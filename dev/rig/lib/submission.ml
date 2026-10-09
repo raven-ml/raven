@@ -47,8 +47,7 @@ external sub_fixed : c -> int -> int -> nativeint -> bool -> unit
 external sub_slot : c -> int -> int -> nativeint -> unit = "caml_rig_sub_slot"
 [@@noalloc]
 
-external sub_hold : c -> int -> unit = "caml_rig_sub_hold" [@@noalloc]
-external sub_collect : c -> int array -> int = "caml_rig_sub_collect"
+external sub_collect : c -> int array -> int -> int = "caml_rig_sub_collect"
 external sub_point : c -> int -> int = "caml_rig_sub_point" [@@noalloc]
 external sub_wait : c -> int -> int -> int -> int -> unit = "caml_rig_sub_wait"
 external sub_clear : c -> unit = "caml_rig_sub_clear" [@@noalloc]
@@ -60,24 +59,15 @@ external sub_take : c -> unit = "caml_rig_sub_take"
 external sub_give : c -> unit = "caml_rig_sub_give" [@@noalloc]
 external ensure_record : int -> int -> unit = "caml_rig_ensure_record"
 
-(* The hold whose memory a submission's parts may name, and whose stamps it
-   raises: a {!Hold.t}, which the submission keeps reachable, as its release
-   frees what the parts run; or, for the library's own copy, the stamps of the
-   hold its memory is in, as the copy runs none of the hold's work. *)
-type named = No_hold | Hold of hold | Stamps of int
-
-let named_stamps = function
-  | No_hold -> 0
-  | Hold h -> h.hstamps
-  | Stamps st -> st
-
 type t = {
   dev : device;
   c : c;
   parts : part array;  (** Its buffers are checked live at each submit. *)
   nreads : int;  (** The buffers each run reads. *)
   nwrites : int;  (** The buffers each run writes. *)
-  named : named;  (** The hold whose memory its parts may name. *)
+  hold : hold option;
+      (** The hold whose stamps each run raises, kept reachable: its release
+          frees what the parts run. *)
   mutable scratches : (memory * int) list;
       (** The scratches the running submit named, each with its claim word
           before. *)
@@ -124,14 +114,6 @@ let copy_local d src dst =
 let copy_handle side k b =
   if side = k then Nativeint.of_int b.mem.host else b.mem.handle
 
-(* Refuses a part's buffer that is dead or in a hold other than the one whose
-   stamps are [hold_stamps]: held memory's stamps are its hold's. *)
-let check_buffer fn hold_stamps b =
-  Buffer.check_live fn b;
-  let e = b.mem.root.entry in
-  if e.life = Held && e.stamps <> hold_stamps then
-    invalid_argf "Rig.%s: a part names memory of another hold" fn
-
 (* Hands the C form [c] its [!k]th fixed buffer [b], and counts it. Only [d]'s
    own memory names a handle of its driver ([rig_edge.h]'s [handles]):
    another's, such as this process's memory a copy on another machine's device
@@ -141,14 +123,13 @@ let fix c k d b write =
   sub_fixed c !k (entry_of b).stamps handle write;
   incr k
 
-let build named ~reads ~writes d parts =
+let build hold ~reads ~writes d parts =
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
   if Dev.is_lost d then Dev.raise_lost d;
   if Dev.is_host d || Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name;
-  let hold_stamps = named_stamps named in
-  let check_buffer = check_buffer fn hold_stamps in
+  let check_buffer = Buffer.check_live fn in
   let nafter = ref 0 and nfixed = ref 0 in
   Array.iteri
     (fun i p ->
@@ -184,8 +165,6 @@ let build named ~reads ~writes d parts =
           nfixed := !nfixed + 2)
     parts;
   let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes in
-  (* The hold keeps its stamps while the submission holds it. *)
-  if hold_stamps <> 0 then sub_hold c hold_stamps;
   let at = ref 0 and k = ref 0 in
   Array.iteri
     (fun i p ->
@@ -211,7 +190,7 @@ let build named ~reads ~writes d parts =
           fix c k d src false;
           fix c k d dst true)
     parts;
-  { dev = d; c; parts; nreads = reads; nwrites = writes; named; scratches = [] }
+  { dev = d; c; parts; nreads = reads; nwrites = writes; hold; scratches = [] }
 
 let is_scratch b = b.mem.root.entry.life = Scratch
 
@@ -226,8 +205,7 @@ let names_scratch p =
 let make ?hold ~reads ~writes d parts =
   if Array.exists names_scratch parts then
     invalid_arg "Rig.Submission.make: a part names a scratch buffer";
-  let named = match hold with Some h -> Hold h | None -> No_hold in
-  build named ~reads ~writes d parts
+  build hold ~reads ~writes d parts
 
 (* In-queue waits *)
 
@@ -294,26 +272,17 @@ let pair d p =
 
 let fn = "submit"
 
-(* Checks a part's buffers: live and, once a hold exists, in no hold but the
-   submission's, whose stamps are [st]. *)
-let check_held held st b =
-  if held then check_buffer fn st b else Buffer.check_live fn b
-
-let check_part held st p =
+let check_part p =
   match p.work with
-  | Words b -> check_held held st b
-  | Fill f -> check_held held st f.arg
+  | Words b -> Buffer.check_live fn b
+  | Fill f -> Buffer.check_live fn f.arg
   | Copy { src; dst } ->
-      check_held held st src;
-      check_held held st dst
+      Buffer.check_live fn src;
+      Buffer.check_live fn dst
 
-(* Checks the parts' buffers are live and, once a hold exists, in no hold but
-   the submission's: memory put in a hold after it was named must be named with
-   the hold. A process that never made a hold holds no memory, and checks
-   liveness only. *)
-let check_parts s held =
+let check_parts s =
   for k = 0 to Array.length s.parts - 1 do
-    check_part held (named_stamps s.named) s.parts.(k)
+    check_part s.parts.(k)
   done
 
 let counted n what = Printf.sprintf "%d %s%s" n what (if n = 1 then "" else "s")
@@ -325,11 +294,6 @@ let check_counts s reads writes =
       (counted nr "read") (counted nw "write") (counted s.nreads "read")
       (counted s.nwrites "write")
 
-(* Refuses [b], element [i] of the run's array of [access] ([reads] or
-   [writes]), unless it is live, on [s]'s device, once a hold exists in no hold,
-   and, written, of memory that admits writes; and hands its stamps and handle
-   to the C slot [k]. Memory of another device that is lost raises its loss;
-   [s]'s device's own loss is the hand-over's. *)
 (* Takes the scratch [b] for the running submit: its claim word goes
    exclusive, so no submit on another domain names it until this one ends it
    or raises. A scratch this submit named already is its own. *)
@@ -350,7 +314,12 @@ let claim_scratch s what i b =
     s.scratches <- (m, w) :: s.scratches
   end
 
-let name_one s held (access : access) i k b =
+(* Refuses [b], element [i] of the run's array of [access] ([reads] or
+   [writes]), unless it is live, on [s]'s device and, written, of memory that
+   admits writes; and hands its stamps and handle to the C slot [k]. Memory of
+   another device that is lost raises its loss; [s]'s device's own loss is the
+   hand-over's. Once a scratch exists, [marked], a scratch is claimed. *)
+let name_one s marked (access : access) i k b =
   let what = match access with Read -> "reads" | Read_write -> "writes" in
   if not (Buffer.is_live b) then
     invalid_argf "Rig.%s: %s.(%d) is dead: %s" fn what i b.mem.claim.why;
@@ -362,9 +331,7 @@ let name_one s held (access : access) i k b =
   if m != b.mem && m.dev != s.dev && Dev.is_lost m.dev then Dev.raise_lost m.dev;
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
   let e = m.entry in
-  if held && e.life = Held then
-    invalid_argf "Rig.%s: %s.(%d)'s memory is in a hold" fn what i;
-  if held && e.life = Scratch then claim_scratch s what i b;
+  if marked && e.life = Scratch then claim_scratch s what i b;
   if access = Read_write && e.access = Read then
     invalid_argf "Rig.%s: %s.(%d)'s memory admits only reads" fn what i;
   sub_slot s.c k e.stamps b.mem.handle
@@ -428,16 +395,16 @@ let rec hand_over s nwaits =
 
 (* Names the run's [k]th buffer, a read below [s.nreads], else a write: the
    buffer. *)
-let name s held reads writes k =
+let name s marked reads writes k =
   let nr = s.nreads in
   if k < nr then begin
     let b = Array.unsafe_get reads k in
-    name_one s held Read k k b;
+    name_one s marked Read k k b;
     b
   end
   else begin
     let b = Array.unsafe_get writes (k - nr) in
-    name_one s held Read_write (k - nr) k b;
+    name_one s marked Read_write (k - nr) k b;
     b
   end
 
@@ -446,15 +413,17 @@ let name s held reads writes k =
    hand-over returned: the C slots hold its stamps without a reference, and the
    caller's array may change meanwhile. A frame keeps four buffers, so the
    rooting costs a call per four. *)
-let rec run s held reads writes waits k =
+let rec run s marked reads writes waits k =
   let n = s.nreads + s.nwrites in
-  if k >= n then hand_over s (wait_points s (sub_collect s.c waits) 0 0)
+  if k >= n then
+    let hold = match s.hold with Some h -> h.hstamps | None -> 0 in
+    hand_over s (wait_points s (sub_collect s.c waits hold) 0 0)
   else
-    let b0 = name s held reads writes k in
-    let b1 = if k + 1 < n then name s held reads writes (k + 1) else b0 in
-    let b2 = if k + 2 < n then name s held reads writes (k + 2) else b0 in
-    let b3 = if k + 3 < n then name s held reads writes (k + 3) else b0 in
-    let p = run s held reads writes waits (k + 4) in
+    let b0 = name s marked reads writes k in
+    let b1 = if k + 1 < n then name s marked reads writes (k + 1) else b0 in
+    let b2 = if k + 2 < n then name s marked reads writes (k + 2) else b0 in
+    let b3 = if k + 3 < n then name s marked reads writes (k + 3) else b0 in
+    let p = run s marked reads writes waits (k + 4) in
     ignore (Sys.opaque_identity b0);
     ignore (Sys.opaque_identity b1);
     ignore (Sys.opaque_identity b2);
@@ -470,7 +439,7 @@ let submit s ~reads ~writes ~waits =
   sub_take s.c;
   let marked = Atomic.get Memory.any_marked in
   match
-    check_parts s marked;
+    check_parts s;
     run s marked reads writes waits 0
   with
   | p ->
@@ -490,8 +459,8 @@ let submit s ~reads ~writes ~waits =
         named;
       raise e
 
-let copy ~hold_stamps d queue ~src ~dst =
+let copy d queue ~src ~dst =
   let part = { queue; after = [||]; work = Copy { src; dst } } in
   submit
-    (build (Stamps hold_stamps) ~reads:0 ~writes:0 d [| part |])
+    (build None ~reads:0 ~writes:0 d [| part |])
     ~reads:[||] ~writes:[||] ~waits:[||]

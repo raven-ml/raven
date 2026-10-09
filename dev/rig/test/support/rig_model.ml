@@ -254,7 +254,7 @@ and rmem = {
   mkind : mkind;
   data : Bytes.t;
   defined : Bytes.t;  (** ['\001'] where [data] is known. *)
-  mutable stamps : rstamps;
+  stamps : rstamps;
   mutable hold : rhold option;
   mutable readers : int;  (** Read claims. *)
   mutable generation : int;
@@ -403,9 +403,20 @@ let waits ?(all = false) v (st : rstamps) =
    device's borrow, raise its loss. *)
 let owned v b = uses v [ b.on; b.mem.owner ]
 
-(* The call reads memory [m]: it waits for its last write, or, for memory in a
-   hold, for every point of the hold. *)
-let reads v m = waits ~all:(m.hold <> None) v m.stamps
+(* Every point of the hold of memory [m], if it is in one: a submission made
+   with the hold may write any of its memory. *)
+let waits_hold v m = Option.iter (fun h -> waits ~all:true v h.hstamps) m.hold
+
+(* The call reads memory [m]: it waits for its last write and the hold's
+   points. *)
+let reads v m =
+  waits v m.stamps;
+  waits_hold v m
+
+(* The call writes memory [m]: it waits for every point of it and of its hold. *)
+let waits_all v m =
+  waits ~all:true v m.stamps;
+  waits_hold v m
 let invalid_if v c = if c then v.invalid <- true
 
 (* [r] may be lost, and so may the devices whose queue may wait on its work. *)
@@ -1128,7 +1139,7 @@ let borrow_ref (v : rdevv) src dst outcome =
       invalid_if vd (dead b);
       uses vd [ d ];
       owned vd b;
-      waits ~all:true vd b.mem.stamps;
+      waits_all vd b.mem;
       let predicted = maps d b in
       judge w vd outcome (fun got ->
           match (predicted, got) with
@@ -1198,8 +1209,8 @@ let fill_ref seed last c outcome =
     let vd = verdict () in
     invalid_if vd (dead b);
     owned vd b;
-    if b.on.kind = Host then waits ~all:true vd b.mem.stamps
-    else if b.length > 0 then waits ~all:true vd b.mem.stamps;
+    if b.on.kind = Host then waits_all vd b.mem
+    else if b.length > 0 then waits_all vd b.mem;
     let lost () =
       unknown b;
       if device_work b.on then maybe_write b.mem.stamps b.on
@@ -1234,7 +1245,7 @@ let read_ref last c outcome =
   let vd = verdict () in
   invalid_if vd (dead b);
   owned vd b;
-  if b.on.kind = Host then waits ~all:true vd b.mem.stamps
+  if b.on.kind = Host then waits_all vd b.mem
   else if b.length > 0 then reads vd b.mem;
   let lost () = if device_work b.on then maybe_use b.mem.stamps b.on in
   judge ~lost c.w vd outcome (fun s ->
@@ -1274,7 +1285,7 @@ let copy_judge ~invalid last src a b outcome =
   owned vd b;
   if a.length > 0 then begin
     reads vd a.mem;
-    waits ~all:true vd b.mem.stamps
+    waits_all vd b.mem
   end;
   let w = src.w in
   let lost () =
@@ -1381,11 +1392,6 @@ let transfer_sys ((s : sdev), w) ((s' : sdev), _) n seed =
 let make_ref ?hold (v : rdevv) pair sc outcome =
   let d = v.r and w = sc.subw in
   let held = Option.bind hold (fun (h : rhcell) -> h.h) in
-  let other_hold m =
-    match m.hold with
-    | Some h -> not (Option.equal ( == ) (Some h) held)
-    | None -> false
-  in
   let vd = verdict () in
   let skipped =
     match (pair, d.kind) with
@@ -1404,8 +1410,7 @@ let make_ref ?hold (v : rdevv) pair sc outcome =
       in
       invalid_if vd (not copies);
       invalid_if vd (dead a || dead b || a.length <> b.length);
-      invalid_if vd (a.on != d || b.on != d || read_only b.mem);
-      invalid_if vd (other_hold a.mem || other_hold b.mem)
+      invalid_if vd (a.on != d || b.on != d || read_only b.mem)
   | None -> ());
   uses vd [ d ];
   if skipped then
@@ -1511,7 +1516,6 @@ let submit_ref last rc wc sc outcome =
       let vd = verdict () in
       let parts = match sub.copy with Some (a, b) -> [ a; b ] | None -> [] in
       invalid_if vd (List.exists dead (r :: wb :: parts));
-      invalid_if vd (r.mem.hold <> None || wb.mem.hold <> None);
       (* A slot not on the device is borrowed on it first, which waits for
          every point of its memory (rig.mli, Buffer.borrow). *)
       let slot b = if b.on == d then `Some else maps d b in
@@ -1519,22 +1523,15 @@ let submit_ref last rc wc sc outcome =
       uses ~maybe:true vd [ r.on; wb.on ];
       uses vd [ r.mem.owner; wb.mem.owner ];
       List.iter
-        (fun b -> if b.on != d then waits ~all:true vd b.mem.stamps)
+        (fun b -> if b.on != d then waits_all vd b.mem)
         [ r; wb ];
-      invalid_if vd
-        (List.exists
-           (fun b ->
-             match b.mem.hold with
-             | Some h -> not (Option.equal ( == ) (Some h) sub.held)
-             | None -> false)
-           parts);
       uses vd [ d ];
       reads vd r.mem;
-      waits ~all:true vd wb.mem.stamps;
+      waits_all vd wb.mem;
       (match sub.copy with
       | Some (a, b) ->
           reads vd a.mem;
-          waits ~all:true vd b.mem.stamps
+          waits_all vd b.mem
       | None -> ());
       let w = sc.subw in
       let lost () =
@@ -1638,25 +1635,9 @@ let hold_ref a b hc outcome =
       invalid_if vd (dead x || dead y);
       invalid_if vd (x.mem.hold <> None || y.mem.hold <> None);
       judge hc.hw vd outcome (fun () ->
-          let mems = if x.mem == y.mem then [ x.mem ] else [ x.mem; y.mem ] in
-          let st = empty_stamps () in
-          List.iter
-            (fun m ->
-              let s = m.stamps in
-              st.writer <-
-                (match s.writer with Some _ as wr -> wr | None -> st.writer);
-              List.iter (fun d -> st.writers <- add d st.writers) s.writers;
-              List.iter
-                (fun d -> st.users <- add d st.users)
-                (Option.to_list s.writer @ s.users);
-              List.iter (fun d -> st.maybe <- add d st.maybe) s.maybe)
-            mems;
-          let h = { hstamps = st } in
-          List.iter
-            (fun m ->
-              m.stamps <- st;
-              m.hold <- Some h)
-            mems;
+          let h = { hstamps = empty_stamps () } in
+          x.mem.hold <- Some h;
+          y.mem.hold <- Some h;
           hc.h <- Some h)
 
 let hold_sys a b hc =
@@ -1675,7 +1656,7 @@ let claim_ref c outcome =
   let vd = verdict () in
   invalid_if vd (dead b);
   owned vd b;
-  waits ~all:true vd b.mem.stamps;
+  waits_all vd b.mem;
   match outcome with
   | Error (Invalid_argument _) when c.w.two && not (dead b) -> ()
   | _ -> judge c.w vd outcome (fun () -> b.mem.readers <- b.mem.readers + 1)
@@ -1698,8 +1679,8 @@ let with_ref r d outcome =
   invalid_if vd (dead a || dead b || overlaps a b);
   owned vd a;
   owned vd b;
-  waits ~all:true vd a.mem.stamps;
-  waits ~all:true vd b.mem.stamps;
+  waits_all vd a.mem;
+  waits_all vd b.mem;
   match outcome with
   | Error (Invalid_argument _)
     when r.w.two && not (dead a || dead b || overlaps a b) ->
@@ -1724,7 +1705,7 @@ let consume_ref src dst outcome =
   let vd = verdict () in
   invalid_if vd (dead b);
   owned vd b;
-  waits ~all:true vd b.mem.stamps;
+  waits_all vd b.mem;
   match outcome with
   | Error (Invalid_argument _) when src.w.two && not (dead b) -> ()
   | _ ->
@@ -1762,7 +1743,7 @@ let wait_ref access c outcome =
   let vd = verdict () in
   invalid_if vd (dead b);
   owned vd b;
-  waits ~all:(access = B.Read_write || b.mem.hold <> None) vd b.mem.stamps;
+  if access = B.Read_write then waits_all vd b.mem else reads vd b.mem;
   judge c.w vd outcome Fun.id
 
 let wait_sys access c = guard c.sw @@ fun () -> B.wait (get c).b access
@@ -1928,10 +1909,14 @@ let fork_ref w outcome =
           | Some b, _ when device_work b.on ->
               failf "a buffer of %s read in the child" (kind_name b.on.kind)
           | Some b, seen -> (
-              let st = b.mem.stamps in
+              let points (st : rstamps) =
+                Option.to_list st.writer @ st.writers @ st.users @ st.maybe
+              in
+              let held =
+                match b.mem.hold with Some h -> points h.hstamps | None -> []
+              in
               let drivers =
-                List.exists device_work
-                  (Option.to_list st.writer @ st.writers @ st.users @ st.maybe)
+                List.exists device_work (points b.mem.stamps @ held)
               in
               match seen with
               | (Lost_cell | Read _) when drivers -> ()

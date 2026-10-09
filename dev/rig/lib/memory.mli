@@ -26,8 +26,11 @@ val page : int
 
     Stamps are the address of a C record ([struct rig_stamps] in [rig_stubs.h])
     as an int, [0] for none. They count references: each memory and hold that
-    shares them holds one, and the last {!stamps_unref} frees them. Nothing
-    checks a use after that. The stubs never block or release the runtime. *)
+    shares them holds one, so does each memory linked to a hold's, and the last
+    {!stamps_unref} frees them. Nothing checks a use after that. A memory's
+    points are its stamps' and, once it is in a hold, those of the hold's
+    stamps, to which its own link. The stubs never block or release the
+    runtime. *)
 
 val stamps_new : unit -> int
 (** [stamps_new ()] is new empty stamps with one reference. Raises
@@ -36,14 +39,17 @@ val stamps_new : unit -> int
 val stamps_ref : int -> unit
 val stamps_unref : int -> unit
 
-val stamps_absorb : int -> int -> unit
-(** [stamps_absorb dst src] makes each device's use in [dst] at least its use in
-    [src], and gives [dst] the last write of [src] if [dst] has none. Raises
-    [Stdlib.Out_of_memory] if [dst] must grow and memory runs out. *)
+val stamps_hold : int -> int -> unit
+(** [stamps_hold st h] links [st], the stamps of memory in no hold, to the
+    hold's stamps [h]. *)
+
+val held : int -> bool
+(** [held st] is [true] iff [st] links to a hold's stamps. *)
 
 val iter_points : (int -> unit) -> int -> unit
 (** [iter_points f st] is [f] over the points of [st], the last write first,
-    none for [0]. It allocates nothing. *)
+    then those of the hold's stamps [st] links to, none for [0]. It allocates
+    nothing. *)
 
 val iter_write : (int -> unit) -> int -> unit
 (** [iter_write f st] is [f] of [st]'s last write, if any. It allocates nothing.
@@ -213,9 +219,8 @@ val free_entry : entry -> unit
     [e] back. *)
 
 val any_marked : bool Atomic.t
-(** [any_marked] is [true] once a hold or a scratch was made in this process:
-    until then every entry's life is [Collected], and a submit reads no buffer's
-    life. *)
+(** [any_marked] is [true] once a scratch was made in this process: until then
+    every entry's life is [Collected], and a submit reads no buffer's life. *)
 
 val retire : device -> entry -> unit
 (** [retire d e] frees [e] once [d] reached the value it has submitted now, or,

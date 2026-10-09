@@ -45,16 +45,34 @@ value caml_rig_stamps_ref(value v_s) {
   return Val_unit;
 }
 
-/* Drops a reference to the stamps, freeing them with the last. */
-value caml_rig_stamps_unref(value v_s) {
-  struct rig_stamps *s = Stamps_val(v_s);
-  if (atomic_fetch_sub(&s->refs, 1) != 1) return Val_unit;
+/* Drops a reference to the stamps [s], freeing them with the last, and
+   with them their reference to their hold's. */
+static void unref(struct rig_stamps *s) {
+  if (atomic_fetch_sub(&s->refs, 1) != 1) return;
+  struct rig_stamps *hold = atomic_load(&s->hold);
   while (s != NULL) {
     struct rig_stamps *next = atomic_load(&s->next);
     free(s);
     s = next;
   }
+  if (hold != NULL) unref(hold);
+}
+
+value caml_rig_stamps_unref(value v_s) {
+  unref(Stamps_val(v_s));
   return Val_unit;
+}
+
+/* Links the stamps [v_s], of memory in no hold, to the hold's [v_hold]. */
+value caml_rig_stamps_hold(value v_s, value v_hold) {
+  struct rig_stamps *hold = Stamps_val(v_hold);
+  atomic_fetch_add(&hold->refs, 1);
+  atomic_store(&Stamps_val(v_s)->hold, hold);
+  return Val_unit;
+}
+
+value caml_rig_stamps_held(value v_s) {
+  return Val_bool(held(Stamps_val(v_s)) != NULL);
 }
 
 /* The use word of the device [index] in the stamps [s]: its existing one,
@@ -104,12 +122,6 @@ static void raise_own(_Atomic uint64_t *slot, uint64_t p) {
   atomic_store_explicit(slot, p, memory_order_release);
 }
 
-static void raise_max(_Atomic uint64_t *slot, uint64_t p) {
-  uint64_t cur = atomic_load(slot);
-  while (cur < p && !atomic_compare_exchange_weak(slot, &cur, p)) {
-  }
-}
-
 /* Makes [p] the last write. A write of another device replaces the last
    write: its caller ordered the two writes. */
 static void raise_last_write(struct rig_stamps *s, uint64_t p) {
@@ -122,13 +134,19 @@ static void raise_last_write(struct rig_stamps *s, uint64_t p) {
 }
 
 /* The [v_k]th point of the stamps: 0 the last write, then the uses in
-   order; 0 for an empty slot, -1 past the last. */
+   order, then those of their hold's; 0 for an empty slot, -1 past the
+   last. */
 value caml_rig_stamps_get(value v_s, value v_k) {
   struct rig_stamps *s = Stamps_val(v_s);
   intnat k = Long_val(v_k);
   if (k == 0) return Val_long((intnat)atomic_load(&s->write));
   k -= 1;
+  struct rig_stamps *first = s;
   for (; s != NULL; s = atomic_load(&s->next)) {
+    if (k < RIG_USES) return Val_long((intnat)use_point(&s->use[k]));
+    k -= RIG_USES;
+  }
+  for (s = held(first); s != NULL; s = atomic_load(&s->next)) {
     if (k < RIG_USES) return Val_long((intnat)use_point(&s->use[k]));
     k -= RIG_USES;
   }
@@ -136,12 +154,14 @@ value caml_rig_stamps_get(value v_s, value v_k) {
 }
 
 /* Forgets every point of the stamps [v_s] but those of the device
-   [v_index]: memory taken out of that device's cache, whose other points its
-   cache reached before it took the memory in. Nothing else names the stamps
-   then, so the stores race with nothing. */
+   [v_index], and their hold: memory taken out of that device's cache, whose
+   other points its cache reached before it took the memory in. Nothing else
+   names the stamps then, so the stores race with nothing. */
 value caml_rig_stamps_keep(value v_s, value v_index) {
   struct rig_stamps *s = Stamps_val(v_s);
   int index = Int_val(v_index);
+  struct rig_stamps *hold = atomic_exchange(&s->hold, NULL);
+  if (hold != NULL) unref(hold);
   uint64_t w = atomic_load(&s->write);
   if (w != 0 && RIG_INDEX(w) != index) atomic_store(&s->write, 0);
   for (; s != NULL; s = atomic_load(&s->next))
@@ -149,24 +169,6 @@ value caml_rig_stamps_keep(value v_s, value v_index) {
       uint64_t p = atomic_load(&s->use[i]);
       if (p != 0 && RIG_INDEX(p) != index) atomic_store(&s->use[i], 0);
     }
-  return Val_unit;
-}
-
-/* Raises [v_dst] with every point of [v_src]: the stamps of memory put in a
-   hold. */
-value caml_rig_stamps_absorb(value v_dst, value v_src) {
-  struct rig_stamps *dst = Stamps_val(v_dst), *src = Stamps_val(v_src);
-  uint64_t w = atomic_load(&src->write);
-  for (; src != NULL; src = atomic_load(&src->next))
-    for (int i = 0; i < RIG_USES; i++) {
-      uint64_t p = use_point(&src->use[i]);
-      if (p == 0) continue;
-      raise_max(reserve(dst, RIG_INDEX(p)), p);
-    }
-  if (w != 0) {
-    uint64_t cur = atomic_load(&dst->write);
-    if (cur == 0) atomic_compare_exchange_strong(&dst->write, &cur, w);
-  }
   return Val_unit;
 }
 
@@ -333,11 +335,6 @@ value caml_rig_sub_slot(value v_s, value v_k, value v_stamps,
   return Val_unit;
 }
 
-value caml_rig_sub_hold(value v_s, value v_stamps) {
-  Sub_val(v_s)->hold = Stamps_val(v_stamps);
-  return Val_unit;
-}
-
 static void grow(void **a, int *c, int want, size_t size) {
   if (want <= *c) return;
   int n = want < 8 ? 8 : 2 * want;
@@ -373,18 +370,24 @@ static void add_handle(struct rig_sub *s, uint64_t h) {
   s->handles[s->nhandles++] = h;
 }
 
-/* Adds the points the use of [sl] follows: its last write, and every use if
-   the work writes it. Reserves [own]'s use word in its stamps. */
+static void add_uses(struct rig_sub *s, int own, struct rig_stamps *st) {
+  for (; st != NULL; st = atomic_load(&st->next))
+    for (int i = 0; i < RIG_USES; i++)
+      add_point(s, own, use_point(&st->use[i]));
+}
+
+/* Adds the points the use of [sl] follows: its last write, every use if
+   the work writes it, and every use of its hold's stamps. Reserves [own]'s
+   use word in its stamps. */
 static void add_slot(struct rig_sub *s, int own, struct rig_slot *sl,
                      int write) {
   struct rig_stamps *st = sl->stamps;
   sl->use = reserve(st, own);
   uint64_t w = atomic_load_explicit(&st->write, memory_order_acquire);
   if (w != 0 && RIG_INDEX(w) != own) add_point(s, own, w);
-  if (write)
-    for (; st != NULL; st = atomic_load(&st->next))
-      for (int i = 0; i < RIG_USES; i++)
-        add_point(s, own, use_point(&st->use[i]));
+  if (write) add_uses(s, own, st);
+  struct rig_stamps *hold = held(st);
+  if (hold != NULL) add_uses(s, own, hold);
 }
 
 /* The handles of the memory [s]'s work names, each once. */
@@ -399,11 +402,13 @@ static void collect_handles(struct rig_sub *s, int nslots) {
 /* Collects the points [s]'s work follows, the greatest per other device,
    with the points of [v_waits], and the handles of the memory it names,
    each once, unless every handle is the last collect's, and reserves the
-   use words its raise stores to. Answers the number of points. */
-value caml_rig_sub_collect(value v_s, value v_waits) {
+   use words its raise stores to, in the hold's stamps [v_hold] too, 0 for
+   none. Answers the number of points. */
+value caml_rig_sub_collect(value v_s, value v_waits, value v_hold) {
   struct rig_sub *s = Sub_val(v_s);
   int own = s->dev->index, nslots = s->nreads + s->nwrites;
   s->npoints = s->nwaits = 0;
+  s->hold = Stamps_val(v_hold);
   for (int k = 0; k < s->nfixed; k++)
     add_slot(s, own, &s->fixed[k], s->fixed_write[k]);
   for (int k = 0; k < nslots; k++)
@@ -456,10 +461,11 @@ void rig_sub_raise(struct rig_sub *s, uint64_t p) {
   if (s->hold != NULL) raise_own(s->hold_use, p);
 }
 
-/* Forgets a run's buffers but their handles, and its waits. */
+/* Forgets a run's buffers but their handles, its hold and its waits. */
 value caml_rig_sub_clear(value v_s) {
   struct rig_sub *s = Sub_val(v_s);
   for (int k = 0; k < s->nreads + s->nwrites; k++) s->slots[k].stamps = NULL;
+  s->hold = NULL;
   s->npoints = s->nwaits = 0;
   return Val_unit;
 }

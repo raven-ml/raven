@@ -149,18 +149,7 @@ let is_slot m =
          Hashtbl.fold (fun _ st r -> r || holds st m) device_stages false)
 
 let queued d queue ~src ~dst =
-  Dev.wait d (Point.value (Submission.copy ~hold_stamps:0 d queue ~src ~dst))
-
-(* The stamps of the hold a copy between [src] and [dst] names, [0] for none:
-   held memory's stamps are its hold's. [None] for memory of two holds, which no
-   one submission names: the copy stages, each leg naming one hold's memory. *)
-let hold_stamps src dst =
-  let e = src.mem.root.entry and e' = dst.mem.root.entry in
-  match (e.life = Held, e'.life = Held) with
-  | true, true when e.stamps <> e'.stamps -> None
-  | true, _ -> Some e.stamps
-  | false, true -> Some e'.stamps
-  | false, false -> Some 0
+  Dev.wait d (Point.value (Submission.copy d queue ~src ~dst))
 
 (* [m] as [d]'s copy queue takes it: a device of another machine takes this
    process's memory as it is, its driver carrying the bytes; another device
@@ -172,11 +161,11 @@ let mine d m =
    [start] and waited for when [wait]. Unwaited, it is recorded once a wait
    sees it done. *)
 let on_queue ~wait d src dst n start =
-  match (d.copy_queue, hold_stamps src dst, mine d src.mem, mine d dst.mem) with
-  | Some queue, Some hold_stamps, Some s, Some t ->
+  match (d.copy_queue, mine d src.mem, mine d dst.mem) with
+  | Some queue, Some s, Some t ->
       let v =
         Point.value
-          (Submission.copy ~hold_stamps d queue ~src:{ src with mem = s }
+          (Submission.copy d queue ~src:{ src with mem = s }
              ~dst:{ dst with mem = t })
       in
       if wait then begin

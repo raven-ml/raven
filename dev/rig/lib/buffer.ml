@@ -134,7 +134,7 @@ let borrow d b =
 
 let wait_points b access =
   let e = b.mem.root.entry in
-  if access = Read && e.life <> Held then
+  if access = Read && not (Memory.held e.stamps) then
     Memory.iter_write Dev.wait_point e.stamps
   else Memory.iter_points Dev.wait_point e.stamps
 

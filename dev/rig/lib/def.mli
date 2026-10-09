@@ -7,7 +7,7 @@
 
     [rig_memory.c] reads by position, for the readers and claims [rig.h]
     declares, the fields of {!buffer} and {!claim}, those of {!memory} up to
-    [root], those of {!entry} up to [life], and those of {!device} up to [c]: a
+    [root], those of {!entry} up to [stamps], and those of {!device} up to [c]: a
     change of their order changes it too. *)
 
 type ('a, 'r, 'i) dm =
@@ -119,9 +119,8 @@ and entry = {
   region : region option;
   io_region : io_region option;
   access : access;
-  mutable stamps : int;  (** The C stamps, a hold's once held; 0 none. *)
+  stamps : int;  (** The C stamps, which link to a hold's once held. *)
   mutable life : life;  (** Guarded by [owner]'s lock. *)
-  mutable own : int;  (** The memory's own stamps. *)
   mutable maps : mapping list;  (** Other devices' mappings of it. *)
   mutable unmaps : int; [@atomic]
       (** The unmaps left before a dead memory is given back. *)
@@ -135,9 +134,8 @@ and entry = {
 }
 
 (** The type for how an entry's memory ends: once its buffers are collected,
-    once its hold is released, or once the first submit naming it returns.
-    [rig_memory.c] reads [Held] as its position. *)
-and life = Collected | Held | Scratch
+    or once the first submit naming it returns. *)
+and life = Collected | Scratch
 
 and pages =
   | Unasked

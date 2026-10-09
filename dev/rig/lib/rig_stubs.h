@@ -98,16 +98,31 @@ struct rig_device {
 /* A memory's stamps: the point of its last write and, per device, the point
    of its last use. A chunk never moves, so a raise is one store or
    compare-and-set; a submission reserves its device's use word before its
-   hand-over, so a raise allocates nothing. [refs] counts the memories and
-   holds that share it. */
+   hand-over, so a raise allocates nothing. [refs] counts the memories,
+   holds and memories' links that share it.
+
+   A memory in a hold links to the hold's stamps, set once, which only
+   submissions made with the hold raise, as uses. The memory's uses are its
+   own and the hold's: such a submission may write any of its memory, so
+   a read follows every point of the hold too. */
 #define RIG_USES 4
 
 struct rig_stamps {
   _Atomic uint64_t write;
   _Atomic uint64_t use[RIG_USES];
   _Atomic(struct rig_stamps *) next;
-  _Atomic int refs; /* in the first chunk only */
+  _Atomic int refs;                  /* in the first chunk only */
+  _Atomic(struct rig_stamps *) hold; /* in the first chunk only */
 };
+
+/* The hold's stamps that the stamps [s] link to, or NULL. Most memory is
+   in no hold: the load is relaxed, and only a link found acquires. */
+static inline struct rig_stamps *held(struct rig_stamps *s) {
+  struct rig_stamps *hold =
+      atomic_load_explicit(&s->hold, memory_order_relaxed);
+  if (hold != NULL) atomic_thread_fence(memory_order_acquire);
+  return hold;
+}
 
 /* A slot of a prepared submission: a memory's stamps, NULL while unset,
    the handle by which the device names it, and the device's use word in
@@ -143,7 +158,7 @@ struct rig_sub {
   unsigned char *fixed_write;
   int nreads, nwrites; /* a run's buffers: those it reads, then writes */
   struct rig_slot *slots;
-  struct rig_stamps *hold;
+  struct rig_stamps *hold; /* a run's hold's stamps, NULL for none */
   _Atomic uint64_t *hold_use;
   /* Built for one submit, cleared after it. */
   int npoints, cpoints;

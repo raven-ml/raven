@@ -67,8 +67,7 @@ let test_release () =
   drain d;
   equal ~msg:"in the next drain" int 1 (Atomic.get runs)
 
-(* Memory in a hold returns by the hold: a read waits for the hold's work, which
-   wrote nothing. *)
+(* A read of held memory waits for the hold's work, which may write it. *)
 let test_wait_held () =
   let d, p = P.open_ "hold:wait" in
   let m = B.create d 64 in
@@ -157,26 +156,35 @@ let test_memory_returns () =
   ignore (P.run p);
   equal ~msg:"once it is reached" bool true (freed ())
 
+(* Held memory is named as any memory, by a run's buffers and by parts, with
+   its hold, another or none. Its uses follow the hold's stamps: a read waits
+   for the hold's work on another device, as a write does. *)
+let test_named () =
+  let d, _ = P.open_ "hold:named" and e, pe = P.open_ "hold:named-other" in
+  let m = B.create d 64 and m' = B.create d 64 in
+  let h = H.make [ m ] and h' = H.make [ m' ] in
+  let v = Rig.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 e [||])) in
+  let answer = Testable.make ~pp:Support.Reader.pp_answer ~equal:( = ) in
+  equal ~msg:"a host read before the hold's work" answer Support.Reader.Wait
+    (Support.Reader.claim m B.Read);
+  equal ~msg:"the hold's work, unrun" int 1 (P.queued pe);
+  let s = Sub.make ~hold:h' ~reads:1 ~writes:1 d [||] in
+  ignore (Rig.submit s ~reads:[| m |] ~writes:[| m' |] ~waits:[||]);
+  at_least ~msg:"a read follows the hold's work" int ~than:v (Rig.signaled e);
+  let copy = Sub.Copy { src = m'; dst = m } in
+  let part = { Sub.queue = "COPY:0"; after = [||]; work = copy } in
+  ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]));
+  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [| part |]))
+
 (* Refusals *)
 
-let test_refusals () =
-  let d, _ = P.open_ "hold:refusals" in
-  let m = B.create d 64 and m' = B.create d 64 in
+let test_one_hold () =
+  let d, _ = P.open_ "hold:one" in
+  let m = B.create d 64 in
   let h = H.make [ m ] in
   raises_match Exn.invalid_arg (fun () ->
       H.make [ B.view m ~first:8 ~length:8 ]);
-  let s = Sub.make ~hold:h ~reads:1 ~writes:1 d [||] in
-  let other = B.create d 64 in
-  raises_match Exn.invalid_arg (fun () ->
-      Rig.submit s ~reads:[| m |] ~writes:[| other |] ~waits:[||]);
-  raises_match Exn.invalid_arg (fun () ->
-      Rig.submit s ~reads:[| other |] ~writes:[| m |] ~waits:[||]);
-  let h' = H.make [ m' ] in
-  let copy = Sub.Copy { src = m'; dst = B.create d 64 } in
-  let part = { Sub.queue = "COPY:0"; after = [||]; work = copy } in
-  raises_match Exn.invalid_arg (fun () ->
-      Sub.make ~hold:h ~reads:0 ~writes:0 d [| part |]);
-  ignore (Sub.make ~hold:h' ~reads:0 ~writes:0 d [| part |])
+  ignore (Sys.opaque_identity h)
 
 let test_dead () =
   let b = B.create Rig.host 8 in
@@ -197,12 +205,8 @@ let test_release_transport_fault () =
   drain Rig.host;
   equal (option string) (Some "the link went down") (Rig.lost d)
 
-(* Memory put in a hold after a submission named it is refused at the next
-   submit, by a part or by a slot: work on held memory raises the hold's stamps,
-   which only a submission made with the hold does. *)
-(* Held memory a device's queue copies copies in and out: the copy's stamps are
-   the hold's, so the hold's release waits for it. Between memory of two holds,
-   which no one submission names, the copy stages. *)
+(* Held memory a device's queue copies copies in and out, and between memory of
+   two holds. *)
 let test_copy_held () =
   let d, _ = P.open_ ~host_visible:false "hold:copy" in
   let m = B.create d 64 in
@@ -223,15 +227,21 @@ let test_copy_held () =
   equal ~msg:"between two holds" string (String.make 64 'h') (contents back);
   ignore (Sys.opaque_identity (h, h'))
 
+(* A submission made before its memory was put in a hold, and submitted after,
+   raises the memory's own stamps: a host wait on the memory waits for it. *)
 let test_held_after () =
-  let d, _ = P.open_ "hold:after" in
+  let d, p = P.open_ "hold:after" in
   let src = B.create d 64 and dst = B.create d 64 in
   let copy =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
   let s = Sub.make ~reads:0 ~writes:0 d [| copy |] in
-  let h = H.make [ src ] in
-  raises_match Exn.invalid_arg (fun () -> submit s);
+  let h = H.make [ dst ] in
+  let v = Rig.Point.value (submit s) in
+  equal ~msg:"queued" int 1 (P.queued p);
+  B.wait dst B.Read;
+  equal ~msg:"after the wait" int 0 (P.queued p);
+  at_least ~msg:"after the wait" int ~than:v (Rig.signaled d);
   ignore (Sys.opaque_identity h)
 
 (* Two domains holding one memory: one hold takes it, the other raises. *)
@@ -286,12 +296,13 @@ let tests =
         test "a read of held memory waits for the hold's work" test_wait_held;
         test "held memory returns once its hold is unreachable and reached"
           test_memory_returns;
-        test "held memory is named only with its hold, in one hold"
-          test_refusals;
+        test "held memory is named as any memory, its uses after the hold's"
+          test_named;
+        test "memory is in one hold at most" test_one_hold;
         test "a dead buffer is not held" test_dead;
         test "held memory a device's queue copies copies in and out"
           test_copy_held;
-        test "memory a part names, held after make, is refused at submit"
+        test "a wait on memory held after a submission's make waits for it"
           test_held_after;
         stateful ~domains:2 "two domains holding one memory: one hold takes it"
           hold_commands;

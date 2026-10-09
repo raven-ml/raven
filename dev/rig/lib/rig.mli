@@ -674,11 +674,11 @@ end
 
     A linked program keeps its fixed memory in one hold, and its images and the
     driver objects its work uses reachable through the hold's release. A hold
-    has one stamp per device, raised to the point of each submission that names
-    it. Its memory is named by submissions only with the hold, and returns once
-    the hold is unreachable and each of its stamps is reached. A hold is made
-    before work names its memory: a submission that named the memory before is
-    refused at its next {!submit}. *)
+    has one stamp per device, raised to the point of each submission made with
+    it ({!Submission.make}), whose work may use any of the hold's memory. Every
+    use of that memory follows each stamp of the hold, a read as a write does,
+    beside the memory's own stamps. The memory returns once the hold is
+    unreachable and each of its stamps is reached. *)
 module Hold : sig
   type t
   (** The type for holds. *)
@@ -759,9 +759,9 @@ module Submission : sig
     ?hold:Hold.t -> reads:int -> writes:int -> device -> part array -> t
   (** [make ~hold ~reads ~writes d parts] is a submission of [parts] on [d]
       whose every run reads [reads] buffers and writes [writes] buffers
-      ({!submit}), a buffer counted as often as it is passed. [hold] names the
-      memory of a {!Hold}: every submit of the submission raises the hold's
-      stamp of [d], and the parts may name the hold's memory.
+      ({!submit}), a buffer counted as often as it is passed. Every submit of
+      the submission raises [hold]'s stamp of [d], and the submission keeps
+      [hold] reachable.
 
       Raises [Invalid_argument] if [d] is {!host} or an {!Io} device, which run
       no submitted work, [reads] or [writes] is negative, an index of a part's
@@ -770,10 +770,9 @@ module Submission : sig
       is not host memory, a {!Copy}'s buffers differ in size, are not [d]'s
       memory (on a driver's device of another machine, one of them may be memory
       this process's host addresses), or its [dst]'s memory is [Read]
-      ({!Buffer.val-access}), [d]'s driver runs no copies (it lists no copy
-      queue, {!Driver.queues}), or a part names memory of a hold other than
-      [hold]; and {!Lost} if [d] is lost. A part [d]'s driver does not run is
-      refused at {!submit}. *)
+      ({!Buffer.val-access}), or [d]'s driver runs no copies (it lists no copy
+      queue, {!Driver.queues}); and {!Lost} if [d] is lost. A part [d]'s
+      driver does not run is refused at {!submit}. *)
 end
 
 val submit :
@@ -793,7 +792,8 @@ val submit :
     returns. It:
     + Loads the points [s]'s work must follow: the last write of each buffer of
       [reads] and of each buffer its parts read, every use by another device of
-      each buffer of [writes] and of each copy's [dst], and the points of
+      each buffer of [writes] and of each copy's [dst], every stamp of another
+      device of the {!Hold} of each memory in one, and the points of
       [waits]. Each foreign point not yet reached is a wait in [d]'s queue if
       [d]'s driver waits on the producer's completion ({!Driver.waits_on}) and
       [d] maps the producer's timeline word, decided once per pair of devices,
@@ -823,15 +823,14 @@ val submit :
 
     Raises [Invalid_argument] if [reads] or [writes] holds another number of
     buffers than {!Submission.make} declared, a buffer of [reads], [writes] or a
-    part is dead, a buffer of [reads] or [writes] is not on [d] or its memory is
-    in a hold, a buffer of [reads] or [writes] is a {!Buffer.scratch} another
-    submit or a claim holds, the memory of a buffer of [writes] is [Read]
-    ({!Buffer.val-access}), a part names memory of a hold other than the
-    submission's, or the parts never fit [d]'s empty queues or name one its
-    driver does not run; and {!Lost} if [d] is lost, [d]'s hand-over fails, or a
-    producer [d]'s queue waits on is lost before the hand-over, and for the
-    buffers and the points [s] follows as {!Lost} states. A device lost after
-    [v] was handed over raises {!Lost}, with [v]'s stamps naming it. *)
+    part is dead, a buffer of [reads] or [writes] is not on [d], a buffer of
+    [reads] or [writes] is a {!Buffer.scratch} another submit or a claim holds,
+    the memory of a buffer of [writes] is [Read] ({!Buffer.val-access}), or the
+    parts never fit [d]'s empty queues or name one its driver does not run;
+    and {!Lost} if [d] is lost, [d]'s hand-over fails, or a producer [d]'s
+    queue waits on is lost before the hand-over, and for the buffers and the
+    points [s] follows as {!Lost} states. A device lost after [v] was handed
+    over raises {!Lost}, with [v]'s stamps naming it. *)
 
 (** {1:images Images} *)
 

@@ -14,7 +14,10 @@ external stamps_new : unit -> int = "caml_rig_stamps_new"
 external stamps_ref : int -> unit = "caml_rig_stamps_ref" [@@noalloc]
 external stamps_unref : int -> unit = "caml_rig_stamps_unref" [@@noalloc]
 external stamps_get : int -> int -> int = "caml_rig_stamps_get" [@@noalloc]
-external stamps_absorb : int -> int -> unit = "caml_rig_stamps_absorb"
+external stamps_hold : int -> int -> unit = "caml_rig_stamps_hold"
+[@@noalloc]
+
+external stamps_held : int -> bool = "caml_rig_stamps_held" [@@noalloc]
 external stamps_keep : int -> int -> unit = "caml_rig_stamps_keep" [@@noalloc]
 
 (* [f] over the points of the stamps [st] from the [k]th on. *)
@@ -26,6 +29,7 @@ let rec iter_from f st k =
   end
 
 let iter_points f st = if st <> 0 then iter_from f st 0
+let held st = st <> 0 && stamps_held st
 
 let iter_write f st =
   if st <> 0 then
@@ -117,7 +121,6 @@ let entry ?region ?io_region ?(access = Read_write) owner memory bytes stamps =
     io_region;
     access;
     stamps;
-    own = stamps;
     maps = [];
     unmaps = 0;
     life = Collected;
@@ -322,9 +325,7 @@ let end_scratch m =
   Atomic.Loc.incr [%atomic.loc cl.generation];
   if m.token != no_token then token_release m.token
 
-let drop_stamps (e : entry) =
-  if e.life = Held then stamps_unref e.stamps;
-  if e.own <> 0 then stamps_unref e.own
+let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
 
 (* Gives [e]'s region back to its driver, and its bytes to their keeper. *)
 let give_back (e : entry) =
@@ -482,10 +483,9 @@ let cache d e =
 
 let to_cache d e = Dev.protect d (fun () -> cache d e)
 
-(* Memory the cache never takes: held memory, io memory, and host memory a
-   device borrowed, which returns to its keeper once its uses are reached. *)
-let uncached (e : entry) =
-  e.life = Held || e.memory = Host_kept || is_io_memory e
+(* Memory the cache never takes: io memory, and host memory a device borrowed,
+   which returns to its keeper once its uses are reached. *)
+let uncached (e : entry) = e.memory = Host_kept || is_io_memory e
 
 (* Whether [d] holds more than its budget in the memory that [e]'s counts in:
    [e] then returns to the driver, so a later allocation the budget refuses

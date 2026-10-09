@@ -158,7 +158,7 @@ value caml_rig_blit_bytes(value v_src, value v_b, value v_j, value v_n) {
    A buffer is the record { mem; offset; length; generation }, its
    memory { dev; bytes; host; address; handle; claim; entry; root; ... },
    its claim { count; generation; why } and the entry of its root
-   { owner; memory; bytes; region; io_region; access; stamps; held; ... },
+   { owner; memory; bytes; region; io_region; access; stamps; ... },
    as rig's Def module lays them out. */
 
 enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_KIND, DEVICE_C };
@@ -167,10 +167,7 @@ enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
        MEMORY_CLAIM, MEMORY_ENTRY, MEMORY_ROOT };
 enum { CLAIM_COUNT, CLAIM_GEN, CLAIM_WHY };
 enum { ENTRY_OWNER, ENTRY_MEMORY, ENTRY_BYTES, ENTRY_REGION, ENTRY_IO_REGION,
-       ENTRY_ACCESS, ENTRY_STAMPS, ENTRY_LIFE };
-
-/* An entry's life Held, as rig's Def lays out its constructors. */
-#define LIFE_HELD 1
+       ENTRY_ACCESS, ENTRY_STAMPS };
 
 /* The claim word's bit for memory that admits only reads, and its step
    per claim, as rig's Memory module lays the word out. */
@@ -214,19 +211,25 @@ static int dev_lost(value mem) {
   return atomic_load_explicit(&d->state, memory_order_acquire) != RIG_LIVE;
 }
 
-/* Whether the work of the stamps [s] that an access must follow is done:
-   that of the last write, or of every use if [every]. A use word that a
-   submission reserved holds no value until its first raise. */
-static int stamps_done(struct rig_stamps *s, int every) {
-  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
-  if (w != 0 && !rig_point_done(w)) return 0;
-  if (!every) return 1;
+static int uses_done(struct rig_stamps *s) {
   for (; s != NULL; s = atomic_load_explicit(&s->next, memory_order_acquire))
     for (int i = 0; i < RIG_USES; i++) {
       uint64_t p = atomic_load_explicit(&s->use[i], memory_order_acquire);
       if (RIG_VALUE(p) != 0 && !rig_point_done(p)) return 0;
     }
   return 1;
+}
+
+/* Whether the work of the stamps [s] that an access must follow is done:
+   that of the last write, or of every use if [every], and of every use of
+   their hold's. A use word that a submission reserved holds no value until
+   its first raise. */
+static int stamps_done(struct rig_stamps *s, int every) {
+  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
+  if (w != 0 && !rig_point_done(w)) return 0;
+  if (every && !uses_done(s)) return 0;
+  struct rig_stamps *hold = held(s);
+  return hold == NULL || uses_done(hold);
 }
 
 /* Claims first, then checks [b] under the claim: the compare-and-set
@@ -254,10 +257,7 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
   struct rig_stamps *s =
       (struct rig_stamps *)Long_val(load_field(entry, ENTRY_STAMPS));
   if (dev_lost(mem) || (root != mem && dev_lost(root)) ||
-      (s != NULL &&
-       !stamps_done(s, access == RIG_READ_WRITE ||
-                           Long_val(load_field(entry, ENTRY_LIFE)) ==
-                               LIFE_HELD)))
+      (s != NULL && !stamps_done(s, access == RIG_READ_WRITE)))
     return RIG_WAIT;
   return RIG_CLAIMED;
 }

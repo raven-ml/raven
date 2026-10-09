@@ -54,7 +54,7 @@ let span b =
   let m = b.mem.root in
   let n = Buffer.length b in
   if m.host >= 0 && Option.is_none m.dev.machine then (0, m.host + b.offset, n)
-  else (-m.entry.own, b.offset, n)
+  else (-m.entry.stamps, b.offset, n)
 
 (* Orders spans by space, then first byte; the polymorphic compare took 40% of
    [with_]. *)
