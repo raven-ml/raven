@@ -19,7 +19,8 @@
   test_structure)
  (libraries rig_nv_abi rig_nv_abi_support rig_elf windtrap)
  (deps
-  (source_tree fixtures)))
+  (source_tree fixtures)
+  ../../elf/fixtures/simple_add_sm89.cubin))
 
 ; The probes' initialisers run around rig_nv_abi's in the order the
 ; libraries are listed, and -linkall links every module of the library.

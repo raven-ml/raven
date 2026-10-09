@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Cubins: NVRTC's simple_add (fixtures/README.md), and cubins a small ELF
-   writer builds, read against the ELF layout below them. Relocation types after
-   NVIDIA's cuobjdump: R_CUDA_64 0x2, R_CUDA_ABS32_LO_32 0x38,
+(* Cubins: NVRTC's simple_add (../../elf/fixtures/README.md), and cubins a small
+   ELF writer builds, read against the ELF layout below them. Relocation types
+   after NVIDIA's cuobjdump: R_CUDA_64 0x2, R_CUDA_ABS32_LO_32 0x38,
    R_CUDA_ABS32_HI_32 0x39. *)
 
 open Windtrap
@@ -212,7 +212,7 @@ let page = 4096
 
 let simple_add () =
   read
-    (In_channel.with_open_bin "fixtures/simple_add_sm89.cubin"
+    (In_channel.with_open_bin "../../elf/fixtures/simple_add_sm89.cubin"
        In_channel.input_all)
 
 let nvrtc =

@@ -9,12 +9,12 @@
    NVIDIA's Linux kernel driver holds.
 
    An NVIDIA GPU's channel runs words that compiled code writes. The cubin
-   ([simple_add.cu], compiled for sm_89) is loaded on the device, which places
-   its image in the GPU's memory. A launch is a descriptor, built from the
-   kernel and the GPU, and a constant bank holding the launch's sizes and the
-   kernel's parameters; a segment of channel words schedules the descriptor, and
-   each submission places one ring entry, naming that segment, on the compute
-   channel. *)
+   (rig's ELF fixture [simple_add.cu], compiled for sm_89) is loaded on the
+   device, which places its image in the GPU's memory. A launch is a descriptor,
+   built from the kernel and the GPU, and a constant bank holding the launch's
+   sizes and the kernel's parameters; a segment of channel words schedules the
+   descriptor, and each submission places one ring entry, naming that segment,
+   on the compute channel. *)
 
 open Rig
 module Abi = Rig_nv_abi
@@ -50,7 +50,8 @@ let encode p = Abi.Packet.encode Int64.of_int p
 
 let run g (gpu : Abi.Gpu.t) =
   let bin =
-    In_channel.with_open_bin "simple_add_sm89.cubin" In_channel.input_all
+    In_channel.with_open_bin "../../test/elf/fixtures/simple_add_sm89.cubin"
+      In_channel.input_all
   in
   let cubin = Result.get_ok (Abi.Cubin.of_string bin) in
   let k = Option.get (Abi.Cubin.kernel cubin "simple_add") in

@@ -1,14 +1,11 @@
 # NV ABI fixtures
 
-- `simple_add_sm89.cubin`, the cubin of `simple_add.cu` for sm_89, made in
-  this directory by `../../../gen/nvrtc.c` with NVRTC 12.8.93 (CUDA 12.8,
-  the PyPI package `nvidia-cuda-nvrtc-cu12==12.8.93`), whose files are
-  under `$NVRTC`:
-  `cc ../../../gen/nvrtc.c -I$NVRTC/include -L$NVRTC/lib -l:libnvrtc.so.12 -Wl,-rpath,$NVRTC/lib -o nvrtc && ./nvrtc simple_add.cu sm_89 simple_add_sm89.cubin`.
-  Another release of NVRTC writes its own version into the file.
+The suite reads `simple_add_sm89.cubin` from the ELF fixtures,
+`../../../elf/fixtures`, whose README says how it is made.
 
-- `globals_sm89.cubin`, the cubin of `globals.cu` for sm_89, made the same
-  way on kimchi (Debian 13, x86_64), which rebuilds the committed bytes (md5
+- `globals_sm89.cubin`, the cubin of `globals.cu` for sm_89, made with the
+  NVRTC and `nvrtc.c` that make `simple_add_sm89.cubin`, on kimchi (Debian
+  13, x86_64), which rebuilds the committed bytes (md5
   8fa197ddee692082de0ae3c46916b770):
   `./nvrtc globals.cu sm_89 globals_sm89.cubin`. `llvm-readelf -S -r -s`
   reads its uninitialised `scale` in `.nv.global` (NOBITS, allocated, 4

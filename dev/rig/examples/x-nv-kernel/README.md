@@ -37,14 +37,6 @@ dune exec ./main.exe
 
 ## The cubin
 
-`simple_add_sm89.cubin` is `simple_add.cu` compiled by `nvrtc.c` with NVRTC
-12.8.93 (CUDA 12.8, the PyPI package `nvidia-cuda-nvrtc-cu12==12.8.93`),
-whose files are under `$NVRTC`, on Linux x86_64:
-
-```bash
-cc nvrtc.c -I$NVRTC/include -L$NVRTC/lib -l:libnvrtc.so.12 \
-  -Wl,-rpath,$NVRTC/lib -o nvrtc
-./nvrtc simple_add.cu sm_89 simple_add_sm89.cubin
-```
-
-Another release of NVRTC writes its own version into the file.
+The example loads `simple_add_sm89.cubin`, `simple_add.cu` compiled for sm_89,
+from rig's ELF fixtures in `dev/rig/test/elf/fixtures`, whose README says how
+it is made.
