@@ -41,14 +41,23 @@ let alloc g kind =
   | Some r -> r
   | None -> fail "a fresh device has no room for 64 KiB"
 
-(* Two domains stop one device at once; the GPU opens again. *)
+(* Two domains close one device at once, which rig stops once; the GPU opens
+   again. *)
 let test_stop_twice () =
   let firmware = firmware () in
-  let g = open_ firmware in
-  let ds =
-    List.init 2 (fun _ -> Domain.spawn (fun () -> Rig_amd.stop g ~fault:None))
+  let d =
+    match
+      Rig.open_
+        (module Rig_amd)
+        ~name:(Rig_amd_pci.device_name 0)
+        (fun () -> Rig_amd_pci.open_ ~firmware 0)
+    with
+    | Ok d -> d
+    | Error why -> failf "GPU 0 did not open: %s" why
   in
+  let ds = List.init 2 (fun _ -> Domain.spawn (fun () -> Rig.close d)) in
   List.iter Domain.join ds;
+  equal (option string) (Some "closed") (Rig.lost d);
   Rig_amd.stop (open_ firmware) ~fault:None
 
 (* A device's memory is freed after the GPU it was on opened again: the frees
@@ -121,7 +130,7 @@ let () =
            [
              group ~timeout:120. "a detached GPU, as root"
                [
-                 test "a device two domains stop at once opens again"
+                 test "a device two domains close at once opens again"
                    test_stop_twice;
                  test
                    "memory of a stopped device is freed after its GPU opened \
