@@ -246,7 +246,9 @@ type answer =
   | Held_exclusive  (** An operand's memory is held exclusive. *)
   | Read_only  (** A written operand's memory is [Read]. *)
   | Repeated_elements  (** A written operand reaches an element twice. *)
-  | Overlapping  (** A written operand shares a byte with another operand. *)
+  | Overlapping
+      (** A written operand shares a byte with another written operand, or
+          with a read operand not identical to it ({!door}). *)
   | Bad_layout
       (** An operand's layout is not a layout: a guard for C callers, which an
           array made by this library never meets. *)
@@ -264,6 +266,15 @@ val door :
     and run nothing, [Repeated_elements] or [Overlapping] for a written array,
     [Dead_buffer] or [Held_exclusive] for an array, or [Read_only] for a written
     array on [Read] memory.
+
+    Two arrays are {e identical} when they have one element width, lie in one
+    memory, and place every index at the same byte. A written array may share
+    bytes with read arrays identical to it, and with no other: [Overlapping]
+    for one that shares a byte with another written array, or with a read
+    array not identical to it, of another width or placing an index at another
+    byte. A written array identical to read arrays is claimed once, for
+    writing. Identity counts among the first 62 arrays of [read]; a later one
+    that shares a byte with a written array is [Overlapping].
 
     It waits for no device work. [f] touches the arrays' elements only through
     work it submits with {!Rig.submit}, naming each array of [written] in its

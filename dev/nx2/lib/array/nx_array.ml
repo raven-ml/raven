@@ -96,7 +96,8 @@ let refused name answer operands =
    plus 256 times the mask of the arrays whose claim found work pending or a
    lost device behind them: bit [k] for the [k]th array of [written], then
    [read], bit [waits_last] for every array from it on. *)
-external claim_all : any array -> any array -> (int[@untagged])
+external claim_all :
+  any array -> any array -> (int[@untagged]) -> (int[@untagged])
   = "nx_array_claim_all_byte" "nx_array_claim_all"
 [@@noalloc]
 
@@ -105,7 +106,8 @@ let waits_last = 53
 (* An answer is the immediate of its code (nx_array.h). *)
 external answer_of_code : int -> answer = "%identity"
 
-external release_all : any array -> any array -> unit = "nx_array_release_all"
+external release_all : any array -> any array -> int -> unit
+  = "nx_array_release_all"
 [@@noalloc]
 
 external end_claim : Buffer.t -> unit = "nx_array_end_claim" [@@noalloc]
@@ -119,8 +121,35 @@ let shares_bytes (Any a) (Any b) =
   Buffer.overlaps a.buffer b.buffer
   && shares a b (Buffer.offset a.buffer) (Buffer.offset b.buffer)
 
+external same_bytes :
+  ('v, 's) t -> ('w, 'r) t -> (int[@untagged]) -> (int[@untagged]) -> bool
+  = "nx_array_identical_byte" "nx_array_identical"
+[@@noalloc]
+
+(* Whether [a] and [b] are identical: one width, one memory, and every index
+   at one byte. *)
+let identical (Any a) (Any b) =
+  Buffer.overlaps a.buffer b.buffer
+  && same_bytes a b (Buffer.offset a.buffer) (Buffer.offset b.buffer)
+
+(* The read arrays the claims skip, as a mask, bit [j] for [read.(j)]: those
+   identical to a written array, whose claim for writing covers them. The
+   mask holds the first [skip_last] read arrays; a later one identical to a
+   written array is refused as overlapping it. *)
+let skip_last = 62
+
+let skips written read =
+  let mask = ref 0 in
+  for j = 0 to min (Array.length read) skip_last - 1 do
+    for i = 0 to Array.length written - 1 do
+      if identical written.(i) read.(j) then mask := !mask lor (1 lsl j)
+    done
+  done;
+  !mask
+
 (* The first refusal of a written array: it reaches an element twice, or
-   shares a byte with another array. *)
+   shares a byte with another written array or with a read array not
+   identical to it. *)
 let refusal written read =
   let answer = ref Done and i = ref 0 in
   while !answer = Done && !i < Array.length written do
@@ -131,7 +160,10 @@ let refusal written read =
         if j <> !i && shares_bytes aw written.(j) then answer := Overlapping
       done;
       for j = 0 to Array.length read - 1 do
-        if shares_bytes aw read.(j) then answer := Overlapping
+        if
+          shares_bytes aw read.(j)
+          && not (j < skip_last && identical aw read.(j))
+        then answer := Overlapping
       done
     end;
     incr i
@@ -158,32 +190,33 @@ let probe_lost written read waits =
     end
   done
 
-(* [Done] with every array claimed, or a refusal with none. Raises
-   [Rig.Lost], with none, for an array behind a lost device. *)
-let admit written read =
-  match refusal written read with
-  | Done -> (
-      let claimed = claim_all written read in
-      let waits = claimed lsr 8 in
-      if waits = 0 then answer_of_code claimed
-      else
-        match probe_lost written read waits with
-        | () -> Done
-        | exception e ->
-            release_all written read;
-            Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
-  | refusal -> refusal
+(* [Done] with every array claimed but those [skip] marks, or a refusal with
+   none. Raises [Rig.Lost], with none, for an array behind a lost device. *)
+let admit written read skip =
+  let claimed = claim_all written read skip in
+  let waits = claimed lsr 8 in
+  if waits = 0 then answer_of_code claimed
+  else
+    match probe_lost written read waits with
+    | () -> Done
+    | exception e ->
+        release_all written read skip;
+        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let door ~written ~read f x =
-  match admit written read with
+  match refusal written read with
   | Done -> (
-      match f x with
-      | () ->
-          release_all written read;
-          Done
-      | exception e ->
-          release_all written read;
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+      let skip = skips written read in
+      match admit written read skip with
+      | Done -> (
+          match f x with
+          | () ->
+              release_all written read skip;
+              Done
+          | exception e ->
+              release_all written read skip;
+              Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+      | refusal -> refusal)
   | refusal -> refusal
 
 (* Making arrays *)

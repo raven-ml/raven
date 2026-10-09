@@ -5,7 +5,8 @@
 
 (* Contractions through every kernel library the host runs: within the bound
    Nx_kernel.Spec.contract states of the exact sum, the same bits under every
-   layout of the same values, and nothing written where declined. nx.cpu's
+   layout of the same values and into a destination identical to init, and
+   nothing written where declined. nx.cpu's
    group checks what nx_cpu.mli states: the cases it computes, and its order,
    bit for bit, against a reference built here. *)
 
@@ -516,6 +517,35 @@ let law_init_as_dst (b : Support.backend) (c : case) =
       | _, r -> failf "in place, contract answered %a" Nx_array_support.pp_answer r
       end
 
+(* A destination identical to [init], a C-contiguous array of the result's
+   dtype, gives the bits a fresh one does: a kernel reads each element of
+   [init] before it writes the destination there. *)
+let law_in_place (b : Support.backend) (c : case) =
+  match c.init with
+  | None -> cover "no init" true
+  | Some i -> (
+      let module K = (val b.kernels) in
+      let c = { c with init = Some (cast_to c.out i) } in
+      let alias = cast_to c.out i in
+      let answer = K.contract c.spec ~dst:alias [| c.a; c.b; alias |] in
+      match (run b c, answer) with
+      | Some y, A.Done ->
+          cover "computed" true;
+          let g = to64 y and g' = to64 alias in
+          let differs i = bits (A.get g i) <> bits (A.get g' i) in
+          let bad = List.filter differs (indices (shape_of y)) in
+          let show i =
+            Format.asprintf "%a: %h, in place %h" pp_ints i (A.get g i)
+              (A.get g' i)
+          in
+          equal (list string) []
+            (List.filteri (fun n _ -> n < 8) (List.map show bad))
+      | None, A.Declined -> cover "declined" true
+      | y, r ->
+          failf "a fresh destination %s, in place %a"
+            (if Option.is_some y then "computed" else "declined")
+            Nx_array_support.pp_answer r)
+
 (* A kernel that declines writes nothing: [dst] keeps its values. *)
 let law_declined (b : Support.backend) c =
   let module K = (val b.kernels) in
@@ -628,6 +658,8 @@ let laws (b : Support.backend) =
         (run (law_init_as_dst b));
       prop "a declined contraction writes nothing" any_case
         (run (law_declined b));
+      prop "a destination identical to init gives a fresh one's bits"
+        computed (run (law_in_place b));
     ]
 
 (* nx.cpu under each table the host runs. *)

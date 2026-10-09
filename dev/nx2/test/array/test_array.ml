@@ -1224,7 +1224,6 @@ let test_door_positions () =
 
 let test_door_written () =
   let x = floats32 [| 3 |] [| 1.; 2.; 3. |] in
-  equal ~msg:"z is x" answer A.Overlapping (S.add x x (zeros [| 3 |]));
   let b = A.buffer (zeros [| 8 |]) in
   let z = A.v f32 (L.contiguous [| 3 |]) b in
   let y = A.v f32 (L.v ~offset:2 ~strides:[| 1 |] [| 3 |]) b in
@@ -1233,6 +1232,24 @@ let test_door_written () =
   equal ~msg:"z beside y" answer A.Done (S.add z x y);
   let r = Option.get (A.move (M.Broadcast [| 3 |]) (zeros [| 1 |])) in
   equal ~msg:"z broadcast" answer A.Repeated_elements (S.add r x x)
+
+(* A written operand may be identical to read ones: one width, one memory,
+   every index at one byte. The pair is claimed once and leaves no claim. *)
+let test_door_identical () =
+  let x = floats32 [| 3 |] [| 1.; 2.; 3. |] in
+  equal ~msg:"x + 0 into x" answer A.Done (S.add x x (zeros [| 3 |]));
+  equal (values f32) [| 1.; 2.; 3. |] (A.to_array x);
+  equal ~msg:"x + x into x" answer A.Done (S.add x x x);
+  equal (values f32) [| 2.; 4.; 6. |] (A.to_array x);
+  equal ~msg:"released" bool true (unclaimed (A.buffer x));
+  let b = A.buffer (zeros [| 4 |]) in
+  let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b in
+  equal ~msg:"shifted one element" answer A.Overlapping
+    (S.add (at 0) (at 1) (zeros [| 3 |]));
+  let sq = floats32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let t = Option.get (A.move (M.Permute [| 1; 0 |]) sq) in
+  equal ~msg:"transposed" answer A.Overlapping (S.add sq t (zeros [| 2; 2 |]));
+  equal ~msg:"released after a refusal" bool true (unclaimed (A.buffer sq))
 
 let test_door_buffers () =
   let x = floats32 [| 2 |] [| 1.; 2. |] in
@@ -1269,7 +1286,9 @@ let test_door_reasons () =
     (fun _ -> reason ~sub:"held exclusive" (S.add (zeros [| 2 |]) x held));
   let r = Option.get (A.move (M.Broadcast [| 2 |]) (zeros [| 1 |])) in
   reason ~sub:"element twice" (S.add r x x);
-  reason ~sub:"shares bytes" (S.add x x (zeros [| 2 |]));
+  let b = A.buffer (zeros [| 3 |]) in
+  let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 2 |]) b in
+  reason ~sub:"shares bytes" (S.add (at 0) (at 1) x);
   reason ~sub:"shapes differ" (S.add (zeros [| 2 |]) x (zeros [| 3 |]))
 
 (* An operand with no element passes the door wherever its memory lies. *)
@@ -1330,7 +1349,6 @@ let test_ocaml_door_refuses () =
     equal ~msg (pair answer (option bool)) (r, None) (ocaml_door written read);
     released (Array.append written read)
   in
-  refuses ~msg:"z is x" A.Overlapping [| A.Any x |] [| A.Any x |];
   refuses ~msg:"written twice" A.Overlapping [| A.Any x; A.Any x |] [||];
   let b = A.buffer (zeros [| 8 |]) in
   let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b in
@@ -1364,6 +1382,30 @@ let test_ocaml_door_refuses () =
     (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any ro |])
 
 (* Off the host, views of one buffer overlap by their offsets. *)
+(* The OCaml door's identity rule, as nx_read's. *)
+let test_ocaml_door_identical () =
+  let xa = floats32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let x = A.Any xa in
+  let door = pair answer (option bool) in
+  equal ~msg:"x into x" door (A.Done, Some true) (ocaml_door [| x |] [| x |]);
+  equal ~msg:"x into x, read twice" door (A.Done, Some true)
+    (ocaml_door [| x |] [| x; x |]);
+  released [| x |];
+  let bytes = A.Any (Option.get (A.bitcast D.Uint8 xa)) in
+  equal ~msg:"another width" door (A.Overlapping, None)
+    (ocaml_door [| x |] [| bytes |]);
+  let b = A.buffer (zeros [| 4 |]) in
+  let at offset = A.Any (A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b) in
+  equal ~msg:"shifted one element" door (A.Overlapping, None)
+    (ocaml_door [| at 0 |] [| at 1 |]);
+  let sq = floats32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let t = A.Any (Option.get (A.move (M.Permute [| 1; 0 |]) sq)) in
+  equal ~msg:"transposed" door (A.Overlapping, None)
+    (ocaml_door [| A.Any sq |] [| t |]);
+  equal ~msg:"identical, written twice" door (A.Overlapping, None)
+    (ocaml_door [| x; x |] [||]);
+  released [| x; bytes; A.Any sq |]
+
 let test_ocaml_door_off_host () =
   let io = S.io_device () in
   let b = A.buffer (A.to_device io (zeros [| 8 |])) in
@@ -1386,7 +1428,7 @@ let test_ocaml_door_bigarrays () =
   in
   let head = part 0 and tail = part 2 in
   equal ~msg:"overlap" (pair answer (option bool)) (A.Overlapping, None)
-    (ocaml_door [| tail (over 0) |] [| head (over 2) |]);
+    (ocaml_door [| tail (over 0) |] [| head (over 1) |]);
   equal ~msg:"beside" (pair answer (option bool)) (A.Done, Some true)
     (ocaml_door [| head (over 0) |] [| head (over 2) |])
 
@@ -1690,6 +1732,8 @@ let tests =
         test "another dtype or shape at any position is refused untouched"
           test_door_positions;
         test "a written operand must be distinct and alone" test_door_written;
+        test "a written operand may be identical to read ones, claimed once"
+          test_door_identical;
         test "dead, foreign and exclusive buffers are refused" test_door_buffers;
         test "refused names the reason of each refusal the door answers"
           test_door_reasons;
@@ -1704,6 +1748,8 @@ let tests =
           test_ocaml_door_runs;
         test "refuses before claiming or running anything"
           test_ocaml_door_refuses;
+        test "a written array may be identical to read ones, claimed once"
+          test_ocaml_door_identical;
         test "off the host, views overlap by their offsets"
           test_ocaml_door_off_host;
         test "bigarrays over one memory overlap by their addresses"

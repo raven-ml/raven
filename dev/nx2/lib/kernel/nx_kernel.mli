@@ -28,10 +28,20 @@ module Spec = Spec
 
 (** The type for kernel libraries.
 
-    Every kernel writes its result into [dst]: fresh, C-contiguous, reaching no
+    Every kernel writes its result into [dst]: C-contiguous, reaching no
     element twice, of the result's shape and dtype, on the operands' device.
     Operands may be strided, broadcast or offset. The caller has checked their
     shapes, dtypes and axes against the operation's rule.
+
+    [dst] shares no byte with an operand, except one it is identical to
+    ({!Nx_array.door}) that the kernel reads only at the result's own index:
+    an operand of [apply1] to [apply3], a [Plain] load of [map], or
+    [contract]'s [init]. A kernel reads such an operand at an index before it
+    writes [dst] there, so the result is the one a fresh [dst] receives. The
+    door refuses an operand that shares a byte with [dst] without being
+    identical to it; an identical operand the kernel reads at other indices,
+    as a gather's source or a contraction's [a] and [b], is the caller's
+    error.
 
     A kernel claims [dst] and its operands for the extent of its call through a
     door: [nx_read] of [nx_array.h] for host kernels, {!Nx_array.door} for

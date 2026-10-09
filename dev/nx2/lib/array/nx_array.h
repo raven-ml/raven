@@ -65,7 +65,8 @@ enum {
   NX_EXCLUSIVE,    /* an operand's memory is held exclusive */
   NX_READ_ONLY,    /* a written operand's memory is Read */
   NX_NOT_DISTINCT, /* a written operand reaches a position twice */
-  NX_OVERLAP,      /* a written operand shares a byte with another */
+  NX_OVERLAP,      /* a written operand shares a byte with another written
+                      operand, or a read one not identical to it */
   NX_LAYOUT,       /* an operand's layout is not one */
   NX_SHAPE,        /* operands of one loop have different shapes */
   NX_ARITY         /* no operand, or more than NX_MAX_OPERANDS, to a loop */
@@ -119,6 +120,7 @@ typedef struct {
      nx_read waits for device work on it. */
   value buffer;
   int wait;
+  int alias; /* identical to a written operand, whose claim covers it */
   struct caml__roots_block roots;
 } nx_array;
 
@@ -129,7 +131,10 @@ int nx_array_dtype(value v);
    it refuses one, claims nothing and leaves [out] unspecified. Per operand
    it checks the dtype, the layout, that the buffer lives and, unless the
    operand has no element, that the host addresses it; per written operand,
-   that it is NX_DISTINCT and shares no byte with another operand. It then
+   that it is NX_DISTINCT and shares no byte with another written operand, nor
+   with a read operand unless the two are identical: one width, and every
+   index at one byte (equal extents and strides, one first bit). A read
+   operand identical to a written one is claimed through it, once. It then
    claims each operand's memory, for writing if written: NX_EXCLUSIVE if the
    memory is held exclusive, NX_READ_ONLY if a written operand's memory is
    Read. Under the claims it waits for the device work each operand's access

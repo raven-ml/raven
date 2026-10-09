@@ -7,8 +7,9 @@
    copies and casts into fresh C-contiguous destinations, each against a
    reference built element by element, over every dtype and pair of dtypes,
    drawn source layouts and drawn bytes; a kind the backend states it computes
-   is never declined, and a decline writes nothing; and operands kept alive
-   across a call. nx.cpu's own refusals have a group of their own. *)
+   is never declined, and a decline writes nothing; a destination identical to
+   an operand read at its own index gives a fresh one's bits; and operands
+   kept alive across a call. nx.cpu's own refusals have a group of their own. *)
 
 open Windtrap
 open Nx_array_gen
@@ -974,6 +975,61 @@ let test_declined_map (b : Support.backend) () =
   | A.Done -> equal (array float_exact) [| 2.; 4.; 6. |] (A.to_array (host y))
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
 
+(* In place *)
+
+(* [k dst a] into a fresh destination, then into [a] itself as a C-contiguous
+   copy, [a] being an operand [k] reads only at the result's own index: one
+   answer, and on [Done] the same bits. *)
+let in_place ~msg (b : Support.backend) a k =
+  let fresh = A.create b.device (A.dtype a) (L.shape (A.layout a)) in
+  let want = k fresh a in
+  let alias = A.copy a in
+  equal ~msg answer want (k alias alias);
+  if want = A.Done then begin
+    cover "computed" true;
+    equal ~msg (list string) [] (differ (host fresh) (host alias))
+  end
+
+let binaries = List.filter (function P.Binary _ -> true | _ -> false) op2s
+
+(* An operand of [apply1] to [apply3], or a [Plain] load of [map], may be the
+   destination itself: the kernels read each index before they write it. *)
+let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
+    (Pair (x, y), seed) =
+  let module K = (val b.kernels) in
+  let dt = A.dtype x and shape = L.shape (A.layout x) in
+  let x = on b x and y = on b y in
+  List.iter
+    (fun op ->
+      in_place ~msg:"apply1 into its operand" b x (fun dst x ->
+          K.apply1 op ~dst x))
+    ones;
+  List.iter
+    (fun k ->
+      let msg into = strf "%s into %s" (name2 k) into in
+      in_place ~msg:(msg "the first") b x (fun dst x -> K.apply2 k ~dst x y);
+      in_place ~msg:(msg "the second") b y (fun dst y -> K.apply2 k ~dst x y);
+      in_place ~msg:(msg "both") b x (fun dst x -> K.apply2 k ~dst x x))
+    kinds;
+  let c = on b (seeded D.Bool shape seed) in
+  let z = on b (seeded dt shape (seed + 1)) in
+  in_place ~msg:"where into the second" b x (fun dst x ->
+      K.apply3 Where ~dst c x y);
+  in_place ~msg:"where into the third" b y (fun dst y ->
+      K.apply3 Where ~dst c x y);
+  in_place ~msg:"fma into the addend" b z (fun dst z ->
+      K.apply3 Fma ~dst x y z);
+  if P.accepts2 (Binary Add) dt then begin
+    let p =
+      P.v ~ins:[| D.Any dt; D.Any dt |]
+        [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |]
+        ~outs:[| 2 |]
+    in
+    let s = Nx_kernel.Spec.map p ~loads:[| Plain; Plain |] in
+    in_place ~msg:"map into a load" b x (fun dst x ->
+        K.map s ~dsts:[| A.Any dst |] [| A.Any x; A.Any y |])
+  end
+
 (* Operands outlive the call *)
 
 (* While another domain collects and compacts, copies of arrays no other value
@@ -1055,6 +1111,17 @@ let laws (b : Support.backend) =
         (Gen.triple dtypes shape Gen.nat)
         (run (law_apply0 b));
       test "a declined map writes nothing" (unit (test_declined_map b));
+      prop "an operand read at the result's own index may be the destination"
+        (Gen.pair pairs Gen.nat)
+        (run (fun ((Pair (x, _), _) as c) ->
+             covers (Case x);
+             law_in_place b c));
+      prop ~count:8 "in place over large views" (Gen.pair large_pairs Gen.nat)
+        (run
+           (law_in_place
+              ~ones:P.[ Copy; Unary Neg ]
+              ~kinds:P.[ Binary Add; Binary Mul ]
+              b));
       test "operands outlive a released call"
         (unit (test_collect_during_call b));
     ]

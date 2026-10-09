@@ -76,6 +76,17 @@ static void reach(value v, const nx_array *a, int64_t *first, int64_t *last) {
   *last = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
 }
 
+/* Whether the descriptors [a] and [b], both with elements, are identical:
+   one width, and every index at one byte: equal extents and strides, and
+   one first bit. */
+static int identical(const nx_array *a, const nx_array *b) {
+  if (a->bits != b->bits || a->rank != b->rank) return 0;
+  for (int i = 0; i < 2 * a->rank; i++)
+    if (a->dim[i] != b->dim[i]) return 0;
+  return (int64_t)(intptr_t)a->base * 8 + a->offset * a->bits ==
+         (int64_t)(intptr_t)b->base * 8 + b->offset * b->bits;
+}
+
 int nx_read(int n, const nx_operand *in, nx_array *out) {
   if (n <= 0) return NX_OK;
   for (int k = 0; k < n; k++) {
@@ -94,6 +105,7 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
       return NX_NOT_HOST;
     if (in[k].written && !(a->flags & NX_DISTINCT)) return NX_NOT_DISTINCT;
   }
+  for (int k = 0; k < n; k++) out[k].alias = 0;
   for (int k = 0; k < n; k++) {
     int64_t first, last, first_j, last_j;
     if (!in[k].written) continue;
@@ -102,7 +114,10 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
     for (int j = 0; j < n; j++) {
       if (j == k) continue;
       reach(in[j].array, &out[j], &first_j, &last_j);
-      if (first_j < last && first < last_j) return NX_OVERLAP;
+      if (!(first_j < last && first < last_j)) continue;
+      /* A read operand identical to a written one is claimed through it. */
+      if (in[j].written || !identical(&out[k], &out[j])) return NX_OVERLAP;
+      out[j].alias = 1;
     }
   }
   /* Every operand is claimed before any wait: a refusal of a later operand
@@ -110,11 +125,14 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
      another domain consumes an operand while the call waits. */
   int waits = 0;
   for (int k = 0; k < n; k++) {
+    out[k].wait = 0;
+    if (out[k].alias) continue;
     enum rig_claim c = rig_buffer_claim(
         out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
     int e = claim_code(c);
     if (e) {
-      while (k-- > 0) rig_buffer_release(out[k].buffer);
+      while (k-- > 0)
+        if (!out[k].alias) rig_buffer_release(out[k].buffer);
       return e;
     }
     out[k].wait = c == RIG_WAIT;
@@ -151,7 +169,8 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
 
 void nx_done(int n, nx_array *a) {
   if (n <= 0) return;
-  for (int k = 0; k < n; k++) rig_buffer_release(a[k].buffer);
+  for (int k = 0; k < n; k++)
+    if (!a[k].alias) rig_buffer_release(a[k].buffer);
   /* Unlink the roots nx_read pushed, under any pushed since. */
   struct caml__roots_block **p = &CAML_LOCAL_ROOTS;
   while (*p != &a[n - 1].roots) {
@@ -178,9 +197,23 @@ static value nth_buffer(value written, value read, mlsize_t k) {
   return k < nw ? any_buffer(written, k) : any_buffer(read, k - nw);
 }
 
-static void release_first(value written, value read, mlsize_t n) {
+/* The number of read arrays the door's skip mask holds: nx_array.ml's
+   skip_last. */
+#define SKIP_LAST 62
+
+/* Whether the door claims the [k]th array of [written], then [read]: every
+   one but the read arrays [skip] marks, bit j for [read]'s jth, identical to
+   a written array whose claim covers them. */
+static int claimed_by_door(value written, mlsize_t k, intnat skip) {
+  mlsize_t nw = Wosize_val(written);
+  return k < nw || k - nw >= SKIP_LAST || !((skip >> (k - nw)) & 1);
+}
+
+static void release_first(value written, value read, mlsize_t n,
+                          intnat skip) {
   for (mlsize_t k = 0; k < n; k++)
-    rig_buffer_release(nth_buffer(written, read, k));
+    if (claimed_by_door(written, k, skip))
+      rig_buffer_release(nth_buffer(written, read, k));
 }
 
 /* The array index from which claim_all's mask has one bit for the rest. */
@@ -193,15 +226,16 @@ static void release_first(value written, value read, mlsize_t n) {
    unfinished, or a lost device is behind them, which the door probes. Bit k
    is the [k]th array of [written], then [read]; bit WAITS_LAST stands for
    every array from it on. */
-intnat nx_array_claim_all(value written, value read) {
+intnat nx_array_claim_all(value written, value read, intnat skip) {
   mlsize_t nw = Wosize_val(written), n = nw + Wosize_val(read);
   intnat waits = 0;
   for (mlsize_t k = 0; k < n; k++) {
+    if (!claimed_by_door(written, k, skip)) continue;
     enum rig_claim c = rig_buffer_claim(nth_buffer(written, read, k),
                                         k < nw ? RIG_READ_WRITE : RIG_READ);
     int e = claim_code(c);
     if (e) {
-      release_first(written, read, k);
+      release_first(written, read, k, skip);
       return e;
     }
     if (c == RIG_WAIT) waits |= (intnat)1 << (k < WAITS_LAST ? k : WAITS_LAST);
@@ -209,12 +243,13 @@ intnat nx_array_claim_all(value written, value read) {
   return NX_OK + 256 * waits;
 }
 
-value nx_array_claim_all_byte(value written, value read) {
-  return Val_long(nx_array_claim_all(written, read));
+value nx_array_claim_all_byte(value written, value read, value skip) {
+  return Val_long(nx_array_claim_all(written, read, Long_val(skip)));
 }
 
-value nx_array_release_all(value written, value read) {
-  release_first(written, read, Wosize_val(written) + Wosize_val(read));
+value nx_array_release_all(value written, value read, value skip) {
+  release_first(written, read, Wosize_val(written) + Wosize_val(read),
+                Long_val(skip));
   return Val_unit;
 }
 
@@ -251,6 +286,34 @@ value nx_array_shares(value a, value b, intnat pa, intnat pb) {
 
 value nx_array_shares_byte(value a, value b, value pa, value pb) {
   return nx_array_shares(a, b, Long_val(pa), Long_val(pb));
+}
+
+/* Whether the arrays [a] and [b], which share a byte, are identical: one
+   width, equal extents and strides, and one first bit, their buffers placed
+   as nx_array_shares places them. */
+value nx_array_identical(value a, value b, intnat pa, intnat pb) {
+  value la = Field(a, ARRAY_LAYOUT), lb = Field(b, ARRAY_LAYOUT);
+  int64_t bits = nx_dtype_row_of(nx_array_dtype(a)).bits;
+  if (bits != nx_dtype_row_of(nx_array_dtype(b)).bits) return Val_false;
+  value sa = Field(la, NX_LAYOUT_SHAPE), sb = Field(lb, NX_LAYOUT_SHAPE);
+  value ta = Field(la, NX_LAYOUT_STRIDES), tb = Field(lb, NX_LAYOUT_STRIDES);
+  mlsize_t r = Wosize_val(sa);
+  if (Wosize_val(sb) != r) return Val_false;
+  for (mlsize_t i = 0; i < r; i++)
+    if (Field(sa, i) != Field(sb, i) || Field(ta, i) != Field(tb, i))
+      return Val_false;
+  uint8_t *ha = rig_buffer_host(Field(a, ARRAY_BUFFER));
+  uint8_t *hb = rig_buffer_host(Field(b, ARRAY_BUFFER));
+  if (ha != NULL && hb != NULL) {
+    pa = (intnat)(intptr_t)ha;
+    pb = (intnat)(intptr_t)hb;
+  }
+  return Val_bool(pa * 8 + Long_val(Field(la, NX_LAYOUT_OFFSET)) * bits ==
+                  pb * 8 + Long_val(Field(lb, NX_LAYOUT_OFFSET)) * bits);
+}
+
+value nx_array_identical_byte(value a, value b, value pa, value pb) {
+  return nx_array_identical(a, b, Long_val(pa), Long_val(pb));
 }
 
 /* Coalescing */
