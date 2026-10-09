@@ -129,11 +129,16 @@ typedef void (*rig_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
 
    Threads. The workers are made at the first job of t > 1 and live until
    the process exits. Those that cannot be made are missing from every job;
-   with none, the calling thread runs every chunk. Threads that wait for
-   work spin for up to 100 us before they sleep, so jobs that follow each
-   other closely start without a system call. In a child made by fork, the
-   pool starts anew at its first job; fork waits for a running job of more
-   than one thread to end. */
+   with none, the calling thread runs every chunk. Threads that wait, for
+   work or for the end of their job, spin for up to 100 us before they
+   sleep, and do not yield their core while they spin: jobs that follow
+   each other closely start without a system call, and other programs get
+   those cores only when the system preempts a spinning thread. A thread
+   that the system takes off its core inside a job, while every core is
+   busy, can end the job up to 100 us late, once the job's other threads
+   stop spinning. In a child made by fork, the pool starts anew at its
+   first job; fork waits for a running job of more than one thread to
+   end. */
 void rig_pool_run(int threads, int64_t total, int64_t chunks, rig_pool_body body,
                  void *ctx);
 

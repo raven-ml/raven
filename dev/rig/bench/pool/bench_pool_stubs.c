@@ -13,7 +13,6 @@
 #include <caml/mlvalues.h>
 
 #include <pthread.h>
-#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -103,11 +102,8 @@ value rig_pool_bench_compute(value v_threads, value v_total, value v_chunks,
    A job without the pool: threads of the bench's own, each of which runs a
    fixed share of the chunks, one call each, once a generation word moves,
    then counts down to the caller, which runs share 0. Nothing is claimed,
-   entered or parked. The threads wait as the pool's workers do, spinning,
-   and yielding the core between reads after 2 us, so that a competing
-   load does not starve them; they live for one row. */
-
-static const int64_t floor_busy_ns = 2000;
+   entered or parked. The threads wait as the pool's workers do, spinning;
+   they live for one row. */
 
 static struct {
   _Alignas(128) _Atomic uint64_t generation;
@@ -137,15 +133,12 @@ static void floor_share(int i) {
 }
 
 /* Waits for [*word] to leave [value] (or [*stop] to be set), spinning,
-   then yielding between reads, and returns the last value read. */
+   and returns the last value read. */
 static uint64_t floor_wait(_Atomic uint64_t *word, uint64_t value) {
   uint64_t v;
-  int64_t start = now_ns();
   while ((v = atomic_load_explicit(word, memory_order_acquire)) == value &&
-         !atomic_load_explicit(&floor_job.stop, memory_order_relaxed)) {
+         !atomic_load_explicit(&floor_job.stop, memory_order_relaxed))
     relax();
-    if (now_ns() - start >= floor_busy_ns) sched_yield();
-  }
   return v;
 }
 
