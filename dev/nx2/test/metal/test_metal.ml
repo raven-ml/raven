@@ -800,6 +800,37 @@ let every_quadruple () =
         Dt.all)
     shapes
 
+(* The bound's check sees a NaN output of a finite sum, wherever it lies
+   among the outputs. *)
+let nan_output =
+  cases ~name:(strf "output %d")
+    "a NaN output of a finite sum is over its bound" [ 0; 31; 63 ]
+    (fun at ->
+      let t = dev () in
+      let c =
+        {
+          dt = Dt.Any Dt.Float32;
+          out = Dt.Any Dt.Float32;
+          a_t = false;
+          b_t = false;
+          batch = 1;
+          m = 8;
+          n = 8;
+          k = 4;
+          init = No_init;
+          pad = 0;
+          bpad = 0;
+          spread = 0;
+          values = Drawn;
+        }
+      in
+      let dims, a, b, out, init, run = call t c in
+      ignore (S.run t run);
+      (floats (S.arg_operand out)).{at} <- Float.nan;
+      let worst, where = S.contract_error ?init dims ~a ~b ~out in
+      equal ~msg:"the output over its bound" int at where;
+      greater ~msg:"its error over its bound" float_exact ~than:1. worst)
+
 (* float64 has no arithmetic on Apple GPUs: the library declines it. *)
 let declines_float64 () =
   let t = dev () in
@@ -867,6 +898,7 @@ let contract =
     [
       contract_bound;
       contract_wraps;
+      nan_output;
       test "float64 declines" declines_float64;
       test "every kernel runs" every_kernel;
       test "the plan declines or is right" every_quadruple;

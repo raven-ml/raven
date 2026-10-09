@@ -463,13 +463,14 @@ value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
         }
         double allowed = g * mag + flush +
                          1.01 * rounding(out.dtype, fabs(s) + g * mag + flush);
-        double e = fabs(got - s);
+        /* A NaN output of a finite sum is wrong by any measure. */
+        double e = isnan(got) ? INFINITY : fabs(got - s);
         double ratio = allowed > 0 ? e / allowed : (e > 0 ? INFINITY : 0);
         /* A float32 result within the bound past out's range rounds to the
            infinity of its sign. */
         double far = copysign(1, got) * s + g * mag + flush;
         if (isinf(got) && far >= overflow(out.dtype)) ratio = 0;
-        if (!(ratio <= worst)) {
+        if (ratio > worst) {
           worst = ratio;
           at = o;
         }
