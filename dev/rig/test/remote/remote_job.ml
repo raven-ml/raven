@@ -201,9 +201,20 @@ type launch = {
 
 (* Starts support/launched.exe in [mode] with the variables [vars] added to its
    environment, as a launcher does: its descriptor 3 is a pipe read here, the
-   report, and its standard output and error another, what it said. *)
-let launch ?(args = []) vars mode =
+   report, and its standard output and error another, what it said. With
+   [~reader_gone:true] the report's reader is closed before the program starts,
+   so each of its report writes fails, and the report reads as no lines. *)
+let launch ?(args = []) ?(reader_gone = false) vars mode =
   let rr, rw = Unix.pipe ~cloexec:true () in
+  let rr =
+    if not reader_gone then rr
+    else begin
+      Unix.close rr;
+      let er, ew = Unix.pipe ~cloexec:true () in
+      Unix.close ew;
+      er
+    end
+  in
   let sr, sw = Unix.pipe ~cloexec:true () in
   let sh = "/bin/sh" in
   let argv =

@@ -593,6 +593,14 @@ let exits_unclosed () =
   equal report_w (0, [ "started"; "closed" ], [ "connected"; "CPU@m1" ]) e;
   equal (list exit_w) [ (0, [ "closed" ]) ] (List.map finish agents)
 
+(* A report whose reader is gone fails each write, and the program goes on: no
+   SIGPIPE ends it. *)
+let reader_gone () =
+  with_hex_agents @@ fun agents ->
+  let e = ended (launch ~reader_gone:true (launch_vars agents) "close") in
+  equal report_w (0, [], [ "connected"; "CPU@m1" ]) e;
+  equal (list exit_w) [ (0, [ "closed" ]) ] (List.map finish agents)
+
 (* The program kills itself once its process failed: the report was written
    before. *)
 let agent_killed () =
@@ -712,6 +720,7 @@ let launching =
       test "started, then closed, its machines named as the launcher names them"
         started_closed;
       test "a program that exits without close reports closed" exits_unclosed;
+      test "a program whose report's reader is gone goes on" reader_gone;
       test "an agent killed: failed, reported before the process fails"
         agent_killed;
       cases ~name:fst "a start that fails reports failed" bad_starts

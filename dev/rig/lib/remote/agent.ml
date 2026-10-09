@@ -18,14 +18,13 @@ let join_s = 10.
 
 (* Reports to a launcher *)
 
-external unsetenv : string -> unit = "caml_rig_remote_unsetenv"
-external report_open : int -> bool = "caml_rig_remote_report_open"
-external report_write : int -> string -> unit = "caml_rig_remote_report_write"
+external report_open : int -> Unix.file_descr option
+  = "caml_rig_remote_report_open"
 
 let report_var = "RIG_REMOTE_REPORT"
 
 type report = {
-  fd : int;
+  fd : Unix.file_descr;
   pid : int;  (** The process that reports. *)
   lock : Mutex.t;
   mutable started : bool;
@@ -34,7 +33,7 @@ type report = {
 
 let take name =
   let v = Sys.getenv_opt name in
-  if Option.is_some v then unsetenv name;
+  if Option.is_some v then Unix.unsetenv name;
   v
 
 let report fd =
@@ -43,17 +42,43 @@ let report fd =
       int_of_string_opt fd
     else None
   in
-  match n with
-  | Some n when report_open n ->
+  match Option.bind n report_open with
+  | Some fd ->
       Ok
         {
-          fd = n;
+          fd;
           pid = Unix.getpid ();
           lock = Mutex.create ();
           started = false;
           ended = false;
         }
-  | _ -> Error (strf "%s=%S is no open file descriptor" report_var fd)
+  | None -> Error (strf "%s=%S is no open file descriptor" report_var fd)
+
+(* Writes [s] from byte [at] on [fd], up to the first failure other than an
+   interruption. *)
+let rec write_all fd s at =
+  let n = String.length s - at in
+  if n > 0 then
+    match Unix.single_write_substring fd s at n with
+    | k -> if k > 0 then write_all fd s (at + k)
+    | exception Unix.Unix_error (EINTR, _, _) -> write_all fd s at
+    | exception Unix.Unix_error _ -> ()
+
+(* Writes [s] on [fd], ignoring every error. A pipe whose reader is gone raises
+   SIGPIPE on the writing thread, which would end the process: the signal is
+   blocked in this thread while it writes, and the one the write raised is taken
+   before it is unblocked. *)
+let report_write fd s =
+  if Sys.win32 then write_all fd s 0
+  else begin
+    let old = Thread.sigmask SIG_BLOCK [ Sys.sigpipe ] in
+    let pending () = List.mem Sys.sigpipe (Unix.sigpending ()) in
+    let was_pending = pending () in
+    write_all fd s 0;
+    if (not was_pending) && pending () then
+      ignore (Unix.sigwait [ Sys.sigpipe ]);
+    ignore (Thread.sigmask SIG_SETMASK old)
+  end
 
 (* Writes [line] in one write, a reason's newlines as spaces, unless this
    process is a child of the one that reports. *)
