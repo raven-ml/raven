@@ -11,16 +11,16 @@ aql/encode	alloc_words	exact	168
 aql/encode	wall_time	batch=16384	n=20	3.073e-07	2.990e-07 2.991e-07 3.009e-07 3.013e-07 3.015e-07 3.022e-07 3.023e-07 3.033e-07 3.044e-07 3.068e-07 3.077e-07 3.104e-07 3.109e-07 3.128e-07 3.136e-07 3.137e-07 3.149e-07 3.193e-07 3.233e-07 3.264e-07
 aql/fill-into-bytes	alloc_words	exact	0
 aql/fill-into-bytes	wall_time	batch=1048576	n=20	7.823e-09	7.801e-09 7.810e-09 7.811e-09 7.813e-09 7.814e-09 7.814e-09 7.814e-09 7.820e-09 7.821e-09 7.822e-09 7.824e-09 7.839e-09 7.843e-09 7.844e-09 7.845e-09 7.845e-09 7.850e-09 7.864e-09 7.911e-09 7.950e-09
-code-object/kernel/last-of-128	alloc_words	exact	2
-code-object/kernel/last-of-128	wall_time	batch=8192	n=20	7.625e-07	7.605e-07 7.622e-07 7.623e-07 7.623e-07 7.623e-07 7.624e-07 7.624e-07 7.624e-07 7.624e-07 7.624e-07 7.626e-07 7.627e-07 7.628e-07 7.630e-07 7.634e-07 7.644e-07 7.647e-07 7.650e-07 7.665e-07 7.698e-07
-code-object/of-string/amd-128-kernels	alloc_words	exact	20946
-code-object/of-string/amd-128-kernels	wall_time	batch=256	n=20	3.260e-05	3.200e-05 3.223e-05 3.236e-05 3.236e-05 3.238e-05 3.243e-05 3.244e-05 3.250e-05 3.251e-05 3.260e-05 3.260e-05 3.261e-05 3.261e-05 3.262e-05 3.270e-05 3.271e-05 3.273e-05 3.288e-05 3.290e-05 3.298e-05
+code-object/kernel/last-of-128	alloc_words	exact	0
+code-object/kernel/last-of-128	wall_time	batch=262144	n=20	2.653e-08	2.638e-08 2.644e-08 2.644e-08 2.645e-08 2.646e-08 2.649e-08 2.649e-08 2.650e-08 2.651e-08 2.652e-08 2.653e-08 2.653e-08 2.657e-08 2.659e-08 2.665e-08 2.679e-08 2.706e-08 2.707e-08 2.709e-08 2.711e-08
+code-object/of-string/amd-128-kernels	alloc_words	exact	21467
+code-object/of-string/amd-128-kernels	wall_time	batch=256	n=20	3.316e-05	3.280e-05 3.289e-05 3.290e-05 3.298e-05 3.302e-05 3.307e-05 3.310e-05 3.310e-05 3.313e-05 3.314e-05 3.318e-05 3.334e-05 3.335e-05 3.338e-05 3.338e-05 3.341e-05 3.364e-05 3.368e-05 3.392e-05 3.492e-05
 pm4/dispatch/gfx11	alloc_words	exact	535
-pm4/dispatch/gfx11	wall_time	batch=32768	n=20	2.570e-07	2.557e-07 2.558e-07 2.559e-07 2.561e-07 2.562e-07 2.562e-07 2.562e-07 2.563e-07 2.566e-07 2.567e-07 2.572e-07 2.576e-07 2.576e-07 2.578e-07 2.581e-07 2.587e-07 2.591e-07 2.594e-07 2.605e-07 2.605e-07
+pm4/dispatch/gfx11	wall_time	batch=32768	n=20	2.683e-07	2.655e-07 2.658e-07 2.661e-07 2.665e-07 2.665e-07 2.671e-07 2.673e-07 2.675e-07 2.680e-07 2.681e-07 2.685e-07 2.689e-07 2.691e-07 2.692e-07 2.696e-07 2.699e-07 2.707e-07 2.717e-07 2.812e-07 2.825e-07
 pm4/dispatch/gfx12	alloc_words	exact	535
-pm4/dispatch/gfx12	wall_time	batch=32768	n=20	2.613e-07	2.579e-07 2.581e-07 2.583e-07 2.591e-07 2.594e-07 2.598e-07 2.599e-07 2.605e-07 2.608e-07 2.613e-07 2.613e-07 2.613e-07 2.614e-07 2.618e-07 2.619e-07 2.622e-07 2.626e-07 2.633e-07 2.637e-07 2.657e-07
+pm4/dispatch/gfx12	wall_time	batch=32768	n=20	2.668e-07	2.638e-07 2.642e-07 2.654e-07 2.660e-07 2.661e-07 2.662e-07 2.665e-07 2.665e-07 2.667e-07 2.668e-07 2.669e-07 2.672e-07 2.672e-07 2.675e-07 2.677e-07 2.683e-07 2.692e-07 2.711e-07 2.735e-07 2.783e-07
 pm4/dispatch/gfx9	alloc_words	exact	566
-pm4/dispatch/gfx9	wall_time	batch=32768	n=20	2.766e-07	2.741e-07 2.748e-07 2.750e-07 2.752e-07 2.756e-07 2.759e-07 2.759e-07 2.759e-07 2.763e-07 2.765e-07 2.766e-07 2.766e-07 2.769e-07 2.769e-07 2.769e-07 2.770e-07 2.772e-07 2.774e-07 2.775e-07 2.787e-07
+pm4/dispatch/gfx9	wall_time	batch=32768	n=20	2.819e-07	2.800e-07 2.801e-07 2.806e-07 2.807e-07 2.808e-07 2.809e-07 2.811e-07 2.813e-07 2.817e-07 2.818e-07 2.820e-07 2.824e-07 2.825e-07 2.830e-07 2.830e-07 2.834e-07 2.836e-07 2.836e-07 2.839e-07 2.840e-07
 pm4/encode/gfx12	alloc_words	exact	605
 pm4/encode/gfx12	wall_time	batch=16384	n=20	4.939e-07	4.718e-07 4.778e-07 4.802e-07 4.806e-07 4.815e-07 4.830e-07 4.855e-07 4.880e-07 4.902e-07 4.934e-07 4.945e-07 4.945e-07 4.957e-07 4.978e-07 4.980e-07 5.000e-07 5.003e-07 5.027e-07 5.036e-07 5.260e-07
 pm4/fill-into-bytes/gfx12	alloc_words	exact	0
@@ -39,10 +39,13 @@ register/find/compute/gfx9	alloc_words	exact	4
 register/find/compute/gfx9	wall_time	batch=131072	n=20	4.943e-08	4.926e-08 4.928e-08 4.928e-08 4.928e-08 4.928e-08 4.930e-08 4.937e-08 4.939e-08 4.939e-08 4.943e-08 4.943e-08 4.945e-08 4.947e-08 4.948e-08 4.963e-08 4.984e-08 4.994e-08 5.010e-08 5.015e-08 5.095e-08
 scratch/descriptor/gfx12	alloc_words	exact	15
 scratch/descriptor/gfx12	wall_time	batch=262144	n=20	2.637e-08	2.565e-08 2.592e-08 2.597e-08 2.604e-08 2.608e-08 2.613e-08 2.621e-08 2.627e-08 2.632e-08 2.635e-08 2.639e-08 2.656e-08 2.659e-08 2.669e-08 2.681e-08 2.682e-08 2.686e-08 2.690e-08 2.693e-08 2.742e-08
+thread-trace/waves/gfx9-4096	alloc_words	exact	147570
+thread-trace/waves/gfx9-4096	wall_time	batch=32	n=20	2.525e-04	2.467e-04 2.480e-04 2.483e-04 2.490e-04 2.494e-04 2.496e-04 2.501e-04 2.504e-04 2.509e-04 2.521e-04 2.529e-04 2.552e-04 2.557e-04 2.557e-04 2.558e-04 2.576e-04 2.601e-04 2.611e-04 2.642e-04 2.716e-04
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
+# forced: blessed pm4/dispatch/gfx9 pm4/dispatch/gfx11 pm4/dispatch/gfx12 code-object/of-string/amd-128-kernels code-object/kernel/last-of-128 thread-trace/waves/gfx9-4096 under load 8.1 on 10 cores
 
 aql/dispatch	alloc_words	exact	135
 aql/dispatch	wall_time	batch=16384	n=20	4.399e-07	4.338e-07 4.362e-07 4.369e-07 4.372e-07 4.374e-07 4.379e-07 4.384e-07 4.385e-07 4.388e-07 4.397e-07 4.400e-07 4.403e-07 4.403e-07 4.406e-07 4.409e-07 4.412e-07 4.441e-07 4.453e-07 4.462e-07 4.478e-07
@@ -50,16 +53,16 @@ aql/encode	alloc_words	exact	168
 aql/encode	wall_time	batch=16384	n=20	5.248e-07	5.198e-07 5.211e-07 5.212e-07 5.216e-07 5.220e-07 5.226e-07 5.227e-07 5.232e-07 5.237e-07 5.244e-07 5.252e-07 5.260e-07 5.261e-07 5.321e-07 5.337e-07 5.338e-07 5.348e-07 5.361e-07 5.362e-07 5.371e-07
 aql/fill-into-bytes	alloc_words	exact	0
 aql/fill-into-bytes	wall_time	batch=524288	n=20	1.303e-08	1.284e-08 1.284e-08 1.286e-08 1.287e-08 1.298e-08 1.300e-08 1.303e-08 1.303e-08 1.303e-08 1.303e-08 1.303e-08 1.305e-08 1.306e-08 1.307e-08 1.308e-08 1.310e-08 1.313e-08 1.316e-08 1.317e-08 1.329e-08
-code-object/kernel/last-of-128	alloc_words	exact	2
-code-object/kernel/last-of-128	wall_time	batch=8192	n=20	1.217e-06	1.206e-06 1.207e-06 1.208e-06 1.208e-06 1.209e-06 1.211e-06 1.211e-06 1.212e-06 1.214e-06 1.217e-06 1.218e-06 1.218e-06 1.227e-06 1.228e-06 1.229e-06 1.229e-06 1.231e-06 1.233e-06 1.235e-06 1.250e-06
-code-object/of-string/amd-128-kernels	alloc_words	exact	20946
-code-object/of-string/amd-128-kernels	wall_time	batch=128	n=20	5.725e-05	5.624e-05 5.643e-05 5.650e-05 5.662e-05 5.665e-05 5.689e-05 5.708e-05 5.713e-05 5.720e-05 5.721e-05 5.730e-05 5.732e-05 5.736e-05 5.751e-05 5.779e-05 5.780e-05 5.809e-05 5.811e-05 5.909e-05 5.915e-05
+code-object/kernel/last-of-128	alloc_words	exact	0
+code-object/kernel/last-of-128	wall_time	batch=131072	n=20	3.919e-08	3.853e-08 3.867e-08 3.877e-08 3.883e-08 3.884e-08 3.885e-08 3.897e-08 3.904e-08 3.909e-08 3.918e-08 3.920e-08 3.924e-08 3.926e-08 3.934e-08 3.938e-08 3.972e-08 3.973e-08 3.975e-08 3.986e-08 4.006e-08
+code-object/of-string/amd-128-kernels	alloc_words	exact	21467
+code-object/of-string/amd-128-kernels	wall_time	batch=128	n=20	5.785e-05	5.721e-05 5.724e-05 5.726e-05 5.735e-05 5.744e-05 5.752e-05 5.774e-05 5.775e-05 5.777e-05 5.783e-05 5.787e-05 5.815e-05 5.823e-05 5.829e-05 5.835e-05 5.860e-05 5.867e-05 5.892e-05 5.932e-05 5.949e-05
 pm4/dispatch/gfx11	alloc_words	exact	535
-pm4/dispatch/gfx11	wall_time	batch=16384	n=20	3.661e-07	3.559e-07 3.582e-07 3.616e-07 3.623e-07 3.642e-07 3.644e-07 3.649e-07 3.650e-07 3.659e-07 3.659e-07 3.664e-07 3.670e-07 3.671e-07 3.682e-07 3.703e-07 3.756e-07 3.757e-07 3.785e-07 3.799e-07 3.851e-07
+pm4/dispatch/gfx11	wall_time	batch=16384	n=20	3.721e-07	3.651e-07 3.656e-07 3.659e-07 3.686e-07 3.692e-07 3.695e-07 3.706e-07 3.714e-07 3.717e-07 3.719e-07 3.723e-07 3.734e-07 3.755e-07 3.761e-07 3.781e-07 3.788e-07 3.788e-07 3.808e-07 3.811e-07 3.835e-07
 pm4/dispatch/gfx12	alloc_words	exact	535
-pm4/dispatch/gfx12	wall_time	batch=16384	n=20	3.640e-07	3.506e-07 3.548e-07 3.617e-07 3.619e-07 3.623e-07 3.630e-07 3.630e-07 3.637e-07 3.639e-07 3.639e-07 3.640e-07 3.665e-07 3.672e-07 3.680e-07 3.681e-07 3.690e-07 3.714e-07 3.902e-07 4.609e-07 4.975e-07
+pm4/dispatch/gfx12	wall_time	batch=16384	n=20	3.686e-07	3.641e-07 3.645e-07 3.646e-07 3.656e-07 3.665e-07 3.669e-07 3.672e-07 3.678e-07 3.681e-07 3.685e-07 3.687e-07 3.687e-07 3.688e-07 3.690e-07 3.691e-07 3.692e-07 3.695e-07 3.705e-07 3.714e-07 3.731e-07
 pm4/dispatch/gfx9	alloc_words	exact	566
-pm4/dispatch/gfx9	wall_time	batch=16384	n=20	3.866e-07	3.785e-07 3.794e-07 3.803e-07 3.811e-07 3.813e-07 3.827e-07 3.835e-07 3.839e-07 3.862e-07 3.865e-07 3.866e-07 3.870e-07 3.871e-07 3.877e-07 3.878e-07 3.894e-07 3.925e-07 3.943e-07 4.009e-07 4.081e-07
+pm4/dispatch/gfx9	wall_time	batch=16384	n=20	3.969e-07	3.866e-07 3.886e-07 3.906e-07 3.951e-07 3.952e-07 3.953e-07 3.961e-07 3.963e-07 3.965e-07 3.966e-07 3.973e-07 3.974e-07 3.979e-07 3.992e-07 3.993e-07 4.014e-07 4.023e-07 4.031e-07 6.749e-07 6.781e-07
 pm4/encode/gfx12	alloc_words	exact	605
 pm4/encode/gfx12	wall_time	batch=8192	n=20	7.474e-07	7.349e-07 7.352e-07 7.352e-07 7.359e-07 7.425e-07 7.432e-07 7.447e-07 7.451e-07 7.459e-07 7.460e-07 7.487e-07 7.516e-07 7.523e-07 7.565e-07 7.575e-07 7.577e-07 7.623e-07 7.752e-07 7.782e-07 7.856e-07
 pm4/fill-into-bytes/gfx12	alloc_words	exact	0
@@ -78,6 +81,8 @@ register/find/compute/gfx9	alloc_words	exact	4
 register/find/compute/gfx9	wall_time	batch=65536	n=20	8.959e-08	8.866e-08 8.900e-08 8.904e-08 8.905e-08 8.908e-08 8.929e-08 8.932e-08 8.934e-08 8.937e-08 8.949e-08 8.968e-08 8.969e-08 8.976e-08 8.998e-08 8.999e-08 9.016e-08 9.020e-08 9.035e-08 9.038e-08 9.056e-08
 scratch/descriptor/gfx12	alloc_words	exact	15
 scratch/descriptor/gfx12	wall_time	batch=262144	n=20	3.711e-08	3.654e-08 3.660e-08 3.678e-08 3.682e-08 3.695e-08 3.706e-08 3.707e-08 3.707e-08 3.709e-08 3.710e-08 3.711e-08 3.713e-08 3.720e-08 3.720e-08 3.725e-08 3.726e-08 3.728e-08 3.745e-08 3.749e-08 3.754e-08
+thread-trace/waves/gfx9-4096	alloc_words	exact	147570
+thread-trace/waves/gfx9-4096	wall_time	batch=16	n=20	4.327e-04	4.070e-04 4.150e-04 4.174e-04 4.195e-04 4.238e-04 4.266e-04 4.272e-04 4.297e-04 4.320e-04 4.320e-04 4.334e-04 4.363e-04 4.364e-04 4.365e-04 4.374e-04 4.398e-04 4.411e-04 4.437e-04 4.464e-04 4.483e-04
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
