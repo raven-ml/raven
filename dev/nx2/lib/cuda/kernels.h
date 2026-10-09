@@ -7,9 +7,10 @@
    instances, the tiles and each family's parameters.
 
    A kernel reads one parameter struct, the parameters of its launch. The
-   host writes it field by field at the offsets gen/gen.exe prints into
-   kernels.ml, and rig turns each address field into the address of a
-   buffer of the submit. */
+   host writes it field by field at the offsets kernels.ml states, and rig
+   turns each address field into the address of a buffer of the submit.
+   kernels.ml holds every fact of this header the host plans with;
+   test/cuda/test_cuda_kernels.ml checks that the two agree. */
 
 #ifndef NX_CUDA_KERNELS_H
 #define NX_CUDA_KERNELS_H

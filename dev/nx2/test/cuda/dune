@@ -1,4 +1,5 @@
-; Correctness on CUDA's GPU 0, skipping without one.
+; Correctness on CUDA's GPU 0, skipping without one; and kernels.ml against
+; kernels.h, on any machine.
 
 (tests
  (names test_cuda)
@@ -9,3 +10,18 @@
  (names test_cuda_place)
  (modules test_cuda_place)
  (libraries nx nx_array nx_cuda_support rig rig.cuda windtrap))
+
+; The library's kernels.ml, built here beside a stub that reads kernels.h.
+
+(tests
+ (names test_cuda_kernels)
+ (modules test_cuda_kernels kernels)
+ (libraries windtrap)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../lib/cuda)
+  (extra_deps ../../lib/cuda/kernels.h)
+  (names test_cuda_kernels_stubs)))
+
+(rule
+ (copy ../../lib/cuda/kernels.ml kernels.ml))

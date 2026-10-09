@@ -85,8 +85,10 @@ let reads_as dt into =
 
 (* Instances *)
 
+let count = Array.length K.kernels
+
 let index i =
-  let rec go k = if K.instances.(k) = i then k else go (k + 1) in
+  let rec go k = if snd K.kernels.(k) = i then k else go (k + 1) in
   go 0
 
 let pack_kernel = index K.Pack
@@ -96,9 +98,9 @@ let pack_kernel = index K.Pack
 (* Loops with their state as arguments: a local loop closing over them would
    allocate its closure on every call. *)
 let rec find_mma_from k kind a b t =
-  if k = K.count then -1
+  if k = count then -1
   else
-    match K.instances.(k) with
+    match snd K.kernels.(k) with
     | Mma (kind', a', b', t')
       when (kind' == kind || kind' == K.Any) && a' == a && b' == b && t' == t ->
         k
@@ -107,18 +109,18 @@ let rec find_mma_from k kind a b t =
 let find_mma kind a b t = find_mma_from 0 kind a b t
 
 let rec find_simt_from k sum side =
-  if k = K.count then -1
+  if k = count then -1
   else
-    match K.instances.(k) with
+    match snd K.kernels.(k) with
     | Simt (sum', side') when sum' == sum && side' = side -> k
     | _ -> find_simt_from (k + 1) sum side
 
 let find_simt sum side = find_simt_from 0 sum side
 
 let rec find_skinny_from k sum =
-  if k = K.count then -1
+  if k = count then -1
   else
-    match K.instances.(k) with
+    match snd K.kernels.(k) with
     | Skinny sum' when sum' == sum -> k
     | _ -> find_skinny_from (k + 1) sum
 
@@ -583,13 +585,13 @@ let choose c v s ~dst ops =
 (* Sequences *)
 
 (* The submission's key: its contraction kernel, then its packs, split and init,
-   dense over [K.count] kernels, so no count collides. *)
+   dense over [count] kernels, so no count collides. *)
 let flags = 16
-let sequences = K.count * flags
+let sequences = count * flags
 
 let sequence c =
   c.kernel
-  + K.count
+  + count
     * (Bool.to_int c.a.packed
       lor (Bool.to_int c.b.packed lsl 1)
       lor (Bool.to_int (c.splits > 1) lsl 2)
@@ -638,7 +640,7 @@ let launches c =
 
 let parts c image ~queue =
   let part (kernel, params, refs) =
-    let kernel = K.names.(kernel) in
+    let kernel = fst K.kernels.(kernel) in
     {
       Rig.Submission.queue;
       after = [||];

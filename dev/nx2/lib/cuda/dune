@@ -10,8 +10,3 @@
   (extra_deps kernels/sm_89.cubin)
   (flags :standard -DNX_CUDA_KERNELS_DIR=kernels)
   (names nx_cuda_stubs)))
-
-(rule
- (with-stdout-to
-  kernels.ml
-  (run gen/gen.exe)))
