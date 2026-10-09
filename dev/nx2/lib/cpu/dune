@@ -1,4 +1,8 @@
 ; Kernels for host memory.
+;
+; convert.c is compiled once per target: as itself for base, and as its copy
+; convert_v3.c for v3, with v3's instructions on x86-64 and as an empty unit
+; elsewhere. target.c picks the table at run time.
 
 (library
  (name nx_cpu)
@@ -6,5 +10,30 @@
  (foreign_stubs
   (language c)
   (include_dirs ../array)
-  (extra_deps convert.inc)
-  (names target target_base target_v3 job walk stage copy)))
+  (names target job walk stage copy convert))
+ (foreign_stubs
+  (language c)
+  (include_dirs ../array)
+  (flags :standard -DNX_CPU_V3 (:include v3_flags.sexp))
+  (names convert_v3)))
+
+(rule
+ (copy convert.c convert_v3.c))
+
+(rule
+ (target v3_flags.sexp)
+ (enabled_if
+  (= %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "(-mavx2 -mfma -mf16c -mbmi2)"))))
+
+(rule
+ (target v3_flags.sexp)
+ (enabled_if
+  (<> %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))

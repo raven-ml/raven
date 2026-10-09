@@ -3,13 +3,23 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The conversion runs, compiled once per target by the file that includes
-   this one, which fills its table with fill.
+/* The conversion runs, compiled once per target, and the fill of its table.
+
+   dune compiles this file as itself for the base target, the instructions
+   every host of the architecture has: SSE2 on x86-64, NEON on arm64. It
+   compiles it again as convert_v3.c with NX_CPU_V3 and, on x86-64, AVX2,
+   FMA, F16C and BMI2, the headers' inline codecs and nx_array.h's runs
+   included. Everything here but the fill is static, so no code compiled
+   for v3 reaches the base table. Elsewhere the v3 unit is empty.
 
    One loop per pair of dtypes, each element converted by an expression
    built from nx_dtype.h's codecs: the store rule of Dtype.of_float from a
    float, the ring's map from an integer. The codecs select rather than
    branch, so every loop vectorises. */
+
+#include "cpu.h"
+
+#if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 typedef struct {
   float re, im;
@@ -178,3 +188,16 @@ static void fill(nx_cpu_target *t) {
   t->convert[NX_INT64][NX_FLOAT32] = run_INT64_FLOAT32;
   t->convert[NX_UINT64][NX_FLOAT32] = run_UINT64_FLOAT32;
 }
+
+#if defined(NX_CPU_V3)
+void nx_cpu_fill_v3(nx_cpu_target *t) { fill(t); }
+#else
+void nx_cpu_fill_base(nx_cpu_target *t) { fill(t); }
+#endif
+
+#else
+
+/* ISO C forbids an empty unit. */
+typedef int nx_cpu_no_v3;
+
+#endif

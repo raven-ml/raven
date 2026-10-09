@@ -45,7 +45,7 @@ typedef struct {
 } nx_cpu_target;
 
 /* The tables, each filled when the program starts on a host that runs it,
-   by its target's file. */
+   by convert.c compiled for its target. */
 extern nx_cpu_target nx_cpu_base;
 void nx_cpu_fill_base(nx_cpu_target *t);
 #if defined(__x86_64__)
