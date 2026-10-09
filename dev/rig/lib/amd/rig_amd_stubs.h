@@ -41,7 +41,8 @@ enum { RIG_AMD_COMPUTE, RIG_AMD_COPY, RIG_AMD_QUEUES };
 enum { RING_PM4, RING_AQL, RING_SDMA };
 
 /* The scratch writes an AQL queue's descriptor takes at the next
-   submission's first compute part. */
+   submission's first compute part, which also makes the pending scratch
+   the one launches name. */
 #define RIG_AMD_SCRATCH_WRITES 8
 
 /* The packets the writer places, which Rig_amd encodes once per device.
@@ -60,11 +61,13 @@ enum {
   S_TRAP,      /* copy: interrupt */
   S_COPY,      /* copy: 2 bytes from 1 to 0, at most the engine's packet */
   A_IB,        /* AQL compute: the 1 words of PM4 packets at 0 */
+  T_INVALIDATE, /* compute: invalidate the caches above the L2 */
   RIG_AMD_TEMPLATES
 };
 
 #define RIG_AMD_TEMPLATE_WORDS 16
 #define RIG_AMD_TEMPLATE_HOLES 4
+#define RIG_AMD_TEMPLATE_ARGS 3
 #define RIG_AMD_HOLE_OPS 3
 
 /* A word of a template that holds a computation on an argument: the
@@ -84,13 +87,10 @@ struct rig_amd_template {
   struct rig_amd_hole holes[RIG_AMD_TEMPLATE_HOLES];
 };
 
-/* Template [t]'s words in [w], its holes filled from [args]: their
-   count. */
-static inline int rig_amd_fill(const struct rig_amd_template *t,
-                               const uint64_t *args, uint32_t *w) {
-  memcpy(w, t->words, sizeof t->words);
-  for (int i = 0; i < t->nholes; i++) {
-    const struct rig_amd_hole *h = &t->holes[i];
+/* Writes into [w] the [n] holes at [h], filled from [args]. */
+static inline void rig_amd_holes(const struct rig_amd_hole *h, int n,
+                                 const uint64_t *args, uint32_t *w) {
+  for (; n > 0; n--, h++) {
     uint64_t v = args[h->arg];
     for (int j = 0; j < h->nops; j++) switch (h->op[j]) {
         case OP_ADD: v += h->k[j]; break;
@@ -100,7 +100,74 @@ static inline int rig_amd_fill(const struct rig_amd_template *t,
     w[h->at] = (uint32_t)v;
     if (h->wide == 2) w[h->at + 1] = (uint32_t)(v >> 32);
   }
+}
+
+/* Template [t]'s words in [w], its holes filled from [args]: their
+   count. */
+static inline int rig_amd_fill(const struct rig_amd_template *t,
+                               const uint64_t *args, uint32_t *w) {
+  memcpy(w, t->words, sizeof t->words);
+  rig_amd_holes(t->holes, t->nholes, args, w);
   return t->n;
+}
+
+/* A function's launch, which the device's [entry] makes once per function
+   of a loaded image and which lives until the image is unloaded: the PM4
+   words of its dispatch, whose holes take, in order, the address of its
+   arguments, the device's scratch, its threads per group along x, y and z
+   and its groups along x, y and z. The word at [lds_at] is [lds_word] plus
+   [lds_unit] for each [lds_granule] bytes, rounded up, of the function's
+   [group] bytes of LDS and the launch's shared memory. Its arguments take
+   [kernarg] bytes, after the launch's parameters at most, and [hidden]
+   holds the offset among them of each implicit argument it reads, in the
+   order below, or -1. A launch fits when its threads per group are at most
+   [max_threads] and its shared memory at most [max_shared] bytes. */
+enum {
+  L_ARGS,
+  L_SCRATCH,
+  L_THREADS,
+  L_GROUPS = L_THREADS + 3,
+  RIG_AMD_LAUNCH_ARGS = L_GROUPS + 3
+};
+
+/* The implicit arguments of code object v5 a launch writes: its groups
+   along each axis (32 bits), its threads per group along each (16 bits),
+   the threads of a partial last group along each (16 bits), the first
+   thread's index along each (64 bits), the axes of its grid (16 bits) and
+   its shared memory's bytes (32 bits). */
+enum {
+  H_BLOCKS,
+  H_GROUP = H_BLOCKS + 3,
+  H_REMAINDER = H_GROUP + 3,
+  H_OFFSET = H_REMAINDER + 3,
+  H_DIMS = H_OFFSET + 3,
+  H_LDS,
+  RIG_AMD_HIDDEN
+};
+
+#define RIG_AMD_LAUNCH_WORDS 64
+#define RIG_AMD_LAUNCH_HOLES 12
+
+struct rig_amd_launch {
+  uint32_t words[RIG_AMD_LAUNCH_WORDS];
+  int n, nholes;
+  struct rig_amd_hole holes[RIG_AMD_LAUNCH_HOLES];
+  uint32_t lds_at, lds_word, lds_unit, lds_granule, group;
+  uint32_t max_threads, max_shared, kernarg;
+  int32_t hidden[RIG_AMD_HIDDEN];
+};
+
+/* Launch [l]'s dispatch in [w], its holes filled from [args] and its LDS
+   word from its groups' [shared] bytes: its count. */
+static inline int rig_amd_dispatch(const struct rig_amd_launch *l,
+                                   const uint64_t *args, uint32_t shared,
+                                   uint32_t *w) {
+  uint32_t lds = l->group + shared;
+  memcpy(w, l->words, 4 * (size_t)l->n);
+  rig_amd_holes(l->holes, l->nholes, args, w);
+  w[l->lds_at] =
+      l->lds_word + (lds + l->lds_granule - 1) / l->lds_granule * l->lds_unit;
+  return l->n;
 }
 
 /* A submission that used a ring or the segment: its value, and the
@@ -155,6 +222,8 @@ struct rig_amd {
   struct rig_amd_hdp hdps[RIG_AMD_HDPS];
   uint64_t ib_at;               /* the PM4 words not yet in an AQL packet */
   size_t ib_n;
+  uint64_t scratch_gpu;         /* the scratch the launches name */
+  uint64_t scratch_next;        /* the pending scratch */
   int scratch_n;                /* the descriptor's pending writes */
   uint64_t scratch_at[RIG_AMD_SCRATCH_WRITES];
   uint32_t scratch_value[RIG_AMD_SCRATCH_WRITES];

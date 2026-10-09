@@ -307,7 +307,7 @@ let priv = 1 lsl 20
 let lds_shift = 15
 let lds_mask = 0x1ff
 let lds_granule_gfx950 = 1280
-let lds_granule = 512
+let lds_granule_other = 512
 
 (* The scratch's buffer descriptor in a kernel's first user SGPRs: the base
    address with SWIZZLE_ENABLE, bit 63, the most records, and a word of its
@@ -319,6 +319,9 @@ let lds_granule = 512
 let swizzle_enable = Int64.min_int
 let num_records = 0xffff_ffff
 let scratch_format = 0x20c14000
+
+let lds_granule (g : Gpu.t) =
+  match g.gc with 9, 5, _ -> lds_granule_gfx950 | _ -> lds_granule_other
 
 let dispatch (g : Gpu.t) (k : Code_object.kernel) ~program ~scratch ~args
     ~packet:dispatch_packet ~threads:(tx, ty, tz) ~groups:(gx, gy, gz)
@@ -338,9 +341,7 @@ let dispatch (g : Gpu.t) (k : Code_object.kernel) ~program ~scratch ~args
   in
   let initiator = if k.wave32 then d.initiator_wave32 else d.initiator_wave64 in
   let rsrc1 = if major g = 11 then k.rsrc1 lor priv else k.rsrc1 in
-  let granule =
-    match g.gc with 9, 5, _ -> lds_granule_gfx950 | _ -> lds_granule
-  in
+  let granule = lds_granule g in
   let lds = (k.group_segment + granule - 1) / granule in
   if lds > lds_mask then
     invalid_argf

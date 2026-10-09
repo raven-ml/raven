@@ -13,9 +13,12 @@
    and waits that order parts of two queues, and on the last queue the
    release of v into the word. Each compute part follows a partial flush of
    the dispatches before it; the first, and any after a slot wait, also
-   follows a cache acquire. A submission without compute parts invalidates
-   no cache: none of its work reads. It then flushes the host data path if
-   the host wrote GPU memory through the BAR, and rings the doorbells. */
+   follows a cache acquire, and any other launch an invalidation of the
+   caches above the L2, so that it reads what the dispatches before it
+   wrote. A launch's parameters go in the segment. A submission without
+   compute parts invalidates no cache: none of its work reads. It then
+   flushes the host data path if the host wrote GPU memory through the BAR,
+   and rings the doorbells. */
 
 #define _GNU_SOURCE
 
@@ -124,10 +127,35 @@ static uint64_t copies(const struct rig_amd *d, uint64_t bytes) {
   return (bytes + d->max_copy - 1) / d->max_copy;
 }
 
+/* The bytes of launch [p]'s arguments: its parameters, and its function's
+   arguments, implicit ones included. */
+static uint64_t arguments(const struct rig_part *p) {
+  const struct rig_amd_launch *l = p->launch.launch;
+  return p->launch.params > l->kernarg ? p->launch.params : l->kernarg;
+}
+
+/* The words part [p] places itself, and the bytes it takes from the
+   segment. */
+static uint64_t part_words(const struct rig_amd *d, const struct rig_part *p,
+                           uint64_t *bytes) {
+  switch (p->kind) {
+  case RIG_WORDS: return p->words.n;
+  case RIG_FILL:
+    *bytes += align_up(p->fill.segment_bytes, SEGMENT_ALIGN);
+    return p->fill.ring_units;
+  case RIG_LAUNCH: {
+    const struct rig_amd_launch *l = p->launch.launch;
+    *bytes += align_up(arguments(p), SEGMENT_ALIGN);
+    return (uint64_t)l->n + words_of(d, T_INVALIDATE);
+  }
+  default: return copies(d, p->copy.bytes) * words_of(d, S_COPY);
+  }
+}
+
 /* The words a submission of [parts] places on each queue, at most, with
    RIG_AMD_WAITS waits, and the bytes it takes from the segment in one
-   run: its fills', and on an AQL ring the writer's own PM4 words, each
-   indirect buffer of them aligned. */
+   run: its fills' and launches', and on an AQL ring the writer's own PM4
+   words, each indirect buffer of them aligned. */
 static void need(const struct rig_amd *d, const struct rig_part *p, int n,
                  uint64_t *words, uint64_t *bytes) {
   int c = RIG_AMD_COMPUTE, s = RIG_AMD_COPY;
@@ -141,10 +169,7 @@ static void need(const struct rig_amd *d, const struct rig_part *p, int n,
              words_of(d, S_TRAP);
   *bytes = SEGMENT_ALIGN;
   for (int i = 0; i < n; i++) {
-    uint64_t w = p[i].kind == RIG_WORDS ? p[i].words.n
-                 : p[i].kind == RIG_FILL
-                     ? p[i].fill.ring_units
-                     : copies(d, p[i].copy.bytes) * words_of(d, S_COPY);
+    uint64_t w = part_words(d, &p[i], bytes);
     if (p[i].queue == c) {
       parts += w;
       pm4 += words_of(d, T_FLUSH) + words_of(d, T_ACQUIRE) +
@@ -154,8 +179,6 @@ static void need(const struct rig_amd *d, const struct rig_part *p, int n,
     } else
       words[s] += w + words_of(d, S_FENCE) +
                   (uint64_t)p[i].nafter * words_of(d, S_POLL);
-    if (p[i].kind == RIG_FILL)
-      *bytes += align_up(p[i].fill.segment_bytes, SEGMENT_ALIGN);
   }
   if (d->rings[c].kind != RING_AQL) words[c] = pm4 + parts;
   else {
@@ -164,10 +187,31 @@ static void need(const struct rig_amd *d, const struct rig_part *p, int n,
   }
 }
 
+/* Whether launch [p], whose block is in [args], runs: on a PM4 compute
+   ring, over a grid and groups of no empty axis, within its function's
+   threads per group and shared memory. */
+static int launches(const struct rig_amd *d, const struct rig_part *p,
+                    const uint8_t *args) {
+  const struct rig_amd_launch *l = p->launch.launch;
+  if (p->queue != RIG_AMD_COMPUTE || d->rings[p->queue].kind != RING_PM4 ||
+      l == NULL || args == NULL)
+    return 0;
+  const struct rig_block *b = (const void *)(args + p->launch.block);
+  uint64_t threads = 1;
+  for (int k = 0; k < 3; k++) {
+    if (b->groups[k] == 0 || b->threads[k] == 0 ||
+        b->threads[k] > l->max_threads)
+      return 0;
+    threads *= b->threads[k];
+  }
+  return threads <= l->max_threads && b->shared <= l->max_shared;
+}
+
 /* Whether a part is one the device runs. A part's own declaration past its
    ring or the segment never fits, which also keeps a submission's sum of
    them far from wrapping. */
-static int runs(const struct rig_amd *d, const struct rig_part *p, int i) {
+static int runs(const struct rig_amd *d, const struct rig_part *p, int i,
+                const uint8_t *args) {
   if (p->queue != RIG_AMD_COMPUTE && p->queue != RIG_AMD_COPY) return 0;
   uint64_t size = d->rings[p->queue].size;
   switch (p->kind) {
@@ -184,6 +228,9 @@ static int runs(const struct rig_amd *d, const struct rig_part *p, int i) {
   case RIG_COPY:
     if (is_copy(p) && p->queue != RIG_AMD_COPY) return 0;
     break;
+  case RIG_LAUNCH:
+    if (!launches(d, p, args)) return 0;
+    break;
   default:
     return 0;
   }
@@ -194,11 +241,10 @@ static int runs(const struct rig_amd *d, const struct rig_part *p, int i) {
 
 int rig_amd_room(void *self, const struct rig_part *parts, int n,
                  const uint8_t *args) {
-  (void)args;
   struct rig_amd *d = self;
   if (n > RIG_AMD_PARTS) return RIG_NEVER;
   for (int i = 0; i < n; i++)
-    if (!runs(d, &parts[i], i)) return RIG_NEVER;
+    if (!runs(d, &parts[i], i, args)) return RIG_NEVER;
   uint64_t words[RIG_AMD_QUEUES], bytes;
   need(d, parts, n, words, &bytes);
   struct rig_amd_ring *c = &d->rings[RIG_AMD_COMPUTE];
@@ -259,10 +305,11 @@ static uint64_t slot_gpu(const struct rig_amd *d, int i) {
   return d->slots_gpu + 8 * (uint64_t)i;
 }
 
-/* The pending writes of a new AQL scratch to the queue's descriptor, placed
-   once, by the queue, between submissions. The one publisher holds the lock
-   for a few stores, which the submit waits out: a kernel of this submission
-   may need the scratch being published. */
+/* A new scratch: on an AQL queue, the pending writes to the queue's
+   descriptor, placed once, by the queue, between submissions; on either,
+   the address the launches from here on name. The one publisher holds the
+   lock for a few stores, which the submit waits out: a kernel of this
+   submission may need the scratch being published. */
 static void scratch(struct submission *s, struct rig_amd_ring *r) {
   struct rig_amd *d = s->d;
   if (!atomic_load_explicit(&d->scratch_ready, memory_order_acquire)) return;
@@ -271,6 +318,7 @@ static void scratch(struct submission *s, struct rig_amd_ring *r) {
   if (atomic_load_explicit(&d->scratch_ready, memory_order_relaxed)) {
     for (int i = 0; i < d->scratch_n; i++)
       emit(d, r, T_WRITE, d->scratch_at[i], d->scratch_value[i], 0);
+    d->scratch_gpu = d->scratch_next;
     atomic_store_explicit(&d->scratch_ready, 0, memory_order_relaxed);
     atomic_store_explicit(&d->scratch_taken, s->v, memory_order_release);
   }
@@ -311,9 +359,10 @@ static void wait_slot(struct submission *s, int q, int j) {
    first part the pending scratch writes, which then change the descriptor
    while no dispatch runs, then its slot waits, then, for the first part or
    after a slot wait, the cache acquire, so that it reads what the host, the
-   copy queue and other devices wrote. */
-static void prepare(struct submission *s, const struct rig_part *parts, int i,
-                    int first) {
+   copy queue and other devices wrote. Answers whether it placed the
+   acquire. */
+static int prepare(struct submission *s, const struct rig_part *parts, int i,
+                   int first) {
   struct rig_amd *d = s->d;
   int q = parts[i].queue;
   struct rig_amd_ring *r = &d->rings[q];
@@ -327,6 +376,7 @@ static void prepare(struct submission *s, const struct rig_part *parts, int i,
       acquire = 1;
     }
   if (compute && acquire) emit(d, r, T_ACQUIRE, 0, 0, 0);
+  return compute && acquire;
 }
 
 static void signal_slot(struct submission *s, int q, int i) {
@@ -346,6 +396,58 @@ static void copy(struct submission *s, const struct rig_part *p) {
     uint64_t n = p->copy.bytes - off;
     emit(d, r, S_COPY, dst + off, src + off, n < d->max_copy ? n : d->max_copy);
   }
+}
+
+/* Writes into [args] the implicit arguments [l] reads, of a launch of
+   block [b]: its grid of whole groups starts at thread 0. */
+static void implicit(const struct rig_amd_launch *l, const struct rig_block *b,
+                     uint8_t *args) {
+  const int32_t *h = l->hidden;
+  uint16_t dims = 1, zero16 = 0;
+  uint64_t zero64 = 0;
+  for (int k = 0; k < 3; k++) {
+    uint16_t t = (uint16_t)b->threads[k];
+    if ((uint64_t)b->groups[k] * b->threads[k] > 1) dims = (uint16_t)(k + 1);
+    if (h[H_BLOCKS + k] >= 0) memcpy(args + h[H_BLOCKS + k], &b->groups[k], 4);
+    if (h[H_GROUP + k] >= 0) memcpy(args + h[H_GROUP + k], &t, 2);
+    if (h[H_REMAINDER + k] >= 0) memcpy(args + h[H_REMAINDER + k], &zero16, 2);
+    if (h[H_OFFSET + k] >= 0) memcpy(args + h[H_OFFSET + k], &zero64, 8);
+  }
+  if (h[H_DIMS] >= 0) memcpy(args + h[H_DIMS], &dims, 2);
+  if (h[H_LDS] >= 0) memcpy(args + h[H_LDS], &b->shared, 4);
+}
+
+/* Places launch [p] on the compute ring: its arguments in the segment, its
+   parameters with each ref's offset plus its slot's address, then the
+   implicit arguments its function reads; then, unless [acquired], the
+   invalidation, then its dispatch, the LDS its groups take in their
+   resources. */
+static void launch(struct submission *s, const struct rig_part *p,
+                   const uint8_t *args, const uint64_t *slots, int acquired) {
+  struct rig_amd *d = s->d;
+  struct rig_amd_ring *r = &d->rings[RIG_AMD_COMPUTE];
+  struct rig_amd_segment *g = &d->segment;
+  const struct rig_block *b = (const void *)(args + p->launch.block);
+  uint64_t at = g->put % g->size;
+  uint8_t *params = g->host + at;
+  memcpy(params, b->params, p->launch.params);
+  for (int i = 0; i < p->launch.nrefs; i++) {
+    const struct rig_ref *f = &p->launch.refs[i];
+    uint64_t x;
+    memcpy(&x, b->params + f->at, 8);
+    x += slots[f->slot];
+    memcpy(params + f->at, &x, 8);
+  }
+  implicit(p->launch.launch, b, params);
+  g->put += align_up(arguments(p), SEGMENT_ALIGN);
+  if (!acquired) emit(d, r, T_INVALIDATE, 0, 0, 0);
+  uint64_t a[RIG_AMD_LAUNCH_ARGS] = {g->gpu + at, d->scratch_gpu};
+  for (int k = 0; k < 3; k++) {
+    a[L_THREADS + k] = b->threads[k];
+    a[L_GROUPS + k] = b->groups[k];
+  }
+  uint32_t w[RIG_AMD_LAUNCH_WORDS];
+  put_words(r, w, (size_t)rig_amd_dispatch(p->launch.launch, a, b->shared, w));
 }
 
 static void release(struct submission *s, int q) {
@@ -428,12 +530,10 @@ static int fail(struct submission *s, const char **failure) {
 }
 
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                      int nwaits, const struct rig_part *parts, int nparts,
-                      const uint8_t *args, const uint64_t *slots, int nslots,
-                      const uint64_t *handles, int nhandles,
-                      const char **failure) {
-  (void)args;
-  (void)slots;
+                   int nwaits, const struct rig_part *parts, int nparts,
+                   const uint8_t *args, const uint64_t *slots, int nslots,
+                   const uint64_t *handles, int nhandles,
+                   const char **failure) {
   (void)nslots;
   (void)handles;
   (void)nhandles;
@@ -487,9 +587,10 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
     int q = p->queue;
     struct rig_amd_ring *ring = &d->rings[q];
     enter(&s, q, waits, nwaits, copy_parts);
-    prepare(&s, parts, i, !placed[q]++);
+    int acquired = prepare(&s, parts, i, !placed[q]++);
     flush(d, ring);
     if (p->kind == RIG_WORDS) put_words(ring, p->words.at, p->words.n);
+    else if (p->kind == RIG_LAUNCH) launch(&s, p, args, slots, acquired);
     else if (p->kind == RIG_FILL) {
       struct rig_amd_writer w = {
           d, ring, p->fill.ring_units,

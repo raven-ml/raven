@@ -90,67 +90,64 @@ let work_bin () = fixture "work_gfx1201.hsaco"
 let binary () = (kernels_bin (), [ "empty"; "double_index"; "spin"; "wild" ])
 let second () = if driverless () then None else Some (open_gpu ())
 
-(* A fixture loaded on each device, and its description. *)
-let code bin =
-  (Rig_gpu_support.loader bin, lazy (Result.get_ok (Rig_amd_abi.Code_object.of_string (bin ()))))
+(* Each fixture, loaded once on each device. *)
+let kernels = Rig_gpu_support.loader kernels_bin
+let work = Rig_gpu_support.loader work_bin
 
-let kernels = code kernels_bin
-let work = code work_bin
-
-(* The [n] low bytes of [x], little-endian. *)
-let le x n =
-  let b = Bytes.create 8 in
-  Bytes.set_int64_le b 0 (Int64.of_int x);
-  Bytes.sub_string b 0 n
-
-(* A part of the words of a dispatch of [name] of [code] over [groups]
-   workgroups of 64, its arguments [args] in Pinned memory of [t]. *)
-let dispatch t (load, co) name ~groups args =
-  let co = Lazy.force co in
-  let gpu = (Rig_amd.capability t.g).gpu in
-  let k = Option.get (Rig_amd_abi.Code_object.kernel co name) in
-  let base = Option.get (Rig.Image.entry (load t.d) name) - k.descriptor in
-  let packet =
-    Rig_amd_abi.Pm4.run gpu
-      (Rig_amd_abi.Pm4.dispatch gpu k ~program:(base + k.entry) ~scratch:0
-         ~args:(Rig.Buffer.address args) ~packet:0 ~threads:(64, 1, 1)
-         ~groups:(groups, 1, 1) ())
+(* [name] of the fixture [load] loads, on COMPUTE:0 over one group of 64
+   work-items, with [params] bytes of parameters [store] stores. *)
+let launching t load name ~params store =
+  let module Run = Rig.Submission.Run in
+  let part =
+    {
+      Rig.Submission.queue = "COMPUTE:0";
+      after = [||];
+      work = Launch { image = load t.d; kernel = name; params; refs = [||] };
+    }
   in
-  let s = Rig_amd_abi.Packet.encode Int64.of_int packet in
-  let ws =
-    Array.init (String.length s / 4) (fun i ->
-        Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
+  let block run b =
+    Run.groups run b 1 1 1;
+    Run.threads run b 64 1 1;
+    store run b
   in
-  (Rig_gpu_support.work (words_part ~queue:"COMPUTE:0" ws), args)
+  { Rig_gpu_support.part; block }
 
 (* work.cl's [copy dst src n delay] copies [n] words. *)
 let copy_words t ~dst ~src =
-  let n = Rig.Buffer.length src / 4 in
-  dispatch t work "copy" ~groups:1
-    (Rig_gpu_support.arguments t.d
-       (le (Rig.Buffer.address dst) 8
-       ^ le (Rig.Buffer.address src) 8
-       ^ le n 4 ^ le 0 4))
+  let module Run = Rig.Submission.Run in
+  let w =
+    launching t work "copy" ~params:24 (fun run b ->
+        Run.int64 run b 0 (Rig.Buffer.address dst);
+        Run.int64 run b 8 (Rig.Buffer.address src);
+        Run.int32 run b 16 (Rig.Buffer.length src / 4);
+        Run.int32 run b 20 0)
+  in
+  (w, src)
 
 (* kernels.cl's [spin flag n] sleeps [n] times 127 x 64 cycles, at most
-   2.1 us at 4 GHz, then sets its flag, here the arguments' last word. *)
+   2.1 us at 4 GHz, then sets its flag, a word of its own here. *)
 let spin t ~ns =
-  let args = Rig_gpu_support.arguments t.d (String.make 24 '\000') in
-  let n = (ns / 2000) + 1 in
-  Rig.Buffer.copy
-    ~src:(Rig.Buffer.of_string (le (Rig.Buffer.address args + 16) 8 ^ le n 4))
-    ~dst:(Rig.Buffer.view args ~first:0 ~length:12);
-  dispatch t kernels "spin" ~groups:1 args
+  let module Run = Rig.Submission.Run in
+  let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
+  let w =
+    launching t kernels "spin" ~params:12 (fun run b ->
+        Run.int64 run b 0 (Rig.Buffer.address flag);
+        Run.int32 run b 8 ((ns / 2000) + 1))
+  in
+  (w, flag)
 
-let launch_binary () = None
+let launch_binary () = Some (fixture "launch_gfx1201.hsaco")
 
 (* The C entries *)
 
 module Edge = struct
   (* The ints the C side reads: queue, kind (rig_edge.h's, 0 for none), fill,
      argument, ring units, segment bytes, copy destination, source and bytes,
-     the counts of [after] indices and of words, the indices, the words. *)
-  type part = { ints : int array; keep : arg option }
+     the counts of [after] indices and of words, the indices, the words. A
+     launch's block, its grid, groups, shared memory and parameters
+     (rig_edge.h's struct rig_block), goes in the args, at the offset its ring
+     units take when the part is handed over. *)
+  type part = { ints : int array; keep : arg option; block : string }
 
   let index = function
     | "COMPUTE:0" -> 0
@@ -160,6 +157,11 @@ module Edge = struct
   let rig_words = 1
   let rig_fill = 2
   let rig_copy = 3
+  let rig_launch = 4
+
+  (* The ints' indices of a launch's block offset, and of its words. *)
+  let units_at = 4
+  let block_align = 16
 
   let make ?keep ~queue ~kind ~after ?(fill = 0n) ?(arg = 0) ?(units = 0)
       ?(bytes = 0) ?(dst = 0) ?(src = 0) ?(copy = 0) words =
@@ -183,6 +185,7 @@ module Edge = struct
         Array.concat
           [ head; after; Array.map (fun w -> w land 0xffff_ffff) words ];
       keep;
+      block = "";
     }
 
   let words ~queue ?(after = [||]) ws =
@@ -195,6 +198,39 @@ module Edge = struct
   let copy ?(after = [||]) ~dst ~src n =
     make ~queue:1 ~kind:rig_copy ~after ~dst ~src ~copy:n [||]
 
+  let launch ?(after = [||]) (e : Rig_edge.entry) ~groups:(gx, gy, gz)
+      ~threads:(tx, ty, tz) ?(shared = 0) params refs =
+    let header = Bytes.create 32 in
+    List.iteri
+      (fun i v -> Bytes.set_int32_le header (4 * i) (Int32.of_int v))
+      [ gx; gy; gz; tx; ty; tz; shared; 0 ];
+    let words =
+      Array.concat (List.map (fun (at, slot) -> [| at; slot |]) refs)
+    in
+    let p =
+      make ~queue:0 ~kind:rig_launch ~after ~fill:e.launch ~arg:e.code
+        ~bytes:(String.length params) words
+    in
+    { p with block = Bytes.to_string header ^ params }
+
+  (* The parts' ints with each launch's block offset, and the args. *)
+  let args ps =
+    let b = Buffer.create 256 in
+    let place p =
+      if p.block = "" then p.ints
+      else begin
+        while Buffer.length b mod block_align <> 0 do
+          Buffer.add_char b '\000'
+        done;
+        let ints = Array.copy p.ints in
+        ints.(units_at) <- Buffer.length b;
+        Buffer.add_string b p.block;
+        ints
+      end
+    in
+    let ints = Array.map place ps in
+    (ints, Buffer.contents b)
+
   let raw ~queue ?(work = `None) ?(after = [||]) () =
     match work with
     | `None -> make ~queue ~kind:0 ~after [||]
@@ -202,27 +238,31 @@ module Edge = struct
     | `Fill -> make ~queue ~kind:rig_fill ~after ~fill:(fill_entry ()) [||]
     | `Copy n -> make ~queue ~kind:rig_copy ~after ~copy:n [||]
 
-  external room_c : nativeint -> int array array -> int = "rig_amd_test_room"
+  external room_c : nativeint -> int array array -> string -> int
+    = "rig_amd_test_room"
 
   external submit_c :
-    nativeint -> int -> int array -> int array array -> string option
-    = "rig_amd_test_submit"
+    nativeint ->
+    int ->
+    int array ->
+    int array array ->
+    string ->
+    int array ->
+    string option = "rig_amd_test_submit_byte" "rig_amd_test_submit"
 
   let room g ps =
-    match
-      room_c (Rig_amd.facts g).edge (Array.map (fun p -> p.ints) ps)
-    with
+    let ints, args = args ps in
+    match room_c (Rig_amd.facts g).edge ints args with
     | 0 -> `Fits
     | 1 -> `Later
     | _ -> `Never
 
-  let submit g ~v ?(waits = [||]) ps =
+  let submit g ~v ?(waits = [||]) ?(slots = [||]) ps =
     let w =
       Array.concat (Array.to_list (Array.map (fun (a, x) -> [| a; x |]) waits))
     in
-    let r =
-      submit_c (Rig_amd.facts g).edge v w (Array.map (fun p -> p.ints) ps)
-    in
+    let ints, args = args ps in
+    let r = submit_c (Rig_amd.facts g).edge v w ints args slots in
     (* The fills' arguments lived through the call. *)
     Array.iter (fun p -> ignore (Sys.opaque_identity p.keep)) ps;
     match r with None -> `Ok | Some why -> `Failed why

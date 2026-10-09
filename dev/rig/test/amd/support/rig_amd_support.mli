@@ -92,6 +92,22 @@ module Edge : sig
   (** [copy ~after ~dst ~src n] is a copy of [n] bytes from the GPU address
       [src] to [dst], on ["COPY:0"]. *)
 
+  val launch :
+    ?after:int array ->
+    Rig_edge.entry ->
+    groups:int * int * int ->
+    threads:int * int * int ->
+    ?shared:int ->
+    string ->
+    (int * int) list ->
+    part
+  (** [launch ~after e ~groups ~threads ~shared params refs] is a launch on
+      ["COMPUTE:0"] of the function whose entry is [e], over [groups] of
+      [threads], its groups taking [shared] bytes of shared memory (defaults to
+      [0]), with the parameters [params], in which the 8 bytes at each
+      [(at, slot)] of [refs] are an offset into the submit's buffer [slot]
+      ({!submit}'s [slots]). *)
+
   val raw :
     queue:int ->
     ?work:[ `None | `Words of int | `Fill | `Copy of int ] ->
@@ -110,9 +126,11 @@ module Edge : sig
     Rig_amd.t ->
     v:int ->
     ?waits:(int * int) array ->
+    ?slots:int array ->
     part array ->
     [ `Ok | `Failed of string ]
-  (** [submit g ~v ~waits ps] is what [g]'s submit entry answers for [ps] as the
-      value [v], after the waits [(a, w)]: the 64-bit word at [a] holds at least
-      [w]. *)
+  (** [submit g ~v ~waits ~slots ps] is what [g]'s submit entry answers for [ps]
+      as the value [v], after the waits [(a, w)]: the 64-bit word at [a] holds
+      at least [w]. [slots] are the addresses of the buffers its launches' refs
+      name (defaults to none). *)
 end

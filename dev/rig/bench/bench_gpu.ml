@@ -554,39 +554,33 @@ let nv_kernel g d =
     (S.words (S.launch l k "empty" ~blocks:1 []))
     (fun () -> ignore (Sys.opaque_identity (k, l)))
 
-(* [empty] over one work-item, loaded by rig, as the packets that dispatch
-   it. *)
+(* [empty] over one work-item as a launch, loaded by rig; the floor's launch is
+   of the image the driver lays over pinned memory, which the host writes. *)
 let amd_kernel g d =
-  let module Abi = Rig_amd_abi in
-  let module Pm4 = Abi.Pm4 in
-  let get = function Ok x -> x | Error why -> failwith why in
   let binary =
     In_channel.with_open_bin
       (Filename.concat (fixtures "amd") "kernels_gfx1201.hsaco")
       In_channel.input_all
   in
-  let k =
-    Option.get
-      (Abi.Code_object.kernel (get (Abi.Code_object.of_string binary)) "empty")
+  let image =
+    match Rig.Image.load d binary with Ok i -> i | Error why -> failwith why
   in
-  let p = get (Rig.Image.load d binary) in
-  let base = Option.get (Rig.Image.entry p "empty") - k.descriptor in
-  let gpu = (Rig_amd.capability g).gpu in
-  let packets =
-    Abi.Packet.encode Int64.of_int
-      (Pm4.run gpu
-         (Pm4.dispatch gpu k ~program:(base + k.entry) ~scratch:0 ~args:0
-            ~packet:0 ~threads:(1, 1, 1) ~groups:(1, 1, 1) ()))
+  let m, r =
+    match Rig_amd.image g binary with
+    | Ok (Rig_edge.Place (n, lay)) ->
+        let r = Option.get (Rig_amd.alloc g Pinned n) in
+        let m, code = lay r in
+        Rig_gpu_support.Host.write (Option.get (Rig_amd.locate r).host) code;
+        (m, r)
+    | Ok (Loaded _) -> failwith "AMD loaded its code itself"
+    | Error why -> failwith why
   in
-  let words =
-    Array.init
-      (String.length packets / 4)
-      (fun i ->
-        Int32.to_int (String.get_int32_le packets (4 * i)) land 0xffff_ffff)
-  in
+  let e = Option.get (Rig_amd.entry m "empty") in
+  let launch = Sub.Launch { image; kernel = "empty"; params = 0; refs = [||] } in
   work
-    (Rig_amd_support.words_part ~queue:"COMPUTE:0" words)
-    (fun () -> ignore (Sys.opaque_identity p))
+    ~floor:(fun f -> floor_launch f e.code e.launch 0)
+    { Sub.queue = "COMPUTE:0"; after = [||]; work = launch }
+    (fun () -> ignore (Sys.opaque_identity (m, r)))
 
 (* A GPU opened through its suite's fixture, as rig's device and the
    driver's. *)

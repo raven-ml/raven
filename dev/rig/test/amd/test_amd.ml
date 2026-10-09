@@ -405,7 +405,7 @@ let facts () =
         (list (pair string (list string)))
         ~msg
         [
-          ("COMPUTE:0", [ "words"; "fill" ]);
+          ("COMPUTE:0", [ "words"; "fill" ] @ if aql then [] else [ "launch" ]);
           ("COPY:0", [ "words"; "fill"; "copy" ]);
         ]
         (List.map (fun (q : Rig_edge.queue) -> (q.name, runs q.runs)) f.queues);
@@ -612,6 +612,155 @@ let images =
     [
       test "an image names its kernels' descriptors in its code" loads;
       test "an image refuses what the GPU cannot run, saying why" refusals;
+    ]
+
+(* Launches
+
+   A launch's dispatch is its function's template, made at entry, filled at the
+   hand-over: rig_amd_ring.c places its arguments in the segment and its
+   dispatch on the compute ring, which the host path's device lets the suite
+   read. *)
+
+let launch_bin = lazy (read_fixture "launch_gfx1201.hsaco")
+
+let launch_kernel name =
+  let co = Result.get_ok (Abi.Code_object.of_string (Lazy.force launch_bin)) in
+  Option.get (Abi.Code_object.kernel co name)
+
+(* The bytes of [ids]'s parameters: [out]'s offset into its buffer, [a], [b] and
+   [f]. *)
+let ids_params ~out ~a ~b ~f =
+  let p = Bytes.create 24 in
+  Bytes.set_int64_le p 0 (Int64.of_int out);
+  Bytes.set_int64_le p 8 (Int64.of_int a);
+  Bytes.set_int32_le p 16 (Int32.of_int b);
+  Bytes.set_int32_le p 20 (Int32.bits_of_float f);
+  Bytes.to_string p
+
+(* What [entry] makes of a kernel: a launch, once, and the scratch of its
+   private segment; and what it refuses. *)
+let entries () =
+  Host.with_device @@ fun h g ->
+  let m, r, _ = load g (Lazy.force launch_bin) in
+  let e = Option.get (A.entry m "ids") in
+  not_equal nativeint ~msg:"a PM4 queue's launch" 0n e.launch;
+  equal nativeint ~msg:"made once" e.launch
+    (Option.get (A.entry m "ids")).launch;
+  let before = h.allocated in
+  ignore (A.entry m "scratch");
+  equal int ~msg:"the scratch, made at entry" (before + 1) h.allocated;
+  ignore (A.entry m "scratch");
+  equal int ~msg:"the scratch, made once" (before + 1) h.allocated;
+  raises_match ~msg:"a kernel that reads its dispatch packet"
+    (Exn.invalid_arg ~substring:"dispatch packet") (fun () ->
+      A.entry m "packet");
+  A.unload g m;
+  A.free g r;
+  let m, r, _ = load g (read_fixture "../abi/fixtures/hidden_gfx1201.hsaco") in
+  raises_match ~msg:"a kernel that reads a runtime's service"
+    (Exn.invalid_arg ~substring:"hidden_printf_buffer") (fun () ->
+      A.entry m "every");
+  A.unload g m;
+  A.free g r
+
+(* The words of [q]'s ring from position [p] to [p'], a PM4 ring's positions
+   being words. *)
+let handed (q : Host.queue) p p' =
+  let size = q.bytes / 4 in
+  List.init (p' - p) (fun i -> H.get32 (at q.ring (4 * ((p + i) mod size))))
+
+(* Whether [ys] holds [xs] at some index. *)
+let holds ys xs =
+  let n = List.length xs and ys = Array.of_list ys in
+  let rec at i =
+    i + n <= Array.length ys
+    && (List.for_all2 ( = ) xs (Array.to_list (Array.sub ys i n)) || at (i + 1))
+  in
+  at 0
+
+(* A launch of [ids] over 3 x 2 groups of 64 x 2 work-items: its parameters,
+   each ref's slot address added, then the implicit arguments its function reads
+   go in the segment, and its dispatch, of those arguments, on the compute ring.
+   The segment is the third memory the device takes of its path, before its
+   queues. *)
+let launch_hand_over () =
+  Host.with_device @@ fun h g ->
+  let m, r, _ = load g (Lazy.force launch_bin) in
+  let k = launch_kernel "ids" in
+  let e = Option.get (A.entry m "ids") in
+  let slot = 0x7000_0000 in
+  let params = ids_params ~out:0x40 ~a:5 ~b:7 ~f:1.5 in
+  let q = Host.compute h in
+  let p0 = Host.position q in
+  equal answer `Ok
+    (E.submit g ~v:1 ~slots:[| slot |]
+       [| E.launch e ~groups:(3, 2, 1) ~threads:(64, 2, 1) params [ (0, 0) ] |]);
+  let segment = List.nth (List.rev h.queue_memory) 2 in
+  let args = H.read segment 96 in
+  let u32 at = Int32.to_int (String.get_int32_le args at) land 0xffff_ffff in
+  let u16 at = String.get_uint16_le args at in
+  equal int ~msg:"out, its slot's address added" (slot + 0x40)
+    (Int64.to_int (String.get_int64_le args 0));
+  equal string ~msg:"a, b and f" (String.sub params 8 16) (String.sub args 8 16);
+  equal (list int) ~msg:"its groups" [ 3; 2; 1 ] [ u32 24; u32 28; u32 32 ];
+  equal (list int) ~msg:"its threads per group" [ 64; 2; 1 ]
+    [ u16 36; u16 38; u16 40 ];
+  equal (list int) ~msg:"no partial group" [ 0; 0; 0 ]
+    [ u16 42; u16 44; u16 46 ];
+  equal string ~msg:"the first work-item at 0" (String.make 24 '\000')
+    (String.sub args 64 24);
+  equal int ~msg:"two axes" 2 (u16 88);
+  let base = e.code - k.descriptor in
+  let dispatch =
+    A.dispatch r9700 k ~program:(base + k.entry) ~lds:65536
+      [| segment; 0; 64; 2; 1; 3; 2; 1 |]
+      ~shared:0
+  in
+  let ws =
+    List.init
+      (String.length dispatch / 4)
+      (fun i ->
+        Int32.to_int (String.get_int32_le dispatch (4 * i)) land 0xffff_ffff)
+  in
+  equal bool ~msg:"its dispatch, on the compute ring" true
+    (holds (handed q p0 (Host.position q)) ws);
+  Host.reach g 1;
+  A.unload g m;
+  A.free g r
+
+(* What the room check answers for a launch: a launch fits within its function's
+   256 work-items per group and the GPU's LDS less the 256 bytes [lds] takes
+   itself; it never fits past them or with an empty axis. *)
+let launch_room () =
+  Host.with_device @@ fun _ g ->
+  let m, r, _ = load g (Lazy.force launch_bin) in
+  let ids = Option.get (A.entry m "ids")
+  and lds = Option.get (A.entry m "lds") in
+  let params = ids_params ~out:0 ~a:0 ~b:0 ~f:0. in
+  let room ?(e = ids) ?shared groups threads =
+    E.room g [| E.launch e ~groups ~threads ?shared params [ (0, 0) ] |]
+  in
+  equal room_answer ~msg:"256 work-items" `Fits (room (1, 1, 1) (64, 2, 2));
+  equal room_answer ~msg:"257 work-items" `Never (room (1, 1, 1) (257, 1, 1));
+  equal room_answer ~msg:"an empty grid" `Never (room (1, 0, 1) (64, 1, 1));
+  equal room_answer ~msg:"an empty group" `Never (room (1, 1, 1) (64, 1, 0));
+  equal room_answer ~msg:"the GPU's LDS" `Fits
+    (room ~e:lds ~shared:(65536 - 256) (1, 1, 1) (64, 1, 1));
+  equal room_answer ~msg:"past the GPU's LDS" `Never
+    (room ~e:lds ~shared:(65536 - 255) (1, 1, 1) (64, 1, 1));
+  A.unload g m;
+  A.free g r
+
+let launches =
+  group ~timeout:30. "launches"
+    [
+      test
+        "entry makes a launch once, with its scratch, and refuses what a \
+         launch cannot write"
+        entries;
+      test "a launch hands over its arguments and its dispatch" launch_hand_over;
+      test "a launch fits within its function's and the GPU's limits"
+        launch_room;
     ]
 
 (* Room
@@ -1024,12 +1173,6 @@ let hdp =
 
 let marker k = 0x5eed_0000 lor k
 let is_marker w = w land 0xffff_0000 = 0x5eed_0000
-
-(* The words of [q]'s ring from position [p] to [p'], a PM4 ring's positions
-   being words. *)
-let handed (q : Host.queue) p p' =
-  let size = q.bytes / 4 in
-  List.init (p' - p) (fun i -> H.get32 (at q.ring (4 * ((p + i) mod size))))
 
 type failing = {
   before : (bool * int) list; (* parts before it: queue, words *)
@@ -1508,6 +1651,96 @@ let kernel ?of_ ?after t p name ~groups args =
 
 let multiples k n = le32s (List.init n (fun i -> k * i))
 let doubled = multiples 2
+
+(* Launches on the GPU *)
+
+module Sub = Rig.Submission
+
+let launch_code = code_of launch_bin
+
+(* Submits one launch of [p]'s [name] over [groups] of [threads], its groups
+   taking [shared] bytes, whose block [set] stores, reading [reads] and writing
+   [writes], and waits for it. *)
+let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
+    ?(shared = 0) ~set ~reads ~writes () =
+  let refs =
+    Array.of_list (List.map (fun (at, slot) -> { Sub.at; slot }) refs)
+  in
+  let part =
+    {
+      Sub.queue = "COMPUTE:0";
+      after = [||];
+      work = Launch { image = p; kernel = name; params; refs };
+    }
+  in
+  let s =
+    Sub.make ~reads:(Array.length reads) ~writes:(Array.length writes) t.d
+      [| part |]
+  in
+  let run = Sub.Run.make () and b = Sub.block s 0 in
+  Sub.Run.groups run b gx gy gz;
+  Sub.Run.threads run b tx ty tz;
+  Sub.Run.shared run b shared;
+  set run b;
+  Rig.wait t.d (Rig.Point.value (Rig.submit s ~run ~reads ~writes ~waits:[||]))
+
+let scratch_launch () =
+  S.with_ @@ fun t ->
+  let p = image ~of_:launch_code t in
+  let out = buffer ~memory:Pinned t (4 * 64) in
+  launch t p "scratch" ~params:12
+    ~refs:[ (0, 0) ]
+    ~groups:(1, 1, 1) ~threads:(64, 1, 1)
+    ~set:(fun run b ->
+      Sub.Run.int64 run b 0 0;
+      Sub.Run.int32 run b 8 5)
+    ~reads:[||] ~writes:[| out |] ();
+  equal string ~msg:"out" (multiples 5 64) (get out)
+
+(* [lds] over a group of 64 work-items, its tile of [n] words in the dynamic LDS
+   after the 256 bytes it takes itself: the tile's last words, which only a
+   group segment grown by the launch's shared memory holds. *)
+let lds_launch n () =
+  S.with_ @@ fun t ->
+  let p = image ~of_:launch_code t in
+  let out = buffer ~memory:Pinned t (4 * 64) in
+  let own = (launch_kernel "lds").group_segment in
+  launch t p "lds" ~params:16
+    ~refs:[ (0, 0) ]
+    ~groups:(1, 1, 1) ~threads:(64, 1, 1) ~shared:(4 * n)
+    ~set:(fun run b ->
+      Sub.Run.int64 run b 0 0;
+      Sub.Run.int32 run b 8 own;
+      Sub.Run.int32 run b 12 n)
+    ~reads:[||] ~writes:[| out |] ();
+  equal string ~msg:"out" (multiples 1 64) (get out)
+
+(* 257 work-items, one more than [ids] takes: the submit refuses them and the
+   device stays live. *)
+let past_the_bound () =
+  S.with_ @@ fun t ->
+  let p = image ~of_:launch_code t in
+  let out = buffer t (4 * 257) in
+  raises_match ~msg:"257 work-items"
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () ->
+      launch t p "ids" ~params:24
+        ~refs:[ (0, 0) ]
+        ~groups:(1, 1, 1) ~threads:(257, 1, 1)
+        ~set:(fun run b -> Sub.Run.int64 run b 0 0)
+        ~reads:[||] ~writes:[| out |] ());
+  equal bool ~msg:"lost" true (Option.is_none (Rig.lost t.d))
+
+let launching =
+  group ~timeout:60. "launching"
+    [
+      test "a launch of a kernel that takes scratch computes" scratch_launch;
+      cases ~name:string_of_int
+        "a launch's dynamic LDS follows the kernel's own" [ 64; 4096; 16320 ]
+        (fun n -> lds_launch n ());
+      test "a launch past its kernel's work-items is refused, the device live"
+        past_the_bound;
+    ]
 
 let work =
   group ~timeout:60. "work"
@@ -2579,6 +2812,7 @@ let () =
          paths;
          misuse;
          images;
+         launches;
          room;
          hdp;
          failures;
@@ -2586,6 +2820,7 @@ let () =
          domains;
          work;
          code;
+         launching;
          failures_hw;
          waits;
          two;

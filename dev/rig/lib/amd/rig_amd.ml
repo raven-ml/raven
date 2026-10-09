@@ -111,11 +111,17 @@ external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"
 external zero : int -> int -> unit = "caml_rig_amd_zero"
 external poke32 : int -> int -> int -> unit = "caml_rig_amd_poke32"
 
-external publish_scratch : int -> int array -> int array -> int
+external publish_scratch : int -> int -> int array -> int array -> int
   = "caml_rig_amd_scratch"
 
 external scratch_taken : int -> int = "caml_rig_amd_scratch_taken" [@@noalloc]
 external signaled_word : int -> int = "caml_rig_amd_signaled" [@@noalloc]
+
+external c_launch :
+  string -> string -> int array -> int array -> int array -> int
+  = "caml_rig_amd_launch"
+
+external free_launch : int -> unit = "caml_rig_amd_launch_free"
 
 (* Opening *)
 
@@ -124,6 +130,7 @@ type t = {
   path : int; (* the path's key, as an integer *)
   index : int; (* the GPU's number in bus order *)
   gpu : Abi.Gpu.t;
+  aql : bool; (* the compute queue reads AQL packets *)
   lds : int;
   hdp : int option;
   hdps : Mutex.t; (* the HDP registers' counts *)
@@ -132,6 +139,7 @@ type t = {
   facts : region Rig_edge.facts;
   own : mem list; (* rings, pointers, segment, slots *)
   scratch : scratch;
+  grow : int -> (unit, string) result; (* the scratch's [grow_scratch] *)
   traces : traces;
 }
 
@@ -142,9 +150,10 @@ and traces = {
   mutable made : (Abi.Capability.trace * mem list) option;
 }
 
-(* An AQL queue's scratch: in its descriptor, published for the next submission
-   to write there, and replaced, each freed once the word reaches the value that
-   installed its successor. *)
+(* The device's scratch, which every kernel the compute queue runs takes, one at
+   a time: installed, published for the next submission to take, and replaced,
+   each freed once the word reaches the value that installed its successor. An
+   AQL queue's descriptor names it; a launch's dispatch does on a PM4 queue. *)
 and scratch = {
   lock : Mutex.t;
   mutable installed : (mem * int) option;
@@ -166,11 +175,15 @@ let pointers_bytes = 4096
 (* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
 let max_waits = 255
 
-(* The queues, as rig_amd_ring.c's [runs] accepts their parts. *)
-let device_queues =
+(* The queues, as rig_amd_ring.c's [runs] accepts their parts: launches on a PM4
+   compute queue only, whose dispatches run on the one die. *)
+let device_queues ~aql =
   Rig_edge.
     [
-      { name = "COMPUTE:0"; runs = [ Words; Fill ] };
+      {
+        name = "COMPUTE:0";
+        runs = (if aql then [ Words; Fill ] else [ Words; Fill; Launch ]);
+      };
       { name = "COPY:0"; runs = [ Words; Fill; Copy ] };
     ]
 
@@ -216,11 +229,12 @@ let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
     Sdma.trap;
     Sdma.copy_linear ~dst:0 ~src:1 ~bytes:2;
     Abi.Aql.indirect_buffer 0 ~dwords:1;
+    Pm4.acquire_mem g Agent;
   ]
 
 let set_templates self g ~interrupt ~waits64 ~aql =
   let set i p =
-    let words, holes = Template.flatten p in
+    let words, holes = Template.flatten (fun _ -> None) Fun.id p in
     set_template self i words holes
   in
   List.iteri set (templates g ~interrupt ~waits64 ~aql);
@@ -278,7 +292,7 @@ let settle_scratch self ops st =
   List.iter (fun (m, _) -> ops.free m) reached;
   st.retired <- kept
 
-let grow_scratch self ops (g : Abi.Gpu.t) ~desc st n =
+let grow_scratch self ops (g : Abi.Gpu.t) ~aql ~desc st n =
   Mutex.protect st.lock @@ fun () ->
   settle_scratch self ops st;
   let have =
@@ -292,9 +306,11 @@ let grow_scratch self ops (g : Abi.Gpu.t) ~desc st n =
     match ops.alloc `Gpu bytes with
     | None -> Error (strf "no GPU memory for %d bytes of scratch" bytes)
     | Some m ->
-        let ats, values = List.split (scratch_writes g ~desc m n bytes) in
+        let writes = if aql then scratch_writes g ~desc m n bytes else [] in
+        let ats, values = List.split writes in
         let took =
-          publish_scratch self (Array.of_list ats) (Array.of_list values)
+          publish_scratch self (mem_address m) (Array.of_list ats)
+            (Array.of_list values)
         in
         (* The publication this one replaces: placed by the submission of [took]
            since the settle above, or never placed and never in the queue's
@@ -454,14 +470,14 @@ let make (type m) (p : m path) =
     let traces = { traces_lock = Mutex.create (); made = None } in
     let trace = make_trace p ops traces in
     let grow =
-      grow_scratch self ops p.gpu ~desc:(mem_address pointers) scratch
+      grow_scratch self ops p.gpu ~aql ~desc:(mem_address pointers) scratch
     in
     let capability = capability_of p ~aql ~grow ~trace in
     let facts =
       {
         Rig_edge.arch = Abi.Gpu.processor p.gpu;
         budget = p.budget;
-        queues = device_queues;
+        queues = device_queues ~aql;
         completion = Store;
         waits =
           {
@@ -485,6 +501,7 @@ let make (type m) (p : m path) =
         path = Type.Id.uid p.key;
         index = p.index;
         gpu = p.gpu;
+        aql;
         lds = p.lds;
         hdp = p.hdp;
         hdps = Mutex.create ();
@@ -493,6 +510,7 @@ let make (type m) (p : m path) =
         facts;
         own = [ slot_words; segment; compute; copy; pointers ];
         scratch;
+        grow;
         traces;
       }
   in
@@ -581,6 +599,9 @@ module Code_object = Abi.Code_object
 type image = {
   co : Code_object.t;
   base : int; (* the address of the region it was laid over *)
+  dev : t;
+  lock : Mutex.t;
+  launches : (string, int) Hashtbl.t; (* by function: its C launch *)
 }
 
 let too_large g co =
@@ -606,18 +627,113 @@ let image g bin =
     | None ->
         let lay r =
           let base = mem_address r.mem in
-          ({ co; base }, Code_object.image co)
+          let launches = Hashtbl.create 8 in
+          ( { co; base; dev = g; lock = Mutex.create (); launches },
+            Code_object.image co )
         in
         Ok (Rig_edge.Place (Code_object.size co, lay))
 
-let entry m f =
-  Option.map
-    (fun (k : Code_object.kernel) ->
-      { Rig_edge.code = m.base + k.descriptor; launch = 0n })
-    (Code_object.kernel m.co f)
+(* A dispatch's values: known to its launch, or the hand-over's argument [i], in
+   the order of rig_amd_stubs.h's L_ARGS, L_SCRATCH, L_THREADS and L_GROUPS. *)
+type value = Known of int | Arg of int
 
-(* An image holds nothing on the GPU: its code is in a region rig frees. *)
-let unload _ _ = ()
+let word s i = Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff
+
+(* The offsets of the implicit arguments [k] reads, in the order of
+   rig_amd_stubs.h's H_BLOCKS, H_GROUP, H_REMAINDER, H_OFFSET, H_DIMS and H_LDS,
+   or -1. *)
+let hidden f (k : Code_object.kernel) =
+  let at = Array.make 14 (-1) in
+  let axis : Code_object.axis -> int = function X -> 0 | Y -> 1 | Z -> 2 in
+  let set (h : Code_object.hidden) off =
+    match h with
+    | Block_count a -> at.(axis a) <- off
+    | Group_size a -> at.(3 + axis a) <- off
+    | Remainder a -> at.(6 + axis a) <- off
+    | Global_offset a -> at.(9 + axis a) <- off
+    | Grid_dims -> at.(12) <- off
+    | Dynamic_lds_size -> at.(13) <- off
+    | Other kind ->
+        invalid_argf
+          "Rig_amd.entry: kernel %s reads the implicit argument %s, which a \
+           launch does not write"
+          f kind
+  in
+  List.iter (fun (h, off) -> set h off) k.hidden;
+  at
+
+(* The C launch of kernel [k], named [f], whose code is at [program], on [g],
+   whose groups take at most [lds] bytes of LDS: its dispatch, its limits, and
+   the word that holds the LDS its groups take, COMPUTE_PGM_RSRC2, which the
+   hand-over sets from the launch's shared memory. It is the one word that a
+   group segment one granule larger changes. *)
+let c_launch_of g (k : Code_object.kernel) ~program ~lds f =
+  let dispatch group =
+    Template.flatten
+      (function Known n -> Some (Int64.of_int n) | Arg _ -> None)
+      (function Arg i -> i | Known _ -> assert false (* known: no hole *))
+      (Pm4.dispatch g
+         { k with group_segment = group }
+         ~program:(Known program) ~scratch:(Arg 1) ~args:(Arg 0)
+         ~packet:(Known 0) ~threads:(Arg 2, Arg 3, Arg 4)
+         ~groups:(Arg 5, Arg 6, Arg 7) ())
+  in
+  let granule = Pm4.lds_granule g in
+  let words, holes = dispatch 0 and more, _ = dispatch granule in
+  let at =
+    match
+      List.filter
+        (fun i -> word words i <> word more i)
+        (List.init (String.length words / 4) Fun.id)
+    with
+    | [ at ] -> at
+    | _ -> invalid_argf "Rig_amd.entry: kernel %s's LDS is not one word" f
+  in
+  c_launch words holes
+    [|
+      at; word words at; word more at - word words at; granule; k.group_segment;
+    |]
+    [| k.max_threads; lds - k.group_segment; k.kernarg_size |]
+    (hidden f k)
+
+(* [m]'s launch of its kernel [k], named [f]. *)
+let launch m f (k : Code_object.kernel) =
+  let g = m.dev in
+  if k.dispatch_ptr then
+    invalid_argf
+      "Rig_amd.entry: kernel %s reads its dispatch packet, which a launch does \
+       not write"
+      f;
+  if k.private_segment > 0 then
+    Result.iter_error
+      (fun why -> invalid_argf "Rig_amd.entry: kernel %s: %s" f why)
+      (g.grow k.private_segment);
+  c_launch_of g.gpu k ~program:(m.base + k.entry) ~lds:g.lds f
+
+(* An AQL queue runs no launch. *)
+let entry m f =
+  match Code_object.kernel m.co f with
+  | None -> None
+  | Some k when m.dev.aql ->
+      Some { Rig_edge.code = m.base + k.descriptor; launch = 0n }
+  | Some k ->
+      let l =
+        Mutex.protect m.lock @@ fun () ->
+        match Hashtbl.find_opt m.launches f with
+        | Some l -> l
+        | None ->
+            let l = launch m f k in
+            Hashtbl.add m.launches f l;
+            l
+      in
+      Some
+        { Rig_edge.code = m.base + k.descriptor; launch = Nativeint.of_int l }
+
+(* The image's code is in a region rig frees; the launches [entry] made go
+   here. *)
+let unload _ m =
+  Mutex.protect m.lock @@ fun () ->
+  Hashtbl.iter (fun _ l -> free_launch l) m.launches
 
 (* Work *)
 
@@ -647,6 +763,15 @@ let stop g ~fault =
         (List.map fst (buffers @ st.retired) @ traces @ g.own)
 
 (* Tests *)
+
+external c_dispatch : int -> int array -> int -> string
+  = "caml_rig_amd_dispatch"
+
+let dispatch g k ~program ~lds args ~shared =
+  let l = c_launch_of g k ~program ~lds "dispatch" in
+  Fun.protect
+    ~finally:(fun () -> free_launch l)
+    (fun () -> c_dispatch l args shared)
 
 external renumber_device : int -> int -> int -> unit = "caml_rig_amd_renumber"
 

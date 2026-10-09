@@ -379,15 +379,23 @@ let launch_rows =
     part "COMPUTE:0"
       (Fill { fill = fill_entry (); arg; ring_units; segment_bytes = bytes })
   in
-  let launching count () =
+  (* [n] launches of [empty] over one work-item, a part each. *)
+  let launching n () =
     let t = dev () in
-    let p, base = load t in
-    let gpu = (A.capability t.g).gpu in
-    let one = encode (dispatch gpu (kernel "empty") ~base ~args:0 ~threads:1) in
-    let ws = String.concat "" (List.init count (fun _ -> one)) in
-    (t, p, prepare t [| filled t (ws, [||]) |])
+    let p, _ = load t in
+    let empty =
+      part "COMPUTE:0"
+        (Launch { image = p; kernel = "empty"; params = 0; refs = [||] })
+    in
+    let s = prepare t (Array.make n empty) in
+    for i = 0 to n - 1 do
+      let b = Rig.Submission.block s i in
+      Rig.Submission.Run.groups t.run b 1 1 1;
+      Rig.Submission.Run.threads t.run b 1 1 1
+    done;
+    (t, p, s)
   in
-  (* [64]'s launches as parts of one queue, a launch each. *)
+  (* [launch/64]'s dispatches as fills of one queue, a fill each. *)
   let parts n () =
     let t = dev () in
     let p, base = load t in
@@ -423,6 +431,31 @@ let launch_rows =
     let ws, hs = Packet.template known run in
     let f = filled t ~arg:(address out) ~bytes:8 (ws, holes (fun _ -> 0) hs) in
     (t, p, prepare t [| f |])
+  in
+  (* [double_index] over 64 work-items, its argument the address of its run's
+     buffer, which the hand-over adds to the offset the run stores. *)
+  let params () =
+    let t = dev () in
+    let p, _ = load t in
+    let out = B.create t.d 256 in
+    let s =
+      Rig.Submission.make ~reads:0 ~writes:1 t.d
+        [|
+          part "COMPUTE:0"
+            (Launch
+               {
+                 image = p;
+                 kernel = "double_index";
+                 params = 8;
+                 refs = [| { at = 0; slot = 0 } |];
+               });
+        |]
+    in
+    let b = Rig.Submission.block s 0 in
+    Rig.Submission.Run.groups t.run b 1 1 1;
+    Rig.Submission.Run.threads t.run b 64 1 1;
+    Rig.Submission.Run.int64 t.run b 0 0;
+    (t, p, s, [| out |])
   in
   let bar () =
     let t = dev () in
@@ -465,6 +498,12 @@ let launch_rows =
              floor_submits w 64 false);
          [
            row "1-segment" segment (fun (t, _, s) -> run t s);
+           row "1-params" params (fun (t, _, s, writes) ->
+               let p =
+                 Rig.submit s ~run:t.run ~reads:[||] ~writes ~waits:[||]
+               in
+               t.v <- Rig.Point.value p;
+               wait t);
            row "1-bar-args" bar (fun (t, _, args, out, s) ->
                set64 args out;
                run t s);

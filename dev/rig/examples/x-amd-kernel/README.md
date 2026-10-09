@@ -1,13 +1,12 @@
 # `x-amd-kernel`
 
 **Needs an AMD GPU of processor gfx1201, such as a Radeon AI PRO R9700, held by
-Linux's `amdgpu` driver, with a compute queue that reads PM4 packets.**
-Elsewhere it prints a line and exits.
+Linux's `amdgpu` driver.** Elsewhere it prints a line and exits.
 
-An AMD GPU's queues read packets that compiled code writes. This example loads a
-code object, writes the dispatch of its kernel `add` as PM4 words from the
-kernel's descriptor, places them on the compute queue as a step (arguments in a
-hold, arrays passed to each submit), and checks the result.
+This example loads a code object and launches its kernel `add` over a million
+floats: a submission of one `Launch` part, whose parameters are the addresses
+of three arrays, each a ref to a buffer the submit passes, and a run that holds
+the launch's grid, its groups and the offsets into the arrays.
 
 ```bash
 cd dev/rig/examples/x-amd-kernel
@@ -16,23 +15,20 @@ dune exec ./main.exe
 
 ## What You'll Learn
 
-- Reading a code object: `Rig_amd_abi.Code_object.of_string`, `kernel`
-- Loading it: the device places its image in the GPU's memory, and
-  `Image.entry` names the kernel's descriptor
-- What compiled code finds in an AMD device's capability:
-  `Rig.capability g Rig_amd_abi.Capability.key`, its `gpu` and `compute`
-- Writing a dispatch: `Pm4.dispatch` inside `Pm4.run`, encoded by
-  `Packet.encode`
-- Work as words: `Submission.Words`
+- Loading code: `Image.load` places the code object's image in the GPU's memory
+- Launching a kernel: `Submission.Launch`, its parameter bytes and its refs
+- Storing a launch's grid, groups and parameters into a run:
+  `Submission.block`, `Run.groups`, `Run.threads`, `Run.int64`
+- Which devices launch: `queues` and the kinds of work each runs
 
 ## Key Functions
 
-| Function                                  | Purpose                                 |
-| ----------------------------------------- | --------------------------------------- |
-| `Code_object.kernel co name`              | A kernel as its descriptor describes it |
-| `Pm4.dispatch gpu k ~program ~args ...`   | The packets that launch it              |
-| `Pm4.run gpu p`                           | Order it after earlier work, and before later |
-| `Packet.encode Int64.of_int p`            | The packets' bytes                      |
+| Function                               | Purpose                                      |
+| -------------------------------------- | -------------------------------------------- |
+| `Image.load d binary`                  | Load a code object on a device               |
+| `Launch { image; kernel; params; refs }` | A part that runs a kernel once            |
+| `Submission.block s i`                 | Where part [i]'s grid and parameters lie in a run |
+| `Run.int64 run b at v`                 | Store a parameter, a ref's offset at a ref's [at] |
 
 ## The code object
 

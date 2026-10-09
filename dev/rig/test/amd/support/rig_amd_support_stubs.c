@@ -89,7 +89,10 @@ value rig_amd_test_data(value v_ba) {
 /* The C entries. A part is the ints Rig_amd_support.Edge makes: the queue,
    its kind, the fill, its argument, ring units, segment bytes, the copy's
    destination, source and bytes, the counts of [after] indices and of
-   words, then the indices, then the words. */
+   words, then the indices, then the words. A launch's fill is its launch,
+   its argument its code, its ring units its block's offset in the args,
+   its segment bytes its parameters' and its words its refs, each two words,
+   at then slot. */
 
 enum {
   part_queue,
@@ -156,6 +159,14 @@ static void *edge(value v_waits, value v_parts, struct rig_wait **wp,
       p[i].copy.src = (uint64_t)at(k, part_src);
       p[i].copy.bytes = (uint64_t)at(k, part_copy);
       break;
+    case RIG_LAUNCH:
+      p[i].launch.code = (uint64_t)at(k, part_arg);
+      p[i].launch.launch = (const void *)at(k, part_fill);
+      p[i].launch.block = (uint32_t)at(k, part_units);
+      p[i].launch.params = (uint32_t)at(k, part_bytes);
+      p[i].launch.refs = (const struct rig_ref *)words;
+      p[i].launch.nrefs = nw / 2;
+      break;
     }
     for (int j = 0; j < na; j++) *after++ = (int)at(k, part_after + j);
     for (int j = 0; j < nw; j++)
@@ -172,33 +183,47 @@ static const struct rig_driver *driver_of(value v_self) {
 }
 
 /* What the room check of the device [v_self] answers for [v_parts]. */
-value rig_amd_test_room(value v_self, value v_parts) {
+value rig_amd_test_room(value v_self, value v_parts, value v_args) {
   struct rig_wait *w;
   struct rig_part *p;
   void *mem = edge(Atom(0), v_parts, &w, &p);
   int r = driver_of(v_self)->room((void *)Nativeint_val(v_self), p,
-                                  (int)Wosize_val(v_parts), NULL);
+                                  (int)Wosize_val(v_parts),
+                                  (const uint8_t *)String_val(v_args));
   free(mem);
   return Val_int(r);
 }
 
 /* What the submit of the device [v_self] answers for [v_parts] as the value
-   [v_v] after the waits [v_waits] (address, value pairs): [None], or
+   [v_v] after the waits [v_waits] (address, value pairs), its launches'
+   blocks in [v_args] and its slots' addresses [v_slots]: [None], or
    [Some why] for RIG_FAILED. */
 value rig_amd_test_submit(value v_self, value v_v, value v_waits,
-                          value v_parts) {
-  CAMLparam4(v_self, v_v, v_waits, v_parts);
+                          value v_parts, value v_args, value v_slots) {
+  CAMLparam5(v_self, v_v, v_waits, v_parts, v_args);
+  CAMLxparam1(v_slots);
   CAMLlocal1(v_why);
   struct rig_wait *w;
   struct rig_part *p;
+  int nslots = (int)Wosize_val(v_slots);
+  uint64_t *slots = malloc((size_t)(nslots + 1) * sizeof *slots);
+  if (slots == NULL) caml_raise_out_of_memory();
+  for (int i = 0; i < nslots; i++) slots[i] = (uint64_t)at(v_slots, i);
   void *mem = edge(v_waits, v_parts, &w, &p);
   const char *failure = NULL;
   int r = driver_of(v_self)->submit(
       (void *)Nativeint_val(v_self), (uint64_t)Long_val(v_v), w,
-      (int)(Wosize_val(v_waits) / 2), p, (int)Wosize_val(v_parts), NULL, NULL,
-      0, NULL, 0, &failure);
+      (int)(Wosize_val(v_waits) / 2), p, (int)Wosize_val(v_parts),
+      (const uint8_t *)String_val(v_args), slots, nslots, NULL, 0, &failure);
   free(mem);
+  free(slots);
   if (r != RIG_FAILED) CAMLreturn(Val_none);
   v_why = caml_copy_string(failure ? failure : "");
   CAMLreturn(caml_alloc_some(v_why));
+}
+
+value rig_amd_test_submit_byte(value *argv, int argn) {
+  (void)argn;
+  return rig_amd_test_submit(argv[0], argv[1], argv[2], argv[3], argv[4],
+                             argv[5]);
 }

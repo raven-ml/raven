@@ -6,10 +6,14 @@
 (* The ring writer's templates, with no GPU: a packet loaded into a device
    state's template, as the driver loads its own at open, then filled as the
    writer fills it, is the packet's encoding. A template holds at most 16 words
-   and 4 holes, each a term of at most 3 operations on argument 0, 1 or 2. *)
+   and 4 holes, each a term of at most 3 operations on argument 0, 1 or 2. A
+   launch's dispatch, as the writer places it, is Pm4's on every GPU the driver
+   drives, which no machine has all of. *)
 
 open Windtrap
 open Rig_amd_abi
+
+let strf = Printf.sprintf
 
 external create : unit -> int = "caml_rig_amd_create"
 
@@ -24,7 +28,7 @@ let max_words = 16
 let max_holes = 4
 
 let load p =
-  let words, holes = Template.flatten p in
+  let words, holes = Template.flatten (fun _ -> None) Fun.id p in
   set_template self 0 words holes
 
 (* Printing *)
@@ -234,4 +238,171 @@ let templates =
               load [ W32 (Shift (Value 0, n)) ]));
     ]
 
-let () = exit (run "rig_amd.template" [ templates ])
+(* Launches *)
+
+(* The GPUs of each GC the driver drives, GFX950 with its LDS granule of 1280
+   bytes, and the LDS of a workgroup of each. *)
+let gpus =
+  let gpu ?target gc =
+    {
+      Gpu.target = Option.value ~default:gc target;
+      gc;
+      sdma = (6, 0, 0);
+      xccs = 1;
+      shader_engines = 4;
+      compute_units = 32;
+      scratch_slots = 32;
+    }
+  in
+  [
+    (gpu ~target:(9, 4, 2) (9, 4, 3), 65536);
+    (gpu (9, 5, 0), 163840);
+    (gpu (11, 0, 0), 65536);
+    (gpu (11, 5, 0), 65536);
+    (gpu ~target:(12, 0, 1) (12, 0, 1), 65536);
+  ]
+
+type launch = {
+  g : Gpu.t;
+  lds : int;
+  k : Code_object.kernel;
+  program : int;
+  args : int array; (* parameters, scratch, threads, groups *)
+  shared : int;
+}
+
+let pp_launch ppf l =
+  let a, b, c = l.g.gc in
+  Format.fprintf ppf
+    "GC %d.%d.%d, LDS %d; group %d, private %d, rsrc 0x%x 0x%x 0x%x, wave32 \
+     %b, buffer %b; program 0x%x, args [%s], shared %d"
+    a b c l.lds l.k.group_segment l.k.private_segment l.k.rsrc1 l.k.rsrc2
+    l.k.rsrc3 l.k.wave32 l.k.private_segment_buffer l.program
+    (String.concat "; "
+       (Array.to_list (Array.map (Printf.sprintf "0x%x") l.args)))
+    l.shared
+
+(* Kernels as compilers describe them, whose group segment and shared memory fit
+   the GPU's LDS, many of them empty or ending at the LDS. *)
+let launches =
+  let open Gen in
+  let u32 = int_range 0 0xffff_ffff in
+  let aligned n = map (fun a -> a * n) (int_range 0 (((1 lsl 48) - 1) / n)) in
+  let part n = frequency [ (3, int_range 0 n); (1, of_list [ 0; n ]) ] in
+  let side = int_range 1 1024 in
+  with_pp pp_launch
+    (let* g, lds = of_list gpus in
+     let* group = part lds in
+     let+ shared = part (lds - group)
+     and+ private_segment = int_range 0 (1 lsl 16)
+     and+ rsrc1, rsrc2, rsrc3 = triple u32 u32 u32
+     and+ wave32, psb = pair bool bool
+     and+ program, scratch = pair (aligned 256) (aligned 256)
+     and+ params = aligned 64
+     and+ tx, ty, tz = triple side side side
+     and+ gx, gy, gz = triple u32 u32 u32 in
+     let k =
+       {
+         Code_object.descriptor = 0;
+         entry = 0;
+         group_segment = group;
+         private_segment;
+         kernarg_size = 0;
+         (* No privilege (bit 20) nor LDS (bits 15 to 23), which AMDGPUUsage
+            says the descriptor leaves 0. *)
+         rsrc1 = rsrc1 land lnot (1 lsl 20);
+         rsrc2 = rsrc2 land lnot (0x1ff lsl 15);
+         rsrc3;
+         wave32;
+         dispatch_ptr = false;
+         private_segment_buffer = psb;
+         max_threads = 1024;
+         hidden = [];
+       }
+     in
+     let args = [| params; scratch; tx; ty; tz; gx; gy; gz |] in
+     { g; lds; k; program; args; shared })
+
+let launches_law =
+  prop
+    "a launch's dispatch is Pm4's, its group segment grown by its shared memory"
+    launches (fun l ->
+      let lds = l.k.group_segment + l.shared and a = l.args in
+      let granule = Pm4.lds_granule l.g in
+      let units n = (n + granule - 1) / granule in
+      cover "no shared memory" (l.shared = 0);
+      cover "shared memory past the group segment's granules"
+        (units lds > units l.k.group_segment);
+      cover "the GPU's whole LDS" (lds = l.lds);
+      cover "a granule of 1280 bytes" (granule = 1280);
+      let expected =
+        Pm4.dispatch l.g
+          { l.k with group_segment = lds }
+          ~program:l.program ~scratch:a.(1) ~args:a.(0) ~packet:0
+          ~threads:(a.(2), a.(3), a.(4))
+          ~groups:(a.(5), a.(6), a.(7))
+          ()
+      in
+      equal string
+        (Packet.encode Int64.of_int expected)
+        (Rig_amd.dispatch l.g l.k ~program:l.program ~lds:l.lds l.args
+           ~shared:l.shared))
+
+(* The driver finds the word that holds a dispatch's LDS as the one word a group
+   segment one granule larger changes. On each GPU, a group segment of [n]
+   granules changes that word alone, by [n] times that change. *)
+let lds_word =
+  cases
+    ~name:(fun ((g : Gpu.t), _) ->
+      let a, b, c = g.gc in
+      strf "GC %d.%d.%d" a b c)
+    "a dispatch's LDS is one word, linear in its granules" gpus
+    (fun (g, lds) ->
+      let k =
+        {
+          Code_object.descriptor = 0;
+          entry = 0;
+          group_segment = 0;
+          private_segment = 0;
+          kernarg_size = 0;
+          rsrc1 = 0;
+          rsrc2 = 0;
+          rsrc3 = 0;
+          wave32 = true;
+          dispatch_ptr = false;
+          private_segment_buffer = false;
+          max_threads = 1024;
+          hidden = [];
+        }
+      in
+      let granule = Pm4.lds_granule g in
+      let words n =
+        let p =
+          Pm4.dispatch g
+            { k with group_segment = n * granule }
+            ~program:0 ~scratch:0 ~args:0 ~packet:0 ~threads:(1, 1, 1)
+            ~groups:(1, 1, 1) ()
+        in
+        let s = Packet.encode Int64.of_int p in
+        Array.init
+          (String.length s / 4)
+          (fun i ->
+            Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
+      in
+      let w0 = words 0 and w1 = words 1 in
+      let at =
+        List.filter
+          (fun i -> w0.(i) <> w1.(i))
+          (List.init (Array.length w0) Fun.id)
+      in
+      equal ~msg:"the words one granule changes" int 1 (List.length at);
+      let at = List.hd at in
+      for n = 0 to lds / granule do
+        let wn = words n in
+        let expected = Array.copy w0 in
+        expected.(at) <- w0.(at) + (n * (w1.(at) - w0.(at)));
+        equal ~msg:(strf "%d granules" n) (array int) expected wn
+      done)
+
+let launches_group = group "launches" [ lds_word; launches_law ]
+let () = exit (run "rig_amd.template" [ templates; launches_group ])

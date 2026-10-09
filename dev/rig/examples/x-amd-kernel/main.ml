@@ -6,17 +6,16 @@
 (* A kernel on an AMD GPU.
 
    Needs an AMD GPU of processor gfx1201, such as a Radeon AI PRO R9700, that
-   Linux's amdgpu driver holds, with a compute queue that reads PM4 packets.
+   Linux's amdgpu driver holds.
 
-   An AMD GPU's queue reads packets that compiled code writes. The code object
-   ([add.cl], compiled for gfx1201) is loaded on the device, which places its
-   image in the GPU's memory. The dispatch of its kernel is written once as PM4
-   words from the kernel's descriptor, and each submission places those words on
-   the compute queue. The kernel reads its arguments, the addresses of its
-   arrays, from memory the GPU addresses. *)
+   The code object ([add.cl], compiled for gfx1201) is loaded on the device,
+   which places its image in the GPU's memory. A submission launches its kernel
+   [add] once: its parameters are the addresses of three arrays, each a ref to
+   a buffer the submit passes, which the device writes into the parameters as
+   it hands the launch over. The run holds what changes from one submit to the
+   next: the launch's grid, its groups and the offsets into the arrays. *)
 
 open Rig
-module Abi = Rig_amd_abi
 
 let n = 1 lsl 20
 let group = 64
@@ -31,66 +30,35 @@ let floats g f =
   Buffer.copy ~src:h ~dst:b;
   b
 
-(* A host buffer holding [s]'s bytes. *)
-let of_string s =
-  let b = Buffer.create host (String.length s) in
-  let a = Buffer.bigarray Bigarray.char b in
-  String.iteri (fun i c -> a.{i} <- c) s;
-  b
-
-let le64 xs =
-  String.concat ""
-    (List.map
-       (fun x ->
-         let b = Bytes.create 8 in
-         Bytes.set_int64_le b 0 (Int64.of_int x);
-         Bytes.to_string b)
-       xs)
-
-let run g (cap : Abi.Capability.t) =
+let run g =
   let bin = In_channel.with_open_bin "add_gfx1201.hsaco" In_channel.input_all in
-  let co = Result.get_ok (Abi.Code_object.of_string bin) in
-  let k = Option.get (Abi.Code_object.kernel co "add") in
+  let image = Result.get_ok (Image.load g bin) in
 
-  (* The device places the image; the kernel's descriptor names where its code
-     starts. *)
-  let p = Result.get_ok (Image.load g bin) in
-  let base = Option.get (Image.entry p "add") - k.descriptor in
+  (* One launch of [add], whose 24 bytes of parameters are three addresses:
+     the run's buffers 0 and 1, which it reads, and 2, which it writes. *)
+  let refs =
+    Submission.
+      [| { at = 0; slot = 0 }; { at = 8; slot = 1 }; { at = 16; slot = 2 } |]
+  in
+  let part =
+    {
+      Submission.queue = "COMPUTE:0";
+      after = [||];
+      work = Launch { image; kernel = "add"; params = 24; refs };
+    }
+  in
+  let s = Submission.make ~reads:2 ~writes:1 g [| part |] in
 
-  (* The arrays, and the kernel's arguments in pinned memory. *)
+  (* The run: n / 64 groups of 64 work-items, each array from its first
+     byte. *)
+  let run = Submission.Run.make () in
+  let block = Submission.block s 0 in
+  Submission.Run.groups run block (n / group) 1 1;
+  Submission.Run.threads run block group 1 1;
+  List.iter (fun at -> Submission.Run.int64 run block at 0) [ 0; 8; 16 ];
+
   let a = floats g float_of_int and b = floats g (fun _ -> 0.5) in
   let out = Buffer.create g (4 * n) in
-  let args = Buffer.create ~memory:Pinned g 24 in
-  Buffer.copy
-    ~src:
-      (of_string
-         (le64 [ Buffer.address a; Buffer.address b; Buffer.address out ]))
-    ~dst:args;
-
-  (* The dispatch, as words: [Pm4.run] makes the kernel read what earlier work
-     wrote and the packets after it wait for its waves. *)
-  let dispatch =
-    Abi.Pm4.dispatch cap.gpu k ~program:(base + k.entry) ~scratch:0
-      ~args:(Buffer.address args) ~packet:0 ~threads:(group, 1, 1)
-      ~groups:(n / group, 1, 1)
-      ()
-  in
-  let words =
-    of_string (Abi.Packet.encode Int64.of_int (Abi.Pm4.run cap.gpu dispatch))
-  in
-  Printf.printf "the dispatch is %d words of PM4\n" (Buffer.length words / 4);
-
-  (* The step: a hold that keeps the image, the arguments as fixed memory,
-     and the arrays passed to each submit. *)
-  let hold = Hold.make (fun () -> ignore (Sys.opaque_identity p)) in
-  let part =
-    { Submission.queue = "COMPUTE:0"; after = [||]; work = Words words }
-  in
-  let s =
-    Submission.make ~hold ~fixed:[ (args, Read) ] ~reads:2 ~writes:1 g
-      [| part |]
-  in
-  let run = Submission.Run.make () in
   let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
   Format.printf "%s (%s) ran add on %d floats at %a@." (name g) (arch g) n
     Point.pp pt;
@@ -117,10 +85,8 @@ let () =
         (fun () -> Rig_amd_amdgpu.open_ 0)
       |> Result.get_ok
     in
-    let cap = Option.get (capability g Abi.Capability.key) in
-    match cap.compute with
-    | Aql _ -> print_endline "this GPU's compute queue reads AQL packets"
-    | Pm4 when Abi.Gpu.processor cap.gpu <> "gfx1201" ->
-        Printf.printf "the code object is for gfx1201; this GPU is %s\n"
-          (Abi.Gpu.processor cap.gpu)
-    | Pm4 -> run g cap
+    if arch g <> "gfx1201" then
+      Printf.printf "the code object is for gfx1201; this GPU is %s\n" (arch g)
+    else if not (List.exists (fun (q : queue) -> List.mem Launch q.runs) (queues g))
+    then print_endline "this GPU's compute queue runs no launch"
+    else run g

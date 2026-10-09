@@ -33,7 +33,6 @@
   rig_cuda_support
   rig_nv_support
   rig_amd_support
-  rig_amd_abi
   rig_disk
   thumper))
 

@@ -95,10 +95,47 @@ value caml_rig_amd_ring_byte(value *argv, int argn) {
    first word, its argument, its words (1 or 2), its operations' count, then
    each operation and its constant. */
 
-static void refuse(const char *why) {
+#define TEMPLATE "Rig_amd.make: a packet template"
+#define LAUNCH "Rig_amd.entry: a launch"
+
+static void refuse(const char *what, const char *why) {
   char msg[96];
-  snprintf(msg, sizeof msg, "Rig_amd.make: a packet template %s", why);
+  snprintf(msg, sizeof msg, "%s %s", what, why);
   caml_invalid_argument(msg);
+}
+
+/* Reads the hole records [v_holes] of [what], whose words are [n], into
+   [h], at most [max] of them, each reading an argument below [nargs]:
+   their count. */
+static int holes(const char *what, value v_holes, struct rig_amd_hole *h,
+                 int max, int nargs, int n) {
+  size_t len = caml_string_length(v_holes) / 8;
+  uint64_t f[4 + 2 * RIG_AMD_HOLE_OPS];
+  int count = 0;
+  for (size_t i = 0; i < len; i += 4 + 2 * (size_t)f[3]) {
+    if (count == max) refuse(what, "has too many holes");
+    if (len - i < 4) refuse(what, "hole is cut short");
+    memcpy(f, String_val(v_holes) + 8 * i, 4 * 8);
+    if (f[3] > RIG_AMD_HOLE_OPS) refuse(what, "hole takes too many operations");
+    if (len - i - 4 < 2 * f[3]) refuse(what, "hole is cut short");
+    memcpy(f + 4, String_val(v_holes) + 8 * (i + 4), 2 * 8 * f[3]);
+    if (f[1] >= (uint64_t)nargs) refuse(what, "hole reads an unknown argument");
+    if (f[2] < 1 || f[2] > 2 || f[0] + f[2] > (uint64_t)n)
+      refuse(what, "hole lies outside its words");
+    struct rig_amd_hole *o = &h[count++];
+    o->at = (uint8_t)f[0];
+    o->arg = (uint8_t)f[1];
+    o->wide = (uint8_t)f[2];
+    o->nops = (uint8_t)f[3];
+    for (int j = 0; j < o->nops; j++) {
+      uint64_t op = f[4 + 2 * j], k = f[5 + 2 * j];
+      if (op > OP_OR) refuse(what, "hole takes an unknown operation");
+      if (op == OP_SHIFT && k > 63) refuse(what, "hole's shift is outside 0 to 63");
+      o->op[j] = (uint8_t)op;
+      o->k[j] = k;
+    }
+  }
+  return count;
 }
 
 /* Template [t]: its words as little-endian bytes, and its holes, records as
@@ -108,37 +145,78 @@ value caml_rig_amd_template(value v_self, value v_t, value v_words,
                             value v_holes) {
   struct rig_amd_template c;
   size_t bytes = caml_string_length(v_words);
-  if (bytes > sizeof c.words) refuse("exceeds 16 words");
+  if (bytes > sizeof c.words) refuse(TEMPLATE, "exceeds 16 words");
   c.n = (int)(bytes / 4);
   memcpy(c.words, String_val(v_words), 4 * (size_t)c.n);
-  size_t n = caml_string_length(v_holes) / 8;
-  uint64_t f[4 + 2 * RIG_AMD_HOLE_OPS];
-  c.nholes = 0;
-  for (size_t i = 0; i < n; i += 4 + 2 * (size_t)f[3]) {
-    if (c.nholes == RIG_AMD_TEMPLATE_HOLES) refuse("has too many holes");
-    if (n - i < 4) refuse("hole is cut short");
-    memcpy(f, String_val(v_holes) + 8 * i, 4 * 8);
-    if (f[3] > RIG_AMD_HOLE_OPS) refuse("hole takes too many operations");
-    if (n - i - 4 < 2 * f[3]) refuse("hole is cut short");
-    memcpy(f + 4, String_val(v_holes) + 8 * (i + 4), 2 * 8 * f[3]);
-    if (f[1] > 2) refuse("hole reads an argument outside 0 to 2");
-    if (f[2] < 1 || f[2] > 2 || f[0] + f[2] > (uint64_t)c.n)
-      refuse("hole lies outside its words");
-    struct rig_amd_hole *h = &c.holes[c.nholes++];
-    h->at = (uint8_t)f[0];
-    h->arg = (uint8_t)f[1];
-    h->wide = (uint8_t)f[2];
-    h->nops = (uint8_t)f[3];
-    for (int j = 0; j < h->nops; j++) {
-      uint64_t op = f[4 + 2 * j], k = f[5 + 2 * j];
-      if (op > OP_OR) refuse("hole takes an unknown operation");
-      if (op == OP_SHIFT && k > 63) refuse("hole's shift is outside 0 to 63");
-      h->op[j] = (uint8_t)op;
-      h->k[j] = k;
-    }
-  }
+  c.nholes = holes(TEMPLATE, v_holes, c.holes, RIG_AMD_TEMPLATE_HOLES,
+                   RIG_AMD_TEMPLATE_ARGS, c.n);
   Device_val(v_self)->templates[Int_val(v_t)] = c;
   return Val_unit;
+}
+
+/* The bytes of each implicit argument a launch writes. */
+static const int hidden_bytes[RIG_AMD_HIDDEN] = {4, 4, 4, 2, 2, 2, 2,
+                                                 2, 2, 8, 8, 8, 2, 4};
+
+/* A launch (struct rig_amd_launch): its dispatch's words and holes, as a
+   template's; [v_lds], the index of its LDS word, that word without LDS, the
+   word's increment per granule, the granule's bytes and the function's own
+   LDS bytes; [v_max], its most threads per group and shared bytes and its
+   arguments' bytes; and [v_hidden], the offsets of its implicit arguments,
+   each within its arguments, or -1. Its address, an int, which
+   caml_rig_amd_launch_free frees. */
+value caml_rig_amd_launch(value v_words, value v_holes, value v_lds,
+                          value v_max, value v_hidden) {
+  struct rig_amd_launch c;
+  size_t bytes = caml_string_length(v_words);
+  if (bytes > sizeof c.words) refuse(LAUNCH, "exceeds its words");
+  c.n = (int)(bytes / 4);
+  memcpy(c.words, String_val(v_words), 4 * (size_t)c.n);
+  c.nholes = holes(LAUNCH, v_holes, c.holes, RIG_AMD_LAUNCH_HOLES,
+                   RIG_AMD_LAUNCH_ARGS, c.n);
+  c.lds_at = (uint32_t)at(v_lds, 0);
+  c.lds_word = (uint32_t)at(v_lds, 1);
+  c.lds_unit = (uint32_t)at(v_lds, 2);
+  c.lds_granule = (uint32_t)at(v_lds, 3);
+  c.group = (uint32_t)at(v_lds, 4);
+  c.max_threads = (uint32_t)at(v_max, 0);
+  c.max_shared = (uint32_t)at(v_max, 1);
+  c.kernarg = (uint32_t)at(v_max, 2);
+  if (c.lds_at >= (uint32_t)c.n || c.lds_granule == 0)
+    refuse(LAUNCH, "LDS word lies outside its words");
+  if (Wosize_val(v_hidden) != RIG_AMD_HIDDEN)
+    refuse(LAUNCH, "names another number of implicit arguments");
+  for (int i = 0; i < RIG_AMD_HIDDEN; i++) {
+    intnat h = at(v_hidden, i);
+    if (h < -1 || (h >= 0 && h + hidden_bytes[i] > (intnat)c.kernarg))
+      refuse(LAUNCH, "implicit argument lies outside its arguments");
+    c.hidden[i] = (int32_t)h;
+  }
+  struct rig_amd_launch *l = malloc(sizeof *l);
+  if (l == NULL) caml_raise_out_of_memory();
+  *l = c;
+  return Val_long((intnat)l);
+}
+
+value caml_rig_amd_launch_free(value v_l) {
+  free((void *)Long_val(v_l));
+  return Val_unit;
+}
+
+/* The words of launch [v_l]'s dispatch, as the hand-over places them with
+   the arguments [v_args] and [v_shared] bytes of shared memory, as
+   little-endian bytes on a little-endian host. */
+value caml_rig_amd_dispatch(value v_l, value v_args, value v_shared) {
+  const struct rig_amd_launch *l = (const void *)Long_val(v_l);
+  uint64_t args[RIG_AMD_LAUNCH_ARGS];
+  uint32_t w[RIG_AMD_LAUNCH_WORDS];
+  if (Wosize_val(v_args) != RIG_AMD_LAUNCH_ARGS)
+    caml_invalid_argument("Rig_amd.dispatch: expected 8 arguments");
+  for (int i = 0; i < RIG_AMD_LAUNCH_ARGS; i++) args[i] = (uint64_t)at(v_args, i);
+  int n = rig_amd_dispatch(l, args, (uint32_t)Long_val(v_shared), w);
+  value s = caml_alloc_string(4 * (mlsize_t)n);
+  memcpy(Bytes_val(s), w, 4 * (size_t)n);
+  return s;
 }
 
 value caml_rig_amd_max_copy(value v_self, value v_n) {
@@ -200,11 +278,13 @@ value caml_rig_amd_settle(value v_self) {
   return Val_unit;
 }
 
-/* Publishes the writes of a new AQL scratch to the queue's descriptor: the
-   32-bit [values] at the GPU addresses [at], which the next submission
-   places. Answers the value whose submission placed the publication this
-   one replaces, or 0 if none did, read under the lock. */
-value caml_rig_amd_scratch(value v_self, value v_at, value v_values) {
+/* Publishes a new scratch at the GPU address [base], with the writes of
+   it to an AQL queue's descriptor: the 32-bit [values] at the GPU addresses
+   [at], which the next submission places. Answers the value whose
+   submission placed the publication this one replaces, or 0 if none did,
+   read under the lock. */
+value caml_rig_amd_scratch(value v_self, value v_base, value v_at,
+                           value v_values) {
   struct rig_amd *d = Device_val(v_self);
   int n = (int)Wosize_val(v_at), idle = 0;
   if (n > RIG_AMD_SCRATCH_WRITES)
@@ -216,6 +296,7 @@ value caml_rig_amd_scratch(value v_self, value v_at, value v_values) {
     d->scratch_value[i] = (uint32_t)at(v_values, i);
   }
   d->scratch_n = n;
+  d->scratch_next = (uint64_t)Long_val(v_base);
   atomic_store_explicit(&d->scratch_taken, 0, memory_order_relaxed);
   atomic_store_explicit(&d->scratch_ready, 1, memory_order_relaxed);
   atomic_store_explicit(&d->scratch_lock, 0, memory_order_release);

@@ -20,3 +20,13 @@ Made in this directory from `work.cl` with the same tools:
   delay, `shared`, which takes 256 bytes of local data share, and `inc`,
   which adds 1 to each word:
   `clang -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 -nogpulib -O2 work.cl -o work.o && ld.lld -shared work.o -o work_gfx1201.hsaco && rm work.o`
+
+Made in this directory from `launch.cl` with the same tools:
+
+- `launch_gfx1201.hsaco`, the kernels the suites launch: `ids` and `twice`,
+  the conformance laws' (`Rig_gpu_support.Conformance.launch_binary`),
+  which learn their grid from the implicit arguments; `lds`, which takes
+  dynamic LDS after 256 bytes of its own; `scratch`, which takes 4100
+  bytes of scratch per work-item; and `packet`, which reads its dispatch
+  packet:
+  `clang -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 -nogpulib -O2 launch.cl -o launch.o && ld.lld -shared launch.o -o launch_gfx1201.hsaco && rm launch.o`

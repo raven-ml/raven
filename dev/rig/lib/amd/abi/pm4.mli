@@ -52,6 +52,11 @@ val dispatch :
     kernel {!Code_object.of_string} reads for a processor [g] runs never raises.
 *)
 
+val lds_granule : Gpu.t -> int
+(** [lds_granule g] is the bytes of one unit of the LDS a dispatch's workgroups
+    take on [g] ({!dispatch}): 1280 on GFX950, 512 on the others. A workgroup
+    that takes [n] bytes takes [n] rounded up to a multiple of it. *)
+
 val run : Gpu.t -> 'v Packet.t -> 'v Packet.t
 (** [run g p] runs [p], the words of one or more dispatches none of which reads
     what another writes, and of what goes with them, such as their profiling: it
