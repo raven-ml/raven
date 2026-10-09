@@ -97,11 +97,12 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     the consumer, and its shape, dtype and placement still answer.
 
     A movement that maps the elements one to one ({!reshape}, {!flatten},
-    {!squeeze}, {!unsqueeze}, {!transpose}, {!moveaxis}, {!swapaxes}, {!flip})
-    spends its handle and passes a new one to its result, whether it makes a
-    view or a copy; the deaths wait for the final consumer. Any other operation
-    consumes it. Two handles of one donor reaching one operation raise naming
-    [Nx.donate]: the same handle twice, two donations, or one chain read twice.
+    {!squeeze}, {!unsqueeze}, {!transpose}, {!moveaxis}, {!swapaxes}, {!flip},
+    {!rearrange}) spends its handle and passes a new one to its result, whether
+    it makes a view or a copy; the deaths wait for the final consumer. Any other
+    operation consumes it. Two handles of one donor reaching one operation raise
+    naming [Nx.donate]: the same handle twice, two donations, or one chain read
+    twice.
 
     The consumer may write its result into the donated memory when it reads the
     operand only at the result's own index (an elementwise operand), the memory
@@ -253,6 +254,78 @@ val repeat : ?axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     otherwise.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x] or [n < 0]. *)
+
+(** {1:patterns Axis patterns}
+
+    A pattern states a layout in words. Names are words separated by spaces,
+    parentheses group axes merged into one, [1] is an axis of extent [1], and
+    [...] stands for the axes no name covers. One grammar serves {!rearrange},
+    with one operand, and einsum and contract, with two:
+
+    {v
+    pattern  ::= operands "->" layout [ "|" name { name } ]
+    operands ::= layout [ "," layout ]
+    layout   ::= { axis }
+    axis     ::= name | "(" name { name } ")" | "1" | "..."
+    name     ::= a letter, then letters, digits and "_"
+    v}
+
+    {[
+    let split_heads = Nx.Pattern.v "b t (h d) -> b h t d"
+    let merge_heads = Nx.Pattern.inverse split_heads
+    let q = Nx.rearrange ~sizes:[ ("h", heads) ] split_heads y
+    ]} *)
+
+(** Axis patterns. *)
+module Pattern : sig
+  type t
+  (** The type for axis patterns, parsed and checked. *)
+
+  val v : string -> t
+  (** [v s] is the pattern [s]. Each call parses [s]; a pattern bound at a
+      module's top level is parsed once, as the module starts.
+
+      With one operand, every name appears once on each side; a group on the
+      left splits an axis and on the right merges axes; [1] drops a unit axis on
+      the left and adds one on the right; [...] is the same axes on both sides.
+
+      With two, a name in both operands and the result is a batch axis, in one
+      operand and the result a free axis, and the names after [|] are summed:
+      each is in both operands and not in the result. Every operand name is in
+      the result or summed. A group in an operand splits that operand's axis,
+      and an extent a group leaves unknown comes from the other operand where
+      the name appears there; a segmented group's outer extent is its offsets'
+      length minus one ([contract]). [...] stands for the same leading axes in
+      all three layouts, kept as batch axes; [1] drops a unit axis of an operand
+      or adds one to the result.
+
+      Raises [Invalid_argument] naming [s] if it is not in the grammar, a name
+      repeats within a layout, [...] appears twice in a layout, or a name breaks
+      the rules above. A string in NumPy's einsum notation, such as
+      ["bik,bkj->bij"], raises with the pattern it means:
+      ["b i k, b k j -> b i j | k"]. *)
+
+  val inverse : t -> t
+  (** [inverse p] is the one-operand pattern that undoes [p]: its sides
+      exchanged.
+
+      Raises [Invalid_argument] if [p] has two operands. *)
+end
+
+val rearrange :
+  ?sizes:(string * int) list -> Pattern.t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [rearrange ~sizes p x] is [x] split, permuted and merged as [p] says: the
+    result's element at an index is [x]'s element where each name takes the same
+    position. A name alone on the left takes its axis's extent, and [sizes]
+    gives others; a group on the left may hold one name whose extent neither
+    gives, the quotient of its axis by the others. A view where strides express
+    it, a copy otherwise.
+
+    Raises [Invalid_argument] if [p] has two operands, [p]'s left side names
+    more axes than [x] has or, without [...], other than [x]'s rank, a [1] on
+    the left meets an extent other than [1], a group's extents do not divide or
+    multiply to its axis, a group has two unknown extents, a size disagrees with
+    the extent [x] gives its name, or a name in [sizes] is not in [p]. *)
 
 (** {1:arith Arithmetic}
 

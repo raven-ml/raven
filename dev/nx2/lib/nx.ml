@@ -466,6 +466,22 @@ let repeat ?axis:a n x =
     (Array.init (ndim x) (fun i -> if i = a then n else 1))
     x
 
+(* Axis patterns *)
+
+module Pattern = struct
+  include Pattern
+
+  let v s = v ~by:"Nx.Pattern.v" s
+  let inverse p = inverse ~by:"Nx.Pattern.inverse" p
+end
+
+let rearrange ?(sizes = []) p x =
+  let by = "Nx.rearrange" in
+  let moves =
+    Pattern.moves ~by ~sizes p (shape x) (fun ppf -> pp_value ppf x)
+  in
+  List.fold_left (fun x mv -> move ~by mv x) x moves
+
 (* Operations as data *)
 
 module Prim = struct

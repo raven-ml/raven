@@ -3,7 +3,20 @@
 
 (library
  (name nx)
- (modules grid devices route value prim interp place expand exec eval repr nx)
+ (modules
+  grid
+  devices
+  route
+  value
+  prim
+  interp
+  place
+  expand
+  exec
+  eval
+  repr
+  pattern
+  nx)
  (private_modules
   grid
   devices
@@ -15,6 +28,7 @@
   expand
   exec
   eval
-  repr)
+  repr
+  pattern)
  (modules_without_implementation value)
  (libraries nx_array nx_kernel nx_cpu rig))

@@ -10,7 +10,8 @@
   test_exec
   test_interp
   test_donate
-  test_shapes)
+  test_shapes
+  test_patterns)
  (modules
   test_devices
   test_values
@@ -18,7 +19,8 @@
   test_exec
   test_interp
   test_donate
-  test_shapes)
+  test_shapes
+  test_patterns)
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))
 
 (copy_files
