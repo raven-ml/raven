@@ -66,13 +66,19 @@ external record :
   = "nx_metal_test_launch"
 
 external harness_threads : unit -> int = "nx_metal_test_threads"
+external library : unit -> string * string array = "nx_metal_test_library"
 
-let kernels = kernels ()
+(* The run's kernels, by index: nx.metal's, by their enum, then the harness's,
+   by theirs. *)
+let library_metallib, library_kernels = library ()
+let harness_kernels = kernels ()
+let kernels = Array.append library_kernels harness_kernels
 let harness_threads = harness_threads ()
 
 type t = {
   rig : Rig.t;
-  image : Rig.Image.t;
+  library : Rig.Image.t;
+  harness : Rig.Image.t;
   split : nativeint;
   pipelines : pipelines;
 }
@@ -90,12 +96,13 @@ let open_ () =
            (fun () -> Rig_metal.open_ 0))
     in
     let cap = Option.get (Rig.capability rig Rig_metal_abi.key) in
-    let image = get (Rig.Image.load rig (metallib ())) in
+    let library = get (Rig.Image.load rig library_metallib) in
+    let harness = get (Rig.Image.load rig (metallib ())) in
     let pipelines =
       Bigarray.(Array1.create int64 c_layout (Array.length kernels))
     in
     Bigarray.Array1.fill pipelines 0L;
-    Some { rig; image; split = cap.split; pipelines }
+    Some { rig; library; harness; split = cap.split; pipelines }
 
 let rig t = t.rig
 
@@ -120,8 +127,9 @@ let view k o =
 
 (* Runs *)
 
-(* A run's records and the kernels they launch, by index. *)
-type run = { records : string; kernels : int list }
+(* A run's records, the kernels they launch, by index, and the memory they
+   address beyond the caller's operands, such as their scratch. *)
+type run = { records : string; kernels : int list; holds : operand list }
 
 let index k =
   match Array.find_index (String.equal k) kernels with
@@ -142,20 +150,24 @@ let launch ?(groups = (1, 1, 1)) ?(threads = threads) k ~addrs ~words =
   let records =
     record k groups threads (Bytes.unsafe_to_string b) (List.length addrs)
   in
-  { records; kernels = [ k ] }
+  { records; kernels = [ k ]; holds = [] }
 
 let seq rs =
   {
     records = String.concat "" (List.map (fun r -> r.records) rs);
     kernels = List.concat_map (fun r -> r.kernels) rs;
+    holds = List.concat_map (fun r -> r.holds) rs;
   }
 
 let prepare t run =
   (* A fill resolves nothing: each pipeline is made before the submission. *)
   let entry k =
+    let image =
+      if k < Array.length library_kernels then t.library else t.harness
+    in
     if t.pipelines.{k} = 0L then
       t.pipelines.{k} <-
-        Int64.of_int (Option.get (Rig.Image.entry t.image kernels.(k)))
+        Int64.of_int (Option.get (Rig.Image.entry image kernels.(k)))
   in
   List.iter entry run.kernels;
   let a = arg t.split t.pipelines run.records in
@@ -175,6 +187,7 @@ let prepare t run =
   fun () ->
     let p = Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||] in
     Rig.wait t.rig (Rig.Point.value p);
+    ignore (Sys.opaque_identity run.holds);
     span a
 
 let run t r = prepare t r ()
@@ -226,3 +239,59 @@ let probe ?(dtype = 0) t kernel in_ ~which n =
     (run t
        (launch kernel ~groups:(groups n) ~addrs ~words:[ n; which; dtype; 0 ]));
   out
+
+(* Contract *)
+
+type arg = { o : operand; dtype : int; strides : int * int * int }
+
+let arg o dt strides = { o; dtype = Nx_array.Dtype.code dt; strides }
+let arg_operand a = a.o
+let gpu a = (address a.o, a.dtype, a.strides)
+let cpu a = (a.o.host, a.dtype, a.strides)
+
+type dims = int * int * int * int * int
+type view = int * int * (int * int * int)
+
+external plan_contract :
+  dims -> view -> view -> view -> view option -> (string * int) option
+  = "nx_metal_test_plan_contract"
+
+external rebase : string -> int -> string = "nx_metal_test_rebase"
+external record_entries : string -> int array = "nx_metal_test_entries"
+
+external contract_error :
+  dims -> view -> view -> view -> view option -> float * int
+  = "nx_metal_test_contract_error"
+
+external contract_wrong :
+  dims -> view -> view -> view -> view option -> int * int
+  = "nx_metal_test_contract_wrong"
+
+let with_acc acc (batch, m, n, k) = (batch, m, n, k, acc)
+let float32 = Nx_array.Dtype.(Any Float32)
+let code (Nx_array.Dtype.Any dt) = Nx_array.Dtype.code dt
+
+let plan_contract ?init ?(acc = float32) t dims ~a ~b ~out =
+  let planned =
+    plan_contract
+      (with_acc (code acc) dims)
+      (gpu a) (gpu b) (gpu out) (Option.map gpu init)
+  in
+  Fun.flip Option.map planned @@ fun (records, scratch) ->
+  let kernels = Array.to_list (record_entries records) in
+  if scratch = 0 then { records; kernels; holds = [] }
+  else
+    let s = operand t scratch in
+    { records = rebase records (address s); kernels; holds = [ s ] }
+
+let entries r = List.map (fun k -> kernels.(k)) r.kernels
+
+let contract_error ?init dims ~a ~b ~out =
+  contract_error
+    (with_acc (code float32) dims)
+    (cpu a) (cpu b) (cpu out) (Option.map cpu init)
+
+let contract_wrong ?init ~acc dims ~a ~b ~out =
+  contract_wrong
+    (with_acc (code acc) dims)
+    (cpu a) (cpu b) (cpu out) (Option.map cpu init)

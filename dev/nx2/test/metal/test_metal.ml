@@ -3,13 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx.metal's records and fill on the Mac's GPU, through rig, and the GPU's
-   float arithmetic under the build's options. Every test skips on a machine
-   with no Metal GPU. *)
+(* nx.metal's records and fill on the Mac's GPU, through rig, the GPU's float
+   arithmetic under the build's options, and nx.metal's contraction. Every test
+   skips on a machine with no Metal GPU. *)
 
 open Windtrap
 module S = Nx_metal_support
 module Dt = Nx_array.Dtype
+
+let strf = Printf.sprintf
 
 let dev =
   let t = lazy (S.open_ ()) in
@@ -179,6 +181,332 @@ let arithmetic =
       codecs;
     ]
 
+(* Contract *)
+
+type init = No_init | Full | Bias
+
+type case = {
+  dt : Dt.any;
+  out : Dt.any;
+  a_t : bool; (* a stored [k][m] *)
+  b_t : bool; (* b stored [n][k] *)
+  batch : int;
+  m : int;
+  n : int;
+  k : int;
+  init : init;
+  pad : int; (* extra elements per row of a and b *)
+  spread : int;
+}
+
+let pp_case ppf c =
+  let name (Dt.Any dt) = Dt.name dt in
+  Format.fprintf ppf
+    "%s -> %s, a%s b%s, %d x (%d x %d x %d), init %s, pad %d, spread %d"
+    (name c.dt) (name c.out)
+    (if c.a_t then "^T" else "")
+    (if c.b_t then "^T" else "")
+    c.batch c.m c.n c.k
+    (match c.init with No_init -> "none" | Full -> "full" | Bias -> "bias")
+    c.pad c.spread
+
+let floats_dt = [ Dt.Any Dt.Float32; Dt.Any Dt.Float16; Dt.Any Dt.Bfloat16 ]
+
+(* Extents at, around and between the dense kernels' 32 and 64 wide tiles and 16
+   and 32 long steps, or whole tiles, [tile] each. *)
+let extent_gen tile =
+  Gen.one_of
+    [
+      Gen.of_list
+        [ 0; 1; 2; 7; 8; 9; 15; 16; 17; 31; 32; 33; 63; 64; 65; 100; 129 ];
+      Gen.map (fun x -> tile * x) (Gen.int_range 1 3);
+    ]
+
+let case =
+  let open Gen in
+  let+ dt = of_list floats_dt
+  and+ out = of_list floats_dt
+  and+ a_t = bool
+  and+ b_t = bool
+  and+ batch = int_range 1 3
+  and+ m = frequency [ (1, of_list [ 1 ]); (4, extent_gen 64) ]
+  and+ n = extent_gen 64
+  and+ k = Gen.one_of [ extent_gen 16; Gen.of_list [ 300; 1000 ] ]
+  and+ init = of_list [ No_init; Full; Bias ]
+  and+ pad = of_list [ 0; 3 ]
+  and+ spread = of_list [ 0; 8 ] in
+  { dt; out; a_t; b_t; batch; m; n; k; init; pad; spread }
+
+let case = Gen.with_pp pp_case case
+
+(* An operand of [rows] x [cols] per batch, stored [cols][rows] if [trans], each
+   stored row [pad] elements longer, with values from [seed]. *)
+let matrix t (Dt.Any dt) ~trans ~batch ~rows ~cols ~pad ~seed ~spread =
+  let ld = (if trans then rows else cols) + pad in
+  let per = (if trans then cols else rows) * ld in
+  let o = S.operand t (max 1 (Dt.bytes dt (batch * per))) in
+  if batch * per > 0 then S.generate ~spread t o dt (batch * per) ~seed;
+  S.arg o dt (if trans then (per, 1, ld) else (per, ld, 1))
+
+let init_arg t c (Dt.Any dt) =
+  match c.init with
+  | No_init -> None
+  | Full ->
+      Some
+        (matrix t (Dt.Any dt) ~trans:false ~batch:c.batch ~rows:c.m ~cols:c.n
+           ~pad:0 ~seed:3 ~spread:c.spread)
+  | Bias ->
+      let o = S.operand t (max 1 (Dt.bytes dt c.n)) in
+      if c.n > 0 then S.generate ~spread:c.spread t o dt c.n ~seed:4;
+      Some (S.arg o dt (0, 0, 1))
+
+(* The call's operands and its run. *)
+let call t c =
+  let a =
+    matrix t c.dt ~trans:c.a_t ~batch:c.batch ~rows:c.m ~cols:c.k ~pad:c.pad
+      ~seed:1 ~spread:c.spread
+  in
+  let b =
+    matrix t c.dt ~trans:c.b_t ~batch:c.batch ~rows:c.k ~cols:c.n ~pad:c.pad
+      ~seed:2 ~spread:c.spread
+  in
+  let (Dt.Any out_dt) = c.out in
+  let mn = c.batch * c.m * c.n in
+  let out =
+    S.arg (S.operand t (max 1 (Dt.bytes out_dt mn))) out_dt (c.m * c.n, c.n, 1)
+  in
+  let init = init_arg t c c.out in
+  let dims = (c.batch, c.m, c.n, c.k) in
+  let run =
+    require_some ~msg:"the planner declined"
+      (S.plan_contract ?init t dims ~a ~b ~out)
+  in
+  (dims, a, b, out, init, run)
+
+(* Every output is within the contraction's bound of the exact result. *)
+let contract_bound =
+  let empty =
+    {
+      dt = Dt.Any Dt.Float32;
+      out = Dt.Any Dt.Bfloat16;
+      a_t = false;
+      b_t = false;
+      batch = 2;
+      m = 65;
+      n = 3;
+      k = 0;
+      init = Bias;
+      pad = 0;
+      spread = 8;
+    }
+  in
+  (* 128 or more 64 x 64 tiles run on them, whole or reaching past m, n, k. *)
+  let large dt ~a_t ~b_t ~m ~n ~k ~init =
+    { empty with dt; out = dt; a_t; b_t; m; n; k; init; spread = 0 }
+  in
+  let examples =
+    [
+      empty;
+      large (Dt.Any Dt.Float32) ~a_t:false ~b_t:false ~m:512 ~n:512 ~k:64
+        ~init:No_init;
+      large (Dt.Any Dt.Float16) ~a_t:true ~b_t:false ~m:577 ~n:520 ~k:45
+        ~init:Full;
+      large (Dt.Any Dt.Bfloat16) ~a_t:false ~b_t:true ~m:512 ~n:576 ~k:64
+        ~init:Bias;
+      large (Dt.Any Dt.Float32) ~a_t:true ~b_t:true ~m:520 ~n:513 ~k:33
+        ~init:Bias;
+    ]
+  in
+  prop ~count:60 ~examples "a float contraction is within its bound" case
+    (fun c ->
+      cover "an empty sum" (c.k = 0);
+      cover "a transposed operand" (c.a_t || c.b_t);
+      cover "a bias" (c.init = Bias);
+      cover "narrow out" (c.out <> Dt.Any Dt.Float32);
+      let t = dev () in
+      let dims, a, b, out, init, run = call t c in
+      let kernels = S.entries run in
+      let launches_one prefix = String.starts_with ~prefix in
+      let launches prefix = List.exists (launches_one prefix) kernels in
+      let dense =
+        List.filter
+          (fun k -> launches_one "contract_f" k || launches_one "contract_bf" k)
+          kernels
+      in
+      let ends suffix = List.exists (String.ends_with ~suffix) dense in
+      cover "64 x 64 tiles" (dense <> [] && not (ends "_s" || ends "_s_edge"));
+      cover "32 x 32 tiles" (ends "_s" || ends "_s_edge");
+      cover "whole tiles" (dense <> [] && not (ends "_edge"));
+      cover "edge tiles" (ends "_edge");
+      cover "a skinny product, b stored [k][n]" (launches "skinny_" && not c.b_t);
+      cover "a skinny product, b stored [n][k]" (launches "skinny_" && c.b_t);
+      cover "a split along k" (launches "contract_combine");
+      ignore (S.run t run);
+      let worst, at = S.contract_error ?init dims ~a ~b ~out in
+      at_most
+        ~msg:(strf "output %d's error over its bound" at)
+        float_exact ~than:1. worst)
+
+(* Integer contractions wrap in the accumulator and then in out. *)
+
+type int_case = { case : case; acc : Dt.any }
+
+let int_dt =
+  Dt.
+    [
+      Any Int8;
+      Any Uint8;
+      Any Int16;
+      Any Uint16;
+      Any Int32;
+      Any Uint32;
+      Any Int64;
+    ]
+
+let int_case =
+  let open Gen in
+  let+ c = case
+  and+ dt = of_list int_dt
+  and+ out = of_list Dt.[ Any Int8; Any Int32; Any Int64 ]
+  and+ acc = of_list Dt.[ Any Int32; Any Int64 ] in
+  { case = { c with dt; out; spread = 0 }; acc }
+
+let int_case =
+  Gen.with_pp
+    (fun ppf c ->
+      let (Dt.Any acc) = c.acc in
+      Format.fprintf ppf "%a, acc %s" pp_case c.case (Dt.name acc))
+    int_case
+
+(* Bytes into 32 bits sum on the matrix units in float32 chunks: sums longer
+   than a chunk, 1,024 terms of int8 or 258 of uint8. *)
+let long_sums =
+  let case dt ~m ~k =
+    {
+      case =
+        {
+          dt;
+          out = Dt.Any Dt.Int32;
+          a_t = false;
+          b_t = true;
+          batch = 1;
+          m;
+          n = m;
+          k;
+          init = Full;
+          pad = 0;
+          spread = 0;
+        };
+      acc = Dt.Any Dt.Int32;
+    }
+  in
+  [
+    case (Dt.Any Dt.Int8) ~m:64 ~k:2112;
+    case (Dt.Any Dt.Int8) ~m:65 ~k:2101;
+    case (Dt.Any Dt.Uint8) ~m:64 ~k:608;
+    case (Dt.Any Dt.Uint8) ~m:65 ~k:601;
+  ]
+
+let contract_wraps =
+  prop ~count:40 ~examples:long_sums "an integer contraction wraps" int_case
+    (fun { case = c; acc } ->
+      cover "64-bit accumulator" (acc = Dt.Any Dt.Int64);
+      cover "narrow operands" (c.dt = Dt.Any Dt.Int8 || c.dt = Dt.Any Dt.Uint8);
+      let t = dev () in
+      let a =
+        matrix t c.dt ~trans:c.a_t ~batch:c.batch ~rows:c.m ~cols:c.k ~pad:c.pad
+          ~seed:1 ~spread:0
+      in
+      let b =
+        matrix t c.dt ~trans:c.b_t ~batch:c.batch ~rows:c.k ~cols:c.n ~pad:c.pad
+          ~seed:2 ~spread:0
+      in
+      let (Dt.Any out_dt) = c.out in
+      let mn = c.batch * c.m * c.n in
+      let out =
+        S.arg
+          (S.operand t (max 1 (Dt.bytes out_dt mn)))
+          out_dt
+          (c.m * c.n, c.n, 1)
+      in
+      let init = init_arg t c c.out in
+      let dims = (c.batch, c.m, c.n, c.k) in
+      let run =
+        require_some ~msg:"the planner declined"
+          (S.plan_contract ?init ~acc t dims ~a ~b ~out)
+      in
+      ignore (S.run t run);
+      let wrong, first = S.contract_wrong ?init ~acc dims ~a ~b ~out in
+      equal ~msg:(strf "outputs wrong, the first %d" first) int 0 wrong)
+
+(* float64 has no arithmetic on Apple GPUs: the library declines it. *)
+let declines_float64 () =
+  let t = dev () in
+  let m =
+    matrix t (Dt.Any Dt.Float64) ~trans:false ~batch:1 ~rows:4 ~cols:4 ~pad:0
+      ~seed:1 ~spread:0
+  in
+  let plan =
+    S.plan_contract ~acc:(Dt.Any Dt.Float64) t (1, 4, 4, 4) ~a:m ~b:m ~out:m
+  in
+  is_none ~pp:(fun ppf _ -> Format.pp_print_string ppf "a run") plan
+
+(* Determinism: a call's results are the same bits each time it runs. *)
+
+let bytes_of (arg : S.arg) n =
+  let v = S.view Bigarray.char (S.arg_operand arg) in
+  String.init n (fun i -> v.{i})
+
+let deterministic c () =
+  let t = dev () in
+  let _, _, _, out, _, run = call t c in
+  let (Dt.Any out_dt) = c.out in
+  let n = Dt.bytes out_dt (c.batch * c.m * c.n) in
+  let go = S.prepare t run in
+  ignore (go ());
+  let first = bytes_of out n in
+  ignore (go ());
+  equal ~msg:"run twice" string first (bytes_of out n)
+
+let determinism =
+  let case dt ~batch ~m ~n ~k ~b_t =
+    {
+      dt;
+      out = dt;
+      a_t = false;
+      b_t;
+      batch;
+      m;
+      n;
+      k;
+      init = Full;
+      pad = 0;
+      spread = 8;
+    }
+  in
+  cases
+    ~name:(Format.asprintf "%a" pp_case)
+    "determinism"
+    [
+      case (Dt.Any Dt.Float32) ~batch:2 ~m:200 ~n:300 ~k:1000 ~b_t:false;
+      case (Dt.Any Dt.Bfloat16) ~batch:2 ~m:130 ~n:257 ~k:2000 ~b_t:true;
+      case (Dt.Any Dt.Float16) ~batch:1 ~m:768 ~n:776 ~k:300 ~b_t:false;
+      case (Dt.Any Dt.Float16) ~batch:2 ~m:1 ~n:1000 ~k:3000 ~b_t:true;
+      case (Dt.Any Dt.Bfloat16) ~batch:2 ~m:1 ~n:1000 ~k:3000 ~b_t:false;
+      case (Dt.Any Dt.Float32) ~batch:2 ~m:9 ~n:1000 ~k:3000 ~b_t:false;
+      case (Dt.Any Dt.Float32) ~batch:1 ~m:64 ~n:100 ~k:2048 ~b_t:false;
+    ]
+    (fun c -> deterministic c ())
+
+let contract =
+  group ~timeout:120. "contract"
+    [
+      contract_bound;
+      contract_wraps;
+      test "float64 declines" declines_float64;
+      determinism;
+    ]
+
 let () =
   S.hold_gpu ();
-  exit (run "nx_metal" [ runs; arithmetic ])
+  exit (run "nx_metal" [ runs; arithmetic; contract ])

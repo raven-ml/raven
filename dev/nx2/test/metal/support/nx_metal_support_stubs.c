@@ -83,6 +83,22 @@ value nx_metal_test_threads(value unit) {
   return Val_int(NX_HARNESS_THREADS);
 }
 
+/* nx.metal's metallib and its kernels' names, by their nx_metal_kernel. */
+value nx_metal_test_library(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal3(v, b, names);
+  size_t n;
+  const char *m = nx_metal_metallib(&n);
+  b = caml_alloc_initialized_string(n, m);
+  names = caml_alloc_tuple(NX_METAL_KERNEL_COUNT);
+  for (int i = 0; i < NX_METAL_KERNEL_COUNT; i++)
+    Store_field(names, i, caml_copy_string(nx_metal_kernel_names[i]));
+  v = caml_alloc_tuple(2);
+  Store_field(v, 0, b);
+  Store_field(v, 1, names);
+  CAMLreturn(v);
+}
+
 /* The harness's kernels' names, by their nx_harness_kernel. */
 value nx_metal_test_kernels(value unit) {
   (void)unit;
@@ -311,6 +327,217 @@ value nx_metal_test_codec(value v_dtype, value v_codes, value v_decoded,
     encode_wrong += e[i] != want;
   }
   return counts(decode_wrong, encode_wrong, 0);
+}
+
+/* Contract */
+
+/* The operand of the OCaml triple (address, dtype, (s0, s1, s2)). */
+static nx_metal_operand operand(value v) {
+  value s = Field(v, 2);
+  nx_metal_operand o = {(uint64_t)Long_val(Field(v, 0)), Int_val(Field(v, 1)),
+                        {Long_val(Field(s, 0)), Long_val(Field(s, 1)),
+                         Long_val(Field(s, 2))}};
+  return o;
+}
+
+/* The records of the contraction of the dims (batch, m, n, k, acc) over the
+   operands a, b, out and init (an option), with the scratch bytes they
+   address: Some (records, bytes), or None if the planner declines. */
+value nx_metal_test_plan_contract(value v_dims, value v_a, value v_b,
+                                  value v_out, value v_init) {
+  CAMLparam5(v_dims, v_a, v_b, v_out, v_init);
+  CAMLlocal2(s, v);
+  nx_metal_contract_in c = {(uint32_t)Long_val(Field(v_dims, 0)),
+                            (uint32_t)Long_val(Field(v_dims, 1)),
+                            (uint32_t)Long_val(Field(v_dims, 2)),
+                            (uint32_t)Long_val(Field(v_dims, 3)),
+                            Int_val(Field(v_dims, 4))};
+  nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out),
+                   init = Is_some(v_init) ? operand(Some_val(v_init)) : a;
+  nx_metal_records r = {NULL, 0, 0};
+  size_t scratch;
+  int e = nx_metal_plan_contract(&c, &a, &b, &out,
+                                 Is_some(v_init) ? &init : NULL, &r, &scratch);
+  if (e == -2) caml_raise_out_of_memory();
+  if (e == NX_NOT_COMPUTED) CAMLreturn(Val_none);
+  s = caml_alloc_initialized_string(r.len, (const char *)r.bytes);
+  free(r.bytes);
+  v = caml_alloc_tuple(2);
+  Store_field(v, 0, s);
+  Store_field(v, 1, Val_long(scratch));
+  CAMLreturn(caml_alloc_some(v));
+}
+
+/* The value of element [i] of the host memory [p] of dtype [dt]. */
+static double element(const void *p, int dt, int64_t i) {
+  switch (dt) {
+  case NX_FLOAT16: return nx_f16_to_float(((const uint16_t *)p)[i]);
+  case NX_BFLOAT16: return nx_bf16_to_float(((const uint16_t *)p)[i]);
+  case NX_FLOAT32: return ((const float *)p)[i];
+  case NX_INT8: return ((const int8_t *)p)[i];
+  case NX_INT32: return ((const int32_t *)p)[i];
+  default: return 0;
+  }
+}
+
+/* The magnitude from which rounding to [dt] gives infinity. */
+static double overflow(int dt) {
+  return dt == NX_FLOAT16    ? 65520.
+         : dt == NX_BFLOAT16 ? 0x1.ffp127
+                             : 0x1.ffffffp127;
+}
+
+/* The largest error of rounding a float32 x to [dt]: |x| times the unit
+   roundoff, or half the spacing of the subnormals. */
+static double rounding(int dt, double x) {
+  if (dt == NX_FLOAT16) return fmax(0x1p-11 * x, 0x1p-25);
+  if (dt == NX_BFLOAT16) return fmax(0x1p-8 * x, 0x1p-134);
+  return 0;
+}
+
+/* Over every output of the contraction (batch, m, n, k), the largest
+   |out - s| / allowed, s the sum in double: allowed is the contraction's
+   bound γ(k + 1, 2u)·(|init| + Σ|a||b|) at float32's u, plus k·2^-126 for
+   the flushed subnormals, widened by the rounding to out's dtype. Operands are host triples (address, dtype, strides);
+   out is C-contiguous. With the worst element's index. */
+value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
+                                   value v_out, value v_init) {
+  CAMLparam5(v_dims, v_a, v_b, v_out, v_init);
+  CAMLlocal1(v);
+  int64_t batch = Long_val(Field(v_dims, 0)), m = Long_val(Field(v_dims, 1)),
+          n = Long_val(Field(v_dims, 2)), k = Long_val(Field(v_dims, 3));
+  nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out);
+  int has_init = Is_some(v_init);
+  nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
+  double u = 0x1p-24, g = (k + 1) * 2 * u / (1 - (k + 1) * 2 * u);
+  double flush = k * 0x1p-126; /* the GPU's flushed subnormals */
+  double worst = 0;
+  int64_t at = 0;
+  for (int64_t p = 0; p < batch; p++)
+    for (int64_t i = 0; i < m; i++)
+      for (int64_t j = 0; j < n; j++) {
+        double s = 0, mag = 0;
+        for (int64_t l = 0; l < k; l++) {
+          double x = element((void *)a.address, a.dtype,
+                             p * a.strides[0] + i * a.strides[1] +
+                                 l * a.strides[2]);
+          double y = element((void *)b.address, b.dtype,
+                             p * b.strides[0] + l * b.strides[1] +
+                                 j * b.strides[2]);
+          s += x * y;
+          mag += fabs(x * y);
+        }
+        if (has_init) {
+          double z = element((void *)init.address, init.dtype,
+                             p * init.strides[0] + i * init.strides[1] +
+                                 j * init.strides[2]);
+          s += z;
+          mag += fabs(z);
+        }
+        int64_t o = (p * m + i) * n + j;
+        double got = element((void *)out.address, out.dtype, o);
+        double allowed = g * mag + flush +
+                         1.01 * rounding(out.dtype, fabs(s) + g * mag + flush);
+        double e = fabs(got - s);
+        double ratio = allowed > 0 ? e / allowed : (e > 0 ? INFINITY : 0);
+        /* Past out's range a result within the bound rounds to infinity. */
+        if (isinf(got) && signbit(got) == signbit(s) &&
+            fabs(s) + g * mag >= overflow(out.dtype))
+          ratio = 0;
+        if (!(ratio <= worst)) {
+          worst = ratio;
+          at = o;
+        }
+      }
+  v = caml_alloc_tuple(2);
+  Store_field(v, 0, caml_copy_double(worst));
+  Store_field(v, 1, Val_long(at));
+  CAMLreturn(v);
+}
+
+/* The integer at [i] of host memory [p] of dtype [dt], widened by its
+   sign. */
+static uint64_t widened(const void *p, int dt, int64_t i) {
+  switch (dt) {
+  case NX_INT8: return (uint64_t)(int64_t)((const int8_t *)p)[i];
+  case NX_UINT8: return ((const uint8_t *)p)[i];
+  case NX_INT16: return (uint64_t)(int64_t)((const int16_t *)p)[i];
+  case NX_UINT16: return ((const uint16_t *)p)[i];
+  case NX_INT32: return (uint64_t)(int64_t)((const int32_t *)p)[i];
+  case NX_UINT32: return ((const uint32_t *)p)[i];
+  default: return ((const uint64_t *)p)[i];
+  }
+}
+
+/* Over every output of the integer contraction (batch, m, n, k, acc), how
+   many differ from the sum wrapped in acc's width and out's, with the
+   first such output's index, or -1. */
+value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
+                                   value v_out, value v_init) {
+  CAMLparam5(v_dims, v_a, v_b, v_out, v_init);
+  CAMLlocal1(v);
+  int64_t batch = Long_val(Field(v_dims, 0)), m = Long_val(Field(v_dims, 1)),
+          n = Long_val(Field(v_dims, 2)), k = Long_val(Field(v_dims, 3));
+  int acc = Int_val(Field(v_dims, 4));
+  uint64_t acc_mask = acc == NX_INT64 || acc == NX_UINT64 ? ~0ull : 0xffffffffull;
+  nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out);
+  int has_init = Is_some(v_init);
+  nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
+  int bits = nx_dtype_row_of(out.dtype).bits;
+  uint64_t out_mask = bits == 64 ? ~0ull : (1ull << bits) - 1;
+  int64_t wrong = 0, first = -1;
+  for (int64_t p = 0; p < batch; p++)
+    for (int64_t i = 0; i < m; i++)
+      for (int64_t j = 0; j < n; j++) {
+        uint64_t s = 0;
+        for (int64_t l = 0; l < k; l++)
+          s += widened((void *)a.address, a.dtype,
+                       p * a.strides[0] + i * a.strides[1] + l * a.strides[2]) *
+               widened((void *)b.address, b.dtype,
+                       p * b.strides[0] + l * b.strides[1] + j * b.strides[2]);
+        if (has_init)
+          s += widened((void *)init.address, init.dtype,
+                       p * init.strides[0] + i * init.strides[1] +
+                           j * init.strides[2]);
+        int64_t o = (p * m + i) * n + j;
+        uint64_t got = widened((void *)out.address, out.dtype, o);
+        if (((s & acc_mask) & out_mask) != (got & out_mask)) {
+          if (first < 0) first = o;
+          wrong++;
+        }
+      }
+  v = caml_alloc_tuple(2);
+  Store_field(v, 0, Val_long(wrong));
+  Store_field(v, 1, Val_long(first));
+  CAMLreturn(v);
+}
+
+/* The records [v_r] with the scratch at GPU address [v_base] placed. */
+value nx_metal_test_rebase(value v_r, value v_base) {
+  CAMLparam2(v_r, v_base);
+  CAMLlocal1(s);
+  size_t n = caml_string_length(v_r);
+  s = caml_alloc_initialized_string(n, String_val(v_r));
+  nx_metal_rebase((unsigned char *)Bytes_val(s), n, (uint64_t)Long_val(v_base));
+  CAMLreturn(s);
+}
+
+/* The kernel of each launch of the records [v_r], in order. */
+value nx_metal_test_entries(value v_r) {
+  CAMLparam1(v_r);
+  CAMLlocal1(v);
+  const unsigned char *r = (const unsigned char *)String_val(v_r);
+  size_t n = caml_string_length(v_r), count = 0;
+  for (size_t at = 0; at < n; count++)
+    at += sizeof(nx_metal_launch) + ((const nx_metal_launch *)(r + at))->bytes;
+  v = caml_alloc_tuple(count);
+  r = (const unsigned char *)String_val(v_r);
+  for (size_t at = 0, i = 0; at < n; i++) {
+    const nx_metal_launch *l = (const nx_metal_launch *)(r + at);
+    Store_field(v, i, Val_long(l->entry));
+    at += sizeof *l + l->bytes;
+  }
+  CAMLreturn(v);
 }
 
 /* The machine's GPU lock */

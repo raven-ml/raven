@@ -24,18 +24,19 @@ val hold_gpu : unit -> unit
 (** {1:devices Devices} *)
 
 type t
-(** The type for the GPU opened with the harness's metallib loaded. *)
+(** The type for the GPU opened with nx.metal's and the harness's metallibs
+    loaded. *)
 
 val open_ : unit -> t option
-(** [open_ ()] opens the Mac's GPU as the rig device ["METAL"] and loads the
-    harness; [None] on a machine with no Metal GPU. A second call answers the
-    same device. *)
+(** [open_ ()] opens the Mac's GPU as the rig device ["METAL"] and loads
+    nx.metal's and the harness's metallibs; [None] on a machine with no Metal
+    GPU. A second call answers the same device. *)
 
 val rig : t -> Rig.t
 (** [rig t] is [t]'s device. *)
 
 val kernels : string array
-(** [kernels] is the harness's kernels, by their enum. *)
+(** [kernels] is nx.metal's kernels, by their enum, then the harness's. *)
 
 (** {1:operands Operands} *)
 
@@ -76,7 +77,8 @@ val generate :
 (** {1:runs Runs} *)
 
 type run
-(** The type for runs of launches. *)
+(** The type for runs of launches, with the memory they address beyond the
+    caller's operands, such as their scratch, which lives as long as the run. *)
 
 val launch :
   ?groups:int * int * int ->
@@ -85,10 +87,10 @@ val launch :
   addrs:int list ->
   words:int list ->
   run
-(** [launch ~groups ~threads k ~addrs ~words] is a launch of the harness's
-    kernel [k] over [groups] threadgroups (defaults to [(1, 1, 1)]) of [threads]
-    threads (defaults to the harness's 256), with its parameters: the 64-bit
-    addresses [addrs], then the 32-bit [words], padded to a multiple of 8 bytes.
+(** [launch ~groups ~threads k ~addrs ~words] is a launch of the kernel [k] over
+    [groups] threadgroups (defaults to [(1, 1, 1)]) of [threads] threads
+    (defaults to the harness's 256), with its parameters: the 64-bit addresses
+    [addrs], then the 32-bit [words], padded to a multiple of 8 bytes.
 
     Raises [Invalid_argument] if [k] is no kernel. *)
 
@@ -150,3 +152,53 @@ val probe_codec :
     format [dt], the GPU's decodings [decoded] of [codes] and its encodings
     [encoded] of the float32 bits [floats] that differ from nx_dtype.h's on the
     host. *)
+
+(** {1:contract Contract} *)
+
+type arg
+(** The type for operands of a call: memory, a dtype and strides in elements
+    over the call's three axes. *)
+
+val arg : operand -> ('v, 's) Nx_array.Dtype.t -> int * int * int -> arg
+(** [arg o dt strides] is [o] read as [dt] with [strides]. *)
+
+val arg_operand : arg -> operand
+(** [arg_operand a] is [a]'s memory. *)
+
+val plan_contract :
+  ?init:arg ->
+  ?acc:Nx_array.Dtype.any ->
+  t ->
+  int * int * int * int ->
+  a:arg ->
+  b:arg ->
+  out:arg ->
+  run option
+(** [plan_contract ~init ~acc t (batch, m, n, k) ~a ~b ~out] is the run of the
+    contraction of a [(batch, m, k)] and b [(batch, k, n)] into out
+    [(batch, m, n)], C-contiguous, plus [init], accumulated in [acc] (defaults
+    to float32), with its scratch in [t]'s memory, or [None] if nx.metal
+    declines it. *)
+
+val entries : run -> string list
+(** [entries r] is the kernels [r] launches, in order. *)
+
+val contract_wrong :
+  ?init:arg ->
+  acc:Nx_array.Dtype.any ->
+  int * int * int * int ->
+  a:arg ->
+  b:arg ->
+  out:arg ->
+  int * int
+(** [contract_wrong ~acc] is, for an integer contraction accumulated in [acc],
+    once its run returned, the number of outputs that differ from the sum
+    wrapped to [acc]'s width then to out's, and the first one's index, or [-1].
+*)
+
+val contract_error :
+  ?init:arg -> int * int * int * int -> a:arg -> b:arg -> out:arg -> float * int
+(** [contract_error] is, for a float contraction, once its run returned, the
+    largest distance of an output to the exact result as a fraction of the
+    distance the contraction's bound allows, float32 subnormals flushed, with
+    that output's index: at most [1.] when every output is within it. *)
