@@ -145,51 +145,40 @@ __device__ __noinline__ void store(const contract_params &p, int z,
   write(p, z * p.sy[0] + i * p.sy[1] + j * p.sy[2], v);
 }
 
-/* Two outputs (z, i, j) and (z, i, j + 1). With no init, y's pairs whole
-   and aligned along a contiguous j, and y of the accumulator's dtype, or
-   bfloat16 or float16 from float32 (NX_CONTRACT_Y_WHOLE), one
-   store of both; through store otherwise. The conversions round to
-   nearest even, as nx_dtype.h's: only a NaN's payload may differ. */
-__device__ void store_pair(const contract_params &p, int z, int i,
-                                  int j, float v0, float v1) {
+/* Two outputs (z, i, j) and (z, i, j + 1) of the values [v0] and [v1],
+   held in registers. With no init, y's j contiguous, its rows aligned on
+   16 bytes, and y of the accumulator's dtype, or bfloat16 or float16 from
+   float32 (NX_CONTRACT_Y_WHOLE): one store of both, rounding to nearest
+   even as nx_dtype.h's encoders do (only a NaN's payload may differ).
+   Through store otherwise. */
+template <typename T>
+__device__ void store_pair(const contract_params &p, int z, int i, int j,
+                           T v0, T v1) {
   if ((p.aligned & NX_CONTRACT_Y_WHOLE) && i < p.m && j + 1 < p.n) {
     const int64_t o = z * p.sy[0] + i * p.sy[1] + j;
-    uint32_t h;
-    switch (p.y_dtype) {
-    case NX_FLOAT32:
-      *(float2 *)((float *)p.y + o) = make_float2(v0, v1);
-      return;
-    case NX_BFLOAT16:
-      asm("cvt.rn.bf16x2.f32 %0, %1, %2;" : "=r"(h) : "f"(v1), "f"(v0));
-      *(uint32_t *)((uint16_t *)p.y + o) = h;
-      return;
-    case NX_FLOAT16:
-      asm("cvt.rn.f16x2.f32 %0, %1, %2;" : "=r"(h) : "f"(v1), "f"(v0));
+    if (sizeof(T) == 4 && (p.y_dtype == NX_BFLOAT16 || p.y_dtype == NX_FLOAT16)) {
+      uint32_t h;
+      if (p.y_dtype == NX_BFLOAT16)
+        asm("cvt.rn.bf16x2.f32 %0, %1, %2;" : "=r"(h) : "f"((float)v1), "f"((float)v0));
+      else
+        asm("cvt.rn.f16x2.f32 %0, %1, %2;" : "=r"(h) : "f"((float)v1), "f"((float)v0));
       *(uint32_t *)((uint16_t *)p.y + o) = h;
       return;
     }
-  }
-  store(p, z, i, j, v0);
-  store(p, z, i, j + 1, v1);
-}
-
-template <typename T>
-__device__ void store_pair(const contract_params &p, int z, int i,
-                                  int j, T v0, T v1) {
-  if ((p.aligned & NX_CONTRACT_Y_WHOLE) && i < p.m && j + 1 < p.n) {
-    T *y = (T *)p.y + z * p.sy[0] + i * p.sy[1] + j;
-    y[0] = v0, y[1] = v1;
+    struct alignas(2 * sizeof(T)) pair { T e[2]; };
+    *(pair *)((T *)p.y + o) = pair{{v0, v1}};
     return;
   }
   store(p, z, i, j, v0);
   store(p, z, i, j + 1, v1);
 }
 
-/* Eight outputs (z, i, j + e), e < 8, of [v]. With no init, y's j
-   contiguous, its rows aligned on 16 bytes, and y of the accumulator's
-   dtype, or bfloat16 or float16 from float32 (NX_CONTRACT_Y_WHOLE): one
-   16-byte store, rounding to nearest even as nx_dtype.h's encoders do
-   (only a NaN's payload may differ). Through store otherwise. */
+/* Eight outputs (z, i, j + e), e < 8, of [v], in shared memory. With no
+   init, y's j contiguous, its rows aligned on 16 bytes, and y of the
+   accumulator's dtype, or bfloat16 or float16 from float32
+   (NX_CONTRACT_Y_WHOLE): one 16-byte store, rounding to nearest even as
+   nx_dtype.h's encoders do (only a NaN's payload may differ). Through store
+   otherwise. */
 template <typename T>
 __device__ void store8(const contract_params &p, int z, int i, int j,
                               const T *v) {
