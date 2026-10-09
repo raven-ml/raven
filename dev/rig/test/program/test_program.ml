@@ -1235,6 +1235,123 @@ let test_no_rail () =
   let why = require_error (G.load rail_program [| Rig.host |]) in
   contains ~msg:"names the rail" ~sub:"rail 7" why
 
+(* Constants beside holes *)
+
+type beside = {
+  bytes : int64;  (** The word the description holds. *)
+  value : int;
+  width : G.width;
+  shift : int;
+  per_run : bool;  (** The value is the run's int, else fixed. *)
+}
+
+let gen_beside =
+  let open Gen in
+  let+ width = of_list [ G.W32; G.W64 ]
+  and+ shift = int_range 0 62
+  and+ value = int_range 0 max_int
+  and+ raw = int64
+  and+ clash = bool
+  and+ per_run = bool in
+  let field =
+    let w = Int64.of_int (value lsr shift) in
+    match width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w
+  in
+  let raw =
+    match width with W32 -> Int64.logand raw 0xffff_ffffL | W64 -> raw
+  in
+  let bytes = if clash then raw else Int64.logand raw (Int64.lognot field) in
+  { bytes; value; width; shift; per_run }
+
+let gen_beside =
+  Gen.with_pp
+    (fun ppf b ->
+      Format.fprintf ppf "bytes %Lx, value %x >> %d, %s, %s" b.bytes b.value
+        b.shift
+        (match b.width with W32 -> "W32" | W64 -> "W64")
+        (if b.per_run then "per run" else "fixed"))
+    gen_beside
+
+(* A launch of [main] whose 8 parameter bytes hold [b.bytes] with a hole over
+   [b.value]: a value that meets their set bits is refused, at load where it is
+   fixed and at run where it is the run's; otherwise the launch reads the bytes
+   with the value's bits ORed in, every other bit kept. *)
+let beside_law b =
+  let d, pd = polled "beside" in
+  let leaf : value = if b.per_run then Int 0 else Fixed b.value in
+  let bytes = Bytes.create 8 in
+  Bytes.set_int64_le bytes 0 b.bytes;
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      memory = [||];
+      images = [| { device = 0; binary = functions } |];
+      code = [||];
+      inputs = [||];
+      ints = 1;
+      steps =
+        [|
+          submit 0
+            [|
+              {
+                G.queue = "COMPUTE:0";
+                after = [||];
+                work =
+                  Launch
+                    {
+                      image = 0;
+                      kernel = "main";
+                      params =
+                        {
+                          bytes = Bytes.to_string bytes;
+                          holes =
+                            [|
+                              {
+                                G.at = 0;
+                                width = b.width;
+                                leaf;
+                                add = 0;
+                                shift = b.shift;
+                              };
+                            |];
+                        };
+                      refs = [||];
+                      groups = (Fixed 1, Fixed 1, Fixed 1);
+                      threads = (Fixed 1, Fixed 1, Fixed 1);
+                      shared = Fixed 0;
+                    };
+              };
+            |];
+        |];
+    }
+  in
+  let field =
+    let w = Int64.of_int (b.value lsr b.shift) in
+    match b.width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w
+  in
+  let clashes = Int64.logand b.bytes field <> 0L in
+  cover "a value that meets set bits" clashes;
+  cover "a value beside set bits" ((not clashes) && b.bytes <> 0L);
+  cover "a value read per run" b.per_run;
+  match (G.load t [| d |], clashes && not b.per_run) with
+  | Error _, true -> ()
+  | Ok _, true -> fail "load took a fixed value that meets set bits"
+  | Error why, false -> failf "load: %s" why
+  | Ok p, false ->
+      ignore (P.launches pd);
+      let frame = { G.inputs = [||]; ints = [| b.value |] } in
+      if clashes then
+        raises_match ~msg:"run refuses it" Exn.invalid_arg (fun () ->
+            G.run p frame)
+      else begin
+        let pt = (G.run p frame).(0) in
+        Rig.wait d (Rig.Point.value pt);
+        let l = List.hd (P.launches pd) in
+        equal ~msg:"the bytes with the value ORed in" int64
+          (Int64.logor b.bytes field)
+          (String.get_int64_le l.params 0)
+      end
+
 let tests =
   [
     group ~timeout "steps"
@@ -1251,6 +1368,10 @@ let tests =
           "a hole holds the low bits of its leaf plus add, shifted, in memory \
            and in a launch"
           gen_hole hole_law;
+        prop
+          "a value that meets set bits of its bytes is refused, and the bits \
+           outside each value keep the description's bytes"
+          gen_beside beside_law;
       ];
     group ~timeout "bytes"
       [

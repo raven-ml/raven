@@ -91,10 +91,13 @@ type 'a hole = {
     bytes hold the word's constant bits, and [0] where the value goes. For
     example, the high half of an address is
     [{ width = W32; add = 0; shift = 32 }], and a word that holds an address
-    beside a length in its top bits holds the length in the bytes. [v + add] is
-    an [int]: in a [W64] word, the value's bit 63 is its sign, so a constant bit
-    63 lies in the bytes. [shift] is [0] to [62], and holes of one bytes share
-    no byte. *)
+    beside a length in its top bits holds the length in the bytes. A value that
+    meets a set bit of the bytes under it would clobber a constant: {!load}
+    answers [Error] for it, and {!run} raises for a launch's value read per run,
+    so the bits outside each value keep the description's bytes. [v + add] is an
+    [int]: in a [W64] word, the value's bit 63 is its sign, so a constant bit 63
+    lies in the bytes. [shift] is [0] to [62], and holes of one bytes share no
+    byte. *)
 
 type 'a data = { bytes : string; holes : 'a hole array }
 (** The type for bytes with holes. *)
@@ -285,12 +288,13 @@ val load :
     [Error why] if [t] is not well formed for [devices]: an index out of its
     array, other than as many devices as [t]'s, a device whose arch differs, a
     negative size, a hole outside its bytes, sharing a byte with another or with
-    a [shift] outside [0] to [62], a leaf naming memory of [Two] copies in an
-    image or in memory of [One] copy, an [Entry] of a later image, an [init] or
-    a view outside its memory, a launch's parameters of another length, a memory
-    that a device naming it cannot borrow ({!Rig.Buffer.borrow}), an [Address]
-    of memory named by its handle only, an [Int] or a loop's [trip] past the
-    ints, a flag of no byte, a [Host] step's memory the host does not address, a
+    a [shift] outside [0] to [62], a hole whose value meets a set bit of the
+    bytes under it, a leaf naming memory of [Two] copies in an image or in
+    memory of [One] copy, an [Entry] of a later image, an [init] or a view
+    outside its memory, a launch's parameters of another length, a memory that a
+    device naming it cannot borrow ({!Rig.Buffer.borrow}), an [Address] of
+    memory named by its handle only, an [Int] or a loop's [trip] past the ints,
+    a flag of no byte, a [Host] step's memory the host does not address, a
     [split] whose [blocks], [lo] or [hi] {!Rig_host.split} refuses, a [Rail]
     memory, [Ready] or [Ready_arg] of a rail that [rails] does not give, or a
     step whose submission {!Rig.Submission.make} refuses or whose launch
@@ -328,9 +332,9 @@ val run : ?after:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     declares, an input of another device cannot be borrowed, an input a [Host]
     step names is memory the host does not address, [f]'s ints are more than
     [p]'s, a launch's geometry or shared memory, read from the ints, that the
-    run's setters refuse ({!Rig.Submission.Run}), and as {!Rig.submit},
-    {!Rig.Buffer.copy} and {!Rig_host.call} raise; {!Rig.Lost} as the devices
-    raise it. *)
+    run's setters refuse ({!Rig.Submission.Run}), a launch's hole whose value
+    meets a set bit of its bytes, and as {!Rig.submit}, {!Rig.Buffer.copy} and
+    {!Rig_host.call} raise; {!Rig.Lost} as the devices raise it. *)
 
 (** {1:machines Programs of another machine}
 

@@ -920,11 +920,15 @@ let leaf_value p k = function
 
 (* The word hole [h] makes of the value [v] over [word], the word of its bytes
    there: the value's low bits ORed into it. *)
+(* A hole whose value meets set bits of its bytes, at its byte: the value
+   would clobber a constant the description holds there. *)
+exception Clobbers of int
+
 let hole_word h v word =
   let w = Int64.of_int ((v + h.add) lsr h.shift) in
-  match h.width with
-  | W32 -> Int64.logand (Int64.logor word w) 0xffff_ffffL
-  | W64 -> Int64.logor word w
+  let w = match h.width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w in
+  if Int64.logand word w <> 0L then raise (Clobbers h.at);
+  Int64.logor word w
 
 let get_word b h =
   match h.width with
@@ -935,13 +939,15 @@ let get_word b h =
 (* [d]'s bytes with its holes filled for copy [k]. *)
 let filled p k (d : leaf data) =
   let b = Bytes.of_string d.bytes in
-  Array.iter
-    (fun h ->
-      let w = hole_word h (leaf_value p k h.leaf) (get_word d.bytes h) in
-      match h.width with
-      | W32 -> Bytes.set_int32_le b h.at (Int64.to_int32 w)
-      | W64 -> Bytes.set_int64_le b h.at w)
-    d.holes;
+  let fill h =
+    let w = hole_word h (leaf_value p k h.leaf) (get_word d.bytes h) in
+    match h.width with
+    | W32 -> Bytes.set_int32_le b h.at (Int64.to_int32 w)
+    | W64 -> Bytes.set_int64_le b h.at w
+  in
+  (try Array.iter fill d.holes
+   with Clobbers at ->
+     refuse "a hole at byte %d: its value meets set bits of the bytes" at);
   Bytes.unsafe_to_string b
 
 (* Whether [s] names memory of [Two] copies, so that it is made once per
@@ -1066,7 +1072,11 @@ let prepared p k (s : submit) =
 (* A submission [Rig.Submission.make] or a setter refuses is a defect of the
    description. *)
 let prepare p i k s =
-  try prepared p k s with Invalid_argument why -> refuse "step %d: %s" i why
+  try prepared p k s with
+  | Invalid_argument why -> refuse "step %d: %s" i why
+  | Clobbers at ->
+      refuse "step %d: a launch's hole at byte %d meets set bits of its bytes" i
+        at
 
 (* A [Host] step's memory is the host's to address, in each copy. *)
 let check_host p i buffers =
@@ -1253,18 +1263,22 @@ let slot_buffer p (f : frame) k = function
 let submit_step p f k after (spec : submit) copies =
   let q = copies.(if Array.length copies = 2 then k else 0) in
   let d = spec.device in
+  (try
+     for i = 0 to Array.length q.launches - 1 do
+       let l = q.launches.(i) in
+       for j = 0 to Array.length l.holes - 1 do
+         let h = l.holes.(j) in
+         store_hole q.srun l.block l.params h (run_value p f k h.leaf)
+       done;
+       if l.geometry_per_run then
+         store_geometry q.srun l.block l.groups l.threads l.shared
+           (run_value p f k)
+     done
+   with Clobbers at ->
+     invalid "a launch's hole at byte %d: its value meets set bits of its bytes"
+       at);
   pass p f spec.reads q.reads d;
   pass p f spec.writes q.writes d;
-  for i = 0 to Array.length q.launches - 1 do
-    let l = q.launches.(i) in
-    for j = 0 to Array.length l.holes - 1 do
-      let h = l.holes.(j) in
-      store_hole q.srun l.block l.params h (run_value p f k h.leaf)
-    done;
-    if l.geometry_per_run then
-      store_geometry q.srun l.block l.groups l.threads l.shared
-        (run_value p f k)
-  done;
   let waits = if p.ran.(d) then [||] else after in
   match Rig.submit q.sub ~run:q.srun ~reads:q.reads ~writes:q.writes ~waits with
   | point ->
