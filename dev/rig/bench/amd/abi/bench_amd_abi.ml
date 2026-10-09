@@ -198,5 +198,37 @@ let scratch =
             (Scratch.size gfx12 kernel.private_segment));
     ]
 
+(* Thread traces *)
+
+(* A GFX9 trace of 4096 waves, in rounds of 16 that start on 16 compute units,
+   then end, with no time between them. Its tokens are vega10_enum.h's: a
+   WAVE_START of 2 words and a WAVE_END of 1, with the compute unit from bit 6,
+   the slot from bit 10 and the SIMD from bit 14. *)
+let gfx9_trace =
+  let b = Buffer.create (4096 * 6) in
+  let wave token cu slot =
+    token lor (cu lsl 6) lor (slot lsl 10) lor ((cu land 3) lsl 14)
+  in
+  for round = 0 to 255 do
+    let slot = round land 0xf in
+    for cu = 0 to 15 do
+      Buffer.add_uint16_le b (wave 3 cu slot);
+      Buffer.add_uint16_le b 0
+    done;
+    for cu = 0 to 15 do
+      Buffer.add_uint16_le b (wave 6 cu slot)
+    done
+  done;
+  Buffer.contents b
+
+let thread_trace =
+  Thumper.group "thread-trace"
+    [
+      Thumper.bench "waves/gfx9-4096" (fun () ->
+          Thread_trace.waves (Thumper.black_box gfx9) gfx9_trace);
+    ]
+
 let () =
-  exit (Thumper.run "rig_amd_abi" [ pm4; register; aql; code; scratch ])
+  exit
+    (Thumper.run "rig_amd_abi"
+       [ pm4; register; aql; code; scratch; thread_trace ])

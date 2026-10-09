@@ -409,15 +409,21 @@ let iter (g : Gpu.t) f data =
 
 type wave = { cu : int; simd : int; slot : int; start : int; stop : int }
 
+(* A wave's compute unit, SIMD and slot as one int, which a table hashes and
+   compares without allocating: each field is a few bits of a packet, so 20 bits
+   apiece keep them apart. *)
+let key cu simd slot = (cu lsl 40) lor (simd lsl 20) lor slot
+
 let waves g data =
   let started = Hashtbl.create 64 and waves = ref [] in
   let on : Rdna_trace.event -> unit = function
     | Wave_start { time; cu; simd; slot } ->
-        Hashtbl.replace started (cu, simd, slot) time
+        Hashtbl.replace started (key cu simd slot) time
     | Wave_end { time; cu; simd; slot } -> (
-        match Hashtbl.find_opt started (cu, simd, slot) with
+        let k = key cu simd slot in
+        match Hashtbl.find_opt started k with
         | Some start ->
-            Hashtbl.remove started (cu, simd, slot);
+            Hashtbl.remove started k;
             waves := { cu; simd; slot; start; stop = time } :: !waves
         | None -> ())
     | Marker _ -> ()
