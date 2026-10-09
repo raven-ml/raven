@@ -162,31 +162,26 @@ static void narrow(uint dt, uint acc, device uchar *p, ulong i, ulong x) {
   }
 }
 
-/* Reads N runs of 4 consecutive elements at src into x, as vectors. With
-   WIDE, src lies at a multiple of 16 bytes, and bytes are read 16 at a
-   time, four runs from one load: a load reads only at a multiple of its
-   alignment. */
-template <bool WIDE, uint N, typename T>
+/* Reads N runs of 4 consecutive elements at src into x, as vectors. */
+template <uint N, typename T>
 static void runs(thread vec<T, 4> *x, device const T *src) {
   UNROLL
   for (uint v = 0; v < N; v++)
     x[v] = vec<T, 4>(*(device const packed_vec<T, 4> *)(src + 4 * v));
 }
 
-template <uint N, typename T>
-static void bytes(thread vec<T, 4> *x, device const T *src) {
+/* Bytes, 16 at a time, four runs from one load: int8's tiles are whole and
+   their rows start on 16-byte boundaries (plan.c), and a load reads only at
+   a multiple of its alignment. */
+template <uint N>
+static void runs(thread char4 *x, device const char *src) {
+  static_assert(N % 4 == 0, "a thread stages whole 16-byte words");
   UNROLL
   for (uint v = 0; v < N / 4; v++) {
     uint4 w = *(device const uint4 *)(src + 16 * v);
     UNROLL
-    for (uint e = 0; e < 4; e++) x[4 * v + e] = as_type<vec<T, 4>>(w[e]);
+    for (uint e = 0; e < 4; e++) x[4 * v + e] = as_type<char4>(w[e]);
   }
-}
-
-template <bool WIDE, uint N>
-static void runs(thread char4 *x, device const char *src) {
-  if (WIDE) return bytes<N>(x, src);
-  runs<false, N, char>(x, src);
 }
 
 /* An operand's tile as stored: R rows of C elements, contiguous along a
@@ -221,14 +216,14 @@ template <int D, int R, int C, bool K_ROWS> struct tile {
 
   /* Reads the thread's elements of the next step along k, which lies
      wholly inside the matrix, and moves to the step after. */
-  template <bool WIDE> void fetch() {
-    runs<WIDE, per / 4>(x, src);
+  void fetch() {
+    runs<per / 4>(x, src);
     src += K_ROWS ? R * ld : C;
   }
 
   /* fetch, for a step inside the k axis that may reach past the other. */
   void fetch_edge() {
-    if (inside) return fetch<false>();
+    if (inside) return fetch();
     UNROLL
     for (uint e = 0; e < per; e++)
       x[e / 4][e % 4] = (K_ROWS ? c + e < cols : r < rows) ? src[e] : T(0);
@@ -347,6 +342,7 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
                      uint sg [[simdgroup_index_in_threadgroup]],
                      uint lane [[thread_index_in_simdgroup]]) {
   typedef typename elt<D>::t T;
+  static_assert(D != I8 || !EDGE, "int8 tiles are whole");
   /* The tile: TM × TN accumulators of 8 × 8 a simdgroup, and BK steps of
      k at a time. */
   constexpr int TM = BM / (8 * WM), TN = BN / (8 * WN);
@@ -401,8 +397,8 @@ kernel void contract(constant nx_metal_contract &p [[buffer(0)]],
   if (inside)
     for (uint s = 0; s < steps; s++) {
       threadgroup_barrier(mem_flags::mem_threadgroup);
-      ta.template fetch<!EDGE>();
-      tb.template fetch<!EDGE>();
+      ta.fetch();
+      tb.fetch();
       ta.put();
       tb.put();
       threadgroup_barrier(mem_flags::mem_threadgroup);
