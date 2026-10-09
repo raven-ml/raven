@@ -302,10 +302,7 @@ __device__ void mma_contract(const contract_params &p) {
 
   if (p.splits > 1) {
     Acc(&flat)[MI * NI * 4] = *reinterpret_cast<Acc(*)[MI * NI * 4]>(acc);
-    const int tile = z * tiles_m * tiles_n + tm * tiles_n + tn;
-    if (!combine(flat, (Acc *)p.partials + (size_t)tile * p.splits * MI * NI * 4 * THREADS,
-                 p.tickets + tile, p.splits, split))
-      return;
+    if (!combine(flat, (Acc *)p.partials, p.tickets, p.splits)) return;
   }
 
   epilogue<Acc, BM, BN, WM, WN, THREADS, STAGES * (BM + BN) * BKB>(

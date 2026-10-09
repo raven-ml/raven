@@ -190,12 +190,8 @@ __device__ void skinny_contract(const contract_params &p,
   const T *sums = &level8[0][0][0];
   __syncthreads();
   T v[1] = {threadIdx.x < R * 32 ? sums[threadIdx.x] : T(0)};
-  if (splits > 1) {
-    const int tile = z * gridDim.x + blockIdx.x;
-    if (!combine(v, (T *)p.partials + (size_t)tile * splits * blockDim.x,
-                 p.tickets + tile, splits, split))
-      return;
-  }
+  if (splits > 1 && !combine(v, (T *)p.partials, p.tickets, splits))
+    return;
   const int i = threadIdx.x / 32;
   if (i < R && i0 + i < p.m) store(p, z, i0 + i, j0 + threadIdx.x % 32, v[0]);
 }

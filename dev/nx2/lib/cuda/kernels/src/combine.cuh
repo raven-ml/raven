@@ -15,17 +15,21 @@
 
 #include <stdint.h>
 
-/* [v] is this thread's N values of the partial of range [z] of a tile whose
-   [splits] partials go to [part] (N * threads values each) and whose ticket
-   is the word at [ticket], 0 before the first block arrives. Returns true
-   in the last block, its [v] then the tile's sum, and false in the others,
-   which stop there. */
+/* [v] is this thread's N values of the partial of its block: range
+   blockIdx.y of the tile of blockIdx.x and blockIdx.z, whose [splits]
+   partials go to [partials] (N * threads values each, the tiles one after
+   another) and whose ticket is its word of [tickets], 0 before the first
+   block arrives. Returns true in the last block, its [v] then the tile's
+   sum, and false in the others, which stop there. */
 template <typename T, int N>
-__device__ bool combine(T (&v)[N], T *part, uint32_t *ticket, int splits,
-                        int z) {
+__device__ bool combine(T (&v)[N], T *partials, uint32_t *tickets,
+                        int splits) {
   __shared__ int last;
   const int threads = blockDim.x * blockDim.y, tid =
       threadIdx.y * blockDim.x + threadIdx.x;
+  const int tile = blockIdx.z * gridDim.x + blockIdx.x, z = blockIdx.y;
+  T *part = partials + (size_t)tile * splits * N * threads;
+  uint32_t *ticket = tickets + tile;
   T *mine = part + (size_t)z * N * threads;
 #pragma unroll
   for (int f = 0; f < N; f++) __stcg(mine + (size_t)f * threads + tid, v[f]);

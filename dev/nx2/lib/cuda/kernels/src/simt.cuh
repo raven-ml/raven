@@ -121,10 +121,7 @@ __device__ void simt_contract(const contract_params &p) {
 
   if (p.splits > 1) {
     T(&flat)[TM * TM] = *reinterpret_cast<T(*)[TM * TM]>(acc);
-    const int tile = z * gridDim.x + blockIdx.x;
-    if (!combine(flat, (T *)p.partials + (size_t)tile * p.splits * TM * TM * 256,
-                 p.tickets + tile, p.splits, split))
-      return;
+    if (!combine(flat, (T *)p.partials, p.tickets, p.splits)) return;
   }
   /* A thread's columns in each half are consecutive: in pairs, from two
      on. */
