@@ -296,6 +296,63 @@ let constants =
           equal (array bits) [| 0.; 0.; 0.; 0. |] (elements z));
     ]
 
+(* Kills [x]'s memory, as a donation consumes it. *)
+let kill x =
+  let b = A.buffer (Option.get (Nx.Repr.array x)) in
+  Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+      ignore (Rig.Claim.consume c ~why:"consumed by the test" b))
+
+let test_zeros_like_reads_nothing () =
+  let x = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
+  kill x;
+  invalid ~by:"Nx.add" (fun () -> Nx.add x x);
+  C.reset ();
+  let z = Nx.zeros_like x in
+  equal ~msg:"kernel calls: one fill" int 1 (C.calls ());
+  equal (array bits) [| 0.; 0. |] (elements z)
+
+(* Every public function takes a value of every set, a constant included, and
+   gives what it gives on the host. *)
+let every_function (type d) name (x : (float, D.float32_elt, d) Nx.t) =
+  let msg f = name ^ ": " ^ f in
+  let xs = elements x in
+  let ys f = Array.map f xs in
+  equal ~msg:(msg "shape") (array int) [| 2; 2 |] (Nx.shape x);
+  equal ~msg:(msg "dtype") string "float32" (D.name (Nx.dtype x));
+  ignore (Nx.placement x);
+  equal ~msg:(msg "place") (array bits) xs (elements (Nx.place (Nx.placement x) x));
+  equal ~msg:(msg "zeros_like") (array bits) (ys (fun _ -> 0.)) (elements (Nx.zeros_like x));
+  equal ~msg:(msg "add") (array bits) (ys (fun v -> v +. v)) (elements (Nx.add x x));
+  equal ~msg:(msg "mul") (array bits) (ys (fun v -> v *. v)) (elements (Nx.mul x x));
+  equal ~msg:(msg "add a scalar") (array bits) (ys (fun v -> v +. 1.))
+    (elements (Nx.add x (Nx.scalar D.Float32 1.)));
+  let less = Nx.less x (Nx.zeros_like x) in
+  equal ~msg:(msg "less") (array bool) (ys (fun v -> v < 0.)) (elements less);
+  equal ~msg:(msg "where") (array bits) (ys (fun v -> if v < 0. then v else 0.))
+    (elements (Nx.where less x (Nx.zeros_like x)));
+  equal ~msg:(msg "cast") (array bits) xs (elements (Nx.cast D.Float64 x));
+  equal ~msg:(msg "reshape") (array bits) xs (elements (Nx.reshape [| 4 |] x));
+  equal ~msg:(msg "copy") (array bits) xs (elements (Nx.copy x));
+  ignore (Nx.Repr.array x);
+  equal ~msg:(msg "shards") bool true (Nx.Repr.shards x <> None)
+
+let test_every_set () =
+  let host = on_host Plain D.Float32 [| 2; 2 |] [| 1.; -2.; 3.; -4. |] in
+  every_function "host" host;
+  every_function "one memory device" (Nx.place Count.on host);
+  every_function "two, whole on each" (Nx.place Count2.on host);
+  every_function "two, split" (Nx.place (Count2.split ~axis:0) host);
+  every_function "a constant"
+    (Nx.add (Nx.zeros D.Float32 [| 2; 2 |]) (Nx.scalar D.Float32 (-1.5)))
+
+let sets =
+  group "sets"
+    [
+      test "zeros_like reads none of its argument's elements"
+        test_zeros_like_reads_nothing;
+      test "every function takes a value of every set" test_every_set;
+    ]
+
 let allocation =
   group "allocation"
     [
@@ -312,4 +369,5 @@ let allocation =
     ]
 
 let () =
-  exit (run "nx exec" [ laws; broadcasting; kernels; constants; allocation ])
+  exit
+    (run "nx exec" [ laws; broadcasting; kernels; constants; sets; allocation ])

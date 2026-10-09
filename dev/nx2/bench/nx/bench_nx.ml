@@ -23,6 +23,7 @@ let host n =
 
 let x1 = host 1
 let x16 = host 16
+let x1m = host (1 lsl 20)
 let b1 = Nx.less x1 x1
 let a1 = Option.get (Nx.Repr.array x1)
 let half = Nx.scalar D.Float32 0.5
@@ -56,6 +57,10 @@ let dispatch_rows =
           Nx.reshape [| 1; 1 |] (Thumper.black_box x1));
       Thumper.bench "zeros_like-1" (fun () ->
           Nx.zeros_like (Thumper.black_box x1));
+      Thumper.bench "zeros_like-1M" (fun () ->
+          Nx.zeros_like (Thumper.black_box x1m));
+      Thumper.bench "zeros-1M" (fun () ->
+          Nx.place Nx.Placement.host (Nx.zeros D.Float32 [| 1 lsl 20 |]));
       Thumper.bench "add-scalar-1" (fun () ->
           Nx.add (Thumper.black_box x1) (Nx.scalar D.Float32 1.));
     ]

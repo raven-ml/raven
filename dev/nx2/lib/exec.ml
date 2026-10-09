@@ -389,7 +389,7 @@ and compute : type r. by:string -> r Value.prim -> r =
       let where = ref None in
       let r = Prim.results ~by (alloc ~by ~where ()) op in
       let prog =
-        Builder.single
+        Prim.program
           (Op1 (Copy, D.Any (Prim.dtype x), 0))
           [| D.Any (Prim.dtype x) |]
       in
@@ -551,32 +551,19 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
     A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
-let one_node ~by node dt ins loads =
-  let prog = Builder.single node ins in
-  let shape = match loads.(0) with Value.Plain x -> Prim.shape x in
-  let v, () = run ~by (Value.Map { shape; prog; outs = Value.[ dt ]; loads }) in
-  v
-
 (* The paths that build the operation, apart so that the fast paths make no
    closure. *)
 let map1 ~by k dt x =
-  one_node ~by
-    (Op1 (k, D.Any dt, 0))
-    dt
-    [| D.Any (Prim.dtype x) |]
-    [| Value.Plain x |]
+  let v, () = run ~by (Prim.op1 k dt x) in
+  v
 
 let map2 ~by k dt x y =
-  let i = D.Any (Prim.dtype x) in
-  one_node ~by (Op2 (k, 0, 1)) dt [| i; i |] [| Value.Plain x; Value.Plain y |]
+  let v, () = run ~by (Prim.op2 k dt x y) in
+  v
 
 let map3 ~by k c x y =
-  let i = D.Any (Prim.dtype x) in
-  one_node ~by
-    (Op3 (k, 0, 1, 2))
-    (Prim.dtype x)
-    [| D.Any (Prim.dtype c); i; i |]
-    [| Value.Plain c; Value.Plain x; Value.Plain y |]
+  let v, () = run ~by (Prim.op3 k c x y) in
+  v
 
 let apply1 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t) :
     (w, r, d) Value.t =

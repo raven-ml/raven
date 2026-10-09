@@ -67,6 +67,35 @@ val results : by:string -> maker -> 'r prim -> 'r
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
     operands break its rule. *)
 
+val program : Nx_kernel.Prog.node -> Nx_array.Dtype.any array -> Nx_kernel.Prog.t
+(** [program n ins] is {!Nx_kernel.Prog.of_node}[ ~ins n]. Each domain keeps
+    the programs it made: a call equal to an earlier one on the domain makes
+    none.
+
+    Raises [Invalid_argument] as {!Nx_kernel.Prog.v} does. *)
+
+val op1 :
+  Nx_kernel.Prog.op1 ->
+  ('w, 'r) dtype ->
+  ('v, 's, 'd) t ->
+  (('w, 'r, 'd) t * unit) prim
+
+val op2 :
+  Nx_kernel.Prog.op2 ->
+  ('w, 'r) dtype ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  (('w, 'r, 'd) t * unit) prim
+
+val op3 :
+  Nx_kernel.Prog.op3 ->
+  ('a, 'b, 'd) t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  (('v, 's, 'd) t * unit) prim
+(** [opN k dt x …] is the map of the one node [k] over [x …], of [x]'s shape,
+    with result dtype [dt] ([op3]'s: its second operand's). *)
+
 type placer = {
   place : 'v 's 'd. 'd Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
 }

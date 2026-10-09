@@ -4,9 +4,34 @@
   ---------------------------------------------------------------------------*)
 
 type ('v, 's, 'd) t = ('v, 's, 'd) Value.t
+type ('v, 's) dtype = ('v, 's) Nx_array.Dtype.t
 
 let shape = Prim.shape
 let dtype = Prim.dtype
+
+module Dtype = Nx_array.Dtype
+
+let float64 = Dtype.Float64
+let float32 = Dtype.Float32
+let float16 = Dtype.Float16
+let bfloat16 = Dtype.Bfloat16
+let float8_e4m3fn = Dtype.Float8_e4m3fn
+let float8_e5m2 = Dtype.Float8_e5m2
+let float4_e2m1fn = Dtype.Float4_e2m1fn
+let int64 = Dtype.Int64
+let uint64 = Dtype.Uint64
+let int32 = Dtype.Int32
+let uint32 = Dtype.Uint32
+let int16 = Dtype.Int16
+let uint16 = Dtype.Uint16
+let int8 = Dtype.Int8
+let uint8 = Dtype.Uint8
+let int4 = Dtype.Int4
+let uint4 = Dtype.Uint4
+let complex128 = Dtype.Complex128
+let complex64 = Dtype.Complex64
+let bool = Dtype.Bool
+let bit = Dtype.Bit
 
 type host = Devices.host
 type 'd devices = 'd Devices.t
@@ -77,7 +102,7 @@ let bits ~by dt v =
   | exception Invalid_argument e -> invalid_argf "%s: %s" by e
 
 let fill ~by dt shape v =
-  let prog = Builder.single (Const (D.Any dt, bits ~by dt v)) [||] in
+  let prog = Prim.program (Const (D.Any dt, bits ~by dt v)) [||] in
   let x, () =
     Exec.run ~by (Value.Map { shape; prog; outs = Value.[ dt ]; loads = [||] })
   in
@@ -86,17 +111,14 @@ let fill ~by dt shape v =
 let zeros dt shape = fill ~by:"Nx.zeros" dt shape (D.zero dt)
 let scalar dt v = fill ~by:"Nx.scalar" dt [||] v
 
+(* Zeros of [x]'s dtype and shape filled where [x] lies: [x]'s elements are
+   never read. *)
 let zeros_like x =
+  let by = "Nx.zeros_like" in
   let dt = dtype x in
-  let prog =
-    Builder.single (Const (D.Any dt, P.bits dt (D.zero dt))) [| D.Any dt |]
-  in
-  let z, () =
-    Exec.run ~by:"Nx.zeros_like"
-      (Value.Map
-         { shape = shape x; prog; outs = Value.[ dt ]; loads = [| Plain x |] })
-  in
-  z
+  let z = fill ~by dt (shape x) (D.zero dt) in
+  if Prim.is_constant x then z
+  else Exec.run ~by (Value.Place (Prim.placement x, z))
 
 (* The shape [s] and [s'] broadcast to: aligned at their last axes, each extent
    equal or [1]. *)

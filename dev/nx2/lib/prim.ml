@@ -389,6 +389,43 @@ let results : type r. by:string -> maker -> r prim -> r =
               (shape x) pp_shape s)
         data
 
+(* One-node programs and maps *)
+
+(* Each domain's one-node programs, by node and operand dtypes: plain data,
+   compared structurally. A program built once is not built again, which saves
+   a slow-path operation the program's construction (7% of
+   dispatch/zeros_like-1). *)
+let programs = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
+
+let program node ins =
+  let table = Domain.DLS.get programs in
+  let key = (node, ins) in
+  match Hashtbl.find_opt table key with
+  | Some p -> p
+  | None ->
+      let p = P.of_node ~ins node in
+      Hashtbl.add table key p;
+      p
+
+let one_node node dt ins loads =
+  let shape = match loads.(0) with Plain x -> shape x in
+  Map { shape; prog = program node ins; outs = Value.[ dt ]; loads }
+
+let op1 k dt x =
+  one_node (P.Op1 (k, D.Any dt, 0)) dt [| D.Any (dtype x) |] [| Plain x |]
+
+let op2 k dt x y =
+  let i = D.Any (dtype x) in
+  one_node (P.Op2 (k, 0, 1)) dt [| i; i |] [| Plain x; Plain y |]
+
+let op3 k c x y =
+  let i = D.Any (dtype x) in
+  one_node
+    (P.Op3 (k, 0, 1, 2))
+    (dtype x)
+    [| D.Any (dtype c); i; i |]
+    [| Plain c; Plain x; Plain y |]
+
 type placer = {
   place : 'v 's 'd. 'd Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
 }

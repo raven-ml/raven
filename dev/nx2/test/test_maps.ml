@@ -143,7 +143,7 @@ let fresh_one () =
           {
             shape = [||];
             prog =
-              Builder.single (Const (D.Any D.Float32, P.bits D.Float32 1.)) [||];
+              Prim.program (Const (D.Any D.Float32, P.bits D.Float32 1.)) [||];
             outs = Value.[ D.Float32 ];
             loads = [||];
           }))
