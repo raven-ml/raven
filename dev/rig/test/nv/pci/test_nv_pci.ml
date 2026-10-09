@@ -98,7 +98,7 @@ let state =
 let gpu_bus = "0000:03:00.0"
 let taking = "--take"
 
-let fixture () =
+let fixture ?(booted = true) () =
   if not Rig_pci_support.on_linux then
     skip ~reason:"flock on a function's file needs Linux" ();
   let root =
@@ -118,7 +118,12 @@ let fixture () =
   (* NV_PMC_BOOT_42: architecture 0x19 (Ada), implementation 2. *)
   set32 0xa00 ((0x19 lsl 24) lor (2 lsl 20));
   (* NV_PFB_PRI_MMU_WPR2_ADDR_HI *)
-  set32 0x1fa828 0x7ff;
+  if booted then set32 0x1fa828 0x7ff
+  else begin
+    (* The GPU's own boot done: its progress unlocked, then completed. *)
+    set32 0x118128 1;
+    set32 0x118234 0xff
+  end;
   Tree.add root (device ^ "reset") "";
   root
 
@@ -248,6 +253,26 @@ let test_held () =
       contains ~msg:"the take's reason" ~sub:"taken already" why;
       equal ~msg:"no reset" string "" (resets root))
 
+(* The pinned firmware, from the directories the variable RIG_NV_PCI_FIRMWARE
+   lists, separated by [:]: an open reaches the GPU's boot only with them. *)
+let firmware () =
+  match Sys.getenv_opt "RIG_NV_PCI_FIRMWARE" with
+  | Some dirs -> String.split_on_char ':' dirs
+  | None -> skip ~reason:"needs NVIDIA's firmware (RIG_NV_PCI_FIRMWARE)" ()
+
+(* A GPU whose GSP is down boots without a reset. Its open fails at the memory
+   size its firmware should have written, before the GSP's memory is taken: it
+   gives the GPU back as found, so the next open does not reset it either. *)
+let test_failed_early () =
+  let root = fixture ~booted:false () in
+  let firmware = firmware () in
+  let machine = Rig_pci.Machine.at root in
+  for _ = 1 to 2 do
+    let why = require_error (Rig_nv_pci.open_ ~machine ~firmware 0) in
+    contains ~msg:"refused" ~sub:"wrote no memory size" why
+  done;
+  equal ~msg:"no reset" string "" (resets root)
+
 let booted =
   group ~timeout:Rig_pci_support.patience "booted GPUs"
     [
@@ -265,6 +290,10 @@ let booted =
         test_outlived;
       test "a GPU another process holds is refused, never reset (a child holds)"
         test_held;
+      test
+        "an open that fails before the GSP's memory is taken gives the GPU \
+         back unreset (RIG_NV_PCI_FIRMWARE)"
+        test_failed_early;
     ]
 
 let () =
