@@ -43,6 +43,12 @@ val apply3 :
     an [Array], it is {!Exec.apply1} to {!Exec.apply3}, which build no operation
     on their fast path. *)
 
+val place :
+  by:string -> 'e Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'e) t
+(** [place ~by p x] is {!eval} of [Place (p, x)]. With no live [Extent] on the
+    calling domain, a value on one device already at [p] answers at once, over
+    its array. *)
+
 val expand : interpretation -> by:string -> 'r prim -> 'r option
 (** [expand i ~by op] is {!Expand.run} over {!eval}, with [i] not running: an
     optional case as core operations, which reach [i] again. *)

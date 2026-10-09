@@ -45,5 +45,11 @@ let apply3 ~by k c x y =
   if Interp.quiet () then Exec.apply3 ~slow:eval3 ~by k c x y
   else eval3 ~by k c x y
 
+let place ~by p x =
+  match x with
+  | Array { at; a } when Devices.rebrand at == p && Interp.quiet () ->
+      Array { at = p; a }
+  | Array _ | Shards _ | Deferred _ | Traced _ -> eval ~by (Place (p, x))
+
 let expand i ~by op =
   Interp.expanding i (fun () -> Expand.run { apply = eval } ~by op)

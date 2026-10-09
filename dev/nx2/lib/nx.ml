@@ -81,7 +81,7 @@ let devices ?kernels ds : (module Devices) =
     let split ~axis = Devices.split ~by:"Nx.Placement.split" ~axis v
   end)
 
-let place p x = Eval.eval ~by:"Nx.place" (Value.Place (p, x))
+let place p x = Eval.place ~by:"Nx.place" p x
 let placement x = if Prim.is_constant x then None else Some (Prim.placement x)
 
 module Repr = struct
