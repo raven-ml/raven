@@ -208,24 +208,32 @@ typedef float f32x8 __attribute__((ext_vector_type(8)));
 typedef int i32x8 __attribute__((ext_vector_type(8)));
 typedef int i32x2 __attribute__((ext_vector_type(2)));
 
-#define KIND_h16 0
-#define KIND_s8 1
+#define KIND_bf16 0
+#define KIND_f16 1
+#define KIND_s8 2
 
 /* A wave's 16 x 16 tile of sums: lane l holds rows 8 (l / 16) + e, e < 8,
    of column l % 16. Its operand fragments: lane l holds k 8 (l / 16) + e
    of row l % 16 (a's rows m, b's rows n), 8 elements of 16 or 8 bits. */
 template <int KIND> struct Wmma;
 
-template <> struct Wmma<KIND_h16> {
+template <> struct Wmma<KIND_bf16> {
   typedef float acc;
   typedef f32x8 tile;
   typedef u32x4 frag;
-  static DEVICE tile step(const frag &a, const frag &b, tile c, int f16) {
-    if (f16)
-      return __builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12(
-          __builtin_bit_cast(f16x8, a), __builtin_bit_cast(f16x8, b), c);
+  static DEVICE tile step(const frag &a, const frag &b, tile c) {
     return __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32_gfx12(
         __builtin_bit_cast(bf16x8, a), __builtin_bit_cast(bf16x8, b), c);
+  }
+};
+
+template <> struct Wmma<KIND_f16> {
+  typedef float acc;
+  typedef f32x8 tile;
+  typedef u32x4 frag;
+  static DEVICE tile step(const frag &a, const frag &b, tile c) {
+    return __builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12(
+        __builtin_bit_cast(f16x8, a), __builtin_bit_cast(f16x8, b), c);
   }
 };
 
@@ -233,7 +241,7 @@ template <> struct Wmma<KIND_s8> {
   typedef int acc;
   typedef i32x8 tile;
   typedef i32x2 frag;
-  static DEVICE tile step(const frag &a, const frag &b, tile c, int) {
+  static DEVICE tile step(const frag &a, const frag &b, tile c) {
     return __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(true, a, true, b,
                                                             c, false);
   }
@@ -359,7 +367,7 @@ DEVICE void wmma_contract(const contract_params &p) {
       for (int i = 0; i < MI; i++)
 #pragma unroll
         for (int j = 0; j < NI; j++)
-          acc[i][j] = W::step(fa[i], fb[j], acc[i][j], p.f16);
+          acc[i][j] = W::step(fa[i], fb[j], acc[i][j]);
     }
     if (more) {
       uint8_t *next = smem + (kt + 1) % 2 * STAGE;

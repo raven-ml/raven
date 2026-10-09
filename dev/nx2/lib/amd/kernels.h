@@ -39,8 +39,8 @@ typedef struct __attribute__((aligned(8))) {
 /* X(name, FAMILY, ...) for every kernel of the code object, in enum order;
    the arguments after the family are its instance's:
    - ZERO, PACK: none.
-   - WMMA (contract.hip): the operands' kind (h16: bfloat16 or float16, by
-     contract_params' [f16]; s8) and the tile. Both operands k contiguous.
+   - WMMA (contract.hip): the operands' kind (bf16, f16, s8) and the tile.
+     Both operands k contiguous.
    - SIMT (contract.hip): the accumulator's type and the tile's side.
    - SKINNY (contract.hip): the accumulator's type.
    Instances are a budget: each names the rows that keep it. A layout or
@@ -52,13 +52,17 @@ typedef struct __attribute__((aligned(8))) {
   /* f8 operands, rows not of vectors, operands whose free axis is           \
      contiguous */                                                           \
   X(pack, PACK)                                                              \
-  /* bf16 and f16 1024 to 8192, 4096x14336x4096, the gpt-oss prefill        \
-     rows, 64x512x512x512 */                                                 \
-  X(contract_h16_t128x128, WMMA, h16, t128x128)                             \
-  /* 256, 512 */                                                             \
-  X(contract_h16_t64x64, WMMA, h16, t64x64)                                 \
+  /* bf16 1024 to 8192, 4096x14336x4096, the gpt-oss prefill rows,          \
+     64x512x512x512 */                                                       \
+  X(contract_bf16_t128x128, WMMA, bf16, t128x128)                           \
+  /* bf16 256, 512 */                                                        \
+  X(contract_bf16_t64x64, WMMA, bf16, t64x64)                               \
   /* bf16 decode: 1x5120x2880, 1x201088x2880 */                              \
-  X(contract_h16_t16x64, WMMA, h16, t16x64)                                 \
+  X(contract_bf16_t16x64, WMMA, bf16, t16x64)                               \
+  /* f16 1024 to 8192 */                                                     \
+  X(contract_f16_t128x128, WMMA, f16, t128x128)                             \
+  /* f16 256, 512 */                                                         \
+  X(contract_f16_t64x64, WMMA, f16, t64x64)                                 \
   /* int8 4096 */                                                            \
   X(contract_s8_t128x128, WMMA, s8, t128x128)                               \
   /* f32 2048 to 8192 and the 4096 layouts */                                \
@@ -96,8 +100,7 @@ enum nx_amd_kernel { NX_AMD_KERNELS(NX_AMD_ENUM) NX_AMD_KERNEL_COUNT };
    its own workgroup, and the last to arrive adds them in range order
    (combine.h). A SIMT kernel reads a and b of [a_dtype] and [b_dtype],
    converting to its accumulator. The sum, of [acc_dtype], reaches y as a
-   cast from it does. [aligned] holds the NX_CONTRACT_ bits below. [f16]
-   selects float16 over bfloat16 operands in an h16 WMMA kernel. */
+   cast from it does. [aligned] holds the NX_CONTRACT_ bits below. */
 typedef struct {
   const void *a, *b, *init;
   void *y, *partials;
@@ -105,7 +108,7 @@ typedef struct {
   int64_t sa[3], sb[3], si[3], sy[3];
   int32_t batch, m, n, k;
   int32_t splits, a_dtype, b_dtype, init_dtype;
-  int32_t y_dtype, acc_dtype, aligned, f16;
+  int32_t y_dtype, acc_dtype, aligned;
 } contract_params;
 
 /* contract_params' bits of [aligned]. */

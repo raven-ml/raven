@@ -35,11 +35,13 @@ DEVICE uint32_t group_z(void) { return __builtin_amdgcn_workgroup_id_z(); }
 DEVICE u64 index_of(uint32_t n) { return (u64)group() * n + item(); }
 
 /* Waits for the workgroup's work-items, each seeing the others' writes to
-   the local data share before it. */
+   the local data share before it. The fences order the local data share
+   alone: a fence over global memory too would invalidate the compute
+   unit's vector cache at every barrier. */
 DEVICE void barrier(void) {
-  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");
+  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup", "local");
   __builtin_amdgcn_s_barrier();
-  __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
+  __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup", "local");
 }
 
 /* [v] of the lane [lane] ^ [d] of the wave of 32. */
