@@ -12,8 +12,8 @@
    strides element by element. A cast is unstage ∘ stage, plane by plane:
    the stage brings the source's block to its carrier, in place where the
    source is already one in contiguous rows, and the unstage converts the
-   carrier into the destination's dtype. A cast to the source's own dtype
-   is a copy, NaN payloads kept. */
+   carrier into the destination's dtype. A cast to the source's own dtype,
+   and a bitcast, is a copy, NaN payloads kept. */
 
 #include <caml/mlvalues.h>
 
@@ -129,6 +129,14 @@ static value walk_operands(value vd, value vs, int d, int s, int64_t most,
 value nx_cpu_copy(value vd, value vs) {
   int d = nx_array_dtype(vd);
   return walk_operands(vd, vs, d, d, COPY_MOST, copy_block);
+}
+
+/* A bitcast copies the bits of a dtype of the destination's width. */
+value nx_cpu_bitcast(value vd, value vs) {
+  int d = nx_array_dtype(vd), s = nx_array_dtype(vs);
+  if (nx_dtype_row_of(d).bits != nx_dtype_row_of(s).bits)
+    return Val_int(NX_DTYPE);
+  return walk_operands(vd, vs, d, s, COPY_MOST, copy_block);
 }
 
 value nx_cpu_cast(value vd, value vs) {

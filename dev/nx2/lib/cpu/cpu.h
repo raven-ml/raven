@@ -68,8 +68,11 @@ typedef struct {
   nx_cpu_micro thin[3];  /* of 1, 2 and 4 rows; f NULL where none */
 } nx_cpu_gemm;
 
-/* A row of a kind of two operands: n elements of [d] from [x] and [y], each
-   stepping its own count of elements; of three, from [c], [x] and [y]. */
+/* A row of a kind of one operand: n elements of [d] from [x], each stepping
+   its own count of elements; of two, from [x] and [y]; of three, from [c],
+   [x] and [y]. */
+typedef void (*nx_cpu_row1)(int64_t n, uint8_t *d, int64_t sd,
+                            const uint8_t *x, int64_t sx);
 typedef void (*nx_cpu_row2)(int64_t n, uint8_t *d, int64_t sd,
                             const uint8_t *x, int64_t sx, const uint8_t *y,
                             int64_t sy);
@@ -96,8 +99,10 @@ typedef struct {
      the target has none. dot[acc] is lane order's dot. */
   nx_cpu_gemm gemm[NX_DTYPE_COUNT];
   nx_cpu_dot dot[NX_DTYPE_COUNT];
-  /* op2[k][dt] computes the kind of two operands k (nx_spec.h's code) at
-     dt, fma[dt] fma: NULL where the table declines (rows.c). */
+  /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k
+     (nx_spec.h's code) at dt, fma[dt] fma: NULL where the table declines
+     (rows.c). */
+  nx_cpu_row1 op1[NX_OP1_COUNT][NX_DTYPE_COUNT];
   nx_cpu_row2 op2[NX_OP2_COUNT][NX_DTYPE_COUNT];
   nx_cpu_row3 fma[NX_DTYPE_COUNT];
   /* where[i] and fill[i] move elements of 2^i bytes, i in 0..4. */

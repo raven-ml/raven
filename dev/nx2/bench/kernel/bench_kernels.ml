@@ -193,6 +193,14 @@ let binary name k dt n rd =
     (fun () -> (filled dt [| n |], filled dt [| n |], A.create Rig.host rd [| n |]))
     (fun (module K) (x, y, dst) -> K.apply2 k ~dst x y)
 
+(* A kind of one operand over [n] elements of [dt]. *)
+let unary name u dt n =
+  let w = D.bits dt / 8 in
+  apply ~work:(stream 1 w w n)
+    (strf "%s-%s-%s" name (short dt) (count n))
+    (fun () -> (filled dt [| n |], A.create Rig.host dt [| n |]))
+    (fun (module K) (x, dst) -> K.apply1 (Unary u) ~dst x)
+
 let apply_rows =
   let m = mib in
   [
@@ -231,6 +239,14 @@ let apply_rows =
             A.create Rig.host f32 [| m |] ))
         (fun (module K) (x, y, z, dst) -> K.apply3 Fma ~dst x y z);
     ]
+  (* A unary kind that moves bits, then the transcendental kinds. *)
+  @ [ unary "neg" Neg f32 m ]
+  @ List.concat_map
+      (fun (name, u) -> [ unary name u f32 m; unary name u D.Float64 m ])
+      Nx_kernel.Prog.
+        [
+          ("exp", Exp); ("log", Log); ("sin", Sin); ("tanh", Tanh); ("erf", Erf);
+        ]
 
 (* Contractions: [a] and [b] laid out by [layout] from C-contiguous arrays of
    the shapes it is given, contracted over [contracting], with [init] if

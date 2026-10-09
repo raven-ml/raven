@@ -3,10 +3,10 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Fill, and the kinds of two and three operands; iota is iota.c's.
+/* Fill, and the kinds of one, two and three operands; iota is iota.c's.
 
-   Each kind of two or three operands runs as a row function per dtype, the
-   target table's (rows.c). The walk hands the rows a block's rows, and an
+   Each kind of one, two or three operands runs as a row function per dtype,
+   the target table's (rows.c). The walk hands the rows a block's rows, and an
    input whose rows step more than one element is staged first. Fill and
    Where move bits, so they run on every dtype of a byte or more by its
    width alone.
@@ -35,6 +35,7 @@ static int64_t most(int n, const nx_array *a) {
   return NX_CPU_SLOT / w;
 }
 
+typedef nx_cpu_row1 row1;
 typedef nx_cpu_row2 row2;
 typedef nx_cpu_row3 row3;
 
@@ -61,6 +62,7 @@ static row3 where_of(int bytes) {
 typedef struct {
   const nx_array *a;
   int n;
+  row1 f1;
   row2 f2;
   row3 f3;
   const uint8_t *bits; /* a fill's element */
@@ -79,7 +81,9 @@ static void each_row(const op *j, int64_t n0, int64_t n1, uint8_t *const *in,
   for (int64_t r = 0; r < n1; r++) {
     uint8_t *p[NX_MAX_OPERANDS];
     for (int k = 0; k < j->n; k++) p[k] = in[k] + r * s1[k] * (a[k].bits / 8);
-    if (j->n == 3)
+    if (j->n == 2)
+      j->f1(n0, p[0], s0[0], p[1], s0[1]);
+    else if (j->n == 3)
       j->f2(n0, p[0], s0[0], p[1], s0[1], p[2], s0[2]);
     else
       j->f3(n0, p[0], s0[0], p[1], s0[1], p[2], s0[2], p[3], s0[3]);
@@ -159,6 +163,16 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
 }
 
 /* Entries */
+
+/* [k] is a Prog.unary: nx_spec.h's op1 codes list them from NX_OP1_NEG. */
+value nx_cpu_apply1(value k, value vd, value vx) {
+  int x = nx_array_dtype(vx);
+  row1 f = nx_cpu_table->op1[NX_OP1_NEG + Int_val(k)][x];
+  if (f == NULL) return Val_int(NX_DECLINED);
+  nx_operand in[2] = {{vd, x, 1}, {vx, x, 0}};
+  op j = {.f1 = f};
+  return walk_operands(2, in, block, &j);
+}
 
 /* nx_spec.h's code of a Prog.op2 value. */
 static int op2_code(value k) {

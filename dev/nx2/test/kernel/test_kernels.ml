@@ -603,39 +603,41 @@ let test_past_the_caches b () =
 
 (* Declines *)
 
+(* Every unary kind, with its name in nx_kinds.h. *)
+let unaries =
+  Nx_kernel.Prog.
+    [
+      (Neg, "neg");
+      (Recip, "recip");
+      (Abs, "abs");
+      (Sign, "sign");
+      (Sqrt, "sqrt");
+      (Exp, "exp");
+      (Exp2, "exp2");
+      (Log, "log");
+      (Log2, "log2");
+      (Log1p, "log1p");
+      (Expm1, "expm1");
+      (Sin, "sin");
+      (Cos, "cos");
+      (Tan, "tan");
+      (Asin, "asin");
+      (Acos, "acos");
+      (Atan, "atan");
+      (Sinh, "sinh");
+      (Cosh, "cosh");
+      (Tanh, "tanh");
+      (Erf, "erf");
+      (Floor, "floor");
+      (Ceil, "ceil");
+      (Round, "round");
+      (Trunc, "trunc");
+    ]
+
 (* Every kind of one operand, to every kernel's [apply1]. *)
 let op1s =
-  let open Nx_kernel.Prog in
-  [ Copy; Cast; Bitcast ]
-  @ List.map
-      (fun u -> Unary u)
-      [
-        Neg;
-        Recip;
-        Abs;
-        Sign;
-        Sqrt;
-        Exp;
-        Exp2;
-        Log;
-        Log2;
-        Log1p;
-        Expm1;
-        Sin;
-        Cos;
-        Tan;
-        Asin;
-        Acos;
-        Atan;
-        Sinh;
-        Cosh;
-        Tanh;
-        Erf;
-        Floor;
-        Ceil;
-        Round;
-        Trunc;
-      ]
+  Nx_kernel.Prog.[ Copy; Cast; Bitcast ]
+  @ List.map (fun (u, _) -> Nx_kernel.Prog.Unary u) unaries
 
 (* A kernel that declines writes nothing: [dst] keeps its drawn bytes. *)
 let law_declined_apply1 (b : Support.backend) (Case a, D.Any d) =
@@ -784,8 +786,10 @@ let expected (type v s) name (dt : (v, s) D.t) ~compare (ops : (v, s) A.t array)
           ^ if D.bits dt = 64 then "64" else "32"
         in
         let r =
-          if name = "threefry" then Nx_kinds_support.threefry args.(0) args.(1)
-          else Nx_kinds_support.int ty name args
+          match name with
+          | "threefry" -> Nx_kinds_support.threefry args.(0) args.(1)
+          | "floor" | "ceil" | "round" | "trunc" -> args.(0)
+          | _ -> Nx_kinds_support.int ty name args
         in
         if compare then [ Bool.to_int (r <> 0L) ]
         else low_bytes (D.bits dt / 8) r
@@ -828,19 +832,21 @@ let large_pairs =
      Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) seed))
 
 (* The answer of [run] into a seeded destination of [dt] and [shape], checked:
-   [Done] with the bytes [want ()], a decline only of a case [b] does not
-   claim, and nothing written but on [Done]. *)
+   [Done] with the bytes [want ()] where [checked] (by default at the base
+   dtypes), a decline only of a case [b] does not claim, and nothing written
+   but on [Done]. *)
 type into = { into : 'v 's. ('v, 's) A.t -> A.answer }
 
-let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
-    ~want { into } =
+let answers ?checked (b : Support.backend) kind (D.Any at) (D.Any dt) shape
+    ~accepted ~want { into } =
   let dst = on b (seeded dt shape 99) in
   let before = bits_of (host dst) in
   match into dst with
   | A.Done ->
       cover "computed" true;
       equal ~msg:"accepted" bool true accepted;
-      if is_base at then equal (array int) (want ()) (bits_of (host dst))
+      if Option.value checked ~default:(is_base at) then
+        equal (array int) (want ()) (bits_of (host dst))
   | A.Declined ->
       cover "declined" true;
       check_declined b kind (D.Any at);
@@ -851,6 +857,43 @@ let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
       equal ~msg:"refused writes nothing" (array int) before
         (bits_of (host dst))
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+
+let law_apply1 ?(kinds = unaries) (b : Support.backend) (Case x) =
+  let module K = (val b.kernels) in
+  let dt = A.dtype x and shape = L.shape (A.layout x) in
+  let x = on b x in
+  List.iter
+    (fun (u, name) ->
+      let k = P.Unary u in
+      answers b (K1 k) (D.Any dt) (D.Any dt) shape
+        ~accepted:(P.accepts1 k dt dt)
+        ~want:(fun () -> expected name dt ~compare:false [| x |])
+        { into = (fun dst -> K.apply1 k ~dst x) })
+    kinds
+
+(* A bitcast keeps every element's bits, sub-byte codes and NaN payloads
+   included. *)
+let law_bitcast (b : Support.backend) (Case x, D.Any d) =
+  let module K = (val b.kernels) in
+  let dt = A.dtype x in
+  let x = on b x in
+  cover "of one width" (D.bits dt = D.bits d);
+  answers ~checked:true b (K1 Bitcast) (D.Any dt) (D.Any d)
+    (L.shape (A.layout x))
+    ~accepted:(P.accepts1 Bitcast dt d)
+    ~want:(fun () -> bits_of (host x))
+    { into = (fun dst -> K.apply1 Bitcast ~dst x) }
+
+(* A case and a dtype of its width, or any dtype one time in five. *)
+let same_width c =
+  let open Gen in
+  let* (Case a as c) = c in
+  let w = D.bits (A.dtype a) in
+  let alike = List.filter (fun (D.Any d) -> D.bits d = w) D.all in
+  let+ d =
+    frequency [ (4, of_list ~pp:pp_dtype alike); (1, dtypes) ]
+  in
+  (c, d)
 
 let law_apply2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
   let module K = (val b.kernels) in
@@ -964,6 +1007,33 @@ let test_apply_values () =
     [ 0; 1 ];
   done_ ~msg:"fill" (K.apply0 (Fill (P.bits D.Int32 7l)) ~dst:d);
   equal ~msg:"fill" (array int32) (Array.make 6 7l) (A.to_array d);
+  let unary ~msg u xs want =
+    let d = A.create Rig.host D.Float32 [| Array.length xs |] in
+    done_ ~msg (K.apply1 (Unary u) ~dst:d (f32 xs));
+    equal ~msg (array float_exact) want (A.to_array d)
+  in
+  unary ~msg:"round: half away from zero" Round [| 2.5; -2.5; 0.49999997 |]
+    [| 3.; -3.; 0. |];
+  unary ~msg:"exp2: exact at integers" Exp2 [| 3.; -1.; 10.; -149. |]
+    [| 8.; 0.5; 1024.; 0x1p-149 |];
+  unary ~msg:"log2: exact at powers of two" Log2 [| 8.; 0.5; 0x1p-149 |]
+    [| 3.; -1.; -149. |];
+  let d = A.create Rig.host D.Float32 [| 1 |] in
+  done_ ~msg:"sign" (K.apply1 (Unary Sign) ~dst:d (f32 [| Float.nan |]));
+  equal ~msg:"sign: NaN for a NaN" bool true (Float.is_nan (A.get d [| 0 |]));
+  let d = A.create Rig.host D.Int8 [| 4 |] in
+  done_ ~msg:"recip" (K.apply1 (Unary Recip) ~dst:d (i8 [| 1; -1; 2; 0 |]));
+  equal ~msg:"recip: x for 1 and -1, 0 otherwise" (array int) [| 1; -1; 0; 0 |]
+    (A.to_array d);
+  let d = A.create Rig.host D.Uint32 [| 1 |] in
+  done_ ~msg:"bitcast" (K.apply1 Bitcast ~dst:d (f32 [| 1. |]));
+  equal ~msg:"bitcast: 1.0's bits" (array int32) [| 0x3f800000l |]
+    (A.to_array d);
+  equal ~msg:"bitcast across widths is refused" answer A.Wrong_dtype
+    (K.apply1 Bitcast ~dst:(A.create Rig.host D.Float64 [| 1 |]) (f32 [| 1. |]));
+  equal ~msg:"exp on int32 is refused" answer A.Wrong_dtype
+    (K.apply1 (Unary Exp) ~dst:(A.create Rig.host D.Int32 [| 1 |])
+       (A.of_array D.Int32 [| 1 |] [| 1l |]));
   equal ~msg:"idiv on float32 is refused" answer A.Wrong_dtype
     (K.apply2 (Binary Idiv) ~dst:(A.create Rig.host D.Float32 [| 2 |])
        (f32 [| 1.; 2. |]) (f32 [| 1.; 2. |]))
@@ -1109,6 +1179,19 @@ let laws (b : Support.backend) =
         (run (law_declined_apply1 b));
       test "a declined contraction writes nothing"
         (unit (test_declined_contract b));
+      prop "kinds of one operand are nx_kinds.h's at each index" case
+        (run (fun c ->
+             covers c;
+             law_apply1 b c));
+      prop ~count:8 "kinds of one operand over large views" large
+        (run
+           (law_apply1
+              ~kinds:P.[ (Exp, "exp"); (Sin, "sin"); (Neg, "neg") ]
+              b));
+      prop "bitcast keeps every element's bits" (same_width case)
+        (run (fun ((c, _) as x) ->
+             covers c;
+             law_bitcast b x));
       prop "kinds of two operands are nx_kinds.h's at each index" pairs
         (run (law_apply2 b));
       prop ~count:8 "kinds of two operands over large views" large_pairs
@@ -1128,7 +1211,7 @@ let laws (b : Support.backend) =
       prop ~count:8 "in place over large views" (Gen.pair large_pairs Gen.nat)
         (run
            (law_in_place
-              ~ones:P.[ Copy; Unary Neg ]
+              ~ones:P.[ Copy; Unary Neg; Unary Sin ]
               ~kinds:P.[ Binary Add; Binary Mul ]
               b));
       test "operands outlive a released call"

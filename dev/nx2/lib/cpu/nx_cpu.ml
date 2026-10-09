@@ -16,11 +16,27 @@ external cast :
   dst:('v, 's) Nx_array.t -> ('a, 'b) Nx_array.t -> Nx_array.answer
   = "nx_cpu_cast"
 
+external bitcast :
+  dst:('v, 's) Nx_array.t -> ('a, 'b) Nx_array.t -> Nx_array.answer
+  = "nx_cpu_bitcast"
+
+external apply1_c :
+  Nx_kernel.Prog.unary ->
+  ('v, 's) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_apply1"
+
 let apply1 (k : Nx_kernel.Prog.op1) ~dst x =
   match k with
   | Copy -> copy ~dst x
   | Cast -> cast ~dst x
-  | Unary _ | Bitcast -> Declined
+  | (Unary _ | Bitcast)
+    when not
+           (Nx_kernel.Prog.accepts1 k (Nx_array.dtype x) (Nx_array.dtype dst))
+    ->
+      Nx_array.Wrong_dtype
+  | Bitcast -> bitcast ~dst x
+  | Unary u -> apply1_c u dst x
 
 (* Kinds of no, two and three operands (apply.c, iota.c): the kind passes
    as its value. *)
