@@ -42,7 +42,7 @@ static int add(nx_cuda_records *out, int kernel, uint32_t gx, uint32_t gy,
 
 /* The kernels by family and instance, from kernels.h's list. */
 enum { F_ZERO, F_PACK, F_MMA, F_SIMT, F_SKINNY };
-enum { K_h16, K_s8 };
+enum { K_bf16, K_f16, K_s8 };
 enum { A_k, A_m, A_n };
 enum { ACC_f32, ACC_f64, ACC_i64 };
 #define TILE_INDEX(name, ...) T_##name,
@@ -312,11 +312,11 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
   const int f16 = at == NX_FLOAT16 && b->dtype == NX_FLOAT16;
   const int kind =
       acc != NX_FLOAT32 && acc != NX_INT32 ? -1
-      : (bf16_like_a && bf16_like_b) || f16 ? (acc == NX_FLOAT32 ? K_h16 : -1)
+      : bf16_like_a && bf16_like_b && acc == NX_FLOAT32 ? K_bf16
+      : f16 && acc == NX_FLOAT32 ? K_f16
       : at == NX_INT8 && b->dtype == NX_INT8 && acc == NX_INT32 ? K_s8 : -1;
   const int t = kind < 0 ? -1 : mma_tile(kind, batch, m, n);
   const int mma_kind = t < 0 ? -1 : kind;
-  p.f16 = f16;
   int simt = -1;
   if (acc == NX_FLOAT32 || acc == NX_FLOAT64) {
     if (is_int(at) || is_int(b->dtype) || bytes_of(at) == 0 ||

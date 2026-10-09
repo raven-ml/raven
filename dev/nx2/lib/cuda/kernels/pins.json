@@ -26,13 +26,13 @@
   "lib/array/nx_dtype.h": "c8cc210b13d22644e92873bce6f82699c23b893c7ae7442b4782f24bfe9609ac",
   "lib/cuda/kernels/gen.py": "df2a3619718430244c5b66b06f3424b67785b7922b9b312efcebd890b1d42a71",
   "lib/cuda/kernels/src/combine.cuh": "e0f7bc24e9e930c9e78c22e34946d8226344019fc04055dc22a1027d3c6615da",
-  "lib/cuda/kernels/src/contract.cu": "53c1bff0a3308965a1f5db8538e65dc436397909f2fa6efe15c2bd83487059e5",
-  "lib/cuda/kernels.h": "f59667c8b151c2e60d81ae32a5609410e0098391554e966132782e72c196640c",
+  "lib/cuda/kernels/src/contract.cu": "1a951090793c1201db54d4288b3d8ef40f8181983896f66bdec5ca51fd93810e",
+  "lib/cuda/kernels.h": "b59dcfaa09307ed8f74b0afda4fcfbfcbeac99828053927862bfc919319dce81",
   "test/cuda/support/harness.cu": "881b34f04c0268c4692412e6a826c103d58d11e51733e3464122c0629bed3e12",
   "test/cuda/support/harness.h": "180960c7e4b0e3836c5058097a915b994c26551306028a2bfb2ecf716583903e"
  },
  "outputs": {
-  "lib/cuda/kernels/sm_89.cubin": "49af071523fa00af3a2ad251d64062e5ca1570e97df7aa598d585099e40419a1",
+  "lib/cuda/kernels/sm_89.cubin": "b42df91f125a71d2b5163b894b2ba560f5aacb4ccb4ee341cce91fef593445ea",
   "test/cuda/support/sm_89.cubin": "a362b874227d612cb8cfb7a851e65249152210b6e897ace31fec2227f7ace5f4"
  }
 }

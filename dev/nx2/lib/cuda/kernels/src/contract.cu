@@ -504,20 +504,11 @@ __device__ void mma_contract(const contract_params &p) {
         if (next < KT) b.load(sb + next % STAGES * B::BYTES, kt0 + next, p.k, tid);
         cp_commit();
       }
-      /* An h16 kernel's bfloat16 (kind 0) or float16 (kind 1), chosen once
-         a k-step. */
-      if (KIND == 2 || !p.f16)
 #pragma unroll
-        for (int i = 0; i < MI; i++)
+      for (int i = 0; i < MI; i++)
 #pragma unroll
-          for (int j = 0; j < NI; j++)
-            mma(acc[i][j], fa[ks & 1][i], fb[ks & 1][j], KIND);
-      else
-#pragma unroll
-        for (int i = 0; i < MI; i++)
-#pragma unroll
-          for (int j = 0; j < NI; j++)
-            mma(acc[i][j], fa[ks & 1][i], fb[ks & 1][j], 1);
+        for (int j = 0; j < NI; j++)
+          mma(acc[i][j], fa[ks & 1][i], fb[ks & 1][j], KIND);
     }
   }
   cp_wait<0>();
@@ -883,7 +874,8 @@ extern "C" __global__ void zero_u32(const __grid_constant__ zero_params p) {
     p.p[i] = 0;
 }
 
-#define KIND_h16 0
+#define KIND_bf16 0
+#define KIND_f16 1
 #define KIND_s8 2
 #define TRANSPOSED_k false
 #define TRANSPOSED_m true

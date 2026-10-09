@@ -38,40 +38,49 @@ typedef struct __attribute__((aligned(8))) {
 /* X(name, FAMILY, ...) for every kernel of the cubin, in enum order; the
    arguments after the family are its instance's:
    - ZERO, PACK: none.
-   - MMA (contract.cu): the operands' kind (h16: bfloat16 or float16, by
-     contract_params' [f16]; s8), the contiguous axis of a (k or m) and of
-     b (k or n), and the tile.
+   - MMA (contract.cu): the operands' kind (bf16, f16, s8), the contiguous
+     axis of a (k or m) and of b (k or n), and the tile.
    - SIMT (contract.cu): the accumulator's type and the tile's side.
    - SKINNY (contract.cu): the accumulator's type.
    Instances are a budget: each names the rows that keep it. A layout or
    tile with no instance is computed by one that has it, its operand
    packed first; an int32 accumulator sums in int64 and wraps. */
 #define NX_CUDA_KERNELS(X)                                                    \
-  /* every split sum */                                                       \
-  X(zero_u32, ZERO)                                                          \
-  /* f8 operands, rows not of vectors, layouts with no instance */           \
-  X(pack, PACK)                                                              \
-  /* bf16 and f16 4096 to 8192, 4096x14336x4096, 512x201088x2880 */         \
-  X(contract_h16_kk_t128x256, MMA, h16, k, k, t128x256)                     \
-  /* the 4096 rows in layouts kf, fk and ff */                               \
-  X(contract_h16_kn_t128x256, MMA, h16, k, n, t128x256)                     \
-  X(contract_h16_mk_t128x256, MMA, h16, m, k, t128x256)                     \
-  X(contract_h16_mn_t128x256, MMA, h16, m, n, t128x256)                     \
-  /* 1024, 2048, 512x5120x2880, 512x2880x4096, 64x512x512x512 */             \
-  X(contract_h16_kk_t128x128, MMA, h16, k, k, t128x128)                     \
-  /* 256, 512 */                                                             \
-  X(contract_h16_kk_t64x64, MMA, h16, k, k, t64x64)                         \
-  /* bf16 decode: 1x5120x2880, 1x201088x2880 */                              \
-  X(contract_h16_kk_t16x64, MMA, h16, k, k, t16x64)                         \
-  /* int8 4096 */                                                            \
+  /* every split sum */                                                     \
+  X(zero_u32, ZERO)                                                         \
+  /* f8 operands, rows not of vectors, layouts with no instance */          \
+  X(pack, PACK)                                                             \
+  /* bf16 4096 to 8192, 4096x14336x4096, 512x201088x2880 */                 \
+  X(contract_bf16_kk_t128x256, MMA, bf16, k, k, t128x256)                   \
+  /* the 4096 rows in layouts kf, fk and ff */                              \
+  X(contract_bf16_kn_t128x256, MMA, bf16, k, n, t128x256)                   \
+  X(contract_bf16_mk_t128x256, MMA, bf16, m, k, t128x256)                   \
+  X(contract_bf16_mn_t128x256, MMA, bf16, m, n, t128x256)                   \
+  /* bf16 1024, 2048, 512x5120x2880, 512x2880x4096, 64x512x512x512 */       \
+  X(contract_bf16_kk_t128x128, MMA, bf16, k, k, t128x128)                   \
+  /* bf16 256, 512 */                                                       \
+  X(contract_bf16_kk_t64x64, MMA, bf16, k, k, t64x64)                       \
+  /* bf16 decode: 1x5120x2880, 1x201088x2880 */                             \
+  X(contract_bf16_kk_t16x64, MMA, bf16, k, k, t16x64)                       \
+  /* f16 4096, 8192 */                                                      \
+  X(contract_f16_kk_t128x256, MMA, f16, k, k, t128x256)                     \
+  /* the 4096 rows in layouts kf, fk and ff */                              \
+  X(contract_f16_kn_t128x256, MMA, f16, k, n, t128x256)                     \
+  X(contract_f16_mk_t128x256, MMA, f16, m, k, t128x256)                     \
+  X(contract_f16_mn_t128x256, MMA, f16, m, n, t128x256)                     \
+  /* f16 1024, 2048 */                                                      \
+  X(contract_f16_kk_t128x128, MMA, f16, k, k, t128x128)                     \
+  /* f16 256, 512 */                                                        \
+  X(contract_f16_kk_t64x64, MMA, f16, k, k, t64x64)                         \
+  /* int8 4096 */                                                           \
   X(contract_s8_kk_t128x256, MMA, s8, k, k, t128x256)                       \
-  /* f32 2048 to 8192 and the 4096 layouts */                                \
+  /* f32 2048 to 8192 and the 4096 layouts */                               \
   X(contract_simt_f32_128, SIMT, f32, 128)                                  \
-  /* f32 256 to 1024 */                                                      \
+  /* f32 256 to 1024 */                                                     \
   X(contract_simt_f32_64, SIMT, f32, 64)                                    \
-  /* f32 decode 1x5120x2880 */                                               \
+  /* f32 decode 1x5120x2880 */                                              \
   X(contract_skinny_f32, SKINNY, f32)                                       \
-  /* float64 and integer sums: no row; they make the family total */         \
+  /* float64 and integer sums: no row; they make the family total */        \
   X(contract_simt_f64_64, SIMT, f64, 64)                                    \
   X(contract_simt_i64_64, SIMT, i64, 64)                                    \
   X(contract_skinny_f64, SKINNY, f64)                                       \
@@ -102,8 +111,7 @@ enum nx_cuda_kernel { NX_CUDA_KERNELS(NX_CUDA_ENUM) NX_CUDA_KERNEL_COUNT };
    its own block, and the last block to arrive adds them in range order
    (combine.cuh). A SIMT kernel reads a and b of [a_dtype] and [b_dtype],
    converting to its accumulator. The sum, of [acc_dtype], reaches y as a
-   cast from it does. [aligned] holds the NX_CONTRACT_ bits below. [f16]
-   selects float16 over bfloat16 operands in an h16 mma kernel. */
+   cast from it does. [aligned] holds the NX_CONTRACT_ bits below. */
 typedef struct {
   const void *a, *b, *init;
   void *y, *partials;
@@ -111,7 +119,7 @@ typedef struct {
   int64_t sa[3], sb[3], si[3], sy[3];
   int32_t batch, m, n, k;
   int32_t splits, a_dtype, b_dtype, init_dtype;
-  int32_t y_dtype, acc_dtype, aligned, f16;
+  int32_t y_dtype, acc_dtype, aligned, unused;
 } contract_params;
 
 /* contract_params' bits of [aligned]. */
