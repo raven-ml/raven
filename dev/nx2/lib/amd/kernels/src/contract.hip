@@ -637,7 +637,7 @@ DEVICE void dot(const contract_params &p, T (&c)[16], const char *a,
    are vectors where [vectors] says so. */
 template <typename T, int F>
 DEVICE void add_runs(const contract_params &p, T (&c)[16], const char *a,
-                 const char *b, int j, int k, int k1, bool vectors) {
+                     const char *b, int j, int k, int k1, bool vectors) {
   if constexpr (F > 1)
     for (; k + (F - 1) * 128 + 3 < k1; k += F * 128) {
       T bv[F][4];
@@ -684,8 +684,11 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
      the tree's level of 8, (y + y16) + (y8 + y24), then 8 work-items' in
      the local data share to the root. The pairs q and q + 2 are summed one
      after the other, the first's sum waiting in the work-item's place of
-     the local data share, so that two sets of sums are live at once. */
-  const int x = item() % 32, y = item() / 32, j = group() * 32 + x;
+     the local data share, so that two sets of sums are live at once. y is
+     the wave's, as readfirstlane tells the compiler, so a's runs, the same
+     for each lane of a wave, are scalar loads. */
+  const int x = item() % 32, j = group() * 32 + x;
+  const int y = __builtin_amdgcn_readfirstlane(item() / 32);
 #pragma unroll
   for (int h = 0; h < 2; h++) {
     T c[2][16];
