@@ -399,8 +399,6 @@ module Prim : sig
             [ok] is [false], [data_i] each of [data] at [i]. *)
 
   type operands = Operands : 'd any list -> operands
-  type mapper = { map : 'v 's 'd. ('v, 's, 'd) nx -> ('v, 's, 'd) nx }
-  type maker = { make : 'v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) nx }
 
   val name : 'r t -> string
   (** [name op] is [op]'s constructor, as ["Map"]. *)
@@ -413,15 +411,19 @@ module Prim : sig
   (** [operands op] is [op]'s operands in order: a map's loads, [Check]'s [ok]
       then its data, the one operand of the others. *)
 
-  val map : mapper -> 'r t -> 'r t
-  (** [map m op] is [op] with each operand [x] replaced by [m.map x]. *)
+  val map : ('v 's 'd. ('v, 's, 'd) nx -> ('v, 's, 'd) nx) -> 'r t -> 'r t
+  (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
 
   val form : ('v, 's, 'd) nx -> ('v, 's, 'd) form
   (** [form x] is [x] without its bytes. *)
 
-  val results : by:string -> maker -> 'r t -> 'r
+  val results :
+    by:string ->
+    ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) nx) ->
+    'r t ->
+    'r
   (** [results ~by m op] is [op]'s result, its value at position [k] made by
-      [m.make k f], [f] the form eager execution gives it; [()] for [Check].
+      [m k f], [f] the form eager execution gives it; [()] for [Check].
 
       Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
       operands break its rule. *)
@@ -441,13 +443,15 @@ module Prim : sig
   (** What an interpretation keeps in its traced values. A payload holds values,
       never a function of ['d]. *)
 
-  type rule = { rule : 'r. interpretation -> by:string -> 'r t -> 'r }
-  (** What an interpretation makes of the operations it receives. *)
-
-  val interpret : name:string -> reach -> rule -> (interpretation -> 'a) -> 'a
-  (** [interpret ~name reach r f] is [f i], [i] a new interpretation that gives
-      the operations it reaches the meaning [r], live until [f] returns or
-      raises. [name] names it in messages, as ["Rune.grad"]. *)
+  val interpret :
+    name:string ->
+    reach ->
+    ('r. interpretation -> by:string -> 'r t -> 'r) ->
+    (interpretation -> 'a) ->
+    'a
+  (** [interpret ~name reach rule f] is [f i], [i] a new interpretation that
+      gives the operations it reaches the meaning [rule i ~by op], live until
+      [f] returns or raises. [name] names it in messages, as ["Rune.grad"]. *)
 
   val traced :
     interpretation ->

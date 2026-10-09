@@ -29,19 +29,19 @@ let vec dt xs =
 
 let on_count dt xs = Nx.place Count.on (vec dt xs)
 
-(* An interpretation that logs each operation it receives and gives traced
-   results tagged with their position. *)
+(* [logged ~name reach log f] interprets [f] with a rule that logs each
+   operation it receives and gives traced results tagged with their position. *)
 type ('v, 's, 'd) Nx.Prim.payload += Tag : int -> ('v, 's, 'd) Nx.Prim.payload
 
-let logging log =
-  {
-    Nx.Prim.rule =
-      (fun i ~by op ->
-        log := Nx.Prim.name op :: !log;
-        Nx.Prim.results ~by
-          { make = (fun k form -> Nx.Prim.traced i form (Tag k)) }
-          op);
-  }
+let tagged i ~by op =
+  Nx.Prim.results ~by (fun k form -> Nx.Prim.traced i form (Tag k)) op
+
+let logged ~name reach log f =
+  Nx.Prim.interpret ~name reach
+    (fun i ~by op ->
+      log := Nx.Prim.name op :: !log;
+      tagged i ~by op)
+    f
 
 (* A value [i] owns, of [x]'s form. *)
 let tag i x = Nx.Prim.traced i (Nx.Prim.form x) (Tag 0)
@@ -55,7 +55,7 @@ let x3 () = vec f32 [| 1.; 2.; 3. |]
 let test_values_reach () =
   let log = ref [] in
   let x = x3 () in
-  Nx.Prim.interpret ~name:"test.values" Values (logging log) (fun i ->
+  logged ~name:"test.values" Values log (fun i ->
       ignore (Nx.add (tag i x) x);
       let y = Nx.add x x in
       equal ~msg:"computed" (array float_exact) [| 2.; 4.; 6. |] (elements y);
@@ -66,7 +66,7 @@ let test_extent_reach () =
   let log = ref [] in
   let x = Nx.place Count.on (x3 ()) in
   C.reset ();
-  Nx.Prim.interpret ~name:"test.extent" Extent (logging log) (fun _ ->
+  logged ~name:"test.extent" Extent log (fun _ ->
       ignore (Nx.zeros f32 [| 2 |]);
       ignore (Nx.add x x);
       ignore (Nx.copy x));
@@ -78,15 +78,14 @@ let test_extent_reach () =
 let test_innermost () =
   let outer = ref [] and inner = ref [] in
   let x = x3 () in
-  Nx.Prim.interpret ~name:"outer" Values (logging outer) (fun i ->
+  logged ~name:"outer" Values outer (fun i ->
       let t = tag i x in
-      Nx.Prim.interpret ~name:"inner" Extent (logging inner) (fun _ ->
-          ignore (Nx.add t x)));
+      logged ~name:"inner" Extent inner (fun _ -> ignore (Nx.add t x)));
   equal ~msg:"an extent started later" names [ "Map" ] (received inner);
   equal ~msg:"the values started earlier" names [] (received outer);
   let outer = ref [] and inner = ref [] in
-  Nx.Prim.interpret ~name:"outer" Extent (logging outer) (fun _ ->
-      Nx.Prim.interpret ~name:"inner" Values (logging inner) (fun i ->
+  logged ~name:"outer" Extent outer (fun _ ->
+      logged ~name:"inner" Values inner (fun i ->
           ignore (Nx.add (tag i x) x);
           ignore (Nx.add x x)));
   equal ~msg:"values started later" names [ "Map" ] (received inner);
@@ -97,31 +96,22 @@ let test_innermost () =
    raise naming it. *)
 let test_running () =
   let x = x3 () in
-  let computing log =
-    {
-      Nx.Prim.rule =
-        (fun _ ~by op ->
-          log := Nx.Prim.name op :: !log;
-          Nx.Prim.eval ~by op);
-    }
-  in
   let log = ref [] in
+  let computing _ ~by op =
+    log := Nx.Prim.name op :: !log;
+    Nx.Prim.eval ~by op
+  in
   let y =
-    Nx.Prim.interpret ~name:"test.extent" Extent (computing log) (fun _ ->
-        Nx.add x x)
+    Nx.Prim.interpret ~name:"test.extent" Extent computing (fun _ -> Nx.add x x)
   in
   equal ~msg:"delivered once" names [ "Map" ] (received log);
   equal ~msg:"computed by the rule" (array float_exact) [| 2.; 4.; 6. |]
     (elements y);
-  let own =
-    {
-      Nx.Prim.rule =
-        (fun i ~by op ->
-          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-          let (Nx.Prim.Any x) = List.hd xs in
-          ignore (Nx.copy (tag i x));
-          Nx.Prim.eval ~by op);
-    }
+  let own i ~by op =
+    let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+    let (Nx.Prim.Any x) = List.hd xs in
+    ignore (Nx.copy (tag i x));
+    Nx.Prim.eval ~by op
   in
   invalid ~sub:"Nx.copy: test.own's rule applied an operation to its own value"
     (fun () ->
@@ -131,9 +121,7 @@ let test_running () =
 let test_after_return () =
   let x = x3 () in
   let i, t =
-    Nx.Prim.interpret ~name:"test.values" Values
-      (logging (ref []))
-      (fun i -> (i, tag i x))
+    logged ~name:"test.values" Values (ref []) (fun i -> (i, tag i x))
   in
   invalid ~sub:"Nx.add: a value of test.values, used after test.values returned"
     (fun () -> Nx.add t x);
@@ -148,7 +136,7 @@ let test_after_return () =
 let test_domains () =
   let x = x3 () in
   let log = ref [] in
-  Nx.Prim.interpret ~name:"test.values" Values (logging log) (fun i ->
+  logged ~name:"test.values" Values log (fun i ->
       let t = tag i x in
       let elsewhere () =
         match Nx.add t x with
@@ -162,7 +150,7 @@ let test_domains () =
       | None -> fail "a traced value computed on another domain");
   let log = ref [] in
   let y =
-    Nx.Prim.interpret ~name:"test.extent" Extent (logging log) (fun _ ->
+    logged ~name:"test.extent" Extent log (fun _ ->
         Domain.join (Domain.spawn (fun () -> Nx.add x x)))
   in
   equal ~msg:"received" names [] (received log);
@@ -171,17 +159,14 @@ let test_domains () =
 
 let test_later () =
   let a, b =
-    Nx.Prim.interpret ~name:"a" Values
-      (logging (ref []))
-      (fun a ->
-        Nx.Prim.interpret ~name:"b" Values (logging (ref [])) (fun b -> (a, b)))
+    logged ~name:"a" Values (ref []) (fun a ->
+        logged ~name:"b" Values (ref []) (fun b -> (a, b)))
   in
   equal ~msg:"b later" bool true (Nx.Prim.later b a);
   equal ~msg:"a not later" bool false (Nx.Prim.later a b);
   let c =
     Domain.join
-      (Domain.spawn (fun () ->
-           Nx.Prim.interpret ~name:"c" Values (logging (ref [])) Fun.id))
+      (Domain.spawn (fun () -> logged ~name:"c" Values (ref []) Fun.id))
   in
   invalid ~sub:"Nx.Prim.later: c and a started on two domains" (fun () ->
       Nx.Prim.later c a)
@@ -192,20 +177,14 @@ let test_constants () =
   let x = on_count f32 [| 1.; 2.; 3. |] in
   let devices = ref [] in
   let array_of y = Option.get (Nx.Repr.array y) in
-  let looking =
-    {
-      Nx.Prim.rule =
-        (fun i ~by op ->
-          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-          List.iter
-            (fun (Nx.Prim.Any y) ->
-              if Nx.Prim.owner y = None then
-                devices := Rig.name (A.device (array_of y)) :: !devices)
-            xs;
-          Nx.Prim.results ~by
-            { make = (fun k form -> Nx.Prim.traced i form (Tag k)) }
-            op);
-    }
+  let looking i ~by op =
+    let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+    List.iter
+      (fun (Nx.Prim.Any y) ->
+        if Nx.Prim.owner y = None then
+          devices := Rig.name (A.device (array_of y)) :: !devices)
+      xs;
+    tagged i ~by op
   in
   C.reset ();
   Nx.Prim.interpret ~name:"test.values" Values looking (fun i ->
@@ -215,23 +194,17 @@ let test_constants () =
   equal ~msg:"computed on the operation's device" names [ "m0"; "m0" ] !devices;
   equal ~msg:"computed once" int 1 (C.calls ())
 
-(* An operation on values of every set alone reaches an Extent with its
-   operands as the caller passed them: formulas, with no placement. *)
+(* An operation on values of every set alone reaches an Extent with its operands
+   as the caller passed them: formulas, with no placement. *)
 let test_formulas_stay () =
   let c = Nx.zeros f32 [| 2 |] in
   let seen = ref [] in
-  let looking =
-    {
-      Nx.Prim.rule =
-        (fun i ~by op ->
-          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-          List.iter
-            (fun (Nx.Prim.Any y) -> seen := (Nx.placement y = None) :: !seen)
-            xs;
-          Nx.Prim.results ~by
-            { make = (fun k form -> Nx.Prim.traced i form (Tag k)) }
-            op);
-    }
+  let looking i ~by op =
+    let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+    List.iter
+      (fun (Nx.Prim.Any y) -> seen := (Nx.placement y = None) :: !seen)
+      xs;
+    tagged i ~by op
   in
   Nx.Prim.interpret ~name:"test.extent" Extent looking (fun _ ->
       ignore (Nx.add c c));
@@ -387,14 +360,8 @@ let law_forms (shape, a, b, k) =
   cover "0-d" (shape = [||]);
   let (Case (name, op)) = List.nth (cases_of shape a b) k in
   let eager = Nx.Prim.eval ~by:"test" op in
-  Nx.Prim.interpret ~name:"test.forms" Values
-    (logging (ref []))
-    (fun i ->
-      let traced =
-        Nx.Prim.results ~by:"test"
-          { make = (fun k form -> Nx.Prim.traced i form (Tag k)) }
-          op
-      in
+  logged ~name:"test.forms" Values (ref []) (fun i ->
+      let traced = tagged i ~by:"test" op in
       same_results name op traced eager)
 
 (* Ill-formed operations raise naming [by], eagerly and under either reach,
@@ -440,16 +407,10 @@ let test_ill_formed () =
       List.iter
         (fun reach ->
           invalid ~sub:"test.by: " (fun () ->
-              Nx.Prim.interpret ~name:"test" reach
-                (logging (ref []))
-                (fun i ->
+              logged ~name:"test" reach (ref []) (fun i ->
                   let traced =
                     Nx.Prim.map
-                      {
-                        map =
-                          (fun x ->
-                            if reach = Nx.Prim.Values then tag i x else x);
-                      }
+                      (fun x -> if reach = Nx.Prim.Values then tag i x else x)
                       op
                   in
                   Nx.Prim.eval ~by:"test.by" traced)))
@@ -524,36 +485,31 @@ let tangent (type v s d) i node (loads : d Nx.Prim.load array)
   | Op2 (Compare _, _, _) | Const _ | Coord _ -> Nx.zeros_like y
   | _ -> fail "test.jvp: a kind it lacks"
 
-let jvp_rule =
-  {
-    Nx.Prim.rule =
-      (fun (type r) i ~by (op : r Nx.Prim.t) : r ->
-        let both f x =
-          let p, t = parts i x in
-          dual i (f p) (f t)
-        in
-        let primal = { Nx.Prim.map = (fun x -> fst (parts i x)) } in
-        match op with
-        | Map ({ outs = [ _ ]; prog; loads; _ } as m) -> (
-            match (one_node prog, Nx.Prim.expand i ~by op) with
-            | _, Some r -> r
-            | Some node, None ->
-                let y, () = Nx.Prim.eval ~by (Nx.Prim.map primal (Map m)) in
-                (dual i y (tangent i node loads y), ())
-            | None, None -> fail "test.jvp: a map that does not expand")
-        | Map _ -> (
-            match Nx.Prim.expand i ~by op with
-            | Some r -> r
-            | None -> fail "test.jvp: a map that does not expand")
-        | Copy x -> both (fun y -> Nx.Prim.eval ~by (Copy y)) x
-        | Move (mv, x) -> both (fun y -> Nx.Prim.eval ~by (Move (mv, y))) x
-        | Bitcast _ ->
-            invalid_arg (by ^ ": test.jvp has no derivative of a bitcast")
-        | Place (q, x) ->
-            let p, t = parts i x in
-            dual i (Nx.place q p) (Nx.place q t)
-        | Check _ -> Nx.Prim.eval ~by (Nx.Prim.map primal op));
-  }
+let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
+  let both f x =
+    let p, t = parts i x in
+    dual i (f p) (f t)
+  in
+  let primal op = Nx.Prim.map (fun x -> fst (parts i x)) op in
+  match op with
+  | Map ({ outs = [ _ ]; prog; loads; _ } as m) -> (
+      match (one_node prog, Nx.Prim.expand i ~by op) with
+      | _, Some r -> r
+      | Some node, None ->
+          let y, () = Nx.Prim.eval ~by (primal (Map m)) in
+          (dual i y (tangent i node loads y), ())
+      | None, None -> fail "test.jvp: a map that does not expand")
+  | Map _ -> (
+      match Nx.Prim.expand i ~by op with
+      | Some r -> r
+      | None -> fail "test.jvp: a map that does not expand")
+  | Copy x -> both (fun y -> Nx.Prim.eval ~by (Copy y)) x
+  | Move (mv, x) -> both (fun y -> Nx.Prim.eval ~by (Move (mv, y))) x
+  | Bitcast _ -> invalid_arg (by ^ ": test.jvp has no derivative of a bitcast")
+  | Place (q, x) ->
+      let p, t = parts i x in
+      dual i (Nx.place q p) (Nx.place q t)
+  | Check _ -> Nx.Prim.eval ~by (primal op)
 
 let jvp f x v =
   Nx.Prim.interpret ~name:"test.jvp" Values jvp_rule (fun i ->
@@ -595,14 +551,10 @@ let law_jvp (xs, vs) =
    operation and computes it as eager execution would. *)
 type recorded = Recorded : 'r Nx.Prim.t * 'r -> recorded
 
-let recording log =
-  {
-    Nx.Prim.rule =
-      (fun _ ~by op ->
-        let r = Nx.Prim.eval ~by op in
-        log := Recorded (op, r) :: !log;
-        r);
-  }
+let recording log _ ~by op =
+  let r = Nx.Prim.eval ~by op in
+  log := Recorded (op, r) :: !log;
+  r
 
 let step k x = Nx.(add (mul x x) (scalar float32 (Float.of_int k)))
 
@@ -612,8 +564,9 @@ let test_recording () =
     List.init 3 (fun k ->
         let log = ref [] in
         let y =
-          Nx.Prim.interpret ~name:"test.record" Extent (recording log) (fun _ ->
-              step k x)
+          Nx.Prim.interpret ~name:"test.record" Extent
+            (fun i ~by op -> recording log i ~by op)
+            (fun _ -> step k x)
         in
         equal
           ~msg:(Printf.sprintf "trip %d as eager" k)
@@ -665,36 +618,30 @@ let bytes x =
     0
     (Array.to_list (Option.get (Nx.Repr.shards x)))
 
-let staging prog =
-  {
-    Nx.Prim.rule =
-      (fun i ~by op ->
-        let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-        List.iter
-          (fun (Nx.Prim.Any x) ->
-            match Nx.Prim.owner x with
-            | Some o when o == i -> ()
-            | Some _ ->
-                invalid_arg
-                  (by
-                 ^ ": test.stage meets a value of another live interpretation")
-            | None -> prog.held <- prog.held + bytes x)
-          xs;
-        prog.ops <- Nx.Prim.name op :: prog.ops;
-        Nx.Prim.results ~by
-          {
-            make =
-              (fun _ form ->
-                prog.next <- prog.next + 1;
-                Nx.Prim.traced i form (Staged prog.next));
-          }
-          op);
-  }
+let staging prog i ~by op =
+  let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+  List.iter
+    (fun (Nx.Prim.Any x) ->
+      match Nx.Prim.owner x with
+      | Some o when o == i -> ()
+      | Some _ ->
+          invalid_arg
+            (by ^ ": test.stage meets a value of another live interpretation")
+      | None -> prog.held <- prog.held + bytes x)
+    xs;
+  prog.ops <- Nx.Prim.name op :: prog.ops;
+  Nx.Prim.results ~by
+    (fun _ form ->
+      prog.next <- prog.next + 1;
+      Nx.Prim.traced i form (Staged prog.next))
+    op
 
 let stage f args =
   let prog = program () in
   let outs =
-    Nx.Prim.interpret ~name:"test.stage" Extent (staging prog) (fun i ->
+    Nx.Prim.interpret ~name:"test.stage" Extent
+      (fun i ~by op -> staging prog i ~by op)
+      (fun i ->
         f
           (List.map
              (fun a ->
@@ -744,31 +691,25 @@ let exprs = Testable.make ~pp:pp_expr ~equal:( = )
 
 type ('v, 's, 'd) Nx.Prim.payload += Expr : expr -> ('v, 's, 'd) Nx.Prim.payload
 
-let capturing =
-  {
-    Nx.Prim.rule =
-      (fun (type r) i ~by (op : r Nx.Prim.t) : r ->
-        match Nx.Prim.expand i ~by op with
-        | Some r -> r
-        | None ->
-            let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-            let arg (Nx.Prim.Any x) =
-              match Nx.Prim.payload i x with
-              | Some (Expr e) -> e
-              | _ -> Col (Nx.shape x)
-            in
-            let e =
-              match op with
-              | Map { loads = [||]; prog; layout; _ } -> (
-                  match P.node prog (P.length prog - 1) with
-                  | Const (_, bits) -> Lit (bits, L.shape layout)
-                  | _ -> App ("creation", []))
-              | _ -> App (Nx.Prim.name op, List.map arg xs)
-            in
-            Nx.Prim.results ~by
-              { make = (fun _ form -> Nx.Prim.traced i form (Expr e)) }
-              op);
-  }
+let capturing (type r) i ~by (op : r Nx.Prim.t) : r =
+  match Nx.Prim.expand i ~by op with
+  | Some r -> r
+  | None ->
+      let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+      let arg (Nx.Prim.Any x) =
+        match Nx.Prim.payload i x with
+        | Some (Expr e) -> e
+        | _ -> Col (Nx.shape x)
+      in
+      let e =
+        match op with
+        | Map { loads = [||]; prog; layout; _ } -> (
+            match P.node prog (P.length prog - 1) with
+            | Const (_, bits) -> Lit (bits, L.shape layout)
+            | _ -> App ("creation", []))
+        | _ -> App (Nx.Prim.name op, List.map arg xs)
+      in
+      Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form (Expr e)) op
 
 let capture f =
   Nx.Prim.interpret ~name:"test.capture" Extent capturing (fun i ->
@@ -919,7 +860,7 @@ let test_two_fibers () =
     [
       ( "extent",
         fun () ->
-          Nx.Prim.interpret ~name:"test.extent" Extent (logging log) (fun _ ->
+          logged ~name:"test.extent" Extent log (fun _ ->
               yield ();
               ignore (Nx.copy x)) );
       ("beside", fun () -> beside := elements (Nx.add x x));
@@ -935,15 +876,12 @@ let test_dropped () =
     [
       ( "dropped",
         fun () ->
-          Nx.Prim.interpret ~name:"test.dropped" Extent
-            (logging (ref []))
-            (fun _ -> yield ()) );
+          logged ~name:"test.dropped" Extent (ref []) (fun _ -> yield ()) );
     ];
   equal ~msg:"computes" (array float_exact) [| 2.; 4.; 6. |]
     (elements (Nx.add x x));
   let log = ref [] in
-  Nx.Prim.interpret ~name:"test.extent" Extent (logging log) (fun _ ->
-      ignore (Nx.zeros f32 [| 2 |]));
+  logged ~name:"test.extent" Extent log (fun _ -> ignore (Nx.zeros f32 [| 2 |]));
   equal ~msg:"a later extent" names [ "Map" ] (received log)
 
 (* An extent started on this domain and ended on another: each domain's extents
@@ -953,7 +891,7 @@ let test_migrated () =
   let suspended = ref None in
   Effect.Deep.match_with
     (fun () ->
-      Nx.Prim.interpret ~name:"test.migrated" Extent (logging log) (fun _ ->
+      logged ~name:"test.migrated" Extent log (fun _ ->
           yield ();
           ignore (Nx.zeros f32 [| 1 |])))
     ()
@@ -973,13 +911,12 @@ let test_migrated () =
   Domain.join
     (Domain.spawn (fun () ->
          (Option.get !suspended) ();
-         Nx.Prim.interpret ~name:"test.there" Extent (logging there) (fun _ ->
+         logged ~name:"test.there" Extent there (fun _ ->
              ignore (Nx.zeros f32 [| 2 |]))));
   equal ~msg:"the migrated extent, from another domain" names [] (received log);
   equal ~msg:"an extent on the other domain" names [ "Map" ] (received there);
   let here = ref [] in
-  Nx.Prim.interpret ~name:"test.here" Extent (logging here) (fun _ ->
-      ignore (Nx.zeros f32 [| 3 |]));
+  logged ~name:"test.here" Extent here (fun _ -> ignore (Nx.zeros f32 [| 3 |]));
   equal ~msg:"an extent on this domain" names [ "Map" ] (received here)
 
 let fibers =
@@ -1009,7 +946,7 @@ let doubled xs = Array.map (fun x -> round32 (x +. x)) xs
 
 let in_extent x =
   let log = ref [] in
-  Nx.Prim.interpret ~name:"test.extent" Extent (logging log) (fun _ ->
+  logged ~name:"test.extent" Extent log (fun _ ->
       ignore (Nx.add x x);
       ignore (Nx.zeros f32 [| 2 |]));
   received log
@@ -1017,16 +954,13 @@ let in_extent x =
 let in_values x =
   let log = ref [] in
   let y =
-    Nx.Prim.interpret ~name:"test.values" Values (logging log) (fun i ->
+    logged ~name:"test.values" Values log (fun i ->
         ignore (Nx.add (tag i x) x);
         Nx.add x x)
   in
   (received log, elements y)
 
-let leak x =
-  Nx.Prim.interpret ~name:"test.leaked" Values
-    (logging (ref []))
-    (fun i -> tag i x)
+let leak x = logged ~name:"test.leaked" Values (ref []) (fun i -> tag i x)
 
 let use t =
   match Nx.add t t with

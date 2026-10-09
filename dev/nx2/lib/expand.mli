@@ -11,8 +11,10 @@
     constant or a coordinate is a creation of the map's shape. Every other
     operation is core. *)
 
-type apply = { apply : 'r. by:string -> 'r Value.prim -> 'r }
-
-val run : apply -> by:string -> 'r Value.prim -> 'r option
-(** [run a ~by op] is [Some r], [r] [op]'s expansion applied through [a], or
-    [None] for a core case. *)
+val run :
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  'r Value.prim ->
+  'r option
+(** [run apply ~by op] is [Some r], [r] [op]'s expansion applied through
+    [apply], or [None] for a core case. *)

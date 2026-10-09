@@ -114,8 +114,6 @@ let live (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   | Value.Donated { at; arrays; _ } -> Prim.of_arrays at arrays
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
 
-let live_operands = { Prim.map = live }
-
 type handle = Handle : ('v, 's, 'd) Value.t -> handle
 
 (* The donated operands among [xs]. Two handles of one donation, or over one
@@ -290,21 +288,18 @@ let fresh ~by p dt shape =
 
 (* A maker of fresh results at [at], or at their form's placement, recording the
    placement in [where]. *)
-let alloc ~by ?(at : unit Devices.placement option) ?where ?into () =
-  {
-    Prim.make =
-      (fun k f ->
-        let p =
-          match (at, f.placement) with
-          | Some p, _ -> Devices.rebrand p
-          | None, Some p -> p
-          | None, None -> invalid_arg "Exec.alloc: a value of every set"
-        in
-        Option.iter (fun r -> r := Some (Devices.rebrand p)) where;
-        match into with
-        | Some a when k = 0 -> make p [| A.expect f.dtype a |]
-        | Some _ | None -> make p (fresh ~by p f.dtype (L.shape f.layout)));
-  }
+let alloc (type v s d) ~by ?(at : unit Devices.placement option) ?where ?into k
+    (f : (v, s, d) Value.form) : (v, s, d) Value.t =
+  let p =
+    match (at, f.placement) with
+    | Some p, _ -> Devices.rebrand p
+    | None, Some p -> p
+    | None, None -> invalid_arg "Exec.alloc: a value of every set"
+  in
+  Option.iter (fun r -> r := Some (Devices.rebrand p)) where;
+  match into with
+  | Some a when k = 0 -> make p [| A.expect f.dtype a |]
+  | Some _ | None -> make p (fresh ~by p f.dtype (L.shape f.layout))
 
 (* Programs on one device *)
 
@@ -510,17 +505,6 @@ let host () = Devices.rebrand (Devices.one Devices.host 0)
 (* The next node's id. *)
 let nodes = Atomic.make 0
 
-(* How an evaluation reads a constant operand: at a placement, from a memo or
-   from the evaluation's own table. *)
-type resolve = {
-  get :
-    'v 's 'd.
-    'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t;
-}
-
-(* A resolver for operations whose operands have bytes already. *)
-let as_they_are = { get = (fun _ x -> x) }
-
 (* The results of a map into arrays of the dtypes of [dsts]. *)
 type 'd outs = Outs : ('d, 'r) Value.outs -> 'd outs
 
@@ -574,13 +558,13 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           consumed ~by ~reused:(origin_is origin) hs;
           r
       | None ->
-          let r = run ~by (Prim.map live_operands op) in
+          let r = run ~by (Prim.map live op) in
           consumed ~by ~reused:(fun _ -> false) hs;
           r)
   | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
   | Value.Check _ ->
       claim ~by hs;
-      let r = run ~by (Prim.map live_operands op) in
+      let r = run ~by (Prim.map live op) in
       consumed ~by ~reused:(fun _ -> false) hs;
       r
 
@@ -605,48 +589,46 @@ and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
             (arrays_of y);
           y)
   | Value.Check { ok; data; fail } ->
-      Prim.results ~by (alloc ~by ()) op;
+      Prim.results ~by (fun k f -> alloc ~by k f) op;
       check ~by ok data fail
   | _ ->
       if List.for_all (fun (Value.Any x) -> Prim.is_constant x) xs then
         defer ~by op
-      else compute ~by ?into (Prim.prepare ~by (placer ~by) op)
+      else compute ~by ?into (Prim.prepare ~by (fun p x -> placer ~by p x) op)
 
-and placer ~by =
-  {
-    Prim.place =
-      (fun p x ->
-        (* Exec defers an operation over values of every set alone, so [p] is
-           [Some _] here. *)
-        let p = Option.get p in
-        match x with
-        | Value.Deferred _ -> at p x
-        | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
-            if Devices.equal (Prim.placement x) p then x
-            else Place.value ~by p x);
-  }
+(* [x] readable at [p]. Exec defers an operation over values of every set alone,
+   so [p] is [Some _] here. *)
+and placer : type v s d.
+    by:string ->
+    d Devices.placement option ->
+    (v, s, d) Value.t ->
+    (v, s, d) Value.t =
+ fun ~by p x ->
+  let p = Option.get p in
+  match x with
+  | Value.Deferred _ -> at p x
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
+      if Devices.equal (Prim.placement x) p then x else Place.value ~by p x
 
 and defer : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   let id = Atomic.fetch_and_add nodes 1 in
   let node = Value.Node { id; by; op; memo = Atomic.make [] } in
-  Prim.results ~by
-    { make = (fun k form -> Value.Deferred { form; node; k }) }
-    op
+  Prim.results ~by (fun k form -> Value.Deferred { form; node; k }) op
 
 and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
  fun ~by ?into op ->
   match op with
   | Value.Map { layout; prog; loads; _ } ->
       let where = ref None in
-      let r = Prim.results ~by (alloc ~by ~where ?into ()) op in
+      let r = Prim.results ~by (fun k f -> alloc ~by ~where ?into k f) op in
       map_devices ~by (Option.get !where) (L.shape layout) prog
         (fun k w -> Array.map (load_view ~by k w) loads)
         (Prim.arrays op r);
       r
   | Value.Copy x ->
       let where = ref None in
-      let r = Prim.results ~by (alloc ~by ~where ()) op in
+      let r = Prim.results ~by (fun k f -> alloc ~by ~where k f) op in
       let prog =
         Prim.program
           (Op1 (Copy, D.Any (Prim.dtype x), 0))
@@ -696,19 +678,16 @@ and shard_views : type v s d.
  fun ~by op xp views ->
   let xdev = Grid.devices (Devices.grid xp) in
   Prim.results ~by
-    {
-      make =
-        (fun _ f ->
-          let vs = views () in
-          (* Its operand lies at [xp], so it has a placement. *)
-          let p = Option.get f.placement in
-          make p
-            (Array.map
-               (fun k ->
-                 let j = Option.get (Array.find_index (( = ) k) xdev) in
-                 A.expect f.dtype (A.Any vs.(j)))
-               (Grid.devices (Devices.grid p))));
-    }
+    (fun _ f ->
+      let vs = views () in
+      (* Its operand lies at [xp], so it has a placement. *)
+      let p = Option.get f.placement in
+      make p
+        (Array.map
+           (fun k ->
+             let j = Option.get (Array.find_index (( = ) k) xdev) in
+             A.expect f.dtype (A.Any vs.(j)))
+           (Grid.devices (Devices.grid p))))
     op
 
 and check : type d.
@@ -788,22 +767,15 @@ and evaluate root p =
           (fun (q', a) -> if Devices.equal q' q then Some a else None)
           (Option.value ~default:[] (Hashtbl.find_opt local n.id))
   in
-  let resolve =
-    {
-      get =
-        (fun (type v s d)
-          (q : d Devices.placement)
-          (x : (v, s, d) Value.t)
-          :
-          (v, s, d) Value.t
-        ->
-          match x with
-          | Value.Deferred { form; node; k } ->
-              let arrays = Option.get (lookup node (Devices.rebrand q)) in
-              make q (Array.map (A.expect form.dtype) arrays.(k))
-          | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
-              x);
-    }
+  (* How this evaluation reads a constant operand at [q]: from its memo or from
+     the evaluation's own table. *)
+  let resolve (type v s d) (q : d Devices.placement) (x : (v, s, d) Value.t) :
+      (v, s, d) Value.t =
+    match x with
+    | Value.Deferred { form; node; k } ->
+        let arrays = Option.get (lookup node (Devices.rebrand q)) in
+        make q (Array.map (A.expect form.dtype) arrays.(k))
+    | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
   in
   let missing node q =
     List.filter (fun (dep, q) -> lookup dep q = None) (pending node q)
@@ -869,9 +841,7 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
         loads;
       }
   in
-  let on_device =
-    { Expand.apply = (fun ~by op -> compute_at ~by ~resolve:as_they_are at op) }
-  in
+  let on_device ~by op = compute_at ~by ~resolve:(fun _ x -> x) at op in
   match Expand.run on_device ~by op with
   | None -> invalid_arg "Exec.expand_on: a map of one node"
   | Some r ->
@@ -890,14 +860,19 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
 (* A map [op] computed at [p], its results there: its operands lie at [p] or are
    constants, and its rule holds. Any other operation is [run]'s. *)
 and compute_at : type r.
-    by:string -> resolve:resolve -> unit Devices.placement -> r Value.prim -> r
-    =
+    by:string ->
+    resolve:
+      ('v 's 'd.
+       'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t) ->
+    unit Devices.placement ->
+    r Value.prim ->
+    r =
  fun ~by ~resolve p op ->
   match op with
   | Value.Map { loads; layout; prog; _ } ->
-      let r = Prim.results ~by (alloc ~by ~at:p ()) op in
+      let r = Prim.results ~by (fun k f -> alloc ~by ~at:p k f) op in
       let view k w (Value.Plain x) =
-        A.Any (Place.view ~by (resolve.get (Devices.rebrand p) x) k w)
+        A.Any (Place.view ~by (resolve (Devices.rebrand p) x) k w)
       in
       map_devices ~by p (L.shape layout) prog
         (fun k w -> Array.map (view k w) loads)
@@ -909,7 +884,14 @@ and compute_at : type r.
 
 (* [node]'s results at [p], its constant operands already computed where it
    reads them. *)
-and compute_node ~resolve (Value.Node n) p =
+and compute_node :
+    resolve:
+      ('v 's 'd.
+       'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t) ->
+    Value.node ->
+    unit Devices.placement ->
+    A.any array array =
+ fun ~resolve (Value.Node n) p ->
   let by = n.by in
   match n.op with
   | Value.Map _ ->
@@ -918,9 +900,7 @@ and compute_node ~resolve (Value.Node n) p =
   | op ->
       let q = operand_at op p in
       (* Its rule held when it was made, and its operands lie at [q]. *)
-      let op' =
-        Prim.map { map = (fun y -> resolve.get (Devices.rebrand q) y) } op
-      in
+      let op' = Prim.map (fun y -> resolve (Devices.rebrand q) y) op in
       let arrays = Prim.arrays op' (compute ~by op') in
       if Devices.equal q p then arrays
       else

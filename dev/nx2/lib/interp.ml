@@ -35,7 +35,8 @@ let handler i =
         | _ -> None);
   }
 
-let interpret ~name reach rule f =
+let interpret ~name reach
+    (rule : 'r. interpretation -> by:string -> 'r prim -> 'r) f =
   let d = Domain.DLS.get here in
   let start = d.next in
   d.next <- start + 1;
@@ -118,9 +119,7 @@ let receiver ~by op =
 let apply i ~by op =
   let was = i.running in
   i.running <- true;
-  Fun.protect
-    ~finally:(fun () -> i.running <- was)
-    (fun () -> i.rule.rule i ~by op)
+  Fun.protect ~finally:(fun () -> i.running <- was) (fun () -> i.rule i ~by op)
 
 let expanding i f =
   let was = i.running in

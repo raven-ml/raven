@@ -148,14 +148,8 @@ let adds () =
 
 type ('v, 's, 'd) Nx.Prim.payload += Traced : ('v, 's, 'd) Nx.Prim.payload
 
-let tracing =
-  {
-    Nx.Prim.rule =
-      (fun i ~by op ->
-        Nx.Prim.results ~by
-          { make = (fun _ form -> Nx.Prim.traced i form Traced) }
-          op);
-  }
+let tracing i ~by op =
+  Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Traced) op
 
 (* An Extent on another domain, live until [end_elsewhere]. *)
 let extent_elsewhere () =

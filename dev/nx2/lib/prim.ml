@@ -113,8 +113,6 @@ let expect (type v s) (dt : (v, s) dtype) (Any x : 'd any) : (v, s, 'd) t =
 (* Operations *)
 
 type operands = Operands : 'd any list -> operands
-type mapper = { map : 'v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t }
-type maker = { make : 'v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t }
 
 let name : type r. r prim -> string = function
   | Map _ -> "Map"
@@ -134,22 +132,22 @@ let operands : type r. r prim -> operands = function
   | Place (_, x) -> Operands [ Any x ]
   | Check { ok; data; _ } -> Operands (Any ok :: data)
 
-let map_load (type d) m (Plain x : d load) : d load = Plain (m.map x)
-
-let map : type r. mapper -> r prim -> r prim =
+let map : type r.
+    ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
  fun m op ->
+  let map_load (type d) (Plain x : d load) : d load = Plain (m x) in
   match op with
-  | Map p -> Map { p with loads = Array.map (map_load m) p.loads }
-  | Copy x -> Copy (m.map x)
-  | Move (mv, x) -> Move (mv, m.map x)
-  | Bitcast (dt, x) -> Bitcast (dt, m.map x)
-  | Place (p, x) -> Place (p, m.map x)
+  | Map p -> Map { p with loads = Array.map map_load p.loads }
+  | Copy x -> Copy (m x)
+  | Move (mv, x) -> Move (mv, m x)
+  | Bitcast (dt, x) -> Bitcast (dt, m x)
+  | Place (p, x) -> Place (p, m x)
   | Check c ->
       Check
         {
           c with
-          ok = m.map c.ok;
-          data = List.map (fun (Any x) -> Any (m.map x)) c.data;
+          ok = m c.ok;
+          data = List.map (fun (Any x) -> Any (m x)) c.data;
         }
 
 (* Printing *)
@@ -351,11 +349,16 @@ let map_route (type d) ~by layout (loads : d load array) : d Route.t option =
       (Array.make (Array.length loads) shape)
 
 let rec make_outs : type d r.
-    maker -> int -> L.t -> d Devices.placement option -> (d, r) outs -> r =
+    ('a 'b 'c. int -> ('a, 'b, 'c) form -> ('a, 'b, 'c) t) ->
+    int ->
+    L.t ->
+    d Devices.placement option ->
+    (d, r) outs ->
+    r =
  fun m k layout placement -> function
   | [] -> ()
   | dtype :: rest ->
-      let v = m.make k { dtype; layout; placement } in
+      let v = m k { dtype; layout; placement } in
       (v, make_outs m (k + 1) layout placement rest)
 
 let one_route ~by rule x = Route.route ~by rule [| at x |] [| shape x |]
@@ -403,7 +406,11 @@ let bitcast_layout ~by l (from : D.any) (into : D.any) =
     else L.contiguous s'
   end
 
-let results : type r. by:string -> maker -> r prim -> r =
+let results : type r.
+    by:string ->
+    ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
+    r prim ->
+    r =
  fun ~by m op ->
   match op with
   | Map { layout; prog; outs; loads } ->
@@ -412,7 +419,7 @@ let results : type r. by:string -> maker -> r prim -> r =
       make_outs m 0 layout placement outs
   | Copy x ->
       let placement = result (one_route ~by Elementwise x) in
-      m.make 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
+      m 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
   | Move (mv, x) ->
       let s' =
         match Nx_array.Move.shape mv (shape x) with
@@ -425,13 +432,13 @@ let results : type r. by:string -> maker -> r prim -> r =
         | Some l -> l
         | None -> L.contiguous s'
       in
-      m.make 0 { dtype = dtype x; layout; placement }
+      m 0 { dtype = dtype x; layout; placement }
   | Bitcast (dt, x) ->
       let layout =
         bitcast_layout ~by (form x).layout (D.Any (dtype x)) (D.Any dt)
       in
       let placement = result (one_route ~by (bitcast_rule dt x) x) in
-      m.make 0 { dtype = dt; layout; placement }
+      m 0 { dtype = dt; layout; placement }
   | Place (p, x) ->
       let s = shape x in
       ignore (Devices.window ~by p s 0);
@@ -440,7 +447,7 @@ let results : type r. by:string -> maker -> r prim -> r =
         | Array { a; _ }, Some _ -> Nx_array.layout a
         | _ -> L.contiguous s
       in
-      m.make 0 { dtype = dtype x; layout; placement = Some p }
+      m 0 { dtype = dtype x; layout; placement = Some p }
   | Check { ok; data; _ } ->
       let s = shape ok in
       List.iteri
@@ -503,19 +510,18 @@ let op3 k c x y =
     [| D.Any (dtype c); i; i |]
     [| Plain c; Plain x; Plain y |]
 
-type placer = {
-  place :
-    'v 's 'd. 'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
-}
-
 (* Where a route reads operand [i]: [None] where every operand is of every
    set. *)
 let read_at (r : _ Route.t option) i =
   Option.map (fun (r : _ Route.t) -> r.operands.(i)) r
 
-let prepare : type r. by:string -> placer -> r prim -> r prim =
- fun ~by pl op ->
-  let one rule x = pl.place (read_at (one_route ~by rule x) 0) x in
+let prepare : type r.
+    by:string ->
+    ('v 's 'd. 'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t) ->
+    r prim ->
+    r prim =
+ fun ~by place op ->
+  let one rule x = place (read_at (one_route ~by rule x) 0) x in
   match op with
   | Map p ->
       check_map ~by p.layout p.prog p.outs p.loads;
@@ -524,7 +530,7 @@ let prepare : type r. by:string -> placer -> r prim -> r prim =
       let loads =
         Array.mapi
           (fun i (Plain x as l) ->
-            let y = pl.place (read_at r i) x in
+            let y = place (read_at r i) x in
             if y == x then l
             else begin
               moved := true;

@@ -17,19 +17,24 @@
     Each domain counts its live [Extent] interpretations in an atomic of its
     domain-local state, and one atomic counts them on every domain. With that
     one at zero an operation reads it and nothing else; with the domain's count
-    at zero, the two. Otherwise it performs one effect, which the innermost [Extent]
-    handler on the calling fiber answers if its rule is not running and its
-    domain is the caller's; other handlers pass it on. The handler is the truth
-    and the count a hint that is never low. A continuation dropped inside an
-    extent leaves the count high, which costs every later operation on the
+    at zero, the two. Otherwise it performs one effect, which the innermost
+    [Extent] handler on the calling fiber answers if its rule is not running and
+    its domain is the caller's; other handlers pass it on. The handler is the
+    truth and the count a hint that is never low. A continuation dropped inside
+    an extent leaves the count high, which costs every later operation on the
     domain a perform and changes no result. *)
 
 open Value
 
-val interpret : name:string -> reach -> rule -> (interpretation -> 'a) -> 'a
-(** [interpret ~name reach r f] is [f i], [i] a new interpretation that gives
-    the operations it reaches the meaning [r]. [i] is live until [f] returns or
-    raises. *)
+val interpret :
+  name:string ->
+  reach ->
+  ('r. interpretation -> by:string -> 'r prim -> 'r) ->
+  (interpretation -> 'a) ->
+  'a
+(** [interpret ~name reach rule f] is [f i], [i] a new interpretation that gives
+    the operations it reaches the meaning [rule i ~by op]. [i] is live until [f]
+    returns or raises. *)
 
 val traced :
   interpretation -> ('v, 's, 'd) form -> ('v, 's, 'd) payload -> ('v, 's, 'd) t

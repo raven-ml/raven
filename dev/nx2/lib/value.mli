@@ -99,7 +99,8 @@ and reach =
 and interpretation = {
   name : string;  (** In messages, as ["Rune.grad"]. *)
   reach : reach;
-  rule : rule;
+  rule : 'r. interpretation -> by:string -> 'r prim -> 'r;
+      (** What it makes of the operations it receives. *)
   start : int;  (** Its order of start on [domain]. *)
   domain : Domain.id;  (** Where it started. *)
   extents : int Atomic.t;  (** [domain]'s count of live [Extent]s. *)
@@ -107,9 +108,6 @@ and interpretation = {
   mutable running : bool;  (** Whether its rule runs, on [domain]. *)
 }
 (** An interpretation. Only {!Interp} writes its fields. *)
-
-and rule = { rule : 'r. interpretation -> by:string -> 'r prim -> 'r }
-(** What an interpretation makes of the operations it receives. *)
 
 (** {1:operations Operations}
 

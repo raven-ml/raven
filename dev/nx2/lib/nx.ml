@@ -229,14 +229,6 @@ module Prim = struct
 
   type operands = Prim.operands = Operands : 'd any list -> operands
 
-  type mapper = Prim.mapper = {
-    map : 'v 's 'd. ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t;
-  }
-
-  type maker = Prim.maker = {
-    make : 'v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) Value.t;
-  }
-
   let name = Prim.name
   let pp = Prim.pp
   let operands = Prim.operands
@@ -247,10 +239,6 @@ module Prim = struct
   type interpretation = Value.interpretation
   type reach = Value.reach = Values | Extent
   type ('v, 's, +'d) payload = ('v, 's, 'd) Value.payload = ..
-
-  type rule = Value.rule = {
-    rule : 'r. interpretation -> by:string -> 'r t -> 'r;
-  }
 
   let interpret = Interp.interpret
   let traced = Interp.traced

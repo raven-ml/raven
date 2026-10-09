@@ -68,9 +68,6 @@ type operands =
   | Operands : 'd any list -> operands
       (** An operation's operands, all of one brand. *)
 
-type mapper = { map : 'v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t }
-type maker = { make : 'v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t }
-
 val name : 'r prim -> string
 (** [name op] is [op]'s constructor, as ["Map"]. *)
 
@@ -85,12 +82,16 @@ val operands : 'r prim -> operands
 (** [operands op] is [op]'s operands in order: a map's loads, [Check]'s [ok]
     then its data, the one operand of the others. *)
 
-val map : mapper -> 'r prim -> 'r prim
-(** [map m op] is [op] with each operand [x] replaced by [m.map x]. *)
+val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
+(** [map m op] is [op] with each operand [x] replaced by [m x]. *)
 
-val results : by:string -> maker -> 'r prim -> 'r
+val results :
+  by:string ->
+  ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
+  'r prim ->
+  'r
 (** [results ~by m op] is [op]'s result, its value at position [k] made by
-    [m.make k f], [f] the form eager execution gives it; [()] for [Check].
+    [m k f], [f] the form eager execution gives it; [()] for [Check].
 
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
     operands break its rule. *)
@@ -128,20 +129,18 @@ val op3 :
 (** [opN k dt x …] is the map of the one node [k] over [x …], of [x]'s shape,
     with result dtype [dt] ([op3]'s: its second operand's). *)
 
-type placer = {
-  place :
-    'v 's 'd. 'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t;
-}
-(** How the engine makes an operand readable at a placement of its set; [None]
-    where every operand of the operation is of every set. *)
+val prepare :
+  by:string ->
+  ('v 's 'd. 'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t) ->
+  'r prim ->
+  'r prim
+(** [prepare ~by place op] is [op] with each operand [x] replaced by
+    [place p x], [p] where [op]'s route reads [x] ([None] where every operand is
+    of every set); [op] itself where none changes. [Place] and [Check] are [op]
+    itself.
 
-val prepare : by:string -> placer -> 'r prim -> 'r prim
-(** [prepare ~by pl op] is [op] with each operand [x] replaced by
-    [pl.place p x], [p] where [op]'s route reads [x]; [op] itself where none
-    changes. [Place] and [Check] are [op] itself.
-
-    Raises [Invalid_argument] naming [by], before [pl] is called, where [op]'s
-    operands break its rule. *)
+    Raises [Invalid_argument] naming [by], before [place] is called, where
+    [op]'s operands break its rule. *)
 
 val is_constant : ('v, 's, 'd) t -> bool
 

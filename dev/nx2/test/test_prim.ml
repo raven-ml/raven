@@ -29,27 +29,22 @@ let value d a : ('v, 's, b) Value.t =
 
 let f32 ?(d = 0) shape = value d (A.of_array D.Float32 shape (floats shape))
 
-(* A maker that records the forms it is given, and one that must not run. *)
-let recording () =
-  let forms = ref [] in
-  let make : type v s d. int -> (v, s, d) Value.form -> (v, s, d) Value.t =
-   fun k f ->
-    forms :=
-      (k, D.Any f.dtype, f.layout, Option.map Devices.rebrand f.placement)
-      :: !forms;
-    let a = A.create Rig.host f.dtype (L.shape f.layout) in
-    Value.Array
-      { at = Devices.rebrand (Devices.one Devices.host 0); a; dead = Prim.live }
-  in
-  ({ Prim.make }, fun () -> List.rev !forms)
+(* A maker that records the forms it is given in [forms], and one that must not
+   run. *)
+let recording forms k (f : (_, _, _) Value.form) =
+  forms :=
+    (k, D.Any f.dtype, f.layout, Option.map Devices.rebrand f.placement)
+    :: !forms;
+  let a = A.create Rig.host f.dtype (L.shape f.layout) in
+  Value.Array
+    { at = Devices.rebrand (Devices.one Devices.host 0); a; dead = Prim.live }
 
-let refusing =
-  { Prim.make = (fun _ _ -> fail "the maker ran before the rule refused") }
+let refusing _ _ = fail "the maker ran before the rule refused"
 
 let forms (Op op) =
-  let mk, forms = recording () in
-  ignore (Prim.results ~by:"Nx.f" mk op);
-  forms ()
+  let forms = ref [] in
+  ignore (Prim.results ~by:"Nx.f" (fun k f -> recording forms k f) op);
+  List.rev !forms
 
 let one_form op =
   match forms op with
@@ -476,12 +471,9 @@ let operations =
           let seen = ref 0 in
           let op' =
             Prim.map
-              {
-                map =
-                  (fun x ->
-                    incr seen;
-                    x);
-              }
+              (fun x ->
+                incr seen;
+                x)
               op
           in
           equal int count !seen;
@@ -497,7 +489,9 @@ let operations =
                 loads = [| Plain x; Plain x |];
               }
           in
-          let r = Prim.results ~by:"Nx.f" (fst (recording ())) op in
+          let r =
+            Prim.results ~by:"Nx.f" (fun k f -> recording (ref []) k f) op
+          in
           let u, (v, ()) = r in
           let arrays = Prim.arrays op r in
           equal int 2 (Array.length arrays);

@@ -8,21 +8,16 @@ open Value
 (* Computes each constant operand where the operation reads it. An operation
    over values of every set alone has no placement to read them at: they stay
    formulas, which an interpreter places as any caller does. *)
-let computing =
-  {
-    Prim.place =
-      (fun p x ->
-        let x = Exec.live x in
-        match p with Some p -> Exec.at p x | None -> x);
-  }
-
-let read = { Prim.map = (fun x -> Exec.read (Exec.live x)) }
+let computing (type v s d) (p : d Devices.placement option) (x : (v, s, d) t) :
+    (v, s, d) t =
+  let x = Exec.live x in
+  match p with Some p -> Exec.at p x | None -> x
 
 let delivered : type r. by:string -> r prim -> r prim =
  fun ~by op ->
   match op with
   | Place (p, x) -> Place (p, Exec.at (Devices.rebrand p) (Exec.live x))
-  | Check _ -> Prim.map read op
+  | Check _ -> Prim.map (fun x -> Exec.read (Exec.live x)) op
   | Map _ | Copy _ | Move _ | Bitcast _ -> Prim.prepare ~by computing op
 
 let eval ~by op =
@@ -70,5 +65,4 @@ let place ~by p x =
   | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ ->
       eval ~by (Place (p, x))
 
-let expand i ~by op =
-  Interp.expanding i (fun () -> Expand.run { apply = eval } ~by op)
+let expand i ~by op = Interp.expanding i (fun () -> Expand.run eval ~by op)

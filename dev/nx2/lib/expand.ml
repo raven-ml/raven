@@ -6,8 +6,6 @@
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 
-type apply = { apply : 'r. by:string -> 'r Value.prim -> 'r }
-
 (* Whether [prog] is one node over its operands in order, which a kernel
    computes alone. *)
 let one_node prog =
@@ -19,15 +17,16 @@ let one_node prog =
 
 (* Node [i] of [prog] over [loads], as a one-node map of [shape] over [value j]
    for each node [j] it reads. *)
-let node_map (type d) a ~by layout prog (loads : d Value.any array)
-    (value : int -> d Value.any) i : d Value.any =
+let node_map (type d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by layout
+    prog (loads : d Value.any array) (value : int -> d Value.any) i :
+    d Value.any =
   let (D.Any dt) = P.dtype prog i in
   let one node reads =
     let ins = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) reads in
     let loads = Array.map (fun (Value.Any x) -> Value.Plain x) reads in
     let prog = Prim.program node ins in
     let v, () =
-      a.apply ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
+      apply ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
     in
     Value.Any v
   in
@@ -45,8 +44,12 @@ let rec results : type d r. (d, r) Value.outs -> d Value.any list -> r =
   | dt :: outs, v :: vs -> (Prim.expect dt v, results outs vs)
   | _ -> invalid_arg "Expand.results: one value per output"
 
-let run : type r. apply -> by:string -> r Value.prim -> r option =
- fun a ~by op ->
+let run : type r.
+    ('q. by:string -> 'q Value.prim -> 'q) ->
+    by:string ->
+    r Value.prim ->
+    r option =
+ fun apply ~by op ->
   match op with
   | Value.Map { layout; prog; outs; loads } when not (one_node prog) ->
       let loads = Array.map (fun (Value.Plain x) -> Value.Any x) loads in
@@ -54,7 +57,7 @@ let run : type r. apply -> by:string -> r Value.prim -> r option =
       let value j = Option.get values.(j) in
       Array.iteri
         (fun i _ ->
-          values.(i) <- Some (node_map a ~by layout prog loads value i))
+          values.(i) <- Some (node_map apply ~by layout prog loads value i))
         values;
       Some (results outs (List.map value (Array.to_list (P.outs prog))))
   | Value.Map _ | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
