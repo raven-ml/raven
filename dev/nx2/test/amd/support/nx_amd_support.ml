@@ -59,13 +59,15 @@ type image = {
   scratch : Rig.Buffer.t option;
 }
 
-(* A device of GPU 0, its capability, the harness loaded on it, and nx.amd's
-   code object, loaded at its first use. *)
+(* A device of GPU 0, its capability, the harness loaded on it, nx.amd's
+   code object, loaded at its first use, and the two 64-bit stamps
+   device_time reads, in memory the host reads without a copy. *)
 type device = {
   rig : Rig.t;
   cap : Abi.Capability.t;
   harness : image;
   library : image Lazy.t;
+  stamps : Rig.Buffer.t;
 }
 
 type gpu = { work : device; mutable beside : device option }
@@ -155,7 +157,8 @@ let open_device name =
   let library =
     lazy (image_on rig cap (library_object cap) (library_kernels ()))
   in
-  { rig; cap; harness; library }
+  let stamps = Rig.Buffer.create ~memory:Rig.Buffer.Pinned rig 16 in
+  { rig; cap; harness; library; stamps }
 
 let opened = ref None
 
@@ -379,31 +382,43 @@ let run ?beside g r =
 let round = 1024
 let copies = 256
 
+(* The runs of [r] a submission holds. *)
+let per_round = function
+  | Records x -> Int.max 1 (round / x.launches)
+  | Copy _ -> copies
+
 (* The words [p] as a part on [queue]. *)
 let words_part queue p =
   part queue (Words (Rig.Buffer.of_string (Abi.Packet.encode Int64.of_int p)))
 
-let enqueue g ~count r = ignore (submit g.work (body r count))
+let enqueue g ~count r =
+  let rec go left =
+    if left > 0 then begin
+      let n = Int.min left (per_round r) in
+      ignore (submit g.work (body r n));
+      go (left - n)
+    end
+  in
+  go count
 
 (* rig.amd's queues read none of a submission before all of it is placed
    (Rig_amd), so the host never starves the GPU: no hold is needed. A stamp is
-   the GPU's clock, which [r]'s queue writes once the work before it is done. *)
+   the GPU's clock, which [r]'s queue writes once the work before it is done,
+   into the device's stamps: made once, so that a call allocates no GPU
+   memory, and read by the host without a copy. *)
 let device_time g r ~count =
-  let at = buffer g 16 in
+  let at = g.work.stamps in
   let slot i = Rig.Buffer.view at ~first:(8 * i) ~length:8 in
-  let queue, per_round, clock =
+  let queue, clock =
     match r with
-    | Records x ->
-        ( "COMPUTE:0",
-          Int.max 1 (round / x.launches),
-          Abi.Pm4.copy_data Posted Clock )
-    | Copy _ -> ("COPY:0", copies, Abi.Sdma.timestamp)
+    | Records _ -> ("COMPUTE:0", Abi.Pm4.copy_data Posted Clock)
+    | Copy _ -> ("COPY:0", Abi.Sdma.timestamp)
   in
   let stamp i = words_part queue (clock (Rig.Buffer.address (slot i))) in
   let rec go left span =
     if left = 0 then span
     else begin
-      let n = Int.min left per_round in
+      let n = Int.min left (per_round r) in
       let ps = (stamp 0 :: body r n) @ [ stamp 1 ] in
       Rig.wait g.work.rig (submit g.work ps);
       keep r;

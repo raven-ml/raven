@@ -4,29 +4,29 @@
   ---------------------------------------------------------------------------*)
 
 (* The AMD rows against this machine's baseline. A call runs a row's kernel a
-   fixed count of times in one submission and returns once they are done: its
-   wall time is their span on the GPU and a submission's round trip.
-   [bench_amd.exe gate] prints the device times themselves. *)
+   fixed count of times and returns once they are done: its wall time is their
+   span on the GPU and a submission's round trip. The count is in the row's
+   name, past one. [bench_amd.exe gate] prints the device times themselves. *)
 
 module S = Nx_amd_support
 module D = Nx_array.Dtype
 
-(* Runs per call: about 2 ms of a memory-bound row at 500 GB/s; a peak row's run
-   spans about a millisecond itself. *)
-let count (p : Rows.prepared) =
-  match p.work with
-  | Bytes 0 -> 1000
-  | Bytes n -> Int.max 1 (1_000_000_000 / n)
-  | Flops _ -> 1
+let strf = Printf.sprintf
 
+(* A call submits all of its runs but the last, then runs the last and waits
+   for it. The setup runs the row once, outside the timed calls. *)
 let case (r : Rows.row) =
+  let count = r.runs in
   let setup () =
     let g = S.gpu () in
     let p = r.make g in
-    (g, p, count p)
+    S.run g p.run;
+    (g, p)
   in
-  Thumper.bench_with_setup ~setup r.name (fun (g, (p : Rows.prepared), count) ->
-      S.device_time g p.run ~count)
+  let name = if count = 1 then r.name else strf "%s-x%d" r.name count in
+  Thumper.bench_with_setup ~setup name (fun (g, (p : Rows.prepared)) ->
+      if count > 1 then S.enqueue g ~count:(count - 1) p.run;
+      S.run g p.run)
 
 (* The binding's host share of a call: the plan of a contraction alone, and the
    submission of 64 launches of the smallest one, its wait outside the timed
@@ -75,7 +75,6 @@ let host =
    training loop runs it: a GPU busy without pause reaches its power cap and
    lowers its clock. *)
 
-let strf = Printf.sprintf
 let span = 10e-3
 let warm = 0.1
 let idle = 20e-3

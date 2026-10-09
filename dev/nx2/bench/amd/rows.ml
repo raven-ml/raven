@@ -14,7 +14,16 @@ let strf = Printf.sprintf
 
 type work = Bytes of int | Flops of float
 type prepared = { run : S.run; work : work; floor : S.run option }
-type row = { name : string; make : S.gpu -> prepared }
+
+(* A row's name, the runs a bench call makes, and how its GPU prepares it. *)
+type row = { name : string; runs : int; make : S.gpu -> prepared }
+
+(* The runs of a bench call of [work]: about 2 ms of a memory-bound row at
+   500 GB/s; a compute-bound row's run spans about a millisecond itself. *)
+let runs = function
+  | Bytes 0 -> 1000
+  | Bytes n -> Int.max 1 (1_000_000_000 / n)
+  | Flops _ -> 1
 
 (* [n] as a row names a size: 64K, 16M. *)
 let size n =
@@ -24,7 +33,11 @@ let size n =
 
 (* A row of [work] whose run [run] makes, with no floor. *)
 let row name work run =
-  { name; make = (fun g -> { run = run g; work; floor = None }) }
+  {
+    name;
+    runs = runs work;
+    make = (fun g -> { run = run g; work; floor = None });
+  }
 
 let harness g launches = S.record (S.harness g) launches
 
@@ -66,7 +79,7 @@ let peak name ~rounds ~flops =
     in
     { run = harness g [ launch ]; work = Flops total; floor = None }
   in
-  { name = "floor/" ^ name ^ "-peak"; make }
+  { name = "floor/" ^ name ^ "-peak"; runs = 1; make }
 
 let peaks =
   [
@@ -116,6 +129,11 @@ let contract ?(batch = 1) ?(la = `K) ?(lb = `K) (D.Any d as dt) (D.Any c as acc)
       m n k
       (if la = `K && lb = `K then "" else "-" ^ l la ^ l lb)
   in
+  let bytes = D.bits d / 8 * batch * (m + n) * k in
+  let work =
+    if m > 16 then Flops (2. *. float (batch * m * n) *. float k)
+    else Bytes bytes
+  in
   let make g =
     let a, b, y, run = plan g ~batch ~la ~lb dt acc out m n k in
     S.run g run;
@@ -132,19 +150,13 @@ let contract ?(batch = 1) ?(la = `K) ?(lb = `K) (D.Any d as dt) (D.Any c as acc)
     in
     if r.wrong > 0 || not (r.worst <= 1.) then
       failwith (strf "%s: %g of the bound, %d wrong" name r.worst r.wrong);
-    let bytes = D.bits d / 8 * batch * (m + n) * k in
-    if m > 16 then
-      {
-        run;
-        work = Flops (2. *. float (batch * m * n) *. float k);
-        floor = None;
-      }
+    if m > 16 then { run; work; floor = None }
     else
       let operands = S.buffer g (16 * ((bytes + 15) / 16)) in
       let floor = harness g [ S.floor_read g operands ] in
-      { run; work = Bytes bytes; floor = Some floor }
+      { run; work; floor = Some floor }
   in
-  { name; make }
+  { name; runs = runs work; make }
 
 let contracts =
   let open D in

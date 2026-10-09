@@ -107,9 +107,10 @@ val run : ?beside:hog -> gpu -> run -> unit
     [r] is done. *)
 
 val enqueue : gpu -> count:int -> run -> unit
-(** [enqueue g ~count r] submits [r] [count] times and returns without waiting
-    for them: the host's share of [count] runs. The caller keeps [r] until a
-    later {!run} or {!device_time} returns. *)
+(** [enqueue g ~count r] submits [r] [count] times, in submissions of at most
+    1,024 launches or 256 driver copies, and returns without waiting for them:
+    the host's share of [count] runs. The caller keeps [r] until a later {!run}
+    or {!device_time} returns. *)
 
 val device_time : gpu -> run -> count:int -> float
 (** [device_time g r ~count] runs [r] [count] times and is the GPU's time per
