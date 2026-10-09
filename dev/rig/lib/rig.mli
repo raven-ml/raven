@@ -454,20 +454,26 @@ module Buffer : sig
       Staging memory that a device lost while it used it is replaced, so a loss
       reaches no other device's copies.
 
+      A copy between an {!Io} device's memory and a borrow of it ({!borrow})
+      is refused, whatever their bytes: the io device would read or write its
+      memory through its own pages, which a system may never finish, such as
+      a file written from its own mapping.
+
       Raises [Invalid_argument] if [src] and [dst] differ in size, overlap
-      ({!overlaps}), or either is dead, [dst]'s memory is [Read]
-      ({!val-access}), or one is memory of a driver's device of another machine
-      and the device that would copy runs no copy, or the other is memory of
-      this machine that this process's host does not address, of a third
-      machine, or of its machine that [src]'s device does not reach
+      ({!overlaps}), or either is dead, one is an {!Io} device's memory and the
+      other a borrow of it, or a view of one, [dst]'s memory is [Read]
+      ({!val-access}), or one is memory of a driver's device of another
+      machine and the device that would copy runs no copy, or the other is
+      memory of this machine that this process's host does not address, of a
+      third machine, or of its machine that [src]'s device does not reach
       ({!reaches}), or the copy would stage through the [Pinned] memory of a
       device that maps no host memory and the other side's device maps neither
       it nor host memory; {!Lost} if a device that runs the copy is lost or is
-      lost by it, and for [src] and [dst] as {!Lost} states; {!Out_of_memory} if
-      a host or a device cannot allocate its staging memory, or a device's
+      lost by it, and for [src] and [dst] as {!Lost} states; {!Out_of_memory}
+      if a host or a device cannot allocate its staging memory, or a device's
       driver refuses to map the host's after the rounds of
-      {{!reclaim}reclamation}; and what an {!Io} device's read or write raises.
-  *)
+      {{!reclaim}reclamation}; and what an {!Io} device's read or write
+      raises. *)
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},

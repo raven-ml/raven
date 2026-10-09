@@ -358,6 +358,10 @@ let overlaps a b =
   && a.first < b.first + b.length
   && b.first < a.first + a.length
 
+(* Whether one of [a] and [b] is a file and the other a borrow of its pages,
+   which a copy refuses whatever their bytes. *)
+let own_pages a b = a.mem == b.mem && (a.on.kind = Disk) <> (b.on.kind = Disk)
+
 let is_polled r = match r.kind with Polled _ -> true | _ -> false
 
 let runs_on_host r =
@@ -1297,6 +1301,7 @@ let copy_judge ~invalid last src a b outcome =
     waits_all vd b.mem
   end;
   let w = src.w in
+  seen w "a copy between a file and a borrow of its pages" (own_pages a b);
   let lost () =
     unknown b;
     List.iter
@@ -1327,7 +1332,9 @@ let copy_ref last src dst outcome =
   with_buf src outcome @@ fun a ->
   with_buf dst outcome @@ fun b ->
   copy_judge
-    ~invalid:(dead a || dead b || a.length <> b.length || overlaps a b)
+    ~invalid:
+      (dead a || dead b || a.length <> b.length || overlaps a b
+     || own_pages a b)
     last src a b outcome
 
 (* A copy between the first bytes of two buffers, as many in each: views, made
@@ -1341,7 +1348,7 @@ let copy_prefix_ref last src dst outcome =
     | _ -> fail "a view of a dead buffer"
   else
     let a, b = prefixes a b in
-    copy_judge ~invalid:(overlaps a b) last src a b outcome
+    copy_judge ~invalid:(overlaps a b || own_pages a b) last src a b outcome
 
 let copy_prefix_sys last src dst =
   let b = get dst in

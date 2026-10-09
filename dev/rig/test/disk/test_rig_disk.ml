@@ -490,6 +490,30 @@ let test_copy_into_opened () =
       B.copy ~src:(host_of_string "") ~dst:(of_file empty));
   equal octets ~msg:"the file" "x" (contents path)
 
+(* A copy between a file and a borrow of its own pages is refused, both ways and
+   from either borrow: a system write of a file from its own mapping can wait on
+   itself in the kernel for good (macOS's APFS). *)
+let test_copy_own_pages () =
+  let s = pattern 3 8192 and path = new_path () in
+  removing [ path ] @@ fun () ->
+  let file = create path 8192 in
+  write file s;
+  let half b i = B.view b ~first:(i * 4096) ~length:4096 in
+  List.iter
+    (fun (on, d) ->
+      let pages = require_some (B.borrow d file) in
+      List.iter
+        (fun (dir, src, dst) ->
+          raises_match ~msg:(on ^ ", " ^ dir)
+            (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ")
+            (fun () -> B.copy ~src ~dst))
+        [
+          ("into the file", half pages 0, half file 1);
+          ("out of the file", half file 0, half pages 1);
+        ])
+    [ ("the host's", host); ("a device's", Lazy.force memory_device) ];
+  same ~msg:"the file" s (contents path)
+
 (* 20,000 copies of 64 bytes into a file, each from a fresh host buffer that
    nothing else holds: a collection during a copy, such as one an allocation of
    the disk's own runs, must not free its source. *)
@@ -527,6 +551,8 @@ let copies =
         "a file opened for reading admits only reads: a copy into it is \
          refused, empty or not"
         test_copy_into_opened;
+      test "a copy between a file and a borrow of its own pages is refused"
+        test_copy_own_pages;
     ]
 
 (* Borrows *)

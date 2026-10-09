@@ -238,6 +238,14 @@ let rec copy ~src ~dst =
   if n <> Buffer.length dst then
     invalid_argf "Rig.%s: %d bytes into %d" fn n (Buffer.length dst);
   if Buffer.overlaps src dst then invalid_argf "Rig.%s: the buffers overlap" fn;
+  (* An io device's write of its memory from a borrow of its own pages, or its
+     read into them, can wait on itself in the system for good: a file's write
+     from its own mapping on macOS's APFS. *)
+  if
+    Dev.is_io src.mem.dev <> Dev.is_io dst.mem.dev
+    && src.mem.root == dst.mem.root
+  then
+    invalid_argf "Rig.%s: one buffer is a borrow of the other's io memory" fn;
   if Buffer.access dst = Read then
     invalid_argf "Rig.%s: the destination's memory admits only reads" fn;
   let sd = src.mem.dev and dd = dst.mem.dev in
