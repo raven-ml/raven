@@ -118,7 +118,11 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
   in
   let at = Prim.placement x in
   let arrays =
-    match x with Value.Array { a; _ } -> [| a |] | Value.Shards { arrays; _ } -> arrays
+    match x with
+    | Value.Array { a; _ } -> [| a |]
+    | Value.Shards { arrays; _ } -> arrays
+    | Value.Deferred _ ->
+        invalid_arg "Place.value: a constant is placed computed"
   in
   if Devices.equal at p then make arrays
   else begin
@@ -144,3 +148,20 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
     in
     make (Array.mapi take (Grid.devices (Devices.grid p)))
   end
+
+let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
+  let at = Prim.placement x and shape = Prim.shape x in
+  let arrays =
+    match x with
+    | Value.Array { a; _ } -> [| a |]
+    | Value.Shards { arrays; _ } -> arrays
+    | Value.Deferred _ -> invalid_arg "Place.view: a constant has no arrays"
+  in
+  let devices = Grid.devices (Devices.grid at) in
+  match Array.find_index (( = ) k) devices with
+  | None -> invalid_arg "Place.view: no array on the device"
+  | Some j ->
+      let held = Devices.window ~by at shape j in
+      if not (contains held w) then
+        invalid_arg "Place.view: the window is not held";
+      slice arrays.(j) (relative held w)

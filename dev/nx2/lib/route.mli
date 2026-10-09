@@ -47,7 +47,19 @@ type rule =
       (** Operands of one rank, results of the last one's shape, written into it
           along this axis, which every operand reads whole: the target is the
           last operand's placement where it lies on the set. *)
+  | Move of Nx_array.Move.t
+      (** One operand, moved: an axis that keeps its elements in order keeps its
+          cut, where it moves to (a permutation, a broadcast that does not
+          stretch it, a reshape that keeps it with the product of the extents
+          before it, a slice that keeps all of it); any other is read whole. *)
   | Replicated  (** Results whole on every device of the set. *)
+
+val moved : Nx_array.Move.t -> int array -> int -> int option
+(** [moved m s a] is the axis that axis [a] of a value of shape [s] becomes
+    under [m], where it keeps its elements in order: a permutation's, a
+    broadcast that does not stretch it, a reshape that keeps its extent and the
+    product of the extents before it, a slice that keeps all of it. [None] for
+    any other. *)
 
 type 'd t = {
   operands : 'd Devices.placement array;
@@ -62,6 +74,6 @@ val route :
 
     Raises [Invalid_argument] naming [by] if operands lie on two sets or on two
     devices alone, if a placement an operand is read at does not divide its
-    shape ({!Grid.window}), if an axis of [r] is not an axis of an operand, and
-    as an internal fault if [ps] and [shapes] differ in length or [ps] is empty.
-*)
+    shape ({!Grid.window}), if an axis of [r] is not an axis of an operand or a
+    movement does not fit its operand ({!Nx_array.Move.shape}), and as an
+    internal fault if [ps] and [shapes] differ in length or [ps] is empty. *)

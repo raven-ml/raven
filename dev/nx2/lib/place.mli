@@ -25,4 +25,17 @@ val value :
     placement equals [p].
 
     Raises [Invalid_argument] naming [by] if [p]'s cuts do not divide [x]'s
-    shape, {!Rig.Lost} for a lost device, and what {!Rig.Buffer.copy} raises. *)
+    shape, and if [x] is a constant (the engine computes those), {!Rig.Lost} for
+    a lost device, and what {!Rig.Buffer.copy} raises. *)
+
+val view :
+  by:string ->
+  ('v, 's, 'd) Value.t ->
+  int ->
+  Nx_array.Move.range array ->
+  ('v, 's) Nx_array.t
+(** [view ~by x k w] is the window [w] of [x]'s whole, from [x]'s array on its
+    set's device [k], without a copy.
+
+    Raises [Invalid_argument] if [x] is a constant, or no array of [x] on [k]
+    holds [w]. *)

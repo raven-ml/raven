@@ -3,7 +3,7 @@
 
 (library
  (name nx)
- (modules grid devices route value prim place repr nx)
- (private_modules grid devices route value prim place repr)
+ (modules grid devices route value prim builder place exec repr nx)
+ (private_modules grid devices route value prim builder place exec repr)
  (modules_without_implementation value)
  (libraries nx_array nx_kernel nx_cpu rig))

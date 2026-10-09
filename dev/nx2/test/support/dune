@@ -1,6 +1,6 @@
-; Devices for nx's suites.
+; Devices and kernel libraries for nx's suites.
 
 (library
  (name nx_support)
  (modules nx_support)
- (libraries rig))
+ (libraries nx_array nx_kernel nx_cpu rig))

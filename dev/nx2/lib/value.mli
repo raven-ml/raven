@@ -3,13 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Values: nx's central types. This module has no implementation.
+(** Values and operations: nx's central types, defined together because each
+    mentions the other. This module has no implementation.
 
-    A value is concrete: arrays on the devices of its placement. The brand ['d]
-    is phantom: every function that makes a value checks that its arrays lie on
-    its placement's devices, and nothing at run time reads ['d]. *)
+    A value is concrete, arrays on the devices of its placement, or a constant
+    not yet computed. The brand ['d] is phantom: every function that makes a
+    value checks that its arrays lie on its placement's devices, and nothing at
+    run time reads ['d]. A constant's placement is {!Devices.anywhere}. *)
 
 type ('v, 's) dtype = ('v, 's) Nx_array.Dtype.t
+
+(** {1:values Values} *)
 
 type ('v, 's, 'd) t =
   | Array of { at : 'd Devices.placement; a : ('v, 's) Nx_array.t }
@@ -17,6 +21,8 @@ type ('v, 's, 'd) t =
   | Shards of { at : 'd Devices.placement; arrays : ('v, 's) Nx_array.t array }
       (** On [at]'s devices, two or more: per device, in
           [Grid.devices (Devices.grid at)]'s order, its window of the value. *)
+  | Deferred of { form : ('v, 's, 'd) form; node : node; k : int }
+      (** Result [k] of the constant operation [node]. *)
 
 and ('v, 's, 'd) form = {
   dtype : ('v, 's) dtype;
@@ -25,3 +31,57 @@ and ('v, 's, 'd) form = {
 }
 (** A value without its bytes. A sharded value's layout is the C-contiguous
     layout of the whole. *)
+
+and node =
+  | Node : {
+      by : string;
+      op : 'r prim;
+      memo : (unit Devices.placement * Nx_array.any array array) list Atomic.t;
+    }
+      -> node
+      (** An operation whose every operand is a constant, applied by [by].
+          [memo] holds its results computed so far, per placement: per result,
+          one array per device. *)
+
+and 'd any = Any : ('v, 's, 'd) t -> 'd any
+
+(** {1:operations Operations}
+
+    A loop's loads have exactly its iteration shape: no operation broadcasts or
+    promotes. *)
+
+and 'd load =
+  | Plain : ('v, 's, 'd) t -> 'd load
+      (** How a loop reads an operand: through its layout. *)
+
+and ('d, _) outs =
+  | [] : ('d, unit) outs
+  | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) t * 'r) outs
+
+and _ prim =
+  | Map : {
+      shape : int array;
+      prog : Nx_kernel.Prog.t;
+      outs : ('d, 'r) outs;
+      loads : 'd load array;
+    }
+      -> 'r prim
+      (** [prog] at every index of [shape], reading load [i] as its operand [i];
+          result [k] is its output [k]. A one-result map is ['v * unit]. With no
+          loads, a creation. *)
+  | Copy : ('v, 's, 'd) t -> ('v, 's, 'd) t prim
+      (** The value stored afresh, C-contiguous. *)
+  | Move : Nx_array.Move.t * ('v, 's, 'd) t -> ('v, 's, 'd) t prim
+  | Bitcast : ('w, 'r) dtype * ('v, 's, 'd) t -> ('w, 'r, 'd) t prim
+      (** The bits read in another dtype: one width keeps the shape, a narrower
+          one appends an axis of the ratio, a wider one consumes a trailing axis
+          of it. *)
+  | Place : 'e Devices.placement * ('v, 's, 'd) t -> ('v, 's, 'e) t prim
+  | Check : {
+      ok : (bool, Nx_array.Dtype.bool_elt, 'd) t;
+      data : 'd any list;
+      fail : int array -> 'd any list -> exn;
+    }
+      -> unit prim
+      (** Raises [fail i data_i] at the first index [i], in C order, where [ok]
+          is [false], [data_i] each of [data] at [i]. *)

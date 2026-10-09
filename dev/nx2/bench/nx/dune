@@ -1,7 +1,7 @@
 (executable
  (name bench_nx)
  (modules bench_nx)
- (libraries nx nx_array rig thumper))
+ (libraries nx nx_array nx_cpu nx_kernel rig thumper))
 
 (rule
  (alias bench)

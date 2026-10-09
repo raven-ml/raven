@@ -31,6 +31,7 @@ let pp_rule ppf = function
   | Gather a -> Format.fprintf ppf "Gather %d" a
   | Into a -> Format.fprintf ppf "Into %d" a
   | Replicated -> Format.pp_print_string ppf "Replicated"
+  | Move _ -> Format.pp_print_string ppf "Move"
 
 (* An operation: its rule, and its operands' placements and shapes, of one shape
    each but along the axes the rule reads whole. *)
@@ -111,6 +112,7 @@ let result_shape c =
         (List.filteri (fun a _ -> not (Array.mem a axes)) (Array.to_list s))
   | Into _ -> c.shapes.(Array.length c.shapes - 1)
   | Elementwise | Along _ | Gather _ | Replicated -> s
+  | Move mv -> R.shape mv s
 
 (* The part of operand [i] that result window [w] depends on. *)
 let depends c i (w : R.range array) =
@@ -132,7 +134,7 @@ let depends c i (w : R.range array) =
       if i = 1 then Array.mapi (fun a r -> if a = axis then full a else r) w
       else w
   | Into axis -> Array.mapi (fun a r -> if a = axis then full a else r) w
-  | Replicated -> Array.init (Array.length s) full
+  | Replicated | Move _ -> Array.init (Array.length s) full
 
 let contains (outer : R.range array) (inner : R.range array) =
   Array.for_all2
@@ -260,4 +262,109 @@ let cases_ =
           invalid (fun () -> route Elementwise [| Devices.on s4 |] [||]));
     ]
 
-let () = exit (run "nx route" [ group "laws" [ law; keeps ]; cases_ ])
+(* Movements: the operand index each result index reads, as Move states it. *)
+let source mv s idx =
+  let r = Array.length s in
+  match mv with
+  | R.Reshape s' ->
+      let k = ref 0 in
+      Array.iteri (fun i j -> k := (!k * s'.(i)) + j) idx;
+      let src = Array.make r 0 in
+      for i = r - 1 downto 0 do
+        src.(i) <- !k mod s.(i);
+        k := !k / s.(i)
+      done;
+      src
+  | Broadcast s' ->
+      let off = Array.length s' - r in
+      Array.init r (fun i -> if s.(i) = 1 then 0 else idx.(off + i))
+  | Permute p ->
+      let src = Array.make r 0 in
+      Array.iteri (fun i a -> src.(a) <- idx.(i)) p;
+      src
+  | Slice rs -> Array.init r (fun i -> rs.(i).start + (idx.(i) * rs.(i).step))
+  | Window ws ->
+      let src = Array.sub idx 0 r in
+      Array.iteri
+        (fun j (w : R.window) ->
+          src.(w.axis) <- (idx.(w.axis) * w.step) + (idx.(r + j) * w.dilation))
+        ws;
+      src
+
+let move_of s =
+  let open Gen in
+  let r = Array.length s in
+  one_of
+    ([
+       map
+         (fun p -> R.Permute (Array.of_list p))
+         (permutation (List.init r Fun.id));
+       constant (R.Broadcast (Array.append [| 3 |] s));
+       constant
+         (R.Reshape (Array.append [| 2; s.(0) / 2 |] (Array.sub s 1 (r - 1))));
+       map
+         (fun choice ->
+           R.Slice
+             (Array.mapi
+                (fun i d ->
+                  match (choice + i) mod 3 with
+                  | 0 -> { R.start = 0; count = d; step = 1 }
+                  | 1 -> { R.start = 0; count = d / 2; step = 1 }
+                  | _ -> { R.start = d - 1; count = d; step = -1 })
+                s))
+         (int_range 0 2);
+       map
+         (fun a ->
+           R.Window [| { axis = a; size = 2; step = 2; dilation = 1 } |])
+         (int_range 0 (r - 1));
+     ]
+    @
+    if r >= 2 then
+      [
+        constant
+          (R.Reshape (Array.append [| s.(0) * s.(1) |] (Array.sub s 2 (r - 2))));
+      ]
+    else [])
+
+let move_case =
+  let open Gen in
+  with_pp
+    (fun ppf (s, p, _) ->
+      Format.fprintf ppf "%a at %a" pp_ints s Devices.pp_placement p)
+    (let* rank = int_range 1 3 in
+     let* s = array ~size:(constant rank) (of_list [ 4; 8 ]) in
+     let* p = placement_of rank in
+     let+ mv = move_of s in
+     (s, p, mv))
+
+let move_law =
+  prop ~count:300 "each moved result window reads the operand on its own device"
+    move_case (fun (s, p, mv) ->
+      let r = route (Move mv) [| p |] [| s |] in
+      let s' = R.shape mv s in
+      cover "a split operand" (Grid.cuts (Devices.grid p) <> [||]);
+      cover "a split result" (Grid.cuts (Devices.grid r.result) <> [||]);
+      if p != Devices.anywhere then
+        Array.iteri
+          (fun j k ->
+            let w = Devices.window ~by:"t" r.result s' j in
+            let pos = require_some (position r.operands.(0) k) in
+            let have = Devices.window ~by:"t" r.operands.(0) s pos in
+            let rec walk a idx =
+              if a = Array.length s' then
+                let src = source mv s (Array.of_list (List.rev idx)) in
+                equal bool ~msg:"the source index lies in the device's window"
+                  true
+                  (Array.for_all2
+                     (fun (h : R.range) i ->
+                       i >= h.start && i < h.start + h.count)
+                     have src)
+              else
+                for i = w.(a).start to w.(a).start + w.(a).count - 1 do
+                  walk (a + 1) (i :: idx)
+                done
+            in
+            walk 0 [])
+          (Grid.devices (Devices.grid r.result)))
+
+let () = exit (run "nx route" [ group "laws" [ law; keeps; move_law ]; cases_ ])

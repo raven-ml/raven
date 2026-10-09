@@ -45,10 +45,19 @@ let of_shards ~by p arrays =
   if n = 1 then Value.Array { at = p; a = arrays.(0) }
   else Value.Shards { at = p; arrays = Array.copy arrays }
 
+(* A constant reads as computed on the host, its reported placement. *)
+let concrete (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Deferred _ -> Exec.at Devices.anywhere x
+  | Value.Array _ | Value.Shards _ -> x
+
 let array (type v s d) (x : (v, s, d) Value.t) =
-  match x with Value.Array { a; _ } -> Some a | Value.Shards _ -> None
+  match concrete x with
+  | Value.Array { a; _ } -> Some a
+  | Value.Shards _ | Value.Deferred _ -> None
 
 let shards (type v s d) (x : (v, s, d) Value.t) =
-  match x with
+  match concrete x with
   | Value.Array { a; _ } -> Some [| a |]
   | Value.Shards { arrays; _ } -> Some (Array.copy arrays)
+  | Value.Deferred _ -> None

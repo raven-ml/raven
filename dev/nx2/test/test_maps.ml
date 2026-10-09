@@ -1,0 +1,197 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* What only the engine's operations reach, through its private modules, copied
+   here: maps of several nodes, programs of coordinates on split placements,
+   checks, and the laws of constants. *)
+
+open Windtrap
+module A = Nx_array
+module D = Nx_array.Dtype
+module P = Nx_kernel.Prog
+module C = Nx_support.Counting
+
+type b
+
+let m = Nx_support.memory
+let s1 : b Devices.t = Devices.mint ~by:"t" ~kernels:(module C) [ m 0 ]
+let s2 : b Devices.t = Devices.mint ~by:"t" ~kernels:(module C) [ m 0; m 1 ]
+let at1 = Devices.one s1 0
+let split = Devices.split ~by:"t" ~axis:0 s2
+
+let bits =
+  Testable.make ~pp:Format.pp_print_float ~equal:(fun a b ->
+      Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b))
+
+let f32 data : (float, D.float32_elt, b) Value.t =
+  Value.Array
+    {
+      at = at1;
+      a = A.to_device (m 0) (A.of_array D.Float32 [| Array.length data |] data);
+    }
+
+let elements (type v s) (x : (v, s, b) Value.t) : v array =
+  match
+    Repr.array
+      (Place.value ~by:"t" (Devices.rebrand (Devices.one Devices.host 0)) x)
+  with
+  | Some a -> A.to_array a
+  | None -> fail "no array"
+
+let first (x, ()) = x
+
+let maps =
+  group "maps"
+    [
+      test "a map the kernels decline computes node by node" (fun () ->
+          (* x0 * x1 + x0 *)
+          let prog =
+            P.v
+              ~ins:[| D.Any D.Float32; D.Any D.Float32 |]
+              [| In 0; In 1; Op2 (Binary Mul, 0, 1); Op2 (Binary Add, 2, 0) |]
+              ~outs:[| 3 |]
+          in
+          let x = f32 [| 1.; 2.; 3. |] and y = f32 [| 4.; 5.; 6. |] in
+          let z =
+            first
+              (Exec.run ~by:"t"
+                 (Value.Map
+                    {
+                      shape = [| 3 |];
+                      prog;
+                      outs = Value.[ D.Float32 ];
+                      loads = [| Plain x; Plain y |];
+                    }))
+          in
+          equal (array bits) [| 5.; 12.; 21. |] (elements z));
+      test "a creation of coordinates computes each device's window" (fun () ->
+          let prog =
+            P.v ~ins:[||]
+              [| Coord 0; Op1 (Cast, D.Any D.Float32, 0) |]
+              ~outs:[| 1 |]
+          in
+          let c =
+            first
+              (Exec.run ~by:"t"
+                 (Value.Map
+                    {
+                      shape = [| 4 |];
+                      prog;
+                      outs = Value.[ D.Float32 ];
+                      loads = [||];
+                    }))
+          in
+          let placed = Exec.at split c in
+          let shards = Option.get (Repr.shards placed) in
+          equal
+            (array (array bits))
+            [| [| 0.; 1. |]; [| 2.; 3. |] |]
+            (Array.map A.to_array shards));
+    ]
+
+exception Failed of int array * float
+
+let checks =
+  group "checks"
+    [
+      test "a check that holds raises nothing" (fun () ->
+          let ok =
+            Value.Array
+              {
+                at = at1;
+                a =
+                  A.to_device (m 0) (A.of_array D.Bool [| 2 |] [| true; true |]);
+              }
+          in
+          Exec.run ~by:"t"
+            (Value.Check { ok; data = []; fail = (fun _ _ -> Exit) }));
+      test
+        "a check raises its exception at the first failing index, with the \
+         data there" (fun () ->
+          let ok =
+            Value.Array
+              {
+                at = at1;
+                a =
+                  A.to_device (m 0)
+                    (A.of_array D.Bool [| 3 |] [| true; false; false |]);
+              }
+          in
+          let fail i data =
+            match data with
+            | [ Value.Any x ] -> (
+                match Repr.array x with
+                | Some a -> Failed (i, A.get (A.expect D.Float32 (A.Any a)) [||])
+                | None -> Exit)
+            | _ -> Exit
+          in
+          raises
+            (Failed ([| 1 |], 20.))
+            (fun () ->
+              Exec.run ~by:"t"
+                (Value.Check
+                   { ok; data = [ Any (f32 [| 10.; 20.; 30. |]) ]; fail })));
+    ]
+
+(* A fresh constant [1.]: a node of its own. *)
+let fresh_one () =
+  first
+    (Exec.run ~by:"t"
+       (Value.Map
+          {
+            shape = [||];
+            prog =
+              Builder.single (Const (D.Any D.Float32, P.bits D.Float32 1.)) [||];
+            outs = Value.[ D.Float32 ];
+            loads = [||];
+          }))
+
+let constants =
+  group "constants"
+    [
+      test "a node shared by many values computes once per placement" (fun () ->
+          let one = fresh_one () in
+          let c = Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one in
+          let d = Exec.apply2 ~by:"t" (Binary Mul) D.Float32 c c in
+          let e = Exec.apply2 ~by:"t" (Binary Add) D.Float32 c d in
+          C.reset ();
+          ignore (Exec.at at1 e);
+          (* one, c, d, e: four nodes. *)
+          equal int 4 (C.calls ());
+          C.reset ();
+          ignore (Exec.at at1 d);
+          ignore (Exec.at at1 c);
+          equal int 0 (C.calls ()));
+      test "a chain of constants computes in one pass per node, at any length"
+        (fun () ->
+          let n = 100_000 in
+          let one = fresh_one () in
+          let rec chain k x =
+            if k = 0 then x
+            else
+              chain (k - 1) (Exec.apply2 ~by:"t" (Binary Add) D.Float32 x one)
+          in
+          let x =
+            chain n (Exec.apply2 ~by:"t" (Binary Mul) D.Float32 one one)
+          in
+          C.reset ();
+          let v = Exec.at at1 x in
+          (* The fill of [one], the product and the n sums. *)
+          equal int (n + 2) (C.calls ());
+          equal (array bits) [| Float.of_int (n + 1) |] (elements v));
+      test "domains racing to compute a constant agree bit for bit" (fun () ->
+          let one = fresh_one () in
+          let c =
+            Exec.apply2 ~by:"t" (Binary Mul) D.Float32
+              (Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one)
+              one
+          in
+          let work () = elements (Exec.at at1 c) in
+          let d = Domain.spawn work in
+          let here = work () in
+          equal (array bits) here (Domain.join d));
+    ]
+
+let () = exit (run "nx maps" [ maps; checks; constants ])
