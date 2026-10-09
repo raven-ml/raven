@@ -212,7 +212,9 @@ static void need(const struct device *d, const struct rig_part *p, int n,
   bytes[r] += bytes_of(d, r == COMPUTE ? T_RELEASE : T_COPY_RELEASE);
 }
 
-int rig_nv_room(void *self, const struct rig_part *p, int n) {
+int rig_nv_room(void *self, const struct rig_part *p, int n,
+                const uint8_t *args) {
+  (void)args;
   struct device *d = self;
   if (!runs(p, n)) return RIG_NEVER;
   uint64_t entries[CHANNELS], bytes[CHANNELS];
@@ -283,7 +285,11 @@ static void place(struct device *d, const struct rig_part *p) {
 
 int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
                   int nwaits, const struct rig_part *p, int n,
+                  const uint8_t *args, const uint64_t *slots, int nslots,
                   const uint64_t *handles, int nhandles, const char **failure) {
+  (void)args;
+  (void)slots;
+  (void)nslots;
   (void)handles;
   (void)nhandles;
   (void)failure;

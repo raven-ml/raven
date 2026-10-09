@@ -396,7 +396,8 @@ let facts () =
         List.map (function
           | Rig_edge.Words -> "words"
           | Fill -> "fill"
-          | Copy -> "copy")
+          | Copy -> "copy"
+          | Launch -> "launch")
       in
       equal string ~msg (Gpu.processor g) f.arch;
       equal int ~msg (1 lsl 34) f.budget;
@@ -567,11 +568,14 @@ let loads () =
           let k = Option.get (Abi.Code_object.kernel co name) in
           equal (option int) ~msg:name
             (Some (address r + k.descriptor))
-            (A.entry m name))
+            (Option.map (fun (e : Rig_edge.entry) -> e.code) (A.entry m name)))
         [ "empty"; "double_index"; "spin"; "wild" ];
-      equal (option int) ~msg:"no kernel" None (A.entry m "nothing");
+      equal (option int) ~msg:"no kernel" None
+        (Option.map (fun (e : Rig_edge.entry) -> e.code) (A.entry m "nothing"));
       equal (option int) ~msg:"a symbol of no kernel" None
-        (A.entry m "__clang_ocl_kern_imp_spin");
+        (Option.map
+           (fun (e : Rig_edge.entry) -> e.code)
+           (A.entry m "__clang_ocl_kern_imp_spin"));
       A.unload g m;
       A.free g r
 
@@ -1791,7 +1795,7 @@ let go r ps =
   equal answer ~msg:"submit" `Ok (submit r.g ~v:r.v ps);
   S.reached r.g r.v
 
-let entry m f = Option.get (A.entry m f)
+let entry m f = (Option.get (A.entry m f)).code
 
 (* [m]'s image laid over new memory [code], and the part that copies it there
    from staging memory the host wrote. *)

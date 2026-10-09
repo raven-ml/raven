@@ -62,6 +62,7 @@ let facts () =
       | Words -> "Words"
       | Fill -> "Fill"
       | Copy -> "Copy"
+      | Launch -> "Launch"
     in
     (q.name, List.map kind q.runs)
   in
@@ -236,7 +237,8 @@ let images () =
   let m = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
   equal bool ~msg:"double_index" true
     (Option.is_some (C.entry m "double_index"));
-  equal (option int) ~msg:"a missing kernel" None (C.entry m "missing");
+  equal (option int) ~msg:"a missing kernel" None
+    (Option.map (fun (e : Rig_edge.entry) -> e.code) (C.entry m "missing"));
   let e = require_error (C.image g "not a module") in
   starts_with ~affix:"loading the image: CUDA_ERROR_" e;
   let arch = (C.facts g).arch in
@@ -247,7 +249,7 @@ let images () =
   | Error e ->
       not_equal string ~msg:"the cubin's GPU" "sm_89" arch;
       starts_with ~affix:"loading the image: CUDA_ERROR_" e);
-  let f = S.launch (Option.get (C.entry m "empty")) ~grid:1 ~block:1 0 0 in
+  let f = S.launch (Option.get (C.entry m "empty")).code ~grid:1 ~block:1 0 0 in
   S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" f |]);
   C.unload g m
 
@@ -258,7 +260,7 @@ let loads_every_function () =
   S.with_ @@ fun { g; _ } ->
   let m = S.loaded (require_ok (C.image g (S.fixture "kernels.ptx"))) in
   equal (pair int int) (5, 5)
-    (S.functions_loaded (Option.get (C.entry m "empty")));
+    (S.functions_loaded (Option.get (C.entry m "empty")).code);
   C.unload g m
 
 (* An entry launches with as much dynamic shared memory as the GPU allows
@@ -269,7 +271,7 @@ let largest_shared_memory () =
   (* cuda.h's CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN. *)
   let shared = S.attribute 97 in
   let f =
-    S.launch ~shared (Option.get (C.entry m "empty")) ~grid:1 ~block:1 0 0
+    S.launch ~shared (Option.get (C.entry m "empty")).code ~grid:1 ~block:1 0 0
   in
   S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" f |]);
   C.unload g m
@@ -352,7 +354,9 @@ let global = 256 * 1024 * 1024
 
 let load_global t =
   let m = S.loaded (require_ok (C.image t.S.g (S.fixture "global.ptx"))) in
-  let touch = S.launch (Option.get (C.entry m "touch")) ~grid:1 ~block:1 0 0 in
+  let touch =
+    S.launch (Option.get (C.entry m "touch")).code ~grid:1 ~block:1 0 0
+  in
   S.wait t (S.submit t [| S.part ~queue:"COMPUTE:0" touch |]);
   m
 

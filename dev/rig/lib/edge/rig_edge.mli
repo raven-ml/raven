@@ -40,6 +40,7 @@ type kind =
   | Words  (** 32-bit words placed on the queue. *)
   | Fill  (** A C function called with the queue's context. *)
   | Copy  (** A copy between memory of the device. *)
+  | Launch  (** A function of an image run over a grid of groups of threads. *)
 
 type queue = {
   name : string;
@@ -119,7 +120,10 @@ type 'region facts = {
           value.
           - The room check answers whether parts fit the device's queues now,
             once one of its values is reached, or never, for parts that exceed
-            its empty queues, name work it does not run or are of no kind.
+            its empty queues, name work it does not run or are of no kind, and
+            for a launch whose grid or group is empty or exceeds the device's or
+            the function's limits, or whose shared memory exceeds the
+            function's.
           - The hand-over encodes the parts on the device's queues as the work
             of the value after the last one it received, after the waits and
             the device's earlier work. The work runs without another call. The
@@ -166,6 +170,18 @@ type ('region, 'image) code =
           makes nothing on the device before the function is called, so a
           [Place] whose function is never called leaves nothing to release; the
           function calls nothing that may block or fault, and raises nothing. *)
+
+type entry = {
+  code : int;
+      (** What compiled code names the function by: a kernel descriptor's
+          address, a code address, a [CUfunction], a pipeline. *)
+  launch : nativeint;
+      (** What the hand-over reads to launch the function ([launch.launch] in
+          [rig_edge.h]), such as its dispatch template and limits, valid while
+          the image is loaded; [0n] for a driver whose queues run no [Launch].
+      *)
+}
+(** The type for a function of an image, as a driver names it. *)
 
 (** {1:drivers Drivers} *)
 
@@ -242,10 +258,12 @@ module type Driver = sig
   (** [image d b] takes the binary [b], or is [Error why] if [d] refuses it.
       Counted. *)
 
-  val entry : image -> string -> int option
-  (** [entry i f] is the driver's name for [i]'s function [f]: an address or an
-      object, or [None] if [i] has no function [f]. A driver may make it on the
-      first call, compiling [f], and that call may block. Counted.
+  val entry : image -> string -> entry option
+  (** [entry i f] is the driver's name for [i]'s function [f], or [None] if [i]
+      has no function [f]. It makes what a launch of [f] needs, such as a
+      compiled pipeline or [f]'s scratch memory, so a hand-over that launches
+      [f] makes nothing; a second call for [f] makes nothing new. That first
+      call may block. Counted.
 
       Raises [Invalid_argument] with the driver's reason if [f] needs more than
       the device offers, where the driver finds that only here. *)

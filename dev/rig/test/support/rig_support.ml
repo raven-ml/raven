@@ -27,6 +27,11 @@ external polled_last_handles : nativeint -> int array
 external polled_copy_sides : nativeint -> int array
   = "rig_test_polled_copy_sides"
 
+external polled_kernel : string -> nativeint = "rig_test_polled_kernel"
+
+external polled_launches : nativeint -> string array
+  = "rig_test_polled_launches"
+
 external rig_local : unit -> int * int * int = "rig_test_rig_local"
 external rig_word : unit -> int = "rig_test_rig_word"
 external rig_object : unit -> int = "rig_test_rig_object"
@@ -68,6 +73,7 @@ module Driver = struct
     word_at : int;  (** The word's host address. *)
     copies : bool;
     host_visible : bool;
+    addresses : bool;
     transport : bool;
     peers : bool;
     maps_host : bool;
@@ -98,8 +104,17 @@ module Driver = struct
   }
 
   (* A region the driver allocated has a kind; a mapping has none. *)
-  type region = { at : int; kind : kind option; bytes : int; visible : bool }
-  type image = { code : region; owner : t }
+  type region = {
+    at : int;
+    kind : kind option;
+    bytes : int;
+    visible : bool;
+    addressed : bool;
+  }
+
+  (* An image's code is in a region of the device, or, loaded by the driver,
+     nowhere: its functions are the host's. *)
+  type image = { code : region option; owner : t }
 
   exception Fault of string
 
@@ -122,12 +137,13 @@ module Driver = struct
 
   let capability_key : unit Type.Id.t = Type.Id.make ()
 
-  (* Its queues run fills and, with copies, copies. The facts are one call,
-     which goes on whether or not it refuses. *)
+  (* Its queues run fills and, with copies, copies; its compute queue also runs
+     launches. The facts are one call, which goes on whether or not it
+     refuses. *)
   let facts d =
     ignore (step d : bool);
     let runs = Rig_edge.(if d.copies then [ Fill; Copy ] else [ Fill ]) in
-    let compute = { Rig_edge.name = "COMPUTE:0"; runs } in
+    let compute = { Rig_edge.name = "COMPUTE:0"; runs = Launch :: runs } in
     let has c = List.mem c d.waits in
     {
       Rig_edge.arch = "polled";
@@ -149,7 +165,13 @@ module Driver = struct
       maps_host = d.maps_host;
       capability = Capability (capability_key, ());
       word =
-        { at = d.word_at; kind = None; bytes = 8; visible = not d.transport };
+        {
+          at = d.word_at;
+          kind = None;
+          bytes = 8;
+          visible = not d.transport;
+          addressed = true;
+        };
       edge = d.c;
     }
 
@@ -173,7 +195,8 @@ module Driver = struct
     else
       let at = host_alloc n in
       let visible = d.host_visible || kind <> Device in
-      Some { at; kind = Some kind; bytes = n; visible }
+      let addressed = d.addresses || kind <> Device in
+      Some { at; kind = Some kind; bytes = n; visible; addressed }
 
   let rec remove x = function
     | [] -> []
@@ -198,7 +221,7 @@ module Driver = struct
 
   let locate r =
     {
-      Rig_edge.address = Some r.at;
+      Rig_edge.address = (if r.addressed then Some r.at else None);
       host = (if r.visible then Some r.at else None);
       handle = Nativeint.of_int r.at;
     }
@@ -217,7 +240,8 @@ module Driver = struct
     if counted d "map_host" then None
     else begin
       Mutex.protect d.lock (fun () -> d.maps <- n :: d.maps);
-      mapping d { at = p; kind = None; bytes = n; visible = true }
+      mapping d
+        { at = p; kind = None; bytes = n; visible = true; addressed = true }
     end
 
   let image d b =
@@ -228,11 +252,17 @@ module Driver = struct
           let n = int_of_string n in
           Ok
             (Rig_edge.Place
-               (n, fun r -> ({ code = r; owner = d }, String.make n 'c')))
+               (n, fun r -> ({ code = Some r; owner = d }, String.make n 'c')))
+      | [ "functions" ] -> Ok (Rig_edge.Loaded { code = None; owner = d })
       | _ -> Error "not a polled binary"
 
+  (* Its functions are Polled's host functions of that name. *)
   let entry i f =
-    if counted i.owner "entry" || f <> "main" then None else Some i.code.at
+    let launch = polled_kernel f in
+    if counted i.owner "entry" || launch = 0n then None
+    else
+      let code = match i.code with Some r -> r.at | None -> 0 in
+      Some { Rig_edge.code; launch }
 
   let unload d _ = ignore (counted d "unload" : bool)
 
@@ -293,11 +323,11 @@ module Polled = struct
   include Driver
 
   let make ?(capacity = 1024) ?(copies = true) ?(host_visible = true)
-      ?(transport = false) ?(peers = true) ?(maps_host = true)
-      ?(budget = 1 lsl 30) ?(memory = max_int) ?(window = max_int)
-      ?(may_block = false) ?(completion = `Host) ?(waits_on = [])
-      ?(max_waits = max_int) ?(answer = `Stopped) ?(runs = `When_slept)
-      ?(lag = 1) ?hang_ms () =
+      ?(addresses = true) ?(transport = false) ?(peers = true)
+      ?(maps_host = true) ?(budget = 1 lsl 30) ?(memory = max_int)
+      ?(window = max_int) ?(may_block = false) ?(completion = `Host)
+      ?(waits_on = []) ?(max_waits = max_int) ?(answer = `Stopped)
+      ?(runs = `When_slept) ?(lag = 1) ?hang_ms () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
       | Rig_edge.Device -> memory
@@ -311,6 +341,7 @@ module Polled = struct
         word_at = polled_word_at c;
         copies;
         host_visible;
+        addresses;
         transport;
         peers;
         maps_host;
@@ -343,13 +374,13 @@ module Polled = struct
     if runs = `Itself then polled_start d.c;
     d
 
-  let open_ ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
-      ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer ?runs
-      ?lag ?hang_ms name =
+  let open_ ?capacity ?copies ?host_visible ?addresses ?transport ?peers
+      ?maps_host ?budget ?memory ?window ?may_block ?completion ?waits_on
+      ?max_waits ?answer ?runs ?lag ?hang_ms name =
     let p =
-      make ?capacity ?copies ?host_visible ?transport ?peers ?maps_host ?budget
-        ?memory ?window ?may_block ?completion ?waits_on ?max_waits ?answer
-        ?runs ?lag ?hang_ms ()
+      make ?capacity ?copies ?host_visible ?addresses ?transport ?peers
+        ?maps_host ?budget ?memory ?window ?may_block ?completion ?waits_on
+        ?max_waits ?answer ?runs ?lag ?hang_ms ()
     in
     match Rig.open_ (module Driver) ~name (fun () -> Ok p) with
     | Ok d -> (d, p)
@@ -402,6 +433,26 @@ module Polled = struct
     in
     List.map side (Array.to_list (polled_copy_sides d.c))
 
+  type launch = {
+    groups : int * int * int;
+    threads : int * int * int;
+    shared : int;
+    params : string;
+  }
+
+  (* Each block: [rig_edge.h]'s struct rig_block, 32 bytes of header, then the
+     parameters. *)
+  let launch b =
+    let u32 at = Int32.to_int (String.get_int32_le b at) land 0xffff_ffff in
+    let axes k = (u32 k, u32 (k + 4), u32 (k + 8)) in
+    {
+      groups = axes 0;
+      threads = axes 12;
+      shared = u32 24;
+      params = String.sub b 32 (String.length b - 32);
+    }
+
+  let launches d = Array.to_list (Array.map launch (polled_launches d.c))
   let frees d = Mutex.protect d.lock (fun () -> List.rev d.frees)
   let allocs d = Mutex.protect d.lock (fun () -> List.rev d.allocs)
   let host_maps d = Mutex.protect d.lock (fun () -> List.rev d.maps)

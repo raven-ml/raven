@@ -155,7 +155,7 @@ let kernels ?dir g =
   let m =
     loaded (Result.get_ok (Rig_cuda.image g (fixture ?dir "kernels.ptx")))
   in
-  (m, fun name -> Option.get (Rig_cuda.entry m name))
+  (m, fun name -> (Option.get (Rig_cuda.entry m name)).code)
 
 (* Conformance *)
 

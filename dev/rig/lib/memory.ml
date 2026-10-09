@@ -270,6 +270,11 @@ let unload d (Loaded { m; h; i }) =
   let module D = (val m) in
   Dev.give d (fun () -> D.unload h i)
 
+let kernel_entry image f =
+  let (Loaded { m; i; _ }) = image.loaded in
+  let module D = (val m) in
+  Dev.counted image.idev (fun () -> D.entry i f)
+
 (* The budget memory of [kind] on [d] counts in. Pinned memory is [d]'s own
    where the host addresses [d]'s memory, and host memory elsewhere. *)
 type budget = Device_budget | Host_budget | No_budget

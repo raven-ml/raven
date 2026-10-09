@@ -152,9 +152,9 @@ static void encode(struct floor *f, int n) {
   const char *failure = NULL;
   const uint64_t *h = f->handles != NULL ? f->handles : &f->handle;
   int nh = f->handles != NULL ? f->nhandles : n;
-  if (f->driver.room(f->self, &f->part, n) != RIG_FITS) abort();
-  int r = f->driver.submit(f->self, ++f->v, NULL, 0, &f->part, n, h, nh,
-                           &failure);
+  if (f->driver.room(f->self, &f->part, n, NULL) != RIG_FITS) abort();
+  int r = f->driver.submit(f->self, ++f->v, NULL, 0, &f->part, n, NULL, NULL,
+                           0, h, nh, &failure);
   if (r == RIG_FAILED) abort();
   if (r == RIG_COMMITTED) f->committed = f->v;
 }

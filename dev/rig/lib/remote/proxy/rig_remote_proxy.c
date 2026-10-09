@@ -35,7 +35,9 @@ static const char *why(struct rig_remote_link *l) {
 /* Room: only words and copies fit, words only on the host, and no copy
    from this process's memory after a copy into it in one submission, whose
    bytes the hand-over could not wait for. */
-static int proxy_room(void *self, const struct rig_part *parts, int n) {
+static int proxy_room(void *self, const struct rig_part *parts, int n,
+                      const uint8_t *args) {
+  (void)args;
   struct rig_remote_dev *d = self;
   int wrote_local = 0;
   for (int i = 0; i < n; i++) {
@@ -95,8 +97,12 @@ static unsigned char *put_side(unsigned char *b, int local, uint64_t id,
    done. It returns once the frame is sent. */
 static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
                         int nwaits, const struct rig_part *parts, int nparts,
+                        const uint8_t *args, const uint64_t *slots, int nslots,
                         const uint64_t *handles, int nhandles,
                         const char **failure) {
+  (void)args;
+  (void)slots;
+  (void)nslots;
   struct rig_remote_dev *d = self;
   struct rig_remote_link *l = d->link;
   (void)handles;

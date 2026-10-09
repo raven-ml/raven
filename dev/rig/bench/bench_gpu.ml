@@ -187,6 +187,7 @@ let floor_part f (p : Sub.part) =
       floor_fill f fill (B.address arg) ring_units segment_bytes
   | Sub.Words b -> floor_words f (B.address b) (B.length b / 4)
   | Sub.Copy _ -> invalid_arg "floor_part: a copy"
+  | Sub.Launch _ -> invalid_arg "floor_part: a launch"
 
 (* A GPU's submits through rig, beside the same submits through its driver's C
    entries alone. [empty] and [cost] submit no work and wait for each submit or
@@ -472,7 +473,7 @@ let metal_kernel d _ =
     | Ok (Place _) -> failwith "Metal asked to place its code"
     | Error why -> failwith why
   in
-  let step = Option.get (Rig_metal.entry image "step") in
+  let step = (Option.get (Rig_metal.entry image "step")).code in
   let region n = Option.get (Rig_metal.alloc d Device n) in
   let args = region 16 in
   let word = Option.get (Rig_metal.locate (region 16)).address in

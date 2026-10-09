@@ -122,15 +122,42 @@ static void *aligned(size_t align, size_t n) {
 static void aligned_free(void *p) { free(p); }
 #endif
 
+/* A queued submission. Its launches' blocks are its own copies, made at
+   the hand-over with the refs' addresses added: each launch part's
+   [launch.block] is an offset into [blocks]. */
+/* A function the compiler keeps out of its callers. */
+#ifdef _MSC_VER
+#define NOINLINE __declspec(noinline)
+#else
+#define NOINLINE __attribute__((noinline))
+#endif
+
 struct queued {
   uint64_t v;
   int nwaits, nparts;
   struct rig_wait *waits;
   struct rig_part *parts;
+  uint8_t *blocks;
+};
+
+/* Polled's functions: host code run once per group of a launch's grid,
+   with the group's index, the block and its parameter count. A Polled
+   entry's [launch] points to one. */
+struct polled_kernel {
+  void (*run)(const uint32_t group[3], const struct rig_block *b,
+              uint32_t params);
+  uint32_t max_threads, max_shared;
 };
 
 #define LAST 8
 #define LAST_HANDLES 64
+#define LAST_LAUNCHES 8
+
+/* A launch's block as it ran: its [bytes] bytes of header and parameters. */
+struct launched {
+  uint32_t bytes;
+  uint8_t block[sizeof(struct rig_block) + RIG_PARAMS];
+};
 
 struct polled {
   const struct rig_driver *driver; /* first, with the word in its page */
@@ -161,6 +188,11 @@ struct polled {
   intnat fail_from; /* the step from which every call fails, or 0 */
   intnat refuse_from, refuse_to; /* the steps from one below the other refuse */
   char why[64]; /* what a hand-over failing from [fail_from] reports */
+  /* The blocks of the first LAST_LAUNCHES launches run since they were
+     last read, as they ran: fixed, so a device that launches holds no more
+     memory as it runs. */
+  int nlaunched;
+  struct launched launched[LAST_LAUNCHES];
 };
 
 #define Polled_val(v) ((struct polled *)Nativeint_val(v))
@@ -398,10 +430,34 @@ static void commit_upto(struct polled *p, uint64_t v) {
   if (p->itself) cond_broadcast(&p->work);
 }
 
+/* Keeps the [n] bytes of the block [b] as run, among the first
+   LAST_LAUNCHES. [p]'s lock is held. */
+static void keep_launch(struct polled *p, const void *b, uint32_t n) {
+  if (p->nlaunched == LAST_LAUNCHES) return;
+  p->launched[p->nlaunched].bytes = n;
+  memcpy(p->launched[p->nlaunched++].block, b, n);
+}
+
+/* Runs the launch [part] of [s]: its function once per group, x fastest.
+   Kept out of [run_one], whose fills and copies the floors time. */
+NOINLINE static void launch(struct polled *p, struct queued *s,
+                   const struct rig_part *part) {
+  const struct rig_block *b =
+      (const struct rig_block *)(s->blocks + part->launch.block);
+  const struct polled_kernel *k = part->launch.launch;
+  uint32_t g[3];
+  for (g[2] = 0; g[2] < b->groups[2]; g[2]++)
+    for (g[1] = 0; g[1] < b->groups[1]; g[1]++)
+      for (g[0] = 0; g[0] < b->groups[0]; g[0]++)
+        k->run(g, b, part->launch.params);
+  keep_launch(p, b, (uint32_t)sizeof *b + part->launch.params);
+}
+
 static void run_one(struct polled *p, struct queued *s) {
   for (int i = 0; i < s->nparts; i++) {
     struct rig_part *part = &s->parts[i];
     if (part->kind == RIG_FILL) part->fill.fn(NULL, part->fill.arg, s->v);
+    else if (part->kind == RIG_LAUNCH) launch(p, s, part);
     else if (part->copy.bytes != 0) {
       /* A side that copy.local names holds a host address, as Polled's own
          handles do. */
@@ -414,6 +470,7 @@ static void run_one(struct polled *p, struct queued *s) {
   p->held -= s->nparts;
   free(s->waits);
   free(s->parts);
+  if (s->blocks != NULL) free(s->blocks);
   atomic_store_explicit(&p->word, s->v, memory_order_release);
 }
 
@@ -502,11 +559,36 @@ value rig_test_polled_start(value v_p) {
   return Val_unit;
 }
 
-static int polled_room(void *self, const struct rig_part *parts, int n) {
+/* Polled's limits on a grid, as CUDA's: 2^31 - 1 groups along x, 65535
+   along y and z. */
+#define MAX_GROUPS_X 0x7fffffffu
+#define MAX_GROUPS_YZ 65535u
+
+/* Whether the launch [part], whose block lies in [args], has a grid and
+   groups Polled runs. */
+static int launches(const struct rig_part *part, const uint8_t *args) {
+  const struct rig_block *b =
+      (const struct rig_block *)(args + part->launch.block);
+  const struct polled_kernel *k = part->launch.launch;
+  uint64_t threads = 1;
+  for (int a = 0; a < 3; a++) {
+    if (b->groups[a] == 0 || b->threads[a] == 0) return 0;
+    threads *= b->threads[a];
+  }
+  return b->groups[0] <= MAX_GROUPS_X && b->groups[1] <= MAX_GROUPS_YZ &&
+         b->groups[2] <= MAX_GROUPS_YZ && threads <= k->max_threads &&
+         b->shared <= k->max_shared;
+}
+
+static int polled_room(void *self, const struct rig_part *parts, int n,
+                       const uint8_t *args) {
   struct polled *p = self;
-  for (int i = 0; i < n; i++)
-    if (parts[i].kind != RIG_FILL && parts[i].kind != RIG_COPY)
+  for (int i = 0; i < n; i++) {
+    int kind = parts[i].kind;
+    if (kind == RIG_LAUNCH ? !launches(&parts[i], args)
+                           : kind != RIG_FILL && kind != RIG_COPY)
       return RIG_NEVER;
+  }
   if (n > p->capacity) return RIG_NEVER;
   if (p->may_block) return RIG_FITS;
   lock(&p->mu);
@@ -515,10 +597,44 @@ static int polled_room(void *self, const struct rig_part *parts, int n) {
   return full ? RIG_LATER : RIG_FITS;
 }
 
+/* Sets [*copy] to the blocks of [parts]' launches up to the end of the last
+   one, copied from [args] as they are now with each ref's address added, or
+   NULL for parts that launch nothing: the caller may store into [args] once
+   the hand-over returns. Whether memory sufficed. */
+static int blocks(const struct rig_part *parts, int nparts,
+                  const uint8_t *args, const uint64_t *slots, uint8_t **copy) {
+  size_t n = 0;
+  for (int i = 0; i < nparts; i++)
+    if (parts[i].kind == RIG_LAUNCH) {
+      size_t end = parts[i].launch.block + sizeof(struct rig_block) +
+                   parts[i].launch.params;
+      if (end > n) n = end;
+    }
+  if (n == 0) return 1;
+  uint8_t *b = malloc(n);
+  if (b == NULL) return 0;
+  memcpy(b, args, n);
+  for (int i = 0; i < nparts; i++) {
+    if (parts[i].kind != RIG_LAUNCH) continue;
+    uint8_t *params = b + parts[i].launch.block + sizeof(struct rig_block);
+    for (int j = 0; j < parts[i].launch.nrefs; j++) {
+      const struct rig_ref *r = &parts[i].launch.refs[j];
+      uint64_t w;
+      memcpy(&w, params + r->at, sizeof w);
+      w += slots[r->slot];
+      memcpy(params + r->at, &w, sizeof w);
+    }
+  }
+  *copy = b;
+  return 1;
+}
+
 static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
+                         const uint8_t *args, const uint64_t *slots, int nslots,
                          const uint64_t *handles, int nhandles,
                          const char **failure) {
+  (void)nslots;
   struct polled *p = self;
   atomic_fetch_add(&p->submits, 1);
   lock(&p->mu);
@@ -559,7 +675,9 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   for (int i = 0; i < p->nlast_handles; i++) p->last_handles[i] = handles[i];
   struct rig_wait *ws = malloc((size_t)(nwaits + 1) * sizeof *waits);
   struct rig_part *ps = malloc((size_t)(nparts + 1) * sizeof *parts);
-  if (ws == NULL || ps == NULL) {
+  uint8_t *bs = NULL;
+  int ok = ws != NULL && ps != NULL && blocks(parts, nparts, args, slots, &bs);
+  if (!ok) {
     free(ws);
     free(ps);
     unlock(&p->mu);
@@ -572,6 +690,7 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   s->nparts = nparts;
   s->waits = ws;
   s->parts = ps;
+  s->blocks = bs;
   if (nwaits > 0) memcpy(s->waits, waits, (size_t)nwaits * sizeof *waits);
   if (nparts > 0) memcpy(s->parts, parts, (size_t)nparts * sizeof *parts);
   p->held += nparts;
@@ -624,6 +743,7 @@ value rig_test_polled_stop(value v_p) {
   for (int i = 0; i < p->n; i++) {
     free(p->q[i].waits);
     free(p->q[i].parts);
+    free(p->q[i].blocks);
   }
   p->n = 0;
   p->held = 0;
@@ -723,6 +843,80 @@ static int carry(void *queue, void *arg, uint64_t v) {
 value rig_test_carry(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&carry);
+}
+
+/* Polled's functions */
+
+static uint64_t param64(const struct rig_block *b, uint32_t at) {
+  uint64_t w;
+  memcpy(&w, b->params + at, sizeof w);
+  return w;
+}
+
+/* Does nothing. */
+static void run_main(const uint32_t g[3], const struct rig_block *b,
+                     uint32_t params) {
+  (void)g, (void)b, (void)params;
+}
+
+/* Stores, as the 64-bit word of its group's index in the grid, x fastest,
+   the second parameter word plus that index, into the buffer whose address
+   the first word holds. */
+static void run_fill(const uint32_t g[3], const struct rig_block *b,
+                     uint32_t params) {
+  (void)params;
+  uint64_t i =
+      g[0] + (uint64_t)b->groups[0] * (g[1] + (uint64_t)b->groups[1] * g[2]);
+  uint64_t *out = (uint64_t *)(uintptr_t)param64(b, 0);
+  out[i] = param64(b, 8) + i;
+}
+
+/* Group 0 copies the bytes the third parameter word counts from the
+   address the first word holds to the one the second holds. */
+static void run_copy(const uint32_t g[3], const struct rig_block *b,
+                     uint32_t params) {
+  (void)params;
+  if (g[0] != 0 || g[1] != 0 || g[2] != 0) return;
+  memmove((void *)(uintptr_t)param64(b, 8),
+          (const void *)(uintptr_t)param64(b, 0), (size_t)param64(b, 16));
+}
+
+/* Each allows 1024 threads per group and 48 KiB of shared memory. */
+static const struct polled_kernel polled_main = {run_main, 1024, 49152};
+static const struct polled_kernel polled_fill = {run_fill, 1024, 49152};
+static const struct polled_kernel polled_copy = {run_copy, 1024, 49152};
+
+/* The launch of Polled's function [v_name], or 0 for no such function. */
+value rig_test_polled_kernel(value v_name) {
+  const char *n = String_val(v_name);
+  const struct polled_kernel *k = strcmp(n, "main") == 0   ? &polled_main
+                                  : strcmp(n, "fill") == 0 ? &polled_fill
+                                  : strcmp(n, "copy") == 0 ? &polled_copy
+                                                           : NULL;
+  return caml_copy_nativeint((intnat)k);
+}
+
+/* The blocks of the first LAST_LAUNCHES launches run since the last call,
+   each as it ran, which it forgets. */
+value rig_test_polled_launches(value v_p) {
+  CAMLparam1(v_p);
+  CAMLlocal2(a, s);
+  struct polled *p = Polled_val(v_p);
+  struct launched *copy = malloc(sizeof p->launched);
+  if (copy == NULL) caml_raise_out_of_memory();
+  lock(&p->mu);
+  int n = p->nlaunched;
+  memcpy(copy, p->launched, sizeof p->launched);
+  p->nlaunched = 0;
+  unlock(&p->mu);
+  a = caml_alloc_tuple((mlsize_t)n);
+  for (int i = 0; i < n; i++) {
+    s = caml_alloc_initialized_string(copy[i].bytes,
+                                      (const char *)copy[i].block);
+    Store_field(a, i, s);
+  }
+  free(copy);
+  CAMLreturn(a);
 }
 
 /* Raises SIGINT in the calling thread: the runtime records it, and the

@@ -86,6 +86,4 @@ let load d binary =
 let device image = image.idev
 
 let entry image f =
-  let (Loaded { m; i; _ }) = image.loaded in
-  let module D = (val m) in
-  Dev.counted image.idev (fun () -> D.entry i f)
+  Option.map (fun (e : Rig_edge.entry) -> e.code) (Memory.kernel_entry image f)

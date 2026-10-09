@@ -611,7 +611,8 @@ let image g bin =
 
 let entry m f =
   Option.map
-    (fun (k : Code_object.kernel) -> m.base + k.descriptor)
+    (fun (k : Code_object.kernel) ->
+      { Rig_edge.code = m.base + k.descriptor; launch = 0n })
     (Code_object.kernel m.co f)
 
 (* An image holds nothing on the GPU: its code is in a region rig frees. *)

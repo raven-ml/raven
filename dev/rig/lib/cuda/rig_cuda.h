@@ -26,7 +26,8 @@
 
 /* RIG_NEVER if a part is no fill or copy, is a fill with ring units or
    segment bytes, or is on no queue of the device; RIG_FITS otherwise. */
-int rig_cuda_room(void *self, const struct rig_part *parts, int n);
+int rig_cuda_room(void *self, const struct rig_part *parts, int n,
+                  const uint8_t *args);
 
 /* Runs [parts], which rig_cuda_room answered RIG_FITS for and whose [after]
    name only earlier parts, as the work of [v], the value after the last one
@@ -41,6 +42,7 @@ int rig_cuda_room(void *self, const struct rig_part *parts, int n);
    that orders the write. It may block while a stream is full. */
 int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
                        int nwaits, const struct rig_part *parts, int nparts,
+                       const uint8_t *args, const uint64_t *slots, int nslots,
                        const uint64_t *handles, int nhandles,
                        const char **failure);
 

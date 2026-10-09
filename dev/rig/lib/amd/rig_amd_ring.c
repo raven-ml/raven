@@ -192,7 +192,9 @@ static int runs(const struct rig_amd *d, const struct rig_part *p, int i) {
   return 1;
 }
 
-int rig_amd_room(void *self, const struct rig_part *parts, int n) {
+int rig_amd_room(void *self, const struct rig_part *parts, int n,
+                 const uint8_t *args) {
+  (void)args;
   struct rig_amd *d = self;
   if (n > RIG_AMD_PARTS) return RIG_NEVER;
   for (int i = 0; i < n; i++)
@@ -427,8 +429,12 @@ static int fail(struct submission *s, const char **failure) {
 
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                       int nwaits, const struct rig_part *parts, int nparts,
+                      const uint8_t *args, const uint64_t *slots, int nslots,
                       const uint64_t *handles, int nhandles,
                       const char **failure) {
+  (void)args;
+  (void)slots;
+  (void)nslots;
   (void)handles;
   (void)nhandles;
   struct rig_amd *d = self;

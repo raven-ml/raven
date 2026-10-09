@@ -23,7 +23,8 @@
 
 /* RIG_NEVER if a part is no fill on queue 0, or a fill with ring units or
    segment bytes other than 0. RIG_FITS otherwise. */
-int rig_metal_room(void *self, const struct rig_part *parts, int n);
+int rig_metal_room(void *self, const struct rig_part *parts, int n,
+                   const uint8_t *args);
 
 /* Runs [parts], which rig_metal_room answered RIG_FITS for, as the work of
    [v], the value after the last one it received: RIG_COMMITTED, or
@@ -34,6 +35,7 @@ int rig_metal_room(void *self, const struct rig_part *parts, int n);
    flight. */
 int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
                         int nwaits, const struct rig_part *parts, int nparts,
+                        const uint8_t *args, const uint64_t *slots, int nslots,
                         const uint64_t *handles, int nhandles,
                         const char **failure);
 

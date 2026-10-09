@@ -97,6 +97,7 @@ let kind_name : Rig.kind -> string = function
   | Words -> "Words"
   | Fill -> "Fill"
   | Copy -> "Copy"
+  | Launch -> "Launch"
 
 let queue =
   Testable.make
@@ -167,6 +168,12 @@ let refusals (module G : Gpu) () =
     | Words -> Words (B.create Rig.host 8)
     | Fill -> (failing_fill "").work
     | Copy -> Copy { src = B.create t.d 8; dst = B.create t.d 8 }
+    | Launch ->
+        let bin, kernels = G.binary () in
+        let image =
+          require_ok ~pp:Format.pp_print_string (Rig.Image.load t.d bin)
+        in
+        Launch { image; kernel = List.hd kernels; params = 0; refs = [||] }
   in
   let refused queue kind =
     raises_match
@@ -180,7 +187,7 @@ let refusals (module G : Gpu) () =
     (fun (q : Rig.queue) ->
       List.iter
         (fun k -> if not (List.mem k q.runs) then refused q.name k)
-        [ Rig.Words; Fill; Copy ])
+        [ Rig.Words; Fill; Copy; Launch ])
     (Rig.queues t.d);
   refused "NONE:0" Copy;
   equal int ~msg:"values assigned" 0 (Rig.submitted t.d)

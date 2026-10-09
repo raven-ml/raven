@@ -7,6 +7,8 @@ open Def
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
+type ref = { at : int; slot : int }
+
 type work =
   | Words of buffer
   | Fill of {
@@ -16,6 +18,7 @@ type work =
       segment_bytes : int;
     }
   | Copy of { src : buffer; dst : buffer }
+  | Launch of { image : image; kernel : string; params : int; refs : ref array }
 
 type part = { queue : string; after : int array; work : work }
 
@@ -24,8 +27,12 @@ type part = { queue : string; after : int array; work : work }
 (* The C form, which a custom block holds and frees once collected. *)
 type c
 
-external sub_new : int -> int -> int -> int -> int -> int -> c
+external sub_new : int -> int -> int -> int -> int -> int -> int -> c
   = "caml_rig_sub_new_byte" "caml_rig_sub_new"
+
+external sub_launch :
+  c -> int -> int -> nativeint -> int -> ref array -> int -> int
+  = "caml_rig_sub_launch_byte" "caml_rig_sub_launch"
 
 external sub_part : c -> int -> int -> int array -> int -> unit
   = "caml_rig_sub_part"
@@ -62,11 +69,13 @@ let take run c =
   match run_take run c with
   | 0 -> false
   | 1 -> true
-  | _ ->
+  | 2 ->
       run_fit run c;
       true
+  | _ -> invalid_arg "Rig.submit: the run holds no block of the last launch"
 
-external run_slot : run -> int -> int -> nativeint -> unit = "caml_rig_run_slot"
+external run_slot : run -> int -> int -> nativeint -> int -> unit
+  = "caml_rig_run_slot"
 [@@noalloc]
 
 external run_collect : c -> run -> int array -> int -> int
@@ -82,10 +91,47 @@ external run_no_room_at : run -> int = "caml_rig_run_no_room_at" [@@noalloc]
 external run_producer : run -> int = "caml_rig_run_producer" [@@noalloc]
 external c_submit : c -> run -> int = "caml_rig_submit"
 
+type block = int
+
 module Run = struct
   type t = run
 
   let make = run_new
+
+  external groups :
+    t ->
+    (block[@untagged]) ->
+    (int[@untagged]) ->
+    (int[@untagged]) ->
+    (int[@untagged]) ->
+    unit = "caml_rig_run_groups_byte" "caml_rig_run_groups"
+
+  external threads :
+    t ->
+    (block[@untagged]) ->
+    (int[@untagged]) ->
+    (int[@untagged]) ->
+    (int[@untagged]) ->
+    unit = "caml_rig_run_threads_byte" "caml_rig_run_threads"
+
+  external shared : t -> (block[@untagged]) -> (int[@untagged]) -> unit
+    = "caml_rig_run_shared_byte" "caml_rig_run_shared"
+
+  external int32 :
+    t -> (block[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> unit
+    = "caml_rig_run_int32_byte" "caml_rig_run_int32"
+
+  external int64 :
+    t -> (block[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> unit
+    = "caml_rig_run_int64_byte" "caml_rig_run_int64"
+
+  external float32 :
+    t -> (block[@untagged]) -> (int[@untagged]) -> (float[@unboxed]) -> unit
+    = "caml_rig_run_float32_byte" "caml_rig_run_float32"
+
+  external float64 :
+    t -> (block[@untagged]) -> (int[@untagged]) -> (float[@unboxed]) -> unit
+    = "caml_rig_run_float64_byte" "caml_rig_run_float64"
 end
 
 type t = {
@@ -97,7 +143,10 @@ type t = {
   hold : hold option;
       (** The hold whose stamps each run raises, kept reachable: its release
           frees what the parts run. *)
+  blocks : int array;  (** Each part's block, [-1] for a part no launch. *)
 }
+
+let no_block = -1
 
 let queue_index d fn q =
   let rec go i =
@@ -112,11 +161,13 @@ let kind_of = function
   | Words _ -> Rig_edge.Words
   | Fill _ -> Fill
   | Copy _ -> Copy
+  | Launch _ -> Launch
 
 let kind_name = function
   | Rig_edge.Words -> "words"
   | Fill -> "fills"
   | Copy -> "copies"
+  | Launch -> "launches"
 
 (* Refuses a part of a kind its queue does not run. *)
 let check_runs d fn q work =
@@ -166,6 +217,38 @@ let fix c k d b write =
   sub_fixed c !k (entry_of b).stamps handle write;
   incr k
 
+(* The most parameter bytes of a launch, [rig_edge.h]'s RIG_PARAMS. *)
+let max_params = 4096
+
+(* Refuses part [i]'s launch on [d] of a submission whose runs name [slots]
+   buffers unless its image is [d]'s, its refs lie among its parameters and name
+   a run buffer, and its image has its function: the entry. *)
+let launch_entry fn d slots i image kernel params refs =
+  if image.idev != d then
+    invalid_argf "Rig.%s: part %d's image is not loaded on %s" fn i d.name;
+  if params < 0 || params > max_params then
+    invalid_argf "Rig.%s: part %d has %d parameter bytes, not 0 to %d" fn i
+      params max_params;
+  Array.iter
+    (fun { at; slot } ->
+      if at < 0 || at mod 8 <> 0 || at + 8 > params then
+        invalid_argf
+          "Rig.%s: part %d's ref at %d is not 8 aligned bytes of its %d" fn i at
+          params;
+      if slot < 0 || slot >= slots then
+        invalid_argf "Rig.%s: part %d's ref names slot %d of %d" fn i slot slots)
+    refs;
+  let ats = Array.map (fun r -> r.at) refs in
+  Array.sort Int.compare ats;
+  for k = 1 to Array.length ats - 1 do
+    if ats.(k) = ats.(k - 1) then
+      invalid_argf "Rig.%s: part %d has two refs at %d" fn i ats.(k)
+  done;
+  match Memory.kernel_entry image kernel with
+  | Some e -> e
+  | None ->
+      invalid_argf "Rig.%s: part %d's image has no function %S" fn i kernel
+
 let build hold ~reads ~writes d parts =
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
@@ -173,7 +256,8 @@ let build hold ~reads ~writes d parts =
   if Dev.is_host d || Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name;
   let check_buffer = Buffer.check_live fn in
-  let nafter = ref 0 and nfixed = ref 0 in
+  let nafter = ref 0 and nfixed = ref 0 and nrefs = ref 0 in
+  let entries = Array.make (Array.length parts) None in
   Array.iteri
     (fun i p ->
       Array.iter
@@ -202,10 +286,19 @@ let build hold ~reads ~writes d parts =
               d.name;
           if Buffer.access dst = Read then
             invalid_argf "Rig.%s: a copy's dst admits only reads" fn;
-          nfixed := !nfixed + 2)
+          nfixed := !nfixed + 2
+      | Launch l ->
+          entries.(i) <-
+            Some
+              (launch_entry fn d (reads + writes) i l.image l.kernel l.params
+                 l.refs);
+          nrefs := !nrefs + Array.length l.refs)
     parts;
-  let c = sub_new d.c (Array.length parts) !nafter !nfixed reads writes in
-  let at = ref 0 and k = ref 0 in
+  let c =
+    sub_new d.c (Array.length parts) !nafter !nfixed reads writes !nrefs
+  in
+  let blocks = Array.make (Array.length parts) no_block in
+  let at = ref 0 and k = ref 0 and r = ref 0 in
   Array.iteri
     (fun i p ->
       sub_part c i (queue_index d fn p.queue) p.after !at;
@@ -228,11 +321,28 @@ let build hold ~reads ~writes d parts =
               Buffer.length src );
           if side <> local_none then sub_copy_local c i side;
           fix c k d src false;
-          fix c k d dst true)
+          fix c k d dst true
+      | Launch l ->
+          let e = Option.get entries.(i) in
+          blocks.(i) <- sub_launch c i e.code e.launch l.params l.refs !r;
+          r := !r + Array.length l.refs)
     parts;
-  { dev = d; c; parts; nreads = reads; nwrites = writes; hold }
+  {
+    dev = d;
+    c;
+    parts;
+    nreads = reads;
+    nwrites = writes;
+    hold;
+    blocks;
+  }
 
 let make ?hold ~reads ~writes d parts = build hold ~reads ~writes d parts
+
+let block s i =
+  if i < 0 || i >= Array.length s.blocks || s.blocks.(i) = no_block then
+    invalid_argf "Rig.Submission.block: part %d is no launch" i;
+  s.blocks.(i)
 
 (* In-queue waits *)
 
@@ -306,6 +416,7 @@ let check_part p =
   | Copy { src; dst } ->
       Buffer.check_live fn src;
       Buffer.check_live fn dst
+  | Launch _ -> ()
 
 let check_parts s =
   for k = 0 to Array.length s.parts - 1 do
@@ -340,7 +451,9 @@ let name_one s run (access : access) i k b =
   let e = m.entry in
   if access = Read_write && e.access = Read then
     invalid_argf "Rig.%s: %s.(%d)'s memory admits only reads" fn what i;
-  run_slot run k e.stamps b.mem.handle
+  (* -1 for memory with no address, which the collect refuses a ref to. *)
+  let address = if b.mem.address < 0 then -1 else b.mem.address + b.offset in
+  run_slot run k e.stamps b.mem.handle address
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
    queue, or that its queue has no room for, adds the others to the run's waits

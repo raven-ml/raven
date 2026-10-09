@@ -475,7 +475,7 @@ let entry (m : image) f =
     match get_function m.owner m.m f with
     | h when h >= 0 ->
         update m.functions (fun fs -> if List.mem h fs then fs else h :: fs);
-        Some h
+        Some { Rig_edge.code = h; launch = 0n }
     | _ -> refused (strf "finding kernel %S" f) m.owner None
 
 let unload g (m : image) =

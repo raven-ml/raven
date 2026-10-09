@@ -29,7 +29,7 @@ let capability (type a) d (k : a Type.Id.t) : a option =
       | None -> None)
   | None -> None
 
-type kind = Rig_edge.kind = Words | Fill | Copy
+type kind = Rig_edge.kind = Words | Fill | Copy | Launch
 type queue = Rig_edge.queue = { name : string; runs : kind list }
 
 let queues d = Array.to_list d.queues

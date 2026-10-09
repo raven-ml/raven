@@ -173,7 +173,7 @@ let second () =
   S.hold ();
   require_ok (Rig_metal.open_ 0)
 
-let pipeline t f = require_some (Rig_metal.entry t.fill f)
+let pipeline t f = (require_some (Rig_metal.entry t.fill f)).code
 
 (* Submits [parts] as [t]'s next value, which it is. *)
 let submit_parts t parts =
@@ -620,7 +620,7 @@ let foreign_pipelines () =
   let t = dev () in
   let args = alloc t args_bytes in
   let i = load t.g in
-  let step = require_some (Rig_metal.entry i "step") in
+  let step = (require_some (Rig_metal.entry i "step")).code in
   Rig_metal.unload t.g i;
   let invalid p =
     raises_match Exn.invalid_arg (fun () -> icb t args [| dispatch p |])
@@ -668,7 +668,7 @@ let after_unload () =
   let out = alloc t 256 and args = alloc t args_bytes in
   set_args args ~at:0 ~out:(gpu out) ~c:0;
   let i = load t.g in
-  let step = require_some (Rig_metal.entry i "step") in
+  let step = (require_some (Rig_metal.entry i "step")).code in
   let b = require_ok (icb t args [| dispatch step; dispatch step |]) in
   Rig_metal.unload t.g i;
   Gc.full_major ();
@@ -683,7 +683,7 @@ let stopped_icb = "the device was stopped"
 let after_stop () =
   let g = S.driver () in
   let args = alloc_on g args_bytes in
-  let step = require_some (Rig_metal.entry (load g) "step") in
+  let step = (require_some (Rig_metal.entry (load g) "step")).code in
   S.stop_driver g;
   equal (result pass string) ~msg:"after the stop" (Error stopped_icb)
     (Result.map ignore (icb_on g args [| dispatch step |]));
@@ -720,7 +720,7 @@ let stop_commands =
       (fun () -> { stopped = false })
       (fun () ->
         let g = second () in
-        let step = require_some (Rig_metal.entry (load g) "step") in
+        let step = (require_some (Rig_metal.entry (load g) "step")).code in
         (g, alloc_on g args_bytes, step, (Mutex.create (), ref false)));
     command "icb" (dev ^-> returns (result unit string)) icb_model icb_sys;
     command "stop" (dev ^-> returns unit) (fun s -> s.stopped <- true) stop_once;
@@ -992,7 +992,7 @@ let beyond_limits () =
     | Rig_edge.Loaded i -> i
     | Place _ -> failf "Metal asked to place its code"
   in
-  ignore (require_some (Rig_metal.entry i "small"));
+  ignore (require_some (Rig_metal.entry i "small")).code;
   let refused () =
     raises_match
       (Exn.invalid_arg
@@ -1016,7 +1016,7 @@ type held = {
 let entry_system h f =
   match Rig_metal.entry h.i f with
   | None -> false
-  | Some p -> (
+  | Some { code = p; _ } -> (
       Mutex.protect h.m @@ fun () ->
       match Hashtbl.find_opt h.first f with
       | Some q -> p = q
@@ -1049,7 +1049,8 @@ let unloaded_releases () =
     List.init 60 (fun _ ->
         let i = load t.g in
         let w =
-          S.weak (Nativeint.of_int (require_some (Rig_metal.entry i "fill")))
+          S.weak
+            (Nativeint.of_int (require_some (Rig_metal.entry i "fill")).code)
         in
         Rig_metal.unload t.g i;
         w)
@@ -1105,7 +1106,9 @@ let word_after_stop () =
 let unload_after_stop () =
   let g = S.driver () in
   let i = load g in
-  let weak f = S.weak (Nativeint.of_int (require_some (Rig_metal.entry i f))) in
+  let weak f =
+    S.weak (Nativeint.of_int (require_some (Rig_metal.entry i f)).code)
+  in
   let weaks = [ weak "fill"; weak "step"; weak "bump" ] in
   S.stop_driver g;
   List.iteri

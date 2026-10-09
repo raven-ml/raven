@@ -156,6 +156,7 @@ type kind = Rig_edge.kind =
   | Words  (** 32-bit words placed on the queue: {!Submission.Words}. *)
   | Fill  (** A C function called on the queue: {!Submission.Fill}. *)
   | Copy  (** A copy between memory: {!Submission.Copy}. *)
+  | Launch  (** A function run over a grid: {!Submission.Launch}. *)
 
 type queue = Rig_edge.queue = {
   name : string;  (** The name parts give, such as ["COPY:0"]. *)
@@ -699,6 +700,47 @@ module Hold : sig
       a hold. *)
 end
 
+(** {1:images Images} *)
+
+(** Code loaded on a device. *)
+module Image : sig
+  type device := t
+
+  type t
+  (** The type for loaded images: a binary in a device's format, whose functions
+      that device's work runs. *)
+
+  val load : device -> string -> (t, string) result
+  (** [load d binary] loads [binary] on [d]: a code object for AMD, a cubin for
+      NV, a CUDA module for CUDA, a metallib for Metal. Where [d]'s memory holds
+      the code, [load] allocates it as {!Buffer.create} allocates [Device]
+      memory, so the code counts in [d]'s {!budget}, then copies it there as a
+      submission on [d], after [d]'s queued work, and waits for it. Each call
+      loads anew. The image stays loaded while [t] is reachable, and is unloaded
+      once it is not and the work [d] was handed until then is done; its memory
+      then returns to [d].
+
+      [Error why] if [d]'s driver rejects [binary], with its reason, which
+      starts with [d]'s {!name}. [d] stays usable.
+
+      Raises [Invalid_argument] if [d] loads no code ({!host} or an {!Io}
+      device), {!Out_of_memory}, and {!Lost} if [d] is lost or is lost by the
+      load. *)
+
+  val device : t -> device
+  (** [device i] is the device [i] is loaded on. *)
+
+  val entry : t -> string -> int option
+  (** [entry i f] is the name compiled code gives [i]'s function [f] (the [code]
+      of {!Rig_edge.Driver.entry}), such as a kernel descriptor's address, a
+      [CUfunction] or an [MTLComputePipelineState], or [None] if [i] has no
+      function [f]. Work that runs [f] keeps [i] reachable until it is done,
+      such as a {!Hold}'s release that holds it.
+
+      Raises [Invalid_argument] if [i]'s device cannot run [f]
+      ({!Rig_edge.Driver.entry}), and {!Lost} if [i]'s device is lost. *)
+end
+
 (** {1:submitting Submitting work} *)
 
 (** Prepared submissions.
@@ -724,6 +766,11 @@ module Submission : sig
   type t
   (** The type for prepared submissions. *)
 
+  type ref = { at : int; slot : int }
+  (** The type for a launch's references to a run's buffers: the 8 parameter
+      bytes at [at] hold a byte offset into the run's buffer [slot], counting
+      [reads] then [writes] ({!submit}). *)
+
   (** The type for the work of a part. Every buffer it names is used by the
       work: a copy's [dst] is written, everything else read. *)
   type work =
@@ -746,6 +793,22 @@ module Submission : sig
         (** A copy of [src]'s bytes into [dst], on a copy queue. On a driver's
             device of another machine, one of them may be memory this process's
             host addresses, whose bytes the device's driver carries. *)
+    | Launch of {
+        image : Image.t;
+        kernel : string;
+        params : int;
+        refs : ref array;
+      }
+        (** [image]'s function [kernel] run once, over the grid of groups of
+            threads that its block of the run sets ({!block}), with the [params]
+            bytes of parameters of that block, at most 4096.
+
+            In place of the 8 bytes at each ref's [at], the function reads that
+            offset plus the address of the first byte of the run's buffer [slot]
+            as the device's work addresses it ({!Buffer.address}). Through a
+            ref, it reaches only bytes of that buffer, and writes them only if
+            the buffer is one of the run's [writes]: rig orders the work by
+            these facts and checks neither. *)
 
   type part = { queue : string; after : int array; work : work }
   (** The type for parts: [work] on [queue], one of the device's
@@ -764,25 +827,113 @@ module Submission : sig
       Raises [Invalid_argument] if [d] is {!host} or an {!Io} device, which run
       no submitted work, [reads] or [writes] is negative, an index of a part's
       [after] is negative or not below its own, a queue is not one of [d]'s, a
-      part's buffer is dead, a {!Words} or {!Fill} buffer
-      is not host memory, a {!Copy}'s buffers differ in size, are not [d]'s
-      memory (on a driver's device of another machine, one of them may be memory
-      this process's host addresses), or its [dst]'s memory is [Read]
-      ({!Buffer.val-access}), or [d]'s driver runs no copies (it lists no copy
-      queue, {!queues}), or a part's queue does not run its work; and {!Lost}
-      if [d] is lost. Parts that never fit [d]'s queues are refused at
-      {!submit}. *)
+      part's buffer is dead, a {!Words} or {!Fill} buffer is not host memory, a
+      {!Copy}'s buffers differ in size, are not [d]'s memory (on a driver's
+      device of another machine, one of them may be memory this process's host
+      addresses), or its [dst]'s memory is [Read] ({!Buffer.val-access}), or
+      [d]'s driver runs no copies (it lists no copy queue, {!queues}), or a
+      part's queue does not run its work, a {!Launch}'s [image] is not loaded on
+      [d] or has no function [kernel], its [params] is negative or above 4096, a
+      ref's [at] is not a multiple of 8, its 8 bytes are not among the
+      parameters or its [slot] is not below [reads + writes], or two refs share
+      an [at]; as {!Image.entry} where [d] cannot run a launch's function; and
+      {!Lost} if [d] is lost. Parts that never fit [d]'s queues, and launches
+      whose blocks they refuse, are refused at {!submit}. *)
+
+  type block = private int
+  (** The type for where a launch's block lies in a run ({!Run}). *)
+
+  val block : t -> int -> block
+  (** [block s i] is the block of [s]'s part [i] in a run: its grid, its groups
+      and its parameters. The blocks of [s]'s launches lie one after the other,
+      in the order of its parts. [block s i] is meaningful only in a run that
+      then submits [s]: another submission's blocks may lie elsewhere.
+
+      Raises [Invalid_argument] if [s] has no part [i] or it is no {!Launch}. *)
 
   (** Runs. *)
   module Run : sig
     type t
-    (** The type for runs: the storage of one submit at a time, which holds
-        what rig records while the submit runs, such as the points it
-        follows, the regions its work names and its answer. *)
+    (** The type for runs: the storage of one submit at a time, which holds the
+        blocks of the submission's launches, and what rig records while the
+        submit runs, such as the points it follows, the regions its work names
+        and its answer. *)
 
     val make : unit -> t
-    (** [make ()] is a run. It grows to the largest submission it serves,
-        outside the OCaml heap. *)
+    (** [make ()] is a run with no blocks. It grows to the largest submission it
+        serves and the blocks its setters store into, outside the OCaml heap,
+        and never shrinks. *)
+
+    (** {1:blocks Blocks}
+
+        A block holds a launch's geometry and parameters. A run keeps each
+        byte's last store across submits, of whichever submission: a launch
+        reads what was stored last, so a caller stores every parameter its
+        function reads before each submit. Bytes no setter ever stored read
+        [0]. A store into a block the run does not hold yet grows the run to
+        hold it. No setter allocates on the OCaml heap: each is an external
+        taking untagged ints and unboxed floats, so no argument is boxed at a
+        call, inlined or not.
+
+        Every setter raises [Invalid_argument] if a submit is using the run,
+        such as a signal handler's store during a submit's wait, and
+        [Stdlib.Out_of_memory] if the host has no memory to grow the run. *)
+
+    external groups :
+      t ->
+      (block[@untagged]) ->
+      (int[@untagged]) ->
+      (int[@untagged]) ->
+      (int[@untagged]) ->
+      unit = "caml_rig_run_groups_byte" "caml_rig_run_groups"
+    (** [groups r b x y z] sets the grid of [b] to [x] by [y] by [z] groups.
+
+        Raises [Invalid_argument] if one is negative or above [2{^32} - 1]. *)
+
+    external threads :
+      t ->
+      (block[@untagged]) ->
+      (int[@untagged]) ->
+      (int[@untagged]) ->
+      (int[@untagged]) ->
+      unit = "caml_rig_run_threads_byte" "caml_rig_run_threads"
+    (** [threads r b x y z] sets the groups of [b] to [x] by [y] by [z] threads.
+
+        Raises [Invalid_argument] if one is negative or above [2{^32} - 1]. *)
+
+    external shared : t -> (block[@untagged]) -> (int[@untagged]) -> unit
+      = "caml_rig_run_shared_byte" "caml_rig_run_shared"
+    (** [shared r b n] sets the dynamic shared memory of each group of [b] to
+        [n] bytes.
+
+        Raises [Invalid_argument] if [n] is negative or above [2{^32} - 1]. *)
+
+    (** {2:params Parameters}
+
+        [int32 r b i v] stores [v] at byte [i] of [b]'s parameters, in the
+        host's byte order, as do the others for their sizes: [int32] the 32 low
+        bits of [v], [int64] [v] sign-extended, [float32] [v] rounded to single
+        precision, [float64] [v]. At a ref's [at], the 8 bytes are the offset
+        into its buffer ({!ref}).
+
+        Each raises [Invalid_argument] if [i] is negative or the bytes it stores
+        end past [b]'s parameters. *)
+
+    external int32 :
+      t -> (block[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> unit
+      = "caml_rig_run_int32_byte" "caml_rig_run_int32"
+
+    external int64 :
+      t -> (block[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> unit
+      = "caml_rig_run_int64_byte" "caml_rig_run_int64"
+
+    external float32 :
+      t -> (block[@untagged]) -> (int[@untagged]) -> (float[@unboxed]) -> unit
+      = "caml_rig_run_float32_byte" "caml_rig_run_float32"
+
+    external float64 :
+      t -> (block[@untagged]) -> (int[@untagged]) -> (float[@unboxed]) -> unit
+      = "caml_rig_run_float64_byte" "caml_rig_run_float64"
   end
 end
 
@@ -835,59 +986,29 @@ val submit :
     submitted since the last commit show after the next wait for [d] or the
     next [k] values.
 
+    [submit] reads the blocks of [run] ({!Submission.block}) in the hand-over
+    alone, which may come after it released the domain lock to wait for room or
+    for a producer. The work runs with the blocks as they were then: a store
+    into [run] after [submit] returns changes none of it. The caller keeps other
+    threads from storing into [run] until [submit] returns.
+
     It allocates nothing unless it waits.
 
     Raises [Invalid_argument] if another submit is using [run] ([submit] takes
     it at entry and gives it back when it returns or raises), if [reads] or
-    [writes] holds another number of buffers than {!Submission.make} declared,
-    a buffer of [reads], [writes] or a part is dead, a buffer of [reads] or
+    [writes] holds another number of buffers than {!Submission.make} declared, a
+    buffer of [reads], [writes] or a part is dead, a buffer of [reads] or
     [writes] is not on [d], the memory of a buffer of [writes] is [Read]
-    ({!Buffer.val-access}), or the parts never fit [d]'s empty queues or name
-    one its driver does not run; and {!Lost} if [d] is lost, [d]'s hand-over
-    fails, or a producer [d]'s queue waits on is lost before the hand-over, and
-    for the buffers and the points [s] follows as {!Lost} states. A device lost
-    after [v] was handed over raises {!Lost}, with [v]'s stamps naming it. *)
-
-(** {1:images Images} *)
-
-(** Code loaded on a device. *)
-module Image : sig
-  type device := t
-
-  type t
-  (** The type for loaded images: a binary in a device's format, whose functions
-      that device's work runs. *)
-
-  val load : device -> string -> (t, string) result
-  (** [load d binary] loads [binary] on [d]: a code object for AMD, a cubin for
-      NV, a CUDA module for CUDA, a metallib for Metal. Where [d]'s memory holds
-      the code, [load] allocates it as {!Buffer.create} allocates [Device]
-      memory, so the code counts in [d]'s {!budget}, then copies it there as a
-      submission on [d], after [d]'s queued work, and waits for it. Each call
-      loads anew. The image stays loaded while [t] is reachable, and is unloaded
-      once it is not and the work [d] was handed until then is done; its memory
-      then returns to [d].
-
-      [Error why] if [d]'s driver rejects [binary], with its reason, which
-      starts with [d]'s {!name}. [d] stays usable.
-
-      Raises [Invalid_argument] if [d] loads no code ({!host} or an {!Io}
-      device), {!Out_of_memory}, and {!Lost} if [d] is lost or is lost by the
-      load. *)
-
-  val device : t -> device
-  (** [device i] is the device [i] is loaded on. *)
-
-  val entry : t -> string -> int option
-  (** [entry i f] is the driver's name for [i]'s function [f]
-      ({!Rig_edge.Driver.entry}), such as a kernel descriptor's address, a
-      [CUfunction] or an [MTLComputePipelineState], or [None] if [i] has no
-      function [f]. Work that runs [f] keeps [i] reachable until it is done,
-      such as a {!Hold}'s release that holds it.
-
-      Raises [Invalid_argument] if [i]'s device cannot run [f]
-      ({!Rig_edge.Driver.entry}), and {!Lost} if [i]'s device is lost. *)
-end
+    ({!Buffer.val-access}), a launch's ref names one whose memory has no address
+    ({!Buffer.address}), [run] does not hold the block of [s]'s last launch,
+    which no setter stored into, or the parts never fit [d]'s empty queues, name
+    one its driver does not run, or hold a launch whose block [d]'s driver
+    refuses: a grid or a group of no size along an axis, or groups, threads per
+    group or shared memory beyond [d]'s or the function's limits; and {!Lost} if
+    [d] is lost, [d]'s hand-over fails, or a producer [d]'s queue waits on is
+    lost before the hand-over, and for the buffers and the points [s] follows as
+    {!Lost} states. A device lost after [v] was handed over raises {!Lost}, with
+    [v]'s stamps naming it. *)
 
 (** {1:profiles Profiles} *)
 

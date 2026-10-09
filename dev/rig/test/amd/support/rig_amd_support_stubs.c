@@ -177,7 +177,7 @@ value rig_amd_test_room(value v_self, value v_parts) {
   struct rig_part *p;
   void *mem = edge(Atom(0), v_parts, &w, &p);
   int r = driver_of(v_self)->room((void *)Nativeint_val(v_self), p,
-                                  (int)Wosize_val(v_parts));
+                                  (int)Wosize_val(v_parts), NULL);
   free(mem);
   return Val_int(r);
 }
@@ -195,8 +195,8 @@ value rig_amd_test_submit(value v_self, value v_v, value v_waits,
   const char *failure = NULL;
   int r = driver_of(v_self)->submit(
       (void *)Nativeint_val(v_self), (uint64_t)Long_val(v_v), w,
-      (int)(Wosize_val(v_waits) / 2), p, (int)Wosize_val(v_parts), NULL, 0,
-      &failure);
+      (int)(Wosize_val(v_waits) / 2), p, (int)Wosize_val(v_parts), NULL, NULL,
+      0, NULL, 0, &failure);
   free(mem);
   if (r != RIG_FAILED) CAMLreturn(Val_none);
   v_why = caml_copy_string(failure ? failure : "");

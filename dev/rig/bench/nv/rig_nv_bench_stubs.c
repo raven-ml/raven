@@ -44,10 +44,10 @@ value rig_nv_bench_start(value v_self, value v_word, value v_last) {
 static void submit(const struct rig_wait *waits, int nwaits,
                    const struct rig_part *parts, int nparts) {
   const char *failure = NULL;
-  if (rig_nv_room(self, parts, nparts) != RIG_FITS)
+  if (rig_nv_room(self, parts, nparts, NULL) != RIG_FITS)
     caml_failwith("rig_nv_room: the parts do not fit");
-  if (rig_nv_submit(self, ++last, waits, nwaits, parts, nparts, NULL, 0,
-                       &failure) == RIG_FAILED)
+  if (rig_nv_submit(self, ++last, waits, nwaits, parts, nparts, NULL, NULL, 0,
+                    NULL, 0, &failure) == RIG_FAILED)
     caml_failwith(failure);
 }
 
@@ -216,7 +216,7 @@ value rig_nv_bench_rung(value v_words, value v_each) {
       atomic_load_explicit(&d->local, memory_order_acquire) != 0 ||
       atomic_load_explicit(&d->invalidate, memory_order_acquire) != 0)
     submit(NULL, 0, NULL, 0);
-  if (rig_nv_room(self, parts, n) != RIG_FITS)
+  if (rig_nv_room(self, parts, n, NULL) != RIG_FITS)
     caml_failwith("rig_nv_room: the parts do not fit");
   c->open = c->written;
   c->open_words = 0;

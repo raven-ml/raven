@@ -62,7 +62,9 @@ value caml_rig_memory_free(value v_p) {
   return Val_unit;
 }
 
-static int memory_room(void *self, const struct rig_part *parts, int n) {
+static int memory_room(void *self, const struct rig_part *parts, int n,
+                       const uint8_t *args) {
+  (void)args;
   (void)self;
   for (int i = 0; i < n; i++) {
     const struct rig_part *p = &parts[i];
@@ -78,8 +80,12 @@ static int memory_room(void *self, const struct rig_part *parts, int n) {
    observable. Its handles are host addresses. */
 static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
+                         const uint8_t *args, const uint64_t *slots, int nslots,
                          const uint64_t *handles, int nhandles,
                          const char **failure) {
+  (void)args;
+  (void)slots;
+  (void)nslots;
   struct memory_device *m = self;
   (void)waits;
   (void)nwaits;

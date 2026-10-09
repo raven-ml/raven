@@ -165,7 +165,9 @@ int rig_metal_split(void *queue, uint64_t *start, uint64_t *end) {
   return begin(q) || open_encoder(q) ? 1 : 0;
 }
 
-int rig_metal_room(void *self, const struct rig_part *parts, int n) {
+int rig_metal_room(void *self, const struct rig_part *parts, int n,
+                   const uint8_t *args) {
+  (void)args;
   (void)self;
   for (int i = 0; i < n; i++) {
     const struct rig_part *p = &parts[i];
@@ -222,8 +224,12 @@ static const char *run(struct rig_metal *d, uint64_t v,
 
 int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
                         int nwaits, const struct rig_part *parts, int nparts,
+                        const uint8_t *args, const uint64_t *slots, int nslots,
                         const uint64_t *handles, int nhandles,
                         const char **failure) {
+  (void)args;
+  (void)slots;
+  (void)nslots;
   (void)waits, (void)nwaits, (void)handles, (void)nhandles;
   struct rig_metal *d = self;
   int committed = 0;
@@ -268,15 +274,21 @@ void rig_metal_drop(struct rig_metal *d) {
 
 #else
 
-int rig_metal_room(void *self, const struct rig_part *parts, int n) {
+int rig_metal_room(void *self, const struct rig_part *parts, int n,
+                   const uint8_t *args) {
+  (void)args;
   (void)self, (void)parts, (void)n;
   return RIG_NEVER;
 }
 
 int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
                         int nwaits, const struct rig_part *parts, int nparts,
+                        const uint8_t *args, const uint64_t *slots, int nslots,
                         const uint64_t *handles, int nhandles,
                         const char **failure) {
+  (void)args;
+  (void)slots;
+  (void)nslots;
   (void)self, (void)v, (void)waits, (void)nwaits, (void)parts, (void)nparts,
       (void)handles, (void)nhandles;
   *failure = "Metal exists on macOS only";

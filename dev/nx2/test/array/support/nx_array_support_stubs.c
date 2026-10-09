@@ -252,7 +252,9 @@ value nx_array_support_late_signaled(value self) {
 }
 
 /* Late runs fills only, as many as its queue holds. */
-static int late_room(void *self, const struct rig_part *parts, int n) {
+static int late_room(void *self, const struct rig_part *parts, int n,
+                     const uint8_t *args) {
+  (void)args;
   struct late *l = self;
   for (int i = 0; i < n; i++)
     if (parts[i].kind != RIG_FILL || parts[i].fill.ring_units != 0 ||
@@ -266,8 +268,12 @@ static int late_room(void *self, const struct rig_part *parts, int n) {
 /* Submits run one at a time: rig hands a device one submission at once. */
 static int late_submit(void *self, uint64_t v, const struct rig_wait *waits,
                        int nwaits, const struct rig_part *parts, int nparts,
+                       const uint8_t *args, const uint64_t *slots, int nslots,
                        const uint64_t *handles, int nhandles,
                        const char **failure) {
+  (void)args;
+  (void)slots;
+  (void)nslots;
   struct late *l = self;
   (void)waits;
   (void)nwaits;

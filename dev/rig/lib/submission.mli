@@ -14,6 +14,7 @@
 open Def
 
 type t
+type ref = { at : int; slot : int }
 
 type work =
   | Words of buffer
@@ -24,15 +25,55 @@ type work =
       segment_bytes : int;
     }
   | Copy of { src : buffer; dst : buffer }
+  | Launch of { image : image; kernel : string; params : int; refs : ref array }
 
 type part = { queue : string; after : int array; work : work }
 
 val make : ?hold:hold -> reads:int -> writes:int -> device -> part array -> t
 
+type block = private int
+
+val block : t -> int -> block
+
 module Run : sig
   type t
 
   val make : unit -> t
+
+  external groups :
+    t ->
+    (block[@untagged]) ->
+    (int[@untagged]) ->
+    (int[@untagged]) ->
+    (int[@untagged]) ->
+    unit = "caml_rig_run_groups_byte" "caml_rig_run_groups"
+
+  external threads :
+    t ->
+    (block[@untagged]) ->
+    (int[@untagged]) ->
+    (int[@untagged]) ->
+    (int[@untagged]) ->
+    unit = "caml_rig_run_threads_byte" "caml_rig_run_threads"
+
+  external shared : t -> (block[@untagged]) -> (int[@untagged]) -> unit
+    = "caml_rig_run_shared_byte" "caml_rig_run_shared"
+
+  external int32 :
+    t -> (block[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> unit
+    = "caml_rig_run_int32_byte" "caml_rig_run_int32"
+
+  external int64 :
+    t -> (block[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> unit
+    = "caml_rig_run_int64_byte" "caml_rig_run_int64"
+
+  external float32 :
+    t -> (block[@untagged]) -> (int[@untagged]) -> (float[@unboxed]) -> unit
+    = "caml_rig_run_float32_byte" "caml_rig_run_float32"
+
+  external float64 :
+    t -> (block[@untagged]) -> (int[@untagged]) -> (float[@unboxed]) -> unit
+    = "caml_rig_run_float64_byte" "caml_rig_run_float64"
 end
 
 val submit :

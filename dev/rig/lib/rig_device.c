@@ -885,7 +885,7 @@ static int record_waits(struct rig_device *d, struct rig_run *r) {
    waits and handles, and raises the stamps. Called under [d]'s turn. */
 static int admit(struct rig_device *d, const struct rig_sub *s,
                  struct rig_run *r) {
-  int room = d->driver.room(d->self, s->parts, s->nparts);
+  int room = d->driver.room(d->self, s->parts, s->nparts, r->args);
   if (room == RIG_NEVER) return SUBMIT_NEVER;
   if (room == RIG_LATER) {
     r->no_room_at = atomic_load(&d->submitted);
@@ -895,7 +895,8 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   atomic_store_explicit(&d->submitted, v, memory_order_release);
   const char *why = NULL;
   int a = d->driver.submit(d->self, v, r->waits, r->nwaits, s->parts,
-                           s->nparts, r->handles, r->nhandles, &why);
+                           s->nparts, r->args, r->addresses, r->nslots,
+                           r->handles, r->nhandles, &why);
   rig_sub_raise(s, r, RIG_POINT(d->index, v));
   r->v = v;
   if (a == RIG_COMMITTED)

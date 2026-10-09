@@ -556,8 +556,8 @@ let test_copy_refused () =
       Sub.make ~reads:0 ~writes:0 d [| copy |])
 
 (* A part of a kind its queue does not run is refused when the submission is
-   made: Polled's queues run fills and copies, and with no copies, fills
-   alone. *)
+   made: Polled's queues run fills and copies, and with no copies, fills alone,
+   and its compute queue also launches. *)
 let test_runs () =
   let d, _ = P.open_ "submit:runs" in
   let e, _ = P.open_ ~copies:false "submit:runs-fills" in
@@ -566,7 +566,11 @@ let test_runs () =
   in
   let kind ppf k =
     Format.pp_print_string ppf
-      (match k with Rig.Words -> "Words" | Fill -> "Fill" | Copy -> "Copy")
+      (match k with
+      | Rig.Words -> "Words"
+      | Fill -> "Fill"
+      | Copy -> "Copy"
+      | Launch -> "Launch")
   in
   let queue ppf (name, runs) =
     Format.fprintf ppf "%s: %a" name
@@ -577,10 +581,10 @@ let test_runs () =
     Testable.make ~pp:(Format.pp_print_list queue) ~equal:( = )
   in
   equal ~msg:"Polled's queues" kinds
-    [ ("COMPUTE:0", [ Rig.Fill; Copy ]); ("COPY:0", [ Fill; Copy ]) ]
+    [ ("COMPUTE:0", [ Rig.Launch; Fill; Copy ]); ("COPY:0", [ Fill; Copy ]) ]
     (runs d);
   equal ~msg:"Polled's queues with no copies" kinds
-    [ ("COMPUTE:0", [ Rig.Fill ]) ]
+    [ ("COMPUTE:0", [ Rig.Launch; Fill ]) ]
     (runs e);
   let words = B.create Rig.host 8 in
   let part queue work = { Sub.queue; after = [||]; work } in
@@ -593,6 +597,10 @@ let test_runs () =
   raises_match ~msg:"a copy where no queue copies" Exn.invalid_arg (fun () ->
       Sub.make ~reads:0 ~writes:0 e
         [| part "COMPUTE:0" (Sub.Copy { src; dst }) |]);
+  let image = Result.get_ok (Rig.Image.load d "code:64") in
+  let launch = Sub.Launch { image; kernel = "main"; params = 0; refs = [||] } in
+  raises_match ~msg:"a launch on COPY:0" Exn.invalid_arg (fun () ->
+      Sub.make ~reads:0 ~writes:0 d [| part "COPY:0" launch |]);
   equal ~msg:"no queues on the host" int 0 (List.length (Rig.queues Rig.host))
 
 (* A value's work starts once the previous value's completed, on every queue:

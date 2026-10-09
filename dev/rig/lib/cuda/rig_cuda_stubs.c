@@ -909,7 +909,9 @@ static void drain(struct submission *s, uint64_t v) {
   if (e == CUDA_SUCCESS) write_word(d, v);
 }
 
-int rig_cuda_room(void *self, const struct rig_part *p, int n) {
+int rig_cuda_room(void *self, const struct rig_part *p, int n,
+                  const uint8_t *args) {
+  (void)args;
   (void)self;
   for (int i = 0; i < n; i++) {
     int fill = p[i].kind == RIG_FILL;
@@ -923,8 +925,12 @@ int rig_cuda_room(void *self, const struct rig_part *p, int n) {
 
 int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
                        int nwaits, const struct rig_part *parts, int nparts,
+                       const uint8_t *args, const uint64_t *slots, int nslots,
                        const uint64_t *handles, int nhandles,
                        const char **failure) {
+  (void)args;
+  (void)slots;
+  (void)nslots;
   struct device *d = self;
   struct submission s = {d, waits, nwaits, {0, 0}, 0, 0, {0, 0}, NULL, 0};
   int pushed;

@@ -30,7 +30,8 @@
    device's empty rings or number more than 65,535; RIG_LATER if they fit
    once a value the device was given is reached, as its timeline word reads
    now; RIG_FITS otherwise. */
-int rig_nv_room(void *self, const struct rig_part *parts, int n);
+int rig_nv_room(void *self, const struct rig_part *parts, int n,
+                const uint8_t *args);
 
 /* Writes [parts], which rig_nv_room answered RIG_FITS for with nothing
    submitted since, into the device's rings as the work of [v], the value
@@ -39,6 +40,7 @@ int rig_nv_room(void *self, const struct rig_part *parts, int n);
    It never blocks. */
 int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
                   int nwaits, const struct rig_part *parts, int nparts,
+                  const uint8_t *args, const uint64_t *slots, int nslots,
                   const uint64_t *handles, int nhandles, const char **failure);
 
 #endif

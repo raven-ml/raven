@@ -65,7 +65,7 @@ let load d =
    its own. *)
 let dev () =
   let { S.d; g } = S.open_ () in
-  let step = Option.get (M.entry (load g) "step") in
+  let step = (Option.get (M.entry (load g) "step")).code in
   let args = Option.get (M.alloc g Rig_edge.Device 16) in
   let t = { d; g; run = Rig.Submission.Run.make (); v = 0; step; args } in
   H.set64 (host args) (address (alloc t 16));

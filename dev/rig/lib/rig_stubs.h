@@ -165,7 +165,16 @@ struct rig_sub {
   int nfixed; /* the buffers the parts name */
   struct rig_fixed *fixed;
   int nreads, nwrites; /* a run's buffers: those it reads, then writes */
+  int nrefs;
+  struct rig_ref *refs; /* every launch's refs, one after the other */
+  size_t args;          /* where its last launch's block ends in a run */
 };
+
+/* A launch's block in a run, as [Submission.block] encodes it: where it
+   starts, in bytes, above the RIG_BLOCK_BITS bits of its parameter count. */
+#define RIG_BLOCK_BITS 13
+#define RIG_BLOCK_START(b) ((uint64_t)(b) >> RIG_BLOCK_BITS)
+#define RIG_BLOCK_PARAMS(b) ((uint64_t)(b) & ((1u << RIG_BLOCK_BITS) - 1))
 
 /* The state of one submit: what it collects, the handles it names and
    what it answers, in the caller's run, which one submit uses at a time.
@@ -197,6 +206,11 @@ struct rig_run {
   uint64_t no_room_at, v;
   const char *why;
   int producer;
+  /* The launches' blocks the setters store into: [nargs] bytes reach the
+     end of the last block stored into, of [cargs] allocated. */
+  uint8_t *args;
+  size_t nargs, cargs;
+  uint64_t *addresses; /* each slot's address, for launches' refs */
 };
 
 /* Whether the work up to the point [p] is done: its device's word, as the

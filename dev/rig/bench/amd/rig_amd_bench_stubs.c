@@ -177,11 +177,11 @@ value rig_amd_bench_submit(value v_edge, value v_v, value v_at, value v_value,
   for (int i = 0; i < n; i++)
     w[i] = (struct rig_wait){(uint64_t)Long_val(v_at),
                             (uint64_t)Long_val(v_value), RIG_WORD};
-  if (driver->room(self, NULL, 0) != RIG_FITS)
+  if (driver->room(self, NULL, 0, NULL) != RIG_FITS)
     caml_failwith("submit: no room");
   const char *why = NULL;
-  if (driver->submit(self, (uint64_t)Long_val(v_v), w, n, NULL, 0, NULL, 0,
-                     &why) == RIG_FAILED)
+  if (driver->submit(self, (uint64_t)Long_val(v_v), w, n, NULL, 0, NULL, NULL,
+                     0, NULL, 0, &why) == RIG_FAILED)
     caml_failwith(why);
   return Val_unit;
 }

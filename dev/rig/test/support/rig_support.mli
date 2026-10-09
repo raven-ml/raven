@@ -17,6 +17,7 @@ module Polled : sig
     ?capacity:int ->
     ?copies:bool ->
     ?host_visible:bool ->
+    ?addresses:bool ->
     ?transport:bool ->
     ?peers:bool ->
     ?maps_host:bool ->
@@ -37,29 +38,31 @@ module Polled : sig
       1024): beyond it [room] answers [`Later], or, with [may_block], submit
       waits for room. Without [copies] (defaults to [true]) it lists no copy
       queue. Without [host_visible] (defaults to [true]) the host does not
-      address its [Device] memory. With [transport] (defaults to [false]) the
-      host does not address its word either, which is read through [signaled],
-      as behind a transport. Without [peers] (defaults to [true]) it maps no
-      memory of another device, and without [maps_host] (defaults to [true]) no
-      host memory. Its budget is [budget] (defaults to 1 GiB); it holds at most
-      [memory] bytes of [Device] memory and [window] bytes of [Mapped] memory
-      (default to [max_int]); [Pinned] memory is unbounded. Its word advances
-      as [completion] says (defaults to [`Host]): with [`Object], it is the
-      driver's object, its handle the word's address. Its queue waits for
-      producers of the completions [waits_on] lists (defaults to none), at most
-      [max_waits] of them per submission (defaults to [max_int]). With [answer]
-      [`Stopped] (the default) its stop drops its queued work and writes the
-      last value it received into its word; with [`Unknown] it leaves both, as a
-      driver whose work may still run. With [runs] [`Itself] (the default is
-      [`When_slept]) a thread of the driver also runs its queue as work arrives,
-      as a device runs its own work: its work is done at no point a test
-      chooses. With [lag] (defaults to [1]) it commits on its own once [lag]
-      values are uncommitted, and before a submit waits for room: with [1]
-      each hand-over commits its value. Its queue runs only committed
-      submissions, and a sleep that finds only uncommitted ones queued, its
-      word unmoved, raises [Failure "Polled: nothing committed"], as a wait for
-      work nobody committed would hang. With [hang_ms] its facts bound hangs
-      to that many milliseconds (defaults to no bound).
+      address its [Device] memory. Without [addresses] (defaults to [true]) its
+      [Device] memory has no address: its work names it by handle alone. With
+      [transport] (defaults to [false]) the host does not address its word
+      either, which is read through [signaled], as behind a transport. Without
+      [peers] (defaults to [true]) it maps no memory of another device, and
+      without [maps_host] (defaults to [true]) no host memory. Its budget is
+      [budget] (defaults to 1 GiB); it holds at most [memory] bytes of [Device]
+      memory and [window] bytes of [Mapped] memory (default to [max_int]);
+      [Pinned] memory is unbounded. Its word advances as [completion] says
+      (defaults to [`Host]): with [`Object], it is the driver's object, its
+      handle the word's address. Its queue waits for producers of the
+      completions [waits_on] lists (defaults to none), at most [max_waits] of
+      them per submission (defaults to [max_int]). With [answer] [`Stopped] (the
+      default) its stop drops its queued work and writes the last value it
+      received into its word; with [`Unknown] it leaves both, as a driver whose
+      work may still run. With [runs] [`Itself] (the default is [`When_slept]) a
+      thread of the driver also runs its queue as work arrives, as a device runs
+      its own work: its work is done at no point a test chooses. With [lag]
+      (defaults to [1]) it commits on its own once [lag] values are uncommitted,
+      and before a submit waits for room: with [1] each hand-over commits its
+      value. Its queue runs only committed submissions, and a sleep that finds
+      only uncommitted ones queued, its word unmoved, raises
+      [Failure "Polled: nothing committed"], as a wait for work nobody committed
+      would hang. With [hang_ms] its facts bound hangs to that many milliseconds
+      (defaults to no bound).
 
       Raises [Invalid_argument] if [lag < 1]. *)
 
@@ -67,6 +70,7 @@ module Polled : sig
     ?capacity:int ->
     ?copies:bool ->
     ?host_visible:bool ->
+    ?addresses:bool ->
     ?transport:bool ->
     ?peers:bool ->
     ?maps_host:bool ->
@@ -174,6 +178,33 @@ module Polled : sig
   val blocked : t -> int
   (** [blocked d] is the number of submits waiting for room in [d]'s [may_block]
       queue. *)
+
+  (** {1:launches Launches}
+
+      [d]'s queue ["COMPUTE:0"] runs launches; its ["COPY:0"] does not. An image
+      of [d] is the binary ["code:N"], [N] bytes of code placed in [d]'s memory,
+      or ["functions"], which the driver loads and places nowhere. Its functions
+      are Polled's host functions, run once per group of the grid, x fastest:
+      - ["main"] does nothing;
+      - ["fill"] stores, as the 64-bit word of index [i], the group's index in
+        the grid, the second parameter word plus [i] at the address the first
+        holds;
+      - ["copy"], in group 0 alone, copies as many bytes as the third word holds
+        from the address the first holds to the one the second holds.
+
+      Each allows 1024 threads per group and 48 KiB of shared memory, and grids
+      of at most [2{^31} - 1] groups along x and 65535 along y and z. *)
+
+  type launch = {
+    groups : int * int * int;
+    threads : int * int * int;
+    shared : int;
+    params : string;  (** As the function read them. *)
+  }
+
+  val launches : t -> launch list
+  (** [launches d] is the first 8 launches [d] ran since the last call, oldest
+      first, with their blocks as they ran. *)
 
   (** {1:sleeps Sleeps}
 

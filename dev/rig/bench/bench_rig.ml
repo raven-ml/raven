@@ -120,6 +120,32 @@ let contended () =
   in
   (t, s, run, stop, rival)
 
+(* A launch whose 8 refs name a run of 4 reads and 4 writes: each submit stores
+   the refs' offsets, as a caller does for each call. *)
+let refs = 8
+
+let launching () =
+  let t = dev () in
+  let image = Result.get_ok (Rig.Image.load t.d "functions") in
+  let launch =
+    Sub.Launch
+      {
+        image;
+        kernel = "main";
+        params = 8 * refs;
+        refs = Array.init refs (fun k -> { Sub.at = 8 * k; slot = k });
+      }
+  in
+  let s =
+    Sub.make ~reads:(refs / 2) ~writes:(refs / 2) t.d
+      [| { Sub.queue = "COMPUTE:0"; after = [||]; work = launch } |]
+  in
+  let run = Sub.Run.make () and b = Sub.block s 0 in
+  Sub.Run.groups run b 1 1 1;
+  Sub.Run.threads run b 1 1 1;
+  let bs = words t.d refs in
+  (t, s, run, b, Array.sub bs 0 (refs / 2), Array.sub bs (refs / 2) (refs / 2))
+
 let submit_rows =
   let row name setup f = Thumper.bench_with_setup ~setup name f in
   Thumper.group "submit/polled"
@@ -136,6 +162,12 @@ let submit_rows =
           drained t);
       row "foreign-24" foreign (fun (t, s, run, bs) ->
           submit_read ~run s bs;
+          drained t);
+      row "launch-refs-8" launching (fun (t, s, run, b, reads, writes) ->
+          for k = 0 to refs - 1 do
+            Sub.Run.int64 run b (8 * k) 0
+          done;
+          ignore (Rig.submit s ~run ~reads ~writes ~waits:[||]);
           drained t);
       Thumper.bench_with_setup ~setup:contended
         ~teardown:(fun (_, _, _, stop, rival) ->

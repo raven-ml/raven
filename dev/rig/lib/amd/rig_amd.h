@@ -32,7 +32,8 @@
    or a part is one the device does not run: a copy on queue 0, words on an
    AQL queue that are not whole packets, an [after] index not below its own
    part's. */
-int rig_amd_room(void *self, const struct rig_part *parts, int n);
+int rig_amd_room(void *self, const struct rig_part *parts, int n,
+                 const uint8_t *args);
 
 /* Places [parts], which rig_amd_room answered RIG_FITS for, as the work
    of [v], the value after the last one it received, and rings the queues'
@@ -43,6 +44,7 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n);
    failure's message, which lives as long as the process. */
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                       int nwaits, const struct rig_part *parts, int nparts,
+                      const uint8_t *args, const uint64_t *slots, int nslots,
                       const uint64_t *handles, int nhandles,
                       const char **failure);
 

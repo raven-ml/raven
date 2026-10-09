@@ -331,16 +331,17 @@ let image d b =
 
 (* A refusal is not kept: a later call compiles again. *)
 let entry (i : image) f =
+  let code p = { Rig_edge.code = p; launch = 0n } in
   Mutex.protect i.guard @@ fun () ->
   match Array.find_index (String.equal f) i.names with
   | None -> None
-  | Some k when i.pipelines.(k) <> 0 -> Some i.pipelines.(k)
+  | Some k when i.pipelines.(k) <> 0 -> Some (code i.pipelines.(k))
   | Some k -> (
       match pipeline i.library f with
       | "", p, limit ->
           i.limits.(k) <- limit;
           i.pipelines.(k) <- p;
-          Some p
+          Some (code p)
       | why, _, _ ->
           invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f
             why)

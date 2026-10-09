@@ -26,6 +26,9 @@
 #define Sub_val(v) (*(struct rig_sub **)Data_custom_val(v))
 #define Run_val(v) (*(struct rig_run **)Data_custom_val(v))
 
+/* A run buffer's address where its memory has none: the -1 OCaml passes. */
+#define NO_ADDRESS UINT64_MAX
+
 /* Stamps */
 
 static struct rig_stamps *chunk(void) {
@@ -188,6 +191,7 @@ static void sub_free(struct rig_sub *s) {
   free(s->parts);
   free(s->after);
   free(s->fixed);
+  free(s->refs);
   free(s);
 }
 
@@ -205,9 +209,11 @@ static _Atomic uint64_t next_id = 1;
 
 /* A prepared submission on the device [v_d] of [v_nparts] parts whose
    [after] lists hold [v_nafter] indices in all, naming [v_nfixed] buffers,
-   whose runs read [v_nreads] buffers and write [v_nwrites]. */
+   whose runs read [v_nreads] buffers and write [v_nwrites], and whose
+   launches hold [v_nrefs] refs in all. */
 value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
-                       value v_nfixed, value v_nreads, value v_nwrites) {
+                       value v_nfixed, value v_nreads, value v_nwrites,
+                       value v_nrefs) {
   struct rig_sub *s = calloc(1, sizeof *s);
   if (s == NULL) caml_raise_out_of_memory();
   s->id = atomic_fetch_add(&next_id, 1);
@@ -221,6 +227,8 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
   s->parts = zalloc((size_t)s->nparts, sizeof *s->parts, &ok);
   s->after = zalloc((size_t)Int_val(v_nafter), sizeof *s->after, &ok);
   s->fixed = zalloc((size_t)s->nfixed, sizeof *s->fixed, &ok);
+  s->nrefs = Int_val(v_nrefs);
+  s->refs = zalloc((size_t)s->nrefs, sizeof *s->refs, &ok);
   if (!ok) {
     sub_free(s);
     caml_raise_out_of_memory();
@@ -233,7 +241,7 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
 value caml_rig_sub_new_byte(value *argv, int argn) {
   (void)argn;
   return caml_rig_sub_new(argv[0], argv[1], argv[2], argv[3], argv[4],
-                          argv[5]);
+                          argv[5], argv[6]);
 }
 
 /* Part [v_i] on queue [v_queue], after the parts in [v_after], whose
@@ -294,6 +302,44 @@ value caml_rig_sub_copy_local(value v_s, value v_i, value v_side) {
   return Val_unit;
 }
 
+/* The bytes of a block of [params] parameter bytes: its header, then its
+   parameters, up to the 16 bytes the next block starts on. */
+static size_t block_bytes(size_t params) {
+  return sizeof(struct rig_block) + ((params + 15) & ~(size_t)15);
+}
+
+/* Part [v_i] launches the function [v_code], [v_launch] with [v_params]
+   parameter bytes and the refs [v_refs], stored from [v_at] on in the
+   submission's [refs]. Its block follows the block of the launch before
+   it. Answers the block, as RIG_BLOCK_START and RIG_BLOCK_PARAMS read it. */
+value caml_rig_sub_launch(value v_s, value v_i, value v_code, value v_launch,
+                          value v_params, value v_refs, value v_at) {
+  struct rig_sub *s = Sub_val(v_s);
+  struct rig_part *p = &s->parts[Int_val(v_i)];
+  int at = Int_val(v_at), n = (int)Wosize_val(v_refs);
+  for (int j = 0; j < n; j++) {
+    value r = Field(v_refs, j);
+    s->refs[at + j] = (struct rig_ref){(uint32_t)Long_val(Field(r, 0)),
+                                       (uint32_t)Long_val(Field(r, 1))};
+  }
+  size_t start = s->args, params = (size_t)Long_val(v_params);
+  p->kind = RIG_LAUNCH;
+  p->launch.code = (uint64_t)Long_val(v_code);
+  p->launch.launch = (const void *)Nativeint_val(v_launch);
+  p->launch.block = (uint32_t)start;
+  p->launch.params = (uint32_t)params;
+  p->launch.refs = n == 0 ? NULL : &s->refs[at];
+  p->launch.nrefs = n;
+  s->args = start + block_bytes(params);
+  return Val_long((intnat)((start << RIG_BLOCK_BITS) | params));
+}
+
+value caml_rig_sub_launch_byte(value *argv, int argn) {
+  (void)argn;
+  return caml_rig_sub_launch(argv[0], argv[1], argv[2], argv[3], argv[4],
+                             argv[5], argv[6]);
+}
+
 /* Fixed buffer [v_k]: the stamps and handle of a memory a part names, and
    whether the part writes it. */
 value caml_rig_sub_fixed(value v_s, value v_k, value v_stamps, value v_handle,
@@ -310,6 +356,8 @@ value caml_rig_sub_fixed(value v_s, value v_k, value v_stamps, value v_handle,
 static void run_free(struct rig_run *r) {
   free(r->fixed);
   free(r->slots);
+  free(r->addresses);
+  free(r->args);
   free(r->points);
   free(r->waits);
   free(r->producers);
@@ -363,7 +411,11 @@ static int run_fit(struct rig_run *r, const struct rig_sub *s) {
     r->seen_bits = bits;
     r->epoch = 0;
   }
+  /* The addresses grow with the slots, which [fit] counts. */
+  int caddresses = r->cslots;
   if (!fit((void **)&r->fixed, &r->cfixed, s->nfixed, sizeof *r->fixed) ||
+      !fit((void **)&r->addresses, &caddresses, nslots,
+           sizeof *r->addresses) ||
       !fit((void **)&r->slots, &r->cslots, nslots, sizeof *r->slots) ||
       !fit((void **)&r->handles, &r->chandles, nhandles, sizeof *r->handles))
     return 0;
@@ -374,12 +426,18 @@ static int run_fit(struct rig_run *r, const struct rig_sub *s) {
 }
 
 /* Takes the run [v_r] for a submit of [v_s]: 0 if another submit holds it,
-   1 if it fits [v_s], 2 if [caml_rig_run_fit] must fit it first. */
+   1 if it fits [v_s], 2 if [caml_rig_run_fit] must fit it first, and 3,
+   leaving it, if it does not hold [v_s]'s last block. */
 value caml_rig_run_take(value v_r, value v_s) {
   struct rig_run *r = Run_val(v_r);
+  const struct rig_sub *s = Sub_val(v_s);
   int idle = 0;
   if (!atomic_compare_exchange_strong(&r->busy, &idle, 1)) return Val_int(0);
-  return Val_int(Sub_val(v_s)->id == r->sub ? 1 : 2);
+  if (r->nargs < s->args) {
+    atomic_store(&r->busy, 0);
+    return Val_int(3);
+  }
+  return Val_int(s->id == r->sub ? 1 : 2);
 }
 
 /* Fits the taken run [v_r] to [v_s], giving it back if memory ran out. */
@@ -403,11 +461,16 @@ value caml_rig_run_give(value v_r) {
   return Val_unit;
 }
 
-/* Names the run's [v_k]th buffer: a read below [nreads], else a write. */
-value caml_rig_run_slot(value v_r, value v_k, value v_stamps, value v_handle) {
+/* Names the run's [v_k]th buffer, at [v_address] as the device's work
+   addresses it, -1 for memory with no address: a read below [nreads], else
+   a write. */
+value caml_rig_run_slot(value v_r, value v_k, value v_stamps, value v_handle,
+                        value v_address) {
   struct rig_run *r = Run_val(v_r);
-  struct rig_slot *slot = &r->slots[Int_val(v_k)];
+  int k = Int_val(v_k);
+  struct rig_slot *slot = &r->slots[k];
   uint64_t h = (uint64_t)Nativeint_val(v_handle);
+  r->addresses[k] = (uint64_t)Long_val(v_address);
   slot->stamps = Stamps_val(v_stamps);
   if (slot->handle != h) {
     slot->handle = h;
@@ -493,6 +556,11 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   const struct rig_sub *s = Sub_val(v_s);
   struct rig_run *r = Run_val(v_r);
   int own = s->dev->index, nslots = s->nreads + s->nwrites;
+  for (int k = 0; k < s->nrefs; k++)
+    if (r->addresses[s->refs[k].slot] == NO_ADDRESS)
+      caml_invalid_argument(
+          "Rig.submit: a launch addresses a run buffer whose memory has no "
+          "address");
   r->npoints = r->nwaits = 0;
   r->hold = Stamps_val(v_hold);
   for (int k = 0; k < s->nfixed; k++)
@@ -565,4 +633,130 @@ value caml_rig_run_no_room_at(value v_r) {
 
 value caml_rig_run_producer(value v_r) {
   return Val_int(Run_val(v_r)->producer);
+}
+
+/* Blocks */
+
+/* The [size] bytes at byte [at] of the run [v_r]'s block [b], growing the
+   run to hold the whole block. Raises if a submit is using the run, or if
+   [at] is negative or the bytes end past the block, its header's bytes and
+   then its parameters. A store raises before it writes. */
+static uint8_t *block_at(value v_r, intnat b, intnat at, intnat size) {
+  struct rig_run *r = Run_val(v_r);
+  if (atomic_load_explicit(&r->busy, memory_order_relaxed))
+    caml_invalid_argument("Rig.Submission.Run: a submit is using the run");
+  size_t params = RIG_BLOCK_PARAMS(b);
+  if (at < 0 || (size_t)(at + size) > sizeof(struct rig_block) + params)
+    caml_invalid_argument(
+        "Rig.Submission.Run: the bytes lie outside the block's parameters");
+  size_t start = RIG_BLOCK_START(b), end = start + block_bytes(params);
+  if (end > r->cargs) {
+    size_t c = 2 * r->cargs > end ? 2 * r->cargs : end;
+    uint8_t *args = realloc(r->args, c);
+    if (args == NULL) caml_raise_out_of_memory();
+    memset(args + r->cargs, 0, c - r->cargs);
+    r->args = args;
+    r->cargs = c;
+  }
+  if (end > r->nargs) r->nargs = end;
+  return r->args + start + at;
+}
+
+/* The parameters' byte [i], as [block_at] counts. */
+#define PARAM(i) ((intnat)sizeof(struct rig_block) + (i))
+
+/* A header field holds a uint32_t. */
+static uint32_t header_word(intnat v) {
+  if (v < 0 || v > (intnat)UINT32_MAX)
+    caml_invalid_argument(
+        "Rig.Submission.Run: a size is negative or above 2^32 - 1");
+  return (uint32_t)v;
+}
+
+static void store_axes(value v_r, intnat b, size_t field, intnat x, intnat y,
+                       intnat z) {
+  uint32_t a[3] = {header_word(x), header_word(y), header_word(z)};
+  memcpy(block_at(v_r, b, (intnat)field, sizeof a), a, sizeof a);
+}
+
+value caml_rig_run_groups(value v_r, intnat b, intnat x, intnat y, intnat z) {
+  store_axes(v_r, b, offsetof(struct rig_block, groups), x, y, z);
+  return Val_unit;
+}
+
+value caml_rig_run_groups_byte(value v_r, value b, value x, value y,
+                               value z) {
+  return caml_rig_run_groups(v_r, Long_val(b), Long_val(x), Long_val(y),
+                             Long_val(z));
+}
+
+value caml_rig_run_threads(value v_r, intnat b, intnat x, intnat y,
+                           intnat z) {
+  store_axes(v_r, b, offsetof(struct rig_block, threads), x, y, z);
+  return Val_unit;
+}
+
+value caml_rig_run_threads_byte(value v_r, value b, value x, value y,
+                                value z) {
+  return caml_rig_run_threads(v_r, Long_val(b), Long_val(x), Long_val(y),
+                              Long_val(z));
+}
+
+value caml_rig_run_shared(value v_r, intnat b, intnat n) {
+  uint32_t w = header_word(n);
+  memcpy(block_at(v_r, b, offsetof(struct rig_block, shared), sizeof w), &w,
+         sizeof w);
+  return Val_unit;
+}
+
+value caml_rig_run_shared_byte(value v_r, value b, value n) {
+  return caml_rig_run_shared(v_r, Long_val(b), Long_val(n));
+}
+
+/* A negative [i] stays negative through PARAM's sum, which [block_at]
+   refuses only below the header: refuse it here. */
+static uint8_t *param_at(value v_r, intnat b, intnat i, intnat size) {
+  if (i < 0)
+    caml_invalid_argument(
+        "Rig.Submission.Run: the bytes lie outside the block's parameters");
+  return block_at(v_r, b, PARAM(i), size);
+}
+
+value caml_rig_run_int32(value v_r, intnat b, intnat i, intnat v) {
+  uint32_t x = (uint32_t)v;
+  memcpy(param_at(v_r, b, i, sizeof x), &x, sizeof x);
+  return Val_unit;
+}
+
+value caml_rig_run_int32_byte(value v_r, value b, value i, value v) {
+  return caml_rig_run_int32(v_r, Long_val(b), Long_val(i), Long_val(v));
+}
+
+value caml_rig_run_int64(value v_r, intnat b, intnat i, intnat v) {
+  int64_t x = v;
+  memcpy(param_at(v_r, b, i, sizeof x), &x, sizeof x);
+  return Val_unit;
+}
+
+value caml_rig_run_int64_byte(value v_r, value b, value i, value v) {
+  return caml_rig_run_int64(v_r, Long_val(b), Long_val(i), Long_val(v));
+}
+
+value caml_rig_run_float32(value v_r, intnat b, intnat i, double v) {
+  float x = (float)v;
+  memcpy(param_at(v_r, b, i, sizeof x), &x, sizeof x);
+  return Val_unit;
+}
+
+value caml_rig_run_float32_byte(value v_r, value b, value i, value v) {
+  return caml_rig_run_float32(v_r, Long_val(b), Long_val(i), Double_val(v));
+}
+
+value caml_rig_run_float64(value v_r, intnat b, intnat i, double v) {
+  memcpy(param_at(v_r, b, i, sizeof v), &v, sizeof v);
+  return Val_unit;
+}
+
+value caml_rig_run_float64_byte(value v_r, value b, value i, value v) {
+  return caml_rig_run_float64(v_r, Long_val(b), Long_val(i), Double_val(v));
 }

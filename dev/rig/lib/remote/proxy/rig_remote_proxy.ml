@@ -127,7 +127,7 @@ let image d binary =
 
 let entry (i : image) name =
   match request i.link (Wire.Entry { image = i.id; name }) with
-  | Ok e -> e
+  | Ok e -> Option.map (fun code -> { Rig_edge.code; launch = 0n }) e
   | Error _ -> None
 
 let unload d (i : image) = Link.drop d.link i.id

@@ -517,7 +517,10 @@ let facts () =
          ( q.name,
            List.map
              (function
-               | Rig_edge.Words -> "Words" | Fill -> "Fill" | Copy -> "Copy")
+               | Rig_edge.Words -> "Words"
+               | Fill -> "Fill"
+               | Copy -> "Copy"
+               | Launch -> "Launch")
              q.runs ))
        f.queues);
   equal bool ~msg:"completion is the store" true (f.completion = Store);
@@ -898,7 +901,8 @@ let images () =
   equal int ~msg:"the image's bytes" size (String.length bytes);
   equal bool ~msg:"double_index" true
     (Option.is_some (N.entry i "double_index"));
-  equal (option int) ~msg:"a missing kernel" None (N.entry i "missing");
+  equal (option int) ~msg:"a missing kernel" None
+    (Option.map (fun (e : Rig_edge.entry) -> e.code) (N.entry i "missing"));
   is_error ~msg:"not a cubin" (N.image g "not a cubin");
   N.unload g i;
   N.free g r

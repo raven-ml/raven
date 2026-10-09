@@ -687,13 +687,15 @@ and sbuf = { b : B.t; m : smem }
 and scell = { cell : sbuf option Atomic.t; sw : sworld; cl : smem }
 
 (* A submission's submits hold [slock]: one at a time uses its argument and its
-   run. *)
+   run. A launch's submits take neither: each brings a run of its own, so
+   submits of one launch on two domains run at once. *)
 type ssub = {
   s : Sub.t;
   sd : Rig.t;
   sarg : B.t option;
   slock : Mutex.t;
   srun : Sub.Run.t;
+  slaunch : bool;
 }
 
 type sscell = { ss : ssub option Atomic.t; ssw : sworld; scl : smem }
@@ -1480,6 +1482,7 @@ let make_sys ?hold ((s : sdev), w) pair sc =
          sarg = arg;
          slock = Mutex.create ();
          srun = Sub.Run.make ();
+         slaunch = false;
        })
 
 (* A copy between two buffers of [n] bytes that the submission alone holds. *)
@@ -1533,6 +1536,56 @@ let make_own_sys ((s : sdev), w) n sc =
          sarg = None;
          slock = Mutex.create ();
          srun = Sub.Run.make ();
+         slaunch = false;
+       })
+
+(* A launch of Polled's "copy" over its read slot and its write slot, which runs
+   as a fill that copies them (rig_support.mli). Only a Polled device launches,
+   and only Polled loads the host functions: the model makes none elsewhere. *)
+let make_launch_ref (v : rdevv) sc outcome =
+  let d = v.r and w = sc.subw in
+  if not (is_polled d) then
+    match outcome with
+    | Error Skipped -> ()
+    | _ -> fail "a launch the model does not make was made"
+  else
+    let vd = verdict () in
+    uses vd [ d ];
+    judge w vd outcome (fun () ->
+        sc.sub <- Some { dev = d; copy = None; arg = None; held = None })
+
+(* The ref'd words: the read slot's offset, the write slot's, and the bytes to
+   copy. *)
+let launch_refs = [| { Sub.at = 0; slot = 0 }; { Sub.at = 8; slot = 1 } |]
+let launch_params = 24
+
+let make_launch_sys ((s : sdev), w) sc =
+  if Option.is_none s.p then raise Skipped;
+  guard w @@ fun () ->
+  let image =
+    match Rig.Image.load s.d "functions" with
+    | Ok i -> i
+    | Error why -> failwith why
+  in
+  let part =
+    {
+      Sub.queue = "COMPUTE:0";
+      after = [||];
+      work =
+        Sub.Launch
+          { image; kernel = "copy"; params = launch_params; refs = launch_refs };
+    }
+  in
+  let sub = Sub.make ~reads:1 ~writes:1 s.d [| part |] in
+  Atomic.set sc.ss
+    (Some
+       {
+         s = sub;
+         sd = s.d;
+         sarg = None;
+         slock = Mutex.create ();
+         srun = Sub.Run.make ();
+         slaunch = true;
        })
 
 let submit_ref last rc wc sc outcome =
@@ -1621,38 +1674,49 @@ let submit_sys last rc wc sc =
   end;
   let w = rc.sw in
   guard w @@ fun () ->
-  Mutex.protect sub.slock @@ fun () ->
   (* The run's buffers are on the device: a borrow where they are not. *)
   let onto b =
     if Rig.equal (B.device b) sub.sd then b
     else Option.value (B.borrow sub.sd b) ~default:b
   in
   let r = { r with b = onto r.b } and wb = { wb with b = onto wb.b } in
-  (match sub.sarg with
-  | Some arg ->
-      (* Polled runs its work on host memory, at the addresses its buffers
-         have. *)
-      let host_run b =
-        let d = B.device b in
-        Rig.runs_on_host d || Rig.arch d = "polled"
-      in
-      let n = min (B.length r.b) (B.length wb.b) in
-      B.wait arg B.Read_write;
-      let at = B.address arg in
-      if host_run r.b && host_run wb.b && n > 0 then begin
-        S.store at (B.address wb.b);
-        S.store (at + 8) (B.address r.b);
-        S.store (at + 16) n
-      end
-      else begin
-        S.store at 0;
-        S.store (at + 8) 0;
-        S.store (at + 16) 0
-      end
-  | None -> ());
-  Rig.Point.value
-    (Rig.submit sub.s ~run:sub.srun ~reads:[| r.b |] ~writes:[| wb.b |]
-       ~waits:[||])
+  if sub.slaunch then begin
+    let run = Sub.Run.make () and b = Sub.block sub.s 0 in
+    Sub.Run.groups run b 1 1 1;
+    Sub.Run.threads run b 1 1 1;
+    Sub.Run.int64 run b 0 0;
+    Sub.Run.int64 run b 8 0;
+    Sub.Run.int64 run b 16 (min (B.length r.b) (B.length wb.b));
+    Rig.Point.value
+      (Rig.submit sub.s ~run ~reads:[| r.b |] ~writes:[| wb.b |] ~waits:[||])
+  end
+  else
+    Mutex.protect sub.slock @@ fun () ->
+    (match sub.sarg with
+    | Some arg ->
+        (* Polled runs its work on host memory, at the addresses its buffers
+           have. *)
+        let host_run b =
+          let d = B.device b in
+          Rig.runs_on_host d || Rig.arch d = "polled"
+        in
+        let n = min (B.length r.b) (B.length wb.b) in
+        B.wait arg B.Read_write;
+        let at = B.address arg in
+        if host_run r.b && host_run wb.b && n > 0 then begin
+          S.store at (B.address wb.b);
+          S.store (at + 8) (B.address r.b);
+          S.store (at + 16) n
+        end
+        else begin
+          S.store at 0;
+          S.store (at + 8) 0;
+          S.store (at + 16) 0
+        end
+    | None -> ());
+    Rig.Point.value
+      (Rig.submit sub.s ~run:sub.srun ~reads:[| r.b |] ~writes:[| wb.b |]
+         ~waits:[||])
 
 (* Holds *)
 
@@ -2313,6 +2377,14 @@ let commands ~two ~fork =
       (fun v sc ->
         cells ~ws:[ snd v; sc.ssw ] [ sc.scl ] (fun () -> make_sys v None sc))
   in
+  let make_launch =
+    command "make launch"
+      (device ^-> subs ^-> judges unit)
+      (fun v sc o ->
+        one_world [ dw v; sc.subw ] o (fun () -> make_launch_ref v sc o))
+      (fun v sc ->
+        cells ~ws:[ snd v; sc.ssw ] [ sc.scl ] (fun () -> make_launch_sys v sc))
+  in
   let make_held =
     command "make held copy"
       (device ^-> cell ^-> cell ^-> holds ^-> subs ^-> judges unit)
@@ -2473,6 +2545,7 @@ let commands ~two ~fork =
       times 5 make_copy;
       times 4 make_own;
       times 3 make_fill;
+      times 3 make_launch;
       (* A held copy takes six values, more than two domains' prefix makes. *)
       (if two then [] else times 2 make_held);
       times 6 submit;

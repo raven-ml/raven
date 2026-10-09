@@ -3,6 +3,7 @@
   test_open
   test_buffer
   test_submit
+  test_launch
   test_loss
   test_turn
   test_commit
@@ -19,6 +20,7 @@
   test_open
   test_buffer
   test_submit
+  test_launch
   test_loss
   test_turn
   test_commit

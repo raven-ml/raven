@@ -225,6 +225,10 @@ val retire : device -> entry -> unit
 val unload : device -> loaded -> unit
 (** [unload d i] releases what [d]'s driver made for [i] ({!Dev.give}). *)
 
+val kernel_entry : image -> string -> Rig_edge.entry option
+(** [kernel_entry i f] is the driver's entry for [i]'s function [f], a counted
+    call ({!Rig_edge.Driver.entry}). *)
+
 val alloc_entry : device -> memory_kind -> int -> entry
 (** [alloc_entry d kind n] allocates [n] bytes of [d]'s memory of [kind] on the
     allocation path: drains, the cache, the budget, the reclaim rounds, then

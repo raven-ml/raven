@@ -672,7 +672,7 @@ let image (T d) bin =
 
 let entry c name =
   Option.map
-    (fun (k : Cubin.kernel) -> c.base + k.code)
+    (fun (k : Cubin.kernel) -> { Rig_edge.code = c.base + k.code; launch = 0n })
     (Cubin.kernel c.cubin name)
 
 (* An image holds nothing of its device but its code region, which rig frees. *)
