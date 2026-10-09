@@ -170,7 +170,77 @@ let cast_rows =
       cast D.Bool f32 m;
     ]
 
-let rows = copy_rows @ cast_rows
+(* Contractions: [a] and [b] laid out by [layout] from C-contiguous arrays of
+   the shapes it is given, contracted over [contracting], with [init] if
+   given; the floor runs their flops at the host's peak and, with [streams],
+   reads that many bytes. *)
+let contract ?streams ?(init = false) ~acc name ~sa ~sb ~layout ~contracting
+    ~flops =
+  let (D.Any dt) = acc in
+  let bench (module K : Nx_kernel.S) =
+    let spec =
+      Nx_kernel.Spec.contract ~batch:[||] ~contracting ~acc ~out:acc ~init
+    in
+    let shape (A.Any x) = A.Layout.shape (A.layout x) in
+    row name
+      (fun () ->
+        let a, b = layout (A.Any (filled dt sa)) (A.Any (filled dt sb)) in
+        let no_init =
+          Nx_kernel.Spec.contract ~batch:[||] ~contracting ~acc ~out:acc
+            ~init:false
+        in
+        let y =
+          match Nx_kernel.Spec.shapes no_init [| shape a; shape b |] with
+          | Ok [| y |] -> y
+          | _ -> failwith "a contraction row's shapes do not fit"
+        in
+        let ops = [ a; b ] @ if init then [ A.Any (filled dt y) ] else [] in
+        (A.Any (A.create Rig.host dt y), Array.of_list ops))
+      (fun (dst, ops) -> ok (K.contract spec ~dst ops))
+  in
+  let read = Option.to_list (Option.map (fun n -> F.Read n) streams) in
+  { bench; work = F.Fma (acc, flops) :: read }
+
+let plain a b = (a, b)
+
+(* The product of [m × k] and [k × n] C-contiguous matrices. *)
+let gemm ?init ~acc name m n k =
+  contract ?init ~acc name ~sa:[| m; k |] ~sb:[| k; n |] ~layout:plain
+    ~contracting:[| (1, 0) |] ~flops:(2 * m * n * k)
+
+let f64 = D.Float64
+
+let contract_rows =
+  let acc32 = D.Any f32 and acc64 = D.Any f64 in
+  let square acc dt n = gemm ~acc (Printf.sprintf "contract-%s-%d" dt n) n n n in
+  List.map (square acc32 "f32") [ 64; 128; 256; 512; 1024; 2048; 4096 ]
+  @ List.map (square acc64 "f64") [ 256; 1024 ]
+  @ [
+      gemm ~init:true ~acc:acc32 "contract-f32-1024-init" 1024 1024 1024;
+      (* a transposed: the [k × m] array viewed as [m × k]. *)
+      contract ~acc:acc32 "contract-f32-1024-tn" ~sa:[| 1024; 1024 |]
+        ~sb:[| 1024; 1024 |]
+        ~layout:(fun (A.Any a) b ->
+          (A.Any (Option.get (A.move (M.Permute [| 1; 0 |]) a)), b))
+        ~contracting:[| (1, 0) |] ~flops:(2 * 1024 * 1024 * 1024);
+      (* A dot of 10 Mi elements. *)
+      contract ~acc:acc32 "contract-dot-f32-10M" ~sa:[| 10 * mib |]
+        ~sb:[| 10 * mib |] ~layout:plain
+        ~contracting:[| (0, 0) |] ~flops:(2 * 10 * mib)
+        ~streams:(2 * 4 * 10 * mib);
+    ]
+  (* Decoding: [m] rows against a 4096 × 4096 weight stored as [n × k]. *)
+  @ List.map
+      (fun m ->
+        contract ~acc:acc32
+          (Printf.sprintf "contract-f32-m%dx4096x4096" m)
+          ~sa:[| m; 4096 |] ~sb:[| 4096; 4096 |] ~layout:plain
+          ~contracting:[| (1, 1) |]
+          ~flops:(2 * m * 4096 * 4096)
+          ~streams:(4 * 4096 * 4096))
+      [ 1; 8; 32; 128 ]
+
+let rows = copy_rows @ cast_rows @ contract_rows
 
 (* A backend: its rows, then the floors its support derives from their work. *)
 let backend name kernels floors =

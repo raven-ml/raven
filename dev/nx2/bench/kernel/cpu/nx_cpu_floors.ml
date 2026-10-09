@@ -5,7 +5,11 @@
 
 module D = Nx_array.Dtype
 
-type work = Copy of int | Cast of D.any * D.any * int
+type work =
+  | Copy of int
+  | Cast of D.any * D.any * int
+  | Fma of D.any * int
+  | Read of int
 
 type bytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -30,6 +34,9 @@ external floor_codec : int -> codec -> bytes -> bytes -> int -> unit
   = "nx_cpu_bench_floor_codec"
 
 external codecs_run : unit -> bool = "nx_cpu_bench_codecs_run" [@@noalloc]
+
+external floor_fma : int -> bool -> int -> unit = "nx_cpu_bench_floor_fma"
+external floor_read : int -> bytes -> unit = "nx_cpu_bench_floor_read"
 
 external block_transposed : bytes -> bytes -> int -> unit
   = "nx_cpu_bench_block_transposed"
@@ -75,11 +82,14 @@ let short (type v s) (dt : (v, s) D.t) =
   | D.Bit -> "bit"
 
 (* Floors: memcpy of [n] bytes, [n] elements of [inb] bytes moved into [outb],
-   or [n] elements through a codec. *)
+   [n] elements through a codec, [n] flops of fused multiply-adds, float64
+   ones if [f64], or a read of [n] bytes. *)
 type floor =
   | Memcpy of int
   | Move of { inb : int; outb : int; n : int }
   | Codec of codec * int
+  | Peak of { f64 : bool; n : int }
+  | Bytes_read of int
 
 (* A codec's source and destination, and their bytes per element. *)
 let codec_pair = function
@@ -101,6 +111,12 @@ let floor_name = function
   | Codec (c, n) ->
       let s, _, d, _ = codec_pair c in
       strf "codec-%s-%s-%s" s d (count n)
+  | Peak { f64; n } -> strf "fma-%s-%s" (if f64 then "f64" else "f32") (count n)
+  | Bytes_read n -> strf "read-%s" (count n)
+
+(* The flops of a peak's row: a rate, the same for every contraction, about
+   10 ms on one core. A row's floor is its flops at that rate. *)
+let peak_flops = 1024 * mib
 
 (* A copy's floor is its memcpy. A cast's moves its elements' bytes, a sub-byte
    side's pairs of elements as bytes, and a codec's loop where one converts its
@@ -119,6 +135,8 @@ let floors = function
         if (cs, cd) = (short s, short d) then Some (Codec (c, n)) else None
       in
       move :: List.filter_map codec codecs
+  | Fma (dt, _) -> [ Peak { f64 = dt = D.Any D.Float64; n = peak_flops } ]
+  | Read n -> [ Bytes_read n ]
 
 (* The floors of [ws], each once, in the order the work asks for them. *)
 let needed ws =
@@ -152,10 +170,15 @@ let floor_rows ws =
         let _, inb, _, outb = codec_pair c in
         ( (fun () -> (buffer (outb * n), buffer (inb * n))),
           fun (d, s) -> floor_codec threads c d s n )
+    | Peak { f64; n } ->
+        ((fun () -> (buffer 1, buffer 1)), fun _ -> floor_fma threads f64 n)
+    | Bytes_read n -> ((fun () -> (buffer 1, buffer n)), fun (_, s) -> floor_read threads s)
   in
   let floors =
     List.filter
-      (function Codec _ -> codecs_run () | Memcpy _ | Move _ -> true)
+      (function
+        | Codec _ | Peak _ | Bytes_read _ -> codecs_run ()
+        | Memcpy _ | Move _ -> true)
       (needed ws)
   in
   List.concat_map

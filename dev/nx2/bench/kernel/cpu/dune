@@ -1,5 +1,5 @@
-; nx.cpu's floors for the kernel bench: loops that move a row's bytes, and
-; codecs, in C.
+; nx.cpu's floors for the kernel bench: loops that move or read a row's
+; bytes, codecs, and fused multiply-adds at their peak, in C.
 
 (library
  (name nx_cpu_floors)
@@ -8,4 +8,4 @@
  (foreign_stubs
   (language c)
   (include_dirs ../../../lib/array ../../../lib/cpu)
-  (names nx_cpu_bench_stubs nx_cpu_bench_codec)))
+  (names nx_cpu_bench_stubs nx_cpu_bench_codec nx_cpu_bench_fma)))
