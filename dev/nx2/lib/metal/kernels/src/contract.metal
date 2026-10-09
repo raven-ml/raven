@@ -38,8 +38,9 @@ using namespace metal;
 static_assert(THREADS == 32 * WM * WN, "a dense threadgroup is 4 simdgroups");
 #define PAD 4
 
-/* Operand dtypes, by their storage. */
-enum { F32, F16, BF16, I8 };
+/* Operand dtypes, by their storage; BF16F is bfloat16 staged as
+   float32. */
+enum { F32, F16, BF16, BF16F, I8 };
 
 template <int D> struct elt;
 /* t: the storage; s: the type tiles stage in threadgroup memory, into
@@ -79,6 +80,20 @@ template <> struct elt<BF16> {
   }
   static float4 get4(vec<t, 4> x) { return as_type<float4>(uint4(x) << 16); }
   static float get1(t x) { return as_type<float>(uint(x) << 16); }
+};
+
+/* bfloat16 widened as it is staged, so the fragments read float32's
+   tiles. Measured on the large tile: with b stored [n][k] it runs 2.5%
+   faster than BF16 (4096-nt, Llama's up projection, the 512-row
+   prefills); with b stored [k][n], 6% slower. */
+template <> struct elt<BF16F> {
+  static constant constexpr uint chunk = 0, bk = NX_METAL_BK;
+  typedef ushort t;
+  typedef float s, f;
+  static vec<s, 4> stage(vec<t, 4> x) {
+    return as_type<float4>(uint4(x) << 16);
+  }
+  static float2 get(vec<s, 2> x) { return x; }
 };
 
 /* Bytes are exact in half, and stage as half; products of int8 are at
@@ -819,12 +834,13 @@ kernel void pack(constant nx_metal_pack &p [[buffer(0)]],
    one instance each reads tiles reaching past the matrix: measured, its
    checks cost nothing on whole tiles (256 and 512 squares within 3%;
    16-row products 10-13% faster than an unchecked twin), where the large
-   tile's cost 2-11% (f32 4096-nt 9%, 64 x 512 batches 8-11%). */
-#define FLOATS(name, D)                                                   \
+   tile's cost 2-11% (f32 4096-nt 9%, 64 x 512 batches 8-11%). The
+   large tile with b stored [n][k] stages as DT. */
+#define FLOATS(name, D, DT)                                             \
   CONTRACT(name "_n", D, false, false, NX_METAL_LARGE, NX_METAL_LARGE,   \
            elt<D>::bk)                                                    \
-  CONTRACT(name "_t", D, true, false, NX_METAL_LARGE, NX_METAL_LARGE,    \
-           elt<D>::bk)                                                    \
+  CONTRACT(name "_t", DT, true, false, NX_METAL_LARGE, NX_METAL_LARGE,   \
+           elt<DT>::bk)                                                   \
   CONTRACT(name "_s", D, false, true, NX_METAL_SMALL, NX_METAL_SMALL,    \
            elt<D>::bk)                                                    \
   CONTRACT(name "_wn", D, false, true, NX_METAL_WIDE_M, NX_METAL_WIDE_N, \
@@ -832,9 +848,9 @@ kernel void pack(constant nx_metal_pack &p [[buffer(0)]],
   CONTRACT(name "_wt", D, true, true, NX_METAL_WIDE_M, NX_METAL_WIDE_N,  \
            NX_METAL_BK_WIDE)
 
-FLOATS("contract_f32", F32)
-FLOATS("contract_f16", F16)
-FLOATS("contract_bf16", BF16)
+FLOATS("contract_f32", F32, F32)
+FLOATS("contract_f16", F16, F16)
+FLOATS("contract_bf16", BF16, BF16F)
 
 /* int8 into 32 bits: large tiles, whole, b stored [k][n]. */
 CONTRACT("contract_i8", I8, false, false, NX_METAL_LARGE, NX_METAL_LARGE,
