@@ -22,6 +22,46 @@ let apply1 (k : Nx_kernel.Prog.op1) ~dst x =
   | Cast -> cast ~dst x
   | Unary _ | Bitcast -> Declined
 
+(* Kinds of no, two and three operands (apply.c): the kind passes as its
+   value. *)
+
+external fill : string -> ('v, 's) Nx_array.t -> Nx_array.answer
+  = "nx_cpu_fill"
+
+external iota : int -> ('v, 's) Nx_array.t -> Nx_array.answer = "nx_cpu_iota"
+
+external apply2_c :
+  Nx_kernel.Prog.op2 ->
+  ('v, 's) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_apply2"
+
+external apply3_c :
+  Nx_kernel.Prog.op3 ->
+  ('v, 's) Nx_array.t ->
+  ('c, 'e) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_apply3"
+
+let apply0 (k : Nx_kernel.Prog.op0) ~dst =
+  if not (Nx_kernel.Prog.accepts0 k (Nx_array.dtype dst)) then
+    Nx_array.Wrong_dtype
+  else match k with Fill b -> fill b dst | Iota i -> iota i dst
+
+let apply2 k ~dst x y =
+  if not (Nx_kernel.Prog.accepts2 k (Nx_array.dtype x)) then
+    Nx_array.Wrong_dtype
+  else apply2_c k dst x y
+
+let apply3 k ~dst c x y =
+  if not (Nx_kernel.Prog.accepts3 k (Nx_array.dtype c) (Nx_array.dtype x))
+  then Nx_array.Wrong_dtype
+  else apply3_c k dst c x y
+
+let map _ ~dsts:_ _ = Nx_array.Declined
+
 (* Contractions *)
 
 (* [contract_c s v ~dst a b i] contracts [a] and [b], with the init [i] if

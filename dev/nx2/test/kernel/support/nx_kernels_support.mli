@@ -5,13 +5,22 @@
 
 (** Kernel libraries as nx.kernel's suite runs them. *)
 
+(** The type for a kind of any arity. *)
+type kind =
+  | K0 of Nx_kernel.Prog.op0
+  | K1 of Nx_kernel.Prog.op1
+  | K2 of Nx_kernel.Prog.op2
+  | K3 of Nx_kernel.Prog.op3
+
 type backend = {
   name : string;  (** The backend's name in the suite, as ["cpu/base"]. *)
   kernels : (module Nx_kernel.S);  (** Its kernels. *)
   device : Rig.t;  (** The device whose memory its laws compute on. *)
-  computes : Nx_kernel.Prog.op1 list;
-      (** The kinds of one operand it states it computes: the suite fails when
-          it declines one. *)
+  computes : kind -> Nx_array.Dtype.any -> bool;
+      (** [computes k dt] is [true] iff it states it computes [k] at [dt]: the
+          result's dtype for [K0], the operand's for [K1] and [K2], and for
+          [K3] the second operand's, with a [bool] condition. The suite fails
+          when it declines one. *)
   around : 'a. (unit -> 'a) -> 'a;
       (** [around f] is [f ()] run as the backend: nx.cpu's under its target
           table. *)

@@ -170,6 +170,63 @@ let cast_rows =
       cast D.Bool f32 m;
     ]
 
+(* Kinds of no, two and three operands into a fresh C-contiguous array. *)
+let apply name dst run =
+  let bench (module K : Nx_kernel.S) =
+    row name (fun () -> dst ()) (fun x -> ok (run (module K : Nx_kernel.S) x))
+  in
+  { bench; work = [] }
+
+let fill n =
+  let k = Nx_kernel.Prog.Fill (Nx_kernel.Prog.bits f32 1.5) in
+  apply ("fill-f32-" ^ count n)
+    (fun () -> A.create Rig.host f32 [| n |])
+    (fun (module K) dst -> K.apply0 k ~dst)
+
+let binary name k dt n rd =
+  apply name
+    (fun () -> (filled dt [| n |], filled dt [| n |], A.create Rig.host rd [| n |]))
+    (fun (module K) (x, y, dst) -> K.apply2 k ~dst x y)
+
+let apply_rows =
+  let m = mib in
+  [
+    fill 1;
+    fill m;
+    apply "iota-i64-1M"
+      (fun () -> A.create Rig.host D.Int64 [| m |])
+      (fun (module K) dst -> K.apply0 (Iota 0) ~dst);
+  ]
+  @ List.map
+      (fun n -> binary ("add-f32-" ^ count n) (Binary Add) f32 n f32)
+      [ 1; kib; m ]
+  @ [
+      apply "add-f32-1M-transposed"
+        (fun () ->
+          let x = filled f32 [| 1024; 1024 |] in
+          ( Option.get (A.move (M.Permute [| 1; 0 |]) x),
+            filled f32 [| 1024; 1024 |],
+            A.create Rig.host f32 [| 1024; 1024 |] ))
+        (fun (module K) (x, y, dst) -> K.apply2 (Binary Add) ~dst x y);
+      binary "add-i8-1M" (Binary Add) D.Int8 m D.Int8;
+      binary "less-f32-1M" (Compare Less) f32 m D.Bool;
+      apply "where-f32-1M"
+        (fun () ->
+          let c = A.create Rig.host D.Bool [| m |] in
+          ok
+            (Nx_cpu.apply2 (Compare Less) ~dst:c (filled f32 [| m |])
+               (filled f32 [| m |]));
+          (c, filled f32 [| m |], filled f32 [| m |], A.create Rig.host f32 [| m |]))
+        (fun (module K) (c, x, y, dst) -> K.apply3 Where ~dst c x y);
+      apply "fma-f32-1M"
+        (fun () ->
+          ( filled f32 [| m |],
+            filled f32 [| m |],
+            filled f32 [| m |],
+            A.create Rig.host f32 [| m |] ))
+        (fun (module K) (x, y, z, dst) -> K.apply3 Fma ~dst x y z);
+    ]
+
 (* Contractions: [a] and [b] laid out by [layout] from C-contiguous arrays of
    the shapes it is given, contracted over [contracting], with [init] if
    given; the floor runs their flops at the host's peak and, with [streams],
@@ -240,7 +297,7 @@ let contract_rows =
           ~streams:(4 * 4096 * 4096))
       [ 1; 8; 32; 128 ]
 
-let rows = copy_rows @ cast_rows @ contract_rows
+let rows = copy_rows @ cast_rows @ apply_rows @ contract_rows
 
 (* A backend: its rows, then the floors its support derives from their work. *)
 let backend name kernels floors =

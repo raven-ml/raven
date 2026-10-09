@@ -42,7 +42,13 @@ module Spec = Spec
     write; [Declined] if it does not compute the case, before any write or
     queued work. Value-dependent failures are NaN. A kernel's result is a
     function of its operands' values alone: neither layouts nor threads change a
-    bit. *)
+    bit.
+
+    An [apply] entry answers [Wrong_dtype] for dtypes its kind does not take
+    ({!Prog.accepts0} to {!Prog.accepts3}), whatever its caller checked. A
+    decline of [apply0] to [apply3] at a base dtype (float32, float64, the 8-
+    to 64-bit integers and bool) is an error its caller raises; elsewhere, and
+    for [map], its caller computes the case from other operations. *)
 module type S = sig
   type ('v, 's) a := ('v, 's) Nx_array.t
   type answer := Nx_array.answer
@@ -56,8 +62,24 @@ module type S = sig
 
   (** {1:elementwise Elementwise} *)
 
+  val apply0 : Prog.op0 -> dst:('v, 's) a -> answer
+  (** [apply0 k ~dst] stores [k] at each index of [dst]. *)
+
   val apply1 : Prog.op1 -> dst:('v, 's) a -> ('a, 'b) a -> answer
   (** [apply1 k ~dst x] stores [k] of each element of [x] into [dst]. *)
+
+  val apply2 : Prog.op2 -> dst:('v, 's) a -> ('a, 'b) a -> ('a, 'b) a -> answer
+  (** [apply2 k ~dst x y] stores [k] of each element of [x] and [y] into
+      [dst]. *)
+
+  val apply3 :
+    Prog.op3 -> dst:('v, 's) a -> ('c, 'e) a -> ('a, 'b) a -> ('a, 'b) a -> answer
+  (** [apply3 k ~dst c x y] stores [k] of each element of [c], [x] and [y]
+      into [dst]. *)
+
+  val map : Spec.map Spec.t -> dsts:any array -> any array -> answer
+  (** [map s ~dsts ops] stores [s]'s results into [dsts], one per output of
+      its program, from [ops], one per load. *)
 
   (** {1:contraction Contraction} *)
 

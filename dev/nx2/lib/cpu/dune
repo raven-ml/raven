@@ -12,7 +12,7 @@
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
-  (names target job walk stage copy convert gemm gemm_generic gemm_neon))
+  (names target job walk stage copy apply convert gemm gemm_generic gemm_neon))
  (foreign_stubs
   (language c)
   (include_dirs ../array)
