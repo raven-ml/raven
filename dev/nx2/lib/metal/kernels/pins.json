@@ -18,7 +18,7 @@
   "-Werror"
  ],
  "inputs": {
-  "lib/array/nx_dtype.h": "46eb4e478df49f3b5b11e43a1d5b756bdc2f7eb79636f686106284bd044f8ecb",
+  "lib/array/nx_dtype.h": "5c559dbcdfbccf69838ac44d4e35ebcfdb43ff1f5d475b7e87902ce2156720cf",
   "lib/metal/kernels/gen.py": "22a650503c6304bb1e3041f2cb009c03498e9531cdfe0bbb70e0c309c3865096",
   "lib/metal/kernels.h": "213634c4490db592e6b15c8d49d3ec723a5b2a480cc7e69b86fe17f7b24bf1cd",
   "test/metal/support/harness.h": "6f231321ca2cde1cd67313317d1f9f13fd725a745b188eb2ffba83a0ec8ebe6b",

@@ -17,7 +17,7 @@
    through C's double-to-float cast, as bfloat16's from a double, does
    not.
 
-   C, CUDA and HIP sources compile this header with no OCaml header, CUDA's
+   C, CUDA and HIP sources compile this header with no OCaml header, their
    device code included. Metal sources compile it too, without the row
    table and the functions of doubles, which Metal lacks. */
 
@@ -32,12 +32,16 @@
 #include <string.h>
 #endif
 
-/* Every function here is inline, and under CUDA a device function too.
-   C++ needs no static: an inline function may be defined in every unit
-   that uses it, and nvcc warns of an unused static one. It stays defined
-   for the headers beside this one (nx_kinds.h) to qualify theirs. */
-#ifdef __CUDACC__
+/* Every function here is inline, and under CUDA and HIP a device function
+   too. C++ needs no static: an inline function may be defined in every
+   unit that uses it, and nvcc warns of an unused static one. HIP spells
+   the attributes itself: nx.amd compiles with no HIP header, which is
+   what defines __host__ and __device__. It stays defined for the headers beside this one (nx_kinds.h) to qualify
+   theirs. */
+#if defined(__CUDACC__)
 #define NX_INLINE inline __host__ __device__
+#elif defined(__HIP__)
+#define NX_INLINE inline __attribute__((host, device))
 #else
 #define NX_INLINE static inline
 #endif
