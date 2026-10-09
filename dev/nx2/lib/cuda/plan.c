@@ -42,7 +42,7 @@ static int add(nx_cuda_records *out, int kernel, uint32_t gx, uint32_t gy,
 
 /* The kernels by family and instance, from kernels.h's list. */
 enum { F_ZERO, F_PACK, F_MMA, F_SIMT, F_SKINNY };
-enum { K_bf16, K_f16, K_s8, K_h16 };
+enum { K_bf16, K_f16, K_s8, K_any };
 enum { A_k, A_m, A_n };
 enum { ACC_f32, ACC_f64, ACC_i64 };
 #define TILE_INDEX(name, ...) T_##name,
@@ -51,8 +51,8 @@ enum { NX_CUDA_TILES(TILE_INDEX) T_COUNT };
 
 /* An instance's arguments, by family: MMA its operands' kind, a's and b's
    contiguous axes and its tile; SIMT its accumulator in [kind] and its side
-   in [a]; SKINNY its accumulator in [kind]. An h16 MMA instance serves the
-   kinds bf16 and f16. */
+   in [a]; SKINNY its accumulator in [kind]. An MMA instance of kind any
+   serves every kind. */
 typedef struct {
   int family, kind, a, b, tile;
 } instance;
@@ -69,9 +69,8 @@ static const instance instances[] = {NX_CUDA_KERNELS(INSTANCE)};
 static int find(int family, int kind, int a, int b, int tile) {
   for (int i = 0; i < NX_CUDA_KERNEL_COUNT; i++) {
     const instance *x = &instances[i];
-    const int h16 = family == F_MMA && x->kind == K_h16 &&
-                    (kind == K_bf16 || kind == K_f16);
-    if (x->family == family && (x->kind == kind || h16) && x->a == a &&
+    const int any = family == F_MMA && x->kind == K_any;
+    if (x->family == family && (x->kind == kind || any) && x->a == a &&
         x->b == b && x->tile == tile)
       return i;
   }

@@ -38,9 +38,9 @@ typedef struct __attribute__((aligned(8))) {
 /* X(name, FAMILY, ...) for every kernel of the cubin, in enum order; the
    arguments after the family are its instance's:
    - ZERO, PACK: none.
-   - MMA (contract.cu): the operands' kind (bf16, f16, s8, or h16 for
-     bf16 and f16 both, by a's dtype at the kernel's entry), the
-     contiguous axis of a (k or m) and of b (k or n), and the tile.
+   - MMA (contract.cu): the operands' kind (bf16, f16, s8, or any for
+     each of them, by a's dtype at the kernel's entry), the contiguous
+     axis of a (k or m) and of b (k or n), and the tile.
    - SIMT (contract.cu): the accumulator's type and the tile's side.
    - SKINNY (contract.cu): the accumulator's type.
    Instances are a budget: each names the rows that keep it. A layout or
@@ -72,8 +72,8 @@ typedef struct __attribute__((aligned(8))) {
   /* f16 512 */                                                             \
   X(contract_f16_kk_t64x64, MMA, f16, k, k, t64x64)                         \
   /* bf16 and f16 256, and decode: bf16 1x5120x2880 and 1x201088x2880,      \
-     f16 1x5120x2880 */                                                     \
-  X(contract_h16_kk_t16x64, MMA, h16, k, k, t16x64)                         \
+     f16, float8 and int8 1x5120x2880 */                                    \
+  X(contract_any_kk_t16x64, MMA, any, k, k, t16x64)                         \
   /* int8 4096 */                                                           \
   X(contract_s8_kk_t128x256, MMA, s8, k, k, t128x256)                       \
   /* f32 2048 to 8192 and the 4096 layouts */                               \
@@ -83,8 +83,8 @@ typedef struct __attribute__((aligned(8))) {
   /* f32 decode 1x5120x2880 */                                              \
   X(contract_skinny_f32, SKINNY, f32)                                       \
   /* float64 and integer sums, which every library computes: float64-       \
-     1024x1024x1024 and -1x5120x2880, int16-1024x1024x1024 (int64 sums),    \
-     int8-1x5120x2880 (int32 sums) */                                       \
+     1024x1024x1024 and -1x5120x2880, int16-1024x1024x1024 and              \
+     -1x5120x2880 (int64 sums) */                                           \
   X(contract_simt_f64_64, SIMT, f64, 64)                                    \
   X(contract_simt_i64_64, SIMT, i64, 64)                                    \
   X(contract_skinny_f64, SKINNY, f64)                                       \

@@ -170,11 +170,12 @@ let contracts =
       contract bf16 f32 bf16 4096 14336 4096;
       contract ~batch:64 bf16 f32 bf16 512 512 512;
       contract f32 f32 f32 1 5120 2880;
-      (* float64 and integer sums, which the core computes: SIMT and skinny *)
+      (* float64 and integer sums, which the core computes *)
       contract f64 f64 f64 1024 1024 1024;
       contract f64 f64 f64 1 5120 2880;
       contract i16 i64 i64 1024 1024 1024;
       contract i8 i32 i32 1 5120 2880;
+      contract i16 i64 i64 1 5120 2880;
     ]
 
 let all = floors @ contracts
