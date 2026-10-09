@@ -257,6 +257,15 @@ let constants =
           ignore (Nx.add a c);
           equal int 2 first;
           equal int 1 (C.calls ()));
+      test "placing a constant computes it at the placement, once" (fun () ->
+          let c = Nx.zeros D.Float32 [| 2 |] in
+          equal (array bits) [| 0.; 0. |]
+            (elements (Nx.place Nx.Placement.host c));
+          C.reset ();
+          let y = Nx.place Count.on c in
+          ignore (Nx.place Count.on c);
+          equal ~msg:"kernel calls" int 1 (C.calls ());
+          equal (array bits) [| 0.; 0. |] (elements y));
       test "a constant beside a split value is split with it" (fun () ->
           let x =
             Nx.place (Count2.split ~axis:0)

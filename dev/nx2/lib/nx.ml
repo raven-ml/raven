@@ -50,7 +50,7 @@ let devices ?kernels ds : (module Devices) =
     let split ~axis = Devices.split ~by:"Nx.Placement.split" ~axis v
   end)
 
-let place p x = Place.value ~by:"Nx.place" p x
+let place p x = Exec.run ~by:"Nx.place" (Value.Place (p, x))
 let placement = Prim.placement
 
 module Repr = struct
