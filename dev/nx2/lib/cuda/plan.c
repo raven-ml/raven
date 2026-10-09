@@ -335,9 +335,9 @@ static int split_count(uint64_t grid, uint64_t target, int64_t k,
 
 /* The contraction kernel's launch: its [blocks] x [splits] x batch blocks
    of [threads] threads and [shared] dynamic shared bytes, and the [sums]
-   partial sums a block holds when it splits. */
+   partial sums a block holds when it splits, [sum_bytes] each. */
 typedef struct {
-  int kernel, splits, threads, shared;
+  int kernel, splits, threads, shared, sum_bytes;
   uint64_t blocks, sums;
 } launch;
 
@@ -372,7 +372,7 @@ static int plan_mma(plan *c, int kind, int t, launch *l) {
                   ? split_count(l->blocks * p->batch, 256, p->k, 4 * tl->bkb / mes)
                   : split_count(l->blocks * p->batch, 64, p->k, 1024);
   l->threads = tl->threads, l->shared = tl->shared;
-  l->sums = (uint64_t)tl->bm * tl->bn;
+  l->sums = (uint64_t)tl->bm * tl->bn, l->sum_bytes = 4;
   return 0;
 }
 
@@ -399,7 +399,7 @@ static int plan_simt(plan *c, int sum, launch *l) {
      a range. */
   l->splits = split_count(l->blocks * p->batch, 256, p->k, 64);
   l->threads = 256, l->shared = 0;
-  l->sums = (uint64_t)side * side;
+  l->sums = (uint64_t)side * side, l->sum_bytes = sum == ACC_f32 ? 4 : 8;
   p->aligned = (rows_vectors(p->a, p->sa, p->a_dtype) ? NX_CONTRACT_A_VECTORS : 0) |
                (rows_vectors(p->b, p->sb, p->b_dtype) ? NX_CONTRACT_B_VECTORS : 0);
   return 0;
@@ -419,8 +419,10 @@ static int plan_skinny(plan *c, int sum, launch *l) {
   /* By the columns alone: a row's sums are the same bits whatever rows come
      with it. */
   l->splits = split_count(ceil_div(p->n, 32) * p->batch, 64, p->k, 1024);
+  /* A 32-bit integer accumulator sums in 32 bits here. */
+  const int acc = p->acc_dtype, narrow = acc == NX_INT32 || acc == NX_UINT32;
   l->threads = 256, l->shared = 0;
-  l->sums = 256;
+  l->sums = 256, l->sum_bytes = sum == ACC_f32 || narrow ? 4 : 8;
   const int across = free_contiguous(p->sb);
   p->aligned =
       (across ? NX_CONTRACT_B_ACROSS : 0) |
@@ -548,10 +550,9 @@ int nx_cuda_plan_contract(const nx_cuda_contract_in *in,
 
   /* The split sum's partials and tickets, the tickets zeroed first. */
   if (l.splits > 1) {
-    const int acc_bytes = sum == ACC_f64 || sum == ACC_i64 ? 8 : 4;
     const uint64_t tickets = (uint64_t)batch * l.blocks;
     p->partials = (void *)(uintptr_t)take(
-        &c.used, (size_t)tickets * l.splits * l.sums * acc_bytes);
+        &c.used, (size_t)tickets * l.splits * l.sums * l.sum_bytes);
     p->tickets = (uint32_t *)(uintptr_t)take(&c.used, tickets * 4);
     zero_params z = {p->tickets, tickets};
     if ((e = add(out, NX_CUDA_zero_u32, (uint32_t)ceil_div(tickets, 256), 1,
