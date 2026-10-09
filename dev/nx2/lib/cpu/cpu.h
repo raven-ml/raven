@@ -81,6 +81,10 @@ typedef void (*nx_cpu_row2)(int64_t n, uint8_t *d, int64_t sd,
 typedef void (*nx_cpu_row3)(int64_t n, uint8_t *d, int64_t sd,
                             const uint8_t *c, int64_t sc, const uint8_t *x,
                             int64_t sx, const uint8_t *y, int64_t sy);
+/* A fill's row: n elements of [d] set to the element whose bits are at
+   [bits]. */
+typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
+                            const uint8_t *bits);
 
 /* The bytes of the largest tile of any target's microkernel. */
 #define NX_CPU_TILE 4096
@@ -99,6 +103,9 @@ typedef struct {
      dt, fma[dt] fma: NULL where the table declines (rows.c). */
   nx_cpu_row2 op2[NX_OP2_COUNT][NX_DTYPE_COUNT];
   nx_cpu_row3 fma[NX_DTYPE_COUNT];
+  /* where[i] and fill[i] move elements of 2^i bytes, i in 0..4. */
+  nx_cpu_row3 where[5];
+  nx_cpu_row0 fill[5];
 } nx_cpu_target;
 
 /* The tables, each filled when the program starts on a host that runs it,

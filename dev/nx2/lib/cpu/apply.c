@@ -38,39 +38,22 @@ static int64_t most(int n, const nx_array *a) {
 typedef nx_cpu_row2 row2;
 typedef nx_cpu_row3 row3;
 
-/* Where selects bits: one row per width, its condition a boolean. */
-#define WHERE(W, T)                                                          \
-  static void where_##W(int64_t n, uint8_t *d_, int64_t sd,                 \
-                        const uint8_t *c, int64_t sc, const uint8_t *x_,     \
-                        int64_t sx, const uint8_t *y_, int64_t sy) {         \
-    T *d = (T *)d_;                                                          \
-    const T *x = (const T *)x_, *y = (const T *)y_;                          \
-    if (sd == 1 && sc == 1 && sx == 1 && sy == 1)                            \
-      for (int64_t i = 0; i < n; i++) d[i] = c[i] ? x[i] : y[i];             \
-    else                                                                     \
-      for (int64_t i = 0; i < n; i++)                                        \
-        d[i * sd] = c[i * sc] ? x[i * sx] : y[i * sy];                       \
+/* The index of a width of 1, 2, 4, 8 or 16 bytes in the target table's
+   rows by width, or -1. */
+static int width_index(int bytes) {
+  switch (bytes) {
+    case 1: return 0;
+    case 2: return 1;
+    case 4: return 2;
+    case 8: return 3;
+    case 16: return 4;
+    default: return -1;
   }
-
-typedef struct {
-  uint64_t lo, hi;
-} w16;
-
-WHERE(1, uint8_t)
-WHERE(2, uint16_t)
-WHERE(4, uint32_t)
-WHERE(8, uint64_t)
-WHERE(16, w16)
+}
 
 static row3 where_of(int bytes) {
-  switch (bytes) {
-    case 1: return where_1;
-    case 2: return where_2;
-    case 4: return where_4;
-    case 8: return where_8;
-    case 16: return where_16;
-    default: return NULL;
-  }
+  int i = width_index(bytes);
+  return i < 0 ? NULL : nx_cpu_runs->where[i];
 }
 
 /* Blocks */
@@ -150,38 +133,14 @@ static void block(const nx_cpu_block *b, void *ctx) {
   }
 }
 
-/* A fill stores its element by its width. */
-#define FILL(W, T)                                                           \
-  static void fill_##W(const nx_cpu_block *b, void *ctx) {                   \
-    const job *j = ctx;                                                      \
-    T v;                                                                     \
-    memcpy(&v, j->bits, sizeof v);                                           \
-    int64_t s = b->s0[0];                                                    \
-    for (int64_t q = 0; q < b->n2; q++)                                      \
-      for (int64_t r = 0; r < b->n1; r++) {                                  \
-        T *d = (T *)at(j->a, 0, b->at[0] + q * b->s2[0] + r * b->s1[0]);     \
-        if (s == 1)                                                          \
-          for (int64_t i = 0; i < b->n0; i++) d[i] = v;                      \
-        else                                                                 \
-          for (int64_t i = 0; i < b->n0; i++) d[i * s] = v;                  \
-      }                                                                      \
-  }
-
-FILL(1, uint8_t)
-FILL(2, uint16_t)
-FILL(4, uint32_t)
-FILL(8, uint64_t)
-FILL(16, w16)
-
-static nx_cpu_block_fn fill_of(int bytes) {
-  switch (bytes) {
-    case 1: return fill_1;
-    case 2: return fill_2;
-    case 4: return fill_4;
-    case 8: return fill_8;
-    case 16: return fill_16;
-    default: return NULL;
-  }
+/* A fill stores its element through the target table's row of its width. */
+static void fill_block(const nx_cpu_block *b, void *ctx) {
+  const job *j = ctx;
+  nx_cpu_row0 f = nx_cpu_runs->fill[width_index(j->a[0].bits / 8)];
+  for (int64_t q = 0; q < b->n2; q++)
+    for (int64_t r = 0; r < b->n1; r++)
+      f(b->n0, at(j->a, 0, b->at[0] + q * b->s2[0] + r * b->s1[0]), b->s0[0],
+        j->bits);
 }
 
 /* Reads the [n] operands [in] through the door and walks them with [f]. */
@@ -247,7 +206,7 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
 value nx_cpu_fill(value vbits, value vd) {
   CAMLparam2(vbits, vd);
   int d = nx_array_dtype(vd), bits = nx_dtype_row_of(d).bits;
-  if (bits < 8) CAMLreturn(Val_int(NX_DECLINED));
+  if (bits < 8 || width_index(bits / 8) < 0) CAMLreturn(Val_int(NX_DECLINED));
   if (caml_string_length(vbits) != (size_t)(bits / 8))
     CAMLreturn(Val_int(NX_DTYPE));
   /* The door may run OCaml code, which may move the string. */
@@ -255,7 +214,7 @@ value nx_cpu_fill(value vbits, value vd) {
   memcpy(element, String_val(vbits), bits / 8);
   nx_operand in[1] = {{vd, d, 1}};
   job j = {.bits = element};
-  CAMLreturn(run(1, in, fill_of(bits / 8), &j));
+  CAMLreturn(run(1, in, fill_block, &j));
 }
 
 /* Iota: each element is its index along axis [axis], cast to the dtype. A

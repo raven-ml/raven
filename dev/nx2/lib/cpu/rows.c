@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The rows of the kinds of two and three operands, compiled once per
-   target: as itself for base and as its copy rows_v3.c for v3, whose fused
+/* The rows of the kinds of two and three operands, and of fills, compiled
+   once per target: as itself for base and as its copy rows_v3.c for v3, whose fused
    multiply-add is an instruction where base's x86-64 is a call.
 
    A row loads each operand's element into its compute type, computes the
@@ -17,6 +17,8 @@
 #include "cpu.h"
 
 #if !defined(NX_CPU_V3) || defined(__x86_64__)
+
+#include <string.h>
 
 #include "nx_kinds.h"
 
@@ -97,6 +99,63 @@ BIN(or_b, uint8_t, uint8_t, BOOL_LD, nx_or_u32)
 BIN(xor_b, uint8_t, uint8_t, BOOL_LD, nx_xor_u32)
 BIN(threefry_u64, uint64_t, uint64_t, , nx_threefry_u64)
 
+/* Where selects bits and a fill stores them: one row per width. */
+/* A where of [w]-byte words selects by a mask, so that contiguous rows
+   vectorise: a select of the form c ? x : y with a byte condition and wider
+   words ran scalar on the M1 (where-f32-1M 86-126 us against 31-34 for a
+   fill of its bytes). */
+#define WHERE(W, T)                                                          \
+  static void where_##W(int64_t n, uint8_t *d_, int64_t sd,                 \
+                        const uint8_t *c, int64_t sc, const uint8_t *x_,     \
+                        int64_t sx, const uint8_t *y_, int64_t sy) {         \
+    T *d = (T *)d_;                                                          \
+    const T *x = (const T *)x_, *y = (const T *)y_;                          \
+    if (sd == 1 && sc == 1 && sx == 1 && sy == 1)                            \
+      for (int64_t i = 0; i < n; i++) {                                      \
+        T m = (T)0 - (T)(c[i] != 0);                                         \
+        d[i] = (x[i] & m) | (y[i] & (T)~m);                                  \
+      }                                                                      \
+    else                                                                     \
+      for (int64_t i = 0; i < n; i++)                                        \
+        d[i * sd] = c[i * sc] ? x[i * sx] : y[i * sy];                       \
+  }
+
+typedef struct {
+  uint64_t lo, hi;
+} w16;
+
+WHERE(1, uint8_t)
+WHERE(2, uint16_t)
+WHERE(4, uint32_t)
+WHERE(8, uint64_t)
+
+static void where_16(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *c,
+                     int64_t sc, const uint8_t *x_, int64_t sx,
+                     const uint8_t *y_, int64_t sy) {
+  w16 *d = (w16 *)d_;
+  const w16 *x = (const w16 *)x_, *y = (const w16 *)y_;
+  for (int64_t i = 0; i < n; i++)
+    d[i * sd] = c[i * sc] ? x[i * sx] : y[i * sy];
+}
+
+#define FILL(W, T)                                                           \
+  static void fill_##W(int64_t n, uint8_t *d_, int64_t sd,                  \
+                       const uint8_t *bits) {                               \
+    T *d = (T *)d_;                                                          \
+    T v;                                                                     \
+    memcpy(&v, bits, sizeof v);                                              \
+    if (sd == 1)                                                             \
+      for (int64_t i = 0; i < n; i++) d[i] = v;                              \
+    else                                                                     \
+      for (int64_t i = 0; i < n; i++) d[i * sd] = v;                         \
+  }
+
+FILL(1, uint8_t)
+FILL(2, uint16_t)
+FILL(4, uint32_t)
+FILL(8, uint64_t)
+FILL(16, w16)
+
 /* The tables, by kind then dtype: NULL where the case is declined. */
 
 #define CMP_ROWS(DT, D)                                                      \
@@ -144,6 +203,12 @@ static void fill(nx_cpu_target *t) {
   t->op2[NX_OP2_OR][NX_BOOL] = or_b;
   t->op2[NX_OP2_XOR][NX_BOOL] = xor_b;
   t->op2[NX_OP2_THREEFRY][NX_UINT64] = threefry_u64;
+  nx_cpu_row3 where[] = {where_1, where_2, where_4, where_8, where_16};
+  nx_cpu_row0 fills[] = {fill_1, fill_2, fill_4, fill_8, fill_16};
+  for (int i = 0; i < 5; i++) {
+    t->where[i] = where[i];
+    t->fill[i] = fills[i];
+  }
 }
 
 #if defined(NX_CPU_V3)
