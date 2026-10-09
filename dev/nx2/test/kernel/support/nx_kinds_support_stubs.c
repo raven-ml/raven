@@ -11,6 +11,7 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -48,9 +49,17 @@ static const nx_int_loop *nx_kinds_int_loop(const nx_kinds_loops *l,
   return NULL;
 }
 
+/* Raises Invalid_argument naming the string [v]. The message is copied out
+   of [v] first: raising allocates, which may move [v]. */
+static _Noreturn void refuse(value v) {
+  char m[128];
+  snprintf(m, sizeof m, "%s", String_val(v));
+  caml_invalid_argument(m);
+}
+
 static const nx_real_loop *real_loop(const nx_kinds_loops *l, value name) {
   const nx_real_loop *k = nx_kinds_real_loop(l, String_val(name));
-  if (k == NULL) caml_invalid_argument(String_val(name));
+  if (k == NULL) refuse(name);
   return k;
 }
 
@@ -58,7 +67,7 @@ static const nx_kinds_loops *target(value name) {
   const char *t = String_val(name);
   if (strcmp(t, "base") == 0) return nx_kinds_loops_base;
   if (strcmp(t, "v3") == 0 && nx_kinds_loops_v3 != NULL) return nx_kinds_loops_v3;
-  caml_invalid_argument(t);
+  refuse(name);
 }
 
 /* [targets ()]: the targets this CPU runs, the best last. */
@@ -81,7 +90,7 @@ value nx_kinds_support_targets(value unit) {
 
 value nx_kinds_support_f32(value name, value args) {
   const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
-  if ((int)Wosize_val(args) != k->arity) caml_invalid_argument(String_val(name));
+  if ((int)Wosize_val(args) != k->arity) refuse(name);
   float x[3] = {0, 0, 0}, y;
   for (int i = 0; i < k->arity; i++)
     x[i] = nx_bits_float((uint32_t)Long_val(Field(args, i)));
@@ -93,7 +102,7 @@ value nx_kinds_support_f64(value name, value args) {
   CAMLparam2(name, args);
   const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
   if ((int)(Wosize_val(args) / Double_wosize) != k->arity)
-    caml_invalid_argument(String_val(name));
+    refuse(name);
   double x[3] = {0, 0, 0}, y;
   for (int i = 0; i < k->arity; i++) x[i] = Double_flat_field(args, i);
   k->f64(&x[0], &x[1], &x[2], &y, 1);
@@ -106,7 +115,7 @@ value nx_kinds_support_int(value ty, value name, value args) {
   CAMLparam3(ty, name, args);
   const nx_int_loop *k = nx_kinds_int_loop(nx_kinds_loops_best(), String_val(name));
   if (k == NULL || (int)Wosize_val(args) != k->arity)
-    caml_invalid_argument(String_val(name));
+    refuse(name);
   uint64_t x[3] = {0, 0, 0}, y[4];
   for (int i = 0; i < k->arity; i++) x[i] = (uint64_t)Int64_val(Field(args, i));
   k->run(&x[0], &x[1], &x[2], y, 1);
@@ -116,7 +125,7 @@ value nx_kinds_support_int(value ty, value name, value args) {
   else if (!strcmp(t, "u32")) r = (int64_t)(uint32_t)y[1];
   else if (!strcmp(t, "i64")) r = (int64_t)y[2];
   else if (!strcmp(t, "u64")) r = (int64_t)y[3];
-  else caml_invalid_argument(t);
+  else refuse(ty);
   CAMLreturn(caml_copy_int64(r));
 }
 
@@ -149,7 +158,7 @@ static const struct {
 static int find_reference(value name) {
   for (int i = 0; i < (int)(sizeof references / sizeof *references); i++)
     if (strcmp(references[i].name, String_val(name)) == 0) return i;
-  caml_invalid_argument(String_val(name));
+  refuse(name);
 }
 
 static int64_t rank32(float f) {
@@ -466,12 +475,12 @@ value nx_kinds_support_digest(value tgt, value name, value ty) {
   uint64_t h;
   if (!strcmp(t, "int")) {
     const nx_int_loop *k = nx_kinds_int_loop(l, String_val(name));
-    if (k == NULL) caml_invalid_argument(String_val(name));
+    if (k == NULL) refuse(name);
     h = digest_int(k);
   } else if (!strcmp(t, "f32") || !strcmp(t, "f64")) {
     h = digest_real(real_loop(l, name), !strcmp(t, "f64"));
   } else {
-    caml_invalid_argument(t);
+    refuse(ty);
   }
   char s[17];
   for (int i = 0; i < 16; i++) s[i] = "0123456789abcdef"[(h >> (60 - 4 * i)) & 15];
@@ -575,7 +584,7 @@ value nx_kinds_support_binary(value name, value seed, value count) {
   const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
   int is_pow = !strcmp(String_val(name), "pow");
   if (!is_pow && strcmp(String_val(name), "atan2"))
-    caml_invalid_argument(String_val(name));
+    refuse(name);
   long n = Long_val(count);
   uint64_t s = (uint64_t)Long_val(seed);
   float *x = malloc((size_t)n * 4), *z = malloc((size_t)n * 4), *y = malloc((size_t)n * 4);
