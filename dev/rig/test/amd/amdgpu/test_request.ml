@@ -21,9 +21,10 @@ let handle = 0xdc43_0000_0005
 
 external address : Request.params -> int = "caml_rig_amd_amdgpu_address"
 
-let hex (p : Request.params) =
+(* The first [n] bytes of [p]. *)
+let hex (p : Request.params) n =
   String.concat ""
-    (List.init (Bigarray.Array1.dim p) (fun i ->
+    (List.init n (fun i ->
          Printf.sprintf "%02x" (Char.code (Bigarray.Array1.get p i))))
 
 let of_hex h =
@@ -59,44 +60,51 @@ let packed name (r : Request.t) =
         (get64 r.params at);
       Bigarray.Array1.fill (Bigarray.Array1.sub r.params at 8) '\000')
     (pointer name);
-  Printf.sprintf "0x%x %s" r.number (hex r.params)
+  Printf.sprintf "0x%x %s" r.number (hex r.params r.size)
 
 (* Requests *)
 
-let queue k =
-  Request.queue k ~gpu ~ring:0x7f00_0000_1000 ~ring_bytes:0x10000
+(* A request made by [f], kept: none is given back, so each is the test's
+   own. *)
+let made f =
+  let r = Request.take () in
+  f r;
+  r
+
+let queue k r =
+  Request.queue r k ~gpu ~ring:0x7f00_0000_1000 ~ring_bytes:0x10000
     ~eop:0x7f00_0010_0000 ~eop_bytes:0x1000 ~save:0x7f00_0020_0000
     ~save_bytes:0x2a000 ~ctl_stack:0x3000 ~write:0x7f00_0030_0000
     ~read:0x7f00_0030_0008
 
 let requests =
   [
-    ("version", Request.version ());
-    ("acquire_vm", Request.acquire_vm ~drm:7 ~gpu);
-    ("runtime_enable", Request.runtime_enable ());
-    ("alloc_gpu", Request.alloc ~gpu ~va ~bytes `Gpu);
-    ("alloc_bar", Request.alloc ~gpu ~va ~bytes `Bar);
-    ("alloc_system", Request.alloc ~gpu ~va ~bytes `System);
-    ("alloc_userptr", Request.alloc ~gpu ~va ~bytes `Userptr);
-    ("alloc_mmio", Request.alloc ~gpu ~va ~bytes `Mmio);
-    ("free", Request.free handle);
-    ("map", Request.map ~gpu handle);
-    ("unmap", Request.unmap ~gpu handle);
-    ("event_signal", Request.event `Signal ~page:0x1234);
-    ("event_memory", Request.event `Memory ~page:0);
-    ("event_hardware", Request.event `Hardware ~page:0);
-    ("destroy_event", Request.destroy_event 0x42);
-    ("reset_event", Request.reset_event 0x43);
-    ("queue_pm4", queue `Pm4);
-    ("queue_aql", queue `Aql);
-    ("queue_sdma", queue `Sdma);
-    ("destroy_queue", Request.destroy_queue 3);
-    ("wait_3", Request.wait [| 0x40; 0x41; 0x42 |] ~ms:1000);
-    ("wait_2", Request.wait [| 0x41; 0x42 |] ~ms:0);
-    ("device_info", Request.device_info ());
-    ("alloc_context", Request.alloc_context ());
-    ("stable_pstate", Request.stable_pstate 5);
-    ("free_context", Request.free_context 5);
+    ("version", made Request.version);
+    ("acquire_vm", made (Request.acquire_vm ~drm:7 ~gpu));
+    ("runtime_enable", made Request.runtime_enable);
+    ("alloc_gpu", made (fun r -> Request.alloc r ~gpu ~va ~bytes `Gpu));
+    ("alloc_bar", made (fun r -> Request.alloc r ~gpu ~va ~bytes `Bar));
+    ("alloc_system", made (fun r -> Request.alloc r ~gpu ~va ~bytes `System));
+    ("alloc_userptr", made (fun r -> Request.alloc r ~gpu ~va ~bytes `Userptr));
+    ("alloc_mmio", made (fun r -> Request.alloc r ~gpu ~va ~bytes `Mmio));
+    ("free", made (fun r -> Request.free r handle));
+    ("map", made (fun r -> Request.map r ~gpu handle));
+    ("unmap", made (fun r -> Request.unmap r ~gpu handle));
+    ("event_signal", made (fun r -> Request.event r `Signal ~page:0x1234));
+    ("event_memory", made (fun r -> Request.event r `Memory ~page:0));
+    ("event_hardware", made (fun r -> Request.event r `Hardware ~page:0));
+    ("destroy_event", made (fun r -> Request.destroy_event r 0x42));
+    ("reset_event", made (fun r -> Request.reset_event r 0x43));
+    ("queue_pm4", made (queue `Pm4));
+    ("queue_aql", made (queue `Aql));
+    ("queue_sdma", made (queue `Sdma));
+    ("destroy_queue", made (fun r -> Request.destroy_queue r 3));
+    ("wait_3", made (fun r -> Request.wait r [| 0x40; 0x41; 0x42 |] ~ms:1000));
+    ("wait_2", made (fun r -> Request.wait r [| 0x41; 0x42 |] ~ms:0));
+    ("device_info", made Request.device_info);
+    ("alloc_context", made Request.alloc_context);
+    ("stable_pstate", made (fun r -> Request.stable_pstate r 5));
+    ("free_context", made (fun r -> Request.free_context r 5));
   ]
 
 let c_packed =
@@ -190,7 +198,8 @@ let data =
         ^ "0000000000000000410000000000000000000000000000000000000000000000"
         ^ "0000000000000000000000000000000000000000000000004200000000000000" );
     ]
-    (fun (name, h) -> equal string h (hex (List.assoc name requests).data))
+    (fun (name, h) ->
+      equal string h (hex (List.assoc name requests).data (String.length h / 2)))
 
 (* Answers *)
 
@@ -205,41 +214,43 @@ let answers =
       test "the version" (fun () ->
           equal int 1018
             (Request.version_of
-               (answered (Request.version ()) "0100000012000000")));
+               (answered (made Request.version) "0100000012000000")));
       test "an allocation's handle and offset" (fun () ->
           let r =
             answered
-              (Request.alloc ~gpu ~va ~bytes `Gpu)
+              (made (fun r -> Request.alloc r ~gpu ~va ~bytes `Gpu))
               ("00705634127f000000002000000000000500000043dc000000100000000000c0"
              ^ "43dc0000010000d0")
           in
-          equal (pair int int64)
-            (handle, 0xc000_0000_0000_1000L)
-            (Request.allocation r));
+          equal int handle (Request.handle r);
+          equal int64 0xc000_0000_0000_1000L (Request.mmap_offset r));
       test "the GPUs a map reached" (fun () ->
           equal int 1
             (Request.mapped
-               (answered (Request.map ~gpu handle)
+               (answered
+                  (made (fun r -> Request.map r ~gpu handle))
                   "0500000043dc000000000000000000000100000001000000")));
       test "an event's id" (fun () ->
           equal int 0x42
             (Request.event_id
                (answered
-                  (Request.event `Signal ~page:0x1234)
+                  (made (fun r -> Request.event r `Signal ~page:0x1234))
                   "3412000000000000000000000000000001000000000000004200000000000000")));
       test "a queue's id and doorbell" (fun () ->
           let r =
-            answered (queue `Aql)
+            answered
+              (made (queue `Aql))
               ("00100000007f000000003000007f000008003000007f000000080000000000c0"
              ^ "0000010043dc00000200000064000000070000000300000000001000007f0000"
              ^ "001000000000000000002000007f000000a00200003000000000000000000000"
               )
           in
-          equal (pair int int64)
-            (3, 0xc000_0000_0000_0800L)
-            (Request.queue_made r));
+          equal int 3 (Request.queue_id r);
+          equal int64 0xc000_0000_0000_0800L (Request.doorbell_offset r));
       test "a wait's exception events" (fun () ->
-          let r = Request.wait [| 0x40; 0x41; 0x42 |] ~ms:1000 in
+          let r =
+            made (fun r -> Request.wait r [| 0x40; 0x41; 0x42 |] ~ms:1000)
+          in
           blit
             (of_hex
                ("0000000000000000000000000000000000000000000000000000000000000000"
@@ -248,9 +259,10 @@ let answers =
               ^ "010000000200000001000000efbe000000000000000000000000000000000000"
               ^ "00000000000000004200000000000000"))
             r.data;
-          equal (pair int int) (0x41, gpu) (Request.exception_event r `Memory);
-          equal (pair int int) (0x42, 0xbeef)
-            (Request.exception_event r `Hardware);
+          equal int 0x41 (Request.exception_id r `Memory);
+          equal int gpu (Request.exception_gpu r `Memory);
+          equal int 0x42 (Request.exception_id r `Hardware);
+          equal int 0xbeef (Request.exception_gpu r `Hardware);
           equal string
             "memory fault at 0x7f00deadb000 (not present 1, read-only 0, no \
              execute 1, imprecise 0, error type 2)"
@@ -259,8 +271,7 @@ let answers =
             "hardware exception (reset type 1, reset cause 2, memory lost 1)"
             (Request.fault r `Hardware));
       test "the GPU's clock and compute units" (fun () ->
-          let r = Request.device_info () in
-          equal int 448 (Bigarray.Array1.dim r.data);
+          let r = made Request.device_info in
           blit
             (of_hex
                ("00000000000000000000000000000000000000000000000000000000a0860100"
@@ -276,8 +287,79 @@ let answers =
       test "a context's id" (fun () ->
           equal int 5
             (Request.context
-               (answered (Request.alloc_context ())
+               (answered
+                  (made Request.alloc_context)
                   "05000000000000000000000000000000")));
     ]
 
-let () = exit (run "rig_amd_amdgpu.request" [ packing; data; answers ])
+(* Taking and giving *)
+
+let domains =
+  group "a domain's request"
+    [
+      test "a given request is taken again" (fun () ->
+          let r = Request.take () in
+          Request.give r;
+          equal bool true (r == Request.take ());
+          Request.give r);
+      test "a request held is not taken twice" (fun () ->
+          let r = Request.take () in
+          let s = Request.take () in
+          equal bool false (r == s);
+          Request.give s;
+          Request.give r);
+      test "each domain has its own" (fun () ->
+          let r = Request.take () in
+          let s = Domain.join (Domain.spawn Request.take) in
+          Request.give r;
+          equal bool false (r == s));
+    ]
+
+(* Allocations *)
+
+let rounds = 1000
+
+(* The words [f] allocates per call, once the domain's request is made. *)
+let words f =
+  f ();
+  let before = Gc.minor_words () in
+  for _ = 1 to rounds do
+    f ()
+  done;
+  let after = Gc.minor_words () in
+  Float.to_int ((after -. before) /. Float.of_int rounds)
+
+let request f read () =
+  let r = Request.take () in
+  f r;
+  read r;
+  Request.give r
+
+let allocations =
+  cases ~name:fst "packing and reading a request allocates nothing"
+    [
+      ( "alloc",
+        request
+          (fun r -> Request.alloc r ~gpu ~va ~bytes `Gpu)
+          (fun r -> ignore (Request.handle r)) );
+      ( "map",
+        request
+          (fun r -> Request.map r ~gpu handle)
+          (fun r -> ignore (Request.mapped r)) );
+      ("free", request (fun r -> Request.free r handle) ignore);
+      ( "wait",
+        let ids = [| 0x40; 0x41; 0x42 |] in
+        request
+          (fun r -> Request.wait r ids ~ms:1000)
+          (fun r ->
+            ignore (Request.exception_gpu r `Memory);
+            ignore (Request.exception_gpu r `Hardware);
+            ignore (Request.exception_id r `Memory);
+            ignore (Request.exception_id r `Hardware)) );
+    ]
+    (fun (_, f) -> equal int 0 (words f))
+
+let () =
+  exit
+    (run "rig_amd_amdgpu.request"
+       [ packing; data; answers; domains; allocations ])
