@@ -570,7 +570,8 @@ value nx_metal_test_rebase(value v_r, value v_base) {
   CAMLparam2(v_r, v_base);
   CAMLlocal1(s);
   size_t n = caml_string_length(v_r);
-  s = caml_alloc_initialized_string(n, String_val(v_r));
+  s = caml_alloc_string(n);
+  memcpy(Bytes_val(s), String_val(v_r), n);
   nx_metal_rebase((unsigned char *)Bytes_val(s), n, (uint64_t)Long_val(v_base));
   CAMLreturn(s);
 }
