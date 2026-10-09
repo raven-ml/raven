@@ -81,6 +81,10 @@ typedef struct pollfd rig_remote_pollfd;
 #define BEAT_NS 1000000000LL
 #define SILENCE_MS 10000
 
+/* The fewest bytes the receiving thread asks its socket for: a frame up to
+   this size comes in one call with its header. */
+#define READ_AHEAD 16384
+
 /* The seconds a send may wait for its peer to acknowledge a byte. */
 #define SEND_S 10
 
@@ -639,45 +643,63 @@ static void *sender(void *arg) {
 
 /* The receiving thread */
 
-/* Receives [n] bytes into [p]: 0, a socket error, [ENDED] or [SILENT].
-   [last] is when the link's last byte came before it failed. */
+/* The receiving thread's reader: when the link's last byte came before it
+   failed, and bytes received ahead of the frames that hold them. */
+struct reader {
+  int64_t last;
+  size_t at, end; /* [b]'s bytes from [at] to [end] are unread */
+  unsigned char b[READ_AHEAD];
+};
+
+/* Receives [n] bytes into [p]: 0, a socket error, [ENDED] or [SILENT]. It
+   asks the socket for [READ_AHEAD] bytes at least, so that a small frame's
+   header and payload come in one call, and receives larger payloads in
+   place. It polls only once the socket holds nothing. */
 static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
-                    int64_t *last) {
-  while (n > 0) {
-    int64_t left = SILENCE_MS - (now_ns() - *last) / 1000000;
+                    struct reader *rd) {
+  for (;;) {
+    size_t have = rd->end - rd->at;
+    if (have > n) have = (size_t)n;
+    memcpy(p, rd->b + rd->at, have);
+    rd->at += have;
+    p += have;
+    n -= have;
+    if (n == 0) return 0;
+    int ahead = n < READ_AHEAD;
+    int want = ahead ? READ_AHEAD : n > (1u << 30) ? (1 << 30) : (int)n;
+    long m = (long)recv(l->fd, (char *)(ahead ? rd->b : p), want, 0);
+    if (m == 0) return ENDED;
+    if (m > 0) {
+      if (!atomic_load(&l->failed)) rd->last = now_ns();
+      if (ahead) {
+        rd->at = 0;
+        rd->end = (size_t)m;
+      } else {
+        p += m;
+        n -= (uint64_t)m;
+      }
+      continue;
+    }
+    int e = rig_remote_sock_error();
+    if (!again(e)) return e;
+    int64_t left = SILENCE_MS - (now_ns() - rd->last) / 1000000;
     if (left <= 0) return SILENT;
     rig_remote_pollfd pf = {0};
     pf.fd = l->fd;
     pf.events = POLLIN;
     int k = poll(&pf, 1, (int)left);
-    if (k < 0) {
-      int e = rig_remote_sock_error();
-      if (again(e)) continue;
-      return e;
-    }
     if (k == 0) return SILENT;
-    int want = n > (1u << 30) ? (1 << 30) : (int)n;
-    long m = (long)recv(l->fd, (char *)p, want, 0);
-    if (m == 0) return ENDED;
-    if (m < 0) {
-      int e = rig_remote_sock_error();
-      if (again(e)) continue;
-      return e;
-    }
-    if (!atomic_load(&l->failed)) *last = now_ns();
-    p += m;
-    n -= (uint64_t)m;
+    if (k < 0 && !again(e = rig_remote_sock_error())) return e;
   }
-  return 0;
 }
 
 /* Receives a payload of [n] bytes into new memory. */
 static int recv_payload(struct rig_remote_link *l, uint64_t n, unsigned char **p,
-                        int64_t *last) {
+                        struct reader *rd) {
   if (n > SIZE_MAX - 1) return TOO_LARGE;
   *p = malloc((size_t)n + 1);
   if (*p == NULL) return TOO_LARGE;
-  int r = recv_all(l, *p, n, last);
+  int r = recv_all(l, *p, n, rd);
   if (r != 0) {
     free(*p);
     *p = NULL;
@@ -686,10 +708,10 @@ static int recv_payload(struct rig_remote_link *l, uint64_t n, unsigned char **p
 }
 
 /* Places a rail transfer of [n] bytes, its rail and count first. */
-static int recv_rail(struct rig_remote_link *l, uint64_t n, int64_t *last) {
+static int recv_rail(struct rig_remote_link *l, uint64_t n, struct reader *rd) {
   unsigned char h[16];
   if (n < 16) return MALFORMED;
-  int r = recv_all(l, h, 16, last);
+  int r = recv_all(l, h, 16, rd);
   if (r != 0) return r;
   uint64_t id = rig_remote_get_u64(h), c = rig_remote_get_u64(h + 8);
   pthread_mutex_lock(&l->mu);
@@ -703,7 +725,7 @@ static int recv_rail(struct rig_remote_link *l, uint64_t n, int64_t *last) {
     uint64_t j = (c - 1) % rl->nreceive, k = ((c - 1) / rl->nreceive) % 2;
     uint64_t *t = rl->receive + 3 * j;
     if (t[2] == n - 16) {
-      r = recv_all(l, rl->in + k * rl->in_stride + t[1], t[2], last);
+      r = recv_all(l, rl->in + k * rl->in_stride + t[1], t[2], rd);
       if (r == 0) {
         rl->placed = c;
         atomic_store_explicit(count(rl, ARRIVED), c, memory_order_release);
@@ -717,10 +739,10 @@ static int recv_rail(struct rig_remote_link *l, uint64_t n, int64_t *last) {
 }
 
 /* Takes the answer to the oldest pending request. */
-static int recv_answer(struct rig_remote_link *l, uint64_t n, int64_t *last) {
+static int recv_answer(struct rig_remote_link *l, uint64_t n, struct reader *rd) {
   unsigned char *p;
   if (n < 1) return MALFORMED;
-  int r = recv_payload(l, n, &p, last);
+  int r = recv_payload(l, n, &p, rd);
   if (r != 0) return r;
   pthread_mutex_lock(&l->mu);
   struct pending *q = l->pending;
@@ -742,7 +764,7 @@ static int recv_answer(struct rig_remote_link *l, uint64_t n, int64_t *last) {
 
 /* Queues a command of the controller for [next], received into the link's
    kept memory when it is free and large enough, else into new memory. */
-static int recv_cmd(struct rig_remote_link *l, int kind, uint64_t n, int64_t *last) {
+static int recv_cmd(struct rig_remote_link *l, int kind, uint64_t n, struct reader *rd) {
   struct cmd *c = malloc(sizeof *c);
   if (c == NULL) return TOO_LARGE;
   pthread_mutex_lock(&l->mu);
@@ -752,9 +774,9 @@ static int recv_cmd(struct rig_remote_link *l, int kind, uint64_t n, int64_t *la
   int r;
   if (c->kept) {
     c->p = l->kept_p;
-    r = recv_all(l, c->p, n, last);
+    r = recv_all(l, c->p, n, rd);
   } else
-    r = recv_payload(l, n, &c->p, last);
+    r = recv_payload(l, n, &c->p, rd);
   if (r != 0) {
     pthread_mutex_lock(&l->mu);
     if (c->kept) l->kept_free = 1;
@@ -805,10 +827,10 @@ static struct rig_remote_dev *dev_of(struct rig_remote_link *l, uint64_t id) {
 /* Advances a proxy's word: once every copy into this process's memory of
    the values it covers has its bytes, and never past the last value
    handed over. */
-static int recv_word(struct rig_remote_link *l, uint64_t n, int64_t *last) {
+static int recv_word(struct rig_remote_link *l, uint64_t n, struct reader *rd) {
   unsigned char h[16];
   if (n != 16) return MALFORMED;
-  int r = recv_all(l, h, 16, last);
+  int r = recv_all(l, h, 16, rd);
   if (r != 0) return r;
   uint64_t id = rig_remote_get_u64(h), v = rig_remote_get_u64(h + 8);
   pthread_mutex_lock(&l->mu);
@@ -839,10 +861,10 @@ static int recv_word(struct rig_remote_link *l, uint64_t n, int64_t *last) {
 
 /* Writes a copy's bytes where the oldest copy into this process's memory of
    its proxy named. */
-static int recv_bytes(struct rig_remote_link *l, uint64_t n, int64_t *last) {
+static int recv_bytes(struct rig_remote_link *l, uint64_t n, struct reader *rd) {
   unsigned char h[16];
   if (n < 16) return MALFORMED;
-  int r = recv_all(l, h, 16, last);
+  int r = recv_all(l, h, 16, rd);
   if (r != 0) return r;
   uint64_t id = rig_remote_get_u64(h), v = rig_remote_get_u64(h + 8);
   pthread_mutex_lock(&l->mu);
@@ -855,7 +877,7 @@ static int recv_bytes(struct rig_remote_link *l, uint64_t n, int64_t *last) {
   pthread_mutex_unlock(&l->mu);
   /* The copy stays pending while its bytes land, so a stop meanwhile leaves
      the word below it and rig keeps the memory. */
-  r = recv_all(l, c->at, c->bytes, last);
+  r = recv_all(l, c->at, c->bytes, rd);
   pthread_mutex_lock(&l->mu);
   d->locals = c->next;
   if (d->locals == NULL) d->locals_last = NULL;
@@ -874,11 +896,11 @@ void rig_remote_settle(struct rig_remote_dev *d) {
 }
 
 /* Handles one frame: 0 to read on, 1 once the peer closed, or a code. */
-static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, int64_t *last) {
+static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, struct reader *rd) {
   int from_controller = l->peer == 0;
   switch (kind) {
   case K_RAIL:
-    return recv_rail(l, n, last);
+    return recv_rail(l, n, rd);
   case K_BEAT:
     return n == 0 ? 0 : MALFORMED;
   case K_CLOSE:
@@ -892,7 +914,7 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, int64_t *
     /* A string: its length (u32) and its bytes. */
     unsigned char *p;
     if (n < 4 || n > 4 + MAX_WHY) return MALFORMED;
-    int r = recv_payload(l, n, &p, last);
+    int r = recv_payload(l, n, &p, rd);
     if (r != 0) return r;
     uint64_t len = (uint64_t)p[0] | (uint64_t)p[1] << 8 |
                    (uint64_t)p[2] << 16 | (uint64_t)p[3] << 24;
@@ -905,26 +927,26 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, int64_t *
     return 1;
   }
   case K_ANSWER:
-    return from_controller ? MALFORMED : recv_answer(l, n, last);
+    return from_controller ? MALFORMED : recv_answer(l, n, rd);
   case K_WORD:
-    return from_controller ? MALFORMED : recv_word(l, n, last);
+    return from_controller ? MALFORMED : recv_word(l, n, rd);
   case K_BYTES:
-    return from_controller ? MALFORMED : recv_bytes(l, n, last);
+    return from_controller ? MALFORMED : recv_bytes(l, n, rd);
   case K_REQUEST:
   case K_HANDOVER:
   case K_DROP:
-    return from_controller ? recv_cmd(l, kind, n, last) : MALFORMED;
+    return from_controller ? recv_cmd(l, kind, n, rd) : MALFORMED;
   default:
     return MALFORMED;
   }
 }
 
 /* Receives and discards [n] bytes: 0 or a receive's answer. */
-static int skip(struct rig_remote_link *l, uint64_t n, int64_t *last) {
+static int skip(struct rig_remote_link *l, uint64_t n, struct reader *rd) {
   unsigned char b[16384];
   while (n > 0) {
     size_t k = n < sizeof b ? (size_t)n : sizeof b;
-    int r = recv_all(l, b, k, last);
+    int r = recv_all(l, b, k, rd);
     if (r != 0) return r;
     n -= k;
   }
@@ -934,21 +956,23 @@ static int skip(struct rig_remote_link *l, uint64_t n, int64_t *last) {
 /* Handles one frame of a failed link: its peer's abort or close ends the
    stream, and anything else is discarded. */
 static int drain_frame(struct rig_remote_link *l, int kind, uint64_t n,
-                       int64_t *last) {
+                       struct reader *rd) {
   if (kind == K_ABORT || kind == K_CLOSE) return 1;
-  return skip(l, n, last);
+  return skip(l, n, rd);
 }
 
 static void *receiver(void *arg) {
   struct rig_remote_link *l = arg;
-  int64_t last = now_ns();
+  struct reader rd;
+  rd.last = now_ns();
+  rd.at = rd.end = 0;
   for (;;) {
     unsigned char h[HEADER];
-    int r = recv_all(l, h, HEADER, &last);
+    int r = recv_all(l, h, HEADER, &rd);
     if (r == 0) {
       uint64_t n = rig_remote_get_u64(h);
-      r = atomic_load(&l->failed) ? drain_frame(l, h[8], n, &last)
-                                  : recv_frame(l, h[8], n, &last);
+      r = atomic_load(&l->failed) ? drain_frame(l, h[8], n, &rd)
+                                  : recv_frame(l, h[8], n, &rd);
     }
     if (r == 1) break;
     if (r != 0) {
