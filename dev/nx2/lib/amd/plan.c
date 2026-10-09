@@ -85,12 +85,14 @@ static uint64_t workgroups(int t, int64_t batch, int64_t m, int64_t n) {
 }
 
 /* What the WMMA tiles cost on gfx1201: workgroups run in waves of [WAVE],
-   the R9700's 64 compute units, and each tile's outputs per unit of time
-   relative to the 128 x 128 tile's, in percent. The rates are Ada's
-   relative ones until a sweep on the R9700 replaces them. A GPU of
-   another size runs the same tiles, with the same bits. */
-#define WAVE 64
-static const int efficiency[T_COUNT] = {[T_t128x128] = 100, [T_t64x64] = 65,
+   and each tile's outputs per unit of time relative to the 128 x 128
+   tile's, in percent. Measured on the R9700: the 128 x 128 tile's time
+   steps every 96 workgroups, three to each of its 32 work-group
+   processors; the 64 x 64 tile makes 76-83% of its outputs per unit of
+   time at 2048 and 4096 cubed, bfloat16 and float16. A GPU of another
+   size runs the same tiles, with the same bits. */
+#define WAVE 96
+static const int efficiency[T_COUNT] = {[T_t128x128] = 100, [T_t64x64] = 80,
                                         [T_t16x64] = 33};
 
 /* The WMMA tile of a product among those [kind] has an instance of: the
@@ -223,8 +225,7 @@ static int is_int(int dt) {
 /* The split count of a grid of [grid] workgroups: doubled while the grid has
    fewer than [target] workgroups and each range keeps at least [k_min] of k,
    at most 16. The targets are constants of the processor, never a GPU's
-   own count: Ada's measured ones until a sweep on the R9700 replaces
-   them. */
+   own count, measured on the R9700. */
 static int split_count(uint64_t grid, uint64_t target, int64_t k,
                        int64_t k_min) {
   int s = 1;
@@ -365,7 +366,7 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
     gx = ceil_div(m, tl->bm) * ceil_div(n, tl->bn);
     /* A split sum stores and reloads its partials: worth it to fill a
        GPU short of workgroups, or to stream a long k for a few rows. */
-    splits = m <= 16 ? split_count(gx * batch, 256, k, 4 * tl->bkb / mes)
+    splits = m <= 16 ? split_count(gx * batch, 128, k, 4 * tl->bkb / mes)
                      : split_count(gx * batch, 64, k, 1024);
     values = tl->bm * tl->bn / tl->threads, threads = tl->threads;
   } else {
@@ -402,9 +403,10 @@ int nx_amd_plan_contract(const nx_amd_contract_in *in,
                 (!fa && va ? NX_CONTRACT_A_VECTORS : 0);
   } else if (wmma_kind < 0) {
     /* The SIMT tile of least cost among the accumulator's instances, waves
-       times outputs over efficiency: the 64-wide tile computing 70% as fast
-       as the 128-wide one, Ada's ratio until the R9700's is measured. */
-    static const int sides[2] = {128, 64}, eff[2] = {100, 70};
+       times outputs over efficiency: the 64-wide tile computing half as
+       fast as the 128-wide one on the R9700 (39-56% at 2048 and 4096
+       cubed, float32). */
+    static const int sides[2] = {128, 64}, eff[2] = {100, 50};
     int side = 64;
     double least = -1;
     for (int i = 0; i < 2; i++) {
