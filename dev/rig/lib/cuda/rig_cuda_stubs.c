@@ -754,7 +754,8 @@ static CUresult query(CUstream q) {
 /* Submissions */
 
 /* One submission's progress: the streams it entered, whether its foreign
-   waits are placed, and whether both streams run it. */
+   waits are placed, whether both streams run it, and the streams given
+   work since their [done] event was last recorded. */
 struct submission {
   struct device *d;
   const struct rig_wait *waits;
@@ -762,6 +763,7 @@ struct submission {
   int entered[2];
   int waited;
   int both;
+  int unrecorded[2];
   const char *step;  /* the step that failed; NULL: ordering the streams */
   uint64_t bytes;    /* the bytes of the last copy */
 };
@@ -818,21 +820,24 @@ static CUresult enter(struct submission *s, int q) {
   return r;
 }
 
-/* Whether a part after part [i], on the other stream, runs after it. */
-static int awaited(const struct rig_part *p, int n, int i) {
-  for (int j = i + 1; j < n; j++) {
-    if (p[j].queue == p[i].queue) continue;
-    for (int k = 0; k < p[j].nafter; k++)
-      if (p[j].after[k] == i) return 1;
-  }
-  return 0;
+/* Makes stream [q]'s next command wait for the work [s] gave the other
+   stream so far, recording the other stream's [done] event only if it was
+   given work since its last record. */
+static CUresult follow(struct submission *s, int q) {
+  struct device *d = s->d;
+  int o = 1 - q;
+  CUresult e = CUDA_SUCCESS;
+  if (s->unrecorded[o]) e = p_cuEventRecord(d->done[o], d->streams[o]);
+  if (e != CUDA_SUCCESS) return e;
+  s->unrecorded[o] = 0;
+  return p_cuStreamWaitEvent(d->streams[q], d->done[o], 0);
 }
 
-/* Enqueues the parts in array order, each after the parts of the other
-   stream it names, and ends [v] on the stream of the last part (on the
-   last value's stream for none) once both streams' work is done. A part's
-   completion is recorded when a later part of the other stream, or the
-   end, waits for it. */
+/* Enqueues the parts in array order, and ends [v] on the stream of the
+   last part (on the last value's stream for none) once both streams' work
+   is done. A part that names a part of the other stream waits for all the
+   work queued there before it, a superset of the parts it names: the order
+   costs one event per stream and no look ahead. */
 static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
                     int n) {
   struct device *d = s->d;
@@ -849,8 +854,7 @@ static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
     e = enter(s, q);
     for (int k = 0; k < p[i].nafter; k++)
       across |= p[p[i].after[k]].queue != q;
-    if (e == CUDA_SUCCESS && across)
-      e = p_cuStreamWaitEvent(stream, d->done[1 - q], 0);
+    if (e == CUDA_SUCCESS && across) e = follow(s, q);
     s->bytes = p[i].kind == RIG_COPY ? p[i].copy.bytes : 0;
     if (e == CUDA_SUCCESS && p[i].kind == RIG_FILL)
       e = in_step(s, filling, p[i].fill.fn(stream, p[i].fill.arg, v));
@@ -859,12 +863,10 @@ static CUresult run(struct submission *s, uint64_t v, const struct rig_part *p,
              p_cuMemcpyAsync(p[i].copy.dst + p[i].copy.dst_offset,
                              p[i].copy.src + p[i].copy.src_offset,
                              p[i].copy.bytes, stream));
-    if (e == CUDA_SUCCESS && ((i == last[q] && q != r) || awaited(p, n, i)))
-      e = p_cuEventRecord(d->done[q], stream);
+    s->unrecorded[q] = 1;
   }
   if (e == CUDA_SUCCESS) e = enter(s, r);
-  if (e == CUDA_SUCCESS && last[o] >= 0)
-    e = p_cuStreamWaitEvent(d->streams[r], d->done[o], 0);
+  if (e == CUDA_SUCCESS && last[o] >= 0) e = follow(s, r);
   if (e == CUDA_SUCCESS) d->tail = r;
   return e;
 }
@@ -924,7 +926,7 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
                        const uint64_t *handles, int nhandles,
                        const char **failure) {
   struct device *d = self;
-  struct submission s = {d, waits, nwaits, {0, 0}, 0, 0, NULL, 0};
+  struct submission s = {d, waits, nwaits, {0, 0}, 0, 0, {0, 0}, NULL, 0};
   int pushed;
   (void)handles;
   (void)nhandles;
@@ -954,7 +956,7 @@ int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
     CUresult e = own(d->context, &pushed);
     if (e == CUDA_SUCCESS) e = restore(pushed, write_word(d, v));
     if (e != CUDA_SUCCESS) {
-      struct submission s = {d, NULL, 0, {0, 0}, 0, 0, writing, 0};
+      struct submission s = {d, NULL, 0, {0, 0}, 0, 0, {0, 0}, writing, 0};
       fail(d, &s, e);
       d->failed = 1;
     }

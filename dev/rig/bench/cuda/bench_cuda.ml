@@ -149,7 +149,9 @@ let launch_rows =
     let f = S.launch ~count (empty t.g) ~grid:1 ~block:1 0 0 in
     (t, prepare t [| S.part ~queue:"COMPUTE:0" f |])
   in
-  (* [64]'s launches as parts of one queue, a launch each. *)
+  (* [n] launches as parts of one queue, a launch each: [64-parts] is [64]'s
+     launches, and [4096-parts] shows what the driver's ordering costs per
+     part of a large submission. *)
   let parts n () =
     let t = dev () in
     let f = S.launch (empty t.g) ~grid:1 ~block:1 0 0 in
@@ -167,6 +169,7 @@ let launch_rows =
       row "1" (launching 1) (fun (t, s) -> run t s);
       row "64" (launching 64) (fun (t, s) -> run t s);
       row "64-parts" (parts 64) (fun (t, s) -> run t s);
+      row "4096-parts" (parts 4096) (fun (t, s) -> run t s);
       row "submits-64" (launching 1) (fun (t, s) ->
           for _ = 1 to 64 do
             submit t s
