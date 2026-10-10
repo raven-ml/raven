@@ -557,21 +557,20 @@ let run s words =
   | Ok points -> Array.iter Rig.Point.wait points
 
 (* Runs a hand-over's parts in order, sending the bytes of each copy into the
-   controller's memory as it comes, then the word of its value. *)
-(* CR: Consume one payload for every Local source, including zero bytes.
-   [empty upload; nonempty upload] currently feeds the empty area to the
-   second copy and fails the job. Give uploads their own branch, advancing
-   the cursor before the zero-byte guard. Keep that guard around region
-   lookup: an empty remote buffer can have no driver object. *)
+   controller's memory as it comes, then the word of its value. [local] holds
+   one area per copy from Local, an empty one included. A copy of no bytes into
+   memory skips it: an empty remote buffer may have no driver object. *)
 let hand_over s (h : Wire.handover) local =
   let next = ref 0 in
+  let upload () =
+    let a = local.(!next) in
+    incr next;
+    a
+  in
   let side bytes = function
     | Wire.Region { id; offset } ->
         Rig.Buffer.view (buffer s id) ~first:offset ~length:bytes
-    | Wire.Local ->
-        let a = local.(!next) in
-        incr next;
-        Rig.Buffer.of_bigarray a
+    | Wire.Local -> Rig.Buffer.of_bigarray (upload ())
   in
   Array.iter
     (function
@@ -579,6 +578,11 @@ let hand_over s (h : Wire.handover) local =
       | Wire.Copy { src; dst = Wire.Local; bytes } ->
           Link.bytes s.link ~device:h.device ~value:h.value
             (host_bytes (side bytes src))
+      | Wire.Copy { src = Wire.Local; dst; bytes } ->
+          let a = upload () in
+          if bytes > 0 then
+            Rig.Buffer.copy ~src:(Rig.Buffer.of_bigarray a)
+              ~dst:(side bytes dst)
       | Wire.Copy { src; dst; bytes } ->
           if bytes > 0 then
             Rig.Buffer.copy ~src:(side bytes src) ~dst:(side bytes dst))

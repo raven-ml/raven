@@ -626,6 +626,33 @@ let outside_memory () =
   | code, lines ->
       failf "the agent exited %d, printing [%s]" code (String.concat "; " lines)
 
+(* Each upload has its bytes, an empty one included: a hand-over uploads
+   nothing, then "abcd", to memory 1, and reads it back. *)
+let empty_upload () =
+  with_agents @@ fun agents ->
+  let a = List.hd agents in
+  let fd = raw_controller a in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  is_ok ~msg:"the join" ~pp:answer_pp (join_alone fd a);
+  is_ok ~msg:"memory 1" ~pp:answer_pp (ask fd (alloc_host 1 16));
+  let local = u8 1 and memory = u8 0 ^ u64 1 ^ u64 0 in
+  let copy bytes src dst = u8 1 ^ u64 bytes ^ src ^ dst in
+  send fd
+    (frame k_handover
+       (u64 0 ^ u64 1 ^ u32 0 ^ u32 3 ^ copy 0 local memory
+      ^ copy 4 local memory ^ copy 4 memory local ^ "abcd"));
+  let k_word = 5 and k_bytes = 6 in
+  let bytes = next_frame fd in
+  let word = next_frame fd in
+  send fd (frame k_close "");
+  equal
+    (list (option (pair int string)))
+    [ Some (k_bytes, u64 0 ^ u64 1 ^ "abcd"); Some (k_word, u64 0 ^ u64 1) ]
+    [ bytes; word ];
+  equal ~msg:"the agent's close" (option int) (Some k_close)
+    (Option.map fst (next_frame fd));
+  equal exit_w (0, [ "closed" ]) (finish a)
+
 let frames =
   group "frames"
     [
@@ -633,6 +660,7 @@ let frames =
         refused_requests;
       test "a hand-over outside its memory fails the job at the agent"
         outside_memory;
+      test "an empty upload leaves the next upload its bytes" empty_upload;
     ]
 
 (* Launched programs *)
