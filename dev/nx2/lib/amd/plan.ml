@@ -326,8 +326,8 @@ let wmma_tile c kind =
 let plan_wmma c kind t =
   let s = K.shape t in
   let a = c.a and b = c.b in
-  let mes = if kind == K.S8 then 1 else 2 in
-  let whole = c.k mod (16 / mes) = 0 in
+  let width = if kind == K.S8 then 1 else 2 in
+  let whole = c.k mod (16 / width) = 0 in
   let pack_a =
     free_contiguous a.s || (not (rows_vectors a)) || is_f8 a.dtype || not whole
   in
@@ -345,7 +345,7 @@ let plan_wmma c kind t =
        of workgroups, or to stream a long k for a few rows. *)
     c.splits <-
       (if c.m <= 16 then
-         split_count (c.blocks * c.batch) 128 c.k (4 * s.bkb / mes)
+         split_count (c.blocks * c.batch) 128 c.k (4 * s.bkb / width)
        else split_count (c.blocks * c.batch) 64 c.k 1024);
     c.threads <- tile_threads s;
     c.values <- s.bm * s.bn / c.threads;

@@ -1047,13 +1047,26 @@ let packed_split =
 
 (* Calls of [p] allocate nothing, [p] warm: its device, submission and
    workspace made and its domain's frame free. *)
+(* The words the program allocated on either heap. *)
+let allocated () =
+  let minor, promoted, major = Gc.counters () in
+  minor +. major -. promoted
+
+(* The words [f ()] allocates, less what reading the counters allocates. *)
+let words_of f =
+  let a = allocated () in
+  let b = allocated () in
+  f ();
+  allocated () -. b -. (b -. a)
+
 let calls_allocate_nothing g p ~msg =
   S.call p;
-  let before = Gc.minor_words () in
-  for _ = 1 to 64 do
-    S.call p
-  done;
-  let words = Gc.minor_words () -. before in
+  let words =
+    words_of (fun () ->
+        for _ = 1 to 64 do
+          S.call p
+        done)
+  in
   S.run g p;
   equal ~msg int 0 (int_of_float words)
 
@@ -1127,18 +1140,8 @@ let dead_buffers_refused () =
 (* A run of [packed_split] on its own operands. *)
 let split_run : (unit, S.operand * S.run) abstract = abstract "r"
 
-(* Whether a refusal's message [m] is of an operand held exclusive. *)
-let held m =
-  let k = "held exclusive" in
-  let rec at i =
-    i + String.length k <= String.length m
-    && (String.sub m i (String.length k) = k || at (i + 1))
-  in
-  at 0
-
 (* Two domains running [packed_split] at once, each on its own operands or both
-   on one's, get the bits one call alone gets, or a refusal of an operand that
-   the other's call holds exclusive at that moment. *)
+   on one's, get the bits one call alone gets. *)
 let domains_call_alike =
   let g = lazy (S.gpu ()) in
   let want =
@@ -1154,15 +1157,13 @@ let domains_call_alike =
     S.run (Lazy.force g) p;
     S.read y.buffer
   in
-  let judge () = function
-    | Ok bits -> equal string (Lazy.force want) bits
-    | Error (Invalid_argument m) when held m -> ()
-    | Error e -> raise e
-  in
   stateful ~domains:2 ~count:4 "domains calling at once get one call's bits"
     [
       command "make" (Gen.unit @-> makes split_run) (fun () -> ()) make;
-      command "run" (split_run ^-> judges string) judge run;
+      command "run"
+        (split_run ^-> returns string)
+        (fun () -> Lazy.force want)
+        run;
     ]
 
 let tests =
