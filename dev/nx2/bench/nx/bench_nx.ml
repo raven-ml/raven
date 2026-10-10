@@ -403,6 +403,82 @@ let interp_rows =
               done));
     ]
 
+(* The frontend's compositions over 1M host elements, each what a user calls:
+   creation of a leaf (placed on the host, which computes it), the crossings
+   to OCaml values, the scalar forms and the functions nx composes from the
+   kernels' kinds. *)
+
+let n1m = 1 lsl 20
+let ocaml_floats = Array.init n1m (fun i -> Float.of_int (i mod 1000) /. 1000.)
+let f1m = Nx.create D.Float32 [| n1m |] ocaml_floats
+let above1 = Nx.place Nx.Host.on (Nx.add_s f1m 1.)
+let i1m = Nx.place Nx.Host.on (Nx.arange D.Int32 (-(n1m / 2)) (n1m / 2) 1)
+let b1m = Nx.place Nx.Host.on (Nx.less_s f1m 0.5)
+let c1m = Nx.place Nx.Host.on (Nx.complex D.Complex64 ~re:f1m ~im:above1)
+let m1024 = Nx.reshape [| 1024; 1024 |] f1m
+let v1024 = Nx.reshape [| 1024 |] (Nx.slice [ R (0, 1024) ] f1m)
+let p1000 = Nx.slice [ R (0, 1000) ] f1m
+let on_host x = Nx.place Nx.Host.on x
+
+let frontend_rows =
+  Thumper.group "frontend"
+    [
+      Thumper.bench "create-f32-1M" (fun () ->
+          Nx.create D.Float32 [| n1m |] (Thumper.black_box ocaml_floats));
+      Thumper.bench "to_array-f32-1M" (fun () ->
+          Nx.to_array (Thumper.black_box f1m));
+      Thumper.bench "item-f32-1M" (fun () ->
+          Nx.item [ 524_287 ] (Thumper.black_box f1m));
+      Thumper.bench "arange-f32-1M" (fun () ->
+          on_host (Nx.arange D.Float32 0 (Thumper.black_box n1m) 1));
+      Thumper.bench "linspace-f32-1M" (fun () ->
+          on_host (Nx.linspace D.Float32 0. 1. (Thumper.black_box n1m)));
+      Thumper.bench "eye-f32-1024" (fun () ->
+          on_host (Nx.eye D.Float32 (Thumper.black_box 1024)));
+      Thumper.bench "full_like-f32-1M" (fun () ->
+          Nx.full_like (Thumper.black_box f1m) 2.);
+      Thumper.bench "add_s-f32-1M" (fun () ->
+          Nx.add_s (Thumper.black_box f1m) 1.);
+      Thumper.bench "less_s-f32-1M" (fun () ->
+          Nx.less_s (Thumper.black_box f1m) 0.5);
+      Thumper.bench "logical_and-f32-1M" (fun () ->
+          Nx.logical_and (Thumper.black_box f1m) f1m);
+      Thumper.bench "logical_and-bool-1M" (fun () ->
+          Nx.logical_and (Thumper.black_box b1m) b1m);
+      Thumper.bench "isnan-f32-1M" (fun () -> Nx.isnan (Thumper.black_box f1m));
+      Thumper.bench "isfinite-f32-1M" (fun () ->
+          Nx.isfinite (Thumper.black_box f1m));
+      Thumper.bench "clamp-f32-1M" (fun () ->
+          Nx.clamp ~min:0.25 ~max:0.75 (Thumper.black_box f1m));
+      Thumper.bench "lshift-i32-1M" (fun () -> Nx.lshift (Thumper.black_box i1m) 3);
+      Thumper.bench "rshift-i32-1M" (fun () -> Nx.rshift (Thumper.black_box i1m) 3);
+      Thumper.bench "bitwise_not-i32-1M" (fun () ->
+          Nx.bitwise_not (Thumper.black_box i1m));
+      Thumper.bench "square-f32-1M" (fun () -> Nx.square (Thumper.black_box f1m));
+      Thumper.bench "rsqrt-f32-1M" (fun () -> Nx.rsqrt (Thumper.black_box above1));
+      Thumper.bench "hypot-f32-1M" (fun () ->
+          Nx.hypot (Thumper.black_box f1m) above1);
+      Thumper.bench "asinh-f32-1M" (fun () -> Nx.asinh (Thumper.black_box f1m));
+      Thumper.bench "acosh-f32-1M" (fun () -> Nx.acosh (Thumper.black_box above1));
+      Thumper.bench "atanh-f32-1M" (fun () -> Nx.atanh (Thumper.black_box f1m));
+      Thumper.bench "real-c64-1M" (fun () ->
+          Nx.real D.Float32 (Thumper.black_box c1m));
+      Thumper.bench "magnitude-c64-1M" (fun () ->
+          Nx.magnitude D.Float32 (Thumper.black_box c1m));
+      Thumper.bench "angle-c64-1M" (fun () ->
+          Nx.angle D.Float32 (Thumper.black_box c1m));
+      Thumper.bench "complex-c64-1M" (fun () ->
+          Nx.complex D.Complex64 ~re:(Thumper.black_box f1m) ~im:above1);
+      Thumper.bench "conjugate-c64-1M" (fun () ->
+          Nx.conjugate (Thumper.black_box c1m));
+      Thumper.bench "tril-f32-1024" (fun () -> Nx.tril (Thumper.black_box m1024));
+      Thumper.bench "trace-f32-1024" (fun () -> Nx.trace (Thumper.black_box m1024));
+      Thumper.bench "diag-f32-1024" (fun () -> Nx.diag (Thumper.black_box v1024));
+      Thumper.bench "vdot-f32-1M" (fun () -> Nx.vdot (Thumper.black_box f1m) f1m);
+      Thumper.bench "to_string-f32-1000" (fun () ->
+          Nx.to_string (Thumper.black_box p1000));
+    ]
+
 let () =
   exit
   @@ Thumper.run "nx"
@@ -416,4 +492,5 @@ let () =
          contract_rows;
          index_rows;
          interp_rows;
+         frontend_rows;
        ]
