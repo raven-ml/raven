@@ -1522,6 +1522,179 @@ let contract ?sizes ?acc ?init dt p a b =
 let einsum p a b = Contraction.contract ~by:"Nx.einsum" (dtype a) p a b
 let matmul a b = Contraction.matmul ~by:"Nx.matmul" a b
 
+(* Compositions *)
+
+(* The map [body b ins] over [xs] broadcast together, its one result of [dt]:
+   [ins] are [xs]'s nodes, in order. One pass over the operands. *)
+let elementwise ~by dt xs body =
+  let s =
+    List.fold_left
+      (fun s (Value.Any x) -> Prim.broadcast_shape ~by s (shape x))
+      [||] xs
+  in
+  let load (Value.Any x) = Value.Plain (broadcast ~by s x) in
+  let ins = Array.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs) in
+  let b = { nodes = []; count = 0 } in
+  let out = body b (Array.mapi (fun i _ -> node b (In i)) ins) in
+  let prog = P.v ~ins (Array.of_list (List.rev b.nodes)) ~outs:[| out |] in
+  let layout = Nx_array.Layout.contiguous s in
+  let y, () =
+    Eval.eval ~by
+      (Value.Map
+         { layout; prog; outs = Value.[ dt ]; loads = Array.of_list (List.map load xs) })
+  in
+  y
+
+let not_zero b dt x = node b (Op2 (Compare Not_equal, x, const b dt (D.zero dt)))
+
+(* One where [k] of the operands' truths holds, zero elsewhere. *)
+let logical ~by k a b' =
+  let dt = dtype a in
+  elementwise ~by dt [ Any a; Any b' ] (fun b ins ->
+      let t = node b (Op2 (Binary k, not_zero b dt ins.(0), not_zero b dt ins.(1))) in
+      node b (Op3 (Where, t, const b dt (D.one dt), const b dt (D.zero dt))))
+
+let logical_and a b = logical ~by:"Nx.logical_and" And a b
+let logical_or a b = logical ~by:"Nx.logical_or" Or a b
+let logical_xor a b = logical ~by:"Nx.logical_xor" Xor a b
+
+let logical_not x =
+  let dt = dtype x in
+  elementwise ~by:"Nx.logical_not" dt [ Any x ] (fun b ins ->
+      let t = node b (Op2 (Compare Equal, ins.(0), const b dt (D.zero dt))) in
+      node b (Op3 (Where, t, const b dt (D.one dt), const b dt (D.zero dt))))
+
+let integer_or_boolean (type v s) ~by (dt : (v, s) D.t) =
+  match D.kind dt with
+  | D.Signed | D.Unsigned | D.Boolean -> ()
+  | D.Float | D.Complex ->
+      invalid_argf "%s: %s is neither an integer nor a boolean dtype" by (D.name dt)
+
+let integer (type v s) ~by (dt : (v, s) D.t) =
+  match D.kind dt with
+  | D.Signed | D.Unsigned -> ()
+  | D.Float | D.Complex | D.Boolean ->
+      invalid_argf "%s: %s is not an integer dtype" by (D.name dt)
+
+(* The int64 [v] stored into [dt], modulo its width. *)
+let int_const b dt v =
+  node b (Op1 (Cast, D.Any dt, const b D.Int64 v))
+
+let bitwise_not x =
+  let by = "Nx.bitwise_not" in
+  let dt = dtype x in
+  integer_or_boolean ~by dt;
+  elementwise ~by dt [ Any x ] (fun b ins ->
+      node b (Op2 (Binary Xor, ins.(0), int_const b dt (-1L))))
+
+let lshift x n =
+  let by = "Nx.lshift" in
+  let dt = dtype x in
+  integer ~by dt;
+  if n < 0 then invalid_argf "%s: shift %d" by n;
+  let factor = if n < 64 then Int64.shift_left 1L n else 0L in
+  elementwise ~by dt [ Any x ] (fun b ins ->
+      node b (Op2 (Binary Mul, ins.(0), int_const b dt factor)))
+
+(* A signed integer divided by 2^n rounds toward negative infinity: the
+   truncated quotient, less one where the remainder is negative. Past the
+   sign bit only the sign is left. *)
+let rshift x n =
+  let by = "Nx.rshift" in
+  let dt = dtype x in
+  integer ~by dt;
+  if n < 0 then invalid_argf "%s: shift %d" by n;
+  let bits = D.bits dt in
+  elementwise ~by dt [ Any x ] (fun b ins ->
+      let x = ins.(0) in
+      match D.kind dt with
+      | D.Unsigned ->
+          if n >= bits then int_const b dt 0L
+          else node b (Op2 (Binary Idiv, x, int_const b dt (Int64.shift_left 1L n)))
+      | _ when n >= bits - 1 ->
+          let neg = node b (Op2 (Compare Less, x, int_const b dt 0L)) in
+          node b (Op3 (Where, neg, int_const b dt (-1L), int_const b dt 0L))
+      | _ ->
+          let d = int_const b dt (Int64.shift_left 1L n) in
+          let q = node b (Op2 (Binary Idiv, x, d)) in
+          let r = node b (Op2 (Binary Mod, x, d)) in
+          let neg = node b (Op2 (Compare Less, r, int_const b dt 0L)) in
+          let one = node b (Op3 (Where, neg, int_const b dt 1L, int_const b dt 0L)) in
+          node b (Op2 (Binary Sub, q, one)))
+
+let clamp ?min:lo ?max:hi x =
+  let by = "Nx.clamp" in
+  if lo = None && hi = None then x
+  else
+    let dt = dtype x in
+    elementwise ~by dt [ Any x ] (fun b ins ->
+        let v =
+          match lo with
+          | None -> ins.(0)
+          | Some lo -> node b (Op2 (Binary Maximum, ins.(0), node b (Const (D.Any dt, bits ~by dt lo))))
+        in
+        match hi with
+        | None -> v
+        | Some hi -> node b (Op2 (Binary Minimum, v, node b (Const (D.Any dt, bits ~by dt hi)))))
+
+let isnan x = comparison ~by:"Nx.isnan" Not_equal x x
+
+(* A complex value's real and imaginary parts, as views of its bits read as
+   pairs of its parts' format. *)
+type ('s, 'd) parts =
+  | Parts : (float, 'r) D.t * (float, 'r, 'd) t * (float, 'r, 'd) t -> ('s, 'd) parts
+
+let parts (type s d) ~by (z : (Complex.t, s, d) t) : (s, d) parts =
+  let split (type r) (f : (float, r) D.t) =
+    let pairs : (float, r, d) t = Eval.eval ~by (Value.Bitcast (f, z)) in
+    let r = Prim.rank z in
+    let part i =
+      let one = Array.init (r + 1) (fun a ->
+        if a = r then { Nx_array.Move.start = i; count = 1; step = 1 }
+        else whole (Prim.dim z a))
+      in
+      move ~by (Reshape (shape z)) (move ~by (Slice one) pairs)
+    in
+    Parts (f, part 0, part 1)
+  in
+  match dtype z with D.Complex64 -> split D.Float32 | D.Complex128 -> split D.Float64
+
+(* Where a float of [dt]'s format is an infinity: [false] in a format with
+   none. *)
+let infinite (type s) b (dt : (float, s) D.t) x =
+  if not (D.float_format dt).infinities then const b D.Bool false
+  else
+    let a = node b (Op1 (Unary Abs, D.Any dt, x)) in
+    node b (Op2 (Compare Equal, a, const b dt Float.infinity))
+
+(* Where a float of [dt]'s format is neither an infinity nor a NaN. *)
+let finite (type s) b (dt : (float, s) D.t) x =
+  let not_nan = node b (Op2 (Compare Equal, x, x)) in
+  if not (D.float_format dt).infinities then not_nan
+  else
+    let a = node b (Op1 (Unary Abs, D.Any dt, x)) in
+    node b (Op2 (Compare Less, a, const b dt Float.infinity))
+
+(* [x]'s float predicate [p], each part's joined by [k] for a complex [x], and
+   [other] for the other dtypes, where [x] lies. *)
+let predicate (type v s d) ~by (p : 'r. program -> (float, 'r) D.t -> int -> int)
+    k other (x : (v, s, d) t) : d bool_t =
+  match D.kind (dtype x) with
+  | D.Float ->
+      let dt = dtype x in
+      elementwise ~by D.Bool [ Any x ] (fun b ins -> p b dt ins.(0))
+  | D.Complex ->
+      let (Parts (f, re, im)) = parts ~by x in
+      elementwise ~by D.Bool [ Any re; Any im ] (fun b ins ->
+          node b (Op2 (Binary k, p b f ins.(0), p b f ins.(1))))
+  | D.Signed | D.Unsigned | D.Boolean ->
+      beside ~by x (fill ~by D.Bool (shape x) other)
+
+let isinf x = predicate ~by:"Nx.isinf" (fun b dt x -> infinite b dt x) Or false x
+
+let isfinite x =
+  predicate ~by:"Nx.isfinite" (fun b dt x -> finite b dt x) And true x
+
 (* Operations as data *)
 
 module Prim = struct

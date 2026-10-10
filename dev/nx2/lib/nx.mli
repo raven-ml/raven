@@ -814,6 +814,60 @@ val bitwise_or : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 val bitwise_xor : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [bitwise_xor a b] is the bitwise exclusive or, as {!bitwise_and}. *)
 
+val bitwise_not : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [bitwise_not x] is every bit of [x] flipped, the logical not of booleans.
+    Integers and booleans. *)
+
+val lshift : ('v, 's, 'd) t -> int -> ('v, 's, 'd) t
+(** [lshift x n] is [x] shifted [n] bits toward its high end: [x 2{^n}] modulo
+    [2{^w}] for a dtype of [w] bits, [0] once [n] reaches [w]. Integers.
+
+    Raises [Invalid_argument] if [n < 0]. *)
+
+val rshift : ('v, 's, 'd) t -> int -> ('v, 's, 'd) t
+(** [rshift x n] is [x] shifted [n] bits toward its low end: [x / 2{^n}]
+    rounded toward negative infinity, so a signed [x] keeps its sign; [0], or
+    [-1] for a negative [x], once [n] reaches the width. Integers.
+
+    Raises [Invalid_argument] if [n < 0]. *)
+
+val logical_and : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [logical_and a b] is one where [a] and [b] are both not zero, zero
+    elsewhere, in their dtype. A NaN is not zero. Every dtype. *)
+
+val logical_or : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [logical_or a b] is one where [a] or [b] is not zero, as {!logical_and}. *)
+
+val logical_xor : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [logical_xor a b] is one where exactly one of [a] and [b] is not zero, as
+    {!logical_and}. *)
+
+val logical_not : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [logical_not x] is one where [x] is zero, zero elsewhere, as
+    {!logical_and}. *)
+
+val isnan : ('v, 's, 'd) t -> 'd bool_t
+(** [isnan x] is [true] where [x] is a NaN, or a complex number with a NaN
+    part. Every dtype: [false] for the integers and booleans. *)
+
+val isinf : ('v, 's, 'd) t -> 'd bool_t
+(** [isinf x] is [true] where [x] is an infinity, or a complex number with an
+    infinite part. Every dtype: [false] for the integers, the booleans and the
+    float formats without infinities. *)
+
+val isfinite : ('v, 's, 'd) t -> 'd bool_t
+(** [isfinite x] is [true] where [x] is neither an infinity nor a NaN, and for
+    a complex number where both parts are. Every dtype: [true] for the integers
+    and booleans. *)
+
+val clamp : ?min:'v -> ?max:'v -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [clamp ~min ~max x] is [minimum (maximum x min) max] with each bound a
+    constant, a bound left out not applied: [max] where [min > max], and a NaN
+    stays a NaN. [x] itself without either. Every dtype.
+
+    Raises [Invalid_argument] if a bound is an [int] outside [x]'s dtype's
+    range. *)
+
 val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [where c x y] is [x]'s element where [c] is [true] and [y]'s elsewhere.
 
