@@ -265,7 +265,20 @@ let check_memory fn d (b, (access : access)) =
   if access = Read_write && Buffer.access b = Read then
     invalid_argf "Rig.%s: a fixed buffer written admits only reads" fn
 
+(* [p] with arrays of its own. [make] copies the caller's parts once, then
+   checks, sizes and compiles the copy alone: a change to the caller's arrays
+   while it runs, from another domain or from a thread while a driver call
+   blocks, changes nothing. *)
+let own p =
+  let work =
+    match p.work with
+    | Launch l -> Launch { l with refs = Array.copy l.refs }
+    | w -> w
+  in
+  { p with after = Array.copy p.after; work }
+
 let build hold ~fixed ~reads ~writes d parts =
+  let parts = Array.map own parts in
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
   if Dev.is_lost d then Dev.raise_lost d;

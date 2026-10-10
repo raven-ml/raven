@@ -326,6 +326,29 @@ let test_parts_changed () =
   B.copy ~src:out ~dst:host;
   equal string (le64 7) (host_bytes host 8)
 
+(* make reads a part's arrays once: refs changed inside make's call of the
+   driver, after make checked them and before it compiled them, change
+   nothing. *)
+let test_parts_read_once () =
+  let d, p = polled "read-once" in
+  let image = functions d in
+  let refs = [| { Sub.at = 0; slot = 0 } |] in
+  P.before p "entry" (fun () -> refs.(0) <- { at = 8; slot = 0 });
+  let s =
+    Sub.make ~reads:0 ~writes:1 d [| launch image "main" ~params:16 ~refs |]
+  in
+  let out = B.create d 8 in
+  let run = Run.make () and b = Sub.block s 0 in
+  one run b;
+  Run.int64 run b 0 0;
+  Run.int64 run b 8 7;
+  ignore (P.launches p);
+  ignore (submit ~writes:[| out |] s run);
+  ignore (P.run p);
+  equal ~msg:"the ref make checked" (list string)
+    [ le64 (B.address out) ^ le64 7 ]
+    (List.map (fun (l : P.launch) -> l.params) (P.launches p))
+
 (* Refusals *)
 
 let refused ~msg f = raises_match ~msg Exn.invalid_arg f
@@ -521,6 +544,8 @@ let tests =
       [
         test "a submission keeps its launches' images after their array changed"
           test_parts_changed;
+        test "make reads its parts' arrays once, whatever changes them during it"
+          test_parts_read_once;
       ];
     group ~timeout "refusals"
       [

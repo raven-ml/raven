@@ -107,6 +107,11 @@ module Polled : sig
   (** [fault d why] makes [d]'s sleeps, allocations, mappings, loads and reads
       of its budget raise [Fault why] from now on, as a faulted device's do. *)
 
+  val before : t -> string -> (unit -> unit) -> unit
+  (** [before d call f] runs [f] once, at the start of [d]'s next fallible call
+      that {!log} names [call], such as ["entry"]: a point inside a call rig
+      makes, where a test can change what rig was given. *)
+
   val fault_word : t -> string -> unit
   (** [fault_word d why] makes [d]'s reads of its word ([signaled]) raise
       [Fault why] from now on, as a transport's that lost its link. *)

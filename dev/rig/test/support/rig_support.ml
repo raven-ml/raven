@@ -103,6 +103,8 @@ module Driver = struct
     mutable frees_gated : bool;
     mutable freers : int;
     mutable stop_fault : string option;  (** What its stop was given. *)
+    mutable before : (string * (unit -> unit)) list;
+        (** Functions to run at the next call of each name. *)
   }
 
   (* A region the driver allocated has a kind; a mapping has none. *)
@@ -178,8 +180,19 @@ module Driver = struct
       edge = d.c;
     }
 
+  (* Runs, outside the lock, the functions {!before} set for [call]. *)
+  let run_before d call =
+    let mine =
+      Mutex.protect d.lock (fun () ->
+          let mine, rest = List.partition (fun (c, _) -> c = call) d.before in
+          d.before <- rest;
+          mine)
+    in
+    List.iter (fun (_, f) -> f ()) mine
+
   let counted d call =
     note d call;
+    run_before d call;
     step d
 
   let holding d kind =
@@ -383,6 +396,7 @@ module Polled = struct
         frees_gated = false;
         freers = 0;
         stop_fault = None;
+        before = [];
       }
     in
     if runs = `Itself then polled_start d.c;
@@ -406,6 +420,9 @@ module Polled = struct
   let fail d = polled_fail d.c
   let fail_commit d = polled_fail_commit d.c
   let fault d why = Mutex.protect d.lock (fun () -> d.fault <- Some why)
+
+  let before d call f =
+    Mutex.protect d.lock (fun () -> d.before <- (call, f) :: d.before)
 
   let fail_at d n how =
     match how with
