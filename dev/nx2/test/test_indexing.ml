@@ -635,6 +635,15 @@ let declines =
         test_gather_on_one_device;
     ]
 
+(* An update through more positions held in data than one program reads:
+   [n] scalar positions into a value of [n] unit axes, the [k]th (if any)
+   outside its axis. *)
+let test_many_held n k () =
+  let x = Nx.zeros Nx.float32 (Array.make n 1) in
+  let at i = Nx.T (Nx.scalar Nx.int64 (if i = k then 1L else 0L)) in
+  let y = Nx.set (List.init n at) (Nx.scalar Nx.float32 5.) x in
+  equal (array float_exact) [| (if k < n then 0. else 5.) |] (elements y)
+
 (* A gather and a scatter of every dtype. *)
 let dtypes =
   cases
@@ -693,6 +702,21 @@ let refusals =
               Nx.scatter ~combine:Add ~axis:0 (positions [| 2 |] [| 0; 1 |]) b b));
     ]
 
+let many =
+  group "many positions"
+    [
+      cases "an update through positions held in data" ~name:fst
+        [
+          ("15, one program", (15, 15));
+          ("16 in two programs", (16, 16));
+          ("32 in three", (32, 32));
+          ("32, the 31st outside", (32, 30));
+          ("16, the first outside", (16, 0));
+        ]
+        (fun (_, (n, k)) -> test_many_held n k ());
+    ]
+
 let () =
   exit
-    (run "nx indexing" [ laws; definitions; views; dtypes; declines; refusals ])
+    (run "nx indexing"
+       [ laws; definitions; views; dtypes; declines; many; refusals ])

@@ -1197,15 +1197,12 @@ let take_along_axis ~axis:a p x =
 (* Functional updates *)
 
 (* The flat position in [x] of each element of the selection [picks], [-1] where
-   a position held in data lies outside its axis: one map over the selection's
-   shape, reading each position held in data broadcast to it. *)
-(* CR: Split this target map when its inputs plus output exceed
-   Prog.max_operands: sixteen scalar T indices on a [1; ...; 1] tensor
-   already raise. Route all broadcast inputs together before splitting,
-   and place them at that result, so placement is independent of chunks.
-   Carry one partial flat address, keeping -1 sticky for an invalid index;
-   count this carry and the output in each chunk's bound. Keep the
-   selection layout, so storage scales with the selection. *)
+   a position held in data lies outside its axis: a map over the selection's
+   shape, reading each position held in data broadcast to it. A program reads
+   at most [Prog.max_operands] operands and outputs, so more positions held in
+   data than one map reads chain maps, each reading the address so far, [-1]
+   once invalid. Their inputs are placed together first, so the address lies
+   where one map would put it. *)
 let targets ~by x picks =
   let s = shape x in
   let r = Array.length s in
@@ -1215,43 +1212,129 @@ let targets ~by x picks =
   for a = r - 2 downto 0 do
     strides.(a) <- strides.(a + 1) * s.(a + 1)
   done;
-  let nodes = ref [] and count = ref 0 in
-  let push n =
-    nodes := n :: !nodes;
-    incr count;
-    !count - 1
-  in
-  let loads = ref [] in
-  let load v =
-    loads := Value.Plain v :: !loads;
-    List.length !loads - 1
-  in
-  (* The selection's axis [j] as a coordinate. *)
-  let coord j = push (P.Coord (rs - 1 - j)) in
-  let sum = ref (push (const64 0)) and valid = ref None in
-  let add a index =
-    let k = push (const64 strides.(a)) in
-    let m = push (P.Op2 (Binary Mul, index, k)) in
-    sum := push (P.Op2 (Binary Add, !sum, m))
-  in
-  (* A position held in data over selection axes [j, j + k): its value at each
-     index of the selection, and whether it lies in [0, d). *)
-  let held j p d =
+  (* The positions held in data, broadcast to the selection, in pick order:
+     over selection axes [j, j + k) for [k] axes of their own. *)
+  let held j p =
     let ps = shape p in
     let k = Array.length ps in
     let placed =
       Array.init rs (fun i -> if i >= j && i < j + k then ps.(i - j) else 1)
     in
-    let v = broadcast ~by sel (move ~by (Reshape placed) p) in
-    let i = push (P.In (load v)) in
+    broadcast ~by sel (move ~by (Reshape placed) p)
+  in
+  let inputs =
+    let j = ref 0 in
+    List.concat_map
+      (fun (p, a) ->
+        match (p, a) with
+        | New, _ ->
+            incr j;
+            []
+        | At _, Some _ -> []
+        | Span _, Some _ ->
+            incr j;
+            []
+        | Rows ps, Some _ ->
+            let v = held !j (written ~by ps) in
+            incr j;
+            [ v ]
+        | Held p, Some _ ->
+            let v = held !j p in
+            j := !j + ndim p;
+            [ v ]
+        | From (start, _, _), Some _ ->
+            let v = broadcast ~by sel start in
+            incr j;
+            [ v ]
+        | (At _ | Span _ | Rows _ | Held _ | From _), None -> [])
+      picks
+  in
+  let room = P.max_operands - 1 in
+  let inputs =
+    if List.length inputs <= room then inputs
+    else
+      let ps = Array.of_list (List.map Prim.at inputs) in
+      let shapes = Array.make (Array.length ps) sel in
+      match Route.route ~by Elementwise ps shapes with
+      | None -> inputs
+      | Some route -> List.map (Eval.place ~by route.result) inputs
+  in
+  let inputs = ref inputs in
+  let nodes = ref [] and count = ref 0 and loads = ref [] in
+  let push n =
+    nodes := n :: !nodes;
+    incr count;
+    !count - 1
+  in
+  let read v =
+    loads := Value.Plain v :: !loads;
+    push (P.In (List.length !loads - 1))
+  in
+  let sum = ref (push (const64 0)) and valid = ref None in
+  let both ok =
+    valid :=
+      match !valid with
+      | None -> Some ok
+      | Some v -> Some (push (P.Op2 (Binary And, v, ok)))
+  in
+  (* The address so far: the current map's output. *)
+  let address () =
+    let out =
+      match !valid with
+      | None -> !sum
+      | Some ok -> push (P.Op3 (Where, ok, !sum, push (const64 (-1))))
+    in
+    let loads = Array.of_list (List.rev !loads) in
+    let prog =
+      P.v
+        ~ins:(Array.map Prim.load_dtype loads)
+        (Array.of_list (List.rev !nodes))
+        ~outs:[| out |]
+    in
+    let v, () =
+      Eval.eval ~by
+        (Value.Map
+           {
+             layout = Nx_array.Layout.contiguous sel;
+             prog;
+             outs = Value.[ D.Int64 ];
+             loads;
+           })
+    in
+    v
+  in
+  (* The next position held in data, in a map with room to read it: a full
+     map's address carries into a new one, valid where it is not [-1]. *)
+  let next () =
+    if List.length !loads = room then begin
+      let carry = address () in
+      nodes := [];
+      count := 0;
+      loads := [];
+      valid := None;
+      sum := read carry;
+      both (push (P.Op2 (Compare Less_equal, push (const64 0), !sum)))
+    end;
+    match !inputs with
+    | v :: rest ->
+        inputs := rest;
+        read v
+    | [] -> invalid_arg "Nx.targets: a pick without its input"
+  in
+  let add a index =
+    let k = push (const64 strides.(a)) in
+    let m = push (P.Op2 (Binary Mul, index, k)) in
+    sum := push (P.Op2 (Binary Add, !sum, m))
+  in
+  (* The selection's axis [j] as a coordinate. *)
+  let coord j = push (P.Coord (rs - 1 - j)) in
+  (* A position held in data, and whether it lies in [0, d). *)
+  let checked d =
+    let i = next () in
     let lo = push (const64 0) and hi = push (const64 d) in
     let ge = push (P.Op2 (Compare Less_equal, lo, i)) in
     let lt = push (P.Op2 (Compare Less, i, hi)) in
-    let ok = push (P.Op2 (Binary And, ge, lt)) in
-    (valid :=
-       match !valid with
-       | None -> Some ok
-       | Some v -> Some (push (P.Op2 (Binary And, v, ok))));
+    both (push (P.Op2 (Binary And, ge, lt)));
     i
   in
   let j = ref 0 in
@@ -1267,14 +1350,14 @@ let targets ~by x picks =
           let o = push (const64 g.start) in
           add a (push (P.Op2 (Binary Add, o, m)));
           incr j
-      | Rows ps, Some a ->
-          add a (held !j (written ~by ps) s.(a));
+      | Rows _, Some a ->
+          add a (checked s.(a));
           incr j
       | Held p, Some a ->
-          add a (held !j p s.(a));
+          add a (checked s.(a));
           j := !j + ndim p
-      | From (start, n, d), Some a ->
-          let st = push (P.In (load (broadcast ~by sel start))) in
+      | From (_, n, d), Some a ->
+          let st = next () in
           let lo = push (const64 0) and hi = push (const64 (d - n)) in
           let c =
             push
@@ -1289,29 +1372,7 @@ let targets ~by x picks =
     add a (coord !j);
     incr j
   done;
-  let out =
-    match !valid with
-    | None -> !sum
-    | Some ok -> push (P.Op3 (Where, ok, !sum, push (const64 (-1))))
-  in
-  let loads = Array.of_list (List.rev !loads) in
-  let prog =
-    P.v
-      ~ins:(Array.map Prim.load_dtype loads)
-      (Array.of_list (List.rev !nodes))
-      ~outs:[| out |]
-  in
-  let v, () =
-    Eval.eval ~by
-      (Value.Map
-         {
-           layout = Nx_array.Layout.contiguous sel;
-           prog;
-           outs = Value.[ D.Int64 ];
-           loads;
-         })
-  in
-  v
+  address ()
 
 (* The positions a pick held in data, or written as a list, gives its axis, of
    their own shape: [None] for a pick of the program's ranges. *)
