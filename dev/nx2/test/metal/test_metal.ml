@@ -910,7 +910,7 @@ let determinism =
     (fun c -> deterministic c ())
 
 (* Layouts: a contraction's bits are a function of its operands' values and
-   shapes, never of the order a and b are stored in (RFC 0034, Law 4). *)
+   shapes, never of the order a and b are stored in. *)
 
 (* [x], an operand of [rows] x [cols] per batch, copied element for element into
    a fresh one stored [cols][rows] if [trans]. *)
