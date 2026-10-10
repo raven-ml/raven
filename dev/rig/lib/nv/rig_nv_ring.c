@@ -391,15 +391,7 @@ static void put_bank(struct device *d, const struct rig_part *p,
   uint64_t v[VALUES];
   values_of(p, args, gpu_at(c, bank), 0, v);
   rig_nv_fill_structure(&l->bank0, v, w);
-  uint8_t *params = w + l->params_at;
-  memcpy(params, block_of(p, args)->params, p->launch.params);
-  for (int i = 0; i < p->launch.nrefs; i++) {
-    const struct rig_ref *r = &p->launch.refs[i];
-    uint64_t x;
-    memcpy(&x, params + r->at, 8);
-    x += slots[r->slot];
-    memcpy(params + r->at, &x, 8);
-  }
+  rig_params(w + l->params_at, p, args, slots);
   uint64_t n = (uint64_t)l->params_at + p->launch.params;
   if (n < l->bank0.nbytes) n = l->bank0.nbytes;
   memcpy(host_at(c, bank), w, n);

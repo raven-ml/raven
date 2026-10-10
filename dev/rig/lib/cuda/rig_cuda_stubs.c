@@ -908,14 +908,7 @@ static CUresult launch(const struct submission *s, CUstream stream,
   size_t size = p->launch.params;
   void *extra[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, params,
                    CU_LAUNCH_PARAM_BUFFER_SIZE, &size, CU_LAUNCH_PARAM_END};
-  memcpy(params, b->params, size);
-  for (int i = 0; i < p->launch.nrefs; i++) {
-    const struct rig_ref *r = &p->launch.refs[i];
-    uint64_t x;
-    memcpy(&x, params + r->at, sizeof x);
-    x += s->slots[r->slot];
-    memcpy(params + r->at, &x, sizeof x);
-  }
+  rig_params(params, p, s->args, s->slots);
   return p_cuLaunchKernel(fn->f, b->groups[0], b->groups[1], b->groups[2],
                           b->threads[0], b->threads[1], b->threads[2],
                           b->shared, stream, NULL, size > 0 ? extra : NULL);

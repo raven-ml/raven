@@ -436,14 +436,7 @@ static void launch(struct submission *s, const struct rig_part *p,
   const struct rig_block *b = (const void *)(args + p->launch.block);
   uint64_t at = g->put % g->size;
   uint8_t *params = g->host + at;
-  memcpy(params, b->params, p->launch.params);
-  for (int i = 0; i < p->launch.nrefs; i++) {
-    const struct rig_ref *f = &p->launch.refs[i];
-    uint64_t x;
-    memcpy(&x, b->params + f->at, 8);
-    x += slots[f->slot];
-    memcpy(params + f->at, &x, 8);
-  }
+  rig_params(params, p, args, slots);
   implicit(p->launch.launch, b, params);
   g->put += align_up(arguments(p), SEGMENT_ALIGN);
   if (!acquired && !((const struct rig_amd_launch *)p->launch.launch)->packet)

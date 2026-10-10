@@ -616,14 +616,8 @@ static int blocks(const struct rig_part *parts, int nparts,
   memcpy(b, args, n);
   for (int i = 0; i < nparts; i++) {
     if (parts[i].kind != RIG_LAUNCH) continue;
-    uint8_t *params = b + parts[i].launch.block + sizeof(struct rig_block);
-    for (int j = 0; j < parts[i].launch.nrefs; j++) {
-      const struct rig_ref *r = &parts[i].launch.refs[j];
-      uint64_t w;
-      memcpy(&w, params + r->at, sizeof w);
-      w += slots[r->slot];
-      memcpy(params + r->at, &w, sizeof w);
-    }
+    rig_params(b + parts[i].launch.block + sizeof(struct rig_block),
+               &parts[i], args, slots);
   }
   *copy = b;
   return 1;

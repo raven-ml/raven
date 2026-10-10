@@ -23,6 +23,7 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 /* What a room check answers: the parts fit the device's queues now; they
    fit once one of the device's values is reached; they never fit the
@@ -173,6 +174,23 @@ static inline void rig_raise(_Atomic uint64_t *word, uint64_t last) {
   while (w < last && !atomic_compare_exchange_weak_explicit(
                          word, &w, last, memory_order_release,
                          memory_order_acquire)) {
+  }
+}
+
+/* Writes into [dst] the parameters of launch [p] that its function reads:
+   the [p->launch.params] bytes of its block in [args], each ref's 8 bytes, a
+   64-bit integer in the host's byte order, plus [slots[slot]]. [dst] holds as
+   many bytes and lies outside [args]. */
+static inline void rig_params(uint8_t *dst, const struct rig_part *p,
+                              const uint8_t *args, const uint64_t *slots) {
+  const uint8_t *src = args + p->launch.block + sizeof(struct rig_block);
+  memcpy(dst, src, p->launch.params);
+  for (int i = 0; i < p->launch.nrefs; i++) {
+    const struct rig_ref *r = &p->launch.refs[i];
+    uint64_t x;
+    memcpy(&x, src + r->at, sizeof x);
+    x += slots[r->slot];
+    memcpy(dst + r->at, &x, sizeof x);
   }
 }
 
