@@ -746,6 +746,120 @@ let sign_extends () =
             (String.get_int64_le (S.read y.buffer) 0))
     [ D.Any D.Int8; D.Any D.Int16 ]
 
+(* Extents at the int32 edge, 2^31 - 1, whose coordinates a kernel keeps wide,
+   each case's operands broadcast or filled on the GPU and every sum exact in
+   any order: k at the edge through both skinny forms (int64, m = 1, b's k or n
+   axis apart) and through WMMA's 16 x 64 tile (bfloat16, k = 2^31 - 8, a all
+   ones, b ones in its last 64 elements alone); m at the edge through SIMT
+   (int64 into int8, k = 1); n at the edge through WMMA's 16 x 64 tile
+   (bfloat16, k = 16), y's rows stored 16 bytes at once. y ends 16 bytes before
+   the end of its buffer, which no store may reach. *)
+let edge = 0x7fff_ffff
+
+(* [n] bytes of [b] from [first] filled with [pattern], whose length divides
+   [n], by copies that double what is filled. *)
+let fill b ~first n pattern =
+  let w = String.length pattern in
+  S.write (Rig.Buffer.view b ~first ~length:w) pattern;
+  let rec double have =
+    if have < n then begin
+      let more = Int.min have (n - have) in
+      Rig.Buffer.copy
+        ~src:(Rig.Buffer.view b ~first ~length:more)
+        ~dst:(Rig.Buffer.view b ~first:(first + have) ~length:more);
+      double (have + more)
+    end
+  in
+  double w
+
+let int64_word g v =
+  let b = S.buffer g 8 in
+  let s = Bytes.create 8 in
+  Bytes.set_int64_le s 0 v;
+  S.write b (Bytes.to_string s);
+  b
+
+let bf16_ones = String.init 16 (fun i -> if i mod 2 = 0 then '\x80' else '\x3f')
+
+let edge_operand buffer dt shape strides : S.operand =
+  { buffer; dtype = D.code dt; shape; strides; first = 0 }
+
+(* y of [n] elements of [dt] and 16 bytes of sentinel after them. *)
+let edge_y g dt shape strides n =
+  let w = D.bits dt / 8 in
+  let buffer = S.buffer g ((w * n) + 16) in
+  S.write (Rig.Buffer.view buffer ~first:(w * n) ~length:16) (sentinel 16);
+  edge_operand buffer dt shape strides
+
+(* The [bytes] bytes that end [y]'s buffer, the sentinel's 16 among them. *)
+let tail (y : S.operand) bytes =
+  let n = Rig.Buffer.length y.buffer in
+  S.read (Rig.Buffer.view y.buffer ~first:(n - bytes) ~length:bytes)
+
+let edge_contract g ~a ~b ~y ~acc =
+  match
+    S.contract g ~a ~b ~y
+      ~batch:[ (0, 0) ]
+      ~contracting:[ (2, 2) ]
+      ~acc:(D.code acc) ()
+  with
+  | None -> fail "the plan declines"
+  | Some _ -> ()
+
+let edge_k_skinny b_strides () =
+  let g = S.gpu () in
+  let three = int64_word g 3L in
+  let a = edge_operand three D.Int64 [| 1; 1; edge |] [| 0; 0; 0 |] in
+  let b = edge_operand (int64_word g 5L) D.Int64 [| 1; 1; edge |] b_strides in
+  let y = edge_y g D.Int64 [| 1; 1; 1 |] [| 1; 1; 1 |] 1 in
+  edge_contract g ~a ~b ~y ~acc:D.Int64;
+  let t = tail y 24 in
+  equal int64 (Int64.of_int (15 * edge)) (String.get_int64_le t 0);
+  equal string (sentinel 16) (String.sub t 8 16)
+
+let edge_k_wmma () =
+  let g = S.gpu () in
+  let k = edge - 7 in
+  let operand fill_with =
+    let buffer = S.buffer g (2 * k) in
+    fill_with buffer;
+    edge_operand buffer D.Bfloat16 [| 1; 1; k |] [| k; k; 1 |]
+  in
+  let a = operand (fun b -> fill b ~first:0 (2 * k) bf16_ones) in
+  let b =
+    operand (fun b ->
+        fill b ~first:0 (2 * (k - 64)) (String.make 16 '\000');
+        fill b ~first:(2 * (k - 64)) 128 bf16_ones)
+  in
+  let y = edge_y g D.Float32 [| 1; 1; 1 |] [| 1; 1; 1 |] 1 in
+  edge_contract g ~a ~b ~y ~acc:D.Float32;
+  let t = tail y 20 in
+  equal float_exact 64. (Int32.float_of_bits (String.get_int32_le t 0));
+  equal string (sentinel 16) (String.sub t 4 16)
+
+let edge_m_simt () =
+  let g = S.gpu () in
+  let three = int64_word g 3L in
+  let a = edge_operand three D.Int64 [| 1; edge; 1 |] [| 0; 0; 0 |] in
+  let b = edge_operand (int64_word g 5L) D.Int64 [| 1; 1; 1 |] [| 0; 0; 0 |] in
+  let y = edge_y g D.Int8 [| 1; edge; 1 |] [| edge; 1; 1 |] edge in
+  edge_contract g ~a ~b ~y ~acc:D.Int32;
+  equal string (String.make 64 '\015' ^ sentinel 16) (tail y 80)
+
+let edge_n_wmma () =
+  let g = S.gpu () in
+  let a = S.buffer g 32 in
+  S.write a (bf16_ones ^ bf16_ones);
+  let a = edge_operand a D.Bfloat16 [| 1; 1; 16 |] [| 16; 16; 1 |] in
+  let b = S.buffer g 32 in
+  S.write b (bf16_ones ^ bf16_ones);
+  let b = edge_operand b D.Bfloat16 [| 1; edge; 16 |] [| 0; 0; 1 |] in
+  let y = edge_y g D.Bfloat16 [| 1; 1; edge |] [| 0; 0; 1 |] edge in
+  edge_contract g ~a ~b ~y ~acc:D.Float32;
+  (* 16 in bfloat16 is 0x4180. *)
+  let sixteen = String.concat "" (List.init 32 (fun _ -> "\x80\x41")) in
+  equal string (sixteen ^ sentinel 16) (tail y 80)
+
 (* Operands whose rows are 16-byte vectors apart but whose k ends inside a
    vector, each buffer ending at its last element, the gaps between rows
    holding NaN or the integer extreme: no gap enters a sum. *)
@@ -1232,6 +1346,15 @@ let tests =
         cases ~name:case_name "float64 sums past double's range" overflow_cases
           within_bound;
         test "an int32 sum sign-extends into int64" sign_extends;
+        group "extents at the int32 edge"
+          [
+            test "k, skinny, b's k axis apart" (edge_k_skinny [| 0; 0; 0 |]);
+            test "k, skinny, b's n axis contiguous"
+              (edge_k_skinny [| 0; 1; 0 |]);
+            test "k, wmma" edge_k_wmma;
+            test "m, simt" edge_m_simt;
+            test "n, wmma" edge_n_wmma;
+          ];
         test "scratch past the GPU's memory raises" scratch_out_of_memory;
         keeps_subnormals;
         test "warm calls allocate nothing" warm_calls_allocate_nothing;

@@ -40,6 +40,18 @@
 #include "nx_dtype.h"
 
 DEVICE int min_(int a, int b) { return a < b ? a : b; }
+DEVICE int64_t min_(int64_t a, int64_t b) { return a < b ? a : b; }
+
+/* Coordinates: an extent may be 2^31 - 1, so that a coordinate past one, a
+   ceiling or a product of a range by a split count is computed in 64 bits,
+   and narrowed only where it is below an extent. [ceil_div n d] is
+   ceil(n / d), for n an extent. */
+DEVICE int ceil_div(int64_t n, int d) { return (int)((n + d - 1) / d); }
+
+/* The first of [units] units in range [r] of [ranges]. */
+DEVICE int64_t range_start(int64_t units, int r, int ranges) {
+  return (int64_t)r * units / ranges;
+}
 
 /* Elements */
 
@@ -168,7 +180,7 @@ DEVICE void store(const contract_params &p, int z, int i, int j, T v) {
 template <typename T>
 DEVICE void store8(const contract_params &p, int z, int i, int j,
                    const T *v) {
-  if ((p.aligned & NX_CONTRACT_Y_WHOLE) && i < p.m && j + 8 <= p.n) {
+  if ((p.aligned & NX_CONTRACT_Y_WHOLE) && i < p.m && p.n - j >= 8) {
     const int64_t o = z * p.sy[0] + i * p.sy[1] + j;
     if (sizeof(T) == 4 &&
         (p.y_dtype == NX_BFLOAT16 || p.y_dtype == NX_FLOAT16)) {
@@ -284,11 +296,12 @@ struct Operand {
   DEVICE static int row(int e) { return AXIS == AXIS_k ? e / C : e % R; }
   DEVICE static int chunk(int e) { return AXIS == AXIS_k ? e % C : e / R; }
 
-  /* Whether chunk [e] of k-tile [kt] is inside the extents. With the rows
+  /* Whether chunk [e] of k-tile [kt], a tile k reaches, is inside the
+     extents: kt * BK < k, so neither side overflows. With the rows
      contiguous, the plan admits rows and k of whole chunks, so a group's
      chunks are all inside or all outside. */
   DEVICE bool inside(int e, int kt) const {
-    return row(e) < rows && kt * (BKB / ES) + chunk(e) * (16 / ES) < k;
+    return row(e) < rows && chunk(e) * (16 / ES) < k - kt * (BKB / ES);
   }
 
   /* This work-item's chunks of k-tile [kt], as read. Every chunk is one
@@ -355,15 +368,15 @@ DEVICE void wmma_contract(const contract_params &p) {
 
   /* Grouped rasterisation: 8 row-tiles sweep the column tiles together, so
      that a column tile of b is read from the L2 by the 8 in flight. */
-  const int tiles_m = (p.m + BM - 1) / BM, tiles_n = (p.n + BN - 1) / BN;
+  const int tiles_m = ceil_div(p.m, BM), tiles_n = ceil_div(p.n, BN);
   const int pid = group(), groups = 8 * tiles_n, first = pid / groups * 8;
   const int gsz = min_(tiles_m - first, 8);
   const int tm = first + pid % groups % gsz, tn = pid % groups / gsz;
   const int m0 = tm * BM, n0 = tn * BN, z = group_z();
 
-  const int kts = (p.k + BK - 1) / BK, split = group_y();
-  const int kt0 = split * kts / p.splits;
-  const int KT = (split + 1) * kts / p.splits - kt0;
+  const int kts = ceil_div(p.k, BK), split = group_y();
+  const int kt0 = (int)range_start(kts, split, p.splits);
+  const int KT = (int)range_start(kts, split + 1, p.splits) - kt0;
 
   const A a = {(const char *)p.a + (z * p.sa[0] + m0 * p.sa[1]) * ES,
                p.sa[AXIS_A == AXIS_k ? 1 : 2] * ES, p.m - m0, p.k};
@@ -437,7 +450,7 @@ DEVICE void wmma_contract(const contract_params &p) {
 
   if (p.splits > 1) {
     Acc(&flat)[MI * NI * 8] = *reinterpret_cast<Acc(*)[MI * NI * 8]>(acc);
-    const int tile = z * tiles_m * tiles_n + tm * tiles_n + tn;
+    const int64_t tile = ((int64_t)z * tiles_m + tm) * tiles_n + tn;
     if (!combine(flat,
                  (Acc *)p.partials + (size_t)tile * p.splits * MI * NI * 8 * THREADS,
                  p.tickets + tile, p.splits, split, THREADS))
@@ -485,9 +498,10 @@ template <typename T, int BM, int BK> struct Simt_operand {
   int rows, k, r0;
   bool rows_contiguous, vectors;
 
-  DEVICE void load(T (&v)[E], int k0, int tid) const {
+  DEVICE void load(T (&v)[E], int64_t k0, int tid) const {
     const int row = rows_contiguous ? r0 + tid % (BM / E) * E : r0 + tid / (BK / E);
-    const int kk = rows_contiguous ? k0 + tid / (BM / E) : k0 + tid % (BK / E) * E;
+    const int64_t kk =
+        rows_contiguous ? k0 + tid / (BM / E) : k0 + tid % (BK / E) * E;
     if (vectors &&
         (rows_contiguous ? kk < k && row + E - 1 < rows : row < rows && kk + E - 1 < k)) {
       const char *src = base + (row * s_row + kk * s_k) * sizeof(T);
@@ -498,7 +512,8 @@ template <typename T, int BM, int BK> struct Simt_operand {
     }
 #pragma unroll
     for (int e = 0; e < E; e++) {
-      const int r = rows_contiguous ? row + e : row, q = rows_contiguous ? kk : kk + e;
+      const int r = rows_contiguous ? row + e : row;
+      const int64_t q = rows_contiguous ? kk : kk + e;
       v[e] = r < rows && q < k ? ((const T *)base)[r * s_row + q * s_k] : T(0);
     }
   }
@@ -527,13 +542,14 @@ template <typename T, int BM> DEVICE void simt_contract(const contract_params &p
   T(*as)[BK][BM] = (T(*)[BK][BM])smem, (*bs)[BK][BM] = as + 2;
   const int tid = item(), tx = tid % 16, ty = tid / 16, z = group_z();
   /* Grouped rasterisation, as the WMMA kernels'. */
-  const int tiles_m = (p.m + BM - 1) / BM, tiles_n = (p.n + BM - 1) / BM;
+  const int tiles_m = ceil_div(p.m, BM), tiles_n = ceil_div(p.n, BM);
   const int pid = group(), groups = 8 * tiles_n, first = pid / groups * 8;
   const int gsz = min_(tiles_m - first, 8);
   const int tm = first + pid % groups % gsz, tn = pid % groups / gsz;
   const int m0 = tm * BM, n0 = tn * BM;
-  const int kts = (p.k + BK - 1) / BK, split = group_y();
-  const int kt0 = split * kts / p.splits, kt1 = (split + 1) * kts / p.splits;
+  const int kts = ceil_div(p.k, BK), split = group_y();
+  const int kt0 = (int)range_start(kts, split, p.splits);
+  const int kt1 = (int)range_start(kts, split + 1, p.splits);
 
   const Simt_operand<T, BM, BK> a = {(const char *)p.a + z * p.sa[0] * sizeof(T),
                                      p.sa[1], p.sa[2], p.m, p.k, m0,
@@ -551,8 +567,8 @@ template <typename T, int BM> DEVICE void simt_contract(const contract_params &p
     for (int j = 0; j < TM; j++) acc[i][j] = T(0);
   T ra[Simt_operand<T, BM, BK>::E], rb[Simt_operand<T, BM, BK>::E];
   if (kt0 < kt1) {
-    a.load(ra, kt0 * BK, tid);
-    b.load(rb, kt0 * BK, tid);
+    a.load(ra, (int64_t)kt0 * BK, tid);
+    b.load(rb, (int64_t)kt0 * BK, tid);
     a.stash(as[0], ra, tid);
     b.stash(bs[0], rb, tid);
   }
@@ -561,8 +577,8 @@ template <typename T, int BM> DEVICE void simt_contract(const contract_params &p
   for (int kt = kt0, buf = 0; kt < kt1; kt++, buf ^= 1) {
     const bool more = kt + 1 < kt1;
     if (more) {
-      a.load(ra, (kt + 1) * BK, tid);
-      b.load(rb, (kt + 1) * BK, tid);
+      a.load(ra, (int64_t)(kt + 1) * BK, tid);
+      b.load(rb, (int64_t)(kt + 1) * BK, tid);
     }
     /* Unrolled by two: the loads of every k at once would outgrow the
        registers. */
@@ -588,7 +604,7 @@ template <typename T, int BM> DEVICE void simt_contract(const contract_params &p
 
   if (p.splits > 1) {
     T(&flat)[TM * TM] = *reinterpret_cast<T(*)[TM * TM]>(acc);
-    const int tile = z * tiles_m * tiles_n + pid;
+    const int64_t tile = (int64_t)z * tiles_m * tiles_n + pid;
     if (!combine(flat, (T *)p.partials + (size_t)tile * p.splits * TM * TM * THREADS,
                  p.tickets + tile, p.splits, split, THREADS))
       return;
@@ -671,10 +687,13 @@ DEVICE void dot(const contract_params &p, T (&c)[16], const char *a,
    to [c]: F whole runs a step, their loads issued before their sums, so
    that a lane has F in flight, two of 8-byte elements to keep the
    registers they take; then the runs left, one by one. a's rows are
-   those below [ROWS] and m; b's runs are vectors where [vectors] says so. */
+   those below [ROWS] and m; b's runs are vectors where [vectors] says so.
+   [k] steps up to a step past [k1], so it counts in 32 bits unsigned; a
+   run it reads starts below [k1], so a signed int holds it. */
 template <typename T, int ROWS>
 DEVICE void add_runs(const contract_params &p, T (&c)[16], const char *a,
-                     const char *b, int j, int k, int k1, bool vectors) {
+                     const char *b, int j, uint32_t k, uint32_t k1,
+                     bool vectors) {
   constexpr int F = sizeof(T) == 8 ? 2 : 4;
   for (; k + (F - 1) * 128 + 3 < k1; k += F * 128) {
     T bv[F][4];
@@ -685,7 +704,7 @@ DEVICE void add_runs(const contract_params &p, T (&c)[16], const char *a,
   }
   for (; k < k1; k += 128) {
     T bv[1][4];
-    const int us = min_(4, k1 - k);
+    const int us = k1 - k < 4 ? (int)(k1 - k) : 4;
     run(bv[0], b, p.sb[1], p.sb[2], j, k, us, vectors);
     dot<T, 1, ROWS>(p, c, a, bv, k, us);
   }
@@ -698,19 +717,20 @@ DEVICE void add_runs(const contract_params &p, T (&c)[16], const char *a,
    same. */
 template <typename T>
 DEVICE void add_rows(const contract_params &p, T (&c)[16], const char *a,
-                     const char *b, int j, int k, int k1, bool vectors) {
+                     const char *b, int j, uint32_t k, uint32_t k1,
+                     bool vectors) {
   if (p.m == 1)
     add_runs<T, 1>(p, c, a, b, j, k, k1, vectors);
   else
     add_runs<T, 16>(p, c, a, b, j, k, k1, vectors);
 }
 
-/* The workgroup's sums into [level8], row i of column c at element
-   i * 32 + c (its first 512), as the tree leaves them, by the form
-   [FORM]. Rows from m on stay zero. */
+/* The workgroup's sums of its range's [k1] k into [level8], row i of
+   column c at element i * 32 + c (its first 512), as the tree leaves them,
+   by the form [FORM]. Rows from m on stay zero. */
 template <typename T, int FORM>
 DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
-                        const char *a, const char *b, int k0, int k1) {
+                        const char *a, const char *b, uint32_t k1) {
   T *sums = &level8[0][0][0];
   if constexpr (FORM == FORM_column) {
     /* Lane l holds class l, its runs vectors where b's rows are
@@ -720,7 +740,7 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
 #pragma unroll
     for (int i = 0; i < 16; i++) acc[i] = T(0);
     if (j < p.n)
-      add_rows(p, acc, a, b, j, k0 + 4 * lane, k1,
+      add_rows(p, acc, a, b, j, 4 * lane, k1,
                p.aligned & NX_CONTRACT_B_VECTORS);
 #pragma unroll
     for (int i = 0; i < 16; i++)
@@ -750,7 +770,7 @@ DEVICE void skinny_sums(const contract_params &p, T (*level8)[8][32],
     if (j < p.n)
 #pragma unroll
       for (int q = 0; q < 2; q++)
-        add_rows(p, c[q], a, b, j, k0 + 4 * (y + 8 * (h + 2 * q)), k1,
+        add_rows(p, c[q], a, b, j, 4 * (y + 8 * (h + 2 * q)), k1,
                  false);
 #pragma unroll
     for (int i = 0; i < 16; i++) {
@@ -777,14 +797,19 @@ template <typename T, int FORM>
 DEVICE void skinny_contract(const contract_params &p) {
   constexpr int THREADS = NX_CONTRACT_THREADS;
   const int z = group_z(), split = group_y(), splits = p.splits;
-  const char *a = (const char *)p.a + z * p.sa[0] * sizeof(T);
-  const char *b = (const char *)p.b + z * p.sb[0] * sizeof(T);
-  /* The range of k: whole 128-element runs, one t of the lanes. */
-  const int runs = (p.k + 127) / 128;
-  const int k0 = split * runs / splits * 128;
-  const int k1 = min_(p.k, (split + 1) * runs / splits * 128);
+  /* The range of k: whole 128-element runs, one t of the lanes, from k0,
+     at which a and b start. Its k are counted from k0 in 32 bits unsigned,
+     past its end by at most a step. */
+  const int runs = ceil_div(p.k, 128);
+  const int64_t k0 = range_start(runs, split, splits) * 128;
+  const int64_t k1 =
+      min_((int64_t)p.k, range_start(runs, split + 1, splits) * 128);
+  const char *a =
+      (const char *)p.a + (z * p.sa[0] + k0 * p.sa[2]) * sizeof(T);
+  const char *b =
+      (const char *)p.b + (z * p.sb[0] + k0 * p.sb[2]) * sizeof(T);
   static SHARED T level8[16][8][32];
-  skinny_sums<T, FORM>(p, level8, a, b, k0, k1);
+  skinny_sums<T, FORM>(p, level8, a, b, (uint32_t)(k1 - k0));
 
   /* Two of the workgroup's sums per work-item: the partials a split sum
      combines. */
@@ -793,7 +818,7 @@ DEVICE void skinny_contract(const contract_params &p) {
   barrier();
   T v[2] = {sums[item()], sums[256 + item()]};
   if (splits > 1) {
-    const int tile = z * ((p.n + cols - 1) / cols) + group();
+    const int64_t tile = (int64_t)z * ceil_div(p.n, cols) + group();
     if (!combine(v, (T *)p.partials + (size_t)tile * splits * 2 * THREADS,
                  p.tickets + tile, splits, split, THREADS))
       return;
