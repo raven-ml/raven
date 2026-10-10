@@ -1584,14 +1584,12 @@ let load ?rails t devices =
     else load_there t devices
   end
 
-(* CR: Sign-extend each run word when writing its bytes, using [asr].
-   A frame int of -1 currently becomes 0x7fffffffffffffff, which R.int
-   rejects as wider than an OCaml int. A negative loop count succeeds
-   locally but fails the remote job. Keep the decoder's range check. *)
+(* Writes [v] at [at] as a little-endian int64, sign-extended as [R.int] reads
+   it back: -1 is eight 0xff bytes. *)
 let set_word words at v =
   Bigarray.Array1.(
     for i = 0 to 7 do
-      unsafe_set words (at + i) (Char.unsafe_chr ((v lsr (8 * i)) land 0xff))
+      unsafe_set words (at + i) (Char.unsafe_chr ((v asr (8 * i)) land 0xff))
     done)
 
 (* The words are placed on the host's queue when [submit] hands them over, so

@@ -133,8 +133,8 @@ let description archs =
       |];
   }
 
-(* Three runs of the description on [ds], with ints [(groups, trips)], their
-   inputs' bytes after each. *)
+(* Four runs of the description on [ds], with ints [(groups, trips)], their
+   inputs' bytes after each. The last's trips are negative: no trip. *)
 let runs ds =
   let p =
     require_ok ~pp:Format.pp_print_string
@@ -146,7 +146,7 @@ let runs ds =
       let c = far_of_string ds.(0) (le64 0) in
       ignore (G.run p { inputs = [| x; c |]; ints = [| groups; trips |] });
       (read x, read c))
-    [ (8, 1); (3, 0); (5, 4) ]
+    [ (8, 1); (3, 0); (5, 4); (3, -1) ]
 
 let here () =
   let open_ i =
@@ -165,6 +165,8 @@ let same_bytes () =
       (words 3 (fun i -> 100 + i) ^ String.make (size - 24) '\000', le64 0);
       (* Run 2 fills run 0's copy, whose last words run 0 left. *)
       (words 8 (fun i -> 100 + i), le64 4);
+      (* Run 3 fills run 1's copy again. *)
+      (words 3 (fun i -> 100 + i) ^ String.make (size - 24) '\000', le64 0);
     ]
     local;
   with_job @@ fun j _ ->
