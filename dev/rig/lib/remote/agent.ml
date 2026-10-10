@@ -229,6 +229,11 @@ let listen ~key host port =
 let port a = a.port
 
 (* Admits one controller, then the agents of its job before this one. *)
+(* CR: Reserve the controller under this lock before returning Ok, and
+   release the reservation and socket if the handshake fails. Two
+   handshakes can both see None while Wire.accept sends success with the
+   runtime released; the loser then raises in Link.job, leaving an accepted
+   socket unowned. *)
 let admit a p =
   Mutex.protect a.lock @@ fun () ->
   match (p, a.job) with
@@ -315,6 +320,8 @@ type state = {
 (* A refusal of the controller's request, or a failure of the job. *)
 exception Refused of string
 
+let no_memory d n = strf "%s: no memory for %d bytes" (Rig.name d) n
+
 let device s id =
   match Hashtbl.find_opt s.devices id with
   | Some d -> d
@@ -330,6 +337,11 @@ let fresh s id =
   if Hashtbl.mem s.objects id then
     raise (Refused (strf "id %d names an object already" id))
 
+(* CR: This account only knows devices open now. The host's Join account stays
+   empty, so Rig.reaches h d is false for a memory device opened later, unlike
+   the agent. Record both directions of a pair when its newer device opens, and
+   let peer read that newer account. This preserves immutable accounts and keeps
+   peer local. *)
 let account s id d : Wire.account =
   let reaches =
     Hashtbl.fold
@@ -469,7 +481,8 @@ let answer : type a. state -> a Wire.request -> a =
           ~device:(Hashtbl.find_opt s.devices)
       with
       | Ok p -> Hashtbl.replace s.objects id (Program p)
-      | Error why -> raise (Refused why))
+      | Error why -> raise (Refused why)
+      | exception Rig.Out_of_memory (d, n) -> raise (Refused (no_memory d n)))
   | Wire.Entry { image; name } -> (
       (* A program has one function, its run, which a run's words name by the
          program's id. *)
@@ -576,6 +589,9 @@ let rec apply s =
       | () -> apply s
       | exception (Refused why | Invalid_argument why) ->
           Link.fail s.job why;
+          apply s
+      | exception Rig.Out_of_memory (d, n) ->
+          Link.fail s.job (no_memory d n);
           apply s)
 
 (* Serves one job, reporting its end on [report]. *)
@@ -633,6 +649,11 @@ let run a kinds report =
       Rig.fail why);
   r
 
+(* CR: Check and set served in one critical section. Two domains can both read
+   false here and start apply loops on the same controller link, each with its
+   own object table. A copy handled by one then fails to find memory allocated
+   by the other. Claim the agent before taking its report or starting either
+   loop. *)
 let serve a kinds =
   let names = List.map fst kinds in
   if List.length (List.sort_uniq String.compare names) <> List.length names then

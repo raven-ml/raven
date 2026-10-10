@@ -293,6 +293,34 @@ let rail_end_to_end () =
   equal ~msg:"the word, here" string (le64 42) (read_host x);
   r.release ()
 
+(* A program whose memory the agent's device cannot hold is the load's [Error],
+   and the agent goes on: a program that fits loads after it. *)
+let too_large () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let ds = Array.of_list (polled h) in
+  let t = description (Array.map Rig.arch ds) in
+  let huge =
+    {
+      t with
+      memory =
+        [|
+          G.Alloc
+            {
+              device = 0;
+              kind = Rig.Buffer.Device;
+              bytes = 1 lsl 50;
+              init = { bytes = ""; holes = [||] };
+              copies = One;
+            };
+        |];
+    }
+  in
+  let why = require_error (G.load huge ds) in
+  contains ~msg:"names the memory" ~sub:"no memory" why;
+  is_ok ~pp:Format.pp_print_string ~msg:"a program that fits, after"
+    (G.load t ds)
+
 let () =
   Watchdog.start ();
   exit
@@ -305,6 +333,9 @@ let () =
            host_point;
          test ~timeout:60. "an agent refuses a binary that is no program"
            refused_binary;
+         test ~timeout:60.
+           "an agent answers a program its devices cannot hold, and goes on"
+           too_large;
          test ~timeout:60.
            "a program's host code sends a word on a rail, which a program \
             reads at its other end"
