@@ -80,12 +80,17 @@ let f32 = Nx.float32
 
 (* From OCaml values *)
 
+(* A float is stored as [Dtype.of_float] says: float8_e5m2's infinities,
+   which no store makes, saturate. *)
+let stored (type v s) (dt : (v, s) D.t) (v : v) : v =
+  match D.kind dt with D.Float -> D.of_float dt v | _ -> v
+
 let law_round_trip (Case (dt, s, vs)) =
   cover "no element" (Array.exists (( = ) 0) s);
   cover "rank 0" (s = [||]);
   let x = Nx.create dt s vs in
   equal (array int) s (Nx.shape x);
-  equal_elements dt vs (Nx.to_array x)
+  equal_elements dt (Array.map (stored dt) vs) (Nx.to_array x)
 
 (* [item i x] is the element of [to_array x] at [i]'s position in C order,
    written with positive or negative positions. *)
@@ -155,7 +160,7 @@ let name_of label = "Nx." ^ String.sub label 0 (String.index label ':')
 let ocaml =
   group "from OCaml values"
     [
-      prop "to_array (create dt s vs) is vs" case law_round_trip;
+      prop "to_array (create dt s vs) is vs as dt stores them" case law_round_trip;
       prop "item reads to_array's element at its index"
         (Gen.pair case (Gen.pair Gen.nat Gen.bool))
         law_item;
