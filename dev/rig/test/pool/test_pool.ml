@@ -119,6 +119,12 @@ let call_chunks ~total ~chunks (job : P.job) =
 
 (* Whether every call of [job] on [t] > 1 threads holds at most the run bound
    of its strip. *)
+(* CR: Also check call.hi against its starting strip's end in units.
+   With two threads and 32 one-unit chunks, [15,17) crosses strips yet
+   passes this length bound and the partition/order checks. Keep the
+   length bound, share containment with the stateful check, and report
+   the offending bounds. Seed (2,32L,32L) and (2,33L,33L) in job_examples
+   for even and uneven strips permitting multi-chunk calls. *)
 let runs_within ~t ~total ~chunks (job : P.job) =
   let c = chunk_count ~total ~chunks in
   let bounds = Array.of_list (chunk_bounds ~total ~chunks) in
