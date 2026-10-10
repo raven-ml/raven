@@ -8,6 +8,10 @@ module L = Nx_array.Layout
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
+(* The encoders check and write copies of their arrays, taken at entry,
+   which another domain cannot change between the check and the write: a C
+   kernel trusts every descriptor it reads. *)
+
 (* A descriptor is its family's struct of nx_spec.h: int32 fields in the host's
    byte order, its arrays as long as its counts say. *)
 type 'f t = string
@@ -115,6 +119,18 @@ let check_pad fn what (p : pad) =
       if x.size < 1 || x.step < 1 || x.dilation < 1 then
         invalid_argf "%s: %s's window %d is empty" fn what w)
     p.windows
+
+let copy_pad (p : pad) =
+  {
+    lo = Array.copy p.lo;
+    hi = Array.copy p.hi;
+    interior = Array.copy p.interior;
+    windows = Array.copy p.windows;
+  }
+
+let copy_load = function
+  | Plain -> Plain
+  | Padded { fill; pad } -> Padded { fill; pad = copy_pad pad }
 
 let record_bytes (p : pad) =
   at_geometry + (8 * 3 * Array.length p.lo) + (8 * 4 * Array.length p.windows)
@@ -275,6 +291,7 @@ let loop fn family p ~loads ~axes ~reductions =
   Bytes.unsafe_to_string b
 
 let map p ~loads =
+  let loads = Array.map copy_load loads in
   loop "Nx_kernel.Spec.map" family_map p ~loads ~axes:[||] ~reductions:[||]
 
 let check_axes fn axes =
@@ -306,11 +323,14 @@ let check_reductions fn p ~loads ~axes rs =
 
 let reduce p ~loads ~axes rs =
   let fn = "Nx_kernel.Spec.reduce" in
+  let loads = Array.map copy_load loads in
+  let axes = Array.copy axes and rs = Array.copy rs in
   check_reductions fn p ~loads ~axes rs;
   loop fn family_reduce p ~loads ~axes ~reductions:rs
 
 let scan p ~loads ~axis ((r, _, _) as s) =
   let fn = "Nx_kernel.Spec.scan" in
+  let loads = Array.map copy_load loads in
   if r = Moments then invalid_argf "%s: a scan of Moments" fn;
   check_reductions fn p ~loads ~axes:[| axis |] [| s |];
   loop fn family_scan p ~loads ~axes:[| axis |] ~reductions:[| s |]
@@ -337,6 +357,7 @@ let transform_code = function
 
 let fft t ~axes =
   let fn = "Nx_kernel.Spec.fft" in
+  let axes = Array.copy axes in
   if axes = [||] then invalid_argf "%s: no axis" fn;
   check_axes fn axes;
   let n = match t with C2r { n } -> n | C2c _ | R2c -> 0 in
@@ -452,13 +473,9 @@ let narrow_acc (D.Any dt) =
       true
   | _ -> false
 
-(* CR: Validate and encode each pair from a single read. Another domain can
-   replace contracting.(0) with (-1, 0) between these passes; the returned
-   descriptor reaches Contract_view.fill's C shift before its rank check.
-   One pass preserves the checked-descriptor invariant without copying.
-   Prog.v has the same check-then-reread pattern over its caller arrays. *)
 let contract ~batch ~contracting ~acc ~out ~init =
   let fn = "Nx_kernel.Spec.contract" in
+  let batch = Array.copy batch and contracting = Array.copy contracting in
   if narrow_acc acc then begin
     let (D.Any dt) = acc in
     invalid_argf "%s: an accumulator of %a" fn D.pp dt
@@ -716,9 +733,6 @@ let check_shape fn shape =
   if Array.exists (fun d -> d < 0) shape then
     invalid_argf "%s: a negative extent" fn
 
-(* The encoders check and write copies of their arrays, which another
-   domain cannot change between the check and the write. *)
-
 let assemble ~shape ~fill regions =
   let fn = "Nx_kernel.Spec.assemble" in
   let shape = Array.copy shape and regions = Array.map Array.copy regions in
@@ -736,15 +750,7 @@ let assemble ~shape ~fill regions =
 
 let fold ~shape (p : pad) =
   let fn = "Nx_kernel.Spec.fold" in
-  let shape = Array.copy shape in
-  let p =
-    {
-      lo = Array.copy p.lo;
-      hi = Array.copy p.hi;
-      interior = Array.copy p.interior;
-      windows = Array.copy p.windows;
-    }
-  in
+  let shape = Array.copy shape and p = copy_pad p in
   check_shape fn shape;
   check_pad fn "the pad" p;
   (match padded_shape "the result" p shape with

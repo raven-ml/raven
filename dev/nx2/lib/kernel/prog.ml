@@ -386,7 +386,11 @@ let encode ~ins nodes ~outs types =
   Array.iteri (fun k o -> set b (at_outs + (4 * k)) o) outs;
   Bytes.unsafe_to_string b
 
+(* v checks and encodes copies of its arrays, taken at entry, which another
+   domain cannot change between the check and the write. *)
 let v ~ins nodes ~outs =
+  let ins = Array.copy ins and nodes = Array.copy nodes in
+  let outs = Array.copy outs in
   let types = Array.make (Array.length nodes) (D.Any D.Bool) in
   match problem ~ins nodes ~outs types with
   | Some why -> invalid_arg ("Nx_kernel.Prog.v: " ^ why)
