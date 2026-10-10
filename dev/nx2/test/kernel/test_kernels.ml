@@ -1243,11 +1243,14 @@ let test_map_identical_view (b : Support.backend) () =
 
 exception Skip
 
-(* A program over the dtypes [ins], drawn node by node from [st]: each node
-   a kind whose operands' dtypes it takes, a few constants and coordinates
-   among them, every In first; its outputs the last node and, sometimes, an
-   earlier one. At most [room] operands, outputs and coordinate axes. *)
-let program st (ins : D.any array) ~room =
+(* A program over the dtypes [ins], drawn node by node from [st]: one to
+   [length] nodes past its In nodes, each a kind whose operands' dtypes it
+   takes, a few constants and coordinates among them, every In first; its
+   outputs the last node and, sometimes, an earlier one. At most [room]
+   operands, outputs and coordinate axes. Without [sub_byte_bitcasts], a
+   bitcast's operand is of a byte or more. *)
+let program ?(length = 6) ?(sub_byte_bitcasts = true) st (ins : D.any array)
+    ~room =
   let nins = Array.length ins in
   let nodes = ref (Array.to_list (Array.init nins (fun k -> P.In k))) in
   let tys = ref (Array.to_list ins) in
@@ -1279,7 +1282,8 @@ let program st (ins : D.any array) ~room =
         let i = any () in
         let (D.Any x) = ty i in
         let same = List.filter (fun (D.Any d) -> D.bits d = D.bits x) D.all in
-        P.Op1 (Bitcast, pick same, i)
+        if D.bits x < 8 && not sub_byte_bitcasts then P.Op1 (Copy, ty i, i)
+        else P.Op1 (Bitcast, pick same, i)
     | 4 | 5 ->
         let i = any () in
         P.Op1 (Unary (fst (pick unaries)), ty i, i)
@@ -1312,7 +1316,7 @@ let program st (ins : D.any array) ~room =
     | Op2 (_, i, j) -> [ i; j ]
     | Op3 (_, i, j, k) -> [ i; j; k ]
   in
-  for _ = 1 to 1 + Random.State.int st 6 do
+  for _ = 1 to 1 + Random.State.int st length do
     let rec attempt tries =
       let node = draw () in
       let dts = Array.of_list (List.map (List.nth !tys) (operands node)) in
@@ -1353,6 +1357,17 @@ let split (b : Support.backend) p (types : D.any array) shape (ops : A.any array
           let dst = on b (A.of_array D.Int64 shape (Array.make n 0L)) in
           if a < rank then run (K.apply0 (Iota (rank - 1 - a)) ~dst);
           A.Any dst
+      | Const (D.Any d, bits) when D.bits d < 8 ->
+          (* Fill declines sub-byte dtypes: every byte holds the code in
+             each of its elements. *)
+          let w = D.bits d and c = Char.code bits.[0] in
+          let byte = ref 0 in
+          for e = 0 to (8 / w) - 1 do
+            byte := !byte lor (c lsl (e * w))
+          done;
+          let n = Array.fold_left ( * ) 1 shape in
+          let data = String.make (max 1 (D.bytes d n)) (Char.chr !byte) in
+          A.Any (on b (A.v d (L.contiguous shape) (B.of_string data)))
       | Const (_, bits) ->
           let (A.Any dst) = fresh i in
           run (K.apply0 (Fill bits) ~dst);
@@ -1408,12 +1423,42 @@ let bitcasts_sub_byte p (types : D.any array) =
       | _ -> false)
     (List.init (P.length p) Fun.id)
 
+(* The most values [p] holds at once, as nx_cpu.mli counts them: each from
+   the node that computes it through the last node that reads it, or to the
+   end for an output. *)
+let held p =
+  let n = P.length p in
+  let last = Array.init n Fun.id in
+  let read i j = if last.(j) < i then last.(j) <- i in
+  for i = 0 to n - 1 do
+    match P.node p i with
+    | P.In _ | Coord _ | Const _ -> ()
+    | Op1 (_, _, j) -> read i j
+    | Op2 (_, j, k) ->
+        read i j;
+        read i k
+    | Op3 (_, j, k, l) ->
+        read i j;
+        read i k;
+        read i l
+  done;
+  Array.iter (fun o -> last.(o) <- n) (P.outs p);
+  let most = ref 0 in
+  for i = 0 to n - 1 do
+    let live = ref 0 in
+    for v = 0 to i do
+      if last.(v) >= i then incr live
+    done;
+    most := max !most !live
+  done;
+  !most
+
 (* A program's results are its nodes' results, each node run on its own,
    bit for bit: an intermediate holds its dtype's value exactly. With
    [declines], a map that declines a program [declines] does not accept
-   fails. *)
-let law_map_split ?declines ?(labels = true) (b : Support.backend)
-    (Pair (x, y), seed) =
+   fails. [length] bounds the program's nodes past its loads. *)
+let law_map_split ?declines ?(labels = true) ?length ?sub_byte_bitcasts
+    (b : Support.backend) (Pair (x, y), seed) =
   let module K = (val b.kernels) in
   let st = Random.State.make [| seed |] in
   let dt = D.Any (A.dtype x) and shape = L.shape (A.layout x) in
@@ -1423,7 +1468,7 @@ let law_map_split ?declines ?(labels = true) (b : Support.backend)
     else ([| dt |], [| A.Any x |])
   in
   (* nx.cpu's loop holds four operands: a program within them is one map. *)
-  let p, types = program st ins ~room:4 in
+  let p, types = program ?length ?sub_byte_bitcasts st ins ~room:4 in
   let s = Nx_kernel.Spec.map p ~loads:(Array.map (fun _ -> Nx_kernel.Spec.Plain) ins) in
   match split b p types shape ops with
   | exception Skip -> cover "a node declined" true
@@ -1453,6 +1498,8 @@ let law_map_split ?declines ?(labels = true) (b : Support.backend)
           cover "a where" (has (function P.Op3 (Where, _, _, _) -> true | _ -> false));
           cover "two outputs" (Array.length (P.outs p) = 2)
           end;
+          if length <> None then
+            cover "more than eight values held" (held p > 8);
           Array.iteri
             (fun k o ->
               let (A.Any want) = values.(o) in
@@ -1646,6 +1693,9 @@ let laws (b : Support.backend) =
         (unit (test_collect_during_call b));
     ]
 
+(* The values nx_cpu.mli says a map it computes holds at most at once. *)
+let most_held = 256
+
 (* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
    Nx_kernel.S. *)
 let cpu =
@@ -1655,6 +1705,15 @@ let cpu =
         (strf "%s computes every map its loop holds" b.name)
         (Gen.pair pairs Gen.int)
         (fun c -> b.around (fun () -> law_map_split ~declines:bitcasts_sub_byte b c));
+      prop ~count:100
+        (strf "%s computes every map its loop holds of up to %d held values"
+           b.name most_held)
+        (Gen.pair pairs Gen.int)
+        (fun c ->
+          b.around (fun () ->
+              law_map_split ~length:400 ~sub_byte_bitcasts:false ~labels:false
+                ~declines:(fun p _ -> held p > most_held)
+                b c));
       prop ~count:32
         (strf "%s computes maps over large views" b.name)
         (Gen.pair large_pairs Gen.int)

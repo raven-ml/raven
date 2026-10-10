@@ -16,9 +16,12 @@
     [apply1] to [apply3] compute every kind at every dtype of its domain. A
     [Copy] whose operand's dtype is not [dst]'s is refused with
     [Wrong_dtype]. [map] computes a program of plain loads whose outputs,
-    loads and coordinate axes number at most four, holding at most eight of
-    its values at once; it answers [Declined] for the others and for a
-    program that bitcasts a sub-byte dtype.
+    loads and coordinate axes number at most [NX_MAX_OPERANDS] of
+    [nx_array.h], and whose nodes, evaluated in the program's order, hold at
+    most 256 values at once, a value held from the node that computes it
+    through the last node that reads it, or to the end for an output; it
+    answers [Declined] for the others and for a program that bitcasts a
+    sub-byte dtype.
 
     [contract] computes contractions in [float32] or [float64] whose [out] is
     their [acc], whose [a], [b] and [init] each convert exactly into [acc],
