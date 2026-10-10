@@ -701,6 +701,147 @@ val sign : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sign x] is [-1], [0] or [1] by [x]'s sign, and NaN for a NaN. Floats and
     integers. *)
 
+(** {2:scalars Scalar forms}
+
+    [f_s x c] is [f x (scalar (dtype x) c)] and [rf_s c x] is
+    [f (scalar (dtype x) c) x]: the constant takes [x]'s dtype, a float
+    stored as {!Dtype.of_float} says. Each raises as its function does, naming
+    itself, and [Invalid_argument] if [c] is an [int] outside [x]'s dtype's
+    range. *)
+
+val add_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [add_s x c] is [add x c]. *)
+
+val sub_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [sub_s x c] is [sub x c]. *)
+
+val mul_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [mul_s x c] is [mul x c]. *)
+
+val div_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [div_s x c] is [div x c]. *)
+
+val pow_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [pow_s x c] is [pow x c]. *)
+
+val mod_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [mod_s x c] is [mod_ x c]. *)
+
+val maximum_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [maximum_s x c] is [maximum x c]. *)
+
+val minimum_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [minimum_s x c] is [minimum x c]. *)
+
+val rsub_s : 'v -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [rsub_s c x] is [sub c x]. *)
+
+val rdiv_s : 'v -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [rdiv_s c x] is [div c x]. *)
+
+val rpow_s : 'v -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [rpow_s c x] is [pow c x]. *)
+
+val equal_s : ('v, 's, 'd) t -> 'v -> 'd bool_t
+(** [equal_s x c] is [equal x c]. *)
+
+val not_equal_s : ('v, 's, 'd) t -> 'v -> 'd bool_t
+(** [not_equal_s x c] is [not_equal x c]. *)
+
+val less_s : ('v, 's, 'd) t -> 'v -> 'd bool_t
+(** [less_s x c] is [less x c]. *)
+
+val less_equal_s : ('v, 's, 'd) t -> 'v -> 'd bool_t
+(** [less_equal_s x c] is [less_equal x c]. *)
+
+val greater_s : ('v, 's, 'd) t -> 'v -> 'd bool_t
+(** [greater_s x c] is [greater x c]. *)
+
+val greater_equal_s : ('v, 's, 'd) t -> 'v -> 'd bool_t
+(** [greater_equal_s x c] is [greater_equal x c]. *)
+
+(** {2:operators Operators}
+
+    The arithmetic operators, for a local open: [Nx.(sin x * x +$ 1.)].
+    Comparisons and logical operators live in {!Infix}, so that [Nx.( … )]
+    keeps OCaml's own. *)
+
+val ( + ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a + b] is [add a b]. *)
+
+val ( - ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a - b] is [sub a b]. *)
+
+val ( * ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a * b] is [mul a b]. *)
+
+val ( / ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a / b] is [div a b]. *)
+
+val ( ** ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a ** b] is [pow a b]. *)
+
+val ( ~- ) : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [-x] is [neg x]. *)
+
+val ( +$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [x +$ c] is [add_s x c]. *)
+
+val ( -$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [x -$ c] is [sub_s x c]. *)
+
+val ( *$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [x *$ c] is [mul_s x c]. *)
+
+val ( /$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [x /$ c] is [div_s x c]. *)
+
+(** Comparisons and logical operators, for [open Nx.Infix]. *)
+module Infix : sig
+  val ( = ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+  (** [a = b] is [equal a b]. *)
+
+  val ( <> ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+  (** [a <> b] is [not_equal a b]. *)
+
+  val ( < ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+  (** [a < b] is [less a b]. *)
+
+  val ( <= ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+  (** [a <= b] is [less_equal a b]. *)
+
+  val ( > ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+  (** [a > b] is [greater a b]. *)
+
+  val ( >= ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+  (** [a >= b] is [greater_equal a b]. *)
+
+  val ( =$ ) : ('v, 's, 'd) t -> 'v -> 'd bool_t
+  (** [x =$ c] is [equal_s x c]. *)
+
+  val ( <>$ ) : ('v, 's, 'd) t -> 'v -> 'd bool_t
+  (** [x <>$ c] is [not_equal_s x c]. *)
+
+  val ( <$ ) : ('v, 's, 'd) t -> 'v -> 'd bool_t
+  (** [x <$ c] is [less_s x c]. *)
+
+  val ( <=$ ) : ('v, 's, 'd) t -> 'v -> 'd bool_t
+  (** [x <=$ c] is [less_equal_s x c]. *)
+
+  val ( >$ ) : ('v, 's, 'd) t -> 'v -> 'd bool_t
+  (** [x >$ c] is [greater_s x c]. *)
+
+  val ( >=$ ) : ('v, 's, 'd) t -> 'v -> 'd bool_t
+  (** [x >=$ c] is [greater_equal_s x c]. *)
+
+  val ( && ) : 'd bool_t -> 'd bool_t -> 'd bool_t
+  (** [a && b] is [logical_and a b]. Both operands are computed: it is no
+      short circuit. *)
+
+  val ( || ) : 'd bool_t -> 'd bool_t -> 'd bool_t
+  (** [a || b] is [logical_or a b], as [( && )]. *)
+end
+
 (** {2:transcendental Powers, exponentials and trigonometry}
 
     Floats only. *)

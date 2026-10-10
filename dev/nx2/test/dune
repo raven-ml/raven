@@ -20,7 +20,8 @@
   test_data
   test_creation
   test_logic
-  test_math)
+  test_math
+  test_operators)
  (modules
   test_devices
   test_values
@@ -38,7 +39,8 @@
   test_data
   test_creation
   test_logic
-  test_math)
+  test_math
+  test_operators)
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))
 
 (copy_files

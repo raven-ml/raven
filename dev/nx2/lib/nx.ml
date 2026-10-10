@@ -419,11 +419,10 @@ let mul a b = binary ~by:"Nx.mul" (Binary Mul) a b
 
 (* Integers divide by [Idiv]; floats and complex numbers by [Fdiv], whose
    refusal names booleans. *)
-let div (type v s d) (a : (v, s, d) t) (b : (v, s, d) t) =
-  let k =
-    match D.kind (dtype a) with D.Signed | D.Unsigned -> P.Idiv | _ -> Fdiv
-  in
-  binary ~by:"Nx.div" (Binary k) a b
+let quotient (type v s) (dt : (v, s) D.t) : P.binary =
+  match D.kind dt with D.Signed | D.Unsigned -> Idiv | _ -> Fdiv
+
+let div a b = binary ~by:"Nx.div" (Binary (quotient (dtype a))) a b
 
 let mod_ a b = binary ~by:"Nx.mod_" (Binary Mod) a b
 let pow a b = binary ~by:"Nx.pow" (Binary Pow) a b
@@ -446,6 +445,33 @@ let less a b = comparison ~by:"Nx.less" Less a b
 let less_equal a b = comparison ~by:"Nx.less_equal" Less_equal a b
 let greater a b = comparison ~by:"Nx.greater" Less b a
 let greater_equal a b = comparison ~by:"Nx.greater_equal" Less_equal b a
+
+(* Scalar forms: the constant [c] of [x]'s dtype, of every set, beside [x]. *)
+
+let constant ~by x c = fill ~by (dtype x) [||] c
+let scalar_binary ~by k x c = binary ~by k x (constant ~by x c)
+let add_s x c = scalar_binary ~by:"Nx.add_s" (Binary Add) x c
+let sub_s x c = scalar_binary ~by:"Nx.sub_s" (Binary Sub) x c
+let mul_s x c = scalar_binary ~by:"Nx.mul_s" (Binary Mul) x c
+let div_s x c = scalar_binary ~by:"Nx.div_s" (Binary (quotient (dtype x))) x c
+let pow_s x c = scalar_binary ~by:"Nx.pow_s" (Binary Pow) x c
+let mod_s x c = scalar_binary ~by:"Nx.mod_s" (Binary Mod) x c
+let maximum_s x c = scalar_binary ~by:"Nx.maximum_s" (Binary Maximum) x c
+let minimum_s x c = scalar_binary ~by:"Nx.minimum_s" (Binary Minimum) x c
+
+let reversed ~by k c x = binary ~by k (constant ~by x c) x
+let rsub_s c x = reversed ~by:"Nx.rsub_s" (Binary Sub) c x
+let rdiv_s c x = reversed ~by:"Nx.rdiv_s" (Binary (quotient (dtype x))) c x
+let rpow_s c x = reversed ~by:"Nx.rpow_s" (Binary Pow) c x
+
+let compared ~by k x c = comparison ~by k x (constant ~by x c)
+let compared_by ~by k c x = comparison ~by k (constant ~by x c) x
+let equal_s x c = compared ~by:"Nx.equal_s" Equal x c
+let not_equal_s x c = compared ~by:"Nx.not_equal_s" Not_equal x c
+let less_s x c = compared ~by:"Nx.less_s" Less x c
+let less_equal_s x c = compared ~by:"Nx.less_equal_s" Less_equal x c
+let greater_s x c = compared_by ~by:"Nx.greater_s" Less c x
+let greater_equal_s x c = compared_by ~by:"Nx.greater_equal_s" Less_equal c x
 
 let ternary ~by k c x y =
   if same_shape c x && same_shape x y then Eval.apply3 ~by k c x y
@@ -1548,8 +1574,11 @@ let elementwise ~by dt xs body =
 let not_zero b dt x = node b (Op2 (Compare Not_equal, x, const b dt (D.zero dt)))
 
 (* One where [k] of the operands' truths holds, zero elsewhere. *)
-let logical ~by k a b' =
+let logical (type v s d) ~by k (a : (v, s, d) t) (b' : (v, s, d) t) =
   let dt = dtype a in
+  match dt with
+  | D.Bool -> binary ~by (Binary k) a b'
+  | _ ->
   elementwise ~by dt [ Any a; Any b' ] (fun b ins ->
       let t = node b (Op2 (Binary k, not_zero b dt ins.(0), not_zero b dt ins.(1))) in
       node b (Op3 (Where, t, const b dt (D.one dt), const b dt (D.zero dt))))
@@ -1934,3 +1963,33 @@ module Prim = struct
   let eval = Eval.eval
   let expand = Eval.expand
 end
+
+(* Operators *)
+
+module Infix = struct
+  let ( = ) a b = equal a b
+  let ( <> ) a b = not_equal a b
+  let ( < ) a b = less a b
+  let ( <= ) a b = less_equal a b
+  let ( > ) a b = greater a b
+  let ( >= ) a b = greater_equal a b
+  let ( =$ ) x c = equal_s x c
+  let ( <>$ ) x c = not_equal_s x c
+  let ( <$ ) x c = less_s x c
+  let ( <=$ ) x c = less_equal_s x c
+  let ( >$ ) x c = greater_s x c
+  let ( >=$ ) x c = greater_equal_s x c
+  let ( && ) a b = logical_and a b
+  let ( || ) a b = logical_or a b
+end
+
+let ( + ) a b = add a b
+let ( - ) a b = sub a b
+let ( * ) a b = mul a b
+let ( / ) a b = div a b
+let ( ** ) a b = pow a b
+let ( ~- ) x = neg x
+let ( +$ ) x c = add_s x c
+let ( -$ ) x c = sub_s x c
+let ( *$ ) x c = mul_s x c
+let ( /$ ) x c = div_s x c
