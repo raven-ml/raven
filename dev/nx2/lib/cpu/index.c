@@ -278,6 +278,10 @@ static inline double add_f64(double a, double b) {
 #define SET(a, b) (b)
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
 #define MIN(a, b) ((b) < (a) ? (b) : (a))
+/* A boolean is true where its byte is not zero; its extremes are Or and
+   And of truths, stored as 0 or 1. */
+#define OR_B(a, b) ((uint8_t)(((a) | (b)) != 0))
+#define AND_B(a, b) ((uint8_t)((a) != 0 && (b) != 0))
 #define ADD_U8(a, b) ((uint8_t)((a) + (b)))
 #define ADD_U16(a, b) ((uint16_t)((a) + (b)))
 #define ADD_U32(a, b) ((uint32_t)((a) + (b)))
@@ -314,6 +318,8 @@ SCATTER_RUN(max_i64, int64_t, MAX)
 SCATTER_RUN(min_i64, int64_t, MIN)
 SCATTER_RUN(max_u64, uint64_t, MAX)
 SCATTER_RUN(min_u64, uint64_t, MIN)
+SCATTER_RUN(max_b, uint8_t, OR_B)
+SCATTER_RUN(min_b, uint8_t, AND_B)
 
 /* Elements one at a time: sub-byte dtypes, narrow floats and complex
    numbers. */
@@ -492,8 +498,8 @@ static scatter_run run_of(int combine, int dt) {
     case NX_FLOAT32: PICK(add_f32_run, max_f32, min_f32);
     case NX_FLOAT64: PICK(add_f64_run, max_f64, min_f64);
     case NX_INT8: PICK(add_8, max_i8, min_i8);
-    case NX_UINT8:
-    case NX_BOOL: PICK(add_8, max_u8, min_u8);
+    case NX_UINT8: PICK(add_8, max_u8, min_u8);
+    case NX_BOOL: PICK(add_8, max_b, min_b);
     case NX_INT16: PICK(add_16, max_i16, min_i16);
     case NX_UINT16: PICK(add_16, max_u16, min_u16);
     case NX_INT32: PICK(add_32, max_i32, min_i32);

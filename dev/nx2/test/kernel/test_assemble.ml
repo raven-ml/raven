@@ -110,7 +110,10 @@ let case_gen ?(dtypes = D.all) () =
         operand d (M.shape (Slice r) shape) views.(j) (fun _ -> element d rs))
       regions
   in
-  { dtype = d; shape; fill = element d rs; regions; pieces; form }
+  (* A fill is an element's canonical bits: a boolean's 0 or 1. *)
+  let fill = element d rs in
+  let fill = if d = D.Any D.Bool && fill <> "\000" then "\001" else fill in
+  { dtype = d; shape; fill; regions; pieces; form }
 
 let assemble_on (b : Support.backend) ?(in_place = false) c =
   let module K = (val b.kernels) in
@@ -194,6 +197,19 @@ let test_refusals (b : Support.backend) () =
 
 let cases = Gen.with_pp pp_case (case_gen ())
 
+(* A fill alone, which drawn cases reach rarely. *)
+let examples =
+  [
+    {
+      dtype = D.Any D.Float32;
+      shape = [| 2; 3 |];
+      fill = f32 1.5;
+      regions = [||];
+      pieces = [||];
+      form = "slices";
+    };
+  ]
+
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
@@ -206,7 +222,8 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop "the last piece holding an element wins, the fill elsewhere" cases
+      prop ~examples
+        "the last piece holding an element wins, the fill elsewhere" cases
         (run (law_reference b));
       test "refuses fills and shapes that do not fit" (fun () ->
           b.around (test_refusals b));

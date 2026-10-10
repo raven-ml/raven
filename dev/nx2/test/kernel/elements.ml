@@ -107,7 +107,9 @@ let element (D.Any dt) r =
   | D.Float64 -> float64 ()
   | D.Complex64 -> float32 () ^ float32 ()
   | D.Complex128 -> float64 () ^ float64 ()
-  | D.Bool | D.Bit -> String.make 1 (Char.chr (Random.State.int r 2))
+  | D.Bit -> String.make 1 (Char.chr (Random.State.int r 2))
+  (* A boolean is true where its byte is not zero: any byte. *)
+  | D.Bool -> String.make 1 (Char.chr [| 0; 1; 2; 255 |].(Random.State.int r 4))
   | _ when D.bits dt = 4 -> String.make 1 (Char.chr (Random.State.int r 16))
   | _ ->
       let w = D.bits dt / 8 in
@@ -328,5 +330,6 @@ let compare_elements (D.Any dt as d) a b =
     in
     let x = get a and y = get b in
     nans (Float.is_nan x) (Float.is_nan y) (fun () -> compare_floats x y)
+  else if D.is D.Boolean dt then compare (a <> "\000") (b <> "\000")
   else if D.is D.Signed dt then Int64.compare (int_value d a) (int_value d b)
   else Int64.unsigned_compare (int_value d a) (int_value d b)

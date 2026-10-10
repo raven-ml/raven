@@ -102,7 +102,8 @@ static uint64_t key_of(const sorter *s, const uint8_t *p, uint64_t *hi) {
       *hi = key64(c[0]);
       return key64(c[1]);
     }
-    default: return *p; /* uint8, bool */
+    case NX_BOOL: return *p != 0; /* a boolean is true where not zero */
+    default: return *p; /* uint8 */
   }
 }
 

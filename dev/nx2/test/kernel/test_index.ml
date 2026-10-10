@@ -246,6 +246,12 @@ let combined (D.Any dt as d) combine x us =
                (List.fold_left
                   (fun s u -> Int64.add s (int_value d u))
                   (int_value d x) us))
+      | (Max | Min) when D.is D.Boolean dt ->
+          (* Or and And of truths, stored as 0 or 1. *)
+          let op = if combine = S.Max then ( || ) else ( && ) in
+          let truth e = e <> "\000" in
+          let r = List.fold_left (fun t u -> op t (truth u)) (truth x) us in
+          Bits (if r then "\001" else "\000")
       | Max | Min ->
           let pick a b =
             let keep =
@@ -446,9 +452,84 @@ let test_float16_sum (b : Support.backend) () =
   | A.Done -> equal (array float_exact) [| 4096. |] (A.to_array dst)
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
+(* A boolean is true where its byte is not zero: Max and Min of bytes 2,
+   255 and 1 are Or and And of truths, stored as 0 or 1. *)
+let test_bool_extremes (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let bools s =
+    A.v D.Bool (L.contiguous [| 3 |]) (Rig.Buffer.of_string s)
+  in
+  let idx = A.of_array D.Int64 [| 3 |] [| 0L; 1L; 2L |] in
+  let run c =
+    let dst = A.create Rig.host D.Bool [| 3 |] in
+    match
+      K.scatter (S.scatter c ~unique:false ~axis:0) ~dst
+        ~into:(bools "\002\000\255") idx (bools "\001\002\000")
+    with
+    | A.Done -> elements (A.Any dst)
+    | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+  in
+  equal ~msg:"Max" (array string) [| "\001"; "\001"; "\001" |] (run S.Max);
+  equal ~msg:"Min" (array string) [| "\001"; "\000"; "\000" |] (run S.Min)
+
 let large_shapes =
   Gen.of_list
     [ [| 300_000 |]; [| 600; 500 |]; [| 3; 100_000 |]; [| 100_000; 3 |] ]
+
+(* Constructed cases, one per covered regime, so that every seed reaches
+   each: positions in order from [ps], elements drawn from seed 1. *)
+
+let positions_of ps =
+  let k = ref 0 in
+  fun () ->
+    let p = ps.(!k mod Array.length ps) in
+    incr k;
+    p
+
+let gather_example d ~xs ~axis ~n ?(broadcast = []) ps =
+  let r = Array.length xs in
+  let rs = Random.State.make [| 1 |] in
+  let is = Array.mapi (fun i e -> if i = axis then n else e) xs in
+  let iv = { (plain r) with broadcast } in
+  {
+    axis;
+    idx = int64s is iv (positions_of ps);
+    x = operand d xs (plain r) (fun _ -> element d rs);
+    gviews = List.map (( ^ ) "idx ") (view_names iv);
+  }
+
+let scatter_example d combine ~ts ~axis ~m ps =
+  let r = Array.length ts in
+  let rs = Random.State.make [| 1 |] in
+  let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
+  {
+    combine;
+    saxis = axis;
+    into = operand d ts (plain r) (fun _ -> element d rs);
+    sidx = int64s us (plain r) (positions_of ps);
+    updates = operand d us (plain r) (fun _ -> element d rs);
+    sviews = [];
+  }
+
+let gather_examples =
+  [
+    (* Positions outside the axis, from below and above. *)
+    gather_example (D.Any D.Float32) ~xs:[| 3; 4 |] ~axis:1 ~n:5
+      [| 0L; -1L; 4L; Int64.max_int; 3L |];
+    (* A row take: positions broadcast along the rows. *)
+    gather_example (D.Any D.Int16) ~xs:[| 5; 3 |] ~axis:0 ~n:4 ~broadcast:[ 1 ]
+      [| 4L; 0L; 2L; 4L |];
+  ]
+
+let scatter_examples =
+  [
+    (* Shared targets and dropped updates. *)
+    scatter_example (D.Any D.Float32) S.Add ~ts:[| 4 |] ~axis:0 ~m:8
+      [| 0L; 1L; 0L; -1L; 4L; 1L; 1L; Int64.max_int |];
+    (* A narrow float's sum. *)
+    scatter_example (D.Any D.Float16) S.Add ~ts:[| 3 |] ~axis:0 ~m:6
+      [| 0L; 0L; 2L; 5L; 0L; 1L |];
+  ]
 
 let gathers = Gen.with_pp pp_gather (gather_gen ())
 let large_gathers = Gen.with_pp pp_gather (gather_gen ~shapes:large_shapes ())
@@ -484,9 +565,11 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop "a gather reads each position, zero outside the axis" gathers
+      prop ~examples:gather_examples
+        "a gather reads each position, zero outside the axis" gathers
         (run (law_gather_reference b));
-      prop "a scatter combines each target's updates in C order" scatters
+      prop ~examples:scatter_examples
+        "a scatter combines each target's updates in C order" scatters
         (run (law_scatter_reference b));
       prop ~count:10 "large gathers on the job's threads" large_gathers
         (run (gather_agrees b));
@@ -495,6 +578,8 @@ let cpu (b : Support.backend) =
       prop ~count:10 "long scatters split their targets among threads"
         long_scatters
         (run (scatter_agrees b));
+      test "boolean extremes are of truths" (fun () ->
+          b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->
           b.around (test_float16_sum b));
       test "refuses shapes that do not fit and an Add of booleans" (fun () ->
