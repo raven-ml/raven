@@ -847,8 +847,9 @@ module Rng : sig
 
   val bernoulli :
     ?key:'d key -> (float, 's, 'd) t -> 'd bool_t
-  (** [bernoulli p] is [true] with probability [p], elementwise: a uniform draw
-      below [p].
+  (** [bernoulli p] is [true] with probability [p] rounded up to a multiple of
+      [2{^-53}], elementwise: 53 random bits, read as an integer, below
+      [p 2{^53}].
 
       Raises [Invalid_argument] if an element of [p] is outside [[0, 1]]. *)
 

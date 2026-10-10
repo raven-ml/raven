@@ -410,6 +410,53 @@ let distributions =
       test "randint refuses a bound outside int32" (fun () ->
           equal string "Nx.Rng.randint: [0, 4294967296) does not fit in int32"
             (message (fun () -> Rng.randint ~high:0x1_0000_0000 [| 1 |])));
+      (* A bernoulli draw is a 53-bit uniform draw below p, at every float
+         dtype: element j is true where block j's 53 bits, as an integer, are
+         below p 2^53 rounded up, so a float32 p of 1e-9 fires at 1e-9, not at
+         float32's grid of 2^-24. *)
+      cases
+        ~name:(fun (n, _) -> "bernoulli at " ^ n ^ " is a 53-bit draw below p")
+        "bernoulli by blocks"
+        [
+          ( "float32",
+            fun ps ->
+              read
+                (Rng.bernoulli ~key:(Rng.key 16)
+                   (host_of Nx.float32 [| Array.length ps |] ps)) );
+          ( "float64",
+            fun ps ->
+              read
+                (Rng.bernoulli ~key:(Rng.key 16)
+                   (host_of Nx.float64 [| Array.length ps |] ps)) );
+          ( "bfloat16",
+            fun ps ->
+              read
+                (Rng.bernoulli ~key:(Rng.key 16)
+                   (host_of Nx.bfloat16 [| Array.length ps |] ps)) );
+        ]
+        (fun (_, draw) ->
+          let n = 4096 in
+          (* Probabilities every format holds, among them near-zero ones a
+             24-bit draw cannot resolve. *)
+          let ps =
+            Array.init n (fun i ->
+                match i mod 4 with
+                | 0 -> Float.ldexp 1. (-30 - (i mod 20))
+                | 1 -> Float.ldexp (Float.of_int (i mod 255)) (-8)
+                | 2 -> 0.5
+                | _ -> 1.)
+          in
+          let ws = words (Rng.split_batch ~n (Rng.key 16)) in
+          let want =
+            Array.init n (fun j ->
+                let top = Int64.logand (u32 ws.(2 * j)) 0x1F_FFFFL in
+                let m =
+                  Int64.logor (Int64.shift_left top 32) (u32 ws.((2 * j) + 1))
+                in
+                let t = Int64.of_float (Float.ceil (Float.ldexp ps.(j) 53)) in
+                Int64.compare m t < 0)
+          in
+          equal (array bool) want (draw ps));
       test "bernoulli: true at rate p" (fun () ->
           let p =
             Nx.Repr.of_array Nx.Host.v

@@ -107,12 +107,17 @@ let rounded (type s) b (dt : (float, s) D.t) (D.Any c) x =
    [c]: at float32, [p] of 24 or fewer, the low [p] bits of a word scaled by
    2^-p; at float64, [p] of 53, one block's 21 + 32 bits scaled by 2^-53. Both
    are exact, so a draw is a multiple of 2^-p below 1. *)
+(* 53 random bits at position [pos], a uint64 node below 2^53: the low word's
+   low 21 bits over the high word, of one block. *)
+let bits53 b ~key pos =
+  let t = block b ~key pos and w = u64 b two32 in
+  let top = bin b And (bin b Mod t w) (u64 b 0x1F_FFFFL) in
+  bin b Add (bin b Mul top w) (bin b Idiv t w)
+
 let unit b ~key ~p (D.Any c) pos =
   match c with
   | D.Float64 ->
-      let t = block b ~key pos and w = u64 b two32 in
-      let top = bin b And (bin b Mod t w) (u64 b 0x1F_FFFFL) in
-      let m = bin b Add (bin b Mul top w) (bin b Idiv t w) in
+      let m = bits53 b ~key pos in
       bin b Mul (into b D.Float64 m) (const b D.Float64 (Float.ldexp 1. (-53)))
   | _ ->
       let mask = u64 b (Int64.of_int ((1 lsl p) - 1)) in
@@ -426,6 +431,7 @@ type f = {
   sqrt : int -> int;
   abs : int -> int;
   floor : int -> int;
+  ceil : int -> int;
   min : int -> int -> int;
   max : int -> int -> int;
   lt : int -> int -> int;
@@ -448,6 +454,7 @@ let floats b (D.Any cd) =
     sqrt = u Sqrt;
     abs = u Abs;
     floor = u Floor;
+    ceil = u Ceil;
     min = o Minimum;
     max = o Maximum;
     lt = cmp b Less;
@@ -536,7 +543,12 @@ let bernoulli ?key p =
   let c = compute (Prim.dtype p) in
   draw ~by ~params:[| Value.Any p |] (resolve key) D.Bool (Prim.shape p)
     (fun b ~key ~j ins ->
-      cmp b Less (unit b ~key ~p:(precision_of c) c j) (param b c p ins.(0)))
+      (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw
+         is 53 bits below it, rounded up, at every dtype. *)
+      let f = floats b c in
+      let scaled = f.mul (param b c p ins.(0)) (f.lit (Float.ldexp 1. 53)) in
+      let t = into b D.Uint64 (f.ceil scaled) in
+      cmp b Less (bits53 b ~key j) t)
 
 (* Gamma *)
 
