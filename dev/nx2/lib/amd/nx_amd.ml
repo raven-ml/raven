@@ -30,11 +30,13 @@ type workspace = { buffer : Rig.Buffer.t; bytes : int }
 
 let kept = 64 * 1024 * 1024
 
+(* What this library keeps for a device: [queue] runs launches, and [subs]
+   holds the submissions by {!Plan.sequence}, made on first use. *)
 type device = {
   image : Rig.Image.t;
-  queue : string;  (** The queue that runs launches. *)
+  queue : string;
   workspace : workspace Atomic.t;
-  subs : Sub.t option array;  (** By {!Plan.sequence}, made on first use. *)
+  subs : Sub.t option array;
 }
 
 (* Every device asked about and what this library keeps for it, [None] where it
@@ -204,12 +206,12 @@ let bind f ~dst ops ws =
   if Plan.writes f.plan = 2 then f.writes.(1) <- ws;
   f.written.(0) <- dst
 
+(* The door's work: [f.sub], which the call stored before it entered the
+   door. *)
 let issue f =
-  match f.sub with
-  | None -> ()
-  | Some s ->
-      ignore
-        (Rig.submit s ~run:f.run ~reads:f.reads ~writes:f.writes ~waits:[||])
+  ignore
+    (Rig.submit (Option.get f.sub) ~run:f.run ~reads:f.reads ~writes:f.writes
+       ~waits:[||])
 
 let nothing () = ()
 let dead (A.Any x) = Option.is_some (Rig.Buffer.dead (A.buffer x))

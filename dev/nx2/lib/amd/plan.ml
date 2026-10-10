@@ -105,21 +105,25 @@ let ceil_div a b = (a + b - 1) / b
 (* An operand a or b as the contraction kernel reads it, and, when packed, as it
    is: the pack copies it into the workspace. *)
 type operand = {
-  mutable dtype : D.any;  (** As the kernel's parameters name it. *)
+  (* As the kernel reads it: its dtype, as the kernel's parameters name it; its
+     first element, bytes into its slot or into the workspace once packed;
+     [first] as the device addresses it, for alignment, the workspace offset
+     once packed, the workspace being 256-byte aligned; and its strides along
+     batch, its row or column, and k. *)
+  mutable dtype : D.any;
   mutable first : int;
-      (** Its first element: bytes into its slot, or into the workspace once
-          packed. *)
   mutable address : int;
-      (** [first] as the device addresses it, for alignment: the workspace
-          offset once packed, the workspace being 256-byte aligned. *)
-  s : int array;  (** Strides along batch, its row or column, and k. *)
+  s : int array;
+  (* As it is, once packed: its dtype, the dtype its pack writes, its first
+     element (bytes into its slot) and strides; its rows, and the elements a
+     packed row. *)
   mutable packed : bool;
-  mutable own : D.any;  (** Its own dtype. *)
-  mutable into : D.any;  (** The dtype its pack writes. *)
-  mutable src : int;  (** Its own first element, bytes into its slot. *)
-  ps : int array;  (** Its own strides. *)
+  mutable own : D.any;
+  mutable into : D.any;
+  mutable src : int;
+  ps : int array;
   mutable rows : int;
-  mutable lead : int;  (** Elements a packed row. *)
+  mutable lead : int;
 }
 
 let operand () =
@@ -163,13 +167,14 @@ type t = {
   mutable values : int;
   mutable sum_bytes : int;
   mutable aligned : int;
-  (* The workspace: its bytes taken, and the split sum's pieces. *)
+  (* The workspace: its bytes taken, and the split sum's pieces: its partials,
+     its tickets, and its output tiles, a ticket each. *)
   mutable used : int;
   mutable partials : int;
   mutable tickets : int;
-  mutable count : int;  (** Tickets. *)
+  mutable tiles : int;
+  (* Two tiles' costs while choosing one: floats unboxed. *)
   costs : Float.Array.t;
-      (** Two tiles' costs while choosing one: floats unboxed. *)
 }
 
 let make () =
@@ -199,7 +204,7 @@ let make () =
     used = 0;
     partials = 0;
     tickets = 0;
-    count = 0;
+    tiles = 0;
     costs = Float.Array.make 2 0.;
   }
 
@@ -349,7 +354,7 @@ let plan_wmma c kind t =
   end
 
 (* Whether [d] is the dtype the SIMT and skinny kernels of [sum] read. *)
-let own (sum : K.acc) d =
+let reads_own (sum : K.acc) d =
   match sum with
   | F32 -> same d f32
   | F64 -> same d f64
@@ -361,8 +366,10 @@ let own_dtype : K.acc -> D.any = function F32 -> f32 | F64 -> f64 | I64 -> i64
    another is packed into it, exactly, with k contiguous. *)
 let pack_own c sum =
   let into = own_dtype sum in
-  let packs_a = own sum c.a.dtype || pack c c.a ~rows:c.m ~into in
-  let packs_b = packs_a && (own sum c.b.dtype || pack c c.b ~rows:c.n ~into) in
+  let packs_a = reads_own sum c.a.dtype || pack c c.a ~rows:c.m ~into in
+  let packs_b =
+    packs_a && (reads_own sum c.b.dtype || pack c c.b ~rows:c.n ~into)
+  in
   if packs_a && c.a.packed then c.a.dtype <- into;
   if packs_b && c.b.packed then c.b.dtype <- into;
   packs_b
@@ -495,10 +502,10 @@ let rules c =
             (* The split sum's partials and tickets, the tickets zeroed
                first. *)
             if c.splits > 1 then begin
-              c.count <- batch * c.blocks;
+              c.tiles <- batch * c.blocks;
               c.partials <-
-                take c (c.count * c.splits * c.values * c.threads * c.sum_bytes);
-              c.tickets <- take c (c.count * 4)
+                take c (c.tiles * c.splits * c.values * c.threads * c.sum_bytes);
+              c.tickets <- take c (c.tiles * 4)
             end;
             Launches
           end
@@ -571,22 +578,23 @@ let workspace c = if uses_workspace c then Int.max 1 c.used else 0
 let launches c =
   let y = reads c in
   let ws = y + 1 in
-  let ref at slot = { Rig.Submission.at; slot } in
+  let slot_ref at slot = { Rig.Submission.at; slot } in
   let pack slot =
     ( pack_kernel,
       K.Pack_params.size,
-      [| ref K.Pack_params.src slot; ref K.Pack_params.dst ws |] )
+      [| slot_ref K.Pack_params.src slot; slot_ref K.Pack_params.dst ws |] )
   in
   let module P = K.Contract_params in
   let split = c.splits > 1 in
   let refs =
     List.concat
       [
-        [ ref P.a (if c.a.packed then ws else 0) ];
-        [ ref P.b (if c.b.packed then ws else 1) ];
-        (if c.init then [ ref P.init 2 ] else []);
-        [ ref P.y y ];
-        (if split then [ ref P.partials ws; ref P.tickets ws ] else []);
+        [ slot_ref P.a (if c.a.packed then ws else 0) ];
+        [ slot_ref P.b (if c.b.packed then ws else 1) ];
+        (if c.init then [ slot_ref P.init 2 ] else []);
+        [ slot_ref P.y y ];
+        (if split then [ slot_ref P.partials ws; slot_ref P.tickets ws ]
+         else []);
       ]
   in
   List.concat
@@ -594,7 +602,9 @@ let launches c =
       (if c.a.packed then [ pack 0 ] else []);
       (if c.b.packed then [ pack 1 ] else []);
       (if split then
-         [ (zero_kernel, K.Zero_params.size, [| ref K.Zero_params.p ws |]) ]
+         [
+           (zero_kernel, K.Zero_params.size, [| slot_ref K.Zero_params.p ws |]);
+         ]
        else []);
       [ (c.kernel, P.size, Array.of_list refs) ];
     ]
@@ -641,28 +651,22 @@ let write_strides run at field s =
    byte is stored before each submit, so bytes another submission left in the
    run never reach a kernel. *)
 let write run sub c =
-  (* Parts in [launches]' order; a counter, so no closure is allocated. *)
-  let i = ref 0 in
-  if c.a.packed then begin
-    write_pack run (Rig.Submission.block sub !i) c c.a;
-    incr i
-  end;
-  if c.b.packed then begin
-    write_pack run (Rig.Submission.block sub !i) c c.b;
-    incr i
-  end;
+  (* Parts in [launches]' order: a's pack, b's pack, the tickets' zeroing, the
+     contraction. *)
+  let a = Bool.to_int c.a.packed and b = Bool.to_int c.b.packed in
   let split = c.splits > 1 in
+  if c.a.packed then write_pack run (Rig.Submission.block sub 0) c c.a;
+  if c.b.packed then write_pack run (Rig.Submission.block sub a) c c.b;
   if split then begin
-    let at = Rig.Submission.block sub !i in
-    incr i;
-    Run.groups run at (ceil_div c.count K.threads) 1 1;
+    let at = Rig.Submission.block sub (a + b) in
+    Run.groups run at (ceil_div c.tiles K.threads) 1 1;
     Run.threads run at K.threads 1 1;
     Run.shared run at 0;
     Run.int64 run at K.Zero_params.p c.tickets;
-    Run.int64 run at K.Zero_params.n c.count
+    Run.int64 run at K.Zero_params.n c.tiles
   end;
   let module P = K.Contract_params in
-  let at = Rig.Submission.block sub !i in
+  let at = Rig.Submission.block sub (a + b + Bool.to_int split) in
   Run.groups run at c.blocks c.splits c.batch;
   Run.threads run at c.threads 1 1;
   Run.shared run at 0;

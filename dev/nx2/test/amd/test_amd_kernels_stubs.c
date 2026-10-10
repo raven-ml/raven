@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* kernels.h as the C compiler reads it, the device's compiler included:
-   its rows as written, its constants and its structs' fields. */
+/* kernels.h as the host's C compiler reads it: its rows as written, its
+   constants and its structs' fields. */
 
 #include <stddef.h>
 
