@@ -893,12 +893,13 @@ let log_factorials n =
 (* Two regimes with a fixed round count each, chosen per element, so the shape
    of the computation does not depend on the rate. Below 10, inversion: one
    uniform against the cumulative pmf over 48 terms, the mass beyond them 4e-18
-   at rate 10; a rate of zero gives the count 0. From 10 up, Hörmann's
-   transformed rejection with squeeze (PTRS): sixteen rounds, each accepting
-   0.75 to 0.89, leave 2e-10 of an element unaccepted, which takes its last
-   proposal, a draw from the hat with mean near the rate. The elements the
-   inversion owns see a rate of 1e5 there, away from the hat's poles below 1.
-   Inversion reads the key's first split key, rejection its second. *)
+   at rate 10. The pmf is [exp (-rate)] at 0, then each term the last times
+   [rate / i], so a rate of 0 puts the whole mass on the count 0. From 10 up,
+   Hörmann's transformed rejection with squeeze (PTRS): sixteen rounds, each
+   accepting 0.75 to 0.89, leave 2e-10 of an element unaccepted, which takes
+   its last proposal, a draw from the hat with mean near the rate. The elements
+   the inversion owns see a rate of 1e5 there, away from the hat's poles
+   below 1. Inversion reads the key's first split key, rejection its second. *)
 let poisson_inversion_rounds = 48
 let poisson_rejection_rounds = 16
 
@@ -918,19 +919,14 @@ let poisson ?key rate =
       let small = not_ b (f.le (f.lit 10.0) rate) in
       let inversion =
         let u = unit b ~key:k0 ~p c j in
-        let log_rate = f.log rate in
+        let pmf = ref (f.exp (f.neg rate)) in
         let cdf = ref (f.lit 0.0) and count = ref (f.lit 0.0) in
-        Array.iteri
-          (fun i lf ->
-            let log_pmf =
-              f.sub
-                (f.sub (f.mul (f.lit (float_of_int i)) log_rate) rate)
-                (f.lit lf)
-            in
-            cdf := f.add !cdf (f.exp log_pmf);
-            count :=
-              f.add !count (where b (f.lt !cdf u) (f.lit 1.0) (f.lit 0.0)))
-          (log_factorials poisson_inversion_rounds);
+        for i = 0 to poisson_inversion_rounds - 1 do
+          if i > 0 then
+            pmf := f.mul !pmf (f.div rate (f.lit (float_of_int i)));
+          cdf := f.add !cdf !pmf;
+          count := f.add !count (where b (f.lt !cdf u) (f.lit 1.0) (f.lit 0.0))
+        done;
         !count
       in
       let rejection =
