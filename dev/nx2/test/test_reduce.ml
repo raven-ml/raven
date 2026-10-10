@@ -371,6 +371,322 @@ let test_scan_expansions () =
   equal ~msg:"bfloat16 cumsum, rounded once" (array float_exact) want
     (A.to_array (host_array (Nx.cumsum (value b))))
 
+(* Logsumexp, Moments and Arg through Nx.Prim, on a set whose kernels compute
+   the core reductions alone, against references over each result's terms. *)
+
+(* nx.cpu, declining every reduction and scan but one Sum, Prod, Max or Min, as
+   a library that computes the core alone may. *)
+module Core_only = struct
+  include Nx_cpu
+
+  let name = "nx.core"
+
+  let core s =
+    match S.reductions s with
+    | [| (S.Monoid (Sum | Prod | Max | Min), _, _) |] -> true
+    | _ -> false
+
+  let reduce s ~dsts ops =
+    if core s then Nx_cpu.reduce s ~dsts ops else A.Declined
+
+  let scan s ~dsts ops = if core s then Nx_cpu.scan s ~dsts ops else A.Declined
+end
+
+module Core =
+  (val Nx.devices ~kernels:(module Core_only) [ Nx_support.memory 1 ])
+
+let core a = Nx.place Core.on (value a)
+
+let reduce1 r axes x =
+  let y, () =
+    Nx.Prim.eval ~by:"t"
+      (Reduce
+         {
+           layout = L.contiguous (Nx.shape x);
+           axes;
+           prog = identity (Nx.dtype x);
+           reductions = [ r ];
+           loads = [| Plain x |];
+         })
+  in
+  y
+
+let read x = A.to_array (host_array x)
+let bits = Int64.bits_of_float
+let nan_with k = Int64.float_of_bits (Int64.logor 0x7ff8_0000_0000_0000L k)
+
+(* Each result's terms, in C order of the results and of the reduced indices. *)
+let terms s axes xs =
+  Array.map List.rev (fold (fun acc x -> x :: acc) [] s axes xs)
+
+let float64_case =
+  let open Gen in
+  let element =
+    frequency
+      [
+        (24, float_range (-30.) 30.);
+        (1, constant Float.neg_infinity);
+        (1, constant Float.infinity);
+        (1, map (fun k -> nan_with (Int64.of_int k)) (int_range 1 1000));
+      ]
+  in
+  with_pp
+    (fun ppf (s, axes, _) ->
+      Format.fprintf ppf "%a over %s" pp_ints s
+        (match axes with
+        | None -> "all"
+        | Some l -> String.concat "," (List.map string_of_int l)))
+    (let* s = shape in
+     let* axes = axes_of (Array.length s) in
+     let+ xs = array ~size:(constant (Array.fold_left ( * ) 1 s)) element in
+     (s, axes, xs))
+
+let law_logsumexp (s, axes, xs) =
+  let ax = normal (Array.length s) axes in
+  let x = core (A.of_array D.Float64 s xs) in
+  let got =
+    read (reduce1 (Monoid (Logsumexp, 0, Nx.float64)) (Array.of_list ax) x)
+  in
+  Array.iteri
+    (fun i ts ->
+      let g = got.(i) in
+      match List.find_opt Float.is_nan ts with
+      | Some nan ->
+          cover "a NaN term" true;
+          equal ~msg:"the first NaN, its bits" int64 (bits nan) (bits g)
+      | None ->
+          let m = List.fold_left Float.max Float.neg_infinity ts in
+          if Float.is_finite m then begin
+            cover "finite" true;
+            let s = List.fold_left (fun s t -> s +. exp (t -. m)) 0. ts in
+            let want = m +. log s in
+            let n = Float.of_int (List.length ts) in
+            at_most
+              ~msg:(Printf.sprintf "%h against %h" g want)
+              float_exact
+              ~than:((n +. 8.) *. epsilon_float *. (1. +. Float.abs want))
+              (Float.abs (g -. want))
+          end
+          else begin
+            cover "no term, or an infinite maximum" true;
+            equal ~msg:"an infinity" int64 (bits m) (bits g)
+          end)
+    (terms s ax xs)
+
+(* float32 terms near an offset [c], whose large ratio of mean to spread a
+   formula reading [Σ x²] would lose. *)
+let moments_case =
+  let open Gen in
+  with_pp
+    (fun ppf (s, axes, c, _) ->
+      Format.fprintf ppf "%a over %s near %g" pp_ints s
+        (match axes with
+        | None -> "all"
+        | Some l -> String.concat "," (List.map string_of_int l))
+        c)
+    (let* s = shape in
+     let* axes = axes_of (Array.length s) in
+     let* c = of_list [ 0.; 1e3; 1e5 ] in
+     let+ xs =
+       array
+         ~size:(constant (Array.fold_left ( * ) 1 s))
+         (map
+            (fun d -> Int32.float_of_bits (Int32.bits_of_float (c +. d)))
+            (float_range (-10.) 10.))
+     in
+     (s, axes, c, xs))
+
+(* The bounds nx's expansion of Moments states, at float32's unit roundoff: the
+   mean within [γ(n) Σ|x| / n], the variance [V] within [γ(n + 3) V + (1 + γ(n +
+   3)) γ(n)² (Σ|x| / n)²]. The references are float64 two-pass sums, whose own
+   error is the slack. *)
+let law_moments (s, axes, _, xs) =
+  let ax = normal (Array.length s) axes in
+  let x = core (A.of_array D.Float32 s xs) in
+  let mean, var = reduce1 (Moments (0, Nx.float32)) (Array.of_list ax) x in
+  let mean = read mean and var = read var in
+  let u = ldexp 1. (-24) in
+  let gamma k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
+  Array.iteri
+    (fun i ts ->
+      let n = List.length ts in
+      if n = 0 then begin
+        cover "no term" true;
+        equal ~msg:"mean" bool true (Float.is_nan mean.(i));
+        equal ~msg:"variance" bool true (Float.is_nan var.(i))
+      end
+      else begin
+        cover "terms" true;
+        let nf = Float.of_int n in
+        let m = List.fold_left ( +. ) 0. ts /. nf in
+        let v =
+          List.fold_left (fun a t -> a +. ((t -. m) *. (t -. m))) 0. ts /. nf
+        in
+        let abs_mean =
+          List.fold_left (fun a t -> a +. Float.abs t) 0. ts /. nf
+        in
+        let slack =
+          4. *. nf *. epsilon_float *. (v +. (abs_mean *. abs_mean))
+        in
+        at_most ~msg:"mean" float_exact
+          ~than:((gamma n *. abs_mean) +. slack)
+          (Float.abs (mean.(i) -. m));
+        at_most ~msg:"variance" float_exact
+          ~than:
+            ((gamma (n + 3) *. v)
+            +. (1. +. gamma (n + 3))
+               *. gamma n *. gamma n *. abs_mean *. abs_mean
+            +. slack)
+          (Float.abs (var.(i) -. v))
+      end)
+    (terms s ax xs)
+
+(* The extreme and the first position of its bits, by the reference's strict
+   [better]. *)
+let first_extreme better ts =
+  let best = ref 0 in
+  List.iteri (fun i t -> if better t (List.nth ts !best) then best := i) ts;
+  (List.nth ts !best, Int64.of_int !best)
+
+let law_arg (s, axes, _, xs) =
+  let ax = normal (Array.length s) axes in
+  if not (List.exists (fun a -> s.(a) = 0) ax) then begin
+    let x = core (A.of_array D.Int32 s xs) in
+    List.iter
+      (fun (name, e, better) ->
+        let v, p = reduce1 (Arg (e, 0, Nx.int32)) (Array.of_list ax) x in
+        let want = Array.map (first_extreme better) (terms s ax xs) in
+        equal ~msg:(name ^ " extremes") (array int32) (Array.map fst want)
+          (read v);
+        equal ~msg:(name ^ " positions") (array int64) (Array.map snd want)
+          (read p))
+      [
+        ("max", (Max : S.extreme), fun t b -> Int32.compare t b > 0);
+        ("min", Min, fun t b -> Int32.compare t b < 0);
+      ]
+  end
+
+let vector dt xs = core (A.of_array dt [| Array.length xs |] xs)
+
+let test_arg_cases () =
+  let arg (type v s) e (dt : (v, s) D.t) axes shape (xs : v array) =
+    let v, p = reduce1 (Arg (e, 0, dt)) axes (core (A.of_array dt shape xs)) in
+    (read v, read p)
+  in
+  let f64 e xs =
+    let v, p = arg e D.Float64 [| 0 |] [| Array.length xs |] xs in
+    (bits v.(0), p.(0))
+  in
+  let found = pair int64 int64 in
+  equal ~msg:"max of signed zeros: +0, the first one" found
+    (bits 0., 1L)
+    (f64 Max [| -0.; 0.; -0.; 0. |]);
+  equal ~msg:"min of signed zeros: -0, the first one" found
+    (bits (-0.), 0L)
+    (f64 Min [| -0.; 0.; -0. |]);
+  let a = nan_with 7L and b = nan_with 9L in
+  equal ~msg:"a NaN is the extreme: the first, its bits" found
+    (bits a, 1L)
+    (f64 Max [| 1.; a; 5.; b |]);
+  equal ~msg:"and for min" found (bits a, 1L) (f64 Min [| 1.; a; -5.; b |]);
+  equal ~msg:"ties: the first" found (bits 7., 1L) (f64 Max [| 2.; 7.; 7. |]);
+  let grid = [| 1.; 9.; 3.; 9.; 0.; 2. |] in
+  equal ~msg:"over both axes: positions in C order of the reduced indices"
+    (pair (array float_exact) (array int64))
+    ([| 9. |], [| 1L |])
+    (arg Max D.Float64 [| 0; 1 |] [| 2; 3 |] grid);
+  equal ~msg:"along axis 0"
+    (pair (array float_exact) (array int64))
+    ([| 9.; 9.; 3. |], [| 1L; 0L; 0L |])
+    (arg Max D.Float64 [| 0 |] [| 2; 3 |] grid);
+  equal ~msg:"int4"
+    (pair (array int) (array int64))
+    ([| 7 |], [| 2L |])
+    (arg Max D.Int4 [| 0 |] [| 4 |] [| 3; -8; 7; 7 |]);
+  equal ~msg:"bool"
+    (pair (array bool) (array int64))
+    ([| true |], [| 1L |])
+    (arg Max D.Bool [| 0 |] [| 3 |] [| false; true; true |]);
+  equal ~msg:"float16 signed zeros" (array int64) [| 1L |]
+    (snd (arg Max D.Float16 [| 0 |] [| 3 |] [| -0.; 0.; 0. |]));
+  equal ~msg:"float4_e2m1fn signed zeros" (array int64) [| 2L |]
+    (snd (arg Min D.Float4_e2m1fn [| 0 |] [| 3 |] [| 1.; 0.; -0. |]))
+
+let test_moments_cases () =
+  let mean, var =
+    reduce1 (Moments (0, Nx.float64)) [| 0 |] (vector D.Float64 [||])
+  in
+  equal ~msg:"no term: NaN" (pair bool bool) (true, true)
+    (Float.is_nan (read mean).(0), Float.is_nan (read var).(0));
+  let a = nan_with 7L in
+  let mean, var =
+    reduce1
+      (Moments (0, Nx.float64))
+      [| 0 |]
+      (vector D.Float64 [| 1.; a; nan_with 9L |])
+  in
+  equal ~msg:"a NaN term: the first, its bits" (pair int64 int64)
+    (bits a, bits a)
+    (bits (read mean).(0), bits (read var).(0));
+  let mean, var =
+    reduce1
+      (Moments (0, Nx.float16))
+      [| 0 |]
+      (vector D.Float16 [| 1.; 2.; 3.; 4. |])
+  in
+  equal ~msg:"float16"
+    (pair float_exact float_exact)
+    (2.5, 1.25)
+    ((read mean).(0), (read var).(0));
+  (* 3000 terms cross a block of the sum's lane order. *)
+  let xs = Array.init 3000 (fun i -> 1e4 +. Float.of_int (i mod 7)) in
+  let mean, var =
+    reduce1 (Moments (0, Nx.float64)) [| 0 |] (vector D.Float64 xs)
+  in
+  let m = Array.fold_left ( +. ) 0. xs /. 3000. in
+  let v =
+    Array.fold_left (fun a x -> a +. ((x -. m) *. (x -. m))) 0. xs /. 3000.
+  in
+  equal ~msg:"3000 terms"
+    (pair (float 1e-9) (float 1e-9))
+    (m, v)
+    ((read mean).(0), (read var).(0))
+
+let test_logsumexp_cases () =
+  let lse (type v s) (dt : (v, s) D.t) (xs : v array) =
+    read (reduce1 (Monoid (Logsumexp, 0, dt)) [| 0 |] (vector dt xs))
+  in
+  equal ~msg:"no term" int64 (bits Float.neg_infinity)
+    (bits (lse D.Float64 [||]).(0));
+  equal ~msg:"terms all -inf" int64 (bits Float.neg_infinity)
+    (bits (lse D.Float64 [| Float.neg_infinity; Float.neg_infinity |]).(0));
+  equal ~msg:"+inf beside -inf" int64 (bits Float.infinity)
+    (bits (lse D.Float64 [| Float.neg_infinity; Float.infinity; 1. |]).(0));
+  let wide = A.of_array D.Float32 [| 1 |] [| Float.log 2. |] in
+  equal ~msg:"bfloat16 at float32, rounded once" (array float_exact)
+    (A.to_array (cast D.Bfloat16 wide))
+    (lse D.Bfloat16 [| 0.; 0. |])
+
+let test_optional_rules () =
+  let x = vector D.Int32 [| 1l; 2l |] in
+  raises (Invalid_argument "t: Moments does not take int32") (fun () ->
+      reduce1 (Moments (0, Nx.int32)) [| 0 |] x);
+  raises (Invalid_argument "t: Arg Max of no term") (fun () ->
+      reduce1 (Arg (Max, 0, Nx.int32)) [| 0 |] (vector D.Int32 [||]))
+
+let optional_group =
+  group "optional reductions"
+    [
+      prop "logsumexp is m + log Σ exp (x - m), its specials exact" float64_case
+        law_logsumexp;
+      prop "moments are within their stated bounds" moments_case law_moments;
+      prop "arg is the extreme and its first position" int32_case law_arg;
+      test "arg's cases" test_arg_cases;
+      test "moments' cases" test_moments_cases;
+      test "logsumexp's cases" test_logsumexp_cases;
+      test "their rules raise naming the caller" test_optional_rules;
+    ]
+
 let reductions_group =
   group "reductions"
     [
@@ -388,4 +704,4 @@ let reductions_group =
         test_scan_expansions;
     ]
 
-let () = exit (run "nx reduce" [ reductions_group ])
+let () = exit (run "nx reduce" [ reductions_group; optional_group ])

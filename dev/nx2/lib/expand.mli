@@ -14,8 +14,25 @@
     for the floats narrower than 32 bits, the byte-wide dtype for the sub-byte
     ones, the output's dtype otherwise), the plain loop, and a cast to the
     result's dtype. A sum of complex numbers sums their parts, read as floats
-    along a last axis of two. [Moments] and [Arg] have no expansion yet. A
-    one-node map at a dtype other than a base one ({!base}), but a cast, a
+    along a last axis of two.
+
+    [Logsumexp], [Moments] and [Arg] reduce through core loops, in the
+    accumulator for the first two and in the output's dtype for [Arg]. A
+    [Logsumexp] is a [Max] [m], [m'] its finite elements and [0] elsewhere, a
+    [Sum] of [exp (x - m')], then [m' + log s], or [m] where it is a NaN; with
+    no term, [log 0]. [Moments] are two sums: the mean [Σ x / n], then the
+    variance [Σ (x - mean)² / n], each the mean where it is a NaN. An [Arg] is
+    the [Max] or [Min] [m], then a [Min] of the positions, numbered in C order
+    of the reduced indices, whose term has [m]'s bits or, where [m] is a NaN, is
+    a NaN. Where a float sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact
+    sum ({!Nx_kernel.Spec.reduction}), and barring overflow and underflow, a
+    [Logsumexp] [r] of [n] terms whose maximum is finite is within
+    [γ(2n) + u|r| + ε] of the exact one, [ε] the error [Exp] and [Log] add; the
+    mean within [γ(n) Σ|x| / n], and the variance [V] within
+    [γ(n + 3) V + (1 + γ(n + 3)) γ(n)² (Σ|x| / n)²], for [n] exact in the
+    accumulator. A scan of [Logsumexp] or [Arg] has no expansion yet.
+
+    A one-node map at a dtype other than a base one ({!base}), but a cast, a
     bitcast or a copy, computes at its dtypes' accumulators, which hold their
     values exactly, and rounds once to its dtype. A selection, a constant and a
     copy move bits: they compute at the dtypes {!kept} gives. An assembly
