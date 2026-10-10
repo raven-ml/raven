@@ -323,10 +323,15 @@ let inverse ~by p =
 let group_text names ids =
   axis_text (Group (Array.to_list (Array.map (fun i -> names.(i)) ids)))
 
-(* [a * b] for extents, or raises with [fail] past an [int]. *)
-let times fail a b =
-  if a <> 0 && b > max_int / a then fail "more elements than an int counts";
+(* [a * b] for extents, or raises naming [by] and [text] past an [int]. *)
+let times ~by ~text a b =
+  if a <> 0 && b > max_int / a then
+    fail ~by text "more elements than an int counts";
   a * b
+
+let is_identity perm =
+  let rec go i = i = Array.length perm || (perm.(i) = i && go (i + 1)) in
+  go 0
 
 (* The extent of each name of [pl] at a shape [s] and [sizes], with the axes
    [...] covers: the names' extents, and the axes between the reshapes, the
@@ -346,7 +351,9 @@ let extents ~by ~text ~sizes pl s what =
     sizes;
   let r = Array.length s in
   let named =
-    Array.length pl.left - Option.fold ~none:0 ~some:(fun _ -> 1) pl.rest
+    match pl.rest with
+    | None -> Array.length pl.left
+    | Some _ -> Array.length pl.left - 1
   in
   let covered = r - named in
   if pl.rest <> None && covered < 0 then
@@ -358,23 +365,27 @@ let extents ~by ~text ~sizes pl s what =
   let split = Array.make (Array.length names + covered) 0 in
   let a = ref 0 in
   let group ids d =
-    let known = List.filter (fun i -> ext.(i) >= 0) (Array.to_list ids) in
-    let product =
-      List.fold_left (fun p i -> times (fail "%s") p ext.(i)) 1 known
-    in
-    match List.filter (fun i -> ext.(i) < 0) (Array.to_list ids) with
-    | [] ->
-        if product <> d then
-          fail "%s multiplies to %d, axis %d has extent %d"
-            (group_text names ids) product !a d
-    | [ u ] ->
-        if product = 0 || d mod product <> 0 then
-          fail "%s does not divide axis %d of extent %d" (group_text names ids)
-            !a d;
-        ext.(u) <- d / product
-    | _ ->
-        fail "%s has two unknown extents; give one in ~sizes"
-          (group_text names ids)
+    let product = ref 1 and unknown = ref (-1) and unknowns = ref 0 in
+    Array.iter
+      (fun i ->
+        if ext.(i) >= 0 then product := times ~by ~text !product ext.(i)
+        else begin
+          unknown := i;
+          incr unknowns
+        end)
+      ids;
+    if !unknowns > 1 then
+      fail "%s has two unknown extents; give one in ~sizes"
+        (group_text names ids);
+    if !unknowns = 0 && !product <> d then
+      fail "%s multiplies to %d, axis %d has extent %d" (group_text names ids)
+        !product !a d;
+    if !unknowns = 1 then begin
+      if !product = 0 || d mod !product <> 0 then
+        fail "%s does not divide axis %d of extent %d" (group_text names ids) !a
+          d;
+      ext.(!unknown) <- d / !product
+    end
   in
   Array.iter
     (fun slot ->
@@ -403,7 +414,6 @@ let extents ~by ~text ~sizes pl s what =
 
 (* The atoms in the result's order, and the result's extents. *)
 let arrangement ~by ~text pl ext covered atom split =
-  let fail fmt = fail ~by text fmt in
   let rest = Option.value ~default:0 pl.rest in
   let perm = Array.make (Array.length split) 0 in
   let merged =
@@ -429,10 +439,12 @@ let arrangement ~by ~text pl ext covered atom split =
           merged.(!m) <- 1;
           incr m
       | Of ids ->
-          merged.(!m) <-
-            Array.fold_left
-              (fun p i -> times (fail "%s") p (place (atom i) ext.(i)))
-              1 ids;
+          let product = ref 1 in
+          Array.iter
+            (fun i ->
+              product := times ~by ~text !product (place (atom i) ext.(i)))
+            ids;
+          merged.(!m) <- !product;
           incr m)
     pl.right;
   (perm, merged)
@@ -450,7 +462,6 @@ let moves ~by ~sizes p s what =
         if merged = permuted then [] else [ Nx_array.Move.Reshape merged ]
       in
       let moves =
-        if perm = Array.init (Array.length perm) Fun.id then moves
-        else Nx_array.Move.Permute perm :: moves
+        if is_identity perm then moves else Nx_array.Move.Permute perm :: moves
       in
       if split = s then moves else Nx_array.Move.Reshape split :: moves
