@@ -1659,21 +1659,33 @@ let parts (type s d) ~by (z : (Complex.t, s, d) t) : (s, d) parts =
   in
   match dtype z with D.Complex64 -> split D.Float32 | D.Complex128 -> split D.Float64
 
+(* The format a float function of [dt] computes in: float32 for the floats
+   narrower, [dt] itself otherwise. *)
+type wide = Wide : (float, 's) D.t -> wide
+
+let wide (type s) (dt : (float, s) D.t) =
+  if D.bits dt < 32 then Wide D.Float32 else Wide dt
+
 (* Where a float of [dt]'s format is an infinity: [false] in a format with
-   none. *)
+   none. A narrow float compares at float32, where a constant infinity is one:
+   no store makes float8_e5m2's. *)
 let infinite (type s) b (dt : (float, s) D.t) x =
   if not (D.float_format dt).infinities then const b D.Bool false
   else
-    let a = node b (Op1 (Unary Abs, D.Any dt, x)) in
-    node b (Op2 (Compare Equal, a, const b dt Float.infinity))
+    let (Wide w) = wide dt in
+    let x = if D.bits dt < 32 then node b (Op1 (Cast, D.Any w, x)) else x in
+    let a = node b (Op1 (Unary Abs, D.Any w, x)) in
+    node b (Op2 (Compare Equal, a, const b w Float.infinity))
 
 (* Where a float of [dt]'s format is neither an infinity nor a NaN. *)
 let finite (type s) b (dt : (float, s) D.t) x =
   let not_nan = node b (Op2 (Compare Equal, x, x)) in
   if not (D.float_format dt).infinities then not_nan
   else
-    let a = node b (Op1 (Unary Abs, D.Any dt, x)) in
-    node b (Op2 (Compare Less, a, const b dt Float.infinity))
+    let (Wide w) = wide dt in
+    let x = if D.bits dt < 32 then node b (Op1 (Cast, D.Any w, x)) else x in
+    let a = node b (Op1 (Unary Abs, D.Any w, x)) in
+    node b (Op2 (Compare Less, a, const b w Float.infinity))
 
 (* [x]'s float predicate [p], each part's joined by [k] for a complex [x], and
    [other] for the other dtypes, where [x] lies. *)
@@ -1696,13 +1708,6 @@ let isfinite x =
   predicate ~by:"Nx.isfinite" (fun b dt x -> finite b dt x) And true x
 
 (* Float functions *)
-
-(* The format a float function of [dt] computes in: float32 for the floats
-   narrower, [dt] itself otherwise. *)
-type wide = Wide : (float, 's) D.t -> wide
-
-let wide (type s) (dt : (float, s) D.t) =
-  if D.bits dt < 32 then Wide D.Float32 else Wide dt
 
 (* The float function [f b w ins] of [xs], of one dtype, computed in its wide
    format [w] and rounded once to that dtype. *)

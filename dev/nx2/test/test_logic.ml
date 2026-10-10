@@ -226,6 +226,12 @@ let classes =
       prop "isinf" (one all)
         (law_class (fun x -> Nx.isinf x) (fun v -> Float.abs v = infinity) ( || ) false);
       prop "isfinite" (one all) (law_class (fun x -> Nx.isfinite x) Float.is_finite ( && ) true);
+      test "float8_e5m2's largest finite value and its infinity" (fun () ->
+          let x =
+            Nx.bitcast Nx.float8_e5m2 (Nx.create Nx.uint8 [| 3 |] [| 0x7b; 0x7c; 0xfc |])
+          in
+          equal (array bool) [| false; true; true |] (Nx.to_array (Nx.isinf x));
+          equal (array bool) [| true; false; false |] (Nx.to_array (Nx.isfinite x)));
       test "a format without infinities saturates, so nothing is infinite"
         (fun () ->
           let x = Nx.create Nx.float8_e4m3fn [| 2 |] [| 448.; nan |] in
