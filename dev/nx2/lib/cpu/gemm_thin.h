@@ -13,8 +13,9 @@
    vector of b into that row's accumulator for the vector, fused. The
    accumulators are named variables: gcc keeps an array of vectors in
    memory and stores it at every step. A target file defines LOAD, STORE,
-   BCAST (one element into every lane) and FMA (c + a·b, rounded once)
-   before it includes this header, then instantiates THIN. */
+   BCAST (one element into every lane), ZERO (+0 in every lane) and FMA
+   (c + a·b, rounded once) before it includes this header, then
+   instantiates THIN. */
 
 #ifndef NX_CPU_GEMM_THIN_H
 #define NX_CPU_GEMM_THIN_H
@@ -39,7 +40,8 @@
 #define THIN_EACH(M, V, F, x) THIN_M##M(F, V, x)
 
 #define THIN_DECL(r, v, VT) VT c##r##_##v;
-#define THIN_LOAD(r, v, W) c##r##_##v = LOAD(y + r * ldc + v * W);
+#define THIN_LOAD(r, v, W) \
+  c##r##_##v = from == NX_CPU_FROM_ZERO ? ZERO : LOAD(y + r * ldc + v * W);
 #define THIN_STORE(r, v, W) STORE(y + r * ldc + v * W, c##r##_##v);
 #define THIN_ADD(r, v, W) c##r##_##v = FMA(c##r##_##v, a##r, LOAD(b + v * W));
 #define THIN_A(r, VT) VT a##r = BCAST(a + r);
@@ -48,7 +50,8 @@
    being the vector type. */
 #define THIN(name, T, VT, W, M, V)                                         \
   static void name(int64_t k, const void *va, int64_t lda,                \
-                   const void *vb, void *vc, int64_t ldc) {               \
+                   const void *vb, void *vc, int64_t ldc,                 \
+                   nx_cpu_from from) {                                    \
     const T *a = va, *b = vb;                                             \
     T *y = vc;                                                            \
     THIN_EACH(M, V, THIN_DECL, VT)                                        \

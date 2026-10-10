@@ -42,13 +42,18 @@ typedef void (*nx_cpu_run)(const void *src, void *dst, int64_t n);
 #define NX_CPU_LANES 16
 #define NX_CPU_FOLD_BLOCK 1024
 
+/* Where a microkernel's sums start: the tile's outputs, or +0, the tile
+   then only written. */
+typedef enum { NX_CPU_FROM_TILE, NX_CPU_FROM_ZERO } nx_cpu_from;
+
 /* A contraction's microkernel adds to the tile of MR × NR outputs at [c],
    output (i, j) at c + (i·ldc + j)·w, the products of [k] steps of packed
    operands: step p holds MR elements of a at a + p·lda·w and NR of b at
    b + p·NR·w. Each output adds its products in increasing p, each fused
-   into its addition. */
+   into its addition, to the start [from] names. */
 typedef void (*nx_cpu_kernel)(int64_t k, const void *a, int64_t lda,
-                              const void *b, void *c, int64_t ldc);
+                              const void *b, void *c, int64_t ldc,
+                              nx_cpu_from from);
 
 /* A dot adds the [n] products of the contiguous [a] and [b] into the lanes
    at [lanes], term t into lane t modulo NX_CPU_LANES, each fused. */

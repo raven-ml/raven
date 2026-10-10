@@ -170,13 +170,15 @@ static uint8_t *at_r(const problem *p, int64_t e, int64_t i, int64_t j) {
   return p->op[DST].x->base + pos(p, DST, e, i, j, 0) * p->w;
 }
 
-/* Sets R's rows [i0, i1) × columns [j0, j1) of element [e] to init or +0.
-   An init that is dst itself is already there: copying it onto itself would
-   be a memcpy whose source and destination overlap. */
+/* Sets R's rows [i0, i1) × columns [j0, j1) of element [e] to init, or
+   to +0 where k is empty: with k and no init, the kernels start the first
+   block from +0 themselves. An init that is dst itself is already there:
+   copying it onto itself would be a memcpy whose source and destination
+   overlap. */
 static void start(const problem *p, int64_t e, int64_t i0, int64_t i1,
                   int64_t j0, int64_t j1) {
   const int64_t *s = p->op[DST].st;
-  if (p->init_is_dst) return;
+  if (p->init_is_dst || (p->op[INIT].x == NULL && p->ext[CON] > 0)) return;
   for (int64_t i = i0; i < i1; i++) {
     if (p->op[INIT].x) {
       const int64_t *t = p->op[INIT].st;
@@ -192,6 +194,12 @@ static void start(const problem *p, int64_t e, int64_t i0, int64_t i1,
       for (int64_t j = j0; j < j1; j++) memset(at_r(p, e, i, j), 0, p->w);
     }
   }
+}
+
+/* Where R's tiles start in the block of k from [pc]. */
+static nx_cpu_from from(const problem *p, int64_t pc) {
+  return pc == 0 && p->op[INIT].x == NULL ? NX_CPU_FROM_ZERO
+                                          : NX_CPU_FROM_TILE;
 }
 
 /* Chain order */
@@ -268,27 +276,28 @@ static void pack_panel(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* Adds the products of the packed [a], its steps [lda] apart, and [b] to
-   R's tile of [m] rows and [n] columns from (e, i, j) with [k]'s kernel: in
-   place where its columns are adjacent and it is whole, else through a
-   buffer. */
-static void tile(const problem *p, nx_cpu_micro k, int64_t kc,
+   R's tile of [m] rows and [n] columns from (e, i, j) with [k]'s kernel,
+   the block of k from [pc]: in place where its columns are adjacent and it
+   is whole, else through a buffer. */
+static void tile(const problem *p, nx_cpu_micro k, int64_t pc, int64_t kc,
                  const uint8_t *a, int64_t lda, const uint8_t *b, int64_t e,
                  int64_t i, int64_t j, int64_t m, int64_t n) {
   const int64_t *s = p->op[DST].st;
+  nx_cpu_from f = from(p, pc);
   if (m == k.mr && n == k.nr && s[COL] == 1) {
-    k.f(kc, a, lda, b, at_r(p, e, i, j), s[ROW]);
+    k.f(kc, a, lda, b, at_r(p, e, i, j), s[ROW], f);
     return;
   }
   _Alignas(64) uint8_t t[NX_CPU_TILE];
   int w = p->w;
   memset(t, 0, (size_t)(k.mr * k.nr * w));
-  for (int64_t r = 0; r < m; r++)
+  for (int64_t r = 0; f == NX_CPU_FROM_TILE && r < m; r++)
     if (s[COL] == 1)
       memcpy(t + r * k.nr * w, at_r(p, e, i + r, j), (size_t)(n * w));
     else
       for (int64_t q = 0; q < n; q++)
         memcpy(t + (r * k.nr + q) * w, at_r(p, e, i + r, j + q), w);
-  k.f(kc, a, lda, b, t, k.nr);
+  k.f(kc, a, lda, b, t, k.nr, f);
   for (int64_t r = 0; r < m; r++)
     if (s[COL] == 1)
       memcpy(at_r(p, e, i + r, j), t + r * k.nr * w, (size_t)(n * w));
@@ -321,7 +330,7 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
       int64_t j = c->jc + v * k.nr, n = min64(k.nr, c->jc + c->nc - j);
       const uint8_t *b = sliver(c, e, v);
       for (int64_t ir = 0; ir < mc; ir += mr)
-        tile(p, k, c->kc, ap + ir * w, lda, b, e, i0 + ir, j,
+        tile(p, k, c->pc, c->kc, ap + ir * w, lda, b, e, i0 + ir, j,
              min64(mr, mc - ir), n);
     }
   }
@@ -368,8 +377,8 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
       const uint8_t *ap = r->a + (e * k + pc) * r->lda * w;
       pack_b(p, e, j, n, (int)nr, pc, kc, bp);
       for (int64_t ir = 0; ir < m; ir += mr)
-        tile(p, r->k, kc, ap + ir * w, r->lda, bp, e, ir, j, min64(mr, m - ir),
-             n);
+        tile(p, r->k, pc, kc, ap + ir * w, r->lda, bp, e, ir, j,
+             min64(mr, m - ir), n);
       pc += kc;
     }
   }
