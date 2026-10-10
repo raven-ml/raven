@@ -1224,6 +1224,36 @@ let laws (b : Support.backend) =
         (run (law_declined b));
     ]
 
+(* A plain sum and scan whose program is Prog.of_node's [In 0], which keeps
+   its operand as two nodes, compute as [In 0]'s. *)
+let test_of_node (b : Support.backend) () =
+  let x = A.Any (A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]) in
+  let dt = D.Any D.Float32 in
+  let of_node = P.of_node ~ins:[| dt |] (P.In 0) in
+  let module K = (val b.kernels) in
+  let run scan prog shape =
+    let dst = A.Any (A.create b.device D.Float32 shape) in
+    let r = (S.Monoid S.Sum, 0, dt) in
+    let answer =
+      if scan then
+        K.scan (S.scan prog ~loads:[| S.Plain |] ~axis:1 r) ~dsts:[| dst |]
+          [| on b x |]
+      else
+        K.reduce
+          (S.reduce prog ~loads:[| S.Plain |] ~axes:[| 1 |] [| r |])
+          ~dsts:[| dst |] [| on b x |]
+    in
+    equal ~msg:"its answer" bool true (answer = A.Done);
+    let (A.Any h) = host dst in
+    Array.map Int32.bits_of_float (A.to_array (A.expect D.Float32 (A.Any h)))
+  in
+  equal (array int32)
+    (run false (identity dt) [| 2 |])
+    (run false of_node [| 2 |]);
+  equal (array int32)
+    (run true (identity dt) [| 2; 3 |])
+    (run true of_node [| 2; 3 |])
+
 let order (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu's cases and order, " ^ b.name)
@@ -1234,6 +1264,8 @@ let order (b : Support.backend) =
       prop ~examples:any_examples
         "computes the cases nx_cpu.mli lists, declines others" any_case
         (run (law_computes b));
+      test "a program of Prog.of_node's operand computes" (fun () ->
+          b.around (test_of_node b));
       test "a NaN past the first block and chunk is the result's" (fun () ->
           b.around (test_far_nans b));
       test "8- and 16-bit products and sums wrap at their extremes" (fun () ->

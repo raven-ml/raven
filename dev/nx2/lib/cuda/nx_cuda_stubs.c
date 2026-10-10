@@ -57,12 +57,7 @@ static int core(const nx_spec_loop *l) {
   if (l->nloads != 1 || l->nreductions != 1 || nx_spec_loop_pad(l, 0))
     return -1;
   const nx_prog *p = nx_spec_loop_prog(l);
-  /* CR: Recognize the selected output node. Prog.of_node over one input
-     with In 0 stores two In nodes and selects the second, so this rejects
-     a promised core reduce/scan. Keep the one-input/one-output checks
-     and inspect p->nodes[nx_prog_outs(p)[0]], as the CPU classifier does. */
-  if (p->nins != 1 || p->nnodes != 1 || p->nouts != 1) return -1;
-  if (p->nodes[0].tag != NX_NODE_IN || p->nodes[0].a != 0) return -1;
+  if (!nx_prog_is_operand(p)) return -1;
   const nx_spec_reduction *r = nx_spec_loop_reductions(l);
   if (r->kind > NX_MIN || r->output != 0 || r->dtype != nx_prog_ins(p)[0])
     return -1;
