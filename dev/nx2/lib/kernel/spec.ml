@@ -970,6 +970,69 @@ let shapes s ins =
   else if f = family_linalg then linalg_shapes s ins
   else invalid_argf "Nx_kernel.Spec.shapes: family %d" f
 
+(* Dtypes *)
+
+let pp_dtypes ppf ds =
+  Format.pp_print_list
+    ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+    (fun ppf (D.Any dt) -> D.pp ppf dt)
+    ppf (Array.to_list ds)
+
+let refuse what ins =
+  Error (Format.asprintf "%s does not take %a" what pp_dtypes ins)
+
+(* The precision of the float and complex dtypes: 32 or 64 bits a part. *)
+type precision = Complex of int | Real of int | Other
+
+let precision (D.Any dt) =
+  match dt with
+  | D.Complex64 -> Complex 32
+  | D.Complex128 -> Complex 64
+  | D.Float32 -> Real 32
+  | D.Float64 -> Real 64
+  | _ -> Other
+
+let of_precision = function
+  | Complex 32 -> D.Any D.Complex64
+  | Complex _ -> D.Any D.Complex128
+  | Real 32 -> D.Any D.Float32
+  | _ -> D.Any D.Float64
+
+let fft_dtypes s ins =
+  match (transform s, Array.map precision ins) with
+  | C2c _, [| Complex _ |] -> Ok ins
+  | R2c, [| Real b |] -> Ok [| of_precision (Complex b) |]
+  | C2r _, [| Complex b |] -> Ok [| of_precision (Real b) |]
+  | _ -> refuse "the transform" ins
+
+let linalg_dtypes s ins =
+  let r = routine s in
+  let takes a =
+    match (precision a, r) with
+    | Complex _, _ -> true
+    | Real _, Eig _ | Other, _ -> false
+    | Real _, _ -> true
+  in
+  let want = match r with Solve_triangular _ -> 2 | _ -> 1 in
+  let same = Array.for_all (fun d -> d = ins.(0)) in
+  if Array.length ins <> want || not (takes ins.(0) && same ins) then
+    refuse "the routine" ins
+  else
+    let a = ins.(0) and i64 = D.Any D.Int64 in
+    Ok
+      (match r with
+      | Cholesky _ | Solve_triangular _ -> [| a |]
+      | Lu -> [| a; i64; i64 |]
+      | Qr _ -> [| a; a |]
+      | Svd { vectors = None } -> [| a |]
+      | Svd { vectors = Some _ } -> [| a; a; a |]
+      | Eigh { vectors } | Eig { vectors } ->
+          if vectors then [| a; a |] else [| a |])
+
+let dtypes s ins =
+  let f = int32 s at_family in
+  if f = family_fft then fft_dtypes s ins else linalg_dtypes s ins
+
 (* Views *)
 
 module Contract_view = struct

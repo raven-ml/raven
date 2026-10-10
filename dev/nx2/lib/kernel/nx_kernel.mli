@@ -58,8 +58,8 @@ module Spec = Spec
     does not compute the case.
 
     An [apply], [fft] or [linalg] entry answers [Wrong_dtype] for dtypes its
-    kind ({!Prog.accepts0} to {!Prog.accepts3}), transform ({!Spec.fft}) or
-    routine ({!Spec.linalg}) does not take, whatever its caller checked. A
+    kind ({!Prog.accepts0} to {!Prog.accepts3}), transform or routine
+    ({!Spec.dtypes}) does not take or give, whatever its caller checked. A
     decline of [apply0] to [apply3] at a base dtype (float32, float64, the 8-
     to 64-bit integers and bool), of [reduce] or [scan] of one [Sum],
     [Prod], [Max] or [Min] of a program's one operand into its own dtype, read

@@ -1139,6 +1139,8 @@ let pp_transform ppf = function
   | R2c -> Format.pp_print_string ppf "R2c"
   | C2r { n } -> Format.fprintf ppf "C2r %d" n
 
+let transform_t = Testable.make ~pp:pp_transform ~equal:( = )
+
 type fft_case = { t : S.transform; fft_axes : int array; x : int array }
 
 let pp_fft_case ppf c =
@@ -1177,7 +1179,7 @@ let law_fft_encoding c =
        [| 10; transform_code c.t; Array.length c.fft_axes; n |]
        c.fft_axes)
     (Nx_kernel_support.fft_fields s);
-  equal ~msg:"transform" bool true (S.transform s = c.t);
+  equal ~msg:"transform" transform_t c.t (S.transform s);
   equal ~msg:"axes" (array int) c.fft_axes (S.axes s)
 
 (* The result has the operand's shape, but along the last axis: n/2 + 1
@@ -1213,7 +1215,8 @@ let test_fft_refuses () =
   refuses ~msg:"a negative point count" ~t:(S.C2r { n = -1 }) [| 0 |];
   let s = S.fft S.R2c ~axes:[| 1 |] in
   let fails ~msg ins =
-    equal ~msg bool true (Result.is_error (S.shapes s ins))
+    equal ~msg (result (list (list int)) unit) (Error ())
+      (result_of (S.shapes s ins))
   in
   fails ~msg:"an axis past the operand's rank" [| [| 4 |] |];
   fails ~msg:"two operands" [| [| 2; 4 |]; [| 2; 4 |] |];
@@ -1277,6 +1280,8 @@ let linalg_fields (r : S.routine) =
 let pp_routine ppf r =
   Format.fprintf ppf "routine %a" pp_ints (linalg_fields r)
 
+let routine_t = Testable.make ~pp:pp_routine ~equal:( = )
+
 type linalg_case = { r : S.routine; ins : int array array }
 
 let pp_linalg_case ppf c =
@@ -1317,7 +1322,7 @@ let law_linalg_encoding c =
   equal ~msg:"C reads" (array int)
     (Array.append [| 11 |] (linalg_fields c.r))
     (Nx_kernel_support.linalg_fields s);
-  equal ~msg:"routine" bool true (S.routine s = c.r)
+  equal ~msg:"routine" routine_t c.r (S.routine s)
 
 (* The results by the rule of Spec.linalg, for a of [batch; m; n]. *)
 let law_linalg_shapes c =
@@ -1360,6 +1365,71 @@ let law_linalg_shapes c =
   cover "wide" (wide && Result.is_ok want);
   equal (result (list (list int)) unit) want
     (result_of (S.shapes (S.linalg c.r) c.ins))
+
+(* Dtypes *)
+
+let name (D.Any dt) = Format.asprintf "%a" D.pp dt
+let dtypes_of s ins = Result.map (Array.map name) (S.dtypes s ins)
+let names = result (array string) unit
+let refused = Error ()
+let dtypes_or_error s ins = Result.map_error ignore (dtypes_of s ins)
+
+(* Each transform's pairings, from Spec.fft's table, over every dtype. *)
+let test_fft_dtypes () =
+  List.iter
+    (fun (D.Any dt as d) ->
+      let want t =
+        match (t, dt) with
+        | S.C2c _, (D.Complex64 | D.Complex128) -> Ok [| name d |]
+        | S.R2c, D.Float32 -> Ok [| "complex64" |]
+        | S.R2c, D.Float64 -> Ok [| "complex128" |]
+        | S.C2r _, D.Complex64 -> Ok [| "float32" |]
+        | S.C2r _, D.Complex128 -> Ok [| "float64" |]
+        | _ -> refused
+      in
+      List.iter
+        (fun t ->
+          equal
+            ~msg:(Format.asprintf "%a of %s" pp_transform t (name d))
+            names (want t)
+            (dtypes_or_error (S.fft t ~axes:[| 0 |]) [| d |]))
+        (transforms 4))
+    D.all
+
+(* Each routine's results: the operand's dtype, Lu's positions int64; the
+   floats and complex numbers taken, Eig's complex alone; a solve's two
+   operands of one dtype. *)
+let test_linalg_dtypes () =
+  List.iter
+    (fun (D.Any dt as d) ->
+      let complex = match dt with D.Complex64 | D.Complex128 -> true | _ -> false in
+      let real = match dt with D.Float32 | D.Float64 -> true | _ -> false in
+      List.iter
+        (fun r ->
+          let a = name d in
+          let results : S.routine -> string array = function
+            | Lu -> [| a; "int64"; "int64" |]
+            | Qr _ | Eigh { vectors = true } | Eig { vectors = true } -> [| a; a |]
+            | Svd { vectors = Some _ } -> [| a; a; a |]
+            | _ -> [| a |]
+          in
+          let takes = complex || (real && match r with S.Eig _ -> false | _ -> true) in
+          let ins = if is_solve r then [| d; d |] else [| d |] in
+          equal
+            ~msg:(Format.asprintf "%a of %s" pp_routine r a)
+            names
+            (if takes then Ok (results r) else refused)
+            (dtypes_or_error (S.linalg r) ins))
+        routines)
+    D.all;
+  let solve =
+    S.linalg
+      (S.Solve_triangular { triangle = Lower; transpose = false; unit_diagonal = false })
+  in
+  equal ~msg:"a solve of two dtypes" names refused
+    (dtypes_or_error solve D.[| Any Float32; Any Float64 |]);
+  equal ~msg:"a solve of one operand" names refused
+    (dtypes_or_error solve D.[| Any Float32 |])
 
 let tests =
   [
@@ -1429,6 +1499,12 @@ let tests =
           linalg_case law_linalg_encoding;
         prop "results are each routine's, after the batch" linalg_case
           law_linalg_shapes;
+      ];
+    group "dtypes"
+      [
+        test "each transform takes and gives its pairings" test_fft_dtypes;
+        test "each routine takes floats and complex numbers, Eig complex"
+          test_linalg_dtypes;
       ];
     group "contract view"
       [

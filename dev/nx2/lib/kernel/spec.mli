@@ -25,6 +25,15 @@ val shapes : 'f t -> int array array -> (int array array, string) result
     axis's extent; an assembly's and a fold's result has their [shape]. A
     transform's and a routine's are as {!fft} and {!linalg} state them. *)
 
+val dtypes :
+  [< `Fft | `Linalg ] t ->
+  Nx_array.Dtype.any array ->
+  (Nx_array.Dtype.any array, string) result
+(** [dtypes s ins] is the dtypes of [s]'s results for operands of the dtypes
+    [ins], in the order {!shapes} gives the results, or why they do not fit
+    [s]: a transform's and a routine's, as {!fft} and {!linalg} state
+    them. *)
+
 (** {1:loads Loads} *)
 
 type pad = {
@@ -436,9 +445,10 @@ val fft : transform -> axes:int array -> fft t
     is one bin of [+0], and [C2r { n = 0 }] reads one bin and writes no
     point.
 
-    The operand and the result share a precision: [complex64] with
-    [complex64] or [float32], [complex128] with [complex128] or [float64].
-    Each kernel library states its error bound.
+    [C2c] takes [complex64] or [complex128] into its own dtype, [R2c]
+    [float32] into [complex64] and [float64] into [complex128], [C2r]
+    [complex64] into [float32] and [complex128] into [float64]. Each kernel
+    library states its error bound.
 
     Raises [Invalid_argument] unless [axes] is not empty and strictly
     increasing in [[0, ]{!Nx_array.Layout.max_rank}[)], and [n] is not
@@ -529,10 +539,15 @@ val linalg : routine -> linalg t
       ones it takes instead. A zero on a diagonal it reads makes [x]
       NaN.
 
-    [Eig]'s eigenvalues come in an order each kernel library states, and the
-    vectors of [Svd], [Eigh] and [Eig] are determined up to a unit factor
-    per vector, which each library fixes. Each kernel library states its
-    error bounds. *)
+    The relations above leave choices, which each kernel library states:
+    [Eig]'s order of eigenvalues; [Qr]'s factors, unique only up to a unit
+    factor per column of [q] and row of [r] where [r]'s diagonal has no
+    zero, and otherwise from the first zero on up to an orthonormal
+    completion; the vectors of [Svd], [Eigh] and [Eig], unique only up to a
+    unit factor where their value is simple and up to a unitary basis of
+    its space where it repeats; and the columns [Complete] adds, any
+    orthonormal completion. Each kernel library states its error
+    bounds. *)
 
 val routine : linalg t -> routine
 (** [routine s] is what [s] computes. *)

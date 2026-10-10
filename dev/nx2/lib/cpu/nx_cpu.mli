@@ -61,6 +61,7 @@
     refuse with [Shape_mismatch] operands and destinations whose shapes do
     not fit.
 
-    [fft] and [linalg] answer [Declined]. *)
+    [fft] and [linalg] answer [Declined] for the dtypes
+    {!Nx_kernel.Spec.dtypes} gives, and [Wrong_dtype] for others. *)
 
 include Nx_kernel.S

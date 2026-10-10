@@ -163,5 +163,13 @@ let contract s ~dst ops =
     let (Nx_array.Any i) = if Nx_kernel.Spec.init s then ops.(2) else ops.(0) in
     contract_c s v ~dst:d a b i
 
-let fft _ ~dst:_ _ = Nx_array.Declined
-let linalg _ ~dsts:_ _ = Nx_array.Declined
+(* Transforms and factorisations: declined, once the dtypes are the ones [s]
+   takes and gives. *)
+let decline s ~dsts ops =
+  let dtype (Nx_array.Any x) = Nx_array.Dtype.Any (Nx_array.dtype x) in
+  match Nx_kernel.Spec.dtypes s (Array.map dtype ops) with
+  | Ok ds when ds = Array.map dtype dsts -> Nx_array.Declined
+  | _ -> Nx_array.Wrong_dtype
+
+let fft s ~dst x = decline s ~dsts:[| dst |] [| x |]
+let linalg s ~dsts ops = decline s ~dsts ops

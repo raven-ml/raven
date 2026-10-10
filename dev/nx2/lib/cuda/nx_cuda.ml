@@ -343,5 +343,12 @@ let scatter _ ~dst:_ ~into:_ _ _ = A.Declined
 let sort _ ~values:_ ~positions:_ _ = A.Declined
 let assemble _ ~dst:_ _ = A.Declined
 let fold _ ~dst:_ _ = A.Declined
-let fft _ ~dst:_ _ = A.Declined
-let linalg _ ~dsts:_ _ = A.Declined
+(* Declined, once the dtypes are the ones [s] takes and gives. *)
+let decline s ~dsts ops =
+  let dtype (A.Any x) = A.Dtype.Any (A.dtype x) in
+  match Nx_kernel.Spec.dtypes s (Array.map dtype ops) with
+  | Ok ds when ds = Array.map dtype dsts -> A.Declined
+  | _ -> A.Wrong_dtype
+
+let fft s ~dst x = decline s ~dsts:[| dst |] [| x |]
+let linalg s ~dsts ops = decline s ~dsts ops
