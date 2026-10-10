@@ -931,6 +931,165 @@ let test_refusals (b : Support.backend) () =
   equal ~msg:"is +0" (array float_exact) [| 0.; 0. |]
     (A.to_array (A.expect D.Float32 (host dst)))
 
+(* Padded loads *)
+
+(* A reduction or scan of a padded load: the operand, its padding and its
+   fill's bits, and the case of the array the load reads, built here. *)
+type padded = { x : A.any; fill : string; pad : S.pad; loaded : case }
+
+let pp_padded ppf p =
+  let pp_window ppf (w : M.window) =
+    Format.fprintf ppf "(%d %d %d %d)" w.axis w.size w.step w.dilation
+  in
+  Format.fprintf ppf "lo %a hi %a interior %a windows %a of %a" pp_ints
+    p.pad.lo pp_ints p.pad.hi pp_ints p.pad.interior
+    (Format.pp_print_list pp_window)
+    (Array.to_list p.pad.windows) pp_case p.loaded
+
+(* The array [x] padded with the element [fill] (its bits) as [pad] says,
+   C-contiguous, built element by element: along each axis, padded index
+   [i] holds element [(i - lo) / (interior + 1)] where that divides and lies
+   in the operand, the fill elsewhere; then the windows' view. *)
+let pad_array (A.Any x) fill (pad : S.pad) =
+  let dt = A.dtype x in
+  let w = D.bits dt / 8 in
+  let s = L.shape (A.layout x) in
+  let r = Array.length s in
+  let padded =
+    Array.init r (fun i ->
+        let d = s.(i) in
+        pad.lo.(i) + pad.hi.(i) + d + if d > 0 then pad.interior.(i) * (d - 1) else 0)
+  in
+  let bytes = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy x))) in
+  let b = Bytes.create (max 1 (w * total padded)) in
+  List.iteri
+    (fun k idx ->
+      let src = ref 0 and inside = ref true in
+      Array.iteri
+        (fun i j ->
+          let c = j - pad.lo.(i) and step = pad.interior.(i) + 1 in
+          if c < 0 || c mod step <> 0 || c / step >= s.(i) then inside := false
+          else src := (!src * s.(i)) + (c / step))
+        idx;
+      for q = 0 to w - 1 do
+        Bytes.set b ((k * w) + q)
+          (if !inside then Char.chr bytes.((!src * w) + q) else fill.[q])
+      done)
+    (indices padded);
+  let a = A.v dt (L.contiguous padded) (Rig.Buffer.of_string (Bytes.to_string b)) in
+  if pad.windows = [||] then A.Any a
+  else A.Any (Option.get (A.move (M.Window pad.windows) a))
+
+(* The fills a law draws: zero, one, the extremes and a NaN of floats, the
+   least integer. *)
+let fills (D.Any dt) =
+  let le w v =
+    String.init w (fun i ->
+        Char.chr (Int64.to_int (Int64.logand (Int64.shift_right_logical v (8 * i)) 0xFFL)))
+  in
+  let w = D.bits dt / 8 in
+  match dt with
+  | D.Float32 ->
+      List.map (fun v -> le 4 (Int64.of_int32 v))
+        [ 0l; 0x3F800000l; 0xFF800000l; 0x7FC01234l ]
+  | D.Float64 ->
+      List.map (le 8)
+        [ 0L; Int64.bits_of_float 1.; Int64.bits_of_float neg_infinity; 0x7FF8000000000123L ]
+  | D.Bool -> [ "\000"; "\001" ]
+  | _ -> [ le w 0L; le w 7L; le w (Int64.shift_left 1L ((8 * w) - 1)) ]
+
+(* A padding of an operand of shape [s]: low and high padding from -2 to 3
+   (negative crops), interior padding up to 2, all kept non-negative where
+   cropping would leave an axis below zero, and at most one window. *)
+let pad_of s =
+  let open Gen in
+  let r = Array.length s in
+  let ints lo hi = array ~size:(constant r) (int_range lo hi) in
+  let* lo = ints (-2) 3 in
+  let* hi = ints (-2) 3 in
+  let* interior = ints 0 2 in
+  let extent lo hi i =
+    lo.(i) + hi.(i) + s.(i) + if s.(i) > 0 then interior.(i) * (s.(i) - 1) else 0
+  in
+  let lo, hi =
+    if List.for_all (fun i -> extent lo hi i >= 0) (List.init r Fun.id) then
+      (lo, hi)
+    else (Array.map (max 0) lo, Array.map (max 0) hi)
+  in
+  let* axis = option (int_range 0 (r - 1)) in
+  let* size = int_range 1 3 in
+  let* step = int_range 1 2 in
+  let+ dilation = int_range 1 2 in
+  let windows =
+    match axis with
+    | Some axis when extent lo hi axis >= (dilation * (size - 1)) + 1 ->
+        [| { M.axis; size; step; dilation } |]
+    | _ -> [||]
+  in
+  { S.lo; hi; interior; windows }
+
+let padded_case =
+  Gen.with_pp pp_padded
+    (let open Gen in
+     let* scan = bool in
+     let* d = of_list ~pp:pp_dtype base in
+     let* monoid =
+       of_list (List.filter (fun m -> S.accepts (S.Monoid m) d) monoids)
+     in
+     let* s = array ~size:(int_range 1 3) (int_range 0 6) in
+     let* pad = pad_of s in
+     let* fill = of_list (fills d) in
+     let* seed = int in
+     let r = Array.length s in
+     let plain =
+       {
+         perm = Array.init r Fun.id;
+         stepped = false;
+         reversed = None;
+         broadcast = false;
+       }
+     in
+     let x = operand d s plain ~specials:20 seed in
+     let loaded = pad_array x fill pad in
+     let lr = Array.length (shape_of loaded) in
+     let+ axes =
+       if scan then map (fun a -> [| a |]) (int_range 0 (lr - 1))
+       else
+         let+ keep = array ~size:(constant lr) bool in
+         Array.of_list (List.filter (fun i -> keep.(i)) (List.init lr Fun.id))
+     in
+     { x; fill; pad; loaded = { scan; monoid; axes; x = loaded; views = [] } })
+(* nx.cpu reduces and scans a padded load as the array it reads: the
+   reference's bits over that array, built here; an extreme of no term is
+   refused. *)
+let law_padded (b : Support.backend) p =
+  let module K = (val b.kernels) in
+  let c = p.loaded in
+  let (A.Any x) = p.x in
+  let dt = D.Any (A.dtype x) in
+  let loads = [| S.Padded { fill = p.fill; pad = p.pad } |] in
+  let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
+  let answer =
+    if c.scan then
+      K.scan
+        (S.scan (identity dt) ~loads ~axis:c.axes.(0) (S.Monoid c.monoid, 0, dt))
+        ~dsts:[| dst |] [| p.x |]
+    else
+      K.reduce
+        (S.reduce (identity dt) ~loads ~axes:c.axes [| (S.Monoid c.monoid, 0, dt) |])
+        ~dsts:[| dst |] [| p.x |]
+  in
+  let s = shape_of c.x in
+  let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
+  let extreme = c.monoid = S.Max || c.monoid = S.Min in
+  cover "windows" (p.pad.windows <> [||]);
+  cover "cropped" (Array.exists (fun l -> l < 0) p.pad.lo);
+  cover "interior" (Array.exists (fun i -> i > 0) p.pad.interior);
+  match answer with
+  | A.Shape_mismatch when (not c.scan) && extreme && per = 0 ->
+      cover "an extreme of no term" true
+  | A.Done -> equal (list string) [] (differ (expected c) dst)
+  | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -973,6 +1132,8 @@ let cpu (b : Support.backend) =
         dots (run (law_contract b));
       prop ~count:20 ~examples:large_examples "one thread gives the job's bits"
         large (run (law_threads b));
+      prop "a padded load reduces as the array it reads" padded_case
+        (run (law_padded b));
     ]
 
 let () =

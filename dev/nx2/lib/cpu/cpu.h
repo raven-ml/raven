@@ -264,6 +264,16 @@ static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
 void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
                       const nx_loop *l);
 
+/* Padded loads */
+
+/* Fills [out] with the padded load [p] of the operand [a]: a plain
+   descriptor over a C-contiguous copy of [a] padded with [p]'s fill, laid
+   out by [p]'s windows, which a kernel reads as any operand (assemble.c).
+   The copy lives in C-heap memory at [out->base], which the caller frees;
+   it is NULL for a load with no element. Answers 0, or 1 if host memory
+   runs out, having allocated nothing. Reads no OCaml value. */
+int nx_cpu_unpad(const nx_array *a, const nx_spec_pad *p, nx_array *out);
+
 /* The stage */
 
 /* The bytes of a staged block: a walk for the stage takes blocks of at most

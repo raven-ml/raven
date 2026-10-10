@@ -41,10 +41,12 @@
     unspecified.
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
-    program's one operand into its own dtype, read plain, at [float32],
-    [float64] and the 8- to 64-bit integers, and [Max] and [Min] at [bool];
-    they answer [Declined] for the others. They refuse with [Shape_mismatch]
-    what {!Nx_kernel.Spec.shapes} answers [Error] for, and destinations whose
+    program's one operand into its own dtype, read plain or padded, at
+    [float32], [float64] and the 8- to 64-bit integers, and [Max] and [Min]
+    at [bool]; they answer [Declined] for the others. A padded operand is
+    first copied padded into host memory, which the call holds until it
+    returns. They refuse with [Shape_mismatch] what
+    {!Nx_kernel.Spec.shapes} answers [Error] for, and destinations whose
     shapes are not the results'.
 
     A float sum or product numbers each output's terms in C order of the

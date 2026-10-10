@@ -79,7 +79,7 @@ typedef struct {
   const nx_cpu_fold *f;
   int dtype, w, nan;
   _Alignas(8) uint8_t id[8];
-  const nx_array *a; /* a[0] the destination, a[1] the operand */
+  const nx_array *dst, *src; /* the destination, the operand as loaded */
   /* The reduced axes in C order: extents and the operand's steps. */
   int nr;
   int64_t re[NX_MAX_RANK], rs[NX_MAX_RANK];
@@ -159,7 +159,7 @@ static int any_nan(const fold *q, const uint8_t *v, int64_t n) {
 }
 
 static const uint8_t *at(const fold *q, int64_t p) {
-  return q->a[1].base + p * q->w;
+  return q->src->base + p * q->w;
 }
 
 /* The operand's position of term [t] of the output at [p]. */
@@ -306,7 +306,7 @@ static unit unit_of(const fold *q, int64_t u) {
 
 /* Stores the unit's values [v], each NaN replaced by its first NaN term. */
 static void store(const fold *q, const unit *x, const uint8_t *v) {
-  uint8_t *d = q->a[0].base + x->d * q->w;
+  uint8_t *d = q->dst->base + x->d * q->w;
   if (x->sd == 1) memcpy(d, v, x->W * q->w);
   else
     for (int64_t j = 0; j < x->W; j++)
@@ -326,7 +326,7 @@ static void store(const fold *q, const unit *x, const uint8_t *v) {
 static void few(const fold *q, const unit *x) {
   int64_t off[LANES];
   for (int64_t t = 0; t < q->terms; t++) off[t] = term(q, 0, t);
-  uint8_t *d = q->a[0].base + x->d * q->w;
+  uint8_t *d = q->dst->base + x->d * q->w;
   q->f->few(at(q, x->p), off, (int)q->terms, x->s, x->W, q->id, d, x->sd);
   if (!q->nan || (x->sd == 1 && !any_nan(q, d, x->W))) return;
   for (int64_t j = 0; j < x->W; j++) {
@@ -468,7 +468,7 @@ static void plan_reduce(fold *q, const nx_loop *l) {
 /* The destination's elements, all set to the identity: a reduction of no
    term. */
 static void fill_dst(fold *q) {
-  const nx_array *d = &q->a[0];
+  const nx_array *d = q->dst;
   int64_t extent[NX_MAX_RANK], step[1][NX_MAX_RANK];
   for (int i = 0; i < d->rank; i++) {
     extent[i] = d->dim[i];
@@ -508,7 +508,7 @@ static void total(const fold *q, const unit *x, int64_t c, uint8_t *v) {
 static void rescan(const fold *q, const unit *x, int64_t c, uint8_t *a) {
   int64_t t0 = c * SCAN_CHUNK;
   int64_t n = q->terms - t0 < SCAN_CHUNK ? q->terms - t0 : SCAN_CHUNK;
-  uint8_t *y = q->a[0].base + x->d * q->w;
+  uint8_t *y = q->dst->base + x->d * q->w;
   if (q->slices || x->W == 1) {
     q->f->scan(a, at(q, x->p + t0 * q->rs[0]), q->rs[0], x->s,
                y + t0 * q->rd * q->w, q->rd, x->sd, n, (int)x->W);
@@ -528,7 +528,7 @@ static void rescan(const fold *q, const unit *x, int64_t c, uint8_t *a) {
    term from that term on. */
 static void settle(const fold *q, const unit *x) {
   if (!q->nan || q->terms == 0) return;
-  uint8_t *y = q->a[0].base;
+  uint8_t *y = q->dst->base;
   for (int64_t j = 0; j < x->W; j++) {
     int64_t p = x->p + j * x->s, d = x->d + j * x->sd;
     if (!is_nan(q, y + (d + (q->terms - 1) * q->rd) * q->w)) continue;
@@ -587,7 +587,7 @@ static void rescan_quads(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const fold *q = ctx;
   int64_t quads = (q->groups + 3) / 4;
-  uint8_t *y = q->a[0].base;
+  uint8_t *y = q->dst->base;
   for (int64_t v = lo; v < hi; v++) {
     int64_t u = v / quads, c = v % quads * 4;
     unit x = unit_of(q, u * q->groups);
@@ -649,18 +649,26 @@ static void plan_scan(fold *q, const nx_array *d, const nx_array *x, int axis) {
 
 /* Entries */
 
+/* The bytes of a padding record: its header, then lo, hi and interior by
+   axis and four words per window, at most one window per axis. */
+#define PAD_BYTES (24 + 8 * 7 * NX_MAX_RANK)
+
 /* The core case of the descriptor [s]: its monoid, or -1 for a case nx.cpu
-   declines. It reads [s], its axes into [axes], before anything that can
-   move it. */
-static int core(value s, int family, int dt, int *axes, int *naxes) {
+   declines. It reads [s] before anything that can move it: its axes into
+   [axes], and a padded load's record into [pad], setting [padded]. */
+static int core(value s, int family, int dt, int *axes, int *naxes,
+                uint8_t *pad, int *padded) {
   const nx_spec_loop *m = (const nx_spec_loop *)String_val(s);
   if (m->family != family || m->nloads != 1 || m->nreductions != 1) return -1;
-  if (m->loads[0] != 0) return -1;
   const nx_spec_reduction *r = nx_spec_loop_reductions(m);
   const nx_prog *p = nx_spec_loop_prog(m);
   if (r->kind > NX_MIN || r->output != 0 || r->dtype != dt) return -1;
   if (!nx_prog_is_operand(p) || nx_prog_ins(p)[0] != dt) return -1;
   if (nx_cpu_table->fold[r->kind][dt].lanes == NULL) return -1;
+  const nx_spec_pad *d = nx_spec_loop_pad(m, 0);
+  *padded = d != NULL;
+  if (d != NULL)
+    memcpy(pad, d, 24 + 8 * (3 * (size_t)d->rank + 4 * (size_t)d->nwindows));
   *naxes = m->naxes;
   for (int i = 0; i < m->naxes; i++) axes[i] = nx_spec_loop_axes(m)[i];
   return r->kind;
@@ -686,81 +694,98 @@ static int fits(int scan, const int64_t *x, int xr, const int64_t *y, int yr,
   return j == naxes && k == yr;
 }
 
-/* Reduces or scans, as [family] says, the operand in [ops] into the
-   destination in [dsts]: on one thread where [threads] is 1, on as many as
-   the job gives where it is 0. */
-static value run(value s, value dsts, value ops, int family, int threads) {
-  CAMLparam3(s, dsts, ops);
-  int scan = family == NX_SPEC_SCAN;
-  if (Wosize_val(dsts) != 1 || Wosize_val(ops) != 1)
-    CAMLreturn(Val_int(NX_DECLINED));
-  value vd = Field(Field(dsts, 0), 0), vx = Field(Field(ops, 0), 0);
-  int dt = nx_array_dtype(vx), axes[NX_MAX_RANK], naxes;
-  int monoid = core(s, family, dt, axes, &naxes);
-  if (monoid < 0) CAMLreturn(Val_int(NX_DECLINED));
-  /* The shapes, before the door; an extreme has a term for each output. */
-  int64_t x[2 * NX_MAX_RANK], y[2 * NX_MAX_RANK], off, terms, outputs;
-  int xr = nx_array_layout(vx, x, &off), yr = nx_array_layout(vd, y, &off);
-  if (!fits(scan, x, xr, y, yr, axes, naxes, &terms, &outputs))
-    CAMLreturn(Val_int(NX_SHAPE));
-  if (!scan && terms == 0 && outputs > 0 && monoid >= NX_MAX)
-    CAMLreturn(Val_int(NX_SHAPE));
-  nx_operand in[2] = {{vd, dt, 1}, {vx, dt, 0}};
-  nx_array a[2];
-  int e = nx_read(2, in, a);
-  if (e) CAMLreturn(Val_int(e));
+/* Reduces or scans, as [scan] says, [x] into [y] by [monoid]: NX_OK,
+   NX_SHAPE for shapes that do not fit, an extreme of no term included, or
+   -1 if host memory runs out. */
+static int fold_into(int scan, int monoid, int dt, const int *axes, int naxes,
+                     const nx_array *y, const nx_array *x, int threads) {
+  int64_t terms, outputs;
+  if (!fits(scan, x->dim, x->rank, y->dim, y->rank, axes, naxes, &terms,
+            &outputs))
+    return NX_SHAPE;
+  if (!scan && terms == 0 && outputs > 0 && monoid >= NX_MAX) return NX_SHAPE;
   fold q = {.f = &nx_cpu_table->fold[monoid][dt],
             .dtype = dt,
             .w = nx_cpu_width(dt),
             .nan = dt == NX_FLOAT32 || dt == NX_FLOAT64,
-            .a = a,
+            .dst = y,
+            .src = x,
             .terms = terms};
   identity(monoid, dt, q.id);
   int64_t bytes = terms * outputs * q.w;
   if (outputs > 0 && terms == 0 && !scan) fill_dst(&q);
-  if (outputs > 0 && terms > 0) {
-    if (scan) plan_scan(&q, &a[0], &a[1], axes[0]);
-    else {
-      nx_loop l = {.rank = xr, .first = {a[0].offset, a[1].offset}};
-      for (int i = 0, k = 0, j = 0; i < xr; i++) {
-        l.extent[i] = a[1].dim[i];
-        l.step[1][i] = a[1].dim[xr + i];
-        int reduced = j < naxes && axes[j] == i;
-        j += reduced;
-        l.step[0][i] = reduced ? 0 : a[0].dim[yr + k++];
-      }
-      l.rank = nx_coalesce_dims(2, xr, l.extent, l.step);
-      plan_reduce(&q, &l);
+  if (outputs == 0 || terms == 0) return NX_OK;
+  int r = x->rank;
+  if (scan) plan_scan(&q, y, x, axes[0]);
+  else {
+    /* The loop: the destination steps 0 along the reduced axes. */
+    nx_loop l = {.rank = r, .first = {y->offset, x->offset}};
+    for (int i = 0, k = 0, j = 0; i < r; i++) {
+      l.extent[i] = x->dim[i];
+      l.step[1][i] = x->dim[r + i];
+      int reduced = j < naxes && axes[j] == i;
+      j += reduced;
+      l.step[0][i] = reduced ? 0 : y->dim[y->rank + k++];
     }
-    int64_t units = q.outer * q.chunks;
-    if (q.groups > 1) {
-      q.scratch = malloc((size_t)(units * q.groups * q.row * q.w));
-      if (q.scratch == NULL) {
-        nx_done(2, a);
-        caml_raise_out_of_memory();
-      }
-    }
-    if (q.groups == 1)
-      job(units, bytes, threads, scan ? scan_units : reduce_units, &q);
-    else if (!scan) {
-      job(units * q.groups, bytes, threads, reduce_units, &q);
-      job(units, units * q.groups * q.row * q.w, threads, finish_units, &q);
-    } else {
-      job(units * q.groups, bytes, threads, total_units, &q);
-      carries(&q, units);
-      if (q.row == 1)
-        job(units * ((q.groups + 3) / 4), bytes, threads, rescan_quads, &q);
-      else
-        job(units * q.groups, bytes, threads, rescan_units, &q);
-      for (int64_t u = 0; u < units; u++) {
-        unit x = unit_of(&q, u * q.groups);
-        settle(&q, &x);
-      }
-    }
-    free(q.scratch);
+    l.rank = nx_coalesce_dims(2, r, l.extent, l.step);
+    plan_reduce(&q, &l);
   }
+  int64_t units = q.outer * q.chunks;
+  if (q.groups > 1) {
+    q.scratch = malloc((size_t)(units * q.groups * q.row * q.w));
+    if (q.scratch == NULL) return -1;
+  }
+  if (q.groups == 1)
+    job(units, bytes, threads, scan ? scan_units : reduce_units, &q);
+  else if (!scan) {
+    job(units * q.groups, bytes, threads, reduce_units, &q);
+    job(units, units * q.groups * q.row * q.w, threads, finish_units, &q);
+  } else {
+    job(units * q.groups, bytes, threads, total_units, &q);
+    carries(&q, units);
+    if (q.row == 1)
+      job(units * ((q.groups + 3) / 4), bytes, threads, rescan_quads, &q);
+    else
+      job(units * q.groups, bytes, threads, rescan_units, &q);
+    for (int64_t u = 0; u < units; u++) {
+      unit x = unit_of(&q, u * q.groups);
+      settle(&q, &x);
+    }
+  }
+  free(q.scratch);
+  return NX_OK;
+}
+
+/* Reduces or scans, as [family] says, the operand in [ops] into the
+   destination in [dsts]: on one thread where [threads] is 1, on as many as
+   the job gives where it is 0. A padded operand is first copied padded
+   into C-heap scratch (assemble.c), which the plain path then reads. */
+static value run(value s, value dsts, value ops, int family, int threads) {
+  CAMLparam3(s, dsts, ops);
+  if (Wosize_val(dsts) != 1 || Wosize_val(ops) != 1)
+    CAMLreturn(Val_int(NX_DECLINED));
+  value vd = Field(Field(dsts, 0), 0), vx = Field(Field(ops, 0), 0);
+  int dt = nx_array_dtype(vx), axes[NX_MAX_RANK], naxes, padded;
+  _Alignas(8) uint8_t pad[PAD_BYTES];
+  int monoid = core(s, family, dt, axes, &naxes, pad, &padded);
+  if (monoid < 0) CAMLreturn(Val_int(NX_DECLINED));
+  nx_operand in[2] = {{vd, dt, 1}, {vx, dt, 0}};
+  nx_array a[2], loaded, *x = &a[1];
+  int e = nx_read(2, in, a);
+  if (e) CAMLreturn(Val_int(e));
+  if (padded) {
+    if (nx_cpu_unpad(&a[1], (const nx_spec_pad *)pad, &loaded)) {
+      nx_done(2, a);
+      caml_raise_out_of_memory();
+    }
+    x = &loaded;
+  }
+  e = fold_into(family == NX_SPEC_SCAN, monoid, dt, axes, naxes, &a[0], x,
+                threads);
+  if (padded) free(loaded.base);
   nx_done(2, a);
-  CAMLreturn(Val_int(NX_OK));
+  if (e < 0) caml_raise_out_of_memory();
+  CAMLreturn(Val_int(e));
 }
 
 value nx_cpu_reduce_on(value s, value dsts, value ops, int threads) {

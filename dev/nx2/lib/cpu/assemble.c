@@ -224,6 +224,68 @@ value nx_cpu_assemble(value vs, value vd, value vpieces) {
   CAMLreturn(Val_int(e));
 }
 
+/* Padded loads, staged as an assembly of one piece: the fill, then the
+   operand's elements that land inside the padded array, lo + t·(interior
+   + 1) along each axis, then the windows as a layout over the copy. */
+
+int nx_cpu_unpad(const nx_array *a, const nx_spec_pad *p, nx_array *out) {
+  int r = a->rank, nw = p->nwindows, bits = a->bits;
+  const int64_t *lo = p->geometry, *hi = p->geometry + r,
+                *inner = p->geometry + 2 * r;
+  int64_t shape[NX_MAX_RANK], stride[NX_MAX_RANK], total = 1;
+  for (int i = 0; i < r; i++) {
+    int64_t d = a->dim[i];
+    shape[i] = lo[i] + hi[i] + d + (d > 0 ? inner[i] * (d - 1) : 0);
+  }
+  for (int i = r - 1; i >= 0; i--) {
+    stride[i] = total;
+    total *= shape[i];
+  }
+  *out = (nx_array){.dtype = a->dtype, .bits = bits, .rank = r + nw};
+  if (total > 0) {
+    out->base = malloc((size_t)((total * bits + 7) / 8));
+    if (out->base == NULL) return 1;
+    fill_box(out, p->fill, r, shape, stride, 0);
+    /* The operand's indices t that land inside: lo + t·s in [0, shape). */
+    nx_loop l = {.rank = r, .first = {0, a->offset}};
+    int64_t n = 1;
+    for (int i = 0; i < r; i++) {
+      int64_t s = inner[i] + 1, t0 = lo[i] >= 0 ? 0 : (-lo[i] + s - 1) / s;
+      int64_t last = shape[i] - 1 - lo[i] < 0 ? -1 : (shape[i] - 1 - lo[i]) / s;
+      if (last > a->dim[i] - 1) last = a->dim[i] - 1;
+      l.extent[i] = last < t0 ? 0 : last - t0 + 1;
+      l.first[0] += (lo[i] + t0 * s) * stride[i];
+      l.first[1] += t0 * a->dim[r + i];
+      l.step[0][i] = s * stride[i];
+      l.step[1][i] = a->dim[r + i];
+      n *= l.extent[i];
+    }
+    if (n > 0) {
+      l.rank = nx_coalesce_dims(2, r, l.extent, l.step);
+      nx_cpu_copy_loop(out->base, a->base, bits, &l);
+    }
+  }
+  /* The windows: each window's axis by its count, stepping [step]
+     elements, then an axis of its size, stepping [dilation]. */
+  for (int i = 0; i < r; i++) {
+    out->dim[i] = shape[i];
+    out->dim[r + nw + i] = stride[i];
+  }
+  for (int k = 0; k < nw; k++) {
+    const int64_t *w = p->geometry + 3 * r + 4 * k; /* axis, size, step,
+                                                      dilation */
+    int64_t ax = w[0];
+    out->dim[ax] = (shape[ax] - 1 - w[3] * (w[1] - 1)) / w[2] + 1;
+    out->dim[r + nw + ax] = w[2] * stride[ax];
+    out->dim[r + k] = w[1];
+    out->dim[r + nw + r + k] = w[3] * stride[ax];
+  }
+  int64_t elements = 1;
+  for (int i = 0; i < r + nw; i++) elements *= out->dim[i];
+  out->flags = elements == 0 ? NX_EMPTY : nw == 0 ? NX_CONTIGUOUS | NX_DISTINCT : 0;
+  return 0;
+}
+
 /* Folds */
 
 /* An axis of a tap's box: [count] operand indices from [x0] stepping [xs],
