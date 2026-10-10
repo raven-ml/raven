@@ -63,6 +63,31 @@ val complex64 : (Complex.t, Dtype.complex32_elt) dtype
 val bool : (bool, Dtype.bool_elt) dtype
 val bit : (bool, Dtype.bit_elt) dtype
 
+(** Each dtype value [dt] names the type of its values, [dt_t]: a
+    ['d float32_t] is a float32 value on the set ['d]. *)
+
+type 'd float64_t = (float, Dtype.float64_elt, 'd) t
+type 'd float32_t = (float, Dtype.float32_elt, 'd) t
+type 'd float16_t = (float, Dtype.float16_elt, 'd) t
+type 'd bfloat16_t = (float, Dtype.bfloat16_elt, 'd) t
+type 'd float8_e4m3fn_t = (float, Dtype.float8_e4m3fn_elt, 'd) t
+type 'd float8_e5m2_t = (float, Dtype.float8_e5m2_elt, 'd) t
+type 'd float4_e2m1fn_t = (float, Dtype.float4_e2m1fn_elt, 'd) t
+type 'd int64_t = (int64, Dtype.int64_elt, 'd) t
+type 'd uint64_t = (int64, Dtype.uint64_elt, 'd) t
+type 'd int32_t = (int32, Dtype.int32_elt, 'd) t
+type 'd uint32_t = (int32, Dtype.uint32_elt, 'd) t
+type 'd int16_t = (int, Dtype.int16_signed_elt, 'd) t
+type 'd uint16_t = (int, Dtype.int16_unsigned_elt, 'd) t
+type 'd int8_t = (int, Dtype.int8_signed_elt, 'd) t
+type 'd uint8_t = (int, Dtype.int8_unsigned_elt, 'd) t
+type 'd int4_t = (int, Dtype.int4_elt, 'd) t
+type 'd uint4_t = (int, Dtype.uint4_elt, 'd) t
+type 'd complex128_t = (Complex.t, Dtype.complex64_elt, 'd) t
+type 'd complex64_t = (Complex.t, Dtype.complex32_elt, 'd) t
+type 'd bool_t = (bool, Dtype.bool_elt, 'd) t
+type 'd bit_t = (bool, Dtype.bit_elt, 'd) t
+
 (** {1:creation Creation}
 
     A value made from a dtype, a shape and numbers, or by operations from such
@@ -342,7 +367,7 @@ val add : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 val mul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [mul a b] is the elementwise product, as {!add}. *)
 
-val less : ('v, 's, 'd) t -> ('v, 's, 'd) t -> (bool, Dtype.bool_elt, 'd) t
+val less : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
 (** [less a b] is [true] where [a]'s element is below [b]'s: integers by value,
     unsigned dtypes unsigned; floats by value, [-0.] not below [+0.];
     [false < true]; complex numbers by real part, then imaginary part. It is
@@ -351,7 +376,7 @@ val less : ('v, 's, 'd) t -> ('v, 's, 'd) t -> (bool, Dtype.bool_elt, 'd) t
     Raises [Invalid_argument] if the shapes do not broadcast. *)
 
 val where :
-  (bool, Dtype.bool_elt, 'd) t ->
+  'd bool_t ->
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t

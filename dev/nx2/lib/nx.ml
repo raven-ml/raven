@@ -33,6 +33,28 @@ let complex64 = Dtype.Complex64
 let bool = Dtype.Bool
 let bit = Dtype.Bit
 
+type 'd float64_t = (float, Dtype.float64_elt, 'd) t
+type 'd float32_t = (float, Dtype.float32_elt, 'd) t
+type 'd float16_t = (float, Dtype.float16_elt, 'd) t
+type 'd bfloat16_t = (float, Dtype.bfloat16_elt, 'd) t
+type 'd float8_e4m3fn_t = (float, Dtype.float8_e4m3fn_elt, 'd) t
+type 'd float8_e5m2_t = (float, Dtype.float8_e5m2_elt, 'd) t
+type 'd float4_e2m1fn_t = (float, Dtype.float4_e2m1fn_elt, 'd) t
+type 'd int64_t = (int64, Dtype.int64_elt, 'd) t
+type 'd uint64_t = (int64, Dtype.uint64_elt, 'd) t
+type 'd int32_t = (int32, Dtype.int32_elt, 'd) t
+type 'd uint32_t = (int32, Dtype.uint32_elt, 'd) t
+type 'd int16_t = (int, Dtype.int16_signed_elt, 'd) t
+type 'd uint16_t = (int, Dtype.int16_unsigned_elt, 'd) t
+type 'd int8_t = (int, Dtype.int8_signed_elt, 'd) t
+type 'd uint8_t = (int, Dtype.int8_unsigned_elt, 'd) t
+type 'd int4_t = (int, Dtype.int4_elt, 'd) t
+type 'd uint4_t = (int, Dtype.uint4_elt, 'd) t
+type 'd complex128_t = (Complex.t, Dtype.complex64_elt, 'd) t
+type 'd complex64_t = (Complex.t, Dtype.complex32_elt, 'd) t
+type 'd bool_t = (bool, Dtype.bool_elt, 'd) t
+type 'd bit_t = (bool, Dtype.bit_elt, 'd) t
+
 type host = Devices.host
 type 'd devices = 'd Devices.t
 
