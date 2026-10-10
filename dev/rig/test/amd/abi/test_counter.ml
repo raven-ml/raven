@@ -54,7 +54,15 @@ let c name block event register (instances, engines, arrays, wgps) offset =
     offset;
   }
 
-(* A GPU of each processor the table knows, and a profile of its counters. *)
+(* [l] with each element's repeats dropped. *)
+let distinct l =
+  List.rev
+    (List.fold_left
+       (fun acc x -> if List.mem x acc then acc else x :: acc)
+       [] l)
+
+(* A GPU of each processor the table knows, and a profile of its counters, each
+   listed once. *)
 let profiles =
   Gen.with_pp
     (fun ppf (g, names) ->
@@ -63,17 +71,60 @@ let profiles =
      let* g = of_list [ gfx12; gfx11; gfx942 ] in
      let names = Array.of_list (Counter.names g) in
      let+ picks =
-       list ~size:(int_range 0 12) (int_range 0 (Array.length names - 1))
+       list ~size:(int_range 0 16) (int_range 0 (Array.length names - 1))
      in
-     (g, List.map (fun i -> names.(i)) picks))
+     (g, distinct (List.map (fun i -> names.(i)) picks)))
+
+(* The counter registers of [block] on [g]: its [_LO] registers the GC's facts
+   list, from [0]. *)
+let slots g block =
+  let rec go n =
+    match Register.find g (Printf.sprintf "reg%s_PERFCOUNTER%d_LO" block n) with
+    | Some _ -> go (n + 1)
+    | None -> n
+  in
+  go 0
+
+(* Whether [names] asks more counters of a block than its registers. *)
+let overflows g names =
+  let block name =
+    match Counter.layout g [ name ] with
+    | Ok { counters = [ c ]; _ } -> c.block
+    | _ -> fail ("no block for " ^ name)
+  in
+  let blocks = List.map block names in
+  List.exists
+    (fun b -> List.length (List.filter (( = ) b) blocks) > slots g b)
+    blocks
 
 let laws =
   group ~timeout "layout"
     [
+      prop "a profile is refused exactly when a block lacks registers" profiles
+        (fun (g, names) ->
+          let over = overflows g names in
+          cover "fits" (not over);
+          cover "overflows" over;
+          match Counter.layout g names with
+          | Ok l ->
+              equal bool ~msg:"overflows" false over;
+              List.iter
+                (fun (c : Counter.t) ->
+                  less int ~msg:c.name ~than:(slots g c.block) c.register)
+                l.counters
+          | Error e -> equal bool ~msg:e true over);
+      prop "a profile listing a counter twice is refused, naming it"
+        Gen.(pair profiles nat)
+        (fun ((g, names), i) ->
+          assume (names <> []);
+          let twice = List.nth names (i mod List.length names) in
+          equal layout
+            (Error (twice ^ " is listed twice"))
+            (Counter.layout g (names @ [ twice ])));
       prop "a run's samples are each counter's values, one after another"
         profiles (fun (g, names) ->
           match Counter.layout g names with
-          | Error e -> fail e
+          | Error _ -> reject ()
           | Ok l ->
               let size (c : Counter.t) =
                 8 * g.xccs * c.instances * c.engines * c.arrays * c.wgps
@@ -125,6 +176,17 @@ let cases =
       test "a counter the GPU lacks is refused, naming it" (fun () ->
           equal layout (Error "gfx1201 counts no SQ_FOO")
             (Counter.layout gfx12 [ "SQ_WAVES"; "SQ_FOO" ]));
+      test "a fifth GL2C counter on an R9700 is refused, naming the block"
+        (fun () ->
+          equal layout (Error "gfx1201 counts at most 4 GL2C counters at once")
+            (Counter.layout gfx12
+               [
+                 "GL2C_HIT";
+                 "GL2C_MISS";
+                 "GL2C_EA_RDREQ";
+                 "GL2C_EA_WRREQ";
+                 "GL2C_EA_WRREQ_STALL";
+               ]));
       test "a processor the table lacks counts nothing" (fun () ->
           equal (list string) [] (Counter.names gfx90a);
           equal layout (Error "gfx90a counts no SQ_WAVES")

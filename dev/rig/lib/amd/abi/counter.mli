@@ -46,4 +46,7 @@ val names : Gpu.t -> string list
 val layout : Gpu.t -> string list -> (layout, string) result
 (** [layout g names] is the samples of a run of [g] counting [names], in order.
     The result is [Error msg] if [g] counts no counter of [names], naming it, as
-    ["gfx1201 counts no SQ_FOO"]. *)
+    ["gfx1201 counts no SQ_FOO"], if [names] lists a counter twice, naming it,
+    as ["SQ_WAVES is listed twice"], or if [names] has more counters of a block
+    than the block has counter registers, naming the block, as
+    ["gfx1201 counts at most 4 GL2C counters at once"]. *)

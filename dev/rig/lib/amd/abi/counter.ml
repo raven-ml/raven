@@ -52,18 +52,33 @@ let places (g : Gpu.t) = function
           in
           (1, g.shader_engines, arrays_per_engine, per_array / units_per_wgp))
 
+(* Whether [block] has counter register [n]. A block's counter registers are
+   numbered from 0, so the first it lacks is how many it has. *)
+let has g block n =
+  Option.is_some (Register.find g (strf "reg%s_PERFCOUNTER%d_LO" block n))
+
+(* The first name [names] lists twice, if any. *)
+let rec twice = function
+  | [] -> None
+  | n :: rest -> if List.mem n rest then Some n else twice rest
+
 let layout g names =
   let table = table g in
   let registers = Hashtbl.create 4 in
+  let taken block =
+    Option.value ~default:0 (Hashtbl.find_opt registers block)
+  in
   let rec go offset acc = function
     | [] -> Ok { counters = List.rev acc; bytes = offset }
     | name :: rest -> (
         match Array.find_opt (fun (n, _, _) -> n = name) table with
         | None -> Error (strf "%s counts no %s" (Gpu.processor g) name)
+        | Some (_, block, _) when not (has g block (taken block)) ->
+            Error
+              (strf "%s counts at most %d %s counters at once" (Gpu.processor g)
+                 (taken block) block)
         | Some (_, block, event) ->
-            let register =
-              Option.value ~default:0 (Hashtbl.find_opt registers block)
-            in
+            let register = taken block in
             Hashtbl.replace registers block (register + 1);
             let instances, engines, arrays, wgps = places g block in
             let c =
@@ -82,4 +97,6 @@ let layout g names =
             let n = g.xccs * instances * engines * arrays * wgps in
             go (offset + (8 * n)) (c :: acc) rest)
   in
-  go 0 [] names
+  match twice names with
+  | Some n -> Error (strf "%s is listed twice" n)
+  | None -> go 0 [] names
