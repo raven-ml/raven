@@ -100,7 +100,8 @@ typedef struct nx_cpu_gemm {
 
 /* A row of a kind of one operand: n elements of [d] from [x], each stepping
    its own count of elements; of two, from [x] and [y]; of three, from [c],
-   [x] and [y]. */
+   [x] and [y]. Each operand's elements and [d]'s are disjoint or identical:
+   the same address and step. */
 typedef void (*nx_cpu_row1)(int64_t n, uint8_t *d, int64_t sd,
                             const uint8_t *x, int64_t sx);
 typedef void (*nx_cpu_row2)(int64_t n, uint8_t *d, int64_t sd,

@@ -147,20 +147,6 @@ IDENT(8, uint64_t)
     LOOPS2(T, LD, F);                                                        \
   }
 
-/* Whether [n] elements of [w] bytes at [d] share no byte with those an
-   operand at [x] steps [sx] elements through: one element where [sx] is
-   0. */
-/* CR: Remove apart and gate NaN replay on d differing from every input.
-   Row callers already supply disjoint or identical operands; state that
-   invariant in cpu.h. These pointer orderings are undefined across
-   allocations, and EXACT forms forward ends before excluding reversed
-   strides. Identity checks preserve the original inputs for a retry,
-   with aliased rows kept on the scalar-kind path. */
-static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
-                 int64_t w) {
-  return d + n * w <= x || x + (sx == 0 ? 1 : n) * w <= d;
-}
-
 /* A plain loop over [n] elements storing [E] into [d] and noting a NaN. */
 #define NOTED(T, E)                                                          \
   for (int64_t i = 0; i < n; i++) {                                          \
@@ -170,15 +156,16 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
   }
 
 /* The row of the float kind [F] of two operands whose plain operation is
-   [OP]. */
+   [OP]. A row that notes a NaN computes again by [F] from its operands, so
+   one whose destination is an operand (cpu.h: disjoint or identical) takes
+   [F] alone. */
 #define EXACT(NAME, T, OP, F)                                                \
   ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,            \
            int64_t sx, const uint8_t *y_, int64_t sy) {                      \
     T *d = (T *)d_;                                                          \
     const T *x = (const T *)x_, *y = (const T *)y_;                          \
     int nan = 1;                                                             \
-    if (sd == 1 && apart(d_, x_, sx, n, sizeof(T)) &&                        \
-        apart(d_, y_, sy, n, sizeof(T))) {                                   \
+    if (sd == 1 && d_ != x_ && d_ != y_) {                                   \
       nan = 0;                                                               \
       if (sx == 1 && sy == 1) {                                              \
         NOTED(T, x[i] OP y[i])                                               \
@@ -224,7 +211,7 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
   }
 
 /* The row of the float kind [F], fma, whose plain operation is [FN]: the
-   contiguous rows alone are noted. */
+   contiguous rows whose destination is no operand alone are noted. */
 #define EXACT_FMA(NAME, T, FN, F)                                            \
   ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,            \
            int64_t sa, const uint8_t *b_, int64_t sb,                        \
@@ -232,9 +219,8 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
     T *d = (T *)d_;                                                          \
     const T *a = (const T *)a_, *b = (const T *)b_, *c = (const T *)c_;      \
     int nan = 1;                                                             \
-    if (sd == 1 && sa == 1 && sb == 1 && sc == 1 &&                          \
-        apart(d_, a_, 1, n, sizeof(T)) && apart(d_, b_, 1, n, sizeof(T)) &&  \
-        apart(d_, c_, 1, n, sizeof(T))) {                                    \
+    if (sd == 1 && sa == 1 && sb == 1 && sc == 1 && d_ != a_ && d_ != b_ &&  \
+        d_ != c_) {                                                          \
       nan = 0;                                                               \
       NOTED(T, FN(a[i], b[i], c[i]))                                         \
     }                                                                        \
