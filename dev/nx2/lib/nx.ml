@@ -138,43 +138,6 @@ let bits ~by dt v =
   | b -> b
   | exception Invalid_argument e -> invalid_argf "%s: %s" by e
 
-let fill ~by dt shape v =
-  let prog = Prim.program (Const (D.Any dt, bits ~by dt v)) [||] in
-  let layout =
-    match Nx_array.Layout.contiguous shape with
-    | l -> l
-    | exception Invalid_argument e -> invalid_argf "%s: %s" by e
-  in
-  let x, () =
-    Eval.eval ~by
-      (Value.Map { layout; prog; outs = Value.[ dt ]; loads = [||] })
-  in
-  x
-
-let zeros dt shape = fill ~by:"Nx.zeros" dt shape (D.zero dt)
-let scalar dt v = fill ~by:"Nx.scalar" dt [||] v
-
-(* Zeros of [x]'s dtype and shape filled where [x] lies: [x]'s elements are
-   never read. *)
-let zeros_like x =
-  let by = "Nx.zeros_like" in
-  let dt = dtype x in
-  let z = fill ~by dt (shape x) (D.zero dt) in
-  match Prim.at x with
-  | None -> z
-  | Some p -> Eval.eval ~by (Value.Place (p, z))
-
-(* Data in and out *)
-
-type 'd packed = P : ('v, 's, 'd) t -> 'd packed
-
-let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
-  match D.equal_witness (dtype x) dt with
-  | Some Type.Equal -> x
-  | None ->
-      invalid_argf "Nx.unpack: a value of %s, not %s" (D.name (dtype x))
-        (D.name dt)
-
 (* [f ()] with an [Invalid_argument] from the array layer renamed [by]: its
    message without the layer's function. *)
 let renamed ~by f =
@@ -186,6 +149,176 @@ let renamed ~by f =
       | None -> e
     in
     invalid_argf "%s: %s" by reason
+
+let fill ~by dt shape v =
+  let prog = Prim.program (Const (D.Any dt, bits ~by dt v)) [||] in
+  let layout = renamed ~by (fun () -> Nx_array.Layout.contiguous shape) in
+  let x, () =
+    Eval.eval ~by
+      (Value.Map { layout; prog; outs = Value.[ dt ]; loads = [||] })
+  in
+  x
+
+let zeros dt shape = fill ~by:"Nx.zeros" dt shape (D.zero dt)
+let ones dt shape = fill ~by:"Nx.ones" dt shape (D.one dt)
+let full dt shape v = fill ~by:"Nx.full" dt shape v
+let scalar dt v = fill ~by:"Nx.scalar" dt [||] v
+
+(* [c] where [x] lies: [x]'s elements are never read. *)
+let beside ~by x c =
+  match Prim.at x with
+  | None -> c
+  | Some p -> Eval.eval ~by (Value.Place (p, c))
+
+let full_like x v = beside ~by:"Nx.full_like" x (fill ~by:"Nx.full_like" (dtype x) (shape x) v)
+let zeros_like x = beside ~by:"Nx.zeros_like" x (fill ~by:"Nx.zeros_like" (dtype x) (shape x) (D.zero (dtype x)))
+let ones_like x = beside ~by:"Nx.ones_like" x (fill ~by:"Nx.ones_like" (dtype x) (shape x) (D.one (dtype x)))
+
+(* A 0-d value has no axis to cut: beside a cut [x] it is whole on each of
+   [x]'s devices. *)
+let scalar_like x v =
+  let by = "Nx.scalar_like" in
+  let c = fill ~by (dtype x) [||] v in
+  match Prim.at x with
+  | None -> c
+  | Some p ->
+      let g = Devices.grid p in
+      let whole =
+        Array.fold_left (fun g (axis, _) -> Grid.uncut g ~axis) g (Grid.cuts g)
+      in
+      let p = if whole == g then p else Devices.v ~by (Devices.set p) whole in
+      Eval.eval ~by (Value.Place (p, c))
+
+(* Leaves *)
+
+(* A program under construction: its nodes, newest first. *)
+type program = { mutable nodes : P.node list; mutable count : int }
+
+let node b n =
+  b.nodes <- n :: b.nodes;
+  b.count <- b.count + 1;
+  b.count - 1
+
+let const b dt v = node b (Const (D.Any dt, P.bits dt v))
+
+(* The value of [dt] and [shape] whose element at each index is node [body b] of
+   a program with no operand, reading the index through [Coord]. *)
+let leaf ~by dt shape body =
+  let layout = renamed ~by (fun () -> Nx_array.Layout.contiguous shape) in
+  let b = { nodes = []; count = 0 } in
+  let out = body b in
+  let prog = P.v ~ins:[||] (Array.of_list (List.rev b.nodes)) ~outs:[| out |] in
+  let x, () =
+    Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads = [||] })
+  in
+  x
+
+(* The least and greatest [int] [dt] holds, for the dtypes an [int] can leave:
+   the integers narrower than 64 bits, uint64 below zero, and booleans. *)
+let int_bounds (type v s) (dt : (v, s) D.t) =
+  match dt with
+  | D.Int32 -> Some (Int32.to_int Int32.min_int, Int32.to_int Int32.max_int)
+  | D.Uint32 -> Some (0, (1 lsl 32) - 1)
+  | D.Uint64 -> Some (0, max_int)
+  | D.Bool | D.Bit -> Some (0, 1)
+  | D.Int16 -> Some (D.min_value dt, D.max_value dt)
+  | D.Uint16 -> Some (D.min_value dt, D.max_value dt)
+  | D.Int8 -> Some (D.min_value dt, D.max_value dt)
+  | D.Uint8 -> Some (D.min_value dt, D.max_value dt)
+  | D.Int4 -> Some (D.min_value dt, D.max_value dt)
+  | D.Uint4 -> Some (D.min_value dt, D.max_value dt)
+  | D.Int64 | D.Float64 | D.Float32 | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn
+  | D.Float8_e5m2 | D.Float4_e2m1fn | D.Complex128 | D.Complex64 ->
+      None
+
+let arange dt start stop step =
+  let by = "Nx.arange" in
+  if step = 0 then invalid_argf "%s: step 0" by;
+  let n =
+    if (step > 0 && stop <= start) || (step < 0 && stop >= start) then 0
+    else
+      let d = stop - start in
+      if d > 0 <> (stop > start) then
+        invalid_argf "%s: [%d, %d) holds more than %d values" by start stop
+          max_int;
+      ((d - Int.compare step 0) / step) + 1
+  in
+  (if n > 0 then
+     match int_bounds dt with
+     | None -> ()
+     | Some (lo, hi) ->
+         let last = start + ((n - 1) * step) in
+         List.iter
+           (fun v ->
+             if v < lo || v > hi then
+               invalid_argf "%s: %d is outside %s's range [%d, %d]" by v
+                 (D.name dt) lo hi)
+           [ start; last ]);
+  leaf ~by dt [| n |] (fun b ->
+      let i = node b (Coord 0) in
+      let v = node b (Op2 (Binary Mul, i, const b D.Int64 (Int64.of_int step))) in
+      let v = node b (Op2 (Binary Add, v, const b D.Int64 (Int64.of_int start))) in
+      node b (Op1 (Cast, D.Any dt, v)))
+
+(* [start + i step] for the index [i], by one fused multiply-add at float64. *)
+let ramp b ~start ~step =
+  let i = node b (Op1 (Cast, D.Any D.Float64, node b (Coord 0))) in
+  node b
+    (Op3 (Fma, i, const b D.Float64 step, const b D.Float64 start))
+
+let arange_f dt start stop step =
+  let by = "Nx.arange_f" in
+  if step = 0. then invalid_argf "%s: step 0" by;
+  let length = Float.ceil ((stop -. start) /. step) in
+  if (not (Float.is_finite length)) || length >= Float.of_int max_int then
+    invalid_argf "%s: [%g, %g) by %g has no finite length" by start stop step;
+  let n = if length > 0. then Float.to_int length else 0 in
+  leaf ~by dt [| n |] (fun b -> node b (Op1 (Cast, D.Any dt, ramp b ~start ~step)))
+
+(* [n] values from [start] to [stop] at float64: [stop] itself last with
+   [endpoint], so the ends are exact. *)
+let spaced ~by b ~endpoint start stop n =
+  if n < 0 then invalid_argf "%s: %d values" by n;
+  let div = if endpoint then n - 1 else n in
+  let step = if div > 0 then (stop -. start) /. Float.of_int div else 0. in
+  let v = ramp b ~start ~step in
+  if not (endpoint && n >= 2) then v
+  else
+    let last =
+      node b (Op2 (Compare Equal, node b (Coord 0), const b D.Int64 (Int64.of_int (n - 1))))
+    in
+    node b (Op3 (Where, last, const b D.Float64 stop, v))
+
+let linspace dt ?(endpoint = true) start stop n =
+  let by = "Nx.linspace" in
+  leaf ~by dt [| Stdlib.max n 0 |] (fun b ->
+      node b (Op1 (Cast, D.Any dt, spaced ~by b ~endpoint start stop n)))
+
+let logspace dt ?(endpoint = true) ?(base = 10.) start stop n =
+  let by = "Nx.logspace" in
+  leaf ~by dt [| Stdlib.max n 0 |] (fun b ->
+      let e = spaced ~by b ~endpoint start stop n in
+      let v = node b (Op2 (Binary Pow, const b D.Float64 base, e)) in
+      node b (Op1 (Cast, D.Any dt, v)))
+
+let eye ?m ?(k = 0) dt n =
+  let m = Option.value m ~default:n in
+  leaf ~by:"Nx.eye" dt [| n; m |] (fun b ->
+      (* [Coord 0] is the column, [Coord 1] the row. *)
+      let d = node b (Op2 (Binary Sub, node b (Coord 0), node b (Coord 1))) in
+      let on = node b (Op2 (Compare Equal, d, const b D.Int64 (Int64.of_int k))) in
+      node b (Op3 (Where, on, const b dt (D.one dt), const b dt (D.zero dt))))
+
+(* Data in and out *)
+
+type 'd packed = P : ('v, 's, 'd) t -> 'd packed
+
+let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
+  match D.equal_witness (dtype x) dt with
+  | Some Type.Equal -> x
+  | None ->
+      invalid_argf "Nx.unpack: a value of %s, not %s" (D.name (dtype x))
+        (D.name dt)
 
 let on_host a : (_, _, host) t = Repr.of_array Host.v a
 

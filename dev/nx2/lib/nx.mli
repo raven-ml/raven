@@ -116,13 +116,95 @@ val zeros : ('v, 's) dtype -> int array -> ('v, 's, 'd) t
 
     Raises [Invalid_argument] if an extent is negative. *)
 
+val ones : ('v, 's) dtype -> int array -> ('v, 's, 'd) t
+(** [ones dt s] is the value of shape [s] whose every element is one ([true]
+    for booleans), of every set.
+
+    Raises [Invalid_argument] if an extent is negative. *)
+
+val full : ('v, 's) dtype -> int array -> 'v -> ('v, 's, 'd) t
+(** [full dt s v] is the value of shape [s] whose every element is [v], a float
+    stored as {!Dtype.of_float} says, of every set.
+
+    Raises [Invalid_argument] if an extent is negative or [v] is an [int] outside
+    [dt]'s range. *)
+
 val scalar : ('v, 's) dtype -> 'v -> ('v, 's, 'd) t
 (** [scalar dt v] is the 0-d value [v], of every set.
 
     Raises [Invalid_argument] if [v] is an [int] outside [dt]'s range. *)
 
+val arange : ('v, 's) dtype -> int -> int -> int -> ('v, 's, 'd) t
+(** [arange dt start stop step] is the 1-d value [start], [start + step], …
+    before [stop], of every set: empty where [stop] is not past [start] in
+    [step]'s direction. Each value is exact, then stored in [dt] as {!cast}
+    stores an [int64].
+
+    Raises [Invalid_argument] if [step = 0], or a value is outside [dt]'s range
+    for an integer dtype, or other than [0] and [1] for a boolean one. *)
+
+val arange_f : (float, 's) dtype -> float -> float -> float -> (float, 's, 'd) t
+(** [arange_f dt start stop step] is the 1-d value of the [⌈(stop - start) /
+    step⌉] values [start + i step], each computed at float64 with one rounding,
+    then stored in [dt], of every set; empty where that count is not positive.
+
+    Raises [Invalid_argument] if [step = 0.] or the count is not finite. *)
+
+val linspace :
+  ('v, 's) dtype -> ?endpoint:bool -> float -> float -> int -> ('v, 's, 'd) t
+(** [linspace dt ~endpoint start stop n] is [n] values evenly spaced from
+    [start] to [stop], [stop] included where [endpoint] (default [true]), of
+    every set. They are computed at float64 and stored in [dt]: the first is
+    [start] and, with [endpoint] and [n >= 2], the last is [stop], each as [dt]
+    stores it, and for finite [start] and [stop] every value lies between them.
+
+    Raises [Invalid_argument] if [n < 0]. *)
+
+val logspace :
+  (float, 's) dtype ->
+  ?endpoint:bool ->
+  ?base:float ->
+  float ->
+  float ->
+  int ->
+  (float, 's, 'd) t
+(** [logspace dt ~endpoint ~base start stop n] is [base] (default [10.]) to the
+    powers [linspace float64 ~endpoint start stop n], each power computed at
+    float64 and stored once in [dt], of every set: [logspace float32 0. 2. 3]
+    is [1], [10] and [100].
+
+    Raises [Invalid_argument] if [n < 0]. *)
+
+val eye : ?m:int -> ?k:int -> ('v, 's) dtype -> int -> ('v, 's, 'd) t
+(** [eye ~m ~k dt n] is the [n × m] value ([m] defaults to [n]) whose element at
+    row [i] and column [j] is one where [j - i = k] (default [0]) and zero
+    elsewhere, of every set: [k > 0] is a diagonal above the main one.
+
+    Raises [Invalid_argument] if [n] or [m] is negative. *)
+
+(** {2:like From a reference}
+
+    These make a value of their argument's dtype where it lies: beside a value
+    of every set, a value of every set. Its elements are never read. *)
+
 val zeros_like : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [zeros_like x] is zeros of [x]'s dtype and shape, where [x] lies. *)
+(** [zeros_like x] is zeros of [x]'s dtype and shape, at [x]'s placement. *)
+
+val ones_like : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [ones_like x] is {!ones} of [x]'s dtype and shape, at [x]'s placement. *)
+
+val full_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [full_like x v] is {!full} of [x]'s dtype and shape, at [x]'s placement.
+
+    Raises [Invalid_argument] as {!full} does. *)
+
+val scalar_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [scalar_like x v] is {!scalar} of [x]'s dtype, whole on each device of
+    [x]'s placement: a 0-d value has no axis to cut.
+
+    Raises [Invalid_argument] as {!scalar} does. *)
+
+(** {2:moving Donation and copies} *)
 
 val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [donate x] is [x], given up by its owner: a handle that one operation reads.
