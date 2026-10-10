@@ -159,10 +159,12 @@ let operand dt s nb v seed =
 
 (* The bounds gemm.c's paths turn on, on every table: a product of more
    rows and columns than [few_rows_most] (NEON's MC, the largest) takes the
-   chain path; [kc_least] is the smallest block of the contraction, KC, and
-   [panels] the bytes of packed operands a group of batch elements shares. *)
+   chain path; [kc_least] and [nc_least] are the smallest blocks of the
+   contraction and of b's columns, KC and NC, and [panels] the bytes of
+   packed operands a group of batch elements shares, b's panel at least. *)
 let few_rows_most = 128
 let kc_least = 256
+let nc_least = 1024
 let panels = 8 * 1024 * 1024
 
 (* Extents of the batch, row, column and contracted axes, in profiles: any
@@ -251,37 +253,41 @@ let case_of ~acc ~out ~dts =
    one; no product; 64 outputs or more in 4 rows or fewer, and in 4 columns or
    fewer, over several blocks of the contraction; fewer than 64 over several
    blocks of lanes; several panels and several groups of few rows; the
-   chain path over several blocks of the contraction, several panels, and,
-   in float64, several groups. The drawn cases reach each a few times in a
-   hundred or never, so a run of a hundred can miss one. *)
+   chain path over several blocks of the contraction, over several panels
+   without init, with no product and no init, and, in float64, over several
+   groups. The drawn cases reach each a few times in a hundred or never, so
+   a run of a hundred can miss one. *)
 let regimes acc =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
-  let case e =
+  let case (init, e) =
     let ra, rb, ry = ranks e in
-    make ~acc ~out:acc e (acc, plain ra) (acc, plain rb) (Some (acc, plain ry)) 1
+    let ti = if init then Some (acc, plain ry) else None in
+    make ~acc ~out:acc e (acc, plain ra) (acc, plain rb) ti 1
   in
   let rows = few_rows_most + 1 in
-  (* Several groups of the chain path take some 70 million products in
+  (* Several groups of the chain path take some 136 million products in
      float64, twice as many in float32, whose reference is slower: float64
      alone draws them. *)
   let groups =
     match acc with
     | D.Any D.Float64 ->
-        [ ([| (panels / (2 * rows * kc_least * 8)) + 1 |], [| rows |], [| rows |], [| kc_least |]) ]
+        let batch = (panels / (rows * kc_least * 8)) + 1 in
+        [ (true, ([| batch |], [| rows |], [| rows |], [| kc_least |])) ]
     | _ -> []
   in
   List.map case
     ([
-       ([||], [| 0 |], [| 3 |], [| 2 |]);
-       ([| 1 |], [| 1 |], [| 1 |], [| 5 |]);
-       ([||], [| 3 |], [| 2 |], [| 0 |]);
-       ([||], [| 3 |], [| 64 |], [| 600 |]);
-       ([||], [| 64 |], [| 3 |], [| 600 |]);
-       ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]);
-       ([||], [| 1 |], [| 3100 |], [| 3 |]);
-       ([| 350 |], [| 8 |], [| 8 |], [| 2 |]);
-       ([||], [| rows |], [| rows + 3 |], [| 1030 |]);
-       ([||], [| rows |], [| 3100 |], [| 3 |]);
+       (true, ([||], [| 0 |], [| 3 |], [| 2 |]));
+       (true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
+       (true, ([||], [| 3 |], [| 2 |], [| 0 |]));
+       (true, ([||], [| 3 |], [| 64 |], [| 600 |]));
+       (true, ([||], [| 64 |], [| 3 |], [| 600 |]));
+       (true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
+       (true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
+       (true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
+       (true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
+       (false, ([||], [| rows |], [| 3100 |], [| 3 |]));
+       (false, ([||], [| rows |], [| rows |], [| 0 |]));
      ]
     @ groups)
 
@@ -512,10 +518,12 @@ let covers c =
   let chain = per >= 64 && m > few_rows_most && n > few_rows_most in
   let w = match S.acc c.spec with D.Any D.Float32 -> 4 | _ -> 8 in
   cover "the chain path" chain;
+  cover "chain without init" (chain && c.init = None);
+  cover "chain with no product" (chain && k = 0);
   cover "chain over several blocks of the contraction" (chain && k > 1024);
   cover "chain over several panels of columns" (chain && n > 3072);
   cover "chain over several groups of batch elements"
-    (chain && batch * (m + n) * min k kc_least * w > panels);
+    (chain && batch * min n nc_least * min k kc_least * w > panels);
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "stepped"; "broadcast"; "permuted" ]
@@ -760,6 +768,29 @@ let law_computes b c =
   cover "declined" (not computes);
   equal ~msg:"computed" bool computes (Option.is_some (run b c))
 
+(* With no products nx.cpu gives each output init's bits, -0 and a
+   signalling NaN included, below 64 outputs and from 64: [ud] is an
+   unsigned dtype of [fd]'s width, [bits] init's values in it. *)
+let empty (type u ue f fe) (b : Support.backend) (ud : (u, ue) D.t)
+    (fd : (f, fe) D.t) ty (bits : u array) () =
+  let module K = (val b.kernels) in
+  let at (m, n) =
+    let want = Array.init (m * n) (fun i -> bits.(i mod Array.length bits)) in
+    let init = Option.get (A.bitcast fd (A.of_array ud [| m; n |] want)) in
+    let a = A.create Rig.host fd [| m; 0 |] and b = A.create Rig.host fd [| 0; n |] in
+    let dst = A.create Rig.host fd [| m; n |] in
+    let spec =
+      S.contract ~batch:[||] ~contracting:[| (1, 0) |] ~acc:(D.Any fd)
+        ~out:(D.Any fd) ~init:true
+    in
+    let ops = [| A.Any a; A.Any b; A.Any init |] in
+    (match K.contract spec ~dst:(A.Any dst) ops with
+    | A.Done -> ()
+    | r -> failf "contract answered %a" Nx_array_support.pp_answer r);
+    equal (array ty) want (A.to_array (Option.get (A.bitcast ud dst)))
+  in
+  List.iter at [ (1, 3); (8, 24) ]
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -787,6 +818,12 @@ let cpu (b : Support.backend) =
         computed (run (law_order b));
       prop "computes the cases nx_cpu.mli lists, declines others"
         any_case (run (law_computes b));
+      test "with no products, a float32 output is init's bits"
+        (run (empty b D.Uint32 D.Float32 int32
+                [| 0x80000000l; 0x7F800001l; 0x3FC00000l |]));
+      test "with no products, a float64 output is init's bits"
+        (run (empty b D.Uint64 D.Float64 int64
+                [| 0x8000000000000000L; 0x7FF0000000000001L; 0x3FF8000000000000L |]));
     ]
 
 let () =
