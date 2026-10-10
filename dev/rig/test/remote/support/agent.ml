@@ -116,7 +116,20 @@ let () =
     deaf (In_channel.with_open_bin Sys.argv.(1) In_channel.input_all)
   else begin
     let a = listen key 0 in
-    serve a;
+    if mode = "together" then begin
+      (* Two domains serve [a] at once: one raises, the other serves. *)
+      let other =
+        Domain.spawn (fun () ->
+            match serve a with
+            | () -> ()
+            | exception Invalid_argument _ -> print_endline "serve raised")
+      in
+      (match serve a with
+      | () -> ()
+      | exception Invalid_argument _ -> print_endline "serve raised");
+      Domain.join other
+    end
+    else serve a;
     if mode = "again" then serve (listen key (Rig_remote.port a));
     if mode = "linger" then Unix.sleepf 2.;
     if mode = "twice" then

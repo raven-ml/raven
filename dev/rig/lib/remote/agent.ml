@@ -172,17 +172,24 @@ type obj =
   | Rail of Link.t * Rig_remote_abi.end_
   | Program of Rig_program.loaded
 
+(* Where an agent is in its life: each change is one step under its lock, so two
+   serves or two controllers find each other. *)
+type phase =
+  | Listening  (** No serve yet. *)
+  | Claimed  (** A serve waits for a controller. *)
+  | Admitting of Link.job
+      (** A controller was admitted, its handshake not yet done: the job. *)
+  | Serving of { job : Link.job; self : int; controller : Link.t }
+      (** A job, this agent's process in it and the controller's link. *)
+
 type t = {
   key : string;
   socket : Unix.file_descr;
   port : int;
   lock : Mutex.t;
   changed : Condition.t;
-  mutable served : bool;
+  mutable phase : phase;
   mutable pending : int;  (** Handshakes in flight. *)
-  mutable job : Link.job option;
-  mutable self : int;  (** This agent's process, once a controller came. *)
-  mutable controller : Link.t option;
   accepted : (int, Unix.file_descr) Hashtbl.t;
       (** Connections of the job's agents before this one, admitted, waiting for
           the join that names their machines. *)
@@ -220,33 +227,37 @@ let listen ~key host port =
               port;
               lock = Mutex.create ();
               changed = Condition.create ();
-              served = false;
+              phase = Listening;
               pending = 0;
-              job = None;
-              self = 0;
-              controller = None;
               accepted = Hashtbl.create 4;
               peers = Hashtbl.create 4;
               stopped = false;
             })
 
 let port a = a.port
+let close_quietly fd = try Unix.close fd with Unix.Unix_error _ -> ()
 
-(* Admits one controller, then the agents of its job before this one. *)
-(* CR: Reserve the controller under this lock before returning Ok, and
-   release the reservation and socket if the handshake fails. Two
-   handshakes can both see None while Wire.accept sends success with the
-   runtime released; the loser then raises in Link.job, leaving an accepted
-   socket unowned. *)
-let admit a p =
+(* Admits one controller, then the agents of its job before this one. A
+   controller's admission makes the job, which [mine] keeps for its handshake: a
+   second controller finds it. *)
+let admit a mine p =
   Mutex.protect a.lock @@ fun () ->
-  match (p, a.job) with
-  | Wire.Controller, None -> Ok ()
-  | Wire.Controller, Some _ -> Error "the agent serves another job"
-  | Wire.Agent j, Some _ when a.self > 0 && j < a.self -> Ok ()
+  match (p, a.phase) with
+  | Wire.Controller, Claimed -> (
+      match Link.job () with
+      | j ->
+          a.phase <- Admitting j;
+          mine := Some j;
+          Ok ()
+      | exception Invalid_argument why -> Error why)
+  | Wire.Controller, (Admitting _ | Serving _) ->
+      Error "the agent serves another job"
+  | Wire.Controller, Listening -> Error "the agent serves no job yet"
+  | Wire.Agent j, Serving { self; _ } when j < self -> Ok ()
   | Wire.Agent _, _ -> Error "the agent does not expect this agent"
 
-(* Runs one connection's handshake, and makes its link if it is admitted. *)
+(* Runs one connection's handshake, and makes its link if it is admitted. A
+   controller admitted whose handshake then fails gives its job back. *)
 let handshake a fd =
   let finish () =
     Mutex.protect a.lock (fun () ->
@@ -254,21 +265,24 @@ let handshake a fd =
         Condition.broadcast a.changed)
   in
   Fun.protect ~finally:finish @@ fun () ->
-  match Wire.accept fd ~key:a.key ~admit:(admit a) with
-  | Error _ -> ( try Unix.close fd with Unix.Unix_error _ -> ())
-  | Ok (Wire.Controller, Wire.Agent self) ->
-      Mutex.protect a.lock @@ fun () ->
-      let j = Link.job () in
-      a.job <- Some j;
-      a.self <- self;
-      a.controller <-
-        Some (Link.make j fd ~name:"controller" ~peer:Wire.Controller)
-  | Ok (Wire.Agent i, _) ->
-      Mutex.protect a.lock @@ fun () ->
+  let mine = ref None in
+  let r = Wire.accept fd ~key:a.key ~admit:(admit a mine) in
+  Mutex.protect a.lock @@ fun () ->
+  match (r, !mine) with
+  | Ok (Wire.Controller, Wire.Agent self), Some job ->
+      let controller =
+        Link.make job fd ~name:"controller" ~peer:Wire.Controller
+      in
+      a.phase <- Serving { job; self; controller }
+  | Ok (Wire.Agent i, _), None ->
       if a.stopped || Hashtbl.mem a.accepted i || Hashtbl.mem a.peers i then
-        Unix.close fd
+        close_quietly fd
       else Hashtbl.replace a.accepted i fd
-  | Ok (Wire.Controller, Wire.Controller) -> Unix.close fd
+  | _, Some job ->
+      Link.close job;
+      a.phase <- Claimed;
+      close_quietly fd
+  | _, None -> close_quietly fd
 
 (* Accepts connections until [wake] is readable, each handshake on a thread of
    its own. *)
@@ -313,6 +327,7 @@ let stop a waker acceptor =
 
 type state = {
   agent : t;
+  self : int;  (** This agent's process in the job. *)
   job : Link.job;
   link : Link.t;  (** The controller's. *)
   kinds : (string * (unit -> (Rig.t list, string) result)) list;
@@ -366,8 +381,8 @@ let account s id d : Wire.account =
    its agent's machine, as the controller names it in [agents]. *)
 let join s agents =
   let a = s.agent in
-  if a.self > List.length agents then
-    raise (Refused (strf "the job has no agent %d" a.self));
+  if s.self > List.length agents then
+    raise (Refused (strf "the job has no agent %d" s.self));
   let until = Unix.gettimeofday () +. join_s in
   let late name = Refused (strf "%s: no answer within %.0f s" name join_s) in
   let dial j ({ name; host; port } : Wire.agent) =
@@ -377,7 +392,7 @@ let join s agents =
     | Error why -> raise (Refused (strf "%s: %s" name why))
     | Ok fd -> (
         match
-          Wire.dial fd ~key:a.key ~self:(Wire.Agent a.self) ~peer:(Wire.Agent j)
+          Wire.dial fd ~key:a.key ~self:(Wire.Agent s.self) ~peer:(Wire.Agent j)
         with
         | Error why ->
             Unix.close fd;
@@ -389,10 +404,10 @@ let join s agents =
             let l = Link.make s.job fd ~name ~peer:(Wire.Agent j) in
             Mutex.protect a.lock (fun () -> Hashtbl.replace a.peers j l))
   in
-  List.iteri (fun i m -> if i + 1 > a.self then dial (i + 1) m) agents;
+  List.iteri (fun i m -> if i + 1 > s.self then dial (i + 1) m) agents;
   (* The agents before this one dial it; their handshakes run on the acceptor's
      threads. *)
-  let before = List.filteri (fun i _ -> i + 1 < a.self) agents in
+  let before = List.filteri (fun i _ -> i + 1 < s.self) agents in
   let accepted () =
     Mutex.protect a.lock (fun () -> Hashtbl.length a.accepted)
   in
@@ -606,20 +621,24 @@ let run a kinds report =
     Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
   in
   let acceptor = Thread.create (accept_loop a) wake in
-  let link =
+  let job, self, link =
     Mutex.protect a.lock @@ fun () ->
-    while a.controller = None do
-      Condition.wait a.changed a.lock
-    done;
-    Option.get a.controller
+    let rec serving () =
+      match a.phase with
+      | Serving { job; self; controller } -> (job, self, controller)
+      | Listening | Claimed | Admitting _ ->
+          Condition.wait a.changed a.lock;
+          serving ()
+    in
+    serving ()
   in
-  let job = Option.get a.job in
   watch report job;
   let devices = Hashtbl.create 8 in
   Hashtbl.replace devices 0 Rig.host;
   let s =
     {
       agent = a;
+      self;
       job;
       link;
       kinds;
@@ -655,18 +674,19 @@ let run a kinds report =
       Rig.fail why);
   r
 
-(* CR: Check and set served in one critical section. Two domains can both read
-   false here and start apply loops on the same controller link, each with its
-   own object table. A copy handled by one then fails to find memory allocated
-   by the other. Claim the agent before taking its report or starting either
-   loop. *)
 let serve a kinds =
   let names = List.map fst kinds in
   if List.length (List.sort_uniq String.compare names) <> List.length names then
     invalid_arg "Rig_remote.serve: kinds names a kind twice";
-  if Mutex.protect a.lock (fun () -> a.served) then
-    invalid_arg "Rig_remote.serve: the agent served already";
-  Mutex.protect a.lock (fun () -> a.served <- true);
+  let claimed =
+    Mutex.protect a.lock @@ fun () ->
+    match a.phase with
+    | Listening ->
+        a.phase <- Claimed;
+        true
+    | Claimed | Admitting _ | Serving _ -> false
+  in
+  if not claimed then invalid_arg "Rig_remote.serve: the agent served already";
   match take report_var with
   | None -> run a kinds None
   | Some fd -> (

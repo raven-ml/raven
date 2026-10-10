@@ -79,6 +79,43 @@ let second_controller () =
       in
       contains ~sub:"another job" why)
 
+(* Two controllers prove the key to an idle agent at once: the agent admits one
+   and tells the other it serves another job. *)
+let two_controllers () =
+  with_agents @@ fun agents ->
+  let a = List.hd agents in
+  let dial () =
+    let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+    Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port));
+    let module Wire = Rig_remote_proxy.Wire in
+    (fd, Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1))
+  in
+  let second = ref None in
+  let other = Thread.create (fun () -> second := Some (dial ())) () in
+  let first = dial () in
+  Thread.join other;
+  let second = Option.get !second in
+  let admitted, refused =
+    match (first, second) with
+    | (fd, Ok ()), (fd', Error why) | (fd', Error why), (fd, Ok ()) ->
+        Unix.close fd';
+        (fd, why)
+    | (fd, r), (fd', r') ->
+        Unix.close fd;
+        Unix.close fd';
+        failf "the dials answered %s and %s"
+          (match r with Ok () -> "Ok" | Error e -> e)
+          (match r' with Ok () -> "Ok" | Error e -> e)
+  in
+  contains ~sub:"another job" refused;
+  Fun.protect ~finally:(fun () -> Unix.close admitted) @@ fun () ->
+  Unix.setsockopt_float admitted Unix.SO_RCVTIMEO patience;
+  is_ok ~msg:"the join" ~pp:Format.pp_print_string (join_alone admitted a);
+  send admitted (frame k_close "");
+  equal ~msg:"the agent's close" (option int) (Some k_close)
+    (Option.map fst (next_frame admitted));
+  equal exit_w (0, [ "closed" ]) (finish a)
+
 let connect_misuse () =
   with_job @@ fun _ agents ->
   let a = List.hd agents in
@@ -133,6 +170,8 @@ let connecting =
       test "an address nothing listens at is an Error naming it" unreachable;
       test "an agent in a job tells a second controller it serves another"
         second_controller;
+      test "an agent admits one of two controllers that come at once"
+        two_controllers;
       test "connect raises on no agent, an address twice, an open job"
         connect_misuse;
       test "listen answers Error for a host that does not resolve"
@@ -887,6 +926,12 @@ let served_twice () =
   Rig_remote.close (connect agents);
   equal exit_w (0, [ "closed"; "serve raised" ]) (finish (List.hd agents))
 
+(* Two domains serve one agent at once: one raises, the other serves its job. *)
+let served_together () =
+  with_agents ~mode:"together" @@ fun agents ->
+  Rig_remote.close (connect agents);
+  equal exit_w (0, [ "serve raised"; "closed" ]) (finish (List.hd agents))
+
 (* A kind named twice raises before serve waits for a controller; a serve that
    waited instead fails the test after 5 s. *)
 let kind_twice () =
@@ -915,6 +960,8 @@ let processes =
         controller_exits;
       test "a controller killed fails its job at every agent" controller_killed;
       test "serve raises once it served" served_twice;
+      test "serve raises in one of two domains that serve at once"
+        served_together;
       test "serve raises on a kind named twice" kind_twice;
     ]
 
