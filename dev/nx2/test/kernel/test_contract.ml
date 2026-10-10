@@ -791,6 +791,35 @@ let empty (type u ue f fe) (b : Support.backend) (ud : (u, ue) D.t)
   in
   List.iter at [ (1, 3); (8, 24) ]
 
+(* On a thread that has run no product, an empty product gives +0, or
+   init's bits, on the few-rows path and the chain path: a thread's first
+   product makes the buffers nx.cpu keeps for it. *)
+let fresh (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let at (m, n) init =
+    let a = A.create Rig.host D.Float32 [| m; 0 |] in
+    let b = A.create Rig.host D.Float32 [| 0; n |] in
+    let dst = A.of_array D.Float32 [| m; n |] (Array.make (m * n) 7.) in
+    let i = A.of_array D.Float32 [| m; n |] (Array.make (m * n) (-0.)) in
+    let spec =
+      S.contract ~batch:[||] ~contracting:[| (1, 0) |]
+        ~acc:(D.Any D.Float32) ~out:(D.Any D.Float32) ~init
+    in
+    let ops = [ A.Any a; A.Any b ] @ if init then [ A.Any i ] else [] in
+    let call () =
+      try Ok (K.contract spec ~dst:(A.Any dst) (Array.of_list ops))
+      with e -> Error e
+    in
+    (match Domain.join (Domain.spawn call) with
+    | Ok A.Done -> ()
+    | Ok r -> failf "contract answered %a" Nx_array_support.pp_answer r
+    | Error e -> failf "contract raised %s" (Printexc.to_string e));
+    let want = if init then 0x80000000l else 0l in
+    equal (array int32) (Array.make (m * n) want)
+      (Array.map Int32.bits_of_float (A.to_array dst))
+  in
+  List.iter (fun mn -> at mn false; at mn true) [ (8, 8); (200, 200) ]
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -824,6 +853,8 @@ let cpu (b : Support.backend) =
       test "with no products, a float64 output is init's bits"
         (run (empty b D.Uint64 D.Float64 int64
                 [| 0x8000000000000000L; 0x7FF0000000000001L; 0x3FF8000000000000L |]));
+      test "on a fresh thread, an empty product is +0 or init"
+        (run (fresh b));
     ]
 
 let () =

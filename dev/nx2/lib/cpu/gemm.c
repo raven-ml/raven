@@ -176,13 +176,7 @@ static kept *mine(void) {
 static uint8_t *take(int64_t bytes) {
   kept *k = bytes > KEPT ? NULL : mine();
   if (k == NULL) return alloc(bytes);
-  /* CR: Include k->p == NULL in this allocation condition. A fresh calling
-     thread's [8;0] by [0;8] contraction reaches take(0), returns NULL and
-     raises Out_of_memory instead of writing +0 or init. The chain path
-     fails too. Let alloc(0) supply its aligned storage, preserving start's
-     empty-product handling in both paths. Check each on a fresh thread;
-     a previous positive allocation hides the failure. */
-  if (k->n < bytes) {
+  if (k->p == NULL || k->n < bytes) {
     free(k->p);
     k->p = alloc(bytes);
     k->n = k->p ? bytes : 0;
