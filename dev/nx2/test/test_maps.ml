@@ -232,6 +232,86 @@ let constants =
           equal (array bits) here (Domain.join d));
     ]
 
+(* Constants read at a placement their rule does not give: a creation, an
+   assembly of pieces read on one device, and loops of no load, each against
+   the elements the definition gives. *)
+
+let on2 = Devices.on s2
+let d0 = Devices.one s2 0
+let split2 = Devices.split ~by:"t" ~axis:0 s2
+
+let assembly pieces : (float, D.float32_elt, b) Value.t =
+  Exec.run ~by:"t"
+    (Value.Assemble { dtype = D.Float32; shape = [| 4 |]; fill = 7.; pieces })
+
+let ones n : (float, D.float32_elt, b) Value.t =
+  first
+    (Exec.run ~by:"t"
+       (Value.Map
+          {
+            layout = Nx_array.Layout.contiguous [| n |];
+            prog =
+              Prim.program (Const (D.Any D.Float32, P.bits D.Float32 1.)) [||];
+            outs = Value.[ D.Float32 ];
+            loads = [||];
+          }))
+
+(* The sum and the running sum, along the last axis, of [[0; 1; 2]] repeated
+   over four rows: a program of a coordinate alone. *)
+let coords =
+  P.v ~ins:[||] [| Coord 0; Op1 (Cast, D.Any D.Float32, 0) |] ~outs:[| 1 |]
+
+let row_sums () : (float, D.float32_elt, b) Value.t =
+  let s, () =
+    Exec.run ~by:"t"
+      (Value.Reduce
+         {
+           layout = Nx_array.Layout.contiguous [| 4; 3 |];
+           axes = [| 1 |];
+           prog = coords;
+           reductions = Value.[ Monoid (Sum, 0, D.Float32) ];
+           loads = [||];
+         })
+  in
+  s
+
+let row_scans () : (float, D.float32_elt, b) Value.t =
+  Exec.run ~by:"t"
+    (Value.Scan
+       {
+         layout = Nx_array.Layout.contiguous [| 4; 3 |];
+         axis = 1;
+         prog = coords;
+         reduction = Monoid (Sum, 0, D.Float32);
+         loads = [||];
+       })
+
+let forced =
+  let at p x = elements (Exec.at p x) in
+  group "forced constants"
+    [
+      cases "an empty assembly fills its placement" ~name:fst
+        [ ("split", split2); ("on one device", d0); ("on the set", on2) ]
+        (fun (_, p) ->
+          equal (array bits) [| 7.; 7.; 7.; 7. |] (at p (assembly [])));
+      cases "pieces read on one device assemble there" ~name:fst
+        [ ("on one device", d0); ("split", split2) ]
+        (fun (_, p) ->
+          let r = [| { Nx_array.Move.start = 1; count = 2; step = 1 } |] in
+          equal (array bits) [| 7.; 1.; 1.; 7. |]
+            (at p (assembly [ (r, ones 2) ])));
+      cases "a sum of coordinates reduces at its placement" ~name:fst
+        [ ("split", split2); ("on one device", d0) ]
+        (fun (_, p) ->
+          equal (array bits) [| 3.; 3.; 3.; 3. |] (at p (row_sums ())));
+      cases "a running sum of coordinates scans at its placement" ~name:fst
+        [ ("split", split2); ("on one device", d0) ]
+        (fun (_, p) ->
+          equal (array bits)
+            [| 0.; 1.; 3.; 0.; 1.; 3.; 0.; 1.; 3.; 0.; 1.; 3. |]
+            (at p (row_scans ())));
+    ]
+
 (* A movement or bitcast its rule refuses raises naming its function before any
    kernel runs, even where its arrays could only be moved after a copy. *)
 let refused name op =
@@ -428,4 +508,6 @@ let donation =
     ]
 
 let () =
-  exit (run "nx maps" [ maps; checks; constants; rules; programs; donation ])
+  exit
+    (run "nx maps"
+       [ maps; checks; constants; forced; rules; programs; donation ])

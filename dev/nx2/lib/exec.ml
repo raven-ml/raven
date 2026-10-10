@@ -729,19 +729,29 @@ and defer : type r. by:string -> r Value.prim -> r =
   let node = Value.Node { id; by; op; memo = Atomic.make [] } in
   Prim.results ~by (fun k form -> Value.Deferred { form; node; k }) op
 
-and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
- fun ~by ?into op ->
+(* [op] computed over operands that lie where its route reads them, or at [at]
+   for a constant's evaluation: its results are allocated there, and its
+   expansion's operations compute there. A loop of no load is its expansion:
+   no operand gives the kernels its extents. *)
+and compute : type r.
+    by:string -> ?into:A.any -> ?at:unit Devices.placement -> r Value.prim -> r
+    =
+ fun ~by ?into ?at op ->
   match op with
+  | Value.Reduce { loads = [||]; _ } | Value.Scan { loads = [||]; _ } -> (
+      match at with
+      | Some q -> expanded ~by ~at:q q op
+      | None -> invalid_arg "Exec.compute: a loop of no load at no placement")
   | Value.Map { layout; prog; loads; _ } ->
       let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ~where ?into k f) op in
+      let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where ?into k f) op in
       map_devices ~by (Option.get !where) (L.shape layout) prog
         (fun k w -> Array.map (load_view ~by k w) loads)
         (Prim.arrays op r);
       r
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
       let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ~where k f) op in
+      let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
       let rs = Array.of_list (Prim.reductions_list reductions) in
       let reduce (module K : Nx_kernel.S) prog dsts ops =
         let loads = Array.make (Array.length ops) S.Plain in
@@ -752,10 +762,10 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
           (fun k w -> Array.map (load_view ~by k w) loads)
           (Prim.arrays op r)
       then r
-      else expanded ~by (Option.get !where) op
+      else expanded ~by ?at (Option.get !where) op
   | Value.Scan { layout; axis; prog; reduction; loads } ->
       let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ~where k f) op in
+      let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
       let rs = Prim.reductions_list Value.[ reduction ] in
       let scan (module K : Nx_kernel.S) prog dsts ops =
         let loads = Array.make (Array.length ops) S.Plain in
@@ -767,10 +777,12 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
           (fun k w -> Array.map (load_view ~by k w) loads)
           (Prim.arrays op r)
       then r
-      else expanded ~by (Option.get !where) op
+      else expanded ~by ?at (Option.get !where) op
   | Value.Contract { spec; a; b; init; _ } ->
       let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ~where ?into k f) op in
+      let r =
+        Prim.results ~by (fun k f -> alloc ~by ?at ~where ?into k f) op
+      in
       let p = Option.get !where in
       let set = Devices.set p in
       let (module K) = kernels_of ~by ~op:"Contract" set in
@@ -786,10 +798,10 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
             computed :=
               ran ~by (K.contract spec ~dst:dsts.(j) ops) [| dsts.(j) |] ops
           end);
-      if !computed then r else expanded ~by p op
+      if !computed then r else expanded ~by ?at p op
   | Value.Copy x ->
       let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ~where k f) op in
+      let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
       let prog =
         Prim.program
           (Op1 (Copy, D.Any (Prim.dtype x), 0))
@@ -811,7 +823,7 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       let set = Devices.set xp in
       shard_views ~by op xp (fun () -> Iarray.map (cast ~by set dt) xs)
   | Value.Gather { axis; idx; x } ->
-      let r, p = alloc_one ~by op in
+      let r, p = alloc_one ~by ?at op in
       let set = Devices.set p in
       let (module K) = kernels_of ~by ~op:"Gather" set in
       let spec = S.gather ~axis and dsts = arrays_of r in
@@ -824,9 +836,9 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
             if not (ran ~by (K.gather spec ~dst i v) [| A.Any dst |] ops) then
               declined := Some (Devices.rig set k, ops)
           end);
-      or_expanded ~by ~kernels:K.name op r !declined
+      or_expanded ~by ~kernels:K.name ?at op r !declined
   | Value.Scatter { combine; unique; axis; idx; updates; into = t } ->
-      let r, p = alloc_one ~by op in
+      let r, p = alloc_one ~by ?at op in
       let set = Devices.set p in
       let (module K) = kernels_of ~by ~op:"Scatter" set in
       let spec = S.scatter combine ~unique ~axis and dsts = arrays_of r in
@@ -842,11 +854,11 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
             if not (ran ~by (K.scatter spec ~dst ~into i u) [| A.Any dst |] ops)
             then declined := Some (Devices.rig set k, ops)
           end);
-      or_expanded ~by ~kernels:K.name op r !declined
+      or_expanded ~by ~kernels:K.name ?at op r !declined
   | Value.Sort { axis; descending; k; x } ->
       let where = ref None in
       let ((values, positions) as r) =
-        Prim.results ~by (fun j f -> alloc ~by ~where j f) op
+        Prim.results ~by (fun j f -> alloc ~by ?at ~where j f) op
       in
       let p = Option.get !where in
       let set = Devices.set p in
@@ -866,17 +878,36 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
                    [| A.Any v; A.Any q |] ops)
             then declined := Some (Devices.rig set d, ops)
           end);
-      or_expanded ~by ~kernels:K.name op r !declined
+      or_expanded ~by ~kernels:K.name ?at op r !declined
   | Value.Assemble { dtype; shape; fill; pieces } ->
-      assemble ~by dtype shape fill pieces
+      assemble ~by ?at dtype shape fill pieces
   | Value.Place _ | Value.Check _ -> run ~by op
+
+(* [op]'s expansion, its operations applied where their operands lie, or at
+   [at] for a constant's evaluation; [None] for a core case. *)
+and expand : type r.
+    by:string -> ?at:unit Devices.placement -> r Value.prim -> r option =
+ fun ~by ?at op ->
+  match at with
+  | None -> Expand.run run ~by op
+  | Some q -> Expand.run (fun ~by op -> apply_at q ~by op) ~by op
+
+(* An operation of a constant's evaluation at [q]: one over a concrete operand
+   computes where its route reads them; a creation, its other operands
+   constants, computes at [q], where the evaluation reads it. *)
+and apply_at : type r. unit Devices.placement -> by:string -> r Value.prim -> r
+    =
+ fun q ~by op ->
+  if Prim.exists is_concrete op then run ~by op
+  else compute ~by ~at:q (Prim.map (fun y -> at (Devices.rebrand q) y) op)
 
 (* [op], a loop the kernels of [p]'s set declined, as its expansion. A plain
    loop has none: the decline raises naming the kernels. *)
-and expanded : type r. by:string -> unit Devices.placement -> r Value.prim -> r
-    =
- fun ~by p op ->
-  match Expand.run run ~by op with
+and expanded : type r.
+    by:string -> ?at:unit Devices.placement -> unit Devices.placement ->
+    r Value.prim -> r =
+ fun ~by ?at p op ->
+  match expand ~by ?at op with
   | Some r -> r
   | None ->
       let (module K) = kernels_of ~by ~op:(Prim.name op) (Devices.set p) in
@@ -888,15 +919,16 @@ and expanded : type r. by:string -> unit Devices.placement -> r Value.prim -> r
 and or_expanded : type r.
     by:string ->
     kernels:string ->
+    ?at:unit Devices.placement ->
     r Value.prim ->
     r ->
     (Rig.t * A.any array) option ->
     r =
- fun ~by ~kernels op r declined ->
+ fun ~by ~kernels ?at op r declined ->
   match declined with
   | None -> r
   | Some (d, ops) -> (
-      match Expand.run run ~by op with
+      match expand ~by ?at op with
       | Some r -> r
       | None -> (
           match op with
@@ -971,7 +1003,7 @@ and assemble : type v s d.
         let dst = Iarray.get dsts j in
         computed := ran ~by (K.assemble spec ~dst views) [| A.Any dst |] ops
       end);
-  if !computed then r else expanded ~by (Devices.rebrand p) op
+  if !computed then r else expanded ~by ?at (Devices.rebrand p) op
 
 (* [op]'s one result, fresh at [at] or at the placement its rule gives, and that
    placement. *)
@@ -1197,8 +1229,7 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
         loads;
       }
   in
-  let on_device ~by op = compute_at ~by ~resolve:(fun _ x -> x) at op in
-  match Expand.run on_device ~by op with
+  match expand ~by ~at op with
   | None ->
       let (module K) = kernels_of ~by ~op:"Map" set in
       invalid_argf "%s: %s does not compute %a; %s" by K.name Prim.pp op move
@@ -1218,33 +1249,6 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
               (Devices.rig set k) [ A.Any v ])
         (Prim.arrays op r)
 
-(* A map [op] computed at [p], its results there: its operands lie at [p] or are
-   constants, and its rule holds. Any other operation is [run]'s. *)
-and compute_at : type r.
-    by:string ->
-    resolve:
-      ('v 's 'd.
-       'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t) ->
-    unit Devices.placement ->
-    r Value.prim ->
-    r =
- fun ~by ~resolve p op ->
-  match op with
-  | Value.Map { loads; layout; prog; _ } ->
-      let r = Prim.results ~by (fun k f -> alloc ~by ~at:p k f) op in
-      let view k w (Value.Plain x) =
-        A.Any (Place.view ~by (resolve (Devices.rebrand p) x) k w)
-      in
-      map_devices ~by p (L.shape layout) prog
-        (fun k w -> Array.map (view k w) loads)
-        (Prim.arrays op r);
-      r
-  | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
-  | Value.Sort _
-  | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Move _
-  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
-      run ~by op
-
 (* [node]'s results at [p], its constant operands already computed where it
    reads them. *)
 and compute_node :
@@ -1257,20 +1261,6 @@ and compute_node :
  fun ~resolve (Value.Node n) p ->
   let by = n.by in
   match n.op with
-  | Value.Map _ ->
-      (* Its loads are computed at [p] already. *)
-      Prim.arrays n.op (compute_at ~by ~resolve p n.op)
-  (* CR: Keep forced assemblies at their requested placement. An empty [4]
-     assembly split over two devices passes [2] destinations to a [4]
-     descriptor; compute it as a Const Map at [p]. For nonempty constants,
-     call assemble ~at:q after resolving pieces, then keep the q-to-p crop:
-     inferring Replicated again asks a piece forced on one member for arrays
-     on the others. Run assembly expansions with compute_at at the uncut
-     allocation placement too, so fills and positions retain it even when
-     every piece is empty. *)
-  | Value.Assemble { dtype; shape; fill; pieces = [] } ->
-      (* A creation: no operand gives it a placement. *)
-      Prim.arrays n.op (assemble ~by ~at:p dtype shape fill [])
   | Value.Move (mv, x) when uncut p ->
       (* A view at a placement that cuts no axis: each device's whole operand
          there, moved. Its rule held when it was made. *)
@@ -1280,17 +1270,12 @@ and compute_node :
       let xs = arrays_of (resolve (Devices.rebrand p) x) in
       [| any (Iarray.map (cast ~by (Devices.set p) dt) xs) |]
   | op ->
+      (* Its rule held when it was made. Its operands lie at [q], and its
+         results are allocated there, where its rule may place them nowhere (a
+         creation) or elsewhere (a replicated rule). *)
       let q = operand_at op p in
-      (* CR: Materialize zero-load Reduce/Scan bodies at [q] before looping.
-         Sum of Coord 0 over [4] is valid, but placing it raises
-         "Exec.alloc: a value of every set" here. Use Maps in each selected
-         output's original dtype, then an identity loop per reducer with one
-         real load, preserving Moments/Arg and result-window extraction.
-         Separate reducers respect the 16-operand bound; passing q only to
-         alloc still leaves Spec without a loaded iteration shape. *)
-      (* Its rule held when it was made, and its operands lie at [q]. *)
       let op' = Prim.map (fun y -> resolve (Devices.rebrand q) y) op in
-      let arrays = Prim.arrays op' (compute ~by op') in
+      let arrays = Prim.arrays op' (compute ~by ~at:q op') in
       if Devices.equal q p then arrays
       else
         (* Whole on every device: each device of [p] keeps its window, in memory
