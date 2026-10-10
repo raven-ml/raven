@@ -527,7 +527,7 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t option
     A draw is a value of every set when its key is: a formula that computes on
     the set of each operation that reads it. *)
 module Rng : sig
-  type +'d key = private (int32, Dtype.int32_elt, 'd) t
+  type +'d key = private 'd int32_t
   (** The type for keys, of shape [[|2|]], and batches of keys, of shape
       [[|…; 2|]]: two 32-bit words per key. Arithmetic on a key gives an array,
       which no sampler takes. *)
@@ -538,13 +538,13 @@ module Rng : sig
   (** [key seed] is the key of [seed], a value of every set. Equal seeds give
       equal keys. *)
 
-  val of_tensor : (int32, Dtype.int32_elt, 'd) t -> 'd key
+  val of_tensor : 'd int32_t -> 'd key
   (** [of_tensor t] is the key, or batch of keys, whose words are [t], for words
       that were saved: the inverse of {!to_tensor}.
 
       Raises [Invalid_argument] unless [t]'s last axis has extent [2]. *)
 
-  val to_tensor : 'd key -> (int32, Dtype.int32_elt, 'd) t
+  val to_tensor : 'd key -> 'd int32_t
   (** [to_tensor k] is [k]'s words: the inverse of {!of_tensor}, and what the
       coercion of [k] to an array is. *)
 
@@ -568,7 +568,7 @@ module Rng : sig
   (** [fold_in k i] is the key of [k] indexed by [i]: distinct [i] give
       independent keys. A batch of keys gives a batch. *)
 
-  val fold_in_tensor : 'd key -> (int32, Dtype.int32_elt, 'd) t -> 'd key
+  val fold_in_tensor : 'd key -> 'd int32_t -> 'd key
   (** [fold_in_tensor k i] is [fold_in k] of the indices held in [i], for an
       index known only as data. Its shape is [k]'s batch broadcast with [i]'s,
       then [2]; where [i] holds [n] it is [fold_in k n].
@@ -592,7 +592,7 @@ module Rng : sig
       interpretation it is a [Check] operation, which raises
       where the interpretation computes it. *)
 
-  val bits : ?key:'d key -> int array -> (int32, Dtype.int32_elt, 'd) t
+  val bits : ?key:'d key -> int array -> 'd int32_t
   (** [bits shape] is uniformly random 32-bit words: word [j] in C order is word
       [j mod 2] of the generator's block [j / 2].
 
@@ -627,7 +627,7 @@ module Rng : sig
     ?low:int ->
     high:int ->
     int array ->
-    (int32, Dtype.int32_elt, 'd) t
+    'd int32_t
   (** [randint ~low ~high shape] is integers drawn uniformly from
       [\[low, high)] ([low] defaults to [0]): a 64-bit draw times [high - low],
       shifted down by 64 bits, whose biased low part, at most one draw in
@@ -637,7 +637,7 @@ module Rng : sig
       an extent is negative. *)
 
   val bernoulli :
-    ?key:'d key -> (float, 's, 'd) t -> (bool, Dtype.bool_elt, 'd) t
+    ?key:'d key -> (float, 's, 'd) t -> 'd bool_t
   (** [bernoulli p] is [true] with probability [p], elementwise: a uniform draw
       below [p].
 
@@ -678,7 +678,7 @@ module Rng : sig
       Raises [Invalid_argument] if an element of [k] is outside [\[0, inf)]. *)
 
   val poisson :
-    ?key:'d key -> (float, 's, 'd) t -> (int32, Dtype.int32_elt, 'd) t
+    ?key:'d key -> (float, 's, 'd) t -> 'd int32_t
   (** [poisson rate] is Poisson counts of [rate], elementwise; a rate of 0 gives
       0. Below 10 a count inverts the distribution with one uniform draw, with
       no fallback. From 10 up it is Hörmann's transformed rejection over
@@ -694,9 +694,9 @@ module Rng : sig
 
   val binomial :
     ?key:'d key ->
-    (int32, Dtype.int32_elt, 'd) t ->
+    'd int32_t ->
     (float, 's, 'd) t ->
-    (int32, Dtype.int32_elt, 'd) t
+    'd int32_t
   (** [binomial n p] is the number of successes in [n] trials that each succeed
       with probability [p], elementwise over their broadcast shape: 0 at
       [p = 0], [n] at [p = 1]. Where the mean of the rarer outcome is below 10 a
