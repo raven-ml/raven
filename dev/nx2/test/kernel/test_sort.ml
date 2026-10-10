@@ -49,6 +49,15 @@ let shape_gen =
   in
   frequency [ (5, small); (1, edge); (2, long) ]
 
+(* An operand of [d] drawn from [seed], with few distinct values so that ties
+   are common. *)
+let tied d s v seed =
+  let rs = Random.State.make [| seed |] in
+  let pool = Array.init 6 (fun _ -> element d rs) in
+  operand d s v (fun _ ->
+      if Random.State.int rs 3 = 0 then element d rs
+      else pool.(Random.State.int rs 6))
+
 let case_gen ?(dtypes = computed) ?(shapes = shape_gen) () =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
@@ -66,15 +75,13 @@ let case_gen ?(dtypes = computed) ?(shapes = shape_gen) () =
   in
   let* v = view_of r in
   let+ seed = int in
-  let rs = Random.State.make [| seed |] in
-  (* Few distinct values, so that ties are common. *)
-  let pool = Array.init 6 (fun _ -> element d rs) in
-  let x =
-    operand d s v (fun _ ->
-        if Random.State.int rs 3 = 0 then element d rs
-        else pool.(Random.State.int rs 6))
-  in
-  { axis; descending; k; x; views = view_names v }
+  { axis; descending; k; x = tied d s v seed; views = view_names v }
+
+(* A constructed case along the last axis, drawn from seed 1, so that every seed
+   reaches its regime. *)
+let example ?k ?(descending = false) d s =
+  let r = Array.length s in
+  { axis = r - 1; descending; k; x = tied d s (plain r) 1; views = [] }
 
 let kept c = match c.k with None -> (shape_of c.x).(c.axis) | Some k -> k
 
@@ -136,9 +143,20 @@ let agrees (b : Support.backend) c =
       equal ~msg:"values" (array string) ev (elements v)
 
 let law_reference (b : Support.backend) c =
+  let n = (shape_of c.x).(c.axis) in
   cover "descending" c.descending;
-  cover "keeps some" (c.k <> None && kept c < (shape_of c.x).(c.axis));
-  cover "radix" ((shape_of c.x).(c.axis) >= 64 && c.k = None);
+  cover "keeps some" (c.k <> None && kept c < n);
+  cover "radix" (n >= 64 && c.k = None);
+  cover "complex128's two keys" (dtype_of c.x = D.Any D.Complex128 && n >= 2);
+  agrees b c
+
+(* One slice sorts on the job's threads where it is long and keeps more than a
+   few. *)
+let law_large (b : Support.backend) c =
+  cover "one long slice"
+    (Array.length (shape_of c.x) = 1
+    && kept c > 64
+    && dtype_of c.x <> D.Any D.Complex128);
   agrees b c
 
 (* Laws for every library *)
@@ -194,12 +212,26 @@ let test_refusals (b : Support.backend) () =
 
 let cases = Gen.with_pp pp_case (case_gen ())
 
+let examples =
+  [
+    example (D.Any D.Complex128) [| 2; 70 |];
+    example (D.Any D.Complex128) [| 9 |] ~descending:true;
+  ]
+
 (* Slices the job's threads share, and one long slice. *)
 let large =
   Gen.with_pp pp_case
     (case_gen
        ~shapes:(Gen.of_list [ [| 200_000 |]; [| 400; 500 |]; [| 3; 100_000 |] ])
        ())
+
+(* One long slice of 4-byte keys packed with positions, and of 8-byte keys
+   beside them. *)
+let large_examples =
+  [
+    example (D.Any D.Float32) [| 200_000 |];
+    example (D.Any D.Int64) [| 200_000 |] ~descending:true ~k:150_000;
+  ]
 
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
@@ -215,8 +247,11 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop "sorts each slice stably in the order" cases (run (law_reference b));
-      prop ~count:8 "large sorts on the job's threads" large (run (agrees b));
+      prop ~examples "sorts each slice stably in the order" cases
+        (run (law_reference b));
+      prop ~count:8 ~examples:large_examples "large sorts on the job's threads"
+        large
+        (run (law_large b));
       test "refuses results of another shape" (fun () ->
           b.around (test_refusals b));
     ]

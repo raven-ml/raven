@@ -43,6 +43,9 @@
 /* A single slice at least this long sorts on several threads. */
 #define LONG (64 * 1024)
 
+/* A slice's scratch: two arrays of keys and two of positions. */
+#define SCRATCH 4
+
 typedef struct {
   const nx_array *a; /* the values, the positions, the operand */
   int dt, w, kb;     /* the dtype, its bytes and its keys' */
@@ -50,7 +53,7 @@ typedef struct {
   int64_t n, keep;   /* a slice's elements, and those it keeps */
   int64_t sx, sv, sp; /* steps along the axis */
   nx_loop l;          /* the slices: operands values, positions, x */
-  uint64_t *scratch;  /* per worker: five arrays of n words */
+  uint64_t *scratch;  /* per worker: SCRATCH arrays of n words */
 } sorter;
 
 /* Keys */
@@ -71,9 +74,9 @@ static inline uint64_t key64(double f) {
   return f != f ? ~0ull : rank64(nx_double_bits(f));
 }
 
-/* The key of the element at [p], and for a complex128 the real part's key
-   into [hi]. */
-static uint64_t key_of(const sorter *s, const uint8_t *p, uint64_t *hi) {
+/* The key of the element at [p]; a complex128's is its imaginary part's,
+   real_key gives the other. */
+static uint64_t key_of(const sorter *s, const uint8_t *p) {
   switch (s->dt) {
     case NX_FLOAT32: return key32(*(const float *)p);
     case NX_FLOAT64: return key64(*(const double *)p);
@@ -95,16 +98,17 @@ static uint64_t key_of(const sorter *s, const uint8_t *p, uint64_t *hi) {
     }
     case NX_COMPLEX128: {
       const double *c = (const double *)p;
-      if (c[0] != c[0] || c[1] != c[1]) {
-        *hi = ~0ull;
-        return ~0ull;
-      }
-      *hi = key64(c[0]);
-      return key64(c[1]);
+      return c[0] != c[0] || c[1] != c[1] ? ~0ull : key64(c[1]);
     }
     case NX_BOOL: return *p != 0; /* a boolean is true where not zero */
     default: return *p; /* uint8 */
   }
+}
+
+/* A complex128's real part's key, which orders it before its imaginary
+   part's. */
+static uint64_t real_key(const double *c) {
+  return c[0] != c[0] || c[1] != c[1] ? ~0ull : key64(c[0]);
 }
 
 /* The bytes of [dt]'s keys. */
@@ -245,13 +249,13 @@ static void key_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const spread *p = ctx;
   const sorter *s = p->s;
-  uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1, unused;
+  uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1;
   uint64_t flip = s->descending ? mask : 0;
   for (int64_t b = lo; b < hi; b++) {
     int64_t i0, i1;
     block_range(p, b, &i0, &i1);
     for (int64_t i = i0; i < i1; i++) {
-      uint64_t k = key_of(s, p->x + i * s->sx * s->w, &unused) ^ flip;
+      uint64_t k = key_of(s, p->x + i * s->sx * s->w) ^ flip;
       if (p->psrc == NULL) p->src[i] = k << 32 | (uint64_t)i;
       else {
         p->src[i] = k;
@@ -363,21 +367,21 @@ static void sort_long(const sorter *s, int64_t pv, int64_t pp, int64_t px,
 static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
                        uint64_t *scratch) {
   int64_t n = s->n;
-  uint64_t *k = scratch, *k2 = scratch + n, *hi = scratch + 2 * n;
-  int64_t *p = (int64_t *)(scratch + 3 * n), *p2 = (int64_t *)(scratch + 4 * n);
+  uint64_t *k = scratch, *k2 = scratch + n;
+  int64_t *p = (int64_t *)(scratch + 2 * n), *p2 = (int64_t *)(scratch + 3 * n);
   const uint8_t *x = s->a[2].base + px * s->w;
   uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1;
   uint64_t flip = s->descending ? mask : 0;
   for (int64_t i = 0; i < n; i++) {
-    k[i] = key_of(s, x + i * s->sx * s->w, &hi[i]) ^ flip;
-    hi[i] ^= flip;
+    k[i] = key_of(s, x + i * s->sx * s->w) ^ flip;
     p[i] = i;
   }
   int64_t keep = s->keep;
   if (s->dt == NX_COMPLEX128) {
     /* The imaginary parts' order, then the real parts' over it. */
     radix(k, p, k2, p2, n, 8);
-    for (int64_t i = 0; i < n; i++) k[i] = hi[p[i]];
+    for (int64_t i = 0; i < n; i++)
+      k[i] = real_key((const double *)(x + p[i] * s->sx * s->w)) ^ flip;
     radix(k, p, k2, p2, n, 8);
   } else if (n < SMALL)
     insertion(k, p, n);
@@ -413,7 +417,7 @@ static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
 static void sort_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   const sorter *s = ctx;
   const nx_loop *l = &s->l;
-  uint64_t *scratch = s->scratch + (int64_t)worker * 5 * s->n;
+  uint64_t *scratch = s->scratch + (int64_t)worker * SCRATCH * s->n;
   for (int64_t u = lo; u < hi; u++) {
     int64_t v = u, pv = l->first[0], pp = l->first[1], px = l->first[2];
     for (int i = l->rank - 1; i >= 0; i--) {
@@ -478,8 +482,8 @@ value nx_cpu_sort(value vs, value vv, value vp, value vx) {
   s.l.rank = nx_coalesce_dims(3, rx, s.l.extent, s.l.step);
   /* A slice's sort costs as long as copying its elements about eight
      times, a radix's passes. */
-  int64_t bytes = slices * s.n * (s.w + 8);
-  int64_t workers = nx_cpu_threads(bytes, 8 * bytes);
+  int64_t bytes = slices * s.n * (s.w + 8), cost = 8 * bytes;
+  int64_t workers = nx_cpu_threads(bytes, cost);
   /* One long slice sorts on the job's threads, a block of its items each;
      a complex128's two keys, and keeping a few, stay on one. */
   int slots = keep <= KEEP && keep * SPARE <= s.n;
@@ -501,12 +505,13 @@ value nx_cpu_sort(value vs, value vv, value vp, value vx) {
     CAMLreturn(Val_int(NX_OK));
   }
   if (workers > slices) workers = slices;
-  s.scratch = malloc((size_t)workers * 5 * (size_t)s.n * sizeof(uint64_t));
+  s.scratch =
+      malloc((size_t)workers * SCRATCH * (size_t)s.n * sizeof(uint64_t));
   if (s.scratch == NULL) {
     nx_done(3, a);
     caml_raise_out_of_memory();
   }
-  nx_cpu_job(slices, bytes, 8 * bytes, sort_units, &s);
+  nx_cpu_job(slices, bytes, cost, sort_units, &s);
   free(s.scratch);
   nx_done(3, a);
   CAMLreturn(Val_int(NX_OK));
