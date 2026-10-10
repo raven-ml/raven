@@ -1125,10 +1125,14 @@ let test_borrow_cases () =
     | Ok d -> d
     | Error e -> failwith e
   in
+  let on_closed = A.to_device closed a in
   Rig.close closed;
   raises_match ~msg:"lost"
     (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> A.borrow closed a)
+    (fun () -> A.borrow closed a);
+  raises_match ~msg:"lost, on its own device"
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> A.borrow closed on_closed)
 
 let test_bitcast_devices () =
   let x = floats32 [| 2 |] [| 1.; -2. |] in
