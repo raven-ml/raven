@@ -34,10 +34,15 @@
 
 #include "nx_kinds.h"
 
+/* A kind's row, with every function it calls inlined: gcc otherwise calls
+   a long kind, as erf, threefry or pow, out of its loop, which then runs
+   one element at a time. */
+#define ROW static __attribute__((flatten)) void
+
 /* A row of [F] over one operand of the type [T], loaded by [LD]. */
 #define UN(NAME, T, LD, F)                                                   \
-  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,   \
-                   int64_t sx) {                                            \
+  ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,            \
+           int64_t sx) {                                                     \
     T *d = (T *)d_;                                                          \
     const T *x = (const T *)x_;                                              \
     if (sd == 1 && sx == 1)                                                  \
@@ -58,8 +63,8 @@
    scalar kind, which branches. Each piece is tested before it is written,
    so a destination that is its operand reads every element first. */
 #define TRIG(K, S, T)                                                        \
-  static void K##_##S(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_, \
-                      int64_t sx) {                                          \
+  ROW K##_##S(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,         \
+              int64_t sx) {                                                  \
     T *d = (T *)d_;                                                          \
     const T *x = (const T *)x_;                                              \
     if (sd == 1 && sx == 0) {                                                \
@@ -135,8 +140,8 @@ IDENT(8, uint64_t)
 /* A row of [F] over two operands of the storage type [T], loaded by [LD]
    into the compute type, stored as [R]. */
 #define BIN(NAME, T, R, LD, F)                                               \
-  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,   \
-                   int64_t sx, const uint8_t *y_, int64_t sy) {             \
+  ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,            \
+           int64_t sx, const uint8_t *y_, int64_t sy) {                      \
     R *d = (R *)d_;                                                          \
     const T *x = (const T *)x_, *y = (const T *)y_;                          \
     LOOPS2(T, LD, F);                                                        \
@@ -161,8 +166,8 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
 /* The row of the float kind [F] of two operands whose plain operation is
    [OP]. */
 #define EXACT(NAME, T, OP, F)                                                \
-  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,   \
-                   int64_t sx, const uint8_t *y_, int64_t sy) {             \
+  ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,            \
+           int64_t sx, const uint8_t *y_, int64_t sy) {                      \
     T *d = (T *)d_;                                                          \
     const T *x = (const T *)x_, *y = (const T *)y_;                          \
     int nan = 1;                                                             \
@@ -204,9 +209,9 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
       d[i * sd] = (T)F(LD(a[i * sa]), LD(b[i * sb]), LD(c[i * sc]))
 
 #define FMA(NAME, T, LD, F)                                                  \
-  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,   \
-                   int64_t sa, const uint8_t *b_, int64_t sb,                \
-                   const uint8_t *c_, int64_t sc) {                          \
+  ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,            \
+           int64_t sa, const uint8_t *b_, int64_t sb,                        \
+           const uint8_t *c_, int64_t sc) {                                  \
     T *d = (T *)d_;                                                          \
     const T *a = (const T *)a_, *b = (const T *)b_, *c = (const T *)c_;      \
     LOOPS3(T, LD, F);                                                        \
@@ -215,9 +220,9 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
 /* The row of the float kind [F], fma, whose plain operation is [FN]: the
    contiguous rows alone are noted. */
 #define EXACT_FMA(NAME, T, FN, F)                                            \
-  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,   \
-                   int64_t sa, const uint8_t *b_, int64_t sb,                \
-                   const uint8_t *c_, int64_t sc) {                          \
+  ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,            \
+           int64_t sa, const uint8_t *b_, int64_t sb,                        \
+           const uint8_t *c_, int64_t sc) {                                  \
     T *d = (T *)d_;                                                          \
     const T *a = (const T *)a_, *b = (const T *)b_, *c = (const T *)c_;      \
     int nan = 1;                                                             \
@@ -258,8 +263,8 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
 #define REM_u(CT, UT) v & LOW(CT, UT)
 
 #define SHIFTED(NAME, T, CT, UT, F, E)                                       \
-  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,   \
-                   int64_t sx, const uint8_t *y_, int64_t sy) {             \
+  ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,            \
+           int64_t sx, const uint8_t *y_, int64_t sy) {                      \
     T *d = (T *)d_;                                                          \
     const T *x = (const T *)x_, *y = (const T *)y_;                          \
     CT b = sy == 0 ? (CT)y[0] : 0;                                           \
