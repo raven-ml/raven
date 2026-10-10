@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Sorts through every kernel library the host runs: the values are the
-   operand at the positions, in order, and keeping k gives the first k of
-   the whole sort. nx.cpu's group checks the order Spec states against a
-   stable sort built here, at every dtype it computes, through views, with
-   NaN payloads, -0 and ties. *)
+(* Sorts through every kernel library the host runs: the values are the operand
+   at the positions, in order, and keeping k gives the first k of the whole
+   sort. nx.cpu's group checks the order Spec states against a stable sort built
+   here, at every dtype it computes, through views, with NaN payloads, -0 and
+   ties. *)
 
 open Windtrap
 open Elements
@@ -28,17 +28,20 @@ let pp_case ppf c =
     (if c.descending then " descending" else "")
     c.axis
     (match c.k with None -> "" | Some k -> Printf.sprintf " keeping %d" k)
-    D.pp (A.dtype x) pp_ints (shape_of c.x) (String.concat ", " c.views)
+    D.pp (A.dtype x) pp_ints (shape_of c.x)
+    (String.concat ", " c.views)
 
 (* Sub-byte dtypes sort through bytes: nx.cpu declines them. *)
 let computed = List.filter (fun (D.Any dt) -> D.bits dt >= 8) D.all
 
-(* Shapes: small ones of any rank, slices at the edges of the insertion
-   sort's, and long ones that sort by radix or keep a few. *)
+(* Shapes: small ones of any rank, slices at the edges of the insertion sort's,
+   and long ones that sort by radix or keep a few. *)
 let shape_gen =
   let open Gen in
   let small = array ~size:(int_range 1 4) (int_range 0 6) in
-  let edge = map (fun n -> [| 2; n |]) (of_list ~pp:Format.pp_print_int [ 63; 64; 65 ]) in
+  let edge =
+    map (fun n -> [| 2; n |]) (of_list ~pp:Format.pp_print_int [ 63; 64; 65 ])
+  in
   let long =
     let* n = int_range 100 3000 in
     let+ before = array ~size:(int_range 0 1) (int_range 1 3) in
@@ -88,9 +91,8 @@ let sort_on (b : Support.backend) c =
   | A.Declined -> None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-(* Each slice's elements with their positions, stably sorted, the first
-   [kept c] of them: the values' bits and the positions, in C order of the
-   results. *)
+(* Each slice's elements with their positions, stably sorted, the first [kept c]
+   of them: the values' bits and the positions, in C order of the results. *)
 let expected c =
   let d = dtype_of c.x and s = shape_of c.x in
   let es = elements c.x in
@@ -179,10 +181,14 @@ let test_refusals (b : Support.backend) () =
   let p = A.create Rig.host D.Int64 [| 2; 3 |] in
   let s k = S.sort ~axis:1 ~descending:false ~k in
   equal ~msg:"values of another shape" answer A.Shape_mismatch
-    (K.sort (s None) ~values:(A.create Rig.host D.Float32 [| 3; 2 |]) ~positions:p x);
+    (K.sort (s None)
+       ~values:(A.create Rig.host D.Float32 [| 3; 2 |])
+       ~positions:p x);
   equal ~msg:"keeping past the axis" answer A.Shape_mismatch
-    (K.sort (s (Some 4)) ~values:(A.create Rig.host D.Float32 [| 2; 4 |])
-       ~positions:(A.create Rig.host D.Int64 [| 2; 4 |]) x)
+    (K.sort (s (Some 4))
+       ~values:(A.create Rig.host D.Float32 [| 2; 4 |])
+       ~positions:(A.create Rig.host D.Int64 [| 2; 4 |])
+       x)
 
 (* The suite *)
 

@@ -22,13 +22,12 @@ let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
 
 (* Elements as bits *)
 
-(* [x]'s elements in C order of indices, each as its bytes in the host's
-   order, a sub-byte element as its code in one byte. *)
+(* [x]'s elements in C order of indices, each as its bytes in the host's order,
+   a sub-byte element as its code in one byte. *)
 let elements (A.Any x) =
   let bytes (type v s) (c : (v, s) A.t) =
     match A.dtype c with
-    | D.Bit ->
-        Array.map (fun b -> if b then "\001" else "\000") (A.to_array c)
+    | D.Bit -> Array.map (fun b -> if b then "\001" else "\000") (A.to_array c)
     | dt when D.bits dt = 4 ->
         Array.map
           (fun v -> String.make 1 (Char.chr v))
@@ -36,8 +35,9 @@ let elements (A.Any x) =
     | dt ->
         let w = D.bits dt / 8 in
         let b = A.to_array (Option.get (A.bitcast D.Uint8 c)) in
-        Array.init (Array.length b / w) (fun i ->
-            String.init w (fun j -> Char.chr b.((w * i) + j)))
+        Array.init
+          (Array.length b / w)
+          (fun i -> String.init w (fun j -> Char.chr b.((w * i) + j)))
   in
   bytes (A.copy x)
 
@@ -47,12 +47,14 @@ let of_elements (D.Any dt) s es =
   let b = Bytes.make (max 1 (D.bytes dt (Array.length es))) '\000' in
   Array.iteri
     (fun i e ->
-      if bits >= 8 then Bytes.blit_string e 0 b (i * String.length e) (String.length e)
+      if bits >= 8 then
+        Bytes.blit_string e 0 b (i * String.length e) (String.length e)
       else
         let at = i * bits in
         let code = Char.code e.[0] land ((1 lsl bits) - 1) in
         let k = at / 8 in
-        Bytes.set b k (Char.chr (Char.code (Bytes.get b k) lor (code lsl (at mod 8)))))
+        Bytes.set b k
+          (Char.chr (Char.code (Bytes.get b k) lor (code lsl (at mod 8)))))
     es;
   A.Any (A.v dt (L.contiguous s) (Rig.Buffer.of_string (Bytes.to_string b)))
 
@@ -73,11 +75,10 @@ let f64 x =
 
 let nans32 = [| 0x7FC00000l; 0xFFC12345l; 0x7F800001l; 0xFFA00002l |]
 let nans64 = [| 0x7FF8000000000000L; 0x7FF0000000000001L; 0xFFF4000000000002L |]
-
 let specials = [| 0.; -0.; 1.; -1.; 2.; 0.5; infinity; neg_infinity |]
 
-(* A random element of [dt]: small values often, so that targets tie and
-   sums cancel, then specials, NaNs of drawn payloads, and any bits. *)
+(* A random element of [dt]: small values often, so that targets tie and sums
+   cancel, then specials, NaNs of drawn payloads, and any bits. *)
 let element (D.Any dt) r =
   let pick a = a.(Random.State.int r (Array.length a)) in
   let any n = String.init n (fun _ -> Char.chr (Random.State.int r 256)) in
@@ -117,9 +118,9 @@ let element (D.Any dt) r =
 
 (* Views *)
 
-(* How an array of shape [s] is made and viewed: its axes made in another
-   order, stepped by two along its last made axis, reversed along a made
-   axis, and broadcast along the axes [broadcast] from one element. *)
+(* How an array of shape [s] is made and viewed: its axes made in another order,
+   stepped by two along its last made axis, reversed along a made axis, and
+   broadcast along the axes [broadcast] from one element. *)
 type view = {
   perm : int array;
   stepped : bool;
@@ -146,10 +147,16 @@ let view_of ?(broadcast = []) r =
     broadcast;
   }
 
-let plain r = { perm = Array.init r Fun.id; stepped = false; reversed = None; broadcast = [] }
+let plain r =
+  {
+    perm = Array.init r Fun.id;
+    stepped = false;
+    reversed = None;
+    broadcast = [];
+  }
 
-(* An array of shape [s] through the view [v] whose elements in C order are
-   [f k], k counted in C order of the array made before broadcasting. *)
+(* An array of shape [s] through the view [v] whose elements in C order are [f
+   k], k counted in C order of the array made before broadcasting. *)
 let operand dt s v f =
   let r = Array.length s in
   let s0 = Array.mapi (fun i e -> if List.mem i v.broadcast then 1 else e) s in
@@ -157,7 +164,9 @@ let operand dt s v f =
   Array.iteri (fun i m -> inv.(m) <- i) v.perm;
   let made = Array.init r (fun m -> s0.(inv.(m))) in
   let last = r - 1 in
-  let made' = Array.mapi (fun i e -> if v.stepped && i = last then 2 * e else e) made in
+  let made' =
+    Array.mapi (fun i e -> if v.stepped && i = last then 2 * e else e) made
+  in
   let whole e = { M.start = 0; count = e; step = 1 } in
   let move m (A.Any x) = A.Any (Option.get (A.move m x)) in
   let x = of_elements dt made' (Array.init (total made') f) in
@@ -189,8 +198,8 @@ let operand dt s v f =
   let x = move (M.Permute v.perm) x in
   if v.broadcast = [] then x else move (M.Broadcast s) x
 
-(* Positions: in range mostly, and at -1, the extent, past it, and the
-   extremes of int64. *)
+(* Positions: in range mostly, and at -1, the extent, past it, and the extremes
+   of int64. *)
 let position r d =
   match Random.State.int r 12 with
   | 0 -> -1L
@@ -266,14 +275,21 @@ let int_value (D.Any dt) e =
     else Int64.shift_right_logical (Int64.shift_left !v s) s
 
 let int_bits (D.Any dt) w v =
-  if D.bits dt < 8 then String.make 1 (Char.chr (Int64.to_int v land ((1 lsl D.bits dt) - 1)))
-  else String.init w (fun j -> Char.chr (Int64.to_int (Int64.shift_right_logical v (8 * j)) land 0xFF))
+  if D.bits dt < 8 then
+    String.make 1 (Char.chr (Int64.to_int v land ((1 lsl D.bits dt) - 1)))
+  else
+    String.init w (fun j ->
+        Char.chr (Int64.to_int (Int64.shift_right_logical v (8 * j)) land 0xFF))
 
-let is_narrow (D.Any dt) =
-  D.is D.Float dt && D.bits dt < 32
+let is_narrow (D.Any dt) = D.is D.Float dt && D.bits dt < 32
 
 (* A narrow float's code as a float32 value. *)
-let decode (D.Any dt) e = Int32.float_of_bits (Int32.of_int (Nx_array_support.decode (D.code dt) (Char.code e.[0] lor if String.length e > 1 then Char.code e.[1] lsl 8 else 0)))
+let decode (D.Any dt) e =
+  Int32.float_of_bits
+    (Int32.of_int
+       (Nx_array_support.decode (D.code dt)
+          (Char.code e.[0]
+          lor if String.length e > 1 then Char.code e.[1] lsl 8 else 0)))
 
 (* The code of the narrow float nearest [x], by nx.cpu's cast. *)
 let encode (D.Any dt) x =
@@ -285,9 +301,9 @@ let encode (D.Any dt) x =
   (elements (A.Any dst)).(0)
 
 (* The order sorts follow over elements of [d]: -0 below +0, every NaN, and
-   every complex number with a NaN part, above +inf and equal to each
-   other; complex numbers by real part, then imaginary part; integers by
-   value; [false] first. *)
+   every complex number with a NaN part, above +inf and equal to each other;
+   complex numbers by real part, then imaginary part; integers by value; [false]
+   first. *)
 let compare_elements (D.Any dt as d) a b =
   let nans na nb k =
     match (na, nb) with

@@ -3,14 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Gathers and scatters through every kernel library the host runs: a gather
-   and an add-scatter are adjoint, and a scatter into its own operand gives
-   the fresh result. nx.cpu's group checks what Spec states, element by
-   element against a reference built here from the elements' bits: zero
-   reads and dropped writes outside the axis, a target's updates in C order,
-   a narrow float's sum in float32 rounded once, the first NaN of an
-   extreme; at every dtype and through strided, reversed, permuted and
-   broadcast views. *)
+(* Gathers and scatters through every kernel library the host runs: a gather and
+   an add-scatter are adjoint, and a scatter into its own operand gives the
+   fresh result. nx.cpu's group checks what Spec states, element by element
+   against a reference built here from the elements' bits: zero reads and
+   dropped writes outside the axis, a target's updates in C order, a narrow
+   float's sum in float32 rounded once, the first NaN of an extreme; at every
+   dtype and through strided, reversed, permuted and broadcast views. *)
 
 open Windtrap
 module A = Nx_array
@@ -20,18 +19,12 @@ module M = Nx_array.Move
 module S = Nx_kernel.Spec
 module P = Nx_kernel.Prog
 module Support = Nx_kernels_support
-
 open Elements
 (* Cases *)
 
 let all_dtypes = D.all
 
-type gather_case = {
-  axis : int;
-  idx : A.any;
-  x : A.any;
-  gviews : string list;
-}
+type gather_case = { axis : int; idx : A.any; x : A.any; gviews : string list }
 
 let pp_gather ppf c =
   let (A.Any x) = c.x in
@@ -59,14 +52,24 @@ let gather_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen) () =
   let* n = frequency [ (4, int_range 0 6); (1, int_range 7 40) ] in
   let is = Array.mapi (fun i e -> if i = axis then n else e) xs in
   let* xv = view_of r in
-  let* bc = array ~size:(constant r) (frequency [ (3, constant false); (1, constant true) ]) in
-  let broadcast = List.filter (fun i -> bc.(i) && i <> axis) (List.init r Fun.id) in
+  let* bc =
+    array ~size:(constant r)
+      (frequency [ (3, constant false); (1, constant true) ])
+  in
+  let broadcast =
+    List.filter (fun i -> bc.(i) && i <> axis) (List.init r Fun.id)
+  in
   let* iv = view_of ~broadcast r in
   let+ seed = int in
   let rs = Random.State.make [| seed |] in
   let x = operand d xs xv (fun _ -> element d rs) in
 
-  { axis; idx = int64s is iv (fun () -> position rs xs.(axis)); x; gviews = view_names xv @ List.map (( ^ ) "idx ") (view_names iv) }
+  {
+    axis;
+    idx = int64s is iv (fun () -> position rs xs.(axis));
+    x;
+    gviews = view_names xv @ List.map (( ^ ) "idx ") (view_names iv);
+  }
 
 (* Gathers *)
 
@@ -99,7 +102,8 @@ let gather_agrees (b : Support.backend) c =
 
 let law_gather_reference (b : Support.backend) c =
   let d = Int64.of_int (shape_of c.x).(c.axis) in
-  cover "out of range" (Array.exists (fun p -> p < 0L || p >= d) (positions c.idx));
+  cover "out of range"
+    (Array.exists (fun p -> p < 0L || p >= d) (positions c.idx));
   cover "broadcast positions" (List.mem "idx broadcast" c.gviews);
   gather_agrees b c
 
@@ -130,11 +134,13 @@ let pp_scatter ppf c =
 let takes_add (D.Any dt) = not (D.is D.Boolean dt)
 
 let scatter_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen)
-    ?(ms = Gen.frequency [ (4, Gen.int_range 0 8); (1, Gen.int_range 9 60) ]) () =
+    ?(ms = Gen.frequency [ (4, Gen.int_range 0 8); (1, Gen.int_range 9 60) ]) ()
+    =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
   let* combine =
-    of_list ~pp:(fun ppf c -> Format.pp_print_string ppf (combine_name c))
+    of_list
+      ~pp:(fun ppf c -> Format.pp_print_string ppf (combine_name c))
       (if takes_add d then S.[ Set; Add; Max; Min ] else S.[ Set; Max; Min ])
   in
   let* ts = shapes in
@@ -144,8 +150,13 @@ let scatter_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen)
   let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
   let* tv = view_of r in
   let* uv = view_of r in
-  let* bc = array ~size:(constant r) (frequency [ (3, constant false); (1, constant true) ]) in
-  let broadcast = List.filter (fun i -> bc.(i) && i <> axis) (List.init r Fun.id) in
+  let* bc =
+    array ~size:(constant r)
+      (frequency [ (3, constant false); (1, constant true) ])
+  in
+  let broadcast =
+    List.filter (fun i -> bc.(i) && i <> axis) (List.init r Fun.id)
+  in
   let* iv = view_of ~broadcast r in
   let+ seed = int in
   let rs = Random.State.make [| seed |] in
@@ -210,7 +221,8 @@ let combined (D.Any dt as d) combine x us =
                 else
                   let t = round32 (s +. y) in
                   if t = 0. then 0. else t)
-              (let v = decode d x in if Float.is_nan v then v else if v = 0. then 0. else v)
+              (let v = decode d x in
+               if Float.is_nan v then v else if v = 0. then 0. else v)
               us
           in
           if Float.is_nan s then Some_nan else Bits (encode d s)
@@ -222,22 +234,34 @@ let combined (D.Any dt as d) combine x us =
           let part e k = String.sub e (k * h) h in
           let z = if h = 4 then f32 0. else f64 0. in
           let sum k =
-            List.fold_left (fun s u -> add_bits ~w:h s (part u k)) (add_bits ~w:h z (part x k)) us
+            List.fold_left
+              (fun s u -> add_bits ~w:h s (part u k))
+              (add_bits ~w:h z (part x k))
+              us
           in
           Bits (sum 0 ^ sum 1)
-      | Add -> Bits (int_bits d w (List.fold_left (fun s u -> Int64.add s (int_value d u)) (int_value d x) us))
+      | Add ->
+          Bits
+            (int_bits d w
+               (List.fold_left
+                  (fun s u -> Int64.add s (int_value d u))
+                  (int_value d x) us))
       | Max | Min ->
           let pick a b =
             let keep =
               if D.is D.Complex dt then
                 let h = w / 2 in
                 let get = if h = 4 then get32 else get64 in
-                let ra = get a 0 and ia = get a h and rb = get b 0 and ib = get b h in
+                let ra = get a 0
+                and ia = get a h
+                and rb = get b 0
+                and ib = get b h in
                 let c = compare_floats ra rb in
                 let c = if c = 0 then compare_floats ia ib else c in
                 keeps combine
                   ~nan_a:(Float.is_nan ra || Float.is_nan ia)
-                  ~nan_b:(Float.is_nan rb || Float.is_nan ib) c
+                  ~nan_b:(Float.is_nan rb || Float.is_nan ib)
+                  c
               else if D.is D.Float dt then
                 let get e =
                   if is_narrow d then decode d e
@@ -276,8 +300,7 @@ let scatter_expected c =
     ps;
   Array.mapi (fun t x -> combined d c.combine x (List.rev lands.(t))) xs
 
-let is_nan_element d e =
-  is_narrow d && Float.is_nan (decode d e)
+let is_nan_element d e = is_narrow d && Float.is_nan (decode d e)
 
 let check_scatter c y =
   let d = dtype_of c.into in
@@ -295,10 +318,17 @@ let check_scatter c y =
   in
   let show t =
     Printf.sprintf "%d: %s, not %s" t
-      (String.concat "" (List.map (fun ch -> Printf.sprintf "%02x" (Char.code ch)) (List.of_seq (String.to_seq got.(t)))))
+      (String.concat ""
+         (List.map
+            (fun ch -> Printf.sprintf "%02x" (Char.code ch))
+            (List.of_seq (String.to_seq got.(t)))))
       (match want.(t) with
       | Some_nan -> "a NaN"
-      | Bits b -> String.concat "" (List.map (fun ch -> Printf.sprintf "%02x" (Char.code ch)) (List.of_seq (String.to_seq b))))
+      | Bits b ->
+          String.concat ""
+            (List.map
+               (fun ch -> Printf.sprintf "%02x" (Char.code ch))
+               (List.of_seq (String.to_seq b))))
   in
   equal (list string) [] (List.map show (List.filteri (fun i _ -> i < 5) wrong))
 
@@ -310,21 +340,27 @@ let scatter_agrees (b : Support.backend) c =
 let law_scatter_reference (b : Support.backend) c =
   let ps = positions c.sidx in
   let d = (shape_of c.into).(c.saxis) in
-  let inside = List.filter (fun p -> p >= 0L && p < Int64.of_int d) (Array.to_list ps) in
-  cover "shared targets" (List.length (List.sort_uniq compare inside) < List.length inside);
+  let inside =
+    List.filter (fun p -> p >= 0L && p < Int64.of_int d) (Array.to_list ps)
+  in
+  cover "shared targets"
+    (List.length (List.sort_uniq compare inside) < List.length inside);
   cover "dropped updates" (List.length inside < Array.length ps);
   cover "narrow float add" (c.combine = S.Add && is_narrow (dtype_of c.into));
   scatter_agrees b c
 
 (* Laws for every library *)
 
-(* Σ gather x p · y = Σ x · scatter Add 0 p y, in wrapping int64: a
-   position outside the axis reads zero in one and drops its write in the
-   other. *)
+(* Σ gather x p · y = Σ x · scatter Add 0 p y, in wrapping int64: a position
+   outside the axis reads zero in one and drops its write in the other. *)
 let law_adjoint (b : Support.backend) c =
   let d = D.Any D.Int64 in
   let rs = Random.State.make [| 3 |] in
-  let ints s = operand d s (plain (Array.length s)) (fun _ -> int_bits d 8 (Int64.of_int (Random.State.int rs 2001 - 1000))) in
+  let ints s =
+    operand d s
+      (plain (Array.length s))
+      (fun _ -> int_bits d 8 (Int64.of_int (Random.State.int rs 2001 - 1000)))
+  in
   let xs = shape_of c.x and is = shape_of c.idx in
   let x = ints xs and y = ints is in
   let module K = (val b.kernels) in
@@ -332,14 +368,27 @@ let law_adjoint (b : Support.backend) c =
   | None -> ()
   | Some g -> (
       let into = A.of_array D.Int64 xs (Array.make (total xs) 0L) in
-      let s = scatter_on b { combine = Add; saxis = c.axis; into = A.Any into; sidx = c.idx; updates = y; sviews = [] } in
+      let s =
+        scatter_on b
+          {
+            combine = Add;
+            saxis = c.axis;
+            into = A.Any into;
+            sidx = c.idx;
+            updates = y;
+            sviews = [];
+          }
+      in
       match s with
       | None -> ()
       | Some s ->
           let dot a b' =
-            let a = A.to_array (A.expect D.Int64 a) and b' = A.to_array (A.expect D.Int64 b') in
+            let a = A.to_array (A.expect D.Int64 a)
+            and b' = A.to_array (A.expect D.Int64 b') in
             let acc = ref 0L in
-            Array.iteri (fun i v -> acc := Int64.add !acc (Int64.mul v b'.(i))) a;
+            Array.iteri
+              (fun i v -> acc := Int64.add !acc (Int64.mul v b'.(i)))
+              a;
             !acc
           in
           equal int64 (dot x s) (dot g y))
@@ -359,24 +408,33 @@ let test_refusals (b : Support.backend) () =
   equal ~msg:"a gather into another shape" answer A.Shape_mismatch
     (K.gather (S.gather ~axis:1) ~dst:wrong idx x);
   equal ~msg:"positions off the source's shape" answer A.Shape_mismatch
-    (K.gather (S.gather ~axis:0) ~dst:(A.create Rig.host D.Float32 [| 2; 2 |]) idx x);
+    (K.gather (S.gather ~axis:0)
+       ~dst:(A.create Rig.host D.Float32 [| 2; 2 |])
+       idx x);
   let u = A.of_array D.Float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let dst = A.create Rig.host D.Float32 [| 2; 3 |] in
-  equal ~msg:"a scatter of positions and updates of two shapes" answer A.Shape_mismatch
-    (K.scatter (S.scatter Add ~unique:false ~axis:1) ~dst ~into:x
-       (A.of_array D.Int64 [| 2; 1 |] [| 0L; 1L |]) u);
+  equal ~msg:"a scatter of positions and updates of two shapes" answer
+    A.Shape_mismatch
+    (K.scatter
+       (S.scatter Add ~unique:false ~axis:1)
+       ~dst ~into:x
+       (A.of_array D.Int64 [| 2; 1 |] [| 0L; 1L |])
+       u);
   equal ~msg:"a scatter into another shape" answer A.Shape_mismatch
     (K.scatter (S.scatter Add ~unique:false ~axis:1) ~dst:wrong ~into:x idx u);
   let bools = A.of_array D.Bool [| 2 |] [| true; false |] in
   let bdst = A.create Rig.host D.Bool [| 2 |] in
   equal ~msg:"an Add of booleans" answer A.Wrong_dtype
-    (K.scatter (S.scatter Add ~unique:false ~axis:0) ~dst:bdst ~into:bools
-       (A.of_array D.Int64 [| 1 |] [| 0L |]) (A.of_array D.Bool [| 1 |] [| true |]))
+    (K.scatter
+       (S.scatter Add ~unique:false ~axis:0)
+       ~dst:bdst ~into:bools
+       (A.of_array D.Int64 [| 1 |] [| 0L |])
+       (A.of_array D.Bool [| 1 |] [| true |]))
 
 (* nx.cpu's own cases *)
 
-(* A float16 target that 2048 updates of one reach: in float32 the sum is
-   exact, where float16 steps would stop at 2048. *)
+(* A float16 target that 2048 updates of one reach: in float32 the sum is exact,
+   where float16 steps would stop at 2048. *)
 let test_float16_sum (b : Support.backend) () =
   let n = 4096 in
   let into = A.of_array D.Float16 [| 1 |] [| 0. |] in
@@ -389,19 +447,23 @@ let test_float16_sum (b : Support.backend) () =
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 let large_shapes =
-  Gen.of_list [ [| 300_000 |]; [| 600; 500 |]; [| 3; 100_000 |]; [| 100_000; 3 |] ]
+  Gen.of_list
+    [ [| 300_000 |]; [| 600; 500 |]; [| 3; 100_000 |]; [| 100_000; 3 |] ]
 
 let gathers = Gen.with_pp pp_gather (gather_gen ())
 let large_gathers = Gen.with_pp pp_gather (gather_gen ~shapes:large_shapes ())
 let scatters = Gen.with_pp pp_scatter (scatter_gen ())
-let large_scatters = Gen.with_pp pp_scatter (scatter_gen ~shapes:large_shapes ())
+
+let large_scatters =
+  Gen.with_pp pp_scatter (scatter_gen ~shapes:large_shapes ())
 
 (* Many updates along the axis of few slices: threads split the targets. *)
 let long_scatters =
   Gen.with_pp pp_scatter
     (scatter_gen
        ~shapes:(Gen.of_list [ [| 1000 |]; [| 3; 7 |]; [| 5 |] ])
-       ~ms:(Gen.int_range 70_000 100_000) ())
+       ~ms:(Gen.int_range 70_000 100_000)
+       ())
 
 let int_gathers =
   Gen.with_pp pp_gather (gather_gen ~dtypes:[ D.Any D.Int64 ] ())
@@ -431,11 +493,12 @@ let cpu (b : Support.backend) =
       prop ~count:10 "large scatters on the job's threads" large_scatters
         (run (scatter_agrees b));
       prop ~count:10 "long scatters split their targets among threads"
-        long_scatters (run (scatter_agrees b));
-      test "a float16 sum runs in float32 and rounds once"
-        (fun () -> b.around (test_float16_sum b));
-      test "refuses shapes that do not fit and an Add of booleans"
-        (fun () -> b.around (test_refusals b));
+        long_scatters
+        (run (scatter_agrees b));
+      test "a float16 sum runs in float32 and rounds once" (fun () ->
+          b.around (test_float16_sum b));
+      test "refuses shapes that do not fit and an Add of booleans" (fun () ->
+          b.around (test_refusals b));
     ]
 
 let () =

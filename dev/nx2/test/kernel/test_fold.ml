@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Folds through every kernel library the host runs: a fold is the padded
-   load's adjoint over integers. nx.cpu's group checks each result element
-   against a reference that adds, from +0, the elements the load reads from
-   it in C order of their taps, bit for bit, through views of the operand,
-   at the dtypes nx_cpu.mli lists. *)
+(* Folds through every kernel library the host runs: a fold is the padded load's
+   adjoint over integers. nx.cpu's group checks each result element against a
+   reference that adds, from +0, the elements the load reads from it in C order
+   of their taps, bit for bit, through views of the operand, at the dtypes
+   nx_cpu.mli lists. *)
 
 open Windtrap
 open Elements
@@ -38,13 +38,15 @@ let loaded (p : S.pad) s =
       let padded =
         Array.mapi
           (fun i d ->
-            p.lo.(i) + p.hi.(i) + d + if d > 0 then p.interior.(i) * (d - 1) else 0)
+            p.lo.(i) + p.hi.(i) + d
+            + if d > 0 then p.interior.(i) * (d - 1) else 0)
           s
       in
       Some
         (if p.windows = [||] then padded else M.shape (Window p.windows) padded)
 
-let folded = D.[ Any Float32; Any Float64; Any Int32; Any Int8; Any Uint16; Any Int64 ]
+let folded =
+  D.[ Any Float32; Any Float64; Any Int32; Any Int8; Any Uint16; Any Int64 ]
 
 let case_gen ?(dtypes = folded) () =
   let open Gen in
@@ -95,8 +97,8 @@ let fold_on (b : Support.backend) c =
   | A.Declined -> None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-(* The result element each operand element lands on, or [None] for one the
-   load reads from padding. *)
+(* The result element each operand element lands on, or [None] for one the load
+   reads from padding. *)
 let target c xi =
   let r = Array.length c.shape in
   let q = Array.sub xi 0 r in
@@ -122,7 +124,9 @@ let add d a b =
       if w = 4 then (get32, f32, round32) else (get64, f64, Fun.id)
     in
     let x = get a 0 and y = get b 0 in
-    if Float.is_nan x then a else if Float.is_nan y then b else put (round (x +. y))
+    if Float.is_nan x then a
+    else if Float.is_nan y then b
+    else put (round (x +. y))
   else int_bits d (String.length a) (Int64.add (int_value d a) (int_value d b))
 
 let expected c =
@@ -159,7 +163,9 @@ let law_adjoint (b : Support.backend) = function
       let d = D.Any D.Int64 in
       let rs = Random.State.make [| 5 |] in
       let ints s =
-        operand d s (plain (Array.length s)) (fun _ ->
+        operand d s
+          (plain (Array.length s))
+          (fun _ ->
             int_bits d 8 (Int64.of_int (Random.State.int rs 2001 - 1000)))
       in
       let c = { c with x = ints (shape_of c.x) } in
@@ -167,7 +173,8 @@ let law_adjoint (b : Support.backend) = function
       | None -> ()
       | Some f ->
           let a = Array.map (int_value d) (elements (ints c.shape)) in
-          let xs = shape_of c.x and es = Array.map (int_value d) (elements c.x) in
+          let xs = shape_of c.x
+          and es = Array.map (int_value d) (elements c.x) in
           let lhs = ref 0L in
           for k = 0 to total xs - 1 do
             match target c (index_of xs k) with
@@ -202,32 +209,42 @@ let test_threads (b : Support.backend) () =
 
 let test_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let p = { S.lo = [| 1 |]; hi = [| 1 |]; interior = [| 0 |]; windows = [||] } in
+  let p =
+    { S.lo = [| 1 |]; hi = [| 1 |]; interior = [| 0 |]; windows = [||] }
+  in
   let s = S.fold ~shape:[| 3 |] p in
   let x = A.of_array D.Float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
   equal ~msg:"an operand of another shape" answer A.Shape_mismatch
-    (K.fold s ~dst:(A.create Rig.host D.Float32 [| 3 |])
+    (K.fold s
+       ~dst:(A.create Rig.host D.Float32 [| 3 |])
        (A.of_array D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |]));
   equal ~msg:"a destination of another shape" answer A.Shape_mismatch
     (K.fold s ~dst:(A.create Rig.host D.Float32 [| 4 |]) x);
   equal ~msg:"booleans" answer A.Wrong_dtype
-    (K.fold s ~dst:(A.create Rig.host D.Bool [| 3 |])
+    (K.fold s
+       ~dst:(A.create Rig.host D.Bool [| 3 |])
        (A.of_array D.Bool [| 5 |] [| true; false; true; false; true |]))
 
 (* The suite *)
 
-let cases = Gen.with_pp (fun ppf -> function
-  | None -> Format.pp_print_string ppf "no load"
-  | Some c -> pp_case ppf c) (case_gen ())
+let cases =
+  Gen.with_pp
+    (fun ppf -> function
+      | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
+    (case_gen ())
 
-let int_cases = Gen.with_pp (fun ppf -> function
-  | None -> Format.pp_print_string ppf "no load"
-  | Some c -> pp_case ppf c) (case_gen ~dtypes:[ D.Any D.Int64 ] ())
+let int_cases =
+  Gen.with_pp
+    (fun ppf -> function
+      | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
+    (case_gen ~dtypes:[ D.Any D.Int64 ] ())
 
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
-    [ prop "a fold is the padded load's adjoint" int_cases (run (law_adjoint b)) ]
+    [
+      prop "a fold is the padded load's adjoint" int_cases (run (law_adjoint b));
+    ]
 
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in

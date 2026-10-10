@@ -4,11 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 (* Assemblies through every kernel library the host runs: an assembly whose
-   first piece is the destination over the whole result gives the fresh
-   result. nx.cpu's group checks each element against a reference that
-   copies the pieces in order over the fill, at every dtype, over regions
-   that tile the result (a concatenation), sit inside it (a pad), step,
-   reverse and overlap, with pieces through views. *)
+   first piece is the destination over the whole result gives the fresh result.
+   nx.cpu's group checks each element against a reference that copies the pieces
+   in order over the fill, at every dtype, over regions that tile the result (a
+   concatenation), sit inside it (a pad), step, reverse and overlap, with pieces
+   through views. *)
 
 open Windtrap
 open Elements
@@ -69,7 +69,8 @@ let regions_gen shape =
       let* cut = int_range 0 d in
       let piece start count =
         Array.mapi
-          (fun i e -> if i = axis then { M.start; count; step = 1 } else whole e)
+          (fun i e ->
+            if i = axis then { M.start; count; step = 1 } else whole e)
           shape
       in
       let+ three = bool in
@@ -105,7 +106,8 @@ let case_gen ?(dtypes = D.all) () =
   let rs = Random.State.make [| seed |] in
   let pieces =
     Array.mapi
-      (fun j r -> operand d (M.shape (Slice r) shape) views.(j) (fun _ -> element d rs))
+      (fun j r ->
+        operand d (M.shape (Slice r) shape) views.(j) (fun _ -> element d rs))
       regions
   in
   { dtype = d; shape; fill = element d rs; regions; pieces; form }
@@ -120,7 +122,9 @@ let assemble_on (b : Support.backend) ?(in_place = false) c =
       (p, Array.mapi (fun j x -> if j = 0 then p else x) pieces)
     else (A.create Rig.host dt c.shape, pieces)
   in
-  match K.assemble (S.assemble ~shape:c.shape ~fill:c.fill c.regions) ~dst pieces with
+  match
+    K.assemble (S.assemble ~shape:c.shape ~fill:c.fill c.regions) ~dst pieces
+  with
   | A.Done -> Some (A.Any dst)
   | A.Declined -> None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
@@ -147,13 +151,14 @@ let law_reference (b : Support.backend) c =
   | None -> failf "%s declined an assembly" b.name
   | Some y -> equal (array string) (expected c) (elements y)
 
-(* A first piece that is the destination over the whole result gives the
-   fresh result. *)
+(* A first piece that is the destination over the whole result gives the fresh
+   result. *)
 let law_in_place (b : Support.backend) c =
   let rs = Random.State.make [| 7 |] in
   let base =
-    operand c.dtype c.shape (plain (Array.length c.shape)) (fun _ ->
-        element c.dtype rs)
+    operand c.dtype c.shape
+      (plain (Array.length c.shape))
+      (fun _ -> element c.dtype rs)
   in
   let c =
     {
@@ -170,12 +175,18 @@ let law_in_place (b : Support.backend) c =
 let test_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
   let x = A.of_array D.Float32 [| 2 |] [| 1.; 2. |] in
-  let s fill = S.assemble ~shape:[| 4 |] ~fill [| [| { M.start = 1; count = 2; step = 1 } |] |] in
+  let s fill =
+    S.assemble ~shape:[| 4 |] ~fill
+      [| [| { M.start = 1; count = 2; step = 1 } |] |]
+  in
   let dst = A.create Rig.host D.Float32 [| 4 |] in
   equal ~msg:"a fill of another width" answer A.Wrong_dtype
     (K.assemble (s "\000\000") ~dst [| x |]);
   equal ~msg:"a piece off its region" answer A.Shape_mismatch
-    (K.assemble (s (f32 0.)) ~dst [| A.of_array D.Float32 [| 3 |] [| 1.; 2.; 3. |] |]);
+    (K.assemble
+       (s (f32 0.))
+       ~dst
+       [| A.of_array D.Float32 [| 3 |] [| 1.; 2.; 3. |] |]);
   equal ~msg:"a destination of another shape" answer A.Shape_mismatch
     (K.assemble (s (f32 0.)) ~dst:(A.create Rig.host D.Float32 [| 5 |]) [| x |])
 
