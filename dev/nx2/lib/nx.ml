@@ -498,6 +498,113 @@ let split ~axis:a n x =
       start := !start + count;
       move ~by (Slice rs) x)
 
+let assemble ~by dtype shape fill pieces =
+  Eval.eval ~by (Value.Assemble { dtype; shape; fill; pieces })
+
+(* The region of a value of shape [s] that keeps [count] elements from [start]
+   along [axis], and the whole of every other axis. *)
+let region s axis start count =
+  let rs = Array.map whole s in
+  rs.(axis) <- { start; count; step = 1 };
+  rs
+
+let concatenate ~axis:a xs =
+  let by = "Nx.concatenate" in
+  match xs with
+  | [] -> invalid_argf "%s: no values" by
+  | x0 :: _ ->
+      let a = axis ~by x0 a in
+      let s0 = shape x0 in
+      let fits s =
+        Array.length s = Array.length s0
+        && Array.for_all Fun.id (Array.mapi (fun i e -> i = a || e = s0.(i)) s)
+      in
+      let total = ref 0 in
+      let pieces =
+        List.map
+          (fun x ->
+            let s = shape x in
+            if not (fits s) then
+              invalid_argf "%s: %a and %a differ off axis %d" by pp_value x0
+                pp_value x a;
+            let r = region s a !total s.(a) in
+            total := !total + s.(a);
+            (r, x))
+          xs
+      in
+      let s' = Array.copy s0 in
+      s'.(a) <- !total;
+      assemble ~by (dtype x0) s' (D.zero (dtype x0)) pieces
+
+let stack ?axis:(a = 0) xs =
+  let by = "Nx.stack" in
+  match xs with
+  | [] -> invalid_argf "%s: no values" by
+  | x0 :: _ ->
+      let s0 = shape x0 in
+      let r = Array.length s0 + 1 in
+      let a =
+        axis_of ~by r a (fun ppf -> Format.fprintf ppf "a rank %d result" r)
+      in
+      List.iter
+        (fun x ->
+          if not (same_shape x x0) then
+            invalid_argf "%s: %a and %a differ" by pp_value x0 pp_value x)
+        xs;
+      let unit =
+        Array.init r (fun i ->
+            if i < a then s0.(i) else if i = a then 1 else s0.(i - 1))
+      in
+      let s' = Array.copy unit in
+      s'.(a) <- List.length xs;
+      let pieces =
+        List.mapi (fun k x -> (region unit a k 1, move ~by (Reshape unit) x)) xs
+      in
+      assemble ~by (dtype x0) s' (D.zero (dtype x0)) pieces
+
+let pad widths v x =
+  let by = "Nx.pad" in
+  let s = shape x in
+  if Array.length widths <> Array.length s then
+    invalid_argf "%s: %d widths for %a" by (Array.length widths) pp_value x;
+  Array.iter
+    (fun (b, e) ->
+      if b < 0 || e < 0 then invalid_argf "%s: a negative width (%d, %d)" by b e)
+    widths;
+  let s' = Array.mapi (fun i d -> fst widths.(i) + d + snd widths.(i)) s in
+  let rs =
+    Array.mapi
+      (fun i d : Nx_array.Move.range ->
+        { start = fst widths.(i); count = d; step = 1 })
+      s
+  in
+  assemble ~by (dtype x) s' v [ (rs, x) ]
+
+let roll ?axis:along k x =
+  let by = "Nx.roll" in
+  let y, a =
+    match along with
+    | None -> (move ~by (Reshape [| numel x |]) x, 0)
+    | Some a -> (x, axis ~by x a)
+  in
+  let s = shape y in
+  let d = s.(a) in
+  let k = if d = 0 then 0 else ((k mod d) + d) mod d in
+  let rolled =
+    if k = 0 then copy y
+    else
+      let part start count = move ~by (Slice (region s a start count)) y in
+      assemble ~by (dtype y) s
+        (D.zero (dtype y))
+        [
+          (region s a 0 k, part (d - k) k);
+          (region s a k (d - k), part 0 (d - k));
+        ]
+  in
+  match along with
+  | Some _ -> rolled
+  | None -> move ~by (Reshape (shape x)) rolled
+
 (* [x] with its axis [i] repeated [n.(i)] times: whole, end to end, where
    [outer]; element by element otherwise. Each repeated axis gains a unit axis
    beside it, before it where [outer], which is broadcast to the count and

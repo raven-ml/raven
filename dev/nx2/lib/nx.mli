@@ -264,6 +264,35 @@ val split : axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t list
 
     Raises [Invalid_argument] if [axis] is not [x]'s or [n < 1]. *)
 
+val concatenate : axis:int -> ('v, 's, 'd) t list -> ('v, 's, 'd) t
+(** [concatenate ~axis xs] is [xs] joined along their axis [axis], in order. A
+    copy.
+
+    Raises [Invalid_argument] if [xs] is empty, [axis] is not an axis of its
+    first value, or their shapes differ off [axis]. *)
+
+val stack : ?axis:int -> ('v, 's, 'd) t list -> ('v, 's, 'd) t
+(** [stack ~axis xs] is [xs] joined along a new axis at position [axis] of the
+    result (default [0]), in order. A copy.
+
+    Raises [Invalid_argument] if [xs] is empty, their shapes differ, or [axis]
+    is not an axis of the result. *)
+
+val pad : (int * int) array -> 'v -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [pad widths v x] is [x] with [fst widths.(i)] elements [v] before its axis
+    [i] and [snd widths.(i)] after it. A copy.
+
+    Raises [Invalid_argument] if [widths] does not have one pair per axis of
+    [x], a width is negative, or [v] is an [int] outside [x]'s dtype's range. *)
+
+val roll : ?axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [roll ~axis k x] is [x] with its elements along [axis] shifted [k] places
+    toward the end, those past it wrapping to the start; a negative [k] shifts
+    toward the start. Without [axis], [flatten x] shifted, at [x]'s shape. A
+    copy.
+
+    Raises [Invalid_argument] if [axis] is not an axis of [x]. *)
+
 val tile : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [tile reps x] is [x] repeated [reps.(i)] times, end to end, along its axis
     [i]. With more entries in [reps] than [x] has axes, [x] first gains leading

@@ -360,6 +360,103 @@ let laws =
           is [| n * numel o.s |] (fun i -> o.e.(i.(0) / n)) (Nx.repeat n o.x));
     ]
 
+(* Joining, padding and rolling: copies that assemble pieces. *)
+let joins =
+  group "joins"
+    [
+      prop "concatenate undoes split"
+        Gen.(
+          let* o = operand ~min_rank:1 () in
+          let* a = axis_of o in
+          let+ n = int_range 1 4 in
+          (o, a, n))
+        (fun (o, a, n) ->
+          covers o;
+          is o.s (at o) (Nx.concatenate ~axis:a (Nx.split ~axis:a n o.x)));
+      prop "stack puts each value at its position along the new axis"
+        Gen.(
+          let* o = operand () in
+          let* a = int_range 0 (Array.length o.s) in
+          let+ n = int_range 1 3 in
+          (o, a, n))
+        (fun (o, a, n) ->
+          covers o;
+          let xs =
+            List.init n (fun k ->
+                Nx.flip ~axes:[]
+                  (Nx.add o.x (Nx.scalar Nx.int32 (Int32.of_int (100 * k)))))
+          in
+          let r = Array.length o.s in
+          let s' =
+            Array.init (r + 1) (fun i ->
+                if i < a then o.s.(i) else if i = a then n else o.s.(i - 1))
+          in
+          is s'
+            (fun i ->
+              let j =
+                Array.init r (fun d -> if d < a then i.(d) else i.(d + 1))
+              in
+              Int32.add (at o j) (Int32.of_int (100 * i.(a))))
+            (Nx.stack ~axis:a xs));
+      prop "pad surrounds the elements with its value"
+        Gen.(
+          let* o = operand () in
+          let+ widths =
+            array
+              ~size:(constant (Array.length o.s))
+              (pair (int_range 0 2) (int_range 0 2))
+          in
+          (o, widths))
+        (fun (o, widths) ->
+          covers o;
+          let s' =
+            Array.mapi (fun i d -> fst widths.(i) + d + snd widths.(i)) o.s
+          in
+          is s'
+            (fun i ->
+              let j = Array.mapi (fun d k -> k - fst widths.(d)) i in
+              if
+                Array.for_all Fun.id
+                  (Array.mapi (fun d k -> k >= 0 && k < o.s.(d)) j)
+              then at o j
+              else -7l)
+            (Nx.pad widths (-7l) o.x));
+      prop "roll shifts along an axis, wrapping"
+        Gen.(
+          let* o = operand ~min_rank:1 () in
+          let* a = axis_of o in
+          let+ k = int_range (-7) 7 in
+          (o, a, k))
+        (fun (o, a, k) ->
+          covers o;
+          let d = o.s.(a) in
+          is o.s
+            (fun i ->
+              let j = Array.copy i in
+              j.(a) <- (((i.(a) - k) mod d) + d) mod d;
+              at o j)
+            (Nx.roll ~axis:a k o.x);
+          let n = numel o.s in
+          is o.s
+            (fun i ->
+              let p = position o.s i in
+              o.e.((((p - k) mod n) + n) mod n))
+            (Nx.roll k o.x));
+      test "join refusals name the function" (fun () ->
+          let x = (operand_of [| 2; 3 |] Plain).x in
+          invalid ~by:"Nx.concatenate" (fun () -> Nx.concatenate ~axis:0 []);
+          invalid ~by:"Nx.concatenate" (fun () ->
+              Nx.concatenate ~axis:0 [ x; Nx.transpose x ]);
+          invalid ~by:"Nx.stack" (fun () -> Nx.stack ~axis:3 [ x ]);
+          invalid ~by:"Nx.stack" (fun () ->
+              Nx.stack [ x; Nx.reshape [| 3; 2 |] x ]);
+          invalid ~by:"Nx.pad" (fun () -> Nx.pad [| (1, 1) |] 0l x);
+          invalid ~by:"Nx.pad" (fun () -> Nx.pad [| (0, 0); (-1, 0) |] 0l x);
+          invalid ~by:"Nx.pad" (fun () ->
+              Nx.pad [| (1, 0) |] 256 (Nx.zeros Nx.uint8 [| 2 |]));
+          invalid ~by:"Nx.roll" (fun () -> Nx.roll ~axis:2 1 x));
+    ]
+
 let properties =
   group "properties"
     [
@@ -459,7 +556,14 @@ let dtypes =
       equal (array w)
         (init [| 2; 6; 2 |] (fun i ->
              data.(position s [| i.(0); i.(1) / 2; i.(2) |])))
-        (elements (Nx.repeat ~axis:1 2 x)))
+        (elements (Nx.repeat ~axis:1 2 x));
+      equal (array w) data
+        (elements (Nx.concatenate ~axis:1 (Nx.split ~axis:1 2 x)));
+      equal (array w)
+        (init [| 2; 5; 2 |] (fun i ->
+             if i.(1) < 2 then D.zero dt
+             else data.(position s [| i.(0); i.(1) - 2; i.(2) |])))
+        (elements (Nx.pad [| (0, 0); (2, 0); (0, 0) |] (D.zero dt) x)))
 
 (* A refusal: its case's name starts with the function it calls. *)
 let r name f = (name, fun () -> ignore (f ()))
@@ -568,4 +672,6 @@ let donation =
     ]
 
 let () =
-  exit (run "nx shapes" [ laws; properties; views; dtypes; refusals; donation ])
+  exit
+    (run "nx shapes"
+       [ laws; joins; properties; views; dtypes; refusals; donation ])
