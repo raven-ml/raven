@@ -1695,6 +1695,119 @@ let isinf x = predicate ~by:"Nx.isinf" (fun b dt x -> infinite b dt x) Or false 
 let isfinite x =
   predicate ~by:"Nx.isfinite" (fun b dt x -> finite b dt x) And true x
 
+(* Float functions *)
+
+(* The format a float function of [dt] computes in: float32 for the floats
+   narrower, [dt] itself otherwise. *)
+type wide = Wide : (float, 's) D.t -> wide
+
+let wide (type s) (dt : (float, s) D.t) =
+  if D.bits dt < 32 then Wide D.Float32 else Wide dt
+
+(* The float function [f b w ins] of [xs], of one dtype, computed in its wide
+   format [w] and rounded once to that dtype. *)
+let float_map (type v s d) ~by (xs : (v, s, d) t list)
+    (f : 'w. program -> (float, 'w) D.t -> int array -> int) : (v, s, d) t =
+  let dt = dtype (List.hd xs) in
+  match D.kind dt with
+  | D.Float ->
+      let (Wide w) = wide dt in
+      let narrow = D.bits dt < 32 in
+      elementwise ~by dt
+        (List.map (fun x -> Value.Any x) xs)
+        (fun b ins ->
+          if not narrow then f b w ins
+          else
+            let ins = Array.map (fun i -> node b (Op1 (Cast, D.Any w, i))) ins in
+            node b (Op1 (Cast, D.Any dt, f b w ins)))
+  | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
+      invalid_argf "%s: %s is not a float dtype" by (D.name dt)
+
+let un1 b k w x = node b (Op1 (Unary k, D.Any w, x))
+let bin2 b k x y = node b (Op2 (Binary k, x, y))
+let at_least b w x c = node b (Op2 (Compare Less_equal, const b w c, x))
+let below b w x c = node b (Op2 (Compare Less, x, const b w c))
+let pick b c x y = node b (Op3 (Where, c, x, y))
+
+let square x = binary ~by:"Nx.square" (Binary Mul) x x
+
+let rsqrt x =
+  float_map ~by:"Nx.rsqrt" [ x ] (fun b w ins ->
+      un1 b Recip w (un1 b Sqrt w ins.(0)))
+
+(* [m sqrt (1 + (n / m)^2)] for the larger magnitude [m] and the smaller [n]:
+   nothing squares past [m]. Zero for two zeros, an infinity where either is,
+   even beside a NaN. *)
+let hypot x y =
+  float_map ~by:"Nx.hypot" [ x; y ] (fun b w ins ->
+      let ax = un1 b Abs w ins.(0) and ay = un1 b Abs w ins.(1) in
+      let m = bin2 b Maximum ax ay and n = bin2 b Minimum ax ay in
+      let r = bin2 b Fdiv n m in
+      let s = un1 b Sqrt w (node b (Op3 (Fma, r, r, const b w 1.))) in
+      let h = bin2 b Mul m s in
+      let zero = node b (Op2 (Compare Equal, m, const b w 0.)) in
+      let h = pick b zero (const b w 0.) h in
+      let inf v = node b (Op2 (Compare Equal, v, const b w Float.infinity)) in
+      let either = bin2 b Or (inf ax) (inf ay) in
+      pick b either (const b w Float.infinity) h)
+
+(* Past [big] a square would overflow float32: [log (2 x)] is the function to
+   the format's precision there. Below [tiny], [x] is. *)
+let big = 0x1p28
+let tiny = 0x1p-28
+
+let asinh x =
+  float_map ~by:"Nx.asinh" [ x ] (fun b w ins ->
+      let x = ins.(0) in
+      let a = un1 b Abs w x in
+      let far = bin2 b Add (un1 b Log w a) (const b w (Float.log 2.)) in
+      let a2 = bin2 b Mul a a in
+      let root = un1 b Sqrt w (bin2 b Add (const b w 1.) a2) in
+      let near =
+        un1 b Log1p w
+          (bin2 b Add a (bin2 b Fdiv a2 (bin2 b Add (const b w 1.) root)))
+      in
+      let r = pick b (at_least b w a big) far near in
+      let signed = pick b (below b w x 0.) (un1 b Neg w r) r in
+      pick b (below b w a tiny) x signed)
+
+let acosh x =
+  float_map ~by:"Nx.acosh" [ x ] (fun b w ins ->
+      let x = ins.(0) in
+      let far = bin2 b Add (un1 b Log w x) (const b w (Float.log 2.)) in
+      let root = un1 b Sqrt w (node b (Op3 (Fma, x, x, const b w (-1.)))) in
+      let mid =
+        un1 b Log w
+          (bin2 b Sub (bin2 b Add x x)
+             (un1 b Recip w (bin2 b Add x root)))
+      in
+      let t = bin2 b Sub x (const b w 1.) in
+      let near =
+        un1 b Log1p w
+          (bin2 b Add t
+             (un1 b Sqrt w (node b (Op3 (Fma, t, t, bin2 b Add t t)))))
+      in
+      let r = pick b (at_least b w x 2.) mid near in
+      let r = pick b (at_least b w x big) far r in
+      pick b (below b w x 1.) (const b w Float.nan) r)
+
+(* [log1p (2a / (1 - a)) / 2] of [a = |x|], the sign put back: a small [a]
+   splits the quotient to keep its digits. *)
+let atanh x =
+  float_map ~by:"Nx.atanh" [ x ] (fun b w ins ->
+      let x = ins.(0) in
+      let a = un1 b Abs w x in
+      let t = bin2 b Add a a in
+      let one_minus = bin2 b Sub (const b w 1.) a in
+      let small =
+        bin2 b Add t (bin2 b Fdiv (bin2 b Mul t a) one_minus)
+      in
+      let large = bin2 b Fdiv t one_minus in
+      let q = pick b (below b w a 0.5) small large in
+      let r = bin2 b Mul (const b w 0.5) (un1 b Log1p w q) in
+      let signed = pick b (below b w x 0.) (un1 b Neg w r) r in
+      pick b (below b w a tiny) x signed)
+
 (* Operations as data *)
 
 module Prim = struct

@@ -687,6 +687,9 @@ val minimum : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 val neg : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [neg x] is [-x]. Every dtype but booleans. *)
 
+val square : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [square x] is [mul x x]. Every dtype but booleans. *)
+
 val recip : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [recip x] is [1 / x]; on integers, [x] for [1] and [-1] and [0] otherwise.
     Every dtype but booleans. *)
@@ -704,6 +707,16 @@ val sign : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sqrt x] is the square root, NaN below [-0.]. *)
+
+val rsqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [rsqrt x] is [recip (sqrt x)]: [inf] at [+0.], [-inf] at [-0.], NaN below.
+*)
+
+val hypot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [hypot x y] is [sqrt (x{^2} + y{^2})] with no intermediate overflow: finite
+    wherever the result is. It is [inf] where [x] or [y] is an infinity, a NaN
+    beside it included, and NaN where either is a NaN otherwise. Within
+    3 ulps at float32 and float64. *)
 
 val exp : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [exp x] is [e{^x}]. *)
@@ -757,6 +770,19 @@ val cosh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val tanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [tanh x] is the hyperbolic tangent. *)
+
+val asinh : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [asinh x] is the inverse hyperbolic sine, odd, [x] itself near [0.]: within
+    3 ulps at float32 and float64. *)
+
+val acosh : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [acosh x] is the inverse hyperbolic cosine: [0.] at [1.], NaN below [1.],
+    within 3 ulps at float32 and float64. *)
+
+val atanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [atanh x] is the inverse hyperbolic tangent: [inf] at [1.], [-inf] at
+    [-1.], NaN beyond them, odd, [x] itself near [0.]; within 3 ulps at
+    float32 and float64. *)
 
 val erf : (float, 's, 'd) t -> (float, 's, 'd) t
 (** [erf x] is the error function [2/√π ∫₀ˣ e{^-t²} dt]. *)
