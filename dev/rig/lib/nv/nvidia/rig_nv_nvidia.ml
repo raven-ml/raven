@@ -5,8 +5,8 @@
 
 (* Any domain may call any function. A GPU's objects are made once, under
    [gpus_lock], and kept for the process, its registered channels and whether a
-   device of it is open under the same lock; the host ranges [map_host] maps are
-   kept under [ranges_lock]. *)
+   device of it is open under the same lock; the users of every range, and the
+   host ranges [map_host] maps, are kept under [ranges_lock]. *)
 
 module D = Defs
 
@@ -61,29 +61,25 @@ type gpu = {
 
 type mem = {
   va : int;
-  size : int;
   handle : int;
   host : int option; (* the process's address of it, if it maps it *)
   video : int option; (* the GPU whose memory it is, by number *)
-  of_ : owner;
+  range : range; (* the range it lies in *)
 }
 
-and owner =
-  | Own of Va.t (* allocated by this GPU, from these addresses *)
-  | Host of range (* host memory [map_host] mapped *)
-  | Peer (* another GPU's memory, mapped for this one *)
-
-(* Host memory mapped for the GPUs: described to the RM once, under the first
-   GPU that maps it, and mapped for each GPU that maps it, counted. The last
-   unmapping frees the range and its description. A range covers whole pages,
-   which unified memory requires of its bounds. The GPUs address it from the low
-   range: the host's own address may lie above the 40 bits a semaphore takes. *)
+(* A range of unified memory where an RM memory object is mapped for each GPU
+   that maps it, counted: memory a GPU allocated, or host memory [map_host]
+   described. Every region lies in one, its own allocation's, a host range, or
+   another GPU's range it views: unified memory maps a range once per GPU, so
+   a GPU's last region unmaps it for that GPU, and the last region of all frees
+   the range and its object. *)
 and range = {
-  addr : int;
+  gpu_addr : int; (* the GPUs' address of its first byte *)
   bytes : int;
-  gpu_addr : int; (* the GPUs' address of [addr] *)
-  descriptor : int;
-  parent : gpu;
+  memory : int; (* the memory object mapped there *)
+  parent : gpu; (* the GPU the object belongs to *)
+  space : Va.t; (* where [gpu_addr] was taken *)
+  mapped : int option; (* where the process maps the object, if it does *)
   mutable users : (gpu * int) list;
 }
 
@@ -354,6 +350,21 @@ let alloc_video g ~cpu size =
 let memory m =
   { Rig_nv.address = m.va; host = m.host; handle = m.handle; data = m }
 
+(* Memory [g] allocated, mapped for [g] alone. *)
+let allocated g ~video ~host ~space h va size =
+  let range =
+    {
+      gpu_addr = va;
+      bytes = size;
+      memory = h;
+      parent = g;
+      space;
+      mapped = host;
+      users = [ (g, 1) ];
+    }
+  in
+  memory { va; handle = h; host; video; range }
+
 (* A path function's failure that is no refusal is the driver's fault. *)
 let fault = function Ok x -> x | Error e -> raise (Rig_nv.Fault e)
 
@@ -367,65 +378,73 @@ let alloc g kind n =
       Ok
         (Option.map
            (fun (h, va) ->
-             memory
-               {
-                 va;
-                 size;
-                 handle = h;
-                 host = Some va;
-                 video = None;
-                 of_ = Own g.c.low;
-               })
+             allocated g ~video:None ~host:(Some va) ~space:g.c.low h va size)
            x)
   | (`Gpu | `Bar) as k ->
       let* v = alloc_video g ~cpu:(k = `Bar) n in
       Ok
         (Option.map
            (fun (h, va, size, space) ->
-             memory
-               {
-                 va;
-                 size;
-                 handle = h;
-                 host = (if k = `Bar then Some va else None);
-                 video = Some g.index;
-                 of_ = Own space;
-               })
+             let host = if k = `Bar then Some va else None in
+             allocated g ~video:(Some g.index) ~host ~space h va size)
            v)
 
 let ranges_lock = Mutex.create ()
-let ranges : range list ref = ref []
+
+(* The host ranges, each with the host address of its first byte. A host
+   range covers whole pages, which unified memory requires of its bounds. The
+   GPUs address it from the low range: the host's own address may lie above
+   the 40 bits a semaphore takes. *)
+let ranges : (int * range) list ref = ref []
+
+(* Counts a region of [g] over [r], mapping [r] for [g] first if [g] has none:
+   whether [g] maps it. Under [ranges_lock]. *)
+let take g r =
+  match List.assq_opt g r.users with
+  | Some k ->
+      r.users <- (g, k + 1) :: List.remove_assq g r.users;
+      true
+  | None ->
+      let mapped = fault (map_external g r.gpu_addr r.bytes r.memory) in
+      if mapped then r.users <- (g, 1) :: r.users;
+      mapped
+
+(* Ends a region of [g] over [r]: [g]'s last unmaps [r] for [g], and the last
+   of all frees [r] and its object. *)
+let give g r =
+  Mutex.protect ranges_lock @@ fun () ->
+  match List.assq_opt g r.users with
+  | Some k when k > 1 -> r.users <- (g, k - 1) :: List.remove_assq g r.users
+  | Some _ | None ->
+      r.users <- List.remove_assq g r.users;
+      if r.users <> [] then fault (uvm_unmap g r.gpu_addr r.bytes)
+      else begin
+        ranges := List.filter (fun (_, r') -> r' != r) !ranges;
+        fault (uvm_free g.c r.gpu_addr r.bytes);
+        free_object r.parent r.memory;
+        Option.iter (fun a -> Rm.unmap a r.bytes) r.mapped;
+        Va.free r.space r.gpu_addr r.bytes
+      end
 
 let map_host g a n =
   let page = Rm.host_page () in
   let a0 = a land lnot (page - 1) in
   let a1 = round_up (a + n) page in
-  let mem r =
+  let mem start r =
     memory
       {
-        va = r.gpu_addr + (a - r.addr);
-        size = n;
-        handle = r.descriptor;
+        va = r.gpu_addr + (a - start);
+        handle = r.memory;
         host = Some a;
         video = None;
-        of_ = Host r;
+        range = r;
       }
   in
   Mutex.protect ranges_lock @@ fun () ->
-  let inside r = r.addr <= a0 && a1 <= r.addr + r.bytes in
-  let overlaps r = a0 < r.addr + r.bytes && r.addr < a1 in
+  let inside (start, r) = start <= a0 && a1 <= start + r.bytes in
+  let overlaps (start, r) = a0 < start + r.bytes && start < a1 in
   match List.find_opt inside !ranges with
-  | Some r -> (
-      match List.assq_opt g r.users with
-      | Some k ->
-          r.users <- (g, k + 1) :: List.remove_assq g r.users;
-          Some (mem r)
-      | None -> (
-          match fault (map_external g r.gpu_addr r.bytes r.descriptor) with
-          | false -> None
-          | true ->
-              r.users <- (g, 1) :: r.users;
-              Some (mem r)))
+  | Some (start, r) -> if take g r then Some (mem start r) else None
   | None when List.exists overlaps !ranges -> None
   | None -> (
       let size = a1 - a0 in
@@ -441,16 +460,17 @@ let map_host g a n =
           | Ok (Some gpu_addr) ->
               let r =
                 {
-                  addr = a0;
-                  bytes = size;
                   gpu_addr;
-                  descriptor = h;
+                  bytes = size;
+                  memory = h;
                   parent = g;
+                  space = g.c.low;
+                  mapped = None;
                   users = [ (g, 1) ];
                 }
               in
-              ranges := r :: !ranges;
-              Some (mem r)
+              ranges := (a0, r) :: !ranges;
+              Some (mem a0 r)
           | Ok None ->
               free_object g h;
               None
@@ -459,47 +479,16 @@ let map_host g a n =
               raise (Rig_nv.Fault e)))
 
 (* Another GPU's video memory needs peer access, which may be refused; host
-   memory needs none. *)
-(* CR: Share one counted UVM backing across allocated, host and peer
-   regions, including host subviews. UVM replaces an existing mapping on
-   the same GPU; freeing either of two Peer regions unmaps the survivor.
-   Memory.mapping can reach this through racing first borrows. Reuse the
-   backing's full-range mapping per GPU, unmap on its last user, and keep
-   its resources until its last region. Extend range's existing ownership
-   instead of giving each Peer an independent unmap. *)
+   memory needs none. A view counts in the range of the region it views. *)
 let map_peer g (m : mem Rig_nv.memory) =
-  let peer = m.data in
+  let viewed = m.data in
   let refused = function Some u -> List.mem u g.refused | None -> false in
-  if refused peer.video then None
+  if refused viewed.video then None
   else
-    match fault (map_external g peer.va peer.size peer.handle) with
-    | false -> None
-    | true -> Some (memory { peer with of_ = Peer })
+    Mutex.protect ranges_lock @@ fun () ->
+    if take g viewed.range then Some (memory viewed) else None
 
-let unmap_host g r =
-  Mutex.protect ranges_lock @@ fun () ->
-  match List.assq_opt g r.users with
-  | Some k when k > 1 -> r.users <- (g, k - 1) :: List.remove_assq g r.users
-  | Some _ | None ->
-      r.users <- List.remove_assq g r.users;
-      if r.users = [] then begin
-        ranges := List.filter (fun r' -> r' != r) !ranges;
-        fault (uvm_free g.c r.gpu_addr r.bytes);
-        Va.free g.c.low r.gpu_addr r.bytes;
-        free_object r.parent r.descriptor
-      end
-      else fault (uvm_unmap g r.gpu_addr r.bytes)
-
-let free g (m : mem Rig_nv.memory) =
-  let m = m.data in
-  match m.of_ with
-  | Host r -> unmap_host g r
-  | Peer -> fault (uvm_unmap g m.va m.size)
-  | Own space ->
-      free_object g m.handle;
-      fault (uvm_free g.c m.va m.size);
-      (match m.host with Some a -> Rm.unmap a m.size | None -> ());
-      Va.free space m.va m.size
+let free g (m : mem Rig_nv.memory) = give g m.data.range
 
 (* Channels *)
 

@@ -607,9 +607,37 @@ let refused_host () =
   equal bool ~msg:"an unmapped page" true (Option.is_none (N.map_host g p 8));
   equal bool ~msg:"address 0" true (Option.is_none (N.map_host g 0 8))
 
+(* Views a GPU's reopened device makes of memory the GPU already maps: each
+   region over it keeps it mapped until its own free, in whatever order they
+   go. *)
+let views_of_mapped () =
+  let n = 4096 in
+  let a = S.driver () in
+  let src = alloc a Pinned n in
+  S.pattern (host src) n 5;
+  S.stop_driver a;
+  S.with_ @@ fun t ->
+  let view () =
+    require_some ~msg:"a view of memory its GPU maps" (N.map_peer t.g a src)
+  in
+  let v = view () in
+  let v' = view () in
+  N.free a src;
+  N.free t.g v;
+  let k = S.kernels t in
+  let l = S.launches t.g in
+  let out = alloc t.g Pinned n in
+  S.run t [| S.words (copy_after l k ~dst:(address out) ~src:(address v') n) |];
+  equal int ~msg:"the first byte that differs" (-1) (S.mismatch (host out) n 5);
+  S.free_launches l;
+  N.free t.g out;
+  N.free t.g v'
+
 let memory =
   group ~timeout:120. "memory"
     [
+      test "a view of memory its GPU maps lasts until its own free"
+        views_of_mapped;
       test "a copy longer than the copy engine's is the identity" long_copy;
       test
         "an allocation past the GPU's memory is None, and gives back what it \
