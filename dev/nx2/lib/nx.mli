@@ -1605,6 +1605,32 @@ module Rng : sig
       entropy. *)
 end
 
+(** {1:printing Printing} *)
+
+val pp : Format.formatter -> ('v, 's, 'd) t -> unit
+(** [pp ppf x] prints [x]'s dtype and shape, [on] its set off the host, then
+    its elements as nested rows, as [float32 [2; 3] [[1, 2, 3], [4, 5, 6]]].
+    Elements print as {!Dtype.pp_value} does: a float in the shortest form that
+    reads back to it in its format, an unsigned integer unsigned. Past 1000
+    elements an axis longer than 6 shows its first and last 3 around [...]. A
+    value with elements is read as {!to_array} reads it.
+
+    A value of every set prints [of every set] and the operation that makes it;
+    a traced one [traced by] its interpretation; a dead one the function it was
+    donated to; one on a lost device the loss. None of these raises. *)
+
+val to_string : ('v, 's, 'd) t -> string
+(** [to_string x] is [x] printed by {!pp}. *)
+
+val print : ('v, 's, 'd) t -> unit
+(** [print x] prints [x] by {!pp} on standard output, then a newline. *)
+
+val pp_shape : Format.formatter -> int array -> unit
+(** [pp_shape ppf s] prints [s] as nx's messages do: [[2; 3]]. *)
+
+val pp_dtype : Format.formatter -> ('v, 's) dtype -> unit
+(** [pp_dtype] is {!Dtype.pp}: [float32]. *)
+
 (** {1:errors Errors}
 
     Every misuse raises [Invalid_argument] whose message is the function the

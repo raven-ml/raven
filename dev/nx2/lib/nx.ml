@@ -2032,6 +2032,66 @@ let vdot a b =
   Contraction.contract ~by (dtype a) (Pattern.v "k, k -> | k")
     (conjugate (flat a)) (flat b)
 
+(* Printing *)
+
+let pp_dtype = D.pp
+
+(* Past [elided] elements, an axis longer than [2 * edge] prints its first and
+   last [edge] elements around [...]. *)
+let elided = 1000
+let edge = 3
+
+(* [a]'s elements as nested rows, a 0-d array's as its one element. *)
+let pp_elements (type v s) ppf (a : (v, s) Nx_array.t) =
+  let dt = Nx_array.dtype a and s = Nx_array.Layout.shape (Nx_array.layout a) in
+  let r = Array.length s in
+  let cut = Array.fold_left ( * ) 1 s > elided in
+  let i = Array.make r 0 in
+  let rec row axis =
+    if axis = r then D.pp_value dt ppf (Nx_array.get a i)
+    else begin
+      let d = s.(axis) in
+      let shown j = (not cut) || d <= 2 * edge || j < edge || j >= d - edge in
+      Format.fprintf ppf "@[<hv 1>[";
+      for j = 0 to d - 1 do
+        if shown j then begin
+          if j > 0 then Format.fprintf ppf ",@ ";
+          i.(axis) <- j;
+          row (axis + 1)
+        end
+        else if j = edge then Format.fprintf ppf ",@ ..."
+      done;
+      Format.fprintf ppf "]@]"
+    end
+  in
+  row 0
+
+let pp ppf x =
+  let set ppf p =
+    let s = Devices.set p in
+    if Devices.number s <> Devices.number Devices.host then
+      Format.fprintf ppf " on %a" Devices.pp s
+  in
+  Format.fprintf ppf "@[<hv 2>%s %a" (D.name (dtype x)) pp_shape (shape x);
+  Option.iter (set ppf) (Prim.at x);
+  (match x with
+  | Value.Traced { owner; _ } -> Format.fprintf ppf " traced by %s" owner.name
+  | Value.Deferred { node = Value.Node n; _ } ->
+      Format.fprintf ppf " of every set,@ %a" Prim.pp n.op
+  | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
+      let died = Prim.death x in
+      if String.length died > 0 then Format.fprintf ppf ", donated to %s" died
+      else
+        match Exec.on_host ~by:"Nx.pp" (Exec.live x) with
+        | a -> Format.fprintf ppf "@ %a" pp_elements a
+        | exception Rig.Lost (d, why) ->
+            Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
+        | exception Invalid_argument why -> Format.fprintf ppf ", unread: %s" why));
+  Format.fprintf ppf "@]"
+
+let to_string x = Format.asprintf "%a" pp x
+let print x = Format.printf "%a@." pp x
+
 (* Operations as data *)
 
 module Prim = struct
