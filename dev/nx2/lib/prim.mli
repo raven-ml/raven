@@ -61,6 +61,17 @@ val shape : ('v, 's, 'd) t -> int array
 val has_shape : ('v, 's, 'd) t -> int array -> bool
 (** [has_shape x s] is [shape x = s]. It allocates nothing. *)
 
+val merge : int array -> int array -> (int array, int * int * int) result
+(** [merge s s'] is the shape [s] and [s'] broadcast to, aligned at their last
+    axes, each extent equal or [1]; [Error (a, e, e')] at the first axis [a] of
+    that shape where [s] has [e] and [s'] has [e'], neither [1] nor the other.
+*)
+
+val broadcast_shape : by:string -> int array -> int array -> int array
+(** [broadcast_shape ~by s s'] is [merge s s']'s shape. Raises
+    [Invalid_argument] naming [by] and both shapes where they do not broadcast.
+*)
+
 val expect : ('v, 's) dtype -> 'd any -> ('v, 's, 'd) t
 (** [expect dt (Any x)] is [x] at [dt]'s type. Raises [Invalid_argument] naming
     both dtypes if [x]'s dtype is another. *)

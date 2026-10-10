@@ -54,7 +54,6 @@ type 'd complex128_t = (Complex.t, Dtype.complex64_elt, 'd) t
 type 'd complex64_t = (Complex.t, Dtype.complex32_elt, 'd) t
 type 'd bool_t = (bool, Dtype.bool_elt, 'd) t
 type 'd bit_t = (bool, Dtype.bit_elt, 'd) t
-
 type host = Devices.host
 type 'd devices = 'd Devices.t
 
@@ -157,37 +156,6 @@ let zeros_like x =
   | None -> z
   | Some p -> Eval.eval ~by (Value.Place (p, z))
 
-(* The shape [s] and [s'] broadcast to, aligned at their last axes, each extent
-   equal or [1]; [Error (a, e, e')] at the first axis [a] of that shape where
-   [s] has [e] and [s'] has [e'], neither [1] nor the other. *)
-let merge s s' =
-  let r = max (Array.length s) (Array.length s') in
-  let at s i =
-    let k = i - (r - Array.length s) in
-    if k < 0 then 1 else s.(k)
-  in
-  let out = Array.make r 1 in
-  let rec go i =
-    if i = r then Ok out
-    else
-      let a = at s i and b = at s' i in
-      if a = b || b = 1 then (
-        out.(i) <- a;
-        go (i + 1))
-      else if a = 1 then (
-        out.(i) <- b;
-        go (i + 1))
-      else Error (i, a, b)
-  in
-  go 0
-
-let broadcast_shape ~by s s' =
-  match merge s s' with
-  | Ok s'' -> s''
-  | Error _ ->
-      invalid_argf "%s: shapes %a and %a do not broadcast" by pp_shape s
-        pp_shape s'
-
 let broadcast ~by s x =
   if Prim.has_shape x s then x else Eval.eval ~by (Value.Move (Broadcast s, x))
 
@@ -196,7 +164,7 @@ let same_shape = Prim.same_shape
 let binary ~by k a b =
   if same_shape a b then Eval.apply2 ~by k (dtype a) a b
   else
-    let s = broadcast_shape ~by (shape a) (shape b) in
+    let s = Prim.broadcast_shape ~by (shape a) (shape b) in
     Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
 
 let add a b = binary ~by:"Nx.add" (Binary Add) a b
@@ -206,7 +174,7 @@ let less a b =
   let by = "Nx.less" in
   if same_shape a b then Eval.apply2 ~by (Compare Less) D.Bool a b
   else
-    let s = broadcast_shape ~by (shape a) (shape b) in
+    let s = Prim.broadcast_shape ~by (shape a) (shape b) in
     Eval.apply2 ~by (Compare Less) D.Bool (broadcast ~by s a)
       (broadcast ~by s b)
 
@@ -215,7 +183,9 @@ let where c x y =
   if same_shape c x && same_shape x y then Eval.apply3 ~by Where c x y
   else
     let s =
-      broadcast_shape ~by (broadcast_shape ~by (shape c) (shape x)) (shape y)
+      Prim.broadcast_shape ~by
+        (Prim.broadcast_shape ~by (shape c) (shape x))
+        (shape y)
     in
     Eval.apply3 ~by Where (broadcast ~by s c) (broadcast ~by s x)
       (broadcast ~by s y)
@@ -300,7 +270,7 @@ let broadcast_to s x =
   let by = "Nx.broadcast_to" in
   let fits =
     Array.for_all (fun e -> e >= 0) s
-    && match merge (shape x) s with Ok s' -> s' = s | Error _ -> false
+    && match Prim.merge (shape x) s with Ok s' -> s' = s | Error _ -> false
   in
   if not fits then
     invalid_argf "%s: %a does not broadcast to %a" by pp_value x pp_shape s;
@@ -317,7 +287,7 @@ let broadcast_all ~by shapes =
   let step (s, before) s' =
     if Array.exists (fun e -> e < 0) s' then
       invalid_argf "%s: %a has a negative extent" by pp_shape s';
-    match merge s s' with
+    match Prim.merge s s' with
     | Ok s -> (s, before @ [ s' ])
     | Error (a, e, e') ->
         invalid_argf

@@ -95,6 +95,28 @@ let keys =
               (List.map (fun n -> words (Rng.fold_in k n)) [ 0; 1; -4 ])
           in
           equal (array int32) each (words (Rng.fold_in_tensor k i)));
+      test "fold_in_tensor joins a key batch and indices that both broadcast"
+        (fun () ->
+          let ks = Rng.split ~n:2 (Rng.key 5) in
+          let batch =
+            Rng.of_tensor
+              (Nx.reshape [| 2; 1; 2 |]
+                 (Rng.to_tensor (Rng.split_batch ~n:2 (Rng.key 5))))
+          in
+          let i =
+            Nx.Repr.of_array Nx.Host.v
+              (A.of_array A.Dtype.Int32 [| 3 |] [| 0l; 7l; -4l |])
+          in
+          let each =
+            Array.concat
+              (List.concat_map
+                 (fun k ->
+                   List.map (fun n -> words (Rng.fold_in k n)) [ 0; 7; -4 ])
+                 (Array.to_list ks))
+          in
+          let y = Rng.fold_in_tensor batch i in
+          equal (array int) [| 2; 3; 2 |] (Nx.shape (Rng.to_tensor y));
+          equal (array int32) each (words y));
       prop "of_tensor undoes to_tensor" seeds (fun s ->
           let k = Rng.split_batch ~n:3 (Rng.key s) in
           equal (array int32) (words k)
@@ -373,6 +395,29 @@ let rejection =
             xs;
           near ~se:(0.2 /. sqrt (Float.of_int n)) 0.4 (mean xs);
           near ~se:(1. /. sqrt (Float.of_int n)) 0.04 (variance xs));
+      test "beta over parameters that both broadcast is beta over their join"
+        (fun () ->
+          let a = host_of Nx.float64 [| 2; 1 |] [| 0.5; 4. |] in
+          let b = host_of Nx.float64 [| 1; 3 |] [| 1.; 2.; 9. |] in
+          let k = Rng.key 309 in
+          equal (array float_exact)
+            (read
+               (Rng.beta ~key:k
+                  (Nx.broadcast_to [| 2; 3 |] a)
+                  (Nx.broadcast_to [| 2; 3 |] b)))
+            (read (Rng.beta ~key:k a b)));
+      test
+        "binomial over parameters that both broadcast is binomial over their \
+         join" (fun () ->
+          let t = host_of Nx.int32 [| 2; 1 |] [| 5l; 400l |] in
+          let p = host_of Nx.float64 [| 1; 3 |] [| 0.1; 0.5; 0.95 |] in
+          let k = Rng.key 310 in
+          equal (array int32)
+            (read
+               (Rng.binomial ~key:k
+                  (Nx.broadcast_to [| 2; 3 |] t)
+                  (Nx.broadcast_to [| 2; 3 |] p)))
+            (read (Rng.binomial ~key:k t p)));
       test "beta of tiny concentrations stays in [0, 1]" (fun () ->
           let xs =
             read

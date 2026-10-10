@@ -82,6 +82,11 @@ let flat b s =
   emit b (Op1 (Bitcast, D.Any D.Uint64, !acc))
 
 (* Significand widths, the leading bit included. *)
+(* CR: Derive uniform precision from float_format's fraction_bits and
+   min_normal. Float4's two-bit grid includes 0.25 and 0.75, which round to
+   0 and 1, breaking equal weights and [0, 1). Use the largest exact binary
+   grid below 1 (one bit for Float4), replacing this dtype table, and state
+   that precision rule in uniform's contract. *)
 let significand (type s) (dt : (float, s) D.t) =
   match dt with
   | D.Float64 -> 53
@@ -140,6 +145,11 @@ let stretch ~by s x =
   if Prim.has_shape x s then x else move ~by (M.Broadcast s) x
 
 (* A key's batch shape and its words as one uint64 per key. *)
+(* CR: Separate key-shape validation from word packing. of_tensor discards
+   this Bitcast but returns the original tensor; reversed int32 words can
+   require Copy just to check a valid key, and fail on a set without kernels.
+   Use metadata in of_tensor, one, fold_in and with_key; pack only where its
+   result is used, preserving liveness checks. *)
 let words ~by (k : 'd key) =
   let s = Prim.shape k in
   let r = Array.length s in
@@ -248,23 +258,13 @@ let fold_in (k : 'd key) data : 'd key =
   let c = Int64.logor hi (Int64.shift_left lo 32) in
   keys ~by k batch (fun b ~key -> bin b Threefry (u64 b c) key)
 
-let broadcast ~by s s' =
-  match M.shape (M.Broadcast s) s' with
-  | _ -> s
-  | exception Invalid_argument _ -> (
-      match M.shape (M.Broadcast s') s with
-      | _ -> s'
-      | exception Invalid_argument _ ->
-          invalid_argf "%s: shapes %a and %a do not broadcast" by pp_shape s
-            pp_shape s')
-
 (* [fold_in] of an index held in data: [i]'s words [(i asr 32, i)] as the
    sign-extended [i] gives them. A batch of indices gives a batch of keys. *)
 let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     =
   let by = "Nx.Rng.fold_in_tensor" in
   let batch, w = words ~by k in
-  let shape = broadcast ~by batch (Prim.shape i) in
+  let shape = Prim.broadcast_shape ~by batch (Prim.shape i) in
   let b = builder [| D.Any D.Uint64; D.Any D.Int32 |] in
   let key = emit b (In 0) in
   let v =
@@ -291,6 +291,11 @@ let every (type v s d e) ~by (x : (v, s, d) Value.t) : (v, s, e) Value.t =
       Value.Deferred { form = { dtype; layout; placement = None }; node; k }
   | _ -> invalid_argf "%s: the key has bytes; a scope's key is of every set" by
 
+(* CR: Return the validated root and counter from Next, then rebrand the
+   root before fold_in in next_key. With an Extent interpreter around
+   with_key of a prebuilt key, the handler's fold_in returns Traced(None),
+   which next_key's every rejects as having bytes. Deriving at the caller's
+   brand preserves interpretation without rebranding an opaque payload. *)
 type _ Effect.t += Next : unit key Effect.t
 
 let with_key k f =
@@ -447,6 +452,11 @@ let non_negative =
   }
 
 (* Poisson rates: their counts fit int32. *)
+(* CR: Build float-domain predicates in the sampler's compute dtype. Encoding
+   the 2^31 bound in the parameter dtype saturates it to 6, 448 or 57344 for
+   float4/float8, so poisson rejects those valid rates. Widen the predicate's
+   input and constants; keep the original parameter for diagnostics and
+   integer count checks at Int32. *)
 let counted =
   {
     text = "[0, 2^31)";
@@ -569,6 +579,14 @@ let gamma ?key a =
 (* The logarithm of a gamma draw: below a concentration of about 0.03 most
    float32 draws underflow to zero, where their logarithm, of order [log u / a],
    is still finite. *)
+(* CR: Form beta's log ratio from both Marsaglia results. At valid
+   float64 a = b = 2^-1074, both log_gamma values can be -inf, so beta
+   returns NaN. For s = min(1,a,b) and q_i = log(boost_i) below 1
+   (zero otherwise), use (log acc_b - log acc_a) +
+   ((s/b)*q_b - (s/a)*q_a)/s. Subtract the finite scaled shifts before
+   dividing; keep direct Fdiv and the unscaled acc correction so ties
+   retain their gamma ratio. This removes a log_gamma boundary whose
+   intermediate values need not be representable. *)
 let log_gamma b ~key ~n (D.Any cd as c) a j =
   let acc, below, boost = marsaglia b ~key ~n c a j in
   let shift = bin b Fdiv (un b Log cd boost) a in
@@ -583,7 +601,7 @@ let beta ?key a b' =
   require ~by "b" positive ~show:real b';
   let dt = Prim.dtype a in
   let c = compute dt in
-  let s = broadcast ~by (Prim.shape a) (Prim.shape b') in
+  let s = Prim.broadcast_shape ~by (Prim.shape a) (Prim.shape b') in
   let n = numel s in
   draw ~by ~params:[| Value.Any a; Value.Any b' |] (resolve key) dt s
     (fun b ~key ~j ins ->
@@ -984,7 +1002,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   require ~by "p" probability ~show:real prob;
   let dt = Prim.dtype prob in
   let c = compute dt in
-  let s = broadcast ~by (Prim.shape count) (Prim.shape prob) in
+  let s = Prim.broadcast_shape ~by (Prim.shape count) (Prim.shape prob) in
   let len = numel s in
   draw ~by ~params:[| Value.Any count; Value.Any prob |] (resolve key) D.Int32 s
     (fun b ~key ~j ins ->

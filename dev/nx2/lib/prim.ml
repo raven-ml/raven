@@ -93,6 +93,38 @@ let same_shape (type v s w r d) (x : (v, s, d) t) (y : (w, r, d) t) =
       L.rank la = L.rank lb && layouts_equal la lb 0
   | _ -> rank x = rank y && dims_equal x y 0
 
+let pp_shape ppf s =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+
+let merge s s' =
+  let r = max (Array.length s) (Array.length s') in
+  let at s i =
+    let k = i - (r - Array.length s) in
+    if k < 0 then 1 else s.(k)
+  in
+  let out = Array.make r 1 in
+  let rec go i =
+    if i = r then Ok out
+    else
+      let a = at s i and b = at s' i in
+      if a = b || b = 1 then (
+        out.(i) <- a;
+        go (i + 1))
+      else if a = 1 then (
+        out.(i) <- b;
+        go (i + 1))
+      else Error (i, a, b)
+  in
+  go 0
+
+let broadcast_shape ~by s s' =
+  match merge s s' with
+  | Ok s'' -> s''
+  | Error _ ->
+      invalid_argf "%s: shapes %a and %a do not broadcast" by pp_shape s
+        pp_shape s'
+
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
   match x with
   | Array { at; a; _ } | Donated { at; arrays = [| a |]; _ } ->
@@ -265,6 +297,10 @@ let hex bits =
        (List.of_seq (String.to_seq bits)))
 
 (* Node [i] of [p] as an expression of the operands [x0], [x1], …. *)
+(* CR: Preserve the program's sharing when printing. A valid chain of 30
+   adds, each reading the previous node twice, expands to about 9 GiB here.
+   Print each node once and refer to its index, so a small fused program has
+   a diagnostic proportional to its representation. *)
 let rec pp_node p ppf i =
   match P.node p i with
   | In k -> Format.fprintf ppf "x%d" k
@@ -289,10 +325,6 @@ let rec pp_node p ppf i =
   | Op3 (Fma, j, l, n) ->
       Format.fprintf ppf "fma(%a, %a, %a)" (pp_node p) j (pp_node p) l
         (pp_node p) n
-
-let pp_shape ppf s =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
 let pp_operand ppf (Any x) =
   let pp_at ppf = function
@@ -336,6 +368,11 @@ let has_layout_shape x l =
   !i = r
 
 (* A map's rule; its result's layout, C-contiguous of [shape]. *)
+(* CR: Check every Coord against this layout's rank before making results.
+   Prog.v only bounds it by max_rank: a rank-one Map of Coord 1 is accepted
+   by results and tracing, then becomes Iota (-1) when forced. Keep Prog
+   shape-free; check its coordinate requirement here and against the loaded
+   rank in Spec.shapes. *)
 let check_map (type d r) ~by layout prog (outs : (d, r) outs)
     (loads : d load array) =
   let ins = P.ins prog in
@@ -493,6 +530,11 @@ let results : type r.
   | Move (mv, x) ->
       let s' = moved_shape ~by mv x in
       let placement = one_result ~by (Move mv) x in
+      (* CR: Canonicalize the whole layout when the result spans multiple
+         devices. Transposing [4;2] split on axis 0 gives strides [1;2] here,
+         while eager Shards reports [4;1] for the [2;4] whole. A tagged
+         interpreter retains this mismatch. Keep the placement rule in one
+         form constructor; physical shard layouts belong to Repr.shards. *)
       let layout =
         match L.move mv (form_layout x) with
         | Some l -> l
