@@ -209,6 +209,43 @@ let maps =
                     outs = two;
                     loads = [| Plain x; Plain x |];
                   })));
+      test "a node read twice prints once, named by its index" (fun () ->
+          let prog =
+            P.v
+              ~ins:[| D.Any D.Float32; D.Any D.Float32 |]
+              [| In 0; In 1; Op2 (Binary Add, 0, 1); Op2 (Binary Mul, 2, 2) |]
+              ~outs:[| 3 |]
+          in
+          let x = f32 [| 2 |] in
+          equal string
+            "Map n2 = add(x0, x1); [mul(n2, n2)] (x0: float32 [2] at m0) (x1: \
+             float32 [2] at m0)"
+            (Format.asprintf "%a" Prim.pp
+               (Value.Map
+                  {
+                    layout = L.contiguous [| 2 |];
+                    prog;
+                    outs = Value.[ D.Float32 ];
+                    loads = [| Plain x; Plain x |];
+                  })));
+      test "a chain of shared nodes prints in its program's size" (fun () ->
+          let adds = 30 in
+          let nodes =
+            Array.init (adds + 1) (fun i ->
+                if i = 0 then P.In 0 else P.Op2 (Binary Add, i - 1, i - 1))
+          in
+          let prog = P.v ~ins:[| D.Any D.Float32 |] nodes ~outs:[| adds |] in
+          let printed =
+            Format.asprintf "%a" Prim.pp
+              (Value.Map
+                 {
+                   layout = L.contiguous [| 2 |];
+                   prog;
+                   outs = Value.[ D.Float32 ];
+                   loads = [| Plain (f32 [| 2 |]) |];
+                 })
+          in
+          less ~than:2_000 int (String.length printed));
     ]
 
 (* Movements and bitcasts, against nx.array's *)

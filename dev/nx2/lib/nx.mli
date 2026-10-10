@@ -1351,7 +1351,9 @@ module Prim : sig
 
   val pp : Format.formatter -> 'r t -> unit
   (** [pp] formats an operation: its name, its programs as expressions over its
-      operands, and each operand's dtype, shape and placement. *)
+      operands [x0], [x1], …, and each operand's dtype, shape and placement. A
+      program node read more than once prints once, as [nK = …] before the
+      outputs, and as [nK] where it is read. *)
 
   val operands : 'r t -> operands
   (** [operands op] is [op]'s operands in order: a map's loads, a contraction's

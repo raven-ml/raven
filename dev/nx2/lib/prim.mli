@@ -87,7 +87,9 @@ val name : 'r prim -> string
 
 val pp : Format.formatter -> 'r prim -> unit
 (** [pp] formats an operation: its name, its programs as expressions over its
-    operands [x0], [x1], …, and each operand's dtype, shape and placement. *)
+    operands [x0], [x1], …, and each operand's dtype, shape and placement. A
+    program node read more than once prints once, as [nK = …] before the
+    outputs, and as [nK] where it is read. *)
 
 val kind : Nx_kernel.Prog.node -> string
 (** [kind n] names [n]'s kind in messages, as ["Exp"] or ["Less"]. *)

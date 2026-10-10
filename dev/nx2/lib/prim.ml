@@ -356,35 +356,62 @@ let hex bits =
        (fun c -> Printf.sprintf "%02x" (Char.code c))
        (List.of_seq (String.to_seq bits)))
 
-(* Node [i] of [p] as an expression of the operands [x0], [x1], …. *)
-(* CR: Preserve the program's sharing when printing. A valid chain of 30
-   adds, each reading the previous node twice, expands to about 9 GiB here.
-   Print each node once and refer to its index, so a small fused program has
-   a diagnostic proportional to its representation. *)
-let rec pp_node p ppf i =
-  match P.node p i with
-  | In k -> Format.fprintf ppf "x%d" k
-  | Coord a -> Format.fprintf ppf "coord%d" a
-  | Const (dt, bits) -> Format.fprintf ppf "%s:0x%s" (any_name dt) (hex bits)
-  | Op1 (Copy, _, j) -> Format.fprintf ppf "copy(%a)" (pp_node p) j
-  | Op1 (Unary k, _, j) ->
-      Format.fprintf ppf "%s(%a)" (unary_name k) (pp_node p) j
-  | Op1 (Cast, dt, j) ->
-      Format.fprintf ppf "cast_%s(%a)" (any_name dt) (pp_node p) j
-  | Op1 (Bitcast, dt, j) ->
-      Format.fprintf ppf "bitcast_%s(%a)" (any_name dt) (pp_node p) j
-  | Op2 (Binary k, j, l) ->
-      Format.fprintf ppf "%s(%a, %a)" (binary_name k) (pp_node p) j (pp_node p)
-        l
-  | Op2 (Compare k, j, l) ->
-      Format.fprintf ppf "%s(%a, %a)" (compare_name k) (pp_node p) j (pp_node p)
-        l
-  | Op3 (Where, j, l, n) ->
-      Format.fprintf ppf "where(%a, %a, %a)" (pp_node p) j (pp_node p) l
-        (pp_node p) n
-  | Op3 (Fma, j, l, n) ->
-      Format.fprintf ppf "fma(%a, %a, %a)" (pp_node p) j (pp_node p) l
-        (pp_node p) n
+(* A program's expressions over the operands [x0], [x1], …, of the nodes
+   [roots] reads. A node other than a leaf read more than once, by nodes or by
+   [roots], is [nK] where read, defined once as [nK = …; ] by [bindings]: the
+   text is linear in the program. *)
+type printer = {
+  bindings : Format.formatter -> unit -> unit;
+  expr : Format.formatter -> int -> unit;
+}
+
+let printer p roots =
+  let reads = Array.make (P.length p) 0 in
+  let read j = reads.(j) <- reads.(j) + 1 in
+  for i = 0 to P.length p - 1 do
+    match P.node p i with
+    | In _ | Coord _ | Const _ -> ()
+    | Op1 (_, _, j) -> read j
+    | Op2 (_, j, l) ->
+        read j;
+        read l
+    | Op3 (_, j, l, n) ->
+        read j;
+        read l;
+        read n
+  done;
+  List.iter read roots;
+  let shared i =
+    reads.(i) > 1
+    && match P.node p i with In _ | Coord _ | Const _ -> false | _ -> true
+  in
+  let rec expr ppf i =
+    if shared i then Format.fprintf ppf "n%d" i else body ppf i
+  and body ppf i =
+    match P.node p i with
+    | In k -> Format.fprintf ppf "x%d" k
+    | Coord a -> Format.fprintf ppf "coord%d" a
+    | Const (dt, bits) -> Format.fprintf ppf "%s:0x%s" (any_name dt) (hex bits)
+    | Op1 (Copy, _, j) -> Format.fprintf ppf "copy(%a)" expr j
+    | Op1 (Unary k, _, j) -> Format.fprintf ppf "%s(%a)" (unary_name k) expr j
+    | Op1 (Cast, dt, j) -> Format.fprintf ppf "cast_%s(%a)" (any_name dt) expr j
+    | Op1 (Bitcast, dt, j) ->
+        Format.fprintf ppf "bitcast_%s(%a)" (any_name dt) expr j
+    | Op2 (Binary k, j, l) ->
+        Format.fprintf ppf "%s(%a, %a)" (binary_name k) expr j expr l
+    | Op2 (Compare k, j, l) ->
+        Format.fprintf ppf "%s(%a, %a)" (compare_name k) expr j expr l
+    | Op3 (Where, j, l, n) ->
+        Format.fprintf ppf "where(%a, %a, %a)" expr j expr l expr n
+    | Op3 (Fma, j, l, n) ->
+        Format.fprintf ppf "fma(%a, %a, %a)" expr j expr l expr n
+  in
+  let bindings ppf () =
+    for i = 0 to P.length p - 1 do
+      if shared i then Format.fprintf ppf " n%d = %a;" i body i
+    done
+  in
+  { bindings; expr }
 
 let pp_operand ppf (Any x) =
   let pp_at ppf = function
@@ -416,30 +443,35 @@ let rec reductions_list : type d r.
   | [] -> []
   | r :: rest -> spec_reduction r :: reductions_list rest
 
-let pp_reduced prog ppf (r, k, _) =
-  Format.fprintf ppf "%s %a" (reduction_name r) (pp_node prog) (P.outs prog).(k)
+let pp_reduced prog (pr : printer) ppf (r, k, _) =
+  Format.fprintf ppf "%s %a" (reduction_name r) pr.expr (P.outs prog).(k)
+
+let reduced_roots prog rs =
+  List.map (fun (_, k, _) -> (P.outs prog).(k)) rs
 
 let pp : type r. Format.formatter -> r prim -> unit =
  fun ppf op ->
   let (Operands xs) = operands op in
   Format.fprintf ppf "%s" (name op);
+  let sep ppf () = Format.pp_print_string ppf "; " in
   (match op with
   | Map { prog; _ } ->
-      Format.fprintf ppf " [%a]"
-        (Format.pp_print_list
-           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-           (pp_node prog))
-        (Array.to_list (P.outs prog))
+      let outs = Array.to_list (P.outs prog) in
+      let pr = printer prog outs in
+      Format.fprintf ppf "%a [%a]" pr.bindings ()
+        (Format.pp_print_list ~pp_sep:sep pr.expr)
+        outs
   | Reduce { prog; axes; reductions; _ } ->
-      Format.fprintf ppf " [%a] over %a"
-        (Format.pp_print_list
-           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-           (pp_reduced prog))
-        (reductions_list reductions)
-        pp_shape axes
+      let rs = reductions_list reductions in
+      let pr = printer prog (reduced_roots prog rs) in
+      Format.fprintf ppf "%a [%a] over %a" pr.bindings ()
+        (Format.pp_print_list ~pp_sep:sep (pp_reduced prog pr))
+        rs pp_shape axes
   | Scan { prog; axis; reduction; _ } ->
-      Format.fprintf ppf " [%a] along %d" (pp_reduced prog)
-        (spec_reduction reduction) axis
+      let r = spec_reduction reduction in
+      let pr = printer prog (reduced_roots prog [ r ]) in
+      Format.fprintf ppf "%a [%a] along %d" pr.bindings () (pp_reduced prog pr)
+        r axis
   | Gather { axis; _ } -> Format.fprintf ppf " along %d" axis
   | Scatter { combine; unique; axis; _ } ->
       let combine =
