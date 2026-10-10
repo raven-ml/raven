@@ -376,7 +376,13 @@ let contract_rows =
           ~contracting:[| (1, 1) |]
           ~flops:(2 * m * 4096 * 4096)
           ~streams:(4 * 4096 * 4096))
-      [ 1; 8; 32; 128 ]
+      [ 1; 4; 8; 32; 128 ]
+  (* One row against the weight stored as [k × n]. *)
+  @ [
+      contract ~acc:acc32 "contract-f32-m1x4096x4096-kn" ~sa:[| 1; 4096 |]
+        ~sb:[| 4096; 4096 |] ~layout:plain ~contracting:[| (1, 0) |]
+        ~flops:(2 * 4096 * 4096) ~streams:(4 * 4096 * 4096);
+    ]
 
 (* Reductions and scans of one operand by a monoid. A reduction's floor reads
    its operand's bytes; a scan's copies them, since it writes as many. *)

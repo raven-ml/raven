@@ -251,8 +251,9 @@ let case_of ~acc ~out ~dts =
 
 (* A case of each regime the covers name, in [acc], C-contiguous: no output;
    one; no product; 64 outputs or more in 4 rows or fewer, and in 4 columns or
-   fewer, over several blocks of the contraction; fewer than 64 over several
-   blocks of lanes; several panels and several groups of few rows; the
+   fewer; either side of lane order's bound of 4 rows or columns over several
+   blocks of lanes; fewer than 64 outputs over several blocks of lanes;
+   several panels and several groups of few rows; the
    chain path over several blocks of the contraction, over several panels
    without init, with no product and no init, and, in float64, over several
    groups. The drawn cases reach each a few times in a hundred or never, so
@@ -282,6 +283,10 @@ let regimes acc =
        (true, ([||], [| 3 |], [| 2 |], [| 0 |]));
        (true, ([||], [| 3 |], [| 64 |], [| 600 |]));
        (true, ([||], [| 64 |], [| 3 |], [| 600 |]));
+       (true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
+       (true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
+       (true, ([||], [| 40 |], [| 4 |], [| 1100 |]));
+       (false, ([||], [| 40 |], [| 5 |], [| 1100 |]));
        (true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
        (true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
        (true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
@@ -491,10 +496,26 @@ let cpu_computes c =
        (operands c)
   && S.Contract_view.fill (S.Contract_view.make ()) c.spec ~dst (operands c)
 
-(* Outputs per batch element: what picks nx.cpu's order. *)
+(* Outputs per batch element. *)
 let per_batch c =
   let y, _, batch = sizes c in
   if batch = 0 then 0 else total y / batch
+
+(* The extents of [c]'s rows and columns per batch element, as
+   Contract_view's [Row] and [Column] give them. *)
+let rows_cols c =
+  let y, _, _ = sizes c in
+  let nb = Array.length (S.batch c.spec) in
+  let fa =
+    Array.length (shape_of c.a) - nb - Array.length (S.contracting c.spec)
+  in
+  (total (Array.sub y nb fa), total (Array.sub y (nb + fa) (Array.length y - nb - fa)))
+
+(* Whether nx.cpu adds [c]'s outputs in chain order: more than 4 rows, more
+   than 4 columns, and at least 64 outputs per batch element. *)
+let chain_order c =
+  let m, n = rows_cols c in
+  m > 4 && n > 4 && m * n >= 64
 
 let covers c =
   let y, k, batch = sizes c in
@@ -502,19 +523,19 @@ let covers c =
   cover "no output" (total y = 0);
   cover "one output" (total y = 1);
   cover "no product" (k = 0 && total y > 0);
+  let m, n = rows_cols c in
+  let lanes = per > 0 && not (chain_order c) in
   cover "fewer than 64 outputs" (per > 0 && per < 64);
   cover "64 outputs or more" (per >= 64);
   cover "init" (c.init <> None);
   cover "several blocks of the contraction" (per >= 64 && k > 512);
-  cover "several blocks of lanes" (per > 0 && per < 64 && k > 1024);
-  let nb = Array.length (S.batch c.spec) in
-  let fa =
-    Array.length (shape_of c.a) - nb - Array.length (S.contracting c.spec)
-  in
-  let m = total (Array.sub y nb fa) in
-  let n = total (Array.sub y (nb + fa) (Array.length y - nb - fa)) in
+  cover "several blocks of lanes" (lanes && k > 1024);
   cover "4 rows or fewer" (per >= 64 && m <= 4);
   cover "4 columns or fewer" (per >= 64 && n <= 4);
+  cover "4 rows over several blocks of lanes" (m = 4 && n > 16 && k > 1024);
+  cover "5 rows over several blocks of lanes" (m = 5 && n > 16 && k > 1024);
+  cover "4 columns over several blocks of lanes" (n = 4 && m > 16 && k > 1024);
+  cover "5 columns over several blocks of lanes" (n = 5 && m > 16 && k > 1024);
   let chain = per >= 64 && m > few_rows_most && n > few_rows_most in
   let w = match S.acc c.spec with D.Any D.Float32 -> 4 | _ -> 8 in
   cover "the chain path" chain;
@@ -703,9 +724,9 @@ let fma32 a b c =
 let add32 x y = round32 (x +. y)
 
 (* [o]'s result in nx.cpu's order, with [fma] and [add] of the accumulator:
-   one fused chain from init or +0, or, with fewer than 64 outputs per batch
-   element, blocks of 1024 terms in 16 lanes, summed by trees, then init;
-   with no term, init as it is. *)
+   chain order, one fused chain from init or +0; or lane order, blocks of
+   1024 terms in 16 lanes, summed by trees, then init, with no term init as
+   it is. *)
 let ordered ~chain ~fma ~add o =
   let k = Array.length o.av in
   if chain then begin
@@ -750,7 +771,7 @@ let law_order b c =
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
   | None -> cover "a layout the view does not group" true
   | Some y ->
-      let chain = per_batch c >= 64 in
+      let chain = chain_order c in
       let fma, add =
         if S.acc c.spec = D.Any D.Float32 then (fma32, add32)
         else (Float.fma, ( +. ))

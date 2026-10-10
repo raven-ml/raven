@@ -55,10 +55,21 @@ typedef void (*nx_cpu_kernel)(int64_t k, const void *a, int64_t lda,
                               const void *b, void *c, int64_t ldc,
                               nx_cpu_from from);
 
-/* A dot adds the [n] products of the contiguous [a] and [b] into the lanes
-   at [lanes], term t into lane t modulo NX_CPU_LANES, each fused. */
-typedef void (*nx_cpu_dot)(const void *a, const void *b, int64_t n,
-                           void *lanes);
+/* A dot adds, for each of [r] contiguous rows of [a], row i at
+   a + i·lda·w, r at most NX_CPU_DOT_ROWS, the [n] products with the
+   contiguous [b] into row i's lanes at lanes + i·NX_CPU_LANES·w: term t
+   into lane t modulo NX_CPU_LANES, each fused. */
+#define NX_CPU_DOT_ROWS 4
+typedef void (*nx_cpu_dot)(const void *a, int64_t lda, int r, const void *b,
+                           int64_t n, void *lanes);
+
+/* An axpy adds, for each of [r] rows, the element of [a] at a + i·lda·w
+   times each of the [n] contiguous elements of [b] into row i's [n]
+   contiguous accumulators at y + i·ldy·w, each fused. It prefetches the
+   [n] elements at [next], the b of a later call. */
+typedef void (*nx_cpu_axpy)(const void *a, int64_t lda, int r, const void *b,
+                            int64_t n, void *y, int64_t ldy,
+                            const void *next);
 
 /* A pack moves [n1] rows of [n0] elements of acc from [s], stepping [s0]
    along a row and [s1] across rows, one of them 1, into [d]: element i of
@@ -82,7 +93,6 @@ typedef struct {
 typedef struct nx_cpu_gemm {
   nx_cpu_micro kernel;
   int64_t mc, kc, nc;    /* the driver's blocks of rows, of k and of columns */
-  nx_cpu_micro thin[3];  /* of 1, 2 and 4 rows; f NULL where none */
   nx_cpu_pack pack;      /* or NULL: operands pack through the stage */
   const struct nx_cpu_gemm *other; /* or NULL: kernels that compute a
                                       product where they take less time */
@@ -146,9 +156,10 @@ typedef struct {
      int4 and uint4 their value modulo 16, float4 its code, bit 0 or 1. */
   nx_cpu_run convert[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
   /* gemm[acc] contracts in acc in chain order; its kernel is NULL where
-     the target has none. dot[acc] is lane order's dot. */
+     the target has none. dot[acc] and axpy[acc] are lane order's. */
   nx_cpu_gemm gemm[NX_DTYPE_COUNT];
   nx_cpu_dot dot[NX_DTYPE_COUNT];
+  nx_cpu_axpy axpy[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k
      (nx_spec.h's code) at dt, fma[dt] fma: NULL where the table declines
      (rows.c). */

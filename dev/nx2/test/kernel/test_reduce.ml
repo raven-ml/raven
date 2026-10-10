@@ -812,8 +812,8 @@ let law_computes b c =
   cover "declined" (not computes);
   equal ~msg:"computed" bool computes (Option.is_some (run b c))
 
-(* A sum of one axis is a contraction of it with ones, below 64 outputs:
-   the two share their order. *)
+(* A sum of one axis is a contraction of it with ones, in lane order: the
+   two share their order. *)
 let law_contract (b : Support.backend) c =
   let (A.Any x) = c.x in
   let s = shape_of c.x in

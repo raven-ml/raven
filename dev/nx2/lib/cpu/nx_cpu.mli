@@ -30,18 +30,9 @@
     at most 16 bits and the floats of at most 32; [float64] also [int32],
     [uint32] and [float64].
 
-    With at least 64 outputs in each batch element, each output adds its
-    products in increasing order of the contracting pairs' indices, taken in
-    C order, each product fused into its addition, from [init] or [+0]. With
-    fewer, each output's products fall into blocks of 1024 consecutive
-    indices and, within a block, into 16 lanes by index modulo 16, each lane
-    a fused chain from [+0]. Lane [i] takes lane [i + 8] for [i] below 8,
-    then lane [i + 4] for [i] below 4, then [i + 2] for [i] below 2, then
-    lane 0 takes lane 1. The blocks are summed by a binary tree whose left
-    part holds the largest power of two of blocks below their count, each
-    part summed the same way; then [init] is added. With no products, an
-    output is [init]'s bits, or [+0]. Otherwise a NaN result's payload is
-    unspecified.
+    A float contraction adds in its own order
+    ({!Nx_kernel.Spec.section-orders}). With no products, an output is
+    [init]'s bits, or [+0]. Otherwise a NaN result's payload is unspecified.
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand into its own dtype, read plain or padded, at
@@ -52,15 +43,13 @@
     {!Nx_kernel.Spec.shapes} answers [Error] for, and destinations whose
     shapes are not the results'.
 
-    A float sum or product numbers each output's terms in C order of the
-    reduced axes' indices and adds them as a contraction with fewer than 64
-    outputs adds its products: in blocks of 1024, in 16 lanes from [+0] ([1]
-    for a product), then by the lanes' tree and the blocks' tree. A scan
-    cuts each slice along its axis into chunks of 4096 from its start. A
-    chunk's total is its terms reduced in that order. The carry into the
-    first chunk is [+0] ([1]), into the next the carry into this one
-    combined with this one's total; each result of a chunk is its carry
-    combined with the chunk's terms up to it, left to right.
+    A float sum or product adds each output's terms in lane order
+    ({!Nx_kernel.Spec.section-orders}). A scan cuts each slice along its
+    axis into chunks of 4096 from its start. A chunk's total is its terms
+    reduced in that order. The carry into the first chunk is [+0] ([1]), into
+    the next the carry into this one combined with this one's total; each
+    result of a chunk is its carry combined with the chunk's terms up to it,
+    left to right.
 
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A

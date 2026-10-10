@@ -377,6 +377,31 @@ module Contract_view : sig
       a view without it. *)
 end
 
+(** {2:orders Orders of summation}
+
+    Two orders of a float sum, which a kernel library states it follows,
+    so that libraries that state the same order give the same bits. A
+    contraction's terms are each output's products, a reduction's its
+    terms, numbered from [0] by the contracting pairs' or the reduced axes'
+    indices, taken in C order. A contraction's product is fused into the
+    addition that takes it.
+
+    {e Chain order} adds the terms in increasing number, from [init] or
+    [+0].
+
+    {e Lane order} puts the terms into blocks of 1024 consecutive numbers
+    and, within a block, into 16 lanes by number modulo 16, each lane adding
+    its terms in increasing number from [+0] ([1] for a product). Lane [i]
+    takes lane [i + 8] for [i] below 8, then lane [i + 4] for [i] below 4,
+    then [i + 2] for [i] below 2, then lane 0 takes lane 1. The blocks are
+    combined by a binary tree whose left part holds the largest power of two
+    of blocks below their count, each part combined the same way; then
+    [init] is added.
+
+    A contraction's own order is chain order where its view's [Row] and
+    [Column] extents ({!Contract_view.extent}) are both above 4 and
+    multiply to at least 64, and lane order otherwise. *)
+
 (** {1:transforms Fourier transforms} *)
 
 type fft = [ `Fft ]

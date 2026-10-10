@@ -13,6 +13,8 @@
    24 independent accumulators keep its pipes full; loads take five of its
    three load ports' cycles per 24 FMLA. */
 
+#include <math.h>
+
 #include "cpu.h"
 
 #if defined(__aarch64__)
@@ -96,48 +98,50 @@ static void kernel_f64(int64_t k, const void *va, int64_t lda,
     for (int v = 0; v < 3; v++) vst1q_f64(y + i * ldc + 2 * v, c[i][v]);
 }
 
-/* Thin tiles: 16 accumulators, the rows' broadcasts of a and a vector of
-   b. */
-#define FMA vfmaq_f32
+/* Lane order's dots and axpys: 16 lanes are 4 vectors of float32, 8 of
+   float64; 4 rows of float32 or 2 of float64 hold 16 accumulators and b's
+   vectors. */
+#define VT float32x4_t
 #define LOAD vld1q_f32
 #define STORE vst1q_f32
-#define BCAST vld1q_dup_f32
-#define ZERO vdupq_n_f32(0)
-#include "gemm_thin.h"
-THIN(thin1_f32, float, float32x4_t, 4, 1, 16)
-THIN(thin2_f32, float, float32x4_t, 4, 2, 8)
-THIN(thin4_f32, float, float32x4_t, 4, 4, 4)
-#undef FMA
+#define BCAST vdupq_n_f32
+#define FMA vfmaq_f32
+#include "gemm_lanes.h"
+DOT(dot1_f32, float, 4, 4, 1, fmaf)
+DOT(dot2_f32, float, 4, 4, 2, fmaf)
+DOT(dot4_f32, float, 4, 4, 4, fmaf)
+DOTS(dot_f32, float, 4, dot4_f32, dot2_f32, dot1_f32)
+AXPY(axpy_f32, float, 4, fmaf)
+#undef VT
 #undef LOAD
 #undef STORE
 #undef BCAST
-#undef ZERO
-#define FMA vfmaq_f64
+#undef FMA
+#define VT float64x2_t
 #define LOAD vld1q_f64
 #define STORE vst1q_f64
-#define BCAST vld1q_dup_f64
-#define ZERO vdupq_n_f64(0)
-THIN(thin1_f64, double, float64x2_t, 2, 1, 16)
-THIN(thin2_f64, double, float64x2_t, 2, 2, 8)
-THIN(thin4_f64, double, float64x2_t, 2, 4, 4)
+#define BCAST vdupq_n_f64
+#define FMA vfmaq_f64
+DOT(dot1_f64, double, 2, 8, 1, fma)
+DOT(dot2_f64, double, 2, 8, 2, fma)
+DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
+AXPY(axpy_f64, double, 2, fma)
 
 void nx_cpu_set_neon(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = {kernel_f32, F32_MR, F32_NR, SPEED, 1},
       .mc = 128,
       .kc = 512,
-      .nc = 3072,
-      .thin = {{thin1_f32, 1, 64, SPEED, 1},
-               {thin2_f32, 2, 32, SPEED, 1},
-               {thin4_f32, 4, 16, SPEED, 1}}};
+      .nc = 3072};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
       .kernel = {kernel_f64, F64_MR, F64_NR, SPEED, 1},
       .mc = 128,
       .kc = 256,
-      .nc = 3072,
-      .thin = {{thin1_f64, 1, 32, SPEED, 1},
-               {thin2_f64, 2, 16, SPEED, 1},
-               {thin4_f64, 4, 8, SPEED, 1}}};
+      .nc = 3072};
+  t->dot[NX_FLOAT32] = dot_f32;
+  t->dot[NX_FLOAT64] = dot_f64;
+  t->axpy[NX_FLOAT32] = axpy_f32;
+  t->axpy[NX_FLOAT64] = axpy_f64;
 }
 
 #else

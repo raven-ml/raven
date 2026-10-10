@@ -14,6 +14,8 @@
    accumulators are named variables: gcc keeps an array of them in memory
    and stores each at every step. */
 
+#include <math.h>
+
 #include "cpu.h"
 
 #if defined(__x86_64__) && defined(__AVX2__) && defined(__FMA__)
@@ -60,48 +62,50 @@ KERNEL(kernel_f32, float, __m256, 8, _mm256_loadu_ps, _mm256_storeu_ps,
 KERNEL(kernel_f64, double, __m256d, 4, _mm256_loadu_pd, _mm256_storeu_pd,
        _mm256_broadcast_sd, _mm256_fmadd_pd, _mm256_setzero_pd())
 
-/* Thin tiles: 12 accumulators, the rows' broadcasts of a, and b read by
-   the fused adds from memory: 16 registers at 4 rows. */
-#define FMA(c, a, b) _mm256_fmadd_ps(a, b, c)
+/* Lane order's dots and axpys: 16 lanes are 2 vectors of float32, 4 of
+   float64; 4 rows of float32 or 2 of float64 hold 8 accumulators and b's
+   vectors. */
+#define VT __m256
 #define LOAD _mm256_loadu_ps
 #define STORE _mm256_storeu_ps
-#define BCAST _mm256_broadcast_ss
-#define ZERO _mm256_setzero_ps()
-#include "gemm_thin.h"
-THIN(thin1_f32, float, __m256, 8, 1, 12)
-THIN(thin2_f32, float, __m256, 8, 2, 6)
-THIN(thin4_f32, float, __m256, 8, 4, 3)
-#undef FMA
+#define BCAST _mm256_set1_ps
+#define FMA(c, a, b) _mm256_fmadd_ps(a, b, c)
+#include "gemm_lanes.h"
+DOT(dot1_f32, float, 8, 2, 1, fmaf)
+DOT(dot2_f32, float, 8, 2, 2, fmaf)
+DOT(dot4_f32, float, 8, 2, 4, fmaf)
+DOTS(dot_f32, float, 4, dot4_f32, dot2_f32, dot1_f32)
+AXPY(axpy_f32, float, 8, fmaf)
+#undef VT
 #undef LOAD
 #undef STORE
 #undef BCAST
-#undef ZERO
-#define FMA(c, a, b) _mm256_fmadd_pd(a, b, c)
+#undef FMA
+#define VT __m256d
 #define LOAD _mm256_loadu_pd
 #define STORE _mm256_storeu_pd
-#define BCAST _mm256_broadcast_sd
-#define ZERO _mm256_setzero_pd()
-THIN(thin1_f64, double, __m256d, 4, 1, 12)
-THIN(thin2_f64, double, __m256d, 4, 2, 6)
-THIN(thin4_f64, double, __m256d, 4, 4, 3)
+#define BCAST _mm256_set1_pd
+#define FMA(c, a, b) _mm256_fmadd_pd(a, b, c)
+DOT(dot1_f64, double, 4, 4, 1, fma)
+DOT(dot2_f64, double, 4, 4, 2, fma)
+DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
+AXPY(axpy_f64, double, 4, fma)
 
 void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = {kernel_f32, MR, 16, SPEED, 1},
       .mc = 96,
       .kc = 384,
-      .nc = 3072,
-      .thin = {{thin1_f32, 1, 96, SPEED, 1},
-               {thin2_f32, 2, 48, SPEED, 1},
-               {thin4_f32, 4, 24, SPEED, 1}}};
+      .nc = 3072};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
       .kernel = {kernel_f64, MR, 8, SPEED, 1},
       .mc = 96,
       .kc = 256,
-      .nc = 3072,
-      .thin = {{thin1_f64, 1, 48, SPEED, 1},
-               {thin2_f64, 2, 24, SPEED, 1},
-               {thin4_f64, 4, 12, SPEED, 1}}};
+      .nc = 3072};
+  t->dot[NX_FLOAT32] = dot_f32;
+  t->dot[NX_FLOAT64] = dot_f64;
+  t->axpy[NX_FLOAT32] = axpy_f32;
+  t->axpy[NX_FLOAT64] = axpy_f64;
 }
 
 #else
