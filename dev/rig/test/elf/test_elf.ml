@@ -1648,6 +1648,11 @@ let amd_object_path = "amd_gfx1100.o"
 let stripped_path = "amd_128_gfx1100.hsaco"
 let host_path target = "host_" ^ target ^ ".o"
 
+(* CR: The generator selects 0..4, so the sixth, extended-numbering seed
+   never runs. Give each named lazy seed the same mutation property,
+   generating only edits and cut. Divide the existing 2000-case budget
+   across the seeds; this removes the separate index bound and names
+   failures. Force each seed inside its running law. *)
 let corruptible =
   lazy
     [|

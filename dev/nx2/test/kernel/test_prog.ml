@@ -400,6 +400,10 @@ let drawn =
      build ins choices nouts)
 
 (* What C reads, rendered as the support reader renders it. *)
+(* CR: Retain build's types in drawn and render those; P.dtype reads the
+   same encoded field as C, so both can agree on a wrongly typed comparison.
+   Also compare every P.dtype with the retained expectation. Keep the C
+   reader and node round trips: they check separate parts of the contract. *)
 let render p d =
   let code (D.Any dt) = D.code dt in
   let line i nd =
