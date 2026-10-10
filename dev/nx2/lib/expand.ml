@@ -541,6 +541,12 @@ let gather (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    [axis], in order: a position's updates differ off [axis], so their targets
    do, and updates to one target land in C order. A sum associates left to
    right. *)
+(* CR: Narrow Add rounds after every unique scatter: Float16 2048
+   plus [1;1] at one target gives 2048, but its float32 sum gives 2050.
+   Keep the accumulator in float32 and round once. Track touched targets
+   with Set scatters of true into false, then select original into bits
+   elsewhere, preserving untouched NaNs and signed zero. Test this through
+   Unique_scatters and measure the added mask passes. *)
 let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     combine axis idx (updates : (v, s, d) Value.t) (into : (v, s, d) Value.t) :
     (v, s, d) Value.t =
