@@ -167,6 +167,43 @@ let move_rows =
       Thumper.bench "copy-1M" (fun () -> Nx.copy (Thumper.black_box x1m));
     ]
 
+(* Random draws computed on the host: each row places a draw of a fixed key,
+   which computes it. The samplers' programs differ in length: one Threefry
+   block per element for bits and uniform, two for normal, and fixed rounds of
+   proposals for the rejection samplers. *)
+
+let mib = 1 lsl 20
+let key = Nx.Rng.key 0
+
+let filled n v =
+  Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] (Array.make n v))
+
+let rates = filled (1 lsl 16) 4.
+let probabilities = filled mib 0.3
+let draw x = Nx.Repr.array (Nx.place Nx.Host.on x)
+
+let rng_rows =
+  Thumper.group "rng"
+    [
+      Thumper.bench "bits-1M" (fun () ->
+          draw (Nx.Rng.bits ~key:(Thumper.black_box key) [| mib |]));
+      Thumper.bench "uniform-f32-1M" (fun () ->
+          draw (Nx.Rng.uniform ~key:(Thumper.black_box key) D.Float32 [| mib |]));
+      Thumper.bench "uniform-f64-1M" (fun () ->
+          draw (Nx.Rng.uniform ~key:(Thumper.black_box key) D.Float64 [| mib |]));
+      Thumper.bench "normal-f32-1M" (fun () ->
+          draw (Nx.Rng.normal ~key:(Thumper.black_box key) D.Float32 [| mib |]));
+      Thumper.bench "randint-1M" (fun () ->
+          draw
+            (Nx.Rng.randint ~key:(Thumper.black_box key) ~high:1000 [| mib |]));
+      Thumper.bench "bernoulli-f32-1M" (fun () ->
+          draw (Nx.Rng.bernoulli ~key:(Thumper.black_box key) probabilities));
+      Thumper.bench "gamma-f32-64K" (fun () ->
+          draw (Nx.Rng.gamma ~key:(Thumper.black_box key) rates));
+      Thumper.bench "poisson-f32-64K" (fun () ->
+          draw (Nx.Rng.poisson ~key:(Thumper.black_box key) rates));
+    ]
+
 (* Interpretations. Each row adds one-element host values 100 times: eagerly;
    under a Values interpretation that does not reach them; while an Extent lives
    on another domain; while one lives on this domain around another fiber, which
@@ -257,5 +294,6 @@ let () =
          placed_rows;
          place_rows;
          move_rows;
+         rng_rows;
          interp_rows;
        ]
