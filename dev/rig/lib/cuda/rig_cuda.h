@@ -51,7 +51,7 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
                     int nwaits, const struct rig_part *parts, int nparts,
                     const uint8_t *args, const uint64_t *slots, int nslots,
                     const uint64_t *handles, int nhandles,
-                    const char **failure);
+                    uint64_t *times, const char **failure);
 
 /* Writes [v], at most the last value rig_cuda_submit received, into the
    word after the work of every value up to it, unless a commit wrote [v]

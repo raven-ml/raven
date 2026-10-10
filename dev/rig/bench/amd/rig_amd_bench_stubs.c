@@ -181,7 +181,7 @@ value rig_amd_bench_submit(value v_edge, value v_v, value v_at, value v_value,
     caml_failwith("submit: no room");
   const char *why = NULL;
   if (driver->submit(self, (uint64_t)Long_val(v_v), w, n, NULL, 0, NULL, NULL,
-                     0, NULL, 0, &why) == RIG_FAILED)
+                     0, NULL, 0, NULL, &why) == RIG_FAILED)
     caml_failwith(why);
   return Val_unit;
 }

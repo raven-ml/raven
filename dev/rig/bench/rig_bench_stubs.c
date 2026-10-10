@@ -172,7 +172,7 @@ static void encode(struct floor *f, int n) {
   int nh = f->handles != NULL ? f->nhandles : n;
   if (f->driver.room(f->self, &f->part, n, f->args) != RIG_FITS) abort();
   int r = f->driver.submit(f->self, ++f->v, NULL, 0, &f->part, n, f->args,
-                           NULL, 0, h, nh, &failure);
+                           NULL, 0, h, nh, NULL, &failure);
   if (r == RIG_FAILED) abort();
   if (r == RIG_COMMITTED) f->committed = f->v;
 }

@@ -43,6 +43,7 @@ int rig_nv_room(void *self, const struct rig_part *parts, int n,
 int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
                   int nwaits, const struct rig_part *parts, int nparts,
                   const uint8_t *args, const uint64_t *slots, int nslots,
-                  const uint64_t *handles, int nhandles, const char **failure);
+                  const uint64_t *handles, int nhandles,
+                  uint64_t *times, const char **failure);
 
 #endif

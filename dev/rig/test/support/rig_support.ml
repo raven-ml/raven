@@ -45,6 +45,7 @@ external bump : unit -> nativeint = "rig_test_bump"
 external poke : unit -> nativeint = "rig_test_poke"
 external carry : unit -> nativeint = "rig_test_carry"
 external countdown : unit -> nativeint = "rig_test_countdown"
+external ready : unit -> nativeint = "rig_test_ready"
 external slow : unit -> nativeint = "rig_test_slow"
 external interrupt : unit -> unit = "rig_test_interrupt"
 
@@ -63,6 +64,7 @@ let rig_object = rig_object ()
 let poke = poke ()
 let carry = carry ()
 let countdown = countdown ()
+let ready = ready ()
 let slow = slow ()
 
 module Driver = struct

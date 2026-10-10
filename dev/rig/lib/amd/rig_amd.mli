@@ -168,8 +168,9 @@ val capability : t -> Rig_amd_abi.Capability.t
     raises {!Fault} with the path's report if the device's work met a fault.
 
     {b Hand-over.} [edge]'s room check and hand-over are [rig_amd_room] and
-    [rig_amd_submit], which [rig_amd.h] declares; its commit does nothing. A
-    part is:
+    [rig_amd_submit], which [rig_amd.h] declares; its commit does nothing. It
+    leaves a value's times 0: a profile records no span of its work. A part
+    is:
     - words, whole packets of the queue's kind: PM4, or AQL in multiples of 16
       words, on ["COMPUTE:0"]; SDMA on ["COPY:0"];
     - a fill, a C function that places packets on the queue during the

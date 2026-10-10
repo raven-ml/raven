@@ -434,7 +434,7 @@ let never () =
        (events m.ag))
 
 (* A proxy's queues run no fill: the submission is refused when it is made.
-   The fill is rig's timestamp, harmless if a hand-over called it. *)
+   The fill is the support's bump, harmless if a hand-over called it. *)
 let fill_refused () =
   with_machine @@ fun m ->
   let arg = B.create Rig.host 64 in
@@ -447,7 +447,7 @@ let fill_refused () =
           work =
             Sub.Fill
               {
-                fill = Rig.Profile.timestamp;
+                fill = Rig_support.bump;
                 arg;
                 ring_units = 0;
                 segment_bytes = 0;

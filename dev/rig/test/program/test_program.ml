@@ -1208,15 +1208,15 @@ let ready =
 
 let area n = Bigarray.(Array1.create char c_layout n)
 
-(* An end of a rail of this process whose ready function is rig's timestamp: a
-   call stores a time at its argument, the word [stamp]. *)
+(* An end of a rail of this process whose ready function is the support's
+   [ready]: a call stores its count at its argument, the word [stamp]. *)
 let fake_end stamp =
   {
     Rig_remote_abi.outbound = area 512;
     inbound = area 512;
     counts = area 384;
     ready = ignore;
-    ready_fn = Rig.Profile.timestamp;
+    ready_fn = Rig_support.ready;
     ready_arg = Nativeint.of_int (B.address stamp);
   }
 
@@ -1256,7 +1256,7 @@ let test_rail () =
   ignore (G.run p { inputs = [||]; ints = [| 42 |] });
   let outbound = String.init 8 (Bigarray.Array1.get e.outbound) in
   equal ~msg:"the outbound area" int 42 (word outbound 0);
-  greater ~msg:"the ready function's word" int ~than:0 (word (read stamp) 0)
+  equal ~msg:"the ready function's count" int 1 (word (read stamp) 0)
 
 let test_no_rail () =
   let why = require_error (G.load rail_program [| Rig.host |]) in

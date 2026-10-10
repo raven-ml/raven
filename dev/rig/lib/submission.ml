@@ -90,6 +90,9 @@ external run_value : run -> int = "caml_rig_run_value" [@@noalloc]
 external run_no_room_at : run -> int = "caml_rig_run_no_room_at" [@@noalloc]
 external run_producer : run -> int = "caml_rig_run_producer" [@@noalloc]
 external c_submit : c -> run -> int = "caml_rig_submit"
+external run_timed : run -> bool -> unit = "caml_rig_run_timed" [@@noalloc]
+external run_pair : run -> int = "caml_rig_run_pair" [@@noalloc]
+external times_read : int -> int -> int * int = "caml_rig_times_read"
 
 type block = int
 
@@ -149,6 +152,12 @@ type t = {
       (** The hold whose stamps each run raises, kept reachable: its release
           frees what the parts run. *)
   blocks : int array;  (** Each part's block, [-1] for a part no launch. *)
+  lane : string;
+      (** The lane of a span of its work: its first part's queue, [""] for no
+          part. *)
+  span : string;
+      (** The name of a span of its work: its launches' functions, or its first
+          part's kind. *)
 }
 
 let no_block = -1
@@ -376,6 +385,18 @@ let build hold ~fixed ~reads ~writes d parts =
           images := l.image :: !images)
     parts;
   Array.iter (fun (b, access) -> fix_next b (access = Read_write)) memory;
+  let kernels =
+    Array.to_list parts
+    |> List.filter_map (fun p ->
+           match p.work with Launch l -> Some l.kernel | _ -> None)
+  in
+  let lane, span =
+    if Array.length parts = 0 then ("", "")
+    else
+      ( parts.(0).queue,
+        if kernels = [] then kind_name (kind_of parts.(0).work)
+        else String.concat ", " kernels )
+  in
   {
     dev = d;
     c;
@@ -385,6 +406,8 @@ let build hold ~fixed ~reads ~writes d parts =
     nwrites = writes;
     hold;
     blocks;
+    lane;
+    span;
   }
 
 let make ?hold ?(fixed = []) ~reads ~writes d parts =
@@ -591,17 +614,33 @@ let rec go s run reads writes waits k =
     ignore (Sys.opaque_identity b3);
     p
 
+(* Records, in the profiles [ps], the span of [s]'s value [p] once [p] is
+   reached, from the time pair [pair] its driver wrote: none if the driver
+   left it 0. The function holds only [s]'s names: a lost device keeps its
+   functions for good. *)
+let record s ps p pair =
+  let device = s.dev and lane = s.lane and name = s.span in
+  Dev.after device (Point.value p) (fun () ->
+      match times_read device.c pair with
+      | 0, 0 -> ()
+      | start, stop ->
+          Prof.add_all ps [ Span { device; lane; name; start; stop } ])
+
 (* Submits [s] with [run], which the caller took. The C submit reads [s]'s C
    form, and the stamps and templates it names without a reference, with the
    runtime released: their owners stay reachable until the run is given
-   back. *)
+   back. While a profile is taken, a submission with parts times its value. *)
 let taken s run reads writes waits =
+  let ps = if s.lane = "" then [] else Prof.active () in
+  run_timed run (ps <> []);
   match
     check_fixed s;
     go s run reads writes waits 0
   with
   | p ->
+      let pair = run_pair run in
       run_give run;
+      if pair >= 0 then record s ps p pair;
       ignore (Sys.opaque_identity s.c);
       ignore (Sys.opaque_identity s.fixed);
       ignore (Sys.opaque_identity s.images);
@@ -647,6 +686,8 @@ let copy d queue ~src ~dst =
       nwrites = 0;
       hold = None;
       blocks = [||];
+      lane = queue;
+      span = kind_name Copy;
     }
   in
   let run = Domain.DLS.get copy_runs in

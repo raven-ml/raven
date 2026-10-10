@@ -81,18 +81,6 @@ value caml_rig_now(value unit) {
   return Val_long((intnat)rig_now_ns());
 }
 
-/* Stores the host clock into the word at [word], for a device library's
-   completion path: one aligned atomic store, no lock. */
-void rig_timestamp(void *word) {
-  atomic_store_explicit((_Atomic uint64_t *)word, rig_now_ns(),
-                        memory_order_release);
-}
-
-value caml_rig_timestamp(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&rig_timestamp);
-}
-
 /* Release lists
 
    A resource a device must release once nothing reaches it has a token, a

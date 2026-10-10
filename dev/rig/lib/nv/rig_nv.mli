@@ -196,7 +196,8 @@ include Rig_edge.Driver
     part the device does not run. It reads the word first, so [RIG_LATER]
     means a value the device was given is not yet reached. The hand-over,
     [rig_nv_submit], writes its release with each value and answers
-    [RIG_COMMITTED]: the device is never asked to commit. A submission of no
+    [RIG_COMMITTED]: the device is never asked to commit. It leaves a value's
+    times 0: a profile records no span of its work. A submission of no
     parts writes its value after its waits and after every earlier value. A
     [RIG_WORD] wait names an aligned 64-bit word at an address below
     [2{^40}] that the device's work addresses, and a value [w]. It holds the

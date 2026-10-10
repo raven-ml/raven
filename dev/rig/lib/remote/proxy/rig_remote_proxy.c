@@ -99,7 +99,8 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
                         int nwaits, const struct rig_part *parts, int nparts,
                         const uint8_t *args, const uint64_t *slots, int nslots,
                         const uint64_t *handles, int nhandles,
-                        const char **failure) {
+                        uint64_t *times, const char **failure) {
+  (void)times;
   (void)args;
   (void)slots;
   (void)nslots;

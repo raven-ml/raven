@@ -196,7 +196,12 @@ val capability : t -> Rig_metal_abi.t
       at once, or if the device recorded a failure before; then the parts did
       not run (Failures, above). It may block: it calls Metal, and waits for the
       device's oldest command buffer to complete when 1,024 of them are
-      uncommitted or uncompleted, as many as the device's queue holds.
+      uncommitted or uncompleted, as many as the device's queue holds. Given
+      times, a profile being taken, it commits the open command buffer first,
+      runs [v]'s work in command buffers of its own and commits them at once,
+      and writes the first one's [GPUStartTime] and the last one's
+      [GPUEndTime]: a profiled value shares no command buffer, which costs the
+      batching.
     - [rig_metal_commit] commits the open command buffer, which holds the work
       of every value not yet committed, whatever [v].
 

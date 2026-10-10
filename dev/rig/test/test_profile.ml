@@ -140,68 +140,121 @@ let test_counters () =
   equal bool false (Prof.enabled ());
   equal (list string) [] (Prof.counters ())
 
-(* Events read after their point *)
+(* Device time *)
 
-(* [after]'s events are read in the first wait that finds the point reached,
-   before it returns, and ordered by time, longest first. *)
-let test_after () =
-  let d, _ = P.open_ "profile:after" in
-  let m = B.create d 64 in
-  let read = ref false in
-  let span name start stop =
-    Prof.Span { device = d; lane = "COMPUTE:0"; name; start; stop }
-  in
+let functions d =
+  require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
+
+let launch image kernel =
+  {
+    Sub.queue = "COMPUTE:0";
+    after = [||];
+    work = Sub.Launch { image; kernel; params = 0; refs = [||] };
+  }
+
+let bump arg =
+  {
+    Sub.queue = "COMPUTE:0";
+    after = [||];
+    work =
+      Fill { fill = Support.bump; arg; ring_units = 0; segment_bytes = 0 };
+  }
+
+(* Submits [parts] on [d] with a run whose launches run one group of one
+   thread. *)
+let submit_parts d parts =
+  let s = Sub.make ~reads:0 ~writes:0 d parts in
+  let run = Sub.Run.make () in
+  Array.iteri
+    (fun i (p : Sub.part) ->
+      match p.work with
+      | Launch _ ->
+          let b = Sub.block s i in
+          Sub.Run.groups run b 1 1 1;
+          Sub.Run.threads run b 1 1 1
+      | _ -> ())
+    parts;
+  Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
+
+(* The spans of [d] in [events], as [(lane, name, start, stop)]. *)
+let device_spans d events =
+  List.filter_map
+    (function
+      | Prof.Span s when Rig.equal s.device d ->
+          Some (s.lane, s.name, s.start, s.stop)
+      | _ -> None)
+    events
+
+(* A submission's span holds its device's times of all its parts' work, read
+   by the wait that reaches it, on its first part's queue, named after its
+   launches' functions in the order of its parts. *)
+let test_device_span () =
+  let d, _ = P.open_ "profile:device" in
+  let image = functions d and arg = B.create Rig.host 8 in
+  let before = Prof.now () in
   let (), events =
     Prof.take (fun () ->
-        let s = Sub.make ~reads:0 ~writes:1 d [||] in
-        let p = submit s ~writes:[| m |] in
-        Prof.after p (fun () ->
-            read := true;
-            [ span "short" 5 6; span "long" 5 9; span "first" 1 2 ]);
-        equal ~msg:"before the wait" bool false !read;
-        B.wait m B.Read;
-        equal ~msg:"once the wait returned" bool true !read)
+        Rig.Point.wait
+          (submit_parts d
+             [| launch image "main"; bump arg; launch image "copy" |]))
   in
-  equal (list string) [ "first"; "long"; "short" ] (named events)
+  let after = Prof.now () in
+  match device_spans d events with
+  | [ (lane, name, start, stop) ] ->
+      equal (pair string string) ("COMPUTE:0", "main, copy") (lane, name);
+      at_least ~msg:"the start" int ~than:before start;
+      at_least ~msg:"the stop" int ~than:start stop;
+      at_most ~msg:"the stop" int ~than:after stop
+  | spans -> failf "%d spans of the device" (List.length spans)
 
-let test_after_disabled () =
-  let d = memory "profile:after-off" in
-  let p = submit (empty d) in
-  Prof.after p (fun () -> failf "read while no profile is taken");
-  Rig.Point.wait p
-
-(* Events after a point go to the profiles taken when [after] is called. *)
-let test_after_profiles () =
-  let d, _ = P.open_ "profile:after-profiles" in
-  let event name =
-    Prof.Span { device = d; lane = "COMPUTE:0"; name; start = 0; stop = 1 }
+(* A submission with no launch is named after its first part's kind. *)
+let test_kind_span () =
+  let d, _ = P.open_ "profile:kind" in
+  let arg = B.create Rig.host 8 in
+  let (), events =
+    Prof.take (fun () -> Rig.Point.wait (submit_parts d [| bump arg |]))
   in
+  equal
+    (list (pair string string))
+    [ ("COMPUTE:0", "fills") ]
+    (List.map (fun (lane, name, _, _) -> (lane, name)) (device_spans d events))
+
+(* No span: of a submission with no part, of one submitted while no profile
+   is taken, and of a device whose driver cannot time its work. *)
+let test_no_span () =
+  let d, _ = P.open_ "profile:none" and m = memory "profile:none-memory" in
+  let arg = B.create Rig.host 8 in
+  let earlier = submit_parts d [| bump arg |] in
+  let (), events =
+    Prof.take (fun () ->
+        Rig.Point.wait (submit (empty d));
+        Rig.Point.wait earlier;
+        Rig.Point.wait (submit_parts m [| bump arg |]))
+  in
+  equal ~msg:"Polled" int 0 (List.length (device_spans d events));
+  equal ~msg:"the memory device" int 0 (List.length (device_spans m events))
+
+(* A submission's span goes to every profile taken when it was submitted. *)
+let test_span_profiles () =
+  let d, _ = P.open_ "profile:device-profiles" in
+  let arg = B.create Rig.host 8 in
   let (), outer =
     Prof.take (fun () ->
         let (), inner =
           Prof.take (fun () ->
-              let q = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
-              Prof.after q (fun () -> [ event "both" ]))
+              Rig.Point.wait (submit_parts d [| bump arg |]))
         in
-        equal ~msg:"inner" (list string) [ "both" ] (named inner))
+        equal ~msg:"inner" int 1 (List.length (device_spans d inner)))
   in
-  equal ~msg:"outer" (list string) [ "both" ] (named outer);
-  let q = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
-  Prof.after q (fun () -> [ event "before" ]);
-  let (), later = Prof.take (fun () -> Rig.Point.wait q) in
-  equal ~msg:"a profile taken after" (list string) [] (named later)
+  equal ~msg:"outer" int 1 (List.length (device_spans d outer))
 
-(* A profile leaves out the events of a device lost before they were read. *)
-let test_after_lost () =
-  let d, p = P.open_ "profile:after-lost" in
+(* A profile leaves out the span of a device lost before it was read. *)
+let test_span_lost () =
+  let d, p = P.open_ "profile:device-lost" in
+  let arg = B.create Rig.host 8 in
   let (), events =
     Prof.take (fun () ->
-        let q = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
-        Prof.after q (fun () ->
-            [
-              Prof.Span
-                { device = d; lane = "l"; name = "unread"; start = 0; stop = 1 };
-            ]);
+        ignore (submit_parts d [| bump arg |]);
         P.fail p;
         try ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]))
         with Rig.Lost _ -> ())
@@ -228,29 +281,6 @@ let test_allocation () =
   in
   ignore (Sys.opaque_identity b);
   at_least int ~than:4096 (List.fold_left Int.max 0 allocations)
-
-(* [record] reads the second and fourth words of its stamps. *)
-let test_record () =
-  let d, _ = P.open_ "profile:record" in
-  let stamps = B.create Rig.host 32 in
-  let words = B.bigarray Bigarray.int64 stamps in
-  List.iteri (fun i w -> words.{i} <- Int64.of_int w) [ 0; 100; 0; 250 ];
-  let (), events =
-    Prof.take (fun () ->
-        let p = submit (empty d) in
-        Prof.record p ~lane:"COMPUTE:0" ~name:"kernel" stamps)
-  in
-  match events with
-  | [ Prof.Span s ] ->
-      equal (pair int int) (100, 250) (s.start, s.stop);
-      equal string "kernel" s.name
-  | _ -> failf "%d events" (List.length events)
-
-let refuses_stamps stamps () =
-  let d = memory "profile:record-refusals" in
-  let p = submit (empty d) in
-  raises_match Exn.invalid_arg (fun () ->
-      Prof.record p ~lane:"l" ~name:"n" stamps)
 
 (* Copies *)
 
@@ -308,18 +338,6 @@ let test_staged_span () =
       events
   in
   at_least ~msg:"the leg's stop" int ~than:opened (require_some leg)
-
-(* An exception [after]'s function raises is raised again by the wait that ran
-   it. *)
-let test_after_raises () =
-  let d, _ = P.open_ "profile:after-raises" in
-  let (), _ =
-    Prof.take (fun () ->
-        let p = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
-        Prof.after p (fun () -> raise Exit);
-        raises Exit (fun () -> Rig.Point.wait p))
-  in
-  ()
 
 (* Cost *)
 
@@ -432,26 +450,21 @@ let tests =
         test "counters and traces are those the profiles taken ask for"
           test_counters;
       ];
-    group ~timeout "after"
+    group ~timeout "device time"
       [
         test
-          "events after a point are read before the wait that reaches it \
-           returns"
-          test_after;
-        test "events after a point are not read while no profile is taken"
-          test_after_disabled;
-        test "an exception after's function raises reaches the wait"
-          test_after_raises;
-        test "events after a point go to the profiles taken at the call"
-          test_after_profiles;
-        test "a profile leaves out a lost device's unread events"
-          test_after_lost;
-        test "a recorded span reads its stamps' second and fourth words"
-          test_record;
-        test "a recorded span refuses 24 bytes"
-          (refuses_stamps (B.create Rig.host 24));
-        test "a recorded span refuses stamps off an 8-byte boundary"
-          (refuses_stamps (B.view (B.create Rig.host 40) ~first:4 ~length:32));
+          "a submission's span holds its parts' device time, named after its \
+           launches"
+          test_device_span;
+        test "a submission with no launch is named after its first part's kind"
+          test_kind_span;
+        test
+          "no span of an empty submission, an untimed one or an untimeable \
+           device"
+          test_no_span;
+        test "a span goes to the profiles taken at its submit"
+          test_span_profiles;
+        test "a profile leaves out a lost device's unread span" test_span_lost;
       ];
     group ~timeout "copies"
       [

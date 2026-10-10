@@ -1057,6 +1057,56 @@ let refused_geometry () =
   wait t v;
   equal int v (Rig_metal.signaled t.g)
 
+(* Under a profile, each submission's span holds the GPU's times of its work, in
+   its own command buffers: named after its launches, within the host's times
+   around it, and each after the one before, as the device runs them in
+   order. *)
+let spans_in_order n =
+  let t = dev () in
+  let image = launch_image t.d in
+  let out = zeroed t.d 4 in
+  let s =
+    Sub.make ~reads:0 ~writes:1 t.d
+      [|
+        launch image "step" ~params:8 [ { at = 0; slot = 0 } ];
+        launch image "step" ~params:8 [ { at = 0; slot = 0 } ];
+      |]
+  in
+  let run = Run.make () in
+  for i = 0 to 1 do
+    let k = Sub.block s i in
+    set_grid run k one;
+    Run.int64 run k 0 0
+  done;
+  let before = Rig.Profile.now () in
+  let (), events =
+    Rig.Profile.take (fun () ->
+        for _ = 1 to n do
+          ignore (Rig.submit s ~run ~reads:[||] ~writes:[| out |] ~waits:[||])
+        done;
+        B.wait out Read)
+  in
+  let after = Rig.Profile.now () in
+  let spans =
+    List.filter_map
+      (function
+        | Rig.Profile.Span s when Rig.equal s.device t.d ->
+            Some (s.lane, s.name, s.start, s.stop)
+        | _ -> None)
+      events
+  in
+  equal int ~msg:"spans" n (List.length spans);
+  equal int ~msg:"steps" (2 * n) (words out).(0);
+  ignore
+    (List.fold_left
+       (fun last (lane, name, start, stop) ->
+         equal (pair string string) ("COMPUTE:0", "step, step") (lane, name);
+         at_least ~msg:"a start" int ~than:last start;
+         at_least ~msg:"a stop" int ~than:start stop;
+         at_most ~msg:"a stop" int ~than:after stop;
+         stop)
+       before spans)
+
 (* A warm submit of a launch allocates nothing on the OCaml heap, nor does a
    store into its run. *)
 let no_allocation () =
@@ -1099,6 +1149,9 @@ let launches =
         "geometry beyond a function's limits is refused, and the device runs on"
         refused_geometry;
       test "a warm launch submit allocates nothing" no_allocation;
+      cases
+        ~name:(strf "a profile holds %d submissions' spans, in order")
+        "spans" [ 1; 3; 300 ] spans_in_order;
     ]
 
 (* Memory *)

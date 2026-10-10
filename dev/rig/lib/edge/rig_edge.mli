@@ -134,7 +134,10 @@ type 'region facts = {
             the device's earlier work. The work runs without another call. The
             device writes the value into the word once the value is committed
             and the work up to it completed. When it returns, all of the
-            value's work is on the queues; a failure loses the device.
+            value's work is on the queues; a failure loses the device. While a
+            profile is taken, the device also writes, before the word shows
+            the value, when the value's work started and ended on it, on the
+            host's clock, or writes nothing for work it cannot time.
           - The commit, given [v], at most the last value the device received,
             makes the device write [v] or a later value into the word once the
             work up to it completed. Committing a committed value does nothing.

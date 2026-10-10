@@ -28,11 +28,13 @@
 #include <stdint.h>
 
 /* A command buffer between its take and its release. The taker sets [v]
-   (0 for a buffer that is not its submission's last) and the [start] and
-   [end] cells (NULL for none) before it commits the buffer. */
+   (0 for a buffer that is not its submission's last) and the [start],
+   [end] and [first] cells (NULL for none) before it commits the buffer:
+   its completion writes its start time at [start] and [first], and its end
+   time at [end]. [first] is set on the first buffer of a timed value. */
 struct rig_metal_slot {
   uint64_t v;
-  uint64_t *start, *end;
+  uint64_t *start, *end, *first;
   int state;
 };
 

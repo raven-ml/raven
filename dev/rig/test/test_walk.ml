@@ -216,17 +216,15 @@ let hold =
         collect ();
         ignore (B.create d 0))
 
+(* A submission with a part under a profile: its hand-over takes a time
+   pair, and the profile reads it once the value is reached. *)
 let profile =
-  op "profile" ~raises:true (fun d ->
-      let s = Sub.make ~reads:0 ~writes:0 d [||] in
+  op "profile" (fun d ->
+      let arg = B.create Rig.host 8 in
+      let s = Sub.make ~reads:0 ~writes:0 d [| bump arg |] in
       let run = Sub.Run.make () in
-      fun failure ->
-        let events () = if failure = Some Raise then raise Exit else [] in
-        ignore
-          (Rig.Profile.take (fun () ->
-               let p = once ~run s in
-               Rig.Profile.after p events;
-               Rig.Point.wait p)))
+      fun _ ->
+        ignore (Rig.Profile.take (fun () -> Rig.Point.wait (once ~run s))))
 
 let ops =
   [

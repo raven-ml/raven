@@ -1034,7 +1034,7 @@ val submit :
     into [run] after [submit] returns changes none of it. The caller keeps other
     threads from storing into [run] until [submit] returns.
 
-    It allocates nothing unless it waits.
+    It allocates nothing unless it waits or a profile is being taken.
 
     Raises [Invalid_argument] if another submit is using [run] ([submit] takes
     it at entry and gives it back when it returns or raises), if [reads] or
@@ -1073,7 +1073,16 @@ module Profile : sig
         stop : int;
       }
         (** Work that ran on a lane of a device. The host's lanes are its
-            domains, ["domain 0"], ["domain 1"], …. *)
+            domains, ["domain 0"], ["domain 1"], ….
+
+            While a profile is taken, each submission with parts records a span
+            of its work on its device, from when the device started it to when
+            it ended it, all its parts' work, on the lane of its first part's
+            queue, such as ["COMPUTE:0"]. The span is named after the functions
+            its launches run, in the order of its parts, joined by [", "], or,
+            with no launch, after its first part's kind: ["copies"],
+            ["fills"] or ["words"]. A device whose driver cannot time a
+            submission's work records no span of it. *)
     | Allocation of { device : device; time : int; allocated : int }
         (** The bytes of memory [device] allocated from [time] on. *)
     | Load of { image : Image.t; binary : string; time : int }
@@ -1115,10 +1124,10 @@ module Profile : sig
       and, at equal times, longest first, then in the order they were recorded.
       It asks the libraries that encode work to count [counters] (defaults to
       none) and, with [trace] (defaults to [false]), to trace ({!counters},
-      {!traced}). Before it returns it waits for the points whose events are
-      still to be read ({!after}); those of a device lost meanwhile are left
-      out. If [f] raises, the events are dropped and the exception is raised
-      again with its backtrace.
+      {!traced}). Before it returns it waits for the work whose events are
+      still to be read, such as the submissions made while it ran; those of a
+      device lost meanwhile are left out. If [f] raises, the events are dropped
+      and the exception is raised again with its backtrace.
 
       Raises [Invalid_argument] if [counters] names a counter twice. *)
 
@@ -1141,35 +1150,6 @@ module Profile : sig
   (** [span name f] is [f ()], recorded as a span named [name] on the calling
       domain's lane of {!host}, from the call until [f] returns or raises, in
       each profile taken when the call starts. *)
-
-  val after : Point.t -> (unit -> event list) -> unit
-  (** [after p f] records the events [f ()] in each profile being taken, once
-      [p] is reached: [f] reads what [p]'s work wrote, such as its times or
-      counters. [f] runs in the first wait that finds [p] reached, among the
-      waits for [p]'s device ({!wait}, {!Buffer.wait}, {!Buffer.copy} and
-      {!take}'s), before that wait returns: memory a {!Buffer.wait} returns for
-      is read before its caller rewrites it. [f] holds no lock of this library,
-      must not call it and must not raise: an exception it raises is raised
-      again by the wait that ran it. It does nothing unless {!enabled}. *)
-
-  val record : Point.t -> lane:string -> name:string -> Buffer.t -> unit
-  (** [record p ~lane ~name stamps] is [after p] of a {!Span} of [p]'s device
-      named [name] on [lane], whose start and stop are the unsigned 64-bit words
-      at bytes 8 and 24 of the host memory [stamps], in the host's byte order
-      and on the host clock: [p]'s work, or its driver, writes them, as
-      {!timestamp} does.
-
-      Raises [Invalid_argument] if [stamps] is not 32 bytes of host memory
-      starting at a multiple of 8. *)
-
-  val timestamp : nativeint
-  (** [timestamp] is the address of the C function
-
-      {v void rig_timestamp(void *word); v}
-
-      which stores {!now} into the 64-bit word at [word] with one aligned atomic
-      store, in the platform's C calling convention. It takes no lock, so a
-      device library may call it from a completion path. *)
 
   val output_chrome_trace : out_channel -> event list -> unit
   (** [output_chrome_trace oc events] writes [events] to [oc] in Chrome's trace
@@ -1250,4 +1230,5 @@ val memory_device : string -> (t, string) result
 (** [memory_device name] is {!open_} of the device named [name] whose memory is
     the host's and whose work this process runs, with a timeline of its own: it
     runs a submission's copies and fills before its submit returns. It stands
-    for a device with a timeline in tests of what names several devices. *)
+    for a device with a timeline in tests of what names several devices. It
+    times no work: a profile records no span of its submissions. *)

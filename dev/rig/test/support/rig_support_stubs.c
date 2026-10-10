@@ -138,7 +138,26 @@ struct queued {
   struct rig_wait *waits;
   struct rig_part *parts;
   uint8_t *blocks;
+  uint64_t *times; /* where its run's times go, NULL for nowhere */
 };
+
+/* The host clock, rig's (Rig.Profile.now), by which Polled times a value's
+   run. */
+static uint64_t host_ns(void) {
+#if defined(_WIN32)
+  LARGE_INTEGER count, frequency;
+  QueryPerformanceCounter(&count);
+  QueryPerformanceFrequency(&frequency);
+  uint64_t c = (uint64_t)count.QuadPart, f = (uint64_t)frequency.QuadPart;
+  return c / f * 1000000000u + c % f * 1000000000u / f;
+#elif defined(__APPLE__)
+  return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+#endif
+}
 
 /* Polled's functions: host code run once per group of a launch's grid,
    with the group's index, the block and its parameter count. A Polled
@@ -454,6 +473,7 @@ NOINLINE static void launch(struct polled *p, struct queued *s,
 }
 
 static void run_one(struct polled *p, struct queued *s) {
+  if (s->times != NULL) s->times[0] = host_ns();
   for (int i = 0; i < s->nparts; i++) {
     struct rig_part *part = &s->parts[i];
     if (part->kind == RIG_FILL) part->fill.fn(NULL, part->fill.arg, s->v);
@@ -467,6 +487,7 @@ static void run_one(struct polled *p, struct queued *s) {
       if (p->nsides < LAST_HANDLES) p->sides[p->nsides++] = part->copy.local;
     }
   }
+  if (s->times != NULL) s->times[1] = host_ns();
   p->held -= s->nparts;
   free(s->waits);
   free(s->parts);
@@ -627,7 +648,7 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
                          const uint8_t *args, const uint64_t *slots, int nslots,
                          const uint64_t *handles, int nhandles,
-                         const char **failure) {
+                         uint64_t *times, const char **failure) {
   (void)nslots;
   struct polled *p = self;
   atomic_fetch_add(&p->submits, 1);
@@ -685,6 +706,7 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   s->waits = ws;
   s->parts = ps;
   s->blocks = bs;
+  s->times = times;
   if (nwaits > 0) memcpy(s->waits, waits, (size_t)nwaits * sizeof *waits);
   if (nparts > 0) memcpy(s->parts, parts, (size_t)nparts * sizeof *parts);
   p->held += nparts;
@@ -820,6 +842,16 @@ static int countdown(void *queue, void *arg, uint64_t v) {
 value rig_test_countdown(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)&countdown);
+}
+
+/* Stores [c] at [word] with release order: a rail's ready function. */
+static void ready(void *word, uint64_t c) {
+  atomic_store_explicit((_Atomic uint64_t *)word, c, memory_order_release);
+}
+
+value rig_test_ready(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&ready);
 }
 
 /* A fill that copies bytes: its argument's three 64-bit words are the

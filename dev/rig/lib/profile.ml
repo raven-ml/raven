@@ -36,10 +36,6 @@ type event = Def.event =
   | Overwritten of { device : device; time : int; runs : int }
   | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
 
-external timestamp : unit -> nativeint = "caml_rig_timestamp"
-external load64 : int -> int = "caml_rig_load64"
-
-let timestamp = timestamp ()
 let now = Prof.now
 let enabled = Prof.enabled
 
@@ -78,8 +74,8 @@ let counters () =
 
 let traced () = List.exists (fun (p : Prof.t) -> p.trace) (Prof.active ())
 
-(* Waits for the points whose events are still to be read; a device lost
-   meanwhile has them dropped. *)
+(* Waits for the values whose events are still to be read, such as the times
+   of the submissions it timed; a device lost meanwhile has them dropped. *)
 let read_pending () =
   Dev.iter (fun d ->
       if d.afters <> [] then
@@ -118,36 +114,6 @@ let span name f =
           (Span { device = Dev.host; lane; name; start; stop = now () })
       in
       Fun.protect ~finally:finish f
-
-let after p f =
-  match Prof.active () with
-  | [] -> ()
-  | ps ->
-      let d = Dev.of_index (Point.index p) in
-      Dev.after d (Point.value p) (fun () -> Prof.add_all ps (f ()))
-
-let record p ~lane ~name stamps =
-  if
-    stamps.length <> 32 || stamps.mem.host < 0
-    || (stamps.mem.host + stamps.offset) mod 8 <> 0
-  then
-    invalid_arg
-      "Rig.Profile.record: the stamps are not 32 bytes of host memory aligned \
-       to 8";
-  let device = Dev.of_index (Point.index p) in
-  let at = stamps.mem.host + stamps.offset in
-  after p (fun () ->
-      ignore (Sys.opaque_identity stamps);
-      [
-        Span
-          {
-            device;
-            lane;
-            name;
-            start = load64 (at + 8);
-            stop = load64 (at + 24);
-          };
-      ])
 
 (* Chrome's trace event format *)
 

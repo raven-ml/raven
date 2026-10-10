@@ -47,7 +47,7 @@ static void submit(const struct rig_wait *waits, int nwaits,
   if (rig_nv_room(self, parts, nparts, NULL) != RIG_FITS)
     caml_failwith("rig_nv_room: the parts do not fit");
   if (rig_nv_submit(self, ++last, waits, nwaits, parts, nparts, NULL, NULL, 0,
-                    NULL, 0, &failure) == RIG_FAILED)
+                    NULL, 0, NULL, &failure) == RIG_FAILED)
     caml_failwith(failure);
 }
 

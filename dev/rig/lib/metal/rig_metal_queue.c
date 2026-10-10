@@ -238,16 +238,21 @@ static void launch(struct rig_metal_queue *q, const struct rig_part *p,
 /* Runs the parts of [v] in the open command buffer's encoder, opening
    either if none is, and commits the buffer if its work would otherwise wait:
    whether it did. A fill that returns 0 without an open command buffer broke
-   its contract after a failed split. The open mutex is held. */
+   its contract after a failed split. With [times], [v]'s work gets command
+   buffers of its own, committed at once, so the GPU times of the first's
+   start and the last's end are [v]'s. The open mutex is held. */
 static const char *run(struct rig_metal *d, uint64_t v,
                        const struct rig_part *parts, int n,
                        const uint8_t *args, const uint64_t *slots,
-                       int *committed) {
+                       uint64_t *times, int *committed) {
   struct rig_metal_queue *q = &d->open;
   const char *why = NULL;
   @try {
     commit_residency(d);
+    if (times != NULL) commit_open(d);
     if (q->slot < 0) why = begin(q);
+    if (why == NULL && times != NULL)
+      d->ring.slots[q->slot].first = &times[0];
     if (why == NULL && n > 0 && q->encoder == nil) why = open_encoder(q);
     for (int i = 0; i < n && why == NULL; i++) {
       if (parts[i].kind == RIG_LAUNCH) {
@@ -260,7 +265,11 @@ static const char *run(struct rig_metal *d, uint64_t v,
       snprintf(text, sizeof text, "running a fill: it returned %d", rc);
       why = fail(q, text);
     }
-    if (why == NULL) {
+    if (why == NULL && times != NULL) {
+      commit(q, v, NULL, &times[1]);
+      d->open_values = 0;
+      *committed = 1;
+    } else if (why == NULL) {
       d->open_v = v;
       d->open_values++;
       *committed = d->open_values >= open_bound ||
@@ -280,7 +289,7 @@ int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
                      int nwaits, const struct rig_part *parts, int nparts,
                      const uint8_t *args, const uint64_t *slots, int nslots,
                      const uint64_t *handles, int nhandles,
-                     const char **failure) {
+                     uint64_t *times, const char **failure) {
   (void)waits, (void)nwaits, (void)nslots, (void)handles, (void)nhandles;
   struct rig_metal *d = self;
   int committed = 0;
@@ -289,7 +298,7 @@ int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
   if (why == NULL) {
     pthread_mutex_lock(&d->open_mutex);
     @autoreleasepool {
-      why = run(d, v, parts, nparts, args, slots, &committed);
+      why = run(d, v, parts, nparts, args, slots, times, &committed);
     }
     unlock_open(d);
   }
@@ -335,9 +344,10 @@ int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
                      int nwaits, const struct rig_part *parts, int nparts,
                      const uint8_t *args, const uint64_t *slots, int nslots,
                      const uint64_t *handles, int nhandles,
-                     const char **failure) {
+                     uint64_t *times, const char **failure) {
   (void)self, (void)v, (void)waits, (void)nwaits, (void)parts, (void)nparts,
-      (void)args, (void)slots, (void)nslots, (void)handles, (void)nhandles;
+      (void)args, (void)slots, (void)nslots, (void)handles, (void)nhandles,
+      (void)times;
   *failure = "Metal exists on macOS only";
   return RIG_FAILED;
 }

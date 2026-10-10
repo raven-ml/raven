@@ -548,6 +548,17 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   return Val_int(r->npoints);
 }
 
+/* Makes the run's next submit time its value, iff [v_timed]. */
+value caml_rig_run_timed(value v_r, value v_timed) {
+  struct rig_run *r = Run_val(v_r);
+  r->timed = Bool_val(v_timed);
+  r->pair = -1;
+  return Val_unit;
+}
+
+/* The time pair the run's last submit took, -1 for none. */
+value caml_rig_run_pair(value v_r) { return Val_int(Run_val(v_r)->pair); }
+
 value caml_rig_run_point(value v_r, value v_i) {
   return Val_long((intnat)Run_val(v_r)->points[Int_val(v_i)]);
 }

@@ -253,8 +253,9 @@ val capability : t -> Rig_cuda_abi.t
     a stream full waits for earlier work to free it.
 
     [rig_cuda_submit] is called without the domain lock, and calls no function
-    of the OCaml runtime. It encodes the parts on the device's streams as the
-    value [v] after the last one the device was given:
+    of the OCaml runtime. It leaves a value's times 0: a profile records no span
+    of its work. It encodes the parts on the device's streams as the value [v]
+    after the last one the device was given:
     - A part on queue [0] runs on the stream ["COMPUTE:0"], on queue [1] on
       ["COPY:0"]. Parts on one queue run in array order; parts on two queues
       that [after] does not order may run at once.

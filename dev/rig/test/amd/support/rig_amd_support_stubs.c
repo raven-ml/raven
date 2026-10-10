@@ -214,7 +214,8 @@ value rig_amd_test_submit(value v_self, value v_v, value v_waits,
   int r = driver_of(v_self)->submit(
       (void *)Nativeint_val(v_self), (uint64_t)Long_val(v_v), w,
       (int)(Wosize_val(v_waits) / 2), p, (int)Wosize_val(v_parts),
-      (const uint8_t *)String_val(v_args), slots, nslots, NULL, 0, &failure);
+      (const uint8_t *)String_val(v_args), slots, nslots, NULL, 0, NULL,
+      &failure);
   free(mem);
   free(slots);
   if (r != RIG_FAILED) CAMLreturn(Val_none);

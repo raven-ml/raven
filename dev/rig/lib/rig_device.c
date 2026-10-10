@@ -95,6 +95,7 @@ static void cv_wait_ms(struct rig_device *d, int ms) {
 static void mu_init(struct rig_device *d) {
   mutex_init(&d->mu);
   cond_init(&d->cv);
+  mutex_init(&d->times.mu);
 }
 static void cv_broadcast(struct rig_device *d) { cond_broadcast(&d->cv); }
 static void mu_lock(struct rig_device *d) { mutex_lock(&d->mu); }
@@ -892,6 +893,59 @@ static int record_waits(struct rig_device *d, struct rig_run *r) {
   return SUBMIT_OK;
 }
 
+/* Time pairs */
+
+static uint64_t *pair_at(struct rig_times *t, int k) {
+  return t->chunks[k / RIG_TIMES][k % RIG_TIMES];
+}
+
+/* A free pair of [t], zeroed, adding a chunk if none is free: its index,
+   or -1 if the host has no memory for one. */
+static int take_pair(struct rig_times *t) {
+  int k = -1;
+  mutex_lock(&t->mu);
+  if (t->nfree == 0) {
+    uint64_t(*chunk)[2] = calloc(RIG_TIMES, sizeof *chunk);
+    uint64_t(**chunks)[2] =
+        realloc(t->chunks, (size_t)(t->nchunks + 1) * sizeof *chunks);
+    int *free_ = realloc(t->free, (size_t)(t->nchunks + 1) * RIG_TIMES *
+                                      sizeof *free_);
+    if (chunks != NULL) t->chunks = chunks;
+    if (free_ != NULL) t->free = free_;
+    if (chunk != NULL && chunks != NULL && free_ != NULL) {
+      t->chunks[t->nchunks] = chunk;
+      for (int i = RIG_TIMES - 1; i >= 0; i--)
+        t->free[t->nfree++] = t->nchunks * RIG_TIMES + i;
+      t->nchunks++;
+    } else
+      free(chunk);
+  }
+  if (t->nfree > 0) {
+    k = t->free[--t->nfree];
+    uint64_t *p = pair_at(t, k);
+    p[0] = p[1] = 0;
+  }
+  mutex_unlock(&t->mu);
+  return k;
+}
+
+/* The pair [v_k] of the device [v_d], as [(start, stop)], given back. The
+   value it timed is reached, so its driver wrote it. */
+value caml_rig_times_read(value v_d, value v_k) {
+  CAMLparam2(v_d, v_k);
+  CAMLlocal1(v);
+  struct rig_times *t = &Device_val(v_d)->times;
+  mutex_lock(&t->mu);
+  uint64_t *p = pair_at(t, Int_val(v_k));
+  uint64_t start = p[0], stop = p[1];
+  t->free[t->nfree++] = Int_val(v_k);
+  mutex_unlock(&t->mu);
+  v = caml_alloc_tuple(2);
+  Store_field(v, 0, Val_long((intnat)start));
+  Store_field(v, 1, Val_long((intnat)stop));
+  CAMLreturn(v);
+}
+
 /* Asks [d]'s driver for room for [s]; once the parts fit, assigns the next
    value, stores it as submitted, hands the work over with the run [r]'s
    waits and handles, and raises the stamps. Called under [d]'s turn. */
@@ -906,9 +960,11 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   uint64_t v = atomic_load(&d->submitted) + 1;
   atomic_store_explicit(&d->submitted, v, memory_order_release);
   const char *why = NULL;
+  r->pair = r->timed ? take_pair(&d->times) : -1;
+  uint64_t *times = r->pair < 0 ? NULL : pair_at(&d->times, r->pair);
   int a = d->driver.submit(d->self, v, r->waits, r->nwaits, s->parts,
                            s->nparts, r->args, r->addresses, r->nslots,
-                           r->handles, r->nhandles, &why);
+                           r->handles, r->nhandles, times, &why);
   rig_sub_raise(s, r, RIG_POINT(d->index, v));
   r->v = v;
   if (a == RIG_COMMITTED)

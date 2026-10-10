@@ -68,7 +68,7 @@ int rig_metal_ring_take(struct rig_metal_ring *r) {
   while (r->tail - r->head == r->nslots)
     pthread_cond_wait(&r->changed, &r->mutex);
   int i = (int)(r->tail++ % r->nslots);
-  r->slots[i] = (struct rig_metal_slot){0, NULL, NULL, taken};
+  r->slots[i] = (struct rig_metal_slot){0, NULL, NULL, NULL, taken};
   pthread_mutex_unlock(&r->mutex);
   return i;
 }
@@ -80,6 +80,7 @@ void rig_metal_ring_complete(struct rig_metal_ring *r, int i,
   pthread_mutex_lock(&r->mutex);
   if (s->start) *s->start = start;
   if (s->end) *s->end = end;
+  if (s->first) *s->first = start;
   s->state = failure ? failed : done;
   if (failure && r->failure[0] == '\0')
     snprintf(r->failure, sizeof r->failure, "%s", failure);

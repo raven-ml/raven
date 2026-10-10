@@ -136,15 +136,19 @@ typedef int rig_room_fn(void *self, const struct rig_part *parts, int n,
    address of each of the run's [nslots] buffers, as the device's work
    addresses it, for its launches' refs. [handles] lists [self]'s own memory
    the work uses, for a driver whose submissions name it; a copy's side
-   that [copy_local] names is not in it. Answers RIG_COMMITTED if every
-   value up to [v] is committed, RIG_OK if [v] is encoded only, or
-   RIG_FAILED with [*failure] set to the driver's message, which lives as
-   long as the device. */
+   that [copy_local] names is not in it. [times] is NULL unless a profile is
+   being taken; otherwise the driver stores at [times[0]] and [times[1]] the
+   nanoseconds of rig's host clock (Rig.Profile.now: CLOCK_UPTIME_RAW on
+   macOS, CLOCK_MONOTONIC elsewhere) at which [v]'s work started and ended
+   on the device, before the word shows [v], or leaves both 0 if it cannot
+   time the work. Answers RIG_COMMITTED if every value up to [v] is
+   committed, RIG_OK if [v] is encoded only, or RIG_FAILED with [*failure]
+   set to the driver's message, which lives as long as the device. */
 typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
                          const uint8_t *args, const uint64_t *slots,
                          int nslots, const uint64_t *handles, int nhandles,
-                         const char **failure);
+                         uint64_t *times, const char **failure);
 
 /* Commits the device's work up to [v], at most the last value it received:
    the device writes [v] or a later value into the word once the work up to

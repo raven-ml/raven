@@ -204,7 +204,8 @@ value rig_cuda_bench_entry_waits(value v_self, value v_v, value v_at,
     w[i] = (struct rig_wait){.at = (uint64_t)Long_val(v_at), .value = 1,
                             .kind = RIG_WORD};
   const char *why = NULL;
-  int r = rig_cuda_submit(self, v, w, n, NULL, 0, NULL, NULL, 0, NULL, 0, &why);
+  int r = rig_cuda_submit(self, v, w, n, NULL, 0, NULL, NULL, 0, NULL, 0, NULL,
+                          &why);
   if (r == RIG_OK) r = rig_cuda_commit(self, v, &why);
   if (r == RIG_FAILED) caml_failwith(why);
   return Val_unit;

@@ -63,6 +63,23 @@ struct rig_entry {
   uint64_t w, u;
 };
 
+/* A device's time pairs for timed values, chunks of RIG_TIMES pairs that
+   never move, and the indices of the free pairs, under [mu]. A hand-over
+   takes a pair for a value it times; its driver writes the pair before the
+   word shows the value, and the read that records the value's span gives
+   it back. A lost device keeps the pairs of values it never showed: they
+   live as long as the device, so a late write from its work lands in
+   them. */
+#define RIG_TIMES 256
+
+struct rig_times {
+  rig_mutex mu;
+  uint64_t (**chunks)[2];
+  int nchunks;
+  int *free;
+  int nfree;
+};
+
 /* A device. Made at open, never freed: other devices map its word, and its
    loss is read for the life of the process. The mutex guards [turn],
    [inside], the record and the moves of [state] but ENDED to STOPPED;
@@ -92,6 +109,7 @@ struct rig_device {
   int inside; /* counted calls in flight, the turn holder included */
   struct rig_entry *record;
   int nrecord, crecord;
+  struct rig_times times;
 };
 
 /* A memory's stamps: the point of its last write and, per device, the point
@@ -192,6 +210,9 @@ struct rig_run {
   uint8_t *args;
   size_t nargs, cargs;
   uint64_t *addresses; /* each slot's address, for launches' refs */
+  /* Whether the submit times its value, and the device's time pair it took
+     at the hand-over, -1 for none. */
+  int timed, pair;
 };
 
 /* Whether the work up to the point [p] is done: its device's word, as the

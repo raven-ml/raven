@@ -267,6 +267,11 @@ val countdown : nativeint
 (** [countdown] is a fill taking one from the 64-bit word its argument points
     at, which fails if that makes the word zero. *)
 
+val ready : nativeint
+(** [ready] is the address of [void ready(void *word, uint64_t c)], which
+    stores [c] at [word] with release order, as a rail's ready function
+    does. *)
+
 val carry : nativeint
 (** [carry] is a fill copying bytes: its argument's three 64-bit words are the
     destination's address, the source's and the number of bytes. *)

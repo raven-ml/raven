@@ -44,7 +44,4 @@ val counters : unit -> string list
 val traced : unit -> bool
 val now : unit -> int
 val span : string -> (unit -> 'a) -> 'a
-val after : int -> (unit -> event list) -> unit
-val record : int -> lane:string -> name:string -> buffer -> unit
-val timestamp : nativeint
 val output_chrome_trace : out_channel -> event list -> unit
