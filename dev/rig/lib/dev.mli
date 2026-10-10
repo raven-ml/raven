@@ -204,10 +204,13 @@ val wait : device -> int -> unit
     exception one raised once all ran. Raises [Invalid_argument] if [v] exceeds
     [submitted d], and {!Lost} if [d] is or becomes lost. *)
 
-val wait_point : int -> unit
-(** [wait_point p] is {!wait} on [p]'s device and value, committing as it does,
-    except that a point that is done returns, also on a device lost since: it
-    raises {!Lost} only if [p] is not done and its device is or becomes lost. *)
+val wait_point : int -> bool -> int -> unit
+(** [wait_point st every p] is {!wait} on [p]'s device and value, committing as
+    it does, except that a point that is done returns, also on a device lost
+    since: it raises {!Lost} only if [p] is not done and its device is or
+    becomes lost. [p] is a point of the stamps [st] an access follows: their
+    last write's and, if [every], their uses'. Before it blocks, it raises the
+    {!Lost} of any of those a lost device did not reach. *)
 
 val after : device -> int -> (unit -> unit) -> unit
 (** [after d v f] runs [f] in the first {!wait} on [d] that finds [v] reached,

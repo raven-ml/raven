@@ -31,6 +31,22 @@ let iter_write f st =
     let p = stamps_get st 0 in
     if p > 0 then f p
 
+(* Waits for the stamps [st]'s points, as [iter_points] and [iter_write] walk
+   them, with no closure: the walk is a host access's every wait. *)
+let rec wait_from st k =
+  let p = stamps_get st k in
+  if p <> -1 then begin
+    if p <> 0 then Dev.wait_point st true p;
+    wait_from st (k + 1)
+  end
+
+let wait_points st = if st <> 0 then wait_from st 0
+
+let wait_write st =
+  if st <> 0 then
+    let p = stamps_get st 0 in
+    if p > 0 then Dev.wait_point st false p
+
 let for_all_points f st =
   let ok = ref true in
   iter_points (fun p -> if not (f p) then ok := false) st;

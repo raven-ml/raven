@@ -81,21 +81,15 @@ type t = {
   mutable ended : bool; [@atomic]
 }
 
-(* Where a buffer's bytes lie, for the overlap check, as [Buffer.overlaps]
-   places them: a space and the first byte within it. This process's host
-   memory is space 0, at its host addresses. Other memory is a space of its own,
-   at its offsets: minus its stamps' address, which no other memory shares. A
-   device's addresses or handles would not do: memories of a handle-named device
-   lie at handles a few bytes apart. *)
-let host_placed m = m.host >= 0 && Option.is_none m.dev.machine
+(* Where a buffer's bytes lie, for the overlap check, as [rig_buffer_span] in
+   [rig.h] places them: a space and the first byte within it. *)
+external space : buffer -> (int[@untagged])
+  = "caml_rig_span_space_byte" "caml_rig_span_space"
+[@@noalloc]
 
-let space b =
-  let m = b.mem.root in
-  if host_placed m then 0 else -m.entry.stamps
-
-let first b =
-  let m = b.mem.root in
-  if host_placed m then m.host + b.offset else b.offset
+external first : buffer -> (int[@untagged])
+  = "caml_rig_span_first_byte" "caml_rig_span_first"
+[@@noalloc]
 
 let refuse () = invalid_arg "Rig.Claim.with_: a donated buffer overlaps another"
 

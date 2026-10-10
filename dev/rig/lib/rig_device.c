@@ -172,6 +172,18 @@ int rig_point_done(uint64_t p) {
              RIG_VALUE(p);
 }
 
+/* The reached value is stored before the state leaves RIG_LIVE, and never
+   after: a point found lost stays lost. */
+int rig_point_lost(uint64_t p) {
+  struct rig_device *d = device_of(RIG_INDEX(p));
+  if (d == NULL) return 0;
+  int s = state(d);
+  if (s == RIG_LIVE) return 0;
+  return s == RIG_ORPHANED ||
+         atomic_load_explicit(&d->reached, memory_order_relaxed) <
+             RIG_VALUE(p);
+}
+
 value caml_rig_done(value v_p) {
   return Val_bool(rig_point_done((uint64_t)Long_val(v_p)));
 }

@@ -976,6 +976,17 @@ value rig_test_reader_release(value v_b) {
   return Val_unit;
 }
 
+value rig_test_reader_span(value v_b) {
+  CAMLparam1(v_b);
+  CAMLlocal1(r);
+  intnat space, first;
+  rig_buffer_span(v_b, &space, &first);
+  r = caml_alloc_tuple(2);
+  Store_field(r, 0, Val_long(space));
+  Store_field(r, 1, Val_long(first));
+  CAMLreturn(r);
+}
+
 /* How many holders share [v_ba]'s storage, as its proxy counts them. */
 value rig_test_shares(value v_ba) {
   struct caml_ba_proxy *p = Caml_ba_array_val(v_ba)->proxy;

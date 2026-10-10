@@ -198,6 +198,45 @@ size_t rig_buffer_bytes(value b) {
   return (size_t)Long_val(Field(b, BUFFER_LENGTH));
 }
 
+/* Memory of this process's host lies at its host address. Other memory is
+   named by its root's stamps, which no other memory shares: a device's
+   addresses or handles would not do, as memories of a handle-named device
+   lie at handles a few bytes apart. A root's entry changes only for host
+   memory, which this does not read it for. */
+void rig_buffer_span(value b, intnat *space, intnat *first) {
+  value root = Field(Field(b, BUFFER_MEM), MEMORY_ROOT);
+  intnat host = Long_val(Field(root, MEMORY_HOST));
+  intnat offset = Long_val(Field(b, BUFFER_OFFSET));
+  if (host >= 0 && Field(Field(root, MEMORY_DEV), DEVICE_MACHINE) == Val_none) {
+    *space = 0;
+    *first = host + offset;
+    return;
+  }
+  *space = Long_val(load_field(load_field(root, MEMORY_ENTRY), ENTRY_STAMPS));
+  *first = offset;
+}
+
+/* rig_buffer_span for claim.ml, whose overlap check sorts by it. */
+intnat caml_rig_span_space(value b) {
+  intnat space, first;
+  rig_buffer_span(b, &space, &first);
+  return space;
+}
+
+intnat caml_rig_span_first(value b) {
+  intnat space, first;
+  rig_buffer_span(b, &space, &first);
+  return first;
+}
+
+value caml_rig_span_space_byte(value b) {
+  return Val_long(caml_rig_span_space(b));
+}
+
+value caml_rig_span_first_byte(value b) {
+  return Val_long(caml_rig_span_first(b));
+}
+
 const char *rig_buffer_why(value b) {
   value claim = Field(Field(b, BUFFER_MEM), MEMORY_CLAIM);
   value g = atomic_load_explicit((_Atomic value *)&Field(claim, CLAIM_GEN),
@@ -216,29 +255,54 @@ static int dev_lost(value mem) {
   return atomic_load_explicit(&d->state, memory_order_acquire) != RIG_LIVE;
 }
 
-static int uses_done(struct rig_stamps *s) {
+/* What [a], the answer for the points before [p], becomes with [p]: a
+   point a lost device did not reach answers RIG_LOST whatever else does,
+   so a wait gets past none; one not done answers RIG_WAIT. */
+static enum rig_claim follow(enum rig_claim a, uint64_t p) {
+  if (a == RIG_LOST || rig_point_done(p)) return a;
+  return rig_point_lost(p) ? RIG_LOST : RIG_WAIT;
+}
+
+static enum rig_claim follow_uses(enum rig_claim a, struct rig_stamps *s) {
+  for (; s != NULL && a != RIG_LOST;
+       s = atomic_load_explicit(&s->next, memory_order_acquire))
+    for (int i = 0; i < RIG_USES; i++) {
+      uint64_t p = atomic_load_explicit(&s->use[i], memory_order_acquire);
+      if (RIG_VALUE(p) != 0) a = follow(a, p);
+    }
+  return a;
+}
+
+/* The answer for the work of the stamps [s] an access must follow: that
+   of the last write, or of every use if [every]. A use word that a
+   submission reserved holds no value until its first raise. */
+static enum rig_claim follow_stamps(struct rig_stamps *s, int every) {
+  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
+  enum rig_claim a = w != 0 ? follow(RIG_CLAIMED, w) : RIG_CLAIMED;
+  return every ? follow_uses(a, s) : a;
+}
+
+/* The first point of the stamps [v_st] a lost device did not reach: their
+   last write's, then, if [v_every], their uses'; 0 for none. A wait that
+   would block reads it first, so it waits out no work ahead of a loss. */
+value caml_rig_stamps_lost(value v_st, value v_every) {
+  struct rig_stamps *s = (struct rig_stamps *)Long_val(v_st);
+  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
+  if (w != 0 && rig_point_lost(w)) return Val_long((intnat)w);
+  if (!Bool_val(v_every)) return Val_long(0);
   for (; s != NULL; s = atomic_load_explicit(&s->next, memory_order_acquire))
     for (int i = 0; i < RIG_USES; i++) {
       uint64_t p = atomic_load_explicit(&s->use[i], memory_order_acquire);
-      if (RIG_VALUE(p) != 0 && !rig_point_done(p)) return 0;
+      if (RIG_VALUE(p) != 0 && rig_point_lost(p)) return Val_long((intnat)p);
     }
-  return 1;
-}
-
-/* Whether the work of the stamps [s] that an access must follow is done:
-   that of the last write, or of every use if [every]. A use word that a
-   submission reserved holds no value until its first raise. */
-static int stamps_done(struct rig_stamps *s, int every) {
-  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
-  if (w != 0 && !rig_point_done(w)) return 0;
-  return !every || uses_done(s);
+  return Val_long(0);
 }
 
 /* Claims first, then checks [b] under the claim: the compare-and-set
    follows the release of any donation that consumed the memory, so the
    checks see its consumption and its stamps. Work that is not done keeps
    the claim: the caller waits under it, so no donation consumes the memory
-   between the wait and the access. */
+   between the wait and the access, and a loss's wait raises it. */
 enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
   value mem = Field(b, BUFFER_MEM);
   value claim = Field(mem, MEMORY_CLAIM);
@@ -255,13 +319,11 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
     return RIG_DEAD;
   }
   value root = Field(mem, MEMORY_ROOT);
+  if (dev_lost(mem) || (root != mem && dev_lost(root))) return RIG_LOST;
   value entry = load_field(root, MEMORY_ENTRY);
   struct rig_stamps *s =
       (struct rig_stamps *)Long_val(load_field(entry, ENTRY_STAMPS));
-  if (dev_lost(mem) || (root != mem && dev_lost(root)) ||
-      (s != NULL && !stamps_done(s, access == RIG_READ_WRITE)))
-    return RIG_WAIT;
-  return RIG_CLAIMED;
+  return s == NULL ? RIG_CLAIMED : follow_stamps(s, access == RIG_READ_WRITE);
 }
 
 /* Rig.Buffer.wait, which buffer.ml registers, found once. */

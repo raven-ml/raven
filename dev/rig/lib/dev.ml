@@ -26,6 +26,11 @@ external c_committed : int -> int = "caml_rig_committed" [@@noalloc]
 external c_commit : int -> bool -> int = "caml_rig_commit"
 external c_state : int -> int = "caml_rig_state" [@@noalloc]
 external c_done : int -> bool = "caml_rig_done" [@@noalloc]
+
+(* The first point of the stamps [st] that a lost device did not reach, among
+   their last write's and, if [every], their uses', [0] for none. *)
+external c_stamps_lost : int -> bool -> int = "caml_rig_stamps_lost"
+[@@noalloc]
 external c_why : int -> string = "caml_rig_why"
 external c_lose : int -> string -> bool -> bool = "caml_rig_lose"
 external c_faulted : int -> bool = "caml_rig_faulted" [@@noalloc]
@@ -490,11 +495,19 @@ let wait_until_lost d v w =
 
 (* A lost device's point is done if its word reached it before the loss: its
    stop raises the word whatever ran. The word is read before the loss is, so a
-   word the stop raised shows the loss. *)
-let wait_point p =
+   word the stop raised shows the loss. Before it blocks, it raises the loss of
+   any point of [st] a lost device did not reach, so that it waits out no work
+   ahead of a loss. *)
+let wait_point st every p =
   let d = of_index (Point.index p) and v = Point.value p in
   let w = word d in
-  let w = if w >= v || is_lost d then w else wait_until_lost d v w in
+  let w =
+    if w >= v || is_lost d then w
+    else
+      let q = c_stamps_lost st every in
+      if q <> 0 then raise_lost (of_index (Point.index q));
+      wait_until_lost d v w
+  in
   if not (is_lost d) then
     begin if d.afters != [] then run_afters d w
     end

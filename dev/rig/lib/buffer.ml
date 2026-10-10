@@ -127,8 +127,8 @@ let borrow d b =
    last use, including when a Read_write wait resumes the stamps walk. *)
 let wait_points b access =
   let e = b.mem.root.entry in
-  if access = Read then Memory.iter_write Dev.wait_point e.stamps
-  else Memory.iter_points Dev.wait_point e.stamps
+  if access = Read then Memory.wait_write e.stamps
+  else Memory.wait_points e.stamps
 
 let wait b access =
   check_live "Buffer.wait" b;

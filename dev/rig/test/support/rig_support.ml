@@ -565,13 +565,14 @@ module Reader = struct
   external bytes : Rig.Buffer.t -> int = "rig_test_reader_bytes"
   external why : Rig.Buffer.t -> string option = "rig_test_reader_why"
 
-  type answer = Claimed | Wait | Dead | Exclusive | Read_only
+  type answer = Claimed | Wait | Lost | Dead | Exclusive | Read_only
 
   let pp_answer ppf a =
     Format.pp_print_string ppf
       (match a with
       | Claimed -> "Claimed"
       | Wait -> "Wait"
+      | Lost -> "Lost"
       | Dead -> "Dead"
       | Exclusive -> "Exclusive"
       | Read_only -> "Read_only")
@@ -585,4 +586,6 @@ module Reader = struct
 
   external release : Rig.Buffer.t -> unit = "rig_test_reader_release"
   [@@noalloc]
+
+  external span : Rig.Buffer.t -> int * int = "rig_test_reader_span"
 end

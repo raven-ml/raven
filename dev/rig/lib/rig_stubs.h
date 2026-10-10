@@ -201,6 +201,11 @@ struct rig_run {
    the parent's. */
 int rig_point_done(uint64_t p);
 
+/* Whether the point [p] is a lost device's and was not reached when the
+   device was lost: no wait gets past it. A point of a device a forked
+   child inherited is lost. */
+int rig_point_lost(uint64_t p);
+
 /* The host's page size in bytes. */
 size_t rig_page_bytes(void);
 

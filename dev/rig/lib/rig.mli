@@ -435,8 +435,9 @@ module Buffer : sig
       submitted after it returns is the caller's to exclude, by a claim taken
       before the wait ({!Claim}) or a lock of its own.
 
-      Raises [Invalid_argument] if [b] is dead, and {!Lost} as {!Lost} states.
-  *)
+      Raises [Invalid_argument] if [b] is dead, and {!Lost} as {!Lost} states:
+      at once, before it waits for anything, for a loss already present when it
+      is called, and as it finds it for one during the wait. *)
 
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they are
@@ -581,11 +582,11 @@ module Buffer : sig
   (** {1:low Low level}
 
       For the libraries that submit work. C code reads a buffer's host address,
-      its length and the reason it is dead with [rig_buffer_host],
-      [rig_buffer_bytes] and [rig_buffer_why], claims its memory with
-      [rig_buffer_claim] and [rig_buffer_release], and waits under the claim
-      with [rig_buffer_wait], which runs {!wait}; all are declared in
-      [rig.h]. *)
+      its length, where its bytes lie and the reason it is dead with
+      [rig_buffer_host], [rig_buffer_bytes], [rig_buffer_span] and
+      [rig_buffer_why], claims its memory with [rig_buffer_claim] and
+      [rig_buffer_release], and waits under the claim with [rig_buffer_wait],
+      which runs {!wait}; all are declared in [rig.h]. *)
 
   val address : t -> int
   (** [address b] is the address of [b]'s first byte as [b]'s device's work

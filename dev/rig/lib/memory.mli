@@ -44,6 +44,14 @@ val iter_write : (int -> unit) -> int -> unit
 (** [iter_write f st] is [f] of [st]'s last write, if any. It allocates nothing.
 *)
 
+val wait_points : int -> unit
+(** [wait_points st] is {!Dev.wait_point} of each point of [st], as
+    {!iter_points} walks them, for an access that follows every use. *)
+
+val wait_write : int -> unit
+(** [wait_write st] is {!Dev.wait_point} of [st]'s last write, if any, for an
+    access that follows the last write. *)
+
 val check_points : int -> unit
 (** [check_points st] raises {!Dev.Lost} if a point of [st] is on a lost device
     and not done. *)

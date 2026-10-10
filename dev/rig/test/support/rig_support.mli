@@ -321,7 +321,7 @@ module Reader : sig
   (** [why b] is [rig_buffer_why b], [None] for [NULL]. *)
 
   (** The answers of [rig_buffer_claim], in [enum rig_claim]'s order. *)
-  type answer = Claimed | Wait | Dead | Exclusive | Read_only
+  type answer = Claimed | Wait | Lost | Dead | Exclusive | Read_only
 
   val pp_answer : Format.formatter -> answer -> unit
 
@@ -334,4 +334,7 @@ module Reader : sig
 
   val release : Rig.Buffer.t -> unit
   (** [release b] is [rig_buffer_release b]. *)
+
+  val span : Rig.Buffer.t -> int * int
+  (** [span b] is the space and first byte [rig_buffer_span b] gives. *)
 end

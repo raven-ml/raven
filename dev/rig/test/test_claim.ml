@@ -616,19 +616,24 @@ let test_c_transport () =
   R.release m
 
 let lost = function Rig.Lost _ -> true | _ -> false
+let lost_by d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
-(* A lost device's memory answers Wait even once its work on it was reached:
-   the wait under the claim raises Lost and leaves the claim held. *)
+(* Loses [d]: its next submit fails. *)
+let lose d p =
+  P.fail p;
+  try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
+  with Rig.Lost _ -> ()
+
+(* A lost device's memory answers Lost even once its work on it was reached,
+   holding the claim: the wait under it raises Lost. *)
 let test_c_lost () =
   let d, p = P.open_ "claim:c-lost" in
   let m = B.create d 64 in
   write d m;
   ignore (P.run p);
-  P.fail p;
-  (try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
-   with Rig.Lost _ -> ());
-  equal ~msg:"reached, lost" answer R.Wait (R.claim m B.Read);
-  raises_match lost (fun () -> R.wait m B.Read);
+  lose d p;
+  equal ~msg:"reached, lost" answer R.Lost (R.claim m B.Read);
+  raises_match (lost_by d) (fun () -> R.wait m B.Read);
   Claim.release m;
   raises_match ~msg:"the one claim released"
     (Exn.invalid_arg ~substring:"no read claim")
@@ -647,7 +652,7 @@ let test_c_lost_waiting () =
     (Exn.invalid_arg ~substring:"no read claim")
     (fun () -> Claim.release m)
 
-(* Other memory answers Wait for a point a lost device did not reach, and
+(* Other memory answers Lost for a point a lost device did not reach, and
    Claimed for one it reached: its stop's last value in the word reaches
    nothing. *)
 let test_c_lost_points () =
@@ -657,13 +662,59 @@ let test_c_lost_points () =
   write d (require_some (B.borrow d reached));
   ignore (P.run p);
   write d (require_some (B.borrow d unreached));
-  P.fail p;
-  (try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
-   with Rig.Lost _ -> ());
+  lose d p;
   equal ~msg:"reached" answer R.Claimed (R.claim reached B.Read_write);
   R.release reached;
-  equal ~msg:"unreached" answer R.Wait (R.claim unreached B.Read);
+  equal ~msg:"unreached" answer R.Lost (R.claim unreached B.Read);
+  raises_match (lost_by d) (fun () -> R.wait unreached B.Read);
   R.release unreached
+
+(* A lost device's unreached read is followed by a write, not a read. *)
+let test_c_lost_reads () =
+  let d, p = P.open_ "claim:c-lost-reads" in
+  let m = B.create Rig.host (1 lsl 16) in
+  read d (require_some (B.borrow d m));
+  lose d p;
+  equal ~msg:"for reading" answer R.Claimed (R.claim m B.Read);
+  R.release m;
+  equal ~msg:"for writing" answer R.Lost (R.claim m B.Read_write);
+  R.release m
+
+(* A loss behind a live device's unreached work answers Lost, whichever
+   device's use came first, and the wait raises the lost device's Lost at
+   once: the live device's sleeps block at its gate, so a wait for its work
+   would never return. *)
+let test_c_lost_behind_live () =
+  let order lost_first =
+    let name = if lost_first then "claim:c-behind-1" else "claim:c-behind-2" in
+    let live, lp = P.open_ (name ^ "-live") in
+    let d, p = P.open_ (name ^ "-lost") in
+    let m = B.create Rig.host (1 lsl 16) in
+    let read_on d = read d (require_some (B.borrow d m)) in
+    if lost_first then (read_on d; read_on live) else (read_on live; read_on d);
+    lose d p;
+    P.gate lp;
+    equal ~msg:"for writing" answer R.Lost (R.claim m B.Read_write);
+    raises_match (lost_by d) (fun () -> R.wait m B.Read_write);
+    R.release m;
+    equal ~msg:"for reading" answer R.Claimed (R.claim m B.Read);
+    R.release m;
+    P.open_gate lp
+  in
+  order true;
+  order false
+
+(* A borrow on a lost device answers Lost; the memory it maps lives on. *)
+let test_c_lost_borrow () =
+  let d, p = P.open_ "claim:c-lost-borrow" in
+  let m = B.create Rig.host (1 lsl 16) in
+  let b = require_some (B.borrow d m) in
+  lose d p;
+  equal ~msg:"the borrow" answer R.Lost (R.claim b B.Read);
+  raises_match (lost_by d) (fun () -> R.wait b B.Read);
+  R.release b;
+  equal ~msg:"the memory" answer R.Claimed (R.claim m B.Read_write);
+  R.release m
 
 (* Fixed memory is ordered by its access: a claim to read waits for an
    unreached submission that writes it, and for none that reads it. *)
@@ -773,12 +824,17 @@ let tests =
           test_c_wait;
         test "behind a transport a claim reads the word a wait read"
           test_c_transport;
-        test "a wait on a lost device's memory raises Lost under the claim"
+        test "a claim on a lost device's memory answers Lost under the claim"
           test_c_lost;
         test "a device lost during a wait from C raises Lost under the claim"
           test_c_lost_waiting;
-        test "a claim on memory a lost device did not reach waits"
+        test "a claim on memory a lost device did not reach answers Lost"
           test_c_lost_points;
+        test "a lost device's unreached read is lost for writing only"
+          test_c_lost_reads;
+        test "a loss behind a live device's unreached work answers Lost"
+          test_c_lost_behind_live;
+        test "a borrow on a lost device answers Lost" test_c_lost_borrow;
         test "a claim on fixed memory follows its uses by their access"
           test_c_fixed;
       ];
