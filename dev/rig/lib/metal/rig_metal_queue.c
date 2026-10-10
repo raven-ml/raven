@@ -224,14 +224,7 @@ static void launch(struct rig_metal_queue *q, const struct rig_part *p,
   const struct rig_block *b = (const void *)(args + p->launch.block);
   _Alignas(16) uint8_t params[RIG_PARAMS];
   uint32_t n = p->launch.params;
-  memcpy(params, b->params, n);
-  for (int j = 0; j < p->launch.nrefs; j++) {
-    const struct rig_ref *r = &p->launch.refs[j];
-    uint64_t w;
-    memcpy(&w, params + r->at, sizeof w);
-    w += slots[r->slot];
-    memcpy(params + r->at, &w, sizeof w);
-  }
+  rig_params(params, p, args, slots);
   id<MTLComputeCommandEncoder> c = q->encoder;
   [c setComputePipelineState:e->pipeline];
   if (n > 0) [c setBytes:params length:n atIndex:0];
