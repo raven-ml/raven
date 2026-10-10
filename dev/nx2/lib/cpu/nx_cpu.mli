@@ -52,6 +52,8 @@
     chunk's total is its terms reduced in that order. The carry into the
     first chunk is [+0] ([1]), into the next the carry into this one
     combined with this one's total; each result of a chunk is its carry
-    combined with the chunk's terms up to it, left to right. *)
+    combined with the chunk's terms up to it, left to right.
+
+    [gather], [scatter], [sort], [assemble] and [fold] answer [Declined]. *)
 
 include Nx_kernel.S

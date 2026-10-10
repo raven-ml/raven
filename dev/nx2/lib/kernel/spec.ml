@@ -101,23 +101,84 @@ let is_element (D.Any dt) b =
   | 8 when D.equal dt D.Bool -> Char.code b.[0] <= 1
   | _ -> true
 
-let check_pad fn k (p : pad) =
+let check_pad fn what (p : pad) =
   let r = Array.length p.lo in
   if Array.length p.hi <> r || Array.length p.interior <> r then
-    invalid_argf "%s: load %d's lo, hi and interior differ in length" fn k;
+    invalid_argf "%s: %s's lo, hi and interior differ in length" fn what;
   if Array.exists (fun i -> i < 0) p.interior then
-    invalid_argf "%s: load %d's interior padding is negative" fn k;
+    invalid_argf "%s: %s's interior padding is negative" fn what;
   Array.iteri
     (fun w (x : Nx_array.Move.window) ->
       let prev = if w = 0 then -1 else p.windows.(w - 1).axis in
       if x.axis <= prev || x.axis >= r then
-        invalid_argf "%s: load %d's window %d is on axis %d" fn k w x.axis;
+        invalid_argf "%s: %s's window %d is on axis %d" fn what w x.axis;
       if x.size < 1 || x.step < 1 || x.dilation < 1 then
-        invalid_argf "%s: load %d's window %d is empty" fn k w)
+        invalid_argf "%s: %s's window %d is empty" fn what w)
     p.windows
 
 let record_bytes (p : pad) =
   at_geometry + (8 * 3 * Array.length p.lo) + (8 * 4 * Array.length p.windows)
+
+(* Writes the padding record of [p] and the fill's bits [fill] at [at]. *)
+let put_pad b at fill (p : pad) =
+  let r = Array.length p.lo in
+  set b at r;
+  set b (at + 4) (Array.length p.windows);
+  Bytes.blit_string fill 0 b (at + at_fill) (String.length fill);
+  let g = at + at_geometry in
+  for i = 0 to r - 1 do
+    set64 b (g + (8 * i)) p.lo.(i);
+    set64 b (g + (8 * (r + i))) p.hi.(i);
+    set64 b (g + (8 * ((2 * r) + i))) p.interior.(i)
+  done;
+  Array.iteri
+    (fun w (x : Nx_array.Move.window) ->
+      let at = g + (8 * 3 * r) + (32 * w) in
+      set64 b at x.axis;
+      set64 b (at + 8) x.size;
+      set64 b (at + 16) x.step;
+      set64 b (at + 24) x.dilation)
+    p.windows
+
+(* The padding record at [at]. *)
+let get_pad s at =
+  let r = int32 s at and nw = int32 s (at + 4) in
+  let g = at + at_geometry in
+  let axis o = Array.init r (fun i -> get64 s (g + (8 * ((o * r) + i)))) in
+  let windows =
+    Array.init nw (fun w ->
+        let at = g + (8 * 3 * r) + (32 * w) in
+        {
+          Nx_array.Move.axis = get64 s at;
+          size = get64 s (at + 8);
+          step = get64 s (at + 16);
+          dilation = get64 s (at + 24);
+        })
+  in
+  { lo = axis 0; hi = axis 1; interior = axis 2; windows }
+
+(* The shape an operand of shape [x] has once padded by [p], or why it has
+   none; [what] names the operand in messages. *)
+let padded_shape what (p : pad) x =
+  let r = Array.length p.lo in
+  if Array.length x <> r then
+    Error (Printf.sprintf "%s has rank %d, its pad %d" what (Array.length x) r)
+  else
+    let padded =
+      Array.mapi
+        (fun i d ->
+          p.lo.(i) + p.hi.(i) + d + if d > 0 then p.interior.(i) * (d - 1) else 0)
+        x
+    in
+    match Array.find_index (fun d -> d < 0) padded with
+    | Some i -> Error (Printf.sprintf "%s's padded axis %d is negative" what i)
+    | None -> (
+        if p.windows = [||] then Ok padded
+        else
+          match Nx_array.Move.shape (Window p.windows) padded with
+          | y -> Ok y
+          | exception Invalid_argument msg ->
+              Error (Printf.sprintf "%s's windows: %s" what msg))
 
 (* nx_spec.h's code of each reduction, by index. *)
 let kinds =
@@ -168,7 +229,7 @@ let loop fn family p ~loads ~axes ~reductions =
       | Padded { fill; pad } ->
           if not (is_element ins.(k) fill) then
             invalid_argf "%s: load %d's fill is no element of its dtype" fn k;
-          check_pad fn k pad)
+          check_pad fn (Printf.sprintf "load %d" k) pad)
     loads;
   let n = Array.length loads in
   let na = Array.length axes and nr = Array.length reductions in
@@ -209,25 +270,7 @@ let loop fn family p ~loads ~axes ~reductions =
       set b (at_loads + (4 * k)) ats.(k);
       match l with
       | Plain -> ()
-      | Padded { fill; pad } ->
-          let at = ats.(k) and r = Array.length pad.lo in
-          set b at r;
-          set b (at + 4) (Array.length pad.windows);
-          Bytes.blit_string fill 0 b (at + at_fill) (String.length fill);
-          let g = at + at_geometry in
-          for i = 0 to r - 1 do
-            set64 b (g + (8 * i)) pad.lo.(i);
-            set64 b (g + (8 * (r + i))) pad.hi.(i);
-            set64 b (g + (8 * ((2 * r) + i))) pad.interior.(i)
-          done;
-          Array.iteri
-            (fun w (x : Nx_array.Move.window) ->
-              let at = g + (8 * 3 * r) + (32 * w) in
-              set64 b at x.axis;
-              set64 b (at + 8) x.size;
-              set64 b (at + 16) x.step;
-              set64 b (at + 24) x.dilation)
-            pad.windows)
+      | Padded { fill; pad } -> put_pad b ats.(k) fill pad)
     loads;
   Bytes.unsafe_to_string b
 
@@ -286,22 +329,9 @@ let load s k =
   let at = int32 s (at_loads + (4 * k)) in
   if at = 0 then Plain
   else
-    let r = int32 s at and nw = int32 s (at + 4) in
     let (D.Any dt) = (Prog.ins (prog s)).(k) in
     let fill = String.sub s (at + at_fill) (D.bytes dt 1) in
-    let g = at + at_geometry in
-    let axis o = Array.init r (fun i -> get64 s (g + (8 * ((o * r) + i)))) in
-    let windows =
-      Array.init nw (fun w ->
-          let at = g + (8 * 3 * r) + (32 * w) in
-          {
-            Nx_array.Move.axis = get64 s at;
-            size = get64 s (at + 8);
-            step = get64 s (at + 16);
-            dilation = get64 s (at + 24);
-          })
-    in
-    Padded { fill; pad = { lo = axis 0; hi = axis 1; interior = axis 2; windows } }
+    Padded { fill; pad = get_pad s at }
 
 let loads s = Array.init (int32 s at_nloads) (load s)
 
@@ -309,29 +339,7 @@ let loads s = Array.init (int32 s at_nloads) (load s)
 let loaded s k x =
   match load s k with
   | Plain -> Ok x
-  | Padded { pad; _ } -> (
-      let r = Array.length pad.lo in
-      if Array.length x <> r then
-        Error (Printf.sprintf "operand %d has rank %d, its pad %d" k
-                 (Array.length x) r)
-      else
-        let padded =
-          Array.mapi
-            (fun i d ->
-              pad.lo.(i) + pad.hi.(i) + d
-              + if d > 0 then pad.interior.(i) * (d - 1) else 0)
-            x
-        in
-        match Array.find_index (fun d -> d < 0) padded with
-        | Some i ->
-            Error (Printf.sprintf "operand %d's padded axis %d is negative" k i)
-        | None -> (
-            if pad.windows = [||] then Ok padded
-            else
-              match Nx_array.Move.shape (Window pad.windows) padded with
-              | y -> Ok y
-              | exception Invalid_argument msg ->
-                  Error (Printf.sprintf "operand %d's windows: %s" k msg)))
+  | Padded { pad; _ } -> padded_shape (Printf.sprintf "operand %d" k) pad x
 
 (* The one shape the operands of shapes [ins] have once loaded. *)
 let loaded_shape s ins =
@@ -396,6 +404,11 @@ let narrow_acc (D.Any dt) =
       true
   | _ -> false
 
+(* CR: Validate and encode each pair from a single read. Another domain can
+   replace contracting.(0) with (-1, 0) between these passes; the returned
+   descriptor reaches Contract_view.fill's C shift before its rank check.
+   One pass preserves the checked-descriptor invariant without copying.
+   Prog.v has the same check-then-reread pattern over its caller arrays. *)
 let contract ~batch ~contracting ~acc ~out ~init =
   let fn = "Nx_kernel.Spec.contract" in
   if narrow_acc acc then begin
@@ -505,11 +518,246 @@ let contract_shapes s ins =
                    pp_shape y)
           | _ -> Ok [| y |])
 
+(* Gathers, scatters and sorts. nx_spec_axis: the family, the axis, a
+   scatter's combine or a sort's direction, a scatter's uniqueness, then an
+   int64, the elements a sort keeps or -1 for all. *)
+
+type gather = [ `Gather ]
+type scatter = [ `Scatter ]
+type sort = [ `Sort ]
+
+let family_gather = 5
+let family_scatter = 6
+let family_sort = 7
+let at_axis = 4
+let at_combine = 8
+let at_unique = 12
+let at_k = 16
+let axis_bytes = 24
+
+(* nx_spec.h's code of each combine, by index. *)
+let combines : combine array = [| Set; Add; Max; Min |]
+
+let check_axis fn axis =
+  if axis < 0 || axis >= max_rank then
+    invalid_argf "%s: axis %d outside [0, %d)" fn axis max_rank
+
+let axis_spec family ~axis ~second ~unique ~k =
+  let b = Bytes.make axis_bytes '\000' in
+  set b at_family family;
+  set b at_axis axis;
+  set b at_combine second;
+  set b at_unique unique;
+  set64 b at_k k;
+  Bytes.unsafe_to_string b
+
+let gather ~axis =
+  check_axis "Nx_kernel.Spec.gather" axis;
+  axis_spec family_gather ~axis ~second:0 ~unique:0 ~k:(-1)
+
+let scatter c ~unique ~axis =
+  check_axis "Nx_kernel.Spec.scatter" axis;
+  let code = Option.get (Array.find_index (( = ) c) combines) in
+  axis_spec family_scatter ~axis ~second:code ~unique:(Bool.to_int unique)
+    ~k:(-1)
+
+let sort ~axis ~descending ~k =
+  let fn = "Nx_kernel.Spec.sort" in
+  check_axis fn axis;
+  (match k with
+  | Some k when k < 0 -> invalid_argf "%s: keeps %d elements" fn k
+  | _ -> ());
+  axis_spec family_sort ~axis ~second:(Bool.to_int descending) ~unique:0
+    ~k:(Option.value k ~default:(-1))
+
+let axis s = int32 s at_axis
+let combine s = combines.(int32 s at_combine)
+let unique s = int32 s at_unique <> 0
+let descending s = int32 s at_combine <> 0
+let k s = match get64 s at_k with -1 -> None | k -> Some k
+
+(* Whether [x] and [y] have one rank, above [axis], and one extent along
+   every other axis. *)
+let off_axis_fits axis x y =
+  Array.length x = Array.length y
+  && axis < Array.length x
+  && Array.for_all Fun.id (Array.mapi (fun i d -> i = axis || d = y.(i)) x)
+
+let axis_shapes s ins =
+  let f = int32 s at_family and a = axis s in
+  let mismatch what x y =
+    Error
+      (Format.asprintf "%s of shape %a against %a along axis %d" what pp_shape
+         x pp_shape y a)
+  in
+  match ins with
+  | [| idx; x |] when f = family_gather ->
+      if off_axis_fits a idx x then Ok [| idx |]
+      else mismatch "positions" idx x
+  | [| into; idx; u |] when f = family_scatter ->
+      if idx <> u then
+        Error
+          (Format.asprintf "positions of shape %a, updates %a" pp_shape idx
+             pp_shape u)
+      else if off_axis_fits a u into then Ok [| into |]
+      else mismatch "updates" u into
+  | [| x |] when f = family_sort -> (
+      if a >= Array.length x then
+        Error (Printf.sprintf "axis %d of a rank %d" a (Array.length x))
+      else
+        match k s with
+        | Some n when n > x.(a) ->
+            Error (Printf.sprintf "keeps %d of an axis of %d" n x.(a))
+        | Some n ->
+            let y = Array.copy x in
+            y.(a) <- n;
+            Ok [| y; y |]
+        | None -> Ok [| x; x |])
+  | _ -> Error (Printf.sprintf "%d operands" (Array.length ins))
+
+(* Assemblies and folds. nx_spec_shaped: the family, the result's rank, the
+   pieces' count, the fill's length in bytes, the byte offset of a fold's
+   padding and a zero, sixteen bytes of fill, then the shape as int64, then
+   per piece a range per axis, its start, count and step; a fold's padding
+   follows, as a padded load's. *)
+
+type assemble = [ `Assemble ]
+type fold = [ `Fold ]
+
+let family_assemble = 8
+let family_fold = 9
+let at_rank = 4
+let at_npieces = 8
+let at_nfill = 12
+let at_pad = 16
+let at_shaped_fill = 24
+let at_shape = 40
+
+let shaped family ~shape ~fill ~regions ~pad =
+  let r = Array.length shape and n = Array.length regions in
+  let at_ranges = at_shape + (8 * r) in
+  let at_p = at_ranges + (24 * r * n) in
+  let len = match pad with None -> at_p | Some p -> at_p + record_bytes p in
+  let b = Bytes.make len '\000' in
+  set b at_family family;
+  set b at_rank r;
+  set b at_npieces n;
+  set b at_nfill (String.length fill);
+  Bytes.blit_string fill 0 b at_shaped_fill (String.length fill);
+  Array.iteri (fun i d -> set64 b (at_shape + (8 * i)) d) shape;
+  Array.iteri
+    (fun j (rs : Nx_array.Move.range array) ->
+      Array.iteri
+        (fun i (x : Nx_array.Move.range) ->
+          let at = at_ranges + (24 * ((j * r) + i)) in
+          set64 b at x.start;
+          set64 b (at + 8) x.count;
+          set64 b (at + 16) x.step)
+        rs)
+    regions;
+  Option.iter
+    (fun p ->
+      set b at_pad at_p;
+      put_pad b at_p "" p)
+    pad;
+  Bytes.unsafe_to_string b
+
+let check_shape fn shape =
+  if Array.length shape > max_rank then
+    invalid_argf "%s: a result of rank %d" fn (Array.length shape);
+  if Array.exists (fun d -> d < 0) shape then
+    invalid_argf "%s: a negative extent" fn
+
+(* The encoders check and write copies of their arrays, which another
+   domain cannot change between the check and the write. *)
+
+let assemble ~shape ~fill regions =
+  let fn = "Nx_kernel.Spec.assemble" in
+  let shape = Array.copy shape and regions = Array.map Array.copy regions in
+  check_shape fn shape;
+  let n = String.length fill in
+  if n < 1 || n > 16 then invalid_argf "%s: a fill of %d bytes" fn n;
+  Array.iteri
+    (fun j rs ->
+      match Nx_array.Move.shape (Slice rs) shape with
+      | _ -> ()
+      | exception Invalid_argument msg ->
+          invalid_argf "%s: region %d: %s" fn j msg)
+    regions;
+  shaped family_assemble ~shape ~fill ~regions ~pad:None
+
+let fold ~shape (p : pad) =
+  let fn = "Nx_kernel.Spec.fold" in
+  let shape = Array.copy shape in
+  let p =
+    {
+      lo = Array.copy p.lo;
+      hi = Array.copy p.hi;
+      interior = Array.copy p.interior;
+      windows = Array.copy p.windows;
+    }
+  in
+  check_shape fn shape;
+  check_pad fn "the pad" p;
+  (match padded_shape "the result" p shape with
+  | Ok _ -> ()
+  | Error msg -> invalid_argf "%s: %s" fn msg);
+  shaped family_fold ~shape ~fill:"" ~regions:[||] ~pad:(Some p)
+
+let shape s = Array.init (int32 s at_rank) (fun i -> get64 s (at_shape + (8 * i)))
+let fill s = String.sub s at_shaped_fill (int32 s at_nfill)
+let pad s = get_pad s (int32 s at_pad)
+
+let regions s =
+  let r = int32 s at_rank in
+  let at_ranges = at_shape + (8 * r) in
+  Array.init (int32 s at_npieces) (fun j ->
+      Array.init r (fun i ->
+          let at = at_ranges + (24 * ((j * r) + i)) in
+          {
+            Nx_array.Move.start = get64 s at;
+            count = get64 s (at + 8);
+            step = get64 s (at + 16);
+          }))
+
+let shaped_shapes s ins =
+  let y = shape s in
+  if int32 s at_family = family_fold then
+    match ins with
+    | [| x |] -> (
+        match padded_shape "the result" (pad s) y with
+        | Ok z when z = x -> Ok [| y |]
+        | Ok z ->
+            Error
+              (Format.asprintf "an operand of shape %a, not %a" pp_shape x
+                 pp_shape z)
+        | Error _ as e -> e)
+    | _ -> Error (Printf.sprintf "%d operands, not 1" (Array.length ins))
+  else
+    let rs = regions s in
+    if Array.length ins <> Array.length rs then
+      Error
+        (Printf.sprintf "%d pieces, not %d" (Array.length ins) (Array.length rs))
+    else
+      let misfit j x =
+        x <> Nx_array.Move.shape (Slice rs.(j)) y
+      in
+      match Array.find_index Fun.id (Array.mapi misfit ins) with
+      | Some j ->
+          Error
+            (Format.asprintf "piece %d of shape %a, its region %a" j pp_shape
+               ins.(j) pp_shape
+               (Nx_array.Move.shape (Slice rs.(j)) y))
+      | None -> Ok [| y |]
+
 let shapes s ins =
   let f = int32 s at_family in
   if f = family_contract then contract_shapes s ins
   else if f = family_map || f = family_reduce || f = family_scan then
     loop_shapes s ins
+  else if f = family_gather || f = family_scatter || f = family_sort then
+    axis_shapes s ins
+  else if f = family_assemble || f = family_fold then shaped_shapes s ins
   else invalid_argf "Nx_kernel.Spec.shapes: family %d" f
 
 (* Views *)

@@ -39,6 +39,34 @@ module Counting = struct
     Atomic.incr count;
     Nx_cpu.map s ~dsts ops
 
+  let reduce s ~dsts ops =
+    Atomic.incr count;
+    Nx_cpu.reduce s ~dsts ops
+
+  let scan s ~dsts ops =
+    Atomic.incr count;
+    Nx_cpu.scan s ~dsts ops
+
+  let gather s ~dst idx x =
+    Atomic.incr count;
+    Nx_cpu.gather s ~dst idx x
+
+  let scatter s ~dst ~into idx u =
+    Atomic.incr count;
+    Nx_cpu.scatter s ~dst ~into idx u
+
+  let sort s ~values ~positions x =
+    Atomic.incr count;
+    Nx_cpu.sort s ~values ~positions x
+
+  let assemble s ~dst pieces =
+    Atomic.incr count;
+    Nx_cpu.assemble s ~dst pieces
+
+  let fold s ~dst x =
+    Atomic.incr count;
+    Nx_cpu.fold s ~dst x
+
   let contract s ~dst ops =
     Atomic.incr count;
     Nx_cpu.contract s ~dst ops

@@ -21,7 +21,12 @@ enum {
   NX_SPEC_CONTRACT = 1,
   NX_SPEC_MAP = 2,
   NX_SPEC_REDUCE = 3,
-  NX_SPEC_SCAN = 4
+  NX_SPEC_SCAN = 4,
+  NX_SPEC_GATHER = 5,
+  NX_SPEC_SCATTER = 6,
+  NX_SPEC_SORT = 7,
+  NX_SPEC_ASSEMBLE = 8,
+  NX_SPEC_FOLD = 9
 };
 
 /* Prog.t: a scalar program. Counts of operands, nodes and outputs, then a
@@ -119,6 +124,41 @@ static inline const int32_t *nx_spec_loop_axes(const nx_spec_loop *m) {
 static inline const nx_spec_reduction *nx_spec_loop_reductions(
     const nx_spec_loop *m) {
   return (const nx_spec_reduction *)(nx_spec_loop_axes(m) + m->naxes);
+}
+
+/* A scatter's combine, in the order of Spec.combine's cases. */
+enum { NX_SCATTER_SET, NX_SCATTER_ADD, NX_SCATTER_MAX, NX_SCATTER_MIN };
+
+/* Spec.gather, Spec.scatter and Spec.sort: the axis; a scatter's combine
+   and 1 where its targets are unique; a sort's direction, 1 descending, and
+   the elements it keeps along its axis, -1 for all. */
+typedef struct {
+  int32_t family; /* NX_SPEC_GATHER, NX_SPEC_SCATTER or NX_SPEC_SORT */
+  int32_t axis;
+  int32_t combine; /* a sort's: descending */
+  int32_t unique;
+  int64_t k;
+} nx_spec_axis;
+
+/* Spec.assemble and Spec.fold: the result's rank and shape. An assembly
+   holds its fill's [nfill] bytes and per piece a range per axis: start,
+   count and step. A fold holds its padding at byte [at_pad], as a loop's
+   load holds one; its fill is unused. */
+typedef struct {
+  int32_t family; /* NX_SPEC_ASSEMBLE or NX_SPEC_FOLD */
+  int32_t rank, npieces, nfill, at_pad, zero;
+  uint8_t fill[16];
+  int64_t shape[]; /* then ranges[npieces][rank][3] */
+} nx_spec_shaped;
+
+/* Piece [j]'s range along axis [i]: its start, count and step. */
+static inline const int64_t *nx_spec_shaped_range(const nx_spec_shaped *s,
+                                                  int j, int i) {
+  return s->shape + s->rank + 3 * ((int64_t)j * s->rank + i);
+}
+
+static inline const nx_spec_pad *nx_spec_shaped_pad(const nx_spec_shaped *s) {
+  return (const nx_spec_pad *)((const uint8_t *)s + s->at_pad);
 }
 
 /* Spec.contract: the dtypes the sum runs in and its result has (nx_dtype.h's

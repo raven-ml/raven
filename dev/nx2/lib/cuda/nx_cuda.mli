@@ -13,7 +13,8 @@
     claim through {!Nx_array.door} until their work is submitted, and answer
     [Done] once it is on [d]'s timeline.
 
-    [apply0] to [apply3] and [map] answer [Declined] for every kind.
+    [apply0] to [apply3], [map], [gather], [scatter], [sort], [assemble] and
+    [fold] answer [Declined] for every case.
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand into its own dtype, read plain, at [float32],

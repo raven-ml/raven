@@ -13,3 +13,9 @@ external prog : Nx_kernel.Prog.t -> string = "nx_kernel_support_prog"
 
 external loop : [< `Map | `Reduce | `Scan ] Nx_kernel.Spec.t -> string
   = "nx_kernel_support_loop"
+
+external axis_fields : [< `Gather | `Scatter | `Sort ] Nx_kernel.Spec.t -> int array
+  = "nx_kernel_support_axis"
+
+external shaped : [< `Assemble | `Fold ] Nx_kernel.Spec.t -> string
+  = "nx_kernel_support_shaped"

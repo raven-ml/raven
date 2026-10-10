@@ -30,3 +30,15 @@ val loop : [< `Map | `Reduce | `Scan ] Nx_kernel.Spec.t -> string
     kind's code, output and dtype's code; then a line per load, [plain], or
     [padded r w f] followed by [lo], [hi], [interior] and each window's axis,
     size, step and dilation, [f] the fill's sixteen bytes in hex. *)
+
+val axis_fields : [< `Gather | `Scatter | `Sort ] Nx_kernel.Spec.t -> int array
+(** [axis_fields s] is [s] read by C through [nx_spec.h]'s [nx_spec_axis]:
+    the family, the axis, the combine or a sort's direction, [unique] and
+    [k]. *)
+
+val shaped : [< `Assemble | `Fold ] Nx_kernel.Spec.t -> string
+(** [shaped s] is [s] read by C through [nx_spec.h]'s [nx_spec_shaped]:
+    [family f fill h], [h] the fill's bytes in hex; a line [shape] followed
+    by its extents; a line [piece] per piece followed by each axis's start,
+    count and step; then for a fold a line [pad r w] followed by [lo], [hi],
+    [interior] and each window's axis, size, step and dilation. *)

@@ -166,3 +166,64 @@ value nx_kernel_support_loop(value s) {
   free(r);
   CAMLreturn(v);
 }
+
+/* The descriptor [s] read through nx_spec_axis: family, axis, combine (a
+   sort's direction), unique and k. */
+value nx_kernel_support_axis(value s) {
+  CAMLparam1(s);
+  CAMLlocal1(r);
+  if (caml_string_length(s) != sizeof(nx_spec_axis))
+    caml_invalid_argument("not an nx_spec_axis");
+  nx_spec_axis c;
+  memcpy(&c, String_val(s), sizeof c);
+  r = caml_alloc_tuple(5);
+  Store_field(r, 0, Val_int(c.family));
+  Store_field(r, 1, Val_int(c.axis));
+  Store_field(r, 2, Val_int(c.combine));
+  Store_field(r, 3, Val_int(c.unique));
+  Store_field(r, 4, Val_long(c.k));
+  CAMLreturn(r);
+}
+
+/* The descriptor [s] read through nx_spec_shaped, copied first: "family f
+   fill h", h its fill's bytes in hex; a line "shape" and its extents; a
+   line "piece" per piece with each axis's start, count and step; then for
+   a fold "pad", its rank, window count, lo, hi, interior and each window's
+   axis, size, step and dilation. */
+value nx_kernel_support_shaped(value s) {
+  CAMLparam1(s);
+  size_t n = caml_string_length(s);
+  nx_spec_shaped *m = malloc(n);
+  if (m == NULL) caml_raise_out_of_memory();
+  memcpy(m, String_val(s), n);
+  size_t cap = 256 + 24 * (size_t)m->rank * (1 + 3 * (size_t)m->npieces) + 8192;
+  char *r = malloc(cap);
+  if (r == NULL) {
+    free(m);
+    caml_raise_out_of_memory();
+  }
+  size_t at = snprintf(r, cap, "family %d fill ", m->family);
+  for (int i = 0; i < m->nfill; i++)
+    at += snprintf(r + at, cap - at, "%02x", m->fill[i]);
+  at += snprintf(r + at, cap - at, "\nshape");
+  for (int i = 0; i < m->rank; i++)
+    at += snprintf(r + at, cap - at, " %lld", (long long)m->shape[i]);
+  for (int j = 0; j < m->npieces; j++) {
+    at += snprintf(r + at, cap - at, "\npiece");
+    for (int i = 0; i < m->rank; i++) {
+      const int64_t *x = nx_spec_shaped_range(m, j, i);
+      at += snprintf(r + at, cap - at, " %lld %lld %lld", (long long)x[0],
+                     (long long)x[1], (long long)x[2]);
+    }
+  }
+  if (m->family == NX_SPEC_FOLD) {
+    const nx_spec_pad *d = nx_spec_shaped_pad(m);
+    at += snprintf(r + at, cap - at, "\npad %d %d", d->rank, d->nwindows);
+    for (int i = 0; i < 3 * d->rank + 4 * d->nwindows; i++)
+      at += snprintf(r + at, cap - at, " %lld", (long long)d->geometry[i]);
+  }
+  free(m);
+  value v = caml_copy_string(r);
+  free(r);
+  CAMLreturn(v);
+}

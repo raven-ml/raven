@@ -35,13 +35,14 @@ module Spec = Spec
 
     [dst] shares no byte with an operand, except one it is identical to
     ({!Nx_array.door}) that the kernel reads only at the result's own index:
-    an operand of [apply1] to [apply3], a [Plain] load of [map], or
-    [contract]'s [init]. A kernel reads such an operand at an index before it
-    writes [dst] there, so the result is the one a fresh [dst] receives. The
-    door refuses an operand that shares a byte with [dst] without being
-    identical to it; an identical operand the kernel reads at other indices,
-    as a gather's source or a contraction's [a] and [b], is the caller's
-    error.
+    an operand of [apply1] to [apply3], a [Plain] load of [map],
+    [contract]'s [init], [scatter]'s [into], or [assemble]'s first piece
+    where its region is the whole result. A kernel reads such an operand at
+    an index before it writes [dst] there, so the result is the one a fresh
+    [dst] receives. The door refuses an operand that shares a byte with
+    [dst] without being identical to it; an identical operand the kernel
+    reads at other indices, as a gather's source or a contraction's [a] and
+    [b], is the caller's error.
 
     A kernel claims [dst] and its operands for the extent of its call through a
     door: [nx_read] of [nx_array.h] for host kernels, {!Nx_array.door} for
@@ -59,14 +60,17 @@ module Spec = Spec
     An [apply] entry answers [Wrong_dtype] for dtypes its kind does not take
     ({!Prog.accepts0} to {!Prog.accepts3}), whatever its caller checked. A
     decline of [apply0] to [apply3] at a base dtype (float32, float64, the 8-
-    to 64-bit integers and bool), or of [reduce] or [scan] of one [Sum],
+    to 64-bit integers and bool), of [reduce] or [scan] of one [Sum],
     [Prod], [Max] or [Min] of a program's one operand into its own dtype, read
-    plain, at a base dtype, is an error its caller raises; elsewhere, and for
-    [map], its caller computes the case from other operations. *)
+    plain, at a base dtype, of [gather] at a dtype of eight bits or more, or
+    of [scatter] with [unique] at such a dtype, is an error its caller
+    raises; elsewhere, and for [map], [sort], [assemble] and [fold], its
+    caller computes the case from other operations. *)
 module type S = sig
   type ('v, 's) a := ('v, 's) Nx_array.t
   type answer := Nx_array.answer
   type any := Nx_array.any
+  type index := (int64, Nx_array.Dtype.int64_elt) Nx_array.t
 
   val name : string
   (** [name] names the kernels in messages, as ["nx.cpu"]. *)
@@ -104,6 +108,41 @@ module type S = sig
   val scan : Spec.scan Spec.t -> dsts:any array -> any array -> answer
   (** [scan s ~dsts ops] stores [s]'s results into [dsts] from [ops], one per
       load. *)
+
+  (** {1:index Gathers and scatters} *)
+
+  val gather : Spec.gather Spec.t -> dst:('v, 's) a -> index -> ('v, 's) a -> answer
+  (** [gather s ~dst idx x] stores into [dst] the elements of [x] at the
+      positions [idx] holds. *)
+
+  val scatter :
+    Spec.scatter Spec.t ->
+    dst:('v, 's) a ->
+    into:('v, 's) a ->
+    index ->
+    ('v, 's) a ->
+    answer
+  (** [scatter s ~dst ~into idx updates] stores into [dst] the elements of
+      [into] with [updates] combined at the positions [idx] holds. It answers
+      [Wrong_dtype] for an [Add] of a dtype {!Prog.Add} does not take. *)
+
+  (** {1:sorts Sorts} *)
+
+  val sort :
+    Spec.sort Spec.t -> values:('v, 's) a -> positions:index -> ('v, 's) a -> answer
+  (** [sort s ~values ~positions x] stores [x]'s ordered elements into
+      [values] and their positions into [positions]. *)
+
+  (** {1:assembly Assemblies and folds} *)
+
+  val assemble : Spec.assemble Spec.t -> dst:('v, 's) a -> ('v, 's) a array -> answer
+  (** [assemble s ~dst pieces] stores [s]'s assembly of [pieces] into [dst].
+      It answers [Wrong_dtype] if [s]'s fill is not an element of [dst]'s
+      dtype. *)
+
+  val fold : Spec.fold Spec.t -> dst:('v, 's) a -> ('v, 's) a -> answer
+  (** [fold s ~dst x] stores the fold [s] of [x] into [dst]. It answers
+      [Wrong_dtype] for a dtype {!Prog.Add} does not take. *)
 
   (** {1:contraction Contraction} *)
 

@@ -329,3 +329,11 @@ let apply1 _ ~dst:_ _ = A.Declined
 let apply2 _ ~dst:_ _ _ = A.Declined
 let apply3 _ ~dst:_ _ _ _ = A.Declined
 let map _ ~dsts:_ _ = A.Declined
+
+(* Gathers, scatters, sorts, assemblies and folds *)
+
+let gather _ ~dst:_ _ _ = A.Declined
+let scatter _ ~dst:_ ~into:_ _ _ = A.Declined
+let sort _ ~values:_ ~positions:_ _ = A.Declined
+let assemble _ ~dst:_ _ = A.Declined
+let fold _ ~dst:_ _ = A.Declined

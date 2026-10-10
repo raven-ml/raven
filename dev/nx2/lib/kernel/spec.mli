@@ -19,7 +19,10 @@ val shapes : 'f t -> int array array -> (int array array, string) result
     [s]. A map's results have the one shape its operands have once loaded, a
     reduction's that shape without its axes, a scan's that shape. A loop with
     no operand has no shape of its own, and is an [Error]; so is a [Max],
-    [Min] or [Arg] reduction with a result and no term. *)
+    [Min] or [Arg] reduction with a result and no term. A gather's result has
+    its positions' shape, a scatter's its [into]'s, a sort's two results its
+    operand's with [k] elements along its axis, an [Error] for a [k] past the
+    axis's extent; an assembly's and a fold's result has their [shape]. *)
 
 (** {1:loads Loads} *)
 
@@ -156,6 +159,127 @@ val scan :
     shape, or for [Arg] the running extreme and its position along [axis].
 
     Raises [Invalid_argument] as {!reduce} does, and if [r] is [Moments]. *)
+
+(** {1:index Gathers and scatters} *)
+
+type gather = [ `Gather ]
+(** The family of gathers. *)
+
+val gather : axis:int -> gather t
+(** [gather ~axis] reads an operand [x] at positions held in an [int64]
+    operand [idx] of [x]'s rank, which has [x]'s extents along every axis but
+    [axis]. The result has [idx]'s shape; its element at an index [j] is
+    [x]'s at [j] with axis [axis] replaced by [idx]'s element at [j]. A
+    position outside \[[0], [d]), [d] [x]'s extent along [axis], reads the
+    element of zero bits: [+0], [false], [0 + 0i].
+
+    Raises [Invalid_argument] unless [0 <= axis] and [axis] is below
+    {!Nx_array.Layout.max_rank}. *)
+
+type scatter = [ `Scatter ]
+(** The family of scatters. *)
+
+val scatter : combine -> unique:bool -> axis:int -> scatter t
+(** [scatter c ~unique ~axis] combines the elements of an operand [updates]
+    into an operand [into] at positions held in an [int64] operand [idx] of
+    [updates]' shape. The three have one rank and, along every axis but
+    [axis], one extent; the result has [into]'s shape. Update [j] targets
+    [into]'s element at [j] with axis [axis] replaced by [idx]'s element at
+    [j]; a position outside \[[0], [d]), [d] [into]'s extent along [axis],
+    drops the update. Where no update lands, the result is [into]'s element,
+    its bits unchanged. Where the updates [u1], …, [un], in C order of their
+    indices, land on [into]'s element [x], it is:
+    - for [Set], [un];
+    - for [Add], [+0 + x + u1 + … + un] by {!Prog.Add}, a narrow float's sum
+      computed in float32 and rounded once. Each kernel library states how
+      it associates the sum, a function of [n] alone;
+    - for [Max] and [Min], {!Prog.Maximum} and {!Prog.Minimum} of [x], [u1],
+      …, [un]; a NaN result is the first NaN among them, its bits unchanged.
+
+    [Add] takes the dtypes {!Prog.Add} takes, the others every dtype.
+    [unique] promises that no two updates share a target; where two do, the
+    result there is unspecified.
+
+    Raises [Invalid_argument] as {!gather} does. *)
+
+val axis : [< `Gather | `Scatter | `Sort ] t -> int
+(** [axis s] is the axis [s] indexes or sorts along. *)
+
+val combine : scatter t -> combine
+(** [combine s] is how [s] combines. *)
+
+val unique : scatter t -> bool
+(** [unique s] is [true] iff [s] promises distinct targets. *)
+
+(** {1:sorts Sorts} *)
+
+type sort = [ `Sort ]
+(** The family of sorts. *)
+
+val sort : axis:int -> descending:bool -> k:int option -> sort t
+(** [sort ~axis ~descending ~k] orders each slice of an operand [x] along
+    [axis], stably. Its results are the ordered elements, their bits
+    unchanged, and their [int64] positions along [axis]. The order is the one
+    {!Prog}'s domains state, [-0] below [+0], with every NaN, and every
+    complex number with a NaN part, above [+∞] and equal to each other:
+    [-∞ < … < -0 < +0 < … < +∞ < NaN]. [descending] reverses the order and
+    keeps the sort stable: equal elements stay in increasing position. With
+    [Some k] the results keep the first [k] elements along [axis].
+
+    Raises [Invalid_argument] as {!gather} does, and if [k] is negative. *)
+
+val descending : sort t -> bool
+(** [descending s] is [true] iff [s] orders by the reversed order. *)
+
+val k : sort t -> int option
+(** [k s] is the number of elements [s] keeps along its axis, if not all. *)
+
+(** {1:assembly Assemblies and folds} *)
+
+type assemble = [ `Assemble ]
+(** The family of assemblies. *)
+
+val assemble :
+  shape:int array -> fill:string -> Nx_array.Move.range array array -> assemble t
+(** [assemble ~shape ~fill regions] is an array of shape [shape] whose element
+    at an index is the element at that index of the last piece whose region
+    holds it, or the element of bits [fill] in the result's dtype
+    ({!Prog.bits}) where none does. Piece [i] covers the region
+    [regions.(i)], the elements its ranges keep of each axis, as
+    {!Nx_array.Move.Slice} keeps them, and has that slice's shape. Bits are
+    copied, NaN payloads included.
+
+    Raises [Invalid_argument] unless [shape] has at most
+    {!Nx_array.Layout.max_rank} extents, none negative, [fill] one to sixteen
+    bytes, the widest element's, and each region is a slice {!Nx_array.Move.shape} takes for
+    [shape]. *)
+
+type fold = [ `Fold ]
+(** The family of folds. *)
+
+val fold : shape:int array -> pad -> fold t
+(** [fold ~shape p] is the adjoint of a [Padded] load by [p] of an array of
+    shape [shape]. Its operand [x] has the shape that load gives; the
+    result's element at an index is [+0] plus, by {!Prog.Add} from left to
+    right, each element of [x] the load reads from that index, in C order of
+    their taps: their indices along the axes the load's windows append.
+
+    Raises [Invalid_argument] unless [shape] has at most
+    {!Nx_array.Layout.max_rank} extents, none negative, and [p] is a padding
+    of [shape] that {!map} takes and whose padded extents are not
+    negative. *)
+
+val shape : [< `Assemble | `Fold ] t -> int array
+(** [shape s] is the shape of [s]'s result. *)
+
+val fill : assemble t -> string
+(** [fill s] is the bits of the element [s] stores where no piece lies. *)
+
+val regions : assemble t -> Nx_array.Move.range array array
+(** [regions s] is each piece's region. *)
+
+val pad : fold t -> pad
+(** [pad s] is the padding [s] is the adjoint of. *)
 
 (** {1:contract Contractions} *)
 

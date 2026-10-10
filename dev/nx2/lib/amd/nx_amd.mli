@@ -15,8 +15,8 @@
     compute queue of a GPU of one die; on a GPU of several dies its compute
     queue reads AQL packets and runs none, so [computes_on] is [false] there.
 
-    [apply0] to [apply3], [map], [reduce] and [scan] answer [Declined] for every
-    kind. [contract] computes plain loads into [float32], [float64] and integer
+    [apply0] to [apply3], [map], [reduce], [scan], [gather], [scatter],
+    [sort], [assemble] and [fold] answer [Declined] for every case. [contract] computes plain loads into [float32], [float64] and integer
     accumulators, from operands, [init] and results of a byte or more that are
     not complex, whose layouts {!Nx_kernel.Spec.Contract_view} groups. It
     declines a float operand or [init] wider than a float accumulator, an

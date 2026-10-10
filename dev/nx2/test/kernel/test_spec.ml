@@ -850,6 +850,278 @@ let test_reduce_refuses () =
     (Ok [ [ 0 ] ])
     (result_of (S.shapes max0 [| [| 0; 0 |] |]))
 
+(* Gathers, scatters and sorts *)
+
+type axis_case =
+  | Gather of int
+  | Scatter of S.combine * bool * int
+  | Sort of int * bool * int option
+
+let combine_name = function
+  | S.Set -> "Set"
+  | Add -> "Add"
+  | Max -> "Max"
+  | Min -> "Min"
+
+let pp_axis_case ppf = function
+  | Gather a -> Format.fprintf ppf "gather along %d" a
+  | Scatter (c, u, a) ->
+      Format.fprintf ppf "scatter %s%s along %d" (combine_name c)
+        (if u then " unique" else "")
+        a
+  | Sort (a, d, k) ->
+      Format.fprintf ppf "sort along %d%s%s" a
+        (if d then " descending" else "")
+        (match k with None -> "" | Some k -> Printf.sprintf " keeping %d" k)
+
+let combines = S.[ Set; Add; Max; Min ]
+
+let axis_case =
+  Gen.with_pp pp_axis_case
+    (let open Gen in
+     let* axis = int_range 0 (L.max_rank - 1) in
+     let* which = int_range 0 2 in
+     let* b = bool in
+     match which with
+     | 0 -> constant (Gather axis)
+     | 1 ->
+         let+ c = of_list ~pp:(fun ppf c -> Format.pp_print_string ppf (combine_name c)) combines in
+         Scatter (c, b, axis)
+     | _ ->
+         let+ k = option (int_range 0 1_000_000_000_000) in
+         Sort (axis, b, k))
+
+(* What C reads of each case: family, axis, combine or direction, unique,
+   k. *)
+let law_axis_encoding c =
+  let fields, axis =
+    match c with
+    | Gather a -> (Nx_kernel_support.axis_fields (S.gather ~axis:a), a)
+    | Scatter (cb, u, a) ->
+        let s = S.scatter cb ~unique:u ~axis:a in
+        equal ~msg:"combine" bool true (S.combine s = cb);
+        equal ~msg:"unique" bool u (S.unique s);
+        equal ~msg:"axis" int a (S.axis s);
+        (Nx_kernel_support.axis_fields s, a)
+    | Sort (a, d, k) ->
+        let s = S.sort ~axis:a ~descending:d ~k in
+        equal ~msg:"descending" bool d (S.descending s);
+        equal ~msg:"k" (option int) k (S.k s);
+        equal ~msg:"axis" int a (S.axis s);
+        (Nx_kernel_support.axis_fields s, a)
+  in
+  let want =
+    match c with
+    | Gather _ -> [ 5; axis; 0; 0; -1 ]
+    | Scatter (cb, u, _) ->
+        [ 6; axis; Option.get (List.find_index (( = ) cb) combines);
+          Bool.to_int u; -1 ]
+    | Sort (_, d, k) -> [ 7; axis; Bool.to_int d; 0; Option.value k ~default:(-1) ]
+  in
+  equal ~msg:"C reads" (list int) want (Array.to_list fields)
+
+let test_axis_refuses () =
+  let refuses ~msg f = raises_match ~msg Exn.invalid_arg f in
+  refuses ~msg:"a negative axis" (fun () -> S.gather ~axis:(-1));
+  refuses ~msg:"an axis past the rank" (fun () -> S.gather ~axis:L.max_rank);
+  refuses ~msg:"a scatter's axis" (fun () ->
+      S.scatter Add ~unique:false ~axis:(-1));
+  refuses ~msg:"a sort's axis" (fun () ->
+      S.sort ~axis:L.max_rank ~descending:false ~k:None);
+  refuses ~msg:"a negative k" (fun () ->
+      S.sort ~axis:0 ~descending:false ~k:(Some (-1)))
+
+let fits = result (list (list int)) unit
+let misfit = Error ()
+
+(* Each family's shapes, at a fit and at each way to miss it. *)
+let test_axis_shapes () =
+  let g = S.gather ~axis:1 in
+  let sh s ins = result_of (S.shapes s ins) in
+  equal ~msg:"gather: positions' shape" fits
+    (Ok [ [ 2; 5; 4 ] ])
+    (sh g [| [| 2; 5; 4 |]; [| 2; 3; 4 |] |]);
+  equal ~msg:"gather: from an empty axis" fits
+    (Ok [ [ 2; 5; 4 ] ])
+    (sh g [| [| 2; 5; 4 |]; [| 2; 0; 4 |] |]);
+  equal ~msg:"gather: another extent off the axis" fits misfit
+    (sh g [| [| 2; 5; 3 |]; [| 2; 3; 4 |] |]);
+  equal ~msg:"gather: another rank" fits misfit
+    (sh g [| [| 2; 5 |]; [| 2; 3; 4 |] |]);
+  equal ~msg:"gather: an axis past the rank" fits misfit
+    (sh g [| [| 2 |]; [| 2 |] |]);
+  equal ~msg:"gather: one operand" fits misfit (sh g [| [| 2; 3 |] |]);
+  let sc = S.scatter Add ~unique:false ~axis:0 in
+  equal ~msg:"scatter: into's shape" fits
+    (Ok [ [ 7; 4 ] ])
+    (sh sc [| [| 7; 4 |]; [| 9; 4 |]; [| 9; 4 |] |]);
+  equal ~msg:"scatter: positions and updates differ" fits misfit
+    (sh sc [| [| 7; 4 |]; [| 9; 4 |]; [| 8; 4 |] |]);
+  equal ~msg:"scatter: another extent off the axis" fits misfit
+    (sh sc [| [| 7; 4 |]; [| 9; 3 |]; [| 9; 3 |] |]);
+  let so k = S.sort ~axis:1 ~descending:true ~k in
+  equal ~msg:"sort: values and positions" fits
+    (Ok [ [ 2; 5 ]; [ 2; 5 ] ])
+    (sh (so None) [| [| 2; 5 |] |]);
+  equal ~msg:"sort: k along the axis" fits
+    (Ok [ [ 2; 3 ]; [ 2; 3 ] ])
+    (sh (so (Some 3)) [| [| 2; 5 |] |]);
+  equal ~msg:"sort: k of the whole axis" fits
+    (Ok [ [ 2; 5 ]; [ 2; 5 ] ])
+    (sh (so (Some 5)) [| [| 2; 5 |] |]);
+  equal ~msg:"sort: k past the axis" fits misfit
+    (sh (so (Some 6)) [| [| 2; 5 |] |]);
+  equal ~msg:"sort: an axis past the rank" fits misfit
+    (sh (so None) [| [| 2 |] |])
+
+(* Assemblies and folds *)
+
+type assemble_case = {
+  shape : int array;
+  fill : string;
+  regions : M.range array array;
+}
+
+let pp_regions ppf rs =
+  Array.iter
+    (fun r ->
+      Format.fprintf ppf "[%s]"
+        (String.concat "; "
+           (Array.to_list
+              (Array.map
+                 (fun (x : M.range) ->
+                   Printf.sprintf "%d+%d*%d" x.start x.count x.step)
+                 r))))
+    rs
+
+let pp_assemble_case ppf c =
+  Format.fprintf ppf "shape %a, fill %s, regions %a" pp_ints c.shape
+    (hex c.fill) pp_regions c.regions
+
+let assemble_case =
+  Gen.with_pp pp_assemble_case
+    (let open Gen in
+     let* shape = Nx_array_gen.shape in
+     let* n = int_range 1 16 in
+     let* fill = map (fun l -> String.init n (fun i -> Char.chr (List.nth l i))) (list ~size:(constant n) (int_range 0 255)) in
+     let region =
+       let rec go i acc =
+         if i < 0 then constant (Array.of_list acc)
+         else
+           let* r = Nx_array_gen.range shape.(i) in
+           go (i - 1) (r :: acc)
+       in
+       go (Array.length shape - 1) []
+     in
+     let+ regions = array ~size:(int_range 0 3) region in
+     { shape; fill; regions })
+
+let render_shaped ~family ~fill shape regions pad =
+  let nums a = String.concat "" (Array.to_list (Array.map (Printf.sprintf " %d") a)) in
+  Printf.sprintf "family %d fill %s\nshape%s" family (hex fill) (nums shape)
+  ^ String.concat ""
+      (Array.to_list
+         (Array.map
+            (fun r ->
+              "\npiece"
+              ^ nums
+                  (Array.concat
+                     (Array.to_list
+                        (Array.map (fun (x : M.range) -> [| x.start; x.count; x.step |]) r))))
+            regions))
+  ^
+  match pad with
+  | None -> ""
+  | Some (p : S.pad) ->
+      Printf.sprintf "\npad %d %d" (Array.length p.lo) (Array.length p.windows)
+      ^ nums
+          (Array.concat
+             ([ p.lo; p.hi; p.interior ]
+             @ Array.to_list
+                 (Array.map
+                    (fun (w : M.window) -> [| w.axis; w.size; w.step; w.dilation |])
+                    p.windows)))
+
+let law_assemble c =
+  let s = S.assemble ~shape:c.shape ~fill:c.fill c.regions in
+  equal ~msg:"C reads" string
+    (render_shaped ~family:8 ~fill:c.fill c.shape c.regions None)
+    (Nx_kernel_support.shaped s);
+  equal ~msg:"shape" (array int) c.shape (S.shape s);
+  equal ~msg:"fill" string c.fill (S.fill s);
+  equal ~msg:"regions" bool true (S.regions s = c.regions);
+  let pieces = Array.map (fun r -> M.shape (Slice r) c.shape) c.regions in
+  equal ~msg:"fits" fits (Ok [ Array.to_list c.shape ]) (result_of (S.shapes s pieces));
+  let grown = Array.map (fun p -> Array.map (fun d -> d + 1) p) pieces in
+  if Array.length c.shape > 0 && c.regions <> [||] then
+    equal ~msg:"a piece off its region" fits misfit
+      (result_of (S.shapes s grown));
+  equal ~msg:"a piece too many" fits misfit
+    (result_of (S.shapes s (Array.append pieces [| c.shape |])))
+
+let test_assemble_refuses () =
+  let r start count step = { M.start; count; step } in
+  let refuses ~msg ?(fill = "\000") shape regions =
+    raises_match ~msg Exn.invalid_arg (fun () -> S.assemble ~shape ~fill regions)
+  in
+  refuses ~msg:"a negative extent" [| -1 |] [||];
+  refuses ~msg:"past the rank" (Array.make (L.max_rank + 1) 1) [||];
+  refuses ~msg:"no fill" ~fill:"" [| 2 |] [||];
+  refuses ~msg:"a fill past sixteen bytes" ~fill:(String.make 17 'a') [| 2 |] [||];
+  refuses ~msg:"a region of another rank" [| 2 |] [| [| r 0 1 1; r 0 1 1 |] |];
+  refuses ~msg:"a region past its axis" [| 2 |] [| [| r 1 2 1 |] |];
+  refuses ~msg:"a step of 0" [| 2 |] [| [| r 0 1 0 |] |]
+
+type fold_case = { fshape : int array; pad : S.pad }
+
+let pp_fold_case ppf c =
+  Format.fprintf ppf "shape %a, %a" pp_ints c.fshape pp_load
+    (S.Padded { fill = ""; pad = c.pad })
+
+let fold_case =
+  Gen.with_pp pp_fold_case
+    (let open Gen in
+     let* fshape = Nx_array_gen.shape in
+     let+ load = load_of (D.Any D.Float32) (Array.length fshape) in
+     let pad =
+       match load with
+       | S.Padded { pad; _ } -> pad
+       | Plain ->
+           let z = Array.map (fun _ -> 0) fshape in
+           { S.lo = z; hi = z; interior = z; windows = [||] }
+     in
+     { fshape; pad })
+
+let law_fold c =
+  match loaded c.fshape (S.Padded { fill = ""; pad = c.pad }) with
+  | None ->
+      cover "refused" true;
+      raises_match ~msg:"a geometry with no load" Exn.invalid_arg (fun () ->
+          S.fold ~shape:c.fshape c.pad)
+  | Some x ->
+      cover "made" true;
+      let s = S.fold ~shape:c.fshape c.pad in
+      equal ~msg:"C reads" string
+        (render_shaped ~family:9 ~fill:"" c.fshape [||] (Some c.pad))
+        (Nx_kernel_support.shaped s);
+      equal ~msg:"shape" (array int) c.fshape (S.shape s);
+      equal ~msg:"pad" bool true (S.pad s = c.pad);
+      equal ~msg:"fits" fits (Ok [ Array.to_list c.fshape ])
+        (result_of (S.shapes s [| x |]));
+      equal ~msg:"another operand's shape" fits misfit
+        (result_of (S.shapes s [| Array.append x [| 1 |] |]))
+
+let test_fold_refuses () =
+  let z = { S.lo = [| 0 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] } in
+  let refuses ~msg shape pad =
+    raises_match ~msg Exn.invalid_arg (fun () -> S.fold ~shape pad)
+  in
+  refuses ~msg:"a pad of another rank" [| 2; 2 |] z;
+  refuses ~msg:"a negative padded extent" [| 2 |] { z with lo = [| -3 |] };
+  refuses ~msg:"a negative extent" [| -1 |] z;
+  refuses ~msg:"a window past the padded axis" [| 2 |]
+    { z with windows = [| { M.axis = 0; size = 3; step = 1; dilation = 1 } |] }
+
 let tests =
   [
     group "encoder"
@@ -879,6 +1151,23 @@ let tests =
           law_reduce_shapes;
         test "refuses axes and reductions that do not fit, and states shapes"
           test_reduce_refuses;
+      ];
+    group "gathers, scatters and sorts"
+      [
+        prop "C reads what the encoders write, and so do the accessors"
+          axis_case law_axis_encoding;
+        test "refuse axes outside the rank and a negative k" test_axis_refuses;
+        test "state each family's shapes" test_axis_shapes;
+      ];
+    group "assemblies and folds"
+      [
+        prop "C reads what assemble was given, and so do the accessors"
+          assemble_case law_assemble;
+        test "assemble refuses shapes, fills and regions that do not fit"
+          test_assemble_refuses;
+        prop "C reads what fold was given, and its operand is the padded load"
+          fold_case law_fold;
+        test "fold refuses geometries with no load" test_fold_refuses;
       ];
     group "shapes"
       [

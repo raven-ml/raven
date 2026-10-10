@@ -91,6 +91,14 @@ external scan :
   Nx_array.any array ->
   Nx_array.answer = "nx_cpu_scan"
 
+(* Gathers, scatters, sorts, assemblies and folds *)
+
+let gather _ ~dst:_ _ _ = Nx_array.Declined
+let scatter _ ~dst:_ ~into:_ _ _ = Nx_array.Declined
+let sort _ ~values:_ ~positions:_ _ = Nx_array.Declined
+let assemble _ ~dst:_ _ = Nx_array.Declined
+let fold _ ~dst:_ _ = Nx_array.Declined
+
 (* Contractions *)
 
 (* [contract_c s v ~dst a b i] contracts [a] and [b], with the init [i] if
