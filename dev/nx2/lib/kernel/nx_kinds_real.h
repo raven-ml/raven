@@ -121,12 +121,24 @@ NX_INLINE NX_(nx_int) NX_(nx_nearest)(NX_T t) {
   return k;
 }
 
-/* Exact kinds */
+/* NaN results. nx_nan1 and nx_nan2 give r, computed from one or two
+   operands, as a kind gives it: the first NaN operand itself, else the
+   quiet NaN of a clear sign bit where r is a NaN. On x86 an operation of
+   two NaN operands gives one of them by their order, which a compiler sets
+   per target and differently in vector and scalar code, and a negation
+   flips a NaN's sign; these selects make the bits the same everywhere. */
+
+NX_INLINE NX_T NX_(nx_nan1)(NX_T a, NX_T r) {
+  r = r != r ? NX_C(NAN) : r;
+  return a != a ? a : r;
+}
 
 NX_INLINE NX_T NX_(nx_nan2)(NX_T a, NX_T b, NX_T r) {
-  r = NX_ISNAN(b) ? b : r;
+  r = NX_(nx_nan1)(b, r);
   return NX_ISNAN(a) ? a : r;
 }
+
+/* Exact kinds */
 
 NX_INLINE NX_T NX_(nx_add)(NX_T a, NX_T b) { return NX_(nx_nan2)(a, b, a + b); }
 NX_INLINE NX_T NX_(nx_sub)(NX_T a, NX_T b) { return NX_(nx_nan2)(a, b, a - b); }
@@ -134,17 +146,19 @@ NX_INLINE NX_T NX_(nx_mul)(NX_T a, NX_T b) { return NX_(nx_nan2)(a, b, a * b); }
 NX_INLINE NX_T NX_(nx_fdiv)(NX_T a, NX_T b) { return NX_(nx_nan2)(a, b, a / b); }
 
 NX_INLINE NX_T NX_(nx_fma)(NX_T a, NX_T b, NX_T c) {
-  NX_T r = NX_FMA(a, b, c);
-  return NX_(nx_nan2)(a, b, NX_ISNAN(c) ? c : r);
+  NX_T r = NX_(nx_nan1)(c, NX_FMA(a, b, c));
+  r = NX_ISNAN(b) ? b : r;
+  return NX_ISNAN(a) ? a : r;
 }
 
-NX_INLINE NX_T NX_(nx_neg)(NX_T a) { return -a; }
+/* The sign bit flipped: CUDA's negation quiets a signalling NaN. */
+NX_INLINE NX_T NX_(nx_neg)(NX_T a) { return NX_OF_BITS(NX_BITS(a) ^ NX_SIGN_BIT); }
 NX_INLINE NX_T NX_(nx_abs)(NX_T a) { return NX_(nx_abs_bits)(a); }
 NX_INLINE NX_T NX_(nx_sign)(NX_T a) {
   return NX_ISNAN(a) ? a : (NX_T)((a > 0) - (a < 0));
 }
-NX_INLINE NX_T NX_(nx_recip)(NX_T a) { return NX_ONE / a; }
-NX_INLINE NX_T NX_(nx_sqrt)(NX_T a) { return NX_SQRT(a); }
+NX_INLINE NX_T NX_(nx_recip)(NX_T a) { return NX_(nx_nan1)(a, NX_ONE / a); }
+NX_INLINE NX_T NX_(nx_sqrt)(NX_T a) { return NX_(nx_nan1)(a, NX_SQRT(a)); }
 
 NX_INLINE NX_T NX_(nx_trunc)(NX_T a) {
   NX_T m = NX_(nx_abs_bits)(a);
@@ -205,13 +219,18 @@ NX_INLINE NX_(nx_exp_red) NX_(nx_exp_reduce)(NX_T x) {
   return e;
 }
 
-/* exp: e^x = 2^k (1 + expm1 r), expm1 r = r + r^2 Q(r). */
-NX_INLINE NX_T NX_(nx_exp)(NX_T x) {
+/* exp: e^x = 2^k (1 + expm1 r), expm1 r = r + r^2 Q(r); its NaN bits
+   unpinned, for the kinds that call it. */
+NX_INLINE NX_T NX_(nx_exp_of)(NX_T x) {
   x = x > NX_C(EXP_HI) ? NX_C(EXP_HI) : x;
   x = x < NX_C(EXP_LO) ? NX_C(EXP_LO) : x;
   NX_(nx_exp_red) e = NX_(nx_exp_reduce)(x);
   NX_T em = NX_FMA(e.r * e.r, NX_(nx_exp_q)(e.r), e.r);
   return NX_(nx_scale)(NX_ONE + em, e.k);
+}
+
+NX_INLINE NX_T NX_(nx_exp)(NX_T x) {
+  return NX_(nx_nan1)(x, NX_(nx_exp_of)(x));
 }
 
 /* exp2: x = k + r, |r| <= 1/2, 2^r = 1 + r P(r). Exact at integers whose
@@ -220,7 +239,7 @@ NX_INLINE NX_T NX_(nx_exp2)(NX_T x) {
   x = x > NX_C(EXP2_HI) ? NX_C(EXP2_HI) : x;
   x = x < NX_C(EXP2_LO) ? NX_C(EXP2_LO) : x;
   NX_(nx_int) k = NX_(nx_nearest)(x + NX_C(SHIFT));
-  return NX_(nx_scale)(NX_(nx_exp2_poly)(x - k.f), k.i);
+  return NX_(nx_nan1)(x, NX_(nx_scale)(NX_(nx_exp2_poly)(x - k.f), k.i));
 }
 
 /* expm1: e^x - 1 = 2^k ((1 - 2^-k) + r + r^2 Q(r)), the bracket summed
@@ -247,7 +266,7 @@ NX_INLINE NX_(nx_expm1_red) NX_(nx_expm1_pair)(NX_T x) {
 NX_INLINE NX_T NX_(nx_expm1)(NX_T x) {
   NX_(nx_expm1_red) e = NX_(nx_expm1_pair)(x);
   NX_T y = NX_(nx_scale)(e.v.hi + e.v.lo, e.k);
-  return NX_(nx_abs_bits)(x) < NX_C(EXPM1_TINY) ? x : y;
+  return NX_(nx_nan1)(x, NX_(nx_abs_bits)(x) < NX_C(EXPM1_TINY) ? x : y);
 }
 
 /* Logarithms
@@ -283,7 +302,7 @@ NX_INLINE NX_T NX_(nx_log_special)(NX_T u, NX_T x, NX_T y) {
   y = u == NX_C(INF) ? u : y;
   y = u == 0 ? -NX_C(INF) : y;
   y = u < 0 ? NX_C(NAN) : y;
-  return NX_ISNAN(x) ? x : y;
+  return NX_(nx_nan1)(x, y);
 }
 
 NX_INLINE NX_T NX_(nx_log)(NX_T x) {
@@ -346,14 +365,14 @@ NX_INLINE NX_T NX_(nx_sin_at)(NX_T x, NX_(nx_rem) r) {
   NX_(nx_pair) c = NX_(nx_cos_kernel)(r.hi, r.lo);
   NX_T y = (r.q & 1) ? c.hi + c.lo : s.hi + s.lo;
   y = (r.q & 2) ? -y : y;
-  return NX_(nx_abs_bits)(x) < NX_C(TRIG_TINY) ? x : y;
+  return NX_(nx_nan1)(x, NX_(nx_abs_bits)(x) < NX_C(TRIG_TINY) ? x : y);
 }
 
-NX_INLINE NX_T NX_(nx_cos_at)(NX_(nx_rem) r) {
+NX_INLINE NX_T NX_(nx_cos_at)(NX_T x, NX_(nx_rem) r) {
   NX_(nx_pair) s = NX_(nx_sin_kernel)(r.hi, r.lo);
   NX_(nx_pair) c = NX_(nx_cos_kernel)(r.hi, r.lo);
   NX_T y = (r.q & 1) ? s.hi + s.lo : c.hi + c.lo;
-  return ((r.q + 1) & 2) ? -y : y;
+  return NX_(nx_nan1)(x, ((r.q + 1) & 2) ? -y : y);
 }
 
 NX_INLINE NX_T NX_(nx_tan_at)(NX_T x, NX_(nx_rem) r) {
@@ -364,7 +383,7 @@ NX_INLINE NX_T NX_(nx_tan_at)(NX_T x, NX_(nx_rem) r) {
   NX_(nx_pair) n = {odd ? -c.hi : s.hi, odd ? -c.lo : s.lo};
   NX_(nx_pair) d = {odd ? s.hi : c.hi, odd ? s.lo : c.lo};
   NX_(nx_pair) q = NX_(nx_div_pair)(n, d);
-  return NX_(nx_abs_bits)(x) < NX_C(TRIG_TINY) ? x : q.hi + q.lo;
+  return NX_(nx_nan1)(x, NX_(nx_abs_bits)(x) < NX_C(TRIG_TINY) ? x : q.hi + q.lo);
 }
 
 /* Whether x takes the integer reduction. */
@@ -379,7 +398,7 @@ NX_INLINE NX_T NX_(nx_sin_near)(NX_T x) {
 }
 
 NX_INLINE NX_T NX_(nx_cos_near)(NX_T x) {
-  return NX_(nx_cos_at)(NX_(nx_rem_pio2_cw)(x));
+  return NX_(nx_cos_at)(x, NX_(nx_rem_pio2_cw)(x));
 }
 
 NX_INLINE NX_T NX_(nx_tan_near)(NX_T x) {
@@ -392,7 +411,7 @@ NX_INLINE NX_T NX_(nx_sin)(NX_T x) {
 }
 
 NX_INLINE NX_T NX_(nx_cos)(NX_T x) {
-  if (NX_(nx_trig_big)(x)) return NX_(nx_cos_at)(NX_(nx_rem_pio2_big)(x));
+  if (NX_(nx_trig_big)(x)) return NX_(nx_cos_at)(x, NX_(nx_rem_pio2_big)(x));
   return NX_(nx_cos_near)(x);
 }
 
@@ -427,7 +446,7 @@ NX_INLINE NX_T NX_(nx_asin)(NX_T x) {
   NX_T lo = ((NX_C(PIO2_HI) - hi) - d) + NX_FMA((NX_T)-2, r.tail, NX_C(PIO2_LO));
   NX_T y = r.big ? hi + lo : r.s + r.tail;
   y = a > NX_ONE ? NX_C(NAN) : y;
-  return NX_ISNAN(x) ? x : NX_(nx_copysign)(y, x);
+  return NX_(nx_nan1)(x, NX_(nx_copysign)(y, x));
 }
 
 /* acos: pi/2 - asin x within 1/2, 2 asin s above, pi - 2 asin s below; the
@@ -446,7 +465,7 @@ NX_INLINE NX_T NX_(nx_acos)(NX_T x) {
   NX_(nx_pair) h = NX_(nx_two_sum)(base_hi, term);
   NX_T y = h.hi + (h.lo + (base_lo + tail));
   y = a > NX_ONE ? NX_C(NAN) : y;
-  return NX_ISNAN(x) ? x : y;
+  return NX_(nx_nan1)(x, y);
 }
 
 /* Hyperbolic functions
@@ -477,7 +496,7 @@ NX_INLINE NX_T NX_(nx_sinh)(NX_T x) {
   NX_(nx_pair) q = NX_(nx_div_pair)(n, h.w);
   NX_(nx_pair) v = NX_(nx_two_sum)(h.em.hi, q.hi);
   NX_T y = v.hi + (v.lo + (h.em.lo + q.lo));
-  return NX_(nx_copysign)(NX_(nx_scale)(y, h.k - 1), x);
+  return NX_(nx_nan1)(x, NX_(nx_copysign)(NX_(nx_scale)(y, h.k - 1), x));
 }
 
 NX_INLINE NX_T NX_(nx_cosh)(NX_T x) {
@@ -486,7 +505,7 @@ NX_INLINE NX_T NX_(nx_cosh)(NX_T x) {
   NX_(nx_pair) q = NX_(nx_div_pair)(m, h.w);
   NX_(nx_pair) v = NX_(nx_two_sum)(h.w.hi, q.hi);
   NX_T y = v.hi + (v.lo + (h.w.lo + q.lo));
-  return NX_(nx_scale)(y, h.k - 1);
+  return NX_(nx_nan1)(x, NX_(nx_scale)(y, h.k - 1));
 }
 
 /* tanh |x| = -em / (em + 2) with em = expm1(-2|x|), divided as pairs. */
@@ -499,7 +518,7 @@ NX_INLINE NX_T NX_(nx_tanh)(NX_T x) {
   NX_(nx_pair) q = NX_(nx_div_pair)(n, d);
   NX_T y = q.hi + q.lo;
   NX_T a = NX_(nx_abs_bits)(x);
-  return NX_(nx_copysign)(a < NX_C(EXPM1_TINY) ? a : y, x);
+  return NX_(nx_nan1)(x, NX_(nx_copysign)(a < NX_C(EXPM1_TINY) ? a : y, x));
 }
 
 /* pow

@@ -33,12 +33,14 @@
    are exact. exp2 is exact at integers whose power is in the type, log2 at
    powers of two.
 
-   NaN. A NaN operand gives the first NaN operand, its bits unchanged, where
-   a kind says so: add, sub, mul, fdiv, fma, maximum, minimum, pow and
-   atan2, whose operands a compiler may swap and whose hardware returns one
-   register's NaN. Elsewhere it gives that operand, perhaps quieted. A NaN
-   made from numbers, as sin of an infinity, is the instruction set's own
-   NaN, which differs between them: bitwise comparisons take NaNs as one.
+   NaN. A float kind with a NaN operand gives its first NaN operand, its
+   bits unchanged; neg and abs set its sign bit as they do a number's. A
+   NaN a kind makes from numbers, as sin of an infinity, is the quiet NaN of
+   a clear sign bit. The hardware's choice would differ: of two NaN
+   operands x86 returns one by their order, which a compiler sets per
+   target and differently in vector and scalar code, and its own NaN has
+   the sign bit set where Arm's has it clear. So a kind's NaN bits are the
+   same everywhere, as its numbers are.
 
    Each transcendental is one polynomial in one evaluation order, with fma
    where it is written and nowhere else, so its bits, NaNs aside, are the
@@ -445,7 +447,7 @@ NX_INLINE float nx_atan_f32(float x) {
   int big = a > 1.0f;
   float p = nx_atan_kernel_f32(big ? 1.0f / a : a);
   float y = big ? NX_PIO2_HI_F32 + (NX_PIO2_LO_F32 - p) : p;
-  return nx_copysign_f32(y, x);
+  return nx_nan1_f32(x, nx_copysign_f32(y, x));
 }
 
 /* erf
@@ -476,8 +478,8 @@ NX_INLINE float nx_erf_f32(float x) {
   g = nx_fmaf(g, b, 0x1.78e122p-2f);
   g = nx_fmaf(g, b, -0x1.2151d6p+0f);
   g = nx_fmaf(g, b, 0x1.3a6ab6p-12f);
-  float big = 1.0f - nx_exp_f32(nx_fmaf(-b, b, g));
-  return nx_copysign_f32(a < 0.875f ? small : big, x);
+  float big = 1.0f - nx_exp_of_f32(nx_fmaf(-b, b, g));
+  return nx_nan1_f32(x, nx_copysign_f32(a < 0.875f ? small : big, x));
 }
 
 /* atan2 */
@@ -739,7 +741,9 @@ NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(double x) {
   return r;
 }
 
-NX_INLINE double nx_mod_f64(double a, double b) { return fmod(a, b); }
+NX_INLINE double nx_mod_f64(double a, double b) {
+  return nx_nan2_f64(a, b, fmod(a, b));
+}
 
 /* atan t = t + t^3 A(t^2) on |t| <= 7/16, relative error 2^-57.4
    (atanA). */
@@ -790,7 +794,7 @@ NX_INLINE nx_pair_f64 nx_atan_pos_f64(double a, double al) {
 
 NX_INLINE double nx_atan_f64(double x) {
   nx_pair_f64 p = nx_atan_pos_f64(nx_abs_bits_f64(x), 0.0);
-  return nx_copysign_f64(p.hi, x);
+  return nx_nan1_f64(x, nx_copysign_f64(p.hi, x));
 }
 
 /* erf
@@ -850,9 +854,9 @@ NX_INLINE double nx_erf_f64(double x) {
   double b2 = b * b;
   double b2l = nx_fmad(b, b, -b2);
   nx_pair_f64 d = nx_two_sum_f64(g, -b2);
-  double ex = nx_exp_f64(d.hi);
+  double ex = nx_exp_of_f64(d.hi);
   double big = 1.0 - nx_fmad(ex, d.lo - b2l, ex);
-  return nx_copysign_f64(a < 1.0 ? small : big, x);
+  return nx_nan1_f64(x, nx_copysign_f64(a < 1.0 ? small : big, x));
 }
 
 /* atan2: as f32's, with the quotient's rounding error passed to atan as a

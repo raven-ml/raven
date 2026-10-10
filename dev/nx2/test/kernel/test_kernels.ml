@@ -969,6 +969,64 @@ let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
   end
 
 (* Values the kinds' documentation states, through nx.cpu. *)
+(* NaN bits *)
+
+(* [n] elements of [dt] drawn from its specials alone, by [seed]: NaNs of
+   both signs, signalling and quiet, with payloads, infinities, zeros, and
+   numbers that some kinds make NaN from. *)
+let specials_only (type v s) (dt : (v, s) D.t) n seed : (v, s) A.t =
+  let sp = Array.of_list (specials dt) in
+  let b = bytes_of_seed seed n in
+  let pick i = sp.(Char.code b.[i] * 7 mod Array.length sp) in
+  A.v dt (L.contiguous [| n |]) (B.of_string (String.concat "" (List.init n pick)))
+
+(* A float kind's NaN results, those it passes and those it makes, are the
+   same bits under every target table and into a destination that is its
+   operand: the hardware's choice of NaN varies between targets and between
+   vector and scalar code, and nx_kinds.h pins it. *)
+let law_nan_bits (D.Any dt, seed) =
+  let tables =
+    List.filter (fun (b : Support.backend) -> Rig.equal b.device Rig.host)
+      Support.backends
+  in
+  match D.kind dt with
+  | D.Float when D.bits dt >= 32 ->
+      let n = 300 in
+      let x = specials_only dt n seed and y = specials_only dt n (seed + 1) in
+      let z = specials_only dt n (seed + 2) in
+      let kinds =
+        List.map
+          (fun (u, name) -> (name, fun (module K : Nx_kernel.S) dst x -> K.apply1 (Unary u) ~dst x))
+          unaries
+        @ List.filter_map
+            (fun k ->
+              match k with
+              | P.Binary b when P.accepts2 k dt ->
+                  Some (name2 k, fun (module K : Nx_kernel.S) dst x -> K.apply2 (Binary b) ~dst x y)
+              | _ -> None)
+            op2s
+        @ [ ("fma", fun (module K : Nx_kernel.S) dst x -> K.apply3 Fma ~dst x y z) ]
+      in
+      List.iter
+        (fun (name, run) ->
+          let under (b : Support.backend) ~alias =
+            b.around (fun () ->
+                let x' = A.copy x in
+                let dst = if alias then x' else A.create Rig.host dt [| n |] in
+                equal ~msg:name answer A.Done (run b.kernels dst x');
+                bits_of dst)
+          in
+          let want = under (List.hd tables) ~alias:false in
+          List.iter
+            (fun (b : Support.backend) ->
+              equal ~msg:(strf "%s on %s" name b.name) (array int) want
+                (under b ~alias:false);
+              equal ~msg:(strf "%s in place on %s" name b.name) (array int) want
+                (under b ~alias:true))
+            tables)
+        kinds
+  | _ -> ()
+
 let test_apply_values () =
   let k = (module Nx_cpu : Nx_kernel.S) in
   let module K = (val k) in
@@ -1243,6 +1301,9 @@ let laws (b : Support.backend) =
 let cpu =
   group "nx.cpu"
     [
+      prop ~count:8 "NaN results are one set of bits on every table and in place"
+        (Gen.pair (Gen.of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ]) Gen.int)
+        law_nan_bits;
       test "refuses before any write"
         (test_refusals (module Nx_cpu : Nx_kernel.S));
       test "kinds give the values their documentation states" test_apply_values;
