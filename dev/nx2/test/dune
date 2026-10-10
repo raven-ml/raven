@@ -13,6 +13,7 @@
   test_sort
   test_fft
   test_linalg
+  test_padded
   test_interp
   test_donate
   test_shapes
@@ -38,6 +39,7 @@
   test_sort
   test_fft
   test_linalg
+  test_padded
   test_interp
   test_donate
   test_shapes

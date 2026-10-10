@@ -121,6 +121,14 @@ and interpretation = {
 and 'd load =
   | Plain : ('v, 's, 'd) t -> 'd load
       (** How a loop reads an operand: through its layout. *)
+  | Padded : {
+      x : ('v, 's, 'd) t;
+      fill : 'v;
+      pad : Nx_kernel.Spec.pad;
+    }
+      -> 'd load
+      (** [x] padded with [fill] and windowed as [pad] says
+          ({!Nx_kernel.Spec.load}): the loop's shape is the padded one. *)
 
 and ('d, _) reduction =
   | Monoid :
@@ -218,6 +226,14 @@ and _ prim =
       (** [x]'s elements along [axis], stably, in {!Nx_kernel.Spec.sort}'s
           order, reversed where [descending], then their positions along [axis];
           with [Some k], the first [k] of each slice. *)
+  | Fold : {
+      shape : int array;
+      pad : Nx_kernel.Spec.pad;
+      x : ('v, 's, 'd) t;
+    }
+      -> ('v, 's, 'd) t prim
+      (** The adjoint of a [Padded] load by [pad] of a value of [shape]
+          ({!Nx_kernel.Spec.fold}). *)
   | Assemble : {
       dtype : ('v, 's) dtype;
       shape : int array;

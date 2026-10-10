@@ -1302,7 +1302,7 @@ let targets ~by x picks =
   let loads = Array.of_list (List.rev !loads) in
   let prog =
     P.v
-      ~ins:(Array.map (fun (Value.Plain v) -> D.Any (dtype v)) loads)
+      ~ins:(Array.map Prim.load_dtype loads)
       (Array.of_list (List.rev !nodes))
       ~outs:[| out |]
   in
@@ -2102,7 +2102,14 @@ module Prim = struct
   }
 
   type 'd any = 'd Value.any = Any : ('v, 's, 'd) t -> 'd any
-  type 'd load = 'd Value.load = Plain : ('v, 's, 'd) t -> 'd load
+  type 'd load = 'd Value.load =
+    | Plain : ('v, 's, 'd) t -> 'd load
+    | Padded : {
+        x : ('v, 's, 'd) t;
+        fill : 'v;
+        pad : Nx_kernel.Spec.pad;
+      }
+        -> 'd load
 
   type ('d, 'a) reduction = ('d, 'a) Value.reduction =
     | Monoid :
@@ -2240,6 +2247,12 @@ module Prim = struct
         x : ('v, 's, 'd) Value.t;
       }
         -> (('v, 's, 'd) Value.t * (int64, Dtype.int64_elt, 'd) Value.t) t
+    | Fold : {
+        shape : int array;
+        pad : Nx_kernel.Spec.pad;
+        x : ('v, 's, 'd) Value.t;
+      }
+        -> ('v, 's, 'd) Value.t t
     | Assemble : {
         dtype : ('v, 's) dtype;
         shape : int array;

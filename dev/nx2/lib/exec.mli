@@ -18,8 +18,9 @@
     ({!Expand.run}) on that device, over its own operands. Any other decline
     raises naming the kernels, the kind, the dtypes, the device and the move
     the program makes, [Nx.place] onto a set whose kernels compute it: no data
-    moves between devices on its own. The decline of a sort, a transform or a
-    routine also says that its expansion is not available yet. Movements and
+    moves between devices on its own. The decline of a sort, a transform, a
+    routine, a fold or a map with a padded load also says that its expansion
+    is not available yet. Movements and
     bitcasts are views where a layout expresses them, and a copy, then a view,
     otherwise. [Check] raises its exception from the first failing index, read
     on the host.

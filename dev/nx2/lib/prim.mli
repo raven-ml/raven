@@ -181,6 +181,17 @@ val prepare :
     Raises [Invalid_argument] naming [by], before [place] is called, where
     [op]'s operands break its rule. *)
 
+(** {1:loads Loads} *)
+
+val load_any : 'd load -> 'd any
+(** [load_any l] is the operand [l] reads. *)
+
+val load_dtype : 'd load -> Nx_array.Dtype.any
+val is_padded : 'd load -> bool
+
+val spec_load : 'd load -> Nx_kernel.Spec.load
+(** [spec_load l] is how a kernel reads [l]. *)
+
 (** {1:families Transforms and factorisations} *)
 
 val transform : ('d, 'r) fft -> Nx_kernel.Spec.transform

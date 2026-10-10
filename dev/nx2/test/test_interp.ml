@@ -382,6 +382,7 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
   | Fft (R2c _) -> same_form ~msg a b
   | Fft (C2r _) -> same_form ~msg a b
   | Linalg _ -> fail "law_forms builds no factorisation"
+  | Fold _ -> same_form ~msg a b
   | Assemble _ -> same_form ~msg a b
   | Copy _ -> same_form ~msg a b
   | Contract _ -> same_form ~msg a b
@@ -671,11 +672,13 @@ let one_node prog =
 let tangent (type v s d) i node (loads : d Nx.Prim.load array)
     (y : (v, s, d) Nx.t) : (v, s, d) Nx.t =
   let p j =
-    let (Nx.Prim.Plain x) = loads.(j) in
-    Nx.Prim.Any (fst (parts i x))
+    match loads.(j) with
+    | Nx.Prim.Plain x -> Nx.Prim.Any (fst (parts i x))
+    | Nx.Prim.Padded _ -> fail "test.jvp: a padded load"
   and t j =
-    let (Nx.Prim.Plain x) = loads.(j) in
-    Nx.Prim.Any (snd (parts i x))
+    match loads.(j) with
+    | Nx.Prim.Plain x -> Nx.Prim.Any (snd (parts i x))
+    | Nx.Prim.Padded _ -> fail "test.jvp: a padded load"
   in
   let dt = Nx.dtype y in
   match (node : P.node) with
@@ -733,6 +736,9 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
   | Fft _ ->
       invalid_arg (by ^ ": test.jvp has no derivative of a real transform")
   | Linalg _ -> invalid_arg (by ^ ": test.jvp has no derivative of a routine")
+  | Fold f ->
+      (* Linear in [x]. *)
+      both (fun y -> Nx.Prim.eval ~by (Fold { f with x = y })) f.x
   | Sort s ->
       (* The tangent's elements, gathered at the positions. *)
       let p, t = parts i s.x in

@@ -112,21 +112,20 @@ let body (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout prog
     k (loads : d Value.load array) (D.Any acc) : d Value.any =
   let out = (P.outs prog).(k) in
   let cast = not (same (P.dtype prog out) (D.Any acc)) in
-  if identity prog && not cast then
-    let (Value.Plain x) = loads.(0) in
-    Value.Any x
-  else
-    let nodes = Array.init (P.length prog) (P.node prog) in
-    let nodes, last =
-      if cast then
-        (Array.append nodes [| P.Op1 (Cast, D.Any acc, out) |], P.length prog)
-      else (nodes, out)
-    in
-    let prog = P.v ~ins:(P.ins prog) nodes ~outs:[| last |] in
-    let v, () =
-      apply ~by (Value.Map { layout; prog; outs = Value.[ acc ]; loads })
-    in
-    Value.Any v
+  match loads with
+  | [| Value.Plain x |] when identity prog && not cast -> Value.Any x
+  | _ ->
+      let nodes = Array.init (P.length prog) (P.node prog) in
+      let nodes, last =
+        if cast then
+          (Array.append nodes [| P.Op1 (Cast, D.Any acc, out) |], P.length prog)
+        else (nodes, out)
+      in
+      let prog = P.v ~ins:(P.ins prog) nodes ~outs:[| last |] in
+      let v, () =
+        apply ~by (Value.Map { layout; prog; outs = Value.[ acc ]; loads })
+      in
+      Value.Any v
 
 (* [x] stored in [dt]. *)
 let cast_to (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
@@ -544,7 +543,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
     prog (outs : (d, r) Value.outs) (loads : d Value.load array) : r option =
   let n = P.length prog in
   let node = P.node prog (n - 1) in
-  let dts = Array.map (fun (Value.Plain x) -> D.Any (Prim.dtype x)) loads in
+  let dts = Array.map Prim.load_dtype loads in
   let wide =
     match (node : P.node) with
     | Const _ | Op1 (Copy, _, _) | Op3 (Where, _, _, _) -> kept
@@ -562,7 +561,8 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   in
   if not widens then None
   else
-    let load (Value.Plain x) =
+    let load l =
+      let (Value.Any x) = Prim.load_any l in
       let (D.Any w) = wide (D.Any (Prim.dtype x)) in
       Value.Any (held apply ~by w x)
     in
@@ -904,8 +904,9 @@ let run : type r.
     r option =
  fun apply ~by op ->
   match op with
+  | Value.Map { loads; _ } when Array.exists Prim.is_padded loads -> None
   | Value.Map { layout; prog; outs; loads } when not (one_node prog) ->
-      let loads = Array.map (fun (Value.Plain x) -> Value.Any x) loads in
+      let loads = Array.map Prim.load_any loads in
       let values = Array.make (P.length prog) None in
       let value j = Option.get values.(j) in
       Array.iteri
@@ -914,10 +915,11 @@ let run : type r.
         values;
       Some (results outs (List.map value (Array.to_list (P.outs prog))))
   | Value.Reduce { layout; axes; prog; reductions; loads }
-    when not (core_reduce prog reductions) ->
+    when Array.exists Prim.is_padded loads || not (core_reduce prog reductions)
+    ->
       reduce apply ~by layout axes prog reductions loads
   | Value.Scan { layout; axis; prog; reduction = r; loads }
-    when not (plain prog r) ->
+    when Array.exists Prim.is_padded loads || not (plain prog r) ->
       scan apply ~by layout axis prog r loads
   | Value.Contract { spec; out; a; b; init } ->
       Some (contract apply ~by spec out a b init)
@@ -929,6 +931,7 @@ let run : type r.
   | Value.Scatter { combine; unique; axis; idx; updates; into } ->
       scatter apply ~by combine ~unique axis idx updates into
   | Value.Sort { axis; descending; k; x } -> sort apply ~by axis descending k x
-  | Value.Reduce _ | Value.Scan _ | Value.Fft _ | Value.Linalg _ | Value.Copy _
-  | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+  | Value.Reduce _ | Value.Scan _ | Value.Fft _ | Value.Linalg _ | Value.Fold _
+  | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
+  | Value.Check _ ->
       None

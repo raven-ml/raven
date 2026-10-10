@@ -19,7 +19,7 @@ let delivered : type r. by:string -> r prim -> r prim =
   | Place (p, x) -> Place (p, Exec.at (Devices.rebrand p) (Exec.live x))
   | Check _ -> Prim.map (fun x -> Exec.read (Exec.live x)) op
   | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _
-  | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _ ->
+  | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _ ->
       Prim.prepare ~by computing op
 
 let eval ~by op =

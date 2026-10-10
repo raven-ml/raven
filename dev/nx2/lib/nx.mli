@@ -1712,6 +1712,14 @@ module Prim : sig
   type 'd load =
     | Plain : ('v, 's, 'd) nx -> 'd load
         (** How a loop reads an operand: through its layout. *)
+    | Padded : {
+        x : ('v, 's, 'd) nx;
+        fill : 'v;
+        pad : Nx_kernel.Spec.pad;
+      }
+        -> 'd load
+        (** [x] padded with [fill] and windowed as [pad] says
+            ({!Nx_kernel.Spec.load}): the loop's shape is the padded one. *)
 
   (** What a loop's reduction makes of one output of its program. *)
   type ('d, _) reduction =
@@ -1885,6 +1893,14 @@ module Prim : sig
         (** [x]'s elements along [axis], stably, in {!Nx_kernel.Spec.sort}'s
             order, reversed where [descending], then their positions along
             [axis]; with [Some k], the first [k] of each slice. *)
+    | Fold : {
+        shape : int array;
+        pad : Nx_kernel.Spec.pad;
+        x : ('v, 's, 'd) nx;
+      }
+        -> ('v, 's, 'd) nx t
+        (** The adjoint of a [Padded] load by [pad] of a value of [shape]
+            ({!Nx_kernel.Spec.fold}). *)
     | Assemble : {
         dtype : ('v, 's) dtype;
         shape : int array;

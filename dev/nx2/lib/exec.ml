@@ -249,21 +249,24 @@ let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
   match outs with
   | [] -> None
   | dt :: _ -> (
-      let fits (Value.Plain y) =
-        match y with
-        | Value.Donated { at; arrays; _ } when Iarray.length arrays = 1 ->
+      let fits = function
+        | Value.Padded _ -> false
+        | Value.Plain (Value.Donated { at; arrays; _ })
+          when Iarray.length arrays = 1 ->
             let a = Iarray.get arrays 0 in
             D.equal (A.dtype a) dt
             && L.equal (A.layout a) layout
             && Rig.Buffer.spans (A.buffer a)
             && Array.for_all
-                 (fun (Value.Plain z) ->
+                 (fun l ->
+                   let (Value.Any z) = Prim.load_any l in
                    match Prim.at z with
                    | Some q -> Devices.rebrand q == at
                    | None -> true)
                  loads
-        | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _
-        | Value.Traced _ ->
+        | Value.Plain
+            ( Value.Array _ | Value.Shards _ | Value.Donated _
+            | Value.Deferred _ | Value.Traced _ ) ->
             false
       in
       match Array.find_index fits loads with
@@ -281,7 +284,7 @@ let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
                       ( i,
                         d.chain.origin,
                         A.Any (A.v (A.dtype a) (A.layout a) b') ))
-          | Value.Plain _ -> None))
+          | Value.Plain _ | Value.Padded _ -> None))
 
 (* A view made over [a]'s memory, outside any handle chain: the memory is shared
    from then on, so that no donation of [a]'s value writes what the view
@@ -442,8 +445,13 @@ let map_on ~by (module K : Nx_kernel.S) d prog first ops dsts =
            ~dsts ops)
         dsts ops
 
-let load_view (type d) ~by k w (Value.Plain x : d Value.load) =
-  A.Any (Place.view ~by x k w)
+(* A load's operand on device [k] for its window [w] of the loop: a padded
+   load's whole operand, which its route reads on each device. *)
+let load_view (type d) ~by k w (l : d Value.load) =
+  match l with
+  | Value.Plain x -> A.Any (Place.view ~by x k w)
+  | Value.Padded { x; _ } ->
+      A.Any (Place.view ~by x k (Array.map whole (Prim.shape x)))
 
 (* [K]'s copy of [a] into [dst]; where it declines [a]'s dtype, its copy of
    their bits in the dtype {!Expand.kept} gives, where that has their width. *)
@@ -553,8 +561,8 @@ let is_view : type r. r Value.prim -> bool = function
   | Value.Move _ | Value.Bitcast _ -> true
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
-  | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Place _
-  | Value.Check _ ->
+  | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
+  | Value.Place _ | Value.Check _ ->
       false
 
 let find memo p =
@@ -667,13 +675,14 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
       | Some (i, origin, a) ->
           (* Load [i] is the result's memory: the kernel reads each index of it
              before it writes the result there. *)
-          let load j (Value.Plain y) =
-            if j <> i then Value.Plain (live y)
-            else
-              let at = Prim.placement y in
-              Value.Plain
-                (Value.Array
-                   { at; a = A.expect (Prim.dtype y) a; dead = Prim.live })
+          let load j = function
+            | Value.Padded p -> Value.Padded { p with x = live p.x }
+            | Value.Plain y when j <> i -> Value.Plain (live y)
+            | Value.Plain y ->
+                let at = Prim.placement y in
+                Value.Plain
+                  (Value.Array
+                     { at; a = A.expect (Prim.dtype y) a; dead = Prim.live })
           in
           let r =
             plain ~by ~into:a
@@ -686,7 +695,7 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           consumed ~by ~reused:(fun _ -> false) hs;
           r)
   | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
-  | Value.Sort _ | Value.Fft _ | Value.Linalg _
+  | Value.Sort _ | Value.Fft _ | Value.Linalg _ | Value.Fold _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       claim ~by hs;
@@ -753,6 +762,11 @@ and compute : type r.
       match at with
       | Some q -> expanded ~by ~at:q q op
       | None -> invalid_arg "Exec.compute: a loop of no load at no placement")
+  | Value.Map { prog; loads; _ } when Array.exists Prim.is_padded loads ->
+      let spec = S.map prog ~loads:(Array.map Prim.spec_load loads) in
+      each_result ~by ?at op ~kind:"Map"
+        (fun (module K) ~dsts ops -> K.map spec ~dsts ops)
+        (fun k w -> Array.map (load_view ~by k w) loads)
   | Value.Map { layout; prog; loads; _ } ->
       let where = ref None in
       let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where ?into k f) op in
@@ -765,7 +779,7 @@ and compute : type r.
       let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
       let rs = Array.of_list (Prim.reductions_list reductions) in
       let reduce (module K : Nx_kernel.S) prog dsts ops =
-        let loads = Array.make (Array.length ops) S.Plain in
+        let loads = Array.map Prim.spec_load loads in
         K.reduce (S.reduce prog ~loads ~axes rs) ~dsts ops
       in
       if
@@ -779,7 +793,7 @@ and compute : type r.
       let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
       let rs = Prim.reductions_list Value.[ reduction ] in
       let scan (module K : Nx_kernel.S) prog dsts ops =
-        let loads = Array.make (Array.length ops) S.Plain in
+        let loads = Array.map Prim.spec_load loads in
         K.scan (S.scan prog ~loads ~axis (List.hd rs)) ~dsts ops
       in
       if
@@ -890,6 +904,16 @@ and compute : type r.
             then declined := Some (Devices.rig set d, ops)
           end);
       or_expanded ~by ~kernels:K.name ?at op r !declined
+  | Value.Fold { shape; pad; x } ->
+      let spec = S.fold ~shape pad in
+      let read d _ =
+        [| A.Any (Place.view ~by x d (Array.map whole (Prim.shape x))) |]
+      in
+      each_result ~by ?at op ~kind:"Fold"
+        (fun (module K) ~dsts ops ->
+          let (A.Any dst) = dsts.(0) in
+          K.fold spec ~dst (A.expect (A.dtype dst) ops.(0)))
+        read
   | Value.Fft f ->
       let (Value.Any x) = Prim.fft_operand f in
       let axes = Prim.fft_axes f in
@@ -999,7 +1023,8 @@ and or_expanded : type r.
           | Value.Sort _ ->
               unexpanded ~by ~kernels (Prim.name op) d (Array.to_list ops)
           | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
-          | Value.Scatter _ | Value.Fft _ | Value.Linalg _ | Value.Assemble _
+          | Value.Scatter _ | Value.Fft _ | Value.Linalg _ | Value.Fold _
+          | Value.Assemble _
           | Value.Contract _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
           | Value.Place _ | Value.Check _ ->
               refuses ~by ~kernels (Prim.name op) d (Array.to_list ops)))

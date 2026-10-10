@@ -51,8 +51,10 @@
     first runs as a contraction into the accumulator, then casts to the output.
     Any other expands into a map of each pair of elements multiplied in the
     accumulator, a sum over the contracted axes, the [init] added, and a cast to
-    the output's dtype. A sort of another dtype, a transform and a routine have
-    no expansion yet. Every other operation is core. *)
+    the output's dtype. A sort of another dtype, a transform, a routine, a fold
+    and a map with a padded load have no expansion yet; a reduction or a scan
+    with a padded load expands into such a map. Every other operation is core.
+*)
 
 val base : Nx_array.Dtype.any -> bool
 (** [base dt] is [true] for the dtypes every library's kernels compute: float32,

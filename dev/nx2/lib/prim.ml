@@ -255,6 +255,7 @@ let name : type r. r prim -> string = function
   | Gather _ -> "Gather"
   | Scatter _ -> "Scatter"
   | Sort _ -> "Sort"
+  | Fold _ -> "Fold"
   | Fft _ -> "Fft"
   | Linalg _ -> "Linalg"
   | Assemble _ -> "Assemble"
@@ -265,7 +266,21 @@ let name : type r. r prim -> string = function
   | Place _ -> "Place"
   | Check _ -> "Check"
 
-let load_any (type d) (Plain x : d load) : d any = Any x
+let load_any (type d) (l : d load) : d any =
+  match l with Plain x -> Any x | Padded { x; _ } -> Any x
+
+let load_dtype (type d) (l : d load) =
+  let (Any x) = load_any l in
+  D.Any (dtype x)
+
+let is_padded (type d) (l : d load) =
+  match l with Plain _ -> false | Padded _ -> true
+
+(* How a kernel reads [l]. *)
+let spec_load (type d) (l : d load) : S.load =
+  match l with
+  | Plain _ -> Plain
+  | Padded { x; fill; pad } -> Padded { fill = P.bits (dtype x) fill; pad }
 
 let operands : type r. r prim -> operands = function
   | Map { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
@@ -275,6 +290,7 @@ let operands : type r. r prim -> operands = function
   | Scatter { idx; updates; into; _ } ->
       Operands [ Any idx; Any updates; Any into ]
   | Sort { x; _ } -> Operands [ Any x ]
+  | Fold { x; _ } -> Operands [ Any x ]
   | Fft f -> Operands [ fft_operand f ]
   | Linalg l -> Operands (linalg_operands l)
   | Assemble { pieces; _ } -> Operands (List.map (fun (_, x) -> Any x) pieces)
@@ -291,7 +307,7 @@ let iteri_loads : type d.
     ('v 's. int -> ('v, 's, d) t -> unit) -> d load array -> unit =
  fun f loads ->
   for i = 0 to Array.length loads - 1 do
-    let (Plain x) = loads.(i) in
+    let (Any x) = load_any loads.(i) in
     f i x
   done
 
@@ -310,6 +326,7 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
       f 1 updates;
       f 2 into
   | Sort { x; _ } -> f 0 x
+  | Fold { x; _ } -> f 0 x
   | Fft fft ->
       let (Any x) = fft_operand fft in
       f 0 x
@@ -332,7 +349,7 @@ let rec loads_exist : type d.
  fun f loads i ->
   i < Array.length loads
   &&
-  let (Plain x) = loads.(i) in
+  let (Any x) = load_any loads.(i) in
   f x || loads_exist f loads (i + 1)
 
 let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
@@ -344,6 +361,7 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
   | Gather { idx; x; _ } -> f idx || f x
   | Scatter { idx; updates; into; _ } -> f idx || f updates || f into
   | Sort { x; _ } -> f x
+  | Fold { x; _ } -> f x
   | Fft fft ->
       let (Any x) = fft_operand fft in
       f x
@@ -360,7 +378,11 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
 let map : type r.
     ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
  fun m op ->
-  let map_load (type d) (Plain x : d load) : d load = Plain (m x) in
+  let map_load (type d) (l : d load) : d load =
+    match l with
+    | Plain x -> Plain (m x)
+    | Padded p -> Padded { p with x = m p.x }
+  in
   match op with
   | Map p -> Map { p with loads = Array.map map_load p.loads }
   | Reduce p -> Reduce { p with loads = Array.map map_load p.loads }
@@ -369,6 +391,7 @@ let map : type r.
   | Scatter s ->
       Scatter { s with idx = m s.idx; updates = m s.updates; into = m s.into }
   | Sort s -> Sort { s with x = m s.x }
+  | Fold f -> Fold { f with x = m f.x }
   | Fft f -> Fft (map_fft m f)
   | Linalg l -> Linalg (map_linalg m l)
   | Assemble a ->
@@ -601,6 +624,7 @@ let pp : type r. Format.formatter -> r prim -> unit =
       in
       Format.fprintf ppf " %s along %a" kind pp_shape (fft_axes f)
   | Linalg l -> Format.fprintf ppf " %s" (routine_name l)
+  | Fold { shape; _ } -> Format.fprintf ppf " into %a" pp_shape shape
   | Assemble { shape; _ } -> Format.fprintf ppf " into %a" pp_shape shape
   | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
   List.iteri (fun i x -> Format.fprintf ppf " (x%d: %a)" i pp_operand x) xs
@@ -608,10 +632,26 @@ let pp : type r. Format.formatter -> r prim -> unit =
 (* Rules *)
 
 let same_dtype a b = D.code a = D.code b
-let load_shape (type d) (Plain x : d load) = shape x
-
-let load_placement (type d) (Plain x : d load) : d Devices.placement option =
+let load_placement (type d) (l : d load) : d Devices.placement option =
+  let (Any x) = load_any l in
   at x
+
+(* The shape [l] gives its loop, or its refusal raised naming [by]. *)
+let load_shape (type d) ~by (l : d load) =
+  match l with
+  | Plain x -> shape x
+  | Padded { x; _ } -> (
+      let dt = D.Any (dtype x) in
+      let identity = P.v ~ins:[| dt |] [| In 0 |] ~outs:[| 0 |] in
+      let spec =
+        match S.map identity ~loads:[| spec_load l |] with
+        | s -> s
+        | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+      in
+      match S.shapes spec [| shape x |] with
+      | Ok [| s |] -> s
+      | Ok _ -> invalid_argf "%s: a load of several shapes" by
+      | Error e -> invalid_argf "%s: %s" by e)
 
 (* Whether [x]'s shape is [l]'s, allocating nothing. *)
 let has_layout_shape x l =
@@ -632,9 +672,9 @@ let check_loads (type d) ~by ~what layout prog (loads : d load array) =
     invalid_argf "%s: a program of %d operands over %d loads" by
       (Array.length ins) (Array.length loads);
   Array.iteri
-    (fun i (Plain x) ->
+    (fun i l ->
       let (D.Any want) = ins.(i) in
-      let have = dtype x in
+      let (D.Any have) = load_dtype l in
       if not (same_dtype want have) then
         invalid_argf "%s: load %d is %s where the program reads %s" by i
           (D.name have) (D.name want))
@@ -642,10 +682,15 @@ let check_loads (type d) ~by ~what layout prog (loads : d load array) =
   if not (L.is_contiguous layout && L.offset layout = 0) then
     invalid_argf "%s: a %s's layout %a is not C-contiguous" by what L.pp layout;
   Array.iteri
-    (fun i (Plain x as l) ->
-      if not (has_layout_shape x layout) then
+    (fun i l ->
+      let fits =
+        match l with
+        | Plain x -> has_layout_shape x layout
+        | Padded _ -> load_shape ~by l = L.shape layout
+      in
+      if not fits then
         invalid_argf "%s: load %d has shape %a, the %s %a" by i pp_shape
-          (load_shape l) what pp_shape (L.shape layout))
+          (load_shape ~by l) what pp_shape (L.shape layout))
     loads
 
 (* A map's rule; its result's layout, C-contiguous of [shape]. *)
@@ -737,8 +782,21 @@ let reduced shape axes =
    alone. *)
 
 (* A map's route, its loads of the map's layout's shape by its rule. *)
+(* A loop with a padded load reads its operands whole and computes the whole
+   result on each device: a device's window of a padded, windowed read is no
+   window of its operand. *)
+let padded_route (type d) ~by (loads : d load array) =
+  let operand l =
+    let (Any x) = load_any l in
+    shape x
+  in
+  Route.route ~by Replicated
+    (Array.map load_placement loads)
+    (Array.map operand loads)
+
 let map_route (type d) ~by layout (loads : d load array) : d Route.t option =
   if Array.length loads = 0 then None
+  else if Array.exists is_padded loads then padded_route ~by loads
   else
     let shape = L.shape layout in
     Route.route ~by Elementwise
@@ -796,6 +854,7 @@ let rec make_reductions : type d r.
 let loop_route (type d) ~by rule layout (loads : d load array) :
     d Route.t option =
   if Array.length loads = 0 then None
+  else if Array.exists is_padded loads then padded_route ~by loads
   else
     let shape = L.shape layout in
     Route.route ~by rule
@@ -999,6 +1058,22 @@ let linalg_route ~by l =
   let r = rank a in
   route_along ~by [| r - 2; r - 1 |] xs
 
+(* A fold's rule: [x] has the shape a padded load of [shape] gives, and a
+   dtype {!Nx_kernel.Prog.Add} takes. *)
+let check_fold ~by whole pad x =
+  if not (P.accepts2 (Binary Add) (dtype x)) then
+    invalid_argf "%s: Fold does not take %s" by (D.name (dtype x));
+  let spec =
+    match S.fold ~shape:whole pad with
+    | s -> s
+    | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+  in
+  match S.shapes spec [| shape x |] with
+  | Ok _ -> ()
+  | Error e -> invalid_argf "%s: %s" by e
+
+let fold_route ~by x = Route.route ~by Replicated [| at x |] [| shape x |]
+
 let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
     (pieces : (Nx_array.Move.range array * (v, s, d) t) list) =
   (match L.contiguous whole with
@@ -1137,6 +1212,10 @@ let results : type r.
       | R2c { dtype; _ } -> m 0 (of_layout dtype layout placement)
       | C2r { dtype; _ } -> m 0 (of_layout dtype layout placement))
   | Linalg l -> linalg_results ~by m l
+  | Fold { shape; pad; x } ->
+      check_fold ~by shape pad x;
+      let placement = result (fold_route ~by x) in
+      m 0 (of_layout (dtype x) (L.contiguous shape) placement)
   | Assemble { dtype; shape; fill; pieces } ->
       check_assemble ~by dtype shape fill pieces;
       let placement = result (assemble_route ~by pieces) in
@@ -1216,7 +1295,8 @@ let refused ~by node ins =
        (Array.to_list (Array.map (fun (D.Any dt) -> D.name dt) ins)))
 
 let one_node node dt ins loads =
-  let shape = match loads.(0) with Plain x -> shape x in
+  let (Any x) = load_any loads.(0) in
+  let shape = shape x in
   Map
     {
       layout = L.contiguous shape;
@@ -1263,13 +1343,19 @@ let prepare : type r.
     let moved = ref false in
     let loads =
       Array.mapi
-        (fun i (Plain x as l) ->
-          let y = place (read_at r i) x in
-          if y == x then l
-          else begin
-            moved := true;
-            Plain y
-          end)
+        (fun i l ->
+          let placed x =
+            let y = place (read_at r i) x in
+            if y != x then moved := true;
+            y
+          in
+          match l with
+          | Plain x ->
+              let y = placed x in
+              if y == x then l else Plain y
+          | Padded p ->
+              let y = placed p.x in
+              if y == p.x then l else Padded { p with x = y })
         loads
     in
     if !moved then Some loads else None
@@ -1311,6 +1397,9 @@ let prepare : type r.
       ignore (sort_shape ~by s.axis s.descending s.k s.x);
       let r = sort_route ~by s.axis s.x in
       Sort { s with x = place (read_at r 0) s.x }
+  | Fold f ->
+      check_fold ~by f.shape f.pad f.x;
+      Fold { f with x = place (read_at (fold_route ~by f.x) 0) f.x }
   | Fft f ->
       ignore (fft_shape ~by f);
       let r = fft_route ~by f in
@@ -1411,6 +1500,7 @@ let arrays : type r. r prim -> r -> Nx_array.any array array =
       let values, positions = r in
       [| arrays_of values; arrays_of positions |]
   | Fft f -> fft_arrays f r
+  | Fold _ -> [| arrays_of r |]
   | Linalg l -> linalg_arrays l r
   | Assemble _ -> [| arrays_of r |]
   | Contract _ -> [| arrays_of r |]
