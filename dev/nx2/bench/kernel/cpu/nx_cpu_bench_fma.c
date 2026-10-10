@@ -7,8 +7,8 @@
    a read of the bytes a product of few rows streams. The peak runs
    independent chains of vector fused multiply-adds, as many as the pipes
    hold in flight: 16 vectors on arm64 (four pipes, four cycles), 12 on
-   x86-64, whose 16 registers spill at 16 (batch-0.md measured 95.5 against
-   155 GFLOP/s). The read sums the bytes into eight vector accumulators.
+   x86-64, whose 16 registers spill at 16: 95.5 against 155 GFLOP/s on
+   kimchi. The read sums the bytes into eight vector accumulators.
    Both slice the work on the pool's threads as the other floors do; on
    x86-64 they compile for v3's instructions. */
 
