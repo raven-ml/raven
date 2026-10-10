@@ -124,13 +124,13 @@ typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
    [y + j·ys], stepping [sy]. [blocks] stores into [v] the values of the [n] blocks of
    NX_CPU_FOLD_BLOCK contiguous terms from [x], each its lanes from the
    identity [e] and the lanes' tree, as [lanes] and [combine] give them.
-   [few] stores into [y], stepping [sy], the values of [w] outputs of [n]
-   terms each, n at most NX_CPU_LANES: output j's term t at
-   [x + j·s + off[t]], in lane t from the identity [e], then the lanes'
-   tree, as one block of [lanes] gives them. [column] adds into each of the
-   [w] contiguous accumulators at [a] in turn the [n] rows of [x], row i
-   at [x + i·st] and its element j [s] further than j - 1: accumulator j
-   takes row 0's element j, then row 1's, and so on. */
+   [few] stores the values of [h] rows of [w] outputs of [n] terms each, n
+   at most NX_CPU_LANES, output j of row i at [y + i·sy2 + j·sy]: its term
+   t at [x + i·s2 + j·s + off[t]], in lane t from the identity [e], then
+   the lanes' tree, as one block of [lanes] gives them. [column] adds
+   into each of the [w] contiguous accumulators at [a] in turn the [n] rows
+   of [x], row i at [x + i·st] and its element j [s] further than j - 1:
+   accumulator j takes row 0's element j, then row 1's, and so on. */
 typedef struct {
   void (*lanes)(const uint8_t *x, int64_t s, int64_t n, uint8_t *l,
                 int first);
@@ -139,7 +139,8 @@ typedef struct {
                uint8_t *y, int64_t sy, int64_t ys, int64_t n, int k);
   void (*blocks)(const uint8_t *x, int64_t n, const uint8_t *e, uint8_t *v);
   void (*few)(const uint8_t *x, const int64_t *off, int n, int64_t s,
-              int64_t w, const uint8_t *e, uint8_t *y, int64_t sy);
+              int64_t w, int64_t s2, int64_t h, const uint8_t *e, uint8_t *y,
+              int64_t sy, int64_t sy2);
   void (*column)(uint8_t *a, const uint8_t *x, int64_t st, int64_t n,
                  int64_t s, int64_t w);
 } nx_cpu_fold;

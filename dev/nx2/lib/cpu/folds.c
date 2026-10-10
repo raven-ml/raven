@@ -26,6 +26,10 @@
 
 #define BLOCK NX_CPU_FOLD_BLOCK
 
+/* The outputs whose lanes a few-term fold holds side by side: 1 KiB of
+   each lane. */
+#define STRIP(T) (1024 / (int64_t)sizeof(T))
+
 /* How far a scan's sequences run behind one another, in elements. */
 #define LAG 16
 
@@ -151,24 +155,52 @@
       a[j] = v;                                                              \
     }                                                                        \
   }                                                                          \
+  /* Sixteen lanes' values [a] combined with [b]'s. */                      \
+  static inline void pair_##NAME(T *restrict a, const T *restrict b) {      \
+    for (int i = 0; i < 16; i++) a[i] = F(a[i], b[i]);                       \
+  }                                                                          \
   static void few_##NAME(const uint8_t *x_, const int64_t *off, int n,       \
-                         int64_t s, int64_t w, const uint8_t *e_,            \
-                         uint8_t *y_, int64_t sy) {                          \
+                         int64_t s, int64_t w, int64_t s2, int64_t h,        \
+                         const uint8_t *e_, uint8_t *y_, int64_t sy,         \
+                         int64_t sy2) {                                      \
     const T *x = (const T *)x_;                                              \
-    T *y = (T *)y_, e;                                                       \
+    T *y = (T *)y_, e, l[16][STRIP(T)];                                      \
     memcpy(&e, e_, sizeof e);                                                \
-    /* Sixteen outputs at a time: their lanes as rows, which the tree      \
-       combines as vectors. */                                               \
-    for (int64_t j = 0; j < w; j += 16) {                                    \
-      int64_t m = w - j < 16 ? w - j : 16;                                   \
-      T l[16][16];                                                           \
-      for (int t = 0; t < n; t++)                                            \
-        for (int64_t i = 0; i < m; i++)                                      \
-          l[t][i] = F(e, x[(j + i) * s + off[t]]);                           \
-      for (int h = 8; h >= 1; h /= 2)                                        \
-        for (int k = 0; k < h && k + h < n; k++)                             \
-          for (int64_t i = 0; i < m; i++) l[k][i] = F(l[k][i], l[k + h][i]); \
-      for (int64_t i = 0; i < m; i++) y[(j + i) * sy] = l[0][i];             \
+    int64_t cap = STRIP(T);                                                  \
+    /* Each term's values of a strip of outputs are copied side by side,   \
+       as many whole rows as fit or a piece of one, and padded with the    \
+       identity to whole vectors: the lanes and their tree then run over   \
+       vectors of outputs however short the rows. Loops of whole vectors,  \
+       since gcc at -O2 leaves a loop of any other count scalar. */         \
+    for (int64_t r = 0; r < h;) {                                            \
+      int64_t rows = w <= cap ? (h - r < cap / w ? h - r : cap / w) : 1;     \
+      for (int64_t c = 0; c < w; c += cap) {                                 \
+        int64_t m = w - c < cap ? w - c : cap, k = rows * m;                 \
+        int64_t k16 = (k + 15) & ~(int64_t)15;                               \
+        for (int t = 0; t < n; t++) {                                        \
+          T *d = l[t];                                                       \
+          for (int64_t q = 0; q < rows; q++, d += m) {                       \
+            const T *a = x + (r + q) * s2 + c * s + off[t];                  \
+            if (s == 1) memcpy(d, a, m * sizeof(T));                         \
+            else                                                             \
+              for (int64_t j = 0; j < m; j++) d[j] = a[j * s];               \
+          }                                                                  \
+          for (int64_t i = k; i < k16; i++) l[t][i] = e;                     \
+          for (int64_t i = 0; i < k16; i += 16)                              \
+            for (int j = 0; j < 16; j++) l[t][i + j] = F(e, l[t][i + j]);    \
+        }                                                                    \
+        for (int g = 8; g >= 1; g /= 2)                                      \
+          for (int t = 0; t < g && t + g < n; t++)                           \
+            for (int64_t i = 0; i < k16; i += 16)                            \
+              pair_##NAME(l[t] + i, l[t + g] + i);                           \
+        for (int64_t q = 0; q < rows; q++) {                                 \
+          T *d = y + (r + q) * sy2 + c * sy;                                 \
+          if (sy == 1) memcpy(d, l[0] + q * m, m * sizeof(T));               \
+          else                                                               \
+            for (int64_t j = 0; j < m; j++) d[j * sy] = l[0][q * m + j];     \
+        }                                                                    \
+      }                                                                      \
+      r += rows;                                                             \
     }                                                                        \
   }
 

@@ -395,6 +395,9 @@ let computed_examples =
     example S.Sum f32 [| 5 |] [||];
     example ~specials:20 S.Sum f32 [| 5000 |] [| 0 |];
     example S.Max f32 [| 100; 3 |] [| 1 |];
+    (* Short rows of few terms, which units take in bands of rows. *)
+    example ~specials:20 S.Sum f32 [| 46; 13; 2 |] [| 2 |];
+    example ~specials:20 S.Max f64 [| 46; 13; 2 |] [| 2 |];
     example
       ~view:
         {
@@ -421,6 +424,7 @@ let large_examples =
   [
     example ~scan:true S.Sum f32 [| 400_000 |] [| 0 |];
     example S.Sum f32 [| 400_000 |] [| 0 |];
+    example S.Sum f32 [| 4000; 13; 2 |] [| 2 |];
   ]
 
 (* The reference *)

@@ -75,6 +75,12 @@
 /* Units the groups of blocks aim for where outputs are few. */
 #define UNITS 64
 
+/* A fold of a lane of terms or fewer an output copies each term into its
+   strip, then runs the identity and the lanes' tree there: about ten times
+   memcpy's time for its operand (kimchi, one core: 180 us for the 1.35 MB
+   of 2x2 windows, which memcpy moves in 19 us). Its jobs are priced so. */
+#define FEW_COST 10
+
 typedef struct {
   const nx_cpu_fold *f;
   int dtype, w, nan;
@@ -93,10 +99,14 @@ typedef struct {
   int64_t terms, blocks;
   int64_t row;    /* outputs per unit along the row axis; 1 per output */
   int64_t chunks; /* units along the row axis */
+  int64_t band;   /* indices per unit of the kept axis before the row axis */
+  int64_t bands;  /* units along that axis */
   int64_t outer;  /* units along the other kept axes */
   int64_t group;  /* blocks per group, a power of two */
   int64_t groups;
   uint8_t *scratch; /* each unit's group's values, where groups > 1 */
+  int64_t off[LANES]; /* a lane or fewer terms: their positions from the
+                         output's first */
 } fold;
 
 static void identity(int monoid, int dt, uint8_t *id) {
@@ -275,15 +285,16 @@ static void blocks(const fold *q, int64_t p, int64_t s, int64_t W, int64_t b0,
 
 /* Units */
 
-/* Unit [u]'s outputs: the first one's positions in the operand and the
-   destination, how many, and the operand's and destination's steps from
-   one to the next. Units run outer index, then chunk, then group. */
+/* Unit [u]'s outputs: [H] rows of [W], the first one's positions in the
+   operand and the destination, and the operand's and destination's steps
+   from one output to the next in a row, and from one row to the next. Units
+   run outer index, then band, then chunk, then group. */
 typedef struct {
-  int64_t p, d, W, s, sd, g;
+  int64_t p, d, W, s, sd, H, s2, sd2, g;
 } unit;
 
 static unit unit_of(const fold *q, int64_t u) {
-  unit x = {q->x0, q->d0, 1, 0, 0, u % q->groups};
+  unit x = {q->x0, q->d0, 1, 0, 0, 1, 0, 0, u % q->groups};
   u /= q->groups;
   int last = q->nk - 1;
   if (q->row > 1) {
@@ -294,6 +305,17 @@ static unit unit_of(const fold *q, int64_t u) {
     x.W = q->ke[last] - c * q->row < q->row ? q->ke[last] - c * q->row : q->row;
     x.p += c * q->row * x.s;
     x.d += c * q->row * x.sd;
+    last--;
+  }
+  if (q->band > 1) {
+    int64_t c = u % q->bands;
+    u /= q->bands;
+    x.s2 = q->ks[last];
+    x.sd2 = q->kd[last];
+    x.H = q->ke[last] - c * q->band < q->band ? q->ke[last] - c * q->band
+                                              : q->band;
+    x.p += c * q->band * x.s2;
+    x.d += c * q->band * x.sd2;
     last--;
   }
   for (int i = last; i >= 0; i--) {
@@ -322,19 +344,22 @@ static void store(const fold *q, const unit *x, const uint8_t *v) {
 
 /* Outputs of a lane or fewer each, one block: their terms' positions from
    an output's first are the same for every output, and the table folds
-   them output by output, its lanes in registers. */
+   the unit's rows at once, its lanes side by side. */
 static void few(const fold *q, const unit *x) {
-  int64_t off[LANES];
-  for (int64_t t = 0; t < q->terms; t++) off[t] = term(q, 0, t);
-  uint8_t *d = q->dst->base + x->d * q->w;
-  q->f->few(at(q, x->p), off, (int)q->terms, x->s, x->W, q->id, d, x->sd);
-  if (!q->nan || (x->sd == 1 && !any_nan(q, d, x->W))) return;
-  for (int64_t j = 0; j < x->W; j++) {
-    uint8_t *e = d + j * x->sd * q->w;
-    if (!is_nan(q, e)) continue;
-    int64_t t = 0;
-    while (t < q->terms && !is_nan(q, at(q, x->p + j * x->s + off[t]))) t++;
-    if (t < q->terms) memcpy(e, at(q, x->p + j * x->s + off[t]), q->w);
+  q->f->few(at(q, x->p), q->off, (int)q->terms, x->s, x->W, x->s2, x->H, q->id,
+            q->dst->base + x->d * q->w, x->sd, x->sd2);
+  if (!q->nan) return;
+  for (int64_t h = 0; h < x->H; h++) {
+    int64_t p = x->p + h * x->s2;
+    uint8_t *d = q->dst->base + (x->d + h * x->sd2) * q->w;
+    if (x->sd == 1 && !any_nan(q, d, x->W)) continue;
+    for (int64_t j = 0; j < x->W; j++) {
+      uint8_t *e = d + j * x->sd * q->w;
+      if (!is_nan(q, e)) continue;
+      int64_t t = 0;
+      while (t < q->terms && !is_nan(q, at(q, p + j * x->s + q->off[t]))) t++;
+      if (t < q->terms) memcpy(e, at(q, p + j * x->s + q->off[t]), q->w);
+    }
   }
 }
 
@@ -379,12 +404,12 @@ static void finish_units(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static int64_t magnitude(int64_t x) { return x < 0 ? -x : x; }
 
-/* Runs [body] over [total] units on at most [threads] threads, moving
-   [bytes]. */
-static void job(int64_t total, int64_t bytes, int threads, rig_pool_body body,
-                void *ctx) {
+/* Runs [body] over [total] units on at most [threads] threads, touching
+   [bytes] in the time memcpy moves [cost]. */
+static void job(int64_t total, int64_t bytes, double cost, int threads,
+                rig_pool_body body, void *ctx) {
   if (threads == 1) body(0, total, 0, ctx);
-  else nx_cpu_job(total, bytes, bytes, body, ctx);
+  else nx_cpu_job(total, bytes, cost, body, ctx);
 }
 
 /* Adds the axis of extent [e] and steps [s] (operand) and [d] (destination)
@@ -400,7 +425,9 @@ static void keep(fold *q, int64_t e, int64_t s, int64_t d) {
    steps least through the operand becomes the row axis, last, where it
    steps less than every reduced axis or the outputs have few terms. A
    scan's slices otherwise run SLICES side by side along that axis, so that
-   as many running sums are in flight. */
+   as many running sums are in flight. Outputs of a lane of terms or fewer
+   whose rows are short take bands of rows of the kept axis before the row
+   axis, so that a unit holds about a row's worth of outputs. */
 static void choose(fold *q, int scan) {
   int64_t outputs = 1;
   for (int i = 0; i < q->nk; i++) outputs *= q->ke[i];
@@ -415,6 +442,8 @@ static void choose(fold *q, int scan) {
     if (q->re[i] > 1 && magnitude(q->rs[i]) < red) red = magnitude(q->rs[i]);
   q->row = 1;
   q->chunks = 1;
+  q->band = 1;
+  q->bands = 1;
   q->outer = outputs;
   q->blocks = (q->terms + BLOCK - 1) / BLOCK;
   int rows = least >= 0 && (kept < red || q->terms < FEW);
@@ -433,6 +462,11 @@ static void choose(fold *q, int scan) {
   q->row = most < e ? most : e;
   q->chunks = (e + q->row - 1) / q->row;
   q->outer = outputs / e;
+  if (scan || q->terms > LANES || q->nk < 2 || q->chunks > 1) return;
+  int64_t next = q->ke[q->nk - 2], want = (most + q->row - 1) / q->row;
+  q->bands = (next + want - 1) / want;
+  q->band = (next + q->bands - 1) / q->bands;
+  q->outer /= next;
 }
 
 /* Lays out a reduction from the coalesced loop [l] over the destination and
@@ -455,7 +489,8 @@ static void plan_reduce(fold *q, const nx_loop *l) {
   q->x0 = l->first[1];
   q->d0 = l->first[0];
   choose(q, 0);
-  int64_t units = q->outer * q->chunks;
+  for (int64_t t = 0; t < q->terms && t < LANES; t++) q->off[t] = term(q, 0, t);
+  int64_t units = q->outer * q->bands * q->chunks;
   q->group = q->blocks > 0 ? q->blocks : 1;
   if (units < UNITS && q->blocks > 1) {
     int64_t want = (UNITS + units - 1) / units;
@@ -736,23 +771,26 @@ static int fold_into(int scan, int monoid, int dt, const int *axes, int naxes,
     l.rank = nx_coalesce_dims(2, r, l.extent, l.step);
     plan_reduce(&q, &l);
   }
-  int64_t units = q.outer * q.chunks;
+  int64_t units = q.outer * q.bands * q.chunks;
   if (q.groups > 1) {
     q.scratch = malloc((size_t)(units * q.groups * q.row * q.w));
     if (q.scratch == NULL) return -1;
   }
-  if (q.groups == 1)
-    job(units, bytes, threads, scan ? scan_units : reduce_units, &q);
-  else if (!scan) {
-    job(units * q.groups, bytes, threads, reduce_units, &q);
-    job(units, units * q.groups * q.row * q.w, threads, finish_units, &q);
+  if (q.groups == 1) {
+    int64_t cost = !scan && terms <= LANES ? FEW_COST * bytes : bytes;
+    job(units, bytes, cost, threads, scan ? scan_units : reduce_units, &q);
+  } else if (!scan) {
+    int64_t values = units * q.groups * q.row * q.w;
+    job(units * q.groups, bytes, bytes, threads, reduce_units, &q);
+    job(units, values, values, threads, finish_units, &q);
   } else {
-    job(units * q.groups, bytes, threads, total_units, &q);
+    job(units * q.groups, bytes, bytes, threads, total_units, &q);
     carries(&q, units);
     if (q.row == 1)
-      job(units * ((q.groups + 3) / 4), bytes, threads, rescan_quads, &q);
+      job(units * ((q.groups + 3) / 4), bytes, bytes, threads, rescan_quads,
+          &q);
     else
-      job(units * q.groups, bytes, threads, rescan_units, &q);
+      job(units * q.groups, bytes, bytes, threads, rescan_units, &q);
     for (int64_t u = 0; u < units; u++) {
       unit x = unit_of(&q, u * q.groups);
       settle(&q, &x);
