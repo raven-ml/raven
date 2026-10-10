@@ -117,8 +117,19 @@ external sort :
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_sort"
 
-let assemble _ ~dst:_ _ = Nx_array.Declined
-let fold _ ~dst:_ _ = Nx_array.Declined
+(* Assemblies and folds (assemble.c) *)
+
+external assemble :
+  Nx_kernel.Spec.assemble Nx_kernel.Spec.t ->
+  dst:('v, 's) Nx_array.t ->
+  ('v, 's) Nx_array.t array ->
+  Nx_array.answer = "nx_cpu_assemble"
+
+external fold :
+  Nx_kernel.Spec.fold Nx_kernel.Spec.t ->
+  dst:('v, 's) Nx_array.t ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_fold_pad"
 
 (* Contractions *)
 

@@ -1,6 +1,6 @@
 (tests
- (names test_kinds test_prog test_spec test_kernels test_contract test_reduce test_index test_sort)
- (modules test_kinds test_prog test_spec test_kernels test_contract test_reduce test_index test_sort elements)
+ (names test_kinds test_prog test_spec test_kernels test_contract test_reduce test_index test_sort test_fold test_assemble)
+ (modules test_kinds test_prog test_spec test_kernels test_contract test_reduce test_index test_sort test_fold test_assemble elements)
  (libraries
   nx_array
   nx_array_gen

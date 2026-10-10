@@ -59,8 +59,9 @@
     scatter's [Add] adds a target's updates left to right.
 
     [sort] computes every dtype of a byte or more and declines the sub-byte
-    ones; it refuses with [Shape_mismatch] results whose shapes do not fit.
-
-    [assemble] and [fold] answer [Declined]. *)
+    ones. [fold] computes [float32], [float64] and the 8- to 64-bit integers
+    and declines the others. [assemble] computes every dtype from at most
+    three pieces and declines more. The three refuse with [Shape_mismatch]
+    operands and destinations whose shapes do not fit. *)
 
 include Nx_kernel.S
