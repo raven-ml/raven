@@ -359,6 +359,30 @@ let movements =
               | None ->
                   cover "a copy" true;
                   equal layout (L.contiguous s') l));
+      prop "a movement of a split value has its eager result's form" moved
+        (fun (s0, _, mv) ->
+          assume (s0.(0) mod 2 = 0);
+          let host = Devices.rebrand (Devices.one Devices.host 0) in
+          let x =
+            Place.value ~by:"t"
+              (Devices.split ~by:"t" ~axis:0 s2)
+              (Value.Array
+                 {
+                   at = host;
+                   a = A.of_array D.Float32 s0 (floats s0);
+                   dead = Prim.live;
+                 })
+          in
+          match Exec.run ~by:"t" (Move (mv, x)) with
+          | exception Invalid_argument _ -> cover "refused" true
+          | y ->
+              let _, l, p = one_form (Op (Move (mv, x))) in
+              let f = Prim.form y in
+              cover "on two devices"
+                (Devices.device (Option.get f.placement) = None);
+              equal layout f.layout l;
+              equal bool true
+                (Devices.equal (Option.get f.placement) (Option.get p)));
     ]
 
 (* A bitcast of [x] to [dt]: its form's layout against nx.array's bitcast of

@@ -129,6 +129,18 @@ let broadcast_shape ~by s s' =
       invalid_argf "%s: shapes %a and %a do not broadcast" by pp_shape s
         pp_shape s'
 
+(* The form of a value of [dtype] laid out as [layout] at [placement]: a value
+   on several devices, whose arrays are each its window, is laid out as the
+   C-contiguous whole. *)
+let of_layout (type v s d) (dtype : (v, s) dtype) layout
+    (placement : d Devices.placement option) : (v, s, d) form =
+  match placement with
+  | Some p
+    when Devices.device p = None
+         && not (L.is_contiguous layout && L.offset layout = 0) ->
+      { dtype; layout = L.contiguous (L.shape layout); placement }
+  | Some _ | None -> { dtype; layout; placement }
+
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
   match x with
   | Array { at; a; _ } ->
@@ -145,7 +157,7 @@ let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
         placement = Some at;
       }
   | Shards { at; _ } | Donated { at; _ } ->
-      { dtype = dtype x; layout = L.contiguous (shape x); placement = Some at }
+      of_layout (dtype x) (L.contiguous (shape x)) (Some at)
   | Deferred { form; _ } | Traced { form; _ } -> form
 
 let is_constant : type v s d. (v, s, d) t -> bool = function
@@ -647,7 +659,7 @@ let rec make_outs : type d r.
  fun m k layout placement -> function
   | [] -> ()
   | dtype :: rest ->
-      let v = m k { dtype; layout; placement } in
+      let v = m k (of_layout dtype layout placement) in
       (v, make_outs m (k + 1) layout placement rest)
 
 (* A reduction's results, from position [k] of the operation's results. *)
@@ -659,13 +671,13 @@ let make_reduction : type d a.
     (d, a) reduction ->
     a =
  fun m k layout placement -> function
-  | Monoid (_, _, dtype) -> m k { dtype; layout; placement }
+  | Monoid (_, _, dtype) -> m k (of_layout dtype layout placement)
   | Moments (_, dtype) ->
-      let mean = m k { dtype; layout; placement } in
-      (mean, m (k + 1) { dtype; layout; placement })
+      let mean = m k (of_layout dtype layout placement) in
+      (mean, m (k + 1) (of_layout dtype layout placement))
   | Arg (_, _, dtype) ->
-      let extreme = m k { dtype; layout; placement } in
-      (extreme, m (k + 1) { dtype = D.Int64; layout; placement })
+      let extreme = m k (of_layout dtype layout placement) in
+      (extreme, m (k + 1) (of_layout D.Int64 layout placement))
 
 let reduction_width : type d a. (d, a) reduction -> int = function
   | Monoid _ -> 1
@@ -907,48 +919,43 @@ let results : type r.
   | Gather { axis; idx; x } ->
       check_gather ~by axis idx x;
       let placement = result (gather_route ~by axis idx x) in
-      m 0 { dtype = dtype x; layout = L.contiguous (shape idx); placement }
+      m 0 (of_layout (dtype x) (L.contiguous (shape idx)) placement)
   | Scatter { combine; axis; idx; updates; into; _ } ->
       check_scatter ~by combine axis idx updates into;
       let placement = result (scatter_route ~by axis idx updates into) in
-      m 0 { dtype = dtype into; layout = L.contiguous (shape into); placement }
+      m 0 (of_layout (dtype into) (L.contiguous (shape into)) placement)
   | Sort { axis; descending; k; x } ->
       let s = sort_shape ~by axis descending k x in
       let placement = result (sort_route ~by axis x) in
       let layout = L.contiguous s in
-      let values = m 0 { dtype = dtype x; layout; placement } in
-      (values, m 1 { dtype = D.Int64; layout; placement })
+      let values = m 0 (of_layout (dtype x) layout placement) in
+      (values, m 1 (of_layout D.Int64 layout placement))
   | Assemble { dtype; shape; fill; pieces } ->
       check_assemble ~by dtype shape fill pieces;
       let placement = result (assemble_route ~by pieces) in
-      m 0 { dtype; layout = L.contiguous shape; placement }
+      m 0 (of_layout dtype (L.contiguous shape) placement)
   | Contract { spec; out; a; b; init } ->
       let shape = contract_shape ~by spec a b init in
       let placement = result (contract_route ~by spec a b init) in
-      m 0 { dtype = out; layout = L.contiguous shape; placement }
+      m 0 (of_layout out (L.contiguous shape) placement)
   | Copy x ->
       let placement = one_result ~by Elementwise x in
-      m 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
+      m 0 (of_layout (dtype x) (L.contiguous (shape x)) placement)
   | Move (mv, x) ->
       let s' = moved_shape ~by mv x in
       let placement = one_result ~by (Move mv) x in
-      (* CR: Canonicalize the whole layout when the result spans multiple
-         devices. Transposing [4;2] split on axis 0 gives strides [1;2] here,
-         while eager Shards reports [4;1] for the [2;4] whole. A tagged
-         interpreter retains this mismatch. Keep the placement rule in one form
-         constructor; physical shard layouts belong to Repr.shards. *)
       let layout =
         match L.move mv (form_layout x) with
         | Some l -> l
         | None -> L.contiguous s'
       in
-      m 0 { dtype = dtype x; layout; placement }
+      m 0 (of_layout (dtype x) layout placement)
   | Bitcast (dt, x) ->
       let layout =
         bitcast_layout ~by (form_layout x) (D.Any (dtype x)) (D.Any dt)
       in
       let placement = one_result ~by (bitcast_rule dt x) x in
-      m 0 { dtype = dt; layout; placement }
+      m 0 (of_layout dt layout placement)
   | Place (p, x) ->
       let s = shape x in
       ignore (Devices.window ~by p s 0);
@@ -957,7 +964,7 @@ let results : type r.
         | Array { a; _ }, Some _ -> Nx_array.layout a
         | _ -> L.contiguous s
       in
-      m 0 { dtype = dtype x; layout; placement = Some p }
+      m 0 (of_layout (dtype x) layout (Some p))
   | Check { ok; data; _ } ->
       let s = shape ok in
       List.iteri
