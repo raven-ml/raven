@@ -265,6 +265,10 @@ let move m l =
   let m = own m in
   let s' = Move.shape m l.shape in
   let r = rank l and r' = Array.length s' in
+  (* CR: Pass st into reshape: move already owns a zeroed stride array,
+     but reshape allocates another and leaves this one unused. Reusing it
+     preserves unit-axis zeros, result ownership and None. Re-record
+     layout/reshape-4 and array/move-reshape-broadcast. *)
   let st = Shape.zeros r' in
   if numel l = 0 || Array.mem 0 s' then Some (moved s' st 0)
   else

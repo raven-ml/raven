@@ -1451,6 +1451,10 @@ let pp_extreme ppf = function
   | View_at n -> Format.fprintf ppf "a view at %d" n
   | View_length n -> Format.fprintf ppf "a view of %d bytes" n
 
+(* CR: Enumerate these 39 field/boundary pairs with cases, named by
+   pp_extreme, keeping extreme_law and the Ints filter. The default
+   100 random draws repeat pairs and can miss a selected boundary.
+   Each chosen refusal should run once, independently of the seed. *)
 let gen_extreme =
   let open Gen in
   let n =
