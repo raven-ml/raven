@@ -40,7 +40,8 @@
    orders of a and b, n as named (a stored [m][k], b stored [k][n]) and t
    transposed (a stored [k][m], b stored [n][k]): large tiles (_nn to _tt),
    small ones (_s, either order, nx_metal_contract's order says which),
-   wide ones (_wnn to _wtt). Every operand is read where it lies.
+   wide ones (_wnn to _wtt), large ones reading past the matrix (_l,
+   either order). Every operand is read where it lies.
 
    An instance reads its order at run time where doing so costs no row
    measurably, and is compiled per order elsewhere: each instance below
@@ -59,6 +60,8 @@
   X(contract_f32_wtt) X(contract_f16_wnn) X(contract_f16_wnt)              \
   X(contract_f16_wtn) X(contract_f16_wtt) X(contract_bf16_wnn)             \
   X(contract_bf16_wnt) X(contract_bf16_wtn) X(contract_bf16_wtt)           \
+  /* past whole tiles, 64 rows or more: the 1000 cubes */                 \
+  X(contract_f32_l) X(contract_bf16_l)                                     \
   /* int8-4096 */                                                         \
   X(contract_i8_nn) X(contract_i8_nt) X(contract_i8_tn) X(contract_i8_tt)  \
   /* decode, b stored [k][n] and [n][k]: float16 and bfloat16 reading     \

@@ -834,6 +834,15 @@ FLOATS("contract_f32", F32, F32)
 FLOATS("contract_f16", F16, F16)
 FLOATS("contract_bf16", BF16, BF16F)
 
+/* float32 and bfloat16 past whole large tiles, either order: an order
+   branch costs them nothing measured on the 1000 cube (0.99-1.01), and
+   bfloat16 stages its codes, which runs nt 8% faster there than staged
+   as float32. */
+CONTRACT_ANY("contract_f32_l", F32, NX_METAL_LARGE, NX_METAL_LARGE,
+             elt<F32>::bk)
+CONTRACT_ANY("contract_bf16_l", BF16, NX_METAL_LARGE, NX_METAL_LARGE,
+             elt<BF16>::bk)
+
 /* int8 into 32 bits: large tiles, whole, rows on 16-byte boundaries, each
    order. */
 #define INT8(name, AT, BT)                                               \

@@ -658,8 +658,9 @@ let every_kernel () =
     }
   in
   let orders = [ (false, false); (false, true); (true, false); (true, true) ] in
-  (* Large tiles take 128 or more whole ones; small ones fewer, or tiles past
-     the matrix; wide ones few rows. *)
+  (* Large tiles take 128 or more whole ones, or, checked, as many past the
+     matrix that fill seven eighths of their rows (float32, bfloat16); small
+     ones fewer, or tiles past the matrix; wide ones few rows. *)
   let shapes =
     [
       (128, 64, 64, 32);
@@ -669,6 +670,7 @@ let every_kernel () =
       (1, 9, 70, 40);
       (1, 1, 70, 40);
       (1, 40, 40, 1024);
+      (1, 120, 4100, 32);
     ]
   in
   List.iter
@@ -1016,6 +1018,8 @@ let orders =
       (* 40 rows past whole tiles: 32 x 32 tiles count 158 and split k in 2, 16
          x 64 tiles count 120 and would split it in 4. *)
       example (Dt.Any Dt.Float32) ~m:40 ~n:2500 ~k:4096;
+      (* Checked large tiles, which read every order from one instance. *)
+      example (Dt.Any Dt.Bfloat16) ~m:120 ~n:4100 ~k:48;
       (* Sums of -0 over 48 terms: 16-step tiles end on k, 32-step tiles pass
          it. *)
       {

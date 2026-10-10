@@ -19,11 +19,11 @@
    of tiles that consecutive threadgroups take, as a power of two: 4 tiles
    reading one tile of b share it in the GPU's cache. */
 enum { swizzle = 2 };
-enum size { Large, Small, Wide };
+enum size { Large, Small, Wide, Checked };
 static const uint32_t tile_rows[] = {NX_METAL_LARGE, NX_METAL_SMALL,
-                                     NX_METAL_WIDE_M},
+                                     NX_METAL_WIDE_M, NX_METAL_LARGE},
                       tile_cols[] = {NX_METAL_LARGE, NX_METAL_SMALL,
-                                     NX_METAL_WIDE_N};
+                                     NX_METAL_WIDE_N, NX_METAL_LARGE};
 
 /* The steps of k the dense kernel stages for a dtype and tile. */
 static uint32_t tile_k(int dt, enum size size) {
@@ -71,6 +71,8 @@ static const int wide[3][2][2] = {
      {NX_METAL_contract_bf16_wtn, NX_METAL_contract_bf16_wtt}}};
 static const int small[3] = {NX_METAL_contract_f32_s, NX_METAL_contract_f16_s,
                              NX_METAL_contract_bf16_s};
+static const int checked[3] = {NX_METAL_contract_f32_l, -1,
+                               NX_METAL_contract_bf16_l};
 static const int skinny[3][2] = {
     {NX_METAL_skinny_f32_n, NX_METAL_skinny_f32_t},
     {NX_METAL_skinny_f16_n, NX_METAL_skinny_f16_t},
@@ -119,13 +121,24 @@ static uint64_t tiles(const nx_metal_contract_in *c, enum size size) {
   return (c->m + rows - 1) / rows * ((c->n + cols - 1) / cols) * c->batch;
 }
 
-/* The tile a product's dtype and shape pick: wide for few rows; large
-   for products of whole large tiles, enough of them, and whole steps of k
-   in each part; small for the other products of whole tiles; past whole
-   tiles, small, except that the half types take wide ones where small
-   ones would leave more than an eighth of their rows empty (48 rows: 1.2
-   to 1.7 times faster; at 32 and 1,000 rows, small is). int8 runs on
-   whole large tiles. */
+/* Whether tiles of [size] leave at most an eighth of a product's rows
+   empty. */
+static int fills(const nx_metal_contract_in *c, enum size size) {
+  uint32_t rows = tile_rows[size], covered = (c->m + rows - 1) / rows * rows;
+  return 8 * (covered - c->m) <= covered;
+}
+
+/* The tile a product's dtype and shape pick: wide for few rows; large for
+   products of whole large tiles, enough of them, and whole steps of k in
+   each part; small for the other products of whole tiles. Past whole
+   tiles, the largest of the dtype's tiles that leaves at most an eighth
+   of the rows empty: checked large ones for float32 and bfloat16, given
+   enough of them; small ones; wide ones for the half types, small ones
+   for float32. Measured on the 1000 cube, checked large tiles run
+   float32 and bfloat16 nt 0.92 of small ones and nn 1.04 and 0.99,
+   float16 nn 1.06; on 48 rows, wide tiles run the half types 1.2
+   to 1.7 times faster than small ones, and float32 nt 1.3 times slower.
+   int8 runs on whole large tiles. */
 static enum size tile_of(const nx_metal_contract_in *c, int dt, int floats) {
   if (!floats) return Large;
   if (c->m <= wide_rows) return Wide;
@@ -135,9 +148,10 @@ static enum size tile_of(const nx_metal_contract_in *c, int dt, int floats) {
   if (whole && large >= small_tiles &&
       c->k / split(c, large, floats) % tile_k(dt, Large) == 0)
     return Large;
-  if (whole || dt == NX_FLOAT32) return Small;
-  uint32_t rows = tile_rows[Small], covered = (c->m + rows - 1) / rows * rows;
-  return 8 * (covered - c->m) > covered ? Wide : Small;
+  if (whole) return Small;
+  if (dt != NX_FLOAT16 && large >= small_tiles && fills(c, Checked))
+    return Checked;
+  return dt == NX_FLOAT32 || fills(c, Small) ? Small : Wide;
 }
 
 /* [bytes] of the call's scratch after the [*used] bytes taken: their
@@ -202,6 +216,7 @@ static int plan_dense(const nx_metal_contract_in *c, nx_metal_contract *p,
   int entry = i8               ? int8[a_t][b_t]
               : size == Large ? large[d][a_t][b_t]
               : size == Small ? small[d]
+              : size == Checked ? checked[d]
                               : wide[d][a_t][b_t];
   uint32_t parts = split(c, tiles(c, size), floats);
   if (parts == 1) {
