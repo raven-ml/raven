@@ -114,13 +114,16 @@ let backward rule i shape target =
   uncut_all (whole rule i shape) g
 
 (* Whether an operand at [g] gives every device of [want] the part [want] gives
-   it: the same windows, or the whole on each of those devices. *)
+   it, and lies on no other device: the same windows, or the whole on each of
+   exactly those devices. An operand whole on more devices is read at [want],
+   each device of [want] taking its own array. *)
 let covers g want =
-  Grid.equal g want
-  || (not (Grid.is_cut g))
-     && Array.for_all
-          (fun k -> Array.mem k (Grid.devices g))
-          (Grid.devices want)
+  let same_devices () =
+    let have = Grid.devices g and need = Grid.devices want in
+    Array.length have = Array.length need
+    && Array.for_all (fun k -> Array.mem k have) need
+  in
+  Grid.equal g want || ((not (Grid.is_cut g)) && same_devices ())
 
 (* Placements an elementwise operation or a movement reads its operands at with
    nothing to work out: every operand of every set, or every one at one

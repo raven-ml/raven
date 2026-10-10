@@ -17,9 +17,9 @@
     where some lie on one device, that device, which every such operand must
     share; else the first. Each operand is then read where it lies if that gives
     every device of the target the part of the operand the device's window of
-    the result depends on: the same window, or the whole operand on that device;
-    otherwise it is read at the target moved back to its axes, which the engine
-    places it at.
+    the result depends on, and lies on no other device: the same window, or the
+    whole operand on each device of the target; otherwise it is read at the
+    target moved back to its axes, which the engine places it at.
 
     Two rules follow, with JAX as the reference for placements. Operands of one
     set never raise for where they lie: the brand already makes them one set,

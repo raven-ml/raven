@@ -553,11 +553,44 @@ let declined_case =
         | `Min -> "Min")
         a pp_ints s pp_ints p (bits u) (bits x))
 
+(* nx.cpu, declining every gather of a dtype narrower than a byte, which then
+   runs as its expansion. *)
+module Byte_gathers = struct
+  include Nx_cpu
+
+  let name = "nx.byte-gathers"
+
+  let gather s ~dst idx x =
+    if D.bits (A.dtype x) < 8 then A.Declined else Nx_cpu.gather s ~dst idx x
+end
+
+let test_gather_on_one_device () =
+  let closing =
+    match Rig.memory_device "nx-gather-closing" with
+    | Ok d -> d
+    | Error e -> failwith e
+  in
+  let module S =
+    (val Nx.devices ~kernels:(module Byte_gathers)
+           [ Nx_support.memory 3; closing ])
+  in
+  let data = [| 1; 2; 3; 4 |] in
+  let x = Nx.place S.on (host D.Int4 [| 4 |] data) in
+  let d0 = Nx.Placement.device S.v (Nx_support.memory 3) in
+  let p = Nx.place d0 (positions [| 2 |] [| 3; 0 |]) in
+  Rig.close closing;
+  let y = Nx.take ~axis:0 p x in
+  equal bool ~msg:"its placement" true
+    (Nx.Placement.equal d0 (Option.get (Nx.placement y)));
+  equal (array int) [| data.(3); data.(0) |] (elements y)
+
 let declines =
   group "declines"
     [
       prop "a declined scatter combines repeated targets in C order"
         declined_case law_declined;
+      test "a declined gather computes on its target's devices alone"
+        test_gather_on_one_device;
     ]
 
 (* A gather and a scatter of every dtype. *)

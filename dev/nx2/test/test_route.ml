@@ -192,6 +192,29 @@ let law =
               (Grid.devices target)
           end)
 
+(* The devices of [p], in increasing order. *)
+let devices_of p =
+  List.sort Int.compare (Array.to_list (Grid.devices (Devices.grid p)))
+
+let exact =
+  prop ~count:500 "every operand is read on the target's devices alone" case
+    (fun c ->
+      match route c.rule c.ps c.shapes with
+      | exception Invalid_argument _ -> ()
+      | None -> ()
+      | Some r ->
+          let target = devices_of r.result in
+          cover "an operand moved off a device the target lacks"
+            (Array.exists
+               (fun p ->
+                 match p with
+                 | Some p -> devices_of p <> target
+                 | None -> false)
+               c.ps);
+          Array.iter
+            (fun p -> equal (list int) target (devices_of p))
+            r.operands)
+
 let keeps =
   prop "operands already at the result's placement stay there" case (fun c ->
       assume (c.ps.(0) <> None);
@@ -377,4 +400,6 @@ let move_law =
             walk 0 [])
           (Grid.devices (Devices.grid r.result)))
 
-let () = exit (run "nx route" [ group "laws" [ law; keeps; move_law ]; cases_ ])
+let () =
+  exit
+    (run "nx route" [ group "laws" [ law; exact; keeps; move_law ]; cases_ ])

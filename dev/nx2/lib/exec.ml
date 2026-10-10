@@ -844,12 +844,6 @@ and expanded : type r. by:string -> unit Devices.placement -> r Value.prim -> r
       let (module K) = kernels_of ~by ~op:(Prim.name op) (Devices.set p) in
       invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
 
-(* CR: Expand Gather/Scatter inside each declining device's branch.
-   With replicated x and indices only on d0, this retry casts x on d1 too
-   and raises if d1 is closed. Wrap the selected Place.view arrays at
-   Devices.one set k, retain successful destinations, and replace only
-   declined slots with their local expansion. Rebuild the result at p,
-   including the singleton case; this needs no final Copy. *)
 (* [op]'s result [r] where every device computed it. Where a device's kernels
    declined it, with operands [ops] on device [d], its expansion; for a scatter
    whose targets may repeat, which has none, its result on the host, whose
