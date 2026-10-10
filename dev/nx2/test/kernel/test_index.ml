@@ -51,6 +51,11 @@ let gather_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen) () =
   let* axis = int_range 0 (r - 1) in
   let* n = frequency [ (4, int_range 0 6); (1, int_range 7 40) ] in
   let is = Array.mapi (fun i e -> if i = axis then n else e) xs in
+  (* CR: Value views here, in scatter_gen and test_sort never broadcast.
+     Draw their broadcast axes explicitly; keep the reference laws. Seed
+     broadcasts on and off each operation's axis: in-range gathers, scatters
+     with an update and an untouched target, sorts keeping at least one value.
+     Cover nonempty actual layouts with an extent > 1 and stride 0. *)
   let* xv = view_of r in
   let* bc =
     array ~size:(constant r)

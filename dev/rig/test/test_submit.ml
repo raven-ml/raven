@@ -548,6 +548,11 @@ let test_room () =
 
 (* While a submit of a submission waits on the host for a producer, a submit of
    the same submission on another domain, with its own run, completes. *)
+(* CR: Use one Launch with two initialized Runs carrying 41 and 42.
+   Keep the gate and value assertions, then wait for value 2 and check
+   P.launches read 42 then 41. The model holds sc.scl across submits,
+   and the two-domain law uses Fill, so neither checks concurrent
+   launch parameters. Keep the model's cell locks. *)
 let test_run_beside_wait () =
   let producer, pp = P.open_ "submit:beside-producer" in
   let d, _ = P.open_ "submit:beside" in
