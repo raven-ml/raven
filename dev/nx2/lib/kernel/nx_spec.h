@@ -77,6 +77,15 @@ static inline const int32_t *nx_prog_outs(const nx_prog *p) {
   return nx_prog_ins(p) + p->nins;
 }
 
+/* Whether [p] has one operand and one output, the operand unchanged: its
+   output node is In 0, whatever nodes come before it, as in both [In 0]
+   and Prog.of_node's [In 0; In 0]. */
+static inline int nx_prog_is_operand(const nx_prog *p) {
+  if (p->nins != 1 || p->nouts != 1) return 0;
+  const nx_prog_node *out = &p->nodes[nx_prog_outs(p)[0]];
+  return out->tag == NX_NODE_IN && out->a == 0;
+}
+
 /* A reduction's kind, in the order of Spec.reduction's cases: the
    monoids, Moments, then Arg Max and Arg Min. */
 enum { NX_SUM, NX_PROD, NX_MAX, NX_MIN, NX_LOGSUMEXP, NX_MOMENTS, NX_ARGMAX,

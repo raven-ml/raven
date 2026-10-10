@@ -659,9 +659,7 @@ static int core(value s, int family, int dt, int *axes, int *naxes) {
   const nx_spec_reduction *r = nx_spec_loop_reductions(m);
   const nx_prog *p = nx_spec_loop_prog(m);
   if (r->kind > NX_MIN || r->output != 0 || r->dtype != dt) return -1;
-  if (p->nins != 1 || p->nouts != 1 || nx_prog_ins(p)[0] != dt) return -1;
-  const nx_prog_node *out = &p->nodes[nx_prog_outs(p)[0]];
-  if (out->tag != NX_NODE_IN || out->a != 0) return -1;
+  if (!nx_prog_is_operand(p) || nx_prog_ins(p)[0] != dt) return -1;
   if (nx_cpu_table->fold[r->kind][dt].lanes == NULL) return -1;
   *naxes = m->naxes;
   for (int i = 0; i < m->naxes; i++) axes[i] = nx_spec_loop_axes(m)[i];
