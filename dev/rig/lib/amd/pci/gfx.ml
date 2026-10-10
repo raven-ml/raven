@@ -47,8 +47,8 @@ let all_units = 0xffff_ffff
 (* The stride between the descriptors of a queue's dies. *)
 let die_stride = 0x1000
 
-let mqd l q ~base ~kiq ~aql ~xcc ~xccs =
-  let gc = (Regs.gpu l).gc in
+let mqd l q ~base ~kiq ~aql ~xcc =
+  let { Rig_amd_abi.Gpu.gc; xccs; _ } = Regs.gpu l in
   let (f : D.mqd) = layout_of_gc gc in
   let b = Bytes.make f.sizeof '\000' in
   let set (off, _) v = Bytes.set_int32_le b off (Int32.of_int (lo32 v)) in
@@ -281,7 +281,6 @@ let eop_bytes = 0x1000
    descriptor, copies its registers into the hardware queue and activates it. *)
 let program g ~me ~pipe ~queue ~insts ~mqd:at ~kiq ~aql q =
   let l = Regs.layout_of g.r in
-  let xccs = List.length g.xccs in
   List.iter
     (fun xcc ->
       grbm_select g ~me ~pipe ~queue ~inst:xcc;
@@ -293,7 +292,7 @@ let program g ~me ~pipe ~queue ~insts ~mqd:at ~kiq ~aql q =
         Regs.write ~inst:xcc ~value:0 g.r "regCP_HQD_DEQUEUE_REQUEST" []
       end;
       let pa = at + (die_stride * xcc) in
-      let d = mqd l q ~base:(Gmc.mc g.gmc pa) ~kiq ~aql ~xcc ~xccs in
+      let d = mqd l q ~base:(Gmc.mc g.gmc pa) ~kiq ~aql ~xcc in
       Window.write g.vram pa d;
       Window.flush g.vram;
       (* The hardware queue's registers, CP_MQD_BASE_ADDR to CP_HQD_PQ_WPTR_HI,

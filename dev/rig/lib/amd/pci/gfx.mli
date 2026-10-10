@@ -23,26 +23,14 @@ type queue = {
 }
 (** The type for what a compute queue is made of. *)
 
-(* CR: Derive the die count from Regs.gpu l and remove ~xccs. AQL queues
-   use every live die; program passes back the count this layout supplied.
-   Keep ~xcc and PM4/KIQ's instance selection. Make the multidie test's
-   discovery layout contain eight live GC instances instead of pairing a
-   one-die layout with ~xccs:8. *)
 val mqd :
-  Regs.layout ->
-  queue ->
-  base:int ->
-  kiq:bool ->
-  aql:bool ->
-  xcc:int ->
-  xccs:int ->
-  string
-(** [mqd l q ~base ~kiq ~aql ~xcc ~xccs] is the descriptor of queue [q] on die
-    [xcc] of [xccs], as the kernel's MQD structs of [l]'s GC lay it out
-    ([v9_structs.h], [v11_structs.h], [v12_structs.h]), which the hardware reads
-    at the address the memory controller gives [base]: privileged and of the
-    kernel driver's kind if [kiq], an AQL queue if [aql], whose work a GPU of
-    several dies spreads across them. Pure. *)
+  Regs.layout -> queue -> base:int -> kiq:bool -> aql:bool -> xcc:int -> string
+(** [mqd l q ~base ~kiq ~aql ~xcc] is the descriptor of queue [q] on die [xcc]
+    of [l]'s live dies ({!Regs.gpu}), as the kernel's MQD structs of [l]'s GC
+    lay it out ([v9_structs.h], [v11_structs.h], [v12_structs.h]), which the
+    hardware reads at the address the memory controller gives [base]:
+    privileged and of the kernel driver's kind if [kiq], an AQL queue if [aql],
+    whose work a GPU of several dies spreads across them. Pure. *)
 
 (** {1:gc The GC} *)
 

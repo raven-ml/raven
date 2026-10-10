@@ -548,9 +548,13 @@ let gfx12_queue =
     doorbell = 3;
   }
 
-(* A synthetic GPU of GC 9.4.3, for the fields of its descriptor. *)
+(* A synthetic GPU of GC 9.4.3 of eight dies, each a live GC instance at the
+   R9700's GC bases, for the fields of its descriptor. *)
 let gfx9_layout () =
   let d = table "r9700.bin" in
+  let gc_bases = List.assoc 0 (List.assoc gc d.bases) in
+  let dies = List.init 8 (fun i -> (i, gc_bases)) in
+  let d = { d with bases = (gc, dies) :: List.remove_assoc gc d.bases } in
   let d = with_version (with_version d 11 (9, 4, 3)) 42 (4, 4, 2) in
   let d = with_version (with_version d 255 (13, 0, 6)) 1 (13, 0, 6) in
   let d = with_version (with_version d 34 (1, 8, 0)) 40 (4, 4, 2) in
@@ -625,7 +629,6 @@ let queues =
             Gfx.mqd
               (layout (table "r9700.bin"))
               gfx12_queue ~base:0x8_0000_1000 ~kiq:false ~aql:false ~xcc:0
-              ~xccs:1
           in
           equal int 2048 (String.length d);
           equal (list int)
@@ -672,16 +675,15 @@ let queues =
           let d =
             Gfx.mqd
               (layout (table "r9700.bin"))
-              gfx12_queue ~base:0 ~kiq:true ~aql:false ~xcc:0 ~xccs:1
+              gfx12_queue ~base:0 ~kiq:true ~aql:false ~xcc:0
           in
           equal int 0x3 (u32 d (4 * 145) lsr 30));
       test
         "an AQL queue across dies holds its die and chunk over the thread masks"
         (fun () ->
-          let d =
-            Gfx.mqd (gfx9_layout ()) gfx12_queue ~base:0 ~kiq:false ~aql:true
-              ~xcc:2 ~xccs:8
-          in
+          let l = gfx9_layout () in
+          equal ~msg:"dies" int 8 (Regs.gpu l).xccs;
+          let d = Gfx.mqd l gfx12_queue ~base:0 ~kiq:false ~aql:true ~xcc:2 in
           equal (list int)
             [
               0xffff_ffff;
