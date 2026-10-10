@@ -312,6 +312,15 @@ let law_bitcast_same (_, Case a, _) =
   let x = value a in
   equal bool true (Nx.bitcast (A.dtype a) x == x)
 
+(* atan2's range ends: [-π] at [y = -0.], [x < 0], and [π] rounded to the
+   dtype, 3.25 in float8_e4m3fn. *)
+let test_atan2_ends () =
+  let at dt y x = Nx.atan2 (Nx.scalar dt y) (Nx.scalar dt x) in
+  let first x = (A.to_array (host_array x)).(0) in
+  equal float_exact (-.Float.pi) (first (at D.Float64 (-0.) (-1.)));
+  equal float_exact Float.pi (first (at D.Float64 0. (-1.)));
+  equal float_exact 3.25 (first (at D.Float8_e4m3fn 0. (-1.)))
+
 let elementwise =
   group "elementwise"
     [
@@ -326,6 +335,7 @@ let elementwise =
       prop "erf is its kind" unary_operands law_erf;
       prop "a bitcast to its own dtype is the value itself" unary_operands
         law_bitcast_same;
+      test "atan2 reaches its range's ends, rounded" test_atan2_ends;
     ]
 
 let () = exit (run "nx elementwise" [ elementwise ])

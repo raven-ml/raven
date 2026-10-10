@@ -844,7 +844,9 @@ end
 
 (** {2:transcendental Powers, exponentials and trigonometry}
 
-    Floats only. *)
+    Floats only. Each is its mathematical value rounded to the dtype;
+    a stated range is the mathematical one, which rounding can leave
+    at an end: in [float8_e4m3fn], [π] rounds to [3.25]. *)
 
 val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sqrt x] is the square root, NaN below [-0.]. *)
@@ -895,13 +897,9 @@ val acos : ('v, 's, 'd) t -> ('v, 's, 'd) t
 val atan : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [atan x] is the arctangent, in \[[-π/2], [π/2]\]. *)
 
-(* CR: State atan2's mathematical branch as [-pi, pi], then describe its
-   floating-point approximation. atan2(-0, -1) gives negative rounded pi;
-   float8_e4m3fn encodes the endpoints as +/-3.25, so the stated interval
-   cannot bound the outputs. Keep y's signed-zero choice and correct
-   Prog.Atan2's point to (x, y), with y still the first operand. *)
 val atan2 : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [atan2 y x] is the angle of the point [(x, y)], in \][-π], [π]\]. *)
+(** [atan2 y x] is the angle of the point [(x, y)], in \[[-π], [π]\]:
+    [-π] for [y = -0.] and [x < 0]. *)
 
 val sinh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sinh x] is the hyperbolic sine. *)

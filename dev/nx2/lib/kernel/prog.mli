@@ -58,7 +58,7 @@ type binary =
       (** The remainder, of the dividend's sign: the dividend by zero on
           integers, [fmod] on floats. *)
   | Pow  (** The first operand to the power of the second. *)
-  | Atan2  (** The angle of [(y, x)], [y] the first operand, in \]-π, π\]. *)
+  | Atan2  (** The angle of [(x, y)], [y] the first operand, in \[-π, π\]. *)
   | Maximum
       (** The IEEE 754 maximum: NaN propagates and [-0] orders below [+0]. *)
   | Minimum  (** As [Maximum]. *)
