@@ -418,8 +418,11 @@ NX_INLINE int64_t nx_double_to_i64(double x) {
   return x >= 0x1p63 ? INT64_MAX : (int64_t)y;
 }
 
+/* NaN is replaced before the clamp at 0: clang compiles x > 0.0 ? x : 0.0
+   to arm64's fmaxnm, which gives a NaN for a signalling NaN. */
 NX_INLINE uint64_t nx_double_to_u64(double x) {
-  double y = x > 0.0 ? x : 0.0; /* NaN too */
+  double y = x == x ? x : 0.0;
+  y = y > 0.0 ? y : 0.0;
   y = y > 0x1.fffffffffffffp63 ? 0x1.fffffffffffffp63 : y;
   return x >= 0x1p64 ? UINT64_MAX : (uint64_t)y;
 }

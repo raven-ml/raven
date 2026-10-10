@@ -602,6 +602,21 @@ let test_integer_ties b () =
         D.all)
     srcs
 
+(* Every special of every dtype, cast to every dtype. *)
+let test_specials b (D.Any s) () =
+  let sp = specials s in
+  let a =
+    A.v s (L.contiguous [| List.length sp |]) (B.of_string (String.concat "" sp))
+  in
+  List.iter
+    (fun (D.Any d) ->
+      Option.iter
+        (fun dst ->
+          equal ~msg:(D.name d) (list string) []
+            (differ ~src:(A.Any a) (reference a d) dst))
+        (run_op b Cast d a))
+    D.all
+
 (* A cast whose operands do not fit the caches reads and writes them through
    buffers. *)
 let test_past_the_caches b () =
@@ -1510,6 +1525,12 @@ let laws (b : Support.backend) =
       test "float64 about every tie, to every dtype"
         (unit (test_sweep b D.Float64 sweep64));
       test "integers about every rounding point" (unit (test_integer_ties b));
+      group "every special to every dtype"
+        (List.filter_map
+           (fun (D.Any s as d) ->
+             if D.bits s < 8 || specials s = [] then None
+             else Some (test (D.name s) (unit (test_specials b d))))
+           D.all);
       test "a cast past the caches is the reference"
         (unit (test_past_the_caches b));
       prop "a declined kind of one operand writes nothing" (pair case)
