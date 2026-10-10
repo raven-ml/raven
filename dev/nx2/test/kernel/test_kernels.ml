@@ -965,6 +965,34 @@ let law_apply2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
         (fun dst -> K.apply2 k ~dst x' y'))
     kinds
 
+(* Idiv and Mod by a divisor repeated along the rows, each power of two the
+   dtype holds, are nx_kinds.h's, over dividends with the dtype's extremes:
+   the rows shift and mask for such a divisor. *)
+let law_power_of_two_divisors (b : Support.backend) seed =
+  let module K = (val b.kernels) in
+  let n = 300 in
+  let each (D.Any dt) =
+    let x = seeded dt [| n |] seed in
+    let signed = D.is D.Signed dt in
+    for k = 0 to D.bits dt - if signed then 2 else 1 do
+      let one = A.create Rig.host dt [| 1 |] in
+      let p = A.of_array D.Float64 [| 1 |] [| Float.ldexp 1. k |] in
+      ignore (Nx_cpu.apply1 Cast ~dst:one p);
+      let y = A.v dt (L.v ~strides:[| 0 |] [| n |]) (A.buffer one) in
+      let x' = on b x and y' = on b y in
+      List.iter
+        (fun kind ->
+          answers b (K2 kind) (D.Any dt) (D.Any dt) [| n |] ~accepted:true
+            ~want:(fun () -> expected (name2 kind) dt ~compare:false [| x; y |])
+            (fun dst -> K.apply2 kind ~dst x' y'))
+        P.[ Binary Idiv; Binary Mod ]
+    done
+  in
+  List.iter each
+    (List.filter
+       (fun (D.Any d) -> D.is D.Signed d || D.is D.Unsigned d)
+       D.all)
+
 (* Where picks each element's bytes; Fma is nx_kinds.h's. *)
 let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
   let module K = (val b.kernels) in
@@ -1554,6 +1582,9 @@ let laws (b : Support.backend) =
         (run (law_apply2 b));
       prop ~count:8 "kinds of two operands over large views" large_pairs
         (run (law_apply2 ~kinds:P.[ Binary Add; Compare Less ] b));
+      prop ~count:4 "idiv and mod by a repeated power of two are nx_kinds.h's"
+        Gen.nat
+        (run (law_power_of_two_divisors b));
       prop "where picks bytes and fma is nx_kinds.h's"
         (Gen.pair pairs Gen.nat)
         (run (law_apply3 b));

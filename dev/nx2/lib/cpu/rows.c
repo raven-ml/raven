@@ -240,12 +240,46 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
   BIN(maximum_##D, T, T, LD, nx_maximum_##S)                                 \
   BIN(minimum_##D, T, T, LD, nx_minimum_##S)
 
+/* Idiv and Mod of integers by a divisor 2^k repeated along the row, as
+   Nx.Rng's are by 2, 2^31 and 2^32, shift and mask, as a compiler divides
+   by such a constant: the kind's division is a divide instruction an
+   element. A signed quotient rounds toward zero as the kind's does, a
+   negative dividend taking 2^k - 1 more before its shift; the remainder is
+   what the quotient leaves. Given [v] of the compute type [CT], whose
+   unsigned type is [UT], QUO_ and REM_ are the quotient and the remainder,
+   signed and unsigned; LOW is 2^k - 1, and NEG all ones for a negative
+   [v], else 0. */
+#define LOW(CT, UT) ((UT)b - 1)
+#define NEG(CT, UT) ((UT)(v >> (8 * sizeof(CT) - 1)))
+#define QUO_s(CT, UT) (v + (CT)(NEG(CT, UT) & LOW(CT, UT))) >> k
+#define REM_s(CT, UT)                                                        \
+  (CT)((UT)v - (((UT)v + (NEG(CT, UT) & LOW(CT, UT))) & ~LOW(CT, UT)))
+#define QUO_u(CT, UT) v >> k
+#define REM_u(CT, UT) v & LOW(CT, UT)
+
+#define SHIFTED(NAME, T, CT, UT, F, E)                                       \
+  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,   \
+                   int64_t sx, const uint8_t *y_, int64_t sy) {             \
+    T *d = (T *)d_;                                                          \
+    const T *x = (const T *)x_, *y = (const T *)y_;                          \
+    CT b = sy == 0 ? (CT)y[0] : 0;                                           \
+    if (sd == 1 && sx == 1 && sy == 0 && b > 0 && (b & (b - 1)) == 0) {      \
+      int k = 0;                                                             \
+      while (((CT)1 << k) != b) k++;                                         \
+      for (int64_t i = 0; i < n; i++) {                                      \
+        CT v = (CT)x[i];                                                     \
+        d[i] = (T)(E(CT, UT));                                               \
+      }                                                                      \
+      return;                                                                \
+    }                                                                        \
+    LOOPS2(T, (CT), F);                                                      \
+  }
+
 #define ARITH(D, T, LD, S)                                                   \
   COMPARES(D, T, LD, S)                                                      \
   BIN(add_##D, T, T, LD, nx_add_##S)                                         \
   BIN(sub_##D, T, T, LD, nx_sub_##S)                                         \
   BIN(mul_##D, T, T, LD, nx_mul_##S)                                         \
-  BIN(mod_##D, T, T, LD, nx_mod_##S)                                         \
   BIN(pow_##D, T, T, LD, nx_pow_##S)                                         \
   FMA(fma_##D, T, LD, nx_fma_##S)
 
@@ -262,10 +296,11 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
   FLOAT_KINDS1(FLOAT1, S, T)                                                 \
   TRIG_KINDS(TRIG1, S, T)
 
-#define INTS(D, T, CT, S)                                                    \
+#define INTS(D, T, CT, UT, S, SIGN)                                          \
   ARITH(D, T, (CT), S)                                                       \
   INT_KINDS1(INT1, D, T, CT, S)                                              \
-  BIN(idiv_##D, T, T, (CT), nx_idiv_##S)                                     \
+  SHIFTED(idiv_##D, T, CT, UT, nx_idiv_##S, QUO_##SIGN)                      \
+  SHIFTED(mod_##D, T, CT, UT, nx_mod_##S, REM_##SIGN)                        \
   BIN(and_##D, T, T, (CT), nx_and_##S)                                       \
   BIN(or_##D, T, T, (CT), nx_or_##S)                                         \
   BIN(xor_##D, T, T, (CT), nx_xor_##S)
@@ -285,14 +320,14 @@ static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
 
 FLOATS(f32, float, f32, nx_fmaf)
 FLOATS(f64, double, f64, nx_fmad)
-INTS(i8, int8_t, int32_t, i32)
-INTS(i16, int16_t, int32_t, i32)
-INTS(i32, int32_t, int32_t, i32)
-INTS(i64, int64_t, int64_t, i64)
-INTS(u8, uint8_t, uint32_t, u32)
-INTS(u16, uint16_t, uint32_t, u32)
-INTS(u32, uint32_t, uint32_t, u32)
-INTS(u64, uint64_t, uint64_t, u64)
+INTS(i8, int8_t, int32_t, uint32_t, i32, s)
+INTS(i16, int16_t, int32_t, uint32_t, i32, s)
+INTS(i32, int32_t, int32_t, uint32_t, i32, s)
+INTS(i64, int64_t, int64_t, uint64_t, i64, s)
+INTS(u8, uint8_t, uint32_t, uint32_t, u32, u)
+INTS(u16, uint16_t, uint32_t, uint32_t, u32, u)
+INTS(u32, uint32_t, uint32_t, uint32_t, u32, u)
+INTS(u64, uint64_t, uint64_t, uint64_t, u64, u)
 COMPLEX(c64, nx_c64)
 COMPLEX(c128, nx_c128)
 COMPARES(b, uint8_t, BOOL_LD, u32)
