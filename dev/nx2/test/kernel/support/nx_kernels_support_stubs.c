@@ -19,6 +19,9 @@ static const nx_cpu_target *const tables[] = {
 #if defined(__x86_64__)
     &nx_cpu_v3,
 #endif
+#if defined(__APPLE__) && defined(__aarch64__)
+    &nx_cpu_amx,
+#endif
 };
 
 #define TABLES (int)(sizeof tables / sizeof tables[0])

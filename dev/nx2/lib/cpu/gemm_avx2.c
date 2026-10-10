@@ -18,6 +18,10 @@
 
 #if defined(__x86_64__) && defined(__AVX2__) && defined(__FMA__)
 
+/* The kernels' speed (cpu.h): 155 GFLOP/s on a performance core of
+   kimchi, against the 146 GB/s its memcpy moves. */
+#define SPEED 1
+
 #define MR 6
 
 /* Row i's two accumulators. */
@@ -83,17 +87,21 @@ THIN(thin4_f64, double, __m256d, 4, 4, 3)
 
 void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, MR, 16},
+      .kernel = {kernel_f32, MR, 16, SPEED, 1},
       .mc = 96,
       .kc = 384,
       .nc = 3072,
-      .thin = {{thin1_f32, 1, 96}, {thin2_f32, 2, 48}, {thin4_f32, 4, 24}}};
+      .thin = {{thin1_f32, 1, 96, SPEED, 1},
+               {thin2_f32, 2, 48, SPEED, 1},
+               {thin4_f32, 4, 24, SPEED, 1}}};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, MR, 8},
+      .kernel = {kernel_f64, MR, 8, SPEED, 1},
       .mc = 96,
       .kc = 256,
       .nc = 3072,
-      .thin = {{thin1_f64, 1, 48}, {thin2_f64, 2, 24}, {thin4_f64, 4, 12}}};
+      .thin = {{thin1_f64, 1, 48, SPEED, 1},
+               {thin2_f64, 2, 24, SPEED, 1},
+               {thin4_f64, 4, 12, SPEED, 1}}};
 }
 
 #else

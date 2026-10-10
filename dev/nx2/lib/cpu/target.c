@@ -36,6 +36,9 @@ nx_cpu_target nx_cpu_base = {.name = "base"};
 #if defined(__x86_64__)
 nx_cpu_target nx_cpu_v3 = {.name = "v3"};
 #endif
+#if defined(__APPLE__) && defined(__aarch64__)
+nx_cpu_target nx_cpu_amx;
+#endif
 
 const nx_cpu_target *nx_cpu_table = &nx_cpu_base;
 
@@ -46,6 +49,14 @@ __attribute__((constructor)) static void init(void) {
   nx_cpu_set_folds_base(&nx_cpu_base);
 #if defined(__aarch64__)
   nx_cpu_set_neon(&nx_cpu_base);
+#endif
+#if defined(__APPLE__) && defined(__aarch64__)
+  /* amx is base with the matrix unit's kernels. */
+  if (!nx_cpu_has_amx()) return;
+  nx_cpu_amx = nx_cpu_base;
+  nx_cpu_amx.name = "amx";
+  nx_cpu_set_amx(&nx_cpu_amx);
+  nx_cpu_table = &nx_cpu_amx;
 #endif
 #if defined(__x86_64__)
   if (!has_v3()) return;

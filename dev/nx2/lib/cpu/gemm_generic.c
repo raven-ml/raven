@@ -23,6 +23,10 @@
 #define MR 4
 #define NR 4
 
+/* The kernels' speed (cpu.h), as the vector kernels': a target without
+   their own runs these on every product. */
+#define SPEED 1
+
 #define KERNEL(name, T, FMA)                                                \
   static void name(int64_t k, const void *va, int64_t lda, const void *vb,  \
                    void *vc, int64_t ldc, nx_cpu_from from) {               \
@@ -58,9 +62,15 @@ DOT(dot_f64, double, fma)
 
 static void set(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, MR, NR}, .mc = 64, .kc = 256, .nc = 1024};
+      .kernel = {kernel_f32, MR, NR, SPEED, 1},
+      .mc = 64,
+      .kc = 256,
+      .nc = 1024};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, MR, NR}, .mc = 64, .kc = 256, .nc = 1024};
+      .kernel = {kernel_f64, MR, NR, SPEED, 1},
+      .mc = 64,
+      .kc = 256,
+      .nc = 1024};
   t->dot[NX_FLOAT32] = dot_f32;
   t->dot[NX_FLOAT64] = dot_f64;
 }

@@ -60,17 +60,32 @@ typedef void (*nx_cpu_kernel)(int64_t k, const void *a, int64_t lda,
 typedef void (*nx_cpu_dot)(const void *a, const void *b, int64_t n,
                            void *lanes);
 
-/* A microkernel and its tile of MR × NR outputs. */
+/* A pack moves [n1] rows of [n0] elements of acc from [s], stepping [s0]
+   along a row and [s1] across rows, one of them 1, into [d]: element i of
+   row j to d + (j·pitch + i)·w. It packs a's blocks and b's slivers
+   without the stage, whose moves serve every dtype and layout. */
+typedef void (*nx_cpu_pack)(int64_t n0, int64_t n1, const void *s,
+                            int64_t s0, int64_t s1, void *d, int64_t pitch);
+
+/* A microkernel, its tile of MR × NR outputs, its speed: the flops it runs
+   on one thread in the time memcpy moves a byte, which prices its jobs; and
+   the cores that share the hardware it runs on: 1 for a core's vector unit,
+   a cluster's for the M1's matrix unit. */
 typedef struct {
   nx_cpu_kernel f;
   int mr, nr;
+  int flops_per_byte;
+  int shared;
 } nx_cpu_micro;
 
 /* A contraction's kernels for chain order in one accumulator dtype. */
-typedef struct {
+typedef struct nx_cpu_gemm {
   nx_cpu_micro kernel;
   int64_t mc, kc, nc;    /* the driver's blocks of rows, of k and of columns */
   nx_cpu_micro thin[3];  /* of 1, 2 and 4 rows; f NULL where none */
+  nx_cpu_pack pack;      /* or NULL: operands pack through the stage */
+  const struct nx_cpu_gemm *other; /* or NULL: kernels that compute a
+                                      product where they take less time */
 } nx_cpu_gemm;
 
 /* A row of a kind of one operand: n elements of [d] from [x], each stepping
@@ -119,9 +134,9 @@ typedef struct {
                  int64_t s, int64_t w);
 } nx_cpu_fold;
 
-/* The bytes of the largest tile of any target's microkernel: 8 × 12
-   float32 on arm64, 6 × 16 on x86-64, 1 × 96 thin. */
-#define NX_CPU_TILE 384
+/* The bytes of the largest tile of any target's microkernel: 32 × 32
+   float32 on the matrix unit. */
+#define NX_CPU_TILE 4096
 
 typedef struct {
   const char *name;
@@ -151,7 +166,8 @@ typedef struct {
 /* The tables, each set when the program starts on a host that runs it, by
    convert.c, gemm_generic.c, rows.c and folds.c compiled for its target,
    then by the kernels of its instructions: gemm_neon.c's on arm64,
-   gemm_avx2.c's for v3. */
+   gemm_avx2.c's for v3. amx is base's table with gemm_amx.c's kernels for
+   the matrix unit of Apple's M1. */
 extern nx_cpu_target nx_cpu_base;
 void nx_cpu_set_convert_base(nx_cpu_target *t);
 void nx_cpu_set_gemm_base(nx_cpu_target *t);
@@ -159,6 +175,11 @@ void nx_cpu_set_rows_base(nx_cpu_target *t);
 void nx_cpu_set_folds_base(nx_cpu_target *t);
 #if defined(__aarch64__)
 void nx_cpu_set_neon(nx_cpu_target *t);
+#endif
+#if defined(__APPLE__) && defined(__aarch64__)
+extern nx_cpu_target nx_cpu_amx;
+int nx_cpu_has_amx(void);
+void nx_cpu_set_amx(nx_cpu_target *t);
 #endif
 #if defined(__x86_64__)
 extern nx_cpu_target nx_cpu_v3;

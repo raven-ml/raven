@@ -28,25 +28,30 @@
 
    Chain order follows BLIS's loops (Goto and van de Geijn, "Anatomy of
    High-Performance Matrix Multiplication", 2008): per NC columns of b and
-   KC of the contraction, one job packs b's panel into NR-wide slivers,
-   then a job computes MC-row blocks of a, each packed by its worker into
-   MR-wide slivers, against ranges of b's slivers, MR × NR at a time:
+   KC of the contraction, one job packs b's panel into NR-wide slivers and
+   a's rows into MC-row blocks, then a job computes each block against
+   ranges of b's slivers, MR × NR at a time:
 
      for each group of batch elements, NC panel, KC block:
-       job 1: b[kc × nc] -> slivers kc × NR, shared
+       job 1: b[kc × nc] -> slivers kc × NR
+              a[m × kc] -> blocks of MC rows, kc steps each
        job 2: per (element, MC block, range of slivers):
-                a[mc × kc] -> slivers MR × kc, the worker's own
-                for each sliver of b, each sliver of a: R tile += a · b
+                for each sliver of b, each MR rows of the block:
+                  R tile += a · b
 
    A product of at most MC rows, as decoding a token is, packs a whole and
    then streams b: each unit packs a sliver of b and adds it in, so that b
    is read once and no panel passes between jobs. At most 4 rows run on a
    thin kernel of 1, 2 or 4 rows. One of at most MC columns, and fewer
-   columns than rows, is computed as its transpose.
+   columns than rows, is computed as its transpose. Where a table names
+   other kernels, a product runs on those that take less time for its rows
+   (fastest): on the M1, the cores' vector units take products of few rows
+   from its matrix unit.
 
    R, the sum in acc, is dst itself: a dtype is computed with out = acc.
    Each tile starts as init, or +0, when its first KC block is computed. */
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,12 +76,20 @@
    slower take fewer. */
 #define UNITS 4
 
-/* Job costs, in bytes of memcpy (job.c). A flop costs about a byte: peak
-   flops and memcpy bandwidth stand level on the M1's and kimchi's
-   performance cores (99.8 GFLOP/s against 100-160 GB/s, 155 against 146).
-   Packing a byte costs two, a guess no measurement has refined. */
-#define FLOP_COST 1
+/* Job costs, in bytes of memcpy (job.c): a kernel's flops at its speed
+   (cpu.h), and two a byte packed, a guess no measurement has refined. */
 #define PACK_COST 2
+
+/* The cost of [flops] on the kernel [k]. */
+static int64_t flop_cost(nx_cpu_micro k, int64_t flops) {
+  return flops / k.flops_per_byte;
+}
+
+/* The copies of [k]'s hardware the performance cores hold. */
+static int64_t engines(nx_cpu_micro k) {
+  int64_t n = rig_pool_performance_cores() / k.shared;
+  return n > 1 ? n : 1;
+}
 
 /* Operands and axes, as the view numbers them. */
 enum { A = NX_VIEW_A, B = NX_VIEW_B, INIT = NX_VIEW_INIT, DST = NX_VIEW_DST };
@@ -117,8 +130,63 @@ static int64_t pos(const problem *p, int o, int64_t e, int64_t i, int64_t j,
          k * s[CON];
 }
 
+/* Packed operands start on 128 bytes: the matrix unit loads 128 at once. */
+#define ALIGN 128
+
 static void *alloc(int64_t bytes) {
-  return aligned_alloc(64, (size_t)ceil_div(bytes > 0 ? bytes : 1, 64) * 64);
+  return aligned_alloc(ALIGN,
+                       (size_t)ceil_div(bytes > 0 ? bytes : 1, ALIGN) * ALIGN);
+}
+
+/* The calling thread keeps its packed operands' buffer for its next
+   product, up to KEPT bytes: an allocation past 32 KiB goes to the system
+   and back, 0.7 µs on the M1, as long as packing a 128³ product takes. */
+#define KEPT (4 * 1024 * 1024)
+
+typedef struct {
+  uint8_t *p;
+  int64_t n;
+} kept;
+
+static pthread_key_t kept_key;
+static pthread_once_t kept_once = PTHREAD_ONCE_INIT;
+
+static void kept_drop(void *v) {
+  kept *k = v;
+  free(k->p);
+  free(k);
+}
+
+static void kept_init(void) { pthread_key_create(&kept_key, kept_drop); }
+
+/* The calling thread's kept buffer, made at its first product; NULL if
+   it cannot be. */
+static kept *mine(void) {
+  pthread_once(&kept_once, kept_init);
+  kept *k = pthread_getspecific(kept_key);
+  if (k != NULL) return k;
+  k = calloc(1, sizeof *k);
+  if (k != NULL && pthread_setspecific(kept_key, k) == 0) return k;
+  free(k);
+  return NULL;
+}
+
+/* [bytes] for the calling thread's packed operands, NULL if allocation
+   fails; given back by [give]. */
+static uint8_t *take(int64_t bytes) {
+  kept *k = bytes > KEPT ? NULL : mine();
+  if (k == NULL) return alloc(bytes);
+  if (k->n < bytes) {
+    free(k->p);
+    k->p = alloc(bytes);
+    k->n = k->p ? bytes : 0;
+  }
+  return k->p;
+}
+
+static void give(uint8_t *p) {
+  kept *k = mine();
+  if (k == NULL || k->p != p) free(p);
 }
 
 /* The worker's scratch of [bytes], allocated at its first unit. */
@@ -204,20 +272,22 @@ static nx_cpu_from from(const problem *p, int64_t pc) {
 
 /* Chain order */
 
-/* A panel of b: batch elements [e0, e0 + ne), columns [jc, jc + nc), the
-   contraction [pc, pc + kc), packed at [b] in slivers of NR columns. */
+/* A panel: batch elements [e0, e0 + ne), b's columns [jc, jc + nc), the
+   contraction [pc, pc + kc), packed: b at [b] in slivers of NR columns, a
+   at [a] in blocks of MC rows. */
 typedef struct {
   problem *p;
   int64_t e0, ne;
   int64_t jc, nc, pc, kc;
   int64_t slivers;
-  int64_t mblocks;            /* blocks of MC rows of a */
+  int64_t mblocks, rows;      /* blocks of a, each of at most [rows] */
   int64_t ranges, per_range;  /* ranges of slivers a compute unit takes */
-  uint8_t *b;
+  nx_cpu_pack move;           /* the pack job's pack, or NULL */
+  uint8_t *b, *a;
 } panel;
 
 /* Splits the panel's slivers into ranges where its elements' blocks of a
-   are fewer units than [want]: each range packs its block of a again. */
+   are fewer units than [want]: ranges of one block share its packing. */
 static void split(panel *c, int64_t want) {
   int64_t units = c->ne * c->mblocks;
   c->ranges = units < want ? min64(c->slivers, ceil_div(want, units)) : 1;
@@ -241,37 +311,82 @@ static uint8_t *sliver(const panel *c, int64_t e, int64_t s) {
   return c->b + ((e - c->e0) * c->slivers + s) * nr * c->kc * c->p->w;
 }
 
+/* Block [ib] of element [e]'s rows of a, packed: kc steps of [*lda]
+   elements, a multiple of MR, for its [*m] rows. */
+static uint8_t *block(const panel *c, int64_t e, int64_t ib, int64_t *m,
+                      int64_t *lda) {
+  const nx_cpu_gemm *g = c->p->g;
+  *m = min64(g->mc, c->p->ext[ROW] - ib * g->mc);
+  *lda = ceil_div(*m, g->kernel.mr) * g->kernel.mr;
+  return c->a + ((e - c->e0) * c->mblocks + ib) * c->rows * c->kc * c->p->w;
+}
+
+/* The pack of a job of [total] units, [bytes] and [cost]: the target's
+   where the job runs on at most one thread per copy of the kernel's
+   hardware, else none. The matrix unit packs faster than a core, but its
+   cluster's cores queue on it: on the M1 Max a 256³ product packs faster
+   through it on two threads, a 512³ one through the stage on eight. */
+static nx_cpu_pack mover(const problem *p, int64_t total, int64_t bytes,
+                         int64_t cost) {
+  int64_t threads = min64(total, nx_cpu_threads(bytes, cost));
+  return threads <= engines(p->g->kernel) ? p->g->pack : NULL;
+}
+
+/* Moves operand [o]'s block as stage_acc does, through [move] where it is
+   a pack, the operand is in acc and its rows or its columns are
+   contiguous. */
+static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
+                 int64_t s0, int64_t s1, int64_t n0, int64_t n1, uint8_t *d,
+                 int64_t pitch) {
+  const nx_array *x = p->op[o].x;
+  if (move && x->dtype == p->acc && (s0 == 1 || s1 == 1)) {
+    move(n0, n1, x->base + at * p->w, s0, s1, d, pitch);
+    return;
+  }
+  stage_acc(p, o, at, s0, s1, n0, n1, d, pitch);
+}
+
 /* Packs [a]'s rows [i, i + m) of element [e], along k from
    [pc] for [kc], into [d]: kc steps of [lda] elements, zero past m. A
-   block of rows is one stage: its rows transpose in square blocks, where
-   a sliver as narrow as a microkernel's 6 rows would move element by
+   block of rows is one pack: its rows transpose in square blocks, where a
+   sliver as narrow as a microkernel's 6 rows would move element by
    element. */
-static void pack_a(const problem *p, int64_t e, int64_t i, int64_t m,
-                   int64_t lda, int64_t pc, int64_t kc, uint8_t *d) {
+static void pack_a(const problem *p, nx_cpu_pack move, int64_t e, int64_t i,
+                   int64_t m, int64_t lda, int64_t pc, int64_t kc,
+                   uint8_t *d) {
   const int64_t *s = p->op[A].st;
   for (int64_t q = 0; m < lda && q < kc; q++)
     memset(d + (q * lda + m) * p->w, 0, (size_t)((lda - m) * p->w));
-  stage_acc(p, A, pos(p, A, e, i, 0, pc), s[ROW], s[CON], m, kc, d, lda);
+  pack(p, move, A, pos(p, A, e, i, 0, pc), s[ROW], s[CON], m, kc, d, lda);
 }
 
 /* Packs the sliver of [b]'s columns [j, j + n) likewise, kc steps of
    [nr]. */
-static void pack_b(const problem *p, int64_t e, int64_t j, int64_t n, int nr,
-                   int64_t pc, int64_t kc, uint8_t *d) {
+static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
+                   int64_t n, int nr, int64_t pc, int64_t kc, uint8_t *d) {
   const int64_t *s = p->op[B].st;
   if (n < nr) memset(d, 0, (size_t)(nr * kc * p->w));
-  stage_acc(p, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
+  pack(p, move, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
 }
 
+/* Units [0, ne·slivers) pack b's slivers, the next ne·mblocks a's blocks. */
 static void pack_panel(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const panel *c = ctx;
   int nr = c->p->g->kernel.nr;
+  int64_t bs = c->ne * c->slivers;
   for (int64_t u = lo; u < hi; u++) {
-    int64_t e = c->e0 + u / c->slivers, v = u % c->slivers;
-    int64_t j = c->jc + v * nr;
-    pack_b(c->p, e, j, min64(nr, c->jc + c->nc - j), nr, c->pc, c->kc,
-           sliver(c, e, v));
+    if (u < bs) {
+      int64_t e = c->e0 + u / c->slivers, v = u % c->slivers;
+      int64_t j = c->jc + v * nr;
+      pack_b(c->p, c->move, e, j, min64(nr, c->jc + c->nc - j), nr, c->pc,
+             c->kc, sliver(c, e, v));
+      continue;
+    }
+    int64_t e = c->e0 + (u - bs) / c->mblocks, ib = (u - bs) % c->mblocks;
+    int64_t m, lda;
+    uint8_t *d = block(c, e, ib, &m, &lda);
+    pack_a(c->p, c->move, e, ib * c->p->g->mc, m, lda, c->pc, c->kc, d);
   }
 }
 
@@ -288,7 +403,7 @@ static void tile(const problem *p, nx_cpu_micro k, int64_t pc, int64_t kc,
     k.f(kc, a, lda, b, at_r(p, e, i, j), s[ROW], f);
     return;
   }
-  _Alignas(64) uint8_t t[NX_CPU_TILE];
+  _Alignas(ALIGN) uint8_t t[NX_CPU_TILE];
   int w = p->w;
   memset(t, 0, (size_t)(k.mr * k.nr * w));
   for (int64_t r = 0; f == NX_CPU_FROM_TILE && r < m; r++)
@@ -307,23 +422,20 @@ static void tile(const problem *p, nx_cpu_micro k, int64_t pc, int64_t kc,
 }
 
 static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
   const panel *c = ctx;
   problem *p = c->p;
   const nx_cpu_gemm *g = p->g;
   nx_cpu_micro k = g->kernel;
-  int64_t m_all = p->ext[ROW], mr = k.mr, w = p->w;
-  int64_t rows = min64(g->mc, ceil_div(m_all, mr) * mr);
-  uint8_t *ap = scratch(p, worker, rows * min64(g->kc, p->ext[CON]) * w);
-  if (ap == NULL) return;
+  int64_t mr = k.mr, w = p->w;
   for (int64_t u = lo; u < hi; u++) {
     int64_t e, i0, v0, v1;
     unit_of(c, u, &e, &i0, &v0, &v1);
     if (v0 >= v1) continue;
-    int64_t mc = min64(g->mc, m_all - i0);
+    int64_t mc, lda;
+    const uint8_t *ap = block(c, e, i0 / g->mc, &mc, &lda);
     int64_t j0 = c->jc + v0 * k.nr;
     int64_t j1 = min64(c->jc + c->nc, c->jc + v1 * k.nr);
-    int64_t lda = ceil_div(mc, mr) * mr;
-    pack_a(p, e, i0, mc, lda, c->pc, c->kc, ap);
     if (c->pc == 0) start(p, e, i0, i0 + mc, j0, j1);
     if (c->kc == 0) continue;
     for (int64_t v = v0; v < v1; v++) {
@@ -345,6 +457,7 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
 typedef struct {
   problem *p;
   nx_cpu_micro k;
+  nx_cpu_pack move_a, move_b; /* each job's pack, or NULL */
   int64_t lda, kblocks, slivers;
   uint8_t *a; /* element e's step q at a + (e·K + q)·lda·w */
 } few_rows_job;
@@ -356,8 +469,8 @@ static void few_rows_pack(int64_t lo, int64_t hi, int worker, void *ctx) {
   int64_t k = p->ext[CON], kc_most = p->g->kc;
   for (int64_t u = lo; u < hi; u++) {
     int64_t e = u / r->kblocks, pc = u % r->kblocks * kc_most;
-    pack_a(p, e, 0, p->ext[ROW], r->lda, pc, min64(kc_most, k - pc),
-           r->a + (e * k + pc) * r->lda * p->w);
+    pack_a(p, r->move_a, e, 0, p->ext[ROW], r->lda, pc,
+           min64(kc_most, k - pc), r->a + (e * k + pc) * r->lda * p->w);
   }
 }
 
@@ -375,7 +488,7 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
     while (pc < k) {
       int64_t kc = min64(kc_most, k - pc);
       const uint8_t *ap = r->a + (e * k + pc) * r->lda * w;
-      pack_b(p, e, j, n, (int)nr, pc, kc, bp);
+      pack_b(p, r->move_b, e, j, n, (int)nr, pc, kc, bp);
       for (int64_t ir = 0; ir < m; ir += mr)
         tile(p, r->k, pc, kc, ap + ir * w, r->lda, bp, e, ir, j,
              min64(mr, m - ir), n);
@@ -390,6 +503,26 @@ static nx_cpu_micro kernel_of(const nx_cpu_gemm *g, int64_t m) {
   for (int i = 0; i < 3; i++)
     if (g->thin[i].f && g->thin[i].mr >= m) return g->thin[i];
   return g->kernel;
+}
+
+/* The rows of [m] that [k] computes: a multiple of its tile's. */
+static int64_t padded(nx_cpu_micro k, int64_t m) {
+  return ceil_div(m, k.mr) * k.mr;
+}
+
+/* [g] or its other kernels, whichever computes [m] rows in less time: the
+   kernel few_rows or chain takes, its rows padded to its tile, at its
+   speed on every copy of its hardware. On the M1 Max 8 rows are 8 on the
+   vector units of 8 cores at speed 1, against 32 on 2 matrix units at 13:
+   at most 8 rows run on the cores, more on the units. */
+static const nx_cpu_gemm *fastest(const nx_cpu_gemm *g, int64_t m) {
+  const nx_cpu_gemm *o = g->other;
+  if (o == NULL) return g;
+  nx_cpu_micro a = m <= g->mc ? kernel_of(g, m) : g->kernel;
+  nx_cpu_micro b = m <= o->mc ? kernel_of(o, m) : o->kernel;
+  int64_t ta = padded(a, m) * b.flops_per_byte * engines(b);
+  int64_t tb = padded(b, m) * a.flops_per_byte * engines(a);
+  return tb < ta ? o : g;
 }
 
 /* [p] as the product of b's transpose by a's, which has the same outputs
@@ -419,36 +552,40 @@ static void few_rows(problem *p) {
                     .kblocks = ceil_div(k, g->kc),
                     .slivers = ceil_div(n, km.nr)};
   int64_t packed = batch * k * r.lda * w;
-  r.a = alloc(packed);
+  r.a = take(packed);
   if (r.a == NULL) {
     atomic_store(&p->failed, 1);
     return;
   }
   int64_t bytes = batch * n * k * w + packed, flops = 2 * batch * m * n * k;
+  int64_t cost = flop_cost(km, flops) + bytes;
+  r.move_a = mover(p, batch * r.kblocks, packed, PACK_COST * packed);
+  r.move_b = mover(p, batch * r.slivers, bytes, cost);
   nx_cpu_job(batch * r.kblocks, packed, PACK_COST * packed, few_rows_pack,
              &r);
-  nx_cpu_job(batch * r.slivers, bytes, FLOP_COST * flops + bytes,
-             few_rows_unit, &r);
-  free(r.a);
+  nx_cpu_job(batch * r.slivers, bytes, cost, few_rows_unit, &r);
+  give(r.a);
 }
 
 static void chain(problem *p) {
   const nx_cpu_gemm *g = p->g;
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w;
-  int64_t nc = min64(g->nc, n), nr = g->kernel.nr;
-  int64_t slivers = ceil_div(nc, nr);
-  int64_t panel_bytes = slivers * nr * min64(g->kc, k) * w;
-  int64_t group = panel_bytes > 0 && PANELS / panel_bytes > 1
-                      ? PANELS / panel_bytes
-                      : 1;
+  int64_t nc = min64(g->nc, n), nr = g->kernel.nr, kc_most = min64(g->kc, k);
+  int64_t slivers = ceil_div(nc, nr), mblocks = ceil_div(m, g->mc);
+  int64_t b_bytes = slivers * nr * kc_most * w;
+  int64_t rows = min64(g->mc, ceil_div(m, g->kernel.mr) * g->kernel.mr);
+  int64_t a_bytes = mblocks * rows * kc_most * w;
+  int64_t per = b_bytes + a_bytes;
+  int64_t group = per > 0 && PANELS / per > 1 ? PANELS / per : 1;
   group = min64(group, batch);
-  uint8_t *b = alloc(group * panel_bytes);
+  int64_t b_all = ceil_div(group * b_bytes, ALIGN) * ALIGN;
+  uint8_t *b = take(b_all + group * a_bytes);
   if (b == NULL) {
     atomic_store(&p->failed, 1);
     return;
   }
-  int64_t mblocks = ceil_div(m, g->mc);
+  uint8_t *a = b + b_all;
   for (int64_t e0 = 0; e0 < batch; e0 += group) {
     int64_t ne = min64(group, batch - e0);
     for (int64_t jc = 0; jc < n; jc += g->nc) {
@@ -460,30 +597,33 @@ static void chain(problem *p) {
                  .nc = width,
                  .slivers = ceil_div(width, nr),
                  .mblocks = mblocks,
-                 .b = b};
+                 .rows = rows,
+                 .b = b,
+                 .a = a};
       /* Enough units for the threads the compute job takes. */
-      int64_t kc = min64(g->kc, k);
-      int64_t packed = ne * c.slivers * nr * kc * w;
-      int64_t flops = 2 * ne * m * c.nc * kc;
-      split(&c, UNITS * nx_cpu_threads(packed, FLOP_COST * flops + packed));
+      int64_t packed = ne * (c.slivers * nr + m) * kc_most * w;
+      int64_t flops = 2 * ne * m * c.nc * kc_most;
+      int64_t cost = flop_cost(g->kernel, flops) + packed;
+      split(&c, UNITS * nx_cpu_threads(packed, cost));
       int64_t pc = 0;
       do {
         c.pc = pc;
         c.kc = min64(g->kc, k - pc);
         flops = 2 * ne * m * c.nc * c.kc;
-        packed = ne * c.slivers * nr * c.kc * w;
+        packed = ne * (c.slivers * nr + m) * c.kc * w;
+        int64_t packs = ne * (c.slivers + mblocks);
+        c.move = mover(p, packs, packed, PACK_COST * packed);
         if (c.kc > 0)
-          nx_cpu_job(ne * c.slivers, packed, PACK_COST * packed, pack_panel,
-                     &c);
+          nx_cpu_job(packs, packed, PACK_COST * packed, pack_panel, &c);
         nx_cpu_job(ne * mblocks * c.ranges, packed,
-                   FLOP_COST * flops + packed, compute, &c);
+                   flop_cost(g->kernel, flops) + packed, compute, &c);
         if (atomic_load(&p->failed)) goto done;
         pc += g->kc;
       } while (pc < k);
     }
   }
 done:
-  free(b);
+  give(b);
 }
 
 /* Lane order */
@@ -638,6 +778,7 @@ static int contract(int acc, const nx_contract_view *v,
   if (p.ext[ROW] * p.ext[COL] < CHAIN_OUTPUTS) lanes(&p);
   else {
     if (p.ext[COL] < p.ext[ROW] && p.ext[COL] <= p.g->mc) transpose(&p);
+    p.g = fastest(p.g, p.ext[ROW]);
     if (p.ext[ROW] <= p.g->mc) few_rows(&p);
     else chain(&p);
   }

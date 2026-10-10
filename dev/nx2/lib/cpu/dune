@@ -5,7 +5,8 @@
 ; rows_v3.c and folds_v3.c for v3,
 ; with v3's instructions on x86-64 and as empty units elsewhere.
 ; gemm_neon.c holds arm64's kernels, in base; gemm_avx2.c, compiled with
-; v3's instructions, x86-64's. target.c picks the table at run time.
+; v3's instructions, x86-64's; gemm_amx.c the M1 matrix unit's, empty off
+; Apple's arm64. target.c picks the table at run time.
 
 (library
  (name nx_cpu)
@@ -13,7 +14,7 @@
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
-  (names target job walk stage copy apply map iota rows folds fold index sort assemble convert gemm gemm_generic gemm_neon))
+  (names target job walk stage copy apply map iota rows folds fold index sort assemble convert gemm gemm_generic gemm_neon gemm_amx))
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
