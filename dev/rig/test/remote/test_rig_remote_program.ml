@@ -18,6 +18,7 @@ let le64 v =
 
 let words n f = String.concat "" (List.init n (fun i -> le64 (f i)))
 let size = 64
+let archs ds = Iarray.of_array (Array.map Rig.arch ds)
 
 let polled h =
   match Rig_remote.devices h "POLLED" with
@@ -30,7 +31,7 @@ let affine =
     entry = "affine";
   }
 
-let launch ?(holes = [||]) ~image ~groups kernel bytes refs =
+let launch ?(holes : _ iarray = [||]) ~image ~groups kernel bytes refs =
   {
     G.queue = "COMPUTE:0";
     after = [||];
@@ -72,11 +73,7 @@ let description archs =
         { G.device = 1; binary = { bytes = "functions"; holes = [||] } };
       |];
     code = [| affine |];
-    inputs =
-      [|
-        { G.device = 1; bytes = size; access = Rig.Buffer.Read_write };
-        { G.device = 0; bytes = 8; access = Rig.Buffer.Read_write };
-      |];
+    inputs = [| { G.device = 1; bytes = size }; { G.device = 0; bytes = 8 } |];
     ints = 2;
     steps =
       [|
@@ -134,7 +131,7 @@ let description archs =
 let runs ds =
   let p =
     require_ok ~pp:Format.pp_print_string
-      (G.load (description (Array.map Rig.arch ds)) ds)
+      (G.load (description (archs ds)) (Iarray.of_array ds))
   in
   List.map
     (fun (groups, trips) ->
@@ -176,7 +173,7 @@ let host_point () =
   let ds = Array.of_list (polled h) in
   let p =
     require_ok ~pp:Format.pp_print_string
-      (G.load (description (Array.map Rig.arch ds)) ds)
+      (G.load (description (archs ds)) (Iarray.of_array ds))
   in
   let x = Rig.Buffer.create ds.(1) size and c = Rig.Buffer.create ds.(0) 8 in
   let points = G.run p { inputs = [| x; c |]; ints = [| 1; 0 |] } in
@@ -271,7 +268,7 @@ let rail_end_to_end () =
       memory = [| G.Rail { rail = r.id; area = Inbound } |];
       images = [||];
       code = [||];
-      inputs = [| { G.device = 0; bytes = 8; access = Rig.Buffer.Read_write } |];
+      inputs = [| { G.device = 0; bytes = 8 } |];
       ints = 0;
       steps =
         [|
@@ -299,7 +296,7 @@ let too_large () =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
   let ds = Array.of_list (polled h) in
-  let t = description (Array.map Rig.arch ds) in
+  let t = description (archs ds) in
   let huge =
     {
       t with
@@ -316,10 +313,10 @@ let too_large () =
         |];
     }
   in
-  let why = require_error (G.load huge ds) in
+  let why = require_error (G.load huge (Iarray.of_array ds)) in
   contains ~msg:"names the memory" ~sub:"no memory" why;
   is_ok ~pp:Format.pp_print_string ~msg:"a program that fits, after"
-    (G.load t ds)
+    (G.load t (Iarray.of_array ds))
 
 let () =
   Watchdog.start ();

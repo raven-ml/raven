@@ -99,7 +99,7 @@ type 'a hole = {
     lies in the bytes. [shift] is [0] to [62], and holes of one bytes share no
     byte. *)
 
-type 'a data = { bytes : string; holes : 'a hole array }
+type 'a data = { bytes : string; holes : 'a hole iarray }
 (** The type for bytes with holes. *)
 
 (** The type for what a run knows: a word read when the step that needs it runs.
@@ -170,21 +170,21 @@ type work =
           (** Its parameters' bytes, a whole number of 32-bit words and at most
               4096 bytes, each hole written into the run's block before each
               submit. *)
-      refs : Rig.Submission.ref array;
+      refs : Rig.Submission.ref iarray;
       groups : value * value * value;
       threads : value * value * value;
       shared : value;
     }
 
-type part = { queue : string; after : int array; work : work }
+type part = { queue : string; after : int iarray; work : work }
 (** The type for parts, as {!Rig.Submission.part}. *)
 
 type submit = {
   device : int;
-  parts : part array;
-  reads : slot array;
-  writes : slot array;
-  fixed : (view * Rig.Buffer.access) array;
+  parts : part iarray;
+  reads : slot iarray;
+  writes : slot iarray;
+  fixed : (view * Rig.Buffer.access) iarray;
 }
 (** The type for submissions: [parts] on [device], each run reading [reads] and
     writing [writes], whose refs count [reads] then [writes]
@@ -206,8 +206,8 @@ type step =
   | Move of { src : slot; dst : slot }  (** One {!Rig.Buffer.copy}. *)
   | Host of {
       code : int;
-      buffers : (slot * Rig.Buffer.access) array;
-      values : value array;
+      buffers : (slot * Rig.Buffer.access) iarray;
+      values : value iarray;
       split : split option;
     }
       (** A call of host code [code] on the host addresses of [buffers] and on
@@ -218,34 +218,28 @@ type step =
       trips : value;
       trip : int option;
       flag : view option;
-      body : step array;
+      body : step iarray;
     }
       (** [body], [trips] times, none where [trips <= 0], storing each trip's
           index from [0] into word [trip] of the run's ints. With [flag], before
           each trip it reads [flag]'s first byte, once the work that wrote it is
           done, and stops at [0]. *)
 
-(* CR: Input access repeats the steps' accesses and can disagree with them.
-   Declaring Read here with a Host Read_write use admits a read-only host
-   borrow, which Host passes to native code unchecked. Derive each input's
-   required access from Submit, Host and Move at load, and use it for the frame
-   check; remove this duplicate field. *)
-type input = { device : int; bytes : int; access : Rig.Buffer.access }
-(** The type for a run's inputs: a buffer of [device] of at least [bytes] bytes,
-    whose memory admits [access]. *)
+type input = { device : int; bytes : int }
+(** The type for inputs: a buffer of [device] of at least [bytes] bytes. *)
 
 type t = {
-  devices : string array;  (** Each device's {!Rig.arch}, checked at load. *)
-  memory : memory array;
-  images : image array;
-  code : code array;
-  inputs : input array;
+  devices : string iarray;  (** Each device's {!Rig.arch}, checked at load. *)
+  memory : memory iarray;
+  images : image iarray;
+  code : code iarray;
+  inputs : input iarray;
   ints : int;
       (** The number of 64-bit words of the run's ints: host memory of two
           copies that {!load} makes ({!type-copies}). The frame's ints are its
           first words; loops store their trips there, and [Host] steps compute
           others. *)
-  steps : step array;
+  steps : step iarray;
 }
 (** The type for descriptions. *)
 
@@ -270,7 +264,7 @@ type loaded
 val load :
   ?rails:(int -> Rig_remote_abi.end_ option) ->
   t ->
-  Rig.t array ->
+  Rig.t iarray ->
   (loaded, string) result
 (** [load ~rails t devices] is [t] loaded on [devices], device [i] of [t] being
     [devices.(i)], all of one machine ({!Rig.host_of}). [rails id] is this
@@ -329,19 +323,23 @@ val run : ?after:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     on the host ([Move] and [Host] steps, a loop's flag) is done when it
     returns. An [Int] value reads the ints once the run's earlier work that
     writes them is done, and a loop stores its trip once the run's earlier work
-    that reads or writes them is done.
+    that reads or writes them is done. A step reads each input it uses from [f]
+    as it runs.
 
     On another machine it is one submission on that machine's host, and the
     host's point: the agent reaches it once the run's points there are reached.
+    [run] reads each of [f]'s inputs once, before it submits.
 
     Raises [Invalid_argument] if [f]'s inputs are not as many as [p]'s, an input
-    is not on its device, holds fewer bytes, or admits less access than [p]
-    declares, an input of another device cannot be borrowed, an input a [Host]
-    step names is memory the host does not address, [f]'s ints are more than
-    [p]'s, a launch's geometry or shared memory, read from the ints, that the
-    run's setters refuse ({!Rig.Submission.Run}), a launch's hole whose value
-    meets a set bit of its bytes, and as {!Rig.submit}, {!Rig.Buffer.copy} and
-    {!Rig_host.call} raise; {!Rig.Lost} as the devices raise it. *)
+    it reads is not on its device, holds fewer bytes, or is read-only memory
+    ({!Rig.Buffer.val-access}) that a step writes (a [Submit]'s write, a
+    [Move]'s destination or a [Host] step's [Read_write] buffer), an input of
+    another device cannot be borrowed, an input a [Host] step names is memory
+    the host does not address, [f]'s ints are more than [p]'s, a launch's
+    geometry or shared memory, read from the ints, that the run's setters refuse
+    ({!Rig.Submission.Run}), a launch's hole whose value meets a set bit of its
+    bytes, and as {!Rig.submit}, {!Rig.Buffer.copy} and {!Rig_host.call} raise;
+    {!Rig.Lost} as the devices raise it. *)
 
 (** {1:machines Programs of another machine}
 

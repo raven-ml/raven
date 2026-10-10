@@ -1,7 +1,14 @@
 (test
  (name test_program)
  (modules test_program)
- (libraries rig rig_program rig_remote_abi rig_support rig_host_support windtrap)
+ (libraries
+  rig
+  rig_disk
+  rig_program
+  rig_remote_abi
+  rig_support
+  rig_host_support
+  windtrap)
  (deps
   (glob_files ../host/fixtures/*.o)
   (glob_files fixtures/*.o)))

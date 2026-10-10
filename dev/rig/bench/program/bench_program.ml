@@ -67,17 +67,15 @@ let fills steps =
   in
   let t =
     {
-      G.devices = Array.map Rig.arch ds;
+      G.devices = Iarray.of_array (Array.map Rig.arch ds);
       memory = [||];
       images =
-        Array.init 2 (fun d ->
+        Iarray.init 2 (fun d ->
             { G.device = d; binary = { bytes = "functions"; holes = [||] } });
       code = [||];
-      inputs =
-        Array.init 2 (fun d ->
-            { G.device = d; bytes = 8; access = B.Read_write });
+      inputs = Iarray.init 2 (fun d -> { G.device = d; bytes = 8 });
       ints = 0;
-      steps = Array.init steps step;
+      steps = Iarray.init steps step;
     }
   in
   (ds, [| pa; pb |], t)
@@ -90,7 +88,7 @@ let drained r =
 
 let described steps () =
   let ds, ps, t = fills steps in
-  let p = Result.get_ok (G.load t ds) in
+  let p = Result.get_ok (G.load t (Iarray.of_array ds)) in
   let frame =
     { G.inputs = Array.map (fun d -> B.create d 8) ds; ints = [||] }
   in

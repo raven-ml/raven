@@ -97,8 +97,7 @@ let described d binary queue =
     ints = 0;
     memory = [||];
     images = [| { G.device = 0; binary = { G.bytes = binary; holes = [||] } } |];
-    inputs =
-      Array.make 2 { G.device = 0; bytes = 4 * words; access = B.Read_write };
+    inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 4 * words });
     steps =
       [|
         G.Submit

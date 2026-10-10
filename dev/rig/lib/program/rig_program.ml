@@ -20,7 +20,7 @@ type leaf =
 
 type width = W32 | W64
 type 'a hole = { at : int; width : width; leaf : 'a; add : int; shift : int }
-type 'a data = { bytes : string; holes : 'a hole array }
+type 'a data = { bytes : string; holes : 'a hole iarray }
 
 type value =
   | Fixed of int
@@ -53,20 +53,20 @@ type work =
       image : int;
       kernel : string;
       params : value data;
-      refs : Sub.ref array;
+      refs : Sub.ref iarray;
       groups : value * value * value;
       threads : value * value * value;
       shared : value;
     }
 
-type part = { queue : string; after : int array; work : work }
+type part = { queue : string; after : int iarray; work : work }
 
 type submit = {
   device : int;
-  parts : part array;
-  reads : slot array;
-  writes : slot array;
-  fixed : (view * B.access) array;
+  parts : part iarray;
+  reads : slot iarray;
+  writes : slot iarray;
+  fixed : (view * B.access) iarray;
 }
 
 type code = { obj : string; entry : string }
@@ -77,27 +77,27 @@ type step =
   | Move of { src : slot; dst : slot }
   | Host of {
       code : int;
-      buffers : (slot * B.access) array;
-      values : value array;
+      buffers : (slot * B.access) iarray;
+      values : value iarray;
       split : split option;
     }
   | Loop of {
       trips : value;
       trip : int option;
       flag : view option;
-      body : step array;
+      body : step iarray;
     }
 
-type input = { device : int; bytes : int; access : B.access }
+type input = { device : int; bytes : int }
 
 type t = {
-  devices : string array;
-  memory : memory array;
-  images : image array;
-  code : code array;
-  inputs : input array;
+  devices : string iarray;
+  memory : memory iarray;
+  images : image iarray;
+  code : code iarray;
+  inputs : input iarray;
   ints : int;
-  steps : step array;
+  steps : step iarray;
 }
 
 (* A refusal of the description, which [load] answers as [Error]. *)
@@ -105,10 +105,10 @@ exception Refused of string
 
 let refuse fmt = Printf.ksprintf (fun why -> raise (Refused why)) fmt
 
-(* The run's ints are memory [Array.length t.memory] of two copies, which [load]
-   makes on the host: a slot [Ints] is its view. *)
+(* The run's ints are memory [Iarray.length t.memory] of two copies, which
+   [load] makes on the host: a slot [Ints] is its view. *)
 let ints_view t =
-  { memory = Array.length t.memory; offset = 0; length = 8 * t.ints }
+  { memory = Iarray.length t.memory; offset = 0; length = 8 * t.ints }
 
 (* Checks *)
 
@@ -119,17 +119,17 @@ let index what n i =
   if i < 0 || i >= n then refuse "%s %d: no such %s" what i what
 
 let two t m =
-  match t.memory.(m) with
+  match Iarray.get t.memory m with
   | Alloc { copies; _ } -> copies = Two
   | Rail _ -> false
 
 let check_leaf t ~images = function
   | Address { memory; on } ->
-      index "memory" (Array.length t.memory) memory;
-      index "device" (Array.length t.devices) on
-  | Handle m -> index "memory" (Array.length t.memory) m
+      index "memory" (Iarray.length t.memory) memory;
+      index "device" (Iarray.length t.devices) on
+  | Handle m -> index "memory" (Iarray.length t.memory) m
   | Entry { image; _ } -> index "image" images image
-  | Code i -> index "code" (Array.length t.code) i
+  | Code i -> index "code" (Iarray.length t.code) i
   | Ready _ | Ready_arg _ -> ()
 
 let leaf_two t = function
@@ -141,7 +141,7 @@ let width h = match h.width with W32 -> 4 | W64 -> 8
 (* Bounds are compared by subtraction: a description's integers may be any, and
    a sum of two may wrap. *)
 let check_holes what len check holes =
-  Array.iter
+  Iarray.iter
     (fun h ->
       if h.at < 0 || h.at > len - width h then
         refuse "%s: a hole at %d outside its %d bytes" what h.at len;
@@ -149,7 +149,9 @@ let check_holes what len check holes =
         refuse "%s: a hole's shift %d outside 0 to 62" what h.shift;
       check h.leaf)
     holes;
-  let sorted = List.sort (fun a b -> compare a.at b.at) (Array.to_list holes) in
+  let sorted =
+    List.sort (fun a b -> compare a.at b.at) (Iarray.to_list holes)
+  in
   ignore
     (List.fold_left
        (fun prev h ->
@@ -161,7 +163,7 @@ let check_holes what len check holes =
        None sorted)
 
 let check_view t sizes (v : view) =
-  index "memory" (Array.length t.memory) v.memory;
+  index "memory" (Iarray.length t.memory) v.memory;
   let n = sizes.(v.memory) in
   if v.offset < 0 || v.length < 0 || v.offset > n - v.length then
     refuse "memory %d: a view of %d bytes at %d outside its %d bytes" v.memory
@@ -169,28 +171,28 @@ let check_view t sizes (v : view) =
 
 let check_slot t sizes = function
   | Memory v -> check_view t sizes v
-  | Input i -> index "input" (Array.length t.inputs) i
+  | Input i -> index "input" (Iarray.length t.inputs) i
   | Ints -> ()
 
 let check_value t : value -> unit = function
   | Fixed _ -> ()
   | Int i -> index "int" t.ints i
   | Input { input; on } ->
-      index "input" (Array.length t.inputs) input;
-      index "device" (Array.length t.devices) on
-  | Leaf l -> check_leaf t ~images:(Array.length t.images) l
+      index "input" (Iarray.length t.inputs) input;
+      index "device" (Iarray.length t.devices) on
+  | Leaf l -> check_leaf t ~images:(Iarray.length t.images) l
 
 let check_work t sizes = function
   | Words v -> check_view t sizes v
   | Fill { fill; arg; _ } ->
-      check_leaf t ~images:(Array.length t.images) fill;
+      check_leaf t ~images:(Iarray.length t.images) fill;
       check_view t sizes arg
   | Copy { src; dst } ->
       check_view t sizes src;
       check_view t sizes dst
   | Launch
       { image; params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
-      index "image" (Array.length t.images) image;
+      index "image" (Iarray.length t.images) image;
       let n = String.length params.bytes in
       if n mod 4 <> 0 || n > 4096 then
         refuse
@@ -205,21 +207,21 @@ let check_work t sizes = function
 let rec check_step t sizes ndev = function
   | Submit s ->
       index "device" ndev s.device;
-      Array.iter (fun p -> check_work t sizes p.work) s.parts;
-      Array.iter (check_slot t sizes) s.reads;
-      Array.iter (check_slot t sizes) s.writes;
-      Array.iter (fun (v, _) -> check_view t sizes v) s.fixed
+      Iarray.iter (fun p -> check_work t sizes p.work) s.parts;
+      Iarray.iter (check_slot t sizes) s.reads;
+      Iarray.iter (check_slot t sizes) s.writes;
+      Iarray.iter (fun (v, _) -> check_view t sizes v) s.fixed
   | Move { src; dst } ->
       check_slot t sizes src;
       check_slot t sizes dst
   | Host { code; buffers; values; split } ->
-      index "code" (Array.length t.code) code;
-      Array.iter (fun (s, _) -> check_slot t sizes s) buffers;
-      Array.iter (check_value t) values;
+      index "code" (Iarray.length t.code) code;
+      Iarray.iter (fun (s, _) -> check_slot t sizes s) buffers;
+      Iarray.iter (check_value t) values;
       Option.iter
         (fun s ->
           check_value t s.extent;
-          let n = Array.length values in
+          let n = Iarray.length values in
           if
             s.blocks < 1 || s.lo < 0 || s.lo >= n || s.hi < 0 || s.hi >= n
             || s.lo = s.hi
@@ -235,22 +237,22 @@ let rec check_step t sizes ndev = function
           check_view t sizes v;
           if v.length < 1 then refuse "memory %d: a flag of no byte" v.memory)
         flag;
-      Array.iter (check_step t sizes ndev) body
+      Iarray.iter (check_step t sizes ndev) body
 
 (* [sizes] is each memory's bytes; a rail's area's where its end is known. *)
 let check t sizes devices =
-  if Array.length devices <> Array.length t.devices then
+  if Array.length devices <> Iarray.length t.devices then
     refuse "%d devices for a program of %d" (Array.length devices)
-      (Array.length t.devices);
-  Array.iteri
+      (Iarray.length t.devices);
+  Iarray.iteri
     (fun i arch ->
       let a = Rig.arch devices.(i) in
       if a <> arch then
         refuse "device %d: %s is %S, not %S" i (Rig.name devices.(i)) a arch)
     t.devices;
   if t.ints < 0 || t.ints > max_int / 8 then refuse "%d ints" t.ints;
-  let ndev = Array.length t.devices in
-  Array.iteri
+  let ndev = Iarray.length t.devices in
+  Iarray.iteri
     (fun i -> function
       | Alloc { device; bytes; init; copies; _ } ->
           index "device" ndev device;
@@ -260,13 +262,13 @@ let check t sizes devices =
             refuse "memory %d: %d bytes of init in %d bytes" i n bytes;
           check_holes (strf "memory %d" i) n
             (fun l ->
-              check_leaf t ~images:(Array.length t.images) l;
+              check_leaf t ~images:(Iarray.length t.images) l;
               if copies = One && leaf_two t l then
                 refuse "memory %d: of one copy, a hole names memory of two" i)
             init.holes
       | Rail _ -> ())
     t.memory;
-  Array.iteri
+  Iarray.iteri
     (fun i (im : image) ->
       index "device" ndev im.device;
       check_holes (strf "image %d" i)
@@ -276,12 +278,12 @@ let check t sizes devices =
           if leaf_two t l then refuse "image %d: a hole names memory of two" i)
         im.binary.holes)
     t.images;
-  Array.iteri
+  Iarray.iteri
     (fun i (input : input) ->
       index "device" ndev input.device;
       if input.bytes < 0 then refuse "input %d: %d bytes" i input.bytes)
     t.inputs;
-  Array.iter (check_step t sizes ndev) t.steps
+  Iarray.iter (check_step t sizes ndev) t.steps
 
 (* Bytes *)
 
@@ -290,7 +292,7 @@ let check t sizes devices =
    count, then its elements; a variant its tag, a byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 1
+let version = 2
 
 module W = struct
   let int b n = Buffer.add_int64_le b (Int64.of_int n)
@@ -301,8 +303,8 @@ module W = struct
     Buffer.add_string b s
 
   let array f b a =
-    int b (Array.length a);
-    Array.iter (f b) a
+    int b (Iarray.length a);
+    Iarray.iter (f b) a
 
   let option f b = function
     | None -> tag b 0
@@ -484,8 +486,7 @@ module W = struct
     array
       (fun b (i : input) ->
         int b i.device;
-        int b i.bytes;
-        access b i.access)
+        int b i.bytes)
       b t.inputs;
     int b t.ints;
     array step b t.steps
@@ -527,7 +528,7 @@ module R = struct
     r.at <- r.at + n;
     s
 
-  let array f r =
+  let array f r : _ iarray =
     let n = count r in
     if n = 0 then [||]
     else begin
@@ -535,7 +536,7 @@ module R = struct
       for i = 1 to n - 1 do
         a.(i) <- f r
       done;
-      a
+      Iarray.of_array a
     end
 
   let option f r =
@@ -753,8 +754,7 @@ module R = struct
         (fun r ->
           let device = int r in
           let bytes = int r in
-          let access = access r in
-          { device; bytes; access })
+          { device; bytes })
         r
     in
     let ints = int r in
@@ -828,7 +828,7 @@ type lstep =
   | Lmove of { src : slot; dst : slot }
   | Lhost of {
       code : Rig_host.t;
-      buffers : (slot * B.access) array;
+      buffers : (slot * B.access) iarray;
       values : known array array; (* By copy. *)
       split : (known array * split) option; (* The extent by copy. *)
       addresses : int array;
@@ -840,6 +840,27 @@ type lstep =
       flag : view option;
       body : lstep array;
     }
+
+type frame = { inputs : B.t array; ints : int array }
+
+(* Each input's access, as its steps use it: [Read_write] where a step writes
+   it, a [Submit]'s write, a [Move]'s destination or a [Host] buffer of
+   [Read_write]; [Read] otherwise. [t]'s indices are checked. *)
+let input_access (t : t) =
+  let a = Array.make (Iarray.length t.inputs) B.Read in
+  let use (access : B.access) = function
+    | Input i when access = Read_write -> a.(i) <- Read_write
+    | Input _ | Memory _ | Ints -> ()
+  in
+  let rec step = function
+    | Submit s -> Iarray.iter (use Read_write) s.writes
+    | Move { dst; _ } -> use Read_write dst
+    | Host { buffers; _ } ->
+        Iarray.iter (fun (s, access) -> use access s) buffers
+    | Loop { body; _ } -> Iarray.iter step body
+  in
+  Iarray.iter step t.steps;
+  a
 
 (* A program loaded on this machine. *)
 type here = {
@@ -954,7 +975,7 @@ let filled p k (d : leaf data) =
     | W32 -> Bytes.set_int32_le b h.at (Int64.to_int32 w)
     | W64 -> Bytes.set_int64_le b h.at w
   in
-  (try Array.iter fill d.holes
+  (try Iarray.iter fill d.holes
    with Clobbers at ->
      refuse "a hole at byte %d: its value meets set bits of the bytes" at);
   Bytes.unsafe_to_string b
@@ -973,12 +994,13 @@ let per_copy t (s : submit) =
     | Fill { fill; arg; _ } -> leaf_two t fill || view arg
     | Copy { src; dst } -> view src || view dst
     | Launch { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
-        Array.exists (fun h -> value h.leaf) params.holes
+        Iarray.exists (fun h -> value h.leaf) params.holes
         || List.exists value [ gx; gy; gz; tx; ty; tz; shared ]
   in
-  Array.exists (fun (q : part) -> work q.work) s.parts
-  || Array.exists slot s.reads || Array.exists slot s.writes
-  || Array.exists (fun (v, _) -> view v) s.fixed
+  Iarray.exists (fun (q : part) -> work q.work) s.parts
+  || Iarray.exists slot s.reads
+  || Iarray.exists slot s.writes
+  || Iarray.exists (fun (v, _) -> view v) s.fixed
 
 let per_run = function Word _ | Address_of _ -> true | Known _ -> false
 
@@ -1019,18 +1041,24 @@ let prepared p k (s : submit) =
         Sub.Copy { src = view p k d src; dst = view p k d dst }
     | Launch { image; kernel; params; refs; _ } ->
         let params = String.length params.bytes in
+        let refs = Iarray.to_array refs in
         Sub.Launch { image = p.images.(image); kernel; params; refs }
   in
   let parts =
-    Array.map
-      (fun (q : part) ->
-        { Sub.queue = q.queue; after = q.after; work = work q.work })
-      s.parts
+    Iarray.to_array
+      (Iarray.map
+         (fun (q : part) ->
+           {
+             Sub.queue = q.queue;
+             after = Iarray.to_array q.after;
+             work = work q.work;
+           })
+         s.parts)
   in
   let fixed =
-    Array.to_list (Array.map (fun (v, a) -> (view p k d v, a)) s.fixed)
+    Iarray.to_list (Iarray.map (fun (v, a) -> (view p k d v, a)) s.fixed)
   in
-  let reads = Array.length s.reads and writes = Array.length s.writes in
+  let reads = Iarray.length s.reads and writes = Iarray.length s.writes in
   let sub = Sub.make ~hold:p.hold ~fixed ~reads ~writes p.devices.(d) parts in
   let slot s =
     match slot_view p s with Some v -> view p k d v | None -> unset
@@ -1048,9 +1076,9 @@ let prepared p k (s : submit) =
             (Int32.to_int (String.get_int32_le params.bytes (4 * w)))
         done;
         let holes =
-          Array.map (fun h -> { h with leaf = known h.leaf }) params.holes
+          Iarray.map (fun h -> { h with leaf = known h.leaf }) params.holes
         in
-        Array.iter
+        Iarray.iter
           (fun h ->
             if not (per_run h.leaf) then
               store_hole srun b params.bytes h (value h.leaf))
@@ -1066,7 +1094,7 @@ let prepared p k (s : submit) =
             params = params.bytes;
             holes =
               Array.of_list
-                (List.filter (fun h -> per_run h.leaf) (Array.to_list holes));
+                (List.filter (fun h -> per_run h.leaf) (Iarray.to_list holes));
             groups;
             threads;
             shared;
@@ -1077,11 +1105,11 @@ let prepared p k (s : submit) =
   {
     sub;
     srun;
-    reads = Array.map slot s.reads;
-    writes = Array.map slot s.writes;
+    reads = Iarray.to_array (Iarray.map slot s.reads);
+    writes = Iarray.to_array (Iarray.map slot s.writes);
     launches =
       Array.of_list
-        (List.filter_map Fun.id (Array.to_list (Array.mapi launch s.parts)));
+        (List.filter_map Fun.id (Iarray.to_list (Iarray.mapi launch s.parts)));
   }
 
 (* A submission [Rig.Submission.make] or a setter refuses is a defect of the
@@ -1095,7 +1123,7 @@ let prepare p i k s =
 
 (* A [Host] step's memory is the host's to address, in each copy. *)
 let check_host p i buffers =
-  Array.iter
+  Iarray.iter
     (fun (s, _) ->
       match slot_view p s with
       | Some v ->
@@ -1119,14 +1147,22 @@ let rec lstep p i = function
         {
           code = p.code.(code);
           buffers;
-          values = Array.init 2 (fun k -> Array.map (resolve p k) values);
+          values =
+            Array.init 2 (fun k ->
+                Iarray.to_array (Iarray.map (resolve p k) values));
           split = Option.map (fun (s : split) -> (by_copy s.extent, s)) split;
-          addresses = Array.make (Array.length buffers) 0;
-          words = Array.make (Array.length values) 0;
+          addresses = Array.make (Iarray.length buffers) 0;
+          words = Array.make (Iarray.length values) 0;
         }
   | Loop { trips; trip; flag; body } ->
       let trips = Array.init 2 (fun k -> resolve p k trips) in
-      Lloop { trips; trip; flag; body = Array.map (lstep p i) body }
+      Lloop
+        {
+          trips;
+          trip;
+          flag;
+          body = Iarray.to_array (Iarray.map (lstep p i) body);
+        }
 
 let make_memory devices rails = function
   | Alloc { device; kind; bytes; copies; _ } ->
@@ -1146,7 +1182,7 @@ let link (c : code) =
   | Error why -> raise (Refused why)
 
 let write_init p m k =
-  match p.t.memory.(m) with
+  match Iarray.get p.t.memory m with
   | Rail _ -> ()
   | Alloc { init; _ } ->
       let n = String.length init.bytes in
@@ -1166,15 +1202,15 @@ let page_bytes = 65536
 let rec names_ints = function
   | Submit s ->
       let ints = function Ints -> true | Memory _ | Input _ -> false in
-      Array.exists ints s.reads || Array.exists ints s.writes
+      Iarray.exists ints s.reads || Iarray.exists ints s.writes
   | Move _ | Host _ -> false
-  | Loop { body; _ } -> Array.exists names_ints body
+  | Loop { body; _ } -> Iarray.exists names_ints body
 
 (* One copy of the run's ints: a view of a buffer a device can borrow where a
    step names them. *)
 let make_ints (t : t) =
   let n = 8 * t.ints in
-  if Array.exists names_ints t.steps then
+  if Iarray.exists names_ints t.steps then
     B.view (B.create Rig.host (max n page_bytes)) ~first:0 ~length:n
   else B.create Rig.host n
 
@@ -1185,14 +1221,16 @@ let load_here ~rails t devices =
         Bigarray.Array1.dim (rail_area (rail_end rails rail) area)
   in
   match
-    check t (Array.map size t.memory) devices;
-    Array.map link t.code
+    check t (Iarray.to_array (Iarray.map size t.memory)) devices;
+    Iarray.to_array (Iarray.map link t.code)
   with
   | exception Refused why -> Error why
   | code -> (
       let ints = Array.init 2 (fun _ -> make_ints t) in
       let mem =
-        Array.append (Array.map (make_memory devices rails) t.memory) [| ints |]
+        Array.append
+          (Iarray.to_array (Iarray.map (make_memory devices rails) t.memory))
+          [| ints |]
       in
       let twos k =
         Array.to_list mem
@@ -1223,43 +1261,48 @@ let load_here ~rails t devices =
       match
         (* An image's holes name earlier images' entries: each loads once those
            before it did. *)
-        Array.iter
+        Iarray.iter
           (fun im -> p.images <- Array.append p.images [| load_image p im |])
           t.images;
-        Array.iteri
+        Iarray.iteri
           (fun m _ -> Array.iteri (fun k _ -> write_init p m k) mem.(m))
           t.memory;
-        p.steps <- Array.mapi (lstep p) t.steps
+        p.steps <- Iarray.to_array (Iarray.mapi (lstep p) t.steps)
       with
       | () -> Ok p
       | exception Refused why -> Error why)
 
 (* Running *)
 
-type frame = { inputs : B.t array; ints : int array }
-
 let invalid fmt = Printf.ksprintf invalid_arg ("Rig_program.run: " ^^ fmt)
 
-let check_frame (t : t) devices (f : frame) =
-  let n = Array.length t.inputs in
+(* The frame's counts: as many inputs as [t]'s, at most [t]'s ints. *)
+let check_counts (t : t) (f : frame) =
+  let n = Iarray.length t.inputs in
   if Array.length f.inputs <> n then
     invalid "%d inputs for a program of %d" (Array.length f.inputs) n;
-  for i = 0 to n - 1 do
-    let spec = t.inputs.(i) in
-    let b = f.inputs.(i) and d = devices.(spec.device) in
-    if not (Rig.equal (B.device b) d) then
-      invalid "input %d is on %s, not %s" i (Rig.name (B.device b)) (Rig.name d);
-    if B.length b < spec.bytes then
-      invalid "input %d holds %d bytes, fewer than %d" i (B.length b) spec.bytes;
-    if spec.access = B.Read_write && B.access b = B.Read then
-      invalid "input %d is read-only memory, which the program writes" i
-  done;
   if Array.length f.ints > t.ints then
     invalid "%d ints for a program of %d" (Array.length f.ints) t.ints
 
+(* [b], input [i] of [spec], on [spec]'s device [d] and holding its bytes. *)
+let check_input i (spec : input) d b =
+  if not (Rig.equal (B.device b) d) then
+    invalid "input %d is on %s, not %s" i (Rig.name (B.device b)) (Rig.name d);
+  if B.length b < spec.bytes then
+    invalid "input %d holds %d bytes, fewer than %d" i (B.length b) spec.bytes
+
+(* Input [i] of [f], checked where a step uses it: the buffer checked is the
+   buffer used, whatever another domain stores into [f] meanwhile. A write to
+   read-only memory is refused below, by {!Rig.submit} and {!B.copy}, and by
+   [host] for native code. *)
+let input p (f : frame) i =
+  let b = f.inputs.(i) and spec = Iarray.get p.t.inputs i in
+  check_input i spec p.devices.(spec.device) b;
+  b
+
 (* Input [i] of [f] as device [d] names it. *)
 let input_on p (f : frame) i d =
-  let b = f.inputs.(i) and dev = p.devices.(d) in
+  let b = input p f i and dev = p.devices.(d) in
   if Rig.equal (B.device b) dev then b
   else
     match B.borrow dev b with
@@ -1268,7 +1311,7 @@ let input_on p (f : frame) i d =
 
 (* The host reads and writes the ints as it does any rig memory: after the work
    its access must follow, which a step that names them may still run. *)
-let ints_buffer (p : here) k = p.mem.(Array.length p.t.memory).(k)
+let ints_buffer (p : here) k = p.mem.(Iarray.length p.t.memory).(k)
 
 let int_at p k i =
   B.wait (ints_buffer p k) B.Read;
@@ -1283,18 +1326,20 @@ let run_value (p : here) f k = function
   | Word i -> int_at p k i
   | Address_of { input; on } -> B.address (input_on p f input on)
 
-let pass p f (s : slot array) bufs d =
-  for i = 0 to Array.length s - 1 do
-    match s.(i) with
+let pass p f (s : slot iarray) bufs d =
+  for i = 0 to Iarray.length s - 1 do
+    match Iarray.get s i with
     | Input j -> bufs.(i) <- input_on p f j d
     | Memory _ | Ints -> ()
   done
 
 (* Drops the inputs [bufs] held, so a loaded program keeps no caller's buffer
    past its run. *)
-let unpass (s : slot array) bufs =
-  for i = 0 to Array.length s - 1 do
-    match s.(i) with Input _ -> bufs.(i) <- unset | Memory _ | Ints -> ()
+let unpass (s : slot iarray) bufs =
+  for i = 0 to Iarray.length s - 1 do
+    match Iarray.get s i with
+    | Input _ -> bufs.(i) <- unset
+    | Memory _ | Ints -> ()
   done
 
 let mem_buffer p k (v : view) =
@@ -1303,7 +1348,7 @@ let mem_buffer p k (v : view) =
     ~first:v.offset ~length:v.length
 
 let slot_buffer p (f : frame) k = function
-  | Input j -> f.inputs.(j)
+  | Input j -> input p f j
   | Memory v -> mem_buffer p k v
   | Ints -> mem_buffer p k (ints_view p.t)
 
@@ -1341,9 +1386,11 @@ let submit_step p f k after (spec : submit) copies =
       raise e
 
 let host p f k code buffers values split addresses words =
-  Array.iteri
+  Iarray.iteri
     (fun i (s, access) ->
       let b = slot_buffer p f k s in
+      if access = B.Read_write && B.access b = B.Read then
+        invalid "a host step's buffer %d is read-only memory, which it writes" i;
       B.wait b access;
       let a = host_address b in
       (* [load] checked the memory: only an input can fail. *)
@@ -1410,7 +1457,7 @@ let points (p : here) =
   end
 
 let run_steps ~after (p : here) (f : frame) =
-  check_frame p.t p.devices f;
+  check_counts p.t f;
   let k = p.runs land 1 in
   p.runs <- p.runs + 1;
   let twos = p.twos.(k) in
@@ -1452,6 +1499,7 @@ let share_magic = "rig.share\n"
 type there = {
   t : t;
   devices : Rig.t array;
+  access : B.access array;
   entry : int;
   sub : Sub.t;
   srun : Sub.Run.t;
@@ -1462,7 +1510,7 @@ type there = {
 
 type loaded = Here of here | There of there
 
-let words_bytes (t : t) = 8 + (24 * Array.length t.inputs) + 8 + (8 * t.ints)
+let words_bytes (t : t) = 8 + (24 * Iarray.length t.inputs) + 8 + (8 * t.ints)
 
 (* [d]'s id on its machine, as its agent names it. *)
 let proxy_id d =
@@ -1476,8 +1524,8 @@ let load_there t devices =
     (* The areas of rails are the agent's to know: their views are checked
        there. *)
     let size = function Alloc { bytes; _ } -> bytes | Rail _ -> max_int in
-    check t (Array.map size t.memory) devices;
-    let inputs = Array.length t.inputs in
+    check t (Iarray.to_array (Iarray.map size t.memory)) devices;
+    let inputs = Iarray.length t.inputs in
     if
       inputs > (max_int - 16) / 24
       || t.ints > (max_int - 16 - (24 * inputs)) / 8
@@ -1489,7 +1537,7 @@ let load_there t devices =
   | ids -> (
       let b = Buffer.create 4096 in
       Buffer.add_string b share_magic;
-      W.array W.int b ids;
+      W.array W.int b (Iarray.of_array ids);
       Buffer.add_string b (to_string t);
       let host = Rig.host_of devices.(0) in
       match Rig.Image.load host (Buffer.contents b) with
@@ -1514,6 +1562,7 @@ let load_there t devices =
                    {
                      t;
                      devices;
+                     access = input_access t;
                      entry;
                      sub;
                      srun = Sub.Run.make ();
@@ -1523,12 +1572,8 @@ let load_there t devices =
 
 let no_rails _ = None
 
-(* CR: Loaded steps must own the arrays they execute. With [ints = 1], changing
-   the caller's Host.values.(0) from [Int 0] to [Int max_int] after load reaches
-   run_value's unsafe_get unchecked. Capture mutable description/device arrays
-   before validation, including retained Submit slots and input specifications,
-   then keep the owned runtime data. *)
 let load ?rails t devices =
+  let devices = Iarray.to_array devices in
   let here () =
     let rails = Option.value rails ~default:no_rails in
     Result.map (fun p -> Here p) (load_here ~rails t devices)
@@ -1554,22 +1599,38 @@ let set_word words at v =
     done)
 
 (* The words are placed on the host's queue when [submit] hands them over, so
-   the next run writes them again once it returned. *)
-let run_there ~after p (f : frame) =
-  Mutex.protect p.lock @@ fun () ->
-  check_frame p.t p.devices f;
+   the next run writes them again once it returned. Each input is read once,
+   checked and written: the agent checks again what it decodes. *)
+let run_words ~after p (f : frame) =
+  check_counts p.t f;
   set_word p.words 0 p.entry;
-  Array.iteri
-    (fun i b ->
-      let at = 8 + (24 * i) in
-      set_word p.words at (Nativeint.to_int (B.handle b));
-      set_word p.words (at + 8) (B.offset b);
-      set_word p.words (at + 16) (B.length b))
-    f.inputs;
+  for i = 0 to Array.length f.inputs - 1 do
+    let b = f.inputs.(i) and spec = Iarray.get p.t.inputs i in
+    check_input i spec p.devices.(spec.device) b;
+    if p.access.(i) = B.Read_write && B.access b = B.Read then
+      invalid "input %d is read-only memory, which the program writes" i;
+    let at = 8 + (24 * i) in
+    set_word p.words at (Nativeint.to_int (B.handle b));
+    set_word p.words (at + 8) (B.offset b);
+    set_word p.words (at + 16) (B.length b)
+  done;
   let at = 8 + (24 * Array.length f.inputs) in
   set_word p.words at (Array.length f.ints);
-  Array.iteri (fun i v -> set_word p.words (at + 8 + (8 * i)) v) f.ints;
+  for i = 0 to Array.length f.ints - 1 do
+    set_word p.words (at + 8 + (8 * i)) f.ints.(i)
+  done;
   [| Rig.submit p.sub ~run:p.srun ~reads:[||] ~writes:[||] ~waits:after |]
+
+(* The lock as [run_here] takes it. *)
+let run_there ~after p (f : frame) =
+  Mutex.lock p.lock;
+  match run_words ~after p f with
+  | points ->
+      Mutex.unlock p.lock;
+      points
+  | exception e ->
+      Mutex.unlock p.lock;
+      raise e
 
 let run ?(after = [||]) p f =
   match p with Here p -> run_here ~after p f | There p -> run_there ~after p f
@@ -1589,7 +1650,7 @@ let load_share ?rails b ~device =
         | Error _ as e -> e
         | Ok t -> (
             match
-              Array.map
+              Iarray.map
                 (fun id ->
                   match device id with
                   | Some d -> d
@@ -1619,7 +1680,7 @@ let run_share ?(after = [||]) w ~program ~region =
           with Invalid_argument _ ->
             R.fail r "%d bytes at %d past memory %d" length first id)
     in
-    let inputs = Array.init (Array.length p.t.inputs) input in
+    let inputs = Array.init (Iarray.length p.t.inputs) input in
     let n = R.int r in
     if n < 0 || n > p.t.ints then
       R.fail r "%d ints for a program of %d" n p.t.ints;

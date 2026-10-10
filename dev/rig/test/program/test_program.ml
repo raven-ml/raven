@@ -44,7 +44,7 @@ let hole ?(width = G.W64) ?(add = 0) ?(shift = 0) at leaf =
 
 (* A launch of Polled's [fill]: the 64-bit word [i] of its write slot [0] is
    [base + i], for [groups] groups. *)
-let fill ?(holes = [||]) ~image ~groups base =
+let fill ?(holes : _ iarray = [||]) ~image ~groups base =
   let bytes = String.make 8 '\000' ^ le64 base in
   {
     G.queue = "COMPUTE:0";
@@ -85,7 +85,7 @@ let kcopy ~image bytes =
         };
   }
 
-let submit ?(reads = [||]) ?(writes = [||]) device parts =
+let submit ?(reads : _ iarray = [||]) ?(writes : _ iarray = [||]) device parts =
   G.Submit { device; parts; reads; writes; fixed = [||] }
 
 let alloc ?(copies = G.One) ?(init = data "") device bytes =
@@ -94,7 +94,7 @@ let alloc ?(copies = G.One) ?(init = data "") device bytes =
 let all memory = G.Memory { memory; offset = 0; length = 64 }
 
 let load_ok t ds =
-  require_ok ~pp:Format.pp_print_string (G.load t (Array.of_list ds))
+  require_ok ~pp:Format.pp_print_string (G.load t (Iarray.of_list ds))
 
 (* Steps against a model *)
 
@@ -207,7 +207,7 @@ let describe c =
     code = [||];
     ints = 0;
     memory =
-      Array.init 3 (fun m ->
+      Iarray.init 3 (fun m ->
           alloc
             ~copies:(if c.two.(m) then Two else One)
             ~init:(data c.init.(m))
@@ -217,10 +217,10 @@ let describe c =
         { device = 0; binary = functions }; { device = 1; binary = functions };
       |];
     inputs =
-      Array.map
-        (fun device -> { G.device; bytes = size; access = B.Read_write })
-        c.in_dev;
-    steps = Array.of_list (List.map step c.ops);
+      Iarray.map
+        (fun device -> { G.device; bytes = size })
+        (Iarray.of_array c.in_dev);
+    steps = Iarray.of_list (List.map step c.ops);
   }
 
 (* The model: memory of two copies is one per run parity. *)
@@ -365,11 +365,7 @@ let hole_law h =
       ints = 0;
       memory = [| alloc 0 8; alloc ~init 0 16 |];
       images = [| { device = 0; binary = functions } |];
-      inputs =
-        [|
-          { device = 0; bytes = 16; access = B.Read_write };
-          { device = 0; bytes = 16; access = B.Read_write };
-        |];
+      inputs = [| { device = 0; bytes = 16 }; { device = 0; bytes = 16 } |];
       steps =
         [|
           submit 0 ~writes:[| Input 0 |]
@@ -469,7 +465,7 @@ let base d =
     ints = 0;
     memory = [| alloc 0 64 |];
     images = [| { device = 0; binary = functions } |];
-    inputs = [| { device = 0; bytes = 64; access = B.Read_write } |];
+    inputs = [| { device = 0; bytes = 64 } |];
     steps = [| submit 0 ~writes:[| Input 0 |] [| fill ~image:0 ~groups:1 0 |] |];
   }
 
@@ -669,7 +665,7 @@ let test_refusal (_, t, ds) =
   is_error
     ~pp:(fun _ _ -> ())
     ~msg:"load answers Error"
-    (G.load (t d) (Array.of_list (ds d)))
+    (G.load (t d) (Iarray.of_list (ds d)))
 
 let test_unborrowable () =
   let a, _ = polled ~peers:false "lone-a"
@@ -764,7 +760,7 @@ let ints_law i =
       ints = 1;
       memory = [||];
       images = [| { device = 0; binary = functions } |];
-      inputs = [| { device = 0; bytes = 256; access = B.Read_write } |];
+      inputs = [| { device = 0; bytes = 256 } |];
       steps =
         [|
           step_affine Ints ~a:(Fixed i.a) ~c:(Fixed i.c);
@@ -810,7 +806,7 @@ let loop_law k =
       ints = 2;
       memory = [||];
       images = [| { device = 0; binary = functions } |];
-      inputs = Array.make 2 { G.device = 0; bytes = 8; access = B.Read_write };
+      inputs = Iarray.init 2 (fun _ -> { G.device = 0; bytes = 8 });
       steps =
         [|
           Loop
@@ -848,7 +844,7 @@ let test_flag () =
       ints = 0;
       memory = [| alloc ~init:(data (le64 1)) 0 8 |];
       images = [| { device = 0; binary = functions } |];
-      inputs = [| { device = 0; bytes = 8; access = B.Read_write } |];
+      inputs = [| { device = 0; bytes = 8 } |];
       steps =
         [|
           Loop
@@ -882,7 +878,7 @@ let test_code_leaf () =
       ints = 0;
       memory = [||];
       images = [||];
-      inputs = [| { device = 0; bytes = 8; access = B.Read_write } |];
+      inputs = [| { device = 0; bytes = 8 } |];
       steps =
         [|
           Host
@@ -915,7 +911,7 @@ let test_code_leaf () =
 
 let host_refusals =
   let one d = [ d ] in
-  let with_steps ?(ints = 0) ?(code = [| affine |]) d steps =
+  let with_steps ?(ints = 0) ?(code : _ iarray = [| affine |]) d steps =
     { (base d) with code; ints; steps }
   in
   [
@@ -1007,6 +1003,31 @@ let test_host_unaddressed () =
   in
   is_error ~pp:(fun _ _ -> ()) (G.load t [| d |])
 
+(* A host step writes its input 0: a read-only borrow of a file there is refused
+   before the code runs, and the file keeps its bytes. *)
+let test_read_only_input () =
+  let path = Filename.temp_file "rig-program" ".bin" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) @@ fun () ->
+  Out_channel.with_open_bin path (fun oc -> output_string oc (le64 5));
+  let file = Result.get_ok (Rig_disk.of_file path) in
+  let x = Option.get (B.borrow Rig.host file) in
+  let t =
+    {
+      G.devices = [| Rig.arch Rig.host |];
+      code = [| affine |];
+      ints = 0;
+      memory = [||];
+      images = [||];
+      inputs = [| { device = 0; bytes = 8 } |];
+      steps = [| step_affine (Input 0) ~a:(Fixed 2) ~c:(Fixed 1) |];
+    }
+  in
+  let p = load_ok t [ Rig.host ] in
+  raises_match ~msg:"a read-only input" Exn.invalid_arg (fun () ->
+      G.run p { inputs = [| x |]; ints = [||] });
+  equal ~msg:"the file's bytes" string (le64 5)
+    (In_channel.with_open_bin path In_channel.input_all)
+
 let test_ints_refusal () =
   let d = fst (polled "ints") in
   let p = load_ok { (base d) with ints = 1 } [ d ] in
@@ -1021,7 +1042,7 @@ let test_ints_refusal () =
 let gen_t =
   let open Gen in
   let n = int_range (-2) 5000 in
-  let few g = array ~size:(int_range 0 3) g in
+  let few g = map Iarray.of_array (array ~size:(int_range 0 3) g) in
   let str = string_of ~size:(int_range 0 12) char in
   let leaf =
     one_of
@@ -1157,8 +1178,8 @@ let gen_t =
        { obj; entry })
   and+ inputs =
     few
-      (let+ device = n and+ bytes = n and+ access = access in
-       { device; bytes; access })
+      (let+ device = n and+ bytes = n in
+       { device; bytes })
   and+ ints = n
   and+ steps = few (step 2) in
   { devices; memory; images; code; inputs; ints; steps }
@@ -1166,7 +1187,7 @@ let gen_t =
 let pp_t ppf t =
   Format.fprintf ppf "a description of %d bytes, %d steps"
     (String.length (G.to_string t))
-    (Array.length t.steps)
+    (Iarray.length t.steps)
 
 let gen_t = Gen.with_pp pp_t gen_t
 let description = Testable.make ~pp:pp_t ~equal:( = )
@@ -1194,9 +1215,9 @@ let gen_damage =
 
 let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
-  Bytes.set_int64_le s 12 2L;
+  Bytes.set_int64_le s 12 1L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 2, not 1" why
+  contains ~msg:"names the versions" ~sub:"version 1, not 2" why
 
 (* Rails *)
 
@@ -1492,7 +1513,7 @@ let test_trip_follows_work () =
       ints = 1;
       memory = [||];
       images = [| { device = 0; binary = functions } |];
-      inputs = [| { device = 0; bytes = 8; access = B.Read_write } |];
+      inputs = [| { device = 0; bytes = 8 } |];
       steps =
         [|
           Loop
@@ -1534,7 +1555,7 @@ let test_int_follows_writer () =
       ints = 1;
       memory = [||];
       images = [| { device = 0; binary = functions } |];
-      inputs = [| { device = 0; bytes = 8; access = B.Read_write } |];
+      inputs = [| { device = 0; bytes = 8 } |];
       steps =
         [|
           submit 0 ~writes:[| Ints |] [| fill ~image:0 ~groups:1 42 |];
@@ -1547,6 +1568,48 @@ let test_int_follows_writer () =
   let out = one_word d in
   ignore (G.run p { inputs = [| out |]; ints = [| 0 |] });
   equal ~msg:"the word the first launch wrote" int 42 (word_of out)
+
+(* What run reads of the caller's *)
+
+(* run checks an input where a step uses it: a launch writes input 0, a move
+   copies it into input 1 and waits for the launch at the gate, while another
+   domain puts a buffer of no bytes in the frame as input 2. The launch that
+   writes input 2 is refused, and the buffer the frame held keeps its word. *)
+let test_input_checked_at_use () =
+  let d, pd = polled "checked-at-use" in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      code = [||];
+      ints = 0;
+      memory = [||];
+      images = [| { device = 0; binary = functions } |];
+      inputs = Iarray.init 3 (fun _ -> { G.device = 0; bytes = 8 });
+      steps =
+        [|
+          submit 0 ~writes:[| Input 0 |] [| fill ~image:0 ~groups:1 42 |];
+          G.Move { src = Input 0; dst = Input 1 };
+          submit 0 ~writes:[| Input 2 |] [| fill ~image:0 ~groups:1 7 |];
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let frame =
+    { G.inputs = [| one_word d; one_word d; one_word d |]; ints = [||] }
+  in
+  let z = frame.inputs.(2) in
+  P.gate pd;
+  let changer =
+    Domain.spawn (fun () ->
+        Rig_support.await "the move at the gate" (fun () -> P.sleepers pd > 0);
+        frame.inputs.(2) <- B.create d 0;
+        P.open_gate pd)
+  in
+  raises_match ~msg:"input 2 of no bytes" Exn.invalid_arg (fun () ->
+      G.run p frame);
+  Domain.join changer;
+  equal ~msg:"the move ran" int 42 (word_of frame.inputs.(1));
+  equal ~msg:"the frame's earlier input 2" int 0 (word_of z)
 
 let tests =
   [
@@ -1623,6 +1686,10 @@ let tests =
         test "load raises for devices of several machines" test_machines;
         test "run raises for a frame that does not fit" test_frame_refusals;
         test "run raises for more ints than the program's" test_ints_refusal;
+        test "run raises for a read-only input a step writes"
+          test_read_only_input;
+        test "run checks an input where a step uses it"
+          test_input_checked_at_use;
       ];
   ]
 
