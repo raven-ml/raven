@@ -301,14 +301,6 @@ let logspace dt ?(endpoint = true) ?(base = 10.) start stop n =
       let v = node b (Op2 (Binary Pow, const b D.Float64 base, e)) in
       node b (Op1 (Cast, D.Any dt, v)))
 
-let eye ?m ?(k = 0) dt n =
-  let m = Option.value m ~default:n in
-  leaf ~by:"Nx.eye" dt [| n; m |] (fun b ->
-      (* [Coord 0] is the column, [Coord 1] the row. *)
-      let d = node b (Op2 (Binary Sub, node b (Coord 0), node b (Coord 1))) in
-      let on = node b (Op2 (Compare Equal, d, const b D.Int64 (Int64.of_int k))) in
-      node b (Op3 (Where, on, const b dt (D.one dt), const b dt (D.zero dt))))
-
 (* Data in and out *)
 
 type 'd packed = P : ('v, 's, 'd) t -> 'd packed
@@ -397,10 +389,13 @@ let item i x =
       invalid_argf "%s: position %d is outside axis %d of extent %d" by p a d;
     { Nx_array.Move.start = q; count = 1; step = 1 }
   in
-  let x = readable ~by x in
   let one = Array.of_list (List.mapi at i) in
-  let v = Exec.run ~by (Value.Move (Slice one, x)) in
-  Nx_array.get (Exec.on_host ~by v) (Array.make r 0)
+  match readable ~by x with
+  | Value.Array { a; _ } when Rig.shares_host_memory (Nx_array.device a) ->
+      Nx_array.get a (Array.map (fun (w : Nx_array.Move.range) -> w.start) one)
+  | x ->
+      let v = Exec.run ~by (Value.Move (Slice one, x)) in
+      Nx_array.get (Exec.on_host ~by v) (Array.make r 0)
 
 let broadcast ~by s x =
   if Prim.has_shape x s then x else Eval.eval ~by (Value.Move (Broadcast s, x))
@@ -1571,6 +1566,12 @@ let elementwise ~by dt xs body =
   in
   y
 
+let un1 b k w x = node b (Op1 (Unary k, D.Any w, x))
+let bin2 b k x y = node b (Op2 (Binary k, x, y))
+let at_least b w x c = node b (Op2 (Compare Less_equal, const b w c, x))
+let below b w x c = node b (Op2 (Compare Less, x, const b w c))
+let pick b c x y = node b (Op3 (Where, c, x, y))
+
 let not_zero b dt x = node b (Op2 (Compare Not_equal, x, const b dt (D.zero dt)))
 
 (* One where [k] of the operands' truths holds, zero elsewhere. *)
@@ -1625,31 +1626,35 @@ let lshift x n =
   elementwise ~by dt [ Any x ] (fun b ins ->
       node b (Op2 (Binary Mul, ins.(0), int_const b dt factor)))
 
-(* A signed integer divided by 2^n rounds toward negative infinity: the
-   truncated quotient, less one where the remainder is negative. Past the
-   sign bit only the sign is left. *)
+(* [x / 2^n] rounded toward negative infinity, so a signed integer keeps its
+   sign. Up to 32 bits, at float64, which holds every such integer and its
+   quotient exactly: one multiply and a floor. Wider, from the truncated
+   quotient and the remainder's sign. Past the width only the sign is left. *)
 let rshift x n =
   let by = "Nx.rshift" in
   let dt = dtype x in
   integer ~by dt;
   if n < 0 then invalid_argf "%s: shift %d" by n;
   let bits = D.bits dt in
+  let unsigned = D.is D.Unsigned dt in
   elementwise ~by dt [ Any x ] (fun b ins ->
       let x = ins.(0) in
-      match D.kind dt with
-      | D.Unsigned ->
-          if n >= bits then int_const b dt 0L
-          else node b (Op2 (Binary Idiv, x, int_const b dt (Int64.shift_left 1L n)))
-      | _ when n >= bits - 1 ->
-          let neg = node b (Op2 (Compare Less, x, int_const b dt 0L)) in
-          node b (Op3 (Where, neg, int_const b dt (-1L), int_const b dt 0L))
-      | _ ->
-          let d = int_const b dt (Int64.shift_left 1L n) in
-          let q = node b (Op2 (Binary Idiv, x, d)) in
-          let r = node b (Op2 (Binary Mod, x, d)) in
+      if unsigned && n >= bits then int_const b dt 0L
+      else if (not unsigned) && n >= bits - 1 then
+        let neg = node b (Op2 (Compare Less, x, int_const b dt 0L)) in
+        node b (Op3 (Where, neg, int_const b dt (-1L), int_const b dt 0L))
+      else if bits <= 32 then
+        let f = node b (Op1 (Cast, D.Any D.Float64, x)) in
+        let q = bin2 b Mul f (const b D.Float64 (Float.ldexp 1. (-n))) in
+        node b (Op1 (Cast, D.Any dt, un1 b Floor D.Float64 q))
+      else
+        let d = int_const b dt (Int64.shift_left 1L n) in
+        let q = bin2 b Idiv x d in
+        if unsigned then q
+        else
+          let r = bin2 b Mod x d in
           let neg = node b (Op2 (Compare Less, r, int_const b dt 0L)) in
-          let one = node b (Op3 (Where, neg, int_const b dt 1L, int_const b dt 0L)) in
-          node b (Op2 (Binary Sub, q, one)))
+          bin2 b Sub q (pick b neg (int_const b dt 1L) (int_const b dt 0L)))
 
 let clamp ?min:lo ?max:hi x =
   let by = "Nx.clamp" in
@@ -1757,11 +1762,6 @@ let float_map (type v s d) ~by (xs : (v, s, d) t list)
   | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
       invalid_argf "%s: %s is not a float dtype" by (D.name dt)
 
-let un1 b k w x = node b (Op1 (Unary k, D.Any w, x))
-let bin2 b k x y = node b (Op2 (Binary k, x, y))
-let at_least b w x c = node b (Op2 (Compare Less_equal, const b w c, x))
-let below b w x c = node b (Op2 (Compare Less, x, const b w c))
-let pick b c x y = node b (Op3 (Where, c, x, y))
 
 let square x = binary ~by:"Nx.square" (Binary Mul) x x
 
@@ -1769,17 +1769,26 @@ let rsqrt x =
   float_map ~by:"Nx.rsqrt" [ x ] (fun b w ins ->
       un1 b Recip w (un1 b Sqrt w ins.(0)))
 
-(* [m sqrt (1 + (n / m)^2)] for the larger magnitude [m] and the smaller [n]:
-   nothing squares past [m]. Zero for two zeros, an infinity where either is,
-   even beside a NaN. *)
-let hypotenuse b w x y =
+(* [sqrt (x^2 + y^2)] with nothing overflowing: at float32, the squares summed
+   at float64, which holds them; at float64, [m sqrt (1 + (n / m)^2)] for the
+   larger magnitude [m] and the smaller [n], zero for two zeros. An infinity
+   where either is, even beside a NaN. *)
+let hypotenuse (type w) b (w : (float, w) D.t) x y =
   let ax = un1 b Abs w x and ay = un1 b Abs w y in
-  let m = bin2 b Maximum ax ay and n = bin2 b Minimum ax ay in
-  let r = bin2 b Fdiv n m in
-  let s = un1 b Sqrt w (node b (Op3 (Fma, r, r, const b w 1.))) in
-  let h = bin2 b Mul m s in
-  let zero = node b (Op2 (Compare Equal, m, const b w 0.)) in
-  let h = pick b zero (const b w 0.) h in
+  let h =
+    match w with
+    | D.Float32 ->
+        let up v = node b (Op1 (Cast, D.Any D.Float64, v)) in
+        let x = up x and y = up y in
+        let sum = node b (Op3 (Fma, x, x, bin2 b Mul y y)) in
+        node b (Op1 (Cast, D.Any w, un1 b Sqrt D.Float64 sum))
+    | _ ->
+        let m = bin2 b Maximum ax ay and n = bin2 b Minimum ax ay in
+        let r = bin2 b Fdiv n m in
+        let s = un1 b Sqrt w (node b (Op3 (Fma, r, r, const b w 1.))) in
+        let zero = node b (Op2 (Compare Equal, m, const b w 0.)) in
+        pick b zero (const b w 0.) (bin2 b Mul m s)
+  in
   let inf v = node b (Op2 (Compare Equal, v, const b w Float.infinity)) in
   pick b (bin2 b Or (inf ax) (inf ay)) (const b w Float.infinity) h
 
@@ -1895,22 +1904,26 @@ let complex (type c a d) (dt : (Complex.t, c) D.t) ~(re : (float, a, d) t)
   in
   match dt with D.Complex64 -> pairs D.Float32 | D.Complex128 -> pairs D.Float64
 
-(* A complex value's imaginary parts negated, in one map over its bits read as
-   pairs of parts; any other value is itself. *)
+(* A complex value's imaginary parts negated: for complex64, its imaginary
+   part's sign bit flipped in the value read as uint64, in the host's byte
+   order; for complex128, the odd elements of its pairs of parts negated, in
+   one map. Any other value is itself. *)
 let conjugate (type v s d) (x : (v, s, d) t) : (v, s, d) t =
   let by = "Nx.conjugate" in
-  let flip (type p) (f : (float, p) D.t) =
-    let pairs : (float, p, d) t = Eval.eval ~by (Value.Bitcast (f, x)) in
-    let y =
-      elementwise ~by f [ Any pairs ] (fun b ins ->
-          let im = node b (Op2 (Compare Equal, node b (Coord 0), const b D.Int64 1L)) in
-          pick b im (un1 b Neg f ins.(0)) ins.(0))
-    in
-    Eval.eval ~by (Value.Bitcast (dtype x, y))
-  in
   match dtype x with
-  | D.Complex64 -> flip D.Float32
-  | D.Complex128 -> flip D.Float64
+  | D.Complex64 ->
+      let sign = if Sys.big_endian then 0x8000_0000L else Int64.min_int in
+      let u = Eval.eval ~by (Value.Bitcast (D.Uint64, x)) in
+      let flipped = binary ~by (Binary Xor) u (fill ~by D.Uint64 [||] sign) in
+      Eval.eval ~by (Value.Bitcast (D.Complex64, flipped))
+  | D.Complex128 ->
+      let pairs = Eval.eval ~by (Value.Bitcast (D.Float64, x)) in
+      let y =
+        elementwise ~by D.Float64 [ Any pairs ] (fun b ins ->
+            let im = node b (Op2 (Compare Equal, node b (Coord 0), const b D.Int64 1L)) in
+            pick b im (un1 b Neg D.Float64 ins.(0)) ins.(0))
+      in
+      Eval.eval ~by (Value.Bitcast (D.Complex128, y))
   | _ -> x
 
 (* Matrices *)
@@ -1970,7 +1983,8 @@ let diagonal_by ~by ?(offset = 0) ?(axis1 = -2) ?(axis2 = -1) x =
   if a = b then invalid_argf "%s: axis1 and axis2 are both %d" by a;
   let rest = List.filter (fun i -> i <> a && i <> b) (List.init (ndim x) Fun.id) in
   let p = Array.of_list (rest @ [ a; b ]) in
-  last_diagonal ~by offset (permute ~by p x)
+  let last_two = Array.for_all2 ( = ) p (Array.init (ndim x) Fun.id) in
+  last_diagonal ~by offset (if last_two then x else permute ~by p x)
 
 let diagonal ?offset ?axis1 ?axis2 x =
   diagonal_by ~by:"Nx.diagonal" ?offset ?axis1 ?axis2 x
@@ -1982,22 +1996,33 @@ let trace ?(offset = 0) x =
 (* A vector [v] of [n] elements on the [k]th diagonal of an [n + |k|] square:
    [v] padded to the square's extent and read along the rows for [k >= 0],
    along the columns otherwise. *)
+(* The [n × m] value whose [k]th diagonal holds [piece]'s elements, zero
+   elsewhere: one assembly into the two axes merged, the diagonal every
+   [m + 1]th element of them from its first. *)
+let on_diagonal ~by dt n m k piece =
+  ignore (renamed ~by (fun () -> Nx_array.Layout.contiguous [| n; m |]));
+  let start = if k >= 0 then k else -k * m in
+  let count = Prim.dim piece 0 in
+  let along = { Nx_array.Move.start = (if count = 0 then 0 else start); count; step = m + 1 } in
+  let flat = assemble ~by dt [| n * m |] (D.zero dt) [ ([| along |], piece) ] in
+  move ~by (Reshape [| n; m |]) flat
+
+let eye ?m ?(k = 0) dt n =
+  let by = "Nx.eye" in
+  let m = Option.value m ~default:n in
+  let count =
+    Stdlib.max 0
+      (if k >= 0 then Stdlib.min n (m - k) else Stdlib.min (n + k) m)
+  in
+  on_diagonal ~by dt n m k (fill ~by dt [| count |] (D.one dt))
+
 let diag ?(k = 0) v =
   let by = "Nx.diag" in
   match ndim v with
   | 2 -> diagonal_by ~by ~offset:k v
   | 1 ->
-      let dt = dtype v in
       let n = dim 0 v + Stdlib.abs k in
-      let padded =
-        assemble ~by dt [| n |] (D.zero dt) [ (region [| n |] 0 0 (dim 0 v), v) ]
-      in
-      let along = if k >= 0 then [| n; 1 |] else [| 1; n |] in
-      let line = broadcast ~by [| n; n |] (move ~by (Reshape along) padded) in
-      elementwise ~by dt [ Any line ] (fun b ins ->
-          let d = bin2 b Sub (node b (Coord 0)) (node b (Coord 1)) in
-          let on = node b (Op2 (Compare Equal, d, const b D.Int64 (Int64.of_int k))) in
-          pick b on ins.(0) (const b dt (D.zero dt)))
+      on_diagonal ~by (dtype v) n n k v
   | _ -> invalid_argf "%s: %a is neither a vector nor a matrix" by pp_value v
 
 (* Axis names [p0], [p1], ... *)
