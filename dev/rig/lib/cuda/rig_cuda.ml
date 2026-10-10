@@ -54,8 +54,15 @@ let refused step self x = match failed self with 0 -> x | e -> fault step e
 
 (* A GPU's holder: [unheld]; [taken], while a device of it is open or being
    opened; or the C state, negated, of a device stopped while its work still
-   ran. *)
-type gpus = { devices : int array; held : int Atomic.t array }
+   ran. A GPU's [first] is the C state of its first device, whose context the
+   process keeps, and its [reached] the GPUs whose memory its work addresses,
+   by number. *)
+type gpus = {
+  devices : int array;
+  held : int Atomic.t array;
+  first : int option array;
+  reached : int list Atomic.t array;
+}
 
 let unheld = 0
 let taken = 1
@@ -98,7 +105,8 @@ let discover () =
   | ds ->
       let devices = Array.of_list (List.map snd (List.sort compare ds)) in
       let each x = Array.map (fun _ -> Atomic.make x) devices in
-      Ok { devices; held = each unheld }
+      let first = Array.map (fun _ -> None) devices in
+      Ok { devices; held = each unheld; first; reached = each [] }
 
 (* Loads the library and finds its GPUs at the first call that needs them, until
    they are found: a failed load is tried again by the next call, so a driver
@@ -134,7 +142,7 @@ type region = {
   kind : kind;
   address : int;
   handle : int;
-  home : int; (* the C state of the device whose GPU holds GPU memory *)
+  home : int; (* the GPU that holds GPU memory, by number *)
 }
 
 let region home kind ~address ~handle = { kind; address; handle; home }
@@ -156,6 +164,8 @@ type image = {
 
 type t = {
   self : int;
+  gpu : int; (* its GPU's number *)
+  reached : int list Atomic.t; (* its GPU's [reached] *)
   facts : region Rig_edge.facts;
   held : int Atomic.t;
   images : image list Atomic.t; (* loaded, whose functions a graph may run *)
@@ -169,6 +179,7 @@ external stop_device : int -> bool = "caml_rig_cuda_stop"
 external free_word : int -> unit = "caml_rig_cuda_free_word"
 external unload_module : int -> int -> int = "caml_rig_cuda_unload"
 external word_address : int -> int = "caml_rig_cuda_word" [@@noalloc]
+external enable_peer : int -> int -> int = "caml_rig_cuda_peer"
 
 let count () =
   match find_gpus () with Ok g -> Array.length g.devices | Error _ -> 0
@@ -267,6 +278,31 @@ let claim held =
     Error "the GPU still runs the work of a stopped device"
   end
 
+(* Whether [self]'s GPU addresses the GPU memory of [home]'s, after enabling
+   the access. A failure is a refusal, such as CUDA's limit on a GPU's
+   peers. *)
+let reaches self home =
+  match enable_peer self home with
+  | 1 -> true
+  | s -> -s = cuda_error_peer_access_already_enabled
+
+(* Enables access between GPU [i], whose first device is [self], and every
+   GPU opened before it, both ways, recording the GPUs each reaches. *)
+let enable_peers (g : gpus) i self =
+  Mutex.protect lock @@ fun () ->
+  let add i j = Atomic.set g.reached.(i) (j :: Atomic.get g.reached.(i)) in
+  let enable j = function
+    | None -> ()
+    | Some s ->
+        if reaches self s then add i j;
+        if reaches s self then add j i
+  in
+  match g.first.(i) with
+  | Some _ -> ()
+  | None ->
+      Array.iteri enable g.first;
+      g.first.(i) <- Some self
+
 (* Each stream runs fills and copies, and COMPUTE:0 launches. *)
 let compute = { Rig_edge.name = "COMPUTE:0"; runs = [ Fill; Copy; Launch ] }
 let copy = { Rig_edge.name = "COPY:0"; runs = [ Fill; Copy ] }
@@ -308,8 +344,9 @@ let open_ i =
             ("opening the GPU's primary context and streams: " ^ error (-self))
         end
         else begin
+          enable_peers g i self;
           let w = word_address self in
-          let word = region self Word ~address:w ~handle:w in
+          let word = region i Word ~address:w ~handle:w in
           let arch = strf "sm_%d%d" major minor in
           let images = Atomic.make [] in
           let guard = Mutex.create () and stopped = Atomic.make false in
@@ -339,7 +376,8 @@ let open_ i =
               edge = Nativeint.of_int self;
             }
           in
-          Ok { self; facts; held; images; guard; stopped; cap }
+          let reached = g.reached.(i) in
+          Ok { self; gpu = i; reached; facts; held; images; guard; stopped; cap }
         end
 
 (* Facts *)
@@ -355,11 +393,10 @@ external free_memory : int -> bool -> int -> int = "caml_rig_cuda_free"
 external mapped : int -> int -> int = "caml_rig_cuda_mapped"
 external allocation : int -> int -> int = "caml_rig_cuda_allocation"
 external lock : int -> bool -> int -> int -> int = "caml_rig_cuda_lock"
-external enable_peer : int -> int -> int = "caml_rig_cuda_peer"
 
 let allocated g kind n =
   match alloc_memory g.self (kind = Host) n with
-  | a when a >= 0 -> Some (region g.self kind ~address:a ~handle:a)
+  | a when a >= 0 -> Some (region g.gpu kind ~address:a ~handle:a)
   | _ -> refused (strf "allocating %d bytes" n) g.self None
 
 (* CUDA maps no GPU memory for the host: [Mapped] is [None]. *)
@@ -377,31 +414,21 @@ let locate r =
     handle = Nativeint.of_int r.handle;
   }
 
-(* Whether [self]'s GPU addresses the GPU memory of [home]'s, enabling the
-   access. *)
-let reaches self home =
-  match enable_peer self home with
-  | 1 -> true
-  | 0 -> false
-  | s when -s = cuda_error_peer_access_already_enabled -> true
-  | _ -> refused "enabling peer access" self false
-
-(* CR: [peer] is an uncounted fact, also queried after loss. This path
-   enables CUDA access and can block or raise Fault outside rig's counted
-   calls. Read directed support learned at discovery/open here; enable
-   access only in map_peer, which owns resource refusal and context faults. *)
-let peer g g' = reaches g.self g'.self
+(* Whether [g]'s work addresses the GPU memory of GPU [i], as learned when the
+   later of the two GPUs opened. *)
+let addresses g i = i = g.gpu || List.mem i (Atomic.get g.reached)
+let peer g g' = addresses g g'.gpu
 
 let map_peer g _ (r : region) =
   let kind = match r.kind with Peer k -> k | k -> k in
-  if not (on_host kind || reaches g.self r.home) then None
+  if not (on_host kind || addresses g r.home) then None
   else Some { r with kind = Peer kind }
 
 let registry : registration list ref = ref []
 let registry_lock = Mutex.create ()
 let page = page_size ()
 let pages a n = (a / page * page, (a + n + page - 1) / page * page)
-let locked g e a address = region g.self (Locked e) ~address ~handle:a
+let locked g e a address = region g.gpu (Locked e) ~address ~handle:a
 let page_locking n a = strf "page-locking %d bytes at 0x%x" n a
 
 (* A range CUDA did not page-lock is registered. One it did, for another owner,

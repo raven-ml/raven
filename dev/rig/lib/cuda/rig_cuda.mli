@@ -182,10 +182,12 @@ val capability : t -> Rig_cuda_abi.t
     destroys the streams a {!stop} that found work running left, and the GPU
     then opens again.
 
-    {!peer}[ g g'] is [true] iff CUDA gives [g]'s GPU access to the GPU memory
-    of [g']'s, which {!peer} then enables for the pair: always for two devices
-    of one GPU. {!map_peer} maps host memory always, and GPU memory where CUDA
-    gives that access, which it then enables for the pair. The free of a
+    {!peer}[ g g'] is [true] iff [g]'s GPU addresses the GPU memory of [g']'s:
+    always for two devices of one GPU, and for two GPUs where CUDA gave that
+    access when the later of them first opened. That open enables the access
+    both ways where CUDA gives it, for the rest of the process, so each later
+    allocation is mapped for every GPU that reaches it. {!map_peer} maps host
+    memory always, and GPU memory where {!peer} is [true]. The free of a
     {!map_peer} region ends only that region.
 
     {!map_host}[ g a n] page-locks the [n] bytes at [a] for every CUDA device
