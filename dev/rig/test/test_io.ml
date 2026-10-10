@@ -242,6 +242,10 @@ let test_staged_device () =
   t.mapped <- `None;
   let d, _ = P.open_ ~host_visible:false "io:staged-device" in
   let n = (100 lsl 20) + 4096 in
+  (* CR: This pattern repeats every 16 MiB, so 32 MiB staging pieces
+     are identical; replaying or permuting them passes. Add (i lsr 24)
+     to the sum here and in test_buffer's large-copy fixture. This makes
+     their pieces differ while keeping the existing byte variation. *)
   let byte i = Char.unsafe_chr ((i + ((i lsr 16) * 13)) land 255) in
   let h = B.create Rig.host n in
   let ba = B.bigarray Bigarray.char h in

@@ -25,6 +25,11 @@ let load d binary =
 
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
+(* CR: Exercise all four (copies, host_visible) combinations. This
+   always uses a copy queue, leaving host placement and its wait
+   untested. Queue work before successful loads and check it completed,
+   retaining the entry/byte checks. With neither capability, require
+   Invalid_argument and verify a later submission still completes. *)
 let test_load () =
   let d, _ = P.open_ "image:load" in
   let p = load d "code:64" in
