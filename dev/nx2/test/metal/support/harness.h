@@ -5,8 +5,8 @@
 
 /* The kernels the Metal suite and bench run beside nx.metal's: the floors,
    the operand generator, the peaks and the probes. harness.metal defines
-   them; the host launches them through launch records, as it launches the
-   library's. Each reads one parameter struct, its addresses first.
+   them; the host launches them as rig's Launch parts, as nx.metal launches
+   its own. Each reads one parameter struct, its addresses first.
 
    This header compiles as C on the host and as the Metal Shading Language
    on the device. */
@@ -20,15 +20,11 @@
 #include <stdint.h>
 #endif
 
-/* X(name) for every kernel of the harness's metallib, in enum order. */
+/* X(name) for every kernel of the harness's metallib. */
 #define NX_HARNESS_KERNELS(X)                                          \
   X(empty) X(move) X(read) X(generate) X(fma_f32) X(fma_f16)           \
   X(mma_f32) X(mma_f16) X(probe_contract) X(probe_div_sqrt)            \
   X(probe_half) X(probe_codec)
-
-#define NX_HARNESS_ENUM(name) NX_HARNESS_##name,
-enum nx_harness_kernel { NX_HARNESS_KERNELS(NX_HARNESS_ENUM) NX_HARNESS_COUNT };
-#undef NX_HARNESS_ENUM
 
 /* Threads per threadgroup of every harness kernel. */
 #define NX_HARNESS_THREADS 256

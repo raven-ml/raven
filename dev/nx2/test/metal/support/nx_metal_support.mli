@@ -111,6 +111,13 @@ val call : run -> unit
     Raises [Invalid_argument] if [r] is not one contraction of
     {!plan_contract}, and [Failure] if nx.metal declines it. *)
 
+val issue : t -> count:int -> run -> unit
+(** [issue t ~count r] calls the contraction [r] [count] times and returns once
+    their work is done. With a warm [r] it allocates nothing beyond what the
+    calls allocate.
+
+    Raises as {!call} does. *)
+
 (** {1:probes Probes} *)
 
 type floats = (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -162,8 +169,10 @@ type arg
 (** The type for operands of a call: memory, a dtype and strides in elements
     over the call's three axes. *)
 
-val arg : operand -> ('v, 's) Nx_array.Dtype.t -> int * int * int -> arg
-(** [arg o dt strides] is [o] read as [dt] with [strides]. *)
+val arg :
+  ?first:int -> operand -> ('v, 's) Nx_array.Dtype.t -> int * int * int -> arg
+(** [arg ~first o dt strides] is [o] read as [dt] with [strides], its first
+    element [first] elements into [o] (defaults to [0]). *)
 
 val arg_operand : arg -> operand
 (** [arg_operand a] is [a]'s memory. *)

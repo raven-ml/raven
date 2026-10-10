@@ -197,6 +197,15 @@ let run t r = prepare t r ()
 let call = function
   | [ Call c ] -> call_contract c
   | _ -> invalid_arg "Nx_metal_support.call: not one contraction"
+
+let issue t ~count = function
+  | [ Call c ] ->
+      for _ = 1 to count do
+        call_contract c
+      done;
+      Rig.wait t.rig (Rig.submitted t.rig)
+  | _ -> invalid_arg "Nx_metal_support.issue: not one contraction"
+
 let groups n = ((n + harness_threads - 1) / harness_threads, 1, 1)
 
 (* Operand values *)
@@ -247,18 +256,26 @@ let probe ?(dtype = 0) t kernel in_ ~which n =
 
 (* Contract *)
 
-type arg = { o : operand; dtype : int; strides : int * int * int }
+type arg = { o : operand; dtype : int; first : int; strides : int * int * int }
 
-let arg o dt strides = { o; dtype = Nx_array.Dtype.code dt; strides }
+let arg ?(first = 0) o dt strides =
+  { o; dtype = Nx_array.Dtype.code dt; first; strides }
+
 let arg_operand a = a.o
-let cpu a = (a.o.host, a.dtype, a.strides)
 let dtype c = Option.get (Nx_array.Dtype.of_code c)
 
-(* [a] as an array of [shape], its first element at its memory's start. *)
+let cpu a =
+  let (Nx_array.Dtype.Any d) = dtype a.dtype in
+  (a.o.host + (a.first * Nx_array.Dtype.bits d / 8), a.dtype, a.strides)
+
+(* [a] as an array of [shape], its first element [a.first] elements into its
+   memory. *)
 let array a shape =
   let (Nx_array.Dtype.Any d) = dtype a.dtype in
   let s0, s1, s2 = a.strides in
-  let layout = Nx_array.Layout.v ~offset:0 ~strides:[| s0; s1; s2 |] shape in
+  let layout =
+    Nx_array.Layout.v ~offset:a.first ~strides:[| s0; s1; s2 |] shape
+  in
   Nx_array.Any (Nx_array.v d layout a.o.buf)
 
 (* batch, m, n, k, the accumulator's dtype code, and how many outputs a

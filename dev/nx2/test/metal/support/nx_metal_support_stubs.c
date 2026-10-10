@@ -4,10 +4,10 @@
   ---------------------------------------------------------------------------*/
 
 /* The harness's metallib (harness.metallib), included by the assembler,
-   and its kernels' names; launch records; host views of device memory;
-   the timed fill over a run; and the probes' host side. Objective-C on
-   macOS, where the views run; elsewhere no Metal device opens and nothing
-   reaches them. Every stub holds the runtime: none blocks. */
+   and its kernels' names; host views of device memory; and the host side
+   of the probes and of the contraction checks. Objective-C on macOS, where
+   the views run; elsewhere no Metal device opens and nothing reaches them.
+   Every stub holds the runtime: none blocks. */
 
 #include <math.h>
 #include <stdint.h>
@@ -69,7 +69,7 @@ value nx_metal_test_threads(value unit) {
   return Val_int(NX_HARNESS_THREADS);
 }
 
-/* The harness's kernels' names, by their nx_harness_kernel. */
+/* The harness's kernels' names, in NX_HARNESS_KERNELS's order. */
 value nx_metal_test_kernels(value unit) {
   (void)unit;
   return caml_copy_string_array(names);

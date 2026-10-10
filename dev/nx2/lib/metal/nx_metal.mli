@@ -23,9 +23,11 @@
     {!Nx_kernel.Spec.Contract_view} groups. It declines the other cases, an
     extent above [2{^32} - 1], an operand whose elements in a batch element lie
     [2{^32}] elements or more apart, and a float operand with neither axis of
-    unit stride. Float32 and bfloat16 subnormal operands read as zero of their
-    sign, and float32 subnormal products, sums and results store as one: Apple
-    GPUs flush them. Float16 keeps its subnormals. The contraction's bound
-    gains [2{^-126} (1 + Σ (1 + |a| + |b|))] for them. *)
+    unit stride. Float32 and bfloat16 subnormal operands read as a zero of
+    their sign, and float32 subnormal products, sums and results store as a
+    zero of their sign: Apple GPUs flush them. Float16 keeps its subnormals.
+    The flushing widens the contraction's bound on an output by
+    [2{^-126} (1 + Σ (1 + |a| + |b|))], the sum over its [K] products'
+    operands [a] and [b]. *)
 
 include Nx_kernel.S

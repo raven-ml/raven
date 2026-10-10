@@ -206,6 +206,7 @@ type case = {
   init : init;
   pad : int; (* extra elements per row of a and b *)
   bpad : int; (* extra elements per batch of a and b *)
+  first : int; (* elements of a's and b's memory before their first *)
   spread : int;
   values : values;
 }
@@ -221,14 +222,14 @@ let pp_values ppf = function
 let pp_case ppf c =
   let name (Dt.Any dt) = Dt.name dt in
   Format.fprintf ppf
-    "%s -> %s, a%s b%s, %d x (%d x %d x %d), init %s, pad %d, bpad %d, spread \
-     %d, %a"
+    "%s -> %s, a%s b%s, %d x (%d x %d x %d), init %s, pad %d, bpad %d, first \
+     %d, spread %d, %a"
     (name c.dt) (name c.out)
     (if c.a_t then "^T" else "")
     (if c.b_t then "^T" else "")
     c.batch c.m c.n c.k
     (match c.init with No_init -> "none" | Full -> "full" | Bias -> "bias")
-    c.pad c.bpad c.spread pp_values c.values
+    c.pad c.bpad c.first c.spread pp_values c.values
 
 let floats_dt = [ Dt.Any Dt.Float32; Dt.Any Dt.Float16; Dt.Any Dt.Bfloat16 ]
 
@@ -255,6 +256,7 @@ let case =
   and+ init = of_list [ No_init; Full; Bias ]
   and+ pad = of_list [ 0; 3 ]
   and+ bpad = of_list [ 0; 1; 4 ]
+  and+ first = of_list [ 0; 1; 3 ]
   and+ spread = of_list [ 0; 8; 40 ]
   and+ values =
     let* seed = int_range 0 1_000_000 in
@@ -266,7 +268,7 @@ let case =
         (1, constant (Subnormal seed));
       ]
   in
-  { dt; out; a_t; b_t; batch; m; n; k; init; pad; bpad; spread; values }
+  { dt; out; a_t; b_t; batch; m; n; k; init; pad; bpad; first; spread; values }
 
 let case = Gen.with_pp pp_case case
 
@@ -275,19 +277,20 @@ let case = Gen.with_pp pp_case case
 type matrix = { arg : S.arg; len : int; at : int -> int -> int -> int }
 
 (* An operand of [rows] x [cols] per batch, stored [cols][rows] if [trans], each
-   stored row [pad] elements longer and each batch [bpad], with values from
-   [seed]. *)
-let matrix t (Dt.Any dt) ~trans ~batch ~rows ~cols ~pad ~bpad ~seed ~spread =
+   stored row [pad] elements longer and each batch [bpad], [first] elements
+   into its memory, with values from [seed]. *)
+let matrix t (Dt.Any dt) ~trans ~batch ~rows ~cols ~pad ~bpad ~first ~seed
+    ~spread =
   let ld = (if trans then rows else cols) + pad in
   let per = ((if trans then cols else rows) * ld) + bpad in
-  let len = batch * per in
+  let len = first + (batch * per) in
   let o = S.operand t (max 1 (Dt.bytes dt len)) in
   if len > 0 then S.generate ~spread t o dt len ~seed;
   let s1, s2 = if trans then (1, ld) else (ld, 1) in
   {
-    arg = S.arg o dt (per, s1, s2);
+    arg = S.arg ~first o dt (per, s1, s2);
     len;
-    at = (fun p r c -> (p * per) + (r * s1) + (c * s2));
+    at = (fun p r c -> first + (p * per) + (r * s1) + (c * s2));
   }
 
 (* A matrix's elements as unsigned codes of [size] bytes: get and set. *)
@@ -387,7 +390,7 @@ let init_arg t c (Dt.Any dt) =
   | Full ->
       Some
         (matrix t (Dt.Any dt) ~trans:false ~batch:c.batch ~rows:c.m ~cols:c.n
-           ~pad:0 ~bpad:0 ~seed:3 ~spread:c.spread)
+           ~pad:0 ~bpad:0 ~first:0 ~seed:3 ~spread:c.spread)
           .arg
   | Bias ->
       let o = S.operand t (max 1 (Dt.bytes dt c.n)) in
@@ -398,7 +401,7 @@ let init_arg t c (Dt.Any dt) =
 let call ?acc t c =
   let operand ~trans ~rows ~cols ~seed =
     matrix t c.dt ~trans ~batch:c.batch ~rows ~cols ~pad:c.pad ~bpad:c.bpad
-      ~seed ~spread:c.spread
+      ~first:c.first ~seed ~spread:c.spread
   in
   let a = operand ~trans:c.a_t ~rows:c.m ~cols:c.k ~seed:1 in
   let b = operand ~trans:c.b_t ~rows:c.k ~cols:c.n ~seed:2 in
@@ -433,6 +436,7 @@ let contract_bound =
       init = Bias;
       pad = 0;
       bpad = 0;
+      first = 0;
       spread = 8;
       values = Drawn;
     }
@@ -506,6 +510,7 @@ let contract_bound =
       cover "a bias" (c.init = Bias);
       cover "narrow out" (c.out <> Dt.Any Dt.Float32);
       cover "a batch pad" (c.batch > 1 && c.bpad > 0);
+      cover "operands past their memory's start" (c.first > 0);
       cover "wide spread" (c.spread = 40);
       cover "cancellation" (c.values = Cancelling && c.k > 1);
       cover "NaN, infinities, -0"
@@ -570,6 +575,7 @@ let int_example ?(out = Dt.Any Dt.Int32) ?(acc = Dt.Any Dt.Int32) ?(batch = 1)
         init = Full;
         pad = 0;
         bpad;
+        first = 0;
         spread = 0;
         values;
       };
@@ -646,6 +652,7 @@ let every_tile () =
       init = No_init;
       pad = 0;
       bpad = 0;
+      first = 0;
       spread = 0;
       values = Drawn;
     }
@@ -716,7 +723,7 @@ let every_tile () =
 (* The plan's acceptance: over every (a, b, acc, out) of the dtypes, at a shape
    of each kernel class, the plan accepts exactly the stated set, and an
    accepted call's results are within the bound (floats) or exact (integers).
-   Out is filled with 0xAA bytes before each run, so a path that writes nothing
+   Out is filled with 0xAA bytes before the call, so a path that writes nothing
    fails. The reference refuses a dtype it cannot read. *)
 let every_quadruple () =
   let t = dev () in
@@ -771,27 +778,30 @@ let every_quadruple () =
                       and b = arg bm db (k * n, n, 1)
                       and out = arg om dout (m * n, n, 1) in
                       let dims = (1, m, n, k) in
+                      let want = expected da db acc dout in
+                      (* A call it should accept computes drawn operands into
+                         0xaa bytes as it plans. *)
+                      if want then begin
+                        let draw o (Dt.Any dt) len seed =
+                          S.generate ~spread:8 t o dt len ~seed
+                        in
+                        draw am da (m * k) 1;
+                        draw bm db (k * n) 2;
+                        Bigarray.Array1.fill (S.view Bigarray.char om) '\xaa'
+                      end;
                       let plan = S.plan_contract ~acc t dims ~a ~b ~out in
                       let name (Dt.Any dt) = Dt.name dt in
                       let call () =
                         strf "%s x %s, acc %s -> %s, %d x %d x %d" (name da)
                           (name db) (name acc) (name dout) m n k
                       in
-                      let want = expected da db acc dout in
                       if want <> Option.is_some plan then
                         equal
                           ~msg:(strf "%s: accepted" (call ()))
                           bool want (Option.is_some plan);
                       match plan with
                       | None -> ()
-                      | Some run ->
-                          let draw o (Dt.Any dt) len seed =
-                            S.generate ~spread:8 t o dt len ~seed
-                          in
-                          draw am da (m * k) 1;
-                          draw bm db (k * n) 2;
-                          Bigarray.Array1.fill (S.view Bigarray.char om) '\xaa';
-                          ignore (S.run t run);
+                      | Some _ ->
                           if floats acc then
                             let worst, at = S.contract_error dims ~a ~b ~out in
                             at_most
@@ -834,6 +844,7 @@ let nan_output =
           init = No_init;
           pad = 0;
           bpad = 0;
+          first = 0;
           spread = 0;
           values = Drawn;
         }
@@ -850,7 +861,7 @@ let declines_float64 () =
   let t = dev () in
   let m =
     (matrix t (Dt.Any Dt.Float64) ~trans:false ~batch:1 ~rows:4 ~cols:4 ~pad:0
-       ~bpad:0 ~seed:1 ~spread:0)
+       ~bpad:0 ~first:0 ~seed:1 ~spread:0)
       .arg
   in
   let plan =
@@ -889,6 +900,7 @@ let determinism =
       init = Full;
       pad = 0;
       bpad = 0;
+      first = 0;
       spread = 8;
       values = Drawn;
     }
@@ -915,7 +927,7 @@ let determinism =
 let relaid t c x ~trans ~rows ~cols =
   let y =
     matrix t c.dt ~trans ~batch:c.batch ~rows ~cols ~pad:c.pad ~bpad:c.bpad
-      ~seed:0 ~spread:0
+      ~first:c.first ~seed:0 ~spread:0
   in
   let (Dt.Any dt) = c.dt in
   let get, _ = codes x (Dt.bytes dt 1) and _, set = codes y (Dt.bytes dt 1) in
@@ -939,10 +951,10 @@ let orders_agree c =
   let t = dev () in
   let a =
     matrix t c.dt ~trans:false ~batch:c.batch ~rows:c.m ~cols:c.k ~pad:c.pad
-      ~bpad:c.bpad ~seed:1 ~spread:c.spread
+      ~bpad:c.bpad ~first:c.first ~seed:1 ~spread:c.spread
   and b =
     matrix t c.dt ~trans:false ~batch:c.batch ~rows:c.k ~cols:c.n ~pad:c.pad
-      ~bpad:c.bpad ~seed:2 ~spread:c.spread
+      ~bpad:c.bpad ~first:c.first ~seed:2 ~spread:c.spread
   in
   write_values c a b;
   let a_t = relaid t c a ~trans:true ~rows:c.m ~cols:c.k
@@ -955,7 +967,7 @@ let orders_agree c =
   let outputs a b =
     let out =
       matrix t c.out ~trans:false ~batch:c.batch ~rows:c.m ~cols:c.n ~pad:0
-        ~bpad:0 ~seed:5 ~spread:0
+        ~bpad:0 ~first:0 ~seed:5 ~spread:0
     in
     let run =
       require_some ~msg:"the planner declined"
@@ -999,6 +1011,7 @@ let orders =
       init = No_init;
       pad = 0;
       bpad = 0;
+      first = 0;
       spread = 8;
       values = Drawn;
     }
@@ -1054,6 +1067,7 @@ let split_case =
     init = Full;
     pad = 0;
     bpad = 0;
+    first = 0;
     spread = 8;
     values = Drawn;
   }

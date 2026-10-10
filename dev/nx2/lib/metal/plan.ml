@@ -62,13 +62,13 @@ let large = Array.map (fun d -> Array.map (fun o -> index (Large (d, o))) orders
 let wide = Array.map (fun d -> Array.map (fun o -> index (Wide (d, o))) orders) dtypes
 let small = Array.map (fun d -> index (Small d)) dtypes
 
-(* Each dtype's checked large instance, or -1 if it has none. *)
+(* Each dtype's checked large instance, if it has one. *)
 let checked =
   Array.map
     (fun d ->
       if Array.exists (fun (_, i) -> i = K.Checked d) K.kernels then
-        index (Checked d)
-      else -1)
+        Some (index (Checked d))
+      else None)
     dtypes
 
 let int8 = Array.map (fun o -> index (Int8 o)) orders
@@ -201,10 +201,10 @@ let spans32 s rows cols =
   fits32 s.(1) && fits32 s.(2)
   && (rows = 0 || cols = 0 || fits32 (((rows - 1) * s.(1)) + ((cols - 1) * s.(2))))
 
-(* How many parts a product of [tiles] tiles splits into along k: floats
-   only, and only a batch of one. *)
-let split c tiles ~floats =
-  if (not floats) || c.batch <> 1 then 1
+(* How many parts a float product of [tiles] tiles splits into along k: only
+   a batch of one splits. *)
+let split c tiles =
+  if c.batch <> 1 then 1
   else begin
     let parts = ref 1 in
     while
@@ -227,11 +227,7 @@ let tile_k c size =
   match size with
   | Wide -> K.bk_wide
   | Large | Small | Checked -> (
-      match c.a_dtype with Any Float16 | Any Int8 -> K.bk_half | Any _ -> K.bk)
-
-(* The tables' index of a float product's dtype. *)
-let dense_index c =
-  match dense c.a_dtype with Some d -> dtype_index d | None -> 0
+      match c.a_dtype with Any Float16 -> K.bk_half | Any _ -> K.bk)
 
 (* Whether tiles of [size] leave at most an eighth of a product's rows
    empty. *)
@@ -249,30 +245,23 @@ let fills c size =
    Measured on the 1000 cube, checked large tiles run float32 and bfloat16 nt
    0.92 of small ones and nn 1.04 and 0.99, float16 nn 1.06; on 48 rows, wide
    tiles run the half types 1.2 to 1.7 times faster than small ones, and
-   float32 nt 1.3 times slower. int8 runs on whole large tiles. *)
-let tile_of c ~floats =
-  if not floats then Large
-  else if c.m <= wide_rows then Wide
+   float32 nt 1.3 times slower. *)
+let tile_of c d =
+  if c.m <= wide_rows then Wide
   else
     let side = K.large in
     let whole = c.m mod side = 0 && c.n mod side = 0 in
     let large = tiles c Large in
     if whole && large >= small_tiles
-       && c.k / split c large ~floats mod tile_k c Large = 0
+       && c.k / split c large mod tile_k c Large = 0
     then Large
     else if whole then Small
     else if
-      checked.(dense_index c) >= 0 && large >= small_tiles && fills c Checked
+      Option.is_some checked.(dtype_index d)
+      && large >= small_tiles && fills c Checked
     then Checked
     else if same c.a_dtype f32 || fills c Small then Small
     else Wide
-
-(* [bytes] of the workspace after those taken: their offset, on a 256-byte
-   boundary. *)
-let take c bytes =
-  let at = (c.used + 255) land lnot 255 in
-  c.used <- at + bytes;
-  at
 
 (* Whether an operand's stored rows start on 16-byte boundaries: its address,
    row stride and, past one batch element, batch stride. *)
@@ -300,16 +289,17 @@ let plan_skinny c d =
   c.groups_z <- c.batch;
   c.threads <- K.threads
 
-(* A product on the matrix units, each operand read where it lies, as the
-   order says: int8 into 32 bits if [i8], floats otherwise. The tile the shape
-   picks fixes the split, so every output's association is the shape's. A
-   product of few tiles splits along k into parts of equal length: a batch of
-   float32 contractions, part q reading k from q · part_k, whose outputs
-   contract_combine adds in order, then init. Integers sum in chunks within
-   one threadgroup: they never split. *)
-let plan_dense c ~i8 =
-  let floats = not i8 in
-  let size = tile_of c ~floats in
+(* Products on the matrix units read each operand where it lies, as the
+   order says. The tile the shape picks fixes the split, so every output's
+   association is the shape's. A float product of few tiles splits along k
+   into parts of equal length: a batch of float32 contractions, part q
+   reading k from q · part_k, whose outputs contract_combine adds in order,
+   then init. Integers sum in chunks within one threadgroup: they never
+   split. *)
+
+(* The grid of [size] tiles over the product, a column of [1 lsl swizzle]
+   tiles to consecutive threadgroups. *)
+let grid c size =
   let tiles_m = ceil_div c.m (tile_rows size) in
   let tiles_n = ceil_div c.n (tile_cols size) in
   c.swizzle <- (if tiles_m >= 2 * (1 lsl swizzle) then swizzle else 0);
@@ -317,21 +307,28 @@ let plan_dense c ~i8 =
   c.groups_x <- tiles_n * column;
   c.groups_y <- ceil_div tiles_m column;
   c.groups_z <- c.batch;
-  c.threads <- K.threads;
-  let o = order_index c in
+  c.threads <- K.threads
+
+(* int8 into 32 bits: whole large tiles, which never split. *)
+let plan_int8 c =
+  grid c Large;
+  c.kernel <- int8.(order_index c)
+
+(* Floats of the dense dtype [d]; the workspace holds the parts' float32
+   sums. *)
+let plan_float c d =
+  let size = tile_of c d in
+  grid c size;
+  let o = order_index c and i = dtype_index d in
   c.kernel <-
-    (if i8 then int8.(o)
-     else
-       let d = dense_index c in
-       match size with
-       | Large -> large.(d).(o)
-       | Small -> small.(d)
-       | Checked -> checked.(d)
-       | Wide -> wide.(d).(o));
-  c.parts <- split c (tiles c size) ~floats;
+    (match size with
+    | Large -> large.(i).(o)
+    | Small -> small.(i)
+    | Checked -> Option.get checked.(i)
+    | Wide -> wide.(i).(o));
+  c.parts <- split c (tiles c size);
   if c.parts > 1 then begin
-    ignore (take c (c.parts * c.m * c.n * 4));
-    c.used <- ceil_div c.used 16 * 16;
+    c.used <- ceil_div (c.parts * c.m * c.n * 4) 16 * 16;
     c.groups_z <- c.parts
   end
 
@@ -393,12 +390,16 @@ let rules c =
     else if not ordered then Declined
     else
       match dense a with
-      | Some d when c.m = 1 && floats ->
+      | _ when i8 ->
+          plan_int8 c;
+          Launches
+      | Some d when c.m = 1 ->
           plan_skinny c d;
           Launches
-      | _ ->
-          plan_dense c ~i8;
+      | Some d ->
+          plan_float c d;
           Launches
+      | None -> Declined
   end
 
 let strides into v which (x : V.axis) (y : V.axis) =

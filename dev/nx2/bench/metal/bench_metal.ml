@@ -266,24 +266,31 @@ let rows =
 
 (* Timing *)
 
-(* A row's launches per run: the same count on every run and build, about
-   [target_ns] of GPU time at an M1 Max's nominal rates for the row's work; one
-   for a call row. A count measured per run would time different work from one
-   run to the next. *)
+(* A row's launches or calls per run: the same count on every run and build,
+   about [target_ns] of time at an M1 Max's nominal rates for the row's work,
+   and no less than an eager call's own [call_ns] a call; one for a call row.
+   A count measured per run would time different work from one run to the
+   next. *)
 let target_ns = 10_000_000.
 let flops_per_ns = 8_000. (* 8 TFLOP/s *)
 let bytes_per_ns = 400. (* 400 GB/s *)
 let launch_ns = 3_000.
 
+(* An eager call's wall time queued behind others, whatever its work: one
+   submission, 11 to 21 us on an M1 Max. *)
+let call_ns = 15_000.
+
 let launches r =
   if r.call then 1
   else
-    let ns =
+    let work =
       match r.work with
       | `Flops f -> float f /. flops_per_ns
       | `Bytes b -> float b /. bytes_per_ns
       | `Launch -> launch_ns
     in
+    (* Contraction rows, the rows with a floor, are calls. *)
+    let ns = if Option.is_some r.floor then Float.max work call_ns else work in
     max 1 (min 8192 (int_of_float (Float.ceil (target_ns /. ns))))
 
 (* A row's run: its [n] launches or calls, after three runs of one that make
@@ -444,10 +451,28 @@ let case r =
       snd (sized t r))
     (fun go -> go ())
 
+(* The host's share of a call: 64 warm calls of the smallest contraction,
+   then their work. A call that finds nx.metal's caches warm allocates
+   nothing. *)
+let host =
+  let setup () =
+    let t = dev () in
+    let o () = S.operand t 4 in
+    let arg o = S.arg o Dt.Float32 (1, 1, 1) in
+    let run =
+      Option.get
+        (S.plan_contract t (1, 1, 1, 1) ~a:(arg (o ())) ~b:(arg (o ()))
+           ~out:(arg (o ())))
+    in
+    (t, run)
+  in
+  Thumper.bench_with_setup ~setup "issue/contract-64" (fun (t, run) ->
+      S.issue t ~count:64 run)
+
 let () =
   match Array.to_list Sys.argv with
   | _ :: "gate" :: rest -> gate (String.concat "" rest)
   | [ _; "probe" ] -> probe ()
   | _ ->
       S.hold_gpu ();
-      exit (Thumper.run "nx_metal" (List.map case rows))
+      exit (Thumper.run "nx_metal" (List.map case rows @ [ host ]))
