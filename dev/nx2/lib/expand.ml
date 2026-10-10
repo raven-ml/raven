@@ -384,6 +384,47 @@ let assemble (type v s d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by
     (Value.Move (Reshape (Array.copy shape), List.fold_left place flat pieces))
 
 
+(* Gathers and scatters *)
+
+(* The accumulator of [x]'s dtype where it is sub-byte, which kernels may
+   decline to gather or scatter: [None] for a dtype of a byte or more. *)
+let sub_byte (type v s d) (x : (v, s, d) Value.t) =
+  let dt = Prim.dtype x in
+  if D.bits dt >= 8 then None else Some (accumulator (D.Any dt))
+
+(* A sub-byte gather at its accumulator, cast back once. *)
+let gather (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    axis idx (x : (v, s, d) Value.t) : (v, s, d) Value.t option =
+  match sub_byte x with
+  | None -> None
+  | Some (D.Any w) ->
+      let x' = cast_to apply ~by w x in
+      let y = apply ~by (Value.Gather { axis; idx; x = x' }) in
+      Some (cast_to apply ~by (Prim.dtype x) y)
+
+(* A sub-byte scatter at its accumulator, cast back once. An integer's [Add]
+   wraps there to the same bits as at its own dtype. *)
+let scatter (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    combine ~unique axis idx (updates : (v, s, d) Value.t)
+    (into : (v, s, d) Value.t) : (v, s, d) Value.t option =
+  match sub_byte into with
+  | None -> None
+  | Some (D.Any w) ->
+      let wide x = cast_to apply ~by w x in
+      let y =
+        apply ~by
+          (Value.Scatter
+             {
+               combine;
+               unique;
+               axis;
+               idx;
+               updates = wide updates;
+               into = wide into;
+             })
+      in
+      Some (cast_to apply ~by (Prim.dtype into) y)
+
 let run : type r.
     ('q. by:string -> 'q Value.prim -> 'q) ->
     by:string ->
@@ -410,7 +451,9 @@ let run : type r.
       widened apply ~by layout prog outs loads
   | Value.Assemble { dtype; shape; fill; pieces } ->
       Some (assemble apply ~by dtype shape fill pieces)
-  | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
-  | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
-  | Value.Check _ ->
+  | Value.Gather { axis; idx; x } -> gather apply ~by axis idx x
+  | Value.Scatter { combine; unique; axis; idx; updates; into } ->
+      scatter apply ~by combine ~unique axis idx updates into
+  | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
+  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       None

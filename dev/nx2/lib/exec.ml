@@ -756,30 +756,34 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       let set = Devices.set p in
       let (module K) = kernels_of ~by ~op:"Gather" set in
       let spec = S.gather ~axis and dsts = arrays_of r in
+      let declined = ref None in
       each_device ~by p (Prim.shape r) (fun j k w ->
-          let dst = dsts.(j) and i = Place.view ~by idx k w in
-          let v = Place.view ~by x k (along axis (Prim.shape x) w) in
-          let ops = [| A.Any i; A.Any v |] in
-          if not (ran ~by (K.gather spec ~dst i v) [| A.Any dst |] ops) then
-            refuses ~by ~kernels:K.name "Gather" (Devices.rig set k)
-              (Array.to_list ops));
-      r
+          if Option.is_none !declined then begin
+            let dst = dsts.(j) and i = Place.view ~by idx k w in
+            let v = Place.view ~by x k (along axis (Prim.shape x) w) in
+            let ops = [| A.Any i; A.Any v |] in
+            if not (ran ~by (K.gather spec ~dst i v) [| A.Any dst |] ops) then
+              declined := Some (Devices.rig set k, ops)
+          end);
+      or_expanded ~by ~kernels:K.name op r !declined
   | Value.Scatter { combine; unique; axis; idx; updates; into = t } ->
       let r, p = alloc_one ~by op in
       let set = Devices.set p in
       let (module K) = kernels_of ~by ~op:"Scatter" set in
       let spec = S.scatter combine ~unique ~axis and dsts = arrays_of r in
       let s = Prim.shape updates in
+      let declined = ref None in
       each_device ~by p (Prim.shape r) (fun j k w ->
-          let dst = dsts.(j) and into = Place.view ~by t k w in
-          let w' = along axis s w in
-          let i = Place.view ~by idx k w' and u = Place.view ~by updates k w' in
-          let ops = [| A.Any into; A.Any i; A.Any u |] in
-          if not (ran ~by (K.scatter spec ~dst ~into i u) [| A.Any dst |] ops)
-          then
-            refuses ~by ~kernels:K.name "Scatter" (Devices.rig set k)
-              (Array.to_list ops));
-      r
+          if Option.is_none !declined then begin
+            let dst = dsts.(j) and into = Place.view ~by t k w in
+            let w' = along axis s w in
+            let i = Place.view ~by idx k w'
+            and u = Place.view ~by updates k w' in
+            let ops = [| A.Any into; A.Any i; A.Any u |] in
+            if not (ran ~by (K.scatter spec ~dst ~into i u) [| A.Any dst |] ops)
+            then declined := Some (Devices.rig set k, ops)
+          end);
+      or_expanded ~by ~kernels:K.name op r !declined
   | Value.Assemble { dtype; shape; fill; pieces } ->
       assemble ~by dtype shape fill pieces
   | Value.Place _ | Value.Check _ -> run ~by op
@@ -794,6 +798,24 @@ and expanded : type r. by:string -> unit Devices.placement -> r Value.prim -> r
   | None ->
       let (module K) = kernels_of ~by ~op:(Prim.name op) (Devices.set p) in
       invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
+
+(* [op]'s result [r] where every device computed it. Where a device's kernels
+   declined it, with operands [ops] on device [d], its expansion, or the
+   decline's error where it has none. *)
+and or_expanded : type r.
+    by:string ->
+    kernels:string ->
+    r Value.prim ->
+    r ->
+    (Rig.t * A.any array) option ->
+    r =
+ fun ~by ~kernels op r declined ->
+  match declined with
+  | None -> r
+  | Some (d, ops) -> (
+      match Expand.run run ~by op with
+      | Some r -> r
+      | None -> refuses ~by ~kernels (Prim.name op) d (Array.to_list ops))
 
 (* A loop's results [dsts] at [p], each device's window of them computed there
    by [kernel] over its operands [ops k w] for its window [w] of the loop's

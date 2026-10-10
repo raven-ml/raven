@@ -14,21 +14,36 @@ module D = Nx_array.Dtype
 module M = Nx_array.Move
 module C = Nx_support.Counting
 
+(* nx.cpu, declining gathers and scatters of sub-byte dtypes, as a library
+   may. *)
+module Narrow = struct
+  include Nx_cpu
+
+  let name = "nx.narrow"
+  let sub_byte a = D.bits (A.dtype a) < 8
+
+  let gather s ~dst idx x =
+    if sub_byte x then A.Declined else Nx_cpu.gather s ~dst idx x
+
+  let scatter s ~dst ~into idx u =
+    if sub_byte into then A.Declined else Nx_cpu.scatter s ~dst ~into idx u
+end
+
 type b
 
 let m = Nx_support.memory
 let s1 : b Devices.t = Devices.mint ~by:"t" ~kernels:(module C) [ m 0 ]
 let s2 : b Devices.t = Devices.mint ~by:"t" ~kernels:(module C) [ m 0; m 1 ]
+let narrow : b Devices.t = Devices.mint ~by:"t" ~kernels:(module Narrow) [ m 2 ]
 let at1 = Devices.one s1 0
 let split = Devices.split ~by:"t" ~axis:0 s2
 
-let on (type v s) (dt : (v, s) D.t) shape (data : v array) : (v, s, b) Value.t =
+let on_at at k (type v s) (dt : (v, s) D.t) shape (data : v array) :
+    (v, s, b) Value.t =
   Value.Array
-    {
-      at = at1;
-      a = A.to_device (m 0) (A.of_array dt shape data);
-      dead = Prim.live;
-    }
+    { at; a = A.to_device (m k) (A.of_array dt shape data); dead = Prim.live }
+
+let on dt = on_at at1 0 dt
 
 let positions shape ps = on D.Int64 shape (Array.map Int64.of_int ps)
 
@@ -166,4 +181,23 @@ let donation =
             (elements v));
     ]
 
-let () = exit (run "nx index ops" [ rules; placements; donation ])
+let declines =
+  group "declines"
+    [
+      test "a declined sub-byte gather and scatter compute at a wider dtype"
+        (fun () ->
+          let on dt = on_at (Devices.one narrow 0) 2 dt in
+          let x = on D.Int4 [| 2; 3 |] [| -8; -1; 0; 1; 7; 3 |] in
+          let idx = on D.Int64 [| 2; 2 |] [| 2L; 0L; 5L; 1L |] in
+          equal ~msg:"gather, position 5 outside the axis" (array int)
+            [| 0; -8; 0; 7 |]
+            (elements (gather 1 idx x));
+          let into = on D.Int4 [| 3 |] [| 7; -8; 3 |] in
+          let idx = on D.Int64 [| 4 |] [| 0L; 2L; 0L; 9L |] in
+          let u = on D.Int4 [| 4 |] [| 1; -1; 2; 5 |] in
+          equal ~msg:"scatter Add, 7 + 1 + 2 wrapping to -6" (array int)
+            [| -6; -8; 2 |]
+            (elements (scatter Add 0 idx u into)));
+    ]
+
+let () = exit (run "nx index ops" [ rules; placements; donation; declines ])
