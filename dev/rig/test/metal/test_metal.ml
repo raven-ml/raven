@@ -486,6 +486,27 @@ let uncommitted n =
   equal int n (H.get32 (host out));
   List.iter (Rig_metal.free t.g) (out :: args :: held)
 
+(* The device commits its work on its own: after [n] submissions of one dispatch
+   each and nothing more, no wait and no commit through rig, the word reaches
+   the last value within 10 s. *)
+let progress n =
+  let t = dev () in
+  let out = alloc t 256 and args = alloc t args_bytes in
+  set_args args ~at:0 ~out:(gpu out) ~c:0;
+  let f = S.dispatch ~pipeline:(pipeline t "step") args ~groups:1 ~threads:1 in
+  let last = ref 0 in
+  for _ = 1 to n do
+    last := submit t [| f |]
+  done;
+  let t0 = Rig.Profile.now () in
+  while Rig_metal.signaled t.g < !last do
+    if Rig.Profile.now () - t0 > 10_000_000_000 then
+      failf "the word shows %d, not %d, 10 s after the last submission"
+        (Rig_metal.signaled t.g) !last;
+    Domain.cpu_relax ()
+  done;
+  List.iter (Rig_metal.free t.g) [ out; args ]
+
 (* A region allocated between two submits whose work shares a command buffer is
    written by the second. *)
 let allocated_between () =
@@ -556,6 +577,11 @@ let commits =
           (strf
              "%d values behind three running command buffers run with no commit")
         "uncommitted" [ 2; 257 ] uncommitted;
+      cases
+        ~name:(strf "%d values reach the word with no later submission")
+        "progress"
+        [ 1; 2; 3; 4; 255; 256; 257; 1024 ]
+        progress;
       test
         "a region allocated between two submits of one command buffer is \
          written"

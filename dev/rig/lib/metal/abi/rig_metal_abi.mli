@@ -26,13 +26,13 @@
     - [arg], the argument the work was given with;
     - [v], the value the work completes on the device's timeline.
 
-    The encoder runs the commands the fills of the work encode in order, each
-    after the one before completed ([MTLDispatchTypeSerial]). Its command buffer
-    runs after the device's earlier work, and every memory of the device is
-    resident while it runs. The fills of a work share the encoder until one of
-    them splits, so a fill may find state that earlier commands set: it sets
-    every state its commands read, such as a dispatch's pipeline, buffers and
-    threadgroup memory lengths.
+    The encoder runs its commands in order, each after the one before completed
+    ([MTLDispatchTypeSerial]), after the device's earlier work, and every memory
+    of the device is resident while it runs. The encoder and its command buffer
+    may already hold commands of earlier work, and later work may add to them,
+    so a fill may find state that earlier commands set: it sets every state its
+    commands read, such as a dispatch's pipeline, buffers and threadgroup memory
+    lengths.
 
     The fill encodes into that encoder, for instance
     [executeCommandsInBuffer:withRange:], and does nothing else: it ends no
@@ -43,10 +43,12 @@
     [0], and the driver refuses work that declares any other. It stops at the
     first [split] that fails and returns its failure, and returns [0] otherwise.
 
-    After the work's last fill returns, the driver ends the open encoder and
-    commits the last command buffer. [v] is reached once every command buffer
-    of the work completed. The driver loses the device if a fill returns a
-    failure, or, with Metal's reason, if a command buffer of the work fails.
+    The driver ends encoders and commits command buffers when it chooses: a
+    [split] is the only boundary a fill sets. It commits a work's commands no
+    later than when the command buffers committed before them complete, so [v]
+    is reached without a later submission, once every command buffer holding the
+    work completed. The driver loses the device if a fill returns a failure, or,
+    with Metal's reason, if a command buffer holding the work fails.
 
     {b References.}
     - Apple's Metal framework headers (macOS 26 SDK):
@@ -139,10 +141,11 @@ type t = {
 
           Unless [start] is [NULL], [split] writes at [start] the time the
           committed command buffer started on the GPU; unless [end] is [NULL],
-          the time it ended at [end]. Both are written before [v] is reached.
-          Times are nanoseconds of the host clock ([CLOCK_UPTIME_RAW], the clock
-          of Metal's [GPUStartTime]), as unsigned 64-bit integers in the host's
-          byte order.
+          the time it ended at [end]. The command buffer may hold commands of
+          earlier work before the fill's, and its times cover them too. Both are
+          written before [v] is reached. Times are nanoseconds of the host clock
+          ([CLOCK_UPTIME_RAW], the clock of Metal's [GPUStartTime]), as unsigned
+          64-bit integers in the host's byte order.
 
           [split] returns [0], or a nonzero failure that the fill returns as its
           own. It fails if:
