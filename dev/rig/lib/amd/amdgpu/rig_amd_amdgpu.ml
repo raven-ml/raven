@@ -91,7 +91,9 @@ let acquired : (int, gpu) Hashtbl.t = Hashtbl.create 4
 let event_page : (int * int * int) option ref = ref None
 
 (* Views of another GPU's memory, by its handle and the viewing GPU's id: KFD
-   maps a memory once per GPU, so the last view's free unmaps it. *)
+   maps a memory once per GPU, so the first view maps it and the last view's
+   free unmaps it. A count changes with its MAP or UNMAP, under [views_lock],
+   so that a free never unmaps a mapping a new view counts on. *)
 let views : (int * int, int) Hashtbl.t = Hashtbl.create 16
 let views_lock = Mutex.create ()
 
@@ -160,6 +162,32 @@ let map_gpu fd handle gpu map =
   Request.give r;
   if e = 0 && reached <> 1 then eio else e
 
+(* Counts a view of [handle] for GPU [gpu], mapping it at the first: whether
+   the GPU maps it. *)
+let take_view fd handle gpu =
+  let key = (handle, gpu) in
+  Mutex.protect views_lock @@ fun () ->
+  let n = Option.value ~default:0 (Hashtbl.find_opt views key) in
+  if n = 0 && map_gpu fd handle gpu true < 0 then false
+  else begin
+    Hashtbl.replace views key (n + 1);
+    true
+  end
+
+(* Ends a view of [handle] for GPU [gpu], unmapping it at the last: 0, or
+   UNMAP's -errno. A failed UNMAP leaves no count, so that the next view maps
+   again. *)
+let give_view fd handle gpu =
+  let key = (handle, gpu) in
+  Mutex.protect views_lock @@ fun () ->
+  match Hashtbl.find views key - 1 with
+  | 0 ->
+      Hashtbl.remove views key;
+      map_gpu fd handle gpu false
+  | n ->
+      Hashtbl.replace views key n;
+      0
+
 (* Gives back the KFD memory [handle] and the [n] addresses at [at] reserved for
    it, then raises the failure of [step]. *)
 let undo fd handle at n step e =
@@ -207,22 +235,8 @@ let free fd g (m : mem Amd.memory) =
   match p.kind with
   | View -> ()
   | Peer ->
-      let key = (p.handle, g.node.gpu_id) in
-      (* CR: Keep views_lock through the last native unmap. Once the count
-         is removed, map_peer can publish a new view before this free unmaps
-         its shared KFD mapping. The count and native transition need one
-         critical section. Preserve the absent count on failure so the next
-         acquire calls MAP again: UNMAP may fail after removing the mapping. *)
-      let last =
-        Mutex.protect views_lock (fun () ->
-            let n = Hashtbl.find views key - 1 in
-            if n = 0 then Hashtbl.remove views key
-            else Hashtbl.replace views key n;
-            n = 0)
-      in
-      if last then
-        check "unmapping another GPU's memory"
-          (map_gpu fd p.handle g.node.gpu_id false)
+      check "unmapping another GPU's memory"
+        (give_view fd p.handle g.node.gpu_id)
   | Own ->
       ignore (map_gpu fd p.handle g.node.gpu_id false);
       check "freeing GPU memory" (kfd_free fd p.handle);
@@ -281,15 +295,9 @@ let map_peer fd g (m : mem Amd.memory) =
   if o.node.gpu_id = g.node.gpu_id then
     Some { m with data = { m.data with kind = View } }
   else if not (linked g o.node) then None
-  else
-    let key = (m.data.handle, g.node.gpu_id) in
-    Mutex.protect views_lock @@ fun () ->
-    let n = Option.value ~default:0 (Hashtbl.find_opt views key) in
-    if n = 0 && map_gpu fd m.data.handle g.node.gpu_id true < 0 then None
-    else begin
-      Hashtbl.replace views key (n + 1);
-      Some { m with data = { m.data with kind = Peer } }
-    end
+  else if take_view fd m.data.handle g.node.gpu_id then
+    Some { m with data = { m.data with kind = Peer } }
+  else None
 
 (* Opening a GPU *)
 
