@@ -84,7 +84,6 @@ let ops ~libos steps =
 type placement = {
   chip : Chip.t;
   memory : int;
-  fn : Function.t;
   tables : Page_table.t;
   bar : Window.t;
   space : Space.t;
@@ -120,13 +119,14 @@ and sys = { w : Window.t; va : int; pages : int list }
 let sys p ~taken ?(contiguous = false) n =
   let n = round_up n page in
   let align =
-    if contiguous && n > Machine.page (Function.machine p.fn) then 2 * mib
+    if contiguous && n > Machine.page (Function.machine p.chip.fn) then
+      2 * mib
     else page
   in
   match Space.alloc ~align p.space (round_up n align) with
   | None -> Error "no addresses for the GSP's system memory"
   | Some va -> (
-      match Function.alloc_dma ~contiguous ~va p.fn n with
+      match Function.alloc_dma ~contiguous ~va p.chip.fn n with
       | Error why ->
           Space.free p.space va;
           Error why
@@ -148,7 +148,7 @@ let sys p ~taken ?(contiguous = false) n =
 let give_back p taken =
   List.iter
     (fun s ->
-      Function.free_dma p.fn s.w;
+      Function.free_dma p.chip.fn s.w;
       Space.free p.space s.va)
     !taken;
   taken := []
@@ -212,8 +212,8 @@ let bdf bus =
 
 let system_info p =
   let module S = Defs.System_info in
-  let bar i = match Function.bar p.fn i with Some (a, _) -> a | None -> 0 in
-  let f = p.fn in
+  let f = p.chip.fn in
+  let bar i = match Function.bar f i with Some (a, _) -> a | None -> 0 in
   record S.sizeof (fun b ->
       set b S.gpu_phys_addr (bar 0);
       set b S.gpu_phys_fb_addr (bar 1);
@@ -286,15 +286,15 @@ let wait_for g fn =
         true
   in
   let* () =
-    Function.wait g.p.fn ~us:(answer_ms * 1000)
+    Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
       (strf "the GSP's answer to call %d" fn)
       answered
   in
   !found
 
 let send g fn body =
-  Function.wait g.p.fn ~us:(answer_ms * 1000) "room in the GSP's command queue"
-    (fun () -> Msgq.send g.q fn body)
+  Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
+    "room in the GSP's command queue" (fun () -> Msgq.send g.q fn body)
 
 let call g fn body =
   Mutex.protect g.lock (fun () ->
@@ -928,7 +928,7 @@ let falcons g =
 
 let boot g =
   let c = g.p.chip in
-  Function.set_bus_master g.p.fn true;
+  Function.set_bus_master c.fn true;
   (* What the GSP reads first, before it runs. *)
   let* () =
     send g Defs.nv_vgpu_msg_function_gsp_set_system_info (system_info g.p)
@@ -959,9 +959,9 @@ let boot g =
    GPU that answers after it took it: one that does not may still read the
    memory, which stays taken. The GSP runs on, and the next open resets it. *)
 let stop g =
-  let answers () = Option.is_none (Function.failed g.p.fn) in
+  let answers () = Option.is_none (Function.failed g.p.chip.fn) in
   if answers () && Msgq.ready g.q then ignore (unload g);
-  Function.set_bus_master g.p.fn false;
+  Function.set_bus_master g.p.chip.fn false;
   if not (answers ()) then `Unknown
   else begin
     give_back g.p g.taken;

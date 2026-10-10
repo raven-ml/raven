@@ -201,7 +201,7 @@ let wpr2 c =
 (* A GSP that runs, booted by the GPU's kernel driver or a process, is reset
    before anything is written: the take proves no live process holds the GPU,
    and no boot continues from another's GSP. *)
-let started hold c fn =
+let started hold (c : Chip.t) =
   if not (Chip.booted c) then Ok ()
   else
     let* () = Gpus.renew hold in
@@ -209,7 +209,7 @@ let started hold c fn =
     else
       Error
         (strf "%s still runs the GSP's firmware after its reset"
-           (Function.bus fn))
+           (Function.bus c.fn))
 
 let device g ~gsp ~hold ~tables (c : Chip.t) =
   let* () =
@@ -258,10 +258,10 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
    its memory, so a failure gives the GPU back as it found it. From then on the
    hold's stop is the GSP's: a failure stops the GPU through it, and loses
    it. *)
-let start h fn (c : Chip.t) (fw : Images.t) fwsec ~failed =
+let start h (c : Chip.t) (fw : Images.t) fwsec ~failed =
   let* () = Falcon.run c (Falcon.wait_reset c.family) in
   let* memory = Chip.memory c in
-  let* bar = Function.map ~combine:false fn memory_bar in
+  let* bar = Function.map ~combine:false c.fn memory_bar in
   let top =
     Fb_layout.top (Chip.layout c.family) ~memory
       ~boot:fw.bootloader.image.length ~image:fw.gsp.length
@@ -275,7 +275,7 @@ let start h fn (c : Chip.t) (fw : Images.t) fwsec ~failed =
   (* The boot pool holds only the falcons' images: the GSP's objects come from
      the main pool. *)
   Page_table.booted tables;
-  let* gsp = Gsp.create { chip = c; memory; fn; tables; bar; space } fw fwsec in
+  let* gsp = Gsp.create { chip = c; memory; tables; bar; space } fw fwsec in
   Gpus.set_stop h (fun () -> Gsp.stop gsp);
   let* () = Gsp.boot gsp in
   Ok (gsp, tables)
@@ -293,7 +293,7 @@ let boot ~firmware ~index h fn =
         "the GPU's registers are not mapped into the process, as through a \
          transport"
   in
-  let* () = started h c fn in
+  let* () = started h c in
   let* _, loads =
     survey ~firmware (Chip.get c Defs.nv_pmc_boot_42) (fun () -> Vbios.read c)
   in
@@ -309,7 +309,7 @@ let boot ~firmware ~index h fn =
     ignore (Atomic.compare_and_set fault None (Some why))
   in
   let* gsp, tables =
-    match start h fn c fw fwsec ~failed with
+    match start h c fw fwsec ~failed with
     | r -> r
     | exception Rig_nv.Fault why -> Error why
   in
