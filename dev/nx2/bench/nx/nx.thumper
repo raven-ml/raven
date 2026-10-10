@@ -1,6 +1,23 @@
 # thumper baseline v1
 # suite: nx
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+move/copy-1M	alloc_words	exact	202
+move/copy-1M	wall_time	batch=256	n=20	3.321e-05	3.297e-05 3.299e-05 3.306e-05 3.308e-05 3.316e-05 3.318e-05 3.319e-05 3.319e-05 3.320e-05 3.321e-05 3.321e-05 3.324e-05 3.324e-05 3.326e-05 3.327e-05 3.330e-05 3.334e-05 3.336e-05 3.337e-05 3.346e-05
+move/rearrange-heads-1M	alloc_words	exact	600
+move/rearrange-heads-1M	wall_time	batch=8192	n=20	8.106e-07	7.970e-07 8.001e-07 8.006e-07 8.027e-07 8.059e-07 8.060e-07 8.061e-07 8.065e-07 8.067e-07 8.086e-07 8.125e-07 8.128e-07 8.133e-07 8.138e-07 8.165e-07 8.170e-07 8.172e-07 8.184e-07 8.193e-07 8.274e-07
+move/repeat-256K-4	alloc_words	exact	733
+move/repeat-256K-4	wall_time	batch=32	n=20	2.547e-04	2.529e-04 2.531e-04 2.531e-04 2.531e-04 2.532e-04 2.534e-04 2.540e-04 2.540e-04 2.544e-04 2.546e-04 2.549e-04 2.549e-04 2.549e-04 2.552e-04 2.555e-04 2.566e-04 2.567e-04 2.579e-04 2.586e-04 2.591e-04
+move/reshape-swapaxes-heads-1M	alloc_words	exact	448
+move/reshape-swapaxes-heads-1M	wall_time	batch=8192	n=20	6.630e-07	6.604e-07 6.605e-07 6.607e-07 6.611e-07 6.615e-07 6.620e-07 6.623e-07 6.628e-07 6.628e-07 6.630e-07 6.631e-07 6.634e-07 6.634e-07 6.640e-07 6.652e-07 6.655e-07 6.672e-07 6.687e-07 6.742e-07 6.762e-07
+move/transpose-1	alloc_words	exact	184
+move/transpose-1	wall_time	batch=32768	n=20	1.950e-07	1.947e-07 1.947e-07 1.947e-07 1.947e-07 1.948e-07 1.949e-07 1.949e-07 1.949e-07 1.950e-07 1.950e-07 1.950e-07 1.950e-07 1.950e-07 1.950e-07 1.951e-07 1.951e-07 1.954e-07 1.955e-07 1.957e-07 1.960e-07
+move/transpose-1M	alloc_words	exact	184
+move/transpose-1M	wall_time	batch=32768	n=20	2.039e-07	2.036e-07 2.036e-07 2.037e-07 2.037e-07 2.037e-07 2.037e-07 2.037e-07 2.037e-07 2.038e-07 2.038e-07 2.039e-07 2.039e-07 2.039e-07 2.039e-07 2.040e-07 2.041e-07 2.041e-07 2.042e-07 2.046e-07 2.046e-07
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
