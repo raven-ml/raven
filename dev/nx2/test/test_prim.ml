@@ -229,6 +229,10 @@ let maps =
                     loads = [| Plain x; Plain x |];
                   })));
       test "a chain of shared nodes prints in its program's size" (fun () ->
+          (* CR: Use 12 adds: the old printer then produces about 36 KiB,
+             still exceeding the 2,000-character bound. At 30, asprintf tries
+             to allocate about 9 GiB before the assertion can report the
+             regression. *)
           let adds = 30 in
           let nodes =
             Array.init (adds + 1) (fun i ->
