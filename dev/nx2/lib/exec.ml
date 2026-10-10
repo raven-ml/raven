@@ -819,8 +819,10 @@ and expanded : type r. by:string -> unit Devices.placement -> r Value.prim -> r
       invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
 
 (* [op]'s result [r] where every device computed it. Where a device's kernels
-   declined it, with operands [ops] on device [d], its expansion, or the
-   decline's error where it has none. *)
+   declined it, with operands [ops] on device [d], its expansion; for a scatter
+   whose targets may repeat, which has none, its result on the host, whose
+   kernels compute every scatter, placed back at [r]'s placement; else the
+   decline's error. *)
 and or_expanded : type r.
     by:string ->
     kernels:string ->
@@ -832,9 +834,23 @@ and or_expanded : type r.
   match declined with
   | None -> r
   | Some (d, ops) -> (
-      match Expand.run run ~by op with
-      | Some r -> r
-      | None -> refuses ~by ~kernels (Prim.name op) d (Array.to_list ops))
+      match (Expand.run run ~by op, op) with
+      | Some r, _ -> r
+      | None, Value.Scatter ({ unique = false; _ } as s)
+        when not (Devices.equal (Prim.placement r) (host ())) ->
+          let at x = run ~by (Value.Place (host (), x)) in
+          let y =
+            run ~by
+              (Value.Scatter
+                 {
+                   s with
+                   idx = at s.idx;
+                   updates = at s.updates;
+                   into = at s.into;
+                 })
+          in
+          run ~by (Value.Place (Prim.placement r, y))
+      | None, _ -> refuses ~by ~kernels (Prim.name op) d (Array.to_list ops))
 
 (* A loop's results [dsts] at [p], each device's window of them computed there
    by [kernel] over its operands [ops k w] for its window [w] of the loop's

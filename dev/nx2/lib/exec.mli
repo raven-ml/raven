@@ -14,11 +14,13 @@
     set's kernels once per device. [Done] is the result; a refusal raises
     through {!Nx_array.refused} naming [by]; a map, an assembly, or a gather or
     a scatter of a sub-byte dtype a device's kernels decline runs as its
-    expansion ({!Expand.run}) on that device, over its own operands, and a
-    kernel a node or another gather or scatter needs that the kernels decline
-    raises naming the kernels, the kind, the dtypes and the device. Movements and bitcasts are views where a layout expresses them, and
-    a copy, then a view, otherwise. [Check] raises its exception from the first
-    failing index, read on the host.
+    expansion ({!Expand.run}) on that device, over its own operands; a scatter
+    whose targets may repeat that they decline computes on the host, whose
+    kernels compute every scatter, and is placed back; and a kernel a node or
+    another gather or scatter needs that the kernels decline raises naming the
+    kernels, the kind, the dtypes and the device. Movements and bitcasts are
+    views where a layout expresses them, and a copy, then a view, otherwise.
+    [Check] raises its exception from the first failing index, read on the host.
 
     A program that reads coordinates computes each device's window with that
     window's first index added to them. *)

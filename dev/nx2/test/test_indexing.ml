@@ -434,6 +434,121 @@ let views =
             (elements (Nx.slice Nx.[ A; A; I 3; A ] past)));
     ]
 
+(* A scatter a library declines. nx.kernel leaves a scatter whose targets may
+   repeat to its caller, which computes the combination the definition gives:
+   float32 updates that repeat targets, among them NaNs with payloads,
+   infinities and [-0], compared by bits. *)
+
+(* nx.cpu, declining every scatter whose targets may repeat, as a library
+   may. *)
+module Unique_scatters = struct
+  include Nx_cpu
+
+  let name = "nx.unique"
+
+  let scatter s ~dst ~into idx u =
+    if Nx_kernel.Spec.unique s then Nx_cpu.scatter s ~dst ~into idx u
+    else A.Declined
+end
+
+module Unique =
+  (val Nx.devices ~kernels:(module Unique_scatters) [ Nx_support.memory 2 ])
+
+(* Float32 bits: a sum of any of the finite ones is exact in any order. *)
+let finite = [ 0l; 0x80000000l; 0x3f800000l; 0xbf800000l; 0x40000000l ]
+let specials = [ 0x7fc00001l; 0xffc00002l; 0x7f800000l; 0xff800000l ]
+let f = Int32.float_of_bits
+let round32 x = Int32.bits_of_float x
+
+(* The IEEE 754 maximum and minimum of bits [a] and [b]: the first NaN, [-0]
+   below [+0]. *)
+let maximum a b =
+  if Float.is_nan (f a) then a
+  else if Float.is_nan (f b) then b
+  else if f a > f b then a
+  else if f b > f a then b
+  else if Float.sign_bit (f a) then b
+  else a
+
+let minimum a b =
+  if Float.is_nan (f a) then a
+  else if Float.is_nan (f b) then b
+  else if f a < f b then a
+  else if f b < f a then b
+  else if Float.sign_bit (f a) then a
+  else b
+
+let law_declined (s, a, us, p, combine, x, u) =
+  let touched = Array.make (numel s) false in
+  let expected = Array.copy x in
+  let step, c =
+    match combine with
+    | `Set -> ((fun _ v -> v), Nx.Set)
+    | `Add -> ((fun t v -> round32 (f t +. f v)), Nx.Add)
+    | `Max -> (maximum, Nx.Max)
+    | `Min -> (minimum, Nx.Min)
+  in
+  let repeated = ref false in
+  for k = 0 to numel us - 1 do
+    let i = index us k in
+    let q = p.(k) in
+    if q >= 0 && q < s.(a) then begin
+      let ix = Array.copy i in
+      ix.(a) <- q;
+      let t = position s ix in
+      (* [+0] plus the target, once some update lands. *)
+      if combine = `Add && not touched.(t) then
+        expected.(t) <- round32 (0. +. f expected.(t));
+      if touched.(t) then repeated := true;
+      touched.(t) <- true;
+      expected.(t) <- step expected.(t) u.(k)
+    end
+  done;
+  let nan b = Float.is_nan (f b) in
+  cover "a repeated target" !repeated;
+  cover "a NaN update" (combine <> `Add && combine <> `Set && Array.exists nan u);
+  let on dt shape data = Nx.place Unique.on (host dt shape data) in
+  let y =
+    Nx.scatter ~combine:c ~axis:a
+      (Nx.place Unique.on (positions us p))
+      (on D.Float32 us (Array.map f u))
+      (on D.Float32 s (Array.map f x))
+  in
+  equal (array int32) expected (Array.map round32 (elements y))
+
+let declined_case =
+  Gen.(
+    let* r = int_range 1 3 in
+    let* s = array ~size:(constant r) (int_range 1 3) in
+    let* a = int_range 0 (r - 1) in
+    let* k = int_range 0 5 in
+    let us = Array.mapi (fun i d -> if i = a then k else d) s in
+    let* p = array ~size:(constant (numel us)) (int_range (-1) s.(a)) in
+    let* combine = of_list [ `Set; `Add; `Max; `Min ] in
+    let bits = of_list (if combine = `Add then finite else finite @ specials) in
+    let* x = array ~size:(constant (numel s)) bits in
+    let+ u = array ~size:(constant (numel us)) bits in
+    (s, a, us, p, combine, x, u))
+  |> Gen.with_pp (fun ppf (s, a, _, p, combine, x, u) ->
+      let bits b =
+        String.concat "; "
+          (Array.to_list (Array.map (Printf.sprintf "0x%08lx") b))
+      in
+      Format.fprintf ppf "%s axis %d of %a at %a: [%s] into [%s]"
+        (match combine with
+        | `Set -> "Set"
+        | `Add -> "Add"
+        | `Max -> "Max"
+        | `Min -> "Min")
+        a pp_ints s pp_ints p (bits u) (bits x))
+
+let declines =
+  group "declines"
+    [
+      prop "a declined scatter combines repeated targets in C order"
+        declined_case law_declined;
+    ]
+
 (* A gather and a scatter of every dtype. *)
 let dtypes =
   cases
@@ -492,4 +607,6 @@ let refusals =
               Nx.scatter ~combine:Add ~axis:0 (positions [| 2 |] [| 0; 1 |]) b b));
     ]
 
-let () = exit (run "nx indexing" [ laws; definitions; views; dtypes; refusals ])
+let () =
+  exit
+    (run "nx indexing" [ laws; definitions; views; dtypes; declines; refusals ])
