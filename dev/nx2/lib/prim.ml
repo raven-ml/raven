@@ -1407,6 +1407,11 @@ let prepare : type r.
   | Linalg l ->
       ignore (linalg_shapes ~by l);
       let r = linalg_route ~by l in
+      (* CR: Pass operand indices through map_linalg and remove this counter.
+         Record fields do not guarantee a-then-b callbacks: reversed calls
+         gather batch-split b[2;2;1] onto both devices and slice replicated
+         a[2;2;2]. Use a=0, b=1, and 0 for unary routines;
+         Prim.map can ignore the index. Preserve the route's views. *)
       (* The operands in order: [a], then [b]. *)
       let i = ref (-1) in
       Linalg

@@ -47,6 +47,10 @@ let pad ?(lo = [| 0 |]) ?(hi = [| 0 |]) ?(interior = [| 0 |]) windows =
 let window size step = { A.Move.axis = 0; size; step; dilation = 1 }
 
 (* Sum over the last axis of [x] loaded through [pad]. *)
+(* CR: Pass the requested fill to Padded: this helper uses it only
+   to derive shape, then evaluates zero padding. Accept the scalar
+   once and encode it only for Spec. Add fill=10 to the existing
+   boundary case: [13;6;9;17], so dropping the fill cannot pass. *)
 let sum_of x ~fill pad =
   let layout =
     match
