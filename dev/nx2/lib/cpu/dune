@@ -13,7 +13,7 @@
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
-  (names target job walk stage copy apply iota rows folds fold convert gemm gemm_generic gemm_neon))
+  (names target job walk stage copy apply iota rows folds fold index convert gemm gemm_generic gemm_neon))
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)

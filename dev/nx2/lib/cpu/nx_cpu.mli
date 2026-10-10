@@ -54,6 +54,10 @@
     combined with this one's total; each result of a chunk is its carry
     combined with the chunk's terms up to it, left to right.
 
-    [gather], [scatter], [sort], [assemble] and [fold] answer [Declined]. *)
+    [gather] and [scatter] compute every case, at every dtype, and refuse with
+    [Shape_mismatch] operands and destinations whose shapes do not fit. A
+    scatter's [Add] adds a target's updates left to right.
+
+    [sort], [assemble] and [fold] answer [Declined]. *)
 
 include Nx_kernel.S

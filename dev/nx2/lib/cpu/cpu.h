@@ -244,6 +244,14 @@ static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
   if (b.n0 > 0) f(&b, ctx);
 }
 
+/* Copies */
+
+/* Copies the elements of [bits] bits of the loop [l]'s operand 1 from [src]
+   to its operand 0 at [dst], bits for bits, as a copy's walk does
+   (copy.c). */
+void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
+                      const nx_loop *l);
+
 /* The stage */
 
 /* The bytes of a staged block: a walk for the stage takes blocks of at most

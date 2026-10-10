@@ -91,10 +91,23 @@ external scan :
   Nx_array.any array ->
   Nx_array.answer = "nx_cpu_scan"
 
-(* Gathers, scatters, sorts, assemblies and folds *)
+(* Gathers and scatters (index.c) *)
 
-let gather _ ~dst:_ _ _ = Nx_array.Declined
-let scatter _ ~dst:_ ~into:_ _ _ = Nx_array.Declined
+external gather :
+  Nx_kernel.Spec.gather Nx_kernel.Spec.t ->
+  dst:('v, 's) Nx_array.t ->
+  (int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_gather"
+
+external scatter :
+  Nx_kernel.Spec.scatter Nx_kernel.Spec.t ->
+  dst:('v, 's) Nx_array.t ->
+  into:('v, 's) Nx_array.t ->
+  (int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_scatter"
+
 let sort _ ~values:_ ~positions:_ _ = Nx_array.Declined
 let assemble _ ~dst:_ _ = Nx_array.Declined
 let fold _ ~dst:_ _ = Nx_array.Declined

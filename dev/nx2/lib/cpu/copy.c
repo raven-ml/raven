@@ -112,6 +112,14 @@ static void copy_block(const nx_cpu_block *b, void *ctx) {
               a[0].bits);
 }
 
+void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
+                      const nx_loop *l) {
+  /* The walk and the block copy read the operands' bases and widths. */
+  nx_array pair[2] = {{.base = dst, .bits = bits},
+                      {.base = (uint8_t *)src, .bits = bits}};
+  nx_cpu_walk(2, pair, l, COPY_MOST, copy_block, pair);
+}
+
 /* Reads [vd], written, and [vs] of the dtypes [d] and [s] through the door,
    and walks them with [f]. */
 static value walk_operands(value vd, value vs, int d, int s, int64_t most,
