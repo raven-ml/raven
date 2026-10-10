@@ -600,8 +600,11 @@ module Rng : sig
 
   val uniform :
     ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
-  (** [uniform dt shape] is draws from [\[0, 1)]: multiples of [2{^-p}], [p]
-      [dt]'s significand width, each equally likely.
+  (** [uniform dt shape] is draws from [\[0, 1)]: multiples of [2{^-p}], each
+      equally likely, [p] the largest such that every multiple of [2{^-p}] in
+      [\[0, 1)] is a value of [dt]. That is [dt]'s significand width, 53 for
+      float64 down to 3 for float8_e5m2, and 1 for float4_e2m1fn, whose values
+      below 1 are 0 and 0.5.
 
       Raises [Invalid_argument] if an extent is negative. *)
 

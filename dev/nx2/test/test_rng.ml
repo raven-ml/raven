@@ -230,7 +230,22 @@ let unit_grid name dt p =
               (x >= 0. && x < 1.
               && Float.equal (Float.ldexp x p) (Float.round (Float.ldexp x p)))
           then failf "%h is not a multiple of 2^-%d in [0, 1)" x p)
-        xs)
+        xs;
+      (* Each of the 2^p values is equally likely. *)
+      if p <= 8 then begin
+        let m = 1 lsl p in
+        let counts = Array.make m 0 in
+        Array.iter
+          (fun x ->
+            let i = int_of_float (Float.ldexp x p) in
+            counts.(i) <- counts.(i) + 1)
+          xs;
+        let q = 1. /. Float.of_int m and n = Float.of_int (Array.length xs) in
+        Array.iter
+          (fun c ->
+            near ~se:(sqrt (q *. (1. -. q) /. n)) q (Float.of_int c /. n))
+          counts
+      end)
 
 let distributions =
   group "distributions"
@@ -241,6 +256,13 @@ let distributions =
         Nx.float64 53;
       unit_grid "bfloat16 uniform draws are multiples of 2^-8 in [0, 1)"
         Nx.bfloat16 8;
+      unit_grid "float16 uniform draws are multiples of 2^-11 in [0, 1)"
+        Nx.float16 11;
+      unit_grid "float8_e4m3fn uniform draws are multiples of 2^-4 in [0, 1)"
+        Nx.float8_e4m3fn 4;
+      unit_grid "float8_e5m2 uniform draws are multiples of 2^-3 in [0, 1)"
+        Nx.float8_e5m2 3;
+      unit_grid "float4_e2m1fn uniform draws are 0 and 1/2" Nx.float4_e2m1fn 1;
       test "uniform: mean 1/2, variance 1/12" (fun () ->
           let xs = read (Rng.uniform ~key:(Rng.key 100) Nx.float64 [| n |]) in
           near ~se:(sqrt (1. /. 12. /. Float.of_int n)) 0.5 (mean xs);

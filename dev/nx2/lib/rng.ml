@@ -81,21 +81,13 @@ let flat b s =
   done;
   emit b (Op1 (Bitcast, D.Any D.Uint64, !acc))
 
-(* Significand widths, the leading bit included. *)
-(* CR: Derive uniform precision from float_format's fraction_bits and
-   min_normal. Float4's two-bit grid includes 0.25 and 0.75, which round to
-   0 and 1, breaking equal weights and [0, 1). Use the largest exact binary
-   grid below 1 (one bit for Float4), replacing this dtype table, and state
-   that precision rule in uniform's contract. *)
-let significand (type s) (dt : (float, s) D.t) =
-  match dt with
-  | D.Float64 -> 53
-  | D.Float32 -> 24
-  | D.Float16 -> 11
-  | D.Bfloat16 -> 8
-  | D.Float8_e4m3fn -> 4
-  | D.Float8_e5m2 -> 3
-  | D.Float4_e2m1fn -> 2
+(* The largest [p] such that every multiple of 2^-p in [0, 1) is a value of
+   [dt]: the significand's width where the format reaches 2^-p, else the
+   exponent of its least positive value. 53 for float64 down to 3 for
+   float8_e5m2, and 1 for float4_e2m1fn, whose values below 1 are 0 and 0.5. *)
+let precision (type s) (dt : (float, s) D.t) =
+  let f = D.float_format dt in
+  min (f.fraction_bits + 1) (1 - snd (Float.frexp (f.min_normal *. f.epsilon)))
 
 (* Samplers compute at float64 for float64 and at float32 for the other
    floats. *)
@@ -111,22 +103,28 @@ let constf (type v s) b (dt : (v, s) D.t) (x : float) =
 let rounded (type s) b (dt : (float, s) D.t) (D.Any c) x =
   if D.equal c dt then x else into b dt x
 
-(* A draw in [0, 1) at position [pos] with [p] random bits: at [p] of 24 or
-   fewer, a float32, the low [p] bits of a word scaled by 2^-p; at 53, a
-   float64, one block's 21 + 32 bits scaled by 2^-53. Both are exact, so a draw
-   is a multiple of 2^-p below 1. *)
-let unit b ~key ~p pos =
-  if p = 53 then
-    let t = block b ~key pos and w = u64 b two32 in
-    let top = bin b And (bin b Mod t w) (u64 b 0x1F_FFFFL) in
-    let m = bin b Add (bin b Mul top w) (bin b Idiv t w) in
-    bin b Mul (into b D.Float64 m) (const b D.Float64 (Float.ldexp 1. (-53)))
-  else
-    let mask = u64 b (Int64.of_int ((1 lsl p) - 1)) in
-    let bits = bin b And (word b ~key pos) mask in
-    bin b Mul (into b D.Float32 bits) (const b D.Float32 (Float.ldexp 1. (-p)))
+(* A draw in [0, 1) at position [pos] with [p] random bits, in the compute dtype
+   [c]: at float32, [p] of 24 or fewer, the low [p] bits of a word scaled by
+   2^-p; at float64, [p] of 53, one block's 21 + 32 bits scaled by 2^-53. Both
+   are exact, so a draw is a multiple of 2^-p below 1. *)
+let unit b ~key ~p (D.Any c) pos =
+  match c with
+  | D.Float64 ->
+      let t = block b ~key pos and w = u64 b two32 in
+      let top = bin b And (bin b Mod t w) (u64 b 0x1F_FFFFL) in
+      let m = bin b Add (bin b Mul top w) (bin b Idiv t w) in
+      bin b Mul (into b D.Float64 m) (const b D.Float64 (Float.ldexp 1. (-53)))
+  | _ ->
+      let mask = u64 b (Int64.of_int ((1 lsl p) - 1)) in
+      let bits = bin b And (word b ~key pos) mask in
+      bin b Mul (into b D.Float32 bits)
+        (const b D.Float32 (Float.ldexp 1. (-p)))
 
-let bits_of (D.Any c) = match c with D.Float64 -> 53 | _ -> 24
+(* The precision of a compute dtype, float32 or float64. *)
+let precision_of (D.Any c) =
+  match D.kind c with
+  | Float -> precision c
+  | _ -> invalid_arg "Rng.precision_of: not a float dtype"
 
 (* Draws *)
 
@@ -337,20 +335,19 @@ let bits ?key s =
 let uniform ?key dt s =
   let c = compute dt in
   draw ~by:"Nx.Rng.uniform" (resolve key) dt s (fun b ~key ~j _ ->
-      let p = if bits_of c = 53 then 53 else significand dt in
-      rounded b dt c (unit b ~key ~p j))
+      rounded b dt c (unit b ~key ~p:(precision dt) c j))
 
 (* The standard normal draw at position [e] of a Box-Muller draw over a [2;
    pairs] uniform draw: the radius from row 0, the angle from row 1, and both of
    the pair kept, the cosines first. [u1] is floored at 2^-p, the smallest draw
    above zero, so that the logarithm is finite and no other draw moves. A node
    of [cd], float32 or float64. *)
-let gauss b ~key ~p ~pairs (D.Any cd) e =
+let gauss b ~key ~p ~pairs (D.Any cd as c) e =
   let lit x = constf b cd x in
   let pr = u64 b (Int64.of_int pairs) in
   let second = cmp b Less_equal pr e in
   let i = where b second (bin b Sub e pr) e in
-  let u1 = unit b ~key ~p i and u2 = unit b ~key ~p (bin b Add i pr) in
+  let u1 = unit b ~key ~p c i and u2 = unit b ~key ~p c (bin b Add i pr) in
   let floor = bin b Maximum u1 (lit (Float.ldexp 1. (-p))) in
   let r = un b Sqrt cd (bin b Mul (lit (-2.)) (un b Log cd floor)) in
   let angle = bin b Mul u2 (lit (2. *. Float.pi)) in
@@ -362,14 +359,14 @@ let normal ?key dt s =
   let c = compute dt in
   let pairs = (numel s + 1) / 2 in
   draw ~by:"Nx.Rng.normal" (resolve key) dt s (fun b ~key ~j _ ->
-      rounded b dt c (gauss b ~key ~p:(bits_of c) ~pairs c j))
+      rounded b dt c (gauss b ~key ~p:(precision_of c) ~pairs c j))
 
 (* Exponential(1) by inverse CDF, from [1 - u], which is never 0. *)
 let exponential ?key dt s =
   let c = compute dt in
   draw ~by:"Nx.Rng.exponential" (resolve key) dt s (fun b ~key ~j _ ->
       let (D.Any cd) = c in
-      let u = unit b ~key ~p:(bits_of c) j in
+      let u = unit b ~key ~p:(precision_of c) c j in
       let y = un b Neg cd (un b Log cd (bin b Sub (constf b cd 1.) u)) in
       rounded b dt c y)
 
@@ -536,7 +533,7 @@ let bernoulli ?key p =
   let c = compute (Prim.dtype p) in
   draw ~by ~params:[| Value.Any p |] (resolve key) D.Bool (Prim.shape p)
     (fun b ~key ~j ins ->
-      cmp b Less (unit b ~key ~p:(bits_of c) j) (param b c p ins.(0)))
+      cmp b Less (unit b ~key ~p:(precision_of c) c j) (param b c p ins.(0)))
 
 (* Gamma *)
 
@@ -554,7 +551,7 @@ let bernoulli ?key p =
 let rounds = 8
 
 let marsaglia b ~key ~n (D.Any cd as c) a j =
-  let p = bits_of c in
+  let p = precision_of c in
   let lit x = constf b cd x in
   let tiny = lit (Float.ldexp 1. (-p)) in
   let keys = Array.init 3 (fun i -> block b ~key (u64 b (Int64.of_int i))) in
@@ -567,7 +564,7 @@ let marsaglia b ~key ~n (D.Any cd as c) a j =
   for r = 0 to rounds - 1 do
     let pos = bin b Add (u64 b (Int64.of_int (r * n))) j in
     let x = gauss b ~key:keys.(0) ~p ~pairs c pos in
-    let u = unit b ~key:keys.(1) ~p pos in
+    let u = unit b ~key:keys.(1) ~p c pos in
     let t = bin b Add (lit 1.) (bin b Mul squeeze x) in
     let v = bin b Mul t (bin b Mul t t) in
     (* [v] can be non-positive, where the logarithm is undefined: it is floored,
@@ -586,7 +583,7 @@ let marsaglia b ~key ~n (D.Any cd as c) a j =
     acc := where b (bin b And accept fresh) (bin b Mul d v) !acc;
     settled := bin b Or !settled accept
   done;
-  let boost = bin b Maximum (unit b ~key:keys.(2) ~p j) tiny in
+  let boost = bin b Maximum (unit b ~key:keys.(2) ~p c j) tiny in
   (!acc, below, boost)
 
 let gamma ?key a =
@@ -707,7 +704,7 @@ let von_mises ?key kappa =
   draw ~by ~params:[| Value.Any kappa |] (resolve key) dt s
     (fun b ~key ~j ins ->
       let (D.Any cd) = c in
-      let p = bits_of c in
+      let p = precision_of c in
       let lit x = constf b cd x in
       let mul x y = bin b Mul x y in
       let rho, one_minus_rho, a =
@@ -725,8 +722,8 @@ let von_mises ?key kappa =
       let acc = ref (lit 0.) and last = ref (lit 0.) in
       let settled = ref (const b D.Bool false) in
       for r = 0 to von_mises_rounds - 1 do
-        let u = unit b ~key ~p (at r) in
-        let v = unit b ~key ~p (at (von_mises_rounds + r)) in
+        let u = unit b ~key ~p c (at r) in
+        let v = unit b ~key ~p c (at (von_mises_rounds + r)) in
         let phi = mul (bin b Sub u (lit 0.5)) (lit Float.pi) in
         let y = bin b Fdiv lift (denom phi) in
         let squeeze = cmp b Less v (mul y (bin b Sub (lit 2.) y)) in
@@ -863,9 +860,9 @@ let log_factorials n =
 
 (* A rejection loop's draws: round [r] of element [j] of [n] reads positions [r
    n + j] and [(rounds + r) n + j] of the key's uniform draw. *)
-let pair b ~key ~p ~n ~rounds j r =
+let pair b ~key ~p ~n ~rounds c j r =
   let at r = bin b Add (u64 b (Int64.of_int (r * n))) j in
-  (unit b ~key ~p (at r), unit b ~key ~p (at (rounds + r)))
+  (unit b ~key ~p c (at r), unit b ~key ~p c (at (rounds + r)))
 
 (* Two regimes with a fixed round count each, chosen per element, so the shape
    of the computation does not depend on the rate. Below 10, inversion: one
@@ -889,12 +886,12 @@ let poisson ?key rate =
   draw ~by ~params:[| Value.Any rate |] (resolve key) D.Int32 s
     (fun b ~key ~j ins ->
       let f = floats b c in
-      let p = bits_of c in
+      let p = precision_of c in
       let rate = param b c rate ins.(0) in
       let k0 = block b ~key (u64 b 0L) and k1 = block b ~key (u64 b 1L) in
       let small = not_ b (f.le (f.lit 10.0) rate) in
       let inversion =
-        let u = unit b ~key:k0 ~p j in
+        let u = unit b ~key:k0 ~p c j in
         let log_rate = f.log rate in
         let cdf = ref (f.lit 0.0) and count = ref (f.lit 0.0) in
         Array.iteri
@@ -925,7 +922,7 @@ let poisson ?key rate =
         let acc = ref (f.lit 0.0) and last = ref (f.lit 0.0) in
         let settled = ref (const b D.Bool false) in
         for r = 0 to rounds - 1 do
-          let u, v = pair b ~key:k1 ~p ~n ~rounds j r in
+          let u, v = pair b ~key:k1 ~p ~n ~rounds c j r in
           let u = f.sub u (f.lit 0.5) in
           let us = f.sub (f.lit 0.5) (f.abs u) in
           let proposal =
@@ -993,7 +990,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
     (fun b ~key ~j ins ->
       let f = floats b c in
       let (D.Any cd) = c in
-      let bits = bits_of c in
+      let bits = precision_of c in
       let n = into b cd ins.(0) in
       let p = param b c prob ins.(1) in
       let flip = f.lt (f.lit 0.5) p in
@@ -1022,7 +1019,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
               !cdf)
             factorials
         in
-        let u = f.mul (unit b ~key:k0 ~p:bits j) !cdf in
+        let u = f.mul (unit b ~key:k0 ~p:bits c j) !cdf in
         Array.fold_left
           (fun acc cdf ->
             f.add acc (where b (f.lt cdf u) (f.lit 1.0) (f.lit 0.0)))
@@ -1051,7 +1048,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
         let acc = ref (f.lit 0.0) and last = ref (f.lit 0.0) in
         let settled = ref (const b D.Bool false) in
         for r = 0 to rounds - 1 do
-          let u, v = pair b ~key:k1 ~p:bits ~n:len ~rounds j r in
+          let u, v = pair b ~key:k1 ~p:bits ~n:len ~rounds c j r in
           let u = f.sub u (f.lit 0.5) in
           let us = f.sub (f.lit 0.5) (f.abs u) in
           let proposal =
