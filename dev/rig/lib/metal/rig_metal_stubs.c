@@ -123,13 +123,15 @@ value caml_rig_metal_open(value unit) {
   return Val_long(d);
 }
 
-/* [(b, b's GPU address, b's host address)]. */
-static value buffer(id<MTLBuffer> b) {
+/* Where [b] lies, a Rig_edge.location: [{ address = Some (b's GPU
+   address); host = Some (b's host address); handle = b }]. */
+static value location(id<MTLBuffer> b) {
   CAMLparam0();
-  CAMLlocal1(handle);
+  CAMLlocal3(address, host, handle);
+  address = caml_alloc_some(Val_long((intnat)b.gpuAddress));
+  host = caml_alloc_some(Val_long((intnat)b.contents));
   handle = object(b);
-  CAMLreturn(triple(handle, Val_long((intnat)b.gpuAddress),
-                    Val_long((intnat)b.contents)));
+  CAMLreturn(triple(address, host, handle));
 }
 
 /* The device's family, budget and word. */
@@ -137,22 +139,22 @@ value caml_rig_metal_facts(value v_d) {
   CAMLparam1(v_d);
   CAMLlocal1(word);
   struct rig_metal *d = Device_val(v_d);
-  word = buffer(d->word);
+  word = location(d->word);
   intnat budget = (intnat)d->device.recommendedMaxWorkingSetSize;
   CAMLreturn(triple(Val_int(family(d->device)), Val_long(budget), word));
 }
 
 /* Memory */
 
-/* [Some (buffer b)], resident from the device's next submission, or [None]
-   for nil. */
+/* [Some (location b)], resident from the device's next submission, or
+   [None] for nil. */
 static value resident(struct rig_metal *d, id<MTLBuffer> b) {
   if (b == nil) return Val_none;
   pthread_mutex_lock(&d->set_mutex);
   [d->set addAllocation:b];
   d->changed = 1;
   pthread_mutex_unlock(&d->set_mutex);
-  return caml_alloc_some(buffer(b));
+  return caml_alloc_some(location(b));
 }
 
 value caml_rig_metal_alloc(value v_d, value v_n) {
@@ -238,15 +240,13 @@ value caml_rig_metal_image(value v_d, value v_b) {
 }
 
 /* The entry of the function [v_f] of the library [v_lib], whose pipeline
-   an indirect command buffer may use too: [("", pipeline, most threads per
-   threadgroup, entry)], or [(why, 0, 0, 0)] with Metal's reason if Metal
-   makes no pipeline. A threadgroup holds at most the pipeline's
-   [maxTotalThreadsPerThreadgroup] threads, and at most the device's along
-   each axis: their least bounds both. It releases the runtime while Metal
-   compiles. */
+   an indirect command buffer may use too, as the address of its C state;
+   raises [Failure] with Metal's reason if Metal makes no pipeline. A
+   threadgroup holds at most the pipeline's [maxTotalThreadsPerThreadgroup]
+   threads, and at most the device's along each axis: their least bounds
+   both. It releases the runtime while Metal compiles. */
 value caml_rig_metal_pipeline(value v_lib, value v_f) {
   CAMLparam2(v_lib, v_f);
-  CAMLlocal3(why, launch, v);
   id<MTLLibrary> library = Object_val(v_lib);
   char *f = caml_stat_strdup(String_val(v_f));
   struct rig_metal_entry *e = calloc(1, sizeof *e);
@@ -277,24 +277,27 @@ value caml_rig_metal_pipeline(value v_lib, value v_f) {
   caml_stat_free(f);
   if (p == nil) {
     free(e);
-    e = NULL;
-  } else {
-    MTLSize axes = library.device.maxThreadsPerThreadgroup;
-    NSUInteger n = p.maxTotalThreadsPerThreadgroup;
-    n = MIN(n, MIN(axes.width, MIN(axes.height, axes.depth)));
-    e->pipeline = p;
-    e->threads = (uint32_t)n;
-    e->shared = (uint32_t)(library.device.maxThreadgroupMemoryLength -
-                           p.staticThreadgroupMemoryLength);
+    caml_failwith(text);
   }
-  why = caml_copy_string(text);
-  launch = caml_copy_nativeint((intnat)e);
-  v = caml_alloc_tuple(4);
-  Store_field(v, 0, why);
-  Store_field(v, 1, Val_long((intnat)p));
-  Store_field(v, 2, Val_long(e == NULL ? 0 : (intnat)e->threads));
-  Store_field(v, 3, launch);
-  CAMLreturn(v);
+  MTLSize axes = library.device.maxThreadsPerThreadgroup;
+  NSUInteger n = p.maxTotalThreadsPerThreadgroup;
+  n = MIN(n, MIN(axes.width, MIN(axes.height, axes.depth)));
+  e->pipeline = p;
+  e->threads = (uint32_t)n;
+  e->shared = (uint32_t)(library.device.maxThreadgroupMemoryLength -
+                         p.staticThreadgroupMemoryLength);
+  CAMLreturn(caml_copy_nativeint((intnat)e));
+}
+
+/* An entry's pipeline, as an int, and its most threads per threadgroup. */
+value caml_rig_metal_entry_code(value v_e) {
+  struct rig_metal_entry *e = (struct rig_metal_entry *)Nativeint_val(v_e);
+  return Val_long((intnat)e->pipeline);
+}
+
+value caml_rig_metal_entry_threads(value v_e) {
+  struct rig_metal_entry *e = (struct rig_metal_entry *)Nativeint_val(v_e);
+  return Val_long(e->threads);
 }
 
 /* Releases the entry [v_e] and its pipeline. */
@@ -464,6 +467,8 @@ NO_METAL1(caml_rig_metal_free_word)
 NO_METAL1(caml_rig_metal_release)
 NO_METAL2(caml_rig_metal_image)
 NO_METAL2(caml_rig_metal_pipeline)
+NO_METAL1(caml_rig_metal_entry_code)
+NO_METAL1(caml_rig_metal_entry_threads)
 NO_METAL1(caml_rig_metal_release_library)
 NO_METAL1(caml_rig_metal_icb_release)
 NO_METAL3(caml_rig_metal_sleep)

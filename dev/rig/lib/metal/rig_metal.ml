@@ -7,11 +7,11 @@ let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* The C side. A device is the address of its C state, as an int; a Metal object
-   is a retained pointer, a pipeline's as an int; a buffer is the triple of its
-   object, GPU address and host address; an entry's launch is the address of
-   its C state, struct rig_metal_entry, which holds its pipeline. *)
+   is a retained pointer, a pipeline's as an int; a buffer is its location, its
+   object as handle; an entry's launch is the address of its C state, struct
+   rig_metal_entry, which holds its pipeline. *)
 
-type buffer = nativeint * int * int
+type buffer = Rig_edge.location
 
 external count : unit -> int = "caml_rig_metal_count"
 external open_device : unit -> int = "caml_rig_metal_open"
@@ -28,8 +28,11 @@ external release : nativeint -> unit = "caml_rig_metal_release"
 external load : int -> string -> string * nativeint * string array
   = "caml_rig_metal_image"
 
-external pipeline : nativeint -> string -> string * int * int * nativeint
-  = "caml_rig_metal_pipeline"
+external pipeline : nativeint -> string -> nativeint = "caml_rig_metal_pipeline"
+external entry_code : nativeint -> int = "caml_rig_metal_entry_code" [@@noalloc]
+
+external entry_threads : nativeint -> int = "caml_rig_metal_entry_threads"
+[@@noalloc]
 
 external release_library : nativeint -> unit = "caml_rig_metal_release_library"
 
@@ -54,32 +57,24 @@ exception Fault of string
 
 (* Memory *)
 
-(* A region is live while its device's [regions] holds it. [bytes] is what an
-   icb may address in it: [0] for the word, which no icb takes. *)
-type region = {
-  handle : nativeint;
-  address : int;
-  host : int;
-  bytes : int;
-}
+(* A region is its location, made once by the C side, so [locate] allocates
+   nothing. It is live while its device's [regions] holds its handle. *)
+type region = Rig_edge.location
 
-let region bytes (handle, address, host) = { handle; address; host; bytes }
-
-let locate r =
-  { Rig_edge.address = Some r.address; host = Some r.host; handle = r.handle }
+let locate (r : region) = r
 
 (* Opening *)
 
 (* An image's entries, [none] until its first [entry], under [guard]: an [entry]
    compiles holding it, so calls for one function from several domains make one
-   pipeline. [limits] holds each pipeline's most threads per threadgroup, which
-   its launch holds too. *)
+   pipeline. [pipelines] and [device_guard] are its device's. *)
 type image = {
   library : nativeint;
   names : string array;
   entries : Rig_edge.entry array;
-  limits : int array;
   guard : Mutex.t;
+  pipelines : (int, int) Hashtbl.t;
+  device_guard : Mutex.t;
 }
 
 let none = { Rig_edge.code = 0; launch = 0n }
@@ -89,36 +84,31 @@ type t = {
   facts : region Rig_edge.facts;
   cap : Rig_metal_abi.t;
   guard : Mutex.t;
-      (* held by an icb call, by stop, over [images] and [regions] *)
+      (* held by an icb call, by stop, over [pipelines] and [regions] *)
   stopped : bool Atomic.t; (* stop began *)
-  images : image list ref; (* loaded, whose pipelines an icb may record *)
-  regions : (nativeint, region) Hashtbl.t;
-      (* the live regions, by handle: its allocations, mappings and word *)
+  pipelines : (int, int) Hashtbl.t;
+      (* the pipelines an icb may record, those entries of loaded images gave,
+         with each one's most threads per threadgroup *)
+  regions : (nativeint, int) Hashtbl.t;
+      (* the live regions' handles, its allocations, mappings and word, with
+         the bytes an icb may address in each: [0] for the word, which no icb
+         takes *)
 }
 
 let device_name i =
   if i < 0 then invalid_argf "Rig_metal.device_name: GPU %d is negative" i;
   if i = 0 then "METAL" else strf "METAL:%d" i
 
-(* The most threads per threadgroup of [p], a pipeline that [entry] gave for one
-   of [images], else [0]. An icb asks it of every dispatch, so it allocates
-   nothing. *)
-let rec limit images p =
-  match images with
-  | [] -> 0
-  | (i : image) :: rest ->
-      let n = Array.length i.entries in
-      let k = ref 0 in
-      while !k < n && i.entries.(!k).code <> p do
-        incr k
-      done;
-      if !k < n && p <> 0 then i.limits.(!k) else limit rest p
+(* The most threads per threadgroup of [p], a pipeline in [pipelines], else
+   [0]. An icb asks it of every dispatch, so it allocates nothing. *)
+let limit pipelines p =
+  match Hashtbl.find pipelines p with l -> l | exception Not_found -> 0
 
 (* Why dispatch [i] cannot be recorded with a [bytes]-byte argument buffer:
    [Invalid_argument] for a pipeline [entry] never gave or an offset outside the
    buffer, [Some why] for more threads than its pipeline allows. *)
-let refusal images bytes i (d : Rig_metal_abi.dispatch) =
-  let max = limit images d.pipeline in
+let refusal pipelines bytes i (d : Rig_metal_abi.dispatch) =
+  let max = limit pipelines d.pipeline in
   if max = 0 then
     invalid_argf
       "Rig_metal_abi.icb: dispatch %d's pipeline is of no image the device \
@@ -147,7 +137,7 @@ let refusal images bytes i (d : Rig_metal_abi.dispatch) =
    caller may write [ds] meanwhile, so [icb] reads each dispatch once, into its
    own copy, and checks and records that copy: a dispatch read again could hold
    a pipeline the checks never saw. *)
-let icb self guard stopped images regions align buffer
+let icb self guard stopped live regions align buffer
     (ds : Rig_metal_abi.dispatch array) =
   let ds = Array.copy ds in
   let sizes = Array.make (7 * Array.length ds) 0 in
@@ -174,7 +164,7 @@ let icb self guard stopped images regions align buffer
   else
     let bytes =
       match Hashtbl.find_opt regions buffer with
-      | Some r -> r.bytes
+      | Some bytes -> bytes
       | None ->
           invalid_arg
             "Rig_metal_abi.icb: the argument buffer is no live region of the \
@@ -182,7 +172,7 @@ let icb self guard stopped images regions align buffer
     in
     let why = ref None in
     for i = 0 to Array.length ds - 1 do
-      let r = refusal !images bytes i ds.(i) in
+      let r = refusal live bytes i ds.(i) in
       if Option.is_none !why then why := r
     done;
     match !why with
@@ -234,10 +224,9 @@ let open_ i =
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
       let align = if family > 0 then apple_align else mac_align in
       let guard = Mutex.create () and stopped = Atomic.make false in
-      let word = region 0 word in
-      let images = ref [] and regions = Hashtbl.create 64 in
-      Hashtbl.replace regions word.handle word;
-      let icb = icb self guard stopped images regions align in
+      let pipelines = Hashtbl.create 16 and regions = Hashtbl.create 64 in
+      Hashtbl.replace regions word.handle 0;
+      let icb = icb self guard stopped pipelines regions align in
       let cap = { Rig_metal_abi.align; icb; split } in
       let facts =
         {
@@ -255,7 +244,7 @@ let open_ i =
           edge = Nativeint.of_int self;
         }
       in
-      Ok { self; facts; cap; guard; stopped; images; regions }
+      Ok { self; facts; cap; guard; stopped; pipelines; regions }
 
 (* Facts *)
 
@@ -284,25 +273,26 @@ let locked d g r =
       Mutex.unlock d.guard;
       Printexc.raise_with_backtrace e bt
 
-let enter d r = Hashtbl.replace d.regions r.handle r
+let forget d (r : region) = Hashtbl.remove d.regions r.handle
 
-let forget d r = Hashtbl.remove d.regions r.handle
-
-(* The live region of [d]'s [n]-byte buffer [b]. *)
-let live d n b =
-  let r = region n b in
-  locked d enter r;
-  r
+(* Makes [d]'s [n]-byte region [r] live. *)
+let enter d (r : region) n =
+  Mutex.lock d.guard;
+  Hashtbl.replace d.regions r.handle n;
+  Mutex.unlock d.guard
 
 let alloc d _ n =
   if n < 1 then invalid_argf "Rig_metal.alloc: %d bytes, expected at least 1" n;
   match alloc_buffer d.self n with
   | None -> None
-  | Some ((handle, address, host) as b) ->
-      if address mod region_align = 0 && host mod region_align = 0 then
-        Some (live d n b)
+  | Some r as some ->
+      let address = Option.get r.address and host = Option.get r.host in
+      if address mod region_align = 0 && host mod region_align = 0 then begin
+        enter d r n;
+        some
+      end
       else begin
-        free_buffer d.self handle;
+        free_buffer d.self r.handle;
         raise
           (Fault
              (strf
@@ -316,7 +306,9 @@ let map_host d p n =
     invalid_argf "Rig_metal.map_host: %d bytes, expected at least 1" n;
   match map_buffer d.self p n with
   | None -> None
-  | Some b -> Some (live d n b)
+  | Some r as some ->
+      enter d r n;
+      some
 
 let peer _ _ = false
 
@@ -331,33 +323,58 @@ let free d (r : region) =
 let image d b =
   match load d.self b with
   | "", library, names ->
-      let n = Array.length names in
-      let entries = Array.make n none and limits = Array.make n 0 in
-      let i = { library; names; entries; limits; guard = Mutex.create () } in
-      Mutex.protect d.guard (fun () -> d.images := i :: !(d.images));
-      Ok (Rig_edge.Loaded i)
+      let entries = Array.make (Array.length names) none in
+      let guard = Mutex.create () in
+      let pipelines = d.pipelines and device_guard = d.guard in
+      Ok
+        (Rig_edge.Loaded
+           { library; names; entries; guard; pipelines; device_guard })
   | why, _, _ -> Error why
 
-(* A refusal is not kept: a later call compiles again. *)
+(* The index of [f] in [names] from [k], or [-1]. *)
+let rec index names f k =
+  if k = Array.length names then -1
+  else if String.equal (Array.unsafe_get names k) f then k
+  else index names f (k + 1)
+
+(* [entry i f] under [i.guard]. A refusal is not kept: a later call compiles
+   again. *)
+let entry_held (i : image) f =
+  let k = index i.names f 0 in
+  if k < 0 then None
+  else if i.entries.(k).code <> 0 then Some i.entries.(k)
+  else
+    match pipeline i.library f with
+    | launch ->
+        let e = { Rig_edge.code = entry_code launch; launch } in
+        Mutex.lock i.device_guard;
+        Hashtbl.replace i.pipelines e.code (entry_threads launch);
+        Mutex.unlock i.device_guard;
+        i.entries.(k) <- e;
+        Some e
+    | exception Failure why ->
+        invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f why
+
+(* Holds [i.guard], taken without a closure. *)
 let entry (i : image) f =
-  Mutex.protect i.guard @@ fun () ->
-  match Array.find_index (String.equal f) i.names with
-  | None -> None
-  | Some k when i.entries.(k).code <> 0 -> Some i.entries.(k)
-  | Some k -> (
-      match pipeline i.library f with
-      | "", code, limit, launch ->
-          let e = { Rig_edge.code; launch } in
-          i.limits.(k) <- limit;
-          i.entries.(k) <- e;
-          Some e
-      | why, _, _, _ ->
-          invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f
-            why)
+  Mutex.lock i.guard;
+  match entry_held i f with
+  | e ->
+      Mutex.unlock i.guard;
+      e
+  | exception x ->
+      let bt = Printexc.get_raw_backtrace () in
+      Mutex.unlock i.guard;
+      Printexc.raise_with_backtrace x bt
+
+(* Takes [i]'s pipelines out of the ones an icb may record. *)
+let forget_pipelines d (i : image) =
+  for k = 0 to Array.length i.entries - 1 do
+    Hashtbl.remove d.pipelines i.entries.(k).code
+  done
 
 let unload d (i : image) =
-  Mutex.protect d.guard (fun () ->
-      d.images := List.filter (fun j -> j != i) !(d.images));
+  locked d forget_pipelines i;
   Array.iter
     (fun (e : Rig_edge.entry) -> if e.code <> 0 then release e.launch)
     i.entries;
