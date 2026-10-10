@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -99,39 +100,61 @@ static int tiles(int np, int r, int64_t (*lo)[NX_MAX_RANK],
   return sum == total;
 }
 
-/* The pieces' operands, descriptors, ranges and boxes: C-heap scratch of
-   their count. */
+/* The pieces' descriptors, boxes, ranges and operands: one C-heap block of
+   their count. A custom block owns it, so that an exception nx_read raises
+   leaves it to the finalizer. */
 typedef struct {
-  nx_operand *in;
   nx_array *a;
-  int64_t *ranges;
   int64_t (*lo)[NX_MAX_RANK], (*hi)[NX_MAX_RANK];
+  int64_t *ranges;
+  nx_operand *in;
 } pieces;
 
-static void free_pieces(pieces *p) {
-  free(p->in);
-  free(p->a);
-  free(p->ranges);
-  free(p->lo);
-  free(p->hi);
+static void free_scratch(value v) {
+  free(*(void **)Data_custom_val(v));
+  *(void **)Data_custom_val(v) = NULL;
+}
+
+static struct custom_operations scratch_ops = {
+    "nx.cpu.assemble",          free_scratch,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+/* Carves [p] for [np] pieces of rank [r] out of a block that [owner] then
+   owns; 0 if host memory runs out. Each part is a multiple of 8 bytes, so
+   each starts aligned. */
+static int pieces_of(value owner, int np, int r, pieces *p) {
+  size_t n = (size_t)np + 1;
+  size_t sa = n * sizeof *p->a, sb = n * sizeof *p->lo,
+         sr = (3 * (size_t)r * (size_t)np + 1) * sizeof *p->ranges;
+  uint8_t *b = malloc(sa + 2 * sb + sr + n * sizeof *p->in);
+  if (b == NULL) return 0;
+  *(void **)Data_custom_val(owner) = b;
+  p->a = (nx_array *)b;
+  p->lo = (int64_t(*)[NX_MAX_RANK])(b + sa);
+  p->hi = (int64_t(*)[NX_MAX_RANK])(b + sa + sb);
+  p->ranges = (int64_t *)(b + sa + 2 * sb);
+  p->in = (nx_operand *)(b + sa + 2 * sb + sr);
+  return 1;
 }
 
 value nx_cpu_assemble(value vs, value vd, value vpieces) {
   CAMLparam3(vs, vd, vpieces);
+  CAMLlocal1(owner);
   int np = (int)Wosize_val(vpieces);
+  int r = ((const nx_spec_shaped *)String_val(vs))->rank;
+  /* The scratch first: allocating its owner may move [vs], so the
+     descriptor is read after. */
+  owner = caml_alloc_custom(&scratch_ops, sizeof(void *), 0, 1);
+  *(void **)Data_custom_val(owner) = NULL;
+  pieces p;
+  if (!pieces_of(owner, np, r, &p)) caml_raise_out_of_memory();
   const nx_spec_shaped *sp = (const nx_spec_shaped *)String_val(vs);
-  int r = sp->rank, nfill = sp->nfill;
-  if (sp->npieces != np) CAMLreturn(Val_int(NX_SHAPE));
-  /* Scratch first: allocating runs no OCaml code, so the descriptor stays
-     where it is until it is copied. */
-  pieces p = {.in = malloc((size_t)(1 + np) * sizeof *p.in),
-              .a = malloc((size_t)(1 + np) * sizeof *p.a),
-              .ranges = malloc((size_t)(3 * r * np + 1) * sizeof *p.ranges),
-              .lo = malloc((size_t)(np + 1) * sizeof *p.lo),
-              .hi = malloc((size_t)(np + 1) * sizeof *p.hi)};
-  if (!p.in || !p.a || !p.ranges || !p.lo || !p.hi) {
-    free_pieces(&p);
-    caml_raise_out_of_memory();
+  int nfill = sp->nfill;
+  if (sp->npieces != np) {
+    free_scratch(owner);
+    CAMLreturn(Val_int(NX_SHAPE));
   }
   uint8_t fill[16];
   int64_t shape[NX_MAX_RANK], *ranges = p.ranges;
@@ -156,7 +179,7 @@ value nx_cpu_assemble(value vs, value vd, value vpieces) {
       if (ps[i] != ranges[3 * (j * r + i) + 1]) e = NX_SHAPE;
   }
   if (e) {
-    free_pieces(&p);
+    free_scratch(owner);
     CAMLreturn(Val_int(e));
   }
   nx_operand *in = p.in;
@@ -164,7 +187,7 @@ value nx_cpu_assemble(value vs, value vd, value vpieces) {
   in[0] = (nx_operand){vd, dt, 1};
   for (int j = 0; j < np; j++) in[1 + j] = (nx_operand){Field(vpieces, j), dt, 0};
   if ((e = nx_read(1 + np, in, a))) {
-    free_pieces(&p);
+    free_scratch(owner);
     CAMLreturn(Val_int(e));
   }
   int64_t total = 1;
@@ -220,7 +243,7 @@ value nx_cpu_assemble(value vs, value vd, value vpieces) {
     nx_cpu_copy_loop(a[0].base, a[1 + j].base, bits, &l);
   }
   nx_done(1 + np, a);
-  free_pieces(&p);
+  free_scratch(owner);
   CAMLreturn(Val_int(e));
 }
 
