@@ -258,18 +258,33 @@ let widened_bits (D.Any from) b (D.Any into) =
       | D.Bit, D.Bool -> P.bits D.Bool (read D.Bit)
       | _ -> invalid_arg "Expand.widened_bits: no wider dtype")
 
-(* The dtype a selection or a constant, which move bits, holds [d] in: a
-   sub-byte [d]'s accumulator, which holds each of its codes and gives it back,
-   and [d] itself otherwise. A store from float32 saturates float8_e5m2's
-   infinities, merges its NaNs into one code and quiets the 16-bit floats'
-   signaling NaNs. *)
-let kept (D.Any dt as d) = if D.bits dt < 8 then accumulator d else d
+(* float32 would not do for the floats of 8 or 16 bits: a store from it
+   saturates float8_e5m2's infinities, merges its NaNs into one code and quiets
+   the 16-bit floats' signaling NaNs. *)
+let kept (D.Any dt as d) =
+  if base d then d
+  else
+    match D.bits dt with
+    | 8 -> D.Any D.Uint8
+    | 16 -> D.Any D.Uint16
+    | b when b < 8 -> accumulator d
+    | _ -> d
+
+(* [x] held in [dt]: its bits where [dt] has its width, else its value. *)
+let held (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (dt : (w, r) D.t) (x : (v, s, d) Value.t) : (w, r, d) Value.t =
+  match D.equal_witness (Prim.dtype x) dt with
+  | Some Type.Equal -> x
+  | None when D.bits (Prim.dtype x) = D.bits dt ->
+      apply ~by (Value.Bitcast (dt, x))
+  | None -> cast_to apply ~by dt x
 
 (* A one-node map at dtypes some library declines, as the node at dtypes that
    hold its values exactly, its result rounded once to its dtype: their
-   accumulators ({!accumulator}), or for a selection and a constant the dtypes
-   {!kept} gives. [None] for a node whose dtypes all stay, and for a cast, a
-   bitcast or a copy, whose bits are their meaning. *)
+   accumulators ({!accumulator}), or for a selection, a constant and a copy the
+   dtypes {!kept} gives, its result read back as {!held} reads it. [None] for a
+   node whose dtypes all stay, and for a cast and a bitcast, which no other
+   dtype computes exactly. *)
 let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
     prog (outs : (d, r) Value.outs) (loads : d Value.load array) : r option =
   let n = P.length prog in
@@ -277,7 +292,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   let dts = Array.map (fun (Value.Plain x) -> D.Any (Prim.dtype x)) loads in
   let wide =
     match (node : P.node) with
-    | Const _ | Op3 (Where, _, _, _) -> kept
+    | Const _ | Op1 (Copy, _, _) | Op3 (Where, _, _, _) -> kept
     | _ -> accumulator
   in
   let result = P.dtype prog (n - 1) in
@@ -285,7 +300,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   let all = Array.append dts [| result |] in
   let widens =
     match (node : P.node) with
-    | Op1 ((Copy | Cast | Bitcast), _, _) | In _ | Coord _ -> false
+    | Op1 ((Cast | Bitcast), _, _) | In _ | Coord _ -> false
     | Const _ | Op1 _ | Op2 _ | Op3 _ ->
         Array.for_all (fun d -> base (wide d) || stays d) all
         && not (Array.for_all stays all)
@@ -294,13 +309,16 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   else
     let load (Value.Plain x) =
       let (D.Any w) = wide (D.Any (Prim.dtype x)) in
-      Value.Any (cast_to apply ~by w x)
+      Value.Any (held apply ~by w x)
     in
     let operands = Array.map load loads in
     let ins = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) operands in
     let node : P.node =
       match node with
-      | Const (dt, b) -> Const (wide dt, widened_bits dt b (wide dt))
+      | Const ((D.Any from as dt), b) ->
+          let (D.Any into as w) = wide dt in
+          if D.bits from = D.bits into then Const (w, b)
+          else Const (w, widened_bits dt b w)
       | Op1 (k, dt, i) -> Op1 (k, wide dt, i)
       | (Coord _ | Op2 _ | Op3 _ | In _) as nd -> nd
     in
@@ -315,7 +333,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
              loads = Array.map (fun (Value.Any x) -> Value.Plain x) operands;
            })
     in
-    match outs with [ dt ] -> Some (cast_to apply ~by dt v, ()) | _ -> None
+    match outs with [ dt ] -> Some (held apply ~by dt v, ()) | _ -> None
 
 (* The program of a region's flat positions in a C-contiguous value whose axes
    have [strides]: [Σ (start + i·step)·stride] at the region's index [i]. *)

@@ -424,10 +424,28 @@ let map_on ~by (module K : Nx_kernel.S) d prog first ops dsts =
 let load_view (type d) ~by k w (Value.Plain x : d Value.load) =
   A.Any (Place.view ~by x k w)
 
+(* [K]'s copy of [a] into [dst]; where it declines [a]'s dtype, its copy of
+   their bits in the dtype {!Expand.kept} gives, where that has their width. *)
+let copy_into (type v s) (module K : Nx_kernel.S) ~(dst : (v, s) A.t)
+    (a : (v, s) A.t) =
+  match K.apply1 Copy ~dst a with
+  | A.Declined ->
+      let dt = A.dtype a in
+      let (D.Any u) = Expand.kept (D.Any dt) in
+      if D.code u = D.code dt || D.bits u <> D.bits dt then A.Declined
+      else
+        (* One width keeps the layout, so both bitcasts are views. *)
+        K.apply1 Copy
+          ~dst:(Option.get (A.bitcast u dst))
+          (Option.get (A.bitcast u a))
+  | answer -> answer
+
 (* [a] stored afresh, C-contiguous, on its device. *)
-let copy_array ~by (module K : Nx_kernel.S) a =
+let copy_array ~by kernels a =
+  let (module K : Nx_kernel.S) = kernels in
   let dst = A.create (A.device a) (A.dtype a) (L.shape (A.layout a)) in
-  if not (done_or_declined ~by (K.apply1 Copy ~dst a) [ A.Any dst; A.Any a ])
+  if
+    not (done_or_declined ~by (copy_into kernels ~dst a) [ A.Any dst; A.Any a ])
   then
     declined ~by ~kernels:K.name
       (Op1 (Copy, D.Any (A.dtype a), 0))
@@ -1142,12 +1160,15 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
       let (module K) = kernels_of ~by ~op:"Map" set in
       invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
   | Some r ->
-      let (module K) = kernels_of ~by ~op:"Copy" set in
+      let ((module K) as kernels) = kernels_of ~by ~op:"Copy" set in
       Array.iteri
         (fun i per ->
           let (A.Any dst) = dsts.(i) in
           let (A.Any v) = per.(0) in
-          if not (ran ~by (K.apply1 Copy ~dst v) [| A.Any dst |] [| A.Any v |])
+          let v = A.expect (A.dtype dst) (A.Any v) in
+          if
+            not
+              (ran ~by (copy_into kernels ~dst v) [| A.Any dst |] [| A.Any v |])
           then
             declined ~by ~kernels:K.name
               (Op1 (Copy, D.Any (A.dtype v), 0))

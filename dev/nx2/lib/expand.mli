@@ -17,14 +17,13 @@
     along a last axis of two. [Moments] and [Arg] have no expansion yet. A
     one-node map at a dtype other than a base one ({!base}), but a cast, a
     bitcast or a copy, computes at its dtypes' accumulators, which hold their
-    values exactly, and rounds once to its dtype. A selection and a constant
-    move bits: they widen only their sub-byte dtypes, whose accumulators give
-    back each code, and keep the others. An assembly expands into a fill of its
-    flat result, then per piece in order a scatter of the piece's elements at
-    their flat positions, a map of coordinates: O(n) per piece. A gather or a
-    scatter of a sub-byte dtype casts its values to their accumulator, computes
-    there and casts the result back once; an integer's [Add] wraps there to the
-    same bits as at its own dtype.
+    values exactly, and rounds once to its dtype. A selection, a constant and a
+    copy move bits: they compute at the dtypes {!kept} gives. An assembly
+    expands into a fill of its flat result, then per piece in order a scatter of
+    the piece's elements at their flat positions, a map of coordinates: O(n) per
+    piece. A gather or a scatter of a sub-byte dtype casts its values to their
+    accumulator, computes there and casts the result back once; an integer's
+    [Add] wraps there to the same bits as at its own dtype.
 
     A contraction whose accumulator is a float other than its output's dtype
     first runs as a contraction into the accumulator, then casts to the output.
@@ -35,6 +34,13 @@
 val base : Nx_array.Dtype.any -> bool
 (** [base dt] is [true] for the dtypes every library's kernels compute: float32,
     float64, the 8- to 64-bit integers and bool. *)
+
+val kept : Nx_array.Dtype.any -> Nx_array.Dtype.any
+(** [kept d] is the dtype a selection, a constant or a copy of [d] computes in
+    where a library declines [d]: [d] itself for a base dtype; for a float of 8
+    or 16 bits, the unsigned integer of its width, over the same bits; for a
+    sub-byte dtype, its byte-wide accumulator, which holds each of its codes and
+    gives it back; [d] itself otherwise. *)
 
 val run :
   ('q. by:string -> 'q Value.prim -> 'q) ->
