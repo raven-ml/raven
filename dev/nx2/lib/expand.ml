@@ -791,12 +791,6 @@ let gather (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    [axis], in order: a position's updates differ off [axis], so their targets
    do, and updates to one target land in C order. A sum associates left to
    right. *)
-(* CR: Narrow Add rounds after every unique scatter: Float16 2048
-   plus [1;1] at one target gives 2048, but its float32 sum gives 2050.
-   Keep the accumulator in float32 and round once. Track touched targets
-   with Set scatters of true into false, then select original into bits
-   elsewhere, preserving untouched NaNs and signed zero. Test this through
-   Unique_scatters and measure the added mask passes. *)
 let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     combine axis idx (updates : (v, s, d) Value.t) (into : (v, s, d) Value.t) :
     (v, s, d) Value.t =
@@ -828,15 +822,53 @@ let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   done;
   !acc
 
+(* A narrow float's [Add] of repeated targets as {!repeated} in its
+   accumulator, rounded once; a target no update reaches, found by a [Set] of
+   [true] at every target, keeps [into]'s bits. *)
+let rounded_once (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
+    ~by (w : ('w, 'r) D.t) axis idx (updates : (v, s, d) Value.t)
+    (into : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let dt = Prim.dtype into in
+  let wide x = cast_to apply ~by w x in
+  let sum = repeated apply ~by S.Add axis idx (wide updates) (wide into) in
+  let fill b shape : (bool, D.bool_elt, d) Value.t =
+    let prog = P.of_node ~ins:[||] (Const (D.Any D.Bool, P.bits D.Bool b)) in
+    let v, () =
+      apply ~by
+        (Value.Map
+           {
+             layout = L.contiguous shape;
+             prog;
+             outs = Value.[ D.Bool ];
+             loads = [||];
+           })
+    in
+    v
+  in
+  let touched =
+    repeated apply ~by S.Set axis idx
+      (fill true (Prim.shape updates))
+      (fill false (Prim.shape into))
+  in
+  let v, () =
+    apply ~by (Prim.op3 ~by Where touched (cast_to apply ~by dt sum) into)
+  in
+  v
+
 (* A sub-byte scatter at its accumulator, cast back once. An integer's [Add]
    wraps there to the same bits as at its own dtype. A scatter whose targets
-   may repeat at a dtype of a byte or more is {!repeated}. *)
+   may repeat at a dtype of a byte or more is {!repeated}, a narrow float's
+   sum {!rounded_once}. *)
 let scatter (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     combine ~unique axis idx (updates : (v, s, d) Value.t)
     (into : (v, s, d) Value.t) : (v, s, d) Value.t option =
   match sub_byte into with
   | None when unique -> None
-  | None -> Some (repeated apply ~by combine axis idx updates into)
+  | None -> (
+      match (combine, accumulator (D.Any (Prim.dtype into))) with
+      | S.Add, D.Any w when not (same (D.Any w) (D.Any (Prim.dtype into))) ->
+          Some (rounded_once apply ~by w axis idx updates into)
+      | _ -> Some (repeated apply ~by combine axis idx updates into))
   | Some (D.Any w) ->
       let wide x = cast_to apply ~by w x in
       let y =

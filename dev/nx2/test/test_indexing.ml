@@ -607,11 +607,28 @@ let test_declined_scatter_raises () =
         kernels compute it")
     (fun () -> Nx.scatter ~combine:Nx.Add ~axis:0 p u x)
 
+(* A narrow float's sum of repeated updates, rounded once from float32: 2048
+   plus [1; 1] is 2050 at float16, where rounding after each update gives
+   2048. A target no update reaches keeps its bits, a NaN's payload too. *)
+let test_declined_narrow_sum () =
+  let on dt shape data = Nx.place Unique.on (host dt shape data) in
+  let nan = 0x7e01 in
+  let x =
+    Nx.bitcast D.Float16 (on D.Uint16 [| 2 |] [| 0x6800 (* 2048 *); nan |])
+  in
+  let p = on D.Int64 [| 2 |] [| 0L; 0L |] in
+  let u = on D.Float16 [| 2 |] [| 1.; 1. |] in
+  let y = Nx.scatter ~combine:Nx.Add ~axis:0 p u x in
+  equal (array int)
+    [| 0x6801 (* 2050 *); nan |]
+    (elements (Nx.bitcast D.Uint16 y))
+
 let declines =
   group "declines"
     [
       prop "a declined scatter combines repeated targets in C order"
         declined_case law_declined;
+      test "a declined narrow float sum rounds once" test_declined_narrow_sum;
       test "a scatter its device's kernels decline raises naming the move"
         test_declined_scatter_raises;
       test "a declined gather computes on its target's devices alone"

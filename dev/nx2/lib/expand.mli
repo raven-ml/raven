@@ -43,7 +43,9 @@
     integer's [Add] wraps there to the same bits as at its own dtype. Any other
     scatter whose targets may repeat is one unique scatter per position along
     its axis, in order, each of the target so far: O(m |into|) for m positions.
-    A sum associates left to right.
+    A sum associates left to right; a narrow float's sums in its accumulator,
+    rounded once, and a [Set] of [true] at the same targets keeps the bits of
+    each target no update reaches: twice the scatters.
 
     A contraction whose accumulator is a float other than its output's dtype
     first runs as a contraction into the accumulator, then casts to the output.
