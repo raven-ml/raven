@@ -17,13 +17,14 @@
     along a last axis of two. [Moments] and [Arg] have no expansion yet. A
     one-node map at a dtype other than a base one ({!base}), but a cast, a
     bitcast or a copy, computes at its dtypes' accumulators, which hold their
-    values exactly, and rounds once to its dtype; a constant takes its value at
-    the accumulator. An assembly expands into a fill of its flat result, then
-    per piece in order a scatter of the piece's elements at their flat
-    positions, a map of coordinates: O(n) per piece. A gather or a scatter of a
-    sub-byte dtype casts its values to their accumulator, computes there and
-    casts the result back once; an integer's [Add] wraps there to the same bits
-    as at its own dtype. Every other operation is core. *)
+    values exactly, and rounds once to its dtype. A selection and a constant
+    move bits: they widen only their sub-byte dtypes, whose accumulators give
+    back each code, and keep the others. An assembly expands into a fill of its
+    flat result, then per piece in order a scatter of the piece's elements at
+    their flat positions, a map of coordinates: O(n) per piece. A gather or a
+    scatter of a sub-byte dtype casts its values to their accumulator, computes
+    there and casts the result back once; an integer's [Add] wraps there to the
+    same bits as at its own dtype. Every other operation is core. *)
 
 val base : Nx_array.Dtype.any -> bool
 (** [base dt] is [true] for the dtypes every library's kernels compute: float32,

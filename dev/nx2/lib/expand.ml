@@ -256,27 +256,37 @@ let widened_bits (D.Any from) b (D.Any into) =
       | D.Bit, D.Bool -> P.bits D.Bool (read D.Bit)
       | _ -> invalid_arg "Expand.widened_bits: no wider dtype")
 
-(* A one-node map at dtypes some library declines, as the node at their
-   accumulators ({!accumulator}), which hold every value exactly, its result
-   rounded once to its dtype: [None] for a node no accumulator computes exactly,
-   as a cast, a bitcast or a copy whose bits are its meaning, or a complex
-   dtype. *)
+(* The dtype a selection or a constant, which move bits, holds [d] in: a
+   sub-byte [d]'s accumulator, which holds each of its codes and gives it back,
+   and [d] itself otherwise. A store from float32 saturates float8_e5m2's
+   infinities, merges its NaNs into one code and quiets the 16-bit floats'
+   signaling NaNs. *)
+let kept (D.Any dt as d) = if D.bits dt < 8 then accumulator d else d
+
+(* A one-node map at dtypes some library declines, as the node at dtypes that
+   hold its values exactly, its result rounded once to its dtype: their
+   accumulators ({!accumulator}), or for a selection and a constant the dtypes
+   {!kept} gives. [None] for a node whose dtypes all stay, and for a cast, a
+   bitcast or a copy, whose bits are their meaning. *)
 let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
     prog (outs : (d, r) Value.outs) (loads : d Value.load array) : r option =
   let n = P.length prog in
   let node = P.node prog (n - 1) in
   let dts = Array.map (fun (Value.Plain x) -> D.Any (Prim.dtype x)) loads in
-  let wide d = accumulator d in
-  let narrow d = (not (base d)) && base (wide d) in
+  let wide =
+    match (node : P.node) with
+    | Const _ | Op3 (Where, _, _, _) -> kept
+    | _ -> accumulator
+  in
   let result = P.dtype prog (n - 1) in
+  let stays d = same (wide d) d in
+  let all = Array.append dts [| result |] in
   let widens =
     match (node : P.node) with
     | Op1 ((Copy | Cast | Bitcast), _, _) | In _ | Coord _ -> false
-    | Const (dt, _) -> narrow dt
-    | Op1 _ | Op2 _ | Op3 _ ->
-        Array.for_all (fun d -> base d || narrow d) dts
-        && (base result || narrow result)
-        && Array.exists narrow (Array.append dts [| result |])
+    | Const _ | Op1 _ | Op2 _ | Op3 _ ->
+        Array.for_all (fun d -> base (wide d) || stays d) all
+        && not (Array.for_all stays all)
   in
   if not widens then None
   else

@@ -444,10 +444,120 @@ let test_ill_formed () =
       equal ~msg:(name ^ ": kernel calls") int 0 (C.calls ()))
     (ill_formed ())
 
+(* Expansions keep bits. A selection and a constant move bits, so an
+   interpretation that expands every operation it can gives each code of a
+   narrow dtype back unchanged: its infinities, NaNs, [-0], largest finite value
+   and least subnormal among them. *)
+
+let expanding f =
+  Nx.Prim.interpret ~name:"test.expand" Extent
+    (fun i ~by op ->
+      match Nx.Prim.expand i ~by op with
+      | Some r -> r
+      | None -> Nx.Prim.eval ~by op)
+    (fun _ -> f ())
+
+(* The bytes of elements of [w] bits holding [codes] in order, a sub-byte
+   element in the next bits of its byte from the lowest, a wider one in the
+   host's byte order. *)
+let pack w codes =
+  let n = Array.length codes in
+  let b = Bytes.make (max 1 (n * w / 8)) '\000' in
+  Array.iteri
+    (fun j c ->
+      match w with
+      | 16 -> Bytes.set_uint16_ne b (2 * j) c
+      | _ ->
+          let p = j * w in
+          let byte = Bytes.get_uint8 b (p / 8) in
+          Bytes.set_uint8 b (p / 8) (byte lor (c lsl (p mod 8))))
+    codes;
+  Array.init (Bytes.length b) (Bytes.get_uint8 b)
+
+let of_bytes (type v s) (dt : (v, s) D.t) bytes : (v, s, Nx.host) Nx.t =
+  let w = D.bits dt and u = vec Nx.uint8 bytes in
+  let n = Array.length bytes * 8 / w in
+  if w > 8 then Nx.bitcast dt (Nx.reshape [| n; w / 8 |] u)
+  else Nx.reshape [| n |] (Nx.bitcast dt u)
+
+let raw (type v s d) (x : (v, s, d) Nx.t) =
+  let w = D.bits (Nx.dtype x) and n = Nx.numel x in
+  let x = if w < 8 then Nx.reshape [| n * w / 8; 8 / w |] x else x in
+  let b = Nx.bitcast Nx.uint8 x in
+  elements (Nx.reshape [| Nx.numel b |] b)
+
+(* Each dtype outside the base set that is not complex, and the codes its
+   constants are drawn from: every code up to eight bits; for the 16-bit floats
+   the infinities, a quiet NaN, a signaling NaN with a payload, [-0], the
+   largest finite value and the least subnormal. *)
+let narrow =
+  let every w = List.init (1 lsl w) Fun.id in
+  [
+    (D.Any D.Float16, [ 0x7c00; 0xfc00; 0x7e00; 0x7c01; 0x8000; 0x7bff; 0x0001 ]);
+    ( D.Any D.Bfloat16,
+      [ 0x7f80; 0xff80; 0x7fc0; 0x7f81; 0x8000; 0x7f7f; 0x0001 ] );
+    (D.Any D.Float8_e4m3fn, every 8);
+    (D.Any D.Float8_e5m2, every 8);
+    (D.Any D.Float4_e2m1fn, every 4);
+    (D.Any D.Int4, every 4);
+    (D.Any D.Uint4, every 4);
+    (D.Any D.Bit, every 1);
+  ]
+
+(* The first bytes where [b] differs from [a], as ["k: a -> b"]. *)
+let changed a b =
+  let out = ref [] in
+  Array.iteri
+    (fun k x ->
+      if x <> b.(k) && List.length !out < 8 then
+        out := Printf.sprintf "%d: 0x%02x -> 0x%02x" k x b.(k) :: !out)
+    a;
+  List.rev !out
+
+let keeps_bits (type v s) (dt : (v, s) D.t) consts =
+  let w = D.bits dt in
+  let n = max (1 lsl w) (8 / w) in
+  let x =
+    of_bytes dt (pack w (Array.init n (fun j -> j land ((1 lsl w) - 1))))
+  in
+  let all b = vec Nx.bool (Array.make n b) in
+  let msg s = D.name dt ^ ": " ^ s in
+  let same msg a b = equal ~msg (list string) [] (changed a b) in
+  same (msg "where, true") (raw x)
+    (raw (expanding (fun () -> Nx.where (all true) x (Nx.zeros_like x))));
+  same (msg "where, false") (raw x)
+    (raw (expanding (fun () -> Nx.where (all false) (Nx.zeros_like x) x)));
+  let m = max 1 (8 / w) in
+  List.iter
+    (fun c ->
+      let b = pack w [| c |] in
+      let bits = String.init (D.bytes dt 1) (fun k -> Char.chr b.(k)) in
+      let y, () =
+        expanding (fun () ->
+            Nx.Prim.eval ~by:"test"
+              (Map
+                 {
+                   layout = L.contiguous [| m |];
+                   prog = P.of_node ~ins:[||] (Const (D.Any dt, bits));
+                   outs = Nx.Prim.[ dt ];
+                   loads = [||];
+                 }))
+      in
+      same
+        (msg (Printf.sprintf "constant 0x%x" c))
+        (pack w (Array.make m c))
+        (raw y))
+    consts
+
+let test_keeps_bits () =
+  List.iter (fun (D.Any dt, consts) -> keeps_bits dt consts) narrow
+
 let laws =
   group "laws"
     [
       prop "results gives the forms eager execution gives" forms_case law_forms;
+      test "an expanded selection or constant keeps each narrow code's bits"
+        test_keeps_bits;
       test
         "an ill-formed operation raises naming its function, before any kernel"
         test_ill_formed;
