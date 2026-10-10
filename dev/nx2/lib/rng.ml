@@ -144,21 +144,17 @@ let reshape ~by s x = if Prim.has_shape x s then x else move ~by (M.Reshape s) x
 let stretch ~by s x =
   if Prim.has_shape x s then x else move ~by (M.Broadcast s) x
 
-(* A key's batch shape and its words as one uint64 per key. *)
-(* CR: Separate key-shape validation from word packing. of_tensor discards
-   this Bitcast but returns the original tensor; reversed int32 words can
-   require Copy just to check a valid key, and fail on a set without kernels.
-   Use metadata in of_tensor, one, fold_in and with_key; pack only where its
-   result is used, preserving liveness checks. *)
-let words ~by (k : 'd key) =
+(* A key's batch shape: its shape without the last axis, which holds the two
+   words. Every key has that axis: [of_tensor] checks it, and the other
+   constructors make it. *)
+let batch (k : 'd key) =
   let s = Prim.shape k in
-  let r = Array.length s in
-  if r = 0 || s.(r - 1) <> 2 then
-    invalid_argf "%s: a key has shape [...; 2], not %a" by pp_shape s;
-  let w : (int64, D.uint64_elt, 'd) Value.t =
-    Eval.eval ~by (Value.Bitcast (D.Uint64, k))
-  in
-  (Array.sub s 0 (r - 1), w)
+  Array.sub s 0 (Array.length s - 1)
+
+(* A key's words as one uint64 per key: an operation, so a dead key raises
+   here. *)
+let pack ~by (k : 'd key) : (int64, D.uint64_elt, 'd) Value.t =
+  Eval.eval ~by (Value.Bitcast (D.Uint64, k))
 
 let map ~by shape prog dt loads =
   let layout = Nx_array.Layout.contiguous shape in
@@ -173,7 +169,7 @@ let map ~by shape prog dt loads =
    nodes of [params], each loaded at the draw's shape. *)
 let draw ~by ?(params = [||]) (k : 'd key) dt s body =
   check_shape ~by s;
-  let batch, w = words ~by k in
+  let batch = batch k and w = pack ~by k in
   let shape = Array.append batch s in
   let ins =
     Array.append [| D.Any D.Uint64 |]
@@ -203,7 +199,10 @@ let key seed : 'd key =
   map ~by:"Nx.Rng.key" [| 2 |] (program b [| out |]) D.Int32 [||]
 
 let of_tensor (t : (int32, D.int32_elt, 'd) Value.t) : 'd key =
-  ignore (words ~by:"Nx.Rng.of_tensor" t);
+  let s = Prim.shape t in
+  let r = Array.length s in
+  if r = 0 || s.(r - 1) <> 2 then
+    invalid_argf "Nx.Rng.of_tensor: a key has shape [...; 2], not %a" pp_shape s;
   t
 
 let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
@@ -211,7 +210,7 @@ let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
 (* The keys [f b ~key] gives at each element of [shape], whose last axes follow
    [k]'s batch. *)
 let keys ~by (k : 'd key) shape f : 'd key =
-  let w = snd (words ~by k) in
+  let w = pack ~by k in
   let b = builder [| D.Any D.Uint64 |] in
   let key = emit b (In 0) in
   let out = f b ~key in
@@ -222,8 +221,7 @@ let keys ~by (k : 'd key) shape f : 'd key =
   Eval.eval ~by (Value.Bitcast (D.Int32, u))
 
 let one ~by k =
-  let batch, _ = words ~by k in
-  if batch <> [||] then
+  if batch k <> [||] then
     invalid_argf "%s: a batch of keys of shape %a; draw from one key" by
       pp_shape (Prim.shape k)
 
@@ -252,19 +250,18 @@ let split ?(n = 2) k =
 (* The counter [data] folds in: the words [(data asr 32, data)]. *)
 let fold_in (k : 'd key) data : 'd key =
   let by = "Nx.Rng.fold_in" in
-  let batch, _ = words ~by k in
   let hi = Int64.logand (Int64.of_int (data asr 32)) 0xFFFF_FFFFL in
   let lo = Int64.logand (Int64.of_int data) 0xFFFF_FFFFL in
   let c = Int64.logor hi (Int64.shift_left lo 32) in
-  keys ~by k batch (fun b ~key -> bin b Threefry (u64 b c) key)
+  keys ~by k (batch k) (fun b ~key -> bin b Threefry (u64 b c) key)
 
 (* [fold_in] of an index held in data: [i]'s words [(i asr 32, i)] as the
    sign-extended [i] gives them. A batch of indices gives a batch of keys. *)
 let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     =
   let by = "Nx.Rng.fold_in_tensor" in
-  let batch, w = words ~by k in
-  let shape = Prim.broadcast_shape ~by batch (Prim.shape i) in
+  let w = pack ~by k in
+  let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
   let b = builder [| D.Any D.Uint64; D.Any D.Int32 |] in
   let key = emit b (In 0) in
   let v =
@@ -291,16 +288,12 @@ let every (type v s d e) ~by (x : (v, s, d) Value.t) : (v, s, e) Value.t =
       Value.Deferred { form = { dtype; layout; placement = None }; node; k }
   | _ -> invalid_argf "%s: the key has bytes; a scope's key is of every set" by
 
-(* CR: Return the validated root and counter from Next, then rebrand the
-   root before fold_in in next_key. With an Extent interpreter around
-   with_key of a prebuilt key, the handler's fold_in returns Traced(None),
-   which next_key's every rejects as having bytes. Deriving at the caller's
-   brand preserves interpretation without rebranding an opaque payload. *)
-type _ Effect.t += Next : unit key Effect.t
+(* A scope answers [Next] with its root and the next index; the caller folds the
+   index in, at its own brand and under whatever interprets it. *)
+type _ Effect.t += Next : (unit key * int) Effect.t
 
 let with_key k f =
   let root = every ~by:"Nx.Rng.with_key" k in
-  ignore (words ~by:"Nx.Rng.with_key" root);
   let count = ref 0 in
   let effc (type a) (e : a Effect.t) =
     match e with
@@ -309,28 +302,28 @@ let with_key k f =
           (fun (kont : (a, _) Effect.Deep.continuation) ->
             let c = !count in
             incr count;
-            Effect.Deep.continue kont (fold_in root c))
+            Effect.Deep.continue kont (root, c))
     | _ -> None
   in
   Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
 
-(* Outside every scope a domain draws from a key of system entropy: OCaml's
-   default [Random] state is seeded alike in every run. *)
+(* Outside every scope a domain draws from a seed of system entropy: OCaml's
+   default [Random] state is seeded alike in every run. The domain keeps the
+   seed and the next index, never a key, which an interpretation could have
+   made. *)
 let unscoped =
   Domain.DLS.new_key (fun () ->
       let seed = Random.State.bits64 (Random.State.make_self_init ()) in
-      (key (Int64.to_int seed), ref 0))
+      (Int64.to_int seed, ref 0))
 
 let next_key () : 'd key =
-  let k =
-    try Effect.perform Next
-    with Effect.Unhandled Next ->
-      let root, count = Domain.DLS.get unscoped in
+  match Effect.perform Next with
+  | root, c -> fold_in (every ~by:"Nx.Rng.next_key" root) c
+  | exception Effect.Unhandled Next ->
+      let seed, count = Domain.DLS.get unscoped in
       let c = !count in
       incr count;
-      fold_in root c
-  in
-  every ~by:"Nx.Rng.next_key" k
+      fold_in (key seed) c
 
 let resolve = function Some k -> k | None -> next_key ()
 let place p k = Eval.place ~by:"Nx.Rng.place" p k

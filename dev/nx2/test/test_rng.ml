@@ -13,6 +13,7 @@ module Rng = Nx.Rng
 let m = Nx_support.memory
 
 module S2 = (val Nx.devices [ m 0; m 1 ])
+module Count = (val Nx.devices ~kernels:(module Nx_support.Counting) [ m 3 ])
 
 let message f =
   match f () with _ -> "no exception" | exception Invalid_argument m -> m
@@ -117,6 +118,12 @@ let keys =
           let y = Rng.fold_in_tensor batch i in
           equal (array int) [| 2; 3; 2 |] (Nx.shape (Rng.to_tensor y));
           equal (array int32) each (words y));
+      test "of_tensor computes nothing, from reversed words too" (fun () ->
+          let t = Nx.place Count.on (host_of Nx.int32 [| 2 |] [| 1l; 2l |]) in
+          let reversed = Nx.flip t in
+          Nx_support.Counting.reset ();
+          ignore (Rng.of_tensor reversed);
+          equal int 0 (Nx_support.Counting.calls ()));
       prop "of_tensor undoes to_tensor" seeds (fun s ->
           let k = Rng.split_batch ~n:3 (Rng.key s) in
           equal (array int32) (words k)
@@ -499,6 +506,12 @@ let rejection =
 
 (* The scope *)
 
+(* An interpretation that traces every operation it reaches. *)
+type ('v, 's, 'd) Nx.Prim.payload += Traced : ('v, 's, 'd) Nx.Prim.payload
+
+let tracing i ~by op =
+  Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Traced) op
+
 let scope =
   group "scope"
     [
@@ -538,6 +551,25 @@ let scope =
       test "unscoped draws differ" (fun () ->
           let a = read (Rng.bits [| 4 |]) and b = read (Rng.bits [| 4 |]) in
           not_equal (array int32) a b);
+      test "a scoped keyless draw under a tracing extent is traced" (fun () ->
+          let k = Rng.key 205 in
+          let traced =
+            Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
+                Rng.with_key k (fun () ->
+                    Option.is_some (Nx.Prim.payload i (Rng.bits [| 2 |]))))
+          in
+          equal bool true traced);
+      test
+        "an unscoped keyless draw under a tracing extent leaves the domain's \
+         generator usable" (fun () ->
+          let run () =
+            let traced =
+              Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
+                  Option.is_some (Nx.Prim.payload i (Rng.bits [| 2 |])))
+            in
+            (traced, Array.length (read (Rng.bits [| 2 |])))
+          in
+          equal (pair bool int) (true, 2) (Domain.join (Domain.spawn run)));
     ]
 
 let () =

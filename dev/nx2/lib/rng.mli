@@ -6,7 +6,7 @@
 (** [Nx.Rng]: keys, samplers and the scope. Each draw is one map whose elements
     compute their Threefry blocks from their positions. *)
 
-type 'd key = (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
+type +'d key = private (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 
 val key : int -> 'd key
 val of_tensor : (int32, Nx_array.Dtype.int32_elt, 'd) Value.t -> 'd key
