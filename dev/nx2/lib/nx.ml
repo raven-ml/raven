@@ -556,6 +556,115 @@ let rearrange ?(sizes = []) p x =
   in
   List.fold_left (fun x mv -> move ~by mv x) x moves
 
+(* Reductions and scans *)
+
+(* [axes] of a value of rank [r], a negative one counted from the end, sorted:
+   every axis without [axes]. *)
+let reduced_axes ~by r axes =
+  match axes with
+  | None -> Array.init r Fun.id
+  | Some axes ->
+      let axes =
+        Array.of_list (List.map (fun a -> if a < 0 then a + r else a) axes)
+      in
+      Array.iter
+        (fun a ->
+          if a < 0 || a >= r then
+            invalid_argf "%s: axis %d of a value of rank %d" by a r)
+        axes;
+      Array.sort Int.compare axes;
+      Array.iteri
+        (fun i a ->
+          if i > 0 && axes.(i - 1) = a then
+            invalid_argf "%s: axis %d repeats" by a)
+        axes;
+      axes
+
+(* The one-operand reduction [m] of [x] along [axes], rounded to [dt]. *)
+let fold (type v s w r d) ~by m (dt : (w, r) D.t) axes (x : (v, s, d) t) :
+    (w, r, d) t =
+  let prog = Prim.program (In 0) [| D.Any (dtype x) |] in
+  let y, () =
+    Eval.eval ~by
+      (Value.Reduce
+         {
+           layout = Nx_array.Layout.contiguous (shape x);
+           axes;
+           prog;
+           reductions = Value.[ Monoid (m, 0, dt) ];
+           loads = [| Plain x |];
+         })
+  in
+  y
+
+(* [y], reduced from a value of shape [s] along [axes], with each reduced axis
+   kept of extent 1 where [keepdims]. *)
+let kept ~keepdims s axes y =
+  if not keepdims then y
+  else reshape (Array.mapi (fun a n -> if Array.mem a axes then 1 else n) s) y
+
+let reduction ~by m ?axes ?(keepdims = false) x =
+  let s = shape x in
+  let axes = reduced_axes ~by (Array.length s) axes in
+  kept ~keepdims s axes (fold ~by m (dtype x) axes x)
+
+let sum ?axes ?keepdims x = reduction ~by:"Nx.sum" Sum ?axes ?keepdims x
+let prod ?axes ?keepdims x = reduction ~by:"Nx.prod" Prod ?axes ?keepdims x
+let max ?axes ?keepdims x = reduction ~by:"Nx.max" Max ?axes ?keepdims x
+let min ?axes ?keepdims x = reduction ~by:"Nx.min" Min ?axes ?keepdims x
+
+(* The sum at [acc], divided there by the count [n], stored in [x]'s dtype: each
+   element rounds once to it. *)
+let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) : (v, s, d) t
+    =
+  let by = "Nx.mean" in
+  let s = shape x and dt = dtype x in
+  let axes = reduced_axes ~by (Array.length s) axes in
+  let n = Array.fold_left (fun n a -> n * s.(a)) 1 axes in
+  let within (type w r) (acc : (w, r) D.t) (count : (w, r, d) t) =
+    kept ~keepdims s axes (cast dt (div (fold ~by Sum acc axes x) count))
+  in
+  match D.kind dt with
+  | D.Float when D.bits dt < 32 ->
+      within D.Float32 (scalar D.Float32 (Float.of_int n))
+  | D.Float -> within dt (scalar dt (Float.of_int n))
+  | D.Complex -> within dt (scalar dt { Complex.re = Float.of_int n; im = 0. })
+  | D.Signed | D.Unsigned | D.Boolean ->
+      invalid_argf "%s: %s is neither a float nor a complex dtype" by
+        (D.name dt)
+
+(* The inclusive prefix of [m] along [axis] of [x]. *)
+let scan_along ~by m axis x =
+  let dt = dtype x in
+  Eval.eval ~by
+    (Value.Scan
+       {
+         layout = Nx_array.Layout.contiguous (shape x);
+         axis;
+         prog = Prim.program (In 0) [| D.Any dt |];
+         reduction = Monoid (m, 0, dt);
+         loads = [| Plain x |];
+       })
+
+(* Along [axis], or over the elements in C order, keeping [x]'s shape. *)
+let scan ~by m ?axis x =
+  let s = shape x in
+  let r = Array.length s in
+  match axis with
+  | None ->
+      let n = Array.fold_left ( * ) 1 s in
+      reshape s (scan_along ~by m 0 (reshape [| n |] x))
+  | Some axis ->
+      let a = if axis < 0 then axis + r else axis in
+      if a < 0 || a >= r then
+        invalid_argf "%s: axis %d of a value of rank %d" by axis r;
+      scan_along ~by m a x
+
+let cumsum ?axis x = scan ~by:"Nx.cumsum" Sum ?axis x
+let cumprod ?axis x = scan ~by:"Nx.cumprod" Prod ?axis x
+let cummax ?axis x = scan ~by:"Nx.cummax" Max ?axis x
+let cummin ?axis x = scan ~by:"Nx.cummin" Min ?axis x
+
 (* Operations as data *)
 
 module Prim = struct
@@ -568,6 +677,25 @@ module Prim = struct
   type 'd any = 'd Value.any = Any : ('v, 's, 'd) t -> 'd any
   type 'd load = 'd Value.load = Plain : ('v, 's, 'd) t -> 'd load
 
+  type ('d, 'a) reduction = ('d, 'a) Value.reduction =
+    | Monoid :
+        Nx_kernel.Spec.monoid * int * ('v, 's) dtype
+        -> ('d, ('v, 's, 'd) Value.t) reduction
+    | Moments :
+        int * ('v, 's) dtype
+        -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) reduction
+    | Arg :
+        Nx_kernel.Spec.extreme * int * ('v, 's) dtype
+        -> ( 'd,
+             ('v, 's, 'd) Value.t * (int64, Dtype.int64_elt, 'd) Value.t )
+           reduction
+
+  type ('d, 'r) reductions = ('d, 'r) Value.reductions =
+    | [] : ('d, unit) reductions
+    | ( :: ) :
+        ('d, 'a) reduction * ('d, 'r) reductions
+        -> ('d, 'a * 'r) reductions
+
   type ('d, 'r) outs = ('d, 'r) Value.outs =
     | [] : ('d, unit) outs
     | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) t * 'r) outs
@@ -577,6 +705,22 @@ module Prim = struct
         layout : Nx_array.Layout.t;
         prog : Nx_kernel.Prog.t;
         outs : ('d, 'r) outs;
+        loads : 'd load array;
+      }
+        -> 'r t
+    | Reduce : {
+        layout : Nx_array.Layout.t;
+        axes : int array;
+        prog : Nx_kernel.Prog.t;
+        reductions : ('d, 'r) reductions;
+        loads : 'd load array;
+      }
+        -> 'r t
+    | Scan : {
+        layout : Nx_array.Layout.t;
+        axis : int;
+        prog : Nx_kernel.Prog.t;
+        reduction : ('d, 'r) reduction;
         loads : 'd load array;
       }
         -> 'r t

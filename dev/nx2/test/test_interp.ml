@@ -344,10 +344,33 @@ let rec same_outs : type d r. string -> (d, r) Nx.Prim.outs -> r -> r -> unit =
       same_form ~msg x y;
       same_outs msg outs a b
 
+let same_reduction : type d a.
+    string -> (d, a) Nx.Prim.reduction -> a -> a -> unit =
+ fun msg r a b ->
+  match (r, a, b) with
+  | Monoid _, a, b -> same_form ~msg a b
+  | Moments _, (a, a'), (b, b') ->
+      same_form ~msg a b;
+      same_form ~msg a' b'
+  | Arg _, (a, a'), (b, b') ->
+      same_form ~msg a b;
+      same_form ~msg a' b'
+
+let rec same_reductions : type d r.
+    string -> (d, r) Nx.Prim.reductions -> r -> r -> unit =
+ fun msg rs a b ->
+  match (rs, a, b) with
+  | [], (), () -> ()
+  | r :: rs, (x, a), (y, b) ->
+      same_reduction msg r x y;
+      same_reductions msg rs a b
+
 let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
  fun msg op a b ->
   match op with
   | Map { outs; _ } -> same_outs msg outs a b
+  | Reduce { reductions; _ } -> same_reductions msg reductions a b
+  | Scan { reduction; _ } -> same_reduction msg reduction a b
   | Copy _ -> same_form ~msg a b
   | Move _ -> same_form ~msg a b
   | Bitcast _ -> same_form ~msg a b
@@ -503,6 +526,8 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
       match Nx.Prim.expand i ~by op with
       | Some r -> r
       | None -> fail "test.jvp: a map that does not expand")
+  | Reduce _ | Scan _ ->
+      invalid_arg (by ^ ": test.jvp has no derivative of a reduction")
   | Copy x -> both (fun y -> Nx.Prim.eval ~by (Copy y)) x
   | Move (mv, x) -> both (fun y -> Nx.Prim.eval ~by (Move (mv, y))) x
   | Bitcast _ -> invalid_arg (by ^ ": test.jvp has no derivative of a bitcast")

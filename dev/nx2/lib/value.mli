@@ -122,6 +122,30 @@ and 'd load =
   | Plain : ('v, 's, 'd) t -> 'd load
       (** How a loop reads an operand: through its layout. *)
 
+and ('d, _) reduction =
+  | Monoid :
+      Nx_kernel.Spec.monoid * int * ('v, 's) dtype
+      -> ('d, ('v, 's, 'd) t) reduction
+      (** Output [k] of a loop's program folded by the monoid in that output's
+          dtype, rounded once to the dtype. *)
+  | Moments :
+      int * ('v, 's) dtype
+      -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) reduction
+      (** The population mean of output [k], then its variance. *)
+  | Arg :
+      Nx_kernel.Spec.extreme * int * ('v, 's) dtype
+      -> ( 'd,
+           ('v, 's, 'd) t * (int64, Nx_array.Dtype.int64_elt, 'd) t )
+         reduction
+      (** The extreme of output [k], then its first position, in C order of the
+          reduced indices. *)
+
+and ('d, _) reductions =
+  | [] : ('d, unit) reductions
+  | ( :: ) :
+      ('d, 'a) reduction * ('d, 'r) reductions
+      -> ('d, 'a * 'r) reductions
+
 and ('d, _) outs =
   | [] : ('d, unit) outs
   | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) t * 'r) outs
@@ -138,6 +162,27 @@ and _ prim =
           operand [i]; result [k] is its output [k], laid out as [layout], which
           is C-contiguous. A one-result map is ['v * unit]. With no loads, a
           creation. *)
+  | Reduce : {
+      layout : Nx_array.Layout.t;
+      axes : int array;
+      prog : Nx_kernel.Prog.t;
+      reductions : ('d, 'r) reductions;
+      loads : 'd load array;
+    }
+      -> 'r prim
+      (** [prog] at every index of [layout]'s shape, as a map's, each reduction
+          folding its output along [axes], strictly increasing. Results drop
+          [axes] and are C-contiguous. *)
+  | Scan : {
+      layout : Nx_array.Layout.t;
+      axis : int;
+      prog : Nx_kernel.Prog.t;
+      reduction : ('d, 'r) reduction;
+      loads : 'd load array;
+    }
+      -> 'r prim
+      (** The reduction of [prog]'s output over the indices along [axis] up to
+          each index's, inclusive: [layout]'s shape, C-contiguous. *)
   | Copy : ('v, 's, 'd) t -> ('v, 's, 'd) t prim
       (** The value stored afresh, C-contiguous. *)
   | Move : Nx_array.Move.t * ('v, 's, 'd) t -> ('v, 's, 'd) t prim

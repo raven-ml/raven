@@ -7,6 +7,7 @@ open Value
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module P = Nx_kernel.Prog
+module S = Nx_kernel.Spec
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
@@ -155,6 +156,8 @@ type operands = Operands : 'd any list -> operands
 
 let name : type r. r prim -> string = function
   | Map _ -> "Map"
+  | Reduce _ -> "Reduce"
+  | Scan _ -> "Scan"
   | Copy _ -> "Copy"
   | Move _ -> "Move"
   | Bitcast _ -> "Bitcast"
@@ -165,21 +168,29 @@ let load_any (type d) (Plain x : d load) : d any = Any x
 
 let operands : type r. r prim -> operands = function
   | Map { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
+  | Reduce { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
+  | Scan { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
   | Copy x -> Operands [ Any x ]
   | Move (_, x) -> Operands [ Any x ]
   | Bitcast (_, x) -> Operands [ Any x ]
   | Place (_, x) -> Operands [ Any x ]
   | Check { ok; data; _ } -> Operands (Any ok :: data)
 
+let iteri_loads : type d.
+    ('v 's. int -> ('v, 's, d) t -> unit) -> d load array -> unit =
+ fun f loads ->
+  for i = 0 to Array.length loads - 1 do
+    let (Plain x) = loads.(i) in
+    f i x
+  done
+
 let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
     =
  fun f op ->
   match op with
-  | Map { loads; _ } ->
-      for i = 0 to Array.length loads - 1 do
-        let (Plain x) = loads.(i) in
-        f i x
-      done
+  | Map { loads; _ } -> iteri_loads f loads
+  | Reduce { loads; _ } -> iteri_loads f loads
+  | Scan { loads; _ } -> iteri_loads f loads
   | Copy x -> f 0 x
   | Move (_, x) -> f 0 x
   | Bitcast (_, x) -> f 0 x
@@ -200,6 +211,8 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
  fun f op ->
   match op with
   | Map { loads; _ } -> loads_exist f loads 0
+  | Reduce { loads; _ } -> loads_exist f loads 0
+  | Scan { loads; _ } -> loads_exist f loads 0
   | Copy x -> f x
   | Move (_, x) -> f x
   | Bitcast (_, x) -> f x
@@ -212,6 +225,8 @@ let map : type r.
   let map_load (type d) (Plain x : d load) : d load = Plain (m x) in
   match op with
   | Map p -> Map { p with loads = Array.map map_load p.loads }
+  | Reduce p -> Reduce { p with loads = Array.map map_load p.loads }
+  | Scan p -> Scan { p with loads = Array.map map_load p.loads }
   | Copy x -> Copy (m x)
   | Move (mv, x) -> Move (mv, m x)
   | Bitcast (dt, x) -> Bitcast (dt, m x)
@@ -335,7 +350,32 @@ let pp_operand ppf (Any x) =
     (D.name (dtype x))
     pp_shape (shape x) pp_at (at x)
 
-let pp ppf op =
+let spec_reduction : type d a. (d, a) reduction -> S.reduction * int * D.any =
+  function
+  | Monoid (m, k, dt) -> (S.Monoid m, k, D.Any dt)
+  | Moments (k, dt) -> (S.Moments, k, D.Any dt)
+  | Arg (e, k, dt) -> (S.Arg e, k, D.Any dt)
+
+let reduction_name : S.reduction -> string = function
+  | Monoid Sum -> "Sum"
+  | Monoid Prod -> "Prod"
+  | Monoid Max -> "Max"
+  | Monoid Min -> "Min"
+  | Monoid Logsumexp -> "Logsumexp"
+  | Moments -> "Moments"
+  | Arg Max -> "Arg Max"
+  | Arg Min -> "Arg Min"
+
+let rec reductions_list : type d r.
+    (d, r) reductions -> (S.reduction * int * D.any) list = function
+  | [] -> []
+  | r :: rest -> spec_reduction r :: reductions_list rest
+
+let pp_reduced prog ppf (r, k, _) =
+  Format.fprintf ppf "%s %a" (reduction_name r) (pp_node prog) (P.outs prog).(k)
+
+let pp : type r. Format.formatter -> r prim -> unit =
+ fun ppf op ->
   let (Operands xs) = operands op in
   Format.fprintf ppf "%s" (name op);
   (match op with
@@ -345,7 +385,17 @@ let pp ppf op =
            ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
            (pp_node prog))
         (Array.to_list (P.outs prog))
-  | _ -> ());
+  | Reduce { prog; axes; reductions; _ } ->
+      Format.fprintf ppf " [%a] over %a"
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+           (pp_reduced prog))
+        (reductions_list reductions)
+        pp_shape axes
+  | Scan { prog; axis; reduction; _ } ->
+      Format.fprintf ppf " [%a] along %d" (pp_reduced prog)
+        (spec_reduction reduction) axis
+  | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
   List.iteri (fun i x -> Format.fprintf ppf " (x%d: %a)" i pp_operand x) xs
 
 (* Rules *)
@@ -367,14 +417,9 @@ let has_layout_shape x l =
   done;
   !i = r
 
-(* A map's rule; its result's layout, C-contiguous of [shape]. *)
-(* CR: Check every Coord against this layout's rank before making results.
-   Prog.v only bounds it by max_rank: a rank-one Map of Coord 1 is accepted
-   by results and tracing, then becomes Iota (-1) when forced. Keep Prog
-   shape-free; check its coordinate requirement here and against the loaded
-   rank in Spec.shapes. *)
-let check_map (type d r) ~by layout prog (outs : (d, r) outs)
-    (loads : d load array) =
+(* A loop's rule on its loads: one per operand of [prog], of its dtype and of
+   [layout]'s shape, which is C-contiguous. [what] names the loop. *)
+let check_loads (type d) ~by ~what layout prog (loads : d load array) =
   let ins = P.ins prog in
   if Array.length loads <> Array.length ins then
     invalid_argf "%s: a program of %d operands over %d loads" by
@@ -387,6 +432,24 @@ let check_map (type d r) ~by layout prog (outs : (d, r) outs)
         invalid_argf "%s: load %d is %s where the program reads %s" by i
           (D.name have) (D.name want))
     loads;
+  if not (L.is_contiguous layout && L.offset layout = 0) then
+    invalid_argf "%s: a %s's layout %a is not C-contiguous" by what L.pp layout;
+  Array.iteri
+    (fun i (Plain x as l) ->
+      if not (has_layout_shape x layout) then
+        invalid_argf "%s: load %d has shape %a, the %s %a" by i pp_shape
+          (load_shape l) what pp_shape (L.shape layout))
+    loads
+
+(* A map's rule; its result's layout, C-contiguous of [shape]. *)
+(* CR: Check every Coord against this layout's rank before making results.
+   Prog.v only bounds it by max_rank: a rank-one Map of Coord 1 is accepted
+   by results and tracing, then becomes Iota (-1) when forced. Keep Prog
+   shape-free; check its coordinate requirement here and against the loaded
+   rank in Spec.shapes. *)
+let check_map (type d r) ~by layout prog (outs : (d, r) outs)
+    (loads : d load array) =
+  check_loads ~by ~what:"map" layout prog loads;
   let produced = P.outs prog in
   let rec check : type q. int -> (d, q) outs -> unit =
    fun k -> function
@@ -404,15 +467,57 @@ let check_map (type d r) ~by layout prog (outs : (d, r) outs)
              (D.name dt) (D.name want);
          check (k + 1) rest
   in
-  check 0 outs;
-  if not (L.is_contiguous layout && L.offset layout = 0) then
-    invalid_argf "%s: a map's layout %a is not C-contiguous" by L.pp layout;
+  check 0 outs
+
+(* A reduction's rule over [prog]'s outputs, reducing [axes] of [shape]: its
+   output exists and is of a dtype it takes, and an extreme has a term. *)
+let check_reduction ~by prog shape axes (r, k, _) =
+  let produced = P.outs prog in
+  if k < 0 || k >= Array.length produced then
+    invalid_argf "%s: a reduction of output %d of a program of %d" by k
+      (Array.length produced);
+  let (D.Any have) = P.dtype prog produced.(k) in
+  if not (S.accepts r (D.Any have)) then
+    invalid_argf "%s: %s does not take %s" by (reduction_name r) (D.name have);
+  let empty = Array.exists (fun a -> shape.(a) = 0) axes in
+  match r with
+  | (Monoid (Max | Min) | Arg _) when empty ->
+      invalid_argf "%s: %s of no term" by (reduction_name r)
+  | Monoid _ | Moments | Arg _ -> ()
+
+(* [axes] strictly increasing, each an axis of [shape]. *)
+let check_axes ~by shape axes =
   Array.iteri
-    (fun i (Plain x as l) ->
-      if not (has_layout_shape x layout) then
-        invalid_argf "%s: load %d has shape %a, the map %a" by i pp_shape
-          (load_shape l) pp_shape (L.shape layout))
-    loads
+    (fun i a ->
+      if a < 0 || a >= Array.length shape then
+        invalid_argf "%s: axis %d of a value of rank %d" by a
+          (Array.length shape);
+      if i > 0 && axes.(i - 1) >= a then
+        invalid_argf "%s: axes %a are not strictly increasing" by pp_shape axes)
+    axes
+
+let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
+    (loads : d load array) =
+  check_loads ~by ~what:"reduction" layout prog loads;
+  let shape = L.shape layout in
+  check_axes ~by shape axes;
+  match reductions_list rs with
+  | [] -> invalid_argf "%s: a reduction of no output" by
+  | l -> List.iter (check_reduction ~by prog shape axes) l
+
+let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
+    (loads : d load array) =
+  check_loads ~by ~what:"scan" layout prog loads;
+  let shape = L.shape layout in
+  check_axes ~by shape [| axis |];
+  match spec_reduction r with
+  | Moments, _, _ -> invalid_argf "%s: a scan of Moments" by
+  | ((Monoid _ | Arg _), _, _) as sr -> check_reduction ~by prog shape [||] sr
+
+(* [shape] without [axes]. *)
+let reduced shape axes =
+  Array.of_list
+    (List.filteri (fun a _ -> not (Array.mem a axes)) (Array.to_list shape))
 
 (* Each operation's route: where it reads its operands, in [operands]'s order,
    and where its results lie. [results] and [prepare] take placements from it
@@ -439,6 +544,50 @@ let rec make_outs : type d r.
   | dtype :: rest ->
       let v = m k { dtype; layout; placement } in
       (v, make_outs m (k + 1) layout placement rest)
+
+(* A reduction's results, from position [k] of the operation's results. *)
+let make_reduction : type d a.
+    ('v 's 'c. int -> ('v, 's, 'c) form -> ('v, 's, 'c) t) ->
+    int ->
+    L.t ->
+    d Devices.placement option ->
+    (d, a) reduction ->
+    a =
+ fun m k layout placement -> function
+  | Monoid (_, _, dtype) -> m k { dtype; layout; placement }
+  | Moments (_, dtype) ->
+      let mean = m k { dtype; layout; placement } in
+      (mean, m (k + 1) { dtype; layout; placement })
+  | Arg (_, _, dtype) ->
+      let extreme = m k { dtype; layout; placement } in
+      (extreme, m (k + 1) { dtype = D.Int64; layout; placement })
+
+let reduction_width : type d a. (d, a) reduction -> int = function
+  | Monoid _ -> 1
+  | Moments _ | Arg _ -> 2
+
+let rec make_reductions : type d r.
+    ('v 's 'c. int -> ('v, 's, 'c) form -> ('v, 's, 'c) t) ->
+    int ->
+    L.t ->
+    d Devices.placement option ->
+    (d, r) reductions ->
+    r =
+ fun m k layout placement -> function
+  | [] -> ()
+  | r :: rest ->
+      let v = make_reduction m k layout placement r in
+      (v, make_reductions m (k + reduction_width r) layout placement rest)
+
+(* A loop's route by [rule], its loads of [layout]'s shape. *)
+let loop_route (type d) ~by rule layout (loads : d load array) :
+    d Route.t option =
+  if Array.length loads = 0 then None
+  else
+    let shape = L.shape layout in
+    Route.route ~by rule
+      (Array.map load_placement loads)
+      (Array.make (Array.length loads) shape)
 
 let one_route ~by rule x = Route.route ~by rule [| at x |] [| shape x |]
 
@@ -524,6 +673,15 @@ let results : type r.
       check_map ~by layout prog outs loads;
       let placement = result (map_route ~by layout loads) in
       make_outs m 0 layout placement outs
+  | Reduce { layout; axes; prog; reductions; loads } ->
+      check_reduce ~by layout axes prog reductions loads;
+      let placement = result (loop_route ~by (Reduce axes) layout loads) in
+      let out = L.contiguous (reduced (L.shape layout) axes) in
+      make_reductions m 0 out placement reductions
+  | Scan { layout; axis; prog; reduction; loads } ->
+      check_scan ~by layout axis prog reduction loads;
+      let placement = result (loop_route ~by (Along [| axis |]) layout loads) in
+      make_reduction m 0 layout placement reduction
   | Copy x ->
       let placement = one_result ~by Elementwise x in
       m 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
@@ -533,8 +691,8 @@ let results : type r.
       (* CR: Canonicalize the whole layout when the result spans multiple
          devices. Transposing [4;2] split on axis 0 gives strides [1;2] here,
          while eager Shards reports [4;1] for the [2;4] whole. A tagged
-         interpreter retains this mismatch. Keep the placement rule in one
-         form constructor; physical shard layouts belong to Repr.shards. *)
+         interpreter retains this mismatch. Keep the placement rule in one form
+         constructor; physical shard layouts belong to Repr.shards. *)
       let layout =
         match L.move mv (form_layout x) with
         | Some l -> l
@@ -641,23 +799,41 @@ let prepare : type r.
     if lies_simply x then place (at x) x
     else place (read_at (one_route ~by rule x) 0) x
   in
+  (* A loop's loads placed where its route reads them; [None] where none
+     moves. *)
+  let placed (type d) (r : d Route.t option) (loads : d load array) =
+    let moved = ref false in
+    let loads =
+      Array.mapi
+        (fun i (Plain x as l) ->
+          let y = place (read_at r i) x in
+          if y == x then l
+          else begin
+            moved := true;
+            Plain y
+          end)
+        loads
+    in
+    if !moved then Some loads else None
+  in
   match op with
-  | Map p ->
+  | Map p -> (
       check_map ~by p.layout p.prog p.outs p.loads;
-      let r = map_route ~by p.layout p.loads in
-      let moved = ref false in
-      let loads =
-        Array.mapi
-          (fun i (Plain x as l) ->
-            let y = place (read_at r i) x in
-            if y == x then l
-            else begin
-              moved := true;
-              Plain y
-            end)
-          p.loads
-      in
-      if !moved then Map { p with loads } else op
+      match placed (map_route ~by p.layout p.loads) p.loads with
+      | Some loads -> Map { p with loads }
+      | None -> op)
+  | Reduce p -> (
+      check_reduce ~by p.layout p.axes p.prog p.reductions p.loads;
+      let r = loop_route ~by (Reduce p.axes) p.layout p.loads in
+      match placed r p.loads with
+      | Some loads -> Reduce { p with loads }
+      | None -> op)
+  | Scan p -> (
+      check_scan ~by p.layout p.axis p.prog p.reduction p.loads;
+      let r = loop_route ~by (Along [| p.axis |]) p.layout p.loads in
+      match placed r p.loads with
+      | Some loads -> Scan { p with loads }
+      | None -> op)
   | Copy x -> Copy (one Elementwise x)
   | Move (mv, x) ->
       ignore (moved_shape ~by mv x);
@@ -678,10 +854,27 @@ let rec arrays_outs : type d q. (d, q) outs -> q -> Nx_array.any array list =
   | [], () -> []
   | _ :: rest, (v, r) -> arrays_of v :: arrays_outs rest r
 
+let arrays_reduction : type d a.
+    (d, a) reduction -> a -> Nx_array.any array list =
+ fun r v ->
+  match (r, v) with
+  | Monoid _, v -> [ arrays_of v ]
+  | Moments _, (a, b) -> [ arrays_of a; arrays_of b ]
+  | Arg _, (a, b) -> [ arrays_of a; arrays_of b ]
+
+let rec arrays_reductions : type d q.
+    (d, q) reductions -> q -> Nx_array.any array list =
+ fun rs v ->
+  match (rs, v) with
+  | [], () -> []
+  | r :: rest, (a, v) -> arrays_reduction r a @ arrays_reductions rest v
+
 let arrays : type r. r prim -> r -> Nx_array.any array array =
  fun op r ->
   match op with
   | Map { outs; _ } -> Array.of_list (arrays_outs outs r)
+  | Reduce { reductions; _ } -> Array.of_list (arrays_reductions reductions r)
+  | Scan { reduction; _ } -> Array.of_list (arrays_reduction reduction r)
   | Copy _ -> [| arrays_of r |]
   | Move _ -> [| arrays_of r |]
   | Bitcast _ -> [| arrays_of r |]

@@ -277,6 +277,8 @@ let bijective (mv : M.t) shape =
         rs shape
   | Window _ -> false
 
+(* The whole of an axis of extent [d]. *)
+let whole d = { M.start = 0; count = d; step = 1 }
 let extents (w : M.range array) = Array.map (fun (r : M.range) -> r.count) w
 let starts (w : M.range array) = Array.map (fun (r : M.range) -> r.start) w
 
@@ -499,7 +501,9 @@ let operand_at : type r.
    own, and an operation reads it through to its operand's. *)
 let is_view : type r. r Value.prim -> bool = function
   | Value.Move _ | Value.Bitcast _ -> true
-  | Value.Map _ | Value.Copy _ | Value.Place _ | Value.Check _ -> false
+  | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Place _
+  | Value.Check _ ->
+      false
 
 let find memo p =
   List.find_map
@@ -549,6 +553,16 @@ let rec outs_of : type d. A.any list -> d outs = function
   | A.Any a :: rest ->
       let (Outs o) = outs_of rest in
       Outs Value.(A.dtype a :: o)
+
+(* [f j k w] for each device [k] of [p], [j] its position, [w] its window of a
+   value of [shape]. *)
+let each_device ~by p shape f =
+  match Grid.one (Devices.grid p) with
+  | Some k -> f 0 k (Array.map whole shape)
+  | None ->
+      Array.iteri
+        (fun j k -> f j k (Devices.window ~by p shape j))
+        (Grid.devices (Devices.grid p))
 
 let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
@@ -607,8 +621,8 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           let r = run ~by (Prim.map live op) in
           consumed ~by ~reused:(fun _ -> false) hs;
           r)
-  | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
-  | Value.Check _ ->
+  | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
+  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       claim ~by hs;
       let r = run ~by (Prim.map live op) in
       consumed ~by ~reused:(fun _ -> false) hs;
@@ -670,6 +684,35 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
         (fun k w -> Array.map (load_view ~by k w) loads)
         (Prim.arrays op r);
       r
+  | Value.Reduce { layout; axes; prog; reductions; loads } ->
+      let where = ref None in
+      let r = Prim.results ~by (fun k f -> alloc ~by ~where k f) op in
+      let rs = Array.of_list (Prim.reductions_list reductions) in
+      let reduce (module K : Nx_kernel.S) prog dsts ops =
+        let loads = Array.make (Array.length ops) S.Plain in
+        K.reduce (S.reduce prog ~loads ~axes rs) ~dsts ops
+      in
+      if
+        loop_devices ~by (Option.get !where) (L.shape layout) ~axes reduce prog
+          (fun k w -> Array.map (load_view ~by k w) loads)
+          (Prim.arrays op r)
+      then r
+      else expanded ~by (Option.get !where) op
+  | Value.Scan { layout; axis; prog; reduction; loads } ->
+      let where = ref None in
+      let r = Prim.results ~by (fun k f -> alloc ~by ~where k f) op in
+      let rs = Prim.reductions_list Value.[ reduction ] in
+      let scan (module K : Nx_kernel.S) prog dsts ops =
+        let loads = Array.make (Array.length ops) S.Plain in
+        K.scan (S.scan prog ~loads ~axis (List.hd rs)) ~dsts ops
+      in
+      if
+        loop_devices ~by (Option.get !where) (L.shape layout) ~axes:[||] scan
+          prog
+          (fun k w -> Array.map (load_view ~by k w) loads)
+          (Prim.arrays op r)
+      then r
+      else expanded ~by (Option.get !where) op
   | Value.Copy x ->
       let where = ref None in
       let r = Prim.results ~by (fun k f -> alloc ~by ~where k f) op in
@@ -694,6 +737,48 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       let set = Devices.set xp in
       shard_views ~by op xp (fun () -> Array.map (cast ~by set dt) xs)
   | Value.Place _ | Value.Check _ -> run ~by op
+
+(* [op], a loop the kernels of [p]'s set declined, as its expansion. A plain
+   loop has none: the decline raises naming the kernels. *)
+and expanded : type r. by:string -> unit Devices.placement -> r Value.prim -> r
+    =
+ fun ~by p op ->
+  match Expand.run run ~by op with
+  | Some r -> r
+  | None ->
+      let (module K) = kernels_of ~by ~op:(Prim.name op) (Devices.set p) in
+      invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
+
+(* A loop's results [dsts] at [p], each device's window of them computed there
+   by [kernel] over its operands [ops k w] for its window [w] of the loop's
+   iteration of [shape]: the results' window, whole along the reduced [axes].
+   [false] where the kernels decline it. *)
+and loop_devices ~by (p : unit Devices.placement) shape ~axes kernel prog ops
+    dsts =
+  let kernels = kernels_of ~by ~op:"Reduce" (Devices.set p) in
+  let widen (w : M.range array) =
+    let j = ref 0 in
+    Array.mapi
+      (fun a extent ->
+        if Array.mem a axes then whole extent
+        else begin
+          let r = w.(!j) in
+          incr j;
+          r
+        end)
+      shape
+  in
+  let computed = ref true in
+  each_device ~by p (Prim.reduced shape axes) (fun j k w ->
+      if !computed then begin
+        let w = widen w in
+        let ops = ops k w and dsts = Array.map (fun per -> per.(j)) dsts in
+        computed :=
+          ran ~by
+            (kernel kernels (with_offsets prog (starts w)) dsts ops)
+            dsts ops
+      end);
+  !computed
 
 (* The one result of [op] over the arrays [views ()], one per device of [xp] in
    order: at [op]'s placement, whose devices hold them. [views] runs once [op]'s
@@ -939,8 +1024,8 @@ and compute_at : type r.
         (fun k w -> Array.map (view k w) loads)
         (Prim.arrays op r);
       r
-  | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
-  | Value.Check _ ->
+  | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
+  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       run ~by op
 
 (* [node]'s results at [p], its constant operands already computed where it

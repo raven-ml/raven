@@ -9,6 +9,7 @@
   test_place
   test_exec
   test_elementwise
+  test_reduce
   test_interp
   test_donate
   test_shapes
@@ -20,6 +21,7 @@
   test_place
   test_exec
   test_elementwise
+  test_reduce
   test_interp
   test_donate
   test_shapes

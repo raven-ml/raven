@@ -529,6 +529,57 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
     Raises [Invalid_argument] if the shapes do not broadcast. *)
 
+(** {2:reductions Reductions and scans}
+
+    A reduction folds [x]'s elements along [axes], every axis by default, a
+    negative one counted from the end, and drops them, or keeps each with extent
+    [1] where [keepdims]. Its order of association depends on the shape alone. A
+    float result that a NaN reaches is the first NaN in C order. The float
+    formats narrower than 32 bits accumulate at [float32] and round once.
+
+    Each raises [Invalid_argument] naming itself for an axis outside [x]'s rank
+    or repeated, or a dtype it does not take. *)
+
+val sum : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [sum ~axes x] adds the elements from [+0]: a sum of [-0.] terms is [+0.],
+    and a sum of none is [+0.]. Integers wrap. Every dtype but booleans. *)
+
+val prod : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [prod ~axes x] multiplies the elements from [1], as {!sum}. Floats and
+    integers. *)
+
+val max : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [max ~axes x] is the greatest element, as {!maximum} orders them: [-0.]
+    below [+0.], any on booleans. Floats, integers and booleans.
+
+    Raises [Invalid_argument] where an axis it reduces is empty. *)
+
+val min : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [min ~axes x] is the least element, as {!max}; all on booleans. *)
+
+val mean : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [mean ~axes x] is the {!sum} divided by the number of elements, rounded
+    once: NaN for none. Floats and complex numbers. *)
+
+val cumsum : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cumsum ~axis x] is, at each index, the sum of [x]'s elements along [axis]
+    up to that index, inclusive; without [axis], of its elements in C order up
+    to that one, in [x]'s shape. Every dtype but booleans.
+
+    Raises [Invalid_argument] naming itself for an axis outside [x]'s rank or a
+    dtype it does not take. *)
+
+val cumprod : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cumprod ~axis x] is the running product, as {!cumsum}. Floats and integers.
+*)
+
+val cummax : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cummax ~axis x] is the running {!max}, as {!cumsum}. Floats, integers and
+    booleans. *)
+
+val cummin : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cummin ~axis x] is the running {!min}, as {!cummax}. *)
+
 (** {2:conversion Conversion} *)
 
 val cast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
@@ -968,6 +1019,30 @@ module Prim : sig
     | Plain : ('v, 's, 'd) nx -> 'd load
         (** How a loop reads an operand: through its layout. *)
 
+  (** What a loop's reduction makes of one output of its program. *)
+  type ('d, _) reduction =
+    | Monoid :
+        Nx_kernel.Spec.monoid * int * ('v, 's) dtype
+        -> ('d, ('v, 's, 'd) nx) reduction
+        (** [Monoid (m, k, dt)] folds output [k] by [m] in that output's dtype
+            and rounds once to [dt]. *)
+    | Moments :
+        int * ('v, 's) dtype
+        -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) reduction
+        (** The population mean of output [k], then its variance. *)
+    | Arg :
+        Nx_kernel.Spec.extreme * int * ('v, 's) dtype
+        -> ('d, ('v, 's, 'd) nx * (int64, Dtype.int64_elt, 'd) nx) reduction
+        (** The extreme of output [k], then its first position in C order of the
+            reduced indices. *)
+
+  type ('d, 'r) reductions =
+    | [] : ('d, unit) reductions
+    | ( :: ) :
+        ('d, 'a) reduction * ('d, 'r) reductions
+        -> ('d, 'a * 'r) reductions
+        (** A reduction's reductions, its results in order. *)
+
   type ('d, 'r) outs =
     | [] : ('d, unit) outs
     | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) nx * 'r) outs
@@ -987,6 +1062,29 @@ module Prim : sig
             operand [i]; result [k] is its output [k], laid out as [layout],
             which is C-contiguous. A one-result map is ['v * unit]. With no
             loads, a creation. *)
+    | Reduce : {
+        layout : Nx_array.Layout.t;
+        axes : int array;
+        prog : Nx_kernel.Prog.t;
+        reductions : ('d, 'r) reductions;
+        loads : 'd load array;
+      }
+        -> 'r t
+        (** [prog] at every index of [layout]'s shape, as a map's, each
+            reduction folding its output along [axes], strictly increasing, as
+            {!Nx_kernel.Spec.reduce} says. Results drop [axes] and are
+            C-contiguous. [Max], [Min] and [Arg] of no term are refused. *)
+    | Scan : {
+        layout : Nx_array.Layout.t;
+        axis : int;
+        prog : Nx_kernel.Prog.t;
+        reduction : ('d, 'r) reduction;
+        loads : 'd load array;
+      }
+        -> 'r t
+        (** The reduction of [prog]'s output over the indices along [axis] up to
+            each index's, inclusive, of [layout]'s shape. [Moments] is refused.
+        *)
     | Copy : ('v, 's, 'd) nx -> ('v, 's, 'd) nx t
         (** The value stored afresh, C-contiguous. *)
     | Move : Nx_array.Move.t * ('v, 's, 'd) nx -> ('v, 's, 'd) nx t

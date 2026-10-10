@@ -129,6 +129,14 @@ val program :
 val programs_kept : unit -> int
 (** [programs_kept ()] is the number of programs the calling domain keeps. *)
 
+val reductions_list :
+  ('d, 'r) reductions ->
+  (Nx_kernel.Spec.reduction * int * Nx_array.Dtype.any) list
+(** [reductions_list rs] is [rs] as {!Nx_kernel.Spec.reduce} takes them. *)
+
+val reduced : int array -> int array -> int array
+(** [reduced s axes] is [s] without [axes]. *)
+
 val op1 :
   by:string ->
   Nx_kernel.Prog.op1 ->
