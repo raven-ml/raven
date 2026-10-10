@@ -92,9 +92,9 @@ module type S = sig
       [dst]. *)
 
   val apply3 :
-    Prog.op3 -> dst:('v, 's) a -> ('c, 'e) a -> ('a, 'b) a -> ('a, 'b) a -> answer
+    Prog.op3 -> dst:('v, 's) a -> ('c, 'e) a -> ('v, 's) a -> ('v, 's) a -> answer
   (** [apply3 k ~dst c x y] stores [k] of each element of [c], [x] and [y]
-      into [dst]. *)
+      into [dst], of [x]'s and [y]'s dtype, as [Where] and [Fma] give. *)
 
   val map : Spec.map Spec.t -> dsts:any array -> any array -> answer
   (** [map s ~dsts ops] stores [s]'s results into [dsts], one per output of

@@ -19,7 +19,7 @@ module type S = sig
   val apply2 : Prog.op2 -> dst:('v, 's) a -> ('a, 'b) a -> ('a, 'b) a -> answer
 
   val apply3 :
-    Prog.op3 -> dst:('v, 's) a -> ('c, 'e) a -> ('a, 'b) a -> ('a, 'b) a -> answer
+    Prog.op3 -> dst:('v, 's) a -> ('c, 'e) a -> ('v, 's) a -> ('v, 's) a -> answer
 
   val map : Spec.map Spec.t -> dsts:any array -> any array -> answer
   val reduce : Spec.reduce Spec.t -> dsts:any array -> any array -> answer

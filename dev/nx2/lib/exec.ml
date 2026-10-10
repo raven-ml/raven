@@ -388,9 +388,10 @@ let apply_node (module K : Nx_kernel.S) node (A.Any dst) (ops : A.any array) =
       let (A.Any x) = ops.(0) in
       K.apply2 k ~dst x (A.expect (A.dtype x) ops.(1))
   | Op3 (k, _, _, _) ->
+      (* Where and Fma give their second and third operands' dtype. *)
       let (A.Any c) = ops.(0) in
-      let (A.Any x) = ops.(1) in
-      K.apply3 k ~dst c x (A.expect (A.dtype x) ops.(2))
+      let dt = A.dtype dst in
+      K.apply3 k ~dst c (A.expect dt ops.(1)) (A.expect dt ops.(2))
   | In _ -> Declined
 
 (* [prog] over [ops] into [dsts] on device [d], whose window starts at [first]:

@@ -967,7 +967,7 @@ let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
           (List.mapi
              (fun i c -> Array.sub (if c then xs else ys) (i * w) w)
              (Array.to_list cs)))
-      (fun dst -> K.apply3 Where ~dst c x y)
+      (fun dst -> K.apply3 Where ~dst:(A.expect dt (A.Any dst)) c x y)
   in
   if seed mod 2 = 0 then where (seeded D.Bool shape seed)
   else where (seeded D.Bit shape seed);
@@ -975,7 +975,7 @@ let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
   answers b (K3 Fma) (D.Any dt) (D.Any dt) shape
     ~accepted:(P.accepts3 Fma dt dt)
     ~want:(fun () -> expected "fma" dt ~compare:false [| host x; host y; host z |])
-    (fun dst -> K.apply3 Fma ~dst x y z)
+    (fun dst -> K.apply3 Fma ~dst:(A.expect dt (A.Any dst)) x y z)
 
 let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
   let module K = (val b.kernels) in
