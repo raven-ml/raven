@@ -188,23 +188,16 @@ type node =
    order. *)
 type t = string
 
-external loop_operands : unit -> (int[@untagged])
-  = "nx_kernel_max_operands_byte" "nx_kernel_max_operands"
-[@@noalloc]
-
-let max_operands = loop_operands ()
+let max_operands = 16
 let header = 16
 let record = 40
 let at_bits = 24
 let get s at = Int32.to_int (String.get_int32_ne s at)
 let set b at x = Bytes.set_int32_ne b at (Int32.of_int x)
 
-(* The dtype whose code is at [at]. A code of none raises, and [of_string]
-   answers [None] for it. *)
-let dtype_at s at =
-  match D.of_code (get s at) with
-  | Some dt -> dt
-  | None -> invalid_arg "Nx_kernel.Prog: a code of no dtype"
+(* The dtype whose code is at [at] of a program, which holds only dtypes'
+   codes. *)
+let dtype_at p at = Option.get (D.of_code (get p at))
 
 (* Kinds as nx_spec.h's codes: one enum per arity, in the order of the types'
    constructors. *)
@@ -239,18 +232,21 @@ let code2 = function
 
 let code3 = function Where -> 0 | Fma -> 1
 
-let op1_of c =
-  match c with
-  | 0 -> Copy
-  | 1 -> Cast
-  | 2 -> Bitcast
-  | c -> Unary unaries.(c - 3)
+let op1_of = function
+  | 0 -> Some Copy
+  | 1 -> Some Cast
+  | 2 -> Some Bitcast
+  | c when c >= 3 && c < 3 + Array.length unaries -> Some (Unary unaries.(c - 3))
+  | _ -> None
 
 let op2_of c =
   let nb = Array.length binaries in
-  if c < nb then Binary binaries.(c) else Compare compares.(c - nb)
+  if c >= 0 && c < nb then Some (Binary binaries.(c))
+  else if c >= nb && c < nb + Array.length compares then
+    Some (Compare compares.(c - nb))
+  else None
 
-let op3_of = function 0 -> Where | _ -> Fma
+let op3_of = function 0 -> Some Where | 1 -> Some Fma | _ -> None
 
 let accepts n dts =
   let arity = Array.length dts in
@@ -275,7 +271,7 @@ let accepts n dts =
       let (D.Any x') = dts.(2) in
       D.equal x x' && accepts3 k c x
 
-let invalid fmt = Format.kasprintf invalid_arg ("Nx_kernel.Prog.v: " ^^ fmt)
+let strf = Printf.sprintf
 
 (* Whether [b] is the bits of an element of [dt]. *)
 let is_element (D.Any dt) b =
@@ -287,50 +283,77 @@ let is_element (D.Any dt) b =
   | 8 when D.equal dt D.Bool -> Char.code b.[0] <= 1
   | _ -> true
 
-let v ~ins nodes ~outs =
+(* Why node [i], [nd], is no node of a program of [nins] operands, if it is
+   not: an operand, axis or node out of reach, or bits of no element. *)
+let node_problem nins i nd =
+  let refers ks =
+    Option.map
+      (fun k -> strf "node %d refers to node %d" i k)
+      (List.find_opt (fun k -> k < 0 || k >= i) ks)
+  in
+  match nd with
+  | In k when k < 0 || k >= nins -> Some (strf "node %d reads operand %d" i k)
+  | Coord a when a < 0 || a >= Nx_array.Layout.max_rank ->
+      Some (strf "node %d reads axis %d" i a)
+  | Const (dt, b) when not (is_element dt b) ->
+      Some (strf "node %d's bits are no element of its dtype" i)
+  | In _ | Coord _ | Const _ -> None
+  | Op1 (_, _, a) -> refers [ a ]
+  | Op2 (_, a, b) -> refers [ a; b ]
+  | Op3 (_, a, b, c) -> refers [ a; b; c ]
+
+(* Why [ins], [nodes] and [outs] make no program, if they do not, with each
+   node's dtype written to [types] until the first problem. *)
+let problem ~ins nodes ~outs types =
   let nins = Array.length ins and n = Array.length nodes in
   let nouts = Array.length outs in
-  if nouts = 0 then invalid "no output";
-  if nins + nouts > max_operands then
-    invalid "%d operands and outputs, more than %d" (nins + nouts) max_operands;
-  let types = Array.make n (D.Any D.Bool) in
-  let earlier i k =
-    if k < 0 || k >= i then invalid "node %d refers to node %d" i k;
-    types.(k)
+  let operands = function
+    | In _ | Coord _ | Const _ -> [||]
+    | Op1 (_, _, a) -> [| types.(a) |]
+    | Op2 (_, a, b) -> [| types.(a); types.(b) |]
+    | Op3 (_, a, b, c) -> [| types.(a); types.(b); types.(c) |]
   in
-  Array.iteri
-    (fun i nd ->
-      let dts =
-        match nd with
-        | In k ->
-            if k < 0 || k >= nins then invalid "node %d reads operand %d" i k;
-            [||]
-        | Coord a ->
-            if a < 0 || a >= Nx_array.Layout.max_rank then
-              invalid "node %d reads axis %d" i a;
-            [||]
-        | Const (dt, b) ->
-            if not (is_element dt b) then
-              invalid "node %d's bits are no element of its dtype" i;
-            [||]
-        | Op1 (_, _, a) -> [| earlier i a |]
-        | Op2 (_, a, b) -> [| earlier i a; earlier i b |]
-        | Op3 (_, a, b, c) -> [| earlier i a; earlier i b; earlier i c |]
-      in
-      if not (accepts nd dts) then
-        invalid "node %d's kind does not take its operands' dtypes" i;
-      types.(i) <-
-        (match nd with
-        | In k -> ins.(k)
-        | Coord _ -> D.Any D.Int64
-        | Const (dt, _) | Op1 (_, dt, _) -> dt
-        | Op2 (Binary _, _, _) -> dts.(0)
-        | Op2 (Compare _, _, _) -> D.Any D.Bool
-        | Op3 (_, _, _, _) -> dts.(1)))
-    nodes;
-  Array.iter
-    (fun o -> if o < 0 || o >= n then invalid "output %d is no node" o)
-    outs;
+  let rec from i =
+    if i = n then None
+    else
+      let nd = nodes.(i) in
+      match node_problem nins i nd with
+      | Some _ as why -> why
+      | None ->
+          let dts = operands nd in
+          if not (accepts nd dts) then
+            Some (strf "node %d's kind does not take its operands' dtypes" i)
+          else begin
+            types.(i) <-
+              (match nd with
+              | In k -> ins.(k)
+              | Coord _ -> D.Any D.Int64
+              | Const (dt, _) | Op1 (_, dt, _) -> dt
+              | Op2 (Binary _, _, _) -> dts.(0)
+              | Op2 (Compare _, _, _) -> D.Any D.Bool
+              | Op3 (_, _, _, _) -> dts.(1));
+            from (i + 1)
+          end
+  in
+  if nouts = 0 then Some "no output"
+  else if nins + nouts > max_operands then
+    Some
+      (strf "%d operands and outputs, more than %d" (nins + nouts) max_operands)
+  else
+    match from 0 with
+    | Some _ as why -> why
+    | None ->
+        Array.find_map
+          (fun o ->
+            if o < 0 || o >= n then Some (strf "output %d is no node" o)
+            else None)
+          outs
+
+(* The bytes of the program [ins], [nodes] and [outs], whose nodes have the
+   dtypes [types]. *)
+let encode ~ins nodes ~outs types =
+  let nins = Array.length ins and n = Array.length nodes in
+  let nouts = Array.length outs in
   let at_ins = header + (record * n) in
   let at_outs = at_ins + (4 * nins) in
   let b = Bytes.make (at_outs + (4 * nouts)) '\000' in
@@ -363,6 +386,12 @@ let v ~ins nodes ~outs =
   Array.iteri (fun k o -> set b (at_outs + (4 * k)) o) outs;
   Bytes.unsafe_to_string b
 
+let v ~ins nodes ~outs =
+  let types = Array.make (Array.length nodes) (D.Any D.Bool) in
+  match problem ~ins nodes ~outs types with
+  | Some why -> invalid_arg ("Nx_kernel.Prog.v: " ^ why)
+  | None -> encode ~ins nodes ~outs types
+
 let length p = get p 4
 let at_ins p = header + (record * length p)
 
@@ -381,24 +410,35 @@ let dtype p i =
   check_node "dtype" p i;
   dtype_at p (header + (record * i) + 8)
 
+(* The node whose record is the [i]th of the bytes [s], or [None] if the
+   record names none. *)
+let node_at s i =
+  let at = header + (record * i) in
+  let f k = get s (at + k) in
+  let a = f 12 and b = f 16 and c = f 20 in
+  match (f 0, D.of_code (f 8)) with
+  | 0, _ -> Some (In a)
+  | 1, _ -> Some (Coord a)
+  | 2, Some (D.Any d as dt) ->
+      Some (Const (dt, String.sub s (at + at_bits) (D.bytes d 1)))
+  | 3, Some dt -> Option.map (fun k -> Op1 (k, dt, a)) (op1_of (f 4))
+  | 4, _ -> Option.map (fun k -> Op2 (k, a, b)) (op2_of (f 4))
+  | 5, _ -> Option.map (fun k -> Op3 (k, a, b, c)) (op3_of (f 4))
+  | _ -> None
+
 let node p i =
   check_node "node" p i;
-  let at = header + (record * i) in
-  let f k = get p (at + k) in
-  let a = f 12 and b = f 16 and c = f 20 in
-  match f 0 with
-  | 0 -> In a
-  | 1 -> Coord a
-  | 2 ->
-      let (D.Any dt as d) = dtype_at p (at + 8) in
-      Const (d, String.sub p (at + at_bits) (D.bytes dt 1))
-  | 3 -> Op1 (op1_of (f 4), dtype_at p (at + 8), a)
-  | 4 -> Op2 (op2_of (f 4), a, b)
-  | _ -> Op3 (op3_of (f 4), a, b, c)
+  Option.get (node_at p i)
 
 let of_node ~ins n =
   let k = Array.length ins in
   v ~ins (Array.append (Array.init k (fun i -> In i)) [| n |]) ~outs:[| k |]
+
+(* The [n] values [f] gives, or [None] if one is [None]. *)
+let all n f =
+  let xs = Array.init n f in
+  if Array.for_all Option.is_some xs then Some (Array.map Option.get xs)
+  else None
 
 let of_string s =
   let n = String.length s in
@@ -410,8 +450,16 @@ let of_string s =
       || n <> header + (record * nnodes) + (4 * (nins + nouts))
     then None
     else
-      match
-        v ~ins:(ins s) (Array.init nnodes (node s)) ~outs:(outs s)
-      with
-      | p -> if String.equal p s then Some p else None
-      | exception Invalid_argument _ -> None
+      let at_ins = header + (record * nnodes) in
+      let dtype k = D.of_code (get s (at_ins + (4 * k))) in
+      match (all nins dtype, all nnodes (node_at s)) with
+      | Some ins, Some nodes -> (
+          let at_outs = at_ins + (4 * nins) in
+          let outs = Array.init nouts (fun k -> get s (at_outs + (4 * k))) in
+          let types = Array.make nnodes (D.Any D.Bool) in
+          match problem ~ins nodes ~outs types with
+          | Some _ -> None
+          | None ->
+              let p = encode ~ins nodes ~outs types in
+              if String.equal p s then Some p else None)
+      | _ -> None

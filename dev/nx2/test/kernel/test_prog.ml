@@ -451,6 +451,56 @@ let law_program d =
   equal ~msg:"equal programs are equal strings" bool true
     (P.v ~ins:d.ins d.nodes ~outs:d.outs = p)
 
+(* A program's bytes kept, cut short, or with one byte set. *)
+type edit = Keep | Cut of int | Set of int * char
+
+let edited =
+  let open Gen in
+  with_pp
+    (fun ppf (d, e) ->
+      match e with
+      | Keep -> Format.fprintf ppf "%a, kept" pp_drawn d
+      | Cut k -> Format.fprintf ppf "%a, cut to %d bytes" pp_drawn d k
+      | Set (i, c) -> Format.fprintf ppf "%a, byte %d set to %C" pp_drawn d i c)
+    (let* d = drawn in
+     let n =
+       String.length (P.v ~ins:d.ins d.nodes ~outs:d.outs :> string)
+     in
+     let+ e =
+       one_of
+         [
+           constant Keep;
+           map (fun k -> Cut k) (int_range 0 (n - 1));
+           map (fun (i, c) -> Set (i, c)) (pair (int_range 0 (n - 1)) char);
+         ]
+     in
+     (d, e))
+
+(* of_string answers a program only for bytes its readers and v give back,
+   and answers one for v's bytes, never for fewer. *)
+let law_of_string (d, e) =
+  let p = (P.v ~ins:d.ins d.nodes ~outs:d.outs :> string) in
+  let s =
+    match e with
+    | Keep -> p
+    | Cut k -> String.sub p 0 k
+    | Set (i, c) ->
+        let b = Bytes.of_string p in
+        Bytes.set b i c;
+        Bytes.to_string b
+  in
+  match P.of_string s with
+  | Some q ->
+      cover "a program" true;
+      equal ~msg:"cut short" bool false (match e with Cut _ -> true | _ -> false);
+      equal ~msg:"its bytes" string s (q :> string);
+      let nodes = Array.init (P.length q) (P.node q) in
+      equal ~msg:"v gives it back" string s
+        (P.v ~ins:(P.ins q) nodes ~outs:(P.outs q) :> string)
+  | None ->
+      cover "no program" true;
+      equal ~msg:"v's own bytes" bool false (s = p)
+
 (* One node over drawn operands, its references in and around the operands'
    range, and its program built by v from the operands' nodes. *)
 let one_node =
@@ -510,10 +560,10 @@ let test_program_refuses () =
   refuses ~msg:"a bool of 2" [| P.Const (D.Any D.Bool, "\002") |] [| 0 |];
   refuses ~msg:"no output" [| P.In 0 |] [||];
   refuses ~msg:"an output past the nodes" [| P.In 0 |] [| 1 |];
-  refuses ~msg:"more operands and outputs than a loop holds"
-    ~ins:(Array.make P.max_operands f32)
+  refuses ~msg:"seventeen operands and outputs"
+    ~ins:(Array.make 16 f32)
     [| P.In 0 |] [| 0 |];
-  ignore (P.v ~ins:(Array.make (P.max_operands - 1) f32) [| P.In 0 |] ~outs:[| 0 |])
+  ignore (P.v ~ins:(Array.make 15 f32) [| P.In 0 |] ~outs:[| 0 |])
 
 let test_readers_refuse () =
   let p = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |] in
@@ -549,6 +599,8 @@ let tests =
         prop "C reads what v was given, and so do the readers" drawn
           law_program;
         test "v refuses ill-formed programs" test_program_refuses;
+        prop "of_string answers exactly the bytes of a program" edited
+          law_of_string;
         prop "of_node is v over the operands' nodes, and round-trips" one_node
           law_of_node;
         test "readers refuse a node past the program" test_readers_refuse;

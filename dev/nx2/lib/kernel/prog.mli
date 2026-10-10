@@ -117,13 +117,14 @@ type op3 =
 
     Where each kind is defined. Every dtype has one order: [false < true];
     integers by value; floats by value, [-0] below [+0]; complex numbers by
-    real part, then imaginary part. The comparisons compare floats by value,
-    so [-0] equals [+0]; the order's [-0] below [+0] holds for [Maximum],
-    [Minimum] and sorting. A NaN, and a complex number with a NaN part, is a
-    NaN to each kind: comparisons with it are [false], [Maximum] and
-    [Minimum] give it. On booleans [Maximum] is [Or] and [Minimum] is
-    [And]. A kind keeps its operands' dtype where its type says so: the
-    absolute value of a complex number is no kind.
+    real part, then imaginary part. [Maximum] and [Minimum] follow it.
+    [Equal], [Not_equal], [Less] and [Less_equal] follow it too, but compare
+    floats, and complex numbers' parts, as IEEE 754 does: [-0] equals [+0]. A
+    NaN, and a complex number with a NaN part, is a NaN to each kind: every
+    comparison with it is [false] except [Not_equal], which is [true], and
+    [Maximum] and [Minimum] give it. On booleans [Maximum] is [Or] and
+    [Minimum] is [And]. A kind keeps its operands' dtype where its type
+    says so: the absolute value of a complex number is no kind.
 
     - [Neg], [Recip], [Add], [Sub], [Mul]: every dtype but booleans.
     - [Fdiv]: floats and complex. [Idiv]: integers.
@@ -188,8 +189,7 @@ type t = private string
     strings, and a descriptor that holds a program holds these bytes. *)
 
 val max_operands : int
-(** [max_operands] is the most operands plus outputs a program has: the most
-    a loop holds, [NX_MAX_OPERANDS] of [nx_array.h]. *)
+(** [max_operands] is [16], the most operands plus outputs a program has. *)
 
 val accepts : node -> Nx_array.Dtype.any array -> bool
 (** [accepts n dts] is [true] iff [n]'s kind takes nodes of the dtypes [dts],

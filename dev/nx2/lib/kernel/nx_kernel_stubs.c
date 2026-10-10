@@ -42,16 +42,6 @@ _Static_assert(NX_ARGMIN == 7, "one code per reduction");
 _Static_assert(offsetof(nx_spec_pad, fill) == 8, "at_fill");
 _Static_assert(offsetof(nx_spec_pad, geometry) == 24, "at_geometry");
 
-/* The most operands plus outputs of a loop, which bounds a program's. */
-intnat nx_kernel_max_operands(value unit) {
-  (void)unit;
-  return NX_MAX_OPERANDS;
-}
-
-value nx_kernel_max_operands_byte(value unit) {
-  return Val_long(nx_kernel_max_operands(unit));
-}
-
 /* The bits nx_dtype.h's store of [x] writes into an element of the float
    dtype [dt] of at most 16 bits. */
 intnat nx_kernel_narrow_bits(intnat dt, double x) {

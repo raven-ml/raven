@@ -833,7 +833,7 @@ let test_reduce_refuses () =
   refuses ~msg:"moments of integers" ~dt:i32 [| 0 |] [| (S.Moments, 0, i32) |];
   refuses ~msg:"a load too many" ~loads:[| S.Plain; Plain |] [| 0 |] [| sum |];
   refuses ~msg:"results past the most operands" [| 0 |]
-    [| (S.Moments, 0, f32); (S.Arg Max, 0, f32) |];
+    (Array.make 8 (S.Arg Max, 0, f32));
   raises_match ~msg:"a scan of moments" Exn.invalid_arg (fun () ->
       S.scan (p f32) ~loads:[| S.Plain |] ~axis:0 (S.Moments, 0, f32));
   let y = S.shapes (S.scan (p f32) ~loads:[| S.Plain |] ~axis:1 (S.Arg Max, 0, f32)) in
