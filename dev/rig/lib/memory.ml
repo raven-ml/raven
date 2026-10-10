@@ -420,14 +420,13 @@ let cache_key (e : entry) =
   | Driver_memory { memory; _ } -> key e.bytes memory
   | Io_memory _ | Kept _ -> invalid_arg "Rig: io or kept memory in a cache"
 
-(* Holds whose release is still to run: their stamps, release and the
-   generation they were made in. *)
+(* Holds whose release is still to run. *)
 let holds_lock = Lock.create ()
-let holds : (int * (unit -> unit) * int) list ref = ref []
+let holds : hold_release list ref = ref []
 
 (* A hold's release is due once each of its points is reached on a live device,
    and each of its lost devices is Stopped. *)
-let hold_due (st, _, _) =
+let hold_due (Hold_release { stamps = st; _ }) =
   for_all_points
     (fun p ->
       let d = Dev.of_index (Point.index p) in
@@ -436,16 +435,16 @@ let hold_due (st, _, _) =
 
 (* A hold made before a fork is forgotten in the child: its release would call
    the parent's drivers. *)
-let forgotten (st, _, generation) =
+let forgotten (Hold_release { stamps; generation; _ }) =
   generation <> Dev.generation ()
   && begin
-    stamps_unref st;
+    stamps_unref stamps;
     true
   end
 
-(* Runs [release] as a call in flight on each device of [st] that is not
+(* Runs [release value] as a call in flight on each device of [st] that is not
    lost. *)
-let run_release (st, release, _) =
+let run_release (Hold_release { stamps = st; value; release; _ }) =
   let devices = ref [] in
   iter_points
     (fun p ->
@@ -454,7 +453,7 @@ let run_release (st, release, _) =
         devices := d :: !devices)
     st;
   let rec go = function
-    | [] -> release ()
+    | [] -> release value
     | d :: ds -> Dev.counted d (fun () -> go ds)
   in
   Fun.protect ~finally:(fun () -> stamps_unref st) (fun () -> go !devices)
@@ -540,9 +539,7 @@ let route d = function
       if cached then cache d e else d.retiring <- e :: d.retiring;
       Dev.release d
   | Image (loaded, code) -> defer d (Unload (loaded, code))
-  | Release { stamps; release; generation } ->
-      Lock.protect holds_lock (fun () ->
-          holds := (stamps, release, generation) :: !holds)
+  | Release h -> Lock.protect holds_lock (fun () -> holds := h :: !holds)
 
 type fate = Stays | Cached | Freed
 

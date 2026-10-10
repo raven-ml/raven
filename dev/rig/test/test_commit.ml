@@ -157,7 +157,7 @@ let scratch =
 (* Submits once on [d] a submission with a hold whose release sets
    [released], and drops both: the hold is unreachable once this returns. *)
 let[@inline never] submit_held d released =
-  let h = H.make (fun () -> Atomic.set released true) in
+  let h = H.make ~release:(fun () -> Atomic.set released true) () in
   ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 
 (* A hold's release runs once its stamp is reached, in a drain: without a wait,

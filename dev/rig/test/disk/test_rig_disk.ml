@@ -791,7 +791,7 @@ let test_drain_raises kind =
         fun () -> Rig_disk.of_file path
     | Created -> fun () -> Rig_disk.create_file path 3
   in
-  ignore (Rig.Hold.make (fun () -> raise Exit));
+  ignore (Rig.Hold.make ~release:(fun () -> raise Exit) ());
   Gc.full_major ();
   raises Exit opened;
   match kind with

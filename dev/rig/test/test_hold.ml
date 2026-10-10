@@ -25,9 +25,11 @@ let drain d = ignore (Sys.opaque_identity (B.create d 8))
    in [runs], and drops both: the hold is unreachable once this returns. *)
 let[@inline never] submit_held ?(release = ignore) d runs =
   let h =
-    H.make (fun () ->
+    H.make
+      ~release:(fun () ->
         Atomic.incr runs;
         release ())
+      ()
   in
   Rig.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 
@@ -39,7 +41,7 @@ let test_two_devices () =
   let d, pd = P.open_ "hold:first" and e, pe = P.open_ "hold:second" in
   let runs = Atomic.make 0 in
   (fun () ->
-    let h = H.make (fun () -> Atomic.incr runs) in
+    let h = H.make ~release:(fun () -> Atomic.incr runs) () in
     let on x = Sub.make ~hold:h ~reads:0 ~writes:0 x [||] in
     ignore (submit (on d));
     ignore (submit (on e)))
@@ -70,11 +72,39 @@ let test_release () =
 (* A hold with no submission is released once unreachable. *)
 let test_release_unused () =
   let runs = Atomic.make 0 in
-  (fun () -> ignore (Sys.opaque_identity (H.make (fun () -> Atomic.incr runs))))
+  (fun () ->
+    let h = H.make ~release:(fun () -> Atomic.incr runs) () in
+    ignore (Sys.opaque_identity h))
     ();
   Gc.full_major ();
   drain Rig.host;
   equal int 1 (Atomic.get runs)
+
+(* A hold keeps its value reachable until its work is done, gives it to its
+   release, and keeps it no longer: with a release and without one. *)
+let[@inline never] hold_bytes ?release d w =
+  let v = Bytes.of_string "held" in
+  Weak.set w 0 (Some v);
+  let h = H.make ?release v in
+  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+
+let keeps_value release name =
+  let d, p = P.open_ name in
+  let w = Weak.create 1 in
+  hold_bytes ?release d w;
+  Gc.full_major ();
+  drain d;
+  equal ~msg:"while its work is undone" bool true (Weak.check w 0);
+  ignore (P.run p);
+  drain d;
+  Gc.full_major ();
+  equal ~msg:"once released" bool false (Weak.check w 0)
+
+let test_keeps_value () =
+  let seen = ref "" in
+  keeps_value (Some (fun v -> seen := Bytes.to_string v)) "hold:keeps";
+  equal ~msg:"the release's argument" string "held" !seen;
+  keeps_value None "hold:keeps-no-release"
 
 (* On a lost device a hold's release waits for the stop's answer and for the
    word to reach the last value: an Unknown answer with a word short of it
@@ -149,7 +179,7 @@ let test_release_transport_fault () =
    device's submission made with it did. *)
 let test_hold_orders_nothing () =
   let d, _ = P.open_ "hold:orders" and e, pe = P.open_ "hold:orders-other" in
-  let h = H.make ignore in
+  let h = H.make () in
   ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 e [||]));
   ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]));
   Rig.wait d (Rig.submitted d);
@@ -334,6 +364,7 @@ let tests =
         test ~timeout:10. "a drain that finds a transport's fault returns"
           test_release_transport_fault;
         test "a hold orders no work" test_hold_orders_nothing;
+        test "a hold keeps its value until its release" test_keeps_value;
       ];
     group ~timeout "fixed memory"
       [

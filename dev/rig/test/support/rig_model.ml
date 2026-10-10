@@ -1725,7 +1725,7 @@ let hold_ref hc outcome =
 let hold_sys hc =
   if Atomic.get hc.used then raise Skipped;
   let runs = hc.runs in
-  let h = Rig.Hold.make (fun () -> Atomic.incr runs) in
+  let h = Rig.Hold.make ~release:(fun () -> Atomic.incr runs) () in
   Atomic.set hc.used true;
   Atomic.set hc.sh (Some h)
 

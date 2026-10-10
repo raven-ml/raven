@@ -29,7 +29,7 @@ same way.
 | Function                                     | Purpose                                 |
 | -------------------------------------------- | --------------------------------------- |
 | `Submission.Fill { fill; arg; _ }`           | Work that is a C function               |
-| `Hold.make release`                          | What a step's release frees             |
+| `Hold.make ~release v`                       | What a step's release frees             |
 | `Submission.make ~hold ~fixed ~reads ~writes ...` | A step's submission, its fixed memory and its run's arity |
 | `Submission.Run.make ()`                     | Storage for one submit at a time         |
 | `submit s ~run ~reads ~writes ~waits`        | Run it once with these buffers           |

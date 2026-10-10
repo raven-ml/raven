@@ -115,7 +115,7 @@ let run g (gpu : Abi.Gpu.t) =
 
   (* The step: a hold that keeps the image, the launch's memory as fixed
      memory, and the arrays passed to each submit. *)
-  let hold = Hold.make (fun () -> ignore (Sys.opaque_identity p)) in
+  let hold = Hold.make p in
   let part =
     { Submission.queue = "COMPUTE:0"; after = [||]; work = Words words }
   in

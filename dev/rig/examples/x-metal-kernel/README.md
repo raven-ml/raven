@@ -30,7 +30,7 @@ dune exec ./main.exe
 | `Image.load g metallib`            | The image on `g`                            |
 | `Image.entry p "add"`              | Its kernel's pipeline                       |
 | `cap.icb buffer dispatches`        | Record dispatches once                      |
-| `Hold.make release`                | Keep the step's objects until its work ends |
+| `Hold.make ~release v`             | Keep the step's objects until its work ends |
 
 ## The metallib
 

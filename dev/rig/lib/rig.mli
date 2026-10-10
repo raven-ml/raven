@@ -695,25 +695,26 @@ end
 
 (** What submissions' work uses beyond memory.
 
-    A hold retains what its release frees, such as the driver objects a graph
-    or an indirect command buffer makes and the images they name, until every
-    submission made with it ({!Submission.make}) is done. It holds no memory
-    and orders no work: a submission orders its memory itself, its fixed
-    memory included. *)
+    A hold keeps a value reachable, such as the images a step's work names or
+    the driver objects a graph or an indirect command buffer makes, until every
+    submission made with it ({!Submission.make}) is done, then releases it. It
+    holds no memory and orders no work: a submission orders its memory itself,
+    its fixed memory included. *)
 module Hold : sig
   type t
   (** The type for holds. *)
 
-  val make : (unit -> unit) -> t
-  (** [make release] is a hold: [release] runs once, after the hold is
-      unreachable and every submission made with it is done on each of its
-      devices, or, on a lost device, once that device's stop returned with its
-      word at its last value. It never runs while a lost device's word stays
-      below its last value, and never in a child of [fork] for a hold made
-      before the fork. It runs in the next {{!reclaim}drain} of any device, such
-      as a {!Buffer.copy}'s, or as a lost device's stop returns. It holds no
-      lock of this library, must not call it, and must not raise: an exception
-      it raises is raised again by the call whose drain ran it. It counts as a
+  val make : ?release:('a -> unit) -> 'a -> t
+  (** [make ~release v] is a hold of [v]: it keeps [v] reachable, then calls
+      [release v] (defaults to nothing) once, after the hold is unreachable and
+      every submission made with it is done on each of its devices, or, on a
+      lost device, once that device's stop returned with its word at its last
+      value. [release] never runs while a lost device's word stays below its
+      last value, and never in a child of [fork] for a hold made before the
+      fork. It runs in the next {{!reclaim}drain} of any device, such as a
+      {!Buffer.copy}'s, or as a lost device's stop returns. It holds no lock of
+      this library, must not call it, and must not raise: an exception it
+      raises is raised again by the call whose drain ran it. It counts as a
       call in flight on each device of the hold that is not lost, so no
       {!Rig_edge.Driver.stop} of those devices runs beside it. *)
 end
@@ -755,7 +756,7 @@ module Image : sig
       of {!Rig_edge.Driver.entry}), such as a kernel descriptor's address, a
       [CUfunction] or an [MTLComputePipelineState], or [None] if [i] has no
       function [f]. Work that runs [f] keeps [i] reachable until it is done,
-      such as a {!Hold}'s release that holds it.
+      such as by a hold of [i] ({!Hold.make}).
 
       Raises [Invalid_argument] if [i]'s device cannot run [f]
       ({!Rig_edge.Driver.entry}), and {!Lost} if [i]'s device is lost. *)

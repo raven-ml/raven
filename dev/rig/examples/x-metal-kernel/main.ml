@@ -68,16 +68,13 @@ let () =
     in
     let icb = Result.get_ok (cap.icb (Buffer.handle args) [| dispatch |]) in
 
-    (* The step: a hold whose release ends the indirect command buffer and
-       keeps the image until then, the arguments the buffer reads as fixed
+    (* The step: a hold of the indirect command buffer and the image, whose
+       release ends the buffer, the arguments the buffer reads as fixed
        memory, and its arrays passed to each submit. *)
     let fill_arg = Buffer.create g 16 in
     words fill_arg [ Nativeint.to_int icb.handle; 1 ];
-    let hold =
-      Hold.make (fun () ->
-          icb.release ();
-          ignore (Sys.opaque_identity p))
-    in
+    let release ((icb : Rig_metal_abi.icb), _) = icb.release () in
+    let hold = Hold.make ~release (icb, p) in
     let fill =
       Submission.Fill
         { fill = run (); arg = fill_arg; ring_units = 0; segment_bytes = 0 }

@@ -7,4 +7,4 @@
 
 type t = Def.hold
 
-val make : (unit -> unit) -> t
+val make : ?release:('a -> unit) -> 'a -> t

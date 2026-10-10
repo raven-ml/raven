@@ -227,9 +227,19 @@ type event =
   | Overwritten of { device : device; time : int; runs : int }
   | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
 
+(** The type for a hold's release: its stamps, the value it keeps, what it
+    calls with it, and the generation of forks it was made in. *)
+type hold_release =
+  | Hold_release : {
+      stamps : int;
+      value : 'a;
+      release : 'a -> unit;
+      generation : int;
+    }
+      -> hold_release
+
 (** The type for what a release list holds. *)
 type released =
   | Memory of entry
   | Image of loaded * entry option  (** The image and its code's memory. *)
-  | Release of { stamps : int; release : unit -> unit; generation : int }
-      (** A hold's, with the generation of forks it was made in. *)
+  | Release of hold_release

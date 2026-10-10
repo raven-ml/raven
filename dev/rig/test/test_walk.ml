@@ -206,7 +206,7 @@ let wait_transport =
    leaving the hold and its submission unreachable. *)
 let[@inline never] submit_held d failure =
   let release () = if failure = Some Raise then raise Exit in
-  let h = Rig.Hold.make release in
+  let h = Rig.Hold.make ~release () in
   let run = Sub.Run.make () in
   Rig.Point.wait (once ~run (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 

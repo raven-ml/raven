@@ -37,7 +37,7 @@ let show name b =
 let step d =
   let k = ints d [ 1l; 10l; 100l; 1000l ] in
   let arg = Buffer.create d 32 in
-  let hold = Hold.make (fun () -> print_endline "step released") in
+  let hold = Hold.make ~release:(fun () -> print_endline "step released") () in
   let fill =
     Submission.Fill { fill = scale (); arg; ring_units = 0; segment_bytes = 0 }
   in

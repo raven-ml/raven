@@ -286,7 +286,7 @@ let test_hold () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let runs = Atomic.make 0 in
   let release () = Atomic.incr runs in
-  let h = ref (Some (Rig.Hold.make release)) in
+  let h = ref (Some (Rig.Hold.make ~release ())) in
   let lines, ended =
     in_child (fun () ->
         h := None;
