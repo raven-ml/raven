@@ -281,8 +281,9 @@ static enum rig_claim follow_uses(enum rig_claim a, struct rig_stamps *s) {
 
 /* The answer for the work of the stamps [s] an access must follow: that
    of the last write, or of every use if [every]. A use word that a
-   submission reserved holds no value until its first raise. */
-static enum rig_claim follow_stamps(struct rig_stamps *s, int every) {
+   submission reserved holds no value until its first raise. Out of line,
+   so that a claim of memory with no stamps saves no registers for it. */
+static __attribute__((noinline)) enum rig_claim follow_stamps(struct rig_stamps *s, int every) {
   uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
   enum rig_claim a = w != 0 ? follow(RIG_CLAIMED, w) : RIG_CLAIMED;
   return every ? follow_uses(a, s) : a;
