@@ -30,6 +30,7 @@ let named facts = List.map (fun (n, x, _) -> (n, x)) (Array.to_list facts)
 (* kernels.ml's values as kernels.h writes them. *)
 
 let kind = function K.Bf16 -> "bf16" | F16 -> "f16" | S8 -> "s8"
+let axis = function K.K -> "k" | M -> "m" | N -> "n"
 let acc = function K.F32 -> "f32" | F64 -> "f64" | I64 -> "i64"
 let form = function K.Column -> "column" | Across -> "across"
 
@@ -43,7 +44,7 @@ let kernel_row (name, instance) =
     match instance with
     | K.Zero -> [ "ZERO" ]
     | Pack -> [ "PACK" ]
-    | Wmma (k, t) -> [ "WMMA"; kind k; tile t ]
+    | Wmma (k, a, b, t) -> [ "WMMA"; kind k; axis a; axis b; tile t ]
     | Simt (sum, side) -> [ "SIMT"; acc sum; string_of_int side ]
     | Skinny (sum, f) -> [ "SKINNY"; acc sum; form f ]
   in

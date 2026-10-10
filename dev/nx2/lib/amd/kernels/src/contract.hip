@@ -11,9 +11,10 @@
      on gfx12's WMMA 16 x 16 x 16. Each output sums its k in steps of 16
      in increasing k, one WMMA a step.
 
-       global --16-byte loads (zero past the extents), two k-tiles ahead-->
-       registers --> one of two local data share k-tiles --8 k a lane-->
-       fragments --WMMA-->
+       global --16-byte loads (zero past the extents; transposing 8 x 8
+       blocks for an operand whose free axis is contiguous), two k-tiles
+       ahead--> registers --> one of two local data share k-tiles, rows of
+       k --8 k a lane--> fragments --WMMA-->
        accumulators --> combine (splits) --> + init --> y
 
    - simt (m > 16): float32 or float64 sums by fma, integer sums wrapping
@@ -26,8 +27,9 @@
 
    In each, [splits] ranges of k (whole k-tiles for wmma and simt) combine
    in range order (combine.h); init then enters the sum, and the result
-   rounds once to y's dtype. A WMMA operand whose rows along k are not
-   16-byte vectors is first packed into rows that are (pack): the same
+   rounds once to y's dtype. A WMMA operand whose rows along its
+   contiguous axis are not 16-byte vectors, or in a layout with no
+   instance, is first packed into rows of k that are (pack): the same
    values in the same tiles, so the same bits. A SIMT or skinny operand of
    a dtype other than its accumulator's is packed into the accumulator's
    dtype, exactly, so these kernels read their own dtype alone. */
@@ -213,6 +215,11 @@ typedef int i32x2 __attribute__((ext_vector_type(2)));
 #define KIND_f16 1
 #define KIND_s8 2
 
+/* An operand's contiguous axis: k, or its free axis (m for a, n for b). */
+#define AXIS_k 0
+#define AXIS_m 1
+#define AXIS_n 1
+
 /* A wave's 16 x 16 tile of sums: lane l holds rows 8 (l / 16) + e, e < 8,
    of column l % 16. Its operand fragments: lane l holds k 8 (l / 16) + e
    of row l % 16 (a's rows m, b's rows n), 8 elements of 16 or 8 bits. */
@@ -250,21 +257,38 @@ template <> struct Wmma<KIND_s8> {
 
 /* One operand of a workgroup: [R] rows (m for a, n for b) from [r0], their
    k-tiles of [BKB] bytes loaded as 16-byte chunks, [CH] a work-item, into
-   rows of [LDB] bytes of the local data share. Rows hold whole vectors, k's
-   end included: the plan packs an operand whose do not, its rows padded
-   with zeros. */
-template <int R, int BKB, int ES, int LDB, int THREADS> struct Operand {
+   rows of [LDB] bytes of the local data share, chunk q of row r at
+   r * LDB + 16 q. Along [AXIS]'s contiguous axis the rows hold whole
+   vectors, k's end included: the plan packs an operand whose do not, its
+   rows padded with zeros.
+
+   With k contiguous ([AXIS] is AXIS_k), a chunk is one row's k as they
+   lie, a row's chunks on consecutive work-items. With the rows contiguous
+   (16-bit elements), gfx12's transposing load reads a chunk: each group of
+   8 lanes reads 8 runs of 8 rows, one run a k, and lane j of the group
+   receives row j's 8 k, so a group holds 8 consecutive rows' chunk q.
+   Either way the local data share holds the same values. */
+template <int R, int BKB, int ES, int LDB, int THREADS, int AXIS>
+struct Operand {
   static constexpr int C = BKB / 16;         /* chunks a row */
   static constexpr int CH = R * C / THREADS; /* chunks a work-item */
   static_assert(R * C % THREADS == 0, "whole chunks a work-item");
+  static_assert(AXIS == AXIS_k || (ES == 2 && R % 8 == 0),
+                "a transposing load reads 8 rows of 16-bit elements");
 
   const char *base; /* row 0, k 0 */
-  int64_t lead;     /* bytes from a row to the next */
+  int64_t lead;     /* bytes from a row, or a k, to the next */
   int rows, k;      /* rows from r0 to the extent; k in elements */
 
-  /* Whether chunk [e] of k-tile [kt] is inside the extents. */
+  /* The row and chunk of a k-tile of chunk [e]. */
+  DEVICE static int row(int e) { return AXIS == AXIS_k ? e / C : e % R; }
+  DEVICE static int chunk(int e) { return AXIS == AXIS_k ? e % C : e / R; }
+
+  /* Whether chunk [e] of k-tile [kt] is inside the extents. With the rows
+     contiguous, the plan admits rows and k of whole chunks, so a group's
+     chunks are all inside or all outside. */
   DEVICE bool inside(int e, int kt) const {
-    return e / C < rows && kt * (BKB / ES) + e % C * (16 / ES) < k;
+    return row(e) < rows && kt * (BKB / ES) + chunk(e) * (16 / ES) < k;
   }
 
   /* This work-item's chunks of k-tile [kt], as read. Every chunk is one
@@ -273,9 +297,21 @@ template <int R, int BKB, int ES, int LDB, int THREADS> struct Operand {
   DEVICE void load(u32x4 (&v)[CH], int kt, int tid) const {
 #pragma unroll
     for (int it = 0; it < CH; it++) {
-      const int e = tid + it * THREADS;
-      const int64_t at = e / C * lead + (int64_t)kt * BKB + e % C * 16;
-      v[it] = *(const u32x4 *)(inside(e, kt) ? base + at : base);
+      const int e = tid + it * THREADS, r = row(e), q = chunk(e);
+      if constexpr (AXIS == AXIS_k) {
+        const int64_t at = r * lead + (int64_t)kt * BKB + q * 16;
+        v[it] = *(const u32x4 *)(inside(e, kt) ? base + at : base);
+      } else {
+        /* Lane j of a group reads the run from row r - j at its own k. */
+        const int j = e % 8;
+        const int64_t at =
+            ((int64_t)kt * (BKB / ES) + q * 8 + j) * lead + (r - j) * ES;
+        typedef short short8 __attribute__((ext_vector_type(8)));
+        typedef __attribute__((address_space(1))) short8 *global_short8;
+        v[it] = __builtin_bit_cast(
+            u32x4, __builtin_amdgcn_global_load_tr_b128_v8i16(
+                       (global_short8)(inside(e, kt) ? base + at : base)));
+      }
     }
   }
 
@@ -287,7 +323,7 @@ template <int R, int BKB, int ES, int LDB, int THREADS> struct Operand {
 #pragma unroll
     for (int it = 0; it < CH; it++) {
       const int e = tid + it * THREADS;
-      *(u32x4 *)(s + e / C * LDB + e % C * 16) =
+      *(u32x4 *)(s + row(e) * LDB + chunk(e) * 16) =
           inside(e, kt) ? v[it] : (u32x4)0;
     }
   }
@@ -299,7 +335,7 @@ DEVICE F fragment(const uint8_t *s, int r, int k, int ldb, int es) {
   return *(const F *)(s + r * ldb + k * es);
 }
 
-template <int KIND, typename Tile>
+template <int KIND, int AXIS_A, int AXIS_B, typename Tile>
 DEVICE void wmma_contract(const contract_params &p) {
   constexpr int BM = Tile::BM, BN = Tile::BN, BKB = Tile::BKB, WM = Tile::WM,
                 WN = Tile::WN;
@@ -310,8 +346,8 @@ DEVICE void wmma_contract(const contract_params &p) {
   constexpr int WAVES_N = BN / WN, THREADS = (BM / WM) * WAVES_N * 32;
   constexpr int MI = WM / 16, NI = WN / 16, KS = BK / 16;
   constexpr int STAGE = (BM + BN) * LDB, CAP = 2 * STAGE;
-  typedef Operand<BM, BKB, ES, LDB, THREADS> A;
-  typedef Operand<BN, BKB, ES, LDB, THREADS> B;
+  typedef Operand<BM, BKB, ES, LDB, THREADS, AXIS_A> A;
+  typedef Operand<BN, BKB, ES, LDB, THREADS, AXIS_B> B;
   static SHARED __attribute__((aligned(16))) uint8_t smem[CAP];
 
   const int tid = item(), lane = tid % 32, wave = tid / 32;
@@ -330,9 +366,9 @@ DEVICE void wmma_contract(const contract_params &p) {
   const int KT = (split + 1) * kts / p.splits - kt0;
 
   const A a = {(const char *)p.a + (z * p.sa[0] + m0 * p.sa[1]) * ES,
-               p.sa[1] * ES, p.m - m0, p.k};
+               p.sa[AXIS_A == AXIS_k ? 1 : 2] * ES, p.m - m0, p.k};
   const B b = {(const char *)p.b + (z * p.sb[0] + n0 * p.sb[1]) * ES,
-               p.sb[1] * ES, p.n - n0, p.k};
+               p.sb[AXIS_B == AXIS_k ? 1 : 2] * ES, p.n - n0, p.k};
 
   typename W::tile acc[MI][NI] = {};
 
@@ -820,9 +856,9 @@ NX_AMD_TILES(TILE)
 #define ZERO(name, ...)
 #define PACK(name, ...)                                                        \
   KERNEL SIZED(NX_CONTRACT_THREADS) void name(pack_params p) { pack_rows(p); }
-#define WMMA(name, kind, tile)                                                \
+#define WMMA(name, kind, la, lb, tile)                                        \
   KERNEL SIZED(tile::THREADS) void name(contract_params p) {                   \
-    wmma_contract<KIND_##kind, tile>(p);                                       \
+    wmma_contract<KIND_##kind, AXIS_##la, AXIS_##lb, tile>(p);                 \
   }
 #define SIMT(name, acc, bm)                                                    \
   KERNEL SIZED(NX_CONTRACT_THREADS) void name(contract_params p) {             \

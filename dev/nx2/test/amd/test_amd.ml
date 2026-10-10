@@ -508,6 +508,9 @@ let shapes =
     (1, 64, 64, 8192);
     (1, 1, 64, 20000);
     (1, 5, 300, 4100);
+    (* The 128 x 128 tile, partial in m, n and k, its rows and k whole
+       vectors: each layout reads its operands as they lie. *)
+    (2, 1032, 1160, 72);
   ]
 
 let configs =
@@ -595,6 +598,7 @@ let shape_cases =
           (2, 130, 200, 300);
           (1, 64, 64, 8192);
           (1, 3, 100, 5000);
+          (2, 1032, 1160, 72);
         ])
     configs
 

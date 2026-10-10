@@ -12,6 +12,7 @@
 
 (* An instance's arguments, as NX_AMD_KERNELS names them. *)
 type kind = Bf16 | F16 | S8
+type axis = K | M | N
 type acc = F32 | F64 | I64
 type form = Column | Across
 type tile = T128x128 | T64x64 | T16x64
@@ -19,7 +20,7 @@ type tile = T128x128 | T64x64 | T16x64
 type instance =
   | Zero
   | Pack
-  | Wmma of kind * tile
+  | Wmma of kind * axis * axis * tile
   | Simt of acc * int
   | Skinny of acc * form
 
@@ -28,12 +29,18 @@ let kernels =
   [|
     ("zero_u32", Zero);
     ("pack", Pack);
-    ("contract_bf16_t128x128", Wmma (Bf16, T128x128));
-    ("contract_bf16_t64x64", Wmma (Bf16, T64x64));
-    ("contract_bf16_t16x64", Wmma (Bf16, T16x64));
-    ("contract_f16_t128x128", Wmma (F16, T128x128));
-    ("contract_f16_t64x64", Wmma (F16, T64x64));
-    ("contract_s8_t128x128", Wmma (S8, T128x128));
+    ("contract_bf16_kk_t128x128", Wmma (Bf16, K, K, T128x128));
+    ("contract_bf16_kn_t128x128", Wmma (Bf16, K, N, T128x128));
+    ("contract_bf16_mk_t128x128", Wmma (Bf16, M, K, T128x128));
+    ("contract_bf16_mn_t128x128", Wmma (Bf16, M, N, T128x128));
+    ("contract_bf16_kk_t64x64", Wmma (Bf16, K, K, T64x64));
+    ("contract_bf16_kk_t16x64", Wmma (Bf16, K, K, T16x64));
+    ("contract_f16_kk_t128x128", Wmma (F16, K, K, T128x128));
+    ("contract_f16_kn_t128x128", Wmma (F16, K, N, T128x128));
+    ("contract_f16_mk_t128x128", Wmma (F16, M, K, T128x128));
+    ("contract_f16_mn_t128x128", Wmma (F16, M, N, T128x128));
+    ("contract_f16_kk_t64x64", Wmma (F16, K, K, T64x64));
+    ("contract_s8_kk_t128x128", Wmma (S8, K, K, T128x128));
     ("contract_simt_f32_128", Simt (F32, 128));
     ("contract_simt_f32_64", Simt (F32, 64));
     ("contract_skinny_f32", Skinny (F32, Column));

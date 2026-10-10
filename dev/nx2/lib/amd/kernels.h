@@ -22,8 +22,8 @@
 /* X(name, FAMILY, ...) for every kernel of the code object, in enum order;
    the arguments after the family are its instance's:
    - ZERO, PACK: none.
-   - WMMA (contract.hip): the operands' kind (bf16, f16, s8) and the tile.
-     Both operands k contiguous.
+   - WMMA (contract.hip): the operands' kind (bf16, f16, s8), a's and b's
+     contiguous axis (k, or their free axis m and n) and the tile.
    - SIMT (contract.hip): the accumulator's type and the tile's side.
    - SKINNY (contract.hip): the accumulator's type and the form: column,
      b's k axis contiguous, or across, its n axis.
@@ -33,22 +33,29 @@
 #define NX_AMD_KERNELS(X)                                                     \
   /* every split sum */                                                       \
   X(zero_u32, ZERO)                                                          \
-  /* f8 operands, rows not of vectors, operands whose free axis is           \
-     contiguous */                                                           \
+  /* f8 operands, rows not of vectors, layouts with no instance */          \
   X(pack, PACK)                                                              \
   /* bf16 1024 to 8192, 4096x14336x4096, the gpt-oss prefill rows,          \
      64x512x512x512 */                                                       \
-  X(contract_bf16_t128x128, WMMA, bf16, t128x128)                           \
+  X(contract_bf16_kk_t128x128, WMMA, bf16, k, k, t128x128)                  \
+  /* the 4096 rows in layouts kf, fk and ff */                               \
+  X(contract_bf16_kn_t128x128, WMMA, bf16, k, n, t128x128)                  \
+  X(contract_bf16_mk_t128x128, WMMA, bf16, m, k, t128x128)                  \
+  X(contract_bf16_mn_t128x128, WMMA, bf16, m, n, t128x128)                  \
   /* bf16 256, 512 */                                                        \
-  X(contract_bf16_t64x64, WMMA, bf16, t64x64)                               \
+  X(contract_bf16_kk_t64x64, WMMA, bf16, k, k, t64x64)                      \
   /* bf16 decode: 1x5120x2880, 1x201088x2880 */                              \
-  X(contract_bf16_t16x64, WMMA, bf16, t16x64)                               \
+  X(contract_bf16_kk_t16x64, WMMA, bf16, k, k, t16x64)                      \
   /* f16 1024 to 8192 */                                                     \
-  X(contract_f16_t128x128, WMMA, f16, t128x128)                             \
+  X(contract_f16_kk_t128x128, WMMA, f16, k, k, t128x128)                    \
+  /* the 4096 rows in layouts kf, fk and ff */                               \
+  X(contract_f16_kn_t128x128, WMMA, f16, k, n, t128x128)                    \
+  X(contract_f16_mk_t128x128, WMMA, f16, m, k, t128x128)                    \
+  X(contract_f16_mn_t128x128, WMMA, f16, m, n, t128x128)                    \
   /* f16 256, 512 */                                                         \
-  X(contract_f16_t64x64, WMMA, f16, t64x64)                                 \
+  X(contract_f16_kk_t64x64, WMMA, f16, k, k, t64x64)                        \
   /* int8 4096 */                                                            \
-  X(contract_s8_t128x128, WMMA, s8, t128x128)                               \
+  X(contract_s8_kk_t128x128, WMMA, s8, k, k, t128x128)                      \
   /* f32 2048 to 8192 and the 4096 layouts */                                \
   X(contract_simt_f32_128, SIMT, f32, 128)                                  \
   /* f32 256 to 1024 */                                                      \

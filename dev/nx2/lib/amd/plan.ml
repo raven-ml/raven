@@ -68,14 +68,16 @@ let zero_kernel = index_from 0 K.Zero
 
 (* The index of an instance, or -1. Loops with their state as arguments: a local
    loop closing over them would allocate its closure on every call. *)
-let rec find_wmma_from k kind t =
+let rec find_wmma_from k kind a b t =
   if k = count then -1
   else
     match snd K.kernels.(k) with
-    | Wmma (kind', t') when kind' == kind && t' == t -> k
-    | _ -> find_wmma_from (k + 1) kind t
+    | Wmma (kind', a', b', t')
+      when kind' == kind && a' == a && b' == b && t' == t ->
+        k
+    | _ -> find_wmma_from (k + 1) kind a b t
 
-let find_wmma kind t = find_wmma_from 0 kind t
+let find_wmma kind a b t = find_wmma_from 0 kind a b t
 
 let rec find_simt_from k sum side =
   if k = count then -1
@@ -301,14 +303,14 @@ let efficiency : K.tile -> int = function
   | T16x64 -> 33
 
 (* The index in [K.tiles] of the WMMA tile of a product among those [kind] has
-   an instance of: the one of least cost, by its shape alone; m <= 16 takes the
-   16-row tile, and only it. -1 if [kind] has none for the shape: the SIMT or
-   skinny kernels sum it. *)
+   an instance of with k contiguous: the one of least cost, by its shape alone;
+   m <= 16 takes the 16-row tile, and only it. -1 if [kind] has none for the
+   shape: the SIMT or skinny kernels sum it. *)
 let wmma_tile c kind =
   let best = ref (-1) in
   for i = 0 to Array.length K.tiles - 1 do
     let t = K.tiles.(i) in
-    if find_wmma kind t >= 0 && c.m <= 16 = (t == K.T16x64) then begin
+    if find_wmma kind K.K K.K t >= 0 && c.m <= 16 = (t == K.T16x64) then begin
       let s = K.shape t in
       cost c 1 s.bm s.bn (efficiency t);
       if !best < 0 || cheaper c then begin
@@ -319,28 +321,43 @@ let wmma_tile c kind =
   done;
   !best
 
-(* The WMMA kernels, of [kind] on the tile [t]. They read rows of k as whole
-   vectors and never past a row's last: another operand, or one whose k ends
-   inside a vector, is packed into the workspace with k contiguous, its rows
-   padded with zeros. The parameters keep the operands' own dtypes: a pack
+(* Whether the WMMA kernels read [o], of [rows] rows, as it lies: vectors of
+   [per] elements along its contiguous axis, its rows whole vectors where they
+   are contiguous, k whole vectors ([whole]), and no float8. *)
+let readable o rows per whole =
+  rows_vectors o && (not (is_f8 o.dtype)) && whole
+  && ((not (free_contiguous o.s)) || rows mod per = 0)
+
+(* The WMMA kernels, of [kind] on the tile [t]. They read whole vectors along
+   an operand's contiguous axis and never past its extent: an operand whose k,
+   or whose rows where they are contiguous, end inside a vector, or in a layout
+   [t] has no instance of, is packed into the workspace with k contiguous, its
+   rows padded with zeros. The parameters keep the operands' own dtypes: a pack
    changes none. *)
 let plan_wmma c kind t =
   let s = K.shape t in
   let a = c.a and b = c.b in
   let width = if kind == K.S8 then 1 else 2 in
-  let whole = c.k mod (16 / width) = 0 in
+  let per = 16 / width in
+  let whole = c.k mod per = 0 in
+  let la = if free_contiguous a.s then K.M else K.K in
+  let lb = if free_contiguous b.s then K.N else K.K in
   let pack_a =
-    free_contiguous a.s || (not (rows_vectors a)) || is_f8 a.dtype || not whole
+    (not (readable a c.m per whole))
+    || (la != K.K && find_wmma kind la K.K t < 0)
   in
+  let la = if pack_a then K.K else la in
   let pack_b =
-    free_contiguous b.s || (not (rows_vectors b)) || is_f8 b.dtype || not whole
+    (not (readable b c.n per whole))
+    || (lb != K.K && find_wmma kind la lb t < 0)
   in
+  let lb = if pack_b then K.K else lb in
   let into = match kind with S8 -> i8 | F16 -> f16 | Bf16 -> bf16 in
   let packs_a = (not pack_a) || pack c a ~rows:c.m ~into in
   let packs_b = packs_a && ((not pack_b) || pack c b ~rows:c.n ~into) in
   if not packs_b then false
   else begin
-    c.kernel <- find_wmma kind t;
+    c.kernel <- find_wmma kind la lb t;
     c.blocks <- ceil_div c.m s.bm * ceil_div c.n s.bn;
     (* A split sum stores and reloads its partials: worth it to fill a GPU short
        of workgroups, or to stream a long k for a few rows. *)
