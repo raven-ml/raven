@@ -528,20 +528,25 @@ let cases_of ?(layouts = [ (`K, `K); (`K, `Free); (`Free, `K); (`Free, `Free) ])
         shapes)
     configs
 
+(* [n] bytes of 0xa5, written over y before a rerun, so that a rerun that
+   stores nothing shows. *)
+let sentinel n = String.make n '\xa5'
+
 (* The bits depend on the shape alone. The same values in the other layouts,
-   behind an element that breaks the 16-byte vectors, and computed again, give
-   the same bytes. *)
+   behind an element that breaks the 16-byte vectors, and computed again over a
+   sentinel, give the same bytes. *)
 let same_bits c =
   let g = S.gpu () in
-  let _, _, _, y, p = contract g c () in
+  let _, _, _, (y : S.operand), p = contract g c () in
   let want = S.read y.buffer in
   List.iter
     (fun (la, lb, skip) ->
-      let _, _, _, y, _ = contract g { c with la; lb } ~skip () in
+      let _, _, _, (y : S.operand), _ = contract g { c with la; lb } ~skip () in
       equal
         ~msg:(strf "layouts with %d skipped" skip)
         string want (S.read y.buffer))
     [ (`Free, `K, 0); (`K, `Free, 0); (`Free, `Free, 0); (`K, `K, 1) ];
+  S.write y.buffer (sentinel (String.length want));
   S.run g p;
   equal ~msg:"again" string want (S.read y.buffer)
 
@@ -802,11 +807,10 @@ let declines (a, b, acc, out, init) =
   in
   equal ~msg:"the plan" (option pass) None p
 
-(* Out of memory raises: the plan never declines a call for want of it. a,
-   broadcast from one element, packs into 2^21 rows of 2^14 bfloat16, 64 GiB
-   of scratch, more than the GPU holds. *)
-let scratch_out_of_memory () =
-  let g = S.gpu () in
+(* A call whose scratch is past the GPU's memory. a, broadcast from one
+   element, packs into 2^21 rows of 2^14 bfloat16, 64 GiB of scratch, more than
+   the GPU holds. *)
+let past_memory g () =
   let m = 1 lsl 21 and n = 16 and k = 1 lsl 14 in
   let bf16 = D.code D.Bfloat16 in
   let operand buffer shape strides =
@@ -815,13 +819,16 @@ let scratch_out_of_memory () =
   let a = operand (S.buffer g 2) [| 1; m; k |] [| 0; 0; 0 |] in
   let b = operand (S.buffer g (2 * n * k)) [| 1; n; k |] [| n * k; k; 1 |] in
   let y = operand (S.buffer g (2 * m * n)) [| 1; m; n |] [| m * n; n; 1 |] in
+  S.contract g ~a ~b ~y
+    ~batch:[ (0, 0) ]
+    ~contracting:[ (2, 2) ]
+    ~acc:(D.code D.Float32) ()
+
+(* Out of memory raises: the plan never declines a call for want of it. *)
+let scratch_out_of_memory () =
   raises_match
     (function Rig.Out_of_memory (_, bytes) -> bytes = 1 lsl 36 | _ -> false)
-    (fun () ->
-      S.contract g ~a ~b ~y
-        ~batch:[ (0, 0) ]
-        ~contracting:[ (2, 2) ]
-        ~acc:(D.code D.Float32) ())
+    (past_memory (S.gpu ()))
 
 (* Calls *)
 
@@ -843,11 +850,9 @@ let packed_split =
     pad = 0;
   }
 
-(* A call that finds nx.cuda's device, submission and workspace made, and its
-   domain's frame free, allocates nothing. *)
-let warm_calls_allocate_nothing () =
-  let g = S.gpu () in
-  let _, _, _, _, p = contract g packed_split () in
+(* Calls of [p] allocate nothing, [p] warm: its device, submission and
+   workspace made and its domain's frame free. *)
+let calls_allocate_nothing g p ~msg =
   S.call p;
   let before = Gc.minor_words () in
   for _ = 1 to 64 do
@@ -855,30 +860,117 @@ let warm_calls_allocate_nothing () =
   done;
   let words = Gc.minor_words () -. before in
   S.run g p;
-  equal ~msg:"words for 64 calls" int 0 (int_of_float words)
+  equal ~msg int 0 (int_of_float words)
 
-(* Domains calling one sequence at once, each on its own operands, get the bits
-   one call alone gets. *)
-let domains_call_alike () =
+let warm_calls_allocate_nothing () =
   let g = S.gpu () in
-  let _, _, _, (y : S.operand), _ = contract g packed_split () in
-  let want = S.read y.buffer in
-  let calls = List.init 2 (fun _ -> contract g packed_split ()) in
-  let ds =
+  let _, _, _, _, p = contract g packed_split () in
+  calls_allocate_nothing g p ~msg:"words for 64 calls"
+
+(* A call that raises leaves its domain's frame free, so the warm calls after
+   it allocate nothing. *)
+let raise_frees_the_frame () =
+  let g = S.gpu () in
+  let _, _, _, _, p = contract g packed_split () in
+  S.call p;
+  raises_match
+    (function Rig.Out_of_memory _ -> true | _ -> false)
+    (past_memory g);
+  calls_allocate_nothing g p ~msg:"words for 64 calls after a raise"
+
+(* Split sums of different tile counts, run back to back over a sentinel, give
+   their first run's bits: each call leaves the tickets that the next counts on
+   zero. By the plan's rules all four split: one mma tile, sixteen mma tiles,
+   one SIMT tile and two skinny tiles. *)
+let split_cases =
+  let f32 = D.Any D.Float32 in
+  [
+    packed_split;
+    { packed_split with m = 256; n = 256 };
+    { packed_split with dt = f32; k = 8192; init = `None };
+    { packed_split with dt = f32; m = 1; k = 20000; init = `None };
+  ]
+
+let splits_leave_tickets_zero () =
+  let g = S.gpu () in
+  let runs =
     List.map
-      (fun (_, _, _, _, p) ->
-        Domain.spawn (fun () ->
-            for _ = 1 to 50 do
-              S.call p
-            done))
-      calls
+      (fun c ->
+        let _, _, _, (y : S.operand), p = contract g c () in
+        (c, y, p, S.read y.buffer))
+      split_cases
   in
-  List.iter Domain.join ds;
-  List.iteri
-    (fun i (_, _, _, (y : S.operand), p) ->
-      S.run g p;
-      equal ~msg:(strf "domain %d" i) string want (S.read y.buffer))
-    calls
+  for round = 1 to 3 do
+    List.iter
+      (fun (c, (y : S.operand), p, want) ->
+        S.write y.buffer (sentinel (String.length want));
+        S.run g p;
+        equal
+          ~msg:(strf "round %d, %s" round (case_name c))
+          string want (S.read y.buffer))
+      runs
+  done
+
+(* A call on a consumed buffer is refused as dead, the destination's or an
+   operand's, and nx.cuda reads nothing of it. *)
+let dead_buffers_refused () =
+  let g = S.gpu () in
+  let c = { packed_split with m = 16; n = 16; k = 64 } in
+  List.iter
+    (fun (which, at) ->
+      let a, _, _, y, p = contract g c () in
+      let (o : S.operand) = match which with `Y -> y | `A -> a in
+      Rig.Claim.with_ ~read:[] ~donate:[ [ o.buffer ] ] (fun claims ->
+          ignore (Rig.Claim.consume claims ~why:"donated" o.buffer));
+      let prefix = strf "Nx_cuda.contract: operand %d was consumed, donated" at in
+      raises_match ~msg:prefix
+        (function
+          | Invalid_argument m -> String.starts_with ~prefix m | _ -> false)
+        (fun () -> S.run g p))
+    [ (`Y, 1); (`A, 2) ]
+
+(* Domains *)
+
+(* A run of [packed_split] on its own operands. *)
+let split_run : (unit, S.operand * S.run) abstract = abstract "r"
+
+(* Whether a refusal's message [m] is of an operand held exclusive. *)
+let held m =
+  let k = "held exclusive" in
+  let rec at i =
+    i + String.length k <= String.length m
+    && (String.sub m i (String.length k) = k || at (i + 1))
+  in
+  at 0
+
+(* Two domains running [packed_split] at once, each on its own operands or both
+   on one's, get the bits one call alone gets, or a refusal of an operand that
+   the other's call holds exclusive at that moment. *)
+let domains_call_alike =
+  let g = lazy (S.gpu ()) in
+  let want =
+    lazy
+      (let _, _, _, (y : S.operand), _ = contract (Lazy.force g) packed_split () in
+       S.read y.buffer)
+  in
+  let make () =
+    let _, _, _, y, p = contract (Lazy.force g) packed_split () in
+    (y, p)
+  in
+  let run ((y : S.operand), p) =
+    S.run (Lazy.force g) p;
+    S.read y.buffer
+  in
+  let judge () = function
+    | Ok bits -> equal string (Lazy.force want) bits
+    | Error (Invalid_argument m) when held m -> ()
+    | Error e -> raise e
+  in
+  stateful ~domains:2 ~count:4 "domains calling at once get one call's bits"
+    [
+      command "make" (Gen.unit @-> makes split_run) (fun () -> ()) make;
+      command "run" (split_run ^-> judges string) judge run;
+    ]
 
 let tests =
   [
@@ -923,7 +1015,10 @@ let tests =
         test "an int32 sum sign-extends into int64" sign_extends;
         test "scratch past the GPU's memory raises" scratch_out_of_memory;
         test "warm calls allocate nothing" warm_calls_allocate_nothing;
-        test "domains calling at once get one call's bits" domains_call_alike;
+        test "a call that raises frees its frame" raise_frees_the_frame;
+        test "split sums leave their tickets zero" splits_leave_tickets_zero;
+        test "a consumed buffer is refused as dead" dead_buffers_refused;
+        domains_call_alike;
         prop ~count:400 "every dtype quadruple: declines or within the bound"
           quadruples every_quadruple;
         cases

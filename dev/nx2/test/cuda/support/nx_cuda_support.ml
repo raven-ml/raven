@@ -309,7 +309,7 @@ let call r =
   | Launches _ | Copy _ -> invalid_arg "Nx_cuda_support.call: no contraction"
 
 (* kimchi's driver (615) holds 1,023 launches queued behind a kernel that runs;
-   a round takes half. A contraction is at most four launches. *)
+   a round takes half. A contraction is at most three launches. *)
 let round = 512
 
 let device_time g r ~count =
@@ -317,7 +317,7 @@ let device_time g r ~count =
     match r.body with
     | Launches x -> List.length x.launches
     | Copy _ -> 1
-    | Contract _ -> 4
+    | Contract _ -> 3
   in
   let per_round = Int.max 1 (round / launches) in
   let late n = strf "%d runs of %d launches outgrew the stream" n launches in

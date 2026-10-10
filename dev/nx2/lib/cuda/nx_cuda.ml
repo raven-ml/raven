@@ -29,17 +29,20 @@ external cubin : string -> string option = "nx_cuda_cubin"
    packed operands and split sums, grows to [kept] bytes and is kept, a call
    that needs more taking a buffer of its own; the tickets of split sums are
    zero words, which every call leaves zero. *)
-type workspace = { buffer : Rig.Buffer.t; bytes : int }
+type cell = { buffer : Rig.Buffer.t; bytes : int }
 
 let kept = 64 * 1024 * 1024
 
+(* What this library keeps for a device: [queue] runs launches, and [subs] and
+   [folds] hold the submissions by {!Plan.sequence} and {!Fold.sequence}, made
+   on first use. *)
 type device = {
   image : Rig.Image.t;
-  queue : string;  (** The queue that runs launches. *)
-  workspace : workspace Atomic.t;
-  tickets : workspace Atomic.t;
-  subs : Sub.t option array;  (** By {!Plan.sequence}, made on first use. *)
-  folds : Sub.t option array;  (** By {!Fold.sequence}. *)
+  queue : string;
+  workspace : cell Atomic.t;
+  tickets : cell Atomic.t;
+  subs : Sub.t option array;
+  folds : Sub.t option array;
 }
 
 (* Every device asked about and what this library keeps for it, [None] where it
@@ -158,8 +161,8 @@ let fold_submission d dv p =
 (* A call's state: one per domain, guarded by [busy]. A call that finds it busy,
    such as one of another systhread of the domain or a signal handler's, uses a
    fresh frame it does not keep. A call's buffers and arrays sit in arrays of
-   their count, made once: [reads] and [writes] are the submit's, [read] and
-   [written] the door's. *)
+   their count, up to 3, made once: [reads] and [writes] are the submit's,
+   [read] and [written] the door's. *)
 type frame = {
   busy : bool Atomic.t;
   view : V.t;
@@ -167,7 +170,7 @@ type frame = {
   fold : Fold.t;
   run : Sub.Run.t;
   mutable sub : Sub.t option;
-  read_buffers : Rig.Buffer.t array array;  (** By count, up to 3. *)
+  read_buffers : Rig.Buffer.t array array;
   write_buffers : Rig.Buffer.t array array;
   read_arrays : A.any array array;
   written_arrays : A.any array array;
@@ -236,12 +239,12 @@ let bind f ~dst ops ~writes w1 w2 =
   f.written <- f.written_arrays.(1);
   f.written.(0) <- dst
 
+(* The door's work: [f.sub], which the call stored before it entered the
+   door. *)
 let issue f =
-  match f.sub with
-  | None -> ()
-  | Some s ->
-      ignore
-        (Rig.submit s ~run:f.run ~reads:f.reads ~writes:f.writes ~waits:[||])
+  ignore
+    (Rig.submit (Option.get f.sub) ~run:f.run ~reads:f.reads ~writes:f.writes
+       ~waits:[||])
 
 let nothing () = ()
 let dead (A.Any x) = Option.is_some (Rig.Buffer.dead (A.buffer x))

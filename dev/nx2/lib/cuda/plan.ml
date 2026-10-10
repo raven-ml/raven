@@ -73,9 +73,9 @@ let index i =
 let pack_kernel = index K.Pack
 
 (* The first mma instance that sums [kind] with a's and b's contiguous axes [a]
-   and [b] on the tile [t], or -1. An instance of kind [Any] sums every kind. *)
-(* Loops with their state as arguments: a local loop closing over them would
-   allocate its closure on every call. *)
+   and [b] on the tile [t], or -1. An instance of kind [Any] sums every kind.
+   These finds are loops with their state as arguments: a local loop closing
+   over them would allocate its closure on every call. *)
 let rec find_mma_from k kind a b t =
   if k = count then -1
   else
@@ -115,21 +115,23 @@ let ceil_div a b = (a + b - 1) / b
 (* An operand a or b as the contraction kernel reads it, and, when packed, as it
    is: the pack copies it into the workspace. *)
 type operand = {
-  mutable dtype : D.any;  (** As the kernel reads it. *)
+  (* As the kernel reads it: its dtype; its first element, bytes into its slot
+     or into the workspace once packed; [first] as the device addresses it, for
+     alignment, the workspace offset once packed, the workspace being 256-byte
+     aligned; and its strides along batch, its row or column, and k. *)
+  mutable dtype : D.any;
   mutable first : int;
-      (** Its first element: bytes into its slot, or into the workspace once
-          packed. *)
   mutable address : int;
-      (** [first] as the device addresses it, for alignment: the workspace
-          offset once packed, the workspace being 256-byte aligned. *)
-  s : int array;  (** Strides along batch, its row or column, and k. *)
+  s : int array;
+  (* As it is, once packed: its dtype, first element (bytes into its slot) and
+     strides; its rows, the elements a packed row, and the pack's blocks. *)
   mutable packed : bool;
-  mutable own : D.any;  (** Its own dtype. *)
-  mutable src : int;  (** Its own first element, bytes into its slot. *)
-  ps : int array;  (** Its own strides. *)
+  mutable own : D.any;
+  mutable src : int;
+  ps : int array;
   mutable rows : int;
-  mutable lead : int;  (** Elements a packed row. *)
-  mutable grid : int;  (** The pack's blocks. *)
+  mutable lead : int;
+  mutable grid : int;
 }
 
 let operand () =
@@ -174,12 +176,13 @@ type t = {
   mutable sums : int;
   mutable sum_bytes : int;
   mutable aligned : int;
-  (* The workspace: its bytes taken, and the split sum's pieces. *)
+  (* The workspace: its bytes taken, and the split sum's pieces: its partials,
+     and its output tiles, a ticket each. *)
   mutable used : int;
   mutable partials : int;
-  mutable count : int;  (** Output tiles of a split sum: its tickets. *)
+  mutable tiles : int;
+  (* Two tiles' costs while choosing one: floats unboxed. *)
   costs : Float.Array.t;
-      (** Two tiles' costs while choosing one: floats unboxed. *)
 }
 
 let make () =
@@ -209,7 +212,7 @@ let make () =
     aligned = 0;
     used = 0;
     partials = 0;
-    count = 0;
+    tiles = 0;
     costs = Float.Array.make 2 0.;
   }
 
@@ -312,7 +315,7 @@ let mma_tile c kind =
   let best = ref (-1) in
   for i = 0 to Array.length K.tiles - 1 do
     let t = K.tiles.(i) in
-    if find_mma kind K.K K.K t >= 0 && not (c.m <= 16 && t != K.T16x64) then begin
+    if find_mma kind K.K K.K t >= 0 && (c.m > 16 || t == K.T16x64) then begin
       let s = K.shape t in
       cost c 1 s.bm s.bn (efficiency t);
       if !best < 0 || cheaper c then begin
@@ -359,10 +362,9 @@ let plan_mma c kind t =
     b.dtype <- into;
     (* A split sum stores and reloads its partials: worth it to fill a GPU short
        of blocks, or to stream a long k for a few rows. *)
-    let mes = if kind == K.S8 then 1 else 2 in
     c.splits <-
       (if c.m <= 16 then
-         split_count (c.blocks * c.batch) 256 c.k (4 * s.bkb / mes)
+         split_count (c.blocks * c.batch) 256 c.k (4 * s.bkb / width into)
        else split_count (c.blocks * c.batch) 64 c.k 1024);
     c.threads <- threads s;
     c.shared <- shared s;
@@ -540,8 +542,8 @@ let rules c =
               c.aligned <- c.aligned lor K.y_whole;
             (* The split sum's partials, and a ticket a tile. *)
             if c.splits > 1 then begin
-              c.count <- batch * c.blocks;
-              c.partials <- take c (c.count * c.splits * c.sums * c.sum_bytes)
+              c.tiles <- batch * c.blocks;
+              c.partials <- take c (c.tiles * c.splits * c.sums * c.sum_bytes)
             end;
             Launches
           end
@@ -596,7 +598,7 @@ let uses_workspace c = c.a.packed || c.b.packed || c.splits > 1
 let writes c =
   1 + Bool.to_int (uses_workspace c) + Bool.to_int (c.splits > 1)
 
-let tickets c = if c.splits > 1 then 4 * c.count else 0
+let tickets c = if c.splits > 1 then 4 * c.tiles else 0
 let workspace c = if uses_workspace c then Int.max 1 c.used else 0
 
 (* [c]'s launches in order: each kernel, its parameter bytes and its refs into
@@ -604,22 +606,23 @@ let workspace c = if uses_workspace c then Int.max 1 c.used else 0
 let launches c =
   let y = reads c in
   let ws = y + 1 in
-  let ref at slot = { Rig.Submission.at; slot } in
+  let slot_ref at slot = { Rig.Submission.at; slot } in
   let pack slot =
     ( pack_kernel,
       K.Pack_params.size,
-      [| ref K.Pack_params.src slot; ref K.Pack_params.dst ws |] )
+      [| slot_ref K.Pack_params.src slot; slot_ref K.Pack_params.dst ws |] )
   in
   let module P = K.Contract_params in
   let split = c.splits > 1 in
   let refs =
     List.concat
       [
-        [ ref P.a (if c.a.packed then ws else 0) ];
-        [ ref P.b (if c.b.packed then ws else 1) ];
-        (if c.init then [ ref P.init 2 ] else []);
-        [ ref P.y y ];
-        (if split then [ ref P.partials ws; ref P.tickets (ws + 1) ] else []);
+        [ slot_ref P.a (if c.a.packed then ws else 0) ];
+        [ slot_ref P.b (if c.b.packed then ws else 1) ];
+        (if c.init then [ slot_ref P.init 2 ] else []);
+        [ slot_ref P.y y ];
+        (if split then [ slot_ref P.partials ws; slot_ref P.tickets (ws + 1) ]
+         else []);
       ]
   in
   List.concat
@@ -666,19 +669,13 @@ let write_strides run at field s =
   Run.int64 run at (field + 16) s.(2)
 
 let write run sub c =
-  (* Parts in [parts]' order; a counter, so no closure is allocated. *)
-  let i = ref 0 in
-  if c.a.packed then begin
-    write_pack run (Rig.Submission.block sub !i) c c.a;
-    incr i
-  end;
-  if c.b.packed then begin
-    write_pack run (Rig.Submission.block sub !i) c c.b;
-    incr i
-  end;
+  (* Parts in [parts]' order: a's pack, b's pack, the contraction. *)
+  let a = Bool.to_int c.a.packed and b = Bool.to_int c.b.packed in
+  if c.a.packed then write_pack run (Rig.Submission.block sub 0) c c.a;
+  if c.b.packed then write_pack run (Rig.Submission.block sub a) c c.b;
   let split = c.splits > 1 in
   let module P = K.Contract_params in
-  let at = Rig.Submission.block sub !i in
+  let at = Rig.Submission.block sub (a + b) in
   Run.groups run at c.blocks c.splits c.batch;
   Run.threads run at c.threads 1 1;
   Run.shared run at c.shared;
@@ -702,5 +699,4 @@ let write run sub c =
   Run.int32 run at P.init_dtype (code c.i_dtype);
   Run.int32 run at P.y_dtype (code c.y_dtype);
   Run.int32 run at P.acc_dtype (code c.acc);
-  Run.int32 run at P.aligned c.aligned;
-  Run.int32 run at P.unused 0
+  Run.int32 run at P.aligned c.aligned

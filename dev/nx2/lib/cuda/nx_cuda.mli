@@ -9,9 +9,11 @@
     and this library has a cubin for [d]'s architecture ({!Rig.arch}), which
     loads on [d]: [sm_89]. The first call for [d], of [computes_on] or of a
     kernel, loads it, and a load that fails answers [false] from [computes_on]
-    and [Declined] from a kernel. Raises {!Rig.Lost} if [d] is lost. Kernels
-    claim through {!Nx_array.door} until their work is submitted, and answer
-    [Done] once it is on [d]'s timeline.
+    and [Declined] from a kernel. That first call raises {!Rig.Lost} if [d] is
+    lost; once it has answered, later calls of [computes_on d] answer the same.
+    Kernels claim through {!Nx_array.door} until their work is submitted, and
+    answer [Done] once it is on [d]'s timeline; on a lost [d] they raise
+    {!Rig.Lost}, as the door does.
 
     [apply0] to [apply3], [map], [gather], [scatter], [sort], [assemble],
     [fold], [fft] and [linalg] answer [Declined] for every case.
