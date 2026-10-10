@@ -492,15 +492,19 @@ let refusals =
           raises
             (Invalid_argument
                "Nx.broadcast_shapes: [4; 3] does not broadcast with [2; 1], \
-                [1; 3]: axis 0 has 4, neither 1 nor 2") (fun () ->
+                [1; 3]: axis -2 has 4, neither 1 nor 2") (fun () ->
               Nx.broadcast_shapes [ [| 2; 1 |]; [| 1; 3 |]; [| 4; 3 |] ]);
+          raises
+            (Invalid_argument
+               "Nx.reshape: int32 [2; 3] would have more elements than an int \
+                counts") (fun () -> Nx.reshape [| max_int; 2 |] x);
           raises
             (Invalid_argument "Nx.broadcast_shapes: [-1] has a negative extent")
             (fun () -> Nx.broadcast_shapes [ [| 2 |]; [| -1 |] ]);
           raises
             (Invalid_argument
                "Nx.broadcast_arrays: [4] does not broadcast with [2; 3]: axis \
-                1 has 4, neither 1 nor 3") (fun () ->
+                -1 has 4, neither 1 nor 3") (fun () ->
               Nx.broadcast_arrays [ x; Nx.zeros Nx.int32 [| 4 |] ]);
           raises
             (Invalid_argument
@@ -514,8 +518,6 @@ let refusals =
         [
           r "reshape, two unknown extents" (fun () -> Nx.reshape [| -1; -1 |] x);
           r "reshape, an extent below -1" (fun () -> Nx.reshape [| -2; -3 |] x);
-          r "reshape, more elements than an int counts" (fun () ->
-              Nx.reshape [| max_int; 2; 0 |] x);
           r "reshape, an unknown that does not divide" (fun () ->
               Nx.reshape [| 4; -1 |] x);
           r "broadcast_to, fewer axes" (fun () -> Nx.broadcast_to [| 3 |] x);

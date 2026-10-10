@@ -393,6 +393,9 @@ let calls =
           call_error
             ~sizes:[ ("h", -2) ]
             "b (h d) t -> b h d t" x ": h = -2 in ~sizes is negative";
+          call_error
+            ~sizes:[ ("h", max_int); ("d", 2) ]
+            "b (h d) t -> b h d t" x ": more elements than an int counts";
           call_error "b 1 t -> b t" x ": axis 1 has extent 6 where it has 1";
           call_error "i k, k j -> i j | k" x
             ": has two operands; use Nx.einsum or Nx.contract");

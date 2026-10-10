@@ -346,6 +346,8 @@ let broadcast_all ~by shapes =
     match Prim.merge s s' with
     | Ok s -> (s, before @ [ s' ])
     | Error (a, e, e') ->
+        (* The axis counted from the end, where every shape aligns. *)
+        let a = a - max (Array.length s) (Array.length s') in
         invalid_argf
           "%s: %a does not broadcast with %a: axis %d has %d, neither 1 nor %d"
           by pp_shape s' pp_list before a e' e
