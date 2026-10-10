@@ -31,8 +31,9 @@
    the timeline word reads now, and
    RIG_NEVER if they exceed an empty ring or the segment, are more than 512,
    or a part is one the device does not run: a copy on queue 0, words on an
-   AQL queue that are not whole packets, a launch whose block in [args] has
-   an empty axis or more threads per group or shared memory than its
+   AQL queue that are not whole packets, a launch with fewer parameter
+   bytes than its function's explicit arguments, or whose block in [args]
+   has an empty axis or more threads per group or shared memory than its
    function takes, or, on an AQL queue, 2^32 work-items or more along an
    axis, an [after] index not below its own part's. */
 int rig_amd_room(void *self, const struct rig_part *parts, int n,

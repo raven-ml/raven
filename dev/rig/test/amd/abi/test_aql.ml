@@ -27,6 +27,7 @@ let kernel : Code_object.kernel =
     private_segment_buffer = false;
     max_threads = 256;
     hidden = [];
+    explicit_size = 0;
   }
 
 (* A barrier, and system scope for both fences. *)

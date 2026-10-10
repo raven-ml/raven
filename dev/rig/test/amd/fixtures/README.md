@@ -27,8 +27,8 @@ Made in this directory from `launch.cl` with the same tools:
   the conformance laws' (`Rig_gpu_support.Conformance.launch_binary`),
   which learn their grid from the implicit arguments; `lds`, which takes
   dynamic LDS after 256 bytes of its own; `scratch`, which takes 4100
-  bytes of scratch per work-item; and `packet`, which reads its dispatch
-  packet:
+  bytes of scratch per work-item; `packet`, which reads its dispatch
+  packet; and `packet_scratch`, which does both:
   `clang -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 -nogpulib -O2 launch.cl -o launch.o && ld.lld -shared launch.o -o launch_gfx1201.hsaco && rm launch.o`
 
 Made in this directory from `launch.cl` with the same tools, for gfx942:

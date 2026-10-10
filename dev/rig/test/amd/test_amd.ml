@@ -661,6 +661,10 @@ let entries () =
   equal nativeint ~msg:"made once" e.launch
     (Option.get (A.entry m "ids")).launch;
   let before = h.allocated in
+  raises_match ~msg:"a kernel with scratch that reads its dispatch packet"
+    (Exn.invalid_arg ~substring:"dispatch packet") (fun () ->
+      A.entry m "packet_scratch");
+  equal int ~msg:"no scratch for a kernel entry refuses" before h.allocated;
   ignore (A.entry m "scratch");
   equal int ~msg:"the scratch, made at entry" (before + 1) h.allocated;
   ignore (A.entry m "scratch");
@@ -683,12 +687,15 @@ let handed (q : Host.queue) p p' =
   let size = q.bytes / 4 in
   List.init (p' - p) (fun i -> H.get32 (at q.ring (4 * ((p + i) mod size))))
 
-(* Whether [ys] holds [xs] at some index. *)
-let holds ys xs =
-  let n = List.length xs and ys = Array.of_list ys in
+(* The [n] words of [ys] from the first index that holds [xs], [n] its
+   length, or [ys] if none does: what a test compares with [xs]. *)
+let window ys xs =
+  let n = List.length xs and a = Array.of_list ys in
   let rec at i =
-    i + n <= Array.length ys
-    && (List.for_all2 ( = ) xs (Array.to_list (Array.sub ys i n)) || at (i + 1))
+    if i + n > Array.length a then ys
+    else
+      let w = Array.to_list (Array.sub a i n) in
+      if w = xs then w else at (i + 1)
   in
   at 0
 
@@ -751,14 +758,15 @@ let launch_hand_over (gpu, bin) () =
       (fun i ->
         Int32.to_int (String.get_int32_le dispatch (4 * i)) land 0xffff_ffff)
   in
-  equal bool ~msg:"its dispatch, on the compute ring" true (holds ring ws);
+  equal (list int) ~msg:"its dispatch, on the compute ring" ws (window ring ws);
   Host.reach g 1;
   A.unload g m;
   A.free g r
 
 (* What the room check answers for a launch: a launch fits within its function's
    256 work-items per group and the GPU's LDS less the 256 bytes [lds] takes
-   itself; it never fits past them or with an empty axis. *)
+   itself; it never fits past them, with an empty axis, or with fewer
+   parameter bytes than its function reads. *)
 let launch_room () =
   Host.with_device @@ fun _ g ->
   let m, r, _ = load g (Lazy.force launch_bin) in
@@ -769,6 +777,12 @@ let launch_room () =
     E.room g [| E.launch e ~groups ~threads ?shared params [ (0, 0) ] |]
   in
   equal room_answer ~msg:"256 work-items" `Fits (room (1, 1, 1) (64, 2, 2));
+  equal room_answer ~msg:"16 of the 24 bytes of ids's parameters" `Never
+    (E.room g
+       [|
+         E.launch ids ~groups:(1, 1, 1) ~threads:(64, 1, 1)
+           (String.sub params 0 16) [ (0, 0) ];
+       |]);
   equal room_answer ~msg:"257 work-items" `Never (room (1, 1, 1) (257, 1, 1));
   equal room_answer ~msg:"an empty grid" `Never (room (1, 0, 1) (64, 1, 1));
   equal room_answer ~msg:"an empty group" `Never (room (1, 1, 1) (64, 1, 0));
@@ -1775,7 +1789,7 @@ let past_the_bound () =
         ~groups:(1, 1, 1) ~threads:(257, 1, 1)
         ~set:(fun run b -> Sub.Run.int64 run b 0 0)
         ~reads:[||] ~writes:[| out |] ());
-  equal bool ~msg:"lost" true (Option.is_none (Rig.lost t.d))
+  equal (option string) ~msg:"the device's loss" None (Rig.lost t.d)
 
 let launching =
   group ~timeout:60. "launching"

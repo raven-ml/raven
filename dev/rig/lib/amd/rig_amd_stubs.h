@@ -123,8 +123,9 @@ static inline int rig_amd_fill(const struct rig_amd_template *t,
    shared memory. Its arguments take [kernarg] bytes, after the launch's
    parameters at most, and [hidden] holds the offset among them of each
    implicit argument it reads, in the order below, or -1. A launch fits
-   when its threads per group are at most [max_threads] and its shared
-   memory at most [max_shared] bytes. */
+   when its parameters are its function's [explicit_size] bytes or more,
+   its threads per group at most [max_threads] and its shared memory at
+   most [max_shared] bytes. */
 
 /* The hand-over's arguments: the address of the launch's arguments, the
    device's scratch, its threads per group, its groups, and its grid's
@@ -168,7 +169,7 @@ struct rig_amd_launch {
       uint32_t threads[3], group;
     } aql;
   };
-  uint32_t group, max_threads, max_shared, kernarg;
+  uint32_t group, max_threads, max_shared, kernarg, explicit_size;
   int32_t hidden[RIG_AMD_HIDDEN];
 };
 

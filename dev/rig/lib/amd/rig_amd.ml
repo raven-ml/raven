@@ -677,9 +677,15 @@ let hidden f (k : Code_object.kernel) =
 
 (* The values of [k]'s launch the C launch keeps beside its words: the LDS [k]
    takes itself, its most work-items and shared memory on a GPU whose groups
-   take at most [lds] bytes, and its arguments' bytes. *)
+   take at most [lds] bytes, its arguments' bytes, and its explicit ones'. *)
 let limits (k : Code_object.kernel) ~lds =
-  [| k.group_segment; k.max_threads; lds - k.group_segment; k.kernarg_size |]
+  [|
+    k.group_segment;
+    k.max_threads;
+    lds - k.group_segment;
+    k.kernarg_size;
+    k.explicit_size;
+  |]
 
 let template p =
   Template.flatten
@@ -740,8 +746,9 @@ let c_launch_of g (k : Code_object.kernel) ~base ~lds f =
       [| at; word words at; word more at - word words at; granule |]
       (limits k ~lds) (hidden f k)
 
-(* [m]'s launch of its kernel [k], named [f]. A PM4 dispatch hands a kernel no
-   dispatch packet. *)
+(* [m]'s launch of its kernel [k], named [f], and the scratch of its private
+   segment, which grows only for a kernel the launch takes. A PM4 dispatch hands
+   a kernel no dispatch packet. *)
 let launch m f (k : Code_object.kernel) =
   let g = m.dev in
   if k.dispatch_ptr && not g.aql then
@@ -749,11 +756,14 @@ let launch m f (k : Code_object.kernel) =
       "Rig_amd.entry: kernel %s reads its dispatch packet, which a launch on a \
        GPU of one die does not write"
       f;
+  let l = c_launch_of g.gpu k ~base:m.base ~lds:g.lds f in
   if k.private_segment > 0 then
     Result.iter_error
-      (fun why -> invalid_argf "Rig_amd.entry: kernel %s: %s" f why)
+      (fun why ->
+        free_launch l;
+        invalid_argf "Rig_amd.entry: kernel %s: %s" f why)
       (g.grow k.private_segment);
-  c_launch_of g.gpu k ~base:m.base ~lds:g.lds f
+  l
 
 let entry m f =
   match Code_object.kernel m.co f with

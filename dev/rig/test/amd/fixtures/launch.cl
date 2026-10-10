@@ -54,3 +54,11 @@ kernel void scratch(global uint *out, uint k) {
 kernel void packet(global uint *out) {
   out[0] = *(const constant uint *)__builtin_amdgcn_dispatch_ptr();
 }
+
+/* out[0] = the first word of its dispatch packet plus k, through 1024 words
+   of scratch. */
+kernel void packet_scratch(global uint *out, uint k) {
+  volatile uint p[1024];
+  for (uint i = 0; i < 1024; i++) p[i] = i * k;
+  out[0] = *(const constant uint *)__builtin_amdgcn_dispatch_ptr() + p[k % 1024];
+}

@@ -160,7 +160,8 @@ static const int hidden_bytes[RIG_AMD_HIDDEN] = {4, 4, 4, 2, 2, 2, 2,
 
 /* Reads into [c] what a launch of either form holds: its dispatch's words
    and holes, as a template's; [v_max], the function's own LDS bytes, its most
-   threads per group and shared bytes and its arguments' bytes; and
+   threads per group and shared bytes, its arguments' bytes and its explicit
+   ones'; and
    [v_hidden], the offsets of its implicit arguments, each within its
    arguments, or -1. */
 static void launch_of(struct rig_amd_launch *c, value v_words, value v_holes,
@@ -175,6 +176,7 @@ static void launch_of(struct rig_amd_launch *c, value v_words, value v_holes,
   c->max_threads = (uint32_t)at(v_max, 1);
   c->max_shared = (uint32_t)at(v_max, 2);
   c->kernarg = (uint32_t)at(v_max, 3);
+  c->explicit_size = (uint32_t)at(v_max, 4);
   if (Wosize_val(v_hidden) != RIG_AMD_HIDDEN)
     refuse(LAUNCH, "names another number of implicit arguments");
   for (int i = 0; i < RIG_AMD_HIDDEN; i++) {

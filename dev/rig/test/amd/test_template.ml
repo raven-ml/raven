@@ -327,6 +327,7 @@ let launches =
          private_segment_buffer = psb;
          max_threads = 1024;
          hidden = [];
+         explicit_size = 0;
        }
      in
      let args = [| params; scratch; tx; ty; tz; gx; gy; gz |] in
@@ -395,6 +396,7 @@ let lds_word =
           private_segment_buffer = false;
           max_threads = 1024;
           hidden = [];
+          explicit_size = 0;
         }
       in
       let granule = Pm4.lds_granule g in

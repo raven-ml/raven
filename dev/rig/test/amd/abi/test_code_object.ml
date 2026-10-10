@@ -112,6 +112,7 @@ let descriptor img at : Code_object.kernel =
     private_segment_buffer = bit 0;
     max_threads = 1024;
     hidden = [];
+    explicit_size = u32 8;
   }
 
 let hidden_arg =
@@ -312,6 +313,8 @@ let reading =
             ]
             (kernel "every").hidden;
           equal ~msg:"every's work-items" int 128 (kernel "every").max_threads;
+          equal ~msg:"every's explicit arguments" int 8
+            (kernel "every").explicit_size;
           equal ~msg:"plain"
             (list (pair hidden_arg int))
             [] (kernel "plain").hidden);
@@ -550,6 +553,17 @@ let refusals =
             (patch obj
                (s.at + k.descriptor - Option.get s.offset + 8)
                (set_u32 155)));
+      test "explicit arguments past the kernel's arguments are refused"
+        (fun () ->
+          let obj = fixture "hidden_gfx1201.hsaco" in
+          let co = read obj in
+          let k = require_some (Code_object.kernel co "plain") in
+          let s = section obj ".rodata" in
+          (* plain's kernarg_size, one byte short of its pointer's 8. *)
+          refused ~sub:"explicit"
+            (patch obj
+               (s.at + k.descriptor - Option.get s.offset + 8)
+               (set_u32 7)));
       test "a metadata note that is no MessagePack value is refused" (fun () ->
           let obj = many () in
           (* 0xc1 starts no MessagePack value. *)

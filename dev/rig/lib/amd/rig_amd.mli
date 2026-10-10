@@ -202,10 +202,11 @@ val capability : t -> Rig_amd_abi.Capability.t
     argument segment (a submission's copy packets and segment bytes never
     wrap), or 512 parts. It also answers [RIG_NEVER] for a part the device does
     not run: a copy on ["COMPUTE:0"], words on an AQL queue that are not whole
-    packets, a launch whose grid or group has an empty axis, whose groups
-    have more work-items than its kernel's bound
-    ({!Rig_amd_abi.Code_object.kernel}'s [max_threads]) or more shared memory
-    than the GPU's local data share less the kernel's group segment, or, as
+    packets, a launch whose parameters end before its kernel's explicit
+    arguments do ({!Rig_amd_abi.Code_object.kernel}'s [explicit_size]),
+    whose grid or group has an empty axis, whose groups have more work-items
+    than its kernel's bound ([max_threads]) or more shared memory than the
+    GPU's local data share less the kernel's group segment, or, as
     an AQL packet, whose grid has [2{^32}] work-items or more along an axis,
     an [after] index not below its own part's.
 

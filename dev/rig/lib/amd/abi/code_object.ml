@@ -33,6 +33,7 @@ type kernel = {
   private_segment_buffer : bool;
   max_threads : int;
   hidden : (hidden * int) list;
+  explicit_size : int;
 }
 
 type t = {
@@ -313,6 +314,7 @@ let name_key = ".name"
 let max_threads_key = ".max_flat_workgroup_size"
 let args_key = ".args"
 let offset_key = ".offset"
+let size_key = ".size"
 let kind_key = ".value_kind"
 
 (* The most work-items of a workgroup on any GPU, and so of a kernel the
@@ -342,11 +344,16 @@ let hiddens =
     ("hidden_dynamic_lds_size", Dynamic_lds_size);
   ]
 
+(* Whether the value kind of the [len] bytes at [at] is an implicit
+   argument's, "hidden_none" included. *)
+let is_hidden r at len =
+  let prefix = String.length hidden_prefix in
+  len >= prefix && is r at prefix hidden_prefix
+
 (* The implicit argument of the value kind of the [len] bytes at [at], [None]
    for no implicit argument. *)
 let hidden_of r at len =
-  let prefix = String.length hidden_prefix in
-  if not (len >= prefix && is r at prefix hidden_prefix) then None
+  if not (is_hidden r at len) then None
   else if is r at len hidden_none then None
   else
     match List.find_opt (fun (name, _) -> is r at len name) hiddens with
@@ -393,8 +400,8 @@ let notes (o : Rig_elf.t) ~owner ~kind =
     (Some []) o.sections
 
 (* What the metadata note at [at] of [len] bytes of [file] says of each
-   kernel it names: its most work-items, if it bounds them, and its implicit
-   arguments, by increasing offset. *)
+   kernel it names: its most work-items, if it bounds them, its implicit
+   arguments, by increasing offset, and where its explicit ones end. *)
 let read_metadata file (at, len) =
   let r =
     {
@@ -407,24 +414,32 @@ let read_metadata file (at, len) =
       key_len = 0;
     }
   in
-  (* An argument's implicit argument and its offset, if it is one. *)
+  (* An argument: [`Implicit (h, at)], or [`Explicit e], [e] where its bytes
+     end, or [`None] for a "hidden_none" or one the metadata does not place. *)
   let arg () =
     let v = next r in
     if v <> k_map then (
       rest r v;
-      None)
+      `None)
     else
-      let hidden = ref None and offset = ref (-1) in
+      let implicit = ref false and hidden = ref None in
+      let offset = ref (-1) and size = ref 0 in
       for _ = 1 to r.n do
         if key r then
           let v = next r in
-          if is_key r kind_key && v = k_str then hidden := hidden_of r r.at r.n
+          if is_key r kind_key && v = k_str then begin
+            implicit := is_hidden r r.at r.n;
+            hidden := hidden_of r r.at r.n
+          end
           else if is_key r offset_key && v = k_int then offset := r.n
+          else if is_key r size_key && v = k_int then size := r.n
           else rest r v
       done;
-      match !hidden with
-      | Some h when !offset >= 0 -> Some (h, !offset)
-      | _ -> None
+      match (!implicit, !hidden) with
+      | _, _ when !offset < 0 -> `None
+      | true, Some h -> `Implicit (h, !offset)
+      | true, None -> `None
+      | false, _ -> `Explicit (!offset + !size)
   in
   let kernel acc =
     let v = next r in
@@ -433,6 +448,7 @@ let read_metadata file (at, len) =
       acc)
     else
       let name = ref "" and threads = ref None and args = ref [] in
+      let explicit = ref 0 in
       for _ = 1 to r.n do
         if key r then
           let v = next r in
@@ -441,14 +457,18 @@ let read_metadata file (at, len) =
           else if is_key r max_threads_key && v = k_int then threads := Some r.n
           else if is_key r args_key && v = k_arr then
             for _ = 1 to r.n do
-              match arg () with Some a -> args := a :: !args | None -> ()
+              match arg () with
+              | `Implicit a -> args := a :: !args
+              | `Explicit e -> explicit := Int.max e !explicit
+              | `None -> ()
             done
           else rest r v
       done;
       let by_offset (_, a) (_, b) = Int.compare a b in
       if !name = "" then acc
       else
-        (!name, (!threads, List.stable_sort by_offset (List.rev !args))) :: acc
+        let hidden = List.stable_sort by_offset (List.rev !args) in
+        (!name, (!threads, hidden, Some !explicit)) :: acc
   in
   let kernels = ref [] in
   let v = next r in
@@ -475,7 +495,8 @@ let metadata (o : Rig_elf.t) =
 
 let kd_suffix = ".kd"
 
-let kernel_of o ~target ~most ~size ~meta:(threads, hidden) ps name kd =
+let kernel_of o ~target ~most ~size ~meta:(threads, hidden, explicit) ps name
+    kd =
   if kd + K.sizeof > size then
     Error
       (strf "kernel %S's descriptor at %d lies past the image's end" name kd)
@@ -504,6 +525,7 @@ let kernel_of o ~target ~most ~size ~meta:(threads, hidden) ps name kd =
            name threads most_threads)
     else
       let kernarg_size = field d K.kernarg_size in
+      let explicit_size = Option.value explicit ~default:kernarg_size in
       let outside (h, at) = at < 0 || at + hidden_bytes h > kernarg_size in
       match List.find_opt outside hidden with
       | Some (_, at) ->
@@ -512,6 +534,12 @@ let kernel_of o ~target ~most ~size ~meta:(threads, hidden) ps name kd =
                "kernel %S's implicit argument at %d lies outside its %d bytes \
                 of arguments"
                name at kernarg_size)
+      | None when explicit_size > kernarg_size ->
+          Error
+            (strf
+               "kernel %S's explicit arguments end at %d, past its %d bytes of \
+                arguments"
+               name explicit_size kernarg_size)
       | None ->
           Ok
             {
@@ -533,6 +561,7 @@ let kernel_of o ~target ~most ~size ~meta:(threads, hidden) ps name kd =
                   .amd_kernel_code_properties_enable_sgpr_private_segment_buffer;
               max_threads = threads;
               hidden;
+              explicit_size;
             }
 
 (* The kernels of [o], by name in increasing order, each at the first symbol
@@ -562,12 +591,14 @@ let rec kernels o ~target ~most ~size ps acc metas ds =
   | (name, _) :: _, (m, _) :: metas when String.compare m name < 0 ->
       kernels o ~target ~most ~size ps acc metas ds
   | (name, kd) :: ds, metas -> (
-      let threads, hidden =
+      let threads, hidden, explicit =
         match metas with
         | (m, meta) :: _ when String.equal m name -> meta
-        | _ -> (None, [])
+        | _ -> (None, [], None)
       in
-      let meta = (Option.value threads ~default:most_threads, hidden) in
+      let meta =
+        (Option.value threads ~default:most_threads, hidden, explicit)
+      in
       match kernel_of o ~target ~most ~size ~meta ps name kd with
       | Ok k -> kernels o ~target ~most ~size ps ((name, k) :: acc) metas ds
       | Error _ as e -> e)

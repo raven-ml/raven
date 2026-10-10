@@ -45,7 +45,7 @@ val of_string : string -> (t, string) result
     - a note runs past its section, or its metadata note
       ([NT_AMDGPU_METADATA]) is no MessagePack value, bounds a kernel's
       workgroups to fewer than 1 or more than 1024 work-items, or places an
-      implicit argument outside the kernel's arguments. *)
+      argument outside the kernel's arguments. *)
 
 val target : t -> string
 (** [target co] is the processor [co] is compiled for, as LLVM names it: a GPU,
@@ -126,6 +126,11 @@ type kernel = {
       (** The implicit arguments it reads, each with its offset among its
           arguments, by increasing offset, as the object's metadata lists them;
           [[]] if the metadata lists none. *)
+  explicit_size : int;
+      (** The bytes of its explicit arguments, which its caller writes: the end
+          of the last argument the metadata lists that is no implicit one
+          ({!hidden}): [0] where it lists none, and [kernarg_size] for an object
+          without metadata. *)
 }
 (** The type for kernels, as their descriptors describe them. *)
 

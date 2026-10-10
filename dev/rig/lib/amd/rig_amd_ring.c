@@ -188,15 +188,16 @@ static void need(const struct rig_amd *d, const struct rig_part *p, int n,
 }
 
 /* Whether launch [p], whose block is in [args], runs: on the compute ring,
-   in the form its ring reads, over a grid and groups of no empty axis,
-   within its function's threads per group and shared memory; for an AQL
-   packet, whose grid counts work-items in 32 bits, over fewer than 2^32
-   along each axis. */
+   in the form its ring reads, with the parameters its function reads, over
+   a grid and groups of no empty axis, within its function's threads per
+   group and shared memory; for an AQL packet, whose grid counts work-items
+   in 32 bits, over fewer than 2^32 along each axis. */
 static int launches(const struct rig_amd *d, const struct rig_part *p,
                     const uint8_t *args) {
   const struct rig_amd_launch *l = p->launch.launch;
   if (p->queue != RIG_AMD_COMPUTE || l == NULL || args == NULL ||
-      l->packet != (d->rings[p->queue].kind == RING_AQL))
+      l->packet != (d->rings[p->queue].kind == RING_AQL) ||
+      p->launch.params < l->explicit_size)
     return 0;
   const struct rig_block *b = (const void *)(args + p->launch.block);
   uint64_t threads = 1;
