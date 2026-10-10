@@ -544,6 +544,11 @@ let uncut p = not (Grid.is_cut (Devices.grid p))
 (* The constant operation at [p] reads its operands at this placement: [p] for a
    map, whose operands have its shape, and for a placement that cuts no axis;
    the whole on every device otherwise. *)
+(* CR: Keep [p] only for maps without Prim.is_padded loads.
+   Padding deferred ones[4] to [6], then placing it split over two
+   devices, forces [2] operands although load_view needs the whole [4].
+   Use the existing whole [q] and final crop for padded maps too,
+   so their kernels receive whole operands and destinations. *)
 let operand_at : type r.
     r Value.prim -> unit Devices.placement -> unit Devices.placement =
  fun op p ->
