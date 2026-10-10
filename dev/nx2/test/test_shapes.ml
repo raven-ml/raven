@@ -381,6 +381,12 @@ let joins =
           (o, a, n))
         (fun (o, a, n) ->
           covers o;
+          (* CR: Nx.add makes every input contiguous, and flip ~axes:[] keeps
+             that layout, so covers o does not describe what stack receives.
+             Shift o.e in OCaml, then use lay and Repr.of_array with this oracle.
+             Cover the constructed layouts; seed ~examples with empty and unit
+             shapes and [2;3] reversed, transposed and broadcast inputs, each
+             with two distinct values, so coverage needs no lucky draw. *)
           let xs =
             List.init n (fun k ->
                 Nx.flip ~axes:[]
