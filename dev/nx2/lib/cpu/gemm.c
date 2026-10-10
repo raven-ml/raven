@@ -507,13 +507,17 @@ static void lane_sum(int acc, void *l, uint8_t *d) {
   else *(double *)d = tree_f64_lanes(l);
 }
 
-/* [d] = init (if any) + the tree of the [n] block sums at [s], +0 with no
-   block. */
+/* [d] = init (if any) + the tree of the [n] block sums at [s]; with no
+   block, init as it is, or +0. */
 static void total(const problem *p, int64_t e, int64_t i, int64_t j,
                   const uint8_t *s, int64_t n, uint8_t *d) {
   _Alignas(16) uint8_t x[16] = {0};
   int init = p->op[INIT].x != NULL;
   if (init) stage_acc(p, INIT, pos(p, INIT, e, i, j, 0), 1, 0, 1, 1, x, 0);
+  if (init && n == 0) {
+    memcpy(d, x, (size_t)p->w);
+    return;
+  }
   if (p->acc == NX_FLOAT32) {
     float y = n ? tree_f32((const float *)s, n) : 0.f;
     *(float *)d = init ? *(float *)x + y : y;

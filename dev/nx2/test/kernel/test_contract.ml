@@ -696,7 +696,8 @@ let add32 x y = round32 (x +. y)
 
 (* [o]'s result in nx.cpu's order, with [fma] and [add] of the accumulator:
    one fused chain from init or +0, or, with fewer than 64 outputs per batch
-   element, blocks of 1024 terms in 16 lanes, summed by trees, then init. *)
+   element, blocks of 1024 terms in 16 lanes, summed by trees, then init;
+   with no term, init as it is. *)
 let ordered ~chain ~fma ~add o =
   let k = Array.length o.av in
   if chain then begin
@@ -731,7 +732,7 @@ let ordered ~chain ~fma ~add o =
     in
     let n = (k + 1023) / 1024 in
     let sum = if n = 0 then 0. else tree (Array.init n block) n in
-    match o.init with None -> sum | Some i -> add i sum
+    match o.init with None -> sum | Some i -> if n = 0 then i else add i sum
   end
 
 let law_order b c =

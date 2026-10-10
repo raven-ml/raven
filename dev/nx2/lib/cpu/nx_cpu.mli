@@ -33,8 +33,9 @@
     then lane [i + 4] for [i] below 4, then [i + 2] for [i] below 2, then
     lane 0 takes lane 1. The blocks are summed by a binary tree whose left
     part holds the largest power of two of blocks below their count, each
-    part summed the same way; then [init] is added. A NaN result's payload
-    is unspecified.
+    part summed the same way; then [init] is added. With no products, an
+    output is [init]'s bits, or [+0]. Otherwise a NaN result's payload is
+    unspecified.
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand into its own dtype, read plain, at [float32],
