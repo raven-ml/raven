@@ -702,9 +702,17 @@ let refusals =
               Nx.scatter ~combine:Add ~axis:0 (positions [| 2 |] [| 0; 1 |]) b b));
     ]
 
+(* An update at a window whose start is donated: the start is read once. *)
+let test_donated_start () =
+  let x = Nx.zeros Nx.float32 [| 4 |] in
+  let start = Nx.place Nx.Host.on (Nx.scalar Nx.int64 1L) in
+  let y = Nx.set [ Nx.D (Nx.donate start, 2) ] (Nx.ones Nx.float32 [| 2 |]) x in
+  equal (array float_exact) [| 0.; 1.; 1.; 0. |] (elements y)
+
 let many =
   group "many positions"
     [
+      test "an update at a donated window start" test_donated_start;
       cases "an update through positions held in data" ~name:fst
         [
           ("15, one program", (15, 15));

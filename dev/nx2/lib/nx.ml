@@ -1410,11 +1410,12 @@ let set idx v x =
     | New, None -> true
     | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> false
   in
-  (* CR: Classify picks by their constructors here. [positions] computes a
-     window merely to discard it, then the selected branch reads its start
-     again. A donated D start therefore raises, and an ordinary cache update
-     computes its window twice. Build positions only in the chosen branch. *)
-  match List.partition (fun (p, _) -> positions ~by p = None) picks with
+  let in_program (p, _) =
+    match p with
+    | At _ | Span _ | New -> true
+    | Rows _ | Held _ | From _ -> false
+  in
+  match List.partition in_program picks with
   | ranges, [] ->
       (* Positions written in the program alone: one assembly, [x] then [v] at
          the region the ranges keep. *)
