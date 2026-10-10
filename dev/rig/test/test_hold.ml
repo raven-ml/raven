@@ -310,12 +310,16 @@ let readers_t =
 
 (* Each domain's device, opened once for every case, before any domain
    runs. *)
-let reader_devices = (fst (P.open_ "hold:readers-0"), fst (P.open_ "hold:readers-1"))
+let reader_devices = (P.open_ "hold:readers-0", P.open_ "hold:readers-1")
 
-(* The memory, and each domain's submission over it, on its device. *)
+(* The memory, and each domain's submission over it, on its device. The
+   earlier cases' work runs first: their memory returns, so a drain walks
+   one case's releases, never every case's. *)
 let make_readers () =
+  let (d0, p0), (d1, p1) = reader_devices in
+  ignore (P.run p0);
+  ignore (P.run p1);
   let m = B.create Rig.host (1 lsl 16) in
-  let d0, d1 = reader_devices in
   let device d =
     let on = require_some (B.borrow d m) in
     Sub.make ~fixed:[ (on, B.Read) ] ~reads:0 ~writes:0 d [||]
