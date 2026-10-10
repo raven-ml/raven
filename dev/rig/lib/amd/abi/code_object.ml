@@ -282,15 +282,26 @@ let is r at len k =
 (* Reads the next key of a map, and answers [true] if it is a string, whose
    value is next; else skips the key and its value. *)
 let key r =
-  let k = next r in
-  if k = k_str then (
-    r.key_at <- r.at;
-    r.key_len <- r.n;
-    true)
-  else (
-    rest r k;
-    rest r (next r);
-    false)
+  let at = r.pos in
+  let b = if at < r.stop then Char.code (String.unsafe_get r.s at) else 0xc1 in
+  let n = b land 0x1f in
+  if b >= 0xa0 && b < 0xc0 && at + 1 + n <= r.stop then begin
+    (* A fixstr, as nearly every key is: read in place. *)
+    r.key_at <- at + 1;
+    r.key_len <- n;
+    r.pos <- at + 1 + n;
+    true
+  end
+  else
+    let k = next r in
+    if k = k_str then (
+      r.key_at <- r.at;
+      r.key_len <- r.n;
+      true)
+    else (
+      rest r k;
+      rest r (next r);
+      false)
 
 let is_key r k = is r r.key_at r.key_len k
 
@@ -386,7 +397,15 @@ let notes (o : Rig_elf.t) ~owner ~kind =
    arguments, by increasing offset. *)
 let read_metadata file (at, len) =
   let r =
-    { s = file; pos = at; stop = at + len; n = 0; at = 0; key_at = 0; key_len = 0 }
+    {
+      s = file;
+      pos = at;
+      stop = at + len;
+      n = 0;
+      at = 0;
+      key_at = 0;
+      key_len = 0;
+    }
   in
   (* An argument's implicit argument and its offset, if it is one. *)
   let arg () =
@@ -428,7 +447,8 @@ let read_metadata file (at, len) =
       done;
       let by_offset (_, a) (_, b) = Int.compare a b in
       if !name = "" then acc
-      else (!name, (!threads, List.stable_sort by_offset (List.rev !args))) :: acc
+      else
+        (!name, (!threads, List.stable_sort by_offset (List.rev !args))) :: acc
   in
   let kernels = ref [] in
   let v = next r in
