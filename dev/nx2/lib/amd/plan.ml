@@ -236,12 +236,13 @@ let take c bytes =
 (* Packs [o], of [rows] rows, into the workspace as elements of [into] with k
    contiguous and rows of whole vectors, a work-item an element, and makes the
    kernel read the copy; [false] if its elements outnumber the work-items a grid
-   holds. *)
+   holds. With no k, the kernel reads no element, and nothing is packed. *)
 let pack c o ~rows ~into =
   let es = bytes into in
   let per = 16 / es in
   let lead = ceil_div c.k per * per in
-  if c.batch * rows * lead > max_uint32 * K.threads then false
+  if c.k = 0 then true
+  else if c.batch * rows * lead > max_uint32 * K.threads then false
   else begin
     let at = take c (c.batch * rows * lead * es) in
     o.packed <- true;
