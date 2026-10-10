@@ -265,22 +265,37 @@ let rows =
 
 (* Timing *)
 
-let target_ns = 10_000_000
+(* A row's launches per run: the same count on every run and build, about
+   [target_ns] of GPU time at an M1 Max's nominal rates for the row's work; one
+   for a call row. A count measured per run would time different work from one
+   run to the next. *)
+let target_ns = 10_000_000.
+let flops_per_ns = 8_000. (* 8 TFLOP/s *)
+let bytes_per_ns = 400. (* 400 GB/s *)
+let launch_ns = 3_000.
 
-(* A row's run: [n] launches, enough for [target_ns] of GPU time, sized from the
-   fastest of three runs after three that make the pipelines and warm the caches
-   and the GPU's clock; one launch for a call row. *)
-let calibrate t r =
+let launches r =
+  if r.call then 1
+  else
+    let ns =
+      match r.work with
+      | `Flops f -> float f /. flops_per_ns
+      | `Bytes b -> float b /. bytes_per_ns
+      | `Launch -> launch_ns
+    in
+    max 1 (min 8192 (int_of_float (Float.ceil (target_ns /. ns))))
+
+(* A row's run: its launches in one command buffer, after three runs of one
+   launch that make the pipelines and warm the caches and the GPU's clock. *)
+let sized t r =
   let launch = r.setup t in
   let one = S.prepare t launch in
   for _ = 1 to 3 do
     ignore (one ())
   done;
-  if r.call then (1, one)
-  else
-    let ns = min (one ()) (min (one ()) (one ())) in
-    let n = max 1 (min 8192 ((target_ns + ns - 1) / max ns 1)) in
-    (n, S.prepare t (S.seq (List.init n (fun _ -> launch))))
+  let n = launches r in
+  if n = 1 then (1, one)
+  else (n, S.prepare t (S.seq (List.init n (fun _ -> launch))))
 
 let median l =
   let a = Array.of_list l in
@@ -289,7 +304,7 @@ let median l =
 
 (* The median GPU time per launch, in nanoseconds, over 30 runs. *)
 let per_launch t r =
-  let n, go = calibrate t r in
+  let n, go = sized t r in
   for _ = 1 to 3 do
     ignore (go ())
   done;
@@ -317,7 +332,7 @@ let gate pat =
   (* A call row: the median of 30 samples of the wall time of 50 calls on the
      host's clock, and the median GPU time of a call. *)
   let call_time r =
-    let _, go = calibrate t r in
+    let _, go = sized t r in
     let spans = ref [] in
     let sample () =
       let t0 = Unix.gettimeofday () in
@@ -427,7 +442,7 @@ let case r =
   Thumper.bench_with_setup r.name
     ~setup:(fun () ->
       let t = dev () in
-      snd (calibrate t r))
+      snd (sized t r))
     (fun go -> go ())
 
 let () =
