@@ -180,35 +180,36 @@ let functions names =
   "MTLB" ^ String.concat "" (List.map tag names)
 
 let stamp = Stamp.stamp "0123"
-let stale = Stamp.stale ~digest:"0123" ~kernels:[ "contract_int"; "move" ]
 
-let refusals () =
-  equal ~msg:"current" (option string) None
-    (stale (functions [ "contract_int"; stamp; "move" ]));
-  equal ~msg:"other sources" (option string)
-    (Some "was built from other sources")
-    (stale (functions [ "contract_int"; Stamp.stamp "4567"; "move" ]));
-  equal ~msg:"no stamp" (option string) (Some "was built from other sources")
-    (stale (functions [ "contract_int"; "move" ]));
-  equal ~msg:"a kernel missing" (option string)
-    (Some "lacks the kernel move")
-    (stale (functions [ "contract_int"; stamp ]));
-  equal ~msg:"a name only within another" (option string)
-    (Some "lacks the kernel contract_int")
-    (stale (functions [ "contract_intx"; "xcontract_int"; stamp; "move" ]))
+let names () =
+  let has names f = Stamp.has (functions names) f in
+  equal ~msg:"its stamp" bool true
+    (has [ "contract_int"; stamp; "move" ] stamp);
+  equal ~msg:"another stamp" bool false
+    (has [ "contract_int"; Stamp.stamp "4567"; "move" ] stamp);
+  equal ~msg:"no stamp" bool false (has [ "contract_int"; "move" ] stamp);
+  equal ~msg:"a name only within another" bool false
+    (has [ "contract_intx"; "xcontract_int"; stamp ] "contract_int")
 
-(* The harness's metallib, as the Metal compiler wrote it, names its kernels
-   and no stamp. *)
+let read file = In_channel.with_open_bin file In_channel.input_all
+
+(* The metallibs, as the Metal compiler wrote them, name their kernels. *)
 let harness () =
-  let m =
-    In_channel.with_open_bin "support/harness.metallib" In_channel.input_all
-  in
+  let m = read "support/harness.metallib" in
   equal ~msg:"kernels it lacks" (list string) []
     (List.filter
        (fun f -> not (Stamp.has m f))
-       [ "empty"; "move"; "probe_codec" ]);
-  equal ~msg:"no stamp" (option string) (Some "was built from other sources")
-    (Stamp.stale m ~digest:"0123" ~kernels:[ "empty" ])
+       [ "empty"; "move"; "probe_codec" ])
+
+(* Off a Mac no Metal device opens, and a copied metallib serves as it is. *)
+let library () =
+  if not (Sys.file_exists "/System/Library/Frameworks/Metal.framework") then
+    skip ~reason:"no Metal framework" ();
+  let m = read "../../lib/metal/kernels/kernels.metallib" in
+  equal ~msg:"kernels it lacks" (list string) []
+    (List.filter
+       (fun f -> not (Stamp.has m f))
+       (Array.to_list (Array.map fst K.kernels)))
 
 let () =
   exit
@@ -222,11 +223,12 @@ let () =
              test "the listed fields tile their structs" fields_tile;
              test "the structs' sizes and fields' offsets" offsets;
            ];
-         group "a metallib's stamp"
+         group "metallibs"
            [
              test "the digest is build.sh's" digest;
-             test "a metallib from other sources or short of a kernel is stale"
-               refusals;
+             test "a metallib's functions read as whole NAME tags" names;
              test "the Metal compiler's names read as NAME tags" harness;
+             test "nx.metal's metallib has every kernel kernels.ml names"
+               library;
            ];
        ])

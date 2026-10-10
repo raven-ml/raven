@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The harness's metallib (harness.metallib), included by the assembler,
+/* The harness's metallib (embedded.metallib), included by the assembler,
    and its kernels' names; host views of device memory; and the host side
    of the probes and of the contraction checks. Objective-C on macOS, where
    the views run; elsewhere no Metal device opens and nothing reaches them.

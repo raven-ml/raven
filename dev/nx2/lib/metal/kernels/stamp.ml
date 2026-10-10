@@ -32,12 +32,3 @@ let has metallib f =
   let n = String.length f + 1 in
   let length = String.init 2 (fun i -> Char.chr ((n lsr (8 * i)) land 0xff)) in
   contains metallib ("NAME" ^ length ^ f ^ "\000") 0
-
-(* Why [metallib] is not the one build.sh makes from sources of [digest] that
-   define [kernels], or [None]. *)
-let stale metallib ~digest ~kernels =
-  if not (has metallib (stamp digest)) then Some "was built from other sources"
-  else
-    List.find_map
-      (fun f -> if has metallib f then None else Some ("lacks the kernel " ^ f))
-      kernels

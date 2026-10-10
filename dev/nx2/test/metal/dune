@@ -18,7 +18,7 @@
  (names test_metal_kernels)
  (modules test_metal_kernels kernels stamp)
  (libraries windtrap)
- (deps support/harness.metallib)
+ (deps support/harness.metallib ../../lib/metal/kernels/kernels.metallib)
  (foreign_stubs
   (language c)
   (include_dirs ../../lib/metal ../../lib/array)
