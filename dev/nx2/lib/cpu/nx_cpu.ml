@@ -108,7 +108,15 @@ external scatter :
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_scatter"
 
-let sort _ ~values:_ ~positions:_ _ = Nx_array.Declined
+(* Sorts (sort.c) *)
+
+external sort :
+  Nx_kernel.Spec.sort Nx_kernel.Spec.t ->
+  values:('v, 's) Nx_array.t ->
+  positions:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_sort"
+
 let assemble _ ~dst:_ _ = Nx_array.Declined
 let fold _ ~dst:_ _ = Nx_array.Declined
 

@@ -58,6 +58,9 @@
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
     scatter's [Add] adds a target's updates left to right.
 
-    [sort], [assemble] and [fold] answer [Declined]. *)
+    [sort] computes every dtype of a byte or more and declines the sub-byte
+    ones; it refuses with [Shape_mismatch] results whose shapes do not fit.
+
+    [assemble] and [fold] answer [Declined]. *)
 
 include Nx_kernel.S
