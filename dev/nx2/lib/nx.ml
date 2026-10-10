@@ -340,6 +340,10 @@ let broadcast_all ~by shapes =
       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
       pp_shape ppf l
   in
+  (* CR: Appending copies the growing diagnostic prefix on every valid shape.
+     Cons s' onto before and reverse only for pp_list on failure, keeping
+     the ordered message while making this bookkeeping linear. Add a
+     broadcast_shapes bench over prebuilt compatible shapes. *)
   let step (s, before) s' =
     if Array.exists (fun e -> e < 0) s' then
       invalid_argf "%s: %a has a negative extent" by pp_shape s';
