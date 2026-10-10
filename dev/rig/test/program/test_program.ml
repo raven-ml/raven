@@ -1372,7 +1372,7 @@ let beside_law b =
             G.run p frame)
       else begin
         let pt = (G.run p frame).(0) in
-        Rig.wait d (Rig.Point.value pt);
+        Rig.Point.wait pt;
         let l = List.hd (P.launches pd) in
         equal ~msg:"the bytes with the value ORed in" int64
           (Int64.logor b.bytes field)

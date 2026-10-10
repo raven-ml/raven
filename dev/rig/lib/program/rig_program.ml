@@ -1210,7 +1210,7 @@ let load_here ~rails t devices =
           images = [||];
           code;
           rails;
-          hold = Rig.Hold.make (fun () -> ignore (Sys.opaque_identity code));
+          hold = Rig.Hold.make code;
           steps = [||];
           twos = [| twos 0; twos 1 |];
           flag = B.create Rig.host 1;
@@ -1507,9 +1507,7 @@ let load_there t devices =
                 }
               in
               (* The image stays loaded until the runs' work is done. *)
-              let hold =
-                Rig.Hold.make (fun () -> ignore (Sys.opaque_identity image))
-              in
+              let hold = Rig.Hold.make image in
               let sub = Sub.make ~hold ~reads:0 ~writes:0 host [| part |] in
               Ok
                 (There
