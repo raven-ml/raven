@@ -1289,6 +1289,21 @@ let test_unreleased_locked () =
   stop (hold g m 0);
   equal ~msg:"locked when asked" (list bool) [ true ] !asked
 
+(* An unbound GPU its kernel driver has not let go of is refused a reset and an
+   attach, as an open: the driver's release would write to it after the reset.
+   The vendor resets nothing. *)
+let test_reset_unreleased () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  let unreleased ~root:_ _ = Some "its release pending" in
+  let g = gpus ~unreleased () and m = Machine.at root in
+  let before = Atomic.get vendor_resets in
+  contains ~msg:"reset" ~sub:"its release pending"
+    (require_error (Gpus.reset g m 0));
+  contains ~msg:"attach" ~sub:"its release pending"
+    (require_error (Gpus.attach g m 0));
+  equal ~msg:"resets" int 0 (Atomic.get vendor_resets - before)
+
 (* A GPU bound to vfio-pci stays as it is: nothing is waited for. *)
 let test_vfio_unwaited () =
   needs_flock ();
@@ -1346,6 +1361,10 @@ let tree_changes =
         test_open_unreleased;
       test "the vendor is asked whether the GPU is released under the take's lock"
         test_unreleased_locked;
+      test
+        "an unbound GPU its kernel driver has not let go of is refused a reset \
+         and an attach"
+        test_reset_unreleased;
       test "a file the process may not write is refused, naming it"
         test_change_unwritable;
     ]

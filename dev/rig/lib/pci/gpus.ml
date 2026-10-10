@@ -204,13 +204,9 @@ let register_exit g =
 
 (* Opening *)
 
-(* An unbound GPU whose kernel driver has not let go of it yet is not opened:
-   the driver's release, which writes to it, would race the open's writes. *)
-(* CR: Compose this check with Function.take in one private take, used by
-   open_ and reset_gpu. Reset and attach currently bypass it: after detach
-   reports amdgpu's pending release, both can reset a GPU the kernel will
-   still write to when it releases it. Keep this vendor rule in Gpus and
-   state the same refusal in reset's and attach's contracts. *)
+(* An unbound GPU whose kernel driver has not let go of it yet is not taken, to
+   open, reset or attach it: the driver's release, which writes to it, would
+   race the take's writes. *)
 let released g l =
   let bus = Sysfs.bus l in
   if Sysfs.driver l <> None then Ok ()
@@ -398,7 +394,7 @@ let reset g m i =
   named g i @@ Mutex.protect g.mutex
   @@ fun () ->
   let* bus = gpu g m i in
-  reset_taken g m (Function.take m bus)
+  reset_taken g m (take g m bus)
 
 (* A kernel driver's probe expects the GPU as its vendor's reset leaves it,
    whatever ran on it before, in this process or another: a GPU on no kernel
@@ -410,5 +406,5 @@ let attach g m i =
       | Some d when d <> Sysfs.vfio_pci -> ()
       | _ ->
           Result.iter_error (Fail.fail "%s")
-            (reset_taken g m (Function.take_locked m l));
+            (reset_taken g m (take_locked g m l));
           Sysfs.attach l)

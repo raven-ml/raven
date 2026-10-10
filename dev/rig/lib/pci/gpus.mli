@@ -213,8 +213,9 @@ val attach : t -> Machine.t -> int -> (unit, string) result
     [Error why] if [m] is reached through a transport, if [i] is no GPU, if a
     process holds it, if the process may not write a file, or if no driver takes
     it, such as when the driver's module is not loaded. If its function cannot
-    be taken, such as an unbound GPU behind an IOMMU, or its reset fails, the
-    GPU is left as it was and [why] says how to proceed (bind it to [vfio-pci],
+    be taken, such as an unbound GPU behind an IOMMU, if it is unbound and its
+    kernel driver has not let go of it yet ([unreleased] of {!make}), or if its
+    reset fails, the GPU is left as it was and [why] says how to proceed (bind it to [vfio-pci],
     power cycle).
 
     Exceptions raised by the vendor's reset pass through, the GPU left as it
@@ -232,5 +233,6 @@ val reset : t -> Machine.t -> int -> (unit, string) result
     and the next open does not renew it. Exceptions raised by the vendor's reset
     pass through, as in {{!holds}an open}.
 
-    [Error why] if [i] is no GPU, if a process holds it, if its function cannot
-    be taken, or the vendor's reset's. *)
+    [Error why] if [i] is no GPU, if a process holds it, if it is unbound and its
+    kernel driver has not let go of it yet, which writes to it ([unreleased] of
+    {!make}), if its function cannot be taken, or the vendor's reset's. *)
