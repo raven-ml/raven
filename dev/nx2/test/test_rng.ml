@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Nx.Rng: Threefry's known answers, the laws between keys and draws, and each
-   sampler's distribution within stated bounds. *)
+   sampler's distribution within stated bounds, over drawn keys. *)
 
 open Windtrap
 module A = Nx_array
@@ -31,6 +31,11 @@ let u32 w = Int64.logand (Int64.of_int32 w) 0xFFFF_FFFFL
 let word = Int32.of_int
 let numel s = Array.fold_left ( * ) 1 s
 
+(* Block [i] of the words [ws] of [split_batch]: a uint64, the first word
+   low. *)
+let block ws i =
+  Int64.logor (u32 ws.(2 * i)) (Int64.shift_left (u32 ws.((2 * i) + 1)) 32)
+
 let pp_shape ppf s =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
@@ -40,6 +45,54 @@ let shapes =
   |> Gen.with_pp pp_shape
 
 let seeds = Gen.int
+
+(* The key of any two words. *)
+let keys =
+  Gen.map
+    (fun (w0, w1) -> Rng.of_tensor (host_of Nx.int32 [| 2 |] [| w0; w1 |]))
+    (Gen.pair Gen.int32 Gen.int32)
+
+type float_dtype = F : (float, 's) A.Dtype.t -> float_dtype
+
+let pp_dtype ppf (F dt) = Format.pp_print_string ppf (A.Dtype.name dt)
+
+let wide = Gen.of_list ~pp:pp_dtype [ F Nx.float32; F Nx.float64 ]
+
+(* Each float dtype with its uniform draw's precision [p], from its format:
+   its significand's width, and 1 for float4_e2m1fn, whose values below 1 are 0
+   and 1/2. *)
+let floats =
+  Gen.of_list
+    ~pp:(fun ppf (dt, _) -> pp_dtype ppf dt)
+    [
+      (F Nx.float32, 24);
+      (F Nx.float64, 53);
+      (F Nx.bfloat16, 8);
+      (F Nx.float16, 11);
+      (F Nx.float8_e4m3fn, 4);
+      (F Nx.float8_e5m2, 3);
+      (F Nx.float4_e2m1fn, 1);
+    ]
+
+let pp_float ppf x = Format.fprintf ppf "%h" x
+let floats_of xs = Gen.of_list ~pp:pp_float xs
+
+(* A parameter: a value, or the least positive value of the dtype it is
+   given in. *)
+type param = Least | V of float
+
+let pp_param ppf = function
+  | Least -> Format.pp_print_string ppf "Least"
+  | V x -> Format.fprintf ppf "V %h" x
+
+let params xs = Gen.of_list ~pp:pp_param xs
+
+(* [x] as [dt] holds it. *)
+let at (type s) (dt : (float, s) A.Dtype.t) = function
+  | Least ->
+      let f = A.Dtype.float_format dt in
+      f.min_normal *. f.epsilon
+  | V x -> A.Dtype.of_float dt x
 
 (* Keys *)
 
@@ -60,40 +113,72 @@ let known =
       equal (array int32) (Array.map word want)
         (words (Rng.fold_in (Rng.key seed) data)))
 
-let keys =
+let n = 1 lsl 14
+let mean xs = Array.fold_left ( +. ) 0. xs /. Float.of_int (Array.length xs)
+
+let variance xs =
+  let m = mean xs in
+  Array.fold_left (fun a x -> a +. ((x -. m) *. (x -. m))) 0. xs
+  /. Float.of_int (Array.length xs)
+
+(* [x], a statistic of [n] draws of variance [var / n], within 6 standard
+   errors of [want]: [√var / √n], which does not underflow at a tiny [var]. *)
+let near ~var want x =
+  let se = sqrt var /. sqrt (Float.of_int n) in
+  at_most float_exact ~than:(6. *. se) (Float.abs (x -. want))
+
+(* Two draws are uncorrelated: the mean product of two standard normal draws of
+   [n] is within 6 standard errors, [1 / √n], of 0. *)
+let uncorrelated k k' =
+  let a = read (Rng.normal ~key:k Nx.float64 [| n |]) in
+  let b = read (Rng.normal ~key:k' Nx.float64 [| n |]) in
+  near ~var:1. 0. (mean (Array.map2 ( *. ) a b))
+
+let keys_group =
   group "keys"
     [
       prop "a seed's words are its high and low halves" seeds (fun s ->
           equal (array int32) [| word (s asr 32); word s |] (words (Rng.key s)));
       test "a key is a value of every set" (fun () ->
           is_none (Nx.placement (Rng.to_tensor (Rng.key 7))));
-      prop "split's keys are split_batch's rows" (Gen.int_range 1 6) (fun n ->
-          let k = Rng.key 3 in
+      prop "split's keys are split_batch's rows"
+        (Gen.pair keys (Gen.int_range 1 6))
+        (fun (k, n) ->
           let rows = words (Rng.split_batch ~n k) in
           let each =
             Array.concat (Array.to_list (Array.map words (Rng.split ~n k)))
           in
           equal (array int32) rows each);
-      test "split keys are distinct and differ from their key" (fun () ->
-          let k = Rng.key 11 in
-          let ks = Array.map words (Rng.split ~n:8 k) in
-          let all = Array.to_list (Array.append [| words k |] ks) in
-          equal int (List.length all) (List.length (List.sort_uniq compare all)));
+      prop "split keys are distinct and differ from their key"
+        (Gen.pair keys (Gen.int_range 1 16))
+        (fun (k, n) ->
+          let split = Array.to_list (Array.map words (Rng.split ~n k)) in
+          let all = words k :: split in
+          equal int (n + 1) (List.length (List.sort_uniq compare all)));
+      prop "fold_in of distinct indices gives distinct keys"
+        (Gen.triple keys Gen.int Gen.int)
+        (fun (k, i, i') ->
+          assume (i <> i');
+          not_equal (array int32) (words (Rng.fold_in k i))
+            (words (Rng.fold_in k i')));
+      prop "split keys draw uncorrelated values" keys (fun k ->
+          let ks = Rng.split k in
+          uncorrelated ks.(0) ks.(1));
+      prop "fold_in keys draw uncorrelated values"
+        (Gen.triple keys Gen.int Gen.int)
+        (fun (k, i, i') ->
+          assume (i <> i');
+          uncorrelated (Rng.fold_in k i) (Rng.fold_in k i'));
       prop "fold_in_tensor of [n] is fold_in of n"
-        (Gen.int32_range Int32.min_int Int32.max_int) (fun n ->
-          let k = Rng.key 5 in
-          let i =
-            Nx.Repr.of_array Nx.Host.v (A.of_array A.Dtype.Int32 [||] [| n |])
-          in
+        (Gen.pair keys (Gen.int32_range Int32.min_int Int32.max_int))
+        (fun (k, n) ->
+          let i = host_of A.Dtype.Int32 [||] [| n |] in
           equal (array int32)
             (words (Rng.fold_in k (Int32.to_int n)))
             (words (Rng.fold_in_tensor k i)));
       test "fold_in_tensor of a batch of indices is a batch of keys" (fun () ->
           let k = Rng.key 5 in
-          let i =
-            Nx.Repr.of_array Nx.Host.v
-              (A.of_array A.Dtype.Int32 [| 3 |] [| 0l; 1l; -4l |])
-          in
+          let i = host_of A.Dtype.Int32 [| 3 |] [| 0l; 1l; -4l |] in
           let each =
             Array.concat
               (List.map (fun n -> words (Rng.fold_in k n)) [ 0; 1; -4 ])
@@ -107,10 +192,7 @@ let keys =
               (Nx.reshape [| 2; 1; 2 |]
                  (Rng.to_tensor (Rng.split_batch ~n:2 (Rng.key 5))))
           in
-          let i =
-            Nx.Repr.of_array Nx.Host.v
-              (A.of_array A.Dtype.Int32 [| 3 |] [| 0l; 7l; -4l |])
-          in
+          let i = host_of A.Dtype.Int32 [| 3 |] [| 0l; 7l; -4l |] in
           let each =
             Array.concat
               (List.concat_map
@@ -127,15 +209,12 @@ let keys =
           Nx_support.Counting.reset ();
           ignore (Rng.of_tensor reversed);
           equal int 0 (Nx_support.Counting.calls ()));
-      prop "of_tensor undoes to_tensor" seeds (fun s ->
-          let k = Rng.split_batch ~n:3 (Rng.key s) in
+      prop "of_tensor undoes to_tensor" keys (fun k ->
+          let k = Rng.split_batch ~n:3 k in
           equal (array int32) (words k)
             (words (Rng.of_tensor (Rng.to_tensor k))));
       test "of_tensor refuses a last axis other than 2" (fun () ->
-          let t =
-            Nx.Repr.of_array Nx.Host.v
-              (A.of_array A.Dtype.Int32 [| 3 |] [| 0l; 1l; 2l |])
-          in
+          let t = host_of A.Dtype.Int32 [| 3 |] [| 0l; 1l; 2l |] in
           equal string "Nx.Rng.of_tensor: a key has shape [...; 2], not [3]"
             (message (fun () -> Rng.of_tensor t)));
       test "split refuses n below 1" (fun () ->
@@ -150,23 +229,134 @@ let keys =
 
 (* Draws *)
 
+(* Each sampler at fixed parameters, its draw of a shape read as floats. *)
+let samplers =
+  let of_ints xs = Array.map Int32.to_float xs in
+  let full dt s v = host_of dt s (Array.make (numel s) v) in
+  let counts s = host_of Nx.int32 s (Array.make (numel s) 40l) in
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    [
+      ("bits", fun k s -> of_ints (read (Rng.bits ~key:k s)));
+      ("uniform", fun k s -> read (Rng.uniform ~key:k Nx.float16 s));
+      ("normal", fun k s -> read (Rng.normal ~key:k Nx.float32 s));
+      ("exponential", fun k s -> read (Rng.exponential ~key:k Nx.float64 s));
+      ( "randint",
+        fun k s -> of_ints (read (Rng.randint ~key:k ~low:(-9) ~high:1000 s)) );
+      ( "bernoulli",
+        fun k s ->
+          Array.map Bool.to_float
+            (read (Rng.bernoulli ~key:k (full Nx.float32 s 0.3))) );
+      ("gamma", fun k s -> read (Rng.gamma ~key:k (full Nx.float32 s 0.7)));
+      ( "beta",
+        fun k s ->
+          read (Rng.beta ~key:k (full Nx.float64 s 2.) (full Nx.float64 s 0.5))
+      );
+      ( "von_mises",
+        fun k s -> read (Rng.von_mises ~key:k (full Nx.float32 s 3.)) );
+      ( "poisson",
+        fun k s -> of_ints (read (Rng.poisson ~key:k (full Nx.float64 s 30.)))
+      );
+      ( "binomial",
+        fun k s ->
+          of_ints
+            (read (Rng.binomial ~key:k (counts s) (full Nx.float32 s 0.25))) );
+    ]
+
+(* The words [w] at their uniform's precision [p] of 24 or less: their low [p]
+   bits scaled by [2^-p]. *)
+let low_bits p w =
+  Float.ldexp (Int32.to_float (Int32.logand w (word ((1 lsl p) - 1)))) (-p)
+
+(* 53 bits of block [i] of [ws]: its first word's low 21 bits over its
+   second. *)
+let bits53 ws i =
+  Int64.logor
+    (Int64.shift_left (Int64.logand (u32 ws.(2 * i)) 0x1F_FFFFL) 32)
+    (u32 ws.((2 * i) + 1))
+
+(* Lemire's multiply-shift of the range [low, high) at element [j] of [n]:
+   block [j]'s 64 bits times the range, shifted down by 64, unless its low 64
+   bits fall below [2^64 mod range], where block [n + j] stands whatever its
+   low bits. The flag is whether element [j] took the second block. *)
+let lemire ws ~low ~high ~n j =
+  let r = Int64.of_int (high - low) in
+  let t = Int64.unsigned_rem (Int64.neg r) r in
+  let pick i =
+    let w = block ws i in
+    let wh = Int64.shift_right_logical w 32 and wl = u32 (Int64.to_int32 w) in
+    let hi =
+      Int64.shift_right_logical
+        (Int64.add (Int64.mul wh r)
+           (Int64.shift_right_logical (Int64.mul wl r) 32))
+        32
+    in
+    (hi, Int64.unsigned_compare (Int64.mul w r) t < 0)
+  in
+  let hi, rejected = pick j in
+  let hi = if rejected then fst (pick (n + j)) else hi in
+  (Int32.of_int (low + Int64.to_int hi), rejected)
+
+(* A range [low, high) inside int32: small ones, ones at its extremes, and the
+   whole of it. *)
+let ranges =
+  let open Gen in
+  let fits v = v >= -0x8000_0000 && v <= 0x7FFF_FFFF in
+  let pp ppf (l, h) = Format.fprintf ppf "[%d, %d)" l h in
+  one_of
+    [
+      (let+ low = int_range (-0x8000_0000) 0x7FFF_FFFE
+       and+ width = int_range 1 64 in
+       (low, min (low + width) 0x7FFF_FFFF));
+      (let+ a = int_range (-0x8000_0000) 0x7FFF_FFFF
+       and+ b = int_range (-0x8000_0000) 0x7FFF_FFFF in
+       if a = b then (a, a + 1) else (min a b, max a b));
+      of_list [ (-0x8000_0000, 0x7FFF_FFFF); (-0x8000_0000, -0x7FFF_FFFF) ];
+    ]
+  |> such_that (fun (l, h) -> fits l && fits h && l < h)
+  |> with_pp pp
+
+(* Block 0 of the key of words [(1343584651, 2)], times [0xFFFF0001], falls
+   below [2^64 mod 0xFFFF0001]: its first round is rejected. *)
+let second_round =
+  ( host_of Nx.int32 [| 2 |] [| 1343584651l; 2l |],
+    (-0x8000_0000, 0x7FFF_0001),
+    1 )
+
+let probabilities =
+  let open Gen in
+  one_of
+    [
+      of_list [ 0.; 1.; 0.5 ];
+      float_range 0. 1.;
+      map (fun e -> Float.ldexp 1. e) (int_range (-60) (-1));
+    ]
+
 let draws =
   group "draws"
     [
-      prop "bits are split_batch's words in order" (Gen.int_range 0 9) (fun n ->
-          let k = Rng.key 21 in
+      prop "bits are split_batch's words in order"
+        (Gen.pair keys (Gen.int_range 0 9))
+        (fun (k, n) ->
           cover "odd" (n mod 2 = 1);
           cover "none" (n = 0);
           let blocks = words (Rng.split_batch ~n:(((n + 1) / 2) + 1) k) in
           equal (array int32) (Array.sub blocks 0 n)
             (read (Rng.bits ~key:k [| n |])));
-      prop "a draw is its flat draw reshaped" shapes (fun s ->
-          let k = Rng.key 2 in
+      prop "a draw is its flat draw reshaped" (Gen.pair keys shapes)
+        (fun (k, s) ->
           equal (array int32)
             (read (Rng.bits ~key:k [| numel s |]))
             (read (Rng.bits ~key:k s)));
-      prop "a draw is the same on every set" shapes (fun s ->
-          let k = Rng.key 9 in
+      prop "equal keys give equal draws"
+        (Gen.triple seeds samplers shapes)
+        (fun (seed, (_, draw), s) ->
+          let k = Rng.key seed in
+          let k' = Rng.of_tensor (host_of Nx.int32 [| 2 |] (words k)) in
+          equal (array float_exact) (draw k s) (draw k' s));
+      prop "a draw is the same on every set" (Gen.pair seeds shapes)
+        (fun (seed, s) ->
+          let k = Rng.key seed in
           let x = Rng.normal ~key:k Nx.float32 s in
           equal (array float_exact) (read x) (shard (Nx.place S2.on x)));
       test "a placed key draws where it lies" (fun () ->
@@ -178,9 +368,8 @@ let draws =
             (read (Rng.uniform ~key:(Rng.key 9) Nx.float32 [| 5 |]))
             (shard x));
       prop "a batch of keys draws each key's draw"
-        (Gen.pair (Gen.int_range 1 4) shapes)
-        (fun (n, s) ->
-          let k = Rng.key 4 in
+        (Gen.triple keys (Gen.int_range 1 4) shapes)
+        (fun (k, n, s) ->
           let batch =
             read (Rng.uniform ~key:(Rng.split_batch ~n k) Nx.float64 s)
           in
@@ -192,142 +381,97 @@ let draws =
                     (Rng.split ~n k)))
           in
           equal (array float_exact) each batch);
-      test "float32 uniform is the low 24 bits of bits, scaled" (fun () ->
-          let k = Rng.key 13 in
-          let b = read (Rng.bits ~key:k [| 64 |]) in
+      prop "a narrow float uniform is the low p bits of bits, scaled"
+        (Gen.pair keys floats)
+        (fun (k, (F dt, p)) ->
+          assume (p <= 24);
+          let want = Array.map (low_bits p) (read (Rng.bits ~key:k [| 64 |])) in
+          equal (array float_exact) want
+            (read (Rng.uniform ~key:k dt [| 64 |])));
+      prop "float64 uniform is 53 bits of each block, scaled" keys (fun k ->
+          let ws = words (Rng.split_batch ~n:64 k) in
           let want =
-            Array.map
-              (fun w ->
-                Float.ldexp (Int32.to_float (Int32.logand w 0xFF_FFFFl)) (-24))
-              b
+            Array.init 64 (fun i ->
+                Float.ldexp (Int64.to_float (bits53 ws i)) (-53))
           in
           equal (array float_exact) want
-            (read (Rng.uniform ~key:k Nx.float32 [| 64 |])));
-      test "float64 uniform is 53 bits of each block, scaled" (fun () ->
-          let k = Rng.key 14 and n = 512 in
-          let ws = words (Rng.split_batch ~n k) in
-          let want =
-            Array.init n (fun i ->
-                let top = Int64.logand (u32 ws.(2 * i)) 0x1F_FFFFL in
-                Float.ldexp
-                  ((Int64.to_float top *. 4294967296.)
-                  +. Int64.to_float (u32 ws.((2 * i) + 1)))
-                  (-53))
-          in
-          equal (array float_exact) want
-            (read (Rng.uniform ~key:k Nx.float64 [| n |])));
-      cases
-        ~name:(fun (low, high) -> Printf.sprintf "randint [%d, %d)" low high)
-        "randint is Lemire's multiply-shift of each block"
-        [ (-0x8000_0000, 0x7FFF_FFFF); (0, 3 lsl 28); (-5, 7) ]
-        (fun (low, high) ->
-          let k = Rng.key 15 and n = 4096 in
-          let ws = words (Rng.split_batch ~n:(2 * n) k) in
-          let r = Int64.of_int (high - low) in
-          let t = Int64.unsigned_rem (Int64.neg r) r in
-          let pick i =
-            let w =
-              Int64.logor
-                (u32 ws.(2 * i))
-                (Int64.shift_left (u32 ws.((2 * i) + 1)) 32)
-            in
-            let wh = Int64.shift_right_logical w 32
-            and wl = u32 (Int64.to_int32 w) in
-            let hi =
-              Int64.shift_right_logical
-                (Int64.add (Int64.mul wh r)
-                   (Int64.shift_right_logical (Int64.mul wl r) 32))
-                32
-            in
-            (hi, Int64.unsigned_compare (Int64.mul w r) t < 0)
-          in
-          let want =
-            Array.init n (fun j ->
-                let hi, rejected = pick j in
-                let hi = if rejected then fst (pick (n + j)) else hi in
-                Int32.of_int (low + Int64.to_int hi))
-          in
-          equal (array int32) want
+            (read (Rng.uniform ~key:k Nx.float64 [| 64 |])));
+      prop "randint is Lemire's multiply-shift of each block"
+        ~examples:[ second_round ]
+        (Gen.triple
+           (Gen.map Rng.to_tensor keys)
+           ranges (Gen.int_range 0 64))
+        (fun (k, (low, high), n) ->
+          let k = Rng.of_tensor k in
+          let ws = words (Rng.split_batch ~n:(max 1 (2 * n)) k) in
+          let want = Array.init n (lemire ws ~low ~high ~n) in
+          cover "a second round" (Array.exists snd want);
+          equal (array int32) (Array.map fst want)
             (read (Rng.randint ~key:k ~low ~high [| n |])));
+      prop "bernoulli is a 53-bit draw below p"
+        (Gen.triple keys wide
+           (Gen.array ~size:(Gen.int_range 0 64) probabilities))
+        (fun (k, F dt, ps) ->
+          let ps = Array.map (A.Dtype.of_float dt) ps in
+          let p = host_of dt [| Array.length ps |] ps in
+          let ws = words (Rng.split_batch ~n:(max 1 (Array.length ps)) k) in
+          let want =
+            Array.mapi
+              (fun j p ->
+                Int64.compare (bits53 ws j)
+                  (Int64.of_float (Float.ceil (Float.ldexp p 53)))
+                < 0)
+              ps
+          in
+          equal (array bool) want (read (Rng.bernoulli ~key:k p)));
       test "a negative extent raises" (fun () ->
           equal string "Nx.Rng.uniform: shape [2; -1] has a negative extent"
             (message (fun () -> Rng.uniform Nx.float32 [| 2; -1 |])));
     ]
 
-(* Distributions. Each moment is checked within 6 standard errors of its value,
-   at fixed keys. *)
-
-let n = 1 lsl 16
-let mean xs = Array.fold_left ( +. ) 0. xs /. Float.of_int (Array.length xs)
-
-let variance xs =
-  let m = mean xs in
-  Array.fold_left (fun a x -> a +. ((x -. m) *. (x -. m))) 0. xs
-  /. Float.of_int (Array.length xs)
-
-(* [x] within [k] standard errors [se] of [want]. *)
-let near ~se want x =
-  at_most float_exact ~than:(6. *. se) (Float.abs (x -. want))
-
-let unit_grid name dt p =
-  test name (fun () ->
-      let xs = read (Rng.uniform ~key:(Rng.key 1) dt [| 4096 |]) in
-      Array.iter
-        (fun x ->
-          if
-            not
-              (x >= 0. && x < 1.
-              && Float.equal (Float.ldexp x p) (Float.round (Float.ldexp x p)))
-          then failf "%h is not a multiple of 2^-%d in [0, 1)" x p)
-        xs;
-      (* Each of the 2^p values is equally likely. *)
-      if p <= 8 then begin
-        let m = 1 lsl p in
-        let counts = Array.make m 0 in
-        Array.iter
-          (fun x ->
-            let i = int_of_float (Float.ldexp x p) in
-            counts.(i) <- counts.(i) + 1)
-          xs;
-        let q = 1. /. Float.of_int m and n = Float.of_int (Array.length xs) in
-        Array.iter
-          (fun c ->
-            near ~se:(sqrt (q *. (1. -. q) /. n)) q (Float.of_int c /. n))
-          counts
-      end)
+(* Distributions. Each moment of [n] draws is checked within 6 standard errors
+   of its value, over drawn keys. *)
 
 let distributions =
   group "distributions"
     [
-      unit_grid "float32 uniform draws are multiples of 2^-24 in [0, 1)"
-        Nx.float32 24;
-      unit_grid "float64 uniform draws are multiples of 2^-53 in [0, 1)"
-        Nx.float64 53;
-      unit_grid "bfloat16 uniform draws are multiples of 2^-8 in [0, 1)"
-        Nx.bfloat16 8;
-      unit_grid "float16 uniform draws are multiples of 2^-11 in [0, 1)"
-        Nx.float16 11;
-      unit_grid "float8_e4m3fn uniform draws are multiples of 2^-4 in [0, 1)"
-        Nx.float8_e4m3fn 4;
-      unit_grid "float8_e5m2 uniform draws are multiples of 2^-3 in [0, 1)"
-        Nx.float8_e5m2 3;
-      unit_grid "float4_e2m1fn uniform draws are 0 and 1/2" Nx.float4_e2m1fn 1;
-      test "uniform: mean 1/2, variance 1/12" (fun () ->
-          let xs = read (Rng.uniform ~key:(Rng.key 100) Nx.float64 [| n |]) in
-          near ~se:(sqrt (1. /. 12. /. Float.of_int n)) 0.5 (mean xs);
-          near
-            ~se:(sqrt (1. /. 180. /. Float.of_int n))
-            (1. /. 12.) (variance xs));
-      test "normal: mean 0, variance 1" (fun () ->
-          let xs = read (Rng.normal ~key:(Rng.key 101) Nx.float32 [| n |]) in
-          near ~se:(sqrt (1. /. Float.of_int n)) 0. (mean xs);
-          near ~se:(sqrt (2. /. Float.of_int n)) 1. (variance xs));
-      test "normal at float64: mean 0, variance 1" (fun () ->
-          let xs =
-            read (Rng.normal ~key:(Rng.key 102) Nx.float64 [| n + 1 |])
-          in
-          near ~se:(sqrt (1. /. Float.of_int n)) 0. (mean xs);
-          near ~se:(sqrt (2. /. Float.of_int n)) 1. (variance xs));
+      prop "uniform draws are equally likely multiples of 2^-p in [0, 1)"
+        (Gen.pair keys floats)
+        (fun (k, (F dt, p)) ->
+          let xs = read (Rng.uniform ~key:k dt [| n |]) in
+          Array.iter
+            (fun x ->
+              let scaled = Float.ldexp x p in
+              let whole = Float.equal scaled (Float.round scaled) in
+              if not (x >= 0. && x < 1. && whole) then
+                failf "%h is not a multiple of 2^-%d in [0, 1)" x p)
+            xs;
+          if p <= 8 then begin
+            let bins = 1 lsl p in
+            let counts = Array.make bins 0 in
+            Array.iter
+              (fun x ->
+                let i = int_of_float (Float.ldexp x p) in
+                counts.(i) <- counts.(i) + 1)
+              xs;
+            let q = 1. /. Float.of_int bins and nf = Float.of_int n in
+            Array.iter
+              (fun c -> near ~var:(q *. (1. -. q)) q (Float.of_int c /. nf))
+              counts
+          end);
+      prop "uniform: mean 1/2, variance 1/12" (Gen.pair keys wide)
+        (fun (k, F dt) ->
+          let xs = read (Rng.uniform ~key:k dt [| n |]) in
+          near ~var:(1. /. 12.) 0.5 (mean xs);
+          near ~var:(1. /. 180.) (1. /. 12.) (variance xs));
+      prop "normal: mean 0, variance 1" (Gen.pair keys wide)
+        (fun (k, F dt) ->
+          let xs = read (Rng.normal ~key:k dt [| n |]) in
+          Array.iter
+            (fun x -> if not (Float.is_finite x) then failf "draw %g" x)
+            xs;
+          near ~var:1. 0. (mean xs);
+          near ~var:2. 1. (variance xs));
       (* Key 3743's float32 uniform draw is 0 at index 1386, where the
          exponential is -log 1: +0, never -0. *)
       test "exponential of a zero uniform draw is +0" (fun () ->
@@ -338,57 +482,54 @@ let distributions =
             (read (Rng.exponential ~key:k Nx.float32 [| 4096 |])).(1386)
           in
           equal (pair float_exact bool) (0., false) (x, Float.sign_bit x));
-      test "exponential: mean 1, variance 1, never negative" (fun () ->
+      prop "exponential: finite, never negative, mean 1, variance 1"
+        (Gen.pair keys wide)
+        (fun (k, F dt) ->
+          let xs = read (Rng.exponential ~key:k dt [| n |]) in
+          Array.iter
+            (fun x ->
+              if not (x >= 0. && Float.is_finite x && not (Float.sign_bit x))
+              then failf "draw %g" x)
+            xs;
+          near ~var:1. 1. (mean xs);
+          near ~var:8. 1. (variance xs));
+      prop "randint draws every value of [low, high), uniformly"
+        (Gen.pair keys ranges)
+        (fun (k, (low, high)) ->
           let xs =
-            read (Rng.exponential ~key:(Rng.key 103) Nx.float32 [| n |])
+            read (Rng.randint ~key:k ~low ~high [| n |])
+            |> Array.map Int32.to_int
           in
           Array.iter
             (fun x ->
-              if not (x >= 0. && Float.is_finite x) then failf "draw %g" x)
+              if x < low || x >= high then
+                failf "draw %d outside [%d, %d)" x low high)
             xs;
-          near ~se:(sqrt (1. /. Float.of_int n)) 1. (mean xs);
-          near ~se:(sqrt (8. /. Float.of_int n)) 1. (variance xs));
-      test "split keys draw uncorrelated values" (fun () ->
-          let ks = Rng.split (Rng.key 104) in
-          let a = read (Rng.normal ~key:ks.(0) Nx.float64 [| n |]) in
-          let b = read (Rng.normal ~key:ks.(1) Nx.float64 [| n |]) in
-          let c = mean (Array.map2 ( *. ) a b) in
-          near ~se:(sqrt (1. /. Float.of_int n)) 0. c);
-      test "randint: every value of [low, high), uniformly" (fun () ->
-          let xs =
-            read (Rng.randint ~key:(Rng.key 105) ~low:(-3) ~high:5 [| n |])
-          in
-          let counts = Array.make 8 0 in
-          Array.iter
-            (fun x ->
-              let x = Int32.to_int x in
-              if x < -3 || x >= 5 then failf "draw %d outside [-3, 5)" x;
-              counts.(x + 3) <- counts.(x + 3) + 1)
-            xs;
-          let p = 1. /. 8. in
-          Array.iter
-            (fun c ->
-              near
-                ~se:(sqrt (p *. (1. -. p) /. Float.of_int n))
-                p
-                (Float.of_int c /. Float.of_int n))
-            counts);
-      test "randint over int32's range" (fun () ->
-          let xs =
-            read
-              (Rng.randint ~key:(Rng.key 106) ~low:(-0x8000_0000)
-                 ~high:0x7FFF_FFFF [| 4096 |])
-          in
-          let m = mean (Array.map Int32.to_float xs) in
-          near ~se:(4294967296. *. sqrt (1. /. 12. /. 4096.)) (-0.5) m);
+          let width = high - low and nf = Float.of_int n in
+          if width <= 64 then begin
+            cover "one value" (width = 1);
+            let counts = Array.make width 0 in
+            Array.iter (fun x -> counts.(x - low) <- counts.(x - low) + 1) xs;
+            let p = 1. /. Float.of_int width in
+            Array.iter
+              (fun c -> near ~var:(p *. (1. -. p)) p (Float.of_int c /. nf))
+              counts
+          end
+          else begin
+            (* A uniform draw over [w] values has variance [(w² - 1) / 12]. *)
+            let w = Float.of_int width in
+            let centre = Float.of_int low +. ((w -. 1.) /. 2.) in
+            near ~var:(((w *. w) -. 1.) /. 12.) centre
+              (mean (Array.map Float.of_int xs))
+          end);
       (* A range wider than 2^24, not a power of two: the draws land above 2^24,
          and both their high bins and their low six bits are uniform. With 64
          bins of 1024 expected draws a chi-square has 63 degrees of freedom,
          mean 63 and standard deviation √126. *)
-      test "randint is uniform over a range wider than 2^24" (fun () ->
-          let range = 3 lsl 28 in
+      prop "randint is uniform over a range wider than 2^24" keys (fun k ->
+          let range = 3 lsl 28 and n = 1 lsl 16 in
           let xs =
-            read (Rng.randint ~key:(Rng.key 108) ~high:range [| n |])
+            read (Rng.randint ~key:k ~high:range [| n |])
             |> Array.map Int32.to_int
           in
           let chi2 bin =
@@ -410,85 +551,32 @@ let distributions =
       test "randint refuses a bound outside int32" (fun () ->
           equal string "Nx.Rng.randint: [0, 4294967296) does not fit in int32"
             (message (fun () -> Rng.randint ~high:0x1_0000_0000 [| 1 |])));
-      (* A bernoulli draw is a 53-bit uniform draw below p, at every float
-         dtype: element j is true where block j's 53 bits, as an integer, are
-         below p 2^53 rounded up, so a float32 p of 1e-9 fires at 1e-9, not at
-         float32's grid of 2^-24. *)
-      cases
-        ~name:(fun (n, _) -> "bernoulli at " ^ n ^ " is a 53-bit draw below p")
-        "bernoulli by blocks"
-        [
-          ( "float32",
-            fun ps ->
-              read
-                (Rng.bernoulli ~key:(Rng.key 16)
-                   (host_of Nx.float32 [| Array.length ps |] ps)) );
-          ( "float64",
-            fun ps ->
-              read
-                (Rng.bernoulli ~key:(Rng.key 16)
-                   (host_of Nx.float64 [| Array.length ps |] ps)) );
-          ( "bfloat16",
-            fun ps ->
-              read
-                (Rng.bernoulli ~key:(Rng.key 16)
-                   (host_of Nx.bfloat16 [| Array.length ps |] ps)) );
-        ]
-        (fun (_, draw) ->
-          let n = 4096 in
-          (* Probabilities every format holds, among them near-zero ones a
-             24-bit draw cannot resolve. *)
-          let ps =
-            Array.init n (fun i ->
-                match i mod 4 with
-                | 0 -> Float.ldexp 1. (-30 - (i mod 20))
-                | 1 -> Float.ldexp (Float.of_int (i mod 255)) (-8)
-                | 2 -> 0.5
-                | _ -> 1.)
-          in
-          let ws = words (Rng.split_batch ~n (Rng.key 16)) in
-          let want =
-            Array.init n (fun j ->
-                let top = Int64.logand (u32 ws.(2 * j)) 0x1F_FFFFL in
-                let m =
-                  Int64.logor (Int64.shift_left top 32) (u32 ws.((2 * j) + 1))
-                in
-                let t = Int64.of_float (Float.ceil (Float.ldexp ps.(j) 53)) in
-                Int64.compare m t < 0)
-          in
-          equal (array bool) want (draw ps));
-      test "bernoulli: true at rate p" (fun () ->
-          let p =
-            Nx.Repr.of_array Nx.Host.v
-              (A.of_array A.Dtype.Float32 [| 3; 1 |] [| 0.; 0.25; 1. |])
-          in
-          let p =
-            Nx.mul p
-              (Nx.Repr.of_array Nx.Host.v
-                 (A.of_array A.Dtype.Float32 [| 1; n |] (Array.make n 1.)))
-          in
-          let xs = read (Rng.bernoulli ~key:(Rng.key 107) p) in
-          let rate r =
-            mean
-              (Array.map
-                 (fun b -> if b then 1. else 0.)
-                 (Array.sub xs (r * n) n))
-          in
-          equal float_exact 0. (rate 0);
-          near ~se:(sqrt (0.25 *. 0.75 /. Float.of_int n)) 0.25 (rate 1);
-          equal float_exact 1. (rate 2));
+      (* The rate's bound is a normal one, so [p] keeps [n p] and [n (1 - p)]
+         above 16; "a 53-bit draw below p" pins the rarer events. *)
+      prop "bernoulli: true at rate p"
+        (let edge = Float.ldexp 1. (-10) in
+         Gen.triple keys wide
+           (Gen.one_of
+              [ Gen.of_list [ 0.; 1. ]; Gen.float_range edge (1. -. edge) ]))
+        (fun (k, F dt, p) ->
+          let p = A.Dtype.of_float dt p in
+          let ps = host_of dt [| n |] (Array.make n p) in
+          let xs = read (Rng.bernoulli ~key:k ps) in
+          let rate = mean (Array.map Bool.to_float xs) in
+          cover "never" (p = 0.);
+          cover "always" (p = 1.);
+          if p = 0. || p = 1. then equal float_exact p rate
+          else near ~var:(p *. (1. -. p)) p rate);
       test "bernoulli refuses p outside [0, 1]" (fun () ->
           let p =
-            Nx.Repr.of_array Nx.Host.v
-              (A.of_array A.Dtype.Float64 [| 4 |] [| 0.5; 1.; 1.5; Float.nan |])
+            host_of A.Dtype.Float64 [| 4 |] [| 0.5; 1.; 1.5; Float.nan |]
           in
           equal string "Nx.Rng.bernoulli: p at [2] is 1.5, not in [0, 1]"
             (message (fun () -> Rng.bernoulli p)));
     ]
 
-(* The rejection samplers, each at parameters across its regimes. A gamma of
-   concentration [a] has mean [a] and variance [a], its sample variance a
-   standard error of [a √((2 + 6/a) / n)]. *)
+(* The rejection samplers, each at parameters across its regimes and at the
+   ends of its domain. *)
 
 let full dt v = host_of dt [| n |] (Array.make n v)
 
@@ -504,21 +592,37 @@ let bessel k x =
   let rec fact i = if i <= 1 then 1. else Float.of_int i *. fact (i - 1) in
   go 0 (((x /. 2.) ** Float.of_int k) /. fact k) 0.
 
+(* A gamma of concentration [a] has mean [a], variance [a] and excess kurtosis
+   [6 / a], so its sample variance has variance [(2 a² + 6 a) / n]. *)
+let gamma_moments a xs =
+  Array.iter
+    (fun x -> if not (x >= 0. && Float.is_finite x) then failf "draw %g" x)
+    xs;
+  near ~var:a a (mean xs);
+  near ~var:((2. *. a *. a) +. (6. *. a)) a (variance xs)
+
+(* A count's sample variance has variance [(μ4 - σ⁴) / n], [μ4] its fourth
+   central moment, which is 0 for a constant count, where rounding can give
+   -0. *)
+let count_moments ~mean:mu ~var ~mu4 xs =
+  near ~var mu (mean xs);
+  near ~var:(Float.max 0. (mu4 -. (var *. var))) var (variance xs)
+
+(* A draw of two parameters, beta's or binomial's, has more operands than an
+   nx.cpu map holds and runs node by node, at 20 to 60 times the cost of a
+   draw of one: its laws run on [few] cases. *)
+let few = 25
+
 let rejection =
   group "rejection samplers"
     [
-      cases
-        ~name:(fun a -> Printf.sprintf "gamma %g: mean and variance a" a)
-        "gamma" [ 0.25; 1.; 2.5; 30. ]
-        (fun a ->
-          let xs = read (Rng.gamma ~key:(Rng.key 300) (full Nx.float64 a)) in
-          Array.iter (fun x -> if not (x >= 0.) then failf "draw %g" x) xs;
-          let nf = Float.of_int n in
-          near ~se:(sqrt (a /. nf)) a (mean xs);
-          near ~se:(a *. sqrt ((2. +. (6. /. a)) /. nf)) a (variance xs));
-      test "gamma at float32 has the float64 mean" (fun () ->
-          let xs = read (Rng.gamma ~key:(Rng.key 301) (full Nx.float32 3.)) in
-          near ~se:(sqrt (3. /. Float.of_int n)) 3. (mean xs));
+      prop "gamma: mean and variance a"
+        (Gen.triple keys wide
+           (params
+              [ Least; V 1e-30; V 0.01; V 0.25; V 1.; V 2.5; V 30.; V 1e6 ]))
+        (fun (k, F dt, a) ->
+          let a = at dt a in
+          gamma_moments a (read (Rng.gamma ~key:k (full dt a))));
       (* beta's draw is x = 1 / (1 + exp d), d = log G(b) - log G(a), for the
          gammas its key's two split keys draw. d is a sum of logarithms, each
          rounded, so its error is a few ulps of their magnitudes, and x moves by
@@ -526,13 +630,12 @@ let rejection =
          G(a)| + |log G(b)|), plus 4 ulps for the exponential, the sum, the
          quotient and the reference's own two roundings, of the gammas' ratio
          formed in float64 from their draws. *)
-      cases
-        ~name:(fun (a, b) ->
-          Printf.sprintf "beta %g %g is the gammas' ratio" a b)
-        "beta as a gamma ratio"
-        [ (0.5, 0.5); (0.3, 4.); (2., 3.); (9., 0.7); (40., 25.) ]
-        (fun (a, b) ->
-          let k = Rng.key 313 in
+      prop ~count:few "beta is the gammas' ratio"
+        (Gen.pair keys
+           (Gen.of_list
+              ~pp:(fun ppf (a, b) -> Format.fprintf ppf "(%g, %g)" a b)
+              [ (0.5, 0.5); (0.3, 4.); (2., 3.); (9., 0.7); (40., 25.) ]))
+        (fun (k, (a, b)) ->
           let ks = Rng.split k in
           let ga = read (Rng.gamma ~key:ks.(0) (full Nx.float64 a)) in
           let gb = read (Rng.gamma ~key:ks.(1) (full Nx.float64 b)) in
@@ -552,17 +655,32 @@ let rejection =
           let worst = ref 0. in
           Array.iteri (fun i x -> worst := Float.max !worst (share i x)) xs;
           at_most float_exact ~than:1. !worst);
-      test "beta 2 3: mean 2/5, in [0, 1]" (fun () ->
-          let xs =
-            read
-              (Rng.beta ~key:(Rng.key 302) (full Nx.float64 2.)
-                 (full Nx.float64 3.))
-          in
+      (* Beta(a, b) has mean a / (a + b) and variance a b / ((a + b)² (a + b +
+         1)). At the least positive concentrations both gammas underflow and a
+         draw is 0 or 1, each with probability 1/2, from the logarithms of
+         their shifts. *)
+      prop ~count:few "beta: in [0, 1], mean a / (a + b)"
+        (Gen.triple keys wide
+           (Gen.of_list
+              ~pp:(fun ppf (a, b) ->
+                Format.fprintf ppf "(%a, %a)" pp_param a pp_param b)
+              [
+                (Least, Least);
+                (V 0.01, V 0.01);
+                (V 0.5, V 0.5);
+                (V 2., V 3.);
+                (V 1e-3, V 1e3);
+                (V 1e6, V 1e6);
+              ]))
+        (fun (k, F dt, (a, b)) ->
+          let a = at dt a and b = at dt b in
+          let xs = read (Rng.beta ~key:k (full dt a) (full dt b)) in
           Array.iter
             (fun x -> if not (x >= 0. && x <= 1.) then failf "draw %g" x)
             xs;
-          near ~se:(0.2 /. sqrt (Float.of_int n)) 0.4 (mean xs);
-          near ~se:(1. /. sqrt (Float.of_int n)) 0.04 (variance xs));
+          let s = a +. b in
+          let var = a /. s *. (b /. s) /. (s +. 1.) in
+          near ~var (a /. s) (mean xs));
       test "beta over parameters that both broadcast is beta over their join"
         (fun () ->
           let a = host_of Nx.float64 [| 2; 1 |] [| 0.5; 4. |] in
@@ -586,55 +704,31 @@ let rejection =
                   (Nx.broadcast_to [| 2; 3 |] t)
                   (Nx.broadcast_to [| 2; 3 |] p)))
             (read (Rng.binomial ~key:k t p)));
-      (* At the least positive concentrations a beta draw is 0 or 1, each with
-         probability 1/2: both gammas underflow, and their ratio comes from the
-         logarithms of their shifts. *)
-      cases
-        ~name:(fun (n, _) -> "beta at " ^ n ^ "'s least concentration")
-        "beta at the least concentration"
-        [
-          ( "float64",
-            fun () ->
-              read
-                (Rng.beta ~key:(Rng.key 311)
-                   (full Nx.float64 (Float.ldexp 1. (-1074)))
-                   (full Nx.float64 (Float.ldexp 1. (-1074)))) );
-          ( "float32",
-            fun () ->
-              read
-                (Rng.beta ~key:(Rng.key 312)
-                   (full Nx.float32 (Float.ldexp 1. (-149)))
-                   (full Nx.float32 (Float.ldexp 1. (-149)))) );
-        ]
-        (fun (_, f) ->
-          let xs = f () in
+      (* E cos θ = I1(κ) / I0(κ) and E sin θ = 0, each draw's cosine and sine of
+         variance at most 1. π is the dtype's, which at float32 lies above
+         float64's. *)
+      prop "von_mises: in [-π, π], E cos = I1/I0"
+        (Gen.triple keys wide
+           (params [ V 0.; Least; V 1e-8; V 0.5; V 1.; V 2.; V 50. ]))
+        (fun (k, F dt, kappa) ->
+          let kappa = at dt kappa in
+          let xs = read (Rng.von_mises ~key:k (full dt kappa)) in
+          let pi = A.Dtype.of_float dt Float.pi in
           Array.iter
-            (fun x -> if not (x >= 0. && x <= 1.) then failf "draw %g" x)
+            (fun x -> if not (x >= -.pi && x <= pi) then failf "draw %h" x)
             xs;
-          near ~se:(0.5 /. sqrt (Float.of_int n)) 0.5 (mean xs));
-      test "beta of tiny concentrations stays in [0, 1]" (fun () ->
-          let xs =
-            read
-              (Rng.beta ~key:(Rng.key 303) (full Nx.float32 0.01)
-                 (full Nx.float32 0.01))
-          in
+          near ~var:1.
+            (bessel 1 kappa /. bessel 0 kappa)
+            (mean (Array.map cos xs));
+          near ~var:1. 0. (mean (Array.map sin xs)));
+      prop "von_mises of a huge concentration stays in [-π, π]"
+        (Gen.pair keys wide)
+        (fun (k, F dt) ->
+          let xs = read (Rng.von_mises ~key:k (full dt 1e30)) in
+          let pi = A.Dtype.of_float dt Float.pi in
           Array.iter
-            (fun x -> if not (x >= 0. && x <= 1.) then failf "draw %g" x)
+            (fun x -> if not (x >= -.pi && x <= pi) then failf "draw %h" x)
             xs);
-      cases
-        ~name:(fun k -> Printf.sprintf "von_mises %g: E cos = I1/I0" k)
-        "von_mises" [ 0.; 0.5; 2.; 50. ]
-        (fun k ->
-          let xs =
-            read (Rng.von_mises ~key:(Rng.key 304) (full Nx.float64 k))
-          in
-          Array.iter
-            (fun x ->
-              if not (x >= -.Float.pi && x <= Float.pi) then failf "draw %g" x)
-            xs;
-          let se = 1. /. sqrt (Float.of_int n) in
-          near ~se (bessel 1 k /. bessel 0 k) (mean (Array.map cos xs));
-          near ~se 0. (mean (Array.map sin xs)));
       test "gamma refuses a concentration outside (0, inf)" (fun () ->
           let a = host_of Nx.float64 [| 3 |] [| 1.; -1.; Float.infinity |] in
           equal string "Nx.Rng.gamma: a at [1] is -1, not in (0, inf)"
@@ -643,43 +737,75 @@ let rejection =
           let k = host_of Nx.float64 [| 2 |] [| 0.; Float.infinity |] in
           equal string "Nx.Rng.von_mises: k at [1] is inf, not in [0, inf)"
             (message (fun () -> Rng.von_mises k)));
-      (* A count's sample variance has the standard error [√((μ4 - σ⁴) / n)],
-         [μ4] its fourth central moment. *)
-      cases
-        ~name:(fun l -> Printf.sprintf "poisson %g: mean and variance rate" l)
-        "poisson"
-        [ 0.5; 4.; 10.; 37.; 1000. ]
-        (fun l ->
+      (* A Poisson count of rate [l] has mean and variance [l] and fourth
+         central moment [l + 3 l²]. The bounds are normal ones, so [n l] is
+         above 16, or so small that a count above 0 has no chance. *)
+      prop "poisson: mean and variance rate"
+        (Gen.pair keys
+           (floats_of
+              [
+                Float.ldexp 1. (-1074);
+                1e-3;
+                0.5;
+                4.;
+                9.99;
+                10.;
+                37.;
+                1000.;
+                1e6;
+              ]))
+        (fun (k, l) ->
           let xs =
-            read (Rng.poisson ~key:(Rng.key 305) (full Nx.float64 l))
+            read (Rng.poisson ~key:k (full Nx.float64 l))
             |> Array.map Int32.to_float
           in
           Array.iter (fun x -> if x < 0. then failf "count %g" x) xs;
-          let nf = Float.of_int n in
-          near ~se:(sqrt (l /. nf)) l (mean xs);
-          near ~se:(sqrt ((l +. (2. *. l *. l)) /. nf)) l (variance xs));
-      test "poisson of rate 0 is 0" (fun () ->
-          equal (array int32) (Array.make n 0l)
-            (read (Rng.poisson ~key:(Rng.key 306) (full Nx.float32 0.))));
-      cases
-        ~name:(fun (t, p) -> Printf.sprintf "binomial %d %g: mean n p" t p)
-        "binomial"
-        [ (10, 0.3); (100, 0.5); (1000, 0.9); (7, 0.); (7, 1.) ]
-        (fun (t, p) ->
+          count_moments ~mean:l ~var:l ~mu4:(l +. (3. *. l *. l)) xs);
+      prop "poisson of rate 0 is 0" (Gen.triple keys floats shapes)
+        (fun (k, (F dt, _), s) ->
+          let rate = host_of dt s (Array.make (numel s) 0.) in
+          equal (array int32) (Array.make (numel s) 0l)
+            (read (Rng.poisson ~key:k rate)));
+      prop "poisson near int32's bound counts within [0, 2^31)"
+        (Gen.pair keys (floats_of [ 2147483647.; 2147400000. ]))
+        (fun (k, l) ->
+          let rate = host_of Nx.float64 [| 64 |] (Array.make 64 l) in
+          let xs = read (Rng.poisson ~key:k rate) in
+          Array.iter (fun x -> if x < 0l then failf "count %ld" x) xs);
+      (* A binomial count of [t] trials of probability [p] has mean [t p],
+         variance [t p q] and fourth central moment [t p q (1 + 3 (t - 2) p
+         q)]. *)
+      prop ~count:few "binomial: in [0, n], mean n p, variance n p q"
+        (Gen.pair keys
+           (Gen.of_list
+              ~pp:(fun ppf (t, p) -> Format.fprintf ppf "(%d, %h)" t p)
+              [
+                (0, 0.5);
+                (7, 0.);
+                (7, 1.);
+                (1, 0.3);
+                (10, 0.3);
+                (100, 0.5);
+                (1000, 0.9);
+                (0x7FFF_FFFF, 1e-12);
+                (0x7FFF_FFFF, 0.5);
+                (40, Float.ldexp 1. (-1074));
+              ]))
+        (fun (k, (t, p)) ->
           let count =
             host_of Nx.int32 [| n |] (Array.make n (Int32.of_int t))
           in
           let xs =
-            read (Rng.binomial ~key:(Rng.key 307) count (full Nx.float64 p))
+            read (Rng.binomial ~key:k count (full Nx.float64 p))
             |> Array.map Int32.to_float
           in
           let tf = Float.of_int t in
           Array.iter (fun x -> if x < 0. || x > tf then failf "count %g" x) xs;
-          let nf = Float.of_int n and q = 1. -. p in
+          let q = 1. -. p in
           let var = tf *. p *. q in
-          let mu4 = var *. (1. +. (3. *. (tf -. 2.) *. p *. q)) in
-          near ~se:(sqrt (var /. nf)) (tf *. p) (mean xs);
-          near ~se:(sqrt ((mu4 -. (var *. var)) /. nf)) var (variance xs));
+          count_moments ~mean:(tf *. p) ~var
+            ~mu4:(var *. (1. +. (3. *. (tf -. 2.) *. p *. q)))
+            xs);
       (* A narrow float's largest finite value is a rate like any other: the
          domain is checked at the compute dtype, where 2^31 is a value. *)
       cases
@@ -718,8 +844,8 @@ let tracing i ~by op =
 let scope =
   group "scope"
     [
-      test "keyless draws take the scope's keys in order" (fun () ->
-          let k = Rng.key 200 in
+      prop "keyless draws take the scope's keys in order" seeds (fun s ->
+          let k = Rng.key s in
           let a, b =
             Rng.with_key k (fun () ->
                 let a = read (Rng.bits [| 3 |]) in
@@ -773,4 +899,6 @@ let scope =
     ]
 
 let () =
-  exit (run "nx random" [ known; keys; draws; distributions; rejection; scope ])
+  exit
+    (run "nx random"
+       [ known; keys_group; draws; distributions; rejection; scope ])
