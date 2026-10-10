@@ -170,6 +170,7 @@ let name : type r. r prim -> string = function
   | Scan _ -> "Scan"
   | Gather _ -> "Gather"
   | Scatter _ -> "Scatter"
+  | Sort _ -> "Sort"
   | Assemble _ -> "Assemble"
   | Contract _ -> "Contract"
   | Copy _ -> "Copy"
@@ -187,6 +188,7 @@ let operands : type r. r prim -> operands = function
   | Gather { idx; x; _ } -> Operands [ Any idx; Any x ]
   | Scatter { idx; updates; into; _ } ->
       Operands [ Any idx; Any updates; Any into ]
+  | Sort { x; _ } -> Operands [ Any x ]
   | Assemble { pieces; _ } -> Operands (List.map (fun (_, x) -> Any x) pieces)
   | Contract { a; b; init; _ } ->
       Operands
@@ -219,6 +221,7 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
       f 0 idx;
       f 1 updates;
       f 2 into
+  | Sort { x; _ } -> f 0 x
   | Assemble { pieces; _ } -> List.iteri (fun i (_, x) -> f i x) pieces
   | Contract { a; b; init; _ } ->
       f 0 a;
@@ -248,6 +251,7 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
   | Scan { loads; _ } -> loads_exist f loads 0
   | Gather { idx; x; _ } -> f idx || f x
   | Scatter { idx; updates; into; _ } -> f idx || f updates || f into
+  | Sort { x; _ } -> f x
   | Assemble { pieces; _ } -> List.exists (fun (_, x) -> f x) pieces
   | Contract { a; b; init; _ } ->
       f a || f b || Option.fold ~none:false ~some:f init
@@ -268,6 +272,7 @@ let map : type r.
   | Gather g -> Gather { g with idx = m g.idx; x = m g.x }
   | Scatter s ->
       Scatter { s with idx = m s.idx; updates = m s.updates; into = m s.into }
+  | Sort s -> Sort { s with x = m s.x }
   | Assemble a ->
       Assemble { a with pieces = List.map (fun (r, x) -> (r, m x)) a.pieces }
   | Contract c ->
@@ -484,6 +489,10 @@ let pp : type r. Format.formatter -> r prim -> unit =
       Format.fprintf ppf " %s%s along %d" combine
         (if unique then " unique" else "")
         axis
+  | Sort { axis; descending; k; _ } ->
+      Format.fprintf ppf " along %d%s%s" axis
+        (if descending then " descending" else "")
+        (match k with Some k -> Printf.sprintf " keeping %d" k | None -> "")
   | Assemble { shape; _ } -> Format.fprintf ppf " into %a" pp_shape shape
   | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
   List.iteri (fun i x -> Format.fprintf ppf " (x%d: %a)" i pp_operand x) xs
@@ -801,6 +810,17 @@ let scatter_route ~by axis idx updates into =
     [| at idx; at updates; at into |]
     [| shape idx; shape updates; shape into |]
 
+(* A sort's descriptor and its values' shape: its rule. *)
+let sort_shape ~by axis descending k x =
+  match S.shapes (S.sort ~axis ~descending ~k) [| shape x |] with
+  | Ok [| v; _ |] -> v
+  | Ok _ -> invalid_argf "%s: a sort of other than two results" by
+  | Error e -> invalid_argf "%s: %s" by e
+  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+
+let sort_route ~by axis x =
+  Route.route ~by (Along [| axis |]) [| at x |] [| shape x |]
+
 let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
     (pieces : (Nx_array.Move.range array * (v, s, d) t) list) =
   (match L.contiguous whole with
@@ -892,6 +912,12 @@ let results : type r.
       check_scatter ~by combine axis idx updates into;
       let placement = result (scatter_route ~by axis idx updates into) in
       m 0 { dtype = dtype into; layout = L.contiguous (shape into); placement }
+  | Sort { axis; descending; k; x } ->
+      let s = sort_shape ~by axis descending k x in
+      let placement = result (sort_route ~by axis x) in
+      let layout = L.contiguous s in
+      let values = m 0 { dtype = dtype x; layout; placement } in
+      (values, m 1 { dtype = D.Int64; layout; placement })
   | Assemble { dtype; shape; fill; pieces } ->
       check_assemble ~by dtype shape fill pieces;
       let placement = result (assemble_route ~by pieces) in
@@ -1067,6 +1093,10 @@ let prepare : type r.
           updates = place (read_at r 1) s.updates;
           into = place (read_at r 2) s.into;
         }
+  | Sort s ->
+      ignore (sort_shape ~by s.axis s.descending s.k s.x);
+      let r = sort_route ~by s.axis s.x in
+      Sort { s with x = place (read_at r 0) s.x }
   | Assemble a ->
       check_assemble ~by a.dtype a.shape a.fill a.pieces;
       let r = assemble_route ~by a.pieces in
@@ -1126,6 +1156,9 @@ let arrays : type r. r prim -> r -> Nx_array.any array array =
   | Scan { reduction; _ } -> Array.of_list (arrays_reduction reduction r)
   | Gather _ -> [| arrays_of r |]
   | Scatter _ -> [| arrays_of r |]
+  | Sort _ ->
+      let values, positions = r in
+      [| arrays_of values; arrays_of positions |]
   | Assemble _ -> [| arrays_of r |]
   | Contract _ -> [| arrays_of r |]
   | Copy _ -> [| arrays_of r |]

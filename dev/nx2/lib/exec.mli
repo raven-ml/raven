@@ -12,11 +12,12 @@
     computes each constant operand where the route reads it, places operands the
     route moves, allocates each result at the route's placement, and calls the
     set's kernels once per device. [Done] is the result; a refusal raises
-    through {!Nx_array.refused} naming [by]; a map, an assembly, a gather or a
-    scatter of a sub-byte dtype, or a scatter whose targets may repeat, that a
-    device's kernels decline runs as its expansion ({!Expand.run}) on that
-    device, over its own operands; and a kernel a node or another gather or
-    scatter needs that the kernels decline raises naming the kernels, the kind,
+    through {!Nx_array.refused} naming [by]; a map, an assembly, a gather, a
+    scatter or a sort of a sub-byte dtype, or a scatter whose targets may
+    repeat, that a device's kernels decline runs as its expansion
+    ({!Expand.run}) on that device, over its own operands; and a kernel a node
+    or another gather, scatter or sort needs that the kernels decline raises
+    naming the kernels, the kind,
     the dtypes, the device and the move the program makes, [Nx.place] onto a
     set whose kernels compute it: no data moves between devices on its own.
     Movements and bitcasts are views where a layout expresses them, and a copy,

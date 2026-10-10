@@ -1916,6 +1916,13 @@ module Prim = struct
         into : ('v, 's, 'd) Value.t;
       }
         -> ('v, 's, 'd) Value.t t
+    | Sort : {
+        axis : int;
+        descending : bool;
+        k : int option;
+        x : ('v, 's, 'd) Value.t;
+      }
+        -> (('v, 's, 'd) Value.t * (int64, Dtype.int64_elt, 'd) Value.t) t
     | Assemble : {
         dtype : ('v, 's) dtype;
         shape : int array;

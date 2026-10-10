@@ -10,6 +10,7 @@
   test_exec
   test_elementwise
   test_reduce
+  test_sort
   test_interp
   test_donate
   test_shapes
@@ -29,6 +30,7 @@
   test_exec
   test_elementwise
   test_reduce
+  test_sort
   test_interp
   test_donate
   test_shapes

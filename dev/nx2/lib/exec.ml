@@ -23,6 +23,15 @@ let refuses ~by ~kernels kind d dts =
     (String.concat ", " (List.map (fun (A.Any a) -> D.name (A.dtype a)) dts))
     (Rig.name d) move
 
+(* As [refuses], for an optional case whose expansion nx does not have yet. *)
+let unexpanded ~by ~kernels kind d dts =
+  invalid_argf
+    "%s: %s does not compute %s on %s (%s), and its expansion is not \
+     available yet; %s"
+    by kernels kind
+    (String.concat ", " (List.map (fun (A.Any a) -> D.name (A.dtype a)) dts))
+    (Rig.name d) move
+
 let declined ~by ~kernels node d dts =
   refuses ~by ~kernels (Prim.kind node) d dts
 
@@ -539,8 +548,8 @@ let operand_at : type r.
 let is_view : type r. r Value.prim -> bool = function
   | Value.Move _ | Value.Bitcast _ -> true
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
-  | Value.Scatter _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
-  | Value.Place _ | Value.Check _ ->
+  | Value.Scatter _ | Value.Sort _ | Value.Assemble _ | Value.Contract _
+  | Value.Copy _ | Value.Place _ | Value.Check _ ->
       false
 
 let find memo p =
@@ -666,6 +675,7 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           consumed ~by ~reused:(fun _ -> false) hs;
           r)
   | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
+  | Value.Sort _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       claim ~by hs;
@@ -833,6 +843,30 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
             then declined := Some (Devices.rig set k, ops)
           end);
       or_expanded ~by ~kernels:K.name op r !declined
+  | Value.Sort { axis; descending; k; x } ->
+      let where = ref None in
+      let ((values, positions) as r) =
+        Prim.results ~by (fun j f -> alloc ~by ~where j f) op
+      in
+      let p = Option.get !where in
+      let set = Devices.set p in
+      let (module K) = kernels_of ~by ~op:"Sort" set in
+      let spec = S.sort ~axis ~descending ~k in
+      let vs = arrays_of values and ps = arrays_of positions in
+      let declined = ref None in
+      each_device ~by p (Prim.shape values) (fun j d w ->
+          if Option.is_none !declined then begin
+            let v = Iarray.get vs j and q = Iarray.get ps j in
+            let a = Place.view ~by x d (along axis (Prim.shape x) w) in
+            let ops = [| A.Any a |] in
+            if
+              not
+                (ran ~by
+                   (K.sort spec ~values:v ~positions:q a)
+                   [| A.Any v; A.Any q |] ops)
+            then declined := Some (Devices.rig set d, ops)
+          end);
+      or_expanded ~by ~kernels:K.name op r !declined
   | Value.Assemble { dtype; shape; fill; pieces } ->
       assemble ~by dtype shape fill pieces
   | Value.Place _ | Value.Check _ -> run ~by op
@@ -864,7 +898,15 @@ and or_expanded : type r.
   | Some (d, ops) -> (
       match Expand.run run ~by op with
       | Some r -> r
-      | None -> refuses ~by ~kernels (Prim.name op) d (Array.to_list ops))
+      | None -> (
+          match op with
+          | Value.Sort _ ->
+              unexpanded ~by ~kernels (Prim.name op) d (Array.to_list ops)
+          | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
+          | Value.Scatter _ | Value.Assemble _ | Value.Contract _
+          | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
+          | Value.Check _ ->
+              refuses ~by ~kernels (Prim.name op) d (Array.to_list ops)))
 
 (* A loop's results [dsts] at [p], each device's window of them computed there
    by [kernel] over its operands [ops k w] for its window [w] of the loop's
@@ -1198,6 +1240,7 @@ and compute_at : type r.
         (Prim.arrays op r);
       r
   | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
+  | Value.Sort _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       run ~by op

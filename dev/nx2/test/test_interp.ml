@@ -374,6 +374,10 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
   | Scan { reduction; _ } -> same_reduction msg reduction a b
   | Gather _ -> same_form ~msg a b
   | Scatter _ -> same_form ~msg a b
+  | Sort _ ->
+      let (v, p), (v', p') = (a, b) in
+      same_form ~msg v v';
+      same_form ~msg p p'
   | Assemble _ -> same_form ~msg a b
   | Copy _ -> same_form ~msg a b
   | Contract _ -> same_form ~msg a b
@@ -719,6 +723,11 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
       dual i (scatter pu pt) (scatter tu tt)
   | Scatter _ ->
       invalid_arg (by ^ ": test.jvp has no derivative of a max or min scatter")
+  | Sort s ->
+      (* The tangent's elements, gathered at the positions. *)
+      let p, t = parts i s.x in
+      let v, idx = Nx.Prim.eval ~by (Sort { s with x = p }) in
+      (dual i v (Nx.Prim.eval ~by (Gather { axis = s.axis; idx; x = t })), idx)
   | Assemble a ->
       (* Linear in the pieces; the fill's tangent is zero. *)
       let assemble fill pieces =

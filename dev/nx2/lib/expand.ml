@@ -853,6 +853,18 @@ let scatter (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       in
       Some (cast_to apply ~by (Prim.dtype into) y)
 
+(* A sub-byte sort at its accumulator, which holds each code and orders them
+   alike, its values cast back once. No sub-byte dtype has a NaN code. *)
+let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
+    descending k (x : (v, s, d) Value.t) :
+    ((v, s, d) Value.t * (int64, D.int64_elt, d) Value.t) option =
+  match sub_byte x with
+  | None -> None
+  | Some (D.Any w) ->
+      let x' = cast_to apply ~by w x in
+      let v, p = apply ~by (Value.Sort { axis; descending; k; x = x' }) in
+      Some (cast_to apply ~by (Prim.dtype x) v, p)
+
 let run : type r.
     ('q. by:string -> 'q Value.prim -> 'q) ->
     by:string ->
@@ -884,6 +896,7 @@ let run : type r.
   | Value.Gather { axis; idx; x } -> gather apply ~by axis idx x
   | Value.Scatter { combine; unique; axis; idx; updates; into } ->
       scatter apply ~by combine ~unique axis idx updates into
+  | Value.Sort { axis; descending; k; x } -> sort apply ~by axis descending k x
   | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       None

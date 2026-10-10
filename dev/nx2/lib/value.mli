@@ -208,6 +208,16 @@ and _ prim =
           replaced by [idx]'s element there, in C order of [updates]
           ({!Nx_kernel.Spec.scatter}); [idx] and [updates] have one shape,
           [into]'s off [axis]. [unique] promises distinct targets. *)
+  | Sort : {
+      axis : int;
+      descending : bool;
+      k : int option;
+      x : ('v, 's, 'd) t;
+    }
+      -> (('v, 's, 'd) t * 'd index) prim
+      (** [x]'s elements along [axis], stably, in {!Nx_kernel.Spec.sort}'s
+          order, reversed where [descending], then their positions along [axis];
+          with [Some k], the first [k] of each slice. *)
   | Assemble : {
       dtype : ('v, 's) dtype;
       shape : int array;
