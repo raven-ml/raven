@@ -378,6 +378,8 @@ let test_make_refusals () =
   refused ~msg:"a ref at 4" (fun () -> make [| at 4 0 |]);
   refused ~msg:"a ref ending past the parameters" (fun () -> make [| at 16 0 |]);
   refused ~msg:"a ref at -8" (fun () -> make [| at (-8) 0 |]);
+  refused ~msg:"a ref whose end overflows" (fun () ->
+      make [| at (max_int - 7) 0 |]);
   refused ~msg:"a ref to slot 2 of 2" (fun () -> make [| at 0 2 |]);
   refused ~msg:"a ref to slot -1" (fun () -> make [| at 0 (-1) |]);
   refused ~msg:"two refs at 8" (fun () -> make [| at 8 0; at 8 1 |]);
