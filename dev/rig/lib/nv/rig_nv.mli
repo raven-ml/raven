@@ -310,8 +310,8 @@ type 'm path = {
       (** [reaches i] is [true] iff this GPU's work addresses the GPU memory of
           GPU [i] of this path, another GPU. *)
   map_peer : 'm memory -> 'm memory option;
-      (** [map_peer m] is the memory [m] of another GPU of this path, mapped for
-          this one, or [None] if this GPU cannot address it. *)
+      (** [map_peer m] is the memory [m] of another device of this path, mapped
+          for this GPU, or [None] if this GPU cannot address it. *)
   free : 'm memory -> unit;
       (** [free m] gives back what [alloc], [map_host] or [map_peer] gave. *)
   register : int -> (unit, string) result;

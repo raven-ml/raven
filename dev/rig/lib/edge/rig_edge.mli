@@ -251,7 +251,9 @@ module type Driver = sig
 
   val map_peer : t -> t -> region -> region option
   (** [map_peer d d' r] is a region of [d] over [r], any memory of [d'], or
-      [None]. Counted. *)
+      [None]. Counted. [d]'s GPU may map [r]'s memory already, through [r]
+      itself where [d'] is a device of that GPU, or through another view: each
+      region keeps the memory mapped until rig frees it, once. *)
 
   val map_host : t -> int -> int -> region option
   (** [map_host d p n] is a region of [d] over the [n] bytes of host memory at
