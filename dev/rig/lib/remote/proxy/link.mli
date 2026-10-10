@@ -160,8 +160,8 @@ val next : t -> (Wire.command, string) result
     from any thread, so a thread finishes with a hand-over's areas before any
     thread calls [next]. From then on the link reuses their memory: a later
     hand-over whose bytes fit lands in it. The link keeps one such memory, of at
-    most 128 MiB, so a stream of large hand-overs lands in memory already
-    mapped. *)
+    most 128 MiB, until [next] gives the close, so a stream of large hand-overs
+    lands in memory already mapped. *)
 
 val answer : t -> 'a Wire.request -> ('a, string) result -> unit
 (** [answer l r a] sends [a] as the answer to [r]. [Error why] refuses [r] with
