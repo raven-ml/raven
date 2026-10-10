@@ -37,9 +37,6 @@
 
 /* Assemblies */
 
-/* The pieces an assembly reads with its destination through one door. */
-#define PIECES (NX_MAX_OPERANDS - 1)
-
 /* Stores the element of bits [fill] into the box of [dst] from [first],
    of [r] axes of [extent] stepping [step] elements. */
 static void fill_box(const nx_array *dst, const uint8_t *fill, int r,
@@ -102,16 +99,42 @@ static int tiles(int np, int r, int64_t (*lo)[NX_MAX_RANK],
   return sum == total;
 }
 
+/* The pieces' operands, descriptors, ranges and boxes: C-heap scratch of
+   their count. */
+typedef struct {
+  nx_operand *in;
+  nx_array *a;
+  int64_t *ranges;
+  int64_t (*lo)[NX_MAX_RANK], (*hi)[NX_MAX_RANK];
+} pieces;
+
+static void free_pieces(pieces *p) {
+  free(p->in);
+  free(p->a);
+  free(p->ranges);
+  free(p->lo);
+  free(p->hi);
+}
+
 value nx_cpu_assemble(value vs, value vd, value vpieces) {
   CAMLparam3(vs, vd, vpieces);
   int np = (int)Wosize_val(vpieces);
-  if (np > PIECES) CAMLreturn(Val_int(NX_DECLINED));
-  /* The descriptor, read before the door, which may move it. */
   const nx_spec_shaped *sp = (const nx_spec_shaped *)String_val(vs);
   int r = sp->rank, nfill = sp->nfill;
   if (sp->npieces != np) CAMLreturn(Val_int(NX_SHAPE));
+  /* Scratch first: allocating runs no OCaml code, so the descriptor stays
+     where it is until it is copied. */
+  pieces p = {.in = malloc((size_t)(1 + np) * sizeof *p.in),
+              .a = malloc((size_t)(1 + np) * sizeof *p.a),
+              .ranges = malloc((size_t)(3 * r * np + 1) * sizeof *p.ranges),
+              .lo = malloc((size_t)(np + 1) * sizeof *p.lo),
+              .hi = malloc((size_t)(np + 1) * sizeof *p.hi)};
+  if (!p.in || !p.a || !p.ranges || !p.lo || !p.hi) {
+    free_pieces(&p);
+    caml_raise_out_of_memory();
+  }
   uint8_t fill[16];
-  int64_t shape[NX_MAX_RANK], ranges[PIECES * NX_MAX_RANK * 3];
+  int64_t shape[NX_MAX_RANK], *ranges = p.ranges;
   memcpy(fill, sp->fill, sizeof fill);
   for (int i = 0; i < r; i++) shape[i] = sp->shape[i];
   for (int j = 0; j < np; j++)
@@ -119,47 +142,50 @@ value nx_cpu_assemble(value vs, value vd, value vpieces) {
       memcpy(ranges + 3 * (j * r + i), nx_spec_shaped_range(sp, j, i),
              3 * sizeof(int64_t));
   int dt = nx_array_dtype(vd), bits = nx_dtype_row_of(dt).bits;
+  int e = NX_OK;
   if (nfill != (bits < 8 ? 1 : bits / 8) || (bits < 8 && fill[0] >> bits) ||
       (dt == NX_BOOL && fill[0] > 1))
-    CAMLreturn(Val_int(NX_DTYPE));
-  int64_t ys[2 * NX_MAX_RANK], off;
-  if (nx_array_layout(vd, ys, &off) != r) CAMLreturn(Val_int(NX_SHAPE));
-  for (int i = 0; i < r; i++)
-    if (ys[i] != shape[i]) CAMLreturn(Val_int(NX_SHAPE));
-  for (int j = 0; j < np; j++) {
-    int64_t ps[2 * NX_MAX_RANK];
-    if (nx_array_layout(Field(vpieces, j), ps, &off) != r)
-      CAMLreturn(Val_int(NX_SHAPE));
-    for (int i = 0; i < r; i++)
-      if (ps[i] != ranges[3 * (j * r + i) + 1]) CAMLreturn(Val_int(NX_SHAPE));
+    e = NX_DTYPE;
+  int64_t ys[2 * NX_MAX_RANK], ps[2 * NX_MAX_RANK], off;
+  if (!e && nx_array_layout(vd, ys, &off) != r) e = NX_SHAPE;
+  for (int i = 0; i < r && !e; i++)
+    if (ys[i] != shape[i]) e = NX_SHAPE;
+  for (int j = 0; j < np && !e; j++) {
+    if (nx_array_layout(Field(vpieces, j), ps, &off) != r) e = NX_SHAPE;
+    for (int i = 0; i < r && !e; i++)
+      if (ps[i] != ranges[3 * (j * r + i) + 1]) e = NX_SHAPE;
   }
-  nx_operand in[NX_MAX_OPERANDS] = {{vd, dt, 1}};
+  if (e) {
+    free_pieces(&p);
+    CAMLreturn(Val_int(e));
+  }
+  nx_operand *in = p.in;
+  nx_array *a = p.a;
+  in[0] = (nx_operand){vd, dt, 1};
   for (int j = 0; j < np; j++) in[1 + j] = (nx_operand){Field(vpieces, j), dt, 0};
-  nx_array a[NX_MAX_OPERANDS];
-  int e = nx_read(1 + np, in, a);
-  if (e) CAMLreturn(Val_int(e));
+  if ((e = nx_read(1 + np, in, a))) {
+    free_pieces(&p);
+    CAMLreturn(Val_int(e));
+  }
   int64_t total = 1;
   for (int i = 0; i < r; i++) total *= shape[i];
   const int64_t *step = a[0].dim + r;
-  int64_t lo[PIECES][NX_MAX_RANK], hi[PIECES][NX_MAX_RANK];
+  int64_t(*lo)[NX_MAX_RANK] = p.lo, (*hi)[NX_MAX_RANK] = p.hi;
   int unit = intervals(np, r, ranges, lo, hi);
   /* A piece the door found identical to the destination is in place only
      as the first, over the whole result in order; elsewhere the kernel
      would read it at other indices than it writes. */
-  for (int j = 0; j < np; j++) {
+  for (int j = 0; j < np && !e; j++) {
     if (!a[1 + j].alias) continue;
     int whole = j == 0;
     for (int i = 0; i < r && whole; i++) {
       const int64_t *x = ranges + 3 * i;
       whole = x[0] == 0 && x[1] == shape[i] && (x[2] == 1 || x[1] <= 1);
     }
-    if (!whole) {
-      nx_done(1 + np, a);
-      CAMLreturn(Val_int(NX_OVERLAP));
-    }
+    if (!whole) e = NX_OVERLAP;
   }
   int in_place = np > 0 && a[1].alias;
-  if (total > 0 && !in_place && !(unit && tiles(np, r, lo, hi, total))) {
+  if (!e && total > 0 && !in_place && !(unit && tiles(np, r, lo, hi, total))) {
     if (unit && np == 1) {
       /* The 2·rank boxes around the piece: before and after it along axis
          i, within it along the axes before i, whole along those after. */
@@ -177,24 +203,25 @@ value nx_cpu_assemble(value vs, value vd, value vpieces) {
     } else
       fill_box(&a[0], fill, r, shape, step, a[0].offset);
   }
-  for (int j = 0; j < np; j++) {
+  for (int j = 0; j < np && !e; j++) {
     if (a[1 + j].alias) continue;
     nx_loop l = {.rank = r, .first = {a[0].offset, a[1 + j].offset}};
+    int64_t n = 1;
     for (int i = 0; i < r; i++) {
       const int64_t *x = ranges + 3 * (j * r + i);
       l.extent[i] = x[1];
       l.first[0] += x[0] * step[i];
       l.step[0][i] = x[2] * step[i];
       l.step[1][i] = a[1 + j].dim[r + i];
+      n *= x[1];
     }
-    int64_t n = 1;
-    for (int i = 0; i < r; i++) n *= l.extent[i];
     if (n == 0) continue;
     l.rank = nx_coalesce_dims(2, r, l.extent, l.step);
     nx_cpu_copy_loop(a[0].base, a[1 + j].base, bits, &l);
   }
   nx_done(1 + np, a);
-  CAMLreturn(Val_int(NX_OK));
+  free_pieces(&p);
+  CAMLreturn(Val_int(e));
 }
 
 /* Folds */

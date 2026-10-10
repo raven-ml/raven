@@ -58,7 +58,7 @@ let regions_gen shape =
     go (r - 1) []
   in
   let any =
-    let+ rs = array ~size:(int_range 0 3) any_region in
+    let+ rs = array ~size:(int_range 0 7) any_region in
     ("slices", rs)
   in
   let concat =
@@ -155,13 +155,11 @@ let law_in_place (b : Support.backend) c =
     operand c.dtype c.shape (plain (Array.length c.shape)) (fun _ ->
         element c.dtype rs)
   in
-  (* Two of the drawn pieces at most, so that nx.cpu's three take them. *)
-  let keep a = Array.sub a 0 (min 2 (Array.length a)) in
   let c =
     {
       c with
-      regions = Array.append [| Array.map whole c.shape |] (keep c.regions);
-      pieces = Array.append [| base |] (keep c.pieces);
+      regions = Array.append [| Array.map whole c.shape |] c.regions;
+      pieces = Array.append [| base |] c.pieces;
     }
   in
   match (assemble_on b c, assemble_on b ~in_place:true c) with
