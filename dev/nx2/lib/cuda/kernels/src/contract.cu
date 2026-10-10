@@ -31,131 +31,198 @@ typedef unsigned long long u64;
 /* The SIMT kernels (m > 16): float32 or float64 sums by fma, integer sums
    wrapping; each output summed in increasing k. */
 
-/* A BM x BM tile of outputs per block of 256 threads (16 x 16), k-tiles of
-   64 bytes of k (16 floats), each thread TM x TM outputs in two halves
-   BM / 2 apart each way. Both operands are stored k-major in shared
-   memory, the next k-tile loaded into registers while the current one
-   computes. A thread loads E = BM * BK / 256 elements of each operand per
-   k-tile: E consecutive k of a row, or E consecutive rows of a k, whichever
-   axis is contiguous, as vectors where it can. */
-template <typename T, int BM, int BK> struct Simt_operand {
-  static constexpr int E = BM * BK / 256;
-  const char *base;
-  int64_t s_row, s_k;
-  int rows, k, r0;
-  bool rows_contiguous, vectors;
+/* A block of THREADS computes a BM x BN tile of outputs: warps of 4 x 8
+   lanes, a lane TM x TN outputs in blocks of 4 x 4, its blocks' rows 4
+   apart across lanes and 16 apart in a lane, their columns 4 apart across
+   lanes and 32 apart in a lane, so that a k's fragments are 16-byte loads
+   of which a warp's touch 4 and 8 addresses. The k-tiles, of NX_SIMT_BK,
+   NX_SIMT_STAGES of them in flight, are copied by cp.async straight into
+   shared memory, k-major: element (k, r) at [k][r], each k's row padded
+   by 16 bytes, so that a warp's copies of a k-contiguous operand, an
+   element each, 16 k of 2 rows, fall at most two to a bank. An operand
+   whose rows are contiguous copies along them, 16 bytes at a time where
+   they are vectors. */
+template <typename T, int R, int THREADS> struct Simt_operand {
+  static constexpr int BK = NX_SIMT_BK, V = 16 / sizeof(T), LD = R + V;
+  static constexpr int BYTES = BK * LD * sizeof(T);
+  /* A thread's copies along the rows, of W elements: C a k-tile, its i-th
+     dk(i) k and dr(i) rows from its first. */
+  template <int W> struct Along {
+    static constexpr int PER = R / W, C = BK * PER;
+    static constexpr int N = (C + THREADS - 1) / THREADS;
+    static constexpr bool WIDE = PER >= THREADS; /* a k takes N / BK passes */
+    __device__ static constexpr int dk(int i) {
+      return WIDE ? i / (PER / THREADS) : i * (THREADS / PER);
+    }
+    __device__ static constexpr int dr(int i) {
+      return WIDE ? i % (PER / THREADS) * THREADS * W : 0;
+    }
+  };
+  /* Along k, an element each: NK a k-tile, its i-th i DR rows from its
+     first. */
+  static constexpr int NK = BK * R / THREADS, DR = THREADS / BK;
 
-  __device__ void load(T (&v)[E], int k0, int tid) const {
-    const int row = rows_contiguous ? r0 + tid % (BM / E) * E : r0 + tid / (BK / E);
-    const int kk = rows_contiguous ? k0 + tid / (BM / E) : k0 + tid % (BK / E) * E;
-    if (vectors &&
-        (rows_contiguous ? kk < k && row + E - 1 < rows : row < rows && kk + E - 1 < k)) {
-      const char *src = base + (row * s_row + kk * s_k) * sizeof(T);
-      if (E * sizeof(T) == 8)
-        *(uint2 *)v = *(const uint2 *)src;
-      else
-#pragma unroll
-        for (int e = 0; e < E * (int)sizeof(T) / 16; e++)
-          ((uint4 *)v)[e] = ((const uint4 *)src)[e];
-      return;
-    }
-#pragma unroll
-    for (int e = 0; e < E; e++) {
-      const int r = rows_contiguous ? row + e : row, q = rows_contiguous ? kk : kk + e;
-      v[e] = r < rows && q < k ? ((const T *)base)[r * s_row + q * s_k] : T(0);
-    }
+  const char *src;      /* copy 0 at k-tile 0 */
+  int64_t rstep, kstep; /* bytes a row; a k */
+  uint32_t dst;         /* copy 0's shared offset in a tile */
+  int kk;               /* copy 0's k in a k-tile */
+  int left;             /* rows from copy 0's to the extent */
+  int mode;             /* 0: vectors along rows; 1: elements along rows;
+                           2: elements along k */
+
+  __device__ void make(const char *base, int64_t s_row, int64_t s_k,
+                       int rows, int r0, bool vectors, int tid) {
+    const bool across = s_row == 1 && s_k != 1;
+    int r;
+    if (across && vectors)
+      mode = 0, kk = tid / Along<V>::PER, r = tid % Along<V>::PER * V;
+    else if (across)
+      mode = 1, kk = tid / Along<1>::PER, r = tid % Along<1>::PER;
+    else
+      mode = 2, kk = tid % BK, r = tid / BK;
+    rstep = s_row * (int)sizeof(T), kstep = s_k * (int)sizeof(T);
+    src = base + (r0 + r) * rstep + kk * kstep;
+    dst = (kk * LD + r) * sizeof(T);
+    left = rows - (r0 + r);
   }
 
-  /* The loaded elements into the k-major tile [s]. */
-  __device__ void stash(T (*s)[BM], const T (&v)[E], int tid) const {
+  /* K-tile [kt] of [k] k into the shared tile at [tile]: past the
+     extents, zeros. A vector past the rows' end keeps those inside. */
+  __device__ void copy(uint32_t tile, int kt, int k) const {
+    const char *at = src + kt * BK * kstep;
+    const int kleft = k - kt * BK - kk; /* k inside from copy 0's */
+    if (mode == 0) {
+      typedef Along<V> L;
 #pragma unroll
-    for (int e = 0; e < E; e++)
-      if (rows_contiguous)
-        s[tid / (BM / E)][tid % (BM / E) * E + e] = v[e];
-      else
-        s[tid % (BK / E) * E + e][tid / (BK / E)] = v[e];
+      for (int i = 0; i < L::N; i++) {
+        if (L::C % THREADS && threadIdx.x + THREADS * i >= L::C) break;
+        const int n = L::dk(i) < kleft ? min(V, left - L::dr(i)) : 0;
+        cp_async(tile + dst + (L::dk(i) * LD + L::dr(i)) * sizeof(T),
+                 n > 0 ? at + L::dr(i) * sizeof(T) + L::dk(i) * kstep : src,
+                 n > 0 ? n * sizeof(T) : 0);
+      }
+    } else if (mode == 1) {
+      typedef Along<1> L;
+#pragma unroll
+      for (int i = 0; i < L::N; i++)
+        cp_async_small<sizeof(T)>(
+            tile + dst + (L::dk(i) * LD + L::dr(i)) * sizeof(T),
+            at + L::dr(i) * sizeof(T) + L::dk(i) * kstep,
+            L::dk(i) < kleft && L::dr(i) < left);
+    } else {
+      const int64_t step = DR * rstep;
+#pragma unroll
+      for (int i = 0; i < NK; i++) {
+        cp_async_small<sizeof(T)>(tile + dst + i * DR * sizeof(T), at,
+                                  kleft > 0 && i * DR < left);
+        at += step;
+      }
+    }
   }
 };
 
-template <typename T, int BM>
+template <typename T, int TM, int TN, int WARPS_M, int WARPS_N>
 __device__ void simt_contract(const contract_params &p) {
-  constexpr int BK = 64 / sizeof(T), TM = BM / 16, H = TM / 2, E = BM * BK / 256;
-  __shared__ __align__(16) T as[2][BK][BM], bs[2][BK][BM];
-  const int tid = threadIdx.x, tx = tid % 16, ty = tid / 16, z = blockIdx.z;
+  constexpr int BM = WARPS_M * 4 * TM, BN = WARPS_N * 8 * TN;
+  constexpr int THREADS = WARPS_M * WARPS_N * 32;
+  typedef Simt_operand<T, BM, THREADS> A;
+  typedef Simt_operand<T, BN, THREADS> B;
+  constexpr int BK = NX_SIMT_BK, STAGES = NX_SIMT_STAGES;
+  constexpr int STAGE = A::BYTES + B::BYTES;
+  extern __shared__ __align__(128) uint8_t smem[];
+  const uint32_t s0 = __cvta_generic_to_shared(smem);
+  const int tid = threadIdx.x, lane = tid % 32, warp = tid / 32;
+  const int z = blockIdx.z;
+  /* This lane's first row and column in the tile. */
+  const int lm = (warp / WARPS_N) * 4 * TM + lane / 8 * 4;
+  const int ln = (warp % WARPS_N) * 8 * TN + lane % 8 * 4;
   /* Grouped rasterisation, as the mma kernels'. */
-  const int tiles_m = (p.m + BM - 1) / BM, tiles_n = (p.n + BM - 1) / BM;
+  const int tiles_m = (p.m + BM - 1) / BM, tiles_n = (p.n + BN - 1) / BN;
   const int pid = blockIdx.x, group = 8 * tiles_n, first = (pid / group) * 8;
   const int gsz = min(tiles_m - first, 8);
   const int tm = first + (pid % group) % gsz, tn = (pid % group) / gsz;
-  const int m0 = tm * BM, n0 = tn * BM;
+  const int m0 = tm * BM, n0 = tn * BN;
   const int kts = (p.k + BK - 1) / BK, split = blockIdx.y;
-  const int kt0 = split * kts / p.splits, kt1 = (split + 1) * kts / p.splits;
+  const int kt0 = split * kts / p.splits;
+  const int KT = (split + 1) * kts / p.splits - kt0;
 
-  const Simt_operand<T, BM, BK> a = {(const char *)p.a + z * p.sa[0] * sizeof(T),
-                                     p.sa[1], p.sa[2], p.m, p.k, m0,
-                                     p.sa[1] == 1 && p.sa[2] != 1,
-                                     (p.aligned & NX_CONTRACT_A_VECTORS) != 0};
-  const Simt_operand<T, BM, BK> b = {(const char *)p.b + z * p.sb[0] * sizeof(T),
-                                     p.sb[1], p.sb[2], p.n, p.k, n0,
-                                     p.sb[1] == 1 && p.sb[2] != 1,
-                                     (p.aligned & NX_CONTRACT_B_VECTORS) != 0};
-
-  T acc[TM][TM];
+  A a;
+  B b;
+  a.make((const char *)p.a + z * p.sa[0] * sizeof(T), p.sa[1], p.sa[2], p.m,
+         m0, (p.aligned & NX_CONTRACT_A_VECTORS) != 0, tid);
+  b.make((const char *)p.b + z * p.sb[0] * sizeof(T), p.sb[1], p.sb[2], p.n,
+         n0, (p.aligned & NX_CONTRACT_B_VECTORS) != 0, tid);
+  T acc[TM][TN];
 #pragma unroll
   for (int i = 0; i < TM; i++)
 #pragma unroll
-    for (int j = 0; j < TM; j++) acc[i][j] = T(0);
-  T ra[E], rb[E];
-  if (kt0 < kt1) {
-    a.load(ra, kt0 * BK, tid);
-    b.load(rb, kt0 * BK, tid);
-    a.stash(as[0], ra, tid);
-    b.stash(bs[0], rb, tid);
-  }
-  __syncthreads();
+    for (int j = 0; j < TN; j++) acc[i][j] = T(0);
 
-  for (int kt = kt0, buf = 0; kt < kt1; kt++, buf ^= 1) {
-    const bool more = kt + 1 < kt1;
-    if (more) {
-      a.load(ra, (kt + 1) * BK, tid);
-      b.load(rb, (kt + 1) * BK, tid);
+  /* k [k] of stage [s]'s fragments. */
+  T va[2][TM], vb[2][TN];
+  auto frag = [&](int f, int s, int k) {
+    const T(*as)[A::LD] = (const T(*)[A::LD])(smem + s * STAGE);
+    const T(*bs)[B::LD] = (const T(*)[B::LD])(smem + s * STAGE + A::BYTES);
+#pragma unroll
+    for (int i = 0; i < TM; i++) va[f][i] = as[k][lm + i / 4 * 16 + i % 4];
+#pragma unroll
+    for (int j = 0; j < TN; j++) vb[f][j] = bs[k][ln + j / 4 * 32 + j % 4];
+  };
+
+#pragma unroll
+  for (int s = 0; s < STAGES - 1; s++) {
+    if (s < KT) {
+      a.copy(s0 + s * STAGE, kt0 + s, p.k);
+      b.copy(s0 + s * STAGE + A::BYTES, kt0 + s, p.k);
     }
+    cp_commit();
+  }
+  cp_wait<STAGES - 2>();
+  __syncthreads();
+  frag(0, 0, 0);
+
+  /* K-tile kt sits in stage kt % STAGES; k-step k multiplies the fragments
+     loaded during k - 1 while k + 1's load. At its first k-step k-tile kt
+     + STAGES - 1 refills the stage k-tile kt - 1 left, every thread past
+     it since the barrier of its last k-step: a's copies then, b's half
+     way. The barrier before the last k-step waits for k-tile kt + 1, whose
+     first fragments then load under the last k-step's sums. */
+  for (int kt = 0, s = 0; kt < KT; kt++, s = s + 1 == STAGES ? 0 : s + 1) {
+    const int next = kt + STAGES - 1;
+    const int ns = s == 0 ? STAGES - 1 : s - 1;
 #pragma unroll
     for (int k = 0; k < BK; k++) {
-      T va[TM], vb[TM];
-#pragma unroll
-      for (int e = 0; e < H; e++) {
-        va[e] = as[buf][k][ty * H + e], va[H + e] = as[buf][k][BM / 2 + ty * H + e];
-        vb[e] = bs[buf][k][tx * H + e], vb[H + e] = bs[buf][k][BM / 2 + tx * H + e];
+      if (k == 0 && next < KT) a.copy(s0 + ns * STAGE, kt0 + next, p.k);
+      if (k == BK / 2) {
+        if (next < KT) b.copy(s0 + ns * STAGE + A::BYTES, kt0 + next, p.k);
+        cp_commit();
       }
+      if (k == BK - 1) {
+        cp_wait<STAGES - 2>();
+        __syncthreads();
+        if (kt + 1 < KT) frag((k + 1) & 1, s + 1 == STAGES ? 0 : s + 1, 0);
+      } else
+        frag((k + 1) & 1, s, k + 1);
 #pragma unroll
       for (int i = 0; i < TM; i++)
 #pragma unroll
-        for (int j = 0; j < TM; j++) acc[i][j] = fma_(va[i], vb[j], acc[i][j]);
+        for (int j = 0; j < TN; j++)
+          acc[i][j] = fma_(va[k & 1][i], vb[k & 1][j], acc[i][j]);
     }
-    if (more) {
-      a.stash(as[buf ^ 1], ra, tid);
-      b.stash(bs[buf ^ 1], rb, tid);
-    }
-    __syncthreads();
   }
+  cp_wait<0>();
 
   if (p.splits > 1) {
-    T(&flat)[TM * TM] = *reinterpret_cast<T(*)[TM * TM]>(acc);
+    T(&flat)[TM * TN] = *reinterpret_cast<T(*)[TM * TN]>(acc);
     if (!combine(flat, (T *)p.partials, p.tickets, p.splits)) return;
   }
-  /* A thread's columns in each half are consecutive: in pairs, from two
-     on. */
+  /* A lane's columns come in runs of 4: stored in pairs. */
 #pragma unroll
-  for (int i = 0; i < TM; i++) {
-    const int row = m0 + (i < H ? ty * H + i : BM / 2 + ty * H + i - H);
+  for (int i = 0; i < TM; i++)
 #pragma unroll
-    for (int j = 0; j < TM; j += H > 1 ? 2 : 1) {
-      const int col = n0 + (j < H ? tx * H + j : BM / 2 + tx * H + j - H);
-      if (H > 1) store_pair(p, z, row, col, acc[i][j], acc[i][j + 1]);
-      else store(p, z, row, col, acc[i][j]);
-    }
-  }
+    for (int j = 0; j < TN; j += 2)
+      store_pair(p, z, m0 + lm + i / 4 * 16 + i % 4,
+                 n0 + ln + j / 4 * 32 + j % 4, acc[i][j], acc[i][j + 1]);
 }
 
 /* Skinny */
@@ -563,10 +630,10 @@ __device__ void mma_kernel(const contract_params &p) {
       name(const __grid_constant__ contract_params p) {                        \
     mma_kernel<KIND_##kind, TRANSPOSED_##a, TRANSPOSED_##b, tile>(p);          \
   }
-#define SIMT(name, acc, bm)                                                    \
-  extern "C" __global__ void __launch_bounds__(256)                            \
+#define SIMT(name, acc, tm, tn, wm, wn)                                        \
+  extern "C" __global__ void __launch_bounds__(wm * wn * 32)                   \
       name(const __grid_constant__ contract_params p) {                        \
-    simt_contract<ACC_##acc, bm>(p);                                           \
+    simt_contract<ACC_##acc, tm, tn, wm, wn>(p);                               \
   }
 #define SKINNY(name, acc)                                                      \
   extern "C" __global__ void __launch_bounds__(256)                            \

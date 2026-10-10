@@ -16,10 +16,15 @@ type axis = K | M | N
 type acc = F32 | F64 | I64
 type tile = T128x128 | T128x256 | T64x64 | T16x64
 
+(* A SIMT instance's lane outputs, [tm] x [tn], and its warps,
+   [warps_m] x [warps_n]: a block of [warps_m * 4 * tm] x [warps_n * 8 * tn]
+   outputs. *)
+type simt = { tm : int; tn : int; warps_m : int; warps_n : int }
+
 type instance =
   | Pack
   | Mma of kind * axis * axis * tile
-  | Simt of acc * int
+  | Simt of acc * simt
   | Skinny of acc
   | Fold
 
@@ -41,11 +46,15 @@ let kernels =
     ("contract_f16_kk_t64x64", Mma (F16, K, K, T64x64));
     ("contract_any_kk_t16x64", Mma (Any, K, K, T16x64));
     ("contract_s8_kk_t128x256", Mma (S8, K, K, T128x256));
-    ("contract_simt_f32_128", Simt (F32, 128));
-    ("contract_simt_f32_64", Simt (F32, 64));
+    ( "contract_simt_f32_128x256",
+      Simt (F32, { tm = 16; tn = 8; warps_m = 2; warps_n = 4 }) );
+    ( "contract_simt_f32_64x64",
+      Simt (F32, { tm = 8; tn = 4; warps_m = 2; warps_n = 2 }) );
     ("contract_skinny_f32", Skinny F32);
-    ("contract_simt_f64_64", Simt (F64, 64));
-    ("contract_simt_i64_64", Simt (I64, 64));
+    ( "contract_simt_f64_64x64",
+      Simt (F64, { tm = 4; tn = 4; warps_m = 4; warps_n = 2 }) );
+    ( "contract_simt_i64_64x64",
+      Simt (I64, { tm = 4; tn = 4; warps_m = 4; warps_n = 2 }) );
     ("contract_skinny_f64", Skinny F64);
     ("contract_skinny_i64", Skinny I64);
     ("fold_rows", Fold);
@@ -76,6 +85,10 @@ let a_vectors = 1
 let b_vectors = 2
 let b_across = 4
 let y_whole = 8
+
+(* NX_SIMT_BK and NX_SIMT_STAGES. *)
+let simt_bk = 16
+let simt_stages = 3
 
 (* NX_SKINNY_ROWS. *)
 let skinny_rows = 4

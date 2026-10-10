@@ -87,14 +87,13 @@ let rec find_mma_from k kind a b t =
 
 let find_mma kind a b t = find_mma_from 0 kind a b t
 
-let rec find_simt_from k sum side =
-  if k = count then -1
-  else
-    match snd K.kernels.(k) with
-    | Simt (sum', side') when sum' == sum && side' = side -> k
-    | _ -> find_simt_from (k + 1) sum side
-
-let find_simt sum side = find_simt_from 0 sum side
+(* A SIMT instance's block of outputs, its threads and its efficiency, its
+   outputs per unit of time against the 128 x 256 block's, in percent, on
+   sm_89. *)
+let simt_bm (s : K.simt) = s.warps_m * 4 * s.tm
+let simt_bn (s : K.simt) = s.warps_n * 8 * s.tn
+let simt_threads (s : K.simt) = s.warps_m * s.warps_n * 32
+let simt_efficiency s = if simt_bm s * simt_bn s >= 128 * 256 then 100 else 60
 
 let rec find_skinny_from k sum =
   if k = count then -1
@@ -380,35 +379,45 @@ let own_dtype : K.acc -> D.any = function
   | F64 -> D.Any Float64
   | I64 -> D.Any Int64
 
-(* The SIMT kernels of the accumulator [sum], m > 16: the tile of least cost
-   among its instances; on sm_89, the 64-wide tile computes 70% as fast as the
-   128-wide one. They read their accumulator's own dtype. *)
+(* The SIMT kernels of the accumulator [sum], m > 16: the instance of least
+   cost among its. They read their accumulator's own dtype. *)
 let plan_simt c sum =
-  cost c 0 128 128 100;
-  cost c 1 64 64 70;
-  let side =
-    if find_simt sum 128 >= 0 && (find_simt sum 64 < 0 || not (cheaper c)) then
-      128
-    else 64
-  in
-  c.kernel <- find_simt sum side;
-  c.blocks <- ceil_div c.m side * ceil_div c.n side;
-  if c.kernel < 0 || c.blocks > max_int32 then false
-  else begin
-    pack_into c (own_dtype sum);
-    (* A SIMT block's k-tiles run one after another, each waiting on its loads:
-       split while the grid has fewer than 256 blocks, down to 64 of k a
-       range. *)
-    c.splits <- split_count (c.blocks * c.batch) 256 c.k 64;
-    c.threads <- 256;
-    c.shared <- 0;
-    c.sums <- side * side;
-    c.sum_bytes <- (if sum == K.F32 then 4 else 8);
-    c.aligned <-
-      ((if rows_vectors c.a then K.a_vectors else 0)
-      lor if rows_vectors c.b then K.b_vectors else 0);
-    true
-  end
+  let best = ref (-1) in
+  for k = 0 to count - 1 do
+    match snd K.kernels.(k) with
+    | Simt (sum', s) when sum' == sum ->
+        cost c 1 (simt_bm s) (simt_bn s) (simt_efficiency s);
+        if !best < 0 || cheaper c then begin
+          Float.Array.unsafe_set c.costs 0 (Float.Array.unsafe_get c.costs 1);
+          best := k
+        end
+    | _ -> ()
+  done;
+  c.kernel <- !best;
+  match if !best < 0 then None else Some (snd K.kernels.(!best)) with
+  | Some (Simt (_, s)) ->
+      let bm = simt_bm s and bn = simt_bn s in
+      c.blocks <- ceil_div c.m bm * ceil_div c.n bn;
+      if c.blocks > max_int32 then false
+      else begin
+        pack_into c (own_dtype sum);
+        (* A SIMT block's k-tiles run one after another, each waiting on its
+           loads: split while the grid has fewer than 256 blocks, down to 64
+           of k a range. *)
+        c.splits <- split_count (c.blocks * c.batch) 256 c.k 64;
+        c.threads <- simt_threads s;
+        (* Each stage holds a's and b's k-tiles, k-major, a k's row padded by
+           16 bytes. *)
+        let bytes = width (own_dtype sum) in
+        c.shared <- K.simt_stages * K.simt_bk * ((bm + bn) * bytes + 32);
+        c.sums <- bm * bn;
+        c.sum_bytes <- bytes;
+        c.aligned <-
+          ((if rows_vectors c.a then K.a_vectors else 0)
+          lor if rows_vectors c.b then K.b_vectors else 0);
+        true
+      end
+  | _ -> false
 
 (* The skinny kernel of the accumulator [sum], m <= 16. It reads a float
    accumulator's own dtype, or one integer dtype both operands hold. *)

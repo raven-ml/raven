@@ -44,7 +44,9 @@ let kernel_row (name, instance) =
     match instance with
     | K.Pack -> [ "PACK" ]
     | Mma (k, a, b, t) -> [ "MMA"; kind k; axis a; axis b; tile t ]
-    | Simt (sum, side) -> [ "SIMT"; acc sum; string_of_int side ]
+    | Simt (sum, s) ->
+        "SIMT" :: acc sum
+        :: List.map string_of_int [ s.tm; s.tn; s.warps_m; s.warps_n ]
     | Skinny sum -> [ "SKINNY"; acc sum ]
     | Fold -> [ "FOLD" ]
   in
@@ -76,6 +78,8 @@ let constants () =
       ("b_vectors", K.b_vectors);
       ("b_across", K.b_across);
       ("y_whole", K.y_whole);
+      ("simt_bk", K.simt_bk);
+      ("simt_stages", K.simt_stages);
       ("skinny_rows", K.skinny_rows);
       ("fold_block", K.fold_block);
       ("fold_lanes", K.fold_lanes);

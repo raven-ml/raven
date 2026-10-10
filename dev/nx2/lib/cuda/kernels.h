@@ -25,7 +25,8 @@
    - MMA (contract.cu): the operands' kind (bf16, f16, s8, or any for
      each of them, by a's dtype at the kernel's entry), the contiguous
      axis of a (k or m) and of b (k or n), and the tile.
-   - SIMT (contract.cu): the accumulator's type and the tile's side.
+   - SIMT (contract.cu): the accumulator's type, a lane's TM x TN outputs
+     and the WARPS_M x WARPS_N warps of the block.
    - SKINNY (contract.cu): the accumulator's type.
    - FOLD (fold.cu): none; the monoid and dtype are parameters.
    Instances are a budget: each names the rows that keep it. The plan
@@ -59,16 +60,16 @@
   /* int8 4096 */                                                           \
   X(contract_s8_kk_t128x256, MMA, s8, k, k, t128x256)                       \
   /* f32 2048 to 8192 and the 4096 layouts */                               \
-  X(contract_simt_f32_128, SIMT, f32, 128)                                  \
+  X(contract_simt_f32_128x256, SIMT, f32, 16, 8, 2, 4)                      \
   /* f32 256 to 1024 */                                                     \
-  X(contract_simt_f32_64, SIMT, f32, 64)                                    \
+  X(contract_simt_f32_64x64, SIMT, f32, 8, 4, 2, 2)                         \
   /* f32 decode 1x5120x2880 */                                              \
   X(contract_skinny_f32, SKINNY, f32)                                       \
   /* float64 and integer sums, which every library computes: float64-       \
      1024x1024x1024 and -1x5120x2880, int16-1024x1024x1024 and              \
      -1x5120x2880 (int64 sums) */                                           \
-  X(contract_simt_f64_64, SIMT, f64, 64)                                    \
-  X(contract_simt_i64_64, SIMT, i64, 64)                                    \
+  X(contract_simt_f64_64x64, SIMT, f64, 4, 4, 4, 2)                         \
+  X(contract_simt_i64_64x64, SIMT, i64, 4, 4, 4, 2)                         \
   X(contract_skinny_f64, SKINNY, f64)                                       \
   X(contract_skinny_i64, SKINNY, i64)                                       \
   /* reductions whose terms run along the operand: sum-rows-*, sum-all-* */ \
@@ -126,6 +127,10 @@ enum {
   NX_CONTRACT_B_ACROSS = 4,  /* skinny: b's n axis is contiguous */
   NX_CONTRACT_Y_WHOLE = 8    /* y's outputs store 16 bytes at once */
 };
+
+/* The SIMT kernels' k-tile, in elements, and the k-tiles in flight. */
+#define NX_SIMT_BK 16
+#define NX_SIMT_STAGES 3
 
 /* The skinny kernels' block: NX_SKINNY_ROWS rows of 32 columns. */
 #define NX_SKINNY_ROWS 4

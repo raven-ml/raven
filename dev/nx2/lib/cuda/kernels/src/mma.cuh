@@ -107,6 +107,14 @@ __device__ void cp_async(uint32_t dst, const void *src, int bytes) {
                "l"(src), "r"(bytes));
 }
 
+/* One element of N bytes at [src] to shared [dst], or zero if not
+   [inside]. */
+template <int N>
+__device__ void cp_async_small(uint32_t dst, const void *src, bool inside) {
+  asm volatile("cp.async.ca.shared.global [%0], [%1], %2, %3;\n" ::"r"(dst),
+               "l"(src), "n"(N), "r"(inside ? N : 0));
+}
+
 __device__ void cp_commit(void) {
   asm volatile("cp.async.commit_group;\n" ::);
 }

@@ -42,6 +42,8 @@ static const fact constants[] = {
     {"b_vectors", NX_CONTRACT_B_VECTORS, 0},
     {"b_across", NX_CONTRACT_B_ACROSS, 0},
     {"y_whole", NX_CONTRACT_Y_WHOLE, 0},
+    {"simt_bk", NX_SIMT_BK, 0},
+    {"simt_stages", NX_SIMT_STAGES, 0},
     {"skinny_rows", NX_SKINNY_ROWS, 0},
     {"fold_block", NX_FOLD_BLOCK, 0},
     {"fold_lanes", NX_FOLD_LANES, 0},
