@@ -1254,6 +1254,40 @@ let test_of_node (b : Support.backend) () =
     (run true (identity dt) [| 2; 3 |])
     (run true of_node [| 2; 3 |])
 
+(* Bools stored as bytes other than 0 and 1, through a Uint8 bitcast: a
+   bool is true where its byte is not 0 (dtype.mli), so a Max or a Min of
+   them stores 0 or 1, as nx.cpu's. Rows of [0; 2], [255; 0], [3; 7] and
+   [0; 0]. *)
+let test_bool_bytes (b : Support.backend) () =
+  let bytes = [| 0; 2; 255; 0; 3; 7; 0; 0 |] in
+  let x =
+    A.Any
+      (Option.get (A.bitcast D.Bool (A.of_array D.Uint8 [| 4; 2 |] bytes)))
+  in
+  let dt = D.Any D.Bool in
+  let module K = (val b.kernels) in
+  let run scan m shape =
+    let dst = A.create b.device D.Bool shape in
+    let r = (S.Monoid m, 0, dt) in
+    let answer =
+      if scan then
+        K.scan (S.scan (identity dt) ~loads:[| S.Plain |] ~axis:1 r)
+          ~dsts:[| A.Any dst |] [| on b x |]
+      else
+        K.reduce
+          (S.reduce (identity dt) ~loads:[| S.Plain |] ~axes:[| 1 |] [| r |])
+          ~dsts:[| A.Any dst |] [| on b x |]
+    in
+    equal ~msg:"its answer" bool true (answer = A.Done);
+    let (A.Any h) = host (A.Any dst) in
+    A.to_array (Option.get (A.bitcast D.Uint8 (A.expect D.Bool (A.Any h))))
+  in
+  equal ~msg:"max" (array int) [| 1; 1; 1; 0 |] (run false S.Max [| 4 |]);
+  equal ~msg:"min" (array int) [| 0; 0; 1; 0 |] (run false S.Min [| 4 |]);
+  equal ~msg:"max scan" (array int)
+    [| 0; 1; 1; 1; 1; 1; 0; 0 |]
+    (run true S.Max [| 4; 2 |])
+
 let order (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu's cases and order, " ^ b.name)
@@ -1264,6 +1298,8 @@ let order (b : Support.backend) =
       prop ~examples:any_examples
         "computes the cases nx_cpu.mli lists, declines others" any_case
         (run (law_computes b));
+      test "a bool of any non-zero byte is true" (fun () ->
+          b.around (test_bool_bytes b));
       test "a program of Prog.of_node's operand computes" (fun () ->
           b.around (test_of_node b));
       test "a NaN past the first block and chunk is the result's" (fun () ->

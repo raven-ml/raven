@@ -99,18 +99,15 @@ template <typename T> __device__ __forceinline__ bool is_nan(T v) {
 /* Elements */
 
 /* Element [i] of [x], of the dtype [dt], in the compute type T: a float
-   in its own type, an integer widened by its own sign, a bool as 0 or 1. */
-/* CR: Decode NX_BOOL as byte != 0 here. A valid one-element Bool byte 2
-   makes Max/Min reductions and scans store 2; nx.cpu produces 1, observable
-   through a Uint8 bitcast. Normalizing at this shared load boundary
-   preserves the promised CPU-identical bits for every path. */
+   in its own type, an integer widened by its own sign, a bool as 0 or 1,
+   true where its byte is not 0. */
 template <typename T> __device__ __forceinline__ T load(const void *x, int64_t i, int dt) {
   if constexpr (real<T> || sizeof(T) == 8) return ((const T *)x)[i];
   else
     switch (dt) {
     case NX_INT8: return (T)((const int8_t *)x)[i];
-    case NX_UINT8:
-    case NX_BOOL: return (T)((const uint8_t *)x)[i];
+    case NX_UINT8: return (T)((const uint8_t *)x)[i];
+    case NX_BOOL: return (T)(((const uint8_t *)x)[i] != 0);
     case NX_INT16: return (T)((const int16_t *)x)[i];
     case NX_UINT16: return (T)((const uint16_t *)x)[i];
     default: return ((const T *)x)[i];
