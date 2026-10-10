@@ -11,18 +11,22 @@
    without the OCaml runtime: they call no function of it and read no OCaml
    value.
 
-   The device runs fills only: a part of kind RIG_FILL on queue 0, with no
-   ring units or segment bytes; a fill may start any
-   number of command buffers (rig_metal_abi.mli). [nwaits] is 0: a Metal
-   device waits on no word. */
+   The device runs fills and launches on queue 0: a part of kind RIG_FILL
+   with no ring units or segment bytes, which may start any number of
+   command buffers (rig_metal_abi.mli), and a part of kind RIG_LAUNCH, whose
+   [launch.launch] is the [launch] of Rig_metal.entry. [nwaits] is 0: a
+   Metal device waits on no word. */
 
 #ifndef RIG_METAL_H
 #define RIG_METAL_H
 
 #include <rig_edge.h>
 
-/* RIG_NEVER if a part is no fill on queue 0, or a fill with ring units or
-   segment bytes other than 0. RIG_FITS otherwise. */
+/* RIG_NEVER if a part is not on queue 0, is no fill and no launch, is a
+   fill with ring units or segment bytes other than 0, or is a launch whose
+   block in [args] has an axis of no groups or threads, more threads in a
+   threadgroup than its entry allows, or more threadgroup memory, rounded up
+   to 16 bytes, than its entry allows. RIG_FITS otherwise. */
 int rig_metal_room(void *self, const struct rig_part *parts, int n,
                    const uint8_t *args);
 
@@ -34,10 +38,10 @@ int rig_metal_room(void *self, const struct rig_part *parts, int n,
    at a time; it waits while the device's 1,024 command buffers are in
    flight. */
 int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                        int nwaits, const struct rig_part *parts, int nparts,
-                        const uint8_t *args, const uint64_t *slots, int nslots,
-                        const uint64_t *handles, int nhandles,
-                        const char **failure);
+                     int nwaits, const struct rig_part *parts, int nparts,
+                     const uint8_t *args, const uint64_t *slots, int nslots,
+                     const uint64_t *handles, int nhandles,
+                     const char **failure);
 
 /* Commits the device's open command buffer, which holds the work of every
    value not yet committed: RIG_OK, or RIG_FAILED with [*failure] set as

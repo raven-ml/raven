@@ -5,14 +5,15 @@
 
 /* Submitting to a device: everything that runs without the OCaml runtime.
 
-   A submission runs its fills in order in one serial compute encoder per
-   command buffer, which waits for the device's fence and updates it, so
-   each command buffer runs after the ones before. The fills of a command
-   buffer share its encoder: on the M1 Max a fence between two encoders
-   costs about 25 µs, a dependent dispatch in one encoder about 2 µs. Its
-   command buffers take ring slots in commit order; the last carries the
-   submission's value. A failure drops the open command buffer uncommitted
-   and completes its slot as failed, so the word stops before the value. */
+   A submission runs its parts, fills and launches, in order in one serial
+   compute encoder per command buffer, which waits for the device's fence
+   and updates it, so each command buffer runs after the ones before. The
+   parts of a command buffer share its encoder: on the M1 Max a fence
+   between two encoders costs about 25 µs, a dependent dispatch in one
+   encoder about 2 µs. Its command buffers take ring slots in commit order;
+   the last carries the submission's value. A failure drops the open
+   command buffer uncommitted and completes its slot as failed, so the word
+   stops before the value. */
 
 #define _GNU_SOURCE
 
@@ -22,6 +23,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "rig_metal_stubs.h"
 
@@ -165,16 +167,40 @@ int rig_metal_split(void *queue, uint64_t *start, uint64_t *end) {
   return begin(q) || open_encoder(q) ? 1 : 0;
 }
 
+/* A threadgroup's memory length, which Metal takes in multiples of 16
+   bytes. */
+static uint64_t shared_length(uint32_t shared) {
+  return ((uint64_t)shared + 15) & ~(uint64_t)15;
+}
+
+/* Whether the launch [p], its block in [args], has a grid and threadgroups
+   of no empty axis, at most its entry's threads in a threadgroup, and at
+   most its threadgroup memory. Each axis is at most the bound before the
+   product is taken, so the product of three fits 64 bits. */
+static int launch_fits(const struct rig_part *p, const uint8_t *args) {
+  const struct rig_metal_entry *e = p->launch.launch;
+  const struct rig_block *b = (const void *)(args + p->launch.block);
+  uint64_t threads = 1;
+  for (int k = 0; k < 3; k++) {
+    if (b->groups[k] == 0 || b->threads[k] == 0 || b->threads[k] > e->threads)
+      return 0;
+    threads *= b->threads[k];
+  }
+  return threads <= e->threads && shared_length(b->shared) <= e->shared;
+}
+
+static int fits(const struct rig_part *p, const uint8_t *args) {
+  if (p->queue != 0) return 0;
+  if (p->kind == RIG_LAUNCH) return launch_fits(p, args);
+  return p->kind == RIG_FILL && p->fill.ring_units == 0 &&
+         p->fill.segment_bytes == 0;
+}
+
 int rig_metal_room(void *self, const struct rig_part *parts, int n,
                    const uint8_t *args) {
-  (void)args;
   (void)self;
-  for (int i = 0; i < n; i++) {
-    const struct rig_part *p = &parts[i];
-    if (p->queue != 0 || p->kind != RIG_FILL || p->fill.ring_units != 0 ||
-        p->fill.segment_bytes != 0)
-      return RIG_NEVER;
-  }
+  for (int i = 0; i < n; i++)
+    if (!fits(&parts[i], args)) return RIG_NEVER;
   return RIG_FITS;
 }
 
@@ -187,12 +213,43 @@ static void commit_residency(struct rig_metal *d) {
   pthread_mutex_unlock(&d->set_mutex);
 }
 
-/* Runs the fills of [v] in the open command buffer's encoder, opening
+/* Encodes the launch [p], its block in [args], into [q]'s encoder: its
+   pipeline, its parameters as buffer 0, each ref's word plus its slot's
+   address, its threadgroup memory, and its grid. Metal copies the
+   parameters at [setBytes:], so a copy on the stack serves. Every state the
+   dispatch reads is set here, as a fill sets its own. */
+static void launch(struct rig_metal_queue *q, const struct rig_part *p,
+                   const uint8_t *args, const uint64_t *slots) {
+  const struct rig_metal_entry *e = p->launch.launch;
+  const struct rig_block *b = (const void *)(args + p->launch.block);
+  _Alignas(16) uint8_t params[RIG_PARAMS];
+  uint32_t n = p->launch.params;
+  memcpy(params, b->params, n);
+  for (int j = 0; j < p->launch.nrefs; j++) {
+    const struct rig_ref *r = &p->launch.refs[j];
+    uint64_t w;
+    memcpy(&w, params + r->at, sizeof w);
+    w += slots[r->slot];
+    memcpy(params + r->at, &w, sizeof w);
+  }
+  id<MTLComputeCommandEncoder> c = q->encoder;
+  [c setComputePipelineState:e->pipeline];
+  if (n > 0) [c setBytes:params length:n atIndex:0];
+  if (b->shared > 0)
+    [c setThreadgroupMemoryLength:shared_length(b->shared) atIndex:0];
+  [c dispatchThreadgroups:MTLSizeMake(b->groups[0], b->groups[1], b->groups[2])
+      threadsPerThreadgroup:MTLSizeMake(b->threads[0], b->threads[1],
+                                        b->threads[2])];
+}
+
+/* Runs the parts of [v] in the open command buffer's encoder, opening
    either if none is, and commits the buffer if its work would otherwise wait:
    whether it did. A fill that returns 0 without an open command buffer broke
    its contract after a failed split. The open mutex is held. */
 static const char *run(struct rig_metal *d, uint64_t v,
-                       const struct rig_part *parts, int n, int *committed) {
+                       const struct rig_part *parts, int n,
+                       const uint8_t *args, const uint64_t *slots,
+                       int *committed) {
   struct rig_metal_queue *q = &d->open;
   const char *why = NULL;
   @try {
@@ -200,6 +257,10 @@ static const char *run(struct rig_metal *d, uint64_t v,
     if (q->slot < 0) why = begin(q);
     if (why == NULL && n > 0 && q->encoder == nil) why = open_encoder(q);
     for (int i = 0; i < n && why == NULL; i++) {
+      if (parts[i].kind == RIG_LAUNCH) {
+        launch(q, &parts[i], args, slots);
+        continue;
+      }
       int rc = parts[i].fill.fn(q, parts[i].fill.arg, v);
       if (rc == 0 && q->slot >= 0) continue;
       char text[64];
@@ -223,14 +284,11 @@ static const char *run(struct rig_metal *d, uint64_t v,
 }
 
 int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                        int nwaits, const struct rig_part *parts, int nparts,
-                        const uint8_t *args, const uint64_t *slots, int nslots,
-                        const uint64_t *handles, int nhandles,
-                        const char **failure) {
-  (void)args;
-  (void)slots;
-  (void)nslots;
-  (void)waits, (void)nwaits, (void)handles, (void)nhandles;
+                     int nwaits, const struct rig_part *parts, int nparts,
+                     const uint8_t *args, const uint64_t *slots, int nslots,
+                     const uint64_t *handles, int nhandles,
+                     const char **failure) {
+  (void)waits, (void)nwaits, (void)nslots, (void)handles, (void)nhandles;
   struct rig_metal *d = self;
   int committed = 0;
   d->last = v;
@@ -238,7 +296,7 @@ int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
   if (why == NULL) {
     pthread_mutex_lock(&d->open_mutex);
     @autoreleasepool {
-      why = run(d, v, parts, nparts, &committed);
+      why = run(d, v, parts, nparts, args, slots, &committed);
     }
     unlock_open(d);
   }
@@ -276,21 +334,17 @@ void rig_metal_drop(struct rig_metal *d) {
 
 int rig_metal_room(void *self, const struct rig_part *parts, int n,
                    const uint8_t *args) {
-  (void)args;
-  (void)self, (void)parts, (void)n;
+  (void)self, (void)parts, (void)n, (void)args;
   return RIG_NEVER;
 }
 
 int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                        int nwaits, const struct rig_part *parts, int nparts,
-                        const uint8_t *args, const uint64_t *slots, int nslots,
-                        const uint64_t *handles, int nhandles,
-                        const char **failure) {
-  (void)args;
-  (void)slots;
-  (void)nslots;
+                     int nwaits, const struct rig_part *parts, int nparts,
+                     const uint8_t *args, const uint64_t *slots, int nslots,
+                     const uint64_t *handles, int nhandles,
+                     const char **failure) {
   (void)self, (void)v, (void)waits, (void)nwaits, (void)parts, (void)nparts,
-      (void)handles, (void)nhandles;
+      (void)args, (void)slots, (void)nslots, (void)handles, (void)nhandles;
   *failure = "Metal exists on macOS only";
   return RIG_FAILED;
 }

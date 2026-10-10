@@ -31,10 +31,11 @@
     {b Submissions.} Work reaches the device in C, through its room check and
     submit (the [edge] of {!facts}), over [rig_edge.h]'s structures. A
     submission is a list of {e parts} for the device's one queue, ["COMPUTE:0"],
-    possibly empty. A part is a {e fill}, a C function that encodes Metal work
-    into a compute command encoder the device gives it ({!Rig_metal_abi}); it
+    possibly empty. A part is a {e launch}, one dispatch of a function of a
+    loaded image, or a {e fill}, a C function that encodes Metal work into a
+    compute command encoder the device gives it ({!Rig_metal_abi}), which
     declares no ring units or segment bytes. The device runs no words and no
-    copies, and waits on no other device's word. The submit runs the fills in
+    copies, and waits on no other device's word. The submit runs the parts in
     order into the device's {e open command buffer}, opening one if none is, in
     one encoder per command buffer, each command buffer after the ones before
     it, and returns. It does not wait for the work. Metal runs a command buffer
@@ -90,7 +91,12 @@
       ([gpuAddress], [contents]), [MTLLibrary.h] ([newLibraryWithData:error:],
       [functionNames], [newFunctionWithName:]), [MTLFunction.h]
       ([functionType]), [MTLComputePipeline.h] ([supportIndirectCommandBuffers],
-      [maxTotalThreadsPerThreadgroup]), [MTLIndirectCommandBuffer.h].
+      [maxTotalThreadsPerThreadgroup], [staticThreadgroupMemoryLength]),
+      [MTLComputeCommandEncoder.h] ([setBytes:length:atIndex:],
+      [setThreadgroupMemoryLength:atIndex:],
+      [dispatchThreadgroups:threadsPerThreadgroup:]), [MTLDevice.h]
+      ([maxThreadsPerThreadgroup], [maxThreadgroupMemoryLength]),
+      [MTLIndirectCommandBuffer.h].
     - {{:https://developer.apple.com/documentation/metal/simplifying-gpu-resource-management-with-residency-sets}
        Simplifying GPU resource management with residency sets}: a set added to
       a queue keeps its committed allocations resident for every command buffer
@@ -149,18 +155,18 @@ val capability : t -> Rig_metal_abi.t
 (** {1:this This driver}
 
     {t
-      | Fact             | Value                                  |
-      |------------------|----------------------------------------|
-      | [arch]           | ["AppleN"] or ["Mac2"]                 |
-      | [budget]         | [recommendedMaxWorkingSetSize]         |
-      | [queues]         | ["COMPUTE:0"], which runs [Fill]       |
-      | [completion]     | [Host]                                 |
-      | [waits]          | None, [most = 0]                       |
-      | [may_block]      | [true]                                 |
-      | [maps_host]      | [true]                                 |
-      | [host_addresses] | [true]                                 |
-      | [capability]     | {!Rig_metal_abi.t} ({!val-capability}) |
-      | [word]           | Eight bytes of host memory             |
+      | Fact             | Value                                      |
+      |------------------|--------------------------------------------|
+      | [arch]           | ["AppleN"] or ["Mac2"]                     |
+      | [budget]         | [recommendedMaxWorkingSetSize]             |
+      | [queues]         | ["COMPUTE:0"], which runs [Fill], [Launch] |
+      | [completion]     | [Host]                                     |
+      | [waits]          | None, [most = 0]                           |
+      | [may_block]      | [true]                                     |
+      | [maps_host]      | [true]                                     |
+      | [host_addresses] | [true]                                     |
+      | [capability]     | {!Rig_metal_abi.t} ({!val-capability})     |
+      | [word]           | Eight bytes of host memory                 |
     }
 
     {b Facts.} [arch] is the highest Apple GPU family the GPU supports, such as
@@ -177,9 +183,11 @@ val capability : t -> Rig_metal_abi.t
     [rig_metal_submit] and [rig_metal_commit], which [rig_metal.h] declares. The
     edge is valid while the process runs: a device's C state holds its word,
     which other devices may read after [d] is gone, so neither is ever freed.
-    - [rig_metal_room] answers [RIG_NEVER] for a part that is no fill on queue
-      [0] or declares ring units or segment bytes, and [RIG_FITS] otherwise: the
-      submit waits inside for command buffers when the queue is full.
+    - [rig_metal_room] answers [RIG_NEVER] for a part that is not on queue [0],
+      is no fill and no launch, is a fill that declares ring units or segment
+      bytes, or is a launch beyond its function's limits ({b Launches}, below),
+      and [RIG_FITS] otherwise: the submit waits inside for command buffers when
+      the queue is full.
     - [rig_metal_submit] runs the parts as the work of [v] and answers
       [RIG_COMMITTED] if it committed the open command buffer, [RIG_OK] if [v]'s
       work waits in it. With no part, [v] is observable once the work before it
@@ -218,21 +226,39 @@ val capability : t -> Rig_metal_abi.t
     code itself, and the result is [Ok (Loaded i)]. It is [Error msg] if the
     bytes are no metallib, or if one of its functions is no compute kernel.
 
-    {!entry} answers the address of the [MTLComputePipelineState] of the
-    function, usable from an indirect command buffer. The first call for a
-    function makes the pipeline: Metal compiles it for the GPU, 0.1 to 1 s when
-    its shader cache does not hold it, and the call releases the domain lock
-    meanwhile. Every later call answers the same address, which is valid until
-    {!unload}. Calls for one function from several domains at once make one
-    pipeline. It raises [Invalid_argument] with Metal's reason if Metal makes no
-    pipeline of the function: the function needs what the GPU family lacks
-    (Apple's Metal feature set tables), such as more than its 32 KB of
-    threadgroup memory on the Apple families. A refusal is not kept: a later
-    call compiles again.
+    {!entry} answers, as its [code], the address of the
+    [MTLComputePipelineState] of the function, usable from an indirect command
+    buffer, and as its [launch] the address of what a launch of the function
+    reads: the pipeline and its limits. The first call for a function makes
+    them: Metal compiles it for the GPU, 0.1 to 1 s when its shader cache does
+    not hold it, and the call releases the domain lock meanwhile. Every later
+    call answers the same entry, which is valid until {!unload}. Calls for one
+    function from several domains at once make one pipeline. It raises
+    [Invalid_argument] with Metal's reason if Metal makes no pipeline of the
+    function: the function needs what the GPU family lacks (Apple's Metal
+    feature set tables), such as more than its 32 KB of threadgroup memory on
+    the Apple families. A refusal is not kept: a later call compiles again.
 
-    {!unload} releases the image's library and the pipelines {!entry} made of
-    it. An indirect command buffer made with one of them keeps it until its own
-    release ({!Rig_metal_abi.field-release}).
+    {!unload} releases the image's library, and the pipelines and launches
+    {!entry} made of it. An indirect command buffer made with one of them keeps
+    it until its own release ({!Rig_metal_abi.field-release}).
+
+    {b Launches.} A launch dispatches its function once, in the open command
+    buffer's encoder, after the parts before it completed. It sets the
+    function's pipeline; its parameters as buffer [0]
+    ([setBytes:length:atIndex:]), unless it has none; its threadgroup memory,
+    rounded up to a multiple of 16 bytes, as threadgroup memory [0]
+    ([setThreadgroupMemoryLength:atIndex:]), unless it is [0]; and its grid
+    ([dispatchThreadgroups:threadsPerThreadgroup:]). The function reads its
+    parameters as a [constant] structure at [[[buffer(0)]]], and a ref's 8 bytes
+    as a device pointer, the buffer's GPU address plus the offset.
+
+    The room refuses a launch whose grid or threadgroup has an axis of size [0];
+    whose threadgroup holds more threads, along an axis or in all, than the
+    least of the pipeline's [maxTotalThreadsPerThreadgroup] and the device's
+    [maxThreadsPerThreadgroup] along each axis; or whose threadgroup memory,
+    rounded, exceeds the device's [maxThreadgroupMemoryLength] less the
+    function's [staticThreadgroupMemoryLength].
 
     {b Timeline.} The handlers write the word with release order, and never
     lower it. {!sleep} blocks on a condition the handlers signal, using no

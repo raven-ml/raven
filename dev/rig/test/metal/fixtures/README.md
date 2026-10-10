@@ -1,8 +1,9 @@
 # Metal fixtures
 
-`fill.metallib` holds the kernels of `fill.metal`, `vertex.metallib`
-the vertex function of `vertex.metal`, and `threadgroup.metallib` the
-kernels of `threadgroup.metal`; each source says what its functions do.
+`fill.metallib` holds the kernels of `fill.metal`, `launch.metallib`
+those of `launch.metal`, `vertex.metallib` the vertex function of
+`vertex.metal`, and `threadgroup.metallib` the kernels of
+`threadgroup.metal`; each source says what its functions do.
 Made in this directory on macOS 26.3.1 with Xcode 26.3's Metal toolchain
 (`metal` 32023.864), for each `<name>`:
 

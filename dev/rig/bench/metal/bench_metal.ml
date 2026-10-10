@@ -5,11 +5,11 @@
 
 (* The Mac's GPU through the driver, its work submitted through rig, each row
    beside the raw Metal calls that bound it, made on a queue of their own: a
-   release by a commit and a wait; a launch from an indirect command buffer by
-   the same indirect command buffer and by the same dispatches encoded directly;
-   memory and images by the Metal objects they make. A row waits as a caller
-   does, through rig's wait; the rows of [sleep] wait while spinning threads
-   hold every core. A floor waits as Metal's own API does, blocking in
+   release by a commit and a wait; launches by the same dispatches encoded
+   directly; a launch from an indirect command buffer by the same indirect
+   command buffer; memory and images by the Metal objects they make. A row waits
+   as a caller does, through rig's wait; the rows of [sleep] wait while spinning
+   threads hold every core. A floor waits as Metal's own API does, blocking in
    waitUntilCompleted. Each case opens its device in its own worker, so that no
    process forks after Metal started. *)
 
@@ -40,7 +40,9 @@ let metallib = S.fixture ~dir:"../../test/metal/fixtures" "fill"
 let kib = 1024
 let mib = 1024 * kib
 
-(* A device and the run its row submits with. *)
+(* A device and the run its row submits with; [step] as the driver names it and
+   as rig loaded it, which a launch writes into [out], the one buffer of
+   [writes]. *)
 type dev = {
   d : Rig.t;
   g : M.t;
@@ -48,6 +50,8 @@ type dev = {
   mutable v : int;
   step : int;
   args : M.region;
+  image : Rig.Image.t;
+  writes : Rig.Buffer.t array;
 }
 
 let get = function Ok x -> x | Error why -> failwith why
@@ -67,7 +71,10 @@ let dev () =
   let { S.d; g } = S.open_ () in
   let step = (Option.get (M.entry (load g) "step")).code in
   let args = Option.get (M.alloc g Rig_edge.Device 16) in
-  let t = { d; g; run = Rig.Submission.Run.make (); v = 0; step; args } in
+  let image = get (Rig.Image.load d metallib) in
+  let out = Rig.Buffer.create d 16 in
+  let run = Rig.Submission.Run.make () in
+  let t = { d; g; run; v = 0; step; args; image; writes = [| out |] } in
   H.set64 (host args) (address (alloc t 16));
   t
 
@@ -78,6 +85,37 @@ let submit t s =
   let p = Rig.submit s ~run:t.run ~reads:[||] ~writes:[||] ~waits:[||] in
   t.v <- Rig.Point.value p
 
+(* [step] launched [n] times in one submission, each over one thread and writing
+   [out], its blocks stored in [t]'s run. *)
+let launches t n =
+  let module Sub = Rig.Submission in
+  let step =
+    {
+      Sub.queue = "COMPUTE:0";
+      after = [||];
+      work =
+        Launch
+          {
+            image = t.image;
+            kernel = "step";
+            params = 16;
+            refs = [| { at = 0; slot = 0 } |];
+          };
+    }
+  in
+  let s = Sub.make ~reads:0 ~writes:1 t.d (Array.make n step) in
+  for i = 0 to n - 1 do
+    let b = Sub.block s i in
+    Sub.Run.groups t.run b 1 1 1;
+    Sub.Run.threads t.run b 1 1 1;
+    Sub.Run.int64 t.run b 0 0
+  done;
+  s
+
+let launch_submit t s =
+  let p = Rig.submit s ~run:t.run ~reads:[||] ~writes:t.writes ~waits:[||] in
+  t.v <- Rig.Point.value p
+
 let wait t = Rig.wait t.d t.v
 
 let run t s =
@@ -85,7 +123,7 @@ let run t s =
   wait t
 
 (* A part running an indirect command buffer of [n] dispatches of [step]. *)
-let launch t n =
+let indirect t n =
   let dispatch =
     {
       Rig_metal_abi.pipeline = t.step;
@@ -133,46 +171,51 @@ let release_rows =
     ]
 
 let launch_rows =
+  (* A submission of [n] launches of [step]: [floor-n] runs the same dispatches
+     in one encoder. *)
   let launched n () =
     let t = dev () in
-    (t, launch t n)
+    (t, launches t n)
   in
-  (* A submission of [n] parts, each one dispatch of [step]: [floor-64] runs the
-     same dispatches in one encoder. *)
-  let parts n () =
-    let t = dev () in
-    let f = S.dispatch ~pipeline:t.step t.args ~groups:1 ~threads:1 in
-    (t, (f, prepare t (Array.make n (S.part f))))
+  let run_launches (t, s) =
+    launch_submit t s;
+    wait t
   in
-  (* [n] submissions of one dispatch of [step] each, then a wait for the last:
-     [parts-64]'s dispatches, one value each. *)
-  let submits n (t, (_, s)) =
+  (* [n] submissions of one launch of [step] each, then a wait for the last:
+     [64]'s dispatches, one value each. *)
+  let submits n (t, s) =
     for _ = 1 to n do
-      submit t s
+      launch_submit t s
     done;
     wait t
   in
   let live () =
-    let t, l = launched 1 () in
+    let t, s = launched 1 () in
     let regions = List.init 4096 (fun _ -> alloc t (64 * kib)) in
-    (t, l, regions)
+    (t, s, regions)
   in
-  let indirect n () =
+  let recorded n () =
+    let t = dev () in
+    (t, indirect t n)
+  in
+  let floor_recorded n () =
     let f = floor () in
     (f, floor_icb f n)
   in
   Thumper.group "launch"
     [
-      row "1" (launched 1) (fun (t, (_, s)) -> run t s);
-      row "64" (launched 64) (fun (t, (_, s)) -> run t s);
-      row "parts-64" (parts 64) (fun (t, (_, s)) -> run t s);
-      row "submits-64" stepping (submits 64);
-      row "submits-1024" stepping (submits 1024);
-      row "floor-icb-1" (indirect 1) (fun (f, b) -> floor_execute f b 1);
-      row "floor-icb-64" (indirect 64) (fun (f, b) -> floor_execute f b 64);
+      row "1" (launched 1) run_launches;
+      row "64" (launched 64) run_launches;
+      row "submits-64" (launched 1) (submits 64);
+      row "submits-1024" (launched 1) (submits 1024);
       row "floor-1" floor (fun f -> floor_launch f 1);
       row "floor-64" floor (fun f -> floor_launch f 64);
-      row "1-live-4096" live (fun (t, (_, s), _) -> run t s);
+      row "1-live-4096" live (fun (t, s, _) -> run_launches (t, s));
+      row "icb-1" (recorded 1) (fun (t, (_, s)) -> run t s);
+      row "icb-64" (recorded 64) (fun (t, (_, s)) -> run t s);
+      row "floor-icb-1" (floor_recorded 1) (fun (f, b) -> floor_execute f b 1);
+      row "floor-icb-64" (floor_recorded 64) (fun (f, b) ->
+          floor_execute f b 64);
     ]
 
 let split_rows =

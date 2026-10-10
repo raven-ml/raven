@@ -491,24 +491,31 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
 
 (* The fixtures of [vendor]'s suite. *)
 let fixtures vendor = "../test/" ^ vendor ^ "/fixtures"
-let host_of r = Option.get (Rig_metal.locate r).host
 
-(* [step] over one thread, its argument pointing at a word of its own. *)
-let metal_kernel d _ =
+(* [bump] over one thread as a launch, loaded by rig, its parameters left 0: a
+   count of 0 bytes, so it writes nothing. The floor's launch is of the image
+   the driver loads. A case runs in a forked child, which reaches no Metal
+   compiler: the pipelines of [fill]'s kernels come from Metal's shader cache. *)
+let metal_kernel g d =
   let module S = Rig_metal_support in
+  let bin = S.fixture ~dir:(fixtures "metal") "fill" in
   let image =
-    match Rig_metal.image d (S.fixture ~dir:(fixtures "metal") "fill") with
+    match Rig.Image.load d bin with Ok i -> i | Error why -> failwith why
+  in
+  let own =
+    match Rig_metal.image g bin with
     | Ok (Rig_edge.Loaded i) -> i
     | Ok (Place _) -> failwith "Metal asked to place its code"
     | Error why -> failwith why
   in
-  let step = (Option.get (Rig_metal.entry image "step")).code in
-  let region n = Option.get (Rig_metal.alloc d Device n) in
-  let args = region 16 in
-  let word = Option.get (Rig_metal.locate (region 16)).address in
-  Rig_gpu_support.Host.set64 (host_of args) word;
-  let f = S.dispatch ~pipeline:step args ~groups:1 ~threads:1 in
-  work (S.part f) (fun () -> ignore (Sys.opaque_identity (image, f)))
+  let e = Option.get (Rig_metal.entry own "bump") in
+  let launch =
+    Sub.Launch { image; kernel = "bump"; params = 16; refs = [||] }
+  in
+  work
+    ~floor:(fun f -> floor_launch f e.code e.launch 16)
+    { Sub.queue = "COMPUTE:0"; after = [||]; work = launch }
+    (fun () -> ignore (Sys.opaque_identity own))
 
 (* [empty] over one thread as a launch, loaded by rig; the floor's launch is of
    the image the driver loads. *)

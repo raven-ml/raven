@@ -237,15 +237,23 @@ value caml_rig_metal_image(value v_d, value v_b) {
   CAMLreturn(triple(why, lib, names));
 }
 
-/* The pipeline, usable from an indirect command buffer, of the function
-   [v_f] of the library [v_lib]: [("", pipeline, most threads per
-   threadgroup)], or [(why, 0, 0)] with Metal's reason if Metal makes none.
-   It releases the runtime while Metal compiles. */
+/* The entry of the function [v_f] of the library [v_lib], whose pipeline
+   an indirect command buffer may use too: [("", pipeline, most threads per
+   threadgroup, entry)], or [(why, 0, 0, 0)] with Metal's reason if Metal
+   makes no pipeline. A threadgroup holds at most the pipeline's
+   [maxTotalThreadsPerThreadgroup] threads, and at most the device's along
+   each axis: their least bounds both. It releases the runtime while Metal
+   compiles. */
 value caml_rig_metal_pipeline(value v_lib, value v_f) {
   CAMLparam2(v_lib, v_f);
-  CAMLlocal1(why);
+  CAMLlocal3(why, launch, v);
   id<MTLLibrary> library = Object_val(v_lib);
   char *f = caml_stat_strdup(String_val(v_f));
+  struct rig_metal_entry *e = calloc(1, sizeof *e);
+  if (e == NULL) {
+    caml_stat_free(f);
+    caml_raise_out_of_memory();
+  }
   char text[512] = "";
   id<MTLComputePipelineState> p = nil;
   caml_enter_blocking_section_no_pending();
@@ -267,13 +275,33 @@ value caml_rig_metal_pipeline(value v_lib, value v_f) {
   }
   caml_leave_blocking_section();
   caml_stat_free(f);
+  if (p == nil) {
+    free(e);
+    e = NULL;
+  } else {
+    MTLSize axes = library.device.maxThreadsPerThreadgroup;
+    NSUInteger n = p.maxTotalThreadsPerThreadgroup;
+    n = MIN(n, MIN(axes.width, MIN(axes.height, axes.depth)));
+    e->pipeline = p;
+    e->threads = (uint32_t)n;
+    e->shared = (uint32_t)(library.device.maxThreadgroupMemoryLength -
+                           p.staticThreadgroupMemoryLength);
+  }
   why = caml_copy_string(text);
-  intnat max = p == nil ? 0 : (intnat)p.maxTotalThreadsPerThreadgroup;
-  CAMLreturn(triple(why, Val_long((intnat)p), Val_long(max)));
+  launch = caml_copy_nativeint((intnat)e);
+  v = caml_alloc_tuple(4);
+  Store_field(v, 0, why);
+  Store_field(v, 1, Val_long((intnat)p));
+  Store_field(v, 2, Val_long(e == NULL ? 0 : (intnat)e->threads));
+  Store_field(v, 3, launch);
+  CAMLreturn(v);
 }
 
-value caml_rig_metal_release(value v_pipeline) {
-  [(id)Long_val(v_pipeline) release];
+/* Releases the entry [v_e] and its pipeline. */
+value caml_rig_metal_release(value v_e) {
+  struct rig_metal_entry *e = (struct rig_metal_entry *)Nativeint_val(v_e);
+  [e->pipeline release];
+  free(e);
   return Val_unit;
 }
 

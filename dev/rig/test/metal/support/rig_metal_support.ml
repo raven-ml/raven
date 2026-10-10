@@ -106,50 +106,53 @@ let binary () =
   (fixture ~dir:"../metal/fixtures" "fill", [ "fill"; "step"; "spin"; "bump"; "copy" ])
 
 let second () = Some (Rig_metal.open_ 0)
-let pipelines = Rig_gpu_support.loader (fun () -> fst (binary ()))
-let pipeline t f = Option.get (Rig.Image.entry (pipelines t.d) f)
+let launch_binary () = Some (fixture ~dir:"../metal/fixtures" "launch")
+let images = Rig_gpu_support.loader (fun () -> fst (binary ()))
 
-let le64 x =
-  let b = Bytes.create 8 in
-  Bytes.set_int64_le b 0 (Int64.of_int x);
-  Bytes.to_string b
-
-let le32 x =
-  let b = Bytes.create 4 in
-  Bytes.set_int32_le b 0 (Int32.of_int x);
-  Bytes.to_string b
-
-(* A dispatch of [f] over [groups] threadgroups of [threads] threads, its
-   arguments [args]. *)
-let dispatch_of t f args ~groups ~threads =
-  let arg =
-    dispatch_arg
-      (Nativeint.of_int (pipeline t f))
-      (Rig.Buffer.handle args) (Rig.Buffer.offset args) groups threads
+(* [kernel] of [image] on COMPUTE:0 over [groups] threadgroups of [threads]
+   threads, with [params] bytes of parameters [store] stores: the buffers' GPU
+   addresses themselves, as a support names no slot of the caller's run. *)
+let launching image kernel ~params ~groups ~threads store =
+  let module Run = Rig.Submission.Run in
+  let part =
+    {
+      Rig.Submission.queue = "COMPUTE:0";
+      after = [||];
+      work = Launch { image; kernel; params; refs = [||] };
+    }
   in
-  (Rig_gpu_support.work (part { fn = dispatch_fill (); arg }), args)
+  let block run b =
+    Run.groups run b groups 1 1;
+    Run.threads run b threads 1 1;
+    store run b
+  in
+  { Rig_gpu_support.part; block }
 
 (* The kernel [copy] has a thread per word and no bound: the grid is the
    words, in threadgroups of the most threads up to 256 that divide them. *)
 let copy_words t ~dst ~src =
+  let module Run = Rig.Submission.Run in
   let words = Rig.Buffer.length src / 4 in
   let rec threads k = if words mod k = 0 then k else threads (k - 1) in
   let threads = threads (Int.min words 256) in
-  let args =
-    Rig_gpu_support.arguments t.d
-      (le64 (Rig.Buffer.address dst) ^ le64 (Rig.Buffer.address src))
+  let w =
+    launching (images t.d) "copy" ~params:16 ~groups:(words / threads) ~threads
+      (fun run k ->
+        Run.int64 run k 0 (Rig.Buffer.address dst);
+        Run.int64 run k 8 (Rig.Buffer.address src))
   in
-  dispatch_of t "copy" args ~groups:(words / threads) ~threads
+  (w, src)
 
 (* The kernel [spin] runs [c] steps of a generator on one thread, then writes
-   its state at [out], here the arguments' last word. A step takes about 29
-   ns on an M1 Max: one per 10 ns leaves room for faster GPUs. *)
+   its state at [out], here a word of its own. A step takes about 29 ns on an M1
+   Max: one per 10 ns leaves room for faster GPUs. *)
 let spin t ~ns =
+  let module Run = Rig.Submission.Run in
   let c = Int.min ((ns / 10) + 1) 0xffff_ffff in
-  let args = Rig_gpu_support.arguments t.d (String.make 24 '\000') in
-  Rig.Buffer.copy
-    ~src:(Rig.Buffer.of_string (le64 (Rig.Buffer.address args + 16) ^ le32 c))
-    ~dst:(Rig.Buffer.view args ~first:0 ~length:12);
-  dispatch_of t "spin" args ~groups:1 ~threads:1
-
-let launch_binary () = None
+  let out = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
+  let w =
+    launching (images t.d) "spin" ~params:16 ~groups:1 ~threads:1 (fun run k ->
+        Run.int64 run k 0 (Rig.Buffer.address out);
+        Run.int32 run k 8 c)
+  in
+  (w, out)

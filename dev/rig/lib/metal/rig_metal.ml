@@ -8,7 +8,8 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* The C side. A device is the address of its C state, as an int; a Metal object
    is a retained pointer, a pipeline's as an int; a buffer is the triple of its
-   object, GPU address and host address. *)
+   object, GPU address and host address; an entry's launch is the address of
+   its C state, struct rig_metal_entry, which holds its pipeline. *)
 
 type buffer = nativeint * int * int
 
@@ -22,12 +23,12 @@ external map_buffer : int -> int -> int -> buffer option
 
 external free_buffer : int -> nativeint -> unit = "caml_rig_metal_free"
 external free_word : int -> unit = "caml_rig_metal_free_word"
-external release : int -> unit = "caml_rig_metal_release"
+external release : nativeint -> unit = "caml_rig_metal_release"
 
 external load : int -> string -> string * nativeint * string array
   = "caml_rig_metal_image"
 
-external pipeline : nativeint -> string -> string * int * int
+external pipeline : nativeint -> string -> string * int * int * nativeint
   = "caml_rig_metal_pipeline"
 
 external release_library : nativeint -> unit = "caml_rig_metal_release_library"
@@ -69,16 +70,19 @@ let locate r =
 
 (* Opening *)
 
-(* An image's pipelines, 0 until its first [entry], under [guard]: an [entry]
+(* An image's entries, [none] until its first [entry], under [guard]: an [entry]
    compiles holding it, so calls for one function from several domains make one
-   pipeline. [limits] holds each pipeline's most threads per threadgroup. *)
+   pipeline. [limits] holds each pipeline's most threads per threadgroup, which
+   its launch holds too. *)
 type image = {
   library : nativeint;
   names : string array;
-  pipelines : int array;
+  entries : Rig_edge.entry array;
   limits : int array;
   guard : Mutex.t;
 }
+
+let none = { Rig_edge.code = 0; launch = 0n }
 
 type t = {
   self : int;
@@ -103,9 +107,9 @@ let rec limit images p =
   match images with
   | [] -> 0
   | (i : image) :: rest ->
-      let n = Array.length i.pipelines in
+      let n = Array.length i.entries in
       let k = ref 0 in
-      while !k < n && i.pipelines.(!k) <> p do
+      while !k < n && i.entries.(!k).code <> p do
         incr k
       done;
       if !k < n && p <> 0 then i.limits.(!k) else limit rest p
@@ -140,6 +144,11 @@ let refusal images bytes i (d : Rig_metal_abi.dispatch) =
    [stop], an [unload] and a [free] exclude each other under the device's
    [guard]: once the stop began, the unload took the image or the free took the
    region, the pipelines [icb] would retain or its buffer may be released. *)
+(* CR: Read each dispatch once, then validate and encode its pipeline and
+   sizes from that value under guard. These separate walks can copy
+   pipeline 1, validate a replacement, then retain the saved unchecked
+   pointer. One checked walk keeps ownership and limit checks on exactly
+   what make_icb receives. *)
 let icb self guard stopped images regions align buffer
     (ds : Rig_metal_abi.dispatch array) =
   let sizes = Array.make (7 * Array.length ds) 0 in
@@ -235,7 +244,7 @@ let open_ i =
         {
           Rig_edge.arch;
           budget;
-          queues = [ { name = "COMPUTE:0"; runs = [ Fill ] } ];
+          queues = [ { name = "COMPUTE:0"; runs = [ Fill; Launch ] } ];
           completion = Host;
           waits = { stores = false; hosts = false; objects = false; most = 0 };
           may_block = true;
@@ -324,33 +333,35 @@ let image d b =
   match load d.self b with
   | "", library, names ->
       let n = Array.length names in
-      let pipelines = Array.make n 0 and limits = Array.make n 0 in
-      let i = { library; names; pipelines; limits; guard = Mutex.create () } in
+      let entries = Array.make n none and limits = Array.make n 0 in
+      let i = { library; names; entries; limits; guard = Mutex.create () } in
       Mutex.protect d.guard (fun () -> d.images := i :: !(d.images));
       Ok (Rig_edge.Loaded i)
   | why, _, _ -> Error why
 
 (* A refusal is not kept: a later call compiles again. *)
 let entry (i : image) f =
-  let code p = { Rig_edge.code = p; launch = 0n } in
   Mutex.protect i.guard @@ fun () ->
   match Array.find_index (String.equal f) i.names with
   | None -> None
-  | Some k when i.pipelines.(k) <> 0 -> Some (code i.pipelines.(k))
+  | Some k when i.entries.(k).code <> 0 -> Some i.entries.(k)
   | Some k -> (
       match pipeline i.library f with
-      | "", p, limit ->
+      | "", code, limit, launch ->
+          let e = { Rig_edge.code; launch } in
           i.limits.(k) <- limit;
-          i.pipelines.(k) <- p;
-          Some (code p)
-      | why, _, _ ->
+          i.entries.(k) <- e;
+          Some e
+      | why, _, _, _ ->
           invalid_argf "Rig_metal.entry: Metal makes no pipeline of %S: %s" f
             why)
 
 let unload d (i : image) =
   Mutex.protect d.guard (fun () ->
       d.images := List.filter (fun j -> j != i) !(d.images));
-  Array.iter (fun p -> if p <> 0 then release p) i.pipelines;
+  Array.iter
+    (fun (e : Rig_edge.entry) -> if e.code <> 0 then release e.launch)
+    i.entries;
   release_library i.library
 
 (* Timeline and loss *)

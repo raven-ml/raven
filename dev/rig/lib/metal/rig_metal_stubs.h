@@ -31,6 +31,16 @@ struct rig_metal_queue {
   struct rig_metal *d;
 };
 
+/* What a launch of a function reads, the [launch] of its entry: its
+   pipeline, the most threads a threadgroup of it holds, and the most
+   threadgroup memory a launch may add to what the function declares, in
+   bytes. Made by the function's first entry, freed by its image's
+   unload. */
+struct rig_metal_entry {
+  id<MTLComputePipelineState> pipeline;
+  uint32_t threads, shared;
+};
+
 /* A device: never freed, since a completion handler, another device or the
    C caller may reach it after its loss. Its residency set has a mutex of
    its own, which no completion handler takes; [changed] says whether the
