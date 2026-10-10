@@ -1742,6 +1742,80 @@ module Prim : sig
     | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) nx * 'r) outs
         (** The dtypes of a map's results. *)
 
+  type ('d, _) fft =
+    | C2c : {
+        direction : Nx_kernel.Spec.direction;
+        axes : int array;
+        x : (Complex.t, 's, 'd) nx;
+      }
+        -> ('d, (Complex.t, 's, 'd) nx) fft
+        (** The transform [direction] of [x] along each of [axes]. *)
+    | R2c : {
+        dtype : (Complex.t, 'c) dtype;
+        axes : int array;
+        x : (float, 's, 'd) nx;
+      }
+        -> ('d, (Complex.t, 'c, 'd) nx) fft
+        (** The forward transform of a real [x] along each of [axes], bins [0]
+            to [n/2] along the last; [dtype] has [x]'s precision. *)
+    | C2r : {
+        dtype : (float, 'r) dtype;
+        n : int;
+        axes : int array;
+        x : (Complex.t, 's, 'd) nx;
+      }
+        -> ('d, (float, 'r, 'd) nx) fft
+        (** The real inverse transform of [n] points along the last of [axes],
+            from [n/2 + 1] bins; [dtype] has [x]'s precision. *)
+
+  (** Each constructor is one {!Nx_kernel.Spec.routine}, its results in that
+      routine's order, each of [a]'s dtype but [Lu]'s positions. *)
+  type ('d, _) linalg =
+    | Cholesky : {
+        triangle : Nx_kernel.Spec.triangle;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, ('v, 's, 'd) nx) linalg
+    | Lu :
+        ('v, 's, 'd) nx
+        -> ( 'd,
+             ('v, 's, 'd) nx
+             * (int64, Dtype.int64_elt, 'd) nx
+             * (int64, Dtype.int64_elt, 'd) nx )
+           linalg
+        (** [lu], [pivots], [perm]. *)
+    | Qr : {
+        factors : Nx_kernel.Spec.factors;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg  (** [q], [r]. *)
+    | Svd : {
+        factors : Nx_kernel.Spec.factors;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
+        (** [u], [s], [vh]. *)
+    | Svd_values : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx) linalg
+        (** [s]: [Svd { vectors = None }]. *)
+    | Eigh : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
+        (** [w], [v]. *)
+    | Eigh_values : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx) linalg
+        (** [w]: [Eigh { vectors = false }]. *)
+    | Eig :
+        (Complex.t, 's, 'd) nx
+        -> ('d, (Complex.t, 's, 'd) nx * (Complex.t, 's, 'd) nx) linalg
+        (** [w], [v]. *)
+    | Eig_values : (Complex.t, 's, 'd) nx -> ('d, (Complex.t, 's, 'd) nx) linalg
+        (** [w]: [Eig { vectors = false }]. *)
+    | Solve_triangular : {
+        triangle : Nx_kernel.Spec.triangle;
+        transpose : bool;
+        unit_diagonal : bool;
+        a : ('v, 's, 'd) nx;
+        b : ('v, 's, 'd) nx;
+      }
+        -> ('d, ('v, 's, 'd) nx) linalg
+
   (** The operations. A loop's loads have exactly its iteration shape: no
       operation broadcasts or promotes. *)
   type 'r t =
@@ -1831,6 +1905,11 @@ module Prim : sig
         -> ('v, 's, 'd) nx t
         (** [spec] of [a] and [b], from [init]: its result C-contiguous, of the
             shape {!Nx_kernel.Spec.shapes} gives. *)
+    | Fft : ('d, 'r) fft -> 'r t
+        (** A Fourier transform ({!Nx_kernel.Spec.fft}). *)
+    | Linalg : ('d, 'r) linalg -> 'r t
+        (** A factorisation or a triangular solve ({!Nx_kernel.Spec.linalg}).
+        *)
     | Copy : ('v, 's, 'd) nx -> ('v, 's, 'd) nx t
         (** The value stored afresh, C-contiguous. *)
     | Move : Nx_array.Move.t * ('v, 's, 'd) nx -> ('v, 's, 'd) nx t

@@ -552,8 +552,9 @@ type policy = Memo | Fresh
 let is_view : type r. r Value.prim -> bool = function
   | Value.Move _ | Value.Bitcast _ -> true
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
-  | Value.Scatter _ | Value.Sort _ | Value.Assemble _ | Value.Contract _
-  | Value.Copy _ | Value.Place _ | Value.Check _ ->
+  | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
+  | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Place _
+  | Value.Check _ ->
       false
 
 let find memo p =
@@ -621,6 +622,12 @@ let along axis shape w =
   w.(axis) <- whole shape.(axis);
   w
 
+(* The window of an operand of [shape] whose leading axes are [w]'s first, read
+   whole along the rest: a routine's matrices, below a batch window. *)
+let batch w shape =
+  let b = min (Array.length w) (Array.length shape - 2) in
+  Array.mapi (fun a d -> if a < b then w.(a) else whole d) shape
+
 let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   Prim.iteri (fun i x -> checked ~by i x) op;
@@ -679,7 +686,7 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           consumed ~by ~reused:(fun _ -> false) hs;
           r)
   | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
-  | Value.Sort _
+  | Value.Sort _ | Value.Fft _ | Value.Linalg _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       claim ~by hs;
@@ -883,6 +890,28 @@ and compute : type r.
             then declined := Some (Devices.rig set d, ops)
           end);
       or_expanded ~by ~kernels:K.name ?at op r !declined
+  | Value.Fft f ->
+      let (Value.Any x) = Prim.fft_operand f in
+      let axes = Prim.fft_axes f in
+      let spec = S.fft (Prim.transform f) ~axes in
+      let read d w =
+        let w = Array.fold_left (fun w a -> along a (Prim.shape x) w) w axes in
+        [| A.Any (Place.view ~by x d w) |]
+      in
+      each_result ~by ?at op ~kind:"Fft" (fun (module K) ~dsts ops ->
+          K.fft spec ~dst:dsts.(0) ops.(0)) read
+  | Value.Linalg l ->
+      let spec = S.linalg (Prim.routine l) in
+      let read d w =
+        Array.of_list
+          (List.map
+             (fun (Value.Any x) ->
+               A.Any (Place.view ~by x d (batch w (Prim.shape x))))
+             (Prim.linalg_operands l))
+      in
+      each_result ~by ?at op ~kind:(Prim.routine_name l)
+        (fun (module K) ~dsts ops -> K.linalg spec ~dsts ops)
+        read
   | Value.Assemble { dtype; shape; fill; pieces } ->
       assemble ~by ?at dtype shape fill pieces
   | Value.Place _ | Value.Check _ -> run ~by op
@@ -904,6 +933,37 @@ and apply_at : type r. unit Devices.placement -> by:string -> r Value.prim -> r
  fun q ~by op ->
   if Prim.exists is_concrete op then run ~by op
   else compute ~by ~at:q (Prim.map (fun y -> at (Devices.rebrand q) y) op)
+
+(* [op]'s results, fresh where its rule places them, computed on each device by
+   [kernel] over [read d w], its operands on device [d] for its window [w] of
+   the first result. An optional case nx has no expansion for: a decline
+   raises, naming [kind]. *)
+and each_result : type r.
+    by:string ->
+    ?at:unit Devices.placement ->
+    r Value.prim ->
+    kind:string ->
+    ((module Nx_kernel.S) -> dsts:A.any array -> A.any array -> A.answer) ->
+    (int -> M.range array -> A.any array) ->
+    r =
+ fun ~by ?at op ~kind kernel read ->
+  let where = ref None and shape = ref [||] in
+  let r =
+    Prim.results ~by
+      (fun k f ->
+        if k = 0 then shape := L.shape f.layout;
+        alloc ~by ?at ~where k f)
+      op
+  in
+  let p = Option.get !where and arrays = Prim.arrays op r in
+  let set = Devices.set p in
+  let ((module K) as kernels) = kernels_of ~by ~op:kind set in
+  each_device ~by p !shape (fun j d w ->
+      let dsts = Array.map (fun per -> per.(j)) arrays and ops = read d w in
+      if not (ran ~by (kernel kernels ~dsts ops) dsts ops) then
+        unexpanded ~by ~kernels:K.name kind (Devices.rig set d)
+          (Array.to_list ops));
+  r
 
 (* [op], a loop the kernels of [p]'s set declined, as its expansion. A plain
    loop has none: the decline raises naming the kernels. *)
@@ -939,9 +999,9 @@ and or_expanded : type r.
           | Value.Sort _ ->
               unexpanded ~by ~kernels (Prim.name op) d (Array.to_list ops)
           | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
-          | Value.Scatter _ | Value.Assemble _ | Value.Contract _
-          | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
-          | Value.Check _ ->
+          | Value.Scatter _ | Value.Fft _ | Value.Linalg _ | Value.Assemble _
+          | Value.Contract _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
+          | Value.Place _ | Value.Check _ ->
               refuses ~by ~kernels (Prim.name op) d (Array.to_list ops)))
 
 (* A loop's results [dsts] at [p], each device's window of them computed there

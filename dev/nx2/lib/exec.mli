@@ -15,14 +15,14 @@
     through {!Nx_array.refused} naming [by]; a map, an assembly, a gather, a
     scatter or a sort of a sub-byte dtype, or a scatter whose targets may
     repeat, that a device's kernels decline runs as its expansion
-    ({!Expand.run}) on that device, over its own operands; and a kernel a node
-    or another gather, scatter or sort needs that the kernels decline raises
-    naming the kernels, the kind,
-    the dtypes, the device and the move the program makes, [Nx.place] onto a
-    set whose kernels compute it: no data moves between devices on its own.
-    Movements and bitcasts are views where a layout expresses them, and a copy,
-    then a view, otherwise. [Check] raises its exception from the first failing
-    index, read on the host.
+    ({!Expand.run}) on that device, over its own operands. Any other decline
+    raises naming the kernels, the kind, the dtypes, the device and the move
+    the program makes, [Nx.place] onto a set whose kernels compute it: no data
+    moves between devices on its own. The decline of a sort, a transform or a
+    routine also says that its expansion is not available yet. Movements and
+    bitcasts are views where a layout expresses them, and a copy, then a view,
+    otherwise. [Check] raises its exception from the first failing index, read
+    on the host.
 
     A program that reads coordinates computes each device's window with that
     window's first index added to them. *)

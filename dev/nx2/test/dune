@@ -11,6 +11,8 @@
   test_elementwise
   test_reduce
   test_sort
+  test_fft
+  test_linalg
   test_interp
   test_donate
   test_shapes
@@ -34,6 +36,8 @@
   test_elementwise
   test_reduce
   test_sort
+  test_fft
+  test_linalg
   test_interp
   test_donate
   test_shapes

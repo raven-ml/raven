@@ -181,6 +181,21 @@ val prepare :
     Raises [Invalid_argument] naming [by], before [place] is called, where
     [op]'s operands break its rule. *)
 
+(** {1:families Transforms and factorisations} *)
+
+val transform : ('d, 'r) fft -> Nx_kernel.Spec.transform
+val fft_axes : ('d, 'r) fft -> int array
+val fft_operand : ('d, 'r) fft -> 'd any
+
+val routine : ('d, 'r) linalg -> Nx_kernel.Spec.routine
+(** [routine l] is the routine [l] computes. *)
+
+val routine_name : ('d, 'r) linalg -> string
+(** [routine_name l] names [l]'s routine in messages, as ["Cholesky"]. *)
+
+val linalg_operands : ('d, 'r) linalg -> 'd any list
+(** [linalg_operands l] is [a], then [b] for a triangular solve. *)
+
 val is_constant : ('v, 's, 'd) t -> bool
 
 val arrays : 'r prim -> 'r -> Nx_array.any array array

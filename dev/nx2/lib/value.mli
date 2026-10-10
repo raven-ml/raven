@@ -238,6 +238,10 @@ and _ prim =
       -> ('v, 's, 'd) t prim
       (** [spec] of [a] and [b], from [init]: its result C-contiguous, of the
           shape {!Nx_kernel.Spec.shapes} gives. *)
+  | Fft : ('d, 'r) fft -> 'r prim
+      (** A Fourier transform ({!Nx_kernel.Spec.fft}). *)
+  | Linalg : ('d, 'r) linalg -> 'r prim
+      (** A factorisation or a triangular solve ({!Nx_kernel.Spec.linalg}). *)
   | Copy : ('v, 's, 'd) t -> ('v, 's, 'd) t prim
       (** The value stored afresh, C-contiguous. *)
   | Move : Nx_array.Move.t * ('v, 's, 'd) t -> ('v, 's, 'd) t prim
@@ -254,3 +258,71 @@ and _ prim =
       -> unit prim
       (** Raises [fail i data_i] at the first index [i], in C order, where [ok]
           is [false], [data_i] each of [data] at [i]. *)
+
+and ('d, _) fft =
+  | C2c : {
+      direction : Nx_kernel.Spec.direction;
+      axes : int array;
+      x : (Complex.t, 's, 'd) t;
+    }
+      -> ('d, (Complex.t, 's, 'd) t) fft
+      (** The transform [direction] of [x] along each of [axes]. *)
+  | R2c : {
+      dtype : (Complex.t, 'c) dtype;
+      axes : int array;
+      x : (float, 's, 'd) t;
+    }
+      -> ('d, (Complex.t, 'c, 'd) t) fft
+      (** The forward transform of a real [x] along each of [axes], bins [0] to
+          [n/2] along the last; [dtype] has [x]'s precision. *)
+  | C2r : {
+      dtype : (float, 'r) dtype;
+      n : int;
+      axes : int array;
+      x : (Complex.t, 's, 'd) t;
+    }
+      -> ('d, (float, 'r, 'd) t) fft
+      (** The real inverse transform of [n] points along the last of [axes],
+          from [n/2 + 1] bins; [dtype] has [x]'s precision. *)
+
+(** Each constructor is one {!Nx_kernel.Spec.routine}, its results in that
+    routine's order, each of [a]'s dtype but [Lu]'s positions. *)
+and ('d, _) linalg =
+  | Cholesky : {
+      triangle : Nx_kernel.Spec.triangle;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, ('v, 's, 'd) t) linalg
+  | Lu : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t * 'd index * 'd index) linalg
+      (** [lu], [pivots], [perm]. *)
+  | Qr : {
+      factors : Nx_kernel.Spec.factors;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) linalg  (** [q], [r]. *)
+  | Svd : {
+      factors : Nx_kernel.Spec.factors;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
+      (** [u], [s], [vh]. *)
+  | Svd_values : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t) linalg
+      (** [s]: [Svd { vectors = None }]. *)
+  | Eigh : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
+      (** [w], [v]. *)
+  | Eigh_values : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t) linalg
+      (** [w]: [Eigh { vectors = false }]. *)
+  | Eig :
+      (Complex.t, 's, 'd) t
+      -> ('d, (Complex.t, 's, 'd) t * (Complex.t, 's, 'd) t) linalg
+      (** [w], [v]. *)
+  | Eig_values : (Complex.t, 's, 'd) t -> ('d, (Complex.t, 's, 'd) t) linalg
+      (** [w]: [Eig { vectors = false }]. *)
+  | Solve_triangular : {
+      triangle : Nx_kernel.Spec.triangle;
+      transpose : bool;
+      unit_diagonal : bool;
+      a : ('v, 's, 'd) t;
+      b : ('v, 's, 'd) t;
+    }
+      -> ('d, ('v, 's, 'd) t) linalg

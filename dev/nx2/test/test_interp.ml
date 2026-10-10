@@ -378,6 +378,10 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
       let (v, p), (v', p') = (a, b) in
       same_form ~msg v v';
       same_form ~msg p p'
+  | Fft (C2c _) -> same_form ~msg a b
+  | Fft (R2c _) -> same_form ~msg a b
+  | Fft (C2r _) -> same_form ~msg a b
+  | Linalg _ -> fail "law_forms builds no factorisation"
   | Assemble _ -> same_form ~msg a b
   | Copy _ -> same_form ~msg a b
   | Contract _ -> same_form ~msg a b
@@ -723,6 +727,12 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
       dual i (scatter pu pt) (scatter tu tt)
   | Scatter _ ->
       invalid_arg (by ^ ": test.jvp has no derivative of a max or min scatter")
+  | Fft (C2c f) ->
+      (* Linear in [x]. *)
+      both (fun y -> Nx.Prim.eval ~by (Fft (C2c { f with x = y }))) f.x
+  | Fft _ ->
+      invalid_arg (by ^ ": test.jvp has no derivative of a real transform")
+  | Linalg _ -> invalid_arg (by ^ ": test.jvp has no derivative of a routine")
   | Sort s ->
       (* The tangent's elements, gathered at the positions. *)
       let p, t = parts i s.x in

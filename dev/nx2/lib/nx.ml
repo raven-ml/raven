@@ -2127,6 +2127,73 @@ module Prim = struct
     | [] : ('d, unit) outs
     | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) t * 'r) outs
 
+  type 'd index = (int64, Dtype.int64_elt, 'd) Value.t
+
+  type ('d, 'r) fft = ('d, 'r) Value.fft =
+    | C2c : {
+        direction : Nx_kernel.Spec.direction;
+        axes : int array;
+        x : (Complex.t, 's, 'd) Value.t;
+      }
+        -> ('d, (Complex.t, 's, 'd) Value.t) fft
+    | R2c : {
+        dtype : (Complex.t, 'c) dtype;
+        axes : int array;
+        x : (float, 's, 'd) Value.t;
+      }
+        -> ('d, (Complex.t, 'c, 'd) Value.t) fft
+    | C2r : {
+        dtype : (float, 'r) dtype;
+        n : int;
+        axes : int array;
+        x : (Complex.t, 's, 'd) Value.t;
+      }
+        -> ('d, (float, 'r, 'd) Value.t) fft
+
+  type ('d, 'r) linalg = ('d, 'r) Value.linalg =
+    | Cholesky : {
+        triangle : Nx_kernel.Spec.triangle;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ('d, ('v, 's, 'd) Value.t) linalg
+    | Lu :
+        ('v, 's, 'd) Value.t
+        -> ('d, ('v, 's, 'd) Value.t * 'd index * 'd index) linalg
+    | Qr : {
+        factors : Nx_kernel.Spec.factors;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
+    | Svd : {
+        factors : Nx_kernel.Spec.factors;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ( 'd,
+             ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t
+           )
+           linalg
+    | Svd_values : ('v, 's, 'd) Value.t -> ('d, ('v, 's, 'd) Value.t) linalg
+    | Eigh :
+        ('v, 's, 'd) Value.t
+        -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
+    | Eigh_values : ('v, 's, 'd) Value.t -> ('d, ('v, 's, 'd) Value.t) linalg
+    | Eig :
+        (Complex.t, 's, 'd) Value.t
+        -> ( 'd,
+             (Complex.t, 's, 'd) Value.t * (Complex.t, 's, 'd) Value.t )
+           linalg
+    | Eig_values :
+        (Complex.t, 's, 'd) Value.t
+        -> ('d, (Complex.t, 's, 'd) Value.t) linalg
+    | Solve_triangular : {
+        triangle : Nx_kernel.Spec.triangle;
+        transpose : bool;
+        unit_diagonal : bool;
+        a : ('v, 's, 'd) Value.t;
+        b : ('v, 's, 'd) Value.t;
+      }
+        -> ('d, ('v, 's, 'd) Value.t) linalg
+
   type 'r t = 'r Value.prim =
     | Map : {
         layout : Nx_array.Layout.t;
@@ -2188,6 +2255,8 @@ module Prim = struct
         init : ('v, 's, 'd) Value.t option;
       }
         -> ('v, 's, 'd) Value.t t
+    | Fft : ('d, 'r) fft -> 'r t
+    | Linalg : ('d, 'r) linalg -> 'r t
     | Copy : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t t
     | Move : Nx_array.Move.t * ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t t
     | Bitcast : ('w, 'r) dtype * ('v, 's, 'd) Value.t -> ('w, 'r, 'd) Value.t t

@@ -176,6 +176,78 @@ let expect (type v s) (dt : (v, s) dtype) (Any x : 'd any) : (v, s, 'd) t =
 
 type operands = Operands : 'd any list -> operands
 
+(* Transforms and factorisations: their routines and operands *)
+
+let routine : type d r. (d, r) linalg -> S.routine = function
+  | Cholesky { triangle; _ } -> Cholesky triangle
+  | Lu _ -> Lu
+  | Qr { factors; _ } -> Qr factors
+  | Svd { factors; _ } -> Svd { vectors = Some factors }
+  | Svd_values _ -> Svd { vectors = None }
+  | Eigh _ -> Eigh { vectors = true }
+  | Eigh_values _ -> Eigh { vectors = false }
+  | Eig _ -> Eig { vectors = true }
+  | Eig_values _ -> Eig { vectors = false }
+  | Solve_triangular { triangle; transpose; unit_diagonal; _ } ->
+      Solve_triangular { triangle; transpose; unit_diagonal }
+
+let routine_name (l : (_, _) linalg) =
+  match routine l with
+  | Cholesky _ -> "Cholesky"
+  | Lu -> "Lu"
+  | Qr _ -> "Qr"
+  | Svd _ -> "Svd"
+  | Eigh _ -> "Eigh"
+  | Eig _ -> "Eig"
+  | Solve_triangular _ -> "Solve_triangular"
+
+let linalg_operands : type d r. (d, r) linalg -> d any list = function
+  | Cholesky { a; _ } -> [ Any a ]
+  | Lu a -> [ Any a ]
+  | Qr { a; _ } -> [ Any a ]
+  | Svd { a; _ } -> [ Any a ]
+  | Svd_values a -> [ Any a ]
+  | Eigh a -> [ Any a ]
+  | Eigh_values a -> [ Any a ]
+  | Eig a -> [ Any a ]
+  | Eig_values a -> [ Any a ]
+  | Solve_triangular { a; b; _ } -> [ Any a; Any b ]
+
+let transform : type d r. (d, r) fft -> S.transform = function
+  | C2c { direction; _ } -> C2c direction
+  | R2c _ -> R2c
+  | C2r { n; _ } -> C2r { n }
+
+let fft_axes : type d r. (d, r) fft -> int array = function
+  | C2c { axes; _ } | R2c { axes; _ } | C2r { axes; _ } -> axes
+
+let fft_operand : type d r. (d, r) fft -> d any = function
+  | C2c { x; _ } -> Any x
+  | R2c { x; _ } -> Any x
+  | C2r { x; _ } -> Any x
+
+let map_fft : type d r.
+    ('v 's. ('v, 's, d) t -> ('v, 's, d) t) -> (d, r) fft -> (d, r) fft =
+ fun m -> function
+  | C2c f -> C2c { f with x = m f.x }
+  | R2c f -> R2c { f with x = m f.x }
+  | C2r f -> C2r { f with x = m f.x }
+
+let map_linalg : type d r.
+    ('v 's. ('v, 's, d) t -> ('v, 's, d) t) -> (d, r) linalg -> (d, r) linalg
+    =
+ fun m -> function
+  | Cholesky l -> Cholesky { l with a = m l.a }
+  | Lu a -> Lu (m a)
+  | Qr l -> Qr { l with a = m l.a }
+  | Svd l -> Svd { l with a = m l.a }
+  | Svd_values a -> Svd_values (m a)
+  | Eigh a -> Eigh (m a)
+  | Eigh_values a -> Eigh_values (m a)
+  | Eig a -> Eig (m a)
+  | Eig_values a -> Eig_values (m a)
+  | Solve_triangular l -> Solve_triangular { l with a = m l.a; b = m l.b }
+
 let name : type r. r prim -> string = function
   | Map _ -> "Map"
   | Reduce _ -> "Reduce"
@@ -183,6 +255,8 @@ let name : type r. r prim -> string = function
   | Gather _ -> "Gather"
   | Scatter _ -> "Scatter"
   | Sort _ -> "Sort"
+  | Fft _ -> "Fft"
+  | Linalg _ -> "Linalg"
   | Assemble _ -> "Assemble"
   | Contract _ -> "Contract"
   | Copy _ -> "Copy"
@@ -201,6 +275,8 @@ let operands : type r. r prim -> operands = function
   | Scatter { idx; updates; into; _ } ->
       Operands [ Any idx; Any updates; Any into ]
   | Sort { x; _ } -> Operands [ Any x ]
+  | Fft f -> Operands [ fft_operand f ]
+  | Linalg l -> Operands (linalg_operands l)
   | Assemble { pieces; _ } -> Operands (List.map (fun (_, x) -> Any x) pieces)
   | Contract { a; b; init; _ } ->
       Operands
@@ -234,6 +310,10 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
       f 1 updates;
       f 2 into
   | Sort { x; _ } -> f 0 x
+  | Fft fft ->
+      let (Any x) = fft_operand fft in
+      f 0 x
+  | Linalg l -> List.iteri (fun i (Any x) -> f i x) (linalg_operands l)
   | Assemble { pieces; _ } -> List.iteri (fun i (_, x) -> f i x) pieces
   | Contract { a; b; init; _ } ->
       f 0 a;
@@ -264,6 +344,10 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
   | Gather { idx; x; _ } -> f idx || f x
   | Scatter { idx; updates; into; _ } -> f idx || f updates || f into
   | Sort { x; _ } -> f x
+  | Fft fft ->
+      let (Any x) = fft_operand fft in
+      f x
+  | Linalg l -> List.exists (fun (Any x) -> f x) (linalg_operands l)
   | Assemble { pieces; _ } -> List.exists (fun (_, x) -> f x) pieces
   | Contract { a; b; init; _ } ->
       f a || f b || Option.fold ~none:false ~some:f init
@@ -285,6 +369,8 @@ let map : type r.
   | Scatter s ->
       Scatter { s with idx = m s.idx; updates = m s.updates; into = m s.into }
   | Sort s -> Sort { s with x = m s.x }
+  | Fft f -> Fft (map_fft m f)
+  | Linalg l -> Linalg (map_linalg m l)
   | Assemble a ->
       Assemble { a with pieces = List.map (fun (r, x) -> (r, m x)) a.pieces }
   | Contract c ->
@@ -505,6 +591,16 @@ let pp : type r. Format.formatter -> r prim -> unit =
       Format.fprintf ppf " along %d%s%s" axis
         (if descending then " descending" else "")
         (match k with Some k -> Printf.sprintf " keeping %d" k | None -> "")
+  | Fft f ->
+      let kind =
+        match transform f with
+        | C2c Forward -> "C2c forward"
+        | C2c Inverse -> "C2c inverse"
+        | R2c -> "R2c"
+        | C2r { n } -> Printf.sprintf "C2r of %d points" n
+      in
+      Format.fprintf ppf " %s along %a" kind pp_shape (fft_axes f)
+  | Linalg l -> Format.fprintf ppf " %s" (routine_name l)
   | Assemble { shape; _ } -> Format.fprintf ppf " into %a" pp_shape shape
   | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
   List.iteri (fun i x -> Format.fprintf ppf " (x%d: %a)" i pp_operand x) xs
@@ -833,6 +929,76 @@ let sort_shape ~by axis descending k x =
 let sort_route ~by axis x =
   Route.route ~by (Along [| axis |]) [| at x |] [| shape x |]
 
+(* [f ()], a descriptor, or its refusal raised naming [by]. *)
+let described ~by f =
+  match f () with
+  | s -> s
+  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+
+(* The shapes of the results of [spec] over [xs]: its rule. *)
+let shaped ~by spec (xs : _ any list) =
+  let ins = Array.of_list (List.map (fun (Any x) -> shape x) xs) in
+  match S.shapes spec ins with Ok s -> s | Error e -> invalid_argf "%s: %s" by e
+
+let route_along ~by axes (xs : _ any list) =
+  let at_ = Array.of_list (List.map (fun (Any x) -> at x) xs) in
+  let shapes = Array.of_list (List.map (fun (Any x) -> shape x) xs) in
+  Route.route ~by (Along axes) at_ shapes
+
+(* The float format of a complex dtype's parts, or the complex dtype of a float
+   format's pairs: a transform's operand and result share it. *)
+let partner (D.Any dt) =
+  match dt with
+  | D.Float32 -> Some (D.Any D.Complex64)
+  | D.Float64 -> Some (D.Any D.Complex128)
+  | D.Complex64 -> Some (D.Any D.Float32)
+  | D.Complex128 -> Some (D.Any D.Float64)
+  | _ -> None
+
+let check_fft (type d r) ~by (f : (d, r) fft) =
+  let into (type v s w q) (x : (v, s, d) t) (dt : (w, q) dtype) =
+    match partner (D.Any (dtype x)) with
+    | Some (D.Any p) when same_dtype p dt -> ()
+    | Some _ | None ->
+        invalid_argf "%s: a transform of %s into %s" by (D.name (dtype x))
+          (D.name dt)
+  in
+  match f with
+  | C2c _ -> ()
+  | R2c { dtype; x; _ } -> into x dtype
+  | C2r { dtype; x; _ } -> into x dtype
+
+(* A transform's descriptor and its result's shape: its rule. *)
+let fft_shape ~by f =
+  check_fft ~by f;
+  let spec = described ~by (fun () -> S.fft (transform f) ~axes:(fft_axes f)) in
+  match shaped ~by spec [ fft_operand f ] with
+  | [| s |] -> s
+  | _ -> invalid_argf "%s: a transform of several results" by
+
+let fft_route ~by f = route_along ~by (fft_axes f) [ fft_operand f ]
+
+(* A routine's results' shapes: its rule. Its operands are of float32,
+   float64, complex64 or complex128. *)
+let linalg_shapes ~by l =
+  let xs = linalg_operands l in
+  List.iter
+    (fun (Any x) ->
+      match partner (D.Any (dtype x)) with
+      | Some _ -> ()
+      | None ->
+          invalid_argf "%s: %s does not take %s" by (routine_name l)
+            (D.name (dtype x)))
+    xs;
+  shaped ~by (S.linalg (routine l)) xs
+
+(* A routine acts along its matrices' last two axes. *)
+let linalg_route ~by l =
+  let xs = linalg_operands l in
+  let (Any a) = List.hd xs in
+  let r = rank a in
+  route_along ~by [| r - 2; r - 1 |] xs
+
 let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
     (pieces : (Nx_array.Move.range array * (v, s, d) t) list) =
   (match L.contiguous whole with
@@ -896,6 +1062,39 @@ let contract_route (type a b c e v s d) ~by spec (a : (a, b, d) t)
       Some { Route.operands = Array.make (Array.length ps) p; result = p }
   | Route.Other -> Route.route ~by Replicated ps (contract_shapes a b init)
 
+let linalg_results : type d r.
+    by:string ->
+    ('v 's 'c. int -> ('v, 's, 'c) form -> ('v, 's, 'c) t) ->
+    (d, r) linalg ->
+    r =
+ fun ~by m l ->
+  let shapes = linalg_shapes ~by l in
+  let placement = result (linalg_route ~by l) in
+  let one : type v s. int -> (v, s) dtype -> (v, s, d) t =
+   fun k dtype -> m k (of_layout dtype (L.contiguous shapes.(k)) placement)
+  in
+  (* Results are made in position order. *)
+  let two a b =
+    let x = one 0 a in
+    (x, one 1 b)
+  in
+  let three a b c =
+    let x = one 0 a in
+    let y = one 1 b in
+    (x, y, one 2 c)
+  in
+  match l with
+  | Cholesky { a; _ } -> one 0 (dtype a)
+  | Lu a -> three (dtype a) D.Int64 D.Int64
+  | Qr { a; _ } -> two (dtype a) (dtype a)
+  | Svd { a; _ } -> three (dtype a) (dtype a) (dtype a)
+  | Svd_values a -> one 0 (dtype a)
+  | Eigh a -> two (dtype a) (dtype a)
+  | Eigh_values a -> one 0 (dtype a)
+  | Eig a -> two (dtype a) (dtype a)
+  | Eig_values a -> one 0 (dtype a)
+  | Solve_triangular { a; _ } -> one 0 (dtype a)
+
 let results : type r.
     by:string ->
     ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
@@ -930,6 +1129,14 @@ let results : type r.
       let layout = L.contiguous s in
       let values = m 0 (of_layout (dtype x) layout placement) in
       (values, m 1 (of_layout D.Int64 layout placement))
+  | Fft f ->
+      let layout = L.contiguous (fft_shape ~by f) in
+      let placement = result (fft_route ~by f) in
+      (match f with
+      | C2c { x; _ } -> m 0 (of_layout (dtype x) layout placement)
+      | R2c { dtype; _ } -> m 0 (of_layout dtype layout placement)
+      | C2r { dtype; _ } -> m 0 (of_layout dtype layout placement))
+  | Linalg l -> linalg_results ~by m l
   | Assemble { dtype; shape; fill; pieces } ->
       check_assemble ~by dtype shape fill pieces;
       let placement = result (assemble_route ~by pieces) in
@@ -1104,6 +1311,21 @@ let prepare : type r.
       ignore (sort_shape ~by s.axis s.descending s.k s.x);
       let r = sort_route ~by s.axis s.x in
       Sort { s with x = place (read_at r 0) s.x }
+  | Fft f ->
+      ignore (fft_shape ~by f);
+      let r = fft_route ~by f in
+      Fft (map_fft (fun x -> place (read_at r 0) x) f)
+  | Linalg l ->
+      ignore (linalg_shapes ~by l);
+      let r = linalg_route ~by l in
+      (* The operands in order: [a], then [b]. *)
+      let i = ref (-1) in
+      Linalg
+        (map_linalg
+           (fun x ->
+             incr i;
+             place (read_at r !i) x)
+           l)
   | Assemble a ->
       check_assemble ~by a.dtype a.shape a.fill a.pieces;
       let r = assemble_route ~by a.pieces in
@@ -1155,6 +1377,28 @@ let rec arrays_reductions : type d q.
   | [], () -> []
   | r :: rest, (a, v) -> arrays_reduction r a @ arrays_reductions rest v
 
+let fft_arrays : type d r. (d, r) fft -> r -> Nx_array.any array array =
+ fun f r ->
+  match (f, r) with
+  | C2c _, x -> [| arrays_of x |]
+  | R2c _, x -> [| arrays_of x |]
+  | C2r _, x -> [| arrays_of x |]
+
+let linalg_arrays : type d r. (d, r) linalg -> r -> Nx_array.any array array
+    =
+ fun l r ->
+  match (l, r) with
+  | Cholesky _, x -> [| arrays_of x |]
+  | Svd_values _, x -> [| arrays_of x |]
+  | Eigh_values _, x -> [| arrays_of x |]
+  | Eig_values _, x -> [| arrays_of x |]
+  | Solve_triangular _, x -> [| arrays_of x |]
+  | Lu _, (a, b, c) -> [| arrays_of a; arrays_of b; arrays_of c |]
+  | Svd _, (a, b, c) -> [| arrays_of a; arrays_of b; arrays_of c |]
+  | Qr _, (a, b) -> [| arrays_of a; arrays_of b |]
+  | Eigh _, (a, b) -> [| arrays_of a; arrays_of b |]
+  | Eig _, (a, b) -> [| arrays_of a; arrays_of b |]
+
 let arrays : type r. r prim -> r -> Nx_array.any array array =
  fun op r ->
   match op with
@@ -1166,6 +1410,8 @@ let arrays : type r. r prim -> r -> Nx_array.any array array =
   | Sort _ ->
       let values, positions = r in
       [| arrays_of values; arrays_of positions |]
+  | Fft f -> fft_arrays f r
+  | Linalg l -> linalg_arrays l r
   | Assemble _ -> [| arrays_of r |]
   | Contract _ -> [| arrays_of r |]
   | Copy _ -> [| arrays_of r |]

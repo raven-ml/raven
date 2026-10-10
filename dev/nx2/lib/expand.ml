@@ -929,6 +929,6 @@ let run : type r.
   | Value.Scatter { combine; unique; axis; idx; updates; into } ->
       scatter apply ~by combine ~unique axis idx updates into
   | Value.Sort { axis; descending; k; x } -> sort apply ~by axis descending k x
-  | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
-  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+  | Value.Reduce _ | Value.Scan _ | Value.Fft _ | Value.Linalg _ | Value.Copy _
+  | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       None
