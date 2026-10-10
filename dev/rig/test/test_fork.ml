@@ -254,8 +254,8 @@ let test_locks () =
     lines
 
 (* In a forked child, a buffer over an inherited device's memory raises the
-   device's loss, through a borrow on the host too: the child may not map that
-   memory, as it maps no Metal buffer on macOS. *)
+   device's loss, read by the host directly or through a borrow on the host:
+   the child may not map that memory, as it maps no Metal buffer on macOS. *)
 let test_child_memory () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let d, _ = P.open_ ~copies:false "fork:memory" in
@@ -272,12 +272,14 @@ let test_child_memory () =
         [
           outcome (fun () -> B.wait h B.Read_write);
           outcome (fun () -> B.bigarray Bigarray.char h);
+          outcome (fun () -> B.bigarray Bigarray.char m);
+          outcome (fun () -> B.blit_to_bytes m 0 (Bytes.create 1) 0 1);
           outcome (fun () -> B.copy ~src:h ~dst);
           outcome (fun () -> B.borrow Rig.host m);
         ])
   in
   equal string "exited 0" (status ended);
-  equal (list string) [ "forked"; "forked"; "forked"; "forked" ] lines;
+  equal (list string) (List.init 6 (fun _ -> "forked")) lines;
   B.wait h B.Read_write
 
 (* A hold made before a fork is forgotten in the child: its release would call

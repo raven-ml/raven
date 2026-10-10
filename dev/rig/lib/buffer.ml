@@ -139,6 +139,21 @@ let wait b access =
    constructors of [access] in order. *)
 let () = Callback.register "rig.buffer.wait" wait
 
+(* Host access *)
+
+(* Whether this process's host addresses [b]'s memory: [b] is on the host, or
+   its memory is of a device of this machine and has a host address. An io
+   device's memory has none: its borrow on the host asks for its pages. *)
+let host_addressed b =
+  Dev.is_host b.mem.dev
+  ||
+  let m = b.mem.root in
+  m.host >= 0 && Dev.same_machine m.dev Dev.host
+
+let refuse_unaddressed fn b =
+  invalid_argf "Rig.%s: the host does not address the buffer's memory, on %s"
+    fn b.mem.root.dev.name
+
 (* Bigarrays *)
 
 external bigarray_view :
@@ -175,9 +190,7 @@ let kind_code (type a b) (k : (a, b) Bigarray.kind) =
 let bigarray (type a b) (k : (a, b) Bigarray.kind) b :
     (a, b, Bigarray.c_layout) Bigarray.Array1.t =
   check_live "Buffer.bigarray" b;
-  if not (Dev.is_host b.mem.dev) then
-    invalid_argf "Rig.Buffer.bigarray: the buffer is on %s, not a host"
-      b.mem.dev.name;
+  if not (host_addressed b) then refuse_unaddressed "Buffer.bigarray" b;
   Memory.check b.mem;
   let size = Bigarray.kind_size_in_bytes k in
   let unit =
@@ -228,8 +241,7 @@ let check_range fn what size at n =
 (* The host address of [b]'s first byte. *)
 let host_address fn b =
   check_live fn b;
-  if not (Dev.is_host b.mem.dev) then
-    invalid_argf "Rig.%s: the buffer is on %s, not a host" fn b.mem.dev.name;
+  if not (host_addressed b) then refuse_unaddressed fn b;
   b.mem.host + b.offset
 
 let of_string s =

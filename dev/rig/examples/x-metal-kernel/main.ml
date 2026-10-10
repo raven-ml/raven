@@ -22,16 +22,14 @@ let group = 256
 
 let floats g f =
   let b = Buffer.create g (4 * n) in
-  let a =
-    Buffer.bigarray Bigarray.float32 (Option.get (Buffer.borrow host b))
-  in
+  let a = Buffer.bigarray Bigarray.float32 b in
   for i = 0 to n - 1 do
     a.{i} <- f i
   done;
   b
 
 let words b xs =
-  let a = Buffer.bigarray Bigarray.int64 (Option.get (Buffer.borrow host b)) in
+  let a = Buffer.bigarray Bigarray.int64 b in
   List.iteri (fun i x -> a.{i} <- Int64.of_int x) xs
 
 let () =
@@ -90,9 +88,7 @@ let () =
 
     (* The host reads the result once the GPU wrote it. *)
     Buffer.wait out Read;
-    let r =
-      Buffer.bigarray Bigarray.float32 (Option.get (Buffer.borrow host out))
-    in
+    let r = Buffer.bigarray Bigarray.float32 out in
     let wrong = ref 0 in
     for i = 0 to n - 1 do
       if r.{i} <> float_of_int i +. 0.5 then incr wrong

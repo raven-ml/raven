@@ -17,11 +17,11 @@ open Rig
 
 let int32s b = Buffer.bigarray Bigarray.int32 b
 
-(* The host reads a memory device's buffer through a borrow, once the work that
-   wrote it is done. *)
+(* The host reads a memory device's buffer, whose memory it addresses, once the
+   work that wrote it is done. *)
 let show name b =
   Buffer.wait b Read;
-  let a = int32s (Option.get (Buffer.borrow host b)) in
+  let a = int32s b in
   let xs = List.init (Bigarray.Array1.dim a) (fun i -> Int32.to_string a.{i}) in
   Printf.printf "%-4s [%s]\n" name (String.concat "; " xs)
 

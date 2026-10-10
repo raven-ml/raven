@@ -21,7 +21,7 @@ let int32s b = Buffer.bigarray Bigarray.int32 b
 
 let show name b =
   Buffer.wait b Read;
-  let a = int32s (Option.get (Buffer.borrow host b)) in
+  let a = int32s b in
   let xs = List.init (Bigarray.Array1.dim a) (fun i -> Int32.to_string a.{i}) in
   Printf.printf "%-3s on %s [%s]\n" name
     (Rig.name (Buffer.device b))
@@ -38,9 +38,8 @@ let () =
   (* The host writes [src] on A. It first waits for every use of [src], so that
      no device's work still reads what it overwrites. *)
   let src = Buffer.create a 16 and x = Buffer.create a 16 in
-  let host_src = Option.get (Buffer.borrow host src) in
-  Buffer.wait host_src Read_write;
-  List.iteri (fun i v -> (int32s host_src).{i} <- v) [ 5l; 6l; 7l; 8l ];
+  Buffer.wait src Read_write;
+  List.iteri (fun i v -> (int32s src).{i} <- v) [ 5l; 6l; 7l; 8l ];
 
   (* A's work writes [x]: [x]'s last write is A's point. *)
   let run = Submission.Run.make () in

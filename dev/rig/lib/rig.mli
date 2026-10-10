@@ -540,9 +540,12 @@ module Buffer : sig
 
   val bigarray :
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
-  (** [bigarray k b] is the bytes of the host buffer [b] read as elements of
-      kind [k], without a copy: [length b / Bigarray.kind_size_in_bytes k] of
-      them, in the host's byte order. Writing through it writes [b], whose
+  (** [bigarray k b] is the bytes of [b] read as elements of kind [k], without
+      a copy: [length b / Bigarray.kind_size_in_bytes k] of them, in the host's
+      byte order. This process's host must address [b]'s memory: that of a
+      buffer on {!host}, and that of a device of this machine which the host
+      addresses without a mapping, as {!borrow}[ host] would. An {!Io} device's
+      memory reads through a borrow on {!host}. Writing through it writes [b], whose
       memory must admit it ({!val-access}). It, and every array made from it,
       keeps [b]'s memory alive while reachable, memory a borrow on the host maps
       included: no buffer reuses it and its device does not free it until then.
@@ -550,28 +553,30 @@ module Buffer : sig
       From then on the memory is outside the claims for good, and is never
       exclusive again ({!Claim}).
 
-      Raises [Invalid_argument] if [b] is dead or not on {!host}, [b]'s bytes
-      are not a whole number of elements of [k] starting at a multiple of their
+      Raises [Invalid_argument] if [b] is dead or the host does not address
+      [b]'s memory, [b]'s bytes are not a whole number of elements of [k] starting at a multiple of their
       size (of one component's for complex kinds), or [b]'s memory is held
       exclusive by claims that have not consumed it ({!Claim.consume}), and
       {!Lost} as {!Lost} states. *)
 
   val blit_from_string : string -> int -> t -> int -> int -> unit
-  (** [blit_from_string s i b j n] copies the [n] bytes of [s] from [i] into the
-      host buffer [b] from its byte [j], and returns once they are there. It
-      waits as a {!wait} with [Read_write] does. It takes no claim: claims are
-      the caller's, as for {!copy}.
+  (** [blit_from_string s i b j n] copies the [n] bytes of [s] from [i] into
+      [b] from its byte [j], and returns once they are there. The host must
+      address [b]'s memory, as for {!bigarray}. It waits as a {!wait} with
+      [Read_write] does. It takes no claim: claims are the caller's, as for
+      {!copy}.
 
-      Raises [Invalid_argument] if the ranges are not valid, [b] is dead or not
-      on {!host}, or its memory is [Read] ({!val-access}), and {!Lost} as
-      {!Lost} states. *)
+      Raises [Invalid_argument] if the ranges are not valid, [b] is dead, the
+      host does not address [b]'s memory, or its memory is [Read]
+      ({!val-access}), and {!Lost} as {!Lost} states. *)
 
   val blit_to_bytes : t -> int -> bytes -> int -> int -> unit
-  (** [blit_to_bytes b i s j n] copies the [n] bytes of the host buffer [b] from
-      its byte [i] into [s] from [j]. It waits as a {!wait} with [Read] does.
+  (** [blit_to_bytes b i s j n] copies the [n] bytes of [b] from its byte [i]
+      into [s] from [j]. The host must address [b]'s memory, as for
+      {!bigarray}. It waits as a {!wait} with [Read] does.
 
-      Raises [Invalid_argument] if the ranges are not valid, or [b] is dead or
-      not on {!host}, and {!Lost} as {!Lost} states. *)
+      Raises [Invalid_argument] if the ranges are not valid, [b] is dead or the
+      host does not address [b]'s memory, and {!Lost} as {!Lost} states. *)
 
   (** {1:low Low level}
 

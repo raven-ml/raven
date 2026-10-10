@@ -706,10 +706,7 @@ let test_bigarray_refusals () =
     (Bigarray.Array1.dim
        (B.bigarray Bigarray.complex64 (B.view c ~first:8 ~length:16)));
   raises_match Exn.invalid_arg (fun () ->
-      B.bigarray Bigarray.complex64 (B.view c ~first:4 ~length:16));
-  let d, _ = P.open_ "buffer:not-host" in
-  raises_match Exn.invalid_arg (fun () ->
-      B.bigarray Bigarray.char (B.create d 8))
+      B.bigarray Bigarray.complex64 (B.view c ~first:4 ~length:16))
 
 (* Strings *)
 
@@ -812,13 +809,56 @@ let law_to_bytes c =
   | exception Invalid_argument _ -> equal ~msg:"valid" bool false valid);
   equal string (Bytes.to_string model) (Bytes.to_string got)
 
-let test_blit_refusals () =
-  let d, _ = P.open_ "buffer:blit-not-host" in
-  let m = B.create d 8 in
-  raises_match ~msg:"into a device's memory" Exn.invalid_arg (fun () ->
-      B.blit_from_string "s" 0 m 0 1);
-  raises_match ~msg:"from a device's memory" Exn.invalid_arg (fun () ->
-      B.blit_to_bytes m 0 (Bytes.create 1) 0 1)
+(* Host access *)
+
+(* The host reads and writes the memory of a device that it addresses as the
+   memory itself, without a borrow: what a borrow on the host reads, byte for
+   byte, and what it writes. *)
+let test_host_addressed () =
+  let d, _ = P.open_ "buffer:host-addressed" in
+  let m = B.create d 64 in
+  let on_host = require_some (B.borrow Rig.host m) in
+  B.blit_from_string (String.make 64 'b') 0 m 0 64;
+  equal ~msg:"a blit, through a borrow" string (String.make 64 'b')
+    (bytes on_host);
+  Bigarray.Array1.fill (B.bigarray Bigarray.char m) 'a';
+  equal ~msg:"a bigarray, through a borrow" string (String.make 64 'a')
+    (bytes on_host);
+  Bigarray.Array1.fill (B.bigarray Bigarray.char on_host) 'h';
+  let got = Bytes.create 64 in
+  B.blit_to_bytes m 0 got 0 64;
+  equal ~msg:"a borrow's write, by a blit" string (String.make 64 'h')
+    (Bytes.to_string got);
+  equal ~msg:"a borrow's write, by a bigarray" string (String.make 64 'h')
+    (bytes m)
+
+(* The host refuses memory it does not address: a device's that it reaches
+   only by a mapping, an io device's, whose pages a borrow asks for, and
+   another machine's, though its driver gives it a host address. *)
+let test_host_unaddressed () =
+  let d, _ = P.open_ ~host_visible:false "buffer:unaddressed" in
+  ignore (Support.machine "unaddressed");
+  let far =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_ (module P) ~machine:"unaddressed" ~name:"buffer:unaddressed-far"
+         (fun () -> Ok (P.make ())))
+  in
+  let unaddressed =
+    [
+      ("a device's", B.create d 8);
+      ("an io device's", B.create (Support.io "buffer:unaddressed-io") 8);
+      ("another machine's", B.create far 8);
+    ]
+  in
+  List.iter
+    (fun (whose, m) ->
+      let refused what f =
+        raises_match ~msg:(what ^ " " ^ whose) Exn.invalid_arg f
+      in
+      refused "a bigarray of" (fun () -> B.bigarray Bigarray.char m);
+      refused "a blit into" (fun () -> B.blit_from_string "s" 0 m 0 1);
+      refused "a blit from" (fun () -> B.blit_to_bytes m 0 (Bytes.create 1) 0 1))
+    unaddressed
 
 (* A blit from a string waits for every use of the buffer, its own device's
    included; a blit to bytes for its last write only. *)
@@ -1007,9 +1047,14 @@ let tests =
           blit law_from_string;
         prop "a blit to bytes reads its range of the buffer into its range" blit
           law_to_bytes;
-        test "a blit refuses a device's memory the host does not reach"
-          test_blit_refusals;
         test "a blit waits as a host access of its kind does" test_blit_waits;
+      ];
+    group ~timeout "host access"
+      [
+        test "the host accesses the device memory it addresses directly"
+          test_host_addressed;
+        test "the host refuses memory it does not address"
+          test_host_unaddressed;
       ];
     group ~timeout "bigarrays"
       [

@@ -26,7 +26,7 @@ let ints d xs =
 
 let show name b =
   Buffer.wait b Read;
-  let a = Buffer.bigarray Bigarray.int32 (Option.get (Buffer.borrow host b)) in
+  let a = Buffer.bigarray Bigarray.int32 b in
   let xs = List.init n (fun i -> Int32.to_string a.{i}) in
   Printf.printf "%-4s [%s]\n" name (String.concat "; " xs)
 
@@ -46,9 +46,7 @@ let step d =
     Submission.make ~hold ~fixed:[ (k, Read) ] ~reads:1 ~writes:1 d [| part |]
   in
   let run = Submission.Run.make () in
-  let words =
-    Buffer.bigarray Bigarray.int64 (Option.get (Buffer.borrow host arg))
-  in
+  let words = Buffer.bigarray Bigarray.int64 arg in
   fun ~src ~dst ->
     (* The host rewrites the argument once the work that read it is done. *)
     Buffer.wait arg Read_write;

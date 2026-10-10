@@ -279,12 +279,11 @@ let buffer_rows =
           for i = 0 to slots - 1 do
             B.wait (Array.unsafe_get bs i) B.Read_write
           done);
-      (* A view of 64 MiB a memory device holds, borrowed on the host: the view
-         paces no collection. *)
+      (* A view of 64 MiB a memory device holds, read by the host directly: the
+         view paces no collection. *)
       Thumper.bench_with_setup
         ~metrics:Thumper.Metric.[ wall_time; alloc_words; major_collections ]
-        ~setup:(fun () ->
-          Option.get (B.borrow Rig.host (B.create (memory ()) (64 * mib))))
+        ~setup:(fun () -> B.create (memory ()) (64 * mib))
         "bigarray-64M"
         (fun b -> B.bigarray Bigarray.char b);
       row "blit-from-string-4K"
