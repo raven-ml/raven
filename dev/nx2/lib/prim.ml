@@ -1109,13 +1109,19 @@ let contract_shapes a b init =
   let s = [| shape a; shape b |] in
   match init with None -> s | Some i -> Array.append s [| shape i |]
 
-(* A contraction's result shape: its rule. *)
-(* CR: Check typed [out] against [Spec.out spec] in the shared contraction
-   rule. A Float64 spec with a Float32 witness reaches results' maker with
-   a Float32 form. Pass the witness through results and prepare, rejecting
-   a mismatch before making results or placing operands. *)
-let contract_shape ~by spec a b init =
-  match Nx_kernel.Spec.shapes spec (contract_shapes a b init) with
+(* A contraction's rule, and its result's shape: [out] is its spec's result
+   dtype, which the constructor's type cannot state, [init] is present iff its
+   spec adds one, and the shapes fit its spec. *)
+let check_contract ~by spec out a b init =
+  let (D.Any want) = S.out spec in
+  if not (same_dtype want out) then
+    invalid_argf "%s: a %s result where the contraction gives %s" by
+      (D.name out) (D.name want);
+  (match (init, S.init spec) with
+  | Some _, false -> invalid_argf "%s: an init the contraction does not add" by
+  | None, true -> invalid_argf "%s: no init for a contraction that adds one" by
+  | Some _, true | None, false -> ());
+  match S.shapes spec (contract_shapes a b init) with
   | Ok [| s |] -> s
   | Ok _ -> invalid_argf "%s: a contraction of several results" by
   | Error e -> invalid_argf "%s: %s" by e
@@ -1123,9 +1129,8 @@ let contract_shape ~by spec a b init =
 (* A contraction reads its operands whole on each device that computes it: where
    they lie at one placement that cuts no axis, there; else on every device of
    their set, each holding them whole. *)
-let contract_route (type a b c e v s d) ~by spec (a : (a, b, d) t)
+let contract_route (type a b c e v s d) ~by (a : (a, b, d) t)
     (b : (c, e, d) t) (init : (v, s, d) t option) : d Route.t option =
-  ignore (contract_shape ~by spec a b init);
   let ps =
     match init with
     | None -> [| at a; at b |]
@@ -1221,8 +1226,8 @@ let results : type r.
       let placement = result (assemble_route ~by pieces) in
       m 0 (of_layout dtype (L.contiguous shape) placement)
   | Contract { spec; out; a; b; init } ->
-      let shape = contract_shape ~by spec a b init in
-      let placement = result (contract_route ~by spec a b init) in
+      let shape = check_contract ~by spec out a b init in
+      let placement = result (contract_route ~by a b init) in
       m 0 (of_layout out (L.contiguous shape) placement)
   | Copy x ->
       let placement = one_result ~by Elementwise x in
@@ -1430,7 +1435,8 @@ let prepare : type r.
             List.mapi (fun i (rs, x) -> (rs, place (read_at r i) x)) a.pieces;
         }
   | Contract c ->
-      let r = contract_route ~by c.spec c.a c.b c.init in
+      ignore (check_contract ~by c.spec c.out c.a c.b c.init);
+      let r = contract_route ~by c.a c.b c.init in
       let a = place (read_at r 0) c.a and b = place (read_at r 1) c.b in
       let init = Option.map (fun i -> place (read_at r 2) i) c.init in
       if a == c.a && b == c.b && init == c.init then op

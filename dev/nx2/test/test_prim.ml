@@ -12,6 +12,7 @@ module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module M = Nx_array.Move
 module P = Nx_kernel.Prog
+module S = Nx_kernel.Spec
 
 type b
 type op = Op : 'r Value.prim -> op
@@ -517,6 +518,41 @@ let ops () =
     ("Check", Op (Check { ok; data = [ Any x ]; fail = (fun _ _ -> Exit) }), 2);
   ]
 
+(* A matrix product of float32 [2; 3] and [3; 2], its spec's result [out] and
+   [init] as given. *)
+let product ~out ~init =
+  S.contract ~batch:[||] ~contracting:[| (1, 0) |] ~acc:(D.Any D.Float32)
+    ~out:(D.Any out) ~init
+
+let contractions =
+  let a = f32 [| 2; 3 |] and b = f32 [| 3; 2 |] in
+  let init = Some (f32 [| 2; 2 |]) in
+  let contract spec init : op =
+    Op (Contract { spec; out = D.Float32; a; b; init })
+  in
+  group "contractions"
+    [
+      test "a contraction gives its spec's result" (fun () ->
+          let dt, l, _ =
+            one_form (contract (product ~out:D.Float32 ~init:false) None)
+          in
+          equal bool true (dt = D.Any D.Float32);
+          equal layout (L.contiguous [| 2; 2 |]) l);
+      cases "a contraction refuses" ~name:fst
+        [
+          ( "a result dtype other than its spec's",
+            contract (product ~out:D.Float64 ~init:false) None );
+          ( "an init its spec lacks",
+            contract (product ~out:D.Float32 ~init:false) init );
+          ( "no init where its spec has one",
+            contract (product ~out:D.Float32 ~init:true) None );
+        ]
+        (fun (_, op) ->
+          refuses op;
+          let (Op o) = op in
+          invalid (fun () -> Prim.prepare ~by:"Nx.f" (fun _ x -> x) o));
+    ]
+
 let operations =
   group "operations"
     [
@@ -562,4 +598,7 @@ let operations =
           equal bool true (same arrays.(0).(0) u && same arrays.(1).(0) v));
     ]
 
-let () = exit (run "nx prim" [ maps; movements; bitcasts; others; operations ])
+let () =
+  exit
+    (run "nx prim"
+       [ maps; movements; bitcasts; others; contractions; operations ])
