@@ -24,18 +24,11 @@ external cubin : string -> string option = "nx_cuda_cubin"
 
 (* Devices *)
 
-(* A device's buffer, of [bytes] bytes, named [Read_write] by each call that
-   uses it, so rig orders those calls: the workspace, which holds a call's
-   packed operands and split sums, grows to [kept] bytes and is kept, a call
-   that needs more taking a buffer of its own; the tickets of split sums are
-   zero words, which every call leaves zero. *)
-(* CR: Store Rig.Buffer.t directly in workspace and tickets, and in AMD's
-   and Metal's workspace. Every constructor repeats Buffer.length in bytes;
-   that accessor reads the immutable length without allocating or checking
-   liveness. Remove the wrappers and use it for growth and size checks,
-   preserving atomic publication, the cap and zeroed ticket creation. *)
-type cell = { buffer : Rig.Buffer.t; bytes : int }
-
+(* A device keeps two buffers, each named [Read_write] by every call that uses
+   it, so rig orders those calls: the workspace, which holds a call's packed
+   operands and split sums, grows to [kept] bytes and is kept, a call that
+   needs more taking a buffer of its own; the tickets of split sums are zero
+   words, which every call leaves zero. *)
 let kept = 64 * 1024 * 1024
 
 (* What this library keeps for a device: [queue] runs launches, and [subs] and
@@ -44,8 +37,8 @@ let kept = 64 * 1024 * 1024
 type device = {
   image : Rig.Image.t;
   queue : string;
-  workspace : cell Atomic.t;
-  tickets : cell Atomic.t;
+  workspace : Rig.Buffer.t Atomic.t;
+  tickets : Rig.Buffer.t Atomic.t;
   subs : Sub.t option array;
   folds : Sub.t option array;
 }
@@ -78,13 +71,12 @@ let load d =
           match Rig.Image.load d bin with
           | Error _ -> None
           | Ok image ->
-              let none = { buffer = Rig.Buffer.create d 0; bytes = 0 } in
               Some
                 {
                   image;
                   queue;
-                  workspace = Atomic.make none;
-                  tickets = Atomic.make none;
+                  workspace = Atomic.make (Rig.Buffer.create d 0);
+                  tickets = Atomic.make (Rig.Buffer.create d 0);
                   subs = Array.make Plan.sequences None;
                   folds = Array.make Fold.sequences None;
                 }))
@@ -105,25 +97,24 @@ let device d =
 
 let computes_on d = Option.is_some (device d)
 
-(* [cell]'s buffer of at least [need] bytes, grown to twice its bytes or
+(* [cell]'s buffer of at least [need] bytes, grown to twice its length or
    [need] by [make] at most [cap]. A race stores only a larger one, so it
    never shrinks. A call whose buffer is large enough reads it without
    reaching here, which would allocate [make]'s closure. *)
 let grow cell need ~cap make =
   let w = Atomic.get cell in
-  let bytes = Int.min cap (Int.max need (2 * w.bytes)) in
-  let fresh = { buffer = make bytes; bytes } in
+  let fresh = make (Int.min cap (Int.max need (2 * Rig.Buffer.length w))) in
   let rec store () =
     let w = Atomic.get cell in
-    if w.bytes >= need then w.buffer
-    else if Atomic.compare_and_set cell w fresh then fresh.buffer
+    if Rig.Buffer.length w >= need then w
+    else if Atomic.compare_and_set cell w fresh then fresh
     else store ()
   in
   store ()
 
 let workspace d dv need =
   let w = Atomic.get dv.workspace in
-  if w.bytes >= need then w.buffer
+  if Rig.Buffer.length w >= need then w
   else if need > kept then Rig.Buffer.create d need
   else grow dv.workspace need ~cap:kept (Rig.Buffer.create d)
 
@@ -134,7 +125,7 @@ let zeros d bytes =
 
 let tickets d dv need =
   let w = Atomic.get dv.tickets in
-  if w.bytes >= need then w.buffer
+  if Rig.Buffer.length w >= need then w
   else grow dv.tickets need ~cap:max_int (zeros d)
 
 (* The submission of [p]'s sequence on [d]. Two domains that make one at once

@@ -30,8 +30,6 @@ let apple d = String.starts_with ~prefix:"Apple" (Rig.arch d)
 (* The workspace holds the parts of a call's split sum. Each call that uses it
    names it [Read_write], so rig orders the calls that share it. It grows to
    [kept] bytes and is kept; a call that needs more takes a buffer of its own. *)
-type workspace = { buffer : Rig.Buffer.t; bytes : int }
-
 let kept = 64 * 1024 * 1024
 
 (* What this library keeps for a device: [queue] runs launches, and [subs]
@@ -39,7 +37,7 @@ let kept = 64 * 1024 * 1024
 type device = {
   image : Rig.Image.t;
   queue : string;
-  workspace : workspace Atomic.t;
+  workspace : Rig.Buffer.t Atomic.t;
   subs : Sub.t option array;
 }
 
@@ -69,12 +67,11 @@ let load d =
       match Rig.Image.load d (metallib ()) with
       | Error _ -> None
       | Ok image ->
-          let none = { buffer = Rig.Buffer.create d 0; bytes = 0 } in
           Some
             {
               image;
               queue;
-              workspace = Atomic.make none;
+              workspace = Atomic.make (Rig.Buffer.create d 0);
               subs = Array.make Plan.sequences None;
             })
 
@@ -98,15 +95,15 @@ let computes_on d = Option.is_some (device d)
    it never shrinks. *)
 let workspace d dv need =
   let w = Atomic.get dv.workspace in
-  if w.bytes >= need then w.buffer
+  if Rig.Buffer.length w >= need then w
   else if need > kept then Rig.Buffer.create d need
   else begin
-    let bytes = Int.min kept (Int.max need (2 * w.bytes)) in
-    let fresh = { buffer = Rig.Buffer.create d bytes; bytes } in
+    let bytes = Int.min kept (Int.max need (2 * Rig.Buffer.length w)) in
+    let fresh = Rig.Buffer.create d bytes in
     let rec store () =
       let w = Atomic.get dv.workspace in
-      if w.bytes >= need then w.buffer
-      else if Atomic.compare_and_set dv.workspace w fresh then fresh.buffer
+      if Rig.Buffer.length w >= need then w
+      else if Atomic.compare_and_set dv.workspace w fresh then fresh
       else store ()
     in
     store ()
