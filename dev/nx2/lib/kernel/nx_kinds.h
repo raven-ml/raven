@@ -162,29 +162,38 @@ NX_SIGNED_KINDS(int64_t, uint64_t, i64)
 NX_UNSIGNED_KINDS(uint64_t, u64)
 
 /* Threefry-2x32 with 20 rounds (Salmon et al., Random123): the counter and
-   the key are word pairs, the low word first, and so is the result. */
+   the key are word pairs, the low word first, and so is the result. The
+   rounds are written out, four between key injections, so that a loop of
+   them is straight code a compiler vectorises. */
 NX_INLINE uint32_t nx_rotl32(uint32_t x, int r) {
   return (x << r) | (x >> (32 - r));
 }
 
+#define NX_THREEFRY_ROUND(r)                                                 \
+  x0 += x1;                                                                  \
+  x1 = nx_rotl32(x1, r) ^ x0;
+#define NX_THREEFRY_FOUR(r0, r1, r2, r3, ka, kb, s)                          \
+  NX_THREEFRY_ROUND(r0)                                                      \
+  NX_THREEFRY_ROUND(r1)                                                      \
+  NX_THREEFRY_ROUND(r2)                                                      \
+  NX_THREEFRY_ROUND(r3)                                                      \
+  x0 += ka;                                                                  \
+  x1 += kb + s##u;
+
 NX_INLINE uint64_t nx_threefry_u64(uint64_t counter, uint64_t key) {
-  uint32_t k[3];
-  k[0] = (uint32_t)key;
-  k[1] = (uint32_t)(key >> 32);
-  k[2] = 0x1BD11BDAu ^ k[0] ^ k[1];
-  uint32_t x0 = (uint32_t)counter + k[0], x1 = (uint32_t)(counter >> 32) + k[1];
-  const int rot[8] = {13, 15, 26, 6, 17, 29, 16, 24};
-  for (int i = 0; i < 20; i++) {
-    x0 += x1;
-    x1 = nx_rotl32(x1, rot[i % 8]) ^ x0;
-    if (i % 4 == 3) {
-      uint32_t s = (uint32_t)(i / 4 + 1);
-      x0 += k[s % 3];
-      x1 += k[(s + 1) % 3] + s;
-    }
-  }
+  uint32_t k0 = (uint32_t)key, k1 = (uint32_t)(key >> 32);
+  uint32_t k2 = 0x1BD11BDAu ^ k0 ^ k1;
+  uint32_t x0 = (uint32_t)counter + k0, x1 = (uint32_t)(counter >> 32) + k1;
+  NX_THREEFRY_FOUR(13, 15, 26, 6, k1, k2, 1)
+  NX_THREEFRY_FOUR(17, 29, 16, 24, k2, k0, 2)
+  NX_THREEFRY_FOUR(13, 15, 26, 6, k0, k1, 3)
+  NX_THREEFRY_FOUR(17, 29, 16, 24, k1, k2, 4)
+  NX_THREEFRY_FOUR(13, 15, 26, 6, k2, k0, 5)
   return ((uint64_t)x1 << 32) | x0;
 }
+
+#undef NX_THREEFRY_ROUND
+#undef NX_THREEFRY_FOUR
 
 /* The bits of 2/pi after the point, behind one zero word, for the
    Payne-Hanek reductions. */
