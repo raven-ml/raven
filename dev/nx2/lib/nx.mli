@@ -88,6 +88,15 @@ type 'd complex64_t = (Complex.t, Dtype.complex32_elt, 'd) t
 type 'd bool_t = (bool, Dtype.bool_elt, 'd) t
 type 'd bit_t = (bool, Dtype.bit_elt, 'd) t
 
+(** The type for values whose dtype is hidden, such as a file's named values.
+    Match on [P] for the value; {!unpack} also fixes its dtype. *)
+type 'd packed = P : ('v, 's, 'd) t -> 'd packed
+
+val unpack : ('v, 's) dtype -> 'd packed -> ('v, 's, 'd) t
+(** [unpack dt p] is the value in [p] if its dtype is [dt].
+
+    Raises [Invalid_argument] naming both dtypes otherwise. *)
+
 (** {1:creation Creation}
 
     A value made from a dtype, a shape and numbers, or by operations from such
@@ -144,6 +153,65 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val copy : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [copy x] is [x] stored afresh: equal elements in new memory. *)
+
+(** {2:ocaml From OCaml values}
+
+    A value made from OCaml data lies on the host, the set {!Host}. *)
+
+type host
+(** The brand of {!Host}. *)
+
+val create : ('v, 's) dtype -> int array -> 'v array -> ('v, 's, host) t
+(** [create dt s vs] is the host value of shape [s] holding [vs] in C order,
+    a float stored as {!Dtype.of_float} says.
+
+    Raises [Invalid_argument] if an extent is negative, [Array.length vs] is not
+    the product of [s], or an element is an [int] outside [dt]'s range. *)
+
+val init : ('v, 's) dtype -> int array -> (int array -> 'v) -> ('v, 's, host) t
+(** [init dt s f] is the host value of shape [s] whose element at index [i] is
+    [f i]. [f] is called once per index, in C order, each time with a fresh
+    array.
+
+    Raises [Invalid_argument] as {!create} does. *)
+
+val of_bigarray :
+  ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t -> ('v, 's, host) t
+(** [of_bigarray b] is a host value holding a copy of [b]'s elements, of [b]'s
+    shape and the dtype that stores its kind. Later writes to [b] do not reach
+    it.
+
+    Raises [Invalid_argument] if [b]'s kind is [char], [int] or [nativeint],
+    which no dtype stores. *)
+
+(** {1:reads Reads}
+
+    A read gives a value's elements to OCaml. It works at every brand: it waits
+    for the work the value depends on, copies its elements to the host and
+    leaves every placement as it was. A value of every set is computed on the
+    host. A read is not an operation: no interpretation receives it.
+
+    Each raises [Invalid_argument] naming itself for a dead value, and for a
+    traced one: [Nx.item: the value is traced by Rune.jit]. *)
+
+val to_array : ('v, 's, 'd) t -> 'v array
+(** [to_array x] is [x]'s elements in C order. *)
+
+val item : int list -> ('v, 's, 'd) t -> 'v
+(** [item i x] is [x]'s element at [i], one position per axis, a negative one
+    counting from the end; [item [] x] reads a 0-d value.
+
+    Raises [Invalid_argument] if [i] does not have one position per axis of [x]
+    or a position is outside its axis. *)
+
+val to_bigarray :
+  ('v, 's) Bigarray.kind ->
+  ('v, 's, 'd) t ->
+  ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t
+(** [to_bigarray k x] is a fresh bigarray of [x]'s shape holding its elements.
+    A dtype Bigarray has no kind for is a type error.
+
+    Raises [Invalid_argument] if [x] has more than 16 axes, Bigarray's most. *)
 
 (** {1:shapes Shapes, broadcasting and movements}
 
@@ -809,9 +877,6 @@ val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     placement: whole on one or every device, or cut into windows across them.
     {!place} moves a value between sets, and between placements of one. The host
     is a set like any other, {!Host}. *)
-
-type host
-(** The brand of {!Host}. *)
 
 type +'d devices
 (** The type for device sets of brand ['d]: distinct devices, and the kernels

@@ -121,6 +121,14 @@ val read : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     host's whatever ['d]. It never reaches a function of nx's own as an operand.
 *)
 
+val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
+(** [on_host ~by x] is an array on the host holding [x]'s elements: a constant
+    computed there, a concrete value placed there ({!Place.value}), over [x]'s
+    own array where it is the host's. No interpretation receives it.
+
+    Raises [Invalid_argument] naming [by] for a traced [x], and what
+    {!Place.value} raises. *)
+
 val contract :
   by:string ->
   Nx_kernel.Spec.contract Nx_kernel.Spec.t ->

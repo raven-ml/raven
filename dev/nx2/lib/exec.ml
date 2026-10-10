@@ -974,19 +974,13 @@ and check : type d.
     unit =
  fun ~by ok data fail ->
   let host : d Devices.placement = host () in
-  let on_host (type v s) (x : (v, s, d) Value.t) : (v, s) A.t =
-    match x with
-    | Value.Deferred _ -> Iarray.get (arrays_of (at host x)) 0
-    | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
-        Iarray.get (arrays_of (Place.value ~by host x)) 0
-  in
   let shape = Prim.shape ok in
-  match Array.find_index not (A.to_array (on_host ok)) with
+  match Array.find_index not (A.to_array (on_host ~by ok)) with
   | None -> ()
   | Some i ->
       let idx = unravel i shape in
       let at_idx (Value.Any x) =
-        let a = on_host x in
+        let a = on_host ~by x in
         let one =
           Array.map (fun i -> { M.start = i; count = 1; step = 1 }) idx
         in
@@ -1025,6 +1019,18 @@ and at : type v s d.
               Option.get (find n.memo key)
       in
       make p (typed form.dtype arrays.(k))
+
+(* [x]'s elements in an array on the host: a constant computed there, any other
+   value placed there. *)
+and on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
+ fun ~by x ->
+  let host : d Devices.placement = host () in
+  match x with
+  | Value.Deferred _ -> Iarray.get (arrays_of (at host x)) 0
+  | Value.Traced { owner; _ } ->
+      invalid_argf "%s: the value is traced by %s" by owner.name
+  | Value.Array _ | Value.Shards _ | Value.Donated _ ->
+      Iarray.get (arrays_of (Place.value ~by host x)) 0
 
 (* The constant [c] computed at [p] into memory of its own, its operands taken
    from their memos or computed for this alone: a value given to a caller shares

@@ -164,6 +164,111 @@ let zeros_like x =
   | None -> z
   | Some p -> Eval.eval ~by (Value.Place (p, z))
 
+(* Data in and out *)
+
+type 'd packed = P : ('v, 's, 'd) t -> 'd packed
+
+let unpack (type v s d) (dt : (v, s) D.t) (P x : d packed) : (v, s, d) t =
+  match D.equal_witness (dtype x) dt with
+  | Some Type.Equal -> x
+  | None ->
+      invalid_argf "Nx.unpack: a value of %s, not %s" (D.name (dtype x))
+        (D.name dt)
+
+(* [f ()] with an [Invalid_argument] from the array layer renamed [by]: its
+   message without the layer's function. *)
+let renamed ~by f =
+  try f ()
+  with Invalid_argument e ->
+    let reason =
+      match String.index_opt e ':' with
+      | Some i -> String.trim (String.sub e (i + 1) (String.length e - i - 1))
+      | None -> e
+    in
+    invalid_argf "%s: %s" by reason
+
+let on_host a : (_, _, host) t = Repr.of_array Host.v a
+
+let create dt shape vs =
+  renamed ~by:"Nx.create" (fun () -> on_host (Nx_array.of_array dt shape vs))
+
+let init dt shape f =
+  let by = "Nx.init" in
+  let l = renamed ~by (fun () -> Nx_array.Layout.contiguous shape) in
+  let r = Array.length shape in
+  (* Each index in C order: the last axis runs fastest. *)
+  let index j =
+    let i = Array.make r 0 and j = ref j in
+    for a = r - 1 downto 0 do
+      i.(a) <- !j mod shape.(a);
+      j := !j / shape.(a)
+    done;
+    i
+  in
+  let vs = Array.init (Nx_array.Layout.numel l) (fun j -> f (index j)) in
+  renamed ~by (fun () -> on_host (Nx_array.of_array dt shape vs))
+
+let dtype_of_kind (type v s) (k : (v, s) Bigarray.kind) : (v, s) D.t =
+  match k with
+  | Bigarray.Float64 -> D.Float64
+  | Bigarray.Float32 -> D.Float32
+  | Bigarray.Float16 -> D.Float16
+  | Bigarray.Int64 -> D.Int64
+  | Bigarray.Int32 -> D.Int32
+  | Bigarray.Int16_signed -> D.Int16
+  | Bigarray.Int16_unsigned -> D.Uint16
+  | Bigarray.Int8_signed -> D.Int8
+  | Bigarray.Int8_unsigned -> D.Uint8
+  | Bigarray.Complex64 -> D.Complex128
+  | Bigarray.Complex32 -> D.Complex64
+  | Bigarray.Char | Bigarray.Int | Bigarray.Nativeint ->
+      invalid_argf "Nx.of_bigarray: no dtype stores Bigarray's %s kind"
+        (match k with
+        | Bigarray.Char -> "char"
+        | Bigarray.Int -> "int"
+        | _ -> "nativeint")
+
+let of_bigarray b =
+  let dt = dtype_of_kind (Bigarray.Genarray.kind b) in
+  on_host (Nx_array.copy (Nx_array.of_bigarray dt b))
+
+(* [x]'s elements in an array on the host, for the read [by]. A read is not an
+   operation: no interpretation receives it. *)
+let readable ~by x =
+  Prim.alive ~by 0 x;
+  match Interp.owner x with
+  | Some i -> invalid_argf "%s: the value is traced by %s" by i.name
+  | None -> Exec.live x
+
+let read ~by x = Exec.on_host ~by (readable ~by x)
+
+let to_array x = Nx_array.to_array (read ~by:"Nx.to_array" x)
+
+let to_bigarray k x =
+  let by = "Nx.to_bigarray" in
+  let r = Prim.rank x in
+  if r > 16 then invalid_argf "%s: rank %d, above Bigarray's 16" by r;
+  Option.get (Nx_array.bigarray k (Nx_array.copy (read ~by x)))
+
+let item i x =
+  let by = "Nx.item" in
+  let s = shape x in
+  let r = Array.length s in
+  if List.length i <> r then
+    invalid_argf "%s: index %a for %d axes (%s %a)" by pp_shape
+      (Array.of_list i) r (D.name (dtype x)) pp_shape s;
+  let at a p =
+    let d = s.(a) in
+    let q = if p < 0 then p + d else p in
+    if q < 0 || q >= d then
+      invalid_argf "%s: position %d is outside axis %d of extent %d" by p a d;
+    { Nx_array.Move.start = q; count = 1; step = 1 }
+  in
+  let x = readable ~by x in
+  let one = Array.of_list (List.mapi at i) in
+  let v = Exec.run ~by (Value.Move (Slice one, x)) in
+  Nx_array.get (Exec.on_host ~by v) (Array.make r 0)
+
 let broadcast ~by s x =
   if Prim.has_shape x s then x else Eval.eval ~by (Value.Move (Broadcast s, x))
 

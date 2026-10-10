@@ -16,7 +16,8 @@
   test_patterns
   test_contract
   test_rng
-  test_indexing)
+  test_indexing
+  test_data)
  (modules
   test_devices
   test_values
@@ -30,7 +31,8 @@
   test_patterns
   test_contract
   test_rng
-  test_indexing)
+  test_indexing
+  test_data)
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))
 
 (copy_files
