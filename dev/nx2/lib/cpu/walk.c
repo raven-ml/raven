@@ -24,7 +24,10 @@
       a few cache lines of the input wide, so that a tile reads each of the
       input's lines whole.
    3. Otherwise a block is a piece of a row, or whole rows of the innermost
-      axis along the next.
+      axis along the next. Rows that interleave in operand 0's memory, as
+      rule 1's do, go whole into each block, with as much of a row as fits:
+      a block then writes whole lines of operand 0, which no block another
+      thread runs at the same time writes too.
 
    The units of the job are planes (indices of the axes outside the rows) ×
    blocks of rows × pieces of a row, and unit u's block is computed from u
@@ -196,6 +199,10 @@ void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
     w.n1 = TILE_WIDE / widest < height ? TILE_WIDE / widest : height;
     if (across > most / w.n1) across = most / w.n1;
     w.n0 = across < len ? across : len;
+  } else if (r > 1 && height <= most &&
+             magnitude(wl->step[0][r - 2]) < magnitude(wl->step[0][r - 1])) {
+    w.n1 = height;
+    w.n0 = most / height < len ? most / height : len;
   } else {
     w.n0 = len < most ? len : most;
     w.n1 = most / w.n0 < height ? most / w.n0 : height;
