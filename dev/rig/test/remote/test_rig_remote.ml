@@ -159,6 +159,11 @@ let listens_no_more () =
 
 (* A process the agent started holds none of its sockets: once close returned,
    nothing listens at the agent's port. *)
+(* CR: Wait for a post-exec ready signal and hold the helper on a pipe
+   through this assertion. Its sleep can expire during scheduling delays,
+   so this test passes even if the helper inherited the listener. Release
+   the gate in protected cleanup before finish; have the agent reap the
+   helper and check its exit. *)
 let helper_holds_nothing () =
   with_agents ~mode:"helper" @@ fun agents ->
   let a = List.hd agents in
