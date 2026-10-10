@@ -1329,12 +1329,6 @@ value caml_rig_remote_link_request(value vl, value head) {
    memory once more, or that area's if the kept memory is free and smaller
    and the area holds at most [KEPT_BYTES]. Holds the link's lock and the
    runtime. */
-/* CR: Retire kept/gave at orderly close. An agent serving successive jobs
-   keeps a large upload from each job through these roots. Clear them under
-   the runtime and link lock only after queued and dequeued commands release
-   the cached payload; a next call can still need kept after the native
-   threads end. Retry retirement when next publishes its rooted result.
-   Returned areas keep their own Bigarray storage. */
 static void lend_back(struct rig_remote_link *l) {
   if (l->gave_kept)
     l->kept_free = 1;
@@ -1349,6 +1343,19 @@ static void lend_back(struct rig_remote_link *l) {
   }
   caml_modify_generational_global_root(&l->gave, Val_unit);
   l->gave_kept = 0;
+}
+
+/* Drops the kept memory once [next] gave the controller's close: no command
+   holds it, none comes, and a link is never freed, so an agent serving jobs
+   one after another would keep one job's memory each. An area [next] gave
+   keeps its own storage. Holds the runtime. */
+static void retire_kept(struct rig_remote_link *l) {
+  pthread_mutex_lock(&l->mu);
+  caml_modify_generational_global_root(&l->kept, Val_unit);
+  l->kept_p = NULL;
+  l->kept_n = 0;
+  l->kept_free = 0;
+  pthread_mutex_unlock(&l->mu);
 }
 
 /* The next command of the controller: (kind, payload, its bytes), the
@@ -1388,9 +1395,10 @@ value caml_rig_remote_link_next(value vl) {
     caml_modify_generational_global_root(&l->gave, a);
     l->gave_kept = c->kept;
     pthread_mutex_unlock(&l->mu);
-  } else if (closed)
+  } else if (closed) {
+    retire_kept(l);
     a = area_of_bytes("", 0);
-  else {
+  } else {
     const struct rig_remote_why *w = atomic_load(&l->job->why);
     a = w != NULL ? area_of_bytes(w->s, w->n) : area_of_bytes("", 0);
     n = w != NULL ? w->n : 0;

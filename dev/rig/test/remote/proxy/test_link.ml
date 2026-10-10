@@ -1206,6 +1206,49 @@ let areas_until_next () =
   equal ~msg:"the first area, two calls later" string (String.make n 'c')
     (of_area first)
 
+(* This process's resident memory, in bytes. *)
+let resident () =
+  let pid = string_of_int (Unix.getpid ()) in
+  let ic = Unix.open_process_args_in "ps" [| "ps"; "-o"; "rss="; "-p"; pid |] in
+  let kib = int_of_string (String.trim (input_line ic)) in
+  ignore (Unix.close_process_in ic);
+  kib * 1024
+
+(* A job whose controller sends [handover], a hand-over's frame, then its
+   close; [next] gives both and the job closes. *)
+let closed_job handover =
+  with_raw ~peer:Wire.Controller @@ fun j l p ->
+  write p (handover ^ frame k_close "");
+  let next () = within j ~what:"next" (fun () -> Link.next l) in
+  (match next () with
+  | Ok (Wire.Handover _) -> ()
+  | _ -> fail "next gave no hand-over");
+  equal (result command_w string) (Ok Wire.Close) (next ());
+  within j ~what:"close" (fun () -> Link.close j)
+
+(* A link keeps a hand-over's memory for later ones until next gave the close:
+   jobs one after another, each with a large hand-over, hold no more memory
+   after than before. One uncounted job warms the process. *)
+let kept_until_close () =
+  let n = 64 lsl 20 in
+  let handover =
+    frame k_handover
+      (encode_handover
+         (1, 1, [], [ Copy (Local, Region (5, 0), n) ], [ String.make n 'a' ]))
+  in
+  let settled () =
+    for _ = 1 to 3 do
+      Gc.full_major ()
+    done;
+    resident ()
+  in
+  closed_job handover;
+  let before = settled () in
+  for _ = 1 to 4 do
+    closed_job handover
+  done;
+  less ~msg:"bytes held after four jobs" int ~than:n (settled () - before)
+
 let agents =
   group "agent"
     [
@@ -1227,6 +1270,8 @@ let agents =
         bytes_in_place;
       test "a hand-over's areas hold its bytes until the next call of next"
         areas_until_next;
+      test "a link keeps no hand-over's memory once next gave the close"
+        kept_until_close;
     ]
 
 (* Rails *)
