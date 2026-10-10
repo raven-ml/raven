@@ -8,7 +8,7 @@
  (libraries nx_array nx_kernel rig)
  (foreign_stubs
   (language c)
-  (extra_deps kernels/kernels.metallib)
+  (extra_deps kernels/embedded.metallib)
   (flags
-   (:standard -DNX_METAL_METALLIB=kernels/kernels.metallib))
+   (:standard -DNX_METAL_METALLIB=kernels/embedded.metallib))
   (names nx_metal_stubs)))

@@ -9,3 +9,38 @@
   (progn
    (echo "dev/nx2/lib/metal/kernels/kernels.metallib is missing: build it with `dev/nx2/lib/metal/kernels/build.sh`, or copy it in\n")
    (system "exit 1"))))
+
+; The metallib nx.metal embeds. On a Mac, where build.sh runs, it must be the
+; one build.sh makes from the tree's sources, listed here in build.sh's
+; order: a metallib from older sources fails the build. Elsewhere no Metal
+; device opens, and a copied metallib serves as it is.
+
+(executable
+ (name fresh)
+ (modules fresh stamp kernels))
+
+(rule
+ (copy ../kernels.ml kernels.ml))
+
+(rule
+ (targets embedded.metallib)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (progn
+   (run
+    %{exe:fresh.exe}
+    %{dep:kernels.metallib}
+    %{dep:build.sh}
+    %{dep:../kernels.h}
+    %{dep:../../array/nx_dtype.h}
+    %{dep:src/elements.h}
+    %{dep:src/contract.metal})
+   (copy kernels.metallib embedded.metallib))))
+
+(rule
+ (targets embedded.metallib)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (copy kernels.metallib embedded.metallib)))

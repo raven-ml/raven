@@ -11,12 +11,14 @@
  (modules test_metal_place)
  (libraries nx nx_array nx_metal_support rig windtrap))
 
-; The library's kernels.ml, built here beside a stub that reads kernels.h.
+; The library's kernels.ml, built here beside a stub that reads kernels.h,
+; and the stamp check of its metallib.
 
 (tests
  (names test_metal_kernels)
- (modules test_metal_kernels kernels)
+ (modules test_metal_kernels kernels stamp)
  (libraries windtrap)
+ (deps support/harness.metallib)
  (foreign_stubs
   (language c)
   (include_dirs ../../lib/metal ../../lib/array)
@@ -25,3 +27,6 @@
 
 (rule
  (copy ../../lib/metal/kernels.ml kernels.ml))
+
+(rule
+ (copy ../../lib/metal/kernels/stamp.ml stamp.ml))

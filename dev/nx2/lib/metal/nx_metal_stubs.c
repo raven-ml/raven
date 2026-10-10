@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* nx.metal's metallib (kernels/kernels.metallib), included by the
+/* nx.metal's metallib (kernels/embedded.metallib), included by the
    assembler. The section and the symbols' spelling are the object
    format's: ELF, Mach-O or COFF. */
 

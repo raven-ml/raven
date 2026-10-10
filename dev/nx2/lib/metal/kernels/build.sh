@@ -13,14 +13,33 @@ nx2=$(cd "$(dirname "$0")/../../.." && pwd)
 air=$(mktemp -d)
 trap 'rm -rf "$air"' EXIT
 
-# metallib SRC OUT compiles SRC to AIR and links it alone into OUT.
+# metallib OUT SRC... compiles each SRC to AIR and links them into OUT.
 metallib() {
-  xcrun -sdk macosx metal -std=metal3.1 -mmacosx-version-min=15.0 \
-    -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise \
-    -ffp-contract=off -Wall -Werror -I "$nx2/lib/array" -I "$nx2/lib/metal" \
-    -c "$1" -o "$air/unit.air"
-  xcrun -sdk macosx metallib "$air/unit.air" -o "$2"
+  out=$1
+  shift
+  units=
+  for src in "$@"; do
+    unit="$air/$(basename "$src").air"
+    xcrun -sdk macosx metal -std=metal3.1 -mmacosx-version-min=15.0 \
+      -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise \
+      -ffp-contract=off -Wall -Werror -I "$nx2/lib/array" -I "$nx2/lib/metal" \
+      -c "$src" -o "$unit"
+    units="$units $unit"
+  done
+  # shellcheck disable=SC2086 # one word per unit
+  xcrun -sdk macosx metallib $units -o "$out"
 }
 
-metallib "$nx2/lib/metal/kernels/src/contract.metal" "$nx2/lib/metal/kernels/kernels.metallib"
-metallib "$nx2/test/metal/support/harness.metal" "$nx2/test/metal/support/harness.metallib"
+# The files nx.metal's kernels are compiled from, this script included for
+# its flags, in the order kernels/dune lists them. The metallib gets an empty
+# function named after their digest, which dune checks on a Mac.
+sources="$nx2/lib/metal/kernels/build.sh $nx2/lib/metal/kernels.h
+  $nx2/lib/array/nx_dtype.h $nx2/lib/metal/kernels/src/elements.h
+  $nx2/lib/metal/kernels/src/contract.metal"
+digest=$(for f in $sources; do md5 -q "$f"; done | md5 -q)
+printf 'kernel void nx_metal_sources_%s() {}\n' "$digest" >"$air/stamp.metal"
+
+metallib "$nx2/lib/metal/kernels/kernels.metallib" \
+  "$nx2/lib/metal/kernels/src/contract.metal" "$air/stamp.metal"
+metallib "$nx2/test/metal/support/harness.metallib" \
+  "$nx2/test/metal/support/harness.metal"

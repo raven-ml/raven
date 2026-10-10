@@ -150,6 +150,66 @@ let offsets () =
       ("nx_metal_combine.out_dtype", Q.out_dtype);
     ]
 
+(* Stamp *)
+
+(* A file of [contents]. *)
+let file contents =
+  let f = Filename.temp_file "stamp" "" in
+  Out_channel.with_open_bin f (fun oc -> output_string oc contents);
+  f
+
+(* build.sh's digest of its sources: [md5 -q] of each file, a line each, then
+   [md5 -q] of those lines. The values are that pipeline's. *)
+let digest () =
+  equal ~msg:"no file" string "d41d8cd98f00b204e9800998ecf8427e"
+    (Stamp.digest []);
+  equal ~msg:"one file" string "fd72b1ce6539aca765d3703d8397111f"
+    (Stamp.digest [ file "a" ]);
+  equal ~msg:"in order" string "ef0764cda821cae50c1d46f1511d3249"
+    (Stamp.digest [ file "a"; file "" ])
+
+(* A metallib's function list as its NAME tags spell it: a 16-bit
+   little-endian length, then the name and a NUL. *)
+let functions names =
+  let tag f =
+    let n = String.length f + 1 in
+    "NAME" ^ String.make 1 (Char.chr (n land 0xff))
+    ^ String.make 1 (Char.chr (n lsr 8))
+    ^ f ^ "\000TYPE"
+  in
+  "MTLB" ^ String.concat "" (List.map tag names)
+
+let stamp = Stamp.stamp "0123"
+let stale = Stamp.stale ~digest:"0123" ~kernels:[ "contract_int"; "move" ]
+
+let refusals () =
+  equal ~msg:"current" (option string) None
+    (stale (functions [ "contract_int"; stamp; "move" ]));
+  equal ~msg:"other sources" (option string)
+    (Some "was built from other sources")
+    (stale (functions [ "contract_int"; Stamp.stamp "4567"; "move" ]));
+  equal ~msg:"no stamp" (option string) (Some "was built from other sources")
+    (stale (functions [ "contract_int"; "move" ]));
+  equal ~msg:"a kernel missing" (option string)
+    (Some "lacks the kernel move")
+    (stale (functions [ "contract_int"; stamp ]));
+  equal ~msg:"a name only within another" (option string)
+    (Some "lacks the kernel contract_int")
+    (stale (functions [ "contract_intx"; "xcontract_int"; stamp; "move" ]))
+
+(* The harness's metallib, as the Metal compiler wrote it, names its kernels
+   and no stamp. *)
+let harness () =
+  let m =
+    In_channel.with_open_bin "support/harness.metallib" In_channel.input_all
+  in
+  equal ~msg:"kernels it lacks" (list string) []
+    (List.filter
+       (fun f -> not (Stamp.has m f))
+       [ "empty"; "move"; "probe_codec" ]);
+  equal ~msg:"no stamp" (option string) (Some "was built from other sources")
+    (Stamp.stale m ~digest:"0123" ~kernels:[ "empty" ])
+
 let () =
   exit
     (run "nx.metal kernels"
@@ -161,5 +221,12 @@ let () =
              test "the geometry, the threads and the order bits" constants;
              test "the listed fields tile their structs" fields_tile;
              test "the structs' sizes and fields' offsets" offsets;
+           ];
+         group "a metallib's stamp"
+           [
+             test "the digest is build.sh's" digest;
+             test "a metallib from other sources or short of a kernel is stale"
+               refusals;
+             test "the Metal compiler's names read as NAME tags" harness;
            ];
        ])
