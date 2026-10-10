@@ -8,6 +8,7 @@
   test_values
   test_place
   test_exec
+  test_elementwise
   test_interp
   test_donate
   test_shapes
@@ -18,6 +19,7 @@
   test_values
   test_place
   test_exec
+  test_elementwise
   test_interp
   test_donate
   test_shapes

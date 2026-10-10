@@ -354,35 +354,182 @@ val rearrange :
 
 (** {1:arith Arithmetic}
 
-    Operations compute where their operands lie and give a new value. Binary
-    operations broadcast: aligned at their last axes, two extents are equal or
-    one of them is [1], which stretches. *)
+    Elementwise operations compute where their operands lie and give a new
+    value. Binary operations broadcast: aligned at their last axes, two extents
+    are equal or one of them is [1], which stretches. Integers wrap. The float
+    formats narrower than 32 bits compute at [float32] and round once.
+
+    Each raises [Invalid_argument] naming itself if the shapes do not broadcast,
+    or if its operation does not take the operands' dtype: what each takes is
+    stated with it. The host computes every dtype stated; on a set whose kernels
+    do not compute one, as the GPU libraries complex numbers today, the function
+    raises naming itself. *)
 
 val add : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [add a b] is the elementwise sum, integers wrapping.
+(** [add a b] is the elementwise sum. Every dtype but booleans. *)
 
-    Raises [Invalid_argument] if the shapes do not broadcast, or [a]'s dtype is
-    a boolean. *)
+val sub : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [sub a b] is [a - b], as {!add}. *)
 
 val mul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [mul a b] is the elementwise product, as {!add}. *)
 
+val div : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [div a b] is [a / b]: the IEEE 754 quotient on floats and complex numbers;
+    on integers the quotient truncated toward zero, [0] for a divisor of [0],
+    and a signed dtype's least value for that value by [-1]. Every dtype but
+    booleans. *)
+
+val mod_ : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [mod_ a b] is the remainder of [a / b], of [a]'s sign: [fmod] on floats, and
+    [a] for a divisor of [0] on integers, so that
+    [a = add (mul b (div a b)) (mod_ a b)] on integers. Floats and integers. *)
+
+val pow : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [pow a b] is [a] to the power [b]. Floats and integers. *)
+
+val fma : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [fma a b c] is [a * b + c] rounded once. Floats and integers. *)
+
+val maximum : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [maximum a b] is the greater element by the dtype's order ({!less}). On
+    floats it is the IEEE 754 maximum: a NaN gives NaN, and [-0.] orders below
+    [+0.]. Every dtype. *)
+
+val minimum : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [minimum a b] is the lesser element, as {!maximum}. *)
+
+val neg : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [neg x] is [-x]. Every dtype but booleans. *)
+
+val recip : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [recip x] is [1 / x]; on integers, [x] for [1] and [-1] and [0] otherwise.
+    Every dtype but booleans. *)
+
+val abs : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [abs x] is [x]'s magnitude. Floats and integers. *)
+
+val sign : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [sign x] is [-1], [0] or [1] by [x]'s sign, and NaN for a NaN. Floats and
+    integers. *)
+
+(** {2:transcendental Powers, exponentials and trigonometry}
+
+    Floats only. *)
+
+val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [sqrt x] is the square root, NaN below [-0.]. *)
+
+val exp : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [exp x] is [e{^x}]. *)
+
+val exp2 : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [exp2 x] is [2{^x}], exact at integers whose power the dtype holds. *)
+
+val expm1 : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [expm1 x] is [e{^x} - 1], accurate near [0]. *)
+
+val log : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [log x] is the natural logarithm: [-inf] at [0.], NaN below. *)
+
+val log2 : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [log2 x] is the base-2 logarithm, exact at powers of two. *)
+
+val log1p : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [log1p x] is [log (1 + x)], accurate near [0]. *)
+
+val sin : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [sin x] is the sine of [x] radians. *)
+
+val cos : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cos x] is the cosine of [x] radians. *)
+
+val tan : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [tan x] is the tangent of [x] radians. *)
+
+val asin : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [asin x] is the arcsine, in \[[-π/2], [π/2]\]. *)
+
+val acos : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [acos x] is the arccosine, in \[[0], [π]\]. *)
+
+val atan : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [atan x] is the arctangent, in \[[-π/2], [π/2]\]. *)
+
+val atan2 : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [atan2 y x] is the angle of the point [(x, y)], in \][-π], [π]\]. *)
+
+val sinh : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [sinh x] is the hyperbolic sine. *)
+
+val cosh : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cosh x] is the hyperbolic cosine. *)
+
+val tanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [tanh x] is the hyperbolic tangent. *)
+
+val erf : (float, 's, 'd) t -> (float, 's, 'd) t
+(** [erf x] is the error function [2/√π ∫₀ˣ e{^-t²} dt]. *)
+
+(** {2:rounding Rounding}
+
+    Floats and integers; the identity on integers. *)
+
+val floor : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [floor x] rounds toward negative infinity. *)
+
+val ceil : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [ceil x] rounds toward positive infinity. *)
+
+val round : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [round x] rounds to the nearest integer, halves away from zero. *)
+
+val trunc : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [trunc x] rounds toward zero. *)
+
+(** {2:compare Comparisons and bits}
+
+    Every dtype has one order: [false < true]; integers by value, unsigned
+    dtypes unsigned; floats by value, [-0.] below [+0.]; complex numbers by real
+    part, then imaginary part. A comparison is [true] where it holds; it
+    compares floats by value, so [-0.] equals [+0.], and it is [false] where an
+    element is a NaN, or a complex number with a NaN part, but for {!not_equal},
+    which is [true] there. Comparisons take every dtype. *)
+
+val equal : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+(** [equal a b] is [a = b]. *)
+
+val not_equal : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+(** [not_equal a b] is [a <> b]. *)
+
 val less : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
-(** [less a b] is [true] where [a]'s element is below [b]'s: integers by value,
-    unsigned dtypes unsigned; floats by value, [-0.] not below [+0.];
-    [false < true]; complex numbers by real part, then imaginary part. It is
-    [false] where either is a NaN, or a complex number with a NaN part.
+(** [less a b] is [a < b]. *)
 
-    Raises [Invalid_argument] if the shapes do not broadcast. *)
+val less_equal : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+(** [less_equal a b] is [a <= b]. *)
 
-val where :
-  'd bool_t ->
-  ('v, 's, 'd) t ->
-  ('v, 's, 'd) t ->
-  ('v, 's, 'd) t
+val greater : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+(** [greater a b] is [less b a]. *)
+
+val greater_equal : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
+(** [greater_equal a b] is [less_equal b a]. *)
+
+val bitwise_and : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [bitwise_and a b] is the bitwise and of integers, the logical and of
+    booleans. Integers and booleans. *)
+
+val bitwise_or : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [bitwise_or a b] is the bitwise or, as {!bitwise_and}. *)
+
+val bitwise_xor : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [bitwise_xor a b] is the bitwise exclusive or, as {!bitwise_and}. *)
+
+val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [where c x y] is [x]'s element where [c] is [true] and [y]'s elsewhere.
 
     Raises [Invalid_argument] if the shapes do not broadcast. *)
+
+(** {2:conversion Conversion} *)
 
 val cast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
 (** [cast dt x] is [x]'s elements stored in [dt]; [x] itself where [dt] is [x]'s
@@ -399,6 +546,17 @@ val cast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     these rules give the real part, and the imaginary part is [0.]; a complex
     number stores part by part into a complex dtype, as [true] into a boolean if
     a part is not zero, and by its real part into any other dtype. *)
+
+val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
+(** [bitcast dt x] is [x]'s bits read as elements of [dt], NaN payloads
+    included: [x] itself where [dt] is [x]'s dtype. At one width the shape is
+    [x]'s. A [dt] [k] times narrower appends an axis of [k], its elements the
+    pieces of [x]'s element, in the host's byte order; one [k] times wider reads
+    [x]'s last axis, of [k] elements, as one element, and drops it.
+
+    Raises [Invalid_argument] where [dt] is wider and [x]'s last axis does not
+    have [k] elements, and where [dt] is narrower and [x] has the greatest rank
+    already. *)
 
 (** {1:devices Device sets and placement}
 

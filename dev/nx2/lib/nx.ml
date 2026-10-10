@@ -168,32 +168,88 @@ let binary ~by k a b =
     Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
 
 let add a b = binary ~by:"Nx.add" (Binary Add) a b
+let sub a b = binary ~by:"Nx.sub" (Binary Sub) a b
 let mul a b = binary ~by:"Nx.mul" (Binary Mul) a b
 
-let less a b =
-  let by = "Nx.less" in
-  if same_shape a b then Eval.apply2 ~by (Compare Less) D.Bool a b
+(* Integers divide by [Idiv]; floats and complex numbers by [Fdiv], whose
+   refusal names booleans. *)
+let div (type v s d) (a : (v, s, d) t) (b : (v, s, d) t) =
+  let k =
+    match D.kind (dtype a) with D.Signed | D.Unsigned -> P.Idiv | _ -> Fdiv
+  in
+  binary ~by:"Nx.div" (Binary k) a b
+
+let mod_ a b = binary ~by:"Nx.mod_" (Binary Mod) a b
+let pow a b = binary ~by:"Nx.pow" (Binary Pow) a b
+let atan2 a b = binary ~by:"Nx.atan2" (Binary Atan2) a b
+let maximum a b = binary ~by:"Nx.maximum" (Binary Maximum) a b
+let minimum a b = binary ~by:"Nx.minimum" (Binary Minimum) a b
+let bitwise_and a b = binary ~by:"Nx.bitwise_and" (Binary And) a b
+let bitwise_or a b = binary ~by:"Nx.bitwise_or" (Binary Or) a b
+let bitwise_xor a b = binary ~by:"Nx.bitwise_xor" (Binary Xor) a b
+
+let comparison ~by k a b =
+  if same_shape a b then Eval.apply2 ~by (Compare k) D.Bool a b
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
-    Eval.apply2 ~by (Compare Less) D.Bool (broadcast ~by s a)
-      (broadcast ~by s b)
+    Eval.apply2 ~by (Compare k) D.Bool (broadcast ~by s a) (broadcast ~by s b)
 
-let where c x y =
-  let by = "Nx.where" in
-  if same_shape c x && same_shape x y then Eval.apply3 ~by Where c x y
+let equal a b = comparison ~by:"Nx.equal" Equal a b
+let not_equal a b = comparison ~by:"Nx.not_equal" Not_equal a b
+let less a b = comparison ~by:"Nx.less" Less a b
+let less_equal a b = comparison ~by:"Nx.less_equal" Less_equal a b
+let greater a b = comparison ~by:"Nx.greater" Less b a
+let greater_equal a b = comparison ~by:"Nx.greater_equal" Less_equal b a
+
+let ternary ~by k c x y =
+  if same_shape c x && same_shape x y then Eval.apply3 ~by k c x y
   else
     let s =
       Prim.broadcast_shape ~by
         (Prim.broadcast_shape ~by (shape c) (shape x))
         (shape y)
     in
-    Eval.apply3 ~by Where (broadcast ~by s c) (broadcast ~by s x)
+    Eval.apply3 ~by k (broadcast ~by s c) (broadcast ~by s x)
       (broadcast ~by s y)
+
+let where c x y = ternary ~by:"Nx.where" Where c x y
+let fma a b c = ternary ~by:"Nx.fma" Fma a b c
+let unary ~by k x = Eval.apply1 ~by (Unary k) (dtype x) x
+let neg x = unary ~by:"Nx.neg" Neg x
+let recip x = unary ~by:"Nx.recip" Recip x
+let abs x = unary ~by:"Nx.abs" Abs x
+let sign x = unary ~by:"Nx.sign" Sign x
+let sqrt x = unary ~by:"Nx.sqrt" Sqrt x
+let exp x = unary ~by:"Nx.exp" Exp x
+let exp2 x = unary ~by:"Nx.exp2" Exp2 x
+let expm1 x = unary ~by:"Nx.expm1" Expm1 x
+let log x = unary ~by:"Nx.log" Log x
+let log2 x = unary ~by:"Nx.log2" Log2 x
+let log1p x = unary ~by:"Nx.log1p" Log1p x
+let sin x = unary ~by:"Nx.sin" Sin x
+let cos x = unary ~by:"Nx.cos" Cos x
+let tan x = unary ~by:"Nx.tan" Tan x
+let asin x = unary ~by:"Nx.asin" Asin x
+let acos x = unary ~by:"Nx.acos" Acos x
+let atan x = unary ~by:"Nx.atan" Atan x
+let sinh x = unary ~by:"Nx.sinh" Sinh x
+let cosh x = unary ~by:"Nx.cosh" Cosh x
+let tanh x = unary ~by:"Nx.tanh" Tanh x
+let erf x = unary ~by:"Nx.erf" Erf x
+let floor x = unary ~by:"Nx.floor" Floor x
+let ceil x = unary ~by:"Nx.ceil" Ceil x
+let round x = unary ~by:"Nx.round" Round x
+let trunc x = unary ~by:"Nx.trunc" Trunc x
 
 let cast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
   match D.equal_witness (dtype x) dt with
   | Some Type.Equal -> x
   | None -> Eval.apply1 ~by:"Nx.cast" Cast dt x
+
+let bitcast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
+  match D.equal_witness (dtype x) dt with
+  | Some Type.Equal -> x
+  | None -> Eval.eval ~by:"Nx.bitcast" (Value.Bitcast (dt, x))
 
 let copy x = Eval.eval ~by:"Nx.copy" (Value.Copy x)
 let donate x = Exec.donate ~by:"Nx.donate" x
