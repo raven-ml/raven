@@ -922,6 +922,33 @@ let host_refusals =
     ( "host code that does not link",
       (fun d -> with_steps ~code:[| { obj = "nonsense"; entry = "f" } |] d [||]),
       one );
+    ( "a host value of a rail this machine has not",
+      (fun d ->
+        with_steps d
+          [| step_affine (Input 0) ~a:(Leaf (Ready 9)) ~c:(Fixed 0) |]),
+      one );
+    ( "a host value of a function its image lacks",
+      (fun d ->
+        with_steps d
+          [|
+            step_affine (Input 0)
+              ~a:(Leaf (Entry { image = 0; name = "nope" }))
+              ~c:(Fixed 0);
+          |]),
+      one );
+    ( "a loop's trips of a rail this machine has not",
+      (fun d ->
+        with_steps d
+          [|
+            Loop
+              {
+                trips = Leaf (Ready_arg 9);
+                trip = None;
+                flag = None;
+                body = [||];
+              };
+          |]),
+      one );
     ( "an int past the ints",
       (fun d ->
         with_steps ~ints:1 d [| step_affine Ints ~a:(Int 1) ~c:(Fixed 0) |]),

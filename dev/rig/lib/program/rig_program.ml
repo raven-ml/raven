@@ -794,15 +794,22 @@ let of_string s =
 
 external host_address : B.t -> int = "caml_rig_program_host"
 
+(* A value once loaded, for one copy: a leaf is resolved at load, so a run meets
+   no refusal of it. *)
+type known =
+  | Known of int
+  | Word of int (* Of the run's ints. *)
+  | Address_of of { input : int; on : int }
+
 (* A launch's words that a run writes into its block before each submit: its
    parameters' holes over the run's values, and its geometry. *)
 type launch_run = {
   block : Sub.block;
   params : string;
-  holes : value hole array;
-  groups : value * value * value;
-  threads : value * value * value;
-  shared : value;
+  holes : known hole array;
+  groups : known * known * known;
+  threads : known * known * known;
+  shared : known;
   geometry_per_run : bool; (* Whether a value of its geometry is per run. *)
 }
 
@@ -822,13 +829,13 @@ type lstep =
   | Lhost of {
       code : Rig_host.t;
       buffers : (slot * B.access) array;
-      values : value array;
-      split : split option;
+      values : known array array; (* By copy. *)
+      split : (known array * split) option; (* The extent by copy. *)
       addresses : int array;
       words : int array;
     }
   | Lloop of {
-      trips : value;
+      trips : known array; (* By copy. *)
       trip : int option;
       flag : view option;
       body : lstep array;
@@ -973,9 +980,7 @@ let per_copy t (s : submit) =
   || Array.exists slot s.reads || Array.exists slot s.writes
   || Array.exists (fun (v, _) -> view v) s.fixed
 
-let per_run : value -> bool = function
-  | Int _ | Input _ -> true
-  | Fixed _ | Leaf _ -> false
+let per_run = function Word _ | Address_of _ -> true | Known _ -> false
 
 (* Stores hole [h] of a launch's parameters [params] over [v] into its block
    [b]. A 64-bit word goes as two 32-bit halves: an [int] setter would drop its
@@ -993,6 +998,13 @@ let store_geometry r b (gx, gy, gz) (tx, ty, tz) shared value =
 
 (* The buffer an input's slot holds until a run passes the input. *)
 let unset = B.of_string ""
+
+(* [v] for copy [k], its leaf resolved. *)
+let resolve p k : value -> known = function
+  | Fixed n -> Known n
+  | Leaf l -> Known (leaf_value p k l)
+  | Int i -> Word i
+  | Input { input; on } -> Address_of { input; on }
 
 (* The submission of [s] for copy [k], and its run holding the words of its
    blocks that no run changes. *)
@@ -1024,25 +1036,28 @@ let prepared p k (s : submit) =
     match slot_view p s with Some v -> view p k d v | None -> unset
   in
   let srun = Sub.Run.make () in
-  let value : value -> int = function
-    | Fixed n -> n
-    | Leaf l -> leaf_value p k l
-    | Int _ | Input _ -> 0
-  in
+  let known = resolve p k in
+  let value = function Known n -> n | Word _ | Address_of _ -> 0 in
   let launch i (q : part) =
     match q.work with
     | Words _ | Fill _ | Copy _ -> None
-    | Launch { params; groups; threads; shared; _ } ->
+    | Launch { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
         let b = Sub.block sub i in
         for w = 0 to (String.length params.bytes / 4) - 1 do
           Sub.Run.int32 srun b (4 * w)
             (Int32.to_int (String.get_int32_le params.bytes (4 * w)))
         done;
+        let holes =
+          Array.map (fun h -> { h with leaf = known h.leaf }) params.holes
+        in
         Array.iter
           (fun h ->
             if not (per_run h.leaf) then
               store_hole srun b params.bytes h (value h.leaf))
-          params.holes;
+          holes;
+        let groups = (known gx, known gy, known gz)
+        and threads = (known tx, known ty, known tz)
+        and shared = known shared in
         store_geometry srun b groups threads shared value;
         let gx, gy, gz = groups and tx, ty, tz = threads in
         Some
@@ -1051,9 +1066,7 @@ let prepared p k (s : submit) =
             params = params.bytes;
             holes =
               Array.of_list
-                (List.filter
-                   (fun h -> per_run h.leaf)
-                   (Array.to_list params.holes));
+                (List.filter (fun h -> per_run h.leaf) (Array.to_list holes));
             groups;
             threads;
             shared;
@@ -1101,16 +1114,18 @@ let rec lstep p i = function
   | Move { src; dst } -> Lmove { src; dst }
   | Host { code; buffers; values; split } ->
       check_host p i buffers;
+      let by_copy v = Array.init 2 (fun k -> resolve p k v) in
       Lhost
         {
           code = p.code.(code);
           buffers;
-          values;
-          split;
+          values = Array.init 2 (fun k -> Array.map (resolve p k) values);
+          split = Option.map (fun (s : split) -> (by_copy s.extent, s)) split;
           addresses = Array.make (Array.length buffers) 0;
           words = Array.make (Array.length values) 0;
         }
   | Loop { trips; trip; flag; body } ->
+      let trips = Array.init 2 (fun k -> resolve p k trips) in
       Lloop { trips; trip; flag; body = Array.map (lstep p i) body }
 
 let make_memory devices rails = function
@@ -1237,11 +1252,10 @@ let input_on p (f : frame) i d =
    Submit may still read or write the same memory through an Ints slot. The wait
    at run entry protects reuse across runs only; a later trip can overwrite an
    earlier kernel's input within this run. *)
-let run_value (p : here) f k : value -> int = function
-  | Fixed n -> n
-  | Int i -> Int64.to_int (Bigarray.Array1.unsafe_get p.ints.(k) i)
-  | Input { input; on } -> B.address (input_on p f input on)
-  | Leaf l -> leaf_value p k l
+let run_value (p : here) f k = function
+  | Known n -> n
+  | Word i -> Int64.to_int (Bigarray.Array1.unsafe_get p.ints.(k) i)
+  | Address_of { input; on } -> B.address (input_on p f input on)
 
 let pass p f (s : slot array) bufs d =
   for i = 0 to Array.length s - 1 do
@@ -1311,12 +1325,12 @@ let host p f k code buffers values split addresses words =
         invalid "a host step's buffer %d: the host does not address it" i;
       addresses.(i) <- a)
     buffers;
-  Array.iteri (fun i v -> words.(i) <- run_value p f k v) values;
+  Array.iteri (fun i v -> words.(i) <- run_value p f k v) values.(k);
   let split =
     Option.map
-      (fun (s : split) ->
+      (fun (extent, (s : split)) ->
         {
-          Rig_host.extent = run_value p f k s.extent;
+          Rig_host.extent = run_value p f k extent.(k);
           blocks = s.blocks;
           lo = s.lo;
           hi = s.hi;
@@ -1340,7 +1354,7 @@ let rec exec (p : here) f k after = function
   | Lhost { code; buffers; values; split; addresses; words } ->
       host p f k code buffers values split addresses words
   | Lloop { trips; trip; flag; body } ->
-      let n = run_value p f k trips in
+      let n = run_value p f k trips.(k) in
       let rec go i =
         if i < n && Option.fold ~none:true ~some:(flag_holds p k) flag then begin
           Option.iter
