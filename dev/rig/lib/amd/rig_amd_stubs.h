@@ -112,22 +112,30 @@ static inline int rig_amd_fill(const struct rig_amd_template *t,
 }
 
 /* A function's launch, which the device's [entry] makes once per function
-   of a loaded image and which lives until the image is unloaded: the PM4
-   words of its dispatch, whose holes take, in order, the address of its
-   arguments, the device's scratch, its threads per group along x, y and z
-   and its groups along x, y and z. The word at [lds_at] is [lds_word] plus
-   [lds_unit] for each [lds_granule] bytes, rounded up, of the function's
-   [group] bytes of LDS and the launch's shared memory. Its arguments take
-   [kernarg] bytes, after the launch's parameters at most, and [hidden]
-   holds the offset among them of each implicit argument it reads, in the
-   order below, or -1. A launch fits when its threads per group are at most
-   [max_threads] and its shared memory at most [max_shared] bytes. */
+   of a loaded image and which lives until the image is unloaded: the words
+   of its dispatch, whose holes take the hand-over's arguments below. On a
+   PM4 queue they are PM4 packets, whose word at [pm4.lds_at] is
+   [pm4.lds_word] plus [pm4.lds_unit] for each [pm4.lds_granule] bytes,
+   rounded up, of the LDS its groups take. On an AQL queue they are one
+   kernel dispatch packet, whose 16-bit workgroup sizes lie at the bytes
+   [aql.threads] and whose 32-bit group segment size at [aql.group]. The
+   LDS its groups take is the function's [group] bytes and the launch's
+   shared memory. Its arguments take [kernarg] bytes, after the launch's
+   parameters at most, and [hidden] holds the offset among them of each
+   implicit argument it reads, in the order below, or -1. A launch fits
+   when its threads per group are at most [max_threads] and its shared
+   memory at most [max_shared] bytes. */
+
+/* The hand-over's arguments: the address of the launch's arguments, the
+   device's scratch, its threads per group, its groups, and its grid's
+   work-items along x, y and z. */
 enum {
   L_ARGS,
   L_SCRATCH,
   L_THREADS,
   L_GROUPS = L_THREADS + 3,
-  RIG_AMD_LAUNCH_ARGS = L_GROUPS + 3
+  L_GRID = L_GROUPS + 3,
+  RIG_AMD_LAUNCH_ARGS = L_GRID + 3
 };
 
 /* The implicit arguments of code object v5 a launch writes: its groups
@@ -150,23 +158,43 @@ enum {
 
 struct rig_amd_launch {
   uint32_t words[RIG_AMD_LAUNCH_WORDS];
-  int n, nholes;
+  int n, nholes, packet; /* an AQL packet, else PM4 */
   struct rig_amd_hole holes[RIG_AMD_LAUNCH_HOLES];
-  uint32_t lds_at, lds_word, lds_unit, lds_granule, group;
-  uint32_t max_threads, max_shared, kernarg;
+  union {
+    struct {
+      uint32_t lds_at, lds_word, lds_unit, lds_granule;
+    } pm4;
+    struct {
+      uint32_t threads[3], group;
+    } aql;
+  };
+  uint32_t group, max_threads, max_shared, kernarg;
   int32_t hidden[RIG_AMD_HIDDEN];
 };
 
-/* Launch [l]'s dispatch in [w], its holes filled from [args] and its LDS
-   word from its groups' [shared] bytes: its count. */
+/* Launch [l]'s dispatch in [w], its holes filled from the hand-over's first
+   arguments [args], up to its grid, which they give, and its LDS from its
+   groups' [shared] bytes: its count. */
 static inline int rig_amd_dispatch(const struct rig_amd_launch *l,
                                    const uint64_t *args, uint32_t shared,
                                    uint32_t *w) {
+  uint64_t a[RIG_AMD_LAUNCH_ARGS];
   uint32_t lds = l->group + shared;
+  memcpy(a, args, L_GRID * sizeof *a);
+  for (int k = 0; k < 3; k++) a[L_GRID + k] = a[L_GROUPS + k] * a[L_THREADS + k];
   memcpy(w, l->words, 4 * (size_t)l->n);
-  rig_amd_holes(l->holes, l->nholes, args, w);
-  w[l->lds_at] =
-      l->lds_word + (lds + l->lds_granule - 1) / l->lds_granule * l->lds_unit;
+  rig_amd_holes(l->holes, l->nholes, a, w);
+  if (l->packet) {
+    uint8_t *b = (uint8_t *)w;
+    for (int k = 0; k < 3; k++) {
+      uint16_t t = (uint16_t)a[L_THREADS + k];
+      memcpy(b + l->aql.threads[k], &t, 2);
+    }
+    memcpy(b + l->aql.group, &lds, 4);
+  } else
+    w[l->pm4.lds_at] =
+        l->pm4.lds_word +
+        (lds + l->pm4.lds_granule - 1) / l->pm4.lds_granule * l->pm4.lds_unit;
   return l->n;
 }
 

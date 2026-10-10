@@ -32,6 +32,18 @@ val dispatch :
     Raises [Invalid_argument] if a component of [threads] is not in
     \[[1];[65535]\]. *)
 
+(** The type for the fields of a kernel dispatch packet that its writer may
+    set after encoding it ({!dispatch}): a launch's workgroup sizes, and the
+    LDS its workgroups take. *)
+type field =
+  | Workgroup_size of Code_object.axis
+      (** 16 bits: the work-items of a workgroup along the axis. *)
+  | Group_segment_size  (** 32 bits: the bytes of LDS a workgroup takes. *)
+
+val offset : field -> int
+(** [offset f] is the byte offset of [f] in a kernel dispatch packet, the 64
+    bytes of hsa.h's [hsa_kernel_dispatch_packet_t], little-endian. *)
+
 val indirect_buffer : 'v -> dwords:'v -> 'v Packet.t
 (** [indirect_buffer addr ~dwords] runs the [dwords] words of PM4 packets at
     [addr] ({!Pm4}), in a packet of the vendor's format. Every die the queue

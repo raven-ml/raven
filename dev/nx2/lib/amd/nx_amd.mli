@@ -11,9 +11,7 @@
     kernel, loads it, and a load that fails answers [false] from [computes_on]
     and [Declined] from a kernel. Raises {!Rig.Lost} if [d] is lost. Kernels
     claim through {!Nx_array.door} until their work is submitted, and answer
-    [Done] once it is on [d]'s timeline. rig.amd runs launches on the PM4
-    compute queue of a GPU of one die; on a GPU of several dies its compute
-    queue reads AQL packets and runs none, so [computes_on] is [false] there.
+    [Done] once it is on [d]'s timeline.
 
     [apply0] to [apply3], [map], [reduce], [scan], [gather], [scatter],
     [sort], [assemble], [fold], [fft] and [linalg] answer [Declined] for

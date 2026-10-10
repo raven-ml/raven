@@ -30,3 +30,9 @@ Made in this directory from `launch.cl` with the same tools:
   bytes of scratch per work-item; and `packet`, which reads its dispatch
   packet:
   `clang -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 -nogpulib -O2 launch.cl -o launch.o && ld.lld -shared launch.o -o launch_gfx1201.hsaco && rm launch.o`
+
+Made in this directory from `launch.cl` with the same tools, for gfx942:
+
+- `launch_gfx942.hsaco`, the same kernels for a GPU of several dies, whose
+  queue reads AQL packets:
+  `clang -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=gfx942 -mcode-object-version=5 -nogpulib -O2 launch.cl -o launch.o && ld.lld -shared launch.o -o launch_gfx942.hsaco && rm launch.o`

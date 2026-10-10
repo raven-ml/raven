@@ -110,4 +110,29 @@ let indirect =
             (words (Aql.indirect_buffer 0x1_0000_0100 ~dwords:16)));
     ]
 
-let () = exit (run "rig_amd_abi.aql" [ dispatch; indirect ])
+(* A field's offset is where [dispatch] writes it: the packet of threads (3, 5,
+   7) and a group segment of 0x12345 bytes holds them there, 16 and 32 bits
+   little-endian. *)
+let fields =
+  group ~timeout "fields"
+    [
+      test "each field lies at its offset" (fun () ->
+          let p =
+            Packet.encode Int64.of_int
+              (Aql.dispatch
+                 { kernel with group_segment = 0x12345 }
+                 ~descriptor:0 ~args:0 ~threads:(3, 5, 7) ~grid:(1, 1, 1))
+          in
+          let u16 f = String.get_uint16_le p (Aql.offset f) in
+          equal (list int) ~msg:"workgroup sizes" [ 3; 5; 7 ]
+            [
+              u16 (Workgroup_size X);
+              u16 (Workgroup_size Y);
+              u16 (Workgroup_size Z);
+            ];
+          equal int ~msg:"group segment size" 0x12345
+            (Int32.to_int
+               (String.get_int32_le p (Aql.offset Group_segment_size))));
+    ]
+
+let () = exit (run "rig_amd_abi.aql" [ dispatch; fields; indirect ])

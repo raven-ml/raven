@@ -158,44 +158,74 @@ value caml_rig_amd_template(value v_self, value v_t, value v_words,
 static const int hidden_bytes[RIG_AMD_HIDDEN] = {4, 4, 4, 2, 2, 2, 2,
                                                  2, 2, 8, 8, 8, 2, 4};
 
-/* A launch (struct rig_amd_launch): its dispatch's words and holes, as a
-   template's; [v_lds], the index of its LDS word, that word without LDS, the
-   word's increment per granule, the granule's bytes and the function's own
-   LDS bytes; [v_max], its most threads per group and shared bytes and its
-   arguments' bytes; and [v_hidden], the offsets of its implicit arguments,
-   each within its arguments, or -1. Its address, an int, which
-   caml_rig_amd_launch_free frees. */
-value caml_rig_amd_launch(value v_words, value v_holes, value v_lds,
-                          value v_max, value v_hidden) {
-  struct rig_amd_launch c;
+/* Reads into [c] what a launch of either form holds: its dispatch's words
+   and holes, as a template's; [v_max], the function's own LDS bytes, its most
+   threads per group and shared bytes and its arguments' bytes; and
+   [v_hidden], the offsets of its implicit arguments, each within its
+   arguments, or -1. */
+static void launch_of(struct rig_amd_launch *c, value v_words, value v_holes,
+                      value v_max, value v_hidden) {
   size_t bytes = caml_string_length(v_words);
-  if (bytes > sizeof c.words) refuse(LAUNCH, "exceeds its words");
-  c.n = (int)(bytes / 4);
-  memcpy(c.words, String_val(v_words), 4 * (size_t)c.n);
-  c.nholes = holes(LAUNCH, v_holes, c.holes, RIG_AMD_LAUNCH_HOLES,
-                   RIG_AMD_LAUNCH_ARGS, c.n);
-  c.lds_at = (uint32_t)at(v_lds, 0);
-  c.lds_word = (uint32_t)at(v_lds, 1);
-  c.lds_unit = (uint32_t)at(v_lds, 2);
-  c.lds_granule = (uint32_t)at(v_lds, 3);
-  c.group = (uint32_t)at(v_lds, 4);
-  c.max_threads = (uint32_t)at(v_max, 0);
-  c.max_shared = (uint32_t)at(v_max, 1);
-  c.kernarg = (uint32_t)at(v_max, 2);
-  if (c.lds_at >= (uint32_t)c.n || c.lds_granule == 0)
-    refuse(LAUNCH, "LDS word lies outside its words");
+  if (bytes > sizeof c->words) refuse(LAUNCH, "exceeds its words");
+  c->n = (int)(bytes / 4);
+  memcpy(c->words, String_val(v_words), 4 * (size_t)c->n);
+  c->nholes = holes(LAUNCH, v_holes, c->holes, RIG_AMD_LAUNCH_HOLES,
+                    RIG_AMD_LAUNCH_ARGS, c->n);
+  c->group = (uint32_t)at(v_max, 0);
+  c->max_threads = (uint32_t)at(v_max, 1);
+  c->max_shared = (uint32_t)at(v_max, 2);
+  c->kernarg = (uint32_t)at(v_max, 3);
   if (Wosize_val(v_hidden) != RIG_AMD_HIDDEN)
     refuse(LAUNCH, "names another number of implicit arguments");
   for (int i = 0; i < RIG_AMD_HIDDEN; i++) {
     intnat h = at(v_hidden, i);
-    if (h < -1 || (h >= 0 && h + hidden_bytes[i] > (intnat)c.kernarg))
+    if (h < -1 || (h >= 0 && h + hidden_bytes[i] > (intnat)c->kernarg))
       refuse(LAUNCH, "implicit argument lies outside its arguments");
-    c.hidden[i] = (int32_t)h;
+    c->hidden[i] = (int32_t)h;
   }
+}
+
+/* The launch [c] in memory of its own: its address, an int, which
+   caml_rig_amd_launch_free frees. */
+static value keep(const struct rig_amd_launch *c) {
   struct rig_amd_launch *l = malloc(sizeof *l);
   if (l == NULL) caml_raise_out_of_memory();
-  *l = c;
+  *l = *c;
   return Val_long((intnat)l);
+}
+
+/* A launch on a PM4 queue: [v_lds], the index of its LDS word, that word
+   without LDS, the word's increment per granule and the granule's bytes; the
+   rest as launch_of reads them. */
+value caml_rig_amd_launch_pm4(value v_words, value v_holes, value v_lds,
+                              value v_max, value v_hidden) {
+  struct rig_amd_launch c = {0};
+  launch_of(&c, v_words, v_holes, v_max, v_hidden);
+  c.pm4.lds_at = (uint32_t)at(v_lds, 0);
+  c.pm4.lds_word = (uint32_t)at(v_lds, 1);
+  c.pm4.lds_unit = (uint32_t)at(v_lds, 2);
+  c.pm4.lds_granule = (uint32_t)at(v_lds, 3);
+  if (c.pm4.lds_at >= (uint32_t)c.n || c.pm4.lds_granule == 0)
+    refuse(LAUNCH, "LDS word lies outside its words");
+  return keep(&c);
+}
+
+/* A launch on an AQL queue, whose words are one packet: [v_fields], the
+   bytes of its workgroup sizes along x, y and z and of its group segment
+   size; the rest as launch_of reads them. */
+value caml_rig_amd_launch_aql(value v_words, value v_holes, value v_fields,
+                              value v_max, value v_hidden) {
+  struct rig_amd_launch c = {0};
+  launch_of(&c, v_words, v_holes, v_max, v_hidden);
+  c.packet = 1;
+  for (int k = 0; k < 3; k++) c.aql.threads[k] = (uint32_t)at(v_fields, k);
+  c.aql.group = (uint32_t)at(v_fields, 3);
+  for (int k = 0; k < 3; k++)
+    if (c.aql.threads[k] + 2 > 4 * (uint32_t)c.n)
+      refuse(LAUNCH, "workgroup size lies outside its words");
+  if (c.aql.group + 4 > 4 * (uint32_t)c.n)
+    refuse(LAUNCH, "group segment size lies outside its words");
+  return keep(&c);
 }
 
 value caml_rig_amd_launch_free(value v_l) {
@@ -208,11 +238,11 @@ value caml_rig_amd_launch_free(value v_l) {
    little-endian bytes on a little-endian host. */
 value caml_rig_amd_dispatch(value v_l, value v_args, value v_shared) {
   const struct rig_amd_launch *l = (const void *)Long_val(v_l);
-  uint64_t args[RIG_AMD_LAUNCH_ARGS];
+  uint64_t args[L_GRID];
   uint32_t w[RIG_AMD_LAUNCH_WORDS];
-  if (Wosize_val(v_args) != RIG_AMD_LAUNCH_ARGS)
+  if (Wosize_val(v_args) != L_GRID)
     caml_invalid_argument("Rig_amd.dispatch: expected 8 arguments");
-  for (int i = 0; i < RIG_AMD_LAUNCH_ARGS; i++) args[i] = (uint64_t)at(v_args, i);
+  for (int i = 0; i < L_GRID; i++) args[i] = (uint64_t)at(v_args, i);
   int n = rig_amd_dispatch(l, args, (uint32_t)Long_val(v_shared), w);
   value s = caml_alloc_string(4 * (mlsize_t)n);
   memcpy(Bytes_val(s), w, 4 * (size_t)n);

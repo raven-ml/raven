@@ -405,7 +405,7 @@ let facts () =
         (list (pair string (list string)))
         ~msg
         [
-          ("COMPUTE:0", [ "words"; "fill" ] @ if aql then [] else [ "launch" ]);
+          ("COMPUTE:0", [ "words"; "fill"; "launch" ]);
           ("COPY:0", [ "words"; "fill"; "copy" ]);
         ]
         (List.map (fun (q : Rig_edge.queue) -> (q.name, runs q.runs)) f.queues);
@@ -622,9 +622,10 @@ let images =
    read. *)
 
 let launch_bin = lazy (read_fixture "launch_gfx1201.hsaco")
+let launch_bin_942 = lazy (read_fixture "launch_gfx942.hsaco")
 
-let launch_kernel name =
-  let co = Result.get_ok (Abi.Code_object.of_string (Lazy.force launch_bin)) in
+let launch_kernel ?(bin = launch_bin) name =
+  let co = Result.get_ok (Abi.Code_object.of_string (Lazy.force bin)) in
   Option.get (Abi.Code_object.kernel co name)
 
 (* The bytes of [ids]'s parameters: [out]'s offset into its buffer, [a], [b] and
@@ -638,8 +639,21 @@ let ids_params ~out ~a ~b ~f =
   Bytes.to_string p
 
 (* What [entry] makes of a kernel: a launch, once, and the scratch of its
-   private segment; and what it refuses. *)
+   private segment; and what it refuses. A GPU of several dies launches a
+   kernel that reads its dispatch packet: the packet is the one its queue
+   reads. *)
 let entries () =
+  (Host.with_device ~gpu:mi300 @@ fun h g ->
+   let m, r, _ = load g (Lazy.force launch_bin_942) in
+   not_equal nativeint ~msg:"an AQL queue's launch" 0n
+     (Option.get (A.entry m "ids")).launch;
+   not_equal nativeint ~msg:"AQL: a kernel that reads its dispatch packet" 0n
+     (Option.get (A.entry m "packet")).launch;
+   let before = h.allocated in
+   ignore (A.entry m "scratch");
+   equal int ~msg:"AQL: the scratch, made at entry" (before + 1) h.allocated;
+   A.unload g m;
+   A.free g r);
   Host.with_device @@ fun h g ->
   let m, r, _ = load g (Lazy.force launch_bin) in
   let e = Option.get (A.entry m "ids") in
@@ -680,22 +694,37 @@ let holds ys xs =
 
 (* A launch of [ids] over 3 x 2 groups of 64 x 2 work-items: its parameters,
    each ref's slot address added, then the implicit arguments its function reads
-   go in the segment, and its dispatch, of those arguments, on the compute ring.
-   The segment is the third memory the device takes of its path, before its
-   queues. *)
-let launch_hand_over () =
-  Host.with_device @@ fun h g ->
-  let m, r, _ = load g (Lazy.force launch_bin) in
-  let k = launch_kernel "ids" in
+   go in the segment, and its dispatch, of those arguments, on the compute ring:
+   PM4 words on a GPU of one die, an AQL packet on a GPU of several, whose
+   ring's positions count packets of 16 words. The arguments lie at the
+   segment's start, the third memory the device takes of its path, before its
+   queues; on an AQL queue, where the writer's own PM4 words go in the segment
+   first, at the address the kernel dispatch packet names, words 10 and 11 of
+   the packet of type 2 (hsa.h's HSA_PACKET_TYPE_KERNEL_DISPATCH). *)
+let launch_hand_over (gpu, bin) () =
+  Host.with_device ~gpu @@ fun h g ->
+  let m, r, _ = load g (Lazy.force bin) in
+  let k = launch_kernel ~bin "ids" in
   let e = Option.get (A.entry m "ids") in
   let slot = 0x7000_0000 in
   let params = ids_params ~out:0x40 ~a:5 ~b:7 ~f:1.5 in
   let q = Host.compute h in
-  let p0 = Host.position q in
+  let words = if gpu.xccs > 1 then 16 else 1 in
+  let p0 = Host.position q * words in
   equal answer `Ok
     (E.submit g ~v:1 ~slots:[| slot |]
        [| E.launch e ~groups:(3, 2, 1) ~threads:(64, 2, 1) params [ (0, 0) ] |]);
-  let segment = List.nth (List.rev h.queue_memory) 2 in
+  let ring = handed q p0 (Host.position q * words) in
+  let segment =
+    if gpu.xccs = 1 then List.nth (List.rev h.queue_memory) 2
+    else
+      let ws = Array.of_list ring in
+      let rec packet i =
+        if ws.(i) land 0xff = 2 then ws.(i + 10) lor (ws.(i + 11) lsl 32)
+        else packet (i + 16)
+      in
+      packet 0
+  in
   let args = H.read segment 96 in
   let u32 at = Int32.to_int (String.get_int32_le args at) land 0xffff_ffff in
   let u16 at = String.get_uint16_le args at in
@@ -712,7 +741,7 @@ let launch_hand_over () =
   equal int ~msg:"two axes" 2 (u16 88);
   let base = e.code - k.descriptor in
   let dispatch =
-    A.dispatch r9700 k ~program:(base + k.entry) ~lds:65536
+    A.dispatch gpu k ~base ~lds:65536
       [| segment; 0; 64; 2; 1; 3; 2; 1 |]
       ~shared:0
   in
@@ -722,8 +751,7 @@ let launch_hand_over () =
       (fun i ->
         Int32.to_int (String.get_int32_le dispatch (4 * i)) land 0xffff_ffff)
   in
-  equal bool ~msg:"its dispatch, on the compute ring" true
-    (holds (handed q p0 (Host.position q)) ws);
+  equal bool ~msg:"its dispatch, on the compute ring" true (holds ring ws);
   Host.reach g 1;
   A.unload g m;
   A.free g r
@@ -749,6 +777,21 @@ let launch_room () =
   equal room_answer ~msg:"past the GPU's LDS" `Never
     (room ~e:lds ~shared:(65536 - 255) (1, 1, 1) (64, 1, 1));
   A.unload g m;
+  A.free g r;
+  (* An AQL packet's grid counts work-items in 32 bits. *)
+  Host.with_device ~gpu:mi300 @@ fun _ g ->
+  let m, r, _ = load g (Lazy.force launch_bin_942) in
+  let ids = Option.get (A.entry m "ids") in
+  let room groups threads =
+    E.room g [| E.launch ids ~groups ~threads params [ (0, 0) ] |]
+  in
+  equal room_answer ~msg:"AQL: 2^32 - 256 work-items along x" `Fits
+    (room (0xff_ffff, 1, 1) (256, 1, 1));
+  equal room_answer ~msg:"AQL: 2^32 work-items along x" `Never
+    (room (0x100_0000, 1, 1) (256, 1, 1));
+  equal room_answer ~msg:"AQL: 2^32 work-items along z" `Never
+    (room (1, 1, 0x100_0000) (1, 1, 256));
+  A.unload g m;
   A.free g r
 
 let launches =
@@ -758,7 +801,10 @@ let launches =
         "entry makes a launch once, with its scratch, and refuses what a \
          launch cannot write"
         entries;
-      test "a launch hands over its arguments and its dispatch" launch_hand_over;
+      test "a launch hands over its arguments and its PM4 dispatch"
+        (launch_hand_over (r9700, launch_bin));
+      test "a launch hands over its arguments and its AQL packet"
+        (launch_hand_over (mi300, launch_bin_942));
       test "a launch fits within its function's and the GPU's limits"
         launch_room;
     ]

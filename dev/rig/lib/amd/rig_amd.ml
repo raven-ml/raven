@@ -9,6 +9,7 @@ let ( let* ) = Result.bind
 
 module Abi = Rig_amd_abi
 module Packet = Abi.Packet
+module Aql = Abi.Aql
 module Pm4 = Abi.Pm4
 module Sdma = Abi.Sdma
 
@@ -117,9 +118,13 @@ external publish_scratch : int -> int -> int array -> int array -> int
 external scratch_taken : int -> int = "caml_rig_amd_scratch_taken" [@@noalloc]
 external signaled_word : int -> int = "caml_rig_amd_signaled" [@@noalloc]
 
-external c_launch :
+external c_launch_pm4 :
   string -> string -> int array -> int array -> int array -> int
-  = "caml_rig_amd_launch"
+  = "caml_rig_amd_launch_pm4"
+
+external c_launch_aql :
+  string -> string -> int array -> int array -> int array -> int
+  = "caml_rig_amd_launch_aql"
 
 external free_launch : int -> unit = "caml_rig_amd_launch_free"
 
@@ -175,17 +180,17 @@ let pointers_bytes = 4096
 (* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
 let max_waits = 255
 
-(* The queues, as rig_amd_ring.c's [runs] accepts their parts: launches on a PM4
-   compute queue only, whose dispatches run on the one die. *)
-let device_queues ~aql =
+(* The queues, as rig_amd_ring.c's [runs] accepts their parts. *)
+let device_queues =
   Rig_edge.
     [
-      {
-        name = "COMPUTE:0";
-        runs = (if aql then [ Words; Fill ] else [ Words; Fill; Launch ]);
-      };
+      { name = "COMPUTE:0"; runs = [ Words; Fill; Launch ] };
       { name = "COPY:0"; runs = [ Words; Fill; Copy ] };
     ]
+
+(* Whether [g]'s compute queue reads AQL packets, which every die runs: on a GPU
+   of several dies, else PM4 packets, which one die runs. *)
+let reads_aql (g : Abi.Gpu.t) = g.xccs > 1
 
 (* The queues' positions in the pointers: the compute queue's at the start,
    where an AQL queue's descriptor (amd_hsa_queue.h, amd_queue_t) holds them,
@@ -292,6 +297,13 @@ let settle_scratch self ops st =
   List.iter (fun (m, _) -> ops.free m) reached;
   st.retired <- kept
 
+(* CR: Own a new scratch allocation until publication. For MI300X,
+   [scratch 65536] requests 38 GiB, then the descriptor rejects the
+   4.75 GiB per-die share. If allocation succeeds, that memory leaks.
+   Bracket preparation of the descriptor and publication arguments so a
+   failure releases [m]. End the bracket before [publish_scratch], when the
+   queue may take ownership; record the new pending buffer before freeing
+   an old one. *)
 let grow_scratch self ops (g : Abi.Gpu.t) ~aql ~desc st n =
   Mutex.protect st.lock @@ fun () ->
   settle_scratch self ops st;
@@ -409,7 +421,7 @@ let make (type m) (p : m path) =
         Ok m
     | None -> Error (strf "no memory for its %s" what)
   in
-  let waits64 = waits64 p and aql = p.gpu.xccs > 1 in
+  let waits64 = waits64 p and aql = reads_aql p.gpu in
   let open_device () =
     let* word = alloc "timeline word" 8 in
     let* slot_words = alloc "slot words" (8 * slots) in
@@ -477,7 +489,7 @@ let make (type m) (p : m path) =
       {
         Rig_edge.arch = Abi.Gpu.processor p.gpu;
         budget = p.budget;
-        queues = device_queues ~aql;
+        queues = device_queues;
         completion = Store;
         waits =
           {
@@ -634,7 +646,8 @@ let image g bin =
         Ok (Rig_edge.Place (Code_object.size co, lay))
 
 (* A dispatch's values: known to its launch, or the hand-over's argument [i], in
-   the order of rig_amd_stubs.h's L_ARGS, L_SCRATCH, L_THREADS and L_GROUPS. *)
+   the order of rig_amd_stubs.h's L_ARGS, L_SCRATCH, L_THREADS, L_GROUPS and
+   L_GRID. *)
 type value = Known of int | Arg of int
 
 let word s i = Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff
@@ -662,60 +675,89 @@ let hidden f (k : Code_object.kernel) =
   List.iter (fun (h, off) -> set h off) k.hidden;
   at
 
-(* The C launch of kernel [k], named [f], whose code is at [program], on [g],
-   whose groups take at most [lds] bytes of LDS: its dispatch, its limits, and
-   the word that holds the LDS its groups take, COMPUTE_PGM_RSRC2, which the
-   hand-over sets from the launch's shared memory. It is the one word that a
-   group segment one granule larger changes. *)
-let c_launch_of g (k : Code_object.kernel) ~program ~lds f =
-  let dispatch group =
-    Template.flatten
-      (function Known n -> Some (Int64.of_int n) | Arg _ -> None)
-      (function Arg i -> i | Known _ -> assert false (* known: no hole *))
-      (Pm4.dispatch g
-         { k with group_segment = group }
-         ~program:(Known program) ~scratch:(Arg 1) ~args:(Arg 0)
-         ~packet:(Known 0) ~threads:(Arg 2, Arg 3, Arg 4)
-         ~groups:(Arg 5, Arg 6, Arg 7) ())
-  in
-  let granule = Pm4.lds_granule g in
-  let words, holes = dispatch 0 and more, _ = dispatch granule in
-  let at =
-    match
-      List.filter
-        (fun i -> word words i <> word more i)
-        (List.init (String.length words / 4) Fun.id)
-    with
-    | [ at ] -> at
-    | _ -> invalid_argf "Rig_amd.entry: kernel %s's LDS is not one word" f
-  in
-  c_launch words holes
-    [|
-      at; word words at; word more at - word words at; granule; k.group_segment;
-    |]
-    [| k.max_threads; lds - k.group_segment; k.kernarg_size |]
-    (hidden f k)
+(* The values of [k]'s launch the C launch keeps beside its words: the LDS [k]
+   takes itself, its most work-items and shared memory on a GPU whose groups
+   take at most [lds] bytes, and its arguments' bytes. *)
+let limits (k : Code_object.kernel) ~lds =
+  [| k.group_segment; k.max_threads; lds - k.group_segment; k.kernarg_size |]
 
-(* [m]'s launch of its kernel [k], named [f]. *)
+let template p =
+  Template.flatten
+    (function Known n -> Some (Int64.of_int n) | Arg _ -> None)
+    (function Arg i -> i | Known _ -> assert false (* known: no hole *))
+    p
+
+(* The C launch of kernel [k], named [f], of an image at [base], on [g], whose
+   groups take at most [lds] bytes of LDS.
+
+   On a PM4 queue, its dispatch, whose word that holds the LDS its groups take,
+   COMPUTE_PGM_RSRC2, the hand-over sets from the launch's shared memory. It is
+   the one word that a group segment one granule larger changes.
+
+   On an AQL queue, its kernel dispatch packet, whose workgroup sizes and group
+   segment size the hand-over sets at their offsets, and which names the
+   kernel's descriptor: the queue hands it its scratch and the packet's
+   address. *)
+let c_launch_of g (k : Code_object.kernel) ~base ~lds f =
+  if reads_aql g then
+    let words, holes =
+      template
+        (Aql.dispatch
+           { k with group_segment = 0 }
+           ~descriptor:(Known (base + k.descriptor))
+           ~args:(Arg 0) ~threads:(1, 1, 1) ~grid:(Arg 8, Arg 9, Arg 10))
+    in
+    c_launch_aql words holes
+      Aql.
+        [|
+          offset (Workgroup_size X);
+          offset (Workgroup_size Y);
+          offset (Workgroup_size Z);
+          offset Group_segment_size;
+        |]
+      (limits k ~lds) (hidden f k)
+  else
+    let dispatch group =
+      template
+        (Pm4.dispatch g
+           { k with group_segment = group }
+           ~program:(Known (base + k.entry))
+           ~scratch:(Arg 1) ~args:(Arg 0) ~packet:(Known 0)
+           ~threads:(Arg 2, Arg 3, Arg 4) ~groups:(Arg 5, Arg 6, Arg 7) ())
+    in
+    let granule = Pm4.lds_granule g in
+    let words, holes = dispatch 0 and more, _ = dispatch granule in
+    let at =
+      match
+        List.filter
+          (fun i -> word words i <> word more i)
+          (List.init (String.length words / 4) Fun.id)
+      with
+      | [ at ] -> at
+      | _ -> invalid_argf "Rig_amd.entry: kernel %s's LDS is not one word" f
+    in
+    c_launch_pm4 words holes
+      [| at; word words at; word more at - word words at; granule |]
+      (limits k ~lds) (hidden f k)
+
+(* [m]'s launch of its kernel [k], named [f]. A PM4 dispatch hands a kernel no
+   dispatch packet. *)
 let launch m f (k : Code_object.kernel) =
   let g = m.dev in
-  if k.dispatch_ptr then
+  if k.dispatch_ptr && not g.aql then
     invalid_argf
-      "Rig_amd.entry: kernel %s reads its dispatch packet, which a launch does \
-       not write"
+      "Rig_amd.entry: kernel %s reads its dispatch packet, which a launch on a \
+       GPU of one die does not write"
       f;
   if k.private_segment > 0 then
     Result.iter_error
       (fun why -> invalid_argf "Rig_amd.entry: kernel %s: %s" f why)
       (g.grow k.private_segment);
-  c_launch_of g.gpu k ~program:(m.base + k.entry) ~lds:g.lds f
+  c_launch_of g.gpu k ~base:m.base ~lds:g.lds f
 
-(* An AQL queue runs no launch. *)
 let entry m f =
   match Code_object.kernel m.co f with
   | None -> None
-  | Some k when m.dev.aql ->
-      Some { Rig_edge.code = m.base + k.descriptor; launch = 0n }
   | Some k ->
       let l =
         Mutex.protect m.lock @@ fun () ->
@@ -767,8 +809,8 @@ let stop g ~fault =
 external c_dispatch : int -> int array -> int -> string
   = "caml_rig_amd_dispatch"
 
-let dispatch g k ~program ~lds args ~shared =
-  let l = c_launch_of g k ~program ~lds "dispatch" in
+let dispatch g k ~base ~lds args ~shared =
+  let l = c_launch_of g k ~base ~lds "dispatch" in
   Fun.protect
     ~finally:(fun () -> free_launch l)
     (fun () -> c_dispatch l args shared)

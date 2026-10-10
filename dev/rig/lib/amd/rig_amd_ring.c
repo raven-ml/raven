@@ -146,7 +146,7 @@ static uint64_t part_words(const struct rig_amd *d, const struct rig_part *p,
   case RIG_LAUNCH: {
     const struct rig_amd_launch *l = p->launch.launch;
     *bytes += align_up(arguments(p), SEGMENT_ALIGN);
-    return (uint64_t)l->n + words_of(d, T_INVALIDATE);
+    return (uint64_t)l->n + (l->packet ? 0 : words_of(d, T_INVALIDATE));
   }
   default: return copies(d, p->copy.bytes) * words_of(d, S_COPY);
   }
@@ -187,20 +187,24 @@ static void need(const struct rig_amd *d, const struct rig_part *p, int n,
   }
 }
 
-/* Whether launch [p], whose block is in [args], runs: on a PM4 compute
-   ring, over a grid and groups of no empty axis, within its function's
-   threads per group and shared memory. */
+/* Whether launch [p], whose block is in [args], runs: on the compute ring,
+   in the form its ring reads, over a grid and groups of no empty axis,
+   within its function's threads per group and shared memory; for an AQL
+   packet, whose grid counts work-items in 32 bits, over fewer than 2^32
+   along each axis. */
 static int launches(const struct rig_amd *d, const struct rig_part *p,
                     const uint8_t *args) {
   const struct rig_amd_launch *l = p->launch.launch;
-  if (p->queue != RIG_AMD_COMPUTE || d->rings[p->queue].kind != RING_PM4 ||
-      l == NULL || args == NULL)
+  if (p->queue != RIG_AMD_COMPUTE || l == NULL || args == NULL ||
+      l->packet != (d->rings[p->queue].kind == RING_AQL))
     return 0;
   const struct rig_block *b = (const void *)(args + p->launch.block);
   uint64_t threads = 1;
   for (int k = 0; k < 3; k++) {
     if (b->groups[k] == 0 || b->threads[k] == 0 ||
         b->threads[k] > l->max_threads)
+      return 0;
+    if (l->packet && (uint64_t)b->groups[k] * b->threads[k] > UINT32_MAX)
       return 0;
     threads *= b->threads[k];
   }
@@ -419,9 +423,10 @@ static void implicit(const struct rig_amd_launch *l, const struct rig_block *b,
 
 /* Places launch [p] on the compute ring: its arguments in the segment, its
    parameters with each ref's offset plus its slot's address, then the
-   implicit arguments its function reads; then, unless [acquired], the
-   invalidation, then its dispatch, the LDS its groups take in their
-   resources. */
+   implicit arguments its function reads; then its dispatch, the LDS its
+   groups take in their resources. A PM4 dispatch follows the invalidation,
+   unless [acquired]; an AQL packet acquires at system scope and waits for
+   the packets before it itself. */
 static void launch(struct submission *s, const struct rig_part *p,
                    const uint8_t *args, const uint64_t *slots, int acquired) {
   struct rig_amd *d = s->d;
@@ -440,8 +445,9 @@ static void launch(struct submission *s, const struct rig_part *p,
   }
   implicit(p->launch.launch, b, params);
   g->put += align_up(arguments(p), SEGMENT_ALIGN);
-  if (!acquired) emit(d, r, T_INVALIDATE, 0, 0, 0);
-  uint64_t a[RIG_AMD_LAUNCH_ARGS] = {g->gpu + at, d->scratch_gpu};
+  if (!acquired && !((const struct rig_amd_launch *)p->launch.launch)->packet)
+    emit(d, r, T_INVALIDATE, 0, 0, 0);
+  uint64_t a[L_GRID] = {g->gpu + at, d->scratch_gpu};
   for (int k = 0; k < 3; k++) {
     a[L_THREADS + k] = b->threads[k];
     a[L_GROUPS + k] = b->groups[k];

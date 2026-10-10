@@ -82,7 +82,7 @@ val capability : t -> Rig_amd_abi.Capability.t
       |------|-------|
       | [arch] | The processor the GPU runs code objects of, as LLVM names it ({!Rig_amd_abi.Gpu.processor}), such as ["gfx1201"]. |
       | [budget] | The bytes of the GPU's own memory. |
-      | [queues] | ["COMPUTE:0"] runs [Words], [Fill] and, on a GPU of one die, [Launch]; ["COPY:0"] runs [Words], [Fill] and [Copy]. Index [0] and [1] in C. |
+      | [queues] | ["COMPUTE:0"] runs [Words], [Fill] and [Launch]; ["COPY:0"] runs [Words], [Fill] and [Copy]. Index [0] and [1] in C. |
       | [completion] | [Store]: the queue that releases a value writes the word. |
       | [waits] | [stores] and [hosts] iff the compute queue compares 64-bit words, never [objects]; [most] is [255]. |
       | [may_block] | [false]: the C entries write memory and call no system function. |
@@ -151,15 +151,16 @@ val capability : t -> Rig_amd_abi.Capability.t
     kernel takes more local data share than the GPU has, as
     ["kernel reduce takes 98304 bytes of local data share; the GPU has 65536"].
     {!entry} answers as [code] the address of the descriptor of the kernel,
-    the symbol [f ^ ".kd"], which a dispatch names. On a GPU of one die it also
-    makes the kernel's launch, its dispatch's packets
-    ({!Rig_amd_abi.Pm4.dispatch}), and grows the device's scratch memory to
-    the kernel's private segment; on a GPU of several, whose queue runs no
-    launch, [launch] is [0n]. It raises [Invalid_argument] there for a kernel
-    that reads its dispatch packet or an implicit argument that is a
-    runtime's service ([Other]), which a launch does not write, or whose
-    scratch the GPU has no memory for. {!unload} frees the launches; the code
-    region is rig's.
+    the symbol [f ^ ".kd"], which a dispatch names. It also makes the
+    kernel's launch, and grows the device's scratch memory to the kernel's
+    private segment. On a GPU of one die the launch is the kernel's PM4
+    dispatch ({!Rig_amd_abi.Pm4.dispatch}), which names the scratch; on a GPU
+    of several, its AQL kernel dispatch packet ({!Rig_amd_abi.Aql.dispatch}),
+    whose queue hands the kernel the scratch and the packet. It raises
+    [Invalid_argument] for a kernel that reads an implicit argument that is a
+    runtime's service ([Other]), or, on a GPU of one die, its dispatch
+    packet, which a launch does not write; or whose scratch the GPU has no
+    memory for. {!unload} frees the launches; the code region is rig's.
 
     {b Sleep and faults.} {!sleep} blocks on the path's interrupt, which every
     release raises, and lets other domains run while it waits. It may return
@@ -175,14 +176,16 @@ val capability : t -> Rig_amd_abi.Capability.t
       hand-over, as {!Rig_amd_abi.Capability} states. It places at most its
       ring units of words and takes at most its segment bytes of the device's
       argument segment;
-    - on ["COMPUTE:0"] of a GPU of one die, a launch. The hand-over writes the
-      kernel's arguments into the argument segment: the launch's parameters,
-      each ref's address added, then the implicit arguments the kernel reads
+    - on ["COMPUTE:0"], a launch. The hand-over writes the kernel's
+      arguments into the argument segment: the launch's parameters, each
+      ref's address added, then the implicit arguments the kernel reads
       ({!Rig_amd_abi.Code_object.hidden}), its grid of whole groups starting
-      at work-item 0, over any parameter bytes they share. It invalidates the
-      caches above the L2 before the dispatch, so that a launch reads what
-      the launches before it wrote. The kernel's groups take its group
-      segment plus the launch's shared memory of LDS;
+      at work-item 0, over any parameter bytes they share. It places the
+      kernel's dispatch after invalidating the caches above the L2, on a PM4
+      queue, or as an AQL packet, which waits for the packets before it and
+      acquires at system scope, so that a launch reads what the launches
+      before it wrote. The kernel's groups take its group segment plus the
+      launch's shared memory of LDS;
     - on ["COPY:0"], a copy between two GPU addresses, its handles, whose
       ranges do not overlap.
 
@@ -199,10 +202,12 @@ val capability : t -> Rig_amd_abi.Capability.t
     argument segment (a submission's copy packets and segment bytes never
     wrap), or 512 parts. It also answers [RIG_NEVER] for a part the device does
     not run: a copy on ["COMPUTE:0"], words on an AQL queue that are not whole
-    packets, a launch on an AQL queue, or whose grid or group has an empty
-    axis, whose groups have more than 1024 work-items, the most a workgroup
-    has, or more shared memory than the GPU's local data share less the
-    kernel's group segment, an [after] index not below its own part's.
+    packets, a launch whose grid or group has an empty axis, whose groups
+    have more work-items than its kernel's bound
+    ({!Rig_amd_abi.Code_object.kernel}'s [max_threads]) or more shared memory
+    than the GPU's local data share less the kernel's group segment, or, as
+    an AQL packet, whose grid has [2{^32}] work-items or more along an axis,
+    an [after] index not below its own part's.
 
     The queues read none of a submission's packets before all of them are
     placed, so its work never waits on the host. A submission of no parts
@@ -364,21 +369,22 @@ val is_gpu : vendor:int -> class_:int -> bool
    value, or if [age] is negative or above [v - 1]. *)
 val renumber : ?age:int -> t -> int -> unit
 
-(* [dispatch g k ~program ~lds args ~shared] is the bytes of the words a
-   hand-over places for a launch of [k], whose code is at [program], on a GPU
-   [g] whose groups take at most [lds] bytes of LDS: its dispatch, given the
-   hand-over's 8 arguments [args], the address of its parameters and of the
-   scratch, its threads per group and its groups along x, y and z, and its
-   groups' [shared] bytes of shared memory. Tests compare it with
-   Rig_amd_abi.Pm4.dispatch on every GPU this library drives, which no machine
-   has all of.
+(* [dispatch g k ~base ~lds args ~shared] is the bytes of the words a
+   hand-over places for a launch of [k], of an image at [base], on a GPU [g]
+   whose groups take at most [lds] bytes of LDS, given the hand-over's 8
+   arguments [args], the address of its parameters and of the scratch, its
+   threads per group and its groups along x, y and z, and its groups' [shared]
+   bytes of shared memory: on a GPU of one die, its PM4 dispatch; on a GPU of
+   several, its AQL kernel dispatch packet, which names no scratch. Tests
+   compare it with Rig_amd_abi.Pm4.dispatch and Aql.dispatch on every GPU this
+   library drives, which no machine has all of.
 
-   Raises [Invalid_argument] as Pm4.dispatch does for [k], or if [args] does
-   not hold 8 arguments. *)
+   Raises [Invalid_argument] as those do for [k], or if [args] does not hold 8
+   arguments. *)
 val dispatch :
   Rig_amd_abi.Gpu.t ->
   Rig_amd_abi.Code_object.kernel ->
-  program:int ->
+  base:int ->
   lds:int ->
   int array ->
   shared:int ->

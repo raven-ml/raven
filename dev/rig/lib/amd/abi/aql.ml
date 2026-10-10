@@ -71,6 +71,14 @@ let dispatch (k : Code_object.kernel) ~descriptor ~args ~threads:(tx, ty, tz)
       (fst P.kernarg_address, W64 (Value args));
     ]
 
+type field = Workgroup_size of Code_object.axis | Group_segment_size
+
+let offset = function
+  | Workgroup_size X -> fst P.workgroup_size_x
+  | Workgroup_size Y -> fst P.workgroup_size_y
+  | Workgroup_size Z -> fst P.workgroup_size_z
+  | Group_segment_size -> fst P.group_segment_size
+
 (* The vendor packet of PM4 commands, amd_aql_pm4_ib in ROCR-Runtime's
    amd_aql_queue.cpp:1521-1547 (rocm-systems cccc350d): its format,
    AMD_AQL_FORMAT_PM4_IB, in the vendor header that follows the 16-bit AQL

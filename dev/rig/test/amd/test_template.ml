@@ -240,15 +240,16 @@ let templates =
 
 (* Launches *)
 
-(* The GPUs of each GC the driver drives, GFX950 with its LDS granule of 1280
-   bytes, and the LDS of a workgroup of each. *)
+(* The GPUs of each GC the driver drives, of one die and, for GFX9's, of eight,
+   whose queue reads AQL packets; GFX950 with its LDS granule of 1280 bytes; and
+   the LDS of a workgroup of each. *)
 let gpus =
-  let gpu ?target gc =
+  let gpu ?target ?(xccs = 1) gc =
     {
       Gpu.target = Option.value ~default:gc target;
       gc;
       sdma = (6, 0, 0);
-      xccs = 1;
+      xccs;
       shader_engines = 4;
       compute_units = 32;
       scratch_slots = 32;
@@ -256,7 +257,9 @@ let gpus =
   in
   [
     (gpu ~target:(9, 4, 2) (9, 4, 3), 65536);
+    (gpu ~target:(9, 4, 2) ~xccs:8 (9, 4, 3), 65536);
     (gpu (9, 5, 0), 163840);
+    (gpu ~xccs:8 (9, 5, 0), 163840);
     (gpu (11, 0, 0), 65536);
     (gpu (11, 5, 0), 65536);
     (gpu ~target:(12, 0, 1) (12, 0, 1), 65536);
@@ -266,7 +269,7 @@ type launch = {
   g : Gpu.t;
   lds : int;
   k : Code_object.kernel;
-  program : int;
+  base : int; (* the address of the kernel's image *)
   args : int array; (* parameters, scratch, threads, groups *)
   shared : int;
 }
@@ -274,16 +277,19 @@ type launch = {
 let pp_launch ppf l =
   let a, b, c = l.g.gc in
   Format.fprintf ppf
-    "GC %d.%d.%d, LDS %d; group %d, private %d, rsrc 0x%x 0x%x 0x%x, wave32 \
-     %b, buffer %b; program 0x%x, args [%s], shared %d"
-    a b c l.lds l.k.group_segment l.k.private_segment l.k.rsrc1 l.k.rsrc2
-    l.k.rsrc3 l.k.wave32 l.k.private_segment_buffer l.program
+    "GC %d.%d.%d x %d, LDS %d; group %d, private %d, rsrc 0x%x 0x%x 0x%x, \
+     wave32 %b, buffer %b, descriptor 0x%x, entry 0x%x; base 0x%x, args [%s], \
+     shared %d"
+    a b c l.g.xccs l.lds l.k.group_segment l.k.private_segment l.k.rsrc1
+    l.k.rsrc2 l.k.rsrc3 l.k.wave32 l.k.private_segment_buffer l.k.descriptor
+    l.k.entry l.base
     (String.concat "; "
        (Array.to_list (Array.map (Printf.sprintf "0x%x") l.args)))
     l.shared
 
 (* Kernels as compilers describe them, whose group segment and shared memory fit
-   the GPU's LDS, many of them empty or ending at the LDS. *)
+   the GPU's LDS, many of them empty or ending at the LDS, over grids of fewer
+   than 2^32 work-items along each axis, as an AQL packet holds them. *)
 let launches =
   let open Gen in
   let u32 = int_range 0 0xffff_ffff in
@@ -297,14 +303,17 @@ let launches =
      and+ private_segment = int_range 0 (1 lsl 16)
      and+ rsrc1, rsrc2, rsrc3 = triple u32 u32 u32
      and+ wave32, psb = pair bool bool
-     and+ program, scratch = pair (aligned 256) (aligned 256)
+     and+ base, scratch = pair (aligned 256) (aligned 256)
+     and+ descriptor, entry = pair (int_range 0 1023) (int_range 0 1023)
      and+ params = aligned 64
      and+ tx, ty, tz = triple side side side
      and+ gx, gy, gz = triple u32 u32 u32 in
+     let fit g t = Int.max 1 (Int.min g (0xffff_ffff / t)) in
+     let gx = fit gx tx and gy = fit gy ty and gz = fit gz tz in
      let k =
        {
-         Code_object.descriptor = 0;
-         entry = 0;
+         Code_object.descriptor = 64 * descriptor;
+         entry = 256 * entry;
          group_segment = group;
          private_segment;
          kernarg_size = 0;
@@ -321,31 +330,44 @@ let launches =
        }
      in
      let args = [| params; scratch; tx; ty; tz; gx; gy; gz |] in
-     { g; lds; k; program; args; shared })
+     { g; lds; k; base; args; shared })
 
+(* On a GPU of one die, its PM4 dispatch; on a GPU of several, its AQL kernel
+   dispatch packet, whose grid counts work-items and which hands kernels the
+   queue's scratch. *)
 let launches_law =
   prop
-    "a launch's dispatch is Pm4's, its group segment grown by its shared memory"
+    "a launch's dispatch is Pm4's or Aql's, its group segment grown by its \
+     shared memory"
     launches (fun l ->
       let lds = l.k.group_segment + l.shared and a = l.args in
       let granule = Pm4.lds_granule l.g in
       let units n = (n + granule - 1) / granule in
+      let aql = l.g.xccs > 1 in
       cover "no shared memory" (l.shared = 0);
       cover "shared memory past the group segment's granules"
         (units lds > units l.k.group_segment);
       cover "the GPU's whole LDS" (lds = l.lds);
       cover "a granule of 1280 bytes" (granule = 1280);
+      cover "an AQL packet" aql;
+      cover "an AQL grid of the most work-items along an axis"
+        (aql && a.(5) * a.(2) > 0xffff_ffff - a.(2));
+      let k = { l.k with group_segment = lds } in
       let expected =
-        Pm4.dispatch l.g
-          { l.k with group_segment = lds }
-          ~program:l.program ~scratch:a.(1) ~args:a.(0) ~packet:0
-          ~threads:(a.(2), a.(3), a.(4))
-          ~groups:(a.(5), a.(6), a.(7))
-          ()
+        if aql then
+          Aql.dispatch k ~descriptor:(l.base + k.descriptor) ~args:a.(0)
+            ~threads:(a.(2), a.(3), a.(4))
+            ~grid:(a.(5) * a.(2), a.(6) * a.(3), a.(7) * a.(4))
+        else
+          Pm4.dispatch l.g k ~program:(l.base + k.entry) ~scratch:a.(1)
+            ~args:a.(0) ~packet:0
+            ~threads:(a.(2), a.(3), a.(4))
+            ~groups:(a.(5), a.(6), a.(7))
+            ()
       in
       equal string
         (Packet.encode Int64.of_int expected)
-        (Rig_amd.dispatch l.g l.k ~program:l.program ~lds:l.lds l.args
+        (Rig_amd.dispatch l.g l.k ~base:l.base ~lds:l.lds l.args
            ~shared:l.shared))
 
 (* The driver finds the word that holds a dispatch's LDS as the one word a group
@@ -355,7 +377,7 @@ let lds_word =
   cases
     ~name:(fun ((g : Gpu.t), _) ->
       let a, b, c = g.gc in
-      strf "GC %d.%d.%d" a b c)
+      strf "GC %d.%d.%d, %d dies" a b c g.xccs)
     "a dispatch's LDS is one word, linear in its granules" gpus
     (fun (g, lds) ->
       let k =
