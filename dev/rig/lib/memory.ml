@@ -228,12 +228,9 @@ let borrow_of (root : memory) dev ~host ~address ~handle =
 
 let stamps m = m.root.entry.stamps
 
-let region_info (Region { m; r; _ }) =
+let locate (Region { m; r; _ }) =
   let module D = (val m) in
-  let l = D.locate r in
-  let address = Option.value ~default:(-1) l.address in
-  let host = Option.value ~default:(-1) l.host in
-  (address, l.handle, host)
+  D.locate r
 
 (* Allocation events *)
 
@@ -901,13 +898,14 @@ let room d = Int.max 0 (d.budget - d.used)
 
 (* A fresh memory record over the entry [e] of [d], with its token. *)
 let of_entry d e =
-  let address, handle, host =
+  let m =
     match e.backing with
-    | Driver_memory { region; _ } -> region_info region
-    | Io_memory _ | Kept _ -> (-1, 0n, -1)
+    | Driver_memory { region; _ } ->
+        let l = locate region in
+        make ?host:l.host ?address:l.address ~handle:l.handle d e.bytes e
+    | Io_memory _ | Kept _ -> make d e.bytes e
   in
-  let live = if host >= 0 then d.used else -1 in
-  let m = make ~host ~address ~handle d e.bytes e in
+  let live = if m.host >= 0 then d.used else -1 in
   m.token <- token d.release (Memory e) e.bytes (room d) live;
   m
 
@@ -1070,8 +1068,9 @@ let mapping d m host =
       match made with
       | None -> None
       | Some r -> (
-          let at, by, _ = region_info r in
-          let mp = { on = d; map = r; at; by } in
+          let l = locate r in
+          let at = Option.value ~default:(-1) l.address in
+          let mp = { on = d; map = r; at; by = l.handle } in
           (* Noted on [d] before the memory has it: a word end of [d] that takes
              [d]'s notes between the two leaves the mapping in the memory's
              [maps], which [free_entry] releases. *)

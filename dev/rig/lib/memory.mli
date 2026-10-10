@@ -131,8 +131,8 @@ val make :
 val stamps : memory -> int
 (** [stamps m] is the stamps of the memory [m] lies in, below its borrows. *)
 
-val region_info : region -> int * nativeint * int
-(** [region_info r] is [r]'s address, handle and host address, [-1] for none. *)
+val locate : region -> Rig_edge.location
+(** [locate r] is where [r] lies, as its driver states it. *)
 
 val note : device -> unit
 (** [note d] records [d]'s allocated bytes in the profiles being taken. *)

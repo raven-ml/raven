@@ -450,8 +450,9 @@ let decide d p =
         | None -> host_wait
         | Some r ->
             Dev.protect d (fun () -> d.pair_maps <- (p.index, r) :: d.pair_maps);
-            let at, _, _ = Memory.region_info r in
-            if at < 0 then host_wait else at + skip)
+            match (Memory.locate r).address with
+            | None -> host_wait
+            | Some at -> at + skip)
 
 (* An undecided pair: no way is negative but [host_wait], and an address or an
    object fits in 62 bits. *)

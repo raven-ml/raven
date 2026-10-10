@@ -16,21 +16,24 @@ type t = image
    it. *)
 let place d (e : entry) region code =
   let n = String.length code in
-  let address, handle, host = Memory.region_info region in
+  let l = Memory.locate region in
   match d.copy_queue with
   | Some queue ->
-      let dst =
-        Buffer.of_memory (Memory.make ~host ~address ~handle d e.bytes e) n
+      let m =
+        Memory.make ?host:l.host ?address:l.address ~handle:l.handle d e.bytes e
       in
+      let dst = Buffer.of_memory m n in
       let src = Buffer.create ~memory:Buffer.Pinned d n in
       Buffer.blit_string code 0 src.mem.host n;
       Copy.queued d queue ~src ~dst
-  | None ->
-      if host < 0 then
-        invalid_argf "Rig.Image.load: %s's code memory has no host address"
-          d.name;
-      Dev.wait d (Dev.submitted d);
-      Buffer.blit_string code 0 host n
+  | None -> (
+      match l.host with
+      | None ->
+          invalid_argf "Rig.Image.load: %s's code memory has no host address"
+            d.name
+      | Some host ->
+          Dev.wait d (Dev.submitted d);
+          Buffer.blit_string code 0 host n)
 
 (* The driver's image of [binary] on [d], and the memory its code lies in where
    [d]'s memory holds it. *)
