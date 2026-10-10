@@ -1352,6 +1352,79 @@ let beside_law b =
           (String.get_int64_le l.params 0)
       end
 
+(* Integers at their extremes *)
+
+(* A description's integers may come from another process's bytes: each field
+   whose sum with another bounds an access is drawn where a sum wraps. *)
+type extreme =
+  | Ints of int
+  | Hole_at of int
+  | View_at of int
+  | View_length of int
+
+let pp_extreme ppf = function
+  | Ints n -> Format.fprintf ppf "ints %d" n
+  | Hole_at n -> Format.fprintf ppf "a hole at %d" n
+  | View_at n -> Format.fprintf ppf "a view at %d" n
+  | View_length n -> Format.fprintf ppf "a view of %d bytes" n
+
+let gen_extreme =
+  let open Gen in
+  let n =
+    of_list
+      [
+        max_int;
+        max_int - 1;
+        max_int - 3;
+        max_int - 7;
+        min_int;
+        min_int + 1;
+        -1;
+        1 lsl 60;
+        (max_int / 8) + 1;
+        (max_int / 16) + 1;
+      ]
+  in
+  Gen.with_pp pp_extreme
+    (one_of
+       [
+         map (fun n -> Ints n) (such_that (fun n -> n < 0 || n > max_int / 8) n);
+         map (fun n -> Hole_at n) n;
+         map (fun n -> View_at n) n;
+         map (fun n -> View_length n) n;
+       ])
+
+(* Each answers [Error] at load: none loads, and none raises. *)
+let extreme_law e =
+  let d = fst (Lazy.force devices) in
+  let t = base d in
+  let view offset length =
+    submit 0
+      ~writes:[| Memory { memory = 0; offset; length } |]
+      [| fill ~image:0 ~groups:1 0 |]
+  in
+  let t =
+    match e with
+    | Ints n -> { t with ints = n }
+    | Hole_at n ->
+        {
+          t with
+          memory =
+            [|
+              alloc
+                ~init:
+                  {
+                    bytes = String.make 8 '\000';
+                    holes = [| hole n (addr 0) |];
+                  }
+                0 64;
+            |];
+        }
+    | View_at n -> { t with steps = [| view n 8 |] }
+    | View_length n -> { t with steps = [| view 8 n |] }
+  in
+  is_error ~pp:(fun _ _ -> ()) ~msg:"load answers Error" (G.load t [| d |])
+
 let tests =
   [
     group ~timeout "steps"
@@ -1409,6 +1482,8 @@ let tests =
       ];
     group ~timeout "refusals"
       [
+        prop "load answers Error for integers whose sums would wrap" gen_extreme
+          extreme_law;
         cases
           ~name:(fun (n, _, _) -> n)
           "load answers Error for" (refusals @ host_refusals) test_refusal;

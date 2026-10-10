@@ -138,7 +138,17 @@ let leaf_two t = function
 
 let width h = match h.width with W32 -> 4 | W64 -> 8
 
+(* Bounds are compared by subtraction: a description's integers may be any, and
+   a sum of two may wrap. *)
 let check_holes what len check holes =
+  Array.iter
+    (fun h ->
+      if h.at < 0 || h.at > len - width h then
+        refuse "%s: a hole at %d outside its %d bytes" what h.at len;
+      if h.shift < 0 || h.shift > 62 then
+        refuse "%s: a hole's shift %d outside 0 to 62" what h.shift;
+      check h.leaf)
+    holes;
   let sorted = List.sort (fun a b -> compare a.at b.at) (Array.to_list holes) in
   ignore
     (List.fold_left
@@ -148,20 +158,12 @@ let check_holes what len check holes =
              refuse "%s: holes at %d and %d share a byte" what p.at h.at
          | _ -> ());
          Some h)
-       None sorted);
-  Array.iter
-    (fun h ->
-      if h.at < 0 || h.at + width h > len then
-        refuse "%s: a hole at %d outside its %d bytes" what h.at len;
-      if h.shift < 0 || h.shift > 62 then
-        refuse "%s: a hole's shift %d outside 0 to 62" what h.shift;
-      check h.leaf)
-    holes
+       None sorted)
 
 let check_view t sizes (v : view) =
   index "memory" (Array.length t.memory) v.memory;
   let n = sizes.(v.memory) in
-  if v.offset < 0 || v.length < 0 || v.offset + v.length > n then
+  if v.offset < 0 || v.length < 0 || v.offset > n - v.length then
     refuse "memory %d: a view of %d bytes at %d outside its %d bytes" v.memory
       v.length v.offset n
 
@@ -246,7 +248,7 @@ let check t sizes devices =
       if a <> arch then
         refuse "device %d: %s is %S, not %S" i (Rig.name devices.(i)) a arch)
     t.devices;
-  if t.ints < 0 then refuse "%d ints" t.ints;
+  if t.ints < 0 || t.ints > max_int / 8 then refuse "%d ints" t.ints;
   let ndev = Array.length t.devices in
   Array.iteri
     (fun i -> function
@@ -1230,6 +1232,11 @@ let input_on p (f : frame) i d =
     | Some b -> b
     | None -> invalid "input %d: %s cannot borrow it" i (Rig.name dev)
 
+(* CR: Order host accesses to the ints through this copy's buffer stamps: [Read]
+   before an Int load, [Read_write] before a loop's trip store. An earlier
+   Submit may still read or write the same memory through an Ints slot. The wait
+   at run entry protects reuse across runs only; a later trip can overwrite an
+   earlier kernel's input within this run. *)
 let run_value (p : here) f k : value -> int = function
   | Fixed n -> n
   | Int i -> Int64.to_int (Bigarray.Array1.unsafe_get p.ints.(k) i)
@@ -1432,6 +1439,12 @@ let load_there t devices =
        there. *)
     let size = function Alloc { bytes; _ } -> bytes | Rail _ -> max_int in
     check t (Array.map size t.memory) devices;
+    let inputs = Array.length t.inputs in
+    if
+      inputs > (max_int - 16) / 24
+      || t.ints > (max_int - 16 - (24 * inputs)) / 8
+    then
+      refuse "%d inputs and %d ints: more than a run's words hold" inputs t.ints;
     Array.map proxy_id devices
   with
   | exception Refused why -> Error why
@@ -1474,6 +1487,11 @@ let load_there t devices =
 
 let no_rails _ = None
 
+(* CR: Loaded steps must own the arrays they execute. With [ints = 1], changing
+   the caller's Host.values.(0) from [Int 0] to [Int max_int] after load reaches
+   run_value's unsafe_get unchecked. Capture mutable description/device arrays
+   before validation, including retained Submit slots and input specifications,
+   then keep the owned runtime data. *)
 let load ?rails t devices =
   let here () =
     let rails = Option.value rails ~default:no_rails in
