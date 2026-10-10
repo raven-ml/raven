@@ -140,6 +140,10 @@ let permuted o p y =
 
 let axis_of o = Gen.int_range 0 (Array.length o.s - 1)
 
+(* Axis [a] of [o] as the caller writes it: from the start, or from the end
+   where [neg]. *)
+let spell o neg a = if neg then a - Array.length o.s else a
+
 let laws =
   group "laws"
     [
@@ -180,11 +184,13 @@ let laws =
       prop "transpose moves each axis where its permutation says"
         Gen.(
           let* o = operand () in
-          let+ p = permutation (List.init (Array.length o.s) Fun.id) in
-          (o, p))
-        (fun (o, p) ->
+          let* p = permutation (List.init (Array.length o.s) Fun.id) in
+          let+ neg = bool in
+          (o, p, neg))
+        (fun (o, p, neg) ->
           covers o;
-          permuted o (Array.of_list p) (Nx.transpose ~axes:p o.x);
+          permuted o (Array.of_list p)
+            (Nx.transpose ~axes:(List.map (spell o neg) p) o.x);
           permuted o (rev_axes (Array.length o.s)) (Nx.transpose o.x));
       prop "moveaxis and swapaxes are permutations"
         Gen.(
@@ -208,9 +214,10 @@ let laws =
       prop "flip reverses each axis it names"
         Gen.(
           let* o = operand () in
-          let+ f = subsequence (List.init (Array.length o.s) Fun.id) in
-          (o, f))
-        (fun (o, f) ->
+          let* f = subsequence (List.init (Array.length o.s) Fun.id) in
+          let+ neg = bool in
+          (o, f, neg))
+        (fun (o, f, neg) ->
           covers o;
           is o.s
             (fun i ->
@@ -218,7 +225,7 @@ let laws =
                 (Array.mapi
                    (fun a k -> if List.mem a f then o.s.(a) - 1 - k else k)
                    i))
-            (Nx.flip ~axes:f o.x);
+            (Nx.flip ~axes:(List.map (spell o neg) f) o.x);
           is o.s
             (fun i -> at o (Array.mapi (fun a k -> o.s.(a) - 1 - k) i))
             (Nx.flip o.x));
@@ -248,10 +255,13 @@ let laws =
         Gen.(
           let* o = operand ~min_rank:1 () in
           let* a = axis_of o in
-          let+ b = int_range a (Array.length o.s - 1) in
-          (o, a, b))
-        (fun (o, a, b) ->
-          let y = Nx.flatten ~start_dim:a ~end_dim:b o.x in
+          let* b = int_range a (Array.length o.s - 1) in
+          let+ neg = bool in
+          (o, a, b, neg))
+        (fun (o, a, b, neg) ->
+          let y =
+            Nx.flatten ~start_dim:(spell o neg a) ~end_dim:(spell o neg b) o.x
+          in
           let r = Array.length o.s in
           equal (array int)
             (Array.concat
@@ -269,12 +279,13 @@ let laws =
           let* a = axis_of o in
           let d = o.s.(a) in
           let* window = int_range 1 (max 1 d) in
-          let+ step = int_range 1 3 in
-          (o, a, window, step))
-        (fun (o, a, window, step) ->
+          let* step = int_range 1 3 in
+          let+ neg = bool in
+          (o, a, window, step, neg))
+        (fun (o, a, window, step, neg) ->
           assume (window <= o.s.(a));
           covers o;
-          let y = Nx.sliding_window ~axis:a ~window ~step o.x in
+          let y = Nx.sliding_window ~axis:(spell o neg a) ~window ~step o.x in
           let r = Array.length o.s in
           let s' = Array.append o.s [| window |] in
           s'.(a) <- ((o.s.(a) - window) / step) + 1;
@@ -288,10 +299,12 @@ let laws =
         Gen.(
           let* o = operand ~min_rank:1 () in
           let* a = axis_of o in
-          let+ n = int_range 1 4 in
-          (o, a, n))
-        (fun (o, a, n) ->
-          let parts = Nx.split ~axis:a n o.x in
+          let* n = int_range 1 4 in
+          let+ neg = bool in
+          (o, a, n, neg))
+        (fun (o, a, n, neg) ->
+          covers o;
+          let parts = Nx.split ~axis:(spell o neg a) n o.x in
           let d = o.s.(a) in
           equal ~msg:"runs" int n (List.length parts);
           let start = ref 0 in
@@ -331,9 +344,10 @@ let laws =
         Gen.(
           let* o = operand ~min_rank:1 () in
           let* a = axis_of o in
-          let+ n = int_range 0 3 in
-          (o, a, n))
-        (fun (o, a, n) ->
+          let* n = int_range 0 3 in
+          let+ neg = bool in
+          (o, a, n, neg))
+        (fun (o, a, n, neg) ->
           covers o;
           let s' = Array.copy o.s in
           s'.(a) <- n * o.s.(a);
@@ -342,7 +356,7 @@ let laws =
               let j = Array.copy i in
               j.(a) <- i.(a) / n;
               at o j)
-            (Nx.repeat ~axis:a n o.x);
+            (Nx.repeat ~axis:(spell o neg a) n o.x);
           is [| n * numel o.s |] (fun i -> o.e.(i.(0) / n)) (Nx.repeat n o.x));
     ]
 
@@ -397,9 +411,27 @@ let views =
           each "flip" (Nx.flip ~axes:[ 1 ] x);
           each "sliding_window" (Nx.sliding_window ~window:2 x);
           each "split" (List.nth (Nx.split ~axis:2 3 x) 2);
-          each "tile of a unit axis" (Nx.tile [| 1; 1; 1 |] x);
+          each "tile of a unit axis"
+            (Nx.tile [| 3; 1 |] (Nx.reshape [| 1; 24 |] x));
           each "repeat of a unit axis"
             (Nx.repeat ~axis:0 3 (Nx.reshape [| 1; 24 |] x)));
+      cases
+        ~name:(fun l -> Format.asprintf "%a" pp_layout l)
+        "a permutation, flip, broadcast or window of a strided operand is a \
+         view"
+        [ Reversed; Transposed ]
+        (fun l ->
+          let x = (operand_of [| 2; 3; 4 |] l).x in
+          let each name y = equal ~msg:name bool true (shares x y) in
+          each "broadcast_to" (Nx.broadcast_to [| 5; 2; 3; 4 |] x);
+          each "unsqueeze" (Nx.unsqueeze ~axes:[ 0; -1 ] x);
+          each "squeeze" (Nx.squeeze (Nx.unsqueeze ~axes:[ 1 ] x));
+          each "transpose" (Nx.transpose x);
+          each "moveaxis" (Nx.moveaxis (-1) 0 x);
+          each "swapaxes" (Nx.swapaxes 0 (-1) x);
+          each "flip" (Nx.flip x);
+          each "sliding_window" (Nx.sliding_window ~axis:1 ~window:2 x);
+          each "split" (List.nth (Nx.split ~axis:(-1) 3 x) 1));
       test "a reshape no stride expresses copies" (fun () ->
           let x = Nx.transpose (operand_of [| 2; 3 |] Plain).x in
           let y = Nx.reshape [| 6 |] x in
@@ -438,25 +470,52 @@ let refusals =
     [
       test "messages name the function and the operand" (fun () ->
           raises
-            (Invalid_argument "Nx.reshape: [2; 3] has 6 elements, [4; 2] has 8")
+            (Invalid_argument
+               "Nx.reshape: int32 [2; 3] has 6 elements, [4; 2] has 8")
             (fun () -> Nx.reshape [| 4; 2 |] x);
           raises
             (Invalid_argument
-               "Nx.broadcast_to: [2; 3] does not broadcast to [2; 4]")
+               "Nx.broadcast_to: int32 [2; 3] does not broadcast to [2; 4]")
             (fun () -> Nx.broadcast_to [| 2; 4 |] x);
           raises
             (Invalid_argument "Nx.squeeze: axis 1 of int32 [2; 3] has extent 3")
             (fun () -> Nx.squeeze ~axes:[ 1 ] x);
           raises
             (Invalid_argument
-               "Nx.transpose: axes [0; 0] are not a permutation of int32 [2; \
-                3]'s") (fun () -> Nx.transpose ~axes:[ 0; 0 ] x);
+               "Nx.transpose: axes [0] are not a permutation of int32 [2; 3]'s")
+            (fun () -> Nx.transpose ~axes:[ 0 ] x);
+          raises
+            (Invalid_argument "Nx.transpose: axis 0 of int32 [2; 3] repeats")
+            (fun () -> Nx.transpose ~axes:[ 0; 0 ] x);
           raises (Invalid_argument "Nx.dim: 2 is not an axis of int32 [2; 3]")
-            (fun () -> Nx.dim 2 x));
+            (fun () -> Nx.dim 2 x);
+          raises
+            (Invalid_argument
+               "Nx.broadcast_shapes: [4; 3] does not broadcast with [2; 1], \
+                [1; 3]: axis 0 has 4, neither 1 nor 2") (fun () ->
+              Nx.broadcast_shapes [ [| 2; 1 |]; [| 1; 3 |]; [| 4; 3 |] ]);
+          raises
+            (Invalid_argument "Nx.broadcast_shapes: [-1] has a negative extent")
+            (fun () -> Nx.broadcast_shapes [ [| 2 |]; [| -1 |] ]);
+          raises
+            (Invalid_argument
+               "Nx.broadcast_arrays: [4] does not broadcast with [2; 3]: axis \
+                1 has 4, neither 1 nor 3") (fun () ->
+              Nx.broadcast_arrays [ x; Nx.zeros Nx.int32 [| 4 |] ]);
+          raises
+            (Invalid_argument
+               "Nx.split: 0 runs of int32 [2; 3]; give at least 1") (fun () ->
+              Nx.split ~axis:0 0 x);
+          raises
+            (Invalid_argument
+               "Nx.tile: reps [2] has fewer entries than int32 [2; 3] has axes")
+            (fun () -> Nx.tile [| 2 |] x));
       cases ~name:fst "each refusal raises"
         [
           r "reshape, two unknown extents" (fun () -> Nx.reshape [| -1; -1 |] x);
           r "reshape, an extent below -1" (fun () -> Nx.reshape [| -2; -3 |] x);
+          r "reshape, more elements than an int counts" (fun () ->
+              Nx.reshape [| max_int; 2; 0 |] x);
           r "reshape, an unknown that does not divide" (fun () ->
               Nx.reshape [| 4; -1 |] x);
           r "broadcast_to, fewer axes" (fun () -> Nx.broadcast_to [| 3 |] x);

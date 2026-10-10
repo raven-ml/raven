@@ -191,8 +191,8 @@ val unsqueeze : axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 val flatten : ?start_dim:int -> ?end_dim:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [flatten ~start_dim ~end_dim x] is [x] with its axes [start_dim] to
     [end_dim], both included, merged into one. [start_dim] defaults to [0] and
-    [end_dim] to [-1]; a 0-d [x] flattens to [[1]]. A view where strides express
-    it, a copy otherwise.
+    [end_dim] to [-1]; a 0-d [x] flattens as the [[1]] value it holds. A view
+    where strides express it, a copy otherwise.
 
     Raises [Invalid_argument] if either is not an axis of [x] or [start_dim]
     comes after [end_dim]. *)
@@ -294,10 +294,9 @@ module Pattern : sig
       each is in both operands and not in the result. Every operand name is in
       the result or summed. A group in an operand splits that operand's axis,
       and an extent a group leaves unknown comes from the other operand where
-      the name appears there; a segmented group's outer extent is its offsets'
-      length minus one ([contract]). [...] stands for the same leading axes in
-      all three layouts, kept as batch axes; [1] drops a unit axis of an operand
-      or adds one to the result.
+      the name appears there. [...] stands for the same leading axes in all three
+      layouts, kept as batch axes; [1] drops a unit axis of an operand or adds
+      one to the result.
 
       Raises [Invalid_argument] naming [s] if it is not in the grammar, a name
       repeats within a layout, [...] appears twice in a layout, or a name breaks
@@ -325,7 +324,8 @@ val rearrange :
     more axes than [x] has or, without [...], other than [x]'s rank, a [1] on
     the left meets an extent other than [1], a group's extents do not divide or
     multiply to its axis, a group has two unknown extents, a size disagrees with
-    the extent [x] gives its name, or a name in [sizes] is not in [p]. *)
+    the extent [x] gives its name, a name in [sizes] is not in [p] or is there
+    twice, or a size is negative. *)
 
 (** {1:arith Arithmetic}
 

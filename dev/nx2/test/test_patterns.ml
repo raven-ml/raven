@@ -32,6 +32,56 @@ let host s =
   let data = Array.init (numel s) (fun k -> Int32.of_int (k + 1)) in
   (Nx.Repr.of_array Nx.Host.v (A.of_array D.Int32 s data), data)
 
+(* Operands laid out C-contiguous, reversed along every axis, with their axes
+   reversed, or broadcast from one element. *)
+type layout = Plain | Reversed | Transposed | Broadcast
+
+let pp_layout ppf l =
+  Format.pp_print_string ppf
+    (match l with
+    | Plain -> "plain"
+    | Reversed -> "reversed"
+    | Transposed -> "transposed"
+    | Broadcast -> "broadcast")
+
+let layouts =
+  Gen.of_list ~pp:pp_layout [ Plain; Reversed; Transposed; Broadcast ]
+
+(* Distinct elements of shape [s] laid out as [l] on the host, and the elements
+   it reads in C order. *)
+let laid l s =
+  let r = Array.length s and n = numel s in
+  let data = Array.init n (fun k -> Int32.of_int (k + 1)) in
+  let view m a = Option.get (A.move m a) in
+  let rev = Array.init r (fun i -> r - 1 - i) in
+  let a =
+    match l with
+    | Plain -> A.of_array D.Int32 s data
+    | Reversed ->
+        let whole =
+          Array.map
+            (fun d : Nx_array.Move.range ->
+              { start = max 0 (d - 1); count = d; step = -1 })
+            s
+        in
+        view (Slice whole)
+          (A.of_array D.Int32 s (Array.of_list (List.rev (Array.to_list data))))
+    | Transposed ->
+        let ts = Array.map (fun a -> s.(a)) rev in
+        let base =
+          Array.init n (fun k ->
+              data.(position s (Array.map (fun a -> (index ts k).(a)) rev)))
+        in
+        view (Permute rev) (A.of_array D.Int32 ts base)
+    | Broadcast ->
+        if n = 0 then A.of_array D.Int32 s data
+        else view (Broadcast s) (A.of_array D.Int32 [||] [| 1l |])
+  in
+  let read =
+    match l with Broadcast -> Array.map (fun _ -> 1l) data | _ -> data
+  in
+  (Nx.Repr.of_array Nx.Host.v a, read)
+
 (* A drawn one-operand pattern: named axes [0 .. n - 1] of [extents], and each
    side's items: a group of names (one name written alone), a unit, or the axes
    [...] covers, of [covered] extents. *)
@@ -173,8 +223,8 @@ let reference d data i =
 let laws =
   group "laws"
     [
-      prop "rearrange puts each name's position where the pattern says" drawn
-        (fun d ->
+      prop "rearrange puts each name's position where the pattern says"
+        (Gen.pair drawn layouts) (fun (d, l) ->
           let s = shape_of d d.left in
           cover "no element" (numel s = 0);
           cover "a split group"
@@ -186,16 +236,18 @@ let laws =
                (function Names (_ :: _ :: _) -> true | _ -> false)
                d.right);
           cover "[...]" (Array.length d.covered > 0);
-          let x, data = host s in
+          cover "a strided operand" (l = Reversed || l = Transposed);
+          let x, data = laid l s in
           let y = Nx.rearrange ~sizes:d.sizes (Nx.Pattern.v (text d)) x in
           let s' = shape_of d d.right in
           equal ~msg:"shape" (array int) s' (Nx.shape y);
           equal ~msg:"elements" (array int32)
             (Array.init (numel s') (fun k -> reference d data (index s' k)))
             (elements y));
-      prop "inverse undoes a rearrangement" drawn (fun d ->
+      prop "inverse undoes a rearrangement" (Gen.pair drawn layouts)
+        (fun (d, l) ->
           let s = shape_of d d.left in
-          let x, data = host s in
+          let x, data = laid l s in
           let p = Nx.Pattern.v (text d) in
           let y = Nx.rearrange ~sizes:d.sizes p x in
           (* The inverse splits the groups [p] merged: their extents. *)
@@ -268,6 +320,7 @@ let parsing =
           ("b % -> b", "unexpected '%' at 2");
           ("2b -> 2b", "unexpected '2' at 0");
           ("b -> b | b", "| needs two operands");
+          ("i j -> j i |", "| needs a name");
           ("a, b, c -> a", "a pattern has one or two operands");
           ( "b h q d, b h k d -> b h q k",
             "d is in both operands and not in the result; write it after |" );
@@ -334,6 +387,12 @@ let calls =
           call_error
             ~sizes:[ ("e", 3) ]
             "b h t -> t h b" x ": e in ~sizes is not in it";
+          call_error
+            ~sizes:[ ("h", 2); ("h", 2) ]
+            "b (h d) t -> b h d t" x ": h is twice in ~sizes";
+          call_error
+            ~sizes:[ ("h", -2) ]
+            "b (h d) t -> b h d t" x ": h = -2 in ~sizes is negative";
           call_error "b 1 t -> b t" x ": axis 1 has extent 6 where it has 1";
           call_error "i k, k j -> i j | k" x
             ": has two operands; use Nx.einsum or Nx.contract");

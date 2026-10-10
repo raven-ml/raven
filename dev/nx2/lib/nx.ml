@@ -135,21 +135,36 @@ let zeros_like x =
   | None -> z
   | Some p -> Eval.eval ~by (Value.Place (p, z))
 
-(* The shape [s] and [s'] broadcast to: aligned at their last axes, each extent
-   equal or [1]. *)
-let broadcast_shape ~by s s' =
+(* The shape [s] and [s'] broadcast to, aligned at their last axes, each extent
+   equal or [1]; [Error (a, e, e')] at the first axis [a] of that shape where
+   [s] has [e] and [s'] has [e'], neither [1] nor the other. *)
+let merge s s' =
   let r = max (Array.length s) (Array.length s') in
   let at s i =
     let k = i - (r - Array.length s) in
     if k < 0 then 1 else s.(k)
   in
-  Array.init r (fun i ->
+  let out = Array.make r 1 in
+  let rec go i =
+    if i = r then Ok out
+    else
       let a = at s i and b = at s' i in
-      if a = b || b = 1 then a
-      else if a = 1 then b
-      else
-        invalid_argf "%s: shapes %a and %a do not broadcast" by pp_shape s
-          pp_shape s')
+      if a = b || b = 1 then (
+        out.(i) <- a;
+        go (i + 1))
+      else if a = 1 then (
+        out.(i) <- b;
+        go (i + 1))
+      else Error (i, a, b)
+  in
+  go 0
+
+let broadcast_shape ~by s s' =
+  match merge s s' with
+  | Ok s'' -> s''
+  | Error _ ->
+      invalid_argf "%s: shapes %a and %a do not broadcast" by pp_shape s
+        pp_shape s'
 
 let broadcast ~by s x =
   if Prim.has_shape x s then x else Eval.eval ~by (Value.Move (Broadcast s, x))
@@ -219,12 +234,19 @@ let axes ~by x l =
   List.map
     (fun a ->
       let a' = axis ~by x a in
-      if seen.(a') then invalid_argf "%s: axis %d repeats" by a;
+      if seen.(a') then invalid_argf "%s: axis %d of %a repeats" by a pp_value x;
       seen.(a') <- true;
       a')
     l
 
 let move ~by mv x = Eval.eval ~by (Value.Move (mv, x))
+
+(* [a * b] for extents, or raises naming [by] past an [int]. *)
+let times ~by x a b =
+  if a <> 0 && b > max_int / a then
+    invalid_argf "%s: %a would have more elements than an int counts" by
+      pp_value x;
+  a * b
 
 let reshape s x =
   let by = "Nx.reshape" in
@@ -239,42 +261,54 @@ let reshape s x =
           invalid_argf "%s: %a has two unknown extents" by pp_shape s;
         unknown := Some i
       end
-      else known := !known * e)
+      else known := times ~by x !known e)
     s;
   (match !unknown with
   | Some i when !known > 0 && n mod !known = 0 -> s.(i) <- n / !known
   | Some _ ->
-      invalid_argf "%s: %a has %d elements, which %a cannot hold" by pp_shape
-        (shape x) n pp_shape s
+      invalid_argf "%s: %a has %d elements, which %a cannot hold" by pp_value x
+        n pp_shape s
   | None ->
       if !known <> n then
-        invalid_argf "%s: %a has %d elements, %a has %d" by pp_shape (shape x) n
+        invalid_argf "%s: %a has %d elements, %a has %d" by pp_value x n
           pp_shape s !known);
   move ~by (Reshape s) x
 
 let broadcast_to s x =
   let by = "Nx.broadcast_to" in
-  let xs = shape x in
-  let r = Array.length s and k = Array.length xs in
-  let fits i e =
-    e >= 0 && (i < r - k || xs.(i - (r - k)) = 1 || xs.(i - (r - k)) = e)
+  let fits =
+    Array.for_all (fun e -> e >= 0) s
+    && match merge (shape x) s with Ok s' -> s' = s | Error _ -> false
   in
-  if k > r || not (Array.for_all Fun.id (Array.mapi fits s)) then
-    invalid_argf "%s: %a does not broadcast to %a" by pp_shape xs pp_shape s;
+  if not fits then
+    invalid_argf "%s: %a does not broadcast to %a" by pp_value x pp_shape s;
   move ~by (Broadcast (Array.copy s)) x
 
-let broadcast_shapes ss =
-  let by = "Nx.broadcast_shapes" in
-  List.iter
-    (fun s ->
-      if Array.exists (fun e -> e < 0) s then
-        invalid_argf "%s: %a has a negative extent" by pp_shape s)
-    ss;
-  List.fold_left (broadcast_shape ~by) [||] ss
+(* The shape [shapes] broadcast to, raising naming the first that does not
+   broadcast with those before it, and the axis where it does not. *)
+let broadcast_all ~by shapes =
+  let pp_list ppf l =
+    Format.pp_print_list
+      ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+      pp_shape ppf l
+  in
+  let step (s, before) s' =
+    if Array.exists (fun e -> e < 0) s' then
+      invalid_argf "%s: %a has a negative extent" by pp_shape s';
+    match merge s s' with
+    | Ok s -> (s, before @ [ s' ])
+    | Error (a, e, e') ->
+        invalid_argf
+          "%s: %a does not broadcast with %a: axis %d has %d, neither 1 nor %d"
+          by pp_shape s' pp_list before a e' e
+  in
+  fst (List.fold_left step ([||], []) shapes)
+
+let broadcast_shapes ss = broadcast_all ~by:"Nx.broadcast_shapes" ss
 
 let broadcast_arrays xs =
   let by = "Nx.broadcast_arrays" in
-  let s = List.fold_left (fun s x -> broadcast_shape ~by s (shape x)) [||] xs in
+  let s = broadcast_all ~by (List.map shape xs) in
   List.map (broadcast ~by s) xs
 
 let squeeze ?axes:l x =
@@ -310,38 +344,32 @@ let unsqueeze ~axes:l x =
       if added.(a') then invalid_argf "%s: position %d repeats" by a;
       added.(a') <- true)
     l;
-  let next = ref 0 in
-  let s' =
-    Array.map
-      (fun added ->
-        if added then 1
-        else begin
-          incr next;
-          s.(!next - 1)
-        end)
-      added
-  in
+  (* [x]'s axes fill the positions not added, in order. *)
+  let s' = Array.make r 1 in
+  List.iteri
+    (fun k i -> s'.(i) <- s.(k))
+    (List.filter (fun i -> not added.(i)) (List.init r Fun.id));
   move ~by (Reshape s') x
 
 let flatten ?(start_dim = 0) ?(end_dim = -1) x =
   let by = "Nx.flatten" in
+  (* A 0-d value flattens as the [[1]] it holds. *)
+  let x = if ndim x = 0 then move ~by (Reshape [| 1 |]) x else x in
   let s = shape x in
-  if Array.length s = 0 then move ~by (Reshape [| 1 |]) x
-  else
-    let a = axis ~by x start_dim and b = axis ~by x end_dim in
-    if a > b then
-      invalid_argf "%s: start_dim %d comes after end_dim %d in %a" by start_dim
-        end_dim pp_value x;
-    let merged = Array.fold_left ( * ) 1 (Array.sub s a (b - a + 1)) in
-    let s' =
-      Array.concat
-        [
-          Array.sub s 0 a;
-          [| merged |];
-          Array.sub s (b + 1) (Array.length s - b - 1);
-        ]
-    in
-    move ~by (Reshape s') x
+  let a = axis ~by x start_dim and b = axis ~by x end_dim in
+  if a > b then
+    invalid_argf "%s: start_dim %d comes after end_dim %d in %a" by start_dim
+      end_dim pp_value x;
+  let merged = Array.fold_left (times ~by x) 1 (Array.sub s a (b - a + 1)) in
+  let s' =
+    Array.concat
+      [
+        Array.sub s 0 a;
+        [| merged |];
+        Array.sub s (b + 1) (Array.length s - b - 1);
+      ]
+  in
+  move ~by (Reshape s') x
 
 let permute ~by p x = move ~by (Permute p) x
 
@@ -351,21 +379,10 @@ let transpose ?axes:l x =
   match l with
   | None -> permute ~by (Array.init r (fun i -> r - 1 - i)) x
   | Some l ->
-      let seen = Array.make r false in
-      let p =
-        List.map
-          (fun a ->
-            let a' = if a < 0 then a + r else a in
-            if a' >= 0 && a' < r && not seen.(a') then (
-              seen.(a') <- true;
-              a')
-            else -1)
-          l
-      in
-      if List.length l <> r || List.mem (-1) p then
+      if List.length l <> r then
         invalid_argf "%s: axes %a are not a permutation of %a's" by pp_ints l
           pp_value x;
-      permute ~by (Array.of_list p) x
+      permute ~by (Array.of_list (axes ~by x l)) x
 
 let moveaxis a b x =
   let by = "Nx.moveaxis" in
@@ -410,7 +427,8 @@ let sliding_window ?axis:(a = -1) ~window ?(step = 1) x =
   let axis = axis ~by x a in
   let d = Prim.dim x axis in
   if window < 1 || step < 1 then
-    invalid_argf "%s: window %d and step %d must be at least 1" by window step;
+    invalid_argf "%s: window %d and step %d over %a; give at least 1" by window
+      step pp_value x;
   if window > d then
     invalid_argf "%s: window %d exceeds axis %d of %a" by window a pp_value x;
   move ~by (Window [| { axis; size = window; step; dilation = 1 } |]) x
@@ -418,7 +436,8 @@ let sliding_window ?axis:(a = -1) ~window ?(step = 1) x =
 let split ~axis:a n x =
   let by = "Nx.split" in
   let a = axis ~by x a in
-  if n < 1 then invalid_argf "%s: %d runs" by n;
+  if n < 1 then
+    invalid_argf "%s: %d runs of %a; give at least 1" by n pp_value x;
   let s = shape x in
   let d = s.(a) in
   let start = ref 0 in
@@ -437,12 +456,14 @@ let stretch ~by ~outer n x =
   if Array.for_all (( = ) 1) n then x
   else
     let s = shape x in
-    let axes f = Array.of_list (List.concat (List.mapi f (Array.to_list s))) in
+    let spread f =
+      Array.of_list (List.concat (List.mapi f (Array.to_list s)))
+    in
     let beside k i d =
       if n.(i) = 1 then [ d ] else if outer then [ k; d ] else [ d; k ]
     in
-    let unit = axes (beside 1) and wide = axes (fun i -> beside n.(i) i) in
-    let merged = Array.mapi (fun i d -> n.(i) * d) s in
+    let unit = spread (beside 1) and wide = spread (fun i -> beside n.(i) i) in
+    let merged = Array.mapi (fun i d -> times ~by x n.(i) d) s in
     move ~by (Reshape merged)
       (move ~by (Broadcast wide) (move ~by (Reshape unit) x))
 
@@ -450,8 +471,11 @@ let tile reps x =
   let by = "Nx.tile" in
   let s = shape x in
   let r = Array.length reps and k = Array.length s in
-  if r < k || Array.exists (fun n -> n < 0) reps then
-    invalid_argf "%s: reps %a for %a" by pp_shape reps pp_value x;
+  if r < k then
+    invalid_argf "%s: reps %a has fewer entries than %a has axes" by pp_shape
+      reps pp_value x;
+  if Array.exists (fun n -> n < 0) reps then
+    invalid_argf "%s: reps %a has a negative entry" by pp_shape reps;
   let lead = Array.append (Array.make (r - k) 1) s in
   let x = if r = k then x else move ~by (Reshape lead) x in
   stretch ~by ~outer:true reps x

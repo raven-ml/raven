@@ -24,15 +24,19 @@ type plan
 (** A one-operand pattern prepared for {!moves}: its names numbered, so that a
     call reads arrays and allocates only the movements. *)
 
+(** The type for a pattern's operands. *)
+type kind = private
+  | One of { operand : layout; plan : plan }
+  | Two of { a : layout; b : layout; summed : string list }
+      (** [summed] is the names after [|], in order. With two operands, an
+          [Ellipsis] leads all three layouts or none. *)
+
 type t = private {
   text : string;  (** As written, for messages. *)
-  operands : layout list;  (** One or two. *)
   result : layout;
-  summed : string list;  (** The names after [|], in order. *)
-  plan : plan option;  (** [Some] for one operand. *)
+  kind : kind;
 }
-(** A pattern whose structure holds the rules of [Nx.Pattern.v]. With two
-    operands, an [Ellipsis] leads all three layouts or none. *)
+(** A pattern whose structure holds the rules of [Nx.Pattern.v]. *)
 
 val v : by:string -> string -> t
 (** [v ~by s] is the pattern [s].
