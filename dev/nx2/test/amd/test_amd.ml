@@ -822,10 +822,20 @@ let any_operand g (D.Any d as dt) ~batch ~rows ~k ~broadcast ~seed : S.operand =
   let strides = [| (if broadcast then 0 else rows * k); k; 1 |] in
   { buffer; dtype = D.code d; shape = [| batch; rows; k |]; strides; first = 0 }
 
+(* Whether a contraction's descriptor admits the accumulator [acc]: nx refuses
+   one it does not before any kernel plans. *)
+let admits acc =
+  match
+    Nx_kernel.Spec.contract ~batch:[||] ~contracting:[||] ~acc ~out:acc
+      ~init:false
+  with
+  | _ -> true
+  | exception Invalid_argument _ -> false
+
 (* For every operand, accumulator and output dtypes, the plan declines, or its
    result is within the error bound (float sums) or exact (integer sums), the
    output written as a cast from the accumulator writes it. *)
-let every_quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
+let quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
   let g = S.gpu () in
   let x = any_operand g a ~batch ~rows:m ~k ~broadcast:false ~seed:1 in
   let w = any_operand g b ~batch ~rows:n ~k ~broadcast ~seed:2 in
@@ -867,6 +877,11 @@ let every_quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
       in
       equal ~msg:(strf "wrong outputs, the first %d" r.at) int 0 r.wrong;
       at_most ~msg:(strf "worst at output %d" r.at) float_exact ~than:1. r.worst
+
+(* The law, over the accumulators the descriptor admits. *)
+let every_quadruple (((_, _, acc, _), _, _, _) as q) =
+  if not (admits acc) then collect "the descriptor refuses its accumulator"
+  else quadruple q
 
 let quadruples =
   let open Gen in

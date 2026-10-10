@@ -4,7 +4,7 @@
 (tests
  (names test_amd)
  (modules test_amd)
- (libraries nx_array nx_amd_support nx_gpu_ref rig windtrap))
+ (libraries nx_array nx_kernel nx_amd_support nx_gpu_ref rig windtrap))
 
 ; The library's kernels.ml, built here beside a stub that reads kernels.h.
 
