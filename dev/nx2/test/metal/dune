@@ -1,3 +1,6 @@
+; Correctness on the Mac's GPU, skipping without one; and kernels.ml against
+; kernels.h, on any machine.
+
 (tests
  (names test_metal)
  (modules test_metal)
@@ -7,3 +10,18 @@
  (names test_metal_place)
  (modules test_metal_place)
  (libraries nx nx_array nx_metal_support rig windtrap))
+
+; The library's kernels.ml, built here beside a stub that reads kernels.h.
+
+(tests
+ (names test_metal_kernels)
+ (modules test_metal_kernels kernels)
+ (libraries windtrap)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../lib/metal ../../lib/array)
+  (extra_deps ../../lib/metal/kernels.h)
+  (names test_metal_kernels_stubs)))
+
+(rule
+ (copy ../../lib/metal/kernels.ml kernels.ml))

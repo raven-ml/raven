@@ -4,12 +4,11 @@
   ---------------------------------------------------------------------------*/
 
 /* nx.metal's metallib (kernels/kernels.metallib), included by the
-   assembler, and its kernels' names. The section and the symbols'
-   spelling are the object format's: ELF, Mach-O or COFF. */
+   assembler. The section and the symbols' spelling are the object
+   format's: ELF, Mach-O or COFF. */
 
-#define _GNU_SOURCE
-
-#include "nx_metal.h"
+#include <caml/alloc.h>
+#include <caml/mlvalues.h>
 
 #define STR_(x) #x
 #define STR(x) STR_(x)
@@ -36,13 +35,9 @@ __asm__(SECTION "\n"
 
 extern const char nx_metal_lib[], nx_metal_lib_end[];
 
-const char *nx_metal_metallib(size_t *len) {
-  *len = (size_t)(nx_metal_lib_end - nx_metal_lib);
-  return nx_metal_lib;
+/* The metallib, one for every Apple GPU. */
+value nx_metal_metallib(value unit) {
+  (void)unit;
+  return caml_alloc_initialized_string(nx_metal_lib_end - nx_metal_lib,
+                                       nx_metal_lib);
 }
-
-const char *const nx_metal_kernel_names[NX_METAL_KERNEL_COUNT] = {
-#define NX_METAL_NAME(name) #name,
-    NX_METAL_KERNELS(NX_METAL_NAME)
-#undef NX_METAL_NAME
-};

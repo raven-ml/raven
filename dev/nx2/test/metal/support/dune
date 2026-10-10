@@ -1,20 +1,54 @@
 ; What the Metal suite and bench share: the GPU through rig with the
-; harness's metallib, operands, and runs of launch records through
-; nx.metal's fill. The harness's metallib is built with nx.metal's by
-; lib/metal/kernels/build.sh and embedded here.
+; harness's metallib, operands, and runs of the harness's launches and of
+; nx.metal's contractions. The harness's metallib is built with nx.metal's
+; by lib/metal/kernels/build.sh and embedded here.
 
 (library
  (name nx_metal_support)
- (libraries nx_array nx_metal rig rig.metal rig.metal.abi rig.gpu_lock)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_metal
+  rig
+  rig.metal
+  rig.gpu_lock)
  (foreign_stubs
   (language c)
   (names nx_metal_support_stubs)
-  (include_dirs ../../../lib/metal ../../../lib/array)
+  (include_dirs ../../../lib/array)
   (extra_deps harness.metallib)
   (flags
    (:standard
     -DNX_HARNESS_METALLIB=harness.metallib
-    (:include ../../../lib/metal/objc_flags.sexp)))))
+    (:include objc_flags.sexp))))
+ (c_library_flags
+  (:include frameworks.sexp)))
+
+(rule
+ (targets objc_flags.sexp frameworks.sexp)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (progn
+   (with-stdout-to
+    objc_flags.sexp
+    (echo "(-x objective-c -fblocks)"))
+   (with-stdout-to
+    frameworks.sexp
+    (echo "(-framework Metal -framework Foundation)")))))
+
+(rule
+ (targets objc_flags.sexp frameworks.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (progn
+   (with-stdout-to
+    objc_flags.sexp
+    (echo "()"))
+   (with-stdout-to
+    frameworks.sexp
+    (echo "()")))))
 
 (rule
  (targets harness.metallib)

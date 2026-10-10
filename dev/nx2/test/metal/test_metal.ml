@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx.metal's records and fill on the Mac's GPU, through rig, the GPU's float
-   arithmetic under the build's options, and nx.metal's contraction. Every test
-   skips on a machine with no Metal GPU. *)
+(* Runs of launches on the Mac's GPU, through rig, the GPU's float arithmetic
+   under the build's options, and nx.metal's contraction. Every test skips on a
+   machine with no Metal GPU. *)
 
 open Windtrap
 module S = Nx_metal_support
@@ -43,12 +43,12 @@ let ordered () =
   let move ~dst ~src =
     S.launch "move"
       ~groups:(S.groups (n / 4))
-      ~addrs:[ S.address dst; S.address src; 0; 0 ]
+      ~addrs:[ dst; src; src; src ]
       ~words:[ 1; n / 4 ]
   in
   let generate =
     S.launch "generate" ~groups:(S.groups n)
-      ~addrs:[ S.address a ]
+      ~addrs:[ a ]
       ~words:[ n; Dt.code Dt.Uint32; 11; 0 ]
   in
   ignore (S.run t (S.seq [ generate; move ~dst:b ~src:a; move ~dst:c ~src:b ]));
@@ -491,33 +491,6 @@ let contract_bound =
         (match c.values with Subnormal _ -> c.m * c.n * c.k > 0 | _ -> false);
       let t = dev () in
       let dims, a, b, out, init, run = call t c in
-      (* A call's scratch is its split's parts alone, whatever its operands: at
-         most 2 x 256 tiles of 64 x 64 float32 outputs. *)
-      at_most ~msg:"scratch bytes" int ~than:(8 * 1024 * 1024) (S.scratch run);
-      let kernels = S.entries run in
-      let launches_one prefix = String.starts_with ~prefix in
-      let launches prefix = List.exists (launches_one prefix) kernels in
-      let dense =
-        List.filter
-          (fun k -> launches_one "contract_f" k || launches_one "contract_bf" k)
-          kernels
-      in
-      (* A dense kernel's tile, by its name's last part: s small, w and the
-         orders wide, the orders alone large. Large tiles read whole tiles;
-         small and wide ones, tiles reaching past the matrix. *)
-      let tile k =
-        match List.rev (String.split_on_char '_' k) with
-        | "s" :: _ -> `Small
-        | last :: _ when last.[0] = 'w' -> `Wide
-        | _ -> `Large
-      in
-      let tiles x = List.exists (fun k -> tile k = x) dense in
-      cover "64 x 64 tiles" (tiles `Large);
-      cover "32 x 32 tiles" (tiles `Small);
-      cover "16 x 64 tiles" (tiles `Wide);
-      cover "a skinny product, b stored [k][n]" (launches "skinny_" && not c.b_t);
-      cover "a skinny product, b stored [n][k]" (launches "skinny_" && c.b_t);
-      cover "a split along k" (launches "contract_combine");
       ignore (S.run t run);
       let worst, at = S.contract_error ?init dims ~a ~b ~out in
       at_most
@@ -629,14 +602,11 @@ let contract_wraps =
       let wrong, first = S.contract_wrong ?init ~acc dims ~a ~b ~out in
       equal ~msg:(strf "outputs wrong, the first %d" first) int 0 wrong)
 
-(* Every kernel of the library runs in some call, and its results are right:
-   each instance is named by a call that launches it. *)
-let every_kernel () =
+(* A call of each tile and order, the dtypes of each family, is right. *)
+let every_tile () =
   let t = dev () in
-  let seen = Hashtbl.create 128 in
   let launch ?acc c =
     let dims, a, b, out, init, run = call ?acc t c in
-    List.iter (fun k -> Hashtbl.replace seen k ()) (S.entries run);
     ignore (S.run t run);
     (dims, a, b, out, init)
   in
@@ -718,17 +688,7 @@ let every_kernel () =
              (Format.asprintf "%a" pp_case c)
              first)
         int 0 wrong)
-    ints;
-  let library k =
-    String.starts_with ~prefix:"contract_" k
-    || String.starts_with ~prefix:"skinny_" k
-  in
-  let missing =
-    List.filter
-      (fun k -> library k && not (Hashtbl.mem seen k))
-      (Array.to_list S.kernels)
-  in
-  equal ~msg:"kernels no call launched" (list string) [] missing
+    ints
 
 (* The plan's acceptance: over every (a, b, acc, out) of the dtypes, at a shape
    of each kernel class, the plan accepts exactly the stated set, and an
@@ -756,11 +716,24 @@ let every_quadruple () =
     && ((floats da && acc = Dt.Any Dt.Float32 && floats dout)
        || (integers da && integers acc && integers dout))
   in
+  (* The accumulators a contraction's description admits: none of the
+     narrow floats, bool or bit. *)
+  let accumulators =
+    List.filter
+      (function
+        | Dt.Any
+            ( Dt.Bool | Dt.Bit | Dt.Float16 | Dt.Bfloat16 | Dt.Float8_e4m3fn
+            | Dt.Float8_e5m2 | Dt.Float4_e2m1fn ) ->
+            false
+        | _ -> true)
+      Dt.all
+  in
   (* Small and wide tiles, one row, and a shape of the SIMD integer tile. *)
   let shapes = [ (64, 64, 64); (3, 70, 300); (1, 70, 300); (17, 129, 30) ] in
   List.iter
     (fun (m, n, k) ->
-      let mem len = S.operand t (8 * len) in
+      (* Room for [len] elements of the widest dtype, complex128. *)
+      let mem len = S.operand t (16 * len) in
       let am = mem (m * k) and bm = mem (k * n) and om = mem (m * n) in
       let arg o (Dt.Any dt) strides = S.arg o dt strides in
       List.iter
@@ -813,7 +786,7 @@ let every_quadruple () =
                                    (call ()) first)
                               int 0 wrong)
                     Dt.all)
-                Dt.all)
+                accumulators)
             Dt.all)
         Dt.all)
     shapes
@@ -968,15 +941,12 @@ let orders_agree c =
     in
     ignore (S.run t run);
     let get, _ = codes out size in
-    (S.entries run, Array.init mn get)
+    Array.init mn get
   in
-  let entries, nn = outputs a b in
-  cover "a skinny product"
-    (List.exists (String.starts_with ~prefix:"skinny_") entries);
-  cover "a split along k" (List.mem "contract_combine" entries);
+  let nn = outputs a b in
   List.iter
     (fun (name, a, b) ->
-      let _, y = outputs a b in
+      let y = outputs a b in
       let differs i =
         y.(i) <> nn.(i) && not (nan_code c.out y.(i) && nan_code c.out nn.(i))
       in
@@ -1038,12 +1008,120 @@ let contract =
       contract_wraps;
       nan_output;
       test "float64 declines" declines_float64;
-      test "every kernel runs" every_kernel;
+      test "every tile and order is right" every_tile;
       test "the plan declines or is right" every_quadruple;
       determinism;
       orders;
     ]
 
+(* Calls *)
+
+(* A float16 product of few rows whose sum splits along k: the workspace and
+   the combine's launch. *)
+let split_case =
+  {
+    dt = Dt.Any Dt.Float16;
+    out = Dt.Any Dt.Float16;
+    a_t = false;
+    b_t = true;
+    batch = 1;
+    m = 9;
+    n = 200;
+    k = 2880;
+    init = Full;
+    pad = 0;
+    bpad = 0;
+    spread = 8;
+    values = Drawn;
+  }
+
+let split_bytes = Dt.bytes Dt.Float16 (9 * 200)
+
+(* The words the program allocated on either heap. *)
+let allocated () =
+  let minor, promoted, major = Gc.counters () in
+  minor +. major -. promoted
+
+(* The words [f ()] allocates, less what reading the counters allocates. *)
+let words_of f =
+  let a = allocated () in
+  let b = allocated () in
+  f ();
+  allocated () -. b -. (b -. a)
+
+(* A call that finds nx.metal's device, submission and workspace made, and its
+   domain's frame free, allocates nothing. *)
+let warm_calls_allocate_nothing () =
+  let t = dev () in
+  let _, _, _, _, _, run = call t split_case in
+  S.call run;
+  let words =
+    words_of (fun () ->
+        for _ = 1 to 64 do
+          S.call run
+        done)
+  in
+  ignore (S.run t run);
+  equal ~msg:"words for 64 calls" int 0 (int_of_float words)
+
+(* A call on a consumed buffer is refused as dead, the destination's or an
+   operand's, and nx.metal reads nothing of it. *)
+let dead_buffers_refused () =
+  let t = dev () in
+  List.iter
+    (fun (which, at) ->
+      let _, a, _, out, _, run = call t { split_case with init = No_init } in
+      let o = S.arg_operand (match which with `Out -> out | `A -> a) in
+      Rig.Claim.with_ ~read:[] ~donate:[ [ S.buffer o ] ] (fun claims ->
+          ignore (Rig.Claim.consume claims ~why:"donated" (S.buffer o)));
+      let prefix =
+        strf "Nx_metal.contract: operand %d was consumed, donated" at
+      in
+      raises_match ~msg:prefix
+        (function
+          | Invalid_argument m -> String.starts_with ~prefix m | _ -> false)
+        (fun () -> S.run t run))
+    [ (`Out, 1); (`A, 2) ]
+
+(* A run of [split_case] on its own operands, and its result. *)
+let split_run : (unit, S.arg * S.run) abstract = abstract "r"
+
+(* Two domains running [split_case] at once, each on its own operands or both
+   on one's, get the bits one call alone gets. *)
+let domains_call_alike =
+  let want =
+    lazy
+      (let t = dev () in
+       let _, _, _, out, _, run = call t split_case in
+       ignore (S.run t run);
+       bytes_of out split_bytes)
+  in
+  let make () =
+    ignore (Lazy.force want);
+    let _, _, _, out, _, run = call (dev ()) split_case in
+    (out, run)
+  in
+  let run (out, r) =
+    ignore (S.run (dev ()) r);
+    bytes_of out split_bytes
+  in
+  stateful ~domains:2 ~count:4 "domains calling at once get one call's bits"
+    [
+      command "make" (Gen.unit @-> makes split_run) (fun () -> ()) make;
+      command "run"
+        (split_run ^-> returns string)
+        (fun () -> Lazy.force want)
+        run;
+    ]
+
+let calls =
+  group ~timeout:120. "calls"
+    [
+      test "warm calls allocate nothing" warm_calls_allocate_nothing;
+      test "a consumed buffer is refused as dead" dead_buffers_refused;
+      domains_call_alike;
+    ]
+
 let () =
   S.hold_gpu ();
-  exit (run "nx_metal" [ runs; arithmetic; contract ])
+  exit (run "nx_metal" [ runs; arithmetic; contract; calls ])

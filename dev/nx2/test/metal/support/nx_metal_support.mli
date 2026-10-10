@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (** What the Metal suite and bench share: the Mac's GPU opened through rig with
-    the harness's metallib, operands in its memory, and runs of launch records
-    submitted through nx.metal's fill. *)
+    the harness's metallib, operands in its memory, and runs of the harness's
+    launches and of nx.metal's contractions. *)
 
 (** {1:gpu The machine's GPU lock} *)
 
@@ -17,19 +17,16 @@ val hold_gpu : unit -> unit
 (** {1:devices Devices} *)
 
 type t
-(** The type for the GPU opened with nx.metal's and the harness's metallibs
-    loaded. *)
+(** The type for the GPU opened with the harness's metallib loaded. *)
 
 val open_ : unit -> t option
-(** [open_ ()] opens the Mac's GPU as the rig device ["METAL"] and loads
-    nx.metal's and the harness's metallibs; [None] on a machine with no Metal
-    GPU. A second call answers the same device. *)
+(** [open_ ()] opens the Mac's GPU as the rig device ["METAL"] and loads the
+    harness's metallib; [None] on a machine with no Metal GPU.
+
+    Raises [Failure] if nx.metal does not compute on it. *)
 
 val rig : t -> Rig.t
 (** [rig t] is [t]'s device. *)
-
-val kernels : string array
-(** [kernels] is nx.metal's kernels, by their enum, then the harness's. *)
 
 (** {1:operands Operands} *)
 
@@ -40,8 +37,8 @@ val operand : t -> int -> operand
 (** [operand t n] is [n] bytes of [t]'s memory, [n >= 1], with unspecified
     contents. *)
 
-val address : operand -> int
-(** [address o] is [o]'s GPU address. *)
+val buffer : operand -> Rig.Buffer.t
+(** [buffer o] is [o]'s memory as a buffer. *)
 
 val view :
   ('a, 'b) Bigarray.kind ->
@@ -70,22 +67,24 @@ val generate :
 (** {1:runs Runs} *)
 
 type run
-(** The type for runs of launches, with the memory they address beyond the
-    caller's operands, such as their scratch, which lives as long as the run. *)
+(** The type for runs: launches of the harness's kernels and calls of
+    nx.metal's contraction, in order. A run keeps the operands it names. *)
 
 val launch :
   ?groups:int * int * int ->
   ?threads:int * int * int ->
   string ->
-  addrs:int list ->
+  addrs:operand list ->
   words:int list ->
   run
-(** [launch ~groups ~threads k ~addrs ~words] is a launch of the kernel [k] over
-    [groups] threadgroups (defaults to [(1, 1, 1)]) of [threads] threads
-    (defaults to the harness's 256), with its parameters: the 64-bit addresses
-    [addrs], then the 32-bit [words], padded to a multiple of 8 bytes.
+(** [launch ~groups ~threads k ~addrs ~words] is a launch of the harness's
+    kernel [k] over [groups] threadgroups (defaults to [(1, 1, 1)]) of
+    [threads] threads (defaults to the harness's 256), with its parameters:
+    the 64-bit addresses of [addrs]' first bytes, then the 32-bit [words],
+    padded to a multiple of 8 bytes. A run of launches writes every operand
+    they address.
 
-    Raises [Invalid_argument] if [k] is no kernel. *)
+    Raises [Invalid_argument] if the harness has no kernel [k]. *)
 
 val groups : int -> int * int * int
 (** [groups n] is the threadgroups of 256 threads that cover [n] threads. *)
@@ -94,12 +93,23 @@ val seq : run list -> run
 (** [seq rs] runs the launches of [rs] in order. *)
 
 val prepare : t -> run -> unit -> int
-(** [prepare t r] makes the pipelines of [r]'s kernels and is a function that
-    submits [r] as one command buffer, waits for it and answers its GPU time in
-    nanoseconds. *)
+(** [prepare t r] makes the submissions of [r]'s launches, each run of
+    consecutive launches one submission, and is a function that submits them
+    and calls [r]'s contractions in order, waits for their work and answers
+    the wall time it took, in nanoseconds.
+
+    The function raises [Failure] if nx.metal declines a contraction, and
+    [Invalid_argument] for a refusal. *)
 
 val run : t -> run -> int
 (** [run t r] is [prepare t r ()]. *)
+
+val call : run -> unit
+(** [call r] calls the contraction [r] once and returns once its work is queued.
+    It allocates nothing beyond what {!Nx_metal.contract} allocates.
+
+    Raises [Invalid_argument] if [r] is not one contraction of
+    {!plan_contract}, and [Failure] if nx.metal declines it. *)
 
 (** {1:probes Probes} *)
 
@@ -167,17 +177,14 @@ val plan_contract :
   b:arg ->
   out:arg ->
   run option
-(** [plan_contract ~init ~acc t (batch, m, n, k) ~a ~b ~out] is the run of the
+(** [plan_contract ~init ~acc t (batch, m, n, k) ~a ~b ~out] computes the
     contraction of a [(batch, m, k)] and b [(batch, k, n)] into out
     [(batch, m, n)], C-contiguous, plus [init], accumulated in [acc] (defaults
-    to float32), with its scratch in [t]'s memory, or [None] if nx.metal
-    declines it. *)
+    to float32), with {!Nx_metal.contract}, waits for it, and is the run that
+    computes it again; or [None] if nx.metal declines it.
 
-val entries : run -> string list
-(** [entries r] is the kernels [r] launches, in order. *)
-
-val scratch : run -> int
-(** [scratch r] is the bytes of scratch [r]'s launches address. *)
+    Raises what {!Nx_metal.contract} raises, and [Invalid_argument] for a
+    refusal. *)
 
 val contract_wrong :
   ?init:arg ->

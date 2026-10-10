@@ -24,7 +24,6 @@
 
 #include "harness.h"
 #include "nx_dtype.h"
-#include "nx_metal.h"
 
 /* The harness */
 
@@ -70,97 +69,10 @@ value nx_metal_test_threads(value unit) {
   return Val_int(NX_HARNESS_THREADS);
 }
 
-/* nx.metal's metallib and its kernels' names, by their nx_metal_kernel. */
-value nx_metal_test_library(value unit) {
-  CAMLparam1(unit);
-  CAMLlocal3(v, b, names);
-  size_t n;
-  const char *m = nx_metal_metallib(&n);
-  b = caml_alloc_initialized_string(n, m);
-  names = caml_alloc_tuple(NX_METAL_KERNEL_COUNT);
-  for (int i = 0; i < NX_METAL_KERNEL_COUNT; i++)
-    Store_field(names, i, caml_copy_string(nx_metal_kernel_names[i]));
-  v = caml_alloc_tuple(2);
-  Store_field(v, 0, b);
-  Store_field(v, 1, names);
-  CAMLreturn(v);
-}
-
 /* The harness's kernels' names, by their nx_harness_kernel. */
 value nx_metal_test_kernels(value unit) {
   (void)unit;
   return caml_copy_string_array(names);
-}
-
-/* Runs */
-
-/* The record of a launch of kernel [v_k] over [v_groups] threadgroups of
-   [v_threads] threads, with the parameters [v_params], whose first
-   [v_addrs] words are addresses. */
-value nx_metal_test_launch(value v_k, value v_groups, value v_threads,
-                           value v_params, value v_addrs) {
-  CAMLparam5(v_k, v_groups, v_threads, v_params, v_addrs);
-  CAMLlocal1(s);
-  uint32_t g[3], t[3];
-  for (int i = 0; i < 3; i++) {
-    g[i] = (uint32_t)Long_val(Field(v_groups, i));
-    t[i] = (uint32_t)Long_val(Field(v_threads, i));
-  }
-  nx_metal_records r = {NULL, 0, 0};
-  if (nx_metal_add(&r, (uint32_t)Long_val(v_k), g, t, String_val(v_params),
-                   (uint32_t)caml_string_length(v_params),
-                   (uint32_t)Long_val(v_addrs), 0))
-    caml_raise_out_of_memory();
-  s = caml_alloc_initialized_string(r.len, (const char *)r.bytes);
-  free(r.bytes);
-  CAMLreturn(s);
-}
-
-/* A fill's argument: the times of the command buffer that ran the run,
-   which [split] writes, then the run, its records after it. */
-struct timed {
-  int (*split)(void *queue, uint64_t *start, uint64_t *end);
-  uint64_t start, end;
-  nx_metal_run run;
-};
-
-/* Fills the run, then splits, so the command buffer that ends holds
-   exactly the run's dispatches. */
-static int timed(void *queue, void *arg, uint64_t v) {
-  struct timed *t = arg;
-  int rc = nx_metal_fill(queue, &t->run, v);
-  return rc != 0 ? rc : t->split(queue, &t->start, &t->end);
-}
-
-value nx_metal_test_fill(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)timed);
-}
-
-/* The argument of [timed] over the records [v_records], with [v_split]
-   and the pipelines [v_pipelines], an int64 bigarray the caller keeps
-   alive: a uint8 bigarray. */
-value nx_metal_test_arg(value v_split, value v_pipelines, value v_records) {
-  CAMLparam3(v_split, v_pipelines, v_records);
-  CAMLlocal1(v);
-  size_t n = caml_string_length(v_records);
-  v = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
-                         (intnat)(sizeof(struct timed) + n));
-  struct timed *t = Caml_ba_data_val(v);
-  t->split = (void *)Nativeint_val(v_split);
-  t->start = t->end = 0;
-  t->run.pipelines = Caml_ba_data_val(v_pipelines);
-  t->run.count = (uint64_t)Caml_ba_array_val(v_pipelines)->dim[0];
-  t->run.bytes = n;
-  memcpy(t + 1, String_val(v_records), n);
-  CAMLreturn(v);
-}
-
-/* The GPU time, in nanoseconds, of the command buffer that last ran the
-   argument [v_arg]. */
-value nx_metal_test_span(value v_arg) {
-  struct timed *t = Caml_ba_data_val(v_arg);
-  return Val_long((intnat)(t->end - t->start));
 }
 
 /* Host memory */
@@ -318,44 +230,20 @@ value nx_metal_test_codec(value v_dtype, value v_codes, value v_decoded,
 
 /* Contract */
 
-/* The operand of the OCaml triple (address, dtype, (s0, s1, s2)). */
-static nx_metal_operand operand(value v) {
-  value s = Field(v, 2);
-  nx_metal_operand o = {(uint64_t)Long_val(Field(v, 0)), Int_val(Field(v, 1)),
-                        {Long_val(Field(s, 0)), Long_val(Field(s, 1)),
-                         Long_val(Field(s, 2))}};
-  return o;
-}
+/* An operand in host memory: its address, dtype and strides in elements. */
+typedef struct {
+  uint64_t address;
+  int dtype;
+  int64_t strides[3];
+} operand_t;
 
-/* The records of the contraction of the dims (batch, m, n, k, acc) over the
-   operands a, b, out and init (an option), with the scratch bytes they
-   address: Some (records, bytes), or None if the planner declines. */
-value nx_metal_test_plan_contract(value v_dims, value v_a, value v_b,
-                                  value v_out, value v_init) {
-  CAMLparam5(v_dims, v_a, v_b, v_out, v_init);
-  CAMLlocal2(s, v);
-  nx_metal_contract_in c = {(uint32_t)Long_val(Field(v_dims, 0)),
-                            (uint32_t)Long_val(Field(v_dims, 1)),
-                            (uint32_t)Long_val(Field(v_dims, 2)),
-                            (uint32_t)Long_val(Field(v_dims, 3)),
-                            Int_val(Field(v_dims, 4))};
-  nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out),
-                   init = Is_some(v_init) ? operand(Some_val(v_init)) : a;
-  nx_metal_records r = {NULL, 0, 0};
-  size_t scratch;
-  int e = nx_metal_plan_contract(&c, &a, &b, &out,
-                                 Is_some(v_init) ? &init : NULL, &r, &scratch);
-  if (e == NX_NOT_COMPUTED || e == NX_OUT_OF_MEMORY) {
-    free(r.bytes);
-    if (e == NX_OUT_OF_MEMORY) caml_raise_out_of_memory();
-    CAMLreturn(Val_none);
-  }
-  s = caml_alloc_initialized_string(r.len, (const char *)r.bytes);
-  free(r.bytes);
-  v = caml_alloc_tuple(2);
-  Store_field(v, 0, s);
-  Store_field(v, 1, Val_long(scratch));
-  CAMLreturn(caml_alloc_some(v));
+/* The operand of the OCaml triple (address, dtype, (s0, s1, s2)). */
+static operand_t operand(value v) {
+  value s = Field(v, 2);
+  operand_t o = {(uint64_t)Long_val(Field(v, 0)), Int_val(Field(v, 1)),
+                 {Long_val(Field(s, 0)), Long_val(Field(s, 1)),
+                  Long_val(Field(s, 2))}};
+  return o;
 }
 
 /* The value of element [i] of the host memory [p] of the float dtype [dt],
@@ -435,9 +323,9 @@ value nx_metal_test_contract_error(value v_dims, value v_a, value v_b,
   CAMLlocal1(v);
   int64_t batch = Long_val(Field(v_dims, 0)), m = Long_val(Field(v_dims, 1)),
           n = Long_val(Field(v_dims, 2)), k = Long_val(Field(v_dims, 3));
-  nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out);
+  operand_t a = operand(v_a), b = operand(v_b), out = operand(v_out);
   int has_init = Is_some(v_init);
-  nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
+  operand_t init = has_init ? operand(Some_val(v_init)) : a;
   int ds[] = {a.dtype, b.dtype, out.dtype, init.dtype};
   readable(1, ds, 4);
   double u = 0x1p-24, g = (k + 1) * 2 * u / (1 - (k + 1) * 2 * u);
@@ -533,9 +421,9 @@ value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
   int acc_signed = acc == NX_INT8 || acc == NX_INT16 || acc == NX_INT32 ||
                    acc == NX_INT64;
   uint64_t acc_mask = acc_bits == 64 ? ~0ull : (1ull << acc_bits) - 1;
-  nx_metal_operand a = operand(v_a), b = operand(v_b), out = operand(v_out);
+  operand_t a = operand(v_a), b = operand(v_b), out = operand(v_out);
   int has_init = Is_some(v_init);
-  nx_metal_operand init = has_init ? operand(Some_val(v_init)) : a;
+  operand_t init = has_init ? operand(Some_val(v_init)) : a;
   int ds[] = {a.dtype, b.dtype, out.dtype, init.dtype, acc};
   readable(0, ds, 5);
   int bits = nx_dtype_row_of(out.dtype).bits;
@@ -565,34 +453,5 @@ value nx_metal_test_contract_wrong(value v_dims, value v_a, value v_b,
   v = caml_alloc_tuple(2);
   Store_field(v, 0, Val_long(wrong));
   Store_field(v, 1, Val_long(first));
-  CAMLreturn(v);
-}
-
-/* The records [v_r] with the scratch at GPU address [v_base] placed. */
-value nx_metal_test_rebase(value v_r, value v_base) {
-  CAMLparam2(v_r, v_base);
-  CAMLlocal1(s);
-  size_t n = caml_string_length(v_r);
-  s = caml_alloc_string(n);
-  memcpy(Bytes_val(s), String_val(v_r), n);
-  nx_metal_rebase((unsigned char *)Bytes_val(s), n, (uint64_t)Long_val(v_base));
-  CAMLreturn(s);
-}
-
-/* The kernel of each launch of the records [v_r], in order. */
-value nx_metal_test_entries(value v_r) {
-  CAMLparam1(v_r);
-  CAMLlocal1(v);
-  const unsigned char *r = (const unsigned char *)String_val(v_r);
-  size_t n = caml_string_length(v_r), count = 0;
-  for (size_t at = 0; at < n; count++)
-    at += sizeof(nx_metal_launch) + ((const nx_metal_launch *)(r + at))->bytes;
-  v = caml_alloc_tuple(count);
-  r = (const unsigned char *)String_val(v_r);
-  for (size_t at = 0, i = 0; at < n; i++) {
-    const nx_metal_launch *l = (const nx_metal_launch *)(r + at);
-    Store_field(v, i, Val_long(l->entry));
-    at += sizeof *l + l->bytes;
-  }
   CAMLreturn(v);
 }

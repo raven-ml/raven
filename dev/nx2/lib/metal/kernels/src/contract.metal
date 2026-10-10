@@ -113,7 +113,7 @@ static void runs(thread vec<T, 4> *x, device const T *src) {
 }
 
 /* Bytes, 16 at a time, four runs from one load: int8's tiles are whole and
-   their rows start on 16-byte boundaries (plan.c), and a load reads only at
+   their rows start on 16-byte boundaries (plan.ml), and a load reads only at
    a multiple of its alignment. */
 template <uint N>
 static void runs(thread char4 *x, device const char *src) {

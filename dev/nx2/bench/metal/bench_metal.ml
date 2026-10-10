@@ -4,16 +4,16 @@
   ---------------------------------------------------------------------------*)
 
 (* nx2's Metal floors and kernels on the Mac's GPU, each kernel row beside the
-   floor that bounds it. A row runs [n] launches in one command buffer, enough
-   for 10 ms of GPU time, so that the host's submission and wait are a small
-   part of a call. A call row ([.../call]) runs one, as an eager call does.
+   floor that bounds it. A floor row runs [n] launches in one submission, and a
+   contraction row [n] eager calls of nx.metal, enough for 10 ms of GPU time, so
+   that the host's wait is a small part of a run. A call row ([.../call]) runs
+   one call.
 
-   [bench_metal.exe] runs the rows under thumper, which times calls on the
-   host's clock. [bench_metal.exe gate [PAT]] prints each row's GPU time per
-   launch, from the command buffer's GPU start and end, the median of 30, and
-   its distance to its floor; for a call row, the wall time of a call and its
-   GPU time. [bench_metal.exe probe] prints what the compiler and the GPU do to
-   float arithmetic. *)
+   [bench_metal.exe] runs the rows under thumper, which times runs on the
+   host's clock. [bench_metal.exe gate [PAT]] prints each row's wall time per
+   launch or call, the median of 30 runs, and its distance to its floor; for a
+   call row, the wall time of a call. [bench_metal.exe probe] prints what the
+   compiler and the GPU do to float arithmetic. *)
 
 module S = Nx_metal_support
 module Dt = Nx_array.Dtype
@@ -47,7 +47,7 @@ let operands t n count =
   List.init count (fun i ->
       let o = S.operand t (4 * n) in
       S.generate t o Dt.Float32 n ~seed:(i + 1);
-      S.address o)
+      o)
 
 let size_name n = if n >= m then strf "%dM" (n / m) else strf "%dK" (n / k)
 
@@ -65,8 +65,9 @@ let stream_row kernel ~ins ~out n =
         let ((gx, _, _) as groups) = S.groups vecs in
         let out = S.operand t (if out then 4 * n else 16 * gx) in
         let ins = operands t n ins in
+        (* The kernel reads its first [ins] inputs: the rest repeat the first. *)
         let addrs =
-          S.address out :: (ins @ List.init (3 - List.length ins) (fun _ -> 0))
+          out :: (ins @ List.init (3 - List.length ins) (fun _ -> List.hd ins))
         in
         S.launch kernel ~groups ~addrs ~words:[ List.length ins; vecs ]);
   }
@@ -95,7 +96,7 @@ let peak_row name kernel (Dt.Any dt) ~flops_per_round =
         let out = S.operand t (Dt.bytes dt (2 * threads)) in
         S.generate t out dt (2 * threads) ~seed:7;
         S.launch kernel ~groups:(S.groups threads)
-          ~addrs:[ S.address out ]
+          ~addrs:[ out ]
           ~words:[ iters; 0 ]);
   }
 
@@ -218,8 +219,8 @@ let contract_rows =
             [ (32, 2880, 201088); (48, 5120, 2880); (1000, 1000, 1000) ])
       [ Dt.Any Dt.Bfloat16; Dt.Any Dt.Float16; Dt.Any Dt.Float32 ]
 
-(* Decode's rows as eager calls: each launch in a command buffer of its own,
-   waited for, b resident in the GPU's cache from the call before. *)
+(* Decode's rows as one call at a time, each waited for, b resident in the
+   GPU's cache from the call before. *)
 let call_rows =
   List.filter_map
     (fun r ->
@@ -285,8 +286,8 @@ let launches r =
     in
     max 1 (min 8192 (int_of_float (Float.ceil (target_ns /. ns))))
 
-(* A row's run: its launches in one command buffer, after three runs of one
-   launch that make the pipelines and warm the caches and the GPU's clock. *)
+(* A row's run: its [n] launches or calls, after three runs of one that make
+   the pipelines and warm the caches and the GPU's clock. *)
 let sized t r =
   let launch = r.setup t in
   let one = S.prepare t launch in
@@ -302,7 +303,7 @@ let median l =
   Array.sort compare a;
   a.(Array.length a / 2)
 
-(* The median GPU time per launch, in nanoseconds, over 30 runs. *)
+(* The median wall time per launch or call, in nanoseconds, over 30 runs. *)
 let per_launch t r =
   let n, go = sized t r in
   for _ = 1 to 3 do
@@ -330,21 +331,19 @@ let gate pat =
   Printf.printf "load %.2f\n%-40s %12s %12s %8s\n" (loadavg ()) "row"
     "us/launch" "rate" "/floor";
   (* A call row: the median of 30 samples of the wall time of 50 calls on the
-     host's clock, and the median GPU time of a call. *)
+     host's clock. *)
   let call_time r =
     let _, go = sized t r in
-    let spans = ref [] in
     let sample () =
       let t0 = Unix.gettimeofday () in
       for _ = 1 to 50 do
-        spans := go () :: !spans
+        ignore (go ())
       done;
       (Unix.gettimeofday () -. t0) /. 50.
     in
     let wall = median (List.init 30 (fun _ -> sample ())) in
     Gc.full_major ();
-    Printf.printf "%-40s %12.2f %12s\n%!" r.name (wall *. 1e6)
-      (strf "gpu %.1f us" (float (median !spans) /. 1000.))
+    Printf.printf "%-40s %12.2f\n%!" r.name (wall *. 1e6)
   in
   let time r =
     if r.call then call_time r
