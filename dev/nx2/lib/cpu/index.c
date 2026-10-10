@@ -189,7 +189,7 @@ value nx_cpu_gather(value s, value vd, value vi, value vx) {
     l.step[2][i] = i == axis ? 0 : a[2].dim[rx + i];
   }
   l.rank = nx_coalesce_dims(3, ri, l.extent, l.step);
-  nx_cpu_walk(3, a, &l, GATHER_MOST, gather_block, &g);
+  nx_cpu_walk(3, a, &l, GATHER_MOST, 1, gather_block, &g);
   nx_done(3, a);
   CAMLreturn(Val_int(NX_OK));
 }

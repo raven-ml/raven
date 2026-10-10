@@ -479,6 +479,14 @@ static nx_array coordinate(const nx_array *a, int i) {
   return c;
 }
 
+/* The nodes of [s] that run a kind's row: each takes about as long as a
+   memcpy of the loop's bytes. */
+static int64_t kinds(const step *s, int nn) {
+  int64_t k = 0;
+  for (int i = 0; i < nn; i++) k += s[i].arity > 0 && s[i].alias < 0;
+  return k > 0 ? k : 1;
+}
+
 /* The temporaries the nodes [s] need: TEMPS where one casts, or is of a
    dtype other than its carrier, which it decodes or brings back to its
    dtype through them, else none. */
@@ -514,7 +522,7 @@ static int run_map(const nx_prog *g, nx_array *a, step *s) {
   if (bytes > SLOT) bytes = SLOT;
   nx_loop l;
   if (!(e = nx_coalesce(loop, a, &l)))
-    nx_cpu_walk(loop, a, &l, bytes / j.w, block, &j);
+    nx_cpu_walk(loop, a, &l, bytes / j.w, kinds(s, g->nnodes), block, &j);
   return e;
 }
 

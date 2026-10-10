@@ -184,7 +184,7 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
   if (e) return Val_int(e);
   j->a = a;
   j->n = n;
-  if (!(e = nx_coalesce(n, a, &l))) nx_cpu_walk(n, a, &l, most(n, a), f, j);
+  if (!(e = nx_coalesce(n, a, &l))) nx_cpu_walk(n, a, &l, most(n, a), 1, f, j);
   nx_done(n, a);
   return Val_int(e);
 }

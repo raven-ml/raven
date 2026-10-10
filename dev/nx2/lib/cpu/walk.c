@@ -152,7 +152,7 @@ static void units(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
-                nx_cpu_block_fn f, void *ctx) {
+                int64_t weight, nx_cpu_block_fn f, void *ctx) {
   walk w = {n, *l, 0, 0, 0, 0, 1, 1, f, ctx};
   nx_loop *wl = &w.l;
   int r = wl->rank, bits = 0, widest = 1, byte_wide = 1;
@@ -213,5 +213,5 @@ void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
   for (int k = 0; k < n; k++) strided |= magnitude(wl->step[k][r - 1]) > 1;
   int64_t bytes = elements * bits / 8;
   nx_cpu_job(planes * w.rowblocks * w.pieces, bytes,
-             strided ? STRIDED_COST * bytes : bytes, units, &w);
+             weight * (strided ? STRIDED_COST * bytes : bytes), units, &w);
 }
