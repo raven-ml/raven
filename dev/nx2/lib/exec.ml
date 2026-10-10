@@ -752,6 +752,13 @@ and check : type d.
 (* A constant read at [p] by an operation: a view of a constant is its operand's
    results read at [p] and viewed; any other its results there, kept in its
    memo, which every later read at [p] finds. *)
+(* CR: Walk constant view chains iteratively in both [at] and [own].
+   Repeated [Nx.flip] on a two-element constant reaches this path through
+   [Nx.place] or a concrete consumer; resolving each operand keeps a call
+   frame. Save each view's requested placement, descend via [operand_at],
+   then replay [compute_node] outward. Resolve the first non-view with the
+   original [at]/[own] policy: views stay uncached, placed values own their
+   bytes, and cut-window copies keep their existing semantics. *)
 and at : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
  fun p x ->
@@ -984,11 +991,16 @@ let read x = own (host ()) x
 (* The fast path *)
 
 (* A destination for a result of [dt] beside [x]: over [x]'s layout where it is
-   C-contiguous from offset 0 and of [dt], fresh otherwise. *)
+   C-contiguous from offset 0 and of [dt], fresh otherwise. A dtype narrower
+   than a byte is always fresh, whose spare bits in its last byte are zero. *)
 let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
   let l = A.layout x in
-  if L.is_contiguous l && L.offset l = 0 && D.equal dt (A.dtype x) then
-    A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
+  if
+    L.is_contiguous l
+    && L.offset l = 0
+    && D.equal dt (A.dtype x)
+    && D.bits dt >= 8
+  then A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
 (* The one-node map over the handle [h], whose array is [a], its result of [dt]:

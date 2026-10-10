@@ -466,9 +466,36 @@ let sets =
         int_arrays law_arguments_owned;
     ]
 
+(* A sub-byte result of an odd number of elements leaves the bits of its last
+   byte past its last element zero, as fresh arrays do, on a device whose reused
+   memory keeps the bits it held. *)
+let test_sub_byte_tail () =
+  for n = 1 to 32 do
+    (* Memory of the result's size with every bit set, freed for reuse. *)
+    let set = A.create (m 0) D.Uint8 [| n + 1 |] in
+    for i = 0 to n do
+      A.set set [| i |] 0xFF
+    done;
+    ignore (Sys.opaque_identity set);
+    Gc.full_major ();
+    let x =
+      to_count
+        (on_host Plain D.Int4 [| (2 * n) + 1 |] (Array.make ((2 * n) + 1) 1))
+    in
+    let y = Option.get (Nx.Repr.array (Nx.add x x)) in
+    let bytes =
+      A.v D.Uint8 (Nx_array.Layout.contiguous [| n + 1 |]) (A.buffer y)
+    in
+    equal
+      ~msg:(Printf.sprintf "the last byte of %d elements" ((2 * n) + 1))
+      int 0x02 (A.get bytes [| n |])
+  done
+
 let allocation =
   group "allocation"
     [
+      test "a sub-byte result leaves its last byte's spare bits zero"
+        test_sub_byte_tail;
       test "an add of one-element host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
           ignore (Nx.add a a);
