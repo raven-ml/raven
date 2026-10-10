@@ -23,7 +23,15 @@
    job of one thread that costs more than HOLD_BYTES. The release is the
    one that runs no pending signal handler: a handler that raised there
    would leave the door's claims held. The reacquisition runs none either;
-   they run once the external returns. */
+   they run once the external returns.
+
+   A body may begin a job of its own, as a factorisation's GEMM updates
+   do. That job runs where the runtime is already released, on the calling
+   thread or on a worker, which is no OCaml thread: it neither releases nor
+   reacquires the runtime. A thread-local flag, set while a released job's
+   body runs on any thread, says so: rig_pool's own test of a body is not
+   enough, since a released job of one thread runs its body inline, outside
+   the pool. */
 
 #include <caml/signals.h>
 
@@ -46,6 +54,23 @@ int nx_cpu_threads(int64_t bytes, double cost) {
   return threads < 1 ? 1 : (int)threads;
 }
 
+/* Whether this thread runs a body of a job that released the runtime. */
+static _Thread_local int released;
+
+typedef struct {
+  rig_pool_body body;
+  void *ctx;
+} job;
+
+/* A released job's body, on whichever thread claims its range. */
+static void run_released(int64_t lo, int64_t hi, int worker, void *ctx) {
+  const job *j = ctx;
+  int was = released;
+  released = 1;
+  j->body(lo, hi, worker, j->ctx);
+  released = was;
+}
+
 void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
                 void *ctx) {
   if (total <= 0) return;
@@ -55,7 +80,12 @@ void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
     body(0, total, 0, ctx);
     return;
   }
+  job j = {body, ctx};
+  if (released) {
+    rig_pool_run((int)threads, total, threads * CHUNKS, run_released, &j);
+    return;
+  }
   caml_enter_blocking_section_no_pending();
-  rig_pool_run((int)threads, total, threads * CHUNKS, body, ctx);
+  rig_pool_run((int)threads, total, threads * CHUNKS, run_released, &j);
   caml_leave_blocking_section();
 }

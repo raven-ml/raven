@@ -93,3 +93,6 @@ external serial_scan :
   dsts:Nx_array.any array ->
   Nx_array.any array ->
   Nx_array.answer = "nx_kernels_support_serial_scan"
+
+(* Jobs begun from jobs' bodies. *)
+external nested : int -> int -> int = "nx_kernels_support_nested"

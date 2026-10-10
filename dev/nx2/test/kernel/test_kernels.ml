@@ -1696,6 +1696,20 @@ let laws (b : Support.backend) =
 (* The values nx_cpu.mli says a map it computes holds at most at once. *)
 let most_held = 256
 
+(* A job begun from a job's body runs to its end and adds what it is given,
+   whether the outer job runs on the pool's threads or on the calling thread
+   with the runtime released: 64 units of 64 MiB each, and 1 unit of 2 MiB.
+   Each of the n outer units adds 0 to n - 1. *)
+let test_nested_jobs () =
+  List.iter
+    (fun (n, cost) ->
+      equal
+        ~msg:(Printf.sprintf "%d units of %d bytes" n cost)
+        int
+        (n * (n * (n - 1) / 2))
+        (Support.nested n cost))
+    [ (64, 64 * 1024 * 1024); (1, 2 * 1024 * 1024); (3, 0) ]
+
 (* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
    Nx_kernel.S. *)
 let cpu =
@@ -1732,6 +1746,7 @@ let cpu =
       test "refuses before any write"
         (test_refusals (module Nx_cpu : Nx_kernel.S));
       test "kinds give the values their documentation states" test_apply_values;
+      test "a job begun from a job's body runs to its end" test_nested_jobs;
     ])
 
 let () =

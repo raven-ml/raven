@@ -47,3 +47,8 @@ val serial_scan :
   Nx_array.any array ->
   Nx_array.answer
 (** [serial_scan] is {!Nx_cpu.scan} on one thread. *)
+
+val nested : int -> int -> int
+(** [nested n cost] runs, through nx.cpu's jobs, a job of [n] units of
+    [cost] bytes whose every unit begins a job of [n] units of [cost] bytes
+    adding [0] to [n - 1]: the total of the sums. *)

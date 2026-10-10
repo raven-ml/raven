@@ -235,7 +235,9 @@ static inline int nx_cpu_width(int dt) {
    threads as the cost pays for. A job of more than one thread, or a long
    one, runs with the runtime released: [body] reads no OCaml value. The
    cost is an estimate, a double: one that multiplies extents of several
-   operands may pass an int64_t. */
+   operands may pass an int64_t. A body may begin a job of its own: it runs
+   with the runtime still released, on the body's thread alone where the
+   outer job runs on several (rig_pool.h, Scheduling). */
 void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
                 void *ctx);
 
