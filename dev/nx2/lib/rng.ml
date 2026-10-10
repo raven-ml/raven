@@ -366,8 +366,8 @@ let normal ?key dt s =
   draw ~by:"Nx.Rng.normal" (resolve key) dt s (fun b ~key ~j _ ->
       rounded b dt c (gauss b ~key ~p:(precision_of c) ~pairs c j))
 
-(* Exponential(1) by inverse CDF, from [1 - u], which is never 0. The draw is
-   [0 - log (1 - u)], where a negation would make -0 of u = 0. *)
+(* Exponential(1) by inverse CDF, from [1 - u], which is never 0. The draw is [0
+   - log (1 - u)], where a negation would make -0 of u = 0. *)
 let exponential ?key dt s =
   let c = compute dt in
   draw ~by:"Nx.Rng.exponential" (resolve key) dt s (fun b ~key ~j _ ->
@@ -520,7 +520,8 @@ let refuse ~by name text ~show (p : ('v, 's, 'd) Value.t) ok =
   Eval.eval ~by (Value.Check { ok; data = [ Value.Any p ]; fail })
 
 (* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
-let require ~by name d c (p : (float, 's, 'd) Value.t) =
+let require ~by name d (p : (float, 's, 'd) Value.t) =
+  let c = compute (Prim.dtype p) in
   let b = builder [| D.Any (Prim.dtype p) |] in
   let inside = d.inside (floats b c) (param b c p (emit b (In 0))) in
   let ok =
@@ -539,7 +540,7 @@ let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
 
 let bernoulli ?key p =
   let by = "Nx.Rng.bernoulli" in
-  require ~by "p" probability (compute (Prim.dtype p)) p;
+  require ~by "p" probability p;
   let c = compute (Prim.dtype p) in
   draw ~by ~params:[| Value.Any p |] (resolve key) D.Bool (Prim.shape p)
     (fun b ~key ~j ins ->
@@ -603,7 +604,7 @@ let marsaglia b ~key ~n (D.Any cd as c) a j =
 
 let gamma ?key a =
   let by = "Nx.Rng.gamma" in
-  require ~by "a" positive (compute (Prim.dtype a)) a;
+  require ~by "a" positive a;
   let dt = Prim.dtype a in
   let c = compute dt in
   let s = Prim.shape a in
@@ -625,8 +626,8 @@ let gamma ?key a =
    is a division, where [q · (1 / s)] would make NaN of a zero [q]. *)
 let beta ?key a b' =
   let by = "Nx.Rng.beta" in
-  require ~by "a" positive (compute (Prim.dtype a)) a;
-  require ~by "b" positive (compute (Prim.dtype b')) b';
+  require ~by "a" positive a;
+  require ~by "b" positive b';
   let dt = Prim.dtype a in
   let c = compute dt in
   let s = Prim.broadcast_shape ~by (Prim.shape a) (Prim.shape b') in
@@ -711,7 +712,7 @@ let wrapped_cauchy b cd kappa =
 
 let von_mises ?key kappa =
   let by = "Nx.Rng.von_mises" in
-  require ~by "k" non_negative (compute (Prim.dtype kappa)) kappa;
+  require ~by "k" non_negative kappa;
   let dt = Prim.dtype kappa in
   let c = compute dt in
   let s = Prim.shape kappa in
@@ -764,7 +765,6 @@ let von_mises ?key kappa =
 
 (* Counts *)
 
-let both b x y = bin b And x y
 let either b x y = bin b Or x y
 let not_ b x = cmp b Equal x (const b D.Bool false)
 
@@ -893,7 +893,7 @@ let poisson_rejection_rounds = 16
 
 let poisson ?key rate =
   let by = "Nx.Rng.poisson" in
-  require ~by "rate" counted (compute (Prim.dtype rate)) rate;
+  require ~by "rate" counted rate;
   let dt = Prim.dtype rate in
   let c = compute dt in
   let s = Prim.shape rate in
@@ -957,11 +957,11 @@ let poisson ?key rate =
               (f.min proposal (f.lit 2147483647.0))
               (f.lit 0.0)
           in
-          let squeeze = both b (f.le (f.lit 0.07) us) (f.le v vr) in
+          let squeeze = f.both (f.le (f.lit 0.07) us) (f.le v vr) in
           let reject =
             either b
               (f.lt proposal (f.lit 0.0))
-              (both b (f.lt us (f.lit 0.013)) (f.lt us v))
+              (f.both (f.lt us (f.lit 0.013)) (f.lt us v))
           in
           let lhs =
             f.sub
@@ -970,10 +970,10 @@ let poisson ?key rate =
           in
           let accept =
             either b squeeze
-              (both b (not_ b reject)
+              (f.both (not_ b reject)
                  (f.le lhs (log_poisson_pmf b f count lam)))
           in
-          acc := where b (both b accept (not_ b !settled)) count !acc;
+          acc := where b (f.both accept (not_ b !settled)) count !acc;
           settled := either b !settled accept;
           last := count
         done;
@@ -996,7 +996,7 @@ let binomial_rejection_rounds = 18
 let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   let by = "Nx.Rng.binomial" in
   require_counts ~by "n" count;
-  require ~by "p" probability (compute (Prim.dtype prob)) prob;
+  require ~by "p" probability prob;
   let dt = Prim.dtype prob in
   let c = compute dt in
   let s = Prim.broadcast_shape ~by (Prim.shape count) (Prim.shape prob) in
@@ -1077,19 +1077,19 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
           let count =
             where b (f.le (f.lit 0.0) proposal) (f.min proposal n) (f.lit 0.0)
           in
-          let inside = both b (f.le (f.lit 0.0) proposal) (f.le proposal n) in
-          let squeeze = both b (f.le (f.lit 0.07) us) (f.le v vr) in
+          let inside = f.both (f.le (f.lit 0.0) proposal) (f.le proposal n) in
+          let squeeze = f.both (f.le (f.lit 0.07) us) (f.le v vr) in
           let lhs =
             f.sub
               (f.add (f.log v) log_alpha)
               (f.log (f.add (f.div a (f.mul us us)) b'))
           in
           let accept =
-            both b inside
+            f.both inside
               (either b squeeze
                  (f.le lhs (f.sub (log_binomial_pmf b f count n p q) log_mode)))
           in
-          acc := where b (both b accept (not_ b !settled)) count !acc;
+          acc := where b (f.both accept (not_ b !settled)) count !acc;
           settled := either b !settled accept;
           last := count
         done;

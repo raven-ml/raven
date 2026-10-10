@@ -756,12 +756,9 @@ let scope =
           not_equal (array int32) a b);
       test "a scoped keyless draw under a tracing extent is traced" (fun () ->
           let k = Rng.key 205 in
-          let traced =
-            Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
-                Rng.with_key k (fun () ->
-                    Option.is_some (Nx.Prim.payload i (Rng.bits [| 2 |]))))
-          in
-          equal bool true traced);
+          Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
+              Rng.with_key k (fun () ->
+                  is_some (Nx.Prim.payload i (Rng.bits [| 2 |])))));
       test
         "an unscoped keyless draw under a tracing extent leaves the domain's \
          generator usable" (fun () ->
