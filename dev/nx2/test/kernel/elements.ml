@@ -243,8 +243,13 @@ let get32 e at = Int32.float_of_bits (String.get_int32_le e at)
 let get64 e at = Int64.float_of_bits (String.get_int64_le e at)
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
+(* The quiet NaN of a clear sign bit, the NaN a kind makes from numbers. The
+   hardware's may differ: x86's has the sign bit set. *)
+let made_nan = Int64.float_of_bits 0x7FF8000000000000L
+
 (* Prog.Add on two floats of 32 or 64 bits, from their bits: the first NaN
-   operand's bits, else the rounded sum, +0 for a zero. *)
+   operand's bits, else the rounded sum, +0 for a zero, and {!made_nan} for
+   opposite infinities. *)
 let add_bits ~w a b =
   let get, put, round =
     if w = 4 then (get32, f32, round32) else (get64, f64, Fun.id)
@@ -254,7 +259,7 @@ let add_bits ~w a b =
   else if Float.is_nan y then b
   else
     let s = round (x +. y) in
-    put (if s = 0. then 0. else s)
+    put (if Float.is_nan s then made_nan else if s = 0. then 0. else s)
 
 (* The order of two floats that are not NaN, -0 below +0. *)
 let compare_floats x y =
