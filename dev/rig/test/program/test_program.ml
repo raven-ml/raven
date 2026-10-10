@@ -1452,6 +1452,102 @@ let extreme_law e =
   in
   is_error ~pp:(fun _ _ -> ()) ~msg:"load answers Error" (G.load t [| d |])
 
+(* The ints and the run's work *)
+
+(* A loop of two trips stores its trip in int 0, and each trip's launch copies
+   that word's low byte, read through an Ints slot, to byte [trip] of the input:
+   the launch's offset is a hole over the trip. The gate holds the device's
+   work, so trip 1's store waits for trip 0's work. *)
+let test_trip_follows_work () =
+  let d, pd = polled "trip-order" in
+  let copy_byte =
+    {
+      G.queue = "COMPUTE:0";
+      after = [||];
+      work =
+        Launch
+          {
+            image = 0;
+            kernel = "copy";
+            params =
+              {
+                bytes = le64 0 ^ le64 0 ^ le64 1;
+                holes = [| hole 8 (Int 0 : value) |];
+              };
+            refs =
+              [|
+                { Rig.Submission.at = 0; slot = 0 };
+                { Rig.Submission.at = 8; slot = 1 };
+              |];
+            groups = (Fixed 1, Fixed 1, Fixed 1);
+            threads = (Fixed 1, Fixed 1, Fixed 1);
+            shared = Fixed 0;
+          };
+    }
+  in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      code = [||];
+      ints = 1;
+      memory = [||];
+      images = [| { device = 0; binary = functions } |];
+      inputs = [| { device = 0; bytes = 8; access = B.Read_write } |];
+      steps =
+        [|
+          Loop
+            {
+              trips = Fixed 2;
+              trip = Some 0;
+              flag = None;
+              body =
+                [|
+                  submit 0 ~reads:[| Ints |] ~writes:[| Input 0 |]
+                    [| copy_byte |];
+                |];
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let out = of_bytes d (String.make 8 '\255') in
+  P.gate pd;
+  let opener =
+    Domain.spawn (fun () ->
+        Rig_support.await "a sleep at the gate" (fun () -> P.sleepers pd > 0);
+        P.open_gate pd)
+  in
+  ignore (G.run p { inputs = [| out |]; ints = [||] });
+  let bytes = read out in
+  Domain.join opener;
+  equal ~msg:"each trip's work read its own trip" string "\000\001"
+    (String.sub bytes 0 2)
+
+(* A launch writes int 0 through an Ints slot, and a later launch's hole over
+   int 0 reads what it wrote. *)
+let test_int_follows_writer () =
+  let d, _ = polled "int-order" in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      code = [||];
+      ints = 1;
+      memory = [||];
+      images = [| { device = 0; binary = functions } |];
+      inputs = [| { device = 0; bytes = 8; access = B.Read_write } |];
+      steps =
+        [|
+          submit 0 ~writes:[| Ints |] [| fill ~image:0 ~groups:1 42 |];
+          submit 0 ~writes:[| Input 0 |]
+            [| fill ~image:0 ~groups:1 0 ~holes:[| hole 8 (Int 0 : value) |] |];
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let out = one_word d in
+  ignore (G.run p { inputs = [| out |]; ints = [| 0 |] });
+  equal ~msg:"the word the first launch wrote" int 42 (word_of out)
+
 let tests =
   [
     group ~timeout "steps"
@@ -1506,6 +1602,10 @@ let tests =
         test "memory of one copy waits for nothing on the host"
           test_one_waits_not;
         test "a run's first submission follows its after points" test_after;
+        test "a loop's trip is stored once the work that reads the ints is done"
+          test_trip_follows_work;
+        test "an Int is read once the work that writes the ints is done"
+          test_int_follows_writer;
       ];
     group ~timeout "refusals"
       [

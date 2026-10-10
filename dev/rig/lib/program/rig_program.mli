@@ -225,6 +225,11 @@ type step =
           each trip it reads [flag]'s first byte, once the work that wrote it is
           done, and stops at [0]. *)
 
+(* CR: Input access repeats the steps' accesses and can disagree with them.
+   Declaring Read here with a Host Read_write use admits a read-only host
+   borrow, which Host passes to native code unchecked. Derive each input's
+   required access from Submit, Host and Move at load, and use it for the frame
+   check; remove this duplicate field. *)
 type input = { device : int; bytes : int; access : Rig.Buffer.access }
 (** The type for a run's inputs: a buffer of [device] of at least [bytes] bytes,
     whose memory admits [access]. *)
@@ -322,7 +327,9 @@ val run : ?after:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     points the run's work ends at, one for each device that ran a submission, in
     the order of [p]'s devices: what it submitted last there. The work it does
     on the host ([Move] and [Host] steps, a loop's flag) is done when it
-    returns.
+    returns. An [Int] value reads the ints once the run's earlier work that
+    writes them is done, and a loop stores its trip once the run's earlier work
+    that reads or writes them is done.
 
     On another machine it is one submission on that machine's host, and the
     host's point: the agent reaches it once the run's points there are reached.

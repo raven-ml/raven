@@ -1159,6 +1159,25 @@ let words b =
   if B.length b = 0 then Bigarray.(Array1.create int64 c_layout 0)
   else B.bigarray Bigarray.int64 b
 
+(* A device borrows host memory that starts on a page, as a host buffer of 64
+   KiB or more does (rig.mli, [Buffer.create]). *)
+let page_bytes = 65536
+
+let rec names_ints = function
+  | Submit s ->
+      let ints = function Ints -> true | Memory _ | Input _ -> false in
+      Array.exists ints s.reads || Array.exists ints s.writes
+  | Move _ | Host _ -> false
+  | Loop { body; _ } -> Array.exists names_ints body
+
+(* One copy of the run's ints: a view of a buffer a device can borrow where a
+   step names them. *)
+let make_ints (t : t) =
+  let n = 8 * t.ints in
+  if Array.exists names_ints t.steps then
+    B.view (B.create Rig.host (max n page_bytes)) ~first:0 ~length:n
+  else B.create Rig.host n
+
 let load_here ~rails t devices =
   let size = function
     | Alloc { bytes; _ } -> bytes
@@ -1171,7 +1190,7 @@ let load_here ~rails t devices =
   with
   | exception Refused why -> Error why
   | code -> (
-      let ints = Array.init 2 (fun _ -> B.create Rig.host (8 * t.ints)) in
+      let ints = Array.init 2 (fun _ -> make_ints t) in
       let mem =
         Array.append (Array.map (make_memory devices rails) t.memory) [| ints |]
       in
@@ -1247,14 +1266,21 @@ let input_on p (f : frame) i d =
     | Some b -> b
     | None -> invalid "input %d: %s cannot borrow it" i (Rig.name dev)
 
-(* CR: Order host accesses to the ints through this copy's buffer stamps: [Read]
-   before an Int load, [Read_write] before a loop's trip store. An earlier
-   Submit may still read or write the same memory through an Ints slot. The wait
-   at run entry protects reuse across runs only; a later trip can overwrite an
-   earlier kernel's input within this run. *)
+(* The host reads and writes the ints as it does any rig memory: after the work
+   its access must follow, which a step that names them may still run. *)
+let ints_buffer (p : here) k = p.mem.(Array.length p.t.memory).(k)
+
+let int_at p k i =
+  B.wait (ints_buffer p k) B.Read;
+  Int64.to_int (Bigarray.Array1.unsafe_get p.ints.(k) i)
+
+let set_trip p k w i =
+  B.wait (ints_buffer p k) B.Read_write;
+  Bigarray.Array1.unsafe_set p.ints.(k) w (Int64.of_int i)
+
 let run_value (p : here) f k = function
   | Known n -> n
-  | Word i -> Int64.to_int (Bigarray.Array1.unsafe_get p.ints.(k) i)
+  | Word i -> int_at p k i
   | Address_of { input; on } -> B.address (input_on p f input on)
 
 let pass p f (s : slot array) bufs d =
@@ -1357,9 +1383,7 @@ let rec exec (p : here) f k after = function
       let n = run_value p f k trips.(k) in
       let rec go i =
         if i < n && Option.fold ~none:true ~some:(flag_holds p k) flag then begin
-          Option.iter
-            (fun w -> Bigarray.Array1.set p.ints.(k) w (Int64.of_int i))
-            trip;
+          Option.iter (fun w -> set_trip p k w i) trip;
           for s = 0 to Array.length body - 1 do
             exec p f k after body.(s)
           done;
