@@ -276,7 +276,8 @@ ENVIRONMENT
 
 FILES
        $TMPDIR/rig-agent-UID.lock
-           Held by the user's agent on this machine while it runs.
+           Held by the user's agent on this machine while it runs, and
+           holds its process id.
 
 OUTPUT
        rig agent writes these lines on its standard output, and nothing

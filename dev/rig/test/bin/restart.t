@@ -64,16 +64,17 @@ is killed twice, then b's lock becomes a directory before the third
 start: a new cause, counted from 1.
 
   $ rm attempts
-  $ agent_of() { pgrep -P $(cat machines/$1/pid); }
+  $ agent_of() { cat machines/$1/rig-agent-$(id -u).lock; }
   $ rig run --on a,b -- ./support/ctl.exe wait >out 2>err &
   $ run=$!
   $ ./support/await out joined
   $ kill -KILL $(agent_of b)
   $ ./support/await out "attempt 2"
   $ ./support/await out joined
+  $ agent=$(agent_of b)
   $ rm machines/b/rig-agent-$(id -u).lock
   $ mkdir machines/b/rig-agent-$(id -u).lock
-  $ kill -KILL $(agent_of b)
+  $ kill -KILL $agent
   $ wait $run
   [123]
   $ cat out

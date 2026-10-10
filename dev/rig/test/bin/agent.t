@@ -230,7 +230,7 @@ An agent killed reports nothing: rig agent says how it died, and exits
   $ ctl out12 wait >ctlout 2>ctlerr &
   $ controller=$!
   $ ./support/await ctlout joined
-  $ kill -KILL $(pgrep -P $agent)
+  $ kill -KILL $(cat tmp/rig-agent-$(id -u).lock)
   $ wait $agent
   [123]
   $ show out12

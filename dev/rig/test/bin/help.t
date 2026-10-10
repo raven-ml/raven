@@ -273,7 +273,8 @@ output and its exit status. A page goes to standard output, and rig exits 0.
   
   FILES
          $TMPDIR/rig-agent-UID.lock
-             Held by the user's agent on this machine while it runs.
+             Held by the user's agent on this machine while it runs, and
+             holds its process id.
   
   OUTPUT
          rig agent writes these lines on its standard output, and nothing

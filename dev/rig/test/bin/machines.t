@@ -6,7 +6,7 @@ breaks a machine.
   $ host a 127.0.0.1
   $ host b 127.0.0.1
   $ host c ::1
-  $ agent_of() { pgrep -P $(cat machines/$1/pid); }
+  $ agent_of() { cat machines/$1/rig-agent-$(id -u).lock; }
 
 An agent killed: its machine's half says so, and that death is the cause,
 whatever the program saw of it first.

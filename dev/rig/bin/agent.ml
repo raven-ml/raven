@@ -90,7 +90,8 @@ let half ~firmware address =
 (* The agent *)
 
 (* Holds the machine's lock for the life of the process: one agent of this user
-   runs on a machine at a time. *)
+   runs on a machine at a time. The lock's file holds the holder's process
+   id. *)
 let lock () =
   let path =
     Filename.concat
@@ -102,14 +103,16 @@ let lock () =
       let fd =
         Unix.openfile path [ Unix.O_RDWR; Unix.O_CREAT; Unix.O_CLOEXEC ] 0o600
       in
-      try Unix.lockf fd Unix.F_TLOCK 0
-      with Unix.Unix_error ((Unix.EAGAIN | Unix.EACCES), _, _) ->
-        say Line.Waiting;
-        let rec wait () =
-          try Unix.lockf fd Unix.F_LOCK 0
-          with Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
-        in
-        wait ()
+      (try Unix.lockf fd Unix.F_TLOCK 0
+       with Unix.Unix_error ((Unix.EAGAIN | Unix.EACCES), _, _) ->
+         say Line.Waiting;
+         let rec wait () =
+           try Unix.lockf fd Unix.F_LOCK 0
+           with Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
+         in
+         wait ());
+      Unix.ftruncate fd 0;
+      Proc.write fd (strf "%d\n" (Unix.getpid ()))
     with
     | () -> Ok ()
     | exception Unix.Unix_error (e, _, _) ->

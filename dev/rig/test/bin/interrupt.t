@@ -8,7 +8,7 @@ from a terminal. Each sends the signal once the program joined its job.
   $ host a 127.0.0.1
   $ host b 127.0.0.1
   $ host c ::1
-  $ agent_of() { pgrep -P $(cat machines/$1/pid); }
+  $ agent_of() { cat machines/$1/rig-agent-$(id -u).lock; }
   $ stop() {
   >   rm -f attempts
   >   ./support/defaults.exe rig run --on a,b -- ./support/ctl.exe wait >out 2>err &
