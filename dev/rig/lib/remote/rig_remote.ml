@@ -133,21 +133,20 @@ let machine_of_host h =
       | _ -> None)
   | _ -> None
 
-(* CR: Match the job's full state before consulting the cache, under m.lock.
-   Once a job fails, this Closed-only check lets a previously opened kind return
-   Ok lost devices; a new kind returns Error instead. Returning Error why for
-   Failed why preserves devices' failure contract through the same gate for both
-   paths. *)
+(* The job's state comes first, under the machine's lock: a kind opened before
+   the job ended answers as a new one does. *)
 let devices h kind =
   match machine_of_host h with
   | None -> invalid_arg "Rig_remote.devices: the device is no host of a job"
-  | Some m when Link.wait (Link.job_of m.link) ~ms:0 = Link.Closed ->
-      Error (strf "%s: the job is closed" m.name)
   | Some m -> (
       Mutex.protect m.lock @@ fun () ->
-      match Hashtbl.find_opt m.kinds kind with
-      | Some ds -> Ok ds
-      | None -> (
+      match
+        (Link.wait (Link.job_of m.link) ~ms:0, Hashtbl.find_opt m.kinds kind)
+      with
+      | Link.Closed, _ -> Error (strf "%s: the job is closed" m.name)
+      | Link.Failed why, _ -> Error why
+      | Link.Open, Some ds -> Ok ds
+      | Link.Open, None -> (
           match request m (Wire.Open kind) with
           | Error why -> Error why
           | Ok accounts ->

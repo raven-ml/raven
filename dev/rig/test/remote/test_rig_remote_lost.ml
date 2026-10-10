@@ -12,8 +12,9 @@ open Remote_job
 let root = "FAULTY:0 lost: the agent's device faulted"
 
 (* The FAULTY device's first allocation faults, in the first agent. The job
-   fails with that loss as its root cause; every device here is lost with it,
-   both agents end with it, and the process starts no other job. *)
+   fails with that loss as its root cause; devices answers it for a kind opened
+   before or not, every device here is lost with it, both agents end with it,
+   and the process starts no other job. *)
 let agent_device_lost () =
   with_agents ~n:2 @@ fun agents ->
   let j = connect agents in
@@ -28,6 +29,12 @@ let agent_device_lost () =
   (try ignore (Rig.Buffer.create faulty 16) with _ -> ());
   until ~what:"the job's failure" (fun () -> Rig_remote.failure j <> None);
   equal (option string) (Some root) (Rig_remote.failure j);
+  List.iter
+    (fun kind ->
+      match Rig_remote.devices (List.hd hs) kind with
+      | Ok _ -> failf "devices of %s after the failure" kind
+      | Error why -> equal ~msg:("devices of " ^ kind) string root why)
+    [ "MEM"; "POLLED" ];
   List.iter
     (fun d ->
       raises_match ~msg:(Rig.name d)
