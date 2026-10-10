@@ -944,6 +944,46 @@ val round : ('v, 's, 'd) t -> ('v, 's, 'd) t
 val trunc : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [trunc x] rounds toward zero. *)
 
+(** {2:complex Complex numbers}
+
+    A complex value's parts are floats of half its width: float32 for
+    complex64, float64 for complex128. {!real}, {!imag}, {!magnitude} and
+    {!angle} take the dtype of their result first. *)
+
+val real : (float, 'r) dtype -> (Complex.t, 's, 'd) t -> (float, 'r, 'd) t
+(** [real dt z] is [z]'s real parts, stored in [dt] by the conversion rule
+    ({!cast}): exact where [dt] is as wide as the parts. *)
+
+val imag : (float, 'r) dtype -> (Complex.t, 's, 'd) t -> (float, 'r, 'd) t
+(** [imag dt z] is [z]'s imaginary parts, as {!real}. *)
+
+val magnitude : (float, 'r) dtype -> (Complex.t, 's, 'd) t -> (float, 'r, 'd) t
+(** [magnitude dt z] is [z]'s modulus, {!hypot} of its parts computed in the
+    wider of [dt] and the parts' format, then stored in [dt]. *)
+
+val angle : (float, 'r) dtype -> (Complex.t, 's, 'd) t -> (float, 'r, 'd) t
+(** [angle dt z] is [z]'s argument in radians, {!atan2} of its imaginary and
+    real parts, computed as {!magnitude} is. The negative real axis is a branch
+    cut whose side the sign of a zero imaginary part picks: [-1 + 0i] has
+    angle [π], [-1 - 0i] has [-π]; [0] has angle [0]. *)
+
+val complex :
+  (Complex.t, 'c) dtype ->
+  re:(float, 'a, 'd) t ->
+  im:(float, 'a, 'd) t ->
+  (Complex.t, 'c, 'd) t
+(** [complex dt ~re ~im] is the complex value of parts [re] and [im],
+    broadcast together, each stored in [dt]'s part format by the conversion
+    rule: infinities, NaN and signed zeros stay, and one part never affects the
+    other. [complex dt ~re:(real f z) ~im:(imag f z)] is [z] for [f] the
+    parts' format.
+
+    Raises [Invalid_argument] if the shapes do not broadcast. *)
+
+val conjugate : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [conjugate x] is [x] with each imaginary part negated, [0.] to [-0.]
+    included; [x] itself for a dtype that is not complex. *)
+
 (** {2:compare Comparisons and bits}
 
     Every dtype has one order: [false < true]; integers by value, unsigned

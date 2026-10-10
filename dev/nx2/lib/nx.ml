@@ -1772,18 +1772,20 @@ let rsqrt x =
 (* [m sqrt (1 + (n / m)^2)] for the larger magnitude [m] and the smaller [n]:
    nothing squares past [m]. Zero for two zeros, an infinity where either is,
    even beside a NaN. *)
+let hypotenuse b w x y =
+  let ax = un1 b Abs w x and ay = un1 b Abs w y in
+  let m = bin2 b Maximum ax ay and n = bin2 b Minimum ax ay in
+  let r = bin2 b Fdiv n m in
+  let s = un1 b Sqrt w (node b (Op3 (Fma, r, r, const b w 1.))) in
+  let h = bin2 b Mul m s in
+  let zero = node b (Op2 (Compare Equal, m, const b w 0.)) in
+  let h = pick b zero (const b w 0.) h in
+  let inf v = node b (Op2 (Compare Equal, v, const b w Float.infinity)) in
+  pick b (bin2 b Or (inf ax) (inf ay)) (const b w Float.infinity) h
+
 let hypot x y =
   float_map ~by:"Nx.hypot" [ x; y ] (fun b w ins ->
-      let ax = un1 b Abs w ins.(0) and ay = un1 b Abs w ins.(1) in
-      let m = bin2 b Maximum ax ay and n = bin2 b Minimum ax ay in
-      let r = bin2 b Fdiv n m in
-      let s = un1 b Sqrt w (node b (Op3 (Fma, r, r, const b w 1.))) in
-      let h = bin2 b Mul m s in
-      let zero = node b (Op2 (Compare Equal, m, const b w 0.)) in
-      let h = pick b zero (const b w 0.) h in
-      let inf v = node b (Op2 (Compare Equal, v, const b w Float.infinity)) in
-      let either = bin2 b Or (inf ax) (inf ay) in
-      pick b either (const b w Float.infinity) h)
+      hypotenuse b w ins.(0) ins.(1))
 
 (* Past [big] a square would overflow float32: [log (2 x)] is the function to
    the format's precision there. Below [tiny], [x] is. *)
@@ -1841,6 +1843,75 @@ let atanh x =
       let r = bin2 b Mul (const b w 0.5) (un1 b Log1p w q) in
       let signed = pick b (below b w x 0.) (un1 b Neg w r) r in
       pick b (below b w a tiny) x signed)
+
+(* Complex parts *)
+
+let cast_by (type v s w r d) ~by (dt : (w, r) D.t) (x : (v, s, d) t) :
+    (w, r, d) t =
+  match D.equal_witness (dtype x) dt with
+  | Some Type.Equal -> x
+  | None -> Eval.apply1 ~by Cast dt x
+
+let real dt z =
+  let by = "Nx.real" in
+  let (Parts (_, re, _)) = parts ~by z in
+  cast_by ~by dt re
+
+let imag dt z =
+  let by = "Nx.imag" in
+  let (Parts (_, _, im)) = parts ~by z in
+  cast_by ~by dt im
+
+(* [body b w re im] of [z]'s parts, computed in the wider of [dt] and the
+   parts' format, then stored in [dt]. *)
+let of_parts (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
+    (body : 'w. program -> (float, 'w) D.t -> int -> int -> int) :
+    (float, r, d) t =
+  let (Parts (f, re, im)) = parts ~by z in
+  let (Wide w) = if D.bits dt > D.bits f then Wide dt else Wide f in
+  elementwise ~by dt [ Any re; Any im ] (fun b ins ->
+      let up i =
+        if D.equal w f then i else node b (Op1 (Cast, D.Any w, i))
+      in
+      let v = body b w (up ins.(0)) (up ins.(1)) in
+      if D.equal w dt then v else node b (Op1 (Cast, D.Any dt, v)))
+
+let magnitude dt z =
+  of_parts ~by:"Nx.magnitude" dt z (fun b w re im -> hypotenuse b w re im)
+
+let angle dt z =
+  of_parts ~by:"Nx.angle" dt z (fun b _ re im -> bin2 b Atan2 im re)
+
+let complex (type c a d) (dt : (Complex.t, c) D.t) ~(re : (float, a, d) t)
+    ~(im : (float, a, d) t) : (Complex.t, c, d) t =
+  let by = "Nx.complex" in
+  let s = Prim.broadcast_shape ~by (shape re) (shape im) in
+  let r = Array.length s in
+  let pairs (type p) (f : (float, p) D.t) =
+    let unit = Array.append s [| 1 |] and both = Array.append s [| 2 |] in
+    let part x = move ~by (Reshape unit) (broadcast ~by s (cast_by ~by f x)) in
+    let pieces = [ (region unit r 0 1, part re); (region unit r 1 1, part im) ] in
+    Eval.eval ~by (Value.Bitcast (dt, assemble ~by f both 0. pieces))
+  in
+  match dt with D.Complex64 -> pairs D.Float32 | D.Complex128 -> pairs D.Float64
+
+(* A complex value's imaginary parts negated, in one map over its bits read as
+   pairs of parts; any other value is itself. *)
+let conjugate (type v s d) (x : (v, s, d) t) : (v, s, d) t =
+  let by = "Nx.conjugate" in
+  let flip (type p) (f : (float, p) D.t) =
+    let pairs : (float, p, d) t = Eval.eval ~by (Value.Bitcast (f, x)) in
+    let y =
+      elementwise ~by f [ Any pairs ] (fun b ins ->
+          let im = node b (Op2 (Compare Equal, node b (Coord 0), const b D.Int64 1L)) in
+          pick b im (un1 b Neg f ins.(0)) ins.(0))
+    in
+    Eval.eval ~by (Value.Bitcast (dtype x, y))
+  in
+  match dtype x with
+  | D.Complex64 -> flip D.Float32
+  | D.Complex128 -> flip D.Float64
+  | _ -> x
 
 (* Operations as data *)
 
