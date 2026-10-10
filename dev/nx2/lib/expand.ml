@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 module D = Nx_array.Dtype
+module L = Nx_array.Layout
 module P = Nx_kernel.Prog
 
 (* Whether [prog] is one node over its operands in order, which a kernel
@@ -304,6 +305,85 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
     in
     match outs with [ dt ] -> Some (cast_to apply ~by dt v, ()) | _ -> None
 
+(* The program of a region's flat positions in a C-contiguous value whose axes
+   have [strides]: [Σ (start + i·step)·stride] at the region's index [i]. *)
+let positions (rs : Nx_array.Move.range array) strides =
+  let r = Array.length rs in
+  let int64 n = P.Const (D.Any D.Int64, P.bits D.Int64 (Int64.of_int n)) in
+  let first = ref 0 in
+  Array.iteri
+    (fun d (g : Nx_array.Move.range) ->
+      first := !first + (g.start * strides.(d)))
+    rs;
+  let nodes = ref [] and count = ref 0 in
+  let push n =
+    nodes := n :: !nodes;
+    incr count;
+    !count - 1
+  in
+  let sum = ref (push (int64 !first)) in
+  Array.iteri
+    (fun d (g : Nx_array.Move.range) ->
+      let c = push (P.Coord (r - 1 - d)) in
+      let k = push (int64 (g.step * strides.(d))) in
+      let m = push (P.Op2 (Binary Mul, c, k)) in
+      sum := push (P.Op2 (Binary Add, !sum, m)))
+    rs;
+  P.v ~ins:[||] (Array.of_list (List.rev !nodes)) ~outs:[| !sum |]
+
+(* An assembly as a fill of the flat result, then per piece in order a scatter
+   of its elements at their flat positions: O(n) per piece. *)
+let assemble (type v s d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by
+    (dt : (v, s) Value.dtype) shape (fill : v)
+    (pieces : (Nx_array.Move.range array * (v, s, d) Value.t) list) :
+    (v, s, d) Value.t =
+  let create : type w q.
+      (w, q) Value.dtype -> int array -> P.t -> (w, q, d) Value.t =
+   fun dt shape prog ->
+    let v, () =
+      apply ~by
+        (Value.Map
+           {
+             layout = L.contiguous shape;
+             prog;
+             outs = Value.[ dt ];
+             loads = [||];
+           })
+    in
+    v
+  in
+  let n = Array.fold_left ( * ) 1 shape in
+  let strides = Array.make (Array.length shape) 1 in
+  for d = Array.length shape - 2 downto 0 do
+    strides.(d) <- strides.(d + 1) * shape.(d + 1)
+  done;
+  let flat =
+    create dt [| n |] (P.of_node ~ins:[||] (Const (D.Any dt, P.bits dt fill)))
+  in
+  let place acc (rs, x) =
+    let s = Prim.shape x in
+    let m = Array.fold_left ( * ) 1 s in
+    if m = 0 then acc
+    else
+      let line : type w q. (w, q, d) Value.t -> (w, q, d) Value.t =
+       fun v -> apply ~by (Value.Move (Reshape [| m |], v))
+      in
+      let targets = create D.Int64 s (positions rs strides) in
+      apply ~by
+        (Value.Scatter
+           {
+             combine = Set;
+             unique = true;
+             axis = 0;
+             idx = line targets;
+             updates = line x;
+             into = acc;
+           })
+  in
+  apply ~by
+    (Value.Move (Reshape (Array.copy shape), List.fold_left place flat pieces))
+
+
 let run : type r.
     ('q. by:string -> 'q Value.prim -> 'q) ->
     by:string ->
@@ -328,6 +408,9 @@ let run : type r.
       scan apply ~by layout axis prog r loads
   | Value.Map { layout; prog; outs; loads } ->
       widened apply ~by layout prog outs loads
-  | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
-  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+  | Value.Assemble { dtype; shape; fill; pieces } ->
+      Some (assemble apply ~by dtype shape fill pieces)
+  | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
+  | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
+  | Value.Check _ ->
       None

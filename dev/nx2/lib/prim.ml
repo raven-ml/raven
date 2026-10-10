@@ -158,6 +158,9 @@ let name : type r. r prim -> string = function
   | Map _ -> "Map"
   | Reduce _ -> "Reduce"
   | Scan _ -> "Scan"
+  | Gather _ -> "Gather"
+  | Scatter _ -> "Scatter"
+  | Assemble _ -> "Assemble"
   | Copy _ -> "Copy"
   | Move _ -> "Move"
   | Bitcast _ -> "Bitcast"
@@ -170,6 +173,10 @@ let operands : type r. r prim -> operands = function
   | Map { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
   | Reduce { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
   | Scan { loads; _ } -> Operands (Array.to_list (Array.map load_any loads))
+  | Gather { idx; x; _ } -> Operands [ Any idx; Any x ]
+  | Scatter { idx; updates; into; _ } ->
+      Operands [ Any idx; Any updates; Any into ]
+  | Assemble { pieces; _ } -> Operands (List.map (fun (_, x) -> Any x) pieces)
   | Copy x -> Operands [ Any x ]
   | Move (_, x) -> Operands [ Any x ]
   | Bitcast (_, x) -> Operands [ Any x ]
@@ -191,6 +198,14 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
   | Map { loads; _ } -> iteri_loads f loads
   | Reduce { loads; _ } -> iteri_loads f loads
   | Scan { loads; _ } -> iteri_loads f loads
+  | Gather { idx; x; _ } ->
+      f 0 idx;
+      f 1 x
+  | Scatter { idx; updates; into; _ } ->
+      f 0 idx;
+      f 1 updates;
+      f 2 into
+  | Assemble { pieces; _ } -> List.iteri (fun i (_, x) -> f i x) pieces
   | Copy x -> f 0 x
   | Move (_, x) -> f 0 x
   | Bitcast (_, x) -> f 0 x
@@ -213,6 +228,9 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
   | Map { loads; _ } -> loads_exist f loads 0
   | Reduce { loads; _ } -> loads_exist f loads 0
   | Scan { loads; _ } -> loads_exist f loads 0
+  | Gather { idx; x; _ } -> f idx || f x
+  | Scatter { idx; updates; into; _ } -> f idx || f updates || f into
+  | Assemble { pieces; _ } -> List.exists (fun (_, x) -> f x) pieces
   | Copy x -> f x
   | Move (_, x) -> f x
   | Bitcast (_, x) -> f x
@@ -227,6 +245,11 @@ let map : type r.
   | Map p -> Map { p with loads = Array.map map_load p.loads }
   | Reduce p -> Reduce { p with loads = Array.map map_load p.loads }
   | Scan p -> Scan { p with loads = Array.map map_load p.loads }
+  | Gather g -> Gather { g with idx = m g.idx; x = m g.x }
+  | Scatter s ->
+      Scatter { s with idx = m s.idx; updates = m s.updates; into = m s.into }
+  | Assemble a ->
+      Assemble { a with pieces = List.map (fun (r, x) -> (r, m x)) a.pieces }
   | Copy x -> Copy (m x)
   | Move (mv, x) -> Move (mv, m x)
   | Bitcast (dt, x) -> Bitcast (dt, m x)
@@ -395,6 +418,19 @@ let pp : type r. Format.formatter -> r prim -> unit =
   | Scan { prog; axis; reduction; _ } ->
       Format.fprintf ppf " [%a] along %d" (pp_reduced prog)
         (spec_reduction reduction) axis
+  | Gather { axis; _ } -> Format.fprintf ppf " along %d" axis
+  | Scatter { combine; unique; axis; _ } ->
+      let combine =
+        match (combine : Nx_kernel.Spec.combine) with
+        | Set -> "set"
+        | Add -> "add"
+        | Max -> "max"
+        | Min -> "min"
+      in
+      Format.fprintf ppf " %s%s along %d" combine
+        (if unique then " unique" else "")
+        axis
+  | Assemble { shape; _ } -> Format.fprintf ppf " into %a" pp_shape shape
   | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
   List.iteri (fun i x -> Format.fprintf ppf " (x%d: %a)" i pp_operand x) xs
 
@@ -662,6 +698,77 @@ let bitcast_layout ~by l (from : D.any) (into : D.any) =
     else L.contiguous s'
   end
 
+(* Gathers, scatters and assemblies *)
+
+(* Whether shapes [a] and [b] have one extent along every axis but [axis]. *)
+let off_axis axis a b =
+  Array.length a = Array.length b
+  &&
+  let ok = ref true in
+  Array.iteri (fun i e -> if i <> axis && e <> b.(i) then ok := false) a;
+  !ok
+
+let check_axis ~by axis r =
+  if axis < 0 || axis >= r then
+    invalid_argf "%s: axis %d of an operand of rank %d" by axis r
+
+let check_gather ~by axis idx x =
+  let si = shape idx and sx = shape x in
+  check_axis ~by axis (Array.length sx);
+  if not (off_axis axis si sx) then
+    invalid_argf "%s: positions %a do not fit an operand %a along axis %d" by
+      pp_shape si pp_shape sx axis
+
+let gather_route ~by axis idx x =
+  Route.route ~by (Gather axis) [| at idx; at x |] [| shape idx; shape x |]
+
+let check_scatter ~by (combine : Nx_kernel.Spec.combine) axis idx updates into =
+  let si = shape idx and su = shape updates and st = shape into in
+  check_axis ~by axis (Array.length st);
+  if si <> su then
+    invalid_argf "%s: positions %a and updates %a differ" by pp_shape si
+      pp_shape su;
+  if not (off_axis axis su st) then
+    invalid_argf "%s: updates %a do not fit a target %a along axis %d" by
+      pp_shape su pp_shape st axis;
+  if combine = Add && not (P.accepts2 (Binary Add) (dtype into)) then
+    invalid_argf "%s: Add does not take %s" by (D.name (dtype into))
+
+let scatter_route ~by axis idx updates into =
+  Route.route ~by (Into axis)
+    [| at idx; at updates; at into |]
+    [| shape idx; shape updates; shape into |]
+
+let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
+    (pieces : (Nx_array.Move.range array * (v, s, d) t) list) =
+  (match L.contiguous whole with
+  | _ -> ()
+  | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
+  (match P.bits dt fill with
+  | _ -> ()
+  | exception Invalid_argument e -> invalid_argf "%s: %s" by e);
+  List.iteri
+    (fun i (rs, x) ->
+      match Nx_array.Move.shape (Slice rs) whole with
+      | s ->
+          if not (has_shape x s) then
+            invalid_argf "%s: piece %d has shape %a, its region %a" by i
+              pp_shape (shape x) pp_shape s
+      | exception Invalid_argument e -> invalid_argf "%s: piece %d: %s" by i e)
+    pieces
+
+(* An assembly reads each piece whole and lies whole on every device of their
+   set: no piece's window is any device's alone. *)
+let assemble_route (type v s d) ~by
+    (pieces : (Nx_array.Move.range array * (v, s, d) t) list) : d Route.t option
+    =
+  match pieces with
+  | [] -> None
+  | _ ->
+      Route.route ~by Replicated
+        (Array.of_list (List.map (fun (_, x) -> at x) pieces))
+        (Array.of_list (List.map (fun (_, x) -> shape x) pieces))
+
 let results : type r.
     by:string ->
     ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
@@ -682,6 +789,18 @@ let results : type r.
       check_scan ~by layout axis prog reduction loads;
       let placement = result (loop_route ~by (Along [| axis |]) layout loads) in
       make_reduction m 0 layout placement reduction
+  | Gather { axis; idx; x } ->
+      check_gather ~by axis idx x;
+      let placement = result (gather_route ~by axis idx x) in
+      m 0 { dtype = dtype x; layout = L.contiguous (shape idx); placement }
+  | Scatter { combine; axis; idx; updates; into; _ } ->
+      check_scatter ~by combine axis idx updates into;
+      let placement = result (scatter_route ~by axis idx updates into) in
+      m 0 { dtype = dtype into; layout = L.contiguous (shape into); placement }
+  | Assemble { dtype; shape; fill; pieces } ->
+      check_assemble ~by dtype shape fill pieces;
+      let placement = result (assemble_route ~by pieces) in
+      m 0 { dtype; layout = L.contiguous shape; placement }
   | Copy x ->
       let placement = one_result ~by Elementwise x in
       m 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
@@ -834,6 +953,30 @@ let prepare : type r.
       match placed r p.loads with
       | Some loads -> Scan { p with loads }
       | None -> op)
+  | Gather g ->
+      check_gather ~by g.axis g.idx g.x;
+      let r = gather_route ~by g.axis g.idx g.x in
+      Gather
+        { g with idx = place (read_at r 0) g.idx; x = place (read_at r 1) g.x }
+  | Scatter s ->
+      check_scatter ~by s.combine s.axis s.idx s.updates s.into;
+      let r = scatter_route ~by s.axis s.idx s.updates s.into in
+      Scatter
+        {
+          s with
+          idx = place (read_at r 0) s.idx;
+          updates = place (read_at r 1) s.updates;
+          into = place (read_at r 2) s.into;
+        }
+  | Assemble a ->
+      check_assemble ~by a.dtype a.shape a.fill a.pieces;
+      let r = assemble_route ~by a.pieces in
+      Assemble
+        {
+          a with
+          pieces =
+            List.mapi (fun i (rs, x) -> (rs, place (read_at r i) x)) a.pieces;
+        }
   | Copy x -> Copy (one Elementwise x)
   | Move (mv, x) ->
       ignore (moved_shape ~by mv x);
@@ -875,6 +1018,9 @@ let arrays : type r. r prim -> r -> Nx_array.any array array =
   | Map { outs; _ } -> Array.of_list (arrays_outs outs r)
   | Reduce { reductions; _ } -> Array.of_list (arrays_reductions reductions r)
   | Scan { reduction; _ } -> Array.of_list (arrays_reduction reduction r)
+  | Gather _ -> [| arrays_of r |]
+  | Scatter _ -> [| arrays_of r |]
+  | Assemble _ -> [| arrays_of r |]
   | Copy _ -> [| arrays_of r |]
   | Move _ -> [| arrays_of r |]
   | Bitcast _ -> [| arrays_of r |]

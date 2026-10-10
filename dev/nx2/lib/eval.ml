@@ -18,7 +18,8 @@ let delivered : type r. by:string -> r prim -> r prim =
   match op with
   | Place (p, x) -> Place (p, Exec.at (Devices.rebrand p) (Exec.live x))
   | Check _ -> Prim.map (fun x -> Exec.read (Exec.live x)) op
-  | Map _ | Reduce _ | Scan _ | Copy _ | Move _ | Bitcast _ ->
+  | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Assemble _ | Copy _
+  | Move _ | Bitcast _ ->
       Prim.prepare ~by computing op
 
 let eval ~by op =

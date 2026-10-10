@@ -12,12 +12,13 @@
     computes each constant operand where the route reads it, places operands the
     route moves, allocates each result at the route's placement, and calls the
     set's kernels once per device. [Done] is the result; a refusal raises
-    through {!Nx_array.refused} naming [by]; a map a device's kernels decline
-    runs as its expansion ({!Expand.run}) on that device, over its own operands,
-    and a kernel a node needs that the kernels decline raises naming the
-    kernels, the kind, the dtypes and the device. Movements and bitcasts are
-    views where a layout expresses them, and a copy, then a view, otherwise.
-    [Check] raises its exception from the first failing index, read on the host.
+    through {!Nx_array.refused} naming [by]; a map or an assembly a device's
+    kernels decline runs as its expansion ({!Expand.run}) on that device, over
+    its own operands, and a kernel a node, a gather or a scatter needs that the
+    kernels decline raises naming the kernels, the kind, the dtypes and the
+    device. Movements and bitcasts are views where a layout expresses them, and
+    a copy, then a view, otherwise. [Check] raises its exception from the first
+    failing index, read on the host.
 
     A program that reads coordinates computes each device's window with that
     window's first index added to them. *)

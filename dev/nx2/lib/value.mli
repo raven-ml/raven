@@ -150,6 +150,9 @@ and ('d, _) outs =
   | [] : ('d, unit) outs
   | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) t * 'r) outs
 
+and 'd index = (int64, Nx_array.Dtype.int64_elt, 'd) t
+(** Positions held in data. *)
+
 and _ prim =
   | Map : {
       layout : Nx_array.Layout.t;
@@ -183,6 +186,38 @@ and _ prim =
       -> 'r prim
       (** The reduction of [prog]'s output over the indices along [axis] up to
           each index's, inclusive: [layout]'s shape, C-contiguous. *)
+  | Gather : {
+      axis : int;
+      idx : 'd index;
+      x : ('v, 's, 'd) t;
+    }
+      -> ('v, 's, 'd) t prim
+      (** [x] read at the positions [idx] holds along [axis]: [idx] has [x]'s
+          rank and its extents off [axis], and the result [idx]'s shape. A
+          position outside [x]'s axis reads the element of zero bits. *)
+  | Scatter : {
+      combine : Nx_kernel.Spec.combine;
+      unique : bool;
+      axis : int;
+      idx : 'd index;
+      updates : ('v, 's, 'd) t;
+      into : ('v, 's, 'd) t;
+    }
+      -> ('v, 's, 'd) t prim
+      (** [into] with each update combined at its own index with axis [axis]
+          replaced by [idx]'s element there, in C order of [updates]
+          ({!Nx_kernel.Spec.scatter}); [idx] and [updates] have one shape,
+          [into]'s off [axis]. [unique] promises distinct targets. *)
+  | Assemble : {
+      dtype : ('v, 's) dtype;
+      shape : int array;
+      fill : 'v;
+      pieces : (Nx_array.Move.range array * ('v, 's, 'd) t) list;
+    }
+      -> ('v, 's, 'd) t prim
+      (** The value of [shape] whose element at an index is the last piece's
+          whose region, a [Slice] of [shape] by its ranges, holds it, and [fill]
+          where none does. Each piece has its region's shape. *)
   | Copy : ('v, 's, 'd) t -> ('v, 's, 'd) t prim
       (** The value stored afresh, C-contiguous. *)
   | Move : Nx_array.Move.t * ('v, 's, 'd) t -> ('v, 's, 'd) t prim

@@ -14,11 +14,13 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* Messages *)
 
-let declined ~by ~kernels node d dts =
-  invalid_argf "%s: %s does not compute %s on %s (%s)" by kernels
-    (Prim.kind node)
+let refuses ~by ~kernels kind d dts =
+  invalid_argf "%s: %s does not compute %s on %s (%s)" by kernels kind
     (String.concat ", " (List.map (fun (A.Any a) -> D.name (A.dtype a)) dts))
     (Rig.name d)
+
+let declined ~by ~kernels node d dts =
+  refuses ~by ~kernels (Prim.kind node) d dts
 
 let kernels_of ~by ~op set : (module Nx_kernel.S) =
   match Devices.kernels set with
@@ -506,7 +508,8 @@ let operand_at : type r.
    own, and an operation reads it through to its operand's. *)
 let is_view : type r. r Value.prim -> bool = function
   | Value.Move _ | Value.Bitcast _ -> true
-  | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Place _
+  | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
+  | Value.Scatter _ | Value.Assemble _ | Value.Copy _ | Value.Place _
   | Value.Check _ ->
       false
 
@@ -569,6 +572,12 @@ let each_device ~by p shape f =
         (fun j k -> f j k (Devices.window ~by p shape j))
         (Grid.devices (Devices.grid p))
 
+(* The window [w] of an operand of [shape] read whole along [axis]. *)
+let along axis shape w =
+  let w = Array.copy w in
+  w.(axis) <- whole shape.(axis);
+  w
+
 let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   Prim.iteri (fun i x -> checked ~by i x) op;
@@ -626,8 +635,9 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           let r = run ~by (Prim.map live op) in
           consumed ~by ~reused:(fun _ -> false) hs;
           r)
-  | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
-  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+  | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
+  | Value.Assemble _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
+  | Value.Place _ | Value.Check _ ->
       claim ~by hs;
       let r = run ~by (Prim.map live op) in
       consumed ~by ~reused:(fun _ -> false) hs;
@@ -741,6 +751,37 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       let xp = Prim.placement x and xs = arrays_of x in
       let set = Devices.set xp in
       shard_views ~by op xp (fun () -> Array.map (cast ~by set dt) xs)
+  | Value.Gather { axis; idx; x } ->
+      let r, p = alloc_one ~by op in
+      let set = Devices.set p in
+      let (module K) = kernels_of ~by ~op:"Gather" set in
+      let spec = S.gather ~axis and dsts = arrays_of r in
+      each_device ~by p (Prim.shape r) (fun j k w ->
+          let dst = dsts.(j) and i = Place.view ~by idx k w in
+          let v = Place.view ~by x k (along axis (Prim.shape x) w) in
+          let ops = [| A.Any i; A.Any v |] in
+          if not (ran ~by (K.gather spec ~dst i v) [| A.Any dst |] ops) then
+            refuses ~by ~kernels:K.name "Gather" (Devices.rig set k)
+              (Array.to_list ops));
+      r
+  | Value.Scatter { combine; unique; axis; idx; updates; into = t } ->
+      let r, p = alloc_one ~by op in
+      let set = Devices.set p in
+      let (module K) = kernels_of ~by ~op:"Scatter" set in
+      let spec = S.scatter combine ~unique ~axis and dsts = arrays_of r in
+      let s = Prim.shape updates in
+      each_device ~by p (Prim.shape r) (fun j k w ->
+          let dst = dsts.(j) and into = Place.view ~by t k w in
+          let w' = along axis s w in
+          let i = Place.view ~by idx k w' and u = Place.view ~by updates k w' in
+          let ops = [| A.Any into; A.Any i; A.Any u |] in
+          if not (ran ~by (K.scatter spec ~dst ~into i u) [| A.Any dst |] ops)
+          then
+            refuses ~by ~kernels:K.name "Scatter" (Devices.rig set k)
+              (Array.to_list ops));
+      r
+  | Value.Assemble { dtype; shape; fill; pieces } ->
+      assemble ~by dtype shape fill pieces
   | Value.Place _ | Value.Check _ -> run ~by op
 
 (* [op], a loop the kernels of [p]'s set declined, as its expansion. A plain
@@ -784,6 +825,52 @@ and loop_devices ~by (p : unit Devices.placement) shape ~axes kernel prog ops
             dsts ops
       end);
   !computed
+
+(* An assembly's result at [at], or where its rule places it: its kernel on each
+   device, or its expansion where the kernels decline it. *)
+and assemble : type v s d.
+    by:string ->
+    ?at:unit Devices.placement ->
+    (v, s) D.t ->
+    int array ->
+    v ->
+    (M.range array * (v, s, d) Value.t) list ->
+    (v, s, d) Value.t =
+ fun ~by ?at dtype shape fill pieces ->
+  let op = Value.Assemble { dtype; shape; fill; pieces } in
+  let r, p = alloc_one ~by ?at op in
+  let (module K) = kernels_of ~by ~op:"Assemble" (Devices.set p) in
+  let spec =
+    S.assemble ~shape ~fill:(P.bits dtype fill)
+      (Array.of_list (List.map fst pieces))
+  and dsts = arrays_of r in
+  let computed = ref true in
+  each_device ~by p shape (fun j k _ ->
+      if !computed then begin
+        let views =
+          Array.of_list
+            (List.map
+               (fun (_, x) ->
+                 Place.view ~by x k (Array.map whole (Prim.shape x)))
+               pieces)
+        in
+        let ops = Array.map (fun v -> A.Any v) views in
+        computed :=
+          ran ~by (K.assemble spec ~dst:dsts.(j) views) [| A.Any dsts.(j) |] ops
+      end);
+  if !computed then r else expanded ~by (Devices.rebrand p) op
+
+(* [op]'s one result, fresh at [at] or at the placement its rule gives, and that
+   placement. *)
+and alloc_one : type v s d.
+    by:string ->
+    ?at:unit Devices.placement ->
+    (v, s, d) Value.t Value.prim ->
+    (v, s, d) Value.t * d Devices.placement =
+ fun ~by ?at op ->
+  let where = ref None in
+  let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
+  (r, Devices.rebrand (Option.get !where))
 
 (* The one result of [op] over the arrays [views ()], one per device of [xp] in
    order: at [op]'s placement, whose devices hold them. [views] runs once [op]'s
@@ -1031,8 +1118,9 @@ and compute_at : type r.
         (fun k w -> Array.map (view k w) loads)
         (Prim.arrays op r);
       r
-  | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
-  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+  | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
+  | Value.Assemble _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
+  | Value.Place _ | Value.Check _ ->
       run ~by op
 
 (* [node]'s results at [p], its constant operands already computed where it
@@ -1050,6 +1138,9 @@ and compute_node :
   | Value.Map _ ->
       (* Its loads are computed at [p] already. *)
       Prim.arrays n.op (compute_at ~by ~resolve p n.op)
+  | Value.Assemble { dtype; shape; fill; pieces = [] } ->
+      (* A creation: no operand gives it a placement. *)
+      Prim.arrays n.op (assemble ~by ~at:p dtype shape fill [])
   | Value.Move (mv, x) when uncut p ->
       (* A view at a placement that cuts no axis: each device's whole operand
          there, moved. Its rule held when it was made. *)

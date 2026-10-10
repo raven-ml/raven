@@ -371,6 +371,9 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
   | Map { outs; _ } -> same_outs msg outs a b
   | Reduce { reductions; _ } -> same_reductions msg reductions a b
   | Scan { reduction; _ } -> same_reduction msg reduction a b
+  | Gather _ -> same_form ~msg a b
+  | Scatter _ -> same_form ~msg a b
+  | Assemble _ -> same_form ~msg a b
   | Copy _ -> same_form ~msg a b
   | Move _ -> same_form ~msg a b
   | Bitcast _ -> same_form ~msg a b
@@ -528,6 +531,30 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
       | None -> fail "test.jvp: a map that does not expand")
   | Reduce _ | Scan _ ->
       invalid_arg (by ^ ": test.jvp has no derivative of a reduction")
+  | Gather g ->
+      (* Linear in [x]: the positions carry no tangent. *)
+      let idx = fst (parts i g.idx) in
+      both (fun y -> Nx.Prim.eval ~by (Gather { g with idx; x = y })) g.x
+  | Scatter ({ combine = Set | Add; _ } as s) ->
+      (* Linear in the updates and the target. *)
+      let idx = fst (parts i s.idx) in
+      let pu, tu = parts i s.updates and pt, tt = parts i s.into in
+      let scatter updates into =
+        Nx.Prim.eval ~by (Scatter { s with idx; updates; into })
+      in
+      dual i (scatter pu pt) (scatter tu tt)
+  | Scatter _ ->
+      invalid_arg (by ^ ": test.jvp has no derivative of a max or min scatter")
+  | Assemble a ->
+      (* Linear in the pieces; the fill's tangent is zero. *)
+      let assemble fill pieces =
+        Nx.Prim.eval ~by (Assemble { a with fill; pieces })
+      in
+      dual i
+        (assemble a.fill
+           (List.map (fun (r, x) -> (r, fst (parts i x))) a.pieces))
+        (assemble (D.zero a.dtype)
+           (List.map (fun (r, x) -> (r, snd (parts i x))) a.pieces))
   | Copy x -> both (fun y -> Nx.Prim.eval ~by (Copy y)) x
   | Move (mv, x) -> both (fun y -> Nx.Prim.eval ~by (Move (mv, y))) x
   | Bitcast _ -> invalid_arg (by ^ ": test.jvp has no derivative of a bitcast")

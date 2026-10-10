@@ -724,6 +724,28 @@ module Prim = struct
         loads : 'd load array;
       }
         -> 'r t
+    | Gather : {
+        axis : int;
+        idx : (int64, Dtype.int64_elt, 'd) Value.t;
+        x : ('v, 's, 'd) Value.t;
+      }
+        -> ('v, 's, 'd) Value.t t
+    | Scatter : {
+        combine : Nx_kernel.Spec.combine;
+        unique : bool;
+        axis : int;
+        idx : (int64, Dtype.int64_elt, 'd) Value.t;
+        updates : ('v, 's, 'd) Value.t;
+        into : ('v, 's, 'd) Value.t;
+      }
+        -> ('v, 's, 'd) Value.t t
+    | Assemble : {
+        dtype : ('v, 's) dtype;
+        shape : int array;
+        fill : 'v;
+        pieces : (Nx_array.Move.range array * ('v, 's, 'd) Value.t) list;
+      }
+        -> ('v, 's, 'd) Value.t t
     | Copy : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t t
     | Move : Nx_array.Move.t * ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t t
     | Bitcast : ('w, 'r) dtype * ('v, 's, 'd) Value.t -> ('w, 'r, 'd) Value.t t

@@ -36,12 +36,13 @@
  (files ../lib/value.mli))
 
 (tests
- (names test_grid test_route test_prim test_maps)
+ (names test_grid test_route test_prim test_maps test_index_ops)
  (modules
   test_grid
   test_route
   test_prim
   test_maps
+  test_index_ops
   grid
   devices
   route

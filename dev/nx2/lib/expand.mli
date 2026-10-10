@@ -18,7 +18,10 @@
     one-node map at a dtype other than a base one ({!base}), but a cast, a
     bitcast or a copy, computes at its dtypes' accumulators, which hold their
     values exactly, and rounds once to its dtype; a constant takes its value at
-    the accumulator. Every other operation is core. *)
+    the accumulator. An assembly expands into a fill of its flat result, then
+    per piece in order a scatter of the piece's elements at their flat
+    positions, a map of coordinates: O(n) per piece. Every other operation is
+    core. *)
 
 val base : Nx_array.Dtype.any -> bool
 (** [base dt] is [true] for the dtypes every library's kernels compute: float32,
