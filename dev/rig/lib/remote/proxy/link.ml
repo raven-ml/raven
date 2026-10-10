@@ -356,9 +356,11 @@ type t = {
   c : nativeint;
   job : job;
   name : string;
-  lock : Mutex.t;
+  lock : Mutex.t; (* [asked] and [rails] *)
   asked : any Queue.t; (* requests [next] gave, unanswered, oldest first *)
   rails : (int, unit) Hashtbl.t; (* the ids of its rails *)
+  next_lock : Mutex.t; (* held across a [next] *)
+  answer_lock : Mutex.t; (* held across an [answer]'s check and send *)
 }
 
 let make job fd ~name ~peer =
@@ -372,6 +374,8 @@ let make job fd ~name ~peer =
     lock = Mutex.create ();
     asked = Queue.create ();
     rails = Hashtbl.create 4;
+    next_lock = Mutex.create ();
+    answer_lock = Mutex.create ();
   }
 
 let name l = l.name
@@ -429,13 +433,12 @@ let drop l id =
   check_id "drop" id;
   post l.c k_drop (encoded (fun b -> add_u64 b id))
 
-(* CR: Serialize each complete next and answer operation, using separate private
-   locks. Concurrent next calls can publish requests in reverse dequeue order;
-   concurrent answers can pop in order and post in reverse. Replies carry no
-   request id, so accepted calls can receive each other's values. Keep the two
-   directions independent: a waiting next must allow earlier requests to be
-   answered. *)
+(* Answers carry no request id: the peer pairs them with its requests by wire
+   order. So a [next] dequeues and records its request in one step, and an
+   [answer] checks, pops and sends in one step, each under its own lock: a
+   [next] waiting for a frame holds up no answer. *)
 let next l =
+  Mutex.protect l.next_lock @@ fun () ->
   let k, a, n = next_c l.c in
   let r = reader (if Array1.dim a = n then a else Array1.sub a 0 n) in
   match
@@ -456,6 +459,15 @@ let next l =
       Error (Option.value (failure l.job) ~default:"")
 
 let answer l q a =
+  let payload =
+    match a with
+    | Ok v -> "\000" ^ encode_answer q v
+    | Error why ->
+        encoded (fun b ->
+            add_u8 b 1;
+            add_string b (cut why))
+  in
+  Mutex.protect l.answer_lock @@ fun () ->
   let oldest =
     Mutex.protect l.lock @@ fun () ->
     match Queue.peek_opt l.asked with
@@ -467,14 +479,6 @@ let answer l q a =
   if not oldest then
     invalid_arg
       "Rig_remote_proxy.Link.answer: the request is not the oldest unanswered";
-  let payload =
-    match a with
-    | Ok v -> "\000" ^ encode_answer q v
-    | Error why ->
-        encoded (fun b ->
-            add_u8 b 1;
-            add_string b (cut why))
-  in
   post l.c k_answer payload
 
 let word l ~device v =

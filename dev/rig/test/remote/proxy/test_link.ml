@@ -1775,10 +1775,73 @@ let fresh_ids () =
   let dups = List.length all - List.length (List.sort_uniq Int.compare all) in
   equal ~msg:"ids given twice" int 0 dups
 
+(* Two domains wait in next. A Load whose binary takes long to decode comes
+   first, then an Open: whichever domain took the Load, it is the oldest
+   request. *)
+let nexts_in_order () =
+  with_raw ~peer:Wire.Controller @@ fun _ l p ->
+  let take () = Domain.spawn (fun () -> Link.next l) in
+  let d1 = take () and d2 = take () in
+  let n = 32 lsl 20 in
+  write p
+    (frame k_request ("\005" ^ u64 1 ^ u64 n ^ String.make n 'b')
+    ^ frame k_request ("\002" ^ str "MEM"));
+  let answer_load = function
+    | Ok (Wire.Request (Wire.Load _ as r)) -> (
+        match Link.answer l r (Ok ()) with
+        | () -> Some (Ok ())
+        | exception Invalid_argument why -> Some (Error why))
+    | _ -> None
+  in
+  equal
+    (list (result unit string))
+    [ Ok () ]
+    (List.filter_map answer_load [ Domain.join d1; Domain.join d2 ])
+
+(* Two domains answer two requests. The first answer takes long to encode; the
+   second domain retries until the first request is answered, which is when its
+   own becomes the oldest. The answers reach the peer in the requests' order. *)
+let answers_in_order () =
+  with_raw ~peer:Wire.Controller @@ fun j l p ->
+  write p
+    (frame k_request ("\002" ^ str "a") ^ frame k_request ("\002" ^ str "b"));
+  let opened () =
+    match within j ~what:"next" (fun () -> Link.next l) with
+    | Ok (Wire.Request (Wire.Open _ as r)) -> r
+    | _ -> fail "next gave no open"
+  in
+  let first = opened () in
+  let second = opened () in
+  let name = String.make (15 lsl 20) 'a' in
+  let large = { Wire.id = 0; name; arch = ""; budget = 0; reaches = [] } in
+  let rec answer_second () =
+    match Link.answer l second (Ok []) with
+    | () -> ()
+    | exception Invalid_argument _ ->
+        Domain.cpu_relax ();
+        answer_second ()
+  in
+  let d1 = Domain.spawn (fun () -> Link.answer l first (Ok [ large ])) in
+  let d2 = Domain.spawn answer_second in
+  let size f = Option.map (fun (k, p) -> (k, String.length p)) f in
+  let a1 = size (next_frame p) in
+  let a2 = size (next_frame p) in
+  Domain.join d1;
+  Domain.join d2;
+  let large_bytes = 1 + 4 + 8 + (4 + String.length name) + 4 + 8 + 4 in
+  equal
+    (list (option (pair int int)))
+    [ Some (k_answer, large_bytes); Some (k_answer, 5) ]
+    [ a1; a2 ]
+
 let domains =
   group "domains"
     [
       test "fresh never gives an id twice, from two domains at once" fresh_ids;
+      test "next from two domains gives requests in the order they came"
+        nexts_in_order;
+      test "answer from two domains sends answers in the requests' order"
+        answers_in_order;
       stateful ~count:20 ~domains:2
         "requests from two domains each get their own answer" parallel_commands;
     ]
