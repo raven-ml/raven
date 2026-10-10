@@ -11,12 +11,11 @@
     call. It answers [Done] once its work is done, or, before any write, a
     refusal: the door's, or [Shape_mismatch] if the operands' shapes differ.
 
-    [apply1] computes [Copy], [Cast] and [Bitcast], and [apply3] [Where], at
-    every dtype; [apply0] computes [Fill] at every dtype of a byte or more and
-    [Iota] at float32, float64 and the 8- to 64-bit integers. The other kinds
-    are computed at every dtype but the complex ones, which are declined. A
+    [apply0] computes [Fill] at every dtype of a byte or more and [Iota] at
+    float32, float64 and the 8- to 64-bit integers, and declines the others.
+    [apply1] to [apply3] compute every kind at every dtype of its domain. A
     [Copy] whose operand's dtype is not [dst]'s is refused with
-    [Wrong_dtype].
+    [Wrong_dtype]. [map] answers [Declined].
 
     [contract] computes contractions in [float32] or [float64] whose [out] is
     their [acc], whose [a], [b] and [init] each convert exactly into [acc],
@@ -60,8 +59,8 @@
 
     [sort] computes every dtype of a byte or more and declines the sub-byte
     ones. [fold] computes [float32], [float64] and the 8- to 64-bit integers
-    and declines the others. [assemble] computes every dtype from at most
-    three pieces and declines more. The three refuse with [Shape_mismatch]
-    operands and destinations whose shapes do not fit. *)
+    and declines the others. [assemble] computes every dtype. The three
+    refuse with [Shape_mismatch] operands and destinations whose shapes do
+    not fit. *)
 
 include Nx_kernel.S

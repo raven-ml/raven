@@ -817,7 +817,25 @@ let rec expected : type v s.
         if compare then [ Bool.to_int (r <> 0L) ]
         else if D.bits dt < 8 then [ Int64.to_int r land 0xF ]
         else low_bytes (D.bits dt / 8) r
-    | D.Complex -> invalid_arg "expected: complex"
+    | D.Complex when D.bits dt = 64 ->
+        let part a i =
+          Int32.to_int (A.get (words a) (Array.append idx [| i |])) land 0xFFFF_FFFF
+        in
+        let args =
+          Array.concat (Array.to_list (Array.map (fun a -> [| part a 0; part a 1 |]) ops))
+        in
+        let r = Nx_kinds_support.c64 name args in
+        if compare then [ Bool.to_int (r.(0) <> 0) ]
+        else low_bytes 4 (Int64.of_int r.(0)) @ low_bytes 4 (Int64.of_int r.(1))
+    | D.Complex ->
+        let args =
+          Array.concat
+            (Array.to_list
+               (Array.map (fun a -> let z = A.get a idx in [| z.Complex.re; z.im |]) ops))
+        in
+        let r = Nx_kinds_support.c128 name args in
+        if compare then [ Bool.to_int (r.(0) <> 0.) ]
+        else low_bytes 8 (Int64.bits_of_float r.(0)) @ low_bytes 8 (Int64.bits_of_float r.(1))
   in
   Array.of_list (List.concat_map per (indices shape))
 
@@ -860,20 +878,17 @@ let large_pairs =
      Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) seed))
 
 (* The answer of [run] into a seeded destination of [dt] and [shape], checked:
-   [Done] with the bytes [want ()] where [checked] (by default but at the
-   complex dtypes), a decline only of a case [b] does not claim, and nothing
-   written
-   but on [Done]. *)
-let answers ?checked (b : Support.backend) kind (D.Any at) (D.Any dt) shape
-    ~accepted ~want (into : 'v 's. ('v, 's) A.t -> A.answer) =
+   [Done] with the bytes [want ()], a decline only of a case [b] does not
+   claim, and nothing written but on [Done]. *)
+let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
+    ~want (into : 'v 's. ('v, 's) A.t -> A.answer) =
   let dst = on b (seeded dt shape 99) in
   let before = bits_of (host dst) in
   match into dst with
   | A.Done ->
       cover "computed" true;
       equal ~msg:"accepted" bool true accepted;
-      if Option.value checked ~default:(not (D.is D.Complex at)) then
-        equal (array int) (want ()) (bits_of (host dst))
+      equal (array int) (want ()) (bits_of (host dst))
   | A.Declined ->
       cover "declined" true;
       check_declined b kind (D.Any at);
@@ -905,7 +920,7 @@ let law_bitcast (b : Support.backend) (Case x, D.Any d) =
   let dt = A.dtype x in
   let x = on b x in
   cover "of one width" (D.bits dt = D.bits d);
-  answers ~checked:true b (K1 Bitcast) (D.Any dt) (D.Any d)
+  answers b (K1 Bitcast) (D.Any dt) (D.Any d)
     (L.shape (A.layout x))
     ~accepted:(P.accepts1 Bitcast dt d)
     ~want:(fun () -> bits_of (host x))
@@ -943,7 +958,7 @@ let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
   let w = max 1 (D.bits dt / 8) in
   let where (type s) (c : (bool, s) A.t) =
     let c = on b c in
-    answers ~checked:true b (K3 Where) (D.Any dt) (D.Any dt) shape
+    answers b (K3 Where) (D.Any dt) (D.Any dt) shape
       ~accepted:(P.accepts3 Where (A.dtype c) dt)
       ~want:(fun () ->
         let cs = A.to_array (host c) and xs = bits_of (host x)

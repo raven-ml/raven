@@ -27,6 +27,15 @@ val int : string -> string -> int64 array -> int64
 val threefry : int64 -> int64 -> int64
 (** [threefry counter key] is [nx_threefry_u64]. *)
 
+val c64 : string -> int array -> int array
+(** [c64 kind args] is the c64 kind [kind] ([add], [fdiv], [less], …) of the
+    operands whose parts' binary32 bits are [args], each operand's real part
+    first: [[| re; im |]] as bits. A comparison gives 1.0 or 0.0 as its real
+    part. Raises [Invalid_argument] on an unknown kind or arity. *)
+
+val c128 : string -> float array -> float array
+(** [c128 kind args] is {!c64} at c128, parts as floats. *)
+
 val run :
   string ->
   (float, 's, Bigarray.c_layout) Bigarray.Array1.t ->

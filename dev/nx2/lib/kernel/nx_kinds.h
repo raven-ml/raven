@@ -6,12 +6,13 @@
 /* Kinds: what each scalar kind of a program computes.
 
    One function per kind and compute type: nx_<kind>_<type>, the type f32,
-   f64, i32, u32, i64 or u64. Every kernel library computes a kind through
-   these functions, or through code that gives the same bits, so that a
-   library's interpreter and its loops agree bit for bit and two libraries
-   agree wherever the kind is exact. The float kinds are written once, in
-   nx_kinds_real.h, which this header includes for f32 and f64; the
-   pieces whose algorithm differs between the two are written here.
+   f64, i32, u32, i64, u64, c64 or c128 (complex, at the end). Every kernel
+   library computes a kind through these functions, or through code that
+   gives the same bits, so that a library's interpreter and its loops agree
+   bit for bit and two libraries agree wherever the kind is exact. The
+   float kinds are written once, in nx_kinds_real.h, which this header
+   includes for f32 and f64; the pieces whose algorithm differs between the
+   two are written here.
 
    Compute types. float16, bfloat16 and the float8 dtypes compute in f32
    through nx_dtype.h's codecs and round once on the store. 8- and 16-bit
@@ -889,6 +890,135 @@ NX_INLINE double nx_atan2_f64(double y, double x) {
   return nx_nan2_f64(y, x, v);
 }
 
+NX_INLINE uint32_t nx_double_sign(double d) {
+  return (uint32_t)(nx_double_bits(d) >> 63);
+}
+
 #endif /* __METAL_VERSION__ */
+
+/* Complex
+
+   complex64 and complex128 compute as pairs of f32 and f64, nx_c64 and
+   nx_c128, the real part first as they are stored. u below is the part's
+   unit roundoff, 2^-24 or 2^-53, and the error of a result z' against the
+   exact z is normwise, |z' - z| / |z|; each bound holds where no part of
+   the computation overflows or underflows.
+
+   Add, Sub and Neg are the parts', each part following its kind's NaN
+   rule, so a NaN part leaves the other part's result as it is. Mul is the
+   textbook product, (ar br - ai bi) + (ar bi + ai br) i, each part one fma
+   over the other product: within 2u (Jeannerod, Kornerup, Louvet and
+   Muller, 2017).
+
+   Fdiv is Smith's algorithm (1962): the divisor's larger part divides its
+   smaller, so no intermediate overflows or underflows where the quotient's
+   parts do not. The platform's own division (C's operator, __divdc3)
+   scales instead and gives a NaN part where the quotient's is 0: (0 +
+   2^-50 i) / (0 - 2^-1074 i) is -inf + NaN i in glibc's libgcc, -inf + 0 i
+   here. Each product that feeds a sum is an fma. Within 4u. Recip is
+   (1 + 0 i) / x so. A NaN part in an operand of Mul, Fdiv or Recip makes
+   both parts of the result NaN, and every NaN part of their results is
+   the quiet NaN of a clear sign bit: which NaN an operation propagates
+   varies between its scalar and vector instructions, and a negated
+   operand flips its sign.
+
+   Order is the real part's, then the imaginary part's. Equal holds where
+   both parts are equal, Not_equal where Equal does not, Less and
+   Less_equal by the order. A number with a NaN part is a NaN: Equal, Less
+   and Less_equal with it are false, and Maximum and Minimum give the first
+   such operand, as the real kinds do. Maximum and Minimum order -0 below
+   +0 in each part. */
+
+#define NX_COMPLEX_KINDS(C, T, R, FMA, ISNAN, SIGN, NANC)                    \
+  typedef struct {                                                           \
+    T re, im;                                                                \
+  } nx_##C;                                                                  \
+                                                                             \
+  NX_INLINE nx_##C nx_##C##_of(T re, T im) {                                 \
+    nx_##C z;                                                                \
+    z.re = re;                                                               \
+    z.im = im;                                                               \
+    return z;                                                                \
+  }                                                                          \
+                                                                             \
+  NX_INLINE int nx_nan_##C(nx_##C a) { return ISNAN(a.re) || ISNAN(a.im); }  \
+                                                                             \
+  NX_INLINE nx_##C nx_neg_##C(nx_##C a) {                                    \
+    return nx_##C##_of(nx_neg_##R(a.re), nx_neg_##R(a.im));                  \
+  }                                                                          \
+  NX_INLINE nx_##C nx_add_##C(nx_##C a, nx_##C b) {                          \
+    return nx_##C##_of(nx_add_##R(a.re, b.re), nx_add_##R(a.im, b.im));      \
+  }                                                                          \
+  NX_INLINE nx_##C nx_sub_##C(nx_##C a, nx_##C b) {                          \
+    return nx_##C##_of(nx_sub_##R(a.re, b.re), nx_sub_##R(a.im, b.im));      \
+  }                                                                          \
+  /* z with each NaN part the quiet NaN of a clear sign bit. */              \
+  NX_INLINE nx_##C nx_quiet_##C(T re, T im) {                                \
+    return nx_##C##_of(ISNAN(re) ? NANC : re, ISNAN(im) ? NANC : im);        \
+  }                                                                          \
+  NX_INLINE nx_##C nx_mul_##C(nx_##C a, nx_##C b) {                          \
+    T ii = a.im * b.im, ir = a.im * b.re;                                    \
+    return nx_quiet_##C(FMA(a.re, b.re, -ii), FMA(a.re, b.im, ir));          \
+  }                                                                          \
+                                                                             \
+  /* Smith's algorithm with selects for its branch, which vectorise: p is   \
+     the divisor's larger part, q the other, x and y the dividend's parts   \
+     in the same roles. Where the real part is the larger, the quotient is  \
+     ((x + r y) + (y - r x) i) / d, else ((x + r y) + (r x - y) i) / d. */  \
+  NX_INLINE nx_##C nx_fdiv_##C(nx_##C a, nx_##C b) {                         \
+    int big = nx_abs_bits_##R(b.re) >= nx_abs_bits_##R(b.im);                \
+    T p = big ? b.re : b.im, q = big ? b.im : b.re;                          \
+    T x = big ? a.re : a.im, y = big ? a.im : a.re;                          \
+    T r = q / p, d = FMA(r, q, p);                                           \
+    T im = big ? FMA(-r, x, y) : FMA(r, x, -y);                              \
+    return nx_quiet_##C(FMA(r, y, x) / d, im / d);                           \
+  }                                                                          \
+  NX_INLINE nx_##C nx_recip_##C(nx_##C a) {                                  \
+    return nx_fdiv_##C(nx_##C##_of((T)1, (T)0), a);                          \
+  }                                                                          \
+                                                                             \
+  NX_INLINE int nx_equal_##C(nx_##C a, nx_##C b) {                           \
+    return a.re == b.re && a.im == b.im;                                     \
+  }                                                                          \
+  NX_INLINE int nx_not_equal_##C(nx_##C a, nx_##C b) {                       \
+    return !nx_equal_##C(a, b);                                              \
+  }                                                                          \
+  NX_INLINE int nx_less_##C(nx_##C a, nx_##C b) {                            \
+    int n = nx_nan_##C(a) || nx_nan_##C(b);                                  \
+    return !n && (a.re < b.re || (a.re == b.re && a.im < b.im));             \
+  }                                                                          \
+  NX_INLINE int nx_less_equal_##C(nx_##C a, nx_##C b) {                      \
+    int n = nx_nan_##C(a) || nx_nan_##C(b);                                  \
+    return !n && (a.re < b.re || (a.re == b.re && a.im <= b.im));            \
+  }                                                                          \
+                                                                             \
+  /* 1 where x follows y in the order with -0 below +0, -1 where it         \
+     precedes, 0 where they are one value; neither is NaN. */               \
+  NX_INLINE int nx_order_##R(T x, T y) {                                     \
+    int c = (x > y) - (x < y);                                               \
+    return c != 0 ? c : (int)SIGN(y) - (int)SIGN(x);                         \
+  }                                                                          \
+  NX_INLINE int nx_order_##C(nx_##C a, nx_##C b) {                           \
+    int c = nx_order_##R(a.re, b.re);                                        \
+    return c != 0 ? c : nx_order_##R(a.im, b.im);                            \
+  }                                                                          \
+  NX_INLINE nx_##C nx_maximum_##C(nx_##C a, nx_##C b) {                      \
+    if (nx_nan_##C(a)) return a;                                             \
+    if (nx_nan_##C(b)) return b;                                             \
+    return nx_order_##C(a, b) >= 0 ? a : b;                                  \
+  }                                                                          \
+  NX_INLINE nx_##C nx_minimum_##C(nx_##C a, nx_##C b) {                      \
+    if (nx_nan_##C(a)) return a;                                             \
+    if (nx_nan_##C(b)) return b;                                             \
+    return nx_order_##C(a, b) <= 0 ? a : b;                                  \
+  }                                                                          \
+  NX_INLINE nx_##C nx_where_##C(int c, nx_##C a, nx_##C b) { return c ? a : b; }
+
+NX_COMPLEX_KINDS(c64, float, f32, nx_fmaf, nx_float_nan, nx_float_sign,
+                 NX_NAN_F32)
+#ifndef __METAL_VERSION__
+NX_COMPLEX_KINDS(c128, double, f64, nx_fmad, nx_double_nan, nx_double_sign,
+                 NX_NAN_F64)
+#endif
 
 #endif /* NX_KINDS_H */

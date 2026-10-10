@@ -32,9 +32,9 @@
     T *d = (T *)d_;                                                          \
     const T *x = (const T *)x_;                                              \
     if (sd == 1 && sx == 1)                                                  \
-      for (int64_t i = 0; i < n; i++) d[i] = (T)F(LD(x[i]));                 \
+      for (int64_t i = 0; i < n; i++) d[i] = F(LD(x[i]));                    \
     else                                                                     \
-      for (int64_t i = 0; i < n; i++) d[i * sd] = (T)F(LD(x[i * sx]));       \
+      for (int64_t i = 0; i < n; i++) d[i * sd] = F(LD(x[i * sx]));          \
   }
 
 /* Elements of a trigonometric row's piece. */
@@ -107,10 +107,10 @@ IDENT(8, uint64_t)
     R *d = (R *)d_;                                                          \
     const T *x = (const T *)x_, *y = (const T *)y_;                          \
     if (sd == 1 && sx == 1 && sy == 1)                                       \
-      for (int64_t i = 0; i < n; i++) d[i] = (R)F(LD(x[i]), LD(y[i]));       \
+      for (int64_t i = 0; i < n; i++) d[i] = F(LD(x[i]), LD(y[i]));          \
     else                                                                     \
       for (int64_t i = 0; i < n; i++)                                        \
-        d[i * sd] = (R)F(LD(x[i * sx]), LD(y[i * sy]));                      \
+        d[i * sd] = F(LD(x[i * sx]), LD(y[i * sy]));                         \
   }
 
 #define FMA(NAME, T, LD, F)                                                  \
@@ -160,6 +160,16 @@ IDENT(8, uint64_t)
   BIN(or_##D, T, T, (CT), nx_or_##S)                                         \
   BIN(xor_##D, T, T, (CT), nx_xor_##S)
 
+/* Complex numbers take the arithmetic kinds but Mod and Pow, and Fdiv. */
+#define COMPLEX(D, T)                                                        \
+  COMPARES(D, T, , D)                                                        \
+  BIN(add_##D, T, T, , nx_add_##D)                                           \
+  BIN(sub_##D, T, T, , nx_sub_##D)                                           \
+  BIN(mul_##D, T, T, , nx_mul_##D)                                           \
+  BIN(fdiv_##D, T, T, , nx_fdiv_##D)                                         \
+  UN(neg_##D, T, , nx_neg_##D)                                               \
+  UN(recip_##D, T, , nx_recip_##D)
+
 /* A boolean is 1 where its byte is not zero. */
 #define BOOL_LD(v) ((uint32_t)((v) != 0))
 
@@ -173,6 +183,8 @@ INTS(u8, uint8_t, uint32_t, u32)
 INTS(u16, uint16_t, uint32_t, u32)
 INTS(u32, uint32_t, uint32_t, u32)
 INTS(u64, uint64_t, uint64_t, u64)
+COMPLEX(c64, nx_c64)
+COMPLEX(c128, nx_c128)
 COMPARES(b, uint8_t, BOOL_LD, u32)
 BIN(and_b, uint8_t, uint8_t, BOOL_LD, nx_and_u32)
 BIN(or_b, uint8_t, uint8_t, BOOL_LD, nx_or_u32)
@@ -274,7 +286,18 @@ FILL(16, w16)
   t->op1[NX_OP1_FLOOR][DT] = t->op1[NX_OP1_CEIL][DT] = ident_##W;            \
   t->op1[NX_OP1_ROUND][DT] = t->op1[NX_OP1_TRUNC][DT] = ident_##W
 
+#define COMPLEX_ROWS(DT, D)                                                  \
+  CMP_ROWS(DT, D);                                                           \
+  t->op2[NX_OP2_ADD][DT] = add_##D;                                          \
+  t->op2[NX_OP2_SUB][DT] = sub_##D;                                          \
+  t->op2[NX_OP2_MUL][DT] = mul_##D;                                          \
+  t->op2[NX_OP2_FDIV][DT] = fdiv_##D;                                        \
+  t->op1[NX_OP1_NEG][DT] = neg_##D;                                          \
+  t->op1[NX_OP1_RECIP][DT] = recip_##D
+
 static void set(nx_cpu_target *t) {
+  COMPLEX_ROWS(NX_COMPLEX64, c64);
+  COMPLEX_ROWS(NX_COMPLEX128, c128);
   FLOAT_ROWS(NX_FLOAT32, f32);
   FLOAT_ROWS(NX_FLOAT64, f64);
   INT_ROWS(NX_INT8, i8, 1);

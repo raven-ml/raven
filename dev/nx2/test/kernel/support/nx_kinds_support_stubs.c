@@ -129,6 +129,67 @@ value nx_kinds_support_int(value ty, value name, value args) {
   CAMLreturn(caml_copy_int64(r));
 }
 
+/* Writes the complex kind [k] of the [n] operands [x] into [y] and answers
+   1, or answers 0 for an unknown kind or arity; a comparison's 1 or 0 is
+   the real part. */
+#define COMPLEX_CALL(C, T)                                                    \
+  static int call_##C(const char *k, int n, const nx_##C *x, nx_##C *y) {     \
+    if (n == 1 && !strcmp(k, "neg")) *y = nx_neg_##C(x[0]);                   \
+    else if (n == 1 && !strcmp(k, "recip")) *y = nx_recip_##C(x[0]);          \
+    else if (n != 2) return 0;                                                \
+    else if (!strcmp(k, "add")) *y = nx_add_##C(x[0], x[1]);                  \
+    else if (!strcmp(k, "sub")) *y = nx_sub_##C(x[0], x[1]);                  \
+    else if (!strcmp(k, "mul")) *y = nx_mul_##C(x[0], x[1]);                  \
+    else if (!strcmp(k, "fdiv")) *y = nx_fdiv_##C(x[0], x[1]);                \
+    else if (!strcmp(k, "maximum")) *y = nx_maximum_##C(x[0], x[1]);          \
+    else if (!strcmp(k, "minimum")) *y = nx_minimum_##C(x[0], x[1]);          \
+    else if (!strcmp(k, "equal"))                                             \
+      *y = nx_##C##_of((T)nx_equal_##C(x[0], x[1]), 0);                       \
+    else if (!strcmp(k, "not_equal"))                                         \
+      *y = nx_##C##_of((T)nx_not_equal_##C(x[0], x[1]), 0);                   \
+    else if (!strcmp(k, "less"))                                              \
+      *y = nx_##C##_of((T)nx_less_##C(x[0], x[1]), 0);                        \
+    else if (!strcmp(k, "less_equal"))                                        \
+      *y = nx_##C##_of((T)nx_less_equal_##C(x[0], x[1]), 0);                  \
+    else return 0;                                                            \
+    return 1;                                                                 \
+  }
+COMPLEX_CALL(c64, float)
+COMPLEX_CALL(c128, double)
+
+value nx_kinds_support_c64(value name, value args) {
+  CAMLparam2(name, args);
+  CAMLlocal1(r);
+  int n = (int)Wosize_val(args) / 2;
+  nx_c64 x[2], y;
+  if (n < 1 || n > 2 || (int)Wosize_val(args) != 2 * n) refuse(name);
+  for (int i = 0; i < n; i++)
+    x[i] = nx_c64_of(nx_bits_float((uint32_t)Long_val(Field(args, 2 * i))),
+                     nx_bits_float((uint32_t)Long_val(Field(args, 2 * i + 1))));
+  if (!call_c64(String_val(name), n, x, &y)) refuse(name);
+  r = caml_alloc_tuple(2);
+  Store_field(r, 0, Val_long(nx_float_bits(y.re)));
+  Store_field(r, 1, Val_long(nx_float_bits(y.im)));
+  CAMLreturn(r);
+}
+
+value nx_kinds_support_c128(value name, value args) {
+  CAMLparam2(name, args);
+  CAMLlocal1(r);
+  int n = (int)(Wosize_val(args) / Double_wosize) / 2;
+  nx_c128 x[2], y;
+  if (n < 1 || n > 2 || (int)(Wosize_val(args) / Double_wosize) != 2 * n)
+    refuse(name);
+  for (int i = 0; i < n; i++)
+    x[i] = nx_c128_of(Double_flat_field(args, 2 * i),
+                      Double_flat_field(args, 2 * i + 1));
+  if (!call_c128(String_val(name), n, x, &y)) refuse(name);
+  r = caml_alloc_float_array(2);
+  Store_double_flat_field(r, 0, y.re);
+  Store_double_flat_field(r, 1, y.im);
+  CAMLreturn(r);
+}
+
 /* Errors of f32 results against the C library's f64 functions
 
    The error of y against the double r rounded correctly to binary32, in

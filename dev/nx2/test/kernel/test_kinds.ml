@@ -763,6 +763,211 @@ let test_threefry =
     ]
     (fun (counter, key, want) -> equal int64 want (K.threefry counter key))
 
+(* Complex
+
+   c64 and c128 against their meaning: Add, Sub and Neg are their parts' f32
+   and f64 kinds, bit for bit; Mul is within 2u, and Fdiv and Recip within
+   4u, of the exact result, normwise, where parts lie in [2^-40, 2^40], u the
+   part's unit roundoff; a NaN part in an operand of Mul, Fdiv or Recip makes
+   both parts NaN; the order is the real part's, then the imaginary part's. *)
+
+(* The exact values below are double-doubles, hi + lo. *)
+let two_sum a b =
+  let s = a +. b in
+  let bb = s -. a in
+  (s, a -. (s -. bb) +. (b -. bb))
+
+let two_prod a b =
+  let p = a *. b in
+  (p, Float.fma a b (-.p))
+
+let dd_add (ah, al) (bh, bl) =
+  let s, e = two_sum ah bh in
+  two_sum s (e +. al +. bl)
+
+let dd_neg (h, l) = (-.h, -.l)
+
+let dd_mul (ah, al) (bh, bl) =
+  let p, e = two_prod ah bh in
+  two_sum p (e +. (ah *. bl) +. (al *. bh))
+
+let dd_div ((ah, _) as a) ((bh, _) as b) =
+  let q1 = ah /. bh in
+  let r = dd_add a (dd_neg (dd_mul b (q1, 0.))) in
+  two_sum q1 (fst r /. bh)
+
+(* The exact product and quotient of (ar + ai i) and (br + bi i) *)
+let exact_mul (ar, ai) (br, bi) =
+  ( dd_add (two_prod ar br) (dd_neg (two_prod ai bi)),
+    dd_add (two_prod ar bi) (two_prod ai br) )
+
+let exact_div (ar, ai) (br, bi) =
+  let den = dd_add (two_prod br br) (two_prod bi bi) in
+  ( dd_div (dd_add (two_prod ar br) (two_prod ai bi)) den,
+    dd_div (dd_add (two_prod ai br) (dd_neg (two_prod ar bi))) den )
+
+(* |z' - z| / |z| in units of [u]. *)
+let normwise u (re, im) ((zr, _) as r, ((zi, _) as i)) =
+  let d x z = fst (dd_add (x, 0.) (dd_neg z)) in
+  Float.hypot (d re r) (d im i) /. Float.hypot zr zi /. u
+
+let round_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
+
+(* A part of magnitude in [2^-40, 2^40], either sign. *)
+let part =
+  let open Gen in
+  let* m = float_range 1. 2. in
+  let* e = int_range (-40) 40 in
+  let+ s = bool in
+  Float.ldexp (if s then -.m else m) e
+
+let parts = Gen.(pair part part)
+
+let c64_of (re, im) = [| bits32 (round_f32 re); bits32 (round_f32 im) |]
+let pair_of a = (f a.(0), f a.(1))
+
+let c64_call k ops = pair_of (K.c64 k (Array.concat (List.map c64_of ops)))
+
+let c128_call k ops =
+  let r = K.c128 k (Array.concat (List.map (fun (a, b) -> [| a; b |]) ops)) in
+  (r.(0), r.(1))
+
+let f32_pair (re, im) = (round_f32 re, round_f32 im)
+
+(* Mul, Fdiv and Recip within their bounds, at c64 and c128. *)
+let test_complex_bounds =
+  let check name bound u call round exact =
+    prop (strf "%s within %gu" name bound) ~count:20000
+      Gen.(pair parts parts)
+      (fun (a, b) ->
+        let a = round a and b = round b in
+        let z = exact a b in
+        at_most float_exact ~than:bound (normwise u (call a b) z))
+  in
+  [
+    check "mul c64" 2. 0x1p-24
+      (fun a b -> c64_call "mul" [ a; b ])
+      f32_pair exact_mul;
+    check "mul c128" 2. 0x1p-53
+      (fun a b -> c128_call "mul" [ a; b ])
+      Fun.id exact_mul;
+    check "fdiv c64" 4. 0x1p-24
+      (fun a b -> c64_call "fdiv" [ a; b ])
+      f32_pair exact_div;
+    check "fdiv c128" 4. 0x1p-53
+      (fun a b -> c128_call "fdiv" [ a; b ])
+      Fun.id exact_div;
+    check "recip c64" 4. 0x1p-24
+      (fun _ b -> c64_call "recip" [ b ])
+      f32_pair
+      (fun _ b -> exact_div (1., 0.) b);
+    check "recip c128" 4. 0x1p-53
+      (fun _ b -> c128_call "recip" [ b ])
+      Fun.id
+      (fun _ b -> exact_div (1., 0.) b);
+  ]
+
+(* Add, Sub and Neg are their parts', a NaN's bits included. *)
+let test_complex_parts =
+  let two32 k (ar, ai, br, bi) =
+    equal (array exact32)
+      [| K.f32 k [| ar; br |]; K.f32 k [| ai; bi |] |]
+      (K.c64 k [| ar; ai; br; bi |])
+  in
+  let two64 k (ar, ai, br, bi) =
+    equal (array value64)
+      [| K.f64 k [| ar; br |]; K.f64 k [| ai; bi |] |]
+      (K.c128 k [| ar; ai; br; bi |])
+  in
+  let gen32s = Gen.(pair (pair gen32 gen32) (pair gen32 gen32)) in
+  let gen64s = Gen.(pair (pair gen64 gen64) (pair gen64 gen64)) in
+  let flat ((a, b), (c, d)) = (a, b, c, d) in
+  List.concat_map
+    (fun k ->
+      [
+        prop (strf "%s c64" k) gen32s (fun x -> two32 k (flat x));
+        prop (strf "%s c128" k) gen64s (fun x -> two64 k (flat x));
+      ])
+    [ "add"; "sub" ]
+  @ [
+      prop "neg c64" Gen.(pair gen32 gen32) (fun (a, b) ->
+          equal (array exact32)
+            [| K.f32 "neg" [| a |]; K.f32 "neg" [| b |] |]
+            (K.c64 "neg" [| a; b |]));
+      prop "neg c128" Gen.(pair gen64 gen64) (fun (a, b) ->
+          equal (array value64)
+            [| K.f64 "neg" [| a |]; K.f64 "neg" [| b |] |]
+            (K.c128 "neg" [| a; b |]));
+    ]
+
+(* A NaN part in an operand of Mul, Fdiv or Recip makes both parts the quiet
+   NaN of a clear sign bit, at c64 read as a double. *)
+let test_complex_nan =
+  prop "a NaN part makes mul, fdiv and recip the quiet NaN"
+    Gen.(triple parts parts (int_range 0 3))
+    (fun ((ar, ai), (br, bi), at) ->
+      let ops = [| ar; ai; br; bi |] in
+      ops.(at) <- Float.nan;
+      let a = (ops.(0), ops.(1)) and b = (ops.(2), ops.(3)) in
+      let quiet x = Int64.equal (bits64 x) 0x7FF8_0000_0000_0000L in
+      let both (re, im) = quiet re && quiet im in
+      equal bool true (both (c128_call "mul" [ a; b ]));
+      equal bool true (both (c128_call "fdiv" [ a; b ]));
+      equal bool true (both (c64_call "mul" [ a; b ]));
+      equal bool true (both (c64_call "fdiv" [ a; b ]));
+      if at >= 2 then begin
+        equal bool true (both (c128_call "recip" [ b ]));
+        equal bool true (both (c64_call "recip" [ b ]))
+      end)
+
+(* A quotient whose imaginary part is 0 while its real part overflows. *)
+let test_complex_smith =
+  test "fdiv keeps a zero part beside an infinite one" (fun () ->
+      let want = (Float.neg_infinity, 0.) in
+      let pp ppf (a, b) = Format.fprintf ppf "%h + %hi" a b in
+      let t = Testable.make ~pp ~equal:( = ) in
+      equal t want
+        (c128_call "fdiv" [ (0., 0x1p-50); (0., -.Float.ldexp 1. (-1074)) ]);
+      equal t want (c64_call "fdiv" [ (0., 0x1p-20); (0., -0x1p-149) ]))
+
+(* The order: by the real part, then the imaginary part, -0 below +0 for the
+   extremes; a NaN part ranks as NaN. *)
+let test_complex_order =
+  let small = Gen.of_list [ -1.; -0.; 0.; 1.; Float.infinity; Float.nan ] in
+  let z = Gen.pair small small in
+  let nan (a, b) = Float.is_nan a || Float.is_nan b in
+  let cmp (ar, ai) (br, bi) =
+    let one x y =
+      if x = y then compare (Float.sign_bit y) (Float.sign_bit x)
+      else compare x y
+    in
+    let c = one ar br in
+    if c <> 0 then c else one ai bi
+  in
+  let meaning k a b =
+    let n = nan a || nan b in
+    let flag p = if p then (1., 0.) else (0., 0.) in
+    match k with
+    | "equal" -> flag (fst a = fst b && snd a = snd b)
+    | "not_equal" -> flag (not (fst a = fst b && snd a = snd b))
+    | "less" -> flag ((not n) && (fst a < fst b || (fst a = fst b && snd a < snd b)))
+    | "less_equal" ->
+        flag ((not n) && (fst a < fst b || (fst a = fst b && snd a <= snd b)))
+    | "maximum" -> if nan a then a else if nan b then b else if cmp a b >= 0 then a else b
+    | _ -> if nan a then a else if nan b then b else if cmp a b <= 0 then a else b
+  in
+  (* Each part's bits, any NaN for a NaN: the values travel through f32. *)
+  let t = pair value64 value64 in
+  List.map
+    (fun k ->
+      prop (strf "%s by real, then imaginary part" k) Gen.(pair z z)
+        (fun (a, b) ->
+          cover "NaN" (nan a || nan b);
+          cover "equal reals" (fst a = fst b);
+          equal t (meaning k a b) (c128_call k [ a; b ]);
+          equal t (meaning k a b) (c64_call k [ a; b ])))
+    [ "equal"; "not_equal"; "less"; "less_equal"; "maximum"; "minimum" ]
+
 let () =
   exit
   @@ run "nx_array.kinds"
@@ -782,4 +987,7 @@ let () =
          group ~timeout:10. "f64" test_f64_exact;
          group ~timeout:10. "integers" test_ints;
          group ~timeout:10. "threefry" [ test_threefry ];
+         group ~timeout:10. "complex"
+           (test_complex_bounds @ test_complex_parts @ test_complex_order
+           @ [ test_complex_nan; test_complex_smith ]);
        ]
