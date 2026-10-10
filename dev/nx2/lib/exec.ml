@@ -404,9 +404,14 @@ let map_on ~by (module K : Nx_kernel.S) d prog first ops dsts =
   let prog = with_offsets prog first in
   match single prog with
   | Some node ->
+      let arrays = Array.append dsts ops in
       ran ~by (apply_node (module K) node dsts.(0) ops) dsts ops
-      || declined ~by ~kernels:K.name node d
-           (Array.to_list (Array.append dsts ops))
+      ||
+      (* A decline at base dtypes is the kernels' error; at others the node
+         expands. *)
+      if Array.for_all (fun (A.Any a) -> Expand.base (D.Any (A.dtype a))) arrays
+      then declined ~by ~kernels:K.name node d (Array.to_list arrays)
+      else false
   | None ->
       ran ~by
         (K.map
@@ -989,7 +994,9 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
   in
   let on_device ~by op = compute_at ~by ~resolve:(fun _ x -> x) at op in
   match Expand.run on_device ~by op with
-  | None -> invalid_arg "Exec.expand_on: a map of one node"
+  | None ->
+      let (module K) = kernels_of ~by ~op:"Map" set in
+      invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
   | Some r ->
       let (module K) = kernels_of ~by ~op:"Copy" set in
       Array.iteri

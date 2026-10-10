@@ -292,6 +292,17 @@ let constants =
           equal ~msg:"kernel calls: both again, into memory of its own" int 4
             (C.calls ());
           equal (array bits) [| 0.; 0. |] (elements y));
+      test "a constant of a sub-byte dtype computes on the host" (fun () ->
+          let host x = Nx.place Nx.Host.on x in
+          let get x = A.to_array (Option.get (Nx.Repr.array (host x))) in
+          equal ~msg:"int4" (array int) [| -3; -3; -3 |]
+            (get (Nx.add (Nx.zeros D.Int4 [| 3 |]) (Nx.scalar D.Int4 (-3))));
+          equal ~msg:"uint4" (array int) [| 0; 0 |]
+            (get (Nx.zeros D.Uint4 [| 2 |]));
+          equal ~msg:"float4_e2m1fn" (array float_exact) [| 1.5 |]
+            (get (Nx.reshape [| 1 |] (Nx.scalar D.Float4_e2m1fn 1.5)));
+          equal ~msg:"bit" (array bool) [| true |]
+            (get (Nx.reshape [| 1 |] (Nx.scalar D.Bit true))));
       test "a constant beside a split value is split with it" (fun () ->
           let x =
             Nx.place (Count2.split ~axis:0)

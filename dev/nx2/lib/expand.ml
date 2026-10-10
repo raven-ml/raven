@@ -225,6 +225,85 @@ let scan (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
   in
   reduction apply ~by ~loop layout prog loads r
 
+(* Narrow dtypes *)
+
+(* Whether [dt] is a base dtype, which every library's kernels compute: float32,
+   float64, the 8- to 64-bit integers and bool. *)
+let base (D.Any dt) =
+  match dt with
+  | D.Float32 | D.Float64 | D.Int64 | D.Uint64 | D.Int32 | D.Uint32 | D.Int16
+  | D.Uint16 | D.Int8 | D.Uint8 | D.Bool ->
+      true
+  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 | D.Float4_e2m1fn
+  | D.Int4 | D.Uint4 | D.Bit | D.Complex64 | D.Complex128 ->
+      false
+
+(* The bits [b] of an element of [from], as an element of [into], which holds
+   its value exactly. *)
+let widened_bits (D.Any from) b (D.Any into) =
+  let read (type v s) (dt : (v, s) D.t) : v =
+    Nx_array.get
+      (Nx_array.v dt (Nx_array.Layout.contiguous [||]) (Rig.Buffer.of_string b))
+      [||]
+  in
+  match (D.kind from, into) with
+  | D.Float, D.Float32 -> P.bits D.Float32 (read from)
+  | _ -> (
+      match (from, into) with
+      | D.Int4, D.Int8 -> P.bits D.Int8 (read D.Int4)
+      | D.Uint4, D.Uint8 -> P.bits D.Uint8 (read D.Uint4)
+      | D.Bit, D.Bool -> P.bits D.Bool (read D.Bit)
+      | _ -> invalid_arg "Expand.widened_bits: no wider dtype")
+
+(* A one-node map at dtypes some library declines, as the node at their
+   accumulators ({!accumulator}), which hold every value exactly, its result
+   rounded once to its dtype: [None] for a node no accumulator computes exactly,
+   as a cast, a bitcast or a copy whose bits are its meaning, or a complex
+   dtype. *)
+let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
+    prog (outs : (d, r) Value.outs) (loads : d Value.load array) : r option =
+  let n = P.length prog in
+  let node = P.node prog (n - 1) in
+  let dts = Array.map (fun (Value.Plain x) -> D.Any (Prim.dtype x)) loads in
+  let wide d = accumulator d in
+  let narrow d = (not (base d)) && base (wide d) in
+  let result = P.dtype prog (n - 1) in
+  let widens =
+    match (node : P.node) with
+    | Op1 ((Copy | Cast | Bitcast), _, _) | In _ | Coord _ -> false
+    | Const (dt, _) -> narrow dt
+    | Op1 _ | Op2 _ | Op3 _ ->
+        Array.for_all (fun d -> base d || narrow d) dts
+        && (base result || narrow result)
+        && Array.exists narrow (Array.append dts [| result |])
+  in
+  if not widens then None
+  else
+    let load (Value.Plain x) =
+      let (D.Any w) = wide (D.Any (Prim.dtype x)) in
+      Value.Any (cast_to apply ~by w x)
+    in
+    let operands = Array.map load loads in
+    let ins = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) operands in
+    let node : P.node =
+      match node with
+      | Const (dt, b) -> Const (wide dt, widened_bits dt b (wide dt))
+      | Op1 (k, dt, i) -> Op1 (k, wide dt, i)
+      | (Coord _ | Op2 _ | Op3 _ | In _) as nd -> nd
+    in
+    let (D.Any w) = wide result in
+    let v, () =
+      apply ~by
+        (Value.Map
+           {
+             layout;
+             prog = Prim.program node ins;
+             outs = Value.[ w ];
+             loads = Array.map (fun (Value.Any x) -> Value.Plain x) operands;
+           })
+    in
+    match outs with [ dt ] -> Some (cast_to apply ~by dt v, ()) | _ -> None
+
 let run : type r.
     ('q. by:string -> 'q Value.prim -> 'q) ->
     by:string ->
@@ -247,6 +326,8 @@ let run : type r.
   | Value.Scan { layout; axis; prog; reduction = r; loads }
     when not (plain prog r) ->
       scan apply ~by layout axis prog r loads
-  | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
+  | Value.Map { layout; prog; outs; loads } ->
+      widened apply ~by layout prog outs loads
+  | Value.Reduce _ | Value.Scan _ | Value.Copy _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       None
