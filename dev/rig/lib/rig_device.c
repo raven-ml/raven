@@ -445,11 +445,13 @@ static char *lost_with(struct rig_device *p) {
 
 /* Loses every device whose unreached work waits in its queue on an
    unreached value of the lost [p], reading both words as they stand, and
-   spreads from each. A device is lost once, so each is visited once. The
-   domain lock is released and no mutex held. */
-static void spread(struct rig_device *p) {
+   spreads from each. Each keeps the reason [shared], a process's failure
+   that every device keeps and none frees, or, if it is NULL, "[p's name]
+   lost". A device is lost once, so each is visited once. The domain lock
+   is released and no mutex held. */
+static void spread(struct rig_device *p, char *shared) {
   int n = atomic_load(&top);
-  char *why = NULL;
+  char *why = shared;
   for (int i = 1; i <= n; i++) {
     struct rig_device *c = device_of(i);
     if (c == NULL || c == p || is_lost(c)) continue;
@@ -465,11 +467,11 @@ static void spread(struct rig_device *p) {
     }
     mu_unlock(c);
     if (!won) continue;
-    why = NULL; /* [c] keeps it */
-    spread(c);
+    why = shared; /* [c] keeps it */
+    spread(c, shared);
     finish(c);
   }
-  free(why);
+  if (why != shared) free(why);
 }
 
 /* Loses [d] for the reason [v_why], a fault of a counted call and a
@@ -485,7 +487,7 @@ value caml_rig_lose(value v_d, value v_why, value v_fault) {
   if (won) d->faulted = Bool_val(v_fault);
   mu_unlock(d);
   if (won) {
-    spread(d);
+    spread(d, NULL);
     finish(d);
   } else
     free(why);
@@ -540,13 +542,7 @@ value caml_rig_fail(value v_why) {
     int won = lose_locked(d, why, 0);
     mu_unlock(d);
     if (!won) continue;
-    /* CR: Carry fail's reason through recursive spread. With A opened before
-       B and B waiting on A, fail("cancelled") loses B as "A lost" instead.
-       Pass the shared process reason here and through recursion; ordinary
-       loss keeps its per-producer reason. Keep spread before finish so
-       dependent loss snapshots precede stops, and never free the shared
-       reason. */
-    spread(d);
+    spread(d, why);
     finish(d);
   }
   caml_leave_blocking_section();
@@ -860,7 +856,7 @@ static int give_turn(struct rig_device *d, int released, int r) {
   if (r == SUBMIT_FAILED) {
     if (!released) caml_enter_blocking_section_no_pending();
     released = 1;
-    spread(d);
+    spread(d, NULL);
     finish(d);
   }
   if (released) caml_leave_blocking_section();

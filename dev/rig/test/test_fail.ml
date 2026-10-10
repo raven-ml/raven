@@ -15,7 +15,8 @@ module P = Rig_support.Polled
 
 let timeout = 60.
 let empty d = Sub.make d [||]
-let submit s = Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||] ~waits:[||]
+let submit ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||] ~waits
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 let failure () = Option.value ~default:"none" (Rig.failure ())
 
@@ -129,6 +130,20 @@ let test_fail =
     failure ();
   ]
 
+(* A device a fail loses through its waits on another keeps the fail's reason,
+   however deep the chain of waits. *)
+let test_fail_spread =
+  child_case [ "the world failed"; "the world failed"; "the world failed" ]
+  @@ fun () ->
+  let a, _ = P.open_ "fail:producer" in
+  let b, _ = P.open_ ~waits_on:[ `Host ] "fail:middle" in
+  let c, _ = P.open_ ~waits_on:[ `Host ] "fail:consumer" in
+  let on_a = submit (empty a) in
+  let on_b = submit (empty b) ~waits:[| on_a |] in
+  ignore (submit (empty c) ~waits:[| on_b |]);
+  Rig.fail "the world failed";
+  List.map (fun d -> Option.value ~default:"not lost" (Rig.lost d)) [ a; b; c ]
+
 (* Opens race a fail on another domain: every device that opened is lost with
    its reason and stopped once, and every open that answered after the fail
    returned is an error. *)
@@ -171,6 +186,8 @@ let tests =
         test "the first loss stays the failure" test_first_loss;
         test "a fail that comes first is the failure" test_fail_first;
         test "a fail loses every device and refuses every open" test_fail;
+        test "a device lost through its waits keeps the fail's reason"
+          test_fail_spread;
         test "opens beside a fail end lost or refused" test_fail_beside_opens;
       ];
   ]
