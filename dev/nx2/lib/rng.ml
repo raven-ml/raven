@@ -551,6 +551,33 @@ let bernoulli ?key p =
       let t = into b D.Uint64 (f.ceil scaled) in
       cmp b Less (bits53 b ~key j) t)
 
+(* Rejection *)
+
+(* A rejection loop's draw. Acceptance reads data, so the loop has a fixed
+   number of rounds: [round r] is round [r]'s proposal and whether it is
+   accepted, and the draw is the first proposal accepted. An element no round
+   accepts takes [otherwise], or by default the last proposal, whatever its
+   test. Built from the last round back, each round is one select. *)
+let first_accepted b ~rounds ?otherwise round =
+  let last, accepted = round (rounds - 1) in
+  let acc =
+    ref
+      (match otherwise with
+      | None -> last
+      | Some v -> where b accepted last v)
+  in
+  for r = rounds - 2 downto 0 do
+    let x, accepted = round r in
+    acc := where b accepted x !acc
+  done;
+  !acc
+
+(* A rejection loop's uniforms: round [r] of element [j] of [n] reads positions
+   [r n + j] and [(rounds + r) n + j] of the key's uniform draw. *)
+let pair b ~key ~p ~n ~rounds c j r =
+  let at r = bin b Add (u64 b (Int64.of_int (r * n))) j in
+  (unit b ~key ~p c (at r), unit b ~key ~p c (at (rounds + r)))
+
 (* Gamma *)
 
 (* Marsaglia and Tsang (2000): at a concentration of 1 or more, a normal draw
@@ -576,8 +603,7 @@ let marsaglia b ~key ~n (D.Any cd as c) a j =
   let d = bin b Sub boosted (lit (1. /. 3.)) in
   let squeeze = un b Recip cd (un b Sqrt cd (bin b Mul (lit 9.) d)) in
   let pairs = ((rounds * n) + 1) / 2 in
-  let acc = ref boosted and settled = ref (const b D.Bool false) in
-  for r = 0 to rounds - 1 do
+  let round r =
     let pos = bin b Add (u64 b (Int64.of_int (r * n))) j in
     let x = gauss b ~key:keys.(0) ~p ~pairs c pos in
     let u = unit b ~key:keys.(1) ~p c pos in
@@ -594,13 +620,11 @@ let marsaglia b ~key ~n (D.Any cd as c) a j =
            (bin b Add (un b Neg cd (bin b Mul d v)) (bin b Mul d log_v)))
     in
     let log_u = un b Log cd (bin b Maximum u tiny) in
-    let accept = bin b And positive (cmp b Less log_u bound) in
-    let fresh = cmp b Equal !settled (const b D.Bool false) in
-    acc := where b (bin b And accept fresh) (bin b Mul d v) !acc;
-    settled := bin b Or !settled accept
-  done;
+    (bin b Mul d v, bin b And positive (cmp b Less log_u bound))
+  in
+  let draw = first_accepted b ~rounds ~otherwise:boosted round in
   let boost = bin b Maximum (unit b ~key:keys.(2) ~p c j) tiny in
-  (!acc, below, boost)
+  (draw, below, boost)
 
 let gamma ?key a =
   let by = "Nx.Rng.gamma" in
@@ -734,12 +758,9 @@ let von_mises ?key kappa =
           (mul one_minus_rho one_minus_rho)
           (mul (mul (lit 4.) rho) (mul cs cs))
       in
-      let at r = bin b Add (u64 b (Int64.of_int (r * n))) j in
-      let acc = ref (lit 0.) and last = ref (lit 0.) in
-      let settled = ref (const b D.Bool false) in
-      for r = 0 to von_mises_rounds - 1 do
-        let u = unit b ~key ~p c (at r) in
-        let v = unit b ~key ~p c (at (von_mises_rounds + r)) in
+      let rounds = von_mises_rounds in
+      let round r =
+        let u, v = pair b ~key ~p ~n ~rounds c j r in
         let phi = mul (bin b Sub u (lit 0.5)) (lit Float.pi) in
         let y = bin b Fdiv lift (denom phi) in
         let squeeze = cmp b Less v (mul y (bin b Sub (lit 2.) y)) in
@@ -747,13 +768,9 @@ let von_mises ?key kappa =
           cmp b Less_equal (lit (-1.))
             (bin b Sub (un b Log cd (bin b Fdiv y v)) y)
         in
-        let accept = bin b Or squeeze bound in
-        let fresh = cmp b Equal !settled (const b D.Bool false) in
-        acc := where b (bin b And accept fresh) phi !acc;
-        settled := bin b Or !settled accept;
-        last := phi
-      done;
-      let phi = where b !settled !acc !last in
+        (phi, bin b Or squeeze bound)
+      in
+      let phi = first_accepted b ~rounds round in
       let half =
         bin b Fdiv
           (mul (un b Abs cd (un b Sin cd phi)) one_minus_rho)
@@ -873,12 +890,6 @@ let log_factorials n =
       if i > 0 then acc := !acc +. Float.log (float_of_int i);
       !acc)
 
-(* A rejection loop's draws: round [r] of element [j] of [n] reads positions [r
-   n + j] and [(rounds + r) n + j] of the key's uniform draw. *)
-let pair b ~key ~p ~n ~rounds c j r =
-  let at r = bin b Add (u64 b (Int64.of_int (r * n))) j in
-  (unit b ~key ~p c (at r), unit b ~key ~p c (at (rounds + r)))
-
 (* Two regimes with a fixed round count each, chosen per element, so the shape
    of the computation does not depend on the rate. Below 10, inversion: one
    uniform against the cumulative pmf over 48 terms, the mass beyond them 4e-18
@@ -934,9 +945,7 @@ let poisson ?key rate =
         let vr =
           f.sub (f.lit 0.9277) (f.div (f.lit 3.6224) (f.sub b' (f.lit 2.0)))
         in
-        let acc = ref (f.lit 0.0) and last = ref (f.lit 0.0) in
-        let settled = ref (const b D.Bool false) in
-        for r = 0 to rounds - 1 do
+        let round r =
           let u, v = pair b ~key:k1 ~p ~n ~rounds c j r in
           let u = f.sub u (f.lit 0.5) in
           let us = f.sub (f.lit 0.5) (f.abs u) in
@@ -968,16 +977,12 @@ let poisson ?key rate =
               (f.add (f.log v) log_inv_alpha)
               (f.log (f.add (f.div a (f.mul us us)) b'))
           in
-          let accept =
+          ( count,
             either b squeeze
               (f.both (not_ b reject)
-                 (f.le lhs (log_poisson_pmf b f count lam)))
-          in
-          acc := where b (f.both accept (not_ b !settled)) count !acc;
-          settled := either b !settled accept;
-          last := count
-        done;
-        where b !settled !acc !last
+                 (f.le lhs (log_poisson_pmf b f count lam))) )
+        in
+        first_accepted b ~rounds round
       in
       into b D.Int32 (where b small inversion rejection))
 
@@ -1060,9 +1065,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
         let vr = f.sub (f.lit 0.92) (f.div (f.lit 4.2) b') in
         let mode = f.floor (f.mul (f.add n (f.lit 1.0)) p) in
         let log_mode = log_binomial_pmf b f mode n p q in
-        let acc = ref (f.lit 0.0) and last = ref (f.lit 0.0) in
-        let settled = ref (const b D.Bool false) in
-        for r = 0 to rounds - 1 do
+        let round r =
           let u, v = pair b ~key:k1 ~p:bits ~n:len ~rounds c j r in
           let u = f.sub u (f.lit 0.5) in
           let us = f.sub (f.lit 0.5) (f.abs u) in
@@ -1084,16 +1087,13 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
               (f.add (f.log v) log_alpha)
               (f.log (f.add (f.div a (f.mul us us)) b'))
           in
-          let accept =
+          ( count,
             f.both inside
               (either b squeeze
                  (f.le lhs (f.sub (log_binomial_pmf b f count n p q) log_mode)))
-          in
-          acc := where b (f.both accept (not_ b !settled)) count !acc;
-          settled := either b !settled accept;
-          last := count
-        done;
-        where b !settled !acc !last
+          )
+        in
+        first_accepted b ~rounds round
       in
       let y = into b D.Int32 (where b small inversion rejection) in
       where b flip (bin b Sub ins.(0) y) y)
