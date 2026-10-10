@@ -23,6 +23,14 @@ contract/matmul-f32-64	alloc_words	exact	668
 contract/matmul-f32-64	wall_time	batch=1024	n=20	5.765e-06	5.749e-06 5.750e-06 5.752e-06 5.753e-06 5.757e-06 5.758e-06 5.758e-06 5.760e-06 5.760e-06 5.764e-06 5.765e-06 5.770e-06 5.775e-06 5.779e-06 5.780e-06 5.782e-06 5.782e-06 5.790e-06 5.793e-06 5.797e-06
 contract/matmul-f32-64-direct	alloc_words	exact	57
 contract/matmul-f32-64-direct	wall_time	batch=1024	n=20	5.004e-06	4.963e-06 4.967e-06 4.996e-06 4.997e-06 4.998e-06 5.000e-06 5.001e-06 5.002e-06 5.002e-06 5.003e-06 5.004e-06 5.004e-06 5.005e-06 5.005e-06 5.007e-06 5.009e-06 5.015e-06 5.023e-06 5.029e-06 5.045e-06
+index/concatenate-2x512K	alloc_words	exact	1409
+index/concatenate-2x512K	wall_time	batch=256	n=20	3.788e-05	3.766e-05 3.775e-05 3.775e-05 3.776e-05 3.780e-05 3.781e-05 3.782e-05 3.787e-05 3.787e-05 3.787e-05 3.789e-05 3.790e-05 3.791e-05 3.792e-05 3.797e-05 3.801e-05 3.806e-05 3.810e-05 3.874e-05 4.404e-05
+index/scatter-add-64K-into-1K	alloc_words	exact	1466
+index/scatter-add-64K-into-1K	wall_time	batch=128	n=20	5.308e-05	5.290e-05 5.294e-05 5.297e-05 5.300e-05 5.301e-05 5.303e-05 5.304e-05 5.304e-05 5.306e-05 5.306e-05 5.310e-05 5.311e-05 5.313e-05 5.315e-05 5.315e-05 5.318e-05 5.318e-05 5.320e-05 5.327e-05 5.406e-05
+index/set-row-8M	alloc_words	exact	4755
+index/set-row-8M	wall_time	batch=4	n=20	1.034e-04	9.264e-05 9.295e-05 9.517e-05 9.648e-05 9.929e-05 1.008e-04 1.011e-04 1.015e-04 1.033e-04 1.033e-04 1.036e-04 1.043e-04 1.056e-04 1.066e-04 1.070e-04 1.090e-04 1.094e-04 1.102e-04 1.116e-04 1.141e-04
+index/take-rows-1K-of-8K	alloc_words	exact	1654
+index/take-rows-1K-of-8K	wall_time	batch=512	n=20	1.279e-05	1.246e-05 1.253e-05 1.263e-05 1.265e-05 1.269e-05 1.269e-05 1.270e-05 1.270e-05 1.278e-05 1.279e-05 1.280e-05 1.281e-05 1.283e-05 1.284e-05 1.285e-05 1.287e-05 1.288e-05 1.290e-05 1.290e-05 1.354e-05
 move/copy-1M	alloc_words	exact	202
 move/copy-1M	wall_time	batch=256	n=20	3.321e-05	3.297e-05 3.299e-05 3.306e-05 3.308e-05 3.316e-05 3.318e-05 3.319e-05 3.319e-05 3.320e-05 3.321e-05 3.321e-05 3.324e-05 3.324e-05 3.326e-05 3.327e-05 3.330e-05 3.334e-05 3.336e-05 3.337e-05 3.346e-05
 move/rearrange-heads-1M	alloc_words	exact	600
@@ -103,6 +111,14 @@ dispatch/zeros_like-1	alloc_words	exact	331
 dispatch/zeros_like-1	wall_time	batch=16384	n=20	5.754e-07	5.700e-07 5.712e-07 5.726e-07 5.728e-07 5.730e-07 5.737e-07 5.740e-07 5.741e-07 5.753e-07 5.753e-07 5.755e-07 5.760e-07 5.763e-07 5.767e-07 5.768e-07 5.769e-07 5.770e-07 5.771e-07 5.790e-07 5.828e-07
 dispatch/zeros_like-1M	alloc_words	exact	331
 dispatch/zeros_like-1M	wall_time	batch=128	n=20	4.470e-05	4.268e-05 4.279e-05 4.284e-05 4.291e-05 4.310e-05 4.314e-05 4.323e-05 4.362e-05 4.453e-05 4.465e-05 4.474e-05 4.517e-05 4.525e-05 4.529e-05 4.530e-05 4.578e-05 4.580e-05 4.633e-05 4.770e-05 4.859e-05
+index/concatenate-2x512K	alloc_words	exact	1409
+index/concatenate-2x512K	wall_time	batch=128	n=20	4.902e-05	4.617e-05 4.663e-05 4.670e-05 4.688e-05 4.788e-05 4.805e-05 4.807e-05 4.807e-05 4.807e-05 4.836e-05 4.968e-05 5.083e-05 5.085e-05 5.128e-05 5.191e-05 5.194e-05 5.199e-05 5.207e-05 5.371e-05 5.411e-05
+index/scatter-add-64K-into-1K	alloc_words	exact	1466
+index/scatter-add-64K-into-1K	wall_time	batch=128	n=20	6.607e-05	6.459e-05 6.479e-05 6.486e-05 6.495e-05 6.533e-05 6.534e-05 6.579e-05 6.580e-05 6.589e-05 6.599e-05 6.615e-05 6.622e-05 6.635e-05 6.637e-05 6.660e-05 6.688e-05 6.724e-05 6.732e-05 6.745e-05 6.836e-05
+index/set-row-8M	alloc_words	exact	4755
+index/set-row-8M	wall_time	batch=64	n=20	1.186e-04	1.063e-04 1.071e-04 1.074e-04 1.099e-04 1.099e-04 1.125e-04 1.147e-04 1.162e-04 1.170e-04 1.181e-04 1.192e-04 1.219e-04 1.223e-04 1.265e-04 1.287e-04 1.301e-04 1.409e-04 1.467e-04 1.470e-04 1.492e-04
+index/take-rows-1K-of-8K	alloc_words	exact	1654
+index/take-rows-1K-of-8K	wall_time	batch=256	n=20	1.767e-05	1.644e-05 1.655e-05 1.657e-05 1.657e-05 1.678e-05 1.703e-05 1.716e-05 1.721e-05 1.736e-05 1.757e-05 1.777e-05 1.791e-05 1.796e-05 1.799e-05 1.818e-05 1.825e-05 1.863e-05 1.876e-05 1.926e-05 2.346e-05
 interp/add-1-100-beside-extent-on-another-domain	alloc_words	exact	4200
 interp/add-1-100-beside-extent-on-another-domain	wall_time	batch=256	n=20	1.759e-05	1.722e-05 1.735e-05 1.744e-05 1.752e-05 1.752e-05 1.754e-05 1.755e-05 1.755e-05 1.757e-05 1.758e-05 1.759e-05 1.759e-05 1.766e-05 1.767e-05 1.773e-05 1.781e-05 1.781e-05 1.783e-05 1.793e-05 1.841e-05
 interp/add-1-100-eager	alloc_words	exact	4200

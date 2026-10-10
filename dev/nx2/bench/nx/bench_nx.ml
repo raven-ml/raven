@@ -254,6 +254,57 @@ let contract_rows =
   Thumper.group "contract"
     (matmul_rows 4 @ matmul_rows 64 @ matmul_rows 1024 @ decode_rows)
 
+(* Indexing: a row take reads its rows, an add-scatter its updates, a set
+   writes its row into a copy of the cache, and concatenate copies its result
+   once. *)
+
+let table =
+  Nx.Repr.of_array Nx.Host.v
+    (A.of_array D.Float32 [| 8192; 256 |] (Array.make (8192 * 256) 1.))
+
+let ids_1k =
+  Nx.Repr.of_array Nx.Host.v
+    (A.of_array D.Int64 [| 1024 |]
+       (Array.init 1024 (fun i -> Int64.of_int (i * 7 mod 8192))))
+
+let ids_64k =
+  Nx.Repr.of_array Nx.Host.v
+    (A.of_array D.Int64 [| 65536 |]
+       (Array.init 65536 (fun i -> Int64.of_int (i mod 1024))))
+
+let ones_64k = host 65536
+let sums = Nx.zeros D.Float32 [| 1024 |]
+let half_1m = host (1 lsl 19)
+
+(* A cache of 8 heads, 4096 positions and 64 features, 8 MiB, and one
+   position's row. *)
+let cache =
+  Nx.add
+    (Nx.Repr.of_array Nx.Host.v
+       (A.of_array D.Float32 [| 1; 8; 4096; 64 |]
+          (Array.make (8 * 4096 * 64) 0.)))
+    (Nx.zeros D.Float32 [| 1; 8; 4096; 64 |])
+
+let row =
+  Nx.Repr.of_array Nx.Host.v
+    (A.of_array D.Float32 [| 1; 8; 1; 64 |] (Array.make 512 1.))
+
+let pos = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [||] [| 1000L |])
+
+let index_rows =
+  Thumper.group "index"
+    [
+      Thumper.bench "take-rows-1K-of-8K" (fun () ->
+          Nx.take ~axis:0 (Thumper.black_box ids_1k) table);
+      Thumper.bench "scatter-add-64K-into-1K" (fun () ->
+          Nx.scatter ~combine:Add ~axis:0 (Thumper.black_box ids_64k) ones_64k
+            sums);
+      Thumper.bench "set-row-8M" (fun () ->
+          Nx.set Nx.[ A; A; D (pos, 1); A ] row (Thumper.black_box cache));
+      Thumper.bench "concatenate-2x512K" (fun () ->
+          Nx.concatenate ~axis:0 [ Thumper.black_box half_1m; half_1m ]);
+    ]
+
 (* Interpretations. Each row adds one-element host values 100 times: eagerly;
    under a Values interpretation that does not reach them; while an Extent lives
    on another domain; while one lives on this domain around another fiber, which
@@ -346,5 +397,6 @@ let () =
          move_rows;
          rng_rows;
          contract_rows;
+         index_rows;
          interp_rows;
        ]
