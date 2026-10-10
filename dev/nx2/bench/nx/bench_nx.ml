@@ -182,9 +182,26 @@ let rates = filled (1 lsl 16) 4.
 let probabilities = filled mib 0.3
 let draw x = Nx.Repr.array (Nx.place Nx.Host.on x)
 
+(* The draws' floor: nx.cpu's Threefry called directly over 1M counters under
+   one broadcast key, the one block per element that bits and uniform compute,
+   without the counters' and words' arithmetic around it. *)
+let counters = A.of_array D.Uint64 [| mib |] (Array.init mib Int64.of_int)
+
+let one_key =
+  Option.get
+    (A.move (A.Move.Broadcast [| mib |]) (A.of_array D.Uint64 [| 1 |] [| 0L |]))
+
+let threefry_direct c =
+  let dst = A.create (A.device c) D.Uint64 [| mib |] in
+  match Nx_cpu.apply2 (Binary Threefry) ~dst c one_key with
+  | Done -> dst
+  | refusal -> A.refused "threefry-1M-direct" refusal [ A.Any dst; A.Any c ]
+
 let rng_rows =
   Thumper.group "rng"
     [
+      Thumper.bench "threefry-1M-direct" (fun () ->
+          threefry_direct (Thumper.black_box counters));
       Thumper.bench "bits-1M" (fun () ->
           draw (Nx.Rng.bits ~key:(Thumper.black_box key) [| mib |]));
       Thumper.bench "uniform-f32-1M" (fun () ->
