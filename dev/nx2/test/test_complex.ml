@@ -132,6 +132,13 @@ let law_polar fname
         (Nx.to_array z)
   | _ -> ()
 
+(* CR: Five witnesses return without calling either operation. Restrict
+   the ULP laws to float32/float64 and add cases for every narrow witness
+   and both complex formats, with independent libm/domain answers stored
+   by D.of_float. Pick values away from rounding midpoints, signed zeros,
+   branch sides and NaN/inf. Check these stored results exactly. Include
+   complex128 (1e300 + 4e300i): angle must round atan2(4,1), while first
+   converting its parts to float32 gives pi/4. *)
 let polar =
   [
     prop "magnitude is hypot of the parts, within 3 ulps"
