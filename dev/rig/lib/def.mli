@@ -44,11 +44,6 @@ type kind =
     object as an int. *)
 type completion = Store | Object of int | Host_writes
 
-(** The type for a memory's kind: {!Rig.Buffer.memory}'s three, host memory its
-    keeper frees (a heap bigarray or the caller's), io memory its device made,
-    and io memory its library gave. *)
-type memory_kind = Device | Pinned | Mapped | Host_kept | Io_made | Io_given
-
 (** {!Rig.Buffer.access}. *)
 type access = Read | Read_write
 
@@ -60,6 +55,18 @@ type keep =
   | Heap of
       (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
   | Bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
+
+(** The type for who made an io memory: its device, or its library. *)
+type origin = Made | Given
+
+(** The type for what a memory's bytes are: a driver's region of one of
+    {!Rig.Buffer.memory}'s kinds, an io region, or host memory whose keeper
+    frees it, held until the uses a device's borrow made are reached
+    ([Kept Nothing] for none). *)
+type backing =
+  | Driver_memory of { memory : Rig_edge.memory; region : region }
+  | Io_memory of { origin : origin; region : io_region }
+  | Kept of keep
 
 (** The type for the end of a stopped device's timeline word: read still, its
     readers moved to the C record's copy at a count of minor collections, or
@@ -104,7 +111,7 @@ type device = {
   mutable used : int; [@atomic]
       (** Own bytes in live buffers, code and cache. *)
   mutable cached : int; [@atomic]
-  cache : entry list Hashtbl.Make(Int).t;  (** By [bytes * 8 + kind]. *)
+  cache : entry list Hashtbl.Make(Int).t;  (** By [bytes * 4 + kind]. *)
   mutable retiring : entry list; [@atomic]
       (** Waiting for other devices' uses. *)
   mutable pending : (int * pending) list; [@atomic]
@@ -126,10 +133,8 @@ type device = {
 
 and entry = {
   owner : device;
-  memory : memory_kind;
+  backing : backing;
   bytes : int;
-  region : region option;
-  io_region : io_region option;
   access : access;
   stamps : int;  (** The C stamps, which link to a hold's once held. *)
   mutable maps : mapping list;
@@ -140,9 +145,6 @@ and entry = {
       (** An io memory's pages, asked at its first borrow. *)
   mutable proxy : int;
       (** The C proxy of the bigarrays over the memory, 0 before the first. *)
-  mutable kept : keep;
-      (** Host memory a device borrowed: its bytes, held until its uses are
-          reached. *)
   id : int;
       (** Unique for the life of the process. Last: [rig_memory.c] reads the
           fields before it by their place. *)

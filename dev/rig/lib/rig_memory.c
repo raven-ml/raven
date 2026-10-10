@@ -164,7 +164,7 @@ value caml_rig_blit_bytes(value v_src, value v_b, value v_j, value v_n) {
    A buffer is the record { mem; offset; length; generation }, its
    memory { dev; bytes; host; address; handle; claim; entry; root; ... },
    its claim { count; generation; why } and the entry of its root
-   { owner; memory; bytes; region; io_region; access; stamps; ... },
+   { owner; backing; bytes; access; stamps; ... },
    as rig's Def module lays them out. */
 
 enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_KIND, DEVICE_C };
@@ -172,8 +172,7 @@ enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
 enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
        MEMORY_CLAIM, MEMORY_ENTRY, MEMORY_ROOT };
 enum { CLAIM_COUNT, CLAIM_GEN, CLAIM_WHY };
-enum { ENTRY_OWNER, ENTRY_MEMORY, ENTRY_BYTES, ENTRY_REGION, ENTRY_IO_REGION,
-       ENTRY_ACCESS, ENTRY_STAMPS };
+enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS };
 
 /* The claim word's bit for memory that admits only reads, and its step
    per claim, as rig's Memory module lays the word out. */

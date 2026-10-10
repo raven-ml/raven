@@ -10,14 +10,13 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type t = image
 
-(* Places [code] at the start of [d]'s code memory [e]: by a copy on [d]'s copy
-   queue from pinned memory, or by the host where [d] runs no copy, after [d]'s
-   queued work either way, and waits for it. *)
-let place d (e : entry) code =
+(* Places [code] at the start of [d]'s code memory [e], whose region is
+   [region]: by a copy on [d]'s copy queue from pinned memory, or by the host
+   where [d] runs no copy, after [d]'s queued work either way, and waits for
+   it. *)
+let place d (e : entry) region code =
   let n = String.length code in
-  let address, handle, host =
-    match e.region with Some r -> Memory.region_info r | None -> (-1, 0n, -1)
-  in
+  let address, handle, host = Memory.region_info region in
   match d.copy_queue with
   | Some queue ->
       let dst =
@@ -43,10 +42,11 @@ let loaded d binary =
       | Error why -> Error (strf "%s: %s" d.name why)
       | Ok (Rig_edge.Loaded i) -> Ok (Loaded { m; h; i }, None)
       | Ok (Place (n, lay)) -> (
-          let e = Memory.alloc_entry d Device n in
+          let e = Memory.alloc_entry d Rig_edge.Device n in
           (* [d]'s regions are of [d]'s region type. *)
-          match e.region with
-          | Some (Region { r; rid = rid'; _ }) -> (
+          match e.backing with
+          | Driver_memory { region = Region { r; rid = rid'; _ } as region; _ }
+            -> (
               match Type.Id.provably_equal rid rid' with
               | Some Type.Equal -> (
                   (* A failure gives the code memory back once [d]'s work that
@@ -54,7 +54,7 @@ let loaded d binary =
                      and raises its own exception. *)
                   match
                     let i, code = lay r in
-                    (try place d e code
+                    (try place d e region code
                      with x ->
                        Memory.unload d (Loaded { m; h; i });
                        raise x);
@@ -65,7 +65,7 @@ let loaded d binary =
                       Memory.retire d e;
                       raise x)
               | None -> assert false)
-          | None -> assert false))
+          | Io_memory _ | Kept _ -> assert false))
   | _ -> invalid_argf "Rig.Image.load: %s loads no code" d.name
 
 let load d binary =

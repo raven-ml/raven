@@ -25,11 +25,6 @@ let[@inline] check_live fn b = if not (is_live b) then refuse_dead fn b
 let of_memory mem length =
   { mem; offset = 0; length; generation = generation mem.claim }
 
-let kind_of : memory -> Def.memory_kind = function
-  | Device -> Def.Device
-  | Pinned -> Def.Pinned
-  | Mapped -> Def.Mapped
-
 let create ?(memory = Device) d n =
   if n < 0 then invalid_argf "Rig.Buffer.create: %d bytes is negative" n;
   if Dev.is_lost d then Dev.raise_lost d;
@@ -40,8 +35,8 @@ let create ?(memory = Device) d n =
       Memory.drain d;
       Memory.make ~address:0 d 0 Memory.no_entry
     end
-    else if Dev.is_io d then Memory.alloc d Def.Device n
-    else Memory.alloc d (kind_of memory) n
+    else if Dev.is_io d then Memory.alloc d Device n
+    else Memory.alloc d memory n
   in
   of_memory mem n
 
@@ -60,13 +55,13 @@ let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
 
 let io (type r) b (k : r Type.Id.t) : r option =
   check_live "Buffer.io" b;
-  match b.mem.root.entry.io_region with
-  | Some (Io_region { m; r; _ }) -> (
+  match b.mem.root.entry.backing with
+  | Io_memory { region = Io_region { m; r; _ }; _ } -> (
       let module I = (val m) in
       match Type.Id.provably_equal I.region_key k with
       | Some Type.Equal -> Some r
       | None -> None)
-  | None -> None
+  | Driver_memory _ | Kept _ -> None
 
 let of_bigarray ba =
   let n = Bigarray.Array1.size_in_bytes ba in
@@ -97,6 +92,11 @@ let spans b = b.offset = 0 && b.length = b.mem.root.bytes
 
 (* Where [b]'s bytes lie: in this process's host memory by address, or in one
    memory by its identity. *)
+(* CR: Use the root's host address or its already-cached Io page address as
+   one location rule shared with Claim's span checks. A host borrow [h] of a
+   disk buffer aliases [of_bigarray (bigarray char h)], but its root.host is
+   -1, so this returns false and bypasses Nx_array's alias check. Cached pages
+   name local host memory; answering overlap must not create a mapping. *)
 let overlaps b b' =
   let n = b.length and n' = b'.length in
   n > 0 && n' > 0
@@ -119,6 +119,12 @@ let borrow d b =
         Some { b with mem }
     | None -> None
 
+(* CR: Retain [b] through this walk and both blits below, as Copy.copy keeps
+   its buffers. A profiling callback can collect the last host borrow while
+   another domain drains and reuses its completed memory. This walk retains
+   only an integer stamps address; each blit retains only [at] after [wait].
+   A final Sys.opaque_identity of [b] keeps each address owned through its
+   last use, including when a Read_write wait resumes the stamps walk. *)
 let wait_points b access =
   let e = b.mem.root.entry in
   if access = Read then Memory.iter_write Dev.wait_point e.stamps

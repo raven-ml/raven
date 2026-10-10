@@ -178,20 +178,22 @@ let on_queue ~wait d src dst n start =
   | _ -> false
 
 let io_read src dst n =
-  match src.mem.entry.io_region with
-  | Some (Io_region { m; h; r }) ->
+  match src.mem.entry.backing with
+  | Io_memory { region = Io_region { m; h; r }; _ } ->
       let module I = (val m) in
       Dev.counted src.mem.dev (fun () ->
           I.read h r ~at:src.offset ~dst:(host_address dst) ~len:n)
-  | None -> invalid_argf "Rig.%s: the source is no io memory" fn
+  | Driver_memory _ | Kept _ ->
+      invalid_argf "Rig.%s: the source is no io memory" fn
 
 let io_write src dst n =
-  match dst.mem.entry.io_region with
-  | Some (Io_region { m; h; r }) ->
+  match dst.mem.entry.backing with
+  | Io_memory { region = Io_region { m; h; r }; _ } ->
       let module I = (val m) in
       Dev.counted dst.mem.dev (fun () ->
           I.write h r ~at:dst.offset ~src:(host_address src) ~len:n)
-  | None -> invalid_argf "Rig.%s: the destination is no io memory" fn
+  | Driver_memory _ | Kept _ ->
+      invalid_argf "Rig.%s: the destination is no io memory" fn
 
 (* How the host moves bytes: between memory it addresses, or by an io device's
    read or write. A constant, so a host copy allocates nothing. *)

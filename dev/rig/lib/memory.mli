@@ -73,18 +73,10 @@ val token : int -> released -> int -> int -> int -> token
 val holds_list : int
 (** [holds_list] is the release list of holds, which every drain reads. *)
 
-val entry :
-  ?region:region ->
-  ?io_region:io_region ->
-  ?access:access ->
-  device ->
-  memory_kind ->
-  int ->
-  int ->
-  entry
-(** [entry owner kind bytes st] is a new release record of [bytes] bytes of
-    [owner]'s memory of [kind], whose stamps are [st], in no hold and mapped by
-    no device. [access] defaults to [Read_write]. *)
+val entry : ?access:access -> device -> backing -> int -> int -> entry
+(** [entry owner backing bytes st] is a new release record of [bytes] bytes of
+    [owner]'s memory, whose stamps are [st], in no hold and mapped by no device.
+    [access] defaults to [Read_write]. *)
 
 val no_entry : entry
 (** [no_entry] is the entry of host memory no device borrowed: no stamps, no
@@ -219,12 +211,12 @@ val kernel_entry : image -> string -> Rig_edge.entry option
 (** [kernel_entry i f] is the driver's entry for [i]'s function [f], a counted
     call ({!Rig_edge.Driver.entry}). *)
 
-val alloc_entry : device -> memory_kind -> int -> entry
+val alloc_entry : device -> Rig_edge.memory -> int -> entry
 (** [alloc_entry d kind n] allocates [n] bytes of [d]'s memory of [kind] on the
     allocation path: drains, the cache, the budget, the reclaim rounds, then
     {!Dev.Out_of_memory}. *)
 
-val alloc : device -> memory_kind -> int -> memory
+val alloc : device -> Rig_edge.memory -> int -> memory
 (** [alloc d kind n] is a memory record over [alloc_entry d kind n], with its
     token. *)
 

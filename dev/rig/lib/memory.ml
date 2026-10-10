@@ -102,30 +102,27 @@ let heap_bytes n =
 (* Memory records *)
 
 let is_io_memory (e : entry) =
-  match e.memory with
-  | Io_made | Io_given -> true
-  | Device | Pinned | Mapped | Host_kept -> false
+  match e.backing with
+  | Io_memory _ -> true
+  | Driver_memory _ | Kept _ -> false
 
 let entry_ids = Atomic.make 0
 
-let entry ?region ?io_region ?(access = Read_write) owner memory bytes stamps =
+let entry ?(access = Read_write) owner backing bytes stamps =
   {
     id = Atomic.fetch_and_add entry_ids 1;
     owner;
-    memory;
+    backing;
     bytes;
-    region;
-    io_region;
     access;
     stamps;
     maps = [];
     unmaps = 0;
     pages = Unasked;
     proxy = 0;
-    kept = Nothing;
   }
 
-let no_entry = entry Dev.host Host_kept 0 0
+let no_entry = entry Dev.host (Kept Nothing) 0 0
 
 (* Claim words *)
 
@@ -140,7 +137,10 @@ let new_claim keep (e : entry) =
   let reached =
     match keep with
     | Bigarray _ -> true
-    | Nothing | Heap _ -> e.memory = Io_given
+    | Nothing | Heap _ -> (
+        match e.backing with
+        | Io_memory { origin = Given; _ } -> true
+        | Io_memory { origin = Made; _ } | Driver_memory _ | Kept _ -> false)
   in
   let word =
     (if reached then outside else 0)
@@ -228,18 +228,15 @@ let note d =
 
 (* Driver calls *)
 
-let edge_memory : memory_kind -> Rig_edge.memory = function
-  | Pinned -> Pinned
-  | Mapped -> Mapped
-  | Device | Host_kept | Io_made | Io_given -> Device
+type memory_kind = Rig_edge.memory = Device | Pinned | Mapped
 
 (* [n] new bytes of [d]'s memory of [kind] as a release record, or [None] if [d]
-   has not the room. *)
-let new_entry d kind n =
+   has not the room. An io device's memory has no kind. *)
+let new_entry d (kind : memory_kind) n =
   match d.kind with
   | Driver { m; h; rid } -> (
       let module D = (val m) in
-      match Dev.counted d (fun () -> D.alloc h (edge_memory kind) n) with
+      match Dev.counted d (fun () -> D.alloc h kind n) with
       | None -> None
       | Some r when d.host_addresses && (D.locate r).host = None ->
           ignore (Dev.give d (fun () -> D.free h r) : bool);
@@ -248,17 +245,16 @@ let new_entry d kind n =
              allocated a region without a host address"
             d.name
       | Some r ->
+          let region = Region { m; h; r; rid } in
           Some
-            (entry ~region:(Region { m; h; r; rid }) d kind n (stamps_new ())))
+            (entry d (Driver_memory { memory = kind; region }) n (stamps_new ())))
   | Io { m; h } -> (
       let module I = (val m) in
       match Dev.counted d (fun () -> I.alloc h n) with
       | None -> None
       | Some r ->
-          Some
-            (entry
-               ~io_region:(Io_region { m; h; r })
-               d Io_made n (stamps_new ())))
+          let region = Io_region { m; h; r } in
+          Some (entry d (Io_memory { origin = Made; region }) n (stamps_new ())))
   | Host -> None
 
 (* Gives back a region [d] allocated or mapped, an io region or an image:
@@ -275,6 +271,12 @@ let unload_now d (Loaded { m; h; i }) =
   let module D = (val m) in
   Dev.give d (fun () -> D.unload h i)
 
+(* CR: Keep [image] alive until this counted call returns. If entry lookup
+   is its last use, only the driver image remains rooted while Metal
+   compiles. Another domain can collect the core token and drain it,
+   releasing the library during that compilation; counted calls only
+   exclude stop. A final Sys.opaque_identity of [image] here preserves
+   the loaded-image guarantee for every driver. *)
 let kernel_entry image f =
   let (Loaded { m; i; _ }) = image.loaded in
   let module D = (val m) in
@@ -285,11 +287,18 @@ let kernel_entry image f =
 type budget = Device_budget | Host_budget | No_budget
 
 let budget_of d = function
-  | Device | Mapped | Io_made -> Device_budget
+  | Device | Mapped -> Device_budget
   | Pinned -> if Dev.reaches Dev.host d then Device_budget else Host_budget
-  | Host_kept | Io_given -> No_budget
 
-let owns d kind = budget_of d kind = Device_budget
+(* The budget [e] counts in: io memory its device made counts in the device's,
+   memory a library or a keeper frees in none. *)
+let entry_budget (e : entry) =
+  match e.backing with
+  | Driver_memory { memory; _ } -> budget_of e.owner memory
+  | Io_memory { origin = Made; _ } -> Device_budget
+  | Io_memory { origin = Given; _ } | Kept _ -> No_budget
+
+let owns (e : entry) = entry_budget e = Device_budget
 
 (* Takes [n] bytes of the room of [budget] on [d], if it has them. *)
 let take_room d budget n =
@@ -336,13 +345,15 @@ let drop_stamps (e : entry) = if e.stamps <> 0 then stamps_unref e.stamps
 let give_back (e : entry) =
   let d = e.owner in
   let given =
-    (match e.region with Some r -> free_region d r | None -> true)
-    && match e.io_region with Some r -> free_io d r | None -> true
+    match e.backing with
+    | Driver_memory { region; _ } -> free_region d region
+    | Io_memory { region; _ } -> free_io d region
+    | Kept _ -> true
   in
   if not given then defer d (Free e)
   else begin
     drop_stamps e;
-    let budget = budget_of d e.memory in
+    let budget = entry_budget e in
     give_room d budget e.bytes;
     if budget = Device_budget then note d
   end
@@ -396,18 +407,18 @@ let unmapped (e : entry) =
   if Atomic.Loc.fetch_and_add [%atomic.loc e.unmaps] (-1) = 1 then give_back e
 
 let key n kind =
-  let k =
-    match kind with
-    | Device -> 0
-    | Pinned -> 1
-    | Mapped -> 2
-    | Host_kept -> 3
-    | Io_made -> 4
-    | Io_given -> 5
-  in
-  (n * 8) + k
+  let k = match kind with Device -> 0 | Pinned -> 1 | Mapped -> 2 in
+  (n * 4) + k
 
-let cache_key (e : entry) = key e.bytes e.memory
+(* Memory the cache never takes: io memory, and host memory a device borrowed,
+   which returns to its keeper once its uses are reached. *)
+let uncached (e : entry) =
+  match e.backing with Driver_memory _ -> false | Io_memory _ | Kept _ -> true
+
+let cache_key (e : entry) =
+  match e.backing with
+  | Driver_memory { memory; _ } -> key e.bytes memory
+  | Io_memory _ | Kept _ -> invalid_arg "Rig: io or kept memory in a cache"
 
 (* Holds whose release is still to run: their stamps, release and the
    generation they were made in. *)
@@ -509,15 +520,11 @@ let cache d e =
 
 let to_cache d e = Dev.protect d (fun () -> cache d e)
 
-(* Memory the cache never takes: io memory, and host memory a device borrowed,
-   which returns to its keeper once its uses are reached. *)
-let uncached (e : entry) = e.memory = Host_kept || is_io_memory e
-
 (* Whether [d] holds more than its budget in the memory that [e]'s counts in:
    [e] then returns to the driver, so a later allocation the budget refuses
    cannot reuse it. It skips the cache, never the wait: the driver gets [e]
    once every point of it is reached, [d]'s own included. *)
-let over_budget d (e : entry) = owns d e.memory && d.used > d.budget
+let over_budget d (e : entry) = owns e && d.used > d.budget
 
 (* Routes a record [d]'s release list gave. *)
 let route d = function
@@ -780,7 +787,7 @@ let take_cache ?upto d =
   | Some upto ->
       let held = ref d.used in
       take_cache_if d (fun e ->
-          owns d e.memory && !held > upto
+          owns e && !held > upto
           && begin
             held := !held - e.bytes;
             true
@@ -815,11 +822,11 @@ let release_cache ?upto ~wait d = release_taken ~wait d (take_cache ?upto)
 
 let rounds = 4
 
-(* Whether [d]'s memory [e] counts in the budget of [pool], the host or a
+(* Whether the memory [e] counts in the budget of [pool], the host or a
    device. *)
-let charged pool d (e : entry) =
-  match budget_of d e.memory with
-  | Device_budget -> d == pool
+let charged pool (e : entry) =
+  match entry_budget e with
+  | Device_budget -> e.owner == pool
   | Host_budget -> Dev.is_host pool
   | No_budget -> false
 
@@ -828,11 +835,11 @@ let charged pool d (e : entry) =
    until [d]'s handed work is done. Only the entries' plain fields are read: a
    drain may free them meanwhile. *)
 let holds_back pool d =
-  List.exists (charged pool d) d.retiring
+  List.exists (charged pool) d.retiring
   || List.exists
        (function
          | _, Free e | _, Unmap (_, Some e) | _, Unload (_, Some e) ->
-             charged pool e.owner e
+             charged pool e
          | _, (Unmap (_, None) | Unload (_, None)) -> false)
        d.pending
 
@@ -855,7 +862,7 @@ let reclaim_round pool round =
       if not (Dev.busy d) then begin
         if holds_back pool d && not (Dev.is_lost d) then
           wait_for d (Dev.submitted d);
-        release_taken ~wait:true d (fun d -> take_cache_if d (charged pool d))
+        release_taken ~wait:true d (fun d -> take_cache_if d (charged pool))
       end);
   drain_all ();
   if round >= 2 then begin
@@ -877,7 +884,9 @@ let room d = Int.max 0 (d.budget - d.used)
 (* A fresh memory record over the entry [e] of [d], with its token. *)
 let of_entry d e =
   let address, handle, host =
-    match e.region with Some r -> region_info r | None -> (-1, 0n, -1)
+    match e.backing with
+    | Driver_memory { region; _ } -> region_info region
+    | Io_memory _ | Kept _ -> (-1, 0n, -1)
   in
   let live = if host >= 0 then d.used else -1 in
   let m = make ~host ~address ~handle d e.bytes e in
@@ -988,8 +997,7 @@ let ensure_entry m =
   let d = m.dev in
   Dev.protect d (fun () ->
       if m.entry == no_entry then begin
-        let e = entry d Host_kept m.bytes (stamps_new ()) in
-        e.kept <- m.keep;
+        let e = entry d (Kept m.keep) m.bytes (stamps_new ()) in
         m.entry <- e;
         m.token <- token d.release (Memory e) 0 max_int (-1)
       end)
@@ -1022,7 +1030,9 @@ let map_peer_region d (Region { m = om; h = oh; r; rid }) =
   | _ -> None
 
 let map_peer d m =
-  match m.entry.region with Some r -> map_peer_region d r | None -> None
+  match m.entry.backing with
+  | Driver_memory { region; _ } -> map_peer_region d region
+  | Io_memory _ | Kept _ -> None
 
 (* [d]'s mapping of the memory [m] owns, whose host address is [host] or [-1],
    made at the first borrow and shared by the later ones. *)
@@ -1069,8 +1079,8 @@ let pages (m : memory) =
   let e = m.entry in
   (match e.pages with
   | Unasked -> (
-      match e.io_region with
-      | Some (Io_region { m = im; h; r }) ->
+      match e.backing with
+      | Io_memory { region = Io_region { m = im; h; r }; _ } ->
           let module I = (val im) in
           let got =
             match Dev.counted m.dev (fun () -> I.pages h r) with
@@ -1081,9 +1091,12 @@ let pages (m : memory) =
               match e.pages with
               | Unasked -> e.pages <- got
               | Pages _ | No_pages -> ())
-      | None -> ())
+      | Driver_memory _ | Kept _ -> ())
   | Pages _ | No_pages -> ());
   match e.pages with Pages ba -> ba_address ba | Unasked | No_pages -> -1
+
+let has_region (e : entry) =
+  match e.backing with Driver_memory _ -> true | Io_memory _ | Kept _ -> false
 
 (* How [d] reaches the root memory [m] whose host address is [host]: constant
    answers, so asking builds nothing. *)
@@ -1102,7 +1115,8 @@ let[@inline] reach d (m : memory) host =
   else if Dev.is_host d then if host >= 0 then At_host else Cannot
   else if d.memory_device && host >= 0 then Addressed
   else if m.bytes = 0 then Empty
-  else if host >= 0 && m.entry.region = None && host mod page <> 0 then Cannot
+  else if host >= 0 && (not (has_region m.entry)) && host mod page <> 0 then
+    Cannot
   else Map
 
 (* Whether [m] is io memory of no bytes, which every other device borrows over
@@ -1157,15 +1171,16 @@ let maps d m =
       made || Option.is_some (mapping d m host)
 
 let prefetch d (m : memory) ~at ~len =
-  match m.root.entry.io_region with
-  | Some (Io_region { m = im; h; r }) when not (Dev.is_host d) -> (
+  match m.root.entry.backing with
+  | Io_memory { region = Io_region { m = im; h; r }; _ } when not (Dev.is_host d)
+    -> (
       let module I = (val im) in
       try I.prefetch h r ~at ~len with I.Fault _ | Sys_error _ -> ())
   | _ -> ()
 
 let of_io d r ~access n =
   drain d;
-  let e = entry ~io_region:r ~access d Io_given n (stamps_new ()) in
+  let e = entry ~access d (Io_memory { origin = Given; region = r }) n (stamps_new ()) in
   let m = make d n e in
   m.token <- token d.release (Memory e) n max_int (-1);
   m
