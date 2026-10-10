@@ -726,6 +726,40 @@ let stop_commands =
     command "stop" (dev ^-> returns unit) (fun s -> s.stopped <- true) stop_once;
   ]
 
+(* An icb call beside writes to its dispatch array, each slot holding the loaded
+   pipeline or one no image gave: the call checks and records the dispatches one
+   read gave, so it answers as before or after each write, and never records a
+   pipeline it did not check. *)
+let slots = 4
+let written_icb valid = Array.for_all Fun.id valid
+
+let written_sys (t, args, _, ds) =
+  match icb t args ds with
+  | Ok b ->
+      b.release ();
+      true
+  | exception Invalid_argument _ -> false
+  | Error why -> failf "the icb call answered %S" why
+
+let write_commands =
+  let held =
+    abstract "ds" ~release:(fun (t, args, _, _) -> Rig_metal.free t.g args)
+  in
+  [
+    command "dispatches"
+      (Gen.unit @-> makes held)
+      (fun () -> Array.make slots true)
+      (fun () ->
+        let t = dev () in
+        let step = pipeline t "step" in
+        (t, alloc t args_bytes, step, Array.make slots (dispatch step)));
+    command "write"
+      (held ^-> Gen.int_range 0 (slots - 1) @-> Gen.bool @-> returns unit)
+      (fun valid k b -> valid.(k) <- b)
+      (fun (_, _, step, ds) k b -> ds.(k) <- dispatch (if b then step else 1));
+    command "icb" (held ^-> returns bool) written_icb written_sys;
+  ]
+
 let icbs =
   group ~timeout:60. "indirect command buffers"
     [
@@ -743,6 +777,10 @@ let icbs =
       test "an icb call after the stop answers the stop" after_stop;
       stateful ~domains:2 ~count:20
         "an icb call beside a stop answers as before or after it" stop_commands;
+      stateful ~domains:2 ~count:50
+        "an icb call beside writes to its dispatches answers as before or \
+         after each"
+        write_commands;
     ]
 
 (* Bytes *)

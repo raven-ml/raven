@@ -143,14 +143,13 @@ let refusal images bytes i (d : Rig_metal_abi.dispatch) =
 (* Compiled code calls a device's [icb] beside every other call, so [icb],
    [stop], an [unload] and a [free] exclude each other under the device's
    [guard]: once the stop began, the unload took the image or the free took the
-   region, the pipelines [icb] would retain or its buffer may be released. *)
-(* CR: Read each dispatch once, then validate and encode its pipeline and
-   sizes from that value under guard. These separate walks can copy
-   pipeline 1, validate a replacement, then retain the saved unchecked
-   pointer. One checked walk keeps ownership and limit checks on exactly
-   what make_icb receives. *)
+   region, the pipelines [icb] would retain or its buffer may be released. The
+   caller may write [ds] meanwhile, so [icb] reads each dispatch once, into its
+   own copy, and checks and records that copy: a dispatch read again could hold
+   a pipeline the checks never saw. *)
 let icb self guard stopped images regions align buffer
     (ds : Rig_metal_abi.dispatch array) =
+  let ds = Array.copy ds in
   let sizes = Array.make (7 * Array.length ds) 0 in
   let record i (d : Rig_metal_abi.dispatch) =
     let gx, gy, gz = d.groups and tx, ty, tz = d.threads in
