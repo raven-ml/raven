@@ -1213,6 +1213,66 @@ val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Raises [Invalid_argument] if an operand is 0-d, the inner extents differ,
     the leading axes do not broadcast, or the dtype is a boolean. *)
 
+val dot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [dot a b] sums the products of [a]'s last axis with [b]'s only axis, for a
+    1-d [b], or its second to last otherwise. The result's axes are [a]'s
+    others, then [b]'s: two vectors give their 0-d inner product, two matrices
+    their product. It does not broadcast, and accumulates as {!matmul}.
+
+    Raises [Invalid_argument] if an operand is 0-d, the summed extents differ,
+    or the dtype is a boolean. *)
+
+val vdot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [vdot a b] is the 0-d sum of the products of [conjugate a] and [b], both
+    flattened, accumulated as {!matmul}.
+
+    Raises [Invalid_argument] if [a] and [b] have different numbers of
+    elements, or the dtype is a boolean. *)
+
+(** {2:matrices Matrices}
+
+    A value of two axes or more is a batch of matrices over its last two:
+    rows, then columns. *)
+
+val matrix_transpose : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [matrix_transpose x] is [x] with its last two axes exchanged; [x] itself
+    below two axes. A view. *)
+
+val tril : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [tril ~k x] is [x] where column - row [<= k] (default [0]) and zero above,
+    in each matrix of the batch.
+
+    Raises [Invalid_argument] if [x] has fewer than two axes. *)
+
+val triu : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [triu ~k x] is [x] where column - row [>= k] (default [0]) and zero below,
+    as {!tril}. *)
+
+val diagonal :
+  ?offset:int -> ?axis1:int -> ?axis2:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [diagonal ~offset ~axis1 ~axis2 x] is the elements of [x] at index [i]
+    along [axis1] and [i + offset] along [axis2] (default the last two axes,
+    and [0]), for each [i] where both lie in their axes; that axis replaces the
+    two, last, the others kept in order. A view where [x]'s two axes merge
+    without a copy.
+
+    Raises [Invalid_argument] if [x] has fewer than two axes, or [axis1] and
+    [axis2] are not two distinct axes of [x]. *)
+
+val trace : ?offset:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [trace ~offset x] is the {!sum} of [diagonal ~offset x] along its last
+    axis: one value per matrix of the batch, [+0] for an empty diagonal.
+
+    Raises [Invalid_argument] as {!diagonal} and {!sum} do. *)
+
+val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [diag ~k v] is, for a vector [v] of [n] elements, the square of
+    [n + |k|] whose [k]th diagonal (default [0], above the main one where
+    positive) holds [v] and whose other elements are zero; for a matrix, its
+    diagonal [diagonal ~offset:k v].
+
+    Raises [Invalid_argument] if [v] has neither one nor two axes. *)
+
 (** {1:devices Device sets and placement}
 
     A value lies on a device set, a module minted by {!devices} whose brand ['d]

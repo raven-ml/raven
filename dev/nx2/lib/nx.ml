@@ -1913,6 +1913,125 @@ let conjugate (type v s d) (x : (v, s, d) t) : (v, s, d) t =
   | D.Complex128 -> flip D.Float64
   | _ -> x
 
+(* Matrices *)
+
+let matrix ~by x =
+  if ndim x < 2 then
+    invalid_argf "%s: %a has fewer than two axes" by pp_value x
+
+let matrix_transpose x =
+  let r = ndim x in
+  if r < 2 then x
+  else
+    let p = Array.init r Fun.id in
+    p.(r - 2) <- r - 1;
+    p.(r - 1) <- r - 2;
+    permute ~by:"Nx.matrix_transpose" p x
+
+(* [x] where column - row holds [keep] against [k] over its last two axes, zero
+   elsewhere: [Coord 0] is the column, [Coord 1] the row. *)
+let triangle ~by keep k x =
+  matrix ~by x;
+  let dt = dtype x in
+  elementwise ~by dt [ Any x ] (fun b ins ->
+      let d = bin2 b Sub (node b (Coord 0)) (node b (Coord 1)) in
+      let kk = const b D.Int64 (Int64.of_int k) in
+      let inside =
+        match keep with
+        | `Below -> node b (Op2 (Compare Less_equal, d, kk))
+        | `Above -> node b (Op2 (Compare Less_equal, kk, d))
+      in
+      pick b inside ins.(0) (const b dt (D.zero dt)))
+
+let tril ?(k = 0) x = triangle ~by:"Nx.tril" `Below k x
+let triu ?(k = 0) x = triangle ~by:"Nx.triu" `Above k x
+
+(* The diagonal of [x]'s last two axes [m] and [n], [offset] above the main one,
+   as a slice of every [n + 1]th element of the two axes merged: a view where
+   they merge without a copy. *)
+let last_diagonal ~by offset x =
+  let s = shape x in
+  let r = Array.length s in
+  let m = s.(r - 2) and n = s.(r - 1) in
+  let count =
+    Stdlib.max 0
+      (if offset >= 0 then Stdlib.min m (n - offset)
+       else Stdlib.min (m + offset) n)
+  in
+  let start = if count = 0 then 0 else if offset >= 0 then offset else -offset * n in
+  let lead = Array.sub s 0 (r - 2) in
+  let flat = move ~by (Reshape (Array.append lead [| m * n |])) x in
+  let ranges = Array.append (Array.map whole lead) [| { Nx_array.Move.start; count; step = n + 1 } |] in
+  move ~by (Slice ranges) flat
+
+let diagonal_by ~by ?(offset = 0) ?(axis1 = -2) ?(axis2 = -1) x =
+  matrix ~by x;
+  let a = axis ~by x axis1 and b = axis ~by x axis2 in
+  if a = b then invalid_argf "%s: axis1 and axis2 are both %d" by a;
+  let rest = List.filter (fun i -> i <> a && i <> b) (List.init (ndim x) Fun.id) in
+  let p = Array.of_list (rest @ [ a; b ]) in
+  last_diagonal ~by offset (permute ~by p x)
+
+let diagonal ?offset ?axis1 ?axis2 x =
+  diagonal_by ~by:"Nx.diagonal" ?offset ?axis1 ?axis2 x
+
+let trace ?(offset = 0) x =
+  let by = "Nx.trace" in
+  reduction ~by Sum ~axes:[ -1 ] (diagonal_by ~by ~offset x)
+
+(* A vector [v] of [n] elements on the [k]th diagonal of an [n + |k|] square:
+   [v] padded to the square's extent and read along the rows for [k >= 0],
+   along the columns otherwise. *)
+let diag ?(k = 0) v =
+  let by = "Nx.diag" in
+  match ndim v with
+  | 2 -> diagonal_by ~by ~offset:k v
+  | 1 ->
+      let dt = dtype v in
+      let n = dim 0 v + Stdlib.abs k in
+      let padded =
+        assemble ~by dt [| n |] (D.zero dt) [ (region [| n |] 0 0 (dim 0 v), v) ]
+      in
+      let along = if k >= 0 then [| n; 1 |] else [| 1; n |] in
+      let line = broadcast ~by [| n; n |] (move ~by (Reshape along) padded) in
+      elementwise ~by dt [ Any line ] (fun b ins ->
+          let d = bin2 b Sub (node b (Coord 0)) (node b (Coord 1)) in
+          let on = node b (Op2 (Compare Equal, d, const b D.Int64 (Int64.of_int k))) in
+          pick b on ins.(0) (const b dt (D.zero dt)))
+  | _ -> invalid_argf "%s: %a is neither a vector nor a matrix" by pp_value v
+
+(* Axis names [p0], [p1], ... *)
+let names p n = List.init n (fun i -> p ^ string_of_int i)
+
+let dot a b =
+  let by = "Nx.dot" in
+  let ra = ndim a and rb = ndim b in
+  if ra = 0 || rb = 0 then
+    invalid_argf "%s: %a and %a: an operand is 0-d" by pp_value a pp_value b;
+  let la = names "a" (ra - 1) @ [ "k" ] in
+  let lb, out_b =
+    if rb = 1 then ([ "k" ], [])
+    else
+      let lead = names "b" (rb - 2) in
+      (lead @ [ "k"; "c" ], lead @ [ "c" ])
+  in
+  let words l = String.concat " " l in
+  let p =
+    Pattern.v
+      (Printf.sprintf "%s, %s -> %s | k" (words la) (words lb)
+         (words (names "a" (ra - 1) @ out_b)))
+  in
+  Contraction.contract ~by (dtype a) p a b
+
+let vdot a b =
+  let by = "Nx.vdot" in
+  if numel a <> numel b then
+    invalid_argf "%s: %a and %a differ in their number of elements" by pp_value
+      a pp_value b;
+  let flat x = move ~by (Reshape [| numel x |]) x in
+  Contraction.contract ~by (dtype a) (Pattern.v "k, k -> | k")
+    (conjugate (flat a)) (flat b)
+
 (* Operations as data *)
 
 module Prim = struct

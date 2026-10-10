@@ -23,7 +23,8 @@
   test_logic
   test_math
   test_operators
-  test_complex)
+  test_complex
+  test_matrices)
  (modules
   test_devices
   test_values
@@ -44,7 +45,8 @@
   test_logic
   test_math
   test_operators
-  test_complex)
+  test_complex
+  test_matrices)
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))
 
 (copy_files
