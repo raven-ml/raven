@@ -154,7 +154,7 @@ let devices h kind =
                 let record = Rig_remote_abi.Device { id = a.id } in
                 Rig.open_
                   (module Proxy)
-                  ~machine:m.name ~name:a.name
+                  ~machine:h ~name:a.name
                   (fun () -> Ok (Proxy.make m.link a record))
               in
               let rec all acc = function

@@ -45,11 +45,11 @@ let opaque = lazy (fst (Rig_support.Polled.open_ ~host_visible:false "readers:sp
 
 let far =
   lazy
-    (ignore (Rig_support.machine "readers:far");
-     require_ok ~pp:Format.pp_print_string
+    (require_ok ~pp:Format.pp_print_string
        (Rig.open_
           (module Rig_support.Polled)
-          ~machine:"readers:far" ~name:"readers:far-gpu"
+          ~machine:(Rig_support.machine "readers:far")
+          ~name:"readers:far-gpu"
           (fun () ->
             Ok (Rig_support.Polled.make ~host_visible:false ~peers:false ()))))
 

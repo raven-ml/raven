@@ -267,18 +267,21 @@ let test_of_io () =
      String.init 16 (Bigarray.Array1.get ba))
 
 (* A device of another machine is named after it, and its host is the device
-   opened as that machine's, which runs work and loads code. *)
+   opened as that machine's, which runs work and loads code. A device opened
+   beside any device of the machine is of that machine. *)
 let test_machine () =
   let far = require_ok ~pp:Format.pp_print_string (open_host "far" "HOST") in
-  let g =
+  let beside machine name =
     require_ok ~pp:Format.pp_print_string
-      (Rig.open_
-         (module P)
-         ~machine:"far" ~name:"open:gpu"
-         (fun () -> Ok (P.make ())))
+      (Rig.open_ (module P) ~machine ~name (fun () -> Ok (P.make ())))
   in
+  let g = beside far "open:gpu" in
+  let g' = beside g "open:gpu-beside" in
   equal string "open:gpu@far" (Rig.name g);
   equal device far (Rig.host_of g);
+  equal ~msg:"beside a device" device far (Rig.host_of g');
+  equal ~msg:"beside this machine's host" device Rig.host
+    (Rig.host_of (beside Rig.host "open:here"));
   equal device far (Rig.host_of far);
   equal ~msg:"shares this process's host memory" (list bool) [ false; false ]
     [ Rig.shares_host_memory g; Rig.shares_host_memory far ];
@@ -286,22 +289,6 @@ let test_machine () =
     [ Rig.reaches g Rig.host; Rig.reaches Rig.host g ];
   equal ~msg:"computes" bool true (Rig.computes far);
   ignore (submit (Rig.Submission.make far [||]))
-
-(* A device of another machine opens once that machine's host is open, so every
-   device has a host: before, the open raises and leaves the name unopened. *)
-let test_machine_without_host () =
-  let open_gpu () =
-    Rig.open_
-      (module P)
-      ~machine:"hostless" ~name:"open:lone-gpu"
-      (fun () -> Ok (P.make ()))
-  in
-  raises_match Exn.invalid_arg (fun () -> open_gpu ());
-  let far =
-    require_ok ~pp:Format.pp_print_string (open_host "hostless" "HOST")
-  in
-  let g = require_ok ~pp:Format.pp_print_string (open_gpu ()) in
-  equal device far (Rig.host_of g)
 
 (* A machine has one host: [~host] names another machine's, and a second host of
    a machine whose host is open under another name is refused. *)
@@ -311,6 +298,35 @@ let test_one_host () =
   equal ~msg:"the same name" device h
     (require_ok ~pp:Format.pp_print_string (open_host "one" "A"))
 
+(* A machine has one host for its life: once it is closed or lost, [open_host]
+   of the machine answers [Error], under its name or another. *)
+let test_host_for_life () =
+  let closed =
+    require_ok ~pp:Format.pp_print_string (open_host "life-closed" "CPU")
+  in
+  Rig.close closed;
+  let lost = P.make () in
+  let host =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_host (module P) ~machine:"life-lost" ~name:"CPU" (fun () ->
+           Ok lost))
+  in
+  P.fault lost "unplugged";
+  (try ignore (Rig.Buffer.create host 8) with Rig.Lost _ -> ());
+  Rig.close host;
+  List.iter
+    (fun (machine, name) ->
+      is_error
+        ~pp:(fun ppf d -> Format.pp_print_string ppf (Rig.name d))
+        ~msg:(machine ^ " " ^ name)
+        (open_host machine name))
+    [
+      ("life-closed", "CPU");
+      ("life-closed", "OTHER");
+      ("life-lost", "CPU");
+      ("life-lost", "OTHER");
+    ]
+
 (* Closing another machine's host closes every device of its machine too. *)
 let test_close_machine () =
   let far = require_ok ~pp:Format.pp_print_string (open_host "closing" "CPU") in
@@ -318,7 +334,7 @@ let test_close_machine () =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_
          (module P)
-         ~machine:"closing" ~name:"open:closing-gpu"
+         ~machine:far ~name:"open:closing-gpu"
          (fun () -> Ok (P.make ())))
   in
   Rig.close far;
@@ -356,7 +372,7 @@ let test_open_on_ended_host () =
       Error "CPU@ended-closed lost: closed";
       Error "CPU@ended-lost lost: unplugged";
     ]
-    [ gpu "ended-closed"; gpu "ended-lost" ]
+    [ gpu closed; gpu host ]
 
 (* Closing a lost host closes its machine's devices too. *)
 let test_close_lost_host () =
@@ -372,7 +388,7 @@ let test_close_lost_host () =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_
          (module P)
-         ~machine:"closing-lost" ~name:"open:closing-lost-gpu"
+         ~machine:far ~name:"open:closing-lost-gpu"
          (fun () -> Ok (P.make ())))
   in
   P.fault lost "unplugged";
@@ -483,9 +499,8 @@ let tests =
       test "a region an io library gave is a buffer of its device" test_of_io;
       test "a device of another machine is named after it, its host the io's"
         test_machine;
-      test "a device of another machine opens once that machine's host is"
-        test_machine_without_host;
       test "a machine has one host" test_one_host;
+      test "a machine has one host for its life" test_host_for_life;
       test "closing a machine's host closes its devices" test_close_machine;
       test "a machine whose host ended opens no more devices"
         test_open_on_ended_host;

@@ -1176,29 +1176,27 @@ module type Io = Rig_edge.Io
 
 val open_ :
   (module Driver with type t = 'a) ->
-  ?machine:string ->
+  ?machine:t ->
   name:string ->
   (unit -> ('a, string) result) ->
   (t, string) result
 (** [open_ (module D) ~machine ~name make] is the open device named [name] on
-    [machine] (defaults to this one), the machine whose hardware [make] opens. A
-    machine's name names one machine for the life of the process: a library that
-    reaches machines gives each one it makes a name of its own, so a second
-    connection to one address is another machine, with devices of its own. If no
-    device of that name is open there, [make ()] opens it, under the name's
-    lock, so one name on one machine has one live device; its [Error] is the
-    result, and an exception it raises is raised again, the name left unopened.
-    Opens of other names go on meanwhile. A closed or lost device's name opens
-    again once its driver's {!Rig_edge.Driver.stop} returned.
+    the machine of [machine], any device of it (defaults to this machine): the
+    machine whose hardware [make] opens. If no device of that name is open
+    there, [make ()] opens it, under the name's lock, so one name on one machine
+    has one live device; its [Error] is the result, and an exception it raises
+    is raised again, the name left unopened. Opens of other names go on
+    meanwhile. A closed or lost device's name opens again once its driver's
+    {!Rig_edge.Driver.stop} returned.
 
     The result is [Error why] if the name's device is lost and its stop has not
-    returned, if the process failed ({!fail}), if [machine] is another machine
-    whose host is lost or closed, [why] as that host's {!Lost} prints, or if the
-    process opened 65,535 devices already: device indices are never reused.
+    returned, if the process failed ({!fail}), if [machine] is of another
+    machine whose host ({!host_of}) is lost or closed, [why] as that host's
+    {!Lost} prints, or if the process opened 65,535 devices already: device
+    indices are never reused.
 
     Raises [Invalid_argument] if the open device of that name is another
-    driver's, [machine] is another machine whose host was never opened
-    ({!open_host}), or the driver's facts break the contract: their [edge] is
+    driver's, or the driver's facts break the contract: their [edge] is
     [0n] or its state's first member is [NULL], or [hang_ms] is [Some n] with
     [n < 1] ({!Rig_edge.facts}). *)
 
@@ -1208,16 +1206,22 @@ val open_host :
   name:string ->
   (unit -> ('a, string) result) ->
   (t, string) result
-(** [open_host (module D) ~machine ~name make] is {!open_} of [machine]'s host
-    ({!host_of}): a driver's device of [machine] that runs the submissions and
-    loads the code its driver takes. Devices of [machine] open once it is open.
+(** [open_host (module D) ~machine ~name make] is {!open_} of the host
+    ({!host_of}) of the machine named [machine]: a driver's device of that
+    machine that runs the submissions and loads the code its driver takes. Its
+    devices open beside it ({!open_}'s [machine]). A machine's name names one
+    machine for the life of the process: a library that reaches machines gives
+    each one it makes a name of its own, so a second connection to one address
+    is another machine, with devices of its own. A machine has one host for its
+    life: once that host is lost or closed, [open_host] of the machine is
+    [Error].
 
     Raises [Invalid_argument] as {!open_}, or if [machine] has a host of another
     name, open and not lost, or still opening. *)
 
 val open_io :
   (module Io with type t = 'a) ->
-  ?machine:string ->
+  ?machine:t ->
   name:string ->
   (unit -> ('a, string) result) ->
   (t, string) result

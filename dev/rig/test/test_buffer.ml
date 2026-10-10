@@ -259,7 +259,7 @@ let test_copy_machines () =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_
          (module P)
-         ~machine:"elsewhere" ~name
+         ~machine:far ~name
          (fun () -> Ok (P.make ?copies ~host_visible:false ~peers:false ())))
   in
   let g = gpu "buffer:far-gpu" and g' = gpu "buffer:far-other" in
@@ -279,12 +279,11 @@ let test_copy_machines () =
 (* A device of another machine copies this process's memory as it is, in one
    copy each way. *)
 let test_copy_across () =
-  ignore (Support.machine "across");
+  let machine = Support.machine "across" in
   let g, p =
     let p = P.make ~host_visible:false ~peers:false () in
     ( require_ok ~pp:Format.pp_print_string
-        (Rig.open_ (module P) ~machine:"across" ~name:"buffer:across"
-           (fun () -> Ok p)),
+        (Rig.open_ (module P) ~machine ~name:"buffer:across" (fun () -> Ok p)),
       p )
   in
   let src = B.of_string "across machines" in
@@ -836,11 +835,11 @@ let test_host_addressed () =
    another machine's, though its driver gives it a host address. *)
 let test_host_unaddressed () =
   let d, _ = P.open_ ~host_visible:false "buffer:unaddressed" in
-  ignore (Support.machine "unaddressed");
+  let machine = Support.machine "unaddressed" in
   let far =
     require_ok ~pp:Format.pp_print_string
-      (Rig.open_ (module P) ~machine:"unaddressed" ~name:"buffer:unaddressed-far"
-         (fun () -> Ok (P.make ())))
+      (Rig.open_ (module P) ~machine ~name:"buffer:unaddressed-far" (fun () ->
+           Ok (P.make ())))
   in
   let unaddressed =
     [

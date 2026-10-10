@@ -112,6 +112,10 @@ val same_machine : device -> device -> bool
 val host_of : device -> device
 (** {!Rig.host_of}. *)
 
+val machine_of : device option -> machine
+(** [machine_of d] is the machine of a device opened beside [d], this one for
+    [None]: {!Rig.open_}'s [machine]. *)
+
 val reaches : device -> device -> bool
 (** {!Rig.reaches}. *)
 
@@ -235,12 +239,12 @@ val release_list : unit -> int
 val open_driver :
   ?memory_device:bool ->
   (module Rig_edge.Driver with type t = 'a) ->
-  ?machine:string ->
-  ?host:bool ->
+  machine:machine ->
   name:string ->
   (unit -> ('a, string) result) ->
   (device, string) result
-(** [open_driver (module D) ~machine ~host ~name make] is {!Rig.open_}.
+(** [open_driver (module D) ~machine ~name make] is {!Rig.open_} on [machine],
+    or {!Rig.open_host} for [Hosts].
     Concurrent opens of a name wait for the first. A fault while the device's
     facts are read stops the handle and is [Error]. With [memory_device]
     (defaults to [false]), {!Rig.runs_on_host} is [true] of the device and
@@ -248,7 +252,7 @@ val open_driver :
 
 val open_io :
   (module Rig_edge.Io with type t = 'a) ->
-  ?machine:string ->
+  machine:machine ->
   name:string ->
   (unit -> ('a, string) result) ->
   (device, string) result

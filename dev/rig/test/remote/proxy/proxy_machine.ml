@@ -332,7 +332,7 @@ let with_machine ?(reaches = []) ?(room = max_int) f =
                 ok_or_fail
                   (Rig.open_
                      (module Proxy)
-                     ~machine ~name:a.name
+                     ~machine:host ~name:a.name
                      (fun () ->
                        Ok
                          (Proxy.make far a

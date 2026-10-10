@@ -173,6 +173,10 @@ enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
 enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
        MEMORY_CLAIM, MEMORY_ENTRY, MEMORY_ROOT };
 enum { CLAIM_COUNT, CLAIM_GEN, CLAIM_WHY };
+
+/* A device's machine when it is this process's: [Here], the machine type's
+   first constant constructor. */
+#define MACHINE_HERE Val_int(0)
 enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS };
 
 /* The claim word's bit for memory that admits only reads, and its step
@@ -208,7 +212,8 @@ void rig_buffer_span(value b, intnat *space, intnat *first) {
   value root = Field(Field(b, BUFFER_MEM), MEMORY_ROOT);
   intnat host = Long_val(Field(root, MEMORY_HOST));
   intnat offset = Long_val(Field(b, BUFFER_OFFSET));
-  if (host >= 0 && Field(Field(root, MEMORY_DEV), DEVICE_MACHINE) == Val_none) {
+  value machine = Field(Field(root, MEMORY_DEV), DEVICE_MACHINE);
+  if (host >= 0 && machine == MACHINE_HERE) {
     *space = 0;
     *first = host + offset;
     return;

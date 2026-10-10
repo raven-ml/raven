@@ -200,7 +200,7 @@ let host_address fn b =
 
 (* Memory this process's host addresses, which a copy on a device of another
    machine names by its host address ([rig_edge.h]'s [copy_local]). *)
-let local b = Option.is_none b.mem.dev.machine && b.mem.host >= 0
+let local b = Dev.same_machine b.mem.dev Dev.host && b.mem.host >= 0
 let local_none = 0
 let local_src = 1
 let local_dst = 2
@@ -209,7 +209,7 @@ let local_dst = 2
    cannot run: on a device of another machine, one side may be. An int, so a
    local copy allocates nothing for it. *)
 let copy_local d src dst =
-  let far = Option.is_some d.machine in
+  let far = not (Dev.same_machine d Dev.host) in
   if src.mem.dev == d && dst.mem.dev == d then local_none
   else if far && local src && dst.mem.dev == d then local_src
   else if far && src.mem.dev == d && local dst then local_dst
@@ -614,6 +614,11 @@ let record s ps p pair =
    form, and the stamps and templates it names without a reference, with the
    runtime released: their owners stay reachable until the run is given
    back. While a profile is taken, a submission with parts times its value. *)
+(* CR: Represent the optional span explicitly. Queue names may be "",
+   so this drops a valid nonempty submission's span even when its driver
+   can time it. Keep None only for no parts and Some (lane, name) for
+   both build and copy; preserve allocation-free unprofiled submits and
+   avoid requesting times for empty submissions. *)
 let taken s run buffers waits =
   let ps = if s.lane = "" then [] else Prof.active () in
   run_timed run (ps <> []);

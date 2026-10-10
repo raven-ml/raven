@@ -93,7 +93,6 @@ let register d =
   in
   go ()
 
-let same_machine d d' = Option.equal String.equal d.machine d'.machine
 
 module Cache = Hashtbl.Make (Int)
 
@@ -156,7 +155,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~completion ~waits
 
 let host =
   let d =
-    make_device ~index:0 ~name:"CPU" ~machine:None ~kind:Host
+    make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues:[||]
       ~completion:Host_writes ~waits:no_waits ~hang_ms:None ~maps_host:false
       ~host_addresses:false ~word:0 ~word_region:None ~key:(-1)
@@ -192,21 +191,32 @@ let lost d = if is_lost d then Some (c_why d.c) else None
 let raise_lost d = raise (Lost (d, c_why d.c))
 let submitted d = c_submitted d.c
 let committed d = c_committed d.c
+
+(* The host of each other machine named so far: a machine has one for its
+   life. *)
 let machines : (string, device) Hashtbl.t = Hashtbl.create 4
 
 (* The machines whose host an open is making, by the host's full name. *)
 let hosting : (string, string) Hashtbl.t = Hashtbl.create 4
 
-(* The machines whose host a close is ending. *)
-let closing : (string, unit) Hashtbl.t = Hashtbl.create 4
+(* The hosts a close is ending, by index. *)
+let closing : (int, unit) Hashtbl.t = Hashtbl.create 4
 let table_lock = Lock.create ()
 
-(* A device of another machine opens only once that machine's host is open
-   ([open_named]), so every device has one. *)
-let host_of d =
-  match d.machine with
-  | None -> host
-  | Some m -> Lock.protect table_lock (fun () -> Hashtbl.find machines m)
+let host_of d = match d.machine with Here -> host | Hosts _ -> d | On h -> h
+let same_machine d d' = host_of d == host_of d'
+
+let machine_of = function
+  | None -> Here
+  | Some d ->
+      let h = host_of d in
+      if h == host then Here else On h
+
+(* The name of machine [m], [None] for this one. *)
+let rec machine_name = function
+  | Here -> None
+  | Hosts m -> Some m
+  | On h -> machine_name h.machine
 
 (* Loss and stops *)
 
@@ -555,16 +565,14 @@ let next_index = Atomic.make 1
 
 (* Opens the device [name] on [machine] with [make], which builds it from its
    index and full name, once no open of that name runs. *)
-let open_named ~fn ~machine ~name ~key ~host make =
-  let k = (machine, name) in
-  let full = match machine with None -> name | Some m -> name ^ "@" ^ m in
-  (* A machine has one host, open or opening, and its devices open after it. *)
-  let check_machine () =
+let open_named ~fn ~machine ~name ~key make =
+  let m = machine_name machine in
+  let k = (m, name) in
+  let full = match m with None -> name | Some m -> name ^ "@" ^ m in
+  (* A machine has one host, open or opening. *)
+  let check_host () =
     match machine with
-    | None when host ->
-        invalid_argf "Rig.%s: %s is no other machine's host" fn full
-    | None -> ()
-    | Some m when host -> (
+    | Hosts m -> (
         (match Hashtbl.find_opt machines m with
         | Some h when h.name <> full && not (is_lost h) ->
             invalid_argf "Rig.%s: machine %s's host is %s" fn m h.name
@@ -573,21 +581,22 @@ let open_named ~fn ~machine ~name ~key ~host make =
         | Some n when n <> full ->
             invalid_argf "Rig.%s: machine %s's host is opening as %s" fn m n
         | _ -> ())
-    | Some m ->
-        if not (Hashtbl.mem machines m) then
-          invalid_argf "Rig.%s: no host of machine %s was opened" fn m
+    | Here | On _ -> ()
   in
-  (* A device of a machine whose host is lost or closing opens no more. *)
+  (* A machine whose host is lost or closing opens nothing more, its host
+     included: it has one for its life. *)
   let host_down () =
+    let down h =
+      if is_lost h then Some (strf "%s lost: %s" h.name (c_why h.c))
+      else if Hashtbl.mem closing h.index then Some (strf "%s lost: closed" h.name)
+      else None
+    in
     match machine with
-    | Some m when not host -> (
-        match Hashtbl.find_opt machines m with
-        | Some h when is_lost h -> Some (strf "%s lost: %s" h.name (c_why h.c))
-        | Some h when Hashtbl.mem closing m ->
-            Some (strf "%s lost: closed" h.name)
-        | _ -> None)
-    | _ -> None
+    | Here -> None
+    | On h -> down h
+    | Hosts m -> Option.bind (Hashtbl.find_opt machines m) down
   in
+  let host = match machine with Hosts _ -> true | Here | On _ -> false in
   (* A failed process opens nothing, not calling [make]. *)
   let rec find () =
     match (c_failed (), host_down (), Hashtbl.find_opt table k) with
@@ -606,12 +615,11 @@ let open_named ~fn ~machine ~name ~key ~host make =
   in
   let found =
     Lock.protect table_lock (fun () ->
-        check_machine ();
+        check_host ();
         match find () with
         | `Make ->
             Hashtbl.replace table k Opening;
-            if host then
-              Option.iter (fun m -> Hashtbl.replace hosting m full) machine;
+            if host then Option.iter (fun m -> Hashtbl.replace hosting m full) m;
             `Make
         | r -> r)
   in
@@ -621,12 +629,12 @@ let open_named ~fn ~machine ~name ~key ~host make =
   | `Make -> (
       let finish r =
         Lock.protect table_lock (fun () ->
-            if host then Option.iter (Hashtbl.remove hosting) machine;
+            if host then Option.iter (Hashtbl.remove hosting) m;
             (match r with
             | Ok d ->
                 Hashtbl.replace table k (Open d);
                 if host then
-                  Option.iter (fun m -> Hashtbl.replace machines m d) machine
+                  Option.iter (fun m -> Hashtbl.replace machines m d) m
             | Error _ -> Hashtbl.remove table k);
             Lock.broadcast table_lock);
         r
@@ -689,10 +697,9 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
   d
 
 let open_driver (type a) ?(memory_device = false)
-    (module D : Rig_edge.Driver with type t = a) ?machine ?(host = false) ~name
-    make =
+    (module D : Rig_edge.Driver with type t = a) ~machine ~name make =
   let fn = if memory_device then "memory_device" else "open_" in
-  open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key) ~host
+  open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key)
   @@ fun ~index ~name:full ->
   match make () with
   | Error e -> Error e
@@ -710,10 +717,10 @@ let open_driver (type a) ?(memory_device = false)
           (try D.stop h ~fault:None with D.Fault _ -> ());
           raise e)
 
-let open_io (type a) (module I : Rig_edge.Io with type t = a) ?machine ~name
+let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
     make =
   let key = Type.Id.uid I.region_key in
-  open_named ~fn:"open_io" ~machine ~name ~key ~host:false
+  open_named ~fn:"open_io" ~machine ~name ~key
   @@ fun ~index ~name:full ->
   match make () with
   | Error e -> Error e
@@ -750,13 +757,6 @@ let opening_on m =
     (fun (m', _) slot acc -> acc || (m' = Some m && slot = Opening))
     table false
 
-(* Whether [d] is another machine's host. Holds the table's lock. *)
-let is_machine_host d =
-  match d.machine with
-  | None -> false
-  | Some m -> (
-      match Hashtbl.find_opt machines m with Some h -> h == d | None -> false)
-
 (* A machine's devices end before its host, so [host_of] of an open device is
    never closed: the machine stops taking opens, the opens in flight finish,
    then its devices close. *)
@@ -765,20 +765,20 @@ let close d =
   let machine =
     Lock.protect table_lock @@ fun () ->
     match d.machine with
-    | Some m when is_machine_host d ->
-        Hashtbl.replace closing m ();
+    | Hosts m ->
+        Hashtbl.replace closing d.index ();
         while opening_on m do
           Lock.wait table_lock
         done;
-        Some (m, devices_of m d)
-    | _ -> None
+        Some (devices_of m d)
+    | Here | On _ -> None
   in
   match machine with
   | None -> close_one d
-  | Some (m, devices) ->
+  | Some devices ->
       Fun.protect
         ~finally:(fun () ->
-          Lock.protect table_lock (fun () -> Hashtbl.remove closing m))
+          Lock.protect table_lock (fun () -> Hashtbl.remove closing d.index))
         (fun () ->
           List.iter close_one devices;
           close_one d)

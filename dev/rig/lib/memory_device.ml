@@ -65,7 +65,7 @@ end
 let open_ name =
   Dev.open_driver ~memory_device:true
     (module D)
-    ~name
+    ~machine:Def.Here ~name
     (fun () ->
       let self = state () in
       Ok { D.self; word = word_of self })

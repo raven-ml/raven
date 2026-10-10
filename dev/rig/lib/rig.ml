@@ -82,10 +82,13 @@ module Profile = Profile
 module type Driver = Rig_edge.Driver
 module type Io = Rig_edge.Io
 
-let open_ m ?machine ~name make = Dev.open_driver m ?machine ~name make
+let open_ m ?machine ~name make =
+  Dev.open_driver m ~machine:(Dev.machine_of machine) ~name make
 
 let open_host m ~machine ~name make =
-  Dev.open_driver m ~machine ~host:true ~name make
+  Dev.open_driver m ~machine:(Hosts machine) ~name make
 
-let open_io m ?machine ~name make = Dev.open_io m ?machine ~name make
+let open_io m ?machine ~name make =
+  Dev.open_io m ~machine:(Dev.machine_of machine) ~name make
+
 let memory_device = Memory_device.open_

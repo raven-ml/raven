@@ -81,7 +81,7 @@ type progress = { seen : int; idle : bool; since : int }
 type device = {
   index : int;
   name : string;
-  machine : string option;
+  machine : machine;
   kind : kind;
   c : int;  (** The C record. *)
   arch : string;
@@ -130,6 +130,11 @@ type device = {
   mutable word_end : word_end;  (** Guarded by [lock]. *)
   mutable afters : (int * (unit -> unit)) list;
 }
+
+(** The type for a device's machine: this process's, another one of which the
+    device is the host, by the name {!Rig.open_host} gave it, or the other
+    machine whose host is the device given. *)
+and machine = Here | Hosts of string | On of device
 
 and entry = {
   owner : device;

@@ -13,11 +13,11 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 external memmove : int -> int -> int -> unit = "caml_rig_memmove"
 
 let fn = "Buffer.copy"
-let local m = Option.is_none m.dev.machine && m.host >= 0
+let local m = Dev.same_machine m.dev Dev.host && m.host >= 0
 let host_address b = b.mem.host + b.offset
 
 (* A driver's device of another machine, which no staging memory reaches. *)
-let far d = Option.is_some d.machine && not (Dev.is_io d)
+let far d = (not (Dev.same_machine d Dev.host)) && not (Dev.is_io d)
 
 (* Records the transfer of [bytes] from [src]'s memory to [dst]'s asked at
    [start], which the host sees done now. *)
@@ -126,7 +126,7 @@ let runs b = not (local b.mem || Dev.is_io b.mem.dev)
    device that runs [b]'s legs, if one does, before they run. *)
 let map_halves st b ~pieces h0 h1 =
   let d = b.mem.dev in
-  if runs b && Option.is_none d.machine then begin
+  if runs b && Dev.same_machine d Dev.host then begin
     map_half st d h0;
     if pieces > 1 then map_half st d h1
   end
@@ -155,7 +155,8 @@ let queued d queue ~src ~dst =
    process's memory as it is, its driver carrying the bytes; another device
    maps it. A function of its own, so a copy builds no closure. *)
 let mine d m =
-  if Option.is_some d.machine && local m then Some m else Memory.borrow d m
+  if (not (Dev.same_machine d Dev.host)) && local m then Some m
+  else Memory.borrow d m
 
 (* A copy of [n] bytes on [d]'s copy queue between buffers [d] maps, asked at
    [start] and waited for when [wait]. Unwaited, it is recorded once a wait
@@ -285,7 +286,7 @@ and runner b =
 and stage_for src dst =
   let needs b =
     let d = runner b in
-    runs b && Option.is_none d.machine && not d.maps_host
+    runs b && Dev.same_machine d Dev.host && not d.maps_host
   in
   match (needs src, needs dst) with
   | true, true when runner src != runner dst ->

@@ -312,7 +312,7 @@ val io : string -> Rig.t
 val machine : string -> Rig.t
 (** [machine m] is the host of the machine named [m], a {!Polled} device whose
     memory this process does not address and that maps no other memory, opened
-    unless it is open: devices of [m] open once it is. *)
+    unless it is open: devices of [m] open beside it ({!Rig.open_}). *)
 
 (** The C readers of [rig.h], called from C. *)
 module Reader : sig
