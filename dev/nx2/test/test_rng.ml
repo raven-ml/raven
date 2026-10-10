@@ -493,6 +493,22 @@ let rejection =
           let mu4 = var *. (1. +. (3. *. (tf -. 2.) *. p *. q)) in
           near ~se:(sqrt (var /. nf)) (tf *. p) (mean xs);
           near ~se:(sqrt ((mu4 -. (var *. var)) /. nf)) var (variance xs));
+      (* A narrow float's largest finite value is a rate like any other: the
+         domain is checked at the compute dtype, where 2^31 is a value. *)
+      cases
+        ~name:(fun (n, _) -> "poisson accepts " ^ n ^ "'s largest rate")
+        "narrow rates"
+        [
+          ( "float4_e2m1fn",
+            fun () -> Rng.poisson (host_of Nx.float4_e2m1fn [| 1 |] [| 6. |]) );
+          ( "float8_e4m3fn",
+            fun () -> Rng.poisson (host_of Nx.float8_e4m3fn [| 1 |] [| 448. |])
+          );
+          ( "float8_e5m2",
+            fun () -> Rng.poisson (host_of Nx.float8_e5m2 [| 1 |] [| 57344. |])
+          );
+        ]
+        (fun (_, f) -> equal int 1 (Array.length (read (f ()))));
       test "poisson refuses a rate whose counts int32 cannot hold" (fun () ->
           let rate = host_of Nx.float64 [| 2 |] [| 1.; 2147483648. |] in
           equal string

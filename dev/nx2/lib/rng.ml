@@ -412,70 +412,92 @@ let randint ?key ?(low = 0) ~high s =
 
 (* Parameters *)
 
-(* A parameter's domain: as a refusal writes it, and the boolean node of whether
-   the float node [x] of [dt] lies in it. NaN lies outside each. *)
-type domain = { text : string; inside : 'v 's. b -> ('v, 's) D.t -> int -> int }
+(* Float arithmetic on the nodes of one compute dtype. *)
+type f = {
+  lit : float -> int;
+  add : int -> int -> int;
+  sub : int -> int -> int;
+  mul : int -> int -> int;
+  div : int -> int -> int;
+  neg : int -> int;
+  log : int -> int;
+  log1p : int -> int;
+  exp : int -> int;
+  sqrt : int -> int;
+  abs : int -> int;
+  floor : int -> int;
+  min : int -> int -> int;
+  max : int -> int -> int;
+  lt : int -> int -> int;
+  le : int -> int -> int;
+  both : int -> int -> int;
+}
 
-(* [x] is finite where [x - x] is zero. *)
-let finite b dt x = cmp b Equal (bin b Sub x x) (constf b dt 0.)
+let floats b (D.Any cd) =
+  let u k x = un b k cd x and o k x y = bin b k x y in
+  {
+    lit = constf b cd;
+    add = o Add;
+    sub = o Sub;
+    mul = o Mul;
+    div = o Fdiv;
+    neg = u Neg;
+    log = u Log;
+    log1p = u Log1p;
+    exp = u Exp;
+    sqrt = u Sqrt;
+    abs = u Abs;
+    floor = u Floor;
+    min = o Minimum;
+    max = o Maximum;
+    lt = cmp b Less;
+    le = cmp b Less_equal;
+    both = bin b And;
+  }
+
+(* Parameter [x] at the compute dtype [cd]. *)
+let param b (D.Any cd) (p : (float, 's, 'd) Value.t) x =
+  if D.equal cd (Prim.dtype p) then x else into b cd x
+
+(* A float parameter's domain: as a refusal writes it, and the boolean node of
+   whether [x], the parameter at its sampler's compute dtype, lies in it. NaN
+   lies outside each. The compute dtype holds every bound, where a narrow
+   parameter dtype would round it. *)
+type domain = { text : string; inside : f -> int -> int }
+
+(* [x] is finite where [x - x] is zero, and NaN elsewhere. *)
+let finite f x = f.le (f.sub x x) (f.lit 0.)
 
 let probability =
   {
     text = "[0, 1]";
-    inside =
-      (fun b dt x ->
-        bin b And
-          (cmp b Less_equal (constf b dt 0.) x)
-          (cmp b Less_equal x (constf b dt 1.)));
+    inside = (fun f x -> f.both (f.le (f.lit 0.) x) (f.le x (f.lit 1.)));
   }
 
 let positive =
   {
     text = "(0, inf)";
-    inside =
-      (fun b dt x -> bin b And (cmp b Less (constf b dt 0.) x) (finite b dt x));
+    inside = (fun f x -> f.both (f.lt (f.lit 0.) x) (finite f x));
   }
 
 let non_negative =
   {
     text = "[0, inf)";
-    inside =
-      (fun b dt x ->
-        bin b And (cmp b Less_equal (constf b dt 0.) x) (finite b dt x));
+    inside = (fun f x -> f.both (f.le (f.lit 0.) x) (finite f x));
   }
 
 (* Poisson rates: their counts fit int32. *)
-(* CR: Build float-domain predicates in the sampler's compute dtype. Encoding
-   the 2^31 bound in the parameter dtype saturates it to 6, 448 or 57344 for
-   float4/float8, so poisson rejects those valid rates. Widen the predicate's
-   input and constants; keep the original parameter for diagnostics and
-   integer count checks at Int32. *)
 let counted =
   {
     text = "[0, 2^31)";
     inside =
-      (fun b dt x ->
-        bin b And
-          (cmp b Less_equal (constf b dt 0.) x)
-          (cmp b Less x (constf b dt 2147483648.)));
+      (fun f x -> f.both (f.le (f.lit 0.) x) (f.lt x (f.lit 2147483648.)));
   }
 
-(* Counts: integers from 0. *)
-let natural =
-  {
-    text = "[0, inf)";
-    inside = (fun b dt x -> cmp b Less_equal (const b dt (D.zero dt)) x);
-  }
-
-(* Raises, at the check, naming [name]'s first element outside [d], its value as
-   [show] writes it. *)
-let require ~by name d ~show (p : ('v, 's, 'd) Value.t) =
+(* Raises, at the check, naming [name]'s first element of [p] where [ok], a map
+   over [p], is false, [p]'s value there as [show] writes it, and [text]. *)
+let refuse ~by name text ~show (p : ('v, 's, 'd) Value.t) ok =
   let dt = Prim.dtype p in
-  let b = builder [| D.Any dt |] in
-  let inside = d.inside b dt (emit b (In 0)) in
-  let ok =
-    map ~by (Prim.shape p) (program b [| inside |]) D.Bool [| Value.Any p |]
-  in
   let fail i data =
     let v =
       match data with
@@ -486,20 +508,31 @@ let require ~by name d ~show (p : ('v, 's, 'd) Value.t) =
       | _ -> "unread"
     in
     Invalid_argument
-      (Format.asprintf "%s: %s at %a is %s, not in %s" by name pp_shape i v
-         d.text)
+      (Format.asprintf "%s: %s at %a is %s, not in %s" by name pp_shape i v text)
   in
   Eval.eval ~by (Value.Check { ok; data = [ Value.Any p ]; fail })
 
-let real = Printf.sprintf "%g"
+(* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
+let require ~by name d c (p : (float, 's, 'd) Value.t) =
+  let b = builder [| D.Any (Prim.dtype p) |] in
+  let inside = d.inside (floats b c) (param b c p (emit b (In 0))) in
+  let ok =
+    map ~by (Prim.shape p) (program b [| inside |]) D.Bool [| Value.Any p |]
+  in
+  refuse ~by name d.text ~show:(Printf.sprintf "%g") p ok
 
-(* Parameter [x] at the compute dtype [cd]. *)
-let param b (D.Any cd) (p : (float, 's, 'd) Value.t) x =
-  if D.equal cd (Prim.dtype p) then x else into b cd x
+(* Checks that the counts [n] are not negative. *)
+let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
+  let b = builder [| D.Any D.Int32 |] in
+  let inside = cmp b Less_equal (const b D.Int32 0l) (emit b (In 0)) in
+  let ok =
+    map ~by (Prim.shape n) (program b [| inside |]) D.Bool [| Value.Any n |]
+  in
+  refuse ~by name "[0, inf)" ~show:Int32.to_string n ok
 
 let bernoulli ?key p =
   let by = "Nx.Rng.bernoulli" in
-  require ~by "p" probability ~show:real p;
+  require ~by "p" probability (compute (Prim.dtype p)) p;
   let c = compute (Prim.dtype p) in
   draw ~by ~params:[| Value.Any p |] (resolve key) D.Bool (Prim.shape p)
     (fun b ~key ~j ins ->
@@ -558,7 +591,7 @@ let marsaglia b ~key ~n (D.Any cd as c) a j =
 
 let gamma ?key a =
   let by = "Nx.Rng.gamma" in
-  require ~by "a" positive ~show:real a;
+  require ~by "a" positive (compute (Prim.dtype a)) a;
   let dt = Prim.dtype a in
   let c = compute dt in
   let s = Prim.shape a in
@@ -590,8 +623,8 @@ let log_gamma b ~key ~n (D.Any cd as c) a j =
    gammas that underflow keep their ratio. *)
 let beta ?key a b' =
   let by = "Nx.Rng.beta" in
-  require ~by "a" positive ~show:real a;
-  require ~by "b" positive ~show:real b';
+  require ~by "a" positive (compute (Prim.dtype a)) a;
+  require ~by "b" positive (compute (Prim.dtype b')) b';
   let dt = Prim.dtype a in
   let c = compute dt in
   let s = Prim.broadcast_shape ~by (Prim.shape a) (Prim.shape b') in
@@ -666,7 +699,7 @@ let wrapped_cauchy b cd kappa =
 
 let von_mises ?key kappa =
   let by = "Nx.Rng.von_mises" in
-  require ~by "k" non_negative ~show:real kappa;
+  require ~by "k" non_negative (compute (Prim.dtype kappa)) kappa;
   let dt = Prim.dtype kappa in
   let c = compute dt in
   let s = Prim.shape kappa in
@@ -718,47 +751,6 @@ let von_mises ?key kappa =
       rounded b dt c theta)
 
 (* Counts *)
-
-(* Float arithmetic on the nodes of one compute dtype. *)
-type f = {
-  lit : float -> int;
-  add : int -> int -> int;
-  sub : int -> int -> int;
-  mul : int -> int -> int;
-  div : int -> int -> int;
-  neg : int -> int;
-  log : int -> int;
-  log1p : int -> int;
-  exp : int -> int;
-  sqrt : int -> int;
-  abs : int -> int;
-  floor : int -> int;
-  min : int -> int -> int;
-  max : int -> int -> int;
-  lt : int -> int -> int;
-  le : int -> int -> int;
-}
-
-let floats b (D.Any cd) =
-  let u k x = un b k cd x and o k x y = bin b k x y in
-  {
-    lit = constf b cd;
-    add = o Add;
-    sub = o Sub;
-    mul = o Mul;
-    div = o Fdiv;
-    neg = u Neg;
-    log = u Log;
-    log1p = u Log1p;
-    exp = u Exp;
-    sqrt = u Sqrt;
-    abs = u Abs;
-    floor = u Floor;
-    min = o Minimum;
-    max = o Maximum;
-    lt = cmp b Less;
-    le = cmp b Less_equal;
-  }
 
 let both b x y = bin b And x y
 let either b x y = bin b Or x y
@@ -889,7 +881,7 @@ let poisson_rejection_rounds = 16
 
 let poisson ?key rate =
   let by = "Nx.Rng.poisson" in
-  require ~by "rate" counted ~show:real rate;
+  require ~by "rate" counted (compute (Prim.dtype rate)) rate;
   let dt = Prim.dtype rate in
   let c = compute dt in
   let s = Prim.shape rate in
@@ -991,8 +983,8 @@ let binomial_rejection_rounds = 18
 
 let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   let by = "Nx.Rng.binomial" in
-  require ~by "n" natural ~show:Int32.to_string count;
-  require ~by "p" probability ~show:real prob;
+  require_counts ~by "n" count;
+  require ~by "p" probability (compute (Prim.dtype prob)) prob;
   let dt = Prim.dtype prob in
   let c = compute dt in
   let s = Prim.broadcast_shape ~by (Prim.shape count) (Prim.shape prob) in
