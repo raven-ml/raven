@@ -361,13 +361,16 @@ let normal ?key dt s =
   draw ~by:"Nx.Rng.normal" (resolve key) dt s (fun b ~key ~j _ ->
       rounded b dt c (gauss b ~key ~p:(precision_of c) ~pairs c j))
 
-(* Exponential(1) by inverse CDF, from [1 - u], which is never 0. *)
+(* Exponential(1) by inverse CDF, from [1 - u], which is never 0. The draw is
+   [0 - log (1 - u)], where a negation would make -0 of u = 0. *)
 let exponential ?key dt s =
   let c = compute dt in
   draw ~by:"Nx.Rng.exponential" (resolve key) dt s (fun b ~key ~j _ ->
       let (D.Any cd) = c in
       let u = unit b ~key ~p:(precision_of c) c j in
-      let y = un b Neg cd (un b Log cd (bin b Sub (constf b cd 1.) u)) in
+      let y =
+        bin b Sub (constf b cd 0.) (un b Log cd (bin b Sub (constf b cd 1.) u))
+      in
       rounded b dt c y)
 
 let fits v = v >= -0x8000_0000 && v <= 0x7FFF_FFFF

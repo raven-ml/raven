@@ -328,6 +328,16 @@ let distributions =
           in
           near ~se:(sqrt (1. /. Float.of_int n)) 0. (mean xs);
           near ~se:(sqrt (2. /. Float.of_int n)) 1. (variance xs));
+      (* Key 3743's float32 uniform draw is 0 at index 1386, where the
+         exponential is -log 1: +0, never -0. *)
+      test "exponential of a zero uniform draw is +0" (fun () ->
+          let k = Rng.key 3743 in
+          equal float_exact 0.
+            (read (Rng.uniform ~key:k Nx.float32 [| 4096 |])).(1386);
+          let x =
+            (read (Rng.exponential ~key:k Nx.float32 [| 4096 |])).(1386)
+          in
+          equal (pair float_exact bool) (0., false) (x, Float.sign_bit x));
       test "exponential: mean 1, variance 1, never negative" (fun () ->
           let xs =
             read (Rng.exponential ~key:(Rng.key 103) Nx.float32 [| n |])
