@@ -412,6 +412,44 @@ let test_stale_raised () =
   Claim.release b;
   equal ~msg:"the buffer stays live" (option string) None (B.dead b)
 
+(* An exception raised at any allocation of a [with_], as [Out_of_memory] or a
+   signal handler's is, leaves no claim behind. A memory profile raises at the
+   [n]th allocation inside the call, for each [n] until a call returns. *)
+exception Injected
+
+let raising_at n armed =
+  let left = ref n in
+  let alloc _ =
+    if !armed then begin
+      decr left;
+      if !left = 0 then raise Injected
+    end;
+    None
+  in
+  { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
+
+let test_raise_anywhere () =
+  let r = B.create Rig.host 8 and b = B.create Rig.host 8 in
+  let read = [ r ] and donate = [ [ b ] ] in
+  let f c = Claim.exclusive c b in
+  let rec from n =
+    let armed = ref false in
+    let tracker = raising_at n armed in
+    ignore (Gc.Memprof.start ~sampling_rate:1. tracker);
+    armed := true;
+    let raised =
+      match Claim.with_ ~read ~donate f with
+      | _ -> false
+      | exception Injected -> true
+    in
+    armed := false;
+    Gc.Memprof.stop ();
+    let msg = Printf.sprintf "raised at allocation %d" n in
+    equal ~msg bool true (donated_exclusive r && donated_exclusive b);
+    if raised then from (n + 1) else n
+  in
+  ignore (from 1)
+
 (* Two domains: with_ of a group of two memories, against a read of the second
    that ends in the same call. Whatever the order, no claim outlives its call:
    at the end the group is exclusive again. *)
@@ -811,6 +849,8 @@ let tests =
           test_share_refused;
         test "a claim whose with_ returned holds nothing" test_stale_returned;
         test "a claim whose with_ raised holds nothing" test_stale_raised;
+        test "a raise at any allocation of a with_ leaves no claim"
+          test_raise_anywhere;
         test "a buffer's death is a fact with its reason" test_dead_fact;
         test "claims on memory a loss reaches raise and release"
           test_lost_claims;

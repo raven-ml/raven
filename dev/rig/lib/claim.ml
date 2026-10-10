@@ -73,19 +73,12 @@ let share b =
 
 (* The buffers [with_] was given, which it holds for reading: [ended] is set
    once its [f] returned or raised, before any claim is released, and from then
-   on they hold nothing. *)
-(* CR: Derive exclusive from a live c's donation membership and a negative
-   claim word: its retained read claims prevent another owner. c.exclusive
-   repeats this fact, allocating after exclusive_all; failure there or when
-   allocating c leaks acquired claims. Allocate c before claiming and protect
-   hold_groups with f, keeping group rollback. Have finish mark c ended,
-   unhold negative donation words, then release the original lists. consume's
-   checked membership also suffices for its exclusive-to-consumed CAS.
-   Finish before reraising e: saving its backtrace first can allocate. *)
+   on they hold nothing. A donated memory is held exclusive iff its claim word
+   is negative: the read claim [with_] keeps on it lets no other holder make it
+   so. *)
 type t = {
   read : buffer list;
   donate : buffer list list;
-  mutable exclusive : claim list;
   mutable ended : bool; [@atomic]
 }
 
@@ -244,19 +237,13 @@ let rec exclusive_all = function
            false
          end)
 
-let rec hold_all c = function
-  | [] -> ()
-  | b :: bs ->
-      c.exclusive <- b.mem.claim :: c.exclusive;
-      hold_all c bs
-
 (* Holds each value of [donate] exclusive that spans its memories and has no
    other claim on them. *)
-let rec hold_groups c = function
+let rec hold_groups = function
   | [] -> ()
   | g :: gs ->
-      if all_span g && exclusive_all g then hold_all c g;
-      hold_groups c gs
+      if all_span g then ignore (exclusive_all g);
+      hold_groups gs
 
 (* Ends an exclusive claim, back to one read claim: outside the claims if the
    consumer exported the memory. Only an export of the consumer's buffer races
@@ -271,40 +258,48 @@ let rec unhold cl =
 
 let rec unhold_all = function
   | [] -> ()
-  | cl :: cls ->
-      unhold cl;
-      unhold_all cls
+  | b :: bs ->
+      if count b.mem.claim < 0 then unhold b.mem.claim;
+      unhold_all bs
+
+let rec unhold_groups = function
+  | [] -> ()
+  | g :: gs ->
+      unhold_all g;
+      unhold_groups gs
 
 let finish c =
   c.ended <- true;
-  unhold_all c.exclusive;
+  unhold_groups c.donate;
   release_all c.read;
   release_groups c.donate
 
-(* Allocates the claims' record and a cell per exclusive buffer: no list of
-   the caller's is copied, and no closure is made. *)
+(* Allocates the claims' record alone, before it claims: no list of the
+   caller's is copied, and no closure is made. From the first claim to the
+   last release nothing allocates outside [f], so an exception raised at an
+   allocation, as [Out_of_memory] or a signal handler's is, leaves no claim
+   behind. *)
 let with_ ~read ~donate f =
   check_live read;
   check_live_groups donate;
   refuse_overlaps read donate;
+  let c = { read; donate; ended = false } in
   take_all read;
   (match take_groups donate with
   | () -> ()
   | exception e ->
       release_all read;
       raise e);
-  let c = { read; donate; exclusive = []; ended = false } in
-  hold_groups c donate;
-  match f c with
+  match
+    hold_groups donate;
+    f c
+  with
   | r ->
       finish c;
       r
   | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
       finish c;
-      Printexc.raise_with_backtrace e bt
-
-let exclusive c b = (not c.ended) && List.memq b.mem.claim c.exclusive
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let rec names cl = function
   | [] -> false
@@ -313,6 +308,10 @@ let rec names cl = function
 let rec names_groups cl = function
   | [] -> false
   | g :: gs -> names cl g || names_groups cl gs
+
+let exclusive c b =
+  let cl = b.mem.claim in
+  (not c.ended) && count cl < 0 && names_groups cl c.donate
 
 let consume c ~why b =
   if c.ended then invalid_arg "Rig.Claim.consume: the claims' with_ returned";
@@ -325,7 +324,7 @@ let consume c ~why b =
   cl.why <- why;
   let g = Atomic.Loc.fetch_and_add [%atomic.loc cl.generation] 1 + 1 in
   (* After the generation: an export that finds the word consumed then finds
-     every earlier buffer dead. *)
-  if List.memq cl c.exclusive then
-    ignore (swap cl Memory.exclusive Memory.consumed);
+     every earlier buffer dead. The claims hold [cl], so a word exclusive is
+     theirs. *)
+  ignore (swap cl Memory.exclusive Memory.consumed);
   { b with generation = g }
