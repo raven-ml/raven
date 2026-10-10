@@ -773,6 +773,12 @@ let law_prefix (b : Support.backend) c =
   | _ -> failf "a scan and its prefix were not both computed"
 
 (* A kernel that declines writes nothing. *)
+(* CR: terms casts narrow floats and complex values to Int64, so writes
+   can disappear (Float16 0.5 and 0.75 both become 0). Initialize dst
+   with deterministic bytes, keeping spare packed bits zero, and compare
+   its full buffer via Rig.Buffer.copy to host and blit_to_bytes. Use the
+   same byte check in test_contract's refusal law. Keep the Float16 reduce
+   example and add its nonempty scan counterpart. *)
 let law_declined (b : Support.backend) c =
   let (A.Any x) = c.x in
   let dst = on b (A.Any (A.create Rig.host (A.dtype x) (result_shape c))) in
