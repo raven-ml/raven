@@ -369,35 +369,31 @@ let drawn (type v s) (dt : (v, s) D.t) s : (v, s) A.t Gen.t =
   A.v dt (L.contiguous s) (B.of_string (if data = "" then "\000" else data))
 
 (* An array of any dtype and shape over drawn bytes, viewed through a movement:
-   strided, broadcast, windowed, transposed or reshaped. *)
+   strided, broadcast, windowed, transposed or reshaped. A drawn movement
+   repeats elements a few times in a hundred, so one case in five is
+   broadcast along a new leading axis. *)
 let case_of dts =
   let open Gen in
   let* (D.Any dt) = dts in
   let* s = shape in
   let* a = drawn dt s in
-  let+ m = option (movement ~apart:false s) in
+  let lead =
+    let+ e = int_range 2 3 in
+    Some (M.Broadcast (Array.append [| e |] s))
+  in
+  let+ m = frequency [ (4, option (movement ~apart:false s)); (1, lead) ] in
   let a = Option.value ~default:a (Option.bind m (fun m -> A.move m a)) in
   Case a
 
 let case = Gen.with_pp pp_case (case_of dtypes)
 
-(* Arrays of a few hundred thousand elements at most, in shapes about the walk's
-   block and tile sizes, transposed, stepped, or cut into 2x2 windows whose
-   last two axes are swapped, as a pooling layer reads them: a job of several
-   threads and blocks. *)
-let large_of dts =
-  let open Gen in
-  let* (D.Any dt) = dts in
-  let side =
-    of_list ~pp:Format.pp_print_int [ 1; 7; 63; 64; 65; 255; 256; 257; 300 ]
-  in
-  let* h = of_list ~pp:Format.pp_print_int [ 255; 256; 257; 300 ] in
-  let* w = side in
-  let* view = of_list ~pp:Format.pp_print_int [ 0; 1; 2; 3 ] in
+(* An array of [dt], values from [seed], [h] by [w] and seen through [view]:
+   as made, transposed, stepped, or cut into 2x2 windows whose last two axes
+   are swapped, as a pooling layer reads them. *)
+let large_at dt h w view seed =
   let s =
     match view with 0 -> [| h; w |] | 1 -> [| w; h |] | _ -> [| h; 2 * w |]
   in
-  let+ seed = int in
   let a = seeded dt s seed in
   match view with
   | 0 -> Case a
@@ -412,7 +408,26 @@ let large_of dts =
       let v = Option.get (A.move (M.Window [| w 0; w 1 |]) a) in
       Case (Option.get (A.move (M.Permute [| 0; 1; 3; 2 |]) v))
 
+(* Arrays of a few hundred thousand elements at most, in shapes about the
+   walk's block and tile sizes, through each view: a job of several threads
+   and blocks. *)
+let large_of dts =
+  let open Gen in
+  let* (D.Any dt) = dts in
+  let side =
+    of_list ~pp:Format.pp_print_int [ 1; 7; 63; 64; 65; 255; 256; 257; 300 ]
+  in
+  let* h = of_list ~pp:Format.pp_print_int [ 255; 256; 257; 300 ] in
+  let* w = side in
+  let* view = of_list ~pp:Format.pp_print_int [ 0; 1; 2; 3 ] in
+  let+ seed = int in
+  large_at dt h w view seed
+
 let large = Gen.with_pp pp_case (large_of dtypes)
+
+(* One large array through each view: the 32 drawn cases of a large law miss
+   a view one time in ten thousand. *)
+let large_views = List.map (fun v -> large_at D.Float32 257 65 v 1) [ 0; 1; 2; 3 ]
 
 (* Transposed arrays whose rows lie a multiple of 4 KiB apart, as a
    4096-wide matrix's do: a tile's rows share their addresses' low bits. *)
@@ -1226,7 +1241,8 @@ let laws (b : Support.backend) =
         (run (fun c ->
              covers c;
              law_copy b c));
-      prop ~count:32 "copy of large views is bits for bits" large
+      prop ~count:32 ~examples:large_views "copy of large views is bits for bits"
+        large
         (run (fun c ->
              covers_large c;
              law_copy b c));
@@ -1238,7 +1254,9 @@ let laws (b : Support.backend) =
              covers c;
              cover "to the source's dtype" (D.equal (A.dtype a) d);
              law_cast b (c, D.Any d)));
-      prop ~count:32 "cast of large views is the reference" (pair large)
+      prop ~count:32
+        ~examples:(List.map (fun c -> (c, D.Any D.Float64)) large_views)
+        "cast of large views is the reference" (pair large)
         (run (fun (c, d) ->
              covers_large c;
              law_cast b (c, d)));

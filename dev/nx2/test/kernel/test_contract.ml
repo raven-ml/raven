@@ -185,21 +185,19 @@ let extents =
       (2, shaped (one 342 420) (constant [| 8 |]) (constant [| 8 |]) (one 1 4));
     ]
 
-(* A case in [acc] into [out], each operand of [acc] or of [dts]. *)
-let case_of ~acc ~out ~dts =
-  let open Gen in
-  let* batch, rows, cols, con = extents in
+(* The ranks of [a], [b] and the result for the extents [e]. *)
+let ranks (batch, rows, cols, con) =
+  let nb = Array.length batch and nk = Array.length con in
+  (nb + Array.length rows + nk, nb + nk + Array.length cols,
+   nb + Array.length rows + Array.length cols)
+
+(* The case of the extents [e] in [acc] into [out]: [a] and [b] of the dtypes
+   and through the views given, an init where [init] gives one, values drawn
+   from [seed]. *)
+let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
   let nb = Array.length batch and fa = Array.length rows in
-  let pick = frequency [ (3, constant ~pp:pp_dtype acc); (2, of_list ~pp:pp_dtype dts) ] in
   let sa = Array.concat [ batch; rows; con ] in
   let sb = Array.concat [ batch; con; cols ] in
-  let* da = pick in
-  let* db = pick in
-  let* di = pick in
-  let* va = view (Array.length sa) nb in
-  let* vb = view (Array.length sb) nb in
-  let* with_init = bool in
-  let* seed = int in
   let ia = inverse va.perm and ib = inverse vb.perm in
   let spec init =
     S.contract
@@ -213,17 +211,56 @@ let case_of ~acc ~out ~dts =
   let y =
     match S.shapes (spec false) [| shape_of a; shape_of b |] with
     | Ok [| y |] -> y
-    | Ok _ -> invalid_arg "case_of: results"
-    | Error e -> invalid_arg ("case_of: " ^ e)
+    | Ok _ -> invalid_arg "make: results"
+    | Error e -> invalid_arg ("make: " ^ e)
   in
-  let+ vi = view (Array.length y) 0 in
-  let init =
-    if with_init then
-      Some (operand di (Array.map (fun i -> y.(i)) (inverse vi.perm)) 0 vi (seed + 2))
-    else None
+  let made (di, vi) =
+    operand di (Array.map (fun i -> y.(i)) (inverse vi.perm)) 0 vi (seed + 2)
   in
-  let views = names va @ names vb @ if with_init then names vi else [] in
-  { spec = spec with_init; a; b; init; out; views }
+  let views =
+    names va @ names vb @ Option.fold ~none:[] ~some:(fun (_, vi) -> names vi) init
+  in
+  { spec = spec (init <> None); a; b; init = Option.map made init; out; views }
+
+(* A case in [acc] into [out], each operand of [acc] or of [dts]. *)
+let case_of ~acc ~out ~dts =
+  let open Gen in
+  let* ((batch, _, _, _) as e) = extents in
+  let nb = Array.length batch in
+  let ra, rb, ry = ranks e in
+  let pick = frequency [ (3, constant ~pp:pp_dtype acc); (2, of_list ~pp:pp_dtype dts) ] in
+  let* da = pick in
+  let* db = pick in
+  let* di = pick in
+  let* va = view ra nb in
+  let* vb = view rb nb in
+  let* vi = view ry 0 in
+  let* with_init = bool in
+  let+ seed = int in
+  make ~acc ~out e (da, va) (db, vb) (if with_init then Some (di, vi) else None) seed
+
+(* A case of each regime the covers name, in [acc], C-contiguous: no output;
+   one; no product; 64 outputs or more in 4 rows or fewer, and in 4 columns or
+   fewer, over several blocks of the contraction; fewer than 64 over several
+   blocks of lanes; several panels; several groups. The drawn cases reach
+   each a few times in a hundred, so a run of a hundred can miss one. *)
+let regimes acc =
+  let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
+  let case e =
+    let ra, rb, ry = ranks e in
+    make ~acc ~out:acc e (acc, plain ra) (acc, plain rb) (Some (acc, plain ry)) 1
+  in
+  List.map case
+    [
+      ([||], [| 0 |], [| 3 |], [| 2 |]);
+      ([| 1 |], [| 1 |], [| 1 |], [| 5 |]);
+      ([||], [| 3 |], [| 2 |], [| 0 |]);
+      ([||], [| 3 |], [| 64 |], [| 600 |]);
+      ([||], [| 64 |], [| 3 |], [| 600 |]);
+      ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]);
+      ([||], [| 1 |], [| 3100 |], [| 3 |]);
+      ([| 350 |], [| 8 |], [| 8 |], [| 2 |]);
+    ]
 
 (* The dtypes each accumulator holds, as nx_cpu.mli lists them. *)
 let held = function
@@ -264,6 +301,8 @@ let computed =
   Gen.with_pp pp_case
     (Gen.bind (Gen.of_list ~pp:pp_dtype accs) (fun acc ->
          case_of ~acc ~out:acc ~dts:(held acc)))
+
+let examples = List.concat_map regimes accs
 
 (* Cases nx.cpu may decline: accumulators it lacks, other results, operands an
    accumulator does not hold. *)
@@ -665,16 +704,16 @@ let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
     [
-      prop "a contraction is within its bound of the exact sum"
+      prop ~examples "a contraction is within its bound of the exact sum"
         computed (run (law_bound b));
-      prop "a contraction's bits do not depend on layouts" computed
+      prop ~examples "a contraction's bits do not depend on layouts" computed
         (run (law_layouts b));
-      prop "an init given as dst gives the same bits" computed
+      prop ~examples "an init given as dst gives the same bits" computed
         (run (law_init_as_dst b));
       prop "a declined contraction writes nothing" any_case
         (run (law_declined b));
-      prop "a destination identical to init gives a fresh one's bits"
-        computed (run (law_in_place b));
+      prop ~examples
+        "a destination identical to init gives a fresh one's bits" computed (run (law_in_place b));
     ]
 
 (* nx.cpu under each table the host runs. *)
@@ -682,7 +721,7 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop "each output adds its products in nx.cpu's order"
+      prop ~examples "each output adds its products in nx.cpu's order"
         computed (run (law_order b));
       prop "computes the cases nx_cpu.mli lists, declines others"
         any_case (run (law_computes b));
