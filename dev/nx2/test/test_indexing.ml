@@ -164,9 +164,29 @@ let pp_case ppf c =
        pp_entry)
     c.entries
 
-let entry d =
+(* How a list of written positions is drawn: [Repeats] may name a position
+   twice, which [slice] reads twice and [set] refuses; [Distinct] names each
+   at most once, in any order, each from the start or the end. *)
+type lists = Repeats | Distinct
+
+let entry lists d =
   let open Gen in
   let pos = int_range (-d) (d - 1) in
+  let written =
+    match lists with
+    | Repeats ->
+        let* k = int_range 0 3 in
+        list ~size:(constant k) pos
+    | Distinct ->
+        let* k = int_range 0 d in
+        let* keys = array ~size:(constant d) (int_range 0 999) in
+        let+ ends = array ~size:(constant d) bool in
+        let order =
+          List.sort (fun i j -> compare keys.(i) keys.(j)) (List.init d Fun.id)
+        in
+        List.filteri (fun n _ -> n < k) order
+        |> List.map (fun p -> if ends.(p) then p - d else p)
+  in
   let held =
     let* r = int_range 0 2 in
     let* s = array ~size:(constant r) (int_range 0 2) in
@@ -192,21 +212,25 @@ let entry d =
     one_of
       ((let+ p = pos in
         I p)
-      :: (let* k = int_range 0 3 in
-          let+ ps = list ~size:(constant k) pos in
+      :: (let+ ps = written in
           L ps)
       :: any)
 
-let case =
+let case lists =
   let open Gen in
   with_pp pp_case
     (let* r = int_range 0 3 in
      let* s = array ~size:(constant r) (int_range 0 3) in
-     let* m = int_range 0 r in
+     (* The number of axes selected along: one case in five selects along
+        none, so that each kind of entry turns up in a run. *)
+     let* m =
+       if r = 0 then constant 0
+       else frequency [ (1, constant 0); (4, int_range 1 r) ]
+     in
      let rec entries a =
        if a = m then constant []
        else
-         let* e = entry s.(a) in
+         let* e = entry lists s.(a) in
          let* news = int_range 0 1 in
          let+ rest = entries (a + 1) in
          (if news = 1 then [ N; e ] else [ e ]) @ rest
@@ -226,28 +250,16 @@ let covers c =
   cover "a negative step" (has (function Rs (_, _, c) -> c < 0 | _ -> false));
   cover "a new axis" (has (( = ) N))
 
-(* Whether no list of written positions names a position twice, which [set]
-   refuses. *)
-let distinct_lists c =
-  let axis = ref 0 in
-  List.for_all
-    (fun e ->
-      match e with
-      | N -> true
-      | L ps ->
-          let d = c.s.(!axis) in
-          incr axis;
-          let ps = List.map (fun p -> if p < 0 then p + d else p) ps in
-          List.length (List.sort_uniq compare ps) = List.length ps
-      | I _ | T _ | R _ | Rs _ | A | D _ ->
-          incr axis;
-          true)
-    c.entries
+(* The cases a law that [covers] runs. Its rarest label, a negative step, marks
+   about one case in sixteen: 100 cases miss it once in 500 runs, 300 once in
+   10^8. *)
+let count = 300
 
 let laws =
   group "laws"
     [
-      prop "slice reads each entry's positions, zero outside" case (fun c ->
+      prop ~count "slice reads each entry's positions, zero outside"
+        (case Repeats) (fun c ->
           covers c;
           let x, data = operand c.s in
           let sel, read = selection c.s c.entries in
@@ -259,7 +271,8 @@ let laws =
                  | Some ix -> data.(position c.s ix)
                  | None -> 0l))
             (elements y));
-      prop "set writes each entry's positions, the last write winning" case
+      prop ~count "set writes each entry's positions, the last write winning"
+        (case Distinct)
         (fun c ->
           covers c;
           let data_entry = function T _ | L _ | D _ -> true | _ -> false in
@@ -271,7 +284,6 @@ let laws =
             );
           let x, data = operand c.s in
           let sel, read = selection c.s c.entries in
-          assume (distinct_lists c);
           let v = Array.init (numel sel) (fun k -> Int32.of_int (-k - 1)) in
           let expected = Array.copy data in
           for k = 0 to numel sel - 1 do
@@ -283,10 +295,9 @@ let laws =
           equal ~msg:"shape" (array int) c.s (Nx.shape y);
           equal ~msg:"elements" (array int32) expected (elements y);
           equal ~msg:"x unchanged" (array int32) data (elements x));
-      prop "set of a slice is the identity" case (fun c ->
+      prop "set of a slice is the identity" (case Distinct) (fun c ->
           let x, data = operand c.s in
           let idx = List.map to_index c.entries in
-          assume (distinct_lists c);
           equal (array int32) data (elements (Nx.set idx (Nx.slice idx x) x)));
     ]
 
