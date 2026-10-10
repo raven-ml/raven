@@ -330,6 +330,11 @@ let matmul ~by a b =
     let j = i - (l - Array.length s) in
     if j < 0 then None else Some s.(j)
   in
+  (* CR: These names only encode axis identity. Use leading indices and
+     distinct row, column and inner ids, with an extent array. Structural
+     equality in index_of lets the same lower keep handling parsed strings.
+     This removes string construction and hashing; preserve the list order.
+     Check matmul-f32-4 and a small reused-pattern einsum before landing. *)
   let extents = Hashtbl.create 8 in
   let name i e =
     let n = "l" ^ string_of_int i in

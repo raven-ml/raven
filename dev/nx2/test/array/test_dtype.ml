@@ -557,6 +557,10 @@ let test_every_code (F (dt, f)) =
     (Array.map (fun c -> A.get a [| c |]) codes)
 
 (* Wider formats: ties around codes drawn across the range. *)
+(* CR: The required largest-code case is drawn by chance, so a correct
+   store can fail coverage. Move these six boundaries to prop's ~examples
+   and draw remaining cases with Gen.int_range 0 top. Keep the oracle and
+   covers; every run then checks the boundaries and explores the range. *)
 let law_ties (F (dt, f)) =
   let codes =
     let top = last f and normal = 1 lsl f.frac in

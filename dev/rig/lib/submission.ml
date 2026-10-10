@@ -613,6 +613,8 @@ let record s ps p pair =
       match times_read device.c pair with
       | 0, 0 -> ()
       | start, stop ->
+          (* CR: This is add_all's only caller. Use Prof.add ps (Span ...)
+             and remove add_all; no producer needs a list of events. *)
           Prof.add_all ps [ Span { device; lane; name; start; stop } ])
 
 (* Submits [s] with [run], which the caller took. The C submit reads [s]'s C
