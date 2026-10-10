@@ -97,6 +97,36 @@ value rig_pool_bench_compute(value v_threads, value v_total, value v_chunks,
   return Val_unit;
 }
 
+/* Memory-bound jobs
+
+   A fill of [fill_floats] floats, 4 MiB, which the cores' caches hold
+   between jobs when each core stores the same part every time. */
+
+enum { fill_floats = 1 << 20 };
+
+static float *fill_buffer(void) {
+  static float *b;
+  if (b == NULL) {
+    b = calloc(fill_floats, sizeof *b);
+    if (b == NULL) abort();
+  }
+  return b;
+}
+
+static void fill(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  float *b = ctx;
+  for (int64_t i = lo; i < hi; i++) b[i] = 1.0f;
+}
+
+/* [fill threads chunks] runs the fill on [threads] threads in [chunks]
+   chunks. */
+value rig_pool_bench_fill(value v_threads, value v_chunks) {
+  rig_pool_run(Int_val(v_threads), fill_floats, Long_val(v_chunks), fill,
+               fill_buffer());
+  return Val_unit;
+}
+
 /* Floors
 
    A job without the pool: threads of the bench's own, each of which runs a

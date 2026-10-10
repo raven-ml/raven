@@ -33,8 +33,9 @@
 #define CACHE_BYTES (32 * 1024 * 1024)
 #define HOLD_BYTES (1024 * 1024)
 
-/* Chunks per thread: threads claim chunks as they finish, so a thread that
-   runs slower, an efficiency core's say, takes fewer. */
+/* Chunks per thread: a thread that finishes its strip takes the chunks left
+   in the others', so a thread that runs slower, an efficiency core's say,
+   runs fewer. */
 #define CHUNKS 8
 
 int nx_cpu_threads(int64_t bytes, int64_t cost) {

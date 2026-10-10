@@ -7,9 +7,9 @@
 
    One pool per process: rig_pool_cores () - 1 persistent workers, made at
    the first job of more than one thread. A job is published behind a
-   generation counter; its threads claim runs of chunk indices from a shared
-   counter (see claim). A worker enters the job before it
-   claims, while the caller has not closed it. The caller closes the job
+   generation counter; its threads claim runs of chunk indices from a
+   counter per strip, their own first (see claim). A worker enters the job
+   before it claims, while the caller has not closed it. The caller closes the job
    once its own claims find no chunk left and waits only for the workers
    inside, so a worker late to see the job, or kept off its core by the
    system, delays nothing.
@@ -76,13 +76,11 @@ static const size_t stack_bytes = 8 << 20;
    together. */
 enum { line_bytes = 128 };
 
-/* A claim takes 1 / claim_split of the claiming thread's share of the chunks
-   left, and at least one. One claim a chunk costs a fetch-add that every
-   thread contends for, 28 ns a chunk on 6 x86 cores, more than a short
-   chunk's work. While a claim runs, the other threads claim claim_split
-   times its chunks, so a core up to about claim_split times slower than the
-   others ends about when they do. A job of fewer than 2 * claim_split chunks
-   a thread claims them one at a time. */
+/* A claim takes 1 / claim_split of the chunks left in its strip, and at
+   least one: one claim a chunk costs a fetch-add, more than a short chunk's
+   work once threads contend for the counter. A thread up to about
+   claim_split times slower than the others leaves most of its strip to them.
+   A strip of fewer than 2 * claim_split chunks is claimed one at a time. */
 enum { claim_split = 8 };
 
 /* Hook points: the suite compiles this file again with RIG_POOL_HOOK defined
@@ -355,14 +353,11 @@ int rig_pool_performance_cores(void) {
 /* Jobs */
 
 /* A job as its caller passes it. [wide] says i * total may overflow 64 bits
-   for some chunk bound i <= chunks, so the bounds take 128. [split] divides
-   the chunks left into a run: claim_split times the caller's threads,
-   before the workers made bound them, as rig_pool.h states the runs. */
+   for some chunk bound i <= chunks, so the bounds take 128. */
 typedef struct {
   rig_pool_body body;
   void *ctx;
   int64_t total, chunks;
-  uint64_t split;
   int threads, wide;
 } job;
 
@@ -371,6 +366,16 @@ static inline int64_t bound(const job *j, int64_t i) {
   if (j->wide) return (int64_t)((__int128)i * j->total / j->chunks);
   return i * j->total / j->chunks;
 }
+
+/* A strip: its claim counter, the next unclaimed chunk index, beside its
+   end, and a gap that keeps the next strip's a line away. Each counter is
+   written by its own thread at every claim, and by others only at a job's
+   tail. The caller writes both at the job's opening. */
+typedef struct {
+  _Atomic uint64_t next;
+  uint64_t end;
+  char gap[line_bytes - 2 * sizeof(uint64_t)];
+} strip;
 
 typedef struct pool pool;
 
@@ -382,6 +387,7 @@ typedef struct {
 struct pool {
   int threads;           /* the workers made, plus the caller */
   worker *workers;       /* [1, threads); slot 0 is the caller */
+  strip *strips;         /* [0, threads), strip k claimed first by worker k */
   pthread_mutex_t drive; /* one published job at a time */
   pthread_mutex_t mtx;   /* guards parking */
   pthread_cond_t wake;   /* parked workers wait here for a new generation */
@@ -392,18 +398,10 @@ struct pool {
   _Atomic uint64_t generation;
   /* The job, written while no worker is inside and read only inside. */
   job job;
-  /* Each gap keeps what follows it at least a line away from what precedes
-     it, whatever the pool's address. The claims' counter stays off the
-     line of the job and the generation, which every claim would otherwise
-     take from the threads that spin on it. The workers' entries stay off
-     the claims' line, which they would otherwise take from the caller's
-     claims as a job opens: an empty job on 16 x86 threads took 1.6 times
-     as long. A job of two threads pays for it on Apple silicon, where it
-     moves two lines between caller and worker instead of one: 100 ns
-     became 130. */
+  /* The gap keeps the workers' entries a line away from the job and the
+     generation, which every entry would otherwise take from the threads
+     that spin on it, whatever the pool's address. */
   char gap[line_bytes];
-  _Atomic uint64_t next; /* next unclaimed chunk index */
-  char gap2[line_bytes];
   _Atomic uint64_t inside; /* the workers inside the job, | closed */
   _Atomic int waiting;     /* whether the caller parked on [done] */
   /* Bit [id % 64] of word [id / 64] is set while worker [id] is parked. */
@@ -444,30 +442,46 @@ static uint64_t spin(_Atomic uint64_t *word, uint64_t value, spin_until until,
   }
 }
 
-/* Claims runs of chunks of [j] until none remains, one call a run. A
-   thread's last run ends below the counter, so at most the chunks past it
-   are left: while those are too few for a run of two, the thread claims one
-   chunk without reading the counter first, as a short job's threads always
-   do. Else the run's length comes from a load of the counter, which other
-   claims may pass before the fetch-add lands: the run is then longer than
-   its share by their few chunks at most. The counter is unsigned: past the
-   last chunk it grows by at most a run a thread, below 2^64 for any job. A
-   relaxed fetch-add makes every index unique; ordering rides the opening
-   and closing of the job. */
-static void claim(pool *p, const job *j, int id) {
-  uint64_t c = (uint64_t)j->chunks, split = j->split;
-  uint64_t past = 0; /* the end of the thread's last run */
-  for (;;) {
+/* Claims runs of chunks of strip [k] of [j] until none remains, one call a
+   run, [past] being at most its counter. A thread's last run ends below the
+   counter, so at most the chunks past it are left: none once it reaches the
+   strip's end, where the thread stops without touching the counter again,
+   which spares the lines that other threads' passes read. While those
+   chunks are too few for a run of two, the thread claims one without
+   reading the counter first, as a short strip's threads always do. Else the run's length comes
+   from a load of the counter, which other claims may pass before the
+   fetch-add lands: the run is then longer than its share by their few
+   chunks at most. The counter is unsigned: past the strip's last chunk it
+   grows by at most a run a thread, below 2^64 for any job. A relaxed
+   fetch-add makes every index unique; ordering rides the opening and
+   closing of the job. */
+static void claim_strip(pool *p, const job *j, int k, int id, uint64_t past) {
+  _Atomic uint64_t *next = &p->strips[k].next;
+  uint64_t end = p->strips[k].end;
+  while (past < end) {
     uint64_t run = 1;
-    if (c - past >= 2 * split) {
-      uint64_t at = atomic_load_explicit(&p->next, memory_order_relaxed);
-      if (at < c && c - at >= 2 * split) run = (c - at) / split;
+    if (end - past >= 2 * claim_split) {
+      uint64_t at = atomic_load_explicit(next, memory_order_relaxed);
+      if (at < end && end - at >= 2 * claim_split)
+        run = (end - at) / claim_split;
     }
-    uint64_t i = atomic_fetch_add_explicit(&p->next, run, memory_order_relaxed);
-    if (i >= c) return;
-    past = c - i > run ? i + run : c;
+    uint64_t i = atomic_fetch_add_explicit(next, run, memory_order_relaxed);
+    if (i >= end) return;
+    past = end - i > run ? i + run : end;
     RIG_POOL_HOOK(chunk);
     j->body(bound(j, (int64_t)i), bound(j, (int64_t)past), id, j->ctx);
+  }
+}
+
+/* Claims thread [id]'s own strip, then what is left of the others, from the
+   next one on. A strip's counter only grows, so one pass over them leaves
+   no chunk unclaimed. */
+static void claim(pool *p, const job *j, int id) {
+  int t = j->threads;
+  claim_strip(p, j, id, id, id == 0 ? 0 : p->strips[id - 1].end);
+  for (int k = id + 1 == t ? 0 : id + 1; k != id; k = k + 1 == t ? 0 : k + 1) {
+    uint64_t at = atomic_load_explicit(&p->strips[k].next, memory_order_relaxed);
+    if (at < p->strips[k].end) claim_strip(p, j, k, id, at);
   }
 }
 
@@ -621,7 +635,9 @@ static pool *create(void) {
   if (p == NULL) return NULL;
   p->workers = calloc((size_t)cores, sizeof *p->workers);
   if (p->workers == NULL) goto fail_pool;
-  if (pthread_mutex_init(&p->drive, NULL) != 0) goto fail_workers;
+  p->strips = calloc((size_t)cores, sizeof *p->strips);
+  if (p->strips == NULL) goto fail_workers;
+  if (pthread_mutex_init(&p->drive, NULL) != 0) goto fail_strips;
   if (pthread_mutex_init(&p->mtx, NULL) != 0) goto fail_drive;
   if (pthread_cond_init(&p->wake, NULL) != 0) goto fail_mtx;
   if (pthread_cond_init(&p->done, NULL) != 0) goto fail_wake;
@@ -634,6 +650,8 @@ fail_mtx:
   pthread_mutex_destroy(&p->mtx);
 fail_drive:
   pthread_mutex_destroy(&p->drive);
+fail_strips:
+  free(p->strips);
 fail_workers:
   free(p->workers);
 fail_pool:
@@ -704,24 +722,39 @@ static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
   return x < lo ? lo : x > hi ? hi : x;
 }
 
+/* Cuts [c] chunks into the strips of [t] threads: strip k begins at
+   floor (k c / t) = k q + floor (k r / t), for c = q t + r. The second term
+   grows by one each time [rest], k r mod t, wraps, so the bounds take no
+   division past the first. */
+static void open_strips(pool *p, uint64_t c, int t) {
+  uint64_t q = c / (uint64_t)t, r = c % (uint64_t)t;
+  uint64_t lo = 0, rest = 0;
+  for (int k = 0; k < t; k++) {
+    atomic_store_explicit(&p->strips[k].next, lo, memory_order_relaxed);
+    rest += r;
+    lo += q + (rest >= (uint64_t)t);
+    if (rest >= (uint64_t)t) rest -= (uint64_t)t;
+    p->strips[k].end = lo;
+  }
+}
+
 /* Runs a job of [t] > 1 threads and [c] chunks: alone if begun from a body
    or without a pool, else on at most p->threads (<= rig_pool_cores ()). Once
    it returns, no thread touches the job or the claim counter until the next
    job opens. Out of line, so a serial rig_pool_run saves no registers. */
 __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
                                           rig_pool_body body, void *ctx) {
-  uint64_t split = (uint64_t)t * claim_split;
   pool *p = in_body ? NULL : get();
   if (p && t > p->threads) t = p->threads;
   if (p == NULL || t == 1) {
     body(0, total, 0, ctx);
     return;
   }
-  job j = {body, ctx, total, c, split, t, total > INT64_MAX / c};
+  job j = {body, ctx, total, c, t, total > INT64_MAX / c};
 
   pthread_mutex_lock(&p->drive);
   p->job = j;
-  atomic_store_explicit(&p->next, 0, memory_order_relaxed);
+  open_strips(p, (uint64_t)c, t);
   atomic_fetch_and_explicit(&p->inside, ~closed, memory_order_release);
   RIG_POOL_HOOK(opened);
   uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);

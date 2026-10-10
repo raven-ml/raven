@@ -28,6 +28,10 @@
    cores, where a run must not hold the costliest units on one thread. Both run
    as fast as 8 chunks a thread.
 
+   Memory jobs fill 4 MiB of floats on every core, 8 chunks a thread, which the
+   cores' caches hold from one job to the next only if each core stores the
+   same part of it every time.
+
    A floor row runs the job of the row above it on threads of the bench's own,
    each with a fixed share of the chunks and nothing claimed: what announcing a
    job and waiting for every thread cost without the pool. *)
@@ -48,6 +52,8 @@ external floor_empty : int -> int -> unit = "rig_pool_bench_floor_empty"
 
 external floor_compute : int -> int -> unit = "rig_pool_bench_floor_compute"
 [@@noalloc]
+
+external fill : int -> int -> unit = "rig_pool_bench_fill" [@@noalloc]
 
 let cores = Rig_pool_probe.cores ()
 let fast = Rig_pool_probe.performance_cores ()
@@ -110,6 +116,13 @@ let compute =
           compute fast units units true);
     ]
 
+let memory =
+  let chunks = chunks_per_thread * cores in
+  Thumper.group "memory"
+    [
+      Thumper.bench "fill-4MiB-all-cores" (fun () -> fill cores chunks);
+    ]
+
 (* The process's CPU time counts what spinning workers spend. A batch of at
    least 50 ms spans several of the scheduler's time slices. *)
 let config =
@@ -117,4 +130,4 @@ let config =
     default |> batch_floor 0.05
     |> metrics Thumper.Metric.[ wall_time; cpu_time; alloc_words ])
 
-let () = exit (Thumper.run ~config "rig_pool" [ launch; claim; compute ])
+let () = exit (Thumper.run ~config "rig_pool" [ launch; claim; compute; memory ])

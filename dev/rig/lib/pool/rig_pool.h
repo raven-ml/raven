@@ -12,9 +12,11 @@
    The pool runs jobs. A job is a range of units [0, total) cut into
    contiguous chunks and run on at most a given number of threads: the
    calling thread, which is worker 0, and the pool's workers. Each thread
-   claims the next chunks in index order until none remains, so a thread
-   that finishes early runs the chunks a slower one would have run. The job
-   returns once every chunk has run.
+   has a strip of consecutive chunks, the same in every job of the same
+   total, chunks and threads, which it runs first, so that a job run again
+   over the same memory finds each strip in the caches of the core that ran
+   it. A thread that finishes its strip early runs the chunks left in the
+   others'. The job returns once every chunk has run.
 
    A caller sizes a job by two facts about the host: its cores, which bound
    the threads of every job, and its performance cores, those that run
@@ -87,17 +89,24 @@ typedef void (*rig_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
      [lo, hi) = [floor (i * total / c), floor ((i + 1) * total / c))
 
    exactly, for every total and c. The chunks partition [0, total), none is
-   empty, and floor (total / c) <= hi - lo <= ceil (total / c). Chunks are
-   claimed in index order, in runs that hold at most an eighth of a
-   thread's share (see Runs): a caller that puts its costliest chunks
-   first has them start first, spread over the threads.
+   empty, and floor (total / c) <= hi - lo <= ceil (total / c).
 
-   Runs. On t > 1 threads, a thread claims a run of consecutive chunks at a
-   time, in one call: about an eighth of a thread's share of the chunks
-   left, which shrinks as the job goes, so that a job of many short chunks
-   costs few claims and a thread up to about eight times slower than the
-   others ends about when they do. A run is at most max (1, floor (c / 8t))
-   chunks, so a job of fewer than 16 t chunks makes one call a chunk.
+   Strips. On t > 1 threads, worker w's strip is the chunks
+
+     [floor (w * c / t), floor ((w + 1) * c / t))
+
+   none empty, with t less the workers that could not be made (see
+   Threads). A thread claims its own strip's chunks in index order, then
+   those left in each other strip in turn, from worker w + 1's on, in index
+   order within each. A thread that never comes to the job leaves its whole
+   strip to the others.
+
+   Runs. A thread claims a run of consecutive chunks of a strip at a time,
+   in one call: about an eighth of the chunks the strip has left, so that a
+   job of many short chunks costs few claims and a thread up to about eight
+   times slower than the others leaves most of its strip to them. A run is
+   at most max (1, floor (s / 8)) chunks, s the strip's chunks, so a job of
+   at most 15 t chunks makes one call a chunk.
 
    Worker index. 0 <= worker < t <= max (threads, 1), and the calling
    thread's worker is 0. A thread keeps its index for the whole job and
