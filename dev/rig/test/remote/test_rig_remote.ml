@@ -157,6 +157,24 @@ let listens_no_more () =
       fail "a second job at an agent of one"
   | Error why -> not_contains ~sub:"another job" why
 
+(* A process the agent started holds none of its sockets: once close returned,
+   nothing listens at the agent's port. *)
+let helper_holds_nothing () =
+  with_agents ~mode:"helper" @@ fun agents ->
+  let a = List.hd agents in
+  Rig_remote.close (connect agents);
+  let s = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  let outcome =
+    match Unix.connect s (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port)) with
+    | () -> "accepted"
+    | exception Unix.Unix_error (e, _, _) -> Unix.error_message e
+  in
+  Unix.close s;
+  equal ~msg:"a connection to the agent's port" string
+    (Unix.error_message Unix.ECONNREFUSED)
+    outcome;
+  equal exit_w (0, [ "closed" ]) (finish a)
+
 let listen_unresolved () =
   is_error (Rig_remote.listen ~key:(as_key key) "no-such-host.invalid" 0)
 
@@ -179,6 +197,8 @@ let connecting =
       test "a second job at one address is another machine, named #2"
         second_connection;
       test "once close returned, no agent listens" listens_no_more;
+      test "a process the agent started keeps no listener open"
+        helper_holds_nothing;
     ]
 
 (* Hosts and devices *)

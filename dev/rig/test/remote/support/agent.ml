@@ -12,7 +12,8 @@
    In mode "again" it then listens at the same port and serves a second job
    likewise. In mode "linger" it waits 2 s before it exits. In mode "twice" it
    then calls serve again, and prints "serve raised" if that raised
-   Invalid_argument. In mode "deaf" it is no agent of rig.remote: it proves the
+   Invalid_argument. In mode "helper" it starts a process that runs 2 s before
+   it serves, and waits for it before it exits. In mode "deaf" it is no agent of rig.remote: it proves the
    key to the controller, then stops listening, so no other agent of the job
    reaches it, and waits for the job to end.
 
@@ -116,6 +117,13 @@ let () =
     deaf (In_channel.with_open_bin Sys.argv.(1) In_channel.input_all)
   else begin
     let a = listen key 0 in
+    let helper =
+      if mode <> "helper" then None
+      else
+        let null = Unix.openfile "/dev/null" [ O_RDWR; O_CLOEXEC ] 0 in
+        let args = [| "sleep"; "2" |] in
+        Some (Unix.create_process "sleep" args null null null)
+    in
     if mode = "together" then begin
       (* Two domains serve [a] at once: one raises, the other serves. *)
       let other =
@@ -132,6 +140,7 @@ let () =
     else serve a;
     if mode = "again" then serve (listen key (Rig_remote.port a));
     if mode = "linger" then Unix.sleepf 2.;
+    Option.iter (fun pid -> ignore (Unix.waitpid [] pid)) helper;
     if mode = "twice" then
       match Rig_remote.serve a kinds with
       | _ -> print_endline "serve returned"

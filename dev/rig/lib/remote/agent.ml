@@ -140,7 +140,8 @@ let dial_tcp ~s host port =
   match resolve host port with
   | Error _ as e -> e
   | Ok addr -> (
-      let fd = Unix.socket (Unix.domain_of_sockaddr addr) Unix.SOCK_STREAM 0 in
+      let domain = Unix.domain_of_sockaddr addr in
+      let fd = Unix.socket ~cloexec:true domain Unix.SOCK_STREAM 0 in
       let fail e =
         Unix.close fd;
         Error (Unix.error_message e)
@@ -201,11 +202,8 @@ let listen ~key host port =
   match resolve host port with
   | Error _ as e -> e
   | Ok addr -> (
-      (* CR: Create this socket and dial_tcp's with ~cloexec:true. An executed
-         helper inherits the listener and keeps its port bound after serve and
-         the controller's close return. Setting the flag after creation leaves a
-         race with another thread starting a process. *)
-      let fd = Unix.socket (Unix.domain_of_sockaddr addr) Unix.SOCK_STREAM 0 in
+      let domain = Unix.domain_of_sockaddr addr in
+      let fd = Unix.socket ~cloexec:true domain Unix.SOCK_STREAM 0 in
       match
         Unix.setsockopt fd Unix.SO_REUSEADDR true;
         Unix.bind fd addr;
