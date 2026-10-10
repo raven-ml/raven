@@ -403,6 +403,8 @@ let malformed_from_controller =
        ^ "abcd") );
     ( "a hand-over with a part of kind 2",
       frame k_handover (u64 0 ^ u64 1 ^ u32 0 ^ u32 1 ^ "\002") );
+    ( "a load of max_int bytes",
+      frame k_request ("\005" ^ u64 1 ^ u64 max_int) );
   ]
 
 let malformed_at_controller (_, f) =

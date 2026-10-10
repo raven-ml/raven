@@ -69,13 +69,10 @@ type reader = { a : area; mutable at : int }
 
 let reader a = { a; at = 0 }
 
-(* CR: Compare n with dim - r.at, retaining the n < 0 check. A 17-byte
-   Load payload declaring max_int binary bytes wraps r.at + n negative,
-   then String.init raises Invalid_argument instead of failing the job
-   for a malformed frame. Checking remaining bytes preserves the reader's
-   bound for every span, including hand-over subareas. *)
+(* The bound compares [n] with the bytes left: [r.at + n] wraps for an [n]
+   near [max_int]. *)
 let take r n =
-  if n < 0 || r.at + n > Array1.dim r.a then raise Malformed;
+  if n < 0 || n > Array1.dim r.a - r.at then raise Malformed;
   let at = r.at in
   r.at <- at + n;
   at
