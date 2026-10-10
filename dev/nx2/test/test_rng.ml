@@ -425,6 +425,32 @@ let rejection =
                   (Nx.broadcast_to [| 2; 3 |] t)
                   (Nx.broadcast_to [| 2; 3 |] p)))
             (read (Rng.binomial ~key:k t p)));
+      (* At the least positive concentrations a beta draw is 0 or 1, each with
+         probability 1/2: both gammas underflow, and their ratio comes from the
+         logarithms of their shifts. *)
+      cases
+        ~name:(fun (n, _) -> "beta at " ^ n ^ "'s least concentration")
+        "beta at the least concentration"
+        [
+          ( "float64",
+            fun () ->
+              read
+                (Rng.beta ~key:(Rng.key 311)
+                   (full Nx.float64 (Float.ldexp 1. (-1074)))
+                   (full Nx.float64 (Float.ldexp 1. (-1074)))) );
+          ( "float32",
+            fun () ->
+              read
+                (Rng.beta ~key:(Rng.key 312)
+                   (full Nx.float32 (Float.ldexp 1. (-149)))
+                   (full Nx.float32 (Float.ldexp 1. (-149)))) );
+        ]
+        (fun (_, f) ->
+          let xs = f () in
+          Array.iter
+            (fun x -> if not (x >= 0. && x <= 1.) then failf "draw %g" x)
+            xs;
+          near ~se:(0.5 /. sqrt (Float.of_int n)) 0.5 (mean xs));
       test "beta of tiny concentrations stays in [0, 1]" (fun () ->
           let xs =
             read

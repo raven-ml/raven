@@ -602,25 +602,15 @@ let gamma ?key a =
       let shift = bin b Pow boost (un b Recip cd a') in
       rounded b dt c (where b below (bin b Mul acc shift) acc))
 
-(* The logarithm of a gamma draw: below a concentration of about 0.03 most
-   float32 draws underflow to zero, where their logarithm, of order [log u / a],
-   is still finite. *)
-(* CR: Form beta's log ratio from both Marsaglia results. At valid
-   float64 a = b = 2^-1074, both log_gamma values can be -inf, so beta
-   returns NaN. For s = min(1,a,b) and q_i = log(boost_i) below 1
-   (zero otherwise), use (log acc_b - log acc_a) +
-   ((s/b)*q_b - (s/a)*q_a)/s. Subtract the finite scaled shifts before
-   dividing; keep direct Fdiv and the unscaled acc correction so ties
-   retain their gamma ratio. This removes a log_gamma boundary whose
-   intermediate values need not be representable. *)
-let log_gamma b ~key ~n (D.Any cd as c) a j =
-  let acc, below, boost = marsaglia b ~key ~n c a j in
-  let shift = bin b Fdiv (un b Log cd boost) a in
-  bin b Add (un b Log cd acc) (where b below shift (constf b cd 0.))
-
 (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas from the key's two
-   split keys, formed as [1 / (1 + exp (log G(b) - log G(a)))] so that two
-   gammas that underflow keep their ratio. *)
+   split keys, formed as [1 / (1 + exp d)], [d = log G(b) - log G(a)], so that
+   two gammas that underflow keep their ratio. A gamma below a concentration of
+   1 is [acc U^(1/a)], so [d = log acc_b - log acc_a + q_b / b - q_a / a] with
+   [q = log U] there and 0 elsewhere. Each [q / a] alone is [-∞] at a tiny
+   concentration, and two of them make NaN, so the shifts are scaled by [s = min
+   a b] before they meet: [(s/b) q_b - (s/a) q_a] is finite, and its quotient by
+   [s] is [d]'s shift, an infinity only where the draw is 0 or 1. The quotient
+   is a division, where [q · (1 / s)] would make NaN of a zero [q]. *)
 let beta ?key a b' =
   let by = "Nx.Rng.beta" in
   require ~by "a" positive (compute (Prim.dtype a)) a;
@@ -631,12 +621,22 @@ let beta ?key a b' =
   let n = numel s in
   draw ~by ~params:[| Value.Any a; Value.Any b' |] (resolve key) dt s
     (fun b ~key ~j ins ->
-      let (D.Any cd) = c in
+      let f = floats b c in
       let ka = block b ~key (u64 b 0L) and kb = block b ~key (u64 b 1L) in
-      let ga = log_gamma b ~key:ka ~n c (param b c a ins.(0)) j in
-      let gb = log_gamma b ~key:kb ~n c (param b c b' ins.(1)) j in
-      let e = un b Exp cd (bin b Sub gb ga) in
-      rounded b dt c (un b Recip cd (bin b Add (constf b cd 1.) e)))
+      let a = param b c a ins.(0) and b'' = param b c b' ins.(1) in
+      let gamma key x =
+        let acc, below, boost = marsaglia b ~key ~n c x j in
+        (f.log acc, where b below (f.log boost) (f.lit 0.))
+      in
+      let la, qa = gamma ka a and lb, qb = gamma kb b'' in
+      let least = f.min a b'' in
+      let shift =
+        f.div
+          (f.sub (f.mul (f.div least b'') qb) (f.mul (f.div least a) qa))
+          least
+      in
+      let d = f.add (f.sub lb la) shift in
+      rounded b dt c (f.div (f.lit 1.) (f.add (f.lit 1.) (f.exp d))))
 
 (* Von Mises *)
 
