@@ -93,8 +93,9 @@ val kind : Nx_kernel.Prog.node -> string
 (** [kind n] names [n]'s kind in messages, as ["Exp"] or ["Less"]. *)
 
 val operands : 'r prim -> operands
-(** [operands op] is [op]'s operands in order: a map's loads, [Check]'s [ok]
-    then its data, the one operand of the others. *)
+(** [operands op] is [op]'s operands in order: a map's loads, a contraction's
+    [a], [b] then [init], [Check]'s [ok] then its data, the one operand of the
+    others. *)
 
 val iteri : ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> 'r prim -> unit
 (** [iteri f op] is [f i x] for each operand [x] of [op], at its position [i] in

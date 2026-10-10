@@ -44,6 +44,18 @@ val apply3 :
     an [Array], it is {!Exec.apply1} to {!Exec.apply3}, which build no operation
     on their fast path. *)
 
+val contract :
+  by:string ->
+  Nx_kernel.Spec.contract Nx_kernel.Spec.t ->
+  ('v, 's) dtype ->
+  ('a, 'b, 'd) t ->
+  ('c, 'e, 'd) t ->
+  ('v, 's, 'd) t option ->
+  ('v, 's, 'd) t
+(** [contract ~by spec dt a b init] is {!eval} of the contraction [spec]. With
+    no live [Extent] on the calling domain, it is {!Exec.contract} where that
+    answers. *)
+
 val place :
   by:string -> 'e Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'e) t
 (** [place ~by p x] is {!eval} of [Place (p, x)]. With no live [Extent] on the

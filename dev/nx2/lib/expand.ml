@@ -6,6 +6,8 @@
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module P = Nx_kernel.Prog
+module S = Nx_kernel.Spec
+module M = Nx_array.Move
 
 (* Whether [prog] is one node over its operands in order, which a kernel
    computes alone. *)
@@ -393,6 +395,111 @@ let assemble (type v s d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by
   apply ~by
     (Value.Move (Reshape (Array.copy shape), List.fold_left place flat pieces))
 
+(* Contractions *)
+
+(* [x], whose axis [i] is [full]'s axis [at.(i)], at the shape [full]: its axes
+   put in that order, a unit axis where it has none, and broadcast. *)
+let spread (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (x : (v, s, d) Value.t) at full : (v, s, d) Value.t =
+  let r = Array.length at in
+  let order = Array.init r Fun.id in
+  Array.sort (fun i j -> compare at.(i) at.(j)) order;
+  let move mv x = apply ~by (Value.Move (mv, x)) in
+  let x = if order = Array.init r Fun.id then x else move (M.Permute order) x in
+  let units = Array.mapi (fun k e -> if Array.mem k at then e else 1) full in
+  let x = if Prim.has_shape x units then x else move (M.Reshape units) x in
+  if units = full then x else move (M.Broadcast full) x
+
+(* The contraction [spec] of [a] and [b] from [init], into [out], as other
+   operations. A float result narrower than its accumulator is the contraction
+   into the accumulator, rounded once. Any other is the products in the
+   accumulator at every index of the result's axes then the contracted ones, a
+   sum over the contracted ones, [init] added, and one rounding to [out]. *)
+let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
+    ~by spec (out : (v, s) D.t) (a : (a, b, d) Value.t) (b : (c, e, d) Value.t)
+    (init : (v, s, d) Value.t option) : (v, s, d) Value.t =
+  let (D.Any acc) = S.acc spec in
+  let batch = S.batch spec and contracting = S.contracting spec in
+  if D.is D.Float acc && not (D.equal acc out) then
+    let spec =
+      S.contract ~batch ~contracting ~acc:(D.Any acc) ~out:(D.Any acc)
+        ~init:(S.init spec)
+    in
+    let init = Option.map (cast_to apply ~by acc) init in
+    let y = apply ~by (Value.Contract { spec; out = acc; a; b; init }) in
+    cast_to apply ~by out y
+  else
+    let sa = Prim.shape a and sb = Prim.shape b in
+    let free s side =
+      List.filter
+        (fun i ->
+          not
+            (Array.exists (fun p -> side p = i) batch
+            || Array.exists (fun p -> side p = i) contracting))
+        (List.init (Array.length s) Fun.id)
+    in
+    let fa = free sa fst and fb = free sb snd in
+    let nb = Array.length batch and nfa = List.length fa in
+    let rshape =
+      Array.concat
+        [
+          Array.map (fun (i, _) -> sa.(i)) batch;
+          Array.of_list (List.map (fun i -> sa.(i)) fa);
+          Array.of_list (List.map (fun i -> sb.(i)) fb);
+        ]
+    in
+    let nr = Array.length rshape in
+    let full =
+      Array.append rshape (Array.map (fun (i, _) -> sa.(i)) contracting)
+    in
+    let positions s side frees offset =
+      let at = Array.make (Array.length s) 0 in
+      Array.iteri (fun k p -> at.(side p) <- k) batch;
+      List.iteri (fun j i -> at.(i) <- nb + offset + j) frees;
+      Array.iteri (fun c p -> at.(side p) <- nr + c) contracting;
+      at
+    in
+    let va = spread apply ~by a (positions sa fst fa 0) full in
+    let vb = spread apply ~by b (positions sb snd fb nfa) full in
+    let prog =
+      P.v
+        ~ins:[| D.Any (Prim.dtype a); D.Any (Prim.dtype b) |]
+        [|
+          In 0;
+          In 1;
+          Op1 (Cast, D.Any acc, 0);
+          Op1 (Cast, D.Any acc, 1);
+          Op2 (Binary Mul, 2, 3);
+        |]
+        ~outs:[| 4 |]
+    in
+    let layout = Nx_array.Layout.contiguous full in
+    let loads = [| Value.Plain va; Value.Plain vb |] in
+    let sum =
+      if Array.length contracting = 0 then
+        fst
+          (apply ~by (Value.Map { layout; prog; outs = Value.[ acc ]; loads }))
+      else
+        fst
+          (apply ~by
+             (Value.Reduce
+                {
+                  layout;
+                  axes = Array.init (Array.length contracting) (fun c -> nr + c);
+                  prog;
+                  reductions = Value.[ Monoid (Sum, 0, acc) ];
+                  loads;
+                }))
+    in
+    let sum =
+      match init with
+      | None -> sum
+      | Some i ->
+          fst
+            (apply ~by
+               (Prim.op2 ~by (Binary Add) acc sum (cast_to apply ~by acc i)))
+    in
+    cast_to apply ~by out sum
 
 (* Gathers and scatters *)
 
@@ -457,6 +564,8 @@ let run : type r.
   | Value.Scan { layout; axis; prog; reduction = r; loads }
     when not (plain prog r) ->
       scan apply ~by layout axis prog r loads
+  | Value.Contract { spec; out; a; b; init } ->
+      Some (contract apply ~by spec out a b init)
   | Value.Map { layout; prog; outs; loads } ->
       widened apply ~by layout prog outs loads
   | Value.Assemble { dtype; shape; fill; pieces } ->

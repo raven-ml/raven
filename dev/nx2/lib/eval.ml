@@ -18,8 +18,8 @@ let delivered : type r. by:string -> r prim -> r prim =
   match op with
   | Place (p, x) -> Place (p, Exec.at (Devices.rebrand p) (Exec.live x))
   | Check _ -> Prim.map (fun x -> Exec.read (Exec.live x)) op
-  | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Assemble _ | Copy _
-  | Move _ | Bitcast _ ->
+  | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Assemble _ | Contract _
+  | Copy _ | Move _ | Bitcast _ ->
       Prim.prepare ~by computing op
 
 let eval ~by op =
@@ -54,6 +54,14 @@ let apply2 ~by k dt x y =
 let apply3 ~by k c x y =
   if Interp.quiet () then Exec.apply3 ~slow:eval3 ~by k c x y
   else eval3 ~by k c x y
+
+let contract ~by spec dt a b init =
+  let fast =
+    if Interp.quiet () then Exec.contract ~by spec dt a b init else None
+  in
+  match fast with
+  | Some y -> y
+  | None -> eval ~by (Contract { spec; out = dt; a; b; init })
 
 let place ~by p x =
   match x with

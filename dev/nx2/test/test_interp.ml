@@ -15,6 +15,7 @@ module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module M = Nx_array.Move
 module P = Nx_kernel.Prog
+module S = Nx_kernel.Spec
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 
@@ -375,6 +376,7 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
   | Scatter _ -> same_form ~msg a b
   | Assemble _ -> same_form ~msg a b
   | Copy _ -> same_form ~msg a b
+  | Contract _ -> same_form ~msg a b
   | Move _ -> same_form ~msg a b
   | Bitcast _ -> same_form ~msg a b
   | Place _ -> same_form ~msg a b
@@ -666,6 +668,25 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
         (assemble (D.zero a.dtype)
            (List.map (fun (r, x) -> (r, snd (parts i x))) a.pieces))
   | Copy x -> both (fun y -> Nx.Prim.eval ~by (Copy y)) x
+  | Contract { out; spec; a; b; init } ->
+      (* Bilinear: the tangent is ta · b + a · tb + tinit. *)
+      let pa, ta = parts i a and pb, tb = parts i b in
+      let product a b =
+        let spec =
+          S.contract ~batch:(S.batch spec) ~contracting:(S.contracting spec)
+            ~acc:(S.acc spec) ~out:(S.out spec) ~init:false
+        in
+        Nx.Prim.eval ~by (Contract { out; spec; a; b; init = None })
+      in
+      let init' = Option.map (fun x -> fst (parts i x)) init in
+      let y =
+        Nx.Prim.eval ~by (Contract { out; spec; a = pa; b = pb; init = init' })
+      in
+      let t = Nx.add (product ta pb) (product pa tb) in
+      let t =
+        match init with Some x -> Nx.add t (snd (parts i x)) | None -> t
+      in
+      dual i y t
   | Move (mv, x) -> both (fun y -> Nx.Prim.eval ~by (Move (mv, y))) x
   | Bitcast _ -> invalid_arg (by ^ ": test.jvp has no derivative of a bitcast")
   | Place (q, x) ->

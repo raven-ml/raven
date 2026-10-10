@@ -384,11 +384,40 @@ let test_reuse_after_view () =
     (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
   equal ~msg:"the result" (array bits) [| 2.; 3. |] (elements y)
 
+(* A contraction consumes its donated [init] and computes into fresh memory:
+   here [y = init + a · b] elementwise, as a contraction with one batch pair and
+   no sum. *)
+let test_contract_consumes () =
+  let init = f32 [| 10.; 20. |] in
+  let d = Exec.donate ~by:"t" init in
+  let spec =
+    Nx_kernel.Spec.contract
+      ~batch:[| (0, 0) |]
+      ~contracting:[||] ~acc:(D.Any D.Float32) ~out:(D.Any D.Float32) ~init:true
+  in
+  let y =
+    Exec.run ~by:"t"
+      (Value.Contract
+         {
+           out = D.Float32;
+           spec;
+           a = f32 [| 1.; 2. |];
+           b = f32 [| 3.; 4. |];
+           init = Some d;
+         })
+  in
+  equal ~msg:"the result" (array bits) [| 13.; 28. |] (elements y);
+  equal ~msg:"fresh memory" bool false
+    (Rig.Buffer.overlaps (A.buffer (array_of init)) (A.buffer (array_of y)));
+  raises_match (Exn.invalid_arg ~substring:"t: operand 1 was donated to t")
+    (fun () -> Exec.run ~by:"t" (Value.Copy init))
+
 let donation =
   group "donation"
     [
       test "a handle passed on by a view is written in place"
         test_reuse_after_view;
+      test "a contraction consumes its donated init" test_contract_consumes;
       test "an elementwise operation writes into a donated operand" test_reuse;
       test "the fast path writes into a donated operand too" test_reuse_fast;
       test "the fast path of one operand writes into it" test_reuse_fast1;

@@ -67,6 +67,18 @@ type 'd t = {
   result : 'd Devices.placement;
 }
 
+(** The type for where operands lie together. *)
+type 'd common =
+  | Every_set  (** Every operand is of every set. *)
+  | Uncut of 'd Devices.placement
+      (** Every operand not of every set lies at this placement, which cuts no
+          axis. *)
+  | Other  (** Any other arrangement. *)
+
+val common : 'd Devices.placement option array -> 'd common
+(** [common ps] is where operands at [ps] lie together, [None] for an operand of
+    every set. *)
+
 val route :
   by:string ->
   rule ->

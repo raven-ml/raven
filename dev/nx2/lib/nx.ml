@@ -1242,6 +1242,15 @@ let cumprod ?axis x = scan ~by:"Nx.cumprod" Prod ?axis x
 let cummax ?axis x = scan ~by:"Nx.cummax" Max ?axis x
 let cummin ?axis x = scan ~by:"Nx.cummin" Min ?axis x
 
+(* Contraction *)
+
+let contract ?sizes ?acc ?init dt p a b =
+  let acc = Option.map (fun dt -> D.Any dt) acc in
+  Contraction.contract ~by:"Nx.contract" ?sizes ?acc ?init dt p a b
+
+let einsum p a b = Contraction.contract ~by:"Nx.einsum" (dtype a) p a b
+let matmul a b = Contraction.matmul ~by:"Nx.matmul" a b
+
 (* Operations as data *)
 
 module Prim = struct
@@ -1321,6 +1330,14 @@ module Prim = struct
         shape : int array;
         fill : 'v;
         pieces : (Nx_array.Move.range array * ('v, 's, 'd) Value.t) list;
+      }
+        -> ('v, 's, 'd) Value.t t
+    | Contract : {
+        spec : Nx_kernel.Spec.contract Nx_kernel.Spec.t;
+        out : ('v, 's) dtype;
+        a : ('a, 'b, 'd) Value.t;
+        b : ('c, 'e, 'd) Value.t;
+        init : ('v, 's, 'd) Value.t option;
       }
         -> ('v, 's, 'd) Value.t t
     | Copy : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t t

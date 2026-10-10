@@ -16,6 +16,7 @@
   eval
   repr
   pattern
+  contraction
   rng
   nx)
  (private_modules
@@ -31,6 +32,7 @@
   eval
   repr
   pattern
+  contraction
   rng)
  (modules_without_implementation value)
  (libraries nx_array nx_kernel nx_cpu rig))

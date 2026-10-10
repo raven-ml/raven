@@ -14,6 +14,7 @@
   test_donate
   test_shapes
   test_patterns
+  test_contract
   test_rng
   test_indexing)
  (modules
@@ -27,6 +28,7 @@
   test_donate
   test_shapes
   test_patterns
+  test_contract
   test_rng
   test_indexing)
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))

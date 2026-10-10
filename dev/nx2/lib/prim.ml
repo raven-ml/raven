@@ -161,6 +161,7 @@ let name : type r. r prim -> string = function
   | Gather _ -> "Gather"
   | Scatter _ -> "Scatter"
   | Assemble _ -> "Assemble"
+  | Contract _ -> "Contract"
   | Copy _ -> "Copy"
   | Move _ -> "Move"
   | Bitcast _ -> "Bitcast"
@@ -177,6 +178,9 @@ let operands : type r. r prim -> operands = function
   | Scatter { idx; updates; into; _ } ->
       Operands [ Any idx; Any updates; Any into ]
   | Assemble { pieces; _ } -> Operands (List.map (fun (_, x) -> Any x) pieces)
+  | Contract { a; b; init; _ } ->
+      Operands
+        (Any a :: Any b :: Option.to_list (Option.map (fun i -> Any i) init))
   | Copy x -> Operands [ Any x ]
   | Move (_, x) -> Operands [ Any x ]
   | Bitcast (_, x) -> Operands [ Any x ]
@@ -206,6 +210,10 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
       f 1 updates;
       f 2 into
   | Assemble { pieces; _ } -> List.iteri (fun i (_, x) -> f i x) pieces
+  | Contract { a; b; init; _ } ->
+      f 0 a;
+      f 1 b;
+      Option.iter (f 2) init
   | Copy x -> f 0 x
   | Move (_, x) -> f 0 x
   | Bitcast (_, x) -> f 0 x
@@ -231,6 +239,8 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
   | Gather { idx; x; _ } -> f idx || f x
   | Scatter { idx; updates; into; _ } -> f idx || f updates || f into
   | Assemble { pieces; _ } -> List.exists (fun (_, x) -> f x) pieces
+  | Contract { a; b; init; _ } ->
+      f a || f b || Option.fold ~none:false ~some:f init
   | Copy x -> f x
   | Move (_, x) -> f x
   | Bitcast (_, x) -> f x
@@ -250,6 +260,8 @@ let map : type r.
       Scatter { s with idx = m s.idx; updates = m s.updates; into = m s.into }
   | Assemble a ->
       Assemble { a with pieces = List.map (fun (r, x) -> (r, m x)) a.pieces }
+  | Contract c ->
+      Contract { c with a = m c.a; b = m c.b; init = Option.map m c.init }
   | Copy x -> Copy (m x)
   | Move (mv, x) -> Move (mv, m x)
   | Bitcast (dt, x) -> Bitcast (dt, m x)
@@ -431,7 +443,7 @@ let pp : type r. Format.formatter -> r prim -> unit =
         (if unique then " unique" else "")
         axis
   | Assemble { shape; _ } -> Format.fprintf ppf " into %a" pp_shape shape
-  | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
+  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ -> ());
   List.iteri (fun i x -> Format.fprintf ppf " (x%d: %a)" i pp_operand x) xs
 
 (* Rules *)
@@ -769,6 +781,35 @@ let assemble_route (type v s d) ~by
         (Array.of_list (List.map (fun (_, x) -> at x) pieces))
         (Array.of_list (List.map (fun (_, x) -> shape x) pieces))
 
+(* A contraction's operand shapes, [a], [b], then [init] where there is one. *)
+let contract_shapes a b init =
+  let s = [| shape a; shape b |] in
+  match init with None -> s | Some i -> Array.append s [| shape i |]
+
+(* A contraction's result shape: its rule. *)
+let contract_shape ~by spec a b init =
+  match Nx_kernel.Spec.shapes spec (contract_shapes a b init) with
+  | Ok [| s |] -> s
+  | Ok _ -> invalid_argf "%s: a contraction of several results" by
+  | Error e -> invalid_argf "%s: %s" by e
+
+(* A contraction reads its operands whole on each device that computes it: where
+   they lie at one placement that cuts no axis, there; else on every device of
+   their set, each holding them whole. *)
+let contract_route (type a b c e v s d) ~by spec (a : (a, b, d) t)
+    (b : (c, e, d) t) (init : (v, s, d) t option) : d Route.t option =
+  ignore (contract_shape ~by spec a b init);
+  let ps =
+    match init with
+    | None -> [| at a; at b |]
+    | Some i -> [| at a; at b; at i |]
+  in
+  match Route.common ps with
+  | Route.Every_set -> None
+  | Route.Uncut p ->
+      Some { Route.operands = Array.make (Array.length ps) p; result = p }
+  | Route.Other -> Route.route ~by Replicated ps (contract_shapes a b init)
+
 let results : type r.
     by:string ->
     ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
@@ -801,6 +842,10 @@ let results : type r.
       check_assemble ~by dtype shape fill pieces;
       let placement = result (assemble_route ~by pieces) in
       m 0 { dtype; layout = L.contiguous shape; placement }
+  | Contract { spec; out; a; b; init } ->
+      let shape = contract_shape ~by spec a b init in
+      let placement = result (contract_route ~by spec a b init) in
+      m 0 { dtype = out; layout = L.contiguous shape; placement }
   | Copy x ->
       let placement = one_result ~by Elementwise x in
       m 0 { dtype = dtype x; layout = L.contiguous (shape x); placement }
@@ -977,6 +1022,12 @@ let prepare : type r.
           pieces =
             List.mapi (fun i (rs, x) -> (rs, place (read_at r i) x)) a.pieces;
         }
+  | Contract c ->
+      let r = contract_route ~by c.spec c.a c.b c.init in
+      let a = place (read_at r 0) c.a and b = place (read_at r 1) c.b in
+      let init = Option.map (fun i -> place (read_at r 2) i) c.init in
+      if a == c.a && b == c.b && init == c.init then op
+      else Contract { c with a; b; init }
   | Copy x -> Copy (one Elementwise x)
   | Move (mv, x) ->
       ignore (moved_shape ~by mv x);
@@ -1021,6 +1072,7 @@ let arrays : type r. r prim -> r -> Nx_array.any array array =
   | Gather _ -> [| arrays_of r |]
   | Scatter _ -> [| arrays_of r |]
   | Assemble _ -> [| arrays_of r |]
+  | Contract _ -> [| arrays_of r |]
   | Copy _ -> [| arrays_of r |]
   | Move _ -> [| arrays_of r |]
   | Bitcast _ -> [| arrays_of r |]

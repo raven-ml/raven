@@ -117,3 +117,17 @@ val read : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     value of every set computed for this library to read, its placement the
     host's whatever ['d]. It never reaches a function of nx's own as an operand.
 *)
+
+val contract :
+  by:string ->
+  Nx_kernel.Spec.contract Nx_kernel.Spec.t ->
+  ('v, 's) Value.dtype ->
+  ('a, 'b, 'd) Value.t ->
+  ('c, 'e, 'd) Value.t ->
+  ('v, 's, 'd) Value.t option ->
+  ('v, 's, 'd) Value.t option
+(** [contract ~by spec dt a b init] is [Some] the contraction [spec] of [a] and
+    [b] from [init] where no interpretation reaches it, its operands are live
+    arrays on one device at physically one placement whose set has kernels, they
+    fit [spec], and the kernels compute it: it builds no operation and allocates
+    the C-contiguous result. [None] otherwise, for the operation to decide. *)

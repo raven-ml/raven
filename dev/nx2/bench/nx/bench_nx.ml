@@ -204,6 +204,56 @@ let rng_rows =
           draw (Nx.Rng.poisson ~key:(Thumper.black_box key) rates));
     ]
 
+(* Contractions at the shapes of nx.cpu's and nx.cuda's rows, each beside its
+   kernel called directly, so that the frontend's cost over it shows: squares,
+   and a decode step's one row against a weight stored as [n × k]. *)
+
+let matrix dt s =
+  Nx.Repr.of_array Nx.Host.v
+    (A.of_array dt s (Array.make (Array.fold_left ( * ) 1 s) 1.))
+
+let gemm_direct ~contracting a b s =
+  let spec =
+    Nx_kernel.Spec.contract ~batch:[||] ~contracting ~acc:(D.Any D.Float32)
+      ~out:(D.Any D.Float32) ~init:false
+  in
+  let a = Option.get (Nx.Repr.array a) and b = Option.get (Nx.Repr.array b) in
+  fun () ->
+    let dst = A.create Rig.host D.Float32 s in
+    match Nx_cpu.contract spec ~dst:(A.Any dst) [| A.Any a; A.Any b |] with
+    | Done -> dst
+    | refusal -> A.refused "contract-direct" refusal [ A.Any dst ]
+
+let matmul_rows n =
+  let a = matrix D.Float32 [| n; n |] and b = matrix D.Float32 [| n; n |] in
+  let name = Printf.sprintf "matmul-f32-%d" n in
+  [
+    Thumper.bench name (fun () ->
+        Nx.Repr.array (Nx.matmul (Thumper.black_box a) b));
+    Thumper.bench (name ^ "-direct")
+      (gemm_direct ~contracting:[| (1, 0) |] a b [| n; n |]);
+  ]
+
+let rows_by_weight = Nx.Pattern.v "m k, n k -> m n | k"
+
+let decode_rows =
+  let x = matrix D.Float32 [| 1; 4096 |]
+  and w = matrix D.Float32 [| 4096; 4096 |] in
+  let xb = matrix D.Bfloat16 [| 1; 2880 |]
+  and wb = matrix D.Bfloat16 [| 5120; 2880 |] in
+  [
+    Thumper.bench "einsum-f32-m1x4096x4096" (fun () ->
+        Nx.Repr.array (Nx.einsum rows_by_weight (Thumper.black_box x) w));
+    Thumper.bench "einsum-f32-m1x4096x4096-direct"
+      (gemm_direct ~contracting:[| (1, 1) |] x w [| 1; 4096 |]);
+    Thumper.bench "einsum-bf16-m1x5120x2880" (fun () ->
+        Nx.Repr.array (Nx.einsum rows_by_weight (Thumper.black_box xb) wb));
+  ]
+
+let contract_rows =
+  Thumper.group "contract"
+    (matmul_rows 4 @ matmul_rows 64 @ matmul_rows 1024 @ decode_rows)
+
 (* Interpretations. Each row adds one-element host values 100 times: eagerly;
    under a Values interpretation that does not reach them; while an Extent lives
    on another domain; while one lives on this domain around another fiber, which
@@ -295,5 +345,6 @@ let () =
          place_rows;
          move_rows;
          rng_rows;
+         contract_rows;
          interp_rows;
        ]

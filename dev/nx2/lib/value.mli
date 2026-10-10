@@ -218,6 +218,16 @@ and _ prim =
       (** The value of [shape] whose element at an index is the last piece's
           whose region, a [Slice] of [shape] by its ranges, holds it, and [fill]
           where none does. Each piece has its region's shape. *)
+  | Contract : {
+      spec : Nx_kernel.Spec.contract Nx_kernel.Spec.t;
+      out : ('v, 's) dtype;  (** [spec]'s [out]. *)
+      a : ('a, 'b, 'd) t;
+      b : ('c, 'e, 'd) t;
+      init : ('v, 's, 'd) t option;  (** Present iff [spec] has one. *)
+    }
+      -> ('v, 's, 'd) t prim
+      (** [spec] of [a] and [b], from [init]: its result C-contiguous, of the
+          shape {!Nx_kernel.Spec.shapes} gives. *)
   | Copy : ('v, 's, 'd) t -> ('v, 's, 'd) t prim
       (** The value stored afresh, C-contiguous. *)
   | Move : Nx_array.Move.t * ('v, 's, 'd) t -> ('v, 's, 'd) t prim

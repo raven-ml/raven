@@ -744,6 +744,59 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     have [k] elements, and where [dt] is narrower and [x] has the greatest rank
     already. *)
 
+(** {1:contraction Contraction}
+
+    A contraction multiplies two operands along their paired axes and sums the
+    products over the summed ones. *)
+
+val contract :
+  ?sizes:(string * int) list ->
+  ?acc:('w, 'q) dtype ->
+  ?init:('v, 's, 'd) t ->
+  ('v, 's) dtype ->
+  Pattern.t ->
+  ('a, 'b, 'd) t ->
+  ('c, 'e, 'd) t ->
+  ('v, 's, 'd) t
+(** [contract dt p a b] is [round_dt (init + Σ a · b)] over [p]'s summed names,
+    summed in [acc], for each index of [p]'s result. [sizes] gives the extents
+    of names inside groups that neither operand's shape gives alone.
+
+    [acc] defaults to [float32] for float operands of 32 bits or fewer,
+    [float64], [complex64] or [complex128] at the operands' width otherwise, and
+    [dt] for integers, which wrap. An integer operand with a float one has no
+    default: [acc] is required. The sum starts from [init], or [+0] without it,
+    and associates in an order that is a function of the shapes alone, never of
+    the order a pattern lists its names, which each kernel library states.
+    Before rounding it is within [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the exact
+    sum of its [K] products, where [γ(n, v) = n v / (1 - n v)] and [u] is
+    [acc]'s unit roundoff.
+
+    A donated [init] is consumed as {!donate} states.
+
+    Raises [Invalid_argument] if [dt] is a boolean; [p] has one operand; an
+    operand's rank is not the number of axes [p] gives it; paired extents
+    differ; a group's extents do not multiply to its axis, or it leaves two
+    extents unknown; a unit axis's extent is not [1]; a name in [sizes] is not
+    in [p]; [acc] is omitted for an integer and a float operand, or is a
+    boolean, a float narrower than [float32] or than a float operand, or of
+    another kind than [dt]; or [init]'s shape is not the result's. *)
+
+val einsum : Pattern.t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [einsum p a b] is [contract (dtype a) p a b]: two operands, as a contraction
+    has. A product of three is two calls.
+
+    Raises [Invalid_argument] as {!contract} does. *)
+
+val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [matmul a b] is the matrix product over the last two axes, leading axes
+    broadcast, at [a]'s dtype and accumulated as {!contract} does by default. A
+    1-d [a] is a row and a 1-d [b] a column, and their unit axis is dropped from
+    the result: two 1-d operands give their 0-d inner product.
+
+    Raises [Invalid_argument] if an operand is 0-d, the inner extents differ,
+    the leading axes do not broadcast, or the dtype is a boolean. *)
+
 (** {1:devices Device sets and placement}
 
     A value lies on a device set, a module minted by {!devices} whose brand ['d]
@@ -1257,6 +1310,16 @@ module Prim : sig
         (** The value of [shape] whose element at an index is the last piece's
             whose region, a [Slice] of [shape] by its ranges, holds it, and
             [fill] where none does. Each piece has its region's shape. *)
+    | Contract : {
+        spec : Nx_kernel.Spec.contract Nx_kernel.Spec.t;
+        out : ('v, 's) dtype;  (** [spec]'s [out]. *)
+        a : ('a, 'b, 'd) nx;
+        b : ('c, 'e, 'd) nx;
+        init : ('v, 's, 'd) nx option;  (** Present iff [spec] has one. *)
+      }
+        -> ('v, 's, 'd) nx t
+        (** [spec] of [a] and [b], from [init]: its result C-contiguous, of the
+            shape {!Nx_kernel.Spec.shapes} gives. *)
     | Copy : ('v, 's, 'd) nx -> ('v, 's, 'd) nx t
         (** The value stored afresh, C-contiguous. *)
     | Move : Nx_array.Move.t * ('v, 's, 'd) nx -> ('v, 's, 'd) nx t
@@ -1284,8 +1347,9 @@ module Prim : sig
       operands, and each operand's dtype, shape and placement. *)
 
   val operands : 'r t -> operands
-  (** [operands op] is [op]'s operands in order: a map's loads, [Check]'s [ok]
-      then its data, the one operand of the others. *)
+  (** [operands op] is [op]'s operands in order: a map's loads, a contraction's
+      [a], [b] then [init], [Check]'s [ok] then its data, the one operand of the
+      others. *)
 
   val map : ('v 's 'd. ('v, 's, 'd) nx -> ('v, 's, 'd) nx) -> 'r t -> 'r t
   (** [map m op] is [op] with each operand [x] replaced by [m x]. *)

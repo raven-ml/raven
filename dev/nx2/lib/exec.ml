@@ -509,8 +509,8 @@ let operand_at : type r.
 let is_view : type r. r Value.prim -> bool = function
   | Value.Move _ | Value.Bitcast _ -> true
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
-  | Value.Scatter _ | Value.Assemble _ | Value.Copy _ | Value.Place _
-  | Value.Check _ ->
+  | Value.Scatter _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
+  | Value.Place _ | Value.Check _ ->
       false
 
 let find memo p =
@@ -636,8 +636,8 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           consumed ~by ~reused:(fun _ -> false) hs;
           r)
   | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
-  | Value.Assemble _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
-  | Value.Place _ | Value.Check _ ->
+  | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Move _
+  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       claim ~by hs;
       let r = run ~by (Prim.map live op) in
       consumed ~by ~reused:(fun _ -> false) hs;
@@ -728,6 +728,25 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
           (Prim.arrays op r)
       then r
       else expanded ~by (Option.get !where) op
+  | Value.Contract { spec; a; b; init; _ } ->
+      let where = ref None in
+      let r = Prim.results ~by (fun k f -> alloc ~by ~where ?into k f) op in
+      let p = Option.get !where in
+      let set = Devices.set p in
+      let (module K) = kernels_of ~by ~op:"Contract" set in
+      let view x k =
+        A.Any (Place.view ~by x k (Array.map whole (Prim.shape x)))
+      in
+      let dsts = (Prim.arrays op r).(0) in
+      let computed = ref true in
+      each_device ~by p (Prim.shape r) (fun j k _ ->
+          if !computed then begin
+            let init = Option.to_list (Option.map (fun i -> view i k) init) in
+            let ops = Array.of_list (view a k :: view b k :: init) in
+            computed :=
+              ran ~by (K.contract spec ~dst:dsts.(j) ops) [| dsts.(j) |] ops
+          end);
+      if !computed then r else expanded ~by p op
   | Value.Copy x ->
       let where = ref None in
       let r = Prim.results ~by (fun k f -> alloc ~by ~where k f) op in
@@ -1141,8 +1160,8 @@ and compute_at : type r.
         (Prim.arrays op r);
       r
   | Value.Reduce _ | Value.Scan _ | Value.Gather _ | Value.Scatter _
-  | Value.Assemble _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
-  | Value.Place _ | Value.Check _ ->
+  | Value.Assemble _ | Value.Contract _ | Value.Copy _ | Value.Move _
+  | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       run ~by op
 
 (* [node]'s results at [p], its constant operands already computed where it
@@ -1426,3 +1445,37 @@ let rec apply3 : type a b v s d.
       | Some p -> apply3 ~slow ~by k (at p c) (at p x) (at p y)
       | None -> slow ~by k c x y)
   | _ -> slow ~by k c x y
+
+(* The contraction [spec] of live arrays on one device, at physically one
+   placement whose set has kernels, computed by them without building the
+   operation. [None] elsewhere, where its operands break its rule, and where the
+   kernels decline it: the operation decides those. *)
+let contract (type v s a b c e d) ~by spec (dt : (v, s) D.t)
+    (x : (a, b, d) Value.t) (y : (c, e, d) Value.t)
+    (init : (v, s, d) Value.t option) : (v, s, d) Value.t option =
+  match (x, y) with
+  | Value.Array rx, Value.Array ry
+    when rx.at == ry.at && live_word rx.dead && live_word ry.dead -> (
+      let at = rx.at in
+      let set = Devices.set at in
+      let operands =
+        match init with
+        | None -> Some [| A.Any rx.a; A.Any ry.a |]
+        | Some (Value.Array ri) when ri.at == at && live_word ri.dead ->
+            Some [| A.Any rx.a; A.Any ry.a; A.Any ri.a |]
+        | Some _ -> None
+      in
+      match (operands, Grid.one (Devices.grid at), Devices.kernels set) with
+      | Some ops, Some k, Some (module K) -> (
+          let shape (A.Any a) = L.shape (A.layout a) in
+          match S.shapes spec (Array.map shape ops) with
+          | Ok [| s |] -> (
+              let dst = A.create (Devices.rig set k) dt s in
+              match K.contract spec ~dst:(A.Any dst) ops with
+              | Done -> Some (Value.Array { at; a = dst; dead = Prim.live })
+              | Declined -> None
+              | refusal -> A.refused by refusal (A.Any dst :: Array.to_list ops)
+              )
+          | Ok _ | Error _ -> None)
+      | _ -> None)
+  | _ -> None
