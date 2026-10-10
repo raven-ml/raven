@@ -55,6 +55,24 @@ let placements =
           let module S1 = (val Nx.devices [ m 2 ]) in
           equal string "m2" (pp S1.on);
           equal string "m2" (pp (S1.split ~axis:0)));
+      test "a placement on one device of a set is that device alone" (fun () ->
+          let p = Nx.Placement.device S4.v (m 2) in
+          equal string "m2" (pp p);
+          equal bool true (Nx.Placement.devices p == S4.v);
+          equal bool true (p == Nx.Placement.device S4.v (m 2));
+          not_equal placement S4.on p;
+          let x = Nx.place p (Nx.zeros Nx.float32 [| 3 |]) in
+          equal (list string) [ "m2" ]
+            (List.map
+               (fun a -> Rig.name (Nx_array.device a))
+               (Array.to_list (Option.get (Nx.Repr.shards x)))));
+      test "a placement on the one device of a set is the set's whole"
+        (fun () ->
+          let module S1 = (val Nx.devices [ m 2 ]) in
+          equal bool true (S1.on == Nx.Placement.device S1.v (m 2)));
+      test "device refuses a device outside the set" (fun () ->
+          invalid ~by:"Nx.Placement.device" (fun () ->
+              Nx.Placement.device S2.v (m 2)));
       test "a split is not the whole on every device" (fun () ->
           not_equal placement S4.on (S4.split ~axis:0));
       cases "split refuses the axis" ~name:string_of_int

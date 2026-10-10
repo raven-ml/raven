@@ -834,17 +834,18 @@ end
 
 (** Where a value's elements lie over its set. *)
 module Placement : sig
-  (* CR: Expose [device : 'd devices -> Rig.t -> 'd t], checking membership.
-     No public constructor selects one member of a multi-device set. A new
-     singleton set changes the brand, preventing a Check's condition and data
-     from occupying different devices of one set. Recovering this placement
-     through Nx_array and Repr needs storage solely to name a placement that
-     Devices.one already caches. *)
   type +'d t
   (** The type for placements over a set of brand ['d]. *)
 
   val on : 'd devices -> 'd t
   (** [on s] holds the whole value on every device of [s]. *)
+
+  val device : 'd devices -> Rig.t -> 'd t
+  (** [device s d] holds the whole value on [d] alone, a device of [s];
+      [on s] where [s] has [d] alone.
+
+      Raises [Invalid_argument] naming [Nx.Placement.device] unless [d]
+      is a device of [s] ({!Rig.equal}). *)
 
   val split : axis:int -> 'd devices -> 'd t
   (** [split ~axis s] cuts [axis] into equal windows, one per device of [s], in

@@ -6,6 +6,8 @@
 type ('v, 's, 'd) t = ('v, 's, 'd) Value.t
 type ('v, 's) dtype = ('v, 's) Nx_array.Dtype.t
 
+let invalid_argf fmt = Format.kasprintf invalid_arg fmt
+
 let shape = Prim.shape
 let dtype = Prim.dtype
 
@@ -69,6 +71,14 @@ module Placement = struct
   type 'd t = 'd Devices.placement
 
   let on = Devices.on
+
+  let device s d =
+    match Devices.position s d with
+    | Some k -> Devices.one s k
+    | None ->
+        invalid_argf "Nx.Placement.device: %s is not a device of %a"
+          (Rig.name d) Devices.pp s
+
   let split ~axis s = Devices.split ~by:"Nx.Placement.split" ~axis s
   let mesh m cuts = Devices.mesh ~by:"Nx.Placement.mesh" m cuts
   let devices = Devices.set
@@ -118,8 +128,6 @@ end
 
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
-
-let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 let pp_shape ppf s =
   Format.fprintf ppf "[%s]"
