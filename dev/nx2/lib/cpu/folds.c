@@ -26,6 +26,9 @@
 
 #define BLOCK NX_CPU_FOLD_BLOCK
 
+/* How far a scan's sequences run behind one another, in elements. */
+#define LAG 16
+
 /* A lane fold and a combine of [F] over elements of [T]. */
 #define FOLD(NAME, T, F)                                                     \
   static void lanes_##NAME(const uint8_t *x_, int64_t s, int64_t n,          \
@@ -60,12 +63,41 @@
       for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[i * s]);              \
   }                                                                          \
   static void scan_##NAME(uint8_t *a_, const uint8_t *x_, int64_t s,         \
-                          uint8_t *y_, int64_t sy, int64_t n) {             \
+                          int64_t xs, uint8_t *y_, int64_t sy, int64_t ys,   \
+                          int64_t n, int k) {                                \
     const T *x = (const T *)x_;                                              \
-    T *y = (T *)y_, a;                                                       \
-    memcpy(&a, a_, sizeof a);                                                \
-    for (int64_t i = 0; i < n; i++) y[i * sy] = a = F(a, x[i * s]);          \
-    memcpy(a_, &a, sizeof a);                                                \
+    T *y = (T *)y_, a[4];                                                    \
+    memcpy(a, a_, k * sizeof(T));                                            \
+    /* Sequence j runs LAG·j elements behind sequence 0: sequences a       \
+       multiple of 4 KiB apart would otherwise touch addresses x86 takes   \
+       for one another's (4K aliasing). */                                   \
+    int64_t i = 0;                                                           \
+    if (k == 4 && n > 3 * LAG) {                                             \
+      for (int j = 0; j < 4; j++)                                            \
+        for (int64_t m = 0; m < (3 - j) * LAG; m++)                          \
+          y[j * ys + m * sy] = a[j] = F(a[j], x[j * xs + m * s]);            \
+      /* Four named accumulators, so that each stays in a register. */     \
+      T a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];                          \
+      const T *x1 = x + xs, *x2 = x + 2 * xs, *x3 = x + 3 * xs;              \
+      T *y1 = y + ys, *y2 = y + 2 * ys, *y3 = y + 3 * ys;                    \
+      for (i = 3 * LAG; i < n; i++) {                                        \
+        y[i * sy] = a0 = F(a0, x[i * s]);                                    \
+        y1[(i - LAG) * sy] = a1 = F(a1, x1[(i - LAG) * s]);                  \
+        y2[(i - 2 * LAG) * sy] = a2 = F(a2, x2[(i - 2 * LAG) * s]);          \
+        y3[(i - 3 * LAG) * sy] = a3 = F(a3, x3[(i - 3 * LAG) * s]);          \
+      }                                                                      \
+      a[0] = a0;                                                             \
+      a[1] = a1;                                                             \
+      a[2] = a2;                                                             \
+      a[3] = a3;                                                             \
+      for (int j = 1; j < 4; j++)                                            \
+        for (int64_t m = n - j * LAG; m < n; m++)                            \
+          y[j * ys + m * sy] = a[j] = F(a[j], x[j * xs + m * s]);            \
+    } else                                                                   \
+      for (int j = 0; j < k; j++)                                            \
+        for (i = 0; i < n; i++)                                              \
+          y[j * ys + i * sy] = a[j] = F(a[j], x[j * xs + i * s]);            \
+    memcpy(a_, a, k * sizeof(T));                                            \
   }                                                                          \
   /* Four blocks' lanes at once, so that more additions are in flight. */ \
   static inline void four_##NAME(const T *x, T e, T *v) {             \
@@ -97,8 +129,47 @@
     T *v = (T *)v_, e;                                                       \
     memcpy(&e, e_, sizeof e);                                                \
     int64_t b = 0;                                                           \
-    for (; b + 4 <= n; b += 4) four_##NAME(x + b * BLOCK, e, v + b);  \
-    for (; b < n; b++) one_##NAME(x + b * BLOCK, e, v + b);              \
+    for (; b + 4 <= n; b += 4) four_##NAME(x + b * BLOCK, e, v + b);         \
+    for (; b < n; b++) one_##NAME(x + b * BLOCK, e, v + b);                  \
+  }                                                                          \
+  static void column_##NAME(uint8_t *a_, const uint8_t *x_, int64_t st,      \
+                            int64_t n, int64_t s, int64_t w) {               \
+    T *a = (T *)a_;                                                          \
+    const T *x = (const T *)x_;                                              \
+    int64_t j = 0;                                                           \
+    if (s == 1)                                                              \
+      for (; j + 32 <= w; j += 32) {                                         \
+        T v[32];                                                             \
+        memcpy(v, a + j, sizeof v);                                          \
+        for (int64_t i = 0; i < n; i++)                                      \
+          for (int k = 0; k < 32; k++) v[k] = F(v[k], x[i * st + j + k]);    \
+        memcpy(a + j, v, sizeof v);                                          \
+      }                                                                      \
+    for (; j < w; j++) {                                                     \
+      T v = a[j];                                                            \
+      for (int64_t i = 0; i < n; i++) v = F(v, x[i * st + j * s]);           \
+      a[j] = v;                                                              \
+    }                                                                        \
+  }                                                                          \
+  static void few_##NAME(const uint8_t *x_, const int64_t *off, int n,       \
+                         int64_t s, int64_t w, const uint8_t *e_,            \
+                         uint8_t *y_, int64_t sy) {                          \
+    const T *x = (const T *)x_;                                              \
+    T *y = (T *)y_, e;                                                       \
+    memcpy(&e, e_, sizeof e);                                                \
+    /* Sixteen outputs at a time: their lanes as rows, which the tree      \
+       combines as vectors. */                                               \
+    for (int64_t j = 0; j < w; j += 16) {                                    \
+      int64_t m = w - j < 16 ? w - j : 16;                                   \
+      T l[16][16];                                                           \
+      for (int t = 0; t < n; t++)                                            \
+        for (int64_t i = 0; i < m; i++)                                      \
+          l[t][i] = F(e, x[(j + i) * s + off[t]]);                           \
+      for (int h = 8; h >= 1; h /= 2)                                        \
+        for (int k = 0; k < h && k + h < n; k++)                             \
+          for (int64_t i = 0; i < m; i++) l[k][i] = F(l[k][i], l[k + h][i]); \
+      for (int64_t i = 0; i < m; i++) y[(j + i) * sy] = l[0][i];             \
+    }                                                                        \
   }
 
 #define ADD(a, b) ((a) + (b))
@@ -143,7 +214,9 @@ FOLD(min_b, uint8_t, ALL)
 
 /* The table's folds, by monoid then dtype: NULL where declined. */
 #define SET(M, DT, F)                                                        \
-  t->fold[M][DT] = (nx_cpu_fold){lanes_##F, combine_##F, scan_##F, blocks_##F}
+  t->fold[M][DT] =                                                           \
+      (nx_cpu_fold){lanes_##F, combine_##F, scan_##F, blocks_##F, few_##F,  \
+                    column_##F}
 
 #define ALL4(DT, D)                                                          \
   SET(NX_SUM, DT, sum_##D);                                                  \

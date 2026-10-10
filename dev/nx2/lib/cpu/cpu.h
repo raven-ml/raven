@@ -88,18 +88,30 @@ typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
    stepping [s] elements, into the NX_CPU_LANES lanes at [l]: term i into
    lane (first + i) mod NX_CPU_LANES. [combine] adds the [n] elements at
    [x], stepping [s], into the [n] contiguous accumulators at [a], element
-   by element. [scan] adds the [n] elements at [x], stepping [s], into the
-   one accumulator at [a] in order, storing each sum into [y], stepping
-   [sy]. [blocks] stores into [v] the values of the [n] blocks of
+   by element. [scan] runs [k] sequences, at most 4, side by side: sequence
+   j adds the [n] elements at [x + j·xs], stepping [s], into the
+   accumulator [a]'s element j in order, storing each sum at
+   [y + j·ys], stepping [sy]. [blocks] stores into [v] the values of the [n] blocks of
    NX_CPU_FOLD_BLOCK contiguous terms from [x], each its lanes from the
-   identity [e] and the lanes' tree, as [lanes] and [combine] give them. */
+   identity [e] and the lanes' tree, as [lanes] and [combine] give them.
+   [few] stores into [y], stepping [sy], the values of [w] outputs of [n]
+   terms each, n at most NX_CPU_LANES: output j's term t at
+   [x + j·s + off[t]], in lane t from the identity [e], then the lanes'
+   tree, as one block of [lanes] gives them. [column] adds into each of the
+   [w] contiguous accumulators at [a] in turn the [n] rows of [x], row i
+   at [x + i·st] and its element j [s] further than j - 1: accumulator j
+   takes row 0's element j, then row 1's, and so on. */
 typedef struct {
   void (*lanes)(const uint8_t *x, int64_t s, int64_t n, uint8_t *l,
                 int first);
   void (*combine)(uint8_t *a, const uint8_t *x, int64_t s, int64_t n);
-  void (*scan)(uint8_t *a, const uint8_t *x, int64_t s, uint8_t *y,
-               int64_t sy, int64_t n);
+  void (*scan)(uint8_t *a, const uint8_t *x, int64_t s, int64_t xs,
+               uint8_t *y, int64_t sy, int64_t ys, int64_t n, int k);
   void (*blocks)(const uint8_t *x, int64_t n, const uint8_t *e, uint8_t *v);
+  void (*few)(const uint8_t *x, const int64_t *off, int n, int64_t s,
+              int64_t w, const uint8_t *e, uint8_t *y, int64_t sy);
+  void (*column)(uint8_t *a, const uint8_t *x, int64_t st, int64_t n,
+                 int64_t s, int64_t w);
 } nx_cpu_fold;
 
 /* The bytes of the largest tile of any target's microkernel: 8 × 12

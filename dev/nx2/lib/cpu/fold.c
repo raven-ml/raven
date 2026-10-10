@@ -66,6 +66,9 @@
 /* Fewer terms per output take the streaming path. */
 #define FEW 16
 
+/* A scan's slices a unit runs side by side where its axis steps least. */
+#define SLICES 4
+
 /* Full blocks whose values the table computes in one call. */
 #define RUN 64
 
@@ -86,6 +89,7 @@ typedef struct {
   int64_t ke[NX_MAX_RANK], ks[NX_MAX_RANK], kd[NX_MAX_RANK];
   int64_t x0, d0;
   int64_t rd; /* a scan's destination step along its axis */
+  int slices; /* a unit's outputs are slices scanned side by side */
   int64_t terms, blocks;
   int64_t row;    /* outputs per unit along the row axis; 1 per output */
   int64_t chunks; /* units along the row axis */
@@ -208,6 +212,17 @@ static void block(const fold *q, int64_t p, int64_t s, int64_t W, int64_t b,
   _Alignas(16) uint8_t l[LANES * ROW];
   int64_t row = W * q->w;
   for (int i = 0; i < used; i++) fill(q, l + i * row, W);
+  /* Along one reduced axis, lane i's terms lie LANES apart: the table adds
+     each lane's in order, its accumulators in registers. */
+  if (q->nr == 1) {
+    int64_t st = q->rs[0];
+    for (int i = 0; i < used; i++)
+      q->f->column(l + i * row, at(q, p + (t0 + i) * st), LANES * st,
+                   (n - i + LANES - 1) / LANES, s, W);
+    lane_tree(q, l, W, used);
+    memcpy(v, l, row);
+    return;
+  }
   /* The terms' positions step through the reduced axes as an odometer. */
   int64_t idx[NX_MAX_RANK], pos = term(q, p, t0), r = q->nr - 1;
   for (int64_t i = r, t = t0; i >= 0; i--) {
@@ -305,12 +320,34 @@ static void store(const fold *q, const unit *x, const uint8_t *v) {
   }
 }
 
+/* Outputs of a lane or fewer each, one block: their terms' positions from
+   an output's first are the same for every output, and the table folds
+   them output by output, its lanes in registers. */
+static void few(const fold *q, const unit *x) {
+  int64_t off[LANES];
+  for (int64_t t = 0; t < q->terms; t++) off[t] = term(q, 0, t);
+  uint8_t *d = q->a[0].base + x->d * q->w;
+  q->f->few(at(q, x->p), off, (int)q->terms, x->s, x->W, q->id, d, x->sd);
+  if (!q->nan || (x->sd == 1 && !any_nan(q, d, x->W))) return;
+  for (int64_t j = 0; j < x->W; j++) {
+    uint8_t *e = d + j * x->sd * q->w;
+    if (!is_nan(q, e)) continue;
+    int64_t t = 0;
+    while (t < q->terms && !is_nan(q, at(q, x->p + j * x->s + off[t]))) t++;
+    if (t < q->terms) memcpy(e, at(q, x->p + j * x->s + off[t]), q->w);
+  }
+}
+
 static void reduce_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const fold *q = ctx;
   _Alignas(16) uint8_t v[ROW];
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u);
+    if (q->terms <= LANES) {
+      few(q, &x);
+      continue;
+    }
     int64_t b0 = x.g * q->group, b1 = b0 + q->group;
     if (b1 > q->blocks) b1 = q->blocks;
     if (q->groups == 1) {
@@ -361,8 +398,10 @@ static void keep(fold *q, int64_t e, int64_t s, int64_t d) {
 
 /* Picks the path for [q]'s axes and lays out its units. The kept axis that
    steps least through the operand becomes the row axis, last, where it
-   steps less than every reduced axis or the outputs have few terms. */
-static void choose(fold *q) {
+   steps less than every reduced axis or the outputs have few terms. A
+   scan's slices otherwise run SLICES side by side along that axis, so that
+   as many running sums are in flight. */
+static void choose(fold *q, int scan) {
   int64_t outputs = 1;
   for (int i = 0; i < q->nk; i++) outputs *= q->ke[i];
   int least = -1;
@@ -378,7 +417,8 @@ static void choose(fold *q) {
   q->chunks = 1;
   q->outer = outputs;
   q->blocks = (q->terms + BLOCK - 1) / BLOCK;
-  if (least < 0 || (kept >= red && q->terms >= FEW)) return;
+  int rows = least >= 0 && (kept < red || q->terms < FEW);
+  if (least < 0 || (!rows && !scan)) return;
   int64_t e = q->ke[least], s = q->ks[least], d = q->kd[least];
   for (int i = least; i < q->nk - 1; i++) {
     q->ke[i] = q->ke[i + 1];
@@ -388,7 +428,9 @@ static void choose(fold *q) {
   q->ke[q->nk - 1] = e;
   q->ks[q->nk - 1] = s;
   q->kd[q->nk - 1] = d;
-  q->row = ROW / q->w < e ? ROW / q->w : e;
+  q->slices = !rows;
+  int64_t most = q->slices ? SLICES : ROW / q->w;
+  q->row = most < e ? most : e;
   q->chunks = (e + q->row - 1) / q->row;
   q->outer = outputs / e;
 }
@@ -412,7 +454,7 @@ static void plan_reduce(fold *q, const nx_loop *l) {
   }
   q->x0 = l->first[1];
   q->d0 = l->first[0];
-  choose(q);
+  choose(q, 0);
   int64_t units = q->outer * q->chunks;
   q->group = q->blocks > 0 ? q->blocks : 1;
   if (units < UNITS && q->blocks > 1) {
@@ -447,27 +489,38 @@ static void fill_dst(fold *q) {
 
 /* Scans */
 
-/* Chunk [c]'s total of the unit's slices, into [v]. */
+/* Chunk [c]'s total of the unit's slices, into [v]: slice by slice where
+   they run side by side. */
 static void total(const fold *q, const unit *x, int64_t c, uint8_t *v) {
   int64_t b0 = c * (SCAN_CHUNK / BLOCK), b1 = b0 + SCAN_CHUNK / BLOCK;
-  blocks(q, x->p, x->s, x->W, b0, b1 < q->blocks ? b1 : q->blocks, v);
+  if (b1 > q->blocks) b1 = q->blocks;
+  if (!q->slices) {
+    blocks(q, x->p, x->s, x->W, b0, b1, v);
+    return;
+  }
+  for (int64_t j = 0; j < x->W; j++)
+    blocks(q, x->p + j * x->s, 0, 1, b0, b1, v + j * q->w);
 }
 
 /* Chunk [c]'s results of the unit's slices, from the carry [a], which it
-   leaves holding the chunk's last results. */
+   leaves holding the chunk's last results: side by side, or a row of
+   outputs at a time. */
 static void rescan(const fold *q, const unit *x, int64_t c, uint8_t *a) {
   int64_t t0 = c * SCAN_CHUNK;
   int64_t n = q->terms - t0 < SCAN_CHUNK ? q->terms - t0 : SCAN_CHUNK;
-  uint8_t *y = q->a[0].base;
-  if (x->W == 1) {
-    q->f->scan(a, at(q, x->p + t0 * q->rs[0]), q->rs[0],
-               y + (x->d + t0 * q->rd) * q->w, q->rd, n);
+  uint8_t *y = q->a[0].base + x->d * q->w;
+  if (q->slices || x->W == 1) {
+    q->f->scan(a, at(q, x->p + t0 * q->rs[0]), q->rs[0], x->s,
+               y + t0 * q->rd * q->w, q->rd, x->sd, n, (int)x->W);
     return;
   }
   for (int64_t t = t0; t < t0 + n; t++) {
+    uint8_t *row = y + t * q->rd * q->w;
     q->f->combine(a, at(q, x->p + t * q->rs[0]), x->s, x->W);
-    for (int64_t j = 0; j < x->W; j++)
-      memcpy(y + (x->d + t * q->rd + j * x->sd) * q->w, a + j * q->w, q->w);
+    if (x->sd == 1) memcpy(row, a, x->W * q->w);
+    else
+      for (int64_t j = 0; j < x->W; j++)
+        memcpy(row + j * x->sd * q->w, a + j * q->w, q->w);
   }
 }
 
@@ -486,8 +539,8 @@ static void settle(const fold *q, const unit *x) {
   }
 }
 
-/* One pass per unit: each chunk's total, then its results from the carry,
-   which then takes the total. */
+/* One pass per unit: each chunk's results from the carry, which then takes
+   the chunk's total. The last chunk's total carries nowhere. */
 static void scan_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const fold *q = ctx;
@@ -496,9 +549,10 @@ static void scan_units(int64_t lo, int64_t hi, int worker, void *ctx) {
     unit x = unit_of(q, u);
     fill(q, carry, x.W);
     for (int64_t c = 0; c * SCAN_CHUNK < q->terms; c++) {
-      total(q, &x, c, v);
       memcpy(a, carry, x.W * q->w);
       rescan(q, &x, c, a);
+      if ((c + 1) * SCAN_CHUNK >= q->terms) break;
+      total(q, &x, c, v);
       q->f->combine(carry, v, 1, x.W);
     }
     settle(q, &x);
@@ -513,7 +567,7 @@ static void total_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   const fold *q = ctx;
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u);
-    total(q, &x, x.g, q->scratch + u * q->row * q->w);
+    if (x.g < q->groups - 1) total(q, &x, x.g, q->scratch + u * q->row * q->w);
   }
 }
 
@@ -523,6 +577,29 @@ static void rescan_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u);
     rescan(q, &x, x.g, q->scratch + u * q->row * q->w);
+  }
+}
+
+/* One slice's chunks four at a time, side by side, where a unit is one
+   slice: their carries lie side by side in the scratch. A short last chunk
+   runs alone. */
+static void rescan_quads(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const fold *q = ctx;
+  int64_t quads = (q->groups + 3) / 4;
+  uint8_t *y = q->a[0].base;
+  for (int64_t v = lo; v < hi; v++) {
+    int64_t u = v / quads, c = v % quads * 4;
+    unit x = unit_of(q, u * q->groups);
+    uint8_t *a = q->scratch + (u * q->groups + c) * q->w;
+    int k = q->groups - c < 4 ? (int)(q->groups - c) : 4;
+    int full = (c + k) * SCAN_CHUNK <= q->terms ? k : k - 1;
+    int64_t t0 = c * SCAN_CHUNK;
+    if (full > 0)
+      q->f->scan(a, at(q, x.p + t0 * q->rs[0]), q->rs[0], SCAN_CHUNK * q->rs[0],
+                 y + (x.d + t0 * q->rd) * q->w, q->rd, SCAN_CHUNK * q->rd,
+                 SCAN_CHUNK, full);
+    if (full < k) rescan(q, &x, c + full, a + full * q->w);
   }
 }
 
@@ -536,7 +613,7 @@ static void carries(const fold *q, int64_t units) {
       uint8_t *s = q->scratch + (u * q->groups + c) * row;
       memcpy(v, s, row);
       memcpy(s, carry, row);
-      q->f->combine(carry, v, 1, x.W);
+      if (c < q->groups - 1) q->f->combine(carry, v, 1, x.W);
     }
   }
 }
@@ -565,7 +642,7 @@ static void plan_scan(fold *q, const nx_array *d, const nx_array *x, int axis) {
     n = nx_coalesce_dims(2, n, extent, step);
     for (int i = 0; i < n; i++) keep(q, extent[i], step[1][i], step[0][i]);
   }
-  choose(q);
+  choose(q, 1);
   int64_t chunks = (q->terms + SCAN_CHUNK - 1) / SCAN_CHUNK;
   q->groups = q->outer * q->chunks < UNITS && chunks > 1 ? chunks : 1;
 }
@@ -673,7 +750,10 @@ static value run(value s, value dsts, value ops, int family, int threads) {
     } else {
       job(units * q.groups, bytes, threads, total_units, &q);
       carries(&q, units);
-      job(units * q.groups, bytes, threads, rescan_units, &q);
+      if (q.row == 1)
+        job(units * ((q.groups + 3) / 4), bytes, threads, rescan_quads, &q);
+      else
+        job(units * q.groups, bytes, threads, rescan_units, &q);
       for (int64_t u = 0; u < units; u++) {
         unit x = unit_of(&q, u * q.groups);
         settle(&q, &x);
