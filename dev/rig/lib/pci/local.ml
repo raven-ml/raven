@@ -9,7 +9,6 @@
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
 
-external flock : Unix.file_descr -> unit = "caml_rig_pci_flock"
 external file_map : Unix.file_descr -> int -> int -> int = "caml_rig_pci_map"
 external file_unmap : int -> int -> unit = "caml_rig_pci_unmap"
 
@@ -17,45 +16,9 @@ let page = Sysmem.page
 let round_page n = (n + page - 1) / page * page
 let reserve = Sysmem.reserve
 
-(* Locks *)
-
-(* A function taken physically is locked by flock on its configuration space
-   file: the lock is the file's, which every process that opens it shares.
-   Behind VFIO the group's file admits one process at a time itself. *)
-let lock files bus fd =
-  let file = Sysfs.path files bus "config" in
-  try flock fd with
-  | Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
-      Fail.fail "%s is taken already; find who holds it: lsof %s" bus file
-  | Unix.Unix_error (e, _, _) ->
-      Fail.fail "locking %s with %s: %s" bus file (Unix.error_message e)
-
 let rec update a f =
   let v = Atomic.get a in
   if not (Atomic.compare_and_set a v (f v)) then update a f
-
-(* The configuration files this process locks for a change, each with the domain
-   making it. A take inside a change, by that domain, shares the change's lock:
-   the change holds the function for it. Two descriptors of one process exclude
-   each other, so the take could not lock the file itself. *)
-let changing = Atomic.make []
-let in_change file = List.mem (file, Domain.self ()) (Atomic.get changing)
-
-let locked files bus f =
-  let file = Sysfs.path files bus "config" in
-  match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
-  | exception Unix.Unix_error (e, _, _) ->
-      Error (strf "opening %s: %s" file (Unix.error_message e))
-  | fd -> (
-      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-      match lock files bus fd with
-      | exception Fail.Failed why -> Error why
-      | () ->
-          let key = (file, Domain.self ()) in
-          update changing (List.cons key);
-          Fun.protect ~finally:(fun () ->
-              update changing (List.filter (fun k -> k <> key)))
-          @@ f)
 
 (* Taking *)
 
@@ -334,7 +297,8 @@ let take_iommu files fds bus bars =
    VFIO's no-IOMMU mode. Otherwise nothing handles them: the take turns its INTx
    off, which bus mastering does not gate, so that a GPU left running signals no
    line another device's handler shares. *)
-let take_physical files fds bus bars =
+let take_physical l fds bars =
+  let files = Sysfs.files l and bus = Sysfs.bus l in
   let file = Sysfs.path files bus "config" in
   let config =
     try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
@@ -347,7 +311,8 @@ let take_physical files fds bus bars =
         Fail.fail "opening %s: %s" file (Unix.error_message e)
   in
   fds := config :: !fds;
-  if not (in_change file) then lock files bus config;
+  let lock = Fail.step ("locking " ^ file) (fun () -> Sysfs.keep l) in
+  fds := lock :: !fds;
   (* The first act of a process on the machine's memory: what processes that
      died left and no function reaches goes, without waiting for a reset. What
      the function still reaches stays, until its GPU is reset. *)
@@ -355,7 +320,7 @@ let take_physical files fds bus bars =
   Sysmem.collect_dead ~root;
   let inherited = Sysmem.left ~root ~bus in
   let interrupts =
-    if Sysfs.driver files bus = Some "vfio-pci" then
+    if Sysfs.driver l = Some Sysfs.vfio_pci then
       let _, _, efd = Vfio.open_function files fds bus Vfio.No_iommu in
       Some efd
     else None
@@ -380,43 +345,36 @@ let take_physical files fds bus bars =
   hold t;
   t
 
-(* A failure gives back every descriptor taken. *)
-(* CR: Hold the config-file lock before [access] and [bars]. Another
-   process can attach after [access] chose Physical, so this take later
-   disables INTx with the kernel driver bound. Have [locked] supply a
-   private, single-use, nonescaping acquisition closure; pass it through
-   one checked Function constructor, with Gpus' release check inside the
-   same lock. Replace [in_change] with that explicit handoff and retain a
-   duplicate lock fd until the physical take is released. Attach keeps its
-   outer fd through reset/release and rebind. *)
-let take files bus =
-  if not (Sysfs.exists files bus) then
-    Error (strf "%s is no PCI function of this machine" bus)
-  else
-    let fds = ref [] in
-    let refused why =
-      List.iter Unix.close !fds;
-      Error why
-    in
-    match
-      let* addressing = Sysfs.access files bus in
-      let bars = Sysfs.bars files bus in
-      let by =
-        match addressing with
-        | Ops.Iommu -> take_iommu
-        | Physical -> take_physical
-      in
-      Ok (fn (by files fds bus bars))
-    with
-    | Ok _ as fn -> fn
-    | Error why -> refused why
-    | exception Fail.Failed why -> refused why
+(* A failure gives back every descriptor taken. Behind VFIO the group's file
+   admits one process at a time; taken physically, the function keeps its
+   lock until its release. *)
+let take l =
+  let fds = ref [] in
+  let refused why =
+    List.iter Unix.close !fds;
+    Error why
+  in
+  match
+    let* addressing = Sysfs.access l in
+    let bars = Sysfs.bars l in
+    match addressing with
+    | Ops.Iommu ->
+        Ok (fn (take_iommu (Sysfs.files l) fds (Sysfs.bus l) bars))
+    | Physical -> Ok (fn (take_physical l fds bars))
+  with
+  | Ok _ as fn -> fn
+  | Error why -> refused why
+  | exception Fail.Failed why -> refused why
 
 let ops files =
   {
     Ops.transport = Window.unsafe_transport 0;
     page;
     functions = (fun () -> Sysfs.functions files);
-    take = take files;
+    take =
+      (fun bus ->
+        if not (Sysfs.exists files bus) then
+          Error (strf "%s is no PCI function of this machine" bus)
+        else Sysfs.locked files bus take);
     reserve = (fun ~base n -> Fail.result (fun () -> reserve ~base n));
   }

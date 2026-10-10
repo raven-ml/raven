@@ -1275,6 +1275,20 @@ let test_open_unreleased () =
   Atomic.set pending false;
   stop (hold g m 0)
 
+(* The vendor's [unreleased] is asked under the lock the take holds, so that no
+   change comes between the answer and the take. *)
+let test_unreleased_locked () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  let asked = ref [] in
+  let unreleased ~root:_ _ =
+    asked := held root gpu_bus :: !asked;
+    None
+  in
+  let g = gpus ~unreleased () and m = Machine.at root in
+  stop (hold g m 0);
+  equal ~msg:"locked when asked" (list bool) [ true ] !asked
+
 (* A GPU bound to vfio-pci stays as it is: nothing is waited for. *)
 let test_vfio_unwaited () =
   needs_flock ();
@@ -1330,6 +1344,8 @@ let tree_changes =
       test
         "an unbound GPU its kernel driver has not let go of is refused an open"
         test_open_unreleased;
+      test "the vendor is asked whether the GPU is released under the take's lock"
+        test_unreleased_locked;
       test "a file the process may not write is refused, naming it"
         test_change_unwritable;
     ]

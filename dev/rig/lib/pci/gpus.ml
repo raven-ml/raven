@@ -211,20 +211,29 @@ let register_exit g =
    reports amdgpu's pending release, both can reset a GPU the kernel will
    still write to when it releases it. Keep this vendor rule in Gpus and
    state the same refusal in reset's and attach's contracts. *)
-let released g m bus =
+let released g l =
+  let bus = Sysfs.bus l in
+  if Sysfs.driver l <> None then Ok ()
+  else
+    match g.unreleased ~root:(Sysfs.root (Sysfs.files l)) bus with
+    | None -> Ok ()
+    | Some why ->
+        Error
+          (strf
+             "its kernel driver has not let go of %s yet, and writes to it when \
+              it does: %s"
+             bus why)
+
+let take_locked g m l =
+  let* () = released g l in
+  Function.take_locked m l
+
+(* The check and the take hold one lock, so that no change comes between them.
+   Through a transport the far machine's take locks the function. *)
+let take g m bus =
   match Machine.files m with
-  | None -> Ok ()
-  | Some files -> (
-      if Sysfs.driver files bus <> None then Ok ()
-      else
-        match g.unreleased ~root:(Sysfs.root files) bus with
-        | None -> Ok ()
-        | Some why ->
-            Error
-              (strf
-                 "its kernel driver has not let go of %s yet, and writes to it \
-                  when it does: %s"
-                 bus why))
+  | None -> Function.take m bus
+  | Some files -> Sysfs.locked files bus (fun l -> take_locked g m l)
 
 (* A GPU this process lost, or one a process that died left reaching memory, is
    renewed before the driver starts; one whose renewal fails is lost. *)
@@ -233,8 +242,7 @@ let open_ g m i f =
   named g i @@ Mutex.protect g.mutex
   @@ fun () ->
   let* bus = gpu g m i in
-  let* () = released g m bus in
-  let* fn = Function.take m bus in
+  let* fn = take g m bus in
   let h =
     {
       gpus = g;
@@ -274,9 +282,9 @@ let open_ g m i f =
 
 (* Changes to the machine *)
 
-(* [f files bus] for GPU [i] of [m], whose files are [files], which no process
-   takes while it runs: the lock a take holds is held around [f]. *)
-let change g fn m i f =
+(* [f l] for GPU [i] of [m], which no process takes while it runs: [l] is the
+   lock a take holds. *)
+let change g fn m i (f : 's. 's Sysfs.lock -> unit) =
   index fn i;
   named g i @@ Mutex.protect g.mutex
   @@ fun () ->
@@ -287,7 +295,7 @@ let change g fn m i f =
            (Option.value (Machine.name m) ~default:"the machine"))
   | Some files ->
       let* bus = gpu g m i in
-      Local.locked files bus (fun () -> Fail.result (fun () -> f files bus))
+      Sysfs.locked files bus (fun l -> Fail.result (fun () -> f l))
 
 (* What of this process holds the GPU at [bus]: a device open or mapped, or a
    file of its DRM device the kernel still holds for it. *)
@@ -354,18 +362,19 @@ let let_go g files bus nodes ~bound =
    lets go inside the unbind; the vendor confirms it after. A GPU on vfio-pci
    stays as it is, and an unbound one waits for the vendor. *)
 let detach g m i =
-  change g "detach" m i (fun files bus ->
+  change g "detach" m i (fun l ->
+      let files = Sysfs.files l and bus = Sysfs.bus l in
       let nodes = g.nodes ~root:(Sysfs.root files) bus in
       Option.iter
         (Fail.fail "%s is open in this process, through %s" bus)
         (own files bus nodes);
-      (match Sysfs.driver files bus with
-      | Some d when d = Sysfs.vfio_pci -> Sysfs.detach files bus
+      (match Sysfs.driver l with
+      | Some d when d = Sysfs.vfio_pci -> Sysfs.detach l
       | driver ->
-          Option.iter (Fail.fail "%s") (Sysfs.refusal files bus);
+          Option.iter (Fail.fail "%s") (Sysfs.refusal l);
           let bound = Option.is_some driver in
           let_go g files bus nodes ~bound;
-          Sysfs.detach files bus;
+          Sysfs.detach l;
           if bound then
             Option.iter
               (Fail.fail
@@ -373,32 +382,33 @@ let detach g m i =
                   %s"
                  bus)
               (g.unreleased ~root:(Sysfs.root files) bus));
-      Sysfs.resize files bus g.memory_bar)
+      Sysfs.resize l g.memory_bar)
 
 (* Resets *)
 
-(* Takes the function of the GPU at [bus] on [m] and renews it, releasing it
-   whatever the reset answers. *)
-let reset_gpu g m bus =
-  let* fn = Function.take m bus in
+(* Renews the GPU of [m] whose function [taken] is, releasing it whatever the
+   reset answers. *)
+let reset_taken g m taken =
+  let* fn = taken in
   Fun.protect ~finally:(fun () -> Function.release fn) @@ fun () ->
-  renew_taken g m bus fn
+  renew_taken g m (Function.bus fn) fn
 
 let reset g m i =
   index "reset" i;
   named g i @@ Mutex.protect g.mutex
   @@ fun () ->
   let* bus = gpu g m i in
-  reset_gpu g m bus
+  reset_taken g m (Function.take m bus)
 
 (* A kernel driver's probe expects the GPU as its vendor's reset leaves it,
    whatever ran on it before, in this process or another: a GPU on no kernel
    driver, or on vfio-pci, is reset first, through a take, while the process can
-   take it. The take shares the change's lock, so no other comes between. *)
+   take it. The take holds the change's lock, so no other comes between. *)
 let attach g m i =
-  change g "attach" m i (fun files bus ->
-      match Sysfs.driver files bus with
+  change g "attach" m i (fun l ->
+      match Sysfs.driver l with
       | Some d when d <> Sysfs.vfio_pci -> ()
       | _ ->
-          Result.iter_error (Fail.fail "%s") (reset_gpu g m bus);
-          Sysfs.attach files bus)
+          Result.iter_error (Fail.fail "%s")
+            (reset_taken g m (Function.take_locked m l));
+          Sysfs.attach l)

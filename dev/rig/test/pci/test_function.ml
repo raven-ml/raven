@@ -199,7 +199,7 @@ let refusals =
     ( "a function on vfio-pci in no IOMMU group",
       [ Tree.gpu ~driver:"vfio-pci" "0000:03:00.0" ],
       "0000:03:00.0",
-      [ "flock" ],
+      [],
       [ "0000:03:00.0 is bound to vfio-pci but in no IOMMU group" ] );
     ( "a disabled function",
       [ Tree.gpu ~enabled:false "0000:03:00.0" ],
@@ -228,8 +228,9 @@ let refusals =
       [ "reading "; "iommu_groups/12/type: " ] );
   ]
 
+(* A take reads a function the machine has under its lock, which needs Linux. *)
 let test_refusal (_, fns, bus, opts, subs) =
-  if List.mem "flock" opts && not on_linux then
+  if List.exists (fun (fn : Tree.fn) -> fn.bus = bus) fns && not on_linux then
     skip ~reason:"flock on a function's file needs Linux" ();
   let lockdown =
     if List.mem "lockdown" opts then Some "none [integrity] confidentiality"
@@ -298,6 +299,25 @@ let test_physical () =
       ("VFIO's no-IOMMU mode", [], [ "12" ], Some "12");
     ]
 
+(* A take reads how the function is taken under the lock that takes and changes
+   hold, so that no change comes between: a function the lock's holder binds to
+   vfio-pci meanwhile, as an attach would, is refused as taken. Another function
+   bound to vfio-pci in group 12 gives the tree the driver and the group. *)
+let test_take_locked () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Tree.gpu "0000:03:00.0" in
+  let root =
+    Tree.make [ fn; Tree.gpu ~driver:"vfio-pci" ~group:"12" "0000:43:00.0" ]
+  in
+  let m = Machine.at root in
+  let f = require_ok (Function.take m fn.bus) in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  let d = "sys/bus/pci/devices/0000:03:00.0/" in
+  Tree.link root (d ^ "driver") "../../drivers/vfio-pci";
+  Tree.link root (d ^ "iommu_group") "../../../../kernel/iommu_groups/12";
+  contains ~sub:"0000:03:00.0 is taken already"
+    (require_error (Function.take m fn.bus))
+
 (* A BAR's file is as long as the BAR, and maps whole. A file shorter than its
    BAR would end the process with SIGBUS at the first access past its end, so
    the map refuses it, naming the file. *)
@@ -336,8 +356,7 @@ let through_vfio =
   ]
 
 let test_through_vfio (_, groups, noiommu, beside, enabled) =
-  if noiommu <> [] && not on_linux then
-    skip ~reason:"flock on a function's file needs Linux" ();
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
   let fn = Tree.gpu ~driver:"vfio-pci" ~group:"12" ~enabled "0000:03:00.0" in
   let fns = if beside then [ fn; audio "0000:03:00.1" ] else [ fn ] in
   contains ~sub:"dev/vfio/vfio does not exist"
@@ -510,6 +529,9 @@ let tree_files =
          physically by one take at a time, its BARs as its registers and \
          resource file say, all ones past 64 bytes, without interrupts"
         test_physical;
+      test
+        "a function the lock's holder binds to vfio-pci is refused as taken"
+        test_take_locked;
       test
         "a BAR of a function taken physically maps whole from its file, and a \
          file shorter than its BAR is refused"

@@ -322,6 +322,11 @@ val unpin : t -> int -> int -> unit
 
 (**/**)
 
+(* [take_locked m l] is {!take} of the function [l] locks, [l] being of [m]'s
+   files ({!Machine.files}): the take holds the lock [l] is, which a physical
+   take keeps until its release. *)
+val take_locked : Machine.t -> 's Sysfs.lock -> (t, string) result
+
 (* [inherited f] is [true] iff a process that died left [f] reaching memory of
    its machine when [f] was taken, which [f] may still write, and {!forget} has
    not run since. *)

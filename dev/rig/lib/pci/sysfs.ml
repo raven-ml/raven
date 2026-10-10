@@ -36,6 +36,34 @@ let path m bus file = strf "%s/%s/%s" m.devices bus file
 let exists m bus = Sys.file_exists (Filename.concat m.devices bus)
 let vfio_file m name = Filename.concat m.vfio name
 
+(* Locks *)
+
+external flock : Unix.file_descr -> unit = "caml_rig_pci_flock"
+
+(* A function's configuration file is locked by flock: the lock is the open
+   file's, which a duplicate descriptor shares and every other open of the file,
+   in this process or another, is refused. *)
+type 's lock = { files : t; bus : string; fd : Unix.file_descr }
+
+let locked m bus (f : 's. 's lock -> ('a, string) result) =
+  let file = path m bus "config" in
+  match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
+  | exception Unix.Unix_error (e, _, _) ->
+      Error (strf "opening %s: %s" file (Unix.error_message e))
+  | fd -> (
+      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+      match flock fd with
+      | exception Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
+          Error (strf "%s is taken already; find who holds it: lsof %s" bus file)
+      | exception Unix.Unix_error (e, _, _) ->
+          Error
+            (strf "locking %s with %s: %s" bus file (Unix.error_message e))
+      | () -> f { files = m; bus; fd })
+
+let files l = l.files
+let bus l = l.bus
+let keep l = Unix.dup ~cloexec:true l.fd
+
 (* A channel's failure names its file: "FILE: cause". *)
 let read file =
   match In_channel.with_open_text file In_channel.input_all with
@@ -84,7 +112,8 @@ let link m bus file =
   let l = path m bus file in
   if Sys.file_exists l then Some (Filename.basename (readlink l)) else None
 
-let driver m bus = link m bus "driver"
+let driver_of m bus = link m bus "driver"
+let driver l = driver_of l.files l.bus
 let group m bus = link m bus "iommu_group"
 
 (* A function the kernel lists but whose files cannot be read, as while it is
@@ -166,7 +195,7 @@ let address regs i =
     if wide i && i + 1 < bars then Some (low lor (regs.(i + 1) lsl 32))
     else Some low
 
-let bars m bus =
+let bars { files = m; bus; _ } =
   let regs = registers m bus and file = path m bus "resource" in
   let lines = Array.of_list (String.split_on_char '\n' (read file)) in
   Array.init bars (fun i ->
@@ -211,7 +240,7 @@ let locked_down m =
 
 let state m bus =
   {
-    driver = driver m bus;
+    driver = driver_of m bus;
     iommu = iommu_of m bus;
     siblings = siblings m bus;
     enabled = enabled m bus;
@@ -225,7 +254,7 @@ let group_holders m g =
   | fns ->
       Array.to_list fns |> List.sort String.compare
       |> List.filter_map (fun f ->
-          match driver m f with
+          match driver_of m f with
           | Some d when not (List.mem d [ vfio_pci; "pci-stub"; "pcieport" ]) ->
               Some (f, d)
           | _ -> None)
@@ -260,7 +289,7 @@ let addressing m bus s =
            m.lockdown bus)
   | _ -> Ok Ops.Physical
 
-let access m bus = addressing m bus (state m bus)
+let access { files = m; bus; _ } = addressing m bus (state m bus)
 
 (* Changes *)
 
@@ -299,7 +328,7 @@ let stop_mastering m bus =
    takeable once unbound, alone and enabled: one it could not take then could
    not be reset to go back to its driver. A function it leaves on no driver
    masters the bus no more: without an IOMMU it could write any host memory. *)
-let detach m bus =
+let detach { files = m; bus; _ } =
   let s = state m bus in
   if s.driver <> Some vfio_pci then begin
     let detached = { s with driver = None; siblings = []; enabled = true } in
@@ -309,14 +338,14 @@ let detach m bus =
   (match addressing m bus s with
   | Ok _ -> ()
   | Error _ -> (
-      (match driver m bus with
+      (match driver_of m bus with
       | Some d when d <> vfio_pci ->
           write (path m bus "driver/unbind") bus;
-          if driver m bus <> None then
+          if driver_of m bus <> None then
             Fail.fail "the driver %s stays bound to %s" d bus
       | _ -> ());
       List.iter (fun s -> write (path m s "remove") "1") (siblings m bus);
-      if driver m bus = None && not (enabled m bus) then
+      if driver_of m bus = None && not (enabled m bus) then
         write (path m bus "enable") "1";
       let s = state m bus in
       match (addressing m bus s, s) with
@@ -327,14 +356,14 @@ let detach m bus =
       | Error _, { driver = None; enabled = false; _ } ->
           Fail.fail "%s is still disabled after enabling it" bus
       | Error why, _ -> Fail.fail "%s" why));
-  if driver m bus = None then stop_mastering m bus
+  if driver_of m bus = None then stop_mastering m bus
 
 let reset m bus = write (path m bus "reset") "1"
 
 (* A rescan brings back the functions [detach] removed. The function itself is
    on the bus already, so its driver is probed for it. *)
-let attach m bus =
-  match driver m bus with
+let attach { files = m; bus; _ } =
+  match driver_of m bus with
   | Some d when d <> vfio_pci -> ()
   | bound ->
       if bound = Some vfio_pci then write (path m bus "driver/unbind") bus;
@@ -342,7 +371,7 @@ let attach m bus =
       write (Filename.concat m.bus_files "rescan") "1";
       write (override m bus) "\n";
       write (Filename.concat m.bus_files "drivers_probe") bus;
-      if driver m bus = None then
+      if driver_of m bus = None then
         Fail.fail "no kernel driver took %s; load its module first" bus
 
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
@@ -352,9 +381,9 @@ let attach m bus =
    BAR keeps its own. The bitmap is an [int], whose highest bit is [largest]. *)
 let largest = Sys.int_size - 2
 
-let resize m bus i =
+let resize { files = m; bus; _ } i =
   let file = path m bus (strf "resource%d_resize" i) in
-  if driver m bus = None && Sys.file_exists file then
+  if driver_of m bus = None && Sys.file_exists file then
     let sizes = read_hex file in
     let rec try_from k =
       if k >= 0 then
@@ -474,7 +503,7 @@ let held_elsewhere m bus nodes =
           (find_held gpu (opened (Filename.concat proc pid))))
     (Option.value (listing proc) ~default:[])
 
-let refusal m bus =
+let refusal { files = m; bus; _ } =
   let s = state m bus in
   match
     addressing m bus { s with driver = None; siblings = []; enabled = true }

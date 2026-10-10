@@ -27,15 +27,7 @@ type t = {
   pins : unit Tables.Range.t; (* (address, bytes) *)
 }
 
-(* A bus is parsed before it names a file of the machine's. *)
-let take machine bus =
-  let taken =
-    match Machine.failed machine with
-    | Some why -> Error why
-    | None when Option.is_none (Bus_address.numbers bus) ->
-        Error (strf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus)
-    | None -> Machine.take machine bus
-  in
+let make machine bus taken =
   Result.map
     (fun fn ->
       {
@@ -52,6 +44,19 @@ let take machine bus =
         pins = Tables.Range.create 16;
       })
     taken
+
+(* A bus is parsed before it names a file of the machine's. *)
+let take machine bus =
+  make machine bus
+  @@
+  match Machine.failed machine with
+  | Some why -> Error why
+  | None when Option.is_none (Bus_address.numbers bus) ->
+      Error (strf "%S is no PCI bus address, expected DDDD:BB:DD.F" bus)
+  | None -> Machine.take machine bus
+
+let take_locked machine l =
+  make machine (Sysfs.bus l) (Machine.take_locked machine l)
 
 let machine f = f.machine
 let bus f = f.bus

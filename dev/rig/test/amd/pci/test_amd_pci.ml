@@ -1304,7 +1304,10 @@ let r9700 = "0000:05:00.0"
 let unbound () =
   Tree.make [ { (Tree.gpu r9700) with vendor = 0x1002; class_ = 0x030000 } ]
 
+(* The open asks under the function's lock, which needs Linux. *)
 let refusal root =
+  if not Rig_pci_support.on_linux then
+    skip ~reason:"flock on a function's file needs Linux" ();
   match Rig_amd_pci.open_ ~machine:(Rig_pci.Machine.at root) ~firmware:[] 0 with
   | Ok _ -> fail "a GPU opened"
   | Error why -> why

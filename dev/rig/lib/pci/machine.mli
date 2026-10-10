@@ -164,13 +164,19 @@ val make : name:string -> ops -> t
 (* [take m bus] is [m]'s take: {!Function.take} builds on it. *)
 val take : t -> string -> (fn, string) result
 
+(* [take_locked m l] is [m]'s take of the function [l] locks, under [l]:
+   {!Function.take_locked} builds on it. Raises [Invalid_argument] if [l] is not
+   of [m]'s {!files}. *)
+val take_locked : t -> 's Sysfs.lock -> (fn, string) result
+
 (* [reserved m a n] is [true] iff the [n] bytes at [a] lie in one range
    {!reserve} reserved on [m]. *)
 val reserved : t -> int -> int -> bool
 
 (* [files m] is the files of [m] if the process reaches [m] without a transport:
-   {!this}'s, or those of a machine {!at} made. Only {!Gpus}' changes to kernel
-   drivers read them. *)
+   {!this}'s, or those of a machine {!at} made. Only {!Gpus} reads them, to lock
+   a GPU's function across its checks, its take and its changes to kernel
+   drivers. *)
 val files : t -> Sysfs.t option
 
 (* [wait m ~us f] calls [f], at least once, until it is [true], [m] failed, or

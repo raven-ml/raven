@@ -92,6 +92,11 @@ let rec within a n = function
 let reserved m a n = within a n (Atomic.get m.reserved)
 let take m bus = m.ops.take bus
 
+let take_locked m l =
+  match m.files with
+  | Some files when files == Sysfs.files l -> Local.take l
+  | _ -> invalid_arg "Machine.take_locked: the lock is of another machine's"
+
 (* A wait spins for [spin_ns], where devices mostly answer, then naps [nap_s]
    between calls, so that a long wait holds no core. Elapsed time is compared in
    whole microseconds against [us], which cannot overflow. *)
