@@ -173,6 +173,40 @@ let get_pad s at =
   in
   { lo = axis 0; hi = axis 1; interior = axis 2; windows }
 
+(* Whether [s]'s extents are non-negative and those other than 0 multiply to
+   at most max_numel: the shapes a layout admits. *)
+let admitted s =
+  let rec go i n =
+    i = Array.length s
+    ||
+    let d = s.(i) in
+    d >= 0
+    && if d = 0 then go (i + 1) n
+       else d <= L.max_numel / n && go (i + 1) (n * d)
+  in
+  go 0 1
+
+let past what s =
+  Error
+    (Format.asprintf "%s of shape %a has more than %d elements" what pp_shape s
+       L.max_numel)
+
+(* [a + b], or [None] past an int. *)
+let add a b =
+  if (b > 0 && a > max_int - b) || (b < 0 && a < min_int - b) then None
+  else Some (a + b)
+
+(* The extent [lo + hi + d + interior·(d - 1)] of an axis of extent [d]
+   padded by [lo], [hi] and [interior], or [None] past an int. *)
+let padded_extent lo hi interior d =
+  let gaps =
+    if d <= 1 then Some 0
+    else if interior > max_int / (d - 1) then None
+    else Some (interior * (d - 1))
+  in
+  Option.bind gaps (fun g ->
+      Option.bind (add d g) (fun e -> Option.bind (add e lo) (fun e -> add e hi)))
+
 (* The shape an operand of shape [x] has once padded by [p], or why it has
    none; [what] names the operand in messages. *)
 let padded_shape what (p : pad) x =
@@ -183,11 +217,15 @@ let padded_shape what (p : pad) x =
     let padded =
       Array.mapi
         (fun i d ->
-          p.lo.(i) + p.hi.(i) + d + if d > 0 then p.interior.(i) * (d - 1) else 0)
+          padded_extent p.lo.(i) p.hi.(i) p.interior.(i) d
+          |> Option.value ~default:(-1))
         x
     in
     match Array.find_index (fun d -> d < 0) padded with
-    | Some i -> Error (Printf.sprintf "%s's padded axis %d is negative" what i)
+    | Some i ->
+        Error
+          (Printf.sprintf "%s's padded axis %d is negative or overflows" what i)
+    | None when not (admitted padded) -> past (what ^ "'s padding") padded
     | None -> (
         if p.windows = [||] then Ok padded
         else
@@ -958,7 +996,7 @@ let linalg_shapes s ins =
     Error (Printf.sprintf "a matrix of rank %d" (Array.length ins.(0)))
   else matrix_shapes r ins.(0) ins.(want - 1)
 
-let shapes s ins =
+let family_shapes s ins =
   let f = int32 s at_family in
   if f = family_contract then contract_shapes s ins
   else if f = family_map || f = family_reduce || f = family_scan then
@@ -969,6 +1007,14 @@ let shapes s ins =
   else if f = family_fft then fft_shapes s ins
   else if f = family_linalg then linalg_shapes s ins
   else invalid_argf "Nx_kernel.Spec.shapes: family %d" f
+
+let shapes s ins =
+  match family_shapes s ins with
+  | Error _ as e -> e
+  | Ok ys as ok -> (
+      match Array.find_opt (fun y -> not (admitted y)) ys with
+      | None -> ok
+      | Some y -> past "a result" y)
 
 (* Dtypes *)
 

@@ -23,7 +23,10 @@ val shapes : 'f t -> int array array -> (int array array, string) result
     its positions' shape, a scatter's its [into]'s, a sort's two results its
     operand's with [k] elements along its axis, an [Error] for a [k] past the
     axis's extent; an assembly's and a fold's result has their [shape]. A
-    transform's and a routine's are as {!fft} and {!linalg} state them. *)
+    transform's and a routine's are as {!fft} and {!linalg} state them.
+    Every shape it derives, a padded load's and each result's, is one a
+    layout admits ({!Nx_array.Layout.max_numel}): one past it is an
+    [Error]. *)
 
 val dtypes :
   [< `Fft | `Linalg ] t ->
@@ -276,8 +279,7 @@ val fold : shape:int array -> pad -> fold t
 
     Raises [Invalid_argument] unless [shape] has at most
     {!Nx_array.Layout.max_rank} extents, none negative, and [p] is a padding
-    of [shape] that {!map} takes and whose padded extents are not
-    negative. *)
+    of [shape] that {!map} takes and whose padded shape {!shapes} admits. *)
 
 val shape : [< `Assemble | `Fold ] t -> int array
 (** [shape s] is the shape of [s]'s result. *)

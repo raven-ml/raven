@@ -256,6 +256,68 @@ let test_shapes_refuse () =
   fits ~msg:"no init" (s ~init:true) [| a; b |];
   fits ~msg:"init's shape" (s ~init:true) [| a; b; [| 2; 5; 3 |] |]
 
+(* Every shape Spec.shapes derives, at max_numel and past it. *)
+let test_shapes_admit () =
+  let big = L.max_numel and f32 = D.Any D.Float32 in
+  let sh s ins = result_of (S.shapes s ins) in
+  let ok ~msg want s ins =
+    equal ~msg (result (list (list int)) unit) (Ok want) (sh s ins)
+  in
+  let refused ~msg s ins =
+    equal ~msg (result (list (list int)) unit) (Error ()) (sh s ins)
+  in
+  let p = Nx_kernel.Prog.v ~ins:[| f32 |] [| Nx_kernel.Prog.In 0 |] ~outs:[| 0 |] in
+  let fill = Nx_kernel.Prog.bits D.Float32 0. in
+  let padded ?(interior = [| 0 |]) lo hi =
+    S.map p
+      ~loads:[| S.Padded { fill; pad = { lo; hi; interior; windows = [||] } } |]
+  in
+  ok ~msg:"padded to max_numel" [ [ big ] ] (padded [| big - 2 |] [| 0 |])
+    [| [| 2 |] |];
+  refused ~msg:"padded past max_numel" (padded [| big - 1 |] [| 0 |])
+    [| [| 2 |] |];
+  refused ~msg:"lo + hi wraps" (padded [| max_int |] [| max_int |]) [| [| 2 |] |];
+  refused ~msg:"lo + hi wraps below" (padded [| min_int |] [| min_int |])
+    [| [| 2 |] |];
+  refused ~msg:"interior times extent wraps"
+    (padded ~interior:[| max_int |] [| 0 |] [| 0 |])
+    [| [| 3 |] |];
+  refused ~msg:"interior times extent past max_numel"
+    (padded ~interior:[| big / 2 |] [| 0 |] [| 0 |])
+    [| [| 3 |] |];
+  let padded2 lo hi =
+    S.map p
+      ~loads:
+        [|
+          S.Padded
+            { fill; pad = { lo; hi; interior = [| 0; 0 |]; windows = [||] } };
+        |]
+  in
+  ok ~msg:"no element, other extents at max_numel" [ [ 0; big ] ]
+    (padded2 [| 0; 0 |] [| 0; big - 1 |])
+    [| [| 0; 1 |] |];
+  refused ~msg:"no element, other extents past max_numel"
+    (padded2 [| 0; 0 |] [| 0; big |])
+    [| [| 0; 1 |] |];
+  let mm =
+    S.contract ~batch:[||] ~contracting:[| (1, 0) |] ~acc:f32 ~out:f32
+      ~init:false
+  in
+  let k = 1 lsl 27 in
+  ok ~msg:"a contraction to max_numel" [ [ k / 2; k ] ] mm
+    [| [| k / 2; 0 |]; [| 0; k |] |];
+  refused ~msg:"a contraction past max_numel" mm [| [| k; 0 |]; [| 0; k |] |];
+  let c2r n = S.fft (S.C2r { n }) ~axes:[| 0 |] in
+  ok ~msg:"a transform to max_numel points" [ [ big ] ] (c2r big)
+    [| [| (big / 2) + 1 |] |];
+  refused ~msg:"a transform past max_numel points" (c2r (big + 2))
+    [| [| (big / 2) + 2 |] |];
+  ok ~msg:"square factors at max_numel" [ [ k / 2; k / 2 ]; [ k / 2; 0 ] ]
+    (S.linalg (S.Qr Complete))
+    [| [| k / 2; 0 |] |];
+  refused ~msg:"square factors past max_numel" (S.linalg (S.Qr Complete))
+    [| [| k; 0 |] |]
+
 (* Views *)
 
 (* An array of float32 over [l], on a host buffer that holds its positions. *)
@@ -596,22 +658,41 @@ let law_map_encoding c =
   equal ~msg:"prog" string (p :> string) (S.prog s : P.t :> string);
   equal ~msg:"loads" bool true (S.loads s = c.loads)
 
-(* The shape an operand of shape [x] has once loaded, by the rule. *)
+(* Whether the extents of [s] other than 0 multiply to at most max_numel. *)
+let admitted s =
+  let n =
+    Array.fold_left
+      (fun n d ->
+        match n with
+        | Some n when d = 0 -> Some n
+        | Some n when d <= L.max_numel / n -> Some (n * d)
+        | _ -> None)
+      (Some 1) s
+  in
+  n <> None
+
+(* The shape an operand of shape [x] has once loaded, by the rule, its
+   extents computed in floats, exact for the small ones the generators draw
+   and past max_numel for the large. *)
 let loaded x = function
   | S.Plain -> Some x
   | Padded { pad; _ } ->
-      let padded =
-        Array.mapi
-          (fun i d ->
-            pad.lo.(i) + pad.hi.(i) + d + (pad.interior.(i) * max 0 (d - 1)))
-          x
+      let extent i d =
+        let f = Float.of_int in
+        f pad.lo.(i) +. f pad.hi.(i) +. f d
+        +. (f pad.interior.(i) *. Float.of_int (max 0 (d - 1)))
       in
-      if Array.exists (fun d -> d < 0) padded then None
-      else if pad.windows = [||] then Some padded
+      let padded = Array.mapi extent x in
+      if Array.exists (fun d -> d < 0. || d > Float.of_int L.max_numel) padded
+      then None
       else
-        match Nx_array.Move.shape (Window pad.windows) padded with
-        | y -> Some y
-        | exception Invalid_argument _ -> None
+        let padded = Array.map Float.to_int padded in
+        if not (admitted padded) then None
+        else if pad.windows = [||] then Some padded
+        else
+          match Nx_array.Move.shape (Window pad.windows) padded with
+          | y -> Some y
+          | exception Invalid_argument _ -> None
 
 let law_map_shapes c =
   let s = S.map (prog_of c) ~loads:c.loads in
@@ -1483,6 +1564,7 @@ let tests =
         prop "the result is batch, then a's free axes, then b's" any_case
           law_shapes;
         test "refuses operands that do not fit" test_shapes_refuse;
+        test "admits every shape it derives by max_numel" test_shapes_admit;
       ];
     group "transforms"
       [
