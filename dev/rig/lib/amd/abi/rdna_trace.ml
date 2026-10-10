@@ -46,6 +46,15 @@ type kind =
    its kind. *)
 type packet = int * int * int * int * field option * kind
 
+(* CR: Correct generation-specific descriptions the gfx1201 captures left
+   unsettled, no instruction stream having emitted them: GFX11 NEW_PC (0x21) is
+   16 nibbles; 18 consumes a following WAVE_END header. GFX12 needs a 7-bit 0x66
+   prefix of 6 nibbles (delta bits 7..9), and 6-bit 0x16 of 12 nibbles (delta
+   bits 6..8), over the inherited rows. Packet 10 is WAVE_START_EXT in both
+   formats: emit Start with packet 9's identity fields. Share those fields per
+   format while keeping each format's packet widths. Source: AMD's
+   rocprof-trace-decoder in ROCm/rocm-systems@1753e7a4,
+   source/gfx{10,11,12}/gfx*token.cpp and source/gfx10/rdna_sqtt.cpp. *)
 let rdna3 : packet list =
   [
     (1, 0x7, 0x3, 3, Some (3, 5), Plain);
@@ -96,7 +105,10 @@ let rdna3 : packet list =
     (24, 0x7, 0x2, 5, Some (4, 6), Plain);
   ]
 
-(* RDNA4 widens the work-group processor and moves fields of eight types. *)
+(* RDNA4 widens the work-group processor and moves fields of eight types. Its
+   0x46 packets, an s_ttracedata_imm's byte, are 8 nibbles: the 5-bit 0x6 row's
+   14 would read a following packet into them. A trace an R9700 wrote shows it
+   (test_thread_trace.ml's fixture). *)
 let rdna4 : packet list =
   [
     (1, 0x7, 0x3, 3, Some (3, 5), Plain);
@@ -133,6 +145,7 @@ let rdna4 : packet list =
     (10, 0x1f, 0x1c, 10, Some (5, 6), Plain);
     (11, 0x1f, 0x5, 6, Some (5, 7), Plain);
     (12, 0x1f, 0x6, 14, Some (7, 9), Plain);
+    (12, 0x7f, 0x46, 8, Some (7, 9), Plain);
     (13, 0x1f, 0x16, 8, Some (7, 9), Plain);
     (14, 0x7f, 0x31, 12, Some (7, 8), Plain);
     (15, 0xf, 0x8, 2, Some (4, 7), Short);

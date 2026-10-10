@@ -23,3 +23,12 @@ Made in this directory from `hidden.s` with the same tools:
   `every` names each implicit argument of code object version 5, and
   bounds its workgroups at 128 work-items; `plain` names none:
   `clang -c -x assembler -target amdgcn-amd-amdhsa -mcpu=gfx1201 -mcode-object-version=5 hidden.s -o hidden.o && ld.lld -shared hidden.o -o hidden_gfx1201.hsaco && rm hidden.o`
+
+Captured on a Radeon AI PRO R9700 (gfx1201) under Linux's amdgpu driver:
+
+- `ttracedata_gfx1201.sqtt`, shader engine 0's thread trace of `k_ttrace`
+  from `ttracedata.cl`, compiled as `many.cl` is, launched over 64
+  workgroups of 64 work-items between `Thread_trace.start` and
+  `Thread_trace.stop`, its bytes up to the end `Thread_trace.length`
+  gives. Each wave issues eight `s_ttracedata` (0x06 packets, 14 nibbles)
+  and eight `s_ttracedata_imm` (0x46 packets, 8 nibbles).

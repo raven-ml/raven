@@ -265,6 +265,8 @@ type event =
   | Start of key * bool  (** A wave starts; [true] holds the gap in it. *)
   | End of key * bool  (** A wave ends. *)
   | Mark of int  (** A clock marker, at a slope of the realtime clock. *)
+  | Data of int
+      (** An [s_ttracedata_imm]'s byte: on RDNA4, a 0x46 packet of 8 nibbles. *)
   | Nop
 
 type format = Rdna3 | Rdna4 | Gfx9
@@ -284,6 +286,7 @@ let pp_event ppf = function
   | Start (k, i) -> Format.fprintf ppf "Start (%a, %b)" pp_key k i
   | End (k, i) -> Format.fprintf ppf "End (%a, %b)" pp_key k i
   | Mark s -> Format.fprintf ppf "Mark %d" s
+  | Data d -> Format.fprintf ppf "Data %d" d
   | Nop -> Format.fprintf ppf "Nop"
 
 (* Keys of few values, so that waves share them, at the fields' edges. *)
@@ -304,6 +307,7 @@ let event ~far key =
       (3, map (fun (k, i) -> Start (k, i)) (pair key bool));
       (3, map (fun (k, i) -> End (k, i)) (pair key bool));
       (1, map (fun s -> Mark s) (int_range 1 8));
+      (1, map (fun d -> Data d) (int_range 0 255));
       (1, constant Nop);
     ]
 
@@ -478,6 +482,12 @@ let write fmt evs =
               put s ~units:(if fmt = Rdna3 then 12 else 16) v;
               last_rt := Some (!time, rt);
               markers := (!time, rt) :: !markers)
+      | Data d ->
+          (* Its byte at bits 22 to 29, its delta field 0. *)
+          if fmt = Rdna4 then begin
+            flush ();
+            put s ~units:8 (0x46 lor (d lsl 22))
+          end
       | Nop -> if fmt <> Gfx9 then put s ~units:1 0)
     evs;
   flush ();
@@ -496,7 +506,7 @@ let restarts fmt evs =
       | End (k, _) ->
           Hashtbl.remove open_ (key_of fmt k);
           false
-      | Gap _ | Mark _ | Nop -> false)
+      | Gap _ | Mark _ | Data _ | Nop -> false)
     evs
 
 let decoded =
@@ -536,6 +546,58 @@ let cut_short name gpus =
           (Thread_trace.waves g (String.sub m.trace 0 n))
       done)
 
+(* A trace an R9700 wrote (fixtures/README.md): its waves, each with its compute
+   unit, SIMD, slot and times, and how many there are. Its 0x06 and 0x46 packets
+   lie among their starts and ends. *)
+let captured () =
+  let trace =
+    In_channel.with_open_bin "fixtures/ttracedata_gfx1201.sqtt"
+      In_channel.input_all
+  in
+  let waves = Thread_trace.waves (gpu (12, 0, 1)) trace in
+  let line (w : Thread_trace.wave) =
+    strf "cu %d simd %d slot %d: %d-%d" w.cu w.simd w.slot w.start w.stop
+  in
+  expect
+    (String.concat "\n"
+       (strf "%d waves" (List.length waves) :: List.map line waves))
+  @@ __POS_OF__
+       {|
+    32 waves
+    cu 1 simd 0 slot 0: 2562-5240
+    cu 1 simd 2 slot 0: 2563-5247
+    cu 1 simd 1 slot 0: 2579-5248
+    cu 1 simd 3 slot 0: 2580-5251
+    cu 0 simd 0 slot 0: 2558-5351
+    cu 0 simd 2 slot 0: 2559-5371
+    cu 0 simd 1 slot 0: 2577-5387
+    cu 16 simd 0 slot 0: 2569-5392
+    cu 16 simd 2 slot 0: 2570-5394
+    cu 17 simd 0 slot 0: 2571-5397
+    cu 17 simd 1 slot 0: 2587-5400
+    cu 0 simd 3 slot 0: 2578-5403
+    cu 16 simd 1 slot 0: 2585-5404
+    cu 17 simd 2 slot 0: 2572-5405
+    cu 17 simd 3 slot 0: 2588-5408
+    cu 16 simd 3 slot 0: 2586-5420
+    cu 3 simd 0 slot 0: 2567-5528
+    cu 3 simd 1 slot 0: 2583-5533
+    cu 3 simd 2 slot 0: 2568-5535
+    cu 3 simd 3 slot 0: 2584-5537
+    cu 2 simd 0 slot 0: 2565-5631
+    cu 2 simd 2 slot 0: 2566-5639
+    cu 2 simd 1 slot 0: 2581-5640
+    cu 2 simd 3 slot 0: 2582-5642
+    cu 19 simd 0 slot 0: 2575-5712
+    cu 18 simd 0 slot 0: 2573-5713
+    cu 19 simd 1 slot 0: 2594-5715
+    cu 18 simd 2 slot 0: 2574-5717
+    cu 19 simd 2 slot 0: 2576-5718
+    cu 18 simd 1 slot 0: 2590-5720
+    cu 19 simd 3 slot 0: 2595-5721
+    cu 18 simd 3 slot 0: 2591-5723
+  |}
+
 let decoding =
   group ~timeout "decoding"
     [
@@ -545,6 +607,9 @@ let decoding =
           let fmt = format_of g in
           let m = write fmt evs in
           cover "a wave" (m.waves <> []);
+          cover "an RDNA4 0x46 packet"
+            (fmt = Rdna4
+            && List.exists (function Data _ -> true | _ -> false) evs);
           cover "a wave whose key ends twice"
             (List.length
                (List.sort_uniq compare (List.map (fun (w, _) -> w.key) m.waves))
@@ -581,6 +646,7 @@ let decoding =
           equal (pair int bool) (0, true)
             ( List.length (Thread_trace.waves (gpu v) ""),
               Option.is_none (Thread_trace.clock (gpu v) "") ));
+      test "a gfx1201 trace of s_ttracedata decodes to its waves" captured;
       test "two markers at one shader time give no clock" (fun () ->
           let s = { units = []; length = 0 } in
           put s ~units:16 (0x11 lor (3 lsl 7));
