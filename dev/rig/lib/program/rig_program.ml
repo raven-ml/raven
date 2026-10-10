@@ -1359,6 +1359,11 @@ let submit_step p f k after (spec : submit) copies =
    with Clobbers at ->
      invalid "a launch's hole at byte %d: its value meets set bits of its bytes"
        at);
+  (* CR: Include both pass calls in the exception scope below. If a later
+     input cannot be borrowed, earlier ones stay in q.reads or q.writes:
+     run_here clears only the frame snapshot. Let the existing unpass
+     paths cover partial binding too, so a failed run does not retain
+     caller buffers for the loaded program's lifetime. *)
   pass p f spec.buffers q.buffers d;
   let waits = if p.ran.(d) then [||] else after in
   match Rig.submit q.sub ~run:q.srun ~buffers:q.buffers ~waits with
@@ -1579,6 +1584,10 @@ let load ?rails t devices =
     else load_there t devices
   end
 
+(* CR: Sign-extend each run word when writing its bytes, using [asr].
+   A frame int of -1 currently becomes 0x7fffffffffffffff, which R.int
+   rejects as wider than an OCaml int. A negative loop count succeeds
+   locally but fails the remote job. Keep the decoder's range check. *)
 let set_word words at v =
   Bigarray.Array1.(
     for i = 0 to 7 do

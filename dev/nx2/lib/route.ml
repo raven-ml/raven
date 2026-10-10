@@ -38,6 +38,12 @@ let product s lo hi =
 (* The result axis that axis [a] of a value of shape [s] becomes under [m],
    where it keeps its elements in order: a reshape keeps an axis whose extent,
    and the product of the extents before it, the result has too. *)
+(* CR: Match reshape cuts using their tile count. Reshaping [8] split over
+   two devices to [2;4] currently gathers a full [8] on each device;
+   each existing [4] shard can instead reshape to [1;4]. For positive
+   shapes, match axes by equal prefix products and extents divisible by
+   that count. Walk actual cuts and use this one correspondence in
+   forward, backward and localize; extent equality needlessly loses it. *)
 let moved (m : Nx_array.Move.t) s a =
   match m with
   | Permute p -> Array.find_index (( = ) a) p
@@ -56,6 +62,12 @@ let moved (m : Nx_array.Move.t) s a =
       let r = rs.(a) in
       if r.start = 0 && r.step = 1 && r.count = s.(a) then Some a else None
   | Window ws ->
+      (* CR: Preserve this axis's cut for a window of size 1 and step 1.
+         It keeps every element in order and only appends a unit axis.
+         sliding_window ~window:1 of [8] split over two devices currently
+         gathers two full [8] copies; each [4] shard can give a [4;1] view.
+         Recognize the identity axis here: localize and Layout.move already
+         handle it, preserving the Window primitive's other semantics. *)
       if Array.exists (fun (w : Nx_array.Move.window) -> w.axis = a) ws then
         None
       else Some a

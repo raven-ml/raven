@@ -560,6 +560,11 @@ let run s words =
 
 (* Runs a hand-over's parts in order, sending the bytes of each copy into the
    controller's memory as it comes, then the word of its value. *)
+(* CR: Consume one payload for every Local source, including zero bytes.
+   [empty upload; nonempty upload] currently feeds the empty area to the
+   second copy and fails the job. Give uploads their own branch, advancing
+   the cursor before the zero-byte guard. Keep that guard around region
+   lookup: an empty remote buffer can have no driver object. *)
 let hand_over s (h : Wire.handover) local =
   let next = ref 0 in
   let side bytes = function

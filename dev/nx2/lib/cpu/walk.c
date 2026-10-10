@@ -188,6 +188,11 @@ void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
       if (b > stride) stride = b;
     }
     int64_t across = TILE_SPAN / stride > 1 ? TILE_SPAN / stride : 1;
+    /* CR: Cap n1 by most before dividing by it. Adaptive maps can
+       allow 16 elements while a transposed Float32 plane chooses
+       32/128 rows; most/n1 becomes zero, then pieces divides by n0=0.
+       Shrink rows first to keep n0*n1 <= most, with at least one row
+       and column. */
     w.n1 = TILE_WIDE / widest < height ? TILE_WIDE / widest : height;
     if (across > most / w.n1) across = most / w.n1;
     w.n0 = across < len ? across : len;

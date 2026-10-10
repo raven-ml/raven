@@ -176,6 +176,12 @@ static kept *mine(void) {
 static uint8_t *take(int64_t bytes) {
   kept *k = bytes > KEPT ? NULL : mine();
   if (k == NULL) return alloc(bytes);
+  /* CR: Include k->p == NULL in this allocation condition. A fresh calling
+     thread's [8;0] by [0;8] contraction reaches take(0), returns NULL and
+     raises Out_of_memory instead of writing +0 or init. The chain path
+     fails too. Let alloc(0) supply its aligned storage, preserving start's
+     empty-product handling in both paths. Check each on a fresh thread;
+     a previous positive allocation hides the failure. */
   if (k->n < bytes) {
     free(k->p);
     k->p = alloc(bytes);
@@ -551,6 +557,13 @@ static void few_rows(problem *p) {
                     .lda = ceil_div(m, km.mr) * km.mr,
                     .kblocks = ceil_div(k, g->kc),
                     .slivers = ceil_div(n, km.nr)};
+  /* CR: Check workspace counts before multiplying. Legal f32 broadcast
+     views [8;2^58] and [2^58;8] each span four bytes, but this count
+     overflows signed int64 before allocation. Keep storage sizes,
+     alignment and work counts exact and checked; unrepresentable storage
+     takes the existing failure/OOM path. Saturate only scheduling byte/flop
+     estimates, with safe ceiling division and heuristic comparisons too.
+     Cover chain's buffers and lanes' partial sums at the same boundary. */
   int64_t packed = batch * k * r.lda * w;
   r.a = take(packed);
   if (r.a == NULL) {

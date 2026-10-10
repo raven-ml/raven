@@ -208,6 +208,11 @@ let free fd g (m : mem Amd.memory) =
   | View -> ()
   | Peer ->
       let key = (p.handle, g.node.gpu_id) in
+      (* CR: Keep views_lock through the last native unmap. Once the count
+         is removed, map_peer can publish a new view before this free unmaps
+         its shared KFD mapping. The count and native transition need one
+         critical section. Preserve the absent count on failure so the next
+         acquire calls MAP again: UNMAP may fail after removing the mapping. *)
       let last =
         Mutex.protect views_lock (fun () ->
             let n = Hashtbl.find views key - 1 in

@@ -591,6 +591,11 @@ val acos : ('v, 's, 'd) t -> ('v, 's, 'd) t
 val atan : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [atan x] is the arctangent, in \[[-π/2], [π/2]\]. *)
 
+(* CR: State atan2's mathematical branch as [-pi, pi], then describe its
+   floating-point approximation. atan2(-0, -1) gives negative rounded pi;
+   float8_e4m3fn encodes the endpoints as +/-3.25, so the stated interval
+   cannot bound the outputs. Keep y's signed-zero choice and correct
+   Prog.Atan2's point to (x, y), with y still the first operand. *)
 val atan2 : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [atan2 y x] is the angle of the point [(x, y)], in \][-π], [π]\]. *)
 

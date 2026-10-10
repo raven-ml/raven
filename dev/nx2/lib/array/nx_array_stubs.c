@@ -141,6 +141,12 @@ static int admit(int n, const nx_operand *in, nx_array *out, int64_t *span) {
     *first = base + Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
     *last = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
   }
+  /* CR: Keep every operand's claim and wait through nx_done. A host borrow
+     of a closed memory device can be byte-identical to a fresh host
+     Buffer.of_bigarray wrapper; clearing its wait hides Rig.Lost and lets
+     the kernel write. Keep alias as byte-identity metadata and release every
+     acquired claim in refusal cleanup and nx_done. Separate roots can have
+     different pending work, so they must retain their own waits. */
   /* A written operand shares bytes with no other but a read operand
      identical to it, which its claim for writing covers: that read
      operand's own claim ends here. Read operands may share bytes, so only
@@ -341,6 +347,18 @@ value nx_array_identical_byte(value a, value b, value pa, value pb) {
 }
 
 /* Coalescing */
+
+/* CR: Bound merged extents before multiplying. With axis 0 batched,
+   legal empty [0; 2^31; 2^31] produces a Contract_view Row extent
+   of 2^62, exposed as min_int by its int accessor. Keep axes separate
+   when their product exceeds INT64_MAX; group must also decline a
+   single extent above Max_long, documented by fill. Detect zero before
+   coalescing, and honor NX_EMPTY in the contiguous shortcut:
+   [2^31; 2^32; 0] currently overflows before reaching zero.
+   Keep all group-fit validation before refusal. In fold.c, validate
+   all shapes before counting, then handle NX_EMPTY: an empty destination
+   succeeds; an empty source with outputs fills Sum/Prod or refuses
+   Max/Min. Its fits currently overflows these same unused products. */
 
 /* The coalescer, written once: it reads axis i's extent at [ein][i] and
    operand k's step at [sin][k][i], and writes the merged loop into

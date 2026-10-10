@@ -66,6 +66,13 @@ let failf ~by p fmt =
 
 (* Each name's extent, from [sizes], the operands' axes and the division of
    their groups. *)
+(* CR: Solve grouped extents exactly before lowering. With h=2^31 and
+   d=2^32, (h d u)=0 leaves u unknown, while a result (h d) wraps to
+   zero. Reject negative sizes; handle known zeros first, requiring a
+   zero source and leaving unknowns pending. Otherwise divide the source
+   exactly by known factors: infer the residual for one unknown, or
+   require 1 for none. For result groups, scan for zero before checked
+   multiplication, so (h d u) remains valid when u=0. *)
 let extents ~by ~pat ~sizes layouts =
   let known = Hashtbl.create 16 in
   let learn n d where =
@@ -313,6 +320,11 @@ let matmul ~by a b =
     invalid_argf "%s: inner extents %d and %d differ; %s" by k k' (both ());
   let lead_a = if ra = 1 then [||] else Array.sub sa 0 (ra - 2) in
   let lead_b = if rb = 1 then [||] else Array.sub sb 0 (rb - 2) in
+  (* CR: Compute the leading shape with Prim.broadcast_shape, then retain
+     this loop's axis ownership. max turns the valid pair 0/1 into 1 and
+     the guards reject it: [0;2;3] times [1;3;4] must give [0;2;4].
+     Missing/zero axes fail too. The shared shape rule preserves zero
+     without broadcasting either operand. *)
   let l = max (Array.length lead_a) (Array.length lead_b) in
   let at s i =
     let j = i - (l - Array.length s) in

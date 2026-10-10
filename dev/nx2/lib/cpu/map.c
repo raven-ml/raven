@@ -518,6 +518,10 @@ static int run_map(const nx_prog *g, nx_array *a, step *s) {
   prog j = {a, loop, g->nouts, g->nnodes, s, {0}, slots, temps(s, g->nnodes),
             widest(s, g->nnodes)};
   memcpy(j.outs, nx_prog_outs(g), sizeof(int32_t) * (size_t)g->nouts);
+  /* CR: A valid constant-only Nx_cpu.map has slots=temps=0, so this
+     divides by zero before walking. Use the normal SLOT cap when no
+     scratch is needed; retain zero allocated slots and the existing
+     constant/alias stores. */
   int64_t bytes = ARENA / (slots + j.temps) / LINE * LINE;
   if (bytes > SLOT) bytes = SLOT;
   nx_loop l;

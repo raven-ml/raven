@@ -263,6 +263,10 @@ let max_params = 4096
 (* Refuses part [i]'s launch on [d] of a submission whose runs name [slots]
    buffers unless its image is [d]'s, its refs lie among its parameters and name
    a run buffer, and its image has its function: the entry. *)
+(* CR: Check [at > params - 8] after bounding params. At [max_int - 7],
+   the aligned [at + 8] wraps to min_int and passes. Native encoding
+   narrows it to 0xfffffff8 on 64-bit, and rig_params then copies outside
+   the parameter storage. Refuse this at make, as its contract promises. *)
 let launch_entry fn d slots i image kernel params refs =
   if image.idev != d then
     invalid_argf "Rig.%s: part %d's image is not loaded on %s" fn i d.name;

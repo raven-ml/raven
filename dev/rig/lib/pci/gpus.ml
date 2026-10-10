@@ -206,6 +206,11 @@ let register_exit g =
 
 (* An unbound GPU whose kernel driver has not let go of it yet is not opened:
    the driver's release, which writes to it, would race the open's writes. *)
+(* CR: Compose this check with Function.take in one private take, used by
+   open_ and reset_gpu. Reset and attach currently bypass it: after detach
+   reports amdgpu's pending release, both can reset a GPU the kernel will
+   still write to when it releases it. Keep this vendor rule in Gpus and
+   state the same refusal in reset's and attach's contracts. *)
 let released g m bus =
   match Machine.files m with
   | None -> Ok ()

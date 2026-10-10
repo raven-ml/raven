@@ -836,6 +836,12 @@ and expanded : type r. by:string -> unit Devices.placement -> r Value.prim -> r
       let (module K) = kernels_of ~by ~op:(Prim.name op) (Devices.set p) in
       invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
 
+(* CR: Expand Gather/Scatter inside each declining device's branch.
+   With replicated x and indices only on d0, this retry casts x on d1 too
+   and raises if d1 is closed. Wrap the selected Place.view arrays at
+   Devices.one set k, retain successful destinations, and replace only
+   declined slots with their local expansion. Rebuild the result at p,
+   including the singleton case; this needs no final Copy. *)
 (* [op]'s result [r] where every device computed it. Where a device's kernels
    declined it, with operands [ops] on device [d], its expansion; for a scatter
    whose targets may repeat, which has none, its result on the host, whose
@@ -1216,6 +1222,14 @@ and compute_node :
   | Value.Map _ ->
       (* Its loads are computed at [p] already. *)
       Prim.arrays n.op (compute_at ~by ~resolve p n.op)
+  (* CR: Keep forced assemblies at their requested placement. An empty [4]
+     assembly split over two devices passes [2] destinations to a [4]
+     descriptor; compute it as a Const Map at [p]. For nonempty constants,
+     call assemble ~at:q after resolving pieces, then keep the q-to-p crop:
+     inferring Replicated again asks a piece forced on one member for arrays
+     on the others. Run assembly expansions with compute_at at the uncut
+     allocation placement too, so fills and positions retain it even when
+     every piece is empty. *)
   | Value.Assemble { dtype; shape; fill; pieces = [] } ->
       (* A creation: no operand gives it a placement. *)
       Prim.arrays n.op (assemble ~by ~at:p dtype shape fill [])
@@ -1229,6 +1243,13 @@ and compute_node :
       [| Array.map (fun a -> A.Any (cast ~by (Devices.set p) dt a)) xs |]
   | op ->
       let q = operand_at op p in
+      (* CR: Materialize zero-load Reduce/Scan bodies at [q] before looping.
+         Sum of Coord 0 over [4] is valid, but placing it raises
+         "Exec.alloc: a value of every set" here. Use Maps in each selected
+         output's original dtype, then an identity loop per reducer with one
+         real load, preserving Moments/Arg and result-window extraction.
+         Separate reducers respect the 16-operand bound; passing q only to
+         alloc still leaves Spec without a loaded iteration shape. *)
       (* Its rule held when it was made, and its operands lie at [q]. *)
       let op' = Prim.map (fun y -> resolve (Devices.rebrand q) y) op in
       let arrays = Prim.arrays op' (compute ~by op') in

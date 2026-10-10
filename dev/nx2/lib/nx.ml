@@ -589,6 +589,10 @@ let roll ?axis:along k x =
   in
   let s = shape y in
   let d = s.(a) in
+  (* CR: Add d only when the remainder is negative. The valid empty shape
+     [0; max_int] rolled by 1 along axis 1 makes 1 + d wrap here, yielding
+     -1 and a rejected slice. Normalize k mod d conditionally; it stays in
+     [0, d) without overflow, including k = min_int. *)
   let k = if d = 0 then 0 else ((k mod d) + d) mod d in
   let rolled =
     if k = 0 then copy y
@@ -690,6 +694,10 @@ type 'd pick =
 
 (* [start] to [stop] by [step] within an axis of extent [d], clipped as a range
    written in the program is: negative ends count from the end. *)
+(* CR: Count a nonempty range by division before addition. On an axis
+   of extent 3, Rs (0, 3, max_int) currently selects nothing through
+   overflow. Use 1 + (distance - 1) / magnitude, handling min_int as
+   a singleton reverse range before negating the step. *)
 let range d start stop step : Nx_array.Move.range =
   let resolve e = if e < 0 then e + d else e in
   if step > 0 then
@@ -853,6 +861,11 @@ let slice idx x =
     then x
     else move ~by (Slice ranges) x
   in
+  (* CR: Let slice's final reshape assemble all output axes. On a rank-32
+     input, [I 0; T p] with rank-2 p reaches rank 33 before dropping I,
+     although the result has rank 32. Factor the rank-preserving Gather
+     out of take_axis and use it here for Rows, Held and From, keeping
+     reverse order. take_axis can retain its finishing reshape for take. *)
   (* Gathers from the last axis back, so that an axis a gather replaces does not
      renumber the ones still to come. *)
   let y =
@@ -918,6 +931,13 @@ let take_along_axis ~axis:a p x =
 (* The flat position in [x] of each element of the selection [picks], [-1] where
    a position held in data lies outside its axis: one map over the selection's
    shape, reading each position held in data broadcast to it. *)
+(* CR: Split this target map when its inputs plus output exceed
+   Prog.max_operands: sixteen scalar T indices on a [1; ...; 1] tensor
+   already raise. Route all broadcast inputs together before splitting,
+   and place them at that result, so placement is independent of chunks.
+   Carry one partial flat address, keeping -1 sticky for an invalid index;
+   count this carry and the output in each chunk's bound. Keep the
+   selection layout, so storage scales with the selection. *)
 let targets ~by x picks =
   let s = shape x in
   let r = Array.length s in
@@ -1061,6 +1081,10 @@ let set idx v x =
     | New, None -> true
     | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> false
   in
+  (* CR: Classify picks by their constructors here. [positions] computes a
+     window merely to discard it, then the selected branch reads its start
+     again. A donated D start therefore raises, and an ordinary cache update
+     computes its window twice. Build positions only in the chosen branch. *)
   match List.partition (fun (p, _) -> positions ~by p = None) picks with
   | ranges, [] ->
       (* Positions written in the program alone: one assembly, [x] then [v] at

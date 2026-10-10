@@ -150,6 +150,12 @@ IDENT(8, uint64_t)
 /* Whether [n] elements of [w] bytes at [d] share no byte with those an
    operand at [x] steps [sx] elements through: one element where [sx] is
    0. */
+/* CR: Remove apart and gate NaN replay on d differing from every input.
+   Row callers already supply disjoint or identical operands; state that
+   invariant in cpu.h. These pointer orderings are undefined across
+   allocations, and EXACT forms forward ends before excluding reversed
+   strides. Identity checks preserve the original inputs for a retry,
+   with aliased rows kept on the scalar-kind path. */
 static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
                  int64_t w) {
   return d + n * w <= x || x + (sx == 0 ? 1 : n) * w <= d;

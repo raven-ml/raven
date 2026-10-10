@@ -142,6 +142,14 @@ __device__ void simt_contract(const contract_params &p) {
   const int gsz = min(tiles_m - first, 8);
   const int tm = first + (pid % group) % gsz, tn = (pid % group) / gsz;
   const int m0 = tm * BM, n0 = tn * BN;
+  /* CR: Keep derived coordinates wide. Legal f32 broadcasts [17;INT_MAX]
+     and [INT_MAX;17], four bytes each, overflow p.k+15; safe ceil still
+     leaves 16*kts=2^31. Promote ceilings, split products and transposed
+     MMA row-to-byte products before arithmetic. Keep skinny's rounded
+     endpoint and 128-step induction wide. Check vector tails by remaining
+     extent: store8's j+8 overflows at n=INT_MAX after fixing the ceilings.
+     Narrow only proven in-range coordinates; preserve accepted shapes
+     and summation order. */
   const int kts = (p.k + BK - 1) / BK, split = blockIdx.y;
   const int kt0 = split * kts / p.splits;
   const int KT = (split + 1) * kts / p.splits - kt0;

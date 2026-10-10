@@ -112,6 +112,11 @@ let lock () =
          in
          wait ());
       Unix.ftruncate fd 0;
+      (* CR: Proc.write swallows ENOSPC, so an existing empty lock on a full
+         TMPDIR lets the agent listen without its promised PID. Write it with
+         a local single_write_substring loop, advancing on short writes and
+         retrying EINTR; close fd and return Error on failure. Keep the
+         successful fd open and preserve Proc.write's diagnostic policy. *)
       Proc.write fd (strf "%d\n" (Unix.getpid ()))
     with
     | () -> Ok ()

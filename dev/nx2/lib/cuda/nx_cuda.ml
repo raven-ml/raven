@@ -29,6 +29,11 @@ external cubin : string -> string option = "nx_cuda_cubin"
    packed operands and split sums, grows to [kept] bytes and is kept, a call
    that needs more taking a buffer of its own; the tickets of split sums are
    zero words, which every call leaves zero. *)
+(* CR: Store Rig.Buffer.t directly in workspace and tickets, and in AMD's
+   and Metal's workspace. Every constructor repeats Buffer.length in bytes;
+   that accessor reads the immutable length without allocating or checking
+   liveness. Remove the wrappers and use it for growth and size checks,
+   preserving atomic publication, the cap and zeroed ticket creation. *)
 type cell = { buffer : Rig.Buffer.t; bytes : int }
 
 let kept = 64 * 1024 * 1024

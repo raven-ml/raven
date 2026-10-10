@@ -386,6 +386,10 @@ let reaches self home =
   | s when -s = cuda_error_peer_access_already_enabled -> true
   | _ -> refused "enabling peer access" self false
 
+(* CR: [peer] is an uncounted fact, also queried after loss. This path
+   enables CUDA access and can block or raise Fault outside rig's counted
+   calls. Read directed support learned at discovery/open here; enable
+   access only in map_peer, which owns resource refusal and context faults. *)
 let peer g g' = reaches g.self g'.self
 
 let map_peer g _ (r : region) =

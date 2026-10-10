@@ -1329,6 +1329,12 @@ value caml_rig_remote_link_request(value vl, value head) {
    memory once more, or that area's if the kept memory is free and smaller
    and the area holds at most [KEPT_BYTES]. Holds the link's lock and the
    runtime. */
+/* CR: Retire kept/gave at orderly close. An agent serving successive jobs
+   keeps a large upload from each job through these roots. Clear them under
+   the runtime and link lock only after queued and dequeued commands release
+   the cached payload; a next call can still need kept after the native
+   threads end. Retry retirement when next publishes its rooted result.
+   Returned areas keep their own Bigarray storage. */
 static void lend_back(struct rig_remote_link *l) {
   if (l->gave_kept)
     l->kept_free = 1;

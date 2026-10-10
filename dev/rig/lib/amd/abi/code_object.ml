@@ -129,6 +129,11 @@ let patch ~size i (r : Rig_elf.relocation) =
       (strf "relocation %d patches bytes past the image's end at %d" i r.offset)
   else
     let b = Bytes.create rel64_bytes in
+    (* CR: Evaluate REL64 in Int64 before adding the addend. An admitted
+       data relocation S=0, A=-2^62, P=448 needs 0xbffffffffffffe40;
+       native-int arithmetic writes 0x3ffffffffffffe40. The image bound
+       makes S-P safe in int: widen that difference and A before adding,
+       keeping the existing offset/addend API. *)
     Bytes.set_int64_le b 0 (Int64.of_int (target + addend - r.offset));
     Ok (r.offset, Bytes.unsafe_to_string b)
 

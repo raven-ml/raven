@@ -460,6 +460,13 @@ let map_host g a n =
 
 (* Another GPU's video memory needs peer access, which may be refused; host
    memory needs none. *)
+(* CR: Share one counted UVM backing across allocated, host and peer
+   regions, including host subviews. UVM replaces an existing mapping on
+   the same GPU; freeing either of two Peer regions unmaps the survivor.
+   Memory.mapping can reach this through racing first borrows. Reuse the
+   backing's full-range mapping per GPU, unmap on its last user, and keep
+   its resources until its last region. Extend range's existing ownership
+   instead of giving each Peer an independent unmap. *)
 let map_peer g (m : mem Rig_nv.memory) =
   let peer = m.data in
   let refused = function Some u -> List.mem u g.refused | None -> false in

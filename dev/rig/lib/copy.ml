@@ -330,6 +330,12 @@ and staged src dst n =
     done;
     Buffer.wait dst Buffer.Read_write
   in
+  (* CR: Release this slot on both exits of an outer handler covering setup,
+     run and settle. A >32 MiB disk-to-GPU copy can queue half0, fail the next
+     read with Sys_error, then raise Sys.Break in settle and skip give_slot.
+     Two such copies strand both slots. Keep the completion waits: after an
+     interruption, the halves' stamps order their next use; lost halves are
+     replaced. *)
   (* No leg outlives the copy: the slot is given back unused, also when making
      its memory raised. *)
   let settle () =

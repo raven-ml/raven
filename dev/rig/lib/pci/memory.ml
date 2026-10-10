@@ -243,6 +243,11 @@ let map_host m a n =
   match Space.alloc ~align:page (space m) bytes with
   | None -> Ok None
   | Some va -> (
+      (* CR: Construct this window through [machine m], preserving its transport.
+         [map_host] accepts addresses on the GPU's machine, but [Window.v]
+         makes them local. Mapping an address from a transported [alloc_dma]
+         then calling [Memory.host] turns remote memory into a local pointer.
+         The machine already holds the transport; keep that choice there. *)
       let host = Some (Window.v a n) in
       match map_pinned m ~va ~source:(Borrowed a) ~host first bytes with
       | (Error _ | Ok None) as r ->

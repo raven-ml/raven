@@ -19,6 +19,10 @@ let of_array ~by s a =
         (Rig.name (A.device a))
         Devices.pp s
 
+(* CR: Copy [arrays] before validating or sharing it. A caller can replace
+   a slot after its buffer was shared but before the final copy, leaving the
+   returned value over unshared memory that donation may consume. Check,
+   share and retain the same snapshot; move the existing copy to entry. *)
 let of_shards ~by p arrays =
   let set = Devices.set p and devices = Grid.devices (Devices.grid p) in
   let n = Array.length devices in

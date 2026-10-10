@@ -669,6 +669,10 @@ let to_device d a =
   let layout = Layout.v ~offset ~strides:(Layout.strides l) (Layout.shape l) in
   v a.dtype layout buffer
 
+(* CR: Delegate same-device borrows to Buffer.borrow too. [live] checks
+   donation death, so this shortcut returns Some a after its memory device
+   closes. Preserve Some a when Rig returns a.buffer, and leave destination,
+   root-owner and pending-loss checks with Rig. *)
 let borrow d a =
   live "Nx_array.borrow" a.buffer;
   if Rig.equal (device a) d then Some a

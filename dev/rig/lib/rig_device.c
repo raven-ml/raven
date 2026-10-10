@@ -540,6 +540,12 @@ value caml_rig_fail(value v_why) {
     int won = lose_locked(d, why, 0);
     mu_unlock(d);
     if (!won) continue;
+    /* CR: Carry fail's reason through recursive spread. With A opened before
+       B and B waiting on A, fail("cancelled") loses B as "A lost" instead.
+       Pass the shared process reason here and through recursion; ordinary
+       loss keeps its per-producer reason. Keep spread before finish so
+       dependent loss snapshots precede stops, and never free the shared
+       reason. */
     spread(d);
     finish(d);
   }

@@ -33,6 +33,10 @@ let () =
     (int64s inp).{i} <- Int64.of_int i
   done;
   let buffers = [| Buffer.address out; Buffer.address inp |] in
+  (* CR: Keep [inp] alive through each call with
+     [ignore (Sys.opaque_identity inp)] after it. The address array holds
+     only integers, so collection can free or recycle the input before the
+     host program finishes. The split call's [xs] is also dead by then. *)
   Rig_host.call p buffers [| 0; n; 3; 1 |];
   Printf.printf "out = [%s]\n"
     (String.concat "; "

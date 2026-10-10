@@ -23,6 +23,10 @@
 type t
 (** The type for a GSP, from the system memory of its boot on. *)
 
+(* CR: Drop fn from placement and use chip.fn for Function operations.
+   They name the same GPU: boot enables DMA through p.fn and waits through
+   p.chip.fn. Passing both admits a mismatch with no meaning. Derive fn in
+   rig_nv_pci.started/start from their Chip.t too. *)
 type placement = {
   chip : Chip.t;
   memory : int;  (** The size of the GPU's memory ({!Chip.memory}). *)

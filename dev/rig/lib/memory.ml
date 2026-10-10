@@ -460,6 +460,11 @@ let forgotten (Hold_release { stamps; generation; _ }) =
 
 (* Runs [release value] as a call in flight on each device of [st] that is not
    lost. *)
+(* CR: Keep this hold until its release starts. A device can lose after
+   the live filter and refuse [counted], so this drops the stamps without
+   ever calling the release. Admit every stamped device, accepting Stopped
+   devices; on refusal before callback entry, unwind admissions, then requeue
+   the intact hold. Once entered, consume it even if release raises. *)
 let run_release (Hold_release { stamps = st; value; release; _ }) =
   let devices = ref [] in
   iter_points

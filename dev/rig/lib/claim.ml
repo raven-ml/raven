@@ -74,6 +74,14 @@ let share b =
 (* The buffers [with_] was given, which it holds for reading: [ended] is set
    once its [f] returned or raised, before any claim is released, and from then
    on they hold nothing. *)
+(* CR: Derive exclusive from a live c's donation membership and a negative
+   claim word: its retained read claims prevent another owner. c.exclusive
+   repeats this fact, allocating after exclusive_all; failure there or when
+   allocating c leaks acquired claims. Allocate c before claiming and protect
+   hold_groups with f, keeping group rollback. Have finish mark c ended,
+   unhold negative donation words, then release the original lists. consume's
+   checked membership also suffices for its exclusive-to-consumed CAS.
+   Finish before reraising e: saving its backtrace first can allocate. *)
 type t = {
   read : buffer list;
   donate : buffer list list;

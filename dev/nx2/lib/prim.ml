@@ -544,6 +544,12 @@ let check_axes ~by shape axes =
         invalid_argf "%s: axes %a are not strictly increasing" by pp_shape axes)
     axes
 
+(* CR: Check loads plus scalar results against Prog.max_operands here,
+   before results calls its maker or prepare places operands. One load
+   with sixteen Monoid reductions passes this rule, allocates sixteen
+   destinations, then Spec.reduce rejects its seventeen operands. A
+   fifteen-load Scan with Arg has the same gap. Reuse reduction_width
+   for both checks so traced and eager operations accept one rule. *)
 let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
     (loads : d load array) =
   check_loads ~by ~what:"reduction" layout prog loads;
@@ -787,6 +793,10 @@ let contract_shapes a b init =
   match init with None -> s | Some i -> Array.append s [| shape i |]
 
 (* A contraction's result shape: its rule. *)
+(* CR: Check typed [out] against [Spec.out spec] in the shared contraction
+   rule. A Float64 spec with a Float32 witness reaches results' maker with
+   a Float32 form. Pass the witness through results and prepare, rejecting
+   a mismatch before making results or placing operands. *)
 let contract_shape ~by spec a b init =
   match Nx_kernel.Spec.shapes spec (contract_shapes a b init) with
   | Ok [| s |] -> s

@@ -381,6 +381,14 @@ let take_physical files fds bus bars =
   t
 
 (* A failure gives back every descriptor taken. *)
+(* CR: Hold the config-file lock before [access] and [bars]. Another
+   process can attach after [access] chose Physical, so this take later
+   disables INTx with the kernel driver bound. Have [locked] supply a
+   private, single-use, nonescaping acquisition closure; pass it through
+   one checked Function constructor, with Gpus' release check inside the
+   same lock. Replace [in_change] with that explicit handoff and retain a
+   duplicate lock fd until the physical take is released. Attach keeps its
+   outer fd through reset/release and rebind. *)
 let take files bus =
   if not (Sysfs.exists files bus) then
     Error (strf "%s is no PCI function of this machine" bus)

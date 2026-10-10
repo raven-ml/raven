@@ -23,6 +23,11 @@ type queue = {
 }
 (** The type for what a compute queue is made of. *)
 
+(* CR: Derive the die count from Regs.gpu l and remove ~xccs. AQL queues
+   use every live die; program passes back the count this layout supplied.
+   Keep ~xcc and PM4/KIQ's instance selection. Make the multidie test's
+   discovery layout contain eight live GC instances instead of pairing a
+   one-die layout with ~xccs:8. *)
 val mqd :
   Regs.layout ->
   queue ->

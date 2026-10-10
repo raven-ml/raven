@@ -449,6 +449,11 @@ type routine =
       unit_diagonal : bool;
     }
 
+(* CR: Define LU's pivot by the whole ascending scan: start at row j,
+   replacing it only when a later magnitude is greater. "The first row"
+   beating every preceding row always chooses j; for [[0]; [1]], that
+   leaves a zero pivot and contradicts the stated L U reconstruction.
+   The scan preserves first ties and the stated NaN comparisons. *)
 val linalg : routine -> linalg t
 (** [linalg r] computes [r] on each matrix of an operand [a], its last two
     axes, of [m] rows and [n] columns, [k = min m n]. Its other axes, the
