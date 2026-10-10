@@ -345,19 +345,21 @@ let run ?beside g r =
         failwith "the hog's workgroups did not all start within the hold";
       if set h.let_go then failwith "the hog let go before the work was done"
 
-(* rig.amd refuses a submission that takes more than half its argument segment.
-   A launch's parameters take at most 256 bytes of it, so a round of 1,024
-   launches at most 256 KiB. A submission holds at most 512 parts: 256 driver
-   copies. A contraction is at most four launches. *)
-let round = 1024
+(* rig.amd refuses a submission of more than 512 parts, or one that takes more
+   than half its argument segment, which 512 launches of at most 256 bytes of
+   parameters each stay under. A timed round's two stamps are parts too, so a
+   round of launches holds 510; one of driver copies holds 256. A round of
+   contractions is 256 calls, each a submission of its own. *)
+let parts = 510
 let copies = 256
+let calls = 256
 
 (* The runs of [r] a submission holds. *)
 let per_round r =
   match r.body with
-  | Launches x -> Int.max 1 (round / List.length x.launches)
+  | Launches x -> Int.max 1 (parts / List.length x.launches)
   | Copy _ -> copies
-  | Contract _ -> round / 4
+  | Contract _ -> calls
 
 let enqueue g ~count r =
   let rec go left =
