@@ -207,6 +207,48 @@ let unary name u dt n =
     (fun () -> (filled dt [| n |], A.create Rig.host dt [| n |]))
     (fun (module K) (x, dst) -> K.apply1 (Unary u) ~dst x)
 
+(* A map of the program [p] over [n] elements of its loads, into fresh
+   arrays of its outputs' dtypes. *)
+let map ?work name p n =
+  let module P = Nx_kernel.Prog in
+  let s = Nx_kernel.Spec.map p ~loads:(Array.map (fun _ -> Nx_kernel.Spec.Plain) (P.ins p)) in
+  apply ?work name
+    (fun () ->
+      ( Array.map (fun (D.Any d) -> A.Any (filled d [| n |])) (P.ins p),
+        Array.map
+          (fun o ->
+            let (D.Any d) = P.dtype p o in
+            A.Any (A.create Rig.host d [| n |]))
+          (P.outs p) ))
+    (fun (module K) (ops, dsts) -> K.map s ~dsts ops)
+
+(* Maps: one Add, as apply2 runs it; six float32 nodes over one load, a
+   program the interpreter runs block by block in L1; and a bfloat16 Add,
+   decoded and encoded in its slots. *)
+let map_rows =
+  let module P = Nx_kernel.Prog in
+  let m = mib and f = D.Any f32 in
+  let add dt = P.v ~ins:[| dt; dt |] [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |] ~outs:[| 2 |] in
+  let six =
+    P.v ~ins:[| f |]
+      P.
+        [|
+          In 0;
+          Op2 (Binary Mul, 0, 0);
+          Op2 (Binary Add, 1, 0);
+          Op2 (Binary Mul, 2, 0);
+          Op2 (Binary Sub, 3, 1);
+          Op2 (Binary Maximum, 4, 0);
+          Op2 (Binary Mul, 5, 2);
+        |]
+      ~outs:[| 6 |]
+  in
+  [
+    map ~work:(stream 2 4 4 m) "map-add-f32-1M" (add f) m;
+    map ~work:(stream 1 4 4 m) "map-6-f32-1M" six m;
+    map "map-add-bf16-1M" (add (D.Any D.Bfloat16)) m;
+  ]
+
 let apply_rows =
   let m = mib in
   [
@@ -618,8 +660,8 @@ let assembly_rows =
   ]
 
 let rows =
-  copy_rows @ cast_rows @ apply_rows @ contract_rows @ fold_rows @ index_rows
-  @ sort_rows @ assembly_rows
+  copy_rows @ cast_rows @ apply_rows @ map_rows @ contract_rows @ fold_rows
+  @ index_rows @ sort_rows @ assembly_rows
 
 (* A contraction's axes grouped as a GPU planner reads them: Spec.Contract_view
    of the bf16 4096 call, a and b [1; 4096; 4096] over the batch pair (0, 0)

@@ -76,7 +76,13 @@ let apply3 k ~dst c x y =
   then Nx_array.Wrong_dtype
   else apply3_c k dst c x y
 
-let map _ ~dsts:_ _ = Nx_array.Declined
+external map_c :
+  Nx_kernel.Spec.map Nx_kernel.Spec.t ->
+  Nx_array.any array ->
+  Nx_array.any array ->
+  Nx_array.answer = "nx_cpu_map"
+
+let map s ~dsts ops = map_c s dsts ops
 (* Reductions and scans (fold.c) *)
 
 external reduce :

@@ -15,7 +15,10 @@
     float32, float64 and the 8- to 64-bit integers, and declines the others.
     [apply1] to [apply3] compute every kind at every dtype of its domain. A
     [Copy] whose operand's dtype is not [dst]'s is refused with
-    [Wrong_dtype]. [map] answers [Declined].
+    [Wrong_dtype]. [map] computes a program of plain loads whose outputs,
+    loads and coordinate axes number at most four, holding at most eight of
+    its values at once; it answers [Declined] for the others and for a
+    program that bitcasts a sub-byte dtype.
 
     [contract] computes contractions in [float32] or [float64] whose [out] is
     their [acc], whose [a], [b] and [init] each convert exactly into [acc],

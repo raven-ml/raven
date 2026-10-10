@@ -998,8 +998,12 @@ let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
       (fun dst -> K.apply0 (Iota axis) ~dst)
   end
 
-(* Values the kinds' documentation states, through nx.cpu. *)
 (* NaN bits *)
+
+(* nx.cpu under each target table the host runs. *)
+let cpu_tables =
+  List.filter (fun (b : Support.backend) -> Rig.equal b.device Rig.host)
+    Support.backends
 
 (* [n] elements of [dt] drawn from its specials alone, by [seed]: NaNs of
    both signs, signalling and quiet, with payloads, infinities, zeros, and
@@ -1015,10 +1019,7 @@ let specials_only (type v s) (dt : (v, s) D.t) n seed : (v, s) A.t =
    operand: the hardware's choice of NaN varies between targets and between
    vector and scalar code, and nx_kinds.h pins it. *)
 let law_nan_bits (D.Any dt, seed) =
-  let tables =
-    List.filter (fun (b : Support.backend) -> Rig.equal b.device Rig.host)
-      Support.backends
-  in
+  let tables = cpu_tables in
   match D.kind dt with
   | D.Float when D.bits dt >= 32 ->
       let n = 300 in
@@ -1057,6 +1058,7 @@ let law_nan_bits (D.Any dt, seed) =
         kinds
   | _ -> ()
 
+(* Values the kinds' documentation states, through nx.cpu. *)
 let test_apply_values () =
   let k = (module Nx_cpu : Nx_kernel.S) in
   let module K = (val k) in
@@ -1161,6 +1163,230 @@ let test_declined_map (b : Support.backend) () =
   | A.Declined -> equal (array int) before (bits_of (host y))
   | A.Done -> equal (array float_exact) [| 2.; 4.; 6. |] (A.to_array (host y))
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
+
+(* Programs *)
+
+exception Skip
+
+(* A program over the dtypes [ins], drawn node by node from [st]: each node
+   a kind whose operands' dtypes it takes, a few constants and coordinates
+   among them, every In first; its outputs the last node and, sometimes, an
+   earlier one. At most [room] operands, outputs and coordinate axes. *)
+let program st (ins : D.any array) ~room =
+  let nins = Array.length ins in
+  let nodes = ref (Array.to_list (Array.init nins (fun k -> P.In k))) in
+  let tys = ref (Array.to_list ins) in
+  let axes = ref [] in
+  let pick l = List.nth l (Random.State.int st (List.length l)) in
+  let all_dtypes = Array.of_list D.all in
+  let draw () =
+    let n = List.length !nodes and ty i = List.nth !tys i in
+    let any () = Random.State.int st n in
+    let alike i = List.filter (fun j -> ty j = ty i) (List.init n Fun.id) in
+    match Random.State.int st 9 with
+    | 0 ->
+        let (D.Any dt) = all_dtypes.(Random.State.int st (Array.length all_dtypes)) in
+        let e = bits_of (seeded dt [| 1 |] (Random.State.bits st)) in
+        let e = if D.is D.Boolean dt then [| e.(0) land 1 |] else e in
+        P.Const (D.Any dt, String.init (Array.length e) (fun i -> Char.chr e.(i)))
+    | 1 ->
+        let a = Random.State.int st 3 in
+        if List.mem a !axes || nins + List.length !axes + 2 > room then
+          P.Op1 (Copy, ty 0, 0)
+        else begin
+          axes := a :: !axes;
+          P.Coord a
+        end
+    | 2 ->
+        let i = any () in
+        P.Op1 (Cast, all_dtypes.(Random.State.int st (Array.length all_dtypes)), i)
+    | 3 ->
+        let i = any () in
+        let (D.Any x) = ty i in
+        let same = List.filter (fun (D.Any d) -> D.bits d = D.bits x) D.all in
+        P.Op1 (Bitcast, pick same, i)
+    | 4 | 5 ->
+        let i = any () in
+        P.Op1 (Unary (fst (pick unaries)), ty i, i)
+    | 6 | 7 ->
+        let i = any () in
+        P.Op2 (pick op2s, i, pick (alike i))
+    | _ ->
+        let i = any () in
+        let conds =
+          List.filter
+            (fun j -> let (D.Any d) = ty j in D.is D.Boolean d)
+            (List.init n Fun.id)
+        in
+        if Random.State.bool st then P.Op3 (Fma, i, pick (alike i), pick (alike i))
+        else if conds = [] then P.Op2 (Compare Less, i, pick (alike i))
+        else P.Op3 (Where, pick conds, i, pick (alike i))
+  in
+  let dtype_of node =
+    match node with
+    | P.In k -> ins.(k)
+    | Coord _ -> D.Any D.Int64
+    | Const (d, _) -> d
+    | Op1 (_, d, _) -> d
+    | Op2 (Compare _, _, _) -> D.Any D.Bool
+    | Op2 (_, i, _) | Op3 (_, _, i, _) -> List.nth !tys i
+  in
+  let operands = function
+    | P.In _ | Coord _ | Const _ -> []
+    | Op1 (_, _, i) -> [ i ]
+    | Op2 (_, i, j) -> [ i; j ]
+    | Op3 (_, i, j, k) -> [ i; j; k ]
+  in
+  for _ = 1 to 1 + Random.State.int st 6 do
+    let rec attempt tries =
+      let node = draw () in
+      let dts = Array.of_list (List.map (List.nth !tys) (operands node)) in
+      if P.accepts node dts then node
+      else if tries = 0 then P.Op1 (Copy, List.nth !tys 0, 0)
+      else attempt (tries - 1)
+    in
+    let node = attempt 50 in
+    nodes := !nodes @ [ node ];
+    tys := !tys @ [ dtype_of node ]
+  done;
+  let n = List.length !nodes in
+  let outs =
+    if n > nins + 1 && nins + List.length !axes + 2 <= room && Random.State.bool st
+    then [| n - 1; nins + Random.State.int st (n - 1 - nins) |]
+    else [| n - 1 |]
+  in
+  (P.v ~ins (Array.of_list !nodes) ~outs, Array.of_list !tys)
+
+(* Each node of [p] run on its own through [b]'s kinds of no to three
+   operands, over the operands [ops] of [shape]: the arrays of every node.
+   Raises [Skip] where a kind is declined. *)
+let split (b : Support.backend) p (types : D.any array) shape (ops : A.any array) =
+  let module K = (val b.kernels) in
+  let values = Array.make (P.length p) ops.(0) in
+  let fresh i =
+    let (D.Any d) = types.(i) in
+    A.Any (A.create b.device d shape)
+  in
+  let run answer = if answer <> A.Done then raise Skip in
+  for i = 0 to P.length p - 1 do
+    values.(i) <-
+      (match P.node p i with
+      | In k -> ops.(k)
+      | Coord a ->
+          let rank = Array.length shape in
+          let n = Array.fold_left ( * ) 1 shape in
+          let dst = on b (A.of_array D.Int64 shape (Array.make n 0L)) in
+          if a < rank then run (K.apply0 (Iota (rank - 1 - a)) ~dst);
+          A.Any dst
+      | Const (_, bits) ->
+          let (A.Any dst) = fresh i in
+          run (K.apply0 (Fill bits) ~dst);
+          A.Any dst
+      | Op1 (k, _, j) ->
+          let (A.Any dst) = fresh i in
+          let (A.Any x) = values.(j) in
+          run (K.apply1 k ~dst x);
+          A.Any dst
+      | Op2 (k, j, l) ->
+          let (A.Any dst) = fresh i in
+          let (A.Any x) = values.(j) in
+          run (K.apply2 k ~dst x (A.expect (A.dtype x) values.(l)));
+          A.Any dst
+      | Op3 (k, c, j, l) ->
+          let (A.Any c) = values.(c) in
+          let (A.Any x) = values.(j) in
+          let dst = A.expect (A.dtype x) (fresh i) in
+          run (K.apply3 k ~dst c x (A.expect (A.dtype x) values.(l)));
+          A.Any dst)
+  done;
+  values
+
+(* [p]'s nodes, one per line. *)
+let describe p =
+  let dname (D.Any d) = D.name d in
+  let node = function
+    | P.In k -> strf "in %d" k
+    | Coord a -> strf "coord %d" a
+    | Const (d, b) ->
+        strf "const %s 0x%s" (dname d)
+          (String.concat "" (List.init (String.length b) (fun i -> strf "%02x" (Char.code b.[i]))))
+    | Op1 (Copy, d, i) -> strf "copy %s %d" (dname d) i
+    | Op1 (Cast, d, i) -> strf "cast %s %d" (dname d) i
+    | Op1 (Bitcast, d, i) -> strf "bitcast %s %d" (dname d) i
+    | Op1 (Unary u, d, i) -> strf "%s %s %d" (List.assoc u unaries) (dname d) i
+    | Op2 (k, i, j) -> strf "%s %d %d" (name2 k) i j
+    | Op3 (Where, c, i, j) -> strf "where %d %d %d" c i j
+    | Op3 (Fma, a, b, c) -> strf "fma %d %d %d" a b c
+  in
+  String.concat "; "
+    (List.init (P.length p) (fun i -> strf "%d: %s" i (node (P.node p i))))
+
+(* Whether [p] bitcasts a sub-byte dtype, which nx_cpu.mli says its map
+   declines. *)
+let bitcasts_sub_byte p (types : D.any array) =
+  List.exists
+    (fun i ->
+      match P.node p i with
+      | Op1 (Bitcast, _, j) ->
+          let (D.Any d) = types.(j) in
+          D.bits d < 8
+      | _ -> false)
+    (List.init (P.length p) Fun.id)
+
+(* A program's results are its nodes' results, each node run on its own,
+   bit for bit: an intermediate holds its dtype's value exactly. With
+   [declines], a map that declines a program [declines] does not accept
+   fails. *)
+let law_map_split ?declines ?(labels = true) (b : Support.backend)
+    (Pair (x, y), seed) =
+  let module K = (val b.kernels) in
+  let st = Random.State.make [| seed |] in
+  let dt = D.Any (A.dtype x) and shape = L.shape (A.layout x) in
+  let x = on b x and y = on b y in
+  let ins, ops =
+    if Random.State.bool st then ([| dt; dt |], [| A.Any x; A.Any y |])
+    else ([| dt |], [| A.Any x |])
+  in
+  (* nx.cpu's loop holds four operands: a program within them is one map. *)
+  let p, types = program st ins ~room:4 in
+  let s = Nx_kernel.Spec.map p ~loads:(Array.map (fun _ -> Nx_kernel.Spec.Plain) ins) in
+  match split b p types shape ops with
+  | exception Skip -> cover "a node declined" true
+  | values -> (
+      let dsts =
+        Array.map
+          (fun o ->
+            let (D.Any d) = types.(o) in
+            A.Any (on b (seeded d shape (seed + o))))
+          (P.outs p)
+      in
+      match K.map s ~dsts ops with
+      | A.Declined -> (
+          cover "map declined" true;
+          match declines with
+          | Some ok when not (ok p types) ->
+              failf "map declined a program it computes: %d nodes" (P.length p)
+          | _ -> ())
+      | A.Done ->
+          cover "computed" true;
+          if labels then begin
+          cover "several nodes" (P.length p > Array.length ins + 1);
+          let has f = List.exists f (List.init (P.length p) (P.node p)) in
+          cover "a coordinate" (has (function P.Coord _ -> true | _ -> false));
+          cover "a constant" (has (function P.Const _ -> true | _ -> false));
+          cover "a cast" (has (function P.Op1 (Cast, _, _) -> true | _ -> false));
+          cover "a where" (has (function P.Op3 (Where, _, _, _) -> true | _ -> false));
+          cover "two outputs" (Array.length (P.outs p) = 2)
+          end;
+          Array.iteri
+            (fun k o ->
+              let (A.Any want) = values.(o) in
+              let (A.Any got) = dsts.(k) in
+              equal ~msg:(strf "output %d of %s" k (describe p)) (array int)
+                (bits_of (host want))
+                (bits_of (host got)))
+            (P.outs p)
+      | r -> failf "map answered %a" Nx_array_support.pp_answer r)
 
 (* In place *)
 
@@ -1314,6 +1540,11 @@ let laws (b : Support.backend) =
         (Gen.triple dtypes shape Gen.nat)
         (run (law_apply0 b));
       test "a declined map writes nothing" (unit (test_declined_map b));
+      prop ~count:300 "a map gives the bits of its nodes run one by one"
+        (Gen.pair pairs Gen.int)
+        (run (fun ((Pair (x, _), _) as c) ->
+             covers (Case x);
+             law_map_split b c));
       prop "an operand read at the result's own index may be the destination"
         (Gen.pair pairs Gen.nat)
         (run (fun ((Pair (x, _), _) as c) ->
@@ -1332,15 +1563,31 @@ let laws (b : Support.backend) =
 (* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
    Nx_kernel.S. *)
 let cpu =
-  group "nx.cpu"
+  let maps (b : Support.backend) =
     [
+      prop ~count:300
+        (strf "%s computes every map its loop holds" b.name)
+        (Gen.pair pairs Gen.int)
+        (fun c -> b.around (fun () -> law_map_split ~declines:bitcasts_sub_byte b c));
+      prop ~count:32
+        (strf "%s computes maps over large views" b.name)
+        (Gen.pair large_pairs Gen.int)
+        (fun ((Pair (x, _), _) as c) ->
+          covers_large (Case x);
+          b.around (fun () ->
+              law_map_split ~declines:bitcasts_sub_byte ~labels:false b c));
+    ]
+  in
+  group "nx.cpu"
+    (List.concat_map maps cpu_tables
+    @ [
       prop ~count:8 "NaN results are one set of bits on every table and in place"
         (Gen.pair (Gen.of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ]) Gen.int)
         law_nan_bits;
       test "refuses before any write"
         (test_refusals (module Nx_cpu : Nx_kernel.S));
       test "kinds give the values their documentation states" test_apply_values;
-    ]
+    ])
 
 let () =
   exit (run "nx_kernel.kernels" (List.map laws Support.backends @ [ cpu ]))
