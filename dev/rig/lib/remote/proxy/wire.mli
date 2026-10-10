@@ -8,7 +8,8 @@
     A job's processes are its {e controller} and an {e agent} on each other
     machine ({!process}). Each pair of them has one TCP connection, which one
     end {e dials} and the other {e accepts}: the controller dials every agent,
-    and each agent dials the agents after it. Every integer is little-endian; a
+    and each agent dials the agents after it. Every integer is little-endian,
+    and a u64 above [2]{^ 62}[ - 1], OCaml's largest int, is malformed; a
     process is a u32, [0] for the controller and [i] for agent [i], from [1] to
     [2]{^ 32}[ - 1]; a string is its length (u32) and its bytes.
 

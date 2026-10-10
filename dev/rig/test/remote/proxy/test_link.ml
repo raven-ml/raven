@@ -56,6 +56,12 @@ let u64 n =
   Bytes.set_int64_le b 0 (Int64.of_int n);
   Bytes.to_string b
 
+(* A u64 of any bits, which [u64] cannot write past [max_int]. *)
+let u64_bits v =
+  let b = Bytes.create 8 in
+  Bytes.set_int64_le b 0 v;
+  Bytes.to_string b
+
 let str s = u32 (String.length s) ^ s
 
 let frame kind payload =
@@ -387,6 +393,10 @@ let malformed_from_controller =
     ("a word", frame k_word (u64 0 ^ u64 1));
     ("a bytes frame", frame k_bytes (u64 0 ^ u64 1 ^ "x"));
     ("a drop of 7 bytes", frame k_drop (String.make 7 '\000'));
+    ("a drop of 2^63 + 1", frame k_drop (u64_bits 0x8000_0000_0000_0001L));
+    ("a drop of 2^62", frame k_drop (u64_bits 0x4000_0000_0000_0000L));
+    ( "a hand-over of device 2^63",
+      frame k_handover (u64_bits Int64.min_int ^ u64 1 ^ u32 0 ^ u32 0) );
     ( "a hand-over copying Local to Local",
       frame k_handover
         (u64 0 ^ u64 1 ^ u32 0 ^ u32 1 ^ "\001" ^ u64 4 ^ "\001" ^ "\001"

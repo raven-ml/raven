@@ -87,10 +87,12 @@ let uint r n =
 
 let u32 r = uint r 4
 
-(* A u64 that fits a non-negative int. *)
+(* A u64 that fits a non-negative int: bits 62 and 63, the top byte's high two,
+   are clear. Narrowed first, a value with bit 63 set would alias a small
+   one. *)
 let u64 r =
   let v = uint r 8 in
-  if v < 0 then raise Malformed;
+  if Char.code r.a.{r.at - 1} land 0xc0 <> 0 then raise Malformed;
   v
 
 let bytes r n =
@@ -425,6 +427,12 @@ let drop l id =
   check_id "drop" id;
   post l.c k_drop (encoded (fun b -> add_u64 b id))
 
+(* CR: Serialize each complete next and answer operation, using separate private
+   locks. Concurrent next calls can publish requests in reverse dequeue order;
+   concurrent answers can pop in order and post in reverse. Replies carry no
+   request id, so accepted calls can receive each other's values. Keep the two
+   directions independent: a waiting next must allow earlier requests to be
+   answered. *)
 let next l =
   let k, a, n = next_c l.c in
   let r = reader (if Array1.dim a = n then a else Array1.sub a 0 n) in
@@ -492,6 +500,11 @@ let aligned n =
   Array1.fill a '\000';
   a
 
+(* CR: Validate both endpoints' extents and rounded two-copy sizes before
+   sending a Rail request or registering an end. With src=0, dst=max_int and
+   length=1, inbound wraps to zero bytes; a valid one-byte send then writes at
+   inbound + max_int in recv_rail. Share checked sizing between request
+   validation and allocation so native transfers fit their areas. *)
 let landing ts field =
   let size =
     Array.fold_left
