@@ -1777,19 +1777,31 @@ let lds_launch n () =
 
 (* 257 work-items, one more than [ids] takes: the submit refuses them and the
    device stays live. *)
-let past_the_bound () =
-  S.with_ @@ fun t ->
-  let p = image ~of_:launch_code t in
-  let out = buffer t (4 * 257) in
-  raises_match ~msg:"257 work-items"
-    (function Invalid_argument _ -> true | _ -> false)
-    (fun () ->
-      launch t p "ids" ~params:24
-        ~refs:[ (0, 0) ]
-        ~groups:(1, 1, 1) ~threads:(257, 1, 1)
-        ~set:(fun run b -> Sub.Run.int64 run b 0 0)
-        ~reads:[||] ~writes:[| out |] ());
-  equal (option string) ~msg:"the device's loss" None (Rig.lost t.d)
+(* A launch whose block the driver refuses: past its kernel's work-items, or of
+   an empty grid or group. The submit raises a refusal that names the launch,
+   and the device stays live. *)
+let refused_blocks =
+  cases
+    ~name:(fun (n, _, _) -> n)
+    "a launch whose block the driver refuses raises, the device live"
+    [
+      ("257 work-items", (1, 1, 1), (257, 1, 1));
+      ("an empty grid", (0, 1, 1), (64, 1, 1));
+      ("an empty group", (1, 1, 1), (64, 1, 0));
+    ]
+    (fun (_, groups, threads) ->
+      S.with_ @@ fun t ->
+      let p = image ~of_:launch_code t in
+      let out = buffer t (4 * 257) in
+      raises_match
+        (Exn.invalid_arg ~substring:"a launch whose block it refuses")
+        (fun () ->
+          launch t p "ids" ~params:24
+            ~refs:[ (0, 0) ]
+            ~groups ~threads
+            ~set:(fun run b -> Sub.Run.int64 run b 0 0)
+            ~reads:[||] ~writes:[| out |] ());
+      equal (option string) ~msg:"the device's loss" None (Rig.lost t.d))
 
 let launching =
   group ~timeout:60. "launching"
@@ -1798,8 +1810,7 @@ let launching =
       cases ~name:string_of_int
         "a launch's dynamic LDS follows the kernel's own" [ 64; 4096; 16320 ]
         (fun n -> lds_launch n ());
-      test "a launch past its kernel's work-items is refused, the device live"
-        past_the_bound;
+      refused_blocks;
     ]
 
 let work =

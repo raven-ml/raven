@@ -547,8 +547,8 @@ let rec hand_over s run nwaits =
   end
   else if r = Dev.Answer.never then
     invalid_argf
-      "Rig.%s: the parts never fit %s's queues, or name work its driver does \
-       not run"
+      "Rig.%s: the parts never fit %s's queues, name work its driver does not \
+       run, or hold a launch whose block it refuses"
       fn d.name
   else if r = Dev.Answer.producer_lost then
     Dev.raise_lost (Dev.of_index (run_producer run))
