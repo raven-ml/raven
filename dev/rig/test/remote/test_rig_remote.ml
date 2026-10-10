@@ -448,7 +448,8 @@ let between_agents () =
       bad "no transfer" [||] [||];
       bad "length 0" [| { t5 with length = 0 } |] [||];
       bad "src -1" [| { t5 with src = -1 } |] [||];
-      bad "dst -1" [||] [| { t5 with dst = -1 } |]
+      bad "dst -1" [||] [| { t5 with dst = -1 } |];
+      bad "dst max_int" [||] [| { t5 with dst = max_int } |]
   | _ -> fail "two hosts"
 
 (* A rail with this process: its end here, laid out as the abi says, and a
@@ -524,7 +525,8 @@ let forks =
 let answer_pp = Format.pp_print_string
 
 (* Requests an agent cannot apply are refused, and the job goes on: an id the
-   job holds already, a rail of no transfer or of an empty one. *)
+   job holds already, a rail of no transfer, of an empty one, of one past its
+   areas' bound, or of areas larger than the agent's memory. *)
 let refused_requests () =
   with_agents @@ fun agents ->
   let a = List.hd agents in
@@ -539,6 +541,10 @@ let refused_requests () =
   is_error ~msg:"a rail of no transfer" (ask fd (rail_out 3 []));
   is_error ~msg:"a rail of an empty transfer"
     (ask fd (rail_out 4 [ (0, 0, 0) ]));
+  is_error ~msg:"a rail from byte max_int"
+    (ask fd (rail_out 5 [ (max_int, 0, 1) ]));
+  is_error ~msg:"a rail of 2^61 bytes"
+    (ask fd (rail_out 6 [ ((1 lsl 60) - 1, 0, 1) ]));
   send fd (frame k_close "");
   equal ~msg:"the agent's close" (option int) (Some k_close)
     (Option.map fst (next_frame fd));

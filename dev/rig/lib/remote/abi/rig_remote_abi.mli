@@ -67,6 +67,14 @@ type transfer = {
 }
 (** The type for transfers: the same bytes at the same places in every run. *)
 
+val check_transfers :
+  send:transfer array -> receive:transfer array -> (unit, string) result
+(** [check_transfers ~send ~receive] is [Ok ()] iff a rail can carry [send] and
+    [receive]: they are not both empty, and each transfer's [length] is positive
+    and its [src] and [dst] are non-negative, with [src + length] and
+    [dst + length] at most [2]{^ 60}. [Error why] otherwise, [why] naming the
+    transfer. *)
+
 type end_ = {
   outbound : area;
       (** Two copies, one after the other, of the bytes this machine sends: each
@@ -121,9 +129,8 @@ type host = {
           the job failed or [peer] is of another job, [why] naming the cause. It
           may be called from any domain.
 
-          Raises [Invalid_argument] if [peer] is this host, [send] and [receive]
-          are both empty, or a transfer's [length] is not positive or its [src]
-          or [dst] is negative. *)
+          Raises [Invalid_argument] if [peer] is this host or {!check_transfers}
+          answers [Error]. *)
 }
 (** The type for the record of another machine's host. *)
 

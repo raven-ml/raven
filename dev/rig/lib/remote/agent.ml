@@ -194,6 +194,10 @@ let listen ~key host port =
   match resolve host port with
   | Error _ as e -> e
   | Ok addr -> (
+      (* CR: Create this socket and dial_tcp's with ~cloexec:true. An executed
+         helper inherits the listener and keeps its port bound after serve and
+         the controller's close return. Setting the flag after creation leaves a
+         race with another thread starting a process. *)
       let fd = Unix.socket (Unix.domain_of_sockaddr addr) Unix.SOCK_STREAM 0 in
       match
         Unix.setsockopt fd Unix.SO_REUSEADDR true;
@@ -492,7 +496,12 @@ let answer : type a. state -> a Wire.request -> a =
   | Wire.Rail { id; peer; send; receive } ->
       fresh s id;
       let l = peer_link s peer in
-      let e = Link.rail l ~id ~send ~receive in
+      let e =
+        match Link.rail l ~id ~send ~receive with
+        | e -> e
+        | exception Out_of_memory ->
+            raise (Refused (strf "rail %d: no memory for its areas" id))
+      in
       Hashtbl.replace s.objects id (Rail (l, e))
 
 let drop s id =
@@ -663,4 +672,8 @@ let serve a kinds =
   | Some fd -> (
       match report fd with
       | Ok r -> run a kinds (Some r)
+      (* CR: Close a.socket before returning this report error. No acceptor
+         started, so stop never runs; RIG_REMOTE_REPORT=bad leaves a claimed,
+         unreusable agent still listening. Keep the one-shot claim and use
+         close_quietly so cleanup preserves the configuration error. *)
       | Error why -> Error why)

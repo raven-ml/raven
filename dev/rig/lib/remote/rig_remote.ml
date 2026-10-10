@@ -60,19 +60,6 @@ let request m q =
 
 (* Rails *)
 
-let check_transfers send receive =
-  if Array.length send = 0 && Array.length receive = 0 then
-    invalid_arg "Rig_remote_abi.host.rail: the rail carries no transfer";
-  let check (t : Rig_remote_abi.transfer) =
-    if t.length <= 0 || t.src < 0 || t.dst < 0 then
-      invalid_argf
-        "Rig_remote_abi.host.rail: a transfer of %d bytes from %d to %d is \
-         invalid"
-        t.length t.src t.dst
-  in
-  Array.iter check send;
-  Array.iter check receive
-
 (* [f] made to run at its first call alone: a rail's release runs once. *)
 let once f =
   let ran = Atomic.make false in
@@ -85,7 +72,9 @@ let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
   | Some h when h.machine = m.name ->
       invalid_arg "Rig_remote_abi.host.rail: the peer is this host"
   | _ -> ());
-  check_transfers send receive;
+  (match Rig_remote_abi.check_transfers ~send ~receive with
+  | Ok () -> ()
+  | Error why -> invalid_argf "Rig_remote_abi.host.rail: %s" why);
   let id = Link.fresh () in
   match peer with
   | None -> (
@@ -144,6 +133,11 @@ let machine_of_host h =
       | _ -> None)
   | _ -> None
 
+(* CR: Match the job's full state before consulting the cache, under m.lock.
+   Once a job fails, this Closed-only check lets a previously opened kind return
+   Ok lost devices; a new kind returns Error instead. Returning Error why for
+   Failed why preserves devices' failure contract through the same gate for both
+   paths. *)
 let devices h kind =
   match machine_of_host h with
   | None -> invalid_arg "Rig_remote.devices: the device is no host of a job"

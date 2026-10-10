@@ -500,11 +500,8 @@ let aligned n =
   Array1.fill a '\000';
   a
 
-(* CR: Validate both endpoints' extents and rounded two-copy sizes before
-   sending a Rail request or registering an end. With src=0, dst=max_int and
-   length=1, inbound wraps to zero bytes; a valid one-byte send then writes at
-   inbound + max_int in recv_rail. Share checked sizing between request
-   validation and allocation so native transfers fit their areas. *)
+(* Transfers [Rig_remote_abi.check_transfers] accepted end by [2^60]: an area's
+   two copies, each rounded up to [copy_align], fit an int. *)
 let landing ts field =
   let size =
     Array.fold_left
@@ -521,17 +518,9 @@ let flat ts =
        (Array.to_list ts))
 
 let rail l ~id ~send ~receive =
-  if Array.length send = 0 && Array.length receive = 0 then
-    invalid_arg "Rig_remote_proxy.Link.rail: the rail carries no transfer";
-  let check (t : Rig_remote_abi.transfer) =
-    if t.length <= 0 || t.src < 0 || t.dst < 0 then
-      invalid_argf
-        "Rig_remote_proxy.Link.rail: a transfer of %d bytes from %d to %d is \
-         invalid"
-        t.length t.src t.dst
-  in
-  Array.iter check send;
-  Array.iter check receive;
+  (match Rig_remote_abi.check_transfers ~send ~receive with
+  | Ok () -> ()
+  | Error why -> invalid_argf "Rig_remote_proxy.Link.rail: %s" why);
   Mutex.protect l.lock @@ fun () ->
   if Hashtbl.mem l.rails id then
     invalid_argf "Rig_remote_proxy.Link.rail: the link has a rail %d" id;

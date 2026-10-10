@@ -8,6 +8,26 @@ type area =
 
 type transfer = { src : int; dst : int; length : int }
 
+(* The largest end of a transfer. *)
+let max_end = 1 lsl 60
+
+(* Each end is compared by subtraction: a sum near [max_int] would wrap. *)
+let check_transfers ~send ~receive =
+  let bad t =
+    t.length <= 0 || t.src < 0 || t.dst < 0
+    || t.src > max_end - t.length
+    || t.dst > max_end - t.length
+  in
+  if Array.length send = 0 && Array.length receive = 0 then
+    Error "the rail carries no transfer"
+  else
+    match (Array.find_opt bad send, Array.find_opt bad receive) with
+    | Some t, _ | None, Some t ->
+        Error
+          (Printf.sprintf "a transfer of %d bytes from %d to %d is invalid"
+             t.length t.src t.dst)
+    | None, None -> Ok ()
+
 type end_ = {
   outbound : area;
   inbound : area;

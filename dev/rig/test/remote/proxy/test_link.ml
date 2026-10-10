@@ -1403,7 +1403,54 @@ let rail_misuse () =
   bad "length 0" [| { t5 with length = 0 } |] [||];
   bad "length -1" [||] [| { t5 with length = -1 } |];
   bad "src -1" [| { t5 with src = -1 } |] [||];
-  bad "dst -1" [||] [| { t5 with dst = -1 } |]
+  bad "dst -1" [||] [| { t5 with dst = -1 } |];
+  bad "src max_int" [| { t5 with src = max_int } |] [||];
+  bad "dst max_int" [||] [| { t5 with dst = max_int } |];
+  bad "a length of max_int" [||] [| { t5 with length = max_int } |]
+
+(* Integers at and around where [src + length] or [dst + length] passes 2^60 or
+   wraps. *)
+let extreme =
+  Gen.of_list ~pp:Format.pp_print_int
+    [
+      min_int;
+      -1;
+      0;
+      1;
+      5;
+      (1 lsl 60) - 5;
+      (1 lsl 60) - 1;
+      1 lsl 60;
+      (1 lsl 60) + 1;
+      max_int - 4;
+      max_int;
+    ]
+
+let transfer_g =
+  let open Gen in
+  let+ src = extreme and+ dst = extreme and+ length = extreme in
+  { Rig_remote_abi.src; dst; length }
+
+(* A transfer fits iff its length is positive and each end, its start plus its
+   length summed without wrapping, is a byte from 0 to 2^60. *)
+let fits (t : Rig_remote_abi.transfer) =
+  let ends_by start =
+    start >= 0
+    && Int64.(compare (add (of_int start) (of_int t.length)) (shift_left 1L 60))
+       <= 0
+  in
+  t.length > 0 && ends_by t.src && ends_by t.dst
+
+let transfers_law (send, receive) =
+  cover "a transfer that fits" (Array.exists fits (Array.append send receive));
+  cover "a transfer that does not"
+    (Array.exists (fun t -> not (fits t)) (Array.append send receive));
+  let expected =
+    (send <> [||] || receive <> [||])
+    && Array.for_all fits send && Array.for_all fits receive
+  in
+  equal bool expected
+    (Result.is_ok (Rig_remote_abi.check_transfers ~send ~receive))
 
 let rail_from_raw () =
   with_raw @@ fun j l p ->
@@ -1515,6 +1562,11 @@ let rails =
         rail_law;
       test "rail raises on its id again, no transfer, or a bad transfer"
         rail_misuse;
+      prop "check_transfers accepts exactly the transfers that fit 2^60"
+        (Gen.pair
+           (Gen.array ~size:(Gen.int_range 0 2) transfer_g)
+           (Gen.array ~size:(Gen.int_range 0 2) transfer_g))
+        transfers_law;
       test "a rail frame as wire.mli lays it out lands at its destination"
         rail_from_raw;
       test "a rail frame of another length fails the job" rail_wrong_length;

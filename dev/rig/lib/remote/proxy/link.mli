@@ -195,9 +195,9 @@ val rail :
     and stores [arrived]. The end's memory lives until {!release_rail},
     reachable or not.
 
-    Raises [Invalid_argument] if [l] has a rail [id], [send] and [receive] are
-    both empty, or a transfer's [length] is not positive or its [src] or [dst]
-    is negative. *)
+    Raises [Invalid_argument] if [l] has a rail [id] or
+    {!Rig_remote_abi.check_transfers} answers [Error], and [Out_of_memory] if
+    the host cannot allocate the areas. *)
 
 val release_rail : t -> int -> unit
 (** [release_rail l id] ends [l]'s rail [id] here: once it returns, neither
