@@ -237,6 +237,14 @@ static inline double add_f64(double a, double b) {
   return s == 0 ? 0.0 : s;
 }
 
+static inline nx_c64 add_c64(nx_c64 a, nx_c64 b) {
+  return nx_c64_of(add_f32(a.re, b.re), add_f32(a.im, b.im));
+}
+
+static inline nx_c128 add_c128(nx_c128 a, nx_c128 b) {
+  return nx_c128_of(add_f64(a.re, b.re), add_f64(a.im, b.im));
+}
+
 /* Typed runs: [F] combines the target's element with the update. Where the
    positions step 0 along the run, each step of the axis is one row. */
 #define SCATTER_RUN(NAME, T, F)                                              \
@@ -320,58 +328,14 @@ SCATTER_RUN(max_u64, uint64_t, MAX)
 SCATTER_RUN(min_u64, uint64_t, MIN)
 SCATTER_RUN(max_b, uint8_t, OR_B)
 SCATTER_RUN(min_b, uint8_t, AND_B)
+SCATTER_RUN(add_c64_run, nx_c64, add_c64)
+SCATTER_RUN(max_c64, nx_c64, nx_maximum_c64)
+SCATTER_RUN(min_c64, nx_c64, nx_minimum_c64)
+SCATTER_RUN(add_c128_run, nx_c128, add_c128)
+SCATTER_RUN(max_c128, nx_c128, nx_maximum_c128)
+SCATTER_RUN(min_c128, nx_c128, nx_minimum_c128)
 
-/* Elements one at a time: sub-byte dtypes, narrow floats and complex
-   numbers. */
-
-/* The rank of a float in the order, -0 below +0, for a value that is not
-   NaN. */
-static inline uint32_t rank_f32(float x) {
-  uint32_t b = nx_float_bits(x);
-  return b & 0x80000000u ? ~b : b | 0x80000000u;
-}
-
-static inline uint64_t rank_f64(double x) {
-  uint64_t b = nx_double_bits(x);
-  return b & 0x8000000000000000ull ? ~b : b | 0x8000000000000000ull;
-}
-
-/* Whether the extreme of [combine] of a and b is a: the first NaN, else the
-   greater (lesser) by rank, a on a tie. */
-static inline int keeps_f32(int combine, float a, float b) {
-  if (nx_float_nan(a)) return 1;
-  if (nx_float_nan(b)) return 0;
-  return combine == NX_SCATTER_MAX ? rank_f32(a) >= rank_f32(b)
-                                   : rank_f32(a) <= rank_f32(b);
-}
-
-/* A complex number's order: its real part, then its imaginary part; one
-   with a NaN part is a NaN. */
-static inline int keeps_c64(int combine, const float *a, const float *b) {
-  int na = nx_float_nan(a[0]) || nx_float_nan(a[1]);
-  int nb = nx_float_nan(b[0]) || nx_float_nan(b[1]);
-  if (na) return 1;
-  if (nb) return 0;
-  uint32_t ra = rank_f32(a[0]), rb = rank_f32(b[0]);
-  if (ra == rb) {
-    ra = rank_f32(a[1]);
-    rb = rank_f32(b[1]);
-  }
-  return combine == NX_SCATTER_MAX ? ra >= rb : ra <= rb;
-}
-
-static inline int keeps_c128(int combine, const double *a, const double *b) {
-  int na = a[0] != a[0] || a[1] != a[1];
-  int nb = b[0] != b[0] || b[1] != b[1];
-  if (na) return 1;
-  if (nb) return 0;
-  uint64_t ra = rank_f64(a[0]), rb = rank_f64(b[0]);
-  if (ra == rb) {
-    ra = rank_f64(a[1]);
-    rb = rank_f64(b[1]);
-  }
-  return combine == NX_SCATTER_MAX ? ra >= rb : ra <= rb;
-}
+/* Elements one at a time: sub-byte dtypes and narrow floats. */
 
 /* The code of a narrow float's element nearest [f]. */
 static uint32_t narrow_of_float(int dt, float f) {
@@ -418,28 +382,6 @@ static inline int32_t sub_value(int dt, uint32_t c) {
 static void combine_one(const scatter *c, int64_t pd, int64_t pu) {
   const nx_array *d = &c->a[0], *u = &c->a[3];
   int dt = c->dt;
-  if (dt == NX_COMPLEX64 || dt == NX_COMPLEX128) {
-    int w = dt == NX_COMPLEX64 ? 8 : 16;
-    uint8_t *e = d->base + pd * w;
-    const uint8_t *v = u->base + pu * w;
-    if (c->combine == NX_SCATTER_ADD && dt == NX_COMPLEX64) {
-      float *x = (float *)e;
-      const float *y = (const float *)v;
-      x[0] = add_f32(x[0], y[0]);
-      x[1] = add_f32(x[1], y[1]);
-    } else if (c->combine == NX_SCATTER_ADD) {
-      double *x = (double *)e;
-      const double *y = (const double *)v;
-      x[0] = add_f64(x[0], y[0]);
-      x[1] = add_f64(x[1], y[1]);
-    } else if (c->combine == NX_SCATTER_SET ||
-               !(dt == NX_COMPLEX64
-                     ? keeps_c64(c->combine, (float *)e, (const float *)v)
-                     : keeps_c128(c->combine, (double *)e,
-                                  (const double *)v)))
-      memcpy(e, v, (size_t)w);
-    return;
-  }
   uint32_t a = code_at(d, pd), b = code_at(u, pu);
   if (c->combine == NX_SCATTER_SET) {
     code_put(d, pd, b);
@@ -455,9 +397,12 @@ static void combine_one(const scatter *c, int64_t pd, int64_t pu) {
       c->acc[k] = add_f32(c->acc[k], nx_bits_to_float(dt, b));
       return;
     }
-    if (!keeps_f32(c->combine, nx_bits_to_float(dt, a),
-                   nx_bits_to_float(dt, b)))
-      code_put(d, pd, b);
+    /* The update replaces the element where the extreme is not the
+       element's own value. */
+    float x = nx_bits_to_float(dt, a), y = nx_bits_to_float(dt, b);
+    float g = c->combine == NX_SCATTER_MAX ? nx_maximum_f32(x, y)
+                                           : nx_minimum_f32(x, y);
+    if (nx_float_bits(g) != nx_float_bits(x)) code_put(d, pd, b);
     return;
   }
   /* int4, uint4 and bit; Add wraps modulo 16. */
@@ -506,6 +451,8 @@ static scatter_run run_of(int combine, int dt) {
     case NX_UINT32: PICK(add_32, max_u32, min_u32);
     case NX_INT64: PICK(add_64, max_i64, min_i64);
     case NX_UINT64: PICK(add_64, max_u64, min_u64);
+    case NX_COMPLEX64: PICK(add_c64_run, max_c64, min_c64);
+    case NX_COMPLEX128: PICK(add_c128_run, max_c128, min_c128);
     default: return element_run;
   }
 #undef PICK
