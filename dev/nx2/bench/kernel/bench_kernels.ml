@@ -403,7 +403,223 @@ let fold_rows =
     running "scan-sum-f32-1024x4096-axis0" f32 [| 1024; 4096 |] 0;
   ]
 
-let rows = copy_rows @ cast_rows @ apply_rows @ contract_rows @ fold_rows
+(* Gathers and scatters. A gather's floor copies its result's bytes and reads
+   its positions'; a scatter's reads its positions and updates and copies
+   [into]. Positions are random unless monotone. *)
+
+let positions n bound f =
+  A.of_array D.Int64 [| n |]
+    (Array.init n (fun i -> Int64.of_int (f i mod bound)))
+
+let random i = (i * 2654435761) lsr 7
+
+(* The setups give the call as a closure over its operands, whose dtype the row
+   does not know. *)
+let gather_row name ~axis x idx (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let (A.Any x) = x () in
+      let idx = idx () in
+      let dst = A.create Rig.host (A.dtype x) (A.Layout.shape (A.layout idx)) in
+      let s = Nx_kernel.Spec.gather ~axis in
+      fun () -> ok (K.gather s ~dst idx x))
+    (fun call -> call ())
+
+let scatter_row name c ~axis into idx u (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let (A.Any into) = into () in
+      let u = A.expect (A.dtype into) (u ()) and idx = idx () in
+      let dst =
+        A.create Rig.host (A.dtype into) (A.Layout.shape (A.layout into))
+      in
+      let s = Nx_kernel.Spec.scatter c ~unique:false ~axis in
+      fun () -> ok (K.scatter s ~dst ~into idx u))
+    (fun call -> call ())
+
+let index_rows =
+  let m = mib in
+  let any dt s () = A.Any (filled dt s) in
+  let flat n bound f () = positions n bound f in
+  let rows n w bound () =
+    Option.get
+      (A.move
+         (M.Broadcast [| n; w |])
+         (Option.get (A.move (M.Reshape [| n; 1 |]) (positions n bound random))))
+  in
+  let gather name ~axis x idx ~out ~read =
+    { bench = gather_row name ~axis x idx; work = [ F.Copy out; F.Read read ] }
+  in
+  let scatter name c ~axis into idx u ~into_bytes ~read =
+    {
+      bench = scatter_row name c ~axis into idx u;
+      work = [ F.Copy into_bytes; F.Read read ];
+    }
+  in
+  let along n () =
+    A.of_array D.Int64 [| n; n |]
+      (Array.init (n * n) (fun i -> Int64.of_int (random i mod n)))
+  in
+  [
+    (* A row take, an embedding's lookup: rows of 8 float32. *)
+    gather "gather-f32-rows-1Mx8" ~axis:0
+      (any f32 [| m; 8 |])
+      (rows m 8 m) ~out:(32 * m) ~read:(40 * m);
+    gather "gather-f32-16M-monotone" ~axis:0
+      (any f32 [| 16 * m |])
+      (flat (16 * m) (16 * m) Fun.id)
+      ~out:(64 * m) ~read:(192 * m);
+    gather "gather-f64-16M-random" ~axis:0
+      (any f64 [| 16 * m |])
+      (flat (16 * m) (16 * m) random)
+      ~out:(128 * m) ~read:(256 * m);
+    gather "gather-f32-along-axis1-2048x2048" ~axis:1
+      (any f32 [| 2048; 2048 |])
+      (along 2048) ~out:(16 * m) ~read:(48 * m);
+    scatter "scatter-add-f64-16M-into-1M" Add ~axis:0 (any f64 [| m |])
+      (flat (16 * m) m random)
+      (any f64 [| 16 * m |])
+      ~into_bytes:(8 * m) ~read:(256 * m);
+    scatter "scatter-add-f64-16M-into-128" Add ~axis:0 (any f64 [| 128 |])
+      (flat (16 * m) 128 random)
+      (any f64 [| 16 * m |])
+      ~into_bytes:1024 ~read:(256 * m);
+    scatter "scatter-set-f64-16M-into-16M" Set ~axis:0
+      (any f64 [| 16 * m |])
+      (flat (16 * m) (16 * m) random)
+      (any f64 [| 16 * m |])
+      ~into_bytes:(128 * m) ~read:(256 * m);
+    scatter "scatter-max-f64-16M-into-1M" Max ~axis:0 (any f64 [| m |])
+      (flat (16 * m) m random)
+      (any f64 [| 16 * m |])
+      ~into_bytes:(8 * m) ~read:(256 * m);
+    scatter "scatter-add-f16-16M-into-1M" Add ~axis:0 (any D.Float16 [| m |])
+      (flat (16 * m) m random)
+      (any D.Float16 [| 16 * m |])
+      ~into_bytes:(2 * m) ~read:(160 * m);
+    (* An embedding's gradient: rows of 512 float32 into a table of 32 Ki. *)
+    scatter "scatter-add-f32-rows-64Kx512" Add ~axis:0
+      (any f32 [| 32 * kib; 512 |])
+      (rows (64 * kib) 512 (32 * kib))
+      (any f32 [| 64 * kib; 512 |])
+      ~into_bytes:(64 * m)
+      ~read:((128 * m) + (512 * kib));
+  ]
+
+(* Sorts. A sort's floor copies its keys and positions once per radix pass of
+   its key's bytes. *)
+
+let sort_row name ~axis ~descending ~k x (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let (A.Any x) = x () in
+      let y = Array.copy (A.Layout.shape (A.layout x)) in
+      Option.iter (fun k -> y.(axis) <- k) k;
+      let values = A.create Rig.host (A.dtype x) y in
+      let positions = A.create Rig.host D.Int64 y in
+      let s = Nx_kernel.Spec.sort ~axis ~descending ~k in
+      fun () -> ok (K.sort s ~values ~positions x))
+    (fun call -> call ())
+
+let sort_rows =
+  let m = mib in
+  let any dt s () = A.Any (filled dt s) in
+  let sort name ?(descending = false) ?k ~axis x ~passes ~n =
+    {
+      bench = sort_row name ~axis ~descending ~k x;
+      work = [ F.Copy (passes * n * 16) ];
+    }
+  in
+  [
+    sort "sort-f32-1M" ~axis:0 (any f32 [| m |]) ~passes:4 ~n:m;
+    sort "sort-i64-1M" ~axis:0 (any D.Int64 [| m |]) ~passes:8 ~n:m;
+    sort "sort-f32-rows-512x512" ~axis:1
+      (any f32 [| 512; 512 |])
+      ~passes:4 ~n:(512 * 512);
+    (* A mixture of experts' router: the best 4 of 32 per token. *)
+    sort "topk-4-of-32-512-rows" ~descending:true ~k:4 ~axis:1
+      (any f32 [| 512; 32 |])
+      ~passes:1 ~n:(512 * 32);
+  ]
+
+(* Assemblies and folds. An assembly's floor copies its result's bytes; a fold's
+   reads its operand and copies its result once per tap, as its boxes do. *)
+
+let assemble_row name ~shape ~fill regions pieces (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let pieces = pieces () in
+      let (A.Any p) = pieces.(0) in
+      let dt = A.dtype p in
+      let pieces = Array.map (A.expect dt) pieces in
+      let dst = A.create Rig.host dt shape in
+      let s = Nx_kernel.Spec.assemble ~shape ~fill regions in
+      fun () -> ok (K.assemble s ~dst pieces))
+    (fun call -> call ())
+
+let fold_row name ~shape pad x (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let (A.Any x) = x () in
+      let dst = A.create Rig.host (A.dtype x) shape in
+      let s = Nx_kernel.Spec.fold ~shape pad in
+      fun () -> ok (K.fold s ~dst x))
+    (fun call -> call ())
+
+let assembly_rows =
+  let zero = Nx_kernel.Prog.bits f32 0. in
+  let any s () = A.Any (filled f32 s) in
+  let whole d = { M.start = 0; count = d; step = 1 } in
+  let n = 512 in
+  let conv =
+    let w axis = { M.axis; size = 3; step = 1; dilation = 1 } in
+    {
+      Nx_kernel.Spec.lo = [| 0; 0; 1; 1 |];
+      hi = [| 0; 0; 1; 1 |];
+      interior = [| 0; 0; 0; 0 |];
+      windows = [| w 2; w 3 |];
+    }
+  in
+  let image = [| 32; 64; 56; 56 |] in
+  let bytes s = 4 * Array.fold_left ( * ) 1 s in
+  [
+    {
+      bench =
+        assemble_row "assemble-concat-2x-512x512-f32"
+          ~shape:[| 2 * n; n |]
+          ~fill:zero
+          [|
+            [| { M.start = 0; count = n; step = 1 }; whole n |];
+            [| { M.start = n; count = n; step = 1 }; whole n |];
+          |]
+          (fun () -> [| any [| n; n |] (); any [| n; n |] () |]);
+      work = [ F.Copy (bytes [| 2 * n; n |]) ];
+    };
+    {
+      bench =
+        assemble_row "assemble-pad-1-of-1022x1022-f32" ~shape:[| 1024; 1024 |]
+          ~fill:zero
+          [|
+            [|
+              { M.start = 1; count = 1022; step = 1 };
+              { M.start = 1; count = 1022; step = 1 };
+            |];
+          |]
+          (fun () -> [| any [| 1022; 1022 |] () |]);
+      work = [ F.Copy (bytes [| 1024; 1024 |]) ];
+    };
+    {
+      bench =
+        fold_row "fold-3x3-pad1-f32-32x64x56x56" ~shape:image conv (fun () ->
+            any [| 32; 64; 56; 56; 3; 3 |] ());
+      work =
+        [ F.Read (bytes [| 32; 64; 56; 56; 3; 3 |]); F.Copy (9 * bytes image) ];
+    };
+  ]
+
+let rows =
+  copy_rows @ cast_rows @ apply_rows @ contract_rows @ fold_rows @ index_rows
+  @ sort_rows @ assembly_rows
 
 (* A contraction's axes grouped as a GPU planner reads them: Spec.Contract_view
    of the bf16 4096 call, a and b [1; 4096; 4096] over the batch pair (0, 0)
