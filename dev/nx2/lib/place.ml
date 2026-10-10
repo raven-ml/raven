@@ -190,7 +190,7 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
   let at = Prim.placement x in
   let arrays =
     match x with
-    | Value.Array { a; _ } -> [| a |]
+    | Value.Array { a; _ } -> Iarray.of_list [ a ]
     | Value.Shards { arrays; _ } -> arrays
     | Value.Deferred _ ->
         invalid_arg "Place.value: a constant is placed computed"
@@ -203,7 +203,8 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
   else begin
     let shape = Prim.shape x and dt = Prim.dtype x in
     let sources =
-      Array.mapi (fun i a -> (Devices.window ~by at shape i, a)) arrays
+      Array.init (Iarray.length arrays) (fun i ->
+          (Devices.window ~by at shape i, Iarray.get arrays i))
     in
     let set = Devices.set p in
     let take j k =
@@ -212,7 +213,8 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
       | Some a -> a
       | None -> gather d dt w sources
     in
-    make (Array.mapi take (Grid.devices (Devices.grid p)))
+    let devices = Grid.devices (Devices.grid p) in
+    make (Iarray.init (Array.length devices) (fun j -> take j devices.(j)))
   end
 
 (* [x]'s window [w] from the array of device [k], which holds it. *)
@@ -220,7 +222,7 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   let at = Prim.placement x and shape = Prim.shape x in
   let arrays =
     match x with
-    | Value.Array { a; _ } -> [| a |]
+    | Value.Array { a; _ } -> Iarray.of_list [ a ]
     | Value.Shards { arrays; _ } -> arrays
     | Value.Deferred _ -> invalid_arg "Place.view: a constant has no arrays"
     | Value.Traced _ -> invalid_arg "Place.view: a traced value has no arrays"
@@ -234,7 +236,7 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
       let held = Devices.window ~by at shape j in
       if not (contains held w) then
         invalid_arg "Place.view: the window is not held";
-      slice arrays.(j) (relative held w)
+      slice (Iarray.get arrays j) (relative held w)
 
 let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   match x with

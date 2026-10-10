@@ -65,7 +65,7 @@ let placements =
           equal (list string) [ "m2" ]
             (List.map
                (fun a -> Rig.name (Nx_array.device a))
-               (Array.to_list (Option.get (Nx.Repr.shards x)))));
+               (Iarray.to_list (Option.get (Nx.Repr.shards x)))));
       test "a placement on the one device of a set is the set's whole"
         (fun () ->
           let module S1 = (val Nx.devices [ m 2 ]) in

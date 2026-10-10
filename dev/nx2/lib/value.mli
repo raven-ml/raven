@@ -30,14 +30,14 @@ type ('v, 's, 'd) t =
           function it was donated to once it died ({!Exec.donate}). *)
   | Shards of {
       at : 'd Devices.placement;
-      arrays : ('v, 's) Nx_array.t array;
+      arrays : ('v, 's) Nx_array.t iarray;
       mutable dead : string; [@atomic]
     }
       (** On [at]'s devices, two or more: per device, in
           [Grid.devices (Devices.grid at)]'s order, its window of the value. *)
   | Donated of {
       at : 'd Devices.placement;
-      arrays : ('v, 's) Nx_array.t array;
+      arrays : ('v, 's) Nx_array.t iarray;
       chain : chain;
       mutable spent : string; [@atomic]
     }

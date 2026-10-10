@@ -69,10 +69,11 @@ let split_x () : (float, D.float32_elt, b) Value.t =
     {
       at = Devices.split ~by:"t" ~axis:0 s2;
       arrays =
-        [|
-          A.to_device (m 0) (A.of_array D.Float32 [| 2 |] [| 0.; 1. |]);
-          A.to_device (m 1) (A.of_array D.Float32 [| 2 |] [| 2.; 3. |]);
-        |];
+        Iarray.of_list
+          [
+            A.to_device (m 0) (A.of_array D.Float32 [| 2 |] [| 0.; 1. |]);
+            A.to_device (m 1) (A.of_array D.Float32 [| 2 |] [| 2.; 3. |]);
+          ];
       dead = Prim.live;
     }
 

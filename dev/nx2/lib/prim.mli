@@ -30,7 +30,7 @@ val placement : ('v, 's, 'd) t -> 'd Devices.placement
     [Invalid_argument] for a value of every set. *)
 
 val of_arrays :
-  'd Devices.placement -> ('v, 's) Nx_array.t array -> ('v, 's, 'd) t
+  'd Devices.placement -> ('v, 's) Nx_array.t iarray -> ('v, 's, 'd) t
 (** [of_arrays p arrays] is the live value over [arrays], one per device of [p]:
     [Array] for one, [Shards] otherwise. *)
 

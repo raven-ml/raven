@@ -1170,18 +1170,19 @@ module Repr : sig
       [None] for a value on several devices or of every set. [a] may be strided
       or offset. It is for reading: writing through it changes [x]. *)
 
-  val of_shards : 'd Placement.t -> ('v, 's) Nx_array.t array -> ('v, 's, 'd) t
-  (** [of_shards p arrays] is the value whose bytes are [arrays], one per device
-      of [p] in order, each that device's window.
+  val of_shards :
+    'd Placement.t -> ('v, 's) Nx_array.t iarray -> ('v, 's, 'd) t
+  (** [of_shards p arrays] is the value whose bytes are [arrays], one per
+      device of [p] in order, each that device's window.
 
-      Raises [Invalid_argument] naming [Nx.Repr.of_shards] unless there is one
-      array per device of [p], each on its device, all of one shape, of a rank
-      that has every axis [p] cuts. *)
+      Raises [Invalid_argument] naming [Nx.Repr.of_shards] unless there
+      is one array per device of [p], each on its device, all of one
+      shape, of a rank that has every axis [p] cuts. *)
 
-  val shards : ('v, 's, 'd) t -> ('v, 's) Nx_array.t array option
-  (** [shards x] is [Some arrays], one per device of [x]'s placement, in order:
-      [[| a |]] for a value on one device; [None] for a value of every set. The
-      arrays are for reading, as {!array}'s. *)
+  val shards : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray option
+  (** [shards x] is [Some arrays], one per device of [x]'s placement, in
+      order: [[| a |]] for a value on one device; [None] for a value of
+      every set. The arrays are for reading, as {!array}'s. *)
 end
 
 (**/**)

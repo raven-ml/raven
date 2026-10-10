@@ -26,13 +26,15 @@ let placement : type v s d. (v, s, d) t -> d Devices.placement = function
 
 let dtype : type v s d. (v, s, d) t -> (v, s) dtype = function
   | Array { a; _ } -> Nx_array.dtype a
-  | Shards { arrays; _ } | Donated { arrays; _ } -> Nx_array.dtype arrays.(0)
+  | Shards { arrays; _ } | Donated { arrays; _ } ->
+      Nx_array.dtype (Iarray.get arrays 0)
   | Deferred { form; _ } | Traced { form; _ } -> form.dtype
 
 (* The layout of [x]'s array, of its first shard, or of its form. *)
 let own_layout : type v s d. (v, s, d) t -> L.t = function
   | Array { a; _ } -> Nx_array.layout a
-  | Shards { arrays; _ } | Donated { arrays; _ } -> Nx_array.layout arrays.(0)
+  | Shards { arrays; _ } | Donated { arrays; _ } ->
+      Nx_array.layout (Iarray.get arrays 0)
   | Deferred { form; _ } | Traced { form; _ } -> form.layout
 
 let rank x = L.rank (own_layout x)
@@ -52,8 +54,9 @@ let alive ~by i x =
     invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
 
 let of_arrays (type v s d) (p : d Devices.placement)
-    (arrays : (v, s) Nx_array.t array) : (v, s, d) t =
-  if Array.length arrays = 1 then Array { at = p; a = arrays.(0); dead = live }
+    (arrays : (v, s) Nx_array.t iarray) : (v, s, d) t =
+  if Iarray.length arrays = 1 then
+    Array { at = p; a = Iarray.get arrays 0; dead = live }
   else Shards { at = p; arrays; dead = live }
 
 (* The tiles along [axis] of a value at [p]: 1 where it is not cut. *)
@@ -128,7 +131,14 @@ let broadcast_shape ~by s s' =
 
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
   match x with
-  | Array { at; a; _ } | Donated { at; arrays = [| a |]; _ } ->
+  | Array { at; a; _ } ->
+      {
+        dtype = Nx_array.dtype a;
+        layout = Nx_array.layout a;
+        placement = Some at;
+      }
+  | Donated { at; arrays; _ } when Iarray.length arrays = 1 ->
+      let a = Iarray.get arrays 0 in
       {
         dtype = Nx_array.dtype a;
         layout = Nx_array.layout a;
@@ -663,7 +673,9 @@ let one_result ~by rule x =
    device. *)
 let form_layout (type v s d) (x : (v, s, d) t) =
   match x with
-  | Array { a; _ } | Donated { arrays = [| a |]; _ } -> Nx_array.layout a
+  | Array { a; _ } -> Nx_array.layout a
+  | Donated { arrays; _ } when Iarray.length arrays = 1 ->
+      Nx_array.layout (Iarray.get arrays 0)
   | Shards _ | Donated _ -> L.contiguous (shape x)
   | Deferred { form; _ } | Traced { form; _ } -> form.layout
 
@@ -1048,7 +1060,8 @@ let prepare : type r.
 let arrays_of : type v s d. (v, s, d) t -> Nx_array.any array = function
   | Array { a; _ } -> [| Nx_array.Any a |]
   | Shards { arrays; _ } | Donated { arrays; _ } ->
-      Array.map (fun a -> Nx_array.Any a) arrays
+      Array.init (Iarray.length arrays) (fun j ->
+          Nx_array.Any (Iarray.get arrays j))
   | Deferred _ -> invalid_arg "Prim.arrays: a constant has no arrays"
   | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
 

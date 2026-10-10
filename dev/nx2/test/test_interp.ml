@@ -861,7 +861,7 @@ let bytes x =
   List.fold_left
     (fun n a -> n + D.bytes (A.dtype a) (L.numel (A.layout a)))
     0
-    (Array.to_list (Option.get (Nx.Repr.shards x)))
+    (Iarray.to_list (Option.get (Nx.Repr.shards x)))
 
 let staging prog i ~by op =
   let (Nx.Prim.Operands xs) = Nx.Prim.operands op in

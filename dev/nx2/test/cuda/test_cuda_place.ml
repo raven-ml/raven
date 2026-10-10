@@ -54,7 +54,7 @@ let half_window ~transposed ~axis () =
   let module Two = (val Nx.devices [ Rig.host; gpu ]) in
   let a = unpaged ~transposed in
   let y = Nx.place (Two.split ~axis) (Nx.Repr.of_array Nx.Host.v a) in
-  let half = (require_some (Nx.Repr.shards y)).(1) in
+  let half = Iarray.get (require_some (Nx.Repr.shards y)) 1 in
   equal string ~msg:"its device" (Rig.name gpu) (Rig.name (A.device half));
   equal int ~msg:"its buffer's bytes"
     (Dt.bytes Dt.Float32 (rows * cols / 2))

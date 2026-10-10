@@ -50,9 +50,16 @@ let ran ~by answer dsts ops =
 
 let make = Prim.of_arrays
 
-let arrays_of (type v s d) (x : (v, s, d) Value.t) : (v, s) A.t array =
+(* Arrays kept untyped, one per device, at [dt]. *)
+let typed dt (per : A.any array) =
+  Iarray.init (Array.length per) (fun j -> A.expect dt per.(j))
+
+let any arrays =
+  Array.init (Iarray.length arrays) (fun j -> A.Any (Iarray.get arrays j))
+
+let arrays_of (type v s d) (x : (v, s, d) Value.t) : (v, s) A.t iarray =
   match x with
-  | Value.Array { a; _ } -> [| a |]
+  | Value.Array { a; _ } -> Iarray.of_list [ a ]
   | Value.Shards { arrays; _ } | Value.Donated { arrays; _ } -> arrays
   | Value.Deferred _ -> invalid_arg "Exec: a constant has no arrays"
   | Value.Traced _ -> invalid_arg "Exec: a traced value has no arrays"
@@ -97,7 +104,7 @@ let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
       Value.Donated
         {
           at = r.at;
-          arrays = [| r.a |];
+          arrays = Iarray.of_list [ r.a ];
           chain = chain claim;
           spent = Prim.live;
         }
@@ -146,9 +153,9 @@ let handles ~by xs =
               match (x, y) with
               | Value.Donated a, Value.Donated b ->
                   a.chain.origin = b.chain.origin
-                  || Array.exists
+                  || Iarray.exists
                        (fun p ->
-                         Array.exists
+                         Iarray.exists
                            (fun q ->
                              Rig.Buffer.overlaps (A.buffer p) (A.buffer q))
                            b.arrays)
@@ -164,7 +171,7 @@ let handles ~by xs =
   hs
 
 (* The buffers of a handle, one per device. *)
-let buffers (Handle x) = Array.to_list (Array.map A.buffer (arrays_of x))
+let buffers (Handle x) = Iarray.to_list (Iarray.map A.buffer (arrays_of x))
 
 (* Claims the handles [hs] for their consumer [by], before it reads them: each
    chain, then its donor, dies naming [by]. A chain or donor another consumer
@@ -231,7 +238,8 @@ let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
   | dt :: _ -> (
       let fits (Value.Plain y) =
         match y with
-        | Value.Donated { at; arrays = [| a |]; _ } ->
+        | Value.Donated { at; arrays; _ } when Iarray.length arrays = 1 ->
+            let a = Iarray.get arrays 0 in
             D.equal (A.dtype a) dt
             && L.equal (A.layout a) layout
             && Rig.Buffer.spans (A.buffer a)
@@ -250,7 +258,7 @@ let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
       | Some i -> (
           match loads.(i) with
           | Value.Plain (Value.Donated d) ->
-              let a = d.arrays.(0) in
+              let a = Iarray.get d.arrays 0 in
               let b = A.buffer a in
               Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
                   if not (Rig.Claim.exclusive c b) then None
@@ -289,13 +297,12 @@ let starts (w : M.range array) = Array.map (fun (r : M.range) -> r.start) w
 let fresh ~by p dt shape =
   let set = Devices.set p in
   match Grid.one (Devices.grid p) with
-  | Some k -> [| A.create (Devices.rig set k) dt shape |]
+  | Some k -> Iarray.of_list [ A.create (Devices.rig set k) dt shape ]
   | None ->
-      Array.mapi
-        (fun j k ->
-          A.create (Devices.rig set k) dt
+      let devices = Grid.devices (Devices.grid p) in
+      Iarray.init (Array.length devices) (fun j ->
+          A.create (Devices.rig set devices.(j)) dt
             (extents (Devices.window ~by p shape j)))
-        (Grid.devices (Devices.grid p))
 
 (* A maker of fresh results at [at], or at their form's placement, recording the
    placement in [where]. *)
@@ -309,7 +316,8 @@ let alloc (type v s d) ~by ?(at : unit Devices.placement option) ?where ?into k
   in
   Option.iter (fun r -> r := Some (Devices.rebrand p)) where;
   match into with
-  | Some a when k = 0 -> make p [| A.expect f.dtype a |]
+  | Some a when k = 0 ->
+      Value.Array { at = p; a = A.expect f.dtype a; dead = Prim.live }
   | Some _ | None -> make p (fresh ~by p f.dtype (L.shape f.layout))
 
 (* Programs on one device *)
@@ -619,13 +627,13 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
         (Prim.placement r, arrays_of r)
       in
       let at, arrays =
-        match d.arrays with
-        | [| a |] -> (
-            ignore (Prim.prepare ~by (fun _ y -> y) op);
-            match A.move mv a with
-            | Some v -> (d.at, [| v |])
-            | None -> moved ())
-        | _ -> moved ()
+        if Iarray.length d.arrays <> 1 then moved ()
+        else begin
+          ignore (Prim.prepare ~by (fun _ y -> y) op);
+          match A.move mv (Iarray.get d.arrays 0) with
+          | Some v -> (d.at, Iarray.of_list [ v ])
+          | None -> moved ()
+        end
       in
       d.spent <- by;
       Value.Donated { at; arrays; chain = d.chain; spent = Prim.live }
@@ -671,10 +679,10 @@ and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
           let y = Place.value ~by p x in
           (* A value over [x]'s memory, kept or borrowed, shares it. *)
           let xs = arrays_of x in
-          Array.iter
+          Iarray.iter
             (fun b ->
               if
-                Array.exists
+                Iarray.exists
                   (fun a -> Rig.Buffer.overlaps (A.buffer a) (A.buffer b))
                   xs
               then Rig.Claim.share (A.buffer b))
@@ -783,11 +791,11 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       let move a =
         moved ~by set (localize mv shape cuts (L.shape (A.layout a))) a
       in
-      shard_views ~by op xp (fun () -> Array.map move xs)
+      shard_views ~by op xp (fun () -> Iarray.map move xs)
   | Value.Bitcast (dt, x) ->
       let xp = Prim.placement x and xs = arrays_of x in
       let set = Devices.set xp in
-      shard_views ~by op xp (fun () -> Array.map (cast ~by set dt) xs)
+      shard_views ~by op xp (fun () -> Iarray.map (cast ~by set dt) xs)
   | Value.Gather { axis; idx; x } ->
       let r, p = alloc_one ~by op in
       let set = Devices.set p in
@@ -796,7 +804,7 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       let declined = ref None in
       each_device ~by p (Prim.shape r) (fun j k w ->
           if Option.is_none !declined then begin
-            let dst = dsts.(j) and i = Place.view ~by idx k w in
+            let dst = Iarray.get dsts j and i = Place.view ~by idx k w in
             let v = Place.view ~by x k (along axis (Prim.shape x) w) in
             let ops = [| A.Any i; A.Any v |] in
             if not (ran ~by (K.gather spec ~dst i v) [| A.Any dst |] ops) then
@@ -812,7 +820,7 @@ and compute : type r. by:string -> ?into:A.any -> r Value.prim -> r =
       let declined = ref None in
       each_device ~by p (Prim.shape r) (fun j k w ->
           if Option.is_none !declined then begin
-            let dst = dsts.(j) and into = Place.view ~by t k w in
+            let dst = Iarray.get dsts j and into = Place.view ~by t k w in
             let w' = along axis s w in
             let i = Place.view ~by idx k w'
             and u = Place.view ~by updates k w' in
@@ -936,8 +944,8 @@ and assemble : type v s d.
                pieces)
         in
         let ops = Array.map (fun v -> A.Any v) views in
-        computed :=
-          ran ~by (K.assemble spec ~dst:dsts.(j) views) [| A.Any dsts.(j) |] ops
+        let dst = Iarray.get dsts j in
+        computed := ran ~by (K.assemble spec ~dst views) [| A.Any dst |] ops
       end);
   if !computed then r else expanded ~by (Devices.rebrand p) op
 
@@ -960,7 +968,7 @@ and shard_views : type v s d.
     by:string ->
     (v, s, d) Value.t Value.prim ->
     d Devices.placement ->
-    (unit -> (v, s) A.t array) ->
+    (unit -> (v, s) A.t iarray) ->
     (v, s, d) Value.t =
  fun ~by op xp views ->
   let xdev = Grid.devices (Devices.grid xp) in
@@ -969,12 +977,11 @@ and shard_views : type v s d.
       let vs = views () in
       (* Its operand lies at [xp], so it has a placement. *)
       let p = Option.get f.placement in
+      let devices = Grid.devices (Devices.grid p) in
       make p
-        (Array.map
-           (fun k ->
-             let j = Option.get (Array.find_index (( = ) k) xdev) in
-             A.expect f.dtype (A.Any vs.(j)))
-           (Grid.devices (Devices.grid p))))
+        (Iarray.init (Array.length devices) (fun i ->
+             let j = Option.get (Array.find_index (( = ) devices.(i)) xdev) in
+             A.expect f.dtype (A.Any (Iarray.get vs j)))))
     op
 
 and check : type d.
@@ -987,9 +994,9 @@ and check : type d.
   let host : d Devices.placement = host () in
   let on_host (type v s) (x : (v, s, d) Value.t) : (v, s) A.t =
     match x with
-    | Value.Deferred _ -> (arrays_of (at host x)).(0)
+    | Value.Deferred _ -> Iarray.get (arrays_of (at host x)) 0
     | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
-        (arrays_of (Place.value ~by host x)).(0)
+        Iarray.get (arrays_of (Place.value ~by host x)) 0
   in
   let shape = Prim.shape ok in
   match Array.find_index not (A.to_array (on_host ok)) with
@@ -1035,7 +1042,7 @@ and at : type v s d.
               remember n.memo key a;
               Option.get (find n.memo key)
       in
-      make p (Array.map (A.expect form.dtype) arrays.(k))
+      make p (typed form.dtype arrays.(k))
 
 (* The constant [c] computed at [p] into memory of its own, its operands taken
    from their memos or computed for this alone: a value given to a caller shares
@@ -1052,7 +1059,7 @@ and own : type v s d.
         if is_view n.op then compute_node ~resolve:own node key
         else evaluate node key
       in
-      make p (Array.map (A.expect form.dtype) arrays.(k))
+      make p (typed form.dtype arrays.(k))
 
 (* [root]'s results at [p], fresh: the constants it reads are taken from their
    memos where an operation read them at the placement it reads them, and
@@ -1072,7 +1079,7 @@ and memoised : type v s d.
   match x with
   | Value.Deferred { form; node = Value.Node n; k } ->
       let arrays = Option.get (find n.memo (Devices.rebrand q)) in
-      make q (Array.map (A.expect form.dtype) arrays.(k))
+      make q (typed form.dtype arrays.(k))
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
 
 (* [evaluate] where some constant [root] reads is in no memo. *)
@@ -1093,7 +1100,7 @@ and evaluate_all root p =
     match x with
     | Value.Deferred { form; node; k } ->
         let arrays = Option.get (lookup node (Devices.rebrand q)) in
-        make q (Array.map (A.expect form.dtype) arrays.(k))
+        make q (typed form.dtype arrays.(k))
     | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
   in
   let missing node q =
@@ -1237,10 +1244,10 @@ and compute_node :
       (* A view at a placement that cuts no axis: each device's whole operand
          there, moved. Its rule held when it was made. *)
       let xs = arrays_of (resolve (Devices.rebrand p) x) in
-      [| Array.map (fun a -> A.Any (moved ~by (Devices.set p) mv a)) xs |]
+      [| any (Iarray.map (moved ~by (Devices.set p) mv) xs) |]
   | Value.Bitcast (dt, x) when uncut p ->
       let xs = arrays_of (resolve (Devices.rebrand p) x) in
-      [| Array.map (fun a -> A.Any (cast ~by (Devices.set p) dt a)) xs |]
+      [| any (Iarray.map (cast ~by (Devices.set p) dt) xs) |]
   | op ->
       let q = operand_at op p in
       (* CR: Materialize zero-load Reduce/Scan bodies at [q] before looping.
@@ -1325,7 +1332,7 @@ let handle_at (type v s d) (at : d Devices.placement) (h : (v, s, d) Value.t) =
   match h with
   | Value.Donated d ->
       d.at == at
-      && Array.length d.arrays = 1
+      && Iarray.length d.arrays = 1
       && Devices.kernels (Devices.set at) <> None
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
 
@@ -1350,7 +1357,7 @@ let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
   | Value.Donated dx when handle_at dx.at x ->
       let (module K) = kernels_at dx.at in
-      donated ~by dt x dx.arrays.(0) (fun dst a ->
+      donated ~by dt x (Iarray.get dx.arrays 0) (fun dst a ->
           match K.apply1 k ~dst a with
           | Done -> value_of dx.at dst
           | Declined | Wrong_dtype -> slow ~by k dt (value_of dx.at a)
@@ -1420,12 +1427,12 @@ let rec apply2 : type v s w r d.
   | Value.Donated dx, Value.Array ry when handle_at ry.at x && live_at ry.at y
     ->
       let (module K) = kernels_at ry.at in
-      donated ~by dt x dx.arrays.(0) (fun dst a ->
+      donated ~by dt x (Iarray.get dx.arrays 0) (fun dst a ->
           kernel2 ~slow ~by (module K) k dt ry.at dst a ry.a)
   | Value.Array rx, Value.Donated dy when handle_at rx.at y && live_at rx.at x
     ->
       let (module K) = kernels_at rx.at in
-      donated ~by dt y dy.arrays.(0) (fun dst b ->
+      donated ~by dt y (Iarray.get dy.arrays 0) (fun dst b ->
           kernel2 ~slow ~by (module K) k dt rx.at dst rx.a b)
   | Value.Array rx, Value.Deferred _
     when live_word rx.dead && well_formed2 k x y ->
@@ -1485,17 +1492,17 @@ let rec apply3 : type a b v s d.
   | Value.Donated dc, Value.Array rx, Value.Array ry
     when handle_at rx.at c && live_at rx.at x && live_at rx.at y ->
       let (module K) = kernels_at rx.at in
-      donated ~by (A.dtype rx.a) c dc.arrays.(0) (fun dst c' ->
+      donated ~by (A.dtype rx.a) c (Iarray.get dc.arrays 0) (fun dst c' ->
           kernel3 ~slow ~by (module K) k rx.at dst c' rx.a ry.a)
   | Value.Array rc, Value.Donated dx, Value.Array ry
     when handle_at rc.at x && live_at rc.at c && live_at rc.at y ->
       let (module K) = kernels_at rc.at in
-      donated ~by (A.dtype ry.a) x dx.arrays.(0) (fun dst x' ->
+      donated ~by (A.dtype ry.a) x (Iarray.get dx.arrays 0) (fun dst x' ->
           kernel3 ~slow ~by (module K) k rc.at dst rc.a x' ry.a)
   | Value.Array rc, Value.Array rx, Value.Donated dy
     when handle_at rc.at y && live_at rc.at c && live_at rc.at x ->
       let (module K) = kernels_at rc.at in
-      donated ~by (A.dtype rx.a) y dy.arrays.(0) (fun dst y' ->
+      donated ~by (A.dtype rx.a) y (Iarray.get dy.arrays 0) (fun dst y' ->
           kernel3 ~slow ~by (module K) k rc.at dst rc.a rx.a y')
   | (Value.Deferred _, _, _ | _, Value.Deferred _, _ | _, _, Value.Deferred _)
     when well_formed3 k c x y -> (

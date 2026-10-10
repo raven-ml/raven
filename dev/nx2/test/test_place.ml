@@ -123,7 +123,7 @@ let expected xs shape b =
   go 0 0;
   List.rev !out
 
-let shards (V x) = require_some (Nx.Repr.shards x)
+let shards (V x) = Iarray.to_array (require_some (Nx.Repr.shards x))
 
 (* [x] holds, on each device of [w], that device's window of [xs]. *)
 let holds xs shape w x =
@@ -242,7 +242,7 @@ let sharing =
           let (V x) = place On (host [| 4 |]) in
           let a = require_some (Nx.Repr.shards x) in
           let b = require_some (Nx.Repr.shards (Nx.place S4.on x)) in
-          equal bool true (Array.for_all2 ( == ) a b));
+          equal bool true (Iarray.for_all2 ( == ) a b));
       test "a set over the host's device reads the host's array" (fun () ->
           let module Fast =
             (val Nx.devices ~kernels:(module Nx_cpu) [ Rig.host ])
@@ -255,7 +255,8 @@ let sharing =
           let (V x) = host [| 1024 |] in
           let a = require_some (Nx.Repr.array x) in
           let b = require_some (Nx.Repr.shards (Nx.place S4.on x)) in
-          equal bool true (Rig.Buffer.overlaps (A.buffer a) (A.buffer b.(1))));
+          equal bool true
+            (Rig.Buffer.overlaps (A.buffer a) (A.buffer (Iarray.get b 1))));
       narrow "int4" A.Dtype.Int4 Fun.id;
       narrow "int16" A.Dtype.Int16 Fun.id;
       narrow "bool" A.Dtype.Bool (fun i -> i mod 2 = 0);

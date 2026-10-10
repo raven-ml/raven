@@ -94,7 +94,7 @@ let maps =
           equal
             (array (array bits))
             [| [| 0.; 1. |]; [| 2.; 3. |] |]
-            (Array.map A.to_array shards));
+            (Iarray.to_array (Iarray.map A.to_array shards)));
     ]
 
 exception Failed of int array * float

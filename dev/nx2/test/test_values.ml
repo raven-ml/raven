@@ -55,7 +55,7 @@ let values =
       test "a sharded value's shape is the whole's" (fun () ->
           let x =
             Nx.Repr.of_shards (S2.split ~axis:1)
-              [| on (m 0) [| 3; 2 |]; on (m 1) [| 3; 2 |] |]
+              (Iarray.of_list [ on (m 0) [| 3; 2 |]; on (m 1) [| 3; 2 |] ])
           in
           equal (array int) [| 3; 4 |] (Nx.shape x));
     ]
@@ -69,24 +69,24 @@ let repr =
           equal bool true (same a b));
       test "shards of a value from shards are those arrays" (fun () ->
           let a = on (m 0) [| 2 |] and b = on (m 1) [| 2 |] in
-          let s =
-            require_some (Nx.Repr.shards (Nx.Repr.of_shards S2.on [| a; b |]))
-          in
-          equal bool true (same a s.(0) && same b s.(1)));
+          let x = Nx.Repr.of_shards S2.on (Iarray.of_list [ a; b ]) in
+          let s = require_some (Nx.Repr.shards x) in
+          equal bool true (same a (Iarray.get s 0) && same b (Iarray.get s 1)));
       test "a value on two devices has no single array" (fun () ->
           let x =
-            Nx.Repr.of_shards S2.on [| on (m 0) [| 2 |]; on (m 1) [| 2 |] |]
+            Nx.Repr.of_shards S2.on
+              (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 2 |] ])
           in
           is_none (Nx.Repr.array x));
       test "shards of a value on one device is its array" (fun () ->
           let a = on (m 0) [| 2 |] in
           let s = require_some (Nx.Repr.shards (Nx.Repr.of_array S2.v a)) in
-          equal int 1 (Array.length s);
-          equal bool true (same a s.(0)));
+          equal int 1 (Iarray.length s);
+          equal bool true (same a (Iarray.get s 0)));
       test "shards on one device of a placement make an array value" (fun () ->
           let module S1 = (val Nx.devices [ m 3 ]) in
           let a = on (m 3) [| 2 |] in
-          let x = Nx.Repr.of_shards S1.on [| a |] in
+          let x = Nx.Repr.of_shards S1.on (Iarray.of_list [ a ]) in
           equal bool true (same a (require_some (Nx.Repr.array x))));
       test "an array on another set's device is refused" (fun () ->
           invalid ~by:"Nx.Repr.of_array" (fun () ->
@@ -94,25 +94,28 @@ let repr =
       cases "of_shards refuses" ~name:fst
         [
           ( "one array for two devices",
-            fun () -> Nx.Repr.of_shards S2.on [| on (m 0) [| 2 |] |] );
+            fun () ->
+              Nx.Repr.of_shards S2.on (Iarray.of_list [ on (m 0) [| 2 |] ]) );
           ( "an array on another device than its place",
             fun () ->
-              Nx.Repr.of_shards S2.on [| on (m 1) [| 2 |]; on (m 1) [| 2 |] |]
+              Nx.Repr.of_shards S2.on
+                (Iarray.of_list [ on (m 1) [| 2 |]; on (m 1) [| 2 |] ])
           );
           ( "arrays of two shapes",
             fun () ->
-              Nx.Repr.of_shards S2.on [| on (m 0) [| 2 |]; on (m 1) [| 3 |] |]
+              Nx.Repr.of_shards S2.on
+                (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 3 |] ])
           );
           ( "a cut axis the arrays lack",
             fun () ->
               Nx.Repr.of_shards (S2.split ~axis:1)
-                [| on (m 0) [| 2 |]; on (m 1) [| 2 |] |] );
+                (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 2 |] ]) );
         ]
         (fun (_, f) -> invalid ~by:"Nx.Repr.of_shards" f);
       test "placement of a value from shards is the placement given" (fun () ->
           let x =
             Nx.Repr.of_shards (S2.split ~axis:0)
-              [| on (m 0) [| 2 |]; on (m 1) [| 2 |] |]
+              (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 2 |] ])
           in
           equal placement (S2.split ~axis:0) (Option.get (Nx.placement x)));
     ]
@@ -135,7 +138,9 @@ let errors =
       ( "Nx.Repr.of_array",
         fun () -> ignore (Nx.Repr.of_array Other.v (on (m 0) [| 2 |])) );
       ( "Nx.Repr.of_shards",
-        fun () -> ignore (Nx.Repr.of_shards S2.on [| on (m 0) [| 2 |] |]) );
+        fun () ->
+          ignore (Nx.Repr.of_shards S2.on (Iarray.of_list [ on (m 0) [| 2 |] ]))
+      );
     ]
     (fun (name, f) ->
       match f () with
