@@ -46,9 +46,10 @@ type t =
 val shape : t -> int array -> int array
 (** [shape m s] is the shape of the result of [m] on an argument of shape [s].
 
-    Raises [Invalid_argument] if an extent of [s] is negative, the result has
-    more than {!Nx_array.Layout.max_rank} axes or a number of elements that does
-    not fit in an [int], or unless:
+    Raises [Invalid_argument] if an extent of [s] is negative, if [s] or the
+    result has extents other than [0] whose product exceeds
+    {!Nx_array.Layout.max_numel}, if the result has more than
+    {!Nx_array.Layout.max_rank} axes, or unless:
     - [Reshape s']: [s']'s extents are non-negative, their product [s]'s.
     - [Broadcast s']: [s']'s extents are non-negative; it has at least [s]'s
       rank, and each extent of [s] aligned from the right is [1] or [s']'s.

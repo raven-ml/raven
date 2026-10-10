@@ -448,6 +448,19 @@ let joins =
               let p = position o.s i in
               o.e.((((p - k) mod n) + n) mod n))
             (Nx.roll k o.x));
+      test "roll takes every k and an axis of max_numel" (fun () ->
+          let big = Nx_array.Layout.max_numel in
+          let x = Nx.zeros Nx.int32 [| 0; big |] in
+          equal (array int) [| 0; big |] (Nx.shape (Nx.roll ~axis:1 1 x));
+          equal (array int) [| 0; big |] (Nx.shape (Nx.roll ~axis:1 (-1) x));
+          let o = operand_of [| 3 |] Plain in
+          List.iter
+            (fun k ->
+              let k' = ((k mod 3) + 3) mod 3 in
+              is o.s
+                (fun i -> at o [| (i.(0) + 3 - k') mod 3 |])
+                (Nx.roll ~axis:0 k o.x))
+            [ min_int; min_int + 1; max_int; max_int - 1 ]);
       test "join refusals name the function" (fun () ->
           let x = (operand_of [| 2; 3 |] Plain).x in
           invalid ~by:"Nx.concatenate" (fun () -> Nx.concatenate ~axis:0 []);

@@ -38,15 +38,15 @@
    runs fewer. */
 #define CHUNKS 8
 
-int nx_cpu_threads(int64_t bytes, int64_t cost) {
-  int64_t threads = cost / THREAD_BYTES;
+int nx_cpu_threads(int64_t bytes, double cost) {
+  double threads = cost / THREAD_BYTES;
   int cores =
       bytes > CACHE_BYTES ? rig_pool_cores() : rig_pool_performance_cores();
-  if (threads > cores) threads = cores;
+  if (threads > cores) return cores;
   return threads < 1 ? 1 : (int)threads;
 }
 
-void nx_cpu_job(int64_t total, int64_t bytes, int64_t cost, rig_pool_body body,
+void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
                 void *ctx) {
   if (total <= 0) return;
   int64_t threads = nx_cpu_threads(bytes, cost);

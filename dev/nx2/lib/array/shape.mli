@@ -15,10 +15,13 @@ val max_rank : int
 val check_rank : string -> int -> unit
 (** [check_rank fn r] raises [Invalid_argument] if [r > max_rank]. *)
 
+val max_numel : int
+(** {!Nx_array.Layout.max_numel}. *)
+
 val numel : string -> int array -> int
 (** [numel fn s] is the product of [s]'s extents, [1] for no extent. Raises
-    [Invalid_argument] if an extent is negative or the product does not fit in
-    an [int]. *)
+    [Invalid_argument] if an extent is negative or the product of the extents
+    other than [0] exceeds {!max_numel}. *)
 
 val zeros : int -> int array
 (** [zeros r] is a fresh array of [r] zeros. *)

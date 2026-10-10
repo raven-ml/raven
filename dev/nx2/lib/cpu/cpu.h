@@ -232,13 +232,15 @@ static inline int nx_cpu_width(int dt) {
 /* Runs [body] over the units [0, total) of work that touches [bytes] bytes
    and takes as long as memcpy of [cost] bytes, on as many of the pool's
    threads as the cost pays for. A job of more than one thread, or a long
-   one, runs with the runtime released: [body] reads no OCaml value. */
-void nx_cpu_job(int64_t total, int64_t bytes, int64_t cost, rig_pool_body body,
+   one, runs with the runtime released: [body] reads no OCaml value. The
+   cost is an estimate, a double: one that multiplies extents of several
+   operands may pass an int64_t. */
+void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
                 void *ctx);
 
 /* The threads nx_cpu_job gives such work, if it has as many units: at
    least 1. */
-int nx_cpu_threads(int64_t bytes, int64_t cost);
+int nx_cpu_threads(int64_t bytes, double cost);
 
 /* Folds */
 

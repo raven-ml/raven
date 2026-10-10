@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 let max_rank = 32
+let max_numel = 1 lsl 53
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 let pp ppf a =
@@ -35,27 +36,23 @@ let copy s =
 let check_rank fn r =
   if r > max_rank then invalid_argf "%s: rank %d exceeds %d" fn r max_rank
 
-(* A shape with a zero extent has no element, whatever its other extents: its
-   product is 0 before any of them is multiplied. Each product is formed only
+(* A shape with a zero extent has no element, but the product of its other
+   extents is bounded all the same: every product of a layout's extents then
+   fits, whichever of them a kernel multiplies. Each product is formed only
    once it is known to fit. *)
 let numel fn s =
-  let r = Array.length s and zero = ref false in
+  let r = Array.length s and n = ref 1 and zero = ref false in
   for i = 0 to r - 1 do
     let d = Array.unsafe_get s i in
     if d < 0 then invalid_argf "%s: axis %d of %a is %d, below 0" fn i pp s d;
     if d = 0 then zero := true
-  done;
-  if !zero then 0
-  else begin
-    let n = ref 1 in
-    for i = 0 to r - 1 do
-      let d = Array.unsafe_get s i in
-      (* Two factors below 2^31 multiply without overflow in a 63-bit int, and
-         nx.array is 64-bit only: the division, tens of cycles, runs only for
-         larger ones. *)
-      if !n lor d >= 1 lsl 31 && !n > max_int / d then
-        invalid_argf "%s: the number of elements of %a overflows" fn pp s;
+    else begin
+      (* Two factors below 2^26 multiply to at most max_numel: the division,
+         tens of cycles, runs only for larger ones. *)
+      if !n lor d >= 1 lsl 26 && d > max_numel / !n then
+        invalid_argf "%s: the extents of %a other than 0 multiply past %d" fn
+          pp s max_numel;
       n := !n * d
-    done;
-    !n
-  end
+    end
+  done;
+  if !zero then 0 else !n

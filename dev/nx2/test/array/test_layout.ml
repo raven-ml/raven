@@ -80,15 +80,19 @@ let canonical l =
 
 (* Construction, by the interface *)
 
-(* The product of [s]'s extents, if it fits in an [int]; a zero extent makes it
-   zero. *)
+let max_numel = L.max_numel
+
+(* The product of [s]'s extents, if the product of those other than 0 is at
+   most [max_numel]. *)
 let numel s =
-  if Array.exists (( = ) 0) s then Some 0
-  else
-    Array.fold_left
-      (fun n d ->
-        Option.bind n (fun n -> if d > max_int / n then None else Some (n * d)))
-      (Some 1) s
+  Array.fold_left
+    (fun n d ->
+      Option.bind n (fun n ->
+          if d = 0 then Some n
+          else if d > max_numel / n then None
+          else Some (n * d)))
+    (Some 1) s
+  |> Option.map (fun n -> if Array.mem 0 s then 0 else n)
 
 let add a b =
   match (a, b) with
@@ -100,9 +104,9 @@ let add a b =
 (* Whether [(d - 1)·|t|], the reach of an axis, fits in an [int]. *)
 let fits d t = d <= 1 || (t <> min_int && abs t <= max_int / (d - 1))
 
-(* The offset and strides [v] makes of its arguments, or why it must raise. A
-   position "does not fit" if the span's end, one past the greatest position,
-   does not: a layout whose greatest position is [max_int] has no span. *)
+(* The offset and strides [v] makes of its arguments, or why it must raise:
+   the end of the span, one past the greatest position, is at most
+   [max_numel]. *)
 let v_reference s strides offset =
   let r = Array.length s in
   let* () = check (r <= L.max_rank) "too many axes" in
@@ -118,10 +122,10 @@ let v_reference s strides offset =
     in
     let* () =
       match (reach (min 0), reach (max 0)) with
-      | Some lo, Some hi when lo >= 0 && hi < max_int -> Ok ()
-      | Some lo, Some _ when lo >= 0 -> Error "a position overflows"
+      | Some lo, Some hi when lo >= 0 && hi < max_numel -> Ok ()
+      | Some lo, Some _ when lo >= 0 -> Error "a span past max_numel"
       | Some _, Some _ | None, _ -> Error "a negative position"
-      | Some _, None -> Error "a position overflows"
+      | Some _, None -> Error "a span past max_numel"
     in
     Ok (offset, Array.map2 (fun d t -> if d = 1 then 0 else t) s strides)
 
@@ -138,6 +142,10 @@ let v_args =
               max_int;
               max_int / 2;
               (max_int / 2) + 1;
+              max_numel;
+              max_numel - 1;
+              -(max_numel - 1);
+              (max_numel / 2) + 1;
               max_int / 3;
               -(max_int / 2);
               -max_int;
@@ -147,7 +155,14 @@ let v_args =
   in
   let shapes =
     frequency
-      [ (8, shape); (1, array ~size:(int_range 1 3) (int_range (-1) 3)) ]
+      [
+        (8, shape);
+        (1, array ~size:(int_range 1 3) (int_range (-1) 3));
+        ( 1,
+          array ~size:(int_range 1 3)
+            (ints_of
+               [ 0; 1; 2; 1 lsl 26; 1 lsl 27; max_numel; max_numel + 1 ]) );
+      ]
   in
   with_pp
     (fun ppf (s, st, o) ->
@@ -159,7 +174,17 @@ let v_args =
        frequency
          [
            (6, int_range (-2) 12);
-           (1, ints_of [ max_int; max_int - 1; min_int; max_int / 2 ]);
+           ( 1,
+             ints_of
+               [
+                 max_int;
+                 max_int - 1;
+                 min_int;
+                 max_int / 2;
+                 max_numel;
+                 max_numel - 1;
+                 max_numel - 2;
+               ] );
          ]
      and+ lifted = bool in
      (* Raise the offset by the reach of the negative strides, where it fits, so
@@ -184,15 +209,22 @@ let v_args =
 let reasons =
   [
     "a negative extent";
+    "too many elements";
     "strides of another length";
     "an axis' reach overflows";
     "a negative position";
-    "a position overflows";
+    "a span past max_numel";
   ]
 
 let law_v (s, strides, offset) =
   let expected = v_reference s strides offset in
   List.iter (fun r -> cover r (expected = Error r)) reasons;
+  cover "no element, other extents past max_numel"
+    (expected = Error "too many elements" && Array.mem 0 s);
+  cover "a span that ends at max_numel"
+    (match expected with
+    | Ok _ -> numel s <> Some 0 && snd (L.span (L.v ~offset ~strides s)) = max_numel
+    | Error _ -> false);
   match expected with
   | Error _ -> raises_match Exn.invalid_arg (fun () -> L.v ~offset ~strides s)
   | Ok (o, st) ->
@@ -228,6 +260,21 @@ let refusals =
       fun () -> L.v ~strides:[| (max_int / 2) + 1 |] [| 3 |] );
     ( "v of too many elements",
       fun () -> L.v ~strides:[| 0; 0 |] [| max_int; 2 |] );
+    ("contiguous past max_numel", fun () -> L.contiguous [| max_numel + 1 |]);
+    ( "contiguous of no element whose other extents pass max_numel",
+      fun () -> L.contiguous [| 0; 1 lsl 27; (1 lsl 26) + 1 |] );
+    ( "contiguous of no element whose other extents overflow",
+      fun () -> L.contiguous [| max_int; 2; 0 |] );
+    ( "a broadcast v past max_numel",
+      fun () -> L.v ~strides:[| 0; 0 |] [| (max_numel / 2) + 1; 2 |] );
+    ( "v of no element whose other extents pass max_numel",
+      fun () -> L.v ~strides:[| 0; 0; 0 |] [| max_numel; 2; 0 |] );
+    ( "v whose span ends past max_numel",
+      fun () -> L.v ~strides:[| max_numel |] [| 2 |] );
+    ( "v whose offset is max_numel",
+      fun () -> L.v ~offset:max_numel ~strides:[| 1 |] [| 1 |] );
+    ( "v whose negative reach passes max_numel",
+      fun () -> L.v ~offset:max_numel ~strides:[| -max_numel |] [| 2 |] );
   ]
 
 let test_refuses (_, f) = raises_match Exn.invalid_arg f
@@ -236,14 +283,27 @@ let test_bounds () =
   equal int 32 L.max_rank;
   equal int 32 (L.rank (L.contiguous (Array.make 32 1)));
   equal int 32 (L.rank (L.v ~strides:(Array.make 32 0) (Array.make 32 2)));
-  equal int max_int (L.numel (L.contiguous [| max_int |]));
-  let reach = (max_int / 2) + 1 in
-  equal ints [| reach |] (L.strides (L.v ~strides:[| reach |] [| 2 |]))
+  equal int (1 lsl 53) max_numel;
+  equal ~msg:"NX_MAX_NUMEL" int max_numel (Nx_array_support.max_numel ());
+  equal int max_numel (L.numel (L.contiguous [| max_numel |]));
+  equal (pair int int) (0, max_numel)
+    (L.span (L.contiguous [| max_numel / 2; 2 |]));
+  let reach = max_numel - 1 in
+  let l = L.v ~strides:[| reach |] [| 2 |] in
+  equal ints [| reach |] (L.strides l);
+  equal (pair int int) (0, max_numel) (L.span l);
+  let l = L.v ~offset:(max_numel - 1) ~strides:[| -reach |] [| 2 |] in
+  equal (pair int int) (0, max_numel) (L.span l);
+  let l = L.v ~offset:(max_numel - 1) ~strides:[| 0 |] [| 1 |] in
+  equal (pair int int) (max_numel - 1, max_numel) (L.span l);
+  equal int max_numel
+    (L.numel (L.v ~strides:[| 0; 0 |] [| max_numel / 2; 2 |]))
 
 let test_no_element () =
-  let s = [| max_int; 2; 0 |] in
+  let s = [| max_numel / 2; 2; 0 |] in
   equal ints s (L.shape (L.contiguous s));
-  equal ints s (L.shape (L.v ~strides:[| 0; 0; 0 |] s))
+  equal ints s (L.shape (L.v ~strides:[| 0; 0; 0 |] s));
+  equal int 0 (L.numel (L.contiguous s))
 
 let test_broadcast_scalar () =
   let one = L.contiguous [||] in
@@ -541,14 +601,17 @@ let tests =
     group "construction"
       [
         test "refusals name the axis at fault" test_messages;
-        test "max_rank is 32, and 32 axes are accepted" test_bounds;
+        test
+          "max_rank is 32, max_numel 2^53, and layouts reach both bounds"
+          test_bounds;
         prop ~count:1000
           "v keeps its arguments in canonical form, and raises iff they do not \
            fit"
           v_args law_v;
         prop "contiguous places element k at position k" shape law_contiguous;
         cases ~name:fst "refuses" refusals test_refuses;
-        test "a shape with no element takes any other extent" test_no_element;
+        test "a shape with no element takes other extents up to max_numel"
+          test_no_element;
         test "dim and stride refuse an axis out of range" test_axis_refuses;
         test
           "a scalar broadcast to two elements is neither contiguous nor \

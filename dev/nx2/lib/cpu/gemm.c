@@ -92,8 +92,10 @@
    (cpu.h), and two a byte packed, a guess no measurement has refined. */
 #define PACK_COST 2
 
-/* The cost of [flops] on the kernel [k]. */
-static int64_t flop_cost(nx_cpu_micro k, int64_t flops) {
+/* The cost of [flops] on the kernel [k]. Flops multiply the extents of
+   several operands, so they and the costs are doubles; storage, within one
+   operand's extents rounded to a tile, fits in an int64_t (NX_MAX_NUMEL). */
+static double flop_cost(nx_cpu_micro k, double flops) {
   return flops / k.flops_per_byte;
 }
 
@@ -339,7 +341,7 @@ static uint8_t *block(const panel *c, int64_t e, int64_t ib, int64_t *m,
    cluster's cores queue on it: on the M1 Max a 256³ product packs faster
    through it on two threads, a 512³ one through the stage on eight. */
 static nx_cpu_pack mover(const problem *p, int64_t total, int64_t bytes,
-                         int64_t cost) {
+                         double cost) {
   int64_t threads = min64(total, nx_cpu_threads(bytes, cost));
   return threads <= engines(p->g->kernel) ? p->g->pack : NULL;
 }
@@ -553,21 +555,14 @@ static void few_rows(problem *p) {
                     .lda = ceil_div(m, km.mr) * km.mr,
                     .kblocks = ceil_div(k, g->kc),
                     .slivers = ceil_div(n, km.nr)};
-  /* CR: Check workspace counts before multiplying. Legal f32 broadcast
-     views [8;2^58] and [2^58;8] each span four bytes, but this count
-     overflows signed int64 before allocation. Keep storage sizes,
-     alignment and work counts exact and checked; unrepresentable storage
-     takes the existing failure/OOM path. Saturate only scheduling byte/flop
-     estimates, with safe ceiling division and heuristic comparisons too.
-     Cover chain's buffers and lanes' partial sums at the same boundary. */
   int64_t packed = batch * k * r.lda * w;
   r.a = take(packed);
   if (r.a == NULL) {
     atomic_store(&p->failed, 1);
     return;
   }
-  int64_t bytes = batch * n * k * w + packed, flops = 2 * batch * m * n * k;
-  int64_t cost = flop_cost(km, flops) + bytes;
+  int64_t bytes = batch * n * k * w + packed;
+  double cost = flop_cost(km, 2.0 * batch * m * n * k) + bytes;
   r.move_a = mover(p, batch * r.kblocks, packed, PACK_COST * packed);
   r.move_b = mover(p, batch * r.slivers, bytes, cost);
   nx_cpu_job(batch * r.kblocks, packed, PACK_COST * packed, few_rows_pack,
@@ -611,14 +606,14 @@ static void chain(problem *p) {
                  .a = a};
       /* Enough units for the threads the compute job takes. */
       int64_t packed = ne * (c.slivers * nr + m) * kc_most * w;
-      int64_t flops = 2 * ne * m * c.nc * kc_most;
-      int64_t cost = flop_cost(g->kernel, flops) + packed;
+      double cost =
+          flop_cost(g->kernel, 2.0 * ne * m * c.nc * kc_most) + packed;
       split(&c, UNITS * nx_cpu_threads(packed, cost));
       int64_t pc = 0;
       do {
         c.pc = pc;
         c.kc = min64(g->kc, k - pc);
-        flops = 2 * ne * m * c.nc * c.kc;
+        double flops = 2.0 * ne * m * c.nc * c.kc;
         packed = ne * (c.slivers * nr + m) * c.kc * w;
         int64_t packs = ne * (c.slivers + mblocks);
         c.move = mover(p, packs, packed, PACK_COST * packed);
@@ -818,7 +813,7 @@ static void dots_finish(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 /* a is read in place where it is acc and adjacent along k, else staged
    whole first: it is the smaller operand. */
-static void dots(problem *p, int64_t bytes, int64_t cost) {
+static void dots(problem *p, int64_t bytes, double cost) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w, outputs = batch * m * n;
   dots_job f = {.p = p,
@@ -941,7 +936,7 @@ static void rows_finish(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-static void rows(problem *p, int64_t bytes, int64_t cost) {
+static void rows(problem *p, int64_t bytes, double cost) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t w = p->w;
   rows_job f = {.p = p,
@@ -974,7 +969,7 @@ static void lanes(problem *p) {
   }
   /* The cores' kernels run a flop in the time memcpy moves a byte. */
   int64_t bytes = batch * (m + n) * k * w;
-  int64_t cost = 2 * batch * m * n * k + bytes;
+  double cost = 2.0 * batch * m * n * k + bytes;
   if (p->op[B].st[CON] == 1) dots(p, bytes, cost);
   else rows(p, bytes, cost);
 }

@@ -99,6 +99,11 @@ static void add_loop(const nx_array *a, const nx_loop *l) {
   }
 }
 
+value nx_array_support_max_numel(value unit) {
+  (void)unit;
+  return Val_long(NX_MAX_NUMEL);
+}
+
 value nx_array_support_codes(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(r);

@@ -16,7 +16,8 @@
     A layout is immutable and in one {e canonical form}: an axis of extent 1 has
     stride 0, and a layout with no element has offset 0 and every stride 0. Two
     layouts of one shape that map every index to the same position are then
-    {!equal}.
+    {!equal}. Its sizes are at most {!max_numel}, so code that multiplies them
+    checks nothing.
 
     No OCaml array a function takes is kept, and every array a function returns
     is fresh. *)
@@ -27,12 +28,18 @@ type t
 val max_rank : int
 (** [max_rank] is [32], the most axes a layout has. *)
 
+val max_numel : int
+(** [max_numel] is [2{^53}]. A layout's extents, the product of its extents
+    other than [0], and the end of its span are at most [max_numel]. A
+    product of any of its extents, a position times a width of at most 128
+    bits, and a sum of a few of these fit in an [int]. *)
+
 val contiguous : int array -> t
 (** [contiguous s] is the layout of shape [s] in C order at offset 0: element
     [k] in C order is at position [k].
 
     Raises [Invalid_argument] if [s] has more than {!max_rank} axes, a negative
-    extent, or a number of elements that does not fit in an [int]. *)
+    extent, or extents other than [0] whose product exceeds {!max_numel}. *)
 
 val v : ?offset:int -> strides:int array -> int array -> t
 (** [v ~offset ~strides s] is the layout of shape [s] with [strides] and
@@ -40,8 +47,8 @@ val v : ?offset:int -> strides:int array -> int array -> t
 
     Raises [Invalid_argument] as {!contiguous} does, if [strides] does not have
     [s]'s length, if [(d - 1)·|t|] does not fit in an [int] for an axis of
-    extent [d] and stride [t], if a position is negative or does not fit in an
-    [int], or if the end of its span ({!span}) does not fit in an [int]. *)
+    extent [d] and stride [t], or, for a layout with an element, if a position
+    is negative or the end of its span ({!span}) exceeds {!max_numel}. *)
 
 (** {1:queries Queries}
 

@@ -28,6 +28,7 @@ let pp_answer ppf a =
   Format.pp_print_string ppf (fst (List.find (fun (_, b) -> a = b) answers))
 
 external codes : unit -> int array = "nx_array_support_codes"
+external max_numel : unit -> int = "nx_array_support_max_numel"
 external code : Nx_array.answer -> int = "%identity"
 
 external add : 'z -> 'x -> 'y -> Nx_array.answer = "nx_array_support_add"

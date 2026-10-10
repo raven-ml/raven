@@ -10,19 +10,21 @@ open Nx_array_gen
 let ( let* ) = Option.bind
 let ints = array int
 let guard b = if b then Some () else None
+let max_numel = Nx_array.Layout.max_numel
 
 (* The shape a movement gives, by its preconditions *)
 
-(* The product of [s]'s extents, [None] if it does not fit in an [int]: a zero
-   extent makes it zero, whatever the others. *)
+(* The product of [s]'s extents, [None] if the product of those other than 0
+   passes [max_numel]. *)
 let numel s =
-  if Array.exists (( = ) 0) s then Some 0
-  else
+  let* n =
     Array.fold_left
       (fun n d ->
         let* n = n in
-        if d > max_int / n then None else Some (n * d))
+        if d = 0 then Some n else if d > max_numel / n then None else Some (n * d))
       (Some 1) s
+  in
+  Some (if Array.mem 0 s then 0 else n)
 
 let in_axis d i = 0 <= i && i < d
 
@@ -54,6 +56,7 @@ let rec increasing = function
 let expected m s =
   let r = Array.length s in
   let* () = guard (Array.for_all (fun d -> d >= 0) s) in
+  let* _ = numel s in
   let* s' =
     match m with
     | M.Reshape s' ->
@@ -176,13 +179,25 @@ let bounds =
     refused "a reshape whose elements overflow"
       (M.Reshape [| (max_int / 2) + 1; 2 |])
       [| 4 |];
+    ok "a reshape to max_numel elements"
+      (M.Reshape [| max_numel / 2; 2 |])
+      [| max_numel |] [| max_numel / 2; 2 |];
+    refused "a reshape past max_numel elements"
+      (M.Reshape [| (max_numel / 2) + 1; 2 |])
+      [| max_numel + 2 |];
     refused "a reshape of no element to some" (M.Reshape [| 3 |]) [| 0 |];
     refused "a reshape to negative extents whose product matches"
       (M.Reshape [| -2; -3 |])
       [| 6 |];
-    ok "a reshape to no element takes any other extent"
+    ok "a reshape to no element takes other extents up to max_numel"
+      (M.Reshape [| max_numel / 2; 2; 0 |])
+      [| 0 |] [| max_numel / 2; 2; 0 |];
+    refused "a reshape to no element whose other extents pass max_numel"
+      (M.Reshape [| (max_numel / 2) + 1; 2; 0 |])
+      [| 0 |];
+    refused "a reshape to no element whose other extents overflow"
       (M.Reshape [| max_int; 2; 0 |])
-      [| 0 |] [| max_int; 2; 0 |];
+      [| 0 |];
     ok "a broadcast of an extent 1 to 0"
       (M.Broadcast [| 0; 3 |])
       [| 1; 3 |] [| 0; 3 |];
@@ -192,9 +207,27 @@ let bounds =
     refused "a broadcast whose elements overflow"
       (M.Broadcast [| max_int; 2 |])
       [| 1; 2 |];
+    ok "a broadcast to max_numel elements"
+      (M.Broadcast [| max_numel / 2; 2 |])
+      [| 1; 2 |] [| max_numel / 2; 2 |];
+    refused "a broadcast past max_numel elements"
+      (M.Broadcast [| (max_numel / 2) + 1; 2 |])
+      [| 1; 2 |];
+    refused "a broadcast to no element whose other extents pass max_numel"
+      (M.Broadcast [| (max_numel / 2) + 1; 2; 0 |])
+      [| 1 |];
+    refused "a window of an empty argument whose other extents pass max_numel"
+      (M.Window [| w 1 1 1 1 |])
+      [| 0; 2; (max_numel / 2) + 1 |];
     refused "a permutation whose elements overflow"
       (M.Permute [| 1; 0 |])
       [| max_int; 2 |];
+    refused "a permutation of an argument past max_numel elements"
+      (M.Permute [| 1; 0 |])
+      [| max_numel + 1; 1 |];
+    refused "a slice of an empty argument whose other extents pass max_numel"
+      (M.Slice [| r 0 0 1; r 0 1 1; r 0 1 1 |])
+      [| 0; 1 lsl 27; 1 lsl 27 |];
     ok "a permutation of no axis" (M.Permute [||]) [||] [||];
     refused "a permutation of an argument past the most axes"
       (M.Permute (Array.init 33 Fun.id))

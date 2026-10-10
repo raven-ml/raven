@@ -305,6 +305,7 @@ value nx_array_shares(value a, value b, intnat pa, intnat pb) {
     pa = (intnat)(intptr_t)ha;
     pb = (intnat)(intptr_t)hb;
   }
+  /* A span's end is at most NX_MAX_NUMEL: times 128 bits, it fits. */
   int64_t bits_a = nx_dtype_row_of(nx_array_dtype(a)).bits;
   int64_t bits_b = nx_dtype_row_of(nx_array_dtype(b)).bits;
   int64_t first_a = pa + Long_val(Field(la, NX_LAYOUT_LO)) * bits_a / 8;
@@ -348,25 +349,14 @@ value nx_array_identical_byte(value a, value b, value pa, value pb) {
 
 /* Coalescing */
 
-/* CR: Bound merged extents before multiplying. With axis 0 batched,
-   legal empty [0; 2^31; 2^31] produces a Contract_view Row extent
-   of 2^62, exposed as min_int by its int accessor. Keep axes separate
-   when their product exceeds INT64_MAX; group must also decline a
-   single extent above Max_long, documented by fill. Detect zero before
-   coalescing, and honor NX_EMPTY in the contiguous shortcut:
-   [2^31; 2^32; 0] currently overflows before reaching zero.
-   Keep all group-fit validation before refusal. In fold.c, validate
-   all shapes before counting, then handle NX_EMPTY: an empty destination
-   succeeds; an empty source with outputs fills Sum/Prod or refuses
-   Max/Min. Its fits currently overflows these same unused products. */
-
 /* The coalescer, written once: it reads axis i's extent at [ein][i] and
    operand k's step at [sin][k][i], and writes the merged loop into
    [extent] and [step], which may be [ein] and [sin] themselves. Axis i
    lands at [out] or merges into out - 1, both at most i: the loop
    rewrites only what it has read. Inlined at both callers: through a call,
    nx_coalesce read the descriptors into its loop first, and a door's loop
-   over strided operands cost about 7 ns more on the M1 Max. */
+   over strided operands cost about 7 ns more on the M1 Max. A merged
+   extent is a product of one layout's extents: at most NX_MAX_NUMEL. */
 static inline __attribute__((always_inline)) int coalesce(
     int n, int rank, const int64_t *ein, const int64_t *const *sin,
     int64_t *extent, int64_t (*step)[NX_MAX_RANK]) {

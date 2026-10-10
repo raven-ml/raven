@@ -21,6 +21,7 @@ type t = {
 }
 
 let max_rank = Shape.max_rank
+let max_numel = Shape.max_numel
 let contiguous_flag = 1
 let distinct_flag = 2
 let empty_flag = 4
@@ -83,16 +84,16 @@ let hash l =
 
 (* Building *)
 
-let overflow fn = invalid_argf "%s: the layout's positions overflow" fn
+let negative fn = invalid_argf "%s: the layout reaches a negative position" fn
 
-let add fn a x =
-  if (x > 0 && a > max_int - x) || (x < 0 && a < min_int - x) then overflow fn;
-  a + x
+let past fn =
+  invalid_argf "%s: the layout's span ends past max_numel (%d)" fn max_numel
 
 (* The layout of [shape], [strides] and [offset] in canonical form, with its
    flags and span. It takes [shape] and [strides] as its own and writes
-   [strides]. Extents are non-negative and their product fits; a stride of an
-   axis of extent above 1 times the extent fits. The span is checked to fit. *)
+   [strides]. Extents are non-negative and their product is admitted
+   (Shape.numel); a stride of an axis of extent above 1 times the extent fits
+   in an int. The span is checked against [max_numel]. *)
 let finish fn shape strides offset =
   let r = Array.length shape in
   let empty = ref false in
@@ -113,20 +114,27 @@ let finish fn shape strides offset =
   end
   else begin
     (* The span, from the offset and each axis's reach; C order, where stride i
-       is the product of the later extents, or 0 for an axis of extent 1. *)
+       is the product of the later extents, or 0 for an axis of extent 1. The
+       offset and every reach lie within the span, so each is bounded first:
+       then their sum, of at most 33 terms below 2^53, fits. *)
+    if offset < 0 then negative fn;
+    if offset >= max_numel then past fn;
     let lo = ref offset and hi = ref offset in
     let contiguous = ref true and run = ref 1 in
     for i = r - 1 downto 0 do
       let d = shape.(i) and st = strides.(i) in
       let reach = (d - 1) * st in
-      if reach < 0 then lo := add fn !lo reach else hi := add fn !hi reach;
+      if reach <= -max_numel then negative fn;
+      if reach >= max_numel then past fn;
+      if reach < 0 then lo := !lo + reach else hi := !hi + reach;
       if st <> if d = 1 then 0 else !run then contiguous := false;
       run := !run * d
     done;
     (* A position counts elements from a buffer's first byte: a negative one
-       lies outside every buffer. With [0 <= lo] and [hi] fitting, every reach
-       below sums to at most [hi - 1 - lo]: no sum overflows. *)
-    if !lo < 0 then invalid_argf "%s: the layout reaches a negative position" fn;
+       lies outside every buffer. With [0 <= lo] and [hi < max_numel], every
+       reach below sums to at most [hi - 1 - lo]. *)
+    if !lo < 0 then negative fn;
+    if !hi >= max_numel then past fn;
     (* Distinct: each axis of extent above 1 has a stride above the reach of the
        axes of smaller stride, ties broken by axis. *)
     let distinct = ref true in
@@ -146,7 +154,7 @@ let finish fn shape strides offset =
       (if !contiguous then contiguous_flag else 0)
       lor if !distinct then distinct_flag else 0
     in
-    { shape; strides; offset; flags; lo = !lo; hi = add fn !hi 1 }
+    { shape; strides; offset; flags; lo = !lo; hi = !hi + 1 }
   end
 
 (* Constructors *)

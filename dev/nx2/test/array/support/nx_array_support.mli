@@ -32,6 +32,9 @@ val codes : unit -> int array
 (** [codes ()] is [nx_array.h]'s codes in the order of {!Nx_array.answer}'s
     constructors: [NX_OK], [NX_DECLINED], [NX_DTYPE] and on. *)
 
+val max_numel : unit -> int
+(** [max_numel ()] is [nx_array.h]'s [NX_MAX_NUMEL]. *)
+
 val code : Nx_array.answer -> int
 (** [code a] is the integer OCaml represents [a] by, which C reads. *)
 

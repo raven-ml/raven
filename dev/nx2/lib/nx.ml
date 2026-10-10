@@ -706,11 +706,8 @@ let roll ?axis:along k x =
   in
   let s = shape y in
   let d = s.(a) in
-  (* CR: Add d only when the remainder is negative. The valid empty shape
-     [0; max_int] rolled by 1 along axis 1 makes 1 + d wrap here, yielding
-     -1 and a rejected slice. Normalize k mod d conditionally; it stays in
-     [0, d) without overflow, including k = min_int. *)
-  let k = if d = 0 then 0 else ((k mod d) + d) mod d in
+  let k = if d = 0 then 0 else k mod d in
+  let k = if k < 0 then k + d else k in
   let rolled =
     if k = 0 then copy y
     else

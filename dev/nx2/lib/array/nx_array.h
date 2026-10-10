@@ -108,6 +108,12 @@ typedef struct {
   int written;
 } nx_operand;
 
+/* Layout.max_numel: a descriptor's extents, the product of its extents
+   other than 0, and the end of its span are at most NX_MAX_NUMEL. A product
+   of any of its extents, a position times a width of at most 128 bits, and
+   a sum of a few of these fit in an int64_t, unchecked. */
+#define NX_MAX_NUMEL ((int64_t)1 << 53)
+
 /* An operand, read: its descriptor. [base] is NULL for an operand with no
    element. */
 typedef struct {
