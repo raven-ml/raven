@@ -413,6 +413,39 @@ let rejection =
       test "gamma at float32 has the float64 mean" (fun () ->
           let xs = read (Rng.gamma ~key:(Rng.key 301) (full Nx.float32 3.)) in
           near ~se:(sqrt (3. /. Float.of_int n)) 3. (mean xs));
+      (* beta's draw is x = 1 / (1 + exp d), d = log G(b) - log G(a), for the
+         gammas its key's two split keys draw. d is a sum of logarithms, each
+         rounded, so its error is a few ulps of their magnitudes, and x moves by
+         x (1 - x) per unit of d: the draw lies within 16 ε x (1 - x) (2 + |log
+         G(a)| + |log G(b)|), plus 4 ulps for the exponential, the sum, the
+         quotient and the reference's own two roundings, of the gammas' ratio
+         formed in float64 from their draws. *)
+      cases
+        ~name:(fun (a, b) ->
+          Printf.sprintf "beta %g %g is the gammas' ratio" a b)
+        "beta as a gamma ratio"
+        [ (0.5, 0.5); (0.3, 4.); (2., 3.); (9., 0.7); (40., 25.) ]
+        (fun (a, b) ->
+          let k = Rng.key 313 in
+          let ks = Rng.split k in
+          let ga = read (Rng.gamma ~key:ks.(0) (full Nx.float64 a)) in
+          let gb = read (Rng.gamma ~key:ks.(1) (full Nx.float64 b)) in
+          let xs =
+            read (Rng.beta ~key:k (full Nx.float64 a) (full Nx.float64 b))
+          in
+          (* The error of each draw as a fraction of its bound. *)
+          let share i x =
+            let r = ga.(i) /. (ga.(i) +. gb.(i)) in
+            let logs = 2. +. Float.abs (log ga.(i)) +. Float.abs (log gb.(i)) in
+            let bound =
+              (16. *. epsilon_float *. r *. (1. -. r) *. logs)
+              +. (4. *. (Float.succ r -. r))
+            in
+            Float.abs (x -. r) /. bound
+          in
+          let worst = ref 0. in
+          Array.iteri (fun i x -> worst := Float.max !worst (share i x)) xs;
+          at_most float_exact ~than:1. !worst);
       test "beta 2 3: mean 2/5, in [0, 1]" (fun () ->
           let xs =
             read
