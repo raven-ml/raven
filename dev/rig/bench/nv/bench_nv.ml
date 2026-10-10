@@ -50,7 +50,7 @@ let submission t ps =
   { s = Sub.make ~reads:0 ~writes:0 t.d ps; run = Sub.Run.make () }
 
 let submit { s; run } = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
-let run t s = Rig.wait t.d (Rig.Point.value (submit s))
+let run s = Rig.Point.wait (submit s)
 
 (* The floor of [t]: its later values are given from C. *)
 let floor t =
@@ -151,22 +151,22 @@ let release_rows =
   let floor_of setup () = floor (fst (setup ())) in
   Thumper.group "release"
     [
-      row "driver" empty (fun (t, s) -> run t s);
+      row "driver" empty (fun (_, s) -> run s);
       row "floor" (floor_of empty) (fun _ -> floor_release 1);
-      row "mapped" mapped (fun (t, s, _) -> run t s);
+      row "mapped" mapped (fun (_, s, _) -> run s);
       row "floor-mapped"
         (fun () ->
           let t, _, m = mapped () in
           (floor t, m))
         (fun _ -> floor_release 1);
       row "switch" switching (fun (t, copy, none) ->
-          run t (if Rig.submitted t.d land 1 = 0 then copy else none));
+          run (if Rig.submitted t.d land 1 = 0 then copy else none));
       row "floor-switch" (floor_of empty) (fun _ -> floor_switch ());
-      row "no-wait-100" empty (fun (t, s) ->
+      row "no-wait-100" empty (fun (_, s) ->
           for _ = 1 to 99 do
             ignore (submit s)
           done;
-          run t s);
+          run s);
       row "floor-no-wait-100" (floor_of empty) (fun _ -> floor_release 100);
     ]
 
@@ -241,18 +241,18 @@ let launch_rows =
   in
   Thumper.group "launch"
     [
-      row "1" (launch_parts 1) (fun (t, s) -> run t s);
+      row "1" (launch_parts 1) (fun (_, s) -> run s);
       row "floor-1" (floor_launching 1) floor_run;
-      row "64" (launch_parts 64) (fun (t, s) -> run t s);
+      row "64" (launch_parts 64) (fun (_, s) -> run s);
       row "floor-64" (floor_launching 64) floor_run;
-      row "64-parts" (launching_as `Apart 64) (fun (t, _, _, s) -> run t s);
+      row "64-parts" (launching_as `Apart 64) (fun (_, _, _, s) -> run s);
       row "submits-64" submitting submit_all;
       row "floor-submits-64" floor_apart (fun (_, _, ws) -> floor_entries ws);
       row "floor-submits-64-rung" floor_apart (fun (_, _, ws) ->
           floor_rung ws true);
       row "floor-submits-64-unreleased" floor_apart (fun (_, _, ws) ->
           floor_rung ws false);
-      row "4096-parts" (launching_as `Apart 4096) (fun (t, _, _, s) -> run t s);
+      row "4096-parts" (launching_as `Apart 4096) (fun (_, _, _, s) -> run s);
     ]
 
 let copy_rows =
@@ -263,7 +263,7 @@ let copy_rows =
   in
   let copy name n kinds =
     [
-      row name (copying n kinds) (fun (t, _, _, s) -> run t s);
+      row name (copying n kinds) (fun (_, _, _, s) -> run s);
       row ("floor-" ^ name)
         (fun () ->
           let t, dst, src, _ = copying n kinds () in

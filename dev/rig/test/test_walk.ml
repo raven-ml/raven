@@ -142,7 +142,6 @@ let bump arg =
   }
 
 let once ~run s = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
-let finish d p = Rig.wait d (Rig.Point.value p)
 
 let submit =
   op "submit" (fun d ->
@@ -151,7 +150,7 @@ let submit =
       let s = Sub.make ~reads:0 ~writes:0 d [| bump arg |] in
       let run = Sub.Run.make () in
       fun _ ->
-        finish d (once ~run s);
+        Rig.Point.wait (once ~run s);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
 
 (* A device whose memory the host does not address, which copied through the
@@ -201,7 +200,7 @@ let wait_transport =
   op "wait behind a transport" ~opener:(P.open_ ~transport:true) (fun d ->
       let s = Sub.make ~reads:0 ~writes:0 d [||] in
       let run = Sub.Run.make () in
-      fun _ -> finish d (once ~run s))
+      fun _ -> Rig.Point.wait (once ~run s))
 
 (* Submits on [d] once with a hold whose release raises under [Raise],
    leaving the hold and its submission unreachable. *)
@@ -209,7 +208,7 @@ let[@inline never] submit_held d failure =
   let release () = if failure = Some Raise then raise Exit in
   let h = Rig.Hold.make release in
   let run = Sub.Run.make () in
-  finish d (once ~run (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+  Rig.Point.wait (once ~run (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
 
 let hold =
   op "hold" ~raises:true (fun d failure ->
@@ -227,7 +226,7 @@ let profile =
           (Rig.Profile.take (fun () ->
                let p = once ~run s in
                Rig.Profile.after p events;
-               finish d p)))
+               Rig.Point.wait p)))
 
 let ops =
   [
@@ -396,10 +395,12 @@ let memory_attempt n =
   let part = { Sub.queue = "COMPUTE:0"; after = [||]; work = fill } in
   let s = ref (Some (Sub.make ~reads:0 ~writes:0 d (Array.make fills part))) in
   let run = Sub.Run.make () in
-  finish d (once ~run (Option.get !s));
+  Rig.Point.wait (once ~run (Option.get !s));
   let heap, fds = census () in
   S.store (B.address counter) n;
-  let got = outcome d (fun () -> finish d (once ~run (Option.get !s))) in
+  let got =
+    outcome d (fun () -> Rig.Point.wait (once ~run (Option.get !s)))
+  in
   let at = Printf.sprintf ", fill %d" n in
   equal ~msg:("outcome" ^ at) string "lost: a fill failed" got;
   settle d;

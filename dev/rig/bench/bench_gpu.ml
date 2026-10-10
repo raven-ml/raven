@@ -431,19 +431,18 @@ let gpu_rows (type a) (module D : Rig.Driver with type t = a) ?(sleeps = false)
       [ row "reached" reached (fun (g, v) -> Rig.wait g v) ];
     Thumper.group (strf "submit/%s" v)
       [
-        row "empty" rig (fun (g, s, run, _) ->
-            Rig.wait g
-              (Rig.Point.value
-                 (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])));
-        row "cost" rig (fun (g, s, run, n) ->
+        row "empty" rig (fun (_, s, run, _) ->
+            Rig.Point.wait
+              (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]));
+        row "cost" rig (fun (_, s, run, n) ->
             let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
             incr n;
-            if !n mod drain = 0 then Rig.wait g (Rig.Point.value p));
-        row "kernel" kernel_rig (fun (g, s, run, reads, writes, keep, n) ->
+            if !n mod drain = 0 then Rig.Point.wait p);
+        row "kernel" kernel_rig (fun (_, s, run, reads, writes, keep, n) ->
             let p = Rig.submit s ~run ~reads ~writes ~waits:[||] in
             incr n;
             if !n mod drain = 0 then begin
-              Rig.wait g (Rig.Point.value p);
+              Rig.Point.wait p;
               keep ()
             end);
       ];

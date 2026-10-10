@@ -29,7 +29,7 @@
     let s = Rig.Submission.make ~reads:0 ~writes:0 d [||] in
     let run = Rig.Submission.Run.make () in
     let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
-    Rig.wait d (Rig.Point.value p)
+    Rig.Point.wait p
     ]}
 
     {b GPUs.} The device drives GPUs of GFX 9.4.2, 9.5.0, 11 and 12. Its compute

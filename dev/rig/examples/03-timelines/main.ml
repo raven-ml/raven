@@ -61,7 +61,7 @@ let () =
       [| copy src mid; copy ~after:[| 0 |] mid dst |]
   in
   let p = submit chain ~run ~reads:[||] ~writes:[||] ~waits:[||] in
-  wait d (Point.value p);
+  Point.wait p;
   Format.printf "chain:        %a@." Point.pp p;
   show "dst" dst;
 

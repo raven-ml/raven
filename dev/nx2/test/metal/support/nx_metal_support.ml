@@ -169,7 +169,7 @@ let prepare t r =
   let run = Rig.Submission.Run.make () in
   fun () ->
     let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
-    Rig.wait t.rig (Rig.Point.value p);
+    Rig.Point.wait p;
     ignore (Sys.opaque_identity r.holds);
     span a
 

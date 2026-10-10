@@ -260,7 +260,7 @@ let bytes_before_word () =
   for round = 1 to 3 do
     let h = B.create Rig.host n in
     let p = submit (copy_submission m.host ~src:far ~dst:h) in
-    Rig.wait m.host (Rig.Point.value p);
+    Rig.Point.wait p;
     let ba = B.bigarray Bigarray.char h in
     let bad = ref (-1) in
     for i = n - 1 downto 0 do
@@ -424,7 +424,7 @@ let never () =
   raises_match ~msg:"words on a device other than the host" Exn.invalid_arg
     (fun () -> submit (on m.devices.(0)));
   let p = submit (on m.host) in
-  Rig.wait m.host (Rig.Point.value p);
+  Rig.Point.wait p;
   equal bool true
     (List.exists
        (function
@@ -466,7 +466,7 @@ let waits_travel () =
   let p = submit (copy_submission d1 ~src:a ~dst:b) in
   let q = submit ~waits:[| p |] (copy_submission d2 ~src:c ~dst:c') in
   resume m.ag;
-  Rig.wait d2 (Rig.Point.value q);
+  Rig.Point.wait q;
   let waits =
     require_match
       (List.find_map (function
@@ -491,7 +491,7 @@ let room_later () =
   let early = finished () in
   resume m.ag;
   let p = third () in
-  Rig.wait m.host (Rig.Point.value p);
+  Rig.Point.wait p;
   equal ~msg:"the third submit returned while 80 MiB were in flight" bool false
     early
 
@@ -500,7 +500,7 @@ let room_idle () =
   let n = 100 lsl 20 in
   let a = B.create m.host n and b = B.create m.host n in
   let p = submit (copy_submission m.host ~src:a ~dst:b) in
-  Rig.wait m.host (Rig.Point.value p)
+  Rig.Point.wait p
 
 let work =
   group "work"
@@ -561,7 +561,7 @@ let in_flight_fails () =
   Link.fail m.ag.job "failed in flight";
   raises_match
     (function Rig.Lost (_, why) -> why = "failed in flight" | _ -> false)
-    (fun () -> Rig.wait m.host (Rig.Point.value p));
+    (fun () -> Rig.Point.wait p);
   until ~what:"the word at the last value handed over" (fun () ->
       Rig.signaled m.host = Rig.Point.value p)
 

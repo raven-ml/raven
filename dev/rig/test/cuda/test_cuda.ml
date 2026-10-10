@@ -332,7 +332,7 @@ let refused_launches () =
     launching d ~groups:(1, 1, 65535) ~threads:(1024, 1, 1) ~shared:0
   in
   let big = B.create d (4 * n) in
-  Rig.wait d (Rig.Point.value (submitted s run [| big |]))
+  Rig.Point.wait (submitted s run [| big |])
 
 (* A launch takes as much dynamic shared memory as the GPU gives a group,
    beyond the 48 KiB CUDA allows by default. [rotate] stores into each word
@@ -346,7 +346,7 @@ let largest_shared_memory () =
   in
   Run.int32 run (Sub.block s 0) 8 5;
   let out = B.create ~memory:Pinned d (4 * 256) in
-  Rig.wait d (Rig.Point.value (submitted s run [| out |]));
+  Rig.Point.wait (submitted s run [| out |]);
   equal (array int) ~msg:"the words"
     (Array.init 256 (fun t -> 5 + (3 * ((t + 1) mod 256))))
     (words out 256)

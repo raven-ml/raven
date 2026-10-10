@@ -86,7 +86,7 @@ let test_many_waits () =
   let last = waiting_on b in
   P.stall pa max_int;
   P.fault pb "the engine hung";
-  raises_match (lost c) (fun () -> Rig.wait c (Rig.Point.value last));
+  raises_match (lost c) (fun () -> Rig.Point.wait last);
   equal (option string) (Some "the engine hung") (Rig.lost b)
 
 (* Loses [d] through a failed hand-over, then drains as an allocation does:
@@ -153,7 +153,7 @@ let test_no_spread () =
   let producer, pp = P.open_ "loss:producer-2" in
   let consumer, _ = P.open_ ~waits_on:[ `Host ] "loss:consumer-2" in
   let a = submit (empty producer) in
-  Rig.wait producer (Rig.Point.value a);
+  Rig.Point.wait a;
   ignore (submit (empty consumer) ~waits:[| a |]);
   P.fail pp;
   raises_match (lost producer) (fun () -> submit (empty producer));
@@ -246,15 +246,14 @@ let test_others_go_on () =
   let e, _ = P.open_ "loss:kept" in
   let named = B.create e 64 in
   let s = Sub.make ~reads:1 ~writes:0 d [||] in
-  Rig.wait d
-    (Rig.Point.value (submit s ~reads:[| require_some (B.borrow d named) |]));
+  Rig.Point.wait (submit s ~reads:[| require_some (B.borrow d named) |]);
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   B.wait named B.Read_write;
   Rig.Claim.read named;
   Rig.Claim.release named;
   let w = Sub.make ~reads:0 ~writes:1 e [||] in
-  Rig.wait e (Rig.Point.value (submit w ~writes:[| named |]));
+  Rig.Point.wait (submit w ~writes:[| named |]);
   equal (option string) None (Rig.lost e)
 
 (* Other memory raises a lost device's loss for a use that waits for a point the
@@ -337,8 +336,7 @@ let test_reused_after_loss () =
     (fun () ->
       let m = B.create a n in
       let s = Sub.make ~reads:1 ~writes:0 u [||] in
-      Rig.wait u
-        (Rig.Point.value (submit s ~reads:[| require_some (B.borrow u m) |]));
+      Rig.Point.wait (submit s ~reads:[| require_some (B.borrow u m) |]);
       B.address m)
       ()
   in
@@ -579,7 +577,7 @@ let test_release_while_stopping () =
   let consumer, pc = P.open_ ~waits_on:[ `Host ] "loss:stopping-consumer" in
   let v = submit (empty producer) in
   let w = submit (empty consumer) ~waits:[| v |] in
-  Rig.wait consumer (Rig.Point.value w);
+  Rig.Point.wait w;
   P.gate pc;
   let loser =
     Domain.spawn (fun () ->

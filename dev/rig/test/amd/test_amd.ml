@@ -1682,7 +1682,7 @@ let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
   Sub.Run.threads run b tx ty tz;
   Sub.Run.shared run b shared;
   set run b;
-  Rig.wait t.d (Rig.Point.value (Rig.submit s ~run ~reads ~writes ~waits:[||]))
+  Rig.Point.wait (Rig.submit s ~run ~reads ~writes ~waits:[||])
 
 let scratch_launch () =
   S.with_ @@ fun t ->

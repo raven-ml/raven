@@ -425,7 +425,7 @@ let test_submit_refusals () =
   refused_submit ~msg:"shared memory past 48 KiB" d (fun () ->
       submit ~reads s (geometry ~shared:49153 ()));
   let v = submit ~reads s (geometry ~threads:(1024, 1, 1) ~shared:49152 ()) in
-  Rig.wait d (Rig.Point.value v)
+  Rig.Point.wait v
 
 let test_setter_refusals () =
   let d, _ = polled "setters" in
@@ -478,7 +478,7 @@ let test_setter_in_use () =
   contains ~msg:"its refusal" ~sub:"a submit is using the run"
     (Option.get !refused);
   ignore (P.launches p);
-  Rig.wait d (Rig.Point.value v);
+  Rig.Point.wait v;
   equal (list string) ~msg:"the parameters run"
     [ le64 41 ]
     (List.map (fun (l : P.launch) -> l.params) (P.launches p))

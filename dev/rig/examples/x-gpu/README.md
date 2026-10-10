@@ -29,7 +29,7 @@ Without an argument it opens the first path that sees a GPU.
 
 - A GPU's facts: `arch`, `budget`, `shares_host_memory`, `reaches`
 - Copies between the host and a GPU, timed by a profile's copy events
-- Work in flight: `signaled` behind `submitted` until `wait` returns
+- Work in flight: `signaled` behind `submitted` until `Point.wait` returns
 
 ## Key Functions
 
@@ -37,7 +37,7 @@ Without an argument it opens the first path that sees a GPU.
 | --------------------------------------- | ----------------------------------------- |
 | `Rig.open_ (module D) ~name make`       | The device `make` opens, driven by `D`     |
 | `Buffer.copy ~src ~dst`                 | Copy between the host and the GPU          |
-| `submit`, `signaled`, `wait`            | Hand work over, see it complete            |
+| `submit`, `signaled`, `Point.wait`      | Hand work over, see it complete            |
 
 ## Next Steps
 

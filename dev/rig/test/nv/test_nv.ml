@@ -797,7 +797,7 @@ let refused_launches () =
   in
   ids_params run (Sub.block s 0) ~offset:0 ~a:0 ~b:1;
   let out = B.create d (4 * 65535 * 1024) in
-  Rig.wait d (Rig.Point.value (submitted s run ~reads:[||] ~writes:[| out |]))
+  Rig.Point.wait (submitted s run ~reads:[||] ~writes:[| out |])
 
 (* A launch takes as much dynamic shared memory as a block may beside its
    own. *)
@@ -812,7 +812,7 @@ let most_shared_memory () =
   Run.int64 run b 0 0;
   Run.int32 run b 8 5;
   let out = B.create d (4 * 512) in
-  Rig.wait d (Rig.Point.value (submitted s run ~reads:[||] ~writes:[| out |]));
+  Rig.Point.wait (submitted s run ~reads:[||] ~writes:[| out |]);
   let value i g = (5 + (3 * i) + (7 * g)) land 0xffff_ffff in
   equal (array int) ~msg:"the words"
     (Array.init 512 (fun i ->
@@ -877,8 +877,7 @@ let launch_copy_launch () =
   Run.int64 run b2 0 0;
   Run.int64 run b2 8 0;
   Run.int32 run b2 16 1;
-  Rig.wait d
-    (Rig.Point.value (submitted s run ~reads:[||] ~writes:[| out; mid; dst |]));
+  Rig.Point.wait (submitted s run ~reads:[||] ~writes:[| out; mid; dst |]);
   equal (array int)
     (Array.init n (fun k -> (2 * (11 + (3 * k))) + 1))
     (words dst ~at:0 n)
@@ -914,7 +913,7 @@ let local_launch () =
   Run.threads run b 256 1 1;
   Run.int64 run b 0 0;
   Run.int32 run b 8 n;
-  Rig.wait d (Rig.Point.value (submitted s run ~reads:[||] ~writes:[| out |]));
+  Rig.Point.wait (submitted s run ~reads:[||] ~writes:[| out |]);
   equal (array int)
     (Array.init n (fun i -> (512 * i) + 130816))
     (words out ~at:0 n)

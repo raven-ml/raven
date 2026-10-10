@@ -60,7 +60,7 @@ let test_polled () =
   let b = submit ~run s in
   equal int 2 (P.queued p);
   equal int 0 (Rig.signaled d);
-  Rig.wait d (Rig.Point.value b);
+  Rig.Point.wait b;
   equal int 0 (P.queued p);
   equal bool true (Rig.Point.value a < Rig.Point.value b)
 
@@ -118,9 +118,9 @@ let test_hang_moving () =
 let test_hang_idle () =
   let d, _ = P.open_ ~hang_ms "submit:hang-idle" in
   let s = empty d and run = Sub.Run.make () in
-  Rig.wait d (Rig.Point.value (submit ~run s));
+  Rig.Point.wait (submit ~run s);
   Thread.delay (3. *. Float.of_int hang_ms /. 1000.);
-  Rig.wait d (Rig.Point.value (submit ~run s));
+  Rig.Point.wait (submit ~run s);
   equal (option string) None (Rig.lost d)
 
 (* A device whose queue waits on a value of a device lost to its bound is lost
@@ -131,7 +131,7 @@ let test_hang_spread () =
   let a = submit (empty producer) in
   ignore (submit (empty consumer) ~waits:[| a |]);
   P.stall pp max_int;
-  raises_match lost (fun () -> Rig.wait producer (Rig.Point.value a));
+  raises_match lost (fun () -> Rig.Point.wait a);
   equal (option string) (Some "submit:hang-producer lost") (Rig.lost consumer)
 
 (* A device whose queue waits for another device's work loses nothing to its
@@ -339,7 +339,7 @@ let test_run_keeps () =
   in
   let b = Domain.join other in
   equal ~msg:"another domain's buffer" bool false (B.address b = !at);
-  Rig.wait d (Rig.Point.value run)
+  Rig.Point.wait run
 
 (* A Polled device that waits on host-written words waits for a producer in its
    queue: the submit hands it over without waiting. *)
@@ -367,7 +367,7 @@ let in_queue ~completion =
   equal int 1 (P.queued pp);
   equal int 1 (P.queued cp);
   equal int 0 (P.run cp);
-  Rig.wait producer (Rig.Point.value a);
+  Rig.Point.wait a;
   equal int 1 (P.run cp);
   equal int (Rig.Point.value b) (Rig.signaled consumer)
 
@@ -434,7 +434,7 @@ let test_wait_in_queue () =
   let a = submit (empty producer) in
   let b = submit (empty consumer) ~waits:[| a |] in
   equal ~msg:"waits in the queue" int 1 (List.length (P.last_waits cp));
-  Rig.wait consumer (Rig.Point.value b);
+  Rig.Point.wait b;
   equal ~msg:"the producer's word" int (Rig.Point.value a)
     (Rig.signaled producer)
 

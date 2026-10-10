@@ -19,7 +19,7 @@ at once. A GPU's work runs after `submit` returns, with the same calls; see
 - Submissions made once and submitted many times, each submit with a run:
   `Submission.make`, `Submission.Run.make`, `submit`
 - Parts on a device's queues, ordered by `after`
-- Points and values: `Point.pp`, `submitted`, `signaled`, `wait`
+- Points and values: `Point.pp`, `Point.wait`, `submitted`, `signaled`, `wait`
 
 ## Key Functions
 
@@ -29,6 +29,7 @@ at once. A GPU's work runs after `submit` returns, with the same calls; see
 | `Submission.make ~reads ~writes d`        | Work for `d`, prepared once            |
 | `Submission.Run.make ()`                  | Storage for one submit at a time       |
 | `submit s ~run`                           | Hand `s` over; the point of its value  |
+| `Point.wait p`                            | Return once `p`'s device reached it    |
 | `wait d v`                                | Return once `d` reached `v`            |
 
 ## Next Steps

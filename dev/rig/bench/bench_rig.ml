@@ -261,7 +261,7 @@ let written d n =
   let bs = Array.init n (fun _ -> B.create d 8) in
   let w = Sub.make ~reads:0 ~writes:n d [||] and run = Sub.Run.make () in
   let p = Rig.submit w ~run ~reads:[||] ~writes:bs ~waits:[||] in
-  Rig.wait d (Rig.Point.value p);
+  Rig.Point.wait p;
   bs
 
 let row name setup f = Thumper.bench_with_setup ~setup name f

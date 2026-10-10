@@ -18,7 +18,7 @@ dune exec ./main.exe
 |---|---|---|
 | [`01-buffers`](./01-buffers/) | Bytes of a device's memory, on the host | `Buffer.create`, `of_bigarray`, `bigarray`, `view`, `copy` |
 | [`02-files`](./02-files/) | Files as the disk's memory: copy or borrow | `Rig_disk.create_file`, `of_file`, `barrier`, `Buffer.borrow` |
-| [`03-timelines`](./03-timelines/) | Submissions, values and points | `memory_device`, `Submission.make`, `Submission.Run.make`, `submit`, `wait` |
+| [`03-timelines`](./03-timelines/) | Submissions, values and points | `memory_device`, `Submission.make`, `Submission.Run.make`, `submit`, `Point.wait` |
 | [`04-stamps`](./04-stamps/) | Work across devices, ordered by the memory it touches | `Buffer.borrow`, `submit ~waits`, `Buffer.wait` |
 | [`05-steps`](./05-steps/) | A step prepared once and run many times | `Submission.Fill`, `Submission.make ~fixed`, `Hold.make`, `submit ~run ~reads ~writes` |
 | [`06-reclamation`](./06-reclamation/) | Memory that returns without a free | `budget`, `set_budget`, `Out_of_memory` |

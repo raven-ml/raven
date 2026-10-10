@@ -43,6 +43,7 @@ module Point = struct
 
   let device p = Dev.of_index (Point.index p)
   let value = Point.value
+  let wait p = Dev.wait (device p) (value p)
   let pp ppf p = Format.fprintf ppf "%s:%d" (device p).name (value p)
 end
 

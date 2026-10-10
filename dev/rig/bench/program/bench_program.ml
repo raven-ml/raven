@@ -398,7 +398,7 @@ let spins_of p =
   for _ = 2 to spins do
     pt := (G.run p no_frame).(0)
   done;
-  Rig.wait (Rig.Point.device !pt) (Rig.Point.value !pt)
+  Rig.Point.wait !pt
 
 (* The floor: the same runs on a Polled device of this process that runs its own
    queue, which no agent sits in front of. *)

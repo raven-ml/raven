@@ -183,7 +183,7 @@ let host_point () =
   equal ~msg:"the host's point" (list string)
     [ Rig.name h ]
     (List.map (fun p -> Rig.name (Rig.Point.device p)) (Array.to_list points));
-  Rig.wait h (Rig.Point.value points.(0))
+  Rig.Point.wait points.(0)
 
 (* A binary that is no program is the agent's refusal. *)
 let refused_binary () =
@@ -262,7 +262,7 @@ let rail_end_to_end () =
       G.load ~rails:(fun _ -> None) fill [| h |]);
   let far = require_ok ~pp:Format.pp_print_string (G.load fill [| h |]) in
   let pt = (G.run far { inputs = [||]; ints = [| 42 |] }).(0) in
-  Rig.wait h (Rig.Point.value pt);
+  Rig.Point.wait pt;
   (* [arrived] is the word at byte 256 of the counts. *)
   until ~what:"the transfer's arrival" (fun () -> word_at local.counts 256 >= 1);
   let read_inbound =

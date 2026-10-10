@@ -168,7 +168,7 @@ let test_after_disabled () =
   let d = memory "profile:after-off" in
   let p = submit (empty d) in
   Prof.after p (fun () -> failf "read while no profile is taken");
-  Rig.wait d (Rig.Point.value p)
+  Rig.Point.wait p
 
 (* Events after a point go to the profiles taken when [after] is called. *)
 let test_after_profiles () =
@@ -188,7 +188,7 @@ let test_after_profiles () =
   equal ~msg:"outer" (list string) [ "both" ] (named outer);
   let q = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
   Prof.after q (fun () -> [ event "before" ]);
-  let (), later = Prof.take (fun () -> Rig.wait d (Rig.Point.value q)) in
+  let (), later = Prof.take (fun () -> Rig.Point.wait q) in
   equal ~msg:"a profile taken after" (list string) [] (named later)
 
 (* A profile leaves out the events of a device lost before they were read. *)
@@ -317,7 +317,7 @@ let test_after_raises () =
     Prof.take (fun () ->
         let p = submit (Sub.make ~reads:0 ~writes:0 d [||]) in
         Prof.after p (fun () -> raise Exit);
-        raises Exit (fun () -> Rig.wait d (Rig.Point.value p)))
+        raises Exit (fun () -> Rig.Point.wait p))
   in
   ()
 

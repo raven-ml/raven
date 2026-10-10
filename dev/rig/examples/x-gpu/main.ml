@@ -100,11 +100,12 @@ let () =
       Printf.printf "the bytes came back: %b\n\n" same;
 
       (* Work runs after [submit] returns: right after it, the GPU has not
-         always reached the value it assigned. [wait] returns once it has. *)
+         always reached the value it assigned. [Point.wait] returns once it
+         has. *)
       let s = Submission.make ~reads:0 ~writes:0 g [||] in
       let run = Submission.Run.make () in
       let p = submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
       Format.printf "submitted %a; signaled %d on return@." Point.pp p
         (signaled g);
-      wait g (Point.value p);
+      Point.wait p;
       Printf.printf "after wait: signaled %d\n" (signaled g)

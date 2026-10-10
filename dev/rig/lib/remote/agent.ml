@@ -532,10 +532,7 @@ let region s id =
 let run s words =
   match Rig_program.run_share words ~program:(program s) ~region:(region s) with
   | Error why -> raise (Refused why)
-  | Ok points ->
-      Array.iter
-        (fun p -> Rig.wait (Rig.Point.device p) (Rig.Point.value p))
-        points
+  | Ok points -> Array.iter Rig.Point.wait points
 
 (* Runs a hand-over's parts in order, sending the bytes of each copy into the
    controller's memory as it comes, then the word of its value. *)

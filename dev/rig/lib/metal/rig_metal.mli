@@ -25,7 +25,7 @@
     let s = Rig.Submission.make ~reads:0 ~writes:0 d [||] in
     let run = Rig.Submission.Run.make () in
     let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
-    Rig.wait d (Rig.Point.value p)
+    Rig.Point.wait p
     ]}
 
     {b Submissions.} Work reaches the device in C, through its room check and

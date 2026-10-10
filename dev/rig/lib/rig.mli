@@ -271,6 +271,12 @@ module Point : sig
   val value : t -> int
   (** [value p] is [p]'s value, [1] or more. *)
 
+  val wait : t -> unit
+  (** [wait p] returns once [p]'s device reached [p]'s value, as {!Rig.wait}
+      does.
+
+      Raises {!Lost} if the device is lost or is lost by the wait. *)
+
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a point as [NAME:v]. *)
 end
