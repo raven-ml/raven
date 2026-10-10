@@ -25,6 +25,9 @@ let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 let shard x = A.to_array (Option.get (Nx.Repr.shards x)).(0)
 let host_of dt s xs = Nx.Repr.of_array Nx.Host.v (A.of_array dt s xs)
 let words k = read (Rng.to_tensor k)
+
+(* An int32 word as the unsigned 32-bit value it holds. *)
+let u32 w = Int64.logand (Int64.of_int32 w) 0xFFFF_FFFFL
 let word = Int32.of_int
 let numel s = Array.fold_left ( * ) 1 s
 
@@ -200,6 +203,52 @@ let draws =
           in
           equal (array float_exact) want
             (read (Rng.uniform ~key:k Nx.float32 [| 64 |])));
+      test "float64 uniform is 53 bits of each block, scaled" (fun () ->
+          let k = Rng.key 14 and n = 512 in
+          let ws = words (Rng.split_batch ~n k) in
+          let want =
+            Array.init n (fun i ->
+                let top = Int64.logand (u32 ws.(2 * i)) 0x1F_FFFFL in
+                Float.ldexp
+                  ((Int64.to_float top *. 4294967296.)
+                  +. Int64.to_float (u32 ws.((2 * i) + 1)))
+                  (-53))
+          in
+          equal (array float_exact) want
+            (read (Rng.uniform ~key:k Nx.float64 [| n |])));
+      cases
+        ~name:(fun (low, high) -> Printf.sprintf "randint [%d, %d)" low high)
+        "randint is Lemire's multiply-shift of each block"
+        [ (-0x8000_0000, 0x7FFF_FFFF); (0, 3 lsl 28); (-5, 7) ]
+        (fun (low, high) ->
+          let k = Rng.key 15 and n = 4096 in
+          let ws = words (Rng.split_batch ~n:(2 * n) k) in
+          let r = Int64.of_int (high - low) in
+          let t = Int64.unsigned_rem (Int64.neg r) r in
+          let pick i =
+            let w =
+              Int64.logor
+                (u32 ws.(2 * i))
+                (Int64.shift_left (u32 ws.((2 * i) + 1)) 32)
+            in
+            let wh = Int64.shift_right_logical w 32
+            and wl = u32 (Int64.to_int32 w) in
+            let hi =
+              Int64.shift_right_logical
+                (Int64.add (Int64.mul wh r)
+                   (Int64.shift_right_logical (Int64.mul wl r) 32))
+                32
+            in
+            (hi, Int64.unsigned_compare (Int64.mul w r) t < 0)
+          in
+          let want =
+            Array.init n (fun j ->
+                let hi, rejected = pick j in
+                let hi = if rejected then fst (pick (n + j)) else hi in
+                Int32.of_int (low + Int64.to_int hi))
+          in
+          equal (array int32) want
+            (read (Rng.randint ~key:k ~low ~high [| n |])));
       test "a negative extent raises" (fun () ->
           equal string "Nx.Rng.uniform: shape [2; -1] has a negative extent"
             (message (fun () -> Rng.uniform Nx.float32 [| 2; -1 |])));
