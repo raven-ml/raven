@@ -174,9 +174,8 @@ let kind_name = function
   | Copy -> "copies"
   | Launch -> "launches"
 
-(* Refuses a part of a kind its queue does not run. *)
-let check_runs d fn q work =
-  let k = kind_of work in
+(* Refuses a part of the kind [k] on the queue [q] if [q] does not run it. *)
+let check_runs d fn q k =
   if not (List.mem k d.queues.(q).runs) then
     invalid_argf "Rig.%s: %s's queue %S runs no %s" fn d.name d.queues.(q).name
       (kind_name k)
@@ -213,15 +212,42 @@ let copy_local d src dst =
 let copy_handle side k b =
   if side = k then Nativeint.of_int b.mem.host else b.mem.handle
 
-(* Hands the C form [c] its [!k]th fixed buffer [b], counts it and adds it to
-   [fixed]. Only [d]'s own memory names a handle of its driver ([rig_edge.h]'s
-   [handles]): another's, such as this process's memory a copy on another
-   machine's device names, keeps its stamps alone. *)
-let fix c k fixed d b write =
+(* Hands the C form [c] its [k]th fixed buffer [b]. Only [d]'s own memory
+   names a handle of its driver ([rig_edge.h]'s [handles]): another's, such as
+   this process's memory a copy on another machine's device names, keeps its
+   stamps alone. *)
+let fix c k d b write =
   let handle = if b.mem.dev == d then b.mem.handle else 0n in
-  sub_fixed c !k (entry_of b).stamps handle write;
-  incr k;
-  fixed := b :: !fixed
+  sub_fixed c k (entry_of b).stamps handle write
+
+(* Refuses a device that runs no submitted work. *)
+let check_device fn d =
+  if Dev.is_lost d then Dev.raise_lost d;
+  if Dev.is_host d || Dev.is_io d then
+    invalid_argf "Rig.%s: %s runs no submitted work" fn d.name
+
+(* Refuses a copy on [d] of [src] into [dst] unless both are live and of one
+   size, [d] reaches both, and [dst] admits writes. *)
+let check_copy fn d src dst =
+  Buffer.check_live fn src;
+  Buffer.check_live fn dst;
+  if Buffer.length src <> Buffer.length dst then
+    invalid_argf "Rig.%s: a copy's buffers differ in size" fn;
+  if copy_local d src dst < 0 then
+    invalid_argf "Rig.%s: a copy's buffers are not %s's memory" fn d.name;
+  if Buffer.access dst = Read then
+    invalid_argf "Rig.%s: a copy's dst admits only reads" fn
+
+(* Makes part [i] of [c] a copy on [d] of [src] into [dst]. *)
+let set_copy c d i src dst =
+  let side = copy_local d src dst in
+  sub_copy c i
+    ( copy_handle side local_dst dst,
+      dst.offset,
+      copy_handle side local_src src,
+      src.offset,
+      Buffer.length src );
+  if side <> local_none then sub_copy_local c i side
 
 (* The most parameter bytes of a launch, [rig_edge.h]'s RIG_PARAMS. *)
 let max_params = 4096
@@ -281,9 +307,7 @@ let build hold ~fixed ~reads ~writes d parts =
   let parts = Array.map own parts in
   let fn = "Submission.make" in
   if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
-  if Dev.is_lost d then Dev.raise_lost d;
-  if Dev.is_host d || Dev.is_io d then
-    invalid_argf "Rig.%s: %s runs no submitted work" fn d.name;
+  check_device fn d;
   let check_buffer = Buffer.check_live fn in
   let nafter = ref 0 and nfixed = ref 0 and nrefs = ref 0 in
   let entries = Array.make (Array.length parts) None in
@@ -295,7 +319,7 @@ let build hold ~fixed ~reads ~writes d parts =
             invalid_argf "Rig.%s: part %d's after names part %d" fn i j)
         p.after;
       nafter := !nafter + Array.length p.after;
-      check_runs d fn (queue_index d fn p.queue) p.work;
+      check_runs d fn (queue_index d fn p.queue) (kind_of p.work);
       match p.work with
       | Words w ->
           check_buffer w;
@@ -306,15 +330,7 @@ let build hold ~fixed ~reads ~writes d parts =
           ignore (host_address fn f.arg);
           incr nfixed
       | Copy { src; dst } ->
-          check_buffer src;
-          check_buffer dst;
-          if Buffer.length src <> Buffer.length dst then
-            invalid_argf "Rig.%s: a copy's buffers differ in size" fn;
-          if copy_local d src dst < 0 then
-            invalid_argf "Rig.%s: a copy's buffers are not %s's memory" fn
-              d.name;
-          if Buffer.access dst = Read then
-            invalid_argf "Rig.%s: a copy's dst admits only reads" fn;
+          check_copy fn d src dst;
           nfixed := !nfixed + 2
       | Launch l ->
           entries.(i) <-
@@ -332,6 +348,11 @@ let build hold ~fixed ~reads ~writes d parts =
   let blocks = Array.make (Array.length parts) no_block in
   let at = ref 0 and k = ref 0 and r = ref 0 in
   let fixed = ref [] and images = ref [] in
+  let fix_next b write =
+    fix c !k d b write;
+    incr k;
+    fixed := b :: !fixed
+  in
   Array.iteri
     (fun i p ->
       sub_part c i (queue_index d fn p.queue) p.after !at;
@@ -339,29 +360,22 @@ let build hold ~fixed ~reads ~writes d parts =
       match p.work with
       | Words w ->
           sub_words c i (host_address fn w) (Buffer.length w / 4);
-          fix c k fixed d w false
+          fix_next w false
       | Fill f ->
           sub_fill c i f.fill (host_address fn f.arg) f.ring_units
             f.segment_bytes;
-          fix c k fixed d f.arg false
+          fix_next f.arg false
       | Copy { src; dst } ->
-          let side = copy_local d src dst in
-          sub_copy c i
-            ( copy_handle side local_dst dst,
-              dst.offset,
-              copy_handle side local_src src,
-              src.offset,
-              Buffer.length src );
-          if side <> local_none then sub_copy_local c i side;
-          fix c k fixed d src false;
-          fix c k fixed d dst true
+          set_copy c d i src dst;
+          fix_next src false;
+          fix_next dst true
       | Launch l ->
           let e = Option.get entries.(i) in
           blocks.(i) <- sub_launch c i e.code e.launch l.params l.refs !r;
           r := !r + Array.length l.refs;
           images := l.image :: !images)
     parts;
-  Array.iter (fun (b, access) -> fix c k fixed d b (access = Read_write)) memory;
+  Array.iter (fun (b, access) -> fix_next b (access = Read_write)) memory;
   {
     dev = d;
     c;
@@ -608,9 +622,33 @@ let submit s ~run ~reads ~writes ~waits =
    replaced by a fresh one for the copy. *)
 let copy_runs = Domain.DLS.new_key run_new
 
+(* The submission [build] makes of the one part
+   [{ queue; after = [||]; work = Copy { src; dst } }], compiled directly: each
+   [Buffer.copy] through a queue makes one, and it has no after, launch or fixed
+   memory for [build]'s copies, loops and blocks to handle. *)
 let copy d queue ~src ~dst =
-  let part = { queue; after = [||]; work = Copy { src; dst } } in
-  let s = build None ~fixed:[] ~reads:0 ~writes:0 d [| part |] in
+  let fn = "Submission.make" in
+  check_device fn d;
+  let q = queue_index d fn queue in
+  check_runs d fn q Rig_edge.Copy;
+  check_copy fn d src dst;
+  let c = sub_new d.c 1 0 2 0 0 0 in
+  sub_part c 0 q [||] 0;
+  set_copy c d 0 src dst;
+  fix c 0 d src false;
+  fix c 1 d dst true;
+  let s =
+    {
+      dev = d;
+      c;
+      fixed = [| src; dst |];
+      images = [];
+      nreads = 0;
+      nwrites = 0;
+      hold = None;
+      blocks = [||];
+    }
+  in
   let run = Domain.DLS.get copy_runs in
   let run =
     if take run s.c then run
