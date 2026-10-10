@@ -408,11 +408,11 @@ let digits m = String.length (string_of_int m)
 let nearest p x =
   let s = Printf.sprintf "%.*e" (p - 1) x in
   let i = String.index s 'e' in
-  let m =
-    int_of_string
-      (String.concat "" (String.split_on_char '.' (String.sub s 0 i)))
-  in
-  (m, int_of_string (String.sub s (i + 1) (String.length s - i - 1)))
+  let m = ref 0 in
+  for j = 0 to i - 1 do
+    if s.[j] <> '.' then m := (!m * 10) + Char.code s.[j] - Char.code '0'
+  done;
+  (!m, int_of_string (String.sub s (i + 1) (String.length s - i - 1)))
 
 (* [m, e] written positionally for [-4 <= e < 16], as [%g] does but up to
    10{^16} so that integers in that range read whole, and as [d.ddde±XX]
@@ -519,12 +519,16 @@ let float_text code x =
   in
   let rec shortest p =
     let d = nearest p ax in
-    let candidates =
-      List.map decimal_text [ d; beside p d 1; beside p d (-1) ]
-    in
-    match List.find_opt reads_back candidates with
-    | Some t -> sign ^ t
-    | None -> if p >= 17 then sign ^ decimal_text d else shortest (p + 1)
+    let first = decimal_text d in
+    if reads_back first then sign ^ first
+    else
+      let up = decimal_text (beside p d 1) in
+      if reads_back up then sign ^ up
+      else
+        let down = decimal_text (beside p d (-1)) in
+        if reads_back down then sign ^ down
+        else if p >= 17 then sign ^ first
+        else shortest (p + 1)
   in
   if Float.is_nan x then "nan"
   else if ax = Float.infinity then sign ^ "inf"
