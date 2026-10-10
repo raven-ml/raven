@@ -730,8 +730,11 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t option
 
     A key is the generator's whole state: every draw is a function of its key,
     dtype and shape, the same on every set. Fresh draws come from fresh keys, by
-    {!split} or {!fold_in}. A scope lets one key stand for a region: a sampler
-    called without [~key] takes the scope's next key.
+    {!split} or {!fold_in}. A key is spent once it is used: its own draws, its
+    {!split} keys, its {!fold_in} keys and the keys of a scope rooted at it all
+    come from one stream of blocks under it, so using a key two of these ways
+    can repeat bits. A scope lets one key stand for a region: a sampler called
+    without [~key] takes the scope's next key.
 
     A draw is a value of every set when its key is: a formula that computes on
     the set of each operation that reads it. *)
@@ -763,7 +766,8 @@ module Rng : sig
 
   val split : ?n:int -> 'd key -> 'd key array
   (** [split ~n k] is [n] keys derived from [k] ([n] defaults to [2]),
-      independent of each other and of [k]'s own draws.
+      independent of each other. They are [k]'s blocks [0] to [n - 1], so a key
+      split is spent ({!Rng}).
 
       Raises [Invalid_argument] if [n < 1] or [k] is a batch. *)
 
@@ -811,9 +815,9 @@ module Rng : sig
     ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
   (** [uniform dt shape] is draws from [\[0, 1)]: multiples of [2{^-p}], each
       equally likely, [p] the largest such that every multiple of [2{^-p}] in
-      [\[0, 1)] is a value of [dt]. That is [dt]'s significand width, 53 for
-      float64 down to 3 for float8_e5m2, and 1 for float4_e2m1fn, whose values
-      below 1 are 0 and 0.5.
+      [\[0, 1)] is a value of [dt]: [dt]'s significand width, from float64's
+      53 down to float8_e5m2's 3; float4_e2m1fn's values below 1 are 0 and
+      0.5, so its [p] is 1.
 
       Raises [Invalid_argument] if an extent is negative. *)
 
