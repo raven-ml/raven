@@ -23,7 +23,10 @@
     the piece's elements at their flat positions, a map of coordinates: O(n) per
     piece. A gather or a scatter of a sub-byte dtype casts its values to their
     accumulator, computes there and casts the result back once; an integer's
-    [Add] wraps there to the same bits as at its own dtype.
+    [Add] wraps there to the same bits as at its own dtype. Any other scatter
+    whose targets may repeat is one unique scatter per position along its axis,
+    in order, each of the target so far: O(m |into|) for m positions. A sum
+    associates left to right.
 
     A contraction whose accumulator is a float other than its output's dtype
     first runs as a contraction into the accumulator, then casts to the output.

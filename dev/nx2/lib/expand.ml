@@ -537,13 +537,50 @@ let gather (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       let y = apply ~by (Value.Gather { axis; idx; x = x' }) in
       Some (cast_to apply ~by (Prim.dtype x) y)
 
+(* A scatter whose targets may repeat as one unique scatter per position along
+   [axis], in order: a position's updates differ off [axis], so their targets
+   do, and updates to one target land in C order. A sum associates left to
+   right. *)
+let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    combine axis idx (updates : (v, s, d) Value.t) (into : (v, s, d) Value.t) :
+    (v, s, d) Value.t =
+  let s = Prim.shape updates in
+  let at : type w q. int -> (w, q, d) Value.t -> (w, q, d) Value.t =
+   fun i x ->
+    let w =
+      Array.mapi
+        (fun a n ->
+          if a = axis then { M.start = i; count = 1; step = 1 }
+          else { M.start = 0; count = n; step = 1 })
+        s
+    in
+    apply ~by (Value.Move (Slice w, x))
+  in
+  let acc = ref into in
+  for i = 0 to s.(axis) - 1 do
+    acc :=
+      apply ~by
+        (Value.Scatter
+           {
+             combine;
+             unique = true;
+             axis;
+             idx = at i idx;
+             updates = at i updates;
+             into = !acc;
+           })
+  done;
+  !acc
+
 (* A sub-byte scatter at its accumulator, cast back once. An integer's [Add]
-   wraps there to the same bits as at its own dtype. *)
+   wraps there to the same bits as at its own dtype. A scatter whose targets
+   may repeat at a dtype of a byte or more is {!repeated}. *)
 let scatter (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     combine ~unique axis idx (updates : (v, s, d) Value.t)
     (into : (v, s, d) Value.t) : (v, s, d) Value.t option =
   match sub_byte into with
-  | None -> None
+  | None when unique -> None
+  | None -> Some (repeated apply ~by combine axis idx updates into)
   | Some (D.Any w) ->
       let wide x = cast_to apply ~by w x in
       let y =

@@ -221,15 +221,16 @@ let kernels =
           ignore (Nx.add a a);
           equal int 1 (C.calls ()));
       test
-        "a declined core kind raises naming the kernels, kind, dtypes and \
-         device" (fun () ->
+        "a declined core kind raises naming the kernels, kind, dtypes, device \
+         and move" (fun () ->
           let a =
             Nx.place Dec.on (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |])
           in
           raises
             (Invalid_argument
                "Nx.add: nx.test does not compute Add on float32, float32, \
-                float32 (m1)") (fun () -> Nx.add a a));
+                float32 (m1); place its operands with Nx.place on a set whose \
+                kernels compute it") (fun () -> Nx.add a a));
       test "a kind the kernels compute beside a declined one runs" (fun () ->
           let a =
             Nx.place Dec.on (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |])

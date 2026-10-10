@@ -584,11 +584,36 @@ let test_gather_on_one_device () =
     (Nx.Placement.equal d0 (Option.get (Nx.placement y)));
   equal (array int) [| data.(3); data.(0) |] (elements y)
 
+(* nx.cpu, declining every scatter. *)
+module No_scatters = struct
+  include Nx_cpu
+
+  let name = "nx.no-scatters"
+  let scatter _ ~dst:_ ~into:_ _ _ = A.Declined
+end
+
+module None_ =
+  (val Nx.devices ~kernels:(module No_scatters) [ Nx_support.memory 2 ])
+
+let test_declined_scatter_raises () =
+  let on dt shape data = Nx.place None_.on (host dt shape data) in
+  let p = on D.Int64 [| 3 |] [| 1L; 1L; 0L |] in
+  let u = on D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let x = on D.Float32 [| 2 |] [| 0.; 0. |] in
+  raises
+    (Invalid_argument
+       "Nx.scatter: nx.no-scatters does not compute Scatter on float32, \
+        int64, float32 (m2); place its operands with Nx.place on a set whose \
+        kernels compute it")
+    (fun () -> Nx.scatter ~combine:Nx.Add ~axis:0 p u x)
+
 let declines =
   group "declines"
     [
       prop "a declined scatter combines repeated targets in C order"
         declined_case law_declined;
+      test "a scatter its device's kernels decline raises naming the move"
+        test_declined_scatter_raises;
       test "a declined gather computes on its target's devices alone"
         test_gather_on_one_device;
     ]

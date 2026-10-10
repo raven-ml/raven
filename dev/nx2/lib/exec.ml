@@ -14,10 +14,14 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* Messages *)
 
+(* The move a program makes where a device's kernels decline an operation:
+   nx moves no data between devices on its own. *)
+let move = "place its operands with Nx.place on a set whose kernels compute it"
+
 let refuses ~by ~kernels kind d dts =
-  invalid_argf "%s: %s does not compute %s on %s (%s)" by kernels kind
+  invalid_argf "%s: %s does not compute %s on %s (%s); %s" by kernels kind
     (String.concat ", " (List.map (fun (A.Any a) -> D.name (A.dtype a)) dts))
-    (Rig.name d)
+    (Rig.name d) move
 
 let declined ~by ~kernels node d dts =
   refuses ~by ~kernels (Prim.kind node) d dts
@@ -842,13 +846,11 @@ and expanded : type r. by:string -> unit Devices.placement -> r Value.prim -> r
   | Some r -> r
   | None ->
       let (module K) = kernels_of ~by ~op:(Prim.name op) (Devices.set p) in
-      invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
+      invalid_argf "%s: %s does not compute %a; %s" by K.name Prim.pp op move
 
 (* [op]'s result [r] where every device computed it. Where a device's kernels
-   declined it, with operands [ops] on device [d], its expansion; for a scatter
-   whose targets may repeat, which has none, its result on the host, whose
-   kernels compute every scatter, placed back at [r]'s placement; else the
-   decline's error. *)
+   declined it, with operands [ops] on device [d], its expansion, on the
+   devices that computed [r]; else the decline's error. *)
 and or_expanded : type r.
     by:string ->
     kernels:string ->
@@ -860,23 +862,9 @@ and or_expanded : type r.
   match declined with
   | None -> r
   | Some (d, ops) -> (
-      match (Expand.run run ~by op, op) with
-      | Some r, _ -> r
-      | None, Value.Scatter ({ unique = false; _ } as s)
-        when not (Devices.equal (Prim.placement r) (host ())) ->
-          let at x = run ~by (Value.Place (host (), x)) in
-          let y =
-            run ~by
-              (Value.Scatter
-                 {
-                   s with
-                   idx = at s.idx;
-                   updates = at s.updates;
-                   into = at s.into;
-                 })
-          in
-          run ~by (Value.Place (Prim.placement r, y))
-      | None, _ -> refuses ~by ~kernels (Prim.name op) d (Array.to_list ops))
+      match Expand.run run ~by op with
+      | Some r -> r
+      | None -> refuses ~by ~kernels (Prim.name op) d (Array.to_list ops))
 
 (* A loop's results [dsts] at [p], each device's window of them computed there
    by [kernel] over its operands [ops k w] for its window [w] of the loop's
@@ -1165,7 +1153,7 @@ and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
   match Expand.run on_device ~by op with
   | None ->
       let (module K) = kernels_of ~by ~op:"Map" set in
-      invalid_argf "%s: %s does not compute %a" by K.name Prim.pp op
+      invalid_argf "%s: %s does not compute %a; %s" by K.name Prim.pp op move
   | Some r ->
       let ((module K) as kernels) = kernels_of ~by ~op:"Copy" set in
       Array.iteri
