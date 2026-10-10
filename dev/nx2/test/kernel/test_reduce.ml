@@ -363,6 +363,66 @@ let large =
             ])
        base)
 
+(* Examples: one case for each regime a law covers, so that every seed
+   reaches every label whatever the generator draws. *)
+let example ?(scan = false) ?view ?(specials = 0) monoid dt s axes =
+  let r = Array.length s in
+  let view =
+    Option.value view
+      ~default:
+        {
+          perm = Array.init r Fun.id;
+          stepped = false;
+          reversed = None;
+          broadcast = false;
+        }
+  in
+  {
+    scan;
+    monoid;
+    axes;
+    x = operand dt s view ~specials 1;
+    views = view_names view;
+  }
+
+let f32 = D.Any D.Float32
+let f64 = D.Any D.Float64
+
+let computed_examples =
+  [
+    example S.Sum f32 [| 0; 3 |] [| 1 |];
+    example S.Sum f32 [| 3; 0 |] [| 1 |];
+    example S.Sum f32 [| 5 |] [||];
+    example ~specials:20 S.Sum f32 [| 5000 |] [| 0 |];
+    example S.Max f32 [| 100; 3 |] [| 1 |];
+    example
+      ~view:
+        {
+          perm = [| 2; 0; 1 |];
+          stepped = true;
+          reversed = Some 0;
+          broadcast = true;
+        }
+      S.Sum f64 [| 3; 4; 5 |] [| 1 |];
+  ]
+
+let any_examples =
+  [
+    example S.Sum f32 [| 4 |] [| 0 |];
+    example S.Sum (D.Any D.Float16) [| 4 |] [| 0 |];
+  ]
+
+let scan_examples = [ example ~scan:true S.Sum f32 [| 9000 |] [| 0 |] ]
+
+let dot_examples =
+  [ example S.Sum f32 [| 3000 |] [| 0 |]; example S.Sum f32 [| 3 |] [||] ]
+
+let large_examples =
+  [
+    example ~scan:true S.Sum f32 [| 400_000 |] [| 0 |];
+    example S.Sum f32 [| 400_000 |] [| 0 |];
+  ]
+
 (* The reference *)
 
 (* A term: a float's value with its bits, or an integer's value as an
@@ -824,6 +884,34 @@ let test_far_nans (b : Support.backend) () =
           equal ~msg:(monoid_name monoid) int64 0x7FC12345L
             (Int64.logand (bits_of last) 0xFFFFFFFFL))
     [ (false, S.Sum); (false, S.Max); (true, S.Sum); (true, S.Prod) ]
+
+(* Products and sums of 8- and 16-bit integers at their extremes wrap in
+   their width: 0xFFFF · 0xFFFF is 1 at uint16. *)
+let test_wrap (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let fold (type s) (dt : (int, s) D.t) m xs want =
+    let x = on b (A.Any (A.of_array dt [| Array.length xs |] xs)) in
+    let dst = on b (A.Any (A.create Rig.host dt [||])) in
+    let s =
+      S.reduce (identity (D.Any dt)) ~loads:[| S.Plain |] ~axes:[| 0 |]
+        [| (S.Monoid m, 0, D.Any dt) |]
+    in
+    (match K.reduce s ~dsts:[| dst |] [| x |] with
+    | A.Done -> ()
+    | r -> failf "reduce answered %a" Nx_array_support.pp_answer r);
+    equal
+      ~msg:(Printf.sprintf "%s of %s" (monoid_name m) (D.name dt))
+      int want
+      (A.get (A.expect dt (host dst)) [||])
+  in
+  fold D.Uint16 S.Prod [| 0xFFFF; 0xFFFF; 3 |] 3;
+  fold D.Int16 S.Prod [| -32768; -1 |] (-32768);
+  fold D.Int16 S.Prod [| 32767; 32767 |] 1;
+  fold D.Uint8 S.Prod [| 255; 255 |] 1;
+  fold D.Int8 S.Prod [| -128; -1 |] (-128);
+  fold D.Uint16 S.Sum [| 0xFFFF; 0xFFFF |] 0xFFFE;
+  fold D.Int16 S.Sum [| 32767; 1 |] (-32768)
+
 let test_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
   let on x = on b (A.Any x) in
@@ -851,22 +939,28 @@ let laws (b : Support.backend) =
     [
       prop "a float sum is within its bound of the exact sum" sums
         (run (law_bound b));
-      prop "bits do not depend on layouts" computed (run (law_layouts b));
-      prop "a scan of a prefix is the prefix of the scan" scans
-        (run (law_prefix b));
-      prop "a declined case writes nothing" any_case (run (law_declined b));
+      prop ~examples:computed_examples "bits do not depend on layouts" computed
+        (run (law_layouts b));
+      prop ~examples:scan_examples "a scan of a prefix is the prefix of the scan"
+        scans (run (law_prefix b));
+      prop ~examples:any_examples "a declined case writes nothing" any_case
+        (run (law_declined b));
     ]
 
 let order (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu's cases and order, " ^ b.name)
     [
-      prop "each result folds its terms in nx.cpu's order" computed
+      prop ~examples:computed_examples
+        "each result folds its terms in nx.cpu's order" computed
         (run (law_order b));
-      prop "computes the cases nx_cpu.mli lists, declines others" any_case
+      prop ~examples:any_examples
+        "computes the cases nx_cpu.mli lists, declines others" any_case
         (run (law_computes b));
-      test "a NaN past the first block and chunk is the result's"
-        (fun () -> b.around (test_far_nans b));
+      test "a NaN past the first block and chunk is the result's" (fun () ->
+          b.around (test_far_nans b));
+      test "8- and 16-bit products and sums wrap at their extremes" (fun () ->
+          b.around (test_wrap b));
       test "refuses a destination of another shape and an extreme of nothing"
         (fun () -> b.around (test_refusals b));
     ]
@@ -875,10 +969,10 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop "a sum of one axis is a contraction with ones" dots
-        (run (law_contract b));
-      prop ~count:20 "one thread gives the job's bits" large
-        (run (law_threads b));
+      prop ~examples:dot_examples "a sum of one axis is a contraction with ones"
+        dots (run (law_contract b));
+      prop ~count:20 ~examples:large_examples "one thread gives the job's bits"
+        large (run (law_threads b));
     ]
 
 let () =

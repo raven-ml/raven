@@ -55,7 +55,9 @@
 #define LANES NX_CPU_LANES
 #define SCAN_CHUNK 4096
 
-/* A streaming unit's row of outputs: 512 bytes, 128 float32. */
+/* A streaming unit's row of outputs: 512 bytes, 128 float32. Byte buffers
+   hold elements of the dtype, read and written as such, so they are aligned
+   as the widest. */
 #define ROW 512
 
 /* The depth of the blocks' tree: 2^48 blocks exceed any array. */
@@ -73,7 +75,7 @@
 typedef struct {
   const nx_cpu_fold *f;
   int dtype, w, nan;
-  uint8_t id[8];
+  _Alignas(8) uint8_t id[8];
   const nx_array *a; /* a[0] the destination, a[1] the operand */
   /* The reduced axes in C order: extents and the operand's steps. */
   int nr;
@@ -196,14 +198,14 @@ static void block(const fold *q, int64_t p, int64_t s, int64_t W, int64_t b,
   int64_t t0 = b * BLOCK, n = q->terms - t0 < BLOCK ? q->terms - t0 : BLOCK;
   int used = n < LANES ? (int)n : LANES;
   if (W == 1) {
-    uint8_t l[LANES * 8];
+    _Alignas(16) uint8_t l[LANES * 8];
     fill(q, l, LANES);
     runs(q, p, t0, n, l);
     lane_tree(q, l, 1, used);
     memcpy(v, l, q->w);
     return;
   }
-  uint8_t l[LANES * ROW];
+  _Alignas(16) uint8_t l[LANES * ROW];
   int64_t row = W * q->w;
   for (int i = 0; i < used; i++) fill(q, l + i * row, W);
   /* The terms' positions step through the reduced axes as an odometer. */
@@ -230,7 +232,8 @@ static void block(const fold *q, int64_t p, int64_t s, int64_t W, int64_t b,
    [v]: the identity for no block. */
 static void blocks(const fold *q, int64_t p, int64_t s, int64_t W, int64_t b0,
                    int64_t b1, uint8_t *v) {
-  uint8_t stack[LEVELS][ROW], run[RUN * 8];
+  _Alignas(16) uint8_t stack[LEVELS][ROW];
+  _Alignas(16) uint8_t run[RUN * 8];
   int top = 0;
   int64_t row = W * q->w;
   /* One output's full blocks of contiguous terms take the table's blocks,
@@ -305,7 +308,7 @@ static void store(const fold *q, const unit *x, const uint8_t *v) {
 static void reduce_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const fold *q = ctx;
-  uint8_t v[ROW];
+  _Alignas(16) uint8_t v[ROW];
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u);
     int64_t b0 = x.g * q->group, b1 = b0 + q->group;
@@ -325,7 +328,7 @@ static void finish_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   int64_t row = q->row * q->w;
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u * q->groups);
-    uint8_t stack[LEVELS][ROW];
+    _Alignas(16) uint8_t stack[LEVELS][ROW];
     int top = 0;
     for (int64_t g = 0; g < q->groups; g++) {
       memcpy(stack[top++], q->scratch + (u * q->groups + g) * row, row);
@@ -488,7 +491,7 @@ static void settle(const fold *q, const unit *x) {
 static void scan_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const fold *q = ctx;
-  uint8_t carry[ROW], a[ROW], v[ROW];
+  _Alignas(16) uint8_t carry[ROW], a[ROW], v[ROW];
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u);
     fill(q, carry, x.W);
@@ -525,7 +528,7 @@ static void rescan_units(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static void carries(const fold *q, int64_t units) {
   int64_t row = q->row * q->w;
-  uint8_t carry[ROW], v[ROW];
+  _Alignas(16) uint8_t carry[ROW], v[ROW];
   for (int64_t u = 0; u < units; u++) {
     unit x = unit_of(q, u * q->groups);
     fill(q, carry, x.W);

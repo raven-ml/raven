@@ -107,10 +107,13 @@
 #define ALL(a, b) ((uint8_t)((a) & ((b) != 0)))
 
 /* The four monoids of an integer dtype of storage [T], unsigned [U], at the
-   compute suffix [S] for its extremes, [C] its compute type. */
-#define INTS(D, T, U, C, S)                                                  \
-  static inline T add_##D(T a, T b) { return (T)(U)((U)a + (U)b); }          \
-  static inline T mul_##D(T a, T b) { return (T)(U)((U)a * (U)b); }          \
+   compute suffix [S] for its extremes, [C] its compute type and [M] the
+   unsigned type of [C]'s width. Sums and products run in [M], where they
+   wrap: 8- and 16-bit operands would promote to int, whose product of two
+   0xFFFF overflows. */
+#define INTS(D, T, U, C, M, S)                                               \
+  static inline T add_##D(T a, T b) { return (T)(U)((M)(U)a + (M)(U)b); }    \
+  static inline T mul_##D(T a, T b) { return (T)(U)((M)(U)a * (M)(U)b); }    \
   static inline T max_##D(T a, T b) { return (T)nx_maximum_##S((C)a, (C)b); } \
   static inline T min_##D(T a, T b) { return (T)nx_minimum_##S((C)a, (C)b); } \
   FOLD(sum_##D, T, add_##D)                                                  \
@@ -118,14 +121,14 @@
   FOLD(max_##D, T, max_##D)                                                  \
   FOLD(min_##D, T, min_##D)
 
-INTS(i8, int8_t, uint8_t, int32_t, i32)
-INTS(u8, uint8_t, uint8_t, uint32_t, u32)
-INTS(i16, int16_t, uint16_t, int32_t, i32)
-INTS(u16, uint16_t, uint16_t, uint32_t, u32)
-INTS(i32, int32_t, uint32_t, int32_t, i32)
-INTS(u32, uint32_t, uint32_t, uint32_t, u32)
-INTS(i64, int64_t, uint64_t, int64_t, i64)
-INTS(u64, uint64_t, uint64_t, uint64_t, u64)
+INTS(i8, int8_t, uint8_t, int32_t, uint32_t, i32)
+INTS(u8, uint8_t, uint8_t, uint32_t, uint32_t, u32)
+INTS(i16, int16_t, uint16_t, int32_t, uint32_t, i32)
+INTS(u16, uint16_t, uint16_t, uint32_t, uint32_t, u32)
+INTS(i32, int32_t, uint32_t, int32_t, uint32_t, i32)
+INTS(u32, uint32_t, uint32_t, uint32_t, uint32_t, u32)
+INTS(i64, int64_t, uint64_t, int64_t, uint64_t, i64)
+INTS(u64, uint64_t, uint64_t, uint64_t, uint64_t, u64)
 
 FOLD(sum_f32, float, ADD)
 FOLD(prod_f32, float, MUL)
