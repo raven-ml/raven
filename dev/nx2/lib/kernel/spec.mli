@@ -486,11 +486,6 @@ type routine =
       unit_diagonal : bool;
     }
 
-(* CR: Define LU's pivot by the whole ascending scan: start at row j,
-   replacing it only when a later magnitude is greater. "The first row"
-   beating every preceding row always chooses j; for [[0]; [1]], that
-   leaves a zero pivot and contradicts the stated L U reconstruction.
-   The scan preserves first ties and the stated NaN comparisons. *)
 val linalg : routine -> linalg t
 (** [linalg r] computes [r] on each matrix of an operand [a], its last two
     axes, of [m] rows and [n] columns, [k = min m n]. Its other axes, the
@@ -512,9 +507,11 @@ val linalg : routine -> linalg t
     - [Lu]: three results. [lu], of [a]'s shape, holds the unit lower
       triangular [L] below its diagonal, its ones unstored, and the upper
       triangular [U] on and above it. [pivots], [[…; k]]: at step [j], rows
-      [j] and [pivots[j]] were interchanged, [pivots[j]] the first row from
-      [j] whose magnitude in column [j] is greater than every row's before
-      it from [j], [|re| + |im|] on complex; a NaN is never greater.
+      [j] and [pivots[j]] were interchanged, [pivots[j]] the row a scan of
+      column [j] down from row [j] ends at: it starts at [j] and moves to a
+      later row only where that row's magnitude, [|re| + |im|] on complex,
+      is greater than the current one's. A NaN is never greater, and
+      nothing is greater than a NaN.
       [perm], [[…; m]]: row [i] of [L U] is row [perm[i]] of [a]. A zero
       pivot stays in [U] and its column of [L] is not divided.
     - [Qr f]: two results, [q] with orthonormal columns and the upper
