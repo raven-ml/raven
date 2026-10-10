@@ -115,18 +115,11 @@ let target c xi =
   in
   if Array.exists (fun v -> v < 0) i then None else Some (flat c.shape i)
 
-(* Prog.Add on two elements of [d]: floats from their bits, the first NaN
-   operand, integers wrapping. *)
+(* Prog.Add on two elements of [d]: floats by {!Elements.add_bits}, integers
+   wrapping. *)
 let add d a b =
   if D.Any D.Float32 = d || D.Any D.Float64 = d then
-    let w = String.length a in
-    let get, put, round =
-      if w = 4 then (get32, f32, round32) else (get64, f64, Fun.id)
-    in
-    let x = get a 0 and y = get b 0 in
-    if Float.is_nan x then a
-    else if Float.is_nan y then b
-    else put (round (x +. y))
+    add_bits ~w:(String.length a) a b
   else int_bits d (String.length a) (Int64.add (int_value d a) (int_value d b))
 
 let expected c =
