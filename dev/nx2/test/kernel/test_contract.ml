@@ -157,6 +157,14 @@ let operand dt s nb v seed =
   let x = if v.broadcast then move (M.Broadcast s) x else x in
   A.Any (move (M.Permute v.perm) x)
 
+(* The bounds gemm.c's paths turn on, on every table: a product of more
+   rows and columns than [few_rows_most] (NEON's MC, the largest) takes the
+   chain path; [kc_least] is the smallest block of the contraction, KC, and
+   [panels] the bytes of packed operands a group of batch elements shares. *)
+let few_rows_most = 128
+let kc_least = 256
+let panels = 8 * 1024 * 1024
+
 (* Extents of the batch, row, column and contracted axes, in profiles: any
    ranks over a few elements; one output; 64 outputs or more with edge
    tiles; several blocks of the contraction on several threads; dots past a
@@ -242,25 +250,40 @@ let case_of ~acc ~out ~dts =
 (* A case of each regime the covers name, in [acc], C-contiguous: no output;
    one; no product; 64 outputs or more in 4 rows or fewer, and in 4 columns or
    fewer, over several blocks of the contraction; fewer than 64 over several
-   blocks of lanes; several panels; several groups. The drawn cases reach
-   each a few times in a hundred, so a run of a hundred can miss one. *)
+   blocks of lanes; several panels and several groups of few rows; the
+   chain path over several blocks of the contraction, several panels, and,
+   in float64, several groups. The drawn cases reach each a few times in a
+   hundred or never, so a run of a hundred can miss one. *)
 let regimes acc =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let case e =
     let ra, rb, ry = ranks e in
     make ~acc ~out:acc e (acc, plain ra) (acc, plain rb) (Some (acc, plain ry)) 1
   in
+  let rows = few_rows_most + 1 in
+  (* Several groups of the chain path take some 70 million products in
+     float64, twice as many in float32, whose reference is slower: float64
+     alone draws them. *)
+  let groups =
+    match acc with
+    | D.Any D.Float64 ->
+        [ ([| (panels / (2 * rows * kc_least * 8)) + 1 |], [| rows |], [| rows |], [| kc_least |]) ]
+    | _ -> []
+  in
   List.map case
-    [
-      ([||], [| 0 |], [| 3 |], [| 2 |]);
-      ([| 1 |], [| 1 |], [| 1 |], [| 5 |]);
-      ([||], [| 3 |], [| 2 |], [| 0 |]);
-      ([||], [| 3 |], [| 64 |], [| 600 |]);
-      ([||], [| 64 |], [| 3 |], [| 600 |]);
-      ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]);
-      ([||], [| 1 |], [| 3100 |], [| 3 |]);
-      ([| 350 |], [| 8 |], [| 8 |], [| 2 |]);
-    ]
+    ([
+       ([||], [| 0 |], [| 3 |], [| 2 |]);
+       ([| 1 |], [| 1 |], [| 1 |], [| 5 |]);
+       ([||], [| 3 |], [| 2 |], [| 0 |]);
+       ([||], [| 3 |], [| 64 |], [| 600 |]);
+       ([||], [| 64 |], [| 3 |], [| 600 |]);
+       ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]);
+       ([||], [| 1 |], [| 3100 |], [| 3 |]);
+       ([| 350 |], [| 8 |], [| 8 |], [| 2 |]);
+       ([||], [| rows |], [| rows + 3 |], [| 1030 |]);
+       ([||], [| rows |], [| 3100 |], [| 3 |]);
+     ]
+    @ groups)
 
 (* The dtypes each accumulator holds, as nx_cpu.mli lists them. *)
 let held = function
@@ -320,11 +343,22 @@ let any_case =
    the contracted index: the contracting pairs' indices in C order. *)
 type output = { init : float option; av : float array; bv : float array }
 
-(* The result's shape and its outputs in C order. *)
+(* The result's shape, and [each f], which calls [f yi k o] on each output
+   in C order: [yi] its index, [k] its position in C order, [o] its init and
+   factors. The operands are read as C-contiguous float64 arrays, each
+   output's factors at offsets computed once. *)
 let outputs c =
-  let a = to64 c.a and b = to64 c.b in
-  let init = Option.map to64 c.init in
-  let la = A.layout a and lb = A.layout b in
+  let flat x = A.to_array (to64 x) in
+  let strides s =
+    let st = Array.make (Array.length s) 1 in
+    for i = Array.length s - 2 downto 0 do
+      st.(i) <- st.(i + 1) * s.(i + 1)
+    done;
+    st
+  in
+  let sa = shape_of c.a and sb = shape_of c.b in
+  let a = flat c.a and b = flat c.b and init = Option.map flat c.init in
+  let ta = strides sa and tb = strides sb in
   let bp = S.batch c.spec and cp = S.contracting c.spec in
   let free side r =
     List.filter
@@ -335,44 +369,68 @@ let outputs c =
       (List.init r Fun.id)
     |> Array.of_list
   in
-  let fa = free fst (L.rank la) and fb = free snd (L.rank lb) in
-  let nb = Array.length bp and nfa = Array.length fa in
+  let fa = free fst (Array.length sa) and fb = free snd (Array.length sb) in
+  let none n = Array.make (Array.length n) 0 in
   let y =
     Array.concat
       [
-        Array.map (fun (i, _) -> L.dim la i) bp;
-        Array.map (L.dim la) fa;
-        Array.map (L.dim lb) fb;
+        Array.map (fun (i, _) -> sa.(i)) bp;
+        Array.map (fun ax -> sa.(ax)) fa;
+        Array.map (fun ax -> sb.(ax)) fb;
       ]
   in
-  let ks = indices (Array.map (fun (i, _) -> L.dim la i) cp) in
-  let each yi =
-    let ai = Array.make (L.rank la) 0 and bi = Array.make (L.rank lb) 0 in
-    Array.iteri
-      (fun p (i, j) ->
-        ai.(i) <- yi.(p);
-        bi.(j) <- yi.(p))
-      bp;
-    Array.iteri (fun q ax -> ai.(ax) <- yi.(nb + q)) fa;
-    Array.iteri (fun q ax -> bi.(ax) <- yi.(nb + nfa + q)) fb;
-    let terms =
-      List.map
-        (fun ki ->
-          Array.iteri
-            (fun q (i, j) ->
-              ai.(i) <- ki.(q);
-              bi.(j) <- ki.(q))
-            cp;
-          (A.get a ai, A.get b bi))
-        ks
-    in
-    {
-      init = Option.map (fun i -> A.get i yi) init;
-      av = Array.of_list (List.map fst terms);
-      bv = Array.of_list (List.map snd terms);
-    }
+  (* Each axis of the result's step in a and in b. *)
+  let ya =
+    Array.concat
+      [ Array.map (fun (i, _) -> ta.(i)) bp; Array.map (fun ax -> ta.(ax)) fa; none fb ]
   in
-  (y, List.map each (indices y))
+  let yb =
+    Array.concat
+      [ Array.map (fun (_, j) -> tb.(j)) bp; none fa; Array.map (fun ax -> tb.(ax)) fb ]
+  in
+  (* The contracted index's offsets in a and in b, in C order. *)
+  let kd = Array.map (fun (i, _) -> sa.(i)) cp in
+  let offsets steps =
+    let at = Array.make (Array.length kd) 0 in
+    Array.init (total kd) (fun _ ->
+        let off = ref 0 in
+        Array.iteri (fun q i -> off := !off + (i * steps.(q))) at;
+        let q = ref (Array.length kd - 1) in
+        let carry () =
+          at.(!q) <- at.(!q) + 1;
+          at.(!q) = kd.(!q)
+        in
+        while !q >= 0 && carry () do
+          at.(!q) <- 0;
+          decr q
+        done;
+        !off)
+  in
+  let oa = offsets (Array.map (fun (i, _) -> ta.(i)) cp) in
+  let ob = offsets (Array.map (fun (_, j) -> tb.(j)) cp) in
+  let ty = strides y in
+  let each f =
+    for k = 0 to total y - 1 do
+      let yi = Array.make (Array.length y) 0 in
+      let ra = ref 0 and rb = ref 0 and r = ref k in
+      for d = 0 to Array.length y - 1 do
+        let i = !r / ty.(d) in
+        r := !r - (i * ty.(d));
+        yi.(d) <- i;
+        ra := !ra + (i * ya.(d));
+        rb := !rb + (i * yb.(d))
+      done;
+      let o =
+        {
+          init = Option.map (fun x -> x.(k)) init;
+          av = Array.map (fun t -> a.(!ra + t)) oa;
+          bv = Array.map (fun t -> b.(!rb + t)) ob;
+        }
+      in
+      f yi k o
+    done
+  in
+  (y, each)
 
 (* [x + y] as a double and its error, exactly (Knuth's TwoSum). *)
 let two_sum x y =
@@ -443,8 +501,6 @@ let covers c =
   cover "init" (c.init <> None);
   cover "several blocks of the contraction" (per >= 64 && k > 512);
   cover "several blocks of lanes" (per > 0 && per < 64 && k > 1024);
-  cover "several panels" (per >= 64 && Array.exists (fun e -> e > 3072) y);
-  cover "several groups" (per >= 64 && batch > 341);
   let nb = Array.length (S.batch c.spec) in
   let fa =
     Array.length (shape_of c.a) - nb - Array.length (S.contracting c.spec)
@@ -453,6 +509,13 @@ let covers c =
   let n = total (Array.sub y (nb + fa) (Array.length y - nb - fa)) in
   cover "4 rows or fewer" (per >= 64 && m <= 4);
   cover "4 columns or fewer" (per >= 64 && n <= 4);
+  let chain = per >= 64 && m > few_rows_most && n > few_rows_most in
+  let w = match S.acc c.spec with D.Any D.Float32 -> 4 | _ -> 8 in
+  cover "the chain path" chain;
+  cover "chain over several blocks of the contraction" (chain && k > 1024);
+  cover "chain over several panels of columns" (chain && n > 3072);
+  cover "chain over several groups of batch elements"
+    (chain && batch * (m + n) * min k kc_least * w > panels);
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "stepped"; "broadcast"; "permuted" ]
@@ -478,16 +541,14 @@ let bits x =
 
 (* The first outputs of [y] at which [check] answers why it is wrong. *)
 let wrong c y check =
-  let shape, outs = outputs c in
-  let g = to64 y in
+  let _, each = outputs c in
+  let g = A.to_array (to64 y) in
   let bad = ref [] in
-  List.iter2
-    (fun yi o ->
-      match check o (A.get g yi) with
+  each (fun yi k o ->
+      match check o g.(k) with
       | Some why when List.length !bad < 8 ->
           bad := Format.asprintf "%a: %s" pp_ints yi why :: !bad
-      | _ -> ())
-    (indices shape) outs;
+      | _ -> ());
   List.rev !bad
 
 (* The laws of S *)
