@@ -137,8 +137,9 @@ let record image launches =
 let driver_copy ~src ~dst = { body = Copy { src; dst }; prepared = [] }
 
 (* Makes the submission of [works] in order on [d], each on its queue, every
-   buffer a launch addresses written: one slot an address. *)
-let prepare d works =
+   buffer a launch addresses written: one slot an address. Its submits are
+   [hold]'s. *)
+let prepare ?hold d works =
   let slots = ref [] and count = ref 0 in
   let launch_work image l =
     let ref i = function
@@ -168,7 +169,7 @@ let prepare d works =
   let parts = Array.of_list (List.map part works) in
   let buffers = Array.of_list (List.rev !slots) in
   let access = Array.make (Array.length buffers) Rig.Buffer.Read_write in
-  let sub = Rig.Submission.make ~access d.rig parts in
+  let sub = Rig.Submission.make ?hold ~access d.rig parts in
   let blocks = Rig.Submission.Run.make () in
   List.iteri
     (fun i (_, w) ->
@@ -204,11 +205,11 @@ let works r =
   | Contract _ -> invalid_arg "Nx_amd_support: a contraction among launches"
 
 (* [r]'s submission on [d] under [key], made by [works] on first use. *)
-let prepared d r key works =
+let prepared ?hold d r key works =
   match List.assoc_opt key r.prepared with
   | Some p -> p
   | None ->
-      let p = prepare d (works ()) in
+      let p = prepare ?hold d (works ()) in
       r.prepared <- (key, p) :: r.prepared;
       p
 
@@ -256,7 +257,9 @@ let zero b = write b (String.make (Rig.Buffer.length b) '\000')
    are the work device's memory, which the GPU's devices share: [started] counts
    the hog's workgroups that hold their processors, [release] lets them go, and
    [late] and [let_go] say that the work's queue or the hog gave up waiting for
-   the other. *)
+   the other. The hog reaches them by addresses in its parameters, which rig
+   neither orders nor keeps, so that it runs beside the work device's
+   submissions that name them; [keep] keeps them reachable until it is done. *)
 type hog = {
   blocks : int;
   started : Rig.Buffer.t;
@@ -264,6 +267,7 @@ type hog = {
   late : Rig.Buffer.t;
   let_go : Rig.Buffer.t;
   wgp : Rig.Buffer.t;
+  keep : Rig.Hold.t;
   device : device;
   hold : run;
   wait : run;
@@ -289,18 +293,15 @@ let hog g =
   let word () = buffer g 4 in
   let started = word () and release = word () and late = word () in
   let let_go = word () and wgp = buffer g (4 * blocks) in
-  let on b = Option.get (Rig.Buffer.borrow d.rig b) in
+  let at b =
+    W (Rig.Buffer.address (Option.get (Rig.Buffer.borrow d.rig b)))
+  in
+  let keep = Rig.Hold.make [ started; release; late; let_go; wgp ] in
   let hold =
     record d.harness
       [
         launch "hog" ~groups:(blocks, 1, 1) ~threads:hog_threads
-          [
-            A (on started);
-            A (on wgp);
-            A (on release);
-            A (on let_go);
-            W (ticks d hold_ns);
-          ];
+          [ at started; at wgp; at release; at let_go; W (ticks d hold_ns) ];
       ]
   in
   let wait =
@@ -314,15 +315,28 @@ let hog g =
     record (harness g)
       [ launch "release" ~groups:(1, 1, 1) ~threads:1 [ A release ] ]
   in
-  { blocks; started; release; late; let_go; wgp; device = d; hold; wait; free }
+  {
+    blocks;
+    started;
+    release;
+    late;
+    let_go;
+    wgp;
+    keep;
+    device = d;
+    hold;
+    wait;
+    free;
+  }
 
 let held_wgps h =
   let s = read h.wgp in
   List.init h.blocks (fun i -> Int32.to_int (String.get_int32_le s (4 * i)))
 
 (* Beside a hog, the work waits on its queue until every hog workgroup holds its
-   processor, and releases them once done: rig orders nothing between two
-   devices' queues, and orders the work device's submissions as made. *)
+   processor, and releases them once done: the work device's submissions, the
+   wait and the release among them, run in the order made, and the hog, which
+   names none of their buffers, runs beside them. *)
 let run ?beside g r =
   match beside with
   | None -> Rig.wait g.work.rig (once g r)
@@ -332,7 +346,8 @@ let run ?beside g r =
       | Launches _ | Contract _ -> ());
       List.iter zero [ h.started; h.release; h.late; h.let_go ];
       let held =
-        submit (prepared h.device h.hold "run" (fun () -> works h.hold))
+        submit
+          (prepared ~hold:h.keep h.device h.hold "run" (fun () -> works h.hold))
       in
       ignore (once g h.wait);
       ignore (once g r);

@@ -835,7 +835,13 @@ module Submission : sig
             as the device's work addresses it ({!Buffer.address}). Through a
             ref, it reaches only bytes of that buffer, and writes them only if
             the run's access for [slot] is [Read_write]: rig orders the work by
-            these facts and checks neither. *)
+            these facts and checks neither. Memory the function reaches by an
+            address its parameters hold other than at a ref, such as
+            {!Buffer.address}'s, rig neither orders nor keeps: the caller orders
+            that work against other work on the memory, such as by atomics
+            between devices that run at once, and keeps the memory reachable
+            until the work is done, such as by a {!Hold} of its buffer made with
+            the submission. *)
 
   type part = { queue : string; after : int array; work : work }
   (** The type for parts: [work] on [queue], one of the device's
