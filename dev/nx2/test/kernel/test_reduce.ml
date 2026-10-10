@@ -396,6 +396,11 @@ let computed_examples =
     example ~specials:20 S.Sum f32 [| 5000 |] [| 0 |];
     example S.Max f32 [| 100; 3 |] [| 1 |];
     (* Short rows of few terms, which units take in bands of rows. *)
+    (* CR: These two examples and the matching large_examples case have
+       contiguous kept axes, which coalesce into one: no multirow bands.
+       Use the existing view with perm=[|0;2;1|], no step, reversal or
+       broadcast. Its strides [26;1;13] retain row width 13 and separate
+       outer rows, covering full and partial bands with the same laws. *)
     example ~specials:20 S.Sum f32 [| 46; 13; 2 |] [| 2 |];
     example ~specials:20 S.Max f64 [| 46; 13; 2 |] [| 2 |];
     example

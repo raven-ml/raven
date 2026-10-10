@@ -29,7 +29,8 @@ let drawn (type s) (dt : (float, s) D.t) n : (float, s, Nx.host) Nx.t Gen.t =
    actuals for finite references; use the previous finite spacing
    only when the next encoding is infinite. Keep the unrounded
    reference and existing overflow/NaN/zero checks. Add fixed
-   hypot(max, 0) cases for float32 and float64. *)
+   hypot(max, 0) cases for float32 and float64. Apply the same rule to
+   test_complex.ml's ulp/close, with magnitude(max + 0i) cases. *)
 let ulp (type s) (dt : (float, s) D.t) r =
   let r = Float.abs r in
   match dt with
