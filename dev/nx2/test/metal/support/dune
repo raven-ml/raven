@@ -50,6 +50,11 @@
     frameworks.sexp
     (echo "()")))))
 
+; nx.metal's kernels.ml, for the names of its library's kernels.
+
+(rule
+ (copy ../../../lib/metal/kernels.ml kernels.ml))
+
 (rule
  (targets harness.metallib)
  (mode fallback)

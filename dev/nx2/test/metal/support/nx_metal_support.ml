@@ -47,6 +47,7 @@ let open_ () =
     Some { rig; harness = get (Rig.Image.load rig (metallib ())) }
 
 let rig t = t.rig
+let kernels = List.map fst (Array.to_list Kernels.kernels)
 
 (* Operands *)
 

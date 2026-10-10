@@ -28,6 +28,10 @@ val open_ : unit -> t option
 val rig : t -> Rig.t
 (** [rig t] is [t]'s device. *)
 
+val kernels : string list
+(** [kernels] is the names of nx.metal's library kernels, in its metallib's
+    order. *)
+
 (** {1:operands Operands} *)
 
 type operand

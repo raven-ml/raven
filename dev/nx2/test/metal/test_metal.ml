@@ -420,6 +420,30 @@ let call ?acc t c =
   in
   (dims, a, b, out, init, run)
 
+(* Runs [r] on [t], and is the functions its launches ran, from the spans a
+   profile records of [t]'s submissions. *)
+let launched t r =
+  let (), events = Rig.Profile.take (fun () -> ignore (S.run t r)) in
+  List.concat_map
+    (function
+      | Rig.Profile.Span s when Rig.equal s.device (S.rig t) ->
+          List.map String.trim (String.split_on_char ',' s.name)
+      | _ -> [])
+    events
+
+(* A dense kernel's tile, by its name's last part: [l] checked large, [s]
+   small, [w] and an order wide, an order alone large. *)
+let tile k =
+  match List.rev (String.split_on_char '_' k) with
+  | "l" :: _ -> `Checked
+  | "s" :: _ -> `Small
+  | last :: _ when last.[0] = 'w' -> `Wide
+  | _ -> `Large
+
+let dense k =
+  String.starts_with ~prefix:"contract_f" k
+  || String.starts_with ~prefix:"contract_bf" k
+
 (* Every output is within the contraction's bound of the exact result, or is the
    NaN or infinity its terms give. *)
 let contract_bound =
@@ -519,7 +543,20 @@ let contract_bound =
         (match c.values with Subnormal _ -> c.m * c.n * c.k > 0 | _ -> false);
       let t = dev () in
       let dims, a, b, out, init, run = call t c in
-      ignore (S.run t run);
+      let kernels = launched t run in
+      let launches k = List.mem k kernels in
+      let tiles x = List.exists (fun k -> dense k && tile k = x) kernels in
+      cover "64 x 64 tiles" (tiles `Large);
+      cover "checked 64 x 64 tiles, float32" (launches "contract_f32_l");
+      cover "checked 64 x 64 tiles, bfloat16" (launches "contract_bf16_l");
+      cover "32 x 32 tiles" (tiles `Small);
+      cover "16 x 64 tiles" (tiles `Wide);
+      cover "a skinny product, b stored [k][n]"
+        (List.exists (String.starts_with ~prefix:"skinny_") kernels
+        && not c.b_t);
+      cover "a skinny product, b stored [n][k]"
+        (List.exists (String.starts_with ~prefix:"skinny_") kernels && c.b_t);
+      cover "a split along k" (launches "contract_combine");
       let worst, at = S.contract_error ?init dims ~a ~b ~out in
       at_most
         ~msg:(strf "output %d's error over its bound" at)
@@ -631,12 +668,14 @@ let contract_wraps =
       let wrong, first = S.contract_wrong ?init ~acc dims ~a ~b ~out in
       equal ~msg:(strf "outputs wrong, the first %d" first) int 0 wrong)
 
-(* A call of each tile and order, the dtypes of each family, is right. *)
-let every_tile () =
+(* Every kernel of the library runs in some call, a call of each tile and
+   order, the dtypes of each family, and its results are right. *)
+let every_kernel () =
   let t = dev () in
+  let seen = Hashtbl.create 64 in
   let launch ?acc c =
     let dims, a, b, out, init, run = call ?acc t c in
-    ignore (S.run t run);
+    List.iter (fun k -> Hashtbl.replace seen k ()) (launched t run);
     (dims, a, b, out, init)
   in
   let base =
@@ -718,7 +757,9 @@ let every_tile () =
              (Format.asprintf "%a" pp_case c)
              first)
         int 0 wrong)
-    ints
+    ints;
+  let missing = List.filter (fun k -> not (Hashtbl.mem seen k)) S.kernels in
+  equal ~msg:"kernels no call launched" (list string) [] missing
 
 (* The plan's acceptance: over every (a, b, acc, out) of the dtypes, at a shape
    of each kernel class, the plan accepts exactly the stated set, and an
@@ -974,14 +1015,17 @@ let orders_agree c =
         (S.plan_contract ?init t (c.batch, c.m, c.n, c.k) ~a:a.arg ~b:b.arg
            ~out:out.arg)
     in
-    ignore (S.run t run);
+    let kernels = launched t run in
     let get, _ = codes out size in
-    Array.init mn get
+    (kernels, Array.init mn get)
   in
-  let nn = outputs a b in
+  let kernels, nn = outputs a b in
+  cover "a skinny product"
+    (List.exists (String.starts_with ~prefix:"skinny_") kernels);
+  cover "a split along k" (List.mem "contract_combine" kernels);
   List.iter
     (fun (name, a, b) ->
-      let y = outputs a b in
+      let _, y = outputs a b in
       let differs i =
         y.(i) <> nn.(i) && not (nan_code c.out y.(i) && nan_code c.out nn.(i))
       in
@@ -1044,7 +1088,7 @@ let contract =
       contract_wraps;
       nan_output;
       test "float64 declines" declines_float64;
-      test "every tile and order is right" every_tile;
+      test "every kernel runs and is right" every_kernel;
       test "the plan declines or is right" every_quadruple;
       determinism;
       orders;
