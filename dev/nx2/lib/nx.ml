@@ -665,6 +665,474 @@ let rearrange ?(sizes = []) p x =
   in
   List.fold_left (fun x mv -> move ~by mv x) x moves
 
+(* Indexing and slicing *)
+
+type 'd index =
+  | I of int
+  | L of int list
+  | T of 'd int64_t
+  | R of int * int
+  | Rs of int * int * int
+  | A
+  | N
+  | D of 'd int64_t * int
+
+(* An entry of a selection checked against its axis of extent [d]: one written
+   position, a range, written positions, positions held in data, a window from a
+   start held in data, or a new axis. *)
+type 'd pick =
+  | At of int
+  | Span of Nx_array.Move.range
+  | Rows of int list
+  | Held of 'd int64_t
+  | From of 'd int64_t * int * int
+  | New
+
+(* [start] to [stop] by [step] within an axis of extent [d], clipped as a range
+   written in the program is: negative ends count from the end. *)
+let range d start stop step : Nx_array.Move.range =
+  let resolve e = if e < 0 then e + d else e in
+  if step > 0 then
+    let start = max 0 (min d (resolve start))
+    and stop = max 0 (min d (resolve stop)) in
+    { start; count = max 0 ((stop - start + step - 1) / step); step }
+  else
+    let start = max (-1) (min (d - 1) (resolve start))
+    and stop = max (-1) (min (d - 1) (resolve stop)) in
+    let count = max 0 ((start - stop - step - 1) / -step) in
+    { start = (if count = 0 then 0 else start); count; step }
+
+(* [idx] checked against [x]: each entry with the axis it selects along, [None]
+   for [N]. Every refusal raises here, before anything is computed. *)
+let picks ~by idx x =
+  let s = shape x in
+  let r = Array.length s in
+  let addressed =
+    List.length (List.filter (function N -> false | _ -> true) idx)
+  in
+  if addressed > r then
+    invalid_argf "%s: %d entries address %d axes; the operand is %a" by
+      (List.length idx) addressed pp_value x;
+  let next = ref 0 in
+  (* The next axis, and a written position checked against it. *)
+  let axis () =
+    incr next;
+    !next - 1
+  in
+  let written a p =
+    let p' = if p < 0 then p + s.(a) else p in
+    if p' < 0 || p' >= s.(a) then
+      invalid_argf "%s: position %d is outside axis %d of %a" by p a pp_value x;
+    p'
+  in
+  List.map
+    (fun entry ->
+      match entry with
+      | N -> (New, None)
+      | I p ->
+          let a = axis () in
+          (At (written a p), Some a)
+      | L ps ->
+          let a = axis () in
+          (Rows (List.map (written a) ps), Some a)
+      | T p -> (Held p, Some (axis ()))
+      | R (start, stop) ->
+          let a = axis () in
+          (Span (range s.(a) start stop 1), Some a)
+      | Rs (_, _, 0) -> invalid_argf "%s: a step of 0" by
+      | Rs (start, stop, step) ->
+          let a = axis () in
+          (Span (range s.(a) start stop step), Some a)
+      | A ->
+          let a = axis () in
+          (Span (whole s.(a)), Some a)
+      | D (start, n) ->
+          let a = axis () in
+          if ndim start <> 0 then
+            invalid_argf "%s: a window's start %a is not 0-d" by pp_value start;
+          if n < 0 || n > s.(a) then
+            invalid_argf "%s: a window of %d on axis %d of %a" by n a pp_value x;
+          (From (start, n, s.(a)), Some a))
+    idx
+
+(* The axes a pick gives the selection. *)
+let extents_of (type d) (p : d pick) =
+  match p with
+  | At _ -> [||]
+  | Span r -> [| r.count |]
+  | Rows ps -> [| List.length ps |]
+  | Held p -> shape p
+  | From (_, n, _) -> [| n |]
+  | New -> [| 1 |]
+
+(* The selection's shape: each pick's axes, then the axes past them. *)
+let selection x picks =
+  let s = shape x in
+  let used = List.length (List.filter (fun (_, a) -> a <> None) picks) in
+  Array.concat
+    (List.map (fun (p, _) -> extents_of p) picks
+    @ [ Array.sub s used (Array.length s - used) ])
+
+(* The int64 value of written positions [ps]: a value of every set. *)
+let written ~by ps =
+  assemble ~by D.Int64
+    [| List.length ps |]
+    0L
+    (List.mapi
+       (fun j p ->
+         ( [| { Nx_array.Move.start = j; count = 1; step = 1 } |],
+           fill ~by D.Int64 [| 1 |] (Int64.of_int p) ))
+       ps)
+
+let const64 n = P.Const (D.Any D.Int64, P.bits D.Int64 (Int64.of_int n))
+
+(* The [n] positions of a window from [start], clamped into [0, d - n]. *)
+let window ~by start n d =
+  let prog =
+    P.v ~ins:[| D.Any D.Int64 |]
+      [|
+        In 0;
+        const64 0;
+        Op2 (Binary Maximum, 0, 1);
+        const64 (d - n);
+        Op2 (Binary Minimum, 2, 3);
+        Coord 0;
+        Op2 (Binary Add, 4, 5);
+      |]
+      ~outs:[| 6 |]
+  in
+  let v, () =
+    Eval.eval ~by
+      (Value.Map
+         {
+           layout = Nx_array.Layout.contiguous [| n |];
+           prog;
+           outs = Value.[ D.Int64 ];
+           loads = [| Plain (broadcast ~by [| n |] start) |];
+         })
+  in
+  v
+
+(* [y] read along [axis] at the positions [p]: [y]'s axis replaced by [p]'s
+   axes. [p] runs along the axis, broadcast across the others, which a kernel
+   reads as row takes. *)
+let take_axis ~by axis p y =
+  let s = shape y and ps = shape p in
+  let n = numel p in
+  let col = Array.mapi (fun i _ -> if i = axis then n else 1) s in
+  let wide = Array.mapi (fun i d -> if i = axis then n else d) s in
+  let idx = broadcast ~by wide (move ~by (Reshape col) p) in
+  let g = Eval.eval ~by (Value.Gather { axis; idx; x = y }) in
+  let s' =
+    Array.concat
+      [
+        Array.sub s 0 axis;
+        ps;
+        Array.sub s (axis + 1) (Array.length s - axis - 1);
+      ]
+  in
+  if Prim.has_shape g s' then g else move ~by (Reshape s') g
+
+let slice idx x =
+  let by = "Nx.slice" in
+  let picks = picks ~by idx x in
+  let s = shape x in
+  let ranges = Array.map whole s in
+  List.iter
+    (fun (p, a) ->
+      match (p, a) with
+      | At i, Some a -> ranges.(a) <- { start = i; count = 1; step = 1 }
+      | Span r, Some a -> ranges.(a) <- r
+      | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> ())
+    picks;
+  let y =
+    if
+      Array.for_all2
+        (fun (r : Nx_array.Move.range) d -> r.count = d && r.step = 1)
+        ranges s
+    then x
+    else move ~by (Slice ranges) x
+  in
+  (* Gathers from the last axis back, so that an axis a gather replaces does not
+     renumber the ones still to come. *)
+  let y =
+    List.fold_left
+      (fun y (p, a) ->
+        match (p, a) with
+        | Rows ps, Some a -> take_axis ~by a (written ~by ps) y
+        | Held p, Some a -> take_axis ~by a p y
+        | From (start, n, d), Some a -> take_axis ~by a (window ~by start n d) y
+        | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> y)
+      y (List.rev picks)
+  in
+  (* Each [At] axis now has extent 1 and goes; each [New] axis comes. *)
+  let s' = selection x picks in
+  if Prim.has_shape y s' then y else move ~by (Reshape s') y
+
+let get p x =
+  let by = "Nx.get" in
+  let s = shape x in
+  if List.length p > Array.length s then
+    invalid_argf "%s: %d positions for %a" by (List.length p) pp_value x;
+  let ranges = Array.map whole s in
+  List.iteri
+    (fun a i ->
+      let i' = if i < 0 then i + s.(a) else i in
+      if i' < 0 || i' >= s.(a) then
+        invalid_argf "%s: position %d is outside axis %d of %a" by i a pp_value
+          x;
+      ranges.(a) <- { start = i'; count = 1; step = 1 })
+    p;
+  let k = List.length p in
+  move ~by
+    (Reshape (Array.sub s k (Array.length s - k)))
+    (move ~by (Slice ranges) x)
+
+let take ?axis p x =
+  let by = "Nx.take" in
+  match axis with
+  | None -> take_axis ~by 0 p (move ~by (Reshape [| numel x |]) x)
+  | Some a ->
+      take_axis ~by (axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x)) p x
+
+let take_along_axis ~axis:a p x =
+  let by = "Nx.take_along_axis" in
+  let a = axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x) in
+  if ndim p <> ndim x then
+    invalid_argf "%s: positions %a for %a of another rank" by pp_value p
+      pp_value x;
+  let sp = shape p and sx = shape x in
+  let off s = Array.mapi (fun i d -> if i = a then 1 else d) s in
+  let b = Prim.broadcast_shape ~by (off sp) (off sx) in
+  let at d = Array.mapi (fun i e -> if i = a then d else e) b in
+  Eval.eval ~by
+    (Value.Gather
+       {
+         axis = a;
+         idx = broadcast ~by (at sp.(a)) p;
+         x = broadcast ~by (at sx.(a)) x;
+       })
+
+(* Functional updates *)
+
+(* The flat position in [x] of each element of the selection [picks], [-1] where
+   a position held in data lies outside its axis: one map over the selection's
+   shape, reading each position held in data broadcast to it. *)
+let targets ~by x picks =
+  let s = shape x in
+  let r = Array.length s in
+  let sel = selection x picks in
+  let rs = Array.length sel in
+  let strides = Array.make r 1 in
+  for a = r - 2 downto 0 do
+    strides.(a) <- strides.(a + 1) * s.(a + 1)
+  done;
+  let nodes = ref [] and count = ref 0 in
+  let push n =
+    nodes := n :: !nodes;
+    incr count;
+    !count - 1
+  in
+  let loads = ref [] in
+  let load v =
+    loads := Value.Plain v :: !loads;
+    List.length !loads - 1
+  in
+  (* The selection's axis [j] as a coordinate. *)
+  let coord j = push (P.Coord (rs - 1 - j)) in
+  let sum = ref (push (const64 0)) and valid = ref None in
+  let add a index =
+    let k = push (const64 strides.(a)) in
+    let m = push (P.Op2 (Binary Mul, index, k)) in
+    sum := push (P.Op2 (Binary Add, !sum, m))
+  in
+  (* A position held in data over selection axes [j, j + k): its value at each
+     index of the selection, and whether it lies in [0, d). *)
+  let held j p d =
+    let ps = shape p in
+    let k = Array.length ps in
+    let placed =
+      Array.init rs (fun i -> if i >= j && i < j + k then ps.(i - j) else 1)
+    in
+    let v = broadcast ~by sel (move ~by (Reshape placed) p) in
+    let i = push (P.In (load v)) in
+    let lo = push (const64 0) and hi = push (const64 d) in
+    let ge = push (P.Op2 (Compare Less_equal, lo, i)) in
+    let lt = push (P.Op2 (Compare Less, i, hi)) in
+    let ok = push (P.Op2 (Binary And, ge, lt)) in
+    (valid :=
+       match !valid with
+       | None -> Some ok
+       | Some v -> Some (push (P.Op2 (Binary And, v, ok))));
+    i
+  in
+  let j = ref 0 in
+  List.iter
+    (fun (p, a) ->
+      match (p, a) with
+      | New, _ -> incr j
+      | At i, Some a -> add a (push (const64 i))
+      | Span g, Some a ->
+          let c = coord !j in
+          let st = push (const64 g.step) in
+          let m = push (P.Op2 (Binary Mul, c, st)) in
+          let o = push (const64 g.start) in
+          add a (push (P.Op2 (Binary Add, o, m)));
+          incr j
+      | Rows ps, Some a ->
+          add a (held !j (written ~by ps) s.(a));
+          incr j
+      | Held p, Some a ->
+          add a (held !j p s.(a));
+          j := !j + ndim p
+      | From (start, n, d), Some a ->
+          let st = push (P.In (load (broadcast ~by sel start))) in
+          let lo = push (const64 0) and hi = push (const64 (d - n)) in
+          let c =
+            push
+              (P.Op2 (Binary Minimum, push (P.Op2 (Binary Maximum, st, lo)), hi))
+          in
+          add a (push (P.Op2 (Binary Add, c, coord !j)));
+          incr j
+      | (At _ | Span _ | Rows _ | Held _ | From _), None -> ())
+    picks;
+  let used = List.length (List.filter (fun (_, a) -> a <> None) picks) in
+  for a = used to r - 1 do
+    add a (coord !j);
+    incr j
+  done;
+  let out =
+    match !valid with
+    | None -> !sum
+    | Some ok -> push (P.Op3 (Where, ok, !sum, push (const64 (-1))))
+  in
+  let loads = Array.of_list (List.rev !loads) in
+  let prog =
+    P.v
+      ~ins:(Array.map (fun (Value.Plain v) -> D.Any (dtype v)) loads)
+      (Array.of_list (List.rev !nodes))
+      ~outs:[| out |]
+  in
+  let v, () =
+    Eval.eval ~by
+      (Value.Map
+         {
+           layout = Nx_array.Layout.contiguous sel;
+           prog;
+           outs = Value.[ D.Int64 ];
+           loads;
+         })
+  in
+  v
+
+(* The positions a pick held in data, or written as a list, gives its axis, of
+   their own shape: [None] for a pick of the program's ranges. *)
+let positions ~by = function
+  | Held p -> Some p
+  | Rows ps -> Some (written ~by ps)
+  | From (start, n, d) -> Some (window ~by start n d)
+  | At _ | Span _ | New -> None
+
+let set idx v x =
+  let by = "Nx.set" in
+  let picks = picks ~by idx x in
+  List.iter
+    (fun (p, _) ->
+      match p with
+      | Rows ps ->
+          if List.length (List.sort_uniq compare ps) <> List.length ps then
+            invalid_argf "%s: a list of positions repeats one" by
+      | At _ | Span _ | Held _ | From _ | New -> ())
+    picks;
+  let sel = selection x picks in
+  let fits =
+    match Prim.broadcast_shape ~by (shape v) sel with
+    | s -> s = sel
+    | exception Invalid_argument _ -> false
+  in
+  if not fits then
+    invalid_argf "%s: %a does not broadcast to the selection %a" by pp_value v
+      pp_shape sel;
+  let s = shape x in
+  let v = broadcast ~by sel v in
+  let whole_axis (p, a) =
+    match (p, a) with
+    | Span r, Some a -> r.count = s.(a) && r.step = 1
+    | New, None -> true
+    | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> false
+  in
+  match List.partition (fun (p, _) -> positions ~by p = None) picks with
+  | ranges, [] ->
+      (* Positions written in the program alone: one assembly, [x] then [v] at
+         the region the ranges keep. *)
+      let region = Array.map whole s in
+      List.iter
+        (fun (p, a) ->
+          match (p, a) with
+          | At i, Some a -> region.(a) <- { start = i; count = 1; step = 1 }
+          | Span r, Some a -> region.(a) <- r
+          | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> ())
+        ranges;
+      let counts =
+        Array.map (fun (r : Nx_array.Move.range) -> r.count) region
+      in
+      assemble ~by (dtype x) s
+        (D.zero (dtype x))
+        [ (Array.map whole s, x); (region, move ~by (Reshape counts) v) ]
+  | ranges, [ ((data, Some a) as pick) ] when List.for_all whole_axis ranges ->
+      (* One axis selected by positions, every other whole: a scatter along it,
+         the positions broadcast across the others. *)
+      let p = Option.get (positions ~by data) in
+      let n = numel p in
+      let wide = Array.mapi (fun i d -> if i = a then n else d) s in
+      let col = Array.mapi (fun i _ -> if i = a then n else 1) s in
+      let idx = broadcast ~by wide (move ~by (Reshape col) p) in
+      let unique = match fst pick with Held _ -> false | _ -> true in
+      Eval.eval ~by
+        (Value.Scatter
+           {
+             combine = Set;
+             unique;
+             axis = a;
+             idx;
+             updates = move ~by (Reshape wide) v;
+             into = x;
+           })
+  | _ ->
+      (* Any other selection: each selected element's flat position. *)
+      let m = Array.fold_left ( * ) 1 sel in
+      let line u = move ~by (Reshape [| m |]) u in
+      let unique =
+        List.for_all
+          (fun (p, _) -> match p with Held _ -> false | _ -> true)
+          picks
+      in
+      let updated =
+        Eval.eval ~by
+          (Value.Scatter
+             {
+               combine = Set;
+               unique;
+               axis = 0;
+               idx = line (targets ~by x picks);
+               updates = line v;
+               into = move ~by (Reshape [| numel x |]) x;
+             })
+      in
+      move ~by (Reshape s) updated
+
+type combine = Set | Add | Max | Min
+
+let scatter ?(combine = Set) ~axis:a p u x =
+  let by = "Nx.scatter" in
+  let combine : Nx_kernel.Spec.combine =
+    match combine with Set -> Set | Add -> Add | Max -> Max | Min -> Min
+  in
+  let axis = axis_of ~by (ndim x) a (fun ppf -> pp_value ppf x) in
+  Eval.eval ~by
+    (Value.Scatter
+       { combine; unique = false; axis; idx = p; updates = u; into = x })
+
 (* Reductions and scans *)
 
 (* [axes] of a value of rank [r], a negative one counted from the end, sorted:

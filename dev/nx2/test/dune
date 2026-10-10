@@ -14,7 +14,8 @@
   test_donate
   test_shapes
   test_patterns
-  test_rng)
+  test_rng
+  test_indexing)
  (modules
   test_devices
   test_values
@@ -26,7 +27,8 @@
   test_donate
   test_shapes
   test_patterns
-  test_rng)
+  test_rng
+  test_indexing)
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))
 
 (copy_files

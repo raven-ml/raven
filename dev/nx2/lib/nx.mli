@@ -381,6 +381,112 @@ val rearrange :
     the extent [x] gives its name, a name in [sizes] is not in [p] or is there
     twice, or a size is negative. *)
 
+(** {1:indexing Indexing and slicing}
+
+    A position written in the program ([I], [L], the ranges) is checked: one
+    outside its axis raises, and a negative one counts from the end. A position
+    held in data ([T], {!take}, {!take_along_axis}, {!scatter}) never raises and
+    never counts from the end: outside [\[0, d)], negative included, it reads
+    zero ([+0.], [false], [0 + 0i]) and its write is dropped. That makes a
+    gather and an add-scatter adjoint; a program that wants a loud failure
+    states it with a check. A [D] start, also held in data, clamps into
+    [\[0, d - n\]] instead, so its window lies in the axis. *)
+
+(** The type for selections along one axis. *)
+type 'd index =
+  | I of int  (** One position; the axis goes. *)
+  | L of int list  (** Positions written in the program; a gather. *)
+  | T of 'd int64_t
+      (** Positions held in data, replacing the axis by their axes; a gather. *)
+  | R of int * int
+      (** [R (start, stop)]: [start] to [stop - 1]. A negative [start] or [stop]
+          counts from the end; then both clip into [\[0, d\]]. *)
+  | Rs of int * int * int
+      (** [Rs (start, stop, step)]: [start], [start + step], … toward [stop],
+          [stop] excluded. A negative [start] or [stop] counts from the end;
+          then both clip into [\[0, d\]] for [step > 0] and into
+          [\[-1, d - 1\]] for [step < 0], so [Rs (-1, -d - 1, -1)] is the axis
+          reversed. *)
+  | A  (** The whole axis. *)
+  | N  (** A new axis of extent [1]; it selects along no axis of [x]. *)
+  | D of 'd int64_t * int
+      (** [D (start, n)]: [n] consecutive positions from the 0-d [start] held
+          in data, the start clamped into [\[0, d - n\]]; a gather. *)
+
+val slice : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [slice idx x] selects from [x] axis by axis: each entry selects along the
+    next axis independently of the others, [N] excepted, and axes past the
+    list are whole. [I], [R], [Rs], [A] and [N] give a view; [L], [T] and [D]
+    gather.
+
+    Raises [Invalid_argument] if [idx] addresses more axes than [x] has, a
+    written position is outside its axis, a step is [0], a [D] start is not
+    0-d, or a [D] length is negative or exceeds its axis. *)
+
+val get : int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [get p x] is [slice (List.map (fun i -> I i) p) x], a view. *)
+
+val take : ?axis:int -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [take ~axis p x] replaces [x]'s axis [axis] by [p]'s axes, reading [x] at
+    each position [p] holds; without [axis], [flatten x] is read. A position
+    outside [\[0, d)] reads zero. A gather.
+
+    Raises [Invalid_argument] if [axis] is not an axis of [x]. *)
+
+val take_along_axis :
+  axis:int -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [take_along_axis ~axis p x] has [p]'s shape broadcast with [x]'s off
+    [axis]; its element at [j] is [x]'s element at [j] with axis [axis]
+    replaced by [p]'s element at [j]. A position outside [\[0, d)] reads zero.
+    A gather.
+
+    Raises [Invalid_argument] if [axis] is not an axis of [x], [p]'s rank is
+    not [x]'s, or the shapes off [axis] do not broadcast. *)
+
+(** {1:updates Functional updates} *)
+
+val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [set idx v x] is [x] with [slice idx x] replaced by [v], broadcast to the
+    selection's shape. [x] is unchanged. Without {!donate} it costs a copy of
+    [x]; [set idx v (donate x)] writes only the selection, into [x]'s memory,
+    where {!donate} lets the consumer write there. A position in [T] outside its
+    axis writes nothing; where [T] repeats a position, the last update, in C
+    order of the selection, wins. A [D] window clamps its start as {!slice}
+    does, so a start past [d - n] writes the last [n] positions: a decode step
+    whose position reaches the cache's capacity overwrites its last row, and a
+    program that can pass capacity states the bound with a check.
+
+    Raises [Invalid_argument] as {!slice} does, if [v] does not broadcast to
+    the selection's shape, or if an [L] names one position twice, counting
+    from the end. *)
+
+(** The type for how {!scatter} combines a target with its updates. *)
+type combine =
+  | Set  (** The last update. *)
+  | Add  (** [+0] plus the target plus its updates. *)
+  | Max  (** The largest of the target and its updates, the first NaN. *)
+  | Min  (** The smallest, the first NaN. *)
+
+val scatter :
+  ?combine:combine ->
+  axis:int ->
+  'd int64_t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [scatter ~combine ~axis p u x] is [x] with each element of [u] combined
+    into [x] at its own index with axis [axis] replaced by [p]'s element there;
+    [p] and [u] have one shape. A target's updates apply in C order of [u]:
+    [Set] (default) keeps the last; [Add] gives, where some update lands, [+0]
+    plus the element plus its updates, a narrow float summed in float32 and
+    rounded once, and elsewhere the element keeps its bits; [Max] and [Min]
+    keep the first NaN. A position outside [\[0, d)] writes nothing. A float
+    [Add] gives the same bits on every run.
+
+    Raises [Invalid_argument] if [axis] is not an axis of [x], [p] and [u]
+    differ in shape, their shape differs from [x]'s off [axis], or [combine]
+    is [Add] and the dtype is boolean. *)
+
 (** {1:arith Arithmetic}
 
     Elementwise operations compute where their operands lie and give a new
