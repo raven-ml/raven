@@ -32,6 +32,9 @@ external code : Nx_array.answer -> int = "%identity"
 
 external add : 'z -> 'x -> 'y -> Nx_array.answer = "nx_array_support_add"
 
+external read_all : Nx_array.any array -> Nx_array.answer
+  = "nx_array_support_read_all"
+
 external copy_into :
   ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> Nx_array.answer
   = "nx_array_copy"

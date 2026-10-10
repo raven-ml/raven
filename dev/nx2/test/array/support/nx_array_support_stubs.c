@@ -124,6 +124,26 @@ value nx_array_support_add(value z, value x, value y) {
   return Val_int(e);
 }
 
+/* The most arrays read_all reads. */
+#define READ_ALL 16
+
+/* Reads the arrays [anys], Nx_array.any values, at most READ_ALL, through
+   the door, the first written and the others read, and ends the read it
+   admits. */
+value nx_array_support_read_all(value anys) {
+  nx_operand in[READ_ALL];
+  nx_array a[READ_ALL];
+  int n = (int)Wosize_val(anys);
+  if (n > READ_ALL) caml_invalid_argument("read_all");
+  for (int k = 0; k < n; k++) {
+    value v = Field(Field(anys, k), 0);
+    in[k] = (nx_operand){v, nx_array_dtype(v), k == 0};
+  }
+  int e = nx_read(n, in, a);
+  if (!e) nx_done(n, a);
+  return Val_int(e);
+}
+
 /* Reads [v] through the door, then empties the minor heap and compacts the
    major one while it holds the read, moving [v] and its buffer. */
 extern value caml_gc_compaction(value);

@@ -272,19 +272,19 @@ val door :
 (** [door ~written ~read f x] claims the memory of [written] for writing and of
     [read] for reading, every claim or none, runs [f x], and releases the claims
     when [f] returns or raises; an exception of [f] propagates once they are
-    released. It answers [Done] once [f] returns, or, having claimed nothing
-    and run nothing, [Repeated_elements] or [Overlapping] for a written array,
-    [Dead_buffer] or [Held_exclusive] for an array, or [Read_only] for a written
-    array on [Read] memory.
+    released. It answers [Done] once [f] returns, or, without running [f] and
+    holding no claim when it answers, [Repeated_elements] or [Overlapping] for
+    a written array, [Dead_buffer] or [Held_exclusive] for an array, or
+    [Read_only] for a written array on [Read] memory. [Dead_buffer],
+    [Held_exclusive] and [Read_only] come before the others: a dead array is
+    [Dead_buffer] whatever else is wrong with it.
 
     Two arrays are {e identical} when they have one element width, lie in one
     memory, and place every index at the same byte. A written array may share
     bytes with read arrays identical to it, and with no other: [Overlapping]
     for one that shares a byte with another written array, or with a read
     array not identical to it, of another width or placing an index at another
-    byte. A written array identical to read arrays is claimed once, for
-    writing. Identity counts among the first 62 arrays of [read]; a later one
-    that shares a byte with a written array is [Overlapping].
+    byte.
 
     It waits for no device work. [f] touches the arrays' elements only through
     work it submits with {!Rig.submit}, naming each array of [written] in its
@@ -294,7 +294,7 @@ val door :
     when [f] ends. With a [f] that is not a closure and arrays the caller
     reuses, it allocates nothing.
 
-    Raises {!Rig.Lost}, having claimed nothing and run nothing, if, when it
+    Raises {!Rig.Lost}, without running [f] and holding no claim, if, when it
     claims, an array's memory is a lost device's or must follow work a lost
     device did not finish. A device lost while [f] runs reaches the caller as
     [f]'s exception. *)

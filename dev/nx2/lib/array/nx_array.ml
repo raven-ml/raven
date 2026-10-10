@@ -50,7 +50,7 @@ let reason = function
   | Repeated_elements -> "a written operand reaches an element twice"
   | Overlapping -> "a written operand shares bytes with another operand"
   | Shape_mismatch -> "the operands' shapes differ"
-  | Bad_arity -> "too many operands"
+  | Bad_arity -> "no operand, or too many"
 
 let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)
@@ -86,16 +86,16 @@ let refused name answer operands =
        pp_operand)
     operands
 
-(* The OCaml door. It checks what nx_read checks of a written array, then
-   claims every array or none, as nx_read does, and waits for nothing. It
-   allocates nothing: the loops index the caller's arrays. *)
+(* The OCaml door. It claims every array or none, as nx_read does, then
+   checks under the claims what nx_read checks of a written array, so that a
+   dead array is refused as dead whatever else is wrong with it, and waits
+   for nothing. It allocates nothing: the loops index the caller's arrays. *)
 
 (* A refusal's code with nothing claimed, or [NX_OK] with every array claimed
    plus 256 times the mask of the arrays whose claim found work pending or a
    lost device behind them: bit [k] for the [k]th array of [written], then
    [read], bit [waits_last] for every array from it on. *)
-external claim_all :
-  any array -> any array -> (int[@untagged]) -> (int[@untagged])
+external claim_all : any array -> any array -> (int[@untagged])
   = "nx_array_claim_all_byte" "nx_array_claim_all"
 [@@noalloc]
 
@@ -104,8 +104,7 @@ let waits_last = 53
 (* An answer is the immediate of its code (nx_array.h). *)
 external answer_of_code : int -> answer = "%identity"
 
-external release_all : any array -> any array -> int -> unit
-  = "nx_array_release_all"
+external release_all : any array -> any array -> unit = "nx_array_release_all"
 [@@noalloc]
 
 external end_claim : Buffer.t -> unit = "nx_array_end_claim" [@@noalloc]
@@ -130,21 +129,12 @@ let identical (Any a) (Any b) =
   Buffer.overlaps a.buffer b.buffer
   && same_bytes a b (Buffer.offset a.buffer) (Buffer.offset b.buffer)
 
-(* The read arrays the claims skip: those identical to a written array,
-   whose claim for writing covers them, as a mask, bit [j] for [read.(j)].
-   The mask holds the first [skip_last] read arrays; a later one identical
-   to a written array is refused as overlapping it. *)
-let skip_last = 62
-
-(* An answer's code, its immediate (nx_array.h). *)
-external code_of_answer : answer -> int = "%identity"
-
-(* The skip mask, or minus the code of the first refusal of a written
-   array: it reaches an element twice, or shares a byte with another
-   written array or with a read array not identical to it. Identity is
-   tested only for arrays that share bytes. *)
+(* The first refusal of a written array, or [Done]: it reaches an element
+   twice, or shares a byte with another written array or with a read array
+   not identical to it. Identity is tested only for arrays that share
+   bytes. *)
 let check written read =
-  let answer = ref Done and skip = ref 0 and i = ref 0 in
+  let answer = ref Done and i = ref 0 in
   while !answer = Done && !i < Array.length written do
     let (Any w as aw) = written.(!i) in
     if not (Layout.is_distinct w.layout) then answer := Repeated_elements
@@ -153,15 +143,13 @@ let check written read =
         if j <> !i && shares_bytes aw written.(j) then answer := Overlapping
       done;
       for j = 0 to Array.length read - 1 do
-        if shares_bytes aw read.(j) then
-          if j < skip_last && identical aw read.(j) then
-            skip := !skip lor (1 lsl j)
-          else answer := Overlapping
+        if shares_bytes aw read.(j) && not (identical aw read.(j)) then
+          answer := Overlapping
       done
     end;
     incr i
   done;
-  if !answer = Done then !skip else -code_of_answer !answer
+  !answer
 
 (* An asynchronous exception (a signal handler's, a finaliser's) is raised
    at a poll point: an allocation, a function's entry or a loop's back edge.
@@ -183,33 +171,40 @@ let probe_lost written read waits =
     end
   done
 
-(* [Done] with every array claimed but those [skip] marks, or a refusal with
-   none. Raises [Rig.Lost], with none, for an array behind a lost device. *)
-let admit written read skip =
-  let claimed = claim_all written read skip in
+(* [check] and [probe_lost] under the claims [claim_all] answered
+   [claimed] for. *)
+let checked written read claimed =
+  let answer = check written read in
   let waits = claimed lsr 8 in
-  if waits = 0 then answer_of_code claimed
+  if answer = Done && waits <> 0 then probe_lost written read waits;
+  answer
+
+(* [Done] with every array claimed, or a refusal with none. Raises
+   [Rig.Lost], with none, for an array behind a lost device. *)
+let admit written read =
+  let claimed = claim_all written read in
+  if claimed land 0xff <> 0 then answer_of_code (claimed land 0xff)
   else
-    match probe_lost written read waits with
-    | () -> Done
+    match checked written read claimed with
+    | Done -> Done
+    | refusal ->
+        release_all written read;
+        refusal
     | exception e ->
-        release_all written read skip;
+        release_all written read;
         Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let door ~written ~read f x =
-  let skip = check written read in
-  if skip < 0 then answer_of_code (-skip)
-  else
-    match admit written read skip with
-    | Done -> (
-        match f x with
-        | () ->
-            release_all written read skip;
-            Done
-        | exception e ->
-            release_all written read skip;
-            Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
-    | refusal -> refusal
+  match admit written read with
+  | Done -> (
+      match f x with
+      | () ->
+          release_all written read;
+          Done
+      | exception e ->
+          release_all written read;
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+  | refusal -> refusal
 
 (* Making arrays *)
 
@@ -399,7 +394,8 @@ let position fn a idx =
   !p
 
 (* Claims [b]'s memory, waits for the device work [access] follows, and returns
-   with the claim held: the caller releases it. *)
+   with the claim held: the caller ends it with [end_claim], under a handler
+   that ends it too, as the door does. *)
 let claim fn b access =
   live fn b;
   if host_address b < 0 then
@@ -408,8 +404,8 @@ let claim fn b access =
   match Buffer.wait b access with
   | () -> ()
   | exception e ->
-      Rig.Claim.release b;
-      raise e
+      end_claim b;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let load : type v s. (v, s) Dtype.t -> Buffer.t -> int -> v =
  fun dt b p ->
@@ -494,9 +490,13 @@ let store : type v s. (v, s) Dtype.t -> Buffer.t -> int -> v -> unit =
 let get a idx =
   let p = position "Nx_array.get" a idx in
   claim "Nx_array.get" a.buffer Buffer.Read;
-  let x = load a.dtype a.buffer p in
-  Rig.Claim.release a.buffer;
-  x
+  match load a.dtype a.buffer p with
+  | x ->
+      end_claim a.buffer;
+      x
+  | exception e ->
+      end_claim a.buffer;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let set a idx x =
   let fn = "Nx_array.set" in
@@ -507,8 +507,11 @@ let set a idx x =
   if Buffer.access a.buffer = Buffer.Read then
     invalid_argf "%s: the array's memory is read-only" fn;
   claim fn a.buffer Buffer.Read_write;
-  store a.dtype a.buffer p x;
-  Rig.Claim.release a.buffer
+  match store a.dtype a.buffer p x with
+  | () -> end_claim a.buffer
+  | exception e ->
+      end_claim a.buffer;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 (* Bulk access *)
 
@@ -656,9 +659,11 @@ let to_device d a =
     let src = Buffer.view a.buffer ~first ~length:(last - first) in
     let head = lo * bits mod 8 <> 0 and tail = hi * bits mod 8 <> 0 in
     Rig.Claim.read src;
-    Fun.protect
-      ~finally:(fun () -> Rig.Claim.release src)
-      (fun () -> copy_span ~head ~tail src buffer)
+    match copy_span ~head ~tail src buffer with
+    | () -> end_claim src
+    | exception e ->
+        end_claim src;
+        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
   end;
   let offset = Layout.offset l - (8 * first / bits) in
   let layout = Layout.v ~offset ~strides:(Layout.strides l) (Layout.shape l) in

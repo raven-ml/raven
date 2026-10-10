@@ -3,6 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(__x86_64__)
@@ -94,8 +95,9 @@ static int refuse_claimed(int n, const nx_array *a, int e) {
   return e;
 }
 
-int nx_read(int n, const nx_operand *in, nx_array *out) {
-  if (n <= 0) return NX_OK;
+/* nx_read's checks, which claim every operand or none: [span] holds 2n
+   words for the operands' bytes. */
+static int admit(int n, const nx_operand *in, nx_array *out, int64_t *span) {
   for (int k = 0; k < n; k++) {
     value v = in[k].array;
     nx_array *a = &out[k];
@@ -111,42 +113,42 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
      dead whatever else is wrong with it, and before any wait, so a wait
      runs under every claim and no donation on another domain consumes an
      operand while the call waits. */
-  int waits = 0;
   for (int k = 0; k < n; k++) {
     enum rig_claim c = rig_buffer_claim(
         out[k].buffer, in[k].written ? RIG_READ_WRITE : RIG_READ);
     int e = claim_code(c);
     if (e) return refuse_claimed(k, out, e);
     out[k].wait = c == RIG_WAIT;
-    waits |= out[k].wait;
   }
   /* Each operand's bytes, as host addresses, read once with its layout's
-     span. */
-  int64_t first[NX_MAX_OPERANDS], last[NX_MAX_OPERANDS];
+     span: [first, last) at span[2k], span[2k + 1]. */
   for (int k = 0; k < n; k++) {
     nx_array *a = &out[k];
+    int64_t *first = &span[2 * k], *last = &span[2 * k + 1];
     if (in[k].written && !(a->flags & NX_DISTINCT))
       return refuse_claimed(n, out, NX_NOT_DISTINCT);
     if (a->flags & NX_EMPTY) {
       a->base = NULL;
-      first[k] = last[k] = 0;
+      *first = *last = 0;
       continue;
     }
     if ((a->base = rig_buffer_host(a->buffer)) == NULL)
       return refuse_claimed(n, out, NX_NOT_HOST);
     value l = Field(in[k].array, ARRAY_LAYOUT);
     int64_t base = (int64_t)(intptr_t)a->base;
-    first[k] = base + Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
-    last[k] = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
+    *first = base + Long_val(Field(l, NX_LAYOUT_LO)) * a->bits / 8;
+    *last = base + (Long_val(Field(l, NX_LAYOUT_HI)) * a->bits + 7) / 8;
   }
   /* A written operand shares bytes with no other but a read operand
      identical to it, which its claim for writing covers: that read
-     operand's own claim ends here. */
+     operand's own claim ends here. Read operands may share bytes, so only
+     pairs with a written operand are compared. */
   for (int k = 0; k < n; k++) {
-    if (!in[k].written || first[k] == last[k]) continue;
+    int64_t fk = span[2 * k], lk = span[2 * k + 1];
+    if (!in[k].written || fk == lk) continue;
     for (int j = 0; j < n; j++) {
       if (j == k || out[j].alias) continue;
-      if (!(first[j] < last[k] && first[k] < last[j])) continue;
+      if (!(span[2 * j] < lk && fk < span[2 * j + 1])) continue;
       if (in[j].written || !identical(&out[k], &out[j]))
         return refuse_claimed(n, out, NX_OVERLAP);
       rig_buffer_release(out[j].buffer);
@@ -154,6 +156,23 @@ int nx_read(int n, const nx_operand *in, nx_array *out) {
       out[j].wait = 0;
     }
   }
+  return NX_OK;
+}
+
+int nx_read(int n, const nx_operand *in, nx_array *out) {
+  if (n <= 0) return NX_OK;
+  /* The spans live on the stack up to NX_MAX_OPERANDS operands, beyond on
+     the heap, allocated before any claim. */
+  int64_t local[2 * NX_MAX_OPERANDS], *span = local;
+  if (n > NX_MAX_OPERANDS) {
+    span = malloc(2 * (size_t)n * sizeof *span);
+    if (span == NULL) caml_raise_out_of_memory();
+  }
+  int e = admit(n, in, out, span);
+  if (span != local) free(span);
+  if (e) return e;
+  int waits = 0;
+  for (int k = 0; k < n; k++) waits |= out[k].wait;
   /* Each buffer becomes a local root, so that a kernel that allocates or
      releases the domain lock keeps it reachable and finds it again in
      nx_done. They are chained here and linked at once: where the runtime
@@ -215,23 +234,9 @@ static value nth_buffer(value written, value read, mlsize_t k) {
   return k < nw ? any_buffer(written, k) : any_buffer(read, k - nw);
 }
 
-/* The number of read arrays the door's skip mask holds: nx_array.ml's
-   skip_last. */
-#define SKIP_LAST 62
-
-/* Whether the door claims the [k]th array of [written], then [read]: every
-   one but the read arrays [skip] marks, bit j for [read]'s jth, identical to
-   a written array whose claim covers them. */
-static int claimed_by_door(value written, mlsize_t k, intnat skip) {
-  mlsize_t nw = Wosize_val(written);
-  return k < nw || k - nw >= SKIP_LAST || !((skip >> (k - nw)) & 1);
-}
-
-static void release_first(value written, value read, mlsize_t n,
-                          intnat skip) {
+static void release_first(value written, value read, mlsize_t n) {
   for (mlsize_t k = 0; k < n; k++)
-    if (claimed_by_door(written, k, skip))
-      rig_buffer_release(nth_buffer(written, read, k));
+    rig_buffer_release(nth_buffer(written, read, k));
 }
 
 /* The array index from which claim_all's mask has one bit for the rest. */
@@ -243,17 +248,17 @@ static void release_first(value written, value read, mlsize_t n,
    arrays whose claim answered RIG_WAIT: work their access must follow is
    unfinished, or a lost device is behind them, which the door probes. Bit k
    is the [k]th array of [written], then [read]; bit WAITS_LAST stands for
-   every array from it on. */
-intnat nx_array_claim_all(value written, value read, intnat skip) {
+   every array from it on. A read array identical to a written one is
+   claimed too: claims are counted, so two of one memory do not conflict. */
+intnat nx_array_claim_all(value written, value read) {
   mlsize_t nw = Wosize_val(written), n = nw + Wosize_val(read);
   intnat waits = 0;
   for (mlsize_t k = 0; k < n; k++) {
-    if (!claimed_by_door(written, k, skip)) continue;
     enum rig_claim c = rig_buffer_claim(nth_buffer(written, read, k),
                                         k < nw ? RIG_READ_WRITE : RIG_READ);
     int e = claim_code(c);
     if (e) {
-      release_first(written, read, k, skip);
+      release_first(written, read, k);
       return e;
     }
     if (c == RIG_WAIT) waits |= (intnat)1 << (k < WAITS_LAST ? k : WAITS_LAST);
@@ -261,13 +266,12 @@ intnat nx_array_claim_all(value written, value read, intnat skip) {
   return NX_OK + 256 * waits;
 }
 
-value nx_array_claim_all_byte(value written, value read, value skip) {
-  return Val_long(nx_array_claim_all(written, read, Long_val(skip)));
+value nx_array_claim_all_byte(value written, value read) {
+  return Val_long(nx_array_claim_all(written, read));
 }
 
-value nx_array_release_all(value written, value read, value skip) {
-  release_first(written, read, Wosize_val(written) + Wosize_val(read),
-                Long_val(skip));
+value nx_array_release_all(value written, value read) {
+  release_first(written, read, Wosize_val(written) + Wosize_val(read));
   return Val_unit;
 }
 

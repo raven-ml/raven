@@ -42,6 +42,14 @@ let kill ?(why = "consumed by the test") b =
 let unclaimed b =
   Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c -> Rig.Claim.exclusive c b)
 
+(* Whether no claim holds a live array of [arrays]. *)
+let released arrays =
+  Array.iter
+    (fun (A.Any a) ->
+      if B.dead (A.buffer a) = None then
+        equal ~msg:"released" bool true (unclaimed (A.buffer a)))
+    arrays
+
 (* Answers *)
 
 let answer = Testable.make ~pp:S.pp_answer ~equal:( = )
@@ -1293,7 +1301,8 @@ let test_door_written () =
   let y = A.v f32 (L.v ~offset:3 ~strides:[| 1 |] [| 3 |]) b in
   equal ~msg:"z beside y" answer A.Done (S.add z x y);
   let r = Option.get (A.move (M.Broadcast [| 3 |]) (zeros [| 1 |])) in
-  equal ~msg:"z broadcast" answer A.Repeated_elements (S.add r x x)
+  equal ~msg:"z broadcast" answer A.Repeated_elements (S.add r x x);
+  released [| A.Any r; A.Any x |]
 
 (* A written operand may be identical to read ones: one width, one memory,
    every index at one byte. The pair is claimed once and leaves no claim. *)
@@ -1325,13 +1334,37 @@ let test_door_buffers () =
   kill b;
   equal ~msg:"dead and overlapping" answer A.Dead_buffer (S.add z x y);
   let io = A.to_device (S.io_device ()) x in
-  equal ~msg:"io" answer A.Off_host (S.add (zeros [| 2 |]) x io);
+  let z = zeros [| 2 |] in
+  equal ~msg:"io" answer A.Off_host (S.add z x io);
+  released [| A.Any z; A.Any x; A.Any io |];
   let held = zeros [| 2 |] in
   Rig.Claim.with_ ~read:[]
     ~donate:[ [ A.buffer held ] ]
     (fun c ->
       equal bool true (Rig.Claim.exclusive c (A.buffer held));
       equal ~msg:"exclusive" answer A.Held_exclusive (S.add (zeros [| 2 |]) x held))
+
+(* The door reads any number of operands, more than a loop takes among
+   them, and a refusal after some claims leaves none. *)
+let test_door_arity () =
+  let ops n = Array.init n (fun _ -> A.Any (zeros [| 2 |])) in
+  for n = 0 to 9 do
+    let ops = ops n in
+    equal ~msg:(Printf.sprintf "%d" n) answer A.Done (S.read_all ops);
+    released ops
+  done;
+  let ops9 = ops 9 in
+  let b = A.buffer (zeros [| 4 |]) in
+  ops9.(0) <- A.Any (A.v f32 (L.v ~offset:0 ~strides:[| 1 |] [| 2 |]) b);
+  ops9.(8) <- A.Any (A.v f32 (L.v ~offset:1 ~strides:[| 1 |] [| 2 |]) b);
+  equal ~msg:"9, the last overlapping the first" answer A.Overlapping
+    (S.read_all ops9);
+  released ops9;
+  let ops9 = ops 9 in
+  let (A.Any d) = ops9.(6) in
+  kill (A.buffer d);
+  equal ~msg:"9, the seventh dead" answer A.Dead_buffer (S.read_all ops9);
+  released ops9
 
 (* Each refusal the door answers reaches the user as its own reason. *)
 let test_door_reasons () =
@@ -1397,14 +1430,6 @@ let ocaml_door written read =
   in
   (e, !ran)
 
-(* Whether no claim holds a live array of [arrays]. *)
-let released arrays =
-  Array.iter
-    (fun (A.Any a) ->
-      if B.dead (A.buffer a) = None then
-        equal ~msg:"released" bool true (unclaimed (A.buffer a)))
-    arrays
-
 let test_ocaml_door_runs () =
   let z = A.Any (zeros [| 2 |]) and x = A.Any (floats32 [| 2 |] [| 1.; 2. |]) in
   equal (pair answer (option bool)) (A.Done, Some true) (ocaml_door [| z |] [| x; x |]);
@@ -1447,7 +1472,13 @@ let test_ocaml_door_refuses () =
   raises_match (Exn.invalid_arg ~substring:"no read claim") (fun () ->
       Rig.Claim.release (A.buffer ro));
   equal ~msg:"read-only, read" (pair answer (option bool)) (A.Done, Some true)
-    (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any ro |])
+    (ocaml_door [| A.Any (zeros [| 3 |]) |] [| A.Any ro |]);
+  (* A dead array is refused as dead before any overlap is compared. *)
+  let b = A.buffer (zeros [| 4 |]) in
+  let at offset = A.Any (A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b) in
+  let z = at 0 and y = at 1 in
+  kill b;
+  refuses ~msg:"dead and overlapping" A.Dead_buffer [| z |] [| y |]
 
 (* Off the host, views of one buffer overlap by their offsets. *)
 (* The OCaml door's identity rule, as nx_read's. *)
@@ -1806,6 +1837,7 @@ let tests =
         test "a written operand may be identical to read ones, claimed once"
           test_door_identical;
         test "dead, foreign and exclusive buffers are refused" test_door_buffers;
+        test "reads any number of operands" test_door_arity;
         test "refused names the reason of each refusal the door answers"
           test_door_reasons;
         test "an operand with no element passes the door, on the host or off it"

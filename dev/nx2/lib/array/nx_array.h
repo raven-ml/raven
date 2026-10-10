@@ -136,20 +136,23 @@ int nx_array_dtype(value v);
 int nx_array_layout(value v, int64_t *dim, int64_t *offset);
 
 /* Reads the [n] operands [in] into [out] and answers NX_OK, or answers why
-   it refuses one, claims nothing and leaves [out] unspecified. Per operand
-   it checks the dtype, the layout, that the buffer lives and, unless the
-   operand has no element, that the host addresses it; per written operand,
-   that it is NX_DISTINCT and shares no byte with another written operand, nor
-   with a read operand unless the two are identical: one width, and every
-   index at one byte (equal extents and strides, one first bit). A read
-   operand identical to a written one is claimed through it, once. It then
-   claims each operand's memory, for writing if written: NX_EXCLUSIVE if the
-   memory is held exclusive, NX_READ_ONLY if a written operand's memory is
-   Read. Under the claims it waits for the device work each operand's access
-   must follow, as Rig.Buffer.wait does; this alone runs OCaml code, and only
-   while such work is unfinished. If the wait raises, as Rig.Lost does for a
-   lost device, nx_read releases every claim and raises it. With no operand
-   it answers NX_OK. */
+   it refuses one, claims nothing and leaves [out] unspecified. [n] is any
+   number; with no operand it answers NX_OK. Past NX_MAX_OPERANDS it
+   allocates, before any claim, and raises Out_of_memory if host memory
+   runs out. It checks in this order and answers the first refusal: each
+   operand's dtype; then each operand's claim of its memory, for writing if
+   written: NX_DEAD if its buffer is dead, NX_EXCLUSIVE if the memory is
+   held exclusive, NX_READ_ONLY if a written operand's memory is Read; then,
+   per operand, that a written one is NX_DISTINCT and that the host
+   addresses one with an element; then that a written operand shares no
+   byte with another written operand, nor with a read operand unless the
+   two are identical: one width, and every index at one byte (equal extents
+   and strides, one first bit). A read operand identical to a written one
+   is claimed through it, once. Under the claims it waits for the device
+   work each operand's access must follow, as Rig.Buffer.wait does; this
+   alone runs OCaml code, and only while such work is unfinished. If the
+   wait raises, as Rig.Lost does for a lost device, nx_read releases every
+   claim and raises it. */
 int nx_read(int n, const nx_operand *in, nx_array *out);
 
 /* Releases the claims of the [n] operands a successful nx_read filled and

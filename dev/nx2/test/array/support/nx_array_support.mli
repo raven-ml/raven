@@ -44,6 +44,11 @@ val add : 'z -> 'x -> 'y -> Nx_array.answer
     stores [x + y] into [z] and answers as a kernel does. Its operands are
     untyped, as an array built from parts can be. *)
 
+val read_all : Nx_array.any array -> Nx_array.answer
+(** [read_all arrays] reads [arrays] through [nx_read], the first for writing
+    and the others for reading, and ends the read it admits: [nx_read]'s
+    answer. At most 16 arrays. *)
+
 val copy_into :
   ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> Nx_array.answer
 (** [copy_into dst src] is the gather {!Nx_array.copy} runs, into [dst], any
