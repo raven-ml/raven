@@ -320,12 +320,13 @@ let matmul ~by a b =
     invalid_argf "%s: inner extents %d and %d differ; %s" by k k' (both ());
   let lead_a = if ra = 1 then [||] else Array.sub sa 0 (ra - 2) in
   let lead_b = if rb = 1 then [||] else Array.sub sb 0 (rb - 2) in
-  (* CR: Compute the leading shape with Prim.broadcast_shape, then retain
-     this loop's axis ownership. max turns the valid pair 0/1 into 1 and
-     the guards reject it: [0;2;3] times [1;3;4] must give [0;2;4].
-     Missing/zero axes fail too. The shared shape rule preserves zero
-     without broadcasting either operand. *)
-  let l = max (Array.length lead_a) (Array.length lead_b) in
+  let lead =
+    match Prim.merge lead_a lead_b with
+    | Ok s -> s
+    | Error _ ->
+        invalid_argf "%s: the leading axes do not broadcast; %s" by (both ())
+  in
+  let l = Array.length lead in
   let at s i =
     let j = i - (l - Array.length s) in
     if j < 0 then None else Some s.(j)
@@ -343,16 +344,16 @@ let matmul ~by a b =
   in
   let na = ref [] and nb = ref [] and nr = ref [] and shape = ref [] in
   for i = l - 1 downto 0 do
-    let ea = at lead_a i and eb = at lead_b i in
-    let ext = max (Option.value ~default:1 ea) (Option.value ~default:1 eb) in
+    let ea = at lead_a i and eb = at lead_b i and ext = lead.(i) in
     let named = name i ext in
+    (* The extents broadcast: the axis is both operands' where they agree,
+       else the one whose extent is the result's. *)
     (match (ea, eb) with
     | Some x, Some y when x = y ->
         na := named @ !na;
         nb := named @ !nb
-    | Some x, (Some 1 | None) when x = ext -> na := named @ !na
-    | (Some 1 | None), Some y when y = ext -> nb := named @ !nb
-    | _ -> invalid_argf "%s: the leading axes do not broadcast; %s" by (both ()));
+    | Some x, _ when x = ext -> na := named @ !na
+    | _ -> nb := named @ !nb);
     nr := named @ !nr;
     shape := ext :: !shape
   done;

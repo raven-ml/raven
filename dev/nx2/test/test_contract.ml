@@ -396,6 +396,12 @@ let matmul =
       shape_of "two matrices" [| 2; 3 |] [| 3; 4 |] [| 2; 4 |];
       shape_of "leading axes broadcast" [| 5; 1; 2; 3 |] [| 4; 3; 6 |]
         [| 5; 4; 2; 6 |];
+      shape_of "a leading 0 broadcasts against 1" [| 0; 2; 3 |] [| 1; 3; 4 |]
+        [| 0; 2; 4 |];
+      shape_of "a leading 0 against 1 on the right" [| 1; 2; 3 |]
+        [| 0; 3; 4 |] [| 0; 2; 4 |];
+      shape_of "a leading 0 beside a missing axis" [| 0; 2; 3 |] [| 3; 4 |]
+        [| 0; 2; 4 |];
       shape_of "a 1-d left operand is a row" [| 3 |] [| 2; 3; 4 |] [| 2; 4 |];
       shape_of "a 1-d right operand is a column" [| 2; 2; 3 |] [| 3 |]
         [| 2; 2 |];
@@ -419,6 +425,12 @@ let matmul =
           in
           equal string "Nx.matmul: the result's dtype is bool"
             (message (fun () -> Nx.matmul t t)));
+      test "leading axes that do not broadcast raise" (fun () ->
+          equal string
+            "Nx.matmul: the leading axes do not broadcast; float32 [2; 2; 3] \
+             and float32 [3; 3; 4]"
+            (message (fun () ->
+                 Nx.matmul (x [| 2; 2; 3 |]) (x [| 3; 3; 4 |]))));
       test "inner extents that differ raise" (fun () ->
           equal string
             "Nx.matmul: inner extents 3 and 4 differ; float32 [2; 3] and \
