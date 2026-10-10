@@ -543,6 +543,10 @@ let operand_at : type r.
   | Value.Map _ -> p
   | _ -> if uncut p then p else Devices.on (Devices.set p)
 
+(* How a constant's results are read: from its memo, where they are kept, or
+   computed into memory of their own. *)
+type policy = Memo | Fresh
+
 (* Whether [op] is a view of its operand: a constant's keeps no results of its
    own, and an operation reads it through to its operand's. *)
 let is_view : type r. r Value.prim -> bool = function
@@ -1068,31 +1072,9 @@ and check : type d.
 (* A constant read at [p] by an operation: a view of a constant is its operand's
    results read at [p] and viewed; any other its results there, kept in its
    memo, which every later read at [p] finds. *)
-(* CR: Walk constant view chains iteratively in both [at] and [own].
-   Repeated [Nx.flip] on a two-element constant reaches this path through
-   [Nx.place] or a concrete consumer; resolving each operand keeps a call
-   frame. Save each view's requested placement, descend via [operand_at],
-   then replay [compute_node] outward. Resolve the first non-view with the
-   original [at]/[own] policy: views stay uncached, placed values own their
-   bytes, and cut-window copies keep their existing semantics. *)
 and at : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun p x ->
-  match x with
-  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
-  | Value.Deferred { form; node = Value.Node n as node; k } ->
-      let key = Devices.rebrand p in
-      let arrays =
-        if is_view n.op then compute_node ~resolve:at node key
-        else
-          match find n.memo key with
-          | Some a -> a
-          | None ->
-              let a = evaluate node key in
-              remember n.memo key a;
-              Option.get (find n.memo key)
-      in
-      make p (typed form.dtype arrays.(k))
+ fun p x -> through_views Memo p x
 
 (* [x]'s elements in an array on the host: a constant computed there, any other
    value placed there. *)
@@ -1112,15 +1094,56 @@ and on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
    memory of its own. *)
 and own : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun p x ->
+ fun p x -> through_views Fresh p x
+
+(* The constant [x] at [p]: the chain of views it reads descended to the first
+   operation that is not one, whose results [policy] gives at the placement the
+   chain reads it at, then each view replayed outward over its operand's. A
+   chain of any length takes no stack depth. *)
+and through_views : type v s d.
+    policy -> d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
+ fun policy p x ->
   match x with
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
-  | Value.Deferred { form; node = Value.Node n as node; k } ->
-      let key = Devices.rebrand p in
-      let arrays =
-        if is_view n.op then compute_node ~resolve:own node key
-        else evaluate node key
+  | Value.Deferred { form; node; k } ->
+      (* Each view and where it is read, the innermost first. *)
+      let views = ref [] and node = ref node in
+      let key = ref (Devices.rebrand p) in
+      let continue = ref true in
+      while !continue do
+        let (Value.Node n) = !node in
+        match Prim.operands n.op with
+        | Prim.Operands [ Value.Any (Value.Deferred { node = m; _ }) ]
+          when is_view n.op ->
+            views := (!node, !key) :: !views;
+            key := operand_at n.op !key;
+            node := m
+        | Prim.Operands _ -> continue := false
+      done;
+      let (Value.Node n) = !node in
+      let base =
+        match policy with
+        | Fresh -> evaluate !node !key
+        | Memo -> (
+            match find n.memo !key with
+            | Some a -> a
+            | None ->
+                remember n.memo !key (evaluate !node !key);
+                Option.get (find n.memo !key))
       in
+      (* A view's one operand is the constant read just before it. *)
+      let replay arrays (view, key) =
+        let operand (type w r e) (q : e Devices.placement)
+            (y : (w, r, e) Value.t) : (w, r, e) Value.t =
+          match y with
+          | Value.Deferred { form; k; _ } ->
+              make q (typed form.dtype arrays.(k))
+          | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
+              y
+        in
+        compute_node ~resolve:operand view key
+      in
+      let arrays = List.fold_left replay base !views in
       make p (typed form.dtype arrays.(k))
 
 (* [root]'s results at [p], fresh: the constants it reads are taken from their

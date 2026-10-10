@@ -156,6 +156,11 @@ let fresh_one () =
             loads = [||];
           }))
 
+(* The sum and the running sum, along the last axis, of [[0; 1; 2]] repeated
+   over four rows: a program of a coordinate alone. *)
+let coords =
+  P.v ~ins:[||] [| Coord 0; Op1 (Cast, D.Any D.Float32, 0) |] ~outs:[| 1 |]
+
 let constants =
   group "constants"
     [
@@ -219,6 +224,33 @@ let constants =
           (* The fill of [one], the product and the n sums. *)
           equal int (n + 2) (C.calls ());
           equal (array bits) [| Float.of_int (n + 1) |] (elements v));
+      cases "a chain of views of a constant reads at any length" ~name:fst
+        [
+          ("read by an operation", fun p x -> Exec.at p x);
+          ( "placed",
+            fun p x -> Exec.run ~by:"t" (Value.Place (p, x)) );
+        ]
+        (fun (_, read) ->
+          let flip x =
+            Exec.run ~by:"t"
+              (Value.Move
+                 (Slice [| { Nx_array.Move.start = 1; count = 2; step = -1 } |],
+                  x))
+          in
+          let two =
+            first
+              (Exec.run ~by:"t"
+                 (Value.Map
+                    {
+                      layout = Nx_array.Layout.contiguous [| 2 |];
+                      prog = coords;
+                      outs = Value.[ D.Float32 ];
+                      loads = [||];
+                    }))
+          in
+          let rec chain k x = if k = 0 then x else chain (k - 1) (flip x) in
+          let x = chain 100_001 two in
+          equal (array bits) [| 1.; 0. |] (elements (read at1 x)));
       test "domains racing to compute a constant agree bit for bit" (fun () ->
           let one = fresh_one () in
           let c =
@@ -255,11 +287,6 @@ let ones n : (float, D.float32_elt, b) Value.t =
             outs = Value.[ D.Float32 ];
             loads = [||];
           }))
-
-(* The sum and the running sum, along the last axis, of [[0; 1; 2]] repeated
-   over four rows: a program of a coordinate alone. *)
-let coords =
-  P.v ~ins:[||] [| Coord 0; Op1 (Cast, D.Any D.Float32, 0) |] ~outs:[| 1 |]
 
 let row_sums () : (float, D.float32_elt, b) Value.t =
   let s, () =

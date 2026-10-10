@@ -71,7 +71,14 @@
   exec
   repr)
  (modules_without_implementation value)
- (libraries nx_array nx_kernel nx_cpu nx_support rig windtrap))
+ (libraries nx_array nx_kernel nx_cpu nx_support rig windtrap)
+ ; A stack of 2 MiB: a walk that recurses once per node overflows on a long
+ ; chain of constants.
+ (action
+  (setenv
+   OCAMLRUNPARAM
+   l=256k
+   (run %{test}))))
 
 ; An interpreter's match over Nx.Prim is exhaustive, compiled against nx's
 ; interfaces.
