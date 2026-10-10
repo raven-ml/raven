@@ -667,8 +667,14 @@ static int core(value s, int family, int dt, int *axes, int *naxes,
   if (nx_cpu_table->fold[r->kind][dt].lanes == NULL) return -1;
   const nx_spec_pad *d = nx_spec_loop_pad(m, 0);
   *padded = d != NULL;
-  if (d != NULL)
-    memcpy(pad, d, 24 + 8 * (3 * (size_t)d->rank + 4 * (size_t)d->nwindows));
+  /* A record of more axes than an array has fits no operand: its header
+     alone is enough to refuse it. */
+  if (d != NULL) {
+    int fits = d->rank <= NX_MAX_RANK && d->nwindows >= 0 &&
+               d->rank + d->nwindows <= NX_MAX_RANK;
+    size_t words = 3 * (size_t)d->rank + 4 * (size_t)d->nwindows;
+    memcpy(pad, d, fits ? 24 + 8 * words : 24);
+  }
   *naxes = m->naxes;
   for (int i = 0; i < m->naxes; i++) axes[i] = nx_spec_loop_axes(m)[i];
   return r->kind;
@@ -769,6 +775,14 @@ static value run(value s, value dsts, value ops, int family, int threads) {
   _Alignas(8) uint8_t pad[PAD_BYTES];
   int monoid = core(s, family, dt, axes, &naxes, pad, &padded);
   if (monoid < 0) CAMLreturn(Val_int(NX_DECLINED));
+  /* The copy trusts its record: one that fits no operand of this shape is
+     refused before anything reads the operand. */
+  if (padded) {
+    int64_t xs[2 * NX_MAX_RANK], ys[NX_MAX_RANK], off;
+    int r = nx_array_layout(vx, xs, &off);
+    if (nx_cpu_padded_shape((const nx_spec_pad *)pad, r, xs, ys))
+      CAMLreturn(Val_int(NX_SHAPE));
+  }
   nx_operand in[2] = {{vd, dt, 1}, {vx, dt, 0}};
   nx_array a[2], loaded, *x = &a[1];
   int e = nx_read(2, in, a);

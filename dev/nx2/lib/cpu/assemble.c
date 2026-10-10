@@ -247,6 +247,35 @@ value nx_cpu_assemble(value vs, value vd, value vpieces) {
   CAMLreturn(Val_int(e));
 }
 
+int nx_cpu_padded_shape(const nx_spec_pad *p, int r, const int64_t *x,
+                        int64_t *y) {
+  int nw = p->nwindows;
+  if (p->rank != r || nw < 0 || r + nw > NX_MAX_RANK) return NX_SHAPE;
+  const int64_t *lo = p->geometry, *hi = lo + r, *inner = lo + 2 * r;
+  for (int i = 0; i < r; i++) {
+    int64_t d = x[i], gaps = 0, e;
+    if (inner[i] < 0) return NX_SHAPE;
+    if (d > 0 && __builtin_mul_overflow(inner[i], d - 1, &gaps))
+      return NX_SHAPE;
+    if (__builtin_add_overflow(lo[i], hi[i], &e) ||
+        __builtin_add_overflow(e, d, &e) || __builtin_add_overflow(e, gaps, &e))
+      return NX_SHAPE;
+    if (e < 0) return NX_SHAPE;
+    y[i] = e;
+  }
+  for (int k = 0; k < nw; k++) {
+    const int64_t *w = p->geometry + 3 * r + 4 * k; /* axis, size, step,
+                                                      dilation */
+    if (w[0] < 0 || w[0] >= r || (k > 0 && w[0] <= w[-4])) return NX_SHAPE;
+    if (w[1] < 1 || w[2] < 1 || w[3] < 1) return NX_SHAPE;
+    int64_t e = y[w[0]];
+    if (e < 1 || w[1] - 1 > (e - 1) / w[3]) return NX_SHAPE;
+    y[w[0]] = (e - 1 - w[3] * (w[1] - 1)) / w[2] + 1;
+    y[r + k] = w[1];
+  }
+  return NX_OK;
+}
+
 /* Padded loads, staged as an assembly of one piece: the fill, then the
    operand's elements that land inside the padded array, lo + t·(interior
    + 1) along each axis, then the windows as a layout over the copy. */
@@ -255,18 +284,21 @@ int nx_cpu_unpad(const nx_array *a, const nx_spec_pad *p, nx_array *out) {
   int r = a->rank, nw = p->nwindows, bits = a->bits;
   const int64_t *lo = p->geometry, *hi = p->geometry + r,
                 *inner = p->geometry + 2 * r;
-  int64_t shape[NX_MAX_RANK], stride[NX_MAX_RANK], total = 1;
+  int64_t shape[NX_MAX_RANK], stride[NX_MAX_RANK], total = 1, size;
   for (int i = 0; i < r; i++) {
     int64_t d = a->dim[i];
     shape[i] = lo[i] + hi[i] + d + (d > 0 ? inner[i] * (d - 1) : 0);
   }
+  /* A copy whose bits int64 cannot count has no memory to hold it. */
+  int huge = 0;
   for (int i = r - 1; i >= 0; i--) {
     stride[i] = total;
-    total *= shape[i];
+    huge |= __builtin_mul_overflow(total, shape[i], &total);
   }
   *out = (nx_array){.dtype = a->dtype, .bits = bits, .rank = r + nw};
   if (total > 0) {
-    out->base = malloc((size_t)((total * bits + 7) / 8));
+    if (huge || __builtin_mul_overflow(total, (int64_t)bits, &size)) return 1;
+    out->base = malloc((size_t)((size + 7) / 8));
     if (out->base == NULL) return 1;
     fill_box(out, p->fill, r, shape, stride, 0);
     /* The operand's indices t that land inside: lo + t·s in [0, shape). */
@@ -426,16 +458,9 @@ value nx_cpu_fold_pad(value vs, value vd, value vx) {
   int64_t ys[2 * NX_MAX_RANK], xs[2 * NX_MAX_RANK], off, want[NX_MAX_RANK];
   int ry = nx_array_layout(vd, ys, &off), rx = nx_array_layout(vx, xs, &off);
   if (ry != r || rx != r + nw) CAMLreturn(Val_int(NX_SHAPE));
-  for (int i = 0; i < r; i++) {
+  for (int i = 0; i < r; i++)
     if (ys[i] != shape[i]) CAMLreturn(Val_int(NX_SHAPE));
-    int64_t d = shape[i];
-    want[i] = lo[i] + pad->geometry[r + i] + d + (d > 0 ? (s[i] - 1) * (d - 1) : 0);
-  }
-  for (int k = 0; k < nw; k++) {
-    int64_t a = win[k][0], p = want[a];
-    want[a] = (p - 1 - win[k][3] * (win[k][1] - 1)) / win[k][2] + 1;
-    want[r + k] = win[k][1];
-  }
+  if (nx_cpu_padded_shape(pad, r, shape, want)) CAMLreturn(Val_int(NX_SHAPE));
   for (int i = 0; i < r + nw; i++)
     if (xs[i] != want[i]) CAMLreturn(Val_int(NX_SHAPE));
   nx_operand in[2] = {{vd, dt, 1}, {vx, dt, 0}};

@@ -933,18 +933,33 @@ let test_refusals (b : Support.backend) () =
 
 (* Padded loads *)
 
+(* What a padded load reads: the case of the array, built here, where
+   Spec.shapes takes the padding and the destination; else the shape a
+   reading of the record that checked nothing would give, its windows
+   counted by truncating division, with the reduction's or scan's axes in
+   it. *)
+type loaded =
+  | Reads of case
+  | Refused of { scan : bool; monoid : S.monoid; axes : int array; read : int array }
+
 (* A reduction or scan of a padded load: the operand, its padding and its
-   fill's bits, and the case of the array the load reads, built here. *)
-type padded = { x : A.any; fill : string; pad : S.pad; loaded : case }
+   fill's bits, and what it reads. *)
+type padded = { x : A.any; fill : string; pad : S.pad; loaded : loaded }
 
 let pp_padded ppf p =
   let pp_window ppf (w : M.window) =
     Format.fprintf ppf "(%d %d %d %d)" w.axis w.size w.step w.dilation
   in
-  Format.fprintf ppf "lo %a hi %a interior %a windows %a of %a" pp_ints
+  Format.fprintf ppf "lo %a hi %a interior %a windows %a of %a: " pp_ints
     p.pad.lo pp_ints p.pad.hi pp_ints p.pad.interior
     (Format.pp_print_list pp_window)
-    (Array.to_list p.pad.windows) pp_case p.loaded
+    (Array.to_list p.pad.windows) pp_ints (shape_of p.x);
+  match p.loaded with
+  | Reads c -> pp_case ppf c
+  | Refused r ->
+      Format.fprintf ppf "refused, %s %s along %a of %a"
+        (if r.scan then "scan" else "reduce")
+        (monoid_name r.monoid) pp_ints r.axes pp_ints r.read
 
 (* The array [x] padded with the element [fill] (its bits) as [pad] says,
    C-contiguous, built element by element: along each axis, padded index
@@ -999,34 +1014,92 @@ let fills (D.Any dt) =
   | _ -> [ le w 0L; le w 7L; le w (Int64.shift_left 1L ((8 * w) - 1)) ]
 
 (* A padding of an operand of shape [s]: low and high padding from -2 to 3
-   (negative crops), interior padding up to 2, all kept non-negative where
-   cropping would leave an axis below zero, and at most one window. *)
+   (negative crops), interior padding up to 2 and at most one window of size
+   up to 3, as drawn, so that some crop an axis below zero or hold a window
+   wider than its axis; one in eight is of rank one more than [s]'s. *)
 let pad_of s =
   let open Gen in
-  let r = Array.length s in
+  let* extra = frequency [ (7, constant 0); (1, constant 1) ] in
+  let r = Array.length s + extra in
   let ints lo hi = array ~size:(constant r) (int_range lo hi) in
   let* lo = ints (-2) 3 in
   let* hi = ints (-2) 3 in
   let* interior = ints 0 2 in
-  let extent lo hi i =
-    lo.(i) + hi.(i) + s.(i) + if s.(i) > 0 then interior.(i) * (s.(i) - 1) else 0
-  in
-  let lo, hi =
-    if List.for_all (fun i -> extent lo hi i >= 0) (List.init r Fun.id) then
-      (lo, hi)
-    else (Array.map (max 0) lo, Array.map (max 0) hi)
-  in
   let* axis = option (int_range 0 (r - 1)) in
   let* size = int_range 1 3 in
   let* step = int_range 1 2 in
   let+ dilation = int_range 1 2 in
   let windows =
     match axis with
-    | Some axis when extent lo hi axis >= (dilation * (size - 1)) + 1 ->
-        [| { M.axis; size; step; dilation } |]
-    | _ -> [||]
+    | Some axis -> [| { M.axis; size; step; dilation } |]
+    | None -> [||]
   in
   { S.lo; hi; interior; windows }
+
+(* The padded extents of an operand of shape [s], below zero where a crop
+   passes the axis. *)
+let extents s (pad : S.pad) =
+  Array.mapi
+    (fun i d ->
+      pad.lo.(i) + pad.hi.(i) + d + if d > 0 then pad.interior.(i) * (d - 1) else 0)
+    s
+
+(* The shape a reading of [pad] that checked nothing would give: [s] for a
+   padding of another rank, else the padded extents, each window's axis by
+   its count from truncating division, then the windows' sizes. *)
+let unchecked s (pad : S.pad) =
+  if Array.length pad.lo <> Array.length s then s
+  else
+    let e = extents s pad in
+    Array.iter
+      (fun (w : M.window) ->
+        e.(w.axis) <- ((e.(w.axis) - 1 - (w.dilation * (w.size - 1))) / w.step) + 1)
+      pad.windows;
+    Array.append e (Array.map (fun (w : M.window) -> w.size) pad.windows)
+
+(* [kernel]'s call of a reduction or scan of [x] loaded as [loads] into
+   [dst]. *)
+let fold_padded (b : Support.backend) ~scan monoid axes loads dst x =
+  let module K = (val b.kernels) in
+  let (A.Any a) = x in
+  let dt = D.Any (A.dtype a) in
+  if scan then
+    K.scan (S.scan (identity dt) ~loads ~axis:axes.(0) (S.Monoid monoid, 0, dt))
+      ~dsts:[| dst |] [| x |]
+  else
+    K.reduce (S.reduce (identity dt) ~loads ~axes [| (S.Monoid monoid, 0, dt) |])
+      ~dsts:[| dst |] [| x |]
+
+(* Whether Spec.shapes refuses the reduction or scan of an operand of
+   shape [s] loaded as [loads]. *)
+let refuses dt ~scan monoid axes loads s =
+  let shapes = function Ok _ -> false | Error _ -> true in
+  if scan then
+    shapes
+      (S.shapes
+         (S.scan (identity dt) ~loads ~axis:axes.(0) (S.Monoid monoid, 0, dt))
+         [| s |])
+  else
+    shapes
+      (S.shapes
+         (S.reduce (identity dt) ~loads ~axes [| (S.Monoid monoid, 0, dt) |])
+         [| s |])
+
+(* The reduction or scan by [monoid] along [axes] of an operand of dtype
+   [d] and shape [s] drawn from [seed], loaded as [pad] with [fill]. *)
+let padded ~scan d monoid s pad fill axes seed =
+  let r = Array.length s in
+  let plain =
+    { perm = Array.init r Fun.id; stepped = false; reversed = None; broadcast = false }
+  in
+  let x = operand d s plain ~specials:20 seed in
+  let loads = [| S.Padded { fill; pad } |] in
+  let loaded =
+    if refuses d ~scan monoid axes loads s then
+      Refused { scan; monoid; axes; read = unchecked s pad }
+    else Reads { scan; monoid; axes; x = pad_array x fill pad; views = [] }
+  in
+  { x; fill; pad; loaded }
 
 let padded_case =
   Gen.with_pp pp_padded
@@ -1040,56 +1113,86 @@ let padded_case =
      let* pad = pad_of s in
      let* fill = of_list (fills d) in
      let* seed = int in
-     let r = Array.length s in
-     let plain =
-       {
-         perm = Array.init r Fun.id;
-         stepped = false;
-         reversed = None;
-         broadcast = false;
-       }
-     in
-     let x = operand d s plain ~specials:20 seed in
-     let loaded = pad_array x fill pad in
-     let lr = Array.length (shape_of loaded) in
+     let lr = Array.length (unchecked s pad) in
      let+ axes =
        if scan then map (fun a -> [| a |]) (int_range 0 (lr - 1))
        else
          let+ keep = array ~size:(constant lr) bool in
          Array.of_list (List.filter (fun i -> keep.(i)) (List.init lr Fun.id))
      in
-     { x; fill; pad; loaded = { scan; monoid; axes; x = loaded; views = [] } })
+     padded ~scan d monoid s pad fill axes seed)
+
+(* One padded load of each regime the law covers, float32 filled with
+   one. *)
+let padded_examples =
+  let f32 = D.Any D.Float32 and one = "\000\000\128\063" in
+  let pad ?(windows = [||]) lo hi interior = { S.lo; hi; interior; windows } in
+  let w axis size step = { M.axis; size; step; dilation = 1 } in
+  let reduce m s p axes = padded ~scan:false f32 m s p one axes 7 in
+  [
+    reduce S.Sum [| 4 |]
+      (pad [| -1 |] [| 2 |] [| 1 |] ~windows:[| w 0 2 1 |])
+      [| 1 |];
+    (* A window of 4 over an axis of 3. *)
+    reduce S.Sum [| 3 |] (pad [| 0 |] [| 0 |] [| 0 |] ~windows:[| w 0 4 2 |]) [| 1 |];
+    (* Both axes cropped to -1. *)
+    reduce S.Sum [| 2; 2 |] (pad [| -3; -3 |] [| 0; 0 |] [| 0; 0 |]) [| 0; 1 |];
+    (* A padding of rank 2 over an operand of rank 1. *)
+    reduce S.Sum [| 3 |] (pad [| 0; 5 |] [| 0; 0 |] [| 0; 0 |]) [| 0 |];
+    (* A padding of more axes than an array has, each with a window. *)
+    (let r = L.max_rank + 1 in
+     reduce S.Sum [| 3 |]
+       (pad (Array.make r 0) (Array.make r 0) (Array.make r 0)
+          ~windows:(Array.init r (fun a -> w a 1 1)))
+       [| 0 |]);
+    reduce S.Max [| 0; 2 |] (pad [| 0; 0 |] [| 0; 0 |] [| 0; 0 |]) [| 0 |];
+  ]
+
 (* nx.cpu reduces and scans a padded load as the array it reads: the
-   reference's bits over that array, built here; an extreme of no term is
-   refused. *)
+   reference's bits over that array, built here. It refuses with
+   Shape_mismatch a padding Spec.shapes refuses and an extreme of no term,
+   here into a destination of the shape a reading that checked nothing
+   would give; the sanitize profile shows that it reads nothing then. *)
 let law_padded (b : Support.backend) p =
-  let module K = (val b.kernels) in
-  let c = p.loaded in
-  let (A.Any x) = p.x in
-  let dt = D.Any (A.dtype x) in
   let loads = [| S.Padded { fill = p.fill; pad = p.pad } |] in
-  let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
-  let answer =
-    if c.scan then
-      K.scan
-        (S.scan (identity dt) ~loads ~axis:c.axes.(0) (S.Monoid c.monoid, 0, dt))
-        ~dsts:[| dst |] [| p.x |]
-    else
-      K.reduce
-        (S.reduce (identity dt) ~loads ~axes:c.axes [| (S.Monoid c.monoid, 0, dt) |])
-        ~dsts:[| dst |] [| p.x |]
-  in
-  let s = shape_of c.x in
-  let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
-  let extreme = c.monoid = S.Max || c.monoid = S.Min in
-  cover "windows" (p.pad.windows <> [||]);
-  cover "cropped" (Array.exists (fun l -> l < 0) p.pad.lo);
-  cover "interior" (Array.exists (fun i -> i > 0) p.pad.interior);
-  match answer with
-  | A.Shape_mismatch when (not c.scan) && extreme && per = 0 ->
-      cover "an extreme of no term" true
-  | A.Done -> equal (list string) [] (differ (expected c) dst)
-  | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+  let (A.Any x) = p.x in
+  let s = shape_of p.x in
+  let pad = p.pad in
+  cover "windows" (pad.windows <> [||]);
+  cover "cropped" (Array.exists (fun l -> l < 0) pad.lo);
+  cover "interior" (Array.exists (fun i -> i > 0) pad.interior);
+  match p.loaded with
+  | Reads c ->
+      let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
+      cover "computed" true;
+      (match fold_padded b ~scan:c.scan c.monoid c.axes loads dst p.x with
+      | A.Done -> equal (list string) [] (differ (expected c) dst)
+      | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r)
+  | Refused r ->
+      let same = Array.length pad.lo = Array.length s in
+      let e = if same then extents s pad else s in
+      cover "a padding of another rank" (not same);
+      cover "an axis cropped below zero" (Array.exists (fun d -> d < 0) e);
+      cover "a window wider than its axis"
+        (same
+        && Array.for_all (fun d -> d >= 0) e
+        && Array.exists
+             (fun (w : M.window) -> e.(w.axis) < (w.dilation * (w.size - 1)) + 1)
+             pad.windows);
+      let extreme = r.monoid = S.Max || r.monoid = S.Min in
+      let terms = Array.fold_left (fun n a -> n * r.read.(a)) 1 r.axes in
+      cover "an extreme of no term" (same && (not r.scan) && extreme && terms = 0);
+      let kept =
+        if r.scan then r.read
+        else
+          Array.of_list
+            (List.filteri (fun i _ -> not (Array.mem i r.axes)) (Array.to_list r.read))
+      in
+      let dst = A.Any (A.create Rig.host (A.dtype x) (Array.map (max 0) kept)) in
+      (match fold_padded b ~scan:r.scan r.monoid r.axes loads dst p.x with
+      | A.Shape_mismatch -> ()
+      | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a)
+
 (* The suite *)
 
 let laws (b : Support.backend) =
@@ -1132,8 +1235,8 @@ let cpu (b : Support.backend) =
         dots (run (law_contract b));
       prop ~count:20 ~examples:large_examples "one thread gives the job's bits"
         large (run (law_threads b));
-      prop "a padded load reduces as the array it reads" padded_case
-        (run (law_padded b));
+      prop ~examples:padded_examples "a padded load reduces as the array it reads"
+        padded_case (run (law_padded b));
     ]
 
 let () =

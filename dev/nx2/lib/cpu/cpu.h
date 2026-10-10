@@ -266,12 +266,22 @@ void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
 
 /* Padded loads */
 
+/* Fills [y] with the shape an operand of shape [x] and rank [r] has once
+   padded by [p], its windows' axes last, as Spec.shapes computes it.
+   Answers NX_OK, or NX_SHAPE where Spec.shapes answers [Error]: [r] other
+   than [p]'s rank, an extent below zero or past int64, or a window that
+   does not fit its padded axis. Reads [p]'s geometry only once [r] fits
+   it. */
+int nx_cpu_padded_shape(const nx_spec_pad *p, int r, const int64_t *x,
+                        int64_t *y);
+
 /* Fills [out] with the padded load [p] of the operand [a]: a plain
    descriptor over a C-contiguous copy of [a] padded with [p]'s fill, laid
    out by [p]'s windows, which a kernel reads as any operand (assemble.c).
-   The copy lives in C-heap memory at [out->base], which the caller frees;
-   it is NULL for a load with no element. Answers 0, or 1 if host memory
-   runs out, having allocated nothing. Reads no OCaml value. */
+   [a]'s shape is one nx_cpu_padded_shape answers NX_OK for. The copy
+   lives in C-heap memory at [out->base], which the caller frees; it is
+   NULL for a load with no element. Answers 0, or 1 if host memory runs
+   out, having allocated nothing. Reads no OCaml value. */
 int nx_cpu_unpad(const nx_array *a, const nx_spec_pad *p, nx_array *out);
 
 /* The stage */
