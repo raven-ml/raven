@@ -1122,6 +1122,245 @@ let test_fold_refuses () =
   refuses ~msg:"a window past the padded axis" [| 2 |]
     { z with windows = [| { M.axis = 0; size = 3; step = 1; dilation = 1 } |] }
 
+(* Fourier transforms *)
+
+let transforms n = S.[ C2c Forward; C2c Inverse; R2c; C2r { n } ]
+
+(* nx_spec.h's code of each transform: its place among the cases. *)
+let transform_code = function
+  | S.C2c Forward -> 0
+  | C2c Inverse -> 1
+  | R2c -> 2
+  | C2r _ -> 3
+
+let pp_transform ppf = function
+  | S.C2c Forward -> Format.pp_print_string ppf "C2c Forward"
+  | C2c Inverse -> Format.pp_print_string ppf "C2c Inverse"
+  | R2c -> Format.pp_print_string ppf "R2c"
+  | C2r { n } -> Format.fprintf ppf "C2r %d" n
+
+type fft_case = { t : S.transform; fft_axes : int array; x : int array }
+
+let pp_fft_case ppf c =
+  Format.fprintf ppf "%a along %a of %a" pp_transform c.t pp_ints c.fft_axes
+    pp_ints c.x
+
+(* A transform along a non-empty subset of an operand's axes, whose last
+   axis holds, for most C2r, the bins its points need. *)
+let fft_case =
+  Gen.with_pp pp_fft_case
+    (let open Gen in
+     let* rank = int_range 1 4 in
+     let* x = array ~size:(constant rank) (int_range 0 9) in
+     let* keep = array ~size:(constant rank) bool in
+     let* last = int_range 0 (rank - 1) in
+     let fft_axes =
+       Array.of_list
+         (List.filter
+            (fun i -> keep.(i) || i = last)
+            (List.init rank Fun.id))
+     in
+     let* n = int_range 0 17 in
+     let* t = of_list ~pp:pp_transform (transforms n) in
+     let+ fits = bool in
+     let top = fft_axes.(Array.length fft_axes - 1) in
+     (match t with
+     | S.C2r { n } when fits -> x.(top) <- (n / 2) + 1
+     | _ -> ());
+     { t; fft_axes; x })
+
+let law_fft_encoding c =
+  let s = S.fft c.t ~axes:c.fft_axes in
+  let n = match c.t with S.C2r { n } -> n | _ -> 0 in
+  equal ~msg:"C reads" (array int)
+    (Array.append
+       [| 10; transform_code c.t; Array.length c.fft_axes; n |]
+       c.fft_axes)
+    (Nx_kernel_support.fft_fields s);
+  equal ~msg:"transform" bool true (S.transform s = c.t);
+  equal ~msg:"axes" (array int) c.fft_axes (S.axes s)
+
+(* The result has the operand's shape, but along the last axis: n/2 + 1
+   bins of R2c's n points, C2r's n points of exactly n/2 + 1 bins. *)
+let law_fft_shapes c =
+  let top = c.fft_axes.(Array.length c.fft_axes - 1) in
+  let y = Array.copy c.x in
+  let want =
+    match c.t with
+    | S.C2c _ -> Ok [ Array.to_list y ]
+    | R2c ->
+        y.(top) <- (c.x.(top) / 2) + 1;
+        Ok [ Array.to_list y ]
+    | C2r { n } when c.x.(top) = (n / 2) + 1 ->
+        y.(top) <- n;
+        Ok [ Array.to_list y ]
+    | C2r _ -> Error ()
+  in
+  cover "fits" (Result.is_ok want);
+  cover "C2r" (match c.t with S.C2r _ -> true | _ -> false);
+  equal (result (list (list int)) unit) want
+    (result_of (S.shapes (S.fft c.t ~axes:c.fft_axes) [| c.x |]))
+
+let test_fft_refuses () =
+  let refuses ~msg ?(t = S.C2c Forward) axes =
+    raises_match ~msg Exn.invalid_arg (fun () -> S.fft t ~axes)
+  in
+  refuses ~msg:"no axis" [||];
+  refuses ~msg:"axes out of order" [| 1; 0 |];
+  refuses ~msg:"a repeated axis" [| 0; 0 |];
+  refuses ~msg:"a negative axis" [| -1 |];
+  refuses ~msg:"an axis past the most rank" [| L.max_rank |];
+  refuses ~msg:"a negative point count" ~t:(S.C2r { n = -1 }) [| 0 |];
+  let s = S.fft S.R2c ~axes:[| 1 |] in
+  let fails ~msg ins =
+    equal ~msg bool true (Result.is_error (S.shapes s ins))
+  in
+  fails ~msg:"an axis past the operand's rank" [| [| 4 |] |];
+  fails ~msg:"two operands" [| [| 2; 4 |]; [| 2; 4 |] |];
+  equal ~msg:"no point is one bin" (result (list (list int)) unit)
+    (Ok [ [ 2; 1 ] ])
+    (result_of (S.shapes s [| [| 2; 0 |] |]));
+  equal ~msg:"one bin is no point" (result (list (list int)) unit)
+    (Ok [ [ 2; 0 ] ])
+    (result_of
+       (S.shapes (S.fft (S.C2r { n = 0 }) ~axes:[| 1 |]) [| [| 2; 1 |] |]))
+
+(* Matrices *)
+
+let routines =
+  S.
+    [
+      Cholesky Lower;
+      Cholesky Upper;
+      Lu;
+      Qr Reduced;
+      Qr Complete;
+      Svd { vectors = None };
+      Svd { vectors = Some Reduced };
+      Svd { vectors = Some Complete };
+      Eigh { vectors = false };
+      Eigh { vectors = true };
+      Eig { vectors = false };
+      Eig { vectors = true };
+    ]
+  @ List.concat_map
+      (fun triangle ->
+        List.concat_map
+          (fun transpose ->
+            List.map
+              (fun unit_diagonal ->
+                S.Solve_triangular { triangle; transpose; unit_diagonal })
+              [ false; true ])
+          [ false; true ])
+      S.[ Lower; Upper ]
+
+(* nx_spec_linalg's fields of [r] after the family, by the rule of
+   nx_spec.h. *)
+let linalg_fields (r : S.routine) =
+  let upper = function S.Lower -> 0 | Upper -> 1 in
+  let factors = function
+    | None -> 0
+    | Some S.Reduced -> 1
+    | Some Complete -> 2
+  in
+  let b = Bool.to_int in
+  match r with
+  | Cholesky t -> [| 0; upper t; 0; 0; 0; 0 |]
+  | Lu -> [| 1; 0; 0; 0; 0; 0 |]
+  | Qr f -> [| 2; 0; factors (Some f); 0; 0; 0 |]
+  | Svd { vectors } -> [| 3; 0; factors vectors; 0; 0; 0 |]
+  | Eigh { vectors } -> [| 4; 0; 0; b vectors; 0; 0 |]
+  | Eig { vectors } -> [| 5; 0; 0; b vectors; 0; 0 |]
+  | Solve_triangular { triangle; transpose; unit_diagonal } ->
+      [| 6; upper triangle; 0; 0; b transpose; b unit_diagonal |]
+
+let pp_routine ppf r =
+  Format.fprintf ppf "routine %a" pp_ints (linalg_fields r)
+
+type linalg_case = { r : S.routine; ins : int array array }
+
+let pp_linalg_case ppf c =
+  Format.fprintf ppf "%a of %a" pp_routine c.r
+    (Format.pp_print_list pp_ints)
+    (Array.to_list c.ins)
+
+let is_solve = function S.Solve_triangular _ -> true | _ -> false
+
+(* A routine on a matrix of a batch of rank 0 to 2, square for most, with
+   right-hand sides that fit for most solves, and operands of rank below 2
+   or of the wrong count now and then. *)
+let linalg_case =
+  Gen.with_pp pp_linalg_case
+    (let open Gen in
+     let* r = of_list ~pp:pp_routine routines in
+     let* batch = array ~size:(int_range 0 2) (int_range 0 3) in
+     let* m = int_range 0 5 in
+     let* n = int_range 0 5 in
+     let* square = bool in
+     let n = if square then m else n in
+     let* cols = int_range 0 4 in
+     let* fits = bool in
+     let* rank = int_range 0 3 in
+     let a = Array.append batch [| m; n |] in
+     let b = Array.append batch [| (if fits then n else n + 1); cols |] in
+     let+ odd = int_range 0 9 in
+     let ins =
+       match odd with
+       | 0 -> [| Array.sub a 0 (min rank 1) |]
+       | 1 -> [| a; b; b |]
+       | _ -> if is_solve r then [| a; b |] else [| a |]
+     in
+     { r; ins })
+
+let law_linalg_encoding c =
+  let s = S.linalg c.r in
+  equal ~msg:"C reads" (array int)
+    (Array.append [| 11 |] (linalg_fields c.r))
+    (Nx_kernel_support.linalg_fields s);
+  equal ~msg:"routine" bool true (S.routine s = c.r)
+
+(* The results by the rule of Spec.linalg, for a of [batch; m; n]. *)
+let law_linalg_shapes c =
+  let want =
+    let want = if is_solve c.r then 2 else 1 in
+    let a = c.ins.(0) in
+    let ra = Array.length a in
+    if Array.length c.ins <> want || ra < 2 then Error ()
+    else
+      let batch = Array.to_list (Array.sub a 0 (ra - 2)) in
+      let m = a.(ra - 2) and n = a.(ra - 1) in
+      let k = min m n in
+      let y tail = batch @ tail in
+      match c.r with
+      | (Cholesky _ | Eigh _ | Eig _ | Solve_triangular _) when m <> n ->
+          Error ()
+      | Cholesky _ -> Ok [ y [ n; n ] ]
+      | Solve_triangular _ ->
+          let b = Array.to_list c.ins.(1) in
+          let rows = List.filteri (fun i _ -> i < ra - 1) b in
+          if List.length b = ra && rows = y [ n ] then Ok [ b ]
+          else Error ()
+      | Lu -> Ok [ y [ m; n ]; y [ k ]; y [ m ] ]
+      | Qr Reduced -> Ok [ y [ m; k ]; y [ k; n ] ]
+      | Qr Complete -> Ok [ y [ m; m ]; y [ m; n ] ]
+      | Svd { vectors = None } -> Ok [ y [ k ] ]
+      | Svd { vectors = Some Reduced } ->
+          Ok [ y [ m; k ]; y [ k ]; y [ k; n ] ]
+      | Svd { vectors = Some Complete } ->
+          Ok [ y [ m; m ]; y [ k ]; y [ n; n ] ]
+      | Eigh { vectors } | Eig { vectors } ->
+          Ok (if vectors then [ y [ n ]; y [ n; n ] ] else [ y [ n ] ])
+  in
+  let wide = match Array.to_list c.ins.(0) |> List.rev with
+    | n :: m :: _ -> n > m
+    | _ -> false
+  in
+  cover "fits" (Result.is_ok want);
+  cover "solves" (is_solve c.r && Result.is_ok want);
+  cover "wide" (wide && Result.is_ok want);
+  equal (result (list (list int)) unit) want
+    (result_of (S.shapes (S.linalg c.r) c.ins))
+
 let tests =
   [
     group "encoder"
@@ -1174,6 +1413,22 @@ let tests =
         prop "the result is batch, then a's free axes, then b's" any_case
           law_shapes;
         test "refuses operands that do not fit" test_shapes_refuse;
+      ];
+    group "transforms"
+      [
+        prop "C reads what fft was given, and so do the readers" fft_case
+          law_fft_encoding;
+        prop "results keep the shape but along the last axis" fft_case
+          law_fft_shapes;
+        test "refuses axes that do not fit, and states shapes"
+          test_fft_refuses;
+      ];
+    group "matrices"
+      [
+        prop "C reads what linalg was given, and so does the reader"
+          linalg_case law_linalg_encoding;
+        prop "results are each routine's, after the batch" linalg_case
+          law_linalg_shapes;
       ];
     group "contract view"
       [

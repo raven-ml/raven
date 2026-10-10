@@ -42,3 +42,12 @@ val shaped : [< `Assemble | `Fold ] Nx_kernel.Spec.t -> string
     by its extents; a line [piece] per piece followed by each axis's start,
     count and step; then for a fold a line [pad r w] followed by [lo], [hi],
     [interior] and each window's axis, size, step and dilation. *)
+
+val fft_fields : Nx_kernel.Spec.fft Nx_kernel.Spec.t -> int array
+(** [fft_fields s] is [s] read by C through [nx_spec.h]'s [nx_spec_fft]: the
+    family, the transform's code, the count of axes, [n], then each axis. *)
+
+val linalg_fields : Nx_kernel.Spec.linalg Nx_kernel.Spec.t -> int array
+(** [linalg_fields s] is [s] read by C through [nx_spec.h]'s
+    [nx_spec_linalg]: the family, the routine's code, [upper], [factors],
+    [vectors], [transpose] and [unit_diagonal]. *)

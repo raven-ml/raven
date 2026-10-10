@@ -16,9 +16,10 @@
     queue reads AQL packets and runs none, so [computes_on] is [false] there.
 
     [apply0] to [apply3], [map], [reduce], [scan], [gather], [scatter],
-    [sort], [assemble] and [fold] answer [Declined] for every case. [contract] computes plain loads into [float32], [float64] and integer
-    accumulators, from operands, [init] and results of a byte or more that are
-    not complex, whose layouts {!Nx_kernel.Spec.Contract_view} groups. It
+    [sort], [assemble], [fold], [fft] and [linalg] answer [Declined] for
+    every case. [contract] computes plain loads into [float32], [float64]
+    and integer accumulators, from operands, [init] and results of a byte or
+    more that are not complex, whose layouts {!Nx_kernel.Spec.Contract_view} groups. It
     declines a float operand or [init] wider than a float accumulator, an
     operand or [init] of the other kind than the accumulator, integer or float,
     a batch above 65,535, a row, column or contracted extent above [2{^31} - 1],

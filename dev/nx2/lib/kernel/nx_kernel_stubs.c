@@ -42,6 +42,22 @@ _Static_assert(NX_ARGMIN == 7, "one code per reduction");
 _Static_assert(offsetof(nx_spec_pad, fill) == 8, "at_fill");
 _Static_assert(offsetof(nx_spec_pad, geometry) == 24, "at_geometry");
 
+/* spec.ml writes nx_spec_fft and nx_spec_linalg at these byte offsets. */
+_Static_assert(offsetof(nx_spec_fft, transform) == 4, "at_transform");
+_Static_assert(offsetof(nx_spec_fft, naxes) == 8, "at_naxes");
+_Static_assert(offsetof(nx_spec_fft, n) == 16, "at_points");
+_Static_assert(offsetof(nx_spec_fft, axes) == 24, "at_fft_axes");
+_Static_assert(NX_FFT_C2R == 3, "one code per transform");
+_Static_assert(offsetof(nx_spec_linalg, routine) == 4, "at_routine");
+_Static_assert(offsetof(nx_spec_linalg, upper) == 8, "at_upper");
+_Static_assert(offsetof(nx_spec_linalg, factors) == 12, "at_factors");
+_Static_assert(offsetof(nx_spec_linalg, vectors) == 16, "at_vectors");
+_Static_assert(offsetof(nx_spec_linalg, transpose) == 20, "at_transpose");
+_Static_assert(offsetof(nx_spec_linalg, unit_diagonal) == 24,
+               "at_unit_diagonal");
+_Static_assert(sizeof(nx_spec_linalg) == 28, "linalg_bytes");
+_Static_assert(NX_SOLVE_TRIANGULAR == 6, "one code per routine");
+
 /* The bits nx_dtype.h's store of [x] writes into an element of the float
    dtype [dt] of at most 16 bits. */
 intnat nx_kernel_narrow_bits(intnat dt, double x) {

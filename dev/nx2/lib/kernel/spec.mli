@@ -22,7 +22,8 @@ val shapes : 'f t -> int array array -> (int array array, string) result
     [Min] or [Arg] reduction with a result and no term. A gather's result has
     its positions' shape, a scatter's its [into]'s, a sort's two results its
     operand's with [k] elements along its axis, an [Error] for a [k] past the
-    axis's extent; an assembly's and a fold's result has their [shape]. *)
+    axis's extent; an assembly's and a fold's result has their [shape]. A
+    transform's and a routine's are as {!fft} and {!linalg} state them. *)
 
 (** {1:loads Loads} *)
 
@@ -137,8 +138,8 @@ val reduce :
     not empty, each [k] names an output of [p] whose dtype [r] accepts, and
     the loads and results number at most {!Prog.max_operands}. *)
 
-val axes : [< `Reduce | `Scan ] t -> int array
-(** [axes s] is the axes [s] reduces: one for a scan. *)
+val axes : [< `Reduce | `Scan | `Fft ] t -> int array
+(** [axes s] is the axes [s] reduces or transforms along: one for a scan. *)
 
 val reductions :
   [< `Reduce | `Scan ] t -> (reduction * int * Nx_array.Dtype.any) array
@@ -375,3 +376,133 @@ module Contract_view : sig
       Raises [Invalid_argument] for an axis [o] does not have, and for [Init] in
       a view without it. *)
 end
+
+(** {1:transforms Fourier transforms} *)
+
+type fft = [ `Fft ]
+(** The family of Fourier transforms. *)
+
+(** The type for a transform's direction. Along an axis of [n] points,
+    [Forward] is [y[k] = Σ_j x[j] e^(-2πi jk/n)] and [Inverse] the same sum
+    with [e^(+2πi jk/n)]. Neither divides by [n]. *)
+type direction = Forward | Inverse
+
+(** The type for what a transform reads and writes. *)
+type transform =
+  | C2c of direction  (** Complex to complex. *)
+  | R2c  (** Real to complex. *)
+  | C2r of { n : int }  (** Complex to real, of [n] points. *)
+
+val fft : transform -> axes:int array -> fft t
+(** [fft t ~axes] is the transform [t] of an operand along each of [axes].
+
+    - [C2c d] is the transform [d] along each axis, of the operand's shape.
+    - [R2c] is the [Forward] transform along each axis of a real operand,
+      keeping bins [0] to [n/2] along the last of [axes], [n] its extent.
+    - [C2r { n }] reads [n/2 + 1] bins [X] along the last of [axes]. It is
+      the [Inverse] transform along each of [axes] but the last, then along
+      the last the real parts of the [Inverse] transform of the [n] bins
+      [X'], where [X'[k]] is [X[k]] for [k <= n/2] and [conj X[n - k]]
+      above. The imaginary parts of bin [0] and, for an even [n], of bin
+      [n/2] never contribute. It is this linear map for every operand,
+      Hermitian or not.
+
+    A transform of no point is the empty sum: [R2c] of an axis of extent [0]
+    is one bin of [+0], and [C2r { n = 0 }] reads one bin and writes no
+    point.
+
+    The operand and the result share a precision: [complex64] with
+    [complex64] or [float32], [complex128] with [complex128] or [float64].
+    Each kernel library states its error bound.
+
+    Raises [Invalid_argument] unless [axes] is not empty and strictly
+    increasing in [[0, ]{!Nx_array.Layout.max_rank}[)], and [n] is not
+    negative. *)
+
+val transform : fft t -> transform
+(** [transform s] is the transform [s] computes. *)
+
+(** {1:linalg Matrices} *)
+
+type linalg = [ `Linalg ]
+(** The family of factorisations and triangular solves. *)
+
+(** The type for a square matrix's triangles, each with its diagonal. *)
+type triangle = Lower | Upper
+
+(** The type for how much of a matrix's unitary factors a routine computes,
+    for [m] rows, [n] columns and [k = min m n]: [k] columns of the left one
+    and [k] rows of the right one, or the square ones, of [m] and [n]. *)
+type factors = Reduced | Complete
+
+(** The type for what a routine computes. {!linalg} states each. *)
+type routine =
+  | Cholesky of triangle
+  | Lu
+  | Qr of factors
+  | Svd of { vectors : factors option }
+  | Eigh of { vectors : bool }
+  | Eig of { vectors : bool }
+  | Solve_triangular of {
+      triangle : triangle;
+      transpose : bool;
+      unit_diagonal : bool;
+    }
+
+val linalg : routine -> linalg t
+(** [linalg r] computes [r] on each matrix of an operand [a], its last two
+    axes, of [m] rows and [n] columns, [k = min m n]. Its other axes, the
+    batch, lead every operand and result with one shape. Each matrix is
+    computed on its own: one that fails is NaN in its own results alone.
+    [aᴴ] is the conjugate transpose, the transpose on reals.
+
+    Operands and results are [float32], [float64], [complex64] or
+    [complex128], all of [a]'s dtype, but for [Lu]'s positions, of [int64].
+    [Eig] takes a complex [a]. A real result of a complex [a], a singular
+    value or an eigenvalue of [Eigh], is complex with an imaginary part of
+    [+0].
+
+    - [Cholesky t]: [a] is square. One result: [L] with [a = L Lᴴ] under
+      [Lower], or [U = Lᴴ] under [Upper], [+0] in the other triangle and
+      its diagonal real and positive. It reads [a]'s lower triangle and the
+      real parts of its diagonal alone. A matrix whose factorisation meets
+      a pivot that is not positive, or NaN, is NaN.
+    - [Lu]: three results. [lu], of [a]'s shape, holds the unit lower
+      triangular [L] below its diagonal, its ones unstored, and the upper
+      triangular [U] on and above it. [pivots], [[…; k]]: at step [j], rows
+      [j] and [pivots[j]] were interchanged, [pivots[j]] the first row from
+      [j] whose magnitude in column [j] is greater than every row's before
+      it from [j], [|re| + |im|] on complex; a NaN is never greater.
+      [perm], [[…; m]]: row [i] of [L U] is row [perm[i]] of [a]. A zero
+      pivot stays in [U] and its column of [L] is not divided.
+    - [Qr f]: two results, [q] with orthonormal columns and the upper
+      triangular [r], [a = q r], of [[…; m; k]] and [[…; k; n]] under
+      [Reduced], [[…; m; m]] and [[…; m; n]] under [Complete].
+    - [Svd { vectors }]: [a = u diag s vh], [s] of [[…; k]], descending and
+      not negative, a zero one [+0]. Under [None], one result, [s];
+      under [Some f], [u], [s] and [vh], of [[…; m; k]] and [[…; k; n]]
+      under [Reduced], [[…; m; m]] and [[…; n; n]] under [Complete]. A
+      matrix that holds NaN or an infinity, or on which the iteration does
+      not converge, is NaN in every result.
+    - [Eigh { vectors }]: [a] is square and Hermitian as its lower triangle
+      and the real parts of its diagonal name it, which alone are read.
+      [w], [[…; n]], its eigenvalues ascending; with [vectors], [v],
+      [[…; n; n]], of orthonormal columns, [a v = v diag w]. NaN as for
+      [Svd], over what is read.
+    - [Eig { vectors }]: [a] is square and complex. [w], [[…; n]], its
+      eigenvalues; with [vectors], [v], [[…; n; n]], of columns of unit
+      norm, [a v = v diag w]. NaN as for [Svd].
+    - [Solve_triangular { triangle; transpose; unit_diagonal }]: two
+      operands, [a] square of [n] and [b] of [[…; n; r]]. One result [x] of
+      [b]'s shape: [a x = b], or [aᴴ x = b] under [transpose]. It reads
+      [a]'s [triangle], without its diagonal under [unit_diagonal], whose
+      ones it takes instead. A zero on a diagonal it reads makes [x]
+      NaN.
+
+    [Eig]'s eigenvalues come in an order each kernel library states, and the
+    vectors of [Svd], [Eigh] and [Eig] are determined up to a unit factor
+    per vector, which each library fixes. Each kernel library states its
+    error bounds. *)
+
+val routine : linalg t -> routine
+(** [routine s] is what [s] computes. *)

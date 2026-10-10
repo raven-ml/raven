@@ -156,3 +156,6 @@ let contract s ~dst ops =
     let (Nx_array.Any b) = ops.(1) in
     let (Nx_array.Any i) = if Nx_kernel.Spec.init s then ops.(2) else ops.(0) in
     contract_c s v ~dst:d a b i
+
+let fft _ ~dst:_ _ = Nx_array.Declined
+let linalg _ ~dsts:_ _ = Nx_array.Declined

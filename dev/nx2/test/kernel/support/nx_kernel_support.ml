@@ -19,3 +19,9 @@ external axis_fields : [< `Gather | `Scatter | `Sort ] Nx_kernel.Spec.t -> int a
 
 external shaped : [< `Assemble | `Fold ] Nx_kernel.Spec.t -> string
   = "nx_kernel_support_shaped"
+
+external fft_fields : Nx_kernel.Spec.fft Nx_kernel.Spec.t -> int array
+  = "nx_kernel_support_fft"
+
+external linalg_fields : Nx_kernel.Spec.linalg Nx_kernel.Spec.t -> int array
+  = "nx_kernel_support_linalg"

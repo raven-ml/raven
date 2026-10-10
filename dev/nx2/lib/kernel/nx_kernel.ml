@@ -40,4 +40,6 @@ module type S = sig
   val assemble : Spec.assemble Spec.t -> dst:('v, 's) a -> ('v, 's) a array -> answer
   val fold : Spec.fold Spec.t -> dst:('v, 's) a -> ('v, 's) a -> answer
   val contract : Spec.contract Spec.t -> dst:any -> any array -> answer
+  val fft : Spec.fft Spec.t -> dst:any -> any -> answer
+  val linalg : Spec.linalg Spec.t -> dsts:any array -> any array -> answer
 end

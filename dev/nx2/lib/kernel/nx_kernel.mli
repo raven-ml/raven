@@ -57,15 +57,16 @@ module Spec = Spec
     {!Rig.Out_of_memory} if its device's does; [Declined] says only that it
     does not compute the case.
 
-    An [apply] entry answers [Wrong_dtype] for dtypes its kind does not take
-    ({!Prog.accepts0} to {!Prog.accepts3}), whatever its caller checked. A
+    An [apply], [fft] or [linalg] entry answers [Wrong_dtype] for dtypes its
+    kind ({!Prog.accepts0} to {!Prog.accepts3}), transform ({!Spec.fft}) or
+    routine ({!Spec.linalg}) does not take, whatever its caller checked. A
     decline of [apply0] to [apply3] at a base dtype (float32, float64, the 8-
     to 64-bit integers and bool), of [reduce] or [scan] of one [Sum],
     [Prod], [Max] or [Min] of a program's one operand into its own dtype, read
     plain, at a base dtype, of [gather] at a dtype of eight bits or more, or
     of [scatter] with [unique] at such a dtype, is an error its caller
-    raises; elsewhere, and for [map], [sort], [assemble] and [fold], its
-    caller computes the case from other operations. *)
+    raises; elsewhere, and for [map], [sort], [assemble], [fold], [fft] and
+    [linalg], its caller computes the case from other operations. *)
 module type S = sig
   type ('v, 's) a := ('v, 's) Nx_array.t
   type answer := Nx_array.answer
@@ -149,4 +150,14 @@ module type S = sig
   val contract : Spec.contract Spec.t -> dst:any -> any array -> answer
   (** [contract s ~dst ops] stores the contraction [s] of [ops] into [dst]: [a],
       [b], then [init] where [s] has one. *)
+
+  (** {1:transforms Transforms and factorisations} *)
+
+  val fft : Spec.fft Spec.t -> dst:any -> any -> answer
+  (** [fft s ~dst x] stores the transform [s] of [x] into [dst]. *)
+
+  val linalg : Spec.linalg Spec.t -> dsts:any array -> any array -> answer
+  (** [linalg s ~dsts ops] stores [s]'s results into [dsts], in the order
+      {!Spec.linalg} gives them, from [ops]: [a], then [b] for a triangular
+      solve. *)
 end

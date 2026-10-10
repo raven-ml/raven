@@ -227,3 +227,40 @@ value nx_kernel_support_shaped(value s) {
   free(r);
   CAMLreturn(v);
 }
+
+/* The fields of the transform descriptor [s], read through nx_spec_fft:
+   family, transform, naxes, n, then each axis. */
+value nx_kernel_support_fft(value s) {
+  CAMLparam1(s);
+  CAMLlocal1(r);
+  if (caml_string_length(s) < sizeof(nx_spec_fft))
+    caml_invalid_argument("not an nx_spec_fft");
+  const nx_spec_fft *f = (const nx_spec_fft *)String_val(s);
+  int na = f->naxes;
+  if (caml_string_length(s) != sizeof(nx_spec_fft) + sizeof f->axes[0] * na)
+    caml_invalid_argument("not an nx_spec_fft");
+  r = caml_alloc_tuple(4 + na);
+  /* The allocation may have moved [s]. */
+  f = (const nx_spec_fft *)String_val(s);
+  Store_field(r, 0, Val_int(f->family));
+  Store_field(r, 1, Val_int(f->transform));
+  Store_field(r, 2, Val_int(na));
+  Store_field(r, 3, Val_long(f->n));
+  for (int k = 0; k < na; k++) Store_field(r, 4 + k, Val_int(f->axes[k]));
+  CAMLreturn(r);
+}
+
+/* The fields of the routine descriptor [s], read through nx_spec_linalg:
+   family, routine, upper, factors, vectors, transpose, unit_diagonal. */
+value nx_kernel_support_linalg(value s) {
+  CAMLparam1(s);
+  CAMLlocal1(r);
+  if (caml_string_length(s) != sizeof(nx_spec_linalg))
+    caml_invalid_argument("not an nx_spec_linalg");
+  r = caml_alloc_tuple(7);
+  const nx_spec_linalg *l = (const nx_spec_linalg *)String_val(s);
+  int32_t f[7] = {l->family,    l->routine,   l->upper,        l->factors,
+                  l->vectors,   l->transpose, l->unit_diagonal};
+  for (int k = 0; k < 7; k++) Store_field(r, k, Val_int(f[k]));
+  CAMLreturn(r);
+}

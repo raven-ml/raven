@@ -277,14 +277,17 @@ let loop fn family p ~loads ~axes ~reductions =
 let map p ~loads =
   loop "Nx_kernel.Spec.map" family_map p ~loads ~axes:[||] ~reductions:[||]
 
-(* Checks [axes] and [rs] for a loop over [p] with [loads]. *)
-let check_reductions fn p ~loads ~axes rs =
+let check_axes fn axes =
   Array.iteri
     (fun i a ->
       if a < 0 || a >= max_rank || (i > 0 && a <= axes.(i - 1)) then
         invalid_argf "%s: axes are not strictly increasing in [0, %d)" fn
           max_rank)
-    axes;
+    axes
+
+(* Checks [axes] and [rs] for a loop over [p] with [loads]. *)
+let check_reductions fn p ~loads ~axes rs =
+  check_axes fn axes;
   if rs = [||] then invalid_argf "%s: no reduction" fn;
   let outs = Prog.outs p in
   Array.iter
@@ -312,7 +315,52 @@ let scan p ~loads ~axis ((r, _, _) as s) =
   check_reductions fn p ~loads ~axes:[| axis |] [| s |];
   loop fn family_scan p ~loads ~axes:[| axis |] ~reductions:[| s |]
 
-let at_axes s = at_loads + (4 * int32 s at_nloads)
+(* Fourier transforms. nx_spec_fft: the family, the transform's code, the
+   count of axes and four bytes of padding, the int64 point count of a C2r
+   (0 otherwise), then one int32 per axis. The count of axes lies where a
+   loop's does. *)
+
+type fft = [ `Fft ]
+type direction = Forward | Inverse
+type transform = C2c of direction | R2c | C2r of { n : int }
+
+let family_fft = 10
+let at_transform = 4
+let at_points = 16
+let at_fft_axes = 24
+
+let transform_code = function
+  | C2c Forward -> 0
+  | C2c Inverse -> 1
+  | R2c -> 2
+  | C2r _ -> 3
+
+let fft t ~axes =
+  let fn = "Nx_kernel.Spec.fft" in
+  if axes = [||] then invalid_argf "%s: no axis" fn;
+  check_axes fn axes;
+  let n = match t with C2r { n } -> n | C2c _ | R2c -> 0 in
+  if n < 0 then invalid_argf "%s: C2r of %d points" fn n;
+  let na = Array.length axes in
+  let b = Bytes.make (at_fft_axes + (4 * na)) '\000' in
+  set b at_family family_fft;
+  set b at_transform (transform_code t);
+  set b at_naxes na;
+  set64 b at_points n;
+  Array.iteri (fun i a -> set b (at_fft_axes + (4 * i)) a) axes;
+  Bytes.unsafe_to_string b
+
+let transform s =
+  match int32 s at_transform with
+  | 0 -> C2c Forward
+  | 1 -> C2c Inverse
+  | 2 -> R2c
+  | _ -> C2r { n = get64 s at_points }
+
+let at_axes s =
+  if int32 s at_family = family_fft then at_fft_axes
+  else at_loads + (4 * int32 s at_nloads)
+
 let axes s = Array.init (int32 s at_naxes) (fun i -> int32 s (at_axes s + (4 * i)))
 
 let reductions s =
@@ -749,6 +797,160 @@ let shaped_shapes s ins =
                ins.(j) pp_shape
                (Nx_array.Move.shape (Slice rs.(j)) y))
       | None -> Ok [| y |]
+(* A transform has its operand's shape, but along the last of its axes: [n/2
+   + 1] bins of [n] points for R2c, [n] points of [n/2 + 1] bins for C2r. *)
+let fft_shapes s ins =
+  match ins with
+  | [| x |] -> (
+      let axes = axes s in
+      let last = axes.(Array.length axes - 1) in
+      let y = Array.copy x in
+      if last >= Array.length x then
+        Error (Printf.sprintf "axis %d of a rank %d" last (Array.length x))
+      else
+        match transform s with
+        | C2c _ -> Ok [| y |]
+        | R2c ->
+            y.(last) <- (x.(last) / 2) + 1;
+            Ok [| y |]
+        | C2r { n } when x.(last) <> (n / 2) + 1 ->
+            Error
+              (Printf.sprintf "%d bins along axis %d for %d points" x.(last)
+                 last n)
+        | C2r { n } ->
+            y.(last) <- n;
+            Ok [| y |])
+  | _ -> Error (Printf.sprintf "%d operands, not 1" (Array.length ins))
+
+(* Matrices. nx_spec_linalg: the family, the routine's code, then int32
+   attributes, 0 where the routine has none: the triangle (1 for Upper),
+   the factors (1 Reduced, 2 Complete), vectors, transpose and
+   unit_diagonal. *)
+
+type linalg = [ `Linalg ]
+type triangle = Lower | Upper
+type factors = Reduced | Complete
+
+type routine =
+  | Cholesky of triangle
+  | Lu
+  | Qr of factors
+  | Svd of { vectors : factors option }
+  | Eigh of { vectors : bool }
+  | Eig of { vectors : bool }
+  | Solve_triangular of {
+      triangle : triangle;
+      transpose : bool;
+      unit_diagonal : bool;
+    }
+
+let family_linalg = 11
+let at_routine = 4
+let at_upper = 8
+let at_factors = 12
+let at_vectors = 16
+let at_transpose = 20
+let at_unit_diagonal = 24
+let linalg_bytes = 28
+let upper_code = function Lower -> 0 | Upper -> 1
+let factors_code = function
+  | None -> 0
+  | Some Reduced -> 1
+  | Some Complete -> 2
+
+let linalg r =
+  let b = Bytes.make linalg_bytes '\000' in
+  set b at_family family_linalg;
+  let code, upper, factors, vectors, transpose, unit =
+    match r with
+    | Cholesky t -> (0, upper_code t, 0, false, false, false)
+    | Lu -> (1, 0, 0, false, false, false)
+    | Qr f -> (2, 0, factors_code (Some f), false, false, false)
+    | Svd { vectors } -> (3, 0, factors_code vectors, false, false, false)
+    | Eigh { vectors } -> (4, 0, 0, vectors, false, false)
+    | Eig { vectors } -> (5, 0, 0, vectors, false, false)
+    | Solve_triangular { triangle; transpose; unit_diagonal } ->
+        (6, upper_code triangle, 0, false, transpose, unit_diagonal)
+  in
+  set b at_routine code;
+  set b at_upper upper;
+  set b at_factors factors;
+  set b at_vectors (Bool.to_int vectors);
+  set b at_transpose (Bool.to_int transpose);
+  set b at_unit_diagonal (Bool.to_int unit);
+  Bytes.unsafe_to_string b
+
+let routine s =
+  let triangle = if int32 s at_upper = 0 then Lower else Upper in
+  let factors =
+    match int32 s at_factors with
+    | 0 -> None
+    | 1 -> Some Reduced
+    | _ -> Some Complete
+  in
+  let flag at = int32 s at <> 0 in
+  match int32 s at_routine with
+  | 0 -> Cholesky triangle
+  | 1 -> Lu
+  | 2 -> Qr (Option.get factors)
+  | 3 -> Svd { vectors = factors }
+  | 4 -> Eigh { vectors = flag at_vectors }
+  | 5 -> Eig { vectors = flag at_vectors }
+  | _ ->
+      Solve_triangular
+        {
+          triangle;
+          transpose = flag at_transpose;
+          unit_diagonal = flag at_unit_diagonal;
+        }
+
+(* The results of [r] on [a] of [batch], [m] rows and [n] columns, and for a
+   solve the right-hand sides [b]. *)
+let routine_shapes r a b batch m n =
+  let k = min m n in
+  let y tail = Array.append batch tail in
+  match r with
+  | Cholesky _ -> [| a |]
+  | Solve_triangular _ -> [| b |]
+  | Lu -> [| a; y [| k |]; y [| m |] |]
+  | Qr Reduced -> [| y [| m; k |]; y [| k; n |] |]
+  | Qr Complete -> [| y [| m; m |]; a |]
+  | Svd { vectors = None } -> [| y [| k |] |]
+  | Svd { vectors = Some Reduced } ->
+      [| y [| m; k |]; y [| k |]; y [| k; n |] |]
+  | Svd { vectors = Some Complete } ->
+      [| y [| m; m |]; y [| k |]; y [| n; n |] |]
+  | Eigh { vectors } | Eig { vectors } ->
+      if vectors then [| y [| n |]; a |] else [| y [| n |] |]
+
+(* The results of [r] on the matrices [a], of rank 2 or more, and the
+   right-hand sides [b] of a solve. *)
+let matrix_shapes r a b =
+  let ra = Array.length a in
+  let batch = Array.sub a 0 (ra - 2) in
+  let m = a.(ra - 2) and n = a.(ra - 1) in
+  let square = match r with Lu | Qr _ | Svd _ -> false | _ -> true in
+  let solve = match r with Solve_triangular _ -> true | _ -> false in
+  if square && m <> n then
+    Error (Printf.sprintf "a matrix of %d rows and %d columns" m n)
+  else if
+    solve
+    && (Array.length b <> ra
+       || Array.sub b 0 (ra - 1) <> Array.append batch [| n |])
+  then
+    Error
+      (Format.asprintf "right-hand sides of shape %a for a matrix of %a"
+         pp_shape b pp_shape a)
+  else Ok (routine_shapes r a b batch m n)
+
+let linalg_shapes s ins =
+  let r = routine s in
+  let want = match r with Solve_triangular _ -> 2 | _ -> 1 in
+  if Array.length ins <> want then
+    Error (Printf.sprintf "%d operands, not %d" (Array.length ins) want)
+  else if Array.length ins.(0) < 2 then
+    Error (Printf.sprintf "a matrix of rank %d" (Array.length ins.(0)))
+  else matrix_shapes r ins.(0) ins.(want - 1)
 
 let shapes s ins =
   let f = int32 s at_family in
@@ -758,6 +960,8 @@ let shapes s ins =
   else if f = family_gather || f = family_scatter || f = family_sort then
     axis_shapes s ins
   else if f = family_assemble || f = family_fold then shaped_shapes s ins
+  else if f = family_fft then fft_shapes s ins
+  else if f = family_linalg then linalg_shapes s ins
   else invalid_argf "Nx_kernel.Spec.shapes: family %d" f
 
 (* Views *)

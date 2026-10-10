@@ -265,3 +265,5 @@ let scatter _ ~dst:_ ~into:_ _ _ = A.Declined
 let sort _ ~values:_ ~positions:_ _ = A.Declined
 let assemble _ ~dst:_ _ = A.Declined
 let fold _ ~dst:_ _ = A.Declined
+let fft _ ~dst:_ _ = A.Declined
+let linalg _ ~dsts:_ _ = A.Declined

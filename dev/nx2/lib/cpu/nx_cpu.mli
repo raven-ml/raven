@@ -61,6 +61,8 @@
     ones. [fold] computes [float32], [float64] and the 8- to 64-bit integers
     and declines the others. [assemble] computes every dtype. The three
     refuse with [Shape_mismatch] operands and destinations whose shapes do
-    not fit. *)
+    not fit.
+
+    [fft] and [linalg] answer [Declined]. *)
 
 include Nx_kernel.S

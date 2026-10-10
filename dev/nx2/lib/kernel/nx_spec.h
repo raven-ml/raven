@@ -26,7 +26,9 @@ enum {
   NX_SPEC_SCATTER = 6,
   NX_SPEC_SORT = 7,
   NX_SPEC_ASSEMBLE = 8,
-  NX_SPEC_FOLD = 9
+  NX_SPEC_FOLD = 9,
+  NX_SPEC_FFT = 10,
+  NX_SPEC_LINALG = 11
 };
 
 /* Prog.t: a scalar program. Counts of operands, nodes and outputs, then a
@@ -187,5 +189,38 @@ typedef struct {
   int64_t offset[4];    /* by operand */
   int64_t stride[4][4]; /* by operand, then axis */
 } nx_contract_view;
+
+/* A transform, in the order of Spec.transform's cases, C2c's directions
+   first. */
+enum { NX_FFT_FORWARD, NX_FFT_INVERSE, NX_FFT_R2C, NX_FFT_C2R };
+
+/* Spec.fft: the transform, the count of its axes, the point count [n] of a
+   C2r (0 otherwise), then the axes, strictly increasing. */
+typedef struct {
+  int32_t family; /* NX_SPEC_FFT */
+  int32_t transform, naxes, unused;
+  int64_t n;
+  int32_t axes[];
+} nx_spec_fft;
+
+/* A routine, in the order of Spec.routine's cases. */
+enum {
+  NX_CHOLESKY,
+  NX_LU,
+  NX_QR,
+  NX_SVD,
+  NX_EIGH,
+  NX_EIG,
+  NX_SOLVE_TRIANGULAR
+};
+
+/* Spec.linalg: the routine and its attributes, 0 where it has none: [upper]
+   1 for the triangle Upper (Cholesky, Solve_triangular); [factors] 0 for
+   none, 1 Reduced, 2 Complete (Qr, Svd); [vectors] (Eigh, Eig);
+   [transpose] and [unit_diagonal] (Solve_triangular). */
+typedef struct {
+  int32_t family; /* NX_SPEC_LINALG */
+  int32_t routine, upper, factors, vectors, transpose, unit_diagonal;
+} nx_spec_linalg;
 
 #endif
