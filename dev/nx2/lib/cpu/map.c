@@ -14,7 +14,8 @@
    through the target table's rows, as apply.c's kinds do:
 
    - a load held in its own dtype, its rows contiguous, is read in place,
-     and any other is staged into its slot;
+     unless it is identical to an output, which a node may write first;
+     any other is staged into its slot;
    - a constant is read in place with a step of 0;
    - a coordinate fills its slot with its positions;
    - Copy, a Cast into the operand's own dtype and a Bitcast between byte
@@ -86,7 +87,6 @@ typedef struct {
   int n, nouts, nnodes;
   const step *s;
   const int32_t *outs;
-  int direct[NX_MAX_OPERANDS]; /* whether a load may be read in place */
 } prog;
 
 /* A value of a plane: row r's element i at p + r·s1 + i·s0·w bytes, w its
@@ -118,10 +118,12 @@ static void round_held(int dt, const uint8_t *s, uint8_t *d, uint8_t *t,
   }
 }
 
-/* Whether load [k] of plane [p] is read in place. */
+/* Whether load [k] of plane [p] is read in place. A load identical to an
+   output is not: a node may write the output before another reads the
+   load. */
 static int in_place(const prog *j, const nx_cpu_block *p, int k) {
   const nx_array *a = &j->a[k];
-  return j->direct[k] && a->dtype == held(a->dtype) && p->s0[k] == 1;
+  return !a->alias && a->dtype == held(a->dtype) && p->s0[k] == 1;
 }
 
 /* Where node [i], a node with a slot, computes its value in plane [p]: its
@@ -461,14 +463,7 @@ static value run_map(const nx_spec_loop *m, value vdsts, value vops, step *s) {
   nx_array a[NX_MAX_OPERANDS];
   if ((e = nx_read(n, in, a))) return Val_int(e);
   for (int k = n; k < loop; k++) a[k] = coordinate(&a[0], axis[k - n]);
-  prog j = {a, loop, nouts, g->nnodes, s, outs, {0}};
-  /* A load that is an output too is read through its slot: a later output
-     of the plane would read it after an earlier one's store. */
-  for (int k = nouts; k < n; k++) {
-    j.direct[k] = 1;
-    for (int o = 0; o < nouts; o++)
-      if (a[o].base != NULL && a[o].base == a[k].base) j.direct[k] = 0;
-  }
+  prog j = {a, loop, nouts, g->nnodes, s, outs};
   nx_loop l;
   if (!(e = nx_coalesce(loop, a, &l)))
     nx_cpu_walk(loop, a, &l, SLOT_BYTES / widest(loop, a, s, g->nnodes), block,

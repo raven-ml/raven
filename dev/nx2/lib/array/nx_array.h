@@ -115,11 +115,14 @@ typedef struct {
   int dtype, bits, rank, flags;
   int64_t offset;               /* elements from base */
   int64_t dim[2 * NX_MAX_RANK]; /* rank extents, then rank strides */
+  /* Read-only: a read operand identical to a written one, whose claim
+     covers it. The kernel writes its memory, so it may read it at an index
+     only before it writes that index. */
+  int alias;
   /* Private: the claimed buffer, a local root until nx_done, and whether
      nx_read waits for device work on it. */
   value buffer;
   int wait;
-  int alias; /* identical to a written operand, whose claim covers it */
   struct caml__roots_block roots;
   struct caml__roots_block **local; /* the domain's local roots */
 } nx_array;

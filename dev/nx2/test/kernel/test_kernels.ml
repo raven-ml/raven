@@ -1207,6 +1207,38 @@ let test_declined_map (b : Support.backend) () =
   | A.Done -> equal (array float_exact) [| 2.; 4.; 6. |] (A.to_array (host y))
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
 
+(* A load identical to a destination through another view of its buffer is
+   read before the destination is written: float32 offset 1 over a buffer
+   and offset 0 over the view of the buffer from its fourth byte are one
+   array. *)
+let test_map_identical_view (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let n = 5 in
+  let whole =
+    on b (A.of_array D.Float32 [| n + 1 |] [| 0.; 1.; 2.; 3.; 4.; 5. |])
+  in
+  let buffer = A.buffer whole in
+  let x = A.v D.Float32 (L.v ~offset:1 ~strides:[| 1 |] [| n |]) buffer in
+  let neg =
+    A.v D.Float32 (L.contiguous [| n |])
+      (B.view buffer ~first:4 ~length:(4 * n))
+  in
+  let sum = A.create b.device D.Float32 [| n |] in
+  let p =
+    P.v ~ins:[| D.Any D.Float32 |]
+      [| P.In 0; Op1 (Unary Neg, D.Any D.Float32, 0); Op2 (Binary Add, 0, 0) |]
+      ~outs:[| 1; 2 |]
+  in
+  let s = Nx_kernel.Spec.map p ~loads:[| Plain |] in
+  match K.map s ~dsts:[| A.Any neg; A.Any sum |] [| A.Any x |] with
+  | A.Declined -> ()
+  | A.Done ->
+      equal ~msg:"neg" (array float_exact) [| -1.; -2.; -3.; -4.; -5. |]
+        (A.to_array (host neg));
+      equal ~msg:"add" (array float_exact) [| 2.; 4.; 6.; 8.; 10. |]
+        (A.to_array (host sum))
+  | r -> failf "map answered %a" Nx_array_support.pp_answer r
+
 (* Programs *)
 
 exception Skip
@@ -1592,6 +1624,8 @@ let laws (b : Support.backend) =
         (Gen.triple dtypes shape Gen.nat)
         (run (law_apply0 b));
       test "a declined map writes nothing" (unit (test_declined_map b));
+      test "a map reads a load identical to a destination before writing it"
+        (unit (test_map_identical_view b));
       prop ~count:300 "a map gives the bits of its nodes run one by one"
         (Gen.pair pairs Gen.int)
         (run (fun ((Pair (x, _), _) as c) ->
