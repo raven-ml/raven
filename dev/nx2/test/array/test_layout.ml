@@ -307,6 +307,11 @@ let test_no_allocation () =
 
 (* Movements *)
 
+(* CR: These branch-local covers cannot detect a missing outcome. Add
+   fixed ~examples for each view constructor, an invalid move, and
+   [3;2] with strides [1;3] reshaped to [6], which must answer None.
+   Keep the generator and index-map oracle; use collect for the
+   outcome distribution. *)
 let law_move (l, m) =
   let s = L.shape l in
   match M.shape m s with

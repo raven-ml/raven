@@ -322,6 +322,10 @@ let op_g =
 
 let device_of = function There (d, _) -> Some d | Here _ -> None
 
+(* CR: Generate and print init with ops. Random draws fresh bytes during
+   shrinking and confirmation, so the same ops can test different inputs.
+   Use five fixed-size strings of buffer_size bytes in the generator;
+   keep their lengths fixed while shrinking their contents. *)
 let copies_law ops =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
