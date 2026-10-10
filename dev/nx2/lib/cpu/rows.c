@@ -12,10 +12,19 @@
    kind as nx_kinds.h does, and stores the result in the destination's
    dtype: 8- and 16-bit integers compute in the 32-bit type of their
    signedness and wrap on the store, booleans compute in uint32 from 0 or 1.
-   Rows of contiguous elements take a loop the compiler vectorises, the
-   transcendental kinds' polynomials included. Rows exist at the carriers
-   alone (cpu.h): apply.c runs a narrow or sub-byte dtype's kinds at its
-   carrier's rows. */
+   A row whose destination is contiguous and whose operands are contiguous
+   or one repeated element, as a broadcast operand or a program's constant
+   is, takes a loop the compiler vectorises, the transcendental kinds'
+   polynomials included. Rows exist at the carriers alone (cpu.h): apply.c
+   runs a narrow or sub-byte dtype's kinds at its carrier's rows.
+
+   nx_kinds.h's add, sub, mul, fdiv and fma of floats differ from the plain
+   operation only in which NaN a NaN result is, and pinning it costs three
+   compares and three selects an element, twice the plain operation's
+   instructions. Their rows compute the plain operation and note a NaN,
+   then run the kind over the row where they found one: a row whose
+   destination shares no byte with an operand, which the kind can read
+   again. */
 
 #include "cpu.h"
 
@@ -33,7 +42,10 @@
     const T *x = (const T *)x_;                                              \
     if (sd == 1 && sx == 1)                                                  \
       for (int64_t i = 0; i < n; i++) d[i] = F(LD(x[i]));                    \
-    else                                                                     \
+    else if (sd == 1 && sx == 0) {                                           \
+      T v = F(LD(x[0]));                                                     \
+      for (int64_t i = 0; i < n; i++) d[i] = v;                              \
+    } else                                                                   \
       for (int64_t i = 0; i < n; i++) d[i * sd] = F(LD(x[i * sx]));          \
   }
 
@@ -50,6 +62,11 @@
                       int64_t sx) {                                          \
     T *d = (T *)d_;                                                          \
     const T *x = (const T *)x_;                                              \
+    if (sd == 1 && sx == 0) {                                                \
+      T v = nx_##K##_##S(x[0]);                                              \
+      for (int64_t i = 0; i < n; i++) d[i] = v;                              \
+      return;                                                                \
+    }                                                                        \
     if (sd != 1 || sx != 1) {                                                \
       for (int64_t i = 0; i < n; i++) d[i * sd] = nx_##K##_##S(x[i * sx]);   \
       return;                                                                \
@@ -99,6 +116,22 @@ IDENT(2, uint16_t)
 IDENT(4, uint32_t)
 IDENT(8, uint64_t)
 
+/* The loops of a row of [F] over two operands of the storage type [T],
+   loaded by [LD] into the compute type: contiguous, one of them a repeated
+   element, or any steps. */
+#define LOOPS2(T, LD, F)                                                     \
+  if (sd == 1 && sx == 1 && sy == 1)                                         \
+    for (int64_t i = 0; i < n; i++) d[i] = F(LD(x[i]), LD(y[i]));            \
+  else if (sd == 1 && sx == 1 && sy == 0) {                                  \
+    T b = y[0];                                                              \
+    for (int64_t i = 0; i < n; i++) d[i] = F(LD(x[i]), LD(b));               \
+  } else if (sd == 1 && sx == 0 && sy == 1) {                                \
+    T a = x[0];                                                              \
+    for (int64_t i = 0; i < n; i++) d[i] = F(LD(a), LD(y[i]));               \
+  } else                                                                     \
+    for (int64_t i = 0; i < n; i++)                                          \
+      d[i * sd] = F(LD(x[i * sx]), LD(y[i * sy]))
+
 /* A row of [F] over two operands of the storage type [T], loaded by [LD]
    into the compute type, stored as [R]. */
 #define BIN(NAME, T, R, LD, F)                                               \
@@ -106,12 +139,69 @@ IDENT(8, uint64_t)
                    int64_t sx, const uint8_t *y_, int64_t sy) {             \
     R *d = (R *)d_;                                                          \
     const T *x = (const T *)x_, *y = (const T *)y_;                          \
-    if (sd == 1 && sx == 1 && sy == 1)                                       \
-      for (int64_t i = 0; i < n; i++) d[i] = F(LD(x[i]), LD(y[i]));          \
-    else                                                                     \
-      for (int64_t i = 0; i < n; i++)                                        \
-        d[i * sd] = F(LD(x[i * sx]), LD(y[i * sy]));                         \
+    LOOPS2(T, LD, F);                                                        \
   }
+
+/* Whether [n] elements of [w] bytes at [d] share no byte with those an
+   operand at [x] steps [sx] elements through: one element where [sx] is
+   0. */
+static int apart(const uint8_t *d, const uint8_t *x, int64_t sx, int64_t n,
+                 int64_t w) {
+  return d + n * w <= x || x + (sx == 0 ? 1 : n) * w <= d;
+}
+
+/* A plain loop over [n] elements storing [E] into [d] and noting a NaN. */
+#define NOTED(T, E)                                                          \
+  for (int64_t i = 0; i < n; i++) {                                          \
+    T r = E;                                                                 \
+    d[i] = r;                                                                \
+    nan |= r != r;                                                           \
+  }
+
+/* The row of the float kind [F] of two operands whose plain operation is
+   [OP]. */
+#define EXACT(NAME, T, OP, F)                                                \
+  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,   \
+                   int64_t sx, const uint8_t *y_, int64_t sy) {             \
+    T *d = (T *)d_;                                                          \
+    const T *x = (const T *)x_, *y = (const T *)y_;                          \
+    int nan = 1;                                                             \
+    if (sd == 1 && apart(d_, x_, sx, n, sizeof(T)) &&                        \
+        apart(d_, y_, sy, n, sizeof(T))) {                                   \
+      nan = 0;                                                               \
+      if (sx == 1 && sy == 1) {                                              \
+        NOTED(T, x[i] OP y[i])                                               \
+      } else if (sx == 1 && sy == 0) {                                       \
+        T b = y[0];                                                          \
+        NOTED(T, x[i] OP b)                                                  \
+      } else if (sx == 0 && sy == 1) {                                       \
+        T a = x[0];                                                          \
+        NOTED(T, a OP y[i])                                                  \
+      } else                                                                 \
+        nan = 1;                                                             \
+    }                                                                        \
+    if (!nan) return;                                                        \
+    LOOPS2(T, , F);                                                          \
+  }
+
+/* The loops of a row of [F] over three operands of the type [T], loaded by
+   [LD]: contiguous, one of them a repeated element, or any steps. */
+#define LOOPS3(T, LD, F)                                                     \
+  if (sd == 1 && sa == 1 && sb == 1 && sc == 1)                              \
+    for (int64_t i = 0; i < n; i++)                                          \
+      d[i] = (T)F(LD(a[i]), LD(b[i]), LD(c[i]));                             \
+  else if (sd == 1 && sa == 1 && sb == 1 && sc == 0) {                       \
+    T v = c[0];                                                              \
+    for (int64_t i = 0; i < n; i++) d[i] = (T)F(LD(a[i]), LD(b[i]), LD(v));  \
+  } else if (sd == 1 && sa == 1 && sb == 0 && sc == 1) {                     \
+    T v = b[0];                                                              \
+    for (int64_t i = 0; i < n; i++) d[i] = (T)F(LD(a[i]), LD(v), LD(c[i]));  \
+  } else if (sd == 1 && sa == 0 && sb == 1 && sc == 1) {                     \
+    T v = a[0];                                                              \
+    for (int64_t i = 0; i < n; i++) d[i] = (T)F(LD(v), LD(b[i]), LD(c[i]));  \
+  } else                                                                     \
+    for (int64_t i = 0; i < n; i++)                                          \
+      d[i * sd] = (T)F(LD(a[i * sa]), LD(b[i * sb]), LD(c[i * sc]))
 
 #define FMA(NAME, T, LD, F)                                                  \
   static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,   \
@@ -119,12 +209,26 @@ IDENT(8, uint64_t)
                    const uint8_t *c_, int64_t sc) {                          \
     T *d = (T *)d_;                                                          \
     const T *a = (const T *)a_, *b = (const T *)b_, *c = (const T *)c_;      \
-    if (sd == 1 && sa == 1 && sb == 1 && sc == 1)                            \
-      for (int64_t i = 0; i < n; i++)                                        \
-        d[i] = (T)F(LD(a[i]), LD(b[i]), LD(c[i]));                           \
-    else                                                                     \
-      for (int64_t i = 0; i < n; i++)                                        \
-        d[i * sd] = (T)F(LD(a[i * sa]), LD(b[i * sb]), LD(c[i * sc]));       \
+    LOOPS3(T, LD, F);                                                        \
+  }
+
+/* The row of the float kind [F], fma, whose plain operation is [FN]: the
+   contiguous rows alone are noted. */
+#define EXACT_FMA(NAME, T, FN, F)                                            \
+  static void NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,   \
+                   int64_t sa, const uint8_t *b_, int64_t sb,                \
+                   const uint8_t *c_, int64_t sc) {                          \
+    T *d = (T *)d_;                                                          \
+    const T *a = (const T *)a_, *b = (const T *)b_, *c = (const T *)c_;      \
+    int nan = 1;                                                             \
+    if (sd == 1 && sa == 1 && sb == 1 && sc == 1 &&                          \
+        apart(d_, a_, 1, n, sizeof(T)) && apart(d_, b_, 1, n, sizeof(T)) &&  \
+        apart(d_, c_, 1, n, sizeof(T))) {                                    \
+      nan = 0;                                                               \
+      NOTED(T, FN(a[i], b[i], c[i]))                                         \
+    }                                                                        \
+    if (!nan) return;                                                        \
+    LOOPS3(T, , F);                                                          \
   }
 
 /* The kinds every dtype of a class takes, at the compute suffix [S]. */
@@ -145,9 +249,15 @@ IDENT(8, uint64_t)
   BIN(pow_##D, T, T, LD, nx_pow_##S)                                         \
   FMA(fma_##D, T, LD, nx_fma_##S)
 
-#define FLOATS(D, T, S)                                                      \
-  ARITH(D, T, , S)                                                           \
-  BIN(fdiv_##D, T, T, , nx_fdiv_##S)                                         \
+#define FLOATS(D, T, S, FN)                                                  \
+  COMPARES(D, T, , S)                                                        \
+  EXACT(add_##D, T, +, nx_add_##S)                                           \
+  EXACT(sub_##D, T, -, nx_sub_##S)                                           \
+  EXACT(mul_##D, T, *, nx_mul_##S)                                           \
+  EXACT(fdiv_##D, T, /, nx_fdiv_##S)                                         \
+  BIN(mod_##D, T, T, , nx_mod_##S)                                           \
+  BIN(pow_##D, T, T, , nx_pow_##S)                                           \
+  EXACT_FMA(fma_##D, T, FN, nx_fma_##S)                                      \
   BIN(atan2_##D, T, T, , nx_atan2_##S)                                       \
   FLOAT_KINDS1(FLOAT1, S, T)                                                 \
   TRIG_KINDS(TRIG1, S, T)
@@ -173,8 +283,8 @@ IDENT(8, uint64_t)
 /* A boolean is 1 where its byte is not zero. */
 #define BOOL_LD(v) ((uint32_t)((v) != 0))
 
-FLOATS(f32, float, f32)
-FLOATS(f64, double, f64)
+FLOATS(f32, float, f32, nx_fmaf)
+FLOATS(f64, double, f64, nx_fmad)
 INTS(i8, int8_t, int32_t, i32)
 INTS(i16, int16_t, int32_t, i32)
 INTS(i32, int32_t, int32_t, i32)
@@ -207,7 +317,19 @@ BIN(threefry_u64, uint64_t, uint64_t, , nx_threefry_u64)
         T m = (T)0 - (T)(c[i] != 0);                                         \
         d[i] = (x[i] & m) | (y[i] & (T)~m);                                  \
       }                                                                      \
-    else                                                                     \
+    else if (sd == 1 && sc == 1 && sx == 1 && sy == 0) {                     \
+      T b = y[0];                                                            \
+      for (int64_t i = 0; i < n; i++) {                                      \
+        T m = (T)0 - (T)(c[i] != 0);                                         \
+        d[i] = (x[i] & m) | (b & (T)~m);                                     \
+      }                                                                      \
+    } else if (sd == 1 && sc == 1 && sx == 0 && sy == 1) {                   \
+      T a = x[0];                                                            \
+      for (int64_t i = 0; i < n; i++) {                                      \
+        T m = (T)0 - (T)(c[i] != 0);                                         \
+        d[i] = (a & m) | (y[i] & (T)~m);                                     \
+      }                                                                      \
+    } else                                                                   \
       for (int64_t i = 0; i < n; i++)                                        \
         d[i * sd] = c[i * sc] ? x[i * sx] : y[i * sy];                       \
   }
