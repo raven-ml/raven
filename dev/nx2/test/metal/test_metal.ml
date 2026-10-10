@@ -437,27 +437,50 @@ let contract_bound =
       values = Drawn;
     }
   in
-  (* 128 or more 64 x 64 tiles run on them, whole or reaching past m, n, k. *)
-  let large dt ~a_t ~b_t ~m ~n ~k ~init =
+  (* A product in [dt] throughout, of operands near 1, over 2 batch elements. *)
+  let example dt ~a_t ~b_t ~m ~n ~k ~init =
     { empty with dt; out = dt; a_t; b_t; m; n; k; init; spread = 0 }
   in
   let examples =
     [
       empty;
-      large (Dt.Any Dt.Float32) ~a_t:false ~b_t:false ~m:512 ~n:512 ~k:64
+      (* 128 whole 64 x 64 tiles. *)
+      example (Dt.Any Dt.Float32) ~a_t:false ~b_t:false ~m:512 ~n:512 ~k:64
         ~init:No_init;
-      large (Dt.Any Dt.Float16) ~a_t:true ~b_t:false ~m:577 ~n:520 ~k:45
+      (* float16 past whole tiles: 32 x 32 tiles. *)
+      example (Dt.Any Dt.Float16) ~a_t:true ~b_t:false ~m:577 ~n:520 ~k:45
         ~init:Full;
-      large (Dt.Any Dt.Bfloat16) ~a_t:false ~b_t:true ~m:512 ~n:576 ~k:64
+      (* 144 whole 64 x 64 tiles. *)
+      example (Dt.Any Dt.Bfloat16) ~a_t:false ~b_t:true ~m:512 ~n:576 ~k:64
         ~init:Bias;
-      large (Dt.Any Dt.Float32) ~a_t:true ~b_t:true ~m:520 ~n:513 ~k:33
+      (* Checked 64 x 64 tiles, 162 of them, past m, n and k. *)
+      example (Dt.Any Dt.Float32) ~a_t:true ~b_t:true ~m:520 ~n:513 ~k:33
         ~init:Bias;
+      (* Checked 64 x 64 tiles past m, n and k, a's stored rows off 16-byte
+         boundaries. *)
+      {
+        (example (Dt.Any Dt.Float32) ~a_t:true ~b_t:true ~m:520 ~n:1100 ~k:33
+           ~init:Full)
+        with
+        batch = 1;
+        pad = 3;
+      };
+      (* Checked 64 x 64 tiles past m, n and k, b's stored rows off 16-byte
+         boundaries, with NaN, infinities and -0. *)
+      {
+        (example (Dt.Any Dt.Bfloat16) ~a_t:false ~b_t:false ~m:120 ~n:4100
+           ~k:45 ~init:Bias)
+        with
+        batch = 1;
+        pad = 3;
+        values = Special 5;
+      };
       (* A stored [k][m] of 16 MiB: read where it lies, never copied. *)
-      large (Dt.Any Dt.Float32) ~a_t:true ~b_t:false ~m:1024 ~n:32 ~k:4096
+      example (Dt.Any Dt.Float32) ~a_t:true ~b_t:false ~m:1024 ~n:32 ~k:4096
         ~init:No_init;
       (* Few rows of a split along k, on wide tiles. *)
       {
-        (large (Dt.Any Dt.Float16) ~a_t:false ~b_t:true ~m:9 ~n:200 ~k:2880
+        (example (Dt.Any Dt.Float16) ~a_t:false ~b_t:true ~m:9 ~n:200 ~k:2880
            ~init:Full)
         with
         batch = 1;

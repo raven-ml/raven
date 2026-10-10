@@ -62,8 +62,15 @@ let large = Array.map (fun d -> Array.map (fun o -> index (Large (d, o))) orders
 let wide = Array.map (fun d -> Array.map (fun o -> index (Wide (d, o))) orders) dtypes
 let small = Array.map (fun d -> index (Small d)) dtypes
 
-(* float16 has no checked large instance: -1. *)
-let checked = [| index (Checked F32); -1; index (Checked Bf16) |]
+(* Each dtype's checked large instance, or -1 if it has none. *)
+let checked =
+  Array.map
+    (fun d ->
+      if Array.exists (fun (_, i) -> i = K.Checked d) K.kernels then
+        index (Checked d)
+      else -1)
+    dtypes
+
 let int8 = Array.map (fun o -> index (Int8 o)) orders
 
 let skinny =
@@ -222,6 +229,10 @@ let tile_k c size =
   | Large | Small | Checked -> (
       match c.a_dtype with Any Float16 | Any Int8 -> K.bk_half | Any _ -> K.bk)
 
+(* The tables' index of a float product's dtype. *)
+let dense_index c =
+  match dense c.a_dtype with Some d -> dtype_index d | None -> 0
+
 (* Whether tiles of [size] leave at most an eighth of a product's rows
    empty. *)
 let fills c size =
@@ -233,12 +244,12 @@ let fills c size =
    products of whole large tiles, enough of them, and whole steps of k in each
    part; small for the other products of whole tiles. Past whole tiles, the
    largest of the dtype's tiles that leaves at most an eighth of the rows
-   empty: checked large ones for float32 and bfloat16, given enough of them;
-   small ones; wide ones for the half types, small ones for float32. Measured
-   on the 1000 cube, checked large tiles run float32 and bfloat16 nt 0.92 of
-   small ones and nn 1.04 and 0.99, float16 nn 1.06; on 48 rows, wide tiles
-   run the half types 1.2 to 1.7 times faster than small ones, and float32 nt
-   1.3 times slower. int8 runs on whole large tiles. *)
+   empty: checked large ones, for the dtypes that have them, given enough of
+   them; small ones; wide ones for the half types, small ones for float32.
+   Measured on the 1000 cube, checked large tiles run float32 and bfloat16 nt
+   0.92 of small ones and nn 1.04 and 0.99, float16 nn 1.06; on 48 rows, wide
+   tiles run the half types 1.2 to 1.7 times faster than small ones, and
+   float32 nt 1.3 times slower. int8 runs on whole large tiles. *)
 let tile_of c ~floats =
   if not floats then Large
   else if c.m <= wide_rows then Wide
@@ -251,8 +262,7 @@ let tile_of c ~floats =
     then Large
     else if whole then Small
     else if
-      (not (same c.a_dtype (D.Any Float16)))
-      && large >= small_tiles && fills c Checked
+      checked.(dense_index c) >= 0 && large >= small_tiles && fills c Checked
     then Checked
     else if same c.a_dtype f32 || fills c Small then Small
     else Wide
@@ -312,7 +322,7 @@ let plan_dense c ~i8 =
   c.kernel <-
     (if i8 then int8.(o)
      else
-       let d = match dense c.a_dtype with Some d -> dtype_index d | None -> 0 in
+       let d = dense_index c in
        match size with
        | Large -> large.(d).(o)
        | Small -> small.(d)
