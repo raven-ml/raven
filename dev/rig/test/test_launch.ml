@@ -23,8 +23,8 @@ let one run b =
   Run.groups run b 1 1 1;
   Run.threads run b 1 1 1
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s run =
-  Rig.submit s ~run ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s run =
+  Rig.submit s ~run ~buffers ~waits
 
 (* Fresh Polled devices: a name opens once. *)
 let opened = Atomic.make 0
@@ -44,9 +44,10 @@ let host_bytes b n =
 
 (* Patching *)
 
-(* A run's buffer: [bytes] bytes, [first] bytes into a buffer of Polled's own
-   memory, or into host memory that starts a page, borrowed on Polled. *)
-type slot = { bytes : int; first : int; borrowed : bool }
+(* A run's buffer, used with [access]: [bytes] bytes, [first] bytes into a
+   buffer of Polled's own memory, or into host memory that starts a page,
+   borrowed on Polled. *)
+type slot = { bytes : int; first : int; borrowed : bool; access : B.access }
 
 (* A ref: the parameter word [at] holds [offset] bytes into run buffer
    [slot]. *)
@@ -60,12 +61,13 @@ type launch_case = {
   shared : int;
 }
 
-type case = { slots : slot list; nreads : int; launches : launch_case list }
+type case = { slots : slot list; launches : launch_case list }
 
 let pp_case ppf c =
   let pp_slot ppf s =
-    Format.fprintf ppf "{%d bytes at %d%s}" s.bytes s.first
+    Format.fprintf ppf "{%d bytes at %d%s%s}" s.bytes s.first
       (if s.borrowed then ", borrowed" else "")
+      (if s.access = B.Read_write then ", written" else "")
   in
   let pp_ref ppf r = Format.fprintf ppf "%d->%d+%d" r.at r.slot r.offset in
   let pp_launch ppf l =
@@ -76,21 +78,21 @@ let pp_case ppf c =
       (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_ref)
       l.refs x y z tx ty tz l.shared
   in
-  Format.fprintf ppf "slots [%a]; %d reads; launches [%a]"
+  Format.fprintf ppf "slots [%a]; launches [%a]"
     (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_slot)
-    c.slots c.nreads
+    c.slots
     (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_launch)
     c.launches
 
 let gen_case =
   let open Gen in
   let* nslots = int_range 1 4 in
-  let* nreads = int_range 0 nslots in
   let slot =
     let+ bytes = int_range 8 64
     and+ first = int_range 0 2
-    and+ borrowed = bool in
-    { bytes; first = 8 * first; borrowed }
+    and+ borrowed = bool
+    and+ access = of_list [ B.Read; B.Read_write ] in
+    { bytes; first = 8 * first; borrowed; access }
   in
   let* slots = list ~size:(constant nslots) slot in
   let launch_case =
@@ -116,7 +118,7 @@ let gen_case =
     { params; refs; groups; threads; shared }
   in
   let+ launches = list ~size:(int_range 1 2) launch_case in
-  { slots; nreads; launches }
+  { slots; launches }
 
 let gen_case = Gen.with_pp pp_case gen_case
 
@@ -164,6 +166,13 @@ let pp_launch ppf (l : P.launch) =
 
 let launch_t = Testable.make ~pp:pp_launch ~equal:( = )
 
+(* Whether a written slot comes before a read one. *)
+let rec write_first = function
+  | [] -> false
+  | { access = B.Read; _ } :: rest -> write_first rest
+  | { access = B.Read_write; _ } :: rest ->
+      List.exists (fun s -> s.access = B.Read) rest
+
 let patch_law c =
   let d, p = Lazy.force patch_device in
   let image = functions d in
@@ -179,14 +188,12 @@ let patch_law c =
            launch image "main" ~params:(String.length l.params) ~refs)
          c.launches)
   in
-  let nslots = Array.length buffers in
-  let s = Sub.make ~reads:c.nreads ~writes:(nslots - c.nreads) d parts in
+  let access = Array.of_list (List.map (fun s -> s.access) c.slots) in
+  let s = Sub.make ~access d parts in
   let run = Run.make () in
   List.iteri (fun i l -> store run (Sub.block s i) l) c.launches;
-  let reads = Array.sub buffers 0 c.nreads
-  and writes = Array.sub buffers c.nreads (nslots - c.nreads) in
   ignore (P.launches p);
-  let v = Rig.Point.value (submit ~reads ~writes s run) in
+  let v = Rig.Point.value (submit ~buffers s run) in
   (* Stores after the submit returned change nothing it handed over. *)
   List.iteri
     (fun i l ->
@@ -222,6 +229,7 @@ let patch_law c =
        refs);
   cover "a view at an offset" (List.exists (fun s -> s.first > 0) c.slots);
   cover "a borrowed slot" (List.exists (fun s -> s.borrowed) c.slots);
+  cover "a written slot before a read one" (write_first c.slots);
   cover "no parameter bytes" (List.exists (fun l -> l.params = "") c.launches);
   cover "two launches, their blocks adjacent" (List.length c.launches = 2)
 
@@ -233,7 +241,7 @@ let test_write_seen () =
   let image = functions d in
   let out = B.create d 32 in
   let s =
-    Sub.make ~reads:0 ~writes:1 d
+    Sub.make ~access:[| B.Read_write |] d
       [| launch image "fill" ~params:16 ~refs:[| { at = 0; slot = 0 } |] |]
   in
   let run = Run.make () and b = Sub.block s 0 in
@@ -241,7 +249,7 @@ let test_write_seen () =
   Run.threads run b 1 1 1;
   Run.int64 run b 0 0;
   Run.int64 run b 8 100;
-  ignore (submit ~writes:[| out |] s run);
+  ignore (submit ~buffers:[| out |] s run);
   B.wait out Read;
   let host = B.create Rig.host 32 in
   B.copy ~src:out ~dst:host;
@@ -262,9 +270,9 @@ let test_device_order () =
   let copy_part ~dst src =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  let copy_into_b = Sub.make ~reads:0 ~writes:0 d [| copy_part ~dst:b src |] in
+  let copy_into_b = Sub.make d [| copy_part ~dst:b src |] in
   let copying =
-    Sub.make ~reads:1 ~writes:1 d
+    Sub.make ~access:[| B.Read; B.Read_write |] d
       [|
         launch image "copy" ~params:24
           ~refs:[| { at = 0; slot = 0 }; { at = 8; slot = 1 } |];
@@ -274,13 +282,13 @@ let test_device_order () =
   one run blk;
   Run.int64 run blk 16 64;
   ignore (submit copy_into_b (Run.make ()));
-  ignore (submit ~reads:[| b |] ~writes:[| c |] copying run);
+  ignore (submit ~buffers:[| b; c |] copying run);
   let out = B.create Rig.host 64 in
   B.copy ~src:c ~dst:out;
   equal string ~msg:"the launch read the copy" data (host_bytes out 64);
   (* A launch on COMPUTE:0 writes [b], then a copy on COPY:0 copies it. *)
   let filling =
-    Sub.make ~reads:0 ~writes:1 d
+    Sub.make ~access:[| B.Read_write |] d
       [| launch image "fill" ~params:16 ~refs:[| { at = 0; slot = 0 } |] |]
   in
   let run = Run.make () and blk = Sub.block filling 0 in
@@ -288,8 +296,8 @@ let test_device_order () =
   Run.threads run blk 1 1 1;
   Run.int64 run blk 0 0;
   Run.int64 run blk 8 7;
-  ignore (submit ~writes:[| b |] filling run);
-  let copy_b = Sub.make ~reads:0 ~writes:0 d [| copy_part ~dst:c b |] in
+  ignore (submit ~buffers:[| b |] filling run);
+  let copy_b = Sub.make d [| copy_part ~dst:c b |] in
   ignore (submit copy_b (Run.make ()));
   B.copy ~src:c ~dst:out;
   equal string ~msg:"the copy read the launch"
@@ -312,7 +320,7 @@ let test_parts_changed () =
     launch image "fill" ~params:16 ~refs:[| { at = 0; slot = 0 } |]
   in
   let parts = [| fill (load ()) |] in
-  let s = Sub.make ~reads:0 ~writes:1 d parts in
+  let s = Sub.make ~access:[| B.Read_write |] d parts in
   parts.(0) <- fill (functions d);
   Gc.full_major ();
   equal ~msg:"the part's image collected" bool false !collected;
@@ -321,7 +329,7 @@ let test_parts_changed () =
   one run b;
   Run.int64 run b 0 0;
   Run.int64 run b 8 7;
-  ignore (submit ~writes:[| out |] s run);
+  ignore (submit ~buffers:[| out |] s run);
   let host = B.create Rig.host 8 in
   B.copy ~src:out ~dst:host;
   equal string (le64 7) (host_bytes host 8)
@@ -335,7 +343,8 @@ let test_parts_read_once () =
   let refs = [| { Sub.at = 0; slot = 0 } |] in
   P.before p "entry" (fun () -> refs.(0) <- { at = 8; slot = 0 });
   let s =
-    Sub.make ~reads:0 ~writes:1 d [| launch image "main" ~params:16 ~refs |]
+    Sub.make ~access:[| B.Read_write |] d
+      [| launch image "main" ~params:16 ~refs |]
   in
   let out = B.create d 8 in
   let run = Run.make () and b = Sub.block s 0 in
@@ -343,7 +352,7 @@ let test_parts_read_once () =
   Run.int64 run b 0 0;
   Run.int64 run b 8 7;
   ignore (P.launches p);
-  ignore (submit ~writes:[| out |] s run);
+  ignore (submit ~buffers:[| out |] s run);
   ignore (P.run p);
   equal ~msg:"the ref make checked" (list string)
     [ le64 (B.address out) ^ le64 7 ]
@@ -357,7 +366,8 @@ let test_make_refusals () =
   let d, _ = polled "make" and other, _ = polled "make-other" in
   let image = functions d in
   let make ?(image = image) ?(kernel = "main") ?(params = 16) refs =
-    Sub.make ~reads:1 ~writes:1 d [| launch image kernel ~params ~refs |]
+    Sub.make ~access:[| B.Read; B.Read_write |] d
+      [| launch image kernel ~params ~refs |]
   in
   let at at slot = { Sub.at; slot } in
   refused ~msg:"an image of another device" (fun () ->
@@ -383,7 +393,7 @@ let test_make_refusals () =
       work = Sub.Copy { src = B.create d 8; dst = B.create d 8 };
     }
   in
-  let s = Sub.make ~reads:0 ~writes:0 d [| copy |] in
+  let s = Sub.make d [| copy |] in
   refused ~msg:"the block of a copy" (fun () -> Sub.block s 0)
 
 (* A refused submit assigns no value and loses nothing. *)
@@ -397,13 +407,13 @@ let test_submit_refusals () =
   let d, _ = polled ~addresses:false "submit" in
   let image = functions d in
   let s =
-    Sub.make ~reads:1 ~writes:0 d
+    Sub.make ~access:[| B.Read |] d
       [| launch image "main" ~params:8 ~refs:[| { at = 0; slot = 0 } |] |]
   in
   let b = Sub.block s 0 in
-  let reads = [| B.create ~memory:Pinned d 8 |] in
+  let buffers = [| B.create ~memory:Pinned d 8 |] in
   refused_submit ~msg:"a run no setter stored into" d (fun () ->
-      submit ~reads s (Run.make ()));
+      submit ~buffers s (Run.make ()));
   let geometry ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1)) ?(shared = 0) () =
     let run = Run.make () in
     let x, y, z = groups and tx, ty, tz = threads in
@@ -413,24 +423,24 @@ let test_submit_refusals () =
     run
   in
   refused_submit ~msg:"a ref to memory with no address" d (fun () ->
-      submit ~reads:[| B.create d 8 |] s (geometry ()));
+      submit ~buffers:[| B.create d 8 |] s (geometry ()));
   refused_submit ~msg:"no groups along y" d (fun () ->
-      submit ~reads s (geometry ~groups:(1, 0, 1) ()));
+      submit ~buffers s (geometry ~groups:(1, 0, 1) ()));
   refused_submit ~msg:"no threads along x" d (fun () ->
-      submit ~reads s (geometry ~threads:(0, 1, 1) ()));
+      submit ~buffers s (geometry ~threads:(0, 1, 1) ()));
   refused_submit ~msg:"1025 threads" d (fun () ->
-      submit ~reads s (geometry ~threads:(5, 205, 1) ()));
+      submit ~buffers s (geometry ~threads:(5, 205, 1) ()));
   refused_submit ~msg:"65536 groups along z" d (fun () ->
-      submit ~reads s (geometry ~groups:(1, 1, 65536) ()));
+      submit ~buffers s (geometry ~groups:(1, 1, 65536) ()));
   refused_submit ~msg:"shared memory past 48 KiB" d (fun () ->
-      submit ~reads s (geometry ~shared:49153 ()));
-  let v = submit ~reads s (geometry ~threads:(1024, 1, 1) ~shared:49152 ()) in
+      submit ~buffers s (geometry ~shared:49153 ()));
+  let v = submit ~buffers s (geometry ~threads:(1024, 1, 1) ~shared:49152 ()) in
   Rig.Point.wait v
 
 let test_setter_refusals () =
   let d, _ = polled "setters" in
   let image = functions d in
-  let s = Sub.make ~reads:0 ~writes:0 d [| launch image "main" ~params:12 |] in
+  let s = Sub.make d [| launch image "main" ~params:12 |] in
   let run = Run.make () and b = Sub.block s 0 in
   refused ~msg:"int32 at -1" (fun () -> Run.int32 run b (-1) 0);
   refused ~msg:"int32 at 9 of 12" (fun () -> Run.int32 run b 9 0);
@@ -452,13 +462,11 @@ let test_setter_in_use () =
   let producer, pp = polled "in-use-producer" in
   let d, p = polled "in-use" in
   let image = functions d in
-  let s = Sub.make ~reads:0 ~writes:0 d [| launch image "main" ~params:8 |] in
+  let s = Sub.make d [| launch image "main" ~params:8 |] in
   let run = Run.make () and b = Sub.block s 0 in
   one run b;
   Run.int64 run b 0 41;
-  let point =
-    submit (Sub.make ~reads:0 ~writes:0 producer [||]) (Run.make ())
-  in
+  let point = submit (Sub.make producer [||]) (Run.make ()) in
   let refused = ref None in
   let handle _ =
     refused :=
@@ -494,19 +502,17 @@ let test_allocation () =
   let d, _ = polled "words" in
   let image = functions d in
   let refs = Array.init 8 (fun k -> { Sub.at = 8 * k; slot = k }) in
-  let s =
-    Sub.make ~reads:4 ~writes:4 d [| launch image "main" ~params:64 ~refs |]
-  in
+  let access = Array.init 8 (fun k -> if k < 4 then B.Read else B.Read_write) in
+  let s = Sub.make ~access d [| launch image "main" ~params:64 ~refs |] in
   let buffers = Array.init 8 (fun _ -> B.create d 8) in
-  let reads = Array.sub buffers 0 4 and writes = Array.sub buffers 4 4 in
   let run = Run.make () and b = Sub.block s 0 in
   one run b;
-  ignore (submit ~reads ~writes s run);
+  ignore (submit ~buffers s run);
   let n = 100 in
   equal int ~msg:"a submit of a launch" 0
     (words (fun () ->
          for _ = 1 to n do
-           ignore (Sys.opaque_identity (submit ~reads ~writes s run))
+           ignore (Sys.opaque_identity (submit ~buffers s run))
          done));
   let setter name f =
     equal int ~msg:name 0

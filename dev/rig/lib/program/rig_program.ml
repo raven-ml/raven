@@ -64,8 +64,7 @@ type part = { queue : string; after : int iarray; work : work }
 type submit = {
   device : int;
   parts : part iarray;
-  reads : slot iarray;
-  writes : slot iarray;
+  buffers : (slot * B.access) iarray;
   fixed : (view * B.access) iarray;
 }
 
@@ -208,8 +207,7 @@ let rec check_step t sizes ndev = function
   | Submit s ->
       index "device" ndev s.device;
       Iarray.iter (fun p -> check_work t sizes p.work) s.parts;
-      Iarray.iter (check_slot t sizes) s.reads;
-      Iarray.iter (check_slot t sizes) s.writes;
+      Iarray.iter (fun (slot, _) -> check_slot t sizes slot) s.buffers;
       Iarray.iter (fun (v, _) -> check_view t sizes v) s.fixed
   | Move { src; dst } ->
       check_slot t sizes src;
@@ -292,7 +290,7 @@ let check t sizes devices =
    count, then its elements; a variant its tag, a byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 2
+let version = 3
 
 module W = struct
   let int b n = Buffer.add_int64_le b (Int64.of_int n)
@@ -393,6 +391,10 @@ module W = struct
         int b i
     | Ints -> tag b 2
 
+  let slot_access b (s, a) =
+    slot b s;
+    access b a
+
   let triple b (x, y, z) =
     value b x;
     value b y;
@@ -436,8 +438,7 @@ module W = struct
         tag b 0;
         int b s.device;
         array part b s.parts;
-        array slot b s.reads;
-        array slot b s.writes;
+        array slot_access b s.buffers;
         array
           (fun b (v, a) ->
             view b v;
@@ -450,11 +451,7 @@ module W = struct
     | Host { code; buffers; values; split } ->
         tag b 2;
         int b code;
-        array
-          (fun b (s, a) ->
-            slot b s;
-            access b a)
-          b buffers;
+        array slot_access b buffers;
         array value b values;
         option
           (fun b (s : split) ->
@@ -637,6 +634,11 @@ module R = struct
     | 2 -> Ints
     | n -> bad r "a slot" n
 
+  let slot_access r =
+    let s = slot r in
+    let a = access r in
+    (s, a)
+
   let triple r =
     let x = value r in
     let y = value r in
@@ -685,8 +687,7 @@ module R = struct
     | 0 ->
         let device = int r in
         let parts = array part r in
-        let reads = array slot r in
-        let writes = array slot r in
+        let buffers = array slot_access r in
         let fixed =
           array
             (fun r ->
@@ -695,21 +696,14 @@ module R = struct
               (v, a))
             r
         in
-        Submit { device; parts; reads; writes; fixed }
+        Submit { device; parts; buffers; fixed }
     | 1 ->
         let src = slot r in
         let dst = slot r in
         Move { src; dst }
     | 2 ->
         let code = int r in
-        let buffers =
-          array
-            (fun r ->
-              let s = slot r in
-              let a = access r in
-              (s, a))
-            r
-        in
+        let buffers = array slot_access r in
         let values = array value r in
         let split =
           option
@@ -818,8 +812,7 @@ type launch_run = {
 type prepared = {
   sub : Sub.t;
   srun : Sub.Run.t;
-  reads : B.t array;
-  writes : B.t array;
+  buffers : B.t array;
   launches : launch_run array;
 }
 
@@ -844,8 +837,8 @@ type lstep =
 type frame = { inputs : B.t array; ints : int array }
 
 (* Each input's access, as its steps use it: [Read_write] where a step writes
-   it, a [Submit]'s write, a [Move]'s destination or a [Host] buffer of
-   [Read_write]; [Read] otherwise. [t]'s indices are checked. *)
+   it, a [Submit] or [Host] buffer of [Read_write] or a [Move]'s destination;
+   [Read] otherwise. [t]'s indices are checked. *)
 let input_access (t : t) =
   let a = Array.make (Iarray.length t.inputs) B.Read in
   let use (access : B.access) = function
@@ -853,10 +846,9 @@ let input_access (t : t) =
     | Input _ | Memory _ | Ints -> ()
   in
   let rec step = function
-    | Submit s -> Iarray.iter (use Read_write) s.writes
-    | Move { dst; _ } -> use Read_write dst
-    | Host { buffers; _ } ->
+    | Submit { buffers; _ } | Host { buffers; _ } ->
         Iarray.iter (fun (s, access) -> use access s) buffers
+    | Move { dst; _ } -> use Read_write dst
     | Loop { body; _ } -> Iarray.iter step body
   in
   Iarray.iter step t.steps;
@@ -998,8 +990,7 @@ let per_copy t (s : submit) =
         || List.exists value [ gx; gy; gz; tx; ty; tz; shared ]
   in
   Iarray.exists (fun (q : part) -> work q.work) s.parts
-  || Iarray.exists slot s.reads
-  || Iarray.exists slot s.writes
+  || Iarray.exists (fun (b, _) -> slot b) s.buffers
   || Iarray.exists (fun (v, _) -> view v) s.fixed
 
 let per_run = function Word _ | Address_of _ -> true | Known _ -> false
@@ -1058,8 +1049,8 @@ let prepared p k (s : submit) =
   let fixed =
     Iarray.to_list (Iarray.map (fun (v, a) -> (view p k d v, a)) s.fixed)
   in
-  let reads = Iarray.length s.reads and writes = Iarray.length s.writes in
-  let sub = Sub.make ~hold:p.hold ~fixed ~reads ~writes p.devices.(d) parts in
+  let access = Iarray.to_array (Iarray.map snd s.buffers) in
+  let sub = Sub.make ~hold:p.hold ~fixed ~access p.devices.(d) parts in
   let slot s =
     match slot_view p s with Some v -> view p k d v | None -> unset
   in
@@ -1105,8 +1096,7 @@ let prepared p k (s : submit) =
   {
     sub;
     srun;
-    reads = Iarray.to_array (Iarray.map slot s.reads);
-    writes = Iarray.to_array (Iarray.map slot s.writes);
+    buffers = Iarray.to_array (Iarray.map (fun (b, _) -> slot b) s.buffers);
     launches =
       Array.of_list
         (List.filter_map Fun.id (Iarray.to_list (Iarray.mapi launch s.parts)));
@@ -1202,7 +1192,7 @@ let page_bytes = 65536
 let rec names_ints = function
   | Submit s ->
       let ints = function Ints -> true | Memory _ | Input _ -> false in
-      Iarray.exists ints s.reads || Iarray.exists ints s.writes
+      Iarray.exists (fun (b, _) -> ints b) s.buffers
   | Move _ | Host _ -> false
   | Loop { body; _ } -> Iarray.exists names_ints body
 
@@ -1326,18 +1316,18 @@ let run_value (p : here) f k = function
   | Word i -> int_at p k i
   | Address_of { input; on } -> B.address (input_on p f input on)
 
-let pass p f (s : slot iarray) bufs d =
+let pass p f (s : (slot * B.access) iarray) bufs d =
   for i = 0 to Iarray.length s - 1 do
-    match Iarray.get s i with
+    match fst (Iarray.get s i) with
     | Input j -> bufs.(i) <- input_on p f j d
     | Memory _ | Ints -> ()
   done
 
 (* Drops the inputs [bufs] held, so a loaded program keeps no caller's buffer
    past its run. *)
-let unpass (s : slot iarray) bufs =
+let unpass (s : (slot * B.access) iarray) bufs =
   for i = 0 to Iarray.length s - 1 do
-    match Iarray.get s i with
+    match fst (Iarray.get s i) with
     | Input _ -> bufs.(i) <- unset
     | Memory _ | Ints -> ()
   done
@@ -1369,20 +1359,17 @@ let submit_step p f k after (spec : submit) copies =
    with Clobbers at ->
      invalid "a launch's hole at byte %d: its value meets set bits of its bytes"
        at);
-  pass p f spec.reads q.reads d;
-  pass p f spec.writes q.writes d;
+  pass p f spec.buffers q.buffers d;
   let waits = if p.ran.(d) then [||] else after in
-  match Rig.submit q.sub ~run:q.srun ~reads:q.reads ~writes:q.writes ~waits with
+  match Rig.submit q.sub ~run:q.srun ~buffers:q.buffers ~waits with
   | point ->
-      unpass spec.reads q.reads;
-      unpass spec.writes q.writes;
+      unpass spec.buffers q.buffers;
       if Array.length p.last = 0 then
         p.last <- Array.make (Array.length p.devices) point;
       p.last.(d) <- point;
       p.ran.(d) <- true
   | exception e ->
-      unpass spec.reads q.reads;
-      unpass spec.writes q.writes;
+      unpass spec.buffers q.buffers;
       raise e
 
 let host p f k code buffers values split addresses words =
@@ -1556,7 +1543,7 @@ let load_there t devices =
               in
               (* The image stays loaded until the runs' work is done. *)
               let hold = Rig.Hold.make image in
-              let sub = Sub.make ~hold ~reads:0 ~writes:0 host [| part |] in
+              let sub = Sub.make ~hold host [| part |] in
               Ok
                 (There
                    {
@@ -1619,7 +1606,7 @@ let run_words ~after p (f : frame) =
   for i = 0 to Array.length f.ints - 1 do
     set_word p.words (at + 8 + (8 * i)) f.ints.(i)
   done;
-  [| Rig.submit p.sub ~run:p.srun ~reads:[||] ~writes:[||] ~waits:after |]
+  [| Rig.submit p.sub ~run:p.srun ~buffers:[||] ~waits:after |]
 
 (* The lock as [run_here] takes it. *)
 let run_there ~after p (f : frame) =

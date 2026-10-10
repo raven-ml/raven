@@ -113,8 +113,7 @@ let fault () =
       ( "Image.load",
         outcome d (fun () ->
             Rig.Image.load d (S.fixture "kernels_sm89.cubin")) );
-      ( "Submission.make",
-        outcome d (fun () -> Rig.Submission.make ~reads:0 ~writes:0 d [||]) );
+      ("Submission.make", outcome d (fun () -> Rig.Submission.make d [||]));
       ("wait", outcome d (fun () -> Rig.wait d (Rig.submitted d)));
     ]
   in

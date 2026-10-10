@@ -168,6 +168,7 @@ static void sub_free(struct rig_sub *s) {
   free(s->parts);
   free(s->after);
   free(s->fixed);
+  free(s->writes);
   free(s->refs);
   free(s);
 }
@@ -186,30 +187,31 @@ static _Atomic uint64_t next_id = 1;
 
 /* A prepared submission on the device [v_d] of [v_nparts] parts whose
    [after] lists hold [v_nafter] indices in all, naming [v_nfixed] buffers,
-   whose runs read [v_nreads] buffers and write [v_nwrites], and whose
-   launches hold [v_nrefs] refs in all. */
+   whose runs use one buffer per access of [v_access] (Read, Read_write),
+   and whose launches hold [v_nrefs] refs in all. */
 value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
-                       value v_nfixed, value v_nreads, value v_nwrites,
-                       value v_nrefs) {
+                       value v_nfixed, value v_access, value v_nrefs) {
   struct rig_sub *s = calloc(1, sizeof *s);
   if (s == NULL) caml_raise_out_of_memory();
   s->id = atomic_fetch_add(&next_id, 1);
   s->dev = (struct rig_device *)Long_val(v_d);
   s->nparts = Int_val(v_nparts);
   s->nfixed = Int_val(v_nfixed);
-  s->nreads = Int_val(v_nreads);
-  s->nwrites = Int_val(v_nwrites);
+  s->nslots = (int)Wosize_val(v_access);
   /* Every array, then one check: a refusal frees what was made. */
   int ok = 1;
   s->parts = zalloc((size_t)s->nparts, sizeof *s->parts, &ok);
   s->after = zalloc((size_t)Int_val(v_nafter), sizeof *s->after, &ok);
   s->fixed = zalloc((size_t)s->nfixed, sizeof *s->fixed, &ok);
+  s->writes = zalloc((size_t)s->nslots, sizeof *s->writes, &ok);
   s->nrefs = Int_val(v_nrefs);
   s->refs = zalloc((size_t)s->nrefs, sizeof *s->refs, &ok);
   if (!ok) {
     sub_free(s);
     caml_raise_out_of_memory();
   }
+  for (int k = 0; k < s->nslots; k++)
+    s->writes[k] = Int_val(Field(v_access, k)) == 1;
   value v = caml_alloc_custom(&sub_ops, sizeof(struct rig_sub *), 0, 1);
   Sub_val(v) = s;
   return v;
@@ -218,7 +220,7 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
 value caml_rig_sub_new_byte(value *argv, int argn) {
   (void)argn;
   return caml_rig_sub_new(argv[0], argv[1], argv[2], argv[3], argv[4],
-                          argv[5], argv[6]);
+                          argv[5]);
 }
 
 /* Part [v_i] on queue [v_queue], after the parts in [v_after], whose
@@ -377,7 +379,7 @@ static int fit(void **a, int *c, int want, size_t size) {
    that served [s] last fits it: its arrays only grow. */
 static int run_fit(struct rig_run *r, const struct rig_sub *s) {
   if (s->id == r->sub) return 1;
-  int nslots = s->nreads + s->nwrites, nhandles = s->nfixed + nslots;
+  int nslots = s->nslots, nhandles = s->nfixed + nslots;
   int bits = 1;
   while ((1 << bits) < 2 * nhandles) bits++;
   if (bits > r->seen_bits) {
@@ -439,8 +441,7 @@ value caml_rig_run_give(value v_r) {
 }
 
 /* Names the run's [v_k]th buffer, at [v_address] as the device's work
-   addresses it, -1 for memory with no address: a read below [nreads], else
-   a write. */
+   addresses it, -1 for memory with no address. */
 value caml_rig_run_slot(value v_r, value v_k, value v_stamps, value v_handle,
                         value v_address) {
   struct rig_run *r = Run_val(v_r);
@@ -529,7 +530,7 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
                            value v_hold) {
   const struct rig_sub *s = Sub_val(v_s);
   struct rig_run *r = Run_val(v_r);
-  int own = s->dev->index, nslots = s->nreads + s->nwrites;
+  int own = s->dev->index, nslots = s->nslots;
   for (int k = 0; k < s->nrefs; k++)
     if (r->addresses[s->refs[k].slot] == NO_ADDRESS)
       caml_invalid_argument(
@@ -540,7 +541,7 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   for (int k = 0; k < s->nfixed; k++)
     r->fixed[k] = add_memory(r, own, s->fixed[k].stamps, s->fixed[k].write);
   for (int k = 0; k < nslots; k++)
-    r->slots[k].use = add_memory(r, own, r->slots[k].stamps, k >= s->nreads);
+    r->slots[k].use = add_memory(r, own, r->slots[k].stamps, s->writes[k]);
   for (mlsize_t k = 0; k < Wosize_val(v_waits); k++)
     add_point(r, own, (uint64_t)Long_val(Field(v_waits, k)));
   if (r->hold != NULL) r->hold_use = reserve(r->hold, own);
@@ -592,9 +593,8 @@ void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p) {
     if (s->fixed[k].write) raise_last_write(s->fixed[k].stamps, p);
     raise_own(r->fixed[k], p);
   }
-  for (int k = 0; k < s->nreads; k++) raise_own(r->slots[k].use, p);
-  for (int k = s->nreads; k < s->nreads + s->nwrites; k++) {
-    raise_last_write(r->slots[k].stamps, p);
+  for (int k = 0; k < s->nslots; k++) {
+    if (s->writes[k]) raise_last_write(r->slots[k].stamps, p);
     raise_own(r->slots[k].use, p);
   }
   if (r->hold != NULL) raise_own(r->hold_use, p);

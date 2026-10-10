@@ -33,9 +33,7 @@ let () =
   let src = Buffer.create a 16 and x = Buffer.create a 16 in
   let run = Submission.Run.make () in
   ignore
-    (submit
-       (Submission.make ~reads:0 ~writes:0 a [| copy src x |])
-       ~run ~reads:[||] ~writes:[||] ~waits:[||]);
+    (submit (Submission.make a [| copy src x |]) ~run ~buffers:[||] ~waits:[||]);
 
   (* A's next work fails, and A is lost. *)
   let arg = Buffer.create a 8 in
@@ -43,8 +41,8 @@ let () =
     Submission.Fill { fill = fail (); arg; ring_units = 0; segment_bytes = 0 }
   in
   let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = bad } in
-  let s = Submission.make ~reads:0 ~writes:0 a [| part |] in
-  lost (fun () -> ignore (submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]));
+  let s = Submission.make a [| part |] in
+  lost (fun () -> ignore (submit s ~run ~buffers:[||] ~waits:[||]));
 
   (* Its facts answer: the reason, its name, its values. *)
   Printf.printf "lost: %s\n" (Option.value (Rig.lost a) ~default:"no");
@@ -58,9 +56,7 @@ let () =
   (* B goes on. *)
   let y = Buffer.create b 16 and z = Buffer.create b 16 in
   let p =
-    submit
-      (Submission.make ~reads:0 ~writes:0 b [| copy y z |])
-      ~run ~reads:[||] ~writes:[||] ~waits:[||]
+    submit (Submission.make b [| copy y z |]) ~run ~buffers:[||] ~waits:[||]
   in
   Format.printf "B goes on: %a@." Point.pp p;
 

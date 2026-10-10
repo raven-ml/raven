@@ -110,10 +110,10 @@ let dev () =
   { d; g; run = Rig.Submission.Run.make (); v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
+let prepare t parts = Rig.Submission.make t.d parts
 
 let submit t s =
-  let p = Rig.submit s ~run:t.run ~reads:[||] ~writes:[||] ~waits:[||] in
+  let p = Rig.submit s ~run:t.run ~buffers:[||] ~waits:[||] in
   t.v <- Rig.Point.value p
 
 let wait t =
@@ -439,7 +439,7 @@ let launch_rows =
     let p, _ = load t in
     let out = B.create t.d 256 in
     let s =
-      Rig.Submission.make ~reads:0 ~writes:1 t.d
+      Rig.Submission.make ~access:[| Read_write |] t.d
         [|
           part "COMPUTE:0"
             (Launch
@@ -498,10 +498,8 @@ let launch_rows =
              floor_submits w 64 false);
          [
            row "1-segment" segment (fun (t, _, s) -> run t s);
-           row "1-params" params (fun (t, _, s, writes) ->
-               let p =
-                 Rig.submit s ~run:t.run ~reads:[||] ~writes ~waits:[||]
-               in
+           row "1-params" params (fun (t, _, s, buffers) ->
+               let p = Rig.submit s ~run:t.run ~buffers ~waits:[||] in
                t.v <- Rig.Point.value p;
                wait t);
            row "1-bar-args" bar (fun (t, _, args, out, s) ->

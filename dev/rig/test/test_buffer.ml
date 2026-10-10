@@ -9,8 +9,8 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers ~waits
 
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (Rig.memory_device name)
@@ -121,7 +121,7 @@ let test_wait () =
       work = Rig.Submission.Copy { src = require_some (B.borrow d h); dst = on };
     }
   in
-  ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [| part |]));
+  ignore (submit (Rig.Submission.make d [| part |]));
   equal int 1 (P.queued p);
   B.wait on B.Read;
   equal int 0 (P.queued p)
@@ -193,9 +193,9 @@ let test_borrow_remade () =
 let test_lost_memory () =
   let d, p = P.open_ "buffer:lost" in
   let on = B.create d 8 in
-  let s = Rig.Submission.make ~reads:0 ~writes:1 d [||] in
+  let s = Rig.Submission.make ~access:[| B.Read_write |] d [||] in
   P.fail p;
-  raises_match lost (fun () -> submit s ~writes:[| on |]);
+  raises_match lost (fun () -> submit s ~buffers:[| on |]);
   raises_match lost (fun () -> Rig.Claim.read on);
   raises_match lost (fun () -> B.wait on B.Read)
 
@@ -229,8 +229,8 @@ let b16 = B.create Rig.host 64
 let test_wait_words () =
   let d, _ = P.open_ "buffer:wait-words" in
   let b = B.create d 64 in
-  let s = Sub.make ~reads:0 ~writes:1 d [||] in
-  ignore (submit s ~writes:[| b |]);
+  let s = Sub.make ~access:[| B.Read_write |] d [||] in
+  ignore (submit s ~buffers:[| b |]);
   B.wait b B.Read_write;
   let before = Gc.minor_words () in
   for _ = 1 to 100 do
@@ -385,8 +385,7 @@ let test_borrow_lost () =
   let e, _ = P.open_ "buffer:borrow-lost-on" in
   let m = B.create d 64 and empty = B.create d 0 in
   P.fail p;
-  (try ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]))
-   with Rig.Lost _ -> ());
+  (try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ());
   raises_match ~msg:"64 bytes" lost (fun () -> B.borrow e m);
   raises_match ~msg:"empty" lost (fun () -> B.borrow e empty)
 
@@ -412,8 +411,8 @@ let test_mapping_released () =
   let d, p = P.open_ "buffer:released" in
   let read_borrow () =
     let h = B.create Rig.host (1 lsl 16) in
-    let s = Sub.make ~reads:1 ~writes:0 d [||] in
-    ignore (submit s ~reads:[| require_some (B.borrow d h) |])
+    let s = Sub.make ~access:[| B.Read |] d [||] in
+    ignore (submit s ~buffers:[| require_some (B.borrow d h) |])
   in
   read_borrow ();
   let unmaps () = count "unmap" p in
@@ -440,11 +439,11 @@ let test_bytes_after_unmap () =
     let ba = Bigarray.Array1.sub paged 0 (1 lsl 16) in
     Gc.finalise (fun _ -> collected := true) ba;
     let h = B.of_bigarray ba in
-    let s = Sub.make ~reads:1 ~writes:0 d [||] in
-    ignore (submit s ~reads:[| require_some (B.borrow d h) |]);
+    let s = Sub.make ~access:[| B.Read |] d [||] in
+    ignore (submit s ~buffers:[| require_some (B.borrow d h) |]);
     ignore (P.run p))
     ();
-  ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  ignore (submit (Sub.make d [||]));
   let drain () =
     Gc.full_major ();
     Gc.full_major ();
@@ -866,14 +865,15 @@ let test_blit_waits () =
   let d, p = P.open_ "buffer:blit-waits" in
   let h = B.of_string (String.make (1 lsl 16) 'a') in
   let on_d = require_some (B.borrow d h) in
-  ignore (submit (Sub.make ~reads:1 ~writes:0 d [||]) ~reads:[| on_d |]);
+  ignore (submit (Sub.make ~access:[| B.Read |] d [||]) ~buffers:[| on_d |]);
   let got = Bytes.create 4 in
   B.blit_to_bytes h 0 got 0 4;
   equal ~msg:"a read left queued" int 1 (P.queued p);
   equal ~msg:"bytes" string "aaaa" (Bytes.to_string got);
   B.blit_from_string "bbbb" 0 h 0 4;
   equal ~msg:"the read ran first" int 0 (P.queued p);
-  ignore (submit (Sub.make ~reads:0 ~writes:1 d [||]) ~writes:[| on_d |]);
+  ignore
+    (submit (Sub.make ~access:[| B.Read_write |] d [||]) ~buffers:[| on_d |]);
   B.blit_to_bytes h 0 got 0 4;
   equal ~msg:"the write ran first" int 0 (P.queued p)
 

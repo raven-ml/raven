@@ -360,7 +360,7 @@ let copies_law ops =
         (after_into false);
       let view p at = B.view buffers.(index p) ~first:at ~length:o.len in
       let s =
-        Sub.make ~reads:0 ~writes:0 devices.(d)
+        Sub.make devices.(d)
           [|
             {
               Sub.queue = "COPY:0";
@@ -371,9 +371,7 @@ let copies_law ops =
             };
           |]
       in
-      last.(d) <-
-        Rig.Point.value
-          (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]);
+      last.(d) <- Rig.Point.value (Rig.submit s ~run ~buffers:[||] ~waits:[||]);
       Bytes.blit model.(index o.src) o.at_src model.(index o.dst) o.at_dst o.len)
     ops;
   Array.iteri (fun d v -> if v > 0 then Rig.wait devices.(d) v) last;
@@ -436,7 +434,7 @@ let close_waits () =
   let here = B.create Rig.host n in
   ignore
     (Rig.submit
-       (Sub.make ~reads:0 ~writes:0 h
+       (Sub.make h
           [|
             {
               Sub.queue = "COPY:0";
@@ -444,7 +442,7 @@ let close_waits () =
               work = Sub.Copy { src = far; dst = here };
             };
           |])
-       ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]);
+       ~run:(Sub.Run.make ()) ~buffers:[||] ~waits:[||]);
   Rig_remote.close j;
   equal ~msg:"the copy's bytes" bool true (read_host here = s);
   equal exit_w (0, [ "closed" ]) (finish (List.hd agents))

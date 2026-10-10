@@ -1719,10 +1719,10 @@ module Sub = Rig.Submission
 let launch_code = code_of launch_bin
 
 (* Submits one launch of [p]'s [name] over [groups] of [threads], its groups
-   taking [shared] bytes, whose block [set] stores, reading [reads] and writing
-   [writes], and waits for it. *)
+   taking [shared] bytes, whose block [set] stores, using each buffer of [uses]
+   with its access, and waits for it. *)
 let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
-    ?(shared = 0) ~set ~reads ~writes () =
+    ?(shared = 0) ~set ~uses () =
   let refs =
     Array.of_list (List.map (fun (at, slot) -> { Sub.at; slot }) refs)
   in
@@ -1733,16 +1733,14 @@ let launch t p name ~params ~refs ~groups:(gx, gy, gz) ~threads:(tx, ty, tz)
       work = Launch { image = p; kernel = name; params; refs };
     }
   in
-  let s =
-    Sub.make ~reads:(Array.length reads) ~writes:(Array.length writes) t.d
-      [| part |]
-  in
+  let buffers, access = Array.split (Array.of_list uses) in
+  let s = Sub.make ~access t.d [| part |] in
   let run = Sub.Run.make () and b = Sub.block s 0 in
   Sub.Run.groups run b gx gy gz;
   Sub.Run.threads run b tx ty tz;
   Sub.Run.shared run b shared;
   set run b;
-  Rig.Point.wait (Rig.submit s ~run ~reads ~writes ~waits:[||])
+  Rig.Point.wait (Rig.submit s ~run ~buffers ~waits:[||])
 
 let scratch_launch () =
   S.with_ @@ fun t ->
@@ -1754,7 +1752,8 @@ let scratch_launch () =
     ~set:(fun run b ->
       Sub.Run.int64 run b 0 0;
       Sub.Run.int32 run b 8 5)
-    ~reads:[||] ~writes:[| out |] ();
+    ~uses:[ (out, Rig.Buffer.Read_write) ]
+    ();
   equal string ~msg:"out" (multiples 5 64) (get out)
 
 (* [lds] over a group of 64 work-items, its tile of [n] words in the dynamic LDS
@@ -1772,7 +1771,8 @@ let lds_launch n () =
       Sub.Run.int64 run b 0 0;
       Sub.Run.int32 run b 8 own;
       Sub.Run.int32 run b 12 n)
-    ~reads:[||] ~writes:[| out |] ();
+    ~uses:[ (out, Rig.Buffer.Read_write) ]
+    ();
   equal string ~msg:"out" (multiples 1 64) (get out)
 
 (* 257 work-items, one more than [ids] takes: the submit refuses them and the
@@ -1800,7 +1800,8 @@ let refused_blocks =
             ~refs:[ (0, 0) ]
             ~groups ~threads
             ~set:(fun run b -> Sub.Run.int64 run b 0 0)
-            ~reads:[||] ~writes:[| out |] ());
+            ~uses:[ (out, Rig.Buffer.Read_write) ]
+            ());
       equal (option string) ~msg:"the device's loss" None (Rig.lost t.d))
 
 let launching =

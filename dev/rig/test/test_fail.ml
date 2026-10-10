@@ -14,11 +14,8 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 
 let timeout = 60.
-let empty d = Sub.make ~reads:0 ~writes:0 d [||]
-
-let submit s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]
-
+let empty d = Sub.make d [||]
+let submit s = Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||] ~waits:[||]
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 let failure () = Option.value ~default:"none" (Rig.failure ())
 

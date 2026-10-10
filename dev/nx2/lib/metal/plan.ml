@@ -447,17 +447,31 @@ let sequences = count * flags
 let sequence c =
   c.kernel + (count * (Bool.to_int (c.parts > 1) lor (Bool.to_int c.init lsl 1)))
 
-let reads c = if c.init then 3 else 2
-let writes c = if c.parts > 1 then 2 else 1
-let workspace c = if c.parts > 1 then c.used else 0
+(* The workspace is a slot of the sequence whenever it splits, whatever its
+   bytes. *)
+let workspace c = if c.parts > 1 then Int.max 1 c.used else 0
+
+(* The slots: [a] 0, [b] 1 and [y] 2, then [init] and the workspace where the
+   sequence has them. *)
+let y_slot = 2
+let init_slot = 3
+let ws_slot c = init_slot + Bool.to_int c.init
+
+let access c =
+  let module B = Rig.Buffer in
+  Array.concat
+    [
+      [| B.Read; B.Read; B.Read_write |];
+      (if c.init then [| B.Read |] else [||]);
+      (if c.parts > 1 then [| B.Read_write |] else [||]);
+    ]
 
 (* [c]'s launches in order: each kernel, its parameter bytes and its refs
-   into the slots [reads] and [writes] count. *)
+   into the slots [access] lists. *)
 let launches c =
-  let y = reads c in
-  let ws = y + 1 in
+  let y = y_slot and ws = ws_slot c in
   let ref at slot = { Rig.Submission.at; slot } in
-  let init at = if c.init then [ ref at 2 ] else [] in
+  let init at = if c.init then [ ref at init_slot ] else [] in
   let module P = K.Contract_params in
   let module Q = K.Combine_params in
   let split = c.parts > 1 in

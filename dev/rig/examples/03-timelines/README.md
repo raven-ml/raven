@@ -26,7 +26,7 @@ at once. A GPU's work runs after `submit` returns, with the same calls; see
 | Function                                  | Purpose                                |
 | ----------------------------------------- | -------------------------------------- |
 | `memory_device name`                      | A device with a timeline on the host   |
-| `Submission.make ~reads ~writes d`        | Work for `d`, prepared once            |
+| `Submission.make ~access d`               | Work for `d`, prepared once            |
 | `Submission.Run.make ()`                  | Storage for one submit at a time       |
 | `submit s ~run`                           | Hand `s` over; the point of its value  |
 | `Point.wait p`                            | Return once `p`'s device reached it    |

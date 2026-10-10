@@ -27,7 +27,7 @@ type part = { queue : string; after : int array; work : work }
 (* The C form, which a custom block holds and frees once collected. *)
 type c
 
-external sub_new : int -> int -> int -> int -> int -> int -> int -> c
+external sub_new : int -> int -> int -> int -> access array -> int -> c
   = "caml_rig_sub_new_byte" "caml_rig_sub_new"
 
 external sub_launch :
@@ -146,8 +146,7 @@ type t = {
   images : image list;
       (** The images of [c]'s launches, kept loaded: [c] names their
           templates, which live while the image is loaded. *)
-  nreads : int;  (** The buffers each run reads. *)
-  nwrites : int;  (** The buffers each run writes. *)
+  access : access array;  (** Each run buffer's access, by slot. *)
   hold : hold option;
       (** The hold whose stamps each run raises, kept reachable: its release
           frees what the parts run. *)
@@ -300,10 +299,10 @@ let check_memory fn d (b, (access : access)) =
   if access = Read_write && Buffer.access b = Read then
     invalid_argf "Rig.%s: a fixed buffer written admits only reads" fn
 
-(* [p] with arrays of its own. [make] copies the caller's parts once, then
-   checks, sizes and compiles the copy alone: a change to the caller's arrays
-   while it runs, from another domain or from a thread while a driver call
-   blocks, changes nothing. *)
+(* [p] with arrays of its own. [make] copies the caller's parts and access
+   once, then checks, sizes and compiles the copy alone: a change to the
+   caller's arrays while it runs, from another domain or from a thread while a
+   driver call blocks, changes nothing. *)
 let own p =
   let work =
     match p.work with
@@ -312,10 +311,9 @@ let own p =
   in
   { p with after = Array.copy p.after; work }
 
-let build hold ~fixed ~reads ~writes d parts =
-  let parts = Array.map own parts in
+let build hold ~fixed ~access d parts =
+  let parts = Array.map own parts and access = Array.copy access in
   let fn = "Submission.make" in
-  if reads < 0 || writes < 0 then invalid_argf "Rig.%s: a count is negative" fn;
   check_device fn d;
   let check_buffer = Buffer.check_live fn in
   let nafter = ref 0 and nfixed = ref 0 and nrefs = ref 0 in
@@ -344,16 +342,14 @@ let build hold ~fixed ~reads ~writes d parts =
       | Launch l ->
           entries.(i) <-
             Some
-              (launch_entry fn d (reads + writes) i l.image l.kernel l.params
-                 l.refs);
+              (launch_entry fn d (Array.length access) i l.image l.kernel
+                 l.params l.refs);
           nrefs := !nrefs + Array.length l.refs)
     parts;
   let memory = Array.of_list fixed in
   Array.iter (check_memory fn d) memory;
   nfixed := !nfixed + Array.length memory;
-  let c =
-    sub_new d.c (Array.length parts) !nafter !nfixed reads writes !nrefs
-  in
+  let c = sub_new d.c (Array.length parts) !nafter !nfixed access !nrefs in
   let blocks = Array.make (Array.length parts) no_block in
   let at = ref 0 and k = ref 0 and r = ref 0 in
   let fixed = ref [] and images = ref [] in
@@ -402,16 +398,15 @@ let build hold ~fixed ~reads ~writes d parts =
     c;
     fixed = Array.of_list !fixed;
     images = !images;
-    nreads = reads;
-    nwrites = writes;
+    access;
     hold;
     blocks;
     lane;
     span;
   }
 
-let make ?hold ?(fixed = []) ~reads ~writes d parts =
-  build hold ~fixed ~reads ~writes d parts
+let make ?hold ?(fixed = []) ?(access = [||]) d parts =
+  build hold ~fixed ~access d parts
 
 let block s i =
   if i < 0 || i >= Array.length s.blocks || s.blocks.(i) = no_block then
@@ -490,32 +485,30 @@ let check_fixed s =
 
 let counted n what = Printf.sprintf "%d %s%s" n what (if n = 1 then "" else "s")
 
-let check_counts s reads writes =
-  let nr = Array.length reads and nw = Array.length writes in
-  if nr <> s.nreads || nw <> s.nwrites then
-    invalid_argf "Rig.%s: %s and %s for a submission of %s and %s" fn
-      (counted nr "read") (counted nw "write") (counted s.nreads "read")
-      (counted s.nwrites "write")
+let check_count s buffers =
+  let n = Array.length buffers and slots = Array.length s.access in
+  if n <> slots then
+    invalid_argf "Rig.%s: %s for a submission of %s" fn (counted n "buffer")
+      (counted slots "buffer")
 
-(* Refuses [b], element [i] of the run's array of [access] ([reads] or
-   [writes]), unless it is live, on [s]'s device and, written, of memory that
-   admits writes; and hands its stamps and handle to the run's slot [k].
-   Memory of another device that is lost raises its loss; [s]'s device's own
-   loss is the hand-over's. *)
-let name_one s run (access : access) i k b =
-  let what = match access with Read -> "reads" | Read_write -> "writes" in
+(* Refuses [b], the run's buffer [k], used with [access], unless it is live, on
+   [s]'s device and, written, of memory that admits writes; and hands its
+   stamps and handle to the run's slot [k]. Memory of another device that is
+   lost raises its loss; [s]'s device's own loss is the hand-over's. *)
+let name_one s run (access : access) k b =
   if not (Buffer.is_live b) then
-    invalid_argf "Rig.%s: %s.(%d) is dead: %s" fn what i b.mem.claim.why;
+    invalid_argf "Rig.%s: buffers.(%d) is dead: %s" fn k b.mem.claim.why;
   (* A queue reaches other memory only through a borrow on its device. *)
   if b.mem.dev != s.dev then
-    invalid_argf "Rig.%s: %s.(%d) is on %s, not on %s: borrow it" fn what i
+    invalid_argf "Rig.%s: buffers.(%d) is on %s, not on %s: borrow it" fn k
       b.mem.dev.name s.dev.name;
   let m = b.mem.root in
   if m != b.mem && m.dev != s.dev && Dev.is_lost m.dev then Dev.raise_lost m.dev;
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
   let e = m.entry in
   if access = Read_write && e.access = Read then
-    invalid_argf "Rig.%s: %s.(%d)'s memory admits only reads" fn what i;
+    invalid_argf
+      "Rig.%s: buffers.(%d) is written and its memory admits only reads" fn k;
   (* -1 for memory with no address, which the collect refuses a ref to. *)
   let address = if b.mem.address < 0 then -1 else b.mem.address + b.offset in
   run_slot run k e.stamps b.mem.handle address
@@ -577,37 +570,28 @@ let rec hand_over s run nwaits =
     Dev.raise_lost (Dev.of_index (run_producer run))
   else Dev.raise_lost d
 
-(* Names the run's [k]th buffer, a read below [s.nreads], else a write: the
-   buffer. *)
-let name s run reads writes k =
-  let nr = s.nreads in
-  if k < nr then begin
-    let b = Array.unsafe_get reads k in
-    name_one s run Read k k b;
-    b
-  end
-  else begin
-    let b = Array.unsafe_get writes (k - nr) in
-    name_one s run Read_write (k - nr) k b;
-    b
-  end
+(* Names the run's [k]th buffer with its access: the buffer. *)
+let name s run buffers k =
+  let b = Array.unsafe_get buffers k in
+  name_one s run (Array.unsafe_get s.access k) k b;
+  b
 
 (* Names the run's buffers from the [k]th on, then hands the work over. Each
    buffer is read once from its array and stays reachable in a frame until the
    hand-over returned: the C slots hold its stamps without a reference, and the
    caller's array may change meanwhile. A frame keeps four buffers, so the
    rooting costs a call per four. *)
-let rec go s run reads writes waits k =
-  let n = s.nreads + s.nwrites in
+let rec go s run buffers waits k =
+  let n = Array.length s.access in
   if k >= n then
     let hold = match s.hold with Some h -> h.hstamps | None -> 0 in
     hand_over s run (wait_points s run (run_collect s.c run waits hold) 0 0)
   else
-    let b0 = name s run reads writes k in
-    let b1 = if k + 1 < n then name s run reads writes (k + 1) else b0 in
-    let b2 = if k + 2 < n then name s run reads writes (k + 2) else b0 in
-    let b3 = if k + 3 < n then name s run reads writes (k + 3) else b0 in
-    let p = go s run reads writes waits (k + 4) in
+    let b0 = name s run buffers k in
+    let b1 = if k + 1 < n then name s run buffers (k + 1) else b0 in
+    let b2 = if k + 2 < n then name s run buffers (k + 2) else b0 in
+    let b3 = if k + 3 < n then name s run buffers (k + 3) else b0 in
+    let p = go s run buffers waits (k + 4) in
     ignore (Sys.opaque_identity b0);
     ignore (Sys.opaque_identity b1);
     ignore (Sys.opaque_identity b2);
@@ -630,12 +614,12 @@ let record s ps p pair =
    form, and the stamps and templates it names without a reference, with the
    runtime released: their owners stay reachable until the run is given
    back. While a profile is taken, a submission with parts times its value. *)
-let taken s run reads writes waits =
+let taken s run buffers waits =
   let ps = if s.lane = "" then [] else Prof.active () in
   run_timed run (ps <> []);
   match
     check_fixed s;
-    go s run reads writes waits 0
+    go s run buffers waits 0
   with
   | p ->
       let pair = run_pair run in
@@ -650,12 +634,12 @@ let taken s run reads writes waits =
       run_give run;
       raise e
 
-let submit s ~run ~reads ~writes ~waits =
+let submit s ~run ~buffers ~waits =
   if Dev.is_lost s.dev then Dev.raise_lost s.dev;
-  check_counts s reads writes;
+  check_count s buffers;
   if not (take run s.c) then
     invalid_argf "Rig.%s: another submit is using the run" fn;
-  taken s run reads writes waits
+  taken s run buffers waits
 
 (* Each domain's run for copies; one another thread of the domain holds is
    replaced by a fresh one for the copy. *)
@@ -671,7 +655,7 @@ let copy d queue ~src ~dst =
   let q = queue_index d fn queue in
   check_runs d fn q Rig_edge.Copy;
   check_copy fn d src dst;
-  let c = sub_new d.c 1 0 2 0 0 0 in
+  let c = sub_new d.c 1 0 2 [||] 0 in
   sub_part c 0 q [||] 0;
   set_copy c d 0 src dst;
   fix c 0 d src false;
@@ -682,8 +666,7 @@ let copy d queue ~src ~dst =
       c;
       fixed = [| src; dst |];
       images = [];
-      nreads = 0;
-      nwrites = 0;
+      access = [||];
       hold = None;
       blocks = [||];
       lane = queue;
@@ -698,4 +681,4 @@ let copy d queue ~src ~dst =
       ignore (take fresh s.c : bool);
       fresh
   in
-  taken s run [||] [||] [||]
+  taken s run [||] [||]

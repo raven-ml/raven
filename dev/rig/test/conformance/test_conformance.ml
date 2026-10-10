@@ -73,18 +73,15 @@ let watched d n =
 
 (* Submitting *)
 
-(* Submits [ws] on [d], reading [reads] and writing [writes]: its point. *)
-let submit_point ?(waits = [||]) d ws ~reads ~writes =
-  let s =
-    Sub.make ~reads:(List.length reads) ~writes:(List.length writes) d
-      (Array.of_list (List.map (fun w -> w.part) ws))
-  in
-  Rig.submit s ~run:(Rig_gpu_support.blocks s ws) ~reads:(Array.of_list reads)
-    ~writes:(Array.of_list writes) ~waits
+(* Submits [ws] on [d], using each buffer of [uses] with its access: its
+   point. *)
+let submit_point ?(waits = [||]) d ws ~uses =
+  let buffers, access = Array.split (Array.of_list uses) in
+  let s = Sub.make ~access d (Array.of_list (List.map (fun w -> w.part) ws)) in
+  Rig.submit s ~run:(Rig_gpu_support.blocks s ws) ~buffers ~waits
 
 (* As [submit_point]: the point's value. *)
-let submit ?waits d ws ~reads ~writes =
-  Rig.Point.value (submit_point ?waits d ws ~reads ~writes)
+let submit ?waits d ws ~uses = Rig.Point.value (submit_point ?waits d ws ~uses)
 
 let copy_part ?(after = [||]) queue ~dst src =
   Rig_gpu_support.work { Sub.queue; after; work = Copy { src; dst } }
@@ -255,9 +252,7 @@ let refusals (module G : Gpu) () =
     raises_match
       ~msg:(strf "%s on %s" (kind_name kind) queue)
       Exn.invalid_arg
-      (fun () ->
-        Sub.make ~reads:0 ~writes:0 t.d
-          [| { queue; after = [||]; work = work kind } |])
+      (fun () -> Sub.make t.d [| { queue; after = [||]; work = work kind } |])
   in
   List.iter
     (fun (q : Rig.queue) ->
@@ -315,7 +310,13 @@ let copies (module G : Gpu) (ka, kb, n, (oa, ob), (h0, h1, h2)) =
         copy_part (q h1) ~after:[| 0 |] ~dst:b a;
         copy_part (q h2) ~after:[| 1 |] ~dst b;
       ]
-      ~reads:[ src ] ~writes:[ a; b; dst ]
+      ~uses:
+        [
+          (src, B.Read);
+          (a, B.Read_write);
+          (b, B.Read_write);
+          (dst, B.Read_write);
+        ]
   in
   Rig.wait t.d v;
   equal octets data (get dst)
@@ -364,10 +365,10 @@ let readers (module G : Gpu) (place, writer, reader, same) =
   (* [agent]'s part copying [src] into [dst], and the buffers it reads. *)
   let device agent ~dst ~src =
     match (agent, copy_queues t.d) with
-    | Copy_part, q :: _ -> (copy_part q ~dst src, [ src ])
+    | Copy_part, q :: _ -> (copy_part q ~dst src, [ (src, B.Read) ])
     | _ ->
         let p, args = G.copy_words t ~dst ~src in
-        (p, [ src; args ])
+        (p, [ (src, B.Read); (args, B.Read) ])
   in
   for round = 1 to 4 do
     let msg = strf "round %d" round in
@@ -381,11 +382,13 @@ let readers (module G : Gpu) (place, writer, reader, same) =
     | Host, r ->
         put mem p;
         let part, reads = device r ~dst:out ~src:mem in
-        Rig.wait t.d (submit t.d [ part ] ~reads ~writes:[ out ]);
+        Rig.wait t.d
+          (submit t.d [ part ] ~uses:(reads @ [ (out, B.Read_write) ]));
         equal octets ~msg p (get out)
     | w, Host ->
         let part, reads = device w ~dst:mem ~src in
-        Rig.wait t.d (submit t.d [ part ] ~reads ~writes:[ mem ]);
+        Rig.wait t.d
+          (submit t.d [ part ] ~uses:(reads @ [ (mem, B.Read_write) ]));
         equal octets ~msg p (get mem)
     | w, r ->
         let pw, rw = device w ~dst:mem ~src in
@@ -394,10 +397,10 @@ let readers (module G : Gpu) (place, writer, reader, same) =
           if same then
             submit t.d
               [ pw; with_after [| 0 |] pr ]
-              ~reads:(rw @ rr) ~writes:[ mem; out ]
+              ~uses:(rw @ rr @ [ (mem, B.Read_write); (out, B.Read_write) ])
           else begin
-            ignore (submit t.d [ pw ] ~reads:rw ~writes:[ mem ]);
-            submit t.d [ pr ] ~reads:rr ~writes:[ out ]
+            ignore (submit t.d [ pw ] ~uses:(rw @ [ (mem, B.Read_write) ]));
+            submit t.d [ pr ] ~uses:(rr @ [ (out, B.Read_write) ])
           end
         in
         Rig.wait t.d v;
@@ -426,17 +429,21 @@ let device_order (module G : Gpu) () =
   let sp, sa = G.spin t ~ns:late in
   let mid = fresh () and o = out () in
   let w, wa = G.copy_words t ~dst:mid ~src in
-  ignore (submit t.d [ sp; w ] ~reads:[ src; sa; wa ] ~writes:[ mid ]);
-  Rig.wait t.d (submit t.d [ copy_part q ~dst:o mid ] ~reads:[] ~writes:[ o ]);
+  ignore
+    (submit t.d [ sp; w ]
+       ~uses:
+         [ (src, B.Read); (sa, B.Read); (wa, B.Read); (mid, B.Read_write) ]);
+  Rig.wait t.d
+    (submit t.d [ copy_part q ~dst:o mid ] ~uses:[ (o, B.Read_write) ]);
   equal octets ~msg:"a copy after work" data (get o);
   let sp, sa = G.spin t ~ns:late in
   let mid = fresh () and o = out () in
   ignore
     (submit t.d
        [ sp; copy_part q ~after:[| 0 |] ~dst:mid src ]
-       ~reads:[ src; sa ] ~writes:[ mid ]);
+       ~uses:[ (src, B.Read); (sa, B.Read); (mid, B.Read_write) ]);
   let r, ra = G.copy_words t ~dst:o ~src:mid in
-  Rig.wait t.d (submit t.d [ r ] ~reads:[ ra ] ~writes:[ o ]);
+  Rig.wait t.d (submit t.d [ r ] ~uses:[ (ra, B.Read); (o, B.Read_write) ]);
   equal octets ~msg:"work after a copy" data (get o)
 
 (* Launches *)
@@ -505,7 +512,9 @@ let launches_conform (module G : Gpu) =
         ~b:g.b ~f:g.f
     in
     let second = twice l ~dst:1 ~src:0 n ~offset:g.offset ~c:g.c in
-    Rig.wait t.d (submit t.d [ first; second ] ~reads:[] ~writes:[ out; dst ]);
+    Rig.wait t.d
+      (submit t.d [ first; second ]
+         ~uses:[ (out, B.Read_write); (dst, B.Read_write) ]);
     let expected =
       Array.init n (fun k -> u32 (g.a + (g.b * k) + int_of_float g.f))
     in
@@ -531,7 +540,7 @@ let empty_launches (module G : Gpu) =
         (fun () ->
           submit t.d
             [ ids l ~slot:0 ~groups ~threads ~offset:0 ~a:0 ~b:0 ~f:0. ]
-            ~reads:[] ~writes:[ out ])
+            ~uses:[ (out, B.Read_write) ])
     in
     List.iter
       (fun (groups, threads) -> refuses groups threads)
@@ -549,7 +558,7 @@ let empty_launches (module G : Gpu) =
       (submit t.d
          [ ids l ~slot:0 ~groups:(1, 1, 1) ~threads:(16, 1, 1) ~offset:0 ~a:1
              ~b:1 ~f:0. ]
-         ~reads:[] ~writes:[ out ]);
+         ~uses:[ (out, B.Read_write) ]);
     equal (array int) ~msg:"a launch after them"
       (Array.init 16 (fun k -> 1 + k))
       (words (get out) ~at:0 16)
@@ -578,11 +587,11 @@ let launch_order (module G : Gpu) =
     ignore
       (submit t.d
          [ sp; copy_part q ~after:[| 0 |] ~dst:mid src ]
-         ~reads:[ src; sa ] ~writes:[ mid ]);
+         ~uses:[ (src, B.Read); (sa, B.Read); (mid, B.Read_write) ]);
     Rig.wait t.d
       (submit t.d
          [ twice l ~dst:1 ~src:0 n ~offset:0 ~c:1 ]
-         ~reads:[ mid ] ~writes:[ dst ]);
+         ~uses:[ (mid, B.Read); (dst, B.Read_write) ]);
     equal (array int) ~msg:"a launch after a copy"
       (Array.init n (fun i -> (2 * i) + 1))
       (words (get dst) ~at:0 n);
@@ -595,9 +604,9 @@ let launch_order (module G : Gpu) =
            ids ~after:[| 0 |] l ~slot:1 ~groups:(n / 64, 1, 1)
              ~threads:(64, 1, 1) ~offset:0 ~a:7 ~b:3 ~f:0.;
          ]
-         ~reads:[ sa ] ~writes:[ mid ]);
+         ~uses:[ (sa, B.Read); (mid, B.Read_write) ]);
     Rig.wait t.d
-      (submit t.d [ copy_part q ~dst:o mid ] ~reads:[] ~writes:[ o ]);
+      (submit t.d [ copy_part q ~dst:o mid ] ~uses:[ (o, B.Read_write) ]);
     equal (array int) ~msg:"a copy after a launch"
       (Array.init n (fun k -> 7 + (3 * k)))
       (words (get o) ~at:0 n)
@@ -617,7 +626,7 @@ let workspace (module G : Gpu) sizes =
     | q :: _ -> (copy_part q ~dst src, [])
     | [] ->
         let p, a = G.copy_words t ~dst ~src in
-        (p, [ a ])
+        (p, [ (a, B.Read) ])
   in
   let launch i k =
     let n = k * 1024 in
@@ -630,8 +639,9 @@ let workspace (module G : Gpu) sizes =
     ignore
       (submit t.d
          [ p0; with_after [| 0 |] p1 ]
-         ~reads:(src :: a1 :: a0)
-         ~writes:[ s; out ]);
+         ~uses:
+           (((src, B.Read) :: (a1, B.Read) :: a0)
+           @ [ (s, B.Read_write); (out, B.Read_write) ]));
     (out, data)
   in
   List.iteri
@@ -670,7 +680,7 @@ let stale_seen (module G : Gpu) () =
 let long_work (module G : Gpu) () =
   G.with_ @@ fun t ->
   let p, args = G.spin t ~ns:1_000_000_000 in
-  let v = submit t.d [ p ] ~reads:[ args ] ~writes:[] in
+  let v = submit t.d [ p ] ~uses:[ (args, B.Read) ] in
   let cpu = Sys.time () in
   for _ = 1 to 10 do
     G.D.sleep t.g ~seen:(v - 1) ~still_ms:50;
@@ -708,7 +718,10 @@ let runs_alone (module G : Gpu) () =
   let data = pattern n 5 in
   let src = filled ~memory:Pinned t.d data in
   let p, args = G.copy_words t ~dst ~src in
-  let v = submit t.d [ p ] ~reads:[ src; args ] ~writes:[ dst ] in
+  let v =
+    submit t.d [ p ]
+      ~uses:[ (src, B.Read); (args, B.Read); (dst, B.Read_write) ]
+  in
   await "the work ran" (fun () -> read () = data);
   Rig.wait t.d v;
   ignore (Sys.opaque_identity dst)
@@ -737,7 +750,7 @@ let loss (module G : Gpu) () =
       skip ~reason:"the device's queues run no fill" ()
   | queue :: _ ->
       let p, args = G.spin t ~ns:100_000_000 in
-      let v = submit t.d [ p ] ~reads:[ args ] ~writes:[] in
+      let v = submit t.d [ p ] ~uses:[ (args, B.Read) ] in
       let why =
         match G.submit t [| failing_fill queue |] with
         | _ -> fail "a failed fill lost nothing"
@@ -787,7 +800,9 @@ let holds (module G : Gpu) (t : G.t) point go =
   in
   let consumed () =
     Rig.wait t.d
-      (submit t.d [ p ] ~reads:[ src; args ] ~writes:[ dst ] ~waits:[| point |])
+      (submit t.d [ p ]
+         ~uses:[ (src, B.Read); (args, B.Read); (dst, B.Read_write) ]
+         ~waits:[| point |])
   in
   Fun.protect
     ~finally:(fun () ->
@@ -799,9 +814,7 @@ let holds (module G : Gpu) (t : G.t) point go =
   ignore (Sys.opaque_identity dst)
 
 let empty_point d =
-  Rig.submit
-    (Sub.make ~reads:0 ~writes:0 d [||])
-    ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]
+  Rig.submit (Sub.make d [||]) ~run:(Sub.Run.make ()) ~buffers:[||] ~waits:[||]
 
 (* The producer, a Polled device, whose work runs when the test runs it. *)
 let polled_waits (module G : Gpu) () =
@@ -829,7 +842,7 @@ let device_waits (module G : Gpu) () =
   Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
   let tp = { G.d = pd; g } in
   let sp, sa = G.spin tp ~ns:50_000_000 in
-  let point = submit_point pd [ sp ] ~reads:[ sa ] ~writes:[] in
+  let point = submit_point pd [ sp ] ~uses:[ (sa, B.Read) ] in
   holds (module G) t point ignore
 
 (* Peers *)
@@ -1009,16 +1022,16 @@ module Order (G : Gpu) = struct
       ([ copy_part (queue_of s.q p) ~dst src ], [])
     else
       let c, a = G.copy_words s.t ~dst ~src in
-      if not p.late then ([ c ], [ a ])
+      if not p.late then ([ c ], [ (a, B.Read) ])
       else
         let sp, a' = G.spin s.t ~ns:late_ns in
-        ([ sp; c ], [ a'; a ])
+        ([ sp; c ], [ (a', B.Read); (a, B.Read) ])
 
   (* Submits [ps]: each part's first system part takes its [after], each index
      the last system part of the part it names. *)
   let submit_one s ps =
     let ends = Array.make (List.length ps) 0 in
-    let parts = ref [] and reads = ref [] and at = ref 0 in
+    let parts = ref [] and uses = ref [] and at = ref 0 in
     List.iteri
       (fun i p ->
         let sys, args = pieces s p in
@@ -1029,9 +1042,9 @@ module Order (G : Gpu) = struct
           sys;
         at := !at + List.length sys;
         ends.(i) <- !at - 1;
-        reads := args @ !reads)
+        uses := args @ !uses)
       ps;
-    ignore (submit s.t.d (List.rev !parts) ~reads:!reads ~writes:[])
+    ignore (submit s.t.d (List.rev !parts) ~uses:!uses)
 
   (* Submits [subs] back to back, then reads the word until it holds the last
      value: each read is at least the one before and at most the last. *)

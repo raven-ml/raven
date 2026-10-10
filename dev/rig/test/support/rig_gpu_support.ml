@@ -143,15 +143,15 @@ module Make (G : Gpu) = struct
     Fun.protect ~finally:(fun () -> stop_driver g) (fun () -> f g)
 
   let submit t ps =
-    let s = Rig.Submission.make ~reads:0 ~writes:0 t.d ps in
+    let s = Rig.Submission.make t.d ps in
     let run = Rig.Submission.Run.make () in
-    Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
+    Rig.Point.value (Rig.submit s ~run ~buffers:[||] ~waits:[||])
 
   let submit_work t ws =
     let ps = Array.of_list (List.map (fun w -> w.part) ws) in
-    let s = Rig.Submission.make ~reads:0 ~writes:0 t.d ps in
+    let s = Rig.Submission.make t.d ps in
     let run = blocks s ws in
-    Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
+    Rig.Point.value (Rig.submit s ~run ~buffers:[||] ~waits:[||])
 
   let wait t v = Rig.wait t.d v
 end

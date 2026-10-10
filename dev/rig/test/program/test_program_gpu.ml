@@ -51,7 +51,9 @@ let by_hand d image queue x y =
     }
   in
   let s =
-    Sub.make ~reads:0 ~writes:2 d
+    Sub.make
+      ~access:[| B.Read_write; B.Read_write |]
+      d
       [|
         launch "ids" ids_params [| { Sub.at = 0; slot = 0 } |];
         launch "twice" twice_params
@@ -71,7 +73,7 @@ let by_hand d image queue x y =
   in
   store 0 ids_params ~groups:4 ~threads:64;
   store 1 twice_params ~groups:words ~threads:1;
-  ignore (Rig.submit s ~run ~reads:[||] ~writes:[| x; y |] ~waits:[||])
+  ignore (Rig.submit s ~run ~buffers:[| x; y |] ~waits:[||])
 
 let described d binary queue =
   let launch kernel params refs ~groups ~threads =
@@ -103,8 +105,7 @@ let described d binary queue =
         G.Submit
           {
             device = 0;
-            reads = [||];
-            writes = [| G.Input 0; G.Input 1 |];
+            buffers = [| (G.Input 0, B.Read_write); (G.Input 1, B.Read_write) |];
             fixed = [||];
             parts =
               [|

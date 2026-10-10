@@ -31,9 +31,9 @@
         work = Copy { src; dst };
       }
     in
-    let s = Rig.Submission.make ~reads:0 ~writes:0 g [| copy |] in
+    let s = Rig.Submission.make g [| copy |] in
     let run = Rig.Submission.Run.make () in
-    let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
+    let p = Rig.submit s ~run ~buffers:[||] ~waits:[||] in
     Rig.Point.wait p
     ]}
 

@@ -120,11 +120,13 @@ let run g (gpu : Abi.Gpu.t) =
     { Submission.queue = "COMPUTE:0"; after = [||]; work = Words words }
   in
   let s =
-    Submission.make ~hold ~fixed:[ (mem, Read) ] ~reads:2 ~writes:1 g
-      [| part |]
+    Submission.make ~hold
+      ~fixed:[ (mem, Read) ]
+      ~access:[| Read; Read; Read_write |]
+      g [| part |]
   in
   let run = Submission.Run.make () in
-  let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
+  let pt = submit s ~run ~buffers:[| a; b; out |] ~waits:[||] in
   Format.printf "%s (%s) ran simple_add on %d ints at %a@." (name g) (arch g) n
     Point.pp pt;
 

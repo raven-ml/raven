@@ -13,10 +13,8 @@ module Support = Rig_support
 let timeout = 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
-let empty d = Sub.make ~reads:0 ~writes:0 d [||]
-
-let submit s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]
+let empty d = Sub.make d [||]
+let submit s = Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||] ~waits:[||]
 
 (* A drain on [d]: what {!Buffer.create} does first. *)
 let drain d = ignore (Sys.opaque_identity (B.create d 8))
@@ -31,7 +29,7 @@ let[@inline never] submit_held ?(release = ignore) d runs =
         release ())
       ()
   in
-  Rig.Point.value (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+  Rig.Point.value (submit (Sub.make ~hold:h d [||]))
 
 (* Releases *)
 
@@ -42,7 +40,7 @@ let test_two_devices () =
   let runs = Atomic.make 0 in
   (fun () ->
     let h = H.make ~release:(fun () -> Atomic.incr runs) () in
-    let on x = Sub.make ~hold:h ~reads:0 ~writes:0 x [||] in
+    let on x = Sub.make ~hold:h x [||] in
     ignore (submit (on d));
     ignore (submit (on e)))
     ();
@@ -86,7 +84,7 @@ let[@inline never] hold_bytes ?release d w =
   let v = Bytes.of_string "held" in
   Weak.set w 0 (Some v);
   let h = H.make ?release v in
-  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+  ignore (submit (Sub.make ~hold:h d [||]))
 
 let keeps_value release name =
   let d, p = P.open_ name in
@@ -180,8 +178,8 @@ let test_release_transport_fault () =
 let test_hold_orders_nothing () =
   let d, _ = P.open_ "hold:orders" and e, pe = P.open_ "hold:orders-other" in
   let h = H.make () in
-  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 e [||]));
-  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]));
+  ignore (submit (Sub.make ~hold:h e [||]));
+  ignore (submit (Sub.make ~hold:h d [||]));
   Rig.wait d (Rig.submitted d);
   equal ~msg:"the other device's work, unrun" int 1 (P.queued pe)
 
@@ -199,8 +197,7 @@ let host_read m =
 (* Submits on [d] once a submission with [m], [d]'s memory, fixed for
    [access]: its point. *)
 let fixing d m access =
-  Rig.Point.value
-    (submit (Sub.make ~fixed:[ (m, access) ] ~reads:0 ~writes:0 d [||]))
+  Rig.Point.value (submit (Sub.make ~fixed:[ (m, access) ] d [||]))
 
 (* Fixed memory read is ordered as a read: a read of it, on the host or on
    another device, waits for no other reader, and a write waits for every
@@ -235,8 +232,8 @@ let test_fixed_write () =
 let test_fixed_shared () =
   let d, p = P.open_ "hold:fixed-shared" in
   let m = B.create d 64 in
-  let reads = Sub.make ~fixed:[ (m, B.Read) ] ~reads:0 ~writes:0 d [||] in
-  let writes = Sub.make ~fixed:[ (m, B.Read_write) ] ~reads:0 ~writes:0 d [||] in
+  let reads = Sub.make ~fixed:[ (m, B.Read) ] d [||] in
+  let writes = Sub.make ~fixed:[ (m, B.Read_write) ] d [||] in
   ignore (submit reads);
   equal ~msg:"after a read" answer Support.Reader.Claimed (host_read m);
   let v = Rig.Point.value (submit writes) in
@@ -288,7 +285,7 @@ let refused ~msg f = raises_match ~msg Exn.invalid_arg f
 
 let test_fixed_refusals () =
   let d, _ = P.open_ "hold:fixed-refusals" and e, _ = P.open_ "hold:other" in
-  let make fixed = Sub.make ~fixed ~reads:0 ~writes:0 d [||] in
+  let make fixed = Sub.make ~fixed d [||] in
   let dead = B.create d 8 in
   Rig.Claim.with_ ~read:[] ~donate:[ [ dead ] ] (fun c ->
       ignore (Rig.Claim.consume c ~why:"donated" dead));
@@ -322,7 +319,7 @@ let make_readers () =
   let m = B.create Rig.host (1 lsl 16) in
   let device d =
     let on = require_some (B.borrow d m) in
-    Sub.make ~fixed:[ (on, B.Read) ] ~reads:0 ~writes:0 d [||]
+    Sub.make ~fixed:[ (on, B.Read) ] d [||]
   in
   (m, device d0, device d1)
 

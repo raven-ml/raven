@@ -42,7 +42,7 @@ let mib = 1024 * kib
 
 (* A device and the run its row submits with; [step] as the driver names it and
    as rig loaded it, which a launch writes into [out], the one buffer of
-   [writes]. *)
+   [buffers]. *)
 type dev = {
   d : Rig.t;
   g : M.t;
@@ -51,7 +51,7 @@ type dev = {
   step : int;
   args : M.region;
   image : Rig.Image.t;
-  writes : Rig.Buffer.t array;
+  buffers : Rig.Buffer.t array;
 }
 
 let get = function Ok x -> x | Error why -> failwith why
@@ -74,15 +74,15 @@ let dev () =
   let image = get (Rig.Image.load d metallib) in
   let out = Rig.Buffer.create d 16 in
   let run = Rig.Submission.Run.make () in
-  let t = { d; g; run; v = 0; step; args; image; writes = [| out |] } in
+  let t = { d; g; run; v = 0; step; args; image; buffers = [| out |] } in
   H.set64 (host args) (address (alloc t 16));
   t
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
+let prepare t parts = Rig.Submission.make t.d parts
 
 let submit t s =
-  let p = Rig.submit s ~run:t.run ~reads:[||] ~writes:[||] ~waits:[||] in
+  let p = Rig.submit s ~run:t.run ~buffers:[||] ~waits:[||] in
   t.v <- Rig.Point.value p
 
 (* [step] launched [n] times in one submission, each over one thread and writing
@@ -103,7 +103,9 @@ let launches t n =
           };
     }
   in
-  let s = Sub.make ~reads:0 ~writes:1 t.d (Array.make n step) in
+  let s =
+    Sub.make ~access:[| Rig.Buffer.Read_write |] t.d (Array.make n step)
+  in
   for i = 0 to n - 1 do
     let b = Sub.block s i in
     Sub.Run.groups t.run b 1 1 1;
@@ -113,7 +115,7 @@ let launches t n =
   s
 
 let launch_submit t s =
-  let p = Rig.submit s ~run:t.run ~reads:[||] ~writes:t.writes ~waits:[||] in
+  let p = Rig.submit s ~run:t.run ~buffers:t.buffers ~waits:[||] in
   t.v <- Rig.Point.value p
 
 let wait t = Rig.wait t.d t.v

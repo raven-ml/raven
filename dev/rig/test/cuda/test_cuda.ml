@@ -285,7 +285,7 @@ let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
   let refs = [| { Sub.at = 0; slot = 0 } |] in
   let work = Sub.Launch { image = launch_image d; kernel; params; refs } in
   let s =
-    Sub.make ~reads:0 ~writes:1 d
+    Sub.make ~access:[| Read_write |] d
       [| { Sub.queue = "COMPUTE:0"; after = [||]; work } |]
   in
   let run = Run.make () in
@@ -295,7 +295,7 @@ let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
   Run.shared run b shared;
   (s, run)
 
-let submitted s run writes = Rig.submit s ~run ~reads:[||] ~writes ~waits:[||]
+let submitted s run buffers = Rig.submit s ~run ~buffers ~waits:[||]
 
 (* The 32-bit words [b] holds. *)
 let words b n = Array.init n (fun i -> H.get32 (B.address b + (4 * i)))
@@ -356,7 +356,7 @@ let largest_shared_memory () =
 let no_allocation () =
   S.with_ @@ fun { d; _ } ->
   let s, run = launching d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0 in
-  let writes = [| B.create d 4096 |] in
+  let buffers = [| B.create d 4096 |] in
   let b = Sub.block s 0 in
   (* [float64] stores first, where [int64] then stores [a]. *)
   let once i =
@@ -368,7 +368,7 @@ let no_allocation () =
     Run.int64 run b 8 i;
     Run.int32 run b 16 3;
     Run.float32 run b 20 1.5;
-    ignore (Sys.opaque_identity (submitted s run writes))
+    ignore (Sys.opaque_identity (submitted s run buffers))
   in
   once 0;
   Rig.wait d 1;

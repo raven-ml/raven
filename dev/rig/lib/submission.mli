@@ -32,8 +32,7 @@ type part = { queue : string; after : int array; work : work }
 val make :
   ?hold:hold ->
   ?fixed:(buffer * access) list ->
-  reads:int ->
-  writes:int ->
+  ?access:access array ->
   device ->
   part array ->
   t
@@ -83,13 +82,7 @@ module Run : sig
     = "caml_rig_run_float64_byte" "caml_rig_run_float64"
 end
 
-val submit :
-  t ->
-  run:Run.t ->
-  reads:buffer array ->
-  writes:buffer array ->
-  waits:int array ->
-  int
+val submit : t -> run:Run.t -> buffers:buffer array -> waits:int array -> int
 
 val copy : device -> string -> src:buffer -> dst:buffer -> int
 (** [copy d queue ~src ~dst] submits a copy of [src] into [dst], memory of [d],

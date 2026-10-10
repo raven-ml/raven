@@ -42,14 +42,10 @@ val sequence : t -> int
 (** [sequence p] is [p]'s kernels and slots as a key below {!sequences}: two
     plans of one key make the same {!parts}. *)
 
-val reads : t -> int
-(** [reads p] is the count of buffers [p]'s launches read: [a], [b], then [init]
-    where given. *)
-
-val writes : t -> int
-(** [writes p] is the count of buffers they write: the result, then the
-    workspace where [workspace p > 0], then the tickets where
-    [tickets p > 0]. *)
+val access : t -> Rig.Buffer.access array
+(** [access p] is the access of each buffer of a run of [p], in slot order: [a],
+    [b], the result, then [init] where given, then the workspace where
+    [workspace p > 0], then the tickets where [tickets p > 0]. *)
 
 val tickets : t -> int
 (** [tickets p] is the bytes of tickets [p]'s split sum takes, from the start
@@ -58,7 +54,7 @@ val tickets : t -> int
 
 val parts : t -> Rig.Image.t -> queue:string -> Rig.Submission.part array
 (** [parts p i ~queue] is the launches of [p]'s sequence of [i]'s kernels on
-    [queue], their refs into the slots {!reads} and {!writes} count. *)
+    [queue], their refs into the slots {!access} lists. *)
 
 val write : Rig.Submission.Run.t -> Rig.Submission.t -> t -> unit
 (** [write r s p] stores the geometry and parameters of [p]'s launches into

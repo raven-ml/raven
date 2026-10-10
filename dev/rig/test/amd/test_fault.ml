@@ -88,14 +88,9 @@ let after () =
   let dst = Rig.Buffer.create c 64
   and back = Rig.Buffer.create ~memory:Pinned c 64 in
   Rig.Buffer.copy ~src:(host_buffer (String.make 64 'y')) ~dst:src;
-  let s =
-    Rig.Submission.make ~reads:0 ~writes:0 c
-      [| copy ~dst src; copy ~dst:back dst |]
-  in
+  let s = Rig.Submission.make c [| copy ~dst src; copy ~dst:back dst |] in
   let run = Rig.Submission.Run.make () in
-  let v =
-    Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
-  in
+  let v = Rig.Point.value (Rig.submit s ~run ~buffers:[||] ~waits:[||]) in
   let rec reached n =
     A.signaled g >= v
     || n > 0
@@ -125,8 +120,9 @@ let unread () =
   in
   ignore
     (Rig.submit
-       (Rig.Submission.make ~reads:0 ~writes:0 c [| dispatch g co p "wild" |])
-       ~run:(Rig.Submission.Run.make ()) ~reads:[||] ~writes:[||] ~waits:[||]);
+       (Rig.Submission.make c [| dispatch g co p "wild" |])
+       ~run:(Rig.Submission.Run.make ())
+       ~buffers:[||] ~waits:[||]);
   let t0 = Sys.time () in
   while Sys.time () -. t0 < 0.5 do
     ()

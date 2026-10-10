@@ -7,8 +7,8 @@ open Windtrap
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Rig.Submission.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Rig.Submission.Run.make ()) ~buffers ~waits
 
 let timeout = 60.
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
@@ -285,7 +285,7 @@ let test_machine () =
   equal (list bool) [ false; false ]
     [ Rig.reaches g Rig.host; Rig.reaches Rig.host g ];
   equal ~msg:"computes" bool true (Rig.computes far);
-  ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 far [||]))
+  ignore (submit (Rig.Submission.make far [||]))
 
 (* A device of another machine opens once that machine's host is open, so every
    device has a host: before, the open raises and leaves the name unopened. *)
@@ -391,7 +391,7 @@ let test_fault_at_open () =
 
 let test_point () =
   let d = memory "open:point" in
-  let p = submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]) in
+  let p = submit (Rig.Submission.make d [||]) in
   equal string "open:point:1" (Format.asprintf "%a" Rig.Point.pp p)
 
 (* An opener's error is the open's, and leaves the name free. *)
@@ -418,8 +418,7 @@ let test_reopen_early () =
   let loser =
     Thread.create
       (fun () ->
-        try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
-        with Rig.Lost _ -> ())
+        try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ())
       ()
   in
   Support.await "a stop at the gate" (fun () -> P.sleepers p = 1);
@@ -431,7 +430,7 @@ let test_reopen_early () =
 
 let test_reopen () =
   let d, p = P.open_ "open:reopen" in
-  let s = Rig.Submission.make ~reads:0 ~writes:0 d [||] in
+  let s = Rig.Submission.make d [||] in
   P.fail p;
   raises_match (function Rig.Lost _ -> true | _ -> false) (fun () -> submit s);
   equal (list string) [ "stop" ] (P.log p);

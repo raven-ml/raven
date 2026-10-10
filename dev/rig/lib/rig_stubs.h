@@ -162,7 +162,8 @@ struct rig_sub {
   int *after; /* every part's [after], one after the other */
   int nfixed; /* the buffers the parts name */
   struct rig_fixed *fixed;
-  int nreads, nwrites; /* a run's buffers: those it reads, then writes */
+  int nslots;      /* a run's buffers */
+  uint8_t *writes; /* per slot: whether its work writes the buffer */
   int nrefs;
   struct rig_ref *refs; /* every launch's refs, one after the other */
   size_t args;          /* where its last launch's block ends in a run */

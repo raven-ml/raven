@@ -177,9 +177,9 @@ let pipeline t f = (require_some (Rig_metal.entry t.fill f)).code
 
 (* Submits [parts] as [t]'s next value, which it is. *)
 let submit_parts t parts =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 t.d parts in
+  let s = Rig.Submission.make t.d parts in
   let run = Rig.Submission.Run.make () in
-  Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
+  Rig.Point.value (Rig.submit s ~run ~buffers:[||] ~waits:[||])
 
 let submit t fills = submit_parts t (Array.map S.part fills)
 let wait t v = Rig.wait t.d v
@@ -870,11 +870,10 @@ let words b =
     (String.length s / 4)
     (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
 
-(* Submits [s] with [run], reading [reads] and writing [writes], and waits for
-   its writes. *)
-let run_wait s run ~reads ~writes =
-  ignore (Rig.submit s ~run ~reads ~writes ~waits:[||]);
-  Array.iter (fun b -> B.wait b Read) writes
+(* Submits [s] with [run] over [buffers], and waits for its writes. *)
+let run_wait s run buffers =
+  ignore (Rig.submit s ~run ~buffers ~waits:[||]);
+  Array.iter (fun b -> B.wait b Read) buffers
 
 let zeroed d n =
   let b = B.create d n in
@@ -931,7 +930,7 @@ let shared_law grid =
   cover "256 threads a group" (per = 256);
   let out = zeroed t.d (4 * n) in
   let s =
-    Sub.make ~reads:0 ~writes:1 t.d
+    Sub.make ~access:[| B.Read_write |] t.d
       [| launch image "neighbours" ~params:12 [ { at = 0; slot = 0 } ] |]
   in
   let run = Run.make () in
@@ -940,7 +939,7 @@ let shared_law grid =
   Run.shared run k (4 * per);
   Run.int64 run k 0 0;
   Run.int32 run k 8 7;
-  run_wait s run ~reads:[||] ~writes:[| out |];
+  run_wait s run [| out |];
   equal (array int)
     (Array.init n (fun i -> 7 + (((i mod per) + 1) mod per)))
     (words out)
@@ -975,7 +974,7 @@ let chained parts =
     | `Icb -> icb_part
   in
   let s =
-    Sub.make ~reads:0 ~writes:1 t.d (Array.of_list (List.map part parts))
+    Sub.make ~access:[| B.Read_write |] t.d (Array.of_list (List.map part parts))
   in
   let run = Run.make () in
   List.iteri
@@ -986,7 +985,7 @@ let chained parts =
         Run.int64 run k 0 0
       end)
     parts;
-  run_wait s run ~reads:[||] ~writes:[| out |];
+  run_wait s run [| out |];
   equal int (List.length parts) (words out).(0);
   b.release ();
   Rig_metal.free t.g args
@@ -996,12 +995,12 @@ let no_params () =
   let t = dev () in
   let image = launch_image t.d in
   let s =
-    Sub.make ~reads:0 ~writes:0 t.d [| launch image "empty" ~params:0 [] |]
+    Sub.make t.d [| launch image "empty" ~params:0 [] |]
   in
   let run = Run.make () in
   set_grid run (Sub.block s 0) one;
   let v =
-    Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
+    Rig.Point.value (Rig.submit s ~run ~buffers:[||] ~waits:[||])
   in
   wait t v;
   equal int v (Rig_metal.signaled t.g)
@@ -1013,7 +1012,7 @@ let widest () =
   let image = launch_image t.d in
   let out = zeroed t.d 4 in
   let s =
-    Sub.make ~reads:0 ~writes:1 t.d
+    Sub.make ~access:[| B.Read_write |] t.d
       [| launch image "last" ~params:4096 [ { at = 4088; slot = 0 } ] |]
   in
   let run = Run.make () in
@@ -1023,7 +1022,7 @@ let widest () =
     Run.int32 run k (4 * w) (w + 1)
   done;
   Run.int64 run k 4088 0;
-  run_wait s run ~reads:[||] ~writes:[| out |];
+  run_wait s run [| out |];
   equal int (1022 * 1023 / 2) (words out).(0)
 
 (* Geometry beyond a function's limits is refused at submit, before any
@@ -1035,7 +1034,7 @@ let refused_geometry () =
   let image = launch_image t.d in
   let out = zeroed t.d (4 * 4096) in
   let s =
-    Sub.make ~reads:0 ~writes:1 t.d
+    Sub.make ~access:[| B.Read_write |] t.d
       [| launch image "neighbours" ~params:12 [ { at = 0; slot = 0 } ] |]
   in
   let refused ?(shared = 4) groups threads =
@@ -1045,7 +1044,7 @@ let refused_geometry () =
     Run.shared run k shared;
     Run.int64 run k 0 0;
     raises_match Exn.invalid_arg (fun () ->
-        Rig.submit s ~run ~reads:[||] ~writes:[| out |] ~waits:[||]);
+        Rig.submit s ~run ~buffers:[| out |] ~waits:[||]);
     equal (option string) None (Rig.lost t.d)
   in
   refused (0, 1, 1) (1, 1, 1);
@@ -1066,7 +1065,7 @@ let spans_in_order n =
   let image = launch_image t.d in
   let out = zeroed t.d 4 in
   let s =
-    Sub.make ~reads:0 ~writes:1 t.d
+    Sub.make ~access:[| B.Read_write |] t.d
       [|
         launch image "step" ~params:8 [ { at = 0; slot = 0 } ];
         launch image "step" ~params:8 [ { at = 0; slot = 0 } ];
@@ -1082,7 +1081,7 @@ let spans_in_order n =
   let (), events =
     Rig.Profile.take (fun () ->
         for _ = 1 to n do
-          ignore (Rig.submit s ~run ~reads:[||] ~writes:[| out |] ~waits:[||])
+          ignore (Rig.submit s ~run ~buffers:[| out |] ~waits:[||])
         done;
         B.wait out Read)
   in
@@ -1114,15 +1113,15 @@ let no_allocation () =
   let image = launch_image t.d in
   let out = zeroed t.d 4 in
   let s =
-    Sub.make ~reads:0 ~writes:1 t.d
+    Sub.make ~access:[| B.Read_write |] t.d
       [| launch image "step" ~params:8 [ { at = 0; slot = 0 } ] |]
   in
-  let run = Run.make () and writes = [| out |] in
+  let run = Run.make () and buffers = [| out |] in
   let k = Sub.block s 0 in
   let go () =
     set_grid run k one;
     Run.int64 run k 0 0;
-    ignore (Rig.submit s ~run ~reads:[||] ~writes ~waits:[||])
+    ignore (Rig.submit s ~run ~buffers ~waits:[||])
   in
   go ();
   B.wait out Read;
@@ -1244,9 +1243,9 @@ let bump t b =
       ~groups:((n + 255) / 256)
       ~threads:256
   in
-  let s = Rig.Submission.make ~reads:0 ~writes:1 t.d [| S.part f |] in
+  let s = Rig.Submission.make ~access:[| Read_write |] t.d [| S.part f |] in
   let run = Rig.Submission.Run.make () in
-  ignore (Rig.submit s ~run ~reads:[||] ~writes:[| b |] ~waits:[||]);
+  ignore (Rig.submit s ~run ~buffers:[| b |] ~waits:[||]);
   B.wait b Read;
   Rig_metal.free t.g args
 

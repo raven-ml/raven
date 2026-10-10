@@ -188,8 +188,8 @@ let write b s =
     Rig.Submission.Fill { fill = store; arg; ring_units = 0; segment_bytes = 0 }
   in
   let s =
-    Rig.Submission.make ~reads:0 ~writes:1 (Rig.Buffer.device b)
+    Rig.Submission.make ~access:[| Read_write |] (Rig.Buffer.device b)
       [| { queue = "COMPUTE:0"; after = [||]; work } |]
   in
   let run = Rig.Submission.Run.make () in
-  ignore (Rig.submit s ~run ~reads:[||] ~writes:[| b |] ~waits:[||])
+  ignore (Rig.submit s ~run ~buffers:[| b |] ~waits:[||])

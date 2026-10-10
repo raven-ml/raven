@@ -10,12 +10,12 @@ module Prof = Rig.Profile
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers ~waits
 
 let timeout = 60.
 let memory name = require_ok ~pp:Format.pp_print_string (Rig.memory_device name)
-let empty d = Sub.make ~reads:0 ~writes:0 d [||]
+let empty d = Sub.make d [||]
 
 (* The spans of [events], as [(lane, name)]. *)
 let spans events =
@@ -163,7 +163,7 @@ let bump arg =
 (* Submits [parts] on [d] with a run whose launches run one group of one
    thread. *)
 let submit_parts d parts =
-  let s = Sub.make ~reads:0 ~writes:0 d parts in
+  let s = Sub.make d parts in
   let run = Sub.Run.make () in
   Array.iteri
     (fun i (p : Sub.part) ->
@@ -174,7 +174,7 @@ let submit_parts d parts =
           Sub.Run.threads run b 1 1 1
       | _ -> ())
     parts;
-  Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
+  Rig.submit s ~run ~buffers:[||] ~waits:[||]
 
 (* The spans of [d] in [events], as [(lane, name, start, stop)]. *)
 let device_spans d events =
@@ -256,8 +256,7 @@ let test_span_lost () =
     Prof.take (fun () ->
         ignore (submit_parts d [| bump arg |]);
         P.fail p;
-        try ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]))
-        with Rig.Lost _ -> ())
+        try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ())
   in
   equal (list string) [] (named events)
 

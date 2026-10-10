@@ -105,8 +105,8 @@ let launch ?(groups = (1, 1, 1)) ?(threads = threads) kernel ~addrs ~words =
 
 let seq = List.concat
 
-(* The submission of the launches [ls], in order, with its run and the buffers
-   it writes: each operand a launch addresses, once. Every byte of each block
+(* The submission of the launches [ls], in order, with its run and its
+   buffers, each written: each operand a launch addresses, once. Every byte of each block
    is stored here, and the run serves this submission alone. *)
 let submission t ls =
   let slots = ref [] in
@@ -139,10 +139,11 @@ let submission t ls =
         })
       ls
   in
-  let writes = Array.of_list (List.rev_map (fun o -> o.buf) !slots) in
+  let buffers = Array.of_list (List.rev_map (fun o -> o.buf) !slots) in
   let sub =
-    Rig.Submission.make ~reads:0 ~writes:(Array.length writes) t.rig
-      (Array.of_list parts)
+    Rig.Submission.make
+      ~access:(Array.make (Array.length buffers) Rig.Buffer.Read_write)
+      t.rig (Array.of_list parts)
   in
   let run = Rig.Submission.Run.make () in
   List.iteri
@@ -157,7 +158,7 @@ let submission t ls =
           (Int64.to_int (String.get_int64_le l.params (8 * q)))
       done)
     ls;
-  (sub, run, writes)
+  (sub, run, buffers)
 
 let call_contract c =
   match Nx_metal.contract c.spec ~dst:c.dst c.ops with
@@ -186,8 +187,8 @@ let prepare t r =
     List.iter
       (function
         | `Call c -> call_contract c
-        | `Submit (sub, run, writes) ->
-            ignore (Rig.submit sub ~run ~reads:[||] ~writes ~waits:[||]))
+        | `Submit (sub, run, buffers) ->
+            ignore (Rig.submit sub ~run ~buffers ~waits:[||]))
       ws;
     Rig.wait t.rig (Rig.submitted t.rig);
     ignore (Sys.opaque_identity r);

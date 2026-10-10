@@ -49,9 +49,9 @@ let handed =
 
 (* Submits [ps] on [d], and is their value. *)
 let submit d ps =
-  let s = Rig.Submission.make ~reads:0 ~writes:0 d ps in
+  let s = Rig.Submission.make d ps in
   let run = Rig.Submission.Run.make () in
-  Rig.Point.value (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||])
+  Rig.Point.value (Rig.submit s ~run ~buffers:[||] ~waits:[||])
 
 (* Paths *)
 
@@ -650,20 +650,16 @@ let high_word () =
   Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
   let word = require_some (P.locate (P.facts p).word).host in
   at_least int ~msg:"the word's host address" ~than:(1 lsl 40) word;
-  let empty = Rig.Submission.make ~reads:0 ~writes:0 pd [||] in
+  let empty = Rig.Submission.make pd [||] in
   let run = Rig.Submission.Run.make () in
-  let point = Rig.submit empty ~run ~reads:[||] ~writes:[||] ~waits:[||] in
+  let point = Rig.submit empty ~run ~buffers:[||] ~waits:[||] in
   let b = alloc t.g Pinned 16 in
   H.set64 (host b) 0;
   let l = S.launches t.g in
-  let s =
-    Rig.Submission.make ~reads:0 ~writes:0 t.d
-      [| S.words (release l (address b) 9) |]
-  in
+  let s = Rig.Submission.make t.d [| S.words (release l (address b) 9) |] in
   S.watchdog "a wait on a high host word" (fun () ->
       let v =
-        Rig.Point.value
-          (Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[| point |])
+        Rig.Point.value (Rig.submit s ~run ~buffers:[||] ~waits:[| point |])
       in
       still ~msg:"the word" int (v - 1) (fun () -> N.signaled t.g) ~ms:20;
       ignore (P.run p);
@@ -729,8 +725,7 @@ let words b ~at n =
   let a = B.bigarray Bigarray.int32 h in
   Array.init n (fun i -> Int32.to_int a.{i} land 0xffff_ffff)
 
-let submitted s run ~reads ~writes =
-  Rig.submit s ~run ~reads ~writes ~waits:[||]
+let submitted s run ~buffers = Rig.submit s ~run ~buffers ~waits:[||]
 
 (* Stores [ids]'s parameters into the block [k] of [run]: its words from [out]
    [offset] bytes on hold [a + b * k]. *)
@@ -747,7 +742,7 @@ let launching ?(kernel = "ids") ?(params = 24) d ~groups:(gx, gy, gz)
     ~threads:(tx, ty, tz) ~shared =
   let image = launch_image d in
   let s =
-    Sub.make ~reads:0 ~writes:1 d
+    Sub.make ~access:[| Read_write |] d
       [| launch_part image kernel ~params [| refer 0 0 |] |]
   in
   let run = Run.make () in
@@ -778,7 +773,7 @@ let refused_launches () =
       ?(shared = 0) () =
     let s, run = launching ?kernel ?params d ~groups ~threads ~shared in
     raises_match ~msg (Exn.invalid_arg ~substring:"never fit") (fun () ->
-        submitted s run ~reads:[||] ~writes:[| out |])
+        submitted s run ~buffers:[| out |])
   in
   refuses "65536 groups along y" ~groups:(1, 65536, 1) ();
   refuses "65536 groups along z" ~groups:(1, 1, 65536) ();
@@ -797,7 +792,7 @@ let refused_launches () =
   in
   ids_params run (Sub.block s 0) ~offset:0 ~a:0 ~b:1;
   let out = B.create d (4 * 65535 * 1024) in
-  Rig.Point.wait (submitted s run ~reads:[||] ~writes:[| out |])
+  Rig.Point.wait (submitted s run ~buffers:[| out |])
 
 (* A launch takes as much dynamic shared memory as a block may beside its
    own. *)
@@ -812,7 +807,7 @@ let most_shared_memory () =
   Run.int64 run b 0 0;
   Run.int32 run b 8 5;
   let out = B.create d (4 * 512) in
-  Rig.Point.wait (submitted s run ~reads:[||] ~writes:[| out |]);
+  Rig.Point.wait (submitted s run ~buffers:[| out |]);
   let value i g = (5 + (3 * i) + (7 * g)) land 0xffff_ffff in
   equal (array int) ~msg:"the words"
     (Array.init 512 (fun i ->
@@ -825,7 +820,7 @@ let most_shared_memory () =
 let no_allocation () =
   S.with_ @@ fun { d; _ } ->
   let s, run = launching d ~groups:(1, 1, 1) ~threads:(32, 1, 1) ~shared:0 in
-  let writes = [| B.create d 4096 |] in
+  let buffers = [| B.create d 4096 |] in
   let b = Sub.block s 0 in
   let once i =
     Run.groups run b 1 1 1;
@@ -837,7 +832,7 @@ let no_allocation () =
     Run.float32 run b 20 1.5;
     Run.float64 run b 16 2.5;
     Run.int32 run b 16 1;
-    ignore (Sys.opaque_identity (submitted s run ~reads:[||] ~writes))
+    ignore (Sys.opaque_identity (submitted s run ~buffers))
   in
   once 0;
   Rig.wait d (Rig.submitted d);
@@ -859,7 +854,9 @@ let launch_copy_launch () =
   let out = B.create d (4 * n) and mid = B.create d (4 * n) in
   let dst = B.create d (4 * n) in
   let s =
-    Sub.make ~reads:0 ~writes:3 d
+    Sub.make
+      ~access:[| Read_write; Read_write; Read_write |]
+      d
       [|
         launch_part image "ids" ~params:24 [| refer 0 0 |];
         copy_part ~after:[| 0 |] ~dst:mid out;
@@ -877,7 +874,7 @@ let launch_copy_launch () =
   Run.int64 run b2 0 0;
   Run.int64 run b2 8 0;
   Run.int32 run b2 16 1;
-  Rig.Point.wait (submitted s run ~reads:[||] ~writes:[| out; mid; dst |]);
+  Rig.Point.wait (submitted s run ~buffers:[| out; mid; dst |]);
   equal (array int)
     (Array.init n (fun k -> (2 * (11 + (3 * k))) + 1))
     (words dst ~at:0 n)
@@ -892,7 +889,7 @@ let launches_wrap () =
   let b = Sub.block s 0 in
   for i = 0 to n - 1 do
     ids_params run b ~offset:(4 * i) ~a:i ~b:0;
-    ignore (submitted s run ~reads:[||] ~writes:[| out |])
+    ignore (submitted s run ~buffers:[| out |])
   done;
   Rig.wait d (Rig.submitted d);
   equal (array int) (Array.init n Fun.id) (words out ~at:0 n)
@@ -904,7 +901,7 @@ let local_launch () =
   let n = 1024 in
   let out = B.create d (4 * n) in
   let s =
-    Sub.make ~reads:0 ~writes:1 d
+    Sub.make ~access:[| Read_write |] d
       [| launch_part (kernel_image d) "stack" ~params:12 [| refer 0 0 |] |]
   in
   let run = Run.make () in
@@ -913,7 +910,7 @@ let local_launch () =
   Run.threads run b 256 1 1;
   Run.int64 run b 0 0;
   Run.int32 run b 8 n;
-  Rig.Point.wait (submitted s run ~reads:[||] ~writes:[| out |]);
+  Rig.Point.wait (submitted s run ~buffers:[| out |]);
   equal (array int)
     (Array.init n (fun i -> (512 * i) + 130816))
     (words out ~at:0 n)

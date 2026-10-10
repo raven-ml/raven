@@ -114,7 +114,7 @@ type work =
 type prepared = {
   sub : Rig.Submission.t;
   blocks : Rig.Submission.Run.t;
-  writes : Rig.Buffer.t array;
+  buffers : Rig.Buffer.t array;
 }
 
 type body =
@@ -166,10 +166,9 @@ let prepare d works =
     { Rig.Submission.queue = q; after = [||]; work }
   in
   let parts = Array.of_list (List.map part works) in
-  let writes = Array.of_list (List.rev !slots) in
-  let sub =
-    Rig.Submission.make ~reads:0 ~writes:(Array.length writes) d.rig parts
-  in
+  let buffers = Array.of_list (List.rev !slots) in
+  let access = Array.make (Array.length buffers) Rig.Buffer.Read_write in
+  let sub = Rig.Submission.make ~access d.rig parts in
   let blocks = Rig.Submission.Run.make () in
   List.iteri
     (fun i (_, w) ->
@@ -190,11 +189,11 @@ let prepare d works =
                   Rig.Submission.Run.int32 blocks b ((8 * k) + 4) v)
             l.params)
     works;
-  { sub; blocks; writes }
+  { sub; blocks; buffers }
 
 let submit p =
   Rig.Point.value
-    (Rig.submit p.sub ~run:p.blocks ~reads:[||] ~writes:p.writes ~waits:[||])
+    (Rig.submit p.sub ~run:p.blocks ~buffers:p.buffers ~waits:[||])
 
 let compute = "COMPUTE:0"
 

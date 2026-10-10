@@ -108,7 +108,7 @@ type work =
 type prepared = {
   sub : Rig.Submission.t;
   blocks : Rig.Submission.Run.t;
-  writes : Rig.Buffer.t array;
+  buffers : Rig.Buffer.t array;
   held : bool;
 }
 
@@ -176,10 +176,9 @@ let prepare g works =
     { Rig.Submission.queue = q; after = [||]; work }
   in
   let parts = Array.of_list (List.map part works) in
-  let writes = Array.of_list (List.rev !slots) in
-  let sub =
-    Rig.Submission.make ~reads:0 ~writes:(Array.length writes) g.device parts
-  in
+  let buffers = Array.of_list (List.rev !slots) in
+  let access = Array.make (Array.length buffers) Rig.Buffer.Read_write in
+  let sub = Rig.Submission.make ~access g.device parts in
   let blocks = Rig.Submission.Run.make () in
   let block i l =
     let b = Rig.Submission.block sub i in
@@ -204,7 +203,7 @@ let prepare g works =
       | Launch (_, l) -> block i l)
     works;
   let held = match works with (_, Hold) :: _ -> true | _ -> false in
-  { sub; blocks; writes; held }
+  { sub; blocks; buffers; held }
 
 (* Submits [p], its hold waiting for the next {!release}, and is its value. The
    count only grows, so a hold an earlier submission queued, which the GPU has
@@ -216,7 +215,7 @@ let submit g p =
       want_at
       (Int64.to_int g.page.{0} + 1);
   Rig.Point.value
-    (Rig.submit p.sub ~run:p.blocks ~reads:[||] ~writes:p.writes ~waits:[||])
+    (Rig.submit p.sub ~run:p.blocks ~buffers:p.buffers ~waits:[||])
 
 let release g = g.page.{0} <- Int64.succ g.page.{0}
 

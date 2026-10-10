@@ -12,8 +12,8 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers ~waits
 
 let timeout = 60.
 let page_bytes = 1 lsl 16
@@ -107,7 +107,7 @@ let queued_copy d ~src ~dst =
   let part =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]))
+  ignore (submit (Sub.make d [| part |]))
 
 (* A driver's device borrows io memory through its pages, as host memory, mapped
    once whatever its borrows. *)
@@ -199,8 +199,8 @@ let test_free () =
   let d, p = P.open_ "io:user" in
   (fun () ->
     let m = B.create io page_bytes in
-    let s = Sub.make ~reads:1 ~writes:0 d [||] in
-    ignore (submit s ~reads:[| require_some (B.borrow d m) |]))
+    let s = Sub.make ~access:[| Read |] d [||] in
+    ignore (submit s ~buffers:[| require_some (B.borrow d m) |]))
     ();
   let drain () =
     Gc.full_major ();
@@ -267,13 +267,13 @@ let test_run_borrows () =
   let io, _ = open_pages () in
   let d, _ = P.open_ "io:slots" in
   let m = B.create io page_bytes in
-  let s = Sub.make ~reads:1 ~writes:1 d [||] in
+  let s = Sub.make ~access:[| Read; Read_write |] d [||] in
   let own = B.create d 8 and borrowed = require_some (B.borrow d m) in
   raises_match Exn.invalid_arg (fun () ->
-      ignore (submit s ~reads:[| m |] ~writes:[| own |]));
+      ignore (submit s ~buffers:[| m; own |]));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (submit s ~reads:[| borrowed |] ~writes:[| m |]));
-  ignore (submit s ~reads:[| borrowed |] ~writes:[| own |])
+      ignore (submit s ~buffers:[| borrowed; m |]));
+  ignore (submit s ~buffers:[| borrowed; own |])
 
 (* The minor words [f ()] allocates. *)
 let minor_words f =
@@ -378,17 +378,17 @@ let test_read_runs () =
   let r = Option.get (Pages.alloc t page_bytes) in
   let m = B.of_io io Pages.region_key r ~access:Read page_bytes in
   let on_d = require_some (B.borrow d m) and own = B.create d page_bytes in
-  let s = Sub.make ~reads:1 ~writes:1 d [||] in
-  ignore (submit s ~reads:[| on_d |] ~writes:[| own |]);
+  let s = Sub.make ~access:[| Read; Read_write |] d [||] in
+  ignore (submit s ~buffers:[| on_d; own |]);
   raises_match ~msg:"a run's write" Exn.invalid_arg (fun () ->
-      ignore (submit s ~reads:[| own |] ~writes:[| on_d |]));
+      ignore (submit s ~buffers:[| own; on_d |]));
   let copy src dst =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  ignore (Sub.make ~reads:0 ~writes:0 d [| copy on_d own |]);
+  ignore (Sub.make d [| copy on_d own |]);
   raises_match ~msg:"a copy part's destination" Exn.invalid_arg (fun () ->
-      ignore (Sub.make ~reads:0 ~writes:0 d [| copy own on_d |]));
-  let fixed access = Sub.make ~fixed:[ (on_d, access) ] ~reads:0 ~writes:0 d [||] in
+      ignore (Sub.make d [| copy own on_d |]));
+  let fixed access = Sub.make ~fixed:[ (on_d, access) ] d [||] in
   ignore (fixed B.Read);
   raises_match ~msg:"fixed memory written" Exn.invalid_arg (fun () ->
       ignore (fixed B.Read_write))

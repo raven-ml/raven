@@ -599,22 +599,33 @@ let sequence c =
       lor (Bool.to_int (c.splits > 1) lsl 2)
       lor (Bool.to_int c.init lsl 3))
 
-let reads c = if c.init then 3 else 2
-
 (* The workspace is a slot of the sequence whenever a launch addresses it,
    whatever its bytes: a pack of no element takes none. *)
 let uses_workspace c = c.a.packed || c.b.packed || c.splits > 1
-let writes c =
-  1 + Bool.to_int (uses_workspace c) + Bool.to_int (c.splits > 1)
-
 let tickets c = if c.splits > 1 then 4 * c.tiles else 0
 let workspace c = if uses_workspace c then Int.max 1 c.used else 0
 
+(* The slots: [a] 0, [b] 1 and [y] 2, then [init], the workspace and the tickets
+   where the sequence has them. A split uses the workspace, so the tickets
+   follow it. *)
+let y_slot = 2
+let init_slot = 3
+let ws_slot c = init_slot + Bool.to_int c.init
+
+let access c =
+  let module B = Rig.Buffer in
+  Array.concat
+    [
+      [| B.Read; B.Read; B.Read_write |];
+      (if c.init then [| B.Read |] else [||]);
+      (if uses_workspace c then [| B.Read_write |] else [||]);
+      (if c.splits > 1 then [| B.Read_write |] else [||]);
+    ]
+
 (* [c]'s launches in order: each kernel, its parameter bytes and its refs into
-   the slots [reads] and [writes] count. *)
+   the slots [access] lists. *)
 let launches c =
-  let y = reads c in
-  let ws = y + 1 in
+  let ws = ws_slot c in
   let slot_ref at slot = { Rig.Submission.at; slot } in
   let pack slot =
     ( pack_kernel,
@@ -628,8 +639,8 @@ let launches c =
       [
         [ slot_ref P.a (if c.a.packed then ws else 0) ];
         [ slot_ref P.b (if c.b.packed then ws else 1) ];
-        (if c.init then [ slot_ref P.init 2 ] else []);
-        [ slot_ref P.y y ];
+        (if c.init then [ slot_ref P.init init_slot ] else []);
+        [ slot_ref P.y y_slot ];
         (if split then [ slot_ref P.partials ws; slot_ref P.tickets (ws + 1) ]
          else []);
       ]

@@ -47,9 +47,9 @@ let alloc t kind n = Option.get (N.alloc t.g kind n)
 type submission = { s : Sub.t; run : Sub.Run.t }
 
 let submission t ps =
-  { s = Sub.make ~reads:0 ~writes:0 t.d ps; run = Sub.Run.make () }
+  { s = Sub.make t.d ps; run = Sub.Run.make () }
 
-let submit { s; run } = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
+let submit { s; run } = Rig.submit s ~run ~buffers:[||] ~waits:[||]
 let run s = Rig.Point.wait (submit s)
 
 (* The floor of [t]: its later values are given from C. *)

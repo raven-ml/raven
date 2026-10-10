@@ -20,7 +20,7 @@ same way.
 - Fixed memory: memory every run uses, named once when the step is made
 - Holds: a release that runs once the step is unreachable and its work done
 - A run's buffers: what it reads and writes, passed to each submit with the
-  storage it uses: `submit s ~run ~reads ~writes ~waits`
+  storage it uses: `submit s ~run ~buffers ~waits`
 - The host rewriting the argument only after the work that read it:
   `Buffer.wait arg Read_write`
 
@@ -30,9 +30,9 @@ same way.
 | -------------------------------------------- | --------------------------------------- |
 | `Submission.Fill { fill; arg; _ }`           | Work that is a C function               |
 | `Hold.make ~release v`                       | What a step's release frees             |
-| `Submission.make ~hold ~fixed ~reads ~writes ...` | A step's submission, its fixed memory and its run's arity |
+| `Submission.make ~hold ~fixed ~access ...`   | A step's submission, its fixed memory and its run's accesses |
 | `Submission.Run.make ()`                     | Storage for one submit at a time         |
-| `submit s ~run ~reads ~writes ~waits`        | Run it once with these buffers           |
+| `submit s ~run ~buffers ~waits`              | Run it once with these buffers           |
 
 ## Next Steps
 

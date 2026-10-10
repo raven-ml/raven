@@ -22,9 +22,9 @@
         (fun () -> Rig_metal.open_ 0)
       |> Result.get_ok
     in
-    let s = Rig.Submission.make ~reads:0 ~writes:0 d [||] in
+    let s = Rig.Submission.make d [||] in
     let run = Rig.Submission.Run.make () in
-    let p = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||] in
+    let p = Rig.submit s ~run ~buffers:[||] ~waits:[||] in
     Rig.Point.wait p
     ]}
 

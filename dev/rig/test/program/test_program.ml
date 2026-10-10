@@ -42,8 +42,8 @@ let functions = data "functions"
 let hole ?(width = G.W64) ?(add = 0) ?(shift = 0) at leaf =
   { G.at; width; leaf; add; shift }
 
-(* A launch of Polled's [fill]: the 64-bit word [i] of its write slot [0] is
-   [base + i], for [groups] groups. *)
+(* A launch of Polled's [fill]: for [groups] groups, the 64-bit word [i] of its
+   slot [0] is [base + i]. *)
 let fill ?(holes : _ iarray = [||]) ~image ~groups base =
   let bytes = String.make 8 '\000' ^ le64 base in
   {
@@ -85,8 +85,8 @@ let kcopy ~image bytes =
         };
   }
 
-let submit ?(reads : _ iarray = [||]) ?(writes : _ iarray = [||]) device parts =
-  G.Submit { device; parts; reads; writes; fixed = [||] }
+let submit ?(buffers : _ iarray = [||]) device parts =
+  G.Submit { device; parts; buffers; fixed = [||] }
 
 let alloc ?(copies = G.One) ?(init = data "") device bytes =
   G.Alloc { device; kind = B.Device; bytes; init; copies }
@@ -192,12 +192,11 @@ let describe c =
   let step = function
     | Fill { dev; dst; groups; base } ->
         submit dev
-          ~writes:[| slot dst |]
+          ~buffers:[| (slot dst, B.Read_write) |]
           [| fill ~image:(image dev) ~groups base |]
     | Kcopy { dev; src; dst; bytes } ->
         submit dev
-          ~reads:[| slot src |]
-          ~writes:[| slot dst |]
+          ~buffers:[| (slot src, B.Read); (slot dst, B.Read_write) |]
           [| kcopy ~image:(image dev) bytes |]
     | Move { src; dst } -> G.Move { src = slot src; dst = slot dst }
   in
@@ -368,9 +367,11 @@ let hole_law h =
       inputs = [| { device = 0; bytes = 16 }; { device = 0; bytes = 16 } |];
       steps =
         [|
-          submit 0 ~writes:[| Input 0 |]
+          submit 0
+            ~buffers:[| (Input 0, B.Read_write) |]
             [| fill_word 0 (hole 8 (G.Leaf address)) |];
-          submit 0 ~writes:[| Input 0 |]
+          submit 0
+            ~buffers:[| (Input 0, B.Read_write) |]
             [| fill_word 1 (shaped h 8 (G.Leaf address)) |];
           Move
             {
@@ -410,7 +411,12 @@ let one_device_fill ?(copies = G.One) d =
     memory = [| alloc ~copies 0 64 |];
     images = [| { device = 0; binary = functions } |];
     inputs = [||];
-    steps = [| submit 0 ~writes:[| all 0 |] [| fill ~image:0 ~groups:1 7 |] |];
+    steps =
+      [|
+        submit 0
+          ~buffers:[| (all 0, B.Read_write) |]
+          [| fill ~image:0 ~groups:1 7 |];
+      |];
   }
 
 let test_two_waits () =
@@ -466,7 +472,12 @@ let base d =
     memory = [| alloc 0 64 |];
     images = [| { device = 0; binary = functions } |];
     inputs = [| { device = 0; bytes = 64 } |];
-    steps = [| submit 0 ~writes:[| Input 0 |] [| fill ~image:0 ~groups:1 0 |] |];
+    steps =
+      [|
+        submit 0
+          ~buffers:[| (Input 0, B.Read_write) |]
+          [| fill ~image:0 ~groups:1 0 |];
+      |];
   }
 
 let with_params bytes (t : G.t) =
@@ -474,7 +485,8 @@ let with_params bytes (t : G.t) =
     t with
     steps =
       [|
-        submit 0 ~writes:[| Input 0 |]
+        submit 0
+          ~buffers:[| (Input 0, B.Read_write) |]
           [|
             {
               G.queue = "COMPUTE:0";
@@ -568,7 +580,11 @@ let refusals =
           steps =
             [|
               submit 0
-                ~writes:[| Memory { memory = 0; offset = 60; length = 8 } |]
+                ~buffers:
+                  [|
+                    ( Memory { memory = 0; offset = 60; length = 8 },
+                      B.Read_write );
+                  |]
                 [| fill ~image:0 ~groups:1 0 |];
             |];
         }),
@@ -578,7 +594,11 @@ let refusals =
         {
           (base d) with
           steps =
-            [| submit 0 ~writes:[| Input 3 |] [| fill ~image:0 ~groups:1 0 |] |];
+            [|
+              submit 0
+                ~buffers:[| (Input 3, B.Read_write) |]
+                [| fill ~image:0 ~groups:1 0 |];
+            |];
         }),
       one );
     ( "an image's index",
@@ -586,7 +606,11 @@ let refusals =
         {
           (base d) with
           steps =
-            [| submit 0 ~writes:[| Input 0 |] [| fill ~image:5 ~groups:1 0 |] |];
+            [|
+              submit 0
+                ~buffers:[| (Input 0, B.Read_write) |]
+                [| fill ~image:5 ~groups:1 0 |];
+            |];
         }),
       one );
     ( "parameters of no whole word",
@@ -626,7 +650,9 @@ let refusals =
           (base d) with
           steps =
             [|
-              submit 0 ~writes:[| Input 0 |] [| { f with queue = "COPY:0" } |];
+              submit 0
+                ~buffers:[| (Input 0, B.Read_write) |]
+                [| { f with queue = "COPY:0" } |];
             |];
         }),
       one );
@@ -636,7 +662,8 @@ let refusals =
           (base d) with
           steps =
             [|
-              submit 0 ~writes:[| Input 0 |]
+              submit 0
+                ~buffers:[| (Input 0, B.Read_write) |]
                 [| fill ~image:0 ~groups:(1 lsl 33) 0 |];
             |];
         }),
@@ -678,7 +705,12 @@ let test_unborrowable () =
       memory = [| alloc 1 64 |];
       images = [| { device = 0; binary = functions } |];
       inputs = [||];
-      steps = [| submit 0 ~writes:[| all 0 |] [| fill ~image:0 ~groups:1 0 |] |];
+      steps =
+        [|
+          submit 0
+            ~buffers:[| (all 0, B.Read_write) |]
+            [| fill ~image:0 ~groups:1 0 |];
+        |];
     }
   in
   let why = require_error (G.load t [| a; b |]) in
@@ -767,8 +799,7 @@ let ints_law i =
           G.Submit
             {
               device = 0;
-              reads = [||];
-              writes = [| Input 0 |];
+              buffers = [| (Input 0, B.Read_write) |];
               fixed = [||];
               parts =
                 [|
@@ -817,7 +848,8 @@ let loop_law k =
               body =
                 [|
                   step_affine (Input 0) ~a:(Fixed 1) ~c:(Fixed 1);
-                  submit 0 ~writes:[| Input 1 |]
+                  submit 0
+                    ~buffers:[| (Input 1, B.Read_write) |]
                     [|
                       fill ~image:0 ~groups:1 0
                         ~holes:[| hole 8 (G.Int 1 : value) |];
@@ -855,7 +887,11 @@ let test_flag () =
               body =
                 [|
                   submit 0
-                    ~writes:[| Memory { memory = 0; offset = 0; length = 8 } |]
+                    ~buffers:
+                      [|
+                        ( Memory { memory = 0; offset = 0; length = 8 },
+                          B.Read_write );
+                      |]
                     [| fill ~image:0 ~groups:1 0 |];
                   step_affine (Input 0) ~a:(Fixed 1) ~c:(Fixed 1);
                 |];
@@ -1127,10 +1163,9 @@ let gen_t =
       [
         (let+ device = n
          and+ parts = few part
-         and+ reads = few slot
-         and+ writes = few slot
+         and+ buffers = few (pair slot access)
          and+ fixed = few (pair view access) in
-         Submit { device; parts; reads; writes; fixed });
+         Submit { device; parts; buffers; fixed });
         (let+ src = slot and+ dst = slot in
          G.Move { src; dst });
         (let+ code = n
@@ -1215,9 +1250,9 @@ let gen_damage =
 
 let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
-  Bytes.set_int64_le s 12 1L;
+  Bytes.set_int64_le s 12 2L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 1, not 2" why
+  contains ~msg:"names the versions" ~sub:"version 2, not 3" why
 
 (* Rails *)
 
@@ -1448,7 +1483,7 @@ let extreme_law e =
   let t = base d in
   let view offset length =
     submit 0
-      ~writes:[| Memory { memory = 0; offset; length } |]
+      ~buffers:[| (Memory { memory = 0; offset; length }, B.Read_write) |]
       [| fill ~image:0 ~groups:1 0 |]
   in
   let t =
@@ -1523,7 +1558,8 @@ let test_trip_follows_work () =
               flag = None;
               body =
                 [|
-                  submit 0 ~reads:[| Ints |] ~writes:[| Input 0 |]
+                  submit 0
+                    ~buffers:[| (Ints, B.Read); (Input 0, B.Read_write) |]
                     [| copy_byte |];
                 |];
             };
@@ -1558,8 +1594,11 @@ let test_int_follows_writer () =
       inputs = [| { device = 0; bytes = 8 } |];
       steps =
         [|
-          submit 0 ~writes:[| Ints |] [| fill ~image:0 ~groups:1 42 |];
-          submit 0 ~writes:[| Input 0 |]
+          submit 0
+            ~buffers:[| (Ints, B.Read_write) |]
+            [| fill ~image:0 ~groups:1 42 |];
+          submit 0
+            ~buffers:[| (Input 0, B.Read_write) |]
             [| fill ~image:0 ~groups:1 0 ~holes:[| hole 8 (Int 0 : value) |] |];
         |];
     }
@@ -1587,9 +1626,13 @@ let test_input_checked_at_use () =
       inputs = Iarray.init 3 (fun _ -> { G.device = 0; bytes = 8 });
       steps =
         [|
-          submit 0 ~writes:[| Input 0 |] [| fill ~image:0 ~groups:1 42 |];
+          submit 0
+            ~buffers:[| (Input 0, B.Read_write) |]
+            [| fill ~image:0 ~groups:1 42 |];
           G.Move { src = Input 0; dst = Input 1 };
-          submit 0 ~writes:[| Input 2 |] [| fill ~image:0 ~groups:1 7 |];
+          submit 0
+            ~buffers:[| (Input 2, B.Read_write) |]
+            [| fill ~image:0 ~groups:1 7 |];
         |];
     }
   in

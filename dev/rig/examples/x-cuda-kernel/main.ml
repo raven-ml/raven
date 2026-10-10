@@ -59,7 +59,7 @@ let () =
     let part =
       { Submission.queue = "COMPUTE:0"; after = [||]; work = launch }
     in
-    let s = Submission.make ~reads:2 ~writes:1 g [| part |] in
+    let s = Submission.make ~access:[| Read; Read; Read_write |] g [| part |] in
 
     (* The run: the grid of n threads, and [n]. The refs' offsets stay 0, the
        start of each buffer. *)
@@ -68,7 +68,7 @@ let () =
     Submission.Run.groups run k (n / block) 1 1;
     Submission.Run.threads run k block 1 1;
     Submission.Run.int32 run k 24 n;
-    let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
+    let pt = submit s ~run ~buffers:[| a; b; out |] ~waits:[||] in
     Format.printf "%s (%s) ran add on %d floats at %a@." (name g) (arch g) n
       Point.pp pt;
 

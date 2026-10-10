@@ -23,7 +23,7 @@
     {v
       Buffer.t ──view, borrow──> memory ──stamps──> points
           │                                            ▲
-          │ submit ~reads ~writes, make ~fixed         │ submit
+          │ submit ~buffers, make ~access ~fixed       │ submit
           ▼                                            │
       Submission.t ─────────── one device ── facts.edge (C)
     v}
@@ -775,8 +775,8 @@ end
     A submission is work for one device: its {e parts}, each for one of the
     device's queues ({!queues}), and the parts each waits for within the
     submission. It is made once and run many times. What changes from one run to
-    the next, the buffers its work reads and writes and the points it waits for,
-    are arguments of {!submit}, which keeps none of them once it returns, with a
+    the next, the buffers its work uses and the points it waits for, are
+    arguments of {!submit}, which keeps none of them once it returns, with a
     {!Submission.Run}, the caller's storage for one submit at a time. A
     submission holds nothing of a run, so any number of threads submit it at
     once, each with its own run. Its prepared form and a run live outside the
@@ -795,8 +795,8 @@ module Submission : sig
 
   type ref = { at : int; slot : int }
   (** The type for a launch's references to a run's buffers: the 8 parameter
-      bytes at [at] hold a byte offset into the run's buffer [slot], counting
-      [reads] then [writes] ({!submit}). *)
+      bytes at [at] hold a byte offset into the run's buffer [slot] ({!submit}'s
+      [buffers]). *)
 
   (** The type for the work of a part. Every buffer it names is used by the
       work: a copy's [dst] is written, everything else read. *)
@@ -834,7 +834,7 @@ module Submission : sig
             offset plus the address of the first byte of the run's buffer [slot]
             as the device's work addresses it ({!Buffer.address}). Through a
             ref, it reaches only bytes of that buffer, and writes them only if
-            the buffer is one of the run's [writes]: rig orders the work by
+            the run's access for [slot] is [Read_write]: rig orders the work by
             these facts and checks neither. *)
 
   type part = { queue : string; after : int array; work : work }
@@ -846,17 +846,17 @@ module Submission : sig
   val make :
     ?hold:Hold.t ->
     ?fixed:(Buffer.t * Buffer.access) list ->
-    reads:int ->
-    writes:int ->
+    ?access:Buffer.access array ->
     device ->
     part array ->
     t
-  (** [make ~hold ~fixed ~reads ~writes d parts] is a submission of [parts] on
-      [d] whose every run reads [reads] buffers and writes [writes] buffers
-      ({!submit}), a buffer counted as often as it is passed. Every submit of
-      the submission is one [hold]'s release waits for ({!Hold.make}), and the
-      submission keeps [hold] reachable. [make] reads [parts], and the arrays in
-      them, once: changing them afterwards changes nothing.
+  (** [make ~hold ~fixed ~access d parts] is a submission of [parts] on [d]
+      whose every run uses one buffer per element of [access] (defaults to
+      none), with that access, at the same index of {!submit}'s [buffers]: a
+      buffer counted as often as it is passed. Every submit of the submission
+      is one [hold]'s release waits for ({!Hold.make}), and the submission
+      keeps [hold] reachable. [make] reads [parts], [access] and the arrays in
+      [parts] once: changing them afterwards changes nothing.
 
       [fixed] (defaults to none) names memory every run uses besides the run's
       buffers and the parts' own, such as the memory a [Words] replay's command
@@ -866,7 +866,7 @@ module Submission : sig
       submissions.
 
       Raises [Invalid_argument] if [d] is {!host} or an {!Io} device, which run
-      no submitted work, [reads] or [writes] is negative, an index of a part's
+      no submitted work, an index of a part's
       [after] is negative or not below its own, a queue is not one of [d]'s, a
       part's buffer is dead, a {!Words} or {!Fill} buffer is not host memory, a
       {!Copy}'s buffers differ in size, are not [d]'s memory (on a driver's
@@ -877,7 +877,7 @@ module Submission : sig
       [d], or [Read_write] on [Read] memory, a {!Launch}'s [image] is not loaded
       on [d] or has no function [kernel], its [params] is negative or above
       4096, a ref's [at] is not a multiple of 8, its 8 bytes are not among the
-      parameters or its [slot] is not below [reads + writes], or two refs share
+      parameters or its [slot] is not an index of [access], or two refs share
       an [at]; as {!Image.entry} where [d] cannot run a launch's function; and
       {!Lost} if [d] is lost. Parts that never fit [d]'s queues, and launches
       whose blocks they refuse, are refused at {!submit}. *)
@@ -982,24 +982,23 @@ end
 val submit :
   Submission.t ->
   run:Submission.Run.t ->
-  reads:Buffer.t array ->
-  writes:Buffer.t array ->
+  buffers:Buffer.t array ->
   waits:Point.t array ->
   Point.t
-(** [submit s ~run ~reads ~writes ~waits] runs [s]'s work once, reading the
-    buffers of [reads] and writing those of [writes] after the points of
-    [waits], with [run] as its storage. It hands the work to [s]'s device [d] as
-    the value [v] it assigns, and is the point [(d, v)]. A buffer may appear
-    more than once, in either array. The buffers are on [d]: [d]'s work reaches
-    other memory through a {!Buffer.borrow}, an {!Io} device's through its
-    pages. [submit] reads each element of [reads] and [writes] once and keeps
-    the buffer reachable until it has raised its stamps. While [submit] runs, no
+(** [submit s ~run ~buffers ~waits] runs [s]'s work once, using each buffer of
+    [buffers] with the access [s] declares at its index ([access] of
+    {!Submission.make}), after the points of [waits], with [run] as its
+    storage. It hands the work to [s]'s device [d] as the value [v] it assigns,
+    and is the point [(d, v)]. A buffer may appear more than once. The buffers
+    are on [d]: [d]'s work reaches other memory through a {!Buffer.borrow}, an
+    {!Io} device's through its pages. [submit] reads each element of [buffers]
+    once and keeps the buffer reachable until it has raised its stamps. While [submit] runs, no
     claim holds a buffer it is passed exclusive ({!Claim}): a caller ensures it
     by a claim of its own, or by memory nothing else reaches. [submit] does not
     check it. It:
-    + Loads the points [s]'s work must follow: the last write of each buffer of
-      [reads], of each buffer its parts read and of its fixed memory read, every
-      use by another device of each buffer of [writes], of each copy's [dst] and
+    + Loads the points [s]'s work must follow: the last write of each buffer it
+      reads, of each buffer its parts read and of its fixed memory read, every
+      use by another device of each buffer it writes, of each copy's [dst] and
       of its fixed memory written, and the points of [waits].
       Each foreign point not yet reached is a wait in [d]'s queue if [d]'s
       queues wait for the producer's completion ({!Rig_edge.waits}) and [d] maps
@@ -1011,8 +1010,8 @@ val submit :
       hand-over or commit, and asks [d]'s driver for room ([edge] in
       {!Rig_edge.facts}). Once the parts fit, it assigns [v], one more than
       {!submitted}[ d], hands the work over, which encodes it on [d]'s queues,
-      and raises the stamps of [reads], [writes], the parts' buffers, the fixed
-      memory and the hold to [(d, v)]. While they do not fit, it commits [d]'s
+      and raises the stamps of [buffers], the parts' buffers, the fixed memory
+      and the hold to [(d, v)]. While they do not fit, it commits [d]'s
       work, waits for [d]'s next value with the turn released, and tries again.
       No OCaml code runs between the assignment and the turn's release, so a
       value is handed over or [d] is lost.
@@ -1037,11 +1036,11 @@ val submit :
     It allocates nothing unless it waits or a profile is being taken.
 
     Raises [Invalid_argument] if another submit is using [run] ([submit] takes
-    it at entry and gives it back when it returns or raises), if [reads] or
-    [writes] holds another number of buffers than {!Submission.make} declared, a
-    buffer of [reads], [writes], a part or [s]'s fixed memory is dead, a buffer
-    of [reads] or [writes] is not on [d], the memory of a buffer of [writes] is
-    [Read] ({!Buffer.val-access}), a launch's ref names one whose memory has no
+    it at entry and gives it back when it returns or raises), if [buffers] holds
+    another number of buffers than [access] in {!Submission.make}, a buffer of
+    [buffers], a part or [s]'s fixed memory is dead, a buffer of [buffers] is
+    not on [d], a buffer whose access is [Read_write] is on [Read] memory
+    ({!Buffer.val-access}), a launch's ref names one whose memory has no
     address ({!Buffer.address}), [run] does not hold the block of [s]'s last
     launch, which no setter stored into, or the parts never fit [d]'s empty
     queues, name one its driver does not run, or hold a launch whose block [d]'s

@@ -9,8 +9,8 @@ module Claim = Rig.Claim
 module P = Rig_support.Polled
 module R = Rig_support.Reader
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Rig.Submission.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Rig.Submission.Run.make ()) ~buffers ~waits
 
 let timeout = 60.
 let answer = Testable.make ~pp:R.pp_answer ~equal:( = )
@@ -565,11 +565,12 @@ let test_c_claims () =
       equal ~msg:"no claim left" bool true (Claim.exclusive c b'))
 
 let write d m =
-  ignore
-    (submit (Rig.Submission.make ~reads:0 ~writes:1 d [||]) ~writes:[| m |])
+  let s = Rig.Submission.make ~access:[| B.Read_write |] d [||] in
+  ignore (submit s ~buffers:[| m |])
 
 let read d m =
-  ignore (submit (Rig.Submission.make ~reads:1 ~writes:0 d [||]) ~reads:[| m |])
+  let s = Rig.Submission.make ~access:[| B.Read |] d [||] in
+  ignore (submit s ~buffers:[| m |])
 
 (* Whether a claim holds [m]'s memory: a donation of it stays a read. *)
 let claimed m =
@@ -621,7 +622,7 @@ let lost_by d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 (* Loses [d]: its next submit fails. *)
 let lose d p =
   P.fail p;
-  try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
+  try ignore (submit (Rig.Submission.make d [||]))
   with Rig.Lost _ -> ()
 
 (* A lost device's memory answers Lost even once its work on it was reached,
@@ -721,7 +722,7 @@ let test_c_lost_borrow () =
 let test_c_fixed () =
   let d, p = P.open_ "claim:c-fixed" in
   let m = B.create d 64 in
-  let fixed access = Rig.Submission.make ~fixed:[ (m, access) ] ~reads:0 ~writes:0 d [||] in
+  let fixed access = Rig.Submission.make ~fixed:[ (m, access) ] d [||] in
   ignore (submit (fixed B.Read));
   equal ~msg:"an unreached read" answer R.Claimed (R.claim m B.Read);
   R.release m;
@@ -737,11 +738,10 @@ let test_c_fixed () =
 let test_lost_claims () =
   let d, p = P.open_ "claim:lost" in
   let m = B.create d 64 in
-  let w = Rig.Submission.make ~reads:0 ~writes:1 d [||] in
-  ignore (submit w ~writes:[| m |]);
+  let w = Rig.Submission.make ~access:[| B.Read_write |] d [||] in
+  ignore (submit w ~buffers:[| m |]);
   P.fail p;
-  (try ignore (submit (Rig.Submission.make ~reads:0 ~writes:0 d [||]))
-   with Rig.Lost _ -> ());
+  (try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ());
   raises_match lost (fun () -> Claim.read m);
   let h = B.create Rig.host 64 in
   raises_match lost (fun () -> Claim.with_ ~read:[ h; m ] ~donate:[] ignore);

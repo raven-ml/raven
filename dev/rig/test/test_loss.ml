@@ -10,10 +10,10 @@ module P = Rig_support.Polled
 module Support = Rig_support
 
 let timeout = 60.
-let empty d = Sub.make ~reads:0 ~writes:0 d [||]
+let empty d = Sub.make d [||]
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers ~waits
 
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
@@ -61,11 +61,11 @@ let test_after_stop () =
 let test_unrun_names () =
   let d, p = P.open_ "loss:unrun" in
   let h = B.create Rig.host (1 lsl 16) in
-  let s = Sub.make ~reads:1 ~writes:0 d [||] in
-  let reads = [| require_some (B.borrow d h) |] in
+  let s = Sub.make ~access:[| B.Read |] d [||] in
+  let buffers = [| require_some (B.borrow d h) |] in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
-  raises_match (lost d) (fun () -> submit s ~reads);
+  raises_match (lost d) (fun () -> submit s ~buffers);
   equal int (1 lsl 16) (Bigarray.Array1.dim (B.bigarray Bigarray.char h))
 
 (* A wait looks at every producer its device's queue waits on, however many
@@ -245,15 +245,15 @@ let test_others_go_on () =
   let d, p = P.open_ "loss:lost" in
   let e, _ = P.open_ "loss:kept" in
   let named = B.create e 64 in
-  let s = Sub.make ~reads:1 ~writes:0 d [||] in
-  Rig.Point.wait (submit s ~reads:[| require_some (B.borrow d named) |]);
+  let s = Sub.make ~access:[| B.Read |] d [||] in
+  Rig.Point.wait (submit s ~buffers:[| require_some (B.borrow d named) |]);
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   B.wait named B.Read_write;
   Rig.Claim.read named;
   Rig.Claim.release named;
-  let w = Sub.make ~reads:0 ~writes:1 e [||] in
-  Rig.Point.wait (submit w ~writes:[| named |]);
+  let w = Sub.make ~access:[| B.Read_write |] e [||] in
+  Rig.Point.wait (submit w ~buffers:[| named |]);
   equal (option string) None (Rig.lost e)
 
 (* Other memory raises a lost device's loss for a use that waits for a point the
@@ -262,8 +262,8 @@ let test_others_go_on () =
 let test_unreached () =
   let d, p = P.open_ "loss:unreached" in
   let h = B.create Rig.host (1 lsl 16) in
-  let reads = Sub.make ~reads:1 ~writes:0 d [||] in
-  ignore (submit reads ~reads:[| require_some (B.borrow d h) |]);
+  let reads = Sub.make ~access:[| B.Read |] d [||] in
+  ignore (submit reads ~buffers:[| require_some (B.borrow d h) |]);
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   B.wait h B.Read;
@@ -279,9 +279,9 @@ let test_stop_reaches_nothing () =
   let d, p = P.open_ "loss:stop-raises" in
   let e, _ = P.open_ "loss:stop-other" in
   let m = B.create e 64 in
-  let writes = Sub.make ~reads:0 ~writes:1 d [||] in
+  let writes = Sub.make ~access:[| B.Read_write |] d [||] in
   let b = require_some (B.borrow d m) in
-  let v = Rig.Point.value (submit writes ~writes:[| b |]) in
+  let v = Rig.Point.value (submit writes ~buffers:[| b |]) in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   equal ~msg:"the word after the stop" bool true (Rig.signaled d >= v);
@@ -310,7 +310,8 @@ let test_own_memory () =
       ("a borrow", fun () -> ignore (B.borrow Rig.host m));
       ( "a submit on another device",
         fun () ->
-          ignore (submit (Sub.make ~reads:1 ~writes:0 e [||]) ~reads:[| b |]) );
+          let s = Sub.make ~access:[| B.Read |] e [||] in
+          ignore (submit s ~buffers:[| b |]) );
     ];
   equal (option string) None (Rig.lost e)
 
@@ -335,8 +336,8 @@ let test_reused_after_loss () =
   let at =
     (fun () ->
       let m = B.create a n in
-      let s = Sub.make ~reads:1 ~writes:0 u [||] in
-      Rig.Point.wait (submit s ~reads:[| require_some (B.borrow u m) |]);
+      let s = Sub.make ~access:[| B.Read |] u [||] in
+      Rig.Point.wait (submit s ~buffers:[| require_some (B.borrow u m) |]);
       B.address m)
       ()
   in

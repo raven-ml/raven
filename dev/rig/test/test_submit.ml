@@ -14,11 +14,10 @@ let memory name = require_ok ~pp:Format.pp_print_string (Rig.memory_device name)
 
 (* [b] borrowed on [d], as a run on [d] takes it. *)
 let on d b = require_some (B.borrow d b)
-let empty ?(reads = 0) ?(writes = 0) d = Sub.make ~reads ~writes d [||]
+let empty ?access d = Sub.make ?access d [||]
 
-let submit ?(run = Sub.Run.make ()) ?(reads = [||]) ?(writes = [||])
-    ?(waits = [||]) s =
-  Rig.submit s ~run ~reads ~writes ~waits
+let submit ?(run = Sub.Run.make ()) ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run ~buffers ~waits
 
 let page_bytes = 1 lsl 16
 
@@ -46,7 +45,7 @@ let test_fill () =
   let d = memory "submit:fill" in
   let arg = B.create Rig.host 8 in
   Support.store (B.address arg) 0;
-  let s = Sub.make ~reads:0 ~writes:0 d [| bump arg; bump arg |] in
+  let s = Sub.make d [| bump arg; bump arg |] in
   let run = Sub.Run.make () in
   ignore (submit ~run s);
   ignore (submit ~run s);
@@ -149,7 +148,7 @@ let test_hang_in_queue () =
     Sub.Fill { fill = Support.slow; arg = ms; ring_units = 0; segment_bytes = 0 }
   in
   let kernel = { Sub.queue = "COMPUTE:0"; after = [||]; work = fill } in
-  let a = submit (Sub.make ~reads:0 ~writes:0 producer [| kernel |]) in
+  let a = submit (Sub.make producer [| kernel |]) in
   let v = Rig.Point.value (submit (empty consumer) ~waits:[| a |]) in
   P.stall pc 2;
   Rig.wait consumer v;
@@ -159,11 +158,10 @@ let test_refusals () =
   let d = memory "submit:refusals" in
   let arg = B.create Rig.host 8 in
   raises_match Exn.invalid_arg (fun () ->
-      Sub.make ~reads:0 ~writes:0 d [| { (bump arg) with after = [| 0 |] } |]);
+      Sub.make d [| { (bump arg) with after = [| 0 |] } |]);
   raises_match Exn.invalid_arg (fun () ->
-      Sub.make ~reads:0 ~writes:0 d [| { (bump arg) with queue = "COPY:9" } |]);
-  raises_match Exn.invalid_arg (fun () -> Sub.make ~reads:(-1) ~writes:0 d [||]);
-  raises_match Exn.invalid_arg (fun () -> submit (empty ~reads:1 d))
+      Sub.make d [| { (bump arg) with queue = "COPY:9" } |]);
+  raises_match Exn.invalid_arg (fun () -> submit (empty ~access:[| B.Read |] d))
 
 (* Each misuse [Submission.make] and [submit] state raises
    [Invalid_argument]. *)
@@ -177,8 +175,8 @@ let test_make_refusals () =
   let copy src dst =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  let make d parts = ignore (Sub.make ~reads:0 ~writes:0 d parts) in
-  let s = Sub.make ~reads:1 ~writes:1 d [||] in
+  let make d parts = ignore (Sub.make d parts) in
+  let s = Sub.make ~access:[| B.Read; B.Read_write |] d [||] in
   let elsewhere = B.create (fst (P.open_ "submit:elsewhere")) 8 in
   List.iter
     (fun (msg, f) -> raises_match ~msg Exn.invalid_arg f)
@@ -194,17 +192,15 @@ let test_make_refusals () =
         fun () -> make d [| copy arg (B.create Rig.host 8) |] );
       ("a part's dead buffer", fun () -> make d [| copy dead unseen |]);
       ( "a run's read of the host's memory",
-        fun () -> ignore (submit s ~reads:[| arg |] ~writes:[| unseen |]) );
+        fun () -> ignore (submit s ~buffers:[| arg; unseen |]) );
       ( "a run's write of another device's memory",
-        fun () -> ignore (submit s ~reads:[| unseen |] ~writes:[| elsewhere |])
-      );
-      ( "a run of more reads than made",
-        fun () ->
-          ignore (submit s ~reads:[| unseen; unseen |] ~writes:[| unseen |]) );
-      ( "a run of fewer writes than made",
-        fun () -> ignore (submit s ~reads:[| unseen |] ~writes:[||]) );
+        fun () -> ignore (submit s ~buffers:[| unseen; elsewhere |]) );
+      ( "a run of more buffers than made",
+        fun () -> ignore (submit s ~buffers:[| unseen; unseen; unseen |]) );
+      ( "a run of fewer buffers than made",
+        fun () -> ignore (submit s ~buffers:[| unseen |]) );
       ( "a run's dead buffer",
-        fun () -> ignore (submit s ~reads:[| dead |] ~writes:[| unseen |]) );
+        fun () -> ignore (submit s ~buffers:[| dead; unseen |]) );
     ]
 
 (* A submit that raises keeps nothing of its run: the next submit of the
@@ -215,22 +211,22 @@ let test_cleared_on_raise () =
   let point = submit (empty producer) in
   P.fail pp;
   (try ignore (submit (empty producer)) with Rig.Lost _ -> ());
-  let s = empty ~reads:1 d and b = on d (B.create Rig.host 8) in
+  let s = empty ~access:[| B.Read |] d and b = on d (B.create Rig.host 8) in
   let run = Sub.Run.make () in
   raises_match
     (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> submit ~run s ~reads:[| b |] ~waits:[| point |]);
-  equal int 1 (Rig.Point.value (submit ~run s ~reads:[| b |]))
+    (fun () -> submit ~run s ~buffers:[| b |] ~waits:[| point |]);
+  equal int 1 (Rig.Point.value (submit ~run s ~buffers:[| b |]))
 
 (* A run's buffer whose memory was consumed through another buffer refuses the
    submit. *)
 let test_dead_slot () =
   let d = memory "submit:dead-slot" in
   let b = B.create Rig.host 8 in
-  let s = empty ~reads:1 d and borrowed = on d b in
+  let s = empty ~access:[| B.Read |] d and borrowed = on d b in
   Rig.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
       ignore (Rig.Claim.consume c ~why:"donated" b));
-  raises_match Exn.invalid_arg (fun () -> submit s ~reads:[| borrowed |]);
+  raises_match Exn.invalid_arg (fun () -> submit s ~buffers:[| borrowed |]);
   equal int 0 (Rig.submitted d)
 
 (* A submission checks the buffers it was made with: a part's buffer that died
@@ -241,7 +237,7 @@ let test_parts_changed () =
   Support.store (B.address a) 0;
   Support.store (B.address b) 0;
   let parts = [| bump a |] in
-  let s = Sub.make ~reads:0 ~writes:0 d parts in
+  let s = Sub.make d parts in
   parts.(0) <- bump b;
   let a' =
     Rig.Claim.with_ ~read:[] ~donate:[ [ a ] ] (fun c ->
@@ -266,7 +262,7 @@ let test_parts_kept () =
   let b = B.create Rig.host 8 in
   Support.store (B.address b) 0;
   let parts = [| bump (fresh ()) |] in
-  let s = Sub.make ~reads:0 ~writes:0 d parts in
+  let s = Sub.make d parts in
   parts.(0) <- bump b;
   Gc.full_major ();
   equal ~msg:"the part's buffer collected" bool false !collected;
@@ -286,9 +282,10 @@ let test_read_waits () =
   let producer, pp = P.open_ "submit:producer" in
   let consumer = memory "submit:consumer" in
   let b = B.create producer page_bytes in
-  ignore (submit (empty ~writes:1 producer) ~writes:[| b |]);
+  ignore (submit (empty ~access:[| B.Read_write |] producer) ~buffers:[| b |]);
   equal int 1 (P.queued pp);
-  ignore (submit (empty ~reads:1 consumer) ~reads:[| on consumer b |]);
+  ignore
+    (submit (empty ~access:[| B.Read |] consumer) ~buffers:[| on consumer b |]);
   equal int 0 (P.queued pp)
 
 (* A part's buffers are ordered as a run's are: a copy waits for another
@@ -301,11 +298,11 @@ let test_part_points () =
   let copy =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  let s = Sub.make ~reads:0 ~writes:0 d [| copy |] and run = Sub.Run.make () in
-  ignore (submit (empty ~writes:1 e) ~writes:[| on e src |]);
+  let s = Sub.make d [| copy |] and run = Sub.Run.make () in
+  ignore (submit (empty ~access:[| B.Read_write |] e) ~buffers:[| on e src |]);
   ignore (submit ~run s);
   equal ~msg:"after a write of the source" int 0 (P.queued pe);
-  ignore (submit (empty ~reads:1 e) ~reads:[| on e dst |]);
+  ignore (submit (empty ~access:[| B.Read |] e) ~buffers:[| on e dst |]);
   ignore (submit ~run s);
   equal ~msg:"after a read of the destination" int 0 (P.queued pe)
 
@@ -330,8 +327,9 @@ let test_run_keeps () =
   in
   let at = ref 0 in
   let run =
-    submit (empty ~writes:1 d)
-      ~writes:
+    submit
+      (empty ~access:[| B.Read_write |] d)
+      ~buffers:
         (let w = B.create d n in
          at := B.address w;
          [| w |])
@@ -438,24 +436,34 @@ let test_wait_in_queue () =
   equal ~msg:"the producer's word" int (Rig.Point.value a)
     (Rig.signaled producer)
 
+let any_access = Gen.of_list [ B.Read; B.Read_write ]
+
+let pp_access ppf a =
+  Format.pp_print_string ppf
+    (match a with B.Read -> "Read" | B.Read_write -> "Read_write")
+
+(* Whether a [Read_write] comes before a [Read]. *)
+let rec write_first = function
+  | [] -> false
+  | B.Read :: rest -> write_first rest
+  | B.Read_write :: rest -> List.mem B.Read rest
+
 (* A submit hands its driver the handle of each region its run and parts use,
-   once. A case reads the buffers [reads] picks among [n], and writes those
-   [writes] picks. *)
-type handles = { n : int; reads : int list; writes : int list }
+   once. A case's run uses, for each element of [uses], the buffer it picks
+   among [n] with its access. *)
+type handles = { n : int; uses : (int * B.access) list }
 
 let pp_handles ppf c =
-  let ints = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int) in
-  Format.fprintf ppf "@[{ n = %d;@ reads = [%a];@ writes = [%a] }@]" c.n ints
-    c.reads ints c.writes
+  let pp_use ppf (k, a) = Format.fprintf ppf "%d %a" k pp_access a in
+  let uses = Format.(pp_print_list ~pp_sep:pp_print_space pp_use) in
+  Format.fprintf ppf "@[{ n = %d;@ uses = [%a] }@]" c.n uses c.uses
 
 let handles_case =
   let open Gen in
   with_pp pp_handles
     (let* n = int_range 1 40 in
-     let picks k = list ~size:(int_range 0 k) (int_range 0 (n - 1)) in
-     map
-       (fun (reads, writes) -> { n; reads; writes })
-       (pair (picks 24) (picks 8)))
+     let use = pair (int_range 0 (n - 1)) any_access in
+     map (fun uses -> { n; uses }) (list ~size:(int_range 0 32) use))
 
 let handles_device = lazy (P.open_ "submit:handles")
 
@@ -466,14 +474,13 @@ let handles_run = Sub.Run.make ()
 let handles_law c =
   let d, p = Lazy.force handles_device in
   let bs = Array.init c.n (fun _ -> B.create d 8) in
-  let reads = List.length c.reads and writes = List.length c.writes in
-  let s = Sub.make ~reads ~writes d [| bump (B.create Rig.host 8) |] in
-  let pick ks = Array.of_list (List.map (fun k -> bs.(k)) ks) in
-  ignore
-    (submit ~run:handles_run s ~reads:(pick c.reads) ~writes:(pick c.writes));
-  let named = List.sort_uniq Int.compare (c.reads @ c.writes) in
-  cover "a buffer named twice"
-    (List.length named < List.length c.reads + List.length c.writes);
+  let access = Array.of_list (List.map snd c.uses) in
+  let s = Sub.make ~access d [| bump (B.create Rig.host 8) |] in
+  let buffers = Array.of_list (List.map (fun (k, _) -> bs.(k)) c.uses) in
+  ignore (submit ~run:handles_run s ~buffers);
+  let named = List.sort_uniq Int.compare (List.map fst c.uses) in
+  cover "a buffer named twice" (List.length named < List.length c.uses);
+  cover "a written buffer before a read one" (write_first (List.map snd c.uses));
   cover "more than 16 buffers named" (List.length named > 16);
   equal (list int)
     (List.sort Int.compare (List.map (fun k -> B.address bs.(k)) named))
@@ -481,14 +488,16 @@ let handles_law c =
 
 (* Each submit of one submission hands its driver the handles that submit's run
    and parts name, whatever the submits before it named. A case submits once per
-   element of [runs], each picking the run's buffers among [n]. *)
-type rerun = { n : int; reads : int; writes : int; runs : int list list }
+   element of [runs], each picking among [n] a buffer per element of [access],
+   used with that access. *)
+type rerun = { n : int; access : B.access list; runs : int list list }
 
 let pp_rerun ppf c =
   let ints = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int) in
+  let accesses = Format.(pp_print_list ~pp_sep:pp_print_space pp_access) in
   let runs = Format.(pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf ";@ ")) in
-  Format.fprintf ppf "@[{ n = %d;@ reads = %d;@ writes = %d;@ runs = [%a] }@]"
-    c.n c.reads c.writes
+  Format.fprintf ppf "@[{ n = %d;@ access = [%a];@ runs = [%a] }@]" c.n accesses
+    c.access
     (runs (fun ppf r -> Format.fprintf ppf "[%a]" ints r))
     c.runs
 
@@ -496,24 +505,20 @@ let rerun_case =
   let open Gen in
   with_pp pp_rerun
     (let* n = int_range 1 6 in
-     let* reads = int_range 0 4 in
-     let* writes = int_range 0 2 in
-     let run = list ~size:(constant (reads + writes)) (int_range 0 (n - 1)) in
-     map
-       (fun runs -> { n; reads; writes; runs })
-       (list ~size:(int_range 2 4) run))
+     let* access = list ~size:(int_range 0 6) any_access in
+     let k = List.length access in
+     let run = list ~size:(constant k) (int_range 0 (n - 1)) in
+     map (fun runs -> { n; access; runs }) (list ~size:(int_range 2 4) run))
 
 let rerun_law c =
   let d, p = Lazy.force handles_device in
   let bs = Array.init c.n (fun _ -> B.create d 8) in
-  let s =
-    Sub.make ~reads:c.reads ~writes:c.writes d [| bump (B.create Rig.host 8) |]
-  in
+  let access = Array.of_list c.access in
+  let s = Sub.make ~access d [| bump (B.create Rig.host 8) |] in
+  cover "a written buffer before a read one" (write_first c.access);
   let named run =
-    let run = Array.of_list (List.map (fun k -> bs.(k)) run) in
-    ignore
-      (submit ~run:handles_run s ~reads:(Array.sub run 0 c.reads)
-         ~writes:(Array.sub run c.reads c.writes));
+    let buffers = Array.of_list (List.map (fun k -> bs.(k)) run) in
+    ignore (submit ~run:handles_run s ~buffers);
     List.sort Int.compare (P.last_handles p)
   in
   List.iteri
@@ -532,7 +537,7 @@ let rerun_law c =
 let test_room () =
   let d, p = P.open_ ~capacity:1 "submit:room" in
   let arg = B.create Rig.host 8 in
-  let s = Sub.make ~reads:0 ~writes:0 d [| bump arg |] in
+  let s = Sub.make d [| bump arg |] in
   let run = Sub.Run.make () in
   ignore (submit ~run s);
   ignore (submit ~run s);
@@ -593,8 +598,7 @@ let test_copy_refused () =
   let copy =
     { Sub.queue = "COMPUTE:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  raises_match Exn.invalid_arg (fun () ->
-      Sub.make ~reads:0 ~writes:0 d [| copy |])
+  raises_match Exn.invalid_arg (fun () -> Sub.make d [| copy |])
 
 (* A part of a kind its queue does not run is refused when the submission is
    made: Polled's queues run fills and copies, and with no copies, fills alone,
@@ -632,16 +636,15 @@ let test_runs () =
   List.iter
     (fun queue ->
       raises_match ~msg:("words on " ^ queue) Exn.invalid_arg (fun () ->
-          Sub.make ~reads:0 ~writes:0 d [| part queue (Sub.Words words) |]))
+          Sub.make d [| part queue (Sub.Words words) |]))
     [ "COMPUTE:0"; "COPY:0" ];
   let src = B.create e 8 and dst = B.create e 8 in
   raises_match ~msg:"a copy where no queue copies" Exn.invalid_arg (fun () ->
-      Sub.make ~reads:0 ~writes:0 e
-        [| part "COMPUTE:0" (Sub.Copy { src; dst }) |]);
+      Sub.make e [| part "COMPUTE:0" (Sub.Copy { src; dst }) |]);
   let image = Result.get_ok (Rig.Image.load d "code:64") in
   let launch = Sub.Launch { image; kernel = "main"; params = 0; refs = [||] } in
   raises_match ~msg:"a launch on COPY:0" Exn.invalid_arg (fun () ->
-      Sub.make ~reads:0 ~writes:0 d [| part "COPY:0" launch |]);
+      Sub.make d [| part "COPY:0" launch |]);
   equal ~msg:"no queues on the host" int 0 (List.length (Rig.queues Rig.host))
 
 (* A value's work starts once the previous value's completed, on every queue:
@@ -679,7 +682,7 @@ let test_device_order () =
   let copy src dst =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  let run parts = ignore (submit (Sub.make ~reads:0 ~writes:0 d parts)) in
+  let run parts = ignore (submit (Sub.make d parts)) in
   let a' = require_some (B.borrow d a) and c' = require_some (B.borrow d c) in
   run [| copy a' b |];
   run [| fill ~dst:(B.address out) ~src:(B.address b) |];
@@ -756,7 +759,7 @@ let make t =
   let copy =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  let s = Sub.make ~reads:0 ~writes:1 t.d [| copy |] in
+  let s = Sub.make ~access:[| B.Read_write |] t.d [| copy |] in
   { dev = t; s = Some s; run = Sub.Run.make (); parts }
 
 let submit_sub sub =
@@ -764,7 +767,7 @@ let submit_sub sub =
   let s = Option.get sub.s in
   let out = B.create t.d 256 in
   let at = B.address out in
-  let v = Rig.Point.value (submit ~run:sub.run s ~writes:[| out |]) in
+  let v = Rig.Point.value (submit ~run:sub.run s ~buffers:[| out |]) in
   sub.parts.last <- v;
   ignore (watch t ~dropped:(frees t) ~last:v [ at ]);
   v
@@ -818,13 +821,12 @@ let lifetime =
 
 let test_allocation () =
   let d = memory "submit:words" in
-  let s = empty ~reads:1 d and reads = [| on d (B.create Rig.host 8) |] in
-  let run = Sub.Run.make () in
-  ignore (Rig.submit s ~run ~reads ~writes:[||] ~waits:[||]);
+  let s = empty ~access:[| B.Read |] d in
+  let buffers = [| on d (B.create Rig.host 8) |] and run = Sub.Run.make () in
+  ignore (Rig.submit s ~run ~buffers ~waits:[||]);
   let before = Gc.minor_words () in
   for _ = 1 to 100 do
-    ignore
-      (Sys.opaque_identity (Rig.submit s ~run ~reads ~writes:[||] ~waits:[||]))
+    ignore (Sys.opaque_identity (Rig.submit s ~run ~buffers ~waits:[||]))
   done;
   let words = int_of_float (Gc.minor_words () -. before) / 100 in
   equal int 0 words
@@ -862,7 +864,7 @@ let make_shared () =
     dev = d;
     base = Rig.submitted d;
     arg;
-    sub = Sub.make ~reads:0 ~writes:0 d [| bump arg; bump arg |];
+    sub = Sub.make d [| bump arg; bump arg |];
   }
 
 (* Every submit ran both its fills. *)

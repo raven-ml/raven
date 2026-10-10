@@ -47,7 +47,7 @@ let run g =
       work = Launch { image; kernel = "add"; params = 24; refs };
     }
   in
-  let s = Submission.make ~reads:2 ~writes:1 g [| part |] in
+  let s = Submission.make ~access:[| Read; Read; Read_write |] g [| part |] in
 
   (* The run: n / 64 groups of 64 work-items, each array from its first
      byte. *)
@@ -59,7 +59,7 @@ let run g =
 
   let a = floats g float_of_int and b = floats g (fun _ -> 0.5) in
   let out = Buffer.create g (4 * n) in
-  let pt = submit s ~run ~reads:[| a; b |] ~writes:[| out |] ~waits:[||] in
+  let pt = submit s ~run ~buffers:[| a; b; out |] ~waits:[||] in
   Format.printf "%s (%s) ran add on %d floats at %a@." (name g) (arch g) n
     Point.pp pt;
 

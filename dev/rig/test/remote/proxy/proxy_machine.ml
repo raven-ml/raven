@@ -367,11 +367,11 @@ let far_of_string d s =
 let random_string n = String.init n (fun _ -> Char.chr (Random.int 256))
 
 let copy_submission d ~src ~dst =
-  Sub.make ~reads:0 ~writes:0 d
+  Sub.make d
     [| { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } } |]
 
 let submit ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[||] ~waits
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||] ~waits
 
 let lost_w =
   Testable.structural ~pp:(fun ppf -> function

@@ -20,7 +20,7 @@ dune exec ./main.exe
 | [`02-files`](./02-files/) | Files as the disk's memory: copy or borrow | `Rig_disk.create_file`, `of_file`, `barrier`, `Buffer.borrow` |
 | [`03-timelines`](./03-timelines/) | Submissions, values and points | `memory_device`, `Submission.make`, `Submission.Run.make`, `submit`, `Point.wait` |
 | [`04-stamps`](./04-stamps/) | Work across devices, ordered by the memory it touches | `Buffer.borrow`, `submit ~waits`, `Buffer.wait` |
-| [`05-steps`](./05-steps/) | A step prepared once and run many times | `Submission.Fill`, `Submission.make ~fixed`, `Hold.make`, `submit ~run ~reads ~writes` |
+| [`05-steps`](./05-steps/) | A step prepared once and run many times | `Submission.Fill`, `Submission.make ~fixed`, `Hold.make`, `submit ~run ~buffers` |
 | [`06-reclamation`](./06-reclamation/) | Memory that returns without a free | `budget`, `set_budget`, `Out_of_memory` |
 | [`07-claims`](./07-claims/) | Writing a donated input in place | `Claim.with_`, `exclusive`, `consume` |
 | [`08-loss`](./08-loss/) | A device that fails, and what goes on | `Lost`, `lost`, `signaled` |

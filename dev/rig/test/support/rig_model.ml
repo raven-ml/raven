@@ -1467,7 +1467,7 @@ let make_sys ?hold ((s : sdev), w) pair sc =
           },
           Some arg )
   in
-  let sub = Sub.make ?hold ~reads:1 ~writes:1 s.d [| part |] in
+  let sub = Sub.make ?hold ~access:[| B.Read; B.Read_write |] s.d [| part |] in
   Atomic.set sc.ss
     (Some
        {
@@ -1521,7 +1521,7 @@ let make_own_sys ((s : sdev), w) n sc =
   let part =
     { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
   in
-  let sub = Sub.make ~reads:1 ~writes:1 s.d [| part |] in
+  let sub = Sub.make ~access:[| B.Read; B.Read_write |] s.d [| part |] in
   Atomic.set sc.ss
     (Some
        {
@@ -1570,7 +1570,7 @@ let make_launch_sys ((s : sdev), w) sc =
           { image; kernel = "copy"; params = launch_params; refs = launch_refs };
     }
   in
-  let sub = Sub.make ~reads:1 ~writes:1 s.d [| part |] in
+  let sub = Sub.make ~access:[| B.Read; B.Read_write |] s.d [| part |] in
   Atomic.set sc.ss
     (Some
        {
@@ -1674,8 +1674,7 @@ let submit_sys last rc wc sc =
     Sub.Run.int64 run b 0 0;
     Sub.Run.int64 run b 8 0;
     Sub.Run.int64 run b 16 (min (B.length r.b) (B.length wb.b));
-    Rig.Point.value
-      (Rig.submit sub.s ~run ~reads:[| r.b |] ~writes:[| wb.b |] ~waits:[||])
+    Rig.Point.value (Rig.submit sub.s ~run ~buffers:[| r.b; wb.b |] ~waits:[||])
   end
   else
     Mutex.protect sub.slock @@ fun () ->
@@ -1702,8 +1701,7 @@ let submit_sys last rc wc sc =
         end
     | None -> ());
     Rig.Point.value
-      (Rig.submit sub.s ~run:sub.srun ~reads:[| r.b |] ~writes:[| wb.b |]
-         ~waits:[||])
+      (Rig.submit sub.s ~run:sub.srun ~buffers:[| r.b; wb.b |] ~waits:[||])
 
 (* Holds *)
 

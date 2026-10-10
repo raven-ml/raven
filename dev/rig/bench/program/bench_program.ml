@@ -60,8 +60,7 @@ let fills steps =
       {
         device = d;
         parts = [| launch d |];
-        reads = [||];
-        writes = [| G.Input d |];
+        buffers = [| (G.Input d, B.Read_write) |];
         fixed = [||];
       }
   in
@@ -114,7 +113,7 @@ let by_hand steps () =
         }
     in
     let s =
-      Sub.make ~reads:0 ~writes:1 ds.(d)
+      Sub.make ~access:[| B.Read_write |] ds.(d)
         [| { Sub.queue = "COMPUTE:0"; after = [||]; work } |]
     in
     let run = Sub.Run.make () and b = Sub.block s 0 in
@@ -126,8 +125,7 @@ let by_hand steps () =
   let subs = Array.init steps sub in
   let go () =
     Array.iter
-      (fun (s, run, writes) ->
-        ignore (Rig.submit s ~run ~reads:[||] ~writes ~waits:[||]))
+      (fun (s, run, buffers) -> ignore (Rig.submit s ~run ~buffers ~waits:[||]))
       subs
   in
   { ps; go; n = 0 }
@@ -244,9 +242,7 @@ let stepping () =
               };
         }
       in
-      let sub () =
-        (Sub.make ~reads:0 ~writes:0 d [| fill |], Sub.Run.make ())
-      in
+      let sub () = (Sub.make d [| fill |], Sub.Run.make ()) in
       {
         job;
         pid;
@@ -275,8 +271,7 @@ let step s =
     v := Rig.Point.value (G.run s.share s.frame).(0)
   done;
   Array.iter
-    (fun (sub, run) ->
-      ignore (Rig.submit sub ~run ~reads:[||] ~writes:[||] ~waits:[||]))
+    (fun (sub, run) -> ignore (Rig.submit sub ~run ~buffers:[||] ~waits:[||]))
     s.subs;
   Mutex.unlock s.lock;
   s.last <- (match s.last with [] -> [ !v ] | x :: _ -> [ !v; x ])
@@ -351,8 +346,7 @@ let spinner d =
                         };
                   };
                 |];
-              reads = [||];
-              writes = [||];
+              buffers = [||];
               fixed = [||];
             };
         |];

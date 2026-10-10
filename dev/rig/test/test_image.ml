@@ -14,8 +14,8 @@ module Prof = Rig.Profile
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers ~waits
 
 let timeout = 60.
 let count call p = List.length (List.filter (( = ) call) (P.log p))
@@ -39,8 +39,7 @@ let test_refused () =
   | Ok _ -> failf "a refused binary loaded"
   | Error why ->
       equal bool true (String.starts_with ~prefix:"image:refused" why);
-      equal int 1
-        (Rig.Point.value (submit (Sub.make ~reads:0 ~writes:0 d [||])))
+      equal int 1 (Rig.Point.value (submit (Sub.make d [||])))
 
 let test_no_code () =
   raises_match Exn.invalid_arg (fun () -> Image.load Rig.host "code:64")
@@ -52,7 +51,7 @@ let test_unload () =
   let code =
     (fun () ->
       let p = load d "code:64" in
-      ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]));
+      ignore (submit (Sub.make d [||]));
       require_some (Image.entry p "main"))
       ()
   in
@@ -74,7 +73,7 @@ let test_entry_lost () =
   let d, p = P.open_ "image:entry-lost" in
   let i = load d "code:64" in
   P.fail p;
-  raises_match (lost d) (fun () -> submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  raises_match (lost d) (fun () -> submit (Sub.make d [||]));
   raises_match (lost d) (fun () -> Image.entry i "main")
 
 let test_budget () =
@@ -122,7 +121,7 @@ let test_unload_after_stop () =
   let i = ref (Some (load d "code:64")) in
   let code = require_some (Image.entry (Option.get !i) "main") in
   P.fail p;
-  raises_match (lost d) (fun () -> submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  raises_match (lost d) (fun () -> submit (Sub.make d [||]));
   equal ~msg:"by the stop" int 0 (count "unload" p);
   i := None;
   collect ();
@@ -136,9 +135,9 @@ let test_unload_after_stop () =
 let test_unload_after_unknown () =
   let d, p = P.open_ ~answer:`Unknown "image:unload-unknown" in
   let i = ref (Some (load d "code:64")) in
-  ignore (submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  ignore (submit (Sub.make d [||]));
   P.fail p;
-  raises_match (lost d) (fun () -> submit (Sub.make ~reads:0 ~writes:0 d [||]));
+  raises_match (lost d) (fun () -> submit (Sub.make d [||]));
   i := None;
   collect ();
   equal ~msg:"with the word short" int 0 (count "unload" p);

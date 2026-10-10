@@ -62,15 +62,13 @@ let bump arg =
       Sub.Fill { fill = Support.bump; arg; ring_units = 0; segment_bytes = 0 };
   }
 
-let bumping ?(reads = 0) ?(writes = 0) d =
-  Sub.make ~reads ~writes d [| bump (B.create Rig.host 8) |]
+let bumping ?access d = Sub.make ?access d [| bump (B.create Rig.host 8) |]
 
 (* A submit of a run that reads nothing, writes nothing and waits for
    nothing. *)
-let submit ~run s = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
+let submit ~run s = Rig.submit s ~run ~buffers:[||] ~waits:[||]
 
-let submit_read ~run s bs =
-  ignore (Rig.submit s ~run ~reads:bs ~writes:[||] ~waits:[||])
+let submit_read ~run s bs = ignore (Rig.submit s ~run ~buffers:bs ~waits:[||])
 
 (* Submits *)
 
@@ -78,7 +76,7 @@ let submit_read ~run s bs =
 
 let empty () =
   let t = dev () in
-  (t, Sub.make ~reads:0 ~writes:0 t.d [||], Sub.Run.make ())
+  (t, Sub.make t.d [||], Sub.Run.make ())
 
 let costing () =
   let t = dev () in
@@ -86,21 +84,22 @@ let costing () =
 
 let reading () =
   let t = dev () in
-  (t, bumping ~reads:slots t.d, Sub.Run.make (), words t.d slots)
+  ( t,
+    bumping ~access:(Array.make slots B.Read) t.d,
+    Sub.Run.make (),
+    words t.d slots )
 
 (* Buffers of another device, its last write reached, borrowed on [t]'s. *)
 let foreign () =
   let t = dev () and o = dev () in
   let bs = words o.d slots in
-  let w = Sub.make ~reads:0 ~writes:slots o.d [||] in
+  let w = Sub.make ~access:(Array.make slots B.Read_write) o.d [||] in
   let run = Sub.Run.make () in
-  let v =
-    Rig.Point.value (Rig.submit w ~run ~reads:[||] ~writes:bs ~waits:[||])
-  in
+  let v = Rig.Point.value (Rig.submit w ~run ~buffers:bs ~waits:[||]) in
   ignore (P.run o.p);
   Rig.wait o.d v;
   ( t,
-    bumping ~reads:slots t.d,
+    bumping ~access:(Array.make slots B.Read) t.d,
     Sub.Run.make (),
     Array.map (fun b -> Option.get (B.borrow t.d b)) bs )
 
@@ -126,8 +125,10 @@ let fixed = 200
 
 let fixing () =
   let t = dev () in
-  let fixed = List.map (fun b -> (b, B.Read)) (Array.to_list (words t.d fixed)) in
-  (t, Sub.make ~fixed ~reads:0 ~writes:0 t.d [||], Sub.Run.make ())
+  let fixed =
+    List.map (fun b -> (b, B.Read)) (Array.to_list (words t.d fixed))
+  in
+  (t, Sub.make ~fixed t.d [||], Sub.Run.make ())
 
 (* A launch whose 8 refs name a run of 4 reads and 4 writes: each submit stores
    the refs' offsets, as a caller does for each call. *)
@@ -145,15 +146,17 @@ let launching () =
         refs = Array.init refs (fun k -> { Sub.at = 8 * k; slot = k });
       }
   in
+  let access =
+    Array.init refs (fun k -> if k < refs / 2 then B.Read else B.Read_write)
+  in
   let s =
-    Sub.make ~reads:(refs / 2) ~writes:(refs / 2) t.d
+    Sub.make ~access t.d
       [| { Sub.queue = "COMPUTE:0"; after = [||]; work = launch } |]
   in
   let run = Sub.Run.make () and b = Sub.block s 0 in
   Sub.Run.groups run b 1 1 1;
   Sub.Run.threads run b 1 1 1;
-  let bs = words t.d refs in
-  (t, s, run, b, Array.sub bs 0 (refs / 2), Array.sub bs (refs / 2) (refs / 2))
+  (t, s, run, b, words t.d refs)
 
 let submit_rows =
   let row name setup f = Thumper.bench_with_setup ~setup name f in
@@ -175,11 +178,11 @@ let submit_rows =
       row "fixed-200" fixing (fun (t, s, run) ->
           ignore (submit ~run s);
           drained t);
-      row "launch-refs-8" launching (fun (t, s, run, b, reads, writes) ->
+      row "launch-refs-8" launching (fun (t, s, run, b, buffers) ->
           for k = 0 to refs - 1 do
             Sub.Run.int64 run b (8 * k) 0
           done;
-          ignore (Rig.submit s ~run ~reads ~writes ~waits:[||]);
+          ignore (Rig.submit s ~run ~buffers ~waits:[||]);
           drained t);
       Thumper.bench_with_setup ~setup:contended
         ~teardown:(fun (_, _, _, stop, rival) ->
@@ -198,23 +201,26 @@ type copy = {
   run : Sub.Run.t;
   args : B.t;
   at : int;
-  outs : B.t array;
+  buffers : B.t array;
 }
 
-type replay = { t : dev; params : B.t array; copies : copy array }
+type replay = { t : dev; copies : copy array }
 
 (* Two copies of a step over [slots] parameters: each reads them, writes its
    output, and fills its own arguments, which the host rewrites before each
    run. *)
 let replaying () =
   let t = dev () in
+  let params = words t.d slots in
+  let access = Array.append (Array.make slots B.Read) [| B.Read_write |] in
   let copy () =
     let args = B.create Rig.host 8 in
-    let s = Sub.make ~reads:slots ~writes:1 t.d [| bump args |] in
+    let s = Sub.make ~access t.d [| bump args |] in
     let run = Sub.Run.make () in
-    { s; run; args; at = B.address args; outs = [| B.create t.d 8 |] }
+    let buffers = Array.append params [| B.create t.d 8 |] in
+    { s; run; args; at = B.address args; buffers }
   in
-  { t; params = words t.d slots; copies = [| copy (); copy () |] }
+  { t; copies = [| copy (); copy () |] }
 
 let run r =
   let c = r.copies.(r.t.n land 1) in
@@ -222,7 +228,7 @@ let run r =
   B.wait c.args B.Read_write;
   ignore (P.run r.t.p);
   Support.store c.at r.t.n;
-  ignore (Rig.submit c.s ~run:c.run ~reads:r.params ~writes:c.outs ~waits:[||])
+  ignore (Rig.submit c.s ~run:c.run ~buffers:c.buffers ~waits:[||])
 
 let replay_rows =
   Thumper.group "replay/polled"
@@ -259,8 +265,8 @@ let chars n = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
 (* Buffers of [d] whose last write, a submission of [d], is reached. *)
 let written d n =
   let bs = Array.init n (fun _ -> B.create d 8) in
-  let w = Sub.make ~reads:0 ~writes:n d [||] and run = Sub.Run.make () in
-  let p = Rig.submit w ~run ~reads:[||] ~writes:bs ~waits:[||] in
+  let w = Sub.make ~access:(Array.make n B.Read_write) d [||] in
+  let p = Rig.submit w ~run:(Sub.Run.make ()) ~buffers:bs ~waits:[||] in
   Rig.Point.wait p;
   bs
 
@@ -380,7 +386,7 @@ let wait_rows =
       row "reached"
         (fun () ->
           let d = memory () and run = Sub.Run.make () in
-          let s = Sub.make ~reads:0 ~writes:0 d [||] in
+          let s = Sub.make d [||] in
           (d, Rig.Point.value (submit ~run s)))
         (fun (d, v) -> Rig.wait d v);
     ]

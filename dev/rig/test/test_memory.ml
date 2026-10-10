@@ -12,8 +12,8 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers ~waits
 
 let timeout = 60.
 let kib = 1024
@@ -38,9 +38,7 @@ let collect d =
    waits for that work. *)
 let[@inline never] dropped_written ?memory s d n =
   let b = B.create ?memory d n in
-  ignore
-    (Rig.submit s ~run:(Sub.Run.make ()) ~reads:[||] ~writes:[| b |]
-       ~waits:[||]);
+  ignore (Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[| b |] ~waits:[||]);
   B.address b
 
 let last n l = List.filteri (fun i _ -> i >= List.length l - n) l
@@ -125,8 +123,7 @@ let test_budget_beside_loss () =
   Support.await "the cache's first free at the gate" (fun () ->
       P.freers p = 1);
   P.fail p;
-  (try ignore (submit (Sub.make ~reads:0 ~writes:0 d [||])) with
-  | Rig.Lost _ -> ());
+  (try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ());
   P.open_frees p;
   equal ~msg:"the budget" string "returned" (Domain.join setter);
   Gc.full_major ();
@@ -141,7 +138,7 @@ let test_budget_beside_loss () =
    allocation's: the host allocation raises Out_of_memory for itself. *)
 let test_ladder_beside_fault () =
   let d, p = P.open_ ~host_visible:false "memory:ladder-fault" in
-  let s = Sub.make ~reads:0 ~writes:1 d [||] in
+  let s = Sub.make ~access:[| B.Read_write |] d [||] in
   ignore (Sys.opaque_identity (dropped_written s ~memory:Pinned d (64 * kib)));
   collect Rig.host;
   P.fault p "the engine hung";
@@ -175,10 +172,10 @@ let test_over_budget_cache () =
    that work ran: an over-budget return skips the cache, never the wait. *)
 let test_over_budget_queued () =
   let d, p = P.open_ "memory:over-budget-queued" in
-  let reads = Sub.make ~reads:1 ~writes:0 d [||] in
+  let reads = Sub.make ~access:[| B.Read |] d [||] in
   let[@inline never] queued () =
     let b = B.create d 64 in
-    ignore (submit reads ~reads:[| b |]);
+    ignore (submit reads ~buffers:[| b |]);
     B.address b
   in
   let at = queued () in
@@ -198,10 +195,10 @@ let test_over_budget_queued () =
    the driver waiting for that work. *)
 let queued_over_budget name =
   let d, p = P.open_ name in
-  let reads = Sub.make ~reads:1 ~writes:0 d [||] in
+  let reads = Sub.make ~access:[| B.Read |] d [||] in
   let[@inline never] queued () =
     let b = B.create d (64 * kib) in
-    ignore (submit reads ~reads:[| b |]);
+    ignore (submit reads ~buffers:[| b |]);
     B.address b
   in
   let at = queued () in
@@ -422,8 +419,8 @@ let test_foreign_use () =
   let at =
     (fun () ->
       let m = B.create a (4 * kib) in
-      let s = Sub.make ~reads:1 ~writes:0 b [||] in
-      ignore (submit s ~reads:[| require_some (B.borrow b m) |]);
+      let s = Sub.make ~access:[| B.Read |] b [||] in
+      ignore (submit s ~buffers:[| require_some (B.borrow b m) |]);
       B.address m)
       ()
   in
@@ -449,7 +446,7 @@ let test_borrowed_host () =
     let part =
       { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
     in
-    ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]));
+    ignore (submit (Sub.make d [| part |]));
     B.address h
   in
   let at = written () in
@@ -478,7 +475,7 @@ let test_borrowed_bigarray () =
     let part =
       { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
     in
-    ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]))
+    ignore (submit (Sub.make d [| part |]))
   in
   let settle () =
     Gc.full_major ();
@@ -505,7 +502,7 @@ let test_idle_borrower () =
     let part =
       { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } }
     in
-    ignore (submit (Sub.make ~reads:0 ~writes:0 d [| part |]))
+    ignore (submit (Sub.make d [| part |]))
   in
   Gc.full_major ();
   Rig.free_cache Rig.host;

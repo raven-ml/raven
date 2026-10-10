@@ -24,7 +24,7 @@ external cubin : string -> string option = "nx_cuda_cubin"
 
 (* Devices *)
 
-(* A device's buffer, of [bytes] bytes, named in the writes of each call that
+(* A device's buffer, of [bytes] bytes, named [Read_write] by each call that
    uses it, so rig orders those calls: the workspace, which holds a call's
    packed operands and split sums, grows to [kept] bytes and is kept, a call
    that needs more taking a buffer of its own; the tickets of split sums are
@@ -140,9 +140,7 @@ let submission d dv p =
   | Some _ as s -> s
   | None ->
       let parts = Plan.parts p dv.image ~queue:dv.queue in
-      let s =
-        Some (Sub.make ~reads:(Plan.reads p) ~writes:(Plan.writes p) d parts)
-      in
+      let s = Some (Sub.make ~access:(Plan.access p) d parts) in
       dv.subs.(key) <- s;
       s
 
@@ -152,7 +150,7 @@ let fold_submission d dv p =
   | Some _ as s -> s
   | None ->
       let parts = Fold.parts p dv.image ~queue:dv.queue in
-      let s = Some (Sub.make ~reads:1 ~writes:(Fold.writes p) d parts) in
+      let s = Some (Sub.make ~access:(Fold.access p) d parts) in
       dv.folds.(key) <- s;
       s
 
@@ -161,8 +159,8 @@ let fold_submission d dv p =
 (* A call's state: one per domain, guarded by [busy]. A call that finds it busy,
    such as one of another systhread of the domain or a signal handler's, uses a
    fresh frame it does not keep. A call's buffers and arrays sit in arrays of
-   their count, up to 3, made once: [reads] and [writes] are the submit's,
-   [read] and [written] the door's. *)
+   their count, made once: [buffers] are the submit's, up to 6, in its slot
+   order, and [read] and [written] the door's, up to 3. *)
 type frame = {
   busy : bool Atomic.t;
   view : V.t;
@@ -170,12 +168,10 @@ type frame = {
   fold : Fold.t;
   run : Sub.Run.t;
   mutable sub : Sub.t option;
-  read_buffers : Rig.Buffer.t array array;
-  write_buffers : Rig.Buffer.t array array;
+  buffer_arrays : Rig.Buffer.t array array;
   read_arrays : A.any array array;
   written_arrays : A.any array array;
-  mutable reads : Rig.Buffer.t array;
-  mutable writes : Rig.Buffer.t array;
+  mutable buffers : Rig.Buffer.t array;
   mutable read : A.any array;
   mutable written : A.any array;
 }
@@ -183,10 +179,10 @@ type frame = {
 (* What a frame holds between calls: no user buffer. *)
 let no_buffer = Rig.Buffer.of_string ""
 let no_array = A.Any (A.create Rig.host A.Dtype.Uint8 [| 0 |])
-let by_count x = Array.init 4 (fun n -> Array.make n x)
+let by_count most x = Array.init (most + 1) (fun n -> Array.make n x)
 
 let frame ~busy =
-  let read_buffers = by_count no_buffer and read_arrays = by_count no_array in
+  let read_arrays = by_count 3 no_array in
   {
     busy = Atomic.make busy;
     view = V.make ();
@@ -194,12 +190,10 @@ let frame ~busy =
     fold = Fold.make ();
     run = Sub.Run.make ();
     sub = None;
-    read_buffers;
-    write_buffers = by_count no_buffer;
+    buffer_arrays = by_count 6 no_buffer;
     read_arrays;
-    written_arrays = by_count no_array;
-    reads = read_buffers.(0);
-    writes = read_buffers.(0);
+    written_arrays = by_count 3 no_array;
+    buffers = [||];
     read = read_arrays.(0);
     written = read_arrays.(0);
   }
@@ -211,40 +205,35 @@ let take () =
   if Atomic.compare_and_set f.busy false true then f else frame ~busy:true
 
 let release f =
+  for n = 1 to 6 do
+    Array.fill f.buffer_arrays.(n) 0 n no_buffer
+  done;
   for n = 1 to 3 do
-    Array.fill f.read_buffers.(n) 0 n no_buffer;
-    Array.fill f.write_buffers.(n) 0 n no_buffer;
     Array.fill f.read_arrays.(n) 0 n no_array;
     Array.fill f.written_arrays.(n) 0 n no_array
   done;
   f.sub <- None;
   Atomic.set f.busy false
 
-(* Makes the frame's arrays hold the call's buffers: [ops] read, [dst], then
-   [w1] and [w2] while [writes] counts them, written. *)
-let bind f ~dst ops ~writes w1 w2 =
-  let n = Array.length ops in
-  f.reads <- f.read_buffers.(n);
-  f.read <- f.read_arrays.(n);
-  for i = 0 to n - 1 do
-    let (A.Any x) = ops.(i) in
-    f.reads.(i) <- A.buffer x;
+let buffer (A.Any x) = A.buffer x
+
+(* Makes the door's arrays hold [ops] read and [dst] written, and [buffers]
+   the submit's [n] buffers, which the caller fills. *)
+let bind f ~dst ops n =
+  let k = Array.length ops in
+  f.read <- f.read_arrays.(k);
+  for i = 0 to k - 1 do
     f.read.(i) <- ops.(i)
   done;
-  let (A.Any y) = dst in
-  f.writes <- f.write_buffers.(writes);
-  f.writes.(0) <- A.buffer y;
-  if writes >= 2 then f.writes.(1) <- w1;
-  if writes = 3 then f.writes.(2) <- w2;
   f.written <- f.written_arrays.(1);
-  f.written.(0) <- dst
+  f.written.(0) <- dst;
+  f.buffers <- f.buffer_arrays.(n)
 
 (* The door's work: [f.sub], which the call stored before it entered the
    door. *)
 let issue f =
   ignore
-    (Rig.submit (Option.get f.sub) ~run:f.run ~reads:f.reads ~writes:f.writes
-       ~waits:[||])
+    (Rig.submit (Option.get f.sub) ~run:f.run ~buffers:f.buffers ~waits:[||])
 
 let nothing () = ()
 let dead (A.Any x) = Option.is_some (Rig.Buffer.dead (A.buffer x))
@@ -269,7 +258,20 @@ let run d dv f s ~dst ops =
         let sub = submission d dv f.plan in
         f.sub <- sub;
         Plan.write f.run (Option.get sub) f.plan;
-        bind f ~dst ops ~writes:(Plan.writes f.plan) ws tk;
+        (* {!Plan.access}'s slots: [a], [b], [dst], then [init], the
+           workspace and the tickets where the plan has them. *)
+        let n = Array.length ops in
+        let uses_ws = Plan.workspace f.plan > 0 in
+        let uses_tk = Plan.tickets f.plan > 0 in
+        let k = n + 1 + Bool.to_int uses_ws + Bool.to_int uses_tk in
+        bind f ~dst ops k;
+        let b = f.buffers in
+        b.(0) <- buffer ops.(0);
+        b.(1) <- buffer ops.(1);
+        b.(2) <- buffer dst;
+        if n = 3 then b.(3) <- buffer ops.(2);
+        if uses_ws then b.(n + 1) <- ws;
+        if uses_tk then b.(k - 1) <- tk;
         A.door ~written:f.written ~read:f.read issue f
 
 let contract s ~dst ops =
@@ -301,7 +303,12 @@ let fold d dv f family s ~dst x =
       Fold.write f.run (Option.get sub) f.fold;
       let ops = f.read_arrays.(1) in
       ops.(0) <- x;
-      bind f ~dst ops ~writes:(Fold.writes f.fold) ws no_buffer;
+      (* {!Fold.access}'s slots: [x], [dst], then the workspace. *)
+      let uses_ws = Fold.workspace f.fold > 0 in
+      bind f ~dst ops (2 + Bool.to_int uses_ws);
+      f.buffers.(0) <- buffer x;
+      f.buffers.(1) <- buffer dst;
+      if uses_ws then f.buffers.(2) <- ws;
       A.door ~written:f.written ~read:f.read issue f
 
 (* The case Fold computes has one destination and one operand. *)

@@ -43,7 +43,9 @@ let step d =
   in
   let part = { Submission.queue = "COMPUTE:0"; after = [||]; work = fill } in
   let s =
-    Submission.make ~hold ~fixed:[ (k, Read) ] ~reads:1 ~writes:1 d [| part |]
+    Submission.make ~hold
+      ~fixed:[ (k, Read) ]
+      ~access:[| Read; Read_write |] d [| part |]
   in
   let run = Submission.Run.make () in
   let words = Buffer.bigarray Bigarray.int64 arg in
@@ -53,7 +55,7 @@ let step d =
     List.iteri
       (fun i a -> words.{i} <- Int64.of_int a)
       [ Buffer.address dst; Buffer.address src; Buffer.address k; n ];
-    submit s ~run ~reads:[| src |] ~writes:[| dst |] ~waits:[||]
+    submit s ~run ~buffers:[| src; dst |] ~waits:[||]
 
 (* Two runs of one step, each on buffers of its own. *)
 let runs d =

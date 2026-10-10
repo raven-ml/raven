@@ -400,25 +400,25 @@ let never () =
   let far = B.create m.host 16 and far2 = B.create m.host 16 in
   let h = B.create Rig.host 16 in
   let both =
-    Sub.make ~reads:0 ~writes:0 m.host
-    [|
-      {
-        Sub.queue = "COPY:0";
-        after = [||];
-        work = Sub.Copy { src = far; dst = h };
-      };
-      {
-        Sub.queue = "COPY:0";
-        after = [||];
-        work = Sub.Copy { src = h; dst = far2 };
-      };
-    |]
+    Sub.make m.host
+      [|
+        {
+          Sub.queue = "COPY:0";
+          after = [||];
+          work = Sub.Copy { src = far; dst = h };
+        };
+        {
+          Sub.queue = "COPY:0";
+          after = [||];
+          work = Sub.Copy { src = h; dst = far2 };
+        };
+      |]
   in
   raises_match ~msg:"a copy from here after a copy into here" Exn.invalid_arg
     (fun () -> submit both);
   let words = host_buffer "\001\000\000\000\002\000\000\000" in
   let on d =
-    Sub.make ~reads:0 ~writes:0 d
+    Sub.make d
       [| { Sub.queue = "COMPUTE:0"; after = [||]; work = Sub.Words words } |]
   in
   raises_match ~msg:"words on a device other than the host" Exn.invalid_arg
@@ -439,7 +439,7 @@ let fill_refused () =
   with_machine @@ fun m ->
   let arg = B.create Rig.host 64 in
   raises_match Exn.invalid_arg @@ fun () ->
-  Sub.make ~reads:0 ~writes:0 m.host
+  Sub.make m.host
       [|
         {
           Sub.queue = "COMPUTE:0";
@@ -686,7 +686,7 @@ let closing_handover () =
       until ~what:"the close" closing;
       let words = host_buffer "\001\000\000\000" in
       let s =
-        Sub.make ~reads:0 ~writes:0 host
+        Sub.make host
           [|
             { Sub.queue = "COMPUTE:0"; after = [||]; work = Sub.Words words };
           |]

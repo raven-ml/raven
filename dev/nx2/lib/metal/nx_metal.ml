@@ -27,9 +27,9 @@ let apple d = String.starts_with ~prefix:"Apple" (Rig.arch d)
 
 (* Devices *)
 
-(* The workspace holds the parts of a call's split sum. It is named in each
-   call's writes, so rig orders the calls that share it. It grows to [kept]
-   bytes and is kept; a call that needs more takes a buffer of its own. *)
+(* The workspace holds the parts of a call's split sum. Each call that uses it
+   names it [Read_write], so rig orders the calls that share it. It grows to
+   [kept] bytes and is kept; a call that needs more takes a buffer of its own. *)
 type workspace = { buffer : Rig.Buffer.t; bytes : int }
 
 let kept = 64 * 1024 * 1024
@@ -120,9 +120,7 @@ let submission d dv p =
   | Some _ as s -> s
   | None ->
       let parts = Plan.parts p dv.image ~queue:dv.queue in
-      let s =
-        Some (Sub.make ~reads:(Plan.reads p) ~writes:(Plan.writes p) d parts)
-      in
+      let s = Some (Sub.make ~access:(Plan.access p) d parts) in
       dv.subs.(key) <- s;
       s
 
@@ -137,15 +135,13 @@ type frame = {
   plan : Plan.t;
   run : Sub.Run.t;
   mutable sub : Sub.t option;
-  reads2 : Rig.Buffer.t array;
-  reads3 : Rig.Buffer.t array;
-  writes1 : Rig.Buffer.t array;
-  writes2 : Rig.Buffer.t array;
+  buffers3 : Rig.Buffer.t array;
+  buffers4 : Rig.Buffer.t array;
+  buffers5 : Rig.Buffer.t array;
   read2 : A.any array;
   read3 : A.any array;
   written : A.any array;
-  mutable reads : Rig.Buffer.t array;
-  mutable writes : Rig.Buffer.t array;
+  mutable buffers : Rig.Buffer.t array;
   mutable read : A.any array;
 }
 
@@ -154,23 +150,20 @@ let no_buffer = Rig.Buffer.of_string ""
 let no_array = A.Any (A.create Rig.host A.Dtype.Uint8 [| 0 |])
 
 let frame ~busy =
-  let reads2 = Array.make 2 no_buffer and writes1 = Array.make 1 no_buffer in
-  let read2 = Array.make 2 no_array in
+  let buffers3 = Array.make 3 no_buffer and read2 = Array.make 2 no_array in
   {
     busy = Atomic.make busy;
     view = V.make ();
     plan = Plan.make ();
     run = Sub.Run.make ();
     sub = None;
-    reads2;
-    reads3 = Array.make 3 no_buffer;
-    writes1;
-    writes2 = Array.make 2 no_buffer;
+    buffers3;
+    buffers4 = Array.make 4 no_buffer;
+    buffers5 = Array.make 5 no_buffer;
     read2;
     read3 = Array.make 3 no_array;
     written = Array.make 1 no_array;
-    reads = reads2;
-    writes = writes1;
+    buffers = buffers3;
     read = read2;
   }
 
@@ -181,39 +174,42 @@ let take () =
   if Atomic.compare_and_set f.busy false true then f else frame ~busy:true
 
 let release f =
-  Array.fill f.reads3 0 3 no_buffer;
-  Array.fill f.reads2 0 2 no_buffer;
-  Array.fill f.writes2 0 2 no_buffer;
-  f.writes1.(0) <- no_buffer;
+  Array.fill f.buffers3 0 3 no_buffer;
+  Array.fill f.buffers4 0 4 no_buffer;
+  Array.fill f.buffers5 0 5 no_buffer;
   Array.fill f.read3 0 3 no_array;
   Array.fill f.read2 0 2 no_array;
   f.written.(0) <- no_array;
   f.sub <- None;
   Atomic.set f.busy false
 
-(* Makes the frame's arrays hold the call's buffers: [a], [b] and [init] read,
-   [dst] and the workspace written. *)
+let buffer (A.Any x) = A.buffer x
+
+(* Makes the frame's arrays hold the call's buffers in {!Plan.access}'s slot
+   order: [a], [b], [dst], then [init] and the workspace where the plan has
+   them. *)
 let bind f ~dst ops ws =
   let n = Array.length ops in
-  f.reads <- (if n = 3 then f.reads3 else f.reads2);
+  let uses_ws = Plan.workspace f.plan > 0 in
+  let k = n + 1 + Bool.to_int uses_ws in
+  f.buffers <-
+    (if k = 5 then f.buffers5 else if k = 4 then f.buffers4 else f.buffers3);
+  f.buffers.(0) <- buffer ops.(0);
+  f.buffers.(1) <- buffer ops.(1);
+  f.buffers.(2) <- buffer dst;
+  if n = 3 then f.buffers.(3) <- buffer ops.(2);
+  if uses_ws then f.buffers.(n + 1) <- ws;
   f.read <- (if n = 3 then f.read3 else f.read2);
   for i = 0 to n - 1 do
-    let (A.Any x) = ops.(i) in
-    f.reads.(i) <- A.buffer x;
     f.read.(i) <- ops.(i)
   done;
-  let (A.Any y) = dst in
-  f.writes <- (if Plan.writes f.plan = 2 then f.writes2 else f.writes1);
-  f.writes.(0) <- A.buffer y;
-  if Plan.writes f.plan = 2 then f.writes.(1) <- ws;
   f.written.(0) <- dst
 
 (* The door's work: [f.sub], which the call stored before it entered the
    door. *)
 let issue f =
   ignore
-    (Rig.submit (Option.get f.sub) ~run:f.run ~reads:f.reads ~writes:f.writes
-       ~waits:[||])
+    (Rig.submit (Option.get f.sub) ~run:f.run ~buffers:f.buffers ~waits:[||])
 
 let nothing () = ()
 let dead (A.Any x) = Option.is_some (Rig.Buffer.dead (A.buffer x))

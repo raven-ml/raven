@@ -49,14 +49,13 @@ val sequence : t -> int
 (** [sequence p] is [p]'s kernels as a key below {!sequences}: two plans of
     one key make the same {!parts}. *)
 
-val writes : t -> int
-(** [writes p] is the count of buffers [p]'s launches write: the result,
-    then the workspace where [workspace p > 0]. They read one, the
-    operand. *)
+val access : t -> Rig.Buffer.access array
+(** [access p] is the access of each buffer of a run of [p], in slot order:
+    the operand, the result, then the workspace where [workspace p > 0]. *)
 
 val parts : t -> Rig.Image.t -> queue:string -> Rig.Submission.part array
 (** [parts p i ~queue] is the launches of [p]'s sequence of [i]'s kernels on
-    [queue], their refs into the operand, then the slots {!writes} counts. *)
+    [queue], their refs into the slots {!access} lists. *)
 
 val write : Rig.Submission.Run.t -> Rig.Submission.t -> t -> unit
 (** [write r s p] stores the geometry and parameters of [p]'s launches into

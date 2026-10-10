@@ -297,7 +297,10 @@ let workspace c =
   else if c.scan then 16 * c.outputs * (c.blocks - 1)
   else 16 * c.outputs * c.groups
 
-let writes c = if c.second then 2 else 1
+let access c =
+  let module B = Rig.Buffer in
+  if c.second then [| B.Read; B.Read_write; B.Read_write |]
+  else [| B.Read; B.Read_write |]
 
 (* [c]'s launches in order: each kernel and its refs into the slots: x, y,
    then the workspace. *)

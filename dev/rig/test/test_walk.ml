@@ -141,13 +141,13 @@ let bump arg =
     work = Fill { fill = S.bump; arg; ring_units = 0; segment_bytes = 0 };
   }
 
-let once ~run s = Rig.submit s ~run ~reads:[||] ~writes:[||] ~waits:[||]
+let once ~run s = Rig.submit s ~run ~buffers:[||] ~waits:[||]
 
 let submit =
   op "submit" (fun d ->
       let arg = B.create Rig.host 8 in
       Bigarray.Array1.fill (B.bigarray Bigarray.char arg) '\000';
-      let s = Sub.make ~reads:0 ~writes:0 d [| bump arg |] in
+      let s = Sub.make d [| bump arg |] in
       let run = Sub.Run.make () in
       fun _ ->
         Rig.Point.wait (once ~run s);
@@ -198,7 +198,7 @@ let load =
 
 let wait_transport =
   op "wait behind a transport" ~opener:(P.open_ ~transport:true) (fun d ->
-      let s = Sub.make ~reads:0 ~writes:0 d [||] in
+      let s = Sub.make d [||] in
       let run = Sub.Run.make () in
       fun _ -> Rig.Point.wait (once ~run s))
 
@@ -208,7 +208,7 @@ let[@inline never] submit_held d failure =
   let release () = if failure = Some Raise then raise Exit in
   let h = Rig.Hold.make ~release () in
   let run = Sub.Run.make () in
-  Rig.Point.wait (once ~run (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+  Rig.Point.wait (once ~run (Sub.make ~hold:h d [||]))
 
 let hold =
   op "hold" ~raises:true (fun d failure ->
@@ -221,7 +221,7 @@ let hold =
 let profile =
   op "profile" (fun d ->
       let arg = B.create Rig.host 8 in
-      let s = Sub.make ~reads:0 ~writes:0 d [| bump arg |] in
+      let s = Sub.make d [| bump arg |] in
       let run = Sub.Run.make () in
       fun _ ->
         ignore (Rig.Profile.take (fun () -> Rig.Point.wait (once ~run s))))
@@ -391,7 +391,7 @@ let memory_attempt n =
       { fill = S.countdown; arg = counter; ring_units = 0; segment_bytes = 0 }
   in
   let part = { Sub.queue = "COMPUTE:0"; after = [||]; work = fill } in
-  let s = ref (Some (Sub.make ~reads:0 ~writes:0 d (Array.make fills part))) in
+  let s = ref (Some (Sub.make d (Array.make fills part))) in
   let run = Sub.Run.make () in
   Rig.Point.wait (once ~run (Option.get !s));
   let heap, fds = census () in

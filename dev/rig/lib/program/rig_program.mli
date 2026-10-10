@@ -182,15 +182,14 @@ type part = { queue : string; after : int iarray; work : work }
 type submit = {
   device : int;
   parts : part iarray;
-  reads : slot iarray;
-  writes : slot iarray;
+  buffers : (slot * Rig.Buffer.access) iarray;
   fixed : (view * Rig.Buffer.access) iarray;
 }
-(** The type for submissions: [parts] on [device], each run reading [reads] and
-    writing [writes], whose refs count [reads] then [writes]
-    ({!Rig.Submission.ref}), with the fixed memory [fixed]. Memory of another
-    device is named through its borrow on [device], made at load; an input of
-    another device, through a borrow made for the run. *)
+(** The type for submissions: [parts] on [device], each run using [buffers],
+    each with its access, which the parts' refs index ({!Rig.Submission.ref}),
+    with the fixed memory [fixed]. Memory of another device is named through its
+    borrow on [device], made at load; an input of another device, through a
+    borrow made for the run. *)
 
 type code = { obj : string; entry : string }
 (** The type for host code: the ELF object [obj], linked on the loading
@@ -332,11 +331,11 @@ val run : ?after:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
 
     Raises [Invalid_argument] if [f]'s inputs are not as many as [p]'s, an input
     it reads is not on its device, holds fewer bytes, or is read-only memory
-    ({!Rig.Buffer.val-access}) that a step writes (a [Submit]'s write, a
-    [Move]'s destination or a [Host] step's [Read_write] buffer), an input of
-    another device cannot be borrowed, an input a [Host] step names is memory
-    the host does not address, [f]'s ints are more than [p]'s, a launch's
-    geometry or shared memory, read from the ints, that the run's setters refuse
+    ({!Rig.Buffer.val-access}) that a step writes (a [Submit]'s or a [Host]
+    step's [Read_write] buffer, or a [Move]'s destination), an input of another
+    device cannot be borrowed, an input a [Host] step names is memory the host
+    does not address, [f]'s ints are more than [p]'s, a launch's geometry or
+    shared memory, read from the ints, that the run's setters refuse
     ({!Rig.Submission.Run}), a launch's hole whose value meets a set bit of its
     bytes, and as {!Rig.submit}, {!Rig.Buffer.copy} and {!Rig_host.call} raise;
     {!Rig.Lost} as the devices raise it. *)

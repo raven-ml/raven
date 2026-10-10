@@ -54,10 +54,10 @@ let dev () =
   { d; g; run = Rig.Submission.Run.make (); v = 0 }
 
 (* The prepared submission of [parts] on [t]. *)
-let prepare t parts = Rig.Submission.make ~reads:0 ~writes:0 t.d parts
+let prepare t parts = Rig.Submission.make t.d parts
 
 let submit t s =
-  let p = Rig.submit s ~run:t.run ~reads:[||] ~writes:[||] ~waits:[||] in
+  let p = Rig.submit s ~run:t.run ~buffers:[||] ~waits:[||] in
   t.v <- Rig.Point.value p
 
 let wait t = Rig.wait t.d t.v

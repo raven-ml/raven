@@ -19,14 +19,14 @@ module Support = Rig_support
 let timeout = 60.
 let lag = 4
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
-let empty d = Sub.make ~reads:0 ~writes:0 d [||]
+let empty d = Sub.make d [||]
 let names = Atomic.make 0
 
 let fresh what =
   Printf.sprintf "commit:%s-%d" what (Atomic.fetch_and_add names 1)
 
-let submit ?(reads = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes:[||] ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers ~waits
 
 (* The last value [p]'s word holds, read without a call of rig. *)
 let word p = Support.load (P.word_at p)
@@ -66,8 +66,8 @@ let device (d, p) =
   {
     d;
     p;
-    run = Sub.make ~reads:1 ~writes:0 d [| bump () |];
-    scratched = Sub.make ~reads:2 ~writes:0 d [| bump () |];
+    run = Sub.make ~access:[| B.Read |] d [| bump () |];
+    scratched = Sub.make ~access:[| B.Read; B.Read |] d [| bump () |];
     buffer = B.create d 8;
     last = Atomic.make None;
   }
@@ -80,8 +80,8 @@ let open_world () =
 let use ?(scratch = []) x ~waits =
   let pt =
     match scratch with
-    | [] -> submit x.run ~reads:[| x.buffer |] ~waits
-    | s -> submit x.scratched ~reads:(Array.of_list (x.buffer :: s)) ~waits
+    | [] -> submit x.run ~buffers:[| x.buffer |] ~waits
+    | s -> submit x.scratched ~buffers:(Array.of_list (x.buffer :: s)) ~waits
   in
   Atomic.set x.last (Some pt)
 
@@ -158,7 +158,7 @@ let scratch =
    [released], and drops both: the hold is unreachable once this returns. *)
 let[@inline never] submit_held d released =
   let h = H.make ~release:(fun () -> Atomic.set released true) () in
-  ignore (submit (Sub.make ~hold:h ~reads:0 ~writes:0 d [||]))
+  ignore (submit (Sub.make ~hold:h d [||]))
 
 (* A hold's release runs once its stamp is reached, in a drain: without a wait,
    only the driver's own commit reaches it. *)
@@ -201,7 +201,7 @@ let test_lost_uncommitted () =
    value goes on without its commit and returns once the work runs. *)
 let test_wait_beside_blocked_submit () =
   let d, p = P.open_ ~lag ~capacity:1 ~may_block:true (fresh "blocked") in
-  let one = Sub.make ~reads:0 ~writes:0 d [| bump () |] in
+  let one = Sub.make d [| bump () |] in
   let v = Rig.Point.value (submit one) in
   let t = Thread.create (fun () -> ignore (submit one)) () in
   Support.await "the second submit blocked" (fun () -> P.blocked p = 1);

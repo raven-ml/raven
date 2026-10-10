@@ -80,8 +80,11 @@ let description archs =
         G.Submit
           {
             device = 0;
-            reads = [||];
-            writes = [| G.Memory { memory = 0; offset = 0; length = size } |];
+            buffers =
+              [|
+                ( G.Memory { memory = 0; offset = 0; length = size },
+                  Rig.Buffer.Read_write );
+              |];
             fixed = [||];
             parts =
               [|
@@ -93,8 +96,12 @@ let description archs =
         G.Submit
           {
             device = 1;
-            reads = [| G.Memory { memory = 0; offset = 0; length = size } |];
-            writes = [| G.Input 0 |];
+            buffers =
+              [|
+                ( G.Memory { memory = 0; offset = 0; length = size },
+                  Rig.Buffer.Read );
+                (G.Input 0, Rig.Buffer.Read_write);
+              |];
             fixed = [||];
             parts =
               [|

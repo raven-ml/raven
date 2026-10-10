@@ -12,11 +12,11 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let submit ?(reads = [||]) ?(writes = [||]) ?(waits = [||]) s =
-  Rig.submit s ~run:(Sub.Run.make ()) ~reads ~writes ~waits
+let submit ?(buffers = [||]) ?(waits = [||]) s =
+  Rig.submit s ~run:(Sub.Run.make ()) ~buffers ~waits
 
 let timeout = 60.
-let empty d = Sub.make ~reads:0 ~writes:0 d [||]
+let empty d = Sub.make d [||]
 let raises_lost f = match f () with _ -> false | exception Rig.Lost _ -> true
 
 let status = function
@@ -160,8 +160,8 @@ let test_io_used () =
   let io = open_store "fork:io-used" in
   let d, p = P.open_ "fork:io-user" in
   let m = ref (Some (B.create io page_bytes)) in
-  let s = Sub.make ~reads:1 ~writes:0 d [||] in
-  ignore (submit s ~reads:[| require_some (B.borrow d (Option.get !m)) |]);
+  let s = Sub.make ~access:[| B.Read |] d [||] in
+  ignore (submit s ~buffers:[| require_some (B.borrow d (Option.get !m)) |]);
   let before = Atomic.get Store.held in
   let lines, ended =
     in_child (fun () ->
@@ -205,7 +205,7 @@ let test_own_device () =
 let one_part d =
   let arg = B.create Rig.host 8 in
   let fill = Support.bump in
-  Sub.make ~reads:0 ~writes:0 d
+  Sub.make d
     [|
       {
         Sub.queue = "COMPUTE:0";
