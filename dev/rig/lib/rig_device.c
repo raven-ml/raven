@@ -186,7 +186,7 @@ int rig_point_lost(uint64_t p) {
 }
 
 value caml_rig_done(value v_p) {
-  return Val_bool(rig_point_done((uint64_t)Long_val(v_p)));
+  return Val_bool(rig_point_done(Unsigned_long_val(v_p)));
 }
 
 #define Device_val(v) ((struct rig_device *)Long_val(v))

@@ -122,8 +122,12 @@ static void raise_last_write(struct rig_stamps *s, uint64_t p) {
   }
 }
 
+/* [caml_rig_stamps_get]'s answer past the last point: a point of index 0,
+   which no work has. Every other word is a point, -1 among them. */
+#define PAST_LAST RIG_POINT(0, 1)
+
 /* The [v_k]th point of the stamps: 0 the last write, then the uses in
-   order; 0 for an empty slot, -1 past the last. */
+   order; 0 for an empty slot, PAST_LAST past the last. */
 value caml_rig_stamps_get(value v_s, value v_k) {
   struct rig_stamps *s = Stamps_val(v_s);
   intnat k = Long_val(v_k);
@@ -133,7 +137,7 @@ value caml_rig_stamps_get(value v_s, value v_k) {
     if (k < RIG_USES) return Val_long((intnat)use_point(&s->use[k]));
     k -= RIG_USES;
   }
-  return Val_long(-1);
+  return Val_long(PAST_LAST);
 }
 
 /* Forgets every point of the stamps [v_s] but those of the device
@@ -543,7 +547,7 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   for (int k = 0; k < nslots; k++)
     r->slots[k].use = add_memory(r, own, r->slots[k].stamps, s->writes[k]);
   for (mlsize_t k = 0; k < Wosize_val(v_waits); k++)
-    add_point(r, own, (uint64_t)Long_val(Field(v_waits, k)));
+    add_point(r, own, Unsigned_long_val(Field(v_waits, k)));
   if (r->hold != NULL) r->hold_use = reserve(r->hold, own);
   if (r->handles_stale) collect_handles(s, r, nslots);
   return Val_int(r->npoints);

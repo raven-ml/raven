@@ -16,10 +16,15 @@ external stamps_unref : int -> unit = "caml_rig_stamps_unref" [@@noalloc]
 external stamps_get : int -> int -> int = "caml_rig_stamps_get" [@@noalloc]
 external stamps_keep : int -> int -> unit = "caml_rig_stamps_keep" [@@noalloc]
 
+(* [stamps_get]'s answer past the last point, [rig_stamps.c]'s PAST_LAST: a
+   point of index 0, which no work has. Points fill an int's 63 bits, so -1 is
+   a point and 0 alone is none. *)
+let past_last = 1
+
 (* [f] over the points of the stamps [st] from the [k]th on. *)
 let rec iter_from f st k =
   let p = stamps_get st k in
-  if p <> -1 then begin
+  if p <> past_last then begin
     if p <> 0 then f p;
     iter_from f st (k + 1)
   end
@@ -29,13 +34,13 @@ let iter_points f st = if st <> 0 then iter_from f st 0
 let iter_write f st =
   if st <> 0 then
     let p = stamps_get st 0 in
-    if p > 0 then f p
+    if p <> 0 then f p
 
 (* Waits for the stamps [st]'s points, as [iter_points] and [iter_write] walk
    them, with no closure: the walk is a host access's every wait. *)
 let rec wait_from st k =
   let p = stamps_get st k in
-  if p <> -1 then begin
+  if p <> past_last then begin
     if p <> 0 then Dev.wait_point st true p;
     wait_from st (k + 1)
   end
@@ -45,7 +50,7 @@ let wait_points st = if st <> 0 then wait_from st 0
 let wait_write st =
   if st <> 0 then
     let p = stamps_get st 0 in
-    if p > 0 then Dev.wait_point st false p
+    if p <> 0 then Dev.wait_point st false p
 
 let for_all_points f st =
   let ok = ref true in

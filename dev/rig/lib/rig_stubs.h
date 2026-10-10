@@ -26,8 +26,9 @@ typedef pthread_cond_t rig_cond;
 #endif
 
 /* Points: a device's index in bits 47 to 62 and a value in bits 0 to 46,
-   the layout of an OCaml int's non-negative range. The word 0 is no point:
-   index 0 is the host, whose work is never stamped. */
+   the 63 bits of an OCaml int. From index 32768 the int is negative, so a
+   point crosses from OCaml as Unsigned_long_val reads it. The word 0 is no
+   point: index 0 is the host, whose work is never stamped. */
 #define RIG_VALUE_BITS 47
 #define RIG_VALUE_MASK ((UINT64_C(1) << RIG_VALUE_BITS) - 1)
 #define RIG_POINT(index, v) (((uint64_t)(index) << RIG_VALUE_BITS) | (v))
