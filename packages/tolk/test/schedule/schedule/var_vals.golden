@@ -9,6 +9,10 @@ layernorm	-
 attention	-
 conv	-
 cat	-
+pad_idiv	-
+pad_idiv_stored	-
+pad_idiv_nested	-
+pad_idiv_shrunk	-
 sort	-
 embedding	-
 split_sum	-

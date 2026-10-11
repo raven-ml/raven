@@ -1,0 +1,31 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=12, device="CPU")
+1 Ops.CONST dtypes.weakint [] 12
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.INDEX dtypes.int [0, 2]
+4 Ops.CONST dtypes.weakint [] 1
+5 Ops.CMPLT dtypes.bool [2, 4]
+6 Ops.CONST dtypes.bool [] True
+7 Ops.CMPNE dtypes.bool [5, 6]
+8 Ops.CONST dtypes.weakint [] 11
+9 Ops.CMPLT dtypes.bool [2, 8]
+10 Ops.AND dtypes.bool [7, 9]
+11 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=11, device="CPU")
+12 Ops.CONST dtypes.bool [] Invalid
+13 Ops.WHERE dtypes.weakint [10, 2, 12]
+14 Ops.INDEX dtypes.int [11, 13]
+15 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=11, device="CPU")
+16 Ops.INDEX dtypes.int [15, 13]
+17 Ops.WHERE dtypes.int [10, 16, 4]
+18 Ops.CDIV dtypes.int [14, 17]
+19 Ops.CONST dtypes.weakint [] 0
+20 Ops.WHERE dtypes.int [10, 18, 19]
+21 Ops.STORE dtypes.void [3, 20]
+22 Ops.END dtypes.void [21, 2]
+23 Ops.SINK dtypes.void [22] KernelInfo()
+24 Ops.BUFFER dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, size=12, device="CPU")
+25 Ops.BUFFER dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=11, device="CPU")
+26 Ops.BUFFER dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=11, device="CPU")
+27 Ops.CALL dtypes.void [23, 24, 25, 26] CallInfo()
+28 Ops.LINEAR dtypes.void [27]
+

@@ -1226,6 +1226,9 @@ thread.
 
 ### Tolk (new)
 
+- Compiled kernels that pad or concatenate an integer quotient no longer die
+  with SIGFPE on x86, as `Norn.Nuts`'s compiled transition did: the padding
+  divided by the zeros it loads, and now divides by 1.
 - Beam search accepts positional scalar arguments, fixing `PARAM has no name`
   when `Rune.jit ~beam` searches a loop that reads its index. `Search` links
   complete calls through `Tolk_engine.link_call`, which replaces `link_program`.

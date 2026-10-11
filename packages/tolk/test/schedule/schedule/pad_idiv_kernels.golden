@@ -1,0 +1,36 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=12, device="CPU") tag=()
+1 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=12, device="CPU")
+2 Ops.CONST dtypes.weakint [] 12
+3 Ops.RANGE dtypes.weakint [2] (0, AxisType.WEAK)
+4 Ops.INDEX dtypes.int [1, 3]
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.CMPLT dtypes.bool [3, 5]
+7 Ops.CONST dtypes.bool [] True
+8 Ops.CMPNE dtypes.bool [6, 7]
+9 Ops.CONST dtypes.weakint [] 11
+10 Ops.CMPLT dtypes.bool [3, 9]
+11 Ops.AND dtypes.bool [8, 10]
+12 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=10, device="CPU")
+13 Ops.CONST dtypes.weakint [] -1
+14 Ops.ADD dtypes.weakint [3, 13]
+15 Ops.CONST dtypes.bool [] Invalid
+16 Ops.WHERE dtypes.weakint [11, 14, 15]
+17 Ops.INDEX dtypes.int [12, 16]
+18 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=10, device="CPU")
+19 Ops.INDEX dtypes.int [18, 16]
+20 Ops.WHERE dtypes.int [11, 19, 5]
+21 Ops.CDIV dtypes.int [17, 20]
+22 Ops.FLOORMOD dtypes.int [17, 20]
+23 Ops.ADD dtypes.int [21, 22]
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.WHERE dtypes.int [11, 23, 24]
+26 Ops.STORE dtypes.void [4, 25]
+27 Ops.END dtypes.void [26, 3]
+28 Ops.SINK dtypes.void [27] KernelInfo()
+29 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=10, device="CPU") tag=()
+30 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=10, device="CPU") tag=()
+31 Ops.CALL dtypes.void [28, 0, 29, 30] CallInfo()
+32 Ops.AFTER dtypes.int [0, 31]
+33 Ops.SINK dtypes.void [32]
+

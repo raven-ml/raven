@@ -14,9 +14,10 @@
     kernel: a split replaces an axis [r] of size [n] by [r'] of size [n / a] and
     a new axis [s] of size [a], and every use of [r] by [r' * a + s], or
     [s * (n / a) + r'] from the top; a pad grows an axis to a multiple and
-    guards its accesses; a swap exchanges two global axes' identities; a tensor
-    core replaces a reduction of products by a matrix multiply-accumulate
-    ({!Op.Wmma}). *)
+    guards its accesses, and an integer division whose divisor reads the axis
+    divides by [1] on the padding, whose loads read zeros; a swap exchanges two
+    global axes' identities; a tensor core replaces a reduction of products by
+    a matrix multiply-accumulate ({!Op.Wmma}). *)
 
 (** {1:schedulers Schedulers} *)
 

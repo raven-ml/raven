@@ -9,6 +9,10 @@ layernorm_kernels	-
 attention_kernels	-
 conv_kernels	-
 cat_kernels	-
+pad_idiv_kernels	-
+pad_idiv_stored_kernels	-
+pad_idiv_nested_kernels	-
+pad_idiv_shrunk_kernels	-
 sort_kernels	-
 embedding_kernels	-
 split_sum_kernels	-

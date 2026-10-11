@@ -430,7 +430,7 @@ let runs_as_interpreted name () =
 
 (* Each kernel is compiled by the host's C compiler, so the default run runs a
    few of them. *)
-let run_by_default = [ "add"; "gated_store"; "fp8" ]
+let run_by_default = [ "add"; "gated_store"; "fp8"; "padto_idiv_upcast" ]
 
 let run_on_host =
   [
@@ -452,6 +452,7 @@ let run_on_host =
     "conv";
     "idiv";
     "idiv_fast";
+    "padto_idiv_upcast";
     "int8";
     "long";
     "long_emulated";

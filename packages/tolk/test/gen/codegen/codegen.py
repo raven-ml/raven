@@ -74,6 +74,7 @@ def unroll(axis, amount): return Opt(OptOps.SPLIT, axis, (amount, AxisType.UNROL
 def local(axis, amount): return Opt(OptOps.SPLIT, axis, (amount, AxisType.LOCAL))
 def group(axis, amount): return Opt(OptOps.SPLIT, axis, (amount, AxisType.LOCAL, True))
 def tensor_core(axis=0): return Opt(OptOps.TC, axis, (-1, 0, 1))
+def padto(axis, amount): return Opt(OptOps.PADTO, axis, amount)
 
 
 def with_opts(kernel, opts): return kernel.replace(arg=replace(kernel.arg, opts_to_apply=tuple(opts)))
@@ -91,6 +92,11 @@ def with_vars(*tensors):
     """The last kernel of a program over bound variables."""
     linear, _ = Tensor.linear_with_vars(*tensors)
     return [c.src[0] for c in linear.src if c.op is Ops.CALL and c.src[0].op is Ops.SINK][-1]
+
+
+def strided_idiv():
+    """A quotient whose divisor reads every third element, from the second."""
+    return empty(10, dtype=dtypes.int).div(empty(30, dtype=dtypes.int).reshape(10, 3)[:, 1], rounding_mode="trunc")
 
 
 def matmul(n, dt=dtypes.float): return last(empty(n, n, dtype=dt) @ empty(n, n, dtype=dt))
@@ -691,6 +697,8 @@ HAND = {
     "reg_placeholder_then_reduce": lambda: custom(empty(4), empty(4, 8), fxn=reg_placeholder_then_reduce),
     "split_range_id_free_of_loop": lambda: custom(empty(4), empty(4), fxn=split_range_id_free_of_loop),
     "sharded_custom_add": sharded,
+    # the padding of a padded axis divides, through an upcast
+    "padto_idiv_upcast": lambda: with_opts(last(strided_idiv()), [padto(0, 16), upcast(0, 4)]),
 }
 
 # Cases with the optimisations they ask for: a kernel of PROGRAMS or HAND, and

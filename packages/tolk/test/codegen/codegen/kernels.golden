@@ -1797,89 +1797,102 @@
 1795 Ops.STORE dtypes.void [1791, 1794]
 1796 Ops.END dtypes.void [1795, 1790]
 1797 Ops.SINK dtypes.void [1796] KernelInfo(name="custom_add_kernel_128")
-1798 Ops.MUL dtypes.weakint [1249, 146]
-1799 Ops.ADD dtypes.weakint [1798, 435]
-1800 Ops.INDEX dtypes.float [167, 1799]
-1801 Ops.CAST dtypes.int [63] dtypes.int
-1802 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=2, device="CPU")
-1803 Ops.INDEX dtypes.int [1802, 1249]
-1804 Ops.CMPNE dtypes.bool [1801, 1803]
-1805 Ops.MUL dtypes.weakint [63, 146]
-1806 Ops.ADD dtypes.weakint [1805, 435]
-1807 Ops.INDEX dtypes.float [9, 1806]
-1808 Ops.WHERE dtypes.float [1804, 214, 1807]
-1809 Ops.REDUCE dtypes.float [1808, 63] (Ops.ADD, 0)
-1810 Ops.STORE dtypes.void [1800, 1809]
-1811 Ops.END dtypes.void [1810, 1249, 435]
-1812 Ops.SINK dtypes.void [1811] KernelInfo()
-1813 Ops.INDEX dtypes.float [717, 1249]
-1814 Ops.ADD dtypes.weakint [1798, 767]
-1815 Ops.INDEX dtypes.float [169, 1814]
-1816 Ops.MUL dtypes.float [1815, 1815]
-1817 Ops.REDUCE dtypes.float [1816, 767] (Ops.ADD, 0)
-1818 Ops.CONST dtypes.weakfloat [] 0.125
-1819 Ops.MUL dtypes.float [1817, 1818]
-1820 Ops.ADD dtypes.float [1819, 1279]
-1821 Ops.SQRT dtypes.float [1820]
-1822 Ops.STORE dtypes.void [1813, 1821]
-1823 Ops.END dtypes.void [1822, 1249]
-1824 Ops.SINK dtypes.void [1823] KernelInfo()
-1825 Ops.MUL dtypes.weakint [403, 402]
-1826 Ops.RANGE dtypes.weakint [402] (4, AxisType.WEAK)
-1827 Ops.ADD dtypes.weakint [1825, 1826]
-1828 Ops.MUL dtypes.weakint [908, 374]
-1829 Ops.ADD dtypes.weakint [1827, 1828]
-1830 Ops.ADD dtypes.weakint [1829, 1798]
-1831 Ops.INDEX dtypes.float [167, 1830]
-1832 Ops.INDEX dtypes.float [708, 1249]
-1833 Ops.RECIPROCAL dtypes.float [1832]
-1834 Ops.MUL dtypes.float [1815, 1833]
-1835 Ops.INDEX dtypes.float [160, 767]
-1836 Ops.MUL dtypes.float [1834, 1835]
-1837 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=64, device="CPU")
-1838 Ops.MUL dtypes.weakint [1829, 146]
-1839 Ops.ADD dtypes.weakint [1838, 767]
-1840 Ops.INDEX dtypes.float [1837, 1839]
-1841 Ops.MUL dtypes.float [1836, 1840]
-1842 Ops.REDUCE dtypes.float [1841, 767] (Ops.ADD, 0)
-1843 Ops.STORE dtypes.void [1831, 1842]
-1844 Ops.END dtypes.void [1843, 1249, 908, 403, 1826]
-1845 Ops.SINK dtypes.void [1844] KernelInfo()
-1846 Ops.MUL dtypes.weakint [718, 146]
-1847 Ops.ADD dtypes.weakint [1846, 546]
-1848 Ops.INDEX dtypes.float [167, 1847]
-1849 Ops.INDEX dtypes.float [169, 1847]
-1850 Ops.INDEX dtypes.float [708, 718]
-1851 Ops.RECIPROCAL dtypes.float [1850]
-1852 Ops.MUL dtypes.float [1849, 1851]
-1853 Ops.INDEX dtypes.float [160, 546]
-1854 Ops.MUL dtypes.float [1852, 1853]
-1855 Ops.STORE dtypes.void [1848, 1854]
-1856 Ops.END dtypes.void [1855, 718, 546]
-1857 Ops.SINK dtypes.void [1856] KernelInfo()
-1858 Ops.INDEX dtypes.float [30, 1251]
-1859 Ops.MUL dtypes.weakint [511, 146]
-1860 Ops.ADD dtypes.weakint [1859, 767]
-1861 Ops.INDEX dtypes.float [9, 1860]
-1862 Ops.MUL dtypes.float [1815, 1861]
-1863 Ops.REDUCE dtypes.float [1862, 767] (Ops.ADD, 0)
-1864 Ops.STORE dtypes.void [1858, 1863]
-1865 Ops.END dtypes.void [1864, 1249, 511]
-1866 Ops.SINK dtypes.void [1865] KernelInfo()
-1867 Ops.SINK dtypes.void [41] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),))
-1868 Ops.SINK dtypes.void [41] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),))
-1869 Ops.SINK dtypes.void [69] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.LOCAL)),))
-1870 Ops.SINK dtypes.void [84] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST))))
-1871 Ops.SINK dtypes.void [84] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))))
-1872 Ops.SINK dtypes.void [119] KernelInfo(opts_to_apply=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),))
-1873 Ops.SINK dtypes.void [84] KernelInfo(opts_to_apply=())
-1874 Ops.SINK dtypes.void [13] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))))
-1875 Ops.SINK dtypes.void [694] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
-1876 Ops.SINK dtypes.void [715] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL))))
-1877 Ops.SINK dtypes.void [727] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
-1878 Ops.SINK dtypes.void [790] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))))
-1879 Ops.SINK dtypes.void [795] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL))))
-1880 Ops.SINK dtypes.void [604] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
-1881 Ops.SINK dtypes.void [119] KernelInfo(opts_to_apply=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.UNROLL))))
-1882 Ops.SINK dtypes.void [14, 29, 42, 51, 57, 70, 85, 103, 120, 133, 145, 166, 185, 189, 220, 228, 237, 245, 255, 270, 282, 291, 299, 311, 322, 343, 357, 391, 430, 454, 458, 470, 481, 486, 509, 522, 544, 559, 567, 579, 589, 600, 605, 655, 664, 669, 677, 684, 695, 716, 728, 737, 743, 752, 761, 778, 791, 796, 802, 806, 812, 831, 846, 858, 870, 878, 904, 957, 991, 1003, 1016, 1029, 1041, 1049, 1055, 1067, 1088, 1102, 1112, 1113, 1120, 1126, 1132, 1140, 1144, 1150, 1222, 1230, 1238, 1248, 1285, 1306, 1354, 1366, 1378, 1385, 1388, 1402, 1412, 1434, 1469, 1480, 1486, 1490, 1496, 1518, 1530, 1534, 1540, 1557, 1575, 1580, 1589, 1600, 1619, 1638, 1663, 1704, 1717, 1727, 1731, 1737, 1747, 1753, 1766, 1789, 1797, 1812, 1824, 1845, 1857, 1866, 1867, 1868, 1869, 1870, 1871, 1872, 1873, 1874, 1875, 1876, 1877, 1878, 1879, 1880, 1881]
+1798 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=10, device="CPU")
+1799 Ops.RANGE dtypes.weakint [1314] (0, AxisType.WEAK)
+1800 Ops.INDEX dtypes.int [1798, 1799]
+1801 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=10, device="CPU")
+1802 Ops.INDEX dtypes.int [1801, 1799]
+1803 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=30, device="CPU")
+1804 Ops.MUL dtypes.weakint [1799, 278]
+1805 Ops.ADD dtypes.weakint [1804, 196]
+1806 Ops.INDEX dtypes.int [1803, 1805]
+1807 Ops.CDIV dtypes.int [1802, 1806]
+1808 Ops.STORE dtypes.void [1800, 1807]
+1809 Ops.END dtypes.void [1808, 1799]
+1810 Ops.SINK dtypes.void [1809] KernelInfo(opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=16), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))))
+1811 Ops.MUL dtypes.weakint [1249, 146]
+1812 Ops.ADD dtypes.weakint [1811, 435]
+1813 Ops.INDEX dtypes.float [167, 1812]
+1814 Ops.CAST dtypes.int [63] dtypes.int
+1815 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=2, device="CPU")
+1816 Ops.INDEX dtypes.int [1815, 1249]
+1817 Ops.CMPNE dtypes.bool [1814, 1816]
+1818 Ops.MUL dtypes.weakint [63, 146]
+1819 Ops.ADD dtypes.weakint [1818, 435]
+1820 Ops.INDEX dtypes.float [9, 1819]
+1821 Ops.WHERE dtypes.float [1817, 214, 1820]
+1822 Ops.REDUCE dtypes.float [1821, 63] (Ops.ADD, 0)
+1823 Ops.STORE dtypes.void [1813, 1822]
+1824 Ops.END dtypes.void [1823, 1249, 435]
+1825 Ops.SINK dtypes.void [1824] KernelInfo()
+1826 Ops.INDEX dtypes.float [717, 1249]
+1827 Ops.ADD dtypes.weakint [1811, 767]
+1828 Ops.INDEX dtypes.float [169, 1827]
+1829 Ops.MUL dtypes.float [1828, 1828]
+1830 Ops.REDUCE dtypes.float [1829, 767] (Ops.ADD, 0)
+1831 Ops.CONST dtypes.weakfloat [] 0.125
+1832 Ops.MUL dtypes.float [1830, 1831]
+1833 Ops.ADD dtypes.float [1832, 1279]
+1834 Ops.SQRT dtypes.float [1833]
+1835 Ops.STORE dtypes.void [1826, 1834]
+1836 Ops.END dtypes.void [1835, 1249]
+1837 Ops.SINK dtypes.void [1836] KernelInfo()
+1838 Ops.MUL dtypes.weakint [403, 402]
+1839 Ops.RANGE dtypes.weakint [402] (4, AxisType.WEAK)
+1840 Ops.ADD dtypes.weakint [1838, 1839]
+1841 Ops.MUL dtypes.weakint [908, 374]
+1842 Ops.ADD dtypes.weakint [1840, 1841]
+1843 Ops.ADD dtypes.weakint [1842, 1811]
+1844 Ops.INDEX dtypes.float [167, 1843]
+1845 Ops.INDEX dtypes.float [708, 1249]
+1846 Ops.RECIPROCAL dtypes.float [1845]
+1847 Ops.MUL dtypes.float [1828, 1846]
+1848 Ops.INDEX dtypes.float [160, 767]
+1849 Ops.MUL dtypes.float [1847, 1848]
+1850 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=64, device="CPU")
+1851 Ops.MUL dtypes.weakint [1842, 146]
+1852 Ops.ADD dtypes.weakint [1851, 767]
+1853 Ops.INDEX dtypes.float [1850, 1852]
+1854 Ops.MUL dtypes.float [1849, 1853]
+1855 Ops.REDUCE dtypes.float [1854, 767] (Ops.ADD, 0)
+1856 Ops.STORE dtypes.void [1844, 1855]
+1857 Ops.END dtypes.void [1856, 1249, 908, 403, 1839]
+1858 Ops.SINK dtypes.void [1857] KernelInfo()
+1859 Ops.MUL dtypes.weakint [718, 146]
+1860 Ops.ADD dtypes.weakint [1859, 546]
+1861 Ops.INDEX dtypes.float [167, 1860]
+1862 Ops.INDEX dtypes.float [169, 1860]
+1863 Ops.INDEX dtypes.float [708, 718]
+1864 Ops.RECIPROCAL dtypes.float [1863]
+1865 Ops.MUL dtypes.float [1862, 1864]
+1866 Ops.INDEX dtypes.float [160, 546]
+1867 Ops.MUL dtypes.float [1865, 1866]
+1868 Ops.STORE dtypes.void [1861, 1867]
+1869 Ops.END dtypes.void [1868, 718, 546]
+1870 Ops.SINK dtypes.void [1869] KernelInfo()
+1871 Ops.INDEX dtypes.float [30, 1251]
+1872 Ops.MUL dtypes.weakint [511, 146]
+1873 Ops.ADD dtypes.weakint [1872, 767]
+1874 Ops.INDEX dtypes.float [9, 1873]
+1875 Ops.MUL dtypes.float [1828, 1874]
+1876 Ops.REDUCE dtypes.float [1875, 767] (Ops.ADD, 0)
+1877 Ops.STORE dtypes.void [1871, 1876]
+1878 Ops.END dtypes.void [1877, 1249, 511]
+1879 Ops.SINK dtypes.void [1878] KernelInfo()
+1880 Ops.SINK dtypes.void [41] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)),))
+1881 Ops.SINK dtypes.void [41] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),))
+1882 Ops.SINK dtypes.void [69] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.LOCAL)),))
+1883 Ops.SINK dtypes.void [84] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST))))
+1884 Ops.SINK dtypes.void [84] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))))
+1885 Ops.SINK dtypes.void [119] KernelInfo(opts_to_apply=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),))
+1886 Ops.SINK dtypes.void [84] KernelInfo(opts_to_apply=())
+1887 Ops.SINK dtypes.void [13] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))))
+1888 Ops.SINK dtypes.void [694] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
+1889 Ops.SINK dtypes.void [715] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL))))
+1890 Ops.SINK dtypes.void [727] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
+1891 Ops.SINK dtypes.void [790] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))))
+1892 Ops.SINK dtypes.void [795] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL))))
+1893 Ops.SINK dtypes.void [604] KernelInfo(opts_to_apply=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
+1894 Ops.SINK dtypes.void [119] KernelInfo(opts_to_apply=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.UNROLL))))
+1895 Ops.SINK dtypes.void [14, 29, 42, 51, 57, 70, 85, 103, 120, 133, 145, 166, 185, 189, 220, 228, 237, 245, 255, 270, 282, 291, 299, 311, 322, 343, 357, 391, 430, 454, 458, 470, 481, 486, 509, 522, 544, 559, 567, 579, 589, 600, 605, 655, 664, 669, 677, 684, 695, 716, 728, 737, 743, 752, 761, 778, 791, 796, 802, 806, 812, 831, 846, 858, 870, 878, 904, 957, 991, 1003, 1016, 1029, 1041, 1049, 1055, 1067, 1088, 1102, 1112, 1113, 1120, 1126, 1132, 1140, 1144, 1150, 1222, 1230, 1238, 1248, 1285, 1306, 1354, 1366, 1378, 1385, 1388, 1402, 1412, 1434, 1469, 1480, 1486, 1490, 1496, 1518, 1530, 1534, 1540, 1557, 1575, 1580, 1589, 1600, 1619, 1638, 1663, 1704, 1717, 1727, 1731, 1737, 1747, 1753, 1766, 1789, 1797, 1810, 1825, 1837, 1858, 1870, 1879, 1880, 1881, 1882, 1883, 1884, 1885, 1886, 1887, 1888, 1889, 1890, 1891, 1892, 1893, 1894]
 

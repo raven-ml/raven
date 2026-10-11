@@ -232,6 +232,44 @@ let convert_pad_to_where_to_keep_behavior_local ctx x =
       let s = List.hd (create_bufferize_and_index_srcs ctx x) in
       Some (where valid s (const (Dtype.const (dtype x) zero)))
 
+(* [constant u] is whether [u] is a constant through casts and movements. *)
+let rec constant u =
+  match op u with
+  | Op.Const -> true
+  | Op.Cast | Reshape | Expand | Permute | Shrink | Flip -> constant (nth u 0)
+  | _ -> false
+
+(* An integer division computed where its ranges are invalid, on a pad's
+   padding, divides by 1 there, unless its divisor is a nonzero constant. The
+   padding loads zeros whatever the divisor's bounds, and a division by zero
+   traps on x86 even in a lane whose result the pad drops. A range's validity
+   is read after the symbolic rules lift its gates to the top and merge them:
+   a shrink after a pad leaves the gate below an addition, and a pad of a pad
+   nests one gate in another. *)
+let guard_division_on_padding ctx x =
+  match Tbl.find_opt ctx.range_map x with
+  | Some (rngs, _) when Dtype.is_int (dtype x) -> (
+      let a, d =
+        match create_bufferize_and_index_srcs ctx x with
+        | [ a; d ] -> (a, d)
+        | _ -> invalid_arg "a division has two sources"
+      in
+      let validity r =
+        get_valid
+          (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() r
+             (After_sources Shape.symbolic))
+      in
+      let may_fail c = not (Dtype.Value.to_bool (vmin c)) in
+      let nonzero_const =
+        constant d && Dtype.Value.(vmin d = vmax d && vmin d <> of_int 0)
+      in
+      match List.filter may_fail (List.map validity rngs) with
+      | c :: cs when not nonzero_const ->
+          let one = const (Dtype.const (dtype d) (`Int Bigint.one)) in
+          Some (replace x ~src:[ a; where (uprod c cs) d one ])
+      | _ -> Some (replace x ~src:[ a; d ]))
+  | _ -> None
+
 let convert_reduce_to_reduce_with_ranges ctx x =
   match arg x with
   | Reduce { op = rop; num_axes } when num_axes <> 0 -> (
@@ -287,6 +325,9 @@ let pm_apply_rangeify =
         on (ops [ Op.Pad ]) convert_pad_to_where_to_keep_behavior_local;
         on (ops [ Op.Stack ]) convert_stack_to_where;
         on (ops [ Op.Index ]) convert_gather;
+        on
+          (ops [ Op.Cdiv; Op.Cmod; Op.Floordiv; Op.Floormod ])
+          guard_division_on_padding;
         on Op.Set.all create_bufferize_and_index_based_on_ranges;
         on Op.Set.movement remove_movement_op_after_rangeify;
       ])

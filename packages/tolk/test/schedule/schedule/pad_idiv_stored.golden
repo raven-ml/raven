@@ -1,0 +1,14 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.BUFFER dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, size=12, device="CPU")
+1 Ops.BUFFER dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=10, device="CPU")
+2 Ops.BUFFER dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=10, device="CPU")
+3 Ops.CONST dtypes.weakint [] 1
+4 Ops.MAX dtypes.int [2, 3]
+5 Ops.STAGE dtypes.int [4]
+6 Ops.CDIV dtypes.int [1, 5]
+7 Ops.CONST dtypes.weakint [] 12
+8 Ops.PAD dtypes.int [6, 3, 7]
+9 Ops.STORE dtypes.void [0, 8]
+10 Ops.AFTER dtypes.int [0, 9]
+11 Ops.SINK dtypes.void [10]
+

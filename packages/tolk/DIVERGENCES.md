@@ -4513,3 +4513,45 @@ stores through a pad.
   `transformations › a compiled gradient of a parameter broadcast over a grid
   is its gradient`; the rune bench's
   `reverse/jit-of-grad-clipped-disc-float64-104x104-host` row.
+
+## D145. An integer division on padding divides by 1 there
+
+- **tinygrad:** `schedule/indexing.py:101-105`
+  (`convert_pad_to_where_to_keep_behavior_local`) and `:177`
+  (`apply_movement_op` on a `PAD`, which makes the source's ranges invalid on
+  the padding); `codegen/opt/postrange.py:146-161` (`PADTO`, which gates the
+  loads of the padded axis). Either way the source is computed on every lane,
+  and its loads read zeros on the padding.
+- **tolk:** `lib/schedule/indexing.ml:236` (`constant`), `:249`
+  (`guard_division_on_padding`) and `:330` (its rule in `pm_apply_rangeify`);
+  `lib/codegen/opt/postrange.ml:490` (`pad_division`, in `Padto`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded.
+- **Differs:** a `CDIV`, `CMOD`, `FLOORDIV` or `FLOORMOD` of integers divides by
+  `where(valid, d, 1)` in two places. Rangeify guards a division whose ranges
+  are invalid somewhere, unless its divisor is a nonzero constant through casts
+  and movements: a stored divisor's bounds say nothing of the zeros its padding
+  loads. A range's validity is read after the symbolic rules lift its gates to
+  the top and merge them: a shrink after a pad leaves the gate below an
+  addition, and a pad of a pad nests one gate in another. `PADTO` guards a
+  division whose divisor reads the padded range. Where the divisor is a gated
+  load, the selection becomes the load's alternative, so the padding loads 1.
+  tinygrad divides by the zeros its padding loads.
+- **Reason:** (b). A division by zero traps on x86 (arm64 gives 0), and C
+  leaves it undefined everywhere. tinygrad's scalar C evaluates such a division
+  lazily only while it has one use, inlined into the selection that drops it;
+  with more uses it computes the quotient into a variable before the selection
+  or the store's gate, and traps too. The host's vector lanes (D141) divide on
+  every lane. `Norn.Nuts`'s compiled transition concatenates `parents + next /
+  spans` between two constants, and its kernel divided the padding's lanes by
+  zero: `test_nuts`, `test_calibration` and `test_posteriordb` died with SIGFPE.
+- **Pinned by:** the `Tolk_engine` suite (`test/engine/tolk_engine`):
+  `link and run › a pad of integer divisions writes what its tensors compute`,
+  over `pad_idiv`, `pad_idiv_stored` (a divisor of at least 1, stored),
+  `pad_idiv_nested` (a quotient padded twice) and `pad_idiv_shrunk` (a quotient
+  shrunk, then padded); the `Codegen` suite's `on the host, a program writes
+  what its kernel writes › padto_idiv_upcast`. Each traps on x86 without the
+  rule; arm64 does not trap. The Schedule suite's recorded `pad_idiv*` graphs
+  and the Codegen suite's `padto_idiv_upcast` goldens, from the equally patched
+  tinygrad; norn's `reproducibility › a compiled transition is the eager one`
+  on x86.

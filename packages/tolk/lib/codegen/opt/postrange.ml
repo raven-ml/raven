@@ -484,10 +484,22 @@ module Scheduler = struct
               ]
             else []
           in
+          (* An integer division whose divisor reads the padded range divides
+             by 1 on the padding: the padding loads zeros, and a division by
+             zero traps on x86 even in a lane no store keeps. *)
+          let pad_division u =
+            match (op u, src u) with
+            | (Op.Cdiv | Cmod | Floordiv | Floormod), [ a; d ]
+              when Dtype.is_int (dtype u) && mem_ranges rng d ->
+                let one = const (Dtype.const (dtype d) (`Int Bigint.one)) in
+                [ (u, replace u ~src:[ a; where valid_ d one ]) ]
+            | _ -> []
+          in
           k.ast <-
             substitute ~calls:Skip ~pass:Fixed_point k.ast
               (((rng, replaced_rng) :: List.concat_map pad_buf (bufs k))
-              @ List.concat_map pad_reduce (reduceops k));
+              @ List.concat_map pad_reduce (reduceops k)
+              @ List.concat_map pad_division (toposort ~calls:Skip k.ast));
           [ replaced_rng ]
       | Swap { axis; with_axis } ->
           let rng = axis_rng axis in

@@ -694,6 +694,23 @@ let runs_each_binding () =
         (by_slot storage contents))
     [ 1; 10; 5 ]
 
+(* The pad_idiv programs pad integer quotients of their inputs: of the inputs
+   themselves, of a stored divisor at least 1, padded twice, and shrunk. Their
+   inputs hold no zero, and their padding, which reads zeros, divides by none. *)
+let divides_on_padding name () =
+  let big = program name in
+  let s, vars, storage = linked big in
+  let nonzero : Dtype.value -> Dtype.value = function
+    | `Int z when Bigint.equal z Bigint.zero -> `Int Bigint.one
+    | v -> v
+  in
+  let storage =
+    List.map (fun s -> { s with before = Array.map nonzero s.before }) storage
+  in
+  refill storage;
+  Engine.run ~vars s (slots storage);
+  equal slot_values (expected ~vars big storage) (by_slot storage contents)
+
 (* [parameterized name] is the recorded program [name] linked with its buffers
    made parameters of their slots, which each run binds, and the program with
    those parameters. *)
@@ -1495,6 +1512,10 @@ let schedules =
       slow "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
         runs_each_binding;
+      cases ~name:Fun.id
+        "a pad of integer divisions writes what its tensors compute"
+        [ "pad_idiv"; "pad_idiv_stored"; "pad_idiv_nested"; "pad_idiv_shrunk" ]
+        (fun name -> divides_on_padding name ());
       cases ~name:Fun.id
         "a schedule runs on the buffers each run binds to its parameters"
         [ "contiguous"; "copy_view"; "shard_add" ] (fun name ->

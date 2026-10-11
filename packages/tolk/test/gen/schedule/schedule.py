@@ -154,6 +154,18 @@ PROGRAMS = {
     "attention": lambda: empty(2, 2, 8, 4).scaled_dot_product_attention(empty(2, 2, 8, 4), empty(2, 2, 8, 4)),
     "conv": lambda: empty(1, 2, 8, 8).conv2d(empty(3, 2, 3, 3)),
     "cat": lambda: Tensor.cat(empty(2, 4), empty(3, 4)),
+    # integer divisions on a pad's padding, which reads zeros
+    "pad_idiv": lambda: (lambda a, b: (a.div(b, rounding_mode="trunc") + a % b).pad(((1, 1),)).contiguous())(
+        empty(10, dtype=dtypes.int32), empty(10, dtype=dtypes.int32)),
+    # a divisor bounded away from 0, stored: the padding loads its buffer
+    "pad_idiv_stored": lambda: (lambda a, b: a.div(b.maximum(1).contiguous(), rounding_mode="trunc").pad(((1, 1),))
+                                .contiguous())(empty(10, dtype=dtypes.int32), empty(10, dtype=dtypes.int32)),
+    # a quotient padded twice, the outer pad as wide as the host's upcast
+    "pad_idiv_nested": lambda: (lambda a, b: (a.div(b, rounding_mode="trunc").pad(((1, 1),)) + 1).pad(((8, 8),))
+                                .contiguous())(empty(38, dtype=dtypes.int32), empty(38, dtype=dtypes.int32)),
+    # a quotient shrunk, then padded
+    "pad_idiv_shrunk": lambda: (lambda a, b: a.div(b, rounding_mode="trunc")[1:].pad(((1, 1),)).contiguous())(
+        empty(11, dtype=dtypes.int32), empty(11, dtype=dtypes.int32)),
     "sort": lambda: empty(8).sort()[0],
     "embedding": lambda: empty(10, 4)[Tensor([1, 2, 3], dtype="int")],
     "split_sum": lambda: empty(65536).sum(),

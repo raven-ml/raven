@@ -85,6 +85,14 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     - a reduction of leading axes becomes a reduction over its ranges;
     - a {!Op.Pad} becomes a selection of its source where its index is valid,
       and of [0] elsewhere;
+    - an integer division ({!Op.Cdiv}, {!Op.Cmod}, {!Op.Floordiv},
+      {!Op.Floormod}) whose divisor is not a nonzero constant, through casts
+      and movements, divides by [1] where its ranges are invalid, as on a pad's
+      padding, whose loads read zeros whatever the divisor's bounds: a
+      division by zero traps on x86 even in a lane whose result the pad drops.
+      A range's validity is that of its gates once the symbolic rules
+      ({!Shape.val-symbolic}) lift them out of the arithmetic and merge them,
+      so the padding of a shrunk or padded source counts;
     - a {!Op.Stack} becomes a selection of its sources by its leading range: a
       chain of comparisons with each index for at most [8] sources, and above
       that a comparison with the middle index choosing between the selections of

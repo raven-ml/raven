@@ -1190,7 +1190,7 @@ index 712a2b7..2304534 100644
  
    # **** local groups ****
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index f80c800..96fb3eb 100644
+index f80c800..6aa4283 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -14,6 +14,8 @@ from tinygrad.renderer import Renderer
@@ -1231,7 +1231,19 @@ index f80c800..96fb3eb 100644
      elif opt.op is OptOps.TC:
        check(len(self.applied_opts) == 0, "tensor core opts must be first") # TODO: remove the need for this by having warps
        check(opt.axis is not None and opt.axis >= 0, "tensor core opts must have an axis")
-@@ -173,6 +177,39 @@ class Scheduler:
+@@ -158,6 +162,11 @@ class Scheduler:
+       for r in self.reduceops:
+         if any(rng in y.ranges for y in r.src[1:]):
+           replaces[r] = r.replace(src=(valid.where(r.src[0], UOp.const(identity_element(r.arg[0], r.dtype), r.dtype)),)+r.src[1:])
++      # an integer division whose divisor reads the padded range divides by 1 on the padding: the padding loads zeros,
++      # and a division by zero traps on x86 even in a lane no store keeps
++      for u in self.ast.toposort():
++        if u.op in {Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD} and dtypes.is_int(u.dtype) and rng in (d:=u.src[1]).ranges:
++          replaces[u] = u.replace(src=(u.src[0], valid.where(d, UOp.const(d.dtype.const(1)))))
+       self.ast = self.ast.substitute(replaces, f"padto {rng.axis_id} {opt.arg}")
+       ret = replaced_rng
+     elif opt.op is OptOps.SWAP:
+@@ -173,6 +182,39 @@ class Scheduler:
      if append_opt: self.applied_opts.append(opt)
      return ret
  
@@ -1271,7 +1283,7 @@ index f80c800..96fb3eb 100644
    def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
      if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
      reduceop = reduceops[0]
-@@ -182,21 +219,28 @@ class Scheduler:
+@@ -182,21 +224,28 @@ class Scheduler:
        in0, in1 = mul.src
        for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
          if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
@@ -1312,7 +1324,7 @@ index f80c800..96fb3eb 100644
            check(not any(self.rngs[i] in axes[:2] for i in self.reduce_axes), "tensor core N and M can't be contracted")
  
            # do optimizations and save the ranges
-@@ -219,7 +263,11 @@ class Scheduler:
+@@ -219,7 +268,11 @@ class Scheduler:
              reduceop = get_single_element([x for x in self.reduceops if axes[2] in UOp.sink(*x.src[1:]).ranges])
              gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
              if mul.op is Ops.CAST: mul = mul.src[0]
@@ -1863,7 +1875,7 @@ index 1f6134e..24949cf 100644
  
  # *****************
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 228ec4e..3353327 100644
+index 228ec4e..1a3fd3e 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -7,11 +7,29 @@ from tinygrad.uop.ops import gate_kernel_sink
@@ -2001,16 +2013,41 @@ index 228ec4e..3353327 100644
    return x.replace(src=tuple(create_bufferize_and_index_srcs(ctx, x)))
  
  def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
-@@ -140,6 +185,8 @@ pm_apply_rangeify = PatternMatcher([
+@@ -104,6 +149,22 @@ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
+   valid: UOp = UOp.const(True).uprod([r.get_valid() for r in ctx.range_map[x][0]])
+   return valid.where(bx.src[0], UOp.const(x.dtype.const(0)))
+ 
++def constant(u:UOp) -> bool:
++  # whether u is a constant through casts and movements
++  while u.op in {Ops.CAST, Ops.RESHAPE, Ops.EXPAND, Ops.PERMUTE, Ops.SHRINK, Ops.FLIP}: u = u.src[0]
++  return u.op is Ops.CONST
++
++# an integer division computed where its ranges are invalid, on a pad's padding, divides by 1 there, unless its divisor
++# is a nonzero constant: the padding loads zeros whatever the divisor's bounds, and a division by zero traps on x86 even
++# in a lane whose result the pad drops. A range's validity is read after symbolic lifts its gates to the top and merges
++# them: a shrink after a pad leaves the gate below an add, and a pad of a pad nests one gate in another
++def guard_division_on_padding(ctx:IndexingContext, x:UOp):
++  if x not in ctx.range_map or not dtypes.is_int(x.dtype): return None
++  a, d = create_bufferize_and_index_srcs(ctx, x)
++  valid = [c for r in ctx.range_map[x][0] if not (c:=graph_rewrite(r, symbolic, name="validity").get_valid()).vmin]
++  if not valid or (constant(d) and d.vmin == d.vmax != 0): return x.replace(src=(a, d))
++  return x.replace(src=(a, valid[0].uprod(*valid[1:]).where(d, UOp.const(d.dtype.const(1)))))
++
+ def convert_reduce_to_reduce_with_ranges(ctx:IndexingContext, x:UOp):
+   if x.arg[1] == 0: return None
+   if x not in ctx.range_map: raise RuntimeError("REDUCE has no ranges in rangeify, UOp verification failed")
+@@ -140,6 +201,10 @@ pm_apply_rangeify = PatternMatcher([
    (UPat(Ops.PAD, name="x"), convert_pad_to_where_to_keep_behavior_local),
    # STACK -> WHERE select on the leading range
    (UPat(Ops.STACK, name="x"), convert_stack_to_where),
 +  # INDEX before ranges -> a load at the loaded index
 +  (UPat(Ops.INDEX, name="x"), convert_gather),
++  # an integer division on padding divides by 1 there
++  (UPat((Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD), name="x"), guard_division_on_padding),
    # finally, apply_rangeify
    (UPat(GroupOp.All, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -186,6 +233,69 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+@@ -186,6 +251,69 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
      case _: raise RuntimeError(f"{op} is not a MovementOp")
    return rngs
  
@@ -2080,7 +2117,7 @@ index 228ec4e..3353327 100644
  @rewrite_group(new_ctx=False)
  def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    if debug: print("**************************")
-@@ -197,6 +307,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -197,6 +325,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    # get the consumer map
    with cpu_profile("consumer map in rangeify", "TINY"):
      tsink_toposort = tsink.toposort(gate_kernel_sink)
@@ -2088,7 +2125,7 @@ index 228ec4e..3353327 100644
      consumer_map: dict[UOp, dict[UOp, None]] = {x:{} for x in tsink_toposort}
      for c in tsink_toposort:
        for x in data_srcs(c.op, c.src):
-@@ -227,10 +338,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -227,10 +356,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -2105,7 +2142,7 @@ index 228ec4e..3353327 100644
        # all ranges are ended now
        ending_ranges[x] = []
        # mark all ranges as ended
-@@ -265,14 +379,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -265,14 +397,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        out_rngs = tuple(_out_rngs)
  
        # we have to (partially) realize here if there's new ranges
@@ -2129,7 +2166,7 @@ index 228ec4e..3353327 100644
          out_rngs = tuple(rctx.new_range(x.shape[i]) for i in range(len(out_rngs)))
      ending_ranges[x] += broadcast_ending_ranges
  
-@@ -298,7 +417,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -298,7 +435,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
  
      # REDUCE creates ranges for the axes it is reducing
      if x.op is Ops.REDUCE and x.arg[1]:
