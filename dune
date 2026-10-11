@@ -30,7 +30,8 @@
 ; An odoc warning is an error in every profile.
 ;
 ; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout, so a hung test
-; cannot block a shared watch server.
+; cannot block a shared watch server. Under tsan it is 15 times longer,
+; ThreadSanitizer's slowdown at most.
 
 (env
  (dev
@@ -81,7 +82,7 @@
   (env-vars
    (TSAN_OPTIONS
     second_deadlock_stack=1:die_after_fork=0:allocator_may_return_null=1)
-   (WINDTRAP_TIMEOUT 60))
+   (WINDTRAP_TIMEOUT 900))
   (odoc
    (warnings fatal)))
  (_
