@@ -212,6 +212,55 @@ let test_break_in_close () =
     (Rig.lost d);
   equal int 1 (count "stop" p)
 
+(* A close waiting for another thread's stop returns to OCaml at least every
+   200 ms. The losing thread's stop parks outside OCaml for up to 5 s, and a
+   thread of no OCaml code raises SIGINT once the close blocks in its wait for
+   the stop. The handler raises Sys.Break on the closing thread during the
+   close, so the close takes Sys.Break with the stop still parked. A close
+   whose wait never returns to OCaml could break only once the park ended,
+   which the check that the stop is still parked catches. The next close
+   finishes: the device keeps its loss's reason, stopped once. *)
+let test_break_waiting_stop () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's waits" ();
+  let d, p = P.open_ "turn:break-stop" in
+  P.before p "stop" Support.park;
+  P.fail p;
+  let loser =
+    spawn (fun () ->
+        match submit (empty d) with _ -> 0 | exception Rig.Lost _ -> 1)
+  in
+  Support.await "a parked stop" Support.parked;
+  let closer = Thread.id (Thread.self ()) and closing = Atomic.make true in
+  let handle _ =
+    if Thread.id (Thread.self ()) = closer && Atomic.get closing then
+      raise Sys.Break
+  in
+  let close () =
+    match Rig.close d with
+    | () ->
+        Atomic.set closing false;
+        false
+    | exception Sys.Break ->
+        Atomic.set closing false;
+        true
+  in
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  let (broke, signalled), held =
+    Fun.protect ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+    @@ fun () ->
+    let r = Support.interrupt_in_wait close in
+    (r, Support.parked ())
+  in
+  Support.unpark ();
+  equal ~msg:"the signal" bool true signalled;
+  equal ~msg:"the close" bool true broke;
+  equal ~msg:"the stop parked as it broke" bool true held;
+  equal ~msg:"the loser" outcome (Ok 1) (loser ());
+  Rig.close d;
+  equal (option string) (Some "the submission failed") (Rig.lost d);
+  equal int 1 (count "stop" p)
+
 let tests =
   [
     group ~timeout "room"
@@ -239,6 +288,8 @@ let tests =
           test_break_waiting_for_room;
         test "a close Sys.Break interrupted finishes at the next close"
           test_break_in_close;
+        test "a close waiting for another thread's stop takes Sys.Break"
+          test_break_waiting_stop;
       ];
   ]
 

@@ -362,6 +362,7 @@ module Driver = struct
 
   let stop d ~fault =
     note d "stop";
+    run_before d "stop";
     Mutex.protect d.lock (fun () -> d.stop_fault <- fault);
     Mutex.protect d.lock (fun () -> at_gate d);
     if d.answer = `Stopped then polled_stop d.c
