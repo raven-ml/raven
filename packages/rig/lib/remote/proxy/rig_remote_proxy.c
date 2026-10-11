@@ -17,6 +17,7 @@
 #include <caml/threads.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "rig_edge.h"
 #include "rig_remote_proxy_stubs.h"
@@ -259,6 +260,12 @@ value caml_rig_remote_proxy_signaled(value vd) {
   return Val_long((intnat)atomic_load(&Dev_val(vd)->word));
 }
 
+static int64_t now_ns(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return (int64_t)t.tv_sec * 1000000000LL + t.tv_nsec;
+}
+
 /* Waits at most [ms] for the shadow to differ from [seen]: [false], or
    [true] if the job failed. Releases the runtime. */
 value caml_rig_remote_proxy_sleep(value vd, value vseen, value vms) {
@@ -269,18 +276,11 @@ value caml_rig_remote_proxy_sleep(value vd, value vseen, value vms) {
   if (rig_remote_forked(l->job)) return Val_true;
   caml_release_runtime_system();
   pthread_mutex_lock(&l->mu);
-  if (!atomic_load(&l->failed) && atomic_load(&d->word) == seen) {
-    struct timespec t;
-    clock_gettime(CLOCK_REALTIME, &t);
-    t.tv_sec += ms / 1000;
-    t.tv_nsec += (ms % 1000) * 1000000L;
-    if (t.tv_nsec >= 1000000000L) {
-      t.tv_sec++;
-      t.tv_nsec -= 1000000000L;
-    }
-    while (!atomic_load(&l->failed) && atomic_load(&d->word) == seen)
-      if (pthread_cond_timedwait(&l->cv, &l->mu, &t) != 0) break;
-  }
+  int64_t until = now_ns() + (int64_t)ms * 1000000LL;
+  for (int64_t now = now_ns();
+       !atomic_load(&l->failed) && atomic_load(&d->word) == seen && now < until;
+       now = now_ns())
+    rig_remote_wait_ns(&l->cv, &l->mu, until - now);
   int failed = atomic_load(&l->failed);
   pthread_mutex_unlock(&l->mu);
   caml_acquire_runtime_system();

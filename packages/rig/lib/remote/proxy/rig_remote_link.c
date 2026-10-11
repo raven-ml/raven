@@ -199,14 +199,34 @@ static int64_t now_ns(void) {
   return (int64_t)t.tv_sec * 1000000000LL + t.tv_nsec;
 }
 
-/* Waits on [cv] for at most [ns] nanoseconds. */
-static void wait_ns(pthread_cond_t *cv, pthread_mutex_t *mu, int64_t ns) {
+/* A condition waits on a clock no step of the wall clock moves: macOS and
+   Windows wait for the time left; elsewhere the condition waits on
+   CLOCK_MONOTONIC. */
+void rig_remote_cond_init(pthread_cond_t *cv) {
+#if defined(__APPLE__) || defined(_WIN32)
+  pthread_cond_init(cv, NULL);
+#else
+  pthread_condattr_t monotonic;
+  pthread_condattr_init(&monotonic);
+  pthread_condattr_setclock(&monotonic, CLOCK_MONOTONIC);
+  pthread_cond_init(cv, &monotonic);
+  pthread_condattr_destroy(&monotonic);
+#endif
+}
+
+void rig_remote_wait_ns(pthread_cond_t *cv, pthread_mutex_t *mu, int64_t ns) {
+  if (ns < 0) ns = 0;
+#if defined(__APPLE__) || defined(_WIN32)
+  struct timespec t = {(time_t)(ns / 1000000000LL), (long)(ns % 1000000000LL)};
+  pthread_cond_timedwait_relative_np(cv, mu, &t);
+#else
   struct timespec t;
-  clock_gettime(CLOCK_REALTIME, &t);
+  clock_gettime(CLOCK_MONOTONIC, &t);
   int64_t at = (int64_t)t.tv_nsec + ns;
   t.tv_sec += (time_t)(at / 1000000000LL);
   t.tv_nsec = (long)(at % 1000000000LL);
   pthread_cond_timedwait(cv, mu, &t);
+#endif
 }
 
 /* Whether [v], a u64 a frame holds, fits a non-negative OCaml int: wire.mli
@@ -739,7 +759,8 @@ static void *sender(void *arg) {
     if (ended || l->due)
       pthread_cond_wait(&l->wake, &l->mu);
     else
-      wait_ns(&l->wake, &l->mu, claimed ? BEAT_NS : l->sent_ns + BEAT_NS - now);
+      rig_remote_wait_ns(&l->wake, &l->mu,
+                         claimed ? BEAT_NS : l->sent_ns + BEAT_NS - now);
   }
   int settled = failing(l->job) ? abort_link(l) : 0;
   pthread_mutex_unlock(&l->mu);
@@ -1191,7 +1212,7 @@ value caml_rig_remote_link_job(value unit) {
     caml_raise_out_of_memory();
   }
   pthread_mutex_init(&j->mu, NULL);
-  pthread_cond_init(&j->cv, NULL);
+  rig_remote_cond_init(&j->cv);
   atomic_store(&j->state, OPEN);
   j->pid = (long)getpid();
   last_job = j;
@@ -1212,7 +1233,7 @@ value caml_rig_remote_link_job_wait(value vj, value vms) {
     int64_t until = now_ns() + ms * 1000000LL;
     for (int64_t now = now_ns();
          atomic_load(&j->state) == OPEN && now < until; now = now_ns())
-      wait_ns(&j->cv, &j->mu, until - now);
+      rig_remote_wait_ns(&j->cv, &j->mu, until - now);
     pthread_mutex_unlock(&j->mu);
     caml_acquire_runtime_system();
   }
@@ -1293,8 +1314,8 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   l->name = nm;
   l->peer = Int_val(peer);
   pthread_mutex_init(&l->mu, NULL);
-  pthread_cond_init(&l->cv, NULL);
-  pthread_cond_init(&l->wake, NULL);
+  rig_remote_cond_init(&l->cv);
+  rig_remote_cond_init(&l->wake);
   l->kept = l->gave = Val_unit;
   caml_register_generational_global_root(&l->kept);
   caml_register_generational_global_root(&l->gave);

@@ -214,6 +214,14 @@ struct rig_remote_dev {
    its own copy, taking no lock. */
 int rig_remote_forked(struct rig_remote_job *j);
 
+/* Inits [cv] for [rig_remote_wait_ns], whose waits a step of the wall clock
+   does not move. */
+void rig_remote_cond_init(pthread_cond_t *cv);
+
+/* Waits on [cv], which [rig_remote_cond_init] made, for at most [ns]
+   nanoseconds; none if [ns] is negative. */
+void rig_remote_wait_ns(pthread_cond_t *cv, pthread_mutex_t *mu, int64_t ns);
+
 /* Bytes of this process's memory a frame sends without copying them. */
 struct rig_remote_span {
   const unsigned char *p;

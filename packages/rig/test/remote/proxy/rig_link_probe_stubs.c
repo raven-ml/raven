@@ -24,18 +24,13 @@ static int64_t now_ns(void) {
   return (int64_t)t.tv_sec * 1000000000LL + t.tv_nsec;
 }
 
-/* Waits on [cv] for at most [ns] nanoseconds. */
-static void wait_ns(pthread_cond_t *cv, pthread_mutex_t *mu, int64_t ns) {
-  struct timespec t;
-  clock_gettime(CLOCK_REALTIME, &t);
-  int64_t at = (int64_t)t.tv_nsec + ns;
-  t.tv_sec += (time_t)(at / 1000000000LL);
-  t.tv_nsec = (long)(at % 1000000000LL);
-  pthread_cond_timedwait(cv, mu, &t);
-}
-
 static pthread_mutex_t hook_mu = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t hook_cv = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t hook_cv;
+static pthread_once_t hook_once = PTHREAD_ONCE_INIT;
+
+/* Every stub inits [hook_cv] first, as the link inits its conditions. */
+static void hook_init(void) { rig_remote_cond_init(&hook_cv); }
+
 static int armed, held, entered, waiters;
 static const int64_t patience = 5000000000LL;
 
@@ -46,7 +41,7 @@ static void hook(enum rig_remote_link_point at, int waiting) {
     pthread_cond_broadcast(&hook_cv);
     int64_t deadline = now_ns() + patience;
     while (armed && now_ns() < deadline)
-      wait_ns(&hook_cv, &hook_mu, deadline - now_ns());
+      rig_remote_wait_ns(&hook_cv, &hook_mu, deadline - now_ns());
   } else if (armed && at == RIG_REMOTE_LINK_RELEASING) {
     entered++;
     waiters += waiting;
@@ -57,6 +52,7 @@ static void hook(enum rig_remote_link_point at, int waiting) {
 
 value rig_link_probe_arm(value point) {
   CAMLparam1(point);
+  pthread_once(&hook_once, hook_init);
   pthread_mutex_lock(&hook_mu);
   armed = Int_val(point) + 1;
   held = entered = waiters = 0;
@@ -67,11 +63,12 @@ value rig_link_probe_arm(value point) {
 
 value rig_link_probe_held(value unit) {
   CAMLparam1(unit);
+  pthread_once(&hook_once, hook_init);
   caml_release_runtime_system();
   pthread_mutex_lock(&hook_mu);
   int64_t deadline = now_ns() + patience;
   while (!held && now_ns() < deadline)
-    wait_ns(&hook_cv, &hook_mu, deadline - now_ns());
+    rig_remote_wait_ns(&hook_cv, &hook_mu, deadline - now_ns());
   int observed = held;
   pthread_mutex_unlock(&hook_mu);
   caml_acquire_runtime_system();
@@ -81,11 +78,12 @@ value rig_link_probe_held(value unit) {
 value rig_link_probe_releases(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(result);
+  pthread_once(&hook_once, hook_init);
   caml_release_runtime_system();
   pthread_mutex_lock(&hook_mu);
   int64_t deadline = now_ns() + patience;
   while (entered < 2 && now_ns() < deadline)
-    wait_ns(&hook_cv, &hook_mu, deadline - now_ns());
+    rig_remote_wait_ns(&hook_cv, &hook_mu, deadline - now_ns());
   int e = entered, w = waiters;
   pthread_mutex_unlock(&hook_mu);
   caml_acquire_runtime_system();
@@ -97,6 +95,7 @@ value rig_link_probe_releases(value unit) {
 
 value rig_link_probe_resume(value unit) {
   CAMLparam1(unit);
+  pthread_once(&hook_once, hook_init);
   pthread_mutex_lock(&hook_mu);
   armed = 0;
   pthread_cond_broadcast(&hook_cv);
