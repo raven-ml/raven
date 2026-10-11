@@ -850,7 +850,7 @@ let kept_c = 512
 
 (* What a closed device keeps of the OCaml heap: rig's record of its facts,
    and the driver's handle with its facts and capability, about 660 bytes on
-   Metal, 820 on NV and 940 on AMD. *)
+   Metal, 570 on NV, 700 on AMD and 860 on AMD with no kernel driver. *)
 let kept_ocaml = 1024
 
 let open_close (module G : Gpu) () =

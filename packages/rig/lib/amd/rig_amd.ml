@@ -53,43 +53,44 @@ type 'm path = {
   stop : fault:string option -> [ `Stopped | `Unknown ];
 }
 
-(* A path's memory, with the key that tells whose it is. *)
-type mem = Mem : 'm Type.Id.t * 'm memory -> mem
+(* Whose a path's memory is, by the path's key, and the path's [free]. Memory
+   holds its owner, so that a free after stop needs nothing of the device. *)
+type 'm owner = { key : 'm Type.Id.t; free : 'm memory -> unit }
+
+(* A path's memory, with its owner. *)
+type mem = Mem : 'm owner * 'm memory -> mem
 
 let mem_address (Mem (_, m)) = m.address
 let mem_host (Mem (_, m)) = m.host
+let free_mem (Mem (o, m)) = o.free m
 
-(* The path's functions over memory whose type the key hides. [free] outlives
-   the device, so it holds the path's key and [free] alone. *)
+(* The owner of memory given back, of which a region keeps only the
+   addresses. *)
+let given : unit owner = { key = Type.Id.make (); free = ignore }
+
+(* The path's functions over memory whose type the owner hides. *)
 type ops = {
   alloc : Rig_edge.memory -> int -> mem option;
   map_host : (int -> int -> mem option) option;
   map_peer : mem -> mem option;
-  free : mem -> unit;
   sleep : ms:int -> unit;
   stable_power : unit -> (unit, string) result;
   stop : fault:string option -> [ `Stopped | `Unknown ];
 }
 
 let ops (type m) (p : m path) =
-  let key = p.key and free = p.free in
-  let pack m = Mem (key, m) in
-  let own (Mem (id, m)) : m memory option =
-    match Type.Id.provably_equal id key with
+  let owner = { key = p.key; free = p.free } in
+  let pack m = Mem (owner, m) in
+  let own (Mem (o, m)) : m memory option =
+    match Type.Id.provably_equal o.key p.key with
     | Some Type.Equal -> Some m
     | None -> None
-  in
-  let free (Mem (id, m)) =
-    match Type.Id.provably_equal id key with
-    | Some Type.Equal -> free m
-    | None -> ()
   in
   {
     alloc = (fun k n -> Option.map pack (p.alloc k n));
     map_host = Option.map (fun f a n -> Option.map pack (f a n)) p.map_host;
     map_peer =
       (fun m -> Option.bind (own m) (fun m -> Option.map pack (p.map_peer m)));
-    free;
     sleep = p.sleep;
     stable_power = p.stable_power;
     stop = p.stop;
@@ -178,8 +179,8 @@ type live = {
          the memory under it *)
 }
 
-(* A device: its facts, what rig's calls after stop use ([peer], [free]), and
-   its live state. *)
+(* A device: its facts, what [peer] uses for the life of the process, and its
+   live state. *)
 type t = {
   self : int;
   path : int; (* the path's key, as an integer *)
@@ -188,15 +189,17 @@ type t = {
   aql : bool; (* the compute queue reads AQL packets *)
   lds : int;
   hdp : int option;
-  hdps : Mutex.t; (* the HDP registers' counts and [gone] *)
-  mutable gone : bool; (* the word was freed, and the C state with it *)
+  hdps : Mutex.t; (* the HDP registers' counts and [word] *)
   budget : int;
   hang_ms : int option;
   waits64 : bool; (* its queues run 64-bit waits *)
   maps_host : bool;
-  word : region;
+  mutable word : region option;
+      (* [None] once rig freed it, and the C state with it *)
+  (* Where the word is, which the facts report also once it is freed. *)
+  word_address : int;
+  word_host : int;
   reaches : int -> bool; (* the path's *)
-  free : mem -> unit; (* [ops.free] *)
   capability : Abi.Capability.t;
   guard : Mutex.t;
       (* held by [grow_scratch], [make_trace], and stop over [live] *)
@@ -320,19 +323,19 @@ let install st p v =
 
 (* Installs a published scratch the queue took, and frees the retired ones the
    word passed. *)
-let settle_scratch self (ops : ops) st =
+let settle_scratch self st =
   let taken = scratch_taken self in
   (match st.pending with
   | Some p when taken > 0 -> install st p taken
   | _ -> ());
   let word = signaled_word self in
   let reached, kept = List.partition (fun (_, v) -> word >= v) st.retired in
-  List.iter (fun (m, _) -> ops.free m) reached;
+  List.iter (fun (m, _) -> free_mem m) reached;
   st.retired <- kept
 
 (* [grow_scratch] under the device's guard, on a device not stopped. *)
 let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql ~desc st n =
-  settle_scratch self ops st;
+  settle_scratch self st;
   let have =
     match (st.pending, st.installed) with
     | Some (_, h), _ | None, Some (_, h) -> h
@@ -353,7 +356,7 @@ let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql ~desc st n =
               let ats, values = List.split writes in
               (Array.of_list ats, Array.of_list values)
           | exception e ->
-              ops.free m;
+              free_mem m;
               raise e
         in
         let took = publish_scratch self (mem_address m) ats values in
@@ -365,7 +368,7 @@ let grow_held self (ops : ops) (g : Abi.Gpu.t) ~aql ~desc st n =
         | Some _ | None -> ());
         let old = st.pending in
         st.pending <- Some (m, n);
-        Option.iter (fun (old, _) -> ops.free old) old;
+        Option.iter (fun (old, _) -> free_mem old) old;
         Served
 
 let grow_scratch g n =
@@ -416,8 +419,8 @@ let make_trace g =
           l.traces <- Some (t, [ b; e ]);
           Ok t
       | b, e ->
-          Option.iter ops.free b;
-          Option.iter ops.free e;
+          Option.iter free_mem b;
+          Option.iter free_mem e;
           Error (strf "no memory for %d bytes of trace buffers" n))
 
 (* The capability's [scratch]: [g]'s scratch grown for [n] bytes per lane. *)
@@ -440,6 +443,11 @@ let is_gpu ~vendor ~class_ =
 
 let key = Type.Id.make ()
 
+(* [g]'s word once rig freed it: where it was. *)
+let freed g =
+  let m = { address = g.word_address; host = Some g.word_host; data = () } in
+  { bytes = 8; mem = Mem (given, m); flush = None }
+
 let facts g =
   {
     Rig_edge.arch = Abi.Gpu.processor g.gpu;
@@ -459,7 +467,7 @@ let facts g =
     maps_host = g.maps_host;
     host_addresses = false;
     capability = Abi.Capability.declare g.capability;
-    word = g.word;
+    word = (match g.word with Some w -> w | None -> freed g);
     edge = Nativeint.of_int g.self;
   }
 
@@ -477,7 +485,8 @@ let live g =
    device keeps no more registers. Once [g]'s word is freed no doorbell rings,
    and the count is left. *)
 let count_hdp g reg delta =
-  Mutex.protect g.hdps (fun () -> (not g.gone) && hdp_count g.self reg delta)
+  Mutex.protect g.hdps (fun () ->
+      Option.is_some g.word && hdp_count g.self reg delta)
 
 let alloc g (kind : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_amd.alloc: %d bytes, expected at least 1" n;
@@ -496,19 +505,19 @@ let alloc g (kind : Rig_edge.memory) n =
 
 (* Gives back [m]: a free the path refuses loses the memory, which no caller can
    act on. *)
-let give_back g m = try g.free m with Fault _ -> ()
+let give_back m = try free_mem m with Fault _ -> ()
 
 (* Frees [g]'s C state with its word. rig frees the word after the stop, but
    may free other regions and unload images after it. *)
 let free_state g =
   Mutex.protect g.hdps (fun () ->
-      g.gone <- true;
+      g.word <- None;
       destroy g.self)
 
 let free g r =
   Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush;
-  give_back g r.mem;
-  if r == g.word then free_state g
+  give_back r.mem;
+  match g.word with Some w when r == w -> free_state g | _ -> ()
 
 (* The GPU names memory by address: the handle is the address. *)
 let locate r =
@@ -529,7 +538,7 @@ let map_peer g _ r =
       match r.flush with
       | Some reg when count_hdp g reg 1 -> view (Some reg)
       | Some _ ->
-          g.free m;
+          free_mem m;
           None
       | None -> view None)
 
@@ -755,7 +764,7 @@ let make (type m) (p : m path) =
   let ops = ops p in
   let taken = ref [] and queues = ref false and copy_launch = ref 0 in
   (* Memory a queue the path could not stop may still read stays. *)
-  let give_back () =
+  let undo () =
     let stopped =
       (not !queues)
       ||
@@ -766,7 +775,7 @@ let make (type m) (p : m path) =
     in
     if stopped then begin
       if !copy_launch <> 0 then free_launch !copy_launch;
-      List.iter (fun m -> try ops.free m with Fault _ -> ()) !taken
+      List.iter give_back !taken
     end
   in
   let alloc what n =
@@ -864,14 +873,14 @@ let make (type m) (p : m path) =
         lds = p.lds;
         hdp = p.hdp;
         hdps = Mutex.create ();
-        gone = false;
         budget = p.budget;
         hang_ms = p.hang_ms;
         waits64;
         maps_host = Option.is_some ops.map_host;
-        word = region 8 word;
+        word = Some (region 8 word);
+        word_address = mem_address word;
+        word_host;
         reaches = p.reaches;
-        free = ops.free;
         capability =
           {
             gpu = p.gpu;
@@ -899,11 +908,11 @@ let make (type m) (p : m path) =
   match open_device () with
   | Ok _ as g -> g
   | Error _ as e ->
-      give_back ();
+      undo ();
       e
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      give_back ();
+      undo ();
       Printexc.raise_with_backtrace e bt
 
 (* Work *)
@@ -933,7 +942,7 @@ let halt g l ~fault =
       let st = l.scratch in
       let buffers = Option.to_list st.installed @ Option.to_list st.pending in
       let traces = match l.traces with Some (_, ms) -> ms | None -> [] in
-      List.iter (give_back g)
+      List.iter give_back
         (List.map fst (buffers @ st.retired) @ traces @ l.own)
 
 let stop g ~fault =

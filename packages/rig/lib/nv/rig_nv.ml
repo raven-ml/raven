@@ -279,8 +279,8 @@ type 'm live = {
   mutable local_retired : ('m memory * int) list;
 }
 
-(* A device: its facts, what rig's calls after stop use ([peer], [free]), and
-   its live state. *)
+(* A device: its facts, what [peer] uses for the life of the process, and its
+   live state. *)
 type 'm dev = {
   self : int;
   arch : string;
@@ -289,25 +289,33 @@ type 'm dev = {
   maps_host : bool;
   key : 'm Type.Id.t;
   index : int;
-  reaches : int -> bool;
-  free : 'm memory -> unit; (* the path's *)
+  reaches : int -> bool; (* the path's *)
   capability : Abi.Gpu.t;
-  word : 'm reg;
-  flush_lock : Mutex.t; (* serialises count_flush, [viewed] and [gone] *)
-  mutable gone : bool; (* the word was freed, and the C state with it *)
+  flush_lock : Mutex.t; (* serialises count_flush, [viewed] and [word] *)
+  mutable word : 'm reg option;
+      (* [None] once rig freed it, and the C state with it *)
+  (* Where the word is, which the facts report also once it is freed. *)
+  word_address : int;
+  word_host : int;
   local_lock : Mutex.t; (* held by [grow], and by stop over [live] *)
   mutable live : 'm live option; (* [None] once stop began *)
 }
 
+(* A region holds what frees it, the path's [free], so that a free after stop
+   needs nothing of the device. *)
 and 'm reg = {
   dev : 'm dev;
   mem : 'm memory;
+  free : 'm memory -> unit;
   bytes : int;
   behind : 'm behind option;
 }
 
 type t = T : 'm dev -> t
-type region = R : 'm reg -> region
+
+(* A region, or a device's word once rig freed it, of which the facts keep
+   where it was. *)
+type region = R : 'm reg -> region | Given of { address : int; host : int }
 
 let key : t Type.Id.t = Type.Id.make ()
 
@@ -356,13 +364,16 @@ let facts (T d) =
     maps_host = d.maps_host;
     host_addresses = false;
     capability = Abi.Gpu.declare d.capability;
-    word = R d.word;
+    word =
+      (match d.word with
+      | Some w -> R w
+      | None -> Given { address = d.word_address; host = d.word_host });
     edge = Nativeint.of_int d.self;
   }
 
-(* Gives [m] back to its path. The device holds [m] no more whatever the path
-   answers: a path that fails to take it back keeps it. *)
-let give d m = try d.free m with Fault _ -> ()
+(* Gives [m] back through [free], its path's. The device holds [m] no more
+   whatever the path answers: a path that fails to take it back keeps it. *)
+let give free m = try free m with Fault _ -> ()
 
 (* [d]'s live state. rig calls nothing that uses it after stop. *)
 let live d =
@@ -392,14 +403,14 @@ let retire d l =
   let seen = read_word d.self in
   let done_, kept = List.partition (fun (_, v) -> v <= seen) l.local_retired in
   l.local_retired <- kept;
-  List.iter (fun (m, _) -> give d m) done_
+  List.iter (fun (m, _) -> give l.path.free m) done_
 
 (* Makes [packed] the pending local memory, freeing a pending one that no
    submission took. *)
 let publish d l m packed =
   (match l.local_pending with
   | Some (old, old_packed) when offer_local d.self old_packed packed ->
-      give d old
+      give l.path.free old
   | Some _ | None ->
       settle d l;
       set_local d.self packed);
@@ -737,7 +748,6 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
         key = p.key;
         index = p.index;
         reaches = p.reaches;
-        free = p.free;
         capability =
           {
             Abi.Gpu.compute_class = g.compute_class;
@@ -750,9 +760,11 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
             local_window;
             local = (fun n -> local d n);
           };
-        word = { dev = d; mem = words; bytes = 8; behind = None };
+        word =
+          Some { dev = d; mem = words; free = p.free; bytes = 8; behind = None };
+        word_address = words.address;
+        word_host = Option.get words.host;
         flush_lock = Mutex.create ();
-        gone = false;
         local_lock = Mutex.create ();
         live =
           Some
@@ -815,7 +827,8 @@ let make p =
 
 (* Memory *)
 
-let region d behind bytes m = R { dev = d; mem = m; bytes; behind }
+let region d (p : _ path) behind bytes m =
+  R { dev = d; mem = m; free = p.free; bytes; behind }
 
 (* Holds of pages *)
 
@@ -835,7 +848,7 @@ let drop p =
    nothing flushes, and the count is left. *)
 let count d p delta =
   Mutex.protect d.flush_lock (fun () ->
-      (not d.gone) && count_flush d.self p.at delta)
+      Option.is_some d.word && count_flush d.self p.at delta)
 
 let page_of = function Mapped_of p | View_of p -> p
 
@@ -844,7 +857,8 @@ let alloc (T d) (memory : Rig_edge.memory) n =
   let l = live d and fn = "Rig_nv.alloc" in
   let p = l.path in
   match memory with
-  | Device | Pinned -> Option.map (region d None n) (path_alloc p fn memory n)
+  | Device | Pinned ->
+      Option.map (region d p None n) (path_alloc p fn memory n)
   | Mapped -> (
       match l.bar with
       | None -> None
@@ -854,32 +868,36 @@ let alloc (T d) (memory : Rig_edge.memory) n =
           | Some m ->
               hold page;
               ignore (count d page 1 : bool);
-              Some (region d (Some (Mapped_of page)) n m)))
+              Some (region d p (Some (Mapped_of page)) n m)))
 
 (* Frees [d]'s C state with its word. rig frees the word after the stop, but
    may free other regions and unload images after it. *)
 let free_state d =
   Mutex.protect d.flush_lock (fun () ->
-      d.gone <- true;
+      d.word <- None;
       destroy d.self)
 
 (* A region holds its device: rig frees it on that device. *)
-let free (T _) (R r) =
-  give r.dev r.mem;
-  if r == r.dev.word then free_state r.dev
-  else
-    match r.behind with
-    | None -> ()
-    | Some b ->
-        let page = page_of b in
-        ignore (count r.dev page (-1) : bool);
-        (match b with Mapped_of _ -> drop page | View_of _ -> ())
+let free (T _) = function
+  | Given _ -> ()
+  | R r -> (
+      give r.free r.mem;
+      match (r.dev.word, r.behind) with
+      | Some w, _ when r == w -> free_state r.dev
+      | _, None -> ()
+      | _, Some b ->
+          let page = page_of b in
+          ignore (count r.dev page (-1) : bool);
+          (match b with Mapped_of _ -> drop page | View_of _ -> ()))
 
-let locate (R r) =
+let address = function R r -> r.mem.address | Given w -> w.address
+
+let locate r =
+  let host = match r with R r -> r.mem.host | Given w -> Some w.host in
   {
-    Rig_edge.address = Some r.mem.address;
-    host = r.mem.host;
-    handle = Nativeint.of_int r.mem.address;
+    Rig_edge.address = Some (address r);
+    host;
+    handle = Nativeint.of_int (address r);
   }
 
 let peer (T d) (T d') =
@@ -905,21 +923,24 @@ let view d l p =
 (* [r] holds its device, the other one. A view of Mapped memory makes [d]'s
    submissions flush the host's writes through the BAR behind it, which [d]'s
    own doorbell does not order. *)
-let map_peer (T d) (T _) (R r) =
-  match Type.Id.provably_equal d.key r.dev.key with
-  | None -> None
-  | Some Type.Equal -> (
-      let l = live d in
-      match below l.path "Rig_nv.map_peer" r.bytes (l.path.map_peer r.mem) with
+let map_peer (T d) (T _) = function
+  | Given _ -> None
+  | R r -> (
+      match Type.Id.provably_equal d.key r.dev.key with
       | None -> None
-      | Some m -> (
-          match Option.map page_of r.behind with
-          | None -> Some (region d None r.bytes m)
-          | Some p when view d l p ->
-              Some (region d (Some (View_of p)) r.bytes m)
-          | Some _ ->
-              give d m;
-              None))
+      | Some Type.Equal -> (
+          let l = live d in
+          let m = l.path.map_peer r.mem in
+          match below l.path "Rig_nv.map_peer" r.bytes m with
+          | None -> None
+          | Some m -> (
+              match Option.map page_of r.behind with
+              | None -> Some (region d l.path None r.bytes m)
+              | Some p when view d l p ->
+                  Some (region d l.path (Some (View_of p)) r.bytes m)
+              | Some _ ->
+                  give l.path.free m;
+                  None)))
 
 let map_host (T d) a n =
   if n < 1 then invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;
@@ -928,7 +949,7 @@ let map_host (T d) a n =
   | None -> None
   | Some map ->
       let m = below p "Rig_nv.map_host" n (map a n) in
-      Option.map (region d None n) m
+      Option.map (region d p None n) m
 
 (* Images *)
 
@@ -947,8 +968,8 @@ type image = {
 (* The cubin [c] laid over the region [r] of [d]. A cubin may load where another
    one's code was, so the compute channel owes an instruction cache
    invalidation. *)
-let lay d c (R r) =
-  let base = r.mem.address in
+let lay d c r =
+  let base = address r in
   owe_invalidate d.self;
   let i =
     {
@@ -1134,12 +1155,12 @@ let halt d l =
     end_channels d.self;
     (* The work no longer runs: what it used goes back, and a failure to give
        some back leaves the device stopped. *)
-    List.iter (give d) l.owned;
+    List.iter (give l.path.free) l.owned;
     Option.iter drop l.bar;
     List.iter drop (Mutex.protect d.flush_lock (fun () -> l.viewed));
-    Option.iter (give d) l.local_current;
-    Option.iter (fun (m, _) -> give d m) l.local_pending;
-    List.iter (fun (m, _) -> give d m) l.local_retired
+    Option.iter (give l.path.free) l.local_current;
+    Option.iter (fun (m, _) -> give l.path.free m) l.local_pending;
+    List.iter (fun (m, _) -> give l.path.free m) l.local_retired
   end
     (* The RM stopped the channels on a fault: nothing runs, though their
        objects stay. Otherwise their own releases bring the word up as their

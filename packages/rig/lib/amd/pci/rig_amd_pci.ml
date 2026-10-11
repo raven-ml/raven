@@ -162,16 +162,24 @@ let host r =
 
 let memory r = { Amd.address = Memory.address r; host = host r; data = r }
 
-(* What a free after stop and [reaches] use: a GPU's memory and the lock its
-   calls take. The device keeps them for the life of the process, so they hold
-   nothing else of the GPU, and stop releases the memory. *)
+(* What the path's memory functions use: a GPU's memory and the lock its calls
+   take. Memory the path gave holds them until its free, also after stop, so
+   they hold nothing else of the GPU, and stop releases the memory. *)
 type gpu = { memory : Memory.t; lock : Mutex.t }
 
 let protect g f = Mutex.protect g.lock f
 
-(* The opened GPUs' memory on this machine, by number, for [reaches]. *)
-let opened : (int, Memory.t) Hashtbl.t = Hashtbl.create 4
-let opened_lock = Mutex.create ()
+(* Each GPU's memory as its last open found it, by machine and number, for
+   [reaches]. What [Memory.reaches] compares is the GPU's own, the same at
+   every open, so a device's [reaches] answers from its GPU's number alone,
+   also once it is lost, and keeps nothing of the device. *)
+let learned : (Machine.t * int * Memory.t) list ref = ref []
+let learned_lock = Mutex.create ()
+
+let learn machine index memory =
+  Mutex.protect learned_lock @@ fun () ->
+  let other (m, i, _) = not (m == machine && i = index) in
+  learned := (machine, index, memory) :: List.filter other !learned
 
 (* A path function raises Rig_amd.Fault for a register sequence that does not
    complete. A flush the hubs do not confirm is raised by the next sleep. *)
@@ -194,12 +202,18 @@ let map_host g a n =
   | Ok (Some r) -> Some (memory r)
   | Ok None | Error _ -> None
 
-let reaches g ~index j =
-  j = index
-  ||
-  match Mutex.protect opened_lock (fun () -> Hashtbl.find_opt opened j) with
-  | Some o -> Memory.reaches g.memory o
-  | None -> false
+let reaches machine ~index j =
+  let known i =
+    List.find_map
+      (fun (m, i', o) -> if m == machine && i' = i then Some o else None)
+      !learned
+  in
+  let reach () =
+    match (known index, known j) with
+    | Some m, Some o -> Memory.reaches m o
+    | _ -> false
+  in
+  j = index || Mutex.protect learned_lock reach
 
 let map_peer g (m : Memory.region Amd.memory) =
   match protect g (fun () -> Memory.map_peer g.memory m.data) with
@@ -233,7 +247,6 @@ let path g h fn ~index : Memory.region Amd.path =
      one its interrupt ring reported: the stop leaves the GPU lost. *)
   let stop ~fault =
     Option.iter (Boot.faulted g) fault;
-    Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);
     Fun.protect
       (fun () -> Gpus.stop h)
       ~finally:(fun () -> protect mem (fun () -> Memory.release mem.memory))
@@ -255,7 +268,7 @@ let path g h fn ~index : Memory.region Amd.path =
       (match Rig_pci.Function.addressing fn with
       | Machine.Physical -> None
       | Iommu -> Some (fun a n -> guard (fun () -> map_host mem a n)));
-    reaches = reaches mem ~index;
+    reaches = reaches (Rig_pci.Function.machine fn) ~index;
     map_peer = (fun m -> guard (fun () -> map_peer mem m));
     free = (fun m -> guard (fun () -> free mem m));
     queue =
@@ -322,8 +335,7 @@ let start ~firmware ~index h fn =
       (* A host resets a VF that holds its access long: every queue is made, so
          it goes back. *)
       Boot.give_back g;
-      Mutex.protect opened_lock (fun () ->
-          Hashtbl.replace opened index (Boot.memory g));
+      learn (Rig_pci.Function.machine fn) index (Boot.memory g);
       Ok d
   | Error why | (exception (Amd.Fault why | Regs.Stuck why)) -> Error why
 

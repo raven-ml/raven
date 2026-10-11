@@ -416,7 +416,8 @@ type 'm path = {
        {!Fault} for any other failure of the GPU or of the path.}
     {- Any domain may call them at the same time, except [stop], which the
        device calls once. After [stop] the device calls only [free] and
-       [reaches], and keeps them for the life of the process.}
+       [reaches]. It keeps [free] until it has given back all the memory
+       the path gave, and [reaches] for the life of the process.}
     {- A [sleep] that another domain began before [stop] may still be waiting
        when [stop] runs. It returns without reading the GPU once [stop] has
        begun.}} *)

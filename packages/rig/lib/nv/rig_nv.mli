@@ -349,8 +349,9 @@ type 'm path = {
 (** The type for what a path gives a device. Each function must return the
     RM's refusal as its result and raise {!Fault} for any other failure, and
     must allow any domain to call it at the same time as others. After the
-    device's {!val-stop}, the device calls only [free] and [reaches], and
-    keeps them for the life of the process. *)
+    device's {!val-stop}, the device calls only [free] and [reaches]. It keeps
+    [free] until it has given back all the memory the path gave, and
+    [reaches] for the life of the process. *)
 
 val make : 'm path -> (t, string) result
 (** [make p] is the device of the GPU [p] reaches. Under [p.device] it

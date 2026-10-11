@@ -99,11 +99,10 @@ let report ~firmware ~chip ~vbios =
 let space = Space.create ~base:(64 * gib) ((1 lsl 40) - (64 * gib))
 
 (* A GPU this path opened. [fault] is the first flush the GPU did not confirm.
-   The device keeps [free] and [reaches] for the life of the process, and with
-   them this record, so stop drops [names] and releases [memory]. *)
+   Memory the path gave holds this record until its free, also after stop, so
+   stop drops [names] and releases [memory]. *)
 type gpu = {
   index : int;
-  machine : Machine.t;
   fn : Function.t;
   memory : Memory.t;
   lock : Mutex.t; (* its memory, page tables and names *)
@@ -173,19 +172,30 @@ let map_host g a n =
   | Ok (Some r) -> Some (memory g r)
   | Ok None | Error _ -> None
 
-(* The GPUs open, for [reaches]. *)
-let opened : gpu list ref = ref []
-let opened_lock = Mutex.create ()
+(* Each GPU's memory as its last open found it, by machine and number, for
+   [reaches]. What [Memory.reaches] compares is the GPU's own, the same at
+   every open, so a device's [reaches] answers from its GPU's number alone,
+   also once it is lost, and keeps nothing of the device. *)
+let learned : (Machine.t * int * Memory.t) list ref = ref []
+let learned_lock = Mutex.create ()
 
-let reaches g j =
-  let owner () =
-    List.find_opt (fun o -> o.index = j && o.machine == g.machine) !opened
+let learn machine index memory =
+  Mutex.protect learned_lock @@ fun () ->
+  let other (m, i, _) = not (m == machine && i = index) in
+  learned := (machine, index, memory) :: List.filter other !learned
+
+let reaches machine ~index j =
+  let known i =
+    List.find_map
+      (fun (m, i', o) -> if m == machine && i' = i then Some o else None)
+      !learned
   in
-  j = g.index
-  ||
-  match Mutex.protect opened_lock owner with
-  | Some o -> Memory.reaches g.memory o.memory
-  | None -> false
+  let reach () =
+    match (known index, known j) with
+    | Some m, Some o -> Memory.reaches m o
+    | _ -> false
+  in
+  j = index || Mutex.protect learned_lock reach
 
 let map_peer g (m : Memory.region Rig_nv.memory) =
   match protect g (fun () -> Memory.map_peer g.memory m.data) with
@@ -263,7 +273,7 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
         (match Function.addressing g.fn with
         | Machine.Physical -> None
         | Iommu -> Some (map_host g));
-      reaches = reaches g;
+      reaches = reaches (Function.machine g.fn) ~index:g.index;
       map_peer = map_peer g;
       free = free g;
       register = (fun _ -> Ok ());
@@ -272,8 +282,6 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
       hang_ms = Some Gpus.hang_ms;
       stop =
         (fun () ->
-          Mutex.protect opened_lock (fun () ->
-              opened := List.filter (fun o -> o != g) !opened);
           Fun.protect
             (fun () -> Gpus.stop hold)
             ~finally:(fun () ->
@@ -348,7 +356,6 @@ let boot ~firmware ~index h fn =
   let g =
     {
       index;
-      machine;
       fn;
       memory = Memory.create fn tables ~bar:memory_bar;
       lock = Mutex.create ();
@@ -358,7 +365,7 @@ let boot ~firmware ~index h fn =
   in
   match device g ~gsp ~hold:h ~tables c with
   | Ok d ->
-      Mutex.protect opened_lock (fun () -> opened := g :: !opened);
+      learn machine index g.memory;
       Ok d
   | Error why | (exception Rig_nv.Fault why) -> Error why
 
