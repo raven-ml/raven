@@ -96,6 +96,15 @@ On Linux that compiler needs libunwind's headers (`libunwind-dev`). A report
 fails the test that made it. Both build in `_build/default`, so run them in
 a tree with no watch server, whose build they would replace.
 
+C that two threads reach at once reads and writes it atomically, and a test
+reads a word that other work writes, such as a rail's count, with
+`Rig_support.load64`. The reports ThreadSanitizer makes in error are
+suppressed in `tsan.supp`, each with its reason. Until windtrap's workers
+stop flushing the shared formatters from several domains, every
+`stateful ~domains:2` suite reports that race; a run reads past it with
+`race:camlWindtrap__Workers.flush_formatters` added to `tsan.supp` in its
+own tree.
+
 The gate runs on Linux, with Clang, whose AddressSanitizer takes its
 allocator's locks across fork. OCaml compiles and links C with the `gcc` on
 `PATH`, so the gate puts Clang there:

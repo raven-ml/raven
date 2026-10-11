@@ -1,0 +1,36 @@
+# ThreadSanitizer's reports made in error, which a process of rig's suites
+# reads at start under dune-workspace.tsan (support/rig_support_stubs.c).
+
+# rig_heap.c's ensure_proxy installs a bigarray's proxy with a
+# compare-and-swap. ThreadSanitizer counts one that fails, which writes
+# nothing, as a write, racing the runtime's read of the proxy the other
+# domain installed.
+race_top:ensure_proxy
+
+# Reads of fields written under a lock, made without it, of values a stale
+# read leaves correct. OCaml defines a racy read to return an earlier or the
+# latest value, and none of these orders access to other memory.
+#
+# A drain's check for pending holds: a stale empty list leaves a due hold to
+# the next drain.
+race_top:camlRig__Memory.drain_holds
+# A device's word end: a stale Read finds the word moved already, and a stale
+# Moved reads the state again under the lock.
+race_top:camlRig__Memory.end_word
+# A staging half: another domain changes only the halves of a slot it took,
+# which the memory asked about is not, so a stale half answers the same.
+race_top:camlRig__Copy.holds
+# A device's way to wait for a producer: a stale undecided decides the pair
+# again, and the device keeps both decisions' mappings.
+race_top:camlRig__Submission.pair_
+
+# The program suite's host code signals the test through memory that
+# compiled host code writes, which ThreadSanitizer does not see, so it finds
+# no order between the run reading the frame and the test changing it after
+# the signal.
+race:test_host_input_kept
+
+# In a child forked while a thread held the runtime's domain lock,
+# ThreadSanitizer keeps that lock's owner from the parent and reads the
+# child's first new thread taking it as a second lock.
+mutex:caml_acquire_domain_lock

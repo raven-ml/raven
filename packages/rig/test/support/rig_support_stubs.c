@@ -57,11 +57,17 @@
 #endif
 
 #if defined(__has_feature)
-#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#if __has_feature(thread_sanitizer)
+#define RIG_TEST_TSAN
+#endif
+#if __has_feature(address_sanitizer)
 #define RIG_TEST_SANITIZER
 #endif
 #endif
-#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#if defined(__SANITIZE_THREAD__)
+#define RIG_TEST_TSAN
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(RIG_TEST_TSAN)
 #define RIG_TEST_SANITIZER
 #endif
 
@@ -1470,3 +1476,37 @@ value rig_test_resident(value unit) {
   caml_failwith("no resident memory on this system");
 #endif
 }
+
+#if defined(RIG_TEST_TSAN) && defined(__linux__)
+#include <fcntl.h>
+#include <sys/syscall.h>
+
+/* ThreadSanitizer's default options in every process that links this file:
+   the suppressions of tsan.supp, beside this directory. The executable lies
+   under the source root's _build, which names the root. ThreadSanitizer calls
+   this before it starts, before the C library has the environment, so it is
+   not instrumented, makes its system call itself and copies by hand. Outside
+   _build, a process suppresses nothing. */
+const char *__tsan_default_options(void);
+__attribute__((no_sanitize("thread"))) const char *__tsan_default_options(
+    void) {
+  static char exe[2048], opts[4096];
+  static const char key[] = "suppressions=\"", build[] = "/_build/",
+                    file[] = "/packages/rig/test/tsan.supp\"";
+  long n = syscall(SYS_readlinkat, AT_FDCWD, "/proc/self/exe", exe,
+                   sizeof exe);
+  long root = -1;
+  for (long i = 0; i + (long)sizeof build - 1 <= n; i++) {
+    long k = 0;
+    while (build[k] != '\0' && exe[i + k] == build[k]) k++;
+    if (build[k] == '\0') root = i;
+  }
+  if (root < 0) return "";
+  long m = 0;
+  for (long k = 0; key[k] != '\0'; k++) opts[m++] = key[k];
+  for (long k = 0; k < root; k++) opts[m++] = exe[k];
+  for (long k = 0; file[k] != '\0'; k++) opts[m++] = file[k];
+  opts[m] = '\0';
+  return opts;
+}
+#endif
