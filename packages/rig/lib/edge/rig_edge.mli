@@ -204,7 +204,10 @@ type 'region facts = {
     write the scratch and read it back during the call, such as to keep
     which of the device's engines runs each part, so that neither
     allocates. No other call uses the scratch meanwhile, and a call finds
-    what an earlier call left there.
+    what an earlier call left there. A copy part's fields may differ from
+    one call to the next, since a copy's ends may be a run's buffers
+    ([Rig.Submission.side]). A driver must decide again on each call
+    what it derives from them.
 
     A driver whose [submit] always returns [RIG_COMMITTED] is never asked
     to commit. Every other driver must commit on its own at least once every

@@ -1291,19 +1291,19 @@ module Submission : sig
 
   (** The type for the ends of a copy. *)
   type side =
-    | Slot of int  (** A run's buffer of this slot ({!submit}). *)
+    | Slot of int  (** The buffer a submit passes as this slot ({!submit}). *)
     | Buffer of Buffer.t  (** This buffer, in every run. *)
 
   val copy : src:side -> dst:side -> part
   (** [copy ~src ~dst] copies [src]'s bytes into [dst]. The two buffers must
       have one length and share no byte ({!Buffer.overlaps}), and [dst]'s
-      memory must admit writes. Each is on the device ({!Buffer.borrow} puts
-      another device's memory there), except that on a driver's device of
-      another machine one of the two may be memory this process's host
-      addresses, whose bytes the device's driver carries; a slot's buffer
-      may be such memory only where copies alone name the slot. [src] and
-      [dst] are not one slot. {!make} checks the ends that are buffers, and
-      each {!submit} the ends that are slots, with its buffers. *)
+      memory must admit writes. [src] and [dst] must not be one slot. Each
+      buffer must be on the device ({!Buffer.borrow} puts another device's
+      memory there). On a driver's device of another machine, one of the two
+      may instead be memory this process's host addresses, whose bytes the
+      device's driver carries. A slot's buffer may be such memory only if
+      copies alone name the slot. {!make} checks the ends that are buffers,
+      and each {!submit} checks the ends that are slots, with its buffers. *)
 
   val launch : ?refs:ref array -> Image.t -> string -> params:int -> part
   (** [launch ~refs image f ~params] runs [image]'s function [f] once, over
@@ -1546,17 +1546,21 @@ val submit :
     receives [v]'s work or [d] is lost, and the stamps of every allocation
     the work uses name [(d, v)] either way.
 
-    Raises [Invalid_argument] if [run] breaks a rule of {!Submission.Run},
-    [buffers] has another length than [s]'s slots, a buffer the work uses
-    is dead or held exclusive ({!Claim}), a buffer of [buffers] is not on [d]
-    ({!Buffer.borrow} puts it there) where {!Submission.copy} does not admit
-    it, the work writes a buffer of [buffers] whose memory is [Read], a
-    copy's two buffers differ in length or share a byte, a ref names
-    handle-only memory, or [d]'s driver can never run the parts
-    ({!Rig_edge.section-calls}). Raises {!Lost} if [d] is
-    lost before [submit] returns, if its driver fails to take the work, or if
-    a point of [waits] is a lost device's and that device never reached
-    it. *)
+    Raises [Invalid_argument] if:
+    {ul
+    {- [run] breaks a rule of {!Submission.Run}, or [buffers] has another
+       length than [s]'s slots;}
+    {- a buffer the work uses is dead or held exclusive ({!Claim});}
+    {- a buffer of [buffers] is not on [d] ({!Buffer.borrow} puts it there),
+       except where {!Submission.copy} admits it, or the work writes it and
+       its memory is [Read];}
+    {- a copy's two buffers differ in length or share a byte, or neither is
+       on [d];}
+    {- a ref names handle-only memory;}
+    {- [d]'s driver can never run the parts ({!Rig_edge.section-calls}).}}
+    Raises {!Lost} if [d] is lost before [submit] returns, if its driver
+    fails to take the work, or if a point of [waits] is a lost device's and
+    that device never reached it. *)
 
 (** {1:per_device Values per device}
 

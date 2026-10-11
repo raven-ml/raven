@@ -68,8 +68,9 @@ Each call, in order:
   the host writes, since the host addresses a memory device's memory, once
   the work that used them is done.
 - `copy ~src:(Buffer src) ~dst:(Buffer dst)` is one *part* of the work, a
-  copy between two buffers. An end may also be a `Slot`, a buffer each
-  submit passes ([`Submission.side`](../lib/rig.mli)). rig orders the parts
+  copy between two buffers that every submit uses. An end may instead be
+  `Slot i`, the buffer `buffers.(i)` of each submit
+  ([`Submission.side`](../lib/rig.mli)). rig orders the parts
   of a submission by the memory they use. It runs a copy on the queue of the
   last earlier part the copy follows, where that queue runs copies, and
   otherwise on the device's copy engine, the queue its driver names in the
@@ -79,10 +80,11 @@ Each call, in order:
 - `Submission.Run.make ()` makes a *run*: the storage that one submit's
   work reads its parameters from, such as a launch's grid
   ([On a GPU](#on-a-gpu)). A copy has none, but every submit takes a run.
-- `submit work ~run ~buffers:[||]` runs the submission once.
-  `buffers` lists the buffers of the slots that a launch's parameters and a
-  copy's `Slot` ends name, and this copy names none. An optional `~waits`
-  lists points of other devices the work must follow.
+- `submit work ~run ~buffers:[||]` runs the submission once. `buffers`
+  holds the buffers that change from one submit to the next, which a
+  launch's parameters and a copy's `Slot` ends name by index. This copy
+  names none. An optional `~waits` lists points of other devices the work
+  must follow.
 - `Point.wait done_` returns once the copy has completed. `Buffer.read`
   would wait for it too, since it follows the last write of `dst`.
 
@@ -121,8 +123,8 @@ and bytes a run never stores read 0, so `twice` gets `x`'s address.
 
 A ref states how the work uses its slot: `Submission.read`,
 `Submission.write` or `Submission.unordered`. `Submission.make` derives the
-slots from the refs, and each submit orders the work after earlier work on
-each slot's memory by that use.
+slots from the refs and the copies' `Slot` ends, and each submit orders the
+work after earlier work on each slot's memory by that use.
 
 A *block* is the part of a run that holds one launch's grid, the threads of
 each group, and its parameters ([`Submission.block`](../lib/rig.mli)).

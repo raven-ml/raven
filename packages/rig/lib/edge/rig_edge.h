@@ -140,8 +140,9 @@ struct rig_part {
    bytes at [scratch] and read them back during the call. No other call
    uses them meanwhile, and a call finds whatever an earlier one left. A
    driver keeps there what it decides per part, such as which engine runs
-   it, so that neither call allocates, but no decision derived from a copy
-   part's fields, which may differ on the next call. */
+   it, so that neither call allocates. It decides again on each call what
+   it derives from a copy part's fields, which may differ on the next
+   call. */
 #define RIG_SCRATCH 8
 
 /* Answers RIG_FITS, RIG_LATER or RIG_NEVER for the [n] parts at [parts],

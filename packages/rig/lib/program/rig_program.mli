@@ -240,9 +240,9 @@ type part =
   | Copy of { src : int; dst : int }
       (** A copy from the submit's slot [src] into its slot [dst], as
           {!Rig.Submission.copy}. An end whose slot is [Memory] is that
-          memory's buffer, set once at load; an end whose slot is an
-          [Input] or the [Ints] is a slot of each run
-          ({!Rig.Submission.type-side}). *)
+          memory's buffer, set once at load. An end whose slot is an [Input]
+          or the [Ints] is a [Slot] end ({!Rig.Submission.type-side}), whose
+          buffer each run passes. *)
   | Launch of {
       image : int;
       name : string;
@@ -350,9 +350,10 @@ val load :
     {- a ref or a copy names no slot of its submit, a slot is named by no
        ref or copy, or a slot is named by both an [Unordered] ref and a
        [Read] or [Write] ref or a copy;}
-    {- a copy's ends differ in length where load knows it: a [Memory]
-       view's and the ints' exactly, an input's as at least its [bytes];}
-    {- a copy's ends are one buffer: the ints, or one input, twice;}
+    {- a copy's ends differ in length where load knows the lengths, which
+       are a [Memory] view's [length], [8 * ints] for the ints, and at least
+       [bytes] for an input;}
+    {- a copy's two ends are both the ints, or both one input;}
     {- [Rail] memory or a [Ready] names a rail that [rails] does not give;}
     {- {!Rig.Submission.make} or a run ({!Rig.Submission.Run}) refuses a
        step, [why] naming the step;}
