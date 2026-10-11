@@ -473,83 +473,64 @@ let start g m images ~partial =
 
 (* Clock gating *)
 
-let gate g =
+(* The GC's clock gating on or off: coarse grain and its light sleep, the
+   gating interrupts, and medium and fine grain through their overrides, which
+   turn gating off when set. The perfmon clock is held either way. Off is the
+   kernel's gfx_v12_0_update_gfx_clock_gating with enable false. *)
+let gating g state =
   let r = g.r in
-  if Regs.has (Regs.layout_of r) "regMM_ATC_L2_MISC_CG" then
-    Regs.write r "regMM_ATC_L2_MISC_CG" [ ("enable", 1); ("mem_ls_enable", 1) ];
+  let gated = state = `On in
+  let on = Bool.to_int gated and override = Bool.to_int (not gated) in
   let major, _, _ = g.gc in
+  if gated && Regs.has (Regs.layout_of r) "regMM_ATC_L2_MISC_CG" then
+    Regs.write r "regMM_ATC_L2_MISC_CG" [ ("enable", 1); ("mem_ls_enable", 1) ];
   each_xcc g (fun inst ->
       safe_mode g ~inst @@ fun () ->
       Regs.update ~inst r "regRLC_CGCG_CGLS_CTRL"
-        [
-          ("cgcg_gfx_idle_threshold", 0x36);
-          ("cgcg_en", 1);
-          ("cgls_rep_compansat_delay", 0xf);
-          ("cgls_en", 1);
-        ];
-      Regs.update ~inst r "regCP_RB_WPTR_POLL_CNTL"
-        [ ("poll_frequency", 0x100); ("idle_poll_count", 0x90) ];
+        ((if gated then
+            [
+              ("cgcg_gfx_idle_threshold", 0x36);
+              ("cgls_rep_compansat_delay", 0xf);
+            ]
+          else [])
+        @ [ ("cgcg_en", on); ("cgls_en", on) ]);
+      if gated then
+        Regs.update ~inst r "regCP_RB_WPTR_POLL_CNTL"
+          [ ("poll_frequency", 0x100); ("idle_poll_count", 0x90) ];
       Regs.update ~inst r "regCP_INT_CNTL"
         [
-          ("cntx_busy_int_enable", 1);
-          ("cntx_empty_int_enable", 1);
-          ("cmp_busy_int_enable", 1);
+          ("cntx_busy_int_enable", on);
+          ("cntx_empty_int_enable", on);
+          ("cmp_busy_int_enable", on);
         ];
       if major >= 10 then begin
-        Regs.update ~inst r "regSDMA0_RLC_CGCG_CTRL" [ ("cgcg_int_enable", 1) ];
-        Regs.update ~inst r "regSDMA1_RLC_CGCG_CTRL" [ ("cgcg_int_enable", 1) ]
+        Regs.update ~inst r "regSDMA0_RLC_CGCG_CTRL" [ ("cgcg_int_enable", on) ];
+        Regs.update ~inst r "regSDMA1_RLC_CGCG_CTRL" [ ("cgcg_int_enable", on) ]
       end;
       Regs.update ~inst r "regRLC_CGTT_MGCG_OVERRIDE"
         ((if major = 9 then
-            [ ("gfxip_mgls_override", 0); ("gfxip_rep_fgcg_override", 0) ]
+            [
+              ("gfxip_mgls_override", override);
+              ("gfxip_rep_fgcg_override", override);
+            ]
           else [])
         @ (if major >= 11 then
-             [ ("perfmon_clock_state", 1); ("gfxip_repeater_fgcg_override", 0) ]
+             [
+               ("perfmon_clock_state", 1);
+               ("gfxip_repeater_fgcg_override", override);
+             ]
            else [])
         @ [
-            ("gfxip_fgcg_override", 0);
-            ("grbm_cgtt_sclk_override", 0);
-            ("rlc_cgtt_sclk_override", 0);
-            ("gfxip_mgcg_override", 0);
-            ("gfxip_cgls_override", 0);
-            ("gfxip_cgcg_override", 0);
+            ("gfxip_fgcg_override", override);
+            ("grbm_cgtt_sclk_override", override);
+            ("rlc_cgtt_sclk_override", override);
+            ("gfxip_mgcg_override", override);
+            ("gfxip_cgls_override", override);
+            ("gfxip_cgcg_override", override);
           ]))
 
-(* The gating [gate] enables, off again: coarse grain off, medium and fine grain
-   overridden, the perfmon clock held, the gating interrupts off, as the
-   kernel's gfx_v12_0_update_gfx_clock_gating with enable false. *)
-let ungate g =
-  let r = g.r in
-  let major, _, _ = g.gc in
-  each_xcc g (fun inst ->
-      safe_mode g ~inst @@ fun () ->
-      Regs.update ~inst r "regRLC_CGCG_CGLS_CTRL"
-        [ ("cgcg_en", 0); ("cgls_en", 0) ];
-      Regs.update ~inst r "regCP_INT_CNTL"
-        [
-          ("cntx_busy_int_enable", 0);
-          ("cntx_empty_int_enable", 0);
-          ("cmp_busy_int_enable", 0);
-        ];
-      if major >= 10 then begin
-        Regs.update ~inst r "regSDMA0_RLC_CGCG_CTRL" [ ("cgcg_int_enable", 0) ];
-        Regs.update ~inst r "regSDMA1_RLC_CGCG_CTRL" [ ("cgcg_int_enable", 0) ]
-      end;
-      Regs.update ~inst r "regRLC_CGTT_MGCG_OVERRIDE"
-        ((if major = 9 then
-            [ ("gfxip_mgls_override", 1); ("gfxip_rep_fgcg_override", 1) ]
-          else [])
-        @ (if major >= 11 then
-             [ ("perfmon_clock_state", 1); ("gfxip_repeater_fgcg_override", 1) ]
-           else [])
-        @ [
-            ("gfxip_fgcg_override", 1);
-            ("grbm_cgtt_sclk_override", 1);
-            ("rlc_cgtt_sclk_override", 1);
-            ("gfxip_mgcg_override", 1);
-            ("gfxip_cgls_override", 1);
-            ("gfxip_cgcg_override", 1);
-          ]))
+let gate g = gating g `On
+let ungate g = gating g `Off
 
 (* Processors *)
 
