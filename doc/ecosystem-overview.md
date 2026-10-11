@@ -7,31 +7,31 @@ through tensors.
 ## How the Libraries Fit Together
 
 ```
-       ┌───────────┐                  ┌───────────┐
-       │   Kaun    │  neural networks │   Norn    │  inference
-       │  (Flax)   │                  │ (NumPyro) │
-       └─────┬─────┘                  └─────┬─────┘
-             │                        ┌─────┴─────┐
-             │                        │   Jera    │  numerical methods
-             │                        │  (SciPy)  │
-             │                        └─────┬─────┘
-       ┌─────┴──────────────────────────────┴──────┐
-       │                    Rune                   │  autodiff, vmap
-       │                   (JAX)                   │
-       └───────────────────────┬───────────────────┘
-                               │
-  ┌────────────────────────────┴────────────────────────────┐
-  │                          Nx                              │
-  │                       (NumPy)                            │
-  └──┬──────────────┬──────────────┬──────────────┬─────────┘
-     │              │              │              │
- ┌───┴────┐    ┌────┴───┐    ┌────┴───┐    ┌─────┴────┐
- │ Talon  │    │  Brot  │    │ Hugin  │    │  Quill   │
- │(Polars)│    │(HF Tok)│    │(Mpl)   │    │(Jupyter) │
- └────────┘    └────────┘    └────────┘    └──────────┘
+ ┌──────────┐  ┌───────────┐
+ │   Kaun   │  │   Norn    │  inference
+ │  (Flax)  │  │ (NumPyro) │
+ └────┬─────┘  └─────┬─────┘
+      │        ┌─────┴─────┐
+      │        │   Jera    │  numerical methods
+      │        │  (SciPy)  │
+      │        └─────┬─────┘
+ ┌────┴──────────────┴─────┐ ┌────────┐ ┌────────┐ ┌───────┐ ┌─────────┐
+ │          Rune           │ │ Talon  │ │  Brot  │ │ Hugin │ │  Quill  │
+ │          (JAX)          │ │(Polars)│ │(HF Tok)│ │ (Mpl) │ │(Jupyter)│
+ └────────────┬────────────┘ └───┬────┘ └───┬────┘ └───┬───┘ └────┬────┘
+ ┌────────────┴──────────────────┴──────────┴──────────┴──────────┴────┐
+ │                              Nx (NumPy)                             │
+ └──────────────────────────────────┬──────────────────────────────────┘
+                              ┌─────┴─────┐
+                              │    Rig    │  devices and their work
+                              └───────────┘
 ```
 
 **Nx** is the foundation — every library operates on `Nx.t` tensors.
+
+**Rig** sits under Nx. It opens devices such as GPUs, holds their memory,
+and orders the work they run. Libraries that face devices directly build
+on it.
 
 **Rune** adds functional transformations on top of Nx: `grad`, `jvp`,
 `vmap`. Your Nx code becomes differentiable without changes.
@@ -52,6 +52,7 @@ their domain.
 | I want to... | Use |
 |---|---|
 | Work with numerical arrays | [Nx](../packages/nx/doc/index.md) |
+| Run compiled work on a GPU or other device | [Rig](../dev/rig/doc/index.md) |
 | Compute gradients | [Rune](../packages/rune/doc/index.md) |
 | Solve equations, integrate, interpolate, fit | [Jera](../packages/jera/doc/index.md) |
 | Fit a probabilistic model | [Norn](../packages/norn/doc/index.md) |
@@ -79,6 +80,25 @@ let mean_y = mean y
 ```
 
 [Nx documentation →](../packages/nx/doc/index.md)
+
+## Rig: Devices
+
+Devices such as GPUs, and the order of the work they run. A program
+opens a device, allocates buffers on it, copies between devices, and
+submits work; rig orders the work of all devices by the memory it uses.
+Apple GPUs run through Metal, NVIDIA GPUs through CUDA, and AMD GPUs
+through Linux's `amdgpu`. Files and the devices of other machines open
+as devices too.
+
+<!-- $MDX skip -->
+```ocaml
+let gpu = Result.get_ok (Rig.open_ (Rig_metal.gpu 0))
+let file = Result.get_ok (Rig_disk.of_file "weights.bin")
+let weights = Rig.Buffer.create gpu (Rig.Buffer.length file)
+let () = Rig.Buffer.copy ~src:file ~dst:weights
+```
+
+[Rig documentation →](../dev/rig/doc/index.md)
 
 ## Rune: Automatic Differentiation
 

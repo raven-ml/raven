@@ -12,7 +12,7 @@
 
 ---
 
-Raven is an ecosystem of OCaml libraries for numerical computing, machine learning, and data science. Everything you know from Python — NumPy, JAX, PyTorch, Matplotlib, Jupyter — rebuilt with type safety.
+Raven is machine learning and scientific computing in OCaml, from neural networks to probabilistic inference to numerical methods, all the way down to the GPU, with no dependencies. It covers what NumPy, JAX, PyTorch, NumPyro, SciPy, pandas and Matplotlib cover in Python, as libraries that compose as ordinary OCaml code.
 
 > Raven is **alpha**. APIs will change. [Feedback welcome.](https://github.com/raven-ml/raven/issues)
 

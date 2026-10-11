@@ -140,6 +140,8 @@ answer, decide it and say why; ask only for the maintainer's own calls.
 - Doc comments live in `.mli` only and start `(** [f x] …`. Operations that
   match on dtypes take explicit type annotations, as in
   `let f (type a b) (t : (a, b) t) =`.
+- API docs (`.mli` doc comments, private modules' included, and guide
+  pages under `doc/`) follow `doc/dev/documentation.md`.
 - A block that isn't obvious gets a short comment: what it does and why, with
   an example when it helps. ASCII diagrams for whole systems. Don't narrate
   the code's arrangement. Section headers are plain `(* Name *)`.
