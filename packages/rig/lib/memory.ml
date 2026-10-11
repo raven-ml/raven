@@ -422,16 +422,55 @@ let unmap_now mp =
      && Dev.word d >= v
      && free_region d mp.map
 
+(* Drains in flight on a device: each holds its resources, and the last to
+   leave a device that holds nothing more frees them. A device holds nothing
+   once its word is given back, its memory and its images have returned and
+   it maps no other memory. Entering and leaving allocate nothing. *)
+let enter l =
+  Lock.hold l.lock;
+  let entered = l.drains >= 0 in
+  if entered then l.drains <- l.drains + 1;
+  Lock.release l.lock;
+  entered
+
+(* A given word means a Stopped device. The list is closed last. *)
+let spent l =
+  l.drains = 0 && l.word_end == Given
+  && Atomic.Loc.get [%atomic.loc l.entries] = 0
+  && l.retiring == [] && fst l.pending == [] && l.cached = 0
+  && l.pair_maps == [] && Cache.length l.mapped = 0
+  && Atomic.Loc.get [%atomic.loc l.word_unmaps] = 0
+  && release_close l.release
+
+let leave d l =
+  Lock.hold l.lock;
+  l.drains <- l.drains - 1;
+  let free = spent l in
+  if free then l.drains <- -1;
+  Lock.release l.lock;
+  if free then Dev.free_live d
+
 (* Notes one of [e]'s unmaps done, and gives [e] back after the last. *)
 let entry_unmapped (e : entry) =
   if Atomic.Loc.fetch_and_add [%atomic.loc e.unmaps] (-1) = 1 then give_back e
 
 (* Notes one unmap of [d]'s word done, and gives the word back after the
-   last. *)
+   last. It holds [d]'s drains meanwhile: the count may reach [0] in another
+   device's drain, and [d]'s resources must outlive the give whichever drain
+   finds [d] spent. A count above [0] keeps [d] from being spent, so the enter
+   holds. *)
 let word_unmapped d =
   let l = Dev.live d in
-  if Atomic.Loc.fetch_and_add [%atomic.loc l.word_unmaps] (-1) = 1 then
-    Option.iter (unmap d) l.word_region
+  if enter l then
+    match
+      if Atomic.Loc.fetch_and_add [%atomic.loc l.word_unmaps] (-1) = 1 then
+        match l.word_region with Some r -> unmap d r | None -> ()
+    with
+    | () -> leave d l
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        leave d l;
+        Printexc.raise_with_backtrace e bt
 
 let unmapped = function Entry e -> entry_unmapped e | Word d -> word_unmapped d
 
@@ -807,34 +846,6 @@ let end_word d =
         unmap_all d;
         word_unmapped d
       end
-
-(* Drains in flight on a device: each holds its resources, and the last to
-   leave a device that holds nothing more frees them. A device holds nothing
-   once its word is given back, its memory and its images have returned and
-   it maps no other memory. Entering and leaving allocate nothing. *)
-let enter l =
-  Lock.hold l.lock;
-  let entered = l.drains >= 0 in
-  if entered then l.drains <- l.drains + 1;
-  Lock.release l.lock;
-  entered
-
-(* A given word means a Stopped device. The list is closed last. *)
-let spent l =
-  l.drains = 0 && l.word_end == Given
-  && Atomic.Loc.get [%atomic.loc l.entries] = 0
-  && l.retiring == [] && fst l.pending == [] && l.cached = 0
-  && l.pair_maps == [] && Cache.length l.mapped = 0
-  && Atomic.Loc.get [%atomic.loc l.word_unmaps] = 0
-  && release_close l.release
-
-let leave d l =
-  Lock.hold l.lock;
-  l.drains <- l.drains - 1;
-  let free = spent l in
-  if free then l.drains <- -1;
-  Lock.release l.lock;
-  if free then Dev.free_live d
 
 (* Drains the devices of [ended] whose stop returned, other than [d], and ends
    their words: every drain drains those that hold memory or have a release
