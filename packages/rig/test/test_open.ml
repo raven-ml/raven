@@ -802,6 +802,40 @@ let test_forgotten () =
   raises_match lost (fun () -> Rig.Point.wait p);
   raises_match lost (fun () -> Rig.Buffer.create e 1)
 
+(* Minor words per call of [f], over 100 calls. *)
+let words f =
+  let before = Gc.minor_words () in
+  for _ = 1 to 100 do
+    f ()
+  done;
+  int_of_float (Gc.minor_words () -. before) / 100
+
+(* A wait for a reached point of an ended device the program still holds
+   allocates nothing, as on a live device: a buffer's wait for the memory it
+   wrote, and a submit that waits for the point. *)
+let test_ended_words () =
+  let d, _ = P.open_ "open:ended-words" in
+  let h = Rig.Buffer.create Rig.host (1 lsl 16) in
+  let writes =
+    Rig.Submission.make d [| Support.touching [| Rig.Submission.write |] |]
+  in
+  let p = submit writes ~buffers:[| require_some (Rig.Buffer.borrow d h) |] in
+  Rig.Point.wait p;
+  Rig.close d;
+  settle ();
+  let s = Rig.Submission.make (memory "open:ended-words-waiter") [||] in
+  let run = Rig.Submission.Run.make () in
+  (* Passed as an option made once: a supplied optional argument may allocate
+     its [Some] at each call. *)
+  let waits = Some [| p |] in
+  let wait () = Rig.Buffer.wait h Rig.Read in
+  let submit () = ignore (Rig.submit s ?waits ~run ~buffers:[||] : Rig.Point.t) in
+  wait ();
+  submit ();
+  equal ~msg:"a buffer's wait" int 0 (words wait);
+  equal ~msg:"a submit's wait" int 0 (words submit);
+  equal device d (Rig.Point.device p)
+
 (* Opens and closes keep nothing once the program holds no value of the
    devices. A window opens and closes [opens] devices, then the rounds of
    [settle] return their memory and end their words. After a warm window,
@@ -947,6 +981,8 @@ let tests =
       test "an ended device answers as it did before its end" test_ended;
       test "a point whose device the program dropped names the ended device"
         test_forgotten;
+      test "a wait for a reached point of an ended device allocates nothing"
+        test_ended_words;
       test "an ended device no value references keeps nothing" test_ended_kept;
     ]
 

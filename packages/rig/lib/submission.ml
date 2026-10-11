@@ -970,36 +970,39 @@ let name_one s run use k b =
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
    queue, or that its queue has no room for, adds the others to the run's waits
-   after committing their producers' work, and is their number. *)
+   after committing their producers' work, and is their number. A done point
+   passes before its device is looked up, which allocates for an ended
+   device. *)
 let rec wait_points s run n i count =
   if i = n then count
   else
     let p = run_point run i in
-    let producer = Dev.of_index (Point.index p) and v = Point.value p in
-    if Dev.is_lost producer then begin
-      Dev.check p;
-      wait_points s run n (i + 1) count
-    end
-    else if Dev.is_done p then wait_points s run n (i + 1) count
+    if Dev.is_done p then wait_points s run n (i + 1) count
     else
-      let way =
-        if count >= (Dev.live s.dev).waits.most then host_wait
-        else pair s.dev producer
-      in
-      if way = host_wait then begin
-        Dev.wait producer v;
+      let producer = Dev.of_index (Point.index p) and v = Point.value p in
+      if Dev.is_lost producer then begin
+        Dev.check p;
         wait_points s run n (i + 1) count
       end
-      else begin
-        Dev.commit producer v;
-        let kind =
-          match (Dev.live producer).completion with
-          | Object _ -> rig_object
-          | _ -> rig_word
+      else
+        let way =
+          if count >= (Dev.live s.dev).waits.most then host_wait
+          else pair s.dev producer
         in
-        run_wait run producer.index way v kind;
-        wait_points s run n (i + 1) (count + 1)
-      end
+        if way = host_wait then begin
+          Dev.wait producer v;
+          wait_points s run n (i + 1) count
+        end
+        else begin
+          Dev.commit producer v;
+          let kind =
+            match (Dev.live producer).completion with
+            | Object _ -> rig_object
+            | _ -> rig_word
+          in
+          run_wait run producer.index way v kind;
+          wait_points s run n (i + 1) (count + 1)
+        end
 
 let rec hand_over s run nwaits =
   let d = s.dev in

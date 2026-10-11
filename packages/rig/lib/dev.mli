@@ -67,7 +67,7 @@ val forgotten : device
 val of_index : int -> device
 (** [of_index i] is the device of index [i], {!host} for [0], or {!forgotten}
     once the collector took that device. [i] must be the index of a device
-    made. *)
+    made. It allocates once that device's resources are freed. *)
 
 val iter : (device -> unit) -> unit
 (** [iter f] applies [f] to each published device other than the host whose
@@ -302,7 +302,9 @@ val generation : unit -> int
     its value now, after a loss too, or the device is Orphaned, whose work
     is the parent's. Waits and
     checks ask whether a point is done ({!is_done}); the return of memory
-    asks whether it is settled ({!settled}). *)
+    asks whether it is settled ({!settled}). A lost device's points are
+    answered from its line, without {!of_index}: {!is_done}, {!settled},
+    {!check} and {!wait_point} on them allocate nothing unless they raise. *)
 
 val submitted : device -> int
 (** [submitted d] is {!Rig.submitted}[ d]. *)

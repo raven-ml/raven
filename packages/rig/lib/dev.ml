@@ -256,9 +256,14 @@ let () =
 let is_host d = match d.kind with Host -> true | _ -> false
 let is_io d = match d.kind with Io _ -> true | _ -> false
 
-(* The host is never lost: a use of its memory reads no C line. *)
-let[@inline] is_lost d = d != host && c_state d.index <> live_state
-let orphaned d = c_state d.index = orphaned_state
+(* Whether the device of index [i] is lost, read from its line alone. The host
+   is never lost: a use of its memory reads no C line. A point of a lost device
+   is answered from its line, without {!of_index}, which allocates once the
+   device's resources are freed. *)
+let[@inline] lost_at i = i <> 0 && c_state i <> live_state
+let[@inline] is_lost d = lost_at d.index
+let orphaned_at i = c_state i = orphaned_state
+let orphaned d = orphaned_at d.index
 let lost d = if is_lost d then Some (c_why d.index) else None
 let raise_lost d = raise (Lost (d, c_why d.index))
 let submitted d = c_submitted d.index
@@ -658,6 +663,10 @@ let wait_until_lost d v w =
   | w -> w
   | exception Lost (d', _) when d' == d -> 0
 
+let check p =
+  let i = Point.index p in
+  if lost_at i && not (c_done p) then raise_lost (of_index i)
+
 (* A lost device's point is done if its word reached it before the loss: its
    stop raises the word whatever ran. The word is read before the loss is, so a
    word the stop raised shows the loss. Before it blocks, it raises the loss of
@@ -665,36 +674,38 @@ let wait_until_lost d v w =
    no work ahead of a loss. The stamps are read from [m] there: [m] holds them
    until then. *)
 let wait_point m every p =
-  let d = of_index (Point.index p) and v = Point.value p in
-  let w = word d in
-  let w =
-    if w >= v || is_lost d then w
-    else
-      let q = c_stamps_lost m.root.entry.stamps every in
-      if q <> 0 then raise_lost (of_index (Point.index q));
-      wait_until_lost d v w
-  in
-  if not (is_lost d) then
-    begin if (live d).afters != [] then run_afters d w
-    end
-  else if not (c_done p) then raise_lost d
+  let i = Point.index p in
+  if lost_at i then check p
+  else
+    let d = of_index i and v = Point.value p in
+    let w = word d in
+    let w =
+      if w >= v || is_lost d then w
+      else
+        let q = c_stamps_lost m.root.entry.stamps every in
+        if q <> 0 then raise_lost (of_index (Point.index q));
+        wait_until_lost d v w
+    in
+    if not (is_lost d) then
+      begin if (live d).afters != [] then run_afters d w
+      end
+    else if not (c_done p) then raise_lost d
 
 (* The word is read before the loss is, as [wait_point] reads them. *)
 let is_done p =
-  let d = of_index (Point.index p) in
-  if is_lost d then c_done p
+  let i = Point.index p in
+  if lost_at i then c_done p
   else
-    let w = word d in
-    if is_lost d then c_done p else w >= Point.value p
+    let w = word (of_index i) in
+    if lost_at i then c_done p else w >= Point.value p
 
 let settled p =
-  let d = of_index (Point.index p) in
-  orphaned d
-  || match word d >= Point.value p with r -> r | exception Lost _ -> false
-
-let check p =
-  let d = of_index (Point.index p) in
-  if is_lost d && not (c_done p) then raise_lost d
+  let i = Point.index p in
+  if lost_at i then orphaned_at i || c_word i >= Point.value p
+  else
+    match word (of_index i) >= Point.value p with
+    | r -> r
+    | exception Lost _ -> false
 
 (* Closing *)
 
