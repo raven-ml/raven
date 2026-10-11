@@ -588,21 +588,25 @@ let raise_anywhere what handle stops opens () =
       r
     in
     let armed = ref false in
-    ignore (Gc.Memprof.start ~sampling_rate:1. (raising_at n armed));
-    armed := true;
-    let opened =
-      match opens name make with
-      | r ->
-          armed := false;
-          Some r
-      | exception Injected -> None
+    let profile = Gc.Memprof.start ~sampling_rate:1. (raising_at n armed) in
+    let stop () =
+      armed := false;
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard profile
     in
-    armed := false;
-    Gc.Memprof.stop ();
+    let opened =
+      Fun.protect ~finally:stop (fun () ->
+          armed := true;
+          match opens name make with
+          | r ->
+              armed := false;
+              Some r
+          | exception Injected -> None)
+    in
     let msg = Printf.sprintf "raised at allocation %d" n in
     match opened with
     | Some r ->
-        ignore (require_ok ~pp:Format.pp_print_string r);
+        Rig.close (require_ok ~pp:Format.pp_print_string r);
         greater ~msg:"allocations that raised" int ~than:1 n
     | None ->
         (* An open that published its device left it open: the name answers
@@ -619,6 +623,7 @@ let raise_anywhere what handle stops opens () =
         if left_open then equal ~msg:("handed, " ^ msg) bool true !handed;
         let stopped = !handed && not left_open in
         equal ~msg int (if stopped then 1 else 0) (stops h);
+        Rig.close d;
         from (n + 1)
   in
   from 1
