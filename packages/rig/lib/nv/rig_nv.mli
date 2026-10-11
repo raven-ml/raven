@@ -166,8 +166,9 @@ val capability : t -> Rig_nv_abi.Gpu.t
     region leaves the memory it maps, and other regions over that memory, in
     place.
 
-    {!peer} is [true] iff one path opened both devices and reaches the other
-    GPU's memory from this one, and {!val-map_peer} then maps it. Peer
+    {!peer} is [true] iff paths of one [key] opened both devices and this
+    device's path reaches the other GPU's memory ([reaches] of
+    {!type-path}), and {!val-map_peer} then maps it. Peer
     access between GPUs is untested. {!val-map_host} returns [None] if the
     path maps no host memory or refuses the pages ({!field-map_host}). *)
 
@@ -327,7 +328,7 @@ type 'm path = {
           memory. *)
   reaches : int -> bool;
       (** [reaches i] is [true] iff this GPU's work addresses the GPU memory of
-          GPU [i] of this path, another GPU. *)
+          another GPU of this path's machine, GPU [i], numbered as [index]. *)
   map_peer : 'm memory -> 'm memory option;
       (** [map_peer m] is the memory [m] of another device of this path, mapped
           for this GPU, or [None] if this GPU cannot address it. *)

@@ -65,15 +65,16 @@ val release : t -> unit
     so that [m] holds no page table. Releasing [m] again does nothing. *)
 
 type reach
-(** The type for what decides whose GPU memory a GPU maps ({!reaches}): facts
-    of the GPU, its machine and its driver, the same at every open of the GPU,
-    so a driver may keep them past the GPU's stop. *)
+(** The type for the facts that decide whose GPU memory a GPU maps
+    ({!reaches}). They are facts of the GPU, its machine and its driver that
+    are the same at every open of the GPU, so a driver may keep them past the
+    GPU's stop. *)
 
 val reach : t -> reach
-(** [reach m] is what decides whose GPU memory [m]'s GPU maps. *)
+(** [reach m] is the facts that decide whose GPU memory [m]'s GPU maps. *)
 
 val reaches : reach -> reach -> bool
-(** [reaches r o] is [true] iff {!map_peer} maps for a GPU of reach [r] the
+(** [reaches r o] is [true] iff {!map_peer} on a GPU of reach [r] maps the
     GPU memory of another GPU of reach [o], given room. That holds iff both
     are on one machine, their page tables share a space, and either links of
     one fabric join them, or neither GPU is behind an IOMMU
