@@ -267,19 +267,36 @@ module Edgeless = struct
   let facts d = { (P.facts d) with edge = 0n }
 end
 
-(* An edge that names no C state refuses the open, the driver's device is
-   stopped, and the name stays free. *)
+(* Zeroed bytes, whose first member is NULL as a C state's. *)
+let zeroed =
+  lazy
+    (let b = Rig.Buffer.create Rig.host 64 in
+     Rig.Buffer.fill b '\000';
+     b)
+
+module Driverless = struct
+  include P
+
+  let facts d =
+    let at = Support.Reader.host (Lazy.force zeroed) in
+    { (P.facts d) with edge = Nativeint.of_int at }
+end
+
+(* An edge that names no C state, or a state whose first member is NULL,
+   refuses the open, the driver's device is stopped, and the name stays
+   free. *)
 let test_edge_refused () =
-  let p = P.make () in
-  raises_match (Exn.invalid_arg ~substring:"rig_driver") (fun () ->
-      Rig.open_
-        {
-          name = "open:edgeless";
-          driver = (module Edgeless);
-          make = (fun () -> Ok p);
-        });
-  equal ~msg:"stopped" bool true (List.mem "stop" (P.log p));
-  ignore (open_as (module P) "open:edgeless" (P.make ()))
+  List.iter
+    (fun (name, driver) ->
+      let p = P.make () in
+      raises_match ~msg:name (Exn.invalid_arg ~substring:"rig_driver")
+        (fun () -> Rig.open_ { name; driver; make = (fun () -> Ok p) });
+      equal ~msg:("stopped, " ^ name) bool true (List.mem "stop" (P.log p));
+      ignore (open_as (module P) name (P.make ())))
+    [
+      ("open:edgeless", (module Edgeless : Rig_edge.Driver with type t = P.t));
+      ("open:driverless", (module Driverless));
+    ]
 
 let open_store name =
   require_ok ~pp:Format.pp_print_string
@@ -882,7 +899,8 @@ let tests =
       test "a region against the host_addresses fact refuses the allocation"
         test_overstated;
       test "a hang bound below 1 ms refuses the open" test_hang_refused;
-      test "an edge that names no C state refuses the open" test_edge_refused;
+      test "an edge that names no C state or driver refuses the open"
+        test_edge_refused;
       test "the host states its facts" test_host;
       test "a driver's device reaches by its facts and its peers" test_reach;
       test "where the host reaches a device, its buffers have host addresses"
