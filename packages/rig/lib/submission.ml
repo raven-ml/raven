@@ -862,8 +862,8 @@ let host_wait = -1
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the producer's object for an object completion, or
    the address of [p]'s word as [d] maps it. The mapping counts in [p]'s word
-   from before it is made, and [d] keeps it only while its own word is read:
-   a stop that came meanwhile gives it back at once. *)
+   from before it is made, and is located before [d] keeps it, only while its
+   own word is read: a stop that came meanwhile gives it back at once. *)
 let decide d p =
   let l = Dev.live d and pl = Dev.live p in
   let waits =
@@ -897,7 +897,16 @@ let decide d p =
         | None ->
             Memory.word_unmapped p;
             host_wait
-        | Some r -> (
+        | Some r ->
+            let way =
+              match (Memory.locate r).address with
+              | None -> host_wait
+              | Some at -> at + skip
+              | exception e ->
+                  let bt = Printexc.get_raw_backtrace () in
+                  Memory.give d r (Word p);
+                  Printexc.raise_with_backtrace e bt
+            in
             let kept =
               Lock.protect l.lock (fun () ->
                   l.word_end = Read
@@ -906,14 +915,11 @@ let decide d p =
                     true
                   end)
             in
-            if not kept then begin
+            if kept then way
+            else begin
               Memory.give d r (Word p);
               host_wait
-            end
-            else
-              match (Memory.locate r).address with
-              | None -> host_wait
-              | Some at -> at + skip))
+            end)
 
 (* An undecided pair: no way is negative but [host_wait], and an address or an
    object fits in 62 bits. *)
