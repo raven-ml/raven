@@ -645,8 +645,9 @@ static char *lost_with(struct rig_device *p) {
    unreached value of the lost [p], reading both words as they stand, and
    spreads from each. Each keeps the reason [shared], a process's failure
    that every device keeps and none frees, or, if it is NULL, "[p's name]
-   lost", or "out of memory" if that cannot be made. A device is lost once, so each is visited once. The domain lock
-   is released, and [table_mu] is the one mutex held. */
+   lost", or "out of memory" if that cannot be made. A device is lost once,
+   so each is visited once. The domain lock is released, and [table_mu] is
+   the one mutex held. */
 static void spread(struct rig_device *p, char *shared) {
   char *why = shared;
   for (int i = next_live(1); i != 0; i = next_live(i + 1)) {
