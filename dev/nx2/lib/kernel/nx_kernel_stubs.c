@@ -12,10 +12,6 @@
 #include "nx_contract_view.h"
 #include "nx_prog.h"
 
-/* prog.ml writes nx_prog at these byte offsets. */
-_Static_assert(offsetof(nx_prog, nodes) == 16, "header");
-_Static_assert(sizeof(nx_prog_node) == 40, "record");
-_Static_assert(offsetof(nx_prog_node, bits) == 24, "at_bits");
 _Static_assert(NX_OP1_COUNT == 28 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
                "one code per kind");
 

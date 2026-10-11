@@ -3,8 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The cubins, embedded: one per architecture the library computes on; and
-   the program reader of fold.ml.
+/* The cubins, embedded: one per architecture the library computes on.
 
    The kernels need a driver of CUDA 13 (R580) or later: nvcc 13.4 builds
    their cubins, which a driver of the same major version runs, newer
@@ -15,8 +14,6 @@
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
-
-#include "nx_prog.h"
 
 /* Defines [name] and [name]_end around the bytes of the file [file], a
    string, embedded in read-only data at build time. */
@@ -47,11 +44,3 @@ CAMLprim value nx_cuda_cubin(value arch) {
                                         nx_cuda_sm_89);
   CAMLreturn(caml_alloc_some(bytes));
 }
-
-/* The dtype code of the program [p]'s one operand where its one output is
-   that operand unchanged, the case fold.cu computes; else -1. */
-intnat nx_cuda_operand(value p) {
-  const nx_prog *q = (const nx_prog *)String_val(p);
-  return nx_prog_is_operand(q) ? nx_prog_ins(q)[0] : -1;
-}
-value nx_cuda_operand_byte(value p) { return Val_long(nx_cuda_operand(p)); }

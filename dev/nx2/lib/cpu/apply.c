@@ -26,7 +26,6 @@
 #include <caml/mlvalues.h>
 
 #include "cpu.h"
-#include "nx_prog.h"
 
 /* A block holds at most NX_CPU_SLOT bytes of its widest operand in its
    carrier, so that an operand staged into a slot fits it and the block's
@@ -204,14 +203,9 @@ value nx_cpu_apply1(value k, value vd, value vx) {
   return walk_operands(2, in, block, &j);
 }
 
-/* nx_prog.h's code of a Prog.op2 value. */
-static int op2_code(value k) {
-  return Tag_val(k) == 0 ? Int_val(Field(k, 0))
-                         : NX_OP2_EQUAL + Int_val(Field(k, 0));
-}
-
 value nx_cpu_apply2(value k, value vd, value vx, value vy) {
-  int x = nx_array_dtype(vx), c = nx_cpu_carrier(x), code = op2_code(k);
+  int x = nx_array_dtype(vx), c = nx_cpu_carrier(x);
+  int code = NX_OP2_CODE(k);
   row2 f = nx_cpu_table->op2[code][c];
   if (f == NULL) return Val_int(NX_DECLINED);
   int d = code >= NX_OP2_EQUAL ? NX_BOOL : x;

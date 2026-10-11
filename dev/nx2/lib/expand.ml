@@ -7,32 +7,53 @@ module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module P = Nx_kernel.Prog
 module M = Nx_array.Move
+open Build
 
-(* Whether [prog] is one node over its operands in order, which a kernel
-   computes alone. *)
-let one_node prog =
-  let n = P.length prog in
-  let ins = Array.length (P.ins prog) in
-  n = ins + 1
-  && P.outs prog = [| ins |]
-  && List.for_all (fun i -> P.node prog i = P.In i) (List.init ins Fun.id)
+(* The node a one-node program computes from its operands in order, which a
+   kernel computes alone, if it is one: every node before its output reads
+   operand [i] at index [i]. *)
+let single (prog : P.t) =
+  let n = Iarray.length prog.nodes in
+  let ins_first =
+    let ok = ref true in
+    for i = 0 to n - 2 do
+      match Iarray.get prog.nodes i with
+      | P.In j when j = i -> ()
+      | _ -> ok := false
+    done;
+    !ok
+  in
+  if Iarray.length prog.outs <> 1 || Iarray.get prog.outs 0 <> n - 1
+     || not ins_first
+  then None
+  else
+    let m = n - 1 in
+    match Iarray.get prog.nodes m with
+    | (Const _ | Coord _) as nd -> Some nd
+    | Op1 (_, _, 0) as nd when m = 1 -> Some nd
+    | Op2 (_, 0, 1) as nd when m = 2 -> Some nd
+    | Op3 (_, 0, 1, 2) as nd when m = 3 -> Some nd
+    | _ -> None
 
 (* Node [i] of [prog] over [loads], as a one-node map of [shape] over [value j]
    for each node [j] it reads. *)
 let node_map (type d) (apply : 'r. by:string -> 'r Value.prim -> 'r) ~by layout
-    prog (loads : d Value.any array) (value : int -> d Value.any) i :
+    (prog : P.t) (loads : d Value.any array) (value : int -> d Value.any) i :
     d Value.any =
   let (D.Any dt) = P.dtype prog i in
   let one node reads =
-    let ins = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) reads in
+    let ins =
+      Iarray.of_array
+        (Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) reads)
+    in
     let loads = Array.map (fun (Value.Any x) -> Value.Plain x) reads in
-    let prog = Prim.program node ins in
+    let prog = P.of_node ~ins node in
     let v, () =
       apply ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
     in
     Value.Any v
   in
-  match P.node prog i with
+  match Iarray.get prog.nodes i with
   | In j -> loads.(j)
   | (Const _ | Coord _) as node -> one node [||]
   | Op1 (k, t, j) -> one (Op1 (k, t, 0)) [| value j |]
@@ -63,13 +84,7 @@ let accumulator (D.Any dt as d) =
   | D.Bit -> D.Any D.Bool
   | _ -> d
 
-(* Whether [prog] reads its one operand and gives it back. *)
-let identity prog =
-  Array.length (P.ins prog) = 1
-  && Array.length (P.outs prog) = 1
-  && P.node prog (P.outs prog).(0) = P.In 0
-
-let output prog k = P.dtype prog (P.outs prog).(k)
+let output (prog : P.t) k = P.dtype prog (Iarray.get prog.outs k)
 
 (* The output a reduction reads and its result's dtype. *)
 let target : type d a. (d, a) Value.reduction -> int * D.any = function
@@ -94,7 +109,7 @@ let complex_sum : type d a. (d, a) Value.reduction -> bool = function
    other expands into plain loops. *)
 let plain prog r =
   let k, dt = target r in
-  identity prog && k = 0
+  P.is_identity prog && k = 0
   && same (output prog 0) dt
   && same (accumulator dt) dt
   && not (complex_sum r)
@@ -111,20 +126,20 @@ let core_reduce (type d q) prog (rs : (d, q) Value.reductions) =
 
 (* Output [k] of [prog] over [loads], of [layout]'s shape, stored in [acc]: the
    operand itself where [prog] is the identity and [acc] its dtype. *)
-let body (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout prog
-    k (loads : d Value.load array) (D.Any acc) : d Value.any =
-  let out = (P.outs prog).(k) in
+let body (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
+    (prog : P.t) k (loads : d Value.load array) (D.Any acc) : d Value.any =
+  let out = Iarray.get prog.outs k in
   let cast = not (same (P.dtype prog out) (D.Any acc)) in
   match loads with
-  | [| Value.Plain x |] when identity prog && not cast -> Value.Any x
+  | [| Value.Plain x |] when P.is_identity prog && not cast -> Value.Any x
   | _ ->
-      let nodes = Array.init (P.length prog) (P.node prog) in
       let nodes, last =
         if cast then
-          (Array.append nodes [| P.Op1 (Cast, D.Any acc, out) |], P.length prog)
-        else (nodes, out)
+          ( Iarray.append prog.nodes [| P.Op1 (Cast, D.Any acc, out) |],
+            Iarray.length prog.nodes )
+        else (prog.nodes, out)
       in
-      let prog = P.v ~ins:(P.ins prog) nodes ~outs:[| last |] in
+      let prog = P.v ~ins:prog.ins nodes ~outs:[| last |] in
       let v, () =
         apply ~by (Value.Map { layout; prog; outs = Value.[ acc ]; loads })
       in
@@ -161,7 +176,7 @@ let reduction (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
         let xt = Prim.dtype x in
         loop
           (Nx_array.Layout.contiguous (Prim.shape x))
-          (Prim.program (P.In 0) [| D.Any xt |])
+          (P.of_node ~ins:[| D.Any xt |] (In 0))
           (Value.Monoid (m, 0, xt))
           [| Value.Plain x |]
       in
@@ -177,21 +192,6 @@ let reduction (type d a) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   | Moments _ | Arg _ -> None
 
 (* Optional reductions *)
-
-(* A program built node by node: [push b n] appends [n] and is its index. *)
-type builder = { mutable nodes : P.node list; mutable count : int }
-
-let builder () = { nodes = []; count = 0 }
-
-let push b n =
-  b.nodes <- n :: b.nodes;
-  b.count <- b.count + 1;
-  b.count - 1
-
-let programs b ~ins outs = P.v ~ins (Array.of_list (List.rev b.nodes)) ~outs
-let program b ~ins out = programs b ~ins [| out |]
-
-let const (type v s) (dt : (v, s) D.t) (x : v) = P.Const (D.Any dt, P.bits dt x)
 
 (* [x], [shape] reduced along [axes], broadcast back to [shape]. *)
 let spread_back (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
@@ -230,7 +230,7 @@ let fold_plain (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     axes m (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let dt = Prim.dtype x in
   fold1 apply ~by (Prim.shape x) axes m
-    (Prim.program (P.In 0) [| D.Any dt |])
+    (P.of_node ~ins:[| D.Any dt |] (In 0))
     dt [| Value.Plain x |]
 
 (* The nodes of [x] where it is a NaN, the first operand where so, else the
@@ -246,16 +246,15 @@ let nan_or b x y =
 let logsumexp (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     shape axes (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let dt = Prim.dtype x in
-  let ins = [| D.Any dt; D.Any dt |] in
   let out = Prim.reduced shape axes in
-  let f v = const dt (D.of_float dt v) in
+  let f b v = const b dt (D.of_float dt v) in
   let sum_exp shift =
-    let b = builder () in
-    let t = push b (In 0) in
+    let b = Build.make () in
+    let t = input b (D.Any dt) in
     let shifted =
       match shift with
       | None -> t
-      | Some _ -> push b (Op2 (Binary Sub, t, push b (In 1)))
+      | Some _ -> push b (Op2 (Binary Sub, t, input b (D.Any dt)))
     in
     let e = push b (Op1 (Unary Exp, D.Any dt, shifted)) in
     let loads =
@@ -264,12 +263,11 @@ let logsumexp (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       | Some m ->
           [| Value.Plain x; Value.Plain (spread_back apply ~by shape axes m) |]
     in
-    let ins = Array.sub ins 0 (Array.length loads) in
-    fold1 apply ~by shape axes Sum (program b ~ins e) dt loads
+    fold1 apply ~by shape axes Sum (program b [| e |]) dt loads
   in
   if Array.exists (fun a -> shape.(a) = 0) axes then
     map1 apply ~by out
-      (Prim.program (Op1 (Unary Log, D.Any dt, 0)) [| D.Any dt |])
+      (P.of_node ~ins:[| D.Any dt |] (Op1 (Unary Log, D.Any dt, 0)))
       dt
       [| Value.Plain (sum_exp None) |]
   else
@@ -277,24 +275,24 @@ let logsumexp (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     (* [m'], from the maximum at node [m]. *)
     let finite b m =
       let a = push b (Op1 (Unary Abs, D.Any dt, m)) in
-      let lt = push b (Op2 (Compare Less, a, push b (f Float.infinity))) in
-      push b (Op3 (Where, lt, m, push b (f 0.)))
+      let lt = push b (Op2 (Compare Less, a, f b Float.infinity)) in
+      push b (Op3 (Where, lt, m, f b 0.))
     in
     let shift =
-      let b = builder () in
-      map1 apply ~by out
-        (program b ~ins:[| D.Any dt |] (finite b (push b (In 0))))
-        dt [| Value.Plain m |]
+      let b = Build.make () in
+      let mi = input b (D.Any dt) in
+      map1 apply ~by out (program b [| finite b mi |]) dt [| Value.Plain m |]
     in
     let s = sum_exp (Some shift) in
-    let b = builder () in
-    let mi = push b (In 0) and si = push b (In 1) in
+    let b = Build.make () in
+    let mi = input b (D.Any dt) in
+    let si = input b (D.Any dt) in
     let r =
       push b
         (Op2 (Binary Add, finite b mi, push b (Op1 (Unary Log, D.Any dt, si))))
     in
     map1 apply ~by out
-      (program b ~ins (nan_or b mi r))
+      (program b [| nan_or b mi r |])
       dt
       [| Value.Plain m; Value.Plain s |]
 
@@ -305,34 +303,37 @@ let moments (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   let dt = Prim.dtype x in
   let out = Prim.reduced shape axes in
   let n = Array.fold_left (fun n a -> n * shape.(a)) 1 axes in
-  let count = const dt (D.of_float dt (Float.of_int n)) in
   (* [s / n] at node [s], or [s] itself where it is a NaN, from [over]. *)
   let divided b s over =
-    let q = push b (Op2 (Binary Fdiv, s, push b count)) in
+    let count = const b dt (D.of_float dt (Float.of_int n)) in
+    let q = push b (Op2 (Binary Fdiv, s, count)) in
     nan_or b over q
   in
   let mean =
-    let b = builder () in
-    let s = push b (In 0) in
+    let b = Build.make () in
+    let s = input b (D.Any dt) in
     map1 apply ~by out
-      (program b ~ins:[| D.Any dt |] (divided b s s))
+      (program b [| divided b s s |])
       dt
       [| Value.Plain (fold_plain apply ~by axes Sum x) |]
   in
   let squares =
-    let b = builder () in
-    let d = push b (Op2 (Binary Sub, push b (In 0), push b (In 1))) in
+    let b = Build.make () in
+    let x' = input b (D.Any dt) in
+    let mean' = input b (D.Any dt) in
+    let d = push b (Op2 (Binary Sub, x', mean')) in
     let sq = push b (Op2 (Binary Mul, d, d)) in
     fold1 apply ~by shape axes Sum
-      (program b ~ins:[| D.Any dt; D.Any dt |] sq)
+      (program b [| sq |])
       dt
       [| Value.Plain x; Value.Plain (spread_back apply ~by shape axes mean) |]
   in
   let var =
-    let b = builder () in
-    let s = push b (In 0) and m = push b (In 1) in
+    let b = Build.make () in
+    let s = input b (D.Any dt) in
+    let m = input b (D.Any dt) in
     map1 apply ~by out
-      (program b ~ins:[| D.Any dt; D.Any dt |] (divided b s m))
+      (program b [| divided b s m |])
       dt
       [| Value.Plain squares; Value.Plain mean |]
   in
@@ -389,11 +390,11 @@ let arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   let nan = match D.kind dt with D.Float | D.Complex -> true | _ -> false in
   let values = if nan then [ Value.Any x; Value.Any mb ] else [] in
   let loads = Array.of_list (values @ kx @ km) in
-  let ins = Array.map (fun (Value.Any y) -> D.Any (Prim.dtype y)) loads in
   (* Nodes [0] to [n - 1] are the [n] loads: [x] and [m] where they may be NaNs,
      then [x]'s keys, then [m]'s. *)
-  let b = builder () in
-  Array.iteri (fun i _ -> ignore (push b (In i))) loads;
+  let b = Build.make () in
+  let input (Value.Any y) = ignore (input b (D.Any (Prim.dtype y))) in
+  Array.iter input loads;
   let v = List.length values and k = List.length kx in
   let equal j = push b (Op2 (Compare Equal, v + j, v + k + j)) in
   let same =
@@ -409,21 +410,20 @@ let arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
       let both = push b (Op2 (Binary And, isnan 0, isnan 1)) in
       push b (Op2 (Binary Or, same, both))
   in
-  let int64 n = const D.Int64 (Int64.of_int n) in
-  let r = Array.length shape in
+  let int64 n = const b D.Int64 (Int64.of_int n) in
   let position, _ =
     Array.fold_right
       (fun a (pos, stride) ->
-        let c = push b (Coord (r - 1 - a)) in
-        let t = push b (Op2 (Binary Mul, c, push b (int64 stride))) in
+        let c = push b (Coord a) in
+        let t = push b (Op2 (Binary Mul, c, int64 stride)) in
         (push b (Op2 (Binary Add, pos, t)), stride * shape.(a)))
       axes
-      (push b (int64 0), 1)
+      (int64 0, 1)
   in
-  let none = push b (const D.Int64 Int64.max_int) in
+  let none = const b D.Int64 Int64.max_int in
   let pick = push b (Op3 (Where, found, position, none)) in
   let p =
-    fold1 apply ~by shape axes Min (program b ~ins pick) D.Int64
+    fold1 apply ~by shape axes Min (program b [| pick |]) D.Int64
       (Array.map (fun (Value.Any y) -> Value.Plain y) loads)
   in
   (m, p)
@@ -472,18 +472,17 @@ type pass = { d : int; at : int; valid : int }
 let doubling (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     axis combine (state : d Value.any array) : d Value.any array =
   let dts = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) state in
-  let k = Array.length state in
-  let ins = Array.append dts dts in
   let before (Value.Any x) d = shifted axis d (D.zero (Prim.dtype x)) x in
   let plain (Value.Any x) = Value.Plain x in
   let rec pass state d =
-    let b = builder () in
-    let earlier = Array.init k (fun i -> push b (In i)) in
-    let later = Array.init k (fun i -> push b (In (k + i))) in
-    let at = push b (Coord (Array.length shape - 1 - axis)) in
-    let shift = push b (const D.Int64 (Int64.of_int d)) in
+    let b = Build.make () in
+    let earlier = Array.map (input b) dts in
+    let later = Array.map (input b) dts in
+    let at = push b (Coord axis) in
+    let shift = const b D.Int64 (Int64.of_int d) in
     let valid = push b (Op2 (Compare Less_equal, shift, at)) in
-    let prog = programs b ~ins (combine b { d; at; valid } earlier later) in
+    let outs = combine b { d; at; valid } earlier later in
+    let prog = program b (Iarray.of_array outs) in
     let loads =
       Array.append
         (Array.map (fun x -> before x d) state)
@@ -496,7 +495,7 @@ let doubling (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
 
 (* The node of whether [v] is finite: [|v| < ∞], [false] for a NaN. *)
 let finite b (D.Any dt) v =
-  let inf = push b (const dt (D.of_float dt Float.infinity)) in
+  let inf = const b dt (D.of_float dt Float.infinity) in
   push b (Op2 (Compare Less, push b (Op1 (Unary Abs, D.Any dt, v)), inf))
 
 (* Logsumexp by doubling: results [a] and [b] combine as
@@ -510,7 +509,7 @@ let running_logsumexp (type v s d)
     (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let dt = Prim.dtype x in
   let combine b p earlier later =
-    let none = push b (const dt (D.of_float dt Float.neg_infinity)) in
+    let none = const b dt (D.of_float dt Float.neg_infinity) in
     let a = push b (Op3 (Where, p.valid, earlier.(0), none)) in
     let y = later.(0) in
     let big = push b (Op2 (Binary Maximum, a, y)) in
@@ -536,7 +535,7 @@ let running_moments (type v s d)
     (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape axis
     (x : (v, s, d) Value.t) : (v, s, d) Value.t * (v, s, d) Value.t =
   let dt = Prim.dtype x in
-  let f v = const dt (D.of_float dt v) in
+  let f b v = const b dt (D.of_float dt v) in
   let layout = L.contiguous shape in
   let two prog loads =
     let a, (b, ()) =
@@ -546,8 +545,11 @@ let running_moments (type v s d)
   in
   let finite b v = finite b (D.Any dt) v in
   (* [c], from the first term at node [t]: [t] where finite, else [0]. *)
-  let shift b t = push b (Op3 (Where, finite b t, t, push b (f 0.))) in
-  if shape.(axis) = 0 then two (P.v ~ins:[||] [| f 0. |] ~outs:[| 0; 0 |]) [||]
+  let shift b t = push b (Op3 (Where, finite b t, t, f b 0.)) in
+  if shape.(axis) = 0 then
+    let b = Build.make () in
+    let zero = f b 0. in
+    two (program b [| zero; zero |]) [||]
   else
     let first =
       let keep a e =
@@ -556,21 +558,21 @@ let running_moments (type v s d)
       let x0 = apply ~by (Value.Move (Slice (Array.mapi keep shape), x)) in
       apply ~by (Value.Move (Broadcast (Array.copy shape), x0))
     in
-    let ins n = Array.make n (D.Any dt) in
     let mu, s =
-      let b = builder () in
-      let t = push b (In 0) in
-      let d = push b (Op2 (Binary Sub, t, shift b (push b (In 1)))) in
+      let b = Build.make () in
+      let t = input b (D.Any dt) in
+      let t0 = input b (D.Any dt) in
+      let d = push b (Op2 (Binary Sub, t, shift b t0)) in
       two
-        (programs b ~ins:(ins 2) [| d; push b (f 0.) |])
+        (program b [| d; f b 0. |])
         [| Value.Plain x; Value.Plain first |]
     in
     let combine b p earlier later =
       let ma = earlier.(0) and sa = earlier.(1) in
       let mb = later.(0) and sb = later.(1) in
       let op2 k x y = push b (Op2 (k, x, y)) in
-      let d = push b (const D.Int64 (Int64.of_int p.d)) in
-      let next = op2 (Binary Add) p.at (push b (const D.Int64 1L)) in
+      let d = const b D.Int64 (Int64.of_int p.d) in
+      let next = op2 (Binary Add) p.at (const b D.Int64 1L) in
       let count n = push b (Op1 (Cast, D.Any dt, op2 (Binary Minimum) n d)) in
       let na = count (op2 (Binary Sub) next d) and nb = count next in
       let n = op2 (Binary Add) na nb in
@@ -590,18 +592,19 @@ let running_moments (type v s d)
     let state =
       doubling apply ~by shape axis combine [| Value.Any mu; Value.Any s |]
     in
-    let b = builder () in
-    let m = push b (In 0) and s = push b (In 1) in
-    let c = shift b (push b (In 2)) in
-    let at = push b (Coord (Array.length shape - 1 - axis)) in
+    let b = Build.make () in
+    let m = input b (D.Any dt) in
+    let s = input b (D.Any dt) in
+    let c = shift b (input b (D.Any dt)) in
+    let at = push b (Coord axis) in
     let at = push b (Op1 (Cast, D.Any dt, at)) in
-    let n = push b (Op2 (Binary Add, at, push b (f 1.))) in
+    let n = push b (Op2 (Binary Add, at, f b 1.)) in
     let mean = push b (Op2 (Binary Add, c, m)) in
     let var = push b (Op2 (Binary Fdiv, s, n)) in
     let nan = push b (Op2 (Binary Sub, m, m)) in
     let var = push b (Op3 (Where, finite b m, var, nan)) in
     two
-      (programs b ~ins:(ins 3) [| mean; var |])
+      (program b [| mean; var |])
       [|
         Value.Plain (Prim.expect dt state.(0));
         Value.Plain (Prim.expect dt state.(1));
@@ -619,9 +622,8 @@ let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     ~by shape axis (e : Nx_kernel.extreme) (x : (v, s, d) Value.t) :
     (v, s, d) Value.t * (int64, D.int64_elt, d) Value.t =
   let dt = Prim.dtype x in
-  let r = Array.length shape in
   let position =
-    let at = P.v ~ins:[||] [| Coord (r - 1 - axis) |] ~outs:[| 0 |] in
+    let at = P.of_node ~ins:[||] (Coord axis) in
     map1 apply ~by shape at D.Int64 [||]
   in
   (* The keys' dtype, and the state's indices that hold them. *)
@@ -662,7 +664,7 @@ let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     let ka = Array.map (fun i -> earlier.(i)) keys in
     let kb = Array.map (fun i -> later.(i)) keys in
     let past = match e with Max -> below ka kb 0 | Min -> below kb ka 0 in
-    let yes = push b (const D.Bool true) and no = push b (const D.Bool false) in
+    let yes = const b D.Bool true and no = const b D.Bool false in
     let past =
       if not floats then past
       else
@@ -816,9 +818,10 @@ let held (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    node whose dtypes all stay, and for a cast and a bitcast, which no other
    dtype computes exactly. *)
 let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
-    prog (outs : (d, r) Value.outs) (loads : d Value.load array) : r option =
-  let n = P.length prog in
-  let node = P.node prog (n - 1) in
+    (prog : P.t) (outs : (d, r) Value.outs) (loads : d Value.load array) :
+    r option =
+  let n = Iarray.length prog.nodes in
+  let node = Iarray.get prog.nodes (n - 1) in
   let dts = Array.map Prim.load_dtype loads in
   let wide =
     match (node : P.node) with
@@ -843,7 +846,10 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
       Value.Any (held apply ~by w x)
     in
     let operands = Array.map load loads in
-    let ins = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) operands in
+    let ins =
+      Iarray.of_array
+        (Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) operands)
+    in
     let node : P.node =
       match node with
       | Const ((D.Any from as dt), b) ->
@@ -859,7 +865,7 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
         (Value.Map
            {
              layout;
-             prog = Prim.program node ins;
+             prog = P.of_node ~ins node;
              outs = Value.[ w ];
              loads = Array.map (fun (Value.Any x) -> Value.Plain x) operands;
            })
@@ -869,23 +875,22 @@ let widened (type d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by layout
 (* The program of a region's flat positions in a C-contiguous value whose axes
    have [strides]: [Σ (start + i·step)·stride] at the region's index [i]. *)
 let positions (rs : Nx_array.Move.range array) strides =
-  let r = Array.length rs in
-  let int64 n = const D.Int64 (Int64.of_int n) in
   let first = ref 0 in
   Array.iteri
     (fun d (g : Nx_array.Move.range) ->
       first := !first + (g.start * strides.(d)))
     rs;
-  let b = builder () in
-  let sum = ref (push b (int64 !first)) in
+  let b = Build.make () in
+  let int64 n = const b D.Int64 (Int64.of_int n) in
+  let sum = ref (int64 !first) in
   Array.iteri
     (fun d (g : Nx_array.Move.range) ->
-      let c = push b (P.Coord (r - 1 - d)) in
-      let k = push b (int64 (g.step * strides.(d))) in
+      let c = push b (P.Coord d) in
+      let k = int64 (g.step * strides.(d)) in
       let m = push b (P.Op2 (Binary Mul, c, k)) in
       sum := push b (P.Op2 (Binary Add, !sum, m)))
     rs;
-  program b ~ins:[||] !sum
+  program b [| !sum |]
 
 (* An assembly as a fill of the flat result, then per piece in order a scatter
    of its elements at their flat positions: O(n) per piece. *)
@@ -1066,24 +1071,22 @@ let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     in
     Padded { x = xt; fill = D.zero dt; pad = { lo; hi; interior; windows } }
   in
-  let zero = const dt (D.zero dt) in
+  let zero b = const b dt (D.zero dt) in
   (* The sum so far plus taps [first] to [first + count - 1]. *)
   let add sum first count =
-    let b = builder () in
+    let b = Build.make () in
     let total, loads =
       match sum with
-      | None -> (ref (push b zero), [])
-      | Some s -> (ref (push b (In 0)), [ Value.Plain s ])
+      | None -> (ref (zero b), [])
+      | Some s -> (ref (input b (D.Any dt)), [ Value.Plain s ])
     in
     let loads =
       Array.of_list (loads @ List.init count (fun i -> tap (first + i)))
     in
-    let base = Array.length loads - count in
-    for i = 0 to count - 1 do
-      total := push b (Op2 (Binary Add, !total, push b (In (base + i))))
+    for _ = 1 to count do
+      total := push b (Op2 (Binary Add, !total, input b (D.Any dt)))
     done;
-    let ins = Array.make (Array.length loads) (D.Any dt) in
-    map1 apply ~by wide (program b ~ins !total) dt loads
+    map1 apply ~by wide (program b [| !total |]) dt loads
   in
   let rec runs sum first =
     if first >= taps then Option.get sum
@@ -1092,8 +1095,8 @@ let fold (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
       runs (Some (add sum first count)) (first + count)
   in
   if Array.exists (( = ) 0) shape || Array.exists (( = ) 0) xs then
-    let b = builder () in
-    map1 apply ~by shape (program b ~ins:[||] (push b zero)) dt [||]
+    let b = Build.make () in
+    map1 apply ~by shape (program b [| zero b |]) dt [||]
   else apply ~by (Value.Move (Reshape (Array.copy shape), runs None 0))
 
 (* Fourier transforms
@@ -1107,9 +1110,8 @@ let whole e = { M.start = 0; count = e; step = 1 }
 (* The value of [shape] whose every element is [+0]. *)
 let zeros (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     (dt : (v, s) D.t) shape : (v, s, d) Value.t =
-  let b = builder () in
   map1 apply ~by shape
-    (program b ~ins:[||] (push b (const dt (D.zero dt))))
+    (P.of_node ~ins:[||] (Const (D.Any dt, P.bits dt (D.zero dt))))
     dt [||]
 
 (* The complex [x] as pairs of [pt], its parts' dtype. *)
@@ -1133,20 +1135,18 @@ let of_pairs (type v s w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    whose shape broadcasts to [out]. *)
 let pairs_map (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     out (loads : (w, r, d) Value.t array) f : (w, r, d) Value.t =
-  let dt = Prim.dtype loads.(0) and rank = Array.length out in
-  let b = builder () in
+  let dt = Prim.dtype loads.(0) in
+  let b = Build.make () in
   let parts =
-    Array.mapi
-      (fun i _ ->
-        let re = push b (In (2 * i)) in
-        (re, push b (In ((2 * i) + 1))))
+    Array.map
+      (fun _ ->
+        let re = input b (D.Any dt) in
+        (re, input b (D.Any dt)))
       loads
   in
   let re, im = f b parts in
-  let first = push b (Coord (rank - 1)) in
-  let imaginary =
-    push b (Op2 (Compare Equal, first, push b (const D.Int64 1L)))
-  in
+  let first = push b (Coord 0) in
+  let imaginary = push b (Op2 (Compare Equal, first, const b D.Int64 1L)) in
   let part c x =
     let s = Prim.shape x in
     let ranges =
@@ -1162,9 +1162,8 @@ let pairs_map (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     Array.concat
       (Array.to_list (Array.map (fun x -> [| part 0 x; part 1 x |]) loads))
   in
-  let ins = Array.make (Array.length views) (D.Any dt) in
   map1 apply ~by out
-    (program b ~ins (push b (Op3 (Where, imaginary, im, re))))
+    (program b [| push b (Op3 (Where, imaginary, im, re)) |])
     dt views
 
 (* The nodes of [x·y] for nodes of complex numbers' parts. *)
@@ -1208,28 +1207,26 @@ let stockham (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
         in
         Value.Plain (move (Broadcast out) y)
       in
-      let b = builder () in
-      let ins = Array.init 4 (fun i -> push b (In i)) in
+      let b = Build.make () in
+      let ins = Array.init 4 (fun _ -> input b (D.Any dt)) in
       let op k x y = push b (P.Op2 (Binary k, x, y)) in
       let sr = op Add ins.(0) ins.(2) and si = op Add ins.(1) ins.(3) in
       let d = (op Sub ins.(0) ins.(2), op Sub ins.(1) ins.(3)) in
       let p = push b (Op1 (Cast, D.Any dt, push b (Coord 2))) in
       let turn =
-        push b
-          (const dt (D.of_float dt (sign *. 2. *. Float.pi /. Float.of_int nl)))
+        const b dt (D.of_float dt (sign *. 2. *. Float.pi /. Float.of_int nl))
       in
       let tr, ti = cmul b d (unit_at b dt (op Mul p turn)) in
       let is axis =
-        push b
-          (Op2 (Compare Equal, push b (Coord axis), push b (const D.Int64 1L)))
+        push b (Op2 (Compare Equal, push b (Coord axis), const b D.Int64 1L))
       in
-      let im = is 4 in
+      let im = is 0 in
       let sum = push b (Op3 (Where, im, si, sr))
       and diff = push b (Op3 (Where, im, ti, tr)) in
-      let o = push b (Op3 (Where, is 1, diff, sum)) in
+      let o = push b (Op3 (Where, is 3, diff, sum)) in
       let y =
         map1 apply ~by out
-          (program b ~ins:(Array.make 4 (D.Any dt)) o)
+          (program b [| o |])
           dt
           [| part 0 0; part 0 1; part m 0; part m 1 |]
       in
@@ -1250,16 +1247,15 @@ let bluestein (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     let rec up p = if p >= (2 * n) - 1 then p else up (2 * p) in
     up 1
   in
-  let i64 v = const D.Int64 (Int64.of_int v) in
-  let f v = const dt (D.of_float dt v) in
+  let i64 b v = const b D.Int64 (Int64.of_int v) in
+  let f b v = const b dt (D.of_float dt v) in
   (* [e^(sg·iπ (t² mod 2n)/n)] at the int64 node [t]. *)
   let chirp b sg t =
     let sq = push b (P.Op2 (Binary Mul, t, t)) in
-    let q = push b (P.Op2 (Binary Mod, sq, push b (i64 (2 * n)))) in
+    let q = push b (P.Op2 (Binary Mod, sq, i64 b (2 * n))) in
     let q = push b (P.Op1 (Cast, D.Any dt, q)) in
     unit_at b dt
-      (push b
-         (P.Op2 (Binary Mul, q, push b (f (sg *. Float.pi /. Float.of_int n)))))
+      (push b (P.Op2 (Binary Mul, q, f b (sg *. Float.pi /. Float.of_int n))))
   in
   let padded =
     apply ~by
@@ -1273,23 +1269,23 @@ let bluestein (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   in
   let a =
     pairs_map apply ~by [| 2; batch; m |] [| padded |] (fun b parts ->
-        cmul b parts.(0) (chirp b sign (push b (Coord 0))))
+        cmul b parts.(0) (chirp b sign (push b (Coord 2))))
   in
   (* [conj c_j] at [t = j] and [t = M - j], [0] elsewhere. *)
   let kernel =
-    let b = builder () in
-    let t = push b (Coord 0) in
-    let below = push b (P.Op2 (Compare Less, t, push b (i64 n))) in
-    let mirror = push b (P.Op2 (Binary Sub, push b (i64 m), t)) in
-    let above = push b (P.Op2 (Compare Less, mirror, push b (i64 n))) in
+    let b = Build.make () in
+    let t = push b (Coord 2) in
+    let below = push b (P.Op2 (Compare Less, t, i64 b n)) in
+    let mirror = push b (P.Op2 (Binary Sub, i64 b m, t)) in
+    let above = push b (P.Op2 (Compare Less, mirror, i64 b n)) in
     let j = push b (P.Op3 (Where, below, t, mirror)) in
     let inside = push b (P.Op2 (Binary Or, below, above)) in
     let cr, ci = chirp b (-.sign) j in
-    let zero = push b (f 0.) in
-    let im = push b (P.Op2 (Compare Equal, push b (Coord 2), push b (i64 1))) in
+    let zero = f b 0. in
+    let im = push b (P.Op2 (Compare Equal, push b (Coord 0), i64 b 1)) in
     let part = push b (P.Op3 (Where, im, ci, cr)) in
     map1 apply ~by [| 2; 1; m |]
-      (program b ~ins:[||] (push b (P.Op3 (Where, inside, part, zero))))
+      (program b [| push b (P.Op3 (Where, inside, part, zero)) |])
       dt [||]
   in
   let fa = stockham apply ~by (-1.) a
@@ -1303,8 +1299,8 @@ let bluestein (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     apply ~by (Value.Move (Slice [| whole 2; whole batch; whole n |], conv))
   in
   pairs_map apply ~by [| 2; batch; n |] [| conv |] (fun b parts ->
-      let re, im = cmul b parts.(0) (chirp b sign (push b (Coord 0))) in
-      let scale = push b (f (1. /. Float.of_int m)) in
+      let re, im = cmul b parts.(0) (chirp b sign (push b (Coord 2))) in
+      let scale = f b (1. /. Float.of_int m) in
       ( push b (P.Op2 (Binary Mul, re, scale)),
         push b (P.Op2 (Binary Mul, im, scale)) ))
 
@@ -1681,8 +1677,7 @@ let unsigned w =
   | 32 -> U (D.Uint32, Int64.to_int32)
   | _ -> U (D.Uint64, Fun.id)
 
-let uconst b (U (ut, of_int64)) n =
-  push b (P.Const (D.Any ut, P.bits ut (of_int64 n)))
+let uconst b (U (ut, of_int64)) n = const b ut (of_int64 n)
 
 let ones w = if w = 64 then -1L else Int64.(sub (shift_left 1L w) 1L)
 
@@ -1721,33 +1716,36 @@ let sort_keys (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     (x : (v, s, d) Value.t) : (int64, D.int64_elt, d) Value.t list =
   let dt = Prim.dtype x and shape = Prim.shape x in
   let w = D.bits dt in
+  (* The keys [build b ins] gives over [loads], [ins] their nodes, one map
+     each. *)
   let keys loads build =
-    let ins = Array.map (fun (Value.Any y) -> D.Any (Prim.dtype y)) loads in
-    let loads = Array.map (fun (Value.Any y) -> Value.Plain y) loads in
-    let count =
-      let b = builder () in
-      List.length (build b)
+    let built () =
+      let b = Build.make () in
+      let input (Value.Any y) = input b (D.Any (Prim.dtype y)) in
+      (b, build b (Array.map input loads))
     in
-    List.init count (fun j ->
-        let b = builder () in
-        let out = List.nth (build b) j in
-        map1 apply ~by shape (program b ~ins out) D.Int64 loads)
+    let loads = Array.map (fun (Value.Any y) -> Value.Plain y) loads in
+    List.init
+      (List.length (snd (built ())))
+      (fun j ->
+        let b, outs = built () in
+        map1 apply ~by shape (program b [| List.nth outs j |]) D.Int64 loads)
   in
   match D.kind dt with
   | D.Boolean ->
-      keys [| Value.Any x |] (fun b ->
-          [ push b (Op1 (Cast, D.Any D.Int64, push b (In 0))) ])
-  | D.Unsigned -> keys [| Value.Any x |] (fun b -> halves b w (push b (In 0)))
+      keys [| Value.Any x |] (fun b ins ->
+          [ push b (Op1 (Cast, D.Any D.Int64, ins.(0))) ])
+  | D.Unsigned -> keys [| Value.Any x |] (fun b ins -> halves b w ins.(0))
   | D.Signed ->
-      keys [| Value.Any x |] (fun b ->
+      keys [| Value.Any x |] (fun b ins ->
           let (U (ut, _) as u) = unsigned w in
-          let bits = push b (Op1 (Bitcast, D.Any ut, push b (In 0))) in
+          let bits = push b (Op1 (Bitcast, D.Any ut, ins.(0))) in
           let sign = uconst b u (Int64.shift_left 1L (w - 1)) in
           halves b w (push b (Op2 (Binary Xor, bits, sign))))
   | D.Float ->
-      keys [| Value.Any x |] (fun b ->
+      keys [| Value.Any x |] (fun b ins ->
           let (U (ut, _)) = unsigned w in
-          let v = push b (In 0) in
+          let v = ins.(0) in
           let nan = push b (Op2 (Compare Not_equal, v, v)) in
           let bits = push b (Op1 (Bitcast, D.Any ut, v)) in
           halves b w (float_key b w bits nan))
@@ -1758,9 +1756,9 @@ let sort_keys (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       let part j = Value.Any (half apply ~by shape pairs j) in
       keys
         [| part 0; part 1 |]
-        (fun b ->
+        (fun b ins ->
           let (U (ut, _)) = unsigned w in
-          let re = push b (In 0) and im = push b (In 1) in
+          let re = ins.(0) and im = ins.(1) in
           let isnan v = push b (Op2 (Compare Not_equal, v, v)) in
           let nan = push b (Op2 (Binary Or, isnan re, isnan im)) in
           let key v =
@@ -1784,24 +1782,22 @@ let bitonic (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
     descending (k : (int64, D.int64_elt, d) Value.t) :
     (int64, D.int64_elt, d) Value.t =
   let shape = Prim.shape k in
-  let r = Array.length shape and n = shape.(axis) in
+  let n = shape.(axis) in
   let low = bit_length (n - 1) in
   let mask = Int64.(sub (shift_left 1L low) 1L) in
-  let int64 v = const D.Int64 v and ins = [| D.Any D.Int64 |] in
-  let coord b = push b (Coord (r - 1 - axis)) in
+  let int64 b v = const b D.Int64 v in
+  let coord b = push b (Coord axis) in
   (* A position, or its complement in a descending sort. *)
   let tie b p =
-    if descending then push b (Op2 (Binary Sub, push b (int64 mask), p)) else p
+    if descending then push b (Op2 (Binary Sub, int64 b mask, p)) else p
   in
   let packed =
-    let b = builder () in
-    let high =
-      push b
-        (Op2
-           (Binary Mul, push b (In 0), push b (int64 (Int64.shift_left 1L low))))
-    in
+    let b = Build.make () in
+    let key = input b (D.Any D.Int64) in
+    let shift = int64 b (Int64.shift_left 1L low) in
+    let high = push b (Op2 (Binary Mul, key, shift)) in
     map1 apply ~by shape
-      (program b ~ins (push b (Op2 (Binary Add, high, tie b (coord b)))))
+      (program b [| push b (Op2 (Binary Add, high, tie b (coord b))) |])
       D.Int64 [| Value.Plain k |]
   in
   let stages = bit_length (n - 1) in
@@ -1825,20 +1821,19 @@ let bitonic (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
      two in a block sorting up, or the second in one sorting down. *)
   let step x block j =
     let partner =
-      let b = builder () in
+      let b = Build.make () in
       map1 apply ~by wide
-        (program b ~ins:[||]
-           (push b (Op2 (Binary Xor, coord b, push b (int64 (Int64.of_int j))))))
+        (program b
+           [| push b (Op2 (Binary Xor, coord b, int64 b (Int64.of_int j))) |])
         D.Int64 [||]
     in
     let y = apply ~by (Value.Gather { axis; idx = partner; x }) in
-    let b = builder () in
-    let a = push b (In 0) and c = push b (In 1) in
+    let b = Build.make () in
+    let a = input b (D.Any D.Int64) in
+    let c = input b (D.Any D.Int64) in
     let clear bit =
-      let m =
-        push b (Op2 (Binary And, coord b, push b (int64 (Int64.of_int bit))))
-      in
-      push b (Op2 (Compare Equal, m, push b (int64 0L)))
+      let m = push b (Op2 (Binary And, coord b, int64 b (Int64.of_int bit))) in
+      push b (Op2 (Compare Equal, m, int64 b 0L))
     in
     let up = clear block and first = clear j in
     let lesser =
@@ -1848,9 +1843,7 @@ let bitonic (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
     let lo = push b (Op2 (Binary Minimum, a, c))
     and hi = push b (Op2 (Binary Maximum, a, c)) in
     map1 apply ~by wide
-      (program b
-         ~ins:[| D.Any D.Int64; D.Any D.Int64 |]
-         (push b (Op3 (Where, lesser, lo, hi))))
+      (program b [| push b (Op3 (Where, lesser, lo, hi)) |])
       D.Int64
       [| Value.Plain x; Value.Plain y |]
   in
@@ -1867,10 +1860,11 @@ let bitonic (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
     if wide.(axis) = n then !x
     else apply ~by (Value.Move (Slice (whole shape), !x))
   in
-  let b = builder () in
-  let p = push b (Op2 (Binary And, push b (In 0), push b (int64 mask))) in
+  let b = Build.make () in
+  let s = input b (D.Any D.Int64) in
+  let p = push b (Op2 (Binary And, s, int64 b mask)) in
   map1 apply ~by shape
-    (program b ~ins (tie b p))
+    (program b [| tie b p |])
     D.Int64 [| Value.Plain sorted |]
 
 (* A sort as positions from its keys, the least significant first, each pass a
@@ -1890,9 +1884,8 @@ let sort (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
       let shape = Prim.shape x in
       let positions =
         if shape.(axis) <= 1 then
-          let b = builder () in
           map1 apply ~by shape
-            (program b ~ins:[||] (push b (const D.Int64 0L)))
+            (P.of_node ~ins:[||] (Const (D.Any D.Int64, P.bits D.Int64 0L)))
             D.Int64 [||]
         else
           let gather idx y = apply ~by (Value.Gather { axis; idx; x = y }) in
@@ -1938,15 +1931,15 @@ let run : type r.
     when Array.exists Prim.is_padded loads ->
       let loads = Array.map (unpadded apply ~by) loads in
       Some (apply ~by (Value.Map { layout; prog; outs; loads }))
-  | Value.Map { layout; prog; outs; loads } when not (one_node prog) ->
+  | Value.Map { layout; prog; outs; loads } when Option.is_none (single prog) ->
       let loads = Array.map Prim.load_any loads in
-      let values = Array.make (P.length prog) None in
+      let values = Array.make (Iarray.length prog.nodes) None in
       let value j = Option.get values.(j) in
       Array.iteri
         (fun i _ ->
           values.(i) <- Some (node_map apply ~by layout prog loads value i))
         values;
-      Some (results outs (List.map value (Array.to_list (P.outs prog))))
+      Some (results outs (List.map value (Iarray.to_list prog.outs)))
   | Value.Reduce { layout; axes; prog; reductions; loads }
     when Array.exists Prim.is_padded loads || not (core_reduce prog reductions)
     ->

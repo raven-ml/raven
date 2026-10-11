@@ -466,11 +466,11 @@ type printer = {
   expr : Format.formatter -> int -> unit;
 }
 
-let printer p roots =
-  let reads = Array.make (P.length p) 0 in
+let printer (p : P.t) roots =
+  let reads = Array.make (Iarray.length p.nodes) 0 in
   let read j = reads.(j) <- reads.(j) + 1 in
-  for i = 0 to P.length p - 1 do
-    match P.node p i with
+  for i = 0 to Iarray.length p.nodes - 1 do
+    match Iarray.get p.nodes i with
     | In _ | Coord _ | Const _ -> ()
     | Op1 (_, _, j) -> read j
     | Op2 (_, j, l) ->
@@ -484,12 +484,14 @@ let printer p roots =
   List.iter read roots;
   let shared i =
     reads.(i) > 1
-    && match P.node p i with In _ | Coord _ | Const _ -> false | _ -> true
+    && match Iarray.get p.nodes i with
+       | In _ | Coord _ | Const _ -> false
+       | _ -> true
   in
   let rec expr ppf i =
     if shared i then Format.fprintf ppf "n%d" i else body ppf i
   and body ppf i =
-    match P.node p i with
+    match Iarray.get p.nodes i with
     | In k -> Format.fprintf ppf "x%d" k
     | Coord a -> Format.fprintf ppf "coord%d" a
     | Const (dt, bits) -> Format.fprintf ppf "%s:0x%s" (any_name dt) (hex bits)
@@ -508,7 +510,7 @@ let printer p roots =
         Format.fprintf ppf "fma(%a, %a, %a)" expr j expr l expr n
   in
   let bindings ppf () =
-    for i = 0 to P.length p - 1 do
+    for i = 0 to Iarray.length p.nodes - 1 do
       if shared i then Format.fprintf ppf " n%d = %a;" i body i
     done
   in
@@ -546,10 +548,12 @@ let rec reductions_list : type d r.
 
 let reductions rs = Array.of_list (reductions_list rs)
 
-let pp_reduced prog (pr : printer) ppf (r, k) =
-  Format.fprintf ppf "%s %a" (reduction_name r) pr.expr (P.outs prog).(k)
+let pp_reduced (prog : P.t) (pr : printer) ppf (r, k) =
+  Format.fprintf ppf "%s %a" (reduction_name r) pr.expr
+    (Iarray.get prog.outs k)
 
-let reduced_roots prog rs = List.map (fun (_, k) -> (P.outs prog).(k)) rs
+let reduced_roots (prog : P.t) rs =
+  List.map (fun (_, k) -> Iarray.get prog.outs k) rs
 
 let pp : type r. Format.formatter -> r prim -> unit =
  fun ppf op ->
@@ -558,7 +562,7 @@ let pp : type r. Format.formatter -> r prim -> unit =
   let sep ppf () = Format.pp_print_string ppf "; " in
   (match op with
   | Map { prog; _ } ->
-      let outs = Array.to_list (P.outs prog) in
+      let outs = Iarray.to_list prog.outs in
       let pr = printer prog outs in
       Format.fprintf ppf "%a [%a]" pr.bindings ()
         (Format.pp_print_list ~pp_sep:sep pr.expr)
@@ -636,16 +640,18 @@ let has_layout_shape x l =
   done;
   !i = r
 
-(* A loop's rule on its loads: one per operand of [prog], of its dtype and of
-   [layout]'s shape, which is C-contiguous. [what] names the loop. *)
-let check_loads (type d) ~by ~what layout prog (loads : d load array) =
-  let ins = P.ins prog in
-  if Array.length loads <> Array.length ins then
+(* A loop's rule on its loads and coordinates: a load per operand of [prog],
+   of its dtype and of [layout]'s shape, which is C-contiguous, and a
+   coordinate along an axis of that shape. [what] names the loop. *)
+let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load array)
+    =
+  let ins = prog.ins in
+  if Array.length loads <> Iarray.length ins then
     invalid_argf "%s: a program of %d operands over %d loads" by
-      (Array.length ins) (Array.length loads);
+      (Iarray.length ins) (Array.length loads);
   Array.iteri
     (fun i l ->
-      let (D.Any want) = ins.(i) in
+      let (D.Any want) = Iarray.get ins i in
       let (D.Any have) = load_dtype l in
       if not (same_dtype want have) then
         invalid_argf "%s: load %d is %s where the program reads %s" by i
@@ -663,29 +669,31 @@ let check_loads (type d) ~by ~what layout prog (loads : d load array) =
       if not fits then
         invalid_argf "%s: load %d has shape %a, the %s %a" by i pp_shape
           (load_shape ~by l) what pp_shape (L.shape layout))
-    loads
+    loads;
+  for i = 0 to Iarray.length prog.nodes - 1 do
+    match Iarray.get prog.nodes i with
+    | P.Coord a when a >= L.rank layout ->
+        invalid_argf "%s: a coordinate along axis %d of a %s of rank %d" by a
+          what (L.rank layout)
+    | _ -> ()
+  done
 
 (* A map's rule; its result's layout, C-contiguous of [shape]. *)
-(* CR: Check every Coord against this layout's rank before making results.
-   Prog.v only bounds it by max_rank: a rank-one Map of Coord 1 is accepted
-   by results and tracing, then becomes Iota (-1) when forced. Keep Prog
-   shape-free; check its coordinate requirement here and against the loaded
-   rank in Nx_kernel.Shape.loaded. *)
-let check_map (type d r) ~by layout prog (outs : (d, r) outs)
+let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
     (loads : d load array) =
   check_loads ~by ~what:"map" layout prog loads;
-  let produced = P.outs prog in
+  let produced = prog.outs in
   let rec check : type q. int -> (d, q) outs -> unit =
    fun k -> function
      | [] ->
-         if k <> Array.length produced then
+         if k <> Iarray.length produced then
            invalid_argf "%s: %d results for a program of %d outputs" by k
-             (Array.length produced)
+             (Iarray.length produced)
      | dt :: rest ->
-         if k >= Array.length produced then
+         if k >= Iarray.length produced then
            invalid_argf "%s: more results than the program's %d outputs" by
-             (Array.length produced);
-         let (D.Any want) = P.dtype prog produced.(k) in
+             (Iarray.length produced);
+         let (D.Any want) = P.dtype prog (Iarray.get produced k) in
          if not (same_dtype want dt) then
            invalid_argf "%s: result %d is %s where the program gives %s" by k
              (D.name dt) (D.name want);
@@ -695,12 +703,12 @@ let check_map (type d r) ~by layout prog (outs : (d, r) outs)
 
 (* A reduction's rule over [prog]'s outputs, reducing [axes] of [shape]: its
    output exists and is of a dtype it takes, and an extreme has a term. *)
-let check_reduction ~by prog shape axes (r, k) =
-  let produced = P.outs prog in
-  if k < 0 || k >= Array.length produced then
+let check_reduction ~by (prog : P.t) shape axes (r, k) =
+  let produced = prog.outs in
+  if k < 0 || k >= Iarray.length produced then
     invalid_argf "%s: a reduction of output %d of a program of %d" by k
-      (Array.length produced);
-  let (D.Any have) = P.dtype prog produced.(k) in
+      (Iarray.length produced);
+  let (D.Any have) = P.dtype prog (Iarray.get produced k) in
   if not (Nx_kernel.accepts r have) then
     invalid_argf "%s: %s does not take %s" by (reduction_name r) (D.name have);
   let empty = Array.exists (fun a -> shape.(a) = 0) axes in
@@ -1229,39 +1237,13 @@ let results : type r.
               (shape x) pp_shape s)
         data
 
-(* One-node programs and maps *)
-
-(* Each domain's one-node programs, by node and operand dtypes: plain data,
-   compared structurally. A slow-path operation finds its program here instead
-   of building it, 7% of dispatch/zeros_like-1. Only nodes from a finite set are
-   kept: kinds over dtypes, and each dtype's zero. A program of another literal
-   lives in its operation alone, or a loop of distinct scalars would fill the
-   table for the domain's life. *)
-let programs = Domain.DLS.new_key (fun () -> Hashtbl.create 64)
-
-let finite : P.node -> bool = function
-  | Const (_, bits) -> String.for_all (fun c -> c = '\000') bits
-  | In _ | Coord _ | Op1 _ | Op2 _ | Op3 _ -> true
-
-let program node ins =
-  if not (finite node) then P.of_node ~ins node
-  else
-    let table = Domain.DLS.get programs in
-    let key = (node, ins) in
-    match Hashtbl.find_opt table key with
-    | Some p -> p
-    | None ->
-        let p = P.of_node ~ins node in
-        Hashtbl.add table key p;
-        p
-
-let programs_kept () = Hashtbl.length (Domain.DLS.get programs)
+(* One-node maps *)
 
 (* Raises naming [by]: [node] does not take operands of [ins]. *)
 let refused ~by node ins =
   invalid_argf "%s: %s does not take %s" by (kind node)
     (String.concat ", "
-       (Array.to_list (Array.map (fun (D.Any dt) -> D.name dt) ins)))
+       (List.map (fun (D.Any dt) -> D.name dt) (Iarray.to_list ins)))
 
 let one_node node dt ins loads =
   let (Any x) = load_any loads.(0) in
@@ -1269,25 +1251,28 @@ let one_node node dt ins loads =
   Map
     {
       layout = L.contiguous shape;
-      prog = program node ins;
+      prog = P.of_node ~ins node;
       outs = Value.[ dt ];
       loads;
     }
 
 let op1 ~by k dt x =
-  let node = P.Op1 (k, D.Any dt, 0) and ins = [| D.Any (dtype x) |] in
+  let node = P.Op1 (k, D.Any dt, 0) in
+  let ins : D.any iarray = [| D.Any (dtype x) |] in
   if not (P.accepts1 k (dtype x) dt) then refused ~by node ins;
   one_node node dt ins [| Plain x |]
 
 let op2 ~by k dt x y =
   let i = D.Any (dtype x) in
-  let node = P.Op2 (k, 0, 1) and ins = [| i; i |] in
+  let node = P.Op2 (k, 0, 1) in
+  let ins : D.any iarray = [| i; i |] in
   if not (P.accepts2 k (dtype x)) then refused ~by node ins;
   one_node node dt ins [| Plain x; Plain y |]
 
 let op3 ~by k c x y =
   let i = D.Any (dtype x) in
-  let node = P.Op3 (k, 0, 1, 2) and ins = [| D.Any (dtype c); i; i |] in
+  let node = P.Op3 (k, 0, 1, 2) in
+  let ins : D.any iarray = [| D.Any (dtype c); i; i |] in
   if not (P.accepts3 k (dtype c) (dtype x)) then refused ~by node ins;
   one_node node (dtype x) ins [| Plain c; Plain x; Plain y |]
 

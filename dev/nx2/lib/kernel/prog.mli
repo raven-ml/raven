@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Scalar kinds.
+(** Scalar programs: the kinds a step computes, and programs of them.
 
     A kind is what one step of a scalar program computes from one element of
     each operand. Each computes, per compute type, as the function of its name
@@ -171,8 +171,7 @@ val bits : ('v, 's) Nx_array.Dtype.t -> 'v -> string
 type node =
   | In of int  (** [In i] is operand [i] at the iteration index. *)
   | Coord of int
-      (** [Coord i] is the index along axis [i], counted from the last, as an
-          [int64]. *)
+      (** [Coord i] is the iteration index along axis [i], as an [int64]. *)
   | Const of Nx_array.Dtype.any * string
       (** [Const (dt, b)] is the element of [dt] whose bits are [b]
           ({!bits}). *)
@@ -182,32 +181,36 @@ type node =
   | Op3 of op3 * int * int * int
       (** [Op3 (k, i, j, l)] is [k] of nodes [i], [j] and [l]. *)
 
-type t = private string
-(** The type for programs: operand dtypes, nodes, and the nodes it outputs.
-    Each node's value is its exact result rounded once to its dtype. It is
-    [nx_prog.h]'s [nx_prog] in a string, so equal programs are equal
-    strings. *)
+type t = private {
+  ins : Nx_array.Dtype.any iarray;  (** The operands' dtypes, in order. *)
+  nodes : node iarray;  (** The nodes, in order. *)
+  outs : int iarray;  (** The nodes it outputs, in order. *)
+}
+(** The type for programs. A program runs at each index of a shape, reading
+    its operands at that index. Each node's value is its exact result rounded
+    once to its dtype ({!dtype}). {!v} makes every program, so its fields
+    hold together as {!v} states; programs are plain data, compared and hashed
+    structurally. *)
 
 val max_operands : int
 (** [max_operands] is [16], the most operands plus outputs a program has. *)
 
-val accepts : node -> Nx_array.Dtype.any array -> bool
-(** [accepts n dts] is [true] iff [n]'s kind takes nodes of the dtypes [dts],
-    its node operands' in order: [Op2]'s two of one dtype, [Op3]'s last two of
-    one dtype. [In], [Coord] and [Const] take none. *)
-
-val v : ins:Nx_array.Dtype.any array -> node array -> outs:int array -> t
+val v :
+  ins:Nx_array.Dtype.any iarray -> node iarray -> outs:int iarray -> t
 (** [v ~ins nodes ~outs] is the program over operands of dtypes [ins] whose
     results are the nodes [outs].
 
     Raises [Invalid_argument] unless every reference names an earlier node,
     every [In] an operand and every [Coord] an axis below
-    {!Nx_array.Layout.max_rank}; every node's kind accepts its operands'
-    dtypes ({!accepts}); every [Const]'s bits are an element of its dtype;
-    [outs] is not empty and names nodes; and operands plus outputs are at
-    most {!max_operands}. *)
+    {!Nx_array.Layout.max_rank}; every node's kind takes its operands'
+    dtypes ({!dtype}): [Op1 (k, y, i)] where {!accepts1}[ k x y], [x] node
+    [i]'s; [Op2 (k, i, j)] where nodes [i] and [j] are of one dtype [x] and
+    {!accepts2}[ k x]; [Op3 (k, i, j, l)] where nodes [j] and [l] are of one
+    dtype [x] and {!accepts3}[ k c x], [c] node [i]'s; every [Const]'s bits
+    are an element of its dtype; [outs] is not empty and names nodes; and
+    operands plus outputs are at most {!max_operands}. *)
 
-val of_node : ins:Nx_array.Dtype.any array -> node -> t
+val of_node : ins:Nx_array.Dtype.any iarray -> node -> t
 (** [of_node ~ins n] is the program of the one node [n] over operands of dtypes
     [ins]: [v ~ins nodes ~outs:[| k |]], [nodes] being [In 0] to [In (k - 1)]
     then [n], [k] the length of [ins]. [n]'s references name operands: node
@@ -215,25 +218,14 @@ val of_node : ins:Nx_array.Dtype.any array -> node -> t
 
     Raises [Invalid_argument] as {!v} does. *)
 
-val of_string : string -> t option
-(** [of_string s] is [Some p] iff [s] is the program [p]: the bytes {!v}
-    makes for some arguments. *)
-
-val ins : t -> Nx_array.Dtype.any array
-(** [ins p] is [p]'s operand dtypes. *)
-
-val length : t -> int
-(** [length p] is [p]'s number of nodes. *)
-
-val node : t -> int -> node
-(** [node p i] is [p]'s node [i].
-
-    Raises [Invalid_argument] if [i] is not a node of [p]. *)
-
 val dtype : t -> int -> Nx_array.Dtype.any
-(** [dtype p i] is the dtype of [p]'s node [i].
+(** [dtype p i] is the dtype of [p]'s node [i]: its operand's for [In], [int64]
+    for [Coord], the one it names for [Const] and [Op1], its operands' for a
+    [Binary] kind, [bool] for a [Compare] kind, and its last two operands' for
+    [Op3].
 
     Raises [Invalid_argument] if [i] is not a node of [p]. *)
 
-val outs : t -> int array
-(** [outs p] is the nodes [p] outputs. *)
+val is_identity : t -> bool
+(** [is_identity p] is [true] iff [p] has one operand and one output, and its
+    output is that operand's [In] node: [p] gives its operand back. *)

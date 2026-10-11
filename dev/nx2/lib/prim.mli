@@ -121,17 +121,6 @@ val results :
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
     operands break its rule. *)
 
-val program :
-  Nx_kernel.Prog.node -> Nx_array.Dtype.any array -> Nx_kernel.Prog.t
-(** [program n ins] is {!Nx_kernel.Prog.of_node}[ ~ins n]. Each domain keeps the
-    programs it made: a call equal to an earlier one on the domain makes none.
-
-    Raises [Invalid_argument] as {!Nx_kernel.Prog.v} does. A node with a literal
-    other than its dtype's zero is not kept. *)
-
-val programs_kept : unit -> int
-(** [programs_kept ()] is the number of programs the calling domain keeps. *)
-
 val reduction : ('d, 'a) reduction -> Nx_kernel.reduction * int
 (** [reduction r] is [r] as {!Nx_kernel.S.scan} takes it: what it computes and
     the program output it reduces. *)

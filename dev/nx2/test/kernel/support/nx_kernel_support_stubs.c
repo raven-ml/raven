@@ -51,43 +51,76 @@ static const char *const op2s[NX_OP2_COUNT] = {
 
 static const char *const op3s[NX_OP3_COUNT] = {"where", "fma"};
 
-/* The program [p] read through nx_prog, copied first as a kernel copies it,
-   one line per node: its tag, kind (or -), dtype code, three operands and
-   sixteen bytes of constant bits in hex; then its operands' dtypes and its
-   outputs. */
+/* The kind of the node [d] of tag [tag] read through nx_prog.h's codes. */
+static const char *kind(int tag, value d) {
+  switch (tag) {
+    case NX_NODE_OP1: return op1s[NX_OP1_CODE(Field(d, NX_OP1_KIND))];
+    case NX_NODE_OP2: return op2s[NX_OP2_CODE(Field(d, NX_OP2_KIND))];
+    default: return op3s[Long_val(Field(d, NX_OP3_KIND))];
+  }
+}
+
+value nx_kernel_support_op1(value k) { return Val_int(NX_OP1_CODE(k)); }
+value nx_kernel_support_op2(value k) { return Val_int(NX_OP2_CODE(k)); }
+
+/* The program [p] read through nx_prog.h's codes, one line per node: its
+   tag, then its fields; then its operands' dtypes and its outputs. */
 value nx_kernel_support_prog(value p) {
   CAMLparam1(p);
-  size_t n = caml_string_length(p);
-  nx_prog *c = malloc(n);
-  if (c == NULL) caml_raise_out_of_memory();
-  memcpy(c, String_val(p), n);
-  size_t cap = 128 + 160 * (size_t)c->nnodes + 16 * (size_t)(c->nins + c->nouts);
+  value ins = Field(p, NX_PROG_INS), nodes = Field(p, NX_PROG_NODES);
+  value outs = Field(p, NX_PROG_OUTS);
+  size_t cap = 128 + 96 * Wosize_val(nodes) +
+               16 * (Wosize_val(ins) + Wosize_val(outs));
   char *s = malloc(cap);
-  if (s == NULL) {
-    free(c);
-    caml_raise_out_of_memory();
-  }
+  if (s == NULL) caml_raise_out_of_memory();
   size_t at = 0;
-  for (int i = 0; i < c->nnodes; i++) {
-    const nx_prog_node *d = &c->nodes[i];
-    const char *kind = d->tag == NX_NODE_OP1   ? op1s[d->kind]
-                       : d->tag == NX_NODE_OP2 ? op2s[d->kind]
-                       : d->tag == NX_NODE_OP3 ? op3s[d->kind]
-                                               : "-";
-    at += snprintf(s + at, cap - at, "%s %s %d %d %d %d ", tags[d->tag], kind,
-                   d->dtype, d->a, d->b, d->c);
-    for (int k = 0; k < 16; k++)
-      at += snprintf(s + at, cap - at, "%02x", d->bits[k]);
+  for (mlsize_t i = 0; i < Wosize_val(nodes); i++) {
+    value d = Field(nodes, i);
+    int tag = Tag_val(d);
+    at += snprintf(s + at, cap - at, "%s", tags[tag]);
+    switch (tag) {
+      case NX_NODE_IN:
+        at += snprintf(s + at, cap - at, " %ld",
+                       Long_val(Field(d, NX_IN_OPERAND)));
+        break;
+      case NX_NODE_COORD:
+        at += snprintf(s + at, cap - at, " %ld",
+                       Long_val(Field(d, NX_COORD_AXIS)));
+        break;
+      case NX_NODE_CONST: {
+        value b = Field(d, NX_CONST_BITS);
+        at += snprintf(s + at, cap - at, " %ld ",
+                       Long_val(Field(d, NX_CONST_DTYPE)));
+        for (mlsize_t k = 0; k < caml_string_length(b); k++)
+          at += snprintf(s + at, cap - at, "%02x", Byte_u(b, k));
+        break;
+      }
+      case NX_NODE_OP1:
+        at += snprintf(s + at, cap - at, " %s %ld %ld", kind(tag, d),
+                       Long_val(Field(d, NX_OP1_DTYPE)),
+                       Long_val(Field(d, NX_OP1_OPERAND)));
+        break;
+      case NX_NODE_OP2:
+        at += snprintf(s + at, cap - at, " %s", kind(tag, d));
+        for (int k = 0; k < 2; k++)
+          at += snprintf(s + at, cap - at, " %ld",
+                         Long_val(Field(d, NX_OP2_OPERANDS + k)));
+        break;
+      default:
+        at += snprintf(s + at, cap - at, " %s", kind(tag, d));
+        for (int k = 0; k < 3; k++)
+          at += snprintf(s + at, cap - at, " %ld",
+                         Long_val(Field(d, NX_OP3_OPERANDS + k)));
+    }
     at += snprintf(s + at, cap - at, "\n");
   }
   at += snprintf(s + at, cap - at, "ins");
-  for (int k = 0; k < c->nins; k++)
-    at += snprintf(s + at, cap - at, " %d", nx_prog_ins(c)[k]);
+  for (mlsize_t k = 0; k < Wosize_val(ins); k++)
+    at += snprintf(s + at, cap - at, " %ld", Long_val(Field(ins, k)));
   at += snprintf(s + at, cap - at, "\nouts");
-  for (int k = 0; k < c->nouts; k++)
-    at += snprintf(s + at, cap - at, " %d", nx_prog_outs(c)[k]);
+  for (mlsize_t k = 0; k < Wosize_val(outs); k++)
+    at += snprintf(s + at, cap - at, " %ld", Long_val(Field(outs, k)));
   at += snprintf(s + at, cap - at, "\n");
-  free(c);
   value r = caml_copy_string(s);
   free(s);
   CAMLreturn(r);
@@ -99,7 +132,7 @@ value nx_kernel_support_tag(value v) {
   return Is_long(v) ? Val_long(Long_val(v)) : Val_int(Tag_val(v));
 }
 
-/* nx_kernel.h's codes by name. */
+/* nx_kernel.h's and nx_prog.h's codes by name. */
 static const struct {
   const char *name;
   int code;
@@ -114,6 +147,41 @@ static const struct {
     CODE(NX_COMBINE_MAX),       CODE(NX_COMBINE_MIN),
     CODE(NX_TRIANGLE_LOWER),    CODE(NX_TRIANGLE_UPPER),
     CODE(NX_FACTORS_REDUCED),   CODE(NX_FACTORS_COMPLETE),
+    CODE(NX_PROG_INS),          CODE(NX_PROG_NODES),
+    CODE(NX_PROG_OUTS),         CODE(NX_NODE_IN),
+    CODE(NX_NODE_COORD),        CODE(NX_NODE_CONST),
+    CODE(NX_NODE_OP1),          CODE(NX_NODE_OP2),
+    CODE(NX_NODE_OP3),          CODE(NX_IN_OPERAND),
+    CODE(NX_COORD_AXIS),        CODE(NX_CONST_DTYPE),
+    CODE(NX_CONST_BITS),        CODE(NX_OP1_KIND),
+    CODE(NX_OP1_DTYPE),         CODE(NX_OP1_OPERAND),
+    CODE(NX_OP2_KIND),          CODE(NX_OP2_OPERANDS),
+    CODE(NX_OP3_KIND),          CODE(NX_OP3_OPERANDS),
+    CODE(NX_OP2_BINARY),        CODE(NX_OP2_COMPARE),
+    CODE(NX_OP1_COPY),          CODE(NX_OP1_CAST),
+    CODE(NX_OP1_BITCAST),       CODE(NX_OP1_NEG),
+    CODE(NX_OP1_RECIP),         CODE(NX_OP1_ABS),
+    CODE(NX_OP1_SIGN),          CODE(NX_OP1_SQRT),
+    CODE(NX_OP1_EXP),           CODE(NX_OP1_EXP2),
+    CODE(NX_OP1_LOG),           CODE(NX_OP1_LOG2),
+    CODE(NX_OP1_LOG1P),         CODE(NX_OP1_EXPM1),
+    CODE(NX_OP1_SIN),           CODE(NX_OP1_COS),
+    CODE(NX_OP1_TAN),           CODE(NX_OP1_ASIN),
+    CODE(NX_OP1_ACOS),          CODE(NX_OP1_ATAN),
+    CODE(NX_OP1_SINH),          CODE(NX_OP1_COSH),
+    CODE(NX_OP1_TANH),          CODE(NX_OP1_ERF),
+    CODE(NX_OP1_FLOOR),         CODE(NX_OP1_CEIL),
+    CODE(NX_OP1_ROUND),         CODE(NX_OP1_TRUNC),
+    CODE(NX_OP2_ADD),           CODE(NX_OP2_SUB),
+    CODE(NX_OP2_MUL),           CODE(NX_OP2_FDIV),
+    CODE(NX_OP2_IDIV),          CODE(NX_OP2_MOD),
+    CODE(NX_OP2_POW),           CODE(NX_OP2_ATAN2),
+    CODE(NX_OP2_MAXIMUM),       CODE(NX_OP2_MINIMUM),
+    CODE(NX_OP2_AND),           CODE(NX_OP2_OR),
+    CODE(NX_OP2_XOR),           CODE(NX_OP2_THREEFRY),
+    CODE(NX_OP2_EQUAL),         CODE(NX_OP2_NOT_EQUAL),
+    CODE(NX_OP2_LESS),          CODE(NX_OP2_LESS_EQUAL),
+    CODE(NX_OP3_WHERE),         CODE(NX_OP3_FMA),
 #undef CODE
 };
 
@@ -121,5 +189,5 @@ value nx_kernel_support_code(value name) {
   for (size_t i = 0; i < sizeof codes / sizeof codes[0]; i++)
     if (strcmp(codes[i].name, String_val(name)) == 0)
       return Val_int(codes[i].code);
-  caml_invalid_argument("Nx_kernel_support.code: not in nx_kernel.h");
+  caml_invalid_argument("Nx_kernel_support.code: in no header");
 }

@@ -151,15 +151,16 @@ let fresh_one () =
           {
             layout = Nx_array.Layout.contiguous [||];
             prog =
-              Prim.program (Const (D.Any D.Float32, P.bits D.Float32 1.)) [||];
+              P.of_node ~ins:[||]
+                (Const (D.Any D.Float32, P.bits D.Float32 1.));
             outs = Value.[ D.Float32 ];
             loads = [||];
           }))
 
-(* The sum and the running sum, along the last axis, of [[0; 1; 2]] repeated
-   over four rows: a program of a coordinate alone. *)
-let coords =
-  P.v ~ins:[||] [| Coord 0; Op1 (Cast, D.Any D.Float32, 0) |] ~outs:[| 1 |]
+(* The coordinate along [axis], as a float32: a program of a coordinate
+   alone. *)
+let coords axis =
+  P.v ~ins:[||] [| Coord axis; Op1 (Cast, D.Any D.Float32, 0) |] ~outs:[| 1 |]
 
 let constants =
   group "constants"
@@ -243,7 +244,7 @@ let constants =
                  (Value.Map
                     {
                       layout = Nx_array.Layout.contiguous [| 2 |];
-                      prog = coords;
+                      prog = coords 0;
                       outs = Value.[ D.Float32 ];
                       loads = [||];
                     }))
@@ -283,11 +284,14 @@ let ones n : (float, D.float32_elt, b) Value.t =
           {
             layout = Nx_array.Layout.contiguous [| n |];
             prog =
-              Prim.program (Const (D.Any D.Float32, P.bits D.Float32 1.)) [||];
+              P.of_node ~ins:[||]
+                (Const (D.Any D.Float32, P.bits D.Float32 1.));
             outs = Value.[ D.Float32 ];
             loads = [||];
           }))
 
+(* The sum and the running sum, along the last axis, of [[0; 1; 2]] repeated
+   over four rows. *)
 let row_sums () : (float, D.float32_elt, b) Value.t =
   let s, () =
     Exec.run ~by:"t"
@@ -295,7 +299,7 @@ let row_sums () : (float, D.float32_elt, b) Value.t =
          {
            layout = Nx_array.Layout.contiguous [| 4; 3 |];
            axes = [| 1 |];
-           prog = coords;
+           prog = coords 1;
            reductions = Value.[ Monoid (Sum, 0, D.Float32) ];
            loads = [||];
          })
@@ -308,7 +312,7 @@ let row_scans () : (float, D.float32_elt, b) Value.t =
        {
          layout = Nx_array.Layout.contiguous [| 4; 3 |];
          axis = 1;
-         prog = coords;
+         prog = coords 1;
          reduction = Monoid (Sum, 0, D.Float32);
          loads = [||];
        })
@@ -357,23 +361,26 @@ let rules =
           refused "a permutation of another rank"
             (Value.Move (Permute [| 1; 0 |], x));
           refused "a reshape of another size" (Value.Move (Reshape [| 4 |], x)));
+      test "a coordinate past a loop's rank calls no kernel" (fun () ->
+          let layout = Nx_array.Layout.contiguous [| 3 |] in
+          refused "a map"
+            (Value.Map
+               {
+                 layout;
+                 prog = coords 1;
+                 outs = Value.[ D.Float32 ];
+                 loads = [||];
+               });
+          refused "a scan"
+            (Value.Scan
+               {
+                 layout;
+                 axis = 0;
+                 prog = coords 1;
+                 reduction = Monoid (Sum, 0, D.Float32);
+                 loads = [||];
+               }));
     ]
-
-(* Programs of distinct literals are not kept: a loop of scalars leaves the
-   domain's table as it was. *)
-let test_literals_not_kept () =
-  let one v = Prim.program (Const (D.Any D.Float32, P.bits D.Float32 v)) [||] in
-  ignore (one 0.);
-  let before = Prim.programs_kept () in
-  for i = 1 to 10_000 do
-    ignore (one (Float.of_int i))
-  done;
-  ignore (one 0.);
-  equal ~msg:"programs kept" int before (Prim.programs_kept ())
-
-let programs =
-  group "programs"
-    [ test "programs of distinct literals are not kept" test_literals_not_kept ]
 
 (* Donation's reuse: an elementwise operation writes into a donated operand's
    memory where rig holds it exclusive and it fits the result. *)
@@ -534,4 +541,4 @@ let donation =
 let () =
   exit
     (run "nx maps"
-       [ maps; checks; constants; forced; rules; programs; donation ])
+       [ maps; checks; constants; forced; rules; donation ])

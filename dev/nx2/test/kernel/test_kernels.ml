@@ -1248,6 +1248,17 @@ let test_constant_map () =
   | A.Done -> equal (array float_exact) (Array.make 15 2.5) (A.to_array y)
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
 
+(* A map whose coordinate names an axis past its rank answers
+   [Shape_mismatch] and writes nothing. *)
+let test_coord_past_rank () =
+  let p =
+    P.v ~ins:[||] [| P.Coord 1; Op1 (Cast, D.Any D.Float32, 0) |] ~outs:[| 1 |]
+  in
+  let y = A.of_array D.Float32 [| 3 |] [| 9.; 9.; 9. |] in
+  equal ~msg:"answer" answer A.Shape_mismatch
+    (Nx_cpu.map p ~dsts:[| A.Any y |] [||]);
+  equal ~msg:"untouched" (array float_exact) [| 9.; 9.; 9. |] (A.to_array y)
+
 (* A map that holds many complex128 values gets blocks of few elements; over
    a transposed float32 operand the walk tiles rows, as many as fit the
    block. Each output is [k] times [2x], cast back to float32. *)
@@ -1264,7 +1275,7 @@ let test_tiled_short_blocks () =
   let nodes = Array.concat [ [| P.In 0; cast |]; twice; sums ] in
   let last = Array.length nodes - 1 in
   let nodes = Array.append nodes [| P.Op1 (Cast, f32, last) |] in
-  let p = P.v ~ins:[| f32 |] nodes ~outs:[| last + 1 |] in
+  let p = P.v ~ins:[| f32 |] (Iarray.of_array nodes) ~outs:[| last + 1 |] in
   let data = Array.init (n * n) Float.of_int in
   let x =
     Option.get
@@ -1291,10 +1302,10 @@ exception Skip
    [length] nodes past its In nodes, each a kind whose operands' dtypes it
    takes, a few constants and coordinates among them, every In first; its
    outputs the last node and, sometimes, an earlier one. At most [room]
-   operands, outputs and coordinate axes. Without [sub_byte_bitcasts], a
-   bitcast's operand is of a byte or more. *)
+   operands, outputs and coordinate axes, each axis below [rank]. Without
+   [sub_byte_bitcasts], a bitcast's operand is of a byte or more. *)
 let program ?(length = 6) ?(sub_byte_bitcasts = true) st (ins : D.any array)
-    ~room =
+    ~room ~rank =
   let nins = Array.length ins in
   let nodes = ref (Array.to_list (Array.init nins (fun k -> P.In k))) in
   let tys = ref (Array.to_list ins) in
@@ -1312,8 +1323,9 @@ let program ?(length = 6) ?(sub_byte_bitcasts = true) st (ins : D.any array)
         let e = if D.is D.Boolean dt then [| e.(0) land 1 |] else e in
         P.Const (D.Any dt, String.init (Array.length e) (fun i -> Char.chr e.(i)))
     | 1 ->
-        let a = Random.State.int st 3 in
-        if List.mem a !axes || nins + List.length !axes + 2 > room then
+        let a = Random.State.int st (max rank 1) in
+        if rank = 0 || List.mem a !axes || nins + List.length !axes + 2 > room
+        then
           P.Op1 (Copy, ty 0, 0)
         else begin
           axes := a :: !axes;
@@ -1360,11 +1372,20 @@ let program ?(length = 6) ?(sub_byte_bitcasts = true) st (ins : D.any array)
     | Op2 (_, i, j) -> [ i; j ]
     | Op3 (_, i, j, k) -> [ i; j; k ]
   in
+  (* Whether [node]'s kind takes its operands' dtypes [dts], as Prog.v
+     states. *)
+  let accepts (node : P.node) dts =
+    match (node, dts) with
+    | Op1 (k, D.Any y, _), [ D.Any x ] -> P.accepts1 k x y
+    | Op2 (k, _, _), [ D.Any x; D.Any x' ] -> D.equal x x' && P.accepts2 k x
+    | Op3 (k, _, _, _), [ D.Any c; D.Any x; D.Any x' ] ->
+        D.equal x x' && P.accepts3 k c x
+    | _ -> true
+  in
   for _ = 1 to 1 + Random.State.int st length do
     let rec attempt tries =
       let node = draw () in
-      let dts = Array.of_list (List.map (List.nth !tys) (operands node)) in
-      if P.accepts node dts then node
+      if accepts node (List.map (List.nth !tys) (operands node)) then node
       else if tries = 0 then P.Op1 (Copy, List.nth !tys 0, 0)
       else attempt (tries - 1)
     in
@@ -1378,28 +1399,29 @@ let program ?(length = 6) ?(sub_byte_bitcasts = true) st (ins : D.any array)
     then [| n - 1; nins + Random.State.int st (n - 1 - nins) |]
     else [| n - 1 |]
   in
-  (P.v ~ins (Array.of_list !nodes) ~outs, Array.of_list !tys)
+  ( P.v ~ins:(Iarray.of_array ins) (Iarray.of_list !nodes)
+      ~outs:(Iarray.of_array outs),
+    Array.of_list !tys )
 
 (* Each node of [p] run on its own through [b]'s kinds of no to three
    operands, over the operands [ops] of [shape]: the arrays of every node.
    Raises [Skip] where a kind is declined. *)
-let split (b : Support.backend) p (types : D.any array) shape (ops : A.any array) =
+let split (b : Support.backend) (p : P.t) (types : D.any array) shape
+    (ops : A.any array) =
   let module K = (val b.kernels) in
-  let values = Array.make (P.length p) ops.(0) in
+  let values = Array.make (Iarray.length p.nodes) ops.(0) in
   let fresh i =
     let (D.Any d) = types.(i) in
     A.Any (A.create b.device d shape)
   in
   let run answer = if answer <> A.Done then raise Skip in
-  for i = 0 to P.length p - 1 do
+  for i = 0 to Iarray.length p.nodes - 1 do
     values.(i) <-
-      (match P.node p i with
+      (match Iarray.get p.nodes i with
       | In k -> ops.(k)
       | Coord a ->
-          let rank = Array.length shape in
-          let n = Array.fold_left ( * ) 1 shape in
-          let dst = on b (A.of_array D.Int64 shape (Array.make n 0L)) in
-          if a < rank then run (K.apply0 (Iota (rank - 1 - a)) ~dst);
+          let dst = A.create b.device D.Int64 shape in
+          run (K.apply0 (Iota a) ~dst);
           A.Any dst
       | Const (D.Any d, bits) when D.bits d < 8 ->
           (* Fill declines sub-byte dtypes: every byte holds the code in
@@ -1436,7 +1458,7 @@ let split (b : Support.backend) p (types : D.any array) shape (ops : A.any array
   values
 
 (* [p]'s nodes, one per line. *)
-let describe p =
+let describe (p : P.t) =
   let dname (D.Any d) = D.name d in
   let node = function
     | P.In k -> strf "in %d" k
@@ -1453,29 +1475,29 @@ let describe p =
     | Op3 (Fma, a, b, c) -> strf "fma %d %d %d" a b c
   in
   String.concat "; "
-    (List.init (P.length p) (fun i -> strf "%d: %s" i (node (P.node p i))))
+    (List.mapi (fun i n -> strf "%d: %s" i (node n)) (Iarray.to_list p.nodes))
 
 (* Whether [p] bitcasts a sub-byte dtype, which nx_cpu.mli says its map
    declines. *)
-let bitcasts_sub_byte p (types : D.any array) =
+let bitcasts_sub_byte (p : P.t) (types : D.any array) =
   List.exists
     (fun i ->
-      match P.node p i with
+      match Iarray.get p.nodes i with
       | Op1 (Bitcast, _, j) ->
           let (D.Any d) = types.(j) in
           D.bits d < 8
       | _ -> false)
-    (List.init (P.length p) Fun.id)
+    (List.init (Iarray.length p.nodes) Fun.id)
 
 (* The most values [p] holds at once, as nx_cpu.mli counts them: each from
    the node that computes it through the last node that reads it, or to the
    end for an output. *)
-let held p =
-  let n = P.length p in
+let held (p : P.t) =
+  let n = Iarray.length p.nodes in
   let last = Array.init n Fun.id in
   let read i j = if last.(j) < i then last.(j) <- i in
   for i = 0 to n - 1 do
-    match P.node p i with
+    match Iarray.get p.nodes i with
     | P.In _ | Coord _ | Const _ -> ()
     | Op1 (_, _, j) -> read i j
     | Op2 (_, j, k) ->
@@ -1486,7 +1508,7 @@ let held p =
         read i k;
         read i l
   done;
-  Array.iter (fun o -> last.(o) <- n) (P.outs p);
+  Array.iter (fun o -> last.(o) <- n) (Iarray.to_array p.outs);
   let most = ref 0 in
   for i = 0 to n - 1 do
     let live = ref 0 in
@@ -1513,7 +1535,8 @@ let law_map_split ?declines ?(labels = true) ?length ?sub_byte_bitcasts
   in
   (* nx.cpu's loop holds sixteen operands: a program within them is one
      map. *)
-  let p, types = program ?length ?sub_byte_bitcasts st ins ~room:16 in
+  let rank = Array.length shape in
+  let p, types = program ?length ?sub_byte_bitcasts st ins ~room:16 ~rank in
   let loads = Array.map (fun (A.Any x) -> Nx_kernel.Plain x) ops in
   match split b p types shape ops with
   | exception Skip -> cover "a node declined" true
@@ -1523,33 +1546,34 @@ let law_map_split ?declines ?(labels = true) ?length ?sub_byte_bitcasts
           (fun o ->
             let (D.Any d) = types.(o) in
             A.Any (on b (seeded d shape (seed + o))))
-          (P.outs p)
+          (Iarray.to_array p.outs)
       in
       match K.map p ~dsts loads with
       | A.Declined -> (
           cover "map declined" true;
           match declines with
           | Some ok when not (ok p types) ->
-              failf "map declined a program it computes: %d nodes" (P.length p)
+              failf "map declined a program it computes: %d nodes"
+                (Iarray.length p.nodes)
           | _ -> ())
       | A.Done ->
           cover "computed" true;
           if labels then begin
-          cover "several nodes" (P.length p > Array.length ins + 1);
-          let has f = List.exists f (List.init (P.length p) (P.node p)) in
+          cover "several nodes" (Iarray.length p.nodes > Array.length ins + 1);
+          let has f = Iarray.exists f p.nodes in
           cover "a coordinate" (has (function P.Coord _ -> true | _ -> false));
           cover "a constant" (has (function P.Const _ -> true | _ -> false));
           cover "a cast" (has (function P.Op1 (Cast, _, _) -> true | _ -> false));
           cover "a where" (has (function P.Op3 (Where, _, _, _) -> true | _ -> false));
-          cover "two outputs" (Array.length (P.outs p) = 2);
+          cover "two outputs" (Array.length (Iarray.to_array p.outs) = 2);
           let axes =
             List.sort_uniq compare
               (List.filter_map
                  (function P.Coord a -> Some a | _ -> None)
-                 (List.init (P.length p) (P.node p)))
+                 (List.init (Iarray.length p.nodes) (Iarray.get p.nodes)))
           in
           cover "more than four loop operands"
-            (Array.length ins + Array.length (P.outs p) + List.length axes > 4)
+            (Array.length ins + Iarray.length p.outs + List.length axes > 4)
           end;
           if length <> None then
             cover "more than eight values held" (held p > 8);
@@ -1560,7 +1584,7 @@ let law_map_split ?declines ?(labels = true) ?length ?sub_byte_bitcasts
               equal ~msg:(strf "output %d of %s" k (describe p)) (array int)
                 (bits_of (host want))
                 (bits_of (host got)))
-            (P.outs p)
+            (Iarray.to_array p.outs)
       | r -> failf "map answered %a" Nx_array_support.pp_answer r)
 
 (* In place *)
@@ -1858,6 +1882,7 @@ let cpu =
       test "kinds give the values their documentation states" test_apply_values;
       test "a job begun from a job's body runs to its end" test_nested_jobs;
       test "a map of constants alone fills its destination" test_constant_map;
+      test "a map's coordinate past its rank is refused" test_coord_past_rank;
       test "a map of short blocks over a transposed operand tiles them"
         test_tiled_short_blocks;
       prop ~count:20 "erf at float64 is nx_kinds.h's over pieces of both ranges"

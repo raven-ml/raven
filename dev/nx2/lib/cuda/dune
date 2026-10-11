@@ -7,7 +7,6 @@
  (libraries nx_array nx_kernel rig)
  (foreign_stubs
   (language c)
-  (include_dirs ../kernel)
-  (extra_deps kernels/embedded.cubin ../kernel/nx_prog.h)
+  (extra_deps kernels/embedded.cubin)
   (flags :standard -DNX_CUDA_CUBIN=kernels/embedded.cubin)
   (names nx_cuda_stubs)))

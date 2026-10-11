@@ -365,63 +365,67 @@ static void *row_of(const step *s, int ct, int xt) {
   }
 }
 
-/* A constant's element held, from the bits of its dtype's element. */
-static void const_of(step *s, const uint8_t *bits) {
+/* A constant's element held, from the bits of its dtype's element in
+   [s]. */
+static void const_of(step *s) {
   int dt = s->dt;
-  memcpy(s->bits, bits, 16);
+  uint8_t bits[16];
+  memcpy(bits, s->bits, 16);
   if (dt == NX_FLOAT4_E2M1FN)
     nx_cpu_table->convert[dt][NX_FLOAT32](bits, s->bits, 1);
   else if (held(dt) != dt)
     round_held(dt, bits, s->bits, NULL, 1);
 }
 
-/* Fills [s] from the program [g], whose loop has [n] operands before its
-   coordinates, and answers NX_OK, or NX_DECLINED; on NX_OK [n] counts the
-   coordinates too, [axis] gives each one's axis and [slots] counts the
-   values held at once. */
-static int decode(const nx_prog *g, step *s, int *n, int *axis, int *slots) {
-  int nn = g->nnodes, nouts = g->nouts, base = *n;
-  const int32_t *outs = nx_prog_outs(g);
+/* Fills the steps [s], copied from a program of [nn] nodes and outputs
+   [outs], whose loop of rank [rank] has [n] operands before its
+   coordinates, and answers NX_OK, NX_SHAPE for a coordinate past the rank,
+   or NX_DECLINED; on NX_OK [n] counts the coordinates too, [axis] gives
+   each one's axis and [slots] counts the values held at once. */
+static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
+                  int *n, int *axis, int *slots) {
+  int base = *n;
   int coord[NX_MAX_RANK];
   for (int i = 0; i < NX_MAX_RANK; i++) coord[i] = -1;
   for (int i = 0; i < nn; i++) {
-    const nx_prog_node *d = &g->nodes[i];
     step *t = &s[i];
-    *t = (step){.tag = d->tag, .kind = d->kind, .dt = d->dtype,
-                .x = {d->a, d->b, d->c}, .slot = -1, .alias = -1, .last = i,
-                .out = -1};
-    switch (d->tag) {
-      case NX_NODE_IN: t->k = nouts + d->a; break;
+    t->arity = 0;
+    t->slot = t->alias = t->out = -1;
+    t->last = i;
+    t->f = NULL;
+    int a = t->x[0];
+    switch (t->tag) {
+      case NX_NODE_IN: t->k = nouts + a; break;
       case NX_NODE_COORD:
-        if (coord[d->a] < 0) {
+        if (a >= rank) return NX_SHAPE;
+        if (coord[a] < 0) {
           if (*n == NX_MAX_OPERANDS) return NX_DECLINED;
-          axis[*n - base] = d->a;
-          coord[d->a] = (*n)++;
+          axis[*n - base] = a;
+          coord[a] = (*n)++;
         }
-        t->k = coord[d->a];
+        t->k = coord[a];
         break;
-      case NX_NODE_CONST: const_of(t, d->bits); break;
+      case NX_NODE_CONST: const_of(t); break;
       case NX_NODE_OP1: {
-        int xt = s[d->a].dt;
+        int xt = s[a].dt;
         t->arity = 1;
-        if (d->kind == NX_OP1_COPY || (d->kind == NX_OP1_CAST && xt == t->dt))
-          t->alias = d->a;
-        else if (d->kind == NX_OP1_BITCAST) {
+        if (t->kind == NX_OP1_COPY || (t->kind == NX_OP1_CAST && xt == t->dt))
+          t->alias = a;
+        else if (t->kind == NX_OP1_BITCAST) {
           if (nx_dtype_row_of(xt).bits < 8) return NX_DECLINED;
-          t->alias = d->a;
-        } else if (d->kind != NX_OP1_CAST &&
+          t->alias = a;
+        } else if (t->kind != NX_OP1_CAST &&
                    (t->f = row_of(t, xt, xt)) == NULL)
           return NX_DECLINED;
         break;
       }
       case NX_NODE_OP2:
         t->arity = 2;
-        if ((t->f = row_of(t, s[d->a].dt, s[d->a].dt)) == NULL)
-          return NX_DECLINED;
+        if ((t->f = row_of(t, s[a].dt, s[a].dt)) == NULL) return NX_DECLINED;
         break;
       default:
         t->arity = 3;
-        if ((t->f = row_of(t, s[d->a].dt, s[d->b].dt)) == NULL)
+        if ((t->f = row_of(t, s[a].dt, s[t->x[1]].dt)) == NULL)
           return NX_DECLINED;
     }
     if (t->alias >= 0 && s[t->alias].alias >= 0) t->alias = s[t->alias].alias;
@@ -466,14 +470,13 @@ static int decode(const nx_prog *g, step *s, int *n, int *axis, int *slots) {
 
 /* The entry */
 
-/* The coordinate along axis [i], counted from the last, of a loop over
-   [a]'s shape: a descriptor coalescing reads, of no buffer. An axis past
-   the shape's has the index 0 everywhere. */
+/* The coordinate along axis [i] of a loop over [a]'s shape: a descriptor
+   coalescing reads, of no buffer. */
 static nx_array coordinate(const nx_array *a, int i) {
   nx_array c = {.dtype = NX_INT64, .bits = 64, .rank = a->rank};
   for (int d = 0; d < a->rank; d++) {
     c.dim[d] = a->dim[d];
-    c.dim[a->rank + d] = d == a->rank - 1 - i;
+    c.dim[a->rank + d] = d == i;
   }
   return c;
 }
@@ -507,16 +510,17 @@ static int widest(const step *s, int nn) {
   return w;
 }
 
-/* Runs the program [g] over the [nouts + nins] operands [a] the door read,
-   decoding it into [s]. */
-static int run_map(const nx_prog *g, nx_array *a, step *s) {
-  int n = g->nouts + g->nins, loop = n, slots, e;
+/* Runs the program copied into the steps [s], of [nn] nodes and outputs
+   [outs], over the [n] operands [a] the door read, its outputs first. */
+static int run_map(step *s, int nn, int nouts, const int32_t *outs,
+                   nx_array *a, int n) {
+  int loop = n, slots, e;
   int axis[NX_MAX_OPERANDS];
-  if (decode(g, s, &loop, axis, &slots) != NX_OK) return NX_DECLINED;
+  if ((e = decode(s, nn, nouts, outs, a[0].rank, &loop, axis, &slots)))
+    return e;
   for (int k = n; k < loop; k++) a[k] = coordinate(&a[0], axis[k - n]);
-  prog j = {a, loop, g->nouts, g->nnodes, s, {0}, slots, temps(s, g->nnodes),
-            widest(s, g->nnodes)};
-  memcpy(j.outs, nx_prog_outs(g), sizeof(int32_t) * (size_t)g->nouts);
+  prog j = {a, loop, nouts, nn, s, {0}, slots, temps(s, nn), widest(s, nn)};
+  memcpy(j.outs, outs, sizeof(int32_t) * (size_t)nouts);
   /* A program of constants alone holds nothing in the arena: its blocks
      take SLOT bytes, as one of few slots does. */
   int held = slots + j.temps;
@@ -524,40 +528,91 @@ static int run_map(const nx_prog *g, nx_array *a, step *s) {
   if (bytes > SLOT) bytes = SLOT;
   nx_loop l;
   if (!(e = nx_coalesce(loop, a, &l)))
-    nx_cpu_walk(loop, a, &l, bytes / j.w, kinds(s, g->nnodes), block, &j);
+    nx_cpu_walk(loop, a, &l, bytes / j.w, kinds(s, nn), block, &j);
   return e;
 }
 
+/* Copies the program [vp], a Prog.t, into the steps [s], one per node: its
+   tag, kind, dtype, operands and a constant's bits, zero-padded; and its
+   operands' dtypes into [ins] and its outputs into [outs]. Prog.v checked
+   every index it follows. */
+static void copy_prog(value vp, step *s, int *ins, int32_t *outs) {
+  value vins = Field(vp, NX_PROG_INS), nodes = Field(vp, NX_PROG_NODES);
+  value vouts = Field(vp, NX_PROG_OUTS);
+  for (mlsize_t k = 0; k < Wosize_val(vins); k++)
+    ins[k] = Int_val(Field(vins, k));
+  for (mlsize_t o = 0; o < Wosize_val(vouts); o++)
+    outs[o] = Int_val(Field(vouts, o));
+  for (mlsize_t i = 0; i < Wosize_val(nodes); i++) {
+    value d = Field(nodes, i);
+    step *t = &s[i];
+    memset(t, 0, sizeof *t);
+    t->tag = Tag_val(d);
+    switch (t->tag) {
+      case NX_NODE_IN:
+        t->x[0] = Int_val(Field(d, NX_IN_OPERAND));
+        t->dt = ins[t->x[0]];
+        break;
+      case NX_NODE_COORD:
+        t->x[0] = Int_val(Field(d, NX_COORD_AXIS));
+        t->dt = NX_INT64;
+        break;
+      case NX_NODE_CONST: {
+        value b = Field(d, NX_CONST_BITS);
+        t->dt = Int_val(Field(d, NX_CONST_DTYPE));
+        memcpy(t->bits, String_val(b), caml_string_length(b));
+        break;
+      }
+      case NX_NODE_OP1:
+        t->kind = NX_OP1_CODE(Field(d, NX_OP1_KIND));
+        t->dt = Int_val(Field(d, NX_OP1_DTYPE));
+        t->x[0] = Int_val(Field(d, NX_OP1_OPERAND));
+        break;
+      case NX_NODE_OP2:
+        t->kind = NX_OP2_CODE(Field(d, NX_OP2_KIND));
+        for (int o = 0; o < 2; o++)
+          t->x[o] = Int_val(Field(d, NX_OP2_OPERANDS + o));
+        t->dt = t->kind >= NX_OP2_EQUAL ? NX_BOOL : s[t->x[0]].dt;
+        break;
+      default:
+        t->kind = Int_val(Field(d, NX_OP3_KIND));
+        for (int o = 0; o < 3; o++)
+          t->x[o] = Int_val(Field(d, NX_OP3_OPERANDS + o));
+        t->dt = s[t->x[1]].dt;
+    }
+  }
+}
+
 /* The external: the program [vp], the destinations [vdsts] and the loads
-   [vloads]. A load's array is its first field, Plain's or Padded's. */
+   [vloads]. A load's array is its first field, Plain's or Padded's. The
+   program is copied before the door, which can run OCaml code. */
 value nx_cpu_map(value vp, value vdsts, value vloads) {
   CAMLparam3(vp, vdsts, vloads);
-  const nx_prog *g = (const nx_prog *)String_val(vp);
-  int nouts = g->nouts, nins = g->nins, n = nouts + nins, e;
+  int nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
+  int nins = (int)Wosize_val(Field(vp, NX_PROG_INS));
+  int nn = (int)Wosize_val(Field(vp, NX_PROG_NODES)), n = nouts + nins, e;
   if ((int)Wosize_val(vdsts) != nouts || (int)Wosize_val(vloads) != nins)
     CAMLreturn(Val_int(NX_ARITY));
   if (n > NX_MAX_OPERANDS) CAMLreturn(Val_int(NX_DECLINED));
   for (int k = 0; k < nins; k++)
     if (Tag_val(Field(vloads, k)) == NX_LOAD_PADDED)
       CAMLreturn(Val_int(NX_DECLINED));
-  const int32_t *ins = nx_prog_ins(g), *outs = nx_prog_outs(g);
+  step local[STEPS], *s = local;
+  if (nn > STEPS && (s = malloc(sizeof(step) * (size_t)nn)) == NULL)
+    caml_raise_out_of_memory();
+  int ins[NX_MAX_OPERANDS];
+  int32_t outs[NX_MAX_OPERANDS];
+  copy_prog(vp, s, ins, outs);
   nx_operand in[NX_MAX_OPERANDS];
   for (int o = 0; o < nouts; o++)
-    in[o] = (nx_operand){Field(vdsts, o), g->nodes[outs[o]].dtype, 1};
+    in[o] = (nx_operand){Field(vdsts, o), s[outs[o]].dt, 1};
   for (int k = 0; k < nins; k++)
     in[nouts + k] = (nx_operand){Field(Field(vloads, k), 0), ins[k], 0};
   nx_array a[NX_MAX_OPERANDS];
-  if ((e = nx_read(n, in, a))) CAMLreturn(Val_int(e));
-  /* The door may have run OCaml code, which may move the program. */
-  g = (const nx_prog *)String_val(vp);
-  step local[STEPS], *s = local;
-  if (g->nnodes > STEPS &&
-      (s = malloc(sizeof(step) * (size_t)g->nnodes)) == NULL) {
+  if (!(e = nx_read(n, in, a))) {
+    e = run_map(s, nn, nouts, outs, a, n);
     nx_done(n, a);
-    caml_raise_out_of_memory();
   }
-  e = run_map(g, a, s);
   if (s != local) free(s);
-  nx_done(n, a);
   CAMLreturn(Val_int(e));
 }

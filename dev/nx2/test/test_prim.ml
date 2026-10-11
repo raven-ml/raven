@@ -232,7 +232,7 @@ let maps =
           (* Inline, 12 adds print about 36 KiB: a failure stays cheap. *)
           let adds = 12 in
           let nodes =
-            Array.init (adds + 1) (fun i ->
+            Iarray.init (adds + 1) (fun i ->
                 if i = 0 then P.In 0 else P.Op2 (Binary Add, i - 1, i - 1))
           in
           let prog = P.v ~ins:[| D.Any D.Float32 |] nodes ~outs:[| adds |] in

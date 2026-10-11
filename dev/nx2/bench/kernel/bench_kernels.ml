@@ -230,18 +230,17 @@ let unary ?(values = `Filled) name u dt n =
 
 (* A map of the program [p] over [n] elements of its loads, into fresh
    arrays of its outputs' dtypes. *)
-let map ?work name p n =
-  let module P = Nx_kernel.Prog in
+let map ?work name (p : Nx_kernel.Prog.t) n =
   apply ?work name
     (fun () ->
       ( Array.map
           (fun (D.Any d) -> Nx_kernel.Plain (filled d [| n |]))
-          (P.ins p),
+          (Iarray.to_array p.ins),
         Array.map
           (fun o ->
-            let (D.Any d) = P.dtype p o in
+            let (D.Any d) = Nx_kernel.Prog.dtype p o in
             A.Any (A.create Rig.host d [| n |]))
-          (P.outs p) ))
+          (Iarray.to_array p.outs) ))
     (fun (module K) (loads, dsts) -> K.map p ~dsts loads)
 
 (* Maps: one Add, as apply2 runs it; six float32 nodes over one load, a

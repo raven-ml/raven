@@ -26,10 +26,12 @@ module Run = Rig.Submission.Run
 module Sub = Rig.Submission
 
 (* The dtype code of the program's one operand where its one output is that
-   operand unchanged, else -1: nx_cuda_stubs.c. *)
-external operand : Nx_kernel.Prog.t -> (int[@untagged])
-  = "nx_cuda_operand_byte" "nx_cuda_operand"
-[@@noalloc]
+   operand unchanged, else -1. *)
+let operand (p : Nx_kernel.Prog.t) =
+  if not (Nx_kernel.Prog.is_identity p) then -1
+  else
+    let (D.Any dt) = Iarray.get p.ins 0 in
+    D.code dt
 
 let rank = K.fold_rank
 let index name =

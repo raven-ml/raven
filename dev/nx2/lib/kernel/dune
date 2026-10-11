@@ -1,7 +1,7 @@
 ; nx.kernel: the vocabulary kernels compute and the contract kernel
 ; libraries implement. nx_kinds.h computes each kind in C, CUDA, HIP and
-; Metal sources; nx_prog.h holds a program's struct and nx_contract_view.h a
-; contraction view's.
+; Metal sources; nx_prog.h reads a program's OCaml value and
+; nx_contract_view.h holds a contraction view's struct.
 
 (library
  (name nx_kernel)

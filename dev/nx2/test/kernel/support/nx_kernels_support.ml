@@ -117,9 +117,9 @@ module Serial = struct
       | Plain _ -> ""
       | Padded { x; fill; _ } -> Nx_kernel.Prog.bits (Nx_array.dtype x) fill
 
-  let accepted p (r, k) =
+  let accepted (p : Nx_kernel.Prog.t) (r, k) =
     let (Nx_array.Dtype.Any dt) =
-      Nx_kernel.Prog.dtype p (Nx_kernel.Prog.outs p).(k)
+      Nx_kernel.Prog.dtype p (Iarray.get p.outs k)
     in
     Nx_kernel.accepts r dt
 

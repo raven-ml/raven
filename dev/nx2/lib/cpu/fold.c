@@ -846,6 +846,15 @@ static int monoid_of(value r, int dt) {
   return m;
 }
 
+/* The dtype of the program [p]'s one operand where its one output is that
+   operand unchanged, else -1. */
+static int operand(value p) {
+  value ins = Field(p, NX_PROG_INS), outs = Field(p, NX_PROG_OUTS);
+  if (Wosize_val(ins) != 1 || Wosize_val(outs) != 1) return -1;
+  value out = Field(Field(p, NX_PROG_NODES), Long_val(Field(outs, 0)));
+  return Tag_val(out) == NX_NODE_IN ? Int_val(Field(ins, 0)) : -1;
+}
+
 /* Reduces or scans, as [scan] says, [x] into [y] by [monoid]: NX_OK,
    NX_SHAPE for shapes that do not fit, an extreme of no term included, or
    -1 if host memory runs out. */
@@ -937,9 +946,7 @@ static value run(int scan, value p, const int *axes, int naxes, value r,
   int dt = nx_array_dtype(vx);
   int monoid = moments ? -1 : monoid_of(r, dt);
   int takes = moments ? dt == NX_FLOAT32 || dt == NX_FLOAT64 : monoid >= 0;
-  const nx_prog *g = (const nx_prog *)String_val(p);
-  if (!takes || !nx_prog_is_operand(g) || nx_prog_ins(g)[0] != dt)
-    CAMLreturn(Val_int(NX_DECLINED));
+  if (!takes || operand(p) != dt) CAMLreturn(Val_int(NX_DECLINED));
   for (int i = 0; i < nd; i++)
     if (nx_array_dtype(Field(dsts, i)) != dt)
       CAMLreturn(Val_int(NX_DECLINED));

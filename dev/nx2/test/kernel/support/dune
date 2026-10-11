@@ -33,7 +33,7 @@
 (rule
  (copy nx_kinds_support_loops.c nx_kinds_support_loops_v3.c))
 
-; nx_prog.h's and nx_contract_view.h's structs and nx_kernel.h's codes as C
+; nx_prog.h's and nx_kernel.h's codes and nx_contract_view.h's struct as C
 ; reads them.
 
 (library

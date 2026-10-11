@@ -672,9 +672,10 @@ let expect (type v s d) (dt : (v, s) D.t) (Nx.Prim.Any x : d Nx.Prim.any) :
   | None -> failf "expected %s, got %s" (D.name dt) (D.name (Nx.dtype x))
 
 (* The node of a one-node program, if [prog] is one. *)
-let one_node prog =
-  let k = Array.length (P.ins prog) in
-  if P.length prog = k + 1 && P.outs prog = [| k |] then Some (P.node prog k)
+let one_node (prog : P.t) =
+  let k = Iarray.length prog.ins in
+  if Iarray.length prog.nodes = k + 1 && prog.outs = [| k |] then
+    Some (Iarray.get prog.nodes k)
   else None
 
 (* The tangent of the one node [node] over [loads], whose primal result is
@@ -1174,7 +1175,7 @@ let capturing (type r) i ~by (op : r Nx.Prim.t) : r =
       let e =
         match op with
         | Map { loads = [||]; prog; layout; _ } -> (
-            match P.node prog (P.length prog - 1) with
+            match Iarray.get prog.nodes (Iarray.length prog.nodes - 1) with
             | Const (_, bits) -> Lit (bits, L.shape layout)
             | _ -> App ("creation", []))
         | _ -> App (Nx.Prim.name op, List.map arg xs)

@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Programs: the kinds' domains against the table prog.mli states, constant
-   bits against an array's bytes, and programs against what C reads and what
-   the readers give. *)
+   bits against an array's bytes, and programs against what they were made
+   of and what C reads. *)
 
 open Windtrap
 module A = Nx_array
@@ -158,6 +158,12 @@ let want3 k c x =
   | P.Where -> cls c = Boolean
   | Fma -> same c x && List.mem (cls x) reals
 
+(* Whether [of_node] builds the program of [n] over operands of [ins]. *)
+let builds ins n =
+  match P.of_node ~ins:(Iarray.of_array ins) n with
+  | _ -> true
+  | exception Invalid_argument _ -> false
+
 let test_domains () =
   let dts = D.all in
   List.iter
@@ -179,7 +185,7 @@ let test_domains () =
           equal
             ~msg:(strf "node %s %s" (op2_name k) (name ax))
             bool (want2 k ax)
-            (P.accepts (Op2 (k, 0, 1)) [| ax; ax |]))
+            (builds [| ax; ax |] (Op2 (k, 0, 1))))
         op2s;
       List.iter
         (fun (D.Any y as ay) ->
@@ -191,7 +197,7 @@ let test_domains () =
               equal
                 ~msg:(strf "node %s %s to %s" (op1_name k) (name ax) (name ay))
                 bool (want1 k ax ay)
-                (P.accepts (Op1 (k, ay, 0)) [| ax |]))
+                (builds [| ax |] (Op1 (k, ay, 0))))
             op1s;
           List.iter
             (fun k ->
@@ -201,14 +207,12 @@ let test_domains () =
               equal
                 ~msg:(strf "node %s %s %s" (op3_name k) (name ax) (name ay))
                 bool (want3 k ax ay)
-                (P.accepts (Op3 (k, 0, 1, 2)) [| ax; ay; ay |]))
+                (builds [| ax; ay; ay |] (Op3 (k, 0, 1, 2))))
             P.[ Where; Fma ])
         dts)
     dts;
   equal ~msg:"two dtypes" bool false
-    (P.accepts (Op2 (Binary Add, 0, 1)) [| D.Any D.Float32; D.Any D.Float64 |]);
-  equal ~msg:"an arity off" bool false
-    (P.accepts (Op2 (Binary Add, 0, 1)) [| D.Any D.Float32 |])
+    (builds [| D.Any D.Float32; D.Any D.Float64 |] (Op2 (Binary Add, 0, 1)))
 
 (* Each kind a base dtype takes has its function in nx_kinds.h at the dtype's
    compute type. Floor, Ceil, Round and Trunc are the identity on integers,
@@ -295,7 +299,12 @@ let test_bits_refuse () =
 
 (* A program drawn from operand dtypes and choices: each node picks, by its
    choice, one of the nodes the earlier ones admit. *)
-type drawn = { ins : D.any array; nodes : P.node array; outs : int array }
+type drawn = {
+  ins : D.any array;
+  nodes : P.node array;
+  types : D.any array;
+  outs : int array;
+}
 
 let base_dtypes =
   D.
@@ -379,6 +388,7 @@ let build ins choices nouts =
   {
     ins;
     nodes;
+    types = !types;
     outs =
       Array.init
         (min (min nouts n) (P.max_operands - Array.length ins))
@@ -399,27 +409,20 @@ let drawn =
      and+ nouts = int_range 1 3 in
      build ins choices nouts)
 
-(* What C reads, rendered as the support reader renders it. *)
-(* CR: Retain build's types in drawn and render those; P.dtype reads the
-   same encoded field as C, so both can agree on a wrongly typed comparison.
-   Also compare every P.dtype with the retained expectation. Keep the C
-   reader and node round trips: they check separate parts of the contract. *)
-let render p d =
+(* What C reads of [d]'s program, rendered as the support reader renders
+   it. *)
+let render d =
   let code (D.Any dt) = D.code dt in
-  let line i nd =
-    let tag, kind, a, b, c, bits =
-      match nd with
-      | P.In k -> ("in", "-", k, 0, 0, "")
-      | Coord k -> ("coord", "-", k, 0, 0, "")
-      | Const (_, s) -> ("const", "-", 0, 0, 0, s)
-      | Op1 (k, _, a) -> ("op1", op1_name k, a, 0, 0, "")
-      | Op2 (k, a, b) -> ("op2", op2_name k, a, b, 0, "")
-      | Op3 (k, a, b, c) -> ("op3", op3_name k, a, b, c, "")
-    in
-    let bits = bits ^ String.make (16 - String.length bits) '\000' in
-    strf "%s %s %d %d %d %d %s\n" tag kind (code (P.dtype p i)) a b c (hex bits)
+  let line nd =
+    match nd with
+    | P.In k -> strf "in %d\n" k
+    | Coord k -> strf "coord %d\n" k
+    | Const (dt, s) -> strf "const %d %s\n" (code dt) (hex s)
+    | Op1 (k, dt, a) -> strf "op1 %s %d %d\n" (op1_name k) (code dt) a
+    | Op2 (k, a, b) -> strf "op2 %s %d %d\n" (op2_name k) a b
+    | Op3 (k, a, b, c) -> strf "op3 %s %d %d %d\n" (op3_name k) a b c
   in
-  String.concat "" (Array.to_list (Array.mapi line d.nodes))
+  String.concat "" (Array.to_list (Array.map line d.nodes))
   ^ "ins"
   ^ String.concat "" (Array.to_list (Array.map (fun t -> strf " %d" (code t)) d.ins))
   ^ "\nouts"
@@ -437,6 +440,10 @@ let pp_node ppf = function
 
 let node = Testable.make ~pp:pp_node ~equal:( = )
 
+let program d =
+  P.v ~ins:(Iarray.of_array d.ins) (Iarray.of_array d.nodes)
+    ~outs:(Iarray.of_array d.outs)
+
 let law_program d =
   Array.iter
     (fun n ->
@@ -444,66 +451,20 @@ let law_program d =
       cover "an Op2" (match n with P.Op2 _ -> true | _ -> false);
       cover "an Op1" (match n with P.Op1 _ -> true | _ -> false))
     d.nodes;
-  let p = P.v ~ins:d.ins d.nodes ~outs:d.outs in
-  equal ~msg:"C reads" string (render p d) (Nx_kernel_support.prog p);
-  equal ~msg:"length" int (Array.length d.nodes) (P.length p);
+  let p = program d in
+  equal ~msg:"C reads" string (render d) (Nx_kernel_support.prog p);
   equal ~msg:"ins" (list string)
     (Array.to_list (Array.map name d.ins))
-    (Array.to_list (Array.map name (P.ins p)));
-  equal ~msg:"outs" (array int) d.outs (P.outs p);
-  Array.iteri (fun i n -> equal ~msg:(strf "node %d" i) node n (P.node p i)) d.nodes;
-  equal ~msg:"equal programs are equal strings" bool true
-    (P.v ~ins:d.ins d.nodes ~outs:d.outs = p)
-
-(* A program's bytes kept, cut short, or with one byte set. *)
-type edit = Keep | Cut of int | Set of int * char
-
-let edited =
-  let open Gen in
-  with_pp
-    (fun ppf (d, e) ->
-      match e with
-      | Keep -> Format.fprintf ppf "%a, kept" pp_drawn d
-      | Cut k -> Format.fprintf ppf "%a, cut to %d bytes" pp_drawn d k
-      | Set (i, c) -> Format.fprintf ppf "%a, byte %d set to %C" pp_drawn d i c)
-    (let* d = drawn in
-     let n =
-       String.length (P.v ~ins:d.ins d.nodes ~outs:d.outs :> string)
-     in
-     let+ e =
-       one_of
-         [
-           constant Keep;
-           map (fun k -> Cut k) (int_range 0 (n - 1));
-           map (fun (i, c) -> Set (i, c)) (pair (int_range 0 (n - 1)) char);
-         ]
-     in
-     (d, e))
-
-(* of_string answers a program only for bytes its readers and v give back,
-   and answers one for v's bytes, never for fewer. *)
-let law_of_string (d, e) =
-  let p = (P.v ~ins:d.ins d.nodes ~outs:d.outs :> string) in
-  let s =
-    match e with
-    | Keep -> p
-    | Cut k -> String.sub p 0 k
-    | Set (i, c) ->
-        let b = Bytes.of_string p in
-        Bytes.set b i c;
-        Bytes.to_string b
-  in
-  match P.of_string s with
-  | Some q ->
-      cover "a program" true;
-      equal ~msg:"cut short" bool false (match e with Cut _ -> true | _ -> false);
-      equal ~msg:"its bytes" string s (q :> string);
-      let nodes = Array.init (P.length q) (P.node q) in
-      equal ~msg:"v gives it back" string s
-        (P.v ~ins:(P.ins q) nodes ~outs:(P.outs q) :> string)
-  | None ->
-      cover "no program" true;
-      equal ~msg:"v's own bytes" bool false (s = p)
+    (List.map name (Iarray.to_list p.ins));
+  equal ~msg:"outs" (array int) d.outs (Iarray.to_array p.outs);
+  equal ~msg:"nodes" (array node) d.nodes (Iarray.to_array p.nodes);
+  Array.iteri
+    (fun i t ->
+      equal ~msg:(strf "dtype %d" i) string (name t) (name (P.dtype p i)))
+    d.types;
+  let q = program d in
+  equal ~msg:"equal programs" bool true (q = p);
+  equal ~msg:"equal hashes" int (Hashtbl.hash p) (Hashtbl.hash q)
 
 (* One node over drawn operands, its references in and around the operands'
    range, and its program built by v from the operands' nodes. *)
@@ -534,14 +495,14 @@ let law_of_node (ins, n) =
   let built f = match f () with p -> Ok p | exception Invalid_argument _ -> Error () in
   let by_v =
     built (fun () ->
-        P.v ~ins (Array.append (Array.init k (fun i -> P.In i)) [| n |]) ~outs:[| k |])
+        P.v ~ins:(Iarray.of_array ins)
+          (Iarray.init (k + 1) (fun i -> if i < k then P.In i else n))
+          ~outs:[| k |])
   in
   cover "built" (Result.is_ok by_v);
   cover "refused" (Result.is_error by_v);
-  match (by_v, built (fun () -> P.of_node ~ins n)) with
-  | Ok p, Ok q ->
-      equal ~msg:"v's program" string (p :> string) (q :> string);
-      equal ~msg:"round trip" bool true (P.of_string (q :> string) = Some q)
+  match (by_v, built (fun () -> P.of_node ~ins:(Iarray.of_array ins) n)) with
+  | Ok p, Ok q -> equal ~msg:"v's program" bool true (p = q)
   | Error (), Error () -> ()
   | Ok _, Error () -> fail "of_node refused what v builds"
   | Error (), Ok _ -> fail "of_node built what v refuses"
@@ -549,7 +510,9 @@ let law_of_node (ins, n) =
 let test_program_refuses () =
   let f32 = D.Any D.Float32 in
   let refuses ~msg ?(ins = [| f32 |]) nodes outs =
-    raises_match ~msg Exn.invalid_arg (fun () -> P.v ~ins nodes ~outs)
+    raises_match ~msg Exn.invalid_arg (fun () ->
+        P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
+          ~outs:(Iarray.of_array outs))
   in
   refuses ~msg:"a forward reference" [| P.Op1 (Copy, f32, 1); In 0 |] [| 0 |];
   refuses ~msg:"a reference to itself" [| P.Op1 (Copy, f32, 0) |] [| 0 |];
@@ -567,12 +530,91 @@ let test_program_refuses () =
   refuses ~msg:"seventeen operands and outputs"
     ~ins:(Array.make 16 f32)
     [| P.In 0 |] [| 0 |];
-  ignore (P.v ~ins:(Array.make 15 f32) [| P.In 0 |] ~outs:[| 0 |])
+  ignore
+    (P.v ~ins:(Iarray.init 15 (fun _ -> f32)) [| P.In 0 |] ~outs:[| 0 |])
 
-let test_readers_refuse () =
+let test_dtype_refuses () =
   let p = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |] in
-  raises_match ~msg:"node" Exn.invalid_arg (fun () -> P.node p 1);
-  raises_match ~msg:"dtype" Exn.invalid_arg (fun () -> P.dtype p (-1))
+  raises_match ~msg:"past the nodes" Exn.invalid_arg (fun () -> P.dtype p 1);
+  raises_match ~msg:"negative" Exn.invalid_arg (fun () -> P.dtype p (-1))
+
+(* Representation: C reads a program by nx_prog.h's codes, so each
+   constructor's tag, each field's position and each kind's code is the one
+   the header names, and a reordered declaration fails here. *)
+
+(* The header's name of the kind of arity [a] named [name]. *)
+let header a name = strf "NX_OP%d_%s" a (String.uppercase_ascii name)
+
+(* Field [off] past the one the header names [name] of [v], as C reads it. *)
+let field ?(off = 0) v name =
+  let r = Obj.repr v and i = Nx_kernel_support.code name + off in
+  if i >= Obj.size r then
+    failf "%s + %d is field %d of a block of %d" name off i (Obj.size r);
+  Obj.field r i
+
+let repr =
+  Testable.make
+    ~pp:(fun ppf o ->
+      if Obj.is_int o then Format.fprintf ppf "%d" (Obj.obj o : int)
+      else Format.fprintf ppf "a block of tag %d" (Obj.tag o))
+    ~equal:( == )
+
+let test_codes () =
+  let code = Nx_kernel_support.code and tag = Nx_kernel_support.tag in
+  List.iter
+    (fun k ->
+      equal ~msg:(op1_name k) int
+        (code (header 1 (op1_name k)))
+        (Nx_kernel_support.op1 k))
+    op1s;
+  List.iter
+    (fun k ->
+      equal ~msg:(op2_name k) int
+        (code (header 2 (op2_name k)))
+        (Nx_kernel_support.op2 k))
+    op2s;
+  List.iter
+    (fun k ->
+      equal ~msg:(op3_name k) int (code (header 3 (op3_name k))) (tag k))
+    P.[ Where; Fma ];
+  let f64 = D.Any D.Float64 and one = P.bits D.Float64 1. in
+  let exp = P.Unary Exp and add = P.Binary Add in
+  List.iter
+    (fun (name, t) -> equal ~msg:name int (code name) t)
+    [
+      ("NX_NODE_IN", tag (P.In 3));
+      ("NX_NODE_COORD", tag (P.Coord 3));
+      ("NX_NODE_CONST", tag (P.Const (f64, one)));
+      ("NX_NODE_OP1", tag (P.Op1 (exp, f64, 5)));
+      ("NX_NODE_OP2", tag (P.Op2 (add, 6, 7)));
+      ("NX_NODE_OP3", tag (P.Op3 (Where, 4, 6, 7)));
+      ("NX_OP2_BINARY", tag add);
+      ("NX_OP2_COMPARE", tag (P.Compare Less));
+    ];
+  let p = P.v ~ins:[| f64 |] [| P.In 0 |] ~outs:[| 0 |] in
+  let op1 = P.Op1 (exp, f64, 5) and op2 = P.Op2 (add, 6, 7) in
+  let op3 = P.Op3 (Where, 4, 6, 7) and cst = P.Const (f64, one) in
+  List.iter
+    (fun (name, read, want) -> equal ~msg:name repr want read)
+    [
+      ("NX_PROG_INS", field p "NX_PROG_INS", Obj.repr p.ins);
+      ("NX_PROG_NODES", field p "NX_PROG_NODES", Obj.repr p.nodes);
+      ("NX_PROG_OUTS", field p "NX_PROG_OUTS", Obj.repr p.outs);
+      ("NX_IN_OPERAND", field (P.In 3) "NX_IN_OPERAND", Obj.repr 3);
+      ("NX_COORD_AXIS", field (P.Coord 2) "NX_COORD_AXIS", Obj.repr 2);
+      ("NX_CONST_DTYPE", field cst "NX_CONST_DTYPE", Obj.repr f64);
+      ("NX_CONST_BITS", field cst "NX_CONST_BITS", Obj.repr one);
+      ("NX_OP1_KIND", field op1 "NX_OP1_KIND", Obj.repr exp);
+      ("NX_OP1_DTYPE", field op1 "NX_OP1_DTYPE", Obj.repr f64);
+      ("NX_OP1_OPERAND", field op1 "NX_OP1_OPERAND", Obj.repr 5);
+      ("NX_OP2_KIND", field op2 "NX_OP2_KIND", Obj.repr add);
+      ("NX_OP2_OPERANDS", field op2 "NX_OP2_OPERANDS", Obj.repr 6);
+      ("NX_OP2_OPERANDS + 1", field ~off:1 op2 "NX_OP2_OPERANDS", Obj.repr 7);
+      ("NX_OP3_KIND", field op3 "NX_OP3_KIND", Obj.repr P.Where);
+      ("NX_OP3_OPERANDS", field op3 "NX_OP3_OPERANDS", Obj.repr 4);
+      ("NX_OP3_OPERANDS + 1", field ~off:1 op3 "NX_OP3_OPERANDS", Obj.repr 6);
+      ("NX_OP3_OPERANDS + 2", field ~off:2 op3 "NX_OP3_OPERANDS", Obj.repr 7);
+    ]
 
 let floats =
   Gen.one_of
@@ -600,14 +642,12 @@ let tests =
       ];
     group "programs"
       [
-        prop "C reads what v was given, and so do the readers" drawn
+        prop "a program holds what v was given, as C reads it" drawn
           law_program;
         test "v refuses ill-formed programs" test_program_refuses;
-        prop "of_string answers exactly the bytes of a program" edited
-          law_of_string;
-        prop "of_node is v over the operands' nodes, and round-trips" one_node
-          law_of_node;
-        test "readers refuse a node past the program" test_readers_refuse;
+        prop "of_node is v over the operands' nodes" one_node law_of_node;
+        test "dtype refuses a node past the program" test_dtype_refuses;
+        test "each tag, field and kind is nx_prog.h's code" test_codes;
       ];
   ]
 

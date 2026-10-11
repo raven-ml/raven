@@ -284,10 +284,8 @@ let run_fold d dv f ~dst x (verdict : Fold.verdict) =
       A.door ~written:f.written ~read:f.read issue f
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
-let accepted p (r, k) =
-  let (Nx_array.Dtype.Any dt) =
-    Nx_kernel.Prog.dtype p (Nx_kernel.Prog.outs p).(k)
-  in
+let accepted (p : Nx_kernel.Prog.t) (r, k) =
+  let (Nx_array.Dtype.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
   Nx_kernel.accepts r dt
 
 (* Fold computes a monoid of output 0 of the program into one destination,

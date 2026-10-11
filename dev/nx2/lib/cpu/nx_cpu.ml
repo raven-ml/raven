@@ -113,10 +113,8 @@ let fill_bits (loads : Nx_kernel.load array) =
     | Padded { x; fill; _ } -> Nx_kernel.Prog.bits (Nx_array.dtype x) fill
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
-let accepted p (r, k) =
-  let (Nx_array.Dtype.Any dt) =
-    Nx_kernel.Prog.dtype p (Nx_kernel.Prog.outs p).(k)
-  in
+let accepted (p : Nx_kernel.Prog.t) (r, k) =
+  let (Nx_array.Dtype.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
   Nx_kernel.accepts r dt
 
 let reduce p ~axes rs ~dsts loads =

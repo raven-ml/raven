@@ -3,25 +3,38 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Programs (Nx_kernel.Prog) as C kernels read them. A program is the start
-   of an OCaml string, which the collector may move: a kernel copies what
-   it reads into its own memory before anything that can run OCaml code,
-   nx_read included. Free of OCaml's headers, so device code includes it. */
+/* Programs (Nx_kernel.Prog) as C reads their OCaml values: each
+   constructor's tag and each field's position, in the order of Prog's
+   declarations. A constant constructor is its index among its type's
+   constant constructors, read by Long_val; one with an argument is a block
+   whose tag, read by Tag_val, is its index among those with one. A dtype is
+   its code (nx_dtype.h). Free of OCaml's headers; the macros expand where
+   they are. */
 
 #ifndef NX_PROG_H
 #define NX_PROG_H
 
-#include <stdint.h>
+/* Prog.t's fields: the operands' dtypes, the nodes and the outputs, each an
+   immutable array. */
+enum { NX_PROG_INS, NX_PROG_NODES, NX_PROG_OUTS };
 
-/* Prog.t: a scalar program. Counts of operands, nodes and outputs, then a
-   record per node, then the operands' dtype codes (nx_dtype.h) and the
-   outputs' node indices; read through nx_prog_ins and nx_prog_outs. A
-   node's [dtype] is its result's; [a], [b] and [c] are its operand, axis or
-   earlier nodes; a constant's bits are in [bits], zero-padded. Kinds are
-   the codes below, in the order of Prog's constructors. */
+/* Prog.node: blocks, by tag. */
 enum { NX_NODE_IN, NX_NODE_COORD, NX_NODE_CONST, NX_NODE_OP1, NX_NODE_OP2,
        NX_NODE_OP3 };
 
+/* Each node's fields: In's operand, Coord's axis, Const's dtype and bits;
+   Op1's kind, dtype and operand; Op2's and Op3's kind, then their operands
+   in order from NX_OP2_OPERANDS and NX_OP3_OPERANDS. */
+enum { NX_IN_OPERAND };
+enum { NX_COORD_AXIS };
+enum { NX_CONST_DTYPE, NX_CONST_BITS };
+enum { NX_OP1_KIND, NX_OP1_DTYPE, NX_OP1_OPERAND };
+enum { NX_OP2_KIND, NX_OP2_OPERANDS };
+enum { NX_OP3_KIND, NX_OP3_OPERANDS };
+
+/* The kinds, one code per arity, in the order of Prog's constructors:
+   Copy, Cast and Bitcast, then the unary kinds; the binary kinds, then the
+   comparisons; Where and Fma. */
 enum {
   NX_OP1_COPY, NX_OP1_CAST, NX_OP1_BITCAST, NX_OP1_NEG, NX_OP1_RECIP,
   NX_OP1_ABS, NX_OP1_SIGN, NX_OP1_SQRT, NX_OP1_EXP, NX_OP1_EXP2, NX_OP1_LOG,
@@ -40,32 +53,20 @@ enum {
 
 enum { NX_OP3_WHERE, NX_OP3_FMA, NX_OP3_COUNT };
 
-typedef struct {
-  int32_t tag, kind, dtype;
-  int32_t a, b, c;
-  uint8_t bits[16];
-} nx_prog_node;
+/* Prog.op2: blocks of one field, by tag. */
+enum { NX_OP2_BINARY, NX_OP2_COMPARE };
 
-typedef struct {
-  int32_t nins, nnodes, nouts, zero;
-  nx_prog_node nodes[];
-} nx_prog;
+/* The code of [k], a Prog.op1 value: Copy, Cast and Bitcast are constants
+   of their codes; Unary is a block whose field is its kind's index from
+   NX_OP1_NEG. */
+#define NX_OP1_CODE(k)                                                     \
+  (Is_long(k) ? (int)Long_val(k) : NX_OP1_NEG + (int)Long_val(Field(k, 0)))
 
-static inline const int32_t *nx_prog_ins(const nx_prog *p) {
-  return (const int32_t *)(p->nodes + p->nnodes);
-}
-
-static inline const int32_t *nx_prog_outs(const nx_prog *p) {
-  return nx_prog_ins(p) + p->nins;
-}
-
-/* Whether [p] has one operand and one output, the operand unchanged: its
-   output node is In 0, whatever nodes come before it, as in both [In 0]
-   and Prog.of_node's [In 0; In 0]. */
-static inline int nx_prog_is_operand(const nx_prog *p) {
-  if (p->nins != 1 || p->nouts != 1) return 0;
-  const nx_prog_node *out = &p->nodes[nx_prog_outs(p)[0]];
-  return out->tag == NX_NODE_IN && out->a == 0;
-}
+/* The code of [k], a Prog.op2 value: its field is its kind's index from
+   NX_OP2_ADD for Binary, from NX_OP2_EQUAL for Compare. An op3 is a
+   constant of its code. */
+#define NX_OP2_CODE(k)                                                     \
+  ((Tag_val(k) == NX_OP2_COMPARE ? NX_OP2_EQUAL : NX_OP2_ADD) +            \
+   (int)Long_val(Field(k, 0)))
 
 #endif

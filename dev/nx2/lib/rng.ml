@@ -27,24 +27,14 @@ let pp_shape ppf s =
 
 (* Programs *)
 
-(* A program under construction: its nodes, newest first. *)
-type b = { ins : D.any array; mutable nodes : P.node list; mutable count : int }
+open Build
 
-let builder ins = { ins; nodes = []; count = 0 }
-
-let emit b n =
-  b.nodes <- n :: b.nodes;
-  b.count <- b.count + 1;
-  b.count - 1
-
-let program b outs = P.v ~ins:b.ins (Array.of_list (List.rev b.nodes)) ~outs
-let const b dt v = emit b (Const (D.Any dt, P.bits dt v))
 let u64 b v = const b D.Uint64 v
-let bin b k x y = emit b (Op2 (Binary k, x, y))
-let cmp b k x y = emit b (Op2 (Compare k, x, y))
-let un b k dt x = emit b (Op1 (Unary k, D.Any dt, x))
-let into b dt x = emit b (Op1 (Cast, D.Any dt, x))
-let where b c x y = emit b (Op3 (Where, c, x, y))
+let bin b k x y = push b (Op2 (Binary k, x, y))
+let cmp b k x y = push b (Op2 (Compare k, x, y))
+let un b k dt x = push b (Op1 (Unary k, D.Any dt, x))
+let into b dt x = push b (Op1 (Cast, D.Any dt, x))
+let where b c x y = push b (Op3 (Where, c, x, y))
 let two32 = 0x1_0000_0000L
 
 (* The counter of block [i], a uint64 node: the words [(2i, 2i + 1)], which
@@ -68,18 +58,17 @@ let word b ~key j =
   where b first (bin b Mod t w) (bin b Idiv t w)
 
 (* The flat index, as a uint64 node, of each element in the last [Array.length
-   s] axes, of extents [s]. *)
-let flat b s =
+   s] axes of a shape of rank [rank], of extents [s]. *)
+let flat b ~rank s =
   let r = Array.length s in
   let acc = ref (const b D.Int64 0L) and weight = ref 1 in
   for c = 0 to r - 1 do
-    let term =
-      bin b Mul (emit b (Coord c)) (const b D.Int64 (Int64.of_int !weight))
-    in
+    let at = push b (Coord (rank - 1 - c)) in
+    let term = bin b Mul at (const b D.Int64 (Int64.of_int !weight)) in
     acc := bin b Add !acc term;
     weight := !weight * s.(r - 1 - c)
   done;
-  emit b (Op1 (Bitcast, D.Any D.Uint64, !acc))
+  push b (Op1 (Bitcast, D.Any D.Uint64, !acc))
 
 (* The largest [p] such that every multiple of 2^-p in [0, 1) is a value of
    [dt]: the significand's width where the format reaches 2^-p, else the
@@ -174,14 +163,12 @@ let draw ~by ?(params = [||]) (k : 'd key) dt s body =
   check_shape ~by s;
   let batch = batch k and w = pack ~by k in
   let shape = Array.append batch s in
-  let ins =
-    Array.append [| D.Any D.Uint64 |]
-      (Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) params)
+  let b = Build.make () in
+  let key = input b (D.Any D.Uint64) in
+  let params' =
+    Array.map (fun (Value.Any x) -> input b (D.Any (Prim.dtype x))) params
   in
-  let b = builder ins in
-  let key = emit b (In 0) in
-  let params' = Array.mapi (fun i _ -> emit b (In (i + 1))) params in
-  let j = flat b s in
+  let j = flat b ~rank:(Array.length shape) s in
   let out = body b ~key ~j params' in
   let w = reshape ~by (Array.append batch (Array.make (Array.length s) 1)) w in
   let loads =
@@ -194,8 +181,8 @@ let draw ~by ?(params = [||]) (k : 'd key) dt s body =
 (* Keys *)
 
 let key seed : 'd key =
-  let b = builder [||] in
-  let first = cmp b Equal (emit b (Coord 0)) (const b D.Int64 0L) in
+  let b = Build.make () in
+  let first = cmp b Equal (push b (Coord 0)) (const b D.Int64 0L) in
   let hi = const b D.Int32 (Int32.of_int (seed asr 32)) in
   let lo = const b D.Int32 (Int32.of_int seed) in
   let out = where b first hi lo in
@@ -214,8 +201,8 @@ let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
    [k]'s batch. *)
 let keys ~by (k : 'd key) shape f : 'd key =
   let w = pack ~by k in
-  let b = builder [| D.Any D.Uint64 |] in
-  let key = emit b (In 0) in
+  let b = Build.make () in
+  let key = input b (D.Any D.Uint64) in
   let out = f b ~key in
   let w = stretch ~by shape w in
   let u : (int64, D.uint64_elt, 'd) Value.t =
@@ -233,7 +220,7 @@ let blocks ~by n k =
   if n < 1 then invalid_argf "%s: n is %d, not at least 1" by n;
   one ~by k;
   keys ~by k [| n |] (fun b ~key ->
-      block b ~key (emit b (Op1 (Bitcast, D.Any D.Uint64, emit b (Coord 0)))))
+      block b ~key (push b (Op1 (Bitcast, D.Any D.Uint64, push b (Coord 0)))))
 
 let split_batch ~n k = blocks ~by:"Nx.Rng.split_batch" n k
 
@@ -265,11 +252,10 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
   let by = "Nx.Rng.fold_in_tensor" in
   let w = pack ~by k in
   let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
-  let b = builder [| D.Any D.Uint64; D.Any D.Int32 |] in
-  let key = emit b (In 0) in
-  let v =
-    emit b (Op1 (Bitcast, D.Any D.Uint64, into b D.Int64 (emit b (In 1))))
-  in
+  let b = Build.make () in
+  let key = input b (D.Any D.Uint64) in
+  let x = input b (D.Any D.Int32) in
+  let v = push b (Op1 (Bitcast, D.Any D.Uint64, into b D.Int64 x)) in
   let w32 = u64 b two32 in
   let c = bin b Add (bin b Idiv v w32) (bin b Mul (bin b Mod v w32) w32) in
   let out = bin b Threefry c key in
@@ -413,7 +399,7 @@ let randint ?key ?(low = 0) ~high s =
       let hi = where b rejected second first in
       let v = into b D.Uint32 hi in
       let v = bin b Add v (const b D.Uint32 (Int32.of_int low)) in
-      emit b (Op1 (Bitcast, D.Any D.Int32, v)))
+      push b (Op1 (Bitcast, D.Any D.Int32, v)))
 
 (* Parameters *)
 
@@ -522,8 +508,9 @@ let refuse ~by name text ~show (p : ('v, 's, 'd) Value.t) ok =
 (* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
 let require ~by name d (p : (float, 's, 'd) Value.t) =
   let c = compute (Prim.dtype p) in
-  let b = builder [| D.Any (Prim.dtype p) |] in
-  let inside = d.inside (floats b c) (param b c p (emit b (In 0))) in
+  let b = Build.make () in
+  let x = input b (D.Any (Prim.dtype p)) in
+  let inside = d.inside (floats b c) (param b c p x) in
   let ok =
     map ~by (Prim.shape p) (program b [| inside |]) D.Bool [| Value.Any p |]
   in
@@ -531,8 +518,9 @@ let require ~by name d (p : (float, 's, 'd) Value.t) =
 
 (* Checks that the counts [n] are not negative. *)
 let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
-  let b = builder [| D.Any D.Int32 |] in
-  let inside = cmp b Less_equal (const b D.Int32 0l) (emit b (In 0)) in
+  let b = Build.make () in
+  let x = input b (D.Any D.Int32) in
+  let inside = cmp b Less_equal (const b D.Int32 0l) x in
   let ok =
     map ~by (Prim.shape n) (program b [| inside |]) D.Bool [| Value.Any n |]
   in

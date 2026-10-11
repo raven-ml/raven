@@ -347,77 +347,47 @@ let alloc (type v s d) ~by ?(at : unit Devices.placement option) ?where ?into k
 
 (* Programs on one device *)
 
+(* Whether [nd] is a [Coord] of an axis whose window starts at [first > 0]. *)
+let shifted first (nd : P.node) =
+  match nd with Coord c -> first.(c) <> 0 | _ -> false
+
 (* [prog] with each [Coord] of an axis whose window starts at [s > 0] replaced
-   by [Coord + s], so that a device computes its window. *)
-let with_offsets prog (first : int array) =
-  let r = Array.length first in
-  let shifted = function P.Coord c -> first.(r - 1 - c) <> 0 | _ -> false in
+   by [Coord + s], so that a device computes its window. Its operands' nodes
+   come first, and each [In] reads its operand's. *)
+let with_offsets (prog : P.t) (first : int array) =
   if
     Array.for_all (fun s -> s = 0) first
-    || not (List.exists shifted (List.init (P.length prog) (P.node prog)))
+    || not (Iarray.exists (shifted first) prog.nodes)
   then prog
   else begin
-    let nodes = ref [] and n = ref 0 in
-    let index = Array.make (P.length prog) 0 in
-    let push nd =
-      nodes := nd :: !nodes;
-      incr n;
-      !n - 1
-    in
-    for i = 0 to P.length prog - 1 do
-      let at j = index.(j) in
-      let nd : P.node =
-        match P.node prog i with
-        | Op1 (k, dt, j) -> Op1 (k, dt, at j)
-        | Op2 (k, j, l) -> Op2 (k, at j, at l)
-        | Op3 (k, j, l, m) -> Op3 (k, at j, at l, at m)
-        | (In _ | Coord _ | Const _) as nd -> nd
-      in
-      index.(i) <-
-        (match nd with
-        | Coord c when first.(r - 1 - c) <> 0 ->
-            let coord = push nd in
-            let start =
-              push
-                (Const
-                   ( D.Any D.Int64,
-                     P.bits D.Int64 (Int64.of_int first.(r - 1 - c)) ))
-            in
-            push (Op2 (Binary Add, coord, start))
-        | _ -> push nd)
-    done;
-    P.v ~ins:(P.ins prog)
-      (Array.of_list (List.rev !nodes))
-      ~outs:(Array.map (fun o -> index.(o)) (P.outs prog))
+    let open Build in
+    let b = make () in
+    let operand k = input b (Iarray.get prog.ins k) in
+    let operands = Array.init (Iarray.length prog.ins) operand in
+    let index = Array.make (Iarray.length prog.nodes) 0 in
+    Iarray.iteri
+      (fun i nd ->
+        let at j = index.(j) in
+        index.(i) <-
+          (match (nd : P.node) with
+          | In k -> operands.(k)
+          | Coord c when first.(c) <> 0 ->
+              let coord = push b nd in
+              let start = const b D.Int64 (Int64.of_int first.(c)) in
+              push b (Op2 (Binary Add, coord, start))
+          | Op1 (k, dt, j) -> push b (Op1 (k, dt, at j))
+          | Op2 (k, j, l) -> push b (Op2 (k, at j, at l))
+          | Op3 (k, j, l, m) -> push b (Op3 (k, at j, at l, at m))
+          | Coord _ | Const _ -> push b nd))
+      prog.nodes;
+    program b (Iarray.map (fun o -> index.(o)) prog.outs)
   end
-
-(* The node a one-node program computes from its operands in order, if it is
-   one: every node before its output reads operand [i] at index [i]. *)
-let single prog =
-  let n = P.length prog and outs = P.outs prog in
-  let ins_first =
-    let ok = ref true in
-    for i = 0 to n - 2 do
-      match P.node prog i with P.In j when j = i -> () | _ -> ok := false
-    done;
-    !ok
-  in
-  if Array.length outs <> 1 || outs.(0) <> n - 1 || not ins_first then None
-  else
-    let m = n - 1 in
-    match P.node prog m with
-    | (Const _ | Coord _) as nd -> Some nd
-    | Op1 (_, _, 0) as nd when m = 1 -> Some nd
-    | Op2 (_, 0, 1) as nd when m = 2 -> Some nd
-    | Op3 (_, 0, 1, 2) as nd when m = 3 -> Some nd
-    | _ -> None
 
 (* [node]'s kernel into [dst], over [ops]. *)
 let apply_node (module K : Nx_kernel.S) node (A.Any dst) (ops : A.any array) =
-  let rank = L.rank (A.layout dst) in
   match (node : P.node) with
   | Const (_, bits) -> K.apply0 (Fill bits) ~dst
-  | Coord c -> K.apply0 (Iota (rank - 1 - c)) ~dst
+  | Coord c -> K.apply0 (Iota c) ~dst
   | Op1 (k, _, _) ->
       let (A.Any x) = ops.(0) in
       K.apply1 k ~dst x
@@ -437,7 +407,7 @@ let apply_node (module K : Nx_kernel.S) node (A.Any dst) (ops : A.any array) =
    node is core. *)
 let map_on ~by (module K : Nx_kernel.S) d prog first ops dsts =
   let prog = with_offsets prog first in
-  match single prog with
+  match Expand.single prog with
   | Some node ->
       let arrays = Array.append dsts ops in
       ran ~by (apply_node (module K) node dsts.(0) ops) dsts ops
@@ -928,11 +898,8 @@ and compute : type r.
   | Value.Copy x ->
       let where = ref None in
       let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
-      let prog =
-        Prim.program
-          (Op1 (Copy, D.Any (Prim.dtype x), 0))
-          [| D.Any (Prim.dtype x) |]
-      in
+      let dt = D.Any (Prim.dtype x) in
+      let prog = P.of_node ~ins:[| dt |] (Op1 (Copy, dt, 0)) in
       map_devices ~by (Option.get !where) (Prim.shape x) prog
         (fun k w -> [| A.Any (Place.view ~by x k w) |])
         (Prim.arrays op r);

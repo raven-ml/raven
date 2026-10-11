@@ -17,9 +17,9 @@
     Destinations of a fixed number are labelled; where its arguments decide
     their number, they come as an array. {!Prog} names what an elementwise
     kernel computes and {!Shape} the shapes of every kernel's destinations.
-    In C, [nx_kinds.h] computes each kind, [nx_prog.h] holds a program's
-    struct, [nx_kernel.h] the codes of the constructors C reads by tag and
-    [nx_contract_view.h] a contraction view's, with no OCaml header, so
+    In C, [nx_kinds.h] computes each kind, [nx_prog.h] and [nx_kernel.h] hold
+    the codes by which C reads a program and the other constructors, and
+    [nx_contract_view.h] a contraction view's struct, with no OCaml header, so
     device sources include them. *)
 
 module Prog = Prog
@@ -358,7 +358,9 @@ module type S = sig
       A loop runs a program at every index of one shape, the shape its loads
       have once loaded ({!Shape.loaded}), reading load [i] as the program's
       operand [i]. Its loads are one per operand of the program, each of that
-      operand's dtype. *)
+      operand's dtype. Its [Coord] nodes read axes of that shape: a loop
+      that computes a program with one past its rank answers
+      [Shape_mismatch] instead. *)
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
