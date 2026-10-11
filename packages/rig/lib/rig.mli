@@ -1329,13 +1329,12 @@ module Submission : sig
   val words : Buffer.t -> part
   (** [words b] places the 32-bit words of [b] on the device's queue, such as
       indirect-buffer or GPFIFO entries. The host must address [b]'s memory,
-      and [b]'s length must be a multiple of 4. Whatever the words do, such
-      as starting a thread trace or invalidating caches before launches, they
-      follow every earlier part of their submission. They run on the queue
-      that runs launches, where it takes words, and a later part follows them
-      if it runs on their queue or may share memory with them ({!make}).
-      Memory the words address is ordered against other work only if it is
-      among the submission's fixed memory. *)
+      and [b]'s length must be a multiple of 4. Words may do what rig cannot
+      see, such as start a thread trace or invalidate caches before a
+      launch, so rule 2 of {!Rig.section-order} orders them after every
+      earlier part, and {!make} says which queue runs them. Memory the words
+      address is ordered against other work only if it is among the
+      submission's fixed memory. *)
 
   (** {1:making Making} *)
 
@@ -1361,9 +1360,7 @@ module Submission : sig
       buffer ref uses its slot as its kind says, and every part uses the fixed
       memory with its access. Two uses may share memory where their buffers
       overlap ({!Buffer.overlaps}), or where either is a slot, whose buffer
-      only a run gives. Words also follow every earlier part, and a later
-      part on their queue follows them. An {!unordered} ref orders nothing.
-      Parts that need no order may run concurrently.
+      only a run gives. An {!unordered} ref orders nothing.
 
       A launch or a fill runs on the first of [d]'s queues that runs its
       kind ({!Rig_edge.type-facts}). Words run on the first queue that runs

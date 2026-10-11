@@ -85,7 +85,10 @@ type queue = {
        that it follows, where that queue runs [Copy], and otherwise on the
        device's {e copy engine}, the queue its facts name in [copy_engine]
        ({!type-facts}), where rig's own copies go.}
-    {- Any other part goes on the first queue whose [runs] lists its kind.}} *)
+    {- Words go on the first queue whose [runs] lists both [Launch] and
+       [Words], and otherwise on the first that lists [Words].}
+    {- A launch or a fill goes on the first queue whose [runs] lists its
+       kind.}} *)
 
 (** The type for how a device's word advances. *)
 type completion =
