@@ -49,7 +49,13 @@ type slot = Memory of view | Input of int | Ints
 type part =
   | Words of view
   | Fill of { fill : leaf; params : value data; refs : ref iarray }
-  | Copy of { src : int; dst : int }
+  | Copy of {
+      src : int;
+      src_offset : (value * int) iarray;
+      dst : int;
+      dst_offset : (value * int) iarray;
+      length : int;
+    }
   | Launch of {
       image : int;
       name : string;
@@ -178,7 +184,10 @@ let check_part t sizes = function
       if n mod 4 <> 0 || n > 4096 then
         refuse "fill: invalid parameter length %d" n;
       check_holes "fill parameters" n (check_value t) params.holes
-  | Copy _ -> ()
+  | Copy { src_offset; dst_offset; length; _ } ->
+      if length < 0 then refuse "a copy of %d bytes" length;
+      Iarray.iter (fun (x, _) -> check_value t x) src_offset;
+      Iarray.iter (fun (x, _) -> check_value t x) dst_offset
   | Launch
       { image; params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
       index "image" (Iarray.length t.images) image;
@@ -193,27 +202,48 @@ let check_part t sizes = function
         n (check_value t) params.holes;
       List.iter (check_value t) [ gx; gy; gz; tx; ty; tz; shared ]
 
-(* Refuses a copy between slots [src] and [dst] whose lengths, where known,
-   differ, or which are one buffer. A view's and the ints' lengths are known,
-   and an input's is at least its [bytes]. *)
-let check_copy t slots src dst =
-  let length = function
-    | Memory v -> `Exactly v.length
-    | Ints -> `Exactly (8 * t.ints)
-    | Input i -> `At_least (Iarray.get t.inputs i).bytes
+(* An offset's value where it holds only constants, which [load] knows. *)
+let fixed_offset terms =
+  Iarray.fold_left
+    (fun sum (x, factor) ->
+      match (sum, x) with
+      | Some s, Fixed n -> Some (s + (n * factor))
+      | _ -> None)
+    (Some 0) terms
+
+(* Refuses a copy whose end lies outside its slot, or whose two ends share a
+   byte of one buffer, where load knows the offsets. A view's and the ints'
+   lengths are known; an input's is only at least its [bytes]. *)
+let check_copy t slots ~src ~src_offset ~dst ~dst_offset ~length =
+  let check_end i offset =
+    match fixed_offset offset with
+    | None -> ()
+    | Some o -> (
+        if o < 0 then refuse "a copy from byte %d of slot %d" o i;
+        let n =
+          match Iarray.get slots i with
+          | Memory v -> Some v.length
+          | Ints -> Some (8 * t.ints)
+          | Input _ -> None
+        in
+        match n with
+        | Some n when o > n - length ->
+            refuse "a copy of %d bytes from byte %d of slot %d's %d" length o i
+              n
+        | _ -> ())
   in
-  let a = Iarray.get slots src and b = Iarray.get slots dst in
-  (match (length a, length b) with
-  | `Exactly n, `Exactly m when n <> m ->
-      refuse "a copy of slot %d's %d bytes into slot %d's %d" src n dst m
-  | `Exactly n, `At_least m | `At_least m, `Exactly n ->
-      if n < m then
-        refuse "a copy between slots %d and %d: %d bytes, an input's %d or more"
-          src dst n m
-  | _ -> ());
-  match (a, b) with
-  | Ints, Ints -> refuse "a copy of the ints into themselves"
-  | Input i, Input j when i = j -> refuse "a copy of input %d into itself" i
+  check_end src src_offset;
+  check_end dst dst_offset;
+  let one =
+    match (Iarray.get slots src, Iarray.get slots dst) with
+    | Ints, Ints -> true
+    | Input i, Input j -> i = j
+    | _ -> false
+  in
+  match (fixed_offset src_offset, fixed_offset dst_offset) with
+  | Some a, Some b when one && length > 0 && a - b < length && b - a < length
+    ->
+      refuse "a copy between overlapping bytes %d and %d of one buffer" a b
   | _ -> ()
 
 let rec check_step t sizes ndev = function
@@ -231,10 +261,10 @@ let rec check_step t sizes ndev = function
       in
       Iarray.iter
         (function
-          | Copy { src; dst } ->
+          | Copy { src; src_offset; dst; dst_offset; length } ->
               name src;
               name dst;
-              check_copy t s.slots src dst
+              check_copy t s.slots ~src ~src_offset ~dst ~dst_offset ~length
           | p ->
               Iarray.iter
                 (fun r ->
@@ -382,7 +412,10 @@ let check_memory t sizes =
               ->
                 terms params.holes check;
                 List.iter check [ gx; gy; gz; tx; ty; tz; shared ]
-            | Words _ | Copy _ -> ())
+            | Copy { src_offset; dst_offset; _ } ->
+                Iarray.iter (fun (x, _) -> check x) src_offset;
+                Iarray.iter (fun (x, _) -> check x) dst_offset
+            | Words _ -> ())
           s.parts
     | Loop { trips; flag; body; _ } ->
         value ~on:None ~fixed:[] (views (Option.to_list flag)) trips;
@@ -446,7 +479,7 @@ let check t sizes devices =
    count, then its elements; a variant its tag, a byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 11
+let version = 12
 
 module W = struct
   let int b n = Buffer.add_int64_le b (Int64.of_int n)
@@ -493,17 +526,20 @@ module W = struct
         tag b 2;
         leaf b l
 
+  let terms f b ts =
+    array
+      (fun b (x, factor) ->
+        f b x;
+        int b factor)
+      b ts
+
   let data f b (d : _ data) =
     string b d.bytes;
     array
       (fun b h ->
         int b h.at;
         tag b (match h.width with W32 -> 0 | W64 -> 1);
-        array
-          (fun b (x, factor) ->
-            f b x;
-            int b factor)
-          b h.terms;
+        terms f b h.terms;
         int b h.add;
         int b h.shift)
       b d.holes
@@ -560,10 +596,13 @@ module W = struct
         leaf b fill;
         data value b params;
         array ref b refs
-    | Copy { src; dst } ->
+    | Copy { src; src_offset; dst; dst_offset; length } ->
         tag b 2;
         int b src;
-        int b dst
+        terms value b src_offset;
+        int b dst;
+        terms value b dst_offset;
+        int b length
     | Launch { image; name; params; refs; groups; threads; shared } ->
         tag b 3;
         int b image;
@@ -691,6 +730,14 @@ module R = struct
 
   let width r = match tag r with 0 -> W32 | 1 -> W64 | n -> bad r "a width" n
 
+  let terms f r =
+    array
+      (fun r ->
+        let x = f r in
+        let factor = int r in
+        (x, factor))
+      r
+
   let data f r =
     let bytes = string r in
     let holes =
@@ -698,14 +745,7 @@ module R = struct
         (fun r ->
           let at = int r in
           let width = width r in
-          let terms =
-            array
-              (fun r ->
-                let x = f r in
-                let factor = int r in
-                (x, factor))
-              r
-          in
+          let terms = terms f r in
           let add = int r in
           let shift = int r in
           { at; width; terms; add; shift })
@@ -787,8 +827,11 @@ module R = struct
         Fill { fill; params; refs }
     | 2 ->
         let src = int r in
+        let src_offset = terms value r in
         let dst = int r in
-        Copy { src; dst }
+        let dst_offset = terms value r in
+        let length = int r in
+        Copy { src; src_offset; dst; dst_offset; length }
     | 3 ->
         let image = int r in
         let name = string r in
@@ -899,14 +942,25 @@ type block_run = {
       (* A launch's geometry where a run changes it. *)
 }
 
+(* A copy's end whose buffer each run passes: [count] bytes of the slot
+   [from], at the offset [offset]'s terms sum to. *)
+type moving = {
+  index : int; (* Of [sub]'s slots. *)
+  from : slot;
+  held : B.t; (* [from]'s buffer, or [unset] for an input. *)
+  offset : (known * int) array;
+  count : int;
+}
+
 (* A step's submission for one copy, its run, and the buffers it is passed:
-   memory set at load, inputs at each run. *)
+   memory set at load, inputs and moving copy ends at each run. *)
 type prepared = {
   sub : Sub.t;
   srun : Sub.Run.t;
   buffers : B.t array;
   input_slots : (int * int) array;
       (* Each slot of [sub] that holds an input, with the input. *)
+  moving : moving array;
   blocks : block_run array;
 }
 
@@ -1192,13 +1246,12 @@ let per_copy t (s : submit) =
     | Leaf l -> leaf_two t l
     | Fixed _ | Int _ -> false
   in
-  let holes =
-    Iarray.exists (fun h -> Iarray.exists (fun (x, _) -> value x) h.terms)
-  in
+  let terms = Iarray.exists (fun (x, _) -> value x) in
+  let holes = Iarray.exists (fun h -> terms h.terms) in
   let part = function
     | Words v -> view v
     | Fill { fill; params; _ } -> leaf_two t fill || holes params.holes
-    | Copy _ -> false
+    | Copy { src_offset; dst_offset; _ } -> terms src_offset || terms dst_offset
     | Launch { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
         holes params.holes
         || List.exists value [ gx; gy; gz; tx; ty; tz; shared ]
@@ -1232,9 +1285,9 @@ let resolve p k : value -> known = function
   | Leaf l -> Known (leaf_value p k l)
   | Int i -> Word i
 
-(* The slot of [s]'s submission for each of [s]'s slots, in order, or [-1]
-   where it has none: memory that only copies name, whose ends are the
-   memory's buffer, set at make. *)
+(* The slot of [s]'s submission for each of [s]'s slots that a ref names, in
+   order, or [-1]; and the count of those slots. A copy's end takes a slot of
+   its own after them unless it is a buffer set at make. *)
 let sub_slots (s : submit) =
   let n = Iarray.length s.slots in
   let reffed = Array.make n false in
@@ -1243,19 +1296,20 @@ let sub_slots (s : submit) =
     s.parts;
   let index = Array.make n (-1) and next = ref 0 in
   for i = 0 to n - 1 do
-    match Iarray.get s.slots i with
-    | Memory _ when not reffed.(i) -> ()
-    | Memory _ | Input _ | Ints ->
-        index.(i) <- !next;
-        incr next
+    if reffed.(i) then begin
+      index.(i) <- !next;
+      incr next
+    end
   done;
-  index
+  (index, !next)
 
 (* The submission of [s] for copy [k], and its run holding the words of its
    blocks that no run changes. *)
 let prepared p k (s : submit) =
   let d = s.device in
-  let index = sub_slots s in
+  let known = resolve p k in
+  let index, reffed = sub_slots s in
+  let next = ref reffed and moving = ref [] in
   let sub_ref r =
     let slot = index.(r.slot) in
     match r.use with
@@ -1269,13 +1323,40 @@ let prepared p k (s : submit) =
     | Fill { fill; params; refs = rs } ->
         let fill = Nativeint.of_int (leaf_value p k fill) in
         Sub.fill ~refs:(refs rs) fill ~params:(String.length params.bytes)
-    | Copy { src; dst } ->
-        let side i =
-          match Iarray.get s.slots i with
-          | Memory v -> Sub.Buffer (view p k d v)
-          | Input _ | Ints -> Sub.Slot index.(i)
+    | Copy { src; src_offset; dst; dst_offset; length } ->
+        (* An end of memory at an offset load knows is that memory's bytes,
+           set at make; any other end is a slot each run passes. *)
+        let side i offset =
+          let terms =
+            Iarray.to_array (Iarray.map (fun (x, f) -> (known x, f)) offset)
+          in
+          let at =
+            Array.fold_left
+              (fun sum (x, f) ->
+                match (sum, x) with
+                | Some s, Known n -> Some (s + (n * f))
+                | _ -> None)
+              (Some 0) terms
+          in
+          match (Iarray.get s.slots i, at) with
+          | Memory v, Some o ->
+              Sub.Buffer (B.view (view p k d v) ~first:o ~length)
+          | slot, _ ->
+              let held =
+                match slot with
+                | Memory v -> view p k d v
+                | Ints -> view p k d (ints_view p.t)
+                | Input _ -> unset
+              in
+              let j = !next in
+              incr next;
+              moving :=
+                { index = j; from = slot; held; offset = terms; count = length }
+                :: !moving;
+              Sub.Slot j
         in
-        Sub.copy ~src:(side src) ~dst:(side dst)
+        let src = side src src_offset in
+        Sub.copy ~src ~dst:(side dst dst_offset)
     | Launch { image; name; params; refs = rs; _ } ->
         Sub.launch ~refs:(refs rs) p.images.(image) name
           ~params:(String.length params.bytes)
@@ -1292,8 +1373,7 @@ let prepared p k (s : submit) =
         && v.length = B.length p.mem.(v.memory).(copy_of p v.memory k)
       then Hashtbl.replace p.fixes (v.memory, copy_of p v.memory k, d) sub)
     s.fixed;
-  let buffers = Array.make (Array.fold_left max (-1) index + 1) unset
-  and inputs = ref [] in
+  let buffers = Array.make !next unset and inputs = ref [] in
   Iarray.iteri
     (fun i slot ->
       let j = index.(i) in
@@ -1304,7 +1384,6 @@ let prepared p k (s : submit) =
         | Ints -> buffers.(j) <- view p k d (ints_view p.t))
     s.slots;
   let srun = Sub.Run.make () in
-  let known = resolve p k in
   let value = function Known n -> n | Word _ -> 0 in
   let block i = function
     | Words _ | Copy _ -> None
@@ -1355,6 +1434,7 @@ let prepared p k (s : submit) =
     srun;
     buffers;
     input_slots = Array.of_list !inputs;
+    moving = Array.of_list (List.rev !moving);
     blocks =
       Array.of_list
         (List.filter_map Fun.id (Iarray.to_list (Iarray.mapi block s.parts)));
@@ -1581,11 +1661,14 @@ let pass p q d =
     q.buffers.(i) <- bound p j d
   done
 
-(* Drops the inputs [q]'s buffers held, so a loaded program keeps no caller's
-   buffer past its run. *)
+(* Drops the inputs and copy ends [q]'s buffers held, so a loaded program
+   keeps no caller's buffer past its run. *)
 let unpass q =
   for x = 0 to Array.length q.input_slots - 1 do
     q.buffers.(fst q.input_slots.(x)) <- unset
+  done;
+  for x = 0 to Array.length q.moving - 1 do
+    q.buffers.(q.moving.(x).index) <- unset
   done
 
 let mem_buffer p k (v : view) =
@@ -1622,6 +1705,24 @@ let submit_step p k waits (spec : submit) copies =
      invalid
        "a parameter hole at byte %d: its value meets set bits of its bytes" at);
   pass p q d;
+  for x = 0 to Array.length q.moving - 1 do
+    let e = q.moving.(x) in
+    let held = match e.from with Input j -> bound p j d | _ -> e.held in
+    let o = ref 0 in
+    for t = 0 to Array.length e.offset - 1 do
+      let v, factor = e.offset.(t) in
+      o := !o + (run_value p k v * factor)
+    done;
+    let o = !o and n = B.length held in
+    if o < 0 || o > n - e.count then begin
+      unpass q;
+      invalid "a copy of %d bytes from byte %d of a slot of %d bytes" e.count o
+        n
+    end;
+    q.buffers.(e.index) <-
+      (if o = 0 && e.count = n then held
+       else B.view held ~first:o ~length:e.count)
+  done;
   let waits = if p.ran.(d) then None else waits in
   match Rig.submit ?waits q.sub ~run:q.srun ~buffers:q.buffers with
   | point ->

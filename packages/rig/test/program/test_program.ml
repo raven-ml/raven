@@ -86,6 +86,13 @@ let alloc ?(copies = G.One) ?(init = data "") device bytes =
 
 let all memory = G.Memory { memory; offset = 0; length = 64 }
 
+(* A copy part of [length] bytes from slot [src] (defaults to [0]) at
+   [src_offset] (defaults to [0]) to slot [dst] (defaults to [1]) at
+   [dst_offset] (defaults to [0]). *)
+let pcopy ?(src = 0) ?(src_offset : _ iarray = [||]) ?(dst = 1)
+    ?(dst_offset : _ iarray = [||]) length =
+  G.Copy { src; src_offset; dst; dst_offset; length }
+
 let load_ok t ds =
   require_ok ~pp:Format.pp_print_string (G.load t (Iarray.of_list ds))
 
@@ -105,7 +112,15 @@ type loc = Mem of int | In of int
 type op =
   | Fill of { dev : int; dst : loc; groups : int; base : int }
   | Kcopy of { dev : int; src : loc; dst : loc; bytes : int }
-  | Pcopy of { dev : int; src : loc; dst : loc }
+  | Pcopy of {
+      dev : int;
+      src : loc;
+      dst : loc;
+      length : int;
+      src_at : int;
+      dst_at : int;
+      per_run : bool;  (* Whether the run reads the offsets from its ints. *)
+    }
   | Move of { src : loc; dst : loc }
 
 type case = {
@@ -128,8 +143,10 @@ let pp_op ppf = function
   | Kcopy { dev; src; dst; bytes } ->
       Format.fprintf ppf "copy@%d %a->%a %d bytes" dev pp_loc src pp_loc dst
         bytes
-  | Pcopy { dev; src; dst } ->
-      Format.fprintf ppf "copy part@%d %a->%a" dev pp_loc src pp_loc dst
+  | Pcopy { dev; src; dst; length; src_at; dst_at; per_run } ->
+      Format.fprintf ppf "copy part@%d %a+%d->%a+%d %d bytes%s" dev pp_loc src
+        src_at pp_loc dst dst_at length
+        (if per_run then " per run" else "")
   | Move { src; dst } -> Format.fprintf ppf "move %a->%a" pp_loc src pp_loc dst
 
 let pp_case ppf c =
@@ -170,8 +187,23 @@ let gen_case =
           and+ words = int_range 0 (size / 8) in
           Kcopy { dev; src; dst; bytes = 8 * words } );
         ( 2,
-          let+ dev = dev and+ src, dst = two_locs in
-          Pcopy { dev; src; dst } );
+          let+ dev = dev
+          and+ src, dst = two_locs
+          and+ length = one_of [ constant size; int_range 0 size ]
+          and+ src_at = int_range 0 size
+          and+ dst_at = int_range 0 size
+          and+ per_run = bool in
+          let fit at = at mod (size - length + 1) in
+          Pcopy
+            {
+              dev;
+              src;
+              dst;
+              length;
+              src_at = fit src_at;
+              dst_at = fit dst_at;
+              per_run;
+            } );
         ( 1,
           let+ src, dst = two_locs in
           Move { src; dst } );
@@ -189,10 +221,28 @@ let gen_case =
 let gen_case = Gen.with_pp pp_case gen_case
 let devices = lazy (fst (polled "model-a"), fst (polled "model-b"))
 
+(* The offset [at] of a copy part's end: a constant, or [2 * w + at mod 2]
+   where word [w] of the run's ints holds [at / 2]. *)
+let copy_offset ~per_run w at : _ iarray =
+  if per_run then [| (G.Int w, 2); (Fixed (at land 1), 1) |]
+  else [| (Fixed at, 1) |]
+
+(* The run's ints: words [2 * i] and [2 * i + 1] hold half the offsets of op
+   [i], a copy part whose offsets the run reads. *)
+let copy_ints c =
+  let ops = Array.of_list c.ops in
+  Array.init
+    (2 * Array.length ops)
+    (fun w ->
+      match ops.(w / 2) with
+      | Pcopy { src_at; dst_at; _ } ->
+          (if w land 1 = 0 then src_at else dst_at) / 2
+      | Fill _ | Kcopy _ | Move _ -> 0)
+
 let describe c =
   let slot = function Mem m -> all m | In i -> G.Input i in
   let image d = d in
-  let step = function
+  let step i = function
     | Fill { dev; dst; groups; base } ->
         submit dev
           ~buffers:[| (slot dst, Rig.Read_write) |]
@@ -205,16 +255,25 @@ let describe c =
               (slot dst, Rig.Read_write);
             |]
           [| kcopy ~image:(image dev) bytes |]
-    | Pcopy { dev; src; dst } ->
+    | Pcopy { dev; src; dst; length; src_at; dst_at; per_run } ->
         submit dev
           ~buffers:[| (slot src, Rig.Read); (slot dst, Rig.Read_write) |]
-          [| Copy { src = 0; dst = 1 } |]
+          [|
+            Copy
+              {
+                src = 0;
+                src_offset = copy_offset ~per_run (2 * i) src_at;
+                dst = 1;
+                dst_offset = copy_offset ~per_run ((2 * i) + 1) dst_at;
+                length;
+              };
+          |]
     | Move { src; dst } -> G.Move { src = slot src; dst = slot dst }
   in
   let a, b = Lazy.force devices in
   {
     G.devices = [| Rig.arch a; Rig.arch b |];
-    ints = 0;
+    ints = 2 * List.length c.ops;
     memory =
       Iarray.init 3 (fun m ->
           alloc
@@ -229,7 +288,7 @@ let describe c =
       Iarray.map
         (fun device -> { G.device; bytes = size })
         (Iarray.of_array c.in_dev);
-    steps = Iarray.of_list (List.map step c.ops);
+    steps = Iarray.of_list (List.mapi step c.ops);
   }
 
 (* The model: memory of two copies is one per run parity. *)
@@ -251,8 +310,9 @@ let model c =
             done
         | Kcopy { src; dst; bytes; _ } ->
             Bytes.blit (cell src) 0 (cell dst) 0 bytes
-        | Pcopy { src; dst; _ } | Move { src; dst } ->
-            Bytes.blit (cell src) 0 (cell dst) 0 size)
+        | Pcopy { src; dst; length; src_at; dst_at; _ } ->
+            Bytes.blit (cell src) src_at (cell dst) dst_at length
+        | Move { src; dst } -> Bytes.blit (cell src) 0 (cell dst) 0 size)
       c.ops;
     Array.map Bytes.to_string inputs
 
@@ -263,7 +323,7 @@ let model_law c =
   let expect = model c in
   for n = 0 to 2 do
     let xs = Array.map2 (fun d s -> of_bytes ds.(d) s) c.in_dev c.inputs in
-    let points = G.run p { inputs = xs; ints = [||] } in
+    let points = G.run p { inputs = xs; ints = copy_ints c } in
     let ran =
       List.filter
         (fun d ->
@@ -293,7 +353,7 @@ let model_law c =
         let dev, reads, writes =
           match op with
           | Fill { dev; dst; _ } -> (Some dev, [], [ dst ])
-          | Kcopy { dev; src; dst; _ } | Pcopy { dev; src; dst } ->
+          | Kcopy { dev; src; dst; _ } | Pcopy { dev; src; dst; _ } ->
               (Some dev, [ src ], [ dst ])
           | Move { src; dst } -> (None, [ src ], [ dst ])
         in
@@ -324,6 +384,17 @@ let model_law c =
   cover "a copy part between memories"
     (List.exists
        (function Pcopy { src = Mem _; dst = Mem _; _ } -> true | _ -> false)
+       c.ops);
+  cover "a copy part of part of its slots"
+    (List.exists
+       (function Pcopy { length; _ } -> length < size | _ -> false)
+       c.ops);
+  cover "a copy part at offsets the run reads"
+    (List.exists
+       (function
+         | Pcopy { per_run; src_at; dst_at; _ } ->
+             per_run && src_at + dst_at > 0
+         | _ -> false)
        c.ops)
 
 (* Holes *)
@@ -678,9 +749,9 @@ let addr memory = G.Address { memory; on = 0 }
 let holed ?width ?shift n h =
   { G.bytes = String.make n '\000'; holes = [| hole ?width ?shift 0 h |] }
 
-(* [base d] whose step copies its slot [0] into its slot [1], of [slots], and
-   fills its slot [0] with a ref of [use]. *)
-let copying ?(ints = 0) ?use slots d =
+(* [base d] whose step copies [length] bytes of its slot [0] into its slot
+   [1], of [slots], and fills its slot [0] with a ref of [use]. *)
+let copying ?(ints = 0) ?use ?src_offset ?dst_offset ?(length = 64) slots d =
   let rw s = (s, Rig.Read_write) in
   {
     (base d) with
@@ -689,7 +760,10 @@ let copying ?(ints = 0) ?use slots d =
       [|
         submit 0
           ~buffers:(Iarray.map rw slots)
-          [| fill ?use ~image:0 ~groups:1 0; Copy { src = 0; dst = 1 } |];
+          [|
+            fill ?use ~image:0 ~groups:1 0;
+            pcopy ?src_offset ?dst_offset length;
+          |];
       |];
   }
 
@@ -857,16 +931,29 @@ let refusals =
             |];
         }),
       one );
-    ( "a copy of memory into ints of another length",
-      copying ~ints:2 [| head; Ints |],
+    ( "a copy past the end of its source",
+      copying ~ints:2 ~length:16 [| head; Ints |],
       one );
-    ( "a copy of memory shorter than its input",
-      copying [| head; Input 0 |],
+    ( "a copy past the end of its destination",
+      copying ~ints:1 ~length:16 [| all 0; Ints |],
       one );
-    ( "a copy of the ints into themselves",
-      copying ~ints:1 [| Ints; Ints |],
+    ( "a copy at a negative offset",
+      copying ~src_offset:[| (Fixed (-8), 1) |] ~length:8 [| all 0; Input 0 |],
       one );
-    ("a copy of an input into itself", copying [| Input 0; Input 0 |], one);
+    ( "a copy of a negative length",
+      copying ~length:(-1) [| all 0; Input 0 |],
+      one );
+    ( "a copy between overlapping bytes of the ints",
+      copying ~ints:2 ~dst_offset:[| (Fixed 4, 1) |] ~length:8 [| Ints; Ints |],
+      one );
+    ( "a copy between overlapping bytes of an input",
+      copying ~dst_offset:[| (Fixed 4, 1) |] ~length:8 [| Input 0; Input 0 |],
+      one );
+    ( "a copy offset of an int past the ints",
+      copying ~ints:1
+        ~src_offset:[| (Int 1, 1) |]
+        ~length:8 [| all 0; Input 0 |],
+      one );
     ( "a ref past its slots",
       (fun d ->
         {
@@ -1550,7 +1637,7 @@ let test_read_only_copy () =
                 (Memory { memory = 0; offset = 0; length = 8 }, Rig.Read);
                 (Input 0, Rig.Read_write);
               |]
-            [| Copy { src = 0; dst = 1 } |];
+            [| pcopy 8 |];
         |];
     }
   in
@@ -1633,8 +1720,12 @@ let gen_t =
          and+ params = data value
          and+ refs = few ref in
          G.Fill { fill; params; refs });
-        (let+ src = n and+ dst = n in
-         (Copy { src; dst } : G.part));
+        (let+ src = n
+         and+ src_offset = few (pair value int)
+         and+ dst = n
+         and+ dst_offset = few (pair value int)
+         and+ length = n in
+         (Copy { src; src_offset; dst; dst_offset; length } : G.part));
         (let+ image = n
          and+ name = str
          and+ params = data value
@@ -1726,7 +1817,7 @@ let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
   Bytes.set_int64_le s 12 7L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 7, not 11" why
+  contains ~msg:"names the versions" ~sub:"version 7, not 12" why
 
 (* A description cut inside its version is malformed where the cut is. *)
 let test_cut_version () =
@@ -2331,10 +2422,10 @@ let test_copy_part () =
                 (view 1 8, Rig.Read_write);
               |]
             [|
-              Copy { src = 0; dst = 1 };
-              Copy { src = 1; dst = 2 };
-              Copy { src = 2; dst = 3 };
-              Copy { src = 3; dst = 4 };
+              pcopy ~src:0 ~dst:1 8;
+              pcopy ~src:1 ~dst:2 8;
+              pcopy ~src:2 ~dst:3 8;
+              pcopy ~src:3 ~dst:4 8;
             |];
           G.Move
             {
@@ -2353,6 +2444,76 @@ let test_copy_part () =
         equal ~msg:(Printf.sprintf "run %d's input %d" run i) int 7 (word_of x))
       [ a; b; c ]
   done
+
+(* A copy part in a loop moves with its trips: trip [i] copies row [i] of
+   memory into row [3 - i] of the input, so the input holds the rows
+   reversed. *)
+let test_copy_loop () =
+  let d, _ = polled "copy-loop" in
+  let rows = [ 10; 11; 12; 13 ] in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      ints = 1;
+      memory =
+        [| alloc ~init:(data (String.concat "" (List.map le64 rows))) 0 32 |];
+      images = [||];
+      inputs = [| { device = 0; bytes = 32 } |];
+      steps =
+        [|
+          Loop
+            {
+              trips = Fixed 4;
+              trip = Some 0;
+              flag = None;
+              body =
+                [|
+                  submit 0
+                    ~buffers:
+                      [|
+                        ( Memory { memory = 0; offset = 0; length = 32 },
+                          Rig.Read );
+                        (Input 0, Rig.Read_write);
+                      |]
+                    [|
+                      pcopy
+                        ~src_offset:[| (Int 0, 8) |]
+                        ~dst_offset:[| (Int 0, -8); (Fixed 24, 1) |]
+                        8;
+                    |];
+                |];
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let x = of_bytes d (String.make 32 '\000') in
+  ignore (G.run p { inputs = [| x |]; ints = [||] });
+  equal ~msg:"the rows reversed" string
+    (String.concat "" (List.map le64 (List.rev rows)))
+    (read x)
+
+(* A copy's end that a run's ints put outside its slot is refused at that
+   step: [load] cannot know where it lies. *)
+let test_copy_outside () =
+  let d, _ = polled "copy-outside" in
+  let t =
+    {
+      (base d) with
+      ints = 1;
+      steps =
+        [|
+          submit 0
+            ~buffers:[| (all 0, Rig.Read); (Input 0, Rig.Read_write) |]
+            [| pcopy ~src_offset:[| (Int 0, 1) |] 8 |];
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let input = of_bytes d (String.make 64 '\000') in
+  ignore (G.run p { inputs = [| input |]; ints = [| 56 |] });
+  raises_match ~msg:"8 bytes from byte 60 of 64" Exn.invalid_arg (fun () ->
+      G.run p { inputs = [| input |]; ints = [| 60 |] })
 
 (* A memory slot that only copies name takes no slot of the step's
    submission, and the slots after it are numbered without it: memory 0, named
@@ -2377,7 +2538,7 @@ let test_renumbered () =
                 (Input 0, Rig.Read_write);
                 (all 1, Rig.Read_write);
               |]
-            [| Copy { src = 0; dst = 2 }; kcopy ~src:2 ~dst:1 ~image:0 64 |];
+            [| pcopy ~dst:2 64; kcopy ~src:2 ~dst:1 ~image:0 64 |];
         |];
     }
   in
@@ -2757,8 +2918,8 @@ let tests =
       [
         prop
           "a run leaves the bytes of its steps run in order, on any device, \
-           memory of two copies alternating by run, and answers one point per \
-           device that ran"
+           copies at the offsets they state, memory of two copies alternating \
+           by run, and answers one point per device that ran"
           gen_case model_law;
       ];
     group ~timeout "holes"
@@ -2880,6 +3041,9 @@ let tests =
         test "a fill reads each run's parameters and refs" test_fill_params;
         test "a fill with no parameters submits" test_fill_empty;
         test "a Copy part copies between its step's slots" test_copy_part;
+        test "a Copy part in a loop moves with its trips" test_copy_loop;
+        test "run raises for a copy its ints put outside its slot"
+          test_copy_outside;
         test "memory only copies name takes no slot of the submission"
           test_renumbered;
         test "an init Address comes from a step fixing its run's copy"

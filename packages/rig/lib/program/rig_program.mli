@@ -237,12 +237,22 @@ type part =
               each submit. *)
       refs : ref iarray;
     }
-  | Copy of { src : int; dst : int }
-      (** A copy from the submit's slot [src] into its slot [dst], as
-          {!Rig.Submission.copy}. An end whose slot is [Memory] is that
-          memory's buffer, set once at load. An end whose slot is an [Input]
-          or the [Ints] is a [Slot] end ({!Rig.Submission.type-side}), whose
-          buffer each run passes. *)
+  | Copy of {
+      src : int;
+      src_offset : (value * int) iarray;
+      dst : int;
+      dst_offset : (value * int) iarray;
+      length : int;
+    }
+      (** A copy of [length] bytes from byte [src_offset] of the submit's slot
+          [src] into byte [dst_offset] of its slot [dst], as
+          {!Rig.Submission.copy}. An offset is the sum, over its terms, of
+          each value times its factor, computed as a hole's sum
+          ({!type-hole}), so a copy in a loop may move with the loop's
+          trips. An end whose slot is [Memory] and whose offset reads no
+          [Int] is those bytes of the memory, set once at load. Any other end
+          is a [Slot] end ({!Rig.Submission.type-side}), whose buffer each run
+          passes. *)
   | Launch of {
       image : int;
       name : string;
@@ -350,10 +360,12 @@ val load :
     {- a ref or a copy names no slot of its submit, a slot is named by no
        ref or copy, or a slot is named by both an [Unordered] ref and a
        [Read] or [Write] ref or a copy;}
-    {- a copy's ends differ in length where load knows the lengths, which
-       are a [Memory] view's [length], [8 * ints] for the ints, and at least
-       [bytes] for an input;}
-    {- a copy's two ends are both the ints, or both one input;}
+    {- a copy's [length] is negative, or an end's offset that reads no
+       [Int] is negative or puts the end past its slot where load knows the
+       slot's length: a [Memory] view's [length] and [8 * ints] for the
+       ints;}
+    {- a copy's two ends share a byte of the ints or of one input, at offsets
+       that read no [Int];}
     {- [Rail] memory or a [Ready] names a rail that [rails] does not give;}
     {- {!Rig.Submission.make} or a run ({!Rig.Submission.Run}) refuses a
        step, [why] naming the step;}
@@ -404,8 +416,8 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
        or cannot be borrowed by a device that names it;}
     {- at a step, after the earlier steps ran, if the run refuses a launch's
        geometry, shared memory or a parameter's value read from the ints
-       ({!Rig.Submission.Run}), and as {!Rig.submit} and {!Rig.Buffer.copy}
-       raise.}}
+       ({!Rig.Submission.Run}), if a copy's offset puts its end outside its
+       slot's buffer, and as {!Rig.submit} and {!Rig.Buffer.copy} raise.}}
     Raises {!Rig.Lost} as the devices raise it. *)
 
 (** {1:machines Programs of another machine}
