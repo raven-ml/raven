@@ -1702,7 +1702,7 @@ sources are compared once D16's guard is written back as tinygrad writes it
 (`CS › sources`, `tinygrad_of_d16`). A kernel with an operation D17 narrows has a second kernel
 recorded, the same with a cast after each such operation, and its golden is
 tinygrad's source for that kernel (`CS › narrowing (D17)`). Execution runs on the host through the
-engine (`support/run.ml`), which compiles each kernel with nx.device's entry
+engine (`support/run.ml`), which compiles each kernel with rig's host entry
 (D28).
 
 | Source | Behaviour | Outcome |
@@ -1724,7 +1724,7 @@ engine (`support/run.ml`), which compiles each kernel with nx.device's entry
 | tinygrad: `null/test_compile_failures.py::TestDisassembly::test_float16_alu` | Clang on arm64 adds halves without converting | dropped here: disassembly is `Compiler_cpu`'s; that each `__fp16` operation rounds to a half is `CS › execution on the host › rounds each operation on halves to a half (D17)` |
 | tinygrad: `device/cpu/test_cpu.py::TestCPU::test_arch_feats` | the architecture's features reach the compiled code (`vmov` with `avx`) | dropped here: the compiler's flags are `Compiler_cpu`'s; `CS › declarations › cachekey` pins that Clang's cache table is named after the architecture |
 | tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_success`, `test_compile_error` | Metal compiles a kernel, and refuses bad source | slow: `CS › every GPU kernel compiles with its target's toolchain › metal_*` (49 kernels; `metal_transcendental_bf16` is xfail: tinygrad's graph truncates a bfloat without the float cast, D18); the refusal is `Compiler_metal`'s |
-| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | Metal memory and pipelines | dropped: the device's, nx.device and `tolk.engine` (plan §1a) |
+| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | Metal memory and pipelines | dropped: the device's, rig and `tolk.engine` (plan §1a) |
 | tinygrad: `renderer/cstyle.py` CUDA and HIP sources through NVRTC and comgr (no test) | the sources compile | slow: `CS › every GPU kernel compiles with its target's toolchain › cuda_*`, `hip_*`, skipped where the library is absent |
 | tinygrad: `device/cpu/test_call.py::TestExternalCall::test_call_out_param`, `test_call_ret` | a call of a function pointer, with an out parameter or a result | `CS › sources › clang_call_out`, `clang_call_ret`; their execution needs a host callback, which the executor does not provide |
 | tinygrad: `null/test_call.py::TestCallCodegen::test_call_stack_pointer` | a call whose argument is the address of a register | `CS › sources › clang_call_stack` (holds `(unsigned int*)((buf0+0))`) |
@@ -1827,7 +1827,7 @@ an object the installed objdump cannot read, skips.
 |---|---|---|
 | tinygrad: `device/cpu/test_cpu.py::TestCPU::test_arch_feats` | `x86_64,x86-64,avx` puts `vmov` in the add kernel, `-avx` does not | `CPU › as tinygrad › the add kernel moves vectors with vmov iff AVX is on: › x86_64,x86-64,avx`, `› x86_64,x86-64,-avx` |
 | tinygrad: `null/test_compile_failures.py::TestDisassembly::test_float16_alu` | on Apple's processors a half addition has no `fcvt` | `CPU › as tinygrad › a half addition on an Apple processor converts nothing` |
-| tinygrad: `null/test_elf.py::TestElfLoader::test_clang_jit_compiler_external_raise`, `test_load_clang_jit_strtab`, `test_link` | the loader refuses an unresolved symbol, reads `.rela.text`, links libm | dropped: loading is nx.device's (`Nx_device.Program`); that the compiled object needs nothing of a library is `CPU › execution on the host › a compiled square root runs without a library` |
+| tinygrad: `null/test_elf.py::TestElfLoader::test_clang_jit_compiler_external_raise`, `test_load_clang_jit_strtab`, `test_link` | the loader refuses an unresolved symbol, reads `.rela.text`, links libm | dropped: loading is rig's (`Rig.Image`); that the compiled object needs nothing of a library is `CPU › execution on the host › a compiled square root runs without a library` |
 | tinygrad: `runtime/support/compiler_cpu.py` `-fno-math-errno` (no test) | a square root is an instruction, not a call | `CPU › objects › a square root is one instruction on › x86_64,x86-64`, `› arm64,generic`; `CPU › execution on the host › a compiled square root runs without a library` |
 | tinygrad: `runtime/support/compiler_cpu.py` `-ffixed-x18` (no test) | x18 is left alone on arm64 | `CPU › features › arm64 leaves x18 alone` |
 | tinygrad: `runtime/support/compiler_cpu.py` features (no test) | arm64 `f` is `+f` and `-f` is `+nof`; riscv64 joins features as extensions, `native` is `rv64g` | `CPU › features › a half addition on arm64 converts iff fp16 is off:` (2), `arm64 vectorizes with its SIMD registers`, `-simd on arm64 disables them`, `a feature on riscv64 is an extension the processor gains`; `CPU › objects › native on riscv64 is rv64g` |
@@ -1837,9 +1837,9 @@ an object the installed objdump cannot read, skips.
 | old: `unit/runtime/cpu/test_compiler.ml` "outputs relocatable ELF for normalized host" | ELF magic, class, byte order, relocatable type, the host's machine | `CPU › objects › native is the host's processor` |
 | old: `unit/runtime/cpu/test_compiler.ml` "explicit architectures" | the ELF machine of `x86_64`, `arm64` and `riscv64` | `CPU › objects › compiles to a relocatable ELF object for › x86_64,x86-64`, `› arm64,generic`, `› riscv64,rv64g` |
 | old: `unit/runtime/cpu/test_compiler.ml` "architecture requires a CPU field" | `arm64` alone is refused | `CPU › architectures › an architecture of fewer than two fields is refused, named: › "arm64"`; the old refusal was a `Compile_error` at compile, tinygrad's and tolk's is at construction |
-| old: `unit/runtime/cpu/test_compiler.ml` "output is parseable by ELF support" | the object has `.text` and the symbol | dropped: ELF parsing is nx.device's; `CPU › execution on the host › a compiled kernel adds two buffers` loads and runs the object |
+| old: `unit/runtime/cpu/test_compiler.ml` "output is parseable by ELF support" | the object has `.text` and the symbol | dropped: ELF parsing is rig's; `CPU › execution on the host › a compiled kernel adds two buffers` loads and runs the object |
 | old: `unit/runtime/cpu/test_compiler.ml` "invalid C raises Compile_error" | Clang's diagnostics in the error | `CPU › errors › a rejected source raises Compile_error with Clang's diagnostics`; `CPU › without Clang › a compile raises Compile_error naming the program CC names` |
-| old: `unit/test_elf.ml` external-call relocations of Clang objects | PLT32 relocations of an object | dropped: ELF relocation is nx.device's |
+| old: `unit/test_elf.ml` external-call relocations of Clang objects | PLT32 relocations of an object | dropped: ELF relocation is rig's |
 | none | determinism | `CPU › objects › one source compiles to the same bytes` |
 
 ## Compiler_cuda
@@ -1858,10 +1858,10 @@ against NVRTC 12.8 on Linux arm64.
 | tinygrad: `runtime/support/compiler_cuda.py` `cuda_disassemble` | `ptxas` then `nvdisasm`, or why they failed | `CUDA › disassembly › a PTX that ptxas cannot assemble prints why`, `a cubin that nvdisasm cannot read prints why` |
 | D15 | making the compiler loads nothing; the first compile raises | `CUDA › without NVRTC on the machine › a compile raises Compile_error naming nvrtc and NVRTC_PATH`; `CUDA › a library that does not load` (4 tests) |
 | tinygrad: `device/nv/test_renderer_failures.py`, `runtime/test_renderer_failures.py` | kernels that once failed to render | dropped here: rendering is `Cstyle`'s section; slow: `Tolk.Cstyle › every GPU kernel compiles with its target's toolchain` compiles every CUDA kernel |
-| old: `unit/test_cuda_abi.ml` "concurrent initialization publishes a complete driver table" | a load from several domains at once | `CUDA › a library that does not load › compiles from several domains at once raise it`; slow: `CUDA › NVRTC › compiles from several domains at once`. The driver table itself is the executor's (nx.device) |
+| old: `unit/test_cuda_abi.ml` "concurrent initialization publishes a complete driver table" | a load from several domains at once | `CUDA › a library that does not load › compiles from several domains at once raise it`; slow: `CUDA › NVRTC › compiles from several domains at once`. The driver table itself is the executor's (rig) |
 | old: `unit/test_cuda_abi.ml` "missing driver symbols stay failed across callers" | a failed load stays failed | `CUDA › a library that does not load › every compile raises the same Compile_error` |
-| old: `unit/test_cuda_abi.ml` the timestamp, submission, copy, host registration and shutdown tests (5) | the CUDA driver's queues and memory | dropped: the runtime is nx.device's and `tolk.engine`'s (plan §1a) |
-| old: `unit/test_runtime_nv.ml` "the recorded nvrtc kernel parses to its recorded fields" | a recorded kernel | dropped: the NV runtime is nx.device's |
+| old: `unit/test_cuda_abi.ml` the timestamp, submission, copy, host registration and shutdown tests (5) | the CUDA driver's queues and memory | dropped: the runtime is rig's and `tolk.engine`'s (plan §1a) |
+| old: `unit/test_runtime_nv.ml` "the recorded nvrtc kernel parses to its recorded fields" | a recorded kernel | dropped: the NV runtime is rig's |
 
 ## Compiler_amd
 
@@ -1897,7 +1897,7 @@ of MTLCompiler itself skip elsewhere than on macOS.
 |---|---|---|
 | tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_success` | a kernel compiles to a library | `M › MTLCompiler › compiles a kernel to a Metal library` |
 | tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_error` | `CompileError` on bad source | `M › MTLCompiler › a rejected source raises Compile_error with the compiler's message` |
-| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | the device's memory and pipelines | dropped: the device is nx.device's and `tolk.engine`'s (plan §1a) |
+| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | the device's memory and pipelines | dropped: the device is rig's and `tolk.engine`'s (plan §1a) |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the reply's data starts after the header and the warnings | `M › MTLCompiler › a source that draws warnings compiles to a Metal library` |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the Metal version by macOS, `-fno-fast-math` | `M › MTLCompiler › the language is the latest the running macOS compiles kernels of`, `fast math is off` |
 | tinygrad: `runtime/ops_metal.py` `MetalCompiler.__reduce__` | one compiler per forked process | dropped: no pickling; `M › MTLCompiler › compiles from several domains at once` pins the concurrent use of one service |
@@ -2120,12 +2120,12 @@ domains share a renderer cannot run under mutation testing, which forks.
 | tinygrad: null/test_device.py::TestDevice::test_old_renderer_env_raises | `CPU_LLVM=1` is refused | dropped: the `{DEV}_{RENDERER}` migration check is not ported (README exclusions) |
 | tinygrad: null/test_device.py::TestDevice::test_canonicalize, test_lowercase_canonicalizes | `cpu`, `CL:0` and `disk:...` canonicalize | `DV › renderer takes a device's name as it is (D6)`: tolk never parses a name, and refuses `cpu`, `CPU:0` and `DISK:...` |
 | tinygrad: null/test_device.py::TestDevice::test_getitem_not_exist | `Device["TYPO"]` fails | `DV › renderer › raises on a name that is no device` |
-| tinygrad: null/test_device.py::TestDevice::test_nonexistent_iface, test_dev_id_out_of_range, test_old_device_env_raises, test_set_device_default_raises, test_dev_contextvar | interfaces, device indices, `Device.DEFAULT` | dropped: opening devices is `tolk.engine`'s and nx.device's, and there is no default device (D3) |
+| tinygrad: null/test_device.py::TestDevice::test_nonexistent_iface, test_dev_id_out_of_range, test_old_device_env_raises, test_set_device_default_raises, test_dev_contextvar | interfaces, device indices, `Device.DEFAULT` | dropped: opening devices is rig's, and there is no default device (D3) |
 | tinygrad: null/test_device.py::TestCompiler (3 tests) | the compiler cache | Renderer's section (`R › Compiler`) |
 | tinygrad: null/test_device.py::TestRunAsModule::test_module_runs | `enumerate_devices_str` | dropped: not ported (README exclusions) |
 | tinygrad: uop/ops.py `to_elf` (read by ops_cpu, ops_cuda, ops_metal, ops_nv, ops_qcom, realize) | buffers compacted in globals order, then variables | `DV › Tiny_elf.of_program › lays out the signature as tinygrad's to_elf does › signatures.golden`; `numbers buffers by their place among the globals, then variables` |
 | tinygrad: device.py `TinyELF.iter_sig` (read by ops_cpu, ops_hip, hcq2) | values packed from an offset, each aligned to its size | `DV › Tiny_elf.iter_sig › packs a signature as tinygrad's iter_sig does › layouts.golden` (offsets 0, 3 and 8); `packs each value at the next offset aligned to its size` |
-| tinygrad: test/helpers.py:146, test/amd/hw/*.py (`dev.runtime(prg.to_elf())`, hand-made `TinyELF`) | loading a program | dropped: loading is nx.device's (D3) |
+| tinygrad: test/helpers.py:146, test/amd/hw/*.py (`dev.runtime(prg.to_elf())`, hand-made `TinyELF`) | loading a program | dropped: loading is rig's (D3) |
 
 ### old tolk
 
@@ -2139,8 +2139,8 @@ domains share a renderer cannot run under mutation testing, which forks.
 | old: unit/test_program_spec.ml "incomplete scalar metadata is rejected before ABI construction", "conflicting scalar declarations are rejected before dispatch", "buffer and scalar declarations share collision checks" | the old program record refused variables without names or bounds, and names that render alike | dropped: `Program_spec` has no counterpart, and tinygrad's `to_elf` checks neither; a variable's name and bounds are `Ops.variable`'s |
 | old: unit/test_device.ml "Buffer.copy_from delegation" (3 tests), unit/test_device_no_engine.ml (2 tests) | buffer copies, and their failure before the engine links | the engine's section (L7): buffers are `tolk.engine`'s (D3) |
 | old: unit/test_device.ml "device bootstrap registration rolls back failed initialization", "concurrent device lookup runs one opener", "incomplete devices are private to the initializing thread", "failed device initialization wakes waiting callers", "failed openers cannot publish provisional devices" | the device registry | dropped: the engine has no registry of devices by name (README) |
-| old: unit/test_device.ml "independent views share root ownership across domains", "program storage belongs to the device across links", "failed buffer finalizers are reported without retrying teardown", "buffer finalizers wait for device operations", "buffer finalizers wait for overlapping systhreads", "suspended device operations reject unrelated fibers", "foreign retirement waits for the active native owner", "buffer finalizers preserve queued retirement error timing", the three "teardown shares device ownership" tests, "foreign access completion is captured, coalesced and retried", "same-name foreign completions retain separate owners" | buffer and device lifetimes across domains and threads | dropped: storage and its lifetime are `tolk.engine`'s and nx.device's (D3); tinygrad has none of these contracts |
-| old: unit/test_device.ml "host storage owns zeroed pages suitable for GPU registration", "per-device mappings share base ownership and release before storage", "opaque storage access requires a type identity", "BUFFER owns storage across execution contexts", the three "serialization" tests, "buffer byte ranges reject overflow", "empty storage never calls an allocator", "failed view allocation preserves ownership", "stale views refresh on every storage access", "external views refresh without freeing their owner" | allocators, views and storage | dropped: allocators are nx.device's and the lazy `Buffer` `tolk.engine`'s (D3) |
+| old: unit/test_device.ml "independent views share root ownership across domains", "program storage belongs to the device across links", "failed buffer finalizers are reported without retrying teardown", "buffer finalizers wait for device operations", "buffer finalizers wait for overlapping systhreads", "suspended device operations reject unrelated fibers", "foreign retirement waits for the active native owner", "buffer finalizers preserve queued retirement error timing", the three "teardown shares device ownership" tests, "foreign access completion is captured, coalesced and retried", "same-name foreign completions retain separate owners" | buffer and device lifetimes across domains and threads | dropped: storage and its lifetime are `tolk.engine`'s and rig's (D3); tinygrad has none of these contracts |
+| old: unit/test_device.ml "host storage owns zeroed pages suitable for GPU registration", "per-device mappings share base ownership and release before storage", "opaque storage access requires a type identity", "BUFFER owns storage across execution contexts", the three "serialization" tests, "buffer byte ranges reject overflow", "empty storage never calls an allocator", "failed view allocation preserves ownership", "stale views refresh on every storage access", "external views refresh without freeing their owner" | allocators, views and storage | dropped: allocators are rig's and the lazy `Buffer` `tolk.engine`'s (D3) |
 
 ### Rows other sections left to Device's
 
@@ -2548,8 +2548,8 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 |---|---|---|
 | tinygrad: engine/realize.py `get_call_arg_uops`, `get_call_var_uops`, `get_call_outs_ins`, `get_call_written_bufs`, `get_call_name`, `estimate_uop` | what a call does | `R › calls of recorded schedules › calls.golden` (21 calls of 14 programs), and `R › get_call_arg_uops`, `› get_call_var_uops`, `› get_call_outs_ins`, `› get_call_written_bufs`, `› get_call_name`, `› estimate_uop` (25 tests) |
 | tinygrad: engine/realize.py `lower_and_compile` | kernels compiled once, in parallel unless one asks for a beam | `R › lower_and_compile of recorded schedules` (14 goldens), `R › lower_and_compile` (8 tests), `R › lower_and_compile with a beam search`, `R › lower_and_compile in parallel` |
-| tinygrad: engine/realize.py `pm_beam`, `compile_linear`'s `BEAM` | a kernel asking for no beam asks for `BEAM`'s | `Hcq2 › compile_linear › makes each kernel ask for a beam of the width BEAM sets` |
-| tinygrad: engine/realize.py `get_call_kernels`, `track_stats`, `ExecContext`, `exec_*`, `runtime_cache`, `run_linear`, `time_call`, `link_linear`, `capturing` | running a linear | dropped here: the run half is `tolk.engine`'s (plan §1a); its execution is `Hcq2 › linking and running` |
+| tinygrad: engine/realize.py `pm_beam`, `compile_linear`'s `BEAM` | a kernel asking for no beam asks for `BEAM`'s | `JB › JITBEAM unset › a kernel is searched with BEAM's width` |
+| tinygrad: engine/realize.py `get_call_kernels`, `track_stats`, `ExecContext`, `exec_*`, `runtime_cache`, `run_linear`, `time_call`, `link_linear`, `capturing` | running a linear | dropped here: the run half is `tolk.engine`'s (plan §1a); its execution is `EN › link and run` |
 | tinygrad: engine/realize.py `pm_validate`, `exec_validate`, `VALIDATE_WITH_CPU` | | dropped: excluded (ruling) |
 | tinygrad: engine/realize.py `get_call_name`'s `encdec` and `get_call_outs_ins`'s | | dropped: the video decoder queue is excluded |
 | tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots | a compiled program keeps its own variable slots | `R › get_call_var_uops › is the constant a call binds each variable to, in the program's order` (a program's variables are read by name, whatever the call's slots) |
@@ -2574,152 +2574,50 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 | old: unit/engine/test_realize.ml "beam lowering stays in the caller" | | `R › lower_and_compile with a beam search › searches each kernel with the width it asks for, in order, one at a time` |
 | old: unit/engine/test_realize.ml group "PROGRAM completion" (6 tests) | a program partly compiled is completed, a complete one kept | `R › lower_and_compile ›` "leaves a compiled program alone"; a partial program is no longer completed (D129) |
 | old: unit/engine/test_realize.ml group "Scoped capture" (5 tests) | | dropped: the captured jit (L8) |
-| old: unit/engine/test_realize.ml "multi-owner templates retire…", "concurrent submissions retain their own address tables", "independent links serialize reservations…", "submission addresses are resolved after preparation", "submission scope permits reentry…", "failed preparation leaves the address table unchanged…", "retained queue replay rejects replaced device owners…" | submissions of a linked batch | `Hcq2 › linking and running ›` "a run waits for its batch's previous run before it rewrites the batch's memory", "a link serves any buffers bound to its inputs"; the owners and their failures are old tolk's contracts, dropped |
+| old: unit/engine/test_realize.ml "multi-owner templates retire…", "concurrent submissions retain their own address tables", "independent links serialize reservations…", "submission addresses are resolved after preparation", "submission scope permits reentry…", "failed preparation leaves the address table unchanged…", "retained queue replay rejects replaced device owners…" | submissions of a linked batch | `EN › runs › runs of one schedule from two domains each compute their own`, `EN › link and run › a schedule runs on the buffers each run binds to its parameters`; the owners and their failures are old tolk's contracts, dropped |
 | old: unit/engine/test_realize.ml "concurrent execution records every cost and timing", "execution counters retain exact large costs" | | dropped: `GlobalCounters` belong to the run half (`tolk.engine`) |
-| old: unit/engine/test_realize.ml "compilation resolves beam context once and respects explicit zero" | | `Hcq2 › compile_linear › makes each kernel ask for a beam of the width BEAM sets` |
+| old: unit/engine/test_realize.ml "compilation resolves beam context once and respects explicit zero" | `JB › JITBEAM unset › a kernel is searched with BEAM's width` |
 | old: unit/engine/test_realize.ml "timing samples…", "failed timing dispatch…", "failed timing drain…" | | dropped: `time_call` is the engine's `time` |
-| old: unit/engine/test_realize.ml "compiled launch uses fixed workgroups", "passes every scalar from program metadata", "requires scalar variables" | | `Hcq2 › linking and running › a schedule's variables reach its kernels`; launch sizes are `Call.launch_dims` (Ops' section) |
+| old: unit/engine/test_realize.ml "compiled launch uses fixed workgroups", "passes every scalar from program metadata", "requires scalar variables" | `EN › link and run › a schedule runs with each binding of its variables`; launch sizes are `Call.launch_dims` (Ops' section) |
 | old: unit/engine/test_realize.ml group "Program cache" (5 tests) | cache keys of programs | dropped here: `Codegen.to_program`'s cache (its section, D5) |
 | old: unit/engine/test_realize.ml "rewrites CALL(SINK) to CALL(PROGRAM) with source and binary" | | `R › lower_and_compile › makes each call of a kernel a call of its program`, `R › lower_and_compile of recorded schedules` |
-| old: unit/engine/test_realize.ml group "Buffer copy" (5 tests) | copies between devices and staging | `Hcq2 › linking and running ›` "a copy between devices and the kernel it feeds agree…", "copies across three devices agree…", `Hcq2 › compile_linear › copies through the halves of a staging buffer…`; size checks are nx.device's `Buffer.copy` |
-| old: unit/engine/test_realize.ml group "Owned buffer resolution" (5 tests), group "Linear execution" (6 tests) | resolving arguments and running kernels | `Hcq2 › linking and running` (the engine's link and run); the owners are old tolk's, dropped |
-
-## Hcq2
-
-`H` is the `Hcq2` suite (`test/runtime/support/hcq2`). Its goldens come from
-tinygrad's NULL queue on the CPU devices CPU:1 to CPU:3, with D1 applied in the
-generator: for each of ten cases, the batches `sched_batches` makes, the
-schedule `compile_linear` returns and its host programs' source. It runs batches
-through `tolk.engine` on the NULL device of test support, which runs the queues
-the host programs submit on a domain of its own. `test_hcq2_sdma` runs apart,
-with `HCQ_NUM_SDMA` set.
-
-### tinygrad
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: null/test_hcq2.py::TestHCQ2Deps (6 tests) | byte-range dependencies | `H › Deps` (6 tests, one each) and `H › Deps law › Deps agrees with a byte-by-byte model` |
-| tinygrad: null/test_hcq2.py `run`, `check`, `orders` | the symbolic executor of a batch's queues | `Batches` (test support) and `H › sched_batches`'s `well_formed` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_kernels_run_in_order | | `H › sched_batches › kernels on one queue run in order`; `chain_batched.golden` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_a_peer_kernel_runs_after_the_copy_that_feeds_it | | `H › sched_batches › a kernel runs after the copy that feeds it`; `peer_copy_batched.golden` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_lanes_of_a_sharded_kernel_do_not_wait_for_each_other | | `H › sched_batches › kernels of different devices do not wait for each other`; `sharded_batched.golden` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_a_device_without_a_copy_queue_copies_with_a_kernel | | `H › compile_linear › a copy on a device without copy queues is a kernel`, `H › linking and running › a copy without copy queues runs as a kernel, and copies`; `peer_copy_kernel_*.golden` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_a_host_kernel_splits_the_batch | | `H › sched_batches › a call on a device without queues splits the batch`; `host_split_*.golden` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_batches_of_real_workloads_are_well_formed | | `H › sched_batches › copies between devices of three kinds are well formed`; `sharded_sum_*.golden`, `copies_*.golden` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Profile::test_profiling_reports_a_range_per_kernel | | `H › linking and running › a profile records a span of each kernel on its device, in order`; `H › stamp slots (D7)` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Profile::test_slots_addressed_by_the_device | slots read through the device's own addresses (`pm_lower`) | dropped: `pm_lower` is excluded (ruling) |
-| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_links_serve_any_input | | `H › linking and running › a link serves any buffers bound to its inputs` |
-| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_eager_templates_compile_once | | dropped: the eager-template caches are excluded (ruling) |
-| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_repeated_word_loops | | `H › patch and bufferize_cmdbuf › a word written at several offsets is written by one loop` |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_compile_and_link_are_idempotent | | `H › compile_linear › returns a linear holding a lowered batch as it is`; `H › lower_call › raises Invalid_argument for a batch lowered already`; linking twice is the engine's |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call, test_jit_symbolic | | `H › linking and running ›` "a link serves any buffers bound to its inputs", "a schedule's variables reach its kernels"; the jit is L8 |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | | `H › linking and running › a batch split by a host kernel agrees with running them one by one` |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_map_cpu_buffer_preserves_contents, test_caches_hold_no_buffers, test_jit_has_no_rt_buffers | | dropped: nx.device's borrows, the excluded template caches and ring buffers |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Fence::test_a_schedule_waits_for_its_previous_run | | D1: the wait is the engine's `Submission.wait`; `H › linking and running › a run waits for its batch's previous run before it rewrites the batch's memory`; the re-arm is `H › timeline values (D1) ›` "the fence is of every queue's signal", "the fence lowers to stores of zero into the slots, and nothing else" |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2FFI::test_ffi_ccall, test_ffi_cstruct, test_nested_cstruct_patches | | `H › ccall, cstruct and cfield` (4 tests) |
-| tinygrad: runtime/support/hcq2.py `layout_args`, `pack_args` | | `H › layout_args and pack_args` (4 tests) |
-| tinygrad: runtime/support/hcq2.py `patch`, `HWQueue.q` | | `H › patch and bufferize_cmdbuf ›` "patch writes its blob, then its rows…", "a row known at link is written at link…"; `H › Queue` (4 tests) |
-| tinygrad: runtime/support/hcq2.py `sched_batches`'s queue choice, `HCQ_NUM_SDMA`, `ALL2ALL` | | `H › sched_batches ›` "a program runs on its compute queue, a copy on its source's copy queue", "AMD copies between peers take one queue, and one per peer with ALL2ALL"; `test_hcq2_sdma` |
-| tinygrad: runtime/support/hcq2.py `_wait_ins`'s NV chain | | `H › sched_batches › on NV a compute queue that waits for another queue waits for its previous call too` |
-| tinygrad: runtime/support/hcq2.py `get_enqueue_devs`'s Metal copies | | `H › sched_batches › Metal's copies stay outside batches, since the host copies its memory` |
-| tinygrad: runtime/support/hcq2.py `stage_copy` | | `H › compile_linear › copies through the halves of a staging buffer of the host where the queues cannot reach` |
-| tinygrad: runtime/support/hcq2.py `pm_unwrap_multi` | | `H › compile_linear › runs a call on sharded buffers once per device, each on its shard`, `H › linking and running › a sharded kernel computes each shard on its device` |
-| tinygrad: runtime/support/hcq2.py `lower_call` | | `H › lower_call` (6 tests), `*_compiled.golden` |
-| tinygrad: runtime/support/hcq2.py `hcq_link`, `pm_link`, `LinkCtx` | | dropped here: the engine's link; run through `H › linking and running` |
-| tinygrad: runtime/support/hcq2.py `split_rdma`, `pm_rdma_encode` | | dropped: RDMA is excluded |
-| — | D1 | `H › timeline values (D1)` (9 tests); the goldens |
-| — | D7 | `H › stamp slots (D7)` (4 tests) |
-| — | D12 | `H › profile keys (D12)` (2 tests) |
-| — | D30 | `H › ranges (D30)` (15 tests); `H › Deps › a write that does not trim keeps the accesses to the bytes it writes`, `› forgotten accesses are no longer followed` |
-
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: unit/engine/test_hcq2.ml all_to_all_copy_queues | SDMA queue counts | `H › sched_batches › AMD copies between peers…`, `test_hcq2_sdma` |
-| old: unit/engine/test_hcq2.ml staged_peer_dependencies | staging alternates two slots, each reused after its reads | `H › compile_linear › copies through the halves of a staging buffer…` (the copies' count); the dependencies are `H › Deps` |
-| old: unit/engine/test_hcq2.ml peer_group_batches | one batch per kind, in order | `H › sched_batches › consecutive calls of two kinds make a batch of each, in the order they appear` |
-| old: unit/engine/test_hcq2.ml sharded_batches | a sharded kernel and the next copies in one batch | `sharded_batched.golden`, `sharded_sum_batched.golden` |
-| old: unit/engine/test_hcq2.ml byte_dependencies | | `H › Deps law › Deps agrees with a byte-by-byte model` |
-| old: unit/engine/test_hcq2.ml region_identity | views of one storage and lanes | `H › unwrap_view and unwrap_lane` (7 tests) |
-| old: unit/engine/test_hcq2.ml overlap_waits, parameter_views | only overlapping accesses wait | `H › Deps ›` "a write of other bytes keeps the dependencies", "views of one storage depend on the bytes they share" |
-| old: unit/engine/test_hcq2.ml nv_chain | | `H › sched_batches › on NV a compute queue…` |
-| old: unit/engine/test_hcq2.ml alias_ordering | | `H › Deps › an access never waits for itself through an alias`, `H › Deps › a write waits for every read since the last write` |
-| old: unit/engine/test_hcq2.ml peers_and_timestamps | epilogues of peers, profile slots | `H › timeline values (D1) › a queue touching a peer's memory waits for the peer's submitted work too`, `H › stamp slots (D7)` |
-| old: unit/engine/test_hcq2.ml compiled_host_submission | the host program patches and replays | `H › linking and running` |
-| old: unit/engine/test_link.ml replacement_ownership, obsolete_link_collection, concurrent_link_publication | | dropped: old tolk's owners and link caches (the templates are excluded) |
-| old: unit/engine/test_link.ml allocation_specs | command buffers uncached, volatile placeholders on the host | dropped here: the engine's allocation (`tolk.engine`'s link) |
-| old: unit/engine/test_link.ml initialization, cast_patches, addresses | blobs, words and addresses written at link | `H › patch and bufferize_cmdbuf`, `H › ccall, cstruct and cfield › a C structure holds each field…` |
-| old: unit/engine/test_link.ml input_links, preserve_runtime, host_call_replay | | `H › linking and running › a link serves any buffers bound to its inputs`, `H › patch and bufferize_cmdbuf › a word written at several offsets…` (two runs) |
+| old: unit/engine/test_realize.ml group "Buffer copy" (5 tests) | copies between devices and staging | `EN › link and run › copies run in the order of their schedule`, `EN › link and run › recorded ›` "copy …"; size checks are rig's `Buffer.copy` |
+| old: unit/engine/test_realize.ml group "Owned buffer resolution" (5 tests), group "Linear execution" (6 tests) | resolving arguments and running kernels | `EN › link and run` (the engine's link and run); the owners are old tolk's, dropped |
 
 ## Engine
 
 The suite is `Tolk_engine` (`engine/tolk_engine/`), written `EN`
-below. `EN › batches` runs batches on the NULL devices of test support
-(`Null_device`), whose queues run behind the host on a domain of their own:
-the engine's half of D1 (each run signals its device's next value once), D7
-(each kernel's span on its compute lane, each copy's on its copy lane), runs
-from two domains, and the waits of RFC 0011's Amendment 2, on the device and
-on the host. The batches' encoding and the rest of their execution, the fence
-under latency included, are the Hcq2 suite's (`H`). `EN › Metal` (slow, on
-macOS) runs the recorded copies on the Metal device, from the host: what they
-write, the buffers each run binds, one signal per run through Metal's shared
-event, runs from two domains, and no allocation or load during a run; the rest
-of Metal's execution is the Ops_metal suite's. `EN › timing` times a program on
-the host, on CPU:1's queues and on Metal. `EN › link and run › recorded` runs the Schedule suite's recorded
+below. `EN › link and run › recorded` runs the Schedule suite's recorded
 programs end to end: each is scheduled, compiled for the devices it names
-(the host and test devices of the host's memory, `Run.devices`), linked with
-its storage bound to buffers of small integers, and run, and its storage then
-holds what its tensors compute (Tensors), with each variable at the value it
-runs with. One program of each kind of call runs by default, the rest are slow.
-`EN › link and run › a schedule runs on the buffers each run binds to its
-parameters` makes a program's buffers parameters of the compiled schedule and
-runs it on two sets of buffers.
-
-Kernels compile on the Worker's domains and the NULL devices run their queues
-on one, and OCaml refuses `Unix.fork` in a process that has spawned a domain,
-so each of `tolk_engine.ml`'s 75 mutants is armed in a process of its own
-(`--arm`) over the default run: 62 fail it. With the run lock removed by hand,
-the two-domain test fails on each of three runs. `||` as `&&` in the storage
-a batch's patches reach drops that storage from the buffers a run touches,
-which alone tell `Nx_device.submit` about link-folded storage of a device
-outside the batch: `EN › batches › a run waits for a device without queues of
-storage` fails, since the work that fills its source touches nothing else the
-run touches. The survivors:
-- dismissed in the source as equivalent (five), and, equivalent too, any
-  parameter or any tagged node counting as a placeholder in a batch's
-  patches, which hold only placeholders and storage;
-- the kernel count of a `DEBUG=2` line, one less: the count is the process's,
-  so a test sees only that each line counts one more than the line before;
-- `sp.device == d && sp.name = name` as `||` in a batch's `DEBUG=2` lines: a
-  batch's kernels take their devices' spans in order, so the first span of the
-  device is the kernel's own;
-- `sp.device == d && sp.name = name` as `||` in `time`: a host profile of
-  one call holds one span;
-- `info.table < 0` as `<= 0`: a batch whose host program reads its address
-  table first takes it as its first argument, and no batch here does. The
-  NULL devices' batches read their submission's word first, as tinygrad's
-  NULL batches read their doorbell, and Metal's read `objc_msgSend`'s word
-  first, or their slots under a profile.
+(the host and memory devices, `Run.devices`), linked with its storage bound
+to buffers of small integers, and run, and its storage then holds what its
+tensors compute (Tensors), with each variable at the value it runs with. One
+program of each kind of call runs by default, the rest are slow. `EN › link
+and run › a schedule runs on the buffers each run binds to its parameters`
+makes a program's buffers parameters of the compiled schedule and runs it on
+two sets of buffers. `EN › GPUs` runs recorded programs, loops, a gather and
+the `DEBUG` reports on Metal, CUDA, NV and AMD through rig, each skipping
+without its GPU. `EN › timing` times a program on the host, on a memory
+device, whose kernels the host runs, and on Metal.
 
 ### tinygrad
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `runtime/support/hcq2.py` `_staging` (no test) | one staging buffer of 128 MiB per host, which every schedule's staged copies share | `EN › batches › linked schedules that stage share the host's staging memory`; their order: `› staged runs of two programs on other devices take turns`, `› staged runs of two programs from two domains each copy their own`, which the NULL devices also order through the host memory every batch touches (D45) |
+| tinygrad: `runtime/support/hcq2.py` `_staging` (no test) | one staging buffer of 128 MiB per host, which every schedule's staged copies share | dropped: staging is rig's (`Rig.Buffer.copy`, D146) |
 | tinygrad: null/test_hcq2.py::TestHCQ2Link::test_links_serve_any_input | a linked schedule serves any input, whose address it does not keep | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` (contiguous, copy_view, shard_add) |
-| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_eager_templates_compile_once | compiling a schedule again returns the compiled one | dropped here: compile_linear's result is Hcq2's; the engine keeps no cache of links, and rune keeps its programs by key |
+| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_eager_templates_compile_once | compiling a schedule again returns the compiled one | dropped here: the engine keeps no cache of links, and rune keeps its programs by key |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | a copy out, a copy in and a copy out run in order | `EN › link and run › copies run in the order of their schedule` |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_caches_hold_no_buffers | freeing the values frees the device memory | `EN › runs › a linked schedule holds its storage while it is reachable` |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_has_no_rt_buffers | a jit's link owns its buffers, none from the one-shot ring | dropped: the engine has no ring; link allocates everything a schedule names (`EN › runs › a run of kernels allocates and loads nothing`) |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call, test_jit_symbolic | a captured jit's new inputs and bindings | the engine's half: `EN › link and run › a schedule runs on the buffers each run binds to its parameters`, `a schedule runs with each binding of its variables`; the jit is L8's |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_map_cpu_buffer_preserves_contents | mapping host memory for a device keeps its bytes | dropped: mapping is nx.device's (`Buffer.borrow`) |
-| tinygrad: runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop, test_nested_loop_in_range, test_two_sequential_loops, test_loop_in_loop | do-while loops count to 10, 12, 25 and 12 | `EN › Program › loops ›` "wait_loop runs its loops to 10", "nested_loop …", "two_loops …", "loop_in_loop …", from the Linearizer's goldens |
-| tinygrad: runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop_spec | the loop under `SPEC=2` | dropped: the specification is Spec's; the loop runs in `EN › Program › loops` |
-| tinygrad: runtime/test_wait_loop.py::TestVolatileLoops::test_async_wait_ext | a kernel spins on a host word another thread sets | dropped: every wait of a run is `Submission.wait` (D1), so no program the engine runs spins on the host |
-| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_kernel_run_wait | a kernel run is one profile range named after the kernel | `EN › runs › each kernel of a run is a span of the host under a profile`; on a device with queues, `EN › batches › a kernel is a span of its compute lane and a copy of its copy lane` |
-| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_copyin, test_profile_multiops, test_profile_multidev, TestSimpleProfiler::test_profiler, TestProfiler::test_cpu_profile | copies and host ranges are profile events | dropped: nx.device records its copies and host spans (`Nx_device.Profile`) |
-| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_multidev_transfer, test_profile_graph, test_dev_jitter_matrix | device-to-device transfers, graph events and clock jitter | dropped: hardware with two devices, and nx.device's calibration |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_map_cpu_buffer_preserves_contents | mapping host memory for a device keeps its bytes | dropped: mapping is rig's (`Rig.Buffer.borrow`) |
+| tinygrad: runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop, test_nested_loop_in_range, test_two_sequential_loops, test_loop_in_loop | do-while loops count to 10, 12, 25 and 12 | `EN › kernels on the host › loops ›` "wait_loop runs its loops to 10", "nested_loop …", "two_loops …", "loop_in_loop …", from the Linearizer's goldens |
+| tinygrad: runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop_spec | the loop under `SPEC=2` | dropped: the specification is Spec's; the loop runs in `EN › kernels on the host › loops` |
+| tinygrad: runtime/test_wait_loop.py::TestVolatileLoops::test_async_wait_ext | a kernel spins on a host word another thread sets | dropped: a run's waits are rig's (D146), so no program the engine runs spins on the host |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_kernel_run_wait | a kernel run is one profile range named after the kernel | `EN › runs › each kernel of a run is in a span of the host under a profile`; on a GPU, `EN › GPUs › Metal › at DEBUG=2, a run prints a line per kernel` |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_copyin, test_profile_multiops, test_profile_multidev, TestSimpleProfiler::test_profiler, TestProfiler::test_cpu_profile | copies and host ranges are profile events | dropped: rig records its copies and host spans (`Nx_device.Profile`) |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_multidev_transfer, test_profile_graph, test_dev_jitter_matrix | device-to-device transfers, graph events and clock jitter | dropped: hardware with two devices, and rig's calibration |
 | tinygrad: runtime/test_search.py::TestSearch::test_beam_symbolic_kernel | beam search applies optimisations to a symbolic kernel | dropped here: the search is `Codegen.Opt.Search`'s; the timing it takes is `EN › timing` |
 | tinygrad: runtime/test_realize_is_realize.py (13 tests) | `Tensor.realize` of lists, ones, disk, multi-device and variables | dropped: the `Tensor` surface; the frontend is nx, and realization rune's (L9) |
 | tinygrad: runtime/test_after.py (12 tests) | ordered and disjoint stores, and the gradients through `after` | dropped: the `Tensor` surface and autodiff (rune, L9); the order of stores is Schedule's |
@@ -2730,14 +2628,14 @@ run touches. The survivors:
 |---|---|---|
 | old: unit/engine/test_symbolic.ml "symbolic shrink+sum runs for several bind values on CPU" | one compiled shrink and sum, run for several values of its variable | `EN › link and run › a schedule runs with each binding of its variables` (variable_reduce at 1, 10 and 5) |
 | old: unit/engine/test_symbolic.ml "symbolic launch dims run on CPU" | a variable sizes a kernel's loop | `EN › link and run › recorded › variable_offset writes what its tensors compute` and the slow `variable_*` programs |
-| old: unit/engine/test_symbolic.ml "symbolic shrink+sum runs for several bind values on CUDA", "symbolic launch dims run on CUDA" | | dropped: CUDA runs batches, whose encoder the engine does not have yet |
+| old: unit/engine/test_symbolic.ml "symbolic shrink+sum runs for several bind values on CUDA", "symbolic launch dims run on CUDA" | | `EN › GPUs › CUDA › recorded ›` "variable_shrink writes what its tensors compute" and "variable_reduce …" |
 | old: unit/engine/test_link.ml "executes linked host calls with rebound buffers and scalars" | a linked schedule runs on buffers and variables bound at each run | `EN › link and run › a schedule runs on the buffers each run binds to its parameters`, `a schedule runs with each binding of its variables` |
 | old: unit/engine/test_link.ml "does not cache link-time inputs" | | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` |
 | old: unit/engine/test_link.ml "concurrent first links publish one retained graph", "secondary owner replacement invalidates cached links without invalidating retained links", "obsolete owner storage retires even while the original graph remains live" | | dropped: the engine keeps no cache of links and no owners; a linked schedule holds its storage while reachable (`EN › runs › a linked schedule holds its storage while it is reachable`) |
-| old: unit/engine/test_realize.ml "passes every scalar from program metadata" | each variable of a program reaches its call, by name | `EN › Program › a kernel runs on its buffers, in the order of its globals`, `a variable left out of vars takes its bound value` |
-| old: unit/engine/test_realize.ml "requires scalar variables" | | `EN › Program › run refuses an unbound variable`; `EN › refusals › run refuses a variable it binds no value`; `EN › timing › a time refuses an unbound variable` |
+| old: unit/engine/test_realize.ml "passes every scalar from program metadata" | each variable of a program reaches its call, by name | `EN › kernels on the host › a kernel runs on its buffers, in the order of its globals`, `a variable left out of vars takes its bound value` |
+| old: unit/engine/test_realize.ml "requires scalar variables" | | `EN › kernels on the host › run refuses an unbound variable`; `EN › refusals › run refuses a variable it binds no value`; `EN › timing › a time refuses an unbound variable` |
 | old: unit/engine/test_realize.ml "copies bytes between host-backed devices", "copies bytes across backend prefixes" | | `EN › link and run › recorded ›` "copy …", `copies run in the order of their schedule` |
-| old: unit/engine/test_realize.ml "preserves overlapping views across staging chunks in both directions", "preserves overlapping external allocations while streaming", "rejects size or dtype mismatches before copy" | | dropped: copies are nx.device's (`Buffer.copy`) |
+| old: unit/engine/test_realize.ml "preserves overlapping views across staging chunks in both directions", "preserves overlapping external allocations while streaming", "rejects size or dtype mismatches before copy" | | dropped: copies are rig's (`Rig.Buffer.copy`) |
 | old: unit/engine/test_realize.ml "resolves the owner retained by each BUFFER node", "unplaced buffers require owned storage" | storage bound at link, allocated otherwise | `EN › link and run › recorded` (bound), `EN › runs › a linked schedule holds its storage while it is reachable` (allocated); `EN › refusals › link refuses a bound node that is no storage` |
 | old: unit/engine/test_realize.ml "resolves PARAM through input_uops", "resolves PARAM kernel args from input_uops", "runs a kernel call with resolved buffers" | | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` |
 | old: unit/engine/test_realize.ml "resolves byte view as an offset view", "resolves an offset byte view structurally" | an argument that is a view at an offset | `EN › link and run › a schedule runs on the buffers each run binds to its parameters › copy_view`, `recorded › copy_view writes what its tensors compute` (slow) |
@@ -2745,10 +2643,10 @@ run touches. The survivors:
 | old: unit/engine/test_realize.ml "replays keep one runtime under changed compile settings" | a replay loads nothing | `EN › runs › a run of kernels allocates and loads nothing` |
 | old: unit/engine/test_realize.ml "replays resolve storage views without building nodes" | | dropped: the nodes a run builds are not observable; that it allocates no device memory is `EN › runs › a run of kernels allocates and loads nothing` |
 | old: unit/engine/test_realize.ml "execution counters retain exact large costs" | | dropped: the engine keeps no counters; a call's cost is `Realize.estimate_uop` |
-| old: unit/engine/test_realize.ml "keys cached programs by exact device name", "same-named devices use their own runtime loader" | a program is loaded per device | `EN › Program › a binary loaded twice is loaded once`; loading per device of a call is `EN › link and run › recorded › shard_add writes what its tensors compute` |
-| old: unit/engine/test_realize.ml "concurrent submissions retain their own address tables", "independent links serialize reservations on their shared device timeline", "submission addresses are resolved after preparation" | runs of one batch rewrite its address table only once the previous run is done | `EN › batches › runs of one batched schedule from two domains each compute their own`; `H › linking and running › a run waits for its batch's previous run before it rewrites the batch's memory` |
-| old: unit/engine/test_realize.ml "timing samples forward timeout and release transient runtimes", "failed timing dispatch drains before runtime release", "failed timing drain preserves its runtime" | timing a program on a device | `EN › timing › a time is positive, under a second › on › a device with queues`, `EN › timing`; the runtimes they release are old tolk's |
-| old: unit/engine/test_link.ml allocation_specs, in Hcq2's section | command buffers uncached, volatile placeholders in memory the host sees | dropped: link keeps its placeholders, so which memory holds them is not observable; on the NULL devices it is one allocator. A vendor's placeholders are its `placeholder`'s, which link binds (`EN › batches › link refuses a C function of a library it does not know`) |
+| old: unit/engine/test_realize.ml "keys cached programs by exact device name", "same-named devices use their own runtime loader" | a program is loaded per device | loading per device of a call is `EN › link and run › recorded › shard_add writes what its tensors compute`; each link loads its programs (`Rig.Image.load`) |
+| old: unit/engine/test_realize.ml "concurrent submissions retain their own address tables", "independent links serialize reservations on their shared device timeline", "submission addresses are resolved after preparation" | runs of one batch rewrite its address table only once the previous run is done | `EN › runs › runs of one schedule from two domains each compute their own`, and on each GPU |
+| old: unit/engine/test_realize.ml "timing samples forward timeout and release transient runtimes", "failed timing dispatch drains before runtime release", "failed timing drain preserves its runtime" | timing a program on a device | `EN › timing › a time is positive, under a second`, `EN › timing`; the runtimes they release are old tolk's |
+| old: unit/engine/test_link.ml allocation_specs, in Hcq2's section | command buffers uncached, volatile placeholders in memory the host sees | dropped: link makes no command buffer or placeholder (D146) |
 
 ### Deferred to the engine by other sections
 
@@ -2758,206 +2656,8 @@ run touches. The survivors:
 | tinygrad: runtime/test_rangeify.py::TestDoubleMatmul::test_double_matmul, in Indexing's section | the numbers of two matmuls | `EN › link and run › recorded › double_matmul writes what its tensors compute` (slow) |
 | tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots, in Cstyle's section | a compiled program's variables are not its call's slots | `EN › link and run › recorded › precompiled_scalar writes what its tensors compute` |
 | tinygrad: runtime/test_linearizer.py::TestLinearizer::test_arg_dedup, test_load_removed, test_assign_fold, in Codegen's section | realized values | `EN › link and run › recorded` (assign, setitem, read_then_overwrite; slow) |
-| old: unit/test_device.ml "Buffer.copy_from delegation" (3 tests), unit/test_device_no_engine.ml (2 tests), in Device's section | | `EN › link and run › recorded ›` "copy …", `copies run in the order of their schedule`; the copy itself is nx.device's |
+| old: unit/test_device.ml "Buffer.copy_from delegation" (3 tests), unit/test_device_no_engine.ml (2 tests), in Device's section | | `EN › link and run › recorded ›` "copy …", `copies run in the order of their schedule`; the copy itself is rig's |
 | tinygrad: null/test_tensor_uop_representation.py (5 tests), old: unit/uop/test_uop.ml runtime_realization_state_parity, in Ops' section | a realized value is a BUFFER | dropped: the engine binds storage to a BUFFER at link and keeps no realized state (D3); a realized value is rune's (L9) |
-
-## Ops_metal
-
-`O` is the `Ops_metal` suite (`test/runtime/ops_metal`). Its goldens come from
-tinygrad's `MetalQueue` on a METAL device described without a GPU, with D1, D7
-and D34 applied in the generator: for each of nine cases (Apple9, Apple7 and
-Mac2 families, no residency set, a profiled chain and a profiled single
-command, a launch size that reads a variable on the first command and on the
-second, and copies to the host between batches), the schedule `sched_batches`
-receives, the schedule `compile_linear` returns and its host programs' source.
-It needs no GPU and no MTLCompiler.
-
-Coverage of `ops_metal.ml` is 95.7% (245 of 256 points) with `OX`. The code no
-test reaches: the refusals of a handle or selector the device lacks, of a
-family that is no Apple GPU's, of a command that is no compiled program, of a
-queue signalling no value and of a copy on the queue; `icb`'s answer for a tag
-whose commands it cannot read; the 8 bytes of arguments of a kernel of
-none, since a call takes its device from its arguments; and `reaches`, which a
-copy asks only of the device it is enqueued on, and Metal's copies are the
-host's. Each test compiles its case afresh. Of the 29 mutants `O` reaches, 28
-are killed. The survivor, `List.is_empty r` negated, is equivalent: it starts a
-command's extent of arguments 8 bytes past their offset, where its first
-argument, a 64-bit address, already ends. Of the 3 never reached, `off + 8`'s
-is the kernel of no arguments'; the two of a range's symbolic sizes fail `OX`
-when each is armed (`--arm`: Metal does not survive `fork`).
-
-### tinygrad
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, `.submit` (no test) | the argument layout, the indirect command buffer's placeholder and the messages of the host program | `O › recorded cases › *_compiled.golden`, `*_host.golden` (9 cases) |
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `residency.value is None` | an encoder declares the buffers resident without a residency set | `O › recorded cases › chain_no_residency_set`: the engine's table of resources runs only where Metal has no residency sets (before macOS 15), and no such Mac runs `OX`, so the recorded host program is its only check |
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `int(arch[5:]) < 9` | before Apple9, the encoder sets each pipeline | `O › recorded cases › chain_apple7`, `chain_mac2`; `OX` runs it on GPUs before Apple9, such as the M1's |
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, the stamps | a profiled command runs in a command buffer of its own, which its stamps hold | `O › recorded cases › chain_profile` (a range over the commands but the last), `one_profile`; D7 and D34 |
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, symbolic sizes | a launch size that reads a variable is set on the command | `O › recorded cases › variable`, `variable_second` (the second command's) |
-| tinygrad: `runtime/ops_metal.py` `get_enqueue_devs` on METAL | Metal's copies are the host's, between batches | `O › recorded cases › host_split` |
-| tinygrad: `runtime/ops_metal.py` `MetalDevice.pm_lower` (`mtl_poll`) | a host program reads the timeline from the event | dropped: no host program reads a timeline (D1) |
-| tinygrad: runtime/test_wait_loop.py | host loops that wait on a signal | the `Hcq2` suite's: no Metal host program waits (D1) |
-| tinygrad: device/metal/test_metal.py::TestMetal::test_alloc_oom, test_failed_newLibraryWithData, test_free | the device's memory and pipelines | nx.metal.device's suite |
-
-### Execution
-
-`OX` runs batches through `tolk.engine` on the Mac's GPU (`test_ops_metal_exec`,
-in `runtest` on macOS only).
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: `runtime/ops_metal.py` `MetalDevice.pm_bufferize`, `sels`, `new_icb`, `new_slots` (no test) | the engine's words of a batch | `OX › execution` (12 tests) |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies out, in and out between the GPU and the host | `OX › copies out, in and out again leave the host the bytes copied in` |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | a linked batch serves new inputs on each run | `OX › a run waits for its batch's previous run before it rewrites the batch's arguments` (eight inputs, run without synchronizing) |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_symbolic | a symbolic size on each run | `OX › a launch size that reads a variable is set on each run` |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_map_cpu_buffer_preserves_contents | | dropped: tinygrad skips it on METAL, which maps nothing |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_compile_and_link_are_idempotent, test_caches_hold_no_buffers, test_jit_has_no_rt_buffers | the jit's caches and runtime ring | dropped here: the captured jit is L8's; the engine has no runtime ring |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Fence, TestHCQ2FFI | the fence and C calls on the CPU | the `Hcq2` and `Engine` suites' |
-| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `OX › a profile records a span of each kernel on the device, in order`; `OX › a profiled batch run twice keeps the second run's spans` (D34) |
-| DIVERGENCES D30 | a range's addresses, integers whatever the element type | `O › loops (D30) › a range's addresses are integers, profiled or not` |
-| DIVERGENCES D30 | a loop's commands, once per trip at a trip's stride, after the commands before the loop | `O › loops (D30) › a loop's commands repeat once per trip, a trip apart, after the commands before it` |
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, symbolic sizes (`d.cast(dtypes.uint64)`) | a launch size of an expression, cast to a 64-bit word, stays an integer: the kernel's compilation commits it | `O › launch sizes › a launch size of an expression is computed in integers` |
-| DIVERGENCES D30 | a range around calls, a loop of indirect commands in one submission | `OX › each trip of a range runs its kernel on its own window`, `› a range of 20000 trips runs from one indirect command buffer`, `› a profiled range records a span of each trip's kernel` |
-| DIVERGENCES D30 | each trip's command sets its own launch size that reads a variable | `OX › each trip of a range sets the launch size that reads a variable` |
-| old: `unit/test_metal_completion.ml` (7 tests) | the old runtime's command ownership, completion order and retirement | dropped: completion and command buffers are nx.device's (`Submission`, `resolve`) |
-| old: `unit/test_runtime_metal.ml` "an argument structure of 15/16/29/33 buffers ..." | many buffers dispatch and rebind | `OX › a kernel of 33 buffers runs from its arguments' buffer`: one argument buffer, so no direct dispatch |
-| old: `unit/test_runtime_metal.ml` "replays symbolic local workgroup dimensions" | | `OX › a launch size that reads a variable is set on each run` |
-| old: `unit/test_runtime_metal.ml` "replays a multi-kernel chain in order", "compile and run one kernel", "exec is ordered" | | `OX › a chain of kernels computes what the interpreter says` |
-| old: `unit/test_runtime_metal.ml` "collects GPU timestamps across profiled replay", "wait returns gpu time" | | `OX › a profile records a span ...`, `› a profiled batch run twice ...` |
-| old: `unit/test_runtime_metal.ml` "relaunches without an intervening synchronize" | | `OX › a run waits for its batch's previous run ...` |
-| old: `unit/test_runtime_metal.ml` "shared copies respect buffer view offsets", "buffer views copy at byte offsets", "as_buffer aliases ...", "nested buffer views ...", "LRU-reused buffers ...", "collects dropped views ..." | | dropped: buffers and copies are nx.device's |
-| old: `unit/test_runtime_metal.ml` tensor-core, reduction and typed-argument tests | kernels' values | dropped here: kernels are the codegen and renderer suites'; their execution on Metal is L9's graph parity |
-| old: `unit/test_runtime_metal.ml` "beam timing replays compiled Metal queues" | | `Tolk_engine.time` and L7's `Search` |
-| old: `unit/test_runtime_metal.ml` "multi-device calls ...", "a sharded kernel on two Metal devices ..." | | dropped: a Mac has one Metal device |
-| old: `unit/test_runtime_metal.ml` "CPU kernels map Metal storage ...", "Metal kernels map borrowed host memory ..." | | dropped here: borrows are nx.device's, and the engine's `link` suite |
-
-## Ops_cuda
-
-`C` is the `Ops_cuda` suite (`test/runtime/ops_cuda`). Its goldens come from
-tinygrad's `CUDAQueue` on a CUDA device described without a GPU (sm_89, which
-reaches the host's memory), with D1 and D36 applied in the generator: for each
-of six cases (a chain, a profiled chain, a launch size that reads a variable,
-a copy in from the host and its profiled form, and copies to the host between
-batches), the schedule `sched_batches` receives, the schedule `compile_linear`
-returns and its host programs' source. It needs no GPU and no driver.
-
-Coverage of `ops_cuda.ml` is 98.3% (113 of 115 points). The code no test
-reaches: the refusal of a command that is no compiled program, and `submit`'s
-answer for a batch whose last command is a loop, since a batch ends with its
-timeline's signal. Each test compiles its case afresh, and mutation runs with
-`PARALLEL=1`, since `Worker` would otherwise spawn domains. The suite kills
-all 8 mutants of `ops_cuda.ml`.
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: `runtime/ops_cuda.py` `CUDAQueue.launch`, `.exec` (no test) | the arguments after their size, the launch's extra words on the queue, `cuLaunchKernel` on the compute stream | `C › recorded cases › chain`, `variable` (a launch size that reads a variable) |
-| tinygrad: `runtime/ops_cuda.py` `CUDAQueue.copy`, `.wait`, `.signal` (no test) | copies on the copy stream, waits and writes of 64-bit words between the streams | `C › recorded cases › copy_in`, `host_split` |
-| tinygrad: `runtime/ops_cuda.py` `CUDAQueue.timestamp` (no test) | a host function stamps a slot | `C › recorded cases › chain_profile`, `copy_in_profile` |
-| tinygrad: `runtime/ops_cuda.py` `CUDAQueue.submit` (no test) | the status of the last call is stored | `C › recorded cases › *_host.golden` |
-| tinygrad: `runtime/ops_cuda.py` `CUDADevice.pm_bufferize`, `handles`, `stamp`, `function` | the engine's words of a batch | `CX` (below) |
-| tinygrad: `runtime/ops_cuda.py` `CUDAAllocator`, `CUDADevice._wait_signal`, `count` | memory, peer maps and waits | nx.cuda.device's suite |
-| tinygrad: `runtime/ops_cuda.py` the `MOCK` interface (`test/mockgpu/cuda`) | a CUDA driver in Python | dropped: no mock drivers (plan §10) |
-| old: `unit/test_cuda_queue.ml` "compiles mixed-width arguments and symbolic launch dimensions" | | `C › recorded cases › variable`; argument layout is `Hcq2.layout_args`'s |
-| old: `unit/test_cuda_queue.ml` "profiles compute and copy calls with native host callbacks" | | `C › recorded cases › copy_in_profile` |
-| old: `unit/test_cuda_queue.ml` "compiles dependencies crossing compute and copy queues" | | `C › recorded cases › copy_in`, `host_split` |
-| old: `unit/test_cuda_queue.ml` "host copies retain an ordinary execution fallback" | | `C › recorded cases › host_split`: a copy the queues reach runs on the copy stream; staging is `Hcq2`'s |
-| old: `unit/test_cuda_queue.ml` "compatible peers share a submission with cross-device dependencies", "independent groups regroup without crossing ordinary calls", "peer timelines use each device's own context" | batching across devices | the `Hcq2` suite's batching, which no vendor changes |
-| DIVERGENCES D30 | a range around launches, a loop of the host program, its addresses integers | `C › loops (D30) › a range is a loop of the host program around its launches`, `› a range's addresses are integers, profiled or not` |
-| DIVERGENCES D30 | a trip's extra words follow the launches' before the loop | `C › loops (D30) › a loop's trip is its own launches' words, after the launches before` |
-
-### Execution
-
-`CX` runs batches through `tolk.engine` on NVIDIA GPUs (`test_ops_cuda_exec`,
-in `runtest`), and skips each test on a machine without the GPUs it needs.
-No CI machine has one: it runs on hardware by hand.
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies out, in and out between the GPU and the host | `CX › copies out, in and out again leave the host the bytes copied in` |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | a linked batch serves new inputs on each run | `CX › a run waits for its batch's previous run before it rewrites the batch's arguments` |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_symbolic | a symbolic size on each run | `CX › a launch size that reads a variable is set on each run` |
-| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `CX › a profile records a span of each kernel on the device, in order`, `› a profiled batch run twice keeps the second run's spans` |
-| tinygrad: `runtime/ops_cuda.py` `CUDAAllocator._map`, `hcq2.py` `stage_copy` | GPU memory is reached through the host | `CX › a copy between two GPUs goes through the host's staging memory` (two GPUs) |
-| DIVERGENCES D30 | a range around calls, a loop of launches in one submission | `CX › each trip of a range runs its kernel on its own window` |
-| old: `unit/test_runtime_cuda.ml` "compile and run one kernel", "exec is ordered", "replays a multi-kernel chain" | | `CX › a chain of kernels computes what the interpreter says` |
-| old: `unit/test_runtime_cuda.ml` "passes scalar variables", "patches scalar values between launches", "queue call replays with updated variables" | | `CX › a launch size that reads a variable is set on each run` |
-| old: `unit/test_runtime_cuda.ml` "rebinds buffers through repeated asynchronous launches", "queue call replays with rebound inputs", "... rebound input and output slots" | | `CX › a run waits for its batch's previous run ...` |
-| old: `unit/test_runtime_cuda.ml` "copies feed dependent kernels and later copies", "queues mapped host copies and falls back for unaligned imports" | | `CX › a copy to the host and back runs on the host, between batches`, `› copies out, in and out again ...` |
-| old: `unit/test_runtime_cuda.ml` "cross-device copy preserves views with peer or host fallback", "queued peer copies preserve views with mapping fallback" | | `CX › a copy between two GPUs goes through the host's staging memory` |
-| old: `unit/test_runtime_cuda.ml` "typed arguments preserve scalar widths in dispatch and replay" | | `CX › a kernel of 33 buffers runs from its arguments' buffer`; the layout is `Hcq2.layout_args`'s |
-| old: `unit/test_runtime_cuda.ml` "wait returns gpu time" | | `CX › a profile records a span ...` |
-| old: `unit/test_runtime_cuda.ml` buffer views, LRU reuse, pinned storage, "cached functions survive independent link collection", "concurrent first links share one timeline and context descriptor" | | dropped: buffers, programs and timelines are nx.device's |
-| old: `unit/test_runtime_cuda.ml` "f16 tensor-core matmul" | | dropped here: kernels are the codegen suites'; their execution is L9's graph parity |
-
-## Ops_nv
-
-`N` is the `Ops_nv` suite (`test/runtime/ops_nv`). Its goldens come from
-tinygrad's `NVComputeQueue` and `NVCopyQueue` on an NV device described without
-a GPU, an Ada one (sm_89) or a Blackwell one, which reaches the host's memory,
-with D1, D38, D40, D43 and D51 applied in the generator: for each of sixteen
-cases, the schedule `sched_batches` receives, the schedule `compile_linear`
-returns and its host programs' source. A program's binary is the NVRTC cubin
-of `simple_add.cu` for sm_89 (`simple_add_sm89.cubin`), followed by the
-program's source, so each program has a binary of its own, or, for the
-`crafted` cases, a cubin the generator builds with 128 registers, shared
-memory, a stack, a parameter bank of its own size, constant bank 3 and every
-attribute format. It needs no GPU and no driver.
-
-There is no Blackwell cubin: the Blackwell cases take an sm_89-shaped cubin
-under a Blackwell compute class, which covers the version-5 launch
-descriptor, and no test reads a Blackwell cubin's attributes. The refusal of
-more than 100 KiB of shared memory is unread.
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: `runtime/ops_nv.py` `QMD` (no test) | a launch descriptor's fields, written and read by name, per version | `N › recorded cases › simple_add`, `simple_add_blackwell`, `simple_add_grid` (a grid of several blocks) |
-| tinygrad: `runtime/ops_nv.py` `NVProgramData`, `nv_build_program` (no test) | a cubin's registers, shared memory, stack, constant banks and launch template, at the offsets of its image | `N › recorded cases › simple_add*` (the real cubin), `crafted*`; the image's layout is `Nx_device_elf`'s, and its upload and relocation nx.nv.device's (D38); a constant bank's size in 16-byte units (D71) |
-| tinygrad: `runtime/ops_nv.py` `NVComputeQueue.exec` (no test) | a launch chains onto the previous launch's descriptor, and the channel schedules the first | `N › recorded cases › simple_add_chain`, `simple_add_chain_blackwell`, `chain`, `chain_blackwell`; `N › chains › a launch after a launch chains onto its descriptor` |
-| tinygrad: `runtime/ops_nv.py` `NVComputeQueue.wait`, `.memory_barrier` (no test) | a wait or a barrier ends a chain | `N › chains › a wait between two launches ends their chain`, `› a barrier between two launches ends their chain`; `N › recorded cases › host_split`, `variable` |
-| tinygrad: `runtime/ops_nv.py` `NVComputeQueue.release`, `QMD.set_release` (no test) | a signal after a launch is one of its descriptor's two releases, and a semaphore release of the channel past them | `N › chains › a signal the descriptor releases keeps the chain`, `› a signal past the descriptor's two releases ends the chain`, `› a signal before any launch is the channel's`; `N › recorded cases › simple_add_profile` (timestamps past the two releases) |
-| tinygrad: `runtime/ops_nv.py` `NVComputeQueue.exec`, its refusals | too many threads a block, a grid or a block beyond the hardware's limits | `N › refusals` (9 tests, with a copy queue's launch, a compute queue's copy, a program that is no cubin, and a command buffer longer than a ring entry holds, D43) |
-| tinygrad: `runtime/ops_nv.py` `NVCopyQueue.copy` (no test) | copies in lines of at most 2 GiB | `N › recorded cases › copy_in`, `copy_out_profile`, `copy_large` (more than 2 GiB) |
-| tinygrad: `runtime/ops_nv.py` `NVCopyQueue.signal`, `.timestamp`, `NVQueue.sem` (no test) | the copy engine's one-word release and four-word timestamp; 64-bit acquires | `N › command words` (15 tests: the compute channel's, the copy engine's and a wait's words for 2^32 - 1, 2^32, 2^32 + 1, 2^33 - 1 and 2^33); D40 |
-| DIVERGENCES D40 | the copy engine writes the high word of a value too, so the word never passes a waiter early and never takes a landed value back | `N › the 32-bit carry law` (every order of three works' writes on the compute channel, this copy queue and nx.nv.device's copies, from four starts across 2^32 and 2^33, and the two encodings the law refuses) |
-| tinygrad: `runtime/ops_nv.py` `NVQueue.submit` (no test) | the host program writes the channel's entry, put, gp_put and doorbell | `N › recorded cases › *_host.golden`; `N › storage` (the placeholders the engine binds to the channel's words) |
-| DIVERGENCES D30, D43 | a launch in a loop runs on descriptors of its trip, and the channel schedules each trip's chain | `N › loops (D30) › each trip's two launches chain on descriptors of the trip's own, and the channel schedules each trip's chain`; `Hcq2 › patch and bufferize_cmdbuf › a region addressed through another region is laid out once, in the buffer of its name` |
-| tinygrad: `runtime/ops_nv.py` `NVDevice._ensure_has_local_memory` | the local memory a descriptor states | the engine's word of the device's local memory (`Tolk_engine.device`), which nx.nv.device grows (`Nx_nv_device.local_memory`, its suite) |
-| tinygrad: external/external_test_hcq.py::TestHCQ::test_timeline_signal_rollover | a timeline across a wrap of its low word | `N › the 32-bit carry law`; NV's timeline values are 64 bits |
-| tinygrad: external/external_test_hcq.py::TestHCQ (the other tests) | queues built and run by hand, through the `HWQueue` of before hcq2 (`bind`, `update_exec`) | dropped: that API is gone at the pinned tinygrad; runs, copies and signals are `NX`'s |
-| tinygrad: test/mockgpu/nv | an NV driver in Python | dropped: no mock drivers (plan §10) |
-| old: `golden/nvqueue` `exec`, `exec_qmd`, `qmd_init` (Ada, Blackwell) | a launch's words and descriptor from the recorded cubin | `N › recorded cases › simple_add`, `simple_add_blackwell` |
-| old: `golden/nvqueue` `exec_chained`, `exec_chained_qmd0`, `exec_chained_qmd1` (Ada, Blackwell) | | `N › recorded cases › simple_add_chain`, `simple_add_chain_blackwell` |
-| old: `golden/nvqueue` `exec_wait_exec*`, `exec_barrier_exec*` (Ada, Blackwell) | | `N › chains › a wait between two launches ...`, `› a barrier between two launches ...` |
-| old: `golden/nvqueue` `exec_release_overflow*`, `signal_after_exec*`, `signal_no_qmd` (Ada, Blackwell) | | `N › chains › a signal the descriptor releases ...`, `› a signal past the descriptor's two releases ...`, `› a signal before any launch ...`; `N › recorded cases › simple_add_profile` |
-| old: `golden/nvqueue` `wait`, `timestamp`, `memory_barrier`, `dma_wait`, `dma_signal`, `dma_timestamp` (Ada, Blackwell) | | `N › command words`; `N › recorded cases › chain_profile`, `copy_out_profile` |
-| old: `golden/nvqueue` `dma_copy_small`, `dma_copy_large` (Ada, Blackwell) | | `N › recorded cases › copy_in`, `copy_large` |
-| old: `golden/nvqueue` `setup`, `setup_local_mem`, `dma_setup` (Ada, Blackwell) | a channel's setup and its local memory | dropped here: nx.nv.device sets up its channels and local memory (`Nx_nv_device.local_memory`) |
-| old: `unit/test_runtime_nv.ml` "Ada descriptors chain launches and release only the tail", "Blackwell descriptors chain ..." | | `N › recorded cases › simple_add_chain`, `simple_add_chain_blackwell` |
-| old: `unit/test_runtime_nv.ml` "compiled launches patch 3D geometry and profiling releases" | | `N › recorded cases › simple_add_grid`, `simple_add_profile` |
-| old: `unit/test_runtime_nv.ml` "launch limits fail before linking command storage" | | `N › refusals` |
-| old: `unit/test_runtime_nv.ml` "channel completion survives low-dword rollover" | | `N › the 32-bit carry law` |
-| old: `unit/test_runtime_nv.ml` qmd group (8 tests) | field writes by name, per version, and their refusals | `N › recorded cases` (every field the encoder writes, in both versions); the tables are generated (`lib/runtime/autogen/gen.py --check`) |
-| old: `unit/test_runtime_nv.ml` program image group, cubin fixture group | | `N › recorded cases › simple_add*`, `crafted*`; relocation and upload are nx.nv.device's (D38) |
-| old: `unit/test_runtime_nv.ml` "independent retained batches cannot overfill the FIFO", "compute and copy FIFOs resume when the GPU retires work" | a writer of a channel waits for room | nx.device: `Nx_device.submit` waits for each NV channel to be at most half full (`Driver.device`'s `room`) |
-| old: `unit/test_runtime_nv.ml` the other compiled queue tests, local memory, iface wire formats, driver version, va allocator, device info, device hang, Pci_iface and device groups | the old runtime's submissions, memory and driver | dropped here: nx.nv.device's suite |
-| old: `unit/test_nv_tables.ml`, `unit/test_nv_ip.ml`, `unit/test_nv_nvdev.ml` | the driver's tables, GSP boot and the driver-less device | dropped here: nx.nv.device's suite; the constants the encoder reads are nx.nv.packet's (`Nx_nv_packet.Defs`) |
-
-### Execution
-
-`NX` runs batches through `tolk.engine` on the first NVIDIA GPU
-(`test_ops_nv_exec`, in `runtest`), and skips each test on a machine
-without one. No CI machine has one: it runs on hardware by hand, and has not
-run yet.
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: `runtime/ops_nv.py` the device's words of a batch (`fifos`, `slm_per_thread`) | the engine binds the channels' words and the local memory word | `NX › execution` (6 tests) |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies between the GPU and the host on the copy engine | `NX › copies from the host and back run on the copy engine, in the batch` |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | runs of one batch without synchronizing | `NX › eight runs of one batch without synchronizing each add one` |
-| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `NX › a profile records a span of each kernel on the device, in order` |
-| DIVERGENCES D30 | a range around calls, one submission | `NX › each trip of a range runs its kernel on its own window`, `› each trip of a range of two kernels runs them on the trip's own windows, chained` |
-| old: `unit/test_runtime_nv.ml` "compiles and runs one kernel", "Ada compute replay patches arguments and wraps the shared FIFO", "Blackwell compute and DMA share ordered retained submissions" | | `NX › a chain of kernels adds one per kernel`, `› copies from the host and back ...`, `› eight runs of one batch ...` |
 
 ## Jit
 
@@ -2966,8 +2666,7 @@ run yet.
 environment is read once per process. `J`'s goldens are 66 captures,
 generated by `gen/engine/jit.py`: each function that tinygrad's four jit test
 files compile, captured by `TinyJit` on its second call over realized buffers,
-on the host and on CPU:1 to CPU:3 with the NULL device's queues and a copy
-queue. A case's goldens are its captured schedule, the buffers the capture
+on the host and on CPU:1 to CPU:3. A case's goldens are its captured schedule, the buffers the capture
 holds, its inputs in slot order, and what `jit_lower` makes of them; each case
 records its variables with their bound values (`captures.golden`).
 
@@ -2978,7 +2677,7 @@ and that no other parameter is bound; that the storage the lowering reaches is
 the held storage of the capture that is no input, plus arenas the capture does
 not reach; and that lowering twice gives the same schedule up to the numbers
 of the storage and placeholders it makes. `J › replay › recorded` links the
-lowering on the host and the NULL devices and replays it as a jitted function
+lowering on the host and memory devices and replays it as a jitted function
 is called: one to three runs, the first from contents drawn from a seed for
 each held buffer and input, each later one keeping what the runs before it
 left, with new inputs; each variable takes the values tinygrad's tests replay
@@ -3079,79 +2778,3 @@ ignored, and `JITBEAM` defaulting to 0 are killed. Two survive, equivalent:
 input to rewrite again, and planning with the inputs held, which the
 substitution has already replaced.
 
-## Ops_amd
-
-`A` is the `Ops_amd` suite (`test/runtime/ops_amd`). Its goldens come from
-tinygrad's `AMDComputeQueue`, `AMDComputeAQLQueue` and `AMDSDMAQueue` on an AMD
-device described without a GPU, whose kernels compile to real code objects
-(the old tolk's HIP fixture, and fixtures LLVM compiled once), with D1, D37,
-D38 and D48 applied in the generator: for each of fifteen cases (gfx1100,
-gfx1201, gfx942 on eight dies with AQL and on one with PM4; chains, profiles,
-copies to and from the host on SDMA 4.4.2, 5 and 6, profiled, and without copy
-queues, a copy over the copy engine's largest, a launch size that reads a
-variable on PM4 and AQL, and a kernel that reads its dispatch packet and
-scratch memory on PM4 and AQL),
-the schedule `sched_batches` receives, the schedule `compile_linear` returns
-and its host programs' source; and the words of the waits and signals on a
-signal word at the values that carry into its high half. It needs no GPU.
-
-Coverage of `ops_amd.ml` is 96.3% (547 of 568 points). The code no test
-reaches: the refusals of a code object with an unknown relocation or no
-`.rodata`, of a symbolic local size, of a command that is no compiled program
-or a command buffer that is no placeholder, of a queue name that is neither
-`COMPUTE` nor `COPY`, and of `copy` on the AQL queue; the `SET_UCONFIG_REG`
-branch of `wreg`, since every register written is an SH register; and the
-scratch buffer descriptor of the user registers, which no code object of the
-supported targets asks for, since they all have architected flat scratch.
-Of the 85 mutants the suite reaches, all are killed; the 4 never reached are
-in the `SET_UCONFIG_REG` branch.
-
-### tinygrad
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: `runtime/ops_amd.py` `AMDComputeQueue` (`pkt3`, `wreg`, `pred_exec`, `wait_reg_mem`, `acquire_mem`, `release_mem`, `memory_barrier`, `kernargs`, `exec`, `wait`, `timestamp`, `signal`, `submit`, `push`) (no test) | PM4 packets, the kernel arguments and the indirect buffer pushed on the ring | `A › recorded cases › chain`, `chain_gfx1201`, `chain_gfx942_cpx`, `profile`, `copies`, `variable`, `scratch` |
-| tinygrad: `runtime/ops_amd.py` `AMDComputeAQLQueue` (no test) | dispatch packets, PM4 runs wrapped as indirect buffers, the doorbell one behind, `pred_exec` on eight dies | `A › recorded cases › chain_gfx942`, `profile_gfx942`, `copies_gfx942`, `scratch_gfx942` |
-| tinygrad: `runtime/ops_amd.py` `AMDSDMAQueue` (no test) | copies in pieces of the largest copy, polls, fences, timestamps, the command buffer streamed into the ring with its tail zeroed | `A › recorded cases › copies`, `copies_gfx942`, `copies_profile` (SDMA timestamps), `large_copy` (SDMA 5: 4 MiB pieces) |
-| tinygrad: `runtime/ops_amd.py` `AMDDevice.has_copy_queue` false | copies become kernels on the compute queue | `A › recorded cases › copies_no_sdma` |
-| tinygrad: `runtime/ops_amd.py` `_amd_program_image`, `AMDDevice.tmpring_size` (no test) | the descriptor's fields, the gfx11 privilege bit, the LDS blocks in RSRC2, the scratch ring | `A › recorded cases › *` (every PM4 case writes them); the LDS check is nx.device's load (D38) |
-| tinygrad: `runtime/ops_amd.py` `AMDComputeQueue.wait`, `.signal`, `AMDSDMAQueue.wait`, `.signal` at 2^32 | 32-bit compares and writes of 64-bit values | `A › signal_words.golden` (D37), `A › carry law (D37)` |
-| tinygrad: `runtime/ops_amd.py` `AMDComputeQueue.push`, `AMDSDMAQueue.submit` (no test) | the host program writes a ring from its put position | `A › room (D39)`: a submission writes at most half a ring, which nx.device leaves room for; `A › splits (D39)`: a batch over its queue's share runs as several (a 10,000-trip AQL range, a 1,000-copy range) |
-| tinygrad: `runtime/ops_amd.py` `AMDDevice.queue_buffer`'s tags, `pm_bufferize`'s `scratch` and `program` (no test) | the placeholders the device's storage binds | `A › what the engine links` (3 tests: the queue words, a program and scratch memory, and every placeholder of every recorded batch) |
-| tinygrad: `runtime/ops_amd.py` `AMDDevice.__init__`'s target assertion, `sdma_queue`'s `unwrap`, the queues' missing `copy` and `exec` | refusals | `A › refusals` (4 tests) |
-| tinygrad: `runtime/ops_amd.py` `AMDSDMAQueue.write` | | dropped: its producer is RDMA (README Exclusions) |
-| tinygrad: external/external_test_amd.py::TestAMD::test_amd_ring_64bit_doorbell | a write pointer near 2^33, the ring wrapping | the host program's push splits at the ring's end in every `A › recorded cases` host program; on hardware, a ring's wrap is nx.amd.device's `copies that wrap the SDMA ring` |
-| tinygrad: runtime/test_hcq2.py | batches and the fence | the `Hcq2` and `Engine` suites' |
-| DIVERGENCES D30 | a range around calls, one submission per run | `A › loops (D30)` (PM4, and profiled AQL); `AX › each trip of a range runs its kernel on its own window` |
-
-### Execution
-
-`AX` runs batches through `tolk.engine` on the first AMD GPU
-(`test_ops_amd_exec`, in `runtest`); every test skips without one.
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| tinygrad: `runtime/ops_amd.py` `AMDDevice.queue_buffer`, `scratch_buffer`, `program_buffer` (no test) | the engine binds the rings and their words, loads the programs and grows the scratch memory | `AX › execution` (5 tests) |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies between the GPU and the host | `AX › copies from the host and back run on the copy engine, in the batch` |
-| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | a linked batch runs again without synchronizing | `AX › eight runs of one batch without synchronizing each add one` |
-| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `AX › a profile records a span of each kernel on the device, in order` |
-| old: `unit/test_runtime_amd.ml` "Device" › "compiles and runs one kernel" | | `AX › a chain of kernels adds one per kernel` |
-
-### old tolk
-
-| Source | Behaviour | Outcome |
-|---|---|---|
-| old: `golden/amdqueue` `wait_*`, `signal_*`, `timestamp_*`, `memory_barrier_*`, `exec_gfx1100` | PM4 words on gfx1100 and gfx942 | `A › recorded cases › chain*`, `profile*`, `A › signal_words.golden` |
-| old: `golden/amdqueue` `sdma_wait_*`, `sdma_signal_*`, `sdma_timestamp_*`, `sdma_copy_{small,exact,over_cap,large}_*` | SDMA words, chunk boundaries | `A › recorded cases › copies*`, `large_copy`, `A › signal_words.golden` |
-| old: `golden/amdqueue` `sdma_write32_*`, `sdma_write64_*` | | dropped: `write` is RDMA's |
-| old: `unit/test_runtime_amd.ml` "AQL" (2 tests) | AQL packets on one and several dies, predicated completion | `A › recorded cases › chain_gfx942`, `profile_gfx942` |
-| old: `unit/test_runtime_amd.ml` "Compiled queues": "profiling timestamps bracket ...", "compiles symbolic launch dimensions ...", "compiles dependencies between SDMA and compute", "executes SDMA wrapping with dispatch packets and minimum scratch" | | `A › recorded cases › profile`, `variable`, `copies`, `scratch` |
-| old: `unit/test_runtime_amd.ml` "PM4 compute dies use disjoint scratch slices" | | dropped: nx.device takes AQL packets on several dies, and `Ops_amd.queues` refuses PM4 packets there |
-| old: `unit/test_runtime_amd.ml` "retained PM4 links keep each device scratch", "Scratch" (7 tests) | | the scratch memory is nx.device's (`Nx_amd_device.scratch`), grown by the engine at link; the ring's words are `A › recorded cases › scratch` |
-| old: `unit/test_runtime_amd.ml` "a replay timeout suppresses publication ...", "a full ring times out ...", "upload and download publish to independent SDMA rings", "SDMA writes patch mixed-width values on replay" | | dropped here: ring room, timeouts and publication are nx.device's and the engine's |
-| old: `unit/test_runtime_amd.ml` "SDMA revision" | the largest copy by the copy engine's version | `A › recorded cases › large_copy` (5.0), `copies` (6.0), `copies_gfx942` (4.4.2) |
-| old: `unit/test_runtime_amd.ml` "Program" (5 tests) | the descriptor, relocations, code properties | `A › recorded cases › scratch*` (dispatch pointer, scratch) and every case; the refusal of excessive LDS is nx.device's load (D38) |
-| old: `unit/test_runtime_amd.ml` "Timeline" (4 tests) | rollover of 32-bit waits | `A › carry law (D37)`: values carry without a rollover protocol |
-| old: `unit/test_runtime_amd.ml` "File_io", "Mmio", "Buffer", "Q", "Signal", "Kfd_iface", "Pci_iface", "Device" | the old runtime | dropped: nx.amd.device's suite |
-| old: `unit/test_runtime_amd.ml` "Compiler" (4 tests) | comgr | the `Compiler_amd` suite's |
-| old: `unit/test_amd_tables.ml` | the generated register tables | dropped: `Amd_gpu` holds only the definitions `Ops_amd` encodes, generated from tinygrad's and checked by `gen.py --check`, and every recorded case checks them |

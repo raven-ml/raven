@@ -6,8 +6,8 @@ for one of three reasons only:
 
 - **(a) an OCaml constraint:** acyclic modules, static types, the GC, domains;
 - **(b) a named consumer:** a raven call site that fails without it;
-- **(c) the executor's contract:** nx.device's submission protocol, which
-  `tolk.engine` drives with the compiler's output.
+- **(c) the executor's contract:** rig's devices, submissions and programs,
+  which `tolk.engine` drives with the compiler's output.
 
 Taste, speed without a measurement, and "the old tolk did it" are not reasons.
 A difference in numerics also needs a failing rune test, since nx semantics
@@ -21,39 +21,11 @@ goes. Entries are in the order of their numbers, and a number is never
 reused, since tests cite them. Keeping only part of a file is scope, recorded
 under Exclusions in `README.md`, not a divergence.
 
-## D1. Timeline values are parameters
+## D1. Withdrawn
 
-- **tinygrad:** `runtime/support/hcq2.py:65-66` (`timeline`, `timeline_value`),
-  `:231-239` (the batch slots, with the slot of the timeline), `:256`, `:276-278`
-  and `:415-434` (`hcq_fence`).
-- **tolk:** `lib/runtime/support/hcq2.ml:212` (`signal_word`), `:224`
-  (`submitted`), `:225` (`value`), `:638` (`make_ctx`), `:748` (`start_ins`),
-  `:808` (the bump) and `:1115` (`hcq_fence`).
-- **Differs:** a device's timeline is its signal word alone, one word. The value
-  of the work submitted before a batch and the value the batch signals are
-  variables of its host program, `submitted d` and `value d`, which the engine
-  binds on each run (`Nx_device.submitted`, `Submission.value`), where tinygrad
-  loads the submitted value from the timeline's second word and writes it back
-  bumped. The host program neither reads nor writes a submitted value: its queues
-  wait for `submitted d` and signal `value d`. The fence keeps only its re-arming
-  of the queue signals, ordered after the run's `submitted d`, as tinygrad's is
-  after the timeline's loads, so that it runs on every run; its wait for the
-  batch's previous run, and its record of the value that run signals, are the
-  engine's (`Submission.wait`), before it writes the address table and calls
-  the host program, so the slots lose the timeline's slot. Runs of one linked
-  batch stay serialized, as RFC 0012 requires. With no load of a timeline in
-  a host program, Metal's `pm_lower` (`runtime/ops_metal.py:192-194`), which
-  reads a timeline's first word from the device's event (`mtl_poll`), has
-  nothing to lower and is not ported.
-- **Reason:** (c). nx.device's runtime writes the submitted value and never
-  publishes it (RFC 0011, Amendment 2), and `Submission.wait` has the timeout,
-  `Lost` and Metal's completion that a spin in the host program lacks.
-- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `timeline
-  values (D1)`, whose recorded batches and host programs are tinygrad's with
-  D1 applied by their generator (`gen/runtime/support/hcq2.py`), and `linking
-  and running › a run waits for its batch's previous run before it rewrites
-  the batch's memory`; and the Engine suite (`test/engine/tolk_engine`):
-  `batches › each run of a batch signals its device's next value once`.
+A device's timeline was its signal word alone, whose values a batch's host
+program took as parameters. rig numbers each device's work and orders it by the
+memory it uses, and tolk encodes no queue (D146).
 
 ## D2. Withdrawn
 
@@ -67,17 +39,15 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `device.py`, `runtime/ops_*.py`.
 - **tolk:** `lib/device.ml` (the compiler half of `device.py`);
-  `engine/ops_metal.ml`, `ops_cuda.ml`, `ops_amd.ml` and `ops_nv.ml` (the
-  IR half of each `ops_*.py`); `engine/tolk_engine.ml:56` (`device`) and
-  the vendors `engine/metal.macos.ml`, `cuda.ml`, `amd.ml` and `nv.ml`;
-  `lib/uop/ops.ml:229` (the type `param_arg`), `:3225` (`param_arg`), `:3253`
-  (`new_buffer`).
+  `engine/tolk_engine.ml` (`target`, `link`); `lib/uop/ops.ml:229` (the type
+  `param_arg`), `:3225` (`param_arg`), `:3253` (`new_buffer`).
 - **Differs:** tolk holds the compiler half: `Compiler` and the renderer
-  and compiler selection of `Compiled`, returning data. The IR half of each
-  `ops_*.py` (queues, `pm_encode`, program data), which encodes over nodes,
-  the lazy `Buffer` and running a schedule are `tolk.engine`'s, which has no
-  registry of devices by name: its caller maps each name to a device;
-  allocators, programs, drivers and profile events are nx.device's. So a node of the compiler holds no runtime state:
+  and compiler selection of `Compiled`, returning data. The lazy `Buffer`
+  and running a schedule are `tolk.engine`'s, which has no registry of
+  devices by name: its caller maps each name to a device. The IR half of
+  each `ops_*.py` (queues, `pm_encode`, program data), allocators, programs,
+  drivers and profile events are rig's (D146). So a node of the compiler
+  holds no runtime state:
   `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for the engine
   to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
   `_base_buffer_is_realized`, `from_buffer` and `_frompy`
@@ -87,15 +57,11 @@ the Exclusions of `README.md`.
 - **Reason:** (c).
 - **Pinned by:** for `Ops`: `Tolk.Ops › storage › new_buffer takes the
   next slot without one` and `Tolk.Ops › arguments › reprs.golden`, where
-  a `BUFFER` prints and interns by its slot alone; for the queues: the
-  `recorded cases` of `Tolk_engine.Ops_metal`, `Tolk_engine.Ops_cuda`,
-  `Tolk_engine.Ops_amd` and `Tolk_engine.Ops_nv`, which encode each vendor's
-  queues as nodes on a machine without its device; for the engine: the Engine
-  suite (`test/engine/tolk_engine`): `device › a name the map does not
-  hold is refused` and `refusals › link refuses a device the map does not
-  hold`, which a registry would resolve, and `refusals › run refuses a
-  parameter it binds no buffers`, which a `BUFFER` holding its buffer would
-  run.
+  a `BUFFER` prints and interns by its slot alone; for the engine: the
+  Engine suite (`test/engine/tolk_engine`): `refusals › link refuses a
+  device the map does not hold`, which a registry would resolve, and
+  `refusals › run refuses a parameter it binds no buffers`, which a `BUFFER`
+  holding its buffer would run.
 
 ## D4. Import cycles are broken
 
@@ -108,8 +74,8 @@ the Exclusions of `README.md`.
     holds renderers;
   - `codegen/opt/postrange.py:267,273` against `search` and `heuristic`, with
     `search` importing `engine.realize`;
-  - `schedule/__init__.py` against `engine.realize`, `engine/realize.py:262`
-    against `hcq2`, and `tensor.py` against `engine.jit` and `engine.realize`;
+  - `schedule/__init__.py` against `engine.realize`, and `tensor.py` against
+    `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
 - **tolk:** for `uop/ops.py`, `lib/uop/shape.ml:87` (`simplify_rules`) and
   `:2861` (which sets them); `lib/uop/ops.ml:1190` (`Make_elementwise`), `:816`
@@ -118,9 +84,8 @@ the Exclusions of `README.md`.
   `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:709`
   (`contiguous_view`); `lib/schedule/schedule.ml:164` (`pm_flatten_linear`);
   `lib/codegen/codegen.ml:621` (`apply_opts`); `lib/engine/realize.ml:117`
-  (`lower_and_compile`); `lib/runtime/support/hcq2.ml:416` (`device`),
-  `:1875` (`pm_beam`), `:1892` (`compile_linear`); and
-  `lib/runtime/support/compiler_metal.ml` (`Compiler_metal`).
+  (`lower_and_compile`); and `lib/runtime/support/compiler_metal.ml`
+  (`Compiler_metal`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
     module: `contiguous_view` and its matcher go to `Prepare`,
@@ -137,7 +102,8 @@ the Exclusions of `README.md`.
     program that links `Shape` has them. `Symbolic` keeps `sym` and the rules
     on conditions, which call `simplify`;
   - `CallInfo.aux`, `hcq2.py`'s `HCQInfo`, is the record `hcq_info` of
-    `Ops`, since call arguments hold it;
+    `Ops`, since call arguments hold it, though no call of tolk's carries
+    one (D146);
   - `render.py`'s `pretty_print` is `Ops.pp`: it prints arguments
     (`argstr`), and arguments print the nodes they hold, so the two recurse;
   - the kept methods of `mixin/*.py` are functions of `Ops`, or of `Shape`
@@ -157,24 +123,20 @@ the Exclusions of `README.md`.
     `Postrange` and takes how to link and time a program as its `link`
     and `time` arguments, where `beam_search` takes `rawbufs` and
     `var_vals`: its caller makes the buffers `args_from_ast` describes
-    (`Tolk_engine.slots`), since `tolk` cannot name nx.device's buffers,
+    (`Tolk_engine.slots`), since `tolk` cannot name rig's buffers,
     and `get_kernel_actions` returns each candidate with its action, without
     tinygrad's `include_0` and its positions in the action table;
     `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
     the beam search as their `beam` argument, a function of the width the
     kernel asks for, and raise when a kernel asks for one and none is given;
-  - the engine has one order (schedule, realize, hcq2, jit), and each late
-    binding is passed as a function argument, never a global reference;
-    `Realize` precedes `Hcq2`, as `hcq2.py` imports `realize.py` at its top;
-    `realize.py`'s `compile_linear` (`:271`), which reaches `hcq2.py` through
-    the import at its bottom, is `Hcq2.compile_linear`, with `pm_beam`, its
-    one reader; the device's queue encoders, which `hcq2.py` finds in the
-    device registry (`Device[d].pm_encode`, `has_copy_queue`, `host`), are
-    given by the caller in its description of each device (`Hcq2.device`);
+  - the engine has one order (schedule, realize, jit), and each late
+    binding is passed as a function argument, never a global reference:
+    `Realize.compile_linear` takes the target of each device from its
+    caller;
   - the compiler modules precede `Cstyle`, and `ops_metal.py`'s
     `MetalCompiler`, which `cstyle.py` imports inside `MetalRenderer`, is
-    `Compiler_metal`, one of them, since the rest of `ops_metal.py`,
-    `Ops_metal`, follows `Hcq2`.
+    `Compiler_metal`, one of them; the rest of `ops_metal.py` is rig's
+    (D146).
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
 - **Pinned by:** for `Codegen`:
@@ -193,10 +155,9 @@ the Exclusions of `README.md`.
   pm_flatten_linear › Linears nested in Linears are inlined in order`; for
   the engine's order: `Tolk.Realize › lower_and_compile with a beam
   search › raises Invalid_argument for a kernel that asks for one when none is
-  given`, `Tolk.Hcq2 › compile_linear › makes each kernel ask for a beam
-  of the width BEAM sets`, which passes the search, and `› copies through the
-  halves of a staging buffer of the host where the queues cannot reach`, whose
-  caller describes the devices and their queues; for `Compiler_metal`:
+  given`, and `Jit JITBEAM › JITBEAM unset › a kernel is searched with
+  BEAM's width`, which passes the search through `Realize.compile_linear`;
+  for `Compiler_metal`:
   `Tolk.Compiler_metal › MTLCompiler › compiles a kernel to a Metal
   library`. Each calls the function where its break puts it, or passes the
   late binding as an argument, so none compiles without the break.
@@ -258,7 +219,7 @@ the Exclusions of `README.md`.
 - **Differs:** the caller gives a target, whose device is a kind and whose
   `arch` is the device's; tolk picks the renderer and compiler from the
   target and never parses the name, with one exception: a name starting with `DISK` is a disk, as
-  tinygrad reserves it and nx.device names its disk devices
+  tinygrad reserves it and rig names its disk device
   (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
 - **Pinned by:** for targets, `Tolk.Device › renderer takes a device's
@@ -270,24 +231,11 @@ the Exclusions of `README.md`.
   devices › copy_to_device rejects a disk and a weak type` and `Tolk.Ops ›
   storage › clone rejects a disk`.
 
-## D7. Stamp slots follow `Submission.record`
+## D7. Withdrawn
 
-- **tinygrad:** `runtime/support/hcq2.py:231,240,301`.
-- **tolk:** `lib/runtime/support/hcq2.ml:713` (`stamps`), `:638` (the
-  slots); `engine/ops_metal.ml` (`submit`), which writes a command's
-  command buffer over words 3 and 5 of the device's slots, where tinygrad's
-  are 5 and 7 (`runtime/ops_metal.py:159-160`).
-- **Differs:** a device's slots are its queue signals, then two slots per call
-  when profiling, with no slot of the timeline between them (D1). A call's two
-  slots are adjacent, so its start and end stamps are words 1 and 3 of one
-  32-byte record, which the engine hands to `Submission.record`.
-- **Reason:** (c). `Submission.record` takes that layout (RFC 0011,
-  Amendment 2, GAP-3).
-- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `stamp slots
-  (D7)` and `linking and running › a profile records a span of each kernel on
-  its device, in order`; and the Engine suite (`test/engine/tolk_engine`):
-  `batches › a kernel is a span of its compute lane and a copy of its copy
-  lane`.
+A device's stamp slots followed nx.device's `Submission.record`, so a batch's
+kernels were spans of a profile. rig times each submission itself, and tolk
+stamps nothing (D146).
 
 ## D8. The disk cache maps strings to strings
 
@@ -397,9 +345,7 @@ the Exclusions of `README.md`.
   is free to differ, and tolk takes the one OCaml's standard library
   has, which has MD5 and BLAKE2 but not SHA-256.
 - **Pinned by:** `Tolk.Ops › key › ignores tags` and `Tolk.Ops ›
-  key › tells arguments apart`; for the profile keys of batched kernels, the
-  Hcq2 suite (`test/runtime/support/hcq2`): `profile keys (D12)`, whose
-  recorded graphs are compared without them.
+  key › tells arguments apart`.
 
 ## D13. Folding reads and writes committed constants at their width
 
@@ -997,7 +943,7 @@ the Exclusions of `README.md`.
   `Tolk.Dtype › const › const keeps the bits of every 8- and 16-bit float
   word`.
 
-## D28. A host program has nx.device's entry
+## D28. A host program has rig's entry
 
 - **tinygrad:** `codegen/__init__.py:449-451` (`do_compile`: the binary is the
   source compiled), `runtime/ops_cpu.py:58-70` (`CPUProgram.__call__` calls
@@ -1005,18 +951,24 @@ the Exclusions of `README.md`.
 - **tolk:** `lib/codegen/codegen.ml` (`host_entry`, `do_compile`).
 - **Differs:** a program for a CPU target is compiled from its source with
   the kernel renamed `NAME_` and an entry `NAME` appended:
-  `void NAME(void **b, const long long *v)`, which passes the buffers, in the
-  order of the program's globals, and the variables, in order, on to the
-  kernel, as C converts them to its parameters' types. The program's source is
-  the renderer's; only its binary differs.
-- **Reason:** (c). nx.device calls a host program with one ABI,
-  `Nx_device.Program.call`'s, and names its profile span after the entry.
-  The entry keeps the kernel's name in profiles, and passes each scalar at its
-  own type: an Apple arm64 stack argument of 32 bits takes 4 bytes, where
-  ctypes' `c_uint64` would take 8.
+  `void NAME(const struct NAME_args *p, long long first, long long end)`. The
+  structure holds a pointer to each buffer, in the order of the program's
+  globals, then each variable but a split's bounds, in order, each aligned to
+  its size, and for a split program (D80) the iterations of its loop. The
+  entry passes them on to the kernel, as C converts them to its parameters'
+  types, and `first` and `end`, at most the iterations, as the split's
+  bounds. The program's source is the renderer's; only its binary differs.
+- **Reason:** (c). rig's host calls a function of linked code with one ABI,
+  `void f(const void *params, int64_t first, int64_t end)`, places each
+  buffer's address among the parameters, and names a submission's span after
+  the entry. The entry keeps the kernel's name in profiles, and passes each
+  scalar at its own type: an Apple arm64 stack argument of 32 bits takes 4
+  bytes, where ctypes' `c_uint64` would take 8.
 - **Pinned by:** the `Codegen` suite, `programs › a host program's binary
-  holds nx.device's entry after the kernel` and `› a host program runs
-  through Program.call, with ten scalars past the argument registers`.
+  holds rig's host entry after the kernel` and `› a host program runs as a
+  launch of rig's host, with ten scalars past the argument registers`; the
+  Tolk_engine suite, `host programs in blocks › a program writes the same
+  bits in 1, 3 and 32 blocks`.
 
 ## D29. A float32 tensor core takes operands widened from its narrow input
 
@@ -1050,91 +1002,11 @@ the Exclusions of `README.md`.
   `lower_linalg › tensor cores › cuda › *`. The core's exact product
   is README's hardware check.
 
-## D30. A range around calls is a loop in its batch
+## D30. Withdrawn
 
-- **tinygrad:** `schedule/__init__.py:72` (linearization drops a call's
-  `END`); `runtime/support/hcq2.py:40-48` (`get_enqueue_devs` enqueues calls
-  only), `:357,379-385` (`HWQueue.loop` repeats the command bytes and their
-  words), `:467-476` (`bufferize_cmdbuf` merges each nested linear once) and
-  `:50-54` (`unwrap_view` reads constant offsets), `:248-249` (`_wait_ins`:
-  an NV compute queue that waits also waits for its previous launch);
-  `runtime/ops_metal.py:103`
-  (`MetalQueue` inherits `HWQueue.loop`, whose bytes it does not use);
-  `uop/weak.py:27-33` (`cast_weak_srcs`).
-- **tolk:** `lib/runtime/support/hcq2.ml`: `range_placement`, which
-  `stages` reads, and `item` in `sched_batches`, the positions and the two
-  visits and the loop edges of `make_ctx`, `Queue.loop`, the copies per trip in
-  `bufferize_cmdbuf`, the ranges of each group in `patch`, the moving offsets
-  of `lower_call`, the halves of `sched_batches`, and the kernels not
-  compiled yet of `get_enqueue_devs`; `engine/ops_metal.ml`,
-  `engine/ops_cuda.ml`, `engine/ops_amd.ml` and
-  `engine/ops_nv.ml` (`loop`).
-- **Differs:** an `END` of ranges around calls that are all enqueued, on
-  devices of one kind, belongs to their batch. Each queue its calls run on
-  loops over its commands of one trip, as `HWQueue.loop` does, and a nested
-  linear whose words read the ranges, directly or through the address of a
-  nested linear that reads them, such as a kernel's arguments, its scalar
-  arguments among them (D140), or a launch descriptor that addresses them, has
-  a copy for each trip, which the trip's
-  words address. A call's position counts
-  every run of the calls before it, and a call waits for the calls on other
-  queues it depends on in the current trip and, after it, in the trip before
-  (for the value `0` in the first trip). Each group of patched words loops
-  over ranges of its own, since a program ends a range once. Metal repeats a
-  loop's indirect commands and their arguments, CUDA's host program loops
-  over its launches, each trip's reading its trip's extra words, and AMD's
-  AQL queue repeats a loop's packets, each trip's running its trip's bytes of
-  the command buffer (tinygrad's `AMDComputeAQLQueue` keeps its packets apart
-  from the bytes `HWQueue.loop` repeats). NV's compute queue ends its chain of
-  launches at a loop's edges, each trip's chaining onto its own descriptors,
-  and its channel runs the chains it schedules at once: so a call on it past
-  a loop's edge also waits for the queue's previous call, as tinygrad's
-  `_wait_ins` has a call do where a wait ends its chain.
-  - An address that moves with a range (its storage's plus the view's offset)
-    and a position a signal stores are 64-bit words cast from the range's weak
-    integers, which D44 computes in integers. tinygrad's loop builds no such
-    word: its offsets only index the command buffer.
-  - A range whose calls are all programs of one host is a loop of that host's
-    batch (D142); one around a call no batch runs, such as a copy on the
-    host, stays a range around them, reading `range_value` variables that the
-    engine binds on each trip; one that mixes enqueued calls with others, or
-    two kinds of device, is refused. `get_enqueue_devs`
-    takes a kernel not compiled yet as its program, so that `stages` answers
-    on a schedule before it compiles.
-  - A batch whose submission a queue cannot hold, such as AMD's AQL ring's
-    share, whose vendor raises `Over_capacity`, runs as two batches, one after
-    the other: its calls halved, or a range's first trips and the rest, each a
-    range of its own, until each part fits. A staged scan then takes one
-    submission for each share of the queue that holds it; `stages` does not
-    decline for size.
-  - `n` trips of `k` calls take `n·k` commands and `n·k` copies of their
-    arguments, made at link: a command and its arguments take 160 bytes on
-    the NULL queues and 264 on Metal. A range of more calls than a chunk runs
-    as chunks of its trips (D67), so its batches hold at most two chunks'.
-- **Reason:** (b). `Rune.scan`'s staged loop (RFC 0012) schedules calls
-  inside a range and runs them as one submission, whatever the trip count
-  (Law 6); tinygrad's scheduler never hands `hcq2.py` a range.
-- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `ranges
-  (D30)`, among them `› a range its queue cannot hold in one submission runs as
-  several`, `› a call its queue cannot hold in one submission is refused`, `› a range with a host program, a host copy or two kinds
-  of device does not stage`, `› a run of a batched range is one submission,
-  whatever its trips`, `› a trip's copy waits for the kernel of the trip
-  before, on another queue`, `› on NV a compute queue's call past a loop's
-  edge waits for its previous call`, `› a ranged batch's addresses are integers,
-  profiled or not` and `› a trip reads its window past what a float offset
-  holds`, and `Deps › a write that does not trim keeps the accesses to the
-  bytes it writes`, `› forgotten accesses are no longer followed`; the
-  Ops_metal suite (`test/runtime/ops_metal`): `loops (D30) › a range's
-  addresses are integers, profiled or not`, and on macOS `execution › each
-  trip of a range runs its kernel on its own window`, `› a range of 20000
-  trips runs from one indirect command buffer` and `› a profiled range
-  records a span of each trip's kernel` (slow); the Ops_cuda suite
-  (`test/runtime/ops_cuda`): `loops (D30) › a range is a loop of the host
-  program around its launches` and `› a range's addresses are integers,
-  profiled or not`; the Ops_amd suite (`test/runtime/ops_amd`): `loops
-  (D30)`; the Ops_nv suite (`test/runtime/ops_nv`): `loops (D30) › each
-  trip's two launches chain on descriptors of the trip's own, and the channel
-  schedules each trip's chain`.
+A range around calls on devices with queues was a loop of their batch, its
+commands repeated per trip. A range is a loop of rig's program, one submission
+per trip of each submission under it (D146).
 
 ## D31. Payne-Hanek reduces exactly, to the nearest quadrant
 
@@ -1171,32 +1043,10 @@ the Exclusions of `README.md`.
   the `payne_hanek_*`, `xsin_*` and `values` goldens, from the equally
   patched tinygrad.
 
-## D34. A profiled Metal command buffer waits in its stamps retained
+## D34. Withdrawn
 
-- **tinygrad:** `runtime/ops_metal.py:155-160` (`MetalQueue.submit` writes
-  the command buffer over a command's start stamp and `0` over its end
-  stamp), `:275-285` (`synchronize` reads their times, then drains the
-  autorelease pool that holds the command buffer).
-- **tolk:** `engine/ops_metal.ml` (`selectors`, and the stamps in
-  `submit`).
-- **Differs:** the host program sends the command buffer `retain` and writes
-  what it returns over the start stamp. Before that it sends `release` to the
-  start stamp's command buffer if the end stamp is still `0`: a run of the
-  batch whose times were never read left it there. A stamp whose times were
-  read, or that was never written, is sent to `nil`, which does nothing. The
-  selectors `retain` and `release` follow tinygrad's in the `mtl_sel` words.
-- **Reason:** (c). nx.device's Metal library reads a command buffer's times at
-  the device's next synchronization, which may run on another domain than the
-  run that committed it, and releases it then (RFC 0011, Amendment 2): a
-  command buffer that only an autorelease pool holds may be freed, and its
-  address reused, before that.
-- **Pinned by:** the Ops_metal suite (`test/runtime/ops_metal`):
-  `recorded cases › chain_profile`, `› one_profile`, whose host programs are
-  tinygrad's with D34 applied by their generator
-  (`gen/runtime/ops_metal.py`); on macOS, `execution › a profile records a
-  span of each kernel on the device, in order` and `› a profiled batch run
-  twice keeps the second run's spans`, which releases the first run's command
-  buffer (slow).
+A profiled Metal command buffer waited in its stamps retained. rig's Metal
+driver commits and times its own command buffers (D146).
 
 ## D35. A selection of a value on no device is that value
 
@@ -1221,153 +1071,30 @@ the Exclusions of `README.md`.
   zero is zero (D35)", and the law "a rewritten value holds the value computed
   whole" over every drawn program.
 
-## D36. A CUDA host program reads a function's address from a word
+## D36. Withdrawn
 
-- **tinygrad:** `runtime/ops_cuda.py:23` (`extern`: a `Buffer` of the host
-  placed at an address), `:38` (`CUDAQueue.extern`: the address of such a
-  buffer), `:51` (a kernel's function) and `:64` (the host function that
-  stamps a slot).
-- **tolk:** `engine/ops_cuda.ml` (`extern`).
-- **Differs:** a kernel's `CUfunction` and the stamping host function reach
-  the host program as words it loads, from placeholders of the device tagged
-  `("function", lib, name)` and `"stamp"`, which the engine fills when it
-  links the batch, in memory the host reads: a function is loaded on each
-  device. tinygrad takes them as the address of a buffer placed at the
-  function, which the batch loads from its address table.
-- **Reason:** (c). nx.device's buffers are memory: none lies at a function's
-  address, and a placeholder's storage is a buffer. A word holding the
-  address is how a C function already reaches a host program
-  (`Hcq2.ccall`).
-- **Pinned by:** the Ops_cuda suite (`test/runtime/ops_cuda`): `recorded
-  cases`, whose host programs are tinygrad's with D36 applied by their
-  generator (`gen/runtime/ops_cuda.py`), and `function words (D36) › a batch
-  over two devices reads a kernel's function from a word of each`; on an
-  NVIDIA GPU, `execution` (slow), whose every kernel reads its function from
-  such a word.
+A CUDA host program read a function's address from a word of the device. rig's
+CUDA driver launches each function (D146).
 
-## D37. AMD's queues wait on a signal word for equality and write it whole
+## D37. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:402` (`AMDComputeQueue.wait`), `:409-412`
-  (`AMDComputeQueue.signal`), `:482-486` (`AMDSDMAQueue.wait`) and `:496-498`
-  (`AMDSDMAQueue.signal`).
-- **tolk:** `engine/ops_amd.ml:74` (`is_signal_word`), `:379`
-  (the compute queue's `wait`), `:395` (its `signal_mem`), `:677` (the copy
-  queue's `wait`) and `:709` (its `signal`).
-- **Differs:** tinygrad's queues compare the low 32 bits of a 64-bit word,
-  and write only them: the compute queue waits until they are at least the
-  value's (`WAIT_REG_MEM`, `>=`) and signals with `RELEASE_MEM` of the low 32
-  bits (`send_32_bit_low`); the copy queue polls for `>=` and fences the low 32
-  bits. A device's values pass 2^32, and then the word's high half is never
-  written, so a 64-bit reader never sees the value, and a wait for a value just
-  past the wrap passes on a word just before it (`0xfffffffd >= 5`). In
-  tolk a wait on a device's signal word, which is for the value its work
-  before the batch signals and which only the batch's own work passes, waits
-  until the low 32 bits equal the value's; a signal of a device's value writes
-  all 64 bits: in one `RELEASE_MEM` of 64-bit data on the compute queue, and on
-  a copy queue with a fence of the low 32 bits then, when they are `0`, a fence
-  of the high 32 bits, four NOPs otherwise, chosen by the host program since the
-  value is its variable. A high half is then written only when it changes, so
-  one that lands after a later value's write holds that value's high half, and
-  a wait on the low half never passes before its value is written. Waits and
-  signals of the queues' signals in the batch's slots, whose values are small,
-  keep tinygrad's encoding.
-- **Reason:** (c). nx.device's AMD library states this rule for every work on
-  an AMD device (its low-level section): its own copies wait for equality of
-  the low 32 bits and write the high half only when the low one is `0`, and a
-  batch's work shares their signal word.
-- **Pinned by:** the Ops_amd suite (`test/runtime/ops_amd`):
-  `signal_words.golden`, the words of the waits and signals at 2^32 - 1, 2^32,
-  2^32 + 1, 2^33 - 1 and 2^33 from tinygrad with D37 applied by its generator
-  (`gen/runtime/ops_amd.py`); `carry law (D37)`, which decodes them into
-  memory writes and checks, in every interleaving of three works' writes and
-  a wait, that the word never reads above the latest value whose work
-  completed and never goes below a value once its writes landed, and that
-  each wait passes only once its value is written; and every `recorded
-  cases` golden.
+AMD's queues waited on a signal word for equality and wrote it whole. rig's AMD
+driver encodes its own waits and releases (D146).
 
-## D38. A program's code object is loaded by the engine
+## D38. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:533-541` (`amd_build_program` makes a
-  placeholder tagged `program` and stores the image into it at link), `:1032`
-  (`AMDDevice.program_buffer` allocates it), `:547-548` (`_amd_program_image`
-  refuses a kernel whose LDS exceeds the GPU's); `runtime/ops_nv.py:314-320`
-  (`nv_build_program` makes a placeholder tagged `program` and stores the
-  image into it at link, with a row for each relocation of the program's own
-  address).
-- **tolk:** `engine/ops_amd.ml:153` (`amd_build_program`),
-  `engine/ops_nv.ml:340` (`build_program`); the engine's AMD and NV
-  modules.
-- **Differs:** the program's placeholder is tagged
-  `("program", binary, name)`, and no link patch writes an image into it: the
-  engine loads the code object on the device (`Nx_device.Program.load`) and
-  binds the placeholder to the image nx.device uploaded and relocated
-  (`Nx_amd_device.kernel`'s `code`, `Nx_nv_device.kernel`'s `image`), whose
-  layout is the one the compiler reads its descriptor from (`Nx_device_elf`,
-  sections aligned to 128 bytes on NV). The LDS check is the AMD load's; NV's
-  relocations are its load's.
-- **Reason:** (c). Programs are nx.device's (D3): its AMD and NV libraries
-  upload a code object once per device into memory the GPU fetches from,
-  relocate it, check the kernel against the GPU and record the load in
-  profiles.
-- **Pinned by:** the Ops_amd and Ops_nv suites: every `recorded cases`
-  golden, from tinygrad with D38 applied by its generator, whose offsets into
-  the image tinygrad's ELF loader computes and the encoders read from
-  `Nx_device_elf`; the Ops_nv suite's `storage › a compute queue names its
-  program's cubin, ...`.
+A program's code object was loaded by the engine for a batch's commands to
+name. rig loads each image (`Rig.Image.load`, D146).
 
-## D39. A submission writes at most half of each AMD ring
+## D39. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:420-428` (`AMDComputeQueue.push`, which
-  the AQL queue's `submit` calls too) and `:500-520` (`AMDSDMAQueue.submit`):
-  the host program writes a submission's packets from the ring's put
-  position without looking at how far the engine has read, and the SDMA
-  queue refuses only a command buffer larger than its ring.
-- **tolk:** `engine/ops_amd.ml:599` (the AQL queue's `submit`) and
-  `:733` (the copy queue's).
-- **Differs:** a submission writes at most half of each ring. A copy
-  queue's command buffer over a quarter of its ring, since zeroing the tail
-  when it does not fit before the ring's end can double what it takes, and
-  AQL packets over half of theirs, are over the queue's capacity
-  (`Hcq2.Over_capacity`): the batch runs as several submissions, its calls or
-  a range's trips split between them, and only a call too large for its
-  queue on its own is refused. nx.device waits, before the host program runs,
-  until each ring of the device is at most half full, so no host program
-  overwrites packets its engine has not read. The copy queue keeps streaming
-  its command buffer into its ring, as tinygrad's does: an SDMA indirect
-  buffer on a user queue is used by nothing this port can check against.
-- **Reason:** (c). nx.device's queue writers wait until the engine leaves room
-  (the AMD library's low-level section), and a host program cannot wait with
-  the device's timeout nor lose it; `Nx_device.submit` does, through the
-  driver's `room`.
-- **Pinned by:** the Ops_amd suite: `room (D39)` and `splits (D39)`, a range
-  of 10,000 trips on AQL, whose chunks (D67) split into batches within their
-  ring's share, and one of 1,000 copies, split likewise; nx.device's suite: `timeline ›
-  a submission runs once its device's queues have room` and `› a device whose
-  queues stay full through its timeout is lost ...`.
-## D40. The copy engine signals the high word of a value too
+A submission wrote at most half of each AMD ring. rig's AMD driver sizes its
+own submissions (D146).
 
-- **tinygrad:** `runtime/ops_nv.py:197-201` (`NVCopyQueue.semaphore` and
-  `.signal`, a one-word copy-engine release of the value's low 32 bits).
-- **tolk:** `engine/ops_nv.ml` (`copy_signal`).
-- **Differs:** the copy queue signals a value in two one-word releases: its low
-  word into the signal word, then its high word into the next four bytes of
-  the signal word when the low word is `0`, and into a word of its own, a
-  volatile placeholder of the device tagged `nv_sink`, otherwise. The value
-  is known when the host program runs, so the second release is always
-  encoded, and its address chosen then.
-- **Reason:** (c). Timeline values are 64 bits, and nx.nv.device writes them
-  as this rule says (its low-level section). A low word alone loses the high
-  word at 2^32: the signal word falls from 2^32 - 1 to 0 and stays there. A
-  high word rewritten on every release takes the value back when another
-  channel's release of the next value lands between the two words.
-- **Pinned by:** the Ops_nv suite (`test/runtime/ops_nv`): `command words ›
-  the copy engine releases the low word, then the high word where the value
-  lives (D40)` for the values 2^32 - 1, 2^32, 2^32 + 1, 2^33 - 1 and 2^33;
-  `the 32-bit carry law`, over every order in which the writes of three works
-  on the compute channel, this copy queue and nx.nv.device's copies can land,
-  and its counterexamples, tinygrad's release and a high word rewritten late;
-  the recorded cases, whose host programs are tinygrad's with D40 applied by
-  their generator (`gen/runtime/ops_nv.py`).
+## D40. Withdrawn
+
+NV's copy engine signalled the high word of a value too. rig's NV driver
+encodes its own releases (D146).
 
 ## D41. The memory plan sees a range's calls, and leaves buffers reached through views
 
@@ -1397,75 +1124,16 @@ the Exclusions of `README.md`.
   `› a buffer a range writes through a view is not placed over another`, each
   of which fails without its half.
 
-## D42. A batch's command buffers, and its placeholders where a device has no window, are pinned memory
+## D42. Withdrawn
 
-- **tinygrad:** `runtime/support/hcq2.py:588` (`bufferize_buf` allocates a
-  volatile placeholder in uncached host memory, a command buffer in device
-  memory the host maps and the GPU reads uncached, `BufferSpec(uncached=True,
-  cpu_access=True)`, and the others in device memory the host maps,
-  `BufferSpec(cpu_access=True)`); `runtime/ops_nv.py:447-485` (NV maps such
-  memory through BAR1); `runtime/ops_amd.py:633` (AMD raises without a large
-  BAR).
-- **tolk:** `engine/tolk_engine.ml` (`placeholder`: a volatile
-  placeholder and a command buffer, `Hcq2.is_cmdbuf`, with
-  `Nx_device.Buffer.create ~memory:Pinned`, the others with `~memory:Mapped`).
-- **Differs:**
-  - A command buffer is pinned memory, system memory the command processor
-    fetches across the bus, where tinygrad uses device memory the GPU reads
-    uncached.
-  - Where a device has no window onto its memory that the host writes through,
-    or the window is full, its mapped memory is its pinned memory, where
-    tinygrad's AMD device raises and its NV device needs the window. A device
-    whose vendor library describes no window (CUDA) has its launch descriptors,
-    constant buffers and kernel arguments in pinned memory.
-- **Reason:** (c). nx.device has no device memory that the device reads
-  uncached. Pinned memory is the kind that keeps the command processor's fetch
-  coherent with the host's writes with no invalidation. nx.device's mapped
-  memory falls back to pinned memory rather than failing, so that a batch runs
-  on every machine.
-- **Pinned by:** the Engine suite (`test/engine/tolk_engine`): `batches ›
-  a batch's kernel arguments are mapped memory, and its command buffers and
-  volatile words pinned memory`; the Ops_amd and Ops_nv execution suites on a
-  GPU.
+A batch's command buffers, and its placeholders where a device had no window,
+were pinned memory. tolk makes no command buffer, and a program's memory is
+rig's (D146).
 
-## D43. A queue bufferizes its own commands, and a region keeps its alignment
+## D43. Withdrawn
 
-- **tinygrad:** `runtime/support/hcq2.py:471` (`bufferize_cmdbuf` lays each
-  nested `LINEAR` out on 128 bytes), `:479-481` (`encode_submit` bufferizes
-  the queue's commands, then hands the buffer to `HWQueue.submit`).
-- **tolk:** `lib/uop/ops.ml` (the `Region` argument of `Op.Linear`),
-  `lib/runtime/support/hcq2.ml:1374` (`bufferize_cmdbuf`), `:1470`
-  (`encode_submit`).
-- **Differs:** a nested `LINEAR`'s argument is a region, a name and an
-  alignment that the vendor creating it states, 128 by default, and printed
-  as the name alone then; `bufferize_cmdbuf` starts each region at its own
-  alignment. A region's words may address another region: every region the
-  command words address, directly or through the words of regions, is laid
-  out once, in the buffer of its name, where tinygrad lays a region addressed
-  through another out again in a buffer of its own, of the same name.
-  `commands.submit` takes no command buffer: `encode_submit` calls it once
-  every command is encoded, and the vendor finishes its queue, then calls
-  `bufferize_cmdbuf` itself, as AMD's AQL queue already bufferizes its
-  packets on the host. A vendor's `submit` raises `Over_capacity` for a
-  submission its queue cannot take, and the batch is split (D30): NV's when
-  its command buffer has more words than a ring entry's 21-bit length field
-  holds (`engine/ops_nv.ml:404`, `submit_cmdbuf`), where tinygrad's
-  entry would carry the length's high bits into its other fields.
-- **Reason:** (b). NV's launch descriptors and constant buffers are regions
-  (Ops_nv), so that a range's trips each get their own copy of them, as the
-  staged scan batches a scan body in one submission (RFC 0012). A launch
-  descriptor starts on 256 bytes, since the channel takes its address shifted
-  by 8, and it is final only once the commands after it are encoded: the next
-  launch chains onto it and the next signals are its releases. tinygrad
-  patches a descriptor buffer whose address is known at launch; a region's
-  address is known only once its bytes are. A descriptor addresses its
-  constant buffer and the next descriptor of its chain, both regions, and
-  each must have one address.
-- **Pinned by:** `Tolk.Hcq2 › patch and bufferize_cmdbuf › each region
-  starts at its own alignment in the buffer of its name` and `› a region
-  addressed through another region is laid out once, in the buffer of its
-  name`; the Hcq2, NULL, Metal, CUDA and AMD goldens, unchanged; the Ops_nv
-  recorded cases, whose generator applies D43 to tinygrad.
+A queue bufferized its own commands, and a region kept its alignment. tolk
+encodes no queue (D146).
 
 ## D44. An integer cast of a weak expression computes in integers
 
@@ -1489,73 +1157,22 @@ the Exclusions of `README.md`.
 - **Pinned by:** the Uop_weak suite (`test/uop/uop_weak`): `pm_commit_weak ›
   a 64-bit unsigned cast of a weak expression keeps its value past a float's
   precision (D44)` and `laws › pm_commit_weak computes an integer cast in
-  integers (D44)`; the Hcq2, Ops_cuda and Ops_metal suites' `a range's
-  addresses are integers, profiled or not` and the Hcq2 suite's `ranges (D30)
-  › a trip reads its window past what a float offset holds`.
+  integers (D44)`.
 
-## D45. Staging memory is a placeholder of the host
+## D45. Withdrawn
 
-- **tinygrad:** `runtime/support/hcq2.py:131-134` (`_staging`: a host
-  `Buffer` of 128 MiB, allocated once per device and kept), `:155-156`
-  (`stage_copy` names it by `UOp.from_buffer`).
-- **tolk:** `lib/runtime/support/hcq2.ml:507` (`staging_size`), `:522`
-  (the placeholder in `stage_copy`); `engine/tolk_engine.ml:512`
-  (`staging`).
-- **Differs:** a copy between memory the queues cannot reach goes through the
-  two halves of a placeholder of the host tagged `"staging"`, of 128 MiB. The
-  engine gives it, at link, the host's staging memory, nx.device's
-  (`Nx_device.staging`): one per host, which every linked schedule and
-  nx.device's own staged copies share, and which is kept for the life of the
-  process, as tinygrad's is. Runs that stage through one host take turns with
-  it, whatever their devices, since each touches it and so takes the host;
-  nx.device's copies take the host too, and wait for those runs' work before
-  they fill a slot. One area per device would let runs overlap for 128 MiB a
-  device, and waits for a measured bottleneck.
-- **Reason:** (c). The compiler opens no device and allocates nothing
-  (plan §1a): storage it names is a placeholder, and the engine's link
-  allocates it.
-- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `compile_linear
-  › copies through the halves of a staging buffer of the host where the
-  queues cannot reach`, which finds one placeholder tagged `"staging"` of
-  128 MiB on the host, and six copies; the Engine suite
-  (`test/engine/tolk_engine`): `batches › linked schedules that stage
-  share the host's staging memory`, `› staged runs of two programs on other
-  devices take turns` and `› staged runs of two programs from two domains each
-  copy their own`.
+Staging memory was a placeholder of the host. rig stages the copies it cannot
+run directly (`Rig.Buffer.copy`, D146).
 
-## D46. Whether a device's queues reach memory is described, not tried
+## D46. Withdrawn
 
-- **tinygrad:** `runtime/support/hcq2.py:151-155` (`stage_copy` maps each
-  buffer on the device with `get_buf` and stages the copy when that raises).
-- **tolk:** `lib/runtime/support/hcq2.ml:467` (`reached`, from
-  `queues.reaches`); `engine/cuda.ml` and `engine/amd.ml` (`reaches`).
-- **Differs:** the caller's description of a device says which other devices'
-  memory its queues address (`Hcq2.queues.reaches`), and a copy is staged when
-  either side's memory is not reached. tinygrad tries to map the buffers and
-  stages the copy on failure. A buffer that `reaches` admits but the device
-  cannot map is staged by nx.device instead (D70).
-- **Reason:** (c). The compiler opens no device, so it cannot try a mapping;
-  the engine describes each device's reach from nx.device's
-  (`Nx_device.reaches`), which the devices' drivers describe from their
-  machine's topology.
-- **Pinned by:** the Hcq2 suite: `compile_linear › copies through the halves
-  of a staging buffer of the host where the queues cannot reach`, whose device
-  description reaches every device but CPU:2.
+Whether a device's queues reached memory was described, not tried. rig answers
+it (`Rig.reaches`), and tolk compiles no copy for it (D146).
 
-## D48. A kernel's dispatch packet in its arguments is words
+## D48. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:61-67` (`dispatch_packet`), `:361-364`
-  (`kernargs`).
-- **tolk:** `engine/ops_amd.ml:162` (`dispatch_packet`).
-- **Differs:** tinygrad gives a known grid size as a Python integer, which the
-  AQL queue turns into a 32-bit constant but the kernel arguments of the PM4
-  queue put as they are among the sources of a `LINEAR`: encoding a kernel
-  that reads its dispatch packet on a PM4 queue raises. tolk's grid sizes
-  are 32-bit constants in both.
-- **Reason:** (a). A node's sources are nodes: OCaml's types admit no integer
-  among them.
-- **Pinned by:** the Ops_amd suite: `recorded cases › scratch`, a kernel that
-  reads its dispatch packet and scratch memory, on a PM4 queue.
+A kernel's dispatch packet in its arguments was words. rig's AMD driver writes
+its dispatch packets (D146).
 
 ## D50. Every C-style renderer writes a division; a product by a reciprocal stays one
 
@@ -1591,34 +1208,10 @@ the Exclusions of `README.md`.
   CUDA's and HIP's `/` are correctly rounded by their compilers' defaults,
   which is on the hardware checks of `test/README.md`.
 
-## D51. A launch reads its local memory size from a word of the device
+## D51. Withdrawn
 
-- **tinygrad:** `runtime/ops_nv.py:283-291` (`NVProgramData` writes the
-  device's `slm_per_thread` into the launch template's
-  `shader_local_memory_high_size`), `:688-697`
-  (`NVDevice._ensure_has_local_memory` grows the device's local memory when
-  it builds a program).
-- **tolk:** `engine/ops_nv.ml:330` (`local_word`), `:352`
-  (`build_program`); `engine/nv.ml` (`local`).
-- **Differs:** a launch template's local memory size reads a 32-bit word,
-  a placeholder of the device tagged `("nv_local", bytes)` for kernels that
-  need `bytes` per thread, which the host program loads when it runs. Every
-  launch on the devices that needs `bytes` reads one such placeholder, since
-  placeholders of one tag in a batch become views of one buffer. The engine
-  binds it to one word of the device,
-  grows the device's local memory to `bytes` when it links the batch
-  (`Nx_nv_device.local_memory`) and writes the bytes per thread the memory
-  then provides into the word. A batch linked before a later one grew the
-  memory launches with the grown size.
-- **Reason:** (c). The compiler opens no device, so it cannot read or grow
-  the device's local memory; nx.nv.device owns it, and grows it as work on the
-  device's timeline.
-- **Pinned by:** the Ops_nv suite: every `recorded cases` golden, from
-  tinygrad with D51 applied by its generator, and `storage › a compute queue
-  names its program's cubin, its channel's words, and the local memory its
-  launches need` and `› the launches of two programs in one batch read one
-  local memory word, whatever the engine binds to it (D51)`; the Ops_nv
-  execution suite on an NVIDIA GPU.
+An NV launch read its local memory size from a word of the device. rig's NV
+driver sizes local memory as it loads a function (D146).
 
 ## D52. A selection of -0. stays off a gated load
 
@@ -1712,10 +1305,7 @@ the Exclusions of `README.md`.
   (D54)`, `pp_param_arg writes a phase that is not 0 and an alignment that is
   not 16 (D54)`, `equal_arg tells apart parameters that differ in phase
   (D54)` and `param_like keeps its storage's phase, moved by a shrink, and
-  knows it modulo what a symbolic start moves by (D54)`; the `Hcq2` suite's
-  `ranges (D30) › a kernel reads windows an odd number of floats apart a
-  float at a time, and windows four floats apart four at a time` and `› a
-  trip reads its window past what a float offset holds`, on x86; the graph format's round trip of `a buffer past
+  knows it modulo what a symbolic start moves by (D54)`;  the graph format's round trip of `a buffer past
   a 16-byte boundary`; the `Schedule` suite's `disk_view_to_linear.golden`,
   a view 8 bytes into a disk file whose parameter has no phase. In rune,
   the `Lower` suite's `a parameter of storage 4 bytes past a 16-byte boundary
@@ -1723,9 +1313,7 @@ the Exclusions of `README.md`.
   phase 4` and `a program over an argument 4 bytes past a 16-byte boundary
   computes nx's values`, and the `Compiled` suite's `edges › an operand whose
   buffer starts 2 bytes into its memory is read where it is`, on the
-  host and on Metal, whose sweeps draw buffers that start at any byte; the
-  slow `Ops_metal (execution)` suite's `phase (D54) › a float16 buffer 2 or 6
-  bytes into its memory is read where it lies with its phase`; the `Schedule`
+  host and on Metal, whose sweeps draw buffers that start at any byte;  the `Schedule`
   suite's `contiguous_mops_to_view › a stage of doubles one past a boundary is
   known to start on 8 bytes (D54)`, `› a stage of rows padded apart, starting
   one double past a boundary, is storage of its own on one (D54)` and `› a
@@ -1829,9 +1417,8 @@ the Exclusions of `README.md`.
   views, the range loses the tag of kernel ranges, and `create_schedule`
   keeps the end around the call, ordered by the call's reads and writes.
   Once the call's body is scheduled and resolved, the schedule is `LINEAR
-  [END(LINEAR [CALL k1; CALL k2; ...], r)]`, the form that ranges of calls
-  on HCQ devices (D30), the memory plan of a range (D41) and `Engine.run`
-  already run. An end over device ranges is still the call, bound at launch.
+  [END(LINEAR [CALL k1; CALL k2; ...], r)]`, the form that the memory plan of a range (D41) and `Tolk_engine.run`, a
+  loop of rig's program (D146), run. An end over device ranges is still the call, bound at launch.
   The kernel graph spec admits loop ranges, ends of calls over them, and
   views that move with them, whose bounds are constants, loop ranges, and
   weak integer sums and products of them, which a call may also pass as a
@@ -2048,68 +1635,16 @@ the Exclusions of `README.md`.
   device › a chain of 8-bit float operations rounds after each, as eager
   does`, and the same on Metal.
 
-## D66. A counted run's log entry is its kernel descriptor's address and its times
+## D66. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:157-165` (`prof_start` writes the program
-  placeholder's slot, a constant, into the run's entry of `prof_log`, one word
-  a run), `:1056-1068` (`collect_prof` hands that slot to its profile event,
-  which `viz/serve.py:353` maps to the program, and pairs the event with the
-  program's runs in order).
-- **tolk:** `engine/ops_amd.ml:547` (`start_run` writes the address of
-  the kernel descriptor, `getaddr lib + desc_offset`, and the GPU's clock
-  before the kernel; `stop_run` the clock after it).
-- **Differs:** a run's entry is three words: the address of its kernel
-  descriptor, which the host program computes from the code object's address
-  at link, where tinygrad writes a constant that names the program's
-  placeholder in its compiler; then the GPU's clock before and after the run,
-  which the compute queue writes with two more packets a counted run.
-- **Reason:** (c). nx.amd.device reads the log at each synchronization and
-  reports each run's counters as an event of the run
-  (`Nx_device.Profile.Counters`): named after its kernel, which it knows by
-  its descriptor address, the program's handle, and nothing of a compiler's
-  placeholders; and timed by the run itself, so that counters belong to their
-  run whatever runs between them go uncounted or are lost, where pairing them
-  with spans in order would give a run another run's counts.
-- **Pinned by:** the Ops_amd suite: `recorded cases › counters`,
-  `counters_gfx1201` and `counters_gfx942`, from the generator patched as
-  `test/gen/runtime/ops_amd.py` says.
+A counted run's log entry was its kernel descriptor's address and its times,
+for the counters an AMD batch read. tolk encodes no counter yet (D146).
 
-## D67. A long range runs as chunks of its trips
+## D67. Withdrawn
 
-- **tinygrad:** `runtime/support/hcq2.py:379-385` (`HWQueue.loop`, which
-  repeats a trip's command bytes and words once per trip:
-  `self.blob += self.blob[start:] * int(r.vmax)`).
-- **tolk:** `lib/runtime/support/hcq2.ml:1215` (`chunk_calls`), `:1219`
-  (`parts`), `:1230` (`chunked`) and `:1184` (`trips_from`), used by
-  `sched_batches`; `engine/tolk_engine.ml:906` (`run_call`'s `Range`, which
-  binds the chunk's variable).
-- **Differs:** a range of a batch (D30) of more than `chunk_calls` calls,
-  `n` trips of `k` calls, runs as chunks of `c = max 1 (chunk_calls / k)`
-  trips. One batch holds a chunk: its loop reads the range as
-  `range_value r' * c` plus its own range, for a range `r'` of `n / c` trips
-  that stays in the schedule as a range of the engine around the batch, so
-  the engine runs the batch once per chunk with the chunk as a variable. A
-  second batch holds the `n mod c` trips left, when there are any. The
-  batches hold at most `2·c·k` commands and their arguments, whatever `n`,
-  and a run takes `n / c` submissions and one more for the trips left,
-  where tinygrad's loop holds `n·k` commands in one submission.
-  `chunk_calls` is 1,024: on Metal a kernel's launch takes about 3 µs and a
-  submission about 24 µs, so a chunk's submission costs under 1% of its
-  launches, and its commands and arguments take about 270 KB.
-- **Reason:** (b). `Rune.scan`'s staged loop runs a body of a few calls per
-  step for as many steps as the scan has: unchunked, a scan of a million
-  steps held about 800 MB of commands and arguments on Metal (808 bytes a
-  step), and its program grew with its trip count, which staging exists to
-  avoid.
-- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `ranges
-  (D30) › a range of more calls than a chunk runs as a batch of a chunk, once
-  per chunk` (a batch of 1,024 trips around which the engine loops twice, a
-  batch of the 5 trips left, three submissions, and every trip's window
-  written); the Ops_amd suite's `splits (D39) › a range of 10,000 trips on
-  AQL …` (a chunk over half its ring halves, the trips left fit); rune's
-  Jit suite on Metal, `staged scans › stage a thousand steps` and `› stage
-  more steps than a batch holds, in chunks and the rest` (3,001 steps), each
-  against the eager scan.
+A long range ran as chunks of its trips, so that a batch held a bounded number
+of commands. A range is a loop of rig's program, which holds one trip's work
+(D146).
 
 ## D68. Withdrawn
 
@@ -2128,55 +1663,15 @@ those rows with one store through a gather whose index is Invalid where a
 row is dropped, which tinygrad schedules as a gated store, and nothing
 stores through a pad.
 
-## D70. A batch reaches host memory through nx.device's staging
+## D70. Withdrawn
 
-- **tinygrad:** `device.py:303-308` (`HostAllocator._alloc`: every host buffer
-  is its own `mmap`, so it starts on a page and every device maps it), and
-  `runtime/support/hcq2.py:151-155` (`stage_copy`, which maps each buffer).
-- **tolk:** `engine/tolk_engine.ml:382` (`reach`), `:604` (link's
-  `reach_word`) and `:721` (`run_batch`); `lib/runtime/support/hcq2.ml:222`
-  (`call_writes`, the batch's `writes`).
-- **Differs:** nx.device starts a host buffer on a page only from 64 KiB, so a
-  CUDA, AMD or NV device, which maps whole pages, cannot borrow a small one.
-  A batch's devices reach the storage its words and inputs address through
-  `Nx_device.Buffer.reach`, which stages such memory in pinned memory of the
-  device and copies it in and back around each submission. The access each
-  memory is reached for is `Read_write` when the batch writes it through any
-  word or input, from the batch's queue data's `writes`, which tinygrad's
-  `HCQInfo` has not: the storage under each output of each of its calls, a
-  copy's destination and a kernel's outputs, in-place ones included, and under
-  every argument of a call whose outputs are not known. A placeholder's
-  storage is borrowed, never staged.
-- **Reason:** (c). nx.device keeps small tensors off a page each, and staging
-  is its to order. tinygrad's `written_bufs` leaves out the storage a call also
-  reads and parameters, so it cannot say which staged memory a run writes.
-- **Pinned by:** the Engine suite (`test/engine/tolk_engine`): `batches ›
-  a host buffer the device cannot borrow is staged, as storage` and `› as an
-  input`, of 12, 256 and 1,280 bytes, on CPU:4, a test device that maps whole
-  pages: each copies the host buffer in and a device buffer back over it, twice,
-  the host rewriting it between runs; and `› a run waits for its batch only
-  when it writes a staged buffer`, whose read returns while CPU:4's late queue
-  has not signaled.
+A batch reached host memory through nx.device's staging. rig's borrows and
+staged copies replace it (D146).
 
-## D71. A launch states a constant bank's size in 16-byte units
+## D71. Withdrawn
 
-- **tinygrad:** `runtime/ops_nv.py:302` (`NVProgramData` writes a constant
-  bank's bytes into the launch template's `constant_buffer_size_shifted4`).
-- **tolk:** `engine/ops_nv.ml:301` (`program_data`).
-- **Differs:** a launch template states each constant bank's size rounded up
-  to 16 bytes and shifted right by 4, as the field's name says, where
-  tinygrad writes the bytes. The field holds 13 bits, so tinygrad refuses a
-  bank of 8 KiB or more, a parameter bank of about a thousand arguments, and
-  states a smaller bank 16 times its size.
-- **Reason:** (b). tinygrad writes a byte count into a field that counts
-  16-byte units. rune's staged scan `write out four hundred steps, each
-  carry stored` launches a kernel whose parameter bank holds 13,192 bytes,
-  which NV refused (`constant_buffer_size_shifted4_0=0x3388 does not fit`)
-  and CUDA runs.
-- **Pinned by:** the Ops_nv suite: every `recorded cases` golden, from
-  tinygrad with D71 applied by its generator; rune's Jit suite on an
-  NVIDIA GPU: `nv › staged scans › write out four hundred steps, each carry
-  stored`.
+A launch stated a constant bank's size in 16-byte units. rig's NV driver writes
+its launch descriptors (D146).
 
 ## D72. Only a view of storage has a contiguous view
 
@@ -2482,7 +1977,7 @@ stores through a pad.
   suite, `values › compiled, a product is eager's › the largest scales`).
 - **Pinned by:** the Cstyle suite: `grouping › Clang computes a product of a
   product as it is grouped`; and the rendered sources of the `codegen`,
-  `renderer/cstyle`, `runtime/support/hcq2` and `engine/jit` goldens, from the
+  `renderer/cstyle` and `engine/jit` goldens, from the
   equally patched tinygrad.
 
 ## D78. The CUDA device's kernels compile to a cubin
@@ -2518,7 +2013,7 @@ stores through a pad.
   in the pipeline) and `:1030` (`whole_loop`); `lib/uop/ops.ml:340`
   (`kernel_info.split`); `lib/uop/call.ml:719` (`program_info_of_sink`);
   `lib/engine/realize.ml:27` (`get_call_var_uops`);
-  `engine/tolk_engine.ml:202` (`block_ops`) and `:230` (`Program.split`);
+  `engine/tolk_engine.ml` (`block_ops`, `blocks` and `split_grid`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same split, estimates,
   launch dimensions and variable values, and runs a split program as one
   block; `test/gen/renderer/renderer.py`, whose estimate tables count a split
@@ -2540,13 +2035,11 @@ stores through a pad.
   records `split = (n, lo, hi)`, the iterations and the two slots, by which
   each launch finds the bounds; `n` is its program's first global size, and
   its estimates count the whole loop, exactly when they read no other
-  variable: counted in the loop's 32-bit type, a count past 2^31 would wrap. A host launch cuts
-  `[0, n)` into `min(n, 4 × workers, ops / 2^18)` blocks, at least one, that
-  nx.device's thread pool runs (`Nx_device.Program.call ~split`); a queue's
-  launch (`get_call_var_uops`) and tinygrad's own (`whole_loop` in
-  `engine/realize.py`) run one block, the whole loop. A host batch passes the
-  same blocks to nx.device's entry, which runs them as
-  `Nx_device.Program.call ~split` does (D142).
+  variable: counted in the loop's 32-bit type, a count past 2^31 would wrap. A host launch cuts `[0, n)` into `min(n, ops / 2^18)` blocks, at least
+  one, each a group of rig's host of as many threads as iterations, which
+  its pool runs on the performance cores, and the entry (D28) runs the
+  iterations its threads number; tinygrad's own launch (`whole_loop` in
+  `engine/realize.py`) runs one block, the whole loop.
 - **Reason:** (b): sofo's and symo's training steps on the CPU, which ran each
   kernel on one core. Their hottest kernels, split by hand into 32 blocks on
   kimchi's 8 E-cores (`taskset -c 6-13`, best of 30), took 6.17 ms and 0.77 ms
@@ -2559,13 +2052,9 @@ stores through a pad.
   split none`, `› a store of no loop splits none`, `› a reduction's loop is
   never split`, `› a serial loop is never split`, `› a loop shrunk by its
   guard splits at its shrunk end, unguarded`, `› a split loop of 2^25 iterations keeps 32-bit indices` and `› a split's bounds and a variable take slots of their own past buffers that skip one`; the
-  Tolk_engine suite: `host programs in blocks › a program writes the same bits
-  in 1, 3 and 32 blocks`, `› a run of much work splits into blocks`, `› a run
-  of little work runs as one block` and `› a run of a large kernel computes
-  its sums`, and `a variable named as a block's bounds is a variable like any
-  other`; nx.device's host suite: `a split call runs each iteration once,
-  in its block` and `a split call runs while another domain's holds the
-  threads`.
+  Tolk_engine suite: `host programs in blocks › a program writes the same bits in 1, 3 and 32
+  blocks` and `› a run of a large kernel computes its sums`, and `a variable
+  named as a block's bounds is a variable like any other`.
 
 ## D81. The matrix-vector layout reads its operands through conversions and decoding
 
@@ -2642,43 +2131,15 @@ stores through a pad.
   value to several devices keeps its bits`, and the recorded programs that
   copy a sharded value to several devices.
 
-## D84. A dispatch's thread-trace marker numbers its queue's dispatches
+## D84. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:248` (`sqtt_setup_exec` takes the
-  marker's command id from `self.dev.sqtt_next_cmd_id`, a counter of the
-  device for the life of the process), `:902` (the counter).
-- **tolk:** `engine/ops_amd.ml:581` (`commands`, a counter of the queue
-  being encoded) and `:584` (`trace_markers`).
-- **Differs:** the command id of a dispatch's RGP event marker counts the
-  dispatches of its queue from 0, where tinygrad counts every dispatch the
-  device's queues encoded in the process.
-- **Reason:** (c). A compiled batch is a value the engine links and caches:
-  with a device's counter, its packets would depend on what compiled before
-  it. The id only ties a trace's markers together, and each run's trace is
-  its own.
-- **Pinned by:** the Ops_amd suite: `recorded cases › traces`,
-  `traces_gfx1201`, `traces_gfx942` and `counters_traces`, from the generator
-  patched as `test/gen/runtime/ops_amd.py` says.
+A dispatch's thread-trace marker numbered its queue's dispatches. tolk encodes
+no thread trace yet (D146).
 
-## D85. A GFX11 trace sets TTRACE_EXEC by name
+## D85. Withdrawn
 
-- **tinygrad:** `runtime/support/amd.py:10` (`AMDReg.encode` shifts each value
-  to its field's lowest bit without cutting it), `runtime/ops_amd.py:310`
-  (`sqtt_start` gives `token_exclude` the bit 11 of
-  `SQ_TT_TOKEN_EXCLUDE_PERF_SHIFT`, past the field's 11 bits on GFX11, which
-  so sets `TTRACE_EXEC`).
-- **tolk:** `engine/ops_amd.ml:412` (`encode` cuts each value to its
-  field, as `bits` does), `:698` (a GFX11 trace sets `ttrace_exec`).
-- **Differs:** a value wider than its field loses its high bits, and a GFX11
-  trace sets `TTRACE_EXEC` by name where tinygrad sets it through the spilled
-  bit. `SQ_THREAD_TRACE_TOKEN_MASK` takes the same value; no other value of
-  the recorded cases spills.
-- **Reason:** (c). A value spilling into the next field changes what the
-  hardware does without anyone asking for it; Mesa's register macros cut each
-  value to its field. Setting the bit by name keeps the traces configured as
-  those nx.amd.device's decoder is tested on.
-- **Pinned by:** the Ops_amd suite: `recorded cases › traces` and
-  `counters_traces`, from tinygrad's own encoding, which spills.
+A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
+(D146).
 
 ## D86. A program reads a lane of a vector at a constant
 
@@ -2804,44 +2265,38 @@ stores through a pad.
   cases `double_sum_group` and `double_sum_group_twice`; the tolk bench's
   `cpu/` and `cuda/` rows.
 
-## D90. A linked schedule resolves its host programs' launches at link
+## D90. A linked schedule resolves its launches at link
 
 - **tinygrad:** `engine/realize.py:132` (`resolve_params`) and `:160`
   (`exec_kernel`), which find a call's buffers, launch dimensions and variable
   values on every run, and `uop/ops.py:1177` (`UOp.sym_infer`), which
   substitutes a symbolic integer's variables and simplifies it on each
   evaluation.
-- **tolk:** `engine/tolk_engine.ml:283` (`env`, the run's variable cells),
-  `:481` (`operand`), `:507` (`lane_operand`), `:528` (`launch`), `:1171`
-  (`settle`), `:1180` (`run_launch`) and `:1232` (`run_call`'s `Range`);
-  `lib/uop/shape.ml:1230` (`sym_compile`).
-- **Differs:** linking a schedule turns each call of a host program into a
-  launch per lane: a view of linked storage at a constant offset is made
-  once, the offset of a view that moves with a range or a variable is an
-  integer function of the run's variables (`Shape.sym_compile`, which simplifies
-  once and computes on `int`s, exactly where a value does not fit), and each
-  variable, of the run or of a range, has a cell that the run and the range's
-  trips write. The devices of a host program's buffers, which nx.device's
-  ordering has the run synchronize (c), are synchronized once until the run
-  queues work again, with a batch: a copy returns once its bytes have landed.
-  Results are those of a resolution on each run. A `DEBUG` report of a call
-  lists the run's variables that the schedule reads, where it listed every
-  variable of the run.
+- **tolk:** `engine/tolk_engine.ml` (`affine`, `value`, `locate` and
+  `launch`); `lib/uop/shape.ml:1230` (`sym_compile`).
+- **Differs:** linking a schedule turns each call into a launch per lane of
+  rig's program (D146), whose buffers, offsets, scalars and grid are words of
+  the run's ints or constants: each variable of the run is a word, a value
+  computed from them a word the run computes once
+  (`Shape.sym_compile`, which simplifies once and computes on `int`s, exactly
+  where a value does not fit), and a value that moves with a loop's trips a
+  hole of rig's program, the sum of trip words times constant factors. A
+  `DEBUG` report of a call lists the run's variables that the schedule reads,
+  where it listed every variable of the run.
 - **Reason:** (b): symo's tutorial step on the CPU runs 2,273 host launches,
   mostly inside the ranges of its staged scans, and sofo's steps do likewise.
   Resolving a launch on each run cost about 5 us on an M1 Max, for kernels
   of 0.3 to 40 us: a jitted scan of 256 small steps (1,024 launches) took
-  5.13 ms and takes 0.27 ms.
+  5.13 ms and took 0.27 ms resolved at link.
 - **Pinned by:** the Tolk_engine suite (`test/engine/tolk_engine`): `link and
   run › a linked scan carries its storage across runs on each run's
   parameters`, `› a scan runs its body once per trip, carrying in place`, `› a
-  schedule runs with each binding of its variables`, `runs › runs of one
-  schedule from two domains each compute their own` and `batches › a host
-  kernel runs once the copy that feeds it landed, after another synchronized
-  the host`; the Ops suite (`test/uop/ops`): `sym_compile › computes what
-  sym_infer does, variables within 50`, `› within 2147483648`, `› at the int
-  extremes`, `› computes exactly where int arithmetic overflows` and `› raises
-  as sym_infer does where a value fits no int`.
+  schedule runs with each binding of its variables` and `runs › runs of one
+  schedule from two domains each compute their own`; the Ops suite
+  (`test/uop/ops`): `sym_compile › computes what sym_infer does, variables
+  within 50`, `› within 2147483648`, `› at the int extremes`, `› computes
+  exactly where int arithmetic overflows` and `› raises as sym_infer does
+  where a value fits no int`.
 
 ## D91. The host's upcast lanes stay within 32
 
@@ -2959,14 +2414,15 @@ stores through a pad.
 - **tinygrad:** `helpers.py:221-236` (`_DEV`, the `DEV` setting, and
   `DEV.target`); `device.py:483-486` (`_select_renderer`, which renders for
   `DEV.target` of the device's kind).
-- **tolk:** `engine/tolk_engine.ml:24` (`target`); `lib/device.ml:144`
+- **tolk:** `engine/tolk_engine.ml` (`target`); `lib/device.ml:144`
   (`renderer`); `lib/helpers.ml:25` (`Target`).
 - **Differs:** there is no `DEV` setting. `Tolk_engine.target` is a function
-  of the device: its vendor's kind and its `arch`, or the host's CPU target.
+  of the device: its vendor's kind, which its driver declares
+  (`Rig.capability`), and its `arch`, or the host's CPU target.
   `Device.renderer` takes the target and renders for it, the first renderer
   of its kind that suits it when it names none. `Helpers.Target` keeps the
   record and its syntax, which tests and the goldens' generator write.
-- **Reason:** (c). nx.device places values on devices, and the compiler
+- **Reason:** (c). rig places values on devices, and the compiler
   compiles for the device the values live on. A target read from the
   environment applies to every device of the process, so it compiles for a
   device the values do not live on, and a malformed `DEV`, meant for another
@@ -3204,36 +2660,10 @@ stores through a pad.
   (a value two full reductions read, inlined), from the equally patched
   tinygrad.
 
-## D107. A batch submits a streamed queue after the queues it waits for
+## D107. Withdrawn
 
-- **tinygrad:** `runtime/support/hcq2.py:285-293` (`_finalize_batch`, which
-  submits the queues in their first use) and `runtime/ops_cuda.py:28-69`
-  (`CUDAQueue`, whose commands are calls of CUDA's driver).
-- **tolk:** `lib/runtime/support/hcq2.ml:427` (the type `submission`), `:1051`
-  (`streamed`), `:1066` (`streamed_order`) and `:1093` (`finalize_batch`);
-  `engine/ops_cuda.ml:173`.
-- **Differs:** a vendor's queues say how its host program hands them their
-  commands: all at once at their submission (`Buffered`: Metal, AMD, NV), or
-  each as the host program makes it, the host waiting while a queue is full
-  (`Streamed`: CUDA, whose stream calls enqueue at once). A batch on streamed
-  queues submits each queue after the queues its calls wait for, the first in
-  use first among those that can come next; a batch whose streamed queues
-  wait for each other runs as two, as a batch its queue cannot hold does. A
-  device's closing waits, a few commands at the end of a queue, may still name
-  a queue submitted after it. Batches on buffered queues are unchanged.
-- **Reason:** (b): symo's tutorial (`tutorial/rnn.ml`) on CUDA. Its compiled
-  optimizer step's batch runs about 35 kernels on the compute stream, waits
-  for a copy into the GPU, then runs 300 more; tinygrad's order submits the
-  compute stream first, which stops at the wait, fills, and blocks the host in
-  `cuLaunchKernel` before it submits the copy: the step hung. A copy queued
-  first runs the step.
-- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `streamed queues
-  › a queue is submitted after the queue it waits for, which it follows in the
-  batch`, `› a copy of a kernel's output runs after it`, `› queues that wait
-  for each other run as several batches` and `› a range whose queues wait for
-  each other runs to the end`, on a model of streamed queues that hold two
-  commands (`Batches.run ~capacity`); `Tolk_engine.Ops_cuda`'s `execution ›
-  kernels after a copy into the GPU that they read all run` on a GPU.
+A batch submitted a streamed queue after the queues it waited for. rig orders
+submissions across queues (D146).
 
 ## D108. On the host, a load a reduce reads fills the lanes by 2
 
@@ -3327,9 +2757,9 @@ stores through a pad.
   compute queue and moves the timeline past the hung value, and
   `on_device_hang`) and `:856` (`can_recover`, true under AM off a virtual
   function); `runtime/support/am/amdev.py:283-290` (`recover`).
-- **tolk:** none: nx.amd.device owns the GPU, and loses it on a hang: under
-  AM after 30 s without progress (`packages/nx/lib/amd/device/nx_amd_device.ml`,
-  `hang_ms`, "hang detected"), under KFD when the driver reports one.
+- **tolk:** none: rig's AMD driver owns the GPU, and loses it on a hang,
+  driver-less after its hang limit and under the kernel's driver when the
+  driver reports one.
 - **Differs:** a hang or fault loses the device under AM as under KFD. Every
   later operation on memory it can reach raises `Lost`, and the process does
   not reset the GPU. An open of the GPU then gives a fresh device under KFD,
@@ -3342,53 +2772,13 @@ stores through a pad.
   device-lost semantics: after a fault every operation on the device's values
   raises, naming the device and the fault, and reopening gives a fresh device
   with a new identity. An in-process reset would only be how AM reopens.
-- **Pinned by:** nx.amd.device's hardware suite
-  (`packages/nx/test/amd/device/test_amd_hw.ml`): `failures › work that
-  never signals loses the device`, on a GPU.
+- **Pinned by:** rig's AMD fault suite (`packages/rig/test/amd/test_fault.ml`),
+  on a GPU.
 
-## D112. An AMD memory barrier leaves the host data path to the host
+## D112. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:142-146` (`memory_barrier`: a
-  `WAIT_REG_MEM` that writes every bit of the bus interface's
-  `GPU_HDP_FLUSH_REQ` and waits until `GPU_HDP_FLUSH_DONE` holds them all,
-  then `acquire_mem`).
-- **tolk:** `engine/ops_amd.ml:388` (`memory_barrier`, `acquire_mem`
-  alone) and `:318` (`wait_reg_mem`, which no longer writes a register
-  before its wait); `engine/amd.ml:144` (`queues`, whose submission hook
-  flushes the host data path from the host before each host program).
-- **Differs:** a barrier invalidates the GPU's caches and does not flush the
-  host data path (HDP), whose flush registers the queue encoder no longer
-  names. The host flushes it through the driver's remapped
-  `HDP_MEM_FLUSH_CNTL` (`Nx_amd_device.flush_hdp`) before each submission,
-  after every write through the BAR: memory a host program writes on each run
-  is pinned host memory, which the HDP does not carry.
-- **Reason:** (c). On a Radeon AI PRO R9700 (GFX12, nbif 6.3.1) under the
-  amdgpu driver, a compute queue running batches back to back while the host
-  allocates and frees device memory hangs within a few hundred batches, and
-  the driver resets the GPU for every process on it. At the hang no wave runs
-  and the MEC waits on a register read (`CP_CPC_STALLED_STAT1`
-  `MEC1_WAIT_ON_RCIU_READ`) inside the batch, the barrier's wait on
-  `GPU_HDP_FLUSH_DONE`, the only register the batch reads. The request is
-  a handshake shared by the GPU's engines, one bit each: on nbif 6.3.1 bits
-  0-9 are the command processors' (`CP0`-`CP9`), 10-11 the copy engines',
-  12-31 reserved. amdgpu's rings request and wait on their own bit only,
-  derived from the ring's ME and pipe (`ref_and_mask_cp2 << pipe` on MEC1).
-  tinygrad requests all 32 bits and waits until all are done, so its wait
-  also depends on every other engine's handshake, the driver's copy rings'
-  among them. No narrower mask is correct for a user queue: the scheduler
-  (MES or HWS) maps it to a pipe it chooses, and may remap it, so the queue
-  cannot name its own bit, and the pipes' bits are the driver's rings' too.
-  ROCr never flushes from a user queue: it writes the remapped
-  `HDP_MEM_FLUSH_CNTL` from the host, as nx does. On other generations the
-  change relies on the same host flush, which `Nx_amd_device.flush_hdp` does
-  identically through the KFD remap on GFX9 and GFX11 and through the
-  register under AM, and on nx giving no mapped memory when the driver
-  remaps no flush register, so that the host never writes through the BAR
-  without one.
-- **Pinned by:** the Ops_amd suite: every recorded case, from the generator
-  patched as `test/gen/runtime/ops_amd.py` says; and on a GPU,
-  `test_ops_amd_exec`'s `execution › a thousand runs back to back while the
-  host allocates`.
+An AMD memory barrier left the host data path to the host. rig's AMD driver
+encodes its barriers (D146).
 
 ## D113. A compiled binary is kept under its compiler's identity
 
@@ -3455,15 +2845,13 @@ stores through a pad.
   `codegen/opt/heuristic.py:21` (`TC_OPT`'s default, `2` during a search and
   `0` otherwise); `engine/jit.py:36` (`getenv("JITBEAM", BEAM.value)`);
   `engine/realize.py:275` (`compile_linear`'s `profile`, `PROFILE or
-  DEBUG >= 2` unless given); `codegen/__init__.py:386`
+  DEBUG >= 2` unless given, for `hcq_compile`); `codegen/__init__.py:386`
   (`os.environ.get("DBGTV")`, read on each failure).
 - **tolk:** `lib/setting.ml:87` (`reach`), `:141` (`shaping`), `:151`
   (`t`), `:215` (`jitbeam`) and `:220` (`tc_opt`);
   `lib/codegen/opt/search.ml:17` (`tc_opt_all`) and `:19` (`actions`);
-  `lib/codegen/opt/heuristic.ml:101`; `lib/setting.ml:300`
-  (`dbgtv`); `lib/runtime/support/hcq2.ml:2051` (`compile_linear`);
-  `engine/tolk_engine.ml:1083` (`profile`); rune's `lib/jit.ml:105`
-  (`settings`).
+  `lib/codegen/opt/heuristic.ml:101`; `lib/setting.ml:300` (`dbgtv`); `lib/engine/realize.ml`
+  (`compile_linear`); rune's `lib/jit.ml:105` (`settings`).
 - **Differs:** tolk reads no variable outside a setting: no module exports
   `getenv`. Each variable is declared once (`Setting`), with its type,
   default and reach. A setting reaches `Output` if a change of its value
@@ -3485,17 +2873,13 @@ stores through a pad.
   `BEAM_PADTO` are read when the search makes its candidates (`actions` is a
   function), so a `context` binding of `TC` reaches the search, where
   tinygrad's search sees the environment alone. `JITBEAM` is a setting
-  whose `None` stands for `BEAM`'s current value. `compile_linear` and
-  `jit_lower` take a required `profile`, `Stamped` or `Unstamped`, and read
-  no setting for it: their caller asks the engine (`Tolk_engine.profile`),
-  which is `Stamped` from `DEBUG` 2, when it prints each kernel's time, and
-  there is no `PROFILE`: nx.device's profiles record the spans of what was
-  compiled to stamp them. A variable tinygrad reads on each use, such as
+  whose `None` stands for `BEAM`'s current value. `compile_linear` reads neither `DEBUG` nor `PROFILE`, since it makes no
+  batch to stamp (D146): rig's profiles record each submission's span, and
+  the engine makes each kernel a submission of its own from `DEBUG` 2, when
+  it prints each kernel's time. There is no `PROFILE`. A variable tinygrad reads on each use, such as
   `DBGTV`, is read when the program starts. A library that compiles with
   tolk declares its own variables the same way, so rune's jit keys on its
-  `Output` settings too, and beyond them only on what is not a setting of
-  tolk: `Tolk_engine.profile ()` and the counters and traces of the
-  profile being taken. A function compiled with an explicit width keys on
+  `Output` settings too, and beyond them only on what is not a setting of tolk. A function compiled with an explicit width keys on
   that width in `BEAM`'s entry, without `JITBEAM`'s, since the width
   overrides both.
 - **Reason:** (b): rune's jit memo and tolk's program, schedule and search
@@ -3607,117 +2991,24 @@ stores through a pad.
   rounds` (4 tests); `searches.golden` and `searches_environment.golden`,
   whose measurements count the kernel's three samples.
 
-## D118. A program's launch reads its own kernel of its cubin
+## D118. Withdrawn
 
-- **tinygrad:** `runtime/ops_nv.py:249-258` (`NVProgramData` takes the
-  registers and stack of the last `EIATTR_REGCOUNT` and
-  `EIATTR_MIN_STACK_SIZE` of `.nv.info` whatever function they name, every
-  `.nv.constantN*` section as a bank, and the whole image as code from
-  offset 0 when the cubin has no `.text.<name>`) and `:315`
-  (`nv_build_program` caches a program by its binary alone).
-- **tolk:** `engine/ops_nv.ml:39` (`program_data`) and `:117`
-  (`build_program`), through `Nx_nv_cubin.kernel`.
-- **Differs:** a launch reads the attributes of its kernel's function, by the
-  symbol each names, and the banks `.nv.constantN` and
-  `.nv.constantN.<name>` only. A program whose cubin has kernels but not its
-  own is refused (`Invalid_argument`, naming the cubin's kernels). Programs
-  are cached by binary and kernel name.
-- **Reason:** (c). nx.nv.device loads a program's function by name and
-  refuses a cubin without it, and its loader and tolk read cubins through one
-  library, `nx.nv.cubin`. tinygrad's reading launches the wrong code from
-  offset 0 when a name is missing, and gives every kernel of a module of
-  several the same registers.
-- **Pinned by:** the Ops_nv suite: `refusals › a program whose cubin lacks
-  its kernel is refused`, and every `recorded cases` golden, whose generator
-  (`gen/runtime/ops_nv.py`) names each program's kernel in its cubin and
-  points the crafted cubin's attributes at its kernel's symbol; nx's
-  `nx.nv.cubin › kernels › each kernel reads its own registers, stack and
-  banks`.
+A program's launch read its own kernel of its cubin. rig's NV driver loads each
+kernel of a cubin (D146).
 
-## D119. AMD's compute queue stamps the GPU's clock as it reaches the packet
+## D119. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:404-407` (`AMDComputeQueue.timestamp`, a
-  `RELEASE_MEM` of the GPU's clock on the end-of-pipe event
-  `CACHE_FLUSH_AND_INV_TS_EVENT`).
-- **tolk:** `engine/ops_amd.ml:638` (`clock_into`, through
-  `Nx_amd_packet.Pm4.copy_data`), used by `:718` (the compute queue's
-  `timestamp`) and by the counted runs' times of D66 (`:655`, `:669`).
-- **Differs:** the compute queue writes the GPU's clock with a `COPY_DATA`
-  from the clock counter, 64 bits with a confirmed write, which the queue
-  executes as it reaches the packet. An end-of-pipe write waits for the pipe
-  to drain, and on GFX12 the drain can include the dispatch queued behind the
-  stamp: on an R9700 (gfx1201, KFD), a stamp before a kernel of 0.6 s was
-  written 11 us before the stamp after it in most runs, so the kernel's span
-  was 11 us. A `BOTTOM_OF_PIPE_TS` event did the same. The queue reaches a
-  stamp after the work before it is complete, since each dispatch ends with a
-  CS partial flush and each AQL packet has its barrier bit, so a stamp after a
-  kernel still follows its waves.
-- **Reason:** (b). `Tolk_engine.time` times a search's candidates by their
-  spans. In the lorenz training step on AMD, most of one kernel's candidates
-  timed at 10 to 13 us; the search picked one, which took 0.8 s of each 1.08 s
-  step, where NV's search picked a candidate of 2.9 ms.
-- **Pinned by:** the Ops_amd execution suite
-  (`test/runtime/ops_amd/test_ops_amd_exec.ml`): `a profile's span of a long
-  kernel covers its run`; the Ops_amd suite: `recorded cases › profile`,
-  `counters` and `traces`, from the generator patched as
-  `test/gen/runtime/ops_amd.py` says.
+AMD's compute queue stamped the GPU's clock as it reached the packet. rig's AMD
+driver times its submissions (D146).
 
-## D120. An AMD program's descriptor is its code object's one kernel
+## D120. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:545-555` (`amd_build_program`: the
-  descriptor at the start of `.rodata`, relocated by its own loop).
-- **tolk:** `engine/ops_amd.ml:163` (`program_data`).
-- **Differs:** tolk reads the code object through `nx.amd.code_object`,
-  which nx's AMD loader reads too: the descriptor is the symbol `name.kd` of
-  the code object's one kernel, and a code object of several kernels is
-  refused. A code object comgr links for one kernel places that kernel's
-  descriptor at the start of `.rodata`, so both read the same bytes.
-- **Reason:** (b), `nx.amd.device`'s loader, whose kernel descriptor parsing
-  is the same layout, read once.
-- **Pinned by:** the `recorded cases` of `Tolk_engine.Ops_amd`, whose fixtures
-  hold one kernel each; `nx.amd.code_object`'s suite for the layout.
+An AMD program's descriptor was its code object's one kernel. rig's AMD driver
+reads code objects (D146).
 
-## D121. AMD's packet layouts are nx.amd.packet's
+## D121. Withdrawn
 
-- **tinygrad:** `runtime/ops_amd.py:60-136` (`dispatch_packet`, `pkt3`,
-  `wreg`, `pred_exec`, `wait_reg_mem`, `acquire_mem`, `release_mem`),
-  `:366-399` (`exec`'s dispatch), `:430-443` (the AQL indirect buffer) and
-  `:470-500` (`AMDSDMAQueue`'s packets); the PM4, SDMA, HSA and register
-  constants of `runtime/autogen/am` and `runtime/autogen/hsa.py`.
-- **tolk:** `engine/ops_amd.ml:71` (`term`, `lower`), `:256`
-  (`compute_queue`) and `:944` (`copy_queue`).
-- **Differs:** every packet's layout, the GC registers it writes and their
-  addresses, the scratch ring's `COMPUTE_TMPRING_SIZE`, and the constants they
-  read come from `nx.amd.packet`, which nx's AMD runtime encodes its copies
-  and its KIQ's packets with. Its packets are polymorphic in the values they
-  place, and a layout's arithmetic on a value is a term of additions, right
-  shifts and ors, with no step of 0: the pieces of an SDMA copy at their
-  offsets, the program's and the scratch's addresses from their bit 8, and
-  the scratch descriptor's bit 63. tolk lowers them to the nodes tinygrad's
-  call sites build: a constant word is a `uint32` constant, an addition adds
-  a `uint64` constant, a shift is by a weak literal, and an or is of a
-  constant. A PM4 dispatch's register writes and user SGPRs are one packet
-  (`Pm4.dispatch`), built from the code object's kernel, which nx's launches
-  build too; its scratch descriptor's base is the scratch address the die's
-  part adds 0 to, where tinygrad's is the address itself, a node no golden
-  holds since no recorded kernel reads a scratch descriptor. Arithmetic
-  tinygrad spells otherwise stays at tolk's call site: the program's address
-  (`+` of a weak literal), the die's scratch (`+` of a weak literal, kept at
-  0), the dispatch packet's address (`+` of a weak literal), the AQL
-  dispatch's grid (a product) and kernel object, the AQL indirect buffers'
-  addresses, the timestamp slots, the SDMA signal's high word (`lsr` of a
-  `uint64` constant), and the profiling copies' addresses.
-  GFX9's wait on a UCONFIG register addresses it from UCONFIG's start in the
-  packet, where tinygrad subtracts at the call. An SDMA fence takes a memory
-  type on SDMA from version 5, where tinygrad asks whether the graphics
-  target's major is not 9: the same engines on every GPU tolk supports. A PM4
-  predicated block's count is the packet encoded again with it, where tinygrad
-  patches the count's bits in place.
-- **Reason:** (b), `nx.amd.device`'s SDMA queue and KIQ, whose packets are
-  the same layouts, defined once.
-- **Pinned by:** the `recorded cases` of `Tolk_engine.Ops_amd`;
-  `Tolk_engine.Ops_amd › packets`, a law per packet that tolk's encoding,
-  evaluated, is `Nx_amd_packet.dwords`'s; `nx.amd.packet`'s suite for the words.
+AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
 
 ## D122. A stored value keeps its bounds
 
@@ -3766,19 +3057,15 @@ stores through a pad.
   the tensor and kernel-graph specs), `lib/schedule/schedule.ml:60` and
   `:184` (`create_schedule` keeps a back edge of a call),
   `lib/schedule/memory.ml:29` (`uses`, the plan counts its calls and flag),
-  `lib/runtime/support/hcq2.ml:1222` (`range_placement`), `:1246` (`stops`)
-  and `:1356` (`on_host` in `sched_batches`), and `engine/tolk_engine.ml:1036`
-  (`Loop` in `link`) and `:1290` (in `run_call`).
+  and `engine/tolk_engine.ml` (`loop`).
 - **Differs:** an `Op.Backedge` stands around a call of a schedule, or a
   linear of calls, with a loop range of at most as many trips and a flag, one
-  boolean of storage the calls write. The schedule keeps it as an entry. Around
-  programs of one host, it is a host batch whose loop reads the flag after each
-  trip, inside a back edge of one trip whose flag the engine reads before it
-  (D142). Otherwise hcq2 batches its calls alone, trip by
-  trip, with the range read as a variable, which a call's scalar argument
-  reads too (D140), and runs a range around one from the engine; the engine reads the flag
-  before each trip and runs the calls while it holds. tinygrad's schedules run
-  each call once, and stop on no value.
+  boolean of storage the calls write. The schedule keeps it as an entry, and the engine makes it a loop of rig's
+  program (D146) that reads the flag before each trip and runs the calls
+  while it holds, its trip in a word of the run's ints, which a call's scalar
+  argument reads too (D140). The flag is storage the program makes or a
+  buffer a caller binds. tinygrad's schedules run each call once, and stop on
+  no value.
 - **Reason:** (b). rune's `Rune.iterate` under `Rune.jit` stages a loop that
   stops on a condition of its carry as one body compiled once, which no
   schedule tinygrad makes can run.
@@ -3786,7 +3073,8 @@ stores through a pad.
   its flag holds, at most its trips`, `› a loop's flag that views wider
   storage is refused`, `› a planned buffer a loop writes is not placed over
   one it leaves`, `› a loop's planned flag is not placed under a buffer before
-  it` and `Metal › a loop runs its batch while its flag holds, at most its
+  it`, `› a back edge whose flag is bound storage reads that storage` and
+  `GPUs › Metal › a loop runs its call while its flag holds, at most its
   trips`; rune's `Jit` and `Iterate` suites.
 
 ## D124. A search times no compilation
@@ -3814,30 +3102,10 @@ stores through a pad.
   `Tolk.Search › BEAM_PADTO=1 ... › a candidate of BEAM_UOPS_MAX
   instructions or more is not compiled`.
 
-## D125. A launch descriptor's field holds all of its value
+## D125. Withdrawn
 
-- **tinygrad:** `runtime/ops_nv.py:73` (`QMD.write` patches a value as the
-  widest unsigned word within its field).
-- **tolk:** `engine/nv_packet.ml:53` (`structure`), over
-  `Nx_nv_packet.hole`, whose holes are their fields' bit ranges; the golden
-  generator, `test/gen/runtime/ops_nv.py` (`write`, `holes`).
-- **Differs:** a field a value fills is a hole of the narrowest unsigned word
-  that covers it. When the field is narrower than its word, the word is the
-  value masked to the field's bits, ored with the word's other bits as the
-  descriptor holds them.
-- **Reason:** (c). The descriptor's layout is nx.nv.packet's, which tolk's
-  queues and nx.nv.device share, and a word within the field drops the
-  value's high bits. Version 3's
-  24-bit `shader_local_memory_high_size` took a 2-byte word, so a kernel with
-  64 KiB or more of local memory per thread ran with that size modulo
-  64 KiB, and the 17- to 25-bit high words of addresses (program, prefetch,
-  constant banks, releases) dropped bit 48 and above. The law that nodes and
-  integers encode alike cannot see it, since both truncated alike.
-- **Pinned by:** nx's `nx.nv.packet › launch descriptors › a local memory of
-  64 KiB per thread fills its field`, `› an address keeps bit 48`, `› a hole
-  keeps the fields it shares bytes with` and `› holes cover their fields, in
-  order`; the Ops_nv suite's recorded cases, whose generator applies the same
-  holes to tinygrad.
+A launch descriptor's field held all of its value. rig's NV driver writes its
+launch descriptors (D146).
 
 ## D126. The transcendental functions are within one ulp
 
@@ -3994,13 +3262,12 @@ stores through a pad.
   round's candidates are timed in the order their compilations end, on every
   device).
 - **tolk:** `lib/codegen/opt/search.ml:352` (`compile`);
-  `lib/engine/worker.ml:77` (`iter`); `engine/tolk_engine.ml:1465`
-  (`clock`).
+  `lib/engine/worker.ml:77` (`iter`); `engine/tolk_engine.ml` (`clock`).
 - **Differs:** a round's candidates are timed in their own order, each once
   its compilation has ended, while other domains compile the later ones
   (`Worker.iter`). Where the host's clock times the runs (`Search.Host`: a
-  program the host calls, or a search whose kernel was not timed), a round compiles all its candidates before it
-  times any. The search reads the clock from its kernel's linked program.
+  program the host calls, or a search whose kernel was not timed), a round compiles all its candidates before it times
+  any. The search reads the clock from its kernel's linked program.
 - **Reason:** the compute filter's running minimum, `seen_libs` and ties
   between equal samples read the order: timed as their compilations end, two
   searches of equal measurements choose apart, and `searches.golden` could
@@ -4010,8 +3277,8 @@ stores through a pad.
 - **Pinned by:** `Tolk.Search › a search on a device's clock times its
   candidates as one on the host's, whatever order their compilations end
   in` and `› a search on the host's clock compiles nothing while it times`;
-  `Tolk.Worker › streaming` (every test); `Tolk_engine › timing › the clock
-  is the device's where it has queues, the host's otherwise` and `› a
+  `Tolk.Worker › streaming` (every test); `Tolk_engine › timing › the clock is a GPU's on a GPU, the host's
+  otherwise` and `› a
   profile taken around a time changes neither its clock nor its value`.
 
 ## D132. A contiguous view's rewrite stops at the effects its storage waits on
@@ -4093,31 +3360,10 @@ stores through a pad.
   the four tests after it; rune's lower_index suite: `quantised products › a
   product unpacks its codes at the width it decodes them in`.
 
-## D135. A Metal command buffer signals through the device's signaler
+## D135. Withdrawn
 
-- **tinygrad:** `runtime/ops_metal.py:85-86` (`HANDLES`, `SELECTORS`),
-  `:162` (`MetalQueue.submit`: the last command buffer encodes
-  `encodeSignalEvent:value:` on the device's event).
-- **tolk:** `engine/ops_metal.ml` (`handles`, `selectors`, and the
-  signal in `submit`); `engine/metal.macos.ml` (`sels`).
-- **Differs:** the host program sends every command buffer to the device's
-  signaler (`Nx_metal_device.signaler`), `[signaler signal:cb value:v]`, before
-  it commits it: the last with the batch's value, the others with `0`. No
-  command buffer encodes a signal on the event, and the `mtl_sel` words hold
-  no `event` handle, since the signaler owns the event: the handle `signaler`
-  follows tinygrad's others, and the selector `signal:value:` follows `retain`
-  and `release`.
-- **Reason:** (c). A command buffer that Metal fails still runs the signal
-  encoded in it, so a GPU-side signal reports failed work as complete.
-  nx.device's Metal library signals a value from the command buffer's
-  completed handler once it completed, and loses the device with Metal's
-  reason otherwise; the runtime loses a device only on its driver's report.
-- **Pinned by:** the Ops_metal suite (`test/runtime/ops_metal`): every
-  `recorded cases` golden, whose host programs are tinygrad's with D135
-  applied by their generator (`gen/runtime/ops_metal.py`); on macOS, every
-  `execution` test, which waits for its batches through the signaler; and
-  `nx.metal.device › failures › a command buffer Metal fails loses the device
-  with Metal's reason`.
+A Metal command buffer signalled through the device's signaler. rig's Metal
+driver signals its own (D146).
 
 ## D137. Stored values that share a computation share their loops
 
@@ -4212,7 +3458,7 @@ stores through a pad.
   (`pass_values`) and `:283` (`resolve_linear_call`);
   `lib/engine/realize.ml:14` (`get_call_arg_uops`) and `:17`
   (`get_call_var_uops`);
-  `engine/tolk_engine.ml:473` (`reader`).
+  `engine/tolk_engine.ml` (`affine`).
 - **Differs:** a precompiled call inside a loop may pass a scalar parameter of
   its body a weak integer expression of the loop's ranges, such as `r`,
   `2r + 1` or `n - 1 - r`. The schedule keeps it as the call's argument, no
@@ -4222,10 +3468,9 @@ stores through a pad.
   a program from its call's slot, and `get_call_arg_uops` leaves out every
   scalar argument, a free variable included. The value reaches the program
   as any variable's does, converted to the parameter's type at the ABI (D28):
-  a queue's batch writes a word of a kernel's arguments that reads the range,
-  copied per trip (D30); a chunk's trips read the chunk's variable (D67); and a
-  launch the engine makes on a trip computes the expression from the ranges'
-  cells. The kernel's program depends on neither the range nor its trips, so
+  a launch inside a loop of rig's program reads it from a hole of its
+  parameters, the sum of the loops' trip words times constant factors
+  (D90). The kernel's program depends on neither the range nor its trips, so
   that loops of any range and length compile one. tinygrad has no loop of
   calls, and its calls bind a scalar only to a variable, by name.
   Beam search samples positional scalars by slot and named variables by name.
@@ -4246,9 +3491,7 @@ stores through a pad.
   reads its trip as a scalar argument on each trip`, `› a back edge's call
   reads its trip on each trip, at most its trips`, `› a loop of one trip passes
   its call the trip as a scalar argument`, `› loops of any range and trips
-  around one call compile one program`, and the same two on Metal; the
-  Hcq2 suite: `ranges › each trip of a chunked range reads its trip as a scalar
-  argument`; `Tolk.Search › a search binds a positional size in its call and
+  around one call compile one program`, and the same two on each GPU; `Tolk.Search › a search binds a positional size in its call and
   launch`; `Tolk.Search on the host › a search runs candidates with named and
   positional scalars`; `Rune.jit › keys › a scan searched with beam 2 draws as
   eager does`.
@@ -4377,67 +3620,11 @@ stores through a pad.
   `wide_tree_cpu` and `long_chain_cpu`, and every other host case without a
   reduce, recorded from the equally patched tinygrad.
 
-## D142. The host runs a run of its calls as one host program
+## D142. Withdrawn
 
-- **tinygrad:** `engine/realize.py:160` (`exec_kernel`, which calls each CPU
-  program from Python), `runtime/support/hcq2.py:40-48` (`get_enqueue_devs`,
-  which enqueues no CPU call: `HCQ_DEVS` holds no CPU device).
-- **tolk:** `lib/runtime/support/hcq2.ml:1246` (`call_host`), `:1272`
-  (`range_placement`), `:1445` (`row_words`, a call's row), `:1457`
-  (`host_batch`), `:1759` (`sched_batches`) and `:2243` (`lower_call`, whose
-  program reads storage of the schedule as volatile);
-  `engine/tolk_engine.ml:98` (`host_placeholder`, which loads the batch's
-  programs), `:748` (`link_batch`) and `:942` (`run_host_batch`);
-  `lib/uop/spec.ml` (a back edge's condition read in a program, after the loop
-  that walks its calls); nx.device's `Program.entry`.
-- **Differs:** a device whose host is this process's runs its programs in
-  host batches (`Hcq2.Programs`): each run of consecutive calls of one host's
-  programs, with the ranges and back edges around them, is one host program
-  of the host, linked and run as a batch without queues. The calls are data:
-  each is a row of the batch's words (its program's position among the
-  batch's programs, the addresses of its buffer and value words, its number of
-  values, its split), and the program walks each run of consecutive calls in
-  a loop, calling each row's program through nx.device's entry. A word known
-  at link is written then; one that reads the run's inputs or variables is
-  computed once per run and copied, by a loop over pairs of positions written
-  at link, into each word that takes it; one that reads a range is written on
-  each trip before the walk of its call. A range is a loop of the program
-  around its walks, so the program grows with neither the calls nor the
-  trips: a straight-line trace of 1,024 kernels is the same program as one of
-  16. A call site per call would make the program, and Clang's compile and
-  tolk's lowering of it, grow with the trace: 1.8 s of rune's `sinkhorn-64`
-  cold compile, a trace of 1,024 kernels. A back edge is a host
-  batch of its own whose loop stops after a trip that clears the flag, inside
-  the engine's back edge of one trip, which reads the flag before the first; a
-  loop around a back edge stays the engine's, which reads its flag before each
-  trip. The program does not read the flag before the first trip itself: the
-  loop's trips would then be a load ordered after the calls before it, and
-  `Shape.ssimplify` of a window moving with the loop rebuilds the loop's range
-  with those calls inside, so the program would hold two copies of the range
-  and one of them no end. A split program passes its split, its blocks
-  `max 1 (min extent (min (4·w) (ops / 2^18)))` computed by the program for
-  the host's workers `w`, a variable the engine binds at link. A run waits for
-  the work that touched the memory the batch reaches, then calls the program
-  once: no OCaml runs per trip or per call, and each call is a span of a
-  profile as a call of its program is. A copy on the host, a call of another
-  machine's host or the disk (`Calls`), and a loop around one, stay the
-  engine's, and a loop's calls are then batched trip by trip. tinygrad calls
-  each CPU program from Python, once per call.
-- **Reason:** (b). rune's staged scans, `Rune.iterate`, `Loop.repeat`'s
-  factorizations and every compiled host function run many small kernels per
-  step: each launch from OCaml cost the allocation of its arguments, a view
-  per moving window, and a release of the runtime.
-- **Pinned by:** the `Tolk_engine` suite: `batches › a range of host calls
-  runs as one host program a run`, `› a host program does not grow with the
-  calls it runs`, `› a run of 1,024 host calls computes each in turn`, `› a
-  host batch reads and writes each run's slots, at their offsets`, `› a split
-  kernel in a host range computes as unsplit`, `› a host range waits for a
-  queue's copy into what it reads`, and `link and run`'s loops and back edges on the host (D60, D123, D140);
-  `device › a device off Metal, CUDA, AMD and NV runs programs of this
-  machine's host` and `› another machine's host runs its calls one by one`;
-  nx.device's host suite: `a call through the entry is a call`, `a split
-  through the entry runs the blocks a split call runs`; rune's Jit, Iterate
-  and Staging suites on the host.
+The host ran a run of its calls as one host program, which called each through
+nx.device's entry. Each call is a launch of rig's host, consecutive ones one
+submission, and a range a loop of rig's program (D146).
 
 ## D143. The host unrolls a reduce beside a small unrolled axis to a vector
 
@@ -4555,3 +3742,35 @@ stores through a pad.
   and the Codegen suite's `padto_idiv_upcast` goldens, from the equally patched
   tinygrad; norn's `reproducibility › a compiled transition is the eager one`
   on x86.
+
+## D146. The runtime is rig: no command queues, batches or host batches
+
+- **tinygrad:** `runtime/support/hcq2.py` (`hcq_compile`, `sched_batches`,
+  the queue encoders it calls through `Compiled.pm_encode`, the host
+  programs that submit them, the staging copies and `hcq_link`);
+  `runtime/ops_*.py` (`pm_encode` and the queues);
+  `engine/realize.py:271` (`compile_linear`, which ends in `hcq_compile`)
+  and `:281` (`run_linear`).
+- **tolk:** `lib/engine/realize.ml` (`compile_linear`);
+  `engine/tolk_engine.ml` (`link`, `run`, `time`); `test/gen/engine/jit.py`,
+  which stops tinygrad's `compile_linear` before `hcq_compile`.
+- **Differs:** `compile_linear` ends once the kernels are compiled: it batches
+  no call, encodes no queue, makes no host program, splits no call into
+  lanes and stages no copy. `Tolk_engine.link` turns the compiled calls into
+  a program of rig (`Rig_program`): a kernel is a launch on each lane's
+  device, a host program's on its host, its parameters laid out as
+  `hcq2.py`'s `layout_args` lays them out; a copy is a copy part of a device
+  that copies between its two sides, or a copy of the host's; a range or a
+  back edge is a loop; and consecutive calls of one device are one
+  submission. rig's drivers encode each vendor's queues, order the work
+  across queues and devices by the memory it uses, stage what no device
+  copies directly, and time the submissions where the driver can. A host
+  program's entry is rig's (D28). Storage the schedule makes is the
+  program's, and storage a caller binds is an input of each run.
+- **Reason:** (c). rig owns each GPU's queues: two runtimes cannot share a
+  GPU, and memory belongs to the runtime that made it.
+- **Pinned by:** the Tolk_engine suite: `link and run › recorded`, `GPUs`
+  (each recorded program, loop and refusal on Metal, CUDA, NV and AMD where
+  the machine has one), `lanes and words` and `runs`; the jit goldens
+  (`test/engine/jit/*_lowered.golden`), which `gen/engine/jit.py` makes
+  without batches.

@@ -69,31 +69,9 @@ named:
   reciprocal is `0x3edb6db8` (`division (D50)`'s operands).
 - **AMD gfx950:** `f32_to_fp8`'s non-saturating `cvt_pk_{fp8,bf8}_f32` makes
   an infinity a NaN in fp8 and keeps it in bf8 (D16).
-- **CUDA (nx.cuda.device):** a device waits with the `Sleep` completion: the
-  runtime polls the signal word, and after 200 ms of stillness the sleep
-  queries both streams each millisecond, so a fault loses the device with the
-  driver's error and a kernel that never signals hangs after the timeout
-  (`test_cuda.ml`'s fault test, `test_cuda_hang.ml`).
-- **AMD and NV (nx.amd.device, nx.nv.device):** the queue and channel words
-  are buffers at the address the host and the GPU share, and the device's
-  own submissions (NV's engine binding and local memory) run through
-  `Nx_device.submit` (`test_amd_hw.ml`, `test_nv_hw.ml`).
-- **The 32-bit carry on AMD and NV:** a device's timeline crossing 2^32 and
-  2^33. AMD's SDMA work waits for the low half of the signal word to equal
-  v - 1 and writes the low half, then the high half when the low one is 0;
-  NV's copy channel releases the low word, then the high word, while its
-  compute channel releases all 64 bits. No waiter may pass early mid-write,
-  and a late high word may never take the word back below another
-  channel's value.
-- **NV batches (Ops_nv, D38, D40, D42, D51):** `test_ops_nv_exec` on an
-  NVIDIA GPU: chained launches, copies on the copy engine inside a batch,
-  runs without synchronizing, profiled spans and each trip of a range on its
-  own descriptors. The copy channel's second release lands at the signal
-  word's high half or at the device's sink word, as its first release's low
-  word says (D40), launches read descriptors, constant buffers and
-  arguments from pinned memory (D42), the program the engine loads through
-  nx.nv.device (D38), and the local memory size from the device's word
-  (D51).
+- **The engine on each GPU:** the Tolk_engine suite's `GPUs` group runs
+  recorded programs, loops, a gather and the `DEBUG` reports on Metal, CUDA,
+  NV and AMD through rig, each skipping where the machine has no such GPU.
 
 ## Coverage and mutation
 
