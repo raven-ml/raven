@@ -466,6 +466,8 @@
  (description
   "Raven is an ecosystem of composable libraries for numerical computing in OCaml. Tensors, automatic differentiation, neural networks, dataframes, plotting, tokenization, computer vision, reinforcement learning, and interactive notebooks.")
  (depends
+  (rig
+   (= :version))
   (nx
    (= :version))
   (tolk

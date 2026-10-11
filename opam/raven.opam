@@ -13,6 +13,7 @@ doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "dune" {>= "3.21"}
+  "rig" {= version}
   "nx" {= version}
   "tolk" {= version}
   "brot" {= version}
