@@ -804,6 +804,42 @@ let test_forgotten () =
   raises_match lost (fun () -> Rig.Point.wait p);
   raises_match lost (fun () -> Rig.Buffer.create e 1)
 
+(* A point keeps what its device's loss made of it once the point names the
+   stand-in: memory whose last write the lost device never reached raises
+   Lost, and memory it wrote before its loss reads. While it records
+   backtraces, the runtime keeps the last exception raised, here the Lost that
+   holds the device, until another is. *)
+let test_forgotten_loss () =
+  let reached = Rig.Buffer.create Rig.host (1 lsl 16) in
+  let dropped = Rig.Buffer.create Rig.host (1 lsl 16) in
+  let point () =
+    let d, p = P.open_ "open:forgotten-loss" in
+    let writes =
+      Rig.Submission.make d [| Support.touching [| Rig.Submission.write |] |]
+    in
+    let write b =
+      submit writes ~buffers:[| require_some (Rig.Buffer.borrow d b) |]
+    in
+    Rig.Point.wait (write reached);
+    let q = write dropped in
+    P.fail p;
+    (try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ());
+    (try raise Exit with Exit -> ());
+    Rig.close d;
+    q
+  in
+  let q = point () in
+  settle ();
+  Gc.full_major ();
+  equal string "ended" (Rig.name (Rig.Point.device q));
+  let size b = Rig.Buffer.read b Bigarray.char Bigarray.Array1.dim in
+  raises_match ~msg:"a wait for the dropped write" lost (fun () ->
+      Rig.Buffer.wait dropped Rig.Read);
+  raises_match ~msg:"a read of the dropped write" lost (fun () ->
+      size dropped);
+  Rig.Buffer.wait reached Rig.Read;
+  equal ~msg:"a read of the reached write" int (1 lsl 16) (size reached)
+
 (* Minor words per call of [f], over 100 calls. *)
 let words f =
   let before = Gc.minor_words () in
@@ -831,7 +867,9 @@ let test_ended_words () =
      its [Some] at each call. *)
   let waits = Some [| p |] in
   let wait () = Rig.Buffer.wait h Rig.Read in
-  let submit () = ignore (Rig.submit s ?waits ~run ~buffers:[||] : Rig.Point.t) in
+  let submit () =
+    ignore (Rig.submit s ?waits ~run ~buffers:[||] : Rig.Point.t)
+  in
   wait ();
   submit ();
   equal ~msg:"a buffer's wait" int 0 (words wait);
@@ -983,6 +1021,8 @@ let tests =
       test "an ended device answers as it did before its end" test_ended;
       test "a point whose device the program dropped names the ended device"
         test_forgotten;
+      test "a write the forgotten device dropped still raises its loss"
+        test_forgotten_loss;
       test "a wait for a reached point of an ended device allocates nothing"
         test_ended_words;
       test "an ended device no value references keeps nothing" test_ended_kept;
