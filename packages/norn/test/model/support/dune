@@ -1,3 +1,9 @@
 (library
  (name posteriordb)
+ (modules posteriordb)
  (libraries norn norn.model nx))
+
+(library
+ (name recovery)
+ (modules recovery)
+ (libraries norn norn.model posteriordb nx rune windtrap))
