@@ -1,0 +1,7 @@
+; AMD GPUs booted over PCI, with no kernel driver.
+
+(library
+ (name rig_amd_pci)
+ (public_name rig.amd.pci)
+ (libraries rig_edge rig_amd rig_amd_abi rig_pci unix)
+ (private_modules boot defs gfx gmc ih psp regs sdma smu soc))

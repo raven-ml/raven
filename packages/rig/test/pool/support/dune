@@ -1,0 +1,13 @@
+; What the pool's suites share. The stubs include the pool's private
+; rig_pool_host.h, copied here.
+
+(library
+ (name rig_pool_probe)
+ (libraries rig_pool unix windtrap)
+ (install_c_headers rig_pool_probe)
+ (foreign_stubs
+  (language c)
+  (names rig_pool_probe_stubs)))
+
+(copy_files
+ (files ../../../lib/pool/rig_pool_host.h))

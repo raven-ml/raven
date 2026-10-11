@@ -1,0 +1,4 @@
+(tests
+ (names test_entry test_completion test_doorbell)
+ (modules test_entry test_completion test_doorbell)
+ (libraries rig_mlx5_abi windtrap))

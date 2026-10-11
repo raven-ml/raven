@@ -1,0 +1,831 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+/* The host's worker threads (rig_pool.h).
+
+   One pool per process: rig_pool_cores () - 1 persistent workers, made at
+   the first job of more than one thread. A job is published behind a
+   generation counter; its threads claim runs of chunk indices from a
+   counter per strip, their own first (see claim). A worker enters the job
+   before it claims, while the caller has not closed it. The caller closes the job
+   once its own claims find no chunk left and waits only for the workers
+   inside, so a worker late to see the job, or kept off its core by the
+   system, delays nothing.
+
+   Jobs come in bursts, such as the kernels of a compiled program a few
+   microseconds apart. A waiting thread spins for spin_ns before it parks on
+   a condition variable, and a job wakes the parked workers only if one of
+   its own threads is among them, so a job's publication costs no system
+   call. */
+
+#define _GNU_SOURCE
+
+#include "rig_pool.h"
+#include "rig_pool_host.h"
+
+#include <pthread.h>
+#include <sched.h>
+#include <stdarg.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <signal.h>
+#include <time.h>
+#include <unistd.h>
+#endif
+
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#elif defined(__linux__)
+#include <errno.h>
+#endif
+
+/* How long a waiting thread spins before it parks. Waking a parked thread
+   takes a system call and tens of microseconds before it runs; a spin
+   longer than the gaps within a burst keeps the workers running for the
+   next job.
+
+   A spinning thread keeps its core. Yielding it between reads hands it to
+   whatever else is runnable: another pool's thread gives it back within
+   microseconds, but a compute-bound program keeps it for its time slice
+   (4 ms at Linux's 250 Hz), and the caller notices its job's end, or a
+   worker its next job, that late. Kept, the core is a cost to whatever
+   else needs it within the window: another pool's threads, and a thread
+   of the same job that the system preempted while every core was busy,
+   which runs again only once the others' windows end. A job of 65,536
+   empty chunks on every core of the M1 Max ran past 100 us in 1.2-2.7% of
+   jobs without the yield and 0.1-0.4% with it, with the host near idle.
+   Beside one busy process per core, jobs on every core took 2.4-2.8 ms
+   with the yield and 1.8 without on 6 x86 cores (fair share 1.75), 3.4-4.9
+   and 2.5-2.8 on the M1 Max; beside other pools the yield was 6-10% faster
+   on x86 and even on the M1. */
+static const uint64_t spin_ns = 100000;
+
+/* A worker's stack, the size of a main thread's on Linux and macOS, so that
+   a body's safe depth does not depend on which thread claims its chunk. */
+static const size_t stack_bytes = 8 << 20;
+
+/* A cache line on Apple silicon, and the pair of lines x86 fetches
+   together. */
+enum { line_bytes = 128 };
+
+/* A claim takes 1 / claim_split of the chunks left in its strip, and at
+   least one: one claim a chunk costs a fetch-add, more than a short chunk's
+   work once threads contend for the counter. A thread up to about
+   claim_split times slower than the others leaves most of its strip to them.
+   A strip of fewer than 2 * claim_split chunks is claimed one at a time. */
+enum { claim_split = 8 };
+
+/* Hook points: the suite compiles this file again with RIG_POOL_HOOK defined
+   (test/rig_pool_hooked_probe_stubs.c), to stop threads at the named points
+   and hold an interleaving of the protocol below. Here they are empty. */
+#ifndef RIG_POOL_HOOK
+#define RIG_POOL_HOOK(point) ((void)0)
+#endif
+
+/* Clock */
+
+static uint64_t now_ns(void) {
+#if defined(_WIN32)
+  LARGE_INTEGER count, frequency;
+  QueryPerformanceCounter(&count);
+  QueryPerformanceFrequency(&frequency);
+  uint64_t c = (uint64_t)count.QuadPart, f = (uint64_t)frequency.QuadPart;
+  return c / f * 1000000000u + c % f * 1000000000u / f;
+#elif defined(__APPLE__)
+  return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+#endif
+}
+
+/* Cores */
+
+#if defined(__linux__)
+
+/* The CPUs of the affinity mask, their number, written to [*cpus], a new
+   array the caller frees, NULL if it cannot be had; -1 if the mask cannot
+   be read. The kernel refuses a mask smaller than its own, which can
+   exceed the configured CPUs, so the mask doubles until it fits, up to
+   2^20 CPUs, far past any kernel's limit. */
+static long affinity_cpus(int **cpus) {
+  *cpus = NULL;
+  long conf = sysconf(_SC_NPROCESSORS_CONF);
+  for (long n = conf > 0 ? conf : 1; n <= (1 << 20); n *= 2) {
+    cpu_set_t *set = CPU_ALLOC(n);
+    if (set == NULL) return -1;
+    size_t size = CPU_ALLOC_SIZE(n);
+    if (sched_getaffinity(0, size, set) == 0) {
+      long count = CPU_COUNT_S(size, set);
+      *cpus = malloc((size_t)count * sizeof **cpus);
+      for (long cpu = 0, k = 0; *cpus != NULL && k < count; cpu++)
+        if (CPU_ISSET_S((size_t)cpu, size, set)) (*cpus)[k++] = (int)cpu;
+      CPU_FREE(set);
+      return count;
+    }
+    CPU_FREE(set);
+    if (errno != EINVAL) return -1;
+  }
+  return -1;
+}
+
+#endif
+
+/* The cgroup quotas and the CPUs' capacities are plain reading of files,
+   compiled everywhere so that the suite runs them on every system. */
+
+/* The file [name] under [root], opened for reading, or NULL. */
+static FILE *open_under(const char *root, const char *name) {
+  char file[4096];
+  if (snprintf(file, sizeof file, "%s%s", root, name) >= (int)sizeof file)
+    return NULL;
+  return fopen(file, "r");
+}
+
+/* Whether the file [name] under [root] opens and [format] reads its [n]
+   values. */
+__attribute__((format(scanf, 4, 5))) static int
+scan_under(const char *root, const char *name, int n, const char *format,
+           ...) {
+  FILE *f = open_under(root, name);
+  if (f == NULL) return 0;
+  va_list args;
+  va_start(args, format);
+  int read = vfscanf(f, format, args);
+  va_end(args);
+  fclose(f);
+  return read == n;
+}
+
+/* Whether the comma-separated [list] holds [token]. */
+static int has_token(const char *list, const char *token) {
+  size_t n = strlen(token);
+  for (const char *s = list;; s++) {
+    if (strncmp(s, token, n) == 0 && (s[n] == ',' || s[n] == '\0')) return 1;
+    s = strchr(s, ',');
+    if (s == NULL) return 0;
+  }
+}
+
+/* The hierarchies that may bound the CPU time: cgroup v2's, and cgroup
+   v1's that holds the cpu controller. A host mounts either or both, the
+   cpu controller in one of them. */
+typedef enum { V2, V1 } hierarchy;
+
+/* Whether a line "ID:CONTROLLERS:PATH" of proc/self/cgroup is [h]'s, with
+   its path written to [path]: v2's line is "0::PATH", v1's lists cpu among
+   its controllers. */
+static int cgroup_line(hierarchy h, const char *line, char *path) {
+  if (h == V2)
+    return strncmp(line, "0::", 3) == 0 &&
+           sscanf(line + 3, "%4095[^\n]", path) == 1;
+  char controllers[4096];
+  return sscanf(line, "%*d:%4095[^:]:%4095[^\n]", controllers, path) == 2 &&
+         has_token(controllers, "cpu");
+}
+
+/* mountinfo quotes spaces, tabs, newlines and backslashes as octal bytes.
+   Decode once, in place, before comparing or opening either path field. */
+static void mount_path(char *path) {
+  char *out = path;
+  while (*path) {
+    if (path[0] == '\\' && path[1] >= '0' && path[1] <= '3' &&
+        path[2] >= '0' && path[2] <= '7' &&
+        path[3] >= '0' && path[3] <= '7') {
+      *out++ = (char)((path[1] - '0') * 64 + (path[2] - '0') * 8 +
+                      path[3] - '0');
+      path += 4;
+    } else {
+      *out++ = *path++;
+    }
+  }
+  *out = '\0';
+}
+
+/* Whether a line of proc/self/mountinfo mounts [h], with its root, the
+   cgroup it shows, written to [mount] and its mount point to [point]. The
+   filesystem type and its options follow " - ": "cgroup2", or "cgroup"
+   with cpu among the options. */
+static int cgroup_mount(hierarchy h, const char *line, char *mount,
+                        char *point) {
+  char type[64], options[4096];
+  const char *fields = strstr(line, " - ");
+  if (fields == NULL ||
+      sscanf(fields + 3, "%63s %*s %4095s", type, options) != 2)
+    return 0;
+  int mounts = h == V2 ? strcmp(type, "cgroup2") == 0
+                       : strcmp(type, "cgroup") == 0 &&
+                             has_token(options, "cpu");
+  if (!mounts ||
+      sscanf(line, "%*s %*s %*s %4095s %4095s", mount, point) != 2)
+    return 0;
+  mount_path(mount);
+  mount_path(point);
+  return 1;
+}
+
+/* The process's cgroup directory of [h] under [root], written to [dir]:
+   the mount of [h] that holds the path of the hierarchy's line in
+   proc/self/cgroup. A mount's root is the cgroup it shows, so the
+   directory is the mount point joined with the path below that root.
+   Returns the length of [root] and the mount point, where the walk to the
+   ancestors stops, or 0 if there is none. */
+static size_t cgroup_dir(hierarchy h, const char *root, char *dir,
+                         size_t size) {
+  char line[4096], path[4096], mount[4096], point[4096];
+  FILE *f = open_under(root, "/proc/self/cgroup");
+  if (f == NULL) return 0;
+  int found = 0;
+  while (!found && fgets(line, sizeof line, f))
+    found = cgroup_line(h, line, path);
+  fclose(f);
+  if (!found || path[0] != '/') return 0;
+
+  size_t stop = 0;
+  f = open_under(root, "/proc/self/mountinfo");
+  if (f == NULL) return 0;
+  while (stop == 0 && fgets(line, sizeof line, f)) {
+    if (!cgroup_mount(h, line, mount, point)) continue;
+    size_t n = strcmp(mount, "/") == 0 ? 0 : strlen(mount);
+    if (strncmp(path, mount, n) != 0 || (path[n] != '/' && path[n] != '\0'))
+      continue;
+    if (snprintf(dir, size, "%s%s%s", root, point, path + n) < (int)size)
+      stop = strlen(root) + strlen(point);
+  }
+  fclose(f);
+  return stop;
+}
+
+/* The tighter of two bounds, -1 being none. */
+static long tighter(long a, long b) {
+  return a < 0 || (b >= 0 && b < a) ? b : a;
+}
+
+/* The quota of the cgroup [dir] of [h] in CPUs, ceil (quota / period), or
+   -1 without one. Rounded up: n threads spend at most n CPUs a period, so
+   rounding a quota of 1.5 down would leave a third of it idle. v2's
+   cpu.max reads "max PERIOD" without a quota and "QUOTA PERIOD" with one;
+   v1's cpu.cfs_quota_us reads -1 without one, beside cpu.cfs_period_us. */
+static long quota_cpus(hierarchy h, const char *dir) {
+  long quota = -1, period = -1;
+  if (h == V2)
+    scan_under(dir, "/cpu.max", 2, "%ld %ld", &quota, &period);
+  else if (scan_under(dir, "/cpu.cfs_quota_us", 1, "%ld", &quota))
+    scan_under(dir, "/cpu.cfs_period_us", 1, "%ld", &period);
+  return quota > 0 && period > 0 ? (quota + period - 1) / period : -1;
+}
+
+/* The tightest quota of the cgroup of [h] and its ancestors, since limits
+   nest. */
+static long hierarchy_cpus(hierarchy h, const char *root) {
+  char dir[4096];
+  size_t stop = cgroup_dir(h, root, dir, sizeof dir);
+  if (stop == 0) return -1;
+  long least = -1;
+  for (;;) {
+    least = tighter(least, quota_cpus(h, dir));
+    char *slash = strrchr(dir, '/');
+    if (strlen(dir) <= stop || slash == NULL) return least;
+    *slash = '\0';
+  }
+}
+
+long rig_pool_cgroup_cpus(const char *root) {
+  return tighter(hierarchy_cpus(V2, root), hierarchy_cpus(V1, root));
+}
+
+/* The capacity of CPU [cpu] under [root], or -1 without one. */
+static long capacity(const char *root, int cpu) {
+  char name[64];
+  long c = -1;
+  snprintf(name, sizeof name, "/sys/devices/system/cpu/cpu%d/cpu_capacity",
+           cpu);
+  return scan_under(root, name, 1, "%ld", &c) ? c : -1;
+}
+
+/* Two passes over the files, so that nothing is allocated. A core of half
+   the largest capacity or less takes twice as long or more for a chunk, as
+   an efficiency core does. Unmeasured on hardware: no Linux host with cores
+   of several sizes was at hand. */
+long rig_pool_capacity_cpus(const char *root, const int *cpus, long n) {
+  long largest = -1;
+  for (long i = 0; i < n; i++) {
+    long c = capacity(root, cpus[i]);
+    if (c < 0) return -1;
+    if (c > largest) largest = c;
+  }
+  long count = 0;
+  for (long i = 0; i < n; i++) count += 2 * capacity(root, cpus[i]) > largest;
+  return count;
+}
+
+static int g_cores, g_performance_cores;
+static pthread_once_t cores_once = PTHREAD_ONCE_INIT;
+
+/* Set once the counts are: a contraction asks for them a dozen times, and
+   pthread_once is a call where this is a load. */
+static atomic_int cores_known;
+
+#if defined(__APPLE__)
+static long sysctl_int(const char *name) {
+  int v = 0;
+  size_t size = sizeof v;
+  return sysctlbyname(name, &v, &size, NULL, 0) == 0 ? v : -1;
+}
+#endif
+
+/* The cores, and the performance cores where the host tells them apart
+   (-1 where it does not). */
+static void cores_init(void) {
+  long cores, fast = -1;
+#if defined(__APPLE__)
+  cores = sysctl_int("hw.physicalcpu");
+  fast = sysctl_int("hw.perflevel0.physicalcpu");
+#elif defined(_WIN32)
+  cores = (long)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+#elif defined(__linux__)
+  int *cpus;
+  cores = affinity_cpus(&cpus);
+  if (cores < 0) cores = sysconf(_SC_NPROCESSORS_ONLN);
+  if (cpus != NULL) fast = rig_pool_capacity_cpus("", cpus, cores);
+  free(cpus);
+  cores = tighter(cores, rig_pool_cgroup_cpus(""));
+#else
+  cores = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+  g_cores = cores < 1 ? 1 : (int)cores;
+  g_performance_cores = fast < 1 || fast > g_cores ? g_cores : (int)fast;
+  atomic_store_explicit(&cores_known, 1, memory_order_release);
+}
+
+static void know_cores(void) {
+  if (!atomic_load_explicit(&cores_known, memory_order_acquire))
+    pthread_once(&cores_once, cores_init);
+}
+
+int rig_pool_cores(void) {
+  know_cores();
+  return g_cores;
+}
+
+int rig_pool_performance_cores(void) {
+  know_cores();
+  return g_performance_cores;
+}
+
+/* Jobs */
+
+/* A job as its caller passes it. [wide] says i * total may overflow 64 bits
+   for some chunk bound i <= chunks, so the bounds take 128. */
+typedef struct {
+  rig_pool_body body;
+  void *ctx;
+  int64_t total, chunks;
+  int threads, wide;
+} job;
+
+/* floor (i * total / chunks), exactly. */
+static inline int64_t bound(const job *j, int64_t i) {
+  if (j->wide) return (int64_t)((__int128)i * j->total / j->chunks);
+  return i * j->total / j->chunks;
+}
+
+/* A strip: its claim counter, the next unclaimed chunk index, beside its
+   end, and a gap that keeps the next strip's a line away. Each counter is
+   written by its own thread at every claim, and by others only at a job's
+   tail. The caller writes both at the job's opening. */
+typedef struct {
+  _Atomic uint64_t next;
+  uint64_t end;
+  char gap[line_bytes - 2 * sizeof(uint64_t)];
+} strip;
+
+typedef struct pool pool;
+
+typedef struct {
+  pool *pool;
+  int id;
+} worker;
+
+struct pool {
+  int threads;           /* the workers made, plus the caller */
+  worker *workers;       /* [1, threads); slot 0 is the caller */
+  strip *strips;         /* [0, threads), strip k claimed first by worker k */
+  pthread_mutex_t drive; /* one published job at a time */
+  pthread_mutex_t mtx;   /* guards parking */
+  pthread_cond_t wake;   /* parked workers wait here for a new generation */
+  pthread_cond_t done;   /* a parked caller waits here for the job's end */
+  /* The job's number in the high 32 bits and its threads in the low 32,
+     so that one load tells a worker that a job began and whether it is one
+     of its threads. */
+  _Atomic uint64_t generation;
+  /* The job, written while no worker is inside and read only inside. */
+  job job;
+  /* The gap keeps the workers' entries a line away from the job and the
+     generation, which every entry would otherwise take from the threads
+     that spin on it, whatever the pool's address. */
+  char gap[line_bytes];
+  _Atomic uint64_t inside; /* the workers inside the job, | closed */
+  _Atomic int waiting;     /* whether the caller parked on [done] */
+  /* Bit [id % 64] of word [id / 64] is set while worker [id] is parked. */
+  _Atomic uint64_t parked[];
+};
+
+/* Whether the thread runs a body of a job of more than one thread: a job
+   it begins then runs alone on it, since the pool runs one such job at a
+   time and the outer job holds it. A job on one thread holds nothing. */
+static _Thread_local int in_body;
+
+static void relax(void) {
+#if defined(__x86_64__) || defined(__i386__)
+  __builtin_ia32_pause();
+#elif defined(__aarch64__)
+  __asm__ __volatile__("yield");
+#endif
+}
+
+/* What a spin waits for: [*word] to leave [value], or to reach it. */
+typedef enum { LEAVE, REACH } spin_until;
+
+/* Spins until [*word] leaves or reaches [value], up to the clock's
+   [deadline], and returns the last value read. The clock is read every 64
+   loads. */
+static uint64_t spin(_Atomic uint64_t *word, uint64_t value, spin_until until,
+                     uint64_t deadline) {
+  int reach = until == REACH;
+  uint64_t v = atomic_load_explicit(word, memory_order_acquire);
+  if ((v == value) == reach) return v;
+  for (;;) {
+    for (int i = 0; i < 64; i++) {
+      relax();
+      v = atomic_load_explicit(word, memory_order_acquire);
+      if ((v == value) == reach) return v;
+    }
+    if (now_ns() >= deadline) return v;
+  }
+}
+
+/* Claims runs of chunks of strip [k] of [j] until none remains, one call a
+   run, [past] being at most its counter. A thread's last run ends below the
+   counter, so at most the chunks past it are left: none once it reaches the
+   strip's end, where the thread stops without touching the counter again,
+   which spares the lines that other threads' passes read. While those
+   chunks are too few for a run of two, the thread claims one without
+   reading the counter first, as a short strip's threads always do. Else the run's length comes
+   from a load of the counter, which other claims may pass before the
+   fetch-add lands: the run is then longer than its share by their few
+   chunks at most. The counter is unsigned: past the strip's last chunk it
+   grows by at most a run a thread, below 2^64 for any job. A relaxed
+   fetch-add makes every index unique; ordering rides the opening and
+   closing of the job. */
+static void claim_strip(pool *p, const job *j, int k, int id, uint64_t past) {
+  _Atomic uint64_t *next = &p->strips[k].next;
+  uint64_t end = p->strips[k].end;
+  while (past < end) {
+    uint64_t run = 1;
+    if (end - past >= 2 * claim_split) {
+      uint64_t at = atomic_load_explicit(next, memory_order_relaxed);
+      if (at < end && end - at >= 2 * claim_split)
+        run = (end - at) / claim_split;
+    }
+    uint64_t i = atomic_fetch_add_explicit(next, run, memory_order_relaxed);
+    if (i >= end) return;
+    past = end - i > run ? i + run : end;
+    RIG_POOL_HOOK(chunk);
+    j->body(bound(j, (int64_t)i), bound(j, (int64_t)past), id, j->ctx);
+  }
+}
+
+/* Claims thread [id]'s own strip, then what is left of the others, from the
+   next one on. A strip's counter only grows, so one pass over them leaves
+   no chunk unclaimed. */
+static void claim(pool *p, const job *j, int id) {
+  int t = j->threads;
+  claim_strip(p, j, id, id, id == 0 ? 0 : p->strips[id - 1].end);
+  for (int k = id + 1 == t ? 0 : id + 1; k != id; k = k + 1 == t ? 0 : k + 1) {
+    uint64_t at = atomic_load_explicit(&p->strips[k].next, memory_order_relaxed);
+    if (at < p->strips[k].end) claim_strip(p, j, k, id, at);
+  }
+}
+
+/* Entering. A worker claims only inside, so the caller never rewrites a job
+   a worker reads, and a worker that arrives after the close turns back
+   without a claim.
+
+   A worker that sees the job closed turns back after one load. Else it
+   enters with a fetch-add, which always lands: a compare-and-swap fails and
+   retries while other workers enter, and with 15 at once on x86 an empty
+   job took 1.4 times as long. An add that finds the job closed after all is
+   undone at once, so the caller, which waits for the count to fall to zero,
+   waits for that undo too. Such an add can even land after the caller's
+   wait has ended; the next job therefore opens by clearing [closed] alone,
+   and counts the add until its undo. */
+static const uint64_t closed = (uint64_t)1 << 63;
+
+static void leave(pool *p) {
+  uint64_t was = atomic_fetch_sub(&p->inside, 1);
+  RIG_POOL_HOOK(left);
+  if (was == (closed | 1) && atomic_load(&p->waiting)) {
+    pthread_mutex_lock(&p->mtx);
+    pthread_cond_signal(&p->done);
+    pthread_mutex_unlock(&p->mtx);
+  }
+}
+
+static int enter(pool *p) {
+  if (atomic_load_explicit(&p->inside, memory_order_relaxed) & closed)
+    return 0;
+  RIG_POOL_HOOK(enter_open);
+  if (!(atomic_fetch_add_explicit(&p->inside, 1, memory_order_acquire) &
+        closed))
+    return 1;
+  RIG_POOL_HOOK(enter_refused);
+  leave(p);
+  return 0;
+}
+
+/* Parking: a thread sets its bit in [parked] (or sets [waiting]) and reads
+   the word it waits on again before it waits, and the thread that changes the
+   word reads the flag after the change, both sequentially consistent: one of
+   them sees the other, so no wakeup is lost. The signal is sent under the
+   mutex the parked thread waits with. A worker that a broadcast wakes for a
+   job it takes no part in parks again at once, since its window has ended. */
+
+static uint64_t park_worker(pool *p, int id, uint64_t seen) {
+  _Atomic uint64_t *word = &p->parked[id / 64];
+  uint64_t bit = (uint64_t)1 << (id % 64);
+  pthread_mutex_lock(&p->mtx);
+  atomic_fetch_or(word, bit);
+  RIG_POOL_HOOK(parking);
+  uint64_t g;
+  while ((g = atomic_load(&p->generation)) == seen)
+    pthread_cond_wait(&p->wake, &p->mtx);
+  atomic_fetch_and(word, ~bit);
+  pthread_mutex_unlock(&p->mtx);
+  return g;
+}
+
+/* Whether one of a job's workers, 1 to [threads] - 1, is parked: one load
+   for jobs of up to 64 threads. */
+static int participant_parked(pool *p, int threads) {
+  for (int w = 0; w * 64 < threads; w++) {
+    int below = threads - w * 64;
+    uint64_t mask = below >= 64 ? ~(uint64_t)0 : ((uint64_t)1 << below) - 1;
+    if (w == 0) mask &= ~(uint64_t)1;
+    if (atomic_load(&p->parked[w]) & mask) return 1;
+  }
+  return 0;
+}
+
+/* The generation of the next job after [g] that worker [id] is one of the
+   threads of: spun for until [deadline], parked for after. A job without
+   the worker is passed over, and after [deadline] slept through: jobs may
+   follow each other faster than a spin reads the clock. */
+static uint64_t next_job(pool *p, int id, uint64_t g, uint64_t deadline) {
+  for (;;) {
+    uint64_t v = spin(&p->generation, g, LEAVE, deadline);
+    if (v == g || (id >= (int)(uint32_t)v && now_ns() >= deadline)) {
+      RIG_POOL_HOOK(park);
+      v = park_worker(p, id, v);
+    }
+    if (id < (int)(uint32_t)v) return v;
+    g = v;
+  }
+}
+
+static void *work(void *arg) {
+  const worker *w = arg;
+  pool *p = w->pool;
+  in_body = 1;
+  /* Workers start before the first job, at generation 0. */
+  uint64_t seen = 0;
+  /* The spin window runs from the worker's last part in a job, and a job it
+     takes no part in leaves the window as it was: a worker that narrow jobs
+     leave out parks once the window ends, for the rest of their burst. */
+  uint64_t deadline = now_ns() + spin_ns;
+  for (;;) {
+    seen = next_job(p, w->id, seen, deadline);
+    /* The job open by now may be a later one than [seen], whose threads
+       the worker learns inside. */
+    if (enter(p)) {
+      RIG_POOL_HOOK(entered);
+      if (w->id < p->job.threads) claim(p, &p->job, w->id);
+      leave(p);
+    }
+    deadline = now_ns() + spin_ns;
+  }
+  return NULL;
+}
+
+/* Starts the workers of [p], with [stack_bytes] of stack and the signals
+   sent to the process blocked, keeping those a body raises itself. A worker
+   that cannot be made so ends the list: the job runs with those made. The
+   workers are never joined. */
+static void start_workers(pool *p, int wanted) {
+  p->threads = 1;
+  pthread_attr_t attr;
+  if (pthread_attr_init(&attr) != 0) return;
+  int sized = pthread_attr_setstacksize(&attr, stack_bytes) == 0;
+#if !defined(_WIN32)
+  sigset_t blocked, saved;
+  sigfillset(&blocked);
+  static const int faults[] = {SIGSEGV, SIGBUS,  SIGFPE, SIGILL,
+                               SIGTRAP, SIGABRT, SIGSYS};
+  for (size_t i = 0; i < sizeof faults / sizeof *faults; i++)
+    sigdelset(&blocked, faults[i]);
+  pthread_sigmask(SIG_SETMASK, &blocked, &saved);
+#endif
+  for (int id = 1; sized && id < wanted; id++) {
+    worker *w = &p->workers[id];
+    w->pool = p;
+    w->id = id;
+    pthread_t thread;
+    if (pthread_create(&thread, &attr, work, w) != 0) break;
+    p->threads = id + 1;
+  }
+#if !defined(_WIN32)
+  pthread_sigmask(SIG_SETMASK, &saved, NULL);
+#endif
+  pthread_attr_destroy(&attr);
+}
+
+/* A new pool, or NULL if its memory or locks cannot be had. calloc's zeros
+   are each atomic field's initial value. */
+static pool *create(void) {
+  int cores = rig_pool_cores();
+  size_t words = ((size_t)cores + 63) / 64;
+  pool *p = calloc(1, sizeof *p + words * sizeof(_Atomic uint64_t));
+  if (p == NULL) return NULL;
+  p->workers = calloc((size_t)cores, sizeof *p->workers);
+  if (p->workers == NULL) goto fail_pool;
+  p->strips = calloc((size_t)cores, sizeof *p->strips);
+  if (p->strips == NULL) goto fail_workers;
+  if (pthread_mutex_init(&p->drive, NULL) != 0) goto fail_strips;
+  if (pthread_mutex_init(&p->mtx, NULL) != 0) goto fail_drive;
+  if (pthread_cond_init(&p->wake, NULL) != 0) goto fail_mtx;
+  if (pthread_cond_init(&p->done, NULL) != 0) goto fail_wake;
+  start_workers(p, cores);
+  return p;
+
+fail_wake:
+  pthread_cond_destroy(&p->wake);
+fail_mtx:
+  pthread_mutex_destroy(&p->mtx);
+fail_drive:
+  pthread_mutex_destroy(&p->drive);
+fail_strips:
+  free(p->strips);
+fail_workers:
+  free(p->workers);
+fail_pool:
+  free(p);
+  return NULL;
+}
+
+/* Fork
+
+   The pool is heap-owned so that a fork child can abandon the inherited one
+   and lazily build its own: only the forking thread survives in the child, so
+   the copied workers, mutexes and condition waiters are unusable, and
+   reinitialising live pthread objects in place is undefined.
+
+   init_mtx serialises lazy creation. The prepare handler holds it and the
+   current pool's drive mutex, so fork waits for a running job of more than
+   one thread; the parent releases both, and the child clears the pointer
+   and releases only the still-valid init_mtx. */
+static _Atomic(pool *) g_pool;
+static pthread_mutex_t init_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
+static int atfork_ok;
+
+#if defined(_WIN32)
+static void register_atfork(void) { atfork_ok = 1; }
+#else
+static void atfork_prepare(void) {
+  pthread_mutex_lock(&init_mtx);
+  pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
+  if (p) pthread_mutex_lock(&p->drive);
+}
+
+static void atfork_parent(void) {
+  pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
+  if (p) pthread_mutex_unlock(&p->drive);
+  pthread_mutex_unlock(&init_mtx);
+}
+
+static void atfork_child(void) {
+  atomic_store_explicit(&g_pool, NULL, memory_order_release);
+  pthread_mutex_unlock(&init_mtx);
+}
+
+static void register_atfork(void) {
+  atfork_ok = pthread_atfork(atfork_prepare, atfork_parent, atfork_child) == 0;
+}
+#endif
+
+/* The pool, made at first use; NULL if it cannot be made, or if a later
+   fork could not be made safe, which leaves the caller computing alone. It
+   exists only once the fork handlers do, so finding it skips the once. */
+static pool *get(void) {
+  pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
+  if (p) return p;
+  pthread_once(&atfork_once, register_atfork);
+  if (!atfork_ok) return NULL;
+  pthread_mutex_lock(&init_mtx);
+  p = atomic_load_explicit(&g_pool, memory_order_relaxed);
+  if (!p) {
+    p = create();
+    atomic_store_explicit(&g_pool, p, memory_order_release);
+  }
+  pthread_mutex_unlock(&init_mtx);
+  return p;
+}
+
+static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
+  return x < lo ? lo : x > hi ? hi : x;
+}
+
+/* Cuts [c] chunks into the strips of [t] threads: strip k begins at
+   floor (k c / t) = k q + floor (k r / t), for c = q t + r. The second term
+   grows by one each time [rest], k r mod t, wraps, so the bounds take no
+   division past the first. */
+static void open_strips(pool *p, uint64_t c, int t) {
+  uint64_t q = c / (uint64_t)t, r = c % (uint64_t)t;
+  uint64_t lo = 0, rest = 0;
+  for (int k = 0; k < t; k++) {
+    atomic_store_explicit(&p->strips[k].next, lo, memory_order_relaxed);
+    rest += r;
+    lo += q + (rest >= (uint64_t)t);
+    if (rest >= (uint64_t)t) rest -= (uint64_t)t;
+    p->strips[k].end = lo;
+  }
+}
+
+/* Runs a job of [t] > 1 threads and [c] chunks: alone if begun from a body
+   or without a pool, else on at most p->threads (<= rig_pool_cores ()). Once
+   it returns, no thread touches the job or the claim counter until the next
+   job opens. Out of line, so a serial rig_pool_run saves no registers. */
+__attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
+                                          rig_pool_body body, void *ctx) {
+  pool *p = in_body ? NULL : get();
+  if (p && t > p->threads) t = p->threads;
+  if (p == NULL || t == 1) {
+    body(0, total, 0, ctx);
+    return;
+  }
+  job j = {body, ctx, total, c, t, total > INT64_MAX / c};
+
+  pthread_mutex_lock(&p->drive);
+  p->job = j;
+  open_strips(p, (uint64_t)c, t);
+  atomic_fetch_and_explicit(&p->inside, ~closed, memory_order_release);
+  RIG_POOL_HOOK(opened);
+  uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);
+  atomic_store(&p->generation, ((g >> 32) + 1) << 32 | (uint32_t)t);
+  RIG_POOL_HOOK(published);
+  if (participant_parked(p, t)) {
+    pthread_mutex_lock(&p->mtx);
+    pthread_cond_broadcast(&p->wake);
+    pthread_mutex_unlock(&p->mtx);
+  }
+
+  in_body = 1;
+  claim(p, &j, 0);
+  in_body = 0;
+
+  RIG_POOL_HOOK(claimed);
+  uint64_t was = atomic_fetch_or(&p->inside, closed);
+  RIG_POOL_HOOK(closed);
+  if (was != 0 &&
+      spin(&p->inside, closed, REACH, now_ns() + spin_ns) != closed) {
+    pthread_mutex_lock(&p->mtx);
+    atomic_store(&p->waiting, 1);
+    RIG_POOL_HOOK(waiting);
+    while (atomic_load(&p->inside) != closed)
+      pthread_cond_wait(&p->done, &p->mtx);
+    atomic_store(&p->waiting, 0);
+    pthread_mutex_unlock(&p->mtx);
+  }
+  pthread_mutex_unlock(&p->drive);
+}
+
+/* A serial job is one call, before any thread-local read or division. */
+void rig_pool_run(int threads, int64_t total, int64_t chunks, rig_pool_body body,
+                 void *ctx) {
+  if (total <= 0) return;
+  int64_t c = clamp(chunks, 1, total);
+  int t = (int)clamp(threads, 1, c);
+  if (t == 1)
+    body(0, total, 0, ctx);
+  else
+    run(t, total, c, body, ctx);
+}

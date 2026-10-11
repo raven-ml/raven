@@ -1,0 +1,6 @@
+(test
+ (name test_elf)
+ (libraries rig_elf windtrap)
+ (deps
+  (source_tree fixtures)
+  ../fixtures/simple_add_sm89.cubin))

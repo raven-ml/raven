@@ -1,0 +1,31 @@
+# thumper baseline v1
+# suite: rig_profile
+
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+# refreshed: 2026-10-10, final Profile, quiet release; CPUs 0-5
+
+export/100	alloc_words	exact	17087
+export/100	wall_time	batch=128	n=20	5.243e-05	5.225e-05 5.228e-05 5.230e-05 5.230e-05 5.235e-05 5.237e-05 5.240e-05 5.240e-05 5.241e-05 5.243e-05 5.244e-05 5.247e-05 5.248e-05 5.250e-05 5.250e-05 5.252e-05 5.257e-05 5.262e-05 5.266e-05 5.270e-05
+export/10000	alloc_words	exact	1894799
+export/10000	wall_time	batch=1	n=20	5.663e-03	5.562e-03 5.578e-03 5.579e-03 5.600e-03 5.613e-03 5.618e-03 5.644e-03 5.648e-03 5.654e-03 5.663e-03 5.663e-03 5.679e-03 5.709e-03 5.718e-03 5.721e-03 5.730e-03 5.743e-03 5.750e-03 5.759e-03 5.774e-03
+record/100	alloc_words	exact	9514
+record/100	wall_time	batch=1024	n=20	9.306e-06	9.179e-06 9.194e-06 9.212e-06 9.232e-06 9.262e-06 9.262e-06 9.267e-06 9.284e-06 9.292e-06 9.302e-06 9.309e-06 9.333e-06 9.341e-06 9.348e-06 9.352e-06 9.355e-06 9.373e-06 9.495e-06 9.524e-06 9.606e-06
+record/10000	alloc_words	exact	1154626
+record/10000	wall_time	batch=1	n=20	1.873e-03	1.706e-03 1.758e-03 1.770e-03 1.774e-03 1.786e-03 1.805e-03 1.815e-03 1.816e-03 1.831e-03 1.862e-03 1.883e-03 1.885e-03 1.914e-03 1.916e-03 1.919e-03 1.929e-03 1.930e-03 2.008e-03 2.049e-03 2.074e-03
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# refreshed: 2026-10-10, Host ownership and final Program/Profile, quiet release
+# rows: record/*, export/*
+
+export/100	alloc_words	exact	17087
+export/100	wall_time	batch=64	n=20	1.051e-04	1.047e-04 1.048e-04 1.048e-04 1.048e-04 1.048e-04 1.048e-04 1.049e-04 1.049e-04 1.049e-04 1.050e-04 1.051e-04 1.051e-04 1.051e-04 1.051e-04 1.051e-04 1.051e-04 1.054e-04 1.059e-04 1.061e-04 1.074e-04
+export/10000	alloc_words	exact	1894799
+export/10000	wall_time	batch=1	n=20	1.125e-02	1.096e-02 1.099e-02 1.099e-02 1.107e-02 1.108e-02 1.113e-02 1.117e-02 1.119e-02 1.122e-02 1.124e-02 1.126e-02 1.129e-02 1.129e-02 1.129e-02 1.130e-02 1.135e-02 1.136e-02 1.138e-02 1.139e-02 1.142e-02
+record/100	alloc_words	exact	9514
+record/100	wall_time	batch=512	n=20	1.478e-05	1.460e-05 1.461e-05 1.462e-05 1.463e-05 1.465e-05 1.472e-05 1.474e-05 1.475e-05 1.476e-05 1.477e-05 1.479e-05 1.480e-05 1.481e-05 1.481e-05 1.483e-05 1.489e-05 1.490e-05 1.499e-05 1.501e-05 1.502e-05
+record/10000	alloc_words	exact	1154626
+record/10000	wall_time	batch=2	n=20	3.110e-03	2.949e-03 3.029e-03 3.042e-03 3.050e-03 3.053e-03 3.065e-03 3.068e-03 3.077e-03 3.086e-03 3.109e-03 3.112e-03 3.195e-03 3.206e-03 3.215e-03 3.216e-03 3.217e-03 3.274e-03 3.294e-03 3.317e-03 3.402e-03

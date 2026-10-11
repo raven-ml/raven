@@ -1,0 +1,87 @@
+(tests
+ (names
+  test_open
+  test_buffer
+  test_submit
+  test_launch
+  test_args
+  test_loss
+  test_turn
+  test_commit
+  test_fork
+  test_fail
+  test_keep
+  test_stamps
+  test_memory
+  test_claim
+  test_image
+  test_io
+  test_walk
+  test_point
+  test_local
+  test_limit)
+ (modules :standard \ test_profile test_readers test_model test_model_fork
+  rig_model)
+ (libraries rig rig_edge rig_support threads.posix unix
+  windtrap))
+
+(test
+ (name test_profile)
+ (modules test_profile)
+ (libraries rig rig_support windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_profile.ml test_profile.ml.corrected))))
+
+(executable
+ (name test_readers)
+ (modules test_readers)
+ (modes native byte)
+ (libraries rig rig_support windtrap))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{dep:test_readers.exe})))
+
+; The bytecode run checks that rig's stubs resolve when ocamlrun loads them
+; from CAML_LD_LIBRARY_PATH.
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (and
+   (<> %{os_type} Win32)
+   (<> %{profile} sanitize)))
+ (deps
+  ../lib/dllrig_stubs.so
+  ../lib/pool/dllrig_pool_stubs.so
+  support/dllrig_support_stubs.so)
+ (action
+  (setenv
+   CAML_LD_LIBRARY_PATH
+   "../lib:../lib/edge:../lib/pool:support:%{lib:windtrap:../stublibs}"
+   (run %{dep:test_readers.bc}))))
+
+(tests
+ (names test_model test_model_fork)
+ (modules test_model test_model_fork rig_model)
+ (locks %{workspace_root}/gpu)
+ (libraries
+  rig
+  rig_support
+  rig_disk
+  rig_metal
+  rig_metal_support
+  rig_cuda
+  rig_cuda_support
+  rig_nv
+  rig_nv_nvidia
+  rig_nv_support
+  rig_amd
+  rig_amd_amdgpu
+  rig_amd_support
+  threads.posix
+  unix
+  windtrap))

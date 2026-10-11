@@ -1,0 +1,17 @@
+(tests
+ (names test_wire test_link test_proxy test_proxy_fail test_rail_release)
+ (modules :standard \ rig_link_probe)
+ (deps
+  support/link_peer.exe
+  (glob_files ../../fixtures/*.o))
+ (libraries rig rig_edge rig_link_probe rig_remote_proxy rig_remote_abi
+  rig_support unix rig_host_support threads.posix windtrap))
+
+(library
+ (name rig_link_probe)
+ (modules rig_link_probe)
+ (libraries rig_remote_proxy threads.posix)
+ (foreign_stubs
+  (language c)
+  (names rig_link_probe_stubs)
+  (extra_deps ../../../lib/remote/proxy/rig_remote_proxy_stubs.h)))

@@ -49,6 +49,12 @@ All notable changes to this project will be documented in this file.
   installs `fehu` and `sowilo`; install them by name.
 - Add compatibility with OCaml 5.5.
 
+### Rig (new)
+
+- Add `rig`, which runs work on GPUs from OCaml through Metal, CUDA, NVIDIA's
+  and AMD's kernel drivers, or no kernel driver on Linux, and orders the work
+  of every device by the memory it uses (`Rig.submit`, `Rig.Buffer.copy`).
+
 ### Norn
 
 - `Norn.Nuts`, `Norn.Hmc`, tempering's moves and nested sampling's slice

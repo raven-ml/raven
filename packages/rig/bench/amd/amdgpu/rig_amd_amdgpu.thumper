@@ -1,0 +1,9 @@
+# thumper baseline v1
+# suite: rig_amd_amdgpu
+
+# machine: baccbeca132e3ae9
+# host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+open/0	alloc_words	exact	2094
+open/0	wall_time	batch=1	n=20	2.282e-02	1.823e-02 2.071e-02 2.075e-02 2.136e-02 2.141e-02 2.148e-02 2.166e-02 2.194e-02 2.240e-02 2.243e-02 2.322e-02 2.332e-02 2.388e-02 2.414e-02 2.438e-02 2.464e-02 2.587e-02 2.594e-02 2.798e-02 3.084e-02

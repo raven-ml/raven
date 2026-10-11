@@ -1,0 +1,180 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* A controller for the tests: [ctl.exe MODE] counts its attempts in the file
+   attempts of the current directory, prints "attempt N", and does as MODE says.
+
+   copy: copies 4 KiB to each machine's host and back, prints "copied N" for N
+   machines, and closes the job.
+
+   exit N: exits N once the job started. raise: raises once it started.
+
+   env: prints the agents' names and the key's length, then whether the three
+   variables are gone once the job started.
+
+   empty: asks each machine's agent for the devices of a kind no GPU of this
+   machine has, which the agents share, and prints how many it serves.
+
+   early N: exits N before starting the job.
+
+   kill: kills itself once the job started. kill-first: so at its first attempt,
+   then copies.
+
+   wait: prints "joined" once the job started, waits for it to fail and raises.
+   wait-first: so at its first attempt, then copies.
+
+   linger-first: at its first attempt, prints "joined" once the job started and
+   never exits; then copies.
+
+   save: prints "joined" once the job started, and on SIGTERM copies.
+
+   fork: forks a child that exits 0, then copies.
+
+   exec SCRIPT: runs [sh -c SCRIPT] to its end, then copies. *)
+
+let attempt () =
+  let n =
+    match In_channel.with_open_text "attempts" In_channel.input_all with
+    | s -> int_of_string (String.trim s) + 1
+    | exception Sys_error _ -> 1
+  in
+  Out_channel.with_open_text "attempts" (fun oc ->
+      output_string oc (string_of_int n));
+  Printf.printf "attempt %d\n%!" n;
+  n
+
+let job () =
+  match Rig_remote.launched () with
+  | Some (Ok j) -> j
+  | Some (Error why) ->
+      prerr_endline ("ctl.exe: " ^ why);
+      exit 1
+  | None ->
+      prerr_endline "ctl.exe: not launched";
+      exit 1
+
+let copy j =
+  let n = 4096 in
+  let hosts = Rig_remote.hosts j in
+  let check h =
+    let here = Rig.Buffer.create Rig.host n
+    and back = Rig.Buffer.create Rig.host n
+    and there = Rig.Buffer.create h n in
+    Rig.Buffer.write here Bigarray.char (fun a -> Bigarray.Array1.fill a 'r');
+    Rig.Buffer.copy ~src:here ~dst:there;
+    Rig.Buffer.copy ~src:there ~dst:back;
+    let bytes b =
+      Rig.Buffer.read b Bigarray.char (fun a ->
+          String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a))
+    in
+    if bytes back <> bytes here then failwith "the bytes did not come back"
+  in
+  List.iter check hosts;
+  Printf.printf "copied %d\n%!" (List.length hosts);
+  Rig_remote.close j
+
+let names () =
+  Sys.getenv "RIG_REMOTE_AGENTS"
+  |> String.split_on_char ','
+  |> List.map (fun a -> List.hd (String.split_on_char '=' a))
+  |> String.concat " "
+
+(* The first of rig agent's kinds that no GPU here has. *)
+let empty_kind () =
+  let here = List.map fst (Rig_gpus.openers ()) in
+  [ "METAL"; "CUDA"; "NV"; "AMD"; "NV-PCI"; "AMD-PCI" ]
+  |> List.find (fun k -> not (List.mem k here))
+
+let empty j =
+  let kind = empty_kind () in
+  let count h =
+    match Rig_remote.devices h kind with
+    | Ok ds ->
+        Printf.printf "%d devices of a kind no GPU here has\n%!"
+          (List.length ds)
+    | Error why -> Printf.printf "%s\n%!" why
+  in
+  List.iter count (Rig_remote.hosts j);
+  Rig_remote.close j
+
+let gone v = Sys.getenv_opt v = None || Sys.getenv_opt v = Some ""
+let kill_self () = Unix.kill (Unix.getpid ()) Sys.sigkill
+
+let wait_failure j =
+  print_endline "joined";
+  while Rig_remote.failed j = None do
+    Unix.sleepf 0.05
+  done;
+  failwith "the job failed"
+
+let () =
+  let n = attempt () in
+  match List.tl (Array.to_list Sys.argv) with
+  | [ "copy" ] -> copy (job ())
+  | [ "exit"; s ] ->
+      ignore (job ());
+      exit (int_of_string s)
+  | [ "raise" ] ->
+      ignore (job ());
+      failwith "ctl raised"
+  | [ "env" ] ->
+      Printf.printf "agents %s, key of %d characters\n%!" (names ())
+        (String.length (Sys.getenv "RIG_REMOTE_KEY"));
+      let j = job () in
+      let vars =
+        [ "RIG_REMOTE_AGENTS"; "RIG_REMOTE_KEY"; "RIG_REMOTE_REPORT" ]
+      in
+      Printf.printf "variables gone: %b\n%!" (List.for_all gone vars);
+      Rig_remote.close j
+  | [ "empty" ] -> empty (job ())
+  | [ "early"; s ] -> exit (int_of_string s)
+  | [ "kill" ] ->
+      ignore (job ());
+      kill_self ()
+  | [ "kill-first" ] ->
+      let j = job () in
+      if n = 1 then kill_self () else copy j
+  | [ "linger-first" ] ->
+      let j = job () in
+      if n > 1 then copy j
+      else begin
+        print_endline "joined";
+        while true do
+          Unix.sleepf 0.05
+        done
+      end
+  | [ "save" ] ->
+      let j = job () in
+      let term = Atomic.make false in
+      Sys.set_signal Sys.sigterm
+        (Sys.Signal_handle (fun _ -> Atomic.set term true));
+      print_endline "joined";
+      while not (Atomic.get term) do
+        Unix.sleepf 0.05
+      done;
+      copy j
+  | [ "wait" ] -> wait_failure (job ())
+  | [ "wait-first" ] ->
+      let j = job () in
+      if n = 1 then wait_failure j else copy j
+  | [ "fork" ] -> (
+      let j = job () in
+      match Unix.fork () with
+      | 0 -> exit 0
+      | child ->
+          ignore (Unix.waitpid [] child);
+          copy j)
+  | [ "exec"; script ] ->
+      let j = job () in
+      let sh = "/bin/sh" in
+      let pid =
+        Unix.create_process sh [| sh; "-c"; script |] Unix.stdin Unix.stdout
+          Unix.stderr
+      in
+      ignore (Unix.waitpid [] pid);
+      copy j
+  | _ ->
+      prerr_endline "usage: ctl.exe MODE";
+      exit 1

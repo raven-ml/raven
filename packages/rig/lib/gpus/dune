@@ -1,0 +1,15 @@
+; The GPUs of this machine, through every path rig ships. Each path's
+; library builds on every system and counts no GPU off its own.
+
+(library
+ (name rig_gpus)
+ (public_name rig.gpus)
+ (libraries
+  rig
+  rig_amd_amdgpu
+  rig_amd_pci
+  rig_cuda
+  rig_edge
+  rig_metal
+  rig_nv_nvidia
+  rig_nv_pci))

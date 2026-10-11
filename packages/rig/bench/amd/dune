@@ -1,0 +1,26 @@
+(executable
+ (name bench_amd)
+ (modules bench_amd)
+ (libraries
+  rig_amd
+  rig_amd_abi
+  rig_amd_amdgpu
+  rig_amd_pci
+  rig_amd_support
+  rig
+  rig_edge
+  thumper
+  unix)
+ (foreign_stubs
+  (language c)
+  (names rig_amd_bench_stubs)))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench %{workspace_root}/gpu)
+ (deps
+  (env_var RIG_AMD_PCI_FIRMWARE)
+  (glob_files *.thumper)
+  (source_tree ../../test/amd/fixtures))
+ (action
+  (run %{exe:bench_amd.exe})))

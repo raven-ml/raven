@@ -1,0 +1,19 @@
+(executable
+ (name main)
+ (libraries rig rig.gpus))
+
+; The program uses the first GPU here, so it takes the GPU suites' lock.
+
+(rule
+ (deps
+  (glob_files kernels/add*))
+ (locks %{workspace_root}/gpu)
+ (action
+  (with-stdout-to
+   main.output
+   (run ./main.exe))))
+
+(rule
+ (alias runtest)
+ (action
+  (diff main.expected main.output)))

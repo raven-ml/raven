@@ -1,0 +1,11 @@
+; AMD GPUs, driven once a path opened them.
+
+(library
+ (name rig_amd)
+ (public_name rig.amd)
+ (libraries rig_amd_abi rig_edge)
+ (private_modules template copy_kernel)
+ (foreign_stubs
+  (language c)
+  (names rig_amd_ring rig_amd_stubs)))
+

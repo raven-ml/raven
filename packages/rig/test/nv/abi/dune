@@ -1,0 +1,17 @@
+(tests
+ (names
+  test_packet
+  test_method
+  test_gpfifo
+  test_cubin
+  test_launch
+  test_local_memory
+  test_qmd
+  test_structure
+  test_rpc
+  test_fb_layout
+  test_page_entry)
+ (libraries rig_nv_abi rig_nv_abi_support rig_elf windtrap)
+ (deps
+  (source_tree fixtures)
+  ../../fixtures/simple_add_sm89.cubin))

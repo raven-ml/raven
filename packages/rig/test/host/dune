@@ -1,0 +1,6 @@
+(tests
+ (names test_host test_walk)
+ (libraries rig rig_host_support rig_support unix windtrap)
+ (deps
+  (source_tree fixtures)
+  (glob_files ../fixtures/*.o)))

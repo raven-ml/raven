@@ -1,0 +1,18 @@
+; test_fault makes the GPU's context fail for the rest of its process, so it
+; is a suite of its own.
+
+(tests
+ (names test_cuda test_fault test_graph_fork)
+ (locks %{workspace_root}/gpu)
+ (libraries
+  rig
+  rig_cuda
+  rig_cuda_abi
+  rig_cuda_support
+  rig_edge
+  rig_gpu_support
+  rig_support
+  unix
+  windtrap)
+ (deps
+  (glob_files fixtures/*)))

@@ -1,0 +1,7 @@
+A's work reaches B's memory once borrowed: true
+A wrote x at A:1
+Rig.Submission.make: a copy's buffers are not B's memory
+B read x at B:1
+y   on B [5; 6; 7; 8]
+z   on CPU [5; 6; 7; 8]
+A submitted 1, B submitted 1

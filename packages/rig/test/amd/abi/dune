@@ -1,0 +1,50 @@
+(tests
+ (names
+  test_packet
+  test_gpu
+  test_register
+  test_code_object
+  test_scratch
+  test_pm4
+  test_aql
+  test_sdma
+  test_thread_trace
+  test_capability
+  test_counter
+  test_discovery
+  test_psp
+  test_smu
+  test_gmc
+  test_gfx
+  test_ih)
+ (modules :standard \ test_firmware test_trace_program)
+ (libraries
+  rig
+  rig_amd_abi
+  rig_amd_abi_support
+  rig_edge
+  rig_elf
+  rig_support
+  windtrap)
+ (deps
+  (source_tree fixtures)
+  ../fixtures/hidden_gfx1201.hsaco
+  (glob_files ../fixtures/r9700*)))
+
+; test_firmware reads an image through rig.pci's firmware cache.
+
+(test
+ (name test_firmware)
+ (modules test_firmware)
+ (libraries rig_amd_abi rig_pci unix windtrap)
+ (deps
+  (glob_files ../fixtures/r9700*)))
+
+(test
+ (name test_trace_program)
+ (modules test_trace_program)
+ (libraries rig_amd_abi rig_amd_abi_support windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_trace_program.ml test_trace_program.ml.corrected))))

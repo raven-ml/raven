@@ -1,0 +1,13 @@
+(executable
+ (name main)
+ (libraries rig))
+
+(rule
+ (with-stdout-to
+  main.output
+  (run ./main.exe)))
+
+(rule
+ (alias runtest)
+ (action
+  (diff main.expected main.output)))

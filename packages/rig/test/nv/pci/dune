@@ -1,0 +1,5 @@
+(test
+ (name test_nv_pci)
+ (libraries rig_nv rig_nv_pci rig_pci rig_pci_support unix windtrap)
+ (deps
+  (source_tree fixtures)))

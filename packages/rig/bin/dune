@@ -1,0 +1,54 @@
+; The rig binary: main.ml over rig_bin, which its suites link to hold, inside
+; the process, gap's signal race and firmware fetched against a test pin.
+
+(executable
+ (name main)
+ (public_name rig)
+ (package rig)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (modules main)
+ (libraries rig_bin unix))
+
+(library
+ (name rig_bin)
+ (package rig)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (modules :standard \ main)
+ (foreign_stubs
+  (language c)
+  (names proc_stubs))
+ (libraries
+  rig
+  rig.amd.amdgpu
+  rig.amd.pci
+  rig.cuda
+  rig.edge
+  rig.metal
+  rig.nv.nvidia
+  rig.nv.pci
+  rig.remote
+  rig.remote.proxy
+  rig.pci
+  unix
+  threads.posix))
+
+(rule
+ (with-stdout-to
+  version.ml
+  (echo
+   "let v = \"%{version:rig}\"\n\nlet session = v ^ \" protocol \" ^ Int.to_string Rig_remote_proxy.Wire.version\n")))
+
+; Each driver-less driver's list of firmware images, the one its gen.py
+; makes its pins from.
+
+(rule
+ (with-stdout-to
+  images.ml
+  (progn
+   (echo "let amd = {|")
+   (cat %{dep:../lib/amd/pci/gen/headers/firmware.tsv})
+   (echo "|}\n\nlet nv = {|")
+   (cat %{dep:../lib/nv/gen/headers/pci/firmware.tsv})
+   (echo "|}\n"))))

@@ -1,0 +1,23 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+// A module whose one global takes 256 MiB of GPU memory, which CUDA holds
+// while the module is loaded. Its kernel [touch] stores to the global, so
+// that a run of it loads the global under lazy loading. It takes two 64-bit
+// parameters, as the kernels of kernels.ptx do.
+
+.version 7.0
+.target sm_50
+.address_size 64
+
+.global .align 4 .b8 big[268435456];
+
+.visible .entry touch(.param .u64 a, .param .u64 b)
+{
+  .reg .b32 %r<2>;
+  mov.u32 %r1, 1;
+  st.global.u32 [big], %r1;
+  ret;
+}

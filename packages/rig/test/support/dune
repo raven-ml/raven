@@ -1,0 +1,21 @@
+; What rig's suites and benches share: Polled, a host-memory driver
+; whose queue runs only when its sleep runs it.
+
+(library
+ (name rig_support)
+ (modules rig_support)
+ (libraries rig rig_edge threads.posix unix windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_support_stubs)))
+
+; What the GPU suites and benches share: host memory, and a GPU of one
+; driver opened through rig.
+
+(library
+ (name rig_gpu_support)
+ (modules rig_gpu_support)
+ (libraries rig rig_edge windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_gpu_support_stubs)))

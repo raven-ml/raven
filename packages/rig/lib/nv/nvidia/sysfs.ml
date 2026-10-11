@@ -1,0 +1,52 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+let ( let* ) = Result.bind
+
+(* The integer in the file [path], as Linux writes [vendor] and [class]:
+   ["0x10de\n"]; [Ok None] if there is no such file. *)
+let read path =
+  if not (Sys.file_exists path) then Ok None
+  else
+    match In_channel.with_open_bin path In_channel.input_line with
+    | Some line -> Ok (int_of_string_opt (String.trim line))
+    | None -> Ok None
+    | exception Sys_error e -> Error e
+
+(* A bus address "dddd:bb:dd.f" as integers, for sorting: a domain may have more
+   than four digits. *)
+let key bus =
+  match String.split_on_char ':' bus with
+  | [ domain; b; df ] -> (
+      match String.split_on_char '.' df with
+      | [ d; f ] ->
+          List.map (fun x -> int_of_string_opt ("0x" ^ x)) [ domain; b; d; f ]
+      | _ -> [])
+  | _ -> []
+
+let gpus root =
+  let dir = Filename.concat root "sys/bus/pci/devices" in
+  let gpu bus =
+    let file f = read (Filename.concat (Filename.concat dir bus) f) in
+    let* vendor = file "vendor" in
+    let* class_ = file "class" in
+    match (vendor, class_) with
+    | Some vendor, Some class_ -> Ok (Rig_nv.is_gpu ~vendor ~class_)
+    | _ -> Ok false
+  in
+  let rec keep = function
+    | [] -> Ok []
+    | bus :: rest ->
+        let* is_gpu = gpu bus in
+        let* gpus = keep rest in
+        Ok (if is_gpu then bus :: gpus else gpus)
+  in
+  if not (Sys.file_exists dir) then Ok []
+  else
+    match Sys.readdir dir with
+    | exception Sys_error e -> Error e
+    | names ->
+        let* gpus = keep (Array.to_list names) in
+        Ok (List.sort (fun a b -> compare (key a, a) (key b, b)) gpus)

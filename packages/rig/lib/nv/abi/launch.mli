@@ -1,0 +1,53 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(** Kernels set up for launch on a GPU.
+
+    A launch of a cubin's kernel ({!Cubin.type-kernel}) depends on the GPU as
+    well: its compute engine's class sets the launch descriptor's version and
+    the layout of the driver's parameters, and the GPU's limits bound the shared
+    memory and threads a launch may take.
+
+    Constant bank [0] is written anew for each launch: the driver's
+    parameters ({!Qmd.val-parameters}), then the kernel's. A launch's
+    descriptor is built from a {!t} ({!Qmd.make}).
+
+    {b References.} The CUDA C++ Programming Guide, "Technical Specifications
+    per Compute Capability", for compute capabilities 8.0 to 12.0: the registers
+    and constant memory a kernel may use. *)
+
+type t = private Repr.launch
+(** The type for kernels set up for launch on a GPU. *)
+
+val make : Gpu.t -> Cubin.kernel -> (t, string) result
+(** [make g k] is [Ok l], [k] set up for launch on [g], or [Error msg] if [k]
+    takes more than a launch can, [msg] saying which:
+    - more shared memory than 100 KiB, the 1 KiB the driver reserves included;
+    - more than 255 registers a thread;
+    - a constant bank of index outside \[[0];[7]\], the banks a launch
+      descriptor names, or of more than 64 KiB.
+
+    Raises [Invalid_argument] if [g.compute_class] is none of the classes
+    {!Gpu.t} names, or if [g.sass_version] is outside \[[0];[0xff]\], the
+    versions a launch descriptor holds. *)
+
+val banks : t -> Cubin.bank list
+(** [banks l] is the constant banks a launch addresses: the kernel's
+    ({!Cubin.type-kernel}), with a bank [0] of 352 bytes at offset [0] first if
+    it has none. *)
+
+val local_bytes : t -> int
+(** [local_bytes l] is the local memory each thread of a launch needs: the
+    kernel's stack and the 576 bytes the driver reserves. *)
+
+val dynamic_shared : t -> int
+(** [dynamic_shared l] is the most dynamic shared memory a block of [l] may
+    take beside its own ({!Qmd.patch_shared}): 100 KiB less the block's own
+    shared memory, the kernel's and the driver's 1 KiB rounded up to 128
+    bytes. *)
+
+val max_threads : t -> int
+(** [max_threads l] is the most threads a block of [l] may have: [1024], or
+    fewer for the registers its threads use. *)

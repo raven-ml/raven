@@ -12,6 +12,14 @@ type library = {
 let libraries =
   [
     {
+      name = "rig";
+      display = "rig";
+      color = "color-blue";
+      description = "Devices such as GPUs, and the order of the work they run";
+      tagline = "Devices and the work they run, for OCaml";
+      symbol = "";
+    };
+    {
       name = "nx";
       display = "nx";
       color = "color-blue";

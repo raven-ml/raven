@@ -1,0 +1,12 @@
+; NVIDIA GPUs, driven through their resource manager whichever path opened
+; them.
+
+(library
+ (name rig_nv)
+ (public_name rig.nv)
+ (libraries rig_nv_abi rig_elf rig_edge unix)
+ (private_modules defs template copy_kernel)
+ (foreign_stubs
+  (language c)
+  (names rig_nv_ring rig_nv_stubs)))
+

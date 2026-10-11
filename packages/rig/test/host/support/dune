@@ -1,0 +1,9 @@
+; What the host suite and bench share: addresses of buffers, the fixtures,
+; and probes of the process's memory and of the host's pool.
+
+(library
+ (name rig_host_support)
+ (libraries rig_pool)
+ (foreign_stubs
+  (language c)
+  (names rig_host_support_stubs)))

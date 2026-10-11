@@ -1,0 +1,13 @@
+; What a driver is to rig: the C structures and codes by which a caller
+; hands work to a driver (rig_edge.h), the OCaml facts and signature a
+; driver matches (rig_edge.mli), and the host's clock they share.
+
+(library
+ (name rig_edge)
+ (public_name rig.edge)
+ (modules rig_edge)
+ (modules_without_implementation rig_edge)
+ (install_c_headers rig_edge)
+ (foreign_stubs
+  (language c)
+  (names rig_edge_stubs)))

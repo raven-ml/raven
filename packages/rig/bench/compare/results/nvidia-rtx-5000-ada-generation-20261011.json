@@ -1,0 +1,1176 @@
+{
+ "date": "2026-10-11",
+ "machine": {
+  "gpu": "NVIDIA RTX 5000 Ada Generation",
+  "driver": "615.71.09",
+  "system": "Linux 6.12.111+deb13-amd64 x86_64"
+ },
+ "scenarios": {
+  "ship": {
+   "utc": "2026-10-11T12:35:57+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    5.5634765625,
+    2.80126953125,
+    1.72705078125
+   ],
+   "rounds": 1,
+   "unit": "bytes",
+   "rows": [
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "593e7735a",
+     "samples": [
+      120464072
+     ],
+     "installed": 7988992,
+     "vendor": 112475080,
+     "vendor_libraries": [
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libcuda.so.615.71.09",
+       "bytes": 112475080,
+       "sha256": "85a8cc8cf00419ceb295ec62c481d05b4cdbdab10f25c5375d6d24bdbe00b4d9"
+      }
+     ],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "593e7735a",
+     "samples": [
+      7988992
+     ],
+     "installed": 7988992,
+     "vendor": 0,
+     "vendor_libraries": [],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      112497296
+     ],
+     "installed": 22216,
+     "vendor": 112475080,
+     "vendor_libraries": [
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libcuda.so.615.71.09",
+       "bytes": 112475080,
+       "sha256": "85a8cc8cf00419ceb295ec62c481d05b4cdbdab10f25c5375d6d24bdbe00b4d9"
+      }
+     ],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+cu130",
+     "samples": [
+      5723480161
+     ],
+     "installed": 5608046305,
+     "vendor": 115433856,
+     "vendor_libraries": [
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libcuda.so.615.71.09",
+       "bytes": 112475080,
+       "sha256": "85a8cc8cf00419ceb295ec62c481d05b4cdbdab10f25c5375d6d24bdbe00b4d9"
+      },
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.615.71.09",
+       "bytes": 2958776,
+       "sha256": "283793c0c30dc32f87c0e9fc9b5326fe764bad156e61afa3e997684c47b29a95"
+      }
+     ],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+      "/usr/lib/x86_64-linux-gnu/libutil.so.1",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    },
+    {
+     "stack": "jax",
+     "device": "gpu",
+     "version": "0.11.2",
+     "samples": [
+      6054651603
+     ],
+     "installed": 5939217747,
+     "vendor": 115433856,
+     "vendor_libraries": [
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libcuda.so.615.71.09",
+       "bytes": 112475080,
+       "sha256": "85a8cc8cf00419ceb295ec62c481d05b4cdbdab10f25c5375d6d24bdbe00b4d9"
+      },
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.615.71.09",
+       "bytes": 2958776,
+       "sha256": "283793c0c30dc32f87c0e9fc9b5326fe764bad156e61afa3e997684c47b29a95"
+      }
+     ],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+      "/usr/lib/x86_64-linux-gnu/libutil.so.1",
+      "/usr/lib/x86_64-linux-gnu/libz.so.1.3.1",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    },
+    {
+     "stack": "tinygrad",
+     "device": "CUDA",
+     "version": "0.14.0",
+     "samples": [
+      519922139
+     ],
+     "installed": 133352691,
+     "vendor": 386569448,
+     "vendor_libraries": [
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libcuda.so.615.71.09",
+       "bytes": 112475080,
+       "sha256": "85a8cc8cf00419ceb295ec62c481d05b4cdbdab10f25c5375d6d24bdbe00b4d9"
+      },
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.615.71.09",
+       "bytes": 36965944,
+       "sha256": "8e38b5cbac5075f965d04520a403c84f55ca4e07dfd970f169d71db193da0454"
+      },
+      {
+       "path": "/usr/local/cuda-13.4/targets/x86_64-linux/lib/libnvJitLink.so.13.4.92",
+       "bytes": 103602848,
+       "sha256": "3afdb9677477dd584d3712a9bf2978d085729f0ed6e6432027e925d1e312e3c9"
+      },
+      {
+       "path": "/usr/local/cuda-13.4/targets/x86_64-linux/lib/libnvrtc-builtins.so.13.4.92",
+       "bytes": 7108552,
+       "sha256": "86414f3c350953a8a09de5eca9b9e8fe919d6289426c5ba9dbab365a3fe827d6"
+      },
+      {
+       "path": "/usr/local/cuda-13.4/targets/x86_64-linux/lib/libnvrtc.so.13.4.92",
+       "bytes": 126417024,
+       "sha256": "9b4fad8ab9a2aff7a1f5b2140ca28d1143fd4dd4025164781620b22b58f1f13e"
+      }
+     ],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+      "/usr/lib/x86_64-linux-gnu/libutil.so.1",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    },
+    {
+     "stack": "tinygrad",
+     "device": "NV",
+     "version": "0.14.0",
+     "samples": [
+      482956195
+     ],
+     "installed": 133352691,
+     "vendor": 349603504,
+     "vendor_libraries": [
+      {
+       "path": "/usr/lib/x86_64-linux-gnu/libcuda.so.615.71.09",
+       "bytes": 112475080,
+       "sha256": "85a8cc8cf00419ceb295ec62c481d05b4cdbdab10f25c5375d6d24bdbe00b4d9"
+      },
+      {
+       "path": "/usr/local/cuda-13.4/targets/x86_64-linux/lib/libnvJitLink.so.13.4.92",
+       "bytes": 103602848,
+       "sha256": "3afdb9677477dd584d3712a9bf2978d085729f0ed6e6432027e925d1e312e3c9"
+      },
+      {
+       "path": "/usr/local/cuda-13.4/targets/x86_64-linux/lib/libnvrtc-builtins.so.13.4.92",
+       "bytes": 7108552,
+       "sha256": "86414f3c350953a8a09de5eca9b9e8fe919d6289426c5ba9dbab365a3fe827d6"
+      },
+      {
+       "path": "/usr/local/cuda-13.4/targets/x86_64-linux/lib/libnvrtc.so.13.4.92",
+       "bytes": 126417024,
+       "sha256": "9b4fad8ab9a2aff7a1f5b2140ca28d1143fd4dd4025164781620b22b58f1f13e"
+      }
+     ],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libatomic.so.1.2.0",
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libcap.so.2.75",
+      "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+      "/usr/lib/x86_64-linux-gnu/libudev.so.1.7.10",
+      "/usr/lib/x86_64-linux-gnu/libusb-1.0.so.0.5.0",
+      "/usr/lib/x86_64-linux-gnu/libutil.so.1",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    }
+   ]
+  },
+  "start": {
+   "utc": "2026-10-11T12:36:04+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    5.27783203125,
+    2.78759765625,
+    1.72900390625
+   ],
+   "rounds": 5,
+   "unit": "ns",
+   "rows": [
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "593e7735a",
+     "samples": [
+      136491261,
+      133795342,
+      136307313,
+      127677821,
+      127001453
+     ]
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "593e7735a",
+     "samples": [
+      69589090,
+      69799357,
+      69578845,
+      69618476,
+      68427804
+     ]
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      121901940,
+      126950626,
+      122727672,
+      122086865,
+      126977490
+     ]
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+cu130",
+     "samples": [
+      718954429,
+      726387828,
+      722570499,
+      720318436,
+      702078306
+     ]
+    },
+    {
+     "stack": "jax",
+     "device": "gpu",
+     "version": "0.11.2",
+     "samples": [
+      538278980,
+      544566531,
+      543887331,
+      538482404,
+      525421177
+     ]
+    },
+    {
+     "stack": "tinygrad",
+     "device": "CUDA",
+     "version": "0.14.0",
+     "samples": [
+      279756816,
+      279294308,
+      279083031,
+      291921763,
+      270370245
+     ]
+    },
+    {
+     "stack": "tinygrad",
+     "device": "NV",
+     "version": "0.14.0",
+     "samples": [
+      338541983,
+      336276784,
+      334443859,
+      326933685,
+      337641363
+     ]
+    }
+   ]
+  },
+  "fit": {
+   "utc": "2026-10-11T12:36:27+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    4.3994140625,
+    2.7734375,
+    1.75244140625
+   ],
+   "rounds": 5,
+   "unit": "bytes",
+   "rows": [
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "593e7735a",
+     "samples": [
+      327155712,
+      327155712,
+      327155712,
+      327155712,
+      327155712
+     ]
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "593e7735a",
+     "samples": [
+      128974848,
+      128974848,
+      128974848,
+      128974848,
+      128974848
+     ]
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      327155712,
+      327155712,
+      327155712,
+      327155712,
+      327155712
+     ]
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+cu130",
+     "samples": [
+      381681664,
+      381681664,
+      381681664,
+      381681664,
+      381681664
+     ]
+    },
+    {
+     "stack": "jax",
+     "device": "gpu",
+     "version": "0.11.2",
+     "samples": [
+      25738346496,
+      25738346496,
+      25738346496,
+      25738346496,
+      25738346496
+     ]
+    },
+    {
+     "stack": "tinygrad",
+     "device": "CUDA",
+     "version": "0.14.0",
+     "samples": [
+      327155712,
+      327155712,
+      327155712,
+      327155712,
+      327155712
+     ]
+    },
+    {
+     "stack": "tinygrad",
+     "device": "NV",
+     "version": "0.14.0",
+     "samples": [
+      150994944,
+      150994944,
+      150994944,
+      150994944,
+      150994944
+     ]
+    }
+   ]
+  },
+  "micro": {
+   "utc": "2026-10-11T12:39:59+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    2.77783203125,
+    2.6591796875,
+    1.9091796875
+   ],
+   "rounds": 5,
+   "unit": "ns",
+   "rows": [
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "593e7735a",
+     "samples": [
+      33749,
+      34020,
+      45717,
+      35556,
+      33805,
+      33516,
+      32854,
+      33279,
+      32869,
+      32826,
+      39656,
+      36119,
+      42357,
+      36076,
+      35590,
+      37949,
+      34219,
+      44604,
+      33257,
+      33501,
+      36797,
+      39008,
+      37252,
+      34374,
+      37033
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "593e7735a",
+     "samples": [
+      13629,
+      13119,
+      12271,
+      13279,
+      11898,
+      11740,
+      11766,
+      12160,
+      11945,
+      15206,
+      12214,
+      12081,
+      12300,
+      11916,
+      14436,
+      12810,
+      13340,
+      15193,
+      12399,
+      12956,
+      11777,
+      15347,
+      15265,
+      13642,
+      12974
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      26256,
+      23208,
+      23115,
+      32650,
+      24516,
+      18190,
+      18599,
+      27108,
+      26650,
+      22657,
+      29323,
+      24720,
+      23701,
+      22762,
+      27282,
+      21997,
+      21628,
+      22223,
+      21469,
+      22335,
+      29565,
+      23764,
+      22238,
+      21449,
+      23730
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+cu130",
+     "samples": [
+      105876,
+      107165,
+      117636,
+      98947,
+      98415,
+      108186,
+      105795,
+      107915,
+      105391,
+      131353,
+      131611,
+      105762,
+      104442,
+      102458,
+      108858,
+      115708,
+      105105,
+      92844,
+      120388,
+      167716,
+      102384,
+      100818,
+      215631,
+      218760,
+      221369
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "jax",
+     "device": "gpu",
+     "version": "0.11.2",
+     "samples": [
+      487972,
+      490750,
+      545767,
+      496287,
+      444275,
+      501653,
+      628990,
+      428876,
+      455961,
+      451077,
+      519034,
+      556288,
+      551035,
+      456165,
+      468766,
+      484624,
+      599052,
+      528964,
+      399667,
+      549154,
+      506706,
+      601484,
+      485976,
+      529396,
+      430144
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "tinygrad",
+     "device": "CUDA",
+     "version": "0.14.0",
+     "samples": [
+      1322886,
+      1311929,
+      1343624,
+      1375267,
+      1365533,
+      1513602,
+      1500873,
+      1432801,
+      1415314,
+      1535611,
+      1358314,
+      1313930,
+      1315021,
+      1422120,
+      1340943,
+      1523393,
+      1359981,
+      1407057,
+      1443830,
+      1333577,
+      1395093,
+      1465228,
+      1521967,
+      1517527,
+      1521726
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "tinygrad",
+     "device": "NV",
+     "version": "0.14.0",
+     "samples": [
+      1475781,
+      1437304,
+      1446772,
+      1457467,
+      1416398,
+      1528945,
+      1619801,
+      1626828,
+      1593433,
+      1648960,
+      1435842,
+      1489871,
+      1414600,
+      1553101,
+      1422988,
+      1448534,
+      1545408,
+      1572984,
+      1537545,
+      1512267,
+      1692085,
+      1678772,
+      1657496,
+      1681376,
+      1691938
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "593e7735a",
+     "samples": [
+      193255,
+      203252,
+      202184,
+      169574,
+      182158,
+      238778,
+      211255,
+      218747,
+      220787,
+      218848,
+      188073,
+      190160,
+      179739,
+      176931,
+      186081,
+      201290,
+      205948,
+      193130,
+      187451,
+      193468,
+      215223,
+      205113,
+      211506,
+      202539,
+      219430
+     ],
+     "case": "add64"
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "593e7735a",
+     "samples": [
+      136493,
+      132655,
+      139176,
+      134079,
+      136148,
+      141364,
+      138604,
+      136146,
+      136808,
+      146641,
+      134890,
+      132751,
+      133866,
+      132952,
+      135201,
+      138224,
+      134114,
+      143465,
+      134126,
+      138657,
+      143233,
+      137586,
+      145954,
+      136775,
+      140843
+     ],
+     "case": "add64"
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      169371,
+      166930,
+      166511,
+      167150,
+      171615,
+      168888,
+      183363,
+      174832,
+      167333,
+      161547,
+      145840,
+      150498,
+      148596,
+      154277,
+      168197,
+      174719,
+      169634,
+      167236,
+      156726,
+      153328,
+      168760,
+      169913,
+      171025,
+      169003,
+      183590
+     ],
+     "case": "add64"
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+cu130",
+     "samples": [
+      460929,
+      459559,
+      471501,
+      459474,
+      462788,
+      574996,
+      572932,
+      549955,
+      564926,
+      553285,
+      457432,
+      459214,
+      450329,
+      491291,
+      506014,
+      568274,
+      579016,
+      555014,
+      554639,
+      585007,
+      485195,
+      468360,
+      464205,
+      491277,
+      460474
+     ],
+     "case": "add64"
+    },
+    {
+     "stack": "jax",
+     "device": "gpu",
+     "version": "0.11.2",
+     "samples": [
+      1694960,
+      1695020,
+      1838846,
+      1703766,
+      1696481,
+      1874611,
+      1940968,
+      1871608,
+      1860657,
+      1852059,
+      1698088,
+      1817426,
+      1676621,
+      1727745,
+      1773034,
+      1880477,
+      1900567,
+      1915747,
+      2091843,
+      2001299,
+      1928787,
+      1767822,
+      1874807,
+      1850256,
+      1837123
+     ],
+     "case": "add64"
+    },
+    {
+     "stack": "tinygrad",
+     "device": "CUDA",
+     "version": "0.14.0",
+     "samples": [
+      29083459,
+      29169131,
+      29146555,
+      29031647,
+      29101946,
+      28577449,
+      28888102,
+      28737964,
+      28438606,
+      28726898,
+      28530661,
+      28543371,
+      28474142,
+      28643384,
+      28543351,
+      28603068,
+      28349910,
+      28297769,
+      28449079,
+      28593889,
+      28635153,
+      28462136,
+      28539526,
+      28315264,
+      28670747
+     ],
+     "case": "add64"
+    },
+    {
+     "stack": "tinygrad",
+     "device": "NV",
+     "version": "0.14.0",
+     "samples": [
+      31960932,
+      32066147,
+      31966749,
+      32053890,
+      32084392,
+      32698255,
+      32796061,
+      32685270,
+      32594086,
+      32979320,
+      32908834,
+      33040804,
+      32810267,
+      32795173,
+      32885628,
+      33114022,
+      33201406,
+      33244027,
+      33248621,
+      33458880,
+      32356316,
+      32301238,
+      32110775,
+      32212895,
+      32475453
+     ],
+     "case": "add64"
+    }
+   ]
+  },
+  "load": {
+   "utc": "2026-10-11T12:40:48+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    2.71044921875,
+    2.6650390625,
+    1.95166015625
+   ],
+   "rounds": 5,
+   "unit": "ns",
+   "rows": [
+    {
+     "stack": "read",
+     "device": "host",
+     "version": null,
+     "samples": [
+      89390445,
+      82728295,
+      89726715,
+      86965706,
+      88297049
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "593e7735a",
+     "samples": [
+      103210393,
+      102796943,
+      111140112,
+      109439991,
+      113865994
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "593e7735a",
+     "samples": [
+      105164982,
+      108500781,
+      113550359,
+      112141909,
+      113091969
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      82705181,
+      81766790,
+      90539974,
+      89480460,
+      82713291
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+cu130",
+     "samples": [
+      88649063,
+      95144928,
+      95227079,
+      94246869,
+      95008435
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "jax",
+     "device": "gpu",
+     "version": "0.11.2",
+     "samples": [
+      222048070,
+      231882752,
+      229704438,
+      241160038,
+      231605239
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "tinygrad",
+     "device": "CUDA",
+     "version": "0.14.0",
+     "samples": [
+      161514908,
+      158302605,
+      162688253,
+      163800431,
+      161939568
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "tinygrad",
+     "device": "NV",
+     "version": "0.14.0",
+     "samples": [
+      61777964,
+      57062589,
+      59455574,
+      62213916,
+      59094023
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "read",
+     "device": "host",
+     "version": null,
+     "samples": [
+      28319198,
+      28734680,
+      29551509,
+      29487098,
+      28152181
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "cuda",
+     "version": "593e7735a",
+     "samples": [
+      48884906,
+      49300263,
+      51016667,
+      54509572,
+      49298251
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "nv",
+     "version": "593e7735a",
+     "samples": [
+      45760776,
+      46047859,
+      45163740,
+      49414841,
+      47083109
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "native",
+     "device": "cuda",
+     "version": null,
+     "samples": [
+      26588560,
+      26968375,
+      29756254,
+      27211844,
+      26887740
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+cu130",
+     "samples": [
+      31424940,
+      32784976,
+      33638781,
+      33640790,
+      32905365
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "jax",
+     "device": "gpu",
+     "version": "0.11.2",
+     "samples": [
+      174848077,
+      167227579,
+      176864397,
+      166112382,
+      169425634
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "tinygrad",
+     "device": "CUDA",
+     "version": "0.14.0",
+     "samples": [
+      95235312,
+      97280121,
+      99906908,
+      111775608,
+      113514654
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "tinygrad",
+     "device": "NV",
+     "version": "0.14.0",
+     "samples": [
+      62064141,
+      63678027,
+      55988374,
+      56017557,
+      62039615
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "floor",
+     "device": "pcie",
+     "version": null,
+     "samples": [
+      10688685,
+      10665603,
+      10687416,
+      10681732,
+      10690441
+     ],
+     "case": null,
+     "bytes": 268435456
+    }
+   ]
+  }
+ }
+}

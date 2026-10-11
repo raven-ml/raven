@@ -1,0 +1,60 @@
+; What every suite here shares: jobs over real agent processes, and the
+; watchdog that kills a suite hung inside C.
+
+(library
+ (name rig_remote_job)
+ (wrapped false)
+ (modules remote_job watchdog)
+ (libraries rig rig_remote rig_remote_proxy threads.posix unix windtrap))
+
+(tests
+ (names
+  test_rig_remote
+  test_rig_remote_lost
+  test_rig_remote_own
+  test_rig_remote_killed
+  test_rig_remote_abort
+  test_rig_remote_join
+  test_rig_remote_ids
+  test_rig_remote_program
+  test_rig_remote_dial)
+ (modules :standard \ remote_job watchdog test_rig_remote_rail)
+ (deps
+  support/agent.exe
+  support/controller.exe
+  support/launched.exe
+  (glob_files ../fixtures/*.o))
+ (libraries
+  rig
+  rig_remote
+  rig_remote_proxy
+  rig_remote_abi
+  rig_remote_job
+  rig_program
+  rig_support
+  rig_host_support
+  threads.posix
+  unix
+  windtrap))
+
+; test_rig_remote_rail holds a queue of this machine's AMD or NV GPU.
+
+(test
+ (name test_rig_remote_rail)
+ (modules test_rig_remote_rail)
+ (locks %{workspace_root}/gpu)
+ (deps support/agent.exe)
+ (libraries
+  rig
+  rig_remote
+  rig_remote_abi
+  rig_remote_job
+  rig_gpu_support
+  rig_support
+  rig_amd_abi
+  rig_amd_support
+  rig_nv_abi
+  rig_nv_support
+  threads.posix
+  unix
+  windtrap))

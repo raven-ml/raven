@@ -1,0 +1,10 @@
+; What pci's suites and benches share: fakes of the machine and the format,
+; and the C that reads and writes through a window as a driver would.
+
+(library
+ (name rig_pci_support)
+ (modules rig_pci_support)
+ (libraries rig_pci unix windtrap)
+ (foreign_stubs
+  (language c)
+  (names rig_pci_support_stubs)))

@@ -1,0 +1,4 @@
+(library
+ (name rig_metal_abi)
+ (public_name rig.metal.abi)
+ (libraries rig_edge))

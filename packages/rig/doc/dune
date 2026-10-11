@@ -1,0 +1,17 @@
+; dune links mdx's toplevel without the profile's link_flags, so rig's
+; sanitized stubs cannot link into it.
+
+(mdx
+ (files
+  index.md
+  01-ordering.md
+  02-claims.md
+  03-memory.md
+  04-loss.md
+  05-drivers.md
+  06-gpus-without-a-driver.md
+  07-machines.md)
+ (package rig)
+ (enabled_if
+  (<> %{profile} sanitize))
+ (libraries rig))

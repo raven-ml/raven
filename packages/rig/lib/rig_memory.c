@@ -1,0 +1,445 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+/* Memory devices, whose memory is the host's and whose work runs in the
+   submitting thread, and the readers of buffers rig.h declares. Nothing
+   here blocks but rig_buffer_wait, which runs Rig.Buffer.wait. */
+
+#define _GNU_SOURCE
+
+#include <stdlib.h>
+#include <string.h>
+
+#define CAML_NAME_SPACE
+#include <caml/alloc.h>
+#include <caml/bigarray.h>
+#include <caml/callback.h>
+#include <caml/fail.h>
+#include <caml/memory.h>
+#include <caml/mlvalues.h>
+
+#include "rig.h"
+#include "rig_stubs.h"
+
+/* Memory devices
+
+   A memory device's state is its driver and its word, alone in a page,
+   which other devices may map. */
+
+struct memory_device {
+  const struct rig_driver *driver;
+  _Atomic uint64_t word;
+};
+
+static void *aligned(size_t align, size_t n) {
+#ifdef _WIN32
+  return _aligned_malloc(n, align);
+#else
+  void *p = NULL;
+  return posix_memalign(&p, align, n) == 0 ? p : NULL;
+#endif
+}
+
+static void aligned_free(void *p) {
+#ifdef _WIN32
+  _aligned_free(p);
+#else
+  free(p);
+#endif
+}
+
+
+/* [v_n] bytes of host memory, on a page from 64 KiB on, or 0. */
+value caml_rig_memory_alloc(value v_n) {
+  size_t n = (size_t)Long_val(v_n);
+  void *p = aligned(n >= (1 << 16) ? rig_page_bytes() : 64, n);
+  return Val_long((intnat)p);
+}
+
+value caml_rig_memory_free(value v_p) {
+  aligned_free((void *)Long_val(v_p));
+  return Val_unit;
+}
+
+static int memory_room(void *self, const struct rig_part *parts, int n,
+                       void *scratch, const uint8_t *args) {
+  (void)scratch;
+  (void)args;
+  (void)self;
+  for (int i = 0; i < n; i++) {
+    const struct rig_part *p = &parts[i];
+    if (p->kind != RIG_FILL && p->kind != RIG_COPY)
+      return RIG_NEVER;
+  }
+  return RIG_FITS;
+}
+
+/* Runs the parts in order, the fills with no queue context, then makes [v]
+   observable. Its handles are host addresses. */
+static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
+                         int nwaits, const struct rig_part *parts, int nparts,
+                         void *scratch, const uint8_t *args,
+                         const uint64_t *slots, int nslots, uint64_t *times,
+                         const char **failure) {
+  (void)scratch;
+  (void)times;
+  (void)nslots;
+  struct memory_device *m = self;
+  (void)waits;
+  (void)nwaits;
+  for (int i = 0; i < nparts; i++) {
+    const struct rig_part *p = &parts[i];
+    if (p->kind == RIG_FILL) {
+      if (rig_fill(NULL, p, args, slots, v) != 0) {
+        *failure = "a fill failed";
+        return RIG_FAILED;
+      }
+    } else if (p->copy.bytes != 0)
+      memmove((char *)(uintptr_t)p->copy.dst + p->copy.dst_offset,
+              (const char *)(uintptr_t)p->copy.src + p->copy.src_offset,
+              (size_t)p->copy.bytes);
+  }
+  atomic_store_explicit(&m->word, v, memory_order_release);
+  return RIG_COMMITTED;
+}
+
+/* The work ran at its hand-over: nothing is left to commit. */
+static int memory_commit(void *self, uint64_t v, const char **failure) {
+  (void)self;
+  (void)v;
+  (void)failure;
+  return RIG_OK;
+}
+
+static const struct rig_driver memory_driver = {memory_room, memory_submit,
+                                                memory_commit};
+
+/* A memory device's state, which the free of its word gives back. */
+value caml_rig_memory_new(value unit) {
+  (void)unit;
+  size_t page = rig_page_bytes();
+  struct memory_device *m = aligned(page, page);
+  if (m == NULL) caml_raise_out_of_memory();
+  memset(m, 0, page);
+  m->driver = &memory_driver;
+  return caml_copy_nativeint((intnat)m);
+}
+
+/* The host address of the word of the memory device [v_m]. */
+value caml_rig_memory_word(value v_m) {
+  struct memory_device *m = (struct memory_device *)Nativeint_val(v_m);
+  return Val_long((intnat)&m->word);
+}
+
+value caml_rig_load64(value v_addr) {
+  return Val_long((intnat)atomic_load_explicit(
+      (_Atomic uint64_t *)Long_val(v_addr), memory_order_acquire));
+}
+
+/* Copies the [v_n] bytes of the string [v_s] from [v_i] into the host
+   buffer [v_b] from [v_j]. With the runtime held: the string is in the
+   OCaml heap, and the buffer, which holds its memory, is reachable. */
+value caml_rig_blit_string(value v_s, value v_i, value v_b, value v_j,
+                           value v_n) {
+  size_t n = (size_t)Long_val(v_n);
+  if (n > 0)
+    memcpy((char *)rig_buffer_host(v_b) + Long_val(v_j),
+           String_val(v_s) + Long_val(v_i), n);
+  return Val_unit;
+}
+
+/* Copies [v_n] bytes of the host buffer [v_src] from [v_i] into the bytes
+   [v_b] from [v_j]. With the runtime held, as above. */
+value caml_rig_blit_bytes(value v_src, value v_i, value v_b, value v_j,
+                          value v_n) {
+  size_t n = (size_t)Long_val(v_n);
+  if (n > 0)
+    memcpy(Bytes_val(v_b) + Long_val(v_j),
+           (char *)rig_buffer_host(v_src) + Long_val(v_i), n);
+  return Val_unit;
+}
+
+/* Sets the [v_n] bytes of the host buffer [v_b] from [v_j] to the byte
+   [v_c]. With the runtime held, as above. */
+value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
+  size_t n = (size_t)Long_val(v_n);
+  if (n > 0)
+    memset((char *)rig_buffer_host(v_b) + Long_val(v_j), Int_val(v_c), n);
+  return Val_unit;
+}
+
+/* Reading buffers
+
+   A buffer is the record { mem; offset; length; generation }, its
+   memory { dev; bytes; host; address; handle; claim; entry; root; ... },
+   its claim { count; generation; why } and the entry of its root
+   { owner; backing; bytes; access; stamps; ... },
+   as rig's Def module lays them out. */
+
+enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE };
+enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
+enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
+       MEMORY_CLAIM, MEMORY_ENTRY, MEMORY_ROOT };
+enum { CLAIM_COUNT, CLAIM_GEN, CLAIM_WHY };
+
+/* A device's machine when it is this process's: [Here], the machine type's
+   first constant constructor. */
+#define MACHINE_HERE Val_int(0)
+enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS,
+       ENTRY_MAPS, ENTRY_UNMAPS, ENTRY_PAGES };
+
+/* The claim word's bit for memory that admits only reads, and its step
+   per claim, as rig's Memory module lays the word out. */
+#define CLAIM_READ_ONLY 2
+#define CLAIM_ONE 4
+
+/* A field another domain writes. Read after the claim's compare-and-set,
+   which acquires, so it shows what the release of any earlier claim
+   published. */
+static value load_field(value v, int i) {
+  return atomic_load_explicit((_Atomic value *)&Field(v, i),
+                              memory_order_relaxed);
+}
+
+void *rig_buffer_host(value b) {
+  value mem = Field(b, BUFFER_MEM);
+  intnat host = Long_val(Field(mem, MEMORY_HOST));
+  if (host < 0) return NULL;
+  return (char *)host + Long_val(Field(b, BUFFER_OFFSET));
+}
+
+/* An io memory's published pages add a local host alias to its stable span.
+   Looking for that alias never asks its device to map any pages. */
+static intnat cached_host(value b) {
+  value root = Field(Field(b, BUFFER_MEM), MEMORY_ROOT);
+  value entry = load_field(root, MEMORY_ENTRY);
+  /* [pages] publishes its bigarray with caml_modify's release store. There
+     is no claim or device lock here to acquire that publication for us. */
+  value pages = atomic_load_explicit((_Atomic value *)&Field(entry, ENTRY_PAGES),
+                                     memory_order_acquire);
+  if (Is_block(pages))
+    return (intnat)Caml_ba_data_val(Field(pages, 0)) +
+           Long_val(Field(b, BUFFER_OFFSET));
+  return 0;
+}
+
+size_t rig_buffer_bytes(value b) {
+  return (size_t)Long_val(Field(b, BUFFER_LENGTH));
+}
+
+/* Memory of this process's host lies at its host address. Other memory is
+   named by its root's stamps, which no other memory shares: a device's
+   addresses or handles would not do, as memories of a handle-named device
+   lie at handles a few bytes apart. An io memory retains these coordinates
+   when its pages become host-addressable through cached_host. */
+void rig_buffer_span(value b, intnat *space, intnat *first) {
+  value root = Field(Field(b, BUFFER_MEM), MEMORY_ROOT);
+  intnat host = Long_val(Field(root, MEMORY_HOST));
+  intnat offset = Long_val(Field(b, BUFFER_OFFSET));
+  value machine = Field(Field(root, MEMORY_DEV), DEVICE_MACHINE);
+  if (host >= 0 && machine == MACHINE_HERE) {
+    *space = 0;
+    *first = host + offset;
+    return;
+  }
+  *space = Long_val(load_field(load_field(root, MEMORY_ENTRY), ENTRY_STAMPS));
+  *first = offset;
+}
+
+value caml_rig_buffer_overlaps(value b, value other) {
+  size_t n = rig_buffer_bytes(b), m = rig_buffer_bytes(other);
+  if (n == 0 || m == 0) return Val_false;
+  intnat space, first, other_space, other_first;
+  rig_buffer_span(b, &space, &first);
+  rig_buffer_span(other, &other_space, &other_first);
+  if (space == other_space)
+    return Val_bool(first < other_first + (intnat)m &&
+                    other_first < first + (intnat)n);
+  if (space != 0) {
+    first = cached_host(b);
+    if (first == 0) return Val_false;
+  }
+  if (other_space != 0) {
+    other_first = cached_host(other);
+    if (other_first == 0) return Val_false;
+  }
+  return Val_bool(first < other_first + (intnat)m &&
+                  other_first < first + (intnat)n);
+}
+
+intnat caml_rig_cached_host(value b) { return cached_host(b); }
+
+value caml_rig_cached_host_byte(value b) {
+  return Val_long(caml_rig_cached_host(b));
+}
+
+/* rig_buffer_span for claim.ml, whose overlap check sorts by it. */
+intnat caml_rig_span_space(value b) {
+  intnat space, first;
+  rig_buffer_span(b, &space, &first);
+  return space;
+}
+
+intnat caml_rig_span_first(value b) {
+  intnat space, first;
+  rig_buffer_span(b, &space, &first);
+  return first;
+}
+
+value caml_rig_span_space_byte(value b) {
+  return Val_long(caml_rig_span_space(b));
+}
+
+value caml_rig_span_first_byte(value b) {
+  return Val_long(caml_rig_span_first(b));
+}
+
+const char *rig_buffer_why(value b) {
+  value claim = Field(Field(b, BUFFER_MEM), MEMORY_CLAIM);
+  value g = atomic_load_explicit((_Atomic value *)&Field(claim, CLAIM_GEN),
+                                 memory_order_acquire);
+  if (Long_val(g) == Long_val(Field(b, BUFFER_GEN))) return NULL;
+  return String_val(Field(claim, CLAIM_WHY));
+}
+
+/* Claims */
+
+/* Whether the device of the memory record [mem] is lost: a borrow's
+   device, or the device whose memory a root is. */
+static int dev_lost(value mem) {
+  int i = Int_val(Field(Field(mem, MEMORY_DEV), DEVICE_INDEX));
+  return atomic_load_explicit(&rig_lines[i].state, memory_order_acquire) !=
+         RIG_LIVE;
+}
+
+/* What [a], the answer for the points before [p], becomes with [p]: a
+   point a lost device did not reach answers RIG_LOST whatever else does,
+   so a wait gets past none; one not done answers RIG_WAIT. */
+static enum rig_claim follow(enum rig_claim a, uint64_t p) {
+  if (a == RIG_LOST || rig_point_done(p)) return a;
+  return rig_point_lost(p) ? RIG_LOST : RIG_WAIT;
+}
+
+static enum rig_claim follow_uses(enum rig_claim a, struct rig_stamps *s) {
+  for (; s != NULL && a != RIG_LOST;
+       s = atomic_load_explicit(&s->next, memory_order_acquire))
+    for (int i = 0; i < RIG_USES; i++) {
+      uint64_t p = atomic_load_explicit(&s->use[i], memory_order_acquire);
+      if (RIG_VALUE(p) != 0) a = follow(a, p);
+    }
+  return a;
+}
+
+/* The answer for the work of the stamps [s] an access must follow: that
+   of the last write, or of every use if [every]. A use word that a
+   submission reserved holds no value until its first raise. Out of line,
+   so that a claim of memory with no stamps saves no registers for it. */
+static __attribute__((noinline)) enum rig_claim follow_stamps(struct rig_stamps *s, int every) {
+  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
+  enum rig_claim a = w != 0 ? follow(RIG_CLAIMED, w) : RIG_CLAIMED;
+  return every ? follow_uses(a, s) : a;
+}
+
+/* The first point of the stamps [v_st] a lost device did not reach: their
+   last write's, then, if [v_every], their uses'; 0 for none. A wait that
+   would block reads it first, so it waits out no work ahead of a loss. */
+value caml_rig_stamps_lost(value v_st, value v_every) {
+  struct rig_stamps *s = (struct rig_stamps *)Long_val(v_st);
+  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
+  if (w != 0 && rig_point_lost(w)) return Val_long((intnat)w);
+  if (!Bool_val(v_every)) return Val_long(0);
+  for (; s != NULL; s = atomic_load_explicit(&s->next, memory_order_acquire))
+    for (int i = 0; i < RIG_USES; i++) {
+      uint64_t p = atomic_load_explicit(&s->use[i], memory_order_acquire);
+      if (RIG_VALUE(p) != 0 && rig_point_lost(p)) return Val_long((intnat)p);
+    }
+  return Val_long(0);
+}
+
+/* Claims first, then checks [b] under the claim: the compare-and-set
+   follows the release of any donation that consumed the memory, so the
+   checks see its consumption and its stamps. Work that is not done keeps
+   the claim: the caller waits under it, so no donation consumes the memory
+   between the wait and the access, and a loss's wait raises it. */
+enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
+  value mem = Field(b, BUFFER_MEM);
+  value claim = Field(mem, MEMORY_CLAIM);
+  _Atomic value *word = (_Atomic value *)&Field(claim, CLAIM_COUNT);
+  value w = atomic_load_explicit(word, memory_order_relaxed);
+  do {
+    if (Long_val(w) < 0) return RIG_EXCLUSIVE;
+    if (access == RIG_READ_WRITE && (Long_val(w) & CLAIM_READ_ONLY))
+      return RIG_READ_ONLY;
+  } while (!atomic_compare_exchange_weak(word, &w,
+                                         Val_long(Long_val(w) + CLAIM_ONE)));
+  if (Long_val(load_field(claim, CLAIM_GEN)) != Long_val(Field(b, BUFFER_GEN))) {
+    rig_buffer_release(b);
+    return RIG_DEAD;
+  }
+  value root = Field(mem, MEMORY_ROOT);
+  if (dev_lost(mem) || (root != mem && dev_lost(root))) return RIG_LOST;
+  value entry = load_field(root, MEMORY_ENTRY);
+  struct rig_stamps *s =
+      (struct rig_stamps *)Long_val(load_field(entry, ENTRY_STAMPS));
+  return s == NULL ? RIG_CLAIMED : follow_stamps(s, access == RIG_READ_WRITE);
+}
+
+/* Rig.Buffer.wait, which buffer.ml registers, found once. */
+static _Atomic(const value *) buffer_wait;
+
+caml_result rig_buffer_wait(value b, enum rig_access access) {
+  const value *f = atomic_load_explicit(&buffer_wait, memory_order_acquire);
+  if (f == NULL) {
+    f = caml_named_value("rig.buffer.wait");
+    if (f == NULL)
+      caml_fatal_error("rig_buffer_wait: Rig.Buffer.wait is not registered");
+    atomic_store_explicit(&buffer_wait, f, memory_order_release);
+  }
+  return caml_callback2_res(*f, b, Val_int(access));
+}
+
+/* A read claim on [v_b]'s memory, with no check of [v_b], for a submit,
+   which checks its buffers under the claims: false, claiming nothing, if
+   the memory is held exclusive. */
+value caml_rig_claim_hold(value v_b) {
+  value claim = Field(Field(v_b, BUFFER_MEM), MEMORY_CLAIM);
+  _Atomic value *word = (_Atomic value *)&Field(claim, CLAIM_COUNT);
+  value w = atomic_load_explicit(word, memory_order_relaxed);
+  do {
+    if (Long_val(w) < 0) return Val_false;
+  } while (!atomic_compare_exchange_weak_explicit(
+      word, &w, Val_long(Long_val(w) + CLAIM_ONE), memory_order_acquire,
+      memory_order_relaxed));
+  return Val_true;
+}
+
+/* Ends a read claim on [b]'s memory: one subtraction of the tagged step.
+   If the word was below CLAIM_ONE, it held no read claim, and the word the
+   subtraction left matches none of the claims' states, so the process
+   aborts. */
+static void claim_end(value b, const char *who) {
+  value claim = Field(Field(b, BUFFER_MEM), MEMORY_CLAIM);
+  value w = atomic_fetch_sub_explicit(
+      (_Atomic value *)&Field(claim, CLAIM_COUNT),
+      Val_long(CLAIM_ONE) - Val_long(0), memory_order_release);
+  if (Long_val(w) < CLAIM_ONE)
+    caml_fatal_error("%s: no read claim to end", who);
+}
+
+/* Ends a claim of [caml_rig_claim_hold]. */
+value caml_rig_claim_drop(value v_b) {
+  claim_end(v_b, "caml_rig_claim_drop");
+  return Val_unit;
+}
+
+/* End the acquired prefix without an OCaml loop's interruptible poll. */
+value caml_rig_claim_drop_prefix(value v_buffers, value v_n) {
+  intnat n = Long_val(v_n);
+  for (intnat i = 0; i < n; i++)
+    caml_rig_claim_drop(Field(v_buffers, i));
+  return Val_unit;
+}
+
+void rig_buffer_release(value b) { claim_end(b, "rig_buffer_release"); }

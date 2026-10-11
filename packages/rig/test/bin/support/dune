@@ -1,0 +1,26 @@
+(executable
+ (name ctl)
+ (modules ctl)
+ (libraries rig rig.gpus rig.remote unix threads.posix))
+
+(executable
+ (name sig)
+ (modules sig)
+ (libraries unix))
+
+(executable
+ (name firmware_test)
+ (modules firmware_test)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries rig_bin))
+
+(executable
+ (name gap)
+ (modules gap)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (foreign_stubs
+  (language c)
+  (names gap))
+ (libraries rig_bin unix))

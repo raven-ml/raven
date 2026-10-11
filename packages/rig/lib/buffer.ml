@@ -1,0 +1,287 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Def
+
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
+type t = buffer
+type kind = Rig_edge.memory = Device | Pinned | Mapped
+type access = Def.access = Read | Read_write
+
+let generation (c : claim) = Atomic.Loc.get [%atomic.loc c.generation]
+let is_live b = b.generation = generation b.mem.claim
+let dead b = if is_live b then None else Some b.mem.claim.why
+let access b = b.mem.root.entry.access
+
+let refuse_dead fn b =
+  invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.claim.why
+
+(* Inlined where it is called per buffer of a submit. *)
+let[@inline] check_live fn b = if not (is_live b) then refuse_dead fn b
+
+let of_memory mem length =
+  { mem; offset = 0; length; generation = generation mem.claim }
+
+let create ?(memory = Device) d n =
+  if n < 0 then invalid_argf "Rig.Buffer.create: %d bytes is negative" n;
+  if Dev.is_lost d then Dev.raise_lost d;
+  let mem =
+    if Dev.is_host d then Memory.host_memory n
+    else if n = 0 then begin
+      (* No memory: work of no bytes reads none, so 0 names it. *)
+      Memory.drain d;
+      Memory.make ~address:0 d 0 Memory.no_entry
+    end
+    else if Dev.is_io d then Memory.alloc d Device n
+    else Memory.alloc d memory n
+  in
+  of_memory mem n
+
+let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
+  if n < 0 then invalid_argf "Rig.Buffer.of_io: %d bytes is negative" n;
+  match d.kind with
+  | Io { m; h } -> (
+      let module I = (val m) in
+      match Type.Id.provably_equal I.region_key k with
+      | Some Type.Equal ->
+          of_memory (Memory.of_io d (Io_region { m; h; r }) ~access n) n
+      | None ->
+          invalid_argf "Rig.Buffer.of_io: %s is another io library's device"
+            d.name)
+  | _ -> invalid_argf "Rig.Buffer.of_io: %s is no io device" d.name
+
+let io (type r) b (k : r Type.Id.t) : r option =
+  check_live "Buffer.io" b;
+  match b.mem.root.entry.backing with
+  | Io_memory { region = Io_region { m; r; _ }; _ } -> (
+      let module I = (val m) in
+      match Type.Id.provably_equal I.region_key k with
+      | Some Type.Equal -> Some r
+      | None -> None)
+  | Driver_memory _ | Kept _ -> None
+
+let of_bigarray ba =
+  let n = Bigarray.Array1.size_in_bytes ba in
+  let addr = Memory.ba_address ba in
+  of_memory
+    (Memory.make ~keep:(Bigarray ba) ~host:addr ~address:addr Dev.host n
+       Memory.no_entry)
+    n
+
+let device b = b.mem.dev
+let length b = b.length
+let offset b = b.offset
+
+let is_borrowed b =
+  b.mem.root != b.mem
+  || match b.mem.root.keep with Bigarray _ -> true | _ -> false
+
+let view b ~first ~length =
+  check_live "Buffer.view" b;
+  if first < 0 || length < 0 || first > b.length || length > b.length - first
+  then
+    invalid_argf
+      "Rig.Buffer.view: %d bytes from byte %d lie outside the buffer's %d"
+      length first b.length;
+  { b with offset = b.offset + first; length }
+
+let spans b = b.offset = 0 && b.length = b.mem.root.bytes
+
+external overlaps : t -> t -> bool = "caml_rig_buffer_overlaps" [@@noalloc]
+
+external space : t -> (int[@untagged])
+  = "caml_rig_span_space_byte" "caml_rig_span_space"
+[@@noalloc]
+
+external first : t -> (int[@untagged])
+  = "caml_rig_span_first_byte" "caml_rig_span_first"
+[@@noalloc]
+
+external cached_host : t -> (int[@untagged])
+  = "caml_rig_cached_host_byte" "caml_rig_cached_host"
+[@@noalloc]
+
+let places b =
+  if b.length = 0 then []
+  else
+    let s = space b in
+    let place = (s, first b) in
+    let a = if s = 0 then 0 else cached_host b in
+    if a = 0 then [ place ] else [ place; (0, a) ]
+
+let borrow d b =
+  check_live "Buffer.borrow" b;
+  if Dev.is_lost d then Dev.raise_lost d;
+  Memory.check b.mem;
+  if b.mem.dev == d then Some b
+  else
+    match Memory.borrow d b.mem with
+    | Some mem ->
+        Memory.prefetch d b.mem ~at:b.offset ~len:b.length;
+        Some { b with mem }
+    | None -> None
+
+let wait_points b access =
+  if access = Read then Memory.wait_write b.mem else Memory.wait_points b.mem
+
+let wait b access =
+  check_live "Buffer.wait" b;
+  Memory.check_owner b.mem;
+  wait_points b access
+
+(* rig_buffer_wait in rig.h calls it with RIG_READ or RIG_READ_WRITE, the
+   constructors of [access] in order. *)
+let () = Callback.register "rig.buffer.wait" wait
+
+(* Host access *)
+
+(* Whether this process's host addresses [b]'s memory: [b] is on the host, or
+   its memory is of a device of this machine and has a host address. An io
+   device's memory has none: its borrow on the host asks for its pages. *)
+let host_addressed b =
+  Dev.is_host b.mem.dev
+  ||
+  let m = b.mem.root in
+  m.host >= 0 && Dev.same_machine m.dev Dev.host
+
+let refuse_unaddressed fn b =
+  invalid_argf "Rig.%s: the host does not address the buffer's memory, on %s" fn
+    b.mem.root.dev.name
+
+(* Bigarrays *)
+
+external bigarray_view :
+  ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t ->
+  int ->
+  int ->
+  int ->
+  ('c, 'd, Bigarray.c_layout) Bigarray.Array1.t = "caml_rig_bigarray_view"
+
+external external_bytes : int -> int -> Memory.bytes_ba
+  = "caml_rig_external_bytes"
+
+external proxy_bytes : int -> int -> int -> Memory.bytes_ba
+  = "caml_rig_proxy_bytes"
+
+(* The runtime's code of each kind, [caml_ba_kind]'s order. *)
+let kind_code (type a b) (k : (a, b) Bigarray.kind) =
+  match k with
+  | Bigarray.Float32 -> 0
+  | Bigarray.Float64 -> 1
+  | Bigarray.Int8_signed -> 2
+  | Bigarray.Int8_unsigned -> 3
+  | Bigarray.Int16_signed -> 4
+  | Bigarray.Int16_unsigned -> 5
+  | Bigarray.Int32 -> 6
+  | Bigarray.Int64 -> 7
+  | Bigarray.Int -> 8
+  | Bigarray.Nativeint -> 9
+  | Bigarray.Complex32 -> 10
+  | Bigarray.Complex64 -> 11
+  | Bigarray.Char -> 12
+  | Bigarray.Float16 -> 13
+
+(* [b]'s bytes as an array of [k], over the memory without a copy. The array
+   keeps the memory alive: the bytes of the root allocation's heap, bigarray or
+   proxy. With [export], the memory first leaves the claims for good. *)
+let array_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
+    (a, b, Bigarray.c_layout) Bigarray.Array1.t =
+  check_live fn b;
+  if not (host_addressed b) then refuse_unaddressed fn b;
+  let size = Bigarray.kind_size_in_bytes k in
+  let unit =
+    match k with
+    | Bigarray.Complex32 | Bigarray.Complex64 -> size / 2
+    | _ -> size
+  in
+  let bytes = b.length in
+  if bytes mod size <> 0 || (b.mem.host + b.offset) mod unit <> 0 then
+    invalid_argf
+      "Rig.%s: %d bytes at offset %d are no whole number of aligned %d-byte \
+       elements"
+      fn bytes b.offset size;
+  if export then begin
+    if not (Memory.export b.mem.claim) then
+      invalid_argf
+        "Rig.%s: the memory is held exclusive by claims that have not consumed \
+         it"
+        fn;
+    (* A consumption between the first check and the export killed [b]: the
+       memory stays marked, which costs only its donations. *)
+    check_live fn b
+  end;
+  let root = b.mem.root in
+  let at = b.mem.host - root.host + b.offset in
+  let code = kind_code k and n = bytes / size in
+  match root.keep with
+  | Heap ba -> bigarray_view ba code at n
+  | Bigarray ba -> bigarray_view ba code at n
+  | Nothing when root.entry == Memory.no_entry ->
+      (* No bytes: nothing to keep. *)
+      bigarray_view (external_bytes b.mem.host b.mem.bytes) code b.offset n
+  | Nothing ->
+      let p = Memory.proxy root.entry in
+      bigarray_view (proxy_bytes p b.mem.host b.mem.bytes) code b.offset n
+
+let array fn k b = array_of fn ~export:false k b
+
+let export b k =
+  let fn = "Buffer.export" in
+  check_live fn b;
+  if b.mem.root.dev != Dev.host then
+    invalid_argf "Rig.%s: the buffer is %s's memory, not the host's" fn
+      b.mem.root.dev.name;
+  wait b Read_write;
+  array_of fn ~export:true k b
+
+(* Strings *)
+
+(* The blits take the buffer and compute its address after the wait, so the
+   buffer, which holds its memory, stays reachable until they return. *)
+external blit_string : string -> int -> t -> int -> int -> unit
+  = "caml_rig_blit_string"
+[@@noalloc]
+
+external blit_bytes : t -> int -> bytes -> int -> int -> unit
+  = "caml_rig_blit_bytes"
+[@@noalloc]
+
+external set_bytes : t -> int -> int -> char -> unit = "caml_rig_set_bytes"
+[@@noalloc]
+
+let check_range fn what size at n =
+  if at < 0 || n < 0 || at > size - n then
+    invalid_argf "Rig.%s: %d bytes from byte %d lie outside the %s's %d" fn n at
+      what size
+
+let of_string s =
+  let n = String.length s in
+  let b = create Dev.host n in
+  blit_string s 0 b 0 n;
+  b
+
+(* Low level *)
+
+let address fn b =
+  check_live fn b;
+  if Dev.is_io b.mem.dev then
+    invalid_argf "Rig.%s: the buffer is on the io device %s" fn b.mem.dev.name;
+  if b.mem.address < 0 then
+    invalid_argf "Rig.%s: %s names this memory by handle only" fn b.mem.dev.name;
+  b.mem.address + b.offset
+
+let aligned b ~at n =
+  if n <= 0 || n land (n - 1) <> 0 then
+    invalid_argf "Rig.Buffer.aligned: %d is not a positive power of two" n;
+  (address "Buffer.aligned" b + at) land (n - 1) = 0
+
+let handle b =
+  check_live "Buffer.handle" b;
+  match b.mem.dev.kind with
+  | Driver _ -> b.mem.handle
+  | Host | Io _ ->
+      invalid_argf "Rig.Buffer.handle: no driver object names %s's memory"
+        b.mem.dev.name

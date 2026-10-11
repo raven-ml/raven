@@ -1,0 +1,577 @@
+{
+ "date": "2026-10-11",
+ "machine": {
+  "gpu": "Radeon AI PRO R9700 (gfx1201)",
+  "driver": "Linux 6.12.111+deb13-amd64",
+  "system": "Linux 6.12.111+deb13-amd64 x86_64"
+ },
+ "scenarios": {
+  "ship": {
+   "utc": "2026-10-11T13:18:05+00:00",
+   "commit": "43932580c",
+   "profile": "release",
+   "load_average": [
+    3.8095703125,
+    2.25634765625,
+    1.1953125
+   ],
+   "rounds": 1,
+   "unit": "bytes",
+   "rows": [
+    {
+     "stack": "rig",
+     "device": "amd",
+     "version": "43932580c",
+     "samples": [
+      8018120
+     ],
+     "installed": 8018120,
+     "vendor": 0,
+     "vendor_libraries": [],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    },
+    {
+     "stack": "native",
+     "device": "hip",
+     "version": null,
+     "samples": [
+      195568419
+     ],
+     "installed": 22192,
+     "vendor": 195546227,
+     "vendor_libraries": [
+      {
+       "path": "torch/lib/python3.12/site-packages/torch/lib/libamd_comgr.so",
+       "bytes": 162856456,
+       "sha256": "7d8f6e852bf63c209e9e3a9880e5c025f49ee66e7b1ab2fa9981ab5cd22e2934"
+      },
+      {
+       "path": "torch/lib/python3.12/site-packages/torch/lib/libamdhip64.so",
+       "bytes": 26764913,
+       "sha256": "c7e4498fb6c8c7bdb89db72feb4b81e2e44ef11634305ef4f237228d750c26da"
+      },
+      {
+       "path": "torch/lib/python3.12/site-packages/torch/lib/libhsa-amd-aqlprofile64.so",
+       "bytes": 747673,
+       "sha256": "d0f033a998e2f9acd66759dc26f35dafc1846f76c55e8e0ddebd756ec8d1a26c"
+      },
+      {
+       "path": "torch/lib/python3.12/site-packages/torch/lib/libhsa-runtime64.so",
+       "bytes": 4232345,
+       "sha256": "cc0049bad50bc945e8bfd48db98ab4ef5a62ed63a9dd738fdc878cf66ffbfddf"
+      },
+      {
+       "path": "torch/lib/python3.12/site-packages/torch/lib/librocprofiler-register.so",
+       "bytes": 944840,
+       "sha256": "8dcc9575cd14dbbcc9e7788abf88ae4723def34ba70f3130a6dac3ea6cb41645"
+      }
+     ],
+     "os_libraries": [
+      "torch/lib/python3.12/site-packages/torch/lib/libdrm.so.2",
+      "torch/lib/python3.12/site-packages/torch/lib/libdrm_amdgpu.so.1",
+      "torch/lib/python3.12/site-packages/torch/lib/libelf.so.1",
+      "torch/lib/python3.12/site-packages/torch/lib/libnuma.so.1",
+      "/usr/lib/x86_64-linux-gnu/libbz2.so.1.0.4",
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "/usr/lib/x86_64-linux-gnu/liblzma.so.5.8.1",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+      "/usr/lib/x86_64-linux-gnu/libz.so.1.3.1",
+      "/usr/lib/x86_64-linux-gnu/libzstd.so.1.5.7",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+rocm7.2",
+     "samples": [
+      15775563906
+     ],
+     "installed": 15775563906,
+     "vendor": 0,
+     "vendor_libraries": [],
+     "os_libraries": [
+      "/usr/lib/x86_64-linux-gnu/libatomic.so.1.2.0",
+      "/usr/lib/x86_64-linux-gnu/libbz2.so.1.0.4",
+      "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "/usr/lib/x86_64-linux-gnu/libibverbs.so.1.14.56.1",
+      "/usr/lib/x86_64-linux-gnu/liblzma.so.5.8.1",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libnl-3.so.200.26.0",
+      "/usr/lib/x86_64-linux-gnu/libnl-route-3.so.200.26.0",
+      "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+      "/usr/lib/x86_64-linux-gnu/libutil.so.1",
+      "/usr/lib/x86_64-linux-gnu/libz.so.1.3.1",
+      "/usr/lib/x86_64-linux-gnu/libzstd.so.1.5.7",
+      "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
+     ]
+    }
+   ]
+  },
+  "start": {
+   "utc": "2026-10-11T12:34:44+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    1.6796875,
+    0.736328125,
+    0.662109375
+   ],
+   "rounds": 5,
+   "unit": "ns",
+   "rows": [
+    {
+     "stack": "rig",
+     "device": "amd",
+     "version": "593e7735a",
+     "samples": [
+      37168504,
+      45493693,
+      53243725,
+      52800928,
+      53929335
+     ]
+    },
+    {
+     "stack": "native",
+     "device": "hip",
+     "version": null,
+     "samples": [
+      73850504,
+      56433783,
+      66903673,
+      58542003,
+      70520638
+     ]
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+rocm7.2",
+     "samples": [
+      1123392122,
+      1099933169,
+      1107788200,
+      1099528250,
+      1105921441
+     ]
+    }
+   ]
+  },
+  "fit": {
+   "utc": "2026-10-11T12:34:54+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    1.64892578125,
+    0.76171875,
+    0.67138671875
+   ],
+   "rounds": 5,
+   "unit": "bytes",
+   "rows": [
+    {
+     "stack": "rig",
+     "device": "amd",
+     "version": "593e7735a",
+     "samples": [
+      30793728,
+      30793728,
+      30793728,
+      30793728,
+      30793728
+     ]
+    },
+    {
+     "stack": "native",
+     "device": "hip",
+     "version": null,
+     "samples": [
+      148963328,
+      148963328,
+      148963328,
+      148963328,
+      148963328
+     ]
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+rocm7.2",
+     "samples": [
+      154529792,
+      154529792,
+      154529792,
+      154529792,
+      154529792
+     ]
+    }
+   ]
+  },
+  "micro": {
+   "utc": "2026-10-11T12:35:03+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    1.548828125,
+    0.77001953125,
+    0.67529296875
+   ],
+   "rounds": 5,
+   "unit": "ns",
+   "rows": [
+    {
+     "stack": "rig",
+     "device": "amd",
+     "version": "593e7735a",
+     "samples": [
+      106824,
+      107692,
+      106679,
+      106608,
+      106719,
+      102729,
+      104171,
+      104136,
+      104320,
+      104088,
+      102421,
+      104111,
+      104486,
+      104141,
+      104642,
+      102628,
+      106238,
+      104130,
+      104049,
+      104204,
+      102699,
+      104277,
+      103897,
+      104298,
+      111521
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "native",
+     "device": "hip",
+     "version": null,
+     "samples": [
+      120314,
+      130676,
+      126123,
+      126250,
+      125996,
+      120854,
+      126760,
+      127293,
+      126996,
+      126886,
+      120433,
+      126330,
+      126429,
+      126679,
+      126815,
+      121089,
+      132131,
+      126730,
+      126904,
+      126688,
+      120844,
+      126216,
+      126938,
+      125606,
+      126911
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+rocm7.2",
+     "samples": [
+      143418,
+      143692,
+      143981,
+      143353,
+      143409,
+      143536,
+      144520,
+      144420,
+      144465,
+      143477,
+      143821,
+      144017,
+      144327,
+      143714,
+      143568,
+      144754,
+      144705,
+      144320,
+      144744,
+      144160,
+      144955,
+      144301,
+      144303,
+      144302,
+      144692
+     ],
+     "case": "add1"
+    },
+    {
+     "stack": "rig",
+     "device": "amd",
+     "version": "593e7735a",
+     "samples": [
+      302168,
+      304857,
+      304744,
+      315234,
+      356279,
+      311461,
+      305893,
+      304973,
+      304960,
+      304076,
+      323746,
+      321961,
+      374901,
+      334278,
+      392137,
+      304934,
+      320773,
+      321459,
+      319596,
+      319847,
+      301110,
+      301818,
+      314397,
+      363817,
+      334227
+     ],
+     "case": "add64"
+    },
+    {
+     "stack": "native",
+     "device": "hip",
+     "version": null,
+     "samples": [
+      390113,
+      412651,
+      411639,
+      412137,
+      399480,
+      390464,
+      412789,
+      411722,
+      412224,
+      411631,
+      413030,
+      483087,
+      487208,
+      488188,
+      486632,
+      411571,
+      470944,
+      486761,
+      487890,
+      479044,
+      390419,
+      402847,
+      411886,
+      397107,
+      408152
+     ],
+     "case": "add64"
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+rocm7.2",
+     "samples": [
+      459583,
+      508534,
+      484822,
+      468676,
+      470329,
+      517633,
+      518006,
+      518228,
+      520681,
+      518417,
+      518044,
+      8658444,
+      31043775,
+      479178,
+      519603,
+      517789,
+      506703,
+      517586,
+      516262,
+      516322,
+      528300,
+      519597,
+      517140,
+      514003,
+      491067
+     ],
+     "case": "add64"
+    }
+   ]
+  },
+  "load": {
+   "utc": "2026-10-11T12:35:25+00:00",
+   "commit": "593e7735a",
+   "profile": "release",
+   "load_average": [
+    1.25,
+    0.75244140625,
+    0.67138671875
+   ],
+   "rounds": 5,
+   "unit": "ns",
+   "rows": [
+    {
+     "stack": "read",
+     "device": "host",
+     "version": null,
+     "samples": [
+      120158599,
+      121598218,
+      124856888,
+      123065724,
+      122322976
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "amd",
+     "version": "593e7735a",
+     "samples": [
+      97284887,
+      91834000,
+      91087935,
+      90954413,
+      92408834
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "native",
+     "device": "hip",
+     "version": null,
+     "samples": [
+      142344368,
+      139554421,
+      138222021,
+      129281771,
+      136829632
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+rocm7.2",
+     "samples": [
+      219174620,
+      242678728,
+      251072833,
+      241125468,
+      287190208
+     ],
+     "case": "cold",
+     "bytes": 268435456
+    },
+    {
+     "stack": "read",
+     "device": "host",
+     "version": null,
+     "samples": [
+      19753244,
+      20175697,
+      18974746,
+      19294026,
+      19384546
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "rig",
+     "device": "amd",
+     "version": "593e7735a",
+     "samples": [
+      43639711,
+      38507798,
+      38861792,
+      38502771,
+      39139617
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "native",
+     "device": "hip",
+     "version": null,
+     "samples": [
+      61355996,
+      62082279,
+      63252797,
+      63430688,
+      61888294
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "torch",
+     "device": "cuda",
+     "version": "2.14.1+rocm7.2",
+     "samples": [
+      215900217,
+      133539058,
+      190280869,
+      249755964,
+      248212985
+     ],
+     "case": "warm",
+     "bytes": 268435456
+    },
+    {
+     "stack": "floor",
+     "device": "pcie",
+     "version": null,
+     "samples": [
+      19420061,
+      19421347,
+      19417798,
+      19419465,
+      19413122
+     ],
+     "case": null,
+     "bytes": 268435456
+    }
+   ]
+  }
+ }
+}

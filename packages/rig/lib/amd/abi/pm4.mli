@@ -1,0 +1,174 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(** The PM4 packets a compute queue reads.
+
+    A compute queue runs its packets in order. It starts each packet once
+    the one before it has started, without waiting for it to complete, so a
+    dispatch's waves may still run when the packets after it start. {!run}
+    orders kernels, and every dispatch goes inside one.
+
+    A PM4 ring may wrap: a packet's words continue at the ring's start. *)
+
+(** {1:runs Runs}
+
+    A dispatch launches a kernel on one die. It sets the [COMPUTE_*]
+    registers from the kernel's descriptor ({!Code_object.type-kernel}),
+    then starts the grid. *)
+
+val dispatch :
+  Gpu.t ->
+  Code_object.kernel ->
+  program:'v ->
+  scratch:'v ->
+  args:'v ->
+  packet:'v ->
+  threads:'v * 'v * 'v ->
+  groups:'v * 'v * 'v ->
+  ?waves_per_array:int ->
+  unit ->
+  'v Packet.t
+(** [dispatch g k ~program ~scratch ~args ~packet ~threads ~groups
+     ~waves_per_array ()] launches [k] over [groups] workgroups of
+    [threads] work-items each. [program] is the address of [k]'s first
+    instruction, its image's address plus [k.entry]. The waves take their
+    scratch from the buffer at [scratch] ({!Scratch.tmpring}). Their user
+    SGPRs hold, in order, a buffer descriptor of that scratch if
+    [k.private_segment_buffer], the address [packet] of a dispatch packet
+    ({!Aql.dispatch}) if [k.dispatch_ptr], and the address [args] of [k]'s
+    arguments. On GFX11 the waves run privileged. At most [waves_per_array]
+    waves run concurrently on each shader array, and as many as fit without it.
+    [program] and [scratch] are 256-byte aligned.
+
+    Raises [Invalid_argument] if [g]'s GC has no dispatch registers, if
+    [waves_per_array] is not in \[[1];[1023]\], if [k]'s group segment
+    exceeds 511 units of {!lds_granule}, or as {!Scratch.tmpring} does for
+    [k]'s private segment. The last two never happen for a kernel read from
+    a code object [g] runs ({!Code_object.runs_on}). *)
+
+val lds_granule : Gpu.t -> int
+(** [lds_granule g] is the bytes of one unit of the LDS a dispatch's
+    workgroups take on [g] ({!dispatch}): 1280 on GFX950, 512 on the others.
+    A workgroup that takes [n] bytes takes [n] rounded up to a multiple of
+    it. *)
+
+val run : Gpu.t -> 'v Packet.t -> 'v Packet.t
+(** [run g p] runs [p], the words of one or more dispatches none of which
+    reads what another writes, and of what goes with them, such as their
+    profiling. It invalidates the caches above the L2 before [p]
+    ({!acquire_mem} at [Agent]), so that [p]'s kernels read what the GPU's
+    work before them wrote. It waits for [p]'s dispatches to complete after
+    it ([CS_PARTIAL_FLUSH]), so that the packets after it start once they
+    have. *)
+
+(** {1:memory Memory and registers} *)
+
+(** The type for what a packet reads or writes: a register, at its address
+    ({!Register.address}), or memory, at the caller's address. *)
+type 'v location = Register of int | Memory of 'v
+
+val set_reg : int -> 'v Packet.t -> 'v Packet.t
+(** [set_reg a ws] writes the words [ws] to the consecutive registers from
+    the one at address [a], with the packet of [a]'s space: SET_SH_REG for
+    an SH register, in \[[0x2c00];[0x3000]\[, or SET_UCONFIG_REG for a
+    UCONFIG register, in \[[0xc000];[0x10000]\[. Every register the words
+    reach lies in [a]'s space.
+
+    Raises [Invalid_argument] if [a] is in neither space, if the words reach
+    past its end, or if they are more than the 16383 the packet's count
+    holds. *)
+
+val write_data : 'v location -> 'v -> 'v Packet.t
+(** [write_data loc v] writes the low 32 bits of [v] to [loc]. A write to
+    memory completes before the next packet starts. *)
+
+(** The type for how a copy completes: posted, or confirmed before the next
+    packet starts. *)
+type write = Posted | Confirmed
+
+(** The type for what a copy reads: a 32-bit counter register, at its
+    address, or the GPU's clock, a 64-bit count at the rate
+    {!Capability.t.clock_hz}. *)
+type source = Counter of int | Clock
+
+val copy_data : write -> source -> 'v -> 'v Packet.t
+(** [copy_data w src addr] copies [src] to memory at [addr] through the L2,
+    as [w] says, when the queue reaches the packet: once the packets before
+    it have started, and before those after it start. *)
+
+(** {1:sync Waits, caches and signals} *)
+
+val wait :
+  Gpu.t ->
+  'v location ->
+  Packet.comparison ->
+  'v ->
+  ?mask:int ->
+  ?interval:int ->
+  unit ->
+  'v Packet.t
+(** [wait g loc cmp v ~mask ~interval ()] waits until the 32 bits at [loc],
+    masked by [mask], compare to the low 32 bits of [v] as [cmp] says,
+    reading them again every [interval] clocks of the packet's poll timer.
+    [mask] defaults to all 32 bits, [interval] to [4].
+
+    Raises [Invalid_argument] if [interval] is not in \[[0];[65535]\]. *)
+
+val wait_64 :
+  Gpu.t -> 'v -> Packet.comparison -> 'v -> ?interval:int -> unit -> 'v Packet.t
+(** [wait_64 g addr cmp v ~interval ()] waits until the 64 bits at [addr]
+    compare to [v] as [cmp] says, reading them again every [interval] clocks
+    of the packet's poll timer, [4] by default. [addr] is a multiple of 8.
+    A queue runs it only if its compute firmware compares 64-bit words,
+    which depends on the firmware's version.
+
+    Raises [Invalid_argument] if [g]'s GC has no such packet (GFX9), or if
+    [interval] is not in \[[0];[65535]\]. *)
+
+val acquire_mem : Gpu.t -> Packet.scope -> 'v Packet.t
+(** [acquire_mem g s] invalidates, before the next packet starts, the caches
+    that would hide writes of scope [s] from the work after it. At [Agent],
+    for writes of work on this GPU, these are the caches above the L2
+    (scalar, vector and L1). At [System], for writes of anyone, they are all
+    of them, the instruction cache and the L2 included, the L2 written back
+    first. *)
+
+(** The type for the signal a release writes: the low 32 bits of a value, or
+    all 64. *)
+type 'v data = Low_32 of 'v | Data_64 of 'v
+
+val release_mem :
+  Gpu.t -> Packet.scope -> ?interrupt:int -> 'v -> 'v data -> 'v Packet.t
+(** [release_mem g s ~interrupt addr d] writes [d] to memory at [addr] once
+    the work before it has completed, at the end of the pipe, so that
+    readers of scope [s] who see the signal see the work's writes. At
+    [System] it writes the L2 back first. At [Agent] it does so only on
+    GFX9, where a GPU of several dies has an L2 per die. A reader on the GPU
+    invalidates its own caches with {!acquire_mem}. The next packet starts
+    without waiting for the release. With [interrupt], it then raises an
+    interrupt whose context id is [interrupt]'s low 32 bits. *)
+
+(** The type for the events a queue signals. *)
+type event =
+  | Cs_partial_flush  (** Waits for the dispatches before it to complete. *)
+  | Thread_trace_marker  (** Marks the thread trace ({!Thread_trace}). *)
+  | Thread_trace_finish  (** Finishes the thread trace. *)
+
+val event_write : event -> 'v Packet.t
+(** [event_write e] signals [e]. *)
+
+(** {1:control Control} *)
+
+val pred_exec : xcc_mask:int -> 'v Packet.t -> 'v Packet.t
+(** [pred_exec ~xcc_mask p] runs [p] only on the dies of [xcc_mask], bit [i]
+    for die [i], of a queue that runs on several.
+
+    Raises [Invalid_argument] if [xcc_mask] is not in \[[0];[255]\] or if
+    [Packet.size p] exceeds 16383 words. *)
+
+val indirect_buffer : 'v -> dwords:'v -> 'v Packet.t
+(** [indirect_buffer addr ~dwords] runs the [dwords] words of PM4 packets at
+    [addr], then the packets after it. [addr] is a multiple of 4 and
+    [dwords] is in \[[0];[1048575]\]. *)

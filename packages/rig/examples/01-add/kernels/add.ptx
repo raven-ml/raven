@@ -1,0 +1,46 @@
+// out[i] = a[i] + b[i] for each thread i of the grid below n, the three
+// arrays of floats given by their addresses. Written by hand for the virtual
+// architecture sm_50, which CUDA compiles for the GPU it loads on.
+
+.version 7.0
+.target sm_50
+.address_size 64
+
+.visible .entry add(
+    .param .u64 a,
+    .param .u64 b,
+    .param .u64 out,
+    .param .u64 n
+)
+{
+    .reg .pred %p<2>;
+    .reg .b32 %r<4>;
+    .reg .f32 %f<4>;
+    .reg .b64 %rd<12>;
+
+    ld.param.u64 %rd1, [a];
+    ld.param.u64 %rd2, [b];
+    ld.param.u64 %rd3, [out];
+    ld.param.u64 %rd4, [n];
+    mov.u32 %r1, %ctaid.x;
+    mov.u32 %r2, %ntid.x;
+    mov.u32 %r3, %tid.x;
+    mul.wide.u32 %rd5, %r1, %r2;
+    cvt.u64.u32 %rd6, %r3;
+    add.s64 %rd5, %rd5, %rd6;
+    setp.ge.u64 %p1, %rd5, %rd4;
+    @%p1 bra DONE;
+    shl.b64 %rd6, %rd5, 2;
+    cvta.to.global.u64 %rd7, %rd1;
+    cvta.to.global.u64 %rd8, %rd2;
+    cvta.to.global.u64 %rd9, %rd3;
+    add.s64 %rd7, %rd7, %rd6;
+    add.s64 %rd8, %rd8, %rd6;
+    add.s64 %rd9, %rd9, %rd6;
+    ld.global.f32 %f1, [%rd7];
+    ld.global.f32 %f2, [%rd8];
+    add.f32 %f3, %f1, %f2;
+    st.global.f32 [%rd9], %f3;
+DONE:
+    ret;
+}

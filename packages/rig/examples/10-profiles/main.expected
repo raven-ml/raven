@@ -1,0 +1,9 @@
+profiling: true
+profiling: false
+
+span        CPU domain 0: allocate
+allocation  M: 4 MiB
+span        CPU domain 0: upload
+copy        CPU -> M: 4 MiB
+
+4 events written to profile.json

@@ -1,0 +1,36 @@
+(test
+ (name test_program)
+ (modules test_program)
+ (libraries
+  rig
+  rig_disk
+  rig_program
+  rig_remote_abi
+  rig_support
+  rig_host_support
+  windtrap)
+ (deps
+  (glob_files ../fixtures/*.o)
+  (glob_files fixtures/*.o)))
+
+; A description on each GPU driver the machine has that runs launches, with
+; the kernels of each driver's conformance fixtures.
+
+(test
+ (name test_program_gpu)
+ (modules test_program_gpu)
+ (locks %{workspace_root}/gpu)
+ (libraries
+  rig
+  rig_program
+  rig_gpu_support
+  rig_metal_support
+  rig_cuda_support
+  rig_nv_support
+  rig_amd_support
+  windtrap)
+ (deps
+  (glob_files ../metal/fixtures/*.metallib)
+  (glob_files ../cuda/fixtures/*)
+  (glob_files ../nv/fixtures/*)
+  (glob_files ../amd/fixtures/*)))

@@ -1,0 +1,11 @@
+{
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-doc/9fdf5c4062007929d9f4e6cbad9c9771fe61b880/classes/compute/clc7c0qmd.h": "e5057d62981b0ecba3c6774244ba531c78f1d6ded529339081ec84e77c0c4e36",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-doc/9fdf5c4062007929d9f4e6cbad9c9771fe61b880/classes/compute/clc9c0qmd.h": "12f61b40ca721248de170469c2673ba7f9f1ac5ea24e42e42b102e8c84d7f43b",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-doc/9fdf5c4062007929d9f4e6cbad9c9771fe61b880/classes/compute/clcec0qmd.h": "6ba3a6d4742a722346c725a1c95114a62738c9a165fe18ec1cdd84c2511b4cfc",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/kernel-open/nvidia-uvm/clc56f.h": "8b7a6d6d5d5e3538f2f3e3b975d00c4aa94bd2480008c49aefcfc2566e3f658e",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/kernel-open/nvidia-uvm/clc7b5.h": "9e8dbda2d6741abeb2d2c81bb92cb621445aac7facf8c8113f3cb3d12f1c7660",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/kernel-open/nvidia-uvm/clc9b5.h": "6a11ca7d4058db242e2da91682db0624307919cf797d33ce52df2337a4bbbff2",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/class/clc7c0.h": "4cc2a76fd66d9124b962adaa68ceadcf8928a2589f0e195dd1d73db260234d0c",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/class/clc9c0.h": "abdfdcfdd2dd5e0a9c823cde3894beceebba79322dc0bbc0a82c15da81e1804a",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-kernel-modules/570.144/src/common/sdk/nvidia/inc/class/clcec0.h": "bbe3bcabc7f129972ed5ed635f58251b657d6e5616cac8cfc5bd817293da7d2e"
+}

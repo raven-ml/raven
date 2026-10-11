@@ -1,0 +1,17 @@
+64-bit, type 1, machine 62: an image of 320 bytes, aligned to 16
+
+sections in the image:
+  .text    at 0x00, 242 bytes
+  .rodata  at 0x100,  64 bytes
+named symbols:
+  poly.c   absolute 0
+  coeffs   image 0x100 (section 4)
+  horner   image 0x0 (section 2)
+  poly     image 0xb0 (section 2)
+relocations (S + A - P):
+  at 0x2e, PC32  to image 0x100 (section 4): 206
+  at 0x76, PC32  to image 0x100 (section 4): 134
+  at 0xd9, PLT32 to image 0x0 (section 2): -221
+
+entry poly at 0xb0; its first byte 0x48
+not an ELF object

@@ -51,6 +51,7 @@ let () = Hugin.(line ~x:(num x) ~y:(num y) () |> save "sine.png")
 |     | Package                        | Like              | What it does                                             |
 | --- | ------------------------------ | ----------------- | -------------------------------------------------------- |
 |     | [**nx**](packages/nx/)         | NumPy             | N-dimensional arrays with linear algebra operations      |
+|     | [**rig**](packages/rig/)       | CUDA driver API   | Devices such as GPUs, and the order of the work they run |
 | ᛏ   | [**tolk**](packages/tolk/)     | tinygrad          | Minimal ML compiler for GPU tensor computation           |
 | ᚱ   | [**rune**](packages/rune/)     | JAX               | Automatic differentiation and functional transformations |
 | ᚲ   | [**kaun**](packages/kaun/)     | Flax              | Neural networks and training                             |

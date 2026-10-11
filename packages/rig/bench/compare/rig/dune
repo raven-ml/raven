@@ -1,0 +1,44 @@
+; run.py's rig probe. run.py builds native.c and runs frameworks.py itself,
+; outside dune.
+
+(executable
+ (name rig)
+ (libraries
+  unix
+  rig
+  rig.disk
+  rig.metal
+  rig.metal.abi
+  rig.cuda
+  rig.nv.nvidia
+  rig.amd.amdgpu)
+ (foreign_stubs
+  (language c)
+  (names metal)
+  (flags
+   (:standard
+    (:include objc_flags.sexp)))))
+
+(rule
+ (alias bench)
+ (deps rig.exe)
+ (action
+  (progn)))
+
+(rule
+ (targets objc_flags.sexp)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (with-stdout-to
+   objc_flags.sexp
+   (echo "(-x objective-c)"))))
+
+(rule
+ (targets objc_flags.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   objc_flags.sexp
+   (echo "()"))))

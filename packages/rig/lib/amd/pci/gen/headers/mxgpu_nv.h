@@ -1,0 +1,66 @@
+/*
+ * Copyright 2014 Advanced Micro Devices, Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ *
+ */
+
+#define NV_MAILBOX_POLL_ACK_TIMEDOUT	500
+#define NV_MAILBOX_POLL_MSG_TIMEDOUT	15000
+enum idh_request {
+	IDH_REQ_GPU_INIT_ACCESS = 1,
+	IDH_REL_GPU_INIT_ACCESS,
+	IDH_REQ_GPU_FINI_ACCESS,
+	IDH_REL_GPU_FINI_ACCESS,
+	IDH_REQ_GPU_RESET_ACCESS,
+	IDH_REQ_GPU_INIT_DATA,
+
+	IDH_LOG_VF_ERROR	= 200,
+	IDH_READY_TO_RESET 	= 201,
+	IDH_RAS_POISON	= 202,
+	IDH_REQ_RAS_ERROR_COUNT = 203,
+	IDH_REQ_RAS_CPER_DUMP = 204,
+	IDH_REQ_RAS_BAD_PAGES = 205,
+	IDH_REQ_RAS_CHK_CRITI = 206
+};
+enum idh_event {
+	IDH_CLR_MSG_BUF	= 0,
+	IDH_READY_TO_ACCESS_GPU,
+	IDH_FLR_NOTIFICATION,
+	IDH_FLR_NOTIFICATION_CMPL,
+	IDH_SUCCESS,
+	IDH_FAIL,
+	IDH_QUERY_ALIVE,
+	IDH_REQ_GPU_INIT_DATA_READY,
+	IDH_RAS_POISON_READY,
+	IDH_PF_SOFT_FLR_NOTIFICATION,
+	IDH_RAS_ERROR_DETECTED,
+	IDH_RAS_ERROR_COUNT_READY = 11,
+	IDH_RAS_CPER_DUMP_READY = 14,
+	IDH_RAS_BAD_PAGES_READY = 15,
+	IDH_RAS_BAD_PAGES_NOTIFICATION = 16,
+	IDH_UNRECOV_ERR_NOTIFICATION = 17,
+	IDH_REQ_RAS_CHK_CRITI_READY = 18,
+
+	IDH_TEXT_MESSAGE = 255,
+};
+#define mmMAILBOX_CONTROL 0xE5E
+#define NV_MAIBOX_CONTROL_TRN_OFFSET_BYTE (mmMAILBOX_CONTROL * 4)
+#define mmMAILBOX_MSGBUF_TRN_DW0 0xE56
+#define mmMAILBOX_MSGBUF_RCV_DW0 0xE5A

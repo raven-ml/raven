@@ -1,0 +1,3 @@
+(library
+ (name rig_amd_abi_support)
+ (libraries rig_amd_abi))

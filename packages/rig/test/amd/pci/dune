@@ -1,0 +1,19 @@
+; test_root opens the GPU itself, under root, where a detached AMD GPU and its
+; firmware are at hand; elsewhere it skips.
+
+(test
+ (name test_root)
+ (modules test_root)
+ (locks %{workspace_root}/gpu)
+ (libraries rig rig_amd rig_amd_pci rig_edge rig_pci rig_pci_support unix
+  windtrap)
+ (foreign_stubs
+  (language c)
+  (names test_root_stubs)))
+
+(test
+ (name test_amd_pci)
+ (modules test_amd_pci)
+ (libraries rig_amd_pci rig_pci rig_pci_support windtrap)
+ (deps
+  (glob_files ../fixtures/r9700*)))

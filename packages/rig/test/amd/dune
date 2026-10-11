@@ -1,0 +1,22 @@
+; test_fault loses a device to a page fault of its work, after which the
+; kernel driver runs no queue of the process on that GPU; test_fork forks,
+; which a process may do only before it spawns a domain. Each is a suite of
+; its own.
+
+(tests
+ (names test_amd test_fault test_fork)
+ (modules test_amd test_fault test_fork)
+ (locks %{workspace_root}/gpu)
+ (libraries
+  rig
+  rig_amd
+  rig_amd_abi
+  rig_amd_amdgpu
+  rig_amd_support
+  rig_edge
+  rig_gpu_support
+  rig_support
+  unix
+  windtrap)
+ (deps
+  (glob_files fixtures/*)))

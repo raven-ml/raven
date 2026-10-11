@@ -1,0 +1,730 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* Code objects of this directory's fixtures (fixtures/README.md): a relocatable
+   object whose descriptors reach their kernels through REL64 relocations, the
+   object linked from it, and objects made by changing bytes of either.
+   Descriptor fields at the offsets of LLVM's AMDHSAKernelDescriptor.h, machines
+   and their processors after LLVM's ELF.h and AMDGPUUsage. *)
+
+open Windtrap
+open Rig_amd_abi
+module S = Rig_amd_abi_support
+
+let strf = Printf.sprintf
+let timeout = S.timeout
+
+let fixture name =
+  In_channel.with_open_bin ("fixtures/" ^ name) In_channel.input_all
+
+(* The AMD suite loads it too, so it lives in that suite's fixtures. *)
+let hidden () =
+  In_channel.with_open_bin "../fixtures/hidden_gfx1201.hsaco"
+    In_channel.input_all
+
+let relocatable () = fixture "kernels_gfx1030.o"
+let linked () = fixture "kernels_gfx1030.hsaco"
+let pp_error ppf e = Format.pp_print_string ppf e
+let read obj = require_ok ~pp:pp_error (Code_object.of_string obj)
+
+(* Changing an object *)
+
+let patch obj at set =
+  let b = Bytes.of_string obj in
+  set b at;
+  Bytes.to_string b
+
+(* The file offset of the first occurrence of [a] in [obj]. *)
+let find obj a =
+  let n = String.length a in
+  let rec go i = if String.sub obj i n = a then i else go (i + 1) in
+  go 0
+
+let set_u8 v b at = Bytes.set_uint8 b at v
+let set_u32 v b at = Bytes.set_int32_le b at (Int32.of_int v)
+let set_u64 v b at = Bytes.set_int64_le b at (Int64.of_int v)
+
+(* The ELF header's EI_ABIVERSION, e_machine and e_flags; the code object
+   versions of AMDGPUUsage's ELFABIVERSION_AMDGPU_HSA_V5 and V6. *)
+let abi_version = 8
+let machine = 18
+let flags = 48
+let v5 = 3
+let v6 = 4
+
+let section obj name =
+  let o = require_ok ~pp:pp_error (Rig_elf.of_string obj) in
+  let named (s : Rig_elf.section) = String.equal s.name name in
+  require_some (Iarray.find_opt named o.sections)
+
+(* The file offset of section [i]'s header and of entry [i] of a table of
+   24-byte entries: symbols and RELA relocations. *)
+let header obj i = Int64.to_int (String.get_int64_le obj 40) + (64 * i)
+let entry obj table i = (section obj table).at + (24 * i)
+
+(* A section header's sh_type and sh_addr; a symbol's st_value; a relocation's
+   r_offset, r_info and r_addend. *)
+let sh_type = 4
+let sh_addr = 16
+let st_value = 8
+let r_offset = 0
+let r_info = 8
+let r_addend = 16
+
+let index obj name =
+  let o = require_ok ~pp:pp_error (Rig_elf.of_string obj) in
+  let rec go i =
+    if (Iarray.get o.sections i).name = name then i else go (i + 1)
+  in
+  go 0
+
+let kernarg_key = ".kernarg_segment_size"
+
+(* The hidden fixture with a single kernel's metadata and its kernarg size
+   encoded as [value]. Replacing the note keeps every descriptor unchanged. *)
+let metadata_size value =
+  let obj = hidden () in
+  let note = section obj ".note" in
+  let metadata =
+    "\x81\xaeamdhsa.kernels\x91\x82\xa5.name\xa5plain\xb5" ^ kernarg_key ^ value
+  in
+  let len = String.length metadata in
+  let obj = patch obj (note.at + 4) (set_u32 len) in
+  let obj =
+    patch obj (note.at + 20) (fun b at -> Bytes.blit_string metadata 0 b at len)
+  in
+  patch obj
+    (header obj (index obj ".note") + 32)
+    (set_u64 (20 + ((len + 3) / 4 * 4)))
+
+(* Kernel [name]'s descriptor with KERNARG_SIZE set to [size]. Zero leaves the
+   size unspecified for a dispatch with a nonnull argument pointer. *)
+let kernarg_descriptor obj name size =
+  let co = read obj in
+  let k = require_some (Code_object.kernel co name) in
+  let s = section obj ".rodata" in
+  patch obj (s.at + k.descriptor - Option.get s.offset + 8) (set_u32 size)
+
+(* The fixtures' symbols and relocation types: R_AMDGPU_ABS32_LO and
+   R_AMDGPU_REL64; the type of a relocation section without addends. *)
+let sym_ext = 5
+let abs32_lo = 1
+let rel64 = 5
+let sht_rel = 9
+let info ~sym ~kind = (sym lsl 32) lor kind
+
+(* Reading *)
+
+let both = [ ("relocatable", relocatable); ("linked", linked) ]
+
+(* A kernel's descriptor as the image holds it: the u32 fields of
+   kernel_descriptor_t at 0, 4, 8, 44, 48 and 52, its i64 entry offset at 16,
+   and its u16 code properties at 56: bit 0 enables the private segment buffer,
+   bit 1 the dispatch pointer, bit 10 waves of 32 lanes. kernels.s states no
+   metadata, so no kernel's workgroups are bounded below the 1024 work-items of
+   any GPU. *)
+let descriptor img at : Code_object.kernel =
+  let u32 o =
+    Int32.to_int (String.get_int32_le img (at + o)) land 0xffff_ffff
+  in
+  let props = String.get_uint16_le img (at + 56) in
+  let bit n = props land (1 lsl n) <> 0 in
+  {
+    descriptor = at;
+    entry = at + Int64.to_int (String.get_int64_le img (at + 16));
+    group_segment = u32 0;
+    private_segment = u32 4;
+    kernarg_size = u32 8;
+    rsrc1 = u32 48;
+    rsrc2 = u32 52;
+    rsrc3 = u32 44;
+    wave32 = bit 10;
+    dispatch_ptr = bit 1;
+    private_segment_buffer = bit 0;
+    max_threads = 1024;
+    hidden = [];
+    explicit_size = u32 8;
+  }
+
+let hidden_arg =
+  Testable.make
+    ~pp:(fun ppf (h : Code_object.hidden) ->
+      let axis : Code_object.axis -> string = function
+        | X -> "X"
+        | Y -> "Y"
+        | Z -> "Z"
+      in
+      match h with
+      | Block_count a -> Format.fprintf ppf "Block_count %s" (axis a)
+      | Group_size a -> Format.fprintf ppf "Group_size %s" (axis a)
+      | Remainder a -> Format.fprintf ppf "Remainder %s" (axis a)
+      | Global_offset a -> Format.fprintf ppf "Global_offset %s" (axis a)
+      | Grid_dims -> Format.pp_print_string ppf "Grid_dims"
+      | Dynamic_lds_size -> Format.pp_print_string ppf "Dynamic_lds_size"
+      | Other k -> Format.fprintf ppf "Other %S" k)
+    ~equal:( = )
+
+let kernel =
+  Testable.make
+    ~pp:(fun ppf (k : Code_object.kernel) ->
+      Format.fprintf ppf
+        "{ descriptor = %d; entry = %d; group = %d; private = %d; kernarg = \
+         %d; rsrc1 = 0x%x; rsrc2 = 0x%x; rsrc3 = 0x%x; wave32 = %b; \
+         dispatch_ptr = %b; private_segment_buffer = %b; max_threads = %d }"
+        k.descriptor k.entry k.group_segment k.private_segment k.kernarg_size
+        k.rsrc1 k.rsrc2 k.rsrc3 k.wave32 k.dispatch_ptr k.private_segment_buffer
+        k.max_threads)
+    ~equal:( = )
+
+let reading =
+  group ~timeout "reading"
+    [
+      cases ~name:fst "an object keeps the bytes it was read from" both
+        (fun (_, obj) ->
+          let obj = obj () in
+          equal string obj (Code_object.elf (read obj)).file);
+      cases ~name:fst "the image is the ELF image in whole 32-bit words" both
+        (fun (_, obj) ->
+          let co = read (obj ()) in
+          equal int
+            (((Code_object.elf co).size + 3) / 4 * 4)
+            (Code_object.size co));
+      test "a linked image of 0x327b bytes takes 0x327c" (fun () ->
+          let co = read (linked ()) in
+          equal (pair int int) (0x327b, 0x327c)
+            ((Code_object.elf co).size, Code_object.size co));
+      cases ~name:fst "every patch lies in the image" both (fun (_, obj) ->
+          let co = read (obj ()) in
+          List.iter
+            (fun (off, p) ->
+              at_least int ~than:0 off;
+              at_most int ~than:(Code_object.size co) (off + String.length p))
+            (Code_object.patches co));
+      cases ~name:fst
+        "each image byte is its last patch's, else its section's, else 0" both
+        (fun (_, obj) ->
+          let co = read (obj ()) in
+          let o = Code_object.elf co in
+          let last_some f l =
+            List.fold_left
+              (fun r x -> Option.fold ~none:r ~some:Option.some (f x))
+              None l
+          in
+          let byte i =
+            let patched (off, p) =
+              if off <= i && i < off + String.length p then Some p.[i - off]
+              else None
+            in
+            let loaded (s : Rig_elf.section) =
+              match s.offset with
+              | Some off when off <= i && i < off + s.length ->
+                  Some o.file.[s.at + i - off]
+              | _ -> None
+            in
+            match last_some patched (Code_object.patches co) with
+            | Some c -> c
+            | None ->
+                Option.value ~default:'\000'
+                  (last_some loaded (Iarray.to_list o.sections))
+          in
+          equal string
+            (String.init (Code_object.size co) byte)
+            (Code_object.image co));
+      test "a REL64 patch is its target's offset from the word, plus the addend"
+        (fun () ->
+          let co = read (relocatable ()) in
+          let expected (r : Rig_elf.relocation) =
+            match r.symbol.place with
+            | Image { offset; _ } ->
+                let b = Bytes.create 8 in
+                let addend =
+                  match r.addend with
+                  | Explicit a -> a
+                  | Implicit _ -> fail "a fixture's relocation without addend"
+                in
+                Bytes.set_int64_le b 0
+                  (Int64.of_int (offset + addend - r.offset));
+                (r.offset, Bytes.to_string b)
+            | Undefined | Absolute _ | Outside _ -> fail "a fixture's symbol"
+          in
+          equal
+            (list (pair int string))
+            (List.map expected (Code_object.elf co).relocations)
+            (Code_object.patches co);
+          equal int 2 (List.length (Code_object.patches co)));
+      (* S + A - P is a 64-bit word: an addend of -2^62 takes it below the 63
+         bits of an [int]. The relocation moves from a's entry offset to the
+         reserved bytes after it, data no kernel reads. *)
+      test "a REL64 patch past an int's range is its 64-bit word" (fun () ->
+          let obj = relocatable () in
+          let e = entry obj ".rela.rodata" 0 in
+          let a = -(1 lsl 62) in
+          let moved =
+            Int64.to_int (String.get_int64_le obj (e + r_offset)) + 8
+          in
+          let obj = patch obj (e + r_offset) (set_u64 moved) in
+          let co = read (patch obj (e + r_addend) (set_u64 a)) in
+          let r = List.hd (Code_object.elf co).relocations in
+          let s =
+            match r.symbol.place with
+            | Image { offset; _ } -> offset
+            | Undefined | Absolute _ | Outside _ -> fail "a fixture's symbol"
+          in
+          less int ~than:0 (s - r.offset);
+          let b = Bytes.create 8 in
+          Bytes.set_int64_le b 0
+            Int64.(sub (add (of_int s) (of_int a)) (of_int r.offset));
+          equal (pair int string)
+            (r.offset, Bytes.to_string b)
+            (List.hd (Code_object.patches co)));
+      test "a linked object has no patches" (fun () ->
+          equal
+            (list (pair int string))
+            []
+            (Code_object.patches (read (linked ()))));
+      cases ~name:fst "kernels are the .kd symbols, in increasing order" both
+        (fun (_, obj) ->
+          equal (list string) [ "a"; "b" ] (Code_object.kernels (read (obj ()))));
+      cases ~name:fst "a kernel is its descriptor in the image" both
+        (fun (_, obj) ->
+          let co = read (obj ()) in
+          let img = Code_object.image co in
+          List.iter
+            (fun name ->
+              let k = require_some (Code_object.kernel co name) in
+              equal ~msg:name kernel (descriptor img k.descriptor) k;
+              equal ~msg:name (option int)
+                (Rig_elf.symbol (Code_object.elf co) (name ^ ".kd"))
+                (Some k.descriptor))
+            (Code_object.kernels co));
+      cases ~name:fst "a kernel's entry is its symbol" both (fun (_, obj) ->
+          let co = read (obj ()) in
+          List.iter
+            (fun name ->
+              equal ~msg:name (option int)
+                (Rig_elf.symbol (Code_object.elf co) name)
+                (Option.map
+                   (fun (k : Code_object.kernel) -> k.entry)
+                   (Code_object.kernel co name)))
+            [ "a"; "b" ]);
+      test "the descriptors' fields are the source's" (fun () ->
+          let co = read (relocatable ()) in
+          let fields name =
+            let k = require_some (Code_object.kernel co name) in
+            ( (k.group_segment, k.private_segment, k.kernarg_size),
+              (k.wave32, k.dispatch_ptr, k.private_segment_buffer) )
+          in
+          let w = pair (triple int int int) (triple bool bool bool) in
+          equal ~msg:"a" w ((256, 64, 24), (true, false, true)) (fields "a");
+          equal ~msg:"b" w ((0, 0, 8), (false, true, false)) (fields "b"));
+      test "each of 128 kernels is found by its name, and no name after it"
+        (fun () ->
+          let co = read (fixture "many_gfx1201.hsaco") in
+          let names = Code_object.kernels co in
+          equal int 128 (List.length names);
+          List.iter
+            (fun name ->
+              let k = require_some ~msg:name (Code_object.kernel co name) in
+              equal ~msg:name (option int)
+                (Rig_elf.symbol (Code_object.elf co) (name ^ ".kd"))
+                (Some k.descriptor);
+              is_none ~msg:(name ^ "!") (Code_object.kernel co (name ^ "!")))
+            names);
+      test "a kernel's workgroups are bounded by the metadata" (fun () ->
+          let co = read (fixture "many_gfx1201.hsaco") in
+          List.iter
+            (fun name ->
+              let k = require_some (Code_object.kernel co name) in
+              equal ~msg:name int 256 k.max_threads)
+            (Code_object.kernels co));
+      cases ~name:fst "a kernel the metadata does not bound has 1024 work-items"
+        both (fun (_, obj) ->
+          let co = read (obj ()) in
+          List.iter
+            (fun name ->
+              let k = require_some (Code_object.kernel co name) in
+              equal ~msg:name int 1024 k.max_threads)
+            (Code_object.kernels co));
+      test "a kernel's implicit arguments are its metadata's" (fun () ->
+          let co = read (hidden ()) in
+          let kernel name = require_some (Code_object.kernel co name) in
+          equal ~msg:"every"
+            (list (pair hidden_arg int))
+            [
+              (Block_count X, 32);
+              (Block_count Y, 36);
+              (Block_count Z, 40);
+              (Group_size X, 44);
+              (Group_size Y, 46);
+              (Group_size Z, 48);
+              (Remainder X, 50);
+              (Remainder Y, 52);
+              (Remainder Z, 54);
+              (Global_offset X, 72);
+              (Global_offset Y, 80);
+              (Global_offset Z, 88);
+              (Grid_dims, 96);
+              (Other "hidden_printf_buffer", 104);
+              (Dynamic_lds_size, 152);
+            ]
+            (kernel "every").hidden;
+          equal ~msg:"every's work-items" int 128 (kernel "every").max_threads;
+          equal ~msg:"every's explicit arguments" int 8
+            (kernel "every").explicit_size;
+          equal ~msg:"plain"
+            (list (pair hidden_arg int))
+            [] (kernel "plain").hidden);
+      (* An argument's map holds .offset, .size and .value_kind in this order,
+         so its offset, a positive fixint, lies 21 bytes before its kind. *)
+      test "a kernel's implicit arguments are by increasing offset" (fun () ->
+          let offset obj kind v =
+            patch obj (find obj kind - 21) (fun b at -> Bytes.set_uint8 b at v)
+          in
+          let obj = offset (hidden ()) "hidden_block_count_x" 40 in
+          let obj = offset obj "hidden_block_count_z" 32 in
+          let k = require_some (Code_object.kernel (read obj) "every") in
+          equal
+            (list (pair hidden_arg int))
+            [
+              (Block_count Z, 32);
+              (Block_count Y, 36);
+              (Block_count X, 40);
+              (Group_size X, 44);
+            ]
+            (List.filteri (fun i _ -> i < 4) k.hidden));
+      cases ~name:fst "an unspecified descriptor size uses the metadata"
+        [ ("every", 288); ("plain", 8) ]
+        (fun (name, size) ->
+          let obj = hidden () in
+          let co = read (kernarg_descriptor obj name 0) in
+          let k = require_some (Code_object.kernel co name) in
+          equal int size k.kernarg_size;
+          equal int 8 k.explicit_size);
+      cases
+        ~name:(fun (name, _) -> name)
+        "a metadata size retains padding and the uint32 range"
+        [
+          ("padding", "\x10");
+          ("uint32 max", "\xce\xff\xff\xff\xff");
+          ("uint64 encoding", "\xcf\000\000\000\000\xff\xff\xff\xff");
+          ("int64 encoding", "\xd3\000\000\000\000\xff\xff\xff\xff");
+        ]
+        (fun (name, value) ->
+          let obj = metadata_size value in
+          let co = read (kernarg_descriptor obj "plain" 0) in
+          let k = require_some (Code_object.kernel co "plain") in
+          equal int
+            (if name = "padding" then 16 else 0xffff_ffff)
+            k.kernarg_size);
+      test "a specified descriptor size takes precedence over metadata"
+        (fun () ->
+          let co = read (metadata_size "\x10") in
+          let k = require_some (Code_object.kernel co "plain") in
+          equal int 8 k.kernarg_size);
+      test "an unspecified size without metadata remains zero" (fun () ->
+          let co = read (kernarg_descriptor (relocatable ()) "a" 0) in
+          let k = require_some (Code_object.kernel co "a") in
+          equal (pair int int) (0, 0) (k.kernarg_size, k.explicit_size));
+      cases ~name:(strf "%S") "a name that is no kernel's is none"
+        [ ""; "c"; "a.kd"; "A"; "ext" ] (fun name ->
+          is_none (Code_object.kernel (read (relocatable ())) name));
+    ]
+
+(* Processors *)
+
+(* EF_AMDGPU_MACH values of LLVM's ELF.h, the generic version in the flags' top
+   byte, and AMDGPUUsage's XNACK and SRAMECC settings of code object v4 on. *)
+let generic ?(version = 1) mach = (version lsl 24) lor mach
+let xnack_sramecc = 0xf00
+
+let gpus =
+  [
+    (9, 0, 10);
+    (9, 4, 2);
+    (9, 5, 0);
+    (10, 3, 0);
+    (10, 3, 6);
+    (11, 0, 0);
+    (11, 0, 3);
+    (11, 5, 1);
+    (11, 5, 3);
+    (12, 0, 0);
+    (12, 0, 1);
+  ]
+
+let with_flags ?(abi = v6) f =
+  patch (patch (relocatable ()) flags (set_u32 f)) abi_version (set_u8 abi)
+
+let processors =
+  cases
+    ~name:(fun (name, f, _) -> strf "%s (0x%x)" name f)
+    "the processor of a code object and the GPUs that run it"
+    [
+      ("gfx1030", 0x36, [ "gfx1030" ]);
+      ("gfx90a", 0x3f, [ "gfx90a" ]);
+      ("gfx1100", 0x41, [ "gfx1100" ]);
+      ("gfx942", 0x4c, [ "gfx942" ]);
+      ("gfx1201", 0x4e, [ "gfx1201" ]);
+      ("gfx942", xnack_sramecc lor 0x4c, [ "gfx942" ]);
+      ("gfx10-3-generic", generic 0x53, [ "gfx1030"; "gfx1036" ]);
+      ( "gfx11-generic",
+        generic 0x54,
+        [ "gfx1100"; "gfx1103"; "gfx1151"; "gfx1153" ] );
+      ("gfx12-generic", generic 0x59, [ "gfx1200"; "gfx1201" ]);
+      ("gfx12-generic", generic ~version:2 0x59, [ "gfx1200"; "gfx1201" ]);
+      ("gfx9-4-generic", generic 0x5f, [ "gfx942"; "gfx950" ]);
+    ]
+    (fun (name, f, runs) ->
+      let co = read (with_flags f) in
+      equal ~msg:"its processor" string name (Code_object.target co);
+      equal ~msg:"the GPUs that run it" (list string) runs
+        (List.filter_map
+           (fun v ->
+             let g = S.gpu v in
+             if Code_object.runs_on co g then Some (Gpu.processor g) else None)
+           gpus))
+
+(* Refusals *)
+
+let refused ?(sub = "") obj =
+  let msg = require_error (Code_object.of_string obj) in
+  contains ~sub msg
+
+(* [obj] with the u32 at [field] of kernel "a"'s descriptor set to [v]. *)
+let descriptor_field obj field v =
+  let k = require_some (Code_object.kernel (read obj) "a") in
+  let rodata = section obj ".rodata" in
+  let at = rodata.at + k.descriptor - Option.get rodata.offset in
+  patch obj (at + field) (set_u32 v)
+
+(* many_gfx1201.hsaco's metadata note: the file offset of its first
+   [.max_flat_workgroup_size] key, a fixstr of 24 bytes after its 1-byte header,
+   whose value follows it as a uint16, 0xcd and two bytes big-endian
+   (msgpack.org's spec). *)
+let many () = fixture "many_gfx1201.hsaco"
+let max_flat = ".max_flat_workgroup_size"
+let first_max_flat obj = find obj max_flat
+
+let with_max_flat obj v =
+  patch obj
+    (first_max_flat obj + String.length max_flat)
+    (fun b at ->
+      Bytes.set_uint8 b at 0xcd;
+      Bytes.set_uint16_be b (at + 1) v)
+
+let refusals =
+  group ~timeout "refusals"
+    [
+      test "bytes that are no ELF object" (fun () -> refused "not an object");
+      test "an object for another machine" (fun () ->
+          refused ~sub:"62"
+            (patch (relocatable ()) machine (fun b at ->
+                 Bytes.set_uint16_le b at 62)));
+      cases ~name:(strf "0x%x") "a machine LLVM names no processor of"
+        [ 0x0; 0x27; 0x60; 0xff ] (fun mach ->
+          refused ~sub:(strf "0x%x" mach) (with_flags ~abi:v5 mach));
+      test "a generic code object before version 6" (fun () ->
+          refused ~sub:"gfx11-generic" (with_flags ~abi:v5 (generic 0x54)));
+      test "a generic code object of generic version 0" (fun () ->
+          refused ~sub:"generic version 0"
+            (with_flags (generic ~version:0 0x54)));
+      test "a relocation of another kind" (fun () ->
+          let obj = relocatable () in
+          refused ~sub:"R_AMDGPU_REL64"
+            (patch obj
+               (entry obj ".rela.rodata" 0 + r_info)
+               (set_u64 (info ~sym:1 ~kind:abs32_lo))));
+      test "a relocation to an undefined symbol" (fun () ->
+          let obj = relocatable () in
+          refused ~sub:"ext"
+            (patch obj
+               (entry obj ".rela.rodata" 0 + r_info)
+               (set_u64 (info ~sym:sym_ext ~kind:rel64))));
+      test "a relocation without an addend in its entry" (fun () ->
+          let obj = relocatable () in
+          refused ~sub:"SHT_REL"
+            (patch obj
+               (header obj (index obj ".rela.rodata") + sh_type)
+               (set_u32 sht_rel)));
+      test "a relocation that names no symbol" (fun () ->
+          let obj = relocatable () in
+          refused
+            (patch obj
+               (entry obj ".rela.rodata" 0 + r_info)
+               (set_u64 (info ~sym:0 ~kind:rel64))));
+      (* .rodata ends the image, 128 bytes from 0x140: a word 4 bytes from its
+         end passes it. *)
+      test "a relocation that patches bytes past the image's end" (fun () ->
+          let obj = relocatable () in
+          refused
+            (patch obj (entry obj ".rela.rodata" 1 + r_offset) (set_u64 0x7c)));
+      (* a.kd 96 bytes into .rodata's 128: its 64 bytes pass the image's end. *)
+      test "a descriptor past the image's end" (fun () ->
+          let obj = relocatable () in
+          refused ~sub:"a"
+            (patch obj (entry obj ".symtab" 3 + st_value) (set_u64 0x60)));
+      cases ~name:fst "an entry outside the image"
+        [
+          ("before it", fun k _ -> -k - 1);
+          ("at its end", fun k size -> size - k);
+          ("far past it", fun _ _ -> 1 lsl 40);
+        ]
+        (fun (_, offset) ->
+          let obj = linked () in
+          let co = read obj in
+          let k = require_some (Code_object.kernel co "a") in
+          let at =
+            (section obj ".rodata").at + k.descriptor
+            - Option.get (section obj ".rodata").offset
+          in
+          refused ~sub:"a"
+            (patch obj (at + 16)
+               (set_u64 (offset k.descriptor (Code_object.size co)))));
+      test "an entry at the image's last byte is in it" (fun () ->
+          let obj = linked () in
+          let co = read obj in
+          let k = require_some (Code_object.kernel co "a") in
+          let rodata = section obj ".rodata" in
+          let at = rodata.at + k.descriptor - Option.get rodata.offset in
+          let co' =
+            read
+              (patch obj (at + 16)
+                 (set_u64 (Code_object.size co - 1 - k.descriptor)))
+          in
+          equal (option int)
+            (Some (Code_object.size co - 1))
+            (Option.map
+               (fun (k : Code_object.kernel) -> k.entry)
+               (Code_object.kernel co' "a")));
+      (* 511 units of 512 bytes, what LDS_SIZE holds on every GPU. *)
+      cases ~name:string_of_int "a kernel's LDS past 511 * 512 bytes is refused"
+        [ 511 * 512; (511 * 512) + 1; 0xffff_ffff ]
+        (fun n ->
+          let obj = descriptor_field (linked ()) 0 n in
+          if n <= 511 * 512 then
+            equal (option int) (Some n)
+              (Option.map
+                 (fun (k : Code_object.kernel) -> k.group_segment)
+                 (Code_object.kernel (read obj) "a"))
+          else refused ~sub:"LDS" obj);
+      (* What WAVESIZE holds for a lane of a 64-lane wave, by the processor's
+         generation (LLVM's GCNSubtarget.h, getMaxWaveScratchSize). *)
+      cases
+        ~name:(fun (p, _, n, _) -> strf "%s, %d bytes" p n)
+        "a kernel's scratch past what its processor's waves hold is refused"
+        (List.concat_map
+           (fun (p, obj, most) ->
+             [ (p, obj, most, true); (p, obj, most + 1, false) ])
+           [
+             ("gfx1030", linked, 8191 * 1024 / 64);
+             ("gfx942", (fun () -> with_flags 0x4c), 8191 * 1024 / 64);
+             ("gfx1100", (fun () -> with_flags 0x41), 32767 * 256 / 64);
+             ( "gfx11-generic",
+               (fun () -> with_flags (generic 0x54)),
+               32767 * 256 / 64 );
+             ("gfx1201", (fun () -> with_flags 0x4e), 262143 * 256 / 64);
+           ])
+        (fun (_, obj, n, taken) ->
+          let obj = descriptor_field (obj ()) 4 n in
+          if taken then
+            equal (option int) (Some n)
+              (Option.map
+                 (fun (k : Code_object.kernel) -> k.private_segment)
+                 (Code_object.kernel (read obj) "a"))
+          else refused ~sub:"scratch" obj);
+      cases ~name:string_of_int
+        "a kernel's workgroups bounded outside [1;1024] are refused"
+        [ 0; 1; 1024; 1025; 0xffff ] (fun n ->
+          let obj = with_max_flat (many ()) n in
+          if n < 1 || n > 1024 then refused ~sub:"work-items" obj
+          else
+            let co = read obj in
+            let bounds =
+              List.map
+                (fun name ->
+                  (require_some (Code_object.kernel co name)).max_threads)
+                (Code_object.kernels co)
+            in
+            equal (pair int int) (1, 127)
+              ( List.length (List.filter (( = ) n) bounds),
+                List.length (List.filter (( = ) 256) bounds) ));
+      test "an implicit argument past the kernel's arguments is refused"
+        (fun () ->
+          let obj = hidden () in
+          let co = read obj in
+          let k = require_some (Code_object.kernel co "every") in
+          let s = section obj ".rodata" in
+          (* kernarg_size, at byte 8 of the descriptor, one byte short of the
+             dynamic LDS size's 4 bytes at 152. *)
+          refused ~sub:"implicit"
+            (patch obj
+               (s.at + k.descriptor - Option.get s.offset + 8)
+               (set_u32 155)));
+      test "explicit arguments past the kernel's arguments are refused"
+        (fun () ->
+          let obj = hidden () in
+          let co = read obj in
+          let k = require_some (Code_object.kernel co "plain") in
+          let s = section obj ".rodata" in
+          (* plain's kernarg_size, one byte short of its pointer's 8. *)
+          refused ~sub:"explicit"
+            (patch obj
+               (s.at + k.descriptor - Option.get s.offset + 8)
+               (set_u32 7)));
+      cases ~name:fst "a metadata kernarg size outside uint32 is refused"
+        [
+          ("negative", "\xff");
+          ("uint32 overflow", "\xcf\000\000\000\001\000\000\000\000");
+          ("uint64 wrap", "\xcf\x80\000\000\000\000\000\000\x08");
+          ("int64 negative", "\xd3\x80\000\000\000\000\000\000\x08");
+          ("wrong type", "\xc0");
+          ("truncated uint64", "\xcf\000");
+        ]
+        (fun (_, value) -> refused ~sub:"metadata" (metadata_size value));
+      cases ~name:fst "an unspecified size still bounds explicit arguments"
+        [ ("zero", 0); ("one byte short", 7) ]
+        (fun (_, size) ->
+          let obj =
+            kernarg_descriptor (hidden ()) "plain" 0
+          in
+          let key = kernarg_key ^ "\008" in
+          let at = find obj key + String.length kernarg_key in
+          refused ~sub:"explicit" (patch obj at (set_u8 size)));
+      test "an unspecified size still bounds implicit arguments" (fun () ->
+          let obj =
+            kernarg_descriptor (hidden ()) "every" 0
+          in
+          let at = find obj kernarg_key + String.length kernarg_key + 1 in
+          (* The uint16 size, one byte short of the dynamic LDS argument. *)
+          refused ~sub:"implicit"
+            (patch obj at (fun b at -> Bytes.set_uint16_be b at 155)));
+      test "a metadata note that is no MessagePack value is refused" (fun () ->
+          let obj = many () in
+          (* 0xc1 starts no MessagePack value. *)
+          refused ~sub:"metadata"
+            (patch obj (first_max_flat obj - 1) (set_u8 0xc1)));
+      test "a note that runs past its section is refused" (fun () ->
+          let obj = many () in
+          (* The first note's description length, after its owner's. *)
+          refused ~sub:"note"
+            (patch obj ((section obj ".note").at + 4) (set_u32 0x7fff_ffff)));
+      (* The image starts at 0x300 and ends with .data's 3 bytes. *)
+      cases
+        ~name:(fun (n, _) -> strf "an image of 2^48%+d bytes" n)
+        "an image longer than 2^48 bytes is refused"
+        [ (0, false); (1, true) ]
+        (fun (extra, refuse) ->
+          let obj = linked () in
+          let address = (1 lsl 48) + 0x300 - 3 + extra in
+          let obj =
+            patch obj
+              (header obj (index obj ".data") + sh_addr)
+              (set_u64 address)
+          in
+          if refuse then refused ~sub:"2^48" obj
+          else equal int (1 lsl 48) (Code_object.size (read obj)));
+    ]
+
+let () = exit (run "rig_amd_abi.code_object" [ reading; processors; refusals ])

@@ -1,0 +1,4 @@
+(library
+ (name rig_remote_abi)
+ (public_name rig.remote.abi)
+ (libraries rig_edge))

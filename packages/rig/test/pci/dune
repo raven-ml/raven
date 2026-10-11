@@ -1,0 +1,19 @@
+(tests
+ (names
+  test_window
+  test_memory
+  test_machine
+  test_space
+  test_page_table
+  test_firmware)
+ (modules :standard \ test_function test_gpus)
+ (libraries rig_pci rig_pci_support unix windtrap))
+
+; test_function and test_gpus take this machine's GPUs.
+
+(tests
+ (names test_function test_gpus)
+ (modules test_function test_gpus)
+ (locks %{workspace_root}/gpu)
+ (libraries rig_pci rig_pci_support unix windtrap))
+

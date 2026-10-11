@@ -1,0 +1,56 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(** The GPU's power manager (MP1), which this library asks by message to
+    set clocks, reset the GPU whole (mode 1) and report machine-check banks.
+
+    A message is a 32-bit ID and a 32-bit argument written to two registers.
+    The firmware writes 1 into a third register when it has run the message,
+    and any other value when it refuses it. The IDs depend on the power
+    manager's version. Calls for one GPU run one at a time. *)
+
+type t
+(** The type for power managers. *)
+
+val make : Regs.t -> Gmc.t -> table:int -> t
+(** [make r gmc ~table] is the power manager, whose driver table is at the
+    physical address [table] of the GPU's memory. *)
+
+val alive : t -> bool
+(** [alive s] is [true] iff the power manager's firmware responds to a message
+    within 100 ms. *)
+
+val start : t -> unit
+(** [start s] gives the firmware the address of its driver table and enables
+    all its features.
+
+    Raises {!Regs.Stuck} if the firmware refuses a message or does not
+    respond within 10 s. *)
+
+val features : t -> int
+(** [features s] is the power manager's enabled features, one bit each, as
+    it reports them. *)
+
+val clocks : t -> [ `Lowest | `Highest ] -> unit
+(** [clocks s level] holds the memory, fabric, SoC and graphics clocks at
+    their lowest or highest frequency. It sets only the clocks whose DPM the
+    power manager reports enabled, so a clock whose DPM is off, as before
+    {!start}, keeps its boot frequency.
+
+    Raises {!Regs.Stuck} if the power manager refuses a request, or counts
+    more than 16 frequencies of a clock. *)
+
+val reset : t -> unit
+(** [reset s] resets the GPU whole (mode 1). Outside a fabric it then waits
+    500 ms, 1 s from SMU 14 on, and reads the function's vendor ID from its
+    configuration space for at most 2 s, until the function responds. On a
+    GPU of a fabric it returns immediately. A caller resets only a GPU
+    outside a fabric, since a fabric's GPUs reset together.
+
+    Raises {!Regs.Stuck} if the function does not respond. *)
+
+val banks : t -> string
+(** [banks s] is the machine-check banks the firmware holds, uncorrectable
+    then correctable, for the report of a fatal hardware error. *)

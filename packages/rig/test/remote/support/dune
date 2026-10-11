@@ -1,0 +1,21 @@
+(executables
+ (names agent controller launched)
+ (modules agent controller launched)
+ (libraries rig rig_remote rig_remote_proxy rig_support unix))
+
+(executable
+ (name two)
+ (modules two)
+ (libraries
+  rig
+  rig.program
+  rig.remote
+  rig.remote.abi
+  rig.amd.abi
+  rig.amd.amdgpu
+  rig.nv.abi
+  rig.nv.nvidia
+  rig_amd_support
+  rig_nv_support
+  rig_cuda_support
+  rig_host_support))

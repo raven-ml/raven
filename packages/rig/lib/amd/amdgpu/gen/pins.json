@@ -1,0 +1,5 @@
+{
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/include/uapi/drm/amdgpu_drm.h": "9d7ff60a211d2aa73a6c15b2da49e050cebe518fc059ee93e31d61288f7b60dc",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/include/uapi/drm/drm.h": "9adac9567a18a234770d98a31c6c505a18e2db02fb0eca596730314d86a46549",
+ "https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/include/uapi/linux/kfd_ioctl.h": "b3721c1a428a32bb9994af579432af48c44fa65abb860049f11a63a5c093235d"
+}

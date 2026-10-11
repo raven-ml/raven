@@ -1,0 +1,19 @@
+; A hang in rig run ends its file after 300 s, above the longest file's
+; run.
+
+(cram
+ (package rig)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (timeout 300)
+ (deps
+  %{bin:rig}
+  support/env.sh
+  support/ssh
+  support/curl
+  support/await
+  support/gone
+  support/ctl.exe
+  support/firmware_test.exe
+  support/sig.exe
+  support/gap.exe))

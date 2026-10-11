@@ -1,0 +1,15 @@
+(test
+ (name test_gpus)
+ (locks %{workspace_root}/gpu)
+ (libraries
+  rig
+  rig_amd_amdgpu
+  rig_amd_pci
+  rig_cuda
+  rig_gpus
+  rig_metal
+  rig_nv_nvidia
+  rig_nv_pci
+  windtrap)
+ (deps
+  (glob_files ../../examples/01-add/kernels/add*)))

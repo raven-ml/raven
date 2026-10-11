@@ -1,0 +1,31 @@
+; Devices, their memory, and the order of work across them.
+
+(library
+ (name rig)
+ (public_name rig)
+ (libraries rig_edge rig_elf rig_pool)
+ (modules_without_implementation def)
+ (private_modules
+  buffer
+  claim
+  copy
+  def
+  dev
+  host_code
+  image
+  lock
+  memory
+  memory_device
+  point
+  prof
+  profile
+  submission)
+ (install_c_headers rig)
+ (foreign_stubs
+  (language c)
+  (names
+   rig_device
+   rig_stamps
+   rig_heap
+   rig_host_code
+   rig_memory)))
