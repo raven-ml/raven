@@ -108,10 +108,29 @@ let test_fail_first =
   lose d p;
   [ failure () ]
 
+(* An io library whose memory holds nothing. *)
+module Nothing = struct
+  type t = unit
+  type region = unit
+
+  exception Fault of string
+
+  let region_key : region Type.Id.t = Type.Id.make ()
+  let budget () = max_int
+  let alloc () _ = Some ()
+  let free () () = ()
+  let read () () ~at:_ ~dst:_ ~len:_ = ()
+  let write () () ~at:_ ~src:_ ~len:_ = ()
+  let pages () () = None
+  let prefetch () () ~at:_ ~len:_ = ()
+  let stop () = ()
+end
+
 (* A fail loses every device but the host, each stopped once; a device already
    lost keeps its reason; the host's memory goes on; an open afterwards answers
-   the reason without calling its opener, also of a name that was open; and a
-   second fail changes nothing. *)
+   the reason without calling its opener, also of a name that was open, an io
+   open too, and a memory device raises it; and a second fail changes
+   nothing. *)
 let test_fail =
   child_case
     [
@@ -122,6 +141,8 @@ let test_fail =
       "host bytes: 8";
       "Error the world failed";
       "Error the world failed";
+      "Error the world failed";
+      "Failure the world failed";
       "opener calls: 0";
       "fail:lost-before lost: the submission failed";
     ]
@@ -147,6 +168,20 @@ let test_fail =
     | Ok _ -> "Ok"
     | Error why -> "Error " ^ why
   in
+  let open_io name =
+    let make () =
+      incr calls;
+      Ok ()
+    in
+    match Rig.open_io { name; io = (module Nothing); make } with
+    | Ok _ -> "Ok"
+    | Error why -> "Error " ^ why
+  in
+  let memory_device name =
+    match Rig.memory_device name with
+    | _ -> "Ok"
+    | exception Failure why -> "Failure " ^ why
+  in
   [
     Option.value ~default:"not lost" (Rig.lost d);
     Printf.sprintf "stops: %d" (count "stop" p);
@@ -155,6 +190,8 @@ let test_fail =
     Printf.sprintf "host bytes: %d" (B.length (B.create Rig.host 8));
     open_ "fail:new";
     open_ "fail:device";
+    open_io "fail:io";
+    memory_device "fail:memory";
     Printf.sprintf "opener calls: %d" !calls;
     failure ();
   ]
