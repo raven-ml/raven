@@ -48,6 +48,7 @@ external countdown : unit -> nativeint = "rig_test_countdown"
 external ready : unit -> nativeint = "rig_test_ready"
 external slow : unit -> nativeint = "rig_test_slow"
 external interrupt : unit -> unit = "rig_test_interrupt"
+external interrupt_after : int -> unit = "rig_test_interrupt_after"
 
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 [@@noalloc]

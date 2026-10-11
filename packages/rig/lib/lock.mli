@@ -40,8 +40,10 @@ val busy : t -> bool
 (** [busy l] is [true] if a call held [l] when [busy] tried to take it. *)
 
 val wait : t -> unit
-(** [wait l], holding [l], gives it up until a {!broadcast} on [l] or a
-    spurious wake-up, then takes it back. *)
+(** [wait l], holding [l], gives it up until a {!broadcast} on [l], a spurious
+    wake-up or 200 ms, then takes it back. A caller waits in a loop, which so
+    returns to OCaml at least every 200 ms, where a pending signal's handler
+    runs ({!Rig.section-domains}). *)
 
 val broadcast : t -> unit
 (** [broadcast l] wakes every {!wait} on [l]. *)

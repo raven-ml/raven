@@ -618,6 +618,76 @@ let test_io_raise_anywhere =
     ( ! )
     (fun name make -> Rig.open_io { name; io = (module Stops); make })
 
+(* An open that waits for another open of its name returns to OCaml at least
+   every 200 ms, where a pending signal's handler runs. A thread of no OCaml
+   code raises SIGINT 300 ms after the wait starts (sampled), while the other
+   opener blocks for up to 5 s, so only the waiting open can take the signal
+   before the other open ends. The handler raises Sys.Break on the waiting
+   thread alone. *)
+let test_break_waiting_open () =
+  if Sys.win32 then skip ~reason:"SIGINT is a console event on Windows" ();
+  let name = "open:break-waiting" in
+  let lock = Mutex.create () and cond = Condition.create () in
+  let go = ref false and started = Atomic.make false in
+  let make () =
+    Atomic.set started true;
+    Mutex.protect lock (fun () ->
+        while not !go do
+          Condition.wait cond lock
+        done);
+    Ok (P.make ())
+  in
+  let first = ref None in
+  let opener =
+    Thread.create
+      (fun () -> first := Some (Rig.open_ { name; driver = (module P); make }))
+      ()
+  in
+  Support.await "the first opener" (fun () -> Atomic.get started);
+  let release () =
+    Mutex.protect lock (fun () ->
+        go := true;
+        Condition.broadcast cond)
+  in
+  (* The watchdog blocks in no OCaml code until the test ends or 5 s pass. *)
+  let ended, ending = Unix.pipe () in
+  let watchdog =
+    Thread.create
+      (fun () ->
+        ignore (Unix.select [ ended ] [] [] 5.);
+        release ())
+      ()
+  in
+  let waiting = Thread.id (Thread.self ()) and taken = ref "nowhere" in
+  let handle _ =
+    if Thread.id (Thread.self ()) = waiting then raise Sys.Break
+    else taken := "on another thread"
+  in
+  let calls = ref 0 in
+  let second () =
+    incr calls;
+    Ok (P.make ())
+  in
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  Support.interrupt_after 300;
+  let got =
+    Fun.protect
+      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+      (fun () ->
+        match Rig.open_ { name; driver = (module P); make = second } with
+        | Ok _ -> "opened, the signal taken " ^ !taken
+        | Error e -> "Error " ^ e
+        | exception Sys.Break -> "Sys.Break")
+  in
+  ignore (Unix.write_substring ending "x" 0 1);
+  Thread.join watchdog;
+  Thread.join opener;
+  Unix.close ended;
+  Unix.close ending;
+  equal ~msg:"the waiting open" string "Sys.Break" got;
+  equal ~msg:"its opener's calls" int 0 !calls;
+  is_ok ~msg:"the other open" (Option.get !first)
+
 (* A lost device's name opens again only once its stop returned: before, the
    open is an [Error]. *)
 let test_reopen_early () =
@@ -845,6 +915,8 @@ let tests =
         test_fault_at_open;
       test "a lost device's name opens anew once its stop answered" test_reopen;
       test "a blocked opener holds back no other name" test_blocked_opener;
+      test "an open waiting for its name's open takes Sys.Break (sampled)"
+        test_break_waiting_open;
       test "an ended device answers as it did before its end" test_ended;
       test "an ended device keeps only its record" test_ended_kept;
     ]

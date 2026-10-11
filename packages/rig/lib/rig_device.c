@@ -37,8 +37,8 @@
 
 #include "rig_stubs.h"
 
-/* How long a turn waiter blocks before it returns to OCaml, where pending
-   signals run: the still interval of waits. */
+/* How long a waiter for a turn or a lock blocks before it returns to OCaml,
+   where pending signals run: the still interval of waits. */
 #define STILL_MS 200
 
 /* What a submit answers. */
@@ -62,12 +62,9 @@ static int mutex_try(rig_mutex *m) { return TryAcquireSRWLockExclusive(m); }
 static void mutex_lock(rig_mutex *m) { AcquireSRWLockExclusive(m); }
 static void mutex_unlock(rig_mutex *m) { ReleaseSRWLockExclusive(m); }
 static void cond_init(rig_cond *c) { InitializeConditionVariable(c); }
-static void cond_wait(rig_cond *c, rig_mutex *m) {
-  SleepConditionVariableSRW(c, m, INFINITE, 0);
-}
 static void cond_broadcast(rig_cond *c) { WakeAllConditionVariable(c); }
-static void cv_wait_ms(struct rig_device *d, int ms) {
-  SleepConditionVariableSRW(&d->cv, &d->mu, (DWORD)ms, 0);
+static void cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
+  SleepConditionVariableSRW(c, m, (DWORD)ms, 0);
 }
 #else
 static void mutex_init(rig_mutex *m) { pthread_mutex_init(m, NULL); }
@@ -75,11 +72,10 @@ static int mutex_try(rig_mutex *m) { return pthread_mutex_trylock(m) == 0; }
 static void mutex_lock(rig_mutex *m) { pthread_mutex_lock(m); }
 static void mutex_unlock(rig_mutex *m) { pthread_mutex_unlock(m); }
 static void cond_init(rig_cond *c) { pthread_cond_init(c, NULL); }
-static void cond_wait(rig_cond *c, rig_mutex *m) { pthread_cond_wait(c, m); }
 static void cond_broadcast(rig_cond *c) { pthread_cond_broadcast(c); }
 /* A clock jump moves one timeout, which only returns a waiter early or late
    to OCaml. */
-static void cv_wait_ms(struct rig_device *d, int ms) {
+static void cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
   struct timespec t;
   clock_gettime(CLOCK_REALTIME, &t);
   t.tv_sec += ms / 1000;
@@ -88,9 +84,13 @@ static void cv_wait_ms(struct rig_device *d, int ms) {
     t.tv_sec += 1;
     t.tv_nsec -= 1000000000;
   }
-  pthread_cond_timedwait(&d->cv, &d->mu, &t);
+  pthread_cond_timedwait(c, m, &t);
 }
 #endif
+
+static void cv_wait_ms(struct rig_device *d, int ms) {
+  cond_wait_ms(&d->cv, &d->mu, ms);
+}
 
 static void mu_init(struct rig_device *d) {
   mutex_init(&d->mu);
@@ -392,13 +392,15 @@ value caml_rig_lock_give(value v_l) {
 }
 
 /* Gives up the lock [v_l], which the caller holds, until a broadcast on
-   it or a spurious wake-up, then takes it back; without the domain lock
-   meanwhile. */
+   it, a spurious wake-up or the still interval, then takes it back; without
+   the domain lock meanwhile. The caller waits in a loop, which so returns
+   to OCaml, where a pending signal's handler runs, at least every still
+   interval. */
 value caml_rig_lock_wait(value v_l) {
   CAMLparam1(v_l);
   struct rig_lock *l = Lock_val(v_l);
   caml_enter_blocking_section_no_pending();
-  cond_wait(&l->cv, &l->mu);
+  cond_wait_ms(&l->cv, &l->mu, STILL_MS);
   caml_leave_blocking_section();
   CAMLreturn(Val_unit);
 }

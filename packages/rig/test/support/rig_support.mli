@@ -330,6 +330,11 @@ val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts
     them on the proxy its arrays share: [0] if they share none. *)
 
+val interrupt_after : int -> unit
+(** [interrupt_after ms] raises SIGINT once [ms] milliseconds have passed, on a
+    new thread that runs no OCaml code, as a signal from outside the process
+    does: its handler runs on the next thread that returns to OCaml. *)
+
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)

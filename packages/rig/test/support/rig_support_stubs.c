@@ -908,6 +908,44 @@ value rig_test_slow(value unit) {
   return caml_copy_nativeint((intnat)&slow);
 }
 
+/* A thread of no OCaml code that raises SIGINT once the milliseconds [p]
+   holds have passed: the signal waits for a thread that returns to OCaml. */
+#ifdef _WIN32
+static DWORD WINAPI interrupter_main(void *p) {
+  sleep_ms((uint64_t)(uintptr_t)p);
+  raise(SIGINT);
+  return 0;
+}
+
+static int spawn_interrupter(uint64_t ms) {
+  HANDLE t = CreateThread(NULL, 0, interrupter_main, (void *)(uintptr_t)ms, 0,
+                          NULL);
+  if (t == NULL) return 0;
+  CloseHandle(t);
+  return 1;
+}
+#else
+static void *interrupter_main(void *p) {
+  sleep_ms((uint64_t)(uintptr_t)p);
+  raise(SIGINT);
+  return NULL;
+}
+
+static int spawn_interrupter(uint64_t ms) {
+  pthread_t t;
+  if (pthread_create(&t, NULL, interrupter_main, (void *)(uintptr_t)ms) != 0)
+    return 0;
+  pthread_detach(t);
+  return 1;
+}
+#endif
+
+value rig_test_interrupt_after(value v_ms) {
+  if (!spawn_interrupter((uint64_t)Long_val(v_ms)))
+    caml_failwith("Rig_support.interrupt_after: no thread");
+  return Val_unit;
+}
+
 /* A fill that takes one from the 64-bit word whose address its argument
    holds, and fails if that makes it zero. */
 static int countdown(void *queue, void *arg, uint64_t v) {
