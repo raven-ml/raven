@@ -30,23 +30,26 @@
     [γ(2n) + u|r| + ε] of the exact one, [ε] the error [Exp] and [Log] add; the
     mean within [γ(n) Σ|x| / n], and the variance [V] within
     [γ(n + 3) V + (1 + γ(n + 3)) γ(n)² (Σ|x| / n)²], for [n] exact in the
-    accumulator. A [Moments] scan, in the accumulator, is two running sums
-    [S₁] and [S₂] of the terms less the slice's first term [c] and of their
-    squares, [c] taken as [0] where it is not finite; at [n] terms the mean
-    is [c + S₁ / n] and the variance [S₂ / n - (S₁ / n)²], not below [+0],
-    each [S₁] where it is a NaN, a NaN term entering the sums with its bits.
-    The mean [μ] is within [γ(n + 2) Σ|x - c| / n + u|μ|] of the exact one
-    and the variance [V] within [γ(3n + 7) (V + (μ - c)²)]. A [Logsumexp]
-    scan, in the accumulator, is [⌈log₂ n⌉] maps for an axis of [n], at
-    least one: pass [k] combines each result with the one [2^k] before it,
-    or with [-∞] where none is, into [M + log1p (exp (m - M))], [M] the two's
-    [Maximum] and [m] their [Minimum], or [M] where [M] is not finite. A
-    result of [n] terms of largest finite magnitude [X] is within
-    [⌈log₂ n⌉ (u (X + ln n + 1) + ε)] of the exact one, to first order and
-    barring overflow, [ε] the error [Exp] and [Log1p] add: O(n log n). An
-    [Arg] scan, in the output's dtype, is the running [Max] or [Min] [m],
-    then a running [Max] of the positions where [m]'s bits differ from
-    those at the position before, [0] elsewhere: exact.
+    accumulator. A scan of [Logsumexp], [Moments] or [Arg], the first two in
+    the accumulator, doubles: along an axis of [n] it is [K = ⌈log₂ n⌉] maps,
+    at least one, pass [k] combining each index's state with the state [2^k]
+    before it, the earlier one first: O(n log n).
+    [Logsumexp] combines [a] and [b] into [M + log1p (exp (m - M))], [M] the
+    two's [Maximum] and [m] their [Minimum], or [M] where [M] is not finite,
+    [a] taken as [-∞] where none is before; a result of [n] terms of largest
+    finite magnitude [X] is within [K (u (X + ln n + 1) + ε)] of the exact
+    one, [ε] the error [Exp] and [Log1p] add. [Moments] combines the means
+    [μ] and sums of squared deviations [S] of the terms less the slice's
+    first term [c], [c] taken as [0] where it is not finite: [na] and [nb]
+    terms into [μa + δ nb / n] and [Sa + Sb + δ² na nb / n], [δ = μb - μa]
+    and [n = na + nb], or the mean [μa + μb] where either is not finite. At
+    [n] terms the mean is [c + μ] and the variance [S / n], or [μ - μ] where
+    [μ] is not finite. With [R] the terms' range, the mean [μ] is within
+    [(4K + 1) u R + u|μ|] of the exact one and the variance [V] within
+    [(8K + 1) u V + (6K² + 2) u R √V]. These bounds hold to first order,
+    barring overflow, for [n] exact in the accumulator. [Arg] combines pairs
+    of an extreme and its position, keeping the earlier pair unless the
+    later extreme is past it in [Max]'s or [Min]'s order: exact.
 
     A one-node map at a dtype other than a base one ({!base}), but a cast, a
     bitcast or a copy, computes at its dtypes' accumulators, which hold their

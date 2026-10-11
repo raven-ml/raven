@@ -578,15 +578,18 @@ let scan_moments (type v s) path axis (a : (v, s) A.t) =
       let m, v = scan1 (Moments (0, dt)) axis (value a) in
       (read m, read v)
 
-(* float32 terms near an offset [c], as {!moments_case}'s, along one axis. *)
+(* float32 terms near an offset [c], as {!moments_case}'s, along one axis, at
+   times long enough for several passes of a doubling. *)
 let moments_scan_case =
   let open Gen in
   with_pp
     (fun ppf (s, axis, c, _) ->
       Format.fprintf ppf "%a along %d near %g" pp_ints s axis c)
     (let* s = shape in
-     let s = if Array.length s = 0 then [| 3 |] else s in
+     let s = if Array.length s = 0 then [| 3 |] else Array.copy s in
      let* axis = int_range 0 (Array.length s - 1) in
+     let* n = frequency [ (3, constant s.(axis)); (1, int_range 5 40) ] in
+     s.(axis) <- n;
      let* c = of_list [ 0.; 1e3; 1e5 ] in
      let+ xs =
        array
@@ -612,20 +615,21 @@ let prefixes s axis =
       List.init s.(axis) (fun j -> List.init (j + 1) at))
     (indices outer)
 
-(* The expansion's bounds: the mean within [γ(n + 2) Σ|x - c| / n + u|μ|], the
-   variance [V] within [γ(3n + 7) (V + (μ - c)²)], [c] the slice's first
-   term; nx.cpu's: the mean within [(n + 9) u X / 2], the variance within
-   [(2n + 21) u X²], [X] the terms' largest magnitude. *)
+(* The expansion's bounds, with [K = ⌈log₂ n⌉] and [R] the terms' range: the
+   mean within [(4K + 1) u R + u|μ|], the variance [V] within
+   [(8K + 1) u V + (6K² + 2) u R √V]; nx.cpu's: the mean within
+   [(n + 9) u X / 2], the variance within [(2n + 21) u X²], [X] the terms'
+   largest magnitude. *)
 let law_moments_scan (s, axis, _, xs) =
   let x = A.of_array D.Float32 s xs in
   let u = ldexp 1. (-24) in
-  let gamma k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
-  let expansion n ~m ~v ~c ~spread ~big:_ =
-    let nf = Float.of_int n in
-    ( (gamma (n + 2) *. spread /. nf) +. (u *. Float.abs m),
-      gamma ((3 * n) + 7) *. (v +. ((m -. c) *. (m -. c))) )
+  let expansion n ~m ~v ~range ~big:_ =
+    let k = Float.ceil (Float.log2 (Float.of_int n)) in
+    ( (((4. *. k) +. 1.) *. u *. range) +. (u *. Float.abs m),
+      (((8. *. k) +. 1.) *. u *. v)
+      +. (((6. *. k *. k) +. 2.) *. u *. range *. Float.sqrt v) )
   in
-  let welford n ~m:_ ~v:_ ~c:_ ~spread:_ ~big =
+  let welford n ~m:_ ~v:_ ~range:_ ~big =
     let nf = Float.of_int n in
     ((nf +. 9.) /. 2. *. u *. big, ((2. *. nf) +. 21.) *. u *. big *. big)
   in
@@ -643,14 +647,14 @@ let law_moments_scan (s, axis, _, xs) =
           let v =
             List.fold_left (fun a t -> a +. ((t -. m) *. (t -. m))) 0. ts /. nf
           in
-          let c = List.hd ts in
-          let spread =
-            List.fold_left (fun a t -> a +. Float.abs (t -. c)) 0. ts
+          let range =
+            List.fold_left Float.max Float.neg_infinity ts
+            -. List.fold_left Float.min Float.infinity ts
           in
           let big =
             List.fold_left (fun a t -> Float.max a (Float.abs t)) 0. ts
           in
-          let bm, bv = bound n ~m ~v ~c ~spread ~big in
+          let bm, bv = bound n ~m ~v ~range ~big in
           let slack = 4. *. nf *. epsilon_float *. (v +. (big *. big)) in
           cover "one term" (n = 1);
           cover "terms" (n > 1);
@@ -1181,7 +1185,27 @@ let test_arg_scan_cases () =
       equal ~msg:(msg "bool")
         (pair (array bool) (array int64))
         ([| false; true; true |], [| 0L; 1L; 1L |])
-        (arg Max D.Bool [| 3 |] [| false; true; true |]))
+        (arg Max D.Bool [| 3 |] [| false; true; true |]);
+      (* Complex numbers order by real part, then imaginary part. *)
+      let z re im = { Complex.re; im } in
+      let parts (v, q) =
+        (Array.map (fun (c : Complex.t) -> (bits c.re, bits c.im)) v, q)
+      in
+      let zs = pair (array (pair int64 int64)) (array int64) in
+      let want v q = parts (v, q) in
+      equal ~msg:(msg "complex128 max, by parts, ties the first") zs
+        (want [| z 1. 2.; z 1. 3.; z 1. 3.; z 1. 3. |] [| 0L; 1L; 1L; 1L |])
+        (parts
+           (arg Max D.Complex128 [| 4 |]
+              [| z 1. 2.; z 1. 3.; z 1. 3.; z 0. 9. |]));
+      equal ~msg:(msg "complex64 min: a -0 part below +0") zs
+        (want [| z 1. 0.; z 1. (-0.); z 0. 5. |] [| 0L; 1L; 2L |])
+        (parts
+           (arg Min D.Complex64 [| 3 |] [| z 1. 0.; z 1. (-0.); z 0. 5. |]));
+      let a = nan_with 7L in
+      equal ~msg:(msg "complex128: a NaN part is the extreme") zs
+        (want [| z 1. 0.; z 2. a; z 2. a |] [| 0L; 1L; 1L |])
+        (parts (arg Max D.Complex128 [| 3 |] [| z 1. 0.; z 2. a; z 5. 0. |])))
 
 let test_optional_rules () =
   let x = vector D.Int32 [| 1l; 2l |] in
