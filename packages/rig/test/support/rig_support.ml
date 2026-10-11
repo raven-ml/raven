@@ -54,6 +54,7 @@ external unpark : unit -> unit = "rig_test_unpark"
 external sees_waits : unit -> bool = "rig_test_sees_waits"
 external interrupter_start : unit -> unit = "rig_test_interrupter_start"
 external interrupter_stop : unit -> bool = "rig_test_interrupter_stop"
+external set_address_space : int -> int = "rig_test_set_address_space"
 
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 [@@noalloc]

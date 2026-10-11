@@ -726,6 +726,68 @@ let shared_commands =
       fill;
   ]
 
+(* Growth the host refuses *)
+
+(* A child process limits its address space to [room] bytes above what it
+   maps, and stores into the last block of a submission whose blocks span 256
+   MiB: the store raises Out_of_memory. With the limit lifted, the run takes
+   another submission's stores and serves its submit. On Linux only: the limit
+   bounds no allocation elsewhere. *)
+let room = 64 lsl 20
+let spanning = 1 lsl 16
+
+let exe =
+  let e = Sys.executable_name in
+  if Filename.is_relative e then Filename.concat (Sys.getcwd ()) e else e
+
+(* The bytes the process maps: the [VmSize] of its status. *)
+let mapped () =
+  let field l = Scanf.sscanf_opt l "VmSize: %d kB" (fun k -> k * 1024) in
+  let lines =
+    In_channel.with_open_text "/proc/self/status" In_channel.input_lines
+  in
+  match List.find_map field lines with
+  | Some n -> n
+  | None -> failwith "no VmSize in /proc/self/status"
+
+let limit n =
+  match Rig_support.set_address_space n with
+  | 0 -> ()
+  | e -> failwith (strf "setrlimit: errno %d" e)
+
+let grow_child () =
+  let d, _ = polled "grow" in
+  let image = functions d in
+  let wide = launch image "main" ~params:4096 in
+  let big = Sub.make d (Array.make spanning wide) in
+  let small =
+    Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
+  in
+  let run = Run.make () in
+  limit (mapped () + room);
+  let refused =
+    match Run.int64 run (Sub.block big (spanning - 1)) 0 1 with
+    | () -> "stored"
+    | exception Stdlib.Out_of_memory -> "Out_of_memory"
+  in
+  limit max_int;
+  let b = Sub.block small 0 and out = B.create d 8 in
+  one run b;
+  Run.int64 run b 8 41;
+  Rig.Point.wait (submit ~buffers:[| out |] small run);
+  Printf.printf "%s\n%Ld\n" refused (String.get_int64_le (host_bytes out 8) 0)
+
+let test_grow_refused () =
+  if not (Sys.file_exists "/proc/self/status") then
+    skip ~reason:"the limit bounds no allocation off Linux" ();
+  let ic = Unix.open_process_args_in exe [| exe; "grow" |] in
+  let out = In_channel.input_all ic in
+  (match Unix.close_process_in ic with
+  | WEXITED 0 -> ()
+  | _ -> failf "the child failed: %s" out);
+  equal (list string) [ "Out_of_memory"; "41" ]
+    (String.split_on_char '\n' (String.trim out))
+
 (* Cost *)
 
 let words f =
@@ -806,6 +868,8 @@ let tests =
         test "a setter refuses a run a submit holds" test_setter_in_use;
         test "a run holds the blocks of the submission last stored into"
           test_block_owner;
+        test "a store whose growth the host refuses raises, the run usable"
+          test_grow_refused;
       ];
     group ~timeout "domains"
       [
@@ -820,4 +884,7 @@ let tests =
       ];
   ]
 
-let () = exit (run "rig.launch" tests)
+let () =
+  match Sys.argv with
+  | [| _; "grow" |] -> grow_child ()
+  | _ -> exit (run "rig.launch" tests)

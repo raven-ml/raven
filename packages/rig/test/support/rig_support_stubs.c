@@ -39,10 +39,14 @@
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <sys/syscall.h>
-#elif defined(__linux__) && defined(__GLIBC__)
+#elif defined(__linux__)
+#include <errno.h>
+#include <sys/resource.h>
+#if defined(__GLIBC__)
 #include <linux/futex.h>
 #include <stdio.h>
 #include <sys/syscall.h>
+#endif
 #endif
 
 #if defined(__has_feature)
@@ -1090,6 +1094,19 @@ value rig_test_interrupter_stop(value unit) {
 }
 
 #endif
+
+/* Holds the runtime: setrlimit does not block. */
+value rig_test_set_address_space(value v_n) {
+#if defined(__linux__)
+  struct rlimit l;
+  if (getrlimit(RLIMIT_AS, &l) != 0) return Val_int(errno);
+  l.rlim_cur = (rlim_t)Long_val(v_n);
+  return Val_int(setrlimit(RLIMIT_AS, &l) == 0 ? 0 : errno);
+#else
+  (void)v_n;
+  return Val_int(-1);
+#endif
+}
 
 /* A fill that takes one from the 64-bit word whose address its argument
    holds, and fails if that makes it zero. */

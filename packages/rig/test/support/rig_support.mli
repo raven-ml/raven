@@ -354,6 +354,11 @@ val interrupt_in_wait : (unit -> 'a) -> 'a * bool
     that returns to OCaml. The boolean is whether the signal was raised. It
     raises [Failure] where not {!sees_waits}. *)
 
+val set_address_space : int -> int
+(** [set_address_space n] sets the process's soft limit of its address space
+    to [n] bytes: [0], the errno of a refusal, or [-1] off Linux, where the
+    limit does not bound allocations. *)
+
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)
