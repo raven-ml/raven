@@ -624,6 +624,17 @@ let test_borrow_retried () =
   Sys.rename aside path;
   equal (option octets) (Some s) (borrowed host file)
 
+(* A file on a file system that maps no file, such as Linux's sysfs, borrows
+   as none, and so does every later borrow of its allocation. *)
+let unmapped = "/sys/devices/system/cpu/online"
+
+let test_never_mapped () =
+  if not (Sys.file_exists unmapped) then
+    skip ~reason:"the machine has no sysfs" ();
+  let file = of_file unmapped in
+  is_none ~msg:"the first borrow" (B.borrow host file);
+  is_none ~msg:"a later borrow" (B.borrow host file)
+
 let test_empty_borrows () =
   let path = new_path () and empty = make_file "" in
   removing [ path; empty ] @@ fun () ->
@@ -652,6 +663,8 @@ let borrows =
          Sys_error naming it, and a later borrow maps it"
         test_borrow_retried;
       test "a file of no bytes borrows as no bytes" test_empty_borrows;
+      test "a file its file system cannot map borrows as none, for good"
+        test_never_mapped;
     ]
 
 (* Opening and creating *)
@@ -1078,6 +1091,25 @@ let test_barrier_dead () =
     (Exn.invalid_arg ~substring:"Rig_disk.barrier: the buffer is dead: gone")
     (fun () -> Rig_disk.barrier file)
 
+(* A barrier first waits for the work that writes the file through a borrow:
+   work of a Polled device, unrun, which the device's loss drops. The barrier
+   raises that loss, and the disk is not lost. *)
+let test_barrier_lost () =
+  let path = new_path () in
+  removing [ path ] @@ fun () ->
+  let file = create path 64 in
+  let d, p = Rig_support.Polled.open_ "DISK-TEST-LOST" in
+  let on_d = require_some (B.borrow d file) in
+  let s =
+    Rig.Submission.make d [| Rig_support.touching [| Rig.Submission.write |] |]
+  in
+  ignore (Rig.submit s ~run:(Rig.Submission.Run.make ()) ~buffers:[| on_d |]);
+  Rig_support.Polled.fault p "the device fell off the bus";
+  let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
+  raises_match ~msg:"an allocation" lost (fun () -> B.create d 8);
+  raises_match ~msg:"the barrier" lost (fun () -> Rig_disk.barrier file);
+  is_none ~msg:"the disk's loss" (Rig.lost disk)
+
 let barriers =
   group ~timeout "barriers"
     [
@@ -1094,6 +1126,8 @@ let barriers =
           raises_match (Exn.invalid_arg ~substring:"Rig_disk.barrier: ")
             (fun () -> Rig_disk.barrier b));
       test "barrier refuses a dead buffer" test_barrier_dead;
+      test "barrier raises the loss of a device whose work writes the file"
+        test_barrier_lost;
       test "barrier returns on an empty buffer of the disk" (fun () ->
           Rig_disk.barrier (B.create disk 0));
       test "barrier returns on a lost device's borrow of an empty file"
