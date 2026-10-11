@@ -966,7 +966,8 @@ let set_pair (l, i, way) =
   l.pairs.(i) <- way
 
 (* [l.pairs] is replaced whole under [d]'s lock and its cells are ints, so a
-   read takes no lock: only an undecided pair does. *)
+   read takes no lock. Racy: a stale [undecided] decides the pair again, and
+   [pair_maps] keeps both decisions' mappings valid. *)
 let pair d p =
   let i = p.index and l = Dev.live d in
   let pairs = l.pairs in

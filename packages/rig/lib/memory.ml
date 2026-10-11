@@ -645,7 +645,9 @@ let take_due_holds () =
       put_back all;
       raise e
 
-let drain_holds () =
+(* Never inlined: rig's ThreadSanitizer suppression of its racy read names it. *)
+let[@inline never] drain_holds () =
+  (* Racy: a stale [[]] leaves a due hold to the next drain. *)
   if !holds != [] then List.iter run_release (take_due_holds ())
 
 let holds_list = Dev.release_list ()
@@ -942,6 +944,8 @@ let moved_at l =
    to [Given] that only one drain takes. *)
 let end_word d =
   let l = Dev.live d in
+  (* Racy: a stale [Read] finds the word moved, and a stale [Moved] reads again
+     under the lock. *)
   match l.word_end with
   | Given -> ()
   | Read ->
@@ -973,7 +977,7 @@ let rec drain_lost d i =
       (match e.live with
       | Some l when enter l ->
           (match
-             if l.word_end != Given then end_word e;
+             end_word e;
              if e != d && not (idle l && l.cached = 0) then drain_own e
            with
           | () -> leave e l
@@ -996,7 +1000,7 @@ let drain d =
     | _ -> ());
     drain_lost d 1;
     if released_any holds_list then List.iter (route d) (released holds_list);
-    if !holds != [] then drain_holds ()
+    drain_holds ()
   end
 
 let () = Dev.answered := drain

@@ -145,7 +145,8 @@ let map_halves st b ~pieces h0 h1 =
   end
 
 (* Whether [m] is the memory of a half of [st]: no closure, so the host's check
-   allocates nothing. *)
+   allocates nothing. Racy: another thread changes only the halves of a slot it
+   took, which [m] is not, so a stale half answers the same. *)
 let holds_half st m i h =
   match st.halves.(i).(h) with Some b -> Memory.root b.mem == Memory.root m | None -> false
 

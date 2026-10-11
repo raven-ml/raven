@@ -275,9 +275,11 @@ type memory = {
   address : int;  (** As [dev]'s work addresses it, [-1] if none. *)
   handle : nativeint;  (** The driver object that names it on [dev]. *)
   claim : claim;  (** The allocation's claim. *)
-  mutable entry : entry;
+  mutable entry : entry; [@atomic]
       (** The allocation's entry, {!Memory.no_entry} for host memory no
-          device borrowed. *)
+          device borrowed. Set once, under its device's lock, and read
+          without it: the read orders the reader's access to the entry's
+          stamps, which C initialised. *)
   root : memory;
       (** The owner's record for a borrow; for the owner's, a record that
           stands for the record itself ({!Memory.root}). *)
