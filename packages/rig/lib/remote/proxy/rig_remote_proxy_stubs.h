@@ -256,14 +256,16 @@ int rig_remote_add_dev(struct rig_remote_dev *d);
 
 /* The points of a link's protocol where rig_remote_link_hook, when set, is
    called: a suite holds a transfer or an abort there to make an
-   interleaving happen. [waiting] says, at RIG_REMOTE_LINK_RELEASING,
-   whether the release waits for an active transfer. Production leaves the
-   hook NULL. */
+   interleaving happen. RIG_REMOTE_LINK_CUT is a sender whose send failed,
+   once it released the send claim. [waiting] says, at
+   RIG_REMOTE_LINK_RELEASING, whether the release waits for an active
+   transfer. Production leaves the hook NULL. */
 enum rig_remote_link_point {
   RIG_REMOTE_LINK_SENDING,
   RIG_REMOTE_LINK_SENT,
   RIG_REMOTE_LINK_ARRIVED,
   RIG_REMOTE_LINK_ABORTING,
+  RIG_REMOTE_LINK_CUT,
   RIG_REMOTE_LINK_RELEASING
 };
 

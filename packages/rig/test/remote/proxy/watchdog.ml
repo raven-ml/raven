@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Every suite here runs in under 25 s, within runtest's 2 minutes. *)
+(* Every suite here runs in under a minute, within runtest's 2 minutes. *)
 let limit = 100.
 
 (* Ends this process with SIGKILL after [limit] seconds, so a suite that hangs

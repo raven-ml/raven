@@ -1,5 +1,6 @@
 (tests
- (names test_wire test_link test_proxy test_proxy_fail test_rail_release)
+ (names test_wire test_link test_link_fail test_proxy test_proxy_fail
+  test_rail_release)
  (modules :standard \ rig_link_probe)
  (deps
   support/link_peer.exe
