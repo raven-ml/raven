@@ -42,10 +42,9 @@ let nv _ ~marker ~arrived ~commands =
   let words = String.length methods / 4 in
   ((N.Gpfifo.entry (i commands) ~offset:0 ~words).bytes, methods)
 
-(* The 64-bit word at byte [at] of the bytes [a], read while work may write
-   them. *)
-let get64 (a : Rig_remote_abi.area) at =
-  String.get_int64_le (String.init 8 (fun i -> a.{at + i})) 0
+(* The 64-bit word at byte [at] of the bytes [a], read with acquire order
+   while work may write it. *)
+let get64 = Rig_support.load64
 
 (* A relay on the loopback to agent [a], and the function that ends both of
    its connections. *)

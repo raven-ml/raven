@@ -1313,6 +1313,12 @@ value rig_test_load(value v_addr) {
   return Val_long((intnat)atomic_load((_Atomic uint64_t *)Long_val(v_addr)));
 }
 
+value rig_test_load64(value v_a, value v_at) {
+  char *p = (char *)Caml_ba_data_val(v_a) + Long_val(v_at);
+  return caml_copy_int64(
+      (int64_t)atomic_load_explicit((_Atomic uint64_t *)p, memory_order_acquire));
+}
+
 value rig_test_store(value v_addr, value v) {
   atomic_store((_Atomic uint64_t *)Long_val(v_addr), (uint64_t)Long_val(v));
   return Val_unit;

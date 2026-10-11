@@ -68,6 +68,11 @@ external heap_bytes : unit -> int = "rig_test_heap_bytes"
 external gcc_asan : unit -> bool = "rig_test_gcc_asan" [@@noalloc]
 external load : int -> int = "rig_test_load"
 external store : int -> int -> unit = "rig_test_store"
+
+external load64 :
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  int ->
+  int64 = "rig_test_load64"
 external move : dst:int -> src:int -> int -> unit = "rig_test_move"
 
 let noop = noop ()

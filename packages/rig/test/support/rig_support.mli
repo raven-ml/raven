@@ -333,6 +333,14 @@ val load : int -> int
 
 val store : int -> int -> unit
 
+val load64 :
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+  int ->
+  int64
+(** [load64 a at] reads the 64-bit word at byte [at] of [a] with acquire order,
+    as work that reads a rail's count does: the bytes written before a release
+    store of the word are visible after it. *)
+
 val move : dst:int -> src:int -> int -> unit
 (** [move ~dst ~src n] copies the [n] bytes at host address [src] to host
     address [dst]. *)

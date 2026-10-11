@@ -43,5 +43,6 @@ fixture() {
   calling_x86_64.o calling_aarch64.o \
   waiting_x86_64.o waiting_aarch64.o ready_x86_64.o ready_aarch64.o \
   ready_x86_64_windows.o \
+  arrival_x86_64.o arrival_aarch64.o \
   simple_add_sm89.cubin
 for f in "$@"; do fixture "$f"; done

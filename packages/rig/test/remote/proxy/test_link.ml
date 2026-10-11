@@ -1392,18 +1392,14 @@ let agents =
 
 (* Rails *)
 
-external get64 : Rig_remote_abi.area -> int -> int64 = "%caml_bigstring_get64"
-
-(* A full barrier: reads after it see what the stores the count published. *)
-let fence = Atomic.make 0
 let ready = 0
 let sent = 128
 let arrived = 256
 
+(* The count at byte [at] of [e]'s counts, read with acquire order: the bytes
+   its store published are visible after it. *)
 let count (e : Rig_remote_abi.end_) at =
-  let v = Int64.to_int (get64 e.counts at) in
-  Atomic.incr fence;
-  v
+  Int64.to_int (Rig_support.load64 e.counts at)
 
 let round256 n = (n + 255) / 256 * 256
 
@@ -1547,7 +1543,7 @@ let rail_law p =
           equal
             ~msg:(who ^ " " ^ name)
             int64 Int64.max_int
-            (get64 e.Rig_remote_abi.counts at))
+            (Rig_support.load64 e.Rig_remote_abi.counts at))
         [ ("ready", ready); ("sent", sent); ("arrived", arrived) ])
     [ ("controller", ec); ("agent", ea) ]
 

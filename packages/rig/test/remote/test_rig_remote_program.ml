@@ -206,12 +206,8 @@ let host_record h =
   | Some (Rig_remote_abi.Host r) -> r
   | _ -> failf "%s has no host record" (Rig.name h)
 
-(* The 64-bit word at byte [at] of [a]. *)
-let word_at (a : Rig_remote_abi.area) at =
-  Int64.to_int
-    (String.get_int64_le
-       (String.init 8 (fun i -> Bigarray.Array1.get a (at + i)))
-       0)
+(* The 64-bit word at byte [at] of [a], read with acquire order. *)
+let word_at (a : Rig_remote_abi.area) at = Int64.to_int (Rig_support.load64 a at)
 
 let rail_sender h id =
   {
@@ -456,20 +452,36 @@ let loaded_rail_ends () =
             G.Rail { rail = rail.id; area = Counts };
             G.Rail { rail = rail.id; area = Inbound };
           |];
-        images = [||];
+        images = [| host_image 0 "arrival" |];
         inputs = [| { G.device = 0; bytes = 8 }; { G.device = 0; bytes = 8 } |];
         ints = 0;
         steps =
           [|
-            G.Move
+            (* test/fixtures' [arrival] stores [arrived], read with acquire
+               order, in input 0 and, once the transfer arrived, its bytes in
+               input 1. *)
+            G.Submit
               {
-                src = G.Memory { memory = 0; offset = 256; length = 8 };
-                dst = G.Input 0;
-              };
-            G.Move
-              {
-                src = G.Memory { memory = 1; offset = 0; length = 8 };
-                dst = G.Input 1;
+                device = 0;
+                slots =
+                  [|
+                    G.Input 0;
+                    G.Memory { memory = 0; offset = 256; length = 8 };
+                    G.Input 1;
+                    G.Memory { memory = 1; offset = 0; length = 8 };
+                  |];
+                fixed = [||];
+                parts =
+                  [|
+                    launch ~image:0 ~groups:(G.Fixed 1) "arrival"
+                      (String.make 32 '\000')
+                      [|
+                        ref_ Write 0 0;
+                        ref_ Read 8 1;
+                        ref_ Write 16 2;
+                        ref_ Read 24 3;
+                      |];
+                  |];
               };
           |];
       }
