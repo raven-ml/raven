@@ -270,13 +270,10 @@ val capability : t -> Rig_cuda_abi.t
        such as an allocation of {!alloc} or of another library, is mapped as
        it is, uncounted. That memory must stay locked until the region is
        freed.}
-    {- A range that shares a page with a locked range without lying inside
-       it is [None].}
     {- Any other range is locked, or [None] if CUDA refuses, as it does for
-       read-only memory.}}
-    It is also [None] where [g] does not map host memory ([maps_host]). A
-    region whose unlocking CUDA refuses, such as after a fault, keeps its
-    pages locked, and every later {!map_host} that overlaps them is [None].
+       read-only memory and for a range that overlaps locked memory without
+       lying inside one of its ranges.}}
+    It is also [None] where [g] does not map host memory ([maps_host]).
 
     On Linux, CUDA locks host pages for writing, which Linux refuses for a
     shared mapping of a file. A CUDA device therefore cannot borrow a region

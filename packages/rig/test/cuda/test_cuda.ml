@@ -961,16 +961,15 @@ module Registry = struct
             e.maps <- e.maps + 1;
             m.regions <- m.regions @ [ Counted e ];
             true
-        | None when List.exists (shares (a, n)) m.entries ->
-            let overlaps =
-              List.exists
-                (fun e -> a < e.start + e.bytes && e.start < a + n)
-                m.entries
-            in
-            cover "a range overlapping a registered one" overlaps;
-            cover "a range sharing only a page" (not overlaps);
+        | None
+          when List.exists
+                 (fun e -> a < e.start + e.bytes && e.start < a + n)
+                 m.entries ->
+            cover "a range overlapping a registered one" true;
             false
         | None ->
+            cover "a range sharing only a page with a registered one"
+              (List.exists (shares (a, n)) m.entries);
             let e = { start = a; bytes = n; maps = 1 } in
             m.entries <- e :: m.entries;
             m.regions <- m.regions @ [ Counted e ];

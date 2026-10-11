@@ -49,11 +49,6 @@ static void *library_open(const char *name) {
 static void *library_symbol(void *lib, const char *name) {
   return (void *)GetProcAddress((HMODULE)lib, name);
 }
-static long host_page_size(void) {
-  SYSTEM_INFO info;
-  GetSystemInfo(&info);
-  return (long)info.dwPageSize;
-}
 #else
 #include <dlfcn.h>
 #include <unistd.h>
@@ -70,7 +65,6 @@ static void *library_open(const char *name) {
 static void *library_symbol(void *lib, const char *name) {
   return dlsym(lib, name);
 }
-static long host_page_size(void) { return sysconf(_SC_PAGESIZE); }
 #endif
 
 /* The CUDA driver API, from cuda.h */
@@ -268,11 +262,6 @@ static value answer(CUresult s, intnat x) {
 value caml_rig_cuda_symbol(value v_name) {
   void *f = library == NULL ? NULL : library_symbol(library, String_val(v_name));
   return Val_long((intnat)f);
-}
-
-value caml_rig_cuda_page_size(value unit) {
-  (void)unit;
-  return Val_long(host_page_size());
 }
 
 value caml_rig_cuda_driver_version(value unit) {
@@ -552,9 +541,9 @@ value caml_rig_cuda_mapped(value v_context, value v_address) {
   return answer(s, (intnat)a);
 }
 
-/* The start of the CUDA allocation that holds [v_address], or CUDA's
-   status negated: host memory CUDA allocated or page-locked, under unified
-   addressing. */
+/* The start of the CUDA allocation or registration that holds [v_address],
+   or CUDA's status negated: host memory CUDA allocated or page-locked, under
+   unified addressing. */
 value caml_rig_cuda_allocation(value v_context, value v_address) {
   CUdeviceptr start = 0;
   CUresult s;

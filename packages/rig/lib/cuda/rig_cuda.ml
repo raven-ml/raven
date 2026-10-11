@@ -24,7 +24,6 @@ exception Fault of string
 external load : unit -> int * string = "caml_rig_cuda_load"
 external error : int -> string = "caml_rig_cuda_error"
 external symbol : string -> int = "caml_rig_cuda_symbol"
-external page_size : unit -> int = "caml_rig_cuda_page_size"
 external driver_version : unit -> int = "caml_rig_cuda_driver_version"
 external device_count : unit -> int = "caml_rig_cuda_count"
 external device : int -> int = "caml_rig_cuda_device"
@@ -140,13 +139,7 @@ let find_gpus () =
 (* Memory. Page-locking is the process's: a registration serves every device,
    and ends at the last free of a region over it, from any device. *)
 
-type registration = {
-  start : int;
-  bytes : int;
-  address : int; (* where CUDA's work reaches [start] *)
-  mutable maps : int;
-  mutable stuck : bool; (* CUDA refused its unregistration *)
-}
+type registration = { start : int; bytes : int; mutable maps : int }
 
 type kind =
   | Device
@@ -540,52 +533,53 @@ let map_peer g _ (r : region) =
   if not (on_host kind || addresses g r.home) then None
   else Some { r with kind = Peer kind }
 
+(* The registrations [map_host] made, with the regions over each. *)
 let registry : registration list ref = ref []
 let registry_lock = Mutex.create ()
-let page = page_size ()
-let pages a n = (a / page * page, (a + n + page - 1) / page * page)
-let locked g e a address = region g.gpu (Locked e) ~address ~handle:a
 let page_locking n a = strf "page-locking %d bytes at 0x%x" n a
 
-(* A range CUDA did not page-lock is registered. One it did, for another owner,
-   is mapped as it is if both its ends lie in one allocation: two allocations
-   may have unlocked pages between them. *)
-let page_lock g a n =
-  let first = mapped g.context a and last = mapped g.context (a + n - 1) in
-  if first >= 0 && last >= 0 then
-    let start = allocation g.context a in
-    if start >= 0 && start = allocation g.context (a + n - 1) then
-      Some (locked g None a first)
-    else None
-  else if first >= 0 || last >= 0 then None
-  else if lock g.context true a n <> 0 then
-    refused (page_locking n a) g.self None
-  else
-    match mapped g.context a with
-    | address when address < 0 -> fault (page_locking n a) (-address)
-    | address ->
-        let e = { start = a; bytes = n; address; maps = 1; stuck = false } in
-        registry := e :: !registry;
-        Some (locked g (Some e) a address)
+(* A region over the locked memory at [a], at the address CUDA's work reaches
+   it by. *)
+let locked g e a =
+  match mapped g.context a with
+  | address when address < 0 -> Error (-address)
+  | address -> Ok (region g.gpu (Locked e) ~address ~handle:a)
 
+(* A range inside a registration [map_host] made counts against it. Any other
+   is registered; if CUDA refuses, it is mapped as it is when both its ends lie
+   in one allocation of CUDA's, which another owner locked: two allocations
+   may have unlocked pages between them. *)
 let map_host g a n =
   if n < 1 then
     invalid_argf "Rig_cuda.map_host: %d bytes, expected at least 1" n;
   if not g.facts.maps_host then None
   else
-    let lo, hi = pages a n in
-    let inside e = e.start <= a && a + n <= e.start + e.bytes in
-    let shares e =
-      let lo', hi' = pages e.start e.bytes in
-      lo < hi' && lo' < hi
-    in
     Mutex.protect registry_lock @@ fun () ->
+    let inside e = e.start <= a && a + n <= e.start + e.bytes in
     match List.find_opt inside !registry with
-    | Some e when e.stuck -> None
-    | Some e ->
-        e.maps <- e.maps + 1;
-        Some (locked g (Some e) a (e.address + (a - e.start)))
-    | None -> if List.exists shares !registry then None else page_lock g a n
+    | Some e -> (
+        match locked g (Some e) a with
+        | Ok r ->
+            e.maps <- e.maps + 1;
+            Some r
+        | Error s -> fault (page_locking n a) s)
+    | None when lock g.context true a n = 0 -> (
+        let e = { start = a; bytes = n; maps = 1 } in
+        match locked g (Some e) a with
+        | Ok r ->
+            registry := e :: !registry;
+            Some r
+        | Error s ->
+            ignore (lock g.context false a 0 : int);
+            fault (page_locking n a) s)
+    | None -> (
+        let start = allocation g.context a in
+        if start < 0 || start <> allocation g.context (a + n - 1) then
+          refused (page_locking n a) g.self None
+        else
+          match locked g None a with
+          | Ok r -> Some r
+          | Error s -> fault (page_locking n a) s)
 
 let free g (r : region) =
   match r.kind with
@@ -596,10 +590,10 @@ let free g (r : region) =
   | Locked (Some e) ->
       Mutex.protect registry_lock @@ fun () ->
       e.maps <- e.maps - 1;
-      if e.maps = 0 && not e.stuck then
-        if lock g.context false e.start 0 = 0 then
-          registry := List.filter (fun e' -> e' != e) !registry
-        else e.stuck <- true
+      if e.maps = 0 then begin
+        registry := List.filter (fun e' -> e' != e) !registry;
+        ignore (lock g.context false e.start 0 : int)
+      end
   | Word ->
       Mutex.protect held_lock @@ fun () ->
       ignore (Atomic.compare_and_set g.held (-g.self) unheld);
