@@ -64,9 +64,10 @@ type file = {
   writable : bool;
   size : int;
   identity : string;
-  mutable fd : int; (* [-1] while closed *)
+  mutable fd : int; [@atomic] (* [-1] while closed *)
   mutable users : int; [@atomic] (* copies using [fd], [-1] while it closes *)
-  mutable newer : file; (* links in the table's ring, [f] itself out of it *)
+  mutable newer : file; [@atomic]
+      (* links in the table's ring, [f] itself out of it *)
   mutable older : file;
   mutable pages : pages option; (* its mapping, once a borrow made it *)
 }
@@ -102,7 +103,7 @@ let unix_error f e = sys_error f (Unix.error_message e)
    recently used file changes no link, and an open or a copy takes the same few
    steps and allocates nothing however full the table is. *)
 let max_open = 64
-let in_table = ref 0
+let in_table = Atomic.make 0
 
 (* The table's lock and the forks it was made after. A forked child makes the
    lock anew at its first use: a thread of its parent may have held it. *)
@@ -162,7 +163,7 @@ let close_fd f =
   if fd >= 0 then begin
     f.fd <- -1;
     if listed f then begin
-      decr in_table;
+      Atomic.decr in_table;
       unlink f
     end;
     f.users <- 0;
@@ -178,7 +179,7 @@ let evict f =
    are open. *)
 let close_down keep =
   let f = ref ring.older in
-  while !in_table > keep && !f != ring do
+  while Atomic.get in_table > keep && !f != ring do
     let g = !f in
     f := g.newer;
     if g.users = 0 then evict g
@@ -190,19 +191,19 @@ let trim () = close_down max_open
 let admit f fd =
   f.fd <- fd;
   if listed f then begin
-    incr in_table;
+    Atomic.incr in_table;
     touch f
   end
 
 (* Opens [path], closing every unpinned descriptor and trying once more if the
    process or the system has too many open. *)
 let open_retrying path mode n =
-  let before = !in_table in
+  let before = Atomic.get in_table in
   match open_path path mode n with
   | r -> r
   | exception (Unix.Unix_error ((EMFILE | ENFILE), _, _) as e) ->
       close_down 0;
-      if !in_table < before then open_path path mode n else raise e
+      if Atomic.get in_table < before then open_path path mode n else raise e
 
 (* Opens [f]'s path again, which must still name [f]'s file. *)
 let reopen f =
@@ -223,7 +224,10 @@ let reopen f =
    without the table's lock: an eviction closes a descriptor only by claiming
    [users] from 0, and a pin that finds the file closed reopens it under the
    lock. An unpin takes the lock only to make its file the most recently used or
-   to bring the table back to its bound. *)
+   to bring the table back to its bound. What a pin or an unpin reads without
+   the lock ([fd], [ring.newer], [in_table]) is atomic, as [users] is: an
+   unpin's read of [in_table] and a trim's read of [users] are never both
+   stale, so the table never stays beyond its bound once its pins end. *)
 
 (* [f]'s descriptor, opened again by its path if it was closed, pinned. Holds
    the table's lock. *)
@@ -258,7 +262,7 @@ let unpin f =
   if
     Atomic.Loc.fetch_and_add [%atomic.loc f.users] (-1) = 1
     && listed f
-    && (ring.newer != f || !in_table > max_open)
+    && (ring.newer != f || Atomic.get in_table > max_open)
   then locked unpinned f
 
 (* [using f fn] is [fn fd] with [f]'s descriptor [fd] pinned. Raises [Sys_error]
