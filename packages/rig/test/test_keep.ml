@@ -262,23 +262,28 @@ type readers = { mutable submits : int }
 let readers_t =
   abstract ~pp:(fun ppf r -> Format.fprintf ppf "%d submits" r.submits) "r"
 
-(* Each domain's device, opened once for every case, before any domain
-   runs. *)
-let reader_devices = (P.open_ "keep:readers-0", P.open_ "keep:readers-1")
+(* Each domain's device, and the memory both borrow, made once for every
+   case before any domain runs. A case then maps and frees nothing, so the
+   devices' logs stay short, and allocates no buffer a device can borrow,
+   each of which can bring a major cycle. *)
+let reader_memory = B.create Rig.host (1 lsl 16)
 
-(* The memory, and each domain's submission over it, on its device. The
-   earlier cases' work runs first: their memory returns, so a drain walks
-   one case's releases, never every case's. *)
+let reader_devices =
+  let device name =
+    let d, p = P.open_ name in
+    (d, p, require_some (B.borrow d reader_memory))
+  in
+  (device "keep:readers-0", device "keep:readers-1")
+
+(* Each domain's submission over the memory, on its device. The earlier
+   cases' work runs first, so a drain walks one case's releases, never every
+   case's. *)
 let make_readers () =
-  let (d0, p0), (d1, p1) = reader_devices in
+  let (d0, p0, on0), (d1, p1, on1) = reader_devices in
   ignore (P.run p0);
   ignore (P.run p1);
-  let m = B.create Rig.host (1 lsl 16) in
-  let device d =
-    let on = require_some (B.borrow d m) in
-    Sub.make ~fixed:[ (on, Rig.Read) ] d [||]
-  in
-  (m, device d0, device d1)
+  let device d on = Sub.make ~fixed:[ (on, Rig.Read) ] d [||] in
+  (reader_memory, device d0 on0, device d1 on1)
 
 let submit_read (_, s, s') domain =
   ignore (submit (if domain = 0 then s else s'))
