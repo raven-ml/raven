@@ -275,13 +275,13 @@ type step =
   | Loop of {
       trips : value;
       trip : int option;
-      flag : view option;
+      flag : slot option;
       body : step iarray;
     }
       (** [body], [trips] times, none where [trips <= 0], storing each trip's
           index from [0] into word [trip] of the run's ints. With [flag], it
-          reads [flag]'s first byte before each trip, once the work that wrote
-          it is done, and stops at [0]. *)
+          reads the first byte of [flag]'s buffer before each trip, once the
+          work that wrote it is done, and stops at [0]. *)
 
 type input = { device : int; bytes : int }
 (** The type for inputs: a buffer of [device] of at least [bytes] bytes. *)
@@ -346,7 +346,7 @@ val load :
        its driver names by handle only;}
     {- a device that names memory cannot borrow it ({!Rig.Buffer.borrow});}
     {- an [Int] or a loop's [trip] is past the ints, or a loop's flag has no
-       byte;}
+       byte, as an input of no [bytes] or ints of no word;}
     {- a ref or a copy names no slot of its submit, a slot is named by no
        ref or copy, or a slot is named by both an [Unordered] ref and a
        [Read] or [Write] ref or a copy;}
