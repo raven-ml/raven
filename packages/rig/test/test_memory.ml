@@ -494,7 +494,7 @@ let test_borrowed_host () =
     let src = B.create d n in
     let dst = require_some (B.borrow d h) in
     let part =
-      Sub.copy ~src ~dst
+      Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
     in
     ignore (submit (Sub.make d [| part |]));
     Support.at h
@@ -523,7 +523,7 @@ let test_borrowed_bigarray () =
     let src = B.create d n in
     let dst = require_some (B.borrow d (B.of_bigarray ba)) in
     let part =
-      Sub.copy ~src ~dst
+      Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
     in
     ignore (submit (Sub.make d [| part |]))
   in
@@ -550,7 +550,7 @@ let test_idle_borrower () =
     let src = B.create d n in
     let dst = require_some (B.borrow d h) in
     let part =
-      Sub.copy ~src ~dst
+      Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
     in
     ignore (submit (Sub.make d [| part |]))
   in

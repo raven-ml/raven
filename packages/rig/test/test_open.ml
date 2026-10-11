@@ -224,7 +224,7 @@ let test_copy_engine () =
   let c = open_as (module Copyless) "open:copyless" (P.make ()) in
   let src = Rig.Buffer.create c 8 and dst = Rig.Buffer.create c 8 in
   raises_match (Exn.invalid_arg ~substring:"runs no copies") (fun () ->
-      Rig.Submission.make c [| Rig.Submission.copy ~src ~dst |])
+      Rig.Submission.(make c [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
 
 (* A copy engine that names no queue, or a queue that runs no copy, refuses
    the open, and the driver's device is stopped. *)

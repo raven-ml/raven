@@ -507,7 +507,10 @@ let copies_law (init, ops) =
       let s =
         Sub.make devices.(d)
           [|
-            Sub.copy ~src:(view o.src o.at_src) ~dst:(view o.dst o.at_dst);
+            Sub.(
+              copy
+                ~src:(Buffer (view o.src o.at_src))
+                ~dst:(Buffer (view o.dst o.at_dst)));
           |]
       in
       last.(d) <- Some (Rig.submit s ~run ~buffers:[||]);
@@ -572,7 +575,7 @@ let close_waits () =
     (Rig.submit
        (Sub.make h
           [|
-            Sub.copy ~src:far ~dst:here;
+            Sub.(copy ~src:(Buffer far) ~dst:(Buffer here));
           |])
        ~run:(Sub.Run.make ()) ~buffers:[||]);
   Rig_remote.close j;

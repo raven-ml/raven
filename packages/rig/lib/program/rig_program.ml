@@ -43,7 +43,7 @@ type slot = Memory of view | Input of int | Ints
 type part =
   | Words of view
   | Fill of { fill : leaf; params : value data; refs : ref iarray }
-  | Copy of { src : view; dst : view }
+  | Copy of { src : int; dst : int }
   | Launch of {
       image : int;
       name : string;
@@ -172,9 +172,7 @@ let check_part t sizes = function
       if n mod 4 <> 0 || n > 4096 then
         refuse "fill: invalid parameter length %d" n;
       check_holes "fill parameters" n (check_value t) params.holes
-  | Copy { src; dst } ->
-      check_view t sizes src;
-      check_view t sizes dst
+  | Copy _ -> ()
   | Launch
       { image; params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
       index "image" (Iarray.length t.images) image;
@@ -189,23 +187,67 @@ let check_part t sizes = function
         n (check_value t) params.holes;
       List.iter (check_value t) [ gx; gy; gz; tx; ty; tz; shared ]
 
+(* Refuses a copy between slots [src] and [dst] whose lengths, where known,
+   differ, or which are one buffer. A view's and the ints' lengths are known,
+   and an input's is at least its [bytes]. *)
+let check_copy t slots src dst =
+  let length = function
+    | Memory v -> `Exactly v.length
+    | Ints -> `Exactly (8 * t.ints)
+    | Input i -> `At_least (Iarray.get t.inputs i).bytes
+  in
+  let a = Iarray.get slots src and b = Iarray.get slots dst in
+  (match (length a, length b) with
+  | `Exactly n, `Exactly m when n <> m ->
+      refuse "a copy of slot %d's %d bytes into slot %d's %d" src n dst m
+  | `Exactly n, `At_least m | `At_least m, `Exactly n ->
+      if n < m then
+        refuse "a copy between slots %d and %d: %d bytes, an input's %d or more"
+          src dst n m
+  | _ -> ());
+  match (a, b) with
+  | Ints, Ints -> refuse "a copy of the ints into themselves"
+  | Input i, Input j when i = j -> refuse "a copy of input %d into itself" i
+  | _ -> ()
+
 let rec check_step t sizes ndev = function
   | Submit s ->
       index "device" ndev s.device;
       Iarray.iter (check_part t sizes) s.parts;
       Iarray.iter (check_slot t sizes) s.slots;
-      let named = Array.make (Iarray.length s.slots) false in
+      (* Per slot, whether an unordered ref names it, and whether an ordered
+         ref or a copy does. *)
+      let n = Iarray.length s.slots in
+      let unordered = Array.make n false and ordered = Array.make n false in
+      let name k =
+        index "slot" n k;
+        ordered.(k) <- true
+      in
       Iarray.iter
-        (fun p ->
-          Iarray.iter
-            (fun r ->
-              index "slot" (Iarray.length s.slots) r.slot;
-              named.(r.slot) <- true)
-            (refs_of p))
+        (function
+          | Copy { src; dst } ->
+              name src;
+              name dst;
+              check_copy t s.slots src dst
+          | p ->
+              Iarray.iter
+                (fun r ->
+                  match r.use with
+                  | Unordered ->
+                      index "slot" n r.slot;
+                      unordered.(r.slot) <- true
+                  | Read | Write -> name r.slot)
+                (refs_of p))
         s.parts;
-      Array.iteri
-        (fun i named -> if not named then refuse "slot %d: no ref names it" i)
-        named;
+      for i = 0 to n - 1 do
+        match (unordered.(i), ordered.(i)) with
+        | false, false -> refuse "slot %d: no ref or copy names it" i
+        | true, true ->
+            refuse
+              "slot %d: named by an unordered ref and an ordered one or a copy"
+              i
+        | _ -> ()
+      done;
       Iarray.iter (fun (v, _) -> check_view t sizes v) s.fixed
   | Move { src; dst } ->
       check_slot t sizes src;
@@ -242,8 +284,7 @@ let check_memory t sizes =
       Iarray.to_list s.parts
       |> List.concat_map (function
         | Words v -> [ v ]
-        | Copy { src; dst } -> [ src; dst ]
-        | Fill _ | Launch _ -> [])
+        | Copy _ | Fill _ | Launch _ -> [])
     in
     List.map fst (Iarray.to_list s.fixed) @ views s.slots @ parts
   in
@@ -398,7 +439,7 @@ let check t sizes devices =
    count, then its elements; a variant its tag, a byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 8
+let version = 9
 
 module W = struct
   let int b n = Buffer.add_int64_le b (Int64.of_int n)
@@ -510,8 +551,8 @@ module W = struct
         array ref b refs
     | Copy { src; dst } ->
         tag b 2;
-        view b src;
-        view b dst
+        int b src;
+        int b dst
     | Launch { image; name; params; refs; groups; threads; shared } ->
         tag b 3;
         int b image;
@@ -727,8 +768,8 @@ module R = struct
         let refs = array ref r in
         Fill { fill; params; refs }
     | 2 ->
-        let src = view r in
-        let dst = view r in
+        let src = int r in
+        let dst = int r in
         Copy { src; dst }
     | 3 ->
         let image = int r in
@@ -846,6 +887,8 @@ type prepared = {
   sub : Sub.t;
   srun : Sub.Run.t;
   buffers : B.t array;
+  input_slots : (int * int) array;
+      (* Each slot of [sub] that holds an input, with the input. *)
   blocks : block_run array;
 }
 
@@ -862,14 +905,16 @@ type lstep =
 type frame = { inputs : B.t array; ints : int array }
 
 (* Whether each of [s]'s slots is written: a [Write] or an [Unordered] ref
-   names it. [s]'s indices are checked. *)
+   names it, or it is a copy's [dst]. [s]'s indices are checked. *)
 let written (s : submit) =
   let w = Array.make (Iarray.length s.slots) false in
   Iarray.iter
-    (fun p ->
-      Iarray.iter
-        (fun r -> if r.use <> Read then w.(r.slot) <- true)
-        (refs_of p))
+    (function
+      | Copy { dst; _ } -> w.(dst) <- true
+      | p ->
+          Iarray.iter
+            (fun r -> if r.use <> Read then w.(r.slot) <- true)
+            (refs_of p))
     s.parts;
   w
 
@@ -1058,12 +1103,6 @@ let view p k d (v : view) =
     (on p v.memory (copy_of p v.memory k) d)
     ~first:v.offset ~length:v.length
 
-(* The memory of [s], [None] for an input. *)
-let slot_view p = function
-  | Memory v -> Some v
-  | Ints -> Some (ints_view p.t)
-  | Input _ -> None
-
 (* The value of [l] for copy [k]. *)
 let leaf_value p k = function
   | Address { memory; on = d } -> (
@@ -1133,7 +1172,7 @@ let per_copy t (s : submit) =
     | Words v -> view v
     | Fill { fill; params; _ } ->
         leaf_two t fill || Iarray.exists (fun h -> value h.leaf) params.holes
-    | Copy { src; dst } -> view src || view dst
+    | Copy _ -> false
     | Launch { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
         Iarray.exists (fun h -> value h.leaf) params.holes
         || List.exists value [ gx; gy; gz; tx; ty; tz; shared ]
@@ -1166,15 +1205,36 @@ let resolve p k : value -> known = function
   | Leaf l -> Known (leaf_value p k l)
   | Int i -> Word i
 
+(* The slot of [s]'s submission for each of [s]'s slots, in order, or [-1]
+   where it has none: memory that only copies name, whose ends are the
+   memory's buffer, set at make. *)
+let sub_slots (s : submit) =
+  let n = Iarray.length s.slots in
+  let reffed = Array.make n false in
+  Iarray.iter
+    (fun p -> Iarray.iter (fun r -> reffed.(r.slot) <- true) (refs_of p))
+    s.parts;
+  let index = Array.make n (-1) and next = ref 0 in
+  for i = 0 to n - 1 do
+    match Iarray.get s.slots i with
+    | Memory _ when not reffed.(i) -> ()
+    | Memory _ | Input _ | Ints ->
+        index.(i) <- !next;
+        incr next
+  done;
+  index
+
 (* The submission of [s] for copy [k], and its run holding the words of its
    blocks that no run changes. *)
 let prepared p k (s : submit) =
   let d = s.device in
+  let index = sub_slots s in
   let sub_ref r =
+    let slot = index.(r.slot) in
     match r.use with
-    | Read -> Sub.read r.slot ~at:r.at
-    | Write -> Sub.write r.slot ~at:r.at
-    | Unordered -> Sub.unordered r.slot ~at:r.at
+    | Read -> Sub.read slot ~at:r.at
+    | Write -> Sub.write slot ~at:r.at
+    | Unordered -> Sub.unordered slot ~at:r.at
   in
   let refs rs = Array.map sub_ref (Iarray.to_array rs) in
   let part = function
@@ -1182,7 +1242,13 @@ let prepared p k (s : submit) =
     | Fill { fill; params; refs = rs } ->
         let fill = Nativeint.of_int (leaf_value p k fill) in
         Sub.fill ~refs:(refs rs) fill ~params:(String.length params.bytes)
-    | Copy { src; dst } -> Sub.copy ~src:(view p k d src) ~dst:(view p k d dst)
+    | Copy { src; dst } ->
+        let side i =
+          match Iarray.get s.slots i with
+          | Memory v -> Sub.Buffer (view p k d v)
+          | Input _ | Ints -> Sub.Slot index.(i)
+        in
+        Sub.copy ~src:(side src) ~dst:(side dst)
     | Launch { image; name; params; refs = rs; _ } ->
         Sub.launch ~refs:(refs rs) p.images.(image) name
           ~params:(String.length params.bytes)
@@ -1199,9 +1265,17 @@ let prepared p k (s : submit) =
         && v.length = B.length p.mem.(v.memory).(copy_of p v.memory k)
       then Hashtbl.replace p.fixes (v.memory, copy_of p v.memory k, d) sub)
     s.fixed;
-  let slot s =
-    match slot_view p s with Some v -> view p k d v | None -> unset
-  in
+  let buffers = Array.make (Array.fold_left max (-1) index + 1) unset
+  and inputs = ref [] in
+  Iarray.iteri
+    (fun i slot ->
+      let j = index.(i) in
+      if j >= 0 then
+        match slot with
+        | Input input -> inputs := (j, input) :: !inputs
+        | Memory v -> buffers.(j) <- view p k d v
+        | Ints -> buffers.(j) <- view p k d (ints_view p.t))
+    s.slots;
   let srun = Sub.Run.make () in
   let known = resolve p k in
   let value = function Known n -> n | Word _ -> 0 in
@@ -1248,7 +1322,8 @@ let prepared p k (s : submit) =
   {
     sub;
     srun;
-    buffers = Iarray.to_array (Iarray.map slot s.slots);
+    buffers;
+    input_slots = Array.of_list !inputs;
     blocks =
       Array.of_list
         (List.filter_map Fun.id (Iarray.to_list (Iarray.mapi block s.parts)));
@@ -1469,20 +1544,17 @@ let set_trip p k w i =
 
 let run_value (p : here) k = function Known n -> n | Word i -> int_at p k i
 
-let pass p (s : slot iarray) bufs d =
-  for i = 0 to Iarray.length s - 1 do
-    match Iarray.get s i with
-    | Input j -> bufs.(i) <- bound p j d
-    | Memory _ | Ints -> ()
+let pass p q d =
+  for x = 0 to Array.length q.input_slots - 1 do
+    let i, j = q.input_slots.(x) in
+    q.buffers.(i) <- bound p j d
   done
 
-(* Drops the inputs [bufs] held, so a loaded program keeps no caller's buffer
-   past its run. *)
-let unpass (s : slot iarray) bufs =
-  for i = 0 to Iarray.length s - 1 do
-    match Iarray.get s i with
-    | Input _ -> bufs.(i) <- unset
-    | Memory _ | Ints -> ()
+(* Drops the inputs [q]'s buffers held, so a loaded program keeps no caller's
+   buffer past its run. *)
+let unpass q =
+  for x = 0 to Array.length q.input_slots - 1 do
+    q.buffers.(fst q.input_slots.(x)) <- unset
   done
 
 let mem_buffer p k (v : view) =
@@ -1513,17 +1585,17 @@ let submit_step p k waits (spec : submit) copies =
    with Clobbers at ->
      invalid
        "a parameter hole at byte %d: its value meets set bits of its bytes" at);
-  pass p spec.slots q.buffers d;
+  pass p q d;
   let waits = if p.ran.(d) then None else waits in
   match Rig.submit ?waits q.sub ~run:q.srun ~buffers:q.buffers with
   | point ->
-      unpass spec.slots q.buffers;
+      unpass q;
       if Array.length p.last = 0 then
         p.last <- Array.make (Array.length p.devices) point;
       p.last.(d) <- point;
       p.ran.(d) <- true
   | exception e ->
-      unpass spec.slots q.buffers;
+      unpass q;
       raise e
 
 (* Whether [flag]'s first byte is not [0], once the work that wrote it is

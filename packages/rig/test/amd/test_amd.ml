@@ -640,7 +640,8 @@ let get b =
   Rig.Buffer.copy ~src:b ~dst:(Rig.Buffer.of_bigarray a);
   String.init n (fun i -> a.{i})
 
-let copy ~dst src = Rig_gpu_support.work (Rig.Submission.copy ~src ~dst)
+let copy ~dst src =
+  Rig_gpu_support.work Rig.Submission.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
 (* Submits [ps] and waits for their point. *)
 let run t ps = Rig.Point.wait (S.submit_work t (Array.to_list ps))

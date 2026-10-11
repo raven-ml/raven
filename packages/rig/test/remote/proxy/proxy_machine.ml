@@ -386,7 +386,7 @@ let random_string n = String.init n (fun _ -> Char.chr (Random.int 256))
 
 let copy_submission d ~src ~dst =
   Sub.make d
-    [| Sub.copy ~src ~dst |]
+    [| Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]
 
 let submit ?waits s = Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers:[||]
 

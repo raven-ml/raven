@@ -250,7 +250,8 @@ let copy_rows =
          let parts =
            Array.init 32 (fun i ->
                let view b = B.view b ~first:(i * 4 * kib) ~length:(4 * kib) in
-               Sub.copy ~src:(view c.far) ~dst:(view c.near))
+               let src = view c.far and dst = view c.near in
+               Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)))
          in
          (c, Sub.make (B.device c.far) parts, Sub.Run.make ()))
        ~teardown:(fun (c, _, _) -> finished c)

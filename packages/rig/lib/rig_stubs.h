@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <caml/mlvalues.h>
+
 #include "rig_edge.h"
 
 #ifdef _WIN32
@@ -183,6 +185,36 @@ struct rig_slot {
   _Atomic uint64_t *use;
 };
 
+/* What a run's buffer that a copy names passes the driver, and where its
+   bytes lie. [handle] and [offset] are the copy's fields for it, which for
+   [local] memory of this process are its memory's host address and the
+   offset into it (RIG_LOCAL_SRC, RIG_LOCAL_DST). [device_memory] is the
+   copy.device_memory fact for it. [space] and [first] are its span
+   (rig_buffer_span), and [alias], unless 0, the host address of an io
+   memory's mapped pages for its first byte, as Rig.Buffer.overlaps
+   compares them. */
+struct rig_side {
+  uint64_t handle, offset, bytes;
+  intptr_t space, first, alias;
+  int local, device_memory;
+};
+
+/* Sets [s] for the buffer [b], which a copy passes as memory of this
+   process iff [local], all but its [device_memory]. */
+void rig_buffer_side(value b, int local, struct rig_side *s);
+
+/* Whether the bytes of [a] and [b] share one, as Rig.Buffer.overlaps
+   answers. */
+int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b);
+
+/* A copy part of a submission: its index and, for its source and its
+   destination, the run's slot, or -1 for a buffer the submission names,
+   whose side is in [ends]. */
+struct rig_copy {
+  int part, src, dst;
+  struct rig_side ends[2]; /* the source's, the destination's */
+};
+
 /* The prepared form of a submission on one device, fixed when it is made:
    any number of submits read it at once. Only its driver's room check and
    submit, under the device's turn, write its scratch. */
@@ -201,6 +233,8 @@ struct rig_sub {
   struct rig_ref *refs; /* every launch's and fill's buffer refs, in part order */
   int ncodes;
   struct rig_code *codes; /* every entry ref, in part order */
+  int ncopies, nslotted; /* its copies, and those with a slot end */
+  struct rig_copy *copies; /* every copy part, in part order */
   size_t args;            /* where its last block ends in a run */
 };
 
@@ -245,6 +279,11 @@ struct rig_run {
   uint8_t *args;
   size_t nargs, cargs;
   uint64_t *addresses; /* each slot's address, for launches' and fills' refs */
+  struct rig_side *sides; /* each slot's side, for copies */
+  /* The parts a submission with copies of slots hands its driver: its own,
+     with each such copy's fields set from the run's slots. */
+  struct rig_part *parts;
+  int cparts;
   /* Whether the submit times its value, and the device's time pair it took
      at the hand-over, -1 for none. */
   int timed, pair;

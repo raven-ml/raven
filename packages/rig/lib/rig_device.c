@@ -1161,8 +1161,10 @@ value caml_rig_times_read(value v_d, value v_k) {
    waits, and raises the stamps. Called under [d]'s turn. */
 static int admit(struct rig_device *d, const struct rig_sub *s,
                  struct rig_run *r) {
-  int room =
-      d->driver.room(d->self, s->parts, s->nparts, s->scratch, r->args);
+  /* A submission with copies of slots hands over the run's parts
+     ([set_copies]). */
+  const struct rig_part *parts = s->nslotted > 0 ? r->parts : s->parts;
+  int room = d->driver.room(d->self, parts, s->nparts, s->scratch, r->args);
   if (room == RIG_NEVER) return SUBMIT_NEVER;
   if (room == RIG_LATER) {
     r->no_room_at = atomic_load(&d->line->submitted);
@@ -1173,7 +1175,7 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
   const char *why = NULL;
   r->pair = r->timed ? take_pair(&d->times) : -1;
   uint64_t *times = r->pair < 0 ? NULL : pair_at(&d->times, r->pair);
-  int a = d->driver.submit(d->self, v, r->waits, r->nwaits, s->parts,
+  int a = d->driver.submit(d->self, v, r->waits, r->nwaits, parts,
                            s->nparts, s->scratch, r->args, r->addresses,
                            r->nslots, times, &why);
   rig_sub_raise(s, r, RIG_POINT(d->index, v));

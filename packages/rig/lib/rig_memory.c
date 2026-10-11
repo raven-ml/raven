@@ -248,25 +248,41 @@ void rig_buffer_span(value b, intnat *space, intnat *first) {
   *first = offset;
 }
 
-value caml_rig_buffer_overlaps(value b, value other) {
-  size_t n = rig_buffer_bytes(b), m = rig_buffer_bytes(other);
-  if (n == 0 || m == 0) return Val_false;
-  intnat space, first, other_space, other_first;
+/* [b]'s bytes and where they lie, as struct rig_side holds them. */
+static void side_span(value b, struct rig_side *s) {
+  intnat space, first;
   rig_buffer_span(b, &space, &first);
-  rig_buffer_span(other, &other_space, &other_first);
-  if (space == other_space)
-    return Val_bool(first < other_first + (intnat)m &&
-                    other_first < first + (intnat)n);
-  if (space != 0) {
-    first = cached_host(b);
-    if (first == 0) return Val_false;
+  s->space = space;
+  s->first = first;
+  s->alias = space == 0 ? 0 : cached_host(b);
+  s->bytes = rig_buffer_bytes(b);
+}
+
+int rig_sides_overlap(const struct rig_side *a, const struct rig_side *b) {
+  if (a->bytes == 0 || b->bytes == 0) return 0;
+  intptr_t x = a->first, y = b->first;
+  if (a->space != b->space) {
+    if (a->space != 0) x = a->alias;
+    if (b->space != 0) y = b->alias;
+    if (x == 0 || y == 0) return 0;
   }
-  if (other_space != 0) {
-    other_first = cached_host(other);
-    if (other_first == 0) return Val_false;
-  }
-  return Val_bool(first < other_first + (intnat)m &&
-                  other_first < first + (intnat)n);
+  return x < y + (intptr_t)b->bytes && y < x + (intptr_t)a->bytes;
+}
+
+void rig_buffer_side(value b, int local, struct rig_side *s) {
+  value mem = Field(b, BUFFER_MEM);
+  side_span(b, s);
+  s->handle = local ? (uint64_t)Long_val(Field(mem, MEMORY_HOST))
+                    : (uint64_t)Nativeint_val(Field(mem, MEMORY_HANDLE));
+  s->offset = (uint64_t)Long_val(Field(b, BUFFER_OFFSET));
+  s->local = local;
+}
+
+value caml_rig_buffer_overlaps(value b, value other) {
+  struct rig_side x, y;
+  side_span(b, &x);
+  side_span(other, &y);
+  return Val_bool(rig_sides_overlap(&x, &y));
 }
 
 intnat caml_rig_cached_host(value b) { return cached_host(b); }

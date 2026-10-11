@@ -44,7 +44,7 @@ let test_read_waits_write () =
   let d, p = P.open_ "point:write" in
   let src = B.create d 8 and dst = B.create d 8 in
   let copy =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   ignore (submit (Sub.make d [| copy |]));
   B.wait dst Read;

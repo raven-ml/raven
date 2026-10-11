@@ -764,7 +764,8 @@ let test_submit_donation (name, kind) () =
   let part work = work in
   let s =
     match kind with
-    | `Copy -> Sub.make d [| part (Sub.copy ~src ~dst) |]
+    | `Copy ->
+        Sub.make d [| part Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]
     | `Fixed ->
         let fill =
           Sub.fill Rig_support.carry ~params:24

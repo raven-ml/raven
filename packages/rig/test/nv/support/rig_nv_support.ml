@@ -59,7 +59,7 @@ let words ws =
       Array.iteri (fun i w -> Bigarray.Array1.set ba i (Int32.of_int w)) ws);
   Sub.words b
 
-let copy ~dst src = Sub.copy ~src ~dst
+let copy ~dst src = Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
 (* Host buffers of 64 KiB or more start on a page, which a device borrows. *)
 let shared t n =

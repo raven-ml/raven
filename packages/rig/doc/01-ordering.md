@@ -40,7 +40,7 @@ submit it:
 ```ocaml
 open Rig
 
-let copy src dst = Submission.copy ~src ~dst
+let copy src dst = Submission.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
 let run = Submission.Run.make ()
 

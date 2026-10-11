@@ -95,8 +95,9 @@ struct rig_args {
      exactly when both buffers' original allocations belong to this device
      and have memory kind Device. Views and borrows on the owning device
      preserve it. Pinned, Mapped, this process's host memory, peer borrows
-     and unbacked empty buffers have 0.
-     The driver chooses how to copy;
+     and unbacked empty buffers have 0. Every field of a copy part may
+     differ from one call to the next, since its ends may be a run's
+     buffers. The driver chooses how to copy on each call;
    - RIG_LAUNCH: the function whose entry is [launch.code] and
      [launch.launch] (the [code] and [launch] the driver's [entry] gave) run
      once, over the grid of the struct rig_block at byte [launch.args.block]
@@ -107,7 +108,8 @@ struct rig_args {
    The part runs after the parts of the same submission before it on its
    queue, and after the parts whose indices the [nafter] ints at [after]
    list, each below its own: [after] orders parts of different queues, and
-   names at most the last part of each other queue. */
+   names at most the last part of each other queue. [parts], and what they
+   point to, are valid only during the call that is handed them. */
 struct rig_part {
   int queue, kind;
   const int *after;
@@ -138,7 +140,8 @@ struct rig_part {
    bytes at [scratch] and read them back during the call. No other call
    uses them meanwhile, and a call finds whatever an earlier one left. A
    driver keeps there what it decides per part, such as which engine runs
-   it, so that neither call allocates. */
+   it, so that neither call allocates, but no decision derived from a copy
+   part's fields, which may differ on the next call. */
 #define RIG_SCRATCH 8
 
 /* Answers RIG_FITS, RIG_LATER or RIG_NEVER for the [n] parts at [parts],

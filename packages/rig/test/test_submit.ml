@@ -77,7 +77,7 @@ let test_copy_memory (length, src_first, dst_first) =
         List.map
           (fun (dst_name, dst, dst_device) ->
             ( src_name ^ " to " ^ dst_name,
-              (Sub.copy ~src ~dst),
+              (Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))),
               src_device && dst_device ))
           destinations)
       sources
@@ -99,8 +99,10 @@ let copy_memory_law (length, src_first, dst_first) =
   cover "different offsets" (src_first <> dst_first);
   test_copy_memory (length, src_first, dst_first)
 
-(* Buffer.copy also carries the facts when a device of another machine
-   receives local host addresses directly, interleaved with its own memory. *)
+(* Buffer.copy and a submission's copies carry the facts when a device of
+   another machine receives local host addresses directly, interleaved with its
+   own memory, through a buffer or a slot. Two local ends are refused, and so
+   is local memory in a slot a ref names. *)
 let test_copy_memory_sequence () =
   let machine = Support.machine "submit:copy-memory-machine" in
   let p = P.make ~host_visible:false () in
@@ -116,14 +118,149 @@ let test_copy_memory_sequence () =
   List.iter
     (fun (src, dst) -> B.copy ~src ~dst)
     [ (a, b); (host, a); (a, b); (b, host); (mapped, a); (a, b); (a, pinned) ];
-  equal (list bool) [ true; false; true; false; false; true; false ]
+  let run = Sub.Run.make () in
+  let copy src dst buffers =
+    Rig.Point.wait (submit ~run (Sub.make d [| Sub.copy ~src ~dst |]) ~buffers)
+  in
+  copy (Slot 0) (Buffer a) [| host |];
+  copy (Buffer a) (Slot 0) [| host |];
+  copy (Buffer host) (Slot 0) [| b |];
+  equal (list bool)
+    [ true; false; true; false; false; true; false; false; false; false ]
     (P.copy_device_memory p);
   equal (list string)
-    [ "none"; "src"; "none"; "dst"; "none"; "none"; "none" ]
+    [
+      "none"; "src"; "none"; "dst"; "none"; "none"; "none"; "src"; "dst"; "src";
+    ]
     (List.map
        (function `None -> "none" | `Src -> "src" | `Dst -> "dst")
        (P.copy_sides p));
+  let other = B.create Rig.host 8 in
+  raises_match ~msg:"two local buffers" Exn.invalid_arg (fun () ->
+      Sub.make d Sub.[| copy ~src:(Buffer host) ~dst:(Buffer other) |]);
+  raises_match ~msg:"a local buffer and a local slot" Exn.invalid_arg (fun () ->
+      copy (Buffer host) (Slot 0) [| other |]);
+  let fill = Sub.make d [| Support.touching [| Sub.read |] |] in
+  raises_match ~msg:"a ref's local buffer" Exn.invalid_arg (fun () ->
+      submit fill ~buffers:[| host |]);
   Rig.close d
+
+(* Copy ends *)
+
+(* A copy from a view of [src_len] bytes at [src_first] of one allocation into
+   a view of [dst_len] bytes at [dst_first] of the same allocation, if
+   [shared], or of another; each end a run's slot, if [src_slot] or
+   [dst_slot], or a buffer the submission names. *)
+type ends = {
+  shared : bool;
+  src_first : int;
+  dst_first : int;
+  src_len : int;
+  dst_len : int;
+  src_slot : bool;
+  dst_slot : bool;
+}
+
+let ends_alloc = 40
+
+let pp_ends ppf c =
+  let side slot = if slot then "slot" else "buffer" in
+  Format.fprintf ppf "%s %d+%d -> %s %s%d+%d" (side c.src_slot) c.src_first
+    c.src_len (side c.dst_slot)
+    (if c.shared then "same " else "")
+    c.dst_first c.dst_len
+
+let gen_ends =
+  let open Gen in
+  let+ shared = bool
+  and+ src_first = int_range 0 24
+  and+ dst_first = int_range 0 24
+  and+ len = int_range 0 16
+  and+ other =
+    frequency [ (4, constant None); (1, map Option.some (int_range 0 16)) ]
+  and+ src_slot = bool
+  and+ dst_slot = bool in
+  let dst_len = Option.value other ~default:len in
+  { shared; src_first; dst_first; src_len = len; dst_len; src_slot; dst_slot }
+
+let ends_overlap c =
+  c.shared && c.src_len > 0 && c.dst_len > 0
+  && c.src_first < c.dst_first + c.dst_len
+  && c.dst_first < c.src_first + c.src_len
+
+let contents b =
+  let s = Bytes.create (B.length b) in
+  B.blit_to_bytes b 0 s 0 (B.length b);
+  Bytes.to_string s
+
+(* A copy whose ends are slots or buffers, in each of the four mixes, copies
+   the bytes as a host copy does. Buffers of two lengths or that share a byte
+   are refused, by make where both ends are buffers and by the submit
+   otherwise, which then takes no value. Copies between two slots run through
+   one submission, each case with its own buffers. *)
+let ends_law cases =
+  let d = memory (Printf.sprintf "submit:ends-%d" (Random.bits ())) in
+  let slots = Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |] in
+  let run = Sub.Run.make () in
+  cover "several runs of one submission"
+    (List.length (List.filter (fun c -> c.src_slot && c.dst_slot) cases) > 1);
+  List.iteri
+    (fun i c ->
+      cover "slot to slot" (c.src_slot && c.dst_slot);
+      cover "slot to buffer" (c.src_slot && not c.dst_slot);
+      cover "buffer to slot" ((not c.src_slot) && c.dst_slot);
+      cover "buffer to buffer" (not (c.src_slot || c.dst_slot));
+      cover "buffers of two lengths" (c.src_len <> c.dst_len);
+      cover "overlapping views of one allocation" (ends_overlap c);
+      cover "disjoint views of one allocation"
+        (c.shared && c.src_len = c.dst_len && c.src_len > 0
+       && not (ends_overlap c));
+      let pattern k =
+        String.init ends_alloc (fun j -> Char.chr (((k * 61) + j) land 255))
+      in
+      let a = B.create d ends_alloc and b = B.create d ends_alloc in
+      B.blit_from_string (pattern (2 * i)) 0 a 0 ends_alloc;
+      B.blit_from_string (pattern ((2 * i) + 1)) 0 b 0 ends_alloc;
+      let src = B.view a ~first:c.src_first ~length:c.src_len in
+      let dst =
+        B.view (if c.shared then a else b) ~first:c.dst_first ~length:c.dst_len
+      in
+      let refused = c.src_len <> c.dst_len || ends_overlap c in
+      let buffers =
+        Array.of_list
+          ((if c.src_slot then [ src ] else [])
+          @ if c.dst_slot then [ dst ] else [])
+      in
+      let side slot k b = if slot then Sub.Slot k else Sub.Buffer b in
+      let make () =
+        if c.src_slot && c.dst_slot then slots
+        else
+          let dst_side = side c.dst_slot (Bool.to_int c.src_slot) dst in
+          Sub.make d [| Sub.copy ~src:(side c.src_slot 0 src) ~dst:dst_side |]
+      in
+      let before = Rig.submitted d in
+      if refused && not (c.src_slot || c.dst_slot) then
+        raises_match ~msg:"make" Exn.invalid_arg (fun () -> make ())
+      else if refused then begin
+        let s = make () in
+        raises_match ~msg:"the submit" Exn.invalid_arg (fun () ->
+            submit ~run s ~buffers);
+        equal ~msg:"a refused run's value" int before (Rig.submitted d)
+      end
+      else begin
+        let into = if c.shared then 2 * i else (2 * i) + 1 in
+        let expected = Bytes.of_string (pattern into) in
+        Bytes.blit_string (pattern (2 * i)) c.src_first expected c.dst_first
+          c.src_len;
+        Rig.Point.wait (submit ~run (make ()) ~buffers);
+        if not c.shared then
+          equal ~msg:"the source's allocation" string (pattern (2 * i))
+            (contents a);
+        equal ~msg:"the destination's allocation" string
+          (Bytes.to_string expected)
+          (contents (if c.shared then a else b))
+      end)
+    cases
 
 let test_values () =
   let d = memory "submit:values" in
@@ -273,10 +410,14 @@ let test_make_refusals () =
   Rig.Claim.with_ ~read:[] ~donate:[ dead ] (fun c ->
       ignore (Rig.Claim.consume c ~why:"donated" dead));
   let copy src dst =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let make d parts = ignore (Sub.make d parts) in
   let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
+  let slot_copy = Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |] in
+  let into_unseen =
+    Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Buffer unseen) |]
+  in
   let elsewhere = B.create (fst (P.open_ "submit:elsewhere")) 8 in
   List.iter
     (fun (msg, f) -> raises_match ~msg Exn.invalid_arg f)
@@ -287,6 +428,28 @@ let test_make_refusals () =
       ( "a copy of another device's memory",
         fun () -> make d [| copy arg (B.create Rig.host 8) |] );
       ("a part's dead buffer", fun () -> make d [| copy dead unseen |]);
+      ( "a copy of a slot into itself",
+        fun () -> make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 0) |] );
+      ( "a copy's negative slot",
+        fun () -> make d Sub.[| copy ~src:(Slot (-1)) ~dst:(Buffer unseen) |] );
+      ( "a slot no ref or copy names",
+        fun () -> make d Sub.[| copy ~src:(Slot 1) ~dst:(Buffer unseen) |] );
+      ( "a slot a copy and an unordered ref name",
+        fun () ->
+          make d
+            Sub.
+              [|
+                copy ~src:(Slot 0) ~dst:(Buffer unseen);
+                Support.touching [| unordered |];
+              |] );
+      ( "a run's copy of buffers of two sizes",
+        fun () -> ignore (submit slot_copy ~buffers:[| unseen; other |]) );
+      ( "a run's copy into a buffer of another size",
+        fun () -> ignore (submit into_unseen ~buffers:[| other |]) );
+      ( "a run's copy of the host's memory",
+        fun () -> ignore (submit slot_copy ~buffers:[| arg; unseen |]) );
+      ( "a run's copy of a dead buffer",
+        fun () -> ignore (submit slot_copy ~buffers:[| dead; unseen |]) );
       ( "a run's read of the host's memory",
         fun () -> ignore (submit s ~buffers:[| arg; unseen |]) );
       ( "a run's write of another device's memory",
@@ -307,7 +470,7 @@ let test_overlapping_copy () =
   let b = B.create d 16 in
   let copy src dst =
     let view first = B.view b ~first ~length:8 in
-    Sub.copy ~src:(view src) ~dst:(view dst)
+    Sub.(copy ~src:(Buffer (view src)) ~dst:(Buffer (view dst)))
   in
   ignore (Sub.make d [| copy 0 8 |]);
   List.iter
@@ -348,7 +511,7 @@ let test_parts_changed () =
   let d = memory "submit:parts-changed" in
   let a = B.create d 8 and b = B.create d 8 and dst = B.create d 8 in
   let copy src =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let parts = [| copy a |] in
   let s = Sub.make d parts in
@@ -371,7 +534,7 @@ let test_parts_kept () =
   let b = B.create d 8 and dst = B.create d 8 in
   Support.store (Support.Reader.host b) 42;
   let copy src =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let parts = [| copy (fresh ()) |] in
   let s = Sub.make d parts in
@@ -505,7 +668,7 @@ let test_part_points () =
   let e, pe = P.open_ "submit:parts-other" in
   let src = B.create d 64 and dst = B.create d 64 in
   let copy =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let s = Sub.make d [| copy |] and run = Sub.Run.make () in
   ignore (submit (empty ~uses:[| Sub.write |] e) ~buffers:[| on e src |]);
@@ -778,7 +941,7 @@ let test_copy_refused () =
   let d, _ = P.open_ ~copies:false "submit:no-copies" in
   let src = B.create d 8 and dst = B.create d 8 in
   let copy =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   raises_match Exn.invalid_arg (fun () -> Sub.make d [| copy |])
 
@@ -791,7 +954,7 @@ let test_runs () =
       Sub.make d [| Sub.words (B.create Rig.host 8) |]);
   let src = B.create e 8 and dst = B.create e 8 in
   raises_match ~msg:"a copy where no queue copies" Exn.invalid_arg (fun () ->
-      Sub.make e [| Sub.copy ~src ~dst |]);
+      Sub.make e [| Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]);
   let image = Result.get_ok (Rig.Image.load e "code:64") in
   ignore (Sub.make e [| Sub.launch image "main" ~params:0 |])
 
@@ -1016,7 +1179,8 @@ let order_law c =
     | Unordered -> Sub.unordered slot ~at
   in
   let part = function
-    | Copy (src, dst) -> Sub.copy ~src:(buffer src) ~dst:(buffer dst)
+    | Copy (src, dst) ->
+        Sub.(copy ~src:(Buffer (buffer src)) ~dst:(Buffer (buffer dst)))
     | Fill ks ->
         Sub.fill
           ~refs:(Array.of_list (List.mapi ref_of ks))
@@ -1089,7 +1253,7 @@ let test_device_order () =
     ignore (submit ~run ~buffers:[| on d dst; on d src |] s)
   in
   let copy src dst =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let run parts = ignore (submit (Sub.make d parts)) in
   let a' = require_some (B.borrow d a) and c' = require_some (B.borrow d c) in
@@ -1170,7 +1334,7 @@ let make t =
   let src = B.create t.d 256 and dst = B.create t.d 256 in
   let parts = watch t ~last:0 [ handle src; handle dst ] in
   let copy =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let s = Sub.make t.d [| copy; Support.touching [| Sub.write |] |] in
   { dev = t; s = Some s; run = Sub.Run.make (); parts }
@@ -1236,15 +1400,29 @@ let lifetime =
 
 let test_allocation () =
   let d = memory "submit:words" in
-  let s = empty ~uses:[| Sub.read |] d in
-  let buffers = [| on d (B.create Rig.host 8) |] and run = Sub.Run.make () in
-  ignore (Rig.submit s ~run ~buffers);
-  let before = Gc.minor_words () in
-  for _ = 1 to 100 do
-    ignore (Sys.opaque_identity (Rig.submit s ~run ~buffers))
-  done;
-  let words = int_of_float (Gc.minor_words () -. before) / 100 in
-  equal int 0 words
+  let words_per_submit s buffers =
+    let run = Sub.Run.make () in
+    ignore (Rig.submit s ~run ~buffers);
+    let before = Gc.minor_words () in
+    for _ = 1 to 100 do
+      ignore (Sys.opaque_identity (Rig.submit s ~run ~buffers))
+    done;
+    int_of_float (Gc.minor_words () -. before) / 100
+  in
+  let fixed = B.create d 8 in
+  List.iter
+    (fun (msg, s, buffers) -> equal ~msg int 0 (words_per_submit s buffers))
+    [
+      ( "a fill's slot",
+        empty ~uses:[| Sub.read |] d,
+        [| on d (B.create Rig.host 8) |] );
+      ( "a copy's slots",
+        Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |],
+        [| B.create d 8; B.create d 8 |] );
+      ( "a copy from a buffer into a slot",
+        Sub.make d Sub.[| copy ~src:(Buffer fixed) ~dst:(Slot 0) |],
+        [| B.create d 8 |] );
+    ]
 
 (* Two domains submitting one submission: the submits take turns, each takes the
    device's next value, and every fill runs. A program counts values from
@@ -1325,8 +1503,61 @@ let shared_commands =
         Rig.Point.value (submit ~run ~buffers:t.buffers t.sub) - t.base);
   ]
 
+(* Two domains copying on one device at once, each between buffers of its
+   own: through one submission whose copy's ends are its two slots, and through
+   Buffer.copy, which shares what it prepares for the device between domains.
+   Each copy's destination ends with its source's word. The host addresses no
+   memory of the device, so its copy engine runs each copy between two of its
+   buffers. *)
+let slot_copier =
+  lazy
+    (let d, _ = P.open_ ~host_visible:false "submit:slot-copier" in
+     (d, Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
+
+(* A buffer of [d] holding [v], and one to copy it into. *)
+let copy_ends d v =
+  let src = B.create d 8 and dst = B.create d 8 in
+  let h = B.create Rig.host 8 in
+  Support.store (Support.Reader.host h) v;
+  B.copy ~src:h ~dst:src;
+  (src, dst)
+
+(* The word of [b], a buffer of a device. *)
+let device_word b =
+  let h = B.create Rig.host 8 in
+  B.copy ~src:b ~dst:h;
+  word h
+
+let copy_commands =
+  [
+    command "submit"
+      (Gen.int @-> returns int)
+      Fun.id
+      (fun v ->
+        let d, s = Lazy.force slot_copier in
+        let src, dst = copy_ends d v in
+        Rig.Point.wait (submit s ~buffers:[| src; dst |]);
+        device_word dst);
+    command "Buffer.copy"
+      (Gen.int @-> returns int)
+      Fun.id
+      (fun v ->
+        let d, _ = Lazy.force slot_copier in
+        let src, dst = copy_ends d v in
+        B.copy ~src ~dst;
+        device_word dst);
+  ]
+
 let tests =
   [
+    group ~timeout "copy ends"
+      [
+        prop ~count:200
+          "a copy between slots and buffers copies as the host does, and \
+           refuses buffers of two lengths or that share a byte"
+          (Gen.list ~size:(Gen.int_range 1 4) (Gen.with_pp pp_ends gen_ends))
+          ends_law;
+      ];
     group ~timeout "copy memory"
       [
         test "empty allocations name no device memory" (fun () ->
@@ -1350,6 +1581,9 @@ let tests =
         test "a submission's fills run with its value" test_fill;
         stateful ~domains:2 "two domains submit one submission at once"
           shared_commands;
+        stateful ~domains:2
+          "two domains copy at once, each between buffers of its own"
+          copy_commands;
         test "a device's work completes once a wait reaches it" test_polled;
         test "a word still for three intervals loses nothing" test_still;
       ];

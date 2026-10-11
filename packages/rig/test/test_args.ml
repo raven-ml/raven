@@ -185,7 +185,9 @@ let test_address () =
   let copy =
     Sub.make d
       [|
-        Sub.copy ~src:mapped ~dst:(B.create d (B.length mapped));
+        Sub.(
+          copy ~src:(Buffer mapped)
+            ~dst:(Buffer (B.create d (B.length mapped))));
       |]
   in
   raises_match ~msg:"part memory is not explicit fixed memory" Exn.invalid_arg

@@ -145,7 +145,8 @@ let test_wait () =
   let n = 1 lsl 16 in
   let h = filled n 'a' and on = B.create d n in
   let part =
-    Rig.Submission.copy ~src:(require_some (B.borrow d h)) ~dst:on
+    let src = require_some (B.borrow d h) in
+    Rig.Submission.(copy ~src:(Buffer src) ~dst:(Buffer on))
   in
   ignore (submit (Rig.Submission.make d [| part |]));
   equal int 1 (P.queued p);
@@ -161,7 +162,9 @@ let test_access_orders () =
   let h = filled n 'a' and src = B.create d n and dst = B.create d n in
   B.write src Bigarray.char (fun a -> Bigarray.Array1.fill a 'x');
   let on_d = require_some (B.borrow d h) in
-  let copy ~src ~dst = Rig.Submission.make d [| Rig.Submission.copy ~src ~dst |] in
+  let copy ~src ~dst =
+    Rig.Submission.(make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])
+  in
   ignore (submit (copy ~src ~dst:on_d));
   equal ~msg:"the write is queued" int 1 (P.queued p);
   equal ~msg:"a read sees it" string (String.make n 'x') (bytes h);
@@ -179,10 +182,9 @@ let test_export () =
   let n = 1 lsl 16 in
   let h = filled n 'a' and src = B.create d n in
   B.write src Bigarray.char (fun a -> Bigarray.Array1.fill a 'x');
-  ignore
-    (submit
-       (Rig.Submission.make d
-          [| Rig.Submission.copy ~src ~dst:(require_some (B.borrow d h)) |]));
+  let dst = require_some (B.borrow d h) in
+  let copy = Rig.Submission.(copy ~src:(Buffer src) ~dst:(Buffer dst)) in
+  ignore (submit (Rig.Submission.make d [| copy |]));
   let a = B.export h Bigarray.char in
   equal ~msg:"the work ran" int 0 (P.queued p);
   equal ~msg:"its bytes" char 'x' a.{n - 1};

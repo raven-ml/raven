@@ -1421,7 +1421,7 @@ let make_sys ?keep ((s : sdev), w) pair sc =
     match pair with
     | Some (src, dst) ->
         let src, dst = prefixes_sys (get src).b (get dst).b in
-        ( (Sub.copy ~src ~dst),
+        ( (Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))),
           Copy )
     | None ->
         (match s.skind with Gpu _ -> raise Skipped | _ -> ());
@@ -1474,7 +1474,7 @@ let make_own_sys ((s : sdev), w) n sc =
   guard w @@ fun () ->
   let src = B.create s.d n and dst = B.create s.d n in
   let part =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let sub = Sub.make s.d (named s part Copy) in
   let slotted = slotted s.skind in

@@ -123,8 +123,8 @@ let release_rows =
   let switching () =
     let t, empty = empty () in
     (* A copy of no bytes runs on the copy stream: it follows nothing. *)
-    let copy = Rig.Submission.copy ~src:(Rig.Buffer.create t.d 0)
-        ~dst:(Rig.Buffer.create t.d 0) in
+    let copy = Rig.Submission.(copy ~src:(Buffer (Rig.Buffer.create t.d 0))
+        ~dst:(Buffer (Rig.Buffer.create t.d 0))) in
     (t, prepare t [| copy |], empty)
   in
   Thumper.group "release"
@@ -229,7 +229,7 @@ let copy_rows =
     let t = dev () in
     let create m = Rig.Buffer.create ~memory:m t.d n in
     let dst = create dst and src = create src in
-    (t, prepare t [| Rig.Submission.copy ~src ~dst |])
+    (t, prepare t Rig.Submission.[| copy ~src:(Buffer src) ~dst:(Buffer dst) |])
   in
   let floor_copying (dst, src) () =
     ignore (floor ());

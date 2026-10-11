@@ -272,7 +272,9 @@ let download_batches () =
   let parts first =
     Array.mapi
       (fun i length ->
-        Sub.copy ~src:(B.view far ~first:i ~length) ~dst:(B.view here ~first:(first + (2 * i)) ~length))
+        let src = B.view far ~first:i ~length in
+        let dst = B.view here ~first:(first + (2 * i)) ~length in
+        Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)))
       [| 0; 1; 0; 2; 0 |]
   in
   pause m.ag;
@@ -463,8 +465,8 @@ let never () =
   let both =
     Sub.make m.host
       [|
-        Sub.copy ~src:far ~dst:h;
-        Sub.copy ~src:h ~dst:far2;
+        Sub.(copy ~src:(Buffer far) ~dst:(Buffer h));
+        Sub.(copy ~src:(Buffer h) ~dst:(Buffer far2));
       |]
   in
   raises_match ~msg:"a copy from here after a copy into here" Exn.invalid_arg
@@ -834,7 +836,14 @@ let handover_layout () =
   let dst = region () in
   let src = B.create Rig.host 16 and back = B.create Rig.host 16 in
   B.blit_from_string "0123456789abcdef" 0 src 0 16;
-  let s = Sub.make host [| Sub.copy ~src ~dst; Sub.copy ~src:dst ~dst:back |] in
+  let s =
+    Sub.make host
+      Sub.
+        [|
+          copy ~src:(Buffer src) ~dst:(Buffer dst);
+          copy ~src:(Buffer dst) ~dst:(Buffer back);
+        |]
+  in
   let _, submitted = spawn (fun () -> submit s) in
   let h = read_n p 9 in
   let payload = read_n p (Int64.to_int (String.get_int64_le h 0)) in

@@ -46,7 +46,7 @@ let () =
   (* A submission is made once and submitted many times, each submit with a
      run, the caller's storage for one submit at a time. A submit returns the
      point of the value it assigns. *)
-  let s = Submission.(make d [| copy ~src ~dst:mid |]) in
+  let s = Submission.(make d [| copy ~src:(Buffer src) ~dst:(Buffer mid) |]) in
   let run = Submission.Run.make () in
   Format.printf "first submit: %a@." Point.pp (submit s ~run ~buffers:[||]);
   Format.printf "again:        %a@." Point.pp (submit s ~run ~buffers:[||]);
@@ -55,7 +55,12 @@ let () =
   (* The parts of one submission run in the order their memory requires. The
      second copy reads what the first writes, so it runs after it. *)
   let chain =
-    Submission.(make d [| copy ~src ~dst:mid; copy ~src:mid ~dst |])
+    Submission.(
+      make d
+        [|
+          copy ~src:(Buffer src) ~dst:(Buffer mid);
+          copy ~src:(Buffer mid) ~dst:(Buffer dst);
+        |])
   in
   let p = submit chain ~run ~buffers:[||] in
   Format.printf "chain:        %a, reached: %b@." Point.pp p (Point.reached p);

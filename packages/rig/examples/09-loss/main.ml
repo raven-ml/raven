@@ -30,7 +30,7 @@ let () =
   (* A writes [x], so [x]'s stamps name A. *)
   let src = Buffer.create a 16 and x = Buffer.create a 16 in
   let run = Submission.Run.make () in
-  let s = Submission.(make a [| copy ~src ~dst:x |]) in
+  let s = Submission.(make a [| copy ~src:(Buffer src) ~dst:(Buffer x) |]) in
   ignore (submit s ~run ~buffers:[||]);
 
   (* A's next work fails, and A is lost. *)
@@ -49,7 +49,7 @@ let () =
 
   (* B goes on. *)
   let y = Buffer.create b 16 and z = Buffer.create b 16 in
-  let s = Submission.(make b [| copy ~src:y ~dst:z |]) in
+  let s = Submission.(make b [| copy ~src:(Buffer y) ~dst:(Buffer z) |]) in
   let p = submit s ~run ~buffers:[||] in
   Format.printf "B goes on: %a@." Point.pp p;
 

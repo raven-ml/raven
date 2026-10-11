@@ -7,14 +7,15 @@
     {!Rig.Submission}, with points as the ints of {!Point}.
 
     {!make} copies the caller's parts and checks them. It derives the run's
-    slots from their refs, and each part's queue and the parts it follows
-    from the memory the parts use ({!Rig_edge.type-queue}). It compiles them
-    into a prepared form ([struct rig_sub] in [rig_stubs.h]), C memory that
-    a custom block owns and frees once collected, fixed once made. The
+    slots from their refs and copies, and each part's queue and the parts it
+    follows from the memory the parts use ({!Rig_edge.type-queue}). It
+    compiles them into a prepared form ([struct rig_sub] in [rig_stubs.h]), C
+    memory that a custom block owns and frees once collected, fixed once
+    made. The
     prepared form names stamps, and each launch's [launch] from its image
     ({!Rig_edge.type-entry}), without a reference, so the record beside it
-    keeps their owners reachable: the buffers of its copy and words parts and
-    its fixed memory, the images of its launches and entry refs, and the
+    keeps their owners reachable: the buffers of its words and copy parts
+    and its fixed memory, the images of its launches and entry refs, and the
     hold of its keep. It also holds each entry ref's function value and place
     in a run's blocks.
 
@@ -22,10 +23,14 @@
     + It takes the caller's run by compare-and-set, and fits the run to the
       submission unless the run served it last.
     + It takes a read claim on each fixed buffer and each of the run's
-      buffers, checks it live, and names it in the run's slot.
+      buffers, checks it live, and names it in the run's slot, with what a
+      copy that names the slot passes the driver.
     + It collects, per other device, the greatest point the work follows
       ([caml_rig_run_collect]), with the caller's waits, and writes each
-      entry ref's value into the run's blocks.
+      entry ref's value into the run's blocks. A submission with copies hands
+      its driver the run's copy of its parts, the fields of each copy with a
+      slot end set from its buffers after their sizes and overlap are
+      checked. A copy between two fixed buffers is set once, at make.
     + For each point not done, it waits on the host, or commits the
       producer's work and adds a wait in the device's queue. The device waits
       in its queue for a producer it can read ({!Def.live}'s [pairs]), up
@@ -54,6 +59,8 @@ type t
 type ref
 (** {!Rig.Submission.ref}. *)
 
+type side = Slot of int | Buffer of buffer  (** {!Rig.Submission.side}. *)
+
 type part
 (** {!Rig.Submission.part}. *)
 
@@ -69,7 +76,7 @@ val unordered : int -> at:int -> ref
 val entry : image -> string -> at:int -> ref
 (** [entry image f ~at] is {!Rig.Submission.entry}[ image f ~at]. *)
 
-val copy : src:buffer -> dst:buffer -> part
+val copy : src:side -> dst:side -> part
 (** [copy ~src ~dst] is {!Rig.Submission.copy}[ ~src ~dst]. *)
 
 val launch : ?refs:ref array -> image -> string -> params:int -> part
@@ -154,9 +161,10 @@ val submit : ?waits:int array -> t -> run:Run.t -> buffers:buffer array -> int
 
 val run_copy : device -> src:buffer -> dst:buffer -> int
 (** [run_copy d ~src ~dst] submits a copy of [src] into [dst] on [d]'s copy
-    engine, and is its point. It compiles the one part directly and
-    submits it with the calling domain's copy run, or a fresh run if another
-    thread of the domain holds that one. [d] must reach both buffers: they
-    are [d]'s, or, for a device of another machine, one side may be this
-    process's memory. It raises as {!Rig.Submission.make} and {!Rig.submit}
-    do. *)
+    engine, and is its point. It submits [d]'s submission of the one part
+    [copy ~src:(Slot 0) ~dst:(Slot 1)], made once per device, with the
+    calling domain's copy run, or a fresh run if another thread of the domain
+    holds that one.
+    [d] must reach both buffers: they are [d]'s, or, for a device of another
+    machine, one side may be this process's memory. It raises as
+    {!Rig.Submission.make} and {!Rig.submit} do. *)

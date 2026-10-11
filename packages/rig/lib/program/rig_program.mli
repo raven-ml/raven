@@ -226,7 +226,12 @@ type part =
               each submit. *)
       refs : ref iarray;
     }
-  | Copy of { src : view; dst : view }
+  | Copy of { src : int; dst : int }
+      (** A copy from the submit's slot [src] into its slot [dst], as
+          {!Rig.Submission.copy}. An end whose slot is [Memory] is that
+          memory's buffer, set once at load; an end whose slot is an
+          [Input] or the [Ints] is a slot of each run
+          ({!Rig.Submission.type-side}). *)
   | Launch of {
       image : int;
       name : string;
@@ -247,10 +252,10 @@ type submit = {
   fixed : (view * Rig.access) iarray;
 }
 (** The type for submissions: [parts] on device [device]. Each run passes
-    [slots], which the parts' refs index, and every run uses the fixed memory
-    [fixed] ({!Rig.Submission.make}). Memory of another device is named
-    through its borrow on [device], made at load, and an input of another
-    device through a borrow made for each run. *)
+    [slots], which the parts' refs and copies index, and every run uses the
+    fixed memory [fixed] ({!Rig.Submission.make}). Memory of another device
+    is named through its borrow on [device], made at load, and an input of
+    another device through a borrow made for each run. *)
 
 (** The type for the steps of a run. *)
 type step =
@@ -331,7 +336,12 @@ val load :
     {- a device that names memory cannot borrow it ({!Rig.Buffer.borrow});}
     {- an [Int] or a loop's [trip] is past the ints, or a loop's flag has no
        byte;}
-    {- a ref names no slot of its submit, or a slot is named by no ref;}
+    {- a ref or a copy names no slot of its submit, a slot is named by no
+       ref or copy, or a slot is named by both an [Unordered] ref and a
+       [Read] or [Write] ref or a copy;}
+    {- a copy's ends differ in length where load knows it: a [Memory]
+       view's and the ints' exactly, an input's as at least its [bytes];}
+    {- a copy's ends are one buffer: the ints, or one input, twice;}
     {- [Rail] memory or a [Ready] names a rail that [rails] does not give;}
     {- {!Rig.Submission.make} or a run ({!Rig.Submission.Run}) refuses a
        step, [why] naming the step;}
@@ -347,8 +357,8 @@ val load :
 (** {1:running Running}
 
     A run {e writes} an input if a [Submit] step passes it in a slot that a
-    [Write] or an [Unordered] ref names, or a [Move] has it as its
-    destination. *)
+    [Write] or an [Unordered] ref or a copy's [dst] names, or a [Move] has it
+    as its destination. *)
 
 type frame = { inputs : Rig.Buffer.t array; ints : int array }
 (** The type for a run's frame: its inputs, by index, and the first words of

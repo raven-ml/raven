@@ -153,7 +153,8 @@ let written_on_return () =
   S.stall (kernel "spin") ~flag:(address flag) ~ns:(second / 20);
   let addresses = Rig.Submission.make ~fixed:[ (src, Read_write) ] d [||] in
   S.write_gpu (Nativeint.of_int (Rig.Submission.address addresses src)) data;
-  Rig.Point.wait (S.submit t [| Rig.Submission.copy ~src ~dst |]);
+  Rig.Point.wait
+    (S.submit t Rig.Submission.[| copy ~src:(Buffer src) ~dst:(Buffer dst) |]);
   equal string ~msg:"the bytes copied" data
     (H.read (H.at dst) n);
   C.free g flag
@@ -198,7 +199,8 @@ let failed_fill () =
   S.write_gpu (Nativeint.of_int (Rig.Submission.address addresses src)) data;
   let parts =
     [|
-      Rig_gpu_support.work (Rig.Submission.copy ~src ~dst);
+      Rig_gpu_support.work
+        Rig.Submission.(copy ~src:(Buffer src) ~dst:(Buffer dst));
       S.part t.d (S.failing 1);
     |]
   in

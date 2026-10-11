@@ -118,7 +118,8 @@ let run t s =
    nothing: its value is released by the copy queue. *)
 let on_copy t =
   prepare t
-    [| Rig.Submission.copy ~src:(B.create t.d 0) ~dst:(B.create t.d 0) |]
+    Rig.Submission.
+      [| copy ~src:(Buffer (B.create t.d 0)) ~dst:(Buffer (B.create t.d 0)) |]
 
 (* Packets *)
 
@@ -467,7 +468,8 @@ let copy_rows =
   let n = 256 * mib in
   let copy t ~dst ~src n =
     let buffer memory = B.create ~memory t.d n in
-    (Rig.Submission.copy ~src:(buffer src) ~dst:(buffer dst))
+    let src = buffer src and dst = buffer dst in
+    Rig.Submission.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let copying n (dst, src) () =
     let t = dev () in

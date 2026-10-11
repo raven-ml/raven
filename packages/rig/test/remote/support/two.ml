@@ -221,7 +221,7 @@ let () =
           Sub.make ~keep:rail
             ~fixed:[ (counts, Rig.Read); (inbound, Read_write); (cmds, Read) ]
             d
-            [| Sub.words ring; Sub.copy ~src ~dst:out |]
+            Sub.[| words ring; copy ~src:(Buffer src) ~dst:(Buffer out) |]
         in
         (s, ring))
   in

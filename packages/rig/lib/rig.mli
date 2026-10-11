@@ -1287,13 +1287,21 @@ module Submission : sig
   type part
   (** The type for parts: a piece of a submission's work. *)
 
-  val copy : src:Buffer.t -> dst:Buffer.t -> part
-  (** [copy ~src ~dst] copies [src]'s bytes into [dst]. Both must have one
-      length, share no byte ({!Buffer.overlaps}) and be on the device
-      ({!Buffer.borrow} puts another device's memory there), and [dst]'s
-      memory must admit writes. On a driver's device of another machine, one
-      side may be memory this process's host addresses, whose bytes the
-      device's driver carries. *)
+  (** The type for the ends of a copy. *)
+  type side =
+    | Slot of int  (** A run's buffer of this slot ({!submit}). *)
+    | Buffer of Buffer.t  (** This buffer, in every run. *)
+
+  val copy : src:side -> dst:side -> part
+  (** [copy ~src ~dst] copies [src]'s bytes into [dst]. The two buffers must
+      have one length and share no byte ({!Buffer.overlaps}), and [dst]'s
+      memory must admit writes. Each is on the device ({!Buffer.borrow} puts
+      another device's memory there), except that on a driver's device of
+      another machine one of the two may be memory this process's host
+      addresses, whose bytes the device's driver carries; a slot's buffer
+      may be such memory only where copies alone name the slot. [src] and
+      [dst] are not one slot. {!make} checks the ends that are buffers, and
+      each {!submit} the ends that are slots, with its buffers. *)
 
   val launch : ?refs:ref array -> Image.t -> string -> params:int -> part
   (** [launch ~refs image f ~params] runs [image]'s function [f] once, over
@@ -1328,10 +1336,11 @@ module Submission : sig
     ?keep:'a -> ?fixed:(Buffer.t * access) list -> device -> part array -> t
   (** [make ~keep ~fixed d parts] is a submission of [parts] on [d]. Its
       slots are [0] to [n - 1], where [n] is one more than the highest slot
-      its buffer refs name, and each run passes one buffer per slot ({!submit}). One
-      buffer may fill several slots. [fixed] (defaults to [[]]) is the
-      submission's fixed memory. [make] reads [parts] once, and no bytes of
-      the buffers, so a caller may write {!address}es into them afterwards.
+      its buffer refs and copies name, and each run passes one buffer per
+      slot ({!submit}). One buffer may fill several slots. [fixed] (defaults
+      to [[]]) is the submission's fixed memory. [make] reads [parts] once,
+      and no bytes of the buffers, so a caller may write {!address}es into
+      them afterwards.
 
       [keep] is a value the work uses beyond memory, such as the driver
       objects that a graph or an indirect command buffer made. The
@@ -1341,14 +1350,14 @@ module Submission : sig
       keeps nothing. [keep] orders no memory.
 
       Rule 2 of {!Rig.section-order} orders the parts by the memory they use.
-      A copy reads [src] and writes [dst], words read their buffer, a buffer
-      ref uses its slot as its kind says, and every part uses the fixed memory
-      with its access. Two uses may share memory where their buffers overlap
-      ({!Buffer.overlaps}), or where either is a slot, whose buffer only a run
-      gives. An {!unordered} ref orders nothing. Parts that need no order may
-      run concurrently. A copy runs on the queue of the last earlier part it
-      follows, where that queue runs copies, and otherwise on the device's
-      copy engine, the queue that [copy_engine] names in its facts
+      A copy reads its [src] and writes its [dst], words read their buffer, a
+      buffer ref uses its slot as its kind says, and every part uses the fixed
+      memory with its access. Two uses may share memory where their buffers
+      overlap ({!Buffer.overlaps}), or where either is a slot, whose buffer
+      only a run gives. An {!unordered} ref orders nothing. Parts that need no
+      order may run concurrently. A copy runs on the queue of the last earlier
+      part it follows, where that queue runs copies, and otherwise on the
+      device's copy engine, the queue that [copy_engine] names in its facts
       ({!Rig_edge.type-facts}).
 
       Raises [Invalid_argument] if:
@@ -1358,9 +1367,10 @@ module Submission : sig
          copy follows no earlier part on a queue that runs copies;}
       {- a part breaks a rule of its constructor or of its refs
          ({!type-ref});}
-      {- a ref's slot is negative, a slot below [n] is named by no ref, or a
-         slot is named by both an {!unordered} ref and a {!read} or {!write}
-         one;}
+      {- a ref's or a copy's slot is negative, a copy's [src] and [dst] are
+         one slot, a slot below [n] is named by no ref or copy, or a slot is
+         named by both an {!unordered} ref and a {!read} or {!write} ref or a
+         copy;}
       {- a buffer of a part or of [fixed] is dead, or a buffer of [fixed] is
          not on [d] or is written on [Read] memory;}
       {- the blocks together exceed [2{^32} - 1] bytes.}}
@@ -1527,11 +1537,14 @@ val submit :
     Raises [Invalid_argument] if [run] breaks a rule of {!Submission.Run},
     [buffers] has another length than [s]'s slots, a buffer the work uses
     is dead or held exclusive ({!Claim}), a buffer of [buffers] is not on [d]
-    ({!Buffer.borrow} puts it there) or is written on [Read] memory, a ref
-    names handle-only memory, or [d]'s driver can never run the parts
-    ({!Rig_edge.section-calls}). Raises {!Lost} if [d] is lost before
-    [submit] returns, if its driver fails to take the work, or if a point of
-    [waits] is a lost device's and that device never reached it. *)
+    ({!Buffer.borrow} puts it there) where {!Submission.copy} does not admit
+    it, the work writes a buffer of [buffers] whose memory is [Read], a
+    copy's two buffers differ in length or share a byte, a ref names
+    handle-only memory, or [d]'s driver can never run the parts
+    ({!Rig_edge.section-calls}). Raises {!Lost} if [d] is
+    lost before [submit] returns, if its driver fails to take the work, or if
+    a point of [waits] is a lost device's and that device never reached
+    it. *)
 
 (** {1:per_device Values per device}
 

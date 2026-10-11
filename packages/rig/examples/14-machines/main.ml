@@ -55,7 +55,7 @@ let controller () =
   (* The bytes cross to the agent once, and M's copy runs there. *)
   let x = Buffer.create m 16 and y = Buffer.create m 16 in
   Buffer.copy ~src:(Buffer.of_bigarray (int32s [ 1l; 2l; 3l; 4l ])) ~dst:x;
-  let s = Submission.(make m [| copy ~src:x ~dst:y |]) in
+  let s = Submission.(make m [| copy ~src:(Buffer x) ~dst:(Buffer y) |]) in
   let run = Submission.Run.make () in
   ignore (submit s ~run ~buffers:[||]);
 

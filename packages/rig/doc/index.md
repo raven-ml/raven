@@ -48,7 +48,9 @@ runs on any machine.
     let src = Buffer.create device 4 in
     let dst = Buffer.create device 4 in
     Buffer.write src Bigarray.int32 (fun a -> a.{0} <- 42l);
-    let work = Submission.make device [| Submission.copy ~src ~dst |] in
+    let work =
+      Submission.(make device [| copy ~src:(Buffer src) ~dst:(Buffer dst) |])
+    in
     let run = Submission.Run.make () in
     let done_ = submit work ~run ~buffers:[||] in
     Point.wait done_;
@@ -65,7 +67,9 @@ Each call, in order:
 - `Buffer.write src Bigarray.int32 f` calls `f` on `src`'s bytes as an array
   the host writes, since the host addresses a memory device's memory, once
   the work that used them is done.
-- `Submission.copy ~src ~dst` is one *part* of the work. rig orders the parts
+- `copy ~src:(Buffer src) ~dst:(Buffer dst)` is one *part* of the work, a
+  copy between two buffers. An end may also be a `Slot`, a buffer each
+  submit passes ([`Submission.side`](../lib/rig.mli)). rig orders the parts
   of a submission by the memory they use. It runs a copy on the queue of the
   last earlier part the copy follows, where that queue runs copies, and
   otherwise on the device's copy engine, the queue its driver names in the
@@ -76,9 +80,9 @@ Each call, in order:
   work reads its parameters from, such as a launch's grid
   ([On a GPU](#on-a-gpu)). A copy has none, but every submit takes a run.
 - `submit work ~run ~buffers:[||]` runs the submission once.
-  `buffers` lists the buffers a launch's parameters refer to, and a copy
-  has none. An optional `~waits` lists points of other devices the work
-  must follow.
+  `buffers` lists the buffers of the slots that a launch's parameters and a
+  copy's `Slot` ends name, and this copy names none. An optional `~waits`
+  lists points of other devices the work must follow.
 - `Point.wait done_` returns once the copy has completed. `Buffer.read`
   would wait for it too, since it follows the last write of `dst`.
 

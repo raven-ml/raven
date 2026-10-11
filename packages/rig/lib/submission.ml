@@ -14,18 +14,22 @@ type use = Use_read | Use_write | Use_unordered
 (* A buffer ref. C reads [at] and [slot], the first two fields. *)
 type slot_ref = { at : int; slot : int; use : use }
 
-type ref = Slot of slot_ref | Entry of { at : int; image : image; f : string }
+type ref =
+  | Slot_ref of slot_ref
+  | Entry of { at : int; image : image; f : string }
 
-let read slot ~at = Slot { at; slot; use = Use_read }
-let write slot ~at = Slot { at; slot; use = Use_write }
-let unordered slot ~at = Slot { at; slot; use = Use_unordered }
+let read slot ~at = Slot_ref { at; slot; use = Use_read }
+let write slot ~at = Slot_ref { at; slot; use = Use_write }
+let unordered slot ~at = Slot_ref { at; slot; use = Use_unordered }
 let entry image f ~at = Entry { at; image; f }
-let ref_at = function Slot { at; _ } | Entry { at; _ } -> at
+let ref_at = function Slot_ref { at; _ } | Entry { at; _ } -> at
+
+type side = Slot of int | Buffer of buffer
 
 type part =
   | Words of buffer
   | Fill of { fill : nativeint; params : int; refs : ref array }
-  | Copy of { src : buffer; dst : buffer }
+  | Copy of { src : side; dst : side }
   | Launch of { image : image; kernel : string; params : int; refs : ref array }
 
 let copy ~src ~dst = Copy { src; dst }
@@ -46,7 +50,8 @@ let use_of : Def.access -> use = function
 (* The C form, which a custom block holds and frees once collected. *)
 type c
 
-external sub_new : Def.c -> int -> int -> int -> use array -> int -> int -> c
+external sub_new :
+  Def.c -> int -> int -> int -> use array -> int -> int -> int -> c
   = "caml_rig_sub_new_byte" "caml_rig_sub_new"
 
 external sub_launch :
@@ -65,12 +70,12 @@ external sub_fill :
 external sub_code : c -> int -> int -> int -> int -> unit
   = "caml_rig_sub_code"
 
-external sub_copy : c -> int -> nativeint * int * nativeint * int * int -> unit
-  = "caml_rig_sub_copy"
+external sub_copy : c -> int -> int -> int -> int -> unit = "caml_rig_sub_copy"
 
-external sub_copy_facts : c -> int -> int -> bool -> unit
-  = "caml_rig_sub_copy_facts"
-[@@noalloc]
+external sub_side : c -> int -> bool -> buffer -> bool -> bool -> unit
+  = "caml_rig_sub_side_byte" "caml_rig_sub_side"
+
+external sub_seal : c -> unit = "caml_rig_sub_seal"
 
 external sub_id : c -> int = "caml_rig_sub_id" [@@noalloc]
 
@@ -105,6 +110,10 @@ let take run c =
 
 external run_slot : run -> int -> int -> int -> unit
   = "caml_rig_run_slot"
+[@@noalloc]
+
+external run_side : run -> int -> buffer -> bool -> bool -> unit
+  = "caml_rig_run_side"
 [@@noalloc]
 
 external run_collect : c -> run -> int array -> int -> int
@@ -169,6 +178,11 @@ module Run = struct
     = "caml_rig_run_float64_byte" "caml_rig_run_float64"
 end
 
+(* What names a run's slot: refs, copies or both. A slot only copies name may
+   be this process's memory on a device of another machine, whose driver
+   carries its bytes. *)
+type naming = Refs | Copies | Both
+
 type t = {
   dev : device;
   c : c;
@@ -182,6 +196,7 @@ type t = {
       (** The images of [c]'s launches, kept loaded: [c] names their templates,
           which live while the image is loaded. *)
   uses : use array;  (** Each slot's use. *)
+  naming : naming array;  (** What names each slot. *)
   hold : hold option;
       (** The hold of the value the submission keeps, whose stamps each run
           raises, kept reachable: its release lets the value go. *)
@@ -219,24 +234,10 @@ let host_address fn b =
 (* Memory this process's host addresses, which a copy on a device of another
    machine names by its host address ([rig_edge.h]'s [copy_local]). *)
 let local b = Dev.same_machine b.mem.dev Dev.host && b.mem.host >= 0
-let local_none = 0
-let local_src = 1
-let local_dst = 2
 
-(* Which side of a copy on [d] is this process's memory, [-1] for a copy [d]
-   cannot run: on a device of another machine, one side may be. An int, so a
-   local copy allocates nothing for it. *)
-let copy_local d src dst =
-  let far = not (Dev.same_machine d Dev.host) in
-  if src.mem.dev == d && dst.mem.dev == d then local_none
-  else if far && local src && dst.mem.dev == d then local_src
-  else if far && src.mem.dev == d && local dst then local_dst
-  else -1
-
-(* The handle a copy's side passes: the host address of the memory on the side
-   [copy_local] names. *)
-let copy_handle side k b =
-  if side = k then Nativeint.of_int b.mem.host else b.mem.handle
+(* Whether a copy on [d] takes [b] as this process's memory, which the driver of
+   [d], a device of another machine, carries. *)
+let carried d b = b.mem.dev != d && local b && not (Dev.same_machine d Dev.host)
 
 (* Only the original allocation says whose memory it is and of which kind:
    a peer borrow's device and handle describe the receiving device's mapping. *)
@@ -250,36 +251,43 @@ let owns_device_memory d b =
 (* Hands the C form [c] its [k]th fixed buffer's stamps and access. *)
 let fix c k b use = sub_fixed c k (entry_of b).stamps use
 
+(* Refuses part [i]'s copy on [d] unless each buffer end is live and [d]'s, or
+   carried, the [dst] buffer admits writes, and two buffer ends have one
+   length, share no byte and are not both carried. A slot end's buffer only a
+   run gives, which the submit checks. *)
+let check_ends fn d i src dst =
+  let check = function
+    | Slot _ -> ()
+    | Buffer b ->
+        Buffer.check_live fn b;
+        if b.mem.dev != d && not (carried d b) then
+          invalid_argf "Rig.%s: part %d copies a buffer on %s, not on %s: \
+                        borrow it"
+            fn i b.mem.dev.name d.name
+  in
+  check src;
+  check dst;
+  (match dst with
+  | Buffer b when Buffer.access b = Def.Read ->
+      invalid_argf "Rig.%s: part %d copies into memory that admits only reads"
+        fn i
+  | Slot _ | Buffer _ -> ());
+  match (src, dst) with
+  | Buffer a, Buffer b ->
+      if Buffer.length a <> Buffer.length b then
+        invalid_argf "Rig.%s: part %d's buffers differ in size" fn i;
+      if Buffer.overlaps a b then
+        invalid_argf "Rig.%s: part %d's buffers overlap" fn i;
+      if carried d a && carried d b then
+        invalid_argf "Rig.%s: neither of part %d's buffers is %s's memory" fn i
+          d.name
+  | _ -> ()
+
 (* Refuses a device that runs no submitted work. *)
 let check_device fn d =
   if Dev.is_lost d then Dev.raise_lost d;
   if Dev.is_io d then
     invalid_argf "Rig.%s: %s runs no submitted work" fn d.name
-
-(* Refuses a copy on [d] of [src] into [dst] unless both are live and of one
-   size, [d] reaches both, and [dst] admits writes. *)
-let check_copy fn d src dst =
-  Buffer.check_live fn src;
-  Buffer.check_live fn dst;
-  if Buffer.length src <> Buffer.length dst then
-    invalid_argf "Rig.%s: a copy's buffers differ in size" fn;
-  if Buffer.overlaps src dst then
-    invalid_argf "Rig.%s: a copy's buffers overlap" fn;
-  if copy_local d src dst < 0 then
-    invalid_argf "Rig.%s: a copy's buffers are not %s's memory" fn d.name;
-  if Buffer.access dst = Def.Read then
-    invalid_argf "Rig.%s: a copy's dst admits only reads" fn
-
-(* Makes part [i] of [c] a copy on [d] of [src] into [dst]. *)
-let set_copy c d i src dst =
-  let side = copy_local d src dst in
-  sub_copy c i
-    ( copy_handle side local_dst dst,
-      dst.offset,
-      copy_handle side local_src src,
-      src.offset,
-      Buffer.length src );
-  sub_copy_facts c i side (owns_device_memory d src && owns_device_memory d dst)
 
 (* The most parameter bytes of a launch, [rig_edge.h]'s RIG_PARAMS. *)
 let max_params = 4096
@@ -361,40 +369,62 @@ let refs_of = function
 (* The buffer refs of [refs], which C places. *)
 let slot_refs refs =
   Array.to_seq refs
-  |> Seq.filter_map (function Slot r -> Some r | Entry _ -> None)
+  |> Seq.filter_map (function Slot_ref r -> Some r | Entry _ -> None)
   |> Array.of_seq
 
 (* Slots *)
 
-(* Each slot's use, from the refs that name it: [Use_write] if one writes it.
-   The slots are 0 to the highest a ref names, each named by a ref, and none
-   both unordered and ordered: a gap or a mix is a mistaken index. *)
+(* The slots part [i] names, how its work uses each, and by what: a copy reads
+   its [src] and writes its [dst]. *)
+let slots_of fn i = function
+  | Copy { src = Slot k; dst = Slot k' } when k = k' ->
+      invalid_argf "Rig.%s: part %d copies slot %d into itself" fn i k
+  | Copy { src; dst } ->
+      let named use = function
+        | Slot k -> [ (k, use, Copies) ]
+        | Buffer _ -> []
+      in
+      named Use_read src @ named Use_write dst
+  | p ->
+      Array.to_list
+        (Array.map (fun r -> (r.slot, r.use, Refs)) (slot_refs (refs_of p)))
+
+(* Each slot's use and what names it, from the refs and copies that name it:
+   [Use_write] if one writes it. The slots are 0 to the highest one named,
+   each named, and none used both unordered and ordered: a gap or a mix is a
+   mistaken index. *)
 let slot_uses fn parts =
-  let n = ref 0 in
-  let parts = Array.map (fun p -> slot_refs (refs_of p)) parts in
-  Array.iter
-    (Array.iter (fun r ->
-         if r.slot < 0 then invalid_argf "Rig.%s: a ref names slot %d" fn r.slot;
-         n := max !n (r.slot + 1)))
-    parts;
-  let uses = Array.make !n None in
-  let name r =
-    uses.(r.slot) <-
-      (match (uses.(r.slot), r.use) with
+  let named = List.concat (Array.to_list (Array.mapi (slots_of fn) parts)) in
+  let n =
+    List.fold_left
+      (fun n (k, _, _) ->
+        if k < 0 then invalid_argf "Rig.%s: a part names slot %d" fn k;
+        max n (k + 1))
+      0 named
+  in
+  let uses = Array.make n None and naming = Array.make n None in
+  let name (k, use, by) =
+    uses.(k) <-
+      (match (uses.(k), use) with
       | None, u -> Some u
       | Some Use_unordered, Use_unordered -> Some Use_unordered
       | Some Use_unordered, _ | Some _, Use_unordered ->
-          invalid_argf "Rig.%s: slot %d has unordered and ordered refs" fn
-            r.slot
+          invalid_argf "Rig.%s: slot %d is used both unordered and ordered" fn
+            k
       | Some Use_write, _ | _, Use_write -> Some Use_write
-      | Some Use_read, Use_read -> Some Use_read)
+      | Some Use_read, Use_read -> Some Use_read);
+    naming.(k) <-
+      (match naming.(k) with
+      | None -> Some by
+      | Some prev when prev = by -> Some by
+      | Some _ -> Some Both)
   in
-  Array.iter (Array.iter name) parts;
-  Array.mapi
-    (fun k -> function
-      | Some u -> u
-      | None -> invalid_argf "Rig.%s: no ref names slot %d" fn k)
-    uses
+  List.iter name named;
+  let get k = function
+    | Some x -> x
+    | None -> invalid_argf "Rig.%s: no ref or copy names slot %d" fn k
+  in
+  (Array.mapi get uses, Array.mapi get naming)
 
 (* Placement and order *)
 
@@ -412,14 +442,19 @@ let slot writes = { bytes = None; writes }
 
 let reaches = function
   | Words w -> [ named false w ]
-  | Copy { src; dst } -> [ named false src; named true dst ]
+  | Copy { src; dst } ->
+      let side writes = function
+        | Slot _ -> slot writes
+        | Buffer b -> named writes b
+      in
+      [ side false src; side true dst ]
   | Fill { refs; _ } | Launch { refs; _ } ->
       Array.fold_right
         (fun r acc ->
           match r with
-          | Entry _ | Slot { use = Use_unordered; _ } -> acc
-          | Slot { use = Use_read; _ } -> slot false :: acc
-          | Slot { use = Use_write; _ } -> slot true :: acc)
+          | Entry _ | Slot_ref { use = Use_unordered; _ } -> acc
+          | Slot_ref { use = Use_read; _ } -> slot false :: acc
+          | Slot_ref { use = Use_write; _ } -> slot true :: acc)
         refs []
 
 (* The parts of one queue that reached bytes of one space: a segment tree over
@@ -623,9 +658,10 @@ let build hold ~fixed d parts =
   let parts = Array.copy parts in
   let fn = "Submission.make" in
   check_device fn d;
-  let uses = slot_uses fn parts in
+  let uses, naming = slot_uses fn parts in
   let check_buffer = Buffer.check_live fn in
   let nfixed = ref 0 and nrefs = ref 0 and ncodes = ref 0 in
+  let ncopies = ref 0 in
   let entries = Array.make (Array.length parts) None in
   let slots = Array.map (fun p -> slot_refs (refs_of p)) parts in
   (* Each part's entry refs: where they lie in its parameters, their value
@@ -635,7 +671,7 @@ let build hold ~fixed d parts =
       (fun i p ->
         Array.to_list (refs_of p)
         |> List.filter_map (function
-          | Slot _ -> None
+          | Slot_ref _ -> None
           | Entry { at; image; f } -> Some (at, entry_code fn d i image f, image)))
       parts
   in
@@ -655,8 +691,10 @@ let build hold ~fixed d parts =
           nrefs := !nrefs + Array.length slots.(i);
           ncodes := !ncodes + List.length codes.(i)
       | Copy { src; dst } ->
-          check_copy fn d src dst;
-          nfixed := !nfixed + 2
+          check_ends fn d i src dst;
+          let buffer = function Buffer _ -> 1 | Slot _ -> 0 in
+          nfixed := !nfixed + buffer src + buffer dst;
+          incr ncopies
       | Launch l ->
           check_args fn i l.params l.refs;
           entries.(i) <-
@@ -674,10 +712,10 @@ let build hold ~fixed d parts =
   let nafter = Array.fold_left (fun n a -> n + Array.length a) 0 afters in
   let c =
     sub_new (Dev.live d).c (Array.length parts) nafter !nfixed uses !nrefs
-      !ncodes
+      !ncodes !ncopies
   in
   let blocks = Array.make (Array.length parts) no_block in
-  let at = ref 0 and k = ref 0 and r = ref 0 and j = ref 0 in
+  let at = ref 0 and k = ref 0 and r = ref 0 and j = ref 0 and m = ref 0 in
   let fixed = ref [] and images = ref [] in
   let fix_next b use =
     fix c !k b use;
@@ -706,9 +744,17 @@ let build hold ~fixed d parts =
           blocks.(i) <- (sub_id c, place, 0, "");
           r := !r + Array.length slots.(i)
       | Copy { src; dst } ->
-          set_copy c d i src dst;
-          fix_next src Use_read;
-          fix_next dst Use_write
+          let slot = function Slot k -> k | Buffer _ -> -1 in
+          sub_copy c !m i (slot src) (slot dst);
+          let side ~dst use = function
+            | Slot _ -> ()
+            | Buffer b ->
+                sub_side c !m dst b (carried d b) (owns_device_memory d b);
+                fix_next b use
+          in
+          side ~dst:false Use_read src;
+          side ~dst:true Use_write dst;
+          incr m
       | Launch l ->
           let e = Option.get entries.(i) in
           let place = sub_launch c i e.code e.launch l.params slots.(i) !r in
@@ -719,6 +765,7 @@ let build hold ~fixed d parts =
           images := l.image :: !images)
     parts;
   Array.iter (fun (b, a) -> fix_next b (use_of a)) memory;
+  sub_seal c;
   let kernels =
     Array.to_list parts
     |> List.filter_map (function Launch l -> Some l.kernel | _ -> None)
@@ -738,6 +785,7 @@ let build hold ~fixed d parts =
     addressable = Array.length memory;
     images = !images;
     uses;
+    naming;
     hold;
     blocks;
     span;
@@ -874,13 +922,18 @@ let check_owner s b =
     Dev.raise_lost r.dev
 
 (* Refuses [b], the run's buffer [k], used with [use], unless it is live, on
-   [s]'s device and, written, of memory that admits writes; and hands its stamps
-   and address to the run's slot [k]. *)
+   [s]'s device or carried for copies alone, and, written, of memory that
+   admits writes; and hands its stamps and address to the run's slot [k], and
+   what a copy passes the driver to its side [k]. *)
 let name_one s run use k b =
   if not (Buffer.is_live b) then
     invalid_argf "Rig.%s: buffers.(%d) is dead: %s" fn k b.mem.claim.why;
+  let naming = Array.unsafe_get s.naming k in
+  let carried =
+    match naming with Copies -> carried s.dev b | Refs | Both -> false
+  in
   (* A queue reaches other memory only through a borrow on its device. *)
-  if b.mem.dev != s.dev then
+  if b.mem.dev != s.dev && not carried then
     invalid_argf "Rig.%s: buffers.(%d) is on %s, not on %s: borrow it" fn k
       b.mem.dev.name s.dev.name;
   check_owner s b;
@@ -892,7 +945,11 @@ let name_one s run use k b =
       "Rig.%s: buffers.(%d) is written and its memory admits only reads" fn k;
   (* -1 for memory with no address, which the collect refuses a ref to. *)
   let address = if b.mem.address < 0 then -1 else b.mem.address + b.offset in
-  run_slot run k e.stamps address
+  run_slot run k e.stamps address;
+  match naming with
+  | Refs -> ()
+  | Copies | Both ->
+      run_side run k b carried (owns_device_memory s.dev b)
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
    queue, or that its queue has no room for, adds the others to the run's waits
@@ -1080,38 +1137,13 @@ let submit ?(waits = [||]) s ~run ~buffers =
    replaced by a fresh one for the copy. *)
 let copy_runs = Domain.DLS.new_key run_new
 
-(* The submission [build] makes of the one part [Copy { src; dst }] on the copy
-   engine, compiled directly: each [Buffer.copy] through a queue makes one, and
-   it has no order, launch or fixed memory for [build]'s placement, loops and
-   blocks to handle. *)
+(* Each device's submission of one copy from slot 0 into slot 1, which [make]
+   places on its copy engine. *)
+let copiers =
+  Dev.new_key (fun d -> make d [| copy ~src:(Slot 0) ~dst:(Slot 1) |])
+
 let run_copy d ~src ~dst =
-  let fn = "Submission.make" in
-  check_device fn d;
-  let l = Dev.live d in
-  let q =
-    match l.copy_engine with
-    | Some q -> q
-    | None -> invalid_argf "Rig.%s: %s runs no copies" fn d.name
-  in
-  check_copy fn d src dst;
-  let c = sub_new l.c 1 0 2 [||] 0 0 in
-  sub_part c 0 q [||] 0;
-  set_copy c d 0 src dst;
-  fix c 0 src Use_read;
-  fix c 1 dst Use_write;
-  let s =
-    {
-      dev = d;
-      c;
-      fixed = [| src; dst |];
-      addressable = 0;
-      images = [];
-      uses = [||];
-      hold = None;
-      blocks = [||];
-      span = Some (l.queues.(q).name, kind_name Copy);
-    }
-  in
+  let s = Dev.local copiers d in
   let run = Domain.DLS.get copy_runs in
   let run =
     if take run s.c then run
@@ -1120,4 +1152,4 @@ let run_copy d ~src ~dst =
       ignore (take fresh s.c : bool);
       fresh
   in
-  taken s run [||] [||]
+  taken s run [| src; dst |] [||]

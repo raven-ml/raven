@@ -81,7 +81,8 @@ let submit ?waits d ws ~uses =
   let s, run, buffers = Rig_gpu_support.prepare ~fixed:uses d ws in
   Rig.submit ?waits s ~run ~buffers
 
-let copy_part ~dst src = Rig_gpu_support.work (Sub.copy ~src ~dst)
+let copy_part ~dst src =
+  Rig_gpu_support.work Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
 (* Returns once [f ()] holds, failing after 10 s of the monotonic clock. *)
 let await what f =
@@ -236,7 +237,8 @@ let refusals (module G : Gpu) () =
   let part : Rig_edge.kind -> Sub.part = function
     | Words -> Sub.words (B.create Rig.host 8)
     | Fill -> (failing_fill t.d).part 0
-    | Copy -> Sub.copy ~src:(B.create t.d 8) ~dst:(B.create t.d 8)
+    | Copy ->
+        Sub.(copy ~src:(Buffer (B.create t.d 8)) ~dst:(Buffer (B.create t.d 8)))
     | Launch -> Sub.launch image (List.hd kernels) ~params:0
   in
   let qs = (G.D.facts t.g).queues in

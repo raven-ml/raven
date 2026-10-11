@@ -45,22 +45,22 @@ let hole ?(width = G.W64) ?(add = 0) ?(shift = 0) at leaf =
 
 (* A launch of Polled's [fill]: for [groups] groups, the 64-bit word [i] of its
    slot [0] is [base + i]. *)
-let fill ?(holes : _ iarray = [||]) ~image ~groups base =
+let fill ?(holes : _ iarray = [||]) ?(use = G.Write) ~image ~groups base =
   let bytes = String.make 8 '\000' ^ le64 base in
   (Launch
         {
           image;
           name = "fill";
           params = { bytes; holes };
-          refs = [| { G.slot = 0; at = 0; use = Write } |];
+          refs = [| { G.slot = 0; at = 0; use } |];
           groups = (Fixed groups, Fixed 1, Fixed 1);
           threads = (Fixed 1, Fixed 1, Fixed 1);
           shared = Fixed 0;
         })
 
-(* A launch of Polled's [copy]: [bytes] bytes from its slot [0] to its slot
-   [1]. *)
-let kcopy ~image bytes =
+(* A launch of Polled's [copy]: [bytes] bytes from its slot [src] (defaults
+   to [0]) to its slot [dst] (defaults to [1]). *)
+let kcopy ?(src = 0) ?(dst = 1) ~image bytes =
   (Launch
         {
           image;
@@ -68,8 +68,8 @@ let kcopy ~image bytes =
           params = data (String.make 16 '\000' ^ le64 bytes);
           refs =
             [|
-              { G.slot = 0; at = 0; use = Read };
-              { G.slot = 1; at = 8; use = Write };
+              { G.slot = src; at = 0; use = Read };
+              { G.slot = dst; at = 8; use = Write };
             |];
           groups = (Fixed 1, Fixed 1, Fixed 1);
           threads = (Fixed 1, Fixed 1, Fixed 1);
@@ -105,6 +105,7 @@ type loc = Mem of int | In of int
 type op =
   | Fill of { dev : int; dst : loc; groups : int; base : int }
   | Kcopy of { dev : int; src : loc; dst : loc; bytes : int }
+  | Pcopy of { dev : int; src : loc; dst : loc }
   | Move of { src : loc; dst : loc }
 
 type case = {
@@ -127,6 +128,8 @@ let pp_op ppf = function
   | Kcopy { dev; src; dst; bytes } ->
       Format.fprintf ppf "copy@%d %a->%a %d bytes" dev pp_loc src pp_loc dst
         bytes
+  | Pcopy { dev; src; dst } ->
+      Format.fprintf ppf "copy part@%d %a->%a" dev pp_loc src pp_loc dst
   | Move { src; dst } -> Format.fprintf ppf "move %a->%a" pp_loc src pp_loc dst
 
 let pp_case ppf c =
@@ -166,6 +169,9 @@ let gen_case =
           and+ src, dst = two_locs
           and+ words = int_range 0 (size / 8) in
           Kcopy { dev; src; dst; bytes = 8 * words } );
+        ( 2,
+          let+ dev = dev and+ src, dst = two_locs in
+          Pcopy { dev; src; dst } );
         ( 1,
           let+ src, dst = two_locs in
           Move { src; dst } );
@@ -199,6 +205,10 @@ let describe c =
               (slot dst, Rig.Read_write);
             |]
           [| kcopy ~image:(image dev) bytes |]
+    | Pcopy { dev; src; dst } ->
+        submit dev
+          ~buffers:[| (slot src, Rig.Read); (slot dst, Rig.Read_write) |]
+          [| Copy { src = 0; dst = 1 } |]
     | Move { src; dst } -> G.Move { src = slot src; dst = slot dst }
   in
   let a, b = Lazy.force devices in
@@ -241,7 +251,8 @@ let model c =
             done
         | Kcopy { src; dst; bytes; _ } ->
             Bytes.blit (cell src) 0 (cell dst) 0 bytes
-        | Move { src; dst } -> Bytes.blit (cell src) 0 (cell dst) 0 size)
+        | Pcopy { src; dst; _ } | Move { src; dst } ->
+            Bytes.blit (cell src) 0 (cell dst) 0 size)
       c.ops;
     Array.map Bytes.to_string inputs
 
@@ -258,7 +269,9 @@ let model_law c =
         (fun d ->
           List.exists
             (function
-              | Fill { dev; _ } | Kcopy { dev; _ } -> dev = d | Move _ -> false)
+              | Fill { dev; _ } | Kcopy { dev; _ } | Pcopy { dev; _ } ->
+                  dev = d
+              | Move _ -> false)
             c.ops)
         [ 0; 1 ]
     in
@@ -280,7 +293,8 @@ let model_law c =
         let dev, reads, writes =
           match op with
           | Fill { dev; dst; _ } -> (Some dev, [], [ dst ])
-          | Kcopy { dev; src; dst; _ } -> (Some dev, [ src ], [ dst ])
+          | Kcopy { dev; src; dst; _ } | Pcopy { dev; src; dst } ->
+              (Some dev, [ src ], [ dst ])
           | Move { src; dst } -> (None, [ src ], [ dst ])
         in
         let seen l =
@@ -296,11 +310,21 @@ let model_law c =
   cover "an input another device borrows"
     (List.exists
        (function
-         | Fill { dev; dst = In i; _ } | Kcopy { dev; dst = In i; _ } ->
+         | Fill { dev; dst = In i; _ }
+         | Kcopy { dev; dst = In i; _ }
+         | Pcopy { dev; dst = In i; _ } ->
              dev <> c.in_dev.(i)
          | _ -> false)
        c.ops);
-  cover "a move" (List.exists (function Move _ -> true | _ -> false) c.ops)
+  cover "a move" (List.exists (function Move _ -> true | _ -> false) c.ops);
+  cover "a copy part into an input"
+    (List.exists (function Pcopy { dst = In _; _ } -> true | _ -> false) c.ops);
+  cover "a copy part out of an input"
+    (List.exists (function Pcopy { src = In _; _ } -> true | _ -> false) c.ops);
+  cover "a copy part between memories"
+    (List.exists
+       (function Pcopy { src = Mem _; dst = Mem _; _ } -> true | _ -> false)
+       c.ops)
 
 (* Holes *)
 
@@ -499,8 +523,24 @@ let addr memory = G.Address { memory; on = 0 }
 let holed ?width ?shift n h =
   { G.bytes = String.make n '\000'; holes = [| hole ?width ?shift 0 h |] }
 
+(* [base d] whose step copies its slot [0] into its slot [1], of [slots], and
+   fills its slot [0] with a ref of [use]. *)
+let copying ?(ints = 0) ?use slots d =
+  let rw s = (s, Rig.Read_write) in
+  {
+    (base d) with
+    ints;
+    steps =
+      [|
+        submit 0
+          ~buffers:(Iarray.map rw slots)
+          [| fill ?use ~image:0 ~groups:1 0; Copy { src = 0; dst = 1 } |];
+      |];
+  }
+
 let refusals =
   let one d = [ d ] in
+  let head = G.Memory { memory = 0; offset = 0; length = 8 } in
   [
     ("as many devices as the program's", (fun d -> base d), fun _ -> []);
     ( "a device's arch",
@@ -642,6 +682,36 @@ let refusals =
             |];
         }),
       one );
+    ( "memory named by an unordered ref and a copy",
+      copying ~use:Unordered [| all 0; Input 0 |],
+      one );
+    ( "an input named by an unordered ref and a copy",
+      copying ~use:Unordered [| Input 0; all 0 |],
+      one );
+    ( "memory named by an unordered and a read ref",
+      (fun d ->
+        {
+          (base d) with
+          steps =
+            [|
+              submit 0
+                ~buffers:[| (all 0, Rig.Read_write); (Input 0, Rig.Read) |]
+                [|
+                  fill ~use:Unordered ~image:0 ~groups:1 0; kcopy ~image:0 8;
+                |];
+            |];
+        }),
+      one );
+    ( "a copy of memory into ints of another length",
+      copying ~ints:2 [| head; Ints |],
+      one );
+    ( "a copy of memory shorter than its input",
+      copying [| head; Input 0 |],
+      one );
+    ( "a copy of the ints into themselves",
+      copying ~ints:1 [| Ints; Ints |],
+      one );
+    ("a copy of an input into itself", copying [| Input 0; Input 0 |], one);
     ( "a ref past its slots",
       (fun d ->
         {
@@ -1266,6 +1336,40 @@ let test_read_only_input () =
   equal ~msg:"the file's bytes" string (le64 5)
     (In_channel.with_open_bin path In_channel.input_all)
 
+(* A copy part writes its destination: a read-only borrow of a file there is
+   refused before the run's work, and the file keeps its bytes. *)
+let test_read_only_copy () =
+  let d, _ = polled "read-only-copy" in
+  let path = Filename.temp_file "rig-program" ".bin" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) @@ fun () ->
+  Out_channel.with_open_bin path (fun oc -> output_string oc (le64 5));
+  let file = Result.get_ok (Rig_disk.of_file path) in
+  let x = require_some (B.borrow d file) in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      ints = 0;
+      memory = [| alloc ~init:(data (le64 7)) 0 8 |];
+      images = [||];
+      inputs = [| { device = 0; bytes = 8 } |];
+      steps =
+        [|
+          submit 0
+            ~buffers:
+              [|
+                (Memory { memory = 0; offset = 0; length = 8 }, Rig.Read);
+                (Input 0, Rig.Read_write);
+              |]
+            [| Copy { src = 0; dst = 1 } |];
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  raises_match ~msg:"a read-only input" Exn.invalid_arg (fun () ->
+      G.run p { inputs = [| x |]; ints = [||] });
+  equal ~msg:"the file's bytes" string (le64 5)
+    (In_channel.with_open_bin path In_channel.input_all)
+
 let test_ints_refusal () =
   let d = fst (polled "ints") in
   let p = load_ok { (base d) with ints = 1 } [ d ] in
@@ -1339,7 +1443,7 @@ let gen_t =
          and+ params = data value
          and+ refs = few ref in
          G.Fill { fill; params; refs });
-        (let+ src = view and+ dst = view in
+        (let+ src = n and+ dst = n in
          (Copy { src; dst } : G.part));
         (let+ image = n
          and+ name = str
@@ -1432,7 +1536,7 @@ let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
   Bytes.set_int64_le s 12 7L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 7, not 8" why
+  contains ~msg:"names the versions" ~sub:"version 7, not 9" why
 
 (* A description cut inside its version is malformed where the cut is. *)
 let test_cut_version () =
@@ -2009,39 +2113,88 @@ let test_frame_read_once () =
   equal ~msg:"the move ran" int 42 (word_of frame.inputs.(1));
   equal ~msg:"the frame's earlier input 2" int 7 (word_of z)
 
-(* A Copy part copies its source view into its destination view on its step's
-   device. *)
+(* A Copy part copies its source slot into its destination slot on its step's
+   device, whether each holds the program's memory or a run's input: memory
+   into an input, that input into another, the other into memory, and memory
+   into memory, with each run's inputs. A move takes the last out. *)
 let test_copy_part () =
   let d, _ = polled "copy-part" in
+  let input = { G.device = 0; bytes = 8 } in
+  let view memory offset = G.Memory { memory; offset; length = 8 } in
   let t =
     {
       G.devices = [| Rig.arch d |];
       ints = 0;
-      memory = [| alloc ~init:(data (le64 42 ^ le64 7)) 0 16; alloc 0 16 |];
+      memory =
+        [| alloc ~init:(data (le64 42 ^ le64 7)) 0 16; alloc 0 16 |];
       images = [||];
-      inputs = [| { device = 0; bytes = 8 } |];
+      inputs = [| input; input; input |];
       steps =
         [|
           submit 0
+            ~buffers:
+              [|
+                (view 0 8, Rig.Read);
+                (Input 0, Rig.Read_write);
+                (Input 1, Rig.Read_write);
+                (view 1 0, Rig.Read_write);
+                (view 1 8, Rig.Read_write);
+              |]
             [|
-              Copy
-                {
-                  src = { memory = 0; offset = 8; length = 8 };
-                  dst = { memory = 1; offset = 0; length = 8 };
-                };
+              Copy { src = 0; dst = 1 };
+              Copy { src = 1; dst = 2 };
+              Copy { src = 2; dst = 3 };
+              Copy { src = 3; dst = 4 };
             |];
           G.Move
             {
-              src = Memory { memory = 1; offset = 0; length = 8 };
-              dst = Input 0;
+              src = Memory { memory = 1; offset = 8; length = 8 };
+              dst = Input 2;
             };
         |];
     }
   in
   let p = load_ok t [ d ] in
-  let out = one_word d in
-  Array.iter Rig.Point.wait (G.run p { inputs = [| out |]; ints = [||] });
-  equal ~msg:"the source's second word" int 7 (word_of out)
+  for run = 1 to 2 do
+    let a = one_word d and b = one_word d and c = one_word d in
+    Array.iter Rig.Point.wait (G.run p { inputs = [| a; b; c |]; ints = [||] });
+    List.iteri
+      (fun i x ->
+        equal ~msg:(Printf.sprintf "run %d's input %d" run i) int 7 (word_of x))
+      [ a; b; c ]
+  done
+
+(* A memory slot that only copies name takes no slot of the step's
+   submission, and the slots after it are numbered without it: memory 0, named
+   by the copy alone, reaches memory 1, which the copy writes and a launch
+   reads into input 0, named by the launch's write ref between them. *)
+let test_renumbered () =
+  let d, _ = polled "renumbered" in
+  let bytes = String.init 64 (fun i -> Char.chr (i + 1)) in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      ints = 0;
+      memory = [| alloc ~init:(data bytes) 0 64; alloc 0 64 |];
+      images = [| { device = 0; binary = functions } |];
+      inputs = [| { device = 0; bytes = 64 } |];
+      steps =
+        [|
+          submit 0
+            ~buffers:
+              [|
+                (all 0, Rig.Read);
+                (Input 0, Rig.Read_write);
+                (all 1, Rig.Read_write);
+              |]
+            [| Copy { src = 0; dst = 2 }; kcopy ~src:2 ~dst:1 ~image:0 64 |];
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let x = B.create d 64 in
+  Array.iter Rig.Point.wait (G.run p { inputs = [| x |]; ints = [||] });
+  equal ~msg:"input 0" string bytes (read x)
 
 (* Run 2 waits for run 0's work on its copy before it writes its ints: the
    frame's ints changed during that wait change nothing. *)
@@ -2506,6 +2659,8 @@ let tests =
         test "run raises for more ints than the program's" test_ints_refusal;
         test "run raises for a read-only input a step writes"
           test_read_only_input;
+        test "run raises for a read-only input a copy part writes"
+          test_read_only_copy;
       ];
     group ~timeout "frame"
       [
@@ -2530,7 +2685,9 @@ let tests =
         test "a launch's ref is its input's address in each run" test_input_ref;
         test "a fill reads each run's parameters and refs" test_fill_params;
         test "a fill with no parameters submits" test_fill_empty;
-        test "a Copy part copies its views on its device" test_copy_part;
+        test "a Copy part copies between its step's slots" test_copy_part;
+        test "memory only copies name takes no slot of the submission"
+          test_renumbered;
         test "an init Address comes from a step fixing its run's copy"
           test_init_address;
         test "an init Entry keeps its host function through queued work"

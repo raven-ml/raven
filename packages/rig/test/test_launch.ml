@@ -269,7 +269,7 @@ let test_device_order () =
   let src = B.create d 64 and b = B.create d 64 and c = B.create d 64 in
   B.copy ~src:(B.of_string data) ~dst:src;
   let copy_part ~dst src =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   let copy_into_b = Sub.make d [| copy_part ~dst:b src |] in
   let copying =
@@ -396,7 +396,7 @@ let test_make_refusals () =
   refused ~msg:"the block of part 1 of 1" (fun () -> Sub.block s 1);
   refused ~msg:"the block of part -1" (fun () -> Sub.block s (-1));
   let copy =
-    Sub.copy ~src:(B.create d 8) ~dst:(B.create d 8)
+    Sub.(copy ~src:(Buffer (B.create d 8)) ~dst:(Buffer (B.create d 8)))
   in
   let s = Sub.make d [| copy |] in
   refused ~msg:"the block of a copy" (fun () -> Sub.block s 0)

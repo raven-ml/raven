@@ -38,7 +38,7 @@ let get b =
   Rig.Buffer.copy ~src:b ~dst:(Rig.Buffer.of_bigarray a);
   String.init n (fun i -> a.{i})
 
-let copy ~dst src = Rig.Submission.copy ~src ~dst
+let copy ~dst src = Rig.Submission.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
 (* A dispatch of [name] of the loaded object [p], one workgroup of 64, which
    reads no arguments. *)

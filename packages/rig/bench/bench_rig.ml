@@ -154,7 +154,8 @@ let making () =
     B.view allocs.(k mod 16) ~first:(64 * (k / 16 mod 4)) ~length:64
   in
   let part k =
-    if k mod 2 = 0 then Sub.copy ~src:(view k) ~dst:(view (k + 1))
+    if k mod 2 = 0 then
+      Sub.(copy ~src:(Buffer (view k)) ~dst:(Buffer (view (k + 1))))
     else
       Sub.fill
         ~refs:[| Sub.read (k mod 8) ~at:0; Sub.write ((k + 3) mod 8) ~at:8 |]

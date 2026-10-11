@@ -194,6 +194,7 @@ static void sub_free(struct rig_sub *s) {
   free(s->uses);
   free(s->refs);
   free(s->codes);
+  free(s->copies);
   free(s);
 }
 
@@ -210,12 +211,13 @@ static _Atomic uint64_t next_id = 1;
 
 /* A prepared submission on the device [v_d] of [v_nparts] parts whose
    [after] lists hold [v_nafter] indices in all, naming [v_nfixed] buffers,
-   whose runs use one buffer per access of [v_access] (an rig_use),
-   and whose launches and fills hold [v_nrefs] buffer refs and [v_ncodes]
-   entry refs in all. It holds the device's record until it is freed. */
+   whose runs use one buffer per access of [v_access] (an rig_use), whose
+   launches and fills hold [v_nrefs] buffer refs and [v_ncodes] entry refs
+   in all, and [v_ncopies] of whose parts are copies. It holds the device's
+   record until it is freed. */
 value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
                        value v_nfixed, value v_access, value v_nrefs,
-                       value v_ncodes) {
+                       value v_ncodes, value v_ncopies) {
   struct rig_sub *s = calloc(1, sizeof *s);
   if (s == NULL) caml_raise_out_of_memory();
   s->id = atomic_fetch_add(&next_id, 1);
@@ -235,6 +237,8 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
   s->refs = zalloc((size_t)s->nrefs, sizeof *s->refs, &ok);
   s->ncodes = Int_val(v_ncodes);
   s->codes = zalloc((size_t)s->ncodes, sizeof *s->codes, &ok);
+  s->ncopies = Int_val(v_ncopies);
+  s->copies = zalloc((size_t)s->ncopies, sizeof *s->copies, &ok);
   if (!ok) {
     sub_free(s);
     caml_raise_out_of_memory();
@@ -249,7 +253,7 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
 value caml_rig_sub_new_byte(value *argv, int argn) {
   (void)argn;
   return caml_rig_sub_new(argv[0], argv[1], argv[2], argv[3], argv[4],
-                          argv[5], argv[6]);
+                          argv[5], argv[6], argv[7]);
 }
 
 /* Part [v_i] on queue [v_queue], after the parts in [v_after], whose
@@ -275,23 +279,66 @@ value caml_rig_sub_words(value v_s, value v_i, value v_host, value v_n) {
   return Val_unit;
 }
 
-value caml_rig_sub_copy(value v_s, value v_i, value v_args) {
-  struct rig_part *p = &Sub_val(v_s)->parts[Int_val(v_i)];
-  p->kind = RIG_COPY;
-  p->copy.dst = (uint64_t)Nativeint_val(Field(v_args, 0));
-  p->copy.dst_offset = (uint64_t)Long_val(Field(v_args, 1));
-  p->copy.src = (uint64_t)Nativeint_val(Field(v_args, 2));
-  p->copy.src_offset = (uint64_t)Long_val(Field(v_args, 3));
-  p->copy.bytes = (uint64_t)Long_val(Field(v_args, 4));
+/* The submission's [v_k]th copy is part [v_i], from the run's slot [v_src]
+   into its slot [v_dst], each -1 for a buffer that [caml_rig_sub_side]
+   sets. */
+value caml_rig_sub_copy(value v_s, value v_k, value v_i, value v_src,
+                        value v_dst) {
+  struct rig_sub *s = Sub_val(v_s);
+  struct rig_copy *c = &s->copies[Int_val(v_k)];
+  s->parts[Int_val(v_i)].kind = RIG_COPY;
+  c->part = Int_val(v_i);
+  c->src = Int_val(v_src);
+  c->dst = Int_val(v_dst);
   return Val_unit;
 }
 
-/* Both endpoint facts are replaced whenever a copy part is set. */
-value caml_rig_sub_copy_facts(value v_s, value v_i, value v_side,
-                             value v_device_memory) {
-  struct rig_part *p = &Sub_val(v_s)->parts[Int_val(v_i)];
-  p->copy.local = Int_val(v_side);
-  p->copy.device_memory = Bool_val(v_device_memory);
+/* Sets the buffer [v_b] as the [v_k]th copy's destination if [v_dst], its
+   source otherwise, passed as this process's memory iff [v_local], with the
+   copy.device_memory fact [v_device_memory]. The side's alias is read once,
+   here: a copy runs on no io device, so an io memory end is a borrow, and
+   borrowing io memory of any byte asked for its pages, which an entry
+   publishes once and keeps. */
+value caml_rig_sub_side(value v_s, value v_k, value v_dst, value v_b,
+                        value v_local, value v_device_memory) {
+  struct rig_side *side =
+      &Sub_val(v_s)->copies[Int_val(v_k)].ends[Bool_val(v_dst)];
+  rig_buffer_side(v_b, Bool_val(v_local), side);
+  side->device_memory = Bool_val(v_device_memory);
+  return Val_unit;
+}
+
+value caml_rig_sub_side_byte(value *argv, int argn) {
+  (void)argn;
+  return caml_rig_sub_side(argv[0], argv[1], argv[2], argv[3], argv[4],
+                           argv[5]);
+}
+
+/* Sets the fields of [p], a copy from [src] into [dst]. */
+static void set_copy(struct rig_part *p, const struct rig_side *src,
+                     const struct rig_side *dst) {
+  p->copy.dst = dst->handle;
+  p->copy.dst_offset = dst->offset;
+  p->copy.src = src->handle;
+  p->copy.src_offset = src->offset;
+  p->copy.bytes = src->bytes;
+  p->copy.local = src->local   ? RIG_LOCAL_SRC
+                  : dst->local ? RIG_LOCAL_DST
+                               : RIG_LOCAL_NONE;
+  p->copy.device_memory = src->device_memory && dst->device_memory;
+}
+
+/* Sets each copy between two buffers in the submission's parts, which make
+   checked, and counts the copies with a slot end, which each submit sets. */
+value caml_rig_sub_seal(value v_s) {
+  struct rig_sub *s = Sub_val(v_s);
+  for (int k = 0; k < s->ncopies; k++) {
+    struct rig_copy *c = &s->copies[k];
+    if (c->src < 0 && c->dst < 0)
+      set_copy(&s->parts[c->part], &c->ends[0], &c->ends[1]);
+    else
+      s->nslotted++;
+  }
   return Val_unit;
 }
 
@@ -391,6 +438,8 @@ static void run_free(struct rig_run *r) {
   free(r->fixed);
   free(r->slots);
   free(r->addresses);
+  free(r->sides);
+  free(r->parts);
   free(r->args);
   free(r->points);
   free(r->waits);
@@ -427,10 +476,10 @@ static int fit(void **a, int *c, int want, size_t size) {
   return 1;
 }
 
-/* Fits the run [r] to the submission [s]: its uses, slots and addresses,
-   and its blocks, which [s] then owns, its new bytes 0. Whether memory
-   sufficed. A run that served [s] last fits its slots: its arrays only
-   grow. */
+/* Fits the run [r] to the submission [s]: its uses, slots, addresses and
+   sides, the parts of a submission with copies, and its blocks, which [s]
+   then owns, its new bytes 0. Whether memory sufficed. A run that served
+   [s] last fits its slots: its arrays only grow. */
 static int run_fit(struct rig_run *r, const struct rig_sub *s) {
   if (s->args > 0 && r->nargs < s->args) {
     if (s->args > r->cargs) {
@@ -445,12 +494,16 @@ static int run_fit(struct rig_run *r, const struct rig_sub *s) {
   }
   if (s->id == r->sub) return 1;
   int nslots = s->nslots;
-  /* The addresses grow with the slots, which [fit] counts. */
-  int caddresses = r->cslots;
+  /* The addresses and sides grow with the slots, which [fit] counts. */
+  int caddresses = r->cslots, csides = r->cslots;
   if (!fit((void **)&r->fixed, &r->cfixed, s->nfixed, sizeof *r->fixed) ||
       !fit((void **)&r->addresses, &caddresses, nslots,
            sizeof *r->addresses) ||
+      !fit((void **)&r->sides, &csides, nslots, sizeof *r->sides) ||
       !fit((void **)&r->slots, &r->cslots, nslots, sizeof *r->slots))
+    return 0;
+  if (s->nslotted > 0 &&
+      !fit((void **)&r->parts, &r->cparts, s->nparts, sizeof *r->parts))
     return 0;
   r->sub = s->id;
   r->nslots = nslots;
@@ -506,6 +559,38 @@ value caml_rig_run_slot(value v_r, value v_k, value v_stamps, value v_address) {
   return Val_unit;
 }
 
+/* Sets the run's [v_k]th side, for copies, from its buffer [v_b], which a
+   copy passes as this process's memory iff [v_local], and whose
+   copy.device_memory fact is [v_device_memory]. */
+value caml_rig_run_side(value v_r, value v_k, value v_b, value v_local,
+                        value v_device_memory) {
+  struct rig_side *side = &Run_val(v_r)->sides[Int_val(v_k)];
+  rig_buffer_side(v_b, Bool_val(v_local), side);
+  side->device_memory = Bool_val(v_device_memory);
+  return Val_unit;
+}
+
+/* Sets the run's parts from [s]'s, the fields of each copy with a slot end
+   from the sides of its ends, or refuses a copy whose buffers differ in
+   size, overlap, or are both this process's memory. */
+static void set_copies(const struct rig_sub *s, struct rig_run *r) {
+  memcpy(r->parts, s->parts, (size_t)s->nparts * sizeof *r->parts);
+  for (int k = 0; k < s->ncopies; k++) {
+    const struct rig_copy *c = &s->copies[k];
+    if (c->src < 0 && c->dst < 0) continue;
+    const struct rig_side *src = c->src < 0 ? &c->ends[0] : &r->sides[c->src];
+    const struct rig_side *dst = c->dst < 0 ? &c->ends[1] : &r->sides[c->dst];
+    if (src->bytes != dst->bytes)
+      caml_invalid_argument("Rig.submit: a copy's buffers differ in size");
+    if (rig_sides_overlap(src, dst))
+      caml_invalid_argument("Rig.submit: a copy's buffers overlap");
+    if (src->local && dst->local)
+      caml_invalid_argument(
+          "Rig.submit: neither of a copy's buffers is its device's memory");
+    set_copy(&r->parts[c->part], src, dst);
+  }
+}
+
 static void grow(void **a, int *c, int want, size_t size) {
   if (want <= *c) return;
   int n = want < 8 ? 8 : 2 * want;
@@ -549,7 +634,8 @@ static _Atomic uint64_t *add_memory(struct rig_run *r, int own,
 }
 
 /* Writes each entry ref's value into the run [v_r]'s blocks, which the
-   taken run holds whole. Collects in [v_r] the points [v_s]'s work follows,
+   taken run holds whole, and sets the run's parts for its copies. Collects
+   in [v_r] the points [v_s]'s work follows,
    the greatest per other device, with the points of [v_waits], and reserves
    the use words its raise stores to, and [own]'s in the hold's stamps
    [v_hold], 0 for none: a hold orders nothing, so its points are not
@@ -564,6 +650,7 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
       caml_invalid_argument(
           "Rig.submit: a ref names a run buffer whose memory has no "
           "address");
+  if (s->nslotted > 0) set_copies(s, r);
   for (int k = 0; k < s->ncodes; k++)
     memcpy(r->args + s->codes[k].at, &s->codes[k].code, sizeof(uint64_t));
   r->npoints = r->nwaits = 0;

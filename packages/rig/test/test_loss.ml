@@ -316,7 +316,9 @@ let test_own_memory () =
   let b = require_some (B.borrow e m) in
   let dst = B.create Rig.host 64 in
   let fixed = Sub.make ~fixed:[ (b, Rig.Read) ] e [||] in
-  let copy = Sub.make e [| Sub.copy ~src:b ~dst:(B.create e 64) |] in
+  let copy =
+    Sub.make e Sub.[| copy ~src:(Buffer b) ~dst:(Buffer (B.create e 64)) |]
+  in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
   List.iter

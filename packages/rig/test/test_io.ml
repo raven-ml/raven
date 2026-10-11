@@ -105,7 +105,7 @@ let bytes b =
 (* A copy on [d] from [src] into [dst], left queued. *)
 let queued_copy d ~src ~dst =
   let part =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   ignore (submit (Sub.make d [| part |]))
 
@@ -439,8 +439,8 @@ let pp_access ppf a =
 let access = Testable.make ~pp:pp_access ~equal:( = )
 
 (* A device's work never writes memory that admits only reads: a run that writes
-   it, a copy part into it and fixed memory written are refused, and reading it
-   is not. *)
+   it, a copy part into it, a run's copy into it and fixed memory written are
+   refused, and reading it is not. *)
 let test_read_runs () =
   let io, t = open_pages () in
   let d, _ = P.open_ ~host_visible:false "io:read-runs" in
@@ -455,11 +455,15 @@ let test_read_runs () =
   raises_match ~msg:"a run's unordered use" Exn.invalid_arg (fun () ->
       ignore (submit unordered ~buffers:[| on_d |]));
   let copy src dst =
-    Sub.copy ~src ~dst
+    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
   in
   ignore (Sub.make d [| copy on_d own |]);
   raises_match ~msg:"a copy part's destination" Exn.invalid_arg (fun () ->
       ignore (Sub.make d [| copy own on_d |]));
+  let slots = Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |] in
+  ignore (submit slots ~buffers:[| on_d; own |]);
+  raises_match ~msg:"a run's copy into it" Exn.invalid_arg (fun () ->
+      ignore (submit slots ~buffers:[| own; on_d |]));
   let fixed access = Sub.make ~fixed:[ (on_d, access) ] d [||] in
   ignore (fixed Rig.Read);
   raises_match ~msg:"fixed memory written" Exn.invalid_arg (fun () ->

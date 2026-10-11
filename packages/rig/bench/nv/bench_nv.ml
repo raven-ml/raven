@@ -141,7 +141,8 @@ let release_rows =
     let t, none = empty () in
     (* A copy of no bytes runs on the copy channel: it follows nothing. *)
     let copy =
-      submission t [| Sub.copy ~src:(B.create t.d 0) ~dst:(B.create t.d 0) |]
+      let src = B.create t.d 0 and dst = B.create t.d 0 in
+      submission t Sub.[| copy ~src:(Buffer src) ~dst:(Buffer dst) |]
     in
     (t, copy, none)
   in
@@ -257,7 +258,8 @@ let copy_rows =
   let copying n (dst, src) () =
     let t = dev () in
     let dst = B.create ~memory:dst t.d n and src = B.create ~memory:src t.d n in
-    (t, dst, src, submission t [| Sub.copy ~src ~dst |])
+    let s = submission t Sub.[| copy ~src:(Buffer src) ~dst:(Buffer dst) |] in
+    (t, dst, src, s)
   in
   let copy name n kinds =
     [

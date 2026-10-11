@@ -52,7 +52,9 @@ let faults () =
     (String.make 64 'x');
   equal int ~msg:"value 1" 1
     (Rig.Point.value (S.submit_work t [ S.launch t "fault" 0 0 ]));
-  ignore (S.submit t [| Rig.Submission.copy ~src:src ~dst:watched |]);
+  ignore
+    (S.submit t
+       Rig.Submission.[| copy ~src:(Buffer src) ~dst:(Buffer watched) |]);
   raises_match
     (function
       | C.Fault why ->

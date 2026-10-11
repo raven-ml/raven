@@ -210,7 +210,7 @@ let test_other_parts () =
       raises_match ~msg Exn.invalid_arg (fun () ->
           Sub.make Rig.host [| part |]))
     [
-      ("a copy", Sub.copy ~src:b ~dst:b');
+      ("a copy", Sub.(copy ~src:(Buffer b) ~dst:(Buffer b')));
       ("a fill", Sub.fill 0n ~params:0);
       ("words", Sub.words b);
     ]
