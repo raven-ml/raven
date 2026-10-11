@@ -224,6 +224,8 @@ and mapping = { on : device; map : region; at : int; by : nativeint }
     covers the work that may use them without naming them. *)
 and pending =
   | Free of entry
+  | Give of entry
+      (** A freed entry whose last mapping went, given back to its driver. *)
   | Unmap of region * mapped option
       (** A mapping, and what it maps, given back after its last unmap. *)
   | Unload of loaded * entry option

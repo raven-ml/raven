@@ -157,6 +157,44 @@ let settle () =
     ignore (B.create Rig.host 8)
   done
 
+(* Memory goes back to its driver once, when its last mapping goes after its
+   device was lost and before its stop returned. The mapper's work keeps the
+   mapping until the memory is freed; then, while a free of other memory holds
+   the owner's stop at Polled's free gate in another domain, the owner is lost
+   and the mapper's drain gives the mapping back. *)
+let test_give_beside_stop () =
+  let o, po = P.open_ "memory:give-owner" in
+  let c, pc = P.open_ "memory:give-mapper" in
+  let[@inline never] mapped () =
+    let m = B.create o (4 * kib) in
+    let s = Sub.make c [| Support.touching [| Sub.read |] |] in
+    Rig.Point.wait (submit s ~buffers:[| Option.get (B.borrow c m) |]);
+    (Support.at m, ref (Some m))
+  in
+  let at, held = mapped () in
+  ignore (submit (Sub.make c [||]) : Rig.Point.t);
+  held := None;
+  collect o;
+  Rig.set_budget o 0;
+  equal ~msg:"the memory while it is mapped" bool false (freed po at);
+  Rig.set_budget o (1 lsl 30);
+  let other = dropped o (4 * kib) in
+  collect o;
+  P.gate_frees po;
+  let freer = Domain.spawn (fun () -> Rig.set_budget o 0) in
+  Support.await "the other memory's free at the gate" (fun () ->
+      P.freers po = 1);
+  P.fail po;
+  (try ignore (submit (Sub.make o [||])) with Rig.Lost _ -> ());
+  ignore (P.run pc : int);
+  collect c;
+  P.open_frees po;
+  Domain.join freer;
+  settle ();
+  let frees at = List.length (List.filter (fun (a, _) -> a = at) (P.frees po)) in
+  equal ~msg:"the other memory's frees" int 1 (frees other);
+  equal ~msg:"the mapped memory's frees" int 1 (frees at)
+
 (* Memory goes back to its driver after every other device's mapping of it,
    whichever ends first. The mapper's end gives back its mapping in another
    domain, held at Polled's free gate while the memory is collected and its
@@ -778,6 +816,8 @@ let tests =
         test "a drain beside a loss frees each memory once, then stops"
           test_drain_beside_loss;
         test "memory goes back after every mapping of it" test_free_after_maps;
+        test "memory whose last mapping goes before its stop goes back once"
+          test_give_beside_stop;
         test
           "the host's out-of-memory ladder raises a device's fault it finds as \
            that device's loss, never the allocation's"

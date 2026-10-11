@@ -401,7 +401,7 @@ let give_back (e : entry) =
     | Io_memory { region; _ } -> free_io d region
     | Kept _ -> true
   in
-  if not given then defer d (Free e)
+  if not given then defer d (Give e)
   else begin
     drop_stamps e;
     let budget = entry_budget e in
@@ -689,6 +689,7 @@ let due_pending d =
    code memory only after the image's unload. *)
 let run_pending d = function
   | Free e -> free_entry e
+  | Give e -> give_back e
   | Unmap (r, after) as p ->
       if free_region d r then Option.iter unmapped after else defer d p
   | Unload (loaded, code) as p -> (
@@ -983,7 +984,7 @@ let holds_back pool l =
   List.exists (charged pool) l.retiring
   ||
   let holds = function
-    | _, Free e | _, Unmap (_, Some (Entry e)) | _, Unload (_, Some e) ->
+    | _, (Free e | Give e | Unmap (_, Some (Entry e)) | Unload (_, Some e)) ->
         charged pool e
     | _, (Unmap (_, (None | Some (Word _))) | Unload (_, None)) -> false
   in
