@@ -1041,11 +1041,15 @@ let signaled (T d) = read_word d.self
 let fault_name table v =
   match List.assoc_opt v table with Some n -> n | None -> strf "0x%x" v
 
-(* The errors the RM wrote into the channels' notifiers when it stopped them,
-   such as for a fault of a channel's own methods. *)
-(* The RM writes an error of the channel group into each channel's notifier: a
-   line for each different one. *)
-let channel_errors d l =
+(* The faults of [d]'s work, one per line: each different error the RM wrote
+   into the channels' notifiers when it stopped them (it writes an error of
+   the channel group into each), then the faults the multiprocessors or the
+   MMU reported to it. *)
+let report d l =
+  let module S = D.Sm_error_states in
+  let module E = D.Sm_error_state in
+  let module M = D.Mmu_fault_info in
+  let module F = D.Mmu_fault_entry in
   let error q =
     let x = notification d.self q in
     if x = 0 then None
@@ -1056,58 +1060,51 @@ let channel_errors d l =
            (fault_name l.error_names code)
            status)
   in
-  match List.filter_map error [ 0; 1 ] with
-  | [ a; b ] when a = b -> [ a ]
-  | errors -> errors
+  let channels =
+    match List.filter_map error [ 0; 1 ] with
+    | [ a; b ] when a = b -> [ a ]
+    | errors -> errors
+  in
+  let control cmd p = l.path.rm.control l.debugger cmd (Some p) in
+  let sm = params S.sizeof and mmu = params M.sizeof in
+  set sm S.h_target_channel l.compute_channel;
+  set sm S.num_s_ms_to_read sm_errors;
+  let sm_fault i =
+    let f x = elt_field S.sm_error_state_array i x in
+    let global = get sm (f E.hww_global_esr)
+    and warp = get sm (f E.hww_warp_esr) in
+    if global = 0 && warp = 0 then None
+    else
+      Some
+        (strf "SM %d fault: esr=0x%x warp_esr=0x%x warp_pc=0x%x" i global warp
+           (get sm (f E.hww_warp_esr_pc64)))
+  in
+  let mmu_fault i =
+    let f x = elt_field M.mmu_fault_info_list i x in
+    strf "MMU fault: 0x%X | %s | %s"
+      (get mmu (f F.fault_address))
+      (fault_name D.fault_types (get mmu (f F.fault_type)))
+      (fault_name D.access_types (get mmu (f F.access_type)))
+  in
+  let faults =
+    match control D.nv83de_ctrl_cmd_debug_read_all_sm_error_states sm with
+    | Error e -> [ strf "reading the multiprocessors' errors: %s" e ]
+    | Ok () when get sm S.mmu_fault_valid = 0 ->
+        List.filter_map sm_fault (List.init sm_errors Fun.id)
+    | Ok () -> (
+        match control D.nv83de_ctrl_cmd_debug_read_mmu_fault_info mmu with
+        | Error e -> [ strf "reading the MMU's faults: %s" e ]
+        | Ok () -> List.init (get mmu M.count) mmu_fault)
+  in
+  channels @ faults
 
-(* The faults the multiprocessors or the MMU reported to the RM, one per
-   line. *)
-let sm_errors_of l =
-  let module S = D.Sm_error_states in
-  let module E = D.Sm_error_state in
-  let rm = l.path.rm in
-  let p = params S.sizeof in
-  set p S.h_target_channel l.compute_channel;
-  set p S.num_s_ms_to_read sm_errors;
-  match
-    rm.control l.debugger D.nv83de_ctrl_cmd_debug_read_all_sm_error_states
-      (Some p)
-  with
-  | Error e -> [ strf "reading the multiprocessors' errors: %s" e ]
-  | Ok () when get p S.mmu_fault_valid <> 0 -> (
-      let module M = D.Mmu_fault_info in
-      let module F = D.Mmu_fault_entry in
-      let m = params M.sizeof in
-      match
-        rm.control l.debugger D.nv83de_ctrl_cmd_debug_read_mmu_fault_info
-          (Some m)
-      with
-      | Error e -> [ strf "reading the MMU's faults: %s" e ]
-      | Ok () ->
-          List.init (get m M.count) (fun i ->
-              let f x = elt_field M.mmu_fault_info_list i x in
-              strf "MMU fault: 0x%X | %s | %s"
-                (get m (f F.fault_address))
-                (fault_name D.fault_types (get m (f F.fault_type)))
-                (fault_name D.access_types (get m (f F.access_type)))))
-  | Ok () ->
-      List.filter_map
-        (fun i ->
-          let f x = elt_field S.sm_error_state_array i x in
-          let global = get p (f E.hww_global_esr)
-          and warp = get p (f E.hww_warp_esr) in
-          if global = 0 && warp = 0 then None
-          else
-            Some
-              (strf "SM %d fault: esr=0x%x warp_esr=0x%x warp_pc=0x%x" i global
-                 warp
-                 (get p (f E.hww_warp_esr_pc64))))
-        (List.init sm_errors Fun.id)
+(* Whether a channel's notifier holds an error. *)
+let notified d = notification d.self 0 <> 0 || notification d.self 1 <> 0
 
 let check_faults d =
   let l = live d in
   l.path.check ();
-  match channel_errors d l @ sm_errors_of l with
+  match report d l with
   | [] -> ()
   | report -> raise (Fault (String.concat "\n" report))
 
@@ -1120,9 +1117,6 @@ external now : unit -> (int[@untagged])
    within a nap of the RM's report, and the wake latency falls on waits rig has
    already spun on, which are long. *)
 let nap_s = 0.001
-
-(* Whether a channel's notifier holds an error. *)
-let notified d = notification d.self 0 <> 0 || notification d.self 1 <> 0
 
 let sleep (T d) ~seen ~still_ms =
   if read_word d.self = seen then begin
@@ -1168,7 +1162,7 @@ let halt d l =
     (* The RM stopped the channels on a fault: nothing runs, though their
        objects stay. Otherwise their own releases bring the word up as their
        work ends; a word raised here could be lowered by a late release. *)
-  else if channel_errors d l <> [] then raise_word d.self
+  else if notified d then raise_word d.self
 
 let stop (T d) ~fault:_ =
   let l =
