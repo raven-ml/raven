@@ -6,7 +6,7 @@ Static site for [raven-ml.dev](https://raven-ml.dev). Built with a small OCaml s
 
 ```bash
 dune build www/build
-python3 -m http.server -d _build/default/www/build
+uv run python -m http.server -d _build/default/www/build
 ```
 
 ## Structure
@@ -15,7 +15,11 @@ python3 -m http.server -d _build/default/www/build
 - `../doc/` — general documentation (installation, roadmap, etc.)
 - `templates/` — HTML templates (`main.html`, `layout_docs.html`, `layout_docs_lib.html`)
 - `generate/` — site generator
-- `process/` — odoc API docs integration (WIP, not part of the build)
+
+The build requests odoc output for each registered package, wraps its public
+modules in the site layout, and adds an API tab to each package. Install the
+`odoc` development tool before building (`dune tools install odoc` when using
+Dune package management). Missing package documentation fails the build.
 
 Library-specific docs live in each library's `doc/` directory (e.g., `packages/nx/doc/`, `packages/rune/doc/`) where they're tested with mdx. The site generator pulls them in automatically.
 
@@ -32,3 +36,12 @@ See the [BERT pipeline](../10-bert-pipeline/) example.
 Those resolve in an editor and on a repository host. `generate/links.ml` turns them into site URLs (`/docs/kaun/training/`, `/docs/nx/`, `/docs/brot/examples/bert-pipeline/`) when the page is rendered, so the same link works in both places. A link to a directory means the page that directory publishes through its `README.md` or `index.md`.
 
 Site-absolute destinations (`/docs/...`) and destinations with no file behind them fail the build, naming the file and line. Images and data files work the same way: reference them by relative path and the generator publishes them alongside the page.
+
+Links to a public `.mli` work the same way:
+
+```markdown
+Read [Nx](../lib/nx.mli), then [Nx_io](../lib/io/nx_io.mli).
+```
+
+The API module list comes from odoc's package index. Private interfaces are not
+published.

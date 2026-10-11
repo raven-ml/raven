@@ -246,7 +246,9 @@ let highlighted_code_block c = function
         |> List.map Cmarkit.Block_line.to_string
         |> String.concat "\n"
       in
-      match Option.bind lang (fun (lang, _) -> Highlight.to_html ~lang (code ())) with
+      match
+        Option.bind lang (fun (lang, _) -> Highlight.to_html ~lang (code ()))
+      with
       | Some html ->
           Cmarkit_renderer.Context.string c html;
           Cmarkit_renderer.Context.byte c '\n';
@@ -503,6 +505,7 @@ let () =
     let url = if is_page path then Site.url_of_path path else "/" ^ path in
     Links.register links ~src ~url
   in
+  Api.register_sources links;
   List.iter register entries;
   List.iter
     (fun { dir; path; assets; lib = _ } ->

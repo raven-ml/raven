@@ -117,9 +117,6 @@
   padding: 0;
   overflow-wrap: anywhere;
 }
-.odoc-api code span span {
-  white-space: nowrap;
-}
 .odoc-api pre code {
   font-size: inherit;
 }
@@ -340,7 +337,7 @@
 .odoc-api a:hover {
   box-shadow: 0 1px 0 0 var(--color-nx);
 }
-.odoc-api .xref-unresolved {
+.odoc-api .xref-unresolved[title] {
   box-shadow: 0 1px 0 0 var(--color-kaun);
 }
 
