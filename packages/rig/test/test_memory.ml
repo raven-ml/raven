@@ -218,6 +218,40 @@ let test_raced_maps () =
   equal ~msg:"the mapper's regions once it went back" (list int) []
     (P.outstanding pc)
 
+(* A device closed while a borrow on another domain maps memory for it gives
+   the mapping back, and the memory goes back to its driver once. The borrow's
+   locate of the mapping waits at Polled's locate gate while the close ends
+   the mapper's word. *)
+let test_close_beside_borrow () =
+  let o, po = P.open_ "memory:borrow-owner" in
+  let d, pd = P.open_ "memory:borrow-mapper" in
+  let[@inline never] made () =
+    let m = B.create o (4 * kib) in
+    (Support.at m, ref (Some m))
+  in
+  let at, held = made () in
+  P.gate_locates pd;
+  let borrower =
+    Domain.spawn (fun () ->
+        match B.borrow d (Option.get !held) with
+        | Some _ -> "borrowed"
+        | None -> "none"
+        | exception Rig.Lost _ -> "lost")
+  in
+  Support.await "the borrow's locate at the gate" (fun () ->
+      P.locaters pd = 1);
+  Rig.close d;
+  settle ();
+  P.open_locates pd;
+  equal ~msg:"the borrow" string "lost" (Domain.join borrower);
+  held := None;
+  collect o;
+  Rig.set_budget o 0;
+  settle ();
+  equal ~msg:"the mapper's regions" (list int) [] (P.outstanding pd);
+  equal ~msg:"the memory's frees" int 1
+    (List.length (List.filter (fun (a, _) -> a = at) (P.frees po)))
+
 (* Memory goes back to its driver after every other device's mapping of it,
    whichever ends first. The mapper's end gives back its mapping in another
    domain, held at Polled's free gate while the memory is collected and its
@@ -843,6 +877,8 @@ let tests =
           test_give_beside_stop;
         test "memory two raced maps share goes back after both"
           test_raced_maps;
+        test "a close beside a borrow's mapping gives it back"
+          test_close_beside_borrow;
         test
           "the host's out-of-memory ladder raises a device's fault it finds as \
            that device's loss, never the allocation's"

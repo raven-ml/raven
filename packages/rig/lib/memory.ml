@@ -1235,48 +1235,93 @@ let peer_memory d (m : memory) =
   | Driver _ -> m.dev.key = d.key
   | Host | Io _ | Ended -> false
 
+(* [d]'s new mapping of the memory [m] owns, whose host address is [host] or
+   [-1]. It counts in the memory and is recorded there first, then noted on
+   [d] while [d]'s word is read: a word end of [d] that came first found no
+   note, so the mapping is taken back out of the memory and given back here,
+   and [d], whose word ended, is lost. A word end that comes later finds the
+   note. *)
+let map_new d m host =
+  (* Memory of a device of [d]'s driver maps as a peer's; other memory the
+     host addresses, as host memory. *)
+  let made =
+    if peer_memory d m then map_peer d m
+    else if host >= 0 then map_host_range d host m.bytes
+    else map_peer d m
+  in
+  match made with
+  | None -> None
+  | Some r -> (
+      let e = m.entry in
+      let loc =
+        match locate r with
+        | loc -> loc
+        | exception x ->
+            let bt = Printexc.get_raw_backtrace () in
+            unmap d r;
+            Printexc.raise_with_backtrace x bt
+      in
+      let at = Option.value ~default:(-1) loc.address in
+      let mp = { on = d; map = r; at; by = loc.handle } in
+      (* A mapping that lost the race counts too, until it is given back, so
+         the memory outlives it. *)
+      let raced =
+        Dev.protect m.dev (fun () ->
+            Atomic.Loc.incr [%atomic.loc e.unmaps];
+            match find_map e d with
+            | Some other -> Some other
+            | None ->
+                e.maps <- mp :: e.maps;
+                None)
+      in
+      match raced with
+      | Some other ->
+          give d r (Entry e);
+          Some other
+      | None ->
+          let l = Dev.live d in
+          let noted =
+            Lock.protect l.lock (fun () ->
+                l.word_end = Read
+                && begin
+                  Cache.replace l.mapped e.id e;
+                  true
+                end)
+          in
+          if noted then Some mp
+          else begin
+            let mine =
+              Dev.protect m.dev (fun () ->
+                  List.memq mp e.maps
+                  && begin
+                    e.maps <- List.filter (fun mp' -> mp' != mp) e.maps;
+                    true
+                  end)
+            in
+            if mine then give d r (Entry e);
+            Dev.raise_lost d
+          end)
+
 (* [d]'s mapping of the memory [m] owns, whose host address is [host] or [-1],
-   made at the first borrow and shared by the later ones. *)
+   made at the first borrow and shared by the later ones. A borrow maps outside
+   any counted call on [d], so [d]'s drains are held across the map and its
+   record: a close on another domain cannot free [d]'s resources in between. *)
 let mapping d m host =
   let found = Dev.protect m.dev (fun () -> find_map m.entry d) in
   match found with
   | Some mp -> Some mp
   | None -> (
-      (* Memory of a device of [d]'s driver maps as a peer's; other memory the
-         host addresses, as host memory. *)
-      let made =
-        if peer_memory d m then map_peer d m
-        else if host >= 0 then map_host_range d host m.bytes
-        else map_peer d m
-      in
-      match made with
-      | None -> None
-      | Some r -> (
-          let l = locate r in
-          let at = Option.value ~default:(-1) l.address in
-          let mp = { on = d; map = r; at; by = l.handle } in
-          (* Noted on [d] before the memory has it: a word end of [d] that takes
-             [d]'s notes between the two leaves the mapping in the memory's
-             [maps], which [free_entry] releases. *)
-          let l = Dev.live d in
-          Lock.protect l.lock (fun () ->
-              Cache.replace l.mapped m.entry.id m.entry);
-          (* A mapping that lost the race counts too, until it is given
-             back, so the memory outlives it. *)
-          let raced =
-            Dev.protect m.dev (fun () ->
-                Atomic.Loc.incr [%atomic.loc m.entry.unmaps];
-                match find_map m.entry d with
-                | Some other -> Some other
-                | None ->
-                    m.entry.maps <- mp :: m.entry.maps;
-                    None)
-          in
-          match raced with
-          | None -> Some mp
-          | Some other ->
-              give d r (Entry m.entry);
-              Some other))
+      let l = Dev.live d in
+      if not (enter l) then Dev.raise_lost d
+      else
+        match map_new d m host with
+        | made ->
+            leave d l;
+            made
+        | exception x ->
+            let bt = Printexc.get_raw_backtrace () in
+            leave d l;
+            Printexc.raise_with_backtrace x bt)
 
 (* The host address of the io memory [m]'s pages, or [-1] if it maps none:
    the first result from its device, kept. A call that raises leaves it to
