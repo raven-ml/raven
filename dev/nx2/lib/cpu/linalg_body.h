@@ -1,0 +1,615 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+/* linalg.c's routines on matrices of one dtype, included once per dtype
+   with T the element, R its real part's type, RDT that real type's dtype
+   code, CPLX 1 for complex, and CONJ, REAL, IMAG and SQRT for T and R,
+   which it undefines at its end. F(name) names the dtype's instance.
+
+   Matrices are dense and row-major, row i at a + i·ld. Each routine runs
+   by scalar loops on blocks of at most LEAF columns and updates the rest
+   of the matrix by products (F(gemm)). */
+
+/* Products */
+
+/* c += sign · op(a) op(b) for c of [m] rows and [n] columns, rows [ldc]
+   apart and its columns adjacent, and [k] products an element, by the
+   contraction (product). Answers 0 if an allocation failed.
+
+   On reals, the smaller of a and b is copied negated where sign is -1.
+   On complex numbers, the product is a real one, with no more flops (the
+   1m method, Van Zee and Smith, 2017): a's [m] rows of [k] complex
+   numbers are [m] rows of [2k] reals, and c's are [m] rows of [2n] reals,
+   where b is copied into [2k] rows of [2n] reals, sign · op(b)'s element
+   (p, j) = x + iy as
+
+     row 2p:     … x  y …        so that a's re·x + im·(−y) is c's real
+     row 2p + 1: … −y x …        part and re·y + im·x its imaginary one.
+
+   a is read in place where its complex numbers lie adjacent along k and
+   unconjugated, and copied otherwise. */
+static int F(gemm)(int64_t m, int64_t n, int64_t k, int sign, operand a,
+                   operand b, T *c, int64_t ldc, arena *s) {
+  if (m == 0 || n == 0 || k == 0) return 1;
+  const T *ap = a.p, *bp = b.p;
+#if !CPLX
+  int64_t ars = a.rs, acs = a.cs, brs = b.rs, bcs = b.cs;
+  if (sign < 0 && m * k <= k * n) {
+    T *w = room(s, m * k * (int64_t)sizeof(T));
+    if (w == NULL) return 0;
+    for (int64_t i = 0; i < m; i++)
+      for (int64_t p = 0; p < k; p++) w[i * k + p] = -ap[i * ars + p * acs];
+    ap = w;
+    ars = k;
+    acs = 1;
+  } else if (sign < 0) {
+    T *w = room(s, k * n * (int64_t)sizeof(T));
+    if (w == NULL) return 0;
+    for (int64_t p = 0; p < k; p++)
+      for (int64_t j = 0; j < n; j++) w[p * n + j] = -bp[p * brs + j * bcs];
+    bp = w;
+    brs = n;
+    bcs = 1;
+  }
+  return product(RDT, m, n, k, (strided){ap, ars, acs},
+                 (strided){bp, brs, bcs}, c, ldc);
+#else
+  int copy_a = a.cs != 1 || a.conj;
+  int64_t na = copy_a ? m * k : 0;
+  T *w = room(s, (na + 2 * k * n) * (int64_t)sizeof(T));
+  if (w == NULL) return 0;
+  int64_t ars = a.rs;
+  if (copy_a) {
+    for (int64_t i = 0; i < m; i++)
+      for (int64_t p = 0; p < k; p++) {
+        T x = ap[i * a.rs + p * a.cs];
+        w[i * k + p] = a.conj ? CONJ(x) : x;
+      }
+    ap = w;
+    ars = k;
+  }
+  R *bt = (R *)(w + na);
+  for (int64_t p = 0; p < k; p++) {
+    R *r0 = bt + 2 * p * 2 * n, *r1 = r0 + 2 * n;
+    for (int64_t j = 0; j < n; j++) {
+      T z = bp[p * b.rs + j * b.cs];
+      R x = sign * REAL(z), y = sign * (b.conj ? -IMAG(z) : IMAG(z));
+      r0[2 * j] = x;
+      r0[2 * j + 1] = y;
+      r1[2 * j] = -y;
+      r1[2 * j + 1] = x;
+    }
+  }
+  return product(RDT, m, 2 * n, 2 * k, (strided){ap, 2 * ars, 1},
+                 (strided){bt, 2 * n, 1}, c, 2 * ldc);
+#endif
+}
+
+/* The operand of [x], rows [rs] and columns [cs] apart. */
+static operand F(op)(const T *x, int64_t rs, int64_t cs) {
+  return (operand){x, rs, cs, 0};
+}
+
+/* The conjugate transpose of [x], rows [ld] apart. */
+static operand F(op_h)(const T *x, int64_t ld) {
+  return (operand){x, 1, ld, CPLX};
+}
+
+/* Triangular solves
+
+   x ← l⁻¹ x for the lower triangular n × n [l] and the n × r [x], or
+   u⁻¹ x for the upper [u], in place: halves of l down to LEAF, as
+   LAPACK's xTRSM's left-side cases run blocked (ReLAPACK's recursive
+   splitting). The lower solve: x1 of l11, then x2 of l22 and
+   x2 − l21 x1; the upper one from its last half. At a leaf, substitution
+   row by row in the direction of the solve,
+
+     x[i] = (x[i] − Σ_{p before i} l[i][p] x[p]) / l[i][i],
+
+   with no division under [unit]. Answers 1, or 0 if an allocation
+   failed. */
+static int F(lower)(const T *l, int64_t n, int64_t ld, T *x, int64_t r,
+                    int64_t ldx, int unit, arena *s) {
+  if (n <= LEAF) {
+    for (int64_t i = 0; i < n; i++) {
+      T *xi = x + i * ldx;
+      for (int64_t p = 0; p < i; p++) {
+        T c = l[i * ld + p];
+        const T *xp = x + p * ldx;
+        for (int64_t j = 0; j < r; j++) xi[j] -= c * xp[j];
+      }
+      if (unit) continue;
+      T d = l[i * ld + i];
+      for (int64_t j = 0; j < r; j++) xi[j] /= d;
+    }
+    return 1;
+  }
+  int64_t n1 = split(n), n2 = n - n1;
+  T *x2 = x + n1 * ldx;
+  return F(lower)(l, n1, ld, x, r, ldx, unit, s) &&
+         F(gemm)(n2, r, n1, -1, F(op)(l + n1 * ld, ld, 1), F(op)(x, ldx, 1),
+                 x2, ldx, s) &&
+         F(lower)(l + n1 * ld + n1, n2, ld, x2, r, ldx, unit, s);
+}
+
+static int F(upper)(const T *u, int64_t n, int64_t ld, T *x, int64_t r,
+                    int64_t ldx, int unit, arena *s) {
+  if (n <= LEAF) {
+    for (int64_t i = n - 1; i >= 0; i--) {
+      T *xi = x + i * ldx;
+      for (int64_t p = i + 1; p < n; p++) {
+        T c = u[i * ld + p];
+        const T *xp = x + p * ldx;
+        for (int64_t j = 0; j < r; j++) xi[j] -= c * xp[j];
+      }
+      if (unit) continue;
+      T d = u[i * ld + i];
+      for (int64_t j = 0; j < r; j++) xi[j] /= d;
+    }
+    return 1;
+  }
+  int64_t n1 = split(n), n2 = n - n1;
+  T *x2 = x + n1 * ldx;
+  return F(upper)(u + n1 * ld + n1, n2, ld, x2, r, ldx, unit, s) &&
+         F(gemm)(n1, r, n2, -1, F(op)(u + n1, ld, 1), F(op)(x2, ldx, 1), x,
+                 ldx, s) &&
+         F(upper)(u, n1, ld, x, r, ldx, unit, s);
+}
+
+/* x ← x l⁻ᴴ for the [m] × [n] [x] and the lower triangular [l] whose
+   diagonal is real, so that x lᴴ is the old x (xTRSM's right-side,
+   conjugate-transposed lower case): halves of l down to LEAF. At a leaf,
+   the n columns are solved as the n rows of t = xᴴ, copied contiguous,
+   since l t' = t for t' = (x l⁻ᴴ)ᴴ: row by row,
+
+     t[c] = (t[c] − Σ_{p < c} l[c][p] t[p]) / l[c][c].
+
+   Columns of x read in place would step a row's length apart, and at a
+   power of two that maps every row to one set of the cache. Answers 0 if
+   an allocation failed. */
+static int F(right)(const T *l, int64_t n, int64_t ld, T *x, int64_t m,
+                    int64_t ldx, arena *s) {
+  if (n <= LEAF) {
+    T *t = room(s, n * m * (int64_t)sizeof(T));
+    if (t == NULL) return 0;
+    for (int64_t i = 0; i < m; i++)
+      for (int64_t c = 0; c < n; c++) t[c * m + i] = CONJ(x[i * ldx + c]);
+    for (int64_t c = 0; c < n; c++) {
+      const T *lc = l + c * ld;
+      T *tc = t + c * m;
+      for (int64_t p = 0; p < c; p++) {
+        T f = lc[p];
+        const T *tp = t + p * m;
+        for (int64_t i = 0; i < m; i++) tc[i] -= f * tp[i];
+      }
+      R d = REAL(lc[c]);
+      for (int64_t i = 0; i < m; i++) tc[i] /= d;
+    }
+    for (int64_t i = 0; i < m; i++)
+      for (int64_t c = 0; c < n; c++) x[i * ldx + c] = CONJ(t[c * m + i]);
+    return 1;
+  }
+  int64_t n1 = split(n), n2 = n - n1;
+  return F(right)(l, n1, ld, x, m, ldx, s) &&
+         F(gemm)(m, n2, n1, -1, F(op)(x, ldx, 1), F(op_h)(l + n1 * ld, ld),
+                 x + n1, ldx, s) &&
+         F(right)(l + n1 * ld + n1, n2, ld, x + n1, m, ldx, s);
+}
+
+/* Cholesky
+
+   L with a = L Lᴴ, in place in a's lower triangle, as ReLAPACK's
+   recursive xPOTRF: L11 of a11, then L21 = a21 L11⁻ᴴ, then L22 of
+   a22 − L21 L21ᴴ. The update runs on column panels of at most HERK
+   columns, each from the diagonal down, so that a panel's diagonal block
+   is computed whole: its part above the diagonal is never read. At a
+   leaf, LAPACK's xPOTF2, row by row,
+
+     L[i][c] = (a[i][c] − Σ_{p < c} L[i][p] conj L[c][p]) / L[c][c]
+     L[i][i] = sqrt (a[i][i] − Σ_{p < i} |L[i][p]|²).
+
+   Only the lower triangle and the diagonal's real parts are read. Answers
+   1, 0 if a pivot is not positive (NaN included), -1 if an allocation
+   failed. */
+static int F(cholesky)(T *a, int64_t n, int64_t ld, arena *s) {
+  if (n <= LEAF) {
+    for (int64_t i = 0; i < n; i++) {
+      T *ai = a + i * ld;
+      for (int64_t c = 0; c <= i; c++) {
+        const T *ac = a + c * ld;
+        T x = ai[c];
+        for (int64_t p = 0; p < c; p++) x -= ai[p] * CONJ(ac[p]);
+        if (c < i) {
+          ai[c] = x / REAL(ac[c]);
+          continue;
+        }
+        R d = REAL(x);
+        if (!(d > 0)) return 0;
+        ai[c] = SQRT(d);
+      }
+    }
+    return 1;
+  }
+  int64_t n1 = split(n), n2 = n - n1;
+  T *a21 = a + n1 * ld, *a22 = a21 + n1;
+  int ok = F(cholesky)(a, n1, ld, s);
+  if (ok <= 0) return ok;
+  if (!F(right)(a, n1, ld, a21, n2, ld, s)) return -1;
+  for (int64_t j = 0; j < n2; j += HERK) {
+    int64_t jb = n2 - j < HERK ? n2 - j : HERK;
+    if (!F(gemm)(n2 - j, jb, n1, -1, F(op)(a21 + j * ld, ld, 1),
+                 F(op_h)(a21 + j * ld, ld), a22 + j * ld + j, ld, s))
+      return -1;
+  }
+  return F(cholesky)(a22, n2, ld, s);
+}
+
+/* LU
+
+   P a = L U with partial pivoting, in place in the m × n [a], as LAPACK's
+   recursive xGETRF2 (ReLAPACK's xGETRF): the panel of a block of columns
+   factors its left half, solves the top rows of its right half by L11,
+   updates the rest of its right half by a22 − L21 U12, then factors that.
+   Interchanges swap whole rows of [a], so every column sees them as they
+   happen. At a leaf of at most LEAF columns, LAPACK's xGETF2: column by
+   column, the pivot is found by a scan of the column from the diagonal
+   down that moves to each later row whose magnitude (|re| + |im|) is
+   greater than the current pivot's, NaN never greater; its row swaps with
+   the diagonal's; a nonzero pivot divides the column below it; the
+   panel's columns to its right take the rank-1 update. Columns past the
+   first k = min m n take U = L⁻¹ a, unit lower L. [pivots] and [perm]
+   take k and m positions. Answers 1, or 0 if an allocation failed. */
+
+static R F(magnitude)(T x) {
+  R re = REAL(x), im = IMAG(x);
+  return (re < 0 ? -re : re) + (im < 0 ? -im : im);
+}
+
+static void F(swap)(T *x, T *y, int64_t n) {
+  for (int64_t j = 0; j < n; j++) {
+    T t = x[j];
+    x[j] = y[j];
+    y[j] = t;
+  }
+}
+
+/* The panel of columns [j0, j0 + n) from row j0 down to row [m], in the
+   matrix [a] of [width] columns. */
+static int F(panel)(T *a, int64_t m, int64_t width, int64_t ld, int64_t j0,
+                    int64_t n, int64_t *pivots, int64_t *perm, arena *s) {
+  if (n <= LEAF) {
+    int64_t j1 = j0 + n;
+    for (int64_t j = j0; j < j1; j++) {
+      int64_t p = j;
+      R best = F(magnitude)(a[j * ld + j]);
+      for (int64_t i = j + 1; i < m; i++) {
+        R v = F(magnitude)(a[i * ld + j]);
+        if (v > best) {
+          best = v;
+          p = i;
+        }
+      }
+      pivots[j] = p;
+      if (p != j) {
+        F(swap)(a + j * ld, a + p * ld, width);
+        int64_t t = perm[j];
+        perm[j] = perm[p];
+        perm[p] = t;
+      }
+      T d = a[j * ld + j];
+      const T *aj = a + j * ld;
+      for (int64_t i = j + 1; i < m; i++) {
+        T *ai = a + i * ld;
+        if (d != 0) ai[j] /= d;
+        T l = ai[j];
+        for (int64_t c = j + 1; c < j1; c++) ai[c] -= l * aj[c];
+      }
+    }
+    return 1;
+  }
+  int64_t n1 = split(n), n2 = n - n1, j1 = j0 + n1;
+  T *a11 = a + j0 * ld + j0, *a12 = a11 + n1, *a21 = a11 + n1 * ld;
+  return F(panel)(a, m, width, ld, j0, n1, pivots, perm, s) &&
+         F(lower)(a11, n1, ld, a12, n2, ld, 1, s) &&
+         F(gemm)(m - j1, n2, n1, -1, F(op)(a21, ld, 1), F(op)(a12, ld, 1),
+                 a21 + n1, ld, s) &&
+         F(panel)(a, m, width, ld, j1, n2, pivots, perm, s);
+}
+
+static int F(lu)(T *a, int64_t m, int64_t n, int64_t ld, int64_t *pivots,
+                 int64_t *perm, arena *s) {
+  int64_t k = m < n ? m : n;
+  for (int64_t i = 0; i < m; i++) perm[i] = i;
+  if (k == 0) return 1;
+  return F(panel)(a, m, n, ld, 0, k, pivots, perm, s) &&
+         F(lower)(a, k, ld, a + k, n - k, ld, 1, s);
+}
+
+/* Householder reflectors */
+
+/* The least normal number over the unit roundoff, below which LAPACK's
+   reflector rescales its norm. */
+#define SAFMIN \
+  ((R)(sizeof(R) == 4 ? FLT_MIN / (FLT_EPSILON / 2) : DBL_MIN / (DBL_EPSILON / 2)))
+
+static R F(abs)(R x) { return x < 0 ? -x : x; }
+
+/* The 2-norm of the [n] elements at [x], [s] apart: the plain sum of
+   squares where it lies where every square that matters is exact, else
+   scaled by the largest part. */
+static R F(norm)(const T *x, int64_t n, int64_t s) {
+  R q = 0;
+  for (int64_t i = 0; i < n; i++) {
+    R re = REAL(x[i * s]), im = IMAG(x[i * s]);
+    q += re * re + im * im;
+  }
+  if ((q >= SAFMIN && q <= 1 / SAFMIN) || q != q) return SQRT(q);
+  R big = 0;
+  for (int64_t i = 0; i < n; i++) {
+    R re = F(abs)(REAL(x[i * s])), im = F(abs)(IMAG(x[i * s]));
+    big = re > big ? re : big;
+    big = im > big ? im : big;
+  }
+  if (big == 0) return SQRT(q);
+  R t = 0;
+  for (int64_t i = 0; i < n; i++) {
+    R re = REAL(x[i * s]) / big, im = IMAG(x[i * s]) / big;
+    t += re * re + im * im;
+  }
+  return big * SQRT(t);
+}
+
+/* sqrt (a² + b² + c²), scaled (LAPACK's xLAPY3). */
+static R F(lapy3)(R a, R b, R c) {
+  R xa = F(abs)(a), xb = F(abs)(b), xc = F(abs)(c);
+  R w = xa > xb ? xa : xb;
+  w = xc > w ? xc : w;
+  if (w == 0 || w != w) return xa + xb + xc;
+  xa /= w;
+  xb /= w;
+  xc /= w;
+  return w * SQRT(xa * xa + xb * xb + xc * xc);
+}
+
+/* The reflector H = I − τ v vᴴ with Hᴴ [α; x] = [β; 0], β real, as LAPACK's
+   xLARFG makes it: v = [1; x'], x' over the [n] elements of [x], [s]
+   apart, and β over [*alpha]. Returns τ, 0 where [α; x] is [β; 0]
+   already. */
+static T F(reflector)(T *alpha, T *x, int64_t n, int64_t s) {
+  R xnorm = F(norm)(x, n, s);
+  R ar = REAL(*alpha), ai = IMAG(*alpha);
+  if (xnorm == 0 && ai == 0) return 0;
+  R beta = ar >= 0 ? -F(lapy3)(ar, ai, xnorm) : F(lapy3)(ar, ai, xnorm);
+  int knt = 0;
+  if (F(abs)(beta) < SAFMIN) {
+    do {
+      knt++;
+      for (int64_t i = 0; i < n; i++) x[i * s] = x[i * s] * (1 / SAFMIN);
+      beta *= 1 / SAFMIN;
+      ar *= 1 / SAFMIN;
+      ai *= 1 / SAFMIN;
+    } while (F(abs)(beta) < SAFMIN && knt < 20);
+    xnorm = F(norm)(x, n, s);
+    R an = F(lapy3)(ar, ai, xnorm);
+    beta = ar >= 0 ? -an : an;
+  }
+#if CPLX
+  T tau = (beta - ar) / beta - (ai / beta) * I;
+  T scale = (ar - beta) + ai * I;
+#else
+  T tau = (beta - ar) / beta;
+  T scale = ar - beta;
+#endif
+  for (int64_t i = 0; i < n; i++) x[i * s] = x[i * s] / scale;
+  for (int j = 0; j < knt; j++) beta *= SAFMIN;
+  *alpha = beta;
+  return tau;
+}
+
+/* c ← (I − τ v vᴴ) c for the [m] × [n] [c], rows [ldc] apart, v's [m]
+   elements [ldv] apart with v[0] taken as 1 (xLARF). [w] holds n
+   elements. */
+static void F(reflect)(const T *v, int64_t ldv, T tau, int64_t m, int64_t n,
+                       T *c, int64_t ldc, T *w) {
+  if (tau == 0) return;
+  for (int64_t j = 0; j < n; j++) w[j] = c[j];
+  for (int64_t i = 1; i < m; i++) {
+    T vi = CONJ(v[i * ldv]);
+    const T *ci = c + i * ldc;
+    for (int64_t j = 0; j < n; j++) w[j] += vi * ci[j];
+  }
+  for (int64_t i = 0; i < m; i++) {
+    T t = i == 0 ? tau : tau * v[i * ldv];
+    T *ci = c + i * ldc;
+    for (int64_t j = 0; j < n; j++) ci[j] -= t * w[j];
+  }
+}
+
+/* QR
+
+   a = Q R by Householder reflectors, as LAPACK's blocked xGEQRF, in place
+   in the m × n [a]: R on and above the diagonal, each reflector's v below
+   it, its τ in [tau]. By blocks of NB columns: a block's columns by
+   reflectors one at a time, each applied to the block's columns to its
+   right (xGEQR2), on a contiguous copy; then the block's product H = I − V T Vᴴ (xLARFT)
+   applied to the columns right of the block as Hᴴ = I − V Tᴴ Vᴴ by
+   products (xLARFB). The scratch [q] holds the block's V, T, two NB × n
+   products and a row: qr_scratch elements. Answers 1, or 0 if an
+   allocation failed. */
+
+/* T of the block of the [jb] reflectors in the dense [h] × jb [v]:
+   T[i][i] = τ_i, T[0:i][i] = −τ_i T[0:i][0:i] V[:, 0:i]ᴴ v_i, zeros below
+   (xLARFT), the products Vᴴ V by a product into [g], jb × jb. Answers 0
+   if an allocation failed. */
+static int F(block_t)(const T *v, int64_t h, int64_t jb, const T *tau, T *t,
+                      T *g, arena *s) {
+  memset(g, 0, sizeof(T) * jb * jb);
+  if (!F(gemm)(jb, jb, h, 1, F(op_h)(v, jb), F(op)(v, jb, 1), g, jb, s))
+    return 0;
+  for (int64_t i = 0; i < jb; i++) {
+    for (int64_t p = 0; p < i; p++) {
+      T x = 0;
+      for (int64_t q = p; q < i; q++) x += t[p * jb + q] * g[q * jb + i];
+      t[p * jb + i] = -tau[i] * x;
+    }
+    t[i * jb + i] = tau[i];
+    for (int64_t p = i + 1; p < jb; p++) t[p * jb + i] = 0;
+  }
+  return 1;
+}
+
+/* [v]'s [h] × jb reflectors in place, below its diagonal, made the dense
+   V: ones on the diagonal, zeros above. */
+static void F(dense_v)(T *v, int64_t h, int64_t jb) {
+  for (int64_t r = 0; r < h && r < jb; r++) {
+    for (int64_t p = r + 1; p < jb; p++) v[r * jb + p] = 0;
+    v[r * jb + r] = 1;
+  }
+}
+
+/* Copies [h] rows of [jb] elements, rows [ls] apart at [x], to [y], rows
+   [ld] apart. */
+static void F(rows)(const T *x, int64_t ls, int64_t h, int64_t jb, T *y,
+                    int64_t ld) {
+  for (int64_t r = 0; r < h; r++) memcpy(y + r * ld, x + r * ls, sizeof(T) * jb);
+}
+
+/* c ← (I − V op(T) Vᴴ) c for c of [m2] × [n2], rows [ldc] apart; [v] the
+   dense m2 × jb V, [t] op(T): c −= V (op(T) (Vᴴ c)). [w] holds 2·jb·n2
+   elements. */
+static int F(larfb)(const T *v, operand t, int64_t jb, int64_t m2,
+                    int64_t n2, T *c, int64_t ldc, T *w, arena *s) {
+  T *w1 = w, *w2 = w + jb * n2;
+  memset(w, 0, sizeof(T) * 2 * jb * n2);
+  return F(gemm)(jb, n2, m2, 1, F(op_h)(v, jb), F(op)(c, ldc, 1), w1, n2,
+                 s) &&
+         F(gemm)(jb, n2, jb, 1, t, F(op)(w1, n2, 1), w2, n2, s) &&
+         F(gemm)(m2, n2, jb, -1, F(op)(v, jb, 1), F(op)(w2, n2, 1), c, ldc,
+                 s);
+}
+
+static int F(qr)(T *a, int64_t m, int64_t n, int64_t ld, T *tau, T *q,
+                 arena *s) {
+  int64_t k = m < n ? m : n;
+  T *vb = q, *t = vb + m * NB, *w = t + NB * NB, *row = w + 2 * NB * n;
+  for (int64_t j0 = 0; j0 < k; j0 += NB) {
+    int64_t jb = NB < k - j0 ? NB : k - j0, j1 = j0 + jb, h = m - j0;
+    /* The panel, contiguous: its rows a power of two apart would share one
+       set of the cache. */
+    F(rows)(a + j0 * ld + j0, ld, h, jb, vb, jb);
+    for (int64_t j = 0; j < jb; j++) {
+      T *ajj = vb + j * jb + j;
+      tau[j0 + j] = F(reflector)(ajj, ajj + jb, h - j - 1, jb);
+      F(reflect)(ajj, jb, CONJ(tau[j0 + j]), h - j, jb - j - 1, ajj + 1, jb,
+                 row);
+    }
+    F(rows)(vb, jb, h, jb, a + j0 * ld + j0, ld);
+    if (j1 == n) continue;
+    F(dense_v)(vb, h, jb);
+    if (!F(block_t)(vb, h, jb, tau + j0, t, w, s) ||
+        !F(larfb)(vb, F(op_h)(t, jb), jb, h, n - j1, a + j0 * ld + j1, ld, w,
+                  s))
+      return 0;
+  }
+  return 1;
+}
+
+/* q ← the first [qc] columns of H_0 ⋯ H_(k−1), m × qc, rows [ldq] apart,
+   from [qr]'s reflectors in [a]: from the identity, the blocks applied
+   last first (LAPACK's xORGQR and xUNGQR). The scratch [w] as for [qr]. */
+static int F(form_q)(const T *a, int64_t m, int64_t n, int64_t ld,
+                     const T *tau, T *q, int64_t qc, int64_t ldq, T *w,
+                     arena *s) {
+  int64_t k = m < n ? m : n;
+  T *vb = w, *t = vb + m * NB, *ww = t + NB * NB;
+  for (int64_t i = 0; i < m; i++)
+    for (int64_t j = 0; j < qc; j++) q[i * ldq + j] = i == j;
+  for (int64_t j0 = k == 0 ? 0 : (k - 1) / NB * NB; k > 0 && j0 >= 0;
+       j0 -= NB) {
+    int64_t jb = NB < k - j0 ? NB : k - j0, h = m - j0;
+    F(rows)(a + j0 * ld + j0, ld, h, jb, vb, jb);
+    F(dense_v)(vb, h, jb);
+    if (!F(block_t)(vb, h, jb, tau + j0, t, ww, s) ||
+        !F(larfb)(vb, F(op)(t, jb, 1), jb, h, qc - j0, q + j0 * ldq + j0, ldq,
+                  ww, s))
+      return 0;
+  }
+  return 1;
+}
+
+/* Matrices of a call */
+
+/* The routine on matrix [b] of the call [c], with the scratch [w] of
+   linalg.c's own elements and the arena [s]. Answers 0 if an allocation
+   failed. */
+static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
+  int64_t m = c->m, n = c->n;
+  T *d = (T *)matrix_at(c, c->nops, b);
+  if (c->routine == QR) {
+    /* a factored in w, then R and Q out. */
+    int64_t k = m < n ? m : n, qc = c->complete ? m : k;
+    T *f = w, *tau = f + m * n, *rest = tau + k;
+    T *r = (T *)matrix_at(c, c->nops + 1, b);
+    stage(c, 0, b, f, n, 0);
+    if (!F(qr)(f, m, n, n, tau, rest, s)) return 0;
+    for (int64_t i = 0; i < qc; i++)
+      for (int64_t j = 0; j < n; j++) r[i * n + j] = j >= i ? f[i * n + j] : 0;
+    return F(form_q)(f, m, n, n, tau, d, qc, qc, rest, s);
+  }
+  if (c->routine == LU) {
+    stage(c, 0, b, d, n, 0);
+    int64_t *pivots = (int64_t *)matrix_at(c, 2, b);
+    int64_t *perm = (int64_t *)matrix_at(c, 3, b);
+    return F(lu)(d, m, n, n, pivots, perm, s);
+  }
+  if (c->routine == CHOLESKY) {
+    stage(c, 0, b, d, n, 0);
+    int ok = F(cholesky)(d, n, n, s);
+    if (ok < 0) return 0;
+    if (ok == 0) {
+      nans(d, n * n * (CPLX + 1), RDT);
+      return 1;
+    }
+    /* The other triangle +0, or under Upper, U = Lᴴ in place. */
+    for (int64_t i = 0; i < n; i++)
+      for (int64_t j = i + 1; j < n; j++) {
+        if (!c->upper) {
+          d[i * n + j] = 0;
+          continue;
+        }
+        d[i * n + j] = CONJ(d[j * n + i]);
+        d[j * n + i] = 0;
+      }
+    return 1;
+  }
+  /* Solve_triangular: op(a) staged into w, x staged into d. */
+  int64_t r = c->r;
+  stage(c, 1, b, d, r, 0);
+  stage(c, 0, b, w, n, c->adjoint);
+  int upper = c->upper != c->adjoint;
+#if CPLX
+  if (c->adjoint)
+    for (int64_t i = 0; i < n * n; i++) w[i] = CONJ(w[i]);
+#endif
+  if (!c->unit)
+    for (int64_t i = 0; i < n; i++)
+      if (w[i * n + i] == 0) {
+        nans(d, n * r * (CPLX + 1), RDT);
+        return 1;
+      }
+  return upper ? F(upper)(w, n, n, d, r, r, c->unit, s)
+               : F(lower)(w, n, n, d, r, r, c->unit, s);
+}
+
+#undef T
+#undef R
+#undef RDT
+#undef SFX
+#undef CPLX
+#undef CONJ
+#undef REAL
+#undef IMAG
+#undef SQRT
+#undef SAFMIN

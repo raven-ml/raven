@@ -1,0 +1,14 @@
+; nx.metal: nx's kernels for Apple GPUs, compiled ahead of time into one
+; metallib (kernels/) and embedded, planned in OCaml and launched as rig's
+; Launch parts. kernels.ml states kernels.h's facts, which the device code
+; reads.
+
+(library
+ (name nx_metal)
+ (libraries nx_array nx_kernel rig)
+ (foreign_stubs
+  (language c)
+  (extra_deps kernels/embedded.metallib)
+  (flags
+   (:standard -DNX_METAL_METALLIB=kernels/embedded.metallib))
+  (names nx_metal_stubs)))

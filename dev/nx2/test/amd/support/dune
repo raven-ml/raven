@@ -1,0 +1,27 @@
+; What the AMD suite and bench share: the harness's kernels, their runs as
+; launches, device time, and operands.
+
+(library
+ (name nx_amd_support)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_amd
+  rig
+  rig.amd
+  rig.amd.abi
+  rig.amd.amdgpu
+  windtrap)
+ (foreign_stubs
+  (language c)
+  (extra_deps gfx1201.co harness.h)
+  (flags :standard -DNX_HARNESS_CO=gfx1201.co)
+  (names nx_amd_support_stubs)))
+
+(rule
+ (targets gfx1201.co)
+ (mode fallback)
+ (action
+  (progn
+   (echo "dev/nx2/test/amd/support/gfx1201.co is missing: build it with `uv run dev/nx2/lib/amd/kernels/build.py`, or copy it in\n")
+   (system "exit 1"))))

@@ -1,0 +1,6 @@
+# Compiled kernels: each backend's kernels/build script writes them, by hand
+# on a machine with its toolchain, and other checkouts copy them in.
+*.cubin
+*.metallib
+*.co
+*.hsaco

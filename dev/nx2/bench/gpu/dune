@@ -1,0 +1,9 @@
+; The host reference the GPU suites and benches check results against.
+
+(library
+ (name nx_gpu_ref)
+ (libraries nx_array)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../lib/array)
+  (names ref nx_gpu_ref_stubs)))

@@ -1,0 +1,285 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
+/* The folds of reductions and scans, compiled once per target: as itself
+   for base and as its copy folds_v3.c for v3.
+
+   A fold is a monoid at a dtype: its identity, a lane fold that adds terms
+   into NX_CPU_LANES lanes by their index, and a combine that adds a row of
+   terms into a row of accumulators, element by element. Integers compute in
+   their own width, unsigned, so they wrap as a wider sum stored back would;
+   booleans fold as any and all of their bytes' being non-zero. A float sum
+   or product uses the instruction: its NaN may differ from nx_kinds.h's, and
+   fold.c replaces every NaN result. Maxima and minima are nx_kinds.h's,
+   whose ties order -0 below +0. Contiguous terms take a loop of all 16
+   lanes, which the compiler vectorises. */
+
+#include "cpu.h"
+
+#if !defined(NX_CPU_V3) || defined(__x86_64__)
+
+#include <string.h>
+
+#include "nx_kinds.h"
+
+#define BLOCK NX_CPU_FOLD_BLOCK
+
+/* The outputs whose lanes a few-term fold holds side by side: 1 KiB of
+   each lane. */
+#define STRIP(T) (1024 / (int64_t)sizeof(T))
+
+/* How far a scan's sequences run behind one another, in elements. */
+#define LAG 16
+
+/* A lane fold and a combine of [F] over elements of [T]. */
+#define FOLD(NAME, T, F)                                                     \
+  static void lanes_##NAME(const uint8_t *x_, int64_t s, int64_t n,          \
+                           uint8_t *l_, int first) {                        \
+    const T *x = (const T *)x_;                                              \
+    T *l = (T *)l_;                                                          \
+    int64_t i = 0;                                                           \
+    for (; i < n && ((first + i) & 15) != 0; i++)                            \
+      l[(first + i) & 15] = F(l[(first + i) & 15], x[i * s]);                \
+    if (s == 1 && n - i >= 16) {                                             \
+      T v[16];                                                               \
+      memcpy(v, l, sizeof v);                                                \
+      for (; i + 16 <= n; i += 16)                                           \
+        for (int k = 0; k < 16; k++) v[k] = F(v[k], x[i + k]);               \
+      memcpy(l, v, sizeof v);                                                \
+    }                                                                        \
+    for (; i < n; i++) l[(first + i) & 15] = F(l[(first + i) & 15], x[i * s]); \
+  }                                                                          \
+  static void combine_##NAME(uint8_t *a_, const uint8_t *x_, int64_t s,      \
+                             int64_t n) {                                    \
+    T *a = (T *)a_;                                                          \
+    const T *x = (const T *)x_;                                              \
+    /* Steps of 2 and 4, a window's or a short row's, as constants the     \
+       compiler loads interleaved. */                                        \
+    if (s == 1)                                                              \
+      for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[i]);                  \
+    else if (s == 2)                                                         \
+      for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[2 * i]);              \
+    else if (s == 4)                                                         \
+      for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[4 * i]);              \
+    else                                                                     \
+      for (int64_t i = 0; i < n; i++) a[i] = F(a[i], x[i * s]);              \
+  }                                                                          \
+  static void scan_##NAME(uint8_t *a_, const uint8_t *x_, int64_t s,         \
+                          int64_t xs, uint8_t *y_, int64_t sy, int64_t ys,   \
+                          int64_t n, int k) {                                \
+    const T *x = (const T *)x_;                                              \
+    T *y = (T *)y_, a[4];                                                    \
+    memcpy(a, a_, k * sizeof(T));                                            \
+    /* Sequence j runs LAG·j elements behind sequence 0: sequences a       \
+       multiple of 4 KiB apart would otherwise touch addresses x86 takes   \
+       for one another's (4K aliasing). */                                   \
+    int64_t i = 0;                                                           \
+    if (k == 4 && n > 3 * LAG) {                                             \
+      for (int j = 0; j < 4; j++)                                            \
+        for (int64_t m = 0; m < (3 - j) * LAG; m++)                          \
+          y[j * ys + m * sy] = a[j] = F(a[j], x[j * xs + m * s]);            \
+      /* Four named accumulators, so that each stays in a register. */     \
+      T a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];                          \
+      const T *x1 = x + xs, *x2 = x + 2 * xs, *x3 = x + 3 * xs;              \
+      T *y1 = y + ys, *y2 = y + 2 * ys, *y3 = y + 3 * ys;                    \
+      for (i = 3 * LAG; i < n; i++) {                                        \
+        y[i * sy] = a0 = F(a0, x[i * s]);                                    \
+        y1[(i - LAG) * sy] = a1 = F(a1, x1[(i - LAG) * s]);                  \
+        y2[(i - 2 * LAG) * sy] = a2 = F(a2, x2[(i - 2 * LAG) * s]);          \
+        y3[(i - 3 * LAG) * sy] = a3 = F(a3, x3[(i - 3 * LAG) * s]);          \
+      }                                                                      \
+      a[0] = a0;                                                             \
+      a[1] = a1;                                                             \
+      a[2] = a2;                                                             \
+      a[3] = a3;                                                             \
+      for (int j = 1; j < 4; j++)                                            \
+        for (int64_t m = n - j * LAG; m < n; m++)                            \
+          y[j * ys + m * sy] = a[j] = F(a[j], x[j * xs + m * s]);            \
+    } else                                                                   \
+      for (int j = 0; j < k; j++)                                            \
+        for (i = 0; i < n; i++)                                              \
+          y[j * ys + i * sy] = a[j] = F(a[j], x[j * xs + i * s]);            \
+    memcpy(a_, a, k * sizeof(T));                                            \
+  }                                                                          \
+  /* Four blocks' lanes at once, so that more additions are in flight. */ \
+  static inline void four_##NAME(const T *x, T e, T *v) {             \
+    T l[4][16];                                                              \
+    for (int j = 0; j < 4; j++)                                              \
+      for (int k = 0; k < 16; k++) l[j][k] = e;                              \
+    for (int i = 0; i < BLOCK; i += 16)                                      \
+      for (int j = 0; j < 4; j++)                                            \
+        for (int k = 0; k < 16; k++)                                         \
+          l[j][k] = F(l[j][k], x[j * BLOCK + i + k]);                        \
+    for (int j = 0; j < 4; j++) {                                            \
+      for (int h = 8; h >= 1; h /= 2)                                        \
+        for (int k = 0; k < h; k++) l[j][k] = F(l[j][k], l[j][k + h]);      \
+      v[j] = l[j][0];                                                        \
+    }                                                                        \
+  }                                                                          \
+  static inline void one_##NAME(const T *x, T e, T *v) {                 \
+    T l[16];                                                                 \
+    for (int k = 0; k < 16; k++) l[k] = e;                                   \
+    for (int i = 0; i < BLOCK; i += 16)                                      \
+      for (int k = 0; k < 16; k++) l[k] = F(l[k], x[i + k]);                 \
+    for (int h = 8; h >= 1; h /= 2)                                          \
+      for (int k = 0; k < h; k++) l[k] = F(l[k], l[k + h]);                  \
+    *v = l[0];                                                               \
+  }                                                                          \
+  static void blocks_##NAME(const uint8_t *x_, int64_t n, const uint8_t *e_, \
+                            uint8_t *v_) {                                   \
+    const T *x = (const T *)x_;                                              \
+    T *v = (T *)v_, e;                                                       \
+    memcpy(&e, e_, sizeof e);                                                \
+    int64_t b = 0;                                                           \
+    for (; b + 4 <= n; b += 4) four_##NAME(x + b * BLOCK, e, v + b);         \
+    for (; b < n; b++) one_##NAME(x + b * BLOCK, e, v + b);                  \
+  }                                                                          \
+  static void column_##NAME(uint8_t *a_, const uint8_t *x_, int64_t st,      \
+                            int64_t n, int64_t s, int64_t w) {               \
+    T *a = (T *)a_;                                                          \
+    const T *x = (const T *)x_;                                              \
+    int64_t j = 0;                                                           \
+    if (s == 1)                                                              \
+      for (; j + 32 <= w; j += 32) {                                         \
+        T v[32];                                                             \
+        memcpy(v, a + j, sizeof v);                                          \
+        for (int64_t i = 0; i < n; i++)                                      \
+          for (int k = 0; k < 32; k++) v[k] = F(v[k], x[i * st + j + k]);    \
+        memcpy(a + j, v, sizeof v);                                          \
+      }                                                                      \
+    for (; j < w; j++) {                                                     \
+      T v = a[j];                                                            \
+      for (int64_t i = 0; i < n; i++) v = F(v, x[i * st + j * s]);           \
+      a[j] = v;                                                              \
+    }                                                                        \
+  }                                                                          \
+  /* Sixteen lanes' values [a] combined with [b]'s. */                      \
+  static inline void pair_##NAME(T *restrict a, const T *restrict b) {      \
+    for (int i = 0; i < 16; i++) a[i] = F(a[i], b[i]);                       \
+  }                                                                          \
+  static void few_##NAME(const uint8_t *x_, const int64_t *off, int n,       \
+                         int64_t s, int64_t w, int64_t s2, int64_t h,        \
+                         const uint8_t *e_, uint8_t *y_, int64_t sy,         \
+                         int64_t sy2) {                                      \
+    const T *x = (const T *)x_;                                              \
+    T *y = (T *)y_, e, l[16][STRIP(T)];                                      \
+    memcpy(&e, e_, sizeof e);                                                \
+    int64_t cap = STRIP(T);                                                  \
+    /* Each term's values of a strip of outputs are copied side by side,   \
+       as many whole rows as fit or a piece of one, and padded with the    \
+       identity to whole vectors: the lanes and their tree then run over   \
+       vectors of outputs however short the rows. Loops of whole vectors,  \
+       since gcc at -O2 leaves a loop of any other count scalar. */         \
+    for (int64_t r = 0; r < h;) {                                            \
+      int64_t rows = w <= cap ? (h - r < cap / w ? h - r : cap / w) : 1;     \
+      for (int64_t c = 0; c < w; c += cap) {                                 \
+        int64_t m = w - c < cap ? w - c : cap, k = rows * m;                 \
+        int64_t k16 = (k + 15) & ~(int64_t)15;                               \
+        for (int t = 0; t < n; t++) {                                        \
+          T *d = l[t];                                                       \
+          for (int64_t q = 0; q < rows; q++, d += m) {                       \
+            const T *a = x + (r + q) * s2 + c * s + off[t];                  \
+            if (s == 1) memcpy(d, a, m * sizeof(T));                         \
+            else                                                             \
+              for (int64_t j = 0; j < m; j++) d[j] = a[j * s];               \
+          }                                                                  \
+          for (int64_t i = k; i < k16; i++) l[t][i] = e;                     \
+          for (int64_t i = 0; i < k16; i += 16)                              \
+            for (int j = 0; j < 16; j++) l[t][i + j] = F(e, l[t][i + j]);    \
+        }                                                                    \
+        for (int g = 8; g >= 1; g /= 2)                                      \
+          for (int t = 0; t < g && t + g < n; t++)                           \
+            for (int64_t i = 0; i < k16; i += 16)                            \
+              pair_##NAME(l[t] + i, l[t + g] + i);                           \
+        for (int64_t q = 0; q < rows; q++) {                                 \
+          T *d = y + (r + q) * sy2 + c * sy;                                 \
+          if (sy == 1) memcpy(d, l[0] + q * m, m * sizeof(T));               \
+          else                                                               \
+            for (int64_t j = 0; j < m; j++) d[j * sy] = l[0][q * m + j];     \
+        }                                                                    \
+      }                                                                      \
+      r += rows;                                                             \
+    }                                                                        \
+  }
+
+#define ADD(a, b) ((a) + (b))
+#define MUL(a, b) ((a) * (b))
+#define ANY(a, b) ((uint8_t)((a) | ((b) != 0)))
+#define ALL(a, b) ((uint8_t)((a) & ((b) != 0)))
+
+/* The four monoids of an integer dtype of storage [T], unsigned [U], at the
+   compute suffix [S] for its extremes, [C] its compute type and [M] the
+   unsigned type of [C]'s width. Sums and products run in [M], where they
+   wrap: 8- and 16-bit operands would promote to int, whose product of two
+   0xFFFF overflows. */
+#define INTS(D, T, U, C, M, S)                                               \
+  static inline T add_##D(T a, T b) { return (T)(U)((M)(U)a + (M)(U)b); }    \
+  static inline T mul_##D(T a, T b) { return (T)(U)((M)(U)a * (M)(U)b); }    \
+  static inline T max_##D(T a, T b) { return (T)nx_maximum_##S((C)a, (C)b); } \
+  static inline T min_##D(T a, T b) { return (T)nx_minimum_##S((C)a, (C)b); } \
+  FOLD(sum_##D, T, add_##D)                                                  \
+  FOLD(prod_##D, T, mul_##D)                                                 \
+  FOLD(max_##D, T, max_##D)                                                  \
+  FOLD(min_##D, T, min_##D)
+
+INTS(i8, int8_t, uint8_t, int32_t, uint32_t, i32)
+INTS(u8, uint8_t, uint8_t, uint32_t, uint32_t, u32)
+INTS(i16, int16_t, uint16_t, int32_t, uint32_t, i32)
+INTS(u16, uint16_t, uint16_t, uint32_t, uint32_t, u32)
+INTS(i32, int32_t, uint32_t, int32_t, uint32_t, i32)
+INTS(u32, uint32_t, uint32_t, uint32_t, uint32_t, u32)
+INTS(i64, int64_t, uint64_t, int64_t, uint64_t, i64)
+INTS(u64, uint64_t, uint64_t, uint64_t, uint64_t, u64)
+
+FOLD(sum_f32, float, ADD)
+FOLD(prod_f32, float, MUL)
+FOLD(max_f32, float, nx_maximum_f32)
+FOLD(min_f32, float, nx_minimum_f32)
+FOLD(sum_f64, double, ADD)
+FOLD(prod_f64, double, MUL)
+FOLD(max_f64, double, nx_maximum_f64)
+FOLD(min_f64, double, nx_minimum_f64)
+FOLD(max_b, uint8_t, ANY)
+FOLD(min_b, uint8_t, ALL)
+
+/* The table's folds, by monoid then dtype: NULL where declined. */
+#define SET(M, DT, F)                                                        \
+  t->fold[M][DT] =                                                           \
+      (nx_cpu_fold){lanes_##F, combine_##F, scan_##F, blocks_##F, few_##F,  \
+                    column_##F}
+
+#define ALL4(DT, D)                                                          \
+  SET(NX_MONOID_SUM, DT, sum_##D);                                            \
+  SET(NX_MONOID_PROD, DT, prod_##D);                                          \
+  SET(NX_MONOID_MAX, DT, max_##D);                                            \
+  SET(NX_MONOID_MIN, DT, min_##D)
+
+static void set(nx_cpu_target *t) {
+  ALL4(NX_FLOAT32, f32);
+  ALL4(NX_FLOAT64, f64);
+  ALL4(NX_INT8, i8);
+  ALL4(NX_UINT8, u8);
+  ALL4(NX_INT16, i16);
+  ALL4(NX_UINT16, u16);
+  ALL4(NX_INT32, i32);
+  ALL4(NX_UINT32, u32);
+  ALL4(NX_INT64, i64);
+  ALL4(NX_UINT64, u64);
+  SET(NX_MONOID_MAX, NX_BOOL, max_b);
+  SET(NX_MONOID_MIN, NX_BOOL, min_b);
+}
+
+#if defined(NX_CPU_V3)
+void nx_cpu_set_folds_v3(nx_cpu_target *t) { set(t); }
+#else
+void nx_cpu_set_folds_base(nx_cpu_target *t) { set(t); }
+#endif
+
+#else
+
+/* ISO C forbids an empty unit. */
+typedef int nx_cpu_no_v3;
+
+#endif
