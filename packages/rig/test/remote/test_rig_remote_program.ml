@@ -578,12 +578,17 @@ let too_large () =
     (G.load t (Iarray.of_array ds))
 
 (* A run raises at the call on a frame the agent would refuse, and the job goes
-   on: here input 0, a host buffer of 8 bytes, which starts on no page, is named
-   by a Polled device that cannot borrow it. *)
+   on: here input 0, a host buffer, is named by a Polled device that maps no
+   host memory, so it cannot borrow it. *)
 let refused_frame () =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
-  let d = List.hd (polled h) in
+  let d =
+    match Rig_remote.devices h "MAPLESS" with
+    | Ok [ d ] -> d
+    | Ok _ -> fail "MAPLESS is one device"
+    | Error why -> failf "devices: %s" why
+  in
   let t =
     {
       G.devices = archs [| h; d |];

@@ -18,9 +18,10 @@
    key to the controller, then stops listening, so no other agent of the job
    reaches it, and waits for the job to end.
 
-   It serves eight kinds. "MEM" is two memory devices. "POLLED" is two Polled
+   It serves nine kinds. "MEM" is two memory devices. "POLLED" is two Polled
    devices, which launch Polled's host functions. "HIDDEN" is a Polled device
-   whose [Device] memory the host does not address. "FAULTY" is a device whose
+   whose [Device] memory the host does not address. "MAPLESS" is a Polled
+   device that maps no host memory. "FAULTY" is a device whose
    next fallible call faults with "the agent's device faulted", which loses it.
    "NONE" is an opener that fails with "no such hardware". "COLLECT" runs a full
    major collection and opens no device. "RAISE" is an opener that raises
@@ -57,6 +58,11 @@ let hidden () =
   opened := d :: !opened;
   Ok [ d ]
 
+let mapless () =
+  let d, _ = Rig_support.Polled.open_ ~maps_host:false "MAPLESS:0" in
+  opened := d :: !opened;
+  Ok [ d ]
+
 let faulty () =
   let d, p = Rig_support.Polled.open_ "FAULTY:0" in
   Rig_support.Polled.fail_at p 1 (`Fault "the agent's device faulted");
@@ -69,6 +75,7 @@ let kinds =
     ("POLLED", polled);
     ("FAULTY", faulty);
     ("HIDDEN", hidden);
+    ("MAPLESS", mapless);
     ("NONE", fun () -> Error "no such hardware");
     ("RAISE", fun () -> failwith "the opener raised");
     ( "COLLECT",
