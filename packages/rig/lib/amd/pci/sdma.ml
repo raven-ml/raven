@@ -10,7 +10,7 @@ let rec log2 n = if n <= 1 then 0 else 1 + log2 (n lsr 1)
 
 type t = {
   r : Regs.t;
-  v : Rig_amd_abi.Discovery.version; (* SDMA0's *)
+  v : Discovery.version; (* SDMA0's *)
   name : string; (* its micro-engine's: F32 before SDMA 7, MCU from it *)
 }
 
@@ -71,7 +71,7 @@ let start s =
             (5, 0x9, 0x9, 0x8);
             (6, 0xa, 0xa, 0x9);
           ])
-      (Rig_amd_abi.Discovery.aids (Regs.discovery (Regs.layout_of r)))
+      (Discovery.aids (Regs.discovery (Regs.layout_of r)))
   else
     Soc.route r ~port:2 ~awid:0xe ~awaddr:0x3
       ~offset:(D.amdgpu_navi10_doorbell_sdma_engine0 * 2)

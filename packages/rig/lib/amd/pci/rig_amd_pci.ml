@@ -18,8 +18,6 @@ module Memory = Rig_pci.Memory
 module Window = Rig_pci.Window
 module Gpus = Rig_pci.Gpus
 module Amd = Rig_amd
-module Discovery = Rig_amd_abi.Discovery
-module Firmware = Rig_amd_abi.Firmware
 
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
@@ -359,3 +357,13 @@ let gpu ?machine ?(firmware = []) i : Rig_amd.t Rig_edge.opener =
     driver = (module Rig_amd);
     make = (fun () -> open_ ?machine ~firmware i);
   }
+
+(* Formats *)
+
+module Discovery = Discovery
+module Firmware = Firmware
+module Psp = Psp
+module Smu = Smu
+module Gmc = Gmc
+module Gfx = Gfx
+module Ih = Ih

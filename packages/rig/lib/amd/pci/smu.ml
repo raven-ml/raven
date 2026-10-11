@@ -4,16 +4,33 @@
   ---------------------------------------------------------------------------*)
 
 module D = Defs
-module Smu = Rig_amd_abi.Smu
 
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
+(* Messages *)
+
+let message mp1 name = List.assoc_opt name (D.smu_messages mp1)
+let clock_request ~clock v = (clock lsl 16) lor v
+
+(* A clock's DPM feature is FEATURE_DPM_ and the clock's name past PPCLK_. *)
+let dpm mp1 ~features clock =
+  let prefix = "PPCLK_" in
+  if not (String.starts_with ~prefix clock) then
+    invalid_argf "Smu.dpm: clock %S is not a PPCLK_ name" clock;
+  let n = String.length prefix in
+  let name = "FEATURE_DPM_" ^ String.sub clock n (String.length clock - n) in
+  match message mp1 name with
+  | Some bit -> (features lsr bit) land 1 = 1
+  | None -> false
+
+(* The power manager *)
+
 type t = {
   r : Regs.t;
   gmc : Gmc.t;
-  mp0 : Rig_amd_abi.Discovery.version;
-  mp1 : Rig_amd_abi.Discovery.version;
+  mp0 : Discovery.version;
+  mp1 : Discovery.version;
   table : int; (* the driver table's physical address *)
   levels : (int, int list) Hashtbl.t; (* each clock's frequencies, read once *)
 }
@@ -31,7 +48,7 @@ let make r gmc ~table =
   }
 
 let id s name =
-  match Smu.message s.mp1 name with
+  match message s.mp1 name with
   | Some id -> id
   | None -> invalid_argf "Rig_amd_pci.gpu: the power manager has no %s" name
 
@@ -100,7 +117,7 @@ let features s =
         "PPSMC_MSG_GetEnabledSmuFeatures" ^ half;
       ]
     in
-    match List.find_map (Smu.message s.mp1) names with
+    match List.find_map (message s.mp1) names with
     | Some m -> send s m 0
     | None ->
         (* Regs.layout refuses a power manager that reports no features. *)
@@ -118,7 +135,7 @@ let frequencies s clock =
   | Some l -> l
   | None ->
       let by_index = id s "PPSMC_MSG_GetDpmFreqByIndex" in
-      let q i = send s by_index (Smu.clock_request ~clock i) land 0x7fff_ffff in
+      let q i = send s by_index (clock_request ~clock i) land 0x7fff_ffff in
       let n = q 0xff in
       if n > max_levels then
         raise
@@ -140,8 +157,8 @@ let clocks s level =
   let features = features s in
   List.iter
     (fun name ->
-      match Smu.message s.mp1 name with
-      | Some clock when Smu.dpm s.mp1 ~features name -> (
+      match message s.mp1 name with
+      | Some clock when dpm s.mp1 ~features name -> (
           match frequencies s clock with
           | [] -> ()
           | l -> (
@@ -151,7 +168,7 @@ let clocks s level =
                 | `Highest -> List.nth l (List.length l - 1)
               in
               let set name =
-                ignore (send s (id s name) (Smu.clock_request ~clock v))
+                ignore (send s (id s name) (clock_request ~clock v))
               in
               let min () = set "PPSMC_MSG_SetSoftMinByFreq" in
               let max () =
@@ -218,7 +235,7 @@ let banks s =
         ("PPSMC_MSG_QueryValidMcaCount", "PPSMC_MSG_McaBankDumpDW")
       else ("PPSMC_MSG_QueryValidMcaCeCount", "PPSMC_MSG_McaBankCeDumpDW")
     in
-    match (Smu.message s.mp1 count, Smu.message s.mp1 dump) with
+    match (message s.mp1 count, message s.mp1 dump) with
     | Some count, Some dump ->
         let half bank i = send s dump ((bank lsl 16) lor i) in
         List.init (send s count 0) (fun bank ->

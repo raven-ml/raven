@@ -12,10 +12,7 @@
    amd_aql_queue.cpp (the scratch buffer descriptor and the vendor packet of
    PM4 commands); Mesa's src/amd/common/ac_sqtt.c for the program that records
    a thread trace on a compute queue; rocprofiler's counter definitions for the
-   events each GPU counts. The boot's formats are amdgpu's too: discovery.h,
-   amdgpu_ucode.h, psp_gfx_if.h, amdgpu_vm.h, the queue descriptors of
-   v9_structs.h to v12_structs.h, the power manager's message headers and the
-   interrupt clients' and sources' headers, excerpted in ../pci/gen. *)
+   events each GPU counts. *)
 
 module Packet = Packet
 module Gpu = Gpu
@@ -28,10 +25,3 @@ module Sdma = Sdma
 module Thread_trace = Thread_trace
 module Counter = Counter
 module Capability = Capability
-module Discovery = Discovery
-module Firmware = Firmware
-module Psp = Psp
-module Smu = Smu
-module Gmc = Gmc
-module Gfx = Gfx
-module Ih = Ih

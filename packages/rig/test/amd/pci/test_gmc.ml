@@ -7,7 +7,7 @@
    bits. *)
 
 open Windtrap
-open Rig_amd_abi
+open Rig_amd_pci
 
 let strf = Printf.sprintf
 
@@ -182,4 +182,4 @@ let page_tables =
            equal int64 (e 0) (Int64.logand (e pa) (Int64.lognot address))));
     ]
 
-let () = exit (run "rig_amd_abi.gmc" [ apertures; page_tables ])
+let () = exit (run "rig_amd_pci.gmc" [ apertures; page_tables ])

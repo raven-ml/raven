@@ -7,7 +7,7 @@
    security processor loads. *)
 
 open Windtrap
-open Rig_amd_abi
+open Rig_amd_pci
 
 let strf = Printf.sprintf
 
@@ -439,4 +439,4 @@ let firmware =
           | Error why -> starts_with ~affix:(path ^ ": ") why);
     ]
 
-let () = exit (run "rig_amd_abi.firmware" [ firmware ])
+let () = exit (run "rig_amd_pci.firmware" [ firmware ])

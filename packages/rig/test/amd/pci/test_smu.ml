@@ -6,7 +6,7 @@
 (* The power manager's messages, against amdgpu's message headers. *)
 
 open Windtrap
-open Rig_amd_abi
+open Rig_amd_pci
 
 let strf = Printf.sprintf
 
@@ -61,4 +61,4 @@ let power =
           equal int 0x2_0010 (Smu.clock_request ~clock:2 0x10));
     ]
 
-let () = exit (run "rig_amd_abi.smu" [ power ])
+let () = exit (run "rig_amd_pci.smu" [ power ])

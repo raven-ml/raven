@@ -10,14 +10,8 @@
   test_sdma
   test_thread_trace
   test_capability
-  test_counter
-  test_discovery
-  test_psp
-  test_smu
-  test_gmc
-  test_gfx
-  test_ih)
- (modules :standard \ test_firmware test_trace_program)
+  test_counter)
+ (modules :standard \ test_trace_program)
  (libraries
   rig
   rig_amd_abi
@@ -28,17 +22,7 @@
   windtrap)
  (deps
   (source_tree fixtures)
-  ../fixtures/hidden_gfx1201.hsaco
-  (glob_files ../fixtures/r9700*)))
-
-; test_firmware reads an image through rig.pci's firmware cache.
-
-(test
- (name test_firmware)
- (modules test_firmware)
- (libraries rig_amd_abi rig_pci unix windtrap)
- (deps
-  (glob_files ../fixtures/r9700*)))
+  ../fixtures/hidden_gfx1201.hsaco))
 
 (test
  (name test_trace_program)

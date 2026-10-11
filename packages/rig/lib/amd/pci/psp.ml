@@ -6,11 +6,108 @@
 module D = Defs
 module Window = Rig_pci.Window
 module Page_table = Rig_pci.Page_table
-module Psp = Rig_amd_abi.Psp
 
 let strf = Printf.sprintf
 let lo32 v = v land 0xffff_ffff
 let hi32 v = (v lsr 32) land 0xffff_ffff
+
+(* Commands *)
+
+(* [command id fields] is a command buffer of command [id] with each [(field,
+   value)] of its command struct set. *)
+let command id fields =
+  let b = Bytes.make D.psp_command_bytes '\000' in
+  let set (off, n) v =
+    match n with
+    | 4 -> Bytes.set_int32_le b off (Int32.of_int (lo32 v))
+    | n -> invalid_arg (strf "Psp: a field of %d bytes" n)
+  in
+  set D.psp_command_id id;
+  List.iter (fun ((off, n), v) -> set (D.psp_command_at + off, n) v) fields;
+  b
+
+let load_ip_fw ~at ~bytes ~fw_type:ty =
+  let open D.Psp_gfx_cmd_load_ip_fw in
+  Bytes.to_string
+    (command D.gfx_cmd_id_load_ip_fw
+       [
+         (fw_phy_addr_lo, lo32 at);
+         (fw_phy_addr_hi, hi32 at);
+         (fw_size, bytes);
+         (fw_type, ty);
+       ])
+
+let load_toc ~at ~bytes =
+  let open D.Psp_gfx_cmd_load_toc in
+  Bytes.to_string
+    (command D.gfx_cmd_id_load_toc
+       [
+         (toc_phy_addr_lo, lo32 at);
+         (toc_phy_addr_hi, hi32 at);
+         (toc_size, bytes);
+       ])
+
+let setup_tmr ~at ~fabric ~bytes =
+  let open D.Psp_gfx_cmd_setup_tmr in
+  let b =
+    command D.gfx_cmd_id_setup_tmr
+      [
+        (buf_phy_addr_lo, lo32 at);
+        (buf_phy_addr_hi, hi32 at);
+        (buf_size, bytes);
+        (system_phy_addr_lo, lo32 fabric);
+        (system_phy_addr_hi, hi32 fabric);
+      ]
+  in
+  (* The driver passes both addresses. *)
+  let bit, _ = virt_phy_addr in
+  let i = D.psp_command_at + (bit / 8) in
+  Bytes.set_uint8 b i (Bytes.get_uint8 b i lor (1 lsl (bit mod 8)));
+  Bytes.to_string b
+
+let autoload_rlc = Bytes.to_string (command D.gfx_cmd_id_autoload_rlc [])
+
+let partition ~mode =
+  Bytes.to_string
+    (command D.gfx_cmd_id_sriov_spatial_part
+       [ (D.Psp_gfx_cmd_sriov_spatial_part.mode, mode) ])
+
+let frame ~command ~fence ~value =
+  let b = Bytes.make D.Psp_gfx_rb_frame.sizeof '\000' in
+  let set (off, _) v = Bytes.set_int32_le b off (Int32.of_int (lo32 v)) in
+  let open D.Psp_gfx_rb_frame in
+  set cmd_buf_addr_lo (lo32 command);
+  set cmd_buf_addr_hi (hi32 command);
+  set fence_addr_lo (lo32 fence);
+  set fence_addr_hi (hi32 fence);
+  set fence_value value;
+  Bytes.to_string b
+
+let response b (off, _) =
+  Int32.to_int (String.get_int32_le b (D.psp_response_at + off))
+  land 0xffff_ffff
+
+let status b = response b D.Psp_gfx_resp.status
+let tmr_bytes b = response b D.Psp_gfx_resp.tmr_size
+
+(* The bootloader *)
+
+(* The bootloader's steps, in amdgpu_psp.c's order: each loads one of the SOS's
+   components, when the image has it. *)
+let steps =
+  D.
+    [
+      (psp_fw_type_psp_kdb, psp_bl__load_key_database);
+      (psp_fw_type_psp_spl, psp_bl__load_tos_spl_table);
+      (psp_fw_type_psp_sys_drv, psp_bl__load_sysdrv);
+      (psp_fw_type_psp_soc_drv, psp_bl__load_socdrv);
+      (psp_fw_type_psp_intf_drv, psp_bl__load_intfdrv);
+      (psp_fw_type_psp_dbg_drv, psp_bl__load_dbgdrv);
+      (psp_fw_type_psp_ras_drv, psp_bl__load_rasdrv);
+      (psp_fw_type_psp_ipkeymgr_drv, psp_bl__load_ipkeymgrdrv);
+      (psp_fw_type_psp_spdm_drv, psp_bl__load_spdmdrv);
+      (psp_fw_type_psp_sos, psp_bl__load_sosdrv);
+    ]
 
 (* The processor *)
 
@@ -24,7 +121,7 @@ type t = {
   m : memory;
   msg : Window.t; (* the message buffer *)
   prefix : string; (* of the message registers, which MP0 14 renamed *)
-  mp0 : Rig_amd_abi.Discovery.version;
+  mp0 : Discovery.version;
   mutable fence_value : int;
   mutable tmr : int; (* its physical address, 0 for the one set up at boot *)
   mutable tmr_size : int;
@@ -82,7 +179,7 @@ let autoload_tmr p = not (List.mem p.mp0 [ (13, 0, 6); (13, 0, 14) ])
 
 (* Writes [data] into the message buffer, the rest of the buffer zeroed as
    amdgpu does before each component, and has it reach the GPU's memory. *)
-let message p (data : Rig_amd_abi.Firmware.piece) =
+let message p (data : Firmware.piece) =
   let n = data.len in
   if n > Window.length p.msg then
     raise (Regs.Stuck (strf "a message of %d bytes exceeds the PSP's buffer" n));
@@ -95,7 +192,7 @@ let wait_bootloader p =
   Regs.wait p.r "the PSP's bootloader" (fun () -> read p 35 land ready <> 0)
 
 let bootloader_load p images (fw_type, step) =
-  match List.assoc_opt fw_type images.Rig_amd_abi.Firmware.sos with
+  match List.assoc_opt fw_type images.Firmware.sos with
   | None -> ()
   | Some data ->
       wait_bootloader p;
@@ -114,7 +211,7 @@ let submit p what cmd =
   let v = p.fence_value in
   Window.write p.vram p.m.command cmd;
   let f =
-    Psp.frame ~command:(Gmc.mc p.gmc p.m.command)
+    frame ~command:(Gmc.mc p.gmc p.m.command)
       ~fence:(Gmc.mc p.gmc p.m.fence) ~value:v
   in
   Window.write p.vram (p.m.ring + at) f;
@@ -124,7 +221,7 @@ let submit p what cmd =
   Regs.wait p.r (strf "the PSP's command %s" what) (fun () ->
       Window.get32 p.vram p.m.fence = v);
   let resp = Window.read p.vram p.m.command (String.length cmd) in
-  let s = Psp.status resp in
+  let s = status resp in
   if s <> 0 then
     raise
       (Regs.Stuck (strf "the PSP's command %s failed with status 0x%x" what s));
@@ -138,7 +235,7 @@ let load p (types, data) =
       ignore
         (submit p
            (strf "load firmware %d" ty)
-           (Psp.load_ip_fw ~at ~bytes:data.len ~fw_type:ty)))
+           (load_ip_fw ~at ~bytes:data.len ~fw_type:ty)))
     types
 
 (* The TMR: its size from the table of contents, or from the scratch register
@@ -148,16 +245,16 @@ let tmr_init p images ~partial =
   (if partial then p.tmr_size <- Regs.read p.r "regSCRATCH_REG5"
    else
      match
-       List.assoc_opt D.psp_fw_type_psp_toc images.Rig_amd_abi.Firmware.sos
+       List.assoc_opt D.psp_fw_type_psp_toc images.Firmware.sos
      with
      | None -> ()
      | Some toc ->
          message p toc;
          let resp =
            submit p "load the table of contents"
-             (Psp.load_toc ~at:(Gmc.mc p.gmc p.m.message) ~bytes:toc.len)
+             (load_toc ~at:(Gmc.mc p.gmc p.m.message) ~bytes:toc.len)
          in
-         p.tmr_size <- Psp.tmr_bytes resp);
+         p.tmr_size <- tmr_bytes resp);
   if (not (boot_time_tmr p)) && p.tmr_size > 0 then
     match
       Page_table.palloc ~boot:false ~align:D.psp_tmr_alignment ~zero:false
@@ -171,7 +268,7 @@ let tmr_load p =
     if p.tmr = 0 then (0, 0, 0)
     else (Gmc.mc p.gmc p.tmr, Gmc.fabric p.gmc p.tmr, p.tmr_size)
   in
-  ignore (submit p "set up the TMR" (Psp.setup_tmr ~at ~fabric ~bytes))
+  ignore (submit p "set up the TMR" (setup_tmr ~at ~fabric ~bytes))
 
 (* A ring left by the last boot is destroyed first; the processor answers each
    control command in bit 31 of the control register, after 20 ms, as the kernel
@@ -195,21 +292,21 @@ let ring_create p =
 
 let os p images =
   if not (alive p) then begin
-    List.iter (bootloader_load p images) Psp.steps;
+    List.iter (bootloader_load p images) steps;
     Regs.wait p.r "the PSP's OS to start" (fun () -> alive p)
   end;
   ring_create p;
   tmr_init p images ~partial:false
 
 let power_firmware p images =
-  Option.iter (load p) images.Rig_amd_abi.Firmware.smu
+  Option.iter (load p) images.Firmware.smu
 
 let firmware p images =
   power_firmware p images;
   if (not (boot_time_tmr p)) || not (autoload_tmr p) then tmr_load p;
   List.iter (load p) images.pieces;
   let gc = Regs.version (Regs.layout_of p.r) D.gc_hwid in
-  if gc >= (11, 0, 0) then ignore (submit p "autoload the RLC" Psp.autoload_rlc)
+  if gc >= (11, 0, 0) then ignore (submit p "autoload the RLC" autoload_rlc)
   else
     match List.assoc_opt D.psp_fw_type_psp_rl images.sos with
     | Some rl -> load p ([ D.gfx_fw_type_reg_list ], rl)
@@ -223,4 +320,4 @@ let start p images ~partial =
   end
 
 let set_partition p mode =
-  ignore (submit p "set the partition mode" (Psp.partition ~mode))
+  ignore (submit p "set the partition mode" (partition ~mode))

@@ -14,10 +14,12 @@ firmware `RIG_AMD_PCI_FIRMWARE` lists, and skips elsewhere: two domains
 closing one device, memory freed after its GPU opened again, and a GPU
 whose holder was killed, reset by the next open.
 
-rig.amd.abi's suites, in `../abi`, check the formats the boot reads and
-writes: the discovery table, the firmware images and their pieces, the
-security processor's commands, the power manager's messages, the
-page-table entries, the queue descriptors and the interrupt entries.
+`test_discovery.ml`, `test_firmware.ml`, `test_psp.ml`, `test_smu.ml`,
+`test_gmc.ml`, `test_gfx.ml` and `test_ih.ml` check the formats the boot
+reads and writes, through amd.pci's hidden section: the discovery table,
+the firmware images and their pieces, the security processor's commands,
+the power manager's messages, the page-table entries, the queue
+descriptors and the interrupt entries.
 
 What nothing here checks, since no interface reaches it without a GPU:
 

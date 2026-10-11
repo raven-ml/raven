@@ -2,4 +2,4 @@
  (name rig_amd_abi)
  (public_name rig.amd.abi)
  (libraries rig_edge rig_elf)
- (private_modules boot_defs defs rdna_trace))
+ (private_modules defs rdna_trace))

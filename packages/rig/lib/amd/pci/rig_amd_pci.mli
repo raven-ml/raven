@@ -291,3 +291,32 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
     {ul
     {- PCI-SIG. {e PCI Express Base Specification}, 7.5.3.7 "Link Control
        Register": ASPM.}} *)
+
+(**/**)
+
+(* What a driver that boots the GPU itself reads from the GPU and its
+   firmware, and writes for the GPU's blocks. Tests check them without a
+   GPU. *)
+
+module Discovery = Discovery
+(** The discovery table: the GPU's blocks, their versions and where their
+    registers lie. *)
+
+module Firmware = Firmware
+(** The firmware a GPU boots with, cut into the pieces its security
+    processor loads. *)
+
+module Psp = Psp
+(** The security processor's commands. *)
+
+module Smu = Smu
+(** The power manager's messages. *)
+
+module Gmc = Gmc
+(** The memory controller's window and page-table entries. *)
+
+module Gfx = Gfx
+(** The compute queues' descriptors and the shader array index. *)
+
+module Ih = Ih
+(** The interrupt rings' entries. *)

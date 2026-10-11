@@ -6,7 +6,7 @@
 (* Discovery tables: the R9700's, and tables damaged anywhere. *)
 
 open Windtrap
-open Rig_amd_abi
+open Rig_amd_pci
 
 let strf = Printf.sprintf
 
@@ -252,4 +252,4 @@ let dies =
     ]
 
 let () =
-  exit (run "rig_amd_abi.discovery" [ discovery; damaged; refusals; dies ])
+  exit (run "rig_amd_pci.discovery" [ discovery; damaged; refusals; dies ])

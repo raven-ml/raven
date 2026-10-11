@@ -14,7 +14,7 @@ let ( let* ) = Result.bind
 (* Layouts *)
 
 type layout = {
-  d : Rig_amd_abi.Discovery.t;
+  d : Discovery.t;
   gpu : Rig_amd_abi.Gpu.t;
   regs : (string, Register.t * int) Hashtbl.t; (* by name: register, block *)
   guarded : (int * int) list;
@@ -56,10 +56,10 @@ let blocks =
 
 let layout d =
   let block b =
-    match Rig_amd_abi.Discovery.version d b with
+    match Discovery.version d b with
     | Some v -> Ok v
     | None ->
-        Error (strf "the GPU has no %s block" (Rig_amd_abi.Discovery.name b))
+        Error (strf "the GPU has no %s block" (Discovery.name b))
   in
   let* gc = block D.gc_hwid in
   let* sdma = block D.sdma0_hwid in
@@ -67,14 +67,14 @@ let layout d =
   let unbooted b v =
     Error
       (strf "%s %s is a version this library does not boot"
-         (Rig_amd_abi.Discovery.name b)
+         (Discovery.name b)
          (dotted v))
   in
   (* The power manager is programmed by messages of its version, among them one
      that reports its enabled features, which a reset asks before it lowers the
      clocks. *)
   let* () =
-    let has name = Option.is_some (Rig_amd_abi.Smu.message mp1 name) in
+    let has name = List.mem_assoc name (D.smu_messages mp1) in
     let pair name = has (name ^ "Low") && has (name ^ "High") in
     if
       pair "PPSMC_MSG_GetRunningSmuFeatures"
@@ -94,7 +94,7 @@ let layout d =
       Rig_amd_abi.Gpu.target = target gc;
       gc;
       sdma;
-      xccs = max 1 (List.length (Rig_amd_abi.Discovery.live d D.gc_hwid));
+      xccs = max 1 (List.length (Discovery.live d D.gc_hwid));
       shader_engines = g.engines;
       compute_units = g.engines * g.arrays * g.units;
       scratch_slots = g.scratch_slots;
@@ -156,14 +156,14 @@ let layout d =
             if s < Array.length segs then Some (segs.(s), segs.(s) + top)
             else None)
           last)
-      (Rig_amd_abi.Discovery.live d D.gc_hwid)
+      (Discovery.live d D.gc_hwid)
     |> List.sort compare
   in
   Ok { d; gpu; regs; guarded }
 
 let gpu l = l.gpu
 let discovery l = l.d
-let version l b = Option.get (Rig_amd_abi.Discovery.version l.d b)
+let version l b = Option.get (Discovery.version l.d b)
 let has l name = Hashtbl.mem l.regs name
 let guarded l = l.guarded
 

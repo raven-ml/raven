@@ -26,7 +26,7 @@ val blocks : int list
 (** [blocks] is the blocks a boot programs: GC, SDMA0, MP0, MP1, MMHUB,
     OSSSYS, NBIF and HDP. *)
 
-val layout : Rig_amd_abi.Discovery.t -> (layout, string) result
+val layout : Discovery.t -> (layout, string) result
 (** [layout d] places the registers of the GPU [d] describes. The result is
     [Error msg]:
     {ul
@@ -41,10 +41,10 @@ val gpu : layout -> Rig_amd_abi.Gpu.t
     9.4.3 runs gfx942 code), its GC and SDMA versions, its live dies and its
     GC's shape. *)
 
-val discovery : layout -> Rig_amd_abi.Discovery.t
+val discovery : layout -> Discovery.t
 (** [discovery l] is the table [l] was placed from. *)
 
-val version : layout -> int -> Rig_amd_abi.Discovery.version
+val version : layout -> int -> Discovery.version
 (** [version l b] is the version of block [b], which {!layout} checked. *)
 
 val has : layout -> string -> bool
@@ -127,7 +127,7 @@ val set : t -> int -> int -> unit
 val set_pcie : ?aid:int -> t -> int -> int -> unit
 (** [set_pcie ~aid r a x] writes [x] to the PCIe register [a] of the
     accelerator die [aid] (defaults to [0]) through the indirect window.
-    [aid] must be a live die ({!Rig_amd_abi.Discovery.aids}), since a write
+    [aid] must be a live die ({!Discovery.aids}), since a write
     to a die fused off stalls the fabric. *)
 
 val wait : ?ms:int -> t -> string -> (unit -> bool) -> unit

@@ -8,6 +8,7 @@ module Window = Rig_pci.Window
 module Page_table = Rig_pci.Page_table
 
 let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* A hub's invalidation engine 17 on one instance, its registers resolved: the
    request, the acknowledgement, and on the MM hub the semaphore and, from GC
@@ -22,7 +23,7 @@ type engine = {
 type t = {
   r : Regs.t;
   vram : Window.t;
-  gc : Rig_amd_abi.Discovery.version;
+  gc : Discovery.version;
   xccs : int list; (* the GC hub's instances *)
   mm : int list; (* the MM hub's instances *)
   node : int; (* where the GPU's memory starts in the fabric's window *)
@@ -54,8 +55,82 @@ let aperture_mask = 0xff_ffff
 let first base = (base land aperture_mask) lsl aperture_unit
 let last top = (((top land aperture_mask) + 1) lsl aperture_unit) - 1
 
+let window ~base ~top ~fabric ~memory =
+  let lo = first base and hi = last top in
+  let at = lo + fabric in
+  if hi >= lo && at + memory - 1 <= hi then Ok ()
+  else
+    Error
+      (strf
+         "the memory controller's window [0x%x, 0x%x] does not hold the GPU's \
+          %d MiB at 0x%x"
+         lo hi (memory lsr 20) at)
+
 (* GC 9.4 and 9.5 address 48 bits of physical memory; the others 44. *)
 let address_bits = function 9, (4 | 5), _ -> 48 | _ -> 44
+
+(* Entries *)
+
+let ( |: ) = Int64.logor
+let flag c f = if c then f else 0L
+let entry_address = 0x0000_ffff_ffff_f000
+
+(* The memory type of uncached accesses. *)
+let mtype_uc = function
+  | 9, _, _ -> D.soc15_mtype_uc
+  | (10 | 11), _, _ -> D.soc21_mtype_uc
+  | _ -> D.soc24_mtype_uc
+
+let entry ~gc ~level ~pa target ~uncached ~snooped ~fragment =
+  if pa land lnot entry_address <> 0 then
+    invalid_argf "Gmc.entry: address 0x%x is not a 4 KiB page below 2^48" pa;
+  let table = target = `Table in
+  let system = target = `Page `System in
+  let shift v s = Int64.shift_left (Int64.of_int v) s in
+  (* GFX12 reaches system memory MTYPE_UC whatever the mapping asks, as the
+     kernel's GART maps the queues and words of VMID 0, which every table of
+     this library serves (gmc_v12_0_gart_init). Its MTYPE_NC is for other VMIDs'
+     system pages (gmc_v12_0_get_vm_pte). *)
+  let mtype =
+    match gc with
+    | (12 | 13), _, _ when system -> D.soc24_mtype_uc
+    | _ -> if uncached then mtype_uc gc else 0
+  in
+  let base =
+    D.amdgpu_pte_valid
+    |: flag system D.amdgpu_pte_system
+    |: flag snooped D.amdgpu_pte_snooped
+    |: shift (fragment land 0x1f) D.amdgpu_pte_frag_shift
+    |: flag (not table)
+         D.(
+           amdgpu_pte_writeable |: amdgpu_pte_readable |: amdgpu_pte_executable)
+    |: Int64.of_int pa
+  in
+  (* A page above the leaf level is a page directory entry marked as a page. *)
+  let leaf_of_pd = (not table) && level <> D.amdgpu_vm_ptb in
+  match gc with
+  | (12 | 13), _, _ ->
+      base
+      |: shift mtype D.amdgpu_pte_mtype_gfx12_shift
+      |:
+      if leaf_of_pd then D.amdgpu_pde_pte_gfx12
+      else flag (not table) D.amdgpu_pte_is_pte
+  | (10 | 11), _, _ ->
+      base
+      |: shift mtype D.amdgpu_pte_mtype_nv10_shift
+      |: flag leaf_of_pd D.amdgpu_pde_pte
+  | _ ->
+      (* GFX9 walks PDB0's entries as pages unless marked to translate further,
+         and PDB1's as covering 2^9 PDB0 entries. *)
+      base
+      |: shift mtype D.amdgpu_pte_mtype_vg10_shift
+      |: flag
+           (table && level = D.amdgpu_vm_pdb1)
+           (shift 0x9 D.amdgpu_pde_bfs_shift)
+      |: flag (table && level = D.amdgpu_vm_pdb0) D.amdgpu_pte_tf
+      |: flag (leaf_of_pd && level <> D.amdgpu_vm_pdb0) D.amdgpu_pde_pte
+
+(* The memory controller *)
 
 let make r vram =
   let l = Regs.layout_of r in
@@ -69,7 +144,7 @@ let make r vram =
   let regions = lfb_field "regGCMC_VM_XGMI_LFB_CNTL" "pf_max_region" in
   let d = Regs.discovery l in
   let nbio79 =
-    match Rig_amd_abi.Discovery.version d D.nbif_hwid with
+    match Discovery.version d D.nbif_hwid with
     | Some (7, 9, (0 | 1)) -> true
     | _ -> false
   in
@@ -86,8 +161,8 @@ let make r vram =
   let base = Regs.read r "regMMMC_VM_FB_LOCATION_BASE" in
   let xccs = List.init (Regs.gpu l).xccs Fun.id in
   let mm =
-    if nbio79 then Rig_amd_abi.Discovery.aids d
-    else List.map fst (Rig_amd_abi.Discovery.live d D.mmhub_hwid)
+    if nbio79 then Discovery.aids d
+    else List.map fst (Discovery.live d D.mmhub_hwid)
   in
   let engines hub insts =
     let name s = strf "reg%sVM_INVALIDATE_ENG17_%s" (hub_prefix hub) s in
@@ -150,7 +225,7 @@ let make r vram =
   }
 
 let covers g ~memory =
-  Rig_amd_abi.Gmc.window ~base:g.base ~top:g.top ~fabric:g.node ~memory
+  window ~base:g.base ~top:g.top ~fabric:g.node ~memory
 
 let mc g pa = g.mc_base + pa
 let fabric g pa = g.fabric_base + pa
@@ -184,7 +259,7 @@ let format g ~flush =
     set_table =
       (fun ~level ~table i ~child ->
         set ~table i
-          (Rig_amd_abi.Gmc.entry ~gc:g.gc ~level ~pa:(fabric g child) `Table
+          (entry ~gc:g.gc ~level ~pa:(fabric g child) `Table
              ~uncached:false ~snooped:false ~fragment:0));
     set_page =
       (fun ~level ~table i ~pa target ~uncached ~snooped ~fragment ->
@@ -195,7 +270,7 @@ let format g ~flush =
           | System -> (pa, `System)
         in
         set ~table i
-          (Rig_amd_abi.Gmc.entry ~gc:g.gc ~level ~pa (`Page kind) ~uncached
+          (entry ~gc:g.gc ~level ~pa (`Page kind) ~uncached
              ~snooped ~fragment));
     clear = (fun ~level:_ ~table i -> set ~table i 0L);
     (* Pages map at PDB1 (1 GiB), PDB0 (2 MiB) and PTB (4 KiB). *)
@@ -205,12 +280,6 @@ let format g ~flush =
   }
 
 (* Hubs *)
-
-(* The memory type of uncached accesses. *)
-let mtype_uc = function
-  | 9, _, _ -> D.soc15_mtype_uc
-  | (10 | 11), _, _ -> D.soc21_mtype_uc
-  | _ -> D.soc24_mtype_uc
 
 (* The hubs translate up to the canonical end of a 48-bit address space. *)
 let vm_last = 0x7fff_ffff_ffff

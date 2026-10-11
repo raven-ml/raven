@@ -6,7 +6,7 @@
 (* Image headers are the kernel's amdgpu_ucode.h; firmware types are
    psp_gfx_if.h's. *)
 
-module D = Boot_defs
+module D = Defs
 
 let strf = Printf.sprintf
 let ( let* ) = Result.bind

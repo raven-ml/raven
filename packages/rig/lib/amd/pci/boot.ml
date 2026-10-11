@@ -39,7 +39,7 @@ type t = {
   smu : Smu.t;
   gfx : Gfx.t;
   sdma : Sdma.t;
-  images : Rig_amd_abi.Firmware.t;
+  images : Firmware.t;
   fault_page : Window.t; (* the system memory page the hubs' faults reach *)
   fault_bus : int; (* its bus address *)
   vf : bool;
@@ -150,12 +150,12 @@ let vf_request mmio f ?(ready = true) req =
    index's low 31 bits with bit 31 set, then its high bits, as the kernel's
    amdgpu_device_mm_access writes them. *)
 let read_table ~vram ~mmio ~memory =
-  let at = memory - Rig_amd_abi.Discovery.offset in
+  let at = memory - Discovery.offset in
   if Window.length vram >= memory then
-    Window.read vram at Rig_amd_abi.Discovery.bytes
+    Window.read vram at Discovery.bytes
   else begin
-    let b = Bytes.create Rig_amd_abi.Discovery.bytes in
-    for i = 0 to (Rig_amd_abi.Discovery.bytes / 4) - 1 do
+    let b = Bytes.create Discovery.bytes in
+    for i = 0 to (Discovery.bytes / 4) - 1 do
       let w = at + (4 * i) in
       Window.set32 mmio (D.mmmm_index * 4) (w land 0x7fff_ffff lor 0x8000_0000);
       Window.set32 mmio (D.mmmm_index_hi * 4) (w lsr 31);
@@ -213,7 +213,7 @@ let surveyed f vram doorbells mmio =
     if size = 0 || size = 0xffff_ffff then Error "the GPU reports no memory"
     else Ok (size lsl 20)
   in
-  let* d = Rig_amd_abi.Discovery.of_string (read_table ~vram ~mmio ~memory) in
+  let* d = Discovery.of_string (read_table ~vram ~mmio ~memory) in
   Ok (vram, doorbells, mmio, vf, lease, memory, d)
 
 (* What the GPU says of itself before any block is touched, its BARs unmapped if
@@ -657,7 +657,7 @@ let sleep g ~ms =
               let reports =
                 List.map
                   (function
-                    | Rig_amd_abi.Ih.Page_fault -> Gmc.fault g.gmc
+                    | Ih.Page_fault -> Gmc.fault g.gmc
                     | Fault why -> why)
                   reports
               in

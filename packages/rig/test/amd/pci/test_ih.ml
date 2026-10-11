@@ -6,7 +6,7 @@
 (* Interrupt entries, decoded. *)
 
 open Windtrap
-open Rig_amd_abi
+open Rig_amd_pci
 
 let gfx9 = (9, 4, 3)
 let gfx11 = (11, 0, 0)
@@ -92,4 +92,4 @@ let interrupts =
               Ih.decode ~gc:gfx12 ~sdma:sdma7 [| 0 |]));
     ]
 
-let () = exit (run "rig_amd_abi.ih" [ interrupts ])
+let () = exit (run "rig_amd_pci.ih" [ interrupts ])

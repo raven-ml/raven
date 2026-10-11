@@ -6,11 +6,11 @@
 (* Blocks are numbered by hardware ID as the kernel's soc15_hw_ip.h numbers
    them. *)
 
-module D = Boot_defs
+module D = Defs
 
 let strf = Printf.sprintf
 
-type version = Gpu.version
+type version = Rig_amd_abi.Gpu.version
 
 type gc = {
   engines : int;

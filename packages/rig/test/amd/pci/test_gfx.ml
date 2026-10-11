@@ -8,7 +8,7 @@
    headers. *)
 
 open Windtrap
-open Rig_amd_abi
+open Rig_amd_pci
 module S = Rig_amd_abi_support
 
 let u32 b off = Int32.to_int (String.get_int32_le b off) land 0xffff_ffff
@@ -128,4 +128,4 @@ let queues =
               Gfx.mqd (S.gpu gc) gfx12_queue ~base:0 `Pm4 ~xcc:0));
     ]
 
-let () = exit (run "rig_amd_abi.gfx" [ queues ])
+let () = exit (run "rig_amd_pci.gfx" [ queues ])

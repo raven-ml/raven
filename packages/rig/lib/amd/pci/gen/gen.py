@@ -1,20 +1,15 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""Generates the tables of the AMD GPUs' boot over PCI, from the same
-excerpts:
-
-- defs.ml, rig_amd_pci's: the blocks' hardware IDs, the registers of each
-  block but GC (whose are rig_amd_abi's) at each version with headers, what
-  the boot reads before the discovery table and of a virtual function, the
-  doorbells, the security processor's ring, and the pinned firmware images;
-- ../abi/boot_defs.ml, rig_amd_abi's: the layouts of the discovery table
-  and its blocks' names, the page-table entries, the queue descriptors, the
-  security processor's commands, the power manager's messages, the
-  interrupt sources, and the layouts of firmware images' headers and the
-  types the security processor loads them as.
-
-A value both read is in both.
+"""Generates defs.ml, the tables of the AMD GPUs' boot over PCI: the layouts
+of the discovery table and its blocks' names and hardware IDs, the
+registers of each block but GC (whose are rig_amd_abi's) at each version
+with headers, what the boot reads before the discovery table and of a
+virtual function, the page-table entries, the doorbells and queue
+descriptors, the security processor's commands and ring, the power
+manager's messages, the interrupt sources, the layouts of firmware images'
+headers and the types the security processor loads them as, and the pinned
+firmware images.
 
 Run from the worktree root:
 
@@ -25,7 +20,7 @@ Run from the worktree root:
 The inputs are excerpts of the Linux kernel's amdgpu headers, in headers/:
 each is a header's licence notice and the lines this script reads, verbatim
 and in the header's order (a #define, an enumeration, a struct's definition).
-They are all under the MIT licence, whose notice both files carry.
+They are all under the MIT licence, whose notice defs.ml carries.
 headers/firmware.tsv lists the pinned firmware images of linux-firmware at
 FIRMWARE_COMMIT: each image's path, BLAKE2b-256 digest and URL, exactly the
 images of IMAGES; the page of rig firmware, in packages/rig/bin/help.ml, names
@@ -54,7 +49,6 @@ HERE = pathlib.Path(__file__).resolve().parent
 HEADERS = HERE / "headers"
 PINS = HERE / "pins.json"
 OUT = HERE.parent / "defs.ml"
-BOOT_OUT = HERE.parent.parent / "abi/boot_defs.ml"
 
 # Sources, each at the commit in its URL
 
@@ -291,9 +285,6 @@ GFX_FW_TYPES = ["GFX_FW_TYPE_" + n for n in (
     "RLC_RESTORE_LIST_GPM_MEM", "RLC_RESTORE_LIST_SRM_MEM", "RLC_RESTORE_LIST_SRM_CNTL", "RLC_P", "RLC_IRAM",
     "RLC_DRAM_BOOT", "P2S_TABLE", "REG_LIST", "IMU_I", "IMU_D", "SDMA_UCODE_TH0", "SDMA_UCODE_TH1", "RS64_PFP",
     "RS64_ME", "RS64_MEC", "RS64_PFP_P0_STACK", "RS64_ME_P0_STACK", "RS64_MEC_P0_STACK")]
-# The types rig_amd_pci's boot loads itself: the PSP's table of contents and
-# register list.
-FW_TYPES_PCI = ["PSP_FW_TYPE_PSP_TOC", "PSP_FW_TYPE_PSP_RL", "GFX_FW_TYPE_REG_LIST"]
 ENUMS = {"amdgpu_ucode.h": ["psp_fw_type"],
          "psp_gfx_if.h": ["psp_gfx_fw_type", "psp_gfx_crtl_cmd_id", "psp_gfx_cmd_id"],
          "amdgpu_psp.h": ["psp_bootloader_cmd", "psp_ring_type"]}
@@ -306,10 +297,6 @@ PSP_BOOT = ["PSP_BL__LOAD_KEY_DATABASE", "PSP_BL__LOAD_TOS_SPL_TABLE", "PSP_BL__
             "PSP_BL__LOAD_SPDMDRV", "PSP_BL__LOAD_SOSDRV",
             "PSP_RING_TYPE__KM"]
 PSP_SIZES = ["PSP_FENCE_BUFFER_SIZE", "PSP_CMD_BUFFER_SIZE", "PSP_1_MEG", "PSP_TMR_ALIGNMENT"]
-# The commands and steps are rig_amd_abi's; the boot's own ring, its
-# buffers and its last step are rig_amd_pci's.
-PSP_RING = ["GFX_CTRL_CMD_ID_DESTROY_RINGS", "PSP_RING_TYPE__KM"]
-PSP_PCI = PSP_RING + ["PSP_BL__LOAD_SOSDRV"] + PSP_SIZES
 # Each command's struct, the fields kept, and the member the layout stops at
 # (a union this library does not read).
 PSP_STRUCTS = {
@@ -802,126 +789,111 @@ def header(h, gen="gen"):
 
 
 def generate(h):
-    """rig_amd_pci's defs.ml and rig_amd_abi's boot_defs.ml, from the
-    excerpts [h], by name."""
-    pci, abi = [header(h)], [header(h, "../pci/gen")]
+    """rig_amd_pci's defs.ml, from the excerpts [h], by name."""
+    ml = [header(h)]
 
-    # Discovery
-    d = h["discovery.h"]
-    abi += ["(* The discovery table *)", ""]
-    for n, v in constants(d, DISCOVERY_CONSTANTS).items():
-        abi.append(f"let {n.lower()} = {ml_int(v)}")
-    for n, v in constants(h["amdgpu_discovery.h"], DISCOVERY_PLACE).items():
-        abi.append(f"let {n.lower()} = {ml_int(v)}")
-    abi.append("")
-    abi.append("(* The tables the binary header lists, by index. *)")
-    for n, v in enum_values(d, DISCOVERY_TABLES).items():
-        abi.append(f"let {n.lower()}_table = {v}")
-    abi.append("")
-    abi.append("(* Layouts: each field as (byte offset, bytes), or (bit offset, bits) for a")
-    abi.append("   bit field; an array's bytes are its element's. *)")
-    for s, wanted in DISCOVERY_STRUCTS.items():
-        size, fields = packed_layout(d, s)
-        abi.append(f"module {ml_module(s)} = struct")
-        abi.append(f"  let sizeof = {size}")
+    def struct(text, s, wanted, upto=None):
+        size, fields = packed_layout(text, s, upto)
+        ml.append(f"module {ml_module(s)} = struct")
+        ml.append(f"  let sizeof = {size}")
         for f in wanted:
             if f not in fields:
                 sys.exit(f"{s} has no field {f}")
-            abi.append(f"  let {f} = {ml_field(fields[f])}")
-        abi.append("end")
-        abi.append("")
+            ml.append(f"  let {f} = {ml_field(fields[f])}")
+        ml.extend(["end", ""])
+
+    # Discovery
+    d = h["discovery.h"]
+    ml += ["(* The discovery table *)", ""]
+    for n, v in constants(d, DISCOVERY_CONSTANTS).items():
+        ml.append(f"let {n.lower()} = {ml_int(v)}")
+    for n, v in constants(h["amdgpu_discovery.h"], DISCOVERY_PLACE).items():
+        ml.append(f"let {n.lower()} = {ml_int(v)}")
+    ml.append("")
+    ml.append("(* The tables the binary header lists, by index. *)")
+    for n, v in enum_values(d, DISCOVERY_TABLES).items():
+        ml.append(f"let {n.lower()}_table = {v}")
+    ml.append("")
+    ml.append("(* Layouts: each field as (byte offset, bytes), or (bit offset, bits) for a")
+    ml.append("   bit field; an array's bytes are its element's. *)")
+    for s, wanted in DISCOVERY_STRUCTS.items():
+        struct(d, s, wanted)
 
     # Hardware IDs
     ids = hw_ids(h["soc15_hw_ip.h"])
     known = dict(ids)
-    abi += ["(* The blocks' hardware IDs, and their names *)", ""]
-    pci += ["(* The blocks' hardware IDs *)", ""]
+    ml += ["(* The blocks' hardware IDs, and their names *)", ""]
     for n in HWIDS:
-        for out in (abi, pci):
-            out.append(f"let {n.lower()}_hwid = {known[n]}")
-    pci.append("")
-    abi.append("")
+        ml.append(f"let {n.lower()}_hwid = {known[n]}")
+    ml.append("")
     first = {}
     for n, v in ids:
         first.setdefault(v, n)
-    abi.append("let hwid_name = function")
+    ml.append("let hwid_name = function")
     for v, n in sorted(first.items()):
-        abi.append(f"  | {v} -> {json.dumps(n)}")
-    abi.append("  | _ -> \"\"")
-    abi.append("")
+        ml.append(f"  | {v} -> {json.dumps(n)}")
+    ml.append("  | _ -> \"\"")
+    ml.append("")
 
     # Page tables
     vm = h["amdgpu_vm.h"]
-    abi += ["(* Page-table entries *)", ""]
-    pci += ["(* Page tables, and the memory types and modes of each generation *)", ""]
+    ml += ["(* Page tables: their entries, and the memory types and modes of each", "   generation *)", ""]
     for n, v in constants(vm, PTE_BITS).items():
-        abi.append(f"let {n.lower()} = 0x{v:x}L")
+        ml.append(f"let {n.lower()} = 0x{v:x}L")
     for n in PTE_SHIFTS:
-        abi.append(f"let {n.lower().removesuffix('_shift')}_shift = {shift(vm, n)}")
+        ml.append(f"let {n.lower().removesuffix('_shift')}_shift = {shift(vm, n)}")
     for n, v in enum_values(vm, VM_LEVELS).items():
-        for out in (abi, pci):
-            out.append(f"let {n.lower()} = {v}")
+        ml.append(f"let {n.lower()} = {v}")
     for hdr, gen_name in MTYPES.items():
         for n in ["MTYPE_UC", "MTYPE_NC"] + SH_MEM:
             m = re.search(rf"\b{n}\s*=\s*(0x[0-9a-fA-F]+|\d+)", h[hdr])
             if m is None:
                 sys.exit(f"{hdr}: no {n}")
-            line = f"let {gen_name}_{n.lower()} = {int(m.group(1), 0)}"
-            pci.append(line)
-            if n == "MTYPE_UC":
-                abi.append(line)
-    pci.append("")
-    abi.append("")
+            ml.append(f"let {gen_name}_{n.lower()} = {int(m.group(1), 0)}")
+    ml.append("")
 
     # Before discovery, and virtual functions
-    pci += ["(* Before the discovery table *)", ""]
+    ml += ["(* Before the discovery table *)", ""]
     for n, v in constants(h["amdgpu_discovery.c"], EARLY).items():
-        pci.append(f"let {n.lower()} = {ml_int(v)}")
-    pci += ["", "(* Virtual functions and their mailbox *)", ""]
+        ml.append(f"let {n.lower()} = {ml_int(v)}")
+    ml += ["", "(* Virtual functions and their mailbox *)", ""]
     for n, v in {**constants(h["amdgpu_virt.h"], VF), **constants(h["mxgpu_nv.h"], MAILBOX),
                  **enum_values(h["mxgpu_nv.h"], MAILBOX_ENUMS)}.items():
-        pci.append(f"let {n.lower()} = {ml_int(v)}")
-    pci.append("")
+        ml.append(f"let {n.lower()} = {ml_int(v)}")
+    ml.append("")
 
     # Compute queues
-    pci += ["(* Compute queues' doorbells *)", ""]
+    ml += ["(* Compute queues *)", ""]
     for n, v in enum_values(h["amdgpu_doorbell.h"], DOORBELLS).items():
-        pci.append(f"let {n.lower()} = {ml_int(v)}")
-    pci.append("")
-    abi += ["(* Compute queues *)", ""]
-    abi += ["(* The fields of a memory queue descriptor, as (byte offset, bytes); the",
-            "   thread management words of its shader engines, in order. *)",
-            "type mqd = {"]
-    abi += [f"  {f} : int * int;" for f in MQD_FIELDS]
-    abi += [f"  {f} : (int * int) option;" for f in MQD_OPTIONAL]
-    abi += ["  compute_static_thread_mgmt : (int * int) list;", "  sizeof : int;", "}", ""]
+        ml.append(f"let {n.lower()} = {ml_int(v)}")
+    ml.append("")
+    ml += ["(* The fields of a memory queue descriptor, as (byte offset, bytes); the",
+           "   thread management words of its shader engines, in order. *)",
+           "type mqd = {"]
+    ml += [f"  {f} : int * int;" for f in MQD_FIELDS]
+    ml += [f"  {f} : (int * int) option;" for f in MQD_OPTIONAL]
+    ml += ["  compute_static_thread_mgmt : (int * int) list;", "  sizeof : int;", "}", ""]
     for hdr, (st, major) in MQDS.items():
         size, fields = packed_layout(h[hdr], st)
-        abi.append(f"(* GFX{major}'s, {st} *)")
-        abi.append(f"let mqd_v{major} = {{")
+        ml.append(f"(* GFX{major}'s, {st} *)")
+        ml.append(f"let mqd_v{major} = {{")
         for f in MQD_FIELDS:
             if f not in fields:
                 sys.exit(f"{st} has no field {f}")
-            abi.append(f"  {f} = {ml_field(fields[f])};")
+            ml.append(f"  {f} = {ml_field(fields[f])};")
         for f in MQD_OPTIONAL:
-            abi.append(f"  {f} = " + (f"Some {ml_field(fields[f])};" if f in fields else "None;"))
+            ml.append(f"  {f} = " + (f"Some {ml_field(fields[f])};" if f in fields else "None;"))
         mgmt = sorted((f for f in fields if f.startswith("compute_static_thread_mgmt_se")),
                       key=lambda f: int(f[len("compute_static_thread_mgmt_se"):]))
-        abi.append("  compute_static_thread_mgmt = [ " + "; ".join(ml_field(fields[f]) for f in mgmt) + " ];")
-        abi.append(f"  sizeof = {size};")
-        abi += ["}", ""]
+        ml.append("  compute_static_thread_mgmt = [ " + "; ".join(ml_field(fields[f]) for f in mgmt) + " ];")
+        ml.append(f"  sizeof = {size};")
+        ml += ["}", ""]
 
     # Security processor
     g, ps = h["psp_gfx_if.h"], h["amdgpu_psp.h"]
-    abi += ["(* The security processor *)", ""]
-    pci += ["(* The security processor *)", ""]
+    ml += ["(* The security processor *)", ""]
     for n, v in {**enum_values(g, PSP_COMMANDS), **enum_values(ps, PSP_BOOT), **constants(ps, PSP_SIZES)}.items():
-        line = f"let {n.lower()} = {ml_int(v)}"
-        if n in PSP_PCI:
-            pci.append(line)
-        if n in PSP_COMMANDS + PSP_BOOT and n not in PSP_RING:
-            abi.append(line)
-    pci.append("")
+        ml.append(f"let {n.lower()} = {ml_int(v)}")
     # A command buffer holds the command at the offset its first reserved
     # array's size subtracts, and the response at the one it subtracts from,
     # in a buffer of the size the second array's subtracts from.
@@ -929,25 +901,18 @@ def generate(h):
     n = re.search(r"reserved_2\[(\d+)\s*-\s*(\d+)\s*-\s*sizeof\(struct psp_gfx_resp\)\]", g)
     if m is None or n is None or m.group(1) != n.group(2):
         sys.exit("psp_gfx_cmd_resp: no command and response offsets")
-    abi += [f"let psp_command_bytes = {n.group(1)}", f"let psp_command_at = {m.group(2)}",
-            f"let psp_response_at = {m.group(1)}"]
+    ml += [f"let psp_command_bytes = {n.group(1)}", f"let psp_command_at = {m.group(2)}",
+           f"let psp_response_at = {m.group(1)}"]
     size, fields = packed_layout(g, "psp_gfx_cmd_resp", upto="cmd")
-    abi.append(f"let psp_command_id = {ml_field(fields['cmd_id'])}")
-    abi.append("")
+    ml.append(f"let psp_command_id = {ml_field(fields['cmd_id'])}")
+    ml.append("")
     for st, (wanted, upto) in PSP_STRUCTS.items():
-        size, fields = packed_layout(g, st, upto)
-        abi.append(f"module {ml_module(st)} = struct")
-        abi.append(f"  let sizeof = {size}")
-        for f in wanted:
-            if f not in fields:
-                sys.exit(f"{st} has no field {f}")
-            abi.append(f"  let {f} = {ml_field(fields[f])}")
-        abi += ["end", ""]
+        struct(g, st, wanted, upto)
 
     # Power manager
-    abi += ["(* The power manager's messages, clocks and the feature bits of their DPM, by MP1",
-            "   version, as (name, value). *)",
-            "let smu_messages = function"]
+    ml += ["(* The power manager's messages, clocks and the feature bits of their DPM, by MP1",
+           "   version, as (name, value). *)",
+           "let smu_messages = function"]
     for versions, m, c, f in SMU_TABLES:
         msgs = {n: v for n, v in ((n, b) for n, b in defines(h[m]).items()) if n in SMU_MESSAGES}
         vals = [(n, evaluate(msgs[n], {})) for n in SMU_MESSAGES if n in msgs]
@@ -956,13 +921,13 @@ def generate(h):
         features = dict((n, int(v, 0)) for n, v in SMU_FEATURE.findall(h[f]))
         vals += [(n, features[n]) for n in SMU_FEATURES if n in features]
         pats = " | ".join(f"({a}, {b}, {cc})" for a, b, cc in versions)
-        abi.append(f"  | {pats} ->")
-        abi.append("      [ " + "; ".join(f"({json.dumps(n)}, {ml_int(v)})" for n, v in vals) + " ]")
-    abi += ["  | _ -> []", ""]
+        ml.append(f"  | {pats} ->")
+        ml.append("      [ " + "; ".join(f"({json.dumps(n)}, {ml_int(v)})" for n, v in vals) + " ]")
+    ml += ["  | _ -> []", ""]
 
     # Interrupts
     ih = h["soc15_ih_clientid.h"]
-    abi += ["(* Interrupts *)", ""]
+    ml += ["(* Interrupts *)", ""]
     for soc in ("soc15", "soc21"):
         body = re.search(rf"enum\s+{soc}_ih_clientid\s*\{{(.*?)\}}", preprocess(ih), re.S).group(1)
         prefix = f"{soc.upper()}_IH_CLIENTID_"
@@ -971,66 +936,55 @@ def generate(h):
         every = enum_values(ih, re.findall(r"(\w+)\s*=", body))
         for n in IH_CLIENTS:
             if n.startswith(prefix):
-                abi.append(f"let {n.lower()} = {ml_int(every[n])}")
-        abi.append(f"let {soc}_client_name = function")
+                ml.append(f"let {n.lower()} = {ml_int(every[n])}")
+        ml.append(f"let {soc}_client_name = function")
         for n, v in sorted(values.items(), key=lambda x: x[1]):
-            abi.append(f"  | {ml_int(v)} -> {json.dumps(n[len(prefix):])}")
-        abi.append("  | _ -> \"\"")
-        abi.append("")
-    abi.append("(* Interrupt sources: block, source ID, name. *)")
-    abi.append("let ih_sources = [")
+            ml.append(f"  | {ml_int(v)} -> {json.dumps(n[len(prefix):])}")
+        ml.append("  | _ -> \"\"")
+        ml.append("")
+    ml.append("(* Interrupt sources: block, source ID, name. *)")
+    ml.append("let ih_sources = [")
     for hdr in IH_SOURCES:
         for m in SRCID.finditer(h[hdr]):
-            abi.append(f"  ({json.dumps(m.group(1))}, {ml_int(int(m.group(3), 0))}, {json.dumps(m.group(2))});")
-    abi += ["]", ""]
+            ml.append(f"  ({json.dumps(m.group(1))}, {ml_int(int(m.group(3), 0))}, {json.dumps(m.group(2))});")
+    ml += ["]", ""]
 
     # Registers
-    pci += ["(* Registers *)", "",
-            "(* The registers of each block but GC, at each version with headers: each",
-            "   register's name, offset and segment in 32-bit words, and its fields as",
-            "   (name, (lowest bit, highest bit)). *)",
-            "let registers = ["]
+    ml += ["(* Registers *)", "",
+           "(* The registers of each block but GC, at each version with headers: each",
+           "   register's name, offset and segment in 32-bit words, and its fields as",
+           "   (name, (lowest bit, highest bit)). *)",
+           "let registers = ["]
     for prefix, vs in REG_FILES.items():
         for v in vs:
             regs = block_registers(prefix, h[reg_header(prefix, v, "offset")], h[reg_header(prefix, v, "sh_mask")])
             if not regs:
                 sys.exit(f"{prefix} {v}: no register kept")
-            pci.append(f"  ( {json.dumps(prefix)}, ({v[0]}, {v[1]}, {v[2]}), [")
+            ml.append(f"  ( {json.dumps(prefix)}, ({v[0]}, {v[1]}, {v[2]}), [")
             for n, (off, seg, fs) in sorted(regs.items()):
                 f = "; ".join(f"({json.dumps(fn)}, ({lo}, {hi}))" for fn, lo, hi in fs)
-                pci.append(f"      {{ Rig_amd_abi.Register.name = {json.dumps(n)}; offset = {ml_int(off)}; "
-                           f"segment = {seg}; fields = [ {f} ] }};")
-            pci.append("    ] );")
-    pci += ["]", ""]
+                ml.append(f"      {{ Rig_amd_abi.Register.name = {json.dumps(n)}; offset = {ml_int(off)}; "
+                          f"segment = {seg}; fields = [ {f} ] }};")
+            ml.append("    ] );")
+    ml += ["]", ""]
 
     # Firmware
     u = h["amdgpu_ucode.h"]
-    abi += ["(* Firmware images *)", "", "(* The headers of images, laid out as the discovery table's. *)"]
+    ml += ["(* Firmware images *)", "", "(* The headers of images, laid out as the discovery table's. *)"]
     for s, wanted in UCODE_STRUCTS.items():
-        size, fields = packed_layout(u, s)
-        abi.append(f"module {ml_module(s)} = struct")
-        abi.append(f"  let sizeof = {size}")
-        for f in wanted:
-            if f not in fields:
-                sys.exit(f"{s} has no field {f}")
-            abi.append(f"  let {f} = {ml_field(fields[f])}")
-        abi.append("end")
-        abi.append("")
-    pci += ["(* Firmware images *)", "", "(* The firmware types the boot loads itself. *)"]
+        struct(u, s, wanted)
     types = {**enum_values(u, PSP_FW_TYPES), **enum_values(h["psp_gfx_if.h"], GFX_FW_TYPES)}
-    for n in FW_TYPES_PCI:
-        pci.append(f"let {n.lower()} = {types[n]}")
-    pci.append("")
-    abi.append("(* The components of the PSP's own image, by type. *)")
+    ml.append("(* The components of the PSP's own image, by type. *)")
     for n in PSP_FW_TYPES:
-        abi.append(f"let {n.lower()} = {types[n]}")
-    abi.append("")
-    abi.append("(* The types the PSP loads the other images' pieces as. *)")
+        ml.append(f"let {n.lower()} = {types[n]}")
+    ml.append("")
+    ml.append("(* The types the PSP loads the other images' pieces as. *)")
     for n in GFX_FW_TYPES:
-        abi.append(f"let {n.lower()} = {types[n]}")
-    pci.append(f"(* The pinned images of linux-firmware at {FIRMWARE_COMMIT[:12]}: each image's path,")
-    pci.append("   and its BLAKE2b-256 digest. *)")
-    pci.append("let pinned = [")
+        ml.append(f"let {n.lower()} = {types[n]}")
+    ml.append("")
+    ml.append(f"(* The pinned images of linux-firmware at {FIRMWARE_COMMIT[:12]}: each image's path,")
+    ml.append("   and its BLAKE2b-256 digest. *)")
+    ml.append("let pinned = [")
     paths = set()
     for row in h[FIRMWARE].splitlines():
         if row.startswith("#"):
@@ -1039,12 +993,12 @@ def generate(h):
         if url != FIRMWARE_URL + path:
             sys.exit(f"{path}: URL {url} is not in the pinned tree")
         paths.add(path)
-        pci.append(f"  ({json.dumps(path)}, {json.dumps(digest)});")
-    pci.append("]")
+        ml.append(f"  ({json.dumps(path)}, {json.dumps(digest)});")
+    ml.append("]")
     want = {"amdgpu/" + n for n in IMAGES}
     if paths != want:
         sys.exit(f"{FIRMWARE}: extra {sorted(paths - want)}, missing {sorted(want - paths)}")
-    return {OUT: "\n".join(pci) + "\n", BOOT_OUT: "\n".join(abi).rstrip("\n") + "\n"}
+    return {OUT: "\n".join(ml) + "\n"}
 
 # Command line
 

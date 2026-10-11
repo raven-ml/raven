@@ -62,7 +62,7 @@ let start r =
         Regs.set_pcie ~aid r
           (Regs.address (Regs.layout_of r) "regXCC_DOORBELL_FENCE")
           (Rig_amd_abi.Register.encode fence [ ("shub_slv_mode", 1) ]))
-      (List.tl (Rig_amd_abi.Discovery.aids d));
+      (List.tl (Discovery.aids d));
     Regs.write ~value:0x7ff r "regBIFC_GFX_INT_MONITOR_MASK" [];
     Regs.write ~value:0xf_ffff r "regBIFC_DOORBELL_ACCESS_EN_PF" []
   end

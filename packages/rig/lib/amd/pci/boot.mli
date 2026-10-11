@@ -62,8 +62,8 @@ val space : Rig_pci.Space.t
 val start :
   gpus:int Lazy.t ->
   Rig_pci.Function.t ->
-  (Rig_amd_abi.Discovery.t ->
-  (Regs.layout * Rig_amd_abi.Firmware.t, string) result) ->
+  (Discovery.t ->
+  (Regs.layout * Firmware.t, string) result) ->
   (t, [ `Refused of string | `Running | `Lost of string ]) result
 (** [start ~gpus f first] boots the GPU of [f], partially or fully as
     {!plan} says. The caller took [f], reserved {!space} on its machine, and
@@ -142,7 +142,7 @@ val reset : Rig_pci.Function.t -> (unit, string) result
 val gpu : t -> Rig_amd_abi.Gpu.t
 (** [gpu g] is {!Regs.gpu} of [g]'s layout. *)
 
-val gc : t -> Rig_amd_abi.Discovery.gc
+val gc : t -> Discovery.gc
 (** [gc g] is the shape of [g]'s GC, from its discovery table. *)
 
 val mec : t -> int

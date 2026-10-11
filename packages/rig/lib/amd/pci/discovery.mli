@@ -13,7 +13,7 @@
     Blocks are named by the hardware ID the table gives them, such as 11
     for GC and 42 for SDMA0. *)
 
-type version = Gpu.version
+type version = Rig_amd_abi.Gpu.version
 (** The type for block versions, [(major, minor, revision)]. *)
 
 type gc = {

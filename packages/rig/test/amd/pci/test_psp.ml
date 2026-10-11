@@ -6,7 +6,7 @@
 (* The security processor's commands, against psp_gfx_if.h. *)
 
 open Windtrap
-open Rig_amd_abi
+open Rig_amd_pci
 
 let u32 b off = Int32.to_int (String.get_int32_le b off) land 0xffff_ffff
 
@@ -75,4 +75,4 @@ let security =
             (Psp.status b, Psp.tmr_bytes b));
     ]
 
-let () = exit (run "rig_amd_abi.psp" [ security ])
+let () = exit (run "rig_amd_pci.psp" [ security ])

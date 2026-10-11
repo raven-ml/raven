@@ -11,9 +11,25 @@
   (language c)
   (names test_root_stubs)))
 
-(test
- (name test_amd_pci)
- (modules test_amd_pci)
- (libraries rig_amd_pci rig_pci rig_pci_support windtrap)
+; test_firmware reads images through rig.pci's firmware cache.
+
+(tests
+ (names
+  test_amd_pci
+  test_discovery
+  test_firmware
+  test_psp
+  test_smu
+  test_gmc
+  test_gfx
+  test_ih)
+ (modules :standard \ test_root)
+ (libraries
+  rig_amd_abi_support
+  rig_amd_pci
+  rig_pci
+  rig_pci_support
+  unix
+  windtrap)
  (deps
   (glob_files ../fixtures/r9700*)))
