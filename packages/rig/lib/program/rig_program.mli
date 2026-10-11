@@ -144,21 +144,21 @@ type 'a hole = {
        :]; add = 0; shift = 32 }];}
     {- a word with an address in its low bits and a length in its high bits
        holds the length in the bytes;}
-    {- at a ref's [at], where the run's bytes hold the offset the ref adds to
-       its slot's address ({!Rig.Submission.type-ref}), the terms
-       [[: (Int i, n) :]] reach row [r] of [n] bytes each, [r] in word [i] of
-       the run's ints, such as the trip a loop stores there.}}
+    {- at a ref's [at], whose bytes hold the offset the ref adds to its
+       slot's address ({!Rig.Submission.type-ref}), the terms
+       [[: (Int i, n) :]] reach row [r] of rows of [n] bytes, where word [i]
+       of the run's ints holds [r], such as the trip a loop stores there.}}
     The rules:
     {ul
     {- [shift] is [0] to [62], and no two holes of one bytes share a byte.}
     {- A value that meets a set bit of the bytes under it would overwrite a
        constant. {!load} returns [Error] for it, and {!run} raises for a
        parameter's value read per run.}
-    {- The sum is an OCaml [int] operation, which wraps modulo [2{^63}].
-       The 64-bit word is its two's complement, and the shift brings in
-       zeros: the high half of [-8] is [0xFFFFFFFF], and the value sets bit
-       63 of a [W64] word iff it is negative and [shift] is [0]. A word whose
-       bit 63 is a constant holds it in the bytes.}} *)
+    {- The sum is computed on OCaml [int]s, which wrap modulo [2{^63}]. The
+       64-bit word is the sum's two's complement, and the shift brings in
+       zeros at the top, so the high half of [-8] is [0xFFFFFFFF]. The value
+       sets bit 63 of a [W64] word iff it is negative and [shift] is [0]. A
+       word whose bit 63 is a constant holds it in the bytes.}} *)
 
 type 'a data = { bytes : string; holes : 'a hole iarray }
 (** The type for bytes with holes. *)
