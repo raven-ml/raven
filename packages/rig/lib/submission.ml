@@ -395,12 +395,12 @@ let slots_of fn i = function
    each named, and none used both unordered and ordered: a gap or a mix is a
    mistaken index. *)
 let slot_uses fn parts =
-  let named = List.concat (Array.to_list (Array.mapi (slots_of fn) parts)) in
+  let named = Array.mapi (slots_of fn) parts in
   let n =
-    List.fold_left
-      (fun n (k, _, _) ->
-        if k < 0 then invalid_argf "Rig.%s: a part names slot %d" fn k;
-        max n (k + 1))
+    Array.fold_left
+      (List.fold_left (fun n (k, _, _) ->
+           if k < 0 then invalid_argf "Rig.%s: a part names slot %d" fn k;
+           max n (k + 1)))
       0 named
   in
   let uses = Array.make n None and naming = Array.make n None in
@@ -420,7 +420,7 @@ let slot_uses fn parts =
       | Some prev when prev = by -> Some by
       | Some _ -> Some Both)
   in
-  List.iter name named;
+  Array.iter (List.iter name) named;
   let get k = function
     | Some x -> x
     | None -> invalid_argf "Rig.%s: no ref or copy names slot %d" fn k

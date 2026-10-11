@@ -1028,6 +1028,18 @@ let test_blocks_bound () =
     (Exn.invalid_arg ~substring:"exceed 2^32 - 1 bytes")
     (fun () -> Sub.make d parts)
 
+(* [make]'s stack does not grow with its parts: 2^20 fills make within a stack
+   of 2^16 words, whatever the parts' count. *)
+let test_parts_stack () =
+  let d, _ = P.open_ "submit:parts-stack" in
+  let parts = Array.make (1 lsl 20) (Sub.fill Support.noop ~params:0) in
+  let gc = Gc.get () in
+  Gc.set { gc with stack_limit = 1 lsl 16 };
+  let s =
+    Fun.protect ~finally:(fun () -> Gc.set gc) (fun () -> Sub.make d parts)
+  in
+  ignore (Sys.opaque_identity s)
+
 (* Order *)
 
 (* A case of the order law: parts on a Polled device, copies between views of
@@ -1749,7 +1761,10 @@ let tests =
           lifetime;
       ];
     group ~timeout "cost"
-      [ test "a submit that does not wait allocates nothing" test_allocation ];
+      [
+        test "a submit that does not wait allocates nothing" test_allocation;
+        test "make takes no stack per part" test_parts_stack;
+      ];
   ]
 
 let () = exit (run "rig.submit" tests)
