@@ -273,4 +273,10 @@ typedef void rig_remote_link_hook_fn(enum rig_remote_link_point at,
                                      int waiting);
 extern rig_remote_link_hook_fn *_Atomic rig_remote_link_hook;
 
+/* The seconds a link bears a silent peer, a send its peer takes no byte of,
+   and a failing link's drain: link.mli's 10. A suite shortens it, for every
+   link from then on, so that its faults come sooner. Production leaves
+   it. */
+extern _Atomic int rig_remote_link_bound_s;
+
 #endif

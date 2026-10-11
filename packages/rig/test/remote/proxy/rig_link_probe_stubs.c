@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* Holds a link's transfers and counts its release entrants, through the
-   hook the link calls at each point of its protocol. */
+   hook the link calls at each point of its protocol, and shortens a link's
+   bounds. */
 
 #include <caml/alloc.h>
 #include <caml/memory.h>
@@ -100,5 +101,11 @@ value rig_link_probe_resume(value unit) {
   armed = 0;
   pthread_cond_broadcast(&hook_cv);
   pthread_mutex_unlock(&hook_mu);
+  CAMLreturn(Val_unit);
+}
+
+value rig_link_probe_bound(value s) {
+  CAMLparam1(s);
+  atomic_store(&rig_remote_link_bound_s, Int_val(s));
   CAMLreturn(Val_unit);
 }

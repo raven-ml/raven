@@ -84,17 +84,12 @@ typedef struct pollfd rig_remote_pollfd;
 #define SHUT_SEND SHUT_WR
 #endif
 
-/* A beat after a second without a send; a failure after ten without a
-   byte. */
+/* A beat after a second without a send. */
 #define BEAT_NS 1000000000LL
-#define SILENCE_MS 10000
 
 /* The fewest bytes the receiving thread asks its socket for: a frame up to
    this size comes in one call with its header. */
 #define READ_AHEAD 16384
-
-/* The seconds a send may wait for its peer to acknowledge a byte. */
-#define SEND_S 10
 
 /* The most bytes of a command's memory a link keeps for later commands. */
 #define KEPT_BYTES ((size_t)128 << 20)
@@ -167,6 +162,14 @@ static pthread_mutex_t rails_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct rail *live_rails;
 
 rig_remote_link_hook_fn *_Atomic rig_remote_link_hook;
+
+_Atomic int rig_remote_link_bound_s = 10;
+
+/* The seconds a link waits for a byte, and for its peer to acknowledge one
+   of a send, before it fails. */
+static inline int bound_s(void) {
+  return atomic_load_explicit(&rig_remote_link_bound_s, memory_order_relaxed);
+}
 
 static inline void hook(enum rig_remote_link_point at, int waiting) {
   rig_remote_link_hook_fn *f =
@@ -260,11 +263,11 @@ static int64_t unacked(struct rig_remote_link *l) {
 }
 
 /* Sends the [n] bytes at [p] on [l]'s socket: 0, a socket error, or
-   [STALLED] once its peer acknowledged no byte for [SEND_S] seconds. A send
-   that waits checks for acknowledgements at least once a second: a system
-   may take bytes from a peer that reads nothing, so the bytes it takes are
-   the measure only where it does not say what it holds unacknowledged.
-   Calls nothing of the runtime. */
+   [STALLED] once its peer acknowledged no byte for [bound_s] seconds. A
+   send that waits checks for acknowledgements at least once a second: a
+   system may take bytes from a peer that reads nothing, so the bytes it
+   takes are the measure only where it does not say what it holds
+   unacknowledged. Calls nothing of the runtime. */
 static int send_all(struct rig_remote_link *l, const void *p, size_t n) {
   const char *c = p;
   int64_t taken = 0; /* the bytes the system took from this call */
@@ -288,7 +291,7 @@ static int send_all(struct rig_remote_link *l, const void *p, size_t n) {
       stuck = now_ns();
       seen = got;
     }
-    int64_t left = SEND_S * 1000LL - (now_ns() - stuck) / 1000000;
+    int64_t left = bound_s() * 1000LL - (now_ns() - stuck) / 1000000;
     if (left <= 0) return STALLED;
     rig_remote_pollfd pf = {0};
     pf.fd = l->fd;
@@ -360,10 +363,10 @@ static struct rig_remote_why *link_reason(struct rig_remote_link *l,
   case ENDED:
     return reason("%s: closed its connection%s", l->name, "");
   case SILENT:
-    snprintf(buf, sizeof buf, "%d", SILENCE_MS / 1000);
+    snprintf(buf, sizeof buf, "%d", bound_s());
     return reason("%s: silent for %s s", l->name, buf);
   case STALLED:
-    snprintf(buf, sizeof buf, "%d", SEND_S);
+    snprintf(buf, sizeof buf, "%d", bound_s());
     return reason("%s: read nothing for %s s", l->name, buf);
   case MALFORMED:
     return reason("%s: a malformed frame%s", l->name, "");
@@ -396,7 +399,7 @@ static void close_if_idle(struct rig_remote_link *l) {
 }
 
 /* Sends an abort with [why], a string as wire.mli lays it out, after the
-   frames sent before. A send that makes no progress for [SEND_S] seconds
+   frames sent before. A send that makes no progress for [bound_s] seconds
    gives up: the peer reads nothing. */
 static void send_abort(struct rig_remote_link *l,
                        const struct rig_remote_why *why) {
@@ -768,7 +771,7 @@ static int recv_all(struct rig_remote_link *l, unsigned char *p, uint64_t n,
     }
     int e = rig_remote_sock_error();
     if (!again(e)) return e;
-    int64_t left = SILENCE_MS - (now_ns() - rd->last) / 1000000;
+    int64_t left = bound_s() * 1000LL - (now_ns() - rd->last) / 1000000;
     if (left <= 0) return SILENT;
     rig_remote_pollfd pf = {0};
     pf.fd = l->fd;
@@ -1201,8 +1204,8 @@ value caml_rig_remote_link_job_wait(value vj, value vms) {
 }
 
 /* Fails the job, and returns once its failure is known, whoever began it.
-   Releases the runtime: an abort waits up to [SEND_S] for a peer that
-   reads nothing. */
+   Releases the runtime: an abort waits up to [bound_s] seconds for a peer
+   that reads nothing. */
 value caml_rig_remote_link_job_fail(value vj, value why) {
   struct rig_remote_job *j = Job_val(vj);
   if (rig_remote_forked(j)) return Val_unit;

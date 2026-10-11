@@ -21,3 +21,8 @@ val releases : unit -> int * int
     their number and the number waiting for an active transfer. *)
 
 val resume : unit -> unit
+
+val bound : int -> unit
+(** [bound s] makes every link from then on bear a silent peer, a send its
+    peer takes no byte of, and a failing link's drain for [s] seconds, in
+    place of the 10 {!Rig_remote_proxy.Link} states. *)

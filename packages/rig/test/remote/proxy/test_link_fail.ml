@@ -22,23 +22,34 @@ let k_rail = 7
 let k_beat = 8
 let k_abort = 9
 
-(* link.mli's bound on a silent peer and on one that reads nothing. *)
-let silence = 10.
+(* The seconds this suite's links bear a silent peer or one that reads nothing,
+   shortened from link.mli's 10 ([Probe.bound]). It is below an observation's
+   5, so one observation sees a stalled send's end. *)
+let bound = 2
 
-(* The seconds a read of a peer's socket waits for a byte. *)
+(* The seconds this suite's clock may run apart from the link's. *)
+let skew = 0.01
+
+(* The seconds a peer waits for a frame's first byte, which a thread of the
+   test may send late under load. *)
 let patience = 5.
+
+(* The seconds without a byte that end a read of what the link sent, which
+   comes at once on loopback. *)
+let quiet = 1.
 
 (* The bytes of a frame or transfer no connection holds whole: its send waits
    for its peer to read. *)
 let large = 32 lsl 20
 
 let reset_cause = "peer: closed its connection"
-let stalled_cause = "peer: read nothing for 10 s"
+let silent_cause = Printf.sprintf "peer: silent for %d s" bound
+let stalled_cause = Printf.sprintf "peer: read nothing for %d s" bound
 
 (* Sockets *)
 
 (* A connected pair of loopback TCP sockets: the link's end, whose send buffer
-   is small, and its peer's, whose reads give up after [patience]. *)
+   is small, and its peer's, whose reads give up after [quiet]. *)
 let connected () =
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
@@ -48,11 +59,11 @@ let connected () =
   Unix.setsockopt_int d Unix.SO_SNDBUF 4096;
   Unix.connect d (Unix.getsockname l);
   let p, _ = Unix.accept ~cloexec:true l in
-  Unix.setsockopt_float p Unix.SO_RCVTIMEO patience;
+  Unix.setsockopt_float p Unix.SO_RCVTIMEO quiet;
   (d, p)
 
 (* The next [n] bytes of [fd], fewer if its stream ends or no byte comes
-   within [patience] first. *)
+   within [quiet] first. *)
 let read_n fd n =
   let b = Bytes.create n in
   let rec go off =
@@ -66,8 +77,7 @@ let read_n fd n =
   in
   Bytes.sub_string b 0 (go 0)
 
-(* The bytes of [fd] until its stream ends, or no byte comes within
-   [patience]. *)
+(* The bytes of [fd] until its stream ends, or no byte comes within [quiet]. *)
 let read_all fd =
   let buf = Buffer.create 65536 in
   let rec go () =
@@ -80,19 +90,39 @@ let read_all fd =
 
 let write fd s = ignore (Unix.write_substring fd s 0 (String.length s))
 
-(* Writes to the non-blocking [fd] until its connection takes no byte: its
-   peer's window is closed once [fd] stays unwritable for half a second, which
-   on loopback acknowledgements take microseconds to open. *)
-let rec fill fd =
-  let rec write_all chunk =
+(* Writes [chunk] to the non-blocking [fd] until it takes none: whether it took
+   any. *)
+let takes fd chunk =
+  let rec go took =
     match write fd chunk with
-    | () -> write_all chunk
-    | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) -> ()
+    | () -> go true
+    | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) -> took
   in
-  write_all (String.make 4096 '\000');
-  write_all "\000";
-  match Unix.select [] [ fd ] [] 0.5 with [], [], [] -> () | _ -> fill fd
+  go false
 
+(* Writes to the non-blocking [fd] until its connection takes no byte for half
+   a second: its peer's window is closed, which on loopback acknowledgements
+   take microseconds to open. A socket that reports itself unwritable may still
+   take bytes, so it writes rather than waits on select. *)
+let fill fd =
+  let rec go since =
+    let took = takes fd (String.make 4096 '\000') || takes fd "\000" in
+    let now = Unix.gettimeofday () in
+    if took || now -. since < 0.5 then begin
+      Thread.delay 0.05;
+      go (if took then now else since)
+    end
+  in
+  go (Unix.gettimeofday ())
+
+(* Reads what [fd] holds, waiting for no byte. *)
+let drain fd =
+  let b = Bytes.create 65536 in
+  while
+    Unix.select [ fd ] [] [] 0. <> ([], [], []) && Unix.read fd b 0 65536 > 0
+  do
+    ()
+  done
 
 (* Frames *)
 
@@ -107,18 +137,20 @@ let beat =
   Bytes.to_string b
 
 (* The kind and payload length of the next frame of [fd] other than a beat, or
-   [None] once its stream ends. *)
-let rec header fd =
+   [None] once its stream ends. Its first byte may take [wait] seconds. *)
+let rec header ?(wait = patience) fd =
+  ignore (Unix.select [ fd ] [] [] wait);
   let h = read_n fd 9 in
   if String.length h < 9 then None
   else
     let n = Int64.to_int (String.get_int64_le h 0) and k = Char.code h.[8] in
-    if k = k_beat then header fd else Some (k, n)
+    if k = k_beat then header ~wait fd else Some (k, n)
 
-(* The frames of [fd] other than beats, until its stream ends. *)
+(* The frames of [fd] other than beats, until its stream ends or no byte comes
+   within [quiet]. *)
 let frames fd =
   let rec go acc =
-    match header fd with
+    match header ~wait:0. fd with
     | None -> List.rev acc
     | Some (k, n) ->
         let p = read_n fd n in
@@ -158,10 +190,11 @@ let spawn f =
     Thread.join t;
     match Option.get !r with Ok v -> v | Error e -> raise e
 
-let timed f =
-  let t0 = Unix.gettimeofday () in
-  let r = f () in
-  (r, Unix.gettimeofday () -. t0)
+(* Checks that the bound passed since [t0]. *)
+let after_bound t0 =
+  at_least ~msg:"the seconds it took" float_exact
+    ~than:(Float.of_int bound -. skew)
+    (Unix.gettimeofday () -. t0)
 
 (* Witnesses *)
 
@@ -213,7 +246,6 @@ let sever s =
   Unix.close s.p;
   s.severed <- true
 
-
 (* Runs [f] on a new job of the two links, [l] the end of a [role] process's
    peer. *)
 let with_scene ?(role = Wire.Agent 1) f =
@@ -256,8 +288,8 @@ let waiters s =
       (frames s.q)
 
 (* Before a frame: an idle link. A severed one fails the job. A stalled peer,
-   which sends nothing, fails it after 10 s, and is sent the abort: the link's
-   sends did not fail. *)
+   which sends nothing, fails it after the bound, and is sent the abort: the
+   link's sends did not fail. *)
 
 let severed_idle () =
   with_scene @@ fun s ->
@@ -266,19 +298,14 @@ let severed_idle () =
   woke reset_cause
 
 let stalled_idle () =
+  let t0 = Unix.gettimeofday () in
   with_scene @@ fun s ->
   let woke = waiters s in
-  let (), took = timed (fun () -> woke "peer: silent for 10 s") in
-  at_least float_exact ~than:(silence -. 1.) took;
+  woke silent_cause;
+  after_bound t0;
   equal ~msg:"what the stalled peer received" (list frame)
-    [ (k_abort, str "peer: silent for 10 s") ]
+    [ (k_abort, str silent_cause) ]
     (frames s.p)
-
-(* A failed send cuts its link's stream. The sender is held once it released
-   the link, while the stall takes 10 s and each observation at most 5. *)
-let held_cut () =
-  let rec held n = n > 0 && (Probe.held () || held (n - 1)) in
-  equal ~msg:"the failed sender is held" bool true (held 3)
 
 (* The bytes of [s] from its first that is not [c], if any. *)
 let stray c s =
@@ -323,18 +350,16 @@ let stalled_mid_frame () =
   Fun.protect ~finally:stop @@ fun () ->
   let woke = waiters s in
   let t0 = Unix.gettimeofday () in
-  let returned = mid_frame s in
   Probe.arm Cut;
-  held_cut ();
+  let returned = mid_frame s in
+  equal ~msg:"the failed sender is held" bool true (Probe.held ());
   let rest = read_all s.p in
   Probe.resume ();
   equal ~msg:"the bytes after the copy's" (option string) None (stray 'x' rest);
   less ~msg:"the frame's bytes the peer read" int ~than:(large - 4096)
     (String.length rest);
   woke stalled_cause;
-  let took = Unix.gettimeofday () -. t0 in
-  at_least float_exact ~than:(silence -. 1.) took;
-  less float_exact ~than:(silence +. 3.) took;
+  after_bound t0;
   returned stalled_cause
 
 (* During a rail transfer: the sending thread sends a transfer too large for
@@ -368,10 +393,10 @@ let stalled_rail () =
   let woke = waiters s in
   let e = rail s in
   let t0 = Unix.gettimeofday () in
+  Probe.arm Cut;
   e.ready 1;
   let dropped = spawn (fun () -> Link.drop s.l 7) in
-  Probe.arm Cut;
-  held_cut ();
+  equal ~msg:"the failed sender is held" bool true (Probe.held ());
   let n, rest =
     match header s.p with
     | Some (k, n) when k = k_rail -> (n, read_all s.p)
@@ -382,15 +407,13 @@ let stalled_rail () =
     (stray 'r' (String.sub rest 16 (String.length rest - 16)));
   less ~msg:"the frame's bytes the peer read" int ~than:n (String.length rest);
   woke stalled_cause;
-  let took = Unix.gettimeofday () -. t0 in
-  at_least float_exact ~than:(silence -. 1.) took;
-  less float_exact ~than:(silence +. 3.) took;
+  after_bound t0;
   dropped ();
   failed_counts ~msg:"the transfer's rail" e
 
 (* During the abort: the job fails, and the faulted link's abort is held as it
    starts. A fault then leaves the root cause as it was, and [fail] returns,
-   within 10 s if the peer reads nothing. *)
+   after the bound if the peer reads nothing. *)
 
 let why = "the test fails the job"
 
@@ -406,24 +429,28 @@ let severed_abort () =
   woke why
 
 (* The peer has read nothing the link sent: while the abort is held, the test
-   fills the link's socket, as frames its peer left unread would. *)
+   reads what the link sent before, then fills the link's socket, as frames its
+   peer left unread would. The abort waits for the bound and gives up: the
+   peer receives the test's zeros and none of the abort. *)
 let stalled_abort () =
   with_scene @@ fun s ->
   let woke = waiters s in
   Probe.arm Aborting;
-  let (), took =
-    timed (fun () ->
-        let failed = spawn (fun () -> Link.fail s.job why) in
-        equal ~msg:"the abort is held" bool true (Probe.held ());
-        fill s.d;
-        Probe.resume ();
-        failed ())
-  in
-  less float_exact ~than:(silence +. 3.) took;
+  let t0 = Unix.gettimeofday () in
+  let failed = spawn (fun () -> Link.fail s.job why) in
+  equal ~msg:"the abort is held" bool true (Probe.held ());
+  drain s.p;
+  fill s.d;
+  Probe.resume ();
+  failed ();
+  after_bound t0;
+  equal ~msg:"the bytes after the test's" (option string) None
+    (stray '\000' (read_all s.p));
   woke why
 
 let () =
   Watchdog.start ();
+  Probe.bound bound;
   exit
     (run "rig_remote_proxy.link_fail"
        [
@@ -431,22 +458,21 @@ let () =
            [
              test "a severed link fails the job, and the others abort"
                severed_idle;
-             slow "a peer silent for 10 s fails the job, and is sent the abort"
+             slow "a silent peer fails the job, and is sent the abort"
                stalled_idle;
            ];
          group ~timeout:30. "mid-frame"
            [
              test "a severed link fails the job, and every writer returns"
                severed_mid_frame;
-             slow "a peer that reads nothing for 10 s fails the job, cut"
+             slow "a peer that reads nothing fails the job, cut"
                stalled_mid_frame;
            ];
          group ~timeout:30. "rail transfer"
            [
              test "a severed link fails the job, and every waiter wakes"
                severed_rail;
-             slow "a peer that reads nothing for 10 s fails the job, cut"
-               stalled_rail;
+             slow "a peer that reads nothing fails the job, cut" stalled_rail;
            ];
          group ~timeout:30. "abort"
            [
