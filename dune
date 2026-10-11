@@ -13,9 +13,19 @@
 ; AddressSanitizer would unmap as its own (use_sigaltstack=0). A refused
 ; allocation returns NULL as libc's does (allocator_may_return_null=1). CUDA
 ; and NV map GPU addresses below 2^40, in the shadow gap
-; (protect_shadow_gap=0). dune links mdx's toplevel without the
-; profile's link_flags, so sanitized C cannot link into it: an mdx stanza whose
-; libraries hold C is off under sanitize.
+; (protect_shadow_gap=0).
+;
+; The tsan profile, which dune-workspace.tsan sets with a compiler built for
+; ThreadSanitizer, compiles the C with the flags that compiler builds its own
+; runtime with, so a race through a stub is reported as one through OCaml is.
+; A lock-order inversion is reported with both acquisitions' stacks
+; (second_deadlock_stack=1). A child forked from a process running threads
+; may start threads of its own, as rig's pool does (die_after_fork=0). A
+; refused allocation returns NULL as libc's does (allocator_may_return_null=1).
+;
+; dune links mdx's toplevel in bytecode without the profile's link_flags, so
+; no sanitizer's runtime reaches it and sanitized C cannot link into it: an
+; mdx stanza whose libraries hold C is off under sanitize and tsan.
 ;
 ; An odoc warning is an error in every profile.
 ;
@@ -55,6 +65,22 @@
    (ASAN_OPTIONS
     halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1:protect_shadow_gap=0)
    (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
+   (WINDTRAP_TIMEOUT 60))
+  (odoc
+   (warnings fatal)))
+ (tsan
+  (c_flags
+   (:standard
+    -std=c11
+    -Wall
+    -Wextra
+    -Werror
+    -g
+    -fno-omit-frame-pointer
+    %{ocaml-config:ocamlopt_cflags}))
+  (env-vars
+   (TSAN_OPTIONS
+    second_deadlock_stack=1:die_after_fork=0:allocator_may_return_null=1)
    (WINDTRAP_TIMEOUT 60))
   (odoc
    (warnings fatal)))

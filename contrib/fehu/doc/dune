@@ -2,5 +2,7 @@
  (files *.md)
  (package fehu)
  (enabled_if
-  (<> %{profile} sanitize))
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (libraries fehu fehu.envs nx unix))

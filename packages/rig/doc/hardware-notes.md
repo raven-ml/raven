@@ -674,7 +674,7 @@ nothing there. With `protect_shadow_gap=0` ASan maps the gap's own shadow
 instead, from 2.3 to 258 GiB, and leaves the rest free. NVIDIA segment
 addresses must lie below 2^40, inside the gap: with its GPU addresses from
 64 GiB no GPU opened under ASan. The kernel path reserves them from 384 GiB,
-and rig's sanitize profile sets `protect_shadow_gap=0` (`packages/rig/dune`).
+and the sanitize profile in the root `dune` sets `protect_shadow_gap=0`.
 
 ## PCI functions on Linux
 

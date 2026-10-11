@@ -12,12 +12,15 @@
   (env-vars
    (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1,v=0))))
 
-; README.md's program runs under mdx. dune links mdx's toplevel without the
-; profile's link_flags, so rig's sanitized stubs cannot link into it.
+; README.md's program runs under mdx. dune links mdx's toplevel in bytecode
+; without the profile's link_flags, so no sanitizer runtime reaches it and
+; rig's sanitized stubs cannot link into it.
 
 (mdx
  (files README.md)
  (package rig)
  (enabled_if
-  (<> %{profile} sanitize))
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (libraries rig))

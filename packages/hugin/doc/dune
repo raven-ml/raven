@@ -2,7 +2,9 @@
  (files *.md)
  (package hugin)
  (enabled_if
-  (<> %{profile} sanitize))
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (libraries
   hugin
   hugin.gg

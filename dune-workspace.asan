@@ -1,0 +1,8 @@
+(lang dune 3.21)
+
+; AddressSanitizer and UndefinedBehaviorSanitizer: the root dune's sanitize
+; profile holds the flags and options.
+
+(context
+ (default
+  (profile sanitize)))

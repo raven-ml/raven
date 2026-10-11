@@ -2,5 +2,7 @@
  (files *.md)
  (package kaun)
  (enabled_if
-  (<> %{profile} sanitize))
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (libraries kaun kaun.hf kaun.datasets rune vega nx nx.io unix))

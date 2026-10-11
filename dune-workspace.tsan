@@ -1,15 +1,14 @@
 (lang dune 3.21)
 
-(lock_dir
- (path dune.lock))
+; ThreadSanitizer: the root dune's tsan profile, with a compiler built with
+; ocaml-option-tsan. Its lock is made once with
+; dune pkg lock --workspace dune-workspace.tsan dune-tsan.lock
 
 (lock_dir
  (path dune-tsan.lock)
  (depopts ocaml-option-tsan))
 
-(context default)
-
 (context
  (default
-  (name tsan)
+  (profile tsan)
   (lock_dir dune-tsan.lock)))

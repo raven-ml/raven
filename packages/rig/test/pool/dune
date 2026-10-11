@@ -50,7 +50,8 @@
  (enabled_if
   (and
    (<> %{os_type} Win32)
-   (<> %{profile} sanitize)))
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (deps ../../lib/pool/dllrig_pool_stubs.so support/dllrig_pool_probe_stubs.so)
  (action
   (setenv

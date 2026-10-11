@@ -90,7 +90,7 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --profile sanitize @otherlibs/compress/runtest
+        run: opam exec -- dune build --workspace dune-workspace.asan @otherlibs/compress/runtest
 
       - name: Build and test nx
         run: |
@@ -110,9 +110,9 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
-          WINDTRAP_PROP_COUNT=1000 opam exec -- dune exec --profile sanitize packages/nx/test/test_bit.exe
-          opam exec -- dune build --profile sanitize @packages/nx/test/runtest
+          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --workspace dune-workspace.asan @packages/nx/test/io/runtest
+          WINDTRAP_PROP_COUNT=1000 opam exec -- dune exec --workspace dune-workspace.asan packages/nx/test/test_bit.exe
+          opam exec -- dune build --workspace dune-workspace.asan @packages/nx/test/runtest
 
       - name: Build and test brot
         env:
@@ -137,7 +137,7 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --profile sanitize @packages/talon/test/csv/runtest @packages/talon/test/parquet/runtest
+        run: opam exec -- dune build --workspace dune-workspace.asan @packages/talon/test/csv/runtest @packages/talon/test/parquet/runtest
 
       # Talon's benchmark questions at the CI size (H2O at 1e6 rows, TPC-H at
       # scale factor 0.1) must answer as DuckDB's committed answers do. The

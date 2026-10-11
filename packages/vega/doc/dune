@@ -2,5 +2,7 @@
  (files *.md)
  (package vega)
  (enabled_if
-  (<> %{profile} sanitize))
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (libraries vega nx unix))

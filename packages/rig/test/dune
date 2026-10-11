@@ -54,7 +54,8 @@
  (enabled_if
   (and
    (<> %{os_type} Win32)
-   (<> %{profile} sanitize)))
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (deps
   ../lib/dllrig_stubs.so
   ../lib/pool/dllrig_pool_stubs.so

@@ -2,5 +2,7 @@
  (files *.md)
  (package nx)
  (enabled_if
-  (<> %{profile} sanitize))
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (libraries nx nx.io unix))

@@ -49,5 +49,6 @@
  (enabled_if
   (and
    (<> %{profile} sanitize)
+   (<> %{profile} tsan)
    (<> %{os_type} Win32)))
  (libraries nx unix))

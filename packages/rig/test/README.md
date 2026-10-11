@@ -74,21 +74,40 @@ other processes use. A timing needs the GPU to itself and a quiet machine
 
 ## Sanitizers
 
-The sanitize profile compiles the C with AddressSanitizer and
-UndefinedBehaviorSanitizer and stresses the collector; `dune` holds the
-options. The gate runs on Linux, with Clang, whose AddressSanitizer takes its
+Each sanitizer is a workspace file at the repository's root, run the same
+way:
+
+```sh
+dune build @packages/rig/runtest --workspace dune-workspace.asan
+dune build @packages/rig/runtest --workspace dune-workspace.tsan
+```
+
+`dune-workspace.asan` builds with the sanitize profile of the root `dune`,
+which holds its options: the C under AddressSanitizer and
+UndefinedBehaviorSanitizer, and the debug runtime with a stressed collector.
+`dune-workspace.tsan` builds the OCaml and the C under ThreadSanitizer, with
+a compiler from its own lock, made once:
+
+```sh
+dune pkg lock --workspace dune-workspace.tsan dune-tsan.lock
+```
+
+On Linux that compiler needs libunwind's headers (`libunwind-dev`). A report
+fails the test that made it. Both build in `_build/default`, so run them in
+a tree with no watch server, whose build they would replace.
+
+The gate runs on Linux, with Clang, whose AddressSanitizer takes its
 allocator's locks across fork. OCaml compiles and links C with the `gcc` on
-`PATH`, so the gate puts Clang there, in a tree with no watch server, whose
-profile and `PATH` a build would take instead:
+`PATH`, so the gate puts Clang there:
 
 ```sh
 mkdir -p /tmp/rig-clang && ln -sf "$(command -v clang-19)" /tmp/rig-clang/gcc
-PATH=/tmp/rig-clang:$PATH dune build --profile sanitize @packages/rig/runtest
+PATH=/tmp/rig-clang:$PATH dune build @packages/rig/runtest --workspace dune-workspace.asan
 ```
 
 Under GCC's AddressSanitizer, which holds no allocator lock across fork, a
 test that forks a process running more than one thread skips. A GPU test
-that skips checks nothing, so read a sanitize run's skip count.
+that skips checks nothing, so read a sanitizer run's skip count.
 
 ## A new driver's checklist
 

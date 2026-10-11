@@ -2,5 +2,7 @@
  (files *.md)
  (package talon)
  (enabled_if
-  (<> %{profile} sanitize))
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
  (libraries talon talon.csv talon.parquet bytesrw nx rig.disk unix))
