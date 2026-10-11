@@ -160,10 +160,10 @@ val capability : t -> Rig_cuda_abi.t
     The device commits a value by enqueueing a write of it into the word
     ([cuStreamWriteValue64]) on the stream the last value ended on. The
     write follows a system-wide memory fence ([CU_STREAM_WRITE_VALUE_DEFAULT]),
-    so the work's writes are visible once the word shows the value. Besides
-    a commit ({!Rig_edge.section-calls}), which writes nothing if a commit
-    already wrote that value or a later one, [rig_cuda_submit] commits, and
-    returns [RIG_COMMITTED]:
+    so the work's writes are visible once the word shows the value. A
+    commit ({!Rig_edge.section-calls}) writes nothing if a commit already
+    wrote that value or a later one. [rig_cuda_submit] also commits, and
+    returns [RIG_COMMITTED], in two cases:
     {ul
     {- a value 64 values past the last commit, so the device commits each
        value at most 64 values late;}
@@ -178,12 +178,13 @@ val capability : t -> Rig_cuda_abi.t
     work wrote could move backwards or show work that has not completed.
 
     A wait is a [RIG_WORD]. It holds the work back until the aligned 64-bit
-    word at [at] holds at least [value], compared circularly: [x] is at
-    least [w] if [x - w], as a signed 64-bit integer, is not negative.
+    word at [at] holds at least [value], compared circularly, in the sense
+    that [x] is at least [w] if [x - w], as a signed 64-bit integer, is not
+    negative.
 
     [rig_cuda_room] never returns [RIG_LATER], since a stream takes any
-    amount of work: [rig_cuda_submit] and [rig_cuda_commit] block while a
-    stream is full, until the device's earlier work frees it.
+    amount of work. [rig_cuda_submit] and [rig_cuda_commit] instead block
+    while a stream is full, until the device's earlier work frees it.
     [rig_cuda_submit] writes no times, so a profile has no span of the
     device's work.
 
@@ -325,7 +326,7 @@ val capability : t -> Rig_cuda_abi.t
     the process. Every later [rig_cuda_submit] enqueues none of its parts,
     and every later [rig_cuda_submit] and [rig_cuda_commit] returns the same
     failure. The word still reaches every value, so that work waiting on it
-    on other devices runs on: a failed [rig_cuda_submit], and every later
+    on other devices runs on. A failed [rig_cuda_submit], and every later
     one, writes its value after its waits, every earlier value and the work
     it enqueued. It writes nothing once the context has failed, whose work no
     longer runs, or if CUDA refuses a call that orders the write.

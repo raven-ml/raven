@@ -191,10 +191,10 @@ val capability : t -> Rig_metal_abi.t
     A fill receives the open compute encoder, encodes into it, and may start
     new command buffers ({!Rig_metal_abi}).
 
-    [rig_metal_room] never returns [RIG_LATER]. Before it opens a command
-    buffer, [rig_metal_submit] blocks while the device has 1,024, as many as
-    its Metal queue holds, counting the open one and the committed ones not
-    yet completed. [rig_metal_commit] commits the open command buffer, which
+    [rig_metal_room] never returns [RIG_LATER]. [rig_metal_submit] instead
+    blocks, before it opens a command buffer, while the device has 1,024
+    command buffers, as many as its Metal queue holds, counting the open one
+    and the committed ones not yet completed. [rig_metal_commit] commits the open command buffer, which
     holds the work of every value not yet committed.
 
     {2:launches Launches}
