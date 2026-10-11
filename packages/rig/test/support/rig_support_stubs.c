@@ -22,6 +22,7 @@
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -239,9 +240,12 @@ struct polled {
      memory as it runs. */
   int nlaunched;
   struct launched launched[LAST_LAUNCHES];
+  struct polled *prev, *next; /* in the list of every device ([all]) */
 };
 
-#define Polled_val(v) ((struct polled *)Nativeint_val(v))
+/* A Polled device's state, in a custom block that frees it once collected
+   ([polled_finalize]). */
+#define Polled_val(v) (*(struct polled **)Data_custom_val(v))
 
 static rig_room_fn polled_room;
 static rig_submit_fn polled_submit;
@@ -250,40 +254,70 @@ static rig_commit_fn polled_commit;
 static const struct rig_driver polled_driver = {polled_room, polled_submit,
                                                 polled_commit};
 
-/* Every Polled device, never freed: a sleep runs the ones whose words the
+/* Every Polled device not yet collected, linked through the devices so
+   that enrolling allocates nothing: a sleep runs the ones whose words the
    sleeper's work waits for. */
 static lock_t all_mu = LOCK_INITIALIZER;
-static struct polled **all;
-static int nall, call;
+static struct polled *all;
 
 static void enrol(struct polled *p) {
   lock(&all_mu);
-  if (nall == call) {
-    int c = call == 0 ? 16 : 2 * call;
-    struct polled **a = realloc(all, (size_t)c * sizeof *a);
-    if (a == NULL) {
-      unlock(&all_mu);
-      caml_raise_out_of_memory();
-    }
-    all = a;
-    call = c;
-  }
-  all[nall++] = p;
+  p->prev = NULL;
+  p->next = all;
+  if (all != NULL) all->prev = p;
+  all = p;
   unlock(&all_mu);
 }
 
 /* The Polled device whose word is at [at], or NULL. */
 static struct polled *enrolled(uintptr_t at) {
   lock(&all_mu);
-  struct polled *found = NULL;
-  for (int i = 0; i < nall && found == NULL; i++)
-    if ((uintptr_t)&all[i]->word == at) found = all[i];
+  struct polled *found = all;
+  while (found != NULL && (uintptr_t)&found->word != at) found = found->next;
   unlock(&all_mu);
   return found;
 }
 
+static void unenrol(struct polled *p) {
+  lock(&all_mu);
+  if (p->prev != NULL) p->prev->next = p->next;
+  else all = p->next;
+  if (p->next != NULL) p->next->prev = p->prev;
+  unlock(&all_mu);
+}
+
+/* Frees a collected device's state, with its queue. A device that runs
+   itself keeps it for its thread, which runs for the life of the process.
+   rig holds the handle, and so the block, until it gave back the device's
+   word: no other device's queue waits on it any more. */
+static void polled_finalize(value v) {
+  struct polled *p = Polled_val(v);
+  if (p->itself) return;
+  unenrol(p);
+  for (int i = 0; i < p->n; i++) {
+    free(p->q[i].waits);
+    free(p->q[i].parts);
+    free(p->q[i].blocks);
+  }
+  free(p->q);
+#ifndef _WIN32
+  pthread_mutex_destroy(&p->mu);
+  pthread_cond_destroy(&p->cv);
+  pthread_cond_destroy(&p->work);
+#endif
+  aligned_free(p);
+}
+
+static struct custom_operations polled_ops = {
+    "rig_test.polled",        polled_finalize,
+    custom_compare_default,   custom_hash_default,
+    custom_serialize_default, custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
 value rig_test_polled_new(value v_capacity, value v_may_block,
                           value v_lag) {
+  CAMLparam3(v_capacity, v_may_block, v_lag);
+  CAMLlocal1(v);
   struct polled *p = aligned(page(), page() > sizeof *p ? page() : sizeof *p);
   if (p == NULL) caml_raise_out_of_memory();
   memset(p, 0, sizeof *p);
@@ -295,7 +329,14 @@ value rig_test_polled_new(value v_capacity, value v_may_block,
   p->may_block = Bool_val(v_may_block);
   p->lag = (uint64_t)Long_val(v_lag);
   enrol(p);
-  return caml_copy_nativeint((intnat)p);
+  v = caml_alloc_custom(&polled_ops, sizeof p, 0, 1);
+  Polled_val(v) = p;
+  CAMLreturn(v);
+}
+
+/* The address of the device's C state, its edge. */
+value rig_test_polled_edge(value v_p) {
+  return caml_copy_nativeint((intnat)Polled_val(v_p));
 }
 
 value rig_test_polled_fail(value v_p) {

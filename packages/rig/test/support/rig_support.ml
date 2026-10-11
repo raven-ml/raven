@@ -3,41 +3,44 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-external polled_new : int -> bool -> int -> nativeint = "rig_test_polled_new"
-external polled_fail : nativeint -> unit = "rig_test_polled_fail"
-external polled_fail_commit : nativeint -> unit = "rig_test_polled_fail_commit"
-external polled_run : nativeint -> int = "rig_test_polled_run"
-external polled_drive : nativeint -> int = "rig_test_polled_drive"
-external polled_start : nativeint -> unit = "rig_test_polled_start"
-external polled_queued : nativeint -> int = "rig_test_polled_queued"
-external polled_submits : nativeint -> int = "rig_test_polled_submits"
-external polled_blocked : nativeint -> int = "rig_test_polled_blocked"
-external polled_step : nativeint -> int = "rig_test_polled_step" [@@noalloc]
-external polled_steps : nativeint -> int = "rig_test_polled_steps"
+type polled
 
-external polled_fail_at : nativeint -> int -> int -> string -> unit
+external polled_new : int -> bool -> int -> polled = "rig_test_polled_new"
+external polled_edge : polled -> nativeint = "rig_test_polled_edge"
+external polled_fail : polled -> unit = "rig_test_polled_fail"
+external polled_fail_commit : polled -> unit = "rig_test_polled_fail_commit"
+external polled_run : polled -> int = "rig_test_polled_run"
+external polled_drive : polled -> int = "rig_test_polled_drive"
+external polled_start : polled -> unit = "rig_test_polled_start"
+external polled_queued : polled -> int = "rig_test_polled_queued"
+external polled_submits : polled -> int = "rig_test_polled_submits"
+external polled_blocked : polled -> int = "rig_test_polled_blocked"
+external polled_step : polled -> int = "rig_test_polled_step" [@@noalloc]
+external polled_steps : polled -> int = "rig_test_polled_steps"
+
+external polled_fail_at : polled -> int -> int -> string -> unit
   = "rig_test_polled_fail_at"
 
-external polled_last_waits : nativeint -> int array
+external polled_last_waits : polled -> int array
   = "rig_test_polled_last_waits"
 
-external polled_layout : nativeint -> int array = "rig_test_polled_layout"
+external polled_layout : polled -> int array = "rig_test_polled_layout"
 
-external polled_copy_facts : nativeint -> (int * bool) array
+external polled_copy_facts : polled -> (int * bool) array
   = "rig_test_polled_copy_facts"
 
 external polled_kernel : string -> nativeint = "rig_test_polled_kernel"
 
-external polled_launches : nativeint -> string array
+external polled_launches : polled -> string array
   = "rig_test_polled_launches"
 
 external rig_local : unit -> int * int * int = "rig_test_rig_local"
 external rig_word : unit -> int = "rig_test_rig_word"
 external rig_object : unit -> int = "rig_test_rig_object"
-external polled_word_at : nativeint -> int = "rig_test_polled_word_at"
-external polled_word : nativeint -> int = "rig_test_polled_word"
-external polled_stop : nativeint -> unit = "rig_test_polled_stop"
-external polled_set_word : nativeint -> int -> unit = "rig_test_polled_set_word"
+external polled_word_at : polled -> int = "rig_test_polled_word_at"
+external polled_word : polled -> int = "rig_test_polled_word"
+external polled_stop : polled -> unit = "rig_test_polled_stop"
+external polled_set_word : polled -> int -> unit = "rig_test_polled_set_word"
 external host_alloc : int -> int = "rig_test_alloc"
 external host_free : int -> unit = "rig_test_free"
 external noop : unit -> nativeint = "rig_test_noop"
@@ -80,7 +83,7 @@ module Driver = struct
   type kind = Rig_edge.memory
 
   type t = {
-    c : nativeint;
+    c : polled;
     word_at : int;  (** The word's host address. *)
     copies : bool;
     host_visible : bool;
@@ -193,7 +196,7 @@ module Driver = struct
           visible = not d.transport;
           addressed = true;
         };
-      edge = d.c;
+      edge = polled_edge d.c;
     }
 
   (* Runs, outside the lock, the functions {!before} set for [call]. *)
