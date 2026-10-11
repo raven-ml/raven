@@ -716,61 +716,72 @@ let open_named ~fn ~machine ~name ~key make =
         else `Error (strf "%s is lost and its stop has not answered" full)
     | None, None, None -> `Make
   in
-  let found =
+  let finish r =
     Lock.protect table_lock (fun () ->
-        check_host ();
-        match find () with
-        | `Make ->
-            Hashtbl.replace table k Opening;
-            if host then Option.iter (fun m -> Hashtbl.replace hosting m full) m;
-            `Make
-        | r -> r)
+        if host then Option.iter (Hashtbl.remove hosting) m;
+        (match r with
+        | Ok d ->
+            Hashtbl.replace table k (Open d);
+            if host then Option.iter (fun m -> Hashtbl.replace machines m d) m
+        | Error _ -> Hashtbl.remove table k);
+        Lock.broadcast table_lock);
+    r
   in
-  match found with
-  | `Open d -> Ok d
-  | `Error e -> Error e
-  | `Make -> (
-      let finish r =
-        Lock.protect table_lock (fun () ->
-            if host then Option.iter (Hashtbl.remove hosting) m;
-            (match r with
-            | Ok d ->
-                Hashtbl.replace table k (Open d);
-                if host then
-                  Option.iter (fun m -> Hashtbl.replace machines m d) m
-            | Error _ -> Hashtbl.remove table k);
-            Lock.broadcast table_lock);
-        r
-      in
-      let index = Atomic.fetch_and_add next_index 1 in
-      if index > Point.max_index then
-        finish
-          (Error
-             (strf "%s: the process opened %d devices, the most it can" full
-                Point.max_index))
-      else
-        match make ~index ~name:full with
-        | r -> finish r
-        | exception e ->
-            let bt = Printexc.get_raw_backtrace () in
-            ignore (finish (Error ""));
-            Printexc.raise_with_backtrace e bt)
+  (* From the moment the slot may read [Opening], an exception, such as one a
+     signal handler raises at an allocation, ends the open as it stands: a
+     device it published stays open under the name, and otherwise the name is
+     free. [make] ends what it made and did not publish. *)
+  let opening = ref false and index = ref 0 in
+  let made () =
+    let i = !index in
+    if i <> 0 && c_next_live i = i then Ok (of_index i) else Error ""
+  in
+  match
+    let found =
+      Lock.protect table_lock (fun () ->
+          check_host ();
+          match find () with
+          | `Make ->
+              opening := true;
+              Hashtbl.replace table k Opening;
+              if host then
+                Option.iter (fun m -> Hashtbl.replace hosting m full) m;
+              `Make
+          | r -> r)
+    in
+    match found with
+    | `Open d -> Ok d
+    | `Error e -> Error e
+    | `Make ->
+        index := Atomic.fetch_and_add next_index 1;
+        if !index > Point.max_index then
+          finish
+            (Error
+               (strf "%s: the process opened %d devices, the most it can" full
+                  Point.max_index))
+        else finish (make ~index:!index ~name:full)
+  with
+  | r -> r
+  | exception e when !opening ->
+      let bt = Printexc.get_raw_backtrace () in
+      ignore (finish (made ()));
+      Printexc.raise_with_backtrace e bt
 
 let completion_of = function
   | Rig_edge.Store -> Store
   | Object o -> Object (Nativeint.to_int o)
   | Host -> Host_writes
 
-(* Puts [d] in the tables, then publishes its C record, which spreads, failures
-   and the fork handler walk for good: a device lost at birth by a failure of
-   the process is stopped here. *)
+(* Publishes the C record of [d], which is in the tables: spreads, failures and
+   the fork handler walk it for good. A device lost at birth by a failure of the
+   process is stopped here. *)
 let publish d =
-  register d;
   c_publish (live d).c;
   run_owed ()
 
-(* The device of the driver's handle [h]. Every fact is read before the C record
-   is published: a fault reading one leaves nothing made. *)
+(* The device of the driver's handle [h], in the tables and not published.
+   Every fact is read before the C record is published: a fault reading one
+   leaves nothing made. *)
 let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
     (h : a) ~index ~name ~machine ~memory_device =
   let m : (a, D.region, D.image) dm = (module D) in
@@ -806,7 +817,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~fault:(function D.Fault why -> Some why | _ -> None)
       ~capability:(Some f.capability) ~budget:f.budget
   in
-  publish d;
+  register d;
   d
 
 let open_driver (type a) ?(memory_device = false)
@@ -817,18 +828,22 @@ let open_driver (type a) ?(memory_device = false)
   match make () with
   | Error e -> Error e
   | Ok h -> (
+      (* Until the device is published, a failure stops the handle: a fault is
+         a loss, and any other exception, such as facts that break the
+         contract, is raised again. *)
       match
         driver_device (module D) h ~index ~name:full ~machine ~memory_device
       with
-      | d -> Ok d
+      | d ->
+          publish d;
+          Ok d
       | exception D.Fault why ->
-          (* A fault at open is a loss: the handle is stopped. *)
           (try D.stop h ~fault:(Some why) with D.Fault _ -> ());
           Error (strf "%s: %s" full why)
-      | exception (Invalid_argument _ as e) ->
-          (* Facts that break the contract: the handle is stopped. *)
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
           (try D.stop h ~fault:None with D.Fault _ -> ());
-          raise e)
+          Printexc.raise_with_backtrace e bt)
 
 let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
     make =
@@ -838,23 +853,32 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
   match make () with
   | Error e -> Error e
   | Ok h -> (
-      match I.budget h with
+      (* As for a driver's device. *)
+      match
+        let budget = I.budget h in
+        let c = c_io_new index full in
+        let d =
+          make_device ~index ~name:full ~machine
+            ~kind:(Io { m = (module I); h })
+            ~c ~arch:"" ~queues:[||] ~copy_engine:None ~completion:Host_writes
+            ~waits:no_waits ~hang_ms:None ~maps_host:false ~host_addresses:false
+            ~word:0 ~word_region:None ~key ~memory_device:false
+            ~fault:(function I.Fault why -> Some why | _ -> None)
+            ~capability:None ~budget
+        in
+        register d;
+        d
+      with
+      | d ->
+          publish d;
+          Ok d
       | exception I.Fault why ->
           (try I.stop h with I.Fault _ -> ());
           Error (strf "%s: %s" full why)
-      | budget ->
-          let c = c_io_new index full in
-          let d =
-            make_device ~index ~name:full ~machine
-              ~kind:(Io { m = (module I); h })
-              ~c ~arch:"" ~queues:[||] ~copy_engine:None ~completion:Host_writes ~waits:no_waits
-              ~hang_ms:None ~maps_host:false ~host_addresses:false ~word:0
-              ~word_region:None ~key ~memory_device:false
-              ~fault:(function I.Fault why -> Some why | _ -> None)
-              ~capability:None ~budget
-          in
-          publish d;
-          Ok d)
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          (try I.stop h with I.Fault _ -> ());
+          Printexc.raise_with_backtrace e bt)
 
 (* Closing *)
 

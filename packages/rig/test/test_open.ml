@@ -523,6 +523,101 @@ let test_opener_raises () =
   let d, _ = P.open_ "open:raises" in
   equal string "open:raises" (Rig.name d)
 
+(* An exception raised at any allocation of an open, as [Out_of_memory] or a
+   signal handler's is, leaves the name free, or open where the open published
+   its device, and stops once a handle that [make] handed to rig and that no
+   device holds: its caller no longer owns it. A memory profile raises at the
+   [n]th allocation inside the call, for each [n] until an open returns. *)
+exception Injected
+
+let raising_at n armed =
+  let left = ref n in
+  let alloc _ =
+    if !armed then begin
+      decr left;
+      if !left = 0 then raise Injected
+    end;
+    None
+  in
+  { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
+
+(* An io library whose handle counts its stops. *)
+module Stops = struct
+  type t = int ref
+  type region = unit
+
+  exception Fault of string
+
+  let region_key : region Type.Id.t = Type.Id.make ()
+  let budget _ = max_int
+  let alloc _ _ = Some ()
+  let free _ () = ()
+  let read _ () ~at:_ ~dst:_ ~len:_ = ()
+  let write _ () ~at:_ ~src:_ ~len:_ = ()
+  let pages _ () = None
+  let prefetch _ () ~at:_ ~len:_ = ()
+  let stop stops = incr stops
+end
+
+(* [raise_anywhere what handle stops opens] opens names with [opens name make]
+   over handles of [handle ()], whose stops [stops] counts. *)
+let raise_anywhere what handle stops opens () =
+  let rec from n =
+    let name = Printf.sprintf "open:raise-%s-%d" what n in
+    let h = handle () and handed = ref false in
+    let make () =
+      let r = Ok h in
+      handed := true;
+      r
+    in
+    let armed = ref false in
+    ignore (Gc.Memprof.start ~sampling_rate:1. (raising_at n armed));
+    armed := true;
+    let opened =
+      match opens name make with
+      | r ->
+          armed := false;
+          Some r
+      | exception Injected -> None
+    in
+    armed := false;
+    Gc.Memprof.stop ();
+    let msg = Printf.sprintf "raised at allocation %d" n in
+    match opened with
+    | Some r ->
+        ignore (require_ok ~pp:Format.pp_print_string r);
+        greater ~msg:"allocations that raised" int ~than:1 n
+    | None ->
+        (* An open that published its device left it open: the name answers
+           it without calling [make]. *)
+        let calls = ref 0 in
+        let d =
+          require_ok ~pp:Format.pp_print_string
+            (opens name (fun () ->
+                 incr calls;
+                 Ok (handle ())))
+        in
+        equal ~msg (option string) None (Rig.lost d);
+        let left_open = !calls = 0 in
+        if left_open then equal ~msg:("handed, " ^ msg) bool true !handed;
+        let stopped = !handed && not left_open in
+        equal ~msg int (if stopped then 1 else 0) (stops h);
+        from (n + 1)
+  in
+  from 1
+
+let test_driver_raise_anywhere =
+  raise_anywhere "driver"
+    (fun () -> P.make ())
+    (fun p -> List.length (List.filter (( = ) "stop") (P.log p)))
+    (fun name make -> Rig.open_ { name; driver = (module P); make })
+
+let test_io_raise_anywhere =
+  raise_anywhere "io"
+    (fun () -> ref 0)
+    ( ! )
+    (fun name make -> Rig.open_io { name; io = (module Stops); make })
+
 (* A lost device's name opens again only once its stop returned: before, the
    open is an [Error]. *)
 let test_reopen_early () =
@@ -740,6 +835,10 @@ let tests =
       test "an opener's error leaves the name free" test_failed_open;
       test "an opener's exception is raised, the name left free"
         test_opener_raises;
+      test "an exception at any allocation of an open stops what it was handed"
+        test_driver_raise_anywhere;
+      test "an exception at any allocation of an io open stops its handle"
+        test_io_raise_anywhere;
       test "a lost device's name opens again only once its stop returned"
         test_reopen_early;
       test "a fault reading a device's facts stops its handle"
