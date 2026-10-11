@@ -788,6 +788,9 @@ let test_forgotten () =
   in
   let p = point () in
   settle ();
+  (* [settle]'s last drain may free the device's resources: a collection after
+     it takes the record. *)
+  Gc.full_major ();
   let e = Rig.Point.device p in
   equal string "ended" (Rig.name e);
   equal (option string) (Some "ended") (Rig.lost e);
