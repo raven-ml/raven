@@ -607,10 +607,19 @@ let first_runs fn d k =
   go 0
 
 (* A part's queue, given [last], the last earlier part of each queue it
-   follows: the first that runs its kind, except for a copy. A copy goes on the
+   follows: the first that runs its kind, except for words and copies. Words
+   go on the first queue that runs launches and words, so the launches they
+   prepare follow them, else on the first that runs words. A copy goes on the
    queue of the last earlier part it follows, where that queue runs copies, so
    dependent work stays on one queue; otherwise on the copy engine. *)
 let place fn d last = function
+  | Words _ -> (
+      let prepares (q : Rig_edge.queue) =
+        List.mem Rig_edge.Launch q.runs && List.mem Rig_edge.Words q.runs
+      in
+      match Array.find_index prepares (Dev.live d).queues with
+      | Some q -> q
+      | None -> first_runs fn d Rig_edge.Words)
   | Copy _ -> (
       let q = ref (-1) in
       Array.iteri
@@ -635,20 +644,28 @@ let after q last =
 
 (* Each part's queue and the parts it follows on other queues. Part [j] follows
    part [i] where they may share memory while one of them writes: every part
-   also uses the [fixed] memory. One pass keeps, per queue, the last part that
-   reached each memory, so the cost grows with the uses, not their pairs. *)
+   also uses the [fixed] memory. Words, whose effect rig cannot see, also
+   follow every earlier part; later parts follow them by memory, or by running
+   on their queue. One pass keeps, per queue, the last part that reached each
+   memory and the last part of all, so the cost grows with the uses, not their
+   pairs. *)
 let order fn d reach fixed parts =
   let n = Array.length parts in
   let queues = Array.make n 0 and afters = Array.make n [||] in
-  let last = Array.make (Array.length (Dev.live d).queues) (-1) in
-  let o = order_of (Array.length last) reach fixed in
+  let nq = Array.length (Dev.live d).queues in
+  let last = Array.make nq (-1) and latest = Array.make nq (-1) in
+  let o = order_of nq reach fixed in
   for j = 0 to n - 1 do
-    Array.fill last 0 (Array.length last) (-1);
+    Array.fill last 0 nq (-1);
     List.iter (follow o last) reach.(j);
     List.iter (follow o last) fixed;
+    (match parts.(j) with
+    | Words _ -> Array.blit latest 0 last 0 nq
+    | Fill _ | Copy _ | Launch _ -> ());
     let q = place fn d last parts.(j) in
     queues.(j) <- q;
     afters.(j) <- after q last;
+    latest.(q) <- j;
     List.iter (reached o q j) reach.(j);
     List.iter (reached o q j) fixed
   done;

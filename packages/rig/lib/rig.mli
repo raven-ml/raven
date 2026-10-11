@@ -327,8 +327,10 @@ val signaled : t -> int
        work of every value below [v], on every queue.}
     {- {e Parts.} Within a submission, a part follows each earlier part that
        may share memory with it, where one of the two writes.
-       {!Submission.make} says which parts may share memory. Parts that need
-       no order may run concurrently.}
+       {!Submission.make} says which parts may share memory and which queue
+       each runs on. A {!Submission.words} part, whose effect rig cannot see,
+       also follows every earlier part, and a later part on its queue follows
+       it. Parts that need no order may run concurrently.}
     {- {e Memory.} Work that reads an allocation follows the allocation's
        last write. Work that writes it follows every use of it, by any
        device.}
@@ -1327,8 +1329,13 @@ module Submission : sig
   val words : Buffer.t -> part
   (** [words b] places the 32-bit words of [b] on the device's queue, such as
       indirect-buffer or GPFIFO entries. The host must address [b]'s memory,
-      and [b]'s length must be a multiple of 4. Memory the words address is
-      ordered only if it is among the submission's fixed memory ({!make}). *)
+      and [b]'s length must be a multiple of 4. Whatever the words do, such
+      as starting a thread trace or invalidating caches before launches, they
+      follow every earlier part of their submission. They run on the queue
+      that runs launches, where it takes words, and a later part follows them
+      if it runs on their queue or may share memory with them ({!make}).
+      Memory the words address is ordered against other work only if it is
+      among the submission's fixed memory. *)
 
   (** {1:making Making} *)
 
@@ -1354,11 +1361,16 @@ module Submission : sig
       buffer ref uses its slot as its kind says, and every part uses the fixed
       memory with its access. Two uses may share memory where their buffers
       overlap ({!Buffer.overlaps}), or where either is a slot, whose buffer
-      only a run gives. An {!unordered} ref orders nothing. Parts that need no
-      order may run concurrently. A copy runs on the queue of the last earlier
-      part it follows, where that queue runs copies, and otherwise on the
-      device's copy engine, the queue that [copy_engine] names in its facts
-      ({!Rig_edge.type-facts}).
+      only a run gives. Words also follow every earlier part, and a later
+      part on their queue follows them. An {!unordered} ref orders nothing.
+      Parts that need no order may run concurrently.
+
+      A launch or a fill runs on the first of [d]'s queues that runs its
+      kind ({!Rig_edge.type-facts}). Words run on the first queue that runs
+      both launches and words, and otherwise on the first that runs words. A
+      copy runs on the queue of the last earlier part it follows, where that
+      queue runs copies, and otherwise on the device's copy engine, the queue
+      that [copy_engine] names in its facts.
 
       Raises [Invalid_argument] if:
       {ul

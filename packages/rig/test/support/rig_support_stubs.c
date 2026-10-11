@@ -663,7 +663,8 @@ static int polled_room(void *self, const struct rig_part *parts, int n,
   for (int i = 0; i < n; i++) {
     int kind = parts[i].kind;
     if (kind == RIG_LAUNCH ? !launches(&parts[i], args)
-                           : kind != RIG_FILL && kind != RIG_COPY)
+                           : kind != RIG_FILL && kind != RIG_COPY &&
+                                 kind != RIG_WORDS)
       return RIG_NEVER;
   }
   if (n > p->capacity) return RIG_NEVER;

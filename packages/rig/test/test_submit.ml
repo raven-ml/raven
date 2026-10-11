@@ -946,17 +946,48 @@ let test_copy_refused () =
   raises_match Exn.invalid_arg (fun () -> Sub.make d [| copy |])
 
 (* A part no queue of its device runs is refused when the submission is made:
-   Polled's queues run no words, and with no copies, no copy. *)
+   the host runs no words, and Polled with no copy queue no copy. *)
 let test_runs () =
-  let d, _ = P.open_ "submit:runs" in
+  raises_match ~msg:"words where no queue takes them" Exn.invalid_arg
+    (fun () -> Sub.make Rig.host [| Sub.words (B.create Rig.host 8) |]);
   let e, _ = P.open_ ~copies:false "submit:runs-fills" in
-  raises_match ~msg:"words" Exn.invalid_arg (fun () ->
-      Sub.make d [| Sub.words (B.create Rig.host 8) |]);
   let src = B.create e 8 and dst = B.create e 8 in
   raises_match ~msg:"a copy where no queue copies" Exn.invalid_arg (fun () ->
       Sub.make e [| Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]);
   let image = Result.get_ok (Rig.Image.load e "code:64") in
   ignore (Sub.make e [| Sub.launch image "main" ~params:0 |])
+
+(* Words, whose effect rig cannot see, follow every earlier part; a later part
+   follows them by running on their queue or by sharing memory with them.
+   Polled's COMPUTE:0 (queue 0) runs launches, fills and words, COPY:0 (queue
+   1) is its copy engine:
+   - 0, a copy a -> b: on the copy engine;
+   - 1, words reading ws: on COMPUTE:0, the queue of launches, after 0, though
+     they share no memory;
+   - 2, a fill: on COMPUTE:0, after the words by that queue's order;
+   - 3, a copy c -> e: on the copy engine, concurrent with the words;
+   - 4, a copy e -> ws: it follows 3 by e, and the words by ws, so it runs on
+     3's queue after the words. *)
+let test_words_order () =
+  let d, p = P.open_ "submit:words-order" in
+  let ws = B.create Rig.host page_bytes in
+  let a = B.create d 8 and b = B.create d 8 in
+  let c = B.create d page_bytes and e = B.create d page_bytes in
+  let copy src dst = Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) in
+  let parts =
+    [|
+      copy a b;
+      Sub.words ws;
+      Sub.fill Support.noop ~params:0;
+      copy c e;
+      copy e (on d ws);
+    |]
+  in
+  Rig.Point.wait (submit (Sub.make d parts));
+  equal
+    (list (pair int (list int)))
+    [ (1, []); (0, [ 0 ]); (0, []); (1, []); (1, [ 1 ]) ]
+    (P.layout p)
 
 (* Words whose buffer holds a part of a word are refused by length, before
    any device has to run them. *)
@@ -985,13 +1016,13 @@ let test_blocks_bound () =
 (* Order *)
 
 (* A case of the order law: parts on a Polled device, copies between views of
-   three allocations and fills whose refs name slots, and fixed memory. The
-   allocations are two of the device's, which the host addresses only with
+   three allocations, fills whose refs name slots, words, and fixed memory.
+   The allocations are two of the device's, which the host addresses only with
    [host_visible], and one of the host's, borrowed. A slot's refs are all of
-   its kind. *)
+   its kind. Each words part reads a host buffer of its own. *)
 type view = { alloc : int; first : int; length : int }
 type use = Read | Write | Unordered
-type order_part = Copy of view * view | Fill of int list
+type order_part = Copy of view * view | Fill of int list | Words
 
 type order_case = {
   host_visible : bool;
@@ -1006,6 +1037,7 @@ let pp_order_case ppf c =
   let kind = function Read -> "r" | Write -> "w" | Unordered -> "u" in
   let part ppf = function
     | Copy (s, d) -> Format.fprintf ppf "copy %a->%a" pp_view s pp_view d
+    | Words -> Format.fprintf ppf "words"
     | Fill slots ->
         Format.fprintf ppf "fill [%s]"
           (String.concat ";"
@@ -1062,6 +1094,7 @@ let gen_order_case =
          Copy (src, dst));
         (let+ slots = list ~size:(int_range 0 2) (int_range 0 2) in
          Fill (List.sort_uniq Int.compare slots));
+        constant Words;
       ]
   in
   let fixed =
@@ -1088,7 +1121,7 @@ let slot_order c =
           List.fold_left
             (fun acc k -> if List.mem k acc then acc else acc @ [ k ])
             acc slots
-      | Copy _ -> acc)
+      | Copy _ | Words -> acc)
     [] c.parts
 
 (* What a part uses, as Submission.make states it: [`View] a buffer it names,
@@ -1097,6 +1130,7 @@ let uses c p =
   let fixed = List.map (fun (v, a) -> (`View v, a = Rig.Read_write)) c.fixed in
   match p with
   | Copy (src, dst) -> (`View src, false) :: (`View dst, true) :: fixed
+  | Words -> fixed
   | Fill slots ->
       List.filter_map
         (fun k ->
@@ -1121,18 +1155,21 @@ let conflict c p p' =
     (uses c p)
 
 (* The layout the order law states: a fill on queue 0, the first that runs it;
-   a copy on the queue of the last earlier part it follows, else on the copy
-   engine, queue 1; and per other queue, the last earlier part it follows. *)
+   words on queue 0, the first that runs launches and words; a copy on the
+   queue of the last earlier part it follows, else on the copy engine, queue
+   1; and per other queue, the last earlier part it follows. A part follows
+   the earlier parts that may share memory with it, and words every earlier
+   part. *)
 let expected_layout c =
   let parts = Array.of_list c.parts in
   let queues = Array.make (Array.length parts) 0 in
   Array.mapi
     (fun j p ->
-      let follows i = conflict c parts.(i) p in
+      let follows i = p = Words || conflict c parts.(i) p in
       let earlier = List.init j Fun.id in
       let q =
         match p with
-        | Fill _ -> 0
+        | Fill _ | Words -> 0
         | Copy _ -> (
             match List.filter follows (List.rev earlier) with
             | i :: _ -> queues.(i)
@@ -1186,6 +1223,7 @@ let order_law c =
           ~refs:(Array.of_list (List.mapi ref_of ks))
           Support.noop
           ~params:(8 * List.length ks)
+    | Words -> Sub.words (B.create Rig.host 8)
   in
   let fixed = List.map (fun (v, a) -> (buffer v, a)) c.fixed in
   let s = Sub.make ~fixed d (Array.of_list (List.map part c.parts)) in
@@ -1200,17 +1238,30 @@ let order_law c =
   cover "a copy on the copy engine after a fill" copy_after_fill;
   cover "a copy on a fill's queue"
     (List.exists2
-       (fun p (q, _) -> match p with Copy _ -> q = 0 | Fill _ -> false)
+       (fun p (q, _) -> match p with Copy _ -> q = 0 | Fill _ | Words -> false)
        c.parts expected);
+  let parts = Array.of_list c.parts in
+  cover "words after a part of another queue"
+    (List.exists2
+       (fun p (_, after) -> p = Words && after <> [])
+       c.parts expected);
+  cover "a copy concurrent with earlier words"
+    (List.exists
+       (fun (j, (q, after)) ->
+         q = 1
+         && List.exists
+              (fun i -> parts.(i) = Words && not (List.mem i after))
+              (List.init j Fun.id))
+       (List.mapi (fun j x -> (j, x)) expected));
   cover "an unordered slot"
     (List.exists
        (function
          | Fill ks -> List.exists (fun k -> c.kinds.(k) = Unordered) ks
-         | Copy _ -> false)
+         | Copy _ | Words -> false)
        c.parts);
   let views =
     List.concat_map
-      (function Copy (s, d) -> [ s; d ] | Fill _ -> [])
+      (function Copy (s, d) -> [ s; d ] | Fill _ | Words -> [])
       c.parts
     @ List.map fst c.fixed
   in
@@ -1625,6 +1676,8 @@ let tests =
           test_copy_refused;
         test "a part of a kind its queue does not run is refused at make"
           test_runs;
+        test "words follow every earlier part, and later parts of their queue"
+          test_words_order;
         test "words of a length no multiple of 4 are refused at make"
           test_part_word;
         test "blocks beyond 2^32 - 1 bytes are refused at make"

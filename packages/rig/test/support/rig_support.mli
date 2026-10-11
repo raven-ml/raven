@@ -38,8 +38,9 @@ module Polled : sig
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
       1024): beyond it [room] answers [`Later], or, with [may_block], submit
       waits for room. Without [copies] (defaults to [true]) it lists no copy
-      queue. Without [host_visible] (defaults to [true]) the host does not
-      address its [Device] memory. Without [addresses] (defaults to [true]) its
+      queue. Its compute queue takes words, and does nothing for them.
+      Without [host_visible] (defaults to [true]) the host does not address
+      its [Device] memory. Without [addresses] (defaults to [true]) its
       [Device] memory has no address: its work names it by handle alone. With
       [transport] (defaults to [false]) the host does not address its word
       either, which is read through [signaled], as behind a transport. Its

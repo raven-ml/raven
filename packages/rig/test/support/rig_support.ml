@@ -154,12 +154,14 @@ module Driver = struct
   let entry_scratch = 1 lsl 16
 
   (* Its queues run fills and, with copies, copies; its compute queue also runs
-     launches. The facts are one call, which goes on whether or not it
-     refuses. *)
+     launches and words. The facts are one call, which goes on whether or not
+     it refuses. *)
   let facts d =
     ignore (step d : bool);
     let runs = Rig_edge.(if d.copies then [ Fill; Copy ] else [ Fill ]) in
-    let compute = { Rig_edge.name = "COMPUTE:0"; runs = Launch :: runs } in
+    let compute =
+      { Rig_edge.name = "COMPUTE:0"; runs = Launch :: Words :: runs }
+    in
     let has c = List.mem c d.waits in
     {
       Rig_edge.arch = "polled";
