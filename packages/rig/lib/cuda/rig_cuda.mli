@@ -19,10 +19,9 @@
     previous value's work, on both streams. To commit a value, the device
     enqueues a write of the value into the word ([cuStreamWriteValue64]),
     which runs once the work before it has completed. It commits when a wait
-    asks for a value, and on its own ({!section-work}). Once the word holds
-    [v], [v] is reached, and a {!Rig.Point.wait} on it returns. Work that
-    waits for another device's point waits on the GPU, as a stream wait on
-    that device's word, where the facts allow it ({!section-facts}).
+    asks for a value, and on its own ({!section-work}). Work that waits for
+    another device's point waits on the GPU, as a stream wait on that
+    device's word, where the facts allow it ({!section-facts}).
 
     Given a device [g] that [Rig.open_ (Rig_cuda.gpu 0)] opened, a buffer [x]
     on it that holds [n] floats, where [n] is a multiple of 256, and a cubin
@@ -154,21 +153,18 @@ val capability : t -> Rig_cuda_abi.t
 
 (** {1:work Work}
 
-    [rig_cuda_submit], the driver's [submit], enqueues the parts of a value
-    on the device's streams. A part on queue [0] runs on ["COMPUTE:0"], one
-    on queue [1] on ["COPY:0"]. Parts on one queue run in array order, and
-    parts on two queues that [after] does not order may run in parallel. A
-    value's work starts after the work of every earlier value, on both
-    streams. [rig_cuda_submit] returns without waiting for the work.
+    The device's [struct rig_driver] holds [rig_cuda_room], [rig_cuda_submit]
+    and [rig_cuda_commit], which [rig_cuda.h] declares. A part on queue [0]
+    runs on ["COMPUTE:0"], one on queue [1] on ["COPY:0"].
 
     The device commits a value by enqueueing a write of it into the word
-    ([cuStreamWriteValue64]) on the stream the last value ended on, after
-    the work of every value up to it. The write follows a system-wide memory
-    fence ([CU_STREAM_WRITE_VALUE_DEFAULT]), so the work's writes are visible
-    once the word shows the value. The device commits in three cases:
+    ([cuStreamWriteValue64]) on the stream the last value ended on. The
+    write follows a system-wide memory fence ([CU_STREAM_WRITE_VALUE_DEFAULT]),
+    so the work's writes are visible once the word shows the value. Besides
+    a commit ({!Rig_edge.section-calls}), which writes nothing if a commit
+    already wrote that value or a later one, [rig_cuda_submit] commits, and
+    returns [RIG_COMMITTED]:
     {ul
-    {- a commit ({!Rig_edge.section-calls}), unless a commit already wrote
-       that value or a later one;}
     {- a value 64 values past the last commit, so the device commits each
        value at most 64 values late;}
     {- a value that holds a copy, as it is enqueued, so that a wait for the
@@ -181,18 +177,21 @@ val capability : t -> Rig_cuda_abi.t
     another's. Only the devices' streams write their words, and a word that
     work wrote could move backwards or show work that has not completed.
 
-    Each wait holds the work back until the aligned 64-bit word at [at]
-    holds at least [value], compared circularly: [x] is at least [w] if
-    [x - w], as a signed 64-bit integer, is not negative. Its kind is
-    [RIG_WORD].
+    A wait is a [RIG_WORD]. It holds the work back until the aligned 64-bit
+    word at [at] holds at least [value], compared circularly: [x] is at
+    least [w] if [x - w], as a signed 64-bit integer, is not negative.
+
+    [rig_cuda_room] never returns [RIG_LATER], since a stream takes any
+    amount of work: [rig_cuda_submit] and [rig_cuda_commit] block while a
+    stream is full, until the device's earlier work frees it.
+    [rig_cuda_submit] writes no times, so a profile has no span of the
+    device's work.
 
     {2:launches Launches}
 
     A launch runs its function with [cuLaunchKernel] over the groups,
     threads and dynamic shared memory of its block, and passes its
     parameters as one buffer ([CU_LAUNCH_PARAM_BUFFER_POINTER]).
-    [rig_cuda_submit] copies the parameters and adds to each ref's 8 bytes
-    its slot's address, and CUDA copies the result at the call.
 
     [rig_cuda_room] refuses a launch if:
     {ul
@@ -202,26 +201,7 @@ val capability : t -> Rig_cuda_abi.t
        ([CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X] to [_Z],
        [CU_DEVICE_ATTRIBUTE_MAX_BLOCK_DIM_X] to [_Z]);}
     {- it has more threads per group, or more dynamic shared memory, than
-       its function's limits.}}
-
-    {2:edge The C functions}
-
-    The device's [struct rig_driver] holds [rig_cuda_room], [rig_cuda_submit]
-    and [rig_cuda_commit], which [rig_cuda.h] declares.
-    {ul
-    {- [rig_cuda_room] returns [RIG_NEVER] for a part that is not a fill, a
-       copy or a launch, a part on a queue the device lacks, and a launch
-       that {!section-launches} refuses. It returns [RIG_FITS] otherwise,
-       since a CUDA stream takes any amount of work.}
-    {- [rig_cuda_submit] returns [RIG_COMMITTED] if it committed the value,
-       and [RIG_OK] otherwise. A submission without parts ends after its waits
-       and after every earlier value. [rig_cuda_submit] writes no times, so a
-       profile has no span of the device's work.}
-    {- [rig_cuda_commit] commits the value it is given (the first case
-       above).}}
-    [rig_cuda_submit] and [rig_cuda_commit] block while a stream is full,
-    until the device's earlier work frees it. After a failure both return
-    [RIG_FAILED] ({!section-failure}). *)
+       its function's limits.}} *)
 
 (** {1:memory Memory}
 
@@ -332,20 +312,20 @@ val capability : t -> Rig_cuda_abi.t
     the fault, such as an {!entry} for a function already found or a
     {!sleep} once the word has moved. [rig_cuda_submit] and
     [rig_cuda_commit] then return [RIG_FAILED] once they call CUDA, and the
-    [graph] function of {!val-capability} returns [Error]. {!free} and {!stop} ignore CUDA's errors and raise nothing.
+    [graph] function of {!val-capability} returns [Error]. {!free} and
+    {!stop} ignore CUDA's errors and raise nothing.
 
-    A [rig_cuda_submit] that fails returns [RIG_FAILED] with what it was
-    doing and the error of the first CUDA call that failed, including one a
-    fill made, as in ["running a fill: CUDA_ERROR_ILLEGAL_ADDRESS: an illegal
-    memory access was encountered"]. The parts enqueued before the failure
-    may run, and the others never do. A [rig_cuda_commit] that fails returns
-    [RIG_FAILED] likewise.
+    A [rig_cuda_submit] or [rig_cuda_commit] that fails returns [RIG_FAILED]
+    with what it was doing and the error of the first CUDA call that failed,
+    including one a fill made, as in ["running a fill:
+    CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was encountered"].
+    The parts enqueued before the failure may run, and the others never do.
 
     A failed device stays failed, since CUDA may keep the context's error for
     the process. Every later [rig_cuda_submit] enqueues none of its parts,
     and every later [rig_cuda_submit] and [rig_cuda_commit] returns the same
     failure. The word still reaches every value, so that work waiting on it
-    on other devices runs on. A failed [rig_cuda_submit], and every later
+    on other devices runs on: a failed [rig_cuda_submit], and every later
     one, writes its value after its waits, every earlier value and the work
     it enqueued. It writes nothing once the context has failed, whose work no
     longer runs, or if CUDA refuses a call that orders the write.
@@ -354,18 +334,16 @@ val capability : t -> Rig_cuda_abi.t
     error ([cuStreamQuery]), and raises {!exception-Fault} with CUDA's error
     once one has.
 
-    {!stop} ignores [fault]. [g]'s work has ended once every value's work has
-    completed, its streams are idle, or a fault has ended the context's work.
-    If it has, the word holds at least the last value [rig_cuda_submit]
-    received when {!stop} returns, and [g]'s streams are destroyed. Otherwise
-    {!stop} commits that last value, and the word reaches it once the work
-    ends, unless the work waits on a word of another device that never
-    reaches its value. The GPU can be opened again once that work ends.
-
-    After {!stop}, compiled code may still call the [symbol] and [graph]
-    functions of {!val-capability}, and rig calls {!free} and {!unload}, even
-    after the GPU has opened again, since the device's modules lie in the
-    GPU's primary context, which the process keeps. *)
+    {!stop} ignores [fault]. If [g]'s work has ended (every value's work has
+    completed, its streams are idle, or a fault has ended the context's
+    work), it writes the last value and destroys [g]'s streams. Otherwise it
+    commits that value, and the word reaches it once the work ends, unless
+    the work waits on a word of another device that never reaches its value.
+    The GPU can be opened again once that work ends. Compiled code may still
+    call the [symbol] and [graph] functions of {!val-capability} after
+    {!stop}, and rig's {!free} and {!unload} may come after the GPU has
+    opened again, since the device's modules lie in the GPU's primary
+    context, which the process keeps. *)
 
 (** {1:references References}
     - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}:

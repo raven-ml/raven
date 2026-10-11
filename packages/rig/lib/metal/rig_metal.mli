@@ -14,19 +14,18 @@
     makes. {!Rig.Image.load} loads the metallib as a Metal library. The first
     call that needs one of its functions, a {!Rig.Submission.make} that
     launches it or a {!Rig.Image.mem} or {!Rig.Image.entry} for it, compiles
-    the function for the GPU into a pipeline, which later launches reuse. A Metal command buffer
-    holds encoded work, and Metal runs it only once it is committed. The
-    device keeps at most one {e open command buffer}, which collects the work
-    of consecutive values until the device commits it. Each {!Rig.submit}
-    encodes its launches into the open command buffer and returns without
-    waiting for them. The device commits the open command buffer when a wait
-    asks for one of its values, and on its own often enough to keep the GPU
-    busy ({!section-work}). As each command buffer completes, Metal calls a
-    handler of the device on one of Metal's threads. The handlers write into
-    the device's timeline word ({!Rig_edge}) the last value of each command
-    buffer once it and every buffer committed before it have completed
-    without failure. Once the word holds [v], [v] is reached, and a wait on
-    it returns.
+    the function for the GPU into a pipeline, which later launches reuse. A
+    Metal command buffer holds encoded work, and Metal runs it only once it
+    is committed. The device keeps at most one {e open command buffer},
+    which collects the work of consecutive values until the device commits
+    it. Each {!Rig.submit} encodes its launches into the open command buffer
+    and returns without waiting for them. The device commits the open
+    command buffer when a wait asks for one of its values, and on its own
+    often enough to keep the GPU busy ({!section-work}). As each command
+    buffer completes, Metal calls a handler of the device on one of Metal's
+    threads. The handlers write into the device's timeline word the last
+    value of each command buffer once it and every buffer committed before
+    it have completed without failure.
 
     This program adds [x] to [y] on the GPU and prints [y[10] = 11]. It
     needs [add.metallib], compiled from
@@ -160,13 +159,13 @@ val capability : t -> Rig_metal_abi.t
 
 (** {1:work Work}
 
-    [rig_metal_submit], the driver's [submit], encodes the parts of a value,
-    in order, into the open command buffer, and opens one if none is open. A
-    command buffer has one compute encoder, which runs its commands one after
-    the other ([MTLDispatchTypeSerial]), and each command buffer runs after
-    the one committed before it. The work of a value therefore follows the
-    work of every earlier value. [rig_metal_submit] returns without waiting
-    for the work.
+    The device's [struct rig_driver] holds [rig_metal_room],
+    [rig_metal_submit] and [rig_metal_commit], which [rig_metal.h] declares.
+    [rig_metal_submit] encodes the parts of a value, in order, into the open
+    command buffer, and opens one if none is open. A command buffer has one
+    compute encoder, which runs its commands one after the other
+    ([MTLDispatchTypeSerial]), and each command buffer runs after the one
+    committed before it.
 
     The device commits the open command buffer in four cases:
     {ul
@@ -177,6 +176,7 @@ val capability : t -> Rig_metal_abi.t
     {- the completion of a command buffer while the open one holds work;}
     {- a [rig_metal_submit] that leaves 256 values in it, so the device
        commits each value at most 256 values late.}}
+    A [rig_metal_submit] that commits returns [RIG_COMMITTED].
 
     Metal calls a handler of the device on one of Metal's threads once a
     command buffer has completed, successfully or not
@@ -190,6 +190,12 @@ val capability : t -> Rig_metal_abi.t
 
     A fill receives the open compute encoder, encodes into it, and may start
     new command buffers ({!Rig_metal_abi}).
+
+    [rig_metal_room] never returns [RIG_LATER]. Before it opens a command
+    buffer, [rig_metal_submit] blocks while the device has 1,024, as many as
+    its Metal queue holds, counting the open one and the committed ones not
+    yet completed. [rig_metal_commit] commits the open command buffer, which
+    holds the work of every value not yet committed.
 
     {2:launches Launches}
 
@@ -212,24 +218,6 @@ val capability : t -> Rig_metal_abi.t
     {- its threadgroup memory, rounded, exceeds the device's
        [maxThreadgroupMemoryLength] less the function's
        [staticThreadgroupMemoryLength].}}
-
-    {2:edge The C functions}
-
-    The device's [struct rig_driver] holds [rig_metal_room],
-    [rig_metal_submit] and [rig_metal_commit], which [rig_metal.h] declares.
-    {ul
-    {- [rig_metal_room] returns [RIG_NEVER] for a part on a queue other than
-       [0], a part that is neither a fill nor a launch, and a launch that
-       {!section-launches} refuses. It returns [RIG_FITS] otherwise, since
-       [rig_metal_submit] itself waits for room.}
-    {- [rig_metal_submit] returns [RIG_COMMITTED] if it committed the open
-       command buffer, and [RIG_OK] if [v]'s work waits in it. Before it
-       opens a command buffer, it blocks while the device has 1,024, as many
-       as its Metal queue holds, counting the open one and the committed
-       ones not yet completed.}
-    {- [rig_metal_commit] commits the open command buffer, which holds the
-       work of every value not yet committed.}}
-    After a failure both return [RIG_FAILED] ({!section-failure}).
 
     {2:profiles Profiles}
 
