@@ -72,3 +72,10 @@ val fork_running : unit -> answer
 (** [fork_running ()] forks while another thread's job runs a body of 50 ms; the
     child runs a job on every core. Its values: whether fork returned after the
     body ended, the child's exit status. *)
+
+val unmade : unit -> answer
+(** [unmade ()] forks a child whose pool is not made yet; it runs a job on every
+    core with each of the pool's three callocs refused in turn, then
+    one with none refused. Its value: the child's exit status, [0] when every
+    job ran each chunk once on the caller alone while the pool could not be
+    made, and on a worker once it could. *)

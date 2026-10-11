@@ -9,12 +9,26 @@
    the scenario's comment is the one that runs. Every wait gives up after
    [patience] (rig_pool_probe.h); a scenario then answers which event it
    waited for. The copy's public names carry rig_pool_hooked_, so it links
-   beside the pool itself. POSIX only: scenarios fork, and workers are told
-   apart by their pthread_t. */
+   beside the pool itself. Its callocs go through [refusing_calloc], which
+   refuses one on request, as a host out of memory does. POSIX only:
+   scenarios fork, and workers are told apart by their pthread_t. */
 
 #define _GNU_SOURCE
 
 #include <pthread.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+
+/* The calloc that answers NULL [refused] calls from now, once. The pool's
+   callocs run on one thread, the one making the pool under its init mutex,
+   so a load and a decrement in turn count them. */
+static _Atomic int refused;
+
+static void *refusing_calloc(size_t n, size_t size) {
+  if (atomic_load(&refused) > 0 && atomic_fetch_sub(&refused, 1) == 1)
+    return NULL;
+  return calloc(n, size);
+}
 
 typedef enum {
   point_enter_open,
@@ -41,7 +55,9 @@ static void hook(point at);
 #define rig_pool_capacity_cpus rig_pool_hooked_capacity_cpus
 /* rig_pool.c's clock is static; renamed, it leaves now_ns to the probes'. */
 #define now_ns rig_pool_now_ns
+#define calloc refusing_calloc
 #include "../../lib/pool/rig_pool.c"
+#undef calloc
 #undef now_ns
 
 #include <caml/alloc.h>
@@ -646,6 +662,42 @@ value rig_pool_test_fork_running(value unit) {
   settle();
   caml_leave_blocking_section();
   return answer(v, 2);
+}
+
+/* A child made by fork, whose pool is not made yet, runs a job on every core
+   with the first, second, then third of the pool's callocs refused, then one
+   with none refused, whose chunks wait for worker 1. It exits with 1 if a
+   refused job made fewer callocs than its refusal's, left a chunk not run
+   once or ran one on a worker, plus 2 if worker 1 ran no chunk once the
+   pool was made. Answers: the child's exit status. */
+value rig_pool_test_unmade(value unit) {
+  (void)unit;
+  int v[1] = {0};
+  caml_enter_blocking_section();
+  settle();
+  pid_t pid = fork();
+  if (pid == 0) {
+    atomic_store(&current, none);
+    alarm(10);
+    int failed = 0;
+    for (int k = 1; k <= 3; k++) {
+      atomic_store(&refused, k);
+      tally j;
+      tally_init(&j, max_chunks);
+      run_tally(rig_pool_cores(), &j);
+      failed |=
+          atomic_load(&refused) != 0 || not_once(&j) > 0 || off(&j, 1) > 0;
+    }
+    atomic_store(&refused, 0);
+    tally made;
+    tally_init(&made, max_chunks);
+    made.awaited = 1;
+    run_tally(rig_pool_cores(), &made);
+    _exit(failed | (atomic_load(&made.worked[1]) ? 0 : 2));
+  }
+  v[0] = child_status(pid);
+  caml_leave_blocking_section();
+  return answer(v, 1);
 }
 
 value rig_pool_test_hooked_cores(value unit) {

@@ -142,6 +142,10 @@ let fork_tests =
              "the child's chunks not run once";
            ]
            [ 1; 0 ] H.fork_running);
+      test
+        "a pool whose memory cannot be had runs each job on the caller, and \
+         is made at a later job"
+        (forked [ "the child's exit status" ] [ 0 ] H.unmade);
     ]
 
 let () =

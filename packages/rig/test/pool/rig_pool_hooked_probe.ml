@@ -25,3 +25,4 @@ external narrow_burst : unit -> answer = "rig_pool_test_narrow_burst"
 
 external fork_parked : unit -> answer = "rig_pool_test_fork_parked"
 external fork_running : unit -> answer = "rig_pool_test_fork_running"
+external unmade : unit -> answer = "rig_pool_test_unmade"
