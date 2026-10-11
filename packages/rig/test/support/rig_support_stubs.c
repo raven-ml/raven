@@ -57,17 +57,17 @@
 #endif
 
 #if defined(__has_feature)
-#if __has_feature(address_sanitizer)
-#define RIG_TEST_ASAN
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define RIG_TEST_SANITIZER
 #endif
 #endif
-#if defined(__SANITIZE_ADDRESS__)
-#define RIG_TEST_ASAN
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define RIG_TEST_SANITIZER
 #endif
 
-#if defined(RIG_TEST_ASAN)
-/* The sanitizer runtime's count; GCC ships the runtime but not
-   <sanitizer/allocator_interface.h>, which declares it. */
+#if defined(RIG_TEST_SANITIZER)
+/* The sanitizer's allocator serves malloc and counts its own heap; GCC ships
+   the runtime but not <sanitizer/allocator_interface.h>, which declares it. */
 size_t __sanitizer_get_current_allocated_bytes(void);
 #elif defined(__APPLE__)
 #include <malloc/malloc.h>
@@ -1387,7 +1387,7 @@ value rig_test_host_held(value unit) {
    say. */
 value rig_test_heap_bytes(value unit) {
   (void)unit;
-#if defined(RIG_TEST_ASAN)
+#if defined(RIG_TEST_SANITIZER)
   return Val_long((intnat)__sanitizer_get_current_allocated_bytes());
 #elif defined(__APPLE__)
   malloc_statistics_t s;
