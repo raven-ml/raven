@@ -1282,7 +1282,8 @@ let answer_misuse () =
   equal (result (option int) refused) (Ok (Some 4)) (r2 ())
 
 (* bytes reads its area in place: it returns only once its peer took the bytes,
-   and the frame carries the area. The area outgrows the sockets' buffers. *)
+   and its frame, the first but beats, which a link sends after a second
+   without one, carries the area. The area outgrows the sockets' buffers. *)
 let bytes_in_place () =
   with_raw ~peer:Wire.Controller @@ fun _ l p ->
   let n = (1 lsl 24) - 16 in
@@ -1298,7 +1299,7 @@ let bytes_in_place () =
   in
   Thread.delay 0.2;
   let early = Atomic.get returned in
-  let f = read_frame p in
+  let f = next_frame p in
   finished ();
   equal ~msg:"returned while its peer read nothing" bool false early;
   equal (option frame_w) (Some (k_bytes, u64 3 ^ u64 7 ^ of_area a)) f
