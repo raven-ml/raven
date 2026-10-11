@@ -5,7 +5,7 @@
 (test
  (name test_compiler_cpu)
  (package tolk)
- (libraries windtrap tolk tolk_test tolk_run tolk.engine nx.device)
+ (libraries windtrap tolk tolk_test tolk_run tolk.engine rig)
  (deps
   (sandbox always)
   (glob_files *.golden))

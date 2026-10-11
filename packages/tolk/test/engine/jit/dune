@@ -2,13 +2,7 @@
  (name test_jit)
  (modules test_jit)
  (package tolk)
- (libraries
-  windtrap
-  tolk
-  tolk.engine
-  tolk_test
-  tolk_run
-  nx.device)
+ (libraries windtrap tolk tolk.engine tolk_test tolk_run rig)
  (deps
   (glob_files *.golden)))
 

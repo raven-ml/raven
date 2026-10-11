@@ -2,7 +2,7 @@ open Windtrap
 open Tolk
 
 (* The host's target, as the engine gives it. *)
-let host_target = Tolk_engine.target Nx_device.host
+let host_target = Tolk_engine.target Rig.host
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 let tensor_core = Testable.make ~pp:Tc.pp ~equal:Tc.equal
 
@@ -1214,18 +1214,16 @@ let division =
     [ Ops.end_ (Ops.store (at 0) (Ops.alu (at 1) Fdiv [ at 2 ])) [ i ] ]
 
 let divides_on_metal () =
-  match Nx_metal_device.get 0 with
+  match Rig.open_ (Rig_metal.gpu 0) with
   | Error why -> skip ~reason:why ()
   | Ok m ->
-      let devices =
-        Tolk_engine.device [ ("CPU", Nx_device.host); ("CPU:1", m) ]
-      in
+      let devices = function "CPU:1" -> m | _ -> Rig.host in
       let n = Array.length dividends in
       let buffer () = Ops.new_buffer (Single "CPU:1") n Float32 in
       let out = buffer () and a = buffer () and b = buffer () in
       let compiled =
-        Hcq2.compile_linear ~profile:Unstamped
-          ~devices:(fun d -> (devices d).compiler)
+        Realize.compile_linear
+          ~targets:(fun d -> Tolk_engine.target (devices d))
           (Ops.v Op.Linear ~src:[ Ops.call division [ out; a; b ] ])
       in
       let on_metal xs = Run.buffer m Float32 (floats xs) in

@@ -67,19 +67,53 @@ let decode dt n bytes =
       done;
       of_bits dt !z)
 
+(* Buffers of values *)
+
+let filled b bytes =
+  let n = Bigarray.Array1.dim bytes in
+  Rig.Buffer.blit_from_string
+    (String.init n (Bigarray.Array1.get bytes))
+    0 b 0 n;
+  b
+
+let buffer d dt values =
+  let bytes = encode dt values in
+  filled (Rig.Buffer.create d (Bigarray.Array1.dim bytes)) bytes
+
+let values dt b =
+  let n = Rig.Buffer.length b in
+  let bytes = Bytes.create n in
+  Rig.Buffer.blit_to_bytes b 0 bytes 0 n;
+  let a =
+    Bigarray.Array1.init Bigarray.char Bigarray.c_layout n (Bytes.get bytes)
+  in
+  decode dt (n / Dtype.itemsize dt) a
+
+(* A buffer of [n] bytes of the host that starts on 64 bytes. The kernels these
+   tests run, recorded from tinygrad, access vectors up to that width, wider
+   than the 16 bytes a host buffer is known to start on. *)
+let aligned_host n =
+  let b = Rig.Buffer.create Rig.host (n + 63) in
+  let rec first j =
+    if Rig.Buffer.aligned b ~at:j 64 then j else first (j + 1)
+  in
+  Rig.Buffer.view b ~first:(first 0) ~length:n
+
+(* A buffer of the host holding [values] as the parameter [p]. *)
 let storage (p : Ops.param_arg) values =
   let n = Option.get p.size in
   if Array.length values <> n then
     invalid_arg
       (Printf.sprintf "slot %d holds %d elements, not %d" p.slot n
          (Array.length values));
-  encode p.dtype values
+  let bytes = encode p.dtype values in
+  filled (aligned_host (Bigarray.Array1.dim bytes)) bytes
 
-let contents (p : Ops.param_arg) bytes =
-  decode p.dtype (Option.get p.size) bytes
+let contents (p : Ops.param_arg) b =
+  Array.sub (values p.dtype b) 0 (Option.get p.size)
 
-(* The buffer parameters of [prg], in the order its linear order declares
-   them. *)
+(* The parameters of [prg] by slot: each buffer, in the order its linear order
+   declares them, and each positional variable. *)
 let buffer_params prg =
   List.filter_map
     (fun u ->
@@ -91,9 +125,9 @@ let buffer_params prg =
     (Ops.src (Ops.nth prg 1))
 
 let on_host ?vars prg buffers =
-  let globals =
+  let info =
     match Ops.arg prg with
-    | Ops.Program info -> info.globals
+    | Ops.Program info -> info
     | _ -> invalid_arg "not a compiled program"
   in
   let params = buffer_params prg in
@@ -105,64 +139,45 @@ let on_host ?vars prg buffers =
           (Dtype.truncate p.dtype (`Int Bigint.zero))
   in
   let memory = List.map (fun p -> (p, storage p (initial p))) params in
-  let by_slot slot =
-    let _, bytes =
-      List.find (fun ((p : Ops.param_arg), _) -> p.slot = slot) memory
-    in
-    Nx_device.Buffer.of_bigarray bytes
+  (* The call passes each buffer parameter as the run's slot of its number, and
+     each positional variable as itself. *)
+  let positional =
+    List.filter
+      (fun v -> match Ops.arg v with Ops.Param p -> p.slot >= 0 | _ -> false)
+      info.vars
   in
-  let p = Tolk_engine.Program.load Nx_device.host prg in
-  Tolk_engine.Program.run ?vars p (List.map by_slot globals);
+  let slots = List.length info.globals + List.length positional in
+  let arg slot =
+    match List.find_opt (fun (p : Ops.param_arg) -> p.slot = slot) params with
+    | Some p ->
+        Call.param
+          ~shape:[ Int (Option.get p.size) ]
+          ~device:(Single "CPU") slot p.dtype
+    | None ->
+        List.find
+          (fun v ->
+            match Ops.arg v with Ops.Param p -> p.slot = slot | _ -> false)
+          positional
+  in
+  let call = Ops.call prg (List.init slots arg) in
+  let s = Tolk_engine.link_call ~devices:(fun _ -> Rig.host) call in
+  let buffers = Array.make (List.length info.globals) [] in
+  List.iter
+    (fun ((p : Ops.param_arg), b) ->
+      if p.slot < Array.length buffers then buffers.(p.slot) <- [ b ])
+    memory;
+  Tolk_engine.run ?vars s buffers;
   List.map
-    (fun ((p : Ops.param_arg), bytes) -> (p.slot, contents p bytes))
+    (fun ((p : Ops.param_arg), b) -> (p.slot, contents p b))
     memory
-
-(* Buffers of values *)
-
-let buffer d dt values =
-  let src = Nx_device.Buffer.of_bigarray (encode dt values) in
-  let dst =
-    Nx_device.Buffer.create d Nx_dtype.Scalar.UInt8
-      (Nx_device.Buffer.nbytes src)
-  in
-  Nx_device.Buffer.copy ~src ~dst;
-  dst
-
-let values dt b =
-  let n = Nx_device.Buffer.nbytes b in
-  let bytes = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
-  Nx_device.Buffer.copy ~src:b ~dst:(Nx_device.Buffer.of_bigarray bytes);
-  decode dt (n / Dtype.itemsize dt) bytes
 
 (* Test devices *)
 
-(* The fault the test devices' driver reports once a wait sleeps. *)
-let fault = Atomic.make None
-let fail why = Atomic.set fault (Some why)
-
-let sleep ~still:_ _ =
-  match Atomic.get fault with
-  | Some why -> failwith why
-  | None -> Unix.sleepf 0.001
-
-let test_device ?(mapping = Nx_device.Driver.Identity) name =
-  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
-    ~completion:(Sleep (fun ~timeline:_ -> sleep))
-    (Host_visible
-       { memory = Nx_device.Driver.host_memory; mapping = Some mapping })
-
-(* Maps host memory where it is, a page at least, as a GPU's driver does. *)
-let pages =
-  Nx_device.Driver.Pages
-    {
-      map = (fun a n -> Ok (Nx_device.Driver.Region.v ~host:a a n));
-      unmap = ignore;
-    }
-
 let opened =
   lazy
-    (("CPU", Nx_device.host)
-     :: List.map (fun n -> (n, test_device n)) [ "CPU:1"; "CPU:2"; "CPU:3" ]
-    @ [ ("CPU:4", test_device ~mapping:pages "CPU:4") ])
+    (("CPU", Rig.host)
+    :: List.map
+         (fun n -> (n, Rig.memory_device n))
+         [ "CPU:1"; "CPU:2"; "CPU:3" ])
 
 let devices () = Lazy.force opened

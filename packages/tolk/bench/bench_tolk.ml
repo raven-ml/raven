@@ -120,7 +120,7 @@ let element dt i : Dtype.value =
 (* [sink] compiled for the host, and a run of it on buffers of small values
    ({!element}). *)
 let compiled sink =
-  let d = Nx_device.host in
+  let d = Rig.host in
   let prg = Codegen.to_program sink (Tolk_engine.renderer d) in
   let elf = Device.Tiny_elf.of_program prg in
   let info = match Ops.arg prg with Program i -> i | _ -> assert false in
@@ -129,11 +129,19 @@ let compiled sink =
   in
   let scratch (p : Device.Tiny_elf.param) =
     let n = List.fold_left ( * ) 1 p.shape in
-    Run.buffer d p.dtype (Array.init n (element p.dtype))
+    [ Run.buffer d p.dtype (Array.init n (element p.dtype)) ]
   in
-  let p = Tolk_engine.Program.load d prg
-  and buffers = List.map scratch params in
-  fun () -> Tolk_engine.Program.run p buffers
+  let arg (p : Device.Tiny_elf.param) =
+    Call.param
+      ~shape:[ Int (List.fold_left ( * ) 1 p.shape) ]
+      ~device:(Single "CPU") p.slot p.dtype
+  in
+  let s =
+    Tolk_engine.link_call
+      ~devices:(fun _ -> d)
+      (Ops.call prg (List.map arg params))
+  and buffers = Array.of_list (List.map scratch params) in
+  fun () -> Tolk_engine.run s buffers
 
 (* The kernel graph [text] with the optimisations it asks for, or with the
    hand-coded ones when [heuristic]. *)

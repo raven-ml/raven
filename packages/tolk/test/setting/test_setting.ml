@@ -344,7 +344,6 @@ let settings =
     number Setting.ring_allreduce_threshold;
     number Setting.reduceop_split_threshold;
     number Setting.reduceop_split_size;
-    optional Setting.hcq_num_sdma;
     switch Setting.mv;
     switch Setting.dmc;
     switch Setting.allow_half8;
@@ -410,7 +409,6 @@ let getenv_defaults =
     ("RING_ALLREDUCE_THRESHOLD", "256000");
     ("REDUCEOP_SPLIT_THRESHOLD", "32768");
     ("REDUCEOP_SPLIT_SIZE", "22");
-    ("HCQ_NUM_SDMA", "");
     ("MV", "1");
     ("DMC", "0");
     ("ALLOW_HALF8", "0");
@@ -483,7 +481,6 @@ let output_settings =
     "DMC";
     "EMULATED_DTYPES";
     "EXPAND_SSA";
-    "HCQ_NUM_SDMA";
     "JITBEAM";
     "LATE_ALLREDUCE";
     "MAX_KERNEL_BUFFERS";

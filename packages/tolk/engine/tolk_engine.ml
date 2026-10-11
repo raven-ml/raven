@@ -7,14 +7,18 @@
 
 open Tolk
 
+let strf = Printf.sprintf
+let fail fn fmt = Printf.ksprintf (fun m -> invalid_arg (fn ^ ": " ^ m)) fmt
+
 (* Devices *)
 
-(* The kind of device a vendor library claims, if any. *)
+(* The kind of device a vendor's driver declares, if any. *)
 let vendor d =
-  if Metal.claims d then Some "METAL"
-  else if Option.is_some (Nx_cuda_device.of_device d) then Some "CUDA"
-  else if Option.is_some (Nx_amd_device.of_device d) then Some "AMD"
-  else if Option.is_some (Nx_nv_device.of_device d) then Some "NV"
+  let declares k = Option.is_some (Rig.capability d k) in
+  if declares Rig_metal_abi.key then Some "METAL"
+  else if declares Rig_cuda_abi.key then Some "CUDA"
+  else if declares Rig_amd_abi.Capability.key then Some "AMD"
+  else if declares Rig_nv_abi.Gpu.key then Some "NV"
   else None
 
 (* The target of a device kind, which names no interface and no indices. *)
@@ -23,424 +27,59 @@ let of_kind ?(renderer = "") ?(arch = "") device =
 
 let target d =
   match vendor d with
-  | Some kind -> of_kind ~arch:(Nx_device.arch d) kind
+  | Some kind -> of_kind ~arch:(Rig.arch d) kind
   | None
-    when d != Nx_device.disk
-         && (Nx_device.host_of d == d || Nx_device.shares_host_memory d) ->
-      let host = Nx_device.host_of d in
-      let cpu = if host == Nx_device.host then "native" else "generic" in
-      of_kind ~renderer:"CLANG" ~arch:(Nx_device.arch host ^ "," ^ cpu) "CPU"
+    when Rig.computes d && (Rig.equal (Rig.host_of d) d || Rig.runs_on_host d)
+    ->
+      let host = Rig.host_of d in
+      let cpu = if Rig.equal host Rig.host then "native" else "generic" in
+      of_kind ~renderer:"CLANG" ~arch:(Rig.arch host ^ "," ^ cpu) "CPU"
   | None ->
-      invalid_arg
-        (Printf.sprintf "Tolk_engine.target: %s runs no program"
-           (Nx_device.name d))
+      invalid_arg (strf "Tolk_engine.target: %s runs no program" (Rig.name d))
 
 let renderer d =
   match Device.renderer (target d) with Ok r -> r | Error why -> failwith why
 
-let find fn devices name =
-  match List.assoc_opt name devices with
-  | Some d -> d
-  | None ->
-      invalid_arg
-        (Printf.sprintf "Tolk_engine.%s: no device is named %s" fn name)
+(* Whether [d] runs copy parts: a GPU with a copy engine, or a memory device. *)
+let copies d =
+  match vendor d with
+  | Some ("CUDA" | "AMD" | "NV") -> true
+  | Some _ -> false
+  | None -> Rig.runs_on_host d && not (Rig.equal d Rig.host)
 
-(* Engine devices *)
+(* Whether [c] copies between memory of [d] and of [d'] in a submission of its
+   own: it copies and reaches both, and both are memory the host computes on, or
+   neither is. A GPU maps host memory by pages, which a host buffer under 64 KiB
+   may not start on, so a copy between the two is the host's
+   ([Rig.Buffer.copy]), which stages where it must. *)
+let copies_between c d d' =
+  copies c && Rig.reaches c d && Rig.reaches c d'
+  && Rig.runs_on_host d = Rig.runs_on_host d'
 
-type device = {
-  device : Nx_device.t;
-  compiler : Hcq2.device;
-  placeholder : Ops.t -> Nx_device.Buffer.t option;
-  submitting : unit -> unit;
-}
+(* Views *)
 
-(* The vendors whose encoders the compiler has, in the order they are tried: a
-   vendor that claims a device gives its queues, the storage of the placeholders
-   its commands name and its refresh inside each submission. *)
-let vendors = [ Metal.queues; Cuda.queues; Amd.queues; Nv.queues ]
+(* A view's storage and byte offset; the offset of a view inside a range around
+   a call reads the range. *)
+let rec view_offset v =
+  match Ops.op v with
+  | Op.Bitcast | Op.After -> view_offset (Ops.nth v 0)
+  | Op.Shrink -> (
+      let base, off = view_offset (Ops.nth v 0) in
+      match Shape.marg v with
+      | Shrink [ (o, _) ] ->
+          (base, Shape.Sint.(off + (o * Int (Dtype.itemsize (Ops.dtype v)))))
+      | _ -> invalid_arg "Tolk_engine: a view of storage is one-dimensional")
+  | _ -> (v, Ops.Int 0)
 
-(* [devices] with the host of each of its devices that none of its names names,
-   under the host's own name. *)
-let with_hosts devices =
-  List.fold_left
-    (fun devices (_, d) ->
-      let h = Nx_device.host_of d in
-      let n = Nx_device.name h in
-      if
-        List.exists (fun (_, d') -> d' == h) devices || List.mem_assoc n devices
-      then devices
-      else devices @ [ (n, h) ])
-    devices devices
-
-(* The storage of the placeholders a host batch's program names: the words
-   holding its programs' addresses, which keep them loaded, and one holding
-   nx.device's entry, which calls them. *)
-let host_word = Mutex.create ()
-
-let words addresses =
-  let n = List.length addresses in
-  let w =
-    Nx_device.Buffer.create Nx_device.host Nx_dtype.Scalar.Int64 (max 1 n)
-  in
-  let b = Nx_device.Buffer.bigarray Bigarray.int64 w in
-  List.iteri (fun i a -> b.{i} <- Int64.of_nativeint a) addresses;
-  w
-
-let entry_word = lazy (words [ Nx_device.Program.entry ])
-
-let load_program = function
-  | Ops.Tag.Tuple [ Bytes binary; String name ] -> (
-      match Nx_device.Program.load Nx_device.host ~binary ~name with
-      | Ok p -> p
-      | Error why -> failwith why)
-  | _ -> invalid_arg "Tolk_engine.link: a program is a binary and a name"
-
-let host_placeholder u =
-  match Ops.tag u with
-  | Some (Tuple [ String "cfunc"; String "nx_device"; String "entry" ]) ->
-      Some (Mutex.protect host_word (fun () -> Lazy.force entry_word))
-  | Some (Tuple [ String "programs"; Tuple programs ]) ->
-      let ps = List.map load_program programs in
-      Some
-        (List.fold_left
-           (fun w p -> Nx_device.Program.keep p w)
-           (words (List.map Nx_device.Program.handle ps))
-           ps)
-  | _ -> None
-
-(* Refuses [devices] if it gives one name twice. *)
-let rec distinct = function
-  | [] -> ()
-  | (n, _) :: devices ->
-      if List.mem_assoc n devices then
-        invalid_arg
-          (Printf.sprintf "Tolk_engine.device: %s names two devices" n);
-      distinct devices
-
-let device devices name =
-  distinct devices;
-  let devices = with_hosts devices in
-  let d = find "device" devices name in
-  (* The disk runs no program: its copies are the runtime's. *)
-  let target = if d == Nx_device.disk then of_kind "DISK" else target d in
-  (* Any name of the host names it: the first one serves. The host is missing
-     only when another device has its name. *)
-  let host =
-    lazy
-      (let h = Nx_device.host_of d in
-       match List.find_opt (fun (_, h') -> h' == h) devices with
-       | Some (host, _) -> host
-       | None ->
-           invalid_arg
-             (Printf.sprintf
-                "Tolk_engine.device: %s names another device than %s's host"
-                (Nx_device.name h) name))
-  in
-  match List.find_map (fun queues -> queues ~host devices name d) vendors with
-  | Some (queues, placeholder, submitting) ->
-      {
-        device = d;
-        compiler = { Hcq2.target; work = Queues queues };
-        placeholder;
-        submitting;
-      }
-  | None when target.device = "CPU" && Nx_device.host_of d == Nx_device.host ->
-      {
-        device = d;
-        compiler = { Hcq2.target; work = Programs (Lazy.force host) };
-        placeholder = host_placeholder;
-        submitting = ignore;
-      }
-  | None ->
-      {
-        device = d;
-        compiler = { Hcq2.target; work = Calls };
-        placeholder = (fun _ -> None);
-        submitting = ignore;
-      }
-
-(* Host programs *)
-
-module Program = struct
-  (* A program whose launch splits a loop into blocks: the loop's iterations,
-     the program's operations, and the positions among its variables of those
-     that hold a block's bounds. *)
-  type split = { extent : Ops.sint; ops : Ops.sint; lo : int; hi : int }
-
-  type t = {
-    program : Nx_device.Program.t;
-    buffers : Device.Tiny_elf.param list; (* in the order of the globals *)
-    globals : int list; (* the argument slot of each *)
-    vars : Ops.t list;
-    split : split option;
-  }
-
-  let split_of prg (info : Ops.program_info) =
-    let at slot =
-      List.find_index
-        (fun v ->
-          match Ops.arg v with Ops.Param p -> p.slot = slot | _ -> false)
-        info.vars
-    in
-    match Ops.arg (Ops.nth prg 0) with
-    | Ops.Kernel { split = Some s; estimates; _ } -> (
-        let ops =
-          match estimates with Some e -> e.ops | None -> s.iterations
-        in
-        match (at s.lo, at s.hi) with
-        | Some lo, Some hi -> Some { extent = s.iterations; ops; lo; hi }
-        | _ ->
-            invalid_arg
-              "Tolk_engine.Program.load: a split's bounds are no variables")
-    | _ -> None
-
-  let load d prg =
-    if (target d).device <> "CPU" then
-      invalid_arg
-        (Printf.sprintf "Tolk_engine.Program.load: %s runs no host program"
-           (Nx_device.name d));
-    let elf = Device.Tiny_elf.of_program prg in
-    let info =
-      match Ops.arg prg with Ops.Program info -> info | _ -> assert false
-    in
-    let nbuffers = List.length info.globals in
-    let buffers = List.filteri (fun i _ -> i < nbuffers) elf.signature in
-    match
-      Nx_device.Program.load (Nx_device.host_of d) ~binary:elf.lib
-        ~name:elf.name
-    with
-    | Ok program ->
-        {
-          program;
-          buffers;
-          globals = info.globals;
-          vars = info.vars;
-          split = split_of prg info;
-        }
-    | Error why -> failwith why
-
-  let value vars v =
-    match Ops.arg v with
-    | Ops.Param p -> (
-        match
-          (Option.bind p.name (fun n -> List.assoc_opt n vars), p.bound)
-        with
-        | Some x, _ -> x
-        | None, Some b -> Dtype.Value.to_int b
-        | None, None ->
-            invalid_arg
-              (Printf.sprintf "Tolk_engine: variable %s is unbound"
-                 (Option.value p.name ~default:(string_of_int p.slot))))
-    | _ -> assert false
-
-  (* Whether the variable of slot [i] is a block's bound, which a launch sets
-     itself. *)
-  let bounds_block p i =
-    match p.split with Some s -> i = s.lo || i = s.hi | None -> false
-
-  (* The values of [vals], [p]'s variables or their bindings, each read by
-     [value], save the blocks' bounds. *)
-  let values p vals value =
-    Array.of_list
-      (List.mapi (fun i v -> if bounds_block p i then 0 else value v) vals)
-
-  (* The blocks of a launch of [extent] iterations and [ops] operations that
-     splits [s]. *)
-  let blocks_of s ~extent ~ops =
-    let most = Hcq2.blocks_per_worker * Nx_device.Program.workers () in
-    let blocks = max 1 (min (min extent most) (ops / Hcq2.block_ops)) in
-    { Nx_device.Program.extent; blocks; lo = s.lo; hi = s.hi }
-
-  (* [s] with each of its variables read by [value]. The loop a launch splits
-     may end at a variable its program no longer reads, as it reads the block's
-     bounds instead. *)
-  let eval value (s : Ops.sint) =
-    let variables u =
-      List.filter_map
-        (fun v ->
-          if Shape.is_variable v then Some (Ops.expr v, value v) else None)
-        (Ops.toposort ~calls:Enter u)
-    in
-    match s with Int n -> n | Sym u -> Shape.sym_infer s (variables u)
-
-  (* The split of a launch of [p] whose variables [value] reads, if [p]
-     splits. *)
-  let split p value =
-    match p.split with
-    | None -> None
-    | Some s ->
-        Some
-          (blocks_of s ~extent:(eval value s.extent) ~ops:(eval value s.ops))
-
-  let call p value buffers values =
-    Nx_device.Program.call ?split:(split p value) p.program buffers values
-
-  let blocks ?(vars = []) p =
-    match split p (value vars) with Some s -> s.blocks | None -> 1
-
-  let run ?(vars = []) p buffers =
-    let fn = "Tolk_engine.Program.run" in
-    let n = List.length p.buffers in
-    if List.length buffers <> n then
-      invalid_arg
-        (Printf.sprintf "%s: %d buffers for %d parameters" fn
-           (List.length buffers) n);
-    List.iter2
-      (fun (param : Device.Tiny_elf.param) b ->
-        let need =
-          List.fold_left ( * ) (Dtype.itemsize param.dtype) param.shape
-        in
-        if Nx_device.Buffer.nbytes b < need then
-          invalid_arg
-            (Printf.sprintf "%s: slot %d holds %d bytes, not %d" fn param.slot
-               (Nx_device.Buffer.nbytes b)
-               need))
-      p.buffers buffers;
-    call p (value vars) (Array.of_list buffers) (values p p.vars (value vars))
-end
-
-(* Linked schedules *)
-
-let strf = Printf.sprintf
-let fail fn fmt = Printf.ksprintf (fun m -> invalid_arg (fn ^ ": " ^ m)) fmt
-
-module B = Nx_device.Buffer
-
-(* Variables *)
-
-(* A run's variables, a cell each: those the run binds, those of the ranges
-   running a trip, and the others unset. Linking gives each name a cell, so
-   that a call reads a value without looking up its name. *)
-type env = { values : int array; set : bool array }
-
-let cell cells name =
-  match Hashtbl.find_opt cells name with
-  | Some i -> i
-  | None ->
-      let i = Hashtbl.length cells in
-      Hashtbl.add cells name i;
-      i
-
-(* How a value of a view's offset or a range's trips reads the variable [u], as
-   [Shape.sym_infer] does: a variable the run leaves unset has no value. *)
-let strict cells u =
-  let name = Ops.expr u in
-  let i = cell cells name in
-  fun env ->
-    if env.set.(i) then env.values.(i)
-    else
-      invalid_arg (strf "Tolk_engine.run: the variable %s has no value" name)
-
-(* How a call reads the variable [u] it passes a program: a variable the run
-   leaves unset takes its bound value. *)
-let binding cells u =
-  let name = Ops.expr u in
-  let i = cell cells name in
-  let unset =
-    match Ops.arg u with
-    | Ops.Param { bound = Some b; _ } ->
-        let b = Dtype.Value.to_int b in
-        fun () -> b
-    | _ ->
-        fun () ->
-          invalid_arg (strf "Tolk_engine.run: variable %s is unbound" name)
-  in
-  fun env -> if env.set.(i) then env.values.(i) else unset ()
-
-let offset cells (s : Ops.sint) = Shape.sym_compile s (strict cells)
-
-(* An input of a batch's address table, resolved at link: the parameter's slot
-   whose buffers it is, its shard, its byte offset, the device whose address the
-   table holds, and whether the batch may write it. Only a parameter's address
-   changes between runs, so the table's other addresses are written at link. *)
-type input = {
-  slot : int;
-  shard : int option;
-  offset : int;
-  on : Nx_device.t;
-  written : bool;
-}
-
-(* The value of a host program's variable on each run: a constant, a device's
-   last submitted value or the value its work signals, or the schedule's. *)
-type binder =
-  | Fixed of int
-  | Submitted of Nx_device.t
-  | Signals of Nx_device.t
-  | Var of (env -> int)
-
-(* A batch, as linked: its host program, the devices whose queues it submits,
-   its arguments, and the values its previous run signals on each device. What
-   depends on the linked schedule alone is resolved once, so that a run
-   allocates little. *)
-type batch = {
-  info : Ops.hcq_info;
-  named : string -> Nx_device.t; (* the devices of the batch, by name *)
-  host_program : Program.t;
-  devices : Nx_device.t list; (* whose queues it submits *)
-  queues : Nx_device.t array; (* the same, by index *)
-  submitting : (unit -> unit) list; (* each device's, before the host program *)
-  copies : (Nx_device.t * Nx_device.t * int) list; (* from, into, bytes *)
-  arguments : B.t list; (* by argument slot *)
-  buffers : B.t array; (* the host program's, in the order of its globals *)
-  binders : binder array; (* the host program's variables, in order *)
-  values : int array; (* the variables' values of the run being made *)
-  inputs : input array; (* the address table's entries, in order *)
-  run_inputs : B.t array; (* the inputs' buffers of the run being made *)
-  run_reached : B.t array; (* how its devices reach them, by input *)
-  addresses : nativeint array; (* the inputs' addresses of the run being made *)
-  touched : B.t list;
-      (* the arguments, the storage its words address, and how link reached that
-         storage *)
-  table : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
-  last : int array;
-}
-
-(* The buffers a run gives a view of storage, one per device, from the
-   buffers bound to the parameters and the run's variables. *)
-type operand = B.t list array -> env -> B.t list
-
-(* A launch of a host program on the device of a lane of its call: how a run
-   finds the buffers and values it passes the program, and the arrays it
-   passes them in, which each run fills anew. *)
-type launch = {
-  program : Program.t;
-  args : (B.t list array -> env -> B.t) array; (* in the order of the globals *)
-  vals : (env -> int) array; (* by variable, a block's bounds 0 *)
-  split : (Program.split * (env -> int) * (env -> int)) option;
-      (* the split, its iterations and its operations *)
-}
-
-(* A call of a schedule, as linked: a host program launched on each device of
-   its first argument, a copy, a batch, calls run once for each value of ranges,
-   each range a cell of its variable and its number of trips, or calls run once
-   per trip of a range while a flag holds. A loop reads its flag before each
-   trip into a byte of the host. *)
-type call =
-  | Kernel of { call : Ops.t; launches : launch array }
-  | Copy of { call : Ops.t; dst : operand; src : operand }
-  | Batch of batch
-  | Range of { ranges : (int * (env -> int)) list; body : call list }
-  | Loop of {
-      range : int option * (env -> int);
-      flag : B.t list array -> env -> B.t;
-      byte :
-        (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t;
-      read : B.t; (* [byte], as the host's buffer *)
-      body : call list;
-    }
-
-type t = {
-  lock : Mutex.t; (* runs share the storage: one at a time *)
-  calls : call list;
-  params : (int * Nx_device.t list * int) list;
-      (* the parameters the runs bind: slot, devices and bytes *)
-  cells : (string, int) Hashtbl.t; (* the variables' cells, by name *)
-  env : env; (* the variables of the run being made *)
-  mutable synced : Nx_device.t list;
-      (* the devices the run's host programs synchronized since it last queued
-         work *)
-}
+(* [view_offset], through a shard selection too: the storage, the shard
+   selected, if any, and the byte offset. *)
+let lane_offset v =
+  let sel, off = view_offset v in
+  if Ops.op sel <> Op.Mselect then (sel, None, off)
+  else
+    let base, inner = view_offset (Ops.nth sel 0) in
+    let shard = match Ops.arg sel with Ops.Shard i -> Some i | _ -> None in
+    (base, shard, Shape.Sint.(off + inner))
 
 let names u =
   match Ops.device u with
@@ -455,607 +94,750 @@ let is_slot u =
 
 let bytes u = Shape.max_numel u * Dtype.itemsize (Ops.dtype u)
 
-let at b off n =
-  if
-    (off = 0
-    && B.nbytes b = n)
-    [@mutate off "a view of a whole buffer is the buffer"]
-  then b
-  else B.view b ~offset:off Nx_dtype.Scalar.UInt8 n
-
 let sint u =
   match Ops.arg u with
   | Ops.Const (`Int z) -> Ops.Int (Bigint.to_int z)
   | _ -> Sym u
 
-let lane buffers i = match buffers with [ b ] -> b | bs -> List.nth bs i
+let is_variable u =
+  Ops.op u = Op.Param
+  && (Ops.addrspace u = Some Dtype.Alu || Shape.is_variable u)
 
-let refused d b why =
-  invalid_arg
-    (strf "Tolk_engine: %s cannot address memory of %s: %s" (Nx_device.name d)
-       (Nx_device.name (B.device b))
-       why)
+(* Variables *)
 
-(* How [d]'s work reaches [b]: [b] on [d], and otherwise as nx.device's
-   [Buffer.reach] gives it for [access], staged where [d] maps none of it. *)
-let reach d b access =
-  if B.device b == d then b
-  else match B.reach d b access with Ok r -> r | Error why -> refused d b why
+(* A run's variables, a cell each, set where the run binds them. Linking gives
+   each name a cell, so that a run reads a value without looking up its name. *)
+type env = { values : int array; set : bool array }
 
-(* A placeholder's storage is its device's to address, and is borrowed alone: a
-   signal word, which the host waits on while the work runs, cannot be
-   staged. *)
-let borrowed d b =
-  if B.device b == d then b
-  else match B.borrow d b with Ok r -> r | Error why -> refused d b why
+let cell cells name =
+  match Hashtbl.find_opt cells name with
+  | Some i -> i
+  | None ->
+      let i = Hashtbl.length cells in
+      Hashtbl.add cells name i;
+      i
 
-(* Whether [b] and [b'] are the same bytes. *)
-let same_memory b b' =
-  b == b'
-  || (B.nbytes b = B.nbytes b' && Nativeint.equal (B.address b) (B.address b'))
+(* How a run reads the variable [u]: its binding, or else the value it is bound
+   to. *)
+let reader cells u =
+  let name = Ops.expr u in
+  let i = cell cells name in
+  let unset =
+    match Ops.arg u with
+    | Ops.Param { bound = Some b; _ } ->
+        let b = Dtype.Value.to_int b in
+        fun () -> b
+    | _ ->
+        fun () ->
+          invalid_arg (strf "Tolk_engine.run: variable %s is unbound" name)
+  in
+  fun env -> if env.set.(i) then env.values.(i) else unset ()
+
+(* Values as forms of words *)
+
+(* The value [Σ factor · word + add] of words of the run's ints: the words that
+   hold the run's variables and the values computed from them, and those where
+   loops store their trips. *)
+type affine = { terms : (int * int) list; add : int }
+
+let constant add = { terms = []; add }
+let word w = { terms = [ (w, 1) ]; add = 0 }
+
+let scale k a =
+  { terms = List.map (fun (w, f) -> (w, k * f)) a.terms; add = k * a.add }
+
+let plus a b =
+  let add terms (w, f) =
+    match List.assoc_opt w terms with
+    | Some g -> (w, f + g) :: List.remove_assoc w terms
+    | None -> (w, f) :: terms
+  in
+  { terms = List.fold_left add a.terms b.terms; add = a.add + b.add }
+
+(* What a word of the ints holds: a value each run computes before its first
+   step, or a loop's trip. *)
+type word_kind = Computed of (env -> int) | Trip
+
+(* Inputs *)
+
+(* A buffer a run is given: a lane of a parameter's buffers, or a buffer bound
+   at link. *)
+type source = Lane of { slot : int; lane : int } | Bound of Rig.Buffer.t
+
+(* An input of the program: a buffer a run is given, or the bytes of one at an
+   offset the run's words compute. *)
+type input =
+  | Whole of source
+  | Part of { source : source; first : int array -> int; length : int }
+
+(* Where a view lies: in memory made at link, of its bytes, or in an input, at
+   an offset. *)
+type place = Memory of { memory : int; bytes : int } | Input of int
+type located = { place : place; offset : affine; device : Rig.t }
+
+(* Linking *)
+
+(* The submission being built: its device's index, its parts and slots, in
+   reverse. *)
+type pending = {
+  on : int;
+  mutable parts : Rig_program.part list;
+  slots : Rig_program.slot Dynarray.t;
+  mutable nparts : int;
+}
+
+(* A kernel of the schedule, for reports and timing: the device it runs on, its
+   function's name and its call. *)
+type kernel = { device : Rig.t; name : string; call : Ops.t }
+
+(* What linking builds: the program's devices, memory, images, inputs and words,
+   each by index, and the steps of the loop being built. *)
+type builder = {
+  fn : string;
+  named : string -> Rig.t;
+  separate : bool;
+  bound : Rig.Buffer.t list Ops.Tbl.t;
+  cells : (string, int) Hashtbl.t;
+  rigs : Rig.t Dynarray.t;
+  memory : Rig_program.memory Dynarray.t;
+  memories : (int, int) Hashtbl.t Ops.Tbl.t;
+  images : Rig_program.image Dynarray.t;
+  image_of : (int * string, int) Hashtbl.t;
+  inputs : (input * Rig_program.input) Dynarray.t;
+  lane_inputs : (int * int, int) Hashtbl.t;
+  mutable bound_inputs : (Rig.Buffer.t * int) list;
+  mutable params : (int * Rig.t list * int) list;
+  words : word_kind Dynarray.t;
+  var_words : (string, int) Hashtbl.t;
+  computed : (int * int) list Ops.Tbl.t;
+  trips : int Ops.Tbl.t;
+  mutable steps : Rig_program.step list;
+  mutable pending : pending option;
+  mutable kernels : kernel list;
+}
+
+(* Appends [x] to [a], and is its index. *)
+let push a x =
+  Dynarray.add_last a x;
+  Dynarray.length a - 1
+
+let device_index b d =
+  match Dynarray.find_index (Rig.equal d) b.rigs with
+  | Some i -> i
+  | None -> push b.rigs d
+
+let new_word b kind = push b.words kind
+
+let var_word b u =
+  let name = Ops.expr u in
+  match Hashtbl.find_opt b.var_words name with
+  | Some w -> w
+  | None ->
+      let w = new_word b (Computed (reader b.cells u)) in
+      Hashtbl.add b.var_words name w;
+      w
+
+(* Whether [u] reads a range: a value that moves with its loop's trips. *)
+let moves u =
+  List.exists (fun x -> Ops.op x = Op.Range) (Ops.toposort ~calls:Skip u)
+
+let reads_variable u = List.exists is_variable (Ops.toposort ~calls:Skip u)
+
+(* The word that holds [u], an expression of the run's variables on lane [lane],
+   which each run computes. *)
+let computed_word b lane u =
+  let ws = Option.value (Ops.Tbl.find_opt b.computed u) ~default:[] in
+  match List.assoc_opt lane ws with
+  | Some w -> w
+  | None ->
+      let read v =
+        match Ops.arg v with
+        | Ops.Param { name = Some "_device_num"; _ } -> fun _ -> lane
+        | _ -> reader b.cells v
+      in
+      let w = new_word b (Computed (Shape.sym_compile (Sym u) read)) in
+      Ops.Tbl.replace b.computed u ((lane, w) :: ws);
+      w
 
 let int_of_const u =
   match Ops.arg u with
   | Ops.Const (`Int z) -> Bigint.to_int z
-  | Ops.Const (`Bool b) -> Bool.to_int b
+  | Ops.Const (`Bool x) -> Bool.to_int x
   | _ -> invalid_arg (Format.asprintf "%a is no integer" Ops.pp u)
 
-(* How a run reads the value [u] that a call passes a program on the device of
-   lane [lane]: a constant, the lane's number, a variable, or an expression of
-   the ranges running a trip. *)
-let reader cells lane u =
+(* [u] on lane [lane] as a form of words: a range's trip moves it by a constant
+   factor, and the rest of it is computed for the run. *)
+let rec affine b lane u =
   match (Ops.op u, Ops.arg u) with
-  | Op.Const, _ ->
-      let c = int_of_const u in
-      fun _ -> c
-  | Op.Param, Ops.Param { name = Some "_device_num"; _ } -> fun _ -> lane
-  | Op.Param, _ -> binding cells u
-  | _ -> offset cells (Sym u)
+  | Op.Const, _ -> constant (int_of_const u)
+  | Op.Range, _ -> (
+      match Ops.Tbl.find_opt b.trips u with
+      | Some w -> word w
+      | None -> fail b.fn "%s reads a range outside its loop" (Ops.expr u))
+  | Op.Param, Ops.Param { name = Some "_device_num"; _ } -> constant lane
+  | Op.Param, _ when is_variable u -> word (var_word b u)
+  | Op.Add, _ ->
+      plus (affine b lane (Ops.nth u 0)) (affine b lane (Ops.nth u 1))
+  | Op.Mul, _ -> (
+      let x = affine b lane (Ops.nth u 0) and y = affine b lane (Ops.nth u 1) in
+      match (x.terms, y.terms) with
+      | [], _ -> scale x.add y
+      | _, [] -> scale y.add x
+      | _ -> computed b lane u)
+  | Op.Cast, _ when Dtype.is_int (Ops.dtype u) -> affine b lane (Ops.nth u 0)
+  | _ -> computed b lane u
 
-let not_storage base =
-  invalid_arg (Format.asprintf "%a is not storage" Ops.pp base)
+and computed b lane u =
+  if moves u then
+    fail b.fn "%s moves with its loop's trips by no constant factor"
+      (Ops.expr u)
+  else if not (reads_variable u) then constant (Shape.sym_infer (Sym u) [])
+  else word (computed_word b lane u)
 
-(* The buffers of the view [u], one per device, or one shared by them all: of a
-   parameter the run binds, of linked storage or placeholders, or of a stack of
-   one view per device. A view of linked storage at a constant offset is made
-   once. *)
-let rec operand storage cells u : operand =
-  let base, shard, off = Hcq2.lane_offset u in
-  let n = bytes u in
-  let select bs = match shard with Some i -> [ List.nth bs i ] | None -> bs in
-  let views bs o = List.map (fun b -> at b o n) (select bs) in
-  let moving = offset cells off in
-  match (Ops.op base, Ops.arg base, off) with
-  | Op.Param, Ops.Param p, _ when Option.is_none (Ops.tag base) ->
-      fun slots env -> views slots.(p.slot) (moving env)
-  | (Op.Param | Op.Buffer), _, Int o -> (
-      match Ops.Tbl.find_opt storage base with
+let affine_sint b lane : Ops.sint -> affine = function
+  | Int n -> constant n
+  | Sym u -> affine b lane u
+
+(* A value of one word, such as a grid's size or a loop's trips. *)
+let value b lane (s : Ops.sint) : Rig_program.value =
+  let a = affine_sint b lane s in
+  match (a.terms, s) with
+  | [], _ -> Fixed a.add
+  | [ (w, 1) ], _ when a.add = 0 -> Int w
+  | _, Sym u when not (moves u) -> Int (computed_word b lane u)
+  | _ -> fail b.fn "a value of one word moves with its loop's trips"
+
+(* Storage *)
+
+let memory b base lane d =
+  let lanes =
+    match Ops.Tbl.find_opt b.memories base with
+    | Some l -> l
+    | None ->
+        let l = Hashtbl.create 1 in
+        Ops.Tbl.replace b.memories base l;
+        l
+  in
+  match Hashtbl.find_opt lanes lane with
+  | Some m -> m
+  | None ->
+      let m =
+        Rig_program.Alloc
+          {
+            device = device_index b d;
+            kind = Device;
+            bytes = max 1 (bytes base);
+            init = { bytes = ""; holes = [||] };
+            copies = One;
+          }
+      in
+      let i = push b.memory m in
+      Hashtbl.replace lanes lane i;
+      i
+
+let add_input b input desc = push b.inputs (input, desc)
+
+let lane_input b ~slot ~lane d n =
+  match Hashtbl.find_opt b.lane_inputs (slot, lane) with
+  | Some i -> i
+  | None ->
+      let i =
+        add_input b
+          (Whole (Lane { slot; lane }))
+          { device = device_index b d; bytes = n }
+      in
+      Hashtbl.replace b.lane_inputs (slot, lane) i;
+      i
+
+let bound_input b buf =
+  match List.assq_opt buf b.bound_inputs with
+  | Some i -> i
+  | None ->
+      let i =
+        add_input b (Whole (Bound buf))
+          {
+            device = device_index b (Rig.Buffer.device buf);
+            bytes = Rig.Buffer.length buf;
+          }
+      in
+      b.bound_inputs <- (buf, i) :: b.bound_inputs;
+      i
+
+let note_param b slot ds n =
+  if not (List.exists (fun (s, _, _) -> s = slot) b.params) then
+    b.params <- (slot, ds, n) :: b.params
+
+(* Where the view [u] of lane [lane] lies: a lane of a parameter, which a run
+   gives; of bound storage; of storage made at link; or of a stack of one view
+   per device. A storage of one device serves every lane. *)
+let rec locate b u lane =
+  let base, shard, off = lane_offset u in
+  let offset = affine_sint b lane off in
+  let pick ns =
+    match shard with
+    | Some j -> j
+    | None -> if List.compare_length_with ns 1 = 0 then 0 else lane
+  in
+  match (Ops.op base, Ops.arg base) with
+  | Op.Param, Ops.Param p when is_slot base ->
+      let ns = names base in
+      let ds = List.map b.named ns in
+      let n = bytes base in
+      note_param b p.slot ds n;
+      let j = pick ns in
+      let d = List.nth ds j in
+      {
+        place = Input (lane_input b ~slot:p.slot ~lane:j d n);
+        offset;
+        device = d;
+      }
+  | Op.Buffer, _ -> (
+      let ns = names base in
+      let j = pick ns in
+      match Ops.Tbl.find_opt b.bound base with
       | Some bs ->
-          let vs = views bs o in
-          fun _ _ -> vs
-      | None -> fun _ _ -> views (Ops.Tbl.find storage base) o)
-  | (Op.Param | Op.Buffer), _, Sym _ ->
-      fun _ env -> views (Ops.Tbl.find storage base) (moving env)
-  | Op.Mstack, _, _ ->
-      let stack = List.map (operand storage cells) (Ops.src base) in
-      fun slots env ->
-        views (List.concat_map (fun v -> v slots env) stack) (moving env)
-  | _ -> not_storage base
+          let buf = List.nth bs j in
+          {
+            place = Input (bound_input b buf);
+            offset;
+            device = Rig.Buffer.device buf;
+          }
+      | None ->
+          let d = b.named (List.nth ns j) in
+          let memory = memory b base j d in
+          {
+            place = Memory { memory; bytes = max 1 (bytes base) };
+            offset;
+            device = d;
+          })
+  | Op.Mstack, _ ->
+      let k = match shard with Some k -> k | None -> lane in
+      let l = locate b (List.nth (Ops.src base) k) 0 in
+      { l with offset = plus l.offset offset }
+  | _ -> fail b.fn "%s is not storage" (Format.asprintf "%a" Ops.pp base)
 
-(* The buffer of the view [u] that the launch of lane [i] passes: a lane or
-   shard of a parameter or of linked storage, at an offset that may move with a
-   range. A view of linked storage at a constant offset is made once. *)
-let lane_operand storage cells u i =
-  let base, shard, off = Hcq2.lane_offset u in
-  let n = bytes u in
-  let pick bs = match shard with Some j -> List.nth bs j | None -> lane bs i in
-  let moving = offset cells off in
-  let linked = Ops.Tbl.find_opt storage base in
-  match (Ops.op base, Ops.arg base, off, linked) with
-  | Op.Param, Ops.Param p, _, _ when Option.is_none (Ops.tag base) ->
-      fun slots env -> at (pick slots.(p.slot)) (moving env) n
-  | (Op.Param | Op.Buffer), _, Int o, Some bs ->
-      let b = at (pick bs) o n in
-      fun _ _ -> b
-  | (Op.Param | Op.Buffer), _, Sym _, Some bs ->
-      let b = pick bs in
-      fun _ env -> at b (moving env) n
+(* Steps *)
+
+let emit b step = b.steps <- step :: b.steps
+
+let flush b =
+  match b.pending with
+  | None -> ()
+  | Some p ->
+      b.pending <- None;
+      emit b
+        (Submit
+           {
+             device = p.on;
+             parts = Iarray.of_list (List.rev p.parts);
+             slots = Iarray.of_list (Dynarray.to_list p.slots);
+             fixed = Iarray.of_list [];
+           })
+
+(* The submission of [on] that takes the next part: one of at most the parts
+   its device always runs ([Rig.most_parts]). *)
+let pending b on =
+  match b.pending with
+  | Some p
+    when p.on = on && p.nparts < Rig.most_parts (Dynarray.get b.rigs on) ->
+      p
   | _ ->
-      let v = operand storage cells u in
-      fun slots env -> lane (v slots env) i
+      flush b;
+      let p = { on; parts = []; slots = Dynarray.create (); nparts = 0 } in
+      b.pending <- Some p;
+      p
 
-(* The launch of the host program [prg] that [call] makes on [d], the device of
-   its lane [i]. *)
-let launch storage cells call prg d i =
-  let p = Program.load d prg in
-  let info = match Ops.arg prg with Ops.Program i -> i | _ -> assert false in
+let add_part b p part =
+  p.parts <- part :: p.parts;
+  p.nparts <- p.nparts + 1;
+  if b.separate then flush b
+
+let slot_index p (s : Rig_program.slot) =
+  match Dynarray.find_index (( = ) s) p.slots with
+  | Some i -> i
+  | None -> push p.slots s
+
+(* The steps [f] emits, as the body of a loop. *)
+let nested b f =
+  flush b;
+  let outer = b.steps in
+  b.steps <- [];
+  f ();
+  flush b;
+  let body = Iarray.of_list (List.rev b.steps) in
+  b.steps <- outer;
+  body
+
+(* Launches *)
+
+(* A block repays waking the host's threads and joining them once it does 2^18
+   operations. *)
+let block_ops = 1 lsl 18
+
+(* The blocks a split launch of [extent] iterations and [ops] operations runs
+   in, and the iterations of each but the last. *)
+let blocks ~extent ~ops =
+  let n = max 1 (min extent (ops / block_ops)) in
+  (n, max 1 ((extent + n - 1) / n))
+
+let le bytes at width v =
+  match width with
+  | 1 -> Bytes.set_int8 bytes at v
+  | 2 -> Bytes.set_int16_le bytes at v
+  | 4 -> Bytes.set_int32_le bytes at (Int32.of_int v)
+  | _ -> Bytes.set_int64_le bytes at (Int64.of_int v)
+
+(* Writes [a] into [width] bytes at [at]: its constant, or a hole. *)
+let place b bytes holes at width a =
+  match a.terms with
+  | [] -> le bytes at width a.add
+  | terms ->
+      let width : Rig_program.width =
+        match width with
+        | 4 -> W32
+        | 8 -> W64
+        | _ -> fail b.fn "a value of %d bytes moves with the run" width
+      in
+      let terms =
+        Iarray.of_list (List.map (fun (w, f) -> (Rig_program.Int w, f)) terms)
+      in
+      holes :=
+        { Rig_program.at; width; terms; add = a.add; shift = 0 } :: !holes
+
+let whole (l : located) : Rig_program.slot =
+  match l.place with
+  | Memory { memory; bytes } -> Memory { memory; offset = 0; length = bytes }
+  | Input i -> Input i
+
+let program_info prg =
+  match Ops.arg prg with
+  | Ops.Program info -> info
+  | _ -> invalid_arg "Tolk_engine: a call of no compiled program"
+
+let kernel_of prg =
+  match Ops.arg (Ops.nth prg 0) with
+  | Ops.Kernel k -> k
+  | _ -> invalid_arg "Tolk_engine: a program of no kernel"
+
+let image b dev binary =
+  match Hashtbl.find_opt b.image_of (dev, binary) with
+  | Some i -> i
+  | None ->
+      let i =
+        push b.images
+          {
+            Rig_program.device = dev;
+            binary = { bytes = binary; holes = [||] };
+          }
+      in
+      Hashtbl.replace b.image_of (dev, binary) i;
+      i
+
+let rec split_at n l =
+  if n = 0 then ([], l)
+  else
+    match l with
+    | x :: rest ->
+        let a, rest = split_at (n - 1) rest in
+        (x :: a, rest)
+    | [] -> ([], [])
+
+type grid = Rig_program.value * Rig_program.value * Rig_program.value
+
+let one : grid = (Fixed 1, Fixed 1, Fixed 1)
+
+let triple : Rig_program.value list -> grid = function
+  | [ x; y; z ] -> (x, y, z)
+  | [ x; y ] -> (x, y, Fixed 1)
+  | [ x ] -> (x, Fixed 1, Fixed 1)
+  | _ -> (Fixed 1, Fixed 1, Fixed 1)
+
+(* How a run computes [s], which reads no range, on lane [lane]. *)
+let counter b lane (s : Ops.sint) =
+  match s with
+  | Int n -> fun _ -> n
+  | Sym u when moves u ->
+      fail b.fn "a split loop's iterations move with its loop's trips"
+  | Sym _ ->
+      let read v =
+        match Ops.arg v with
+        | Ops.Param { name = Some "_device_num"; _ } -> fun _ -> lane
+        | _ -> reader b.cells v
+      in
+      Shape.sym_compile s read
+
+(* The grid of a host program that splits its loop of [extent] iterations into
+   blocks: a group of threads per block, a thread per iteration. *)
+let split_grid b lane extent (k : Ops.kernel_info) : grid * grid =
+  let ops = match k.estimates with Some e -> e.ops | None -> extent in
+  match (extent, ops) with
+  | Int extent, Int ops ->
+      let n, t = blocks ~extent ~ops in
+      ((Fixed n, Fixed 1, Fixed 1), (Fixed t, Fixed 1, Fixed 1))
+  | extent, ops ->
+      let extent = counter b lane extent and ops = counter b lane ops in
+      let n env = fst (blocks ~extent:(extent env) ~ops:(ops env)) in
+      let t env = snd (blocks ~extent:(extent env) ~ops:(ops env)) in
+      ( (Int (new_word b (Computed n)), Fixed 1, Fixed 1),
+        (Int (new_word b (Computed t)), Fixed 1, Fixed 1) )
+
+(* The launch of the compiled program [prg] that [call] makes on its lane
+   [lane], whose device is [d]. A host program runs on its device's host. *)
+let launch b call prg lane d =
+  let info = program_info prg and k = kernel_of prg in
+  let elf = Device.Tiny_elf.of_program prg in
+  let kind = (target d).device in
+  if kind <> info.target.device then
+    fail b.fn "%s runs no %s program" (Rig.name d) info.target.device;
+  let host = kind = "CPU" in
+  let on = if host then Rig.host_of d else d in
+  let dev = device_index b on in
+  let image = image b dev elf.lib in
   let args = Realize.get_call_arg_uops call in
-  let value k v =
-    if Program.bounds_block p k then fun _ -> 0 else reader cells i v
+  let bound slot =
+    match k.split with Some s -> slot = s.lo || slot = s.hi | None -> false
   in
-  let count (s : Ops.sint) = Shape.sym_compile s (reader cells i) in
-  {
-    program = p;
-    args =
-      Array.of_list
-        (List.map
-           (fun g -> lane_operand storage cells (List.nth args g) i)
-           info.globals);
-    vals = Array.of_list (List.mapi value (Realize.get_call_var_uops call prg));
-    split =
-      Option.map
-        (fun (s : Program.split) -> (s, count s.extent, count s.ops))
-        p.split;
-  }
-
-(* The storage each device holds of [base], linked: storage, a placeholder, or
-   the stack of one view per device. *)
-let holds storage base =
-  match Ops.op base with
-  | Op.Param | Op.Buffer -> Ops.Tbl.find storage base
-  | Op.Mstack ->
-      let cells = Hashtbl.create 1 in
-      let stack = List.map (operand storage cells) (Ops.src base) in
-      let unset = Hashtbl.length cells in
-      let env = { values = Array.make unset 0; set = Array.make unset false } in
-      List.concat_map (fun v -> v [||] env) stack
-  | _ -> not_storage base
-
-(* Link patches *)
-
-(* The value of a word known at link, with each address resolved. *)
-let rec word addr u : Dtype.value =
-  let v x : Dtype.value = match word addr x with #Dtype.value as x -> x in
-  match (Ops.op u, Ops.arg u) with
-  | Op.Const, Ops.Const (#Dtype.value as c) -> c
-  | Op.Getaddr, Ops.Device d ->
-      let dn = match d with Single n | Multi (n :: _) -> n | Multi [] -> "" in
-      `Int (Bigint.of_nativeint (addr dn (Ops.nth u 0)))
-  | Op.Cast, _ -> Dtype.truncate (Ops.dtype u) (v (Ops.nth u 0))
-  | Op.Bitcast, _ ->
-      let x = Ops.nth u 0 in
-      Dtype.bitcast (Ops.dtype x) (Ops.dtype u) (v x)
-  | o, _ -> (
-      match
-        Ops.exec_alu o (Ops.dtype u)
-          (List.map (fun x -> (v x :> Dtype.const)) (Ops.src u))
-      with
-      | #Dtype.value as x -> x
-      | `Invalid ->
-          invalid_arg (Format.asprintf "Tolk_engine.link: %a" Ops.pp u))
-
-(* The little-endian bytes of [v], a value of [dt]. *)
-let le dt (v : Dtype.value) =
-  let n = Dtype.itemsize dt in
-  let unsigned =
-    match n with
-    | 1 -> Dtype.Uint8
-    | 2 -> Dtype.Uint16
-    | 4 -> Dtype.Uint32
-    | _ -> Dtype.Uint64
+  let values = List.combine info.vars (Realize.get_call_var_uops call prg) in
+  let vars =
+    List.filter
+      (fun (v, _) ->
+        match Ops.arg v with Ops.Param p -> not (bound p.slot) | _ -> true)
+      values
   in
-  let z =
-    match (dt, v) with
-    | Dtype.Bool, `Bool b -> Bigint.of_int (Bool.to_int b)
-    | _ -> (
-        match Dtype.bitcast dt unsigned v with `Int z -> z | _ -> assert false)
+  (* Its parameters: a pointer to each buffer, each variable but a split's
+     bounds, and a split loop's iterations, each aligned to its size, as the
+     program reads them ({!Tolk.Codegen}). *)
+  let fields =
+    List.map (fun _ -> Dtype.Uint64) info.globals
+    @ List.map (fun (v, _) -> Ops.dtype v) vars
+    @ if Option.is_some k.split then [ Dtype.Int64 ] else []
   in
-  String.init n (fun k -> Char.chr (Bigint.to_int (Bigint.extract z (8 * k) 8)))
-
-let write b off s =
-  let n = String.length s in
-  if (n > 0) [@mutate off "a copy of no bytes writes nothing"] then
-    let src = Bigarray.(Array1.init char c_layout n (String.get s)) in
-    B.copy ~src:(B.of_bigarray src) ~dst:(at b off n)
-
-(* The linked buffer the view [u] is of, the shard it selects, and the view's
-   byte offset in it. *)
-let linked_at storage u =
-  let base, shard, off = Hcq2.unwrap_lane u in
-  (List.nth (holds storage base) (Option.value shard ~default:0), off)
-
-(* Writes the link patch [p], a store of bytes or of words at constant element
-   indices, into the linked storage its view is of. *)
-let apply storage addr p =
-  let dst = Ops.nth p 0 and v = Ops.nth p 1 in
-  let base_at = linked_at storage in
-  let bytes_of u =
-    match (Ops.op u, Ops.arg u) with
-    | Op.Binary, Ops.Bytes s -> Some s
-    | Op.Bitcast, _ -> (
-        match Ops.arg (Ops.nth u 0) with Ops.Bytes s -> Some s | _ -> None)
-    | _ -> None
+  let offsets =
+    Device.Tiny_elf.iter_sig
+      (List.mapi
+         (fun slot dtype ->
+           { Device.Tiny_elf.name = None; slot; dtype; shape = [] })
+         fields)
   in
-  match (bytes_of v, Ops.op dst) with
-  | Some s, _ ->
-      let b, off = base_at dst in
-      write b off s
-  | None, Op.Index -> (
-      let viewed = Ops.nth dst 0 in
-      let b, off = base_at viewed in
-      let dt = Ops.dtype v in
-      let n = Dtype.itemsize dt in
-      (* A group of one row is its index and its word, unstacked. *)
-      let lanes u = if Ops.op u = Op.Stack then Ops.src u else [ u ] in
-      match (lanes (Ops.nth dst 1), lanes v) with
-      | offs, words when List.length offs = List.length words ->
-          List.iter2
-            (fun o w ->
-              write b (off + (int_of_const o * n)) (le dt (word addr w)))
-            offs words
-      | _ -> invalid_arg "Tolk_engine.link: a patch of mismatched stacks")
-  | None, _ ->
-      invalid_arg
-        (Format.asprintf "Tolk_engine.link: %a is no link patch" Ops.pp p)
-
-(* Batches *)
-
-let signal_word_tag = Ops.Tag.String "timeline"
-let staging_tag = Ops.Tag.String "staging"
-
-(* The host's staging memory, which nx.device's copies and the staged copies of
-   every linked schedule share: each run that stages through it touches it, and
-   so holds the host taken, as nx.device's copies do. *)
-let staging h n =
-  let b = Nx_device.staging h in
-  if B.nbytes b < n then
-    invalid_arg
-      (strf "Tolk_engine.link: %s's staging memory holds %d bytes, not %d"
-         (Nx_device.name h) (B.nbytes b) n);
-  b
-
-(* The storage of a batch's placeholder [u]: the signal word of its device for
-   ["timeline"], the host's staging memory for ["staging"], the address of a C
-   function for a [("cfunc", lib, f)] tuple, and for any other, which the host
-   writes: pinned memory for a volatile placeholder, which the device writes
-   too, and for a command buffer, which the device fetches; mapped memory, which
-   the device reads as its own, for the rest, such as kernel arguments. *)
-(* The vendor whose commands name a placeholder gives its storage: its own
-   device's, or a device of the batch's, such as the vendor that owns a C
-   function its host program calls. *)
-let placeholder device queues u =
-  let dev = device (List.hd (names u)) in
-  let d = dev.device in
-  let named =
-    List.find_map
-      (fun n -> (device n).placeholder u)
-      (List.hd (names u) :: queues)
+  (* A structure's size is a multiple of its widest field's. *)
+  let size, align =
+    List.fold_left
+      (fun (m, a) (o, dt) ->
+        let n = Dtype.itemsize dt in
+        (max m (o + n), max a n))
+      (0, 4) offsets
   in
-  match named with
-  | Some b when B.nbytes b < bytes u ->
-      invalid_arg
-        (Format.asprintf "Tolk_engine.link: %a's storage holds %d bytes, not %d"
-           Ops.pp u (B.nbytes b) (bytes u))
-  | Some b -> b
-  | None -> (
-      match Ops.tag u with
-      | Some t when Ops.Tag.equal t signal_word_tag -> Nx_device.signal_word d
-      | Some t when Ops.Tag.equal t staging_tag -> staging d (bytes u)
-      | Some (Ops.Tag.Tuple [ String "cfunc"; String lib; String _ ]) ->
-          invalid_arg (strf "Tolk_engine.link: no C library %s" lib)
-      | _ ->
-          let volatile =
-            match Ops.arg u with Ops.Param p -> p.volatile | _ -> false
-          in
-          let memory : B.memory =
-            if volatile || Hcq2.is_cmdbuf u then Pinned else Mapped
-          in
-          B.create ~memory d Nx_dtype.Scalar.UInt8 (max 1 (bytes u)))
+  let params = Bytes.make (Helpers.round_up size align) '\000' in
+  let holes = ref [] in
+  let buffers_at, rest = split_at (List.length info.globals) offsets in
+  let vars_at, extent_at = split_at (List.length vars) rest in
+  let p = pending b dev in
+  let refs =
+    List.map2
+      (fun g (at, _) ->
+        let l = locate b (List.nth args g) lane in
+        place b params holes at 8 l.offset;
+        let use : Rig_program.use =
+          if List.mem g info.outs then Write else Read
+        in
+        { Rig_program.slot = slot_index p (whole l); at; use })
+      info.globals buffers_at
+  in
+  List.iter2
+    (fun (_, v) (at, dt) ->
+      place b params holes at (Dtype.itemsize dt) (affine b lane v))
+    vars vars_at;
+  let groups, threads =
+    match k.split with
+    | Some s ->
+        (* The bound [hi] of the whole loop is its iterations. *)
+        let extent =
+          List.find_map
+            (fun (v, x) ->
+              match Ops.arg v with
+              | Ops.Param p when p.slot = s.hi -> Some (sint x)
+              | _ -> None)
+            values
+          |> Option.value ~default:s.iterations
+        in
+        List.iter
+          (fun (at, _) -> place b params holes at 8 (affine_sint b lane extent))
+          extent_at;
+        split_grid b lane extent k
+    | None when host -> (one, one)
+    | None ->
+        ( triple (List.map (value b lane) info.global_size),
+          triple (List.map (value b lane) info.local_size) )
+  in
+  b.kernels <- { device = on; name = elf.name; call } :: b.kernels;
+  add_part b p
+    (Launch
+       {
+         image;
+         name = elf.name;
+         params =
+           { bytes = Bytes.to_string params; holes = Iarray.of_list !holes };
+         refs = Iarray.of_list refs;
+         groups;
+         threads;
+         shared = Fixed 0;
+       })
 
-let hcq_info call =
-  match Ops.arg call with Ops.Call { aux; _ } -> aux | _ -> None
+(* Copies *)
 
-let link_batch ~device ~storage ~cells call patches =
-  let info = Option.get (hcq_info call) in
-  let args = Realize.get_call_arg_uops call in
-  let is_placeholder u = Ops.op u = Op.Param && Option.is_some (Ops.tag u) in
-  (* The placeholders the patches address are the batch's too, though its host
-     program may not take them, such as a signal word only its queues read. *)
-  let patched = List.concat_map (Ops.toposort ~calls:Enter) patches in
+(* [l] as a copy's end: its memory or input whole, at the offset each step
+   computes from the run's ints. *)
+let copy_end (l : located) :
+    Rig_program.slot * (Rig_program.value * int) iarray =
+  let slot : Rig_program.slot =
+    match l.place with
+    | Memory { memory; bytes } -> Memory { memory; offset = 0; length = bytes }
+    | Input i -> Input i
+  in
+  let words = List.map (fun (w, f) -> (Rig_program.Int w, f)) l.offset.terms in
+  let add =
+    if l.offset.add = 0 then [] else [ (Rig_program.Fixed l.offset.add, 1) ]
+  in
+  (slot, Iarray.of_list (add @ words))
+
+(* The [n] bytes of [l] as a move's end: memory made at link at a constant
+   offset, a bound buffer whole, or the bytes of an input at an offset each run
+   computes. A move copies its ends whole ([Rig.Buffer.copy]). *)
+let move_end b (l : located) n : Rig_program.slot =
+  match l.place with
+  | Memory { memory; _ } -> (
+      match l.offset.terms with
+      | [] -> Memory { memory; offset = l.offset.add; length = n }
+      | _ -> fail b.fn "a move's offset into storage made at link moves")
+  | Input i ->
+      let input, desc = Dynarray.get b.inputs i in
+      let source = match input with Whole s -> s | Part _ -> assert false in
+      let a = l.offset in
+      let is_trip (w, _) =
+        match Dynarray.get b.words w with Trip -> true | Computed _ -> false
+      in
+      if List.exists is_trip a.terms then
+        fail b.fn "a move's offset into an input moves with its loop's trips";
+      let whole =
+        a.terms = [] && a.add = 0
+        &&
+        match source with
+        | Bound buf -> Rig.Buffer.length buf = n
+        | Lane _ -> false
+      in
+      if whole then Input i
+      else
+        let first ints =
+          List.fold_left (fun s (w, f) -> s + (f * ints.(w))) a.add a.terms
+        in
+        Input
+          (add_input b
+             (Part { source; first; length = n })
+             { device = desc.device; bytes = n })
+
+(* The copy [call] makes on its lane [lane]: a copy part of the source's device
+   or the destination's, the source's first, where it copies between the two
+   ([copies_between]), or else the host's copy. *)
+let copy b call lane =
+  match Realize.get_call_arg_uops call with
+  | [ dst; src ] ->
+      let length = bytes dst in
+      let d = locate b dst lane and s = locate b src lane in
+      let dst_slot, dst_offset = copy_end d
+      and src_slot, src_offset = copy_end s in
+      let runs c = copies_between c s.device d.device in
+      begin match List.find_opt runs [ s.device; d.device ] with
+      | Some c ->
+          let p = pending b (device_index b c) in
+          let src = slot_index p src_slot in
+          let dst = slot_index p dst_slot in
+          add_part b p (Copy { src; src_offset; dst; dst_offset; length })
+      | None ->
+          flush b;
+          emit b
+            (Move { src = move_end b s length; dst = move_end b d length })
+      end
+  | _ -> fail b.fn "a copy of other than two buffers"
+
+(* Calls *)
+
+let rec entry b e =
+  match Ops.op e with
+  | Op.End ->
+      let rec ranges = function
+        | [] -> body b (Ops.nth e 0)
+        | r :: rest -> loop b r None (fun () -> ranges rest)
+      in
+      ranges (List.tl (Ops.src e))
+  | Op.Backedge ->
+      let flag = locate b (Ops.nth e 2) 0 in
+      if flag.offset.terms <> [] then
+        fail b.fn "a back edge's flag moves with the run's words";
+      let flag = (fst (copy_end flag), flag.offset.add) in
+      loop b (Ops.nth e 1) (Some flag) (fun () -> body b (Ops.nth e 0))
+  | Op.Linear -> body b e
+  | _ -> call b e
+
+and body b e =
+  if Ops.op e = Op.Linear then List.iter (entry b) (Ops.src e) else entry b e
+
+(* A loop over the range [r], or one trip where [r] is no range, around the
+   steps [f] emits. *)
+and loop b r flag f =
+  let trips, trip =
+    if Ops.op r <> Op.Range then (Rig_program.Fixed 1, None)
+    else
+      let trips = value b 0 (sint (Ops.nth r 0)) in
+      let w = new_word b Trip in
+      Ops.Tbl.replace b.trips r w;
+      (trips, Some w)
+  in
+  let body = nested b f in
+  Ops.Tbl.remove b.trips r;
+  emit b (Loop { trips; trip; flag; body })
+
+and call b e =
+  let c = Ops.without_after e in
+  let prg = Ops.body c in
+  (* Each parameter a call takes is a slot of the runs, whether its program
+     reads it or not. *)
   List.iter
     (fun u ->
-      if is_placeholder u && not (Ops.Tbl.mem storage u) then
-        Ops.Tbl.replace storage u [ placeholder device info.device u ])
-    (args @ patched);
-  let reached =
-    List.filter_map
-      (fun u ->
-        if Ops.op u = Op.Buffer || is_placeholder u then
-          Some (Ops.Tbl.find storage u)
-        else None)
-      patched
-    |> List.concat
-  in
-  (* How its devices reach the storage its words address, which its runs touch:
-     their work's completion, not the link, ends them. A memory is reached once
-     per device, for reading and writing when the batch writes it through any of
-     its words. *)
-  let reaches = ref [] in
-  let getaddr g =
-    match Ops.arg g with
-    | Ops.Device (Single dn | Multi (dn :: _)) ->
-        let base, _, _ = Hcq2.unwrap_lane (Ops.nth g 0) in
-        Some ((device dn).device, base, fst (linked_at storage (Ops.nth g 0)))
-    | _ -> None
-  in
-  let written =
-    List.filter_map
-      (fun g ->
-        if Ops.op g <> Op.Getaddr then None
-        else
-          match getaddr g with
-          | Some (d, base, b) when List.memq base info.writes -> Some (d, b)
-          | _ -> None)
-      patched
-  in
-  let reach_word d base b =
-    match
-      List.find_opt (fun (d', b', _) -> d' == d && same_memory b b') !reaches
-    with
-    | Some (_, _, r) -> r
-    | None ->
-        let r =
-          if is_placeholder base then borrowed d b
-          else
-            let writes (d', b') = d' == d && same_memory b b' in
-            reach d b
-              (if List.exists writes written then B.Read_write else B.Read)
-        in
-        reaches := (d, b, r) :: !reaches;
-        r
-  in
-  let addr dn u =
-    let base, _, _ = Hcq2.unwrap_lane u in
-    let b, off = linked_at storage u in
-    let d = (device dn).device in
-    Nativeint.add (B.address (reach_word d base b)) (Nativeint.of_int off)
-  in
-  List.iter (apply storage addr) patches;
-  let arguments = List.map (fun u -> List.hd (Ops.Tbl.find storage u)) args in
-  (* The host programs of a device's queues run on the host they name; a host
-     batch, which submits no queue, runs on its host. *)
-  let queues, host =
-    let first = device (List.hd info.device) in
-    match first.compiler.work with
-    | Queues q ->
-        (List.map (fun n -> (device n).device) info.device, (device q.host).device)
-    | Programs _ -> ([], first.device)
-    | Calls -> invalid_arg "Tolk_engine.link: a batch of a device that runs none"
-  in
-  let table =
-    if info.table < 0 then Bigarray.(Array1.create int64 c_layout 0)
-    else
-      let b = List.nth arguments info.table in
-      let hb =
-        match B.borrow host b with Ok m -> m | Error why -> invalid_arg why
-      in
-      reaches := (host, b, hb) :: !reaches;
-      B.bigarray Bigarray.int64 hb
-  in
-  (* A host batch's calls are its host's, whatever device their buffers lie
-     on. *)
-  let named =
-    if List.is_empty queues then fun _ -> host
-    else
-      let named = List.map (fun n -> (n, (device n).device)) info.device in
-      fun n -> List.assoc n named
-  in
-  let host_program = Program.load host (Ops.body call) in
-  let binder u =
-    if Ops.op u = Op.Const then Fixed (int_of_const u)
-    else
-      let name = Ops.expr u in
-      let is var =
-        List.find_opt (fun n -> Ops.expr (var n) = name) info.device
-      in
-      match (is Hcq2.submitted, is Hcq2.value) with
-      | Some n, _ -> Submitted (named n)
-      | None, Some n -> Signals (named n)
-      | None, None when name = Ops.expr Hcq2.host_workers ->
-          Fixed (Nx_device.Program.workers ())
-      | None, None -> Var (reader cells 0 u)
-  in
-  let input (base, off, dev) =
-    let base, shard, inner = Hcq2.unwrap_lane base in
-    match (Ops.op base, Ops.arg base) with
-    | Op.Param, Ops.Param p when Option.is_none (Ops.tag base) ->
-        {
-          slot = p.slot;
-          shard;
-          offset = off + inner;
-          on = named dev;
-          written = List.memq base info.writes;
-        }
-    | _ ->
-        invalid_arg
-          (Format.asprintf "Tolk_engine.link: an input of %a" Ops.pp base)
-  in
-  let inputs = Array.of_list (List.map input info.inputs) in
-  let binders = Array.of_list (List.map binder host_program.vars) in
-  {
-    info;
-    named;
-    host_program;
-    submitting = List.map (fun n -> (device n).submitting) info.device;
-    copies =
-      List.map
-        (fun (s, d, n) -> ((device s).device, (device d).device, n))
-        info.copies;
-    devices = queues;
-    queues = Array.of_list queues;
-    arguments;
-    buffers = Array.of_list (List.map (List.nth arguments) host_program.globals);
-    binders;
-    values = Array.make (Array.length binders) 0;
-    inputs;
-    run_inputs = Array.make (Array.length inputs) (List.hd arguments);
-    run_reached = Array.make (Array.length inputs) (List.hd arguments);
-    addresses = Array.make (Array.length inputs) 0n;
-    touched = arguments @ reached @ List.map (fun (_, _, r) -> r) !reaches;
-    table;
-    last = Array.make (List.length queues) 0;
-  }
+      let base, _, _ = lane_offset u in
+      match Ops.arg base with
+      | Ops.Param p when is_slot base ->
+          note_param b p.slot (List.map b.named (names base)) (bytes base)
+      | _ -> ())
+    (Realize.get_call_arg_uops c);
+  match Ops.op prg with
+  | Op.Store ->
+      let dst = List.hd (Realize.get_call_arg_uops c) in
+      List.iteri (fun lane _ -> copy b c lane) (names dst)
+  | Op.Program ->
+      let first = List.hd (Realize.get_call_arg_uops c) in
+      List.iteri (fun lane n -> launch b c prg lane (b.named n)) (names first)
+  | o -> fail b.fn "%s is no call to run" (Format.asprintf "%a" Op.pp o)
 
-(* A loop: a closure over the submission would allocate on every run. *)
-let rec report_copies s = function
-  | [] -> ()
-  | (src, dst, n) :: rest ->
-      Nx_device.Submission.copied s ~src ~dst n;
-      report_copies s rest
+(* Linked schedules *)
 
-(* Whether the inputs [j] and [k] of a run are the same memory on one device,
-   the first input of a run over input [k]'s, and whether any input over it is
-   written. *)
-let same_input b j k =
-  b.inputs.(j).on == b.inputs.(k).on
-  && same_memory b.run_inputs.(j) b.run_inputs.(k)
+type t = {
+  lock : Mutex.t; (* the frame is shared: one run at a time *)
+  loaded : Rig_program.loaded;
+  params : (int * Rig.t list * int) list;
+      (* the parameters the runs bind: slot, devices and bytes *)
+  cells : (string, int) Hashtbl.t; (* the variables' cells, by name *)
+  env : env; (* the variables of the run being made *)
+  words : word_kind array;
+  inputs : input array;
+  frame : Rig_program.frame;
+  calls : int;
+  kernels : kernel list;
+}
 
-let rec first_same b k j = if same_input b j k then j else first_same b k (j + 1)
-
-let rec any_written b k j =
-  j < Array.length b.inputs
-  && ((b.inputs.(j).written && same_input b j k) || any_written b k (j + 1))
-
-(* A host program is outside the devices' ordering: the work that touched its
-   buffers, such as a batch's before it, completes first. A device is
-   synchronized once until the run queues work again, which only a batch with
-   queues does: a copy returns once its bytes have landed. *)
-let settled t d =
-  if not (List.memq d t.synced) then begin
-    Nx_device.synchronize d;
-    t.synced <- d :: t.synced
-  end
-
-let rec settle_list t = function
-  | [] -> ()
-  | b :: rest ->
-      settled t (B.device b);
-      settle_list t rest
-
-let settle t buffers =
-  for k = 0 to Array.length buffers - 1 do
-    settled t (B.device buffers.(k))
-  done
-
-(* A host batch queues no work: it waits for the work that touched what it
-   reaches, then calls its program. *)
-let run_host_batch t b =
-  let env = t.env in
-  settle_list t b.touched;
-  settle t b.run_reached;
-  for k = 0 to Array.length b.inputs - 1 do
-    b.table.{k} <- Int64.of_nativeint b.addresses.(k)
-  done;
-  for i = 0 to Array.length b.binders - 1 do
-    b.values.(i) <-
-      (match b.binders.(i) with
-      | Fixed v -> v
-      | Var v -> v env
-      | Submitted _ | Signals _ -> assert false)
-  done;
-  Nx_device.Program.call b.host_program.program b.buffers b.values
-
-let run_batch t slots b =
-  let env = t.env in
-  let n = Array.length b.inputs in
-  for k = 0 to n - 1 do
-    let i = b.inputs.(k) in
-    let bs = slots.(i.slot) in
-    b.run_inputs.(k) <-
-      (match i.shard with Some j -> List.nth bs j | None -> List.hd bs)
-  done;
-  (* The run's work reads and writes through how its devices reach its inputs,
-     which are among its touches until it completes. An input's memory is
-     reached once per device, for reading and writing when any input over it is
-     written. *)
-  for k = 0 to n - 1 do
-    let i = b.inputs.(k) in
-    let first = first_same b k 0 in
-    if first < k then b.run_reached.(k) <- b.run_reached.(first)
-    else begin
-      let access = if any_written b k k then B.Read_write else B.Read in
-      b.run_reached.(k) <- reach i.on b.run_inputs.(k) access
-    end;
-    b.addresses.(k) <-
-      Nativeint.add (B.address b.run_reached.(k)) (Nativeint.of_int i.offset)
-  done;
-  if List.is_empty b.devices then run_host_batch t b
-  else
-  let touches = ref b.touched in
-  for k = 0 to n - 1 do
-    if first_same b k 0 = k then touches := b.run_reached.(k) :: !touches
-  done;
-  Nx_device.submit b.devices ~touches:!touches (fun s ->
-      for i = 0 to Array.length b.queues - 1 do
-        if (b.last.(i) > 0) [@mutate off "a wait for 0 returns at once"] then
-          Nx_device.Submission.wait s b.queues.(i) b.last.(i)
-      done;
-      List.iter
-        (fun (d', v) ->
-          if not (List.memq d' b.devices) then Nx_device.Submission.wait s d' v)
-        (Nx_device.Submission.waits s);
-      for k = 0 to Array.length b.inputs - 1 do
-        b.table.{k} <- Int64.of_nativeint b.addresses.(k)
-      done;
-      for i = 0 to Array.length b.binders - 1 do
-        b.values.(i) <-
-          (match b.binders.(i) with
-          | Fixed v -> v
-          | Submitted d -> Nx_device.submitted d
-          | Signals d -> Nx_device.Submission.value s d
-          | Var v -> v env)
-      done;
-      List.iter (fun f -> f ()) b.submitting;
-      Nx_device.Program.call b.host_program.program b.buffers b.values;
-      report_copies s b.copies;
-      if Nx_device.Profile.enabled () then
-        List.iter
-          (fun (k : Ops.hcq_kernel) ->
-            match k.stamps with
-            | first :: _ ->
-                List.iter
-                  (fun dn ->
-                    let d = b.named dn in
-                    let slots =
-                      List.nth b.arguments (List.assoc dn b.info.slots)
-                    in
-                    Nx_device.Submission.record s d
-                      ~lane:
-                        (if Option.is_some k.profile_key then "compute"
-                         else "copy")
-                      ~name:k.name
-                      (B.view slots
-                         ~offset:(8 * (first - 1))
-                         Nx_dtype.Scalar.UInt64 4))
-                  k.devices
-            | [] -> ())
-          b.info.kernels;
-      for i = 0 to Array.length b.queues - 1 do
-        b.last.(i) <- Nx_device.Submission.value s b.queues.(i)
-      done)
-
-(* The calls of a schedule's entry: itself, or those a loop is around. *)
-let rec calls_of entry =
-  match Ops.op entry with
-  | Op.End | Op.Backedge -> calls_of (Ops.nth entry 0)
-  | Op.Linear -> List.concat_map calls_of (Ops.src entry)
-  | _ -> [ entry ]
-
-(* The flags of the loops of a schedule's entry, which name storage too. *)
-let rec flags entry =
-  match Ops.op entry with
-  | Op.Backedge ->
-      Ops.toposort ~calls:Enter (Ops.nth entry 2) @ flags (Ops.nth entry 0)
-  | Op.End -> flags (Ops.nth entry 0)
-  | Op.Linear -> List.concat_map flags (Ops.src entry)
-  | _ -> []
-
-let link ~devices ?(bound = []) linear =
+let link_with ~separate ~devices ?(bound = []) linear =
   let fn = "Tolk_engine.link" in
   if Ops.op linear <> Op.Linear then fail fn "not a compiled schedule";
-  let device = devices in
-  let nx name = (devices name).device in
-  let storage = Ops.Tbl.create 16 in
+  let tbl = Ops.Tbl.create 16 in
   List.iter
     (fun (u, bs) ->
       let ns = names u in
@@ -1063,124 +845,90 @@ let link ~devices ?(bound = []) linear =
         fail fn "%s is not bound to a buffer on each device"
           (Format.asprintf "%a" Ops.pp u);
       List.iter2
-        (fun n b ->
-          if B.device b != nx n || B.nbytes b < bytes u then
+        (fun n buf ->
+          if
+            (not (Rig.equal (Rig.Buffer.device buf) (devices n)))
+            || Rig.Buffer.length buf < bytes u
+          then
             fail fn "a storage node is not bound to %d bytes of %s" (bytes u) n)
         ns bs;
-      Ops.Tbl.replace storage u bs)
+      Ops.Tbl.replace tbl u bs)
     bound;
-  let entries = Ops.src linear in
-  let nodes =
-    List.concat_map
-      (fun e ->
-        let c = Ops.without_after e in
-        let patches = if Ops.op e = Op.After then List.tl (Ops.src e) else [] in
-        (* A batch's inputs are in its table, not among its arguments. *)
-        let inputs =
-          match hcq_info c with
-          | Some i -> List.map (fun (base, _, _) -> base) i.inputs
-          | None -> []
-        in
-        List.concat_map
-          (Ops.toposort ~calls:Enter)
-          (Realize.get_call_arg_uops c @ patches @ inputs))
-      (List.concat_map calls_of entries)
-    @ List.concat_map flags entries
+  let b =
+    {
+      fn;
+      named = devices;
+      separate;
+      bound = tbl;
+      cells = Hashtbl.create 16;
+      rigs = Dynarray.create ();
+      memory = Dynarray.create ();
+      memories = Ops.Tbl.create 16;
+      images = Dynarray.create ();
+      image_of = Hashtbl.create 16;
+      inputs = Dynarray.create ();
+      lane_inputs = Hashtbl.create 16;
+      bound_inputs = [];
+      params = [];
+      words = Dynarray.create ();
+      var_words = Hashtbl.create 16;
+      computed = Ops.Tbl.create 16;
+      trips = Ops.Tbl.create 16;
+      steps = [];
+      pending = None;
+      kernels = [];
+    }
   in
-  List.iter
-    (fun u ->
-      if Ops.op u = Op.Buffer && not (Ops.Tbl.mem storage u) then
-        Ops.Tbl.replace storage u
-          (List.map
-             (fun n -> B.create (nx n) Nx_dtype.Scalar.UInt8 (max (bytes u) 1))
-             (names u)))
-    nodes;
-  let params =
-    List.sort_uniq compare
-      (List.filter_map
-         (fun u ->
-           match Ops.arg u with
-           | Ops.Param p when is_slot u -> Some (p.slot, u)
-           | _ -> None)
-         nodes)
-    |> List.map (fun (slot, u) -> (slot, List.map nx (names u), bytes u))
+  List.iter (entry b) (Ops.src linear);
+  flush b;
+  let rigs = Dynarray.to_list b.rigs in
+  (match rigs with
+  | d :: rest ->
+      let h = Rig.host_of d in
+      List.iter
+        (fun d' ->
+          if not (Rig.equal (Rig.host_of d') h) then
+            fail fn "%s and %s are of two machines" (Rig.name d) (Rig.name d'))
+        rest
+  | [] -> ());
+  let inputs = Dynarray.to_list b.inputs in
+  let words = Dynarray.to_array b.words in
+  let desc =
+    {
+      Rig_program.devices = Iarray.of_list (List.map Rig.arch rigs);
+      memory = Iarray.of_list (Dynarray.to_list b.memory);
+      images = Iarray.of_list (Dynarray.to_list b.images);
+      inputs = Iarray.of_list (List.map snd inputs);
+      ints = Array.length words;
+      steps = Iarray.of_list (List.rev b.steps);
+    }
   in
-  let cells = Hashtbl.create 16 in
-  let trips r =
-    ( cell cells (Ops.expr (Hcq2.range_value r)),
-      offset cells (sint (Ops.nth r 0)) )
+  let loaded =
+    match Rig_program.load desc (Iarray.of_list rigs) with
+    | Ok l -> l
+    | Error why -> failwith (fn ^ ": " ^ why)
   in
-  let body e =
-    let b = Ops.nth e 0 in
-    if Ops.op b = Op.Linear then Ops.src b else [ b ]
-  in
-  let rec linked entry =
-    match Ops.op entry with
-    | Op.End ->
-        Range
-          {
-            ranges = List.map trips (List.tl (Ops.src entry));
-            body = List.map linked (body entry);
-          }
-    | Op.Backedge ->
-        (* A range of one trip is its value, [0]. *)
-        let r = Ops.nth entry 1 in
-        let byte = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 1 in
-        Loop
-          {
-            range =
-              (if Ops.op r = Op.Range then
-                 let c, n = trips r in
-                 (Some c, n)
-               else (None, fun _ -> 1));
-            flag = lane_operand storage cells (Ops.nth entry 2) 0;
-            byte;
-            read = B.of_bigarray byte;
-            body = List.map linked (body entry);
-          }
-    | _ -> linked_call entry
-  and linked_call entry =
-    let call = Ops.without_after entry in
-    let body = Ops.body call in
-    match (Ops.op body, hcq_info call) with
-    | Op.Store, _ -> (
-        match Realize.get_call_arg_uops call with
-        | [ dst; src ] ->
-            Copy
-              {
-                call;
-                dst = operand storage cells dst;
-                src = operand storage cells src;
-              }
-        | _ -> fail fn "a copy of other than two buffers")
-    | Op.Program, Some _ ->
-        let patches =
-          if Ops.op entry = Op.After then List.tl (Ops.src entry) else []
-        in
-        Batch (link_batch ~device ~storage ~cells call patches)
-    | Op.Program, None ->
-        let first = List.hd (Realize.get_call_arg_uops call) in
-        Kernel
-          {
-            call;
-            launches =
-              Array.of_list
-                (List.mapi
-                   (fun i n -> launch storage cells call body (nx n) i)
-                   (names first));
-          }
-    | o, _ -> fail fn "%s is no call to run" (Format.asprintf "%a" Op.pp o)
-  in
-  let calls = List.map linked entries in
-  let n = Hashtbl.length cells in
+  let n = Hashtbl.length b.cells in
+  let inputs = Array.of_list (List.map fst inputs) in
   {
     lock = Mutex.create ();
-    calls;
-    params;
-    cells;
+    loaded;
+    params = List.rev b.params;
+    cells = b.cells;
     env = { values = Array.make n 0; set = Array.make n false };
-    synced = [];
+    words;
+    inputs;
+    frame =
+      {
+        inputs = Array.make (Array.length inputs) (Rig.Buffer.of_string "");
+        ints = Array.make (Array.length words) 0;
+      };
+    calls = List.length (Ops.src linear);
+    kernels = List.rev b.kernels;
   }
+
+let link ~devices ?bound linear =
+  link_with ~separate:(Setting.value Setting.debug >= 2) ~devices ?bound linear
 
 let check_slots t slots =
   let fn = "Tolk_engine.run" in
@@ -1192,26 +940,48 @@ let check_slots t slots =
         fail fn "slot %d takes %d buffers, not %d" slot (List.length ds)
           (List.length bs);
       List.iter2
-        (fun d b ->
-          if B.device b != d then
-            fail fn "slot %d takes a buffer of %s, not of %s" slot
-              (Nx_device.name d)
-              (Nx_device.name (B.device b));
-          if B.nbytes b < n then
-            fail fn "slot %d takes %d bytes, not %d" slot n (B.nbytes b))
+        (fun d buf ->
+          if not (Rig.equal (Rig.Buffer.device buf) d) then
+            fail fn "slot %d takes a buffer of %s, not of %s" slot (Rig.name d)
+              (Rig.name (Rig.Buffer.device buf));
+          if Rig.Buffer.length buf < n then
+            fail fn "slot %d takes %d bytes, not %d" slot n
+              (Rig.Buffer.length buf))
         ds bs)
     t.params
 
+let buffer slots = function
+  | Bound buf -> buf
+  | Lane { slot; lane } -> (
+      match slots.(slot) with [ buf ] -> buf | bs -> List.nth bs lane)
+
+(* Writes the run's frame: its words, then its inputs. *)
+let frame t ~vars slots =
+  let env = t.env in
+  Array.fill env.set 0 (Array.length env.set) false;
+  (* The first binding of a name binds it. *)
+  List.iter
+    (fun (name, v) ->
+      match Hashtbl.find_opt t.cells name with
+      | Some i when not env.set.(i) ->
+          env.values.(i) <- v;
+          env.set.(i) <- true
+      | Some _ | None -> ())
+    vars;
+  let ints = t.frame.ints in
+  for w = 0 to Array.length t.words - 1 do
+    match t.words.(w) with Computed f -> ints.(w) <- f env | Trip -> ()
+  done;
+  for k = 0 to Array.length t.inputs - 1 do
+    t.frame.inputs.(k) <-
+      (match t.inputs.(k) with
+      | Whole s -> buffer slots s
+      | Part { source; first; length } ->
+          Rig.Buffer.view (buffer slots source) ~first:(first ints) ~length)
+  done
+
 (* Reports *)
 
-let reporting () = Setting.value Setting.debug >= 2
-let profile () = if reporting () then Hcq2.Stamped else Hcq2.Unstamped
-
-(* A run prints its reports as [DEBUG] asks, or nothing: a timing run is
-   silent. *)
-type reports = Reported | Silent
-
-let reported = function Reported -> reporting () | Silent -> false
 let kernels_run = Atomic.make 0
 
 (* One line per kernel, as [DEBUG=2] prints it: its device, how many kernels ran
@@ -1223,7 +993,9 @@ let report ~device ~name ~args ~vars (e : Ops.estimates) time =
     match time with
     | None -> ""
     | Some s ->
-        let per x = Float.of_int (Shape.sym_infer x vars) /. Float.max s 1e-20 in
+        let per x =
+          Float.of_int (Shape.sym_infer x vars) /. Float.max s 1e-20
+        in
         Printf.sprintf " tm %s (%7.0f GFLOPS %4.0f GB/s)"
           (Helpers.time_to_str ~w:9 s)
           (per e.ops *. 1e-9)
@@ -1233,284 +1005,107 @@ let report ~device ~name ~args ~vars (e : Ops.estimates) time =
   Printf.printf "*** %-7s %4d %s arg %2d%s\n%!" device count
     (Helpers.ansipad name 46) args timing
 
-(* The seconds [f] takes on the host clock. *)
-let seconds f =
-  let t0 = Nx_device.Profile.now () in
-  f ();
-  Float.of_int (Nx_device.Profile.now () - t0) *. 1e-9
+(* The nanoseconds of each span of the kernel [k] in [events]. *)
+let spans events k =
+  List.filter_map
+    (function
+      | Rig.Profile.Span sp
+        when Rig.equal sp.device k.device && sp.name = k.name ->
+          Some (sp.stop - sp.start)
+      | _ -> None)
+    events
 
-(* A batch's kernels run on its devices, which stamp them: under a profile of
-   its own, the batch reports each kernel's span once its devices synchronized. *)
-let run_reported t ~vars slots b =
-  let (), events = Nx_device.Profile.take (fun () -> run_batch t slots b) in
-  let spans = ref events in
-  let span d name =
-    let rec take = function
-      | [] -> (None, [])
-      | Nx_device.Profile.Span sp :: rest when sp.device == d && sp.name = name
-        ->
-          (Some (Float.of_int (sp.stop - sp.start) *. 1e-9), rest)
-      | e :: rest ->
-          let found, rest = take rest in
-          (found, e :: rest)
-    in
-    let found, rest = take !spans in
-    spans := rest;
-    found
-  in
-  List.iter
-    (fun (k : Ops.hcq_kernel) ->
-      List.iter
-        (fun dn ->
-          report ~device:dn ~name:k.name
-            ~args:(List.length k.input_slots)
-            ~vars k.estimates
-            (span (b.named dn) k.name))
-        k.devices)
-    b.info.kernels
-
-(* The variables the run binds and the trips its ranges run, by name, for the
-   reports. *)
+(* The variables the run binds, by name, for the reports. *)
 let bindings t =
   Hashtbl.fold
     (fun name i vars ->
       if t.env.set.(i) then (name, t.env.values.(i)) :: vars else vars)
     t.cells []
 
-let run_launch t reports call slots l =
-  let env = t.env in
-  let buffers = Array.map (fun a -> a slots env) l.args in
-  settle t buffers;
-  let values = Array.map (fun v -> v env) l.vals in
-  let split =
-    match l.split with
-    | None -> None
-    | Some (s, extent, ops) ->
-        Some (Program.blocks_of s ~extent:(extent env) ~ops:(ops env))
+(* A line for each kernel of each span of [events], timed where the span is one
+   kernel's. *)
+let print_reports t events =
+  let vars = bindings t in
+  let line k time =
+    let args = Realize.get_call_arg_uops k.call in
+    report ~device:(Rig.name k.device)
+      ~name:(Realize.get_call_name ~var_vals:vars k.call args)
+      ~args:(List.length args) ~vars
+      (Realize.estimate_uop k.call)
+      time
   in
-  let launch () =
-    Nx_device.Program.call ?split l.program.program buffers values
+  let kernel d name =
+    List.find_opt (fun k -> Rig.equal k.device d && k.name = name) t.kernels
   in
-  if reported reports then
-    let vars = bindings t in
-    report
-      ~device:(Nx_device.name (B.device buffers.(0)))
-      ~name:
-        (Realize.get_call_name ~var_vals:vars call
-           (Realize.get_call_arg_uops call))
-      ~args:(Array.length buffers) ~vars
-      (Realize.estimate_uop call)
-      (Some (seconds launch))
-  else launch ()
+  List.iter
+    (function
+      | Rig.Profile.Span sp -> (
+          match String.split_on_char ',' sp.name |> List.map String.trim with
+          | [ name ] ->
+              Option.iter
+                (fun k ->
+                  line k (Some (Float.of_int (sp.stop - sp.start) *. 1e-9)))
+                (kernel sp.device name)
+          | names ->
+              List.iter
+                (fun name ->
+                  Option.iter (fun k -> line k None) (kernel sp.device name))
+                names)
+      | _ -> ())
+    events
 
-let rec run_call t reports slots = function
-  | Copy { call; dst; src } ->
-      let dsts = dst slots t.env and srcs = src slots t.env in
-      List.iteri
-        (fun i dst ->
-          let copy () = B.copy ~src:(lane srcs i) ~dst in
-          if reported reports then
-            let vars = bindings t in
-            report
-              ~device:(Nx_device.name (B.device dst))
-              ~name:
-                (Realize.get_call_name ~var_vals:vars call
-                   (Realize.get_call_arg_uops call))
-              ~args:2 ~vars
-              (Realize.estimate_uop call)
-              (Some (seconds copy))
-          else copy ())
-        dsts
-  | Kernel { call; launches } ->
-      for i = 0 to Array.length launches - 1 do
-        run_launch t reports call slots launches.(i)
-      done
-  | Batch b ->
-      if reported reports then run_reported t ~vars:(bindings t) slots b
-      else run_batch t slots b;
-      if not (List.is_empty b.devices) then t.synced <- []
-  | Range { ranges; body } ->
-      let env = t.env in
-      let rec trips = function
-        | [] -> run_calls t reports slots body
-        | (c, count) :: rest ->
-            let n = count env in
-            let value = env.values.(c) and set = env.set.(c) in
-            env.set.(c) <- true;
-            for i = 0 to n - 1 do
-              env.values.(c) <- i;
-              trips rest
-            done;
-            env.values.(c) <- value;
-            env.set.(c) <- set
-      in
-      trips ranges
-  | Loop { range = cell, count; flag; byte; read; body } ->
-      let env = t.env in
-      let n = count env in
-      let holds () =
-        B.copy ~src:(flag slots env) ~dst:read;
-        Bigarray.Array1.unsafe_get byte 0 <> '\000'
-      in
-      let restore =
-        match cell with
-        | None -> Fun.id
-        | Some c ->
-            let value = env.values.(c) and set = env.set.(c) in
-            env.set.(c) <- true;
-            fun () ->
-              env.values.(c) <- value;
-              env.set.(c) <- set
-      in
-      let i = ref 0 in
-      (match cell with
-      | None ->
-          while !i < n && holds () do
-            run_calls t reports slots body;
-            incr i
-          done
-      | Some c ->
-          while !i < n && holds () do
-            env.values.(c) <- !i;
-            run_calls t reports slots body;
-            incr i
-          done);
-      restore ()
+(* Running *)
 
-and run_calls t reports slots = function
-  | [] -> ()
-  | call :: rest ->
-      run_call t reports slots call;
-      run_calls t reports slots rest
-
-let run_with reports ~vars t slots =
+let submit t ~vars slots =
   check_slots t slots;
-  let n = List.length t.calls in
-  if
-    reports = Reported
-    && Setting.value Setting.debug >= 1
-    && n >= 10
-  then Printf.printf "jit execs %d calls\n%!" n;
   Mutex.protect t.lock (fun () ->
-      let env = t.env in
-      Array.fill env.set 0 (Array.length env.set) false;
-      (* The first binding of a name binds it. *)
-      List.iter
-        (fun (name, v) ->
-          match Hashtbl.find_opt t.cells name with
-          | Some i when not env.set.(i) ->
-              env.values.(i) <- v;
-              env.set.(i) <- true
-          | Some _ | None -> ())
-        vars;
-      t.synced <- [];
-      run_calls t reports slots t.calls)
+      frame t ~vars slots;
+      Rig_program.run t.loaded t.frame)
 
-let run ?(vars = []) t slots = run_with Reported ~vars t slots
-
-(* Timing *)
-
-(* Only NV invalidates its caches on demand. *)
-let invalidate_caches d =
-  Option.iter Nx_nv_device.invalidate_caches (Nx_nv_device.of_device d)
-
-(* Each kernel of [calls] once, as the device whose profile records its span and
-   its name: a host program's span is the host's, where it is loaded. *)
-let rec kernels calls =
-  let add ks k =
-    if List.exists (fun (d, n) -> d == fst k && n = snd k) ks then ks
-    else k :: ks
-  in
-  let of_call ks = function
-    | Kernel { launches; _ } ->
-        Array.fold_left
-          (fun ks l ->
-            let p = l.program.program in
-            add ks (Nx_device.Program.device p, Nx_device.Program.name p))
-          ks launches
-    | Batch b ->
-        List.fold_left
-          (fun ks (k : Ops.hcq_kernel) ->
-            List.fold_left
-              (fun ks dn -> add ks (b.named dn, k.name))
-              ks k.devices)
-          ks b.info.kernels
-    | Range { body; _ } | Loop { body; _ } ->
-        List.fold_left add ks (kernels body)
-    | Copy _ -> ks
-  in
-  List.rev (List.fold_left of_call [] calls)
-
-(* The nanoseconds of the spans of the kernel [name] on [d] in [events]. A
-   profile leaves out the spans of a device lost meanwhile: its loss is the
-   error. *)
-let spans events (d, name) =
-  let ns =
-    List.filter_map
-      (function
-        | Nx_device.Profile.Span sp when sp.device == d && sp.name = name ->
-            Some (sp.stop - sp.start)
-        | _ -> None)
-      events
-  in
-  if ns = [] then begin
-    Option.iter (fun why -> raise (Nx_device.Lost (d, why))) (Nx_device.lost d);
-    fail "Tolk_engine.time" "no span of %s" name
-  end;
-  List.fold_left ( + ) 0 ns
-
-let time ?(vars = []) t slots =
-  let kernels = kernels t.calls in
-  let devices =
-    List.fold_left
-      (fun ds (d, _) -> if List.memq d ds then ds else d :: ds)
-      [] kernels
-  in
-  List.iter invalidate_caches devices;
-  let (), events =
-    Nx_device.Profile.take (fun () -> run_with Silent ~vars t slots)
-  in
-  let ns = List.fold_left (fun ns k -> ns + spans events k) 0 kernels in
-  Float.of_int ns *. 1e-9
-
-(* A host program's call is timed on the host's clock; a batch's kernels are
-   stamped by their devices. A loop's read of its flag is a copy, which runs no
-   kernel. *)
-let clock t =
-  let rec stamped = function
-    | Kernel _ -> false
-    | Copy _ | Batch _ -> true
-    | Range { body; _ } | Loop { body; _ } -> List.for_all stamped body
-  in
-  if List.for_all stamped t.calls then Search.Device else Search.Host
+let run ?(vars = []) t slots =
+  let debug = Setting.value Setting.debug in
+  if debug >= 1 && t.calls >= 10 then
+    Printf.printf "jit execs %d calls\n%!" t.calls;
+  if debug < 2 then ignore (submit t ~vars slots)
+  else
+    let _, events = Rig.Profile.take (fun () -> submit t ~vars slots) in
+    print_reports t events
 
 let slots t =
   let n = List.fold_left (fun n (slot, _, _) -> max n (slot + 1)) 0 t.params in
   let slots = Array.make n [] in
   List.iter
     (fun (slot, ds, bytes) ->
-      slots.(slot) <-
-        List.map (fun d -> B.create d Nx_dtype.Scalar.UInt8 (max 1 bytes)) ds)
+      slots.(slot) <- List.map (fun d -> Rig.Buffer.create d (max 1 bytes)) ds)
     t.params;
   slots
+
+(* Timing *)
 
 let link_call ~devices call =
   if Ops.op call <> Op.Call || Ops.op (Ops.body call) <> Op.Program then
     fail "Tolk_engine.link_call" "not a call of a compiled program";
-  (* The host launches the program itself, as a call of its own: a host batch
-     around one call would time the batch. *)
-  let compiler n =
-    let c = (devices n).compiler in
-    match c.work with Programs _ -> { c with work = Calls } | _ -> c
+  let targets n = target (devices n) in
+  link_with ~separate:true ~devices
+    (Realize.compile_linear ~targets (Ops.v Op.Linear ~src:[ call ]))
+
+let clock t =
+  if List.for_all (fun k -> Option.is_some (vendor k.device)) t.kernels then
+    Search.Device
+  else Search.Host
+
+let time ?(vars = []) t slots =
+  let wait points = Array.iter Rig.Point.wait points in
+  let (), events = Rig.Profile.take (fun () -> wait (submit t ~vars slots)) in
+  let ns =
+    List.fold_left
+      (fun ns k ->
+        match spans events k with
+        | [] -> (
+            match Rig.lost k.device with
+            | Some why -> raise (Rig.Lost (k.device, why))
+            | None -> ns)
+        | s -> List.fold_left ( + ) ns s)
+      0 t.kernels
   in
-  link ~devices
-    (Hcq2.compile_linear ~profile:Stamped ~devices:compiler
-       (Ops.v Op.Linear ~src:[ call ]))
-
-(* Command queues *)
-
-module Ops_metal = Ops_metal
-module Ops_cuda = Ops_cuda
-module Ops_amd = Ops_amd
-module Ops_nv = Ops_nv
-module Nv_packet = Nv_packet
+  Float.of_int ns *. 1e-9

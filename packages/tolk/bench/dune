@@ -6,7 +6,7 @@
 (executable
  (name bench_tolk)
  (modules bench_tolk programs lorenz)
- (libraries tolk tolk.engine tolk_test tolk_run nx.device thumper))
+ (libraries tolk tolk.engine tolk_test tolk_run rig thumper))
 
 (executable
  (name embed)

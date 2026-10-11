@@ -26,19 +26,13 @@ let storage u =
   List.filter (fun n -> Ops.op n = Buffer) (Ops.toposort ~calls:Skip u)
 
 (* The parameters of a lowered schedule that each run binds: those its calls
-   take, and the inputs of its batches. *)
+   take. *)
 let parameters u =
-  let nodes = Ops.toposort ~calls:Skip u in
-  let batch_inputs n =
-    match Ops.arg n with
-    | Call { aux = Some info; _ } -> List.map (fun (p, _, _) -> p) info.inputs
-    | _ -> []
-  in
   List.sort_uniq Ops.compare
     (List.filter
        (fun n ->
          Ops.op n = Param && Ops.tag n = None && (param_arg n).slot >= 0)
-       (nodes @ List.concat_map batch_inputs nodes))
+       (Ops.toposort ~calls:Skip u))
 
 (* The parameter the [i]th input [u] becomes: of its type, device and size. *)
 let parameter i u =
@@ -128,9 +122,7 @@ let observed ~devices ~held ~inputs captured =
   let reached = storage captured in
   List.map
     (fun u ->
-      ( u,
-        Run.buffer (devices (device_name u)).Engine.device (Ops.dtype u)
-          (start 0 u) ))
+      (u, Run.buffer (devices (device_name u)) (Ops.dtype u) (start 0 u)))
     (List.sort_uniq Ops.compare
        (inputs @ List.filter (fun b -> List.memq b reached) held))
 
@@ -141,8 +133,8 @@ let replay ~inputs bufs run : replay =
       List.iter
         (fun (u, b) ->
           if k = 0 || List.memq u inputs then
-            Nx_device.Buffer.copy
-              ~src:(Run.buffer Nx_device.host (Ops.dtype u) (start seed u))
+            Rig.Buffer.copy
+              ~src:(Run.buffer Rig.host (Ops.dtype u) (start seed u))
               ~dst:b)
         bufs;
       run vars)
@@ -155,8 +147,8 @@ let unplanned ~devices ~held ~inputs captured =
     Engine.link ~devices
       ~bound:(List.map (fun (u, b) -> (u, [ b ])) bufs)
       (plain (fun () ->
-           Hcq2.compile_linear ~profile:Unstamped
-             ~devices:(fun n -> (devices n).compiler)
+           Realize.compile_linear
+             ~targets:(fun n -> Engine.target (devices n))
              captured))
   in
   replay ~inputs bufs (fun vars -> Engine.run ~vars s [||])
@@ -179,9 +171,9 @@ let contents = list (array Dtypes.value)
 
    A case's goldens are its captured schedule, the sink of the buffers the
    capture holds, the sink of its inputs in the order of their slots, and its
-   lowering, for Clang on x86_64 on the devices of the Hcq2 suite: the host,
-   PYTHON, a host device that holds Python's data, and CPU:1 to CPU:3 with the
-   NULL device's queues. The lowering's binaries are its sources' bytes. *)
+   lowering, for Clang on x86_64 on the host, PYTHON, a host device that holds
+   Python's data, and CPU:1 to CPU:3. The lowering's binaries are its sources'
+   bytes. *)
 
 let captured case = Golden.sink (case ^ ".golden")
 let held case = Ops.src (Golden.sink (case ^ "_held.golden"))
@@ -196,25 +188,9 @@ let recorded_target =
     indices = "";
   }
 
-let recorded_devices () =
-  let events = Null_queue.events () in
-  function
-  | "CPU:1" | "CPU:2" | "CPU:3" ->
-      let queues =
-        {
-          Hcq2.commands = Null_queue.commands events;
-          copy_queue = true;
-          submission = Buffered;
-          host = "CPU";
-          reaches = (fun _ -> true);
-        }
-      in
-      { Hcq2.target = recorded_target; work = Queues queues }
-  | _ -> { Hcq2.target = recorded_target; work = Calls }
-
-let lower ?search ?(devices = recorded_devices ()) case =
+let lower ?search ?(targets = fun _ -> recorded_target) case =
   plain (fun () ->
-      Jit.jit_lower ?search ~profile:Unstamped ~devices ~held_bufs:(held case)
+      Jit.jit_lower ?search ~targets ~held_bufs:(held case)
         ~inputs:(inputs case) (captured case))
 
 (* The cases of tinygrad's jit tests, by the file they come from. *)
@@ -300,8 +276,8 @@ let test_symbolic_jit =
 let cases = test_jit @ test_jit_cases @ test_jit_footguns @ test_symbolic_jit
 
 (* One case of each kind runs by default: kernels on the host, an input that a
-   kernel writes, held buffers without inputs, copies to a device with queues, a
-   held constant of Python's data, and a variable. Compiling the others takes
+   kernel writes, held buffers without inputs, copies to a memory device, a held
+   constant of Python's data, and a variable. Compiling the others takes
    seconds. *)
 let by_default =
   [ "add"; "assign"; "implicit_io"; "transfers"; "held_constant"; "plus1" ]
@@ -355,15 +331,13 @@ let recorded =
 
 (* Replays of recorded captures
 
-   A case replays on the host and the NULL devices, PYTHON being a host device,
-   with each variable over the values tinygrad's tests replay it with, the
-   capture's binding first. *)
+   A case replays on the host and memory devices, PYTHON being the host, with
+   each variable over the values tinygrad's tests replay it with, the capture's
+   binding first. *)
 
-let null = lazy (Null_device.devices ())
-
-let on_null = function
-  | "PYTHON" -> Engine.device [ ("PYTHON", Nx_device.host) ] "PYTHON"
-  | name -> (Lazy.force null) name
+let on_memory = function
+  | "PYTHON" -> Rig.host
+  | name -> List.assoc name (Run.devices ())
 
 (* The values tinygrad's tests replay each variable with. *)
 let replayed_values = [ ("i", (1, 4)); ("j", (2, 4)); ("pos", (0, 3)) ]
@@ -403,9 +377,11 @@ let replays_what_its_capture_leaves case =
   let replays =
     lazy
       (let held = held case and inputs = inputs case and c = captured case in
-       let lowered = lower ~devices:(fun n -> (on_null n).compiler) case in
-       ( unplanned ~devices:on_null ~held ~inputs c,
-         replayed ~devices:on_null ~held ~inputs c lowered ))
+       let lowered =
+         lower ~targets:(fun n -> Engine.target (on_memory n)) case
+       in
+       ( unplanned ~devices:on_memory ~held ~inputs c,
+         replayed ~devices:on_memory ~held ~inputs c lowered ))
   in
   prop ~count:10
     ~examples:[ [ (0, capture_binding case) ] ]
@@ -423,12 +399,12 @@ let replays =
 (* Drawn captures
 
    A drawn capture is a schedule of calls over buffers of four or seventy
-   floats, each on the host or on CPU:1, with compiled kernels, on devices that
-   run their calls one by one. Its first buffers are inputs and the next
-   constants, which the capture holds; no call writes either. Each call writes a
-   buffer it does not read, new or written by an earlier call: a kernel on one
-   device adds one to a buffer, or adds two, or a copy moves a buffer to the
-   other device. It holds the last buffer written, and those its draw keeps. *)
+   floats, each on the host or on the memory device CPU:1, with compiled
+   kernels. Its first buffers are inputs and the next constants, which the
+   capture holds; no call writes either. Each call writes a buffer it does not
+   read, new or written by an earlier call: a kernel on one device adds one to a
+   buffer, or adds two, or a copy moves a buffer to the other device. It holds
+   the last buffer written, and those its draw keeps. *)
 
 type call = Inc of int * int | Add of int * int * int | Copy of int * int
 
@@ -536,7 +512,7 @@ let drawn =
 
 (* The kernels, compiled for the host, of each size. *)
 
-let clang = lazy (Cstyle.clang (Engine.target Nx_device.host))
+let clang = lazy (Cstyle.clang (Engine.target Rig.host))
 
 let compiled name f =
   let kernel n =
@@ -554,7 +530,7 @@ let inc =
   compiled "inc" (fun at -> Ops.add (at 1) (Ops.float ~dtype:Float32 1.))
 
 let add = compiled "add" (fun at -> Ops.add (at 1) (at 2))
-let unqueued = Engine.device (Run.devices ())
+let devices name = List.assoc name (Run.devices ())
 
 (* The captured schedule of [d], with the buffers it holds and its inputs. *)
 let capture_of d =
@@ -581,8 +557,8 @@ let capture_of d =
     List.init d.n_inputs (Array.get nodes) )
 
 let lower_drawn (linear, held, inputs) =
-  Jit.jit_lower ~profile:Unstamped
-    ~devices:(fun n -> (unqueued n).compiler)
+  Jit.jit_lower
+    ~targets:(fun n -> Engine.target (devices n))
     ~held_bufs:held ~inputs linear
 
 let replays_drawn d =
@@ -599,8 +575,8 @@ let replays_drawn d =
   cover "a copy" (List.exists (function Copy _ -> true | _ -> false) d.calls);
   let runs = [ (0, []); (5, []) ] in
   equal contents
-    (unplanned ~devices:unqueued ~held ~inputs linear runs)
-    (replayed ~devices:unqueued ~held ~inputs linear lowered runs)
+    (unplanned ~devices ~held ~inputs linear runs)
+    (replayed ~devices ~held ~inputs linear lowered runs)
 
 let drawn_laws =
   group "jit_lower › drawn"

@@ -3,7 +3,7 @@ open Tolk
 module Compiler = Renderer.Compiler
 
 (* The host's target, as the engine gives it. *)
-let host_target = Tolk_engine.target Nx_device.host
+let host_target = Tolk_engine.target Rig.host
 
 (* Sources *)
 

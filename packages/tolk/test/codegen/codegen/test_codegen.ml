@@ -2,7 +2,7 @@ open Windtrap
 open Tolk
 
 (* The host's target, as the engine gives it. *)
-let host_target = Tolk_engine.target Nx_device.host
+let host_target = Tolk_engine.target Rig.host
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 (* Two graphs are the same when their texts are, and a failure is the diff of
@@ -1030,13 +1030,30 @@ let ten_scalars () =
   in
   let info = match Ops.arg p with Program info -> info | _ -> assert false in
   let result = Bigarray.(Array1.create int32 c_layout 1) in
-  (match
-     Nx_device.Program.load Nx_device.host ~binary:elf.lib ~name:elf.name
-   with
-  | Ok prg ->
-      Nx_device.Program.call prg
-        [| Nx_device.Buffer.of_bigarray result |]
-        (Array.of_list (List.map value info.vars))
+  (* The parameters are the pointer to [out], then each variable, a 32-bit
+     integer. *)
+  (match Rig.Image.load Rig.host elf.lib with
+  | Ok image ->
+      let s =
+        Rig.Submission.(
+          make Rig.host
+            [|
+              launch
+                ~refs:[| write 0 ~at:0 |]
+                image elf.name
+                ~params:(8 + (4 * List.length info.vars));
+            |])
+      in
+      let run = Rig.Submission.Run.make () in
+      let b = Rig.Submission.block s 0 in
+      Rig.Submission.Run.groups run b 1 1 1;
+      Rig.Submission.Run.threads run b 1 1 1;
+      List.iteri
+        (fun i v -> Rig.Submission.Run.int32 run b (8 + (4 * i)) (value v))
+        info.vars;
+      ignore
+        (Rig.submit s ~run ~buffers:[| Rig.Buffer.of_bigarray result |]
+          : Rig.Point.t)
   | Error why -> fail why);
   equal ~msg:"1 + 2 + ... + 10" int32 55l result.{0}
 
@@ -1052,7 +1069,7 @@ let programs =
          compiler" (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) metal in
           equal string (source p) (binary_of p));
-      test "a host program's binary holds nx.device's entry after the kernel"
+      test "a host program's binary holds rig's host entry after the kernel"
         (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) clang in
           equal string
@@ -1061,13 +1078,16 @@ let programs =
                  "#define E_16_16 E_16_16_";
                  source p;
                  "#undef E_16_16";
-                 "void E_16_16(void **b, const long long *v) { E_16_16_(b[0], \
-                  b[1], b[2], v[0], v[1]); }";
+                 "struct E_16_16_args { void *b0; void *b1; void *b2; long \
+                  long n; };";
+                 "void E_16_16(const struct E_16_16_args *p, long long first, \
+                  long long end) { if (end > p->n) end = p->n; if (first < \
+                  end) E_16_16_(p->b0, p->b1, p->b2, first, end); }";
                ])
             (binary_of p));
       test
-        "a host program runs through Program.call, with ten scalars past the \
-         argument registers"
+        "a host program runs as a launch of rig's host, with ten scalars past \
+         the argument registers"
         ten_scalars;
       test "the argument of a program is its program information for the target"
         (fun () ->

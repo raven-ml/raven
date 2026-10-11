@@ -10,27 +10,26 @@
     A captured schedule is every call a function makes, in order, over the
     buffers it was given. Lowering it once gives a schedule that runs again on
     other buffers: its inputs become parameters, which each run binds, its
-    intermediates share a few arenas, and its kernels and batches are compiled.
-    The engine links the result once and runs it on each call. *)
+    intermediates share a few arenas, and its kernels are compiled. The engine
+    links the result once and runs it on each call. *)
 
 val jit_lower :
   ?beam:int ->
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
-  profile:Hcq2.profile ->
-  devices:(string -> Hcq2.device) ->
+  targets:(string -> Helpers.Target.t) ->
   held_bufs:Ops.t list ->
   inputs:Ops.t list ->
   Ops.t ->
   Ops.t
-(** [jit_lower ~beam ~search ~profile ~devices ~held_bufs ~inputs linear] is the
-    captured schedule [linear], an {!Op.Linear} of calls, ready to link:
+(** [jit_lower ~beam ~search ~targets ~held_bufs ~inputs linear] is the captured
+    schedule [linear], an {!Op.Linear} of calls, ready to link:
     + the [i]th buffer of [inputs] is replaced wherever [linear] reaches it by
       the parameter of slot [i] ({!Call.param}), of its type, device and size;
     + its buffers are placed in arenas ({!Memory.memory_plan_rewrite}), except
       [held_bufs], whose contents outlive a run, such as the buffers a caller
       keeps or that hold constants;
-    + it is compiled ({!Hcq2.compile_linear}, with [search], [profile] and
-      [devices]), with the beam width [beam], or else {!Setting.jitbeam}'s, or
-      else {!Setting.beam}'s.
+    + it is compiled ({!Realize.compile_linear}, with [search] and [targets]),
+      with the beam width [beam], or else {!Setting.jitbeam}'s, or else
+      {!Setting.beam}'s.
 
-    Raises as {!Hcq2.compile_linear} does. *)
+    Raises as {!Realize.compile_linear} does. *)

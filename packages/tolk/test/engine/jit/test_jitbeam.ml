@@ -5,7 +5,7 @@
 open Windtrap
 open Tolk
 
-let devices = Tolk_engine.device (Run.devices ())
+let devices name = List.assoc name (Run.devices ())
 
 (* The capture of a kernel adding [c] to four floats on the host. A kernel is
    searched once per process, so each test lowers a kernel of its own. *)
@@ -41,8 +41,8 @@ let searched width =
     [ B (Setting.beam, width) ]
     (fun () ->
       ignore
-        (Jit.jit_lower ~search ~profile:Unstamped
-           ~devices:(fun n -> (devices n).compiler)
+        (Jit.jit_lower ~search
+           ~targets:(fun n -> Tolk_engine.target (devices n))
            ~held_bufs:[ out ] ~inputs:[ x ] linear));
   !widths
 

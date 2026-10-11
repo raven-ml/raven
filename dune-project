@@ -259,7 +259,7 @@
   (ocaml
    (>= 5.2))
   dune
-  (nx
+  (rig
    (= :version))
   (windtrap
    (and

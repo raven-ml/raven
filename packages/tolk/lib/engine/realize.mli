@@ -9,9 +9,8 @@
 
     A schedule is an {!Op.Linear} of calls ({!Schedule}). This module reads what
     a call does (its buffers, its variables, what it writes, its name and its
-    cost) and compiles every kernel a schedule calls, in parallel. Encoding the
-    calls into the command queues of their devices is {!Hcq2}'s; running them is
-    the engine's. *)
+    cost) and compiles every kernel a schedule calls, in parallel. Running them
+    is the engine's. *)
 
 (** {1:calls Calls} *)
 
@@ -80,3 +79,23 @@ val lower_and_compile :
 
     Raises as {!Codegen.to_program} does, and [Invalid_argument] if
     {!Device.renderer} finds no renderer for a target. *)
+
+val compile_linear :
+  ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  targets:(string -> Helpers.Target.t) ->
+  Ops.t ->
+  Ops.t
+(** [compile_linear ~search ~targets linear] is the schedule [linear], whose
+    devices compile for the targets [targets] gives, ready to link and run:
+    + when the setting {!Setting.beam} is [1] or more, each kernel that asks for
+      no beam search asks for one of that width;
+    + its kernels are compiled ({!lower_and_compile}, with [search]).
+
+    Each call of the result is a call of a compiled {!Op.Program} (a kernel), or
+    of an {!Op.Store} of its second argument's storage into its first's (a
+    copy); an {!Op.End} of ranges around such calls, which run once for each
+    combination of the ranges' values, the last range varying fastest; or an
+    {!Op.Backedge} of a range and a flag around them, which run once per trip of
+    the range while the flag's boolean holds.
+
+    Raises as {!lower_and_compile} does. *)

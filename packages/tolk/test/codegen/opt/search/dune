@@ -43,7 +43,7 @@
 (executable
  (name test_search_exec)
  (modules test_search_exec)
- (libraries windtrap tolk tolk_test tolk_run tolk.engine nx.device))
+ (libraries windtrap tolk tolk_test tolk_run tolk.engine rig))
 
 (rule
  (alias runtest)

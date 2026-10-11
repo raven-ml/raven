@@ -289,12 +289,6 @@ val reduceop_split_size : int t
     outputs at most [2]{^ [n]} elements, from [REDUCEOP_SPLIT_SIZE]. Defaults to
     [22]. *)
 
-val hcq_num_sdma : int option t
-(** [hcq_num_sdma] is the number of copy queues copies take
-    ({!Hcq2.sched_batches}), at least one, from [HCQ_NUM_SDMA]. [None], the
-    default, stands for as many as the AMD devices the copies reach, at most
-    [8], under {!all2all}, and for [1] otherwise. *)
-
 val mv : bool t
 (** [mv] lets hand-coded optimizations lay out matrix-vector products
     ({!Heuristic.hand_coded_optimizations}), from [MV]. Defaults to [true]. *)

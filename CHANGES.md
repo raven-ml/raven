@@ -1230,6 +1230,11 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Tolk_engine` runs compiled schedules as programs of rig
+  (`Rig_program`), and tolk depends on rig instead of nx. The queue
+  encoders (`Ops_metal`, `Ops_cuda`, `Ops_amd`, `Ops_nv`) and `Hcq2`'s
+  batches and host programs are gone; `Tolk_engine.time` sums the kernels'
+  spans in rig's profile on every device.
 - Compiled kernels that pad or concatenate an integer quotient no longer die
   with SIGFPE on x86, as `Norn.Nuts`'s compiled transition did: the padding
   divided by the zeros it loads, and now divides by 1.

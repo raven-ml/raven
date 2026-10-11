@@ -1,21 +1,17 @@
-; The engine runs the compiler's schedules on nx.device: the only part of tolk
-; that opens a device, and the one that encodes each vendor's command queues.
+; The engine runs the compiler's schedules on rig: the only part of tolk that
+; opens nothing, and loads and runs programs on the devices callers pass.
 
 (library
  (name tolk_engine)
  (public_name tolk.engine)
  (libraries
   tolk
-  nx.device
-  nx.dtype
-  nx.cuda.device
-  nx.amd.device
-  nx.amd.packet
-  nx.amd.code_object
-  nx.nv.device
-  nx.nv.packet
-  nx.nv.cubin
-  nx.metal.device)
+  rig
+  rig.program
+  rig.metal.abi
+  rig.cuda.abi
+  rig.amd.abi
+  rig.nv.abi)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

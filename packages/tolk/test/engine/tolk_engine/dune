@@ -1,6 +1,5 @@
 ; The suite runs the Schedule suite's recorded programs and the Linearizer
-; suite's loops. A test that loses a NULL device for good runs in a process of
-; its own (tag lost-device).
+; suite's loops, and runs them on each GPU it opens.
 
 (test
  (name test_tolk_engine)
@@ -11,13 +10,12 @@
   tolk.engine
   tolk_test
   tolk_run
-  nx.device
-  nx.dtype
-  nx.metal.device)
+  rig
+  rig.disk
+  rig.metal
+  rig.cuda
+  rig.nv.nvidia
+  rig.amd.amdgpu)
  (deps
   (glob_files ../../schedule/schedule/*.golden)
-  (glob_files ../../codegen/late/linearizer/*.golden))
- (action
-  (progn
-   (run %{test} --exclude-tag lost-device)
-   (run %{test} --tag lost-device))))
+  (glob_files ../../codegen/late/linearizer/*.golden)))

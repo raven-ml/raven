@@ -172,3 +172,32 @@ let lower_and_compile ?search ~targets linear =
     (List.map
        (fun (c, a) -> (c, replace c ~src:(program a :: List.tl (src c))))
        calls)
+
+(* A kernel that asks for no beam search asks for one of the setting's width. *)
+let pm_beam width =
+  Pattern_matcher.v (fun () ->
+      [
+        Pattern_matcher.rule
+          (Upat.op ~name:"call" ~allow_any_len:true
+             ~src:[ Upat.op ~name:"sink" Op.Sink ]
+             Op.Call)
+          (fun m ->
+            match arg (m "sink") with
+            | Kernel k when k.beam = 0 ->
+                let sink =
+                  replace (m "sink") ~arg:(Kernel { k with beam = width })
+                in
+                Some
+                  (replace (m "call") ~src:(sink :: List.tl (src (m "call"))))
+            | _ -> None);
+      ])
+
+let compile_linear ?search ~targets linear =
+  let width = Setting.value Setting.beam in
+  let linear =
+    if width >= 1 then
+      graph_rewrite ~calls:Skip ~pass:Once ~ctx:() linear
+        (After_sources (pm_beam width))
+    else linear
+  in
+  lower_and_compile ?search ~targets linear

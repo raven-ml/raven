@@ -1,9 +1,9 @@
 """Goldens of tinygrad/engine/jit.py: lowering captured schedules.
 
 Each case is a function that tinygrad's tests jit, captured by `TinyJit` on
-its second call over realized buffers, on the devices of hcq2_null.py: the CPU
-host, and CPU:1 to CPU:3 with the NULL device's queues, a copy queue among
-them. For each case:
+its second call over realized buffers, on the CPU host and CPU:1 to CPU:3,
+which compile for Clang on x86_64. No program compiles: a program's binary is
+its source's bytes. For each case:
 - `<case>.golden` is the captured schedule, every call of the function;
 - `<case>_held.golden` the sink of the buffers the capture holds that the
   schedule reaches, by slot, and `<case>_inputs.golden` the sink of its input
@@ -15,14 +15,20 @@ binds.
 """
 
 from golden import graph, table
-import hcq2_null  # noqa: F401
 from tinygrad import Tensor, TinyJit, Variable, dtypes, nn
-from tinygrad.runtime.ops_cpu import CPUDevice
+from tinygrad.device import Compiler
+from tinygrad.helpers import DEV
 from tinygrad.uop.ops import Ops, UOp
 import tinygrad.engine.jit as jit
+import tinygrad.engine.realize as realize
 
-# The NULL devices have copy queues, as the Hcq2 suite's do.
-CPUDevice.has_copy_queue = property(lambda _: True)
+DEV.value = "CPU::x86_64,x86-64"
+Compiler.compile_cached = lambda self, src: src.encode()
+# Workers compile in processes of their own, with tinygrad's compilers.
+realize.get_worker_pool = lambda: None
+# tolk's compile_linear ends once the kernels are compiled: rig runs the calls
+# as they are, so tolk batches none into command queues.
+realize.hcq_compile = lambda linear, *args, **kwargs: linear
 
 
 class Captured(Exception):

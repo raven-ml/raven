@@ -10,8 +10,8 @@
   tolk_test
   tolk_run
   tolk.engine
-  nx.device
-  nx.metal.device)
+  rig
+  rig.metal)
  (deps
   (glob_files *.golden))
  (action

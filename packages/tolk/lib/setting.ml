@@ -275,7 +275,6 @@ let reduceop_split_threshold =
   int ~reach:Output "REDUCEOP_SPLIT_THRESHOLD" 32768
 
 let reduceop_split_size = int ~reach:Output "REDUCEOP_SPLIT_SIZE" 22
-let hcq_num_sdma = int_option ~reach:Output "HCQ_NUM_SDMA"
 let mv = bool ~reach:Output "MV" true
 let dmc = bool ~reach:Output "DMC" false
 let allow_half8 = bool ~reach:Output "ALLOW_HALF8" false

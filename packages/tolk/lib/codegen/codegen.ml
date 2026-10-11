@@ -968,18 +968,19 @@ let writes_memory st =
 let int_vmax u = match vmax u with `Int z -> Bigint.to_int z | _ -> 0
 
 (* A host program's launch runs blocks of one loop on the host's cores at once
-   (Nx_device.Program.call's split). A loop qualifies when it is an output loop
-   no optimisation claimed (Weak), as those a GPU makes global are, and every
-   store to memory reads it in its address: the scheduler lets no index of such
-   a loop read what another writes, so its blocks are independent, and a block
-   computes exactly what the whole loop would for its indices. A serial loop
-   (Loop), whose iterations may read each other's writes, never qualifies. The
-   largest qualifying loop splits. It runs [block_lo + r] for [r] below
-   [block_hi - block_lo], two variables the launch sets for each block; the
-   passes before kept the loop's own bounds, so this is done once the kernel is
-   final. The launch knows the two by their slots, the first past those already
-   taken, which the numbering of the kernel's other variables keeps; their
-   names, fresh among the kernel's variables, only name them in its source. *)
+   (rig's host code). A loop qualifies when it is an output loop no optimisation
+   claimed (Weak), as those a GPU makes global are, and every store to memory
+   reads it in its address: the scheduler lets no index of such a loop read what
+   another writes, so its blocks are independent, and a block computes exactly
+   what the whole loop would for its indices. A serial loop (Loop), whose
+   iterations may read each other's writes, never qualifies. The largest
+   qualifying loop splits. It runs [block_lo + r] for [r] below [block_hi -
+   block_lo], two parameters the host entry sets for each block ([host_entry]);
+   the passes before kept the loop's own bounds, so this is done once the kernel
+   is final. The entry knows the two by their slots, the first past those
+   already taken, which the numbering of the kernel's other variables keeps;
+   their names, fresh among the kernel's variables, only name them in its
+   source. *)
 let split_blocks sink =
   let all = Nodes.to_list (backward_slice_with_self ~calls:Skip sink) in
   let slots, names =
@@ -1383,33 +1384,79 @@ let do_render (ren : Renderer.t) prg lin =
   let source = ren.render (src lin) in
   Some (replace prg ~src:(src prg @ [ v Op.Source ~arg:(String source) ]))
 
-(* nx.device calls a host program as [void f(void **b, const int64_t *v)], its
-   buffers in the order of its globals and its variables in order. The kernel is
-   renamed [NAME_], and [NAME] becomes an entry of that form that passes each of
-   the kernel's parameters on, which C converts to the parameter's type. The
-   source the program keeps is the renderer's. *)
+(* The host calls a program as [void f(const void *p, long long first, long long
+   end)] (rig's host code). [p] points to its parameters: a pointer to each
+   buffer, in the order of its globals, then each variable but a split's bounds
+   in order, each aligned to its size, and for a split program the iterations of
+   the loop it splits, a [long long]. The call runs the iterations [first] to
+   [end - 1], at most the loop's last: the launch's threads number the
+   iterations. The kernel is renamed [NAME_], and [NAME] becomes the entry that
+   passes each of its parameters on, which C converts to the parameter's type.
+   The source the program keeps is the renderer's. *)
 let host_entry prg lin source =
   let info = match arg prg with Program info -> info | _ -> assert false in
-  let name = function_name (kernel_info (nth prg 0)) in
+  let k = kernel_info (nth prg 0) in
+  let name = function_name k in
+  let bound slot =
+    match k.split with Some s -> slot = s.lo || slot = s.hi | None -> false
+  in
+  let index x xs = Option.get (List.find_index x xs) in
   let pass u =
-    let index x xs = Option.get (List.find_index x xs) in
     match arg u with
-    | Param _ when addrspace u = Some Dtype.Alu ->
-        Printf.sprintf "v[%d]" (index (equal u) info.vars)
-    | Param p -> Printf.sprintf "b[%d]" (index (Int.equal p.slot) info.globals)
+    | Param p when addrspace u = Some Dtype.Alu -> (
+        match k.split with
+        | Some s when p.slot = s.lo -> "first"
+        | Some s when p.slot = s.hi -> "end"
+        | _ -> Printf.sprintf "p->v%d" (index (equal u) info.vars))
+    | Param p -> Printf.sprintf "p->b%d" (index (Int.equal p.slot) info.globals)
     | _ -> assert false
   in
+  let ctype dt =
+    match Dtype.itemsize dt with
+    | 1 -> "signed char"
+    | 2 -> "short"
+    | 4 -> "int"
+    | _ -> "long long"
+  in
+  let fields =
+    List.mapi (fun i _ -> Printf.sprintf "void *b%d;" i) info.globals
+    @ List.concat
+        (List.mapi
+           (fun i v ->
+             match arg v with
+             | Param p when bound p.slot -> []
+             | _ -> [ Printf.sprintf "%s v%d;" (ctype (dtype v)) i ])
+           info.vars)
+    @ if Option.is_some k.split then [ "long long n;" ] else []
+  in
   let params = List.filter (fun u -> op u = Op.Param) (src lin) in
-  let abi = if Sys.win32 then "__attribute__((ms_abi)) " else "" in
+  let call =
+    Printf.sprintf "%s_(%s);" name (String.concat ", " (List.map pass params))
+  in
+  let args, body =
+    match fields with
+    | [] -> ("const void *p", call)
+    | _ when Option.is_some k.split ->
+        ( Printf.sprintf "const struct %s_args *p" name,
+          "if (end > p->n) end = p->n; if (first < end) " ^ call )
+    | _ -> (Printf.sprintf "const struct %s_args *p" name, call)
+  in
   String.concat "\n"
-    [
-      Printf.sprintf "#define %s %s_" name name;
-      source;
-      Printf.sprintf "#undef %s" name;
-      Printf.sprintf "%svoid %s(void **b, const long long *v) { %s_(%s); }" abi
-        name name
-        (String.concat ", " (List.map pass params));
-    ]
+    (Printf.sprintf "#define %s %s_" name name
+     :: source
+     :: Printf.sprintf "#undef %s" name
+     ::
+     (match fields with
+     | [] -> []
+     | _ ->
+         [
+           Printf.sprintf "struct %s_args { %s };" name
+             (String.concat " " fields);
+         ])
+    @ [
+        Printf.sprintf "void %s(%s, long long first, long long end) { %s }" name
+          args body;
+      ])
 
 let do_compile ((ren : Renderer.t), compile) prg source =
   let source = match arg source with String s -> s | _ -> assert false in
