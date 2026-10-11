@@ -120,11 +120,26 @@ let test_follows () =
        [| B.of_bigarray out; shared |]);
   equal ~msg:"the Polled work it follows" bool true (Rig.Point.reached written)
 
+(* A profile taken around a launch records its span, named after its function:
+   [take] reads the host's times before it returns. *)
+let test_profiled () =
+  let out = S.words 4 and inb = S.words 4 in
+  let _, events =
+    Rig.Profile.take (fun () -> affine_launch ~n:4 ~t:2 ~a:1 ~c:0 out inb)
+  in
+  equal (list string) [ "affine" ]
+    (List.filter_map
+       (function
+         | Rig.Profile.Span s when Rig.equal s.device Rig.host -> Some s.name
+         | _ -> None)
+       events)
+
 let program_tests =
   group ~timeout "launches"
     [
       prop "a launch runs its function on its parameters over every thread"
         affine_case test_affine;
+      test "a profile records a launch's span" test_profiled;
       test
         "a function calls the process's cbrt and its own function, and reads \
          its constants"

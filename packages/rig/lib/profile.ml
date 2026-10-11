@@ -65,15 +65,19 @@ let recorded_order (n, e) (n', e') =
   match order e e' with 0 -> Int.compare n n' | c -> c
 
 (* Waits for the values whose events are still to be read, such as the times of
-   the submissions it timed; a device lost meanwhile has them dropped. *)
+   the submissions it timed, the host's among them; a device lost meanwhile has
+   them dropped. *)
 let read_pending () =
-  Dev.iter (fun d ->
-      match d.live with
-      | Some l when l.afters <> [] -> (
-          let v = List.fold_left (fun m (v, _) -> Int.max m v) 0 l.afters in
-          try Dev.wait d v
-          with Dev.Lost _ -> Lock.protect l.lock (fun () -> l.afters <- []))
-      | _ -> ())
+  let read (d : device) =
+    match d.live with
+    | Some l when l.afters <> [] -> (
+        let v = List.fold_left (fun m (v, _) -> Int.max m v) 0 l.afters in
+        try Dev.wait d v
+        with Dev.Lost _ -> Lock.protect l.lock (fun () -> l.afters <- []))
+    | _ -> ()
+  in
+  read Dev.host;
+  Dev.iter read
 
 let take f =
   let p = Prof.start () in
