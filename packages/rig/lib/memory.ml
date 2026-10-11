@@ -1250,19 +1250,21 @@ let mapping d m host =
           let l = Dev.live d in
           Lock.protect l.lock (fun () ->
               Cache.replace l.mapped m.entry.id m.entry);
+          (* A mapping that lost the race counts too, until it is given
+             back, so the memory outlives it. *)
           let raced =
             Dev.protect m.dev (fun () ->
+                Atomic.Loc.incr [%atomic.loc m.entry.unmaps];
                 match find_map m.entry d with
                 | Some other -> Some other
                 | None ->
                     m.entry.maps <- mp :: m.entry.maps;
-                    Atomic.Loc.incr [%atomic.loc m.entry.unmaps];
                     None)
           in
           match raced with
           | None -> Some mp
           | Some other ->
-              defer d (Unmap (r, None));
+              give d r (Entry m.entry);
               Some other))
 
 (* The host address of the io memory [m]'s pages, or [-1] if it maps none:

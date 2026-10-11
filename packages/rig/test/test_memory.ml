@@ -195,6 +195,29 @@ let test_give_beside_stop () =
   equal ~msg:"the other memory's frees" int 1 (frees other);
   equal ~msg:"the mapped memory's frees" int 1 (frees at)
 
+(* Two borrows on one device that race to map the same memory leave one
+   mapping, and the memory goes back to its driver after the other is given
+   back. The second borrow runs inside the first one's map, at Polled's probe
+   of it. *)
+let test_raced_maps () =
+  let o, po = P.open_ "memory:raced-owner" in
+  let c, pc = P.open_ "memory:raced-mapper" in
+  let[@inline never] mapped () =
+    let m = B.create o (4 * kib) in
+    P.before pc "map_peer" (fun () -> ignore (Option.get (B.borrow c m)));
+    ignore (Option.get (B.borrow c m));
+    (Support.at m, ref (Some m))
+  in
+  let at, held = mapped () in
+  equal ~msg:"the maps" int 2
+    (List.length (List.filter (( = ) "map_peer") (P.log pc)));
+  held := None;
+  collect o;
+  Rig.set_budget o 0;
+  equal ~msg:"the memory" bool true (freed po at);
+  equal ~msg:"the mapper's regions once it went back" (list int) []
+    (P.outstanding pc)
+
 (* Memory goes back to its driver after every other device's mapping of it,
    whichever ends first. The mapper's end gives back its mapping in another
    domain, held at Polled's free gate while the memory is collected and its
@@ -818,6 +841,8 @@ let tests =
         test "memory goes back after every mapping of it" test_free_after_maps;
         test "memory whose last mapping goes before its stop goes back once"
           test_give_beside_stop;
+        test "memory two raced maps share goes back after both"
+          test_raced_maps;
         test
           "the host's out-of-memory ladder raises a device's fault it finds as \
            that device's loss, never the allocation's"
