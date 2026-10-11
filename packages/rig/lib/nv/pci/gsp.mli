@@ -90,7 +90,7 @@ val gpu : t -> Rig_nv.rm -> subdevice:int -> (Rig_nv.gpu, string) result
 
 val check : t -> string option
 (** [check g] handles the events the GSP sent since the last call, and is the
-    first fault one reported ({!Rig_nv_abi.Rpc.fault}). Once it is [Some], it
+    first fault one reported ({!Rpc.fault}). Once it is [Some], it
     stays. It never waits for the GSP's lock: while a call holds it, the
     call's own reads handle the events, and [check] returns what they
     found. *)

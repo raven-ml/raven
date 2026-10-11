@@ -335,7 +335,7 @@ let legacy ~fwsec ~booter ~libos ~wpr_meta =
 
 (* Encodings *)
 
-let cot_args ~libos ~(wpr_meta : Rig_nv_abi.Fb_layout.image) =
+let cot_args ~libos ~(wpr_meta : Fb_layout.image) =
   let module F = Defs.Fmc_boot_params in
   let module A = Defs.Acr_boot_params in
   let module R = Defs.Rm_params in
@@ -358,8 +358,8 @@ let cot_payload ~args ~fmc (m : Images.fmc) =
   let b = Bytes.make C.sizeof '\000' in
   set b C.version cot_version;
   set b C.size C.sizeof;
-  set b C.frts_vidmem_offset (fst Rig_nv_abi.Fb_layout.cot_frts);
-  set b C.frts_vidmem_size (snd Rig_nv_abi.Fb_layout.cot_frts);
+  set b C.frts_vidmem_offset (fst Fb_layout.cot_frts);
+  set b C.frts_vidmem_size (snd Fb_layout.cot_frts);
   set b C.gsp_boot_args_sysmem_offset args;
   set b C.gsp_fmc_sysmem_offset fmc;
   let words (off, _, n) (r : Images.range) =

@@ -17,6 +17,3 @@ module Cubin = Cubin
 module Launch = Launch
 module Structure = Structure
 module Qmd = Qmd
-module Rpc = Rpc
-module Fb_layout = Fb_layout
-module Page_entry = Page_entry

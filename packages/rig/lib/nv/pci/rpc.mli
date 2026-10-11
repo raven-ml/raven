@@ -77,25 +77,21 @@ val registry : (string * int) list -> string
 
 (** {1:sequences CPU sequences} *)
 
-(** The type for the steps of a register sequence the GSP asks of the CPU, in
-    the sequencer's own terms. Registers are offsets in BAR 0. *)
-type step =
-  | Write of int * int  (** [Write (r, x)] writes [x] to [r]. *)
-  | Modify of int * int * int
-      (** [Modify (r, mask, x)] writes [(r land lnot mask) lor x] to [r]: the
-          bits of [x] outside [mask] are set too. *)
-  | Poll of int * int * int
-      (** [Poll (r, mask, x)] waits until [r land mask] is [x]. *)
-  | Delay_us of int  (** [Delay_us n] waits [n] microseconds. *)
-  | Store of int * int
-      (** [Store (r, i)] saves [r] in slot [i] of the GSP's save area, which the
-          GSP does not read back from the CPU. *)
-  | Core_reset  (** Resets the GSP's falcon. *)
-  | Core_start  (** Starts it. *)
-  | Core_wait_for_halt  (** Waits for it to halt. *)
-  | Core_resume  (** Resumes the GSP from its suspended state. *)
+val sequence : libos:int -> string -> (Falcon.op list, string) result
+(** [sequence ~libos body] is the register accesses a
+    [GSP_RUN_CPU_SEQUENCER] event's [body] asks of the CPU, as the falcons
+    run them, in order:
+    - a write, a modify and a poll of a register of BAR 0. A modify sets the
+      value's bits outside its mask too, and a poll waits as {!Falcon.Poll}
+      does;
+    - a delay;
+    - nothing for a store into the GSP's save area, which the GSP does not
+      read back from the CPU;
+    - for the GSP's core, its falcon reset ({!Falcon.reset}) and allowed to
+      read physical memory without a context, started ({!Falcon.start}) or
+      waited for to halt ({!Falcon.wait_halt}); a resumption resets it as a
+      RISC-V core, gives it its libos arguments at the bus address [libos]
+      in its mailboxes, starts SEC2 and waits for SEC2 to hand it over.
 
-val sequence : string -> (step list, string) result
-(** [sequence body] is the register sequence a [GSP_RUN_CPU_SEQUENCER] event's
-    [body] asks of the CPU. [Error] names an opcode it does not know or a
-    sequence that ends inside a command. *)
+    [Error] names an opcode it does not know or a sequence that ends inside a
+    command. *)

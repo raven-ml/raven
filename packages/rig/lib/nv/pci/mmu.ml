@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 open Rig_pci
-open Rig_nv_abi
 
 let version : Chip.family -> Page_entry.version = function
   | Ampere | Ada -> V2

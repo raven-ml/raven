@@ -248,3 +248,30 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
     respond after one.
 
     Raises [Invalid_argument] if [i < 0]. *)
+
+(**/**)
+
+(* The GSP's formats and the falcons' register accesses, for the suites that
+   check them. *)
+module Rpc = Rpc
+module Fb_layout = Fb_layout
+module Page_entry = Page_entry
+
+module Falcon : sig
+  type cond = Falcon.cond = Is of int | Not of int | Differs of int
+
+  type op = Falcon.op =
+    | Write of int * int
+    | Modify of int * int * int
+    | Copy of int * int
+    | Poll of string * int * int * cond
+    | Delay of int
+    | When of int * int * cond * op list
+    | Expect of string * int * int * cond
+
+  val gsp : int
+  val sec2 : int
+  val reset : int -> [ `Falcon | `Riscv ] -> op list
+  val start : int -> op list
+  val wait_halt : int -> op list
+end

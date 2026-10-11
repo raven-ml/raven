@@ -20,9 +20,10 @@
   Without the firmware these skip: it cannot be in the repository, and an
   open reaches nothing past its report without it.
 
-rig.nv.abi's suites, in `../abi`, check the formats the boot writes and
-reads: the GSP's records, calls and CPU sequences, the region it reserves
-and the page-table entries.
+`test_rpc.ml`, `test_fb_layout.ml` and `test_page_entry.ml` check the
+formats the boot writes and reads, through the library's hidden section:
+the GSP's records and calls, the register accesses its CPU sequences
+become, the region it reserves and the page-table entries.
 
 What nothing here checks, since no host that runs the suite gives root on
 an NVIDIA GPU:

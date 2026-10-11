@@ -257,7 +257,7 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
   let* () =
     match c.family with
     | Blackwell ->
-        Rig_nv_abi.Fb_layout.check ~wpr2:(wpr2 c)
+        Fb_layout.check ~wpr2:(wpr2 c)
           ~top:(Page_table.memory tables)
     | Ampere | Ada -> Ok ()
   in
@@ -310,14 +310,14 @@ let start h (c : Chip.t) (fw : Images.t) fwsec ~failed =
   let* memory = Chip.memory c in
   let* bar = Function.map ~combine:false c.fn memory_bar in
   let top =
-    Rig_nv_abi.Fb_layout.top (Chip.layout c.family) ~memory
+    Fb_layout.top (Chip.layout c.family) ~memory
       ~boot:fw.bootloader.image.length ~image:fw.gsp.length
   in
   let tables =
     Page_table.create (Mmu.format c bar ~failed) space ~memory:top
       ~boot:(Gsp.boot_pool fw.start)
       ~tables:(if Window.length bar >= memory then Main else Pool)
-      ~pages:(Rig_nv_abi.Page_entry.pages (Mmu.version c.family))
+      ~pages:(Page_entry.pages (Mmu.version c.family))
   in
   (* The boot pool holds only the falcons' images: the GSP's objects come from
      the main pool. *)
@@ -399,3 +399,8 @@ let gpu ?machine ?(firmware = []) i : Rig_nv.t Rig_edge.opener =
     driver = (module Rig_nv);
     make = (fun () -> open_ ?machine ~firmware i);
   }
+
+module Rpc = Rpc
+module Fb_layout = Fb_layout
+module Page_entry = Page_entry
+module Falcon = Falcon

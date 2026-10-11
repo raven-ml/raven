@@ -5,10 +5,10 @@
 
 (** NVIDIA's page tables in the GPU's memory.
 
-    {!format} writes {!Rig_nv_abi.Page_entry}'s entries into the GPU's
+    {!format} writes {!Page_entry}'s entries into the GPU's
     memory, and a TLB invalidation makes the GPU read them. *)
 
-val version : Chip.family -> Rig_nv_abi.Page_entry.version
+val version : Chip.family -> Page_entry.version
 (** [version f] is [V2] for Ampere and Ada, [V3] for Blackwell. *)
 
 val format :

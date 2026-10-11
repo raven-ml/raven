@@ -9,7 +9,7 @@
    (open-gpu-kernel-modules 570.144). *)
 
 open Windtrap
-open Rig_nv_abi
+open Rig_nv_pci
 
 let mib = 1 lsl 20
 let u32 s o = Int32.to_int (String.get_int32_le s o) land 0xffff_ffff
@@ -196,7 +196,7 @@ let test_check =
 
 let () =
   exit
-  @@ run "rig_nv_abi.fb_layout"
+  @@ run "rig_nv_pci.fb_layout"
        [
          group ~timeout:10. "radix-3" [ test_radix3 ];
          group ~timeout:10. "metadata"

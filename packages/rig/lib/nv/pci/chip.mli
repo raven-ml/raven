@@ -35,7 +35,7 @@ val of_function : Rig_pci.Function.t -> (t, string) result
     ({!chip}), changing nothing on the GPU. It is [Error] as {!chip}, or if the
     BAR cannot be mapped. *)
 
-val layout : family -> Rig_nv_abi.Fb_layout.layout
+val layout : family -> Fb_layout.layout
 (** [layout f] is who lays out the region the GSP reserves on a GPU of family
     [f]: the process on Ampere and Ada, the FMC on Blackwell. *)
 

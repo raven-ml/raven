@@ -11,7 +11,7 @@
    (PACKED_REGISTRY_TABLE) and rmgspseq.h (the opcodes). *)
 
 open Windtrap
-open Rig_nv_abi
+open Rig_nv_pci
 
 let u8 s o = Char.code s.[o]
 let u32 s o = Int32.to_int (String.get_int32_le s o) land 0xffff_ffff
@@ -249,41 +249,77 @@ let sequencer words =
     words;
   Bytes.to_string b
 
-let pp_step ppf (s : Rpc.step) =
-  match s with
+let rec pp_op ppf (o : Falcon.op) =
+  let cond ppf : Falcon.cond -> unit = function
+    | Is x -> Format.fprintf ppf "is 0x%x" x
+    | Not x -> Format.fprintf ppf "not 0x%x" x
+    | Differs r -> Format.fprintf ppf "differs from 0x%x" r
+  in
+  match o with
   | Write (r, x) -> Format.fprintf ppf "write 0x%x 0x%x" r x
   | Modify (r, m, x) -> Format.fprintf ppf "modify 0x%x 0x%x 0x%x" r m x
-  | Poll (r, m, x) -> Format.fprintf ppf "poll 0x%x 0x%x 0x%x" r m x
-  | Delay_us n -> Format.fprintf ppf "delay %d" n
-  | Store (r, i) -> Format.fprintf ppf "store 0x%x %d" r i
-  | Core_reset -> Format.fprintf ppf "core reset"
-  | Core_start -> Format.fprintf ppf "core start"
-  | Core_wait_for_halt -> Format.fprintf ppf "core wait for halt"
-  | Core_resume -> Format.fprintf ppf "core resume"
+  | Copy (r, r') -> Format.fprintf ppf "copy 0x%x 0x%x" r r'
+  | Poll (what, r, m, c) ->
+      Format.fprintf ppf "poll %S 0x%x 0x%x %a" what r m cond c
+  | Delay n -> Format.fprintf ppf "delay %d" n
+  | When (r, m, c, ops) ->
+      Format.fprintf ppf "when 0x%x 0x%x %a [%a]" r m cond c
+        (Format.pp_print_list pp_op)
+        ops
+  | Expect (what, r, m, c) ->
+      Format.fprintf ppf "expect %S 0x%x 0x%x %a" what r m cond c
 
-let step = Testable.make ~pp:pp_step ~equal:( = )
+let op = Testable.make ~pp:pp_op ~equal:( = )
+let libos = 0x12_3456_7000
+let sequence words = require_ok (Rpc.sequence ~libos (sequencer words))
+
+(* The core's commands are the falcons' own sequences for the GSP's falcon: the
+   falcon reset, then FBIF_CTL's ALLOW_PHYS_NO_CTX (bit 7 of 0x110624) set and
+   DMACTL (0x11010c) cleared. *)
+let core_reset =
+  Falcon.reset Falcon.gsp `Falcon
+  @ Falcon.[ Modify (0x110624, 0x80, 0x80); Write (0x11010c, 0) ]
 
 let test_sequence =
-  cases "each opcode is its step, its payload read in order"
+  cases "each opcode is its register accesses, its payload read in order"
     ~name:(fun (n, _, _) -> n)
     [
-      ("a write", [ 0; 0x1000; 0x5 ], [ Rpc.Write (0x1000, 0x5) ]);
-      ("a modify", [ 1; 0x2000; 0xff; 0x10 ], [ Modify (0x2000, 0xff, 0x10) ]);
+      ("a write", [ 0; 0x1000; 0x5 ], [ Falcon.Write (0x1000, 0x5) ]);
+      ( "a modify sets the value's bits outside its mask",
+        [ 1; 0x2000; 0xf0; 0x13 ],
+        [ Modify (0x2000, 0xf3, 0x13) ] );
       ( "a poll, its timeout and error left",
         [ 2; 0x3000; 0xff; 0x10; 1000; 0 ],
-        [ Poll (0x3000, 0xff, 0x10) ] );
-      ("a delay", [ 3; 20 ], [ Delay_us 20 ]);
-      ("a store", [ 4; 0x4000; 2 ], [ Store (0x4000, 2) ]);
-      ( "the core's commands",
-        [ 5; 6; 7; 8 ],
-        [ Core_reset; Core_start; Core_wait_for_halt; Core_resume ] );
+        [ Poll ("register 0x3000", 0x3000, 0xff, Is 0x10) ] );
+      ("a delay", [ 3; 20 ], [ Delay 20 ]);
+      ("a store", [ 4; 0x4000; 2 ], []);
+      ("a core reset", [ 5 ], core_reset);
+      ("a core start", [ 6 ], Falcon.start Falcon.gsp);
+      ("a wait for the core to halt", [ 7 ], Falcon.wait_halt Falcon.gsp);
       ( "one after another",
         [ 0; 0x1000; 0x5; 3; 20; 6 ],
-        [ Write (0x1000, 0x5); Delay_us 20; Core_start ] );
+        Falcon.[ Write (0x1000, 0x5); Delay 20 ] @ Falcon.start Falcon.gsp );
       ("nothing", [], []);
     ]
-    (fun (_, words, steps) ->
-      equal (list step) steps (require_ok (Rpc.sequence (sequencer words))))
+    (fun (_, words, ops) -> equal (list op) ops (sequence words))
+
+(* A resumption restarts the GSP's falcon as a RISC-V core with the libos
+   arguments in MAILBOX0 and MAILBOX1 (0x110040 and 0x110044), low word first,
+   then starts SEC2 (at 0x840000) and waits for it to hand the GSP over. *)
+let test_resume () =
+  let ops = sequence [ 8 ] in
+  let reset = Falcon.reset Falcon.gsp `Riscv in
+  let n = List.length reset in
+  equal (list op) ~msg:"the reset" reset (List.filteri (fun i _ -> i < n) ops);
+  equal (list op) ~msg:"the libos arguments"
+    Falcon.[ Write (0x110040, 0x3456_7000); Write (0x110044, 0x12) ]
+    (List.filteri (fun i _ -> i >= n && i < n + 2) ops);
+  let start = Falcon.start Falcon.sec2 in
+  equal (list op) ~msg:"SEC2 started" start
+    (List.filteri (fun i _ -> i >= n + 2 && i < n + 2 + List.length start) ops);
+  equal int ~msg:"then a poll and a check"
+    (n + 2 + List.length start + 2)
+    (List.length ops)
 
 let test_sequence_refused =
   cases "a sequence it cannot run is refused"
@@ -297,11 +333,11 @@ let test_sequence_refused =
         "longer" );
     ]
     (fun (_, body, why) ->
-      contains ~sub:why (require_error (Rpc.sequence body)))
+      contains ~sub:why (require_error (Rpc.sequence ~libos body)))
 
 let () =
   exit
-  @@ run "rig_nv_abi.rpc"
+  @@ run "rig_nv_pci.rpc"
        [
          group ~timeout:20. "records"
            [
@@ -327,5 +363,10 @@ let () =
              test "unloading" test_unloading;
              test_registry;
            ];
-         group ~timeout:10. "sequences" [ test_sequence; test_sequence_refused ];
+         group ~timeout:10. "sequences"
+           [
+             test_sequence;
+             test "a resumption restarts the GSP with its arguments" test_resume;
+             test_sequence_refused;
+           ];
        ]

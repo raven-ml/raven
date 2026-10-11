@@ -7,10 +7,8 @@
 
     What compiled code and the driver of an NVIDIA GPU share: the words a
     channel runs, the entries of its ring, the descriptors its launches read,
-    the cubins they run, and the record that describes the GPU. It also holds
-    what a driver that boots the GPU itself shares with the GSP's firmware
-    ({!section-gsp}). Nothing here acts on a GPU. Each value describes bytes,
-    and its caller writes them.
+    the cubins they run, and the record that describes the GPU. Nothing here
+    acts on a GPU. Each value describes bytes, and its caller writes them.
 
     The library describes bytes with three kinds of value:
     - A {e packet} ({!Packet.t}) is a channel's 32-bit words around values of
@@ -91,17 +89,3 @@ module Structure = Structure
 
 module Qmd = Qmd
 (** Launch descriptors. *)
-
-(** {1:gsp The GSP}
-
-    What a driver that boots the GPU itself exchanges with the firmware of its
-    GSP, and the page tables it writes. *)
-
-module Rpc = Rpc
-(** The GSP's calls and messages, as bytes. *)
-
-module Fb_layout = Fb_layout
-(** Where the GSP's firmware goes in memory. *)
-
-module Page_entry = Page_entry
-(** NVIDIA's page-table entries. *)

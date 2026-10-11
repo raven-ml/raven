@@ -1,5 +1,11 @@
 (test
  (name test_nv_pci)
+ (modules test_nv_pci)
  (libraries rig_nv rig_nv_pci rig_pci rig_pci_support unix windtrap)
  (deps
   (source_tree fixtures)))
+
+(tests
+ (names test_rpc test_fb_layout test_page_entry)
+ (modules test_rpc test_fb_layout test_page_entry)
+ (libraries rig_nv_pci windtrap))

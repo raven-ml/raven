@@ -49,7 +49,7 @@ let chip boot42 =
             this library boots"
            arch impl)
 
-let layout : family -> Rig_nv_abi.Fb_layout.layout = function
+let layout : family -> Fb_layout.layout = function
   | Ampere | Ada -> Process
   | Blackwell -> Fmc
 

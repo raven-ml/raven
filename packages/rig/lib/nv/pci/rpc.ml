@@ -219,18 +219,44 @@ let registry keys =
 
 (* CPU sequences *)
 
-type step =
-  | Write of int * int
-  | Modify of int * int * int
-  | Poll of int * int * int
-  | Delay_us of int
-  | Store of int * int
-  | Core_reset
-  | Core_start
-  | Core_wait_for_halt
-  | Core_resume
+(* The GSP's falcon restarted with its libos arguments at the bus address
+   [libos], once SEC2 hands it over. *)
+let resume ~libos =
+  let module L = Defs.Legacy in
+  let gsp = Falcon.gsp and sec2 = Falcon.sec2 in
+  let handoff = L.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff in
+  Falcon.reset gsp `Riscv
+  @ [
+      Falcon.Write (L.nv_pgsp_falcon_mailbox0, libos land 0xffff_ffff);
+      Write (L.nv_pgsp_falcon_mailbox1, libos lsr 32);
+    ]
+  @ Falcon.start sec2
+  @ [
+      Poll
+        ( "SEC2 to hand the GSP over",
+          L.nv_pgc6_bsi_secure_scratch_14,
+          mask handoff,
+          Is
+            (Defs.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff_value_done
+            lsl fst handoff) );
+      Expect
+        ("SEC2 failed", sec2 + L.nv_pfalcon_falcon_mailbox0, 0xffff_ffff, Is 0);
+    ]
 
-let sequence body =
+(* The GSP's falcon reset, able to read physical memory without a context. *)
+let core_reset () =
+  let module L = Defs.Legacy in
+  let gsp = Falcon.gsp in
+  Falcon.reset gsp `Falcon
+  @ [
+      Modify
+        ( gsp + L.nv_pfalcon_fbif_ctl,
+          mask L.nv_pfalcon_fbif_ctl_allow_phys_no_ctx,
+          1 lsl fst L.nv_pfalcon_fbif_ctl_allow_phys_no_ctx );
+      Write (gsp + L.nv_pfalcon_falcon_dmactl, 0);
+    ]
+
+let sequence ~libos body =
   let module S = Gsp_defs.Rpc_cpu_sequencer in
   let base, _, _ = S.command_buffer in
   if String.length body < base then
@@ -242,7 +268,7 @@ let sequence body =
     else
       let word i = get body (base + (4 * i), 4) in
       let rec go i acc =
-        if i >= n then Ok (List.rev acc)
+        if i >= n then Ok (List.concat (List.rev acc))
         else
           let op = word i in
           (* A field of the payload after the opcode. *)
@@ -255,27 +281,35 @@ let sequence body =
           in
           if op = Gsp_defs.gsp_seq_buf_opcode_reg_write then
             let module P = Gsp_defs.Seq_reg_write in
-            take P.sizeof (fun () -> Write (at P.addr, at P.val_))
+            take P.sizeof (fun () -> [ Falcon.Write (at P.addr, at P.val_) ])
           else if op = Gsp_defs.gsp_seq_buf_opcode_reg_modify then
             let module P = Gsp_defs.Seq_reg_modify in
-            take P.sizeof (fun () -> Modify (at P.addr, at P.mask, at P.val_))
+            (* A falcon modify writes the mask's bits only: the value's bits
+               outside the mask join it. *)
+            take P.sizeof (fun () ->
+                let m = at P.mask and x = at P.val_ in
+                [ Falcon.Modify (at P.addr, m lor x, x) ])
           else if op = Gsp_defs.gsp_seq_buf_opcode_reg_poll then
             let module P = Gsp_defs.Seq_reg_poll in
-            take P.sizeof (fun () -> Poll (at P.addr, at P.mask, at P.val_))
+            (* The poll's timeout and error are the runner's. *)
+            take P.sizeof (fun () ->
+                let r = at P.addr in
+                let x = at P.val_ in
+                [ Falcon.Poll (strf "register 0x%x" r, r, at P.mask, Is x) ])
           else if op = Gsp_defs.gsp_seq_buf_opcode_delay_us then
             let module P = Gsp_defs.Seq_delay_us in
-            take P.sizeof (fun () -> Delay_us (at P.val_))
+            take P.sizeof (fun () -> [ Falcon.Delay (at P.val_) ])
           else if op = Gsp_defs.gsp_seq_buf_opcode_reg_store then
-            let module P = Gsp_defs.Seq_reg_store in
-            take P.sizeof (fun () -> Store (at P.addr, at P.index))
+            (* The GSP does not read its save area back from the CPU. *)
+            take Gsp_defs.Seq_reg_store.sizeof (fun () -> [])
           else if op = Gsp_defs.gsp_seq_buf_opcode_core_reset then
-            take 0 (fun () -> Core_reset)
+            take 0 core_reset
           else if op = Gsp_defs.gsp_seq_buf_opcode_core_start then
-            take 0 (fun () -> Core_start)
+            take 0 (fun () -> Falcon.start Falcon.gsp)
           else if op = Gsp_defs.gsp_seq_buf_opcode_core_wait_for_halt then
-            take 0 (fun () -> Core_wait_for_halt)
+            take 0 (fun () -> Falcon.wait_halt Falcon.gsp)
           else if op = Gsp_defs.gsp_seq_buf_opcode_core_resume then
-            take 0 (fun () -> Core_resume)
+            take 0 (fun () -> resume ~libos)
           else Error (strf "a CPU sequence of unknown opcode %d" op)
       in
       go 0 []

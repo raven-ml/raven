@@ -13,7 +13,6 @@
    are release 570.144's. *)
 
 open Rig_pci
-open Rig_nv_abi
 open Field
 
 let strf = Printf.sprintf
@@ -33,61 +32,6 @@ let u64s l =
   record
     (8 * List.length l)
     (fun b -> List.iteri (fun i x -> set b (8 * i, 8) x) l)
-
-(* The CPU sequencer *)
-
-(* [ops ~libos steps] runs the GSP's register sequence [steps] on the falcons, a
-   resumption giving the GSP its libos arguments at the bus address [libos]
-   again. *)
-let ops ~libos steps =
-  let module L = Defs.Legacy in
-  let gsp = Falcon.gsp and sec2 = Falcon.sec2 in
-  let resume =
-    Falcon.reset gsp `Riscv
-    @ [
-        Falcon.Write (L.nv_pgsp_falcon_mailbox0, libos land 0xffff_ffff);
-        Falcon.Write (L.nv_pgsp_falcon_mailbox1, libos lsr 32);
-      ]
-    @ Falcon.start sec2
-    @ [
-        Poll
-          ( "SEC2 to hand the GSP over",
-            L.nv_pgc6_bsi_secure_scratch_14,
-            mask L.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff,
-            Is
-              (Defs
-               .nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff_value_done
-              lsl fst L.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff) );
-        Expect
-          ( "SEC2 failed",
-            sec2 + L.nv_pfalcon_falcon_mailbox0,
-            0xffff_ffff,
-            Falcon.Is 0 );
-      ]
-  in
-  let op : Rpc.step -> Falcon.op list = function
-    | Write (r, x) -> [ Write (r, x) ]
-    (* A falcon modify writes the mask's bits only: the value's bits outside the
-       mask join it. *)
-    | Modify (r, m, x) -> [ Modify (r, m lor x, x) ]
-    (* The poll's timeout and error are the runner's. *)
-    | Poll (r, m, x) -> [ Poll (strf "register 0x%x" r, r, m, Is x) ]
-    | Delay_us n -> [ Delay n ]
-    | Store _ -> []
-    | Core_reset ->
-        Falcon.reset gsp `Falcon
-        @ [
-            Modify
-              ( gsp + L.nv_pfalcon_fbif_ctl,
-                mask L.nv_pfalcon_fbif_ctl_allow_phys_no_ctx,
-                1 lsl fst L.nv_pfalcon_fbif_ctl_allow_phys_no_ctx );
-            Write (gsp + L.nv_pfalcon_falcon_dmactl, 0);
-          ]
-    | Core_start -> Falcon.start gsp
-    | Core_wait_for_halt -> Falcon.wait_halt gsp
-    | Core_resume -> resume
-  in
-  List.concat_map op steps
 
 (* Booting *)
 
@@ -267,8 +211,8 @@ let drain g ~want =
         let* () =
           if m.fn <> Defs.nv_vgpu_msg_event_gsp_run_cpu_sequencer then Ok ()
           else
-            let* steps = Rpc.sequence m.body in
-            Falcon.run g.p.chip (ops ~libos:g.libos steps)
+            let* ops = Rpc.sequence ~libos:g.libos m.body in
+            Falcon.run g.p.chip ops
         in
         (match Rpc.fault m with
         | Some f when g.fault = None -> g.fault <- Some f

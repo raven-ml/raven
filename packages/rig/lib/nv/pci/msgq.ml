@@ -5,10 +5,9 @@
 
 (* Each queue is a ring of 4 KiB elements. A queue's header holds its
    writer's position; its reader keeps its own in the other queue's header
-   page. The rings hold records ([Rig_nv_abi.Rpc.records]). *)
+   page. The rings hold records ([Rpc.records]). *)
 
 open Rig_pci
-open Rig_nv_abi
 open Field
 
 let strf = Printf.sprintf

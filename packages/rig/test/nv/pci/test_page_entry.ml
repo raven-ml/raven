@@ -7,7 +7,7 @@
    2, gh100 for version 3, open-gpu-kernel-modules 570.144). *)
 
 open Windtrap
-open Rig_nv_abi
+open Rig_nv_pci
 
 let pa = 0x1234_5000
 
@@ -98,7 +98,7 @@ let test_levels =
 
 let () =
   exit
-  @@ run "rig_nv_abi.page_entry"
+  @@ run "rig_nv_pci.page_entry"
        [
          group ~timeout:10. "entries" [ test_pte; test_pde; test_dual ];
          group ~timeout:10. "levels" [ test_levels ];

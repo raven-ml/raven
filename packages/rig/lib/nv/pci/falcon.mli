@@ -89,7 +89,7 @@ val legacy : fwsec:hs -> booter:hs -> libos:int -> wpr_meta:int -> op list
     metadata at [wpr_meta] (both bus addresses), a check of the booter's
     mailbox, and a check that the GSP's core runs. *)
 
-val cot_args : libos:int -> wpr_meta:Rig_nv_abi.Fb_layout.image -> string
+val cot_args : libos:int -> wpr_meta:Fb_layout.image -> string
 (** [cot_args ~libos ~wpr_meta] is the FMC's boot arguments
     ([GSP_FMC_BOOT_PARAMS]): the WPR metadata [wpr_meta] and the libos arguments
     at the bus address [libos], both in coherent system memory. *)
@@ -98,7 +98,7 @@ val cot_payload : args:int -> fmc:int -> Images.fmc -> string
 (** [cot_payload ~args ~fmc m] is the COT payload ([NVDM_PAYLOAD_COT], version
     2) that has the FSP boot the GSP from the FMC [m], whose image and boot
     arguments are at the bus addresses [fmc] and [args], its FRTS region where
-    {!Rig_nv_abi.Fb_layout.cot_frts} puts it. *)
+    {!Fb_layout.cot_frts} puts it. *)
 
 val cot : string -> op list
 (** [cot payload] sends the FSP the COT [payload] and waits for the GSP's boot

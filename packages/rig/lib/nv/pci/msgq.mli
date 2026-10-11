@@ -25,9 +25,9 @@ val send : t -> int -> string -> bool
     doorbell after each, or is [false], writing nothing, if the command queue
     has no room for them. *)
 
-val receive : t -> (Rig_nv_abi.Rpc.message, string) result option
+val receive : t -> (Rpc.message, string) result option
 (** [receive q] is the next message of the status queue, if the GSP wrote one,
     which it consumes: [Error] if its elements are not a GSP message
-    ({!Rig_nv_abi.Rpc.message}).
+    ({!Rpc.message}).
 
     Raises [Invalid_argument] if [q] is not {!ready}. *)

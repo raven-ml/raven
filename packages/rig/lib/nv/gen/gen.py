@@ -17,7 +17,7 @@ formats in rig_nv_abi from NVIDIA's sources:
   containers, the registers per family, and the firmware images, pinned.
   They come from release 570.144, the GSP firmware's release, and from
   Linux's nouveau driver.
-- lib/nv/abi/gsp_defs.ml: the GSP's formats, from the same excerpts. Its
+- lib/nv/pci/gsp_defs.ml: the GSP's formats, from the same excerpts. Its
   messages and the bodies of the RM's calls, the CPU sequences, the WPR
   metadata, the registry, the names of the channel errors, and the
   page-table entries.
@@ -366,7 +366,7 @@ STATUS_HEADER = "nvstatuscodes.h"
 
 PCI_HEADERS = HEADERS / "pci"
 PCI_OUT = LIB / "pci/defs.ml"
-GSP_OUT = LIB / "abi/gsp_defs.ml"
+GSP_OUT = LIB / "pci/gsp_defs.ml"
 FIRMWARE_LIST = PCI_HEADERS / "firmware.tsv"
 
 PCI_KERNEL = KERNEL + "570.144/"

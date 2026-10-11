@@ -7,10 +7,7 @@
   test_launch
   test_local_memory
   test_qmd
-  test_structure
-  test_rpc
-  test_fb_layout
-  test_page_entry)
+  test_structure)
  (libraries rig_nv_abi rig_nv_abi_support rig_elf windtrap)
  (deps
   (source_tree fixtures)
