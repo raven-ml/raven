@@ -41,9 +41,9 @@ val busy : t -> bool
 
 val wait : t -> unit
 (** [wait l], holding [l], gives it up until a {!broadcast} on [l], a spurious
-    wake-up or 200 ms, then takes it back. A caller waits in a loop, which so
-    returns to OCaml at least every 200 ms, where a pending signal's handler
-    runs ({!Rig.section-domains}). *)
+    wake-up or 200 ms, then takes it back. Callers wait in a loop on their
+    condition, so a wait returns to OCaml at least every 200 ms, where a
+    pending signal's handler runs ({!Rig.section-domains}). *)
 
 val broadcast : t -> unit
 (** [broadcast l] wakes every {!wait} on [l]. *)

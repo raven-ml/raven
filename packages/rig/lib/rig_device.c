@@ -71,20 +71,36 @@ static void mutex_init(rig_mutex *m) { pthread_mutex_init(m, NULL); }
 static int mutex_try(rig_mutex *m) { return pthread_mutex_trylock(m) == 0; }
 static void mutex_lock(rig_mutex *m) { pthread_mutex_lock(m); }
 static void mutex_unlock(rig_mutex *m) { pthread_mutex_unlock(m); }
-static void cond_init(rig_cond *c) { pthread_cond_init(c, NULL); }
+/* A condition waits on a clock no step of the wall clock moves: macOS has no
+   clock attribute for conditions and waits for the time left; elsewhere the
+   condition waits on CLOCK_MONOTONIC. */
+static void cond_init(rig_cond *c) {
+#ifdef __APPLE__
+  pthread_cond_init(c, NULL);
+#else
+  pthread_condattr_t monotonic;
+  pthread_condattr_init(&monotonic);
+  pthread_condattr_setclock(&monotonic, CLOCK_MONOTONIC);
+  pthread_cond_init(c, &monotonic);
+  pthread_condattr_destroy(&monotonic);
+#endif
+}
 static void cond_broadcast(rig_cond *c) { pthread_cond_broadcast(c); }
-/* A clock jump moves one timeout, which only returns a waiter early or late
-   to OCaml. */
 static void cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
-  struct timespec t;
-  clock_gettime(CLOCK_REALTIME, &t);
-  t.tv_sec += ms / 1000;
-  t.tv_nsec += (long)(ms % 1000) * 1000000;
+  struct timespec t = {ms / 1000, (long)(ms % 1000) * 1000000};
+#ifdef __APPLE__
+  pthread_cond_timedwait_relative_np(c, m, &t);
+#else
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  t.tv_sec += now.tv_sec;
+  t.tv_nsec += now.tv_nsec;
   if (t.tv_nsec >= 1000000000) {
     t.tv_sec += 1;
     t.tv_nsec -= 1000000000;
   }
   pthread_cond_timedwait(c, m, &t);
+#endif
 }
 #endif
 
@@ -393,9 +409,9 @@ value caml_rig_lock_give(value v_l) {
 
 /* Gives up the lock [v_l], which the caller holds, until a broadcast on
    it, a spurious wake-up or the still interval, then takes it back; without
-   the domain lock meanwhile. The caller waits in a loop, which so returns
-   to OCaml, where a pending signal's handler runs, at least every still
-   interval. */
+   the domain lock meanwhile. Callers wait in a loop on their condition, so a
+   wait returns to OCaml at least every still interval, where a pending
+   signal's handler runs. */
 value caml_rig_lock_wait(value v_l) {
   CAMLparam1(v_l);
   struct rig_lock *l = Lock_val(v_l);
