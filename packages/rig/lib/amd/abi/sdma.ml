@@ -51,7 +51,7 @@ let copy g ~dst ~src n =
       W64 (at dst);
     ]
   in
-  List.concat (List.init ((n + max - 1) / max) piece)
+  List.concat_map piece (List.init ((n + max - 1) / max) Fun.id)
 
 (* The interval and retries of a poll, as the kernel driver sets them. *)
 let interval = 0x04

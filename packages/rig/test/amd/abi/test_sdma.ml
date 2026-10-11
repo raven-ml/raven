@@ -112,11 +112,16 @@ let copy =
         (fun n ->
           raises_match (Exn.invalid_arg ~substring:"Sdma.copy") (fun () ->
               Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 n));
-      (* 2^18 copies of 1 GiB, of 7 words each. *)
+      (* 2^18 copies of 1 GiB, of 7 words each, within a stack of 2^16
+         words: none per copy. *)
       test "a copy of 2^48 bytes is taken" (fun () ->
-          equal int
-            ((1 lsl 18) * 7)
-            (Packet.size (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (1 lsl 48))));
+          let gc = Gc.get () in
+          Gc.set { gc with stack_limit = 1 lsl 16 };
+          let size =
+            Fun.protect ~finally:(fun () -> Gc.set gc) (fun () ->
+                Packet.size (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (1 lsl 48)))
+          in
+          equal int ((1 lsl 18) * 7) size);
     ]
 
 let others =
