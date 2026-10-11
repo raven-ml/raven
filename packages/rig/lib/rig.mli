@@ -1806,10 +1806,11 @@ module Profile : sig
       clock from an unspecified start. *)
 
   val record : event -> unit
-  (** [record e] adds [e] to each profile being taken, so {!take} returns it
-      among rig's own events, in time order. It records nothing while no
-      profile is being taken. An event recorded after [take]'s function has
-      returned may join no profile, even one of the work it measures. *)
+  (** [record e] adds [e] to each profile being taken when it is called, so
+      {!take} returns it among rig's own events, in time order. It records
+      nothing while no profile is being taken, so counters a library reads
+      after [take] has returned join no profile, even one of the work they
+      count. *)
 
   val span : string -> (unit -> 'a) -> 'a
   (** [span name f] is [f ()], recorded as a span named [name] on the calling
