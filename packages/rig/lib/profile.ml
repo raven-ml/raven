@@ -64,6 +64,8 @@ let order e e' =
 let recorded_order (n, e) (n', e') =
   match order e e' with 0 -> Int.compare n n' | c -> c
 
+let drop_afters l = l.afters <- []
+
 (* Waits for the values whose events are still to be read, such as the times of
    the submissions it timed, the host's among them; a device lost meanwhile has
    them dropped. *)
@@ -73,7 +75,7 @@ let read_pending () =
     | Some l when l.afters <> [] -> (
         let v = List.fold_left (fun m (v, _) -> Int.max m v) 0 l.afters in
         try Dev.wait d v
-        with Dev.Lost _ -> Lock.protect l.lock (fun () -> l.afters <- []))
+        with Dev.Lost _ -> Lock.protect l.lock drop_afters l)
     | _ -> ()
   in
   read Dev.host;
@@ -90,12 +92,13 @@ let take f =
       let events = Prof.stop p in
       (r, List.map snd (List.stable_sort recorded_order events))
   | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
+      (* Stopped before the backtrace is taken, whose allocation an
+         asynchronous exception may interrupt. *)
       ignore (Prof.stop p);
-      Printexc.raise_with_backtrace e bt
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let span name f =
-  match Prof.active () with
+  match if Prof.enabled () then Prof.active () else [] with
   | [] -> f ()
   | ps ->
       let lane = strf "domain %d" (Domain.self () :> int) in

@@ -40,7 +40,7 @@
     Every object goes back to its driver through {!Dev.give}. What a device
     lost and not yet Stopped would give back waits on its pending list
     ([pending] in {!Def.live}) until it is Stopped. Every drain walks the
-    devices whose stop has returned ({!Dev.ended}) and takes the steps that
+    devices whose stop has returned ({!Dev.next_ended}) and takes the steps that
     end their words ({!Dev.section-loss}). The last drain to leave a device
     whose word is given back, whose entries have all been given back and
     that holds nothing more frees its resources ({!Dev.free_live}).
@@ -236,13 +236,19 @@ val leave : device -> live -> unit
 
 val hold_word : device -> bool
 (** [hold_word d] counts a mapping of [d]'s word about to be made, unless
-    [d]'s word went back to its driver: whether it counted. The mapping is
+    [d]'s word has moved to its C record's copy or gone back to its driver:
+    whether it counted. The mapping is
     then given back with {!give}, or, if none was made, the count with
     {!word_unmapped}. *)
 
 val give : device -> region -> mapped -> unit
 (** [give d r m] gives back [d]'s mapping [r] of [m], now or once [d]
     stopped, and [m] goes back to its driver after its last mapping. *)
+
+val drop_word_map : device -> region -> device -> unit
+(** [drop_word_map d r p] gives back [d]'s mapping [r] of [p]'s word, which
+    [d] never used, dropping the mapping's count of [p]'s word before it
+    frees [r]. *)
 
 val word_unmapped : device -> unit
 (** [word_unmapped d] drops one count of [d]'s word ({!hold_word}), giving

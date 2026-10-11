@@ -6,8 +6,14 @@
 (** Locks: a C mutex with a condition variable, held by a custom block.
 
     Every lock in rig's OCaml code is one: each device's ({!Def.live}), and
-    those of the tables in {!Dev}, {!Memory} and {!Copy}. {!hold} and
-    {!release} bracket a section without a closure.
+    those of the tables in {!Dev}, {!Memory} and {!Copy}.
+
+    An exception raised while a lock is held must not leave it held, or the
+    next call that takes it waits for good. An asynchronous exception, such
+    as [Sys.Break] or [Out_of_memory], arises where OCaml code allocates or
+    polls, and [Stack_overflow] where a function starts. So a section
+    between {!hold} and {!release} allocates nothing, loops nowhere and calls
+    no OCaml function, and every other section runs in {!protect}.
 
     Any domain may call any function. A call that blocks, waiting for a lock
     or in {!wait}, releases the domain's runtime lock meanwhile and runs no
@@ -26,15 +32,18 @@ val create : unit -> t
     has no room for it. *)
 
 val hold : t -> unit
-(** [hold l] waits for [l] and holds it, for a section that raises nothing
-    and allocates no closure, which {!release} ends. *)
+(** [hold l] waits for [l] and holds it, for a section that {!release} ends,
+    which allocates nothing, loops nowhere and calls no OCaml function. *)
 
-val release : t -> unit
-(** [release l] gives back [l], which the caller holds. *)
+external release : t -> unit = "caml_rig_lock_give"
+[@@noalloc]
+(** [release l] gives back [l], which the caller holds. It is a call to C,
+    so a section ends with no call to an OCaml function. *)
 
-val protect : t -> (unit -> 'a) -> 'a
-(** [protect l f] is [f ()] run holding [l], which it gives back if [f]
-    raises. *)
+val protect : t -> ('a -> 'b) -> 'a -> 'b
+(** [protect l f x] is [f x] run holding [l]. If [f] raises, [protect] gives
+    back [l] before it allocates. Callers pass a closed function, defined at
+    the top level, and its argument, so the call allocates no closure. *)
 
 val busy : t -> bool
 (** [busy l] is [true] if a call held [l] when [busy] tried to take it. *)
@@ -46,5 +55,7 @@ val wait : t -> unit
     returns to OCaml at least every 200 ms, where a pending signal's handler
     runs ({!Rig.section-domains}). *)
 
-val broadcast : t -> unit
-(** [broadcast l] wakes every {!wait} on [l]. *)
+external broadcast : t -> unit = "caml_rig_lock_broadcast"
+[@@noalloc]
+(** [broadcast l] wakes every {!wait} on [l]. It is a call to C, as
+    {!release} is. *)

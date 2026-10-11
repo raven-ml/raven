@@ -859,6 +859,18 @@ let rig_word = 0
 let rig_object = 1
 let host_wait = -1
 
+(* Keeps [d]'s mapping [pm] of a producer's word while [d]'s own word is read:
+   whether it kept it. *)
+let keep_pair_map (l, pm) =
+  l.word_end = Read
+  && begin
+    l.pair_maps <- pm :: l.pair_maps;
+    true
+  end
+
+(* What [map_word] answers inside for a mapping [d] did not keep: no way. *)
+let not_kept = min_int
+
 (* How [d] waits for [p]'s word in its queue, mapping the word region [r]: a
    device of the producer's driver maps the region, another the host page that
    holds the word. The mapping counts in [p]'s word from before it is made, and
@@ -875,37 +887,32 @@ let map_word d p r =
       with
       | made -> made
       | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
           Memory.word_unmapped p;
-          Printexc.raise_with_backtrace e bt
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
     in
     match mapped with
     | None ->
         Memory.word_unmapped p;
         host_wait
-    | Some m ->
-        let way =
-          match (Memory.locate m).address with
-          | None -> host_wait
-          | Some at -> at + skip
-          | exception e ->
-              let bt = Printexc.get_raw_backtrace () in
-              Memory.give d m (Word p);
-              Printexc.raise_with_backtrace e bt
-        in
-        let kept =
-          Lock.protect l.lock (fun () ->
-              l.word_end = Read
-              && begin
-                l.pair_maps <- (p, m) :: l.pair_maps;
-                true
-              end)
-        in
-        if kept then way
-        else begin
-          Memory.give d m (Word p);
-          host_wait
-        end
+    | Some m -> (
+        (* The mapping goes back on any exception until [d] keeps it, the
+           allocations of the keep included, its count first. *)
+        match
+          let way =
+            match (Memory.locate m).address with
+            | None -> host_wait
+            | Some at -> at + skip
+          in
+          if Lock.protect l.lock keep_pair_map (l, (p, m)) then way
+          else not_kept
+        with
+        | way when way = not_kept ->
+            Memory.drop_word_map d m p;
+            host_wait
+        | way -> way
+        | exception e ->
+            Memory.drop_word_map d m p;
+            Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the producer's object for an object completion, or
@@ -933,13 +940,22 @@ let decide d p =
               Memory.leave d l;
               way
           | exception e ->
-              let bt = Printexc.get_raw_backtrace () in
               Memory.leave d l;
-              Printexc.raise_with_backtrace e bt)
+              Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
 (* An undecided pair: no way is negative but [host_wait], and an address or an
    object fits in 62 bits. *)
 let undecided = min_int
+
+(* Sets [l]'s pair of the producer of index [i] to [way], growing [l.pairs] by
+   replacement. *)
+let set_pair (l, i, way) =
+  if i >= Array.length l.pairs then begin
+    let a = Array.make (Int.max (i + 1) (2 * Array.length l.pairs)) undecided in
+    Array.blit l.pairs 0 a 0 (Array.length l.pairs);
+    l.pairs <- a
+  end;
+  l.pairs.(i) <- way
 
 (* [l.pairs] is replaced whole under [d]'s lock and its cells are ints, so a
    read takes no lock: only an undecided pair does. *)
@@ -950,15 +966,7 @@ let pair d p =
   if known <> undecided then known
   else begin
     let way = decide d p in
-    Lock.protect l.lock (fun () ->
-        if i >= Array.length l.pairs then begin
-          let a =
-            Array.make (Int.max (i + 1) (2 * Array.length l.pairs)) undecided
-          in
-          Array.blit l.pairs 0 a 0 (Array.length l.pairs);
-          l.pairs <- a
-        end;
-        l.pairs.(i) <- way);
+    Lock.protect l.lock set_pair (l, i, way);
     way
   end
 
@@ -1159,7 +1167,9 @@ let record s (lane, name) ps p pair =
    runtime released: their owners stay reachable until the run is given back.
    While a profile is taken, a submission with parts times its value. *)
 let taken s run buffers waits =
-  let ps = match s.span with None -> [] | Some _ -> Prof.active () in
+  let ps =
+    match s.span with Some _ when Prof.enabled () -> Prof.active () | _ -> []
+  in
   run_timed run (ps <> []);
   let claimed = ref 0 in
   match

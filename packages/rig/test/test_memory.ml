@@ -157,6 +157,23 @@ let settle () =
     ignore (B.create Rig.host 8)
   done
 
+(* A closed device's cache returns its memory to the driver once the device
+   stopped. Buffers of 40 sizes fill 40 keys of the cache, which grows. *)
+let test_closed_cache () =
+  let d, p = P.open_ "memory:closed-cache" in
+  let sizes = List.init 40 (fun k -> (k + 1) * 64) in
+  let[@inline never] drop () =
+    List.iter (fun n -> ignore (Sys.opaque_identity (B.create d n))) sizes
+  in
+  drop ();
+  collect d;
+  let cached = List.fold_left ( + ) 0 sizes in
+  greater ~msg:"bytes in the cache" int ~than:(cached - 1) (Rig.allocated d);
+  Rig.close d;
+  settle ();
+  equal ~msg:"regions left with the driver" (list int) []
+    (List.filter (fun n -> n = 8 || List.mem n sizes) (P.outstanding p))
+
 (* Memory goes back to its driver once, when its last mapping goes after its
    device was lost and before its stop returned. The mapper's work keeps the
    mapping until the memory is freed; then, while a free of other memory holds
@@ -284,6 +301,57 @@ let test_free_after_maps () =
   settle ();
   equal ~msg:"the memory once unmapped" bool true (freed po at);
   equal ~msg:"the mapper's regions" (list int) [] (P.outstanding pd)
+
+(* A mapper's resources outlive its mappings of other memory. The memory,
+   mapped by two devices, is freed in another domain, whose give-back of one
+   mapping waits at that mapper's free gate while it holds the other's
+   mapping too. Both gates close first and the other's opens once one
+   holds, so the test needs no order of the two. The other mapper meanwhile
+   closes and drains its word's end, which finds no mapping of its own left
+   in the memory. It keeps its resources until the free gives its mapping
+   back: nothing raises its loss, every region goes back, and the memory is
+   freed once. *)
+let test_mapper_outlives_maps () =
+  let o, po = P.open_ "memory:outlived-owner" in
+  let a, pa = P.open_ "memory:outlived-a" in
+  let b, pb = P.open_ "memory:outlived-b" in
+  let map d m =
+    let s = Sub.make d [| Support.touching [| Sub.read |] |] in
+    Rig.Point.wait (submit s ~buffers:[| Option.get (B.borrow d m) |])
+  in
+  let[@inline never] mapped () =
+    let m = B.create o (4 * kib) in
+    map a m;
+    map b m;
+    (Support.at m, ref (Some m))
+  in
+  let at, held = mapped () in
+  P.gate_frees pa;
+  P.gate_frees pb;
+  let freer =
+    Domain.spawn (fun () ->
+        held := None;
+        match
+          collect o;
+          Rig.set_budget o 0
+        with
+        | () -> "freed"
+        | exception Rig.Lost (d', _) -> Rig.name d' ^ " lost")
+  in
+  Support.await "an unmap at a gate" (fun () -> P.freers pa + P.freers pb = 1);
+  let gated, other, po' =
+    if P.freers pa = 1 then (pa, b, pb) else (pb, a, pa)
+  in
+  P.open_frees po';
+  Rig.close other;
+  settle ();
+  P.open_frees gated;
+  equal ~msg:"the memory's free" string "freed" (Domain.join freer);
+  settle ();
+  equal ~msg:"the closed mapper's regions" (list int) [] (P.outstanding po');
+  equal ~msg:"the held mapping" bool true (List.mem "unmap" (P.log gated));
+  equal ~msg:"the memory's frees" int 1
+    (List.length (List.filter (fun (x, _) -> x = at) (P.frees po)))
 
 (* A drain that returns collected memory to the driver of a device another
    domain loses meanwhile: its first free waits at Polled's free gate while the
@@ -930,6 +998,9 @@ let tests =
           test_borrowed_bigarray;
         test "host memory an idle device borrowed returns to an allocation"
           test_idle_borrower;
+        test "a closed device's cache returns to its driver" test_closed_cache;
+        test "a mapper's resources outlive its mappings of other memory"
+          test_mapper_outlives_maps;
       ];
   ]
 

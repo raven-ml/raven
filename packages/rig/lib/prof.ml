@@ -16,20 +16,27 @@ external now : unit -> (int[@untagged])
 let profiles : t list Atomic.t = Atomic.make []
 let numbers = Atomic.make 0
 let active () = Atomic.get profiles
-let enabled () = match Atomic.get profiles with [] -> false | _ -> true
+let is_open p = Option.is_some (Atomic.get p.events)
 
+let enabled () =
+  match Atomic.get profiles with [] -> false | ps -> List.exists is_open ps
+
+(* Sets the list to [f] of it without the stopped profiles. *)
 let rec change f =
   let ps = Atomic.get profiles in
-  if not (Atomic.compare_and_set profiles ps (f ps)) then change f
+  if not (Atomic.compare_and_set profiles ps (f (List.filter is_open ps))) then
+    change f
 
 let start () =
   let p = { events = Atomic.make (Some []) } in
   change (fun ps -> ps @ [ p ]);
   p
 
+(* The exchange is the stop: an exception that ends the call after it, at an
+   allocation, leaves [p] in the list stopped, and the next change drops it. *)
 let stop p =
   let events = Atomic.exchange p.events None in
-  change (List.filter (fun p' -> p' != p));
+  change Fun.id;
   match events with None -> [] | Some events -> events
 
 let rec push a x =

@@ -89,9 +89,9 @@ type backing =
   | Kept of keep
 
 (** The type for the end of a Stopped device's timeline word: read still,
-    its readers moved to the C record's copy at a count of minor
-    collections, or given back to the driver ({!Dev}). *)
-type word_end = Read | Moved of int | Given
+    its readers moved to the C record's copy ([moved_at] in {!live}), or
+    given back to the driver ({!Dev}). *)
+type word_end = Read | Moved | Given
 
 (** The type for the word as a wait under a hang bound last saw it: its
     value, whether the device was idle then, and since when, in milliseconds
@@ -123,6 +123,9 @@ type device = {
   capability : Rig_edge.capability option;
       (** What compiled code needs of it. *)
   mutable budget : int; [@atomic]  (** {!Rig.budget}. *)
+  mutable closing : int; [@atomic]
+      (** The closes of this machine's host under way: each adds one under
+          the table's lock and takes it back with one atomic step. *)
   mutable live : live option;
       (** Its resources, [None] once it ended. Read without a lock. *)
 }
@@ -157,7 +160,7 @@ and live = {
   mutable used : int; [@atomic]
       (** Its own bytes in live buffers, code and the cache. *)
   mutable cached : int; [@atomic]  (** The bytes in its cache. *)
-  cache : entry list Hashtbl.Make(Int).t;
+  cache : entry list Tbl.Make(Int).t;
       (** Its cache, by [bytes * 4 + kind]. *)
   mutable retiring : entry list; [@atomic]
       (** Collected entries that wait for their points or their bigarrays. *)
@@ -172,13 +175,19 @@ and live = {
   mutable pair_maps : (device * region) list;
       (** Its mappings of producers' words, by producer, kept until either
           word ends. Each counts in its producer's [word_unmaps]. *)
-  mapped : entry Hashtbl.Make(Int).t;
+  mapped : entry Tbl.Make(Int).t;
       (** The entries it maps, by [id], whose mappings end with its word
           unless the entry is freed first. *)
   mutable word_end : word_end;  (** How far the end of its word went. *)
+  mutable moved_at : int;
+      (** The count of minor collections when the word moved, once
+          [Moved]. *)
   mutable word_unmaps : int; [@atomic]
       (** Other devices' mappings of its word not given back, plus one until
           its word ends: the driver gets the word back at [0]. *)
+  mutable entry_maps : int; [@atomic]
+      (** Its mappings of other devices' memory whose region its driver has
+          not taken back: its resources outlive them. *)
   mutable afters : (int * (unit -> unit)) list;
       (** Functions a wait runs once it finds their value reached. *)
 }

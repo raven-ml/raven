@@ -47,7 +47,9 @@ let stage owner =
 let host_stage = lazy (stage Dev.host)
 
 (* The stages of devices that map no host memory, by device index. *)
-let device_stages : (int, stage) Hashtbl.t = Hashtbl.create 4
+module Stages = Tbl.Make (Int)
+
+let device_stages : stage Stages.t = Stages.create 4
 let slots_lock = Lock.create ()
 
 let names_lost b =
@@ -57,35 +59,41 @@ let names_lost b =
 
 (* The stage of [d], made at its first staged copy; the stages of lost devices
    go then, so that their memory returns. *)
-let stage_of d =
-  Lock.protect slots_lock (fun () ->
-      Hashtbl.filter_map_inplace
-        (fun _ st -> if Dev.is_lost st.owner then None else Some st)
-        device_stages;
-      match Hashtbl.find_opt device_stages d.index with
-      | Some st -> st
-      | None ->
-          let st = stage d in
-          Hashtbl.replace device_stages d.index st;
-          st)
+let find_stage d =
+  let lost i st is = if Dev.is_lost st.owner then i :: is else is in
+  List.iter (Stages.remove device_stages) (Stages.fold lost device_stages []);
+  match Stages.find_opt device_stages d.index with
+  | Some st -> st
+  | None ->
+      let st = stage d in
+      Stages.replace device_stages d.index st;
+      st
 
-let take_slot st =
-  Lock.protect slots_lock (fun () ->
-      let rec free () =
-        if not st.in_use.(0) then 0
-        else if not st.in_use.(1) then 1
-        else (
-          Lock.wait slots_lock;
-          free ())
-      in
-      let i = free () in
-      st.in_use.(i) <- true;
-      i)
+let stage_of d = Lock.protect slots_lock find_stage d
 
+(* Waits for a free slot of [st] and marks it used. *)
+let rec claim_slot st =
+  if not st.in_use.(0) then begin
+    st.in_use.(0) <- true;
+    0
+  end
+  else if not st.in_use.(1) then begin
+    st.in_use.(1) <- true;
+    1
+  end
+  else begin
+    Lock.wait slots_lock;
+    claim_slot st
+  end
+
+let take_slot st = Lock.protect slots_lock claim_slot st
+
+(* Allocates nothing, so no asynchronous exception keeps the slot. *)
 let give_slot st i =
-  Lock.protect slots_lock (fun () ->
-      st.in_use.(i) <- false;
-      Lock.broadcast slots_lock)
+  Lock.hold slots_lock;
+  st.in_use.(i) <- false;
+  Lock.broadcast slots_lock;
+  Lock.release slots_lock
 
 let half st i h =
   match st.halves.(i).(h) with
@@ -134,13 +142,15 @@ let holds st m =
   holds_half st m 0 0 || holds_half st m 0 1 || holds_half st m 1 0
   || holds_half st m 1 1
 
+let staged_in m =
+  Stages.fold (fun _ st r -> r || holds st m) device_stages false
+
 (* Whether [m] is a staging slot's memory: a copy through it that no device runs
    goes no further. *)
 let is_slot m =
   (Lazy.is_val host_stage && holds (Lazy.force host_stage) m)
-  || Hashtbl.length device_stages > 0
-     && Lock.protect slots_lock (fun () ->
-         Hashtbl.fold (fun _ st r -> r || holds st m) device_stages false)
+  || Stages.length device_stages > 0
+     && Lock.protect slots_lock staged_in m
 
 let queued d ~src ~dst =
   Dev.wait d (Point.value (Submission.run_copy d ~src ~dst))
@@ -255,6 +265,25 @@ let stage_for src dst =
       src.mem.dev.name dst.mem.dev.name;
   if needs_own src then stage_with src else stage_with dst
 
+let rec wait_halves st i h =
+  if h < 2 then begin
+    (match st.halves.(i).(h) with
+    | Some b -> ( try Buffer.wait b Buffer.Read_write with Dev.Lost _ -> ())
+    | None -> ());
+    wait_halves st i (h + 1)
+  end
+
+(* Waits for the legs through slot [i]'s halves, so that no leg outlives its
+   transfer, then gives the slot back, also when a wait raises, such as
+   [Sys.Break]: the halves' stamps order their next use, and lost halves are
+   replaced. *)
+let settle st i =
+  match wait_halves st i 0 with
+  | () -> give_slot st i
+  | exception e ->
+      give_slot st i;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 (* Moves [n] bytes through a slot of [st], whose two halves take the pieces in
    turn, so one half fills while the other drains: [into h at] fills the half
    [h] with the bytes from byte [at], and [out_of h at] drains it. The halves
@@ -265,10 +294,10 @@ let stage_for src dst =
    fills and the host drains; otherwise the host's leg into the slot fills one
    half while a device drains the other. *)
 let through st n ~sides ~ahead ~into ~out_of =
-  let i = take_slot st in
   let pieces = (n + half_bytes - 1) / half_bytes in
   let len k = Int.min half_bytes (n - (k * half_bytes)) in
-  let run h0 h1 =
+  let run i =
+    let h0 = half st i 0 and h1 = half st i 1 in
     let half k =
       Buffer.view (if k land 1 = 0 then h0 else h1) ~first:0 ~length:(len k)
     in
@@ -281,27 +310,19 @@ let through st n ~sides ~ahead ~into ~out_of =
       out_of k
     done
   in
-  (* No leg outlives the transfer: the slot is given back unused, also when
-     making its memory raised. It is given back also when a wait raises, such
-     as [Sys.Break]: the halves' stamps order their next use, and lost halves
-     are replaced. *)
-  let settle () =
-    Fun.protect
-      ~finally:(fun () -> give_slot st i)
-      (fun () ->
-        for h = 0 to 1 do
-          match st.halves.(i).(h) with
-          | Some b -> (
-              try Buffer.wait b Buffer.Read_write with Dev.Lost _ -> ())
-          | None -> ()
-        done)
-  in
-  match run (half st i 0) (half st i 1) with
-  | () -> settle ()
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      settle ();
-      Printexc.raise_with_backtrace e bt
+  (* Nothing allocates between taking the slot and the handlers that give it
+     back, so no asynchronous exception keeps it. *)
+  let i = take_slot st in
+  match run i with
+  | () -> settle st i
+  | exception e -> (
+      match Printexc.get_raw_backtrace () with
+      | bt ->
+          settle st i;
+          Printexc.raise_with_backtrace e bt
+      | exception x ->
+          give_slot st i;
+          raise x)
 
 let rec copy ~src ~dst =
   Buffer.check_live fn src;

@@ -8,27 +8,24 @@ type t
 external create : unit -> t = "caml_rig_lock_new"
 external try_take : t -> bool = "caml_rig_lock_try" [@@noalloc]
 external take : t -> unit = "caml_rig_lock_take"
-external give : t -> unit = "caml_rig_lock_give" [@@noalloc]
+external release : t -> unit = "caml_rig_lock_give" [@@noalloc]
 external wait : t -> unit = "caml_rig_lock_wait"
 external broadcast : t -> unit = "caml_rig_lock_broadcast" [@@noalloc]
 
 let hold l = if not (try_take l) then take l
-let release = give
-
-let protect l f =
+let protect l f x =
   hold l;
-  match f () with
+  match f x with
   | v ->
-      give l;
+      release l;
       v
   | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      give l;
-      Printexc.raise_with_backtrace e bt
+      release l;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let busy l =
   if try_take l then begin
-    give l;
+    release l;
     false
   end
   else true

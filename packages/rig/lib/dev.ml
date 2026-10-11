@@ -114,7 +114,8 @@ module Table = struct
     if not (Atomic.compare_and_set a c c') then set t i v
 end
 
-module Cache = Hashtbl.Make (Int)
+module Cache = Tbl.Make (Int)
+module Strings = Tbl.Make (String)
 
 let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most = 0 }
 
@@ -146,7 +147,9 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       pair_maps = [];
       mapped = Cache.create 4;
       word_end = Read;
+      moved_at = 0;
       word_unmaps = 1;
+      entry_maps = 0;
       afters = [];
     }
   in
@@ -162,6 +165,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     memory_device;
     capability;
     budget;
+    closing = 0;
     live = Some live;
   }
 
@@ -196,6 +200,7 @@ let forgotten =
     memory_device = false;
     capability = None;
     budget = 0;
+    closing = 0;
     live = None;
   }
 
@@ -289,20 +294,16 @@ let committed d = c_committed (live d).c
 
 (* Locks *)
 
-let protect d f = Lock.protect (live d).lock f
-let hold d = Lock.hold (live d).lock
-let release d = Lock.release (live d).lock
+let protect d f x = Lock.protect (live d).lock f x
 let busy d = Lock.busy (live d).lock
 
 (* The host of each other machine named so far: a machine has one for its
    life. *)
-let machines : (string, device) Hashtbl.t = Hashtbl.create 4
+let machines : device Strings.t = Strings.create 4
 
 (* The machines whose host an open is making, by the host's full name. *)
-let hosting : (string, string) Hashtbl.t = Hashtbl.create 4
+let hosting : string Strings.t = Strings.create 4
 
-(* The hosts a close is ending, by index. *)
-let closing : (int, unit) Hashtbl.t = Hashtbl.create 4
 let table_lock = Lock.create ()
 
 let host_of d = match d.machine with Here -> host | Hosts _ -> d | On h -> h
@@ -331,24 +332,27 @@ type 'a key = { init : device -> 'a; values : 'a option Table.t }
 type any_key = Key : 'a key -> any_key
 
 let keys : any_key list ref = ref []
-let dropped : (int, unit) Hashtbl.t = Hashtbl.create 16
+let dropped : unit Cache.t = Cache.create 16
 let locals_lock = Lock.create ()
+
+let add_key k = keys := k :: !keys
 
 let new_key init =
   let k = { init; values = Table.make None } in
-  Lock.protect locals_lock (fun () -> keys := Key k :: !keys);
+  Lock.protect locals_lock add_key (Key k);
   k
 
-(* Keeps [v] as [k]'s value on [d] unless a value came first or [d]
-   dropped its values: the value kept, or [v]. *)
-let store k d v =
-  Lock.protect locals_lock @@ fun () ->
+let store_locked (k, d, v) =
   match Table.get k.values d.index with
   | Some v' -> v'
   | None ->
-      if not (Hashtbl.mem dropped d.index || freed d) then
+      if not (Cache.mem dropped d.index || freed d) then
         Table.set k.values d.index (Some v);
       v
+
+(* Keeps [v] as [k]'s value on [d] unless a value came first or [d]
+   dropped its values: the value kept, or [v]. *)
+let store k d v = Lock.protect locals_lock store_locked (k, d, v)
 
 let local k d =
   if is_lost d then raise_lost d;
@@ -356,30 +360,27 @@ let local k d =
   | Some v -> v
   | None -> store k d (k.init d)
 
-let drop_values d =
-  let clear (Key k) =
-    if Option.is_some (Table.get k.values d.index) then
-      Table.set k.values d.index None
-  in
-  Lock.protect locals_lock @@ fun () ->
-  Hashtbl.replace dropped d.index ();
-  List.iter clear !keys
+let clear d (Key k) =
+  if Option.is_some (Table.get k.values d.index) then
+    Table.set k.values d.index None
+
+let drop_locked d =
+  Cache.replace dropped d.index ();
+  List.iter (clear d) !keys
+
+let drop_values d = Lock.protect locals_lock drop_locked d
 
 (* Loss and stops *)
 
 let answered : (device -> unit) ref = ref ignore
-let ended_devices : device list Atomic.t = Atomic.make []
 
-let rec add_ended d =
-  let l = Atomic.get ended_devices in
-  if not (Atomic.compare_and_set ended_devices l (d :: l)) then add_ended d
-
-let ended () = Atomic.get ended_devices
-
-let rec remove_ended d =
-  let l = Atomic.get ended_devices in
-  let l' = List.filter (fun d' -> d' != d) l in
-  if not (Atomic.compare_and_set ended_devices l l') then remove_ended d
+(* A device whose stop returned is one whose line's state moved past
+   [ended_state], which [c_stopped] stores in one step: being found among
+   them takes nothing that may raise. *)
+let rec next_ended i =
+  match c_next_live i with
+  | 0 -> 0
+  | i -> if c_state i >= ended_state then i else next_ended (i + 1)
 
 (* Reads a lost device's word behind a transport through its driver, which may
    be called after [stop], so rig's copy of it moves on. *)
@@ -402,28 +403,39 @@ let stopped d =
   let s = c_state d.index in
   s = stopped_state || (s = ended_state && upgrade d)
 
+let stop_handle d =
+  match d.kind with
+  | Driver { m; h; _ } -> (
+      let module D = (val m) in
+      let fault = if c_faulted (live d).c then Some (why d) else None in
+      try D.stop h ~fault with D.Fault _ -> ())
+  | Io { m; h } -> (
+      let module I = (val m) in
+      try I.stop h with I.Fault _ -> ())
+  | Host | Ended -> ()
+
+let moved d =
+  c_stopped (live d).c;
+  match d.kind with Driver _ -> ignore (upgrade d) | _ -> ()
+
+(* Moves the state on after the driver's stop. Its values drop first, so a
+   close, which waits for the state, returns after the drop, and the state
+   moves also when the drop raises. *)
+let returned d =
+  match drop_values d with
+  | () -> moved d
+  | exception e ->
+      moved d;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 (* The state moves on whatever the driver's stop did: the device must count as
-   stopped or not. Its values drop first, so a close, which waits for the
-   state, returns after the drop. *)
+   stopped or not. *)
 let stop d =
-  let returned () =
-    drop_values d;
-    c_stopped (live d).c;
-    (match d.kind with Driver _ -> ignore (upgrade d) | _ -> ());
-    add_ended d
-  in
-  Fun.protect ~finally:returned (fun () ->
-      match d.kind with
-      | Driver { m; h; _ } -> (
-          let module D = (val m) in
-          let fault =
-            if c_faulted (live d).c then Some (why d) else None
-          in
-          try D.stop h ~fault with D.Fault _ -> ())
-      | Io { m; h } -> (
-          let module I = (val m) in
-          try I.stop h with I.Fault _ -> ())
-      | Host | Ended -> ());
+  (match stop_handle d with
+  | () -> returned d
+  | exception e ->
+      returned d;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()));
   !answered d
 
 let rec run_owed () =
@@ -443,9 +455,13 @@ let leave d =
   c_exit (live d).c;
   run_owed ()
 
-(* Ends the counted call on [d] that raised [e]: a fault of [d] loses it. *)
-let raised d e bt =
-  leave d;
+(* Ends the counted call on [d] that raised [e]: a fault of [d] loses it. The
+   call ends before anything allocates, since a second exception would keep
+   it counted for good. *)
+let raised d e =
+  c_exit (live d).c;
+  let bt = Printexc.get_raw_backtrace () in
+  run_owed ();
   match (live d).fault e with
   | Some why -> lose d why
   | None -> Printexc.raise_with_backtrace e bt
@@ -461,7 +477,7 @@ let counted d f =
       | r ->
           leave d;
           r
-      | exception e -> raised d e (Printexc.get_raw_backtrace ()))
+      | exception e -> raised d e)
   | _ -> refused d
 
 (* On a stopped device a failure of the call, its fault or its memory's, gives
@@ -488,8 +504,9 @@ let give d f =
         leave d;
         true
     | exception e -> (
+        c_exit l.c;
         let bt = Printexc.get_raw_backtrace () in
-        leave d;
+        run_owed ();
         match l.fault e with
         | Some why ->
             ignore (c_lose l.c why true : bool);
@@ -530,7 +547,7 @@ let word d =
             | w ->
                 leave d;
                 w
-            | exception e -> raised d e (Printexc.get_raw_backtrace ())
+            | exception e -> raised d e
           in
           c_set_seen d.index w;
           w
@@ -572,7 +589,7 @@ let sleep d ~seen ~still_ms =
       if c_enter l.c <> 0 then refused d;
       match D.sleep h ~seen ~still_ms with
       | () -> leave d
-      | exception e -> raised d e (Printexc.get_raw_backtrace ()))
+      | exception e -> raised d e)
   | _ -> ()
 
 module Answer = struct
@@ -597,25 +614,27 @@ let rec commit d v = if committed d < v && not (commit_once d) then commit d v
 
 let signaled = word
 
+let take_afters (l, w) =
+  let due, later = List.partition (fun (v, _) -> v <= w) l.afters in
+  l.afters <- later;
+  due
+
 (* Runs the functions registered on [d]'s values up to [w], re-raising the first
    exception one raised once all ran. *)
 let run_afters d w =
   let l = live d in
-  let due =
-    Lock.protect l.lock (fun () ->
-        let due, later = List.partition (fun (v, _) -> v <= w) l.afters in
-        l.afters <- later;
-        due)
-  in
+  let due = Lock.protect l.lock take_afters (l, w) in
   let first = ref None in
   List.iter
     (fun (_, f) -> try f () with e -> if !first = None then first := Some e)
     (List.rev due);
   Option.iter raise !first
 
+let add_after (l, a) = l.afters <- a :: l.afters
+
 let after d v f =
   let l = live d in
-  Lock.protect l.lock (fun () -> l.afters <- (v, f) :: l.afters)
+  Lock.protect l.lock add_after (l, (v, f))
 
 (* A device whose unreached work waits in its queue on another's surfaces that
    producer's unseen fault: its sleep raises it. *)
@@ -755,111 +774,170 @@ let close_one d =
 
 (* Opening *)
 
-type slot = Opening | Open of device
+(* An open of a name: its slot is [k], the machine's name and the device's.
+   [opening] says whether the slot reads [Opening] for it, [index] is the
+   index it took, and [ended] says that an exception ended it. *)
+type request = {
+  fn : string;
+  machine : machine;
+  k : string option * string;
+  full : string;
+  key : int;
+  host : bool;
+  mutable opening : bool;
+  mutable index : int;
+  mutable ended : bool; [@atomic]
+}
 
-let table : (string option * string, slot) Hashtbl.t = Hashtbl.create 16
+type slot = Opening of request | Open of device
+
+module Names = Tbl.Make (struct
+  type t = string option * string
+
+  let equal = ( = )
+  let hash = Hashtbl.hash
+end)
+
+let table : slot Names.t = Names.create 16
 let next_index = Atomic.make 1
 
+(* The device [r] published, if any. *)
+let made r =
+  let i = r.index in
+  if i <> 0 && c_next_live i = i then Ok (of_index i) else Error ""
+
+(* Under the table's lock: ends [r]'s open with [result]. The name's slot
+   changes last, so an open that an exception stopped half way still reads
+   [Opening], and ending it again ends it as once. *)
+let end_open (r, result) =
+  if r.host then Option.iter (Strings.remove hosting) (fst r.k);
+  (match result with
+  | Ok d ->
+      if r.host then
+        Option.iter (fun m -> Strings.replace machines m d) (fst r.k);
+      Names.replace table r.k (Open d)
+  | Error _ -> Names.remove table r.k);
+  Lock.broadcast table_lock
+
+(* Under the table's lock: ends the opens an exception ended, as they stand:
+   a device one published stays open under its name, and otherwise its name
+   is free. *)
+let end_interrupted () =
+  let ended _ slot rs =
+    match slot with Opening r when r.ended -> r :: rs | _ -> rs
+  in
+  List.iter (fun r -> end_open (r, made r)) (Names.fold ended table [])
+
+(* A machine has one host, open or opening. *)
+let check_host r =
+  match r.machine with
+  | Hosts m -> (
+      (match Strings.find_opt machines m with
+      | Some h when h.name <> r.full && not (is_lost h) ->
+          invalid_argf "Rig.%s: machine %s's host is %s" r.fn m h.name
+      | _ -> ());
+      match Strings.find_opt hosting m with
+      | Some n when n <> r.full ->
+          invalid_argf "Rig.%s: machine %s's host is opening as %s" r.fn m n
+      | _ -> ())
+  | Here | On _ -> ()
+
+(* A machine whose host is lost or closing opens nothing more, its host
+   included: it has one for its life. *)
+let host_down machine =
+  let down h =
+    if is_lost h then Some (printed h)
+    else if h.closing > 0 then Some (strf "%s lost: closed" h.name)
+    else None
+  in
+  match machine with
+  | Here -> None
+  | On h -> down h
+  | Hosts m -> Option.bind (Strings.find_opt machines m) down
+
+(* A failed process opens nothing, not calling [make]. *)
+let rec find r =
+  match (c_failed (), host_down r.machine, Names.find_opt table r.k) with
+  | Some why, _, _ | None, Some why, _ -> `Error why
+  | None, None, Some (Opening o) when o.ended ->
+      end_open (o, made o);
+      find r
+  | None, None, Some (Opening _) ->
+      Lock.wait table_lock;
+      find r
+  | None, None, Some (Open d) when not (is_lost d) ->
+      if d.key <> r.key then
+        invalid_argf "Rig.%s: %s is open as another driver's device" r.fn
+          r.full;
+      `Open d
+  | None, None, Some (Open d) ->
+      if stop_returned d then `Make
+      else `Error (strf "%s is lost and its stop has not answered" r.full)
+  | None, None, None -> `Make
+
+(* Under the table's lock: the device open under [r]'s name, or the slot
+   claimed for [r]. *)
+let claim r =
+  end_interrupted ();
+  check_host r;
+  match find r with
+  | `Make ->
+      r.opening <- true;
+      Names.replace table r.k (Opening r);
+      if r.host then
+        Option.iter (fun m -> Strings.replace hosting m r.full) (fst r.k);
+      `Make
+  | found -> found
+
 (* Opens the device [name] on [machine] with [make], which builds it from its
-   index and full name, once no open of that name runs. *)
+   index and full name, once no open of that name runs. From the moment the
+   slot may read [Opening], an exception, such as one a signal handler raises
+   at an allocation, ends the open as it stands: a device it published stays
+   open under the name, and otherwise the name is free. [make] ends what it
+   made and did not publish. *)
 let open_named ~fn ~machine ~name ~key make =
   let m = machine_name machine in
-  let k = (m, name) in
   let full = match m with None -> name | Some m -> name ^ "@" ^ m in
-  (* A machine has one host, open or opening. *)
-  let check_host () =
-    match machine with
-    | Hosts m -> (
-        (match Hashtbl.find_opt machines m with
-        | Some h when h.name <> full && not (is_lost h) ->
-            invalid_argf "Rig.%s: machine %s's host is %s" fn m h.name
-        | _ -> ());
-        match Hashtbl.find_opt hosting m with
-        | Some n when n <> full ->
-            invalid_argf "Rig.%s: machine %s's host is opening as %s" fn m n
-        | _ -> ())
-    | Here | On _ -> ()
-  in
-  (* A machine whose host is lost or closing opens nothing more, its host
-     included: it has one for its life. *)
-  let host_down () =
-    let down h =
-      if is_lost h then Some (printed h)
-      else if Hashtbl.mem closing h.index then Some (strf "%s lost: closed" h.name)
-      else None
-    in
-    match machine with
-    | Here -> None
-    | On h -> down h
-    | Hosts m -> Option.bind (Hashtbl.find_opt machines m) down
-  in
   let host = match machine with Hosts _ -> true | Here | On _ -> false in
-  (* A failed process opens nothing, not calling [make]. *)
-  let rec find () =
-    match (c_failed (), host_down (), Hashtbl.find_opt table k) with
-    | Some why, _, _ | None, Some why, _ -> `Error why
-    | None, None, Some Opening ->
-        Lock.wait table_lock;
-        find ()
-    | None, None, Some (Open d) when not (is_lost d) ->
-        if d.key <> key then
-          invalid_argf "Rig.%s: %s is open as another driver's device" fn full;
-        `Open d
-    | None, None, Some (Open d) ->
-        if stop_returned d then `Make
-        else `Error (strf "%s is lost and its stop has not answered" full)
-    | None, None, None -> `Make
+  let r =
+    {
+      fn;
+      machine;
+      k = (m, name);
+      full;
+      key;
+      host;
+      opening = false;
+      index = 0;
+      ended = false;
+    }
   in
-  let finish r =
-    Lock.protect table_lock (fun () ->
-        if host then Option.iter (Hashtbl.remove hosting) m;
-        (match r with
-        | Ok d ->
-            Hashtbl.replace table k (Open d);
-            if host then Option.iter (fun m -> Hashtbl.replace machines m d) m
-        | Error _ -> Hashtbl.remove table k);
-        Lock.broadcast table_lock);
-    r
-  in
-  (* From the moment the slot may read [Opening], an exception, such as one a
-     signal handler raises at an allocation, ends the open as it stands: a
-     device it published stays open under the name, and otherwise the name is
-     free. [make] ends what it made and did not publish. *)
-  let opening = ref false and index = ref 0 in
-  let made () =
-    let i = !index in
-    if i <> 0 && c_next_live i = i then Ok (of_index i) else Error ""
+  let finish result =
+    Lock.protect table_lock end_open (r, result);
+    result
   in
   match
-    let found =
-      Lock.protect table_lock (fun () ->
-          check_host ();
-          match find () with
-          | `Make ->
-              opening := true;
-              Hashtbl.replace table k Opening;
-              if host then
-                Option.iter (fun m -> Hashtbl.replace hosting m full) m;
-              `Make
-          | r -> r)
-    in
-    match found with
+    match Lock.protect table_lock claim r with
     | `Open d -> Ok d
     | `Error e -> Error e
     | `Make ->
-        index := Atomic.fetch_and_add next_index 1;
-        if !index > Point.max_index then
+        r.index <- Atomic.fetch_and_add next_index 1;
+        if r.index > Point.max_index then
           finish
             (Error
                (strf "%s: the process opened %d devices, the most it can" full
                   Point.max_index))
-        else finish (make ~index:!index ~name:full)
+        else finish (make ~index:r.index ~name:full)
   with
-  | r -> r
-  | exception e when !opening ->
-      let bt = Printexc.get_raw_backtrace () in
-      ignore (finish (made ()));
-      Printexc.raise_with_backtrace e bt
+  | result -> result
+  | exception e when r.opening ->
+      (* Marks [r] ended for the next open or close to end, with no call to an
+         OCaml function, where a second exception may arise. The table's lock
+         is not taken: a waiter reads [ended] when it wakes, at least every
+         200 ms. *)
+      r.ended <- true;
+      Lock.broadcast table_lock;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 let completion_of = function
   | Rig_edge.Store -> Store
@@ -935,9 +1013,8 @@ let open_driver (type a) ?(memory_device = false)
           (try D.stop h ~fault:(Some why) with D.Fault _ -> ());
           Error (strf "%s: %s" full why)
       | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
           (try D.stop h ~fault:None with D.Fault _ -> ());
-          Printexc.raise_with_backtrace e bt)
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
 let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
     make =
@@ -970,51 +1047,75 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
           (try I.stop h with I.Fault _ -> ());
           Error (strf "%s: %s" full why)
       | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
           (try I.stop h with I.Fault _ -> ());
-          Printexc.raise_with_backtrace e bt)
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
 (* Closing *)
 
 (* The open devices of machine [m] but [h]. Holds the table's lock. *)
 let devices_of m h =
-  Hashtbl.fold
+  Names.fold
     (fun (m', _) slot acc ->
       match slot with Open d when m' = Some m && d != h -> d :: acc | _ -> acc)
     table []
 
 let opening_on m =
-  Hashtbl.fold
-    (fun (m', _) slot acc -> acc || (m' = Some m && slot = Opening))
+  Names.fold
+    (fun (m', _) slot acc ->
+      let opening = match slot with Opening _ -> true | Open _ -> false in
+      acc || (m' = Some m && opening))
     table false
+
+(* Under the table's lock: marks the host [d] of machine [m] closing, waits
+   for the opens in flight on [m], ending those an exception ended, and is
+   [m]'s other devices. An exception before it returns, such as [Sys.Break]
+   in a wait, takes the close back by its handler's first step, an atomic
+   one: a call there could take a second exception first. Another close of
+   [d] under way keeps its own. *)
+let start_close ((d : device), m) =
+  match
+    ignore (Atomic.Loc.fetch_and_add [%atomic.loc d.closing] 1);
+    while
+      end_interrupted ();
+      opening_on m
+    do
+      Lock.wait table_lock
+    done;
+    devices_of m d
+  with
+  | devices -> devices
+  | exception e ->
+      ignore (Atomic.Loc.fetch_and_add [%atomic.loc d.closing] (-1));
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 (* A machine's devices end before its host, so [host_of] of an open device is
    never closed: the machine stops taking opens, the opens in flight finish,
    then its devices close. *)
 let close d =
   if is_host d then invalid_arg "Rig.close: the host is never closed";
-  let machine =
-    Lock.protect table_lock @@ fun () ->
-    match d.machine with
-    | Hosts m ->
-        Hashtbl.replace closing d.index ();
-        while opening_on m do
-          Lock.wait table_lock
-        done;
-        Some (devices_of m d)
-    | Here | On _ -> None
-  in
-  match machine with
-  | None -> close_one d
-  | Some devices ->
-      Fun.protect
-        ~finally:(fun () ->
-          Lock.protect table_lock (fun () -> Hashtbl.remove closing d.index))
-        (fun () ->
-          List.iter close_one devices;
-          close_one d)
+  match d.machine with
+  | Here | On _ -> close_one d
+  | Hosts m -> (
+      let devices = Lock.protect table_lock start_close (d, m) in
+      match
+        List.iter close_one devices;
+        close_one d
+      with
+      | () -> ignore (Atomic.Loc.fetch_and_add [%atomic.loc d.closing] (-1))
+      | exception e ->
+          ignore (Atomic.Loc.fetch_and_add [%atomic.loc d.closing] (-1));
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
 (* Freeing *)
+
+let undrop (d : device) = Cache.remove dropped d.index
+
+(* Removes [d]'s names from the table. Holds the table's lock. *)
+let forget_names d =
+  let mine k slot ks =
+    match slot with Open d' when d' == d -> k :: ks | _ -> ks
+  in
+  List.iter (Names.remove table) (Names.fold mine table [])
 
 (* Its resources go first, so a store of a value that raced the drop finds
    them gone once [dropped] forgets [d]. The table holds [d] weakly from then
@@ -1024,15 +1125,13 @@ let close d =
 let free_live d =
   d.live <- None;
   c_unlive d.index;
-  remove_ended d;
   if c_first () = d.index then Atomic.set first_lost (Some (printed d));
   let w = Weak.create 1 in
   Weak.set w 0 (Some d);
   update_freed (Int_map.add d.index w);
   Table.set devices d.index host;
-  Lock.protect locals_lock (fun () -> Hashtbl.remove dropped d.index);
-  let other _ = function Open d' when d' == d -> None | slot -> Some slot in
-  Lock.protect table_lock (fun () -> Hashtbl.filter_map_inplace other table)
+  Lock.protect locals_lock undrop d;
+  Lock.protect table_lock forget_names d
 
 (* Reach *)
 

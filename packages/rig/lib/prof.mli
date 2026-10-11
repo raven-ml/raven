@@ -12,9 +12,12 @@
     Each event gets a number from one counter of the process, which orders
     events of equal time ({!Profile}).
 
-    A profile detaches its events in one exchange when it stops. A recorder
-    that read the list before the stop and adds afterwards finds the cell
-    closed, and its event is dropped. *)
+    A profile detaches its events in one exchange when it stops, which no
+    allocation precedes, so an asynchronous exception cannot leave it open. A
+    recorder that read the list before the stop and adds afterwards finds the
+    cell closed, and its event is dropped. A stopped profile may stay in the
+    list, where an exception that ended {!stop} after its exchange left it,
+    until the next {!start} or {!stop} removes it. *)
 
 type t = {
   events : (int * Def.event) list option Atomic.t;
@@ -23,7 +26,8 @@ type t = {
 (** The type for profiles. *)
 
 val active : unit -> t list
-(** [active ()] is the open profiles, oldest first. *)
+(** [active ()] is the open profiles, oldest first, and stopped ones that
+    remain in the list. *)
 
 val enabled : unit -> bool
 (** [enabled ()] is [true] iff a profile is open. Recorders test it first, so

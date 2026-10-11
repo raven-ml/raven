@@ -689,6 +689,194 @@ let test_break_waiting_open () =
   equal ~msg:"its opener's calls" int 0 !calls;
   is_ok ~msg:"the other open" (Option.get !first)
 
+(* A close of a machine's host waits for the opens in flight on the machine.
+   A Ctrl-C during that wait ends the close and leaves the machine as it was:
+   its host is not lost, and its devices open. The opener parks outside OCaml
+   until the close has taken the signal. *)
+let test_break_waiting_close () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let far =
+    require_ok ~pp:Format.pp_print_string (open_host "break-close" "CPU")
+  in
+  let gpu name make =
+    Rig.open_ ~machine:far { name; driver = (module P); make }
+  in
+  let make () =
+    Support.park ();
+    Ok (P.make ())
+  in
+  let first = ref None in
+  let opener =
+    Thread.create (fun () -> first := Some (gpu "open:break-close-1" make)) ()
+  in
+  Support.await "the opener" Support.parked;
+  Sys.catch_break true;
+  let got, raised =
+    Fun.protect
+      ~finally:(fun () -> Sys.catch_break false)
+      (fun () ->
+        Support.interrupt_in_wait (fun () ->
+            match Rig.close far with
+            | () -> "closed"
+            | exception Sys.Break -> "Sys.Break"))
+  in
+  Support.unpark ();
+  Thread.join opener;
+  equal ~msg:"the close waited" bool true raised;
+  equal ~msg:"the close" string "Sys.Break" got;
+  equal ~msg:"the host" (option string) None (Rig.lost far);
+  is_ok ~msg:"the open in flight" (Option.get !first);
+  is_ok ~msg:"a later open"
+    (gpu "open:break-close-2" (fun () -> Ok (P.make ())));
+  Rig.close far
+
+(* Two closes of one host wait for an open on its machine. A Ctrl-C ends the
+   second close's wait, and the first close still holds the machine: an open
+   on it is an [Error] until the first close ends it. *)
+let test_break_second_close () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let far =
+    require_ok ~pp:Format.pp_print_string (open_host "second-close" "CPU")
+  in
+  let gpu name make =
+    Rig.open_ ~machine:far { name; driver = (module P); make }
+  in
+  let make () =
+    Support.park ();
+    Ok (P.make ())
+  in
+  let first_open = ref None in
+  let opener =
+    Thread.create
+      (fun () -> first_open := Some (gpu "open:second-close-1" make))
+      ()
+  in
+  Support.await "the opener" Support.parked;
+  let first_close = Thread.create (fun () -> Rig.close far) () in
+  let closed = Printf.sprintf "%s lost: closed" (Rig.name far) in
+  let probe () = Error "probe" in
+  Support.await "the first close" (fun () ->
+      gpu "open:second-close-probe" probe = Error closed);
+  let main = Thread.id (Thread.self ()) in
+  (* The first close's thread returns to OCaml too: a signal it takes is
+     raised again, until the second close's thread takes it. *)
+  let handle _ =
+    if Thread.id (Thread.self ()) = main then raise Sys.Break
+    else Unix.kill (Unix.getpid ()) Sys.sigint
+  in
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  let got, raised =
+    Fun.protect
+      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+      (fun () ->
+        Support.interrupt_in_wait (fun () ->
+            match Rig.close far with
+            | () -> "closed"
+            | exception Sys.Break -> "Sys.Break"))
+  in
+  let during = gpu "open:second-close-2" (fun () -> Ok (P.make ())) in
+  Support.unpark ();
+  Thread.join opener;
+  Thread.join first_close;
+  equal ~msg:"the second close waited" bool true raised;
+  equal ~msg:"the second close" string "Sys.Break" got;
+  equal ~msg:"an open while the first close runs"
+    (result unit string) (Error closed) (Result.map ignore during);
+  equal ~msg:"the host" (option string) (Some "closed") (Rig.lost far);
+  ignore (Option.get !first_open)
+
+(* [unpark_on_signal f] is [f ()], run while a SIGINT, which
+   {!Support.interrupt_in_wait} raises once the calling thread blocks in a
+   condition wait, unparks the parked thread instead of raising, at the time
+   [unparked_at] records: the parked thread then goes on while the caller
+   waits. *)
+let unparked_at = ref 0.
+
+let unpark_on_signal f =
+  let unpark _ =
+    unparked_at := Unix.gettimeofday ();
+    Support.unpark ()
+  in
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle unpark) in
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+    (fun () -> Support.interrupt_in_wait f)
+
+(* An opener that parks outside OCaml, then raises [Exit]. *)
+let parks_then_raises () =
+  Support.park ();
+  raise Exit
+
+(* An open that an exception ends wakes the opens of its name waiting for it,
+   and the next one opens. The first opener raises only once the second open
+   waits, and the second returns well within the 200 ms after which a wait
+   looks again unwoken: the end wakes it. These guard the end of an
+   interrupted open by the next open. *)
+let test_ended_wakes_waiter () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let name = "open:ended-wakes" in
+  let first = ref "" in
+  let opener =
+    Thread.create
+      (fun () ->
+        first :=
+          match
+            Rig.open_ { name; driver = (module P); make = parks_then_raises }
+          with
+          | _ -> "returned"
+          | exception Exit -> "raised Exit")
+      ()
+  in
+  Support.await "the first opener" Support.parked;
+  let second, waited =
+    unpark_on_signal (fun () ->
+        let make () = Ok (P.make ()) in
+        Rig.open_ { name; driver = (module P); make })
+  in
+  let took = Unix.gettimeofday () -. !unparked_at in
+  Thread.join opener;
+  equal ~msg:"the second open waited" bool true waited;
+  equal ~msg:"the first open" string "raised Exit" !first;
+  less ~msg:"seconds from the end to the second open's return" float_exact
+    ~than:0.19 took;
+  Rig.close (require_ok ~pp:Format.pp_print_string second)
+
+(* A close of a machine's host waits for the opens in flight on the machine,
+   and ends one that an exception ended. The opener raises only once the
+   close waits. This guards the end of an interrupted open by a close. *)
+let test_close_ends_interrupted_open () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let far =
+    require_ok ~pp:Format.pp_print_string (open_host "close-ended" "CPU")
+  in
+  let first = ref "" in
+  let opener =
+    Thread.create
+      (fun () ->
+        first :=
+          match
+            Rig.open_ ~machine:far
+              {
+                name = "open:close-ended";
+                driver = (module P);
+                make = parks_then_raises;
+              }
+          with
+          | _ -> "returned"
+          | exception Exit -> "raised Exit")
+      ()
+  in
+  Support.await "the opener" Support.parked;
+  let (), waited = unpark_on_signal (fun () -> Rig.close far) in
+  Thread.join opener;
+  equal ~msg:"the close waited" bool true waited;
+  equal ~msg:"the open" string "raised Exit" !first;
+  equal ~msg:"the host" (option string) (Some "closed") (Rig.lost far)
+
 (* A lost device's name opens again only once its stop returned: before, the
    open is an [Error]. *)
 let test_reopen_early () =
@@ -1127,6 +1315,14 @@ let tests =
       test "a blocked opener holds back no other name" test_blocked_opener;
       test "an open waiting for its name's open takes Sys.Break"
         test_break_waiting_open;
+      test "a Ctrl-C in a close's wait for an open leaves the machine open"
+        test_break_waiting_close;
+      test "a Ctrl-C in a second close leaves the first close's mark"
+        test_break_second_close;
+      test "an open an exception ended wakes the opens waiting for its name"
+        test_ended_wakes_waiter;
+      test "a close ends an open in flight that an exception ended"
+        test_close_ends_interrupted_open;
       test "an ended device answers as it did before its end" test_ended;
       test "a point whose device the program dropped names the ended device"
         test_forgotten;

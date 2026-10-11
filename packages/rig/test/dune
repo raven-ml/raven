@@ -17,6 +17,7 @@
   test_image
   test_io
   test_walk
+  test_interrupt
   test_point
   test_local
   test_limit)

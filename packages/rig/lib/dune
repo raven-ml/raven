@@ -19,7 +19,8 @@
   point
   prof
   profile
-  submission)
+  submission
+  tbl)
  (install_c_headers rig)
  (foreign_stubs
   (language c)

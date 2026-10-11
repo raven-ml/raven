@@ -56,9 +56,8 @@ let scope fn (access : access) b k f =
     Buffer.array fn k b
   with
   | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
       drop b;
-      Printexc.raise_with_backtrace e bt
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
   | a -> (
       match f a with
       | r ->

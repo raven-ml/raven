@@ -42,16 +42,8 @@ val host : device
 
     Each raises {!Lost} if [d]'s resources are freed. *)
 
-val protect : device -> (unit -> 'a) -> 'a
-(** [protect d f] is [f ()] run holding [d]'s lock, which it gives back if
-    [f] raises. *)
-
-val hold : device -> unit
-(** [hold d] takes [d]'s lock, for a section that raises nothing and
-    allocates no closure, which {!release} ends. *)
-
-val release : device -> unit
-(** [release d] gives back [d]'s lock, which the caller holds. *)
+val protect : device -> ('a -> 'b) -> 'a -> 'b
+(** [protect d f x] is {!Lock.protect} of [d]'s lock. *)
 
 val busy : device -> bool
 (** [busy d] is [true] if a call held [d]'s lock when [busy] tried to take
@@ -227,10 +219,14 @@ val answered : (device -> unit) ref
 (** [answered] is called with each device whose stop returned, from
     {!run_owed}. {!Memory} sets it to {!Memory.drain}. *)
 
-val ended : unit -> device list
-(** [ended ()] is the devices whose stop returned and whose resources are
-    not freed, newest first. Their memory and mappings may be given back
-    long after the stop. *)
+val next_ended : int -> int
+(** [next_ended i] is the least index from [i] on of a device whose stop
+    returned and whose resources are not freed, or [0] for none. In a forked
+    child it includes the devices inherited from the parent, which are
+    orphaned ({!orphaned}). Its memory
+    and mappings may be given back long after the stop. The stop's change
+    of state makes it one, so nothing an exception interrupts can leave a
+    stopped device out. It allocates nothing. *)
 
 val free_live : device -> unit
 (** [free_live d] frees [d]'s resources: {!live} raises {!Lost} from then
