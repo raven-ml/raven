@@ -73,15 +73,16 @@ end
 
 let opened = Atomic.make 0
 
+let pages () =
+  {
+    Pages.lock = Mutex.create ();
+    calls = [];
+    during = (fun () -> ());
+    mapped = `Pages;
+  }
+
 let open_pages () =
-  let t =
-    {
-      Pages.lock = Mutex.create ();
-      calls = [];
-      during = (fun () -> ());
-      mapped = `Pages;
-    }
-  in
+  let t = pages () in
   let name = Printf.sprintf "io:pages-%d" (Atomic.fetch_and_add opened 1) in
   let io =
     require_ok ~pp:Format.pp_print_string
@@ -545,12 +546,37 @@ let test_read_memory () =
   equal ~msg:"read and written" (pair int int) (0, 0)
     (count "read" t, count "write" t)
 
+(* Pages whose device faults as rig reads its budget. *)
+module Budgetless = struct
+  include Pages
+
+  let budget _ = raise (Fault "the link is down")
+  let stop t = note t "stop"
+end
+
+(* A fault reading an io device's budget is the open's [Error], naming the
+   device: its handle is stopped, and the name opens again. *)
+let test_budget_fault () =
+  let name = "io:budget-fault" and t = pages () in
+  equal
+    (result unit string)
+    (Error "io:budget-fault: the link is down")
+    (Result.map ignore
+       (Rig.open_io
+          { name; io = (module Budgetless); make = (fun () -> Ok t) }));
+  equal ~msg:"stops" int 1 (count "stop" t);
+  is_ok
+    (Rig.open_io
+       { name; io = (module Pages); make = (fun () -> Ok (pages ())) })
+
 let tests =
   [
     group ~timeout "io memory"
       [
         test "a device borrows io memory through its pages, mapped once"
           test_borrow;
+        test "a fault reading an io device's budget is the open's Error"
+          test_budget_fault;
         test "overlaps uses cached io pages without mapping" test_overlaps;
         test "an io span stays stable when its pages are published"
           test_span_stable;
