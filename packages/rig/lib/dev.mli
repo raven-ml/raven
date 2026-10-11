@@ -62,7 +62,8 @@ val busy : device -> bool
 val forgotten : device
 (** [forgotten] is {!Rig.Point.device}'s stand-in for a device the collector
     took: lost with the reason ["ended"], Stopped, its word and submitted
-    value [max_int]. Its index is past every point's. *)
+    value [max_int], its budget [0] until set. Its index is past every
+    point's. *)
 
 val of_index : int -> device
 (** [of_index i] is the device of index [i], {!host} for [0], or {!forgotten}

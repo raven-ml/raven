@@ -282,8 +282,9 @@ module Point : sig
       which it may do once the device has ended and no value the program
       holds refers to it. From then on, [device p] is a stand-in for every
       such device, named ["ended"]: it is lost with the reason ["ended"],
-      computes nothing, reaches only itself, and its {!submitted} and
-      {!signaled} are [max_int]. *)
+      computes nothing, reaches only itself, its {!submitted} and
+      {!signaled} are [max_int], and its {!budget} is [0] until
+      {!set_budget} sets it, as it sets a lost device's. *)
 
   val value : t -> int
   (** [value p] is [p]'s value, [1] or more. *)

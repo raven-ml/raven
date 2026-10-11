@@ -796,6 +796,8 @@ let test_forgotten () =
   equal (option string) (Some "ended") (Rig.lost e);
   equal bool false (Rig.computes e);
   equal bool false (Rig.reaches Rig.host e);
+  equal int 0 (Rig.allocated e);
+  equal int 0 (Rig.budget e);
   equal int 1 (Rig.Point.value p);
   equal bool true (Rig.Point.reached p);
   equal string "ended:1" (Format.asprintf "%a" Rig.Point.pp p);

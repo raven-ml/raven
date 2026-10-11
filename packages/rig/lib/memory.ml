@@ -1340,7 +1340,8 @@ let of_io d r ~access n =
   m
 
 (* A device whose resources are freed keeps the budget set last, and holds no
-   cache. *)
+   cache. So does {!Dev.forgotten}, which every point of a collected device
+   names: a budget set on it is the one they all answer. *)
 let set_budget d n =
   if n < 0 then invalid_argf "Rig.set_budget: budget %d is negative" n;
   match d.live with
