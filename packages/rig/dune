@@ -1,9 +1,3 @@
-; An odoc warning is an error in every profile.
-
-(env
- (_
-  (odoc (warnings fatal))))
-
 ; README.md's program runs under mdx. dune links mdx's toplevel without the
 ; profile's link_flags, so rig's sanitized stubs cannot link into it.
 

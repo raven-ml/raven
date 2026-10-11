@@ -15,6 +15,8 @@
 ; (protect_shadow_gap=0). v=0 silences the debug runtime's banner, which a
 ; cram test would read as output.
 ;
+; An odoc warning is an error in every profile.
+;
 ; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout, so a hung test
 ; cannot block a shared watch server.
 
@@ -24,11 +26,15 @@
    (:standard %{dune-warnings}))
   (c_flags
    (:standard -std=c11 -Wall -Wextra -Werror))
+  (odoc
+   (warnings fatal))
   (env-vars
    (WINDTRAP_TIMEOUT 60)))
  (release
   (c_flags
    (:standard -std=c11 -Wall -Wextra))
+  (odoc
+   (warnings fatal))
   (env-vars
    (WINDTRAP_TIMEOUT 60)))
  (sanitize
@@ -48,9 +54,13 @@
    (ASAN_OPTIONS
     halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1:protect_shadow_gap=0)
    (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
-   (WINDTRAP_TIMEOUT 60)))
+   (WINDTRAP_TIMEOUT 60))
+  (odoc
+   (warnings fatal)))
  (_
   (c_flags
    (:standard -std=c11 -Wall -Wextra -Werror))
+  (odoc
+   (warnings fatal))
   (env-vars
    (WINDTRAP_TIMEOUT 60))))

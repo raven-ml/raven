@@ -1,5 +1,0 @@
-; An odoc warning is an error in every profile.
-
-(env
- (_
-  (odoc (warnings fatal))))
