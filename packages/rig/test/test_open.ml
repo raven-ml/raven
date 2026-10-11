@@ -860,6 +860,33 @@ let test_closed_consumer () =
   equal (list int) [] (P.outstanding p);
   equal ~msg:"the producer" (option string) None (Rig.lost live)
 
+(* A wait that would block behind a live device's unreached write raises the
+   loss of a forgotten device's read queued behind it: the read's point keeps
+   the loss once the collector took its device. The live device's sleeps block
+   at its gate, so a wait for its write would never return. The runtime keeps
+   the last exception as [test_forgotten_loss] says. *)
+let test_forgotten_behind_live () =
+  let live, lp = P.open_ "open:behind-live" in
+  let b = Rig.Buffer.create Rig.host (1 lsl 16) in
+  ignore (touch live b Rig.Submission.write : Rig.Point.t);
+  let point () =
+    let d, p = P.open_ ~waits_on:[ `Host ] "open:behind-lost" in
+    let q = touch d b Rig.Submission.read in
+    P.fail p;
+    (try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ());
+    Rig.close d;
+    q
+  in
+  let q = point () in
+  settle ();
+  (try raise Exit with Exit -> ());
+  Thread.delay 0.;
+  Gc.full_major ();
+  equal string "ended" (Rig.name (Rig.Point.device q));
+  P.gate lp;
+  raises_match lost (fun () -> Rig.Buffer.wait b Rig.Read_write);
+  P.open_gate lp
+
 (* Minor words per call of [f], over 100 calls. *)
 let words f =
   let before = Gc.minor_words () in
@@ -1045,6 +1072,8 @@ let tests =
         test_forgotten_loss;
       test "a closed device gives back its mapping of a live device's word"
         test_closed_consumer;
+      test "a wait behind a live device raises a forgotten device's loss"
+        test_forgotten_behind_live;
       test "a wait for a reached point of an ended device allocates nothing"
         test_ended_words;
       test "an ended device no value references keeps nothing" test_ended_kept;
