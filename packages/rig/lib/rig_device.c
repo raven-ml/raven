@@ -297,9 +297,10 @@ static char no_memory_why[] = "out of memory";
 
 #define Lock_val(v) (*(struct rig_lock **)Data_custom_val(v))
 
-/* After fork, the locks are made anew, since a thread of the parent may
-   have held them; the fork holds [locks_mu] and [table_mu], so the child
-   finds both lists whole. Each device is made anew and its calls in flight
+/* The fork holds [locks_mu] and [table_mu], so the child finds both lists
+   whole, and its one thread, which took them, gives them back. The other
+   locks are made anew, since a thread of the parent may have held them.
+   Each device is made anew and its calls in flight
    forgotten. A driver's device the child inherits is orphaned, lost with
    the reason "forked" unless it was lost: freeing would call a driver, and
    a word may be a page the child shares with its parent, or does not map.
@@ -320,8 +321,8 @@ static void forked_parent(void) {
 }
 
 static void forked_child(void) {
-  mutex_init(&locks_mu);
-  mutex_init(&table_mu);
+  mutex_unlock(&locks_mu);
+  mutex_unlock(&table_mu);
   for (struct rig_lock *l = locks; l != NULL; l = l->next) {
     mutex_init(&l->mu);
     cond_init(&l->cv);
