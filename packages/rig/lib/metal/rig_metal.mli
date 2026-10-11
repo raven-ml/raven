@@ -194,8 +194,9 @@ val capability : t -> Rig_metal_abi.t
     [rig_metal_room] never returns [RIG_LATER]. [rig_metal_submit] instead
     blocks, before it opens a command buffer, while the device has 1,024
     command buffers, as many as its Metal queue holds, counting the open one
-    and the committed ones not yet completed. [rig_metal_commit] commits the open command buffer, which
-    holds the work of every value not yet committed.
+    and the committed ones not yet completed. [rig_metal_commit] commits the
+    open command buffer, which holds the work of every value not yet
+    committed.
 
     {2:launches Launches}
 

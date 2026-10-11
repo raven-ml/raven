@@ -24,8 +24,11 @@
       submission unless the run served it last.
     + It takes a read claim on each fixed buffer and each of the run's
       buffers, checks it live, and names it in the run's slot. For a slot
-      that a copy names, it also records the handle, offset and length that
-      the copy passes the driver.
+      that a copy names, it also records the buffer's side of the copy
+      ([struct rig_side] in [rig_stubs.h]): the handle, offset and length
+      the copy passes the driver, the span and alias its overlap check
+      compares, and whether the side is this process's memory and the
+      device's own memory.
     + It collects, per other device, the greatest point the work follows
       ([caml_rig_run_collect]), with the caller's waits, and writes each
       entry ref's value into the run's blocks. A submission with a copy that
