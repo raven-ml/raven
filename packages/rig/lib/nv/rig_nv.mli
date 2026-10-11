@@ -277,11 +277,10 @@ type gpu = {
 
 type 'm memory = {
   address : int;
-      (** The GPU address of its first byte. The memory must lie below
-          [2{^40}], its last byte included ({!Rig_nv_abi.Gpu}), and a device
-          raises [Invalid_argument] for memory a path returns above. A path
-          may map host memory at a GPU address of its own, as the host's may
-          lie higher. *)
+      (** The GPU address of its first byte. The memory lies below [2{^40}],
+          its last byte included ({!Rig_nv_abi.Gpu}). A path may map host
+          memory at a GPU address of its own, as the host's may lie
+          higher. *)
   host : int option;
       (** The host address of its first byte, if the host addresses it. *)
   handle : int;  (** The RM's name for it, which channel allocations take. *)

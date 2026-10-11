@@ -80,19 +80,17 @@ type 'm path = {
 
 let is_gpu ~vendor ~class_ = vendor = 0x10de && class_ lsr 16 = 0x03
 
-(* The memory [m] of [n] bytes a path answered to the function [fn], below
-   [address_limit] as the path's interface promises: a path that breaks it is
-   given [m] back. *)
+(* The memory [m] of [n] bytes a path answered, below [address_limit] as
+   every path's interface promises. *)
 let address_limit = 1 lsl 40
 
-let below (p : _ path) fn n = function
-  | Some (m : _ memory) when m.address + n > address_limit ->
-      p.free m;
-      invalid_argf "%s: the path answered memory at 0x%x, past 2^40" fn
-        m.address
-  | m -> m
+let below n = function
+  | Some (m : _ memory) as r ->
+      assert (m.address + n <= address_limit);
+      r
+  | None -> None
 
-let path_alloc p fn kind n = below p fn n (p.alloc kind n)
+let path_alloc (p : _ path) kind n = below n (p.alloc kind n)
 
 (* Constants *)
 
@@ -435,7 +433,7 @@ let grow d n =
       let need = Abi.Local_memory.make d.capability n in
       if need.per_thread <= l.per_thread then Served
       else
-        match path_alloc l.path "Rig_nv.capability" Device need.bytes with
+        match path_alloc l.path Device need.bytes with
         | None -> Short need.bytes
         | Some m ->
             publish d l m
@@ -562,7 +560,7 @@ let host what (m : _ memory) =
 let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   let rm = p.rm in
   let alloc kind bytes what =
-    match path_alloc p "Rig_nv.make" kind bytes with
+    match path_alloc p kind bytes with
     | None -> Error (strf "no memory for the %s" what)
     | Some m ->
         taken (fun () -> p.free m);
@@ -588,14 +586,14 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   in
   let* compute_notifier = notifier 0 in
   let* copy_notifier = notifier 1 in
-  let bar = path_alloc p "Rig_nv.make" Mapped page in
+  let bar = path_alloc p Mapped page in
   Option.iter (fun m -> taken (fun () -> p.free m)) bar;
   (* The GPU reads a launch's descriptor and bank as the launch before it
      completes: from its own memory, through the BAR, where the BAR has room. *)
   let in_bar =
     match bar with
     | None -> None
-    | Some _ -> path_alloc p "Rig_nv.make" Mapped launch_bytes
+    | Some _ -> path_alloc p Mapped launch_bytes
   in
   let* launches, launches_bar =
     match in_bar with
@@ -857,16 +855,16 @@ let page_of = function Mapped_of p | View_of p -> p
 
 let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
-  let l = live d and fn = "Rig_nv.alloc" in
+  let l = live d in
   let p = l.path in
   match memory with
   | Device | Pinned ->
-      Option.map (region d p None n) (path_alloc p fn memory n)
+      Option.map (region d p None n) (path_alloc p memory n)
   | Mapped -> (
       match l.bar with
       | None -> None
       | Some page -> (
-          match path_alloc p fn Mapped n with
+          match path_alloc p Mapped n with
           | None -> None
           | Some m ->
               hold page;
@@ -934,7 +932,7 @@ let map_peer (T d) (T _) = function
       | Some Type.Equal -> (
           let l = live d in
           let m = l.path.map_peer r.mem in
-          match below l.path "Rig_nv.map_peer" r.bytes m with
+          match below r.bytes m with
           | None -> None
           | Some m -> (
               match Option.map page_of r.behind with
@@ -951,7 +949,7 @@ let map_host (T d) a n =
   match p.map_host with
   | None -> None
   | Some map ->
-      let m = below p "Rig_nv.map_host" n (map a n) in
+      let m = below n (map a n) in
       Option.map (region d p None n) m
 
 (* Images *)
