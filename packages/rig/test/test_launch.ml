@@ -482,6 +482,50 @@ let test_entry_facts () =
   refused ~msg:"the parameters of no function" (fun () -> params "absent");
   refused ~msg:"the threads of no function" (fun () -> threads "absent")
 
+(* Asking the driver for a function a part names can fail at make, for a
+   launch and for an entry ref alike: with no memory for what its launches need
+   after the rounds of reclamation, make raises Out_of_memory; where the driver
+   finds the function needs more than the device offers, Invalid_argument with
+   its reason, the device live; and where the asking faults, the device's
+   loss. *)
+let test_make_entry_failures () =
+  let d, p = polled "entry-failures" in
+  let parts =
+    [
+      ("a launch", fun image -> launch image "main" ~params:8);
+      ( "an entry ref",
+        fun image ->
+          Sub.fill ~refs:[| Sub.entry image "main" ~at:0 |] Rig_support.noop
+            ~params:8 );
+    ]
+  in
+  let make part = Sub.make d [| part (functions d) |] in
+  List.iter
+    (fun (what, part) ->
+      let image = functions d in
+      P.fail_at p 1 (`Refuse max_int);
+      raises_match ~msg:what
+        (function
+          | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = P.entry_scratch
+          | _ -> false)
+        (fun () -> Sub.make d [| part image |]);
+      P.fail_at p 1 (`Refuse 0);
+      let image = functions d in
+      P.before p "entry" (fun () -> invalid_arg "main needs more than 1 TiB");
+      raises_match ~msg:what
+        (Exn.invalid_arg ~substring:"main needs more than 1 TiB")
+        (fun () -> Sub.make d [| part image |]);
+      equal ~msg:what (option string) None (Rig.lost d);
+      ignore (make part))
+    parts;
+  let image = functions d in
+  P.fail_at p 1 (`Fault "the engine hung");
+  raises_match
+    (function
+      | Rig.Lost (d', why) -> Rig.equal d d' && why = "the engine hung"
+      | _ -> false)
+    (fun () -> Sub.make d [| launch image "main" ~params:8 |])
+
 (* A setter called from a signal handler while a submit holds the run, waiting
    for a producer, raises; the submit then completes with what was stored
    before. *)
@@ -752,6 +796,8 @@ let tests =
     group ~timeout "refusals"
       [
         test "make refuses each launch its interface states" test_make_refusals;
+        test "make raises what asking for a part's function raises"
+          test_make_entry_failures;
         test "submit refuses a run or a block the device cannot launch"
           test_submit_refusals;
         test "a setter refuses bytes outside its block" test_setter_refusals;
