@@ -59,6 +59,7 @@ value caml_tolk_metal_load(value v_path) {
 }
 
 value caml_tolk_metal_macos_major(value unit) {
+  (void)unit;
   char version[32];
   size_t size = sizeof version;
   if (sysctlbyname("kern.osproductversion", version, &size, NULL, 0) != 0)
@@ -68,6 +69,7 @@ value caml_tolk_metal_macos_major(value unit) {
 
 /* The build of macOS, as 25D125: MTLCompiler is part of it. */
 value caml_tolk_metal_macos_build(value unit) {
+  (void)unit;
   char build[64];
   size_t size = sizeof build;
   if (sysctlbyname("kern.osversion", build, &size, NULL, 0) != 0)
@@ -117,18 +119,22 @@ value caml_tolk_metal_compile(value v_request) {
 #else
 
 value caml_tolk_metal_load(value v_path) {
+  (void)v_path;
   return ERROR("MTLCompiler is macOS's");
 }
 
 value caml_tolk_metal_macos_major(value unit) {
+  (void)unit;
   return Val_int(0);
 }
 
 value caml_tolk_metal_macos_build(value unit) {
+  (void)unit;
   return caml_copy_string("");
 }
 
 value caml_tolk_metal_compile(value v_request) {
+  (void)v_request;
   caml_invalid_argument("MTLCompiler is not loaded");
 }
 

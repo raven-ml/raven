@@ -22,6 +22,8 @@
    so that a reply is complete iff it is N bytes past its header. Diagnostics
    (comgr's, LLVM's) go to standard output and error. */
 
+#define _GNU_SOURCE
+
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>

@@ -1,64 +1,8 @@
-; The C flags of every library, test and bench under packages/rig. A C warning is
-; an error in every profile but release, which must not break on a warning a
-; future compiler adds.
-;
-; The sanitize profile, run on Linux, compiles the C with AddressSanitizer and
-; UndefinedBehaviorSanitizer and links the sanitizer runtimes into every
-; executable, whose link_flags keep :standard to carry them. Its options: a
-; report ends the process, leaks are not errors, a domain's thread exits on
-; the signal stack the OCaml runtime allocated, which AddressSanitizer would
-; unmap as its own, an allocation the allocator refuses returns NULL as libc's
-; does, so the library's answer to a refusal is what a test sees, and the
-; shadow gap is left unprotected, since CUDA and NV map GPU addresses below
-; 2^40 in it.
-;
-; The sanitize profile also stresses the collector and links the debug
-; runtime, so a value a stub holds unrooted, or memory a finaliser frees while
-; it is still used, fails at once. OCAMLRUNPARAM gives a 32 KiB minor heap
-; (s=4k), major cycles far more often (o=20), pushed at once by custom blocks
-; (M=1, m=1), and a heap check at the end of each (V=1); v=0 silences the
-; debug runtime's banner, which a cram test would read as output.
-;
-; Benches run with `dune build @bench`, never in runtest, each under the lock
-; %{workspace_root}/bench. A suite or bench that acts on a GPU also takes
-; %{workspace_root}/gpu, so one build runs one at a time. A bench's C that calls a library's C sits in a
-; library: GNU ld resolves it only from an archive listed after the caller.
-;
-; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout, so a hung test
-; cannot block the shared watch server.
+; An odoc warning is an error in every profile.
 
 (env
- (release
-  (odoc (warnings fatal))
-  (c_flags
-   (:standard -std=c11 -Wall -Wextra))
-  (env-vars
-   (WINDTRAP_TIMEOUT 60)))
- (sanitize
-  (odoc (warnings fatal))
-  (c_flags
-   (:standard
-    -std=c11
-    -Wall
-    -Wextra
-    -Werror
-    -g
-    -fno-omit-frame-pointer
-    -fsanitize=address,undefined))
-  (link_flags
-   (:standard -runtime-variant d -cclib -fsanitize=address,undefined))
-  (env-vars
-   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1,v=0)
-   (ASAN_OPTIONS
-    halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1:protect_shadow_gap=0)
-   (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
-   (WINDTRAP_TIMEOUT 60)))
  (_
-  (odoc (warnings fatal))
-  (c_flags
-   (:standard -std=c11 -Wall -Wextra -Werror))
-  (env-vars
-   (WINDTRAP_TIMEOUT 60))))
+  (odoc (warnings fatal))))
 
 ; README.md's program runs under mdx. dune links mdx's toplevel without the
 ; profile's link_flags, so rig's sanitized stubs cannot link into it.

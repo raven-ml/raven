@@ -6,6 +6,8 @@
  * Linux uses /proc filesystem (parsed in OCaml), stubs return defaults.
  */
 
+#define _GNU_SOURCE
+
 #include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/memory.h>

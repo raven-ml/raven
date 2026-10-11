@@ -8,6 +8,8 @@
 /* NVRTC, whose functions are declared here and found in the library at run
    time, so that tolk builds and runs without CUDA. */
 
+#define _GNU_SOURCE
+
 #include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
