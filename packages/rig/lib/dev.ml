@@ -515,13 +515,22 @@ let failure () =
 
 (* The timeline *)
 
+(* A word with no host address is read through a counted call, written out
+   so that a read allocates nothing. *)
 let word d =
   match d.live with
   | Some l when l.word = 0 && not (is_lost d) -> (
       match d.kind with
       | Driver { m; h; _ } ->
           let module D = (val m) in
-          let w = counted d (fun () -> D.signaled h) in
+          if c_enter l.c <> 0 then refused d;
+          let w =
+            match D.signaled h with
+            | w ->
+                leave d;
+                w
+            | exception e -> raised d e (Printexc.get_raw_backtrace ())
+          in
           c_set_seen d.index w;
           w
       | _ -> c_word d.index)

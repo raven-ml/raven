@@ -310,6 +310,35 @@ let test_wait_words () =
   done;
   equal int 0 (int_of_float (Gc.minor_words () -. before) / 100)
 
+(* Behind a transport, where the host reads a device's word through its
+   driver, a wait for reached work allocates nothing: a buffer's wait, and a
+   submit that waits for the point. *)
+let test_wait_words_transport () =
+  let d, _ = P.open_ ~transport:true "buffer:wait-words-transport" in
+  let b = B.create d 64 in
+  let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+  let p = submit s ~buffers:[| b |] in
+  B.wait b Rig.Read_write;
+  let waiter = Sub.make (memory "buffer:wait-words-waiter") [||] in
+  let run = Sub.Run.make () in
+  (* Passed as an option made once: a supplied optional argument may allocate
+     its [Some] at each call. *)
+  let waits = Some [| p |] in
+  let wait () = B.wait b Rig.Read_write in
+  let submit () =
+    ignore (Rig.submit waiter ?waits ~run ~buffers:[||] : Rig.Point.t)
+  in
+  let per_call f =
+    f ();
+    let before = Gc.minor_words () in
+    for _ = 1 to 100 do
+      f ()
+    done;
+    int_of_float (Gc.minor_words () -. before) / 100
+  in
+  equal ~msg:"a buffer's wait" int 0 (per_call wait);
+  equal ~msg:"a submit's wait" int 0 (per_call submit)
+
 let test_create_words () =
   at_most_words (41, 0) (fun () -> B.create Rig.host 64)
 
@@ -1398,6 +1427,8 @@ let words =
     [
       test "a host buffer of 64 bytes costs at most 41 words" test_create_words;
       test "a wait whose points are reached allocates nothing" test_wait_words;
+      test "behind a transport a wait for reached work allocates nothing"
+        test_wait_words_transport;
       test "a host buffer of 1 MiB costs at most 32 and 9 major words"
         test_create_large_words;
       test "a host buffer of no bytes costs at most 32 words"
