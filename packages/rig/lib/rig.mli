@@ -105,8 +105,13 @@ val host : t
     driver's stop ({!Rig_edge.Driver.val-stop}) has not returned, when the
     machine's host ({!section-machines}) is lost or closed, and once the
     process has called openers 65,535 times, failed opens included. For a lost or closed host, [why] is
-    what that host's {!Lost} prints. An exception the opener's [make] raises
-    is raised again, and the name stays unopened. *)
+    what that host's {!Lost} prints.
+
+    An exception raised inside an open, by the opener's [make] or
+    asynchronously ({!section-errors}), is raised again. The name is then
+    unopened, or open with the device the open made, which the next open
+    returns. A handle that [make] returned and that no device holds is
+    stopped once ({!Rig_edge.Driver.val-stop}). *)
 
 val open_ : ?machine:t -> 'a Rig_edge.opener -> (t, string) result
 (** [open_ ~machine o] is the open device named [o.name] on [machine]'s
@@ -489,7 +494,19 @@ val signaled : t -> int
     an io device as it was, and its library decides what a fork does to it.
     A device the child opens is its own. *)
 
-(** {2:errors Errors and failure} *)
+(** {2:errors Errors and failure}
+
+    An exception raised inside a call to rig leaves rig's own state
+    consistent: its devices, names, timelines, stamps and memory. Every later
+    call behaves as its doc states as far as that state decides it. No later
+    call waits on the call the exception ended, no name stays opening, and
+    the device or name that call used serves later calls. A driver's own
+    state is its driver's ({!Rig_edge}). An {e asynchronous} exception is one
+    the runtime raises where the call allocates OCaml values or polls, such
+    as [Sys.Break], [Stdlib.Out_of_memory], or an exception from a signal
+    handler or a [Gc.Memprof] callback, or where a function of the call
+    starts, as [Stack_overflow] is. It may leak the memory of the call it
+    interrupts. *)
 
 exception Lost of t * string
 (** [Lost (d, why)] is raised by a use that the loss of [d] makes invalid
@@ -546,6 +563,8 @@ val failure : unit -> string option
        waiting while its device holds more than its budget skips the cache,
        as does an io device's memory, and returns to the driver. A lost
        device's memory returns as {!section-stops} states.}}
+    Memory that an asynchronous exception leaked ({!section-errors}) may
+    never take these steps.
 
     Collected memory moves to the cache or the driver only inside rig's
     calls, on any domain. {!Buffer.create}, {!Buffer.of_string},
