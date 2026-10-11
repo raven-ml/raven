@@ -4,7 +4,7 @@
  (name rig_mlx5_uverbs)
  (public_name rig.mlx5.uverbs)
  (libraries rig_mlx5 unix)
- (private_modules path verbs)
+ (private_modules path defs)
  (foreign_stubs
   (language c)
   (names rig_mlx5_uverbs_stubs)))

@@ -1,10 +1,10 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""Generates defs.ml of rig.mlx5.abi and rig.mlx5: the layouts of ConnectX's
-work entries, completions and doorbell records and the rules of its access
-regions (abi/defs.ml), and the driver data of the mlx5 driver's objects
-(defs.ml).
+"""Generates defs.ml of rig.mlx5.abi, rig.mlx5 and rig.mlx5.uverbs: the layouts
+of ConnectX's work entries, completions and doorbell records and the rules of
+its access regions (abi/defs.ml), the driver data of the mlx5 driver's objects
+(defs.ml), and the requests of Linux's verbs ioctl (uverbs/defs.ml).
 
 Run from the worktree root:
 
@@ -54,6 +54,11 @@ SOURCES = {
     "device.h": LINUX + "include/linux/mlx5/device.h",  # doorbell registers
     "mlx5_ib.h": LINUX + "drivers/infiniband/hw/mlx5/mlx5_ib.h",
     "mlx5-abi.h": LINUX + "include/uapi/rdma/mlx5-abi.h",  # driver data
+    "ib_user_verbs.h": LINUX + "include/uapi/rdma/ib_user_verbs.h",  # verbs commands
+    "ib_user_ioctl_verbs.h": LINUX + "include/uapi/rdma/ib_user_ioctl_verbs.h",
+    "ib_user_ioctl_cmds.h": LINUX + "include/uapi/rdma/ib_user_ioctl_cmds.h",
+    "rdma_user_ioctl_cmds.h": LINUX + "include/uapi/rdma/rdma_user_ioctl_cmds.h",  # the ioctl
+    "verbs.h": RDMA_CORE + "libibverbs/verbs.h",  # values no uapi header names
 }
 
 # What each library reads: (header, C name) of constants, and (header, C name,
@@ -94,12 +99,51 @@ MLX5_STRUCTS = [
     ("mlx5-abi.h", "mlx5_ib_create_cq", "Create_cq"), ("mlx5-abi.h", "mlx5_ib_create_cq_resp", "Create_cq_resp"),
     ("mlx5-abi.h", "mlx5_ib_create_qp", "Create_qp"), ("mlx5-abi.h", "mlx5_ib_create_qp_resp", "Create_qp_resp"),
 ]
+
+UVERBS_CONSTANTS = [
+    ("ib_user_verbs.h", "IB_USER_VERBS_CMD_" + n) for n in [
+        "GET_CONTEXT", "QUERY_DEVICE", "QUERY_PORT", "ALLOC_PD", "REG_MR", "DEREG_MR",
+        "CREATE_COMP_CHANNEL", "CREATE_CQ", "DESTROY_CQ", "CREATE_QP", "MODIFY_QP", "DESTROY_QP"]
+] + [
+    ("ib_user_ioctl_verbs.h", n) for n in [
+        "IB_UVERBS_ACCESS_LOCAL_WRITE", "IB_UVERBS_ACCESS_REMOTE_WRITE", "IB_UVERBS_ACCESS_REMOTE_READ",
+        "IB_UVERBS_ACCESS_RELAXED_ORDERING", "IB_UVERBS_QPT_RC"]
+] + [
+    ("ib_user_ioctl_cmds.h", n) for n in [
+        "UVERBS_OBJECT_DEVICE", "UVERBS_OBJECT_MR", "UVERBS_METHOD_INVOKE_WRITE", "UVERBS_METHOD_REG_DMABUF_MR",
+        "UVERBS_ATTR_CORE_IN", "UVERBS_ATTR_CORE_OUT", "UVERBS_ATTR_WRITE_CMD", "UVERBS_ATTR_UHW_IN",
+        "UVERBS_ATTR_UHW_OUT"] + ["UVERBS_ATTR_REG_DMABUF_MR_" + a for a in [
+            "HANDLE", "PD_HANDLE", "OFFSET", "LENGTH", "IOVA", "FD", "ACCESS_FLAGS", "RESP_LKEY", "RESP_RKEY"]]
+] + [
+    ("rdma_user_ioctl_cmds.h", "UVERBS_ATTR_F_MANDATORY"),
+] + [
+    ("verbs.h", "IBV_" + n) for n in [
+        "QPS_INIT", "QPS_RTR", "QPS_RTS", "QP_STATE", "QP_ACCESS_FLAGS", "QP_PKEY_INDEX", "QP_PORT", "QP_AV",
+        "QP_PATH_MTU", "QP_TIMEOUT", "QP_RETRY_CNT", "QP_RNR_RETRY", "QP_RQ_PSN", "QP_MAX_QP_RD_ATOMIC",
+        "QP_MIN_RNR_TIMER", "QP_SQ_PSN", "QP_MAX_DEST_RD_ATOMIC", "QP_DEST_QPN", "MTU_256", "PORT_ACTIVE",
+        "LINK_LAYER_INFINIBAND", "LINK_LAYER_ETHERNET", "EVENT_CQ_ERR", "EVENT_QP_FATAL", "EVENT_QP_REQ_ERR",
+        "EVENT_QP_ACCESS_ERR", "EVENT_DEVICE_FATAL", "EVENT_PORT_ACTIVE", "EVENT_PORT_ERR"]
+]
+UVERBS_STRUCTS = [
+    ("rdma_user_ioctl_cmds.h", "ib_uverbs_ioctl_hdr", "Ioctl_hdr"), ("rdma_user_ioctl_cmds.h", "ib_uverbs_attr", "Attr"),
+] + [
+    ("ib_user_verbs.h", "ib_uverbs_" + n, "Uverbs_" + n) for n in [
+        "get_context", "get_context_resp", "create_comp_channel", "create_comp_channel_resp", "alloc_pd",
+        "alloc_pd_resp", "query_device", "query_device_resp", "query_port", "query_port_resp", "reg_mr",
+        "reg_mr_resp", "dereg_mr", "create_cq", "create_cq_resp", "destroy_cq", "destroy_cq_resp", "create_qp",
+        "create_qp_resp", "modify_qp", "destroy_qp", "destroy_qp_resp", "async_event_desc", "comp_event_desc"]
+]
 # The structures the excerpts keep for a kept one's members.
-NESTED = {"mlx5-abi.h": ["mlx5_ib_create_qp_dci_streams"]}
+NESTED = {
+    "mlx5-abi.h": ["mlx5_ib_create_qp_dci_streams"],
+    "rdma_user_ioctl_cmds.h": ["ib_uverbs_attr"],
+    "ib_user_verbs.h": ["ib_uverbs_qp_dest"],
+}
 
 OUTPUTS = {
     LIB / "abi" / "defs.ml": (ABI_CONSTANTS, ABI_STRUCTS),
     LIB / "defs.ml": (MLX5_CONSTANTS, MLX5_STRUCTS),
+    LIB / "uverbs" / "defs.ml": (UVERBS_CONSTANTS, UVERBS_STRUCTS),
 }
 
 # The BSD licence every header offers, which defs.ml carries with the headers'
