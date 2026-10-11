@@ -453,6 +453,7 @@
    (and
     :with-test
     (>= 0.2.0)))
+  (mdx :with-test)
   (thumper :with-test))
  (tags
   (gpu device driver metal cuda amd nvidia)))
