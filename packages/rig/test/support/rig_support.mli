@@ -254,6 +254,17 @@ module Polled : sig
   val freers : t -> int
   (** [freers d] is the number of [d]'s frees blocked. *)
 
+  val gate_locates : t -> unit
+  (** [gate_locates d] makes locates of the mappings [d] made block until
+      {!open_locates}: a probe after a map, outside any counted call, so
+      [d]'s stop can return meanwhile. *)
+
+  val open_locates : t -> unit
+  (** [open_locates d] lets the blocked locates of [d]'s mappings go on. *)
+
+  val locaters : t -> int
+  (** [locaters d] is the number of locates of [d]'s mappings blocked. *)
+
   val interrupt : t -> unit
   (** [interrupt d] makes [d]'s next sleep raise SIGINT in its thread and return
       without running the queue. *)

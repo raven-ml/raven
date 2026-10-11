@@ -859,11 +859,59 @@ let rig_word = 0
 let rig_object = 1
 let host_wait = -1
 
+(* How [d] waits for [p]'s word in its queue, mapping the word region [r]: a
+   device of the producer's driver maps the region, another the host page that
+   holds the word. The mapping counts in [p]'s word from before it is made, and
+   [d] keeps it only while its own word is read, giving it back otherwise. *)
+let map_word d p r =
+  let l = Dev.live d and pl = Dev.live p in
+  if not (Memory.hold_word p) then host_wait
+  else
+    let start = pl.word - (pl.word mod Memory.page) in
+    let mapped, skip =
+      match
+        if d.key = p.key then (Memory.map_peer_region d r, 0)
+        else (Memory.map_host_range d start Memory.page, pl.word - start)
+      with
+      | made -> made
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          Memory.word_unmapped p;
+          Printexc.raise_with_backtrace e bt
+    in
+    match mapped with
+    | None ->
+        Memory.word_unmapped p;
+        host_wait
+    | Some m ->
+        let way =
+          match (Memory.locate m).address with
+          | None -> host_wait
+          | Some at -> at + skip
+          | exception e ->
+              let bt = Printexc.get_raw_backtrace () in
+              Memory.give d m (Word p);
+              Printexc.raise_with_backtrace e bt
+        in
+        let kept =
+          Lock.protect l.lock (fun () ->
+              l.word_end = Read
+              && begin
+                l.pair_maps <- (p, m) :: l.pair_maps;
+                true
+              end)
+        in
+        if kept then way
+        else begin
+          Memory.give d m (Word p);
+          host_wait
+        end
+
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the producer's object for an object completion, or
-   the address of [p]'s word as [d] maps it. The mapping counts in [p]'s word
-   from before it is made, and is located before [d] keeps it, only while its
-   own word is read: a stop that came meanwhile gives it back at once. *)
+   the address of [p]'s word as [d] maps it. A submit decides outside any
+   counted call on [d], so [d]'s drains are held across the map and its keep:
+   a close on another domain cannot free [d]'s resources in between. *)
 let decide d p =
   let l = Dev.live d and pl = Dev.live p in
   let waits =
@@ -877,49 +925,17 @@ let decide d p =
     match (pl.completion, pl.word_region) with
     | Object o, _ -> o
     | _, None -> host_wait
-    | _, Some _ when not (Memory.hold_word p) -> host_wait
-    | _, Some word_region -> (
-        (* A device of the producer's driver maps its word region; another maps
-           the host page that holds the word. *)
-        let start = pl.word - (pl.word mod Memory.page) in
-        let mapped, skip =
-          match
-            if d.key = p.key then (Memory.map_peer_region d word_region, 0)
-            else (Memory.map_host_range d start Memory.page, pl.word - start)
-          with
-          | made -> made
+    | _, Some r -> (
+        if not (Memory.enter l) then host_wait
+        else
+          match map_word d p r with
+          | way ->
+              Memory.leave d l;
+              way
           | exception e ->
               let bt = Printexc.get_raw_backtrace () in
-              Memory.word_unmapped p;
-              Printexc.raise_with_backtrace e bt
-        in
-        match mapped with
-        | None ->
-            Memory.word_unmapped p;
-            host_wait
-        | Some r ->
-            let way =
-              match (Memory.locate r).address with
-              | None -> host_wait
-              | Some at -> at + skip
-              | exception e ->
-                  let bt = Printexc.get_raw_backtrace () in
-                  Memory.give d r (Word p);
-                  Printexc.raise_with_backtrace e bt
-            in
-            let kept =
-              Lock.protect l.lock (fun () ->
-                  l.word_end = Read
-                  && begin
-                    l.pair_maps <- (p, r) :: l.pair_maps;
-                    true
-                  end)
-            in
-            if kept then way
-            else begin
-              Memory.give d r (Word p);
-              host_wait
-            end)
+              Memory.leave d l;
+              Printexc.raise_with_backtrace e bt)
 
 (* An undecided pair: no way is negative but [host_wait], and an address or an
    object fits in 62 bits. *)

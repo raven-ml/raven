@@ -117,18 +117,22 @@ module Driver = struct
     mutable sleepers : int;
     mutable frees_gated : bool;
     mutable freers : int;
+    mutable locates_gated : bool;
+    mutable locaters : int;
     mutable stop_fault : string option;  (** What its stop was given. *)
     mutable before : (string * (unit -> unit)) list;
         (** Functions to run at the next call of each name. *)
   }
 
-  (* A region the driver allocated has a kind; a mapping has none. *)
+  (* A region the driver allocated has a kind; a mapping has none, and names
+     the device that made it. *)
   type region = {
     at : int;
     kind : kind option;
     bytes : int;
     visible : bool;
     addressed : bool;
+    mapper : t option;
   }
 
   (* An image's code is in a region of the device, or, loaded by the driver,
@@ -195,6 +199,7 @@ module Driver = struct
           bytes = 8;
           visible = not d.transport;
           addressed = true;
+          mapper = None;
         };
       edge = polled_edge d.c;
     }
@@ -231,7 +236,8 @@ module Driver = struct
       let at = host_alloc n in
       let visible = d.host_visible || kind <> Device in
       let addressed = d.addresses || kind <> Device in
-      Some { at; kind = Some kind; bytes = n; visible; addressed }
+      Some
+        { at; kind = Some kind; bytes = n; visible; addressed; mapper = None }
 
   let rec remove x = function
     | [] -> []
@@ -266,7 +272,20 @@ module Driver = struct
     | Some why -> raise (Fault why)
     | None -> ()
 
+  (* A locate of a mapping waits at its mapper's locate gate while it is
+     shut. *)
   let locate r =
+    Option.iter
+      (fun d ->
+        Mutex.protect d.lock (fun () ->
+            if d.locates_gated then begin
+              d.locaters <- d.locaters + 1;
+              while d.locates_gated do
+                Condition.wait d.opened d.lock
+              done;
+              d.locaters <- d.locaters - 1
+            end))
+      r.mapper;
     {
       Rig_edge.address = (if r.addressed then Some r.at else None);
       host = (if r.visible then Some r.at else None);
@@ -281,14 +300,21 @@ module Driver = struct
 
   let map_peer d _ r =
     if counted d "map_peer" || not d.peers then None
-    else mapping d { r with kind = None }
+    else mapping d { r with kind = None; mapper = Some d }
 
   let map_host d p n =
     if counted d "map_host" then None
     else begin
       Mutex.protect d.lock (fun () -> d.maps <- n :: d.maps);
       mapping d
-        { at = p; kind = None; bytes = n; visible = true; addressed = true }
+        {
+          at = p;
+          kind = None;
+          bytes = n;
+          visible = true;
+          addressed = true;
+          mapper = Some d;
+        }
     end
 
   let image d b =
@@ -424,6 +450,8 @@ module Polled = struct
         sleepers = 0;
         frees_gated = false;
         freers = 0;
+        locates_gated = false;
+        locaters = 0;
         stop_fault = None;
         before = [];
       }
@@ -547,6 +575,16 @@ module Polled = struct
   let open_frees d =
     Mutex.protect d.lock (fun () ->
         d.frees_gated <- false;
+        Condition.broadcast d.opened)
+
+  let gate_locates d =
+    Mutex.protect d.lock (fun () -> d.locates_gated <- true)
+
+  let locaters d = Mutex.protect d.lock (fun () -> d.locaters)
+
+  let open_locates d =
+    Mutex.protect d.lock (fun () ->
+        d.locates_gated <- false;
         Condition.broadcast d.opened)
 end
 

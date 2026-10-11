@@ -224,6 +224,16 @@ val map_peer_region : device -> region -> region option
     device of [d]'s driver, or [None] for another driver's region or where
     [d] maps none. *)
 
+val enter : live -> bool
+(** [enter l] holds the drains of the device whose resources are [l], unless
+    they are freed: whether it held them. The device's resources outlive the
+    hold, and {!leave} frees them if they became spent. It allocates
+    nothing. *)
+
+val leave : device -> live -> unit
+(** [leave d l] ends a hold {!enter} took on [d]'s resources [l], freeing
+    them if [d] holds nothing more. It allocates nothing. *)
+
 val hold_word : device -> bool
 (** [hold_word d] counts a mapping of [d]'s word about to be made, unless
     [d]'s word went back to its driver: whether it counted. The mapping is

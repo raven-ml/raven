@@ -889,6 +889,34 @@ let test_word_after_maps () =
   equal ~msg:"the producer's regions" (list int) [] (P.outstanding pp);
   equal ~msg:"the consumer's regions" (list int) [] (P.outstanding cp)
 
+(* A device closed while a submit on another domain maps a producer's word
+   for its waits gives that mapping back, and the producer's word goes back
+   once the producer closes. The submit's locate of the mapping waits at
+   Polled's locate gate while the close ends the consumer's word. *)
+let test_close_beside_pair () =
+  let pd, pp = P.open_ "open:pair-producer" in
+  let cd, cp = P.open_ ~waits_on:[ `Host ] "open:pair-consumer" in
+  let pt = submit (Rig.Submission.make pd [||]) in
+  P.gate_locates cp;
+  let submitter =
+    Domain.spawn (fun () ->
+        match submit ~waits:[| pt |] (Rig.Submission.make cd [||]) with
+        | _ -> "submitted"
+        | exception Rig.Lost _ -> "lost")
+  in
+  Support.await "the submit's locate at the gate" (fun () ->
+      P.locaters cp = 1);
+  Rig.close cd;
+  settle ();
+  P.open_locates cp;
+  equal ~msg:"the submit" string "lost" (Domain.join submitter);
+  settle ();
+  equal ~msg:"the consumer's regions" (list int) [] (P.outstanding cp);
+  Rig.close pd;
+  settle ();
+  let words = List.length (List.filter (( = ) "word") (P.log pp)) in
+  equal ~msg:"the producer's word" int 1 words
+
 (* A wait that would block behind a live device's unreached write raises the
    loss of a forgotten device's read queued behind it: the read's point keeps
    the loss once the collector took its device. The live device's sleeps block
@@ -1102,6 +1130,8 @@ let tests =
       test "a closed device gives back its mapping of a live device's word"
         test_closed_consumer;
       test "a word goes back after every mapping of it" test_word_after_maps;
+      test "a close beside a submit's word mapping gives it back"
+        test_close_beside_pair;
       test "a wait behind a live device raises a forgotten device's loss"
         test_forgotten_behind_live;
       test "a wait for a reached point of an ended device allocates nothing"
