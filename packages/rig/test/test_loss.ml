@@ -112,6 +112,27 @@ let test_free_after_stop () =
   collect ();
   equal int 1 (count "free" p)
 
+(* A faulted device's frees after its stop raise its fault, which rig drops:
+   its memory, its mapping and its word each go back once, and the drains
+   that free them raise nothing. *)
+let test_faulted_frees () =
+  let d, p = P.open_ "loss:faulted-frees" in
+  let h = B.create Rig.host (1 lsl 16) in
+  let kept = ref [ B.create d 64; B.create ~memory:Pinned d 128 ] in
+  let mapped = ref (Some (require_some (B.borrow d h))) in
+  P.fault p "the device fell off the bus";
+  raises_match (lost d) (fun () -> B.create d 8);
+  ignore (Sys.opaque_identity (!kept, !mapped));
+  kept := [];
+  mapped := None;
+  collect ();
+  collect ();
+  equal ~msg:"held" (list int) [] (P.outstanding p);
+  equal ~msg:"frees, unmaps and the word's"
+    (list int) [ 2; 1; 1 ]
+    (List.map (fun call -> count call p) [ "free"; "unmap"; "word" ]);
+  equal (option string) (Some "the device fell off the bus") (Rig.lost d)
+
 (* A stopped device's mapping of host memory dropped once its stop answered is
    still unmapped through its driver. *)
 let test_unmap_after_stop () =
@@ -699,6 +720,8 @@ let tests =
           test_many_waits;
         test "a stopped device frees memory dropped after its stop"
           test_free_after_stop;
+        test "a faulted device's frees after its stop raise nothing"
+          test_faulted_frees;
         test "a stopped device unmaps host memory dropped after its stop"
           test_unmap_after_stop;
         test "an Unknown answer frees memory dropped after the word drained"

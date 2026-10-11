@@ -108,7 +108,8 @@ module Polled : sig
 
   val fault : t -> string -> unit
   (** [fault d why] makes [d]'s sleeps, allocations, mappings, loads and reads
-      of its budget raise [Fault why] from now on, as a faulted device's do. *)
+      of its budget raise [Fault why] from now on, as a faulted device's do,
+      and its frees raise it once they gave their region back. *)
 
   val before : t -> string -> (unit -> unit) -> unit
   (** [before d call f] runs [f] once, at the start of [d]'s next fallible call

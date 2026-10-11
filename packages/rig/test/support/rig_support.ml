@@ -254,9 +254,13 @@ module Driver = struct
     if r.kind <> None then host_free r.at
 
   (* The word is the device's own record: its free is logged as ["word"]
-     alone. *)
+     alone. A faulted device's free gives the region back, then raises. *)
   let free d r =
-    if r.kind = None && r.at = d.word_at then note d "word" else free_region d r
+    if r.kind = None && r.at = d.word_at then note d "word"
+    else free_region d r;
+    match Mutex.protect d.lock (fun () -> d.fault) with
+    | Some why -> raise (Fault why)
+    | None -> ()
 
   let locate r =
     {
