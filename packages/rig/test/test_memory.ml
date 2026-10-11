@@ -149,6 +149,47 @@ let test_budget_beside_loss () =
   equal ~msg:"frees" int 3
     (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
 
+(* Collects, then drains every device, round after round, as an allocation of
+   host memory does first. *)
+let settle () =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (B.create Rig.host 8)
+  done
+
+(* Memory goes back to its driver after every other device's mapping of it,
+   whichever ends first. The mapper's end gives back its mapping in another
+   domain, held at Polled's free gate while the memory is collected and its
+   owner's cache emptied. *)
+let test_free_after_maps () =
+  let o, po = P.open_ "memory:mapped-owner" in
+  let d, pd = P.open_ "memory:mapper" in
+  let[@inline never] mapped () =
+    let m = B.create o (4 * kib) in
+    let s = Sub.make d [| Support.touching [| Sub.read |] |] in
+    Rig.Point.wait (submit s ~buffers:[| Option.get (B.borrow d m) |]);
+    (Support.at m, ref (Some m))
+  in
+  let at, held = mapped () in
+  equal ~msg:"the mapper maps the memory" bool true
+    (List.mem "map_peer" (P.log pd));
+  P.gate_frees pd;
+  let mapper =
+    Domain.spawn (fun () ->
+        Rig.close d;
+        settle ())
+  in
+  Support.await "the mapper's unmap at the gate" (fun () -> P.freers pd = 1);
+  held := None;
+  collect o;
+  Rig.set_budget o 0;
+  equal ~msg:"the memory while it is mapped" bool false (freed po at);
+  P.open_frees pd;
+  Domain.join mapper;
+  settle ();
+  equal ~msg:"the memory once unmapped" bool true (freed po at);
+  equal ~msg:"the mapper's regions" (list int) [] (P.outstanding pd)
+
 (* A drain that returns collected memory to the driver of a device another
    domain loses meanwhile: its first free waits at Polled's free gate while the
    loss is recorded, and the device stops once that free returned. The drain's
@@ -736,6 +777,7 @@ let tests =
           test_budget_beside_loss;
         test "a drain beside a loss frees each memory once, then stops"
           test_drain_beside_loss;
+        test "memory goes back after every mapping of it" test_free_after_maps;
         test
           "the host's out-of-memory ladder raises a device's fault it finds as \
            that device's loss, never the allocation's"

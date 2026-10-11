@@ -146,6 +146,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       pair_maps = [];
       mapped = Cache.create 4;
       word_end = Read;
+      word_unmaps = 1;
       afters = [];
     }
   in

@@ -169,13 +169,16 @@ and live = {
           [min_int] undecided, [-1] on the host, otherwise the producer's
           object or its word's address as this device maps it. Grown by
           replacement, written under the lock, and read without it. *)
-  mutable pair_maps : (int * region) list;
-      (** Its mappings of producers' words, by producer index, kept until
-          the producer's word ends. *)
+  mutable pair_maps : (device * region) list;
+      (** Its mappings of producers' words, by producer, kept until either
+          word ends. Each counts in its producer's [word_unmaps]. *)
   mapped : entry Hashtbl.Make(Int).t;
       (** The entries it maps, by [id], whose mappings end with its word
           unless the entry is freed first. *)
   mutable word_end : word_end;  (** How far the end of its word went. *)
+  mutable word_unmaps : int; [@atomic]
+      (** Other devices' mappings of its word not given back, plus one until
+          its word ends: the driver gets the word back at [0]. *)
   mutable afters : (int * (unit -> unit)) list;
       (** Functions a wait runs once it finds their value reached. *)
 }
@@ -196,7 +199,8 @@ and entry = {
   mutable maps : mapping list;
       (** Other devices' mappings of it. Guarded by [owner]'s lock. *)
   mutable unmaps : int; [@atomic]
-      (** The unmaps left before a freed entry goes back to its driver. *)
+      (** Other devices' mappings of it not given back, plus one until it is
+          freed: it goes back to its driver at [0]. *)
   mutable pages : pages;
       (** An io allocation's pages, asked at its first borrow. *)
   mutable proxy : int;
@@ -220,10 +224,12 @@ and mapping = { on : device; map : region; at : int; by : nativeint }
     covers the work that may use them without naming them. *)
 and pending =
   | Free of entry
-  | Unmap of region * entry option
-      (** A mapping, and the freed entry it maps, given back after its last
-          unmap. *)
+  | Unmap of region * mapped option
+      (** A mapping, and what it maps, given back after its last unmap. *)
   | Unload of loaded * entry option
+
+(** The type for what a counted mapping maps: memory, or a device's word. *)
+and mapped = Entry of entry | Word of device
 
 (** The type for an image: one a driver loaded, with its module and handle,
     or code the host linked ({!Host_code}). *)

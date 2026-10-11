@@ -165,7 +165,7 @@ let entry ?(access = Read_write) owner backing bytes stamps =
     access;
     stamps;
     maps = [];
-    unmaps = 0;
+    unmaps = 1;
     pages = Unasked;
     proxy = 0;
   }
@@ -422,10 +422,42 @@ let unmap_now mp =
      && Dev.word d >= v
      && free_region d mp.map
 
-(* [e] waits for its last unmap: until then a mapper's driver may still name the
-   memory's pages, and a driver that maps host memory by its address would hand
-   them to new memory at that address. Its mappings are taken under its owner's
-   lock, as a mapper's word end takes its own: each is released once. *)
+(* Notes one of [e]'s unmaps done, and gives [e] back after the last. *)
+let entry_unmapped (e : entry) =
+  if Atomic.Loc.fetch_and_add [%atomic.loc e.unmaps] (-1) = 1 then give_back e
+
+(* Notes one unmap of [d]'s word done, and gives the word back after the
+   last. *)
+let word_unmapped d =
+  let l = Dev.live d in
+  if Atomic.Loc.fetch_and_add [%atomic.loc l.word_unmaps] (-1) = 1 then
+    Option.iter (unmap d) l.word_region
+
+let unmapped = function Entry e -> entry_unmapped e | Word d -> word_unmapped d
+
+(* Gives back [d]'s mapping [r] of [m] now, or once [d] stopped. Memory and
+   words count their mappings and go back to their driver at the last unmap,
+   whichever side, the mapper's end or their own, takes the mapping: until
+   then a mapper's driver may still name their pages, and a driver that maps
+   host memory by its address would hand them to new memory at that
+   address. *)
+let give d r m =
+  if free_region d r then unmapped m else defer d (Unmap (r, Some m))
+
+(* Counts a mapping of [d]'s word about to be made, unless the word went
+   back: whether it counted. The word's own count stands until its end is
+   [Given], set under the lock. *)
+let hold_word d =
+  let l = Dev.live d in
+  Lock.protect l.lock (fun () ->
+      l.word_end <> Given
+      && begin
+        Atomic.Loc.incr [%atomic.loc l.word_unmaps];
+        true
+      end)
+
+(* [e]'s mappings are taken under its owner's lock, as a mapper's word end
+   takes its own: each is released once. *)
 let rec forget (e : entry) = function
   | [] -> ()
   | mp :: maps ->
@@ -448,16 +480,12 @@ let free_entry (e : entry) =
     end
   in
   forget e maps;
-  let later = List.filter (fun mp -> not (unmap_now mp)) maps in
-  match later with
-  | [] -> give_back e
-  | _ ->
-      Atomic.Loc.set [%atomic.loc e.unmaps] (List.length later);
-      List.iter (fun mp -> defer mp.on (Unmap (mp.map, Some e))) later
-
-(* Notes one of [e]'s unmaps done, and gives [e] back after the last. *)
-let unmapped (e : entry) =
-  if Atomic.Loc.fetch_and_add [%atomic.loc e.unmaps] (-1) = 1 then give_back e
+  List.iter
+    (fun mp ->
+      if unmap_now mp then entry_unmapped e
+      else defer mp.on (Unmap (mp.map, Some (Entry e))))
+    maps;
+  entry_unmapped e
 
 let key n kind =
   let k = match kind with Device -> 0 | Pinned -> 1 | Mapped -> 2 in
@@ -704,7 +732,7 @@ let idle l =
 (* Releases [d]'s mappings of the memory that outlives it, once its word shows
    its last value: each is taken out of its memory's [maps] under the memory's
    owner's lock, which [free_entry] takes, so whichever comes first releases
-   it. *)
+   it, and the memory goes back at its last unmap ([give]). *)
 let unmap_all d =
   let l = Dev.live d in
   let mapped =
@@ -723,7 +751,7 @@ let unmap_all d =
                 Some mp
             | None -> None)
       in
-      Option.iter (fun mp -> unmap d mp.map) mine)
+      Option.iter (fun mp -> give d mp.map (Entry e)) mine)
     mapped
 
 (* [c]'s mappings of [d]'s word, taken out of [c]'s resources. *)
@@ -733,7 +761,7 @@ let word_maps d c =
   | Some l ->
       Lock.protect l.lock (fun () ->
           let of_d, others =
-            List.partition (fun (i, _) -> i = d.index) l.pair_maps
+            List.partition (fun (p, _) -> p == d) l.pair_maps
           in
           l.pair_maps <- others;
           of_d)
@@ -748,9 +776,10 @@ let own_word_maps d =
 
 (* Gives back the stopped [d]'s timeline word once nothing reads it: its
    readers move to the C line's copy, then, once every domain passed a minor
-   collection since, the driver gets the word back, after every other device's
-   mapping of it. [d]'s own mappings of other devices' words go then too: its
-   queue reads them no more. One drain takes each step. *)
+   collection since, the driver gets the word back at the last unmap of it,
+   this one's or a mapper's end's ([give]). [d]'s own mappings of other
+   devices' words go then too: its queue reads them no more. One drain takes
+   each step. *)
 let end_word d =
   let l = Dev.live d in
   match l.word_end with
@@ -771,10 +800,11 @@ let end_word d =
             | _ -> false)
       in
       if mine then begin
-        Dev.iter (fun c -> List.iter (fun (_, r) -> unmap c r) (word_maps d c));
-        List.iter (fun (_, r) -> unmap d r) (own_word_maps d);
+        Dev.iter (fun c ->
+            List.iter (fun (_, r) -> give c r (Word d)) (word_maps d c));
+        List.iter (fun (p, r) -> give d r (Word p)) (own_word_maps d);
         unmap_all d;
-        Option.iter (unmap d) l.word_region
+        word_unmapped d
       end
 
 (* Drains in flight on a device: each holds its resources, and the last to
@@ -794,6 +824,7 @@ let spent l =
   && Atomic.Loc.get [%atomic.loc l.entries] = 0
   && l.retiring == [] && fst l.pending == [] && l.cached = 0
   && l.pair_maps == [] && Cache.length l.mapped = 0
+  && Atomic.Loc.get [%atomic.loc l.word_unmaps] = 0
   && release_close l.release
 
 let leave d l =
@@ -952,8 +983,9 @@ let holds_back pool l =
   List.exists (charged pool) l.retiring
   ||
   let holds = function
-    | _, Free e | _, Unmap (_, Some e) | _, Unload (_, Some e) -> charged pool e
-    | _, (Unmap (_, None) | Unload (_, None)) -> false
+    | _, Free e | _, Unmap (_, Some (Entry e)) | _, Unload (_, Some e) ->
+        charged pool e
+    | _, (Unmap (_, (None | Some (Word _))) | Unload (_, None)) -> false
   in
   let front, back = l.pending in
   List.exists holds front || List.exists holds back
@@ -1223,6 +1255,7 @@ let mapping d m host =
                 | Some other -> Some other
                 | None ->
                     m.entry.maps <- mp :: m.entry.maps;
+                    Atomic.Loc.incr [%atomic.loc m.entry.unmaps];
                     None)
           in
           match raced with

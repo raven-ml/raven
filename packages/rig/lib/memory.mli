@@ -210,7 +210,10 @@ val export : claim -> bool
     A borrow of an allocation on a device is a memory record whose root is
     the owner's. Where the device needs a mapping, the first borrow makes it
     and later ones share it. The mapping is released when the entry is freed
-    ({!free_entry}), or when the mapper's word ends, whichever comes first. *)
+    ({!free_entry}), or when the mapper's word ends, whichever comes first,
+    and the entry goes back to its driver after its last mapping is
+    released. A device's word goes back likewise after every mapping of it
+    that a queue's waits made ({!hold_word}). *)
 
 val map_host_range : device -> int -> int -> region option
 (** [map_host_range d p n] is [d]'s mapping of the [n] bytes of host memory
@@ -220,6 +223,20 @@ val map_peer_region : device -> region -> region option
 (** [map_peer_region d r] is [d]'s mapping of [r], a region of another
     device of [d]'s driver, or [None] for another driver's region or where
     [d] maps none. *)
+
+val hold_word : device -> bool
+(** [hold_word d] counts a mapping of [d]'s word about to be made, unless
+    [d]'s word went back to its driver: whether it counted. The mapping is
+    then given back with {!give}, or, if none was made, the count with
+    {!word_unmapped}. *)
+
+val give : device -> region -> mapped -> unit
+(** [give d r m] gives back [d]'s mapping [r] of [m], now or once [d]
+    stopped, and [m] goes back to its driver after its last mapping. *)
+
+val word_unmapped : device -> unit
+(** [word_unmapped d] drops one count of [d]'s word ({!hold_word}), giving
+    the word back after the last. *)
 
 val borrow : device -> memory -> memory option
 (** [borrow d m] is [d]'s borrow of [m]'s allocation, or [None] where [d]

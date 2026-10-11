@@ -860,6 +860,35 @@ let test_closed_consumer () =
   equal (list int) [] (P.outstanding p);
   equal ~msg:"the producer" (option string) None (Rig.lost live)
 
+(* A device's word goes back to its driver after every other device's mapping
+   of it, whichever device ends first. The consumer's end gives back its
+   mapping of the producer's word in another domain, held at Polled's free gate
+   while the producer ends. *)
+let test_word_after_maps () =
+  let pd, pp = P.open_ "open:word-producer" in
+  let cd, cp = P.open_ ~waits_on:[ `Host ] "open:word-consumer" in
+  let pt = submit (Rig.Submission.make pd [||]) in
+  Rig.Point.wait (submit ~waits:[| pt |] (Rig.Submission.make cd [||]));
+  equal ~msg:"the consumer maps the word" bool true
+    (List.mem "map_peer" (P.log cp));
+  P.gate_frees cp;
+  let consumer =
+    Domain.spawn (fun () ->
+        Rig.close cd;
+        settle ())
+  in
+  Support.await "the consumer's unmap at the gate" (fun () -> P.freers cp = 1);
+  Rig.close pd;
+  settle ();
+  let words () = List.length (List.filter (( = ) "word") (P.log pp)) in
+  equal ~msg:"the producer's word while it is mapped" int 0 (words ());
+  P.open_frees cp;
+  Domain.join consumer;
+  settle ();
+  equal ~msg:"the producer's word once unmapped" int 1 (words ());
+  equal ~msg:"the producer's regions" (list int) [] (P.outstanding pp);
+  equal ~msg:"the consumer's regions" (list int) [] (P.outstanding cp)
+
 (* A wait that would block behind a live device's unreached write raises the
    loss of a forgotten device's read queued behind it: the read's point keeps
    the loss once the collector took its device. The live device's sleeps block
@@ -1072,6 +1101,7 @@ let tests =
         test_forgotten_loss;
       test "a closed device gives back its mapping of a live device's word"
         test_closed_consumer;
+      test "a word goes back after every mapping of it" test_word_after_maps;
       test "a wait behind a live device raises a forgotten device's loss"
         test_forgotten_behind_live;
       test "a wait for a reached point of an ended device allocates nothing"

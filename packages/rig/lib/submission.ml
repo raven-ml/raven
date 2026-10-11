@@ -861,7 +861,8 @@ let host_wait = -1
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the producer's object for an object completion, or
-   the address of [p]'s word as [d] maps it. *)
+   the address of [p]'s word as [d] maps it. The mapping counts in [p]'s word
+   from before it is made. *)
 let decide d p =
   let l = Dev.live d and pl = Dev.live p in
   let waits =
@@ -875,19 +876,29 @@ let decide d p =
     match (pl.completion, pl.word_region) with
     | Object o, _ -> o
     | _, None -> host_wait
+    | _, Some _ when not (Memory.hold_word p) -> host_wait
     | _, Some word_region -> (
         (* A device of the producer's driver maps its word region; another maps
            the host page that holds the word. *)
         let start = pl.word - (pl.word mod Memory.page) in
         let mapped, skip =
-          if d.key = p.key then (Memory.map_peer_region d word_region, 0)
-          else (Memory.map_host_range d start Memory.page, pl.word - start)
+          match
+            if d.key = p.key then (Memory.map_peer_region d word_region, 0)
+            else (Memory.map_host_range d start Memory.page, pl.word - start)
+          with
+          | made -> made
+          | exception e ->
+              let bt = Printexc.get_raw_backtrace () in
+              Memory.word_unmapped p;
+              Printexc.raise_with_backtrace e bt
         in
         match mapped with
-        | None -> host_wait
+        | None ->
+            Memory.word_unmapped p;
+            host_wait
         | Some r -> (
             Lock.protect l.lock (fun () ->
-                l.pair_maps <- (p.index, r) :: l.pair_maps);
+                l.pair_maps <- (p, r) :: l.pair_maps);
             match (Memory.locate r).address with
             | None -> host_wait
             | Some at -> at + skip))
