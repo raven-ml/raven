@@ -569,6 +569,9 @@ value caml_rig_state(value v_i) {
   return Val_int(line_state(line_of(Int_val(v_i))));
 }
 
+/* The reason of the device of index [v_i], "" if it is not lost. Its caller
+   keeps the device's OCaml record reachable: the record's collection frees
+   the reason ([caml_rig_forget]). */
 value caml_rig_why(value v_i) {
   char *why =
       atomic_load_explicit(&line_of(Int_val(v_i))->lost, memory_order_acquire);

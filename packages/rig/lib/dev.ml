@@ -264,8 +264,16 @@ let[@inline] lost_at i = i <> 0 && c_state i <> live_state
 let[@inline] is_lost d = lost_at d.index
 let orphaned_at i = c_state i = orphaned_state
 let orphaned d = orphaned_at d.index
-let lost d = if is_lost d then Some (c_why d.index) else None
-let raise_lost d = raise (Lost (d, c_why d.index))
+
+(* [d]'s reason, copied while [d] is reachable: the collection of [d] frees the
+   C string ({!register}), which may run on another domain during the copy. *)
+let why d =
+  let s = c_why d.index in
+  ignore (Sys.opaque_identity d);
+  s
+
+let lost d = if is_lost d then Some (why d) else None
+let raise_lost d = raise (Lost (d, why d))
 let submitted d = c_submitted d.index
 
 (* A device whose resources are freed is lost: a use of them raises its
@@ -404,7 +412,7 @@ let stop d =
       | Driver { m; h; _ } -> (
           let module D = (val m) in
           let fault =
-            if c_faulted (live d).c then Some (c_why d.index) else None
+            if c_faulted (live d).c then Some (why d) else None
           in
           try D.stop h ~fault with D.Fault _ -> ())
       | Io { m; h } -> (
@@ -497,7 +505,7 @@ let failure () =
   | -1 -> c_failed ()
   | i ->
       let d = of_index i in
-      Some (strf "%s lost: %s" d.name (c_why d.index))
+      Some (strf "%s lost: %s" d.name (why d))
 
 (* The timeline *)
 
@@ -760,7 +768,7 @@ let open_named ~fn ~machine ~name ~key make =
      included: it has one for its life. *)
   let host_down () =
     let down h =
-      if is_lost h then Some (strf "%s lost: %s" h.name (c_why h.index))
+      if is_lost h then Some (strf "%s lost: %s" h.name (why h))
       else if Hashtbl.mem closing h.index then Some (strf "%s lost: closed" h.name)
       else None
     in
