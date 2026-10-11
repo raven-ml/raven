@@ -1,5 +1,5 @@
 (tests
- (names test_host test_walk)
+ (names test_host test_walk test_fork)
  (libraries rig rig_host_support rig_support unix windtrap)
  (deps
   (source_tree fixtures)
