@@ -808,7 +808,8 @@ let test_forgotten () =
    stand-in: memory whose last write the lost device never reached raises
    Lost, and memory it wrote before its loss reads. While it records
    backtraces, the runtime keeps the last exception raised, here the Lost that
-   holds the device, until another is. *)
+   holds the device, until another is, and the thread's copy of it until the
+   thread next releases the domain lock. *)
 let test_forgotten_loss () =
   let reached = Rig.Buffer.create Rig.host (1 lsl 16) in
   let dropped = Rig.Buffer.create Rig.host (1 lsl 16) in
@@ -824,12 +825,13 @@ let test_forgotten_loss () =
     let q = write dropped in
     P.fail p;
     (try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ());
-    (try raise Exit with Exit -> ());
     Rig.close d;
     q
   in
   let q = point () in
   settle ();
+  (try raise Exit with Exit -> ());
+  Thread.delay 0.;
   Gc.full_major ();
   equal string "ended" (Rig.name (Rig.Point.device q));
   let size b = Rig.Buffer.read b Bigarray.char Bigarray.Array1.dim in

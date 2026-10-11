@@ -103,8 +103,9 @@ let test_first_loss =
 (* The first loss stays the failure once its device ended and the collector
    took it: the device's point then names the ended stand-in. While it records
    backtraces, the runtime keeps the last exception raised, here the Lost that
-   holds the device, until another is. Each round collects, then drains every
-   device through an allocation. *)
+   holds the device, until another is, and the thread's copy of it until the
+   thread next releases the domain lock. Each round collects, then drains
+   every device through an allocation. *)
 let test_first_loss_collected =
   child_case [ "fail:collected lost: the submission failed"; "ended" ]
   @@ fun () ->
@@ -112,7 +113,6 @@ let test_first_loss_collected =
     let d, p = P.open_ "fail:collected" in
     let pt = submit (empty d) in
     lose d p;
-    (try raise Exit with Exit -> ());
     Rig.close d;
     pt
   in
@@ -121,6 +121,8 @@ let test_first_loss_collected =
     Gc.full_major ();
     ignore (B.create Rig.host 8 : B.t)
   done;
+  (try raise Exit with Exit -> ());
+  Thread.delay 0.;
   Gc.full_major ();
   [ failure (); Rig.name (Rig.Point.device pt) ]
 
