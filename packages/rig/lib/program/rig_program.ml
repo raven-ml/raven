@@ -20,7 +20,13 @@ type leaf =
 type use = Read | Write | Unordered
 type ref = { slot : int; at : int; use : use }
 type width = W32 | W64
-type 'a hole = { at : int; width : width; leaf : 'a; add : int; shift : int }
+type 'a hole = {
+  at : int;
+  width : width;
+  terms : ('a * int) iarray;
+  add : int;
+  shift : int;
+}
 type 'a data = { bytes : string; holes : 'a hole iarray }
 type value = Fixed of int | Int of int | Leaf of leaf
 type copies = One | Two
@@ -128,7 +134,7 @@ let check_holes what len check holes =
         refuse "%s: a hole at %d outside its %d bytes" what h.at len;
       if h.shift < 0 || h.shift > 62 then
         refuse "%s: a hole's shift %d outside 0 to 62" what h.shift;
-      check h.leaf)
+      Iarray.iter (fun (x, _) -> check x) h.terms)
     holes;
   let sorted =
     List.sort (fun a b -> compare a.at b.at) (Iarray.to_list holes)
@@ -297,6 +303,9 @@ let check_memory t sizes =
         | Move _ -> false)
       steps
   in
+  let terms holes f =
+    Iarray.iter (fun h -> Iarray.iter (fun (x, _) -> f x) h.terms) holes
+  in
   let closure views =
     (* Each pointee must itself occur whole in views, so checking every named
        container also checks every transitive pointee, including cycles. *)
@@ -305,17 +314,14 @@ let check_memory t sizes =
         match Iarray.get t.memory v.memory with
         | Rail _ -> ()
         | Alloc { init; _ } ->
-            Iarray.iter
-              (fun h ->
-                match h.leaf with
-                | Address { memory; _ } | Handle memory ->
-                    if not (whole views memory) then
-                      refuse
-                        "memory %d: its init names memory %d, which its step \
-                         does not name whole"
-                        v.memory memory
-                | Entry _ | Ready _ -> ())
-              init.holes)
+            terms init.holes (function
+              | Address { memory; _ } | Handle memory ->
+                  if not (whole views memory) then
+                    refuse
+                      "memory %d: its init names memory %d, which its step \
+                       does not name whole"
+                      v.memory memory
+              | Entry _ | Ready _ -> ()))
       views
   in
   let value ~on ~fixed views = function
@@ -331,27 +337,21 @@ let check_memory t sizes =
   in
   Iarray.iteri
     (fun i (image : image) ->
-      Iarray.iter
-        (fun h ->
-          match h.leaf with
-          | Address _ | Handle _ -> refuse "image %d: a hole names memory" i
-          | Entry _ | Ready _ -> ())
-        image.binary.holes)
+      terms image.binary.holes (function
+        | Address _ | Handle _ -> refuse "image %d: a hole names memory" i
+        | Entry _ | Ready _ -> ()))
     t.images;
   Iarray.iteri
     (fun m -> function
       | Rail _ -> ()
       | Alloc { init; _ } ->
-          Iarray.iter
-            (fun h ->
-              match h.leaf with
-              | Address { memory; on } when not (fixing memory on t.steps) ->
-                  refuse
-                    "memory %d: its init takes memory %d's address on device \
-                     %d, where no step fixes it whole"
-                    m memory on
-              | Address _ | Handle _ | Entry _ | Ready _ -> ())
-            init.holes)
+          terms init.holes (function
+            | Address { memory; on } when not (fixing memory on t.steps) ->
+                refuse
+                  "memory %d: its init takes memory %d's address on device %d, \
+                   where no step fixes it whole"
+                  m memory on
+            | Address _ | Handle _ | Entry _ | Ready _ -> ()))
     t.memory;
   let rec step = function
     | Submit s ->
@@ -369,11 +369,11 @@ let check_memory t sizes =
                 | Address _ | Handle _ ->
                     refuse "fill: memory is not a callable function"
                 | Entry _ | Ready _ -> ());
-                Iarray.iter (fun h -> check h.leaf) params.holes
+                terms params.holes check
             | Launch
                 { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ }
               ->
-                Iarray.iter (fun h -> check h.leaf) params.holes;
+                terms params.holes check;
                 List.iter check [ gx; gy; gz; tx; ty; tz; shared ]
             | Words _ | Copy _ -> ())
           s.parts
@@ -439,7 +439,7 @@ let check t sizes devices =
    count, then its elements; a variant its tag, a byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 9
+let version = 10
 
 module W = struct
   let int b n = Buffer.add_int64_le b (Int64.of_int n)
@@ -492,7 +492,11 @@ module W = struct
       (fun b h ->
         int b h.at;
         tag b (match h.width with W32 -> 0 | W64 -> 1);
-        f b h.leaf;
+        array
+          (fun b (x, factor) ->
+            f b x;
+            int b factor)
+          b h.terms;
         int b h.add;
         int b h.shift)
       b d.holes
@@ -687,10 +691,17 @@ module R = struct
         (fun r ->
           let at = int r in
           let width = width r in
-          let leaf = f r in
+          let terms =
+            array
+              (fun r ->
+                let x = f r in
+                let factor = int r in
+                (x, factor))
+              r
+          in
           let add = int r in
           let shift = int r in
-          { at; width; leaf; add; shift })
+          { at; width; terms; add; shift })
         r
     in
     { bytes; holes }
@@ -1127,14 +1138,19 @@ let leaf_value p k = function
       | exception Invalid_argument why -> refuse "%s" why)
   | Ready r -> Nativeint.to_int (rail_end p.rails r).ready_fn
 
-(* The word hole [h] makes of the value [v] over [word], the word of its bytes
-   there: the value's low bits ORed into it. *)
 (* A hole whose value meets set bits of its bytes, at its byte: the value
    would clobber a constant the description holds there. *)
 exception Clobbers of int
 
+(* The sum hole [h] writes before its shift, [value] giving its terms'
+   values. *)
+let hole_sum h value =
+  Iarray.fold_left (fun v (x, factor) -> v + (value x * factor)) h.add h.terms
+
+(* The word hole [h] makes of the sum [v] over [word], the word of its bytes
+   there: the sum's 64-bit word, shifted, its low bits ORed into it. *)
 let hole_word h v word =
-  let w = Int64.of_int ((v + h.add) lsr h.shift) in
+  let w = Int64.shift_right_logical (Int64.of_int v) h.shift in
   let w = match h.width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w in
   if Int64.logand word w <> 0L then raise (Clobbers h.at);
   Int64.logor word w
@@ -1149,7 +1165,8 @@ let get_word b h =
 let filled p k (d : leaf data) =
   let b = Bytes.of_string d.bytes in
   let fill h =
-    let w = hole_word h (leaf_value p k h.leaf) (get_word d.bytes h) in
+    let v = hole_sum h (leaf_value p k) in
+    let w = hole_word h v (get_word d.bytes h) in
     match h.width with
     | W32 -> Bytes.set_int32_le b h.at (Int64.to_int32 w)
     | W64 -> Bytes.set_int64_le b h.at w
@@ -1168,23 +1185,26 @@ let per_copy t (s : submit) =
     | Leaf l -> leaf_two t l
     | Fixed _ | Int _ -> false
   in
+  let holes =
+    Iarray.exists (fun h -> Iarray.exists (fun (x, _) -> value x) h.terms)
+  in
   let part = function
     | Words v -> view v
-    | Fill { fill; params; _ } ->
-        leaf_two t fill || Iarray.exists (fun h -> value h.leaf) params.holes
+    | Fill { fill; params; _ } -> leaf_two t fill || holes params.holes
     | Copy _ -> false
     | Launch { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
-        Iarray.exists (fun h -> value h.leaf) params.holes
+        holes params.holes
         || List.exists value [ gx; gy; gz; tx; ty; tz; shared ]
   in
   Iarray.exists part s.parts || Iarray.exists slot s.slots
   || Iarray.exists (fun (v, _) -> view v) s.fixed
 
 let per_run = function Word _ -> true | Known _ -> false
+let hole_per_run h = Iarray.exists (fun (x, _) -> per_run x) h.terms
 
-(* Stores hole [h] of a launch's parameters [params] over [v] into its block
-   [b]. A 64-bit word goes as two 32-bit halves: an [int] setter would drop its
-   bit 63. *)
+(* Stores hole [h] of a launch's parameters [params] over its sum [v] into its
+   block [b]. A 64-bit word goes as two 32-bit halves: an [int] setter would
+   drop its bit 63. *)
 let store_hole r b params h v =
   let w = hole_word h v (get_word params h) in
   Sub.Run.int32 r b h.at (Int64.to_int (Int64.logand w 0xffff_ffffL));
@@ -1288,12 +1308,16 @@ let prepared p k (s : submit) =
             (Int32.to_int (String.get_int32_le params.bytes (4 * w)))
         done;
         let holes =
-          Iarray.map (fun h -> { h with leaf = known h.leaf }) params.holes
+          Iarray.map
+            (fun h ->
+              let terms = Iarray.map (fun (x, f) -> (known x, f)) h.terms in
+              { h with terms })
+            params.holes
         in
         Iarray.iter
           (fun h ->
-            if not (per_run h.leaf) then
-              store_hole srun b params.bytes h (value h.leaf))
+            if not (hole_per_run h) then
+              store_hole srun b params.bytes h (hole_sum h value))
           holes;
         let geometry =
           match work with
@@ -1315,7 +1339,7 @@ let prepared p k (s : submit) =
             params = params.bytes;
             holes =
               Array.of_list
-                (List.filter (fun h -> per_run h.leaf) (Iarray.to_list holes));
+                (List.filter hole_per_run (Iarray.to_list holes));
             geometry;
           }
   in
@@ -1575,7 +1599,12 @@ let submit_step p k waits (spec : submit) copies =
        let l = q.blocks.(i) in
        for j = 0 to Array.length l.holes - 1 do
          let h = l.holes.(j) in
-         store_hole q.srun l.block l.params h (run_value p k h.leaf)
+         let v = ref h.add in
+         for t = 0 to Iarray.length h.terms - 1 do
+           let x, factor = Iarray.get h.terms t in
+           v := !v + (run_value p k x * factor)
+         done;
+         store_hole q.srun l.block l.params h !v
        done;
        match l.geometry with
        | None -> ()

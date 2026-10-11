@@ -60,7 +60,7 @@ let near () =
   else failwith "no AMD or NV GPU on this machine"
 
 let view memory offset length = G.Memory { memory; offset; length }
-let hole at leaf = { G.at; width = W64; leaf; add = 0; shift = 0 }
+let hole at x = { G.at; width = W64; terms = [| (x, 1) |]; add = 0; shift = 0 }
 
 (* Doubles input 0 into input 1 and adds 1, places the result in landing copy
    [k] of the rail's outbound area, and readies the run's count, its int 0,

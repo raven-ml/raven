@@ -36,7 +36,7 @@ let host_image device f =
       { G.bytes = Rig_host_support.fixture ~dir:"../fixtures" f; holes = [||] };
   }
 
-let hole at leaf = { G.at; width = W64; leaf; add = 0; shift = 0 }
+let hole at x = { G.at; width = W64; terms = [| (x, 1) |]; add = 0; shift = 0 }
 
 let launch ?(holes : _ iarray = [||]) ~image ~groups name bytes refs =
   (G.Launch
@@ -345,7 +345,7 @@ let rail_address () =
                           width = W64;
                           shift = 0;
                           add = 0;
-                          leaf = Address { memory = 0; on = 0 };
+                          terms = [| (Address { memory = 0; on = 0 }, 1) |];
                         };
                       |];
                   };

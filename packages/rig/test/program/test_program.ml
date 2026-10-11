@@ -40,8 +40,8 @@ let of_bytes d s =
 let data bytes = { G.bytes; holes = [||] }
 let functions = data "functions"
 
-let hole ?(width = G.W64) ?(add = 0) ?(shift = 0) at leaf =
-  { G.at; width; leaf; add; shift }
+let hole ?(width = G.W64) ?(add = 0) ?(shift = 0) at x =
+  { G.at; width; terms = [| (x, 1) |]; add; shift }
 
 (* A launch of Polled's [fill]: for [groups] groups, the 64-bit word [i] of its
    slot [0] is [base + i]. *)
@@ -345,8 +345,8 @@ let gen_hole =
         h.add h.shift)
     gen_hole
 
-let shaped h at leaf =
-  { G.at; width = h.width; leaf; add = h.add; shift = h.shift }
+let shaped h at x =
+  { G.at; width = h.width; terms = [| (x, 1) |]; add = h.add; shift = h.shift }
 
 let word s i = Int64.to_int (String.get_int64_le s (8 * i))
 
@@ -420,6 +420,161 @@ let hole_law h =
   equal ~msg:"Polled's handle is the address" int a (word y 1);
   cover "a shift past the address's bits" (h.shift > 40);
   cover "a W32 hole" (h.width = W32)
+
+(* Affine holes *)
+
+(* A term of an affine hole: word [i] of the frame's ints, a constant, memory
+   0's address. *)
+type term = Frame of int | Const of int | Addr
+
+type affine = {
+  width : G.width;
+  add : int;
+  shift : int;
+  terms : (term * int) list;
+  frames : (int * int) list;  (** The frame's two ints, per run. *)
+}
+
+let pp_affine ppf c =
+  let term ppf = function
+    | Frame i, f -> Format.fprintf ppf "int %d * %d" i f
+    | Const n, f -> Format.fprintf ppf "%d * %d" n f
+    | Addr, f -> Format.fprintf ppf "address * %d" f
+  in
+  Format.fprintf ppf "%s, add %d, shift %d, terms [%a], frames [%s]"
+    (match c.width with W32 -> "W32" | W64 -> "W64")
+    c.add c.shift
+    (Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") term)
+    c.terms
+    (String.concat "; "
+       (List.map (fun (a, b) -> Printf.sprintf "%d,%d" a b) c.frames))
+
+let gen_affine =
+  let open Gen in
+  let factor =
+    frequency
+      [
+        (3, int_range (-4) 4);
+        (1, of_list [ 1 lsl 32; -(1 lsl 40); max_int; min_int ]);
+      ]
+  in
+  let term =
+    one_of
+      [
+        map (fun i -> Frame i) (int_range 0 1);
+        map (fun n -> Const n) (int_range (-(1 lsl 30)) (1 lsl 30));
+        constant Addr;
+      ]
+  in
+  let+ width = of_list [ G.W32; G.W64 ]
+  and+ add = int_range (-(1 lsl 20)) (1 lsl 20)
+  and+ shift =
+    frequency [ (1, of_list [ 0; 1; 31; 32; 33; 61; 62 ]); (2, int_range 0 62) ]
+  and+ terms = list ~size:(int_range 0 4) (pair term factor)
+  and+ frames = list ~size:(int_range 1 3) (pair int int) in
+  { width; add; shift; terms; frames }
+
+let gen_affine = Gen.with_pp pp_affine gen_affine
+
+(* The word an affine hole of [c] writes, [value] giving its terms' values:
+   the [int] sum taken modulo [2{^64}], divided by [2{^shift}], and for [W32]
+   its low 32 bits. *)
+let affine_sum c value =
+  List.fold_left (fun s (x, f) -> s + (value x * f)) c.add c.terms
+
+let affine_word c value =
+  let sum = Int64.of_int (affine_sum c value) in
+  let w = Int64.unsigned_div sum (Int64.shift_left 1L c.shift) in
+  match c.width with W32 -> Int64.logand w 0xffff_ffffL | W64 -> w
+
+(* A launch's hole of the case's terms writes, on each run, the sum of its
+   terms' values times their factors, plus [add], shifted, as the case's
+   reference computes it; and the same hole over memory leaves in memory 1's
+   init, filled at load, moved into input 1. *)
+let affine_law c =
+  let d = fst (Lazy.force devices) in
+  let address = G.Address { memory = 0; on = 0 } in
+  let value_of : term -> G.value = function
+    | Frame i -> Int i
+    | Const n -> Fixed n
+    | Addr -> Leaf address
+  in
+  let leaf_terms = List.map (fun (_, f) -> (address, f)) c.terms in
+  let affine at terms =
+    let terms = Iarray.of_list terms in
+    { G.at; width = c.width; terms; add = c.add; shift = c.shift }
+  in
+  let fixed : _ iarray =
+    [| ({ G.memory = 0; offset = 0; length = 8 }, Rig.Read) |]
+  in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      ints = 2;
+      memory =
+        [|
+          alloc 0 8;
+          alloc 0 8
+            ~init:
+              {
+                G.bytes = String.make 8 '\000';
+                holes = [| affine 0 leaf_terms |];
+              };
+        |];
+      images = [| { device = 0; binary = functions } |];
+      inputs = [| { device = 0; bytes = 16 }; { device = 0; bytes = 8 } |];
+      steps =
+        [|
+          submit 0
+            ~buffers:[| (Input 0, Rig.Read_write) |]
+            ~fixed
+            [| fill_word 0 (hole 8 (G.Leaf address)) |];
+          submit 0
+            ~buffers:[| (Input 0, Rig.Read_write) |]
+            ~fixed
+            [|
+              fill_word 1
+                (affine 8 (List.map (fun (x, f) -> (value_of x, f)) c.terms));
+            |];
+          Move
+            {
+              src = Memory { memory = 1; offset = 0; length = 8 };
+              dst = Input 1;
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let shifted_negative = ref false in
+  List.iter
+    (fun (i0, i1) ->
+      let x = B.create d 16 and y = B.create d 8 in
+      Array.iter Rig.Point.wait
+        (G.run p { inputs = [| x; y |]; ints = [| i0; i1 |] });
+      let x = read x and y = read y in
+      let a = word x 0 in
+      let value = function
+        | Frame 0 -> i0
+        | Frame _ -> i1
+        | Const n -> n
+        | Addr -> a
+      in
+      if c.shift > 0 && affine_sum c value < 0 then shifted_negative := true;
+      let word64 s i = String.get_int64_le s (8 * i) in
+      equal ~msg:"a launch's hole" int64 (affine_word c value) (word64 x 1);
+      equal ~msg:"a memory's hole" int64
+        (affine_word c (fun _ -> a))
+        (word64 y 0))
+    c.frames;
+  let factors = List.map snd c.terms in
+  cover "two terms or more" (List.length c.terms >= 2);
+  cover "no term" (c.terms = []);
+  cover "a negative factor" (List.exists (fun f -> f < 0) factors);
+  cover "a term the frame gives"
+    (List.exists (function Frame _, _ -> true | _ -> false) c.terms);
+  cover "a W32 hole" (c.width = W32);
+  cover "a shift at a 32-bit boundary" (c.shift = 31 || c.shift = 32);
+  cover "a negative sum, shifted" !shifted_negative
 
 (* Two copies *)
 
@@ -1410,10 +1565,10 @@ let gen_t =
       few
         (let+ at = n
          and+ width = of_list [ W32; W64 ]
-         and+ leaf = f
+         and+ terms = few (pair f int)
          and+ add = int
          and+ shift = n in
-         { at; width; leaf; add; shift })
+         { at; width; terms; add; shift })
     in
     { bytes; holes }
   in
@@ -1536,7 +1691,7 @@ let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
   Bytes.set_int64_le s 12 7L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 7, not 9" why
+  contains ~msg:"names the versions" ~sub:"version 7, not 10" why
 
 (* A description cut inside its version is malformed where the cut is. *)
 let test_cut_version () =
@@ -1683,7 +1838,7 @@ let beside_law b =
                               {
                                 G.at = 0;
                                 width = b.width;
-                                leaf;
+                                terms = [| (leaf, 1) |];
                                 add = 0;
                                 shift = b.shift;
                               };
@@ -2577,6 +2732,10 @@ let tests =
           "a hole holds the low bits of its leaf plus add, shifted, in memory \
            and in a launch"
           gen_hole hole_law;
+        prop
+          "a hole holds its terms' values times their factors, plus add, \
+           shifted, read on each run"
+          gen_affine affine_law;
         prop
           "a value that meets set bits of its bytes is refused, and the bits \
            outside each value keep the description's bytes"
