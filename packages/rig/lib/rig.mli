@@ -156,9 +156,10 @@ val close : t -> unit
 
     A device's properties are set when it opens, and keep their values once
     it is lost. Once a lost device has stopped and its memory has returned,
-    rig frees what it held for the device, in its driver and in rig. It
-    keeps only the device's properties and the last values of its timeline,
-    which its points read for the life of the process. *)
+    rig frees what it held for the device, in its driver and in rig, but
+    its properties and the last values of its timeline. Those go once no
+    value the program holds refers to the device, and its points then name
+    a stand-in ({!Point.device}). *)
 
 val name : t -> string
 (** [name d] is [d]'s name for people: its opener's [name], with
@@ -277,7 +278,11 @@ module Point : sig
   (** The type for points. *)
 
   val device : t -> device
-  (** [device p] is [p]'s device. *)
+  (** [device p] is [p]'s device while a value the program holds refers to
+      that device. Once it has ended and none does, [device p] is a
+      stand-in for every such device, named ["ended"]: it is lost with the
+      reason ["ended"], computes nothing, reaches only itself, and its
+      {!submitted} and {!signaled} are [max_int]. *)
 
   val value : t -> int
   (** [value p] is [p]'s value, [1] or more. *)
@@ -489,7 +494,8 @@ exception Lost of t * string
        device named [NAME];}
     {- ["closed"] for a device {!close} ended;}
     {- the reason given to {!fail};}
-    {- ["forked"] in a child of [fork].}}
+    {- ["forked"] in a child of [fork];}
+    {- ["ended"] when [d] is {!Point.device}'s stand-in.}}
     It prints as ["NAME lost: why"] with [d]'s name. *)
 
 val lost : t -> string option

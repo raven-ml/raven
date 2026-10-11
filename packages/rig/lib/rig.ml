@@ -13,7 +13,8 @@ let host = Dev.host
 let name (d : t) = d.name
 let host_of = Dev.host_of
 let arch d = d.arch
-let computes d = not (Dev.is_io d)
+let computes d =
+  match d.kind with Host | Driver _ -> true | Io _ | Ended -> false
 let runs_on_host d = Dev.is_host d || d.memory_device
 let reaches = Dev.reaches
 let shares_host_memory d = Dev.reaches Dev.host d && Dev.reaches d Dev.host

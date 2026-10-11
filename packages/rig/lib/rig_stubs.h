@@ -37,7 +37,9 @@ typedef pthread_cond_t rig_cond;
 #define RIG_INDEX(p) ((int)((p) >> RIG_VALUE_BITS))
 #define RIG_VALUE(p) ((p) & RIG_VALUE_MASK)
 
-/* Device indices run from 1 to RIG_DEVICES - 1 and are never reused. */
+/* Device indices run from 1 to RIG_DEVICES - 1 and are never reused. The
+   line of index RIG_DEVICES, which no point names, is the stand-in's for
+   the devices whose OCaml records were collected ([caml_rig_forgotten]). */
 #define RIG_DEVICES 65536
 
 /* A device's state. A loss moves a live device to LOSING while its loser
@@ -85,9 +87,11 @@ struct rig_times {
 
 /* A device's timeline line: what a point of the device asks, kept for the
    life of the process at the device's index, since a point outlives its
-   device. [word] is the timeline word, or NULL behind a transport. Once the
-   device is stopped and nothing else reads the driver's word, it points to
-   [final], and the driver's word is given back ([caml_rig_word_retire]).
+   device. Once the device's OCaml record is collected, its reason goes
+   ([caml_rig_forget]). [word] is the timeline word, or NULL behind a
+   transport. Once the device is stopped and nothing else reads the
+   driver's word, it points to [final], and the driver's word is given back
+   ([caml_rig_word_retire]).
    [state], [lost] and [reached] change under the device's mutex while the
    device lives, and every field is read without it. */
 struct rig_line {
@@ -101,7 +105,7 @@ struct rig_line {
   int io;                   /* an io device's, whose state its library holds */
 };
 
-extern struct rig_line rig_lines[RIG_DEVICES];
+extern struct rig_line rig_lines[RIG_DEVICES + 1];
 
 /* A list of release records ([rig_heap.c]): those of a device lie in its
    record. [refs] counts the device and the list's live tokens, and is 0

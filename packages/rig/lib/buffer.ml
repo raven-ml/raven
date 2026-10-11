@@ -282,6 +282,6 @@ let handle b =
   check_live "Buffer.handle" b;
   match b.mem.dev.kind with
   | Driver _ -> b.mem.handle
-  | Host | Io _ ->
+  | Host | Io _ | Ended ->
       invalid_argf "Rig.Buffer.handle: no driver object names %s's memory"
         b.mem.dev.name

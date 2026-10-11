@@ -308,6 +308,7 @@ let new_entry d (kind : memory_kind) n =
           let region = Io_region { m; h; r } in
           Some (entry d (Io_memory { origin = Made; region }) n (stamps_new ())))
   | Host -> None
+  | Ended -> Dev.raise_lost d
 
 (* Gives back a region [d] allocated or mapped, an io region or an image:
    whether it did, which a device lost and not stopped does not ([Dev.give]). *)
@@ -1176,7 +1177,9 @@ let map_peer d m =
 (* Whether [d] maps [m] as a peer's memory: memory of a device of [d]'s
    driver. *)
 let peer_memory d (m : memory) =
-  match m.dev.kind with Driver _ -> m.dev.key = d.key | Host | Io _ -> false
+  match m.dev.kind with
+  | Driver _ -> m.dev.key = d.key
+  | Host | Io _ | Ended -> false
 
 (* [d]'s mapping of the memory [m] owns, whose host address is [host] or [-1],
    made at the first borrow and shared by the later ones. *)

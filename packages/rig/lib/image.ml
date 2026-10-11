@@ -72,6 +72,7 @@ let loaded d binary =
       | Ok c -> Ok (Linked c, None)
       | Error why -> Error (strf "%s: %s" d.name why))
   | Io _ -> invalid_argf "Rig.Image.load: %s loads no code" d.name
+  | Ended -> Dev.raise_lost d
 
 let load d binary =
   if Dev.is_lost d then Dev.raise_lost d;

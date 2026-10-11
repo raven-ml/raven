@@ -152,7 +152,7 @@ static int64_t now_ms(void) { return (int64_t)(rig_now_ns() / 1000000); }
    the table, and holds no runtime lock meanwhile. Code that asks a device
    by index for its timeline reads its line. */
 
-struct rig_line rig_lines[RIG_DEVICES];
+struct rig_line rig_lines[RIG_DEVICES + 1];
 
 static _Atomic(struct rig_device *) devices[RIG_DEVICES];
 static _Atomic int top;
@@ -290,6 +290,10 @@ static _Atomic int first;
 static _Atomic(char *) failed;
 static _Atomic int generation;
 
+/* The reasons no line owns: a fork's, and the stand-in's. */
+static char forked_why[] = "forked";
+static char ended_why[] = "ended";
+
 #define Lock_val(v) (*(struct rig_lock **)Data_custom_val(v))
 
 /* After fork, the locks are made anew, since a thread of the parent may
@@ -314,7 +318,6 @@ static void forked_parent(void) {
 }
 
 static void forked_child(void) {
-  static char why[] = "forked";
   mutex_init(&locks_mu);
   mutex_init(&table_mu);
   for (struct rig_lock *l = locks; l != NULL; l = l->next) {
@@ -335,7 +338,7 @@ static void forked_child(void) {
       owing += line_state(l) == RIG_OWED;
     } else if (i > 0 && (d != NULL || line_state(l) != RIG_LIVE)) {
       char *none = NULL;
-      atomic_compare_exchange_strong(&l->lost, &none, why);
+      atomic_compare_exchange_strong(&l->lost, &none, forked_why);
       atomic_store(&l->state, RIG_ORPHANED);
     }
   }
@@ -786,6 +789,32 @@ value caml_rig_claim(value unit) {
   mutex_unlock(&table_mu);
   caml_leave_blocking_section();
   return Val_int(claimed);
+}
+
+/* Sets up the line of the stand-in for devices whose OCaml records were
+   collected, of index RIG_DEVICES: stopped, lost with the reason "ended",
+   and its word and submitted value past every value. Answers its index. */
+value caml_rig_forgotten(value unit) {
+  (void)unit;
+  struct rig_line *l = line_of(RIG_DEVICES);
+  atomic_store(&l->final, (uint64_t)Max_long);
+  atomic_store(&l->submitted, (uint64_t)Max_long);
+  atomic_store(&l->reached, (uint64_t)Max_long);
+  atomic_store(&l->lost, ended_why);
+  atomic_store(&l->word, &l->final);
+  atomic_store(&l->state, RIG_STOPPED);
+  return Val_int(RIG_DEVICES);
+}
+
+/* Frees the reason of the lost device of index [v_i], whose OCaml record was
+   collected: what asks after the device now asks the stand-in. [fail]'s
+   reason, which every device it lost shares, stays. */
+value caml_rig_forget(value v_i) {
+  struct rig_line *l = line_of(Int_val(v_i));
+  char *why = atomic_exchange(&l->lost, ended_why);
+  if (why != atomic_load(&failed) && why != forked_why && why != ended_why)
+    free(why);
+  return Val_unit;
 }
 
 /* Records that [d]'s stop returned: ENDED for a driver's device, whose

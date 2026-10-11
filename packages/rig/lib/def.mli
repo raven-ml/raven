@@ -51,12 +51,14 @@ type token
     release list ({!Memory.token}). *)
 
 (** The type for what a device is: the host, a driver's device with its
-    module, handle and region witness, or an io device with its module and
-    handle. *)
+    module, handle and region witness, an io device with its module and
+    handle, or the stand-in for the devices whose records were collected
+    ({!Dev.forgotten}). *)
 type kind =
   | Host
   | Driver : { m : ('a, 'r, 'i) dm; h : 'a; rid : 'r Type.Id.t } -> kind
   | Io : { m : ('a, 'r) im; h : 'a } -> kind
+  | Ended
 
 (** The type for how a device's word advances ({!Rig_edge.completion}), an
     object as an int. *)
@@ -102,8 +104,9 @@ type c
     block nor a prepared submission holds it. *)
 
 (** The type for devices: {!Rig.t}. A device is its facts, fixed at open
-    and kept for the life of the process, and its {!live} resources, which
-    it drops at its end ({!Dev.section-loss}). *)
+    and kept while a value of the program or the table of devices holds the
+    record, and its {!live} resources, which it drops at its end
+    ({!Dev.section-loss}). *)
 type device = {
   index : int;  (** Its index in the table of devices, [0] for the host. *)
   name : string;

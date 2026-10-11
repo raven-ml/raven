@@ -836,31 +836,33 @@ let idle_close (module G : Gpu) () =
   G.close t;
   equal int ~msg:"the word" 2 (Rig.signaled t.d)
 
-(* Opens and closes of a device keep little of either heap: rig keeps the
-   device's facts and the reason of its loss, and the driver what the handle
-   that the device's properties keep holds once stopped. The driver's state
-   goes once rig gives back the device's word, and rig's own once the device's
-   memory has returned. A cycle's allocation drains the devices closed before
-   it, and the collections make their words' readers pass, so every device but
-   the last two is gone by a count. *)
-let opens = 64
+(* Opens and closes of a device keep nothing of the OCaml heap once the
+   program holds no value of the devices: rig frees its own state and the
+   driver's once each device's memory has returned and its word has ended,
+   and the collector takes the device's record and its handle. A warm run of
+   as many opens fills the caches and tables the opens grow to, and the
+   rounds of [settle] drain every closed device and make its word's readers
+   pass. *)
+let opens = 32
 
-(* What a closed device keeps of the C heap, with room for the allocator: on
-   Metal, rig's few bytes, the handle's mutex and what Metal keeps of an open,
-   about 300 bytes in all. *)
-let kept_c = 512
+(* What a vendor's library keeps of the C heap past the driver's stop, per
+   open, which neither rig nor the driver can give back: on Metal, about 30
+   bytes of CoreAnalytics messages, and caches that grow by about 10 KB over
+   the first hundreds of opens. The Polled law in test_open holds rig to no
+   growth of the C heap. *)
+let vendor_c = 1024
 
-(* What a closed device keeps of the OCaml heap: rig's record of its facts,
-   and the driver's handle with its facts and capability, about 660 bytes on
-   Metal, 570 on NV, 700 on AMD and 860 on AMD with no kernel driver. *)
-let kept_ocaml = 1024
+let settle () =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (B.create Rig.host 8 : B.t)
+  done
 
 let open_close (module G : Gpu) () =
   let cycle () =
     let t = G.open_ () in
     ignore (B.create t.d 1 : B.t);
-    G.close t;
-    Gc.full_major ()
+    G.close t
   in
   let heap () =
     match Rig_support.heap_bytes () with
@@ -868,17 +870,18 @@ let open_close (module G : Gpu) () =
     | None -> skip ~reason:"the system counts no C heap" ()
   in
   let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
-  for _ = 1 to 8 do
+  for _ = 1 to opens do
     cycle ()
   done;
+  settle ();
   let c = heap () and ml = live () in
   for _ = 1 to opens do
     cycle ()
   done;
-  at_most int ~msg:"the C heap's growth over the opens" ~than:(opens * kept_c)
-    (heap () - c);
-  at_most int ~msg:"the OCaml heap's growth over the opens"
-    ~than:(opens * kept_ocaml)
+  settle ();
+  at_most int ~msg:"the C heap's growth over the opens"
+    ~than:(opens * vendor_c) (heap () - c);
+  at_most int ~msg:"the OCaml heap's growth over the opens" ~than:0
     (live () - ml)
 
 let stale_seen (module G : Gpu) () =
@@ -1370,7 +1373,8 @@ let laws (module G : Gpu) =
         (images g);
       test "a close of an idle device leaves the word at the last value"
         (idle_close g);
-      test "opens and closes keep little of either heap" (open_close g);
+      test "opens and closes keep nothing but the vendor library's own"
+        (open_close g);
       test "sleep returns at once when the word differs from seen"
         (stale_seen g);
       test "sleeps over long work raise no fault, and block" (long_work g);

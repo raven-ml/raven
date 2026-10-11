@@ -56,6 +56,8 @@ external c_waits_in_queue : c -> bool = "caml_rig_waits_in_queue"
 external release_list : unit -> int = "caml_rig_release_list"
 external c_release : c -> int = "caml_rig_device_release" [@@noalloc]
 external host_arch : unit -> string = "caml_rig_arch"
+external c_forgotten : unit -> int = "caml_rig_forgotten"
+external c_forget : int -> unit = "caml_rig_forget" [@@noalloc]
 
 (* [c_next_live i] is the least index from [i] on whose device's resources
    are not freed, 0 for none; [c_unlive i] says index [i]'s are. *)
@@ -84,7 +86,9 @@ let held_ns = 4_000
 
 (* Values by device index, from 0 to [Point.max_index], read without a lock:
    chunks of [chunk] entries, each replaced whole when one of its entries is
-   set. A set copies one chunk, however many devices the process made. *)
+   set. A set copies one chunk, however many devices the process made, and a
+   chunk left with only [empty] entries goes, so a table holds chunks only
+   around the indices it has values for. *)
 module Table = struct
   let bits = 8
   let chunk = 1 lsl bits
@@ -106,6 +110,7 @@ module Table = struct
       if Array.length c = 0 then Array.make chunk t.empty else Array.copy c
     in
     c'.(i land (chunk - 1)) <- v;
+    let c' = if Array.for_all (fun x -> x == t.empty) c' then [||] else c' in
     if not (Atomic.compare_and_set a c c') then set t i v
 end
 
@@ -174,12 +179,62 @@ let host =
   in
   d
 
+(* The device every point of a device whose record was collected names
+   ({!of_index}): lost with the reason ["ended"], its word past every value.
+   Its index is past every point's. *)
+let forgotten =
+  {
+    index = c_forgotten ();
+    name = "ended";
+    machine = Here;
+    kind = Ended;
+    arch = "";
+    maps_host = false;
+    host_addresses = false;
+    key = -1;
+    memory_device = false;
+    capability = None;
+    budget = 0;
+    live = None;
+  }
+
 (* The table of devices *)
 
-(* The devices by index; an index whose open failed holds the host. *)
+(* The devices whose resources are not freed, by index; an index whose open
+   failed, or whose device's resources are freed, holds the host. *)
 let devices = Table.make host
-let of_index i = Table.get devices i
-let register d = Table.set devices d.index d
+
+module Int_map = Map.Make (Int)
+
+(* The devices whose resources are freed, held weakly by index: a point finds
+   its device while a value of the program refers to it, and {!forgotten} once
+   the collector took it, which also takes it out of the map. *)
+let freed_devices : device Weak.t Int_map.t Atomic.t = Atomic.make Int_map.empty
+
+let rec update_freed f =
+  let m = Atomic.get freed_devices in
+  if not (Atomic.compare_and_set freed_devices m (f m)) then update_freed f
+
+let of_index i =
+  let d = Table.get devices i in
+  if d != host || i = 0 then d
+  else
+    match Int_map.find_opt i (Atomic.get freed_devices) with
+    | None -> forgotten
+    | Some w -> ( match Weak.get w 0 with Some d -> d | None -> forgotten)
+
+(* Once the collector takes [d], its weak entry and its line's reason go: its
+   points ask {!forgotten} from then on. The finaliser holds [d]'s index
+   alone. *)
+let register d =
+  Table.set devices d.index d;
+  let i = d.index in
+  Gc.finalise_last
+    (fun () ->
+      update_freed (Int_map.remove i);
+      c_forget i)
+    d
+
 let iter f =
   let rec from i =
     match c_next_live i with
@@ -350,7 +405,7 @@ let stop d =
       | Io { m; h } -> (
           let module I = (val m) in
           try I.stop h with I.Fault _ -> ())
-      | Host -> ());
+      | Host | Ended -> ());
   !answered d
 
 let rec run_owed () =
@@ -426,6 +481,10 @@ let give d f =
 
 let move_word d = c_word_retire (live d).c
 let fail why = if c_fail why then run_owed ()
+
+(* The device whose loss was the process's first failure, once its resources
+   are freed: {!failure} names it for the life of the process. *)
+let first_lost : device option Atomic.t = Atomic.make None
 
 let failure () =
   match c_first () with
@@ -923,11 +982,18 @@ let close d =
 (* Freeing *)
 
 (* Its resources go first, so a store of a value that raced the drop finds
-   them gone once [dropped] forgets [d]. *)
+   them gone once [dropped] forgets [d]. The table holds [d] weakly from then
+   on, set there before its strong entry goes, so a point finds it
+   throughout. *)
 let free_live d =
   d.live <- None;
   c_unlive d.index;
   remove_ended d;
+  if c_first () = d.index then Atomic.set first_lost (Some d);
+  let w = Weak.create 1 in
+  Weak.set w 0 (Some d);
+  update_freed (Int_map.add d.index w);
+  Table.set devices d.index host;
   Lock.protect locals_lock (fun () -> Hashtbl.remove dropped d.index);
   let other _ = function Open d' when d' == d -> None | slot -> Some slot in
   Lock.protect table_lock (fun () -> Hashtbl.filter_map_inplace other table)
@@ -949,7 +1015,7 @@ let reaches d d' =
   || same_machine d d'
      &&
      match (d.kind, d'.kind) with
-     | Io _, _ | _, Io _ -> false
+     | Io _, _ | _, Io _ | Ended, _ | _, Ended -> false
      | Host, Host -> false
      | Host, Driver _ -> d'.host_addresses
      | Driver _, Host -> d.maps_host

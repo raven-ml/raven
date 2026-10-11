@@ -6,15 +6,19 @@
 (** Dev keeps the table of open devices, and runs each device's timeline
     and loss.
 
-    A device is four records. Two last for the life of the process, since a
-    point names its device by index: the OCaml record ({!Def.device}) holds
-    its facts, and the C line ([struct rig_line] in [rig_stubs.h]) its
-    timeline, its state and its loss. Two are its resources, freed at its end
-    ({!free_live}): the OCaml {!Def.live} holds its memory lists and what only
-    its work needs, and the C record ([struct rig_device]) its counted calls,
-    its turn and the waits its queues hold on other devices. This module
-    implements {!Rig}'s opening and closing ({!Rig.section-devices}), waits
-    on a timeline ({!Rig.section-timeline}) and loss ({!Rig.section-loss}).
+    A device is four records. The C line ([struct rig_line] in
+    [rig_stubs.h]) holds its timeline, its state and its loss, and lasts for
+    the life of the process, since a point names its device by index. The
+    OCaml record ({!Def.device}) holds its facts: the table holds it until
+    its resources are freed, and weakly from then on, so a point finds it
+    while a value of the program refers to it, and {!forgotten} once the
+    collector took it, when the line's reason goes. Two are its resources,
+    freed at its end ({!free_live}): the OCaml {!Def.live} holds its memory
+    lists and what only its work needs, and the C record ([struct
+    rig_device]) its counted calls, its turn and the waits its queues hold
+    on other devices. This module implements {!Rig}'s opening and closing
+    ({!Rig.section-devices}), waits on a timeline ({!Rig.section-timeline})
+    and loss ({!Rig.section-loss}).
 
     Any domain may call any function. A device's lock ({!protect}) guards the
     mutable fields of its {!Def.live}. No driver call and no wait runs under
@@ -55,9 +59,15 @@ val busy : device -> bool
 
 (** {1:table The table of devices} *)
 
+val forgotten : device
+(** [forgotten] is {!Rig.Point.device}'s stand-in for a device the collector
+    took: lost with the reason ["ended"], Stopped, its word and submitted
+    value [max_int]. Its index is past every point's. *)
+
 val of_index : int -> device
-(** [of_index i] is the device of index [i], {!host} for [0]. [i] must be
-    the index of a device made. *)
+(** [of_index i] is the device of index [i], {!host} for [0], or {!forgotten}
+    once the collector took that device. [i] must be the index of a device
+    made. *)
 
 val iter : (device -> unit) -> unit
 (** [iter f] applies [f] to each published device other than the host whose
@@ -224,9 +234,9 @@ val ended : unit -> device list
 val free_live : device -> unit
 (** [free_live d] frees [d]'s resources: {!live} raises {!Lost} from then
     on, and [d] leaves {!ended}, its name's slot in the table and the
-    values it dropped ({!drop_values}). [d] is Stopped, its word is given
-    back, its memory has all returned and no drain is in flight on it;
-    {!Memory} decides when. *)
+    values it dropped ({!drop_values}), and the table holds it weakly. [d]
+    is Stopped, its word is given back, its memory has all returned and no
+    drain is in flight on it; {!Memory} decides when. *)
 
 val run_owed : unit -> unit
 (** [run_owed ()] runs each owed stop whose device has no counted call in

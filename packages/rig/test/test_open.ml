@@ -776,25 +776,45 @@ let test_ended () =
   raises_match lost (fun () -> Rig.Local.get k d);
   raises_match lost (fun () -> submit (Rig.Submission.make d [||]))
 
-(* Opens and closes keep of each device only its record: its facts in the OCaml
-   heap and its loss's reason in the C heap. Memory devices free their own
-   state with their word, so what stays is rig's. *)
-let opens = 256
+(* A point outlives the values of its device: once the program holds none,
+   the point names the ended stand-in, lost, which has reached every value. *)
+let test_forgotten () =
+  let point () =
+    let d, _ = P.open_ "open:forgotten" in
+    let p = submit (Rig.Submission.make d [||]) in
+    Rig.Point.wait p;
+    Rig.close d;
+    p
+  in
+  let p = point () in
+  settle ();
+  let e = Rig.Point.device p in
+  equal string "ended" (Rig.name e);
+  equal (option string) (Some "ended") (Rig.lost e);
+  equal bool false (Rig.computes e);
+  equal bool false (Rig.reaches Rig.host e);
+  equal int 1 (Rig.Point.value p);
+  equal bool true (Rig.Point.reached p);
+  equal string "ended:1" (Format.asprintf "%a" Rig.Point.pp p);
+  raises_match lost (fun () -> Rig.Point.wait p);
+  raises_match lost (fun () -> Rig.Buffer.create e 1)
 
-(* The C heap keeps the reason, a few bytes, with room for the allocator. *)
-let kept_c = 64
-
-(* The OCaml heap keeps the record of the device's facts, with its name and
-   its driver's handle and facts. *)
-let kept_ocaml = 512
+(* Opens and closes keep nothing once the program holds no value of the
+   devices. A window opens and closes [opens] devices, then the rounds of
+   [settle] return their memory and end their words. After a warm window,
+   the OCaml heap ends each window where it started it. The C heap moves
+   either way by what the allocator's per-thread caches hold (glibc's),
+   while a leak grows it in every window: the law checks the least growth
+   of [windows]. *)
+let opens = 1024
+let windows = 3
 
 let test_ended_kept () =
   let cycle i =
-    let d = memory (Printf.sprintf "open:kept%d" (i mod 2)) in
+    let d, _ = P.open_ (Printf.sprintf "open:kept%d" (i mod 2)) in
     ignore (Rig.Buffer.create d 64 : Rig.Buffer.t);
     Rig.Point.wait (submit (Rig.Submission.make d [||]));
-    Rig.close d;
-    ignore (Rig.Buffer.create Rig.host 8 : Rig.Buffer.t)
+    Rig.close d
   in
   let heap () =
     match Support.heap_bytes () with
@@ -802,20 +822,27 @@ let test_ended_kept () =
     | None -> skip ~reason:"the system counts no C heap" ()
   in
   let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
-  for i = 1 to 16 do
-    cycle i
-  done;
-  settle ();
-  let c = heap () and ml = live () in
-  for i = 1 to opens do
-    cycle i
-  done;
-  settle ();
-  at_most int ~msg:"the C heap's growth over the opens" ~than:(opens * kept_c)
-    (heap () - c);
-  at_most int ~msg:"the OCaml heap's growth over the opens"
-    ~than:(opens * kept_ocaml)
-    (live () - ml)
+  let window () =
+    let c = heap () and ml = live () in
+    for i = 1 to opens do
+      cycle i
+    done;
+    settle ();
+    (heap () - c, live () - ml)
+  in
+  ignore (window ());
+  let grown = List.init windows (fun _ -> window ()) in
+  let cs = List.map fst grown in
+  at_most int
+    ~msg:
+      (Printf.sprintf "the C heap's least growth over a window (%s)"
+         (String.concat ", " (List.map string_of_int cs)))
+    ~than:0
+    (List.fold_left Int.min max_int cs);
+  List.iter
+    (fun (_, ml) ->
+      at_most int ~msg:"the OCaml heap's growth over a window" ~than:0 ml)
+    grown
 
 (* An open whose opener blocks holds back only opens of its own name. *)
 let test_blocked_opener () =
@@ -915,7 +942,9 @@ let tests =
       test "an open waiting for its name's open takes Sys.Break"
         test_break_waiting_open;
       test "an ended device answers as it did before its end" test_ended;
-      test "an ended device keeps only its record" test_ended_kept;
+      test "a point whose device the program dropped names the ended device"
+        test_forgotten;
+      test "an ended device no value references keeps nothing" test_ended_kept;
     ]
 
 let () = exit (run "rig.open" [ tests ])
