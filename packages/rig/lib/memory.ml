@@ -738,10 +738,19 @@ let word_maps d c =
           l.pair_maps <- others;
           of_d)
 
+(* [d]'s mappings of other devices' words, taken out of its resources. *)
+let own_word_maps d =
+  let l = Dev.live d in
+  Lock.protect l.lock (fun () ->
+      let maps = l.pair_maps in
+      l.pair_maps <- [];
+      maps)
+
 (* Gives back the stopped [d]'s timeline word once nothing reads it: its
    readers move to the C line's copy, then, once every domain passed a minor
    collection since, the driver gets the word back, after every other device's
-   mapping of it. One drain takes each step. *)
+   mapping of it. [d]'s own mappings of other devices' words go then too: its
+   queue reads them no more. One drain takes each step. *)
 let end_word d =
   let l = Dev.live d in
   match l.word_end with
@@ -763,6 +772,7 @@ let end_word d =
       in
       if mine then begin
         Dev.iter (fun c -> List.iter (fun (_, r) -> unmap c r) (word_maps d c));
+        List.iter (fun (_, r) -> unmap d r) (own_word_maps d);
         unmap_all d;
         Option.iter (unmap d) l.word_region
       end
