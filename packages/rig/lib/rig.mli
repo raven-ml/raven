@@ -1776,9 +1776,9 @@ module Profile : sig
         name : string;
         start : int;
         stop : int;
-        part : int;  (** The part of the device that wrote it. *)
+        part : int;  (** The index of the device's unit that wrote it. *)
         data : string;  (** The trace as the device wrote it. *)
-      }  (** The thread trace of a part of a device during a run. *)
+      }  (** The thread trace that a unit of a device wrote during a run. *)
     | Overwritten of { device : device; time : int; runs : int }
         (** Runs whose counters and traces the device overwrote unread. *)
     | Copy of {
@@ -1811,9 +1811,8 @@ module Profile : sig
   val record : event -> unit
   (** [record e] adds [e] to each profile being taken, so {!take} returns it
       among rig's own events, in time order. It records nothing while no
-      profile is being taken. An event joins a profile only if it is recorded
-      before the profiled function returns: counters read after [take]'s
-      function returned join no profile, even of the work they count. *)
+      profile is being taken. An event recorded after [take]'s function has
+      returned may join no profile, even one of the work it measures. *)
 
   val span : string -> (unit -> 'a) -> 'a
   (** [span name f] is [f ()], recorded as a span named [name] on the calling
