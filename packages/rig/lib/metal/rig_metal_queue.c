@@ -3,7 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Submitting to a device: everything that runs without the OCaml runtime.
+/* Submitting to a device: everything that runs without the OCaml runtime,
+   on macOS only.
 
    A submission runs its parts, fills and launches, in order in one serial
    compute encoder per command buffer, which waits for the device's fence
@@ -331,32 +332,6 @@ void rig_metal_drop(struct rig_metal *d) {
   }
   d->open_values = 0;
   unlock_open(d);
-}
-
-#else
-
-int rig_metal_room(void *self, const struct rig_part *parts, int n,
-                   void *scratch, const uint8_t *args) {
-  (void)self, (void)parts, (void)n, (void)scratch, (void)args;
-  return RIG_NEVER;
-}
-
-int rig_metal_submit(void *self, uint64_t v, const struct rig_wait *waits,
-                     int nwaits, const struct rig_part *parts, int nparts,
-                     void *scratch, const uint8_t *args,
-                     const uint64_t *slots, int nslots, uint64_t *times,
-                     const char **failure) {
-  (void)self, (void)v, (void)waits, (void)nwaits, (void)parts, (void)nparts,
-      (void)scratch, (void)args, (void)slots, (void)nslots,
-      (void)times;
-  *failure = "Metal exists on macOS only";
-  return RIG_FAILED;
-}
-
-int rig_metal_commit(void *self, uint64_t v, const char **failure) {
-  (void)self, (void)v;
-  *failure = "Metal exists on macOS only";
-  return RIG_FAILED;
 }
 
 #endif
