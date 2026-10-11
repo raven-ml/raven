@@ -354,38 +354,24 @@ let sym_entry name place : Elf.symbol = { name; place }
 let null_symbol = sym_entry "" Undefined
 let no_symbol = sym_entry "" (Absolute 0)
 
-(* Sorted by start, the spans [(at, n, msg)] share no byte. *)
-let disjoint where spans =
-  ignore
-    (List.fold_left
-       (fun last (at, n, msg) ->
-         at_least ~msg:(msg ^ " in " ^ where) int ~than:last at;
-         at + n)
-       0 (List.sort compare spans))
-
 (* The equations of [Elf.t]'s documentation. They never build the image, whose
    size a corrupted address can make any [int]. *)
 let invariants (o : Elf.t) =
   let count = Iarray.length o.sections in
-  let in_file = ref [] and in_image = ref [] in
   Iarray.iteri
     (fun i (s : Elf.section) ->
       let msg = strf "section %d %S" i s.name in
       at_least ~msg int ~than:0 s.at;
       at_least ~msg int ~than:0 s.length;
       at_most ~msg int ~than:(String.length o.file) (s.at + s.length);
-      if s.length > 0 then in_file := (s.at, s.length, msg) :: !in_file;
       match s.offset with
       | None -> ()
       | Some off ->
           at_least ~msg int ~than:0 off;
           if s.kind = sht_nobits then equal ~msg int 0 s.length
           else equal ~msg int s.size s.length;
-          at_most ~msg int ~than:o.size (off + s.size);
-          if s.size > 0 then in_image := (off, s.size, msg) :: !in_image)
+          at_most ~msg int ~than:o.size (off + s.size))
     o.sections;
-  disjoint "the object" !in_file;
-  disjoint "the image" !in_image;
   equal ~msg:"the image's alignment is a power of two" int 0
     (o.align land (o.align - 1));
   at_least ~msg:"the image's alignment" int ~than:1 o.align;
@@ -887,23 +873,7 @@ let test_dynamic_relocations () =
   equal ~msg:"the image's first byte" (list int) [ 0 ] (offsets 0x100);
   equal ~msg:"and its last" (list int) [ 0x103 ] (offsets 0x203);
   ignore (refused (obj ~at:0xff));
-  ignore (refused (obj ~at:0x204));
-  let between =
-    write
-      [
-        section ~addr:0x100 ".text" "ABCD";
-        section ~addr:0x200 ".data" "EFGH";
-        section ~addr:0x300 ".rodata" "IJKL";
-        symtab ~kind:sht_dynsym ~name:".dynsym" ~link:5 dyn;
-        strtab ~name:".dynstr" dynnames;
-        rela_section ~name:".rela.dyn" ~link:4 ~info:0 [ (0x202, 1, 1, 0) ];
-      ]
-  in
-  let machine = (read between).machine in
-  let held (s : Elf.section) = Elf.allocated ~machine s && s.name <> ".data" in
-  contains ~msg:"one in an allocated section the image does not hold"
-    ~sub:"which the image does not hold"
-    (require_error ~pp:pp_t (Elf.of_string ~held between))
+  ignore (refused (obj ~at:0x204))
 
 (* A relocation without an addend has it in the field it patches: the object's
    bytes there, which a section without bytes and a gap between sections
@@ -1206,8 +1176,6 @@ let refusals =
     ("a big-endian object", patch well_formed 5 1 2);
     ("a truncated header", String.sub well_formed 0 (ehdr_size - 1));
     ("section headers past the end", patch well_formed 40 8 (len - shdr_size));
-    ( "section headers shorter than the class's",
-      patch well_formed 58 2 (shdr_size - 1) );
     ("truncated section headers", String.sub well_formed 0 (len - 1));
     ( "section contents past the end",
       patch_section well_formed 2 sh_offset 8 (len - 4) );
@@ -1225,8 +1193,6 @@ let refusals =
     ("section names in a section it lacks", patch well_formed 62 2 99);
     ( "symbol names in a section it lacks",
       patch_section well_formed 4 sh_link 4 99 );
-    ( "symbol names in a section that is no string table",
-      patch_section well_formed 4 sh_link 4 1 );
     ( "relocation symbols in a section it lacks",
       patch_section well_formed 6 sh_link 4 99 );
     ("a relocation target it lacks", patch_section well_formed 6 sh_info 4 99);
@@ -1236,9 +1202,6 @@ let refusals =
     ("an alignment of 3", patch_section well_formed 2 sh_addralign 8 3);
     ( "an alignment of 12 outside the image",
       patch_section well_formed 4 sh_addralign 8 12 );
-    ("two sections overlapping in the image", addressed ~text:0x100 ~data:0x103);
-    ( "two sections sharing bytes of the object",
-      patch_section well_formed 2 sh_offset 8 ehdr_size );
     ("names longer than the object", shared_names);
     ( "an image longer than max_int",
       write [ section ~addr:0 ".a" "A"; section ~addr:(max_int - 1) ".b" "AB" ]
@@ -1250,8 +1213,6 @@ let refusals =
           section ~align:max_align ".b" "B";
           section ~align:max_align ".c" "C";
         ] );
-    ( "a section the image holds at a multiple of half its alignment",
-      write [ section ~addr:0x102 ~align:4 ".text" "ABCD" ] );
     ( "a symbol value past the int range",
       patch well_formed (symbol_entry + 15) 1 0x40 );
     ( "an address past the int range",
@@ -1294,10 +1255,7 @@ let test_messages () =
     [
       ("not ELF", "not an object");
       ("past the end", String.sub well_formed 0 (String.length well_formed - 1));
-      ("a section it lacks", patch_section well_formed 4 sh_link 4 99);
       ("alignment", patch_section well_formed 2 sh_addralign 8 3);
-      ("overlap", addressed ~text:0x100 ~data:0x103);
-      ("shared bytes", patch_section well_formed 2 sh_offset 8 ehdr_size);
       ("names", shared_names);
       ( "too long",
         write
@@ -1314,6 +1272,11 @@ let test_messages () =
           if i < j then not_equal ~msg:(c ^ " and " ^ c') string m m')
         messages)
     messages
+
+(* [held] is the caller's code: what it raises escapes [of_string]. *)
+let test_held_raises () =
+  raises_match (Exn.invalid_arg ~substring:"held") (fun () ->
+      Elf.of_string ~held:(fun _ -> invalid_arg "held") well_formed)
 
 let test_bad_align () =
   List.iter
@@ -2164,6 +2127,7 @@ let () =
              test "the neighbours of refusals read" test_near_refusals;
              test "each cause has its own message" test_messages;
              test "align must be a positive power of two" test_bad_align;
+             test "what held raises escapes" test_held_raises;
              test "the largest align" test_largest_align;
              group "a corrupted object reads or is refused"
                (let count = 2000 / List.length corruptible in

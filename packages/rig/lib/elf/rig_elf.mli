@@ -66,14 +66,12 @@
     A read object [o] keeps these invariants:
     {ul
     {- A section [s]'s bytes lie in the object,
-       [s.at + s.length <= String.length o.file], and no two sections share a
-       byte of it.}
+       [s.at + s.length <= String.length o.file].}
     {- A section [s] with [s.offset = Some off] lies in the image,
-       [off + s.size <= o.size], at a multiple of its alignment
-       ([sh_addralign], where above [1]), which divides [o.align]. It has all
-       its bytes in the object, [s.length = s.size], or none,
-       [s.length = 0], as an [SHT_NOBITS] one. No two such sections share a
-       byte of the image.}
+       [off + s.size <= o.size], and its alignment ([sh_addralign], where
+       above [1]) divides [o.align]. It has all its bytes in the object,
+       [s.length = s.size], or none, [s.length = 0], as an [SHT_NOBITS]
+       one.}
     {- A place [Image { section = i; offset }] names a section [s], index [i]
        of [o.sections], with [s.offset = Some off] and
        [off <= offset <= off + s.size].}
@@ -205,28 +203,22 @@ type t = private {
     {!of_string} returns [Error msg] if [obj] is not a 32- or 64-bit
     little-endian ELF object, or if:
     {ul
-    {- a part of it lies past its end, or a 64-bit field holds a value an
-       [int] cannot;}
-    {- its section headers are shorter than its class's, 40 or 64 bytes
-       ([e_shentsize]);}
-    {- it refers to a section, symbol or name it does not have, or links a
-       section to one of the wrong type, as a symbol table linked to names
-       that are not a string table is;}
-    {- a section's alignment is not a power of two, or a section the image
-       holds is at an address that is not a multiple of it;}
-    {- two sections share bytes of the object, or of the image;}
+    {- a part of it lies past its end, or it refers to a section, symbol or
+       name it does not have;}
+    {- a 64-bit field holds a value an [int] cannot;}
+    {- a section's alignment is not a power of two;}
     {- its names together are longer than it, which only names that share
        bytes of their string table can be;}
     {- its image would be longer than [max_int] bytes;}
     {- a relocation's offset lies outside the section it patches, or the
        image does not hold that section although it is allocated;}
     {- a relocation that names no section it patches ([sh_info = 0])
-       patches an address outside the image, or in an allocated section the
-       image does not hold, other than a thread-local one without bytes;}
+       patches an address outside the image;}
     {- a relocation without an addend in its entry ([SHT_REL]) patches bytes
        the object does not have, those of a section without bytes or between
        sections.}}
-    [msg] names the condition. *)
+    [msg] names the condition. Nothing else is checked: an object whose
+    sections share bytes, for instance, reads. *)
 
 val allocated : machine:int -> section -> bool
 (** [allocated ~machine s] is [true] iff [s], a section of an object for
@@ -254,7 +246,8 @@ val of_string :
     before the layout, with [offset = None]. [align] defaults to [1].
 
     Reading takes memory linear in [obj]'s length, and time linear in its
-    length plus a sort of its sections, whatever {!field-size} is.
+    length plus a sort of its sections, whatever {!field-size} is. What
+    [held] raises, [of_string] raises.
 
     Raises [Invalid_argument] if [align] is not a positive power of two. *)
 

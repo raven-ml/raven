@@ -3,7 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type place =
@@ -52,7 +51,6 @@ let elfdata2lsb = 1
 let sht_null = 0
 let sht_progbits = 1
 let sht_symtab = 2
-let sht_strtab = 3
 let sht_rela = 4
 let sht_nobits = 8
 let sht_rel = 9
@@ -75,11 +73,9 @@ let sht_x86_64_unwind = 0x70000001
    header has the same fields in the same order in both. *)
 type form = {
   word : int;
-  ehdr : int;
   e_shoff : int;
   e_flags : int;
   e_shentsize : int;
-  shdr : int;
   sym : int;
   st_value : int;
   st_shndx : int;
@@ -88,11 +84,9 @@ type form = {
 let elf32 =
   {
     word = 4;
-    ehdr = 52;
     e_shoff = 32;
     e_flags = 36;
     e_shentsize = 46;
-    shdr = 40;
     sym = 16;
     st_value = 4;
     st_shndx = 14;
@@ -101,52 +95,35 @@ let elf32 =
 let elf64 =
   {
     word = 8;
-    ehdr = 64;
     e_shoff = 40;
     e_flags = 48;
     e_shentsize = 58;
-    shdr = 64;
     sym = 24;
     st_value = 8;
     st_shndx = 6;
   }
 
-(* Errors. A malformed object raises [Malformed] anywhere in the reading;
-   [of_string] turns it into [Error]. *)
+(* Errors. A malformed object raises [Malformed], or [Invalid_argument] where a
+   read past the object's end or a table's meets OCaml's bounds checks;
+   [of_string] turns both into [Error]. What the caller's [held] raises
+   crosses the reading as [Held], and [of_string] raises it again. *)
 
 exception Malformed of string
+exception Held of exn * Printexc.raw_backtrace
 
 let fail fmt = Printf.ksprintf (fun m -> raise (Malformed m)) fmt
+let truncated = "the object is truncated, or refers to data it does not have"
 
-(* Little-endian reads of [s] at [off], refused past its end. They run for every
-   field of the object and are inlined, which saves a call per field. A [get_]
-   one reads a field already known to lie in [s], which the standard library
-   still checks. *)
+(* Little-endian reads of [s] at [off]. *)
 
-let[@inline] check s off n =
-  if off < 0 || off > String.length s - n then
-    fail "the object is truncated: %d bytes at %d lie past its end" n off
-
-let[@inline] u8 s off =
-  check s off 1;
-  Char.code s.[off]
-
-let[@inline] u16 s off =
-  check s off 2;
-  String.get_uint16_le s off
-
-let[@inline] get_u32 s off =
-  Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
-
+let[@inline] u16 s off = String.get_uint16_le s off
 let[@inline] u32 s off =
-  check s off 4;
-  get_u32 s off
-
-let[@inline] get_i32 s off = Int32.to_int (String.get_int32_le s off)
+  Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
+let[@inline] i32 s off = Int32.to_int (String.get_int32_le s off)
 
 (* A 64-bit field that does not fit an [int] is refused. A signed one is an
    addend or a symbol's value. *)
-let[@inline] get_i64 s off =
+let[@inline] i64 s off =
   let v = String.get_int64_le s off in
   let n = Int64.to_int v in
   if Int64.of_int n <> v then
@@ -154,21 +131,14 @@ let[@inline] get_i64 s off =
   n
 
 (* An unsigned one is an offset, size, address or flags. *)
-let[@inline] get_u64 s off =
+let[@inline] u64 s off =
   let v = String.get_int64_le s off in
   let n = Int64.to_int v in
   if n < 0 || Int64.of_int n <> v then
     fail "the 64-bit field %Lu at %d is out of range" v off;
   n
 
-let[@inline] u64 s off =
-  check s off 8;
-  get_u64 s off
-
 (* An unsigned word of the form [f]. *)
-let[@inline] get_word f s off =
-  if f.word = 8 then get_u64 s off else get_u32 s off
-
 let[@inline] word f s off = if f.word = 8 then u64 s off else u32 s off
 
 (* Section headers *)
@@ -188,22 +158,20 @@ type header = {
 }
 
 (* Past [sh_name] and [sh_type], a header holds four words, [sh_link] and
-   [sh_info], then two words. Its bytes are checked once, which saves a check
-   per field. *)
+   [sh_info], then two words. *)
 let header f obj off =
-  check obj off f.shdr;
   let w = f.word in
   {
-    sh_name = get_u32 obj off;
-    sh_type = get_u32 obj (off + 4);
-    sh_flags = get_word f obj (off + 8);
-    sh_addr = get_word f obj (off + 8 + w);
-    sh_offset = get_word f obj (off + 8 + (2 * w));
-    sh_size = get_word f obj (off + 8 + (3 * w));
-    sh_link = get_u32 obj (off + 8 + (4 * w));
-    sh_info = get_u32 obj (off + 12 + (4 * w));
-    sh_addralign = get_word f obj (off + 16 + (4 * w));
-    sh_entsize = get_word f obj (off + 16 + (5 * w));
+    sh_name = u32 obj off;
+    sh_type = u32 obj (off + 4);
+    sh_flags = word f obj (off + 8);
+    sh_addr = word f obj (off + 8 + w);
+    sh_offset = word f obj (off + 8 + (2 * w));
+    sh_size = word f obj (off + 8 + (3 * w));
+    sh_link = u32 obj (off + 8 + (4 * w));
+    sh_info = u32 obj (off + 12 + (4 * w));
+    sh_addralign = word f obj (off + 16 + (4 * w));
+    sh_entsize = word f obj (off + 16 + (5 * w));
   }
 
 (* The null section's size is the section count when [e_shnum] is 0, so it has
@@ -227,19 +195,18 @@ let allocated_as machine kind flags =
 let is_pow2 n = n > 0 && n land (n - 1) = 0
 
 (* The headers of [obj], with the count and the names' index extended through
-   section 0 when they do not fit the ELF header. *)
+   section 0 when they do not fit the ELF header. The count is checked against
+   the object's length before the headers are allocated. *)
 let headers f obj =
   let shoff = word f obj f.e_shoff and entsize = u16 obj f.e_shentsize in
   let shnum = u16 obj (f.e_shentsize + 2) in
   let shstrndx = u16 obj (f.e_shentsize + 4) in
   if shoff = 0 then ([||], shn_undef)
   else begin
-    if entsize < f.shdr then
-      fail "section headers are %d bytes, expected at least %d" entsize f.shdr;
     let first = header f obj shoff in
     let count = if shnum = 0 then first.sh_size else shnum in
     let names = if shstrndx = shn_xindex then first.sh_link else shstrndx in
-    if count > (String.length obj - shoff) / entsize then
+    if entsize = 0 || count > (String.length obj - shoff) / entsize then
       fail "the object is truncated: %d section headers lie past its end" count;
     (Array.init count (fun i -> header f obj (shoff + (i * entsize))), names)
   end
@@ -267,29 +234,11 @@ let string_at obj named tab off =
         if !named > String.length obj then
           raise
             (Malformed
-               (strf "the names total more than the object's %d bytes"
+               (Printf.sprintf "the names total more than the object's %d bytes"
                   (String.length obj)));
         String.sub obj (first + off) len
     | _ -> fail "the name at %d is unterminated" off
   end
-
-let by_start (a, _) (b, _) = Int.compare a b
-
-(* Sorted by start, each span [(at, n)] starts at or past the end of the one
-   before it. Spans usually come sorted, and are sorted otherwise with a merge
-   sort, whose memory is linear. *)
-let disjoint ~where spans =
-  let rec sorted i =
-    i >= Array.length spans
-    || (fst spans.(i - 1) <= fst spans.(i) && sorted (i + 1))
-  in
-  if not (sorted 1) then Array.stable_sort by_start spans;
-  let last = ref 0 in
-  for i = 0 to Array.length spans - 1 do
-    let at, n = spans.(i) in
-    if at < !last then fail "two sections share bytes at %d of %s" at where;
-    last := at + n
-  done
 
 (* Layout *)
 
@@ -306,10 +255,9 @@ let round_up n a =
    its alignment in the image. *)
 let start low align = low - (low land (align - 1))
 
-(* Whether the sections go at their addresses, the address the image starts at,
-   the image's alignment, each held section's image offset, and the image's
-   length. Sections go at their addresses if one has an address, else follow
-   each other, so that no two share a byte of the image. *)
+(* The address the image starts at, the image's alignment, each held section's
+   image offset, and the image's length. Sections go at their addresses if one
+   has an address, else follow each other. *)
 let layout ~align held hs =
   let count = Array.length hs in
   let addressed = ref false and low = ref max_int and largest = ref 1 in
@@ -324,7 +272,7 @@ let layout ~align held hs =
   let addressed = !addressed in
   let address = if addressed then start !low !largest else 0 in
   let offsets = Array.make count None in
-  let size = ref 0 and spans = ref [] in
+  let size = ref 0 in
   for i = 0 to count - 1 do
     if held.(i) then begin
       let h = hs.(i) in
@@ -333,52 +281,12 @@ let layout ~align held hs =
         else round_up !size (Int.max align h.sh_addralign)
       in
       if off > max_int - h.sh_size then too_long ();
-      if h.sh_addralign > 1 && off mod h.sh_addralign <> 0 then
-        fail "section %d at %d is not a multiple of its alignment %d" i off
-          h.sh_addralign;
       offsets.(i) <- Some off;
-      size := Int.max !size (off + h.sh_size);
-      if addressed && h.sh_size > 0 then spans := (off, h.sh_size) :: !spans
+      size := Int.max !size (off + h.sh_size)
     end
   done;
-  if addressed then
-    disjoint ~where:"the image" (Array.of_list (List.rev !spans));
   let image_align = if addressed then !largest else Int.max align !largest in
-  (addressed, address, image_align, offsets, !size)
-
-(* [at + n], or [max_int] past it: the end of an address range. *)
-let end_of at n = if at > max_int - n then max_int else at + n
-
-(* The sections taking memory that the image does not hold, as address ranges
-   sorted and merged into disjoint [(start, end)] pairs, for a binary search. *)
-let lacking held hs =
-  let spans = ref [] in
-  Array.iteri
-    (fun i h ->
-      if takes_memory h.sh_type h.sh_flags && (not held.(i)) && h.sh_size > 0
-      then spans := (h.sh_addr, end_of h.sh_addr h.sh_size) :: !spans)
-    hs;
-  let spans = Array.of_list !spans in
-  Array.stable_sort by_start spans;
-  let merge acc (s, e) =
-    match acc with
-    | (s', e') :: rest when s <= e' -> (s', Int.max e e') :: rest
-    | _ -> (s, e) :: acc
-  in
-  Array.of_list (List.rev (Array.fold_left merge [] spans))
-
-(* Whether one of [ranges], disjoint and sorted, holds [a]. *)
-let holds ranges a =
-  let rec search lo hi =
-    if lo >= hi then false
-    else
-      let mid = (lo + hi) / 2 in
-      let s, e = ranges.(mid) in
-      if a < s then search lo mid
-      else if a >= e then search (mid + 1) hi
-      else true
-  in
-  search 0 (Array.length ranges)
+  (address, image_align, offsets, !size)
 
 (* The held sections with bytes in the object, by image offset: their indexes,
    in which [holding] finds the section of an image offset. *)
@@ -418,48 +326,28 @@ let read ~align ?held obj =
     || not (String.starts_with ~prefix:"\x7fELF" obj)
   then fail "not an ELF object";
   let f =
-    match u8 obj 4 with
+    match Char.code obj.[4] with
     | c when c = elfclass64 -> elf64
     | c when c = elfclass32 -> elf32
     | c -> fail "unknown ELF class %d, expected 1 or 2" c
   in
-  if u8 obj 5 <> elfdata2lsb then fail "not a little-endian ELF object";
-  if String.length obj < f.ehdr then
-    fail "the object is truncated: its ELF header lies past its end";
+  if Char.code obj.[5] <> elfdata2lsb then
+    fail "not a little-endian ELF object";
   let machine = u16 obj 18 in
   let hs, names_index = headers f obj in
   let count = Array.length hs in
-  let section_of i what =
-    if i < 0 || i >= count then
-      fail "%s refers to section %d, which the object does not have" what i;
-    hs.(i)
-  in
-  (* The gABI puts no byte of the object in two sections. Holding to it keeps
-     the entries of tables that would share bytes from being decoded twice. *)
-  let spans = ref [] and symtab = ref (-1) and dynsym = ref (-1) in
+  let symtab = ref (-1) and dynsym = ref (-1) in
   for i = count - 1 downto 0 do
     let h = hs.(i) in
     if h.sh_addralign <> 0 && not (is_pow2 h.sh_addralign) then
       fail "a section's alignment of %d is not a power of two" h.sh_addralign;
-    if has_bytes h then begin
-      check obj h.sh_offset h.sh_size;
-      if h.sh_size > 0 then spans := (h.sh_offset, h.sh_size) :: !spans
-    end;
+    if has_bytes h && h.sh_offset > String.length obj - h.sh_size then
+      fail "the object is truncated: section %d lies past its end" i;
     if h.sh_type = sht_symtab then symtab := i
     else if h.sh_type = sht_dynsym then dynsym := i
   done;
-  disjoint ~where:"the object" (Array.of_list !spans);
   let named = ref 0 in
-  let strings i what =
-    let h = section_of i what in
-    if h.sh_type <> sht_strtab then
-      fail "%s links to section %d, which is no string table" what i;
-    h
-  in
-  let names =
-    if names_index = shn_undef then None
-    else Some (strings names_index "the ELF header")
-  in
+  let names = if names_index = shn_undef then None else Some hs.(names_index) in
   let section h offset =
     {
       name =
@@ -482,12 +370,16 @@ let read ~align ?held obj =
         (None, Array.map (fun h -> allocated_as machine h.sh_type h.sh_flags) hs)
     | Some held ->
         let unplaced = Array.map (fun h -> section h None) hs in
+        let held s =
+          try held s
+          with e -> raise (Held (e, Printexc.get_raw_backtrace ()))
+        in
         (Some unplaced, Array.map held unplaced)
   in
-  let addressed, address, image_align, offsets, size = layout ~align kept hs in
+  let address, image_align, offsets, size = layout ~align kept hs in
   (* The place of a symbol in section [index] at [value]. *)
   let place index value =
-    let h = section_of index "a symbol" in
+    let h = hs.(index) in
     match offsets.(index) with
     | Some off when value - h.sh_addr >= 0 && value - h.sh_addr <= h.sh_size ->
         Image { section = index; offset = off + value - h.sh_addr }
@@ -497,7 +389,7 @@ let read ~align ?held obj =
      at [SHN_XINDEX], in the first [SHT_SYMTAB_SHNDX] section linked to it. *)
   let read_table i =
     let h = hs.(i) in
-    let names = strings h.sh_link "a symbol table" in
+    let names = hs.(h.sh_link) in
     let entsize = Int.max f.sym h.sh_entsize in
     let shndx =
       lazy
@@ -515,11 +407,11 @@ let read ~align ?held obj =
       (length_of h / entsize)
       (fun k ->
         let e = first + (k * entsize) in
-        let name = string_at obj named names (get_u32 obj e) in
-        let index = String.get_uint16_le obj (e + f.st_shndx) in
+        let name = string_at obj named names (u32 obj e) in
+        let index = u16 obj (e + f.st_shndx) in
         let value =
-          if f.word = 8 then get_i64 obj (e + f.st_value)
-          else get_u32 obj (e + f.st_value)
+          if f.word = 8 then i64 obj (e + f.st_value)
+          else u32 obj (e + f.st_value)
         in
         let place =
           if index = shn_undef then Undefined
@@ -551,55 +443,31 @@ let read ~align ?held obj =
     let h = hs.(r) in
     let rela = h.sh_type = sht_rela in
     let entsize = Int.max ((if rela then 3 else 2) * f.word) h.sh_entsize in
-    let read_syms () =
-      let link = section_of h.sh_link "a relocation section" in
-      if link.sh_type <> sht_symtab && link.sh_type <> sht_dynsym then
-        fail
-          "a relocation section links to section %d, which is no symbol table"
-          h.sh_link;
-      table h.sh_link
-    in
-    let syms = ref None and first = at_of h and acc = ref acc in
+    let syms = lazy (table h.sh_link) and first = at_of h and acc = ref acc in
     for k = (length_of h / entsize) - 1 downto 0 do
       let e = first + (k * entsize) in
-      let offset = at (get_word f obj e) in
+      let offset = at (word f obj e) in
       (* [r_info] holds the type in its low 32 bits and the symbol in its high
          ones, or in 32 bits the type in its low 8 bits and the symbol above. *)
       let kind =
-        if f.word = 8 then get_u32 obj (e + 8)
-        else get_u32 obj (e + 4) land 0xff
+        if f.word = 8 then u32 obj (e + 8) else u32 obj (e + 4) land 0xff
       in
       let sym =
-        if f.word = 8 then get_u32 obj (e + 12) else get_u32 obj (e + 4) lsr 8
+        if f.word = 8 then u32 obj (e + 12) else u32 obj (e + 4) lsr 8
       in
       let addend =
         if not rela then field offset
-        else if f.word = 8 then Explicit (get_i64 obj (e + 16))
-        else Explicit (get_i32 obj (e + 8))
+        else if f.word = 8 then Explicit (i64 obj (e + 16))
+        else Explicit (i32 obj (e + 8))
       in
       let symbol =
         if sym = 0 then { name = ""; place = Absolute 0 }
-        else begin
-          let syms =
-            match !syms with
-            | Some t -> t
-            | None ->
-                let t = read_syms () in
-                syms := Some t;
-                t
-          in
-          if sym >= Iarray.length syms then
-            fail "a relocation refers to symbol %d, which its table lacks" sym;
-          Iarray.unsafe_get syms sym
-        end
+        else Iarray.get (Lazy.force syms) sym
       in
       acc := { offset; kind; addend; symbol } :: !acc
     done;
     !acc
   in
-  (* The allocated memory the image lacks, as addresses, which mean something in
-     an object whose sections have addresses. *)
-  let lacks = lazy (if addressed then lacking kept hs else [||]) in
   (* The held sections with bytes, in which a dynamic relocation without an
      addend finds its field by address. *)
   let by_offset = lazy (with_bytes offsets hs) in
@@ -608,10 +476,9 @@ let read ~align ?held obj =
   let relocations_of r h acc =
     if h.sh_type <> sht_rel && h.sh_type <> sht_rela then acc
     else if h.sh_info = 0 then
-      let lacks = Lazy.force lacks in
       entries r
         (fun a ->
-          if a < address || a - address >= size || holds lacks a then
+          if a < address || a - address >= size then
             fail
               "a relocation patches address 0x%x, which the image does not hold"
               a;
@@ -626,7 +493,7 @@ let read ~align ?held obj =
           implicit hs.(i) (Option.get offsets.(i)) x)
         acc
     else
-      let target = section_of h.sh_info "a relocation section" in
+      let target = hs.(h.sh_info) in
       if target.sh_flags land shf_alloc = 0 then acc
       else
         match offsets.(h.sh_info) with
@@ -671,8 +538,8 @@ let read ~align ?held obj =
     bits = 8 * f.word;
     kind = u16 obj 16;
     machine;
-    os_abi = u8 obj 7;
-    abi_version = u8 obj 8;
+    os_abi = Char.code obj.[7];
+    abi_version = Char.code obj.[8];
     flags = u32 obj f.e_flags;
     address;
     align = image_align;
@@ -692,6 +559,8 @@ let of_string ?(align = 1) ?held obj =
   match read ~align ?held obj with
   | o -> Ok o
   | exception Malformed m -> Error m
+  | exception Invalid_argument _ -> Error truncated
+  | exception Held (e, bt) -> Printexc.raise_with_backtrace e bt
 
 (* A loop: the AMD loader looks up each kernel it loads. *)
 let symbol o name =
