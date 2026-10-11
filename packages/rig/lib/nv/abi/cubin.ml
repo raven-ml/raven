@@ -107,67 +107,9 @@ let eiattr_regcount = 0x2f
    16-bit value in place of their size. *)
 let eifmt_sval = 4
 
-(* FNV-1a, in OCaml's 63-bit ints. *)
-let fnv_offset = 0x811c9dc5
-let fnv_prime = 0x100000001b3
-
-let rec hash_from s i h =
-  if i = String.length s then h
-  else hash_from s (i + 1) (h lxor Char.code (String.unsafe_get s i) * fnv_prime)
-
-let rec compare_from s off n t m i =
-  if i = n || i = m then n - m
-  else
-    let c =
-      Char.code (String.unsafe_get s (off + i))
-      - Char.code (String.unsafe_get t i)
-    in
-    if c <> 0 then c else compare_from s off n t m (i + 1)
-
-let rec find_slot names hashes h name off lo hi =
-  if lo >= hi then -1
-  else
-    let mid = (lo + hi) / 2 in
-    let c = Int.compare h (Array.unsafe_get hashes mid) in
-    let c =
-      if c <> 0 then c
-      else
-        let t = Array.unsafe_get names mid in
-        compare_from name off (String.length name - off) t (String.length t) 0
-    in
-    if c = 0 then mid
-    else if c < 0 then find_slot names hashes h name off lo mid
-    else find_slot names hashes h name off (mid + 1) hi
-
-(* Kernels are found by name, and a section names its kernel by the rest of its
-   name after a prefix. Names are kept by their hash, then by their bytes: [slot
-   names hashes name off] is the position in [names] of the name that [name]
-   holds from [off], or [-1]. It reads the name once and compares it in place,
-   so that nothing is copied. *)
-let slot names hashes name off =
-  let h = hash_from name off fnv_offset in
-  find_slot names hashes h name off 0 (Array.length names)
-
-(* [names] without repeats, by hash, then bytes, and their hashes. *)
-let order names =
-  let by_key (h, n) (h', n') =
-    match Int.compare h h' with 0 -> String.compare n n' | c -> c
-  in
-  let keyed = List.map (fun n -> (hash_from n 0 fnv_offset, n)) names in
-  let keyed = Array.of_list (List.sort_uniq by_key keyed) in
-  (Array.map snd keyed, Array.map fst keyed)
-
-(* The position after [prefix] in [name], or [-1]. A loop of its own:
-   [String.starts_with] allocates a closure each call. *)
-let rec prefixed prefix name i =
-  i = String.length prefix
-  || String.unsafe_get prefix i = String.unsafe_get name i
-     && prefixed prefix name (i + 1)
-
+(* The position after [prefix] in [name], or [-1]. *)
 let after ~prefix name =
-  if String.length name >= String.length prefix && prefixed prefix name 0 then
-    String.length prefix
-  else -1
+  if String.starts_with ~prefix name then String.length prefix else -1
 
 (* An .nv.info section with an attribute that runs past its end, or with one the
    reader reads whose data is too short, which [of_string] returns as its
@@ -263,38 +205,33 @@ let kernel_names (o : Rig_elf.t) =
   in
   List.filter_map code (Iarray.to_list o.sections)
 
-(* A kernel's record while the sections are read. *)
-type reading = {
-  mutable code : int;
-  mutable code_bytes : int;
-  mutable registers : int;
-  mutable shared_bytes : int;
-  mutable stack_bytes : int;
-  mutable params_offset : int;
-  mutable params_bytes : int;
-  mutable banks : bank list;
-}
+let empty =
+  {
+    code = 0;
+    code_bytes = 0;
+    registers = 0;
+    shared_bytes = 0;
+    stack_bytes = 0;
+    params_offset = 0;
+    params_bytes = 0;
+    banks = [];
+  }
 
-(* Every kernel's record, in the order of [names], in one pass over the sections
-   in order: each section updates the kernels it is about, so a later section or
-   attribute overrides an earlier one. *)
-let read_kernels (o : Rig_elf.t) names hashes =
-  let reading _ =
-    {
-      code = 0;
-      code_bytes = 0;
-      registers = 0;
-      shared_bytes = 0;
-      stack_bytes = 0;
-      params_offset = 0;
-      params_bytes = 0;
-      banks = [];
-    }
-  in
-  let ks = Array.map reading names in
+(* Every kernel's record, by name, in one pass over the sections in order: each
+   section updates the kernels it is about, so a later section or attribute
+   overrides an earlier one. *)
+let read_kernels (o : Rig_elf.t) names =
+  let ks = Hashtbl.create 16 in
+  List.iter (fun name -> Hashtbl.replace ks name empty) names;
+  (* Updates with [f] the kernel [name] names from [off], if there is one. *)
   let at name off f =
-    let i = slot names hashes name off in
-    if i >= 0 then f (Array.unsafe_get ks i)
+    let k = String.sub name off (String.length name - off) in
+    match Hashtbl.find_opt ks k with
+    | Some r -> Hashtbl.replace ks k (f r)
+    | None -> ()
+  in
+  let named name off =
+    Hashtbl.mem ks (String.sub name off (String.length name - off))
   in
   (* The kernel the symbol [i] is: the kernel of the code section it is in, else
      the kernel of its name. *)
@@ -315,16 +252,19 @@ let read_kernels (o : Rig_elf.t) names hashes =
   let global param data =
     if param = eiattr_regcount then
       let v = u32 o.file (data + 4) in
-      function_of (u32 o.file data) (fun r -> r.registers <- v)
+      function_of (u32 o.file data) (fun r -> { r with registers = v })
     else if param = eiattr_min_stack_size then
       let v = u32 o.file (data + 4) in
-      function_of (u32 o.file data) (fun r -> r.stack_bytes <- v)
+      function_of (u32 o.file data) (fun r -> { r with stack_bytes = v })
   in
-  let own_attribute r param data =
-    if param = eiattr_param_cbank then begin
-      r.params_offset <- String.get_uint16_le o.file (data + 4);
-      r.params_bytes <- String.get_uint16_le o.file (data + 6)
-    end
+  let own_attribute name k param data =
+    if param = eiattr_param_cbank then
+      at name k (fun r ->
+          {
+            r with
+            params_offset = String.get_uint16_le o.file (data + 4);
+            params_bytes = String.get_uint16_le o.file (data + 6);
+          })
   in
   let section (s : Rig_elf.section) =
     let name = s.name in
@@ -332,50 +272,31 @@ let read_kernels (o : Rig_elf.t) names hashes =
     and shared_at = after ~prefix:shared name in
     match (s.offset, bank_of name) with
     | Some offset, _ when code_at >= 0 ->
-        at name code_at (fun r ->
-            r.code <- offset;
-            r.code_bytes <- s.size)
+        at name code_at (fun r -> { r with code = offset; code_bytes = s.size })
     | _ when code_at >= 0 -> ()
     | _ when shared_at >= 0 ->
-        at name shared_at (fun r -> r.shared_bytes <- s.size)
+        at name shared_at (fun r -> { r with shared_bytes = s.size })
     | Some offset, Some (index, owner) ->
         let b = { index; offset; bytes = s.size } in
-        let add r = r.banks <- set_bank r.banks b in
-        if owner < 0 then Array.iter add ks else at name owner add
+        let add r = { r with banks = set_bank r.banks b } in
+        if owner < 0 then
+          Hashtbl.filter_map_inplace (fun _ r -> Some (add r)) ks
+        else at name owner add
     | _ when name = info -> iter_attributes o s global
     | _ ->
         let k = after ~prefix:own_info name in
-        if k >= 0 then
-          at name k (fun r -> iter_attributes o s (own_attribute r))
+        if k >= 0 && named name k then
+          iter_attributes o s (own_attribute name k)
   in
   Iarray.iter section o.sections;
-  let freeze r =
-    let k : kernel =
-      {
-        code = r.code;
-        code_bytes = r.code_bytes;
-        registers = r.registers;
-        shared_bytes = r.shared_bytes;
-        stack_bytes = r.stack_bytes;
-        params_offset = r.params_offset;
-        params_bytes = r.params_bytes;
-        banks = r.banks;
-      }
-    in
-    Some k
-  in
-  Array.map freeze ks
+  ks
 
 type t = {
   elf : Rig_elf.t;
   size : int;
   relocations : relocation list;
   kernels : string list;
-  names : string array; (* every kernel's name, by hash, then bytes *)
-  hashes : int array;
-  records : kernel option array;
-      (* each kernel's record, in the order of [names], all [Some]: [kernel]
-         returns one without allocating *)
+  records : (string, kernel) Hashtbl.t; (* read only once made *)
 }
 
 (* The sections the GPU's memory holds: ELF's, but a kernel's shared memory,
@@ -404,10 +325,8 @@ let of_string obj =
   let* relocations = relocations 0 [] o.relocations in
   let size = ((o.size + page - 1) / page * page) + page in
   let kernels = kernel_names o in
-  let names, hashes = order kernels in
-  match read_kernels o names hashes with
-  | records ->
-      Ok { elf = o; size; relocations; kernels; names; hashes; records }
+  match read_kernels o kernels with
+  | records -> Ok { elf = o; size; relocations; kernels; records }
   | exception Malformed msg -> Error msg
 
 let size c = c.size
@@ -427,7 +346,4 @@ let patches c ~base =
   List.map patch c.relocations
 
 let kernels c = c.kernels
-
-let kernel c name =
-  let i = slot c.names c.hashes name 0 in
-  if i < 0 then None else Array.unsafe_get c.records i
+let kernel c name = Hashtbl.find_opt c.records name
