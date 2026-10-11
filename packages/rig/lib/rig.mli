@@ -159,9 +159,9 @@ val close : t -> unit
     rig frees what it held for the device, in its driver and in rig, but
     its properties and the last values of its timeline. Those go once no
     value the program holds refers to the device and the collector has
-    taken it, and its points then name a stand-in ({!Point.device}). A
+    taken it, and its points then name a stand-in ({!Point.val-device}). A
     {!Lost} refers to its device. While backtraces are recorded
-    ({!Printexc.record_backtrace}), the OCaml runtime keeps the last
+    ([Printexc.record_backtrace]), the OCaml runtime keeps the last
     exception each thread raised, rig's own included, so that device stays
     until the thread raises another and, in a program that links the threads
     library, next releases the domain lock. *)
@@ -502,7 +502,7 @@ exception Lost of t * string
     {- ["closed"] for a device {!close} ended;}
     {- the reason given to {!fail};}
     {- ["forked"] in a child of [fork];}
-    {- ["ended"] when [d] is {!Point.device}'s stand-in;}
+    {- ["ended"] when [d] is {!Point.val-device}'s stand-in;}
     {- ["out of memory"] when the C heap had no room for the reason.}}
     It prints as ["NAME lost: why"] with [d]'s name. *)
 
