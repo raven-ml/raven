@@ -383,9 +383,10 @@ let severed_rail () =
   woke reset_cause;
   failed_counts ~msg:"the transfer's rail" e
 
-(* A drop waits behind the transfer. Once the failed sender released the link,
-   and while it is held there, its peer reads the stream to its end: the
-   transfer's bytes, cut, and no message or abort after them. *)
+(* A drop waits behind the transfer. While the failed sender is held once it
+   released the link, its peer reads what the stream holds, and the rest once
+   the job has failed: the transfer's bytes, cut, and no message or abort after
+   them. *)
 let stalled_rail () =
   with_scene @@ fun s ->
   let stop = beating s.p in
@@ -397,19 +398,42 @@ let stalled_rail () =
   e.ready 1;
   let dropped = spawn (fun () -> Link.drop s.l 7) in
   equal ~msg:"the failed sender is held" bool true (Probe.held ());
-  let n, rest =
+  let n, held =
     match header s.p with
     | Some (k, n) when k = k_rail -> (n, read_all s.p)
     | _ -> fail "the peer was sent no rail frame"
   in
   Probe.resume ();
+  woke stalled_cause;
+  after_bound t0;
+  let rest = held ^ read_all s.p in
   equal ~msg:"the bytes after the transfer's" (option string) None
     (stray 'r' (String.sub rest 16 (String.length rest - 16)));
   less ~msg:"the frame's bytes the peer read" int ~than:n (String.length rest);
-  woke stalled_cause;
-  after_bound t0;
   dropped ();
   failed_counts ~msg:"the transfer's rail" e
+
+(* A release of the cut rail waits for its transfer alone. The thread whose
+   send was cut is held as it begins the job's failure, which waits for the
+   other links' aborts: two releases of the rail then find no transfer to
+   wait for. *)
+let stalled_release () =
+  with_scene @@ fun s ->
+  let stop = beating s.p in
+  Fun.protect ~finally:stop @@ fun () ->
+  let e = rail s in
+  Probe.arm Failing;
+  e.ready 1;
+  equal ~msg:"the cut sender is held" bool true (Probe.held ());
+  let released =
+    List.init 2 (fun _ -> spawn (fun () -> Link.release_rail s.l 2))
+  in
+  equal ~msg:"the releases, and those that waited" (pair int int) (2, 0)
+    (Probe.releases ());
+  Probe.resume ();
+  List.iter (fun join -> join ()) released;
+  equal ~msg:"the job" state (Link.Failed stalled_cause)
+    (Link.wait s.job ~ms:30_000)
 
 (* During the abort: the job fails, and the faulted link's abort is held as it
    starts. A fault then leaves the root cause as it was, and [fail] returns,
@@ -473,6 +497,8 @@ let () =
              test "a severed link fails the job, and every waiter wakes"
                severed_rail;
              slow "a peer that reads nothing fails the job, cut" stalled_rail;
+             slow "a release of the cut rail waits for its transfer alone"
+               stalled_release;
            ];
          group ~timeout:30. "abort"
            [

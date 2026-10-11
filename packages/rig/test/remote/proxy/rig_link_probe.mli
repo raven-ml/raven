@@ -4,12 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 (** Holds a {!Rig_remote_proxy.Link}'s transfer or abort at a point of its
-    protocol, or a sender whose send failed once it released the link
-    ([Cut]). Each observation waits at most five seconds, and so does the
+    protocol, a sender whose send failed once it released the link ([Cut]),
+    or the thread that begins a job's failure before it sends the aborts
+    ([Failing]). Each observation waits at most five seconds, and so does the
     hold. [resume] releases it, including after a failed assertion. Only one
     scenario may run at once. *)
 
-type point = Sending | Sent | Arrived | Aborting | Cut
+type point = Sending | Sent | Arrived | Aborting | Cut | Failing
 
 val arm : point -> unit
 

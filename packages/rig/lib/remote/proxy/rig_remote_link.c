@@ -483,6 +483,7 @@ static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
   }
   struct rig_remote_link *links = j->links;
   pthread_mutex_unlock(&j->mu);
+  hook(RIG_REMOTE_LINK_FAILING, 0);
   /* An idle link sends its abort here; a link mid-frame sends it after
      that frame, from the thread that sends it. Links are only ever
      prepended, so the list read under the job's lock stays whole. */
@@ -636,6 +637,20 @@ static void rail_unused(struct rig_remote_link *l, struct rail *r) {
 
 /* The sending thread */
 
+/* Ends the sending thread's send that failed with [err]: begins the job's
+   failure, then releases the send claim, so that no frame follows the cut
+   one. Holds [l]'s lock and the claim, and releases the lock while the
+   failure begins, which may wait for other links' aborts. */
+static void cut(struct rig_remote_link *l, int err) {
+  pthread_mutex_unlock(&l->mu);
+  link_lost(l, err);
+  pthread_mutex_lock(&l->mu);
+  release_claim(l, err);
+  pthread_mutex_unlock(&l->mu);
+  hook(RIG_REMOTE_LINK_CUT, 0);
+  pthread_mutex_lock(&l->mu);
+}
+
 /* Sends the transfers of [l]'s rails whose [ready] advanced, until the link
    ended. Holds [l]'s lock, and releases it while it sends. [0], or the error
    of a send that failed. */
@@ -649,11 +664,13 @@ static int send_rails(struct rig_remote_link *l) {
     l->sending = 1;
     pthread_mutex_unlock(&l->mu);
     int err = send_due(l, r, ready);
-    if (err != 0) link_lost(l, err);
     pthread_mutex_lock(&l->mu);
     rail_unused(l, r);
-    release_claim(l, err);
-    if (err != 0) return err;
+    if (err != 0) {
+      cut(l, err);
+      return err;
+    }
+    release_claim(l, 0);
     /* This rail stays linked while used; releases of later rails updated
        its next pointer under the lock while the send held none. */
   }
@@ -674,20 +691,21 @@ static int resume(struct rig_remote_link *l) {
   pthread_mutex_unlock(&l->mu);
   hook(RIG_REMOTE_LINK_SENDING, 0);
   if (err == 0) err = send_due(l, r, ready);
-  if (err != 0) link_lost(l, err);
   pthread_mutex_lock(&l->mu);
   rail_unused(l, r);
-  release_claim(l, err);
+  if (err != 0)
+    cut(l, err);
+  else
+    release_claim(l, 0);
   return err;
 }
 
 static void *sender(void *arg) {
   struct rig_remote_link *l = arg;
-  int cut = 0; /* the error of this thread's send that failed */
   pthread_mutex_lock(&l->mu);
   for (;;) {
     if (l->resume != NULL) {
-      if ((cut = resume(l)) != 0) break;
+      if (resume(l) != 0) break;
       continue;
     }
     /* Once the link ends, it waits for the claim's holder: a ready function
@@ -697,7 +715,7 @@ static void *sender(void *arg) {
     int claimed = l->sending || l->writers > 0;
     if (!ended && !claimed && l->due) {
       l->due = 0;
-      if ((cut = send_rails(l)) != 0) break;
+      if (send_rails(l) != 0) break;
       continue;
     }
     int64_t now = now_ns();
@@ -707,10 +725,12 @@ static void *sender(void *arg) {
       l->sending = 1;
       pthread_mutex_unlock(&l->mu);
       int err = send_all(l, h, sizeof h);
-      if (err != 0) link_lost(l, err);
       pthread_mutex_lock(&l->mu);
-      release_claim(l, err);
-      if ((cut = err) != 0) break;
+      if (err != 0) {
+        cut(l, err);
+        break;
+      }
+      release_claim(l, 0);
       continue;
     }
     /* A claim handed over, the claim's release while a rail is due or once
@@ -723,7 +743,6 @@ static void *sender(void *arg) {
   }
   int settled = failing(l->job) ? abort_link(l) : 0;
   pthread_mutex_unlock(&l->mu);
-  if (cut != 0) hook(RIG_REMOTE_LINK_CUT, 0);
   if (settled) abort_left(l->job);
   thread_ends(l);
   return NULL;

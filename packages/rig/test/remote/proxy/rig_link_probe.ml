@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type point = Sending | Sent | Arrived | Aborting | Cut
+type point = Sending | Sent | Arrived | Aborting | Cut | Failing
 
 external arm : point -> unit = "rig_link_probe_arm"
 external held : unit -> bool = "rig_link_probe_held"
