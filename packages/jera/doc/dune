@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package jera)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries jera nx rune))

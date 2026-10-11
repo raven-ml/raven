@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package brot)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries brot unix))

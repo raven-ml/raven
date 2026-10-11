@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package fehu)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries fehu fehu.envs nx unix))

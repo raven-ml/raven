@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package vega)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries vega nx unix))

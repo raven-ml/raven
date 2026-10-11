@@ -13,7 +13,9 @@
 ; allocation returns NULL as libc's does (allocator_may_return_null=1). CUDA
 ; and NV map GPU addresses below 2^40, in the shadow gap
 ; (protect_shadow_gap=0). v=0 silences the debug runtime's banner, which a
-; cram test would read as output.
+; cram test would read as output. dune links mdx's toplevel without the
+; profile's link_flags, so sanitized C cannot link into it: an mdx stanza whose
+; libraries hold C is off under sanitize.
 ;
 ; An odoc warning is an error in every profile.
 ;

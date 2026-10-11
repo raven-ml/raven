@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package kaun)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries kaun kaun.hf kaun.datasets rune vega nx nx.io unix))

@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package sowilo)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries sowilo unix))

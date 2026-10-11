@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package norn)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries norn norn.model nx))

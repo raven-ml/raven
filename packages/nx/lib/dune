@@ -40,4 +40,6 @@
  (package nx)
  (files nx.mli)
  (preludes prelude.ml)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries nx unix))

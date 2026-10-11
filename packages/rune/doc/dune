@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package rune)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries rune nx unix))

@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package nx)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries nx nx.io unix))

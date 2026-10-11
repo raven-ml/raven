@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package tolk)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries tolk unix))

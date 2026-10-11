@@ -1,4 +1,6 @@
 (mdx
  (files *.md)
  (package talon)
+ (enabled_if
+  (<> %{profile} sanitize))
  (libraries talon talon.csv talon.parquet bytesrw nx nx.device unix))
