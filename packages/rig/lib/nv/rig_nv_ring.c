@@ -358,9 +358,11 @@ static void enter(struct submission *s, int q) {
   for (int i = 0; i < s->nwaits; i++)
     emit(d, c, T_ACQUIRE, s->waits[i].at, s->waits[i].value, 0);
   if (q != COMPUTE) return;
+  /* Only the OCaml side writes a pending memory, so an exchange after the
+     load takes a pending one too: the newer, if it replaced it. */
   uint64_t local = atomic_load_explicit(&d->local, memory_order_acquire);
-  if (local != 0 &&
-      atomic_compare_exchange_strong(&d->local, &local, UINT64_C(0))) {
+  if (local != 0 && !(local & LOCAL_TAKEN)) {
+    local = atomic_exchange(&d->local, s->v << 1 | LOCAL_TAKEN);
     uint64_t address = local & ((UINT64_C(1) << LOCAL_ADDRESS_BITS) - 1);
     uint64_t per_tpc = (local >> LOCAL_ADDRESS_BITS) << LOCAL_UNIT_SHIFT;
     emit(d, c, T_LOCAL, address, per_tpc, 0);

@@ -306,27 +306,16 @@ value caml_rig_nv_zero(value v_at, value v_n) {
 
 /* Owed words */
 
-/* Replaces the pending local memory [v_expected] with [v_desired]: [true],
-   or [false] if a submission took [v_expected] meanwhile. */
-value caml_rig_nv_offer_local(value v_self, value v_expected,
-                              value v_desired) {
-  uint64_t expected = (uint64_t)Long_val(v_expected);
-  return Val_bool(atomic_compare_exchange_strong(
-      &Device_val(v_self)->local, &expected, (uint64_t)Long_val(v_desired)));
-}
-
-/* The pending local memory, or [0] if none is pending. */
+/* The pending local memory word (struct device's [local]). */
 value caml_rig_nv_pending_local(value v_self) {
   return Val_long(
       atomic_load_explicit(&Device_val(v_self)->local, memory_order_acquire));
 }
 
-/* Makes [v_packed] the pending local memory; none is pending. */
-value caml_rig_nv_set_local(value v_self, value v_packed) {
-  atomic_store_explicit(&Device_val(v_self)->local,
-                        (uint64_t)Long_val(v_packed),
-                        memory_order_release);
-  return Val_unit;
+/* Makes [v_packed] the pending local memory: the word it replaced. */
+value caml_rig_nv_exchange_local(value v_self, value v_packed) {
+  return Val_long(atomic_exchange(&Device_val(v_self)->local,
+                                  (uint64_t)Long_val(v_packed)));
 }
 
 value caml_rig_nv_owe_invalidate(value v_self) {
@@ -352,11 +341,6 @@ static uint64_t notification(const struct device *d, int q) {
 
 value caml_rig_nv_notification(value v_self, value v_q) {
   return Val_long(notification(Device_val(v_self), Int_val(v_q)));
-}
-
-value caml_rig_nv_last(value v_self) {
-  return Val_long(atomic_load_explicit(&Device_val(v_self)->last,
-                                       memory_order_acquire));
 }
 
 /* Raises the word to the last value submitted, by compare-and-set: it

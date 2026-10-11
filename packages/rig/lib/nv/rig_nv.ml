@@ -146,8 +146,10 @@ let v_bank0 = 6
 let v_next = 7
 let v_shared = 8
 
-(* A pending local memory is one word: its address, below 2^40, and its bytes
-   per cluster in units of 32 KiB above them. *)
+(* A pending local memory is one word: its address, below 2^40 and 4 KiB
+   aligned, and its bytes per cluster in units of 32 KiB above them. The
+   submission of value [v] that takes it leaves [v lsl 1 lor 1] in its
+   place. *)
 let local_address_bits = 40
 let local_unit_shift = 15
 
@@ -181,10 +183,9 @@ external count_flush : int -> int -> int -> bool = "caml_rig_nv_flush"
 [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_nv_zero" [@@noalloc]
 
-external offer_local : int -> int -> int -> bool = "caml_rig_nv_offer_local"
+external exchange_local : int -> int -> int = "caml_rig_nv_exchange_local"
 [@@noalloc]
 
-external set_local : int -> int -> unit = "caml_rig_nv_set_local" [@@noalloc]
 external pending_local : int -> int = "caml_rig_nv_pending_local" [@@noalloc]
 external owe_invalidate : int -> unit = "caml_rig_nv_owe_invalidate" [@@noalloc]
 external read_word : int -> int = "caml_rig_nv_signaled" [@@noalloc]
@@ -201,7 +202,6 @@ external install_copy : int -> nativeint -> int -> string -> unit
   = "caml_rig_nv_copy_kernel"
 [@@noalloc]
 
-external last : int -> int = "caml_rig_nv_last" [@@noalloc]
 external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
 external end_channels : int -> unit = "caml_rig_nv_end" [@@noalloc]
 
@@ -275,7 +275,7 @@ type 'm live = {
   compute_channel : int;
   mutable per_thread : int; (* under [local_lock], as the fields below *)
   mutable local_current : 'm memory option;
-  mutable local_pending : ('m memory * int) option;
+  mutable local_pending : 'm memory option;
   mutable local_retired : ('m memory * int) list;
 }
 
@@ -383,19 +383,25 @@ let live d =
 
 (* Local memory *)
 
-(* Moves the pending local memory to current once a submission took it. The
-   current one serves the values before that submission, all at most the last
-   value submitted once the taking is seen: it retires with that value. *)
+(* The value of the submission that took the pending local memory, if the
+   word [x] says one did. *)
+let taken x = if x land 1 = 1 then Some (x lsr 1) else None
+
+(* Makes [m], which the submission of value [v] took, the current local
+   memory. The current one serves the values before [v]: it retires with
+   [v]. *)
+let succeed l m v =
+  Option.iter (fun c -> l.local_retired <- (c, v) :: l.local_retired)
+    l.local_current;
+  l.local_current <- Some m
+
+(* Moves the pending local memory to current once a submission took it. *)
 let settle d l =
-  match l.local_pending with
-  | Some (m, packed) when pending_local d.self <> packed ->
-      let reached = last d.self in
-      Option.iter
-        (fun c -> l.local_retired <- (c, reached) :: l.local_retired)
-        l.local_current;
-      l.local_current <- Some m;
+  match (l.local_pending, taken (pending_local d.self)) with
+  | Some m, Some v ->
+      succeed l m v;
       l.local_pending <- None
-  | Some _ | None -> ()
+  | (Some _ | None), _ -> ()
 
 (* Frees the retired local memories no work uses: those whose successor's value
    is reached. *)
@@ -405,16 +411,14 @@ let retire d l =
   l.local_retired <- kept;
   List.iter (fun (m, _) -> give l.path.free m) done_
 
-(* Makes [packed] the pending local memory, freeing a pending one that no
-   submission took. *)
+(* Makes [m], whose word is [packed], the pending local memory, freeing a
+   pending one that no submission took. *)
 let publish d l m packed =
-  (match l.local_pending with
-  | Some (old, old_packed) when offer_local d.self old_packed packed ->
-      give l.path.free old
-  | Some _ | None ->
-      settle d l;
-      set_local d.self packed);
-  l.local_pending <- Some (m, packed)
+  (match (l.local_pending, taken (exchange_local d.self packed)) with
+  | Some p, Some v -> succeed l p v
+  | Some p, None -> give l.path.free p
+  | None, _ -> ());
+  l.local_pending <- Some m
 
 type grown = Served | Stopped | Short of int
 
@@ -1158,7 +1162,7 @@ let halt d l =
     Option.iter drop l.bar;
     List.iter drop (Mutex.protect d.flush_lock (fun () -> l.viewed));
     Option.iter (give l.path.free) l.local_current;
-    Option.iter (fun (m, _) -> give l.path.free m) l.local_pending;
+    Option.iter (give l.path.free) l.local_pending;
     List.iter (fun (m, _) -> give l.path.free m) l.local_retired
   end
     (* The RM stopped the channels on a fault: nothing runs, though their

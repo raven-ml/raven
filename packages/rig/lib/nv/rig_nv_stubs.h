@@ -247,7 +247,8 @@ struct device {
   struct template t[TEMPLATES];
   /* an entry is address + base + words * word */
   uint64_t entry_base, entry_word;
-  /* a pending local memory: address | per_tpc / 32 KiB << 40 */
+  /* a pending local memory, address | per_tpc / 32 KiB << 40, or once a
+     submission took it, v << 1 | LOCAL_TAKEN for its value v */
   _Atomic uint64_t local;
   /* whether the compute caches are owed an invalidation */
   _Atomic int invalidate;
@@ -283,5 +284,7 @@ static inline void rig_nv_flush(struct device *d, int launched) {
 /* A pending local memory's fields. */
 #define LOCAL_ADDRESS_BITS 40
 #define LOCAL_UNIT_SHIFT 15
+/* A pending memory's address is 4 KiB aligned: its bit 0 is clear. */
+#define LOCAL_TAKEN UINT64_C(1)
 
 #endif
