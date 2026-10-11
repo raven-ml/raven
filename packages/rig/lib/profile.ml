@@ -17,21 +17,43 @@ type event = Def.event =
     }
   | Allocation of { device : device; time : int; allocated : int }
   | Load of { image : image; binary : string; time : int }
+  | Counters of {
+      device : device;
+      name : string;
+      start : int;
+      stop : int;
+      counters : (string * int array) list;
+    }
+  | Trace of {
+      device : device;
+      name : string;
+      start : int;
+      stop : int;
+      part : int;
+      data : string;
+    }
+  | Overwritten of { device : device; time : int; runs : int }
   | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
 
 let now = Prof.now
 let enabled = Prof.enabled
+let record = Prof.record
 
 let time = function
   | Span s -> s.start
   | Allocation a -> a.time
   | Load l -> l.time
+  | Counters c -> c.start
+  | Trace t -> t.start
+  | Overwritten o -> o.time
   | Copy c -> c.start
 
 let duration = function
   | Span s -> s.stop - s.start
+  | Counters c -> c.stop - c.start
+  | Trace t -> t.stop - t.start
   | Copy c -> c.stop - c.start
-  | Allocation _ | Load _ -> 0
+  | Allocation _ | Load _ | Overwritten _ -> 0
 
 (* Time order; at equal times longest first. *)
 let order e e' =
@@ -115,6 +137,9 @@ let device_of = function
   | Span s -> s.device
   | Allocation a -> a.device
   | Load l -> l.image.idev
+  | Counters c -> c.device
+  | Trace t -> t.device
+  | Overwritten o -> o.device
   | Copy c -> c.src
 
 let output_chrome_trace oc events =
@@ -157,15 +182,16 @@ let output_chrome_trace oc events =
       let tid =
         match e with
         | Span s -> tid d pid s.lane
+        | Counters _ -> tid d pid "counters"
         | Copy _ -> tid d pid "copy"
-        | Allocation _ | Load _ -> 0
+        | Allocation _ | Load _ | Trace _ | Overwritten _ -> 0
       in
       next ();
       let ph =
         match e with
-        | Span _ | Copy _ -> "X"
+        | Span _ | Counters _ | Copy _ -> "X"
         | Allocation _ -> "C"
-        | Load _ -> "i"
+        | Load _ | Trace _ | Overwritten _ -> "i"
       in
       Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph pid
         tid;
@@ -176,12 +202,34 @@ let output_chrome_trace oc events =
           micros oc (s.stop - s.start);
           output_string oc ",\"name\":";
           string oc s.name
+      | Counters c ->
+          output_string oc ",\"dur\":";
+          micros oc (c.stop - c.start);
+          output_string oc ",\"name\":";
+          string oc c.name;
+          output_string oc ",\"args\":{";
+          List.iteri
+            (fun i (name, values) ->
+              if i > 0 then output_char oc ',';
+              string oc name;
+              Printf.fprintf oc ":%d" (Array.fold_left ( + ) 0 values))
+            c.counters;
+          output_char oc '}'
       | Copy c ->
           output_string oc ",\"dur\":";
           micros oc (c.stop - c.start);
           output_string oc ",\"name\":\"copy\",\"args\":{\"to\":";
           string oc c.dst.name;
           Printf.fprintf oc ",\"bytes\":%d}" c.bytes
+      | Trace t ->
+          output_string oc ",\"s\":\"p\",\"name\":";
+          string oc t.name;
+          Printf.fprintf oc ",\"args\":{\"part\":%d,\"bytes\":%d}" t.part
+            (String.length t.data)
+      | Overwritten o ->
+          Printf.fprintf oc
+            ",\"s\":\"p\",\"name\":\"overwritten\",\"args\":{\"runs\":%d}"
+            o.runs
       | Allocation a ->
           Printf.fprintf oc ",\"name\":\"memory\",\"args\":{\"allocated\":%d}"
             a.allocated

@@ -463,6 +463,51 @@ let test_untaken () =
   done;
   equal int 0 (int_of_float (Gc.minor_words () -. before))
 
+(* Recording *)
+
+(* A recorded event goes into each profile being taken: both of two nested
+   profiles, the outer one alone before and after the inner, none while no
+   profile is taken, and one taken on another domain, each in time order
+   among rig's own spans. *)
+let test_record () =
+  let d = memory "profile:record" in
+  let counters start =
+    Prof.Counters
+      { device = d; name = "kernel"; start; stop = start + 1; counters = [] }
+  in
+  let starts =
+    List.filter_map (function Prof.Counters c -> Some c.start | _ -> None)
+  in
+  Prof.record (counters 0);
+  let (now, ((), inner)), outer =
+    Prof.take (fun () ->
+        let now = Prof.now () in
+        Prof.record (counters (now + 1));
+        let r = Prof.take (fun () -> Prof.record (counters (now + 2))) in
+        Prof.record (counters (now + 3));
+        Domain.join (Domain.spawn (fun () -> Prof.record (counters (now + 4))));
+        (now, r))
+  in
+  equal ~msg:"the inner profile" (list int) [ now + 2 ] (starts inner);
+  equal ~msg:"the outer profile" (list int)
+    [ now + 1; now + 2; now + 3; now + 4 ]
+    (starts outer);
+  let (), events =
+    Prof.take (fun () ->
+        Prof.span "before" ignore;
+        Prof.record (counters (Prof.now () + 1_000_000));
+        Prof.record (counters (Prof.now () - 1_000_000));
+        Prof.span "after" ignore)
+  in
+  equal ~msg:"in time order among spans" (list string)
+    [ "counters"; "before"; "after"; "counters" ]
+    (List.map
+       (function
+         | Prof.Span s -> s.name
+         | Prof.Counters _ -> "counters"
+         | _ -> "other")
+       events)
+
 (* Chrome traces *)
 
 let test_chrome () =
@@ -482,6 +527,24 @@ let test_chrome () =
           stop = 1_600;
         };
       Prof.Load { image; binary = "code:8"; time = 1_200 };
+      Prof.Counters
+        {
+          device = d;
+          name = "kernel";
+          start = 2_000;
+          stop = 3_500;
+          counters = [ ("waves", [| 3; 4 |]) ];
+        };
+      Prof.Trace
+        {
+          device = d;
+          name = "kernel";
+          start = 2_000;
+          stop = 3_500;
+          part = 1;
+          data = "\001\002";
+        };
+      Prof.Overwritten { device = d; time = 3_600; runs = 2 };
       Prof.Span
         {
           device = Rig.host;
@@ -519,11 +582,15 @@ let test_chrome () =
     {"ph":"M","pid":1,"tid":2,"name":"thread_name","args":{"name":"domain 1"}},
     {"ph":"X","pid":1,"tid":2,"ts":0.500,"dur":0.100,"name":"a \"quoted\" \\ name"},
     {"ph":"M","pid":3,"tid":0,"name":"process_name","args":{"name":"profile:chrome"}},
-    {"ph":"M","pid":3,"tid":3,"name":"thread_name","args":{"name":"COMPUTE:0"}},
-    {"ph":"X","pid":3,"tid":3,"ts":1.000,"dur":1.500,"name":"kernel"},
+    {"ph":"M","pid":3,"tid":3,"name":"thread_name","args":{"name":"counters"}},
+    {"ph":"X","pid":3,"tid":3,"ts":1.000,"dur":1.500,"name":"kernel","args":{"waves":7}},
+    {"ph":"i","pid":3,"tid":0,"ts":1.000,"s":"p","name":"kernel","args":{"part":1,"bytes":2}},
+    {"ph":"M","pid":3,"tid":4,"name":"thread_name","args":{"name":"COMPUTE:0"}},
+    {"ph":"X","pid":3,"tid":4,"ts":1.000,"dur":1.500,"name":"kernel"},
     {"ph":"C","pid":3,"tid":0,"ts":1.500,"name":"memory","args":{"allocated":4096}},
-    {"ph":"M","pid":1,"tid":4,"name":"thread_name","args":{"name":"copy"}},
-    {"ph":"X","pid":1,"tid":4,"ts":2.000,"dur":0.200,"name":"copy","args":{"to":"profile:chrome","bytes":64}}
+    {"ph":"M","pid":1,"tid":5,"name":"thread_name","args":{"name":"copy"}},
+    {"ph":"X","pid":1,"tid":5,"ts":2.000,"dur":0.200,"name":"copy","args":{"to":"profile:chrome","bytes":64}},
+    {"ph":"i","pid":3,"tid":0,"ts":2.600,"s":"p","name":"overwritten","args":{"runs":2}}
     ]}
     |}
 
@@ -572,6 +639,11 @@ let tests =
       ];
     group ~timeout "cost"
       [ test "a span while no profile is taken allocates nothing" test_untaken ];
+    group ~timeout "recording"
+      [
+        test "a recorded event goes into each profile being taken"
+          test_record;
+      ];
     group ~timeout "chrome" [ test "a trace in Chrome's format" test_chrome ];
   ]
 

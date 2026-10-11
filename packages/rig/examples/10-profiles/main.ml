@@ -25,7 +25,7 @@ let show = function
   | Allocation { device; allocated; _ } ->
       Printf.printf "allocation  %s: %d MiB\n" (Rig.name device)
         (allocated / mib)
-  | Load _ -> ()
+  | Load _ | Counters _ | Trace _ | Overwritten _ -> ()
 
 let () =
   let d = memory_device "M" in

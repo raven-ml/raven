@@ -29,6 +29,22 @@ type event = Def.event =
     }
   | Allocation of { device : device; time : int; allocated : int }
   | Load of { image : image; binary : string; time : int }
+  | Counters of {
+      device : device;
+      name : string;
+      start : int;
+      stop : int;
+      counters : (string * int array) list;
+    }
+  | Trace of {
+      device : device;
+      name : string;
+      start : int;
+      stop : int;
+      part : int;
+      data : string;
+    }
+  | Overwritten of { device : device; time : int; runs : int }
   | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
 
 val take : (unit -> 'a) -> 'a * event list
@@ -39,6 +55,9 @@ val enabled : unit -> bool
 
 val now : unit -> int
 (** [now ()] is {!Rig.Profile.now}[ ()]. *)
+
+val record : event -> unit
+(** [record e] is {!Rig.Profile.record}[ e]. *)
 
 val span : string -> (unit -> 'a) -> 'a
 (** [span name f] is {!Rig.Profile.span}[ name f]. *)

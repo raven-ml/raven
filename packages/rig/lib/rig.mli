@@ -1718,7 +1718,11 @@ end
 module Profile : sig
   type device := t
 
-  (** The type for profile events. Times are nanoseconds of the host clock. *)
+  (** The type for profile events. Times are nanoseconds of the host clock.
+      rig records spans, allocations, loads and copies. A library whose
+      compiled code measures its work, such as with a device's counters or
+      thread traces, records [Counters], [Trace] and [Overwritten] events
+      ({!record}). *)
   type event =
     | Span of {
         device : device;
@@ -1742,6 +1746,25 @@ module Profile : sig
         (** The bytes of memory [device] allocated from [time] on. *)
     | Load of { image : Image.t; binary : string; time : int }
         (** An image loaded. *)
+    | Counters of {
+        device : device;
+        name : string;
+        start : int;
+        stop : int;
+        counters : (string * int array) list;
+            (** Each counter's name and its count during the run, one per unit
+                of the hardware that counts it. *)
+      }  (** The counters of a run of a function. *)
+    | Trace of {
+        device : device;
+        name : string;
+        start : int;
+        stop : int;
+        part : int;  (** The part of the device that wrote it. *)
+        data : string;  (** The trace as the device wrote it. *)
+      }  (** The thread trace of a part of a device during a run. *)
+    | Overwritten of { device : device; time : int; runs : int }
+        (** Runs whose counters and traces the device overwrote unread. *)
     | Copy of {
         src : device;
         dst : device;
@@ -1769,6 +1792,13 @@ module Profile : sig
   (** [now ()] is the host clock, in nanoseconds of the system's monotonic
       clock from an unspecified start. *)
 
+  val record : event -> unit
+  (** [record e] adds [e] to each profile being taken, so {!take} returns it
+      among rig's own events, in time order. It records nothing while no
+      profile is being taken. An event joins a profile only if it is recorded
+      before the profiled function returns: counters read after [take]'s
+      function returned join no profile, even of the work they count. *)
+
   val span : string -> (unit -> 'a) -> 'a
   (** [span name f] is [f ()], recorded as a span named [name] on the calling
       domain's lane of {!host}, from the call until [f] returns or raises, in
@@ -1778,8 +1808,9 @@ module Profile : sig
   (** [output_chrome_trace oc events] writes [events] to [oc] in Chrome's
       trace event format, JSON, which Perfetto and [chrome://tracing] load.
       It writes a process per device, a thread per lane, a complete event per
-      span and per copy (on its [src]'s process), a counter [memory] per
-      allocation change, and an instant event per load. Times are
+      span, per copy (on its [src]'s process) and per run's counters (each
+      summed over its units), a counter [memory] per allocation change, and
+      instant events for loads, traces and overwritten runs. Times are
       microseconds from the earliest event. [oc] is neither flushed nor
       closed. *)
 end

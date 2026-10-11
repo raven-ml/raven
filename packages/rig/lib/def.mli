@@ -291,6 +291,22 @@ type event =
     }
   | Allocation of { device : device; time : int; allocated : int }
   | Load of { image : image; binary : string; time : int }
+  | Counters of {
+      device : device;
+      name : string;
+      start : int;
+      stop : int;
+      counters : (string * int array) list;
+    }
+  | Trace of {
+      device : device;
+      name : string;
+      start : int;
+      stop : int;
+      part : int;
+      data : string;
+    }
+  | Overwritten of { device : device; time : int; runs : int }
   | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
 
 (** The type for a hold's release: its stamps, the value it keeps, and the
