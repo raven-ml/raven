@@ -245,6 +245,23 @@ let refused_file () =
     (Option.is_none (N.map_host g a 8));
   ignore (Sys.opaque_identity file)
 
+(* Two host ranges that end in one page at different places both map, and
+   each frees on its own: [0, 1.5) pages and [1.25, 3) pages. *)
+let shared_page () =
+  S.with_driver @@ fun g ->
+  if (N.facts g).maps_host then begin
+    let p = H.pages (3 * H.page) in
+    let q = H.page / 4 in
+    let a = require_some ~msg:"the first" (N.map_host g p (6 * q)) in
+    let b =
+      require_some ~msg:"the second, which shares a page"
+        (N.map_host g (p + (5 * q)) (7 * q))
+    in
+    N.free g a;
+    N.free g b;
+    H.free_pages p (3 * H.page)
+  end
+
 (* Views a GPU's reopened device makes of memory the GPU already maps: each
    region over it keeps it mapped until its own free, in whatever order they
    go. *)
@@ -321,6 +338,8 @@ let memory =
       test
         "map_host answers None for a file's shared mapping Linux will not pin"
         refused_file;
+      test "map_host maps host ranges that share a page at different ends"
+        shared_page;
     ]
 
 (* Work *)
@@ -1244,48 +1263,36 @@ let timeline =
 
 let shared = fixture ~teardown:S.close S.open_
 
-(* map_host: the registry. The path maps whole pages: a range inside the pages
-   of a mapped one shares its mapping, a range that shares some of their pages
-   is refused. *)
+(* map_host: host ranges. Every range of mapped host memory maps, whatever
+   pages it shares with ranges mapped before, and frees on its own. *)
 
 module Registry = struct
-  type entry = { lo : int; hi : int; mutable maps : int } (* pages [lo, hi) *)
-  type t = { mutable entries : entry list; mutable regions : entry list }
+  type t = { mutable regions : (int * int) list } (* pages [lo, hi) *)
 
   let arena = 4
   let pages (a, n) = (a / H.page, ((a + n - 1) / H.page) + 1)
-  let make () = { entries = []; regions = [] }
+  let make () = { regions = [] }
 
   let map m (a, n) =
     let lo, hi = pages (a, n) in
-    let inside e = e.lo <= lo && hi <= e.hi in
-    match List.find_opt inside m.entries with
-    | Some e ->
-        cover "a range of a mapped one's pages, elsewhere"
-          (lo <> e.lo || hi <> e.hi);
-        cover "a range of the same pages as a mapped one"
-          (lo = e.lo && hi = e.hi);
-        cover "a range under one page that another range maps" (hi - lo = 1);
-        e.maps <- e.maps + 1;
-        m.regions <- m.regions @ [ e ];
-        true
-    | None when List.exists (fun e -> lo < e.hi && e.lo < hi) m.entries ->
-        cover "a range that shares only some of a mapped one's pages" true;
-        false
-    | None ->
-        let e = { lo; hi; maps = 1 } in
-        m.entries <- e :: m.entries;
-        m.regions <- m.regions @ [ e ];
-        true
+    let same (lo', hi') = lo = lo' && hi = hi' in
+    let inside (lo', hi') = lo' <= lo && hi <= hi' && not (same (lo', hi')) in
+    let partly (lo', hi') =
+      lo < hi' && lo' < hi && not (inside (lo', hi') || same (lo', hi'))
+    in
+    cover "a range of the same pages as a mapped one"
+      (List.exists same m.regions);
+    cover "a range inside a mapped one's pages" (List.exists inside m.regions);
+    cover "a range that shares only some of a mapped one's pages"
+      (List.exists partly m.regions);
+    m.regions <- m.regions @ [ (lo, hi) ];
+    true
 
   let free m i =
-    let e = List.nth m.regions i in
+    let lo, hi = List.nth m.regions i in
     m.regions <- List.filteri (fun j _ -> j <> i) m.regions;
-    e.maps <- e.maps - 1;
-    if e.maps = 0 then begin
-      cover "the last free of a range" true;
-      m.entries <- List.filter (fun e' -> e' != e) m.entries
-    end
+    cover "a free of pages another range still maps"
+      (List.exists (fun (lo', hi') -> lo < hi' && lo' < hi) m.regions)
 
   (* The system *)
 

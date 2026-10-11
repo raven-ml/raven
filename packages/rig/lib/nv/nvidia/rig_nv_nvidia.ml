@@ -5,8 +5,8 @@
 
 (* Any domain may call any function. A GPU's objects are made once, under
    [gpus_lock], and kept for the process, its registered channels and whether a
-   device of it is open under the same lock; the users of every range, and the
-   host ranges [map_host] maps, are kept under [ranges_lock].
+   device of it is open under the same lock; the users of every range are kept
+   under [ranges_lock].
 
    References:
    - NVIDIA's open-gpu-kernel-modules, releases 570.144, 580, 610 and 615:
@@ -408,12 +408,6 @@ let alloc g (kind : Rig_edge.memory) n =
 
 let ranges_lock = Mutex.create ()
 
-(* The host ranges, each with the host address of its first byte. A host
-   range covers whole pages, which unified memory requires of its bounds. The
-   GPUs address it from the low range: the host's own address may lie above
-   the 40 bits a semaphore takes. *)
-let ranges : (int * range) list ref = ref []
-
 (* Counts a region of [g] over [r], mapping [r] for [g] first if [g] has none:
    whether [g] maps it. Under [ranges_lock]. *)
 let take g r =
@@ -436,64 +430,49 @@ let give g r =
       r.users <- List.remove_assq g r.users;
       if r.users <> [] then fault (uvm_unmap g r.gpu_addr r.bytes)
       else begin
-        ranges := List.filter (fun (_, r') -> r' != r) !ranges;
         fault (uvm_free g.c r.gpu_addr r.bytes);
         free_object r.parent r.memory;
         Option.iter (fun a -> Rm.unmap a r.bytes) r.mapped;
         Va.free r.space r.gpu_addr r.bytes
       end
 
+(* Each call maps a range of its own, over the whole pages that hold the
+   memory, which unified memory requires of its bounds: two ranges may describe
+   the same pages. The GPUs address it from the low range, as the host's own
+   address may lie above the 40 bits a semaphore takes. *)
 let map_host g a n =
   let page = Rm.host_page () in
   let a0 = a land lnot (page - 1) in
-  let a1 = round_up (a + n) page in
-  let mem start r =
-    memory
-      {
-        va = r.gpu_addr + (a - start);
-        handle = r.memory;
-        host = Some a;
-        video = None;
-        range = r;
-      }
-  in
-  Mutex.protect ranges_lock @@ fun () ->
-  let inside (start, r) = start <= a0 && a1 <= start + r.bytes in
-  let overlaps (start, r) = a0 < start + r.bytes && start < a1 in
-  match List.find_opt inside !ranges with
-  | Some (start, r) -> if take g r then Some (mem start r) else None
-  | None when List.exists overlaps !ranges -> None
-  | None -> (
-      let size = a1 - a0 in
-      match fault (describe g a0 size) with
-      | None -> None
-      | Some h -> (
-          let placed =
-            with_addresses g.c.low ~align:page size @@ fun va ->
-            let* ok = uvm_map g va size h in
-            Ok (if ok then Some va else None)
+  let size = round_up (a + n) page - a0 in
+  match fault (describe g a0 size) with
+  | None -> None
+  | Some h -> (
+      let placed =
+        with_addresses g.c.low ~align:page size @@ fun va ->
+        let* ok = uvm_map g va size h in
+        Ok (if ok then Some va else None)
+      in
+      match placed with
+      | Ok (Some gpu_addr) ->
+          let range =
+            {
+              gpu_addr;
+              bytes = size;
+              memory = h;
+              parent = g;
+              space = g.c.low;
+              mapped = None;
+              users = [ (g, 1) ];
+            }
           in
-          match placed with
-          | Ok (Some gpu_addr) ->
-              let r =
-                {
-                  gpu_addr;
-                  bytes = size;
-                  memory = h;
-                  parent = g;
-                  space = g.c.low;
-                  mapped = None;
-                  users = [ (g, 1) ];
-                }
-              in
-              ranges := (a0, r) :: !ranges;
-              Some (mem a0 r)
-          | Ok None ->
-              free_object g h;
-              None
-          | Error e ->
-              free_object g h;
-              raise (Rig_nv.Fault e)))
+          let va = gpu_addr + (a - a0) in
+          Some (memory { va; handle = h; host = Some a; video = None; range })
+      | Ok None ->
+          free_object g h;
+          None
+      | Error e ->
+          free_object g h;
+          raise (Rig_nv.Fault e))
 
 (* Another GPU's video memory needs peer access, which may be refused; host
    memory needs none. A view counts in the range of the region it views. *)
