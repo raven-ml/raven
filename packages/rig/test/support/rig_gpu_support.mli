@@ -143,6 +143,10 @@ module type S = sig
       ({!release}). It skips the test if the machine has no such GPU, and fails
       it if the GPU does not open. *)
 
+  val open_as : (module Rig_edge.Driver with type t = gpu) -> t
+  (** [open_as m] is {!open_}, the device handed to rig under the driver [m],
+      such as [D] wrapped to declare other facts. *)
+
   val close : t -> unit
   (** [close t] is {!Rig.close}[ t.d]. *)
 

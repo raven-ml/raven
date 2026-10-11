@@ -135,6 +135,7 @@ module type S = sig
   val class_ : string
   val present : unit -> bool
   val open_ : unit -> t
+  val open_as : (module Rig_edge.Driver with type t = gpu) -> t
   val close : t -> unit
   val with_ : (t -> 'a) -> 'a
   val driver : unit -> gpu
@@ -176,7 +177,7 @@ module Make (G : Gpu) = struct
     prepare_open ();
     match G.open_ () with Ok g -> g | Error why -> failf "%s: %s" name why
 
-  let open_ () =
+  let open_as driver =
     prepare_open ();
     let raw = ref None in
     let make () =
@@ -186,11 +187,13 @@ module Make (G : Gpu) = struct
           g)
         (G.open_ ())
     in
-    match Rig.open_ { name; driver = (module G.D); make } with
+    match Rig.open_ { name; driver; make } with
     | Ok d ->
         opened := In_rig d;
         { d; g = Option.get !raw }
     | Error why -> failf "%s in rig: %s" name why
+
+  let open_ () = open_as (module G.D)
 
   let close t =
     Rig.close t.d;

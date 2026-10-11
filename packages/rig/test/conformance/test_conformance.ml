@@ -974,6 +974,43 @@ let loss (module G : Gpu) () =
       await "the word reached the failed value" (fun () ->
           Rig.signaled t.d >= v + 1)
 
+(* The hang bound the law's devices declare, at most. *)
+let hang_cap_ms = 2_000
+
+(* Work that keeps the word still past the device's hang bound loses the device
+   with the reason rig states. The GPU opens through its driver wrapped to
+   declare a bound of 2 s at most, where its facts bound hangs, and the work
+   would end 2 s past it: the word reaches its value once the driver's stop
+   ended the work or it ended, and the GPU opens again. AMD skips: a stop whose
+   preemption of the hung work fails makes amdgpu reset the GPU, which other
+   processes share. *)
+let hung (module G : Gpu) () =
+  if G.class_ = "AMD" then
+    skip ~reason:"a failed preemption of hung work resets the GPU" ();
+  let module Capped = struct
+    include G.D
+
+    let facts h =
+      let f = G.D.facts h in
+      { f with hang_ms = Option.map (Int.min hang_cap_ms) f.hang_ms }
+  end in
+  let t = G.open_as (module Capped) in
+  match (G.D.facts t.g).hang_ms with
+  | None ->
+      G.close t;
+      skip ~reason:"nothing bounds the device's hangs" ()
+  | Some _ ->
+      let ns = 2 * hang_cap_ms * 1_000_000 in
+      let p = submit t.d [ G.spin t ~ns ] ~uses:[] in
+      let why = strf "no progress for %d ms" hang_cap_ms in
+      let hung = function Rig.Lost (_, w) -> w = why | _ -> false in
+      raises_match ~msg:"the wait" hung (fun () -> Rig.Point.wait p);
+      equal (option string) ~msg:"the loss" (Some why) (Rig.lost t.d);
+      await "the word reached the hung value" (fun () ->
+          Rig.signaled t.d >= Rig.Point.value p);
+      G.close t;
+      G.with_ @@ fun t -> Rig.Point.wait (G.submit t [||])
+
 (* Waits *)
 
 (* A submission that waits for a producer's point runs no work before it: the
@@ -1346,6 +1383,8 @@ let laws (module G : Gpu) =
         "a failed fill loses the device with a reason, and the word reaches \
          its value"
         (loss g);
+      test "work past the hang bound loses the device, which opens again"
+        (hung g);
       test "work runs after a Polled device's point it waits for"
         (polled_waits g);
       test "work runs after another device's point it waits for"
