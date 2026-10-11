@@ -149,6 +149,40 @@ let test_budget_beside_loss () =
   equal ~msg:"frees" int 3
     (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
 
+(* A drain that returns collected memory to the driver of a device another
+   domain loses meanwhile: its first free waits at Polled's free gate while the
+   loss is recorded, and the device stops once that free returned. The drain's
+   allocation raises the loss, and each memory is freed once. *)
+let test_drain_beside_loss () =
+  let d, p = P.open_ "memory:drain-loss" in
+  let ats = List.map (fun _ -> dropped d (4 * kib)) [ 1; 2; 3 ] in
+  Rig.set_budget d 8;
+  Gc.full_major ();
+  Gc.full_major ();
+  P.gate_frees p;
+  let drainer =
+    Domain.spawn (fun () ->
+        match B.create d 8 with
+        | _ -> "returned"
+        | exception Rig.Lost (_, why) -> "lost: " ^ why)
+  in
+  Support.await "the drain's first free at the gate" (fun () ->
+      P.freers p = 1);
+  P.fail p;
+  (try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ());
+  let stops () = List.length (List.filter (( = ) "stop") (P.log p)) in
+  equal ~msg:"stops while the free waits" int 0 (stops ());
+  P.open_frees p;
+  equal ~msg:"the drain's allocation" string "lost: the submission failed"
+    (Domain.join drainer);
+  Gc.full_major ();
+  ignore (B.create Rig.host 8);
+  equal ~msg:"stops" int 1 (stops ());
+  equal ~msg:"the collected memory, freed once"
+    (list bool) [ true; true; true ] (List.map (freed p) ats);
+  equal ~msg:"frees" int 3
+    (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
+
 (* The host's out-of-memory ladder waits for a device whose work holds back
    host memory, and a fault that wait finds is that device's loss, never the
    allocation's: the host allocation raises Out_of_memory for itself. *)
@@ -700,6 +734,8 @@ let tests =
           "set_budget while another domain loses the device raises nothing \
            and returns its cache once"
           test_budget_beside_loss;
+        test "a drain beside a loss frees each memory once, then stops"
+          test_drain_beside_loss;
         test
           "the host's out-of-memory ladder raises a device's fault it finds as \
            that device's loss, never the allocation's"
