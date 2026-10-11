@@ -5,19 +5,29 @@
 
 (* Structures *)
 
-let set b (off, n) x =
-  match n with
-  | 1 -> Bytes.set_uint8 b off x
-  | 2 -> Bytes.set_uint16_le b off x
-  | 4 -> Bytes.set_int32_le b off (Int32.of_int x)
-  | _ -> Bytes.set_int64_le b off (Int64.of_int x)
+(* The field [(off, n)] read and written a byte at a time, little-endian,
+   through [byte] and [set_byte]. *)
+let read byte (off, n) =
+  let x = ref 0 in
+  for i = n - 1 downto 0 do
+    x := (!x lsl 8) lor byte (off + i)
+  done;
+  !x
 
-let get s (off, n) =
-  match n with
-  | 1 -> String.get_uint8 s off
-  | 2 -> String.get_uint16_le s off
-  | 4 -> Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
-  | _ -> Int64.to_int (String.get_int64_le s off)
+(* An arithmetic shift: a negative [x] is sign-extended to 64 bits. *)
+let write set_byte (off, n) x =
+  for i = 0 to n - 1 do
+    set_byte (off + i) ((x asr (8 * i)) land 0xff)
+  done
+
+let set b f x = write (Bytes.set_uint8 b) f x
+let get s f = read (String.get_uint8 s) f
+
+let pget (p : Rig_nv.params) f =
+  read (fun i -> Char.code (Bigarray.Array1.get p i)) f
+
+let pset (p : Rig_nv.params) f x =
+  write (fun i v -> Bigarray.Array1.set p i (Char.unsafe_chr v)) f x
 
 let at (base, _) (off, n) = (base + off, n)
 

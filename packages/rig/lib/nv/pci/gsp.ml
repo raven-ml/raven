@@ -295,19 +295,6 @@ let string_of_params (p : Rig_nv.params) =
 let blit_params s (p : Rig_nv.params) =
   String.iteri (fun i c -> Bigarray.Array1.set p i c) s
 
-(* The field [(off, n)] of the parameters [p], little-endian, read in place. *)
-let pget (p : Rig_nv.params) (off, n) =
-  let x = ref 0 in
-  for i = n - 1 downto 0 do
-    x := (!x lsl 8) lor Char.code (Bigarray.Array1.get p (off + i))
-  done;
-  !x
-
-let pset (p : Rig_nv.params) (off, n) x =
-  for i = 0 to n - 1 do
-    Bigarray.Array1.set p (off + i) (Char.chr ((x lsr (8 * i)) land 0xff))
-  done
-
 let params n =
   Bigarray.Array1.init Bigarray.char Bigarray.c_layout n (fun _ -> '\000')
 
