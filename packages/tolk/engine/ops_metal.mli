@@ -24,6 +24,8 @@
     buffer and its encoder pass between messages through volatile placeholders
     of the device tagged ["mtl_cb"] and ["mtl_enc"]. *)
 
+open Tolk
+
 (** {1:queues Command queues} *)
 
 val queues : host:string -> arch:string -> residency_set:bool -> Hcq2.queues

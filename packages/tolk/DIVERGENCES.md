@@ -67,18 +67,17 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `device.py`, `runtime/ops_*.py`.
 - **tolk:** `lib/device.ml` (the compiler half of `device.py`);
-  `lib/runtime/ops_metal.ml`, `ops_cuda.ml`, `ops_amd.ml` and `ops_nv.ml` (the
+  `engine/ops_metal.ml`, `ops_cuda.ml`, `ops_amd.ml` and `ops_nv.ml` (the
   IR half of each `ops_*.py`); `engine/tolk_engine.ml:56` (`device`) and
   the vendors `engine/metal.macos.ml`, `cuda.ml`, `amd.ml` and `nv.ml`;
   `lib/uop/ops.ml:229` (the type `param_arg`), `:3225` (`param_arg`), `:3253`
   (`new_buffer`).
-- **Differs:** tolk holds the compiler half: `Compiler`, the renderer
-  and compiler selection of `Compiled`, and the IR half of each `ops_*.py`
-  (queues, `pm_encode`, program data), all returning data. The lazy `Buffer`
-  and running a schedule are `tolk.engine`'s, which has no registry of
-  devices by name: its caller maps each name to a device; allocators,
-  programs, drivers and profile
-  events are nx.device's. So a node of the compiler holds no runtime state:
+- **Differs:** tolk holds the compiler half: `Compiler` and the renderer
+  and compiler selection of `Compiled`, returning data. The IR half of each
+  `ops_*.py` (queues, `pm_encode`, program data), which encodes over nodes,
+  the lazy `Buffer` and running a schedule are `tolk.engine`'s, which has no
+  registry of devices by name: its caller maps each name to a device;
+  allocators, programs, drivers and profile events are nx.device's. So a node of the compiler holds no runtime state:
   `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for the engine
   to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
   `_base_buffer_is_realized`, `from_buffer` and `_frompy`
@@ -89,8 +88,8 @@ the Exclusions of `README.md`.
 - **Pinned by:** for `Ops`: `Tolk.Ops › storage › new_buffer takes the
   next slot without one` and `Tolk.Ops › arguments › reprs.golden`, where
   a `BUFFER` prints and interns by its slot alone; for the queues: the
-  `recorded cases` of `Tolk.Ops_metal`, `Tolk.Ops_cuda`,
-  `Tolk.Ops_amd` and `Tolk.Ops_nv`, which encode each vendor's
+  `recorded cases` of `Tolk_engine.Ops_metal`, `Tolk_engine.Ops_cuda`,
+  `Tolk_engine.Ops_amd` and `Tolk_engine.Ops_nv`, which encode each vendor's
   queues as nodes on a machine without its device; for the engine: the Engine
   suite (`test/engine/tolk_engine`): `device › a name the map does not
   hold is refused` and `refusals › link refuses a device the map does not
@@ -275,7 +274,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `runtime/support/hcq2.py:231,240,301`.
 - **tolk:** `lib/runtime/support/hcq2.ml:713` (`stamps`), `:638` (the
-  slots); `lib/runtime/ops_metal.ml` (`submit`), which writes a command's
+  slots); `engine/ops_metal.ml` (`submit`), which writes a command's
   command buffer over words 3 and 5 of the device's slots, where tinygrad's
   are 5 and 7 (`runtime/ops_metal.py:159-160`).
 - **Differs:** a device's slots are its queue signals, then two slots per call
@@ -1067,9 +1066,9 @@ the Exclusions of `README.md`.
   visits and the loop edges of `make_ctx`, `Queue.loop`, the copies per trip in
   `bufferize_cmdbuf`, the ranges of each group in `patch`, the moving offsets
   of `lower_call`, the halves of `sched_batches`, and the kernels not
-  compiled yet of `get_enqueue_devs`; `lib/runtime/ops_metal.ml`,
-  `lib/runtime/ops_cuda.ml`, `lib/runtime/ops_amd.ml` and
-  `lib/runtime/ops_nv.ml` (`loop`).
+  compiled yet of `get_enqueue_devs`; `engine/ops_metal.ml`,
+  `engine/ops_cuda.ml`, `engine/ops_amd.ml` and
+  `engine/ops_nv.ml` (`loop`).
 - **Differs:** an `END` of ranges around calls that are all enqueued, on
   devices of one kind, belongs to their batch. Each queue its calls run on
   loops over its commands of one trip, as `HWQueue.loop` does, and a nested
@@ -1178,7 +1177,7 @@ the Exclusions of `README.md`.
   the command buffer over a command's start stamp and `0` over its end
   stamp), `:275-285` (`synchronize` reads their times, then drains the
   autorelease pool that holds the command buffer).
-- **tolk:** `lib/runtime/ops_metal.ml` (`selectors`, and the stamps in
+- **tolk:** `engine/ops_metal.ml` (`selectors`, and the stamps in
   `submit`).
 - **Differs:** the host program sends the command buffer `retain` and writes
   what it returns over the start stamp. Before that it sends `release` to the
@@ -1228,7 +1227,7 @@ the Exclusions of `README.md`.
   placed at an address), `:38` (`CUDAQueue.extern`: the address of such a
   buffer), `:51` (a kernel's function) and `:64` (the host function that
   stamps a slot).
-- **tolk:** `lib/runtime/ops_cuda.ml` (`extern`).
+- **tolk:** `engine/ops_cuda.ml` (`extern`).
 - **Differs:** a kernel's `CUfunction` and the stamping host function reach
   the host program as words it loads, from placeholders of the device tagged
   `("function", lib, name)` and `"stamp"`, which the engine fills when it
@@ -1251,7 +1250,7 @@ the Exclusions of `README.md`.
 - **tinygrad:** `runtime/ops_amd.py:402` (`AMDComputeQueue.wait`), `:409-412`
   (`AMDComputeQueue.signal`), `:482-486` (`AMDSDMAQueue.wait`) and `:496-498`
   (`AMDSDMAQueue.signal`).
-- **tolk:** `lib/runtime/ops_amd.ml:74` (`is_signal_word`), `:379`
+- **tolk:** `engine/ops_amd.ml:74` (`is_signal_word`), `:379`
   (the compute queue's `wait`), `:395` (its `signal_mem`), `:677` (the copy
   queue's `wait`) and `:709` (its `signal`).
 - **Differs:** tinygrad's queues compare the low 32 bits of a 64-bit word,
@@ -1295,8 +1294,8 @@ the Exclusions of `README.md`.
   (`nv_build_program` makes a placeholder tagged `program` and stores the
   image into it at link, with a row for each relocation of the program's own
   address).
-- **tolk:** `lib/runtime/ops_amd.ml:153` (`amd_build_program`),
-  `lib/runtime/ops_nv.ml:340` (`build_program`); the engine's AMD and NV
+- **tolk:** `engine/ops_amd.ml:153` (`amd_build_program`),
+  `engine/ops_nv.ml:340` (`build_program`); the engine's AMD and NV
   modules.
 - **Differs:** the program's placeholder is tagged
   `("program", binary, name)`, and no link patch writes an image into it: the
@@ -1323,7 +1322,7 @@ the Exclusions of `README.md`.
   the host program writes a submission's packets from the ring's put
   position without looking at how far the engine has read, and the SDMA
   queue refuses only a command buffer larger than its ring.
-- **tolk:** `lib/runtime/ops_amd.ml:599` (the AQL queue's `submit`) and
+- **tolk:** `engine/ops_amd.ml:599` (the AQL queue's `submit`) and
   `:733` (the copy queue's).
 - **Differs:** a submission writes at most half of each ring. A copy
   queue's command buffer over a quarter of its ring, since zeroing the tail
@@ -1349,7 +1348,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `runtime/ops_nv.py:197-201` (`NVCopyQueue.semaphore` and
   `.signal`, a one-word copy-engine release of the value's low 32 bits).
-- **tolk:** `lib/runtime/ops_nv.ml` (`copy_signal`).
+- **tolk:** `engine/ops_nv.ml` (`copy_signal`).
 - **Differs:** the copy queue signals a value in two one-word releases: its low
   word into the signal word, then its high word into the next four bytes of
   the signal word when the low word is `0`, and into a word of its own, a
@@ -1450,7 +1449,7 @@ the Exclusions of `README.md`.
   packets on the host. A vendor's `submit` raises `Over_capacity` for a
   submission its queue cannot take, and the batch is split (D30): NV's when
   its command buffer has more words than a ring entry's 21-bit length field
-  holds (`lib/runtime/ops_nv.ml:404`, `submit_cmdbuf`), where tinygrad's
+  holds (`engine/ops_nv.ml:404`, `submit_cmdbuf`), where tinygrad's
   entry would carry the length's high bits into its other fields.
 - **Reason:** (b). NV's launch descriptors and constant buffers are regions
   (Ops_nv), so that a range's trips each get their own copy of them, as the
@@ -1547,7 +1546,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `runtime/ops_amd.py:61-67` (`dispatch_packet`), `:361-364`
   (`kernargs`).
-- **tolk:** `lib/runtime/ops_amd.ml:162` (`dispatch_packet`).
+- **tolk:** `engine/ops_amd.ml:162` (`dispatch_packet`).
 - **Differs:** tinygrad gives a known grid size as a Python integer, which the
   AQL queue turns into a 32-bit constant but the kernel arguments of the PM4
   queue put as they are among the sources of a `LINEAR`: encoding a kernel
@@ -1599,7 +1598,7 @@ the Exclusions of `README.md`.
   `shader_local_memory_high_size`), `:688-697`
   (`NVDevice._ensure_has_local_memory` grows the device's local memory when
   it builds a program).
-- **tolk:** `lib/runtime/ops_nv.ml:330` (`local_word`), `:352`
+- **tolk:** `engine/ops_nv.ml:330` (`local_word`), `:352`
   (`build_program`); `engine/nv.ml` (`local`).
 - **Differs:** a launch template's local memory size reads a 32-bit word,
   a placeholder of the device tagged `("nv_local", bytes)` for kernels that
@@ -2056,7 +2055,7 @@ the Exclusions of `README.md`.
   a run), `:1056-1068` (`collect_prof` hands that slot to its profile event,
   which `viz/serve.py:353` maps to the program, and pairs the event with the
   program's runs in order).
-- **tolk:** `lib/runtime/ops_amd.ml:547` (`start_run` writes the address of
+- **tolk:** `engine/ops_amd.ml:547` (`start_run` writes the address of
   the kernel descriptor, `getaddr lib + desc_offset`, and the GPU's clock
   before the kernel; `stop_run` the clock after it).
 - **Differs:** a run's entry is three words: the address of its kernel
@@ -2163,7 +2162,7 @@ stores through a pad.
 
 - **tinygrad:** `runtime/ops_nv.py:302` (`NVProgramData` writes a constant
   bank's bytes into the launch template's `constant_buffer_size_shifted4`).
-- **tolk:** `lib/runtime/ops_nv.ml:301` (`program_data`).
+- **tolk:** `engine/ops_nv.ml:301` (`program_data`).
 - **Differs:** a launch template states each constant bank's size rounded up
   to 16 bytes and shifted right by 4, as the field's name says, where
   tinygrad writes the bytes. The field holds 13 bits, so tinygrad refuses a
@@ -2648,7 +2647,7 @@ stores through a pad.
 - **tinygrad:** `runtime/ops_amd.py:248` (`sqtt_setup_exec` takes the
   marker's command id from `self.dev.sqtt_next_cmd_id`, a counter of the
   device for the life of the process), `:902` (the counter).
-- **tolk:** `lib/runtime/ops_amd.ml:581` (`commands`, a counter of the queue
+- **tolk:** `engine/ops_amd.ml:581` (`commands`, a counter of the queue
   being encoded) and `:584` (`trace_markers`).
 - **Differs:** the command id of a dispatch's RGP event marker counts the
   dispatches of its queue from 0, where tinygrad counts every dispatch the
@@ -2668,7 +2667,7 @@ stores through a pad.
   (`sqtt_start` gives `token_exclude` the bit 11 of
   `SQ_TT_TOKEN_EXCLUDE_PERF_SHIFT`, past the field's 11 bits on GFX11, which
   so sets `TTRACE_EXEC`).
-- **tolk:** `lib/runtime/ops_amd.ml:412` (`encode` cuts each value to its
+- **tolk:** `engine/ops_amd.ml:412` (`encode` cuts each value to its
   field, as `bits` does), `:698` (a GFX11 trace sets `ttrace_exec`).
 - **Differs:** a value wider than its field loses its high bits, and a GFX11
   trace sets `TTRACE_EXEC` by name where tinygrad sets it through the spilled
@@ -3212,7 +3211,7 @@ stores through a pad.
   (`CUDAQueue`, whose commands are calls of CUDA's driver).
 - **tolk:** `lib/runtime/support/hcq2.ml:427` (the type `submission`), `:1051`
   (`streamed`), `:1066` (`streamed_order`) and `:1093` (`finalize_batch`);
-  `lib/runtime/ops_cuda.ml:173`.
+  `engine/ops_cuda.ml:173`.
 - **Differs:** a vendor's queues say how its host program hands them their
   commands: all at once at their submission (`Buffered`: Metal, AMD, NV), or
   each as the host program makes it, the host waiting while a queue is full
@@ -3233,8 +3232,8 @@ stores through a pad.
   batch`, `› a copy of a kernel's output runs after it`, `› queues that wait
   for each other run as several batches` and `› a range whose queues wait for
   each other runs to the end`, on a model of streamed queues that hold two
-  commands (`Batches.run ~capacity`); `Tolk.Ops_cuda`'s `execution › kernels
-  after a copy into the GPU that they read all run` on a GPU.
+  commands (`Batches.run ~capacity`); `Tolk_engine.Ops_cuda`'s `execution ›
+  kernels after a copy into the GPU that they read all run` on a GPU.
 
 ## D108. On the host, a load a reduce reads fills the lanes by 2
 
@@ -3353,7 +3352,7 @@ stores through a pad.
   `WAIT_REG_MEM` that writes every bit of the bus interface's
   `GPU_HDP_FLUSH_REQ` and waits until `GPU_HDP_FLUSH_DONE` holds them all,
   then `acquire_mem`).
-- **tolk:** `lib/runtime/ops_amd.ml:388` (`memory_barrier`, `acquire_mem`
+- **tolk:** `engine/ops_amd.ml:388` (`memory_barrier`, `acquire_mem`
   alone) and `:318` (`wait_reg_mem`, which no longer writes a register
   before its wait); `engine/amd.ml:144` (`queues`, whose submission hook
   flushes the host data path from the host before each host program).
@@ -3616,7 +3615,7 @@ stores through a pad.
   `.nv.constantN*` section as a bank, and the whole image as code from
   offset 0 when the cubin has no `.text.<name>`) and `:315`
   (`nv_build_program` caches a program by its binary alone).
-- **tolk:** `lib/runtime/ops_nv.ml:39` (`program_data`) and `:117`
+- **tolk:** `engine/ops_nv.ml:39` (`program_data`) and `:117`
   (`build_program`), through `Nx_nv_cubin.kernel`.
 - **Differs:** a launch reads the attributes of its kernel's function, by the
   symbol each names, and the banks `.nv.constantN` and
@@ -3640,7 +3639,7 @@ stores through a pad.
 - **tinygrad:** `runtime/ops_amd.py:404-407` (`AMDComputeQueue.timestamp`, a
   `RELEASE_MEM` of the GPU's clock on the end-of-pipe event
   `CACHE_FLUSH_AND_INV_TS_EVENT`).
-- **tolk:** `lib/runtime/ops_amd.ml:638` (`clock_into`, through
+- **tolk:** `engine/ops_amd.ml:638` (`clock_into`, through
   `Nx_amd_packet.Pm4.copy_data`), used by `:718` (the compute queue's
   `timestamp`) and by the counted runs' times of D66 (`:655`, `:669`).
 - **Differs:** the compute queue writes the GPU's clock with a `COPY_DATA`
@@ -3667,7 +3666,7 @@ stores through a pad.
 
 - **tinygrad:** `runtime/ops_amd.py:545-555` (`amd_build_program`: the
   descriptor at the start of `.rodata`, relocated by its own loop).
-- **tolk:** `lib/runtime/ops_amd.ml:163` (`program_data`).
+- **tolk:** `engine/ops_amd.ml:163` (`program_data`).
 - **Differs:** tolk reads the code object through `nx.amd.code_object`,
   which nx's AMD loader reads too: the descriptor is the symbol `name.kd` of
   the code object's one kernel, and a code object of several kernels is
@@ -3675,8 +3674,8 @@ stores through a pad.
   descriptor at the start of `.rodata`, so both read the same bytes.
 - **Reason:** (b), `nx.amd.device`'s loader, whose kernel descriptor parsing
   is the same layout, read once.
-- **Pinned by:** the `recorded cases` of `Tolk.Ops_amd`, whose fixtures hold
-  one kernel each; `nx.amd.code_object`'s suite for the layout.
+- **Pinned by:** the `recorded cases` of `Tolk_engine.Ops_amd`, whose fixtures
+  hold one kernel each; `nx.amd.code_object`'s suite for the layout.
 
 ## D121. AMD's packet layouts are nx.amd.packet's
 
@@ -3685,7 +3684,7 @@ stores through a pad.
   `:366-399` (`exec`'s dispatch), `:430-443` (the AQL indirect buffer) and
   `:470-500` (`AMDSDMAQueue`'s packets); the PM4, SDMA, HSA and register
   constants of `runtime/autogen/am` and `runtime/autogen/hsa.py`.
-- **tolk:** `lib/runtime/ops_amd.ml:71` (`term`, `lower`), `:256`
+- **tolk:** `engine/ops_amd.ml:71` (`term`, `lower`), `:256`
   (`compute_queue`) and `:944` (`copy_queue`).
 - **Differs:** every packet's layout, the GC registers it writes and their
   addresses, the scratch ring's `COMPUTE_TMPRING_SIZE`, and the constants they
@@ -3716,9 +3715,9 @@ stores through a pad.
   patches the count's bits in place.
 - **Reason:** (b), `nx.amd.device`'s SDMA queue and KIQ, whose packets are
   the same layouts, defined once.
-- **Pinned by:** the `recorded cases` of `Tolk.Ops_amd`; `Tolk.Ops_amd ›
-  packets`, a law per packet that tolk's encoding, evaluated, is
-  `Nx_amd_packet.dwords`'s; `nx.amd.packet`'s suite for the words.
+- **Pinned by:** the `recorded cases` of `Tolk_engine.Ops_amd`;
+  `Tolk_engine.Ops_amd › packets`, a law per packet that tolk's encoding,
+  evaluated, is `Nx_amd_packet.dwords`'s; `nx.amd.packet`'s suite for the words.
 
 ## D122. A stored value keeps its bounds
 
@@ -3819,7 +3818,7 @@ stores through a pad.
 
 - **tinygrad:** `runtime/ops_nv.py:73` (`QMD.write` patches a value as the
   widest unsigned word within its field).
-- **tolk:** `lib/runtime/nv_packet.ml:53` (`structure`), over
+- **tolk:** `engine/nv_packet.ml:53` (`structure`), over
   `Nx_nv_packet.hole`, whose holes are their fields' bit ranges; the golden
   generator, `test/gen/runtime/ops_nv.py` (`write`, `holes`).
 - **Differs:** a field a value fills is a hole of the narrowest unsigned word
@@ -4099,7 +4098,7 @@ stores through a pad.
 - **tinygrad:** `runtime/ops_metal.py:85-86` (`HANDLES`, `SELECTORS`),
   `:162` (`MetalQueue.submit`: the last command buffer encodes
   `encodeSignalEvent:value:` on the device's event).
-- **tolk:** `lib/runtime/ops_metal.ml` (`handles`, `selectors`, and the
+- **tolk:** `engine/ops_metal.ml` (`handles`, `selectors`, and the
   signal in `submit`); `engine/metal.macos.ml` (`sels`).
 - **Differs:** the host program sends every command buffer to the device's
   signaler (`Nx_metal_device.signaler`), `[signaler signal:cb value:v]`, before

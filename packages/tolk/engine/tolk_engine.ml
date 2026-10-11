@@ -1506,3 +1506,11 @@ let link_call ~devices call =
   link ~devices
     (Hcq2.compile_linear ~profile:Stamped ~devices:compiler
        (Ops.v Op.Linear ~src:[ call ]))
+
+(* Command queues *)
+
+module Ops_metal = Ops_metal
+module Ops_cuda = Ops_cuda
+module Ops_amd = Ops_amd
+module Ops_nv = Ops_nv
+module Nv_packet = Nv_packet

@@ -22,6 +22,8 @@
     words of the device tagged [("function", lib, name)] and ["stamp"], in
     memory the host reads, which the engine fills when it links the batch. *)
 
+open Tolk
+
 val queues : host:string -> reaches:(string -> bool) -> Hcq2.queues
 (** [queues ~host ~reaches] is the command queues of a CUDA device, whose
     batches are submitted by host programs of [host], and which addresses the

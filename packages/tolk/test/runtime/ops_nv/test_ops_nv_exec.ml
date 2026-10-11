@@ -3,6 +3,7 @@
 
 open Windtrap
 open Tolk
+module Ops_nv = Tolk_engine.Ops_nv
 module B = Nx_device.Buffer
 
 (* The first NVIDIA GPU through the kernel driver, or a skip where there is
@@ -221,4 +222,4 @@ let execution =
         (trips ~k:2 3);
     ]
 
-let () = exit (run "Tolk.Ops_nv execution" [ execution ])
+let () = exit (run "Tolk_engine.Ops_nv execution" [ execution ])

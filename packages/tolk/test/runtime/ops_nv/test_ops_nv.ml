@@ -1,9 +1,10 @@
-(* Tests of Tolk.Ops_nv: the batches of NV devices, their command words and host
-   programs, are tinygrad's, as the generator changes tinygrad where tolk
-   departs from it. *)
+(* Tests of Tolk_engine.Ops_nv: the batches of NV devices, their command words
+   and host programs, are tinygrad's, as the generator changes tinygrad where
+   tolk departs from it. *)
 
 open Windtrap
 open Tolk
+module Ops_nv = Tolk_engine.Ops_nv
 
 let plain f = Setting.context [ B (Setting.no_color, true) ] f
 
@@ -921,5 +922,5 @@ let loops =
 
 let () =
   exit
-    (run "Tolk.Ops_nv"
+    (run "Tolk_engine.Ops_nv"
        [ recorded; words; chains; refusals; storages; carry; loops ])

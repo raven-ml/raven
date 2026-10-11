@@ -5,6 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
+open Tolk
 open Ops
 
 let u64 n = const ~dtype:Dtype.Uint64 (`Int (Bigint.of_int64_unsigned n))

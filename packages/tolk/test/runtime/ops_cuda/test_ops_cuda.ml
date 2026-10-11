@@ -1,5 +1,6 @@
 open Windtrap
 open Tolk
+module Ops_cuda = Tolk_engine.Ops_cuda
 
 let plain f = Setting.context [ B (Setting.no_color, true) ] f
 
@@ -213,4 +214,4 @@ let loops =
             [ Hcq2.Unstamped; Stamped ]);
     ]
 
-let () = exit (run "Tolk.Ops_cuda" [ recorded; function_words; loops ])
+let () = exit (run "Tolk_engine.Ops_cuda" [ recorded; function_words; loops ])

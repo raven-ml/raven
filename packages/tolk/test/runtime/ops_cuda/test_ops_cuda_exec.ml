@@ -1,5 +1,6 @@
 open Windtrap
 open Tolk
+module Ops_cuda = Tolk_engine.Ops_cuda
 module B = Nx_device.Buffer
 
 (* The CUDA devices, and a skip where there are too few. *)
@@ -385,4 +386,4 @@ let execution =
             (floats_of (List.hd (List.assq dst bound))));
     ]
 
-let () = exit (run "Tolk.Ops_cuda (execution)" [ execution ])
+let () = exit (run "Tolk_engine.Ops_cuda (execution)" [ execution ])

@@ -40,6 +40,8 @@
     until the low 32 bits are at least the value, and a signal of one writes the
     low 32 bits. *)
 
+open Tolk
+
 (** {1:gpus GPUs} *)
 
 type counter = {

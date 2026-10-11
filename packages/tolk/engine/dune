@@ -1,5 +1,5 @@
 ; The engine runs the compiler's schedules on nx.device: the only part of tolk
-; that opens a device.
+; that opens a device, and the one that encodes each vendor's command queues.
 
 (library
  (name tolk_engine)
@@ -10,7 +10,11 @@
   nx.dtype
   nx.cuda.device
   nx.amd.device
+  nx.amd.packet
+  nx.amd.code_object
   nx.nv.device
+  nx.nv.packet
+  nx.nv.cubin
   nx.metal.device)
  (instrumentation
   (backend ppx_windtrap.coverage))

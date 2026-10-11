@@ -1,5 +1,6 @@
 open Windtrap
 open Tolk
+module Ops_amd = Tolk_engine.Ops_amd
 module B = Nx_device.Buffer
 
 (* The first AMD GPU through the kernel driver, or a skip where there is
@@ -398,4 +399,4 @@ let execution =
             (floats_of (List.hd (List.assq dst bound))));
     ]
 
-let () = exit (run "Tolk.Ops_amd execution" [ execution ])
+let () = exit (run "Tolk_engine.Ops_amd execution" [ execution ])

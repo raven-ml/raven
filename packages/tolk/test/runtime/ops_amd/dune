@@ -2,7 +2,13 @@
  (name test_ops_amd)
  (modules test_ops_amd)
  (package tolk)
- (libraries windtrap tolk tolk_test nx.amd.packet nx.amd.code_object)
+ (libraries
+  windtrap
+  tolk
+  tolk.engine
+  tolk_test
+  nx.amd.packet
+  nx.amd.code_object)
  (deps
   (glob_files *.golden)))
 

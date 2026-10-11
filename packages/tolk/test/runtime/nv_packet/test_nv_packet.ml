@@ -1,9 +1,11 @@
-(* Tests of Tolk.Nv_packet: NVIDIA's packets interpreted on a batch's nodes,
-   then evaluated at integers, are the packets interpreted on those integers.
-   nx.nv.device interprets them on integers; tolk's queues on nodes. *)
+(* Tests of Tolk_engine.Nv_packet: NVIDIA's packets interpreted on a batch's
+   nodes, then evaluated at integers, are the packets interpreted on those
+   integers. nx.nv.device interprets them on integers; tolk's queues on nodes.
+*)
 
 open Windtrap
 open Tolk
+module Nv_packet = Tolk_engine.Nv_packet
 module P = Nx_nv_packet
 
 (* Each command of the packet library, its values as integers. *)
@@ -296,7 +298,7 @@ let launch_law l =
 
 let () =
   exit
-    (run "Tolk.Nv_packet"
+    (run "Tolk_engine.Nv_packet"
        [
          group "encoded over nodes, evaluated at integers"
            [

@@ -82,8 +82,8 @@ val device : (string * Nx_device.t) list -> string -> device
 (** [device devices name] is the device [devices] maps [name] to, with its
     {!target}, or, for the disk, which runs no program, the target of the device
     ["DISK"]. A Metal, CUDA, AMD or NV device has the command queues of its
-    vendor ({!Tolk.Ops_metal}, {!Tolk.Ops_cuda}, {!Tolk.Ops_amd},
-    {!Tolk.Ops_nv}), submitted by host programs of the host of its machine
+    vendor ({!Ops_metal}, {!Ops_cuda}, {!Ops_amd},
+    {!Ops_nv}), submitted by host programs of the host of its machine
     ({!Nx_device.host_of}), under the name [devices] gives it, or under its own
     ({!Nx_device.name}) when [devices] gives it none, and gives the storage its
     commands name: Metal's objects, selectors, indirect command buffers and
@@ -303,3 +303,13 @@ val time :
     [s] is lost during the run, and [Invalid_argument] if a kernel of [s]
     records no span in the profile: one of a batch compiled without a profile,
     or one under a range of no trips. *)
+
+(** {1:queues Command queues}
+
+    Each vendor's command queues, as batches encode them. *)
+
+module Ops_metal = Ops_metal
+module Ops_cuda = Ops_cuda
+module Ops_amd = Ops_amd
+module Ops_nv = Ops_nv
+module Nv_packet = Nv_packet

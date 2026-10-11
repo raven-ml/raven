@@ -1,5 +1,6 @@
 open Windtrap
 open Tolk
+module Ops_metal = Tolk_engine.Ops_metal
 module B = Nx_device.Buffer
 
 (* The Metal device, or a skip where there is none. *)
@@ -469,4 +470,5 @@ let execution =
 
 let () =
   exit
-    (run "Tolk.Ops_metal (execution)" [ execution; group "phase" phases ])
+    (run "Tolk_engine.Ops_metal (execution)"
+       [ execution; group "phase" phases ])

@@ -5,6 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
+open Tolk
 open Ops
 open Shape
 open Call

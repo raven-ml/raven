@@ -1,5 +1,6 @@
 open Windtrap
 open Tolk
+module Ops_amd = Tolk_engine.Ops_amd
 
 let plain f = Setting.context [ B (Setting.no_color, true) ] f
 
@@ -1199,7 +1200,7 @@ let waves_keyed =
 
 let () =
   exit
-    (run "Tolk.Ops_amd"
+    (run "Tolk_engine.Ops_amd"
        [
          recorded;
          recorded_words;

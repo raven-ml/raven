@@ -37,6 +37,8 @@
     word being written thus never reads above its old value, and a high word
     written late never takes the value back. *)
 
+open Tolk
+
 (** {1:queues Command queues} *)
 
 type channel = {

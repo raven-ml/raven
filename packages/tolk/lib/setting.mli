@@ -320,7 +320,8 @@ val aligned : bool t
 
 val waves_per_sh : int t
 (** [waves_per_sh] is the most waves an AMD dispatch runs on each shader array
-    ({!Ops_amd}), from [WAVES_PER_SH]. [0] sets no limit. Defaults to [0]. *)
+    ([Tolk_engine.Ops_amd]), from [WAVES_PER_SH]. [0] sets no limit. Defaults
+    to [0]. *)
 
 val beam_padto : bool t
 (** [beam_padto] adds pads of axes to the candidates of the beam search

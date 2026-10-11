@@ -12,6 +12,8 @@
     interprets the packets on nodes: their terms, and how they become a queue's
     words and regions. *)
 
+open Tolk
+
 val term : Ops.t Nx_nv_packet.term -> Ops.t
 (** [term t] is [t] computed on nodes, in its order: an [Add (t, n)] is
     [Ops.add (term t) c], with [c] the [Uint64] constant [n] as an unsigned

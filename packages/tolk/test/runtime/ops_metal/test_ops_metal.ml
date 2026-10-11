@@ -1,5 +1,6 @@
 open Windtrap
 open Tolk
+module Ops_metal = Tolk_engine.Ops_metal
 
 let plain f = Setting.context [ B (Setting.no_color, true) ] f
 
@@ -230,4 +231,4 @@ let loops =
             (List.map (fun (c : Ops_metal.command) -> c.offset) cmds));
     ]
 
-let () = exit (run "Tolk.Ops_metal" [ recorded; loops; sizes ])
+let () = exit (run "Tolk_engine.Ops_metal" [ recorded; loops; sizes ])

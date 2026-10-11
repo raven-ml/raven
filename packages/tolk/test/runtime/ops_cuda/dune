@@ -2,7 +2,7 @@
  (name test_ops_cuda)
  (modules test_ops_cuda)
  (package tolk)
- (libraries windtrap tolk tolk_test)
+ (libraries windtrap tolk tolk.engine tolk_test)
  (deps
   (glob_files *.golden)))
 
