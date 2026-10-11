@@ -240,9 +240,9 @@ module Crc32 : sig
   *)
 
   val string : ?crc:t -> ?first:int -> ?length:int -> string -> t
-  (** [string ~crc ~first ~length s] is like {!bigbytes} for the [length] bytes
-      of [s] starting at [first]. [first] defaults to [0] and [length] to the
-      bytes from [first] to the end of [s].
+  (** [string ~crc ~first ~length s] is like {!val-bigbytes} for the [length]
+      bytes of [s] starting at [first]. [first] defaults to [0] and [length] to
+      the bytes from [first] to the end of [s].
 
       Raises [Invalid_argument] if [first] and [length] are not a range of [s].
   *)

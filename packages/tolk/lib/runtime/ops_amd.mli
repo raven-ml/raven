@@ -21,8 +21,9 @@
     A batch's host program appends each queue's packets to its ring at its
     position, stores the new position, and rings the doorbell. It reads and
     writes the rings and words through placeholders of the device that the
-    engine binds to the device's queues ({!storage}). The packets of a program
-    name its code object and its scratch memory through placeholders too.
+    engine binds to the device's queues ({!type-storage}). The packets of a
+    program name its code object and its scratch memory through placeholders
+    too.
 
     {b Signal words.} A device's signal word ({!Hcq2.signal_word}) holds 64-bit
     values, and a queue compares 32-bit words. A queue waits on a device's

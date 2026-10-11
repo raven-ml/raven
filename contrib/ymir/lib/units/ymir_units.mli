@@ -174,7 +174,7 @@ module Unit : sig
       + [pi^r] when π's exponent [r] is not 0.
       + Each prime whose exponent is not an integer or that is at least 2{^ 24},
         ascending.
-      + Each symbol, in the order of {!terms}. A scope is written in braces,
+      + Each symbol, in the order of {!val-terms}. A scope is written in braces,
         with every byte outside [[A-Za-z0-9._~:#/@+-]] written [%XX] in
         upper-case hexadecimal.
 
@@ -660,7 +660,7 @@ module Quantity : sig
   (** {1:fmt Formatting} *)
 
   val pp : Format.formatter -> ('a, 'b) Nx.t t -> unit
-  (** [pp ppf q] formats [q]'s payload as {!Nx.pp} does, then its unit's
+  (** [pp ppf q] formats [q]'s payload as {!Nx.val-pp} does, then its unit's
       canonical text. *)
 end
 

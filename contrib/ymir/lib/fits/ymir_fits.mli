@@ -76,10 +76,11 @@ module Fits : sig
       hierarchical keyword is the tokens between ["HIERARCH "] and the first [=]
       of a record, joined by single spaces: two or more tokens, or one longer
       than 8 bytes, each of bytes 33–126 other than [=], in the case written, as
-      in ["ESO DET DIT"]. Keywords compare exactly. {!get}, {!find}, {!set} and
-      {!remove} raise [Invalid_argument] on a name of neither form, such as
-      ["naxis"], and on [COMMENT], [HISTORY], blank and [CONTINUE], which
-      {!commentary} reads.
+      in ["ESO DET DIT"]. Keywords compare exactly. {!Header.get},
+      {!Header.find}, {!Header.set} and {!Header.remove} raise
+      [Invalid_argument] on a name of neither form, such as ["naxis"], and on
+      [COMMENT], [HISTORY], blank and [CONTINUE], which {!Header.commentary}
+      reads.
 
       {b Duplicates.} A keyword repeated with different values is indeterminate
       (§4.1.2.3): {!get} returns the value when every card agrees, and is an
@@ -291,16 +292,16 @@ module Fits : sig
       [BSCALE] or [BZERO] makes the image {e scaled}: its element is [BITPIX]'s
       own format.
 
-      {b Values.} {!raw} returns stored numbers in any dtype that holds every
-      value of the element exactly; {!values} returns physical values in a float
-      dtype. On a scaled image the physical value of a stored [s] is
-      [BZERO + BSCALE × s] computed as [Nx.fma bscale s bzero] in float64,
-      [BSCALE] and [BZERO] the float64s nearest their text, then cast to the
-      dtype once.
+      {b Values.} {!Image.raw} returns stored numbers in any dtype that holds
+      every value of the element exactly; {!Image.values} returns physical
+      values in a float dtype. On a scaled image the physical value of a stored
+      [s] is [BZERO + BSCALE × s] computed as [Nx.fma bscale s bzero] in
+      float64, [BSCALE] and [BZERO] the float64s nearest their text, then cast
+      to the dtype once.
 
       {b Undefined pixels.} [BLANK] names a stored value of an integer [BITPIX],
-      and NaN is undefined in a float image. {!values} returns NaN there and
-      {!raw} the stored number.
+      and NaN is undefined in a float image. {!Image.values} returns NaN there
+      and {!Image.raw} the stored number.
 
       {b Windows.} [window] is a [(start, stop)] range per axis, in the tensor's
       axis order, as [Nx.slice] takes [R (start, stop)]. A read copies only the
@@ -383,7 +384,7 @@ module Fits : sig
         losslessly.
 
         Raises [Invalid_argument] if [q] is not positive and finite, if [t] is
-        not float32 or float64, or as {!hdu} does. *)
+        not float32 or float64, or as {!val-hdu} does. *)
   end
 
   (** {1:tables Tables} *)
@@ -396,16 +397,17 @@ module Fits : sig
       binary tables are written.
 
       {b Columns.} TFORMn gives the element (L, X, A, B, I, J, K, E, D, C, M)
-      and the repeat; [rPT] and [rQT] make a {!Lists} column. TDIMn shapes the
-      cell, reversed into C order as NAXISn is; its product is at most the
-      repeat, the cell being the repeat's first product elements. TZEROn and
-      TSCALn follow the image rules: the unsigned offsets are types, anything
-      else makes the column scaled. A column read by name needs a unique TTYPEn.
+      and the repeat; [rPT] and [rQT] make a {!Table.layout.Lists} column. TDIMn
+      shapes the cell, reversed into C order as NAXISn is; its product is at
+      most the repeat, the cell being the repeat's first product elements.
+      TZEROn and TSCALn follow the image rules: the unsigned offsets are types,
+      anything else makes the column scaled. A column read by name needs a
+      unique TTYPEn.
 
       {b Undefined elements.} An integer element equal to TNULLn, a NaN float or
       complex part, and a logical byte other than [T] or [F] are undefined.
-      {!raw} returns the stored marker, NaN or [false] there, {!values} NaN, and
-      {!validity} says which.
+      {!Table.raw} returns the stored marker, NaN or [false] there,
+      {!Table.values} NaN, and {!Table.validity} says which.
 
       {b Text.} An A cell's text is its bytes up to the first NUL with trailing
       spaces dropped. A text grid reads as one list per string.
@@ -422,8 +424,8 @@ module Fits : sig
       decimals. A field equal to TNULLn padded to w is undefined, and a blank
       numeric field is 0. *)
   module Table : sig
-    (** The type for how a column reads: {!read} gives the {!data} case of the
-        same name. *)
+    (** The type for how a column reads: {!read} gives the {!type-data} case of
+        the same name. *)
     type layout =
       | Array of int array
           (** a fixed cell of this shape, C order; [[||]] a scalar *)

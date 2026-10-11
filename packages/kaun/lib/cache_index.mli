@@ -69,7 +69,7 @@
       selection ({!select}) this holds per chosen column, and a column the token
       did not choose is not read.
     + {b Values vary, shapes do not.} Positions and tables, the tables of blocks
-      included, are tensors: under {!Rune.jit} they are inputs of the step, and
+      included, are tensors: under [Rune.jit] they are inputs of the step, and
       one compiled program serves every position and every allocation. *)
 
 type t
@@ -299,7 +299,7 @@ val extend :
     On a whole index [seen] is [values], the values of the tokens that close
     each block under {!val-every}, or the chosen ones under a selection, and
     [pool'] is [pool]. Which case applies depends on how [index] was built and
-    on no tensor's value, so it holds under {!Rune.jit}.
+    on no tensor's value, so it holds under [Rune.jit].
 
     Costs are in the call's tokens and in [context], never in [slots], but for
     one limit: compiled, the write stores each token's row on its own, up to 16

@@ -39,8 +39,8 @@ val pm_commit_weak : (unit, Ops.t) Ops.Pattern_matcher.t
     - a broadcastable node ({!Op.Set.broadcastable}) with a weak source, whose
       sources' least upper type [dt] is committed, converts its weak sources to
       [dt]. A weak constant stays a weak literal, its value converted to [dt]
-      ({!Dtype.const}), when the node's type does not depend on it: the other
-      sources already derive a committed type for the node;
+      ({!Dtype.val-const}), when the node's type does not depend on it: the
+      other sources already derive a committed type for the node;
     - a {!Op.Store} of a weak value converts it to the destination's type;
     - a cast to a committed type [dt] over a weak arithmetic node [u] of [dt]'s
       kind commits [u]'s weak sources at the least upper type of [dt], [u]'s

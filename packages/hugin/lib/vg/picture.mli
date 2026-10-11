@@ -9,7 +9,7 @@
     {!fill} paints the area of a path, {!stroke} its outline, {!glyphs} a glyph
     run and {!image} an image. Its nodes compose: {!group} paints pictures one
     over another, {!clip}, {!transform} and {!opacity} cut, map and fade a
-    picture, {!stamp} paints one at many points, and {!tag} records what a
+    picture, {!stamp} paints one at many points, and {!val-tag} records what a
     picture draws for the tools that read the output.
     {!Hugin_vg.Renderable.v} puts a picture on a page of a physical size,
     and renderers draw renderables.
@@ -230,7 +230,7 @@ val opacity : float -> t -> t
     own, over a transparent backdrop, and the result is composited with its
     alpha multiplied by [a]. This is {e group opacity}: where pictures of [p]
     overlap, the earlier do not show through the later. [opacity 1. p] is [p].
-    [opacity 0. p] paints nothing and keeps the {!bounds} and tags of [p].
+    [opacity 0. p] paints nothing and keeps the {!val-bounds} and tags of [p].
 
     Raises [Invalid_argument] if [a] is not in \[[0];[1]\]. *)
 

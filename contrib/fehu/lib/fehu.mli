@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** {0 Fehu} Reinforcement learning environments and utilities.
+(** Reinforcement learning environments and utilities.
 
     {1 Core}
     {!modules: Value Info Space Env}

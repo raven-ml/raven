@@ -18,9 +18,10 @@ module Random_walk : sig
       is [- |position|]. Episodes terminate when the agent reaches a boundary or
       after 200 steps.
 
-      {b Observation}: {!Fehu.Space.Box} of shape [[1]] in \[[-10.0]; [10.0]\].
+      {b Observation}: {!Fehu.Space.module-Box} of shape [[1]] in \[[-10.0];
+      [10.0]\].
 
-      {b Actions}: {!Fehu.Space.Discrete} 2 -- 0 = left, 1 = right.
+      {b Actions}: {!Fehu.Space.module-Discrete} 2 -- 0 = left, 1 = right.
 
       {b Render modes}: [ansi]. *)
 
@@ -41,10 +42,11 @@ module Cartpole : sig
       while the pole stays up. The episode terminates when the pole exceeds
       +/-12 degrees or the cart leaves +/-2.4, and truncates at 500 steps.
 
-      {b Observation}: {!Fehu.Space.Box} of shape [[4]] -- [x], [x_dot],
+      {b Observation}: {!Fehu.Space.module-Box} of shape [[4]] -- [x], [x_dot],
       [theta], [theta_dot].
 
-      {b Actions}: {!Fehu.Space.Discrete} 2 -- 0 = push left, 1 = push right.
+      {b Actions}: {!Fehu.Space.module-Discrete} 2 -- 0 = push left, 1 = push
+      right.
 
       {b Render modes}: [ansi]. *)
 
@@ -64,10 +66,11 @@ module Grid_world : sig
       obstacle at [(2, 2)] blocks movement. Reward is [+10.0] on reaching the
       goal, [-1.0] otherwise. Truncates at 200 steps.
 
-      {b Observation}: {!Fehu.Space.Multi_discrete} [[5; 5]] -- [(row, col)].
+      {b Observation}: {!Fehu.Space.module-Multi_discrete} [[5; 5]] --
+      [(row, col)].
 
-      {b Actions}: {!Fehu.Space.Discrete} 4 -- 0 = up, 1 = down, 2 = left, 3 =
-      right.
+      {b Actions}: {!Fehu.Space.module-Discrete} 4 -- 0 = up, 1 = down, 2 =
+      left, 3 = right.
 
       {b Render modes}: [ansi], [rgb_array]. *)
 
@@ -89,11 +92,11 @@ module Mountain_car : sig
       reaches position >= 0.5 with non-negative velocity, and truncates at 200
       steps.
 
-      {b Observation}: {!Fehu.Space.Box} of shape [[2]] -- [position],
+      {b Observation}: {!Fehu.Space.module-Box} of shape [[2]] -- [position],
       [velocity].
 
-      {b Actions}: {!Fehu.Space.Discrete} 3 -- 0 = push left, 1 = coast, 2 =
-      push right.
+      {b Actions}: {!Fehu.Space.module-Discrete} 3 -- 0 = push left, 1 = coast,
+      2 = push right.
 
       {b Render modes}: [ansi]. *)
 

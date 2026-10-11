@@ -25,7 +25,7 @@ module type Ptree = sig
         {!iso} and {!field}. Transformations, optimisers and saving take a
         {!type-t}.
       + Map, zip and fold its tensors with {!map}, {!map2} and {!fold}, and test
-        its walk with {!visits}.
+        its walk with {!val-visits}.
       + Combine its float tensors as one vector with {!dot}, {!norm}, {!scale}
         and {!axpy}.
       + Change the payload's type with {!cast} and {!Payload}, which take the
@@ -54,7 +54,7 @@ module type Ptree = sig
       ]}
 
       See doc/06-structures.md for writing a structure, masks by path, payload
-      maps and testing a structure with {!visits}. *)
+      maps and testing a structure with {!val-visits}. *)
 
   type ('a, 'b) tensor
   (** The type for tensors of element type ['a] and layout ['b]. *)
@@ -245,7 +245,7 @@ module type Ptree = sig
       since {!Walk.leaf} changes its type. A forgotten fixed tensor, integer or
       case compiles; a compiled function then freezes the tensor into its first
       program, or replays a program traced for other data. A test of the
-      structure's {!visits} catches each of them.
+      structure's {!val-visits} catches each of them.
 
       Every operation runs the same [walk], so all of them see one order. A
       record literal evaluates its fields in an order OCaml leaves unspecified;
@@ -353,9 +353,10 @@ module type Ptree = sig
   (** [map2 s f x y] is [x] with each tensor [t] at path [p] replaced by
       [f p t u], where [u] is [y]'s tensor at [p]. [f] is applied in walk order.
 
-      Raises [Invalid_argument] if [x] and [y] have different {!visits}, with
-      the mismatch message of {!section-derived} prefixed by ["Nx.Ptree.map2"],
-      or if two tensors at one path differ in dtype, with the message
+      Raises [Invalid_argument] if [x] and [y] have different {!val-visits},
+      with the mismatch message of {!section-derived} prefixed by
+      ["Nx.Ptree.map2"], or if two tensors at one path differ in dtype, with the
+      message
       ["Nx.Ptree.map2: p: float32 in the first value, int32 in the second"]. [f]
       may have been applied to the tensors before [p]. It also raises if [s]'s
       [walk] visits one value two ways, which breaks {!module-type:S}'s
@@ -535,7 +536,8 @@ module type Ptree = sig
   (** Skeletons of values. *)
   module Skeleton : sig
     type t
-    (** The type for a value's skeleton: its {!visits} without the tensors. *)
+    (** The type for a value's skeleton: its {!val-visits} without the tensors.
+    *)
 
     val equal : t -> t -> bool
     (** [equal k k'] is [true] iff [k] and [k'] have equal visits, their paths

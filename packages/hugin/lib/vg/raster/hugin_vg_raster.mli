@@ -6,9 +6,9 @@
 (** Raster rendering.
 
     Draws {{!Hugin_vg.Renderable}renderables} as pixels: an RGBA tensor
-    with {!render}, a PNG file with {!png}. A {e density}, in device pixels per
-    point, fixes the size of a pixel on the page: at density [2.], a page of 360
-    by 240 points is 720 by 480 pixels, each pixel half a point wide.
+    with {!val-render}, a PNG file with {!png}. A {e density}, in device pixels
+    per point, fixes the size of a pixel on the page: at density [2.], a page of
+    360 by 240 points is 720 by 480 pixels, each pixel half a point wide.
 
     {1:accuracy Accuracy}
 
@@ -79,6 +79,6 @@ val png : density:float -> Hugin_vg.Renderable.t -> string
     both directions, so that viewers and printers show it at the size of the
     page of [r], and an [sRGB] chunk with the perceptual rendering intent.
 
-    Raises [Invalid_argument] as {!render} does, and if that number of pixels
-    per metre is not in \[[1];[2{^31} - 1]\], the range of a PNG integer, which
-    takes a density below about [0.00018] or above about [758,000]. *)
+    Raises [Invalid_argument] as {!val-render} does, and if that number of
+    pixels per metre is not in \[[1];[2{^31} - 1]\], the range of a PNG integer,
+    which takes a density below about [0.00018] or above about [758,000]. *)

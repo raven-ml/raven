@@ -13,7 +13,7 @@
     what they change persists after the process.
 
     A function is taken one of two ways, which follow from the machine's state
-    ({!access}) and which {!addressing} reports:
+    ({!val-access}) and which {!val-addressing} reports:
     - {e Behind an IOMMU}, through VFIO, without root. An administrator binds
       the function to [vfio-pci] ([driverctl set-override BUS vfio-pci]) on a
       machine whose IOMMU is on, and grants the user its group's file
@@ -110,9 +110,9 @@ val access : string -> state -> (addressing, string) result
       it applies, the [driverctl] command that binds it to [vfio-pci]. *)
 
 val detached : string -> (addressing, string) result
-(** [detached bus] is {!access} for the function at [bus] of this machine in its
-    current state: [Ok a] iff {!take} can take it, in the way [a]. [Error why]
-    also if [bus] is no function of this machine. *)
+(** [detached bus] is {!val-access} for the function at [bus] of this machine in
+    its current state: [Ok a] iff {!take} can take it, in the way [a].
+    [Error why] also if [bus] is no function of this machine. *)
 
 val detach : string -> unit
 (** [detach bus] detaches the function at [bus] of this machine, so that a

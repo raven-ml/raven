@@ -28,9 +28,9 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
     ([supports_float4]); [8], [4] or [2] for {!Dtype.Float16} under
     {!Setting.allow_half8}. A group starts at an element whose count from the
     boundary behind the buffer's first element, a multiple of its alignment (its
-    phase and alignment, {!Ops.param_arg}), the group's length divides, and is
-    no wider than that alignment, so that every vector access is aligned to its
-    width. A merged load is a {!Op.Shrink} of the buffer, whose
+    phase and alignment, {!Ops.type-param_arg}), the group's length divides, and
+    is no wider than that alignment, so that every vector access is aligned to
+    its width. A merged load is a {!Op.Shrink} of the buffer, whose
     elements each former load reads by index; a merged store stores the stack of
     the former values. Register memory and volatile parameters are left as they
     are, and so is everything under {!Setting.dmc}.

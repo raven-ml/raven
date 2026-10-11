@@ -17,7 +17,7 @@
 
 (** {1:elt Element types}
 
-    The second parameter of a dtype. The standard ones are {!Bigarray}'s; the
+    The second parameter of a dtype. The standard ones are [Bigarray]'s; the
     others have no values. *)
 
 type float16_elt = Bigarray.float16_elt
@@ -277,8 +277,8 @@ val of_bigarray_kind : ('a, 'b) Bigarray.kind -> ('a, 'b) t
     Raises [Invalid_argument] if [k] is [Char], [Int] or [Nativeint]. *)
 
 val to_bigarray_kind : ('a, 'b) t -> ('a, 'b) Bigarray.kind option
-(** [to_bigarray_kind dt] is the {!Bigarray.kind} of [dt]'s elements, if
-    {!Bigarray} has one. It is [None] for {!BFloat16}, the float8 dtypes,
+(** [to_bigarray_kind dt] is the [Bigarray.kind] of [dt]'s elements, if
+    [Bigarray] has one. It is [None] for {!BFloat16}, the float8 dtypes,
     {!Int4}, {!UInt4}, {!UInt32}, {!UInt64}, {!Bool} and {!Bit}. *)
 
 (** {1:predicates Equality} *)
@@ -293,7 +293,8 @@ val equal_witness :
 
 (** {1:scalar Scalar formats} *)
 
-(** Storage formats with no type parameters. {!of_dtype} gives a dtype's. *)
+(** Storage formats with no type parameters. {!Scalar.of_dtype} gives a dtype's.
+*)
 module Scalar : sig
   type ('a, 'b) dtype := ('a, 'b) t
 

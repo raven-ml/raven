@@ -3,10 +3,15 @@
 ; executable: CI runs the compress suites under it, with halt_on_error, so
 ; that a decoder that reads or writes out of bounds on malformed data fails
 ; there.
+;
+; An odoc warning is an error in every profile.
 
 (env
  (sanitize
   (c_flags
    (:standard -g -fno-omit-frame-pointer -fsanitize=address,undefined))
   (link_flags
-   (:standard -cclib -fsanitize=address,undefined))))
+   (:standard -cclib -fsanitize=address,undefined))
+  (odoc (warnings fatal)))
+ (_
+  (odoc (warnings fatal))))

@@ -122,7 +122,7 @@ val param :
 (** [param ~shape slot dt] is the parameter [slot] of type [dt]: a scalar
     without [shape], flat storage of its greatest size viewed as [shape]
     otherwise, whose first element lies [phase] bytes past a multiple of [align]
-    (defaults [0] and [16]; see {!Ops.param_arg}).
+    (defaults [0] and [16]; see {!Ops.type-param_arg}).
 
     Raises [Invalid_argument] if [dt] is weak. *)
 
@@ -136,9 +136,9 @@ val param_like : Ops.t -> int -> Ops.t
 
 val storage_phase : Ops.t -> int * int
 (** [storage_phase u] is the alignment and phase [(align, phase)]
-    ({!Ops.param_arg}) of the storage [u] views: its storage's, moved by the
-    bytes a shrink skips when it shrinks the storage seen whole, a buffer or a
-    stage the schedule allocates, in row-major order. A shrink by a symbolic
+    ({!Ops.type-param_arg}) of the storage [u] views: its storage's, moved by
+    the bytes a shrink skips when it shrinks the storage seen whole, a buffer or
+    a stage the schedule allocates, in row-major order. A shrink by a symbolic
     start known only to multiples of fewer bytes than the storage's alignment,
     such as a window that moves with a range, lowers the alignment to the
     largest power of two those bytes are a multiple of, and a symbolic start

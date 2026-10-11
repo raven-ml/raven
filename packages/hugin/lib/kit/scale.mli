@@ -7,7 +7,7 @@
 
     A scale denotes a {e normalisation}, a function from a domain of data values
     to the reals that maps the domain onto \[[0];[1]\], with an inverse where
-    one exists. {!Ticks} chooses the ticks of a scale.
+    one exists. {!module-Ticks} chooses the ticks of a scale.
 
     There are three kinds of scales ({!type-kind}): quantitative scales over
     floats ({!linear}, {!log}, {!symlog}, {!pow}, {!custom}), temporal scales
@@ -207,10 +207,10 @@ val log :
     and its default domain is \[[1];[base]\]. It takes no [zero], since [0.] is
     missing on a log scale.
 
-    The rules for ticks, tick labels and minor ticks ({!Ticks}) that name an
-    {e integer base} mean a base that is an integer from [2] to [16]; a greater
-    integer base, whose powers hold more multiples than an axis can show,
-    follows the rules of other bases. *)
+    The rules for ticks, tick labels and minor ticks ({!module-Ticks}) that name
+    an {e integer base} mean a base that is an integer from [2] to [16]; a
+    greater integer base, whose powers hold more multiples than an axis can
+    show, follows the rules of other bases. *)
 
 val symlog :
   ?constant:float ->
@@ -273,12 +273,12 @@ val custom :
     transform [forward], whose inverse is [inverse], and which [transform] names
     in printed forms. Its default domain is \[[0];[1]\], its nice domains are
     those of a linear scale over the same domain, and its tick candidates the
-    decimal steps of one ({!Ticks}). [forward] must be strictly monotone where
-    it is finite, [inverse] must be its inverse there, and neither may read
-    mutable state; results are unspecified otherwise. A set domain must have
-    ends that are not missing, where [forward] is finite. An unfitted custom
-    scale whose default ends are missing, such as a logit, normalises every
-    value to [nan]. *)
+    decimal steps of one ({!module-Ticks}). [forward] must be strictly monotone
+    where it is finite, [inverse] must be its inverse there, and neither may
+    read mutable state; results are unspecified otherwise. A set domain must
+    have ends that are not missing, where [forward] is finite. An unfitted
+    custom scale whose default ends are missing, such as a logit, normalises
+    every value to [nan]. *)
 
 val time :
   ?name:string ->
@@ -545,8 +545,8 @@ val pp_property : Format.formatter -> property -> unit
 val equal : 'd t -> 'd t -> bool
 (** [equal s s'] is [true] iff [s] and [s'] set the same properties to equal
     values: floats by [Float.equal], instants by {!Time.equal}, colours by
-    {!Color.equal}, schemes by {!Scheme.equal}, arrays element by element,
-    symbols by {!Symbol.equal}, dash patterns by {!Dash.equal}, and the
+    {!Hugin_gg.Color.equal}, schemes by {!Scheme.equal}, arrays element by
+    element, symbols by {!Symbol.equal}, dash patterns by {!Dash.equal}, and the
     functions of custom transforms physically. A property unset differs from the
     same property set to its default. *)
 

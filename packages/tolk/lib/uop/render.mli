@@ -58,12 +58,13 @@ val srender : Ops.sint -> string
 val pp_uops : Format.formatter -> Ops.t list -> unit
 (** [pp_uops] formats a list of nodes, a linear program, one line per node, in
     columns: its position, from [0], right-aligned on 4 columns; its operation
-    as {!Op.pp} prints it, on 20; the ranges it runs inside ({!Ops.ranges}) as
-    {!Ops.multirange_str} writes them in colour ({!Helpers.colored}), on 10; its
-    type as {!Dtype.pp} prints it, on 40; its sources as a list, on 32; and its
-    argument. A source is its position in the list, the value of a constant as a
-    quoted literal ([['1.5']]), or ['--'] if it is not in the list. The argument
-    prints as {!Ops.pp_arg} does, except a string, such as a name, source text
-    or a single device, which prints without quotes, and a float constant, which
-    prints as {!Dtype.pp_const} does. A column is padded with spaces and never
-    cut. Lines are separated by newlines; the last is not ended. *)
+    as {!Op.pp} prints it, on 20; the ranges it runs inside ({!Ops.val-ranges})
+    as {!Ops.multirange_str} writes them in colour ({!Helpers.colored}), on 10;
+    its type as {!Dtype.pp} prints it, on 40; its sources as a list, on 32; and
+    its argument. A source is its position in the list, the value of a constant
+    as a quoted literal ([['1.5']]), or ['--'] if it is not in the list. The
+    argument prints as {!Ops.pp_arg} does, except a string, such as a name,
+    source text or a single device, which prints without quotes, and a float
+    constant, which prints as {!Dtype.pp_const} does. A column is padded with
+    spaces and never cut. Lines are separated by newlines; the last is not
+    ended. *)

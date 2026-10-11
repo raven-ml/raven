@@ -37,8 +37,8 @@ val equal : t -> t -> bool
 (** [equal o0 o1] is [true] iff [o0] and [o1] are the same optimisation. *)
 
 val compare : t -> t -> int
-(** [compare o0 o1] orders optimisations by kind ({!Tc}, {!Split}, {!Padto},
-    {!Swap}), then axis, then arguments. *)
+(** [compare o0 o1] orders optimisations by kind ({!constructor-Tc}, {!Split},
+    {!Padto}, {!Swap}), then axis, then arguments. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats [Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))]. *)

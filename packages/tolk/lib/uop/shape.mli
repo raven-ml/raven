@@ -10,8 +10,8 @@
     Shapes ({!shape}), the movements that change them and {!simplify}, which
     call each other: a symbolic size is compared, bounded and computed by
     simplifying the node that holds it, and the rules of simplification
-    ({!symbolic}) fold constants into the shapes of the nodes they replace and
-    shorten chains of movements. Divisibility and the evaluation of symbolic
+    ({!val-symbolic}) fold constants into the shapes of the nodes they replace
+    and shorten chains of movements. Divisibility and the evaluation of symbolic
     integers are here too, since the rules read them.
 
     {b Errors.} A broken precondition raises [Invalid_argument]. *)
@@ -61,9 +61,9 @@ val resolve : ?default:bool -> Ops.t -> bool
     Raises [Invalid_argument] if [u] is not boolean. *)
 
 val simplify : Ops.t -> Ops.t
-(** [simplify u] is [u] rewritten with {!symbolic} to a fixed point. A constant
-    is itself, and so is a sink of constants and stacks of constants, which the
-    rules leave as they are. *)
+(** [simplify u] is [u] rewritten with {!val-symbolic} to a fixed point. A
+    constant is itself, and so is a sink of constants and stacks of constants,
+    which the rules leave as they are. *)
 
 val ssimplify : Ops.t -> Ops.sint
 (** [ssimplify u] is [simplify u] as an [Int] if it is an integer constant, a
@@ -122,8 +122,8 @@ module Sint : sig
   val ( <> ) : t -> t -> cond
 
   val resolve : ?default:bool -> cond -> bool
-  (** [resolve ~default c] is [c]'s value if known, and {!resolve}'s otherwise.
-  *)
+  (** [resolve ~default c] is [c]'s value if known, and {!Shape.val-resolve}'s
+      otherwise. *)
 
   val equal : t -> t -> bool
   (** [equal s0 s1] is [true] iff both are the same integer or the same node. It
@@ -341,7 +341,7 @@ val divide_exact : Ops.t -> Ops.t -> Ops.t option
     The rewrites of {!simplify}: they replace a graph by a simpler one with the
     same values, by constant folding, algebraic identities, reasoning on the
     bounds of integers ({!Ops.vmin}, {!Ops.vmax}) and on the conditions that
-    guard them. {!symbolic_simple} folds one node at a time and {!symbolic}
+    guard them. {!symbolic_simple} folds one node at a time and {!val-symbolic}
     matches deeper and canonicalises index arithmetic; {!Symbolic.sym} adds the
     rewrites code generation relies on.
 

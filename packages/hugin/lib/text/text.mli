@@ -24,7 +24,7 @@ type t
 val v : string -> t
 (** [v s] is the characters of the UTF-8 string [s], neither bold nor italic,
     with size factor [1.], shift [0.] and no colour. Each maximal invalid
-    subpart of [s], as {!String.get_utf_8_uchar} decodes it, becomes U+FFFD.
+    subpart of [s], as [String.get_utf_8_uchar] decodes it, becomes U+FFFD.
     Newlines end lines ({!Layout.section-lines}). *)
 
 val concat : t list -> t
@@ -100,7 +100,7 @@ module Layout : sig
         then the others decreasing.
 
       A character is drawn with the glyph of the best-ranked face whose
-      character map has it ({!Hugin_font.Font.glyph} is not [0]). A
+      character map has it ({!Hugin_font.Font.val-glyph} is not [0]). A
       character no face has is drawn with glyph [0] of the best-ranked face and
       listed by {!missing}. A default ignorable character (the Unicode 16.0
       [Default_Ignorable_Code_Point] property) is ignored: it is drawn with no
@@ -194,7 +194,7 @@ module Layout : sig
       line's box has width [0.] at [x = 0.]. *)
 
   val ink : t -> Box2.t option
-  (** [ink l] is the union of the {!Hugin_font.Run.bounds} of the runs of
+  (** [ink l] is the union of the {!Hugin_font.Run.val-bounds} of the runs of
       [l] at their origins, or [None] if no glyph has ink. *)
 
   val missing : t -> Uchar.t list

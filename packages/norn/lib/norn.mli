@@ -250,7 +250,7 @@ module Draws : sig
       [d'].
 
       Raises [Invalid_argument] if [d] and [d'] differ in their visits
-      ({!Nx.Ptree.visits}) or in their number of chains. *)
+      ({!Nx.Ptree.val-visits}) or in their number of chains. *)
 
   val thin : 'u Nx.Ptree.t -> every:int -> 'u t -> 'u t
   (** [thin u ~every d] is every [every]-th draw of each chain of [d], from the
@@ -1379,7 +1379,7 @@ module Nested : sig
   (** [evidence u k s] is the evidence of the dead points of [s] and of its live
       points added as dead, [k] simulating the shrinkage sequences of its error.
       Its {!Evidence.sample} is every dead point, padding included at weight
-      zero, and its {!Evidence.stop} is [Converged], or [Remaining r] if the
+      zero, and its {!Evidence.val-stop} is [Converged], or [Remaining r] if the
       live points could still add [r] nats, the tolerance or more, to [ln Z]. *)
 
   val run :
@@ -1419,7 +1419,7 @@ module Smc : sig
       density, keeping every state, so the [N] particles are [M] chains of
       [N / M] states, equally weighted. Moves are in the coordinates whitened by
       the reweighted particles' mean and covariance, by one of two kernels
-      ({!move}):
+      ({!type-move}):
 
       - [Hmc], Hamiltonian transitions of one step size and one length, the
         length jittered uniformly in [(0, 2)] times its value, as {!Hmc.step}
@@ -1515,7 +1515,8 @@ module Smc : sig
   val evidence : ('u, 'f) state -> ('u, 'f) Evidence.t
   (** [evidence s] is the evidence of the tempered density at [s.beta], the
       posterior's at [β = 1], with the particles as its sample. Its
-      {!Evidence.stop} is [Converged] at [β = 1], else [Temperature s.beta]. *)
+      {!Evidence.val-stop} is [Converged] at [β = 1], else [Temperature s.beta].
+  *)
 
   val run :
     'u Nx.Ptree.t ->

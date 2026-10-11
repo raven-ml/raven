@@ -1,8 +1,12 @@
 ; Since dune language 3.21 the dev profile compiles with the compiler's
 ; default warnings, which leave unused values, opens and fields unreported.
-; Keep dune's stricter development set.
+; Keep dune's stricter development set. An odoc warning is an error in every
+; profile.
 
 (env
  (dev
   (flags
-   (:standard %{dune-warnings}))))
+   (:standard %{dune-warnings}))
+  (odoc (warnings fatal)))
+ (_
+  (odoc (warnings fatal))))

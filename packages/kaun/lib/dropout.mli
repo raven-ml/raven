@@ -20,9 +20,9 @@
     Training-mode masks come from an explicit {!Nx.Rng} key when [?key] is given
     — the mask is a pure function of the key and [x]'s shape — and from the
     ambient {!Nx.Rng} scope otherwise; open one with {!Nx.Rng.with_key} for
-    reproducibility. Either form compiles under {!Rune.val-jit}, provided the
-    key it ultimately draws from is an input of the jitted step rather than one
-    the trace closes over. *)
+    reproducibility. Either form compiles under [Rune.jit], provided the key it
+    ultimately draws from is an input of the jitted step rather than one the
+    trace closes over. *)
 
 val apply :
   rate:float ->
@@ -48,7 +48,7 @@ val apply :
     function's inputs: pass [?key] as a key leaf of the step's input structure,
     or one {!Nx.Rng.fold_in}-derived from such a leaf. Keyless dropout works
     too, if the step body runs inside {!Nx.Rng.with_key} on such a key — what
-    raises {!Rune.Jit_error} is a key the trace closes over, whichever form drew
+    raises [Rune.Jit_error] is a key the trace closes over, whichever form drew
     from it, since the mask would be a constant replayed on every call.
 
     {b Under vmap.} A key the mapped function closes over is a constant of the

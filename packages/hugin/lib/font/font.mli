@@ -143,7 +143,7 @@ val subset : t -> glyph list -> string
       glyph [g] it keeps. Any other glyph has an empty outline and a zero
       advance.
     - [glyph f' u] is [glyph f u] if that glyph is kept, and [0] otherwise.
-    - Its {!family}, {!postscript_name}, {!weight}, {!slant}, {!ascent},
+    - Its {!family}, {!postscript_name}, {!weight}, {!val-slant}, {!ascent},
       {!descent}, {!line_gap}, {!italic_angle} and {!bounds} are those of [f],
       and so are its {!cap_height} and {!x_height} where the [OS/2] table of [f]
       records them. Face-wide maxima of the [head], [hhea] and [maxp] tables are
@@ -227,7 +227,7 @@ val outline : t -> glyph -> Path.t
 (** [outline f g] is the outline of [g], unhinted, to be filled under the
     nonzero rule. Its quadratic curves are exact, composite glyphs are the union
     of their transformed components, and a glyph without ink, such as a space,
-    is {!Path.empty}. Its ink box is {!ink}. *)
+    is {!Hugin_gg.Path.empty}. Its ink box is {!ink}. *)
 
 val ink : t -> glyph -> Box2.t option
 (** [ink f g] is [Path.bounds (outline f g)], the smallest box containing the

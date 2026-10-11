@@ -15,19 +15,19 @@
     entry at [put mod entries] of the ring, stores [put + 1] into [put] and
     [(put + 1) mod entries] into [gp_put], then the channel's token into its
     doorbell. These words are volatile placeholders of the device, which the
-    engine binds to the channel's ({!storage}).
+    engine binds to the channel's ({!type-storage}).
 
     A launch on the compute channel runs from a launch descriptor (a QMD), which
     addresses the launch's constant buffer 0: the driver's parameters, then the
-    addresses of the buffers and the variables. Both are regions ({!Ops.arg}'s
-    [Region]) of 256-byte alignment, named ["qmd"] and ["cbuf"], which
-    {!Hcq2.bufferize_cmdbuf} lays out in a buffer per name; a launch in a loop
-    has a copy of each for every trip. Each program is its cubin, which the
-    engine loads on the device ({!Program}), and its launch descriptor is made
-    from the cubin's registers, shared and local memory and constant banks. The
-    local memory each thread may use is the word of a placeholder ({!Local}),
-    which the engine fills once the device's local memory holds what the batch's
-    kernels need per thread.
+    addresses of the buffers and the variables. Both are regions
+    ({!Ops.type-arg}'s [Region]) of 256-byte alignment, named ["qmd"] and
+    ["cbuf"], which {!Hcq2.bufferize_cmdbuf} lays out in a buffer per name; a
+    launch in a loop has a copy of each for every trip. Each program is its
+    cubin, which the engine loads on the device ({!Program}), and its launch
+    descriptor is made from the cubin's registers, shared and local memory and
+    constant banks. The local memory each thread may use is the word of a
+    placeholder ({!Local}), which the engine fills once the device's local
+    memory holds what the batch's kernels need per thread.
 
     Values signalled are 64 bits. The compute channel writes them whole. The
     copy engine writes 32-bit words: its signal writes the low word of the

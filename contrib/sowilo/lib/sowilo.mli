@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Differentiable computer vision on {!Rune}.
+(** Differentiable computer vision on [Rune].
 
     Sowilo provides image processing operations expressed purely through {!Nx}
-    tensor operations. All operations are compatible with {!Rune.grad'} and
-    {!Rune.vmap'}.
+    tensor operations. All operations are compatible with [Rune.grad'] and
+    [Rune.vmap'].
 
     {1:conventions Image conventions}
 

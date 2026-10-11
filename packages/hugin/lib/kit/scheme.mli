@@ -76,7 +76,7 @@ type t
 val ramp : Color.t array -> t
 (** [ramp cs] is the sequential scheme that runs through the [m] colours [cs] in
     order, at evenly spaced normalised values from [0] to [1], interpolating in
-    Oklab with {!Color.mix} between consecutive ones. Its table is
+    Oklab with {!Hugin_gg.Color.mix} between consecutive ones. Its table is
     [colors 256 (ramp cs)] ({!section-discrete}). [cs] is copied.
 
     Raises [Invalid_argument] if [cs] is empty. *)
@@ -98,8 +98,8 @@ val reverse : t -> t
 val color : ?unknown:Color.t -> t -> float -> Color.t
 (** [color ~unknown s u] is the colour of the normalised value [u] in the
     {{!section-continuous}continuous reading} of [s], and [unknown] if [u] is
-    [nan]. [unknown] defaults to {!Color.transparent}. [color ~unknown s] may be
-    applied once and reused. *)
+    [nan]. [unknown] defaults to {!Hugin_gg.Color.transparent}.
+    [color ~unknown s] may be applied once and reused. *)
 
 val table : t -> Color.t array
 (** [table s] is the table of [s] ({!section-continuous}), from the colour of
@@ -282,8 +282,8 @@ val set3 : t
 val equal : t -> t -> bool
 (** [equal s s'] is [true] iff [s] and [s'] are the same named scheme or are
     made by the same constructor, {!ramp} or {!palette}, from colours that are
-    pairwise {!Color.equal}, and both or neither are reversed: a ramp through
-    the table of {!viridis} is not equal to {!viridis}. *)
+    pairwise {!Hugin_gg.Color.equal}, and both or neither are reversed: a ramp
+    through the table of {!viridis} is not equal to {!viridis}. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf s] formats [s] for debugging: a named scheme by its name, such as

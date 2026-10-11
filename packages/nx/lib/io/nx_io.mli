@@ -22,8 +22,8 @@
     and the tensors of {!load_gguf}.
 
     A value enters and leaves an archive through its structure ({!Nx.Ptree.t}).
-    {!of_value} names each tensor by its path, and {!to_value} reads a value
-    back into the shape of one the program already has:
+    {!Archive.of_value} names each tensor by its path, and {!Archive.to_value}
+    reads a value back into the shape of one the program already has:
 
     {[
     Nx_io.save_safetensors path (Nx_io.Archive.of_value train state);
@@ -32,8 +32,8 @@
     ]}
 
     A file written elsewhere has its own names and layouts. Its importer asks
-    for each entry by name, shape and dtype with {!tensor} and {!float}, and
-    rearranges it with nx:
+    for each entry by name, shape and dtype with {!Archive.tensor} and
+    {!Archive.float}, and rearranges it with nx:
 
     {[
     let linear a ~inputs ~outputs name =
@@ -44,8 +44,8 @@
 
     Asking for an entry reads none of its bytes: it is returned as stored, and
     an archive a format loads holds its entries where they lie in the file.
-    Bytes are never reinterpreted: only {!float} converts, and a block-quantised
-    or sub-byte entry is read as [uint8] with {!tensor}.
+    Bytes are never reinterpreted: only {!Archive.float} converts, and a
+    block-quantised or sub-byte entry is read as [uint8] with {!Archive.tensor}.
 
     An archive is input data, so a mismatch between an archive and what is asked
     of it raises [Failure], naming the entry. *)
@@ -111,7 +111,7 @@ module Archive : sig
       its name, as stored. [like] gives the structure, the dtypes and the
       shapes, and its tensors are discarded: a value is read back with [like]'s
       list lengths, option presences and cases. For values [x] and [y] with
-      equal {!Nx.Ptree.visits}, dtypes and shapes,
+      equal {!Nx.Ptree.val-visits}, dtypes and shapes,
       [to_value s ~like:y (of_value s x)] is [x].
 
       [s] owns the names under its {!Nx.Ptree.prefix}, every name when that is
@@ -147,8 +147,8 @@ val load_image : ?grayscale:bool -> string -> (int, Nx.uint8_elt) Nx.t
     equal channels, and [~grayscale:true] reads a colour image as its luma
     [0.299 R + 0.587 G + 0.114 B] (ITU-R BT.601), within one level.
 
-    @raise Failure if the stream is malformed or is neither PNG nor JPEG.
-    @raise Unix.Unix_error if [path] cannot be read. *)
+    Raises [Failure] if the stream is malformed or is neither PNG nor JPEG.
+    Raises [Unix.Unix_error] if [path] cannot be read. *)
 
 val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
 (** [save_image ?overwrite path t] writes [t] to [path].
@@ -160,12 +160,9 @@ val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
     colour with its chroma subsampled 4:2:0. [overwrite] defaults to [true]. If
     [overwrite] is [false], [path] must not exist.
 
-    @raise Failure
-      if the shape or extension is unsupported, the image has no pixels, or
-      encoding fails.
-    @raise Unix.Unix_error
-      if [path] cannot be written or already exists when [overwrite] is [false].
-*)
+    Raises [Failure] if the shape or extension is unsupported, the image has no
+    pixels, or encoding fails. Raises [Unix.Unix_error] if [path] cannot be
+    written or already exists when [overwrite] is [false]. *)
 
 val encode_png : ?dpi:float -> ?srgb:bool -> (int, Nx.uint8_elt) Nx.t -> string
 (** [encode_png ?dpi ?srgb t] is the contents of a PNG file of [t], without
@@ -181,22 +178,18 @@ val encode_png : ?dpi:float -> ?srgb:bool -> (int, Nx.uint8_elt) Nx.t -> string
     Accepted shapes are [[|height; width|]], [[|height; width; 1|]],
     [[|height; width; 3|]] and [[|height; width; 4|]].
 
-    @raise Invalid_argument
-      if [Float.round (dpi /. 0.0254)] is not in \[[1];[2{^31} - 1]\], the range
-      of a PNG integer: [dpi] is below about [0.0127], above about [5.45e7], or
-      not a number.
-    @raise Failure
-      if the shape is unsupported, the image has no pixels, or encoding fails.
-*)
+    Raises [Invalid_argument] if [Float.round (dpi /. 0.0254)] is not in
+    \[[1];[2{^31} - 1]\], the range of a PNG integer: [dpi] is below about
+    [0.0127], above about [5.45e7], or not a number. Raises [Failure] if the
+    shape is unsupported, the image has no pixels, or encoding fails. *)
 
 (** {1:numpy NumPy formats} *)
 
 val load_npy : string -> Nx.packed
 (** [load_npy path] loads a tensor from a [.npy] file.
 
-    @raise Failure
-      if [path] cannot be read, the stream is malformed, or its dtype is
-      unsupported. *)
+    Raises [Failure] if [path] cannot be read, the stream is malformed, or its
+    dtype is unsupported. *)
 
 val save_npy : ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
 (** [save_npy ?overwrite path t] writes [t] to a [.npy] file.
@@ -204,28 +197,26 @@ val save_npy : ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
     [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
     exist.
 
-    @raise Failure
-      if [path] cannot be written, already exists when [overwrite] is [false],
-      or [t]'s dtype has no standard NPY representation (bfloat16, the 8-bit
-      floats, int4, uint4 and bit, whose message names [Nx.cast Nx.bool] and its
-      packed bytes). *)
+    Raises [Failure] if [path] cannot be written, already exists when
+    [overwrite] is [false], or [t]'s dtype has no standard NPY representation
+    (bfloat16, the 8-bit floats, int4, uint4 and bit, whose message names
+    [Nx.cast Nx.bool] and its packed bytes). *)
 
 val load_npz : string -> Archive.t
 (** [load_npz path] loads all tensors from an [.npz] archive.
 
     The keys are entry names without the [.npy] suffix.
 
-    @raise Failure
-      if [path] cannot be read or the archive or an entry is malformed. *)
+    Raises [Failure] if [path] cannot be read or the archive or an entry is
+    malformed. *)
 
 val load_npz_entry : name:string -> string -> Nx.packed
 (** [load_npz_entry ~name path] loads a single entry from an [.npz] archive.
 
     [name] is the logical entry name, without the [.npy] suffix.
 
-    @raise Failure
-      if [path] cannot be read, [name] is missing, or the archive or entry is
-      malformed. *)
+    Raises [Failure] if [path] cannot be read, [name] is missing, or the archive
+    or entry is malformed. *)
 
 val save_npz : ?overwrite:bool -> string -> Archive.t -> unit
 (** [save_npz ?overwrite path a] writes [a]'s tensors to an [.npz] archive.
@@ -235,11 +226,10 @@ val save_npz : ?overwrite:bool -> string -> Archive.t -> unit
     [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
     exist.
 
-    @raise Failure
-      if a name is invalid, a tensor's dtype has no standard NPY representation
-      (bfloat16, the 8-bit floats, int4, uint4 and bit, whose message names
-      [Nx.cast Nx.bool] and its packed bytes), naming the entry, or [path]
-      cannot be written. *)
+    Raises [Failure] if a name is invalid, a tensor's dtype has no standard NPY
+    representation (bfloat16, the 8-bit floats, int4, uint4 and bit, whose
+    message names [Nx.cast Nx.bool] and its packed bytes), naming the entry, or
+    [path] cannot be written. *)
 
 val gunzip : src:string -> dst:string -> unit
 (** [gunzip ~src ~dst] decompresses a gzip file to [dst]. Existing [dst] is
@@ -247,9 +237,8 @@ val gunzip : src:string -> dst:string -> unit
 
     Concatenated gzip members are supported.
 
-    @raise Failure if [src] is malformed or a checksum is invalid.
-    @raise Unix.Unix_error if [src] cannot be read or [dst] cannot be written.
-*)
+    Raises [Failure] if [src] is malformed or a checksum is invalid. Raises
+    [Unix.Unix_error] if [src] cannot be read or [dst] cannot be written. *)
 
 (** {1:safetensors SafeTensors} *)
 
@@ -284,11 +273,10 @@ val load_safetensors : string -> Archive.t
     bytes. A [BOOL] byte other than 0 or 1 is handed out as stored. An entry
     with no elements is an empty tensor of its shape.
 
-    @raise Failure
-      naming [path], if it is not a regular file that can be read, if its header
-      is malformed, longer than 100 MB, names a tensor twice or gives a tensor
-      an empty name, or if the file's length differs from the one its header
-      describes, as a partial download's does. *)
+    Raises [Failure] naming [path], if it is not a regular file that can be
+    read, if its header is malformed, longer than 100 MB, names a tensor twice
+    or gives a tensor an empty name, or if the file's length differs from the
+    one its header describes, as a partial download's does. *)
 
 val save_safetensors : ?overwrite:bool -> string -> Archive.t -> unit
 (** [save_safetensors ?overwrite path a] writes [a]'s tensors to a SafeTensors
@@ -306,12 +294,11 @@ val save_safetensors : ?overwrite:bool -> string -> Archive.t -> unit
     [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
     exist.
 
-    @raise Failure
-      if [path] cannot be written, or if a tensor's dtype has no SafeTensors
-      equivalent (the complex dtypes, int4, uint4 and bit, whose message names
-      [Nx.cast Nx.bool] and its packed bytes), naming the entry. If the rename
-      is refused twice, the message names the temporary file, which is kept and
-      holds [a]'s tensors. *)
+    Raises [Failure] if [path] cannot be written, or if a tensor's dtype has no
+    SafeTensors equivalent (the complex dtypes, int4, uint4 and bit, whose
+    message names [Nx.cast Nx.bool] and its packed bytes), naming the entry. If
+    the rename is refused twice, the message names the temporary file, which is
+    kept and holds [a]'s tensors. *)
 
 (** {1:gguf GGUF} *)
 
@@ -431,14 +418,13 @@ val load_gguf : string -> Gguf.t
     with a bus error when a truncated page is read. On Windows a mapped file may
     not be deleted or replaced until its values are collected.
 
-    @raise Failure
-      naming [path], if it is not a regular file that can be read, if it does
-      not start with the GGUF magic, if its version is not 2 or 3 or its byte
-      order is big-endian, if its header is malformed or cut short, names a key
-      or a tensor twice, or gives a tensor an empty name, a type this function
-      does not know, a row that is not a whole number of blocks or a position
-      that is not a multiple of the alignment, or if the file ends before a
-      tensor's data. *)
+    Raises [Failure] naming [path], if it is not a regular file that can be
+    read, if it does not start with the GGUF magic, if its version is not 2 or 3
+    or its byte order is big-endian, if its header is malformed or cut short,
+    names a key or a tensor twice, or gives a tensor an empty name, a type this
+    function does not know, a row that is not a whole number of blocks or a
+    position that is not a multiple of the alignment, or if the file ends before
+    a tensor's data. *)
 
 (** {1:text Text format} *)
 
@@ -460,11 +446,10 @@ val load_txt :
     defaults to [" "], [comments] to ["#"], [skiprows] to [0], and [max_rows] to
     every row.
 
-    @raise Failure
-      if [path] cannot be read, its contents cannot be parsed (no row, rows of
-      different lengths, a field that is no literal of [dtype] or is out of its
-      range), [skiprows] is negative, [max_rows] is not positive, or text does
-      not hold [dtype] (see {!save_txt}). *)
+    Raises [Failure] if [path] cannot be read, its contents cannot be parsed (no
+    row, rows of different lengths, a field that is no literal of [dtype] or is
+    out of its range), [skiprows] is negative, [max_rows] is not positive, or
+    text does not hold [dtype] (see {!save_txt}). *)
 
 val save_txt :
   ?sep:string ->
@@ -490,5 +475,5 @@ val save_txt :
     [sep] defaults to [" "]. [append] defaults to [false]. [newline] defaults to
     ["\n"]. [comments] defaults to ["# "].
 
-    @raise Failure
-      if [t]'s dtype or shape is unsupported or [path] cannot be written. *)
+    Raises [Failure] if [t]'s dtype or shape is unsupported or [path] cannot be
+    written. *)

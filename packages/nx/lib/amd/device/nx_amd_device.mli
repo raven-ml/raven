@@ -70,10 +70,10 @@
     ({!Nx_amd_code_object.runs_on}); a load refuses a code object compiled for
     another GPU. The function [name] is the kernel whose descriptor is the
     symbol [name ^ ".kd"]. A code object is uploaded once while a program of it
-    or its {!kernel}'s code is reachable ({!Nx_device.Program.load}). It lies in
-    the GPU's own memory, and counts there ({!Nx_device.budget}), whatever the
-    size of the memory BAR: the copy engine copies it from system memory, and
-    the load returns once it is there.
+    or its {!type-kernel}'s code is reachable ({!Nx_device.Program.load}). It
+    lies in the GPU's own memory, and counts there ({!Nx_device.budget}),
+    whatever the size of the memory BAR: the copy engine copies it from system
+    memory, and the load returns once it is there.
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault, loses
     the device ({!Nx_device.Lost}) with the driver's report when a wait finds
@@ -354,7 +354,7 @@ val launch : touches:Nx_device.Buffer.t list -> dispatch list -> unit
     returns once the work is queued.
 
     A kernel's arguments are padded with zeros to its argument segment
-    ({!Nx_amd_code_object.kernel}). A kernel that reads its dispatch packet
+    ({!Nx_amd_code_object.type-kernel}). A kernel that reads its dispatch packet
     finds one, and a kernel that takes scratch memory gets the device's
     ({!scratch}).
 

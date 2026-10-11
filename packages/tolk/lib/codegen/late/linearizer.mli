@@ -26,8 +26,8 @@ val linearize : Ops.t -> Ops.t list
     which sorts nodes by, in turn:
 
     - their run count, the product of the sizes of the ranges they run inside
-      ({!Ops.ranges}), a range's size being its {!Ops.vmax} plus one: fewer runs
-      come first, so that work leaves the loops it does not need;
+      ({!Ops.val-ranges}), a range's size being its {!Ops.vmax} plus one: fewer
+      runs come first, so that work leaves the loops it does not need;
     - their kind: parameters first, by slot; then buffers outside local memory,
       buffers in local memory, loop ends ({!Op.End} and {!Op.Backedge}), loads,
       the other nodes, stores, and ranges last;
@@ -67,6 +67,6 @@ val pm_add_control_flow : (cfg_context, Ops.t) Ops.Pattern_matcher.t
 val pm_split_ends : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_split_ends] rewrites an {!Op.End} of [u] into nested ends of one range
     each around [u]. Its ranges are, each once, those among its sources after
-    [u] and the ranges its other sources after [u] run inside ({!Ops.ranges});
-    the greatest by argument is innermost. An {!Op.End} closing no range is [u].
-*)
+    [u] and the ranges its other sources after [u] run inside
+    ({!Ops.val-ranges}); the greatest by argument is innermost. An {!Op.End}
+    closing no range is [u]. *)

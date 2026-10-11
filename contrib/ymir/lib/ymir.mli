@@ -61,8 +61,8 @@ end
 
     Each frame type has exactly one value, so two values of one type are one
     frame and a frame mismatch is a type error. A fixed frame's type is an
-    instance of {!fixed}: {!matrix} and {!Direction.rotate} take any two fixed
-    frames, and no other. The users of a frame write its type, as in
+    instance of {!Frame.fixed}: {!Frame.matrix} and {!Direction.rotate} take any
+    two fixed frames, and no other. The users of a frame write its type, as in
     [Frame.galactic Direction.t].
 
     Each fixed frame's orientation is its standard's own numbers, rounded once
@@ -101,9 +101,9 @@ module Frame : sig
       J2000.0. *)
 
   val supergalactic : supergalactic t
-  (** [supergalactic] is supergalactic coordinates, defined on {!galactic}: the
-      north supergalactic pole at Galactic (47.37°, +6.32°), the origin at l =
-      137.37°. *)
+  (** [supergalactic] is supergalactic coordinates, defined on {!val-galactic}:
+      the north supergalactic pole at Galactic (47.37°, +6.32°), the origin at l
+      = 137.37°. *)
 
   val matrix : 'a fixed t -> 'b fixed t -> (float, Nx.float64_elt) Nx.t
   (** [matrix a b] is [M], [[3; 3]] on the host, with [v_b = M · v_a]: for
@@ -112,7 +112,7 @@ module Frame : sig
 
       [M] is [R_b · R_aᵀ]. [matrix a a] is the identity, [matrix icrs b] is
       [R_b] and [matrix a icrs] is [R_aᵀ]; another pair's entries are each
-      computed with one {!Float.fma} chain, so [matrix b a] is the exact
+      computed with one [Float.fma] chain, so [matrix b a] is the exact
       transpose of [matrix a b]. *)
 
   val name : 'f t -> string
@@ -135,33 +135,35 @@ end
     [grad] cotangents and {!Nx.Ptree.map} build directions of any norm. So the
     contract has two halves.
 
-    - {e Constructors return unit vectors.} {!lonlat} and {!of_xyz} give
-      [|xyz| = 1] within 3 ulp, and {!rotate} preserves the norm within 3 ulp.
-    - {e Readers read the ray.} {!lon}, {!lat}, {!separation} and
-      {!position_angle} read every finite row as the direction it points in. A
-      positive multiple of a row reads the same up to the rounding of the
-      multiple, and bit for bit when the multiple is a power of two that rounds
-      no component, subnormal ones included. A NaN component gives NaN, and an
-      infinite one raises [Invalid_argument]. {!rotate} and {!xyz} are linear.
+    - {e Constructors return unit vectors.} {!Direction.lonlat} and
+      {!Direction.of_xyz} give [|xyz| = 1] within 3 ulp, and {!Direction.rotate}
+      preserves the norm within 3 ulp.
+    - {e Readers read the ray.} {!Direction.lon}, {!Direction.lat},
+      {!Direction.separation} and {!Direction.position_angle} read every finite
+      row as the direction it points in. A positive multiple of a row reads the
+      same up to the rounding of the multiple, and bit for bit when the multiple
+      is a power of two that rounds no component, subnormal ones included. A NaN
+      component gives NaN, and an infinite one raises [Invalid_argument].
+      {!Direction.rotate} and {!Direction.xyz} are linear.
 
     So a sum of two directions read as a direction is their chordal midpoint.
 
     {b Derivatives.} Every function has its analytic derivative wherever it is
     differentiable. Where it has none it gives a stated value with derivative 0,
     never NaN:
-    - {!lon} at a pole ([x = y = 0]): 0.
-    - {!lat} at a pole: ±π/2; at a zero row: 0.
-    - {!separation} where [a × (b − a) = 0], that is coincident or antipodal
-      rows or a zero row: π if [a · b < 0], else 0.
-    - {!position_angle} at the same points: 0. With respect to [a] at a pole,
-      its derivative is 0.
+    - {!Direction.lon} at a pole ([x = y = 0]): 0.
+    - {!Direction.lat} at a pole: ±π/2; at a zero row: 0.
+    - {!Direction.separation} where [a × (b − a) = 0], that is coincident or
+      antipodal rows or a zero row: π if [a · b < 0], else 0.
+    - {!Direction.position_angle} at the same points: 0. With respect to [a] at
+      a pole, its derivative is 0.
 
     At [lat]'s poles and [separation]'s 0 and π the function behaves like [|x|],
     and 0 is a subgradient; the other points are discontinuities. Near a pole
     the derivative of [lon] grows as 1/ρ, ρ the distance from the axis.
 
     Every angle in or out is a float64 quantity. Indexing and reshaping go
-    through {!ptree}:
+    through {!Direction.ptree}:
 
     {[
     let near =
@@ -241,10 +243,10 @@ end
 (** Maps between planes and the sky.
 
     A transform is a list of {e stages}, each one family's parameters and a
-    sense, forward or inverse. Its endpoint types say what it maps: {!plane}
-    points, [Frame.icrs Direction.t] directions. Composing appends stages and
-    inverting reverses them; no stage is ever fused, so what a file stated is
-    what a writer prints.
+    sense, forward or inverse. Its endpoint types say what it maps:
+    {!Transform.plane} points, [Frame.icrs Direction.t] directions. Composing
+    appends stages and inverting reverses them; no stage is ever fused, so what
+    a file stated is what a writer prints.
 
     A FITS celestial image stored [[NAXIS2; NAXIS1]] reads as
 
@@ -254,13 +256,14 @@ end
     >> tpv pv >> celestial Tan Frame.icrs ~pv ~native ~crval ~lonpole ~latpole
     ]}
 
-    with {!sip} and {!tpv} present when the header has them. {!axes} holds
-    raven's pixel convention (0-based centres in the data tensor's axis order)
-    and FITS's (1-based, [NAXIS1] first) in one stage.
+    with {!Transform.sip} and {!Transform.tpv} present when the header has them.
+    {!Transform.axes} holds raven's pixel convention (0-based centres in the
+    data tensor's axis order) and FITS's (1-based, [NAXIS1] first) in one stage.
 
-    {b Units.} Each planar family reads its input in the unit it states: {!axes}
-    with an origin, {!sip}, {!linear} and {!scale} in {!Unit.one}, {!shift} in
-    its offset's unit, {!tpv} and {!celestial} in an angle. A list in the wrong
+    {b Units.} Each planar family reads its input in the unit it states:
+    {!Transform.axes} with an origin, {!Transform.sip}, {!Transform.linear} and
+    {!Transform.scale} in {!Unit.one}, {!Transform.shift} in its offset's unit,
+    {!Transform.tpv} and {!Transform.celestial} in an angle. A list in the wrong
     order raises [Invalid_argument] where a stage reads its input.
 
     {b Domains.} A stage is a bijection on its domain, the connected region
@@ -269,13 +272,13 @@ end
     a distance from the reference point of at most 180°; ZPN's ends where its
     polynomial first turns. A distortion's domain is where its Jacobian's
     determinant is positive and, inverted, where Newton's method converges.
-    {!apply} at a finite point outside a domain raises [Invalid_argument]
-    through {!Nx.check}, naming the stage, the point and its distance or
-    residual, as in
+    {!Transform.apply} at a finite point outside a domain raises
+    [Invalid_argument] through {!Nx.check}, naming the stage, the point and its
+    distance or residual, as in
     ["Transform.apply: point 12 is 93.1 deg from the TAN reference (110.8375,
      -73.4537) deg, outside the projection's domain; Transform.covers gives the
-     mask"]. NaN maps to NaN. {!covers} gives the mask for callers that expect
-    points outside.
+     mask"]. NaN maps to NaN. {!Transform.covers} gives the mask for callers
+    that expect points outside.
 
     {b Precision.} Planes are float64: every stage holds its parameters and
     computes in float64, so a header's numbers are held as the file wrote them.
@@ -485,7 +488,7 @@ end
 
     A cell's {e measure} is its solid angle on the sky, or its area in a plane:
     the measure of the quadrilateral of its corners mapped to the world the
-    grid was built with, with great-circle edges on the sky. {!map_world}
+    grid was built with, with great-circle edges on the sky. {!Grid.map_world}
     changes the world and keeps the measures. Measures are computed in
     float64. *)
 module Grid : sig
@@ -673,8 +676,9 @@ end
     {b Validity.} [valid] is true where a sample was measured. Data and variance
     under an invalid sample are replaced by 0 wherever one arises, so a NaN or a
     sentinel there reaches no result under any derivative. Validity only
-    narrows: {!restrict} conjoins, and only {!v} sets a mask anew. Windows
-    always have a mask, false beyond the data. Masks carry no gradient.
+    narrows: {!Observation.restrict} conjoins, and only {!Observation.v} sets a
+    mask anew. Windows always have a mask, false beyond the data. Masks carry no
+    gradient.
 
     {b Area.} A pipeline that defined its surface brightness against a nominal
     area, such as JWST's [PIXAR_SR], or a per-pixel area map, states it as
@@ -1116,11 +1120,11 @@ end
     one: absent both, ICRS; [EQUINOX] alone, FK4 below 1984.0 and FK5 from it;
     [EQUINOX] 2000.0 under FK5 when absent; [EQUINOX] ignored under ICRS.
 
-    - [RA]/[DEC] under ICRS is {!Frame.icrs}, under FK5 at 2000.0
-      {!Frame.fk5_j2000}.
-    - [GLON]/[GLAT] is {!Frame.galactic}, [SLON]/[SLAT]
-      {!Frame.supergalactic}.
-    - [ELON]/[ELAT] under ICRS at 2000.0 is {!Frame.ecliptic_j2000}.
+    - [RA]/[DEC] under ICRS is {!Frame.val-icrs}, under FK5 at 2000.0
+      {!Frame.val-fk5_j2000}.
+    - [GLON]/[GLAT] is {!Frame.val-galactic}, [SLON]/[SLAT]
+      {!Frame.val-supergalactic}.
+    - [ELON]/[ELAT] under ICRS at 2000.0 is {!Frame.val-ecliptic_j2000}.
 
     Other systems and equinoxes are an [Error] naming what they need.
 

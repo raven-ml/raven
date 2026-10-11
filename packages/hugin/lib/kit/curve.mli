@@ -23,7 +23,7 @@
     differences and ratios of coordinates, so coordinates or differences of
     magnitude beyond about [1e300] or below about [1e-300] can give a cubic
     non-finite control points, which a path draws as a
-    {{!Path.section-gaps}gap}.
+    {{!Hugin_gg.Path.section-gaps}gap}.
 
     {1:runs Missing points}
 
@@ -126,7 +126,7 @@ val basis : t
 val path : t -> float array -> float array -> Path.t
 (** [path c xs ys] is curve [c] through the points [(xs.(i), ys.(i))]: one open
     subpath per run of at least two points ({!section-runs}), in order, or
-    {!Path.empty} if there is none.
+    {!Hugin_gg.Path.empty} if there is none.
 
     Raises [Invalid_argument] if [xs] and [ys] differ in length. *)
 
@@ -139,7 +139,8 @@ val area :
     two points ({!section-runs}) gives one closed subpath, in order: the curve
     through the run's points, a straight segment to the run's last baseline
     point, the baseline's curve over the run traversed backwards, and the
-    segment that closes it. It is {!Path.empty} if no run has two points.
+    segment that closes it. It is {!Hugin_gg.Path.empty} if no run has two
+    points.
 
     Raises [Invalid_argument] if [x0], [y0], [xs] and [ys] differ in length. *)
 

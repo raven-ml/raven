@@ -17,9 +17,7 @@
     Code execution is handled by a {!Kernel.t}, an abstract interface that
     supports different backends (OCaml toplevel, subprocess, remote).
 
-    A {!Session.t} manages the document and kernel together, processing
-    {!Session.request} values from frontends and producing
-    {!Session.notification} values.
+    A {!Session.t} manages the document and kernel together.
 
     For batch evaluation of notebooks without an interactive session, see
     {!Eval}.

@@ -14,10 +14,10 @@
     queues (a compute queue, and copy queues) with waits on the signals of the
     queues and devices whose results they read ({!sched_batches}). Each queue's
     commands are then encoded into command words by the device's vendor
-    ({!commands}), and the batch becomes a {e host program}: a kernel for the
-    host that writes the words known only when it runs into the command buffers,
-    and submits them. The rest of the words are written once, when the batch is
-    linked.
+    ({!field-commands}), and the batch becomes a {e host program}: a kernel for
+    the host that writes the words known only when it runs into the command
+    buffers, and submits them. The rest of the words are written once, when the
+    batch is linked.
 
     Everything here is data. Nothing opens a device: the engine links each batch
     (it allocates the storage the batch names and writes the words known at
@@ -125,8 +125,8 @@ val bufferize_cmdbuf : ?device:Ops.device -> Queue.t -> string -> Ops.t
     known at link then and the others when the host program runs. Each word used
     at several offsets is written by one loop over them. The {!Op.Linear}s that
     words address ({!Op.Getaddr}), such as a program's arguments, are regions
-    ({!Ops.arg}'s [Region]): each is laid out at its alignment in a buffer of
-    its own for its name, written before the command buffer. A region whose
+    ({!Ops.type-arg}'s [Region]): each is laid out at its alignment in a buffer
+    of its own for its name, written before the command buffer. A region whose
     words read ranges, such as the arguments of a program in a loop, has a copy
     for each trip of them, each at the region's alignment, and a word addresses
     its trip's copy. It lays the regions out in [q]: reset [q] ({!Queue.reset})
@@ -490,8 +490,8 @@ val lower_call : devices:(string -> device) -> Ops.t -> Ops.t
 (** [lower_call ~devices batch] is the batch [batch] as a call of its host
     program, a kernel of the host of its first device ({!queues.host}), or of
     the host of a host batch:
-    - each submission is encoded by its device's {!commands}, and the fence
-      becomes the stores it makes. A loop around commands ({!Op.End} of an
+    - each submission is encoded by its device's {!field-commands}, and the
+      fence becomes the stores it makes. A loop around commands ({!Op.End} of an
       {!Op.Linear}) repeats their words for each trip of its range, each trip's
       moved by the trip's size and written, when the host program runs, in a
       loop over the range;
@@ -576,12 +576,12 @@ val compile_linear :
 
     {b Linking a batch}, once:
     + Each argument is a placeholder, which the engine allocates on its device:
-      a volatile one ({!Ops.arg}'s [volatile]) and a command buffer
+      a volatile one ({!Ops.type-arg}'s [volatile]) and a command buffer
       ({!is_cmdbuf}) in memory the host and the device both see coherently, and
       the others in memory of the device that the host writes. The engine binds
       [signal_word d]'s placeholder to [d]'s signal word, fills a
       [("cfunc", lib, f)] one with [f]'s address, and allocates each tag its
-      vendor names ({!commands}) as the vendor says. Each {!Op.Buffer} the
+      vendor names ({!field-commands}) as the vendor says. Each {!Op.Buffer} the
       patches address is allocated, unless bound.
     + Each link patch is then written, in order: a store of bytes ({!Op.Binary},
       possibly bitcast) into a view of an argument, or of a stack of words into

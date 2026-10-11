@@ -209,7 +209,7 @@ val cached :
     attend over themselves and [cache] is returned as it is, at the cost of
     {!apply}: a model's whole-sequence forward pass is this function over
     {!Cache_index.whole}. Otherwise each leaf costs one scatter of the call's
-    tokens and one gather of its context; both trace once under {!Rune.jit}
+    tokens and one gather of its context; both trace once under [Rune.jit]
     whatever the index holds. Consumed by a compiled step on a device, the
     step's cost does not depend on the size of the cache. Differentiable through
     Rune.

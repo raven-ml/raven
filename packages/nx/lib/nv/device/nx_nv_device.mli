@@ -81,7 +81,7 @@
     the section [.text.name], and a cubin may hold several, each with its own
     registers, stack and constant bank 0. PTX is not loaded: compile it to a
     cubin first. A cubin is uploaded with its relocations applied, once while a
-    program of it or its {!kernel}'s image is reachable
+    program of it or its {!type-kernel}'s image is reachable
     ({!Nx_device.Program.load}).
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault or an
@@ -256,7 +256,7 @@ type channel = {
       each channel and need not wait;
     - writes its entry at [put mod entries]: the address of its segment, which
       lies below [2{^40}], and the segment's length in 32-bit words, in the
-      entry format of the channel's class ({!props}[.gpfifo_class]);
+      entry format of the channel's class ({!type-props}[.gpfifo_class]);
     - stores [put + 1] into [put] and [(put + 1) mod entries] into [gp_put],
       then [token] into [doorbell].
 
@@ -302,7 +302,7 @@ type kernel = {
 }
 (** The type for kernels: a function of an uploaded cubin. A launch reads the
     rest of what it needs, such as registers and constant banks, from the cubin
-    itself ({!Nx_nv_cubin.kernel}). *)
+    itself ({!Nx_nv_cubin.type-kernel}). *)
 
 val kernel : Nx_device.Program.t -> kernel option
 (** [kernel p] is the kernel of [p], if [p] is loaded on an NV device. Its

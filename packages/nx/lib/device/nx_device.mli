@@ -61,7 +61,7 @@
     pages, where pages are larger) paces the collector's major cycles by the
     program's memory: its OCaml heap and the host memory its live buffers hold.
     A cycle is due once the memory of those allocated since the last one reaches
-    [custom_major_ratio / 150] of it ({!Gc.control}), 29% by default, the share
+    [custom_major_ratio / 150] of it ([Gc.control]), 29% by default, the share
     the collector applies to its heap alone for other memory outside it. A
     buffer dropped just after a cycle marks it is found by the next cycle and
     freed while the one after that sweeps, so unreachable buffers hold at most
@@ -88,7 +88,7 @@
     ({!Driver}). A device that faults is lost for good ({!Lost}): every later
     operation that reads or computes on memory it can reach raises. Opening the
     device again gives a fresh device. Ctrl-C ([Sys.Break], with
-    {!Sys.catch_break}) interrupts the waits of {!synchronize},
+    [Sys.catch_break]) interrupts the waits of {!synchronize},
     {!Submission.wait}, {!Buffer.copy} and {!submit}'s wait for room in a
     device's queues, and loses no device.
 
@@ -128,7 +128,7 @@ val shares_host_memory : t -> bool
 val runs_on_host : t -> bool
 (** [runs_on_host d] is [true] iff [d]'s work is this process's host's: [d] is
     the {!host}, or a device of this machine described as [Host_visible] that
-    loads no programs ({!Driver.device}), such as the test devices over the
+    loads no programs ({!Driver.val-device}), such as the test devices over the
     host's memory. Such a device has no processor of its own: its memory is the
     host's, and the host computes on it as on its own. It is [false] for Metal,
     which runs programs, for CUDA, AMD and NV GPUs, for the {!disk} and for
@@ -141,8 +141,8 @@ val reaches : t -> t -> bool
     maps host memory ({!Driver.mapping}); for a host, the memory of a device of
     its machine that the host addresses; for another device, memory of a device
     of its machine that the host addresses, when [d] maps host memory, and the
-    memory of the devices its driver maps ({!Driver.device}'s [reaches]). It is
-    [false] for devices of two machines, and between the {!disk} and another
+    memory of the devices its driver maps ({!Driver.val-device}'s [reaches]). It
+    is [false] for devices of two machines, and between the {!disk} and another
     device. *)
 
 val name : t -> string
@@ -206,7 +206,7 @@ exception Lost of t * string
       with the same [why], every later operation that takes [d], and every
       {!Buffer.copy}, {!Buffer.bigarray}, {!Program.call}, {!submit} and claim
       ({!Buffer.Claim}) that reaches memory [d] can reach. {!Buffer.view} does
-      not. {!stats} and {!lost} answer, as do the functions that do not take
+      not. {!val-stats} and {!lost} answer, as do the functions that do not take
       [d]: {!name}, {!arch}, {!budget}, {!submitted}, {!signaled} and
       {!signal_word}.
     - Other devices do not wait for [d]'s work, and their other operations are
@@ -218,7 +218,7 @@ exception Lost of t * string
     - An open of [d]'s hardware through its library, such as the one that made
       [d], makes a fresh device of the same {!name}, unequal to [d] and after it
       in {!compare}, where the library can open the hardware again
-      ({!Driver.device}). [d]'s memory stays lost. *)
+      ({!Driver.val-device}). [d]'s memory stays lost. *)
 
 val lost : t -> string option
 (** [lost d] is [Some why] if [d] is lost, [why] being what its {!Lost} carries,
@@ -403,15 +403,16 @@ module Buffer : sig
       - system memory, which [d]'s mapping of host memory ({!Driver.mapping})
         maps: memory of [d]'s host ({!host_of}), of a device described as
         [Host_visible] ({!Driver.memory}), such as Metal and test devices over
-        the host's memory, and the pinned memory of any device ({!memory}).
+        the host's memory, and the pinned memory of any device ({!type-memory}).
         Through an [Identity] mapping, such as the {!host}'s, the borrow is over
         the memory's host addresses, without a copy;
       - the own memory of a [Device_local] device, such as a CUDA, AMD or NV
-        GPU's, which [d]'s driver maps ({!Driver.device}'s [peer]) once per
+        GPU's, which [d]'s driver maps ({!Driver.val-device}'s [peer]) once per
         region, even where a memory BAR gives it a host address. The mapping
         lasts until that device frees the memory, and [d] can reach it until
-        then. The device's mapped memory ({!memory}) is the exception for its
-        host, which borrows it over its host address, as it does pinned memory.
+        then. The device's mapped memory ({!type-memory}) is the exception for
+        its host, which borrows it over its host address, as it does pinned
+        memory.
 
       Through a [Pages] mapping, [d] maps the whole host memory that [b] is a
       view of, once: the borrows on [d] of views of that memory share one
@@ -911,18 +912,19 @@ val stats : t -> Stats.t
 
 (** Profiles of devices' work.
 
-    A profile of every device is taken between {!start} and {!stop}, or while a
-    function runs ({!take}). Profiles nest and overlap, in any domains: each
-    holds the events recorded while it is taken, so taking one leaves what the
-    others record unchanged. The devices record {!event}s: {e spans} of work on
-    a device, changes of its allocated memory, the programs it loads and, on
-    request, the {e counters} and {e traces} of its programs' runs. Spans come
-    from the host ({!span}), from the runtime's own copies and calls of host
-    programs, and from the libraries that submit work ({!Submission.record}).
-    Every time is on the host's clock, {!now}: the times a device stamps on its
-    own clock are calibrated against it when the profile is stopped.
-    {!output_chrome_trace} writes the events in Chrome's trace event format,
-    which Perfetto ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and
+    A profile of every device is taken between {!Profile.start} and
+    {!Profile.stop}, or while a function runs ({!Profile.take}). Profiles nest
+    and overlap, in any domains: each holds the events recorded while it is
+    taken, so taking one leaves what the others record unchanged. The devices
+    record {!Profile.event}s: {e spans} of work on a device, changes of its
+    allocated memory, the programs it loads and, on request, the {e counters}
+    and {e traces} of its programs' runs. Spans come from the host
+    ({!Profile.span}), from the runtime's own copies and calls of host programs,
+    and from the libraries that submit work ({!Submission.record}). Every time
+    is on the host's clock, {!Profile.now}: the times a device stamps on its own
+    clock are calibrated against it when the profile is stopped.
+    {!Profile.output_chrome_trace} writes the events in Chrome's trace event
+    format, which Perfetto ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and
     [chrome://tracing] load.
 
     When no profile is taken, recording costs a read of one atomic value and
@@ -1114,8 +1116,8 @@ module Submission : sig
 
       There is one pair for each device of [D], by the order the devices were
       opened. [D] is the devices of [s] and the devices of the buffers [s]
-      touches ({!Buffer.device}), less those whose waits cannot be encoded: a
-      device whose work does not store its values into its signal word
+      touches ({!Buffer.val-device}), less those whose waits cannot be encoded:
+      a device whose work does not store its values into its signal word
       ({!Driver.Signal}), and one whose signal word a device of [s] does not
       address, of another machine or with no mapping of host memory. Hosts and
       the disk are never in [D]. [D], and so the shape of [waits s], depends on
@@ -1170,8 +1172,8 @@ val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
     whose memory the buffers reach: a borrow's device and the device of the
     memory it maps. It waits on the host for the work [s]'s work cannot wait for
     itself ({!Submission.waits}) and until each device of [ds] has room in its
-    queues for a submission ({!Driver.device}'s [room]), then runs [f s]. For
-    each device [d] of [ds], [f] enqueues work that:
+    queues for a submission ({!Driver.val-device}'s [room]), then runs [f s].
+    For each device [d] of [ds], [f] enqueues work that:
     - completes after all of [d]'s earlier work;
     - waits for each pair of {!Submission.waits}[ s], on the device by reading
       {!signal_word}[ d'], or on the host with {!Submission.wait};
@@ -1236,19 +1238,21 @@ val signal_word : t -> Buffer.t
 (** Descriptions of devices.
 
     A library that opens devices of some kind describes each of them with
-    {!device}, once, and returns that value from every later open. A library
-    that reaches another machine describes that machine's host with {!host}, and
-    the other devices of that machine with {!device} given that host.
+    {!Driver.val-device}, once, and returns that value from every later open. A
+    library that reaches another machine describes that machine's host with
+    {!Driver.host}, and the other devices of that machine with
+    {!Driver.val-device} given that host.
 
     {b The callbacks} of a description run with the device taken, except [link]
     and [dma], which run with none; they must not use their device through this
     module. They report in four ways:
     - [None]: the driver has none;
     - [Error why]: it refuses;
-    - [false] from {!signal}'s [wait]: the work has not signaled yet;
+    - [false] from {!Driver.type-signal}'s [wait]: the work has not signaled
+      yet;
     - [Failure why]: the device faulted, which loses it ({!Lost}).
 
-    A [finalize] that raises is printed and ignored at exit. A {!depends}
+    A [finalize] that raises is printed and ignored at exit. A {!Driver.depends}
     function that raises [Failure] retains its memory. Blocking driver calls
     should release the OCaml runtime. *)
 module Driver : sig
@@ -1607,8 +1611,8 @@ module Driver : sig
       - [room ()] is [true] iff each queue that submitted work writes has room
         for what one submission writes, as the device's library bounds it (its
         low-level section). {!submit} waits for it on each of its devices before
-        it runs [f], as {!wait} does with the device's timeline and [Sleep]; a
-        [Failure] either raises loses the device. Defaults to [true].
+        it runs [f], as {!val-wait} does with the device's timeline and [Sleep];
+        a [Failure] either raises loses the device. Defaults to [true].
       - [finalize ~failed] runs once when the program exits, whether or not the
         device is lost: after the device synchronized if it was not, with
         [failed] telling whether it is lost by then. It leaves the hardware as
@@ -1639,9 +1643,9 @@ module Driver : sig
     io ->
     device
   (** [host ~address ~arch ~memory io] is the host of the machine at [address],
-      named ["CPU@ADDRESS"], with a budget of [max_int], as {!device} describes
-      a device. [memory] allocates the machine's memory, which the host
-      addresses and the process reaches only through [io]. Its timeline is
+      named ["CPU@ADDRESS"], with a budget of [max_int], as {!val-device}
+      describes a device. [memory] allocates the machine's memory, which the
+      host addresses and the process reaches only through [io]. Its timeline is
       memory of its own. With [programs], it loads and calls programs there
       ({!Program}): a call is sent in order after the machine's earlier
       operations. *)

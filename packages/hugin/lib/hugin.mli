@@ -123,7 +123,7 @@
     depend only on the structure of the figure, so a figure rebuilt by the same
     code has the same ids, and {!name} pins a subtree whose position varies.
     Errors, warnings, {!View.zoom}, {!Resolved.scale} and the tags of drawn
-    pictures ({!Picture.tag}) name nodes by id. *)
+    pictures ({!Picture.val-tag}) name nodes by id. *)
 
 (** {1:lower Lower libraries}
 
@@ -1118,7 +1118,7 @@ val legend :
 
     A size says which length the caller fixes: the whole figure's, or each data
     area's, the figure growing to hold what protrudes. Lengths are in points;
-    {!mm} and {!dpi} convert other units. *)
+    {!Size.mm} and {!Size.dpi} convert other units. *)
 module Size : sig
   type t
   (** The type for sizes. *)
@@ -1308,8 +1308,8 @@ end
 (** Roles.
 
     A role is a mark's slot for a channel ({!section-roles}). It is identified
-    by its name, and a parameter ({!param}) by its name and the call that made
-    it. *)
+    by its name, and a parameter ({!Role.param}) by its name and the call that
+    made it. *)
 module Role : sig
   type ('d, 'r) t
   (** The type for roles taking channels of domain values ['d] and range ['r].
@@ -1393,9 +1393,9 @@ end
 
 (** Marks.
 
-    {!v} makes a mark from channel bindings and a draw function. Nothing is read
-    when a mark is made: {!draw} reads each binding's data, reduced where it
-    lives, and calls the draw function once for each panel the mark has a row
+    {!Mark.v} makes a mark from channel bindings and a draw function. Nothing is
+    read when a mark is made: {!draw} reads each binding's data, reduced where
+    it lives, and calls the draw function once for each panel the mark has a row
     in, with that panel's rows. *)
 module Mark : sig
   (** {1:bindings Bindings} *)
@@ -1618,11 +1618,12 @@ module Mark : sig
   val raster : reducer
   (** [raster] draws a panel's picture of the mark as one image painted by the
       raster renderer at the density, over the device pixels the picture reaches
-      ({!Picture.bounds}), when the mark has more than 20,000 rows in the panel
-      or more rows than the panel has device pixels, whatever the output. Rows
-      are painted in their order, so the image is what the picture paints, each
-      component rounded to a level. Composited onto a raster page, which rounds
-      again, it is within one level of the picture drawn there directly. *)
+      ({!Picture.val-bounds}), when the mark has more than 20,000 rows in the
+      panel or more rows than the panel has device pixels, whatever the output.
+      Rows are painted in their order, so the image is what the picture paints,
+      each component rounded to a level. Composited onto a raster page, which
+      rounds again, it is within one level of the picture drawn there directly.
+  *)
 
   (** {1:making Making marks} *)
 
@@ -1650,9 +1651,9 @@ module Mark : sig
       binds, [opacity] included, and clips positions to the domain
       ({!section-rows}). {!draw} only selects each panel's rows, gathers the
       picture's large images ({!section-reducers}) and tags the picture with the
-      mark's id and rows ({!Picture.tag}), instance by instance if it is a stamp
-      of one instance per row: it clips nothing, so ink drawn from a row inside
-      the domain shows whole. Other arguments are:
+      mark's id and rows ({!Picture.val-tag}), instance by instance if it is a
+      stamp of one instance per row: it clips nothing, so ink drawn from a row
+      inside the domain shows whole. Other arguments are:
       - [name], the kind of mark in messages and printed forms, such as ["dot"]
         or ["fehu.cart"].
       - [reduce], the reducer that may draw the mark's rows. Unset, rows are

@@ -10,15 +10,15 @@
     The compiler ({!Tolk}) turns a schedule into data: programs, copies and
     batches of command queues ({!Tolk.Hcq2.compile_linear}). This library runs
     that data on the devices of [nx.device]. It describes each device to the
-    compiler ({!device}), links a compiled schedule once: it allocates the
+    compiler ({!type-device}), links a compiled schedule once: it allocates the
     storage the schedule names and writes every word known before it runs
     ({!link}). It then runs the linked schedule as often as it is asked to, on
     the buffers bound to its parameters ({!run}).
 
-    A schedule names its devices by strings ({!Tolk.Ops.device}); the caller
-    maps each name to a device, and no registry does. A program the host runs,
-    the only program outside batches, is loaded on the host of its device's
-    machine ({!Nx_device.host_of}).
+    A schedule names its devices by strings ({!Tolk.Ops.type-device}); the
+    caller maps each name to a device, and no registry does. A program the host
+    runs, the only program outside batches, is loaded on the host of its
+    device's machine ({!Nx_device.host_of}).
 
     Everything a run needs is allocated when the schedule is linked, so a run
     allocates no device memory, and runs of one linked schedule are serialized:
@@ -97,7 +97,7 @@ val device : (string * Nx_device.t) list -> string -> device
     reach the memory of the devices of [devices] that the device reaches
     ({!Nx_device.reaches}), and copy other memory through the host's. A caller
     that runs work from queues of its own, such as a test of the compiler, makes
-    a {!device} of its own.
+    a {!type-device} of its own.
 
     Raises [Invalid_argument] if [devices] does not map [name], gives one name
     to two devices, or gives the name of an unnamed host of a Metal, CUDA, AMD

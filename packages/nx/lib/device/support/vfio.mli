@@ -29,7 +29,7 @@ type request =
   | Device_get_region_info  (** Of a function: {!region_info}. *)
   | Device_set_irqs  (** Of a function: routes its interrupts ({!msi}). *)
   | Device_reset  (** Of a function: resets it. *)
-  | Iommu_get_info  (** Of the container: {!iommu_info}. *)
+  | Iommu_get_info  (** Of the container: {!val-iommu_info}. *)
   | Iommu_map_dma  (** Of the container: {!map_dma}. *)
   | Iommu_unmap_dma  (** Of the container: {!unmap_dma}. *)
 

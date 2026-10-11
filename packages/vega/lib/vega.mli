@@ -20,9 +20,9 @@
     the step's learning rate from the state's step counter with a schedule
     ({!Schedule}). Each state record is a structure itself ({!adam_ptree},
     {!sgd_ptree}), so a whole training step (forward, backward and update) is
-    one function of [(params, state)] that one {!Rune.val-jit} call compiles
-    into a single program on any device, the state riding it as ordinary
-    argument and result leaves:
+    one function of [(params, state)] that one [Rune.jit] call compiles into a
+    single program on any device, the state riding it as ordinary argument and
+    result leaves:
 
     {[
     let model = Nx.Ptree.instantiate (module Model)
@@ -68,10 +68,10 @@
 
     - {b One skeleton.} The parameters, the gradients and each part of a state
       that has the parameters' shape visit the same leaves and reports under [p]
-      (the same {!Nx.Ptree.visits}) and have equal dtypes leaf by leaf. Every
-      step raises [Invalid_argument] naming itself, the first path at which a
-      value differs from the parameters, and what the value and the parameters
-      hold there, for example
+      (the same {!Nx.Ptree.val-visits}) and have equal dtypes leaf by leaf.
+      Every step raises [Invalid_argument] naming itself, the first path at
+      which a value differs from the parameters, and what the value and the
+      parameters hold there, for example
       ["Vega.adam_step: the root: length 1 in the gradients, length 2 in the
        parameters"] or
       ["Vega.adam_step: w: float32 in the gradients, float64 in the parameters"].
@@ -80,7 +80,7 @@
       {!Nx.Ptree.map2} does.
     - {b Non-parameter leaves.} A structure may carry tensors that are not
       parameters: an {!Nx.Rng.t} threaded through a compiled step, a counter, a
-      batch of indices. {!Rune.val-grad} does not differentiate them, and a step
+      batch of indices. [Rune.grad] does not differentiate them, and a step
       passes every leaf whose dtype is not a float through unchanged, in the
       parameters and in the state. So one structure serves the objective, the
       gradient and the update.
@@ -122,9 +122,9 @@ val clip_by_global_norm : 'p Nx.Ptree.t -> max_norm:float -> 'p -> 'p
     are not floats are returned unchanged.
 
     The scale factor is computed in float32 tensor arithmetic and selected with
-    {!Nx.where} — no host read — so the transform traces under {!Rune.val-jit}
-    on any device and can sit between a jitted backward pass and a jitted
-    optimizer step.
+    {!Nx.where} — no host read — so the transform traces under [Rune.jit] on any
+    device and can sit between a jitted backward pass and a jitted optimizer
+    step.
 
     Raises [Invalid_argument] if [max_norm <= 0.]. *)
 
@@ -172,12 +172,12 @@ module Loss_scale : sig
       captured float would be a constant of the program. *)
 
   val static : float -> t
-  (** [static s] is the fixed scale [s]: {!step} never changes it.
+  (** [static s] is the fixed scale [s]: {!val-step} never changes it.
 
       Raises [Invalid_argument] if [s] is not positive. *)
 
   val dynamic : ?init:float -> unit -> t
-  (** [dynamic ()] is a fresh adaptive scale, adjusted by {!step}. [init]
+  (** [dynamic ()] is a fresh adaptive scale, adjusted by {!val-step}. [init]
       defaults to [32768.] ([2^15]).
 
       Raises [Invalid_argument] if [init] is not positive. *)
@@ -214,7 +214,7 @@ module Loss_scale : sig
 
       A {!static} scale is returned unchanged. [step] is tensor arithmetic: it
       always computes [update grads'] and selects with {!Nx.where}, so it
-      compiles under {!Rune.val-jit} into one program whatever the gradients.
+      compiles under [Rune.jit] into one program whatever the gradients.
 
       Raises [Invalid_argument] if [growth_interval], [growth_factor] or
       [backoff_factor] is not positive, or as {!Nx.Ptree.map2} does if
@@ -228,9 +228,9 @@ end
 (** {1:lr Learning Rates}
 
     A step applies its learning rate as a scalar tensor, cast to each leaf's
-    dtype. A constant rate is one call to {!lr}; a scheduled one is a
+    dtype. A constant rate is one call to {!val-lr}; a scheduled one is a
     {!Schedule} applied to the state's step counter — tensor arithmetic either
-    way, which is what makes the rate track correctly under {!Rune.val-jit}. *)
+    way, which is what makes the rate track correctly under [Rune.jit]. *)
 
 val lr : float -> Nx.float32_t
 (** [lr v] is the learning rate [v] as a scalar tensor, the form the step
@@ -282,10 +282,10 @@ val sgd_step :
     p' = p - lr * v'
     v}
 
-    [lr] is a scalar tensor ({!lr}); [momentum] defaults to [0.], plain gradient
-    descent: the velocity is then the last gradient, and the input velocity is
-    not read at all. The counter advances by one. The whole step is tensor
-    arithmetic over [(params, st)], so it traces under {!Rune.val-jit}.
+    [lr] is a scalar tensor ({!val-lr}); [momentum] defaults to [0.], plain
+    gradient descent: the velocity is then the last gradient, and the input
+    velocity is not read at all. The counter advances by one. The whole step is
+    tensor arithmetic over [(params, st)], so it traces under [Rune.jit].
 
     Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\), or as
     {!section-structures} states if [grads], or [st.velocity] when [momentum] is
@@ -378,9 +378,9 @@ val adam_step :
     p'  = p - lr * d
     v}
 
-    [lr] is a scalar tensor ({!lr}). [b1] defaults to [0.9], [b2] to [0.999],
-    [eps] to [1e-8]; they are compile-time constants, safe captures under
-    {!Rune.val-jit}. The bias corrections are derived from the state's counter
+    [lr] is a scalar tensor ({!val-lr}). [b1] defaults to [0.9], [b2] to
+    [0.999], [eps] to [1e-8]; they are compile-time constants, safe captures
+    under [Rune.jit]. The bias corrections are derived from the state's counter
     in tensor arithmetic (see {!section-structures} for their precision), so the
     whole step traces and the returned state feeds the next call.
 
@@ -452,8 +452,8 @@ val radam_step :
     where [t*] is the first step at which [rho] reaches [5]. [t*] depends on
     [b2] alone: it is found on the host in float64 and compared with the integer
     counter, so the switch is exact at any leaf dtype, and the choice between
-    the two forms is a tensor [where] that traces under {!Rune.val-jit}.
-    Defaults and the counter's role are {!adam_step}'s.
+    the two forms is a tensor [where] that traces under [Rune.jit]. Defaults and
+    the counter's role are {!adam_step}'s.
 
     Raises [Invalid_argument] as {!adam_step} does. *)
 
@@ -782,7 +782,7 @@ val adafactor_step :
     ]}
 
     The history is held at a fixed size, so the state is a parameter tree of
-    static shape ({!lbfgs_ptree}) and the step traces under {!Rune.val-jit}. The
+    static shape ({!lbfgs_ptree}) and the step traces under [Rune.jit]. The
     inner products of the two-loop recursion are at float64 when every float
     leaf is float64, and at float32 otherwise. *)
 

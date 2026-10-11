@@ -7,10 +7,10 @@
 
     A GPU that the process drives itself reaches system memory by physical
     address, through page tables the process writes, unless an IOMMU stands
-    between them ({!Pci.addressing}). Memory reached physically must stay where
-    it is: resident, locked, and at the physical pages the process read for it.
-    This module allocates such memory, pins memory the process already has, and
-    maps memory for an IOMMU to pin ({!map}).
+    between them ({!Pci.type-addressing}). Memory reached physically must stay
+    where it is: resident, locked, and at the physical pages the process read
+    for it. This module allocates such memory, pins memory the process already
+    has, and maps memory for an IOMMU to pin ({!map}).
 
     Reading physical addresses and locking pages need Linux, the privileges for
     [/proc/self/pagemap] and [mlock], and the kernel setting

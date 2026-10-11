@@ -24,8 +24,9 @@ val words : Ops.t Nx_nv_packet.word list -> Ops.t list
 
 val region : string -> string -> (int * Ops.t) list -> Ops.t
 (** [region name bytes patches] is the region named [name] of 256-byte alignment
-    ({!Ops.arg}'s [Region]) holding [bytes], each of [patches], [(offset, w)],
-    written over the bytes from [offset] for the width of [w]'s type. *)
+    ({!Ops.type-arg}'s [Region]) holding [bytes], each of [patches],
+    [(offset, w)], written over the bytes from [offset] for the width of [w]'s
+    type. *)
 
 val structure : string -> Ops.t Nx_nv_packet.structure -> Ops.t
 (** [structure name s] is {!region}[ name] of [s]'s bytes, each hole the

@@ -187,7 +187,7 @@ module Type : sig
     | Float64 : float t  (** IEEE 754 binary64 floats. *)
     | String : string t
         (** UTF-8 text. Text is validated when it enters talon, and invalid
-            bytes belong in {!Binary}. *)
+            bytes belong in {!constructor-Binary}. *)
     | Binary : Binary.t t  (** Byte strings. *)
     | Categorical : string iarray -> string t
         (** Strings from a dictionary, stored as int32 positions in it. The
@@ -264,7 +264,7 @@ module Type : sig
   (** [string] is {!String}. *)
 
   val binary : Binary.t t
-  (** [binary] is {!Binary}. *)
+  (** [binary] is {!constructor-Binary}. *)
 
   val categorical : string array -> string t
   (** [categorical d] is {!Categorical} with a copy of the dictionary [d], which
@@ -292,8 +292,8 @@ module Type : sig
   (** [list t] is {!List} of [t]. *)
 
   val record : (string * any) list -> Record.t t
-  (** [record fields] is {!Record} with [fields], in order. A record type may
-      have no fields, and a field's name may be empty.
+  (** [record fields] is {!constructor-Record} with [fields], in order. A record
+      type may have no fields, and a field's name may be empty.
 
       Raises [Invalid_argument] if two fields have the same name, or a name is
       not valid UTF-8. *)
@@ -305,9 +305,9 @@ module Type : sig
       dimension. *)
 
   val ext : name:string -> ?metadata:string -> 'a t -> ext t
-  (** [ext ~name ?metadata storage] is {!Ext} named [name], with [metadata]
-      (defaults to [""]) and stored as [storage]. Format readers build the types
-      of extension columns with it.
+  (** [ext ~name ?metadata storage] is {!constructor-Ext} named [name], with
+      [metadata] (defaults to [""]) and stored as [storage]. Format readers
+      build the types of extension columns with it.
 
       Raises [Invalid_argument] if [name] is empty or not valid UTF-8, or if
       [storage] is an extension type. *)
@@ -1573,7 +1573,7 @@ end
 module Ext : sig
   (** Extension declarations.
 
-      An extension type is a named type stored as another ({!Type.ext}). A
+      An extension type is a named type stored as another ({!Type.val-ext}). A
       declaration gives it OCaml values ['e], converted to and from its storage
       values ['s]. It is the only way to read an extension column's values or
       compute on them: no {!Col} handle binds one. A library's claim to an
@@ -1611,7 +1611,7 @@ module Ext : sig
 
       [metadata] defaults to [""].
 
-      Raises [Invalid_argument] as {!Type.ext} does. *)
+      Raises [Invalid_argument] as {!Type.val-ext} does. *)
 
   val col : ('e, 's) t -> string -> ('e, Expr.row) Expr.t
   (** [col e name] is the column [name] read through [e]. It binds only a column
@@ -1660,11 +1660,11 @@ module Source : sig
       A predicate compares columns of the source against values. It means what
       its filter means in talon: a comparison uses talon's total order
       ({!Type.compare_value}) and is null when the column's value is null, and
-      {!Not}, {!And} and {!Or} are Kleene's, so a row passes a predicate iff the
-      predicate is [true] on it. A source answers {!Exact} only for a predicate
-      whose meaning it honours entirely: for example, a float column's minimum
-      and maximum prune a row group only when the source knows the group holds
-      no NaN, since NaN passes [>], [>=] and [<>]. *)
+      {!Pred.Not}, {!Pred.And} and {!Pred.Or} are Kleene's, so a row passes a
+      predicate iff the predicate is [true] on it. A source answers {!Exact}
+      only for a predicate whose meaning it honours entirely: for example, a
+      float column's minimum and maximum prune a row group only when the source
+      knows the group holds no NaN, since NaN passes [>], [>=] and [<>]. *)
   module Pred : sig
     type value =
       | Value : 'a Type.t * 'a -> value
@@ -2078,7 +2078,7 @@ module Query : sig
   val run : t -> (table, Error.t) result
   (** [run q] is [q]'s rows as one batch: [fold] into a table, then one copy
       into a single batch. Its columns are canonical ({!Column}), so their
-      {!Column.layout}s do not depend on batches. *)
+      {!Column.type-layout}s do not depend on batches. *)
 
   val values : ('a, Expr.row) Expr.t -> t -> ('a array, Error.t) result
   (** [values e q] is [e] on each row of [q], decoded to OCaml:

@@ -29,8 +29,8 @@ val create : ('obs, 'act, 'render) Env.t list -> ('obs, 'act, 'render) t
 (** [create envs] creates a vectorized environment.
 
     All environments must have structurally identical spaces (checked via
-    {!Space.spec} and {!Space.equal_spec}). Raises [Invalid_argument] if [envs]
-    is empty or spaces differ. *)
+    {!Space.val-spec} and {!Space.equal_spec}). Raises [Invalid_argument] if
+    [envs] is empty or spaces differ. *)
 
 (** {1:accessors Accessors} *)
 

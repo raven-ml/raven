@@ -52,7 +52,7 @@ val connect :
 val listen : key:string -> Unix.sockaddr -> Nx_device_support.Remote_server.t
 (** [listen ~key addr] serves this machine at [addr], as [nx-remote] does:
     {!Nx_device_support.Remote_server.listen} running the host programs of
-    clients with {!Nx_device.Driver.host_programs}.
+    clients with {!Nx_device.Driver.val-host_programs}.
 
     Raises as {!Nx_device_support.Remote_server.listen} does. *)
 

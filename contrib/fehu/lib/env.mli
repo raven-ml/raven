@@ -7,7 +7,7 @@
 
     An environment defines an interactive loop: the agent observes, acts, and
     receives a reward. The environment enforces a lifecycle: {!reset} must be
-    called before {!step}, and a terminated or truncated episode requires
+    called before {!val-step}, and a terminated or truncated episode requires
     another {!reset}. *)
 
 (** {1:step Step results} *)
@@ -83,7 +83,7 @@ val wrap :
 (** [wrap ~observation_space ~action_space ~reset ~step inner] builds a new
     environment that wraps [inner]. The wrapper shares [inner]'s lifecycle state
     (RNG, closed flag, reset flag). All guards (closed, needs-reset, space
-    validation) are enforced by {!reset}/{!step}, so wrappers get them
+    validation) are enforced by {!reset}/{!val-step}, so wrappers get them
     automatically.
 
     The render type is preserved from [inner]. [render_mode] defaults to
@@ -138,8 +138,8 @@ val map_observation :
   ('obs1, 'act, 'render) t ->
   ('obs2, 'act, 'render) t
 (** [map_observation ~observation_space ~f env] transforms observations. Every
-    observation from {!reset} and {!step} is passed through [f] together with
-    the info dictionary. *)
+    observation from {!reset} and {!val-step} is passed through [f] together
+    with the info dictionary. *)
 
 val map_action :
   action_space:'act2 Space.t ->
@@ -160,8 +160,9 @@ val map_reward :
 val clip_action :
   ('obs, Space.Box.element, 'render) t -> ('obs, Space.Box.element, 'render) t
 (** [clip_action env] clamps continuous actions to the bounds of the inner
-    environment's {!Space.Box} action space. The wrapper exposes a relaxed space
-    that accepts any float values, then clips before forwarding. *)
+    environment's {!Space.module-Box} action space. The wrapper exposes a
+    relaxed space that accepts any float values, then clips before forwarding.
+*)
 
 val clip_observation :
   low:float array ->

@@ -246,8 +246,8 @@ module Set : sig
       and {!Max}. *)
 
   val reduce : t
-  (** [reduce] is the operations a {!Reduce} or an {!Allreduce} can reduce with:
-      {!Add}, {!Mul} and {!Max}. *)
+  (** [reduce] is the operations a {!Reduce} or an {!constructor-Allreduce} can
+      reduce with: {!Add}, {!Mul} and {!Max}. *)
 
   val comparison : t
   (** [comparison] is the operations whose result is a boolean whatever the type

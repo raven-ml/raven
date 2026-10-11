@@ -132,7 +132,7 @@ val log_media :
     [kind] is metadata for renderers; the TUI ignores media events. Silently
     ignored if the session is closed.
 
-    @raise Invalid_argument if [path] does not exist. *)
+    Raises [Invalid_argument] if [path] does not exist. *)
 
 val log_table :
   t ->

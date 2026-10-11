@@ -6,7 +6,7 @@
 (** Step metadata dictionaries.
 
     Info dictionaries carry auxiliary data returned by {!Env.reset} and
-    {!Env.step}. Keys are strings and values are {!Value.t}. *)
+    {!Env.val-step}. Keys are strings and values are {!Value.t}. *)
 
 (** {1:types Types} *)
 

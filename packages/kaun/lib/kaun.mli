@@ -9,9 +9,8 @@
     with a payload hole and an [apply] function; a model is a record of layers
     with one [walk], one line per field (see {!Linear} for the pattern).
     [Nx.Ptree.instantiate] makes the model a structure at its tensor type, a
-    training step composes {!Rune.value_and_grad} with a [Vega] optimizer
-    update, and the training loop is ordinary [Seq] iteration over {!Data}
-    minibatches.
+    training step composes [Rune.value_and_grad] with a [Vega] optimizer update,
+    and the training loop is ordinary [Seq] iteration over {!Data} minibatches.
 
     {[
     let model = Nx.Ptree.instantiate (module Model)
@@ -26,10 +25,10 @@
     ]}
 
     Random initialization and shuffling draw from the ambient {!Nx.Rng} scope;
-    open one with {!Nx.Rng.with_key} for reproducibility. Under {!Rune.val-jit}
-    what matters is the key the scope is rooted at, not whether a draw named
-    one: root it at a key threaded through the step's inputs and the keyless
-    draws inside compile, exactly as an explicit key ({!Dropout}) would. *)
+    open one with {!Nx.Rng.with_key} for reproducibility. Under [Rune.jit] what
+    matters is the key the scope is rooted at, not whether a draw named one:
+    root it at a key threaded through the step's inputs and the keyless draws
+    inside compile, exactly as an explicit key ({!Dropout}) would. *)
 
 (** {1:layers Layers}
 

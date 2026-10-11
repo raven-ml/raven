@@ -8,12 +8,12 @@
     A CSV file is text: records on lines, each record's fields separated by a
     separator. Talon reads it as
     {{:https://www.rfc-editor.org/rfc/rfc4180}RFC 4180} writes it, strictly,
-    from a {!Bytesrw.Bytes.Reader.t}.
+    from a [Bytesrw.Bytes.Reader.t].
 
     A {!type-format} says how talon reads a file: its dialect (the separator,
     the quote, whether a header names the columns, and the text that means null)
     and its columns, each a name and the talon type its fields read as. {!sniff}
-    infers a format from a file's first records, {!format} states one,
+    infers a format from a file's first records, {!val-format} states one,
     {!with_type} changes the type a column reads as, and {!pp_format} prints a
     format.
 
@@ -48,7 +48,7 @@
     A field that does not read as its type fails the read, with its line and
     column, its text and the fix.
 
-    {1:sniffing Sniffing}
+    {1:sniffing_rules Sniffing}
 
     {!sniff} reads a file's first records to infer its format, with the quote
     ['"'] and the null tokens it is given:
@@ -144,7 +144,7 @@ val sniff :
   Bytesrw.Bytes.Reader.t ->
   (format, Talon.Error.t) result
 (** [sniff ?rows ?nulls r] is the format of the CSV text that [r] reads,
-    inferred from its first records as {{!sniffing}sniffing} says, with:
+    inferred from its first records as {{!sniffing_rules}sniffing} says, with:
     - [rows], the number of records after the header that types are inferred
       from. Defaults to [16384].
     - [nulls], the format's null tokens, whose fields types are not inferred
@@ -157,7 +157,7 @@ val sniff :
     none splits every sampled record into the same number of fields, if a
     sampled record breaks the {{!syntax}syntax}, if the header names two columns
     the same or a name is not valid UTF-8, or if reading [r] raises
-    {!Bytesrw.Bytes.Stream.Error} or [Sys_error]. [e] gives the line and column
+    [Bytesrw.Bytes.Stream.Error] or [Sys_error]. [e] gives the line and column
     where the input fails.
 
     Raises [Invalid_argument] if [rows < 1], or if a null token holds the quote,
@@ -173,7 +173,7 @@ val decode : format -> Bytesrw.Bytes.Reader.t -> (Talon.t, Talon.Error.t) result
     [Error e] at the earliest record, and its first field, that fails: a header
     that does not name [f]'s columns, a record that breaks the {{!syntax}syntax}
     or has another number of fields, a field that does not read as its column's
-    type, or a read of [r] that raises {!Bytesrw.Bytes.Stream.Error} or
+    type, or a read of [r] that raises [Bytesrw.Bytes.Stream.Error] or
     [Sys_error]. An empty input fails when [f] has a header. [e] gives the line
     and column. *)
 
@@ -197,7 +197,8 @@ val file :
     [Error e] if the file cannot be opened, or as {!sniff}.
 
     Raises [Invalid_argument] if both [format] and [nulls] are given, since a
-    format holds its null tokens ({!format}), or as {!sniff} does on [nulls]. *)
+    format holds its null tokens ({!type-format}), or as {!sniff} does on
+    [nulls]. *)
 
 (** {1:writing Writing} *)
 
@@ -215,13 +216,13 @@ val encode :
     one of [f]'s null tokens, or holds the separator, the quote or a line break,
     and a quote inside it is doubled. A format of one column writes a null as
     its first null token, since a record of one empty field is an empty line,
-    which is no record. [eod] indicates whether {!Bytesrw.Bytes.Slice.eod} is
+    which is no record. [eod] indicates whether [Bytesrw.Bytes.Slice.eod] is
     written on [w] after the records, when they are all written: the caller
     decides when [w] ends. Defaults to [false].
 
     [Error e] if running [q] fails, if a null is to be written in a format of
     one column without a null token, at the line it would be on, or if writing
-    to [w] raises {!Bytesrw.Bytes.Stream.Error} or [Sys_error]. The records
+    to [w] raises [Bytesrw.Bytes.Stream.Error] or [Sys_error]. The records
     before the failure are written.
 
     Raises [Invalid_argument] if [q]'s columns are not [f]'s, names and types,

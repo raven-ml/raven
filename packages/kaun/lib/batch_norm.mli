@@ -16,7 +16,7 @@
     returns updated running statistics; in eval mode it normalizes with the
     running statistics and returns them unchanged. A training step returns the
     updated statistics from the objective beside the loss, through
-    {!Rune.value_and_grad_aux}, which takes their structure and gives them back
+    [Rune.value_and_grad_aux], which takes their structure and gives them back
     undifferentiated:
 
     {[
@@ -117,8 +117,8 @@ val apply :
     population variance — gradients flow through them to [x] — and [stats'] is
     the updated running statistics [momentum * stats + (1 - momentum) * batch].
     [y] does not depend on [stats]. A training step returns [stats'] beside the
-    loss through {!Rune.value_and_grad_aux}, which gives it back
-    undifferentiated (see the module preamble).
+    loss through [Rune.value_and_grad_aux], which gives it back undifferentiated
+    (see the module preamble).
 
     With [training = false], [mean] and [var] are [stats] and [stats' == stats].
 

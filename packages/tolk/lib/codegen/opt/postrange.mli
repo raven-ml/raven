@@ -30,7 +30,7 @@ module Scheduler : sig
 
   val v : Ops.t -> Renderer.t -> t
   (** [v ast ren] schedules the kernel [ast], the sink of a kernel
-      ({!Ops.kernel_info}), for [ren]. Its applied optimisations are those
+      ({!Ops.type-kernel_info}), for [ren]. Its applied optimisations are those
       [ast]'s argument lists. *)
 
   val copy : t -> t

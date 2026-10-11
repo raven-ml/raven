@@ -8,11 +8,11 @@
     A schedule maps a step counter to a learning rate. The counter is a scalar
     [int32] tensor and the result a scalar [float32] tensor, so a schedule is
     ordinary tensor arithmetic: applied to an optimizer state's own [step] leaf
-    inside a compiled training step ({!Rune.val-jit}), the rate is derived
-    inside the program and tracks the state across calls; applied eagerly, it
-    computes the same value. One family serves both worlds — there is no
-    separate host-side variant, only {!eval} to read a schedule at a host
-    counter for logging or for loops that keep their own count.
+    inside a compiled training step ([Rune.jit]), the rate is derived inside the
+    program and tracks the state across calls; applied eagerly, it computes the
+    same value. One family serves both worlds — there is no separate host-side
+    variant, only {!eval} to read a schedule at a host counter for logging or
+    for loops that keep their own count.
 
     Optimizer steps take the schedule's result as their [~lr]:
 

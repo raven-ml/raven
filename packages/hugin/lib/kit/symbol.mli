@@ -96,11 +96,11 @@ val path : paint -> float -> t -> Path.t
 (** [path paint a s] is the outline of [s] at size [a] painted with [paint], its
     centre at the origin. It is [path paint 1. s] scaled by [√a], up to
     rounding. Closed outlines are closed subpaths that turn clockwise on screen,
-    as {!Path.rect} and {!Path.circle} do, and the circle is the one
-    {!Path.circle} draws, whose area and length are those of a true circle up to
-    the error of its arcs. {!plus}, {!times} and {!asterisk} are open subpaths
-    of one segment per stroke, so filled they paint nothing. [path paint 0. s]
-    has every point at the origin.
+    as {!Hugin_gg.Path.rect} and {!Hugin_gg.Path.circle} do, and the circle is
+    the one {!Hugin_gg.Path.circle} draws, whose area and length are those of a
+    true circle up to the error of its arcs. {!plus}, {!times} and {!asterisk}
+    are open subpaths of one segment per stroke, so filled they paint nothing.
+    [path paint 0. s] has every point at the origin.
 
     Raises [Invalid_argument] if [a] is negative or not finite. *)
 

@@ -6,7 +6,7 @@
 (** Loss functions.
 
     A loss maps predictions and targets to a scalar tensor — the shape
-    {!Rune.grad} requires of a training objective. Every loss is differentiable
+    [Rune.grad] requires of a training objective. Every loss is differentiable
     with respect to its predictions (or logits); targets are data and receive no
     gradients.
 

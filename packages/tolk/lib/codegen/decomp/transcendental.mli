@@ -19,7 +19,7 @@
     result is within one unit in the last place of the correctly rounded one: at
     most one value of its type away from it, on the ordered line of the type's
     values. The other floats compute them in {!Dtype.Float32} and round once
-    ({!patterns}), which keeps them within one unit too.
+    ({!val-patterns}), which keeps them within one unit too.
 
     {b Errors.} A function given a node of another type than it is defined for
     raises [Invalid_argument]. *)

@@ -324,7 +324,7 @@ val waves_per_sh : int t
 
 val beam_padto : bool t
 (** [beam_padto] adds pads of axes to the candidates of the beam search
-    ({!Search.actions}), from [BEAM_PADTO]. Defaults to [false]. *)
+    ({!Search.val-actions}), from [BEAM_PADTO]. Defaults to [false]. *)
 
 val beam_uops_max : int t
 (** [beam_uops_max] is the number of instructions from which the beam search

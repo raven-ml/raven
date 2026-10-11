@@ -226,7 +226,7 @@ val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
     elements. It always copies, so writing it leaves [t] unchanged. Loop over it
     for element access that allocates nothing per element.
 
-    Raises [Invalid_argument] if [t]'s dtype has no {!Bigarray.kind}: bfloat16,
+    Raises [Invalid_argument] if [t]'s dtype has no [Bigarray.kind]: bfloat16,
     the float8 dtypes, uint32, uint64, int4, uint4, bool and bit. {!bitcast}
     the first five to the integers of their width first, which have one, and
     {!cast} the next three to [uint8]. A [bit] tensor becomes [uint8] by
@@ -287,10 +287,10 @@ val to_array : ('a, 'b) t -> 'a array
     the same for all of them (copies take it); a reduction over the split axis,
     and a {!take} along it, give a full copy on each device; and an operation
     along the split axis ({!sort}, {!cumsum}, {!pad} or {!concatenate} along it,
-    linear algebra on its last two axes, {!fft} over it) raises. A read
-    ({!item}, {!to_array}, {!to_bigarray}, {!pp}, a save) copies the elements it
-    reads and leaves the value where it is. A value's storage is released when
-    no value reaches it.
+    linear algebra on its last two axes, {!val-fft} over it) raises. A read
+    ({!item}, {!to_array}, {!to_bigarray}, {!val-pp}, a save) copies the
+    elements it reads and leaves the value where it is. A value's storage is
+    released when no value reaches it.
 
     A device whose hardware faults or hangs is lost for good
     ({!Nx_device.Lost}). From then on, every operation that reads or computes on
@@ -702,7 +702,7 @@ val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
 (** [of_bigarray ba] is a tensor of [ba]'s shape over [ba]'s memory, without a
     copy, of the dtype of [ba]'s kind. The tensor takes ownership: the caller
     must not write [ba] afterwards. Fill a bigarray, then wrap it, to build a
-    tensor element by element. A tensor of a dtype with no {!Bigarray.kind} is
+    tensor element by element. A tensor of a dtype with no [Bigarray.kind] is
     built from another: a bfloat16, float8, uint32 or uint64 one from the
     integers of its width with {!bitcast}, such as a bfloat16 one from
     [int16_unsigned] elements, an int4, uint4 or bool one from [uint8]
@@ -757,8 +757,8 @@ module Rng : sig
 
       Draws come from a Threefry generator whose state is a {e key}. Every
       sampler here is a pure function of the key it is given: the same key,
-      dtype and shape give the same values — eagerly, under {!Rune.val-jit}, and
-      on every device. Fresh values come from fresh keys, by {!split}ting a key
+      dtype and shape give the same values — eagerly, under [Rune.jit], and on
+      every device. Fresh values come from fresh keys, by {!split}ting a key
       into independent subkeys or {!fold_in}ning a counter.
 
       Naming a key per draw site is precise but verbose, so a
@@ -781,14 +781,14 @@ module Rng : sig
       state, two 32-bit words held in an int32 tensor of shape [[|2|]], from
       which every draw is a pure function. A batch of keys, from {!split_batch},
       puts axes before the words, as in [[|n; 2|]], and each lane of a
-      {!Rune.val-vmap} over it sees one key. The samplers take one key.
+      [Rune.vmap] over it sees one key. The samplers take one key.
 
       Only this module builds keys: arithmetic or slicing on a key gives a
       tensor, which no sampler takes. A key coerces to its tensor,
       [(k :> Nx.int32_t)], to read its words or save them, and {!of_tensor}
       turns saved words back into a key. A key in a structure, a jitted
-      function's argument or a mapped argument of {!Rune.val-vmap} is walked
-      with {!ptree}. *)
+      function's argument or a mapped argument of [Rune.vmap] is walked with
+      {!ptree}. *)
 
   (** {1:keys Keys} *)
 
@@ -812,7 +812,7 @@ module Rng : sig
   val split_batch : n:int -> t -> t
   (** [split_batch ~n k] is [split ~n k] as one batch of keys, of shape
       [[|n; 2|]]: row [i] holds the words of [(split ~n k).(i)]. It is the
-      argument that gives each lane of a {!Rune.val-vmap} its own key:
+      argument that gives each lane of a [Rune.vmap] its own key:
 
       {v
       Rune.vmap
@@ -1069,12 +1069,11 @@ module Rng : sig
 
       A scope is exactly as strong as its root key. Every draw is {!fold_in} of
       the root, a tensor computation, so a root that is a jitted function's
-      input leaf or a {!Rune.val-vmap} mapped axis makes the whole scope traced
-      or batched — the keyless samplers then compile and decorrelate just as the
+      input leaf or a [Rune.vmap] mapped axis makes the whole scope traced or
+      batched — the keyless samplers then compile and decorrelate just as the
       keyed ones do. A root a transform closes over, such as [with_key (key 42)]
       inside a jitted function, is a constant of that transform, and under
-      {!Rune.val-jit} raises rather than freeze one draw into the compiled
-      program.
+      [Rune.jit] raises rather than freeze one draw into the compiled program.
 
       What a scope gives up against passing keys explicitly is
       order-independence: inserting a draw shifts every draw after it.
@@ -3338,7 +3337,7 @@ val reduce_ranges :
     to [i + 1].
 
     Its work is [O((n + m) log n)] for [n] rows and [m] ranges. Its memory is
-    [O(n + m)], and [O((n + m) log n)] under {!Rune.val-grad}, which keeps every
+    [O(n + m)], and [O((n + m) log n)] under [Rune.grad], which keeps every
     level for the derivative. It reads no value, so it compiles and maps as
     {!take}, {!where} and [op] do, and differentiates as they do: under [`Max]
     and [`Min] a tie gives the whole derivative to one of the tied rows.
@@ -4191,9 +4190,9 @@ val ifft :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifft ?axis ?n ?norm x] is the inverse of {!fft}.
+(** [ifft ?axis ?n ?norm x] is the inverse of {!val-fft}.
 
-    See also {!fft}, {!irfft}. *)
+    See also {!val-fft}, {!irfft}. *)
 
 val fft2 :
   ?axes:int list ->
@@ -4207,7 +4206,7 @@ val fft2 :
     [axes] does not name exactly two axes. So do {!ifft2}, {!rfft2} and
     {!irfft2}.
 
-    See also {!ifft2}, {!fft}. *)
+    See also {!ifft2}, {!val-fft}. *)
 
 val ifft2 :
   ?axes:int list ->
@@ -4263,7 +4262,7 @@ val rfft :
       - : int array = [|3|]
     ]}
 
-    See also {!irfft}, {!fft}. *)
+    See also {!irfft}, {!val-fft}. *)
 
 val irfft :
   (float, 'b) dtype ->
@@ -4673,9 +4672,8 @@ val sliding_window :
     closer together than they are wide share storage, which nothing can observe:
     a tensor is a value. Under [Rune.jit] the windows are materialized.
 
-    @raise Invalid_argument
-      if [window < 1], [step < 1], [window] exceeds the size of [axis], or
-      [axis] is out of bounds
+    Raises [Invalid_argument] if [window < 1], [step < 1], [window] exceeds the
+    size of [axis], or [axis] is out of bounds.
 
     Framing a signal into overlapping windows:
     {[
@@ -4787,13 +4785,13 @@ val correlate :
 
 val convolve :
   ?padding:[ `Full | `Same | `Valid ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [convolve ?padding x kernel] is the N-D convolution: {!correlate} with the
-    kernel flipped along all spatial axes, [padding] keeping the values of the
-    full convolution from the same indices, except that [`Same] keeps them from
-    index [(m - 1) / 2] whether [k] is shorter or longer than [n]. The
+(** [convolve ?padding x kernel] is the N-D convolution: {!val-correlate} with
+    the kernel flipped along all spatial axes, [padding] keeping the values of
+    the full convolution from the same indices, except that [`Same] keeps them
+    from index [(m - 1) / 2] whether [k] is shorter or longer than [n]. The
     convolution of two arrays without batch dimensions is commutative.
 
-    See also {!correlate}. *)
+    See also {!val-correlate}. *)
 
 (** {2:filters Filters} *)
 
@@ -4839,18 +4837,18 @@ val pp : Format.formatter -> ('a, 'b) t -> unit
     include their dtype and shape.
 
     A float element prints as the fewest significant digits that round to it
-    at its dtype: {!float_of_string} of its text, stored in [t]'s dtype, is the
+    at its dtype: [float_of_string] of its text, stored in [t]'s dtype, is the
     element. It is written in full for decimal exponents from [-4] to [15], as
     [0.0001] or [1234567900], and with an exponent beyond, as [1e+16]. NaN
     prints as [nan], whatever its sign, and the infinities as [inf] and [-inf].
     A complex element prints its parts so, as [(1-2i)]. *)
 
 val to_string : ('a, 'b) t -> string
-(** [to_string t] is [t] formatted with {!pp}. *)
+(** [to_string t] is [t] formatted with {!val-pp}. *)
 
 val print : ('a, 'b) t -> unit
-(** [print t] formats [t] with {!pp}, followed by a newline, on standard output.
-*)
+(** [print t] formats [t] with {!val-pp}, followed by a newline, on standard
+    output. *)
 
 val pp_shape : Format.formatter -> int array -> unit
 (** [pp_shape ppf shape] formats [shape] as a bracketed, comma-separated list of
@@ -4895,10 +4893,10 @@ val of_shards :
 
 (** Operations as values.
 
-    Every operation nx computes or answers is a constructor of {!t}: those a
-    backend computes, and {!Move}, {!Place}, {!Read} and {!Check}, which nx
-    answers itself. A transformation is an interpreter of these values,
-    installed with {!intercept}. *)
+    Every operation nx computes or answers is a constructor of {!Op.t}: those a
+    backend computes, and {!Op.Move}, {!Op.Place}, {!Op.Read} and {!Op.Check},
+    which nx answers itself. A transformation is an interpreter of these values,
+    installed with {!Op.intercept}. *)
 module Op : sig
   type ('a, 'b) value := ('a, 'b) t
 

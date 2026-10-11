@@ -9,15 +9,16 @@
 
     A beam search picks a kernel's optimisations ({!Opt.t}) by timing the
     programs they make. Starting from the kernel as it is scheduled, each round
-    applies every optimisation of a table ({!actions}) to each of the fastest
-    kernels found so far, compiles the results, times them, and keeps the
-    fastest, until a round no longer gains.
+    applies every optimisation of a table ({!val-actions}) to each of the
+    fastest kernels found so far, compiles the results, times them, and keeps
+    the fastest, until a round no longer gains.
 
     The search is a diagnostic: it compiles and times hundreds of programs per
     kernel, so it is run offline, on a few kernels extracted from a program, and
-    the optimisations it finds are then applied by name ({!Ops.kernel_info}'s
-    [opts_to_apply]). No kernel is searched unless its argument asks for a width
-    ({!Ops.kernel_info}'s [beam]) and its compiler is given the search:
+    the optimisations it finds are then applied by name
+    ({!Ops.type-kernel_info}'s [opts_to_apply]). No kernel is searched unless
+    its argument asks for a width ({!Ops.type-kernel_info}'s [beam]) and its
+    compiler is given the search:
     [Codegen.to_program ~beam:(beam_search ~link ~time)].
 
     Nothing here runs a program. The search links and times candidates with the
@@ -46,8 +47,8 @@ val get_kernel_actions :
   ?max_up:int -> Postrange.Scheduler.t -> (Opt.t * Postrange.Scheduler.t) list
 (** [get_kernel_actions ~max_up k] is the kernels that one action makes of [k]:
     [(a, k')] for an action [a] of [actions ()] and [k'] a copy of [k] it was
-    applied to, in the order of {!actions}. [k] is left as it is. An action is
-    left out when:
+    applied to, in the order of {!val-actions}. [k] is left as it is. An action
+    is left out when:
     - it does not apply ({!Postrange.Scheduler.apply_opt});
     - it is no tensor core and its axis is not one of [k]'s, or it splits a
       whole axis by its size while [actions ()] splits it by [0] alike;
@@ -88,9 +89,9 @@ val beam_search :
     kernel made ready to run on the device of [k]'s renderer. Its arguments hold
     storage parameters in their slots and constant values for positional scalar
     parameters; an unused slot before the last argument holds a byte. Each
-    scalar of [k]'s kernel ({!Call.variables}) is sampled at the middle of its
-    bounds, [(vmin + vmax) / 2] rounded down. Launch sizes are evaluated with
-    these samples, and the kernel keeps its parameters.
+    scalar of [k]'s kernel ({!Call.val-variables}) is sampled at the middle of
+    its bounds, [(vmin + vmax) / 2] rounded down. Launch sizes are evaluated
+    with these samples, and the kernel keeps its parameters.
 
     [time ~vars p] is the time in seconds of one run of the program [p] links,
     from cold caches where the device can, with each variable bound to its value
@@ -122,15 +123,16 @@ val beam_search :
     up to [amt] kernels and starts as [k] with its samples, or with none if [k]
     was dropped. Each round:
     + The candidates are the kernels {!get_kernel_actions} makes of the beam's
-      kernels, in order. If the clock of [k]'s linked program is {!Device}, they
-      are compiled on the domains {!Worker.iter} spreads them over while the
-      calling domain times those compiled before. Otherwise, as when [k] is not
-      timed, all are compiled ({!Worker.map}) before any is timed.
+      kernels, in order. If the clock of [k]'s linked program is
+      {!constructor-Device}, they are compiled on the domains {!Worker.iter}
+      spreads them over while the calling domain times those compiled before.
+      Otherwise, as when [k] is not timed, all are compiled ({!Worker.map})
+      before any is timed.
     + In order, a candidate is dropped if its binary was timed before in this
-      search, or if its program's estimated operations ({!Ops.estimates}, [0] if
-      unknown) are more than [1000] times the fewest of this round's programs so
-      far. Each other one is timed with an early stop of three times the least
-      sample of the beam's first kernel.
+      search, or if its program's estimated operations ({!Ops.type-estimates},
+      [0] if unknown) are more than [1000] times the fewest of this round's
+      programs so far. Each other one is timed with an early stop of three times
+      the least sample of the beam's first kernel.
     + The fastest candidate is the one of least sample, the first of ties. The
       round progresses if each of its samples is less than each sample of the
       beam's first kernel by more than {!Setting.beam_min_progress}

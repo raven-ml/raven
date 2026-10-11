@@ -65,17 +65,16 @@ module Cpu : sig
   val sample : unit -> t
   (** [sample ()] returns aggregate CPU counters across all cores.
 
-      @raise Sys_error
-        if CPU statistics are unavailable on the current platform or an error
-        occurs during sampling. *)
+      Raises [Sys_error] if CPU statistics are unavailable on the current
+      platform or an error occurs during sampling. *)
 
   val sample_per_core : unit -> t array
   (** [sample_per_core ()] returns per-core CPU counters.
 
       The array length equals the number of logical CPU cores.
 
-      @raise Sys_error
-        if per-core statistics are unavailable or an error occurs. *)
+      Raises [Sys_error] if per-core statistics are unavailable or an error
+      occurs. *)
 
   val compute : prev:t -> next:t -> stats
   (** [compute ~prev ~next] calculates CPU usage percentages between two
@@ -129,9 +128,8 @@ module Mem : sig
   val sample : unit -> t
   (** [sample ()] returns current memory usage statistics.
 
-      @raise Sys_error
-        if memory statistics are unavailable on the current platform or an error
-        occurs during sampling. *)
+      Raises [Sys_error] if memory statistics are unavailable on the current
+      platform or an error occurs during sampling. *)
 end
 
 (** Network I/O statistics. *)
@@ -158,9 +156,8 @@ module Net : sig
   val sample : unit -> t
   (** [sample ()] returns cumulative network I/O counters.
 
-      @raise Sys_error
-        if network statistics are unavailable on the current platform or an
-        error occurs during sampling. *)
+      Raises [Sys_error] if network statistics are unavailable on the current
+      platform or an error occurs during sampling. *)
 
   val compute : prev:t -> next:t -> dt:float -> stats
   (** [compute ~prev ~next ~dt] calculates network I/O rates between two
@@ -170,7 +167,7 @@ module Net : sig
       per second. Negative deltas (e.g., from counter overflow or reboot) are
       treated as zero.
 
-      @raise Invalid_argument if [dt <= 0.0]. *)
+      Raises [Invalid_argument] if [dt <= 0.0]. *)
 end
 
 (** Disk I/O statistics. *)
@@ -205,9 +202,8 @@ module Disk_io : sig
       Only physical disks are included; partitions and virtual devices are
       excluded.
 
-      @raise Sys_error
-        if disk statistics are unavailable on the current platform or an error
-        occurs during sampling. *)
+      Raises [Sys_error] if disk statistics are unavailable on the current
+      platform or an error occurs during sampling. *)
 
   val compute : prev:t -> next:t -> dt:float -> stats
   (** [compute ~prev ~next ~dt] calculates disk I/O rates and utilization
@@ -220,7 +216,7 @@ module Disk_io : sig
 
       If [num_disks] is [0L], [utilization_percent] is [0.0].
 
-      @raise Invalid_argument if [dt <= 0.0]. *)
+      Raises [Invalid_argument] if [dt <= 0.0]. *)
 end
 
 (** Filesystem statistics (instantaneous). *)
@@ -252,13 +248,13 @@ module Fs : sig
   (** [sample ?path ()] returns filesystem statistics for the specified path.
 
       Returns statistics for the filesystem containing [path] (default: ["/"]),
-      along with a list of all mounted partitions via {!partitions}.
+      along with a list of all mounted partitions via {!val-partitions}.
 
       Virtual and system filesystems (e.g., [devfs], [tmpfs], [proc], [sysfs])
       are excluded from the partitions list. Filesystems smaller than
       approximately 100 MB are also excluded.
 
-      @raise Sys_error if the path does not exist or an error occurs. *)
+      Raises [Sys_error] if the path does not exist or an error occurs. *)
 
   val partitions : unit -> partition list
   (** [partitions ()] returns a list of all mounted partitions.
@@ -310,7 +306,7 @@ module Proc : sig
 
         Uses [Unix.times] for CPU times.
 
-        @raise Sys_error if an error occurs during sampling. *)
+        Raises [Sys_error] if an error occurs during sampling. *)
 
     val compute : prev:t -> next:t -> dt:float -> num_cores:int option -> stats
     (** [compute ~prev ~next ~dt ~num_cores] computes CPU usage percentage
@@ -330,7 +326,7 @@ module Proc : sig
         [cpu_percent] to avoid division by near-zero or implausibly large
         intervals.
 
-        @raise Invalid_argument if [dt <= 0.0]. *)
+        Raises [Invalid_argument] if [dt <= 0.0]. *)
   end
 
   (** Process table statistics. *)
@@ -397,7 +393,7 @@ module Proc : sig
         in the result. New processes (in [next] but not [prev]) are included if
         their [mem_percent] is non-zero, with [cpu_percent] set to [0.0].
 
-        @raise Invalid_argument if [dt <= 0.0]. *)
+        Raises [Invalid_argument] if [dt <= 0.0]. *)
   end
 end
 

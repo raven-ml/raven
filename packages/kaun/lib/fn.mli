@@ -49,10 +49,10 @@ val softplus : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     temperature ({!Nx.div}), mask with {!keep_top_k} and {!keep_top_p}, and draw
     with {!Nx.Rng.categorical}, or take {!Nx.argmax} for greedy decoding. The
     masks set the entries they remove to negative infinity and keep the shape,
-    so they compose in any order and trace under {!Rune.jit}.
+    so they compose in any order and trace under [Rune.jit].
 
     Their parameters are tensors, a scalar or one entry per row, so a batch can
-    mix requests with different settings. Under {!Rune.jit} pass them as inputs
+    mix requests with different settings. Under [Rune.jit] pass them as inputs
     of the step: like any captured value, a captured parameter is a constant of
     the compiled program.
 

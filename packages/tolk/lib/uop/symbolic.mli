@@ -7,22 +7,23 @@
 
 (** Symbolic simplification for code generation.
 
-    {!sym} extends {!Shape.symbolic} with the rewrites of loads, stores and
+    {!sym} extends {!Shape.val-symbolic} with the rewrites of loads, stores and
     reductions that code generation relies on, and with reasoning on the
     conditions that gate values ({!pm_simplify_valid}). Its rewrites keep values
-    as {!Shape.symbolic}'s do, except that it computes every power as
+    as {!Shape.val-symbolic}'s do, except that it computes every power as
     [exp2 (y * log2 x)] ({!Transcendental.xpow}). *)
 
 (** {1:valid Conditions} *)
 
 val uop_given_valid : ?try_simplex:bool -> Ops.t -> Ops.t -> Ops.t
-(** [uop_given_valid valid u] is [u] simplified with {!Shape.symbolic}, knowing
-    that the boolean [valid] holds. Each clause of the conjunction [valid] that
-    bounds an integer expression, [e < c], [c < e] or [not (e < c)], is assumed
-    by replacing [e] with a variable of those bounds. With [try_simplex]
-    (default [true]), a clause stating that a sum of irreducible terms is at
-    least [1] also tries each term at least [1] in turn, and keeps the result
-    they all agree on. The result has [u]'s values wherever [valid] holds. *)
+(** [uop_given_valid valid u] is [u] simplified with {!Shape.val-symbolic},
+    knowing that the boolean [valid] holds. Each clause of the conjunction
+    [valid] that bounds an integer expression, [e < c], [c < e] or
+    [not (e < c)], is assumed by replacing [e] with a variable of those bounds.
+    With [try_simplex] (default [true]), a clause stating that a sum of
+    irreducible terms is at least [1] also tries each term at least [1] in turn,
+    and keeps the result they all agree on. The result has [u]'s values wherever
+    [valid] holds. *)
 
 val simplify_valid : Ops.t -> Ops.t option
 (** [simplify_valid valid] is the conjunction [valid] with each clause
@@ -55,7 +56,7 @@ val pm_clean_up_group_sink : (unit, Ops.t) Ops.Pattern_matcher.t
     {!Op.Sink} and {!Op.Group} sources. *)
 
 val sym : (unit, Ops.t) Ops.Pattern_matcher.t
-(** [sym] is {!Shape.symbolic} and {!pm_simplify_valid}, followed by:
+(** [sym] is {!Shape.val-symbolic} and {!pm_simplify_valid}, followed by:
 
     - {b powers}: every {!Op.Pow} is computed from [exp2] and [log2]
       ({!Transcendental.xpow});

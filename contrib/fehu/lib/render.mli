@@ -5,9 +5,9 @@
 
 (** Visualization primitives.
 
-    {!image} is the standard frame type for rgb-rendered environments.
-    {!rollout} runs a policy and feeds rendered frames to a user-provided sink.
-*)
+    {!type-image} is the standard frame type for rgb-rendered environments.
+    {!val-rollout} runs a policy and feeds rendered frames to a user-provided
+    sink. *)
 
 (** {1:pixel Pixel formats} *)
 
@@ -63,6 +63,6 @@ val rollout :
 val on_render :
   sink:(image -> unit) -> ('obs, 'act, image) Env.t -> ('obs, 'act, image) Env.t
 (** [on_render ~sink env] wraps [env] so that every rendered frame after
-    {!Env.reset} and {!Env.step} is passed to [sink]. The wrapper is
+    {!Env.reset} and {!Env.val-step} is passed to [sink]. The wrapper is
     transparent: observations, actions, rewards, and termination signals pass
     through unchanged. *)

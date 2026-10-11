@@ -8,9 +8,9 @@
 (** The intermediate representation: nodes, patterns and graph rewriting.
 
     A node ({!t}) is an operation ({!Op.t}) applied to source nodes, with a
-    payload ({!arg}), an annotation ({!Tag.t}) and a data type derived from the
-    three. Nodes form a directed acyclic graph, and one vocabulary serves every
-    stage of compilation: tensor graphs, kernels, programs and command
+    payload ({!type-arg}), an annotation ({!Tag.t}) and a data type derived from
+    the three. Nodes form a directed acyclic graph, and one vocabulary serves
+    every stage of compilation: tensor graphs, kernels, programs and command
     sequences.
 
     {b Identity.} Nodes are hash-consed: building a node equal to a live one
@@ -23,8 +23,8 @@
     promotes its operands to a common data type, and has their broadcast shape
     ({!module-type-Elementwise}).
 
-    {b Shapes.} A node's shape is a list of {!sint}: integers, or integer nodes
-    for sizes known only when the program runs. Comparing such sizes needs
+    {b Shapes.} A node's shape is a list of {!type-sint}: integers, or integer
+    nodes for sizes known only when the program runs. Comparing such sizes needs
     simplification, so shapes, movements and the functions that read them are
     {!Shape}'s.
 
@@ -75,8 +75,9 @@ module Axis_type : sig
 
   val position : t -> int
   (** [position a] is [a]'s rank in the order in which a kernel lists its axes:
-      [-2] for {!Device}, [-1] for {!Weak} and {!Loop}, then {!Global}, {!Warp},
-      {!Local}, {!Upcast}, {!Reduce} and {!Unroll} from [0] to [5].
+      [-2] for {!constructor-Device}, [-1] for {!Weak} and {!Loop}, then
+      {!Global}, {!Warp}, {!Local}, {!Upcast}, {!Reduce} and {!Unroll} from [0]
+      to [5].
 
       Raises [Invalid_argument] on {!Placeholder}. *)
 
@@ -527,7 +528,7 @@ end
 val dtype_of : Op.t -> t list -> arg -> Dtype.t
 (** [dtype_of op src arg] is the data type of the node [op] of [src] with
     argument [arg]. Unary operations and movements keep their source's type,
-    comparisons are {!Dtype.Bool}, transcendentals widen to a float,
+    comparisons are {!Dtype.t.Bool}, transcendentals widen to a float,
     broadcastable operations promote ({!promo_dtype}), and effects are
     {!Dtype.Void}.
 
@@ -699,7 +700,7 @@ val const : ?dtype:Dtype.t -> Dtype.const -> t
 (** [const ~dtype c] is the constant [c] of type [dtype]. Without [dtype], or
     for [`Invalid], it is the weak literal of [c]'s kind ({!Dtype.of_const}). A
     constant of any other type is a {!Op.Cast} of the literal, whose value is
-    [c] converted to [dtype] ({!Dtype.const}). *)
+    [c] converted to [dtype] ({!Dtype.val-const}). *)
 
 val int : ?dtype:Dtype.t -> int -> t
 (** [int ~dtype n] is [const ~dtype (`Int n)]. *)
@@ -910,7 +911,7 @@ val unique_num : unit -> int
 val new_buffer : ?slot:int -> ?phase:int -> device -> int -> Dtype.t -> t
 (** [new_buffer ~slot ~phase d size dt] is a {!Op.Buffer} of [size] elements of
     [dt] on [d], in [slot] (default {!unique_num}), whose first element lies
-    [phase] bytes past a 16-byte boundary (default [0]; see {!param_arg}).
+    [phase] bytes past a 16-byte boundary (default [0]; see {!type-param_arg}).
 
     Raises [Invalid_argument] if [dt] is weak. *)
 
@@ -1295,7 +1296,7 @@ module Pattern_matcher : sig
 
   val rule_ctx :
     Upat.t -> ('ctx -> (string -> node) -> 'r option) -> ('ctx, 'r) rule
-  (** [rule_ctx p f] is {!rule}, with the context passed to [f]. *)
+  (** [rule_ctx p f] is {!val-rule}, with the context passed to [f]. *)
 
   type ('ctx, 'r) t
   (** The type for pattern matchers. *)

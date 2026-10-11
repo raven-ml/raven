@@ -8,8 +8,8 @@
 (** Code generation: from a kernel to a program.
 
     A kernel is the sink of a graph of loads, stores and arithmetic over ranges,
-    with its {!Ops.kernel_info} as argument. Code generation turns it into a
-    program for a renderer ({!Renderer.t}) in three steps:
+    with its {!Ops.type-kernel_info} as argument. Code generation turns it into
+    a program for a renderer ({!Renderer.t}) in three steps:
     - {!full_rewrite_to_sink} optimises the kernel's loops, then lowers it to
       the nodes the renderer writes: vector axes are expanded into lanes,
       reductions into accumulators, loops into launch dimensions, vectors into
@@ -43,15 +43,15 @@ val full_rewrite_to_sink :
     setting {!Setting.noopt} holds. The settings {!Setting.disable_fast_idiv}
     and {!Setting.transcendental} choose how divisions by constants and
     transcendental functions are decomposed ({!Decomp_op.late_patterns},
-    {!Transcendental.patterns}). When the setting {!Setting.spec} is [1] or
+    {!Transcendental.val-patterns}). When the setting {!Setting.spec} is [1] or
     more, [ast] is checked against {!Spec.tensor} and the result against
     {!Spec.program}; when {!Setting.dbgtv} is not empty, a result that fails is
     first printed on standard output ({!Render.pp_uops}).
 
     Raises [Invalid_argument] if [optimize] holds and [ast]'s argument is not a
-    {!Ops.kernel_info}, if its beam search is asked for without [beam], if an
-    optimisation its argument lists does not apply, with the reason, if a check
-    fails, or if a pass does. *)
+    {!Ops.type-kernel_info}, if its beam search is asked for without [beam], if
+    an optimisation its argument lists does not apply, with the reason, if a
+    check fails, or if a pass does. *)
 
 (** {1:linearizing Linearizing} *)
 

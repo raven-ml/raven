@@ -8,9 +8,9 @@
 (** From tensor graphs to kernel graphs.
 
     A kernel graph is what runs: storage, and calls to kernels that read and
-    write it. Each kernel is a {!Op.Sink} carrying {!Ops.kernel_info}, whose
-    loops are ranges ({!Op.Range}) and whose storage is its parameters. The
-    graph holds no movements: a value is its storage. *)
+    write it. Each kernel is a {!Op.Sink} carrying {!Ops.type-kernel_info},
+    whose loops are ranges ({!Op.Range}) and whose storage is its parameters.
+    The graph holds no movements: a value is its storage. *)
 
 val get_kernel_graph : Ops.t -> Ops.t
 (** [get_kernel_graph sink] is the kernel graph of the prepared tensor graph
@@ -20,7 +20,7 @@ val get_kernel_graph : Ops.t -> Ops.t
      {- ranges index the graph ({!Indexing.run_rangeify}), which prints them
         when the setting {!Setting.debug_rangeify} is on;
      }
-     {- the graph is simplified ({!Shape.symbolic},
+     {- the graph is simplified ({!Shape.val-symbolic},
         {!Simplify.pm_reduce_simplify}), and storage that need not exist is
         removed:
         - a stage ({!Op.Stage}) that a later pass may inline drops the axes its
