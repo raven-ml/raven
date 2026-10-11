@@ -24,7 +24,7 @@ let pp_hex ppf x = Format.fprintf ppf "0x%x" x
 let hex =
   Testable.with_compare Int.compare (Testable.make ~pp:pp_hex ~equal:Int.equal)
 
-let free_base = 0x6f00_0000_0000
+let free_base = 0x100_0000_0000
 
 let largest_gap lo hi live =
   let sorted = List.sort compare live in
