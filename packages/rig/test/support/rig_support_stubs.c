@@ -36,6 +36,15 @@
 #include <unistd.h>
 #endif
 
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <sys/syscall.h>
+#elif defined(__linux__) && defined(__GLIBC__)
+#include <linux/futex.h>
+#include <stdio.h>
+#include <sys/syscall.h>
+#endif
+
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
 #define RIG_TEST_ASAN
@@ -908,43 +917,178 @@ value rig_test_slow(value unit) {
   return caml_copy_nativeint((intnat)&slow);
 }
 
-/* A thread of no OCaml code that raises SIGINT once the milliseconds [p]
-   holds have passed: the signal waits for a thread that returns to OCaml. */
-#ifdef _WIN32
-static DWORD WINAPI interrupter_main(void *p) {
-  sleep_ms((uint64_t)(uintptr_t)p);
-  raise(SIGINT);
-  return 0;
+/* The parked thread: one that blocks outside OCaml, holding no runtime lock,
+   until it is unparked or [park_ticks] ticks of 10 ms pass. */
+static const int park_ticks = 500;
+static atomic_int parked, unparked;
+
+value rig_test_park(value unit) {
+  (void)unit;
+  caml_release_runtime_system();
+  atomic_store(&unparked, 0);
+  atomic_store(&parked, 1);
+  for (int left = park_ticks; left > 0 && !atomic_load(&unparked); left--)
+    sleep_ms(10);
+  atomic_store(&parked, 0);
+  caml_acquire_runtime_system();
+  return Val_unit;
 }
 
-static int spawn_interrupter(uint64_t ms) {
-  HANDLE t = CreateThread(NULL, 0, interrupter_main, (void *)(uintptr_t)ms, 0,
-                          NULL);
-  if (t == NULL) return 0;
-  CloseHandle(t);
+value rig_test_parked(value unit) {
+  (void)unit;
+  return Val_bool(atomic_load(&parked));
+}
+
+value rig_test_unpark(value unit) {
+  (void)unit;
+  atomic_store(&unparked, 1);
+  return Val_unit;
+}
+
+/* Whether a thread of this process blocks in a condition wait, from the
+   system's view of it: the system call it entered is the one condition waits
+   use, __psynch_cvwait on macOS and a futex wait on a bitset with glibc,
+   which no glibc mutex uses. */
+
+#if defined(__APPLE__)
+
+typedef mach_port_t thread_id;
+
+static thread_id self(void) { return pthread_mach_thread_np(pthread_self()); }
+
+static int sees_waits(void) { return 1; }
+
+/* The system call a suspended thread entered: the number its stub put in x16
+   (arm64) or rax (x86_64). */
+static int in_cond_wait(thread_id t) {
+  if (thread_suspend(t) != KERN_SUCCESS) return 0;
+  thread_basic_info_data_t info;
+  mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT;
+  int waiting = thread_info(t, THREAD_BASIC_INFO, (thread_info_t)&info, &n) ==
+                    KERN_SUCCESS &&
+                info.run_state == TH_STATE_WAITING;
+  long call = -1;
+#if defined(__arm64__)
+  arm_thread_state64_t s;
+  n = ARM_THREAD_STATE64_COUNT;
+  if (thread_get_state(t, ARM_THREAD_STATE64, (thread_state_t)&s, &n) ==
+      KERN_SUCCESS)
+    call = (long)s.__x[16];
+#elif defined(__x86_64__)
+  x86_thread_state64_t s;
+  n = x86_THREAD_STATE64_COUNT;
+  if (thread_get_state(t, x86_THREAD_STATE64, (thread_state_t)&s, &n) ==
+      KERN_SUCCESS)
+    call = (long)(s.__rax & 0xffffff);
+#endif
+  thread_resume(t);
+  return waiting && call == SYS_psynch_cvwait;
+}
+
+#elif defined(__linux__) && defined(__GLIBC__)
+
+typedef pid_t thread_id;
+
+static thread_id self(void) { return (pid_t)syscall(SYS_gettid); }
+
+/* The thread's syscall file: the call it is blocked in and its arguments,
+   or "running". */
+static FILE *syscall_file(thread_id t) {
+  char path[64];
+  snprintf(path, sizeof path, "/proc/self/task/%d/syscall", (int)t);
+  return fopen(path, "r");
+}
+
+static int sees_waits(void) {
+  FILE *f = syscall_file(self());
+  if (f == NULL) return 0;
+  fclose(f);
   return 1;
 }
-#else
+
+static int in_cond_wait(thread_id t) {
+  FILE *f = syscall_file(t);
+  if (f == NULL) return 0;
+  long call = -1;
+  unsigned long word, op;
+  int got = fscanf(f, "%ld %lx %lx", &call, &word, &op);
+  fclose(f);
+  return got == 3 && call == SYS_futex &&
+         (op & FUTEX_CMD_MASK) == FUTEX_WAIT_BITSET;
+}
+
+#endif
+
+/* The interrupter: a thread of no OCaml code that raises SIGINT once the
+   thread it watches blocks in a condition wait, as a signal from outside the
+   process does, and stops when told. The handler runs on the next thread
+   that returns to OCaml. */
+
+#if defined(__APPLE__) || (defined(__linux__) && defined(__GLIBC__))
+
+static struct {
+  pthread_t thread;
+  thread_id watched;
+  atomic_int stop;
+  atomic_int raised;
+} interrupter;
+
 static void *interrupter_main(void *p) {
-  sleep_ms((uint64_t)(uintptr_t)p);
-  raise(SIGINT);
+  (void)p;
+  while (!atomic_load(&interrupter.stop)) {
+    if (in_cond_wait(interrupter.watched)) {
+      atomic_store(&interrupter.raised, 1);
+      raise(SIGINT);
+      return NULL;
+    }
+    sleep_ms(1);
+  }
   return NULL;
 }
 
-static int spawn_interrupter(uint64_t ms) {
-  pthread_t t;
-  if (pthread_create(&t, NULL, interrupter_main, (void *)(uintptr_t)ms) != 0)
-    return 0;
-  pthread_detach(t);
-  return 1;
+value rig_test_sees_waits(value unit) {
+  (void)unit;
+  return Val_bool(sees_waits());
 }
-#endif
 
-value rig_test_interrupt_after(value v_ms) {
-  if (!spawn_interrupter((uint64_t)Long_val(v_ms)))
-    caml_failwith("Rig_support.interrupt_after: no thread");
+value rig_test_interrupter_start(value unit) {
+  (void)unit;
+  interrupter.watched = self();
+  atomic_store(&interrupter.stop, 0);
+  atomic_store(&interrupter.raised, 0);
+  if (pthread_create(&interrupter.thread, NULL, interrupter_main, NULL) != 0)
+    caml_failwith("Rig_support.interrupt_in_wait: no thread");
   return Val_unit;
 }
+
+/* Stops the interrupter: whether it raised SIGINT. */
+value rig_test_interrupter_stop(value unit) {
+  (void)unit;
+  atomic_store(&interrupter.stop, 1);
+  caml_release_runtime_system();
+  pthread_join(interrupter.thread, NULL);
+  caml_acquire_runtime_system();
+  return Val_bool(atomic_load(&interrupter.raised));
+}
+
+#else
+
+value rig_test_sees_waits(value unit) {
+  (void)unit;
+  return Val_false;
+}
+
+value rig_test_interrupter_start(value unit) {
+  (void)unit;
+  caml_failwith("Rig_support.interrupt_in_wait: no view of waits");
+}
+
+value rig_test_interrupter_stop(value unit) {
+  (void)unit;
+  return Val_false;
+}
+
+#endif
 
 /* A fill that takes one from the 64-bit word whose address its argument
    holds, and fails if that makes it zero. */

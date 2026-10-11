@@ -48,7 +48,12 @@ external countdown : unit -> nativeint = "rig_test_countdown"
 external ready : unit -> nativeint = "rig_test_ready"
 external slow : unit -> nativeint = "rig_test_slow"
 external interrupt : unit -> unit = "rig_test_interrupt"
-external interrupt_after : int -> unit = "rig_test_interrupt_after"
+external park : unit -> unit = "rig_test_park"
+external parked : unit -> bool = "rig_test_parked"
+external unpark : unit -> unit = "rig_test_unpark"
+external sees_waits : unit -> bool = "rig_test_sees_waits"
+external interrupter_start : unit -> unit = "rig_test_interrupter_start"
+external interrupter_stop : unit -> bool = "rig_test_interrupter_stop"
 
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 [@@noalloc]
@@ -557,6 +562,14 @@ let needs_fork () =
 (* Waiting for a signal *)
 
 let watchdog_s = 10.
+
+let sees_waits = sees_waits ()
+
+let interrupt_in_wait f =
+  interrupter_start ();
+  let raised = ref false in
+  let r = Fun.protect ~finally:(fun () -> raised := interrupter_stop ()) f in
+  (r, !raised)
 
 let await what f =
   let until = Unix.gettimeofday () +. watchdog_s in

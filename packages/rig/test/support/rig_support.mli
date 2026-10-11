@@ -330,10 +330,27 @@ val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts
     them on the proxy its arrays share: [0] if they share none. *)
 
-val interrupt_after : int -> unit
-(** [interrupt_after ms] raises SIGINT once [ms] milliseconds have passed, on a
-    new thread that runs no OCaml code, as a signal from outside the process
-    does: its handler runs on the next thread that returns to OCaml. *)
+val park : unit -> unit
+(** [park ()] blocks the calling thread outside OCaml, holding no runtime lock,
+    until {!unpark} or 5 s. One thread parks at a time. *)
+
+val parked : unit -> bool
+(** [parked ()] is [true] while a thread is in {!park}, outside OCaml. *)
+
+val unpark : unit -> unit
+(** [unpark ()] ends the thread's {!park}. *)
+
+val sees_waits : bool
+(** [sees_waits] is [true] where the system shows which call a thread is
+    blocked in, and condition waits enter a call of their own: on macOS, and on
+    Linux with glibc. *)
+
+val interrupt_in_wait : (unit -> 'a) -> 'a * bool
+(** [interrupt_in_wait f] is [f ()], run while a new thread that runs no OCaml
+    code raises SIGINT once the calling thread blocks in a condition wait, as a
+    signal from outside the process does: its handler runs on the next thread
+    that returns to OCaml. The boolean is whether the signal was raised. It
+    raises [Failure] where not {!sees_waits}. *)
 
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
