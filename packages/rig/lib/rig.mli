@@ -495,7 +495,8 @@ exception Lost of t * string
     {- ["closed"] for a device {!close} ended;}
     {- the reason given to {!fail};}
     {- ["forked"] in a child of [fork];}
-    {- ["ended"] when [d] is {!Point.device}'s stand-in.}}
+    {- ["ended"] when [d] is {!Point.device}'s stand-in;}
+    {- ["out of memory"] when the C heap had no room for the reason.}}
     It prints as ["NAME lost: why"] with [d]'s name. *)
 
 val lost : t -> string option

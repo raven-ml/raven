@@ -290,9 +290,11 @@ static _Atomic int first;
 static _Atomic(char *) failed;
 static _Atomic int generation;
 
-/* The reasons no line owns: a fork's, and the stand-in's. */
+/* The reasons no line owns: a fork's, the stand-in's, and the one a loss
+   keeps when its own could not be copied. */
 static char forked_why[] = "forked";
 static char ended_why[] = "ended";
+static char no_memory_why[] = "out of memory";
 
 #define Lock_val(v) (*(struct rig_lock **)Data_custom_val(v))
 
@@ -643,7 +645,7 @@ static char *lost_with(struct rig_device *p) {
    unreached value of the lost [p], reading both words as they stand, and
    spreads from each. Each keeps the reason [shared], a process's failure
    that every device keeps and none frees, or, if it is NULL, "[p's name]
-   lost". A device is lost once, so each is visited once. The domain lock
+   lost", or "out of memory" if that cannot be made. A device is lost once, so each is visited once. The domain lock
    is released, and [table_mu] is the one mutex held. */
 static void spread(struct rig_device *p, char *shared) {
   char *why = shared;
@@ -658,7 +660,7 @@ static void spread(struct rig_device *p, char *shared) {
     for (int j = 0; j < c->nrecord && !won; j++) {
       struct rig_entry *e = &c->record[j];
       if (e->producer == p->index && e->w > pw && e->u > cw)
-        won = lose_locked(c, why != NULL ? why : p->name, 1);
+        won = lose_locked(c, why != NULL ? why : no_memory_why, 1);
     }
     mu_unlock(c);
     if (!won) continue;
@@ -811,11 +813,12 @@ value caml_rig_forgotten(value unit) {
 
 /* Frees the reason of the lost device of index [v_i], whose OCaml record was
    collected: what asks after the device now asks the stand-in. [fail]'s
-   reason, which every device it lost shares, stays. */
+   reason, which every device it lost shares, and the static reasons stay. */
 value caml_rig_forget(value v_i) {
   struct rig_line *l = line_of(Int_val(v_i));
   char *why = atomic_exchange(&l->lost, ended_why);
-  if (why != atomic_load(&failed) && why != forked_why && why != ended_why)
+  if (why != atomic_load(&failed) && why != forked_why && why != ended_why &&
+      why != no_memory_why)
     free(why);
   return Val_unit;
 }
@@ -1083,7 +1086,8 @@ static void end_turn(struct rig_device *d) {
    it was lost already. The mutex is held. */
 static int fail_locked(struct rig_device *d, const char *why) {
   char *copy = strdup(why);
-  if (lose_locked(d, copy != NULL ? copy : d->name, 1)) return SUBMIT_FAILED;
+  if (lose_locked(d, copy != NULL ? copy : no_memory_why, 1))
+    return SUBMIT_FAILED;
   free(copy);
   return SUBMIT_LOST;
 }
