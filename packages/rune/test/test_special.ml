@@ -462,93 +462,6 @@ let derivatives =
         { b = (fun a b -> lbeta_d2 `A `B a b) };
     ]
 
-(* Residuals
-
-   The bytes per element an eager [vjp] of each function keeps for its pullback,
-   at float64 over 4096 elements, on a test device that counts what it holds:
-   what reverse mode costs through a composition of nx's operations. *)
-
-let device = Nx.Device.cpu 5
-
-let settled () =
-  let m = Nx.Device.memory device in
-  for _ = 1 to 4 do
-    Gc.full_major ();
-    Nx_device.synchronize m
-  done;
-  Nx_device.Stats.allocated (Nx_device.stats m)
-
-let elements = 4096
-
-let residual { u } lo hi =
-  let x = Nx.linspace Nx.float64 lo hi elements in
-  let x = Nx.place (Nx.Placement.on device) x in
-  let before = settled () in
-  let y, pullback = Rune.vjp' u x in
-  let held = settled () - before in
-  ignore (Sys.opaque_identity (y, pullback));
-  held / elements
-
-let residuals =
-  test "an eager vjp keeps these bytes per element" (fun () ->
-      let lbeta = { u = (fun a -> Nx.lbeta a (Nx.full_like a 3.5)) } in
-      let full v t = Nx.full_like t v in
-      let in_x = { u = (fun x -> Nx.log_betainc (full 2.5 x) (full 7. x) x) } in
-      let in_a = { u = (fun a -> Nx.log_betainc a (full 7. a) (full 0.3 a)) } in
-      List.iter
-        (fun (name, u, lo, hi) ->
-          Printf.printf "%s %d\n" name (residual u lo hi))
-        [
-          ("erfc", { u = Nx.erfc }, -6., 27.);
-          ("ndtr", { u = Nx.ndtr }, -38., 9.);
-          ("log_ndtr", { u = Nx.log_ndtr }, -40., 10.);
-          ("erfinv", { u = Nx.erfinv }, -1., 1.);
-          ("ndtri", { u = Nx.ndtri }, 1e-300, 1.);
-          ("lgamma", { u = Nx.lgamma }, -10.5, 30.);
-          ("digamma", { u = Nx.digamma }, -10.5, 30.);
-          ("lbeta", lbeta, 0.1, 30.);
-          ("i0e", { u = Nx.i0e }, -30., 30.);
-          ("i1e", { u = Nx.i1e }, -30., 30.);
-          ( "gammainc",
-            { u = (fun x -> Nx.gammainc (Nx.full_like x 3.5) x) },
-            0.1,
-            30. );
-          ( "gammainc in a",
-            { u = (fun a -> Nx.gammainc a (Nx.full_like a 5.)) },
-            0.1,
-            30. );
-          ( "gammaincinv",
-            { u = (fun p -> Nx.gammaincinv (Nx.full_like p 3.5) p) },
-            1e-6,
-            0.999 );
-          ( "gammaincinv in a",
-            { u = (fun a -> Nx.gammaincinv a (Nx.full_like a 0.3)) },
-            0.1,
-            30. );
-          ("log_betainc in x", in_x, 1e-3, 0.999);
-          ("log_betainc in a", in_a, 0.1, 50.);
-        ];
-      expect (output ())
-      @@ __POS_OF__
-           {|
-        erfc 495
-        ndtr 547
-        log_ndtr 671
-        erfinv 804
-        ndtri 1026
-        lgamma 730
-        digamma 590
-        lbeta 1267
-        i0e 579
-        i1e 564
-        gammainc 4921
-        gammainc in a 6963
-        gammaincinv 16361
-        gammaincinv in a 26355
-        log_betainc in x 11511
-        log_betainc in a 19848
-        |})
-
 let () =
   exit
     (run "rune special"
@@ -561,5 +474,4 @@ let () =
          incomplete_beta;
          derivatives;
          incomplete_gamma_derivatives;
-         residuals;
        ])

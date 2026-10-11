@@ -6,8 +6,9 @@
 (* The words reverse mode and a compiled call's replay allocate on the minor
    heap over one-element values, whose kernels have almost nothing to do: the
    cost of recording and transposing each operation, and of keying and running a
-   program, exactly. Counts are deterministic, so each is pinned: a change that
-   lowers one updates it here, in the same commit. *)
+   program, exactly. Then the device bytes an eager [vjp] keeps for its
+   pullback. Counts are deterministic, so each is pinned: a change that lowers
+   one updates it here, in the same commit. *)
 
 open Windtrap
 
@@ -57,4 +58,87 @@ let replay =
           equal int 808 (words (fun () -> neg x)));
     ]
 
-let () = exit (run "rune allocation" [ reverse; replay ])
+(* Residuals
+
+   The bytes per element an eager [vjp] of each function keeps for its pullback,
+   at float64 over 4096 elements, on a test device that counts what it holds:
+   what reverse mode costs through a composition of nx's operations. Each count
+   is read after forced collections, which take time in proportion to the heap,
+   so they run in this process, which holds little. *)
+
+let device = Nx.Device.cpu 5
+
+let settled () =
+  let m = Nx.Device.memory device in
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    Nx_device.synchronize m
+  done;
+  Nx_device.Stats.allocated (Nx_device.stats m)
+
+let elements = 4096
+
+let residual u lo hi =
+  let x = Nx.linspace Nx.float64 lo hi elements in
+  let x = Nx.place (Nx.Placement.on device) x in
+  let before = settled () in
+  let y, pullback = Rune.vjp' u x in
+  let held = settled () - before in
+  ignore (Sys.opaque_identity (y, pullback));
+  held / elements
+
+let residuals =
+  test "an eager vjp keeps these bytes per element" (fun () ->
+      let full v t = Nx.full_like t v in
+      List.iter
+        (fun (name, u, lo, hi) ->
+          Printf.printf "%s %d\n" name (residual u lo hi))
+        [
+          ("erfc", Nx.erfc, -6., 27.);
+          ("ndtr", Nx.ndtr, -38., 9.);
+          ("log_ndtr", Nx.log_ndtr, -40., 10.);
+          ("erfinv", Nx.erfinv, -1., 1.);
+          ("ndtri", Nx.ndtri, 1e-300, 1.);
+          ("lgamma", Nx.lgamma, -10.5, 30.);
+          ("digamma", Nx.digamma, -10.5, 30.);
+          ("lbeta", (fun a -> Nx.lbeta a (full 3.5 a)), 0.1, 30.);
+          ("i0e", Nx.i0e, -30., 30.);
+          ("i1e", Nx.i1e, -30., 30.);
+          ("gammainc", (fun x -> Nx.gammainc (full 3.5 x) x), 0.1, 30.);
+          ("gammainc in a", (fun a -> Nx.gammainc a (full 5. a)), 0.1, 30.);
+          ("gammaincinv", (fun p -> Nx.gammaincinv (full 3.5 p) p), 1e-6, 0.999);
+          ( "gammaincinv in a",
+            (fun a -> Nx.gammaincinv a (full 0.3 a)),
+            0.1,
+            30. );
+          ( "log_betainc in x",
+            (fun x -> Nx.log_betainc (full 2.5 x) (full 7. x) x),
+            1e-3,
+            0.999 );
+          ( "log_betainc in a",
+            (fun a -> Nx.log_betainc a (full 7. a) (full 0.3 a)),
+            0.1,
+            50. );
+        ];
+      expect (output ())
+      @@ __POS_OF__
+           {|
+        erfc 495
+        ndtr 547
+        log_ndtr 671
+        erfinv 804
+        ndtri 1026
+        lgamma 730
+        digamma 590
+        lbeta 1267
+        i0e 579
+        i1e 564
+        gammainc 4921
+        gammainc in a 6963
+        gammaincinv 16361
+        gammaincinv in a 26355
+        log_betainc in x 11511
+        log_betainc in a 19848
+        |})
+
+let () = exit (run "rune allocation" [ reverse; replay; residuals ])

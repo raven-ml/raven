@@ -9,8 +9,7 @@
   test_composition
   test_constructs
   test_custom
-  test_total
-  test_allocation)
+  test_total)
  (modules
   test_derivatives
   test_laws
@@ -19,10 +18,19 @@
   test_composition
   test_constructs
   test_custom
-  test_total
-  test_allocation)
+  test_total)
  (package rune)
  (libraries windtrap rune rune_test nx nx.dtype nx.ragged))
+
+(test
+ (name test_allocation)
+ (modules test_allocation)
+ (package rune)
+ (libraries windtrap rune nx nx.device)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_allocation.ml test_allocation.ml.corrected))))
 
 (test
  (name test_packed)
@@ -331,7 +339,7 @@
  (name test_special)
  (modules test_special)
  (package rune)
- (libraries windtrap rune nx_test nx nx.device nx.metal)
+ (libraries windtrap rune nx_test nx nx.metal)
  (deps
   (glob_files %{project_root}/packages/nx/test/golden/special/*.golden)
   (glob_files golden/special_grad/*.golden))
