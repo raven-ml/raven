@@ -510,8 +510,31 @@ let statistics_rows =
           Nx.ewma ~axis:1 ~alpha:0.1 (Thumper.black_box m1024));
     ]
 
-(* Scans no kernel library computes, by their expansions: a running
-   logsumexp and a running argmax along rows of 1024. *)
+(* Scans by their expansions, the fallback a library that declines them gets:
+   a running logsumexp, mean and variance, and argmax along rows of 1024, on a
+   memory device whose kernels compute the core reductions alone. *)
+module Core_only = struct
+  include Nx_cpu
+
+  let core : Nx_kernel.reduction -> bool = function
+    | Monoid (Sum | Prod | Max | Min) -> true
+    | _ -> false
+
+  let reduce p ~axes rs ~dsts loads =
+    match rs with
+    | [| (r, _) |] when core r -> Nx_cpu.reduce p ~axes rs ~dsts loads
+    | _ -> A.Declined
+
+  let scan p ~axis ((r, _) as rk) ~dsts loads =
+    if core r then Nx_cpu.scan p ~axis rk ~dsts loads else A.Declined
+end
+
+let core_rows () =
+  let module Core =
+    (val Nx.devices ~kernels:(module Core_only) [ memory 0 ])
+  in
+  Value (Nx.place Core.on m1024)
+
 let scan reduction x =
   let dt = Nx.dtype x in
   Nx.Prim.eval ~by:"bench"
@@ -527,10 +550,12 @@ let scan reduction x =
 let scan_rows =
   Thumper.group "scan"
     [
-      Thumper.bench "logsumexp-f32-1024x1024-rows" (fun () ->
-          scan (Monoid (Logsumexp, 0, D.Float32)) (Thumper.black_box m1024));
-      Thumper.bench "argmax-f32-1024x1024-rows" (fun () ->
-          scan (Arg (Max, 0, D.Float32)) (Thumper.black_box m1024));
+      Thumper.bench_with_setup "logsumexp-f32-1024x1024-rows" ~setup:core_rows
+        (fun (Value x) -> Value (scan (Monoid (Logsumexp, 0, D.Float32)) x));
+      Thumper.bench_with_setup "moments-f32-1024x1024-rows" ~setup:core_rows
+        (fun (Value x) -> Value (fst (scan (Moments (0, D.Float32)) x)));
+      Thumper.bench_with_setup "argmax-f32-1024x1024-rows" ~setup:core_rows
+        (fun (Value x) -> Value (fst (scan (Arg (Max, 0, D.Float32)) x)));
     ]
 
 (* Order and counted lengths, each against its NumPy counterpart at the same
