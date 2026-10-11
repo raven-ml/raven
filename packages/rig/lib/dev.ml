@@ -274,6 +274,10 @@ let why d =
 
 let lost d = if is_lost d then Some (why d) else None
 let raise_lost d = raise (Lost (d, why d))
+
+(* [d]'s loss as {!Lost} prints it. *)
+let printed d = strf "%s lost: %s" d.name (why d)
+
 let submitted d = c_submitted d.index
 
 (* A device whose resources are freed is lost: a use of them raises its
@@ -495,17 +499,19 @@ let give d f =
 let move_word d = c_word_retire (live d).c
 let fail why = if c_fail why then run_owed ()
 
-(* The device whose loss was the process's first failure, once its resources
-   are freed: {!failure} names it for the life of the process. *)
-let first_lost : device option Atomic.t = Atomic.make None
+(* The process's first failure, as {!Lost} prints it, once the device it lost
+   has freed its resources: {!failure} answers it from then on, after the
+   collector takes the device. *)
+let first_lost : string option Atomic.t = Atomic.make None
 
 let failure () =
   match c_first () with
   | 0 -> None
   | -1 -> c_failed ()
-  | i ->
-      let d = of_index i in
-      Some (strf "%s lost: %s" d.name (why d))
+  | i -> (
+      match Table.get devices i with
+      | d when d != host -> Some (printed d)
+      | _ -> Atomic.get first_lost)
 
 (* The timeline *)
 
@@ -768,7 +774,7 @@ let open_named ~fn ~machine ~name ~key make =
      included: it has one for its life. *)
   let host_down () =
     let down h =
-      if is_lost h then Some (strf "%s lost: %s" h.name (why h))
+      if is_lost h then Some (printed h)
       else if Hashtbl.mem closing h.index then Some (strf "%s lost: closed" h.name)
       else None
     in
@@ -1003,12 +1009,13 @@ let close d =
 (* Its resources go first, so a store of a value that raced the drop finds
    them gone once [dropped] forgets [d]. The table holds [d] weakly from then
    on, set there before its strong entry goes, so a point finds it
-   throughout. *)
+   throughout. The text of the process's first failure is kept before too, so
+   {!failure} finds it or [d]. *)
 let free_live d =
   d.live <- None;
   c_unlive d.index;
   remove_ended d;
-  if c_first () = d.index then Atomic.set first_lost (Some d);
+  if c_first () = d.index then Atomic.set first_lost (Some (printed d));
   let w = Weak.create 1 in
   Weak.set w 0 (Some d);
   update_freed (Int_map.add d.index w);

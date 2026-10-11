@@ -158,8 +158,8 @@ val close : t -> unit
     it is lost. Once a lost device has stopped and its memory has returned,
     rig frees what it held for the device, in its driver and in rig, but
     its properties and the last values of its timeline. Those go once no
-    value the program holds refers to the device, and its points then name
-    a stand-in ({!Point.device}). *)
+    value the program holds refers to the device and the collector has
+    taken it, and its points then name a stand-in ({!Point.device}). *)
 
 val name : t -> string
 (** [name d] is [d]'s name for people: its opener's [name], with
@@ -278,11 +278,12 @@ module Point : sig
   (** The type for points. *)
 
   val device : t -> device
-  (** [device p] is [p]'s device while a value the program holds refers to
-      that device. Once it has ended and none does, [device p] is a
-      stand-in for every such device, named ["ended"]: it is lost with the
-      reason ["ended"], computes nothing, reaches only itself, and its
-      {!submitted} and {!signaled} are [max_int]. *)
+  (** [device p] is [p]'s device until the collector takes that device,
+      which it may do once the device has ended and no value the program
+      holds refers to it. From then on, [device p] is a stand-in for every
+      such device, named ["ended"]: it is lost with the reason ["ended"],
+      computes nothing, reaches only itself, and its {!submitted} and
+      {!signaled} are [max_int]. *)
 
   val value : t -> int
   (** [value p] is [p]'s value, [1] or more. *)

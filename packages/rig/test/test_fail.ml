@@ -100,6 +100,30 @@ let test_first_loss =
   Rig.fail "the world failed";
   [ failure () ]
 
+(* The first loss stays the failure once its device ended and the collector
+   took it: the device's point then names the ended stand-in. While it records
+   backtraces, the runtime keeps the last exception raised, here the Lost that
+   holds the device, until another is. Each round collects, then drains every
+   device through an allocation. *)
+let test_first_loss_collected =
+  child_case [ "fail:collected lost: the submission failed"; "ended" ]
+  @@ fun () ->
+  let point () =
+    let d, p = P.open_ "fail:collected" in
+    let pt = submit (empty d) in
+    lose d p;
+    (try raise Exit with Exit -> ());
+    Rig.close d;
+    pt
+  in
+  let pt = point () in
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (B.create Rig.host 8 : B.t)
+  done;
+  Gc.full_major ();
+  [ failure (); Rig.name (Rig.Point.device pt) ]
+
 (* A fail that comes first is the failure, with its reason alone. *)
 let test_fail_first =
   child_case [ "the world failed" ] @@ fun () ->
@@ -252,6 +276,8 @@ let tests =
       [
         test "a close is no failure, a loss is" test_close_no_failure;
         test "the first loss stays the failure" test_first_loss;
+        test "the first loss stays the failure once its device is collected"
+          test_first_loss_collected;
         test "a fail that comes first is the failure" test_fail_first;
         test "a fail loses every device and refuses every open" test_fail;
         test "a device lost through its waits keeps the fail's reason"
