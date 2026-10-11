@@ -8,7 +8,6 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 type 'v term = Value of 'v | Add of 'v term * int64 | Shift of 'v term * int
 type 'v word = Dword of int | W32 of 'v term | W64 of 'v term
 type 'v t = 'v word list
-type scope = Agent | System
 
 let words = function Dword _ | W32 _ -> 1 | W64 _ -> 2
 let size p = List.fold_left (fun n w -> n + words w) 0 p

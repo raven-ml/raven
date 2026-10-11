@@ -34,7 +34,7 @@ let releasing w x f = Fun.protect ~finally:(fun () -> H.set64 (host w) x) f
 
 (* The entry of a segment that writes [x] at [a] once the channel's earlier work
    completed, and of one that waits until the word at [a] is at least [x]. *)
-let release l a x = S.segment l (A.Method.release System a x)
+let release l a x = S.segment l (A.Method.release a x)
 let acquire l a x = S.segment l (A.Method.acquire a x)
 
 (* A kernel that copies [n] bytes from the address [src] to [dst], starting [ns]
@@ -885,14 +885,14 @@ let carry_tear () =
   let below = (1 lsl 32) - 1 and above = 1 lsl 32 in
   let gated i command =
     S.segment l
-      (A.Method.release System (address ready.(i)) 1
+      (A.Method.release (address ready.(i)) 1
       @ A.Method.acquire (address gates.(i)) 1
       @ command)
   in
   let parts =
     [|
-      (1, gated 0 (A.Method.copy_release System (address w) below));
-      (0, gated 1 (A.Method.release System (address w) above));
+      (1, gated 0 (A.Method.copy_release (address w) below));
+      (0, gated 1 (A.Method.release (address w) above));
     |]
   in
   let v = ref 0 in

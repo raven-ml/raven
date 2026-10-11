@@ -107,8 +107,8 @@ type op =
   | Set_program of int64
   | Set_bank of int * int64
   | Set_local_memory of int64
-  | Release of Packet.scope * int64 * int64
-  | Release_stamp of Packet.scope * int64 * int64
+  | Release of int64 * int64
+  | Release_stamp of int64 * int64
   | Chain of int64
 
 val pp_op : Format.formatter -> op -> unit
@@ -122,12 +122,6 @@ val dim_name : Qmd.dim -> string
 
 val dim : Qmd.dim Windtrap.Gen.t
 (** [dim] draws one of {!dims}. *)
-
-val scope_name : Packet.scope -> string
-(** [scope_name s] is ["Agent"] or ["System"]. *)
-
-val scope : Packet.scope Windtrap.Gen.t
-(** [scope] draws a scope. *)
 
 val apply : op -> int64 Qmd.t -> int64 Qmd.t
 (** [apply op q] is [q] with [op]; a release of a descriptor whose releases are

@@ -197,10 +197,8 @@ let set_local_memory bytes q =
 (* Completion *)
 
 (* Every launch ends with a membar to the system (CWD_MEMBAR_TYPE, set by
-   [make]), so a release needs none of its own at either scope. *)
-let membar = function Agent | System -> D.release_membar_type_fe_none
-
-let add_release s addr v q ~size =
+   [make]), so a release needs none of its own. *)
+let add_release addr v q ~size =
   let r0, r1 = q.layout.releases in
   match
     List.find_opt (fun (r : D.release) -> read q r.enable = 0) [ r0; r1 ]
@@ -208,7 +206,7 @@ let add_release s addr v q ~size =
   | None -> None
   | Some r ->
       let sets =
-        Set (r.membar_type, membar s)
+        Set (r.membar_type, D.release_membar_type_fe_none)
         :: Set (r.payload64b, 1)
         :: Set (r.structure_size, size)
         :: Set (r.enable, 1)
@@ -218,11 +216,11 @@ let add_release s addr v q ~size =
       let q = address q r.address_lower r.address_upper (Value addr) in
       Some (address q r.payload_lower r.payload_upper (Value v))
 
-let release s addr v q =
-  add_release s addr v q ~size:D.release_structure_size_semaphore_two_words
+let release addr v q =
+  add_release addr v q ~size:D.release_structure_size_semaphore_two_words
 
-let release_stamp s addr v q =
-  add_release s addr v q ~size:D.release_structure_size_semaphore_four_words
+let release_stamp addr v q =
+  add_release addr v q ~size:D.release_structure_size_semaphore_four_words
 
 (* The descriptor's address, in 256-byte units. *)
 let chain_unit = 8

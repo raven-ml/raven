@@ -81,19 +81,19 @@ val set_local_memory : 'v -> 'v t -> 'v t
 
 (** {1:completion Completion} *)
 
-val release : Packet.scope -> 'v -> 'v -> 'v t -> 'v t option
-(** [release s addr v q] is [q] with a launch that writes the 64-bit [v] at
-    [addr], 8-byte aligned, once the launch completes, so that readers of scope
-    [s] who see [v] see the launch's writes; or [None] if [q] has two
-    releases already.
+val release : 'v -> 'v -> 'v t -> 'v t option
+(** [release addr v q] is [q] with a launch that writes the 64-bit [v] at
+    [addr], 8-byte aligned, once the launch completes, so that any reader who
+    sees [v], the host and other devices included, sees the launch's writes;
+    or [None] if [q] has two releases already.
 
     The write orders nothing but this launch: work the channel runs after the
     launch's scheduling may complete before it, and a launch scheduled later may
     run at the same time. A channel's own progress is written by
     {!Method.release}. *)
 
-val release_stamp : Packet.scope -> 'v -> 'v -> 'v t -> 'v t option
-(** [release_stamp s addr v q] is {!release} that also writes a stamp at
+val release_stamp : 'v -> 'v -> 'v t -> 'v t option
+(** [release_stamp addr v q] is {!release} that also writes a stamp at
     [addr + 8] ({!Method.section-host}). *)
 
 val chain : 'v -> 'v t -> 'v t

@@ -130,18 +130,18 @@ let write = Testable.make ~pp:pp_write ~equal:( = )
 type call =
   | Set_object of Method.engine * int
   | Acquire of int64 * int64
-  | Release of Packet.scope * int64 * int64
-  | Release_stamp of Packet.scope * int64 * int64
+  | Release of int64 * int64
+  | Release_stamp of int64 * int64
   | Interrupt
   | Shared_window of int64
   | Local_window of int64
   | Local_memory of int64 * int64
-  | Invalidate of Packet.scope
+  | Invalidate
   | Wait_for_idle
   | Schedule of int64
   | Copy of int64 * int64 * int64
-  | Copy_release of Packet.scope * int64 * int64
-  | Copy_release_stamp of Packet.scope * int64 * int64
+  | Copy_release of int64 * int64
+  | Copy_release_stamp of int64 * int64
 
 let engine_name : Method.engine -> string = function
   | Compute -> "Compute"
@@ -151,41 +151,37 @@ let pp_call ppf = function
   | Set_object (e, c) ->
       Format.fprintf ppf "set_object %s 0x%x" (engine_name e) c
   | Acquire (a, v) -> Format.fprintf ppf "acquire 0x%Lx 0x%Lx" a v
-  | Release (s, a, v) ->
-      Format.fprintf ppf "release %s 0x%Lx 0x%Lx" (S.scope_name s) a v
-  | Release_stamp (s, a, v) ->
-      Format.fprintf ppf "release_stamp %s 0x%Lx 0x%Lx" (S.scope_name s) a v
+  | Release (a, v) -> Format.fprintf ppf "release 0x%Lx 0x%Lx" a v
+  | Release_stamp (a, v) -> Format.fprintf ppf "release_stamp 0x%Lx 0x%Lx" a v
   | Interrupt -> Format.fprintf ppf "interrupt"
   | Shared_window a -> Format.fprintf ppf "shared_memory_window 0x%Lx" a
   | Local_window a -> Format.fprintf ppf "local_memory_window 0x%Lx" a
   | Local_memory (a, p) ->
       Format.fprintf ppf "local_memory 0x%Lx ~per_tpc:0x%Lx" a p
-  | Invalidate s -> Format.fprintf ppf "invalidate_caches %s" (S.scope_name s)
+  | Invalidate -> Format.fprintf ppf "invalidate_caches"
   | Wait_for_idle -> Format.fprintf ppf "wait_for_idle"
   | Schedule a -> Format.fprintf ppf "schedule 0x%Lx" a
   | Copy (d, s, n) ->
       Format.fprintf ppf "copy ~dst:0x%Lx ~src:0x%Lx 0x%Lx" d s n
-  | Copy_release (s, a, v) ->
-      Format.fprintf ppf "copy_release %s 0x%Lx 0x%Lx" (S.scope_name s) a v
-  | Copy_release_stamp (s, a, v) ->
-      Format.fprintf ppf "copy_release_stamp %s 0x%Lx 0x%Lx" (S.scope_name s) a
-        v
+  | Copy_release (a, v) -> Format.fprintf ppf "copy_release 0x%Lx 0x%Lx" a v
+  | Copy_release_stamp (a, v) ->
+      Format.fprintf ppf "copy_release_stamp 0x%Lx 0x%Lx" a v
 
 let packet : call -> int64 Packet.t = function
   | Set_object (e, c) -> Method.set_object e c
   | Acquire (a, v) -> Method.acquire a v
-  | Release (s, a, v) -> Method.release s a v
-  | Release_stamp (s, a, v) -> Method.release_stamp s a v
+  | Release (a, v) -> Method.release a v
+  | Release_stamp (a, v) -> Method.release_stamp a v
   | Interrupt -> Method.interrupt
   | Shared_window a -> Method.shared_memory_window a
   | Local_window a -> Method.local_memory_window a
   | Local_memory (a, p) -> Method.local_memory a ~per_tpc:p
-  | Invalidate s -> Method.invalidate_caches s
+  | Invalidate -> Method.invalidate_caches
   | Wait_for_idle -> Method.wait_for_idle
   | Schedule a -> Method.schedule a
   | Copy (d, s, n) -> Method.copy ~dst:d ~src:s n
-  | Copy_release (s, a, v) -> Method.copy_release s a v
-  | Copy_release_stamp (s, a, v) -> Method.copy_release_stamp s a v
+  | Copy_release (a, v) -> Method.copy_release a v
+  | Copy_release_stamp (a, v) -> Method.copy_release_stamp a v
 
 (* What an operation must write: its operands' methods, in any order, then the
    method that acts on them, whose named fields have the given values. *)
@@ -225,26 +221,20 @@ let copy_semaphore a v =
   ]
 
 (* LAUNCH_DMA of a release: SEMAPHORE_TYPE 4:3 (ONE_WORD 1, FOUR_WORD 2),
-   SEMAPHORE_PAYLOAD_SIZE 27:27 (TWO_WORD 1), FLUSH_ENABLE 2:2, and at System
-   FLUSH_TYPE 25:25 SYS (0). *)
-let copy_release s ~kind =
-  let flush =
-    match (s : Packet.scope) with
-    | System -> [ ("FLUSH_TYPE", 25, 1, 0) ]
-    | Agent -> []
-  in
+   SEMAPHORE_PAYLOAD_SIZE 27:27 (TWO_WORD 1), FLUSH_ENABLE 2:2, FLUSH_TYPE
+   25:25 SYS (0). *)
+let copy_release ~kind =
   [
     ("SEMAPHORE_TYPE", 3, 2, kind);
     ("SEMAPHORE_PAYLOAD_SIZE", 27, 1, 1);
     ("FLUSH_ENABLE", 2, 1, 1);
+    ("FLUSH_TYPE", 25, 1, 0);
   ]
-  @ flush
 
 (* INVALIDATE_SHADER_CACHES_NO_WFI: INSTRUCTION 0:0, GLOBAL_DATA 4:4, CONSTANT
    12:12. *)
-let invalidated (s : Packet.scope) =
-  [ ("GLOBAL_DATA", 4, 1, 1); ("CONSTANT", 12, 1, 1) ]
-  @ match s with System -> [ ("INSTRUCTION", 0, 1, 1) ] | Agent -> []
+let invalidated =
+  [ ("INSTRUCTION", 0, 1, 1); ("GLOBAL_DATA", 4, 1, 1); ("CONSTANT", 12, 1, 1) ]
 
 let expected = function
   | Set_object (e, c) ->
@@ -256,13 +246,13 @@ let expected = function
         trigger = Some (any, sem_execute);
         fields = execute ~op:3 ~wfi:0 ~stamp:0;
       }
-  | Release (_, a, v) ->
+  | Release (a, v) ->
       {
         operands = semaphore a v;
         trigger = Some (any, sem_execute);
         fields = execute ~op:1 ~wfi:1 ~stamp:0;
       }
-  | Release_stamp (_, a, v) ->
+  | Release_stamp (a, v) ->
       {
         operands = semaphore a v;
         trigger = Some (any, sem_execute);
@@ -284,11 +274,11 @@ let expected = function
           (compute, local_non_throttled_a, hi p);
           (compute, local_non_throttled_b, lo p);
         ]
-  | Invalidate s ->
+  | Invalidate ->
       {
         operands = [];
         trigger = Some (compute, invalidate_no_wfi);
-        fields = invalidated s;
+        fields = invalidated;
       }
   | Wait_for_idle ->
       { operands = []; trigger = Some (compute, wait_for_idle); fields = [] }
@@ -319,17 +309,17 @@ let expected = function
             ("MULTI_LINE_ENABLE", 9, 1, 0);
           ];
       }
-  | Copy_release (s, a, v) ->
+  | Copy_release (a, v) ->
       {
         operands = copy_semaphore a v;
         trigger = Some (copy, launch_dma);
-        fields = copy_release s ~kind:1;
+        fields = copy_release ~kind:1;
       }
-  | Copy_release_stamp (s, a, v) ->
+  | Copy_release_stamp (a, v) ->
       {
         operands = copy_semaphore a v;
         trigger = Some (copy, launch_dma);
-        fields = copy_release s ~kind:2;
+        fields = copy_release ~kind:2;
       }
 
 (* Drawing operations with operands in the ranges the .mli states *)
@@ -356,10 +346,10 @@ let call =
           Set_object (e, c));
          (let+ a = semaphore and+ v = S.u64 in
           Acquire (a, v));
-         (let+ s = S.scope and+ a = semaphore and+ v = S.u64 in
-          Release (s, a, v));
-         (let+ s = S.scope and+ a = stamped and+ v = S.u64 in
-          Release_stamp (s, a, v));
+         (let+ a = semaphore and+ v = S.u64 in
+          Release (a, v));
+         (let+ a = stamped and+ v = S.u64 in
+          Release_stamp (a, v));
          constant Interrupt;
          constant Wait_for_idle;
          map (fun a -> Shared_window a) window;
@@ -367,7 +357,7 @@ let call =
          (let+ a = S.address ~bits:40 ~align:0
           and+ p = S.address ~bits:40 ~align:15 in
           Local_memory (a, p));
-         map (fun s -> Invalidate s) S.scope;
+         constant Invalidate;
          map (fun a -> Schedule a) (S.address ~bits:40 ~align:8);
          (let+ d = wide
           and+ s = wide
@@ -379,10 +369,10 @@ let call =
               ]
           in
           Copy (d, s, Int64.of_int n));
-         (let+ s = S.scope and+ a = semaphore and+ v = S.u64 in
-          Copy_release (s, a, v));
-         (let+ s = S.scope and+ a = stamped and+ v = S.u64 in
-          Copy_release_stamp (s, a, v));
+         (let+ a = semaphore and+ v = S.u64 in
+          Copy_release (a, v));
+         (let+ a = stamped and+ v = S.u64 in
+          Copy_release_stamp (a, v));
        ])
 
 (* The law: an operation's words write its operands, then act on them *)
@@ -433,7 +423,7 @@ let constructor = function
   | Shared_window _ -> "shared_memory_window"
   | Local_window _ -> "local_memory_window"
   | Local_memory _ -> "local_memory"
-  | Invalidate _ -> "invalidate_caches"
+  | Invalidate -> "invalidate_caches"
   | Wait_for_idle -> "wait_for_idle"
   | Schedule _ -> "schedule"
   | Copy _ -> "copy"
@@ -466,10 +456,8 @@ let operations =
         call (fun c ->
           List.iter (fun n -> cover n (constructor c = n)) all;
           check c);
-      test "a release waits for idle at both scopes" (fun () ->
-          List.iter
-            (fun s -> check (Release (s, 0x12_3456_7890L, 0x2_0000_0005L)))
-            [ Packet.Agent; System ]);
+      test "a release waits for idle" (fun () ->
+          check (Release (0x12_3456_7890L, 0x2_0000_0005L)));
       test "a schedule fetches the descriptor and schedules it" (fun () ->
           (* SEND_SIGNALING_PCAS2_B PCAS_ACTION 3:0: PREFETCH_SCHEDULE 9. *)
           match List.rev (read (Method.schedule 0xff_ffff_ff00L)) with
@@ -494,20 +482,17 @@ let listing () =
          Set_object (Compute, 0xc9c0);
          Set_object (Copy, 0xc9b5);
          Acquire (0x12_3456_7808L, 0x8000_0000_0000_0001L);
-         Release (Agent, 0x12_3456_7808L, 7L);
-         Release (System, 0x12_3456_7808L, 7L);
-         Release_stamp (System, 0x12_3456_7810L, 7L);
+         Release (0x12_3456_7808L, 7L);
+         Release_stamp (0x12_3456_7810L, 7L);
          Interrupt;
          Shared_window 0x7294_0000_0000L;
          Local_window 0x7293_0000_0000L;
          Local_memory (0x40_0000_0000L, 0x18_8000L);
-         Invalidate Agent;
-         Invalidate System;
+         Invalidate;
          Schedule 0x12_3456_7800L;
          Copy (0x1_0000_0000L, 0x2_0000_0000L, 0x8000_0000L);
-         Copy_release (Agent, 0x12_3456_7808L, 7L);
-         Copy_release (System, 0x12_3456_7808L, 7L);
-         Copy_release_stamp (System, 0x12_3456_7810L, 7L);
+         Copy_release (0x12_3456_7808L, 7L);
+         Copy_release_stamp (0x12_3456_7810L, 7L);
        ])
 
 let words =
@@ -527,19 +512,13 @@ let words =
               host SEM_PAYLOAD_LO 0x00000001
               host SEM_PAYLOAD_HI 0x80000000
               host SEM_EXECUTE 0x01000003
-            release Agent 0x1234567808 0x7
+            release 0x1234567808 0x7
               host SEM_ADDR_LO 0x34567808
               host SEM_ADDR_HI 0x00000012
               host SEM_PAYLOAD_LO 0x00000007
               host SEM_PAYLOAD_HI 0x00000000
               host SEM_EXECUTE 0x01100001
-            release System 0x1234567808 0x7
-              host SEM_ADDR_LO 0x34567808
-              host SEM_ADDR_HI 0x00000012
-              host SEM_PAYLOAD_LO 0x00000007
-              host SEM_PAYLOAD_HI 0x00000000
-              host SEM_EXECUTE 0x01100001
-            release_stamp System 0x1234567810 0x7
+            release_stamp 0x1234567810 0x7
               host SEM_ADDR_LO 0x34567810
               host SEM_ADDR_HI 0x00000012
               host SEM_PAYLOAD_LO 0x00000007
@@ -559,9 +538,7 @@ let words =
               subch 1 SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A 0x00000000
               subch 1 SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_B 0x00188000
               subch 1 SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_C 0x000000ff
-            invalidate_caches Agent
-              subch 1 INVALIDATE_SHADER_CACHES_NO_WFI 0x00001011
-            invalidate_caches System
+            invalidate_caches
               subch 1 INVALIDATE_SHADER_CACHES_NO_WFI 0x00001011
             schedule 0x1234567800
               subch 1 SEND_PCAS_A 0x12345678
@@ -573,19 +550,13 @@ let words =
               subch 4 OFFSET_OUT_LOWER 0x00000000
               subch 4 LINE_LENGTH_IN 0x80000000
               subch 4 LAUNCH_DMA 0x00000182
-            copy_release Agent 0x1234567808 0x7
+            copy_release 0x1234567808 0x7
               subch 4 SET_SEMAPHORE_A 0x00000012
               subch 4 SET_SEMAPHORE_B 0x34567808
               subch 4 SET_SEMAPHORE_PAYLOAD 0x00000007
               subch 4 SET_SEMAPHORE_PAYLOAD_UPPER 0x00000000
               subch 4 LAUNCH_DMA 0x0800000c
-            copy_release System 0x1234567808 0x7
-              subch 4 SET_SEMAPHORE_A 0x00000012
-              subch 4 SET_SEMAPHORE_B 0x34567808
-              subch 4 SET_SEMAPHORE_PAYLOAD 0x00000007
-              subch 4 SET_SEMAPHORE_PAYLOAD_UPPER 0x00000000
-              subch 4 LAUNCH_DMA 0x0800000c
-            copy_release_stamp System 0x1234567810 0x7
+            copy_release_stamp 0x1234567810 0x7
               subch 4 SET_SEMAPHORE_A 0x00000012
               subch 4 SET_SEMAPHORE_B 0x34567810
               subch 4 SET_SEMAPHORE_PAYLOAD 0x00000007

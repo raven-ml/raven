@@ -463,10 +463,9 @@ let templates self (g : gpu) =
   (* The writer's values, by slot: two addresses or an address and a value, then
      a size. *)
   let a = 0 and b = 1 and n = 2 in
-  let system = Packet.System in
   template self t_acquire ~known:unknown (Method.acquire a b);
-  template self t_release ~known:unknown (Method.release system a b);
-  template self t_copy_release ~known:unknown (Method.copy_release system a b);
+  template self t_release ~known:unknown (Method.release a b);
+  template self t_copy_release ~known:unknown (Method.copy_release a b);
   template self t_copy ~known:unknown (Method.copy ~dst:a ~src:b n);
   template self t_local ~known:unknown (Method.local_memory a ~per_tpc:b);
   template self t_setup ~known
@@ -474,7 +473,7 @@ let templates self (g : gpu) =
     @ Method.local_memory_window local_window
     @ Method.shared_memory_window shared_window);
   template self t_setup_copy ~known (Method.set_object Method.Copy g.copy_class);
-  template self t_invalidate ~known (Method.invalidate_caches system);
+  template self t_invalidate ~known Method.invalidate_caches;
   template self t_idle ~known Method.wait_for_idle;
   template self t_schedule ~known:unknown (Method.schedule a);
   (* An entry is its segment's address plus a constant plus its words times

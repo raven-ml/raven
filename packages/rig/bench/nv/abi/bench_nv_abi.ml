@@ -75,7 +75,7 @@ let describe g =
     |> Qmd.set_program program |> Qmd.set_bank 0 bank0
     |> Qmd.set_local_memory local_per_thread
   in
-  Qmd.structure (Option.get (Qmd.release System signal 1 q))
+  Qmd.structure (Option.get (Qmd.release signal 1 q))
 
 let encode_structure s = Abi.Structure.encode Int64.of_int s
 let encode p = Packet.encode Int64.of_int p
@@ -175,18 +175,18 @@ let known = function Word -> Some (value Word) | V -> None
 (* One placement: a 16-byte copy, then the copy engine's release. *)
 let placement () =
   Method.copy ~dst:0x50_0000_0000 ~src:0x60_0000_0000 16
-  @ Method.copy_release System signal 0x1234
+  @ Method.copy_release signal 0x1234
 
 let methods =
   Thumper.group "method"
     [
       Thumper.bench "release-encode" (fun () ->
-          Packet.encode value (Method.release System (Thumper.black_box Word) V));
+          Packet.encode value (Method.release (Thumper.black_box Word) V));
       Thumper.bench "release-template" (fun () ->
           Packet.template known
-            (Method.release System (Thumper.black_box Word) V));
+            (Method.release (Thumper.black_box Word) V));
       Thumper.bench "release-fill-into-bytes"
-        (packet_floor ~known value (Method.release System Word V));
+        (packet_floor ~known value (Method.release Word V));
       Thumper.bench "placement-encode" (fun () ->
           encode (Thumper.black_box placement ()));
       Thumper.bench "placement-fill-into-bytes"

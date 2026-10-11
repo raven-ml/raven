@@ -141,8 +141,8 @@ type op =
   | Set_program of int64
   | Set_bank of int * int64
   | Set_local_memory of int64
-  | Release of Packet.scope * int64 * int64
-  | Release_stamp of Packet.scope * int64 * int64
+  | Release of int64 * int64
+  | Release_stamp of int64 * int64
   | Chain of int64
 
 let dims = Qmd.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
@@ -151,20 +151,14 @@ let dim_name (d : Qmd.dim) =
   let axis : Qmd.axis -> string = function X -> "X" | Y -> "Y" | Z -> "Z" in
   match d with Grid a -> "Grid " ^ axis a | Block a -> "Block " ^ axis a
 
-let scope_name : Packet.scope -> string = function
-  | Agent -> "Agent"
-  | System -> "System"
-
 let pp_op ppf = function
   | Set_dim (d, n) -> Format.fprintf ppf "set_dim (%s) %d" (dim_name d) n
   | Patch_dim (d, v) -> Format.fprintf ppf "patch_dim (%s) %Ld" (dim_name d) v
   | Set_program a -> Format.fprintf ppf "set_program 0x%Lx" a
   | Set_bank (i, a) -> Format.fprintf ppf "set_bank %d 0x%Lx" i a
   | Set_local_memory n -> Format.fprintf ppf "set_local_memory %Ld" n
-  | Release (s, a, v) ->
-      Format.fprintf ppf "release %s 0x%Lx 0x%Lx" (scope_name s) a v
-  | Release_stamp (s, a, v) ->
-      Format.fprintf ppf "release_stamp %s 0x%Lx 0x%Lx" (scope_name s) a v
+  | Release (a, v) -> Format.fprintf ppf "release 0x%Lx 0x%Lx" a v
+  | Release_stamp (a, v) -> Format.fprintf ppf "release_stamp 0x%Lx 0x%Lx" a v
   | Chain a -> Format.fprintf ppf "chain 0x%Lx" a
 
 let apply op q =
@@ -175,8 +169,8 @@ let apply op q =
   | Set_program a -> Qmd.set_program a q
   | Set_bank (i, a) -> Qmd.set_bank i a q
   | Set_local_memory n -> Qmd.set_local_memory n q
-  | Release (s, a, v) -> full (Qmd.release s a v q)
-  | Release_stamp (s, a, v) -> full (Qmd.release_stamp s a v q)
+  | Release (a, v) -> full (Qmd.release a v q)
+  | Release_stamp (a, v) -> full (Qmd.release_stamp a v q)
   | Chain a -> Qmd.chain a q
 
 type drawn = { gpu : Gpu.t; kernel : Cubin.kernel; ops : op list }
@@ -193,11 +187,6 @@ let pp_drawn ppf d =
     pp_kernel d.kernel
     (Format.pp_print_list pp_op)
     d.ops
-
-let scope =
-  Gen.of_list
-    ~pp:(fun ppf s -> Format.pp_print_string ppf (scope_name s))
-    [ Packet.Agent; System ]
 
 (* Banks 0 to 7, the descriptor's, each of at most 0xffff bytes. *)
 let banks =
@@ -237,10 +226,10 @@ let op (k : Cubin.kernel) (banks : Cubin.bank list) =
       map
         (fun n -> Set_local_memory (Int64.of_int (n * 16)))
         (int_range ((local_bytes + 15) / 16) ((1 lsl 16) - 1));
-      (let+ s = scope and+ a = address ~bits:40 ~align:3 and+ v = u64 in
-       Release (s, a, v));
-      (let+ s = scope and+ a = address ~bits:40 ~align:4 and+ v = u64 in
-       Release_stamp (s, a, v));
+      (let+ a = address ~bits:40 ~align:3 and+ v = u64 in
+       Release (a, v));
+      (let+ a = address ~bits:40 ~align:4 and+ v = u64 in
+       Release_stamp (a, v));
       map (fun a -> Chain a) (address ~bits:40 ~align:8);
     ]
 

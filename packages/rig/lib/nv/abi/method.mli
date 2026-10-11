@@ -50,14 +50,15 @@ val acquire : 'v -> 'v -> 'v Packet.t
     least [v] in circular order: until [w - v], computed modulo [2{^64}], is
     below [2{^63}]. *)
 
-val release : Packet.scope -> 'v -> 'v -> 'v Packet.t
-(** [release s addr v] waits for the channel's earlier work to complete, every
+val release : 'v -> 'v -> 'v Packet.t
+(** [release addr v] waits for the channel's earlier work to complete, every
     engine idle, then writes the 64-bit [v] into the semaphore at [addr], so
-    that readers of scope [s] who see [v] see the work's writes. The channel's
+    that any reader who sees [v], the host and other devices included, sees
+    the work's writes. The channel's
     later methods run after the write. *)
 
-val release_stamp : Packet.scope -> 'v -> 'v -> 'v Packet.t
-(** [release_stamp s addr v] is {!release} that also writes a stamp at
+val release_stamp : 'v -> 'v -> 'v Packet.t
+(** [release_stamp addr v] is {!release} that also writes a stamp at
     [addr + 8] ({!section-host}). *)
 
 val interrupt : 'v Packet.t
@@ -83,11 +84,11 @@ val local_memory : 'v -> per_tpc:'v -> 'v Packet.t
     have completed: a {!release} separates them, and the caller keeps the memory
     until the launches that use it complete. *)
 
-val invalidate_caches : Packet.scope -> 'v Packet.t
-(** [invalidate_caches s] invalidates the compute engine's caches that would
-    hide writes of scope [s] from launches scheduled after it: at [Agent], at
-    least its data and constant caches; at [System], its instruction cache too.
-    It does not wait for the engine's work to complete. *)
+val invalidate_caches : 'v Packet.t
+(** [invalidate_caches] invalidates the compute engine's instruction, data and
+    constant caches, which would hide earlier writes, the host's and other
+    devices' included, from launches scheduled after it. It does not wait for
+    the engine's work to complete. *)
 
 val wait_for_idle : 'v Packet.t
 (** [wait_for_idle] holds the compute engine's later methods until the launches
@@ -110,11 +111,12 @@ val copy : dst:'v -> src:'v -> 'v -> 'v Packet.t
     engine. [n] is at most {!max_copy}; a longer copy is several, at increasing
     offsets. *)
 
-val copy_release : Packet.scope -> 'v -> 'v -> 'v Packet.t
-(** [copy_release s addr v] writes the 64-bit [v] into the 8 bytes at [addr],
+val copy_release : 'v -> 'v -> 'v Packet.t
+(** [copy_release addr v] writes the 64-bit [v] into the 8 bytes at [addr],
     8-byte aligned, once the copy engine's earlier copies are complete, so that
-    readers of scope [s] who see [v] see their writes. *)
+    any reader who sees [v], the host and other devices included, sees their
+    writes. *)
 
-val copy_release_stamp : Packet.scope -> 'v -> 'v -> 'v Packet.t
-(** [copy_release_stamp s addr v] is {!copy_release} that also writes a stamp
+val copy_release_stamp : 'v -> 'v -> 'v Packet.t
+(** [copy_release_stamp addr v] is {!copy_release} that also writes a stamp
     at [addr + 8] ({!section-host}). *)

@@ -147,7 +147,6 @@ type model = {
   banks : (int * int64) list;
   local : int64 option;
   releases : (bool * int64 * int64) list; (* stamped, address, value *)
-  system : bool; (* a release of scope System *)
   chain : int64 option;
 }
 
@@ -158,20 +157,14 @@ let empty =
     banks = [];
     local = None;
     releases = [];
-    system = false;
     chain = None;
   }
 
 let set k v l = (k, v) :: List.remove_assoc k l
 
-let release m stamp s a v =
+let release m stamp a v =
   if List.length m.releases = 2 then m
-  else
-    {
-      m with
-      releases = m.releases @ [ (stamp, a, v) ];
-      system = m.system || s = Packet.System;
-    }
+  else { m with releases = m.releases @ [ (stamp, a, v) ] }
 
 let step m : S.op -> model = function
   | Set_dim (d, n) -> { m with dims = set d (Int64.of_int n) m.dims }
@@ -179,8 +172,8 @@ let step m : S.op -> model = function
   | Set_program a -> { m with program = Some a }
   | Set_bank (i, a) -> { m with banks = set i a m.banks }
   | Set_local_memory n -> { m with local = Some n }
-  | Release (s, a, v) -> release m false s a v
-  | Release_stamp (s, a, v) -> release m true s a v
+  | Release (a, v) -> release m false a v
+  | Release_stamp (a, v) -> release m true a v
   | Chain a -> { m with chain = Some a }
 
 let triple_release =
@@ -246,8 +239,8 @@ let check (d : S.drawn) =
     (List.map
        (fun r -> (f r.size = 0, wide b r.addr, wide b r.payload))
        enabled);
-  if m.system then
-    equal ~msg:"CWD_MEMBAR_TYPE of a System release" int 1 (f l.cwd_membar_type);
+  if m.releases <> [] then
+    equal ~msg:"CWD_MEMBAR_TYPE of a release" int 1 (f l.cwd_membar_type);
   match m.chain with
   | None ->
       equal ~msg:"DEPENDENT_QMD0_ENABLE unchained" int 0 (f l.chain_enable)
@@ -363,10 +356,10 @@ let descriptors =
             [ 0; 128; Launch.dynamic_shared l ]);
       cases ~name:S.class_name "two releases, then none" S.classes (fun cls ->
           let q = qmd cls in
-          let q = require_some (Qmd.release System 0x1000L 1L q) in
-          let q = require_some (Qmd.release_stamp Agent 0x2000L 2L q) in
-          is_none (Qmd.release System 0x3000L 3L q);
-          is_none (Qmd.release_stamp System 0x3000L 3L q));
+          let q = require_some (Qmd.release 0x1000L 1L q) in
+          let q = require_some (Qmd.release_stamp 0x2000L 2L q) in
+          is_none (Qmd.release 0x3000L 3L q);
+          is_none (Qmd.release_stamp 0x3000L 3L q));
     ]
 
 (* Limits *)
@@ -431,7 +424,7 @@ let dump cls =
     |> Qmd.set_local_memory "local"
     |> Qmd.chain "next"
   in
-  let q = Option.get (Qmd.release System "signal" "value" q) in
+  let q = Option.get (Qmd.release "signal" "value" q) in
   let s = Qmd.structure q in
   let row i =
     strf "%04x %s" i

@@ -32,7 +32,7 @@ let amd d ~marker ~arrived ~commands:_ =
 let nv _ ~marker ~arrived ~commands =
   let methods =
     N.Packet.encode Fun.id
-      (N.Method.release System marker 1L @ N.Method.acquire arrived 1L)
+      (N.Method.release marker 1L @ N.Method.acquire arrived 1L)
   in
   let words = String.length methods / 4 in
   (N.Packet.encode Fun.id (N.Gpfifo.entry commands ~offset:0 ~words), methods)

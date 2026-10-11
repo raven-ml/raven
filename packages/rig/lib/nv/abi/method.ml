@@ -53,18 +53,16 @@ let acquire addr v =
        D.nvc56f_sem_execute_operation_acq_circ_geq)
 
 (* A release that waits for idle makes the channel's writes visible to the
-   system first, so it serves both scopes. *)
-let release_op = function
-  | Agent | System ->
-      set D.nvc56f_sem_execute_operation D.nvc56f_sem_execute_operation_release
-      lor set D.nvc56f_sem_execute_release_wfi
-            D.nvc56f_sem_execute_release_wfi_en
+   system first. *)
+let release_op =
+  set D.nvc56f_sem_execute_operation D.nvc56f_sem_execute_operation_release
+  lor set D.nvc56f_sem_execute_release_wfi D.nvc56f_sem_execute_release_wfi_en
 
-let release s addr v = semaphore addr v (release_op s)
+let release addr v = semaphore addr v release_op
 
-let release_stamp s addr v =
+let release_stamp addr v =
   semaphore addr v
-    (release_op s
+    (release_op
     lor set D.nvc56f_sem_execute_release_timestamp
           D.nvc56f_sem_execute_release_timestamp_en)
 
@@ -93,20 +91,17 @@ let local_memory addr ~per_tpc =
       D.nvc7c0_set_shader_local_memory_non_throttled_a
       (hi_lo per_tpc @ [ Dword all_sms ])
 
-(* Both scopes invalidate every cache until the lighter [Agent] form is
-   measured. *)
-let invalidate_caches = function
-  | Agent | System ->
-      methods (subchannel Compute) D.nvc7c0_invalidate_shader_caches_no_wfi
-        [
-          Dword
-            (set D.nvc7c0_invalidate_shader_caches_no_wfi_instruction
-               D.nvc7c0_invalidate_shader_caches_no_wfi_instruction_true
-            lor set D.nvc7c0_invalidate_shader_caches_no_wfi_global_data
-                  D.nvc7c0_invalidate_shader_caches_no_wfi_global_data_true
-            lor set D.nvc7c0_invalidate_shader_caches_no_wfi_constant
-                  D.nvc7c0_invalidate_shader_caches_no_wfi_constant_true);
-        ]
+let invalidate_caches =
+  methods (subchannel Compute) D.nvc7c0_invalidate_shader_caches_no_wfi
+    [
+      Dword
+        (set D.nvc7c0_invalidate_shader_caches_no_wfi_instruction
+           D.nvc7c0_invalidate_shader_caches_no_wfi_instruction_true
+        lor set D.nvc7c0_invalidate_shader_caches_no_wfi_global_data
+              D.nvc7c0_invalidate_shader_caches_no_wfi_global_data_true
+        lor set D.nvc7c0_invalidate_shader_caches_no_wfi_constant
+              D.nvc7c0_invalidate_shader_caches_no_wfi_constant_true);
+    ]
 
 (* WAIT_FOR_IDLE (0x110), one word on the compute subchannel. Its header is
    written out, 0x20012044 by [methods]'s rule, so that the value is static data
@@ -145,16 +140,12 @@ let copy ~dst ~src n =
   @ methods (subchannel Copy) D.nvc7b5_launch_dma [ Dword launch ]
 
 (* SET_SEMAPHORE_A to SET_SEMAPHORE_PAYLOAD_UPPER, then a launch that writes the
-   64-bit payload once the earlier copies are complete and flushed. A flush to
-   the system serves both scopes. *)
-let copy_semaphore s addr v kind =
+   64-bit payload once the earlier copies are complete and flushed to the
+   system. *)
+let copy_semaphore addr v kind =
   let flush =
-    match s with
-    | Agent | System ->
-        set D.nvc7b5_launch_dma_flush_enable
-          D.nvc7b5_launch_dma_flush_enable_true
-        lor set D.nvc7b5_launch_dma_flush_type
-              D.nvc7b5_launch_dma_flush_type_sys
+    set D.nvc7b5_launch_dma_flush_enable D.nvc7b5_launch_dma_flush_enable_true
+    lor set D.nvc7b5_launch_dma_flush_type D.nvc7b5_launch_dma_flush_type_sys
   in
   methods (subchannel Copy) D.nvc7b5_set_semaphore_a
     (hi_lo addr @ [ W64 (Value v) ])
@@ -167,10 +158,10 @@ let copy_semaphore s addr v kind =
                 D.nvc7b5_launch_dma_semaphore_payload_size_two_word);
       ]
 
-let copy_release s addr v =
-  copy_semaphore s addr v
+let copy_release addr v =
+  copy_semaphore addr v
     D.nvc7b5_launch_dma_semaphore_type_release_one_word_semaphore
 
-let copy_release_stamp s addr v =
-  copy_semaphore s addr v
+let copy_release_stamp addr v =
+  copy_semaphore addr v
     D.nvc7b5_launch_dma_semaphore_type_release_four_word_semaphore
