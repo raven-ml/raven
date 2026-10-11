@@ -1,0 +1,38 @@
+; nx.cuda's cubin, which build.sh compiles by hand on a machine with the
+; CUDA toolkit. It is not committed: a checkout without it fails here,
+; naming the script.
+
+(rule
+ (targets sm_89.cubin)
+ (mode fallback)
+ (action
+  (progn
+   (echo "dev/nx2/lib/cuda/kernels/sm_89.cubin is missing: build it with `dev/nx2/lib/cuda/kernels/build.sh`\n")
+   (system "exit 1"))))
+
+(executable
+ (name fresh))
+
+; Check the cubin in every tree, including trees without a CUDA toolkit.
+(rule
+ (target embedded.cubin)
+ (action
+  (progn
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:fresh.exe}
+     %{dep:sm_89.cubin}
+     %{dep:build.sh}
+     %{dep:../kernels.h}
+     %{dep:../../array/nx_dtype.h}
+     %{dep:../../kernel/nx_kinds.h}
+     %{dep:../../kernel/nx_kinds_real.h}
+     %{dep:src/kernels.cu}
+     %{dep:src/contract.cu}
+     %{dep:src/combine.cuh}
+     %{dep:src/elements.cuh}
+     %{dep:src/mma.cuh}
+     %{dep:src/kinds.cuh}
+     %{dep:src/fold.cu}))
+   (copy sm_89.cubin embedded.cubin))))

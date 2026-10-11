@@ -1,0 +1,142 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* The AMD rows against this machine's baseline. A call runs a row's kernel a
+   fixed count of times and returns once they are done: its wall time is their
+   span on the GPU and a submission's round trip. The count is in the row's
+   name, past one. [bench_amd.exe gate] prints the device times themselves. *)
+
+module S = Nx_amd_support
+module D = Nx_array.Dtype
+
+let strf = Printf.sprintf
+
+(* A call submits all of its runs but the last, then runs the last and waits
+   for it. The setup runs the row once, outside the timed calls. *)
+let case (r : Rows.row) =
+  let count = r.runs in
+  let setup () =
+    let g = S.gpu () in
+    let p = r.make g in
+    S.run g p.run;
+    (g, p)
+  in
+  let name = if count = 1 then r.name else strf "%s-x%d" r.name count in
+  Thumper.bench_with_setup ~setup name (fun (g, (p : Rows.prepared)) ->
+      if count > 1 then S.enqueue g ~count:(count - 1) p.run;
+      S.run g p.run)
+
+(* The host's share of a call: 64 calls of the smallest contraction, then
+   the wait for their work. A call that finds nx.amd's caches warm allocates
+   nothing. *)
+let host =
+  let bf16 = D.Any D.Bfloat16 and f32 = D.Any D.Float32 in
+  let setup () =
+    let g = S.gpu () in
+    let _, _, _, run = Rows.plan g bf16 f32 bf16 1 1 1 in
+    (g, run)
+  in
+  [
+    Thumper.bench_with_setup ~setup "issue/contract-64" (fun (g, run) ->
+        S.issue g ~count:64 run);
+  ]
+
+(* Gate *)
+
+(* The gate: a table of each row's device time per run under two protocols, its
+   rate, and its distance to the floor kernel that moves its bytes, timed in the
+   same run, with the compute unit clock each protocol ended at.
+
+   bench_amd.exe gate [PATTERN...]
+
+   A row runs if its name starts with a PATTERN, or is a PATTERN that ends with
+   $ but for it; every row runs without one. First the GPU's clock settles on
+   the row: it runs 100 ms at a time, at most ten times, until two clocks read
+   after it agree within 1%. Then:
+
+   - idle: the median of 30 measurements, each of enough runs to span 10 ms of
+   the GPU's time, after the GPU idled 20 ms, as the reference's ref.py times
+   PyTorch, so that both run in the same power state; - sustained: the median of
+   10 such measurements back to back, after 1 s of the row without pause, as a
+   training loop runs it: a GPU busy without pause reaches its power cap and
+   lowers its clock. *)
+
+let span = 10e-3
+let warm = 0.1
+let idle = 20e-3
+
+let median xs =
+  let a = Array.of_list xs in
+  Array.sort compare a;
+  a.(Array.length a / 2)
+
+(* Seconds per run of [r] when idle and sustained, and the clock each ended
+   at. *)
+let time g r =
+  let t = S.device_time g r ~count:3 in
+  let runs s = Int.max 3 (int_of_float (Float.ceil (s /. t))) in
+  let rec settle last tries =
+    ignore (S.device_time g r ~count:(runs warm));
+    let c = S.cu_clock g in
+    if tries > 1 && Float.abs (c -. last) > 0.01 *. c then settle c (tries - 1)
+  in
+  settle 0. 10;
+  let measure () = S.device_time g r ~count:(runs span) in
+  let idle =
+    median
+      (List.init 30 (fun _ ->
+           Unix.sleepf idle;
+           measure ()))
+  in
+  let idle_clock = S.cu_clock g in
+  ignore (S.device_time g r ~count:(runs 1.));
+  let sustained = median (List.init 10 (fun _ -> measure ())) in
+  ((idle, idle_clock), (sustained, S.cu_clock g))
+
+let rate (p : Rows.prepared) t =
+  match p.work with
+  | Bytes 0 -> ""
+  | Bytes n -> strf "%7.1f GB/s" (float n /. t *. 1e-9)
+  | Flops f -> strf "%7.1f TF/s" (f /. t *. 1e-12)
+
+let row g (r : Rows.row) =
+  let p = r.make g in
+  let (t, c), (ts, cs) = time g p.run in
+  let floor =
+    match p.floor with
+    | None -> ""
+    | Some f ->
+        let (tf, _), _ = time g f in
+        strf "floor %9.2f us  x%.2f" (tf *. 1e6) (t /. tf)
+  in
+  Printf.printf
+    "%-34s idle %10.2f us %s [%.0f MHz]  sustained %10.2f us %s [%.0f MHz]  %s\n\
+     %!"
+    r.name (t *. 1e6) (rate p t) c (ts *. 1e6) (rate p ts) cs floor
+
+let gate patterns =
+  let selected (r : Rows.row) =
+    patterns = []
+    || List.exists
+         (fun p ->
+           match String.ends_with ~suffix:"$" p with
+           | true -> String.sub p 0 (String.length p - 1) = r.name
+           | false -> String.starts_with ~prefix:p r.name)
+         patterns
+  in
+  let g = S.gpu () in
+  Printf.printf "# %s, %d compute units\n%!" (S.arch g) (S.cus g);
+  List.iter (row g) (List.filter selected Rows.all)
+
+let () =
+  (* Looks for the GPU without opening it: the bench's rows open it in thumper's
+     workers, after it forks them. *)
+  if Rig_amd_amdgpu.count () = 0 then begin
+    print_endline "nx.amd bench: no AMD GPU";
+    exit 0
+  end;
+  match List.tl (Array.to_list Sys.argv) with
+  | "gate" :: patterns -> gate patterns
+  | _ -> exit (Thumper.run "nx_amd" (host @ List.map case Rows.all))

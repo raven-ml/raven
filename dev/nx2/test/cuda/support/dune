@@ -1,0 +1,44 @@
+; What the CUDA suite and bench share: the harness's kernels, their runs as
+; launches, device time, and operands.
+
+(library
+ (name nx_cuda_support)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_cuda
+  rig
+  rig.cuda
+  rig.cuda.abi
+  rig.nv
+  rig.nv.abi
+  rig.nv.nvidia
+  windtrap)
+ (foreign_stubs
+  (language c)
+  (extra_deps embedded.cubin harness.h)
+  (flags :standard -DNX_HARNESS_CUBIN=embedded.cubin)
+  (names nx_cuda_support_stubs)))
+
+(rule
+ (targets sm_89.cubin)
+ (mode fallback)
+ (action
+  (progn
+   (echo "dev/nx2/test/cuda/support/sm_89.cubin is missing: build it with `dev/nx2/lib/cuda/kernels/build.sh`\n")
+   (system "exit 1"))))
+
+(rule
+ (target embedded.cubin)
+ (action
+  (progn
+   (chdir
+    %{workspace_root}
+    (run
+     %{exe:../../../lib/cuda/kernels/fresh.exe}
+     %{dep:sm_89.cubin}
+     %{dep:../../../lib/cuda/kernels/build.sh}
+     %{dep:harness.h}
+     %{dep:../../../lib/array/nx_dtype.h}
+     %{dep:harness.cu}))
+   (copy sm_89.cubin embedded.cubin))))

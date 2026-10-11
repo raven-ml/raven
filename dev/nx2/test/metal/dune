@@ -1,0 +1,34 @@
+; Correctness on the Mac's GPU, skipping without one; and kernels.ml against
+; kernels.h, on any machine.
+
+(tests
+ (names test_metal)
+ (locks %{workspace_root}/gpu)
+ (modules test_metal)
+ (libraries nx_array nx_metal_support rig windtrap))
+
+(tests
+ (names test_metal_place)
+ (locks %{workspace_root}/gpu)
+ (modules test_metal_place)
+ (libraries nx nx_array nx_metal_support rig windtrap))
+
+; The library's kernels.ml, built here beside a stub that reads kernels.h,
+; and the stamp check of its metallib.
+
+(tests
+ (names test_metal_kernels)
+ (modules test_metal_kernels kernels stamp)
+ (libraries windtrap)
+ (deps support/harness.metallib ../../lib/metal/kernels/kernels.metallib)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../lib/metal ../../lib/array)
+  (extra_deps ../../lib/metal/kernels.h)
+  (names test_metal_kernels_stubs)))
+
+(rule
+ (copy ../../lib/metal/kernels.ml kernels.ml))
+
+(rule
+ (copy ../../lib/metal/kernels/stamp.ml stamp.ml))

@@ -1,0 +1,19 @@
+(tests
+ (names test_kinds test_prog test_shape test_kernels test_contract test_reduce test_index test_sort test_fold test_assemble test_linalg)
+ (modules test_kinds test_prog test_shape test_kernels test_contract test_reduce test_index test_sort test_fold test_assemble test_linalg elements)
+ (libraries
+  nx_array
+  nx_array_gen
+  nx_array_support
+  nx_cpu
+  nx_kernel
+  nx_kernel_support
+  nx_kernels_support
+  nx_kinds_support
+  rig
+  windtrap)
+ (deps
+  (glob_files golden/kinds/*.golden)
+  golden/kinds/f32-sweep.txt
+  ../../lib/kernel/nx_kinds.h
+  ../../lib/kernel/nx_kinds_real.h))

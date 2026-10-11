@@ -1,0 +1,5 @@
+; The full f32 sweep of nx_kinds.h, run by hand: see sweep_kinds.ml.
+
+(executable
+ (name sweep_kinds)
+ (libraries nx_kinds_support))
