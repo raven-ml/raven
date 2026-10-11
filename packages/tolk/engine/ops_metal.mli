@@ -18,11 +18,11 @@
     The batch's host program encodes the indirect command buffer into command
     buffers of the device's command queue and commits them. It sends each
     Objective-C message through [objc_msgSend], a C function of the library
-    ["metal"] ({!Hcq2.ccall}), with the receivers and selectors it loads from a
-    placeholder of the device tagged ["mtl_sel"]: the words {!handles}, then
-    {!selectors}, which the engine writes when it links the batch. The command
-    buffer and its encoder pass between messages through volatile placeholders
-    of the device tagged ["mtl_cb"] and ["mtl_enc"]. *)
+    ["metal"] ({!Tolk.Hcq2.ccall}), with the receivers and selectors it loads
+    from a placeholder of the device tagged ["mtl_sel"]: the words {!handles},
+    then {!selectors}, which the engine writes when it links the batch. The
+    command buffer and its encoder pass between messages through volatile
+    placeholders of the device tagged ["mtl_cb"] and ["mtl_enc"]. *)
 
 open Tolk
 

@@ -10,17 +10,18 @@
     A CUDA device runs a batch's work on two streams of its context, one for
     kernels and one for copies. The batch's host program enqueues the work
     itself, calling the functions of the CUDA driver (C functions of the library
-    ["cuda"], {!Hcq2.ccall}), with the context and the streams it loads from a
-    placeholder of the device tagged ["cuda"]: its four words are the context,
-    the compute stream, the copy stream, and the status the last call returned,
-    which the host program stores there.
+    ["cuda"], {!Tolk.Hcq2.ccall}), with the context and the streams it loads
+    from a placeholder of the device tagged ["cuda"]: its four words are the
+    context, the compute stream, the copy stream, and the status the last call
+    returned, which the host program stores there.
 
     A launch's arguments are laid out after their size, in a buffer of arguments
-    ({!Op.Linear} ["kernargs"]), and the launch passes the driver their address
-    and the address of their size in the words of the queue's command buffer. A
-    kernel's function, and the host function that stamps a slot, are read from
-    words of the device tagged [("function", lib, name)] and ["stamp"], in
-    memory the host reads, which the engine fills when it links the batch. *)
+    ({!Tolk.Op.Linear} ["kernargs"]), and the launch passes the driver their
+    address and the address of their size in the words of the queue's command
+    buffer. A kernel's function, and the host function that stamps a slot, are
+    read from words of the device tagged [("function", lib, name)] and
+    ["stamp"], in memory the host reads, which the engine fills when it links
+    the batch. *)
 
 open Tolk
 

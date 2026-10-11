@@ -25,20 +25,20 @@
     program name its code object and its scratch memory through placeholders
     too.
 
-    {b Signal words.} A device's signal word ({!Hcq2.signal_word}) holds 64-bit
-    values, and a queue compares 32-bit words. A queue waits on a device's
-    signal word only for the value the device's work before the batch signals
-    ({!Hcq2.submitted}), and only the batch's own work signals the value after
-    it, so the wait is exact: it waits until the word's low 32 bits equal the
-    value's. A queue's signal of a device's value ({!Hcq2.value}) writes the
-    whole word: in one 64-bit write on the compute queue; on a copy queue, which
-    writes 32 bits at a time, its low 32 bits, then its high 32 bits only when
-    the low ones are [0]. A wait on the low half thus never passes before the
-    work it waits for is complete, and a high half that lands after a later
-    value's write holds that value's high half: the word never goes back. A wait
-    on a queue's signal in the batch's slots, whose values are small, waits
-    until the low 32 bits are at least the value, and a signal of one writes the
-    low 32 bits. *)
+    {b Signal words.} A device's signal word ({!Tolk.Hcq2.signal_word}) holds
+    64-bit values, and a queue compares 32-bit words. A queue waits on a
+    device's signal word only for the value the device's work before the batch
+    signals ({!Tolk.Hcq2.submitted}), and only the batch's own work signals the
+    value after it, so the wait is exact: it waits until the word's low 32 bits
+    equal the value's. A queue's signal of a device's value ({!Tolk.Hcq2.value})
+    writes the whole word: in one 64-bit write on the compute queue; on a copy
+    queue, which writes 32 bits at a time, its low 32 bits, then its high 32
+    bits only when the low ones are [0]. A wait on the low half thus never
+    passes before the work it waits for is complete, and a high half that lands
+    after a later value's write holds that value's high half: the word never
+    goes back. A wait on a queue's signal in the batch's slots, whose values are
+    small, waits until the low 32 bits are at least the value, and a signal of
+    one writes the low 32 bits. *)
 
 open Tolk
 
@@ -117,9 +117,10 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
       in a buffer of the device. It then invalidates the caches the kernel reads
       through, other than its instructions' and the L2, and dispatches [prg]'s
       kernel from its code object with its scratch memory, its local size and
-      its grid of work-groups, at most {!Setting.waves_per_sh} waves on each
-      shader array when it is not [0], then waits for it to finish. With AQL,
-      the dispatch is a dispatch packet, which waits for the packets before it;
+      its grid of work-groups, at most {!Tolk.Setting.waves_per_sh} waves on
+      each shader array when it is not [0], then waits for it to finish. With
+      AQL, the dispatch is a dispatch packet, which waits for the packets before
+      it;
     - [copy dst src n] on a copy queue, which copies [n] bytes in pieces of at
       most the copy engine's largest copy: 1 GiB from version 4.4.2 below 5.0
       and from 5.2, 4 MiB otherwise;
@@ -163,8 +164,8 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
     [exec] and [copy] raise [Invalid_argument] on a queue that does not run
     them, and a command of a copy queue [gpu] lacks raises [Invalid_argument]. A
     submission writes at most half of each ring, the room the device leaves it:
-    [submit] raises {!Hcq2.Over_capacity} if a copy queue's packets exceed a
-    quarter of its ring, since zeroing the ring's tail can double what they
+    [submit] raises {!Tolk.Hcq2.Over_capacity} if a copy queue's packets exceed
+    a quarter of its ring, since zeroing the ring's tail can double what they
     take, or if the AQL packets exceed half of theirs, and the batch is then
     split into several submissions.
 
@@ -178,17 +179,17 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
 (** {1:packets Packets} *)
 
 val lower : Ops.t Nx_amd_packet.word list -> Ops.t list
-(** [lower ws] is the packet [ws] as the nodes {!Hcq2.Queue.q} appends: a
-    constant word as a [uint32] constant ({!Hcq2.Queue.dword}), and a term as
-    its value with each offset added as a [uint64] constant and each shift right
-    by an untyped literal. A value has its word's width, so that the queue lays
-    [ws] out as {!Nx_amd_packet.dwords} does. *)
+(** [lower ws] is the packet [ws] as the nodes {!Tolk.Hcq2.Queue.q} appends: a
+    constant word as a [uint32] constant ({!Tolk.Hcq2.Queue.dword}), and a term
+    as its value with each offset added as a [uint64] constant and each shift
+    right by an untyped literal. A value has its word's width, so that the queue
+    lays [ws] out as {!Nx_amd_packet.dwords} does. *)
 
 (** {1:linking What the engine links} *)
 
 (** The type for the storage that the placeholders of AMD's commands name. The
-    queues are named ["COMPUTE:0"] and ["COPY:i"], as {!Hcq2.Queue.name} names
-    them. *)
+    queues are named ["COMPUTE:0"] and ["COPY:i"], as {!Tolk.Hcq2.Queue.name}
+    names them. *)
 type storage =
   | Ring of string  (** The ring of the queue. *)
   | Write_ptr of string

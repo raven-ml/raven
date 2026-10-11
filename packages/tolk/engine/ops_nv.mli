@@ -20,13 +20,13 @@
     A launch on the compute channel runs from a launch descriptor (a QMD), which
     addresses the launch's constant buffer 0: the driver's parameters, then the
     addresses of the buffers and the variables. Both are regions
-    ({!Ops.type-arg}'s [Region]) of 256-byte alignment, named ["qmd"] and
-    ["cbuf"], which {!Hcq2.bufferize_cmdbuf} lays out in a buffer per name; a
-    launch in a loop has a copy of each for every trip. Each program is its
-    cubin, which the engine loads on the device ({!Program}), and its launch
-    descriptor is made from the cubin's registers, shared and local memory and
-    constant banks. The local memory each thread may use is the word of a
-    placeholder ({!Local}), which the engine fills once the device's local
+    ({!Tolk.Ops.type-arg}'s [Region]) of 256-byte alignment, named ["qmd"] and
+    ["cbuf"], which {!Tolk.Hcq2.bufferize_cmdbuf} lays out in a buffer per name;
+    a launch in a loop has a copy of each for every trip. Each program is its
+    cubin, which the engine loads on the device ({!constructor-Program}), and
+    its launch descriptor is made from the cubin's registers, shared and local
+    memory and constant banks. The local memory each thread may use is the word
+    of a placeholder ({!Local}), which the engine fills once the device's local
     memory holds what the batch's kernels need per thread.
 
     Values signalled are 64 bits. The compute channel writes them whole. The
@@ -84,8 +84,8 @@ val queues : host:string -> reaches:(string -> bool) -> props -> Hcq2.queues
       trip's launches chained on descriptors of the trip's own and scheduled by
       the channel once per trip;
     - [submit ()], which appends the queue's command buffer to its channel, one
-      entry of its ring, and raises {!Hcq2.Over_capacity} if the buffer has more
-      32-bit words than an entry's length field holds, [2{^21} - 1].
+      entry of its ring, and raises {!Tolk.Hcq2.Over_capacity} if the buffer has
+      more 32-bit words than an entry's length field holds, [2{^21} - 1].
 
     The copy queue's commands are [copy dst src n], copies of at most 2 GiB each
     from [src] to [dst], [wait] as above, [signal], through the copy engine as
@@ -100,8 +100,8 @@ val queues : host:string -> reaches:(string -> bool) -> props -> Hcq2.queues
 (** {1:linking What the engine links} *)
 
 (** The type for the storage that the placeholders of NV's commands name. The
-    queues are named ["COMPUTE:0"] and ["COPY:0"], as {!Hcq2.Queue.name} names
-    them. *)
+    queues are named ["COMPUTE:0"] and ["COPY:0"], as {!Tolk.Hcq2.Queue.name}
+    names them. *)
 type storage =
   | Program of { binary : string; name : string }
       (** The cubin [binary], loaded on the device, of which the commands launch

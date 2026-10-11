@@ -20,13 +20,13 @@ val term : Ops.t Nx_nv_packet.term -> Ops.t
     integer, and a [Shift (t, n)] is [Ops.shr (term t) (Ops.int n)]. *)
 
 val words : Ops.t Nx_nv_packet.word list -> Ops.t list
-(** [words ws] is the words [ws] as a queue takes them ({!Hcq2.Queue.q}): a
-    [Dword n] is {!Hcq2.Queue.dword}[ n], a [W32 t] is {!term}[ t] as a [Uint32]
-    ({!Ops.ccast}), and a [W64 t] is {!term}[ t] as a [Uint64]. *)
+(** [words ws] is the words [ws] as a queue takes them ({!Tolk.Hcq2.Queue.q}): a
+    [Dword n] is {!Tolk.Hcq2.Queue.dword}[ n], a [W32 t] is {!term}[ t] as a
+    [Uint32] ({!Tolk.Ops.ccast}), and a [W64 t] is {!term}[ t] as a [Uint64]. *)
 
 val region : string -> string -> (int * Ops.t) list -> Ops.t
 (** [region name bytes patches] is the region named [name] of 256-byte alignment
-    ({!Ops.type-arg}'s [Region]) holding [bytes], each of [patches],
+    ({!Tolk.Ops.type-arg}'s [Region]) holding [bytes], each of [patches],
     [(offset, w)], written over the bytes from [offset] for the width of [w]'s
     type. *)
 
