@@ -153,7 +153,8 @@ val capability : t -> Rig_nv_abi.Gpu.t
       work of any later submission of the device reads it.
 
     {!val-alloc} returns [None] if the GPU or the host lacks the memory, and
-    for [Mapped] once the BAR has no room. {!val-alloc} and {!val-map_host}
+    for [Mapped] once the BAR has no room, or if it had none for the path's
+    flush word ({!field-flush}). {!val-alloc} and {!val-map_host}
     raise [Invalid_argument] for fewer than one byte. The device itself
     holds [Pinned] memory for its rings and its word, and 1 MiB for the
     descriptors and constant banks of its launches, in the BAR where the BAR
@@ -303,6 +304,17 @@ type 'm path = {
       (** The host address of the 4-byte register into which the device
           stores a channel's work submit token to wake the channel
           ([NVC361_NOTIFY_CHANNEL_PENDING]). *)
+  flush : int option;
+      (** [Some a] if the host address [a] is a 32-bit word of the GPU's
+          [Mapped] memory, which a device reads before waking its channels
+          so that the host's writes through the GPU's BAR reach the GPU
+          first; [None] if the BAR had no room for it, and the device then
+          has no [Mapped] memory. The word must stay mapped while a device
+          may read it: this GPU's devices, and the devices that view its
+          [Mapped] memory ([map_peer]), until their stop. [Rig_nv_nvidia]
+          keeps it for the life of the process. [Rig_nv_pci] unmaps it at
+          the GPU's stop, with the BAR windows, so a view of a stopped GPU's
+          [Mapped] memory on another device is not covered. *)
   alloc : Rig_edge.memory -> int -> 'm memory option;
       (** [alloc k n] is [n] new bytes of the kind [k] ({!section-regions}) at
           an address aligned to 4 KiB, [Mapped] memory mapped uncached for the

@@ -225,8 +225,8 @@ static inline void full_fence(void) {
 /* A word of a GPU's BAR that a submission reads before its doorbells, which
    returns once the host's writes through that BAR reached the GPU, while
    [count] regions written through it are live: the device's own BAR, or
-   the BAR of the GPU whose Mapped memory the device's views reach. A word,
-   once set, stays mapped until the device's channels end. */
+   the BAR of the GPU whose Mapped memory the device's views reach. The
+   path keeps each word mapped while a device may read it. */
 struct flush {
   volatile const uint32_t *word;
   _Atomic long count;

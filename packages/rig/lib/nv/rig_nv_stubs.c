@@ -270,7 +270,8 @@ value caml_rig_nv_entry(value v_self, value v_base, value v_word) {
   return Val_unit;
 }
 
-/* The word of the device's own BAR a submission reads (struct flush). */
+/* The word of the device's own BAR a submission reads (struct flush), the
+   path's flush word. */
 value caml_rig_nv_bar(value v_self, value v_at) {
   Device_val(v_self)->flushes[0].word = Pointer_val(v_at);
   return Val_unit;

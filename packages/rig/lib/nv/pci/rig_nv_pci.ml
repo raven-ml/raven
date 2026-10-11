@@ -265,6 +265,14 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
   let* device, subdevice, vaspace = Gsp.objects rm in
   let* gpu = Gsp.gpu gsp rm ~subdevice in
   let on = known (Function.machine g.fn) in
+  (* The flush word's page lives with the GPU's memory until the stop. A GPU
+     whose BAR has no room for it opens without Mapped memory. *)
+  let* flush =
+    match protect g (fun () -> Memory.alloc g.memory Memory.Bar 0x1000) with
+    | Ok (Some r) -> Ok (host r)
+    | Ok None -> Ok None
+    | Error _ as e -> e
+  in
   Rig_nv.make
     {
       key = on.key;
@@ -276,6 +284,7 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
       gpu;
       budget = Page_table.main_pool tables;
       doorbell = Window.address c.regs + doorbell_at;
+      flush;
       alloc = alloc g;
       (* A GPU taken physically would keep writing the process's pages after its
          death: it maps no host memory. *)

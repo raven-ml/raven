@@ -64,6 +64,7 @@ type gpu = {
   vaspace : int;
   uuid : string;
   doorbell : int;
+  flush : int option; (* a word of a page of its BAR, mapped for the process *)
   facts : Rig_nv.gpu;
   budget : int;
   hang_ms : int option; (* [None] while the RM's watchdog bounds its work *)
@@ -774,6 +775,7 @@ let make_gpu c ~dev ~index bus =
         vaspace;
         uuid;
         doorbell;
+        flush = None;
         facts =
           {
             Rig_nv.channel_class;
@@ -825,7 +827,13 @@ let make_gpu c ~dev ~index bus =
       Rm.uvm_call c D.uvm_register_gpu_vaspace v V.rm_status
         "registering the GPU's address space"
     in
-    Ok g
+    (* The flush word's page, which every device that reads it may outlive:
+       kept with the GPU's objects. A GPU whose BAR has no room for it has
+       none, and its devices no Mapped memory. *)
+    let* bar = alloc_video g ~cpu:true page in
+    match bar with
+    | Some (_, va, _, _) -> Ok { g with flush = Some va }
+    | None -> Ok g
   in
   match made with
   | Ok g -> Ok g
@@ -872,6 +880,7 @@ let path g =
     gpu = g.facts;
     budget = g.budget;
     doorbell = g.doorbell + doorbell_at;
+    flush = g.flush;
     alloc = alloc g;
     map_host = Some (map_host g);
     index = g.index;

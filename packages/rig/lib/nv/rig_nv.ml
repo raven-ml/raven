@@ -66,6 +66,7 @@ type 'm path = {
   gpu : gpu;
   budget : int;
   doorbell : int;
+  flush : int option;
   alloc : Rig_edge.memory -> int -> 'm memory option;
   map_host : (int -> int -> 'm memory option) option;
   reaches : int -> bool;
@@ -176,7 +177,7 @@ external set_template : int -> int -> string -> string -> unit
   = "caml_rig_nv_template"
 
 external set_entry : int -> int -> int -> unit = "caml_rig_nv_entry" [@@noalloc]
-external set_bar : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
+external set_flush : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
 external count_flush : int -> int -> int -> bool = "caml_rig_nv_flush"
 [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_nv_zero" [@@noalloc]
@@ -241,32 +242,12 @@ let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
 
 (* Devices *)
 
-(* A device's BAR page, whose word at host address [at] a submission reads
-   to flush the host's writes through the GPU's BAR (rig_nv_stubs.h's struct
-   flush). Its holders are the device until its stop, each of its Mapped
-   regions until its free, and each other device that viewed Mapped memory
-   behind it until that device's stop, whose submissions read the word: the
-   last to let go gives it back. *)
-type 'm page = {
-  at : int;
-  give : unit -> unit;
-  mutable holds : int; (* under [pages] *)
-}
-
-(* Where a region's memory lies behind a GPU's BAR: Mapped memory of its own
-   device, which holds the page, or a view of Mapped memory of another
-   device's. *)
-type 'm behind = Mapped_of of 'm page | View_of of 'm page
-
 (* What only a running device uses. The handle outlives the device in its
    properties, so stop drops it. *)
 type 'm live = {
   path : 'm path;
   error_names : (int * string) list;
   owned : 'm memory list;
-  bar : 'm page option;
-  mutable viewed : 'm page list;
-      (* other devices' pages this one holds, under [flush_lock] *)
   group : int;
   debugger : int;
   channels : int list;
@@ -289,7 +270,8 @@ type 'm dev = {
   index : int;
   reaches : int -> bool; (* the path's *)
   capability : Abi.Gpu.t;
-  flush_lock : Mutex.t; (* serialises count_flush, [viewed] and [word] *)
+  flush : int option; (* the path's flush word *)
+  flush_lock : Mutex.t; (* serialises count_flush and [word] *)
   mutable word : 'm reg option;
       (* [None] once rig freed it, and the C state with it *)
   (* Where the word is, which the facts report also once it is freed. *)
@@ -306,7 +288,9 @@ and 'm reg = {
   mem : 'm memory;
   free : 'm memory -> unit;
   bytes : int;
-  behind : 'm behind option;
+  flush : int option;
+      (* the flush word of the GPU whose BAR the host writes the memory
+         through, for Mapped memory and views of it *)
 }
 
 type t = T : 'm dev -> t
@@ -586,12 +570,11 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
   in
   let* compute_notifier = notifier 0 in
   let* copy_notifier = notifier 1 in
-  let bar = path_alloc p Mapped page in
-  Option.iter (fun m -> taken (fun () -> p.free m)) bar;
   (* The GPU reads a launch's descriptor and bank as the launch before it
-     completes: from its own memory, through the BAR, where the BAR has room. *)
+     completes: from its own memory, through the BAR, where the BAR has room
+     and a flush word orders the host's writes through it. *)
   let in_bar =
-    match bar with
+    match p.flush with
     | None -> None
     | Some _ -> path_alloc p Mapped launch_bytes
   in
@@ -705,15 +688,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     set_doorbell self p.doorbell;
     set_launches self launches_host launches.address launch_bytes launches_bar;
     templates self p.gpu;
-    let* bar =
-      match bar with
-      | None -> Ok None
-      | Some m ->
-          let* at = host "BAR page" m in
-          set_bar self at;
-          let give () = try p.free m with Fault _ -> () in
-          Ok (Some { at; give; holds = 1 })
-    in
+    Option.iter (set_flush self) p.flush;
     (* The private copy kernel. On sm_80, sm_86, sm_87 and sm_89, a copy of
        at least 256 KiB between two of the device's own [Device] allocations
        runs as this kernel on the compute channel (rig_nv_ring.c's
@@ -762,9 +737,10 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
             local = (fun n -> local d n);
           };
         word =
-          Some { dev = d; mem = words; free = p.free; bytes = 8; behind = None };
+          Some { dev = d; mem = words; free = p.free; bytes = 8; flush = None };
         word_address = words.address;
         word_host = words_host;
+        flush = p.flush;
         flush_lock = Mutex.create ();
         local_lock = Mutex.create ();
         live =
@@ -773,8 +749,6 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
               path = p;
               error_names = R.robust_channel_errors;
               owned;
-              bar;
-              viewed = [];
               group;
               debugger;
               channels = [ compute; copy ];
@@ -828,30 +802,15 @@ let make p =
 
 (* Memory *)
 
-let region d (p : _ path) behind bytes m =
-  R { dev = d; mem = m; free = p.free; bytes; behind }
+let region d (p : _ path) flush bytes m =
+  R { dev = d; mem = m; free = p.free; bytes; flush }
 
-(* Holds of pages *)
-
-let pages = Mutex.create ()
-let hold p = Mutex.protect pages (fun () -> p.holds <- p.holds + 1)
-
-let drop p =
-  let last =
-    Mutex.protect pages (fun () ->
-        p.holds <- p.holds - 1;
-        p.holds = 0)
-  in
-  if last then p.give ()
-
-(* Counts [delta] regions written through [p]'s BAR in [d]'s flushes:
-   [false] if [d] has no free entry for [p]'s word. Once [d]'s word is freed
-   nothing flushes, and the count is left. *)
-let count d p delta =
+(* Counts [delta] regions written through the BAR of the flush word [w] in
+   [d]'s flushes: [false] if [d] has no free entry for [w]. Once [d]'s word is
+   freed nothing flushes, and the count is left. *)
+let count d w delta =
   Mutex.protect d.flush_lock (fun () ->
-      Option.is_some d.word && count_flush d.self p.at delta)
-
-let page_of = function Mapped_of p | View_of p -> p
+      Option.is_some d.word && count_flush d.self w delta)
 
 let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
@@ -861,15 +820,15 @@ let alloc (T d) (memory : Rig_edge.memory) n =
   | Device | Pinned ->
       Option.map (region d p None n) (path_alloc p memory n)
   | Mapped -> (
-      match l.bar with
+      match d.flush with
       | None -> None
-      | Some page -> (
+      | Some w -> (
           match path_alloc p Mapped n with
           | None -> None
           | Some m ->
-              hold page;
-              ignore (count d page 1 : bool);
-              Some (region d p (Some (Mapped_of page)) n m)))
+              (* The device's own word has its entry from [make]. *)
+              ignore (count d w 1 : bool);
+              Some (region d p (Some w) n m)))
 
 (* Frees [d]'s C state with its word. rig frees the word after the stop, but
    may free other regions and unload images after it. *)
@@ -883,13 +842,10 @@ let free (T _) = function
   | Given _ -> ()
   | R r -> (
       give r.free r.mem;
-      match (r.dev.word, r.behind) with
+      match (r.dev.word, r.flush) with
       | Some w, _ when r == w -> free_state r.dev
       | _, None -> ()
-      | _, Some b ->
-          let page = page_of b in
-          ignore (count r.dev page (-1) : bool);
-          (match b with Mapped_of _ -> drop page | View_of _ -> ()))
+      | _, Some w -> ignore (count r.dev w (-1) : bool))
 
 let address = function R r -> r.mem.address | Given w -> w.address
 
@@ -906,21 +862,6 @@ let peer (T d) (T d') =
   | Some Type.Equal -> d.reaches d'.index
   | None -> false
 
-(* Counts a view of Mapped memory behind [p] in [d]'s flushes, and makes [d]
-   hold [p] until its stop, so that the word its submissions read stays
-   mapped: [false] if [d] has no free entry. *)
-let view d l p =
-  Mutex.protect d.flush_lock @@ fun () ->
-  count_flush d.self p.at 1
-  && begin
-    let own = match l.bar with Some q -> q == p | None -> false in
-    if not (own || List.memq p l.viewed) then begin
-      hold p;
-      l.viewed <- p :: l.viewed
-    end;
-    true
-  end
-
 (* [r] holds its device, the other one. A view of Mapped memory makes [d]'s
    submissions flush the host's writes through the BAR behind it, which [d]'s
    own doorbell does not order. *)
@@ -935,10 +876,10 @@ let map_peer (T d) (T _) = function
           match below r.bytes m with
           | None -> None
           | Some m -> (
-              match Option.map page_of r.behind with
+              match r.flush with
               | None -> Some (region d l.path None r.bytes m)
-              | Some p when view d l p ->
-                  Some (region d l.path (Some (View_of p)) r.bytes m)
+              | Some w when count d w 1 ->
+                  Some (region d l.path (Some w) r.bytes m)
               | Some _ ->
                   give l.path.free m;
                   None)))
@@ -1151,8 +1092,6 @@ let halt d l =
     (* The work no longer runs: what it used goes back, and a failure to give
        some back leaves the device stopped. *)
     List.iter (give l.path.free) l.owned;
-    Option.iter drop l.bar;
-    List.iter drop (Mutex.protect d.flush_lock (fun () -> l.viewed));
     Option.iter (give l.path.free) l.local_current;
     Option.iter (give l.path.free) l.local_pending;
     List.iter (fun (m, _) -> give l.path.free m) l.local_retired
