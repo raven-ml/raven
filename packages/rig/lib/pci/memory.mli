@@ -64,13 +64,22 @@ val release : t -> unit
     driver that keeps [m] past the GPU's stop ({!Gpus.stop}) releases it there,
     so that [m] holds no page table. Releasing [m] again does nothing. *)
 
-val reaches : t -> t -> bool
-(** [reaches m o] is [true] iff {!map_peer}[ m] maps the GPU memory of [o],
-    given room. That holds iff [o] is another GPU's memory on [m]'s machine,
-    their page tables share a space, and either links of one fabric join them,
-    or neither GPU is behind an IOMMU ({!Machine.Iommu}) and [o]'s memory BAR
-    reaches all of [o]'s memory. [reaches m m] is [false], since the GPU maps
-    its own memory already. *)
+type reach
+(** The type for what decides whose GPU memory a GPU maps ({!reaches}): facts
+    of the GPU, its machine and its driver, the same at every open of the GPU,
+    so a driver may keep them past the GPU's stop. *)
+
+val reach : t -> reach
+(** [reach m] is what decides whose GPU memory [m]'s GPU maps. *)
+
+val reaches : reach -> reach -> bool
+(** [reaches r o] is [true] iff {!map_peer} maps for a GPU of reach [r] the
+    GPU memory of another GPU of reach [o], given room. That holds iff both
+    are on one machine, their page tables share a space, and either links of
+    one fabric join them, or neither GPU is behind an IOMMU
+    ({!Machine.Iommu}) and [o]'s memory BAR reaches all of [o]'s memory.
+    It is [false] for two reaches of one GPU, [reaches r r] included, since
+    the GPU maps its own memory already. *)
 
 (** {1:regions Regions} *)
 
@@ -164,9 +173,9 @@ val map_peer : t -> region -> (region option, string) result
     [Peer r'], where [r'] is the region its owner gave.
 
     [Error why] if the GPUs are on different machines, if their page tables
-    take addresses from different spaces, naming both, if [r] is GPU memory and
-    [m] does not {!reaches} its owner's, or if the system memory cannot be
-    pinned, with {!Function.pin}'s reason.
+    take addresses from different spaces, naming both, if [r] is GPU memory
+    that [m]'s GPU does not reach ({!reaches}), or if the system memory cannot
+    be pinned, with {!Function.pin}'s reason.
 
     Raises [Invalid_argument] if [r], or the region it maps, was freed, if it is
     [m]'s GPU's own memory, or if the GPU of [m] maps its addresses already. *)

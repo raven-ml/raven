@@ -354,8 +354,13 @@ let test_reaches (_, c) =
       Function.release x.t_fn;
       Function.release o.t_fn)
   @@ fun () ->
-  equal ~msg:"reaches itself" bool false (Memory.reaches x.t_memory x.t_memory);
-  equal ~msg:"reaches" bool c.reaches (Memory.reaches x.t_memory o.t_memory);
+  let x_reach = Memory.reach x.t_memory in
+  let again = Memory.create ?link:x_link x.t_fn x.t_tables ~bar:0 in
+  equal ~msg:"reaches itself" bool false (Memory.reaches x_reach x_reach);
+  equal ~msg:"reaches itself, opened again" bool false
+    (Memory.reaches x_reach (Memory.reach again));
+  equal ~msg:"reaches" bool c.reaches
+    (Memory.reaches x_reach (Memory.reach o.t_memory));
   let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
   let peer = Memory.map_peer x.t_memory r in
   equal ~msg:"maps" bool c.reaches (Result.is_ok peer);

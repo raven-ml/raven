@@ -167,17 +167,40 @@ type gpu = { memory : Memory.t; lock : Mutex.t }
 
 let protect g f = Mutex.protect g.lock f
 
-(* Each GPU's memory as its last open found it, by machine and number, for
-   [reaches]. What [Memory.reaches] compares is the GPU's own, the same at
-   every open, so a device's [reaches] answers from its GPU's number alone,
-   also once it is lost, and keeps nothing of the device. *)
-let learned : (Machine.t * int * Memory.t) list ref = ref []
-let learned_lock = Mutex.create ()
+(* What the path keeps of each machine, from its first open there: the key
+   its devices share, so that a GPU's number names the same GPU for each of
+   them, and each GPU's reach as its last open found it, by number. A GPU's
+   reach is the same at every open ([Memory.reach]), so a device's [reaches]
+   answers from its GPU's number alone, also once it is lost, and keeps nothing
+   of the device. *)
+type known = {
+  key : Memory.region Type.Id.t;
+  mutable reached : (int * Memory.reach) list;
+}
 
-let learn machine index memory =
-  Mutex.protect learned_lock @@ fun () ->
-  let other (m, i, _) = not (m == machine && i = index) in
-  learned := (machine, index, memory) :: List.filter other !learned
+let machines : (Machine.t * known) list ref = ref []
+let machines_lock = Mutex.create ()
+
+let known m =
+  Mutex.protect machines_lock @@ fun () ->
+  match List.assq_opt m !machines with
+  | Some on -> on
+  | None ->
+      let on = { key = Type.Id.make (); reached = [] } in
+      machines := (m, on) :: !machines;
+      on
+
+let learn on index reach =
+  Mutex.protect machines_lock @@ fun () ->
+  on.reached <- (index, reach) :: List.remove_assoc index on.reached
+
+let reaches on ~index j =
+  let reach () =
+    match (List.assoc_opt index on.reached, List.assoc_opt j on.reached) with
+    | Some r, Some o -> Memory.reaches r o
+    | _ -> false
+  in
+  j = index || Mutex.protect machines_lock reach
 
 (* A path function raises Rig_amd.Fault for a register sequence that does not
    complete. A flush the hubs do not confirm is raised by the next sleep. *)
@@ -200,19 +223,6 @@ let map_host g a n =
   | Ok (Some r) -> Some (memory r)
   | Ok None | Error _ -> None
 
-let reaches machine ~index j =
-  let known i =
-    List.find_map
-      (fun (m, i', o) -> if m == machine && i' = i then Some o else None)
-      !learned
-  in
-  let reach () =
-    match (known index, known j) with
-    | Some m, Some o -> Memory.reaches m o
-    | _ -> false
-  in
-  j = index || Mutex.protect learned_lock reach
-
 let map_peer g (m : Memory.region Amd.memory) =
   match protect g (fun () -> Memory.map_peer g.memory m.data) with
   | Ok (Some r) -> Some (memory r)
@@ -222,8 +232,6 @@ let free g (m : Memory.region Amd.memory) =
   protect g (fun () -> Memory.free g.memory m.data)
 
 (* Opening *)
-
-let key : Memory.region Type.Id.t = Type.Id.make ()
 
 (* The reference clock of SOC15 and SOC21 GPUs, which the timestamps of their
    packets count. *)
@@ -249,8 +257,9 @@ let path g h fn ~index : Memory.region Amd.path =
       (fun () -> Gpus.stop h)
       ~finally:(fun () -> protect mem (fun () -> Memory.release mem.memory))
   in
+  let on = known (Rig_pci.Function.machine fn) in
   {
-    key;
+    key = on.key;
     index;
     gpu;
     waves = gc.waves * simds_per_cu gpu;
@@ -266,7 +275,7 @@ let path g h fn ~index : Memory.region Amd.path =
       (match Rig_pci.Function.addressing fn with
       | Machine.Physical -> None
       | Iommu -> Some (fun a n -> guard (fun () -> map_host mem a n)));
-    reaches = reaches (Rig_pci.Function.machine fn) ~index;
+    reaches = reaches on ~index;
     map_peer = (fun m -> guard (fun () -> map_peer mem m));
     free = (fun m -> guard (fun () -> free mem m));
     queue =
@@ -333,7 +342,10 @@ let start ~firmware ~index h fn =
       (* A host resets a VF that holds its access long: every queue is made, so
          it goes back. *)
       Boot.give_back g;
-      learn (Rig_pci.Function.machine fn) index (Boot.memory g);
+      learn
+        (known (Rig_pci.Function.machine fn))
+        index
+        (Memory.reach (Boot.memory g));
       Ok d
   | Error why | (exception (Amd.Fault why | Regs.Stuck why)) -> Error why
 

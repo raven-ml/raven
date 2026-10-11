@@ -114,7 +114,41 @@ type gpu = {
    take, with each name's region. *)
 and names = { regions : (int, Memory.region) Hashtbl.t; mutable next : int }
 
-let key : Memory.region Type.Id.t = Type.Id.make ()
+(* What the path keeps of each machine, from its first open there: the key
+   its devices share, so that a GPU's number names the same GPU for each of
+   them, and each GPU's reach as its last open found it, by number. A GPU's
+   reach is the same at every open ([Memory.reach]), so a device's [reaches]
+   answers from its GPU's number alone, also once it is lost, and keeps nothing
+   of the device. *)
+type known = {
+  key : Memory.region Type.Id.t;
+  mutable reached : (int * Memory.reach) list;
+}
+
+let machines : (Machine.t * known) list ref = ref []
+let machines_lock = Mutex.create ()
+
+let known m =
+  Mutex.protect machines_lock @@ fun () ->
+  match List.assq_opt m !machines with
+  | Some on -> on
+  | None ->
+      let on = { key = Type.Id.make (); reached = [] } in
+      machines := (m, on) :: !machines;
+      on
+
+let learn on index reach =
+  Mutex.protect machines_lock @@ fun () ->
+  on.reached <- (index, reach) :: List.remove_assoc index on.reached
+
+let reaches on ~index j =
+  let reach () =
+    match (List.assoc_opt index on.reached, List.assoc_opt j on.reached) with
+    | Some r, Some o -> Memory.reaches r o
+    | _ -> false
+  in
+  j = index || Mutex.protect machines_lock reach
+
 let protect g f = Mutex.protect g.lock f
 
 let host r =
@@ -171,31 +205,6 @@ let map_host g a n =
   match protect g (fun () -> Memory.map_host g.memory a n) with
   | Ok (Some r) -> Some (memory g r)
   | Ok None | Error _ -> None
-
-(* Each GPU's memory as its last open found it, by machine and number, for
-   [reaches]. What [Memory.reaches] compares is the GPU's own, the same at
-   every open, so a device's [reaches] answers from its GPU's number alone,
-   also once it is lost, and keeps nothing of the device. *)
-let learned : (Machine.t * int * Memory.t) list ref = ref []
-let learned_lock = Mutex.create ()
-
-let learn machine index memory =
-  Mutex.protect learned_lock @@ fun () ->
-  let other (m, i, _) = not (m == machine && i = index) in
-  learned := (machine, index, memory) :: List.filter other !learned
-
-let reaches machine ~index j =
-  let known i =
-    List.find_map
-      (fun (m, i', o) -> if m == machine && i' = i then Some o else None)
-      !learned
-  in
-  let reach () =
-    match (known index, known j) with
-    | Some m, Some o -> Memory.reaches m o
-    | _ -> false
-  in
-  j = index || Mutex.protect learned_lock reach
 
 let map_peer g (m : Memory.region Rig_nv.memory) =
   match protect g (fun () -> Memory.map_peer g.memory m.data) with
@@ -255,9 +264,10 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
   let* rm = Gsp.rm gsp ~locate:(locate g) in
   let* device, subdevice, vaspace = Gsp.objects rm in
   let* gpu = Gsp.gpu gsp rm ~subdevice in
+  let on = known (Function.machine g.fn) in
   Rig_nv.make
     {
-      key;
+      key = on.key;
       index = g.index;
       rm;
       device;
@@ -273,7 +283,7 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
         (match Function.addressing g.fn with
         | Machine.Physical -> None
         | Iommu -> Some (map_host g));
-      reaches = reaches (Function.machine g.fn) ~index:g.index;
+      reaches = reaches on ~index:g.index;
       map_peer = map_peer g;
       free = free g;
       register = (fun _ -> Ok ());
@@ -365,7 +375,7 @@ let boot ~firmware ~index h fn =
   in
   match device g ~gsp ~hold:h ~tables c with
   | Ok d ->
-      learn machine index g.memory;
+      learn (known machine) index (Memory.reach g.memory);
       Ok d
   | Error why | (exception Rig_nv.Fault why) -> Error why
 

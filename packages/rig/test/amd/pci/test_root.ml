@@ -110,6 +110,34 @@ let test_killed_holder () =
   equal ~msg:"the open's reset let the child's memory go" bool false (left ());
   Rig_amd.stop g ~fault:None
 
+(* Each [Machine.at "/"] is a machine of its own, whose devices never peer
+   with another's. GPU 1 opens through a second machine once its device on the
+   first is closed, where GPUs 0 and 1 reached each other: GPU 0's device does
+   not reach it. *)
+let test_peer_machines () =
+  let firmware = firmware () in
+  let m = Rig_pci.Machine.at "/" in
+  if Rig_amd_pci.count ~machine:m () < 2 then
+    skip ~reason:"the machine has one AMD GPU" ();
+  let open_on machine i =
+    match Rig.open_ (Rig_amd_pci.gpu ~machine ~firmware i) with
+    | Ok d -> d
+    | Error why -> failf "GPU %d did not open: %s" i why
+  in
+  let a = open_on m 0 in
+  Fun.protect ~finally:(fun () -> Rig.close a) @@ fun () ->
+  let b = open_on m 1 in
+  let peers = Rig.reaches a b in
+  Rig.close b;
+  if not peers then
+    skip ~reason:"GPUs 0 and 1 reach no memory of each other" ();
+  let b' = open_on (Rig_pci.Machine.at "/") 1 in
+  Fun.protect ~finally:(fun () -> Rig.close b') @@ fun () ->
+  equal ~msg:"GPU 0 reaches GPU 1 of another machine" bool false
+    (Rig.reaches a b');
+  equal ~msg:"GPU 1 reaches GPU 0 of another machine" bool false
+    (Rig.reaches b' a)
+
 let () =
   match Sys.argv with
   | [| _; arg; dirs |] when arg = killed ->
@@ -130,5 +158,9 @@ let () =
                    "a GPU whose holder was killed is reset by the next open \
                     (SIGKILL in a child)"
                    test_killed_holder;
+                 test
+                   "devices of two machines at one root never reach each \
+                    other"
+                   test_peer_machines;
                ];
            ])

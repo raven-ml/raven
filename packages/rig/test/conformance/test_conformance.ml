@@ -1081,6 +1081,28 @@ let peers (module G : Gpu) () =
   G.D.free g' h;
   G.D.free g' d
 
+(* [Rig.reaches] between two devices of the driver answers from what they
+   learned when they opened: the same once either is closed. *)
+let reaches_closed (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  with_second (module G) @@ fun g' ->
+  let b =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_
+         {
+           name = G.class_ ^ ":second";
+           driver = (module G.D);
+           make = (fun () -> Ok g');
+         })
+  in
+  Fun.protect ~finally:(fun () -> Rig.close b) @@ fun () ->
+  let both () = [ Rig.reaches t.d b; Rig.reaches b t.d ] in
+  let opened = both () in
+  Rig.close b;
+  equal (list bool) ~msg:"once the second is closed" opened (both ());
+  G.close t;
+  equal (list bool) ~msg:"once both are closed" opened (both ())
+
 (* Order *)
 
 (* Submissions of parts, each a copy of words between three buffers: a copy
@@ -1327,6 +1349,8 @@ let laws (module G : Gpu) =
       test "work runs after another device's point it waits for"
         (device_waits g);
       test "peer is whether map_peer maps Device memory" (peers g);
+      test "reaches between two devices answers the same once they close"
+        (reaches_closed g);
       stateful ~timeout:300. ~count:100 ~steps:20
         "values complete in order and the word never moves backwards (sampled)"
         O.commands;

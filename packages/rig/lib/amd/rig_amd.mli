@@ -323,8 +323,8 @@ type 'm memory = {
 
 type 'm path = {
   key : 'm Type.Id.t;
-      (** The path's key: devices whose paths share [key] map each other's
-          memory with [map_peer]. *)
+      (** The path's key: devices whose paths share [key] are of one
+          machine, and map each other's memory with [map_peer]. *)
   index : int;
       (** The GPU's number among the machine's AMD GPUs in bus order
           ({!is_gpu}). *)

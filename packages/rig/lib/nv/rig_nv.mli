@@ -291,8 +291,8 @@ type 'm memory = {
 
 type 'm path = {
   key : 'm Type.Id.t;
-      (** The path's key. Devices whose paths have one key map each other's
-          memory with [map_peer]. *)
+      (** The path's key. Devices whose paths have one key are of one
+          machine, and map each other's memory with [map_peer]. *)
   index : int;  (** The GPU's number ({!is_gpu}). *)
   rm : rm;  (** The GPU's RM. *)
   device : int;  (** The RM's device object of the GPU. *)

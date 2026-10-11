@@ -9,20 +9,23 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 type kind = Gpu | Bar | Host
 type link = { fabric : int64; node : int }
 
-(* The memory a GPU addresses: the facts [reaches] and errors read, and [held],
-   what its regions need. A driver keeps [t] past the GPU's stop, for the life
-   of the process, so [held] goes once the function is released and no region
-   is out, and [t] then keeps a few words. *)
-type t = {
-  bus : string;
+type reach = {
   machine : Machine.t;
-  iommu : bool; (* the function reaches system memory through an IOMMU *)
+  bus : string; (* the GPU's, which names it on its machine *)
   space : Space.t;
+  addressing : Machine.addressing;
+  small_bar : bool;
+  link : link option;
+}
+
+(* The memory a GPU addresses: the facts [reaches] and errors read, and [held],
+   what its regions need. [held] goes once the function is released and no
+   region is out. *)
+type t = {
+  reach : reach;
   bar : int;
   bar_base : int;
   bar_size : int;
-  small_bar : bool; (* the BAR reaches part of the memory *)
-  link : link option;
   mutable held : held option;
 }
 
@@ -73,15 +76,18 @@ let create ?link fn tables ~bar =
         invalid_argf "Memory.create: %s has no BAR %d" (Function.bus fn) bar
   in
   {
-    bus = Function.bus fn;
-    machine = Function.machine fn;
-    iommu = Function.addressing fn = Machine.Iommu;
-    space = Page_table.space tables;
+    reach =
+      {
+        machine = Function.machine fn;
+        bus = Function.bus fn;
+        space = Page_table.space tables;
+        addressing = Function.addressing fn;
+        small_bar = bar_size < Page_table.memory tables;
+        link;
+      };
     bar;
     bar_base;
     bar_size;
-    small_bar = bar_size < Page_table.memory tables;
-    link;
     held =
       Some
         {
@@ -125,18 +131,24 @@ let rec host r =
   | Peer origin -> host origin
   | Allocated | Borrowed _ -> r.host
 
-let linked m o =
-  match (m.link, o.link) with
+let reach m = m.reach
+
+let linked (r : reach) (o : reach) =
+  match (r.link, o.link) with
   | Some l, Some l' -> Int64.equal l.fabric l'.fabric
   | _ -> false
 
-(* A link's entries name the peer's own memory, which crosses no IOMMU; a BAR's
-   name its bus address, which the IOMMU translates. *)
-let reaches m o =
-  m != o
-  && m.machine == o.machine
-  && m.space == o.space
-  && (linked m o || not (m.iommu || o.iommu || o.small_bar))
+(* A GPU maps its own memory already. A link's entries name the peer's own
+   memory, which crosses no IOMMU; a BAR's name its bus address, which the
+   IOMMU translates. *)
+let reaches (r : reach) (o : reach) =
+  r.machine == o.machine
+  && r.bus <> o.bus
+  && r.space == o.space
+  && (linked r o
+     || r.addressing = Machine.Physical
+        && o.addressing = Machine.Physical
+        && not o.small_bar)
 
 (* Errors *)
 
@@ -149,7 +161,7 @@ let beyond m tables runs =
         (strf
            "the machine gave memory at 0x%x, past the %d bits of address %s's \
             page tables hold"
-           pa bits m.bus)
+           pa bits m.reach.bus)
 
 (* Allocating *)
 
@@ -165,16 +177,16 @@ let allocated m mapping =
 
 (* System memory at the same address for the process and the GPU. *)
 let system m h tables n =
-  let page = Machine.page m.machine in
+  let page = Machine.page m.reach.machine in
   if wraps n page then Ok None
   else
     let n = round_up n page in
-    match Space.alloc ~align:page m.space n with
+    match Space.alloc ~align:page m.reach.space n with
     | None -> Ok None
     | Some va -> (
         let give_back view =
           Option.iter (Function.free_dma h.fn) view;
-          Space.free m.space va
+          Space.free m.reach.space va
         in
         match Function.alloc_dma h.fn ~va n with
         | Error _ as e ->
@@ -229,7 +241,7 @@ let live fn m =
   match m.held with
   | Some ({ tables = Some tables; _ } as h) when not (Function.released h.fn) ->
       (h, tables)
-  | Some _ | None -> invalid_argf "Memory.%s: %s is released" fn m.bus
+  | Some _ | None -> invalid_argf "Memory.%s: %s is released" fn m.reach.bus
 
 let keep h r = Tables.Address.replace h.regions r.mapping.va r
 
@@ -282,22 +294,23 @@ let map_pinned m h tables ~va ~source ~host a n =
 let map_host m a n =
   let h, tables = live "map_host" m in
   positive "map_host" n;
-  let page = Machine.page m.machine in
+  let page = Machine.page m.reach.machine in
   if n > max_int - a || wraps (a + n) page then
     Error
-      (strf "%d bytes at 0x%x pass the last address of %s's machine" n a m.bus)
+      (strf "%d bytes at 0x%x pass the last address of %s's machine" n a
+         m.reach.bus)
   else
     let first = a / page * page in
     let bytes = round_up (a + n) page - first in
-    match Space.alloc ~align:page m.space bytes with
+    match Space.alloc ~align:page m.reach.space bytes with
     | None -> Ok None
     | Some va -> (
-        let host = Some (Machine.window m.machine a n) in
+        let host = Some (Machine.window m.reach.machine a n) in
         match
           map_pinned m h tables ~va ~source:(Borrowed a) ~host first bytes
         with
         | (Error _ | Ok None) as r ->
-            Space.free m.space va;
+            Space.free m.reach.space va;
             r
         | Ok (Some r) ->
             let r = { r with off = a - first } in
@@ -318,7 +331,7 @@ let mine fn m r =
   | Some _ | None ->
       invalid_argf
         "Memory.%s: the memory at 0x%x is not %s's, or was given back" fn
-        r.mapping.va m.bus
+        r.mapping.va m.reach.bus
 
 (* Misuse is refused before anything is pinned or written: a region freed, its
    origin freed, or addresses the GPU maps already. *)
@@ -331,10 +344,10 @@ let map_peer m r =
   ignore (mine "map_peer" o r : held);
   if o == m then
     invalid_argf "Memory.map_peer: the memory at 0x%x is %s's own" r.mapping.va
-      m.bus;
+      m.reach.bus;
   if Tables.Address.mem h.regions r.mapping.va then
     invalid_argf "Memory.map_peer: %s maps the memory at 0x%x already"
-      m.bus r.mapping.va;
+      m.reach.bus r.mapping.va;
   let map = r.mapping in
   let mapped = function
     | Ok (Some p) ->
@@ -343,13 +356,14 @@ let map_peer m r =
         Ok (Some p)
     | (Ok None | Error _) as e -> e
   in
-  if m.machine != o.machine then Error "the GPUs are on different machines"
-  else if m.space != o.space then
+  if m.reach.machine != o.reach.machine then
+    Error "the GPUs are on different machines"
+  else if m.reach.space != o.reach.space then
     Error
       (strf
          "%s and %s address different spaces: a peer's memory maps at its \
           owner's address, which is that memory only in a space both share"
-         m.bus o.bus)
+         m.reach.bus o.reach.bus)
   else
     match map.target with
     | System ->
@@ -358,17 +372,18 @@ let map_peer m r =
         let a, n = Option.value r.pinned ~default:(map.va, map.size) in
         mapped
           (map_pinned m h tables ~va:map.va ~source:(Peer r) ~host:None a n)
-    | (Gpu | Peer _) when not (reaches m o) ->
+    | (Gpu | Peer _) when not (reaches m.reach o.reach) ->
         Error
           (strf
              "%s does not reach %s's memory: it needs a link of one fabric, or \
               both GPUs off an IOMMU and a memory BAR as large as the memory, \
               which Resizable BAR in the firmware settings gives"
-             m.bus o.bus)
+             m.reach.bus o.reach.bus)
     | Gpu | Peer _ -> (
         let target, pages =
-          match (m.link, o.link) with
-          | Some _, Some l when linked m o -> (Page_table.Peer l.node, map.pages)
+          match (m.reach.link, o.reach.link) with
+          | Some _, Some l when linked m.reach o.reach ->
+              (Page_table.Peer l.node, map.pages)
           | _ ->
               ( Page_table.System,
                 List.map (fun (pa, n) -> (pa + o.bar_base, n)) map.pages )
@@ -413,7 +428,7 @@ let give_back m h tables r =
       List.iter (fun (pa, _) -> Page_table.pfree tables pa) map.pages
   | _ -> ());
   match r.source with
-  | Allocated | Borrowed _ -> Space.free m.space map.va
+  | Allocated | Borrowed _ -> Space.free m.reach.space map.va
   | Peer _ -> ()
 
 let free m r =

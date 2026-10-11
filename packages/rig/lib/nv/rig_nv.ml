@@ -763,7 +763,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
         word =
           Some { dev = d; mem = words; free = p.free; bytes = 8; behind = None };
         word_address = words.address;
-        word_host = Option.get words.host;
+        word_host = words_host;
         flush_lock = Mutex.create ();
         local_lock = Mutex.create ();
         live =
