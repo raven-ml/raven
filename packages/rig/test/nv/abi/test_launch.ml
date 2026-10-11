@@ -162,9 +162,24 @@ let launch cls ?(params_offset = 0) ?shared_window ?local_window () =
     (S.gpu ~compute_class:cls ?shared_window ?local_window ())
     (S.kernel ~params_offset ())
 
+let zero = Template.Int 0
+
+(* A launch's values, all [0], without banks. *)
+let base =
+  {
+    Qmd.program = zero;
+    local = zero;
+    banks = [];
+    grid = (zero, zero, zero);
+    block = (zero, zero, zero);
+    shared = None;
+    chain = None;
+    releases = [];
+  }
+
 let parameters cls ?params_offset ?shared_window ?local_window () =
   let l = launch cls ?params_offset ?shared_window ?local_window () in
-  Structure.encode Fun.id (Qmd.parameters (Qmd.make l))
+  (Qmd.parameters l base).bytes
 
 (* Where CUDA's code reads a block's sizes and then its grid's, three 32-bit
    words each, as nvdisasm shows NVCC 13.4's code for sm_89 and sm_120 reading
@@ -232,13 +247,15 @@ let driver =
           let sizes =
             List.map2 (fun d n -> Int.min n (Qmd.max_size d)) dims sizes
           in
-          let q =
-            List.fold_left2
-              (fun q d n -> Qmd.set_dim d n q)
-              (Qmd.make (launch cls ()))
-              dims sizes
+          let i = List.map (fun n -> Template.Int n) sizes in
+          let d =
+            {
+              base with
+              block = (List.nth i 0, List.nth i 1, List.nth i 2);
+              grid = (List.nth i 3, List.nth i 4, List.nth i 5);
+            }
           in
-          let p = Structure.encode Fun.id (Qmd.parameters q) in
+          let p = (Qmd.parameters (launch cls ()) d).bytes in
           List.iter2
             (fun d n ->
               equal ~msg:"a size" int n
@@ -252,51 +269,46 @@ let driver =
           let at, bias =
             if cls = S.blackwell then (0x348, params_offset) else (0x40, 0)
           in
-          let before =
-            Qmd.make (launch cls ~params_offset ()) |> Qmd.set_bank 0 0x1000L
+          let l = launch cls ~params_offset () in
+          let known = { base with banks = [ (0, Template.Int address) ] } in
+          let slots =
+            { base with banks = [ (0, Slot 0) ]; block = (Slot 1, zero, zero) }
           in
-          let q =
-            before
-            |> Qmd.set_bank 0 (Int64.of_int address)
-            |> Qmd.patch_dim (Block X) 32L
-          in
-          let read q =
-            let p = Structure.encode Fun.id (Qmd.parameters q) in
-            String.get_int64_le p at
-          in
+          let read p = String.get_int64_le p at in
+          let t = Qmd.parameters l slots in
           cover "Blackwell" (cls = S.blackwell);
           cover "before Blackwell" (cls <> S.blackwell);
-          equal ~msg:"holes in address order" (list int)
+          equal ~msg:"patches in address order" (list int)
             (List.sort Int.compare [ at; word_at (Block X) cls ])
-            (List.map
-               (fun (h : _ Structure.hole) -> h.at)
-               (Qmd.parameters q).holes);
-          equal ~msg:"current address" int64
+            (List.map (fun (p : Template.patch) -> p.at) t.patches);
+          equal ~msg:"a known address" int64
             (Int64.of_int (address + bias))
-            (read q);
-          equal ~msg:"earlier descriptor" int64
-            (Int64.of_int (0x1000 + bias))
-            (read before));
+            (read (Qmd.parameters l known).bytes);
+          equal ~msg:"an address filled" int64
+            (Int64.of_int (address + bias))
+            (read (Template.fill (fun _ -> Int64.of_int address) t)));
       cases ~name:S.class_name
-        "a size left to a value is a hole of the parameters" S.classes
+        "a size left to a slot is a patch of the parameters" S.classes
         (fun cls ->
-          let q =
-            Qmd.make (launch cls ())
-            |> Qmd.patch_dim (Grid X) 1L |> Qmd.patch_dim (Block Y) 2L
-            |> Qmd.set_dim (Block X) 64
+          let d =
+            {
+              base with
+              grid = (Slot 1, zero, zero);
+              block = (zero, Slot 2, zero);
+            }
           in
-          let s = Qmd.parameters q in
-          equal ~msg:"holes"
+          let s = Qmd.parameters (launch cls ()) d in
+          equal ~msg:"patches"
             (list (pair int int))
             (List.sort compare
                [ (word_at (Grid X) cls, 32); (word_at (Block Y) cls, 32) ])
-            (List.map (fun (h : _ Structure.hole) -> (h.at, h.bits)) s.holes);
-          let p = Structure.encode (fun v -> Int64.mul v 7L) s in
+            (List.map (fun (p : Template.patch) -> (p.at, p.bits)) s.patches);
+          let p = Template.fill (fun v -> Int64.of_int (7 * v)) s in
           List.iter
             (fun (d, n) ->
               equal ~msg:"a size" int n
                 (Int32.to_int (String.get_int32_le p (word_at d cls))))
-            [ (Qmd.Grid X, 7); (Block Y, 14); (Block X, 64) ]);
+            [ (Qmd.Grid X, 7); (Block Y, 14) ]);
       test "each class's parameters" (fun () ->
           let show cls =
             let p = parameters cls () in

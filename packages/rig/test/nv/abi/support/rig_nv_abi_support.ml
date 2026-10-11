@@ -64,8 +64,7 @@ let compute_class =
 let pp_kernel ppf (k : Cubin.kernel) =
   Format.fprintf ppf
     "{ code = 0x%x; code_bytes = %d; registers = %d; shared_bytes = %d; \
-     stack_bytes = %d; params_offset = 0x%x; params_bytes = %d; banks = [%a] \
-     }"
+     stack_bytes = %d; params_offset = 0x%x; params_bytes = %d; banks = [%a] }"
     k.code k.code_bytes k.registers k.shared_bytes k.stack_bytes k.params_offset
     k.params_bytes
     (Format.pp_print_list
@@ -106,17 +105,16 @@ let le64 n =
 
 let round_up n a = (n + a - 1) / a * a
 
-(* Terms *)
+(* Templates *)
 
-let rec eval value : _ Packet.term -> int64 = function
-  | Value v -> value v
-  | Add (t, n) -> Int64.add (eval value t) n
-  | Shift (t, n) -> Int64.shift_right_logical (eval value t) n
+let pp_operand ppf : Template.operand -> unit = function
+  | Int n -> Format.fprintf ppf "Int 0x%x" n
+  | Slot i -> Format.fprintf ppf "Slot %d" i
 
-let rec pp_term pp_v ppf : _ Packet.term -> unit = function
-  | Value v -> pp_v ppf v
-  | Add (t, n) -> Format.fprintf ppf "Add (%a, 0x%Lx)" (pp_term pp_v) t n
-  | Shift (t, n) -> Format.fprintf ppf "Shift (%a, %d)" (pp_term pp_v) t n
+let pp_patch ppf (p : Template.patch) =
+  Format.fprintf ppf
+    "{ at = %d; bits = %d; slot = %d; add = 0x%Lx; shift = %d }" p.at p.bits
+    p.slot p.add p.shift
 
 (* An address below 2^bits, a multiple of 2^align. *)
 let address ~bits ~align =
@@ -135,58 +133,64 @@ let field b (hi, lo) =
 
 (* Descriptors *)
 
-type op =
-  | Set_dim of Qmd.dim * int
-  | Patch_dim of Qmd.dim * int64
-  | Set_program of int64
-  | Set_bank of int * int64
-  | Set_local_memory of int64
-  | Release of int64 * int64
-  | Release_stamp of int64 * int64
-  | Chain of int64
-
 let dims = Qmd.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
 
 let dim_name (d : Qmd.dim) =
   let axis : Qmd.axis -> string = function X -> "X" | Y -> "Y" | Z -> "Z" in
   match d with Grid a -> "Grid " ^ axis a | Block a -> "Block " ^ axis a
 
-let pp_op ppf = function
-  | Set_dim (d, n) -> Format.fprintf ppf "set_dim (%s) %d" (dim_name d) n
-  | Patch_dim (d, v) -> Format.fprintf ppf "patch_dim (%s) %Ld" (dim_name d) v
-  | Set_program a -> Format.fprintf ppf "set_program 0x%Lx" a
-  | Set_bank (i, a) -> Format.fprintf ppf "set_bank %d 0x%Lx" i a
-  | Set_local_memory n -> Format.fprintf ppf "set_local_memory %Ld" n
-  | Release (a, v) -> Format.fprintf ppf "release 0x%Lx 0x%Lx" a v
-  | Release_stamp (a, v) -> Format.fprintf ppf "release_stamp 0x%Lx 0x%Lx" a v
-  | Chain a -> Format.fprintf ppf "chain 0x%Lx" a
+(* The slots of a drawn descriptor's values. *)
+let grid_slot = 0
+let block_slot = 3
+let program_slot = 6
+let local_slot = 7
+let shared_slot = 8
+let chain_slot = 9
+let bank_slot i = 10 + i
+let release_slot j = 18 + (2 * j)
+let slots = 22
 
-let apply op q =
-  let full r = Option.value r ~default:q in
-  match op with
-  | Set_dim (d, n) -> Qmd.set_dim d n q
-  | Patch_dim (d, v) -> Qmd.patch_dim d v q
-  | Set_program a -> Qmd.set_program a q
-  | Set_bank (i, a) -> Qmd.set_bank i a q
-  | Set_local_memory n -> Qmd.set_local_memory n q
-  | Release (a, v) -> full (Qmd.release a v q)
-  | Release_stamp (a, v) -> full (Qmd.release_stamp a v q)
-  | Chain a -> Qmd.chain a q
+type drawn = {
+  gpu : Gpu.t;
+  kernel : Cubin.kernel;
+  values : int array;
+  desc : Qmd.t;
+}
 
-type drawn = { gpu : Gpu.t; kernel : Cubin.kernel; ops : op list }
-
-let descriptor d =
-  List.fold_left
-    (fun q op -> apply op q)
-    (Qmd.make (launch d.gpu d.kernel))
-    d.ops
+let descriptor d = Qmd.make (launch d.gpu d.kernel) d.desc
+let value d i = Int64.of_int d.values.(i)
+let filled d = Template.fill (value d) (descriptor d)
 
 let pp_drawn ppf d =
-  Format.fprintf ppf "@[<v>%s, %a@,%a@]"
+  let o = pp_operand in
+  let triple ppf (x, y, z) = Format.fprintf ppf "(%a, %a, %a)" o x o y o z in
+  let option ppf = function
+    | None -> Format.fprintf ppf "None"
+    | Some v -> Format.fprintf ppf "Some (%a)" o v
+  in
+  Format.fprintf ppf
+    "@[<v>%s, %a@,\
+     program %a, local %a, grid %a, block %a, shared %a, chain %a@,\
+     banks [%a]@,\
+     releases [%a]@,\
+     values [%a]@]"
     (class_name d.gpu.compute_class)
-    pp_kernel d.kernel
-    (Format.pp_print_list pp_op)
-    d.ops
+    pp_kernel d.kernel o d.desc.program o d.desc.local triple d.desc.grid triple
+    d.desc.block option d.desc.shared option d.desc.chain
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
+       (fun ppf (i, v) -> Format.fprintf ppf "%d, %a" i o v))
+    d.desc.banks
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
+       (fun ppf -> function
+         | Qmd.Release (a, v) -> Format.fprintf ppf "Release (%a, %a)" o a o v
+         | Stamped (a, v) -> Format.fprintf ppf "Stamped (%a, %a)" o a o v))
+    d.desc.releases
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
+       (fun ppf v -> Format.fprintf ppf "0x%x" v))
+    (Array.to_list d.values)
 
 (* Banks 0 to 7, the descriptor's, each of at most 0xffff bytes. *)
 let banks =
@@ -210,36 +214,106 @@ let kernels =
 let dim =
   Gen.of_list ~pp:(fun ppf d -> Format.pp_print_string ppf (dim_name d)) dims
 
-let op (k : Cubin.kernel) (banks : Cubin.bank list) =
+(* Some of the banks [indices], each with a value [gen i] draws. *)
+let list_of_banks indices gen =
   let open Gen in
-  let size d = int_range 0 (Qmd.max_size d) in
-  let local_bytes = k.stack_bytes + 576 in
-  one_of
-    [
-      (let* d = dim in
-       map (fun n -> Set_dim (d, n)) (size d));
-      (let* d = dim in
-       map (fun n -> Patch_dim (d, Int64.of_int n)) (size d));
-      map (fun a -> Set_program a) (address ~bits:49 ~align:8);
-      (let* i = of_list (List.map (fun (b : Cubin.bank) -> b.index) banks) in
-       map (fun a -> Set_bank (i, a)) (address ~bits:49 ~align:6));
-      map
-        (fun n -> Set_local_memory (Int64.of_int (n * 16)))
-        (int_range ((local_bytes + 15) / 16) ((1 lsl 16) - 1));
-      (let+ a = address ~bits:40 ~align:3 and+ v = u64 in
-       Release (a, v));
-      (let+ a = address ~bits:40 ~align:4 and+ v = u64 in
-       Release_stamp (a, v));
-      map (fun a -> Chain a) (address ~bits:40 ~align:8);
-    ]
+  let* indices = subsequence indices in
+  List.fold_right
+    (fun i rest ->
+      let+ v = gen i and+ rest = rest in
+      (i, v) :: rest)
+    indices (constant [])
+
+(* A value drawn by [gen] for [slot]: known, or left to the slot. *)
+let operand slot gen =
+  let open Gen in
+  let+ v = gen and+ known = bool in
+  (slot, v, known)
+
+let use (slot, v, known) = if known then Template.Int v else Slot slot
 
 let drawn =
   let open Gen in
   let gen =
     let* compute_class, kernel = pair compute_class kernels in
     let gpu = gpu ~compute_class () in
-    let banks = Launch.banks (launch gpu kernel) in
-    let+ ops = list ~size:(int_range 0 12) (op kernel banks) in
-    { gpu; kernel; ops }
+    let l = launch gpu kernel in
+    let address ~bits ~align = map Int64.to_int (address ~bits ~align) in
+    let size d = int_range 0 (Qmd.max_size d) in
+    let three at = function
+      | [ x; y; z ] ->
+          let+ x = operand at (size x)
+          and+ y = operand (at + 1) (size y)
+          and+ z = operand (at + 2) (size z) in
+          (x, y, z)
+      | _ -> assert false
+    in
+    let local_bytes = Launch.local_bytes l in
+    let+ grid = three grid_slot Qmd.[ Grid X; Grid Y; Grid Z ]
+    and+ block = three block_slot Qmd.[ Block X; Block Y; Block Z ]
+    and+ program = operand program_slot (address ~bits:49 ~align:8)
+    and+ local =
+      operand local_slot
+        (map
+           (fun n -> n * 16)
+           (int_range ((local_bytes + 15) / 16) ((1 lsl 16) - 1)))
+    and+ shared =
+      option
+        (operand shared_slot
+           (map
+              (fun n -> n * 128)
+              (int_range 0 (Launch.dynamic_shared l / 128))))
+    and+ chain = option (operand chain_slot (address ~bits:40 ~align:8))
+    and+ releases =
+      let release j =
+        let+ stamped = bool
+        and+ a = operand (release_slot j) (address ~bits:40 ~align:4)
+        and+ v = operand (release_slot j + 1) (int_range 0 max_int) in
+        (stamped, a, v)
+      in
+      let* n = int_range 0 2 in
+      List.fold_right
+        (fun j rest ->
+          let+ r = release j and+ rest = rest in
+          r :: rest)
+        (List.init n Fun.id) (constant [])
+    and+ banks =
+      list_of_banks
+        (List.map (fun (b : Cubin.bank) -> b.index) (Launch.banks l))
+        (fun i -> operand (bank_slot i) (address ~bits:49 ~align:6))
+    in
+    let values = Array.make slots 0 in
+    let all =
+      [ program; local ]
+      @ (let x, y, z = grid in
+         [ x; y; z ])
+      @ (let x, y, z = block in
+         [ x; y; z ])
+      @ Option.to_list shared @ Option.to_list chain @ List.map snd banks
+      @ List.concat_map (fun (_, a, v) -> [ a; v ]) releases
+    in
+    List.iter (fun (s, v, _) -> values.(s) <- v) all;
+    let three (x, y, z) = (use x, use y, use z) in
+    {
+      gpu;
+      kernel;
+      values;
+      desc =
+        {
+          program = use program;
+          local = use local;
+          banks = List.map (fun (i, v) -> (i, use v)) banks;
+          grid = three grid;
+          block = three block;
+          shared = Option.map use shared;
+          chain = Option.map use chain;
+          releases =
+            List.map
+              (fun (stamped, a, v) ->
+                if stamped then Qmd.Stamped (use a, use v)
+                else Release (use a, use v))
+              releases;
+        };
+    }
   in
   with_pp pp_drawn gen

@@ -135,7 +135,7 @@ static void close_segment(const struct device *d, struct channel *c) {
 static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
                  uint64_t b) {
   const struct template *t = &d->t[k];
-  uint64_t bytes = 4 * (uint64_t)t->nwords;
+  uint64_t bytes = t->nbytes;
   uint64_t start = c->open & (c->size - 1);
   if (start + 4 * c->open_words + bytes > c->size) {
     close_segment(d, c);
@@ -145,9 +145,9 @@ static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
   }
   uint64_t at = c->written & (c->size - 1);
   const uint64_t values[3] = {a, b, 0};
-  rig_nv_fill(t, values, (uint32_t *)(c->segments + at));
+  rig_nv_fill(t, values, c->segments + at);
   c->written += bytes;
-  c->open_words += (uint64_t)t->nwords;
+  c->open_words += bytes / 4;
 }
 
 /* Makes the channel's entries up to [c->put] the GPU's and rings, as

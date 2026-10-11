@@ -80,16 +80,13 @@ val address : bits:int -> align:int -> int64 Windtrap.Gen.t
 (** [address ~bits ~align] draws addresses below [2{^bits}], multiples of
     [2{^align}]. *)
 
-(** {1:terms Terms} *)
+(** {1:templates Templates} *)
 
-val eval : ('v -> int64) -> 'v Packet.term -> int64
-(** [eval value t] is [t]'s meaning, as {!Packet.term} states it: unsigned
-    64-bit integers, an addition modulo 2{^ 64} and a logical shift, each value
-    read by [value]. *)
+val pp_operand : Format.formatter -> Template.operand -> unit
+(** [pp_operand] prints an operand as its constructor. *)
 
-val pp_term :
-  (Format.formatter -> 'v -> unit) -> Format.formatter -> 'v Packet.term -> unit
-(** [pp_term pp_v] prints a term as its constructors, values by [pp_v]. *)
+val pp_patch : Format.formatter -> Template.patch -> unit
+(** [pp_patch] prints a patch record. *)
 
 (** {1:fields Descriptor fields} *)
 
@@ -100,20 +97,6 @@ val field : string -> int * int -> int
 
 (** {1:descriptors Descriptors} *)
 
-(** The type for the setters of {!Qmd}, with their arguments. *)
-type op =
-  | Set_dim of Qmd.dim * int
-  | Patch_dim of Qmd.dim * int64
-  | Set_program of int64
-  | Set_bank of int * int64
-  | Set_local_memory of int64
-  | Release of int64 * int64
-  | Release_stamp of int64 * int64
-  | Chain of int64
-
-val pp_op : Format.formatter -> op -> unit
-(** [pp_op] prints an operation as the call it makes. *)
-
 val dims : Qmd.dim list
 (** [dims] is the six sizes of a launch. *)
 
@@ -123,21 +106,42 @@ val dim_name : Qmd.dim -> string
 val dim : Qmd.dim Windtrap.Gen.t
 (** [dim] draws one of {!dims}. *)
 
-val apply : op -> int64 Qmd.t -> int64 Qmd.t
-(** [apply op q] is [q] with [op]; a release of a descriptor whose releases are
-    both taken leaves it as it was. *)
+type drawn = {
+  gpu : Gpu.t;
+  kernel : Cubin.kernel;
+  values : int array;  (** Each value of [desc], known or not, by slot. *)
+  desc : Qmd.t;
+}
+(** The type for descriptors drawn: a launch of [kernel] on [gpu] with the
+    values [desc], each known or left to its slot. *)
 
-type drawn = { gpu : Gpu.t; kernel : Cubin.kernel; ops : op list }
-(** The type for descriptors drawn: a launch of [kernel] on [gpu], then [ops].
-*)
+val grid_slot : int
+val block_slot : int
+val program_slot : int
+val local_slot : int
+val shared_slot : int
+val chain_slot : int
+val bank_slot : int -> int
 
-val descriptor : drawn -> int64 Qmd.t
-(** [descriptor d] is [Qmd.make] of [d]'s launch with [d.ops] applied in order.
-*)
+val release_slot : int -> int
+(** The slots of [desc]'s values: the grid's sizes from [grid_slot], the block's
+    from [block_slot], bank [i]'s address at [bank_slot i], and release [j]'s
+    address and value from [release_slot j]. *)
+
+val descriptor : drawn -> Template.t
+(** [descriptor d] is [Qmd.make] of [d]'s launch and values. *)
+
+val value : drawn -> int -> int64
+(** [value d i] is the value of slot [i]. *)
+
+val filled : drawn -> string
+(** [filled d] is {!descriptor} filled with [d]'s values. *)
 
 val drawn : drawn Windtrap.Gen.t
 (** [drawn] draws launches of each class, of kernels whose fields fit their
-    descriptor fields, and setters each within the range its [.mli] states:
-    sizes up to their {!Qmd.max_size}, addresses aligned and below [2{^49}]
-    ([2{^40}] for releases and chains), local memory a multiple of 16 below 1
-    MiB and at least the launch's {!Launch.local_bytes}. *)
+    descriptor fields, and values each within the range its [.mli] states: sizes
+    up to their {!Qmd.max_size}, addresses aligned and below [2{^49}] ([2{^40}]
+    for chains), local memory a multiple of 16 below 1 MiB and at least the
+    launch's {!Launch.local_bytes}, dynamic shared memory a multiple of 128 up
+    to {!Launch.dynamic_shared}, and up to two releases, each stamped or not.
+    Each value is known or a slot. *)

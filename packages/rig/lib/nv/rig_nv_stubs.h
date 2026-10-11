@@ -7,9 +7,9 @@
    stubs (rig_nv_stubs.c) share.
 
    The writer knows no method number: the words it writes are templates the
-   OCaml side encodes with the ABI library at open, each a run of words with
-   holes, and a hole is a function of one of the writer's values (an
-   address, a payload, a count) that the writer fills.
+   OCaml side encodes with the ABI library at open (Rig_nv_abi.Template),
+   bytes with patches the writer fills from its values (an address, a
+   payload, a count).
 
    A channel's ring and its segment ring return what a submission used once
    the device's timeline word reaches the submission's value: each channel
@@ -43,70 +43,54 @@ enum {
   TEMPLATES
 };
 
+/* A channel template's bytes, and its values: two addresses or an address
+   and a value, then a size. */
 #define TEMPLATE_WORDS 16
-#define TEMPLATE_HOLES 6
-#define HOLE_OPS 3
+#define TEMPLATE_VALUES 3
 #define COPY_MAX (UINT64_C(1) << 31)
 
-/* A hole: the word at index [at], or the two words from it when [wide],
-   low first, filled with the writer's value number [slot] after [nops]
-   operations in order, each an addition ([shift] 0) of [n] modulo 2^64 or a
-   right shift by [shift]. */
-struct hole {
+/* A patch, Rig_nv_abi.Template.patch: the little-endian word of [width]
+   bytes (1, 2, 4 or 8) at byte [at] whose low [bits] bits take
+   (value [slot] + [add]) >> [shift]; its other bits stay. */
+struct patch {
   uint16_t at;
-  uint8_t slot, wide, nops;
-  uint8_t shift[HOLE_OPS];
-  uint64_t n[HOLE_OPS];
+  uint8_t width, bits, slot, shift;
+  uint64_t add;
 };
 
+#define STRUCTURE_BYTES 1024
+#define PATCHES 16
+
+/* A template: a channel's words or a launch's structure in memory. */
 struct template {
-  uint32_t words[TEMPLATE_WORDS];
-  int nwords, nholes;
-  struct hole holes[TEMPLATE_HOLES];
+  uint32_t nbytes, npatches;
+  struct patch patches[PATCHES];
+  uint8_t bytes[STRUCTURE_BYTES];
 };
 
-/* Template [t]'s words in [w], its holes filled from [values]: their
-   count. */
-static inline int rig_nv_fill(const struct template *t,
-                              const uint64_t *values, uint32_t *w) {
-  memcpy(w, t->words, 4 * (size_t)t->nwords);
-  for (int i = 0; i < t->nholes; i++) {
-    const struct hole *h = &t->holes[i];
-    uint64_t x = values[h->slot];
-    for (int j = 0; j < h->nops; j++)
-      x = h->shift[j] ? x >> h->shift[j] : x + h->n[j];
-    w[h->at] = (uint32_t)x;
-    if (h->wide) w[h->at + 1] = (uint32_t)(x >> 32);
+/* Template [t]'s bytes in [w], its patches filled from [values]: their
+   count. The host is little-endian. */
+static inline uint32_t rig_nv_fill(const struct template *t,
+                                   const uint64_t *values, uint8_t *w) {
+  memcpy(w, t->bytes, t->nbytes);
+  for (uint32_t i = 0; i < t->npatches; i++) {
+    const struct patch *p = &t->patches[i];
+    uint64_t x = (values[p->slot] + p->add) >> p->shift;
+    uint64_t mask = p->bits == 64 ? UINT64_MAX : (UINT64_C(1) << p->bits) - 1;
+    uint64_t word = 0;
+    memcpy(&word, w + p->at, p->width);
+    word = (word & ~mask) | (x & mask);
+    memcpy(w + p->at, &word, p->width);
   }
-  return t->nwords;
+  return t->nbytes;
 }
 
 /* Launches
 
    A function set up for launch, as the driver's [entry] made it: its
    descriptors and the driver's parameters of its constant bank 0, as
-   structures with holes the writer fills from a launch's values, and the
-   limits the room check holds its launches to.
-
-   A structure's field is the little-endian word of [width] bytes (1, 2, 4
-   or 8) at byte [at] whose low [bits] bits take the writer's value number
-   [slot] after its operations, as a template's hole does; its other bits
-   stay. */
-struct field {
-  uint16_t at;
-  uint8_t width, bits, slot, nops;
-  uint8_t shift[HOLE_OPS];
-  uint64_t n[HOLE_OPS];
-};
-
-#define STRUCTURE_BYTES 1024
-#define STRUCTURE_FIELDS 16
-
-struct structure {
-  uint32_t nbytes, nfields;
-  struct field fields[STRUCTURE_FIELDS];
-  uint8_t bytes[STRUCTURE_BYTES];
-};
+   templates the writer fills from a launch's values, and the limits the
+   room check holds its launches to. */
 
 /* A launch's values, by slot. */
 enum {
@@ -118,24 +102,6 @@ enum {
   VALUES
 };
 
-/* Structure [s]'s bytes in [w], its fields filled from [values]. The host
-   is little-endian. */
-static inline void rig_nv_fill_structure(const struct structure *s,
-                                         const uint64_t *values, uint8_t *w) {
-  memcpy(w, s->bytes, s->nbytes);
-  for (uint32_t i = 0; i < s->nfields; i++) {
-    const struct field *f = &s->fields[i];
-    uint64_t x = values[f->slot];
-    for (int j = 0; j < f->nops; j++)
-      x = f->shift[j] ? x >> f->shift[j] : x + f->n[j];
-    uint64_t mask = f->bits == 64 ? UINT64_MAX : (UINT64_C(1) << f->bits) - 1;
-    uint64_t word = 0;
-    memcpy(&word, w + f->at, f->width);
-    word = (word & ~mask) | (x & mask);
-    memcpy(w + f->at, &word, f->width);
-  }
-}
-
 /* Descriptor and constant bank alignments, in bytes. */
 #define QMD_ALIGN 256
 #define BANK_ALIGN 64
@@ -143,8 +109,8 @@ static inline void rig_nv_fill_structure(const struct structure *s,
 struct launch {
   /* [qmd[s][c]]: without (s = 0) or with dynamic shared memory, chaining
      no descriptor (c = 0) or the one at V_NEXT */
-  struct structure qmd[2][2];
-  struct structure bank0;
+  struct template qmd[2][2];
+  struct template bank0;
   /* where the kernel's parameters start in bank 0, and the bank's bytes the
      descriptor names */
   uint32_t params_at, bank0_bytes;

@@ -74,8 +74,6 @@ let words s =
     (String.length s / 4)
     (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
 
-let encode = Abi.Structure.encode Int64.of_int
-
 (* [count] launches of the kernel [empty] over one thread, their descriptors and
    constant bank 0 in [Mapped] memory, as compiled code places them: [`Chained],
    descriptors chained from one segment that schedules the first; [`Apart], a
@@ -92,37 +90,47 @@ let launches t count how =
   let local = Abi.Local_memory.make cap (Abi.Launch.local_bytes l) in
   let bank0 = S.mapped t.g 4096 in
   let base = entry - k.code in
-  let bank (q : int Abi.Qmd.t) (b : Abi.Cubin.bank) =
+  let bank (b : Abi.Cubin.bank) =
     let at = if b.index = 0 then address bank0 else base + b.offset in
-    Abi.Qmd.set_bank b.index at q
+    (b.index, Abi.Template.Int at)
   in
-  let one = [ Abi.Qmd.Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ] in
+  let one = Abi.Template.Int 1 in
   let q =
-    List.fold_left (fun q d -> Abi.Qmd.set_dim d 1 q) (Abi.Qmd.make l) one
-    |> Abi.Qmd.set_program entry
-    |> Abi.Qmd.set_local_memory local.per_thread
+    {
+      Abi.Qmd.program = Int entry;
+      local = Int local.per_thread;
+      banks = List.map bank (Abi.Launch.banks l);
+      grid = (one, one, one);
+      block = (one, one, one);
+      shared = None;
+      chain = None;
+      releases = [];
+    }
   in
-  let q = List.fold_left bank q (Abi.Launch.banks l) in
-  H.write (host bank0) (encode (Abi.Qmd.parameters q));
+  H.write (host bank0) (Abi.Qmd.parameters l q).bytes;
   let stride = 512 in
   let qmds = S.mapped t.g (count * stride) in
   for i = 0 to count - 1 do
     let next = address qmds + ((i + 1) * stride) in
     let q =
-      if how = `Chained && i < count - 1 then Abi.Qmd.chain next q else q
+      if how = `Chained && i < count - 1 then
+        { q with chain = Some (Abi.Template.Int next) }
+      else q
     in
-    H.write (at qmds (i * stride)) (encode (Abi.Qmd.structure q))
+    H.write (at qmds (i * stride)) (Abi.Qmd.make l q).bytes
   done;
   let segments = match how with `Chained -> 1 | `Apart -> count in
   let segment_bytes = 256 in
   let segment = S.mapped t.g (segments * segment_bytes) in
   let entry i =
     let qmd = address qmds + (i * stride) in
-    let ws = Abi.Packet.encode Int64.of_int (Abi.Method.schedule qmd) in
+    let ws = (Abi.Method.schedule (Int qmd)).bytes in
     H.write (at segment (i * segment_bytes)) ws;
     let start = address segment + (i * segment_bytes) in
-    let e = Abi.Gpfifo.entry start ~offset:0 ~words:(String.length ws / 4) in
-    words (Abi.Packet.encode Int64.of_int e)
+    let e =
+      Abi.Gpfifo.entry (Int start) ~offset:0 ~words:(String.length ws / 4)
+    in
+    words e.bytes
   in
   (p, Array.init segments entry)
 

@@ -19,7 +19,7 @@
 
 module D = Defs
 module Abi = Rig_nv_abi
-module Packet = Abi.Packet
+module Template = Abi.Template
 module Method = Abi.Method
 module Cubin = Abi.Cubin
 module Launch = Abi.Launch
@@ -128,22 +128,20 @@ let t_invalidate = 7
 let t_idle = 8
 let t_schedule = 9
 
-(* rig_nv_stubs.h's launch values, by slot: the grid's sizes, the group's, bank
-   0's address, the next descriptor's, the dynamic shared memory. *)
-let dims =
-  Abi.Qmd.
-    [
-      (Grid X, 0);
-      (Grid Y, 1);
-      (Grid Z, 2);
-      (Block X, 3);
-      (Block Y, 4);
-      (Block Z, 5);
-    ]
-
+(* rig_nv_stubs.h's launch values, by slot: the grid's sizes along X, Y and Z,
+   the group's, bank 0's address, the next descriptor's, the dynamic shared
+   memory. *)
+let v_grid_x = 0
+let v_block_x = 3
 let v_bank0 = 6
 let v_next = 7
 let v_shared = 8
+
+(* The sizes in the order of rig_nv_stubs.h's launch limits. *)
+let dims = Abi.Qmd.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
+
+(* rig_nv_stubs.h's most bytes of a launch's structure. *)
+let structure_bytes = 1024
 
 (* A pending local memory is one word: its address, below 2^40 and 4 KiB
    aligned, and its bytes per cluster in units of 32 KiB above them. The
@@ -436,38 +434,48 @@ let local d n =
 
 (* Templates *)
 
-(* Sets template [k] of [self] to [p]: the words of [p] with a hole for every
-   value [known] does not give. *)
-let template self k ~known p =
-  let words, holes = Template.flatten known p in
-  set_template self k words holes
+(* [t]'s patches as rig_nv_stubs.c reads them: five little-endian 64-bit words
+   each, its byte, bits, slot, addition and shift. *)
+let patches (t : Template.t) =
+  let b = Buffer.create 256 in
+  let add n = Buffer.add_int64_le b (Int64.of_int n) in
+  List.iter
+    (fun (p : Template.patch) ->
+      add p.at;
+      add p.bits;
+      add p.slot;
+      Buffer.add_int64_le b p.add;
+      add p.shift)
+    t.patches;
+  Buffer.contents b
 
-let unknown _ = None
-let known v = Some (Int64.of_int v)
+let template self k (t : Template.t) = set_template self k t.bytes (patches t)
 
 let templates self (g : gpu) =
   (* The writer's values, by slot: two addresses or an address and a value, then
      a size. *)
-  let a = 0 and b = 1 and n = 2 in
-  template self t_acquire ~known:unknown (Method.acquire a b);
-  template self t_release ~known:unknown (Method.release a b);
-  template self t_copy_release ~known:unknown (Method.copy_release a b);
-  template self t_copy ~known:unknown (Method.copy ~dst:a ~src:b n);
-  template self t_local ~known:unknown (Method.local_memory a ~per_tpc:b);
-  template self t_setup ~known
-    (Method.set_object Method.Compute g.compute_class
-    @ Method.local_memory_window local_window
-    @ Method.shared_memory_window shared_window);
-  template self t_setup_copy ~known (Method.set_object Method.Copy g.copy_class);
-  template self t_invalidate ~known Method.invalidate_caches;
-  template self t_idle ~known Method.wait_for_idle;
-  template self t_schedule ~known:unknown (Method.schedule a);
+  let a = Template.Slot 0 and b = Template.Slot 1 and n = Template.Slot 2 in
+  template self t_acquire (Method.acquire a b);
+  template self t_release (Method.release a b);
+  template self t_copy_release (Method.copy_release a b);
+  template self t_copy (Method.copy ~dst:a ~src:b n);
+  template self t_local (Method.local_memory a ~per_tpc:b);
+  template self t_setup
+    (Template.concat
+       [
+         Method.set_object Method.Compute g.compute_class;
+         Method.local_memory_window (Int local_window);
+         Method.shared_memory_window (Int shared_window);
+       ]);
+  template self t_setup_copy (Method.set_object Method.Copy g.copy_class);
+  template self t_invalidate Method.invalidate_caches;
+  template self t_idle Method.wait_for_idle;
+  template self t_schedule (Method.schedule a);
   (* An entry is its segment's address plus a constant plus its words times
-     another: the address is a term's value, and the words a field of their
-     own. *)
+     another: the address is its own field, and the words another. *)
   let entry words =
-    let e = Abi.Gpfifo.entry 0 ~offset:0 ~words in
-    Int64.to_int (String.get_int64_le (Packet.encode Int64.of_int e) 0)
+    let e = Abi.Gpfifo.entry (Int 0) ~offset:0 ~words in
+    Int64.to_int (String.get_int64_le e.bytes 0)
   in
   set_entry self (entry 0) (entry 1 - entry 0)
 
@@ -489,21 +497,24 @@ let image_bytes c ~base =
 (* Descriptors and bank 0 for a launch whose local memory is already backed. *)
 let descriptors l base code per_thread (k : Cubin.kernel) =
   let open Template in
-  let bank q (b : Cubin.bank) =
-    let at = if b.index = 0 then Slot v_bank0 else Known (base + b.offset) in
-    Abi.Qmd.set_bank b.index at q
+  let bank (b : Cubin.bank) =
+    (b.index, if b.index = 0 then Slot v_bank0 else Int (base + b.offset))
   in
-  let dim q (d, slot) = Abi.Qmd.patch_dim d (Slot slot) q in
-  let q =
-    List.fold_left dim (Abi.Qmd.make l) dims
-    |> Abi.Qmd.set_program (Known code)
-    |> Abi.Qmd.set_local_memory (Known per_thread)
+  let d =
+    {
+      Abi.Qmd.program = Int code;
+      local = Int per_thread;
+      banks = List.map bank (Launch.banks l);
+      grid = (Slot v_grid_x, Slot (v_grid_x + 1), Slot (v_grid_x + 2));
+      block = (Slot v_block_x, Slot (v_block_x + 1), Slot (v_block_x + 2));
+      shared = None;
+      chain = None;
+      releases = [];
+    }
   in
-  let q = List.fold_left bank q (Launch.banks l) in
-  let shared = Abi.Qmd.patch_shared (Slot v_shared) q in
-  let chain q = Abi.Qmd.chain (Slot v_next) q in
-  let flat q = structure (Abi.Qmd.structure q) in
-  let qmds = List.map flat [ q; chain q; shared; chain shared ] in
+  let shared = { d with Abi.Qmd.shared = Some (Slot v_shared) } in
+  let chain (d : Abi.Qmd.t) = { d with chain = Some (Slot v_next) } in
+  let qmds = List.map (Abi.Qmd.make l) [ d; chain d; shared; chain shared ] in
   let bank0_bytes =
     List.fold_left
       (fun n (b : Cubin.bank) -> if b.index = 0 then b.bytes else n)
@@ -511,14 +522,14 @@ let descriptors l base code per_thread (k : Cubin.kernel) =
   in
   let strings =
     List.concat_map
-      (fun (b, f) -> [ b; f ])
-      (qmds @ [ structure (Abi.Qmd.parameters q) ])
+      (fun (t : Template.t) -> [ t.bytes; patches t ])
+      (qmds @ [ Abi.Qmd.parameters l d ])
   in
-  if k.params_offset > Template.structure_bytes then
-    invalid_arg "Rig_nv.entry: a structure places parameters past 1 KiB";
+  if k.params_offset > structure_bytes then
+    invalid_arg "Rig_nv.entry: a launch places parameters past 1 KiB";
   let ints =
     [ k.params_offset; bank0_bytes ]
-    @ List.map (fun (d, _) -> Abi.Qmd.max_size d) dims
+    @ List.map Abi.Qmd.max_size dims
     @ [ Launch.max_threads l; Launch.dynamic_shared l ]
   in
   new_launch (Array.of_list strings) (Array.of_list ints)

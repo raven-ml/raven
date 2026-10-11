@@ -11,7 +11,7 @@
     with {!Method.local_memory}, which holds as much for every thread every
     multiprocessor may run concurrently. The driver holds it and grows it on
     demand ({!Gpu.field-local}), sized by {!make}. Each launch says how much one
-    thread has ({!Qmd.set_local_memory}). *)
+    thread has ({!Qmd.field-local}). *)
 
 type t = {
   per_thread : int;  (** The bytes of each thread, a multiple of 32. *)

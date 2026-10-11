@@ -3,28 +3,33 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Packet
-open Repr
+open Template
 module D = Defs
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-(* A descriptor is the bytes [make] writes and what each setter did since,
-   newest first: setting a field, or leaving one as a hole for a term. Setters
-   add an operation and copy nothing; [structure] applies them in one copy of
-   the bytes. *)
-type 'v op = Set of D.field * int | Hole of 'v hole | Bank of int * 'v
-
-type 'v t = {
-  launch : Repr.launch;
-  layout : D.qmd;
-  banks : int list; (* the indices of the launch's banks *)
-  base : string;
-  ops : 'v op list;
-}
-
 type axis = X | Y | Z
 type dim = Grid of axis | Block of axis
+type release = Release of operand * operand | Stamped of operand * operand
+
+type t = {
+  program : operand;
+  local : operand;
+  banks : (int * operand) list;
+  grid : operand * operand * operand;
+  block : operand * operand * operand;
+  shared : operand option;
+  chain : operand option;
+  releases : release list;
+}
+
+(* CUDA's limits for compute capabilities 8.0 to 12.0 (CUDA C++ Programming
+   Guide, "Technical Specifications per Compute Capability"). *)
+let max_size = function
+  | Grid X -> (1 lsl 31) - 1
+  | Grid (Y | Z) -> 65535
+  | Block (X | Y) -> 1024
+  | Block Z -> 64
 
 (* Fields *)
 
@@ -44,44 +49,45 @@ let rec write_from b ~lo ~bits v i =
     write_from b ~lo ~bits v (i + n)
   end
 
-let write fn b ~lo ~bits v =
-  if v < 0 || v lsr bits <> 0 then
-    invalid_argf "%s: %d does not fit the %d-bit field at bit %d" fn v bits lo;
-  write_from b ~lo ~bits v 0
+let write b (f : D.field) v =
+  if v < 0 || v lsr f.bits <> 0 then
+    invalid_argf "Qmd: %d does not fit the %d-bit field at bit %d" v f.bits f.lo;
+  write_from b ~lo:f.lo ~bits:f.bits v 0
 
-let read_bits s (f : D.field) =
-  let v = ref 0 in
-  for i = f.bits - 1 downto 0 do
-    let bit = f.lo + i in
-    v := (!v lsl 1) lor ((Char.code s.[bit / 8] lsr (bit mod 8)) land 1)
-  done;
-  !v
+(* A descriptor's bytes and patches while it is written. *)
+type writing = { b : Bytes.t; mutable patches : patch list }
 
-(* The value of the field [f]: the latest [Set] of it, else the base's. *)
-let rec latest s (f : D.field) = function
-  | [] -> read_bits s f
-  | Set (g, v) :: _ when g.lo = f.lo -> v
-  | _ :: ops -> latest s f ops
+(* Sets the field [f], which starts a byte if [v] is a slot, to [(v + add) lsr
+   shift]: a known value in the bytes, a slot as a patch, its field zero in the
+   bytes. *)
+let unsigned v =
+  if v < 0 then invalid_argf "Qmd: %d, expected an unsigned integer" v
 
-let read q f = latest q.base f q.ops
-let set q f v = { q with ops = Set (f, v) :: q.ops }
+let field w (f : D.field) ?(add = 0) ?(shift = 0) = function
+  | Int v ->
+      unsigned v;
+      write w.b f ((v + add) lsr shift)
+  | Slot slot ->
+      assert (f.lo mod 8 = 0);
+      let add = Int64.of_int add in
+      let p = { at = f.lo / 8; bits = f.bits; slot; add; shift } in
+      w.patches <- p :: w.patches
 
-(* [q] with the field [f], which starts a byte, filled by the term [t]. A field
-   is known, in the bytes, or a hole, zero in the bytes: the later of a [Set]
-   and a [Hole] of a field wins. *)
-let hole q (f : D.field) t =
-  { q with ops = Hole { at = f.lo / 8; bits = f.bits; value = t } :: q.ops }
+(* [ps] by increasing offset. A sort allocates even an empty list's copy. *)
+let sorted = function
+  | [] -> []
+  | ps -> List.sort (fun (a : patch) b -> Int.compare a.at b.at) ps
 
-(* An address in the fields [lower] and [upper]: [t]'s low 32 bits, then the
-   bits above. *)
-let address q lower upper t = hole (hole q lower t) upper (Shift (t, 32))
-
-(* Terms keep the shapes tolk's compiled programs mirror node for node: an
-   address carries its field's shift even when it is 0, a size only when its
-   field has one. *)
-let shifted v n = Shift (Value v, n)
-let scaled_term t n = if n = 0 then t else Shift (t, n)
-let scaled v n = scaled_term (Value v) n
+(* An address shifted right by [s], in the 32-bit field [lower] and the field
+   [upper] above it. *)
+let address w (lower : D.field) (upper : D.field) s = function
+  | Int v ->
+      unsigned v;
+      write w.b lower ((v lsr s) land 0xffff_ffff);
+      write w.b upper (v lsr (s + 32))
+  | Slot _ as v ->
+      field w lower ~shift:s v;
+      field w upper ~shift:(s + 32) v
 
 (* A descriptor *)
 
@@ -90,18 +96,20 @@ let scaled v n = scaled_term (Value v) n
 let group_id = 0x3f
 let barriers = 1
 
-(* The code prefetched before the launch, in 256-byte units. *)
+(* The code prefetched before the launch, in 256-byte units, and a chained
+   descriptor's address. *)
 let prefetch_unit = 8
+let chain_unit = 8
 
-let make (launch : Launch.t) =
+let make (launch : Launch.t) (d : t) =
   let l = (launch :> Repr.launch) in
   let q = l.layout and k = l.kernel in
-  let b = Bytes.make q.bytes '\000' in
-  let set (f : D.field) v = write "Qmd.make" b ~lo:f.lo ~bits:f.bits v in
+  let w = { b = Bytes.make q.bytes '\000'; patches = [] } in
+  let set f v = write w.b f v in
   let prefetch = q.program_prefetch_size in
+  let banks = Launch.banks launch in
   set q.qmd_major_version q.version;
   set q.register_count k.registers;
-  set q.shared_memory_size (l.shared_bytes lsr q.shared_memory_shift);
   set q.qmd_group_id group_id;
   set q.invalidate_texture_header_cache 1;
   set q.invalidate_texture_sampler_cache 1;
@@ -112,129 +120,86 @@ let make (launch : Launch.t) =
   set q.barrier_count barriers;
   set q.cwd_membar_type D.cwd_membar_type_l1_sysmembar;
   set (bank q.constant_buffer_invalidate 0) 1;
-  set q.min_sm_config_shared_mem_size l.shared_config;
-  set q.target_sm_config_shared_mem_size l.shared_config;
   set q.max_sm_config_shared_mem_size l.max_shared_config;
   set prefetch
     (Int.min (k.code_bytes lsr prefetch_unit) ((1 lsl prefetch.bits) - 1));
   set q.sass_version l.gpu.sass_version;
   Option.iter (fun f -> set f D.qmd_type_grid_cta) q.qmd_type;
   Option.iter (fun f -> set f 1) q.sm_global_caching_enable;
-  let banks = Launch.banks launch in
-  let bank_fields (c : Cubin.bank) =
-    set (bank q.constant_buffer_size_shifted4 c.index) ((c.bytes + 15) lsr 4);
-    set (bank q.constant_buffer_valid c.index) 1
-  in
-  List.iter bank_fields banks;
-  {
-    launch = l;
-    layout = q;
-    banks = List.map (fun (c : Cubin.bank) -> c.index) banks;
-    base = Bytes.unsafe_to_string b;
-    ops = [];
-  }
-
-(* Sizes *)
-
-(* CUDA's limits for compute capabilities 8.0 to 12.0 (CUDA C++ Programming
-   Guide, "Technical Specifications per Compute Capability"). *)
-let max_size = function
-  | Grid X -> (1 lsl 31) - 1
-  | Grid (Y | Z) -> 65535
-  | Block (X | Y) -> 1024
-  | Block Z -> 64
-
-let field q = function
-  | Grid X -> q.layout.grid_width
-  | Grid Y -> q.layout.grid_height
-  | Grid Z -> q.layout.grid_depth
-  | Block X -> q.layout.cta_thread_dimension0
-  | Block Y -> q.layout.cta_thread_dimension1
-  | Block Z -> q.layout.cta_thread_dimension2
-
-let set_dim d n q =
-  if n < 0 || n > max_size d then
-    invalid_argf "Qmd.set_dim: size %d, expected 0 to %d" n (max_size d);
-  set q (field q d) n
-
-let patch_dim d v q = hole q (field q d) (Value v)
-
-(* The block's own shared memory, the launch's, plus [v]: the configuration of
-   the most shared memory holds any [v] {!Launch.dynamic_shared} allows. *)
-let patch_shared v q =
-  let p = q.layout and l = q.launch in
-  let q = set q p.min_sm_config_shared_mem_size l.max_shared_config in
-  let q = set q p.target_sm_config_shared_mem_size l.max_shared_config in
-  hole q p.shared_memory_size
-    (scaled_term
-       (Add (Value v, Int64.of_int l.shared_bytes))
-       p.shared_memory_shift)
-
-(* Addresses *)
-
-let set_program addr q =
-  let p = q.layout in
-  let q =
-    address q p.program_address_lower p.program_address_upper
-      (shifted addr p.program_address_shift)
-  in
-  address q p.program_prefetch_addr_lower_shifted
-    p.program_prefetch_addr_upper_shifted
-    (shifted addr prefetch_unit)
-
-(* [memq]: ints are equal when physically equal, with no polymorphic compare. *)
-let set_bank i addr q =
-  if not (List.memq i q.banks) then
-    invalid_argf "Qmd.set_bank: bank %d, expected one of %s" i
-      (String.concat ", " (List.map string_of_int q.banks));
-  { q with ops = Bank (i, addr) :: q.ops }
-
-let set_local_memory bytes q =
-  let p = q.layout in
-  hole q p.shader_local_memory_high_size
-    (scaled bytes p.shader_local_memory_shift)
-
-(* Completion *)
-
-(* Every launch ends with a membar to the system (CWD_MEMBAR_TYPE, set by
-   [make]), so a release needs none of its own. *)
-let add_release addr v q ~size =
-  let r0, r1 = q.layout.releases in
-  match
-    List.find_opt (fun (r : D.release) -> read q r.enable = 0) [ r0; r1 ]
-  with
-  | None -> None
-  | Some r ->
-      let sets =
-        Set (r.membar_type, D.release_membar_type_fe_none)
-        :: Set (r.payload64b, 1)
-        :: Set (r.structure_size, size)
-        :: Set (r.enable, 1)
-        :: q.ops
+  List.iter
+    (fun (c : Cubin.bank) ->
+      set (bank q.constant_buffer_size_shifted4 c.index) ((c.bytes + 15) lsr 4);
+      set (bank q.constant_buffer_valid c.index) 1)
+    banks;
+  (* Sizes. *)
+  let gx, gy, gz = d.grid and bx, by, bz = d.block in
+  field w q.grid_width gx;
+  field w q.grid_height gy;
+  field w q.grid_depth gz;
+  field w q.cta_thread_dimension0 bx;
+  field w q.cta_thread_dimension1 by;
+  field w q.cta_thread_dimension2 bz;
+  (* The block's own shared memory, the launch's, plus the dynamic: the
+     configuration of the most shared memory holds any dynamic size
+     {!Launch.dynamic_shared} allows. *)
+  let shift = q.shared_memory_shift in
+  (match d.shared with
+  | None ->
+      set q.shared_memory_size (l.shared_bytes lsr shift);
+      set q.min_sm_config_shared_mem_size l.shared_config;
+      set q.target_sm_config_shared_mem_size l.shared_config
+  | Some v ->
+      field w q.shared_memory_size ~add:l.shared_bytes ~shift v;
+      set q.min_sm_config_shared_mem_size l.max_shared_config;
+      set q.target_sm_config_shared_mem_size l.max_shared_config);
+  (* Addresses. *)
+  address w q.program_address_lower q.program_address_upper
+    q.program_address_shift d.program;
+  address w q.program_prefetch_addr_lower_shifted
+    q.program_prefetch_addr_upper_shifted prefetch_unit d.program;
+  field w q.shader_local_memory_high_size ~shift:q.shader_local_memory_shift
+    d.local;
+  let indices = List.map (fun (c : Cubin.bank) -> c.index) banks in
+  List.iter
+    (fun (i, v) ->
+      (* [memq]: ints are equal when physically equal. *)
+      if not (List.memq i indices) then
+        invalid_argf "Qmd.make: bank %d, expected one of %s" i
+          (String.concat ", " (List.map string_of_int indices));
+      address w
+        (bank q.constant_buffer_addr_lower i)
+        (bank q.constant_buffer_addr_upper i)
+        q.constant_buffer_addr_shift v)
+    d.banks;
+  Option.iter
+    (fun v ->
+      set q.dependent_qmd0_enable 1;
+      set q.dependent_qmd0_prefetch 1;
+      set q.dependent_qmd0_action D.dependent_qmd0_action_qmd_schedule;
+      field w q.dependent_qmd0_pointer ~shift:chain_unit v)
+    d.chain;
+  (* Every launch ends with a membar to the system (CWD_MEMBAR_TYPE, set above),
+     so a release needs none of its own. *)
+  let r0, r1 = q.releases in
+  if List.length d.releases > 2 then
+    invalid_argf "Qmd.make: %d releases, expected at most 2"
+      (List.length d.releases);
+  List.iteri
+    (fun i release ->
+      let (r : D.release) = if i = 0 then r0 else r1 in
+      let addr, v, size =
+        match release with
+        | Release (a, v) -> (a, v, D.release_structure_size_semaphore_two_words)
+        | Stamped (a, v) -> (a, v, D.release_structure_size_semaphore_four_words)
       in
-      let q = { q with ops = sets } in
-      let q = address q r.address_lower r.address_upper (Value addr) in
-      Some (address q r.payload_lower r.payload_upper (Value v))
-
-let release addr v q =
-  add_release addr v q ~size:D.release_structure_size_semaphore_two_words
-
-let release_stamp addr v q =
-  add_release addr v q ~size:D.release_structure_size_semaphore_four_words
-
-(* The descriptor's address, in 256-byte units. *)
-let chain_unit = 8
-
-let chain addr q =
-  let p = q.layout in
-  let sets =
-    Set (p.dependent_qmd0_enable, 1)
-    :: Set (p.dependent_qmd0_prefetch, 1)
-    :: Set (p.dependent_qmd0_action, D.dependent_qmd0_action_qmd_schedule)
-    :: q.ops
-  in
-  let q = { q with ops = sets } in
-  hole q p.dependent_qmd0_pointer (shifted addr chain_unit)
+      set r.enable 1;
+      set r.structure_size size;
+      set r.payload64b 1;
+      set r.membar_type D.release_membar_type_fe_none;
+      address w r.address_lower r.address_upper 0 addr;
+      address w r.payload_lower r.payload_upper 0 v)
+    d.releases;
+  { bytes = Bytes.unsafe_to_string w.b; patches = sorted w.patches }
 
 (* The driver's parameters *)
 
@@ -278,112 +243,38 @@ let blackwell =
 
 let stack_limit = 0xfffdc0
 
-(* The sizes in the order of their words: a block's, then a grid's. *)
-let size = function
-  | 0 -> Block X
-  | 1 -> Block Y
-  | 2 -> Block Z
-  | 3 -> Grid X
-  | 4 -> Grid Y
-  | _ -> Grid Z
+(* The 32-bit word [i]. *)
+let word i = { D.lo = 32 * i; bits = 32 }
 
-(* Writes into [b] at [at] the size of the field [f], the latest operation on
-   it: a value, a term (one more of [holes]), or nothing since [make], which
-   left it 0. *)
-let rec put b at (f : D.field) holes = function
-  | [] -> holes
-  | Set (g, v) :: _ when g.lo = f.lo ->
-      Bytes.set_int32_le b at (Int32.of_int v);
-      holes
-  | Hole h :: _ when h.at * 8 = f.lo ->
-      { at; bits = 32; value = h.value } :: holes
-  | _ :: ops -> put b at f holes ops
-
-(* Writes the sizes from the [i]th on into the parameters [b] of layout [p]. *)
-let rec put_sizes b p q i holes =
-  if i = 6 then holes
-  else
-    let word = if i < 3 then p.block + i else p.grid + i - 3 in
-    put_sizes b p q (i + 1) (put b (4 * word) (field q (size i)) holes q.ops)
-
-(* CUDA's grid-constant parameters have generic addresses: NVCC 13.4's sm_89
-   code reads bank 0's base at 0x40, sm_120 the kernel's parameters at 0x348.
-   Each launch points into its own bank, including chained launches. *)
-let rec bank0 at offset holes = function
-  | [] -> holes
-  | Bank (0, addr) :: _ ->
-      let value = Value addr in
-      let value =
-        if offset = 0 then value else Add (value, Int64.of_int offset)
-      in
-      { at; bits = 64; value } :: holes
-  | _ :: ops -> bank0 at offset holes ops
-
-let parameters q =
-  let l = q.launch in
+let parameters (launch : Launch.t) (d : t) =
+  let l = (launch :> Repr.launch) in
+  (* CUDA's grid-constant parameters have generic addresses: NVCC 13.4's sm_89
+     code reads bank 0's base at 0x40, sm_120 the kernel's parameters at 0x348.
+     Each launch points into its own bank, chained launches too. *)
   let p, offset =
     if l.gpu.compute_class = D.blackwell_compute_b then
       (blackwell, l.kernel.params_offset)
     else (before_blackwell, 0)
   in
-  let b = Bytes.make (Int.max l.kernel.params_offset (4 * p.words)) '\000' in
-  Bytes.set_int64_le b (4 * p.shared) (Int64.of_int l.gpu.shared_window);
-  Bytes.set_int64_le b (4 * p.local) (Int64.of_int l.gpu.local_window);
-  Bytes.set_int32_le b (4 * p.stack) (Int32.of_int stack_limit);
-  (* The holes gather in decreasing order. Bank 0's address lies after the
-     sizes on Ampere and Ada and before them on Blackwell, so its hole joins at
-     one end and the holes need no sort, which allocates even when empty. *)
-  let at = 4 * p.address in
-  let holes =
-    if p.address < p.block then put_sizes b p q 0 (bank0 at offset [] q.ops)
-    else bank0 at offset (put_sizes b p q 0 []) q.ops
+  let n = Int.max l.kernel.params_offset (4 * p.words) in
+  let w = { b = Bytes.make n '\000'; patches = [] } in
+  Bytes.set_int64_le w.b (4 * p.shared) (Int64.of_int l.gpu.shared_window);
+  Bytes.set_int64_le w.b (4 * p.local) (Int64.of_int l.gpu.local_window);
+  Bytes.set_int32_le w.b (4 * p.stack) (Int32.of_int stack_limit);
+  let sizes at (x, y, z) =
+    field w (word at) x;
+    field w (word (at + 1)) y;
+    field w (word (at + 2)) z
   in
-  { Repr.bytes = Bytes.unsafe_to_string b; holes = List.rev holes }
-
-(* Layout *)
-
-let rec without at = function
-  | [] -> []
-  | h :: hs -> if h.at = at then hs else h :: without at hs
-
-let rec has_hole at = function
-  | [] -> false
-  | h :: hs -> h.at = at || has_hole at hs
-
-(* Zeroes the field of the hole [h], which starts a byte. *)
-let clear b h =
-  let whole = h.bits / 8 and rest = h.bits mod 8 in
-  Bytes.fill b h.at whole '\000';
-  if rest > 0 then
-    let at = h.at + whole in
-    Bytes.set b at
-      (Char.chr (Char.code (Bytes.get b at) land lnot ((1 lsl rest) - 1)))
-
-(* Applies [ops], newest first in the list, oldest first to [b], and is the
-   holes they leave, at most one at each offset. *)
-let rec apply p b = function
-  | [] -> []
-  | Set (f, v) :: older ->
-      let holes = apply p b older in
-      write "Qmd.structure" b ~lo:f.lo ~bits:f.bits v;
-      let at = f.lo / 8 in
-      if f.lo mod 8 = 0 && has_hole at holes then without at holes else holes
-  | Hole h :: older ->
-      let holes = apply p b older in
-      clear b h;
-      h :: (if has_hole h.at holes then without h.at holes else holes)
-  | Bank (i, addr) :: older ->
-      let lo = bank p.D.constant_buffer_addr_lower i in
-      let hi = bank p.constant_buffer_addr_upper i in
-      let value = shifted addr p.constant_buffer_addr_shift in
-      let low = Hole { at = lo.lo / 8; bits = lo.bits; value } in
-      let high =
-        Hole { at = hi.lo / 8; bits = hi.bits; value = Shift (value, 32) }
-      in
-      apply p b (high :: low :: older)
-
-let structure q =
-  let b = Bytes.of_string q.base in
-  let holes = apply q.layout b q.ops in
-  let holes = List.sort (fun a b -> Int.compare a.at b.at) holes in
-  { Repr.bytes = Bytes.unsafe_to_string b; holes }
+  sizes p.block d.block;
+  sizes p.grid d.grid;
+  let at = 4 * p.address in
+  (match List.assoc_opt 0 d.banks with
+  | None -> ()
+  | Some (Int a) ->
+      unsigned a;
+      Bytes.set_int64_le w.b at (Int64.of_int (a + offset))
+  | Some (Slot slot) ->
+      let add = Int64.of_int offset in
+      w.patches <- { at; bits = 64; slot; add; shift = 0 } :: w.patches);
+  { bytes = Bytes.unsafe_to_string w.b; patches = sorted w.patches }

@@ -82,7 +82,7 @@ static void close_segment(const struct device *d, struct channel *c) {
 static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
                  uint64_t b, uint64_t n) {
   const struct template *t = &d->t[k];
-  uint64_t bytes = 4 * (uint64_t)t->nwords;
+  uint64_t bytes = t->nbytes;
   uint64_t start = c->open & (c->size - 1);
   if (start + 4 * c->open_words + bytes > c->size) {
     close_segment(d, c);
@@ -92,9 +92,9 @@ static void emit(const struct device *d, struct channel *c, int k, uint64_t a,
   }
   uint64_t at = c->written & (c->size - 1);
   const uint64_t values[3] = {a, b, n};
-  rig_nv_fill(t, values, (uint32_t *)(c->segments + at));
+  rig_nv_fill(t, values, c->segments + at);
   c->written += bytes;
-  c->open_words += (uint64_t)t->nwords;
+  c->open_words += bytes / 4;
 }
 
 /* Copies [n] words of ring entries, two words each, low first. */
@@ -218,7 +218,7 @@ static int runs(const struct rig_part *p, int n, const uint8_t *args) {
 }
 
 static uint64_t bytes_of(const struct device *d, int k) {
-  return 4 * (uint64_t)d->t[k].nwords;
+  return d->t[k].nbytes;
 }
 
 /* The channel that releases [v]: the last part's, or COMPUTE when there is
@@ -437,8 +437,8 @@ static void settle(const struct channel *c, struct pending *o, uint64_t next) {
   if (o->l == NULL) return;
   uint8_t w[STRUCTURE_BYTES];
   o->v[V_NEXT] = next == 0 ? 0 : gpu_at(c, next);
-  const struct structure *s = &o->l->qmd[o->v[V_SHARED] > 0][next != 0];
-  rig_nv_fill_structure(s, o->v, w);
+  const struct template *s = &o->l->qmd[o->v[V_SHARED] > 0][next != 0];
+  rig_nv_fill(s, o->v, w);
   memcpy(host_at(c, o->qmd), w, s->nbytes);
   o->l = NULL;
 }
@@ -458,7 +458,7 @@ static uint8_t *dispatch(struct submission *s, const struct launch *l,
   struct pending next = {l, qmd, {0}};
   values_of(b, gpu_at(c, bank), next.v);
   uint8_t w[STRUCTURE_BYTES];
-  rig_nv_fill_structure(&l->bank0, next.v, w);
+  rig_nv_fill(&l->bank0, next.v, w);
   memcpy(host_at(c, bank), w, l->bank0.nbytes);
   int chain = s->open.l != NULL && !waited;
   settle(c, &s->open, chain ? qmd : 0);

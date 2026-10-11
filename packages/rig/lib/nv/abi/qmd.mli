@@ -11,21 +11,12 @@
     completes. Blackwell's compute class reads version 5, the others version 3
     ({!Gpu.t}).
 
-    A descriptor is built from a launch ({!make}), given its sizes, addresses
-    and completion by setters, and laid out as a {!Structure.t} ({!structure}):
-    fields known when encoding are bytes, and each field a value fills is a
-    hole. Setters return a new descriptor and leave their argument as it was.
-    Setting a field again replaces what it held, a known value and a hole alike.
+    A descriptor is made from a launch ({!Launch.t}) and its values ({!t}) as a
+    {!Template.t}: a value known when encoding is in its bytes, and each slot a
+    patch.
 
     {b References.} NVIDIA's descriptor headers in open-gpu-doc: [clc7c0qmd.h]
     (version 3) and [clcec0qmd.h] (version 5). *)
-
-type 'v t
-(** The type for launch descriptors around values of type ['v]. *)
-
-val make : Launch.t -> 'v t
-(** [make l] is the descriptor of a launch of [l], its sizes and addresses [0],
-    without a release or a chain. *)
 
 (** {1:sizes Sizes} *)
 
@@ -41,85 +32,74 @@ val max_size : dim -> int
 (** [max_size d] is the largest size [d] takes: [2{^31}-1] blocks along a grid's
     [X], [65535] along [Y] and [Z]; [1024] threads along a block's [X] and [Y],
     [64] along [Z]. The caller also keeps a block's threads, the product of its
-    three sizes, at most {!Launch.max_threads}: {!set_dim} checks each axis
-    alone. *)
+    three sizes, at most {!Launch.max_threads}. *)
 
-val set_dim : dim -> int -> 'v t -> 'v t
-(** [set_dim d n q] is [q] whose launch has the size [n] along [d].
+(** {1:descriptors Descriptors} *)
 
-    Raises [Invalid_argument] if [n] is outside \[[0];[max_size d]\]. *)
+(** The type for what a launch writes when it completes: the 64-bit value at an
+    address, 8-byte aligned, so that any reader who sees the value, the host and
+    other devices included, sees the launch's writes. The write orders nothing
+    but this launch: work the channel runs after the launch's scheduling may
+    complete before it, and a launch scheduled later may run at the same time. A
+    channel's own progress is written by {!Method.release}. *)
+type release =
+  | Release of Template.operand * Template.operand
+      (** [Release (addr, v)] writes [v] at [addr]. *)
+  | Stamped of Template.operand * Template.operand
+      (** [Stamped (addr, v)] also writes a stamp at [addr + 8], [addr] 16-byte
+          aligned ({!Method.section-host}). *)
 
-val patch_dim : dim -> 'v -> 'v t -> 'v t
-(** [patch_dim d v q] is [q] whose launch has the size [v] along [d], a hole of
-    its {!structure}. [v] is at most [max_size d]. *)
+type t = {
+  program : Template.operand;
+      (** The address of the kernel's first instruction, 256-byte aligned. *)
+  local : Template.operand;
+      (** The bytes of local memory each thread takes of the memory
+          {!Method.local_memory} gives: a multiple of 16, at least the launch's
+          {!Launch.local_bytes}, such as the {!Local_memory.field-per_thread}
+          the memory was sized with. *)
+  banks : (int * Template.operand) list;
+      (** The addresses of the launch's constant banks, 64-byte aligned, by
+          index ({!Launch.banks}). A bank left out is at [0]. *)
+  grid : Template.operand * Template.operand * Template.operand;
+      (** The grid's blocks along [X], [Y] and [Z], each at most its
+          {!max_size}. *)
+  block : Template.operand * Template.operand * Template.operand;
+      (** A block's threads along [X], [Y] and [Z], each at most its
+          {!max_size}. *)
+  shared : Template.operand option;
+      (** [Some v] if each block takes [v] bytes of dynamic shared memory beside
+          its own: a multiple of 128, at most {!Launch.dynamic_shared}. The
+          multiprocessors then run the launch in their configuration of the most
+          shared memory, which holds any such [v]. *)
+  chain : Template.operand option;
+      (** [Some addr] if the launch of the descriptor at [addr], 256-byte
+          aligned, follows: scheduling this one schedules it too, and it starts
+          once this launch completes. *)
+  releases : release list;  (** The launch's releases, in order, at most two. *)
+}
+(** The type for a launch's values, as its descriptor takes them. *)
 
-val patch_shared : 'v -> 'v t -> 'v t
-(** [patch_shared v q] is [q] whose blocks each take [v] bytes of dynamic shared
-    memory beside their own, a hole of its {!structure}. [v] is a multiple of
-    128, at most {!Launch.dynamic_shared}. The multiprocessors run [q]'s launch
-    in their configuration of the most shared memory, which holds any such [v].
-*)
+val make : Launch.t -> t -> Template.t
+(** [make l d] is the descriptor of a launch of [l] with the values [d]: 256
+    bytes for version 3 and 384 for version 5.
 
-(** {1:addresses Addresses} *)
-
-val set_program : 'v -> 'v t -> 'v t
-(** [set_program addr q] is [q] with the kernel's first instruction at [addr],
-    256-byte aligned. *)
-
-val set_bank : int -> 'v -> 'v t -> 'v t
-(** [set_bank i addr q] is [q] with the constant bank [i] at [addr], 64-byte
-    aligned.
-
-    Raises [Invalid_argument] if [i] is not one of the banks of [q]'s launch
-    ({!Launch.banks}). *)
-
-val set_local_memory : 'v -> 'v t -> 'v t
-(** [set_local_memory bytes q] is [q] whose threads each take [bytes] of the
-    local memory {!Method.local_memory} gives: a multiple of 16, at least the
-    launch's {!Launch.local_bytes}, such as the {!Local_memory.field-per_thread}
-    the memory was sized with. *)
-
-(** {1:completion Completion} *)
-
-val release : 'v -> 'v -> 'v t -> 'v t option
-(** [release addr v q] is [q] with a launch that writes the 64-bit [v] at
-    [addr], 8-byte aligned, once the launch completes, so that any reader who
-    sees [v], the host and other devices included, sees the launch's writes;
-    or [None] if [q] has two releases already.
-
-    The write orders nothing but this launch: work the channel runs after the
-    launch's scheduling may complete before it, and a launch scheduled later may
-    run at the same time. A channel's own progress is written by
-    {!Method.release}. *)
-
-val release_stamp : 'v -> 'v -> 'v t -> 'v t option
-(** [release_stamp addr v q] is {!release} that also writes a stamp at
-    [addr + 8] ({!Method.section-host}). *)
-
-val chain : 'v -> 'v t -> 'v t
-(** [chain addr q] is [q] followed by the launch of the descriptor at [addr],
-    256-byte aligned: scheduling [q] schedules it too, and it starts once [q]'s
-    launch completes. *)
+    Raises [Invalid_argument] if a bank of [d] is not one of [l]'s, if [d] has
+    more than two releases, or if a known value is negative or does not fit its
+    field. *)
 
 (** {1:parameters The driver's parameters} *)
 
-val parameters : 'v t -> 'v Structure.t
-(** [parameters q] is the start of constant bank [0] for the launch [q]
-    describes, which the caller writes before the kernel's parameters. Its
-    length is the kernel's [params_offset], or the length of the class's
-    parameters if that is longer. It holds the sizes of [q]'s block and grid
-    along [X], [Y] and [Z], as six unsigned 32-bit words where CUDA's code
-    reads [blockDim] and [gridDim]; the GPU's shared and local memory
-    windows ({!Gpu.t}) and the stack limit; and zeros elsewhere.
-
-    Its holes are the sizes {!patch_dim} left to values, of 32 bits each,
-    and, once {!set_bank} has set bank [0], the address CUDA uses for
-    grid-constant parameters, of 64 bits. That address is bank [0]'s on
+val parameters : Launch.t -> t -> Template.t
+(** [parameters l d] is the start of constant bank [0] for the launch of [l]
+    with the values [d], which the caller writes before the kernel's parameters.
+    Its length is the kernel's [params_offset], or the length of the class's
+    parameters if that is longer. It holds the sizes of [d]'s block and grid
+    along [X], [Y] and [Z], as six unsigned 32-bit words where CUDA's code reads
+    [blockDim] and [gridDim]; the GPU's shared and local memory windows
+    ({!Gpu.t}) and the stack limit; the address CUDA uses for grid-constant
+    parameters, as 64 bits; and zeros elsewhere. That address is bank [0]'s on
     Ampere and Ada, and bank [0]'s plus the kernel's [params_offset] on
-    Blackwell. Before {!set_bank} sets bank [0], it is zero. *)
+    Blackwell, or zero if [d] leaves bank [0] out.
 
-(** {1:layout Layout} *)
-
-val structure : 'v t -> 'v Structure.t
-(** [structure q] is [q] laid out in memory: its [bytes] are the whole
-    descriptor, 256 bytes for version 3 and 384 for version 5. *)
+    Raises [Invalid_argument] if a known size is negative or does not fit 32
+    bits. *)

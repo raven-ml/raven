@@ -10,14 +10,12 @@
     the cubins they run, and the record that describes the GPU. Nothing here
     acts on a GPU. Each value describes bytes, and its caller writes them.
 
-    The library describes bytes with three kinds of value:
-    - A {e packet} ({!Packet.t}) is a channel's 32-bit words around values of
-      the caller's type ['v]: each word is a constant, or a {e term} that
-      computes on a value, and the caller interprets it ({!Packet}).
-      {!Method} and {!Gpfifo} give each operation's words as a packet.
-    - A {e structure} ({!Structure.t}) is bytes in memory around the caller's
-      values: fields the layout knows, and {e holes} that terms fill. A launch
-      descriptor ({!Qmd}) is built as one.
+    The library describes bytes with two kinds of value:
+    - A {e template} ({!Template.t}) is bytes around the caller's values: each
+      value is an integer known now, written in place, or a {e slot}, a value
+      the caller numbers and fills later through a {e patch}. {!Method} and
+      {!Gpfifo} give each operation's words as a template, and {!Qmd} a launch's
+      descriptor and parameters.
     - A {e GPU} ({!Gpu.t}) is what the formats depend on: its classes, its
       geometry and the windows its driver chose, declared by the driver
       ({!Gpu.declare}). A cubin's kernel ({!Cubin}) set up for launch on a GPU
@@ -31,18 +29,18 @@
                                        |                      |
                           a loader writes the image      Launch.t
                                                               |
-                               Qmd.make, set_*, release, chain, structure
+                                                 Qmd.make, Qmd.parameters
                                                               |
-    Method.*, Gpfifo.entry --> 'v Packet.t              'v Structure.t
-                                      \                      /
-                         encode, template, a compiler's own nodes
+    Method.*, Gpfifo.entry --------> Template.t <-------------+
+                                         |
+                       bytes as they are, or filled at each use
     v}
 
     {1:conventions Conventions}
 
-    Addresses are the GPU's virtual addresses. An operand of the caller's type
-    ['v] cannot be checked here: the caller keeps the alignment and range
-    each function states.
+    Addresses are the GPU's virtual addresses. A slot cannot be checked here:
+    the caller keeps the alignment and range each function states for the
+    value that fills it.
 
     Misuse raises [Invalid_argument]: an integer outside the range its function
     states, a class or version no launch descriptor holds. A cubin that is not
@@ -59,8 +57,8 @@
 
 (** {1:words Channel words} *)
 
-module Packet = Packet
-(** Packets: the 32-bit words a channel runs, around the caller's values. *)
+module Template = Template
+(** Bytes around the caller's values. *)
 
 module Method = Method
 (** Channel methods. *)
@@ -83,9 +81,6 @@ module Cubin = Cubin
 
 module Launch = Launch
 (** Kernels set up for launch on a GPU. *)
-
-module Structure = Structure
-(** Structures in memory around values. *)
 
 module Qmd = Qmd
 (** Launch descriptors. *)

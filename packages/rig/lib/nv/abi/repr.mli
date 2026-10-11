@@ -3,11 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The shared representation behind {!Launch.t} and {!Structure.t}, which
-    {!Qmd} reads and builds. *)
-
-type 'v hole = { at : int; bits : int; value : 'v Packet.term }
-type 'v structure = { bytes : string; holes : 'v hole list }
+(** The representation behind {!Launch.t}, which {!Qmd} reads. *)
 
 type launch = {
   kernel : Cubin.kernel;

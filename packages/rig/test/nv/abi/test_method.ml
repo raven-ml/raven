@@ -18,12 +18,12 @@ let strf = Printf.sprintf
 (* Methods, by their byte addresses *)
 
 let set_object = 0x000
-let non_stall_interrupt = 0x020
 let sem_addr_lo = 0x05c
 let sem_addr_hi = 0x060
 let sem_payload_lo = 0x064
 let sem_payload_hi = 0x068
 let sem_execute = 0x06c
+let non_stall_interrupt = 0x020
 let wait_for_idle = 0x110
 let shared_window_a = 0x2a0
 let shared_window_b = 0x2a4
@@ -51,12 +51,12 @@ let line_length_in = 0x418
 let names =
   [
     (set_object, "SET_OBJECT");
-    (non_stall_interrupt, "NON_STALL_INTERRUPT");
     (sem_addr_lo, "SEM_ADDR_LO");
     (sem_addr_hi, "SEM_ADDR_HI");
     (sem_payload_lo, "SEM_PAYLOAD_LO");
     (sem_payload_hi, "SEM_PAYLOAD_HI");
     (sem_execute, "SEM_EXECUTE");
+    (non_stall_interrupt, "NON_STALL_INTERRUPT");
     (wait_for_idle, "WAIT_FOR_IDLE");
     (shared_window_a, "SET_SHADER_SHARED_MEMORY_WINDOW_A");
     (shared_window_b, "SET_SHADER_SHARED_MEMORY_WINDOW_B");
@@ -110,7 +110,7 @@ let rec writes = function
         (List.filteri (fun i _ -> i < n) rest)
       @ writes (List.filteri (fun i _ -> i >= n) rest)
 
-let read p = writes (S.words (Packet.encode Fun.id p))
+let read (p : Template.t) = writes (S.words p.bytes)
 let lo v = Int64.to_int v land 0xffff_ffff
 let hi v = Int64.to_int (Int64.shift_right_logical v 32) land 0xffff_ffff
 let bits v lo n = (v lsr lo) land ((1 lsl n) - 1)
@@ -167,21 +167,41 @@ let pp_call ppf = function
   | Copy_release_stamp (a, v) ->
       Format.fprintf ppf "copy_release_stamp 0x%Lx 0x%Lx" a v
 
-let packet : call -> int64 Packet.t = function
+(* The operands of [c], in order. *)
+let args = function
+  | Set_object _ | Interrupt | Invalidate | Wait_for_idle -> []
+  | Shared_window a | Local_window a | Schedule a -> [ a ]
+  | Acquire (a, v)
+  | Release (a, v)
+  | Release_stamp (a, v)
+  | Local_memory (a, v)
+  | Copy_release (a, v)
+  | Copy_release_stamp (a, v) ->
+      [ a; v ]
+  | Copy (d, s, n) -> [ d; s; n ]
+
+(* The words of [c], each operand known, or left to the slot of its position if
+   [slots]. *)
+let encode ~slots c =
+  let o i v = if slots then Template.Slot i else Int (Int64.to_int v) in
+  let a i = o i (List.nth (args c) i) in
+  match c with
   | Set_object (e, c) -> Method.set_object e c
-  | Acquire (a, v) -> Method.acquire a v
-  | Release (a, v) -> Method.release a v
-  | Release_stamp (a, v) -> Method.release_stamp a v
+  | Acquire _ -> Method.acquire (a 0) (a 1)
+  | Release _ -> Method.release (a 0) (a 1)
+  | Release_stamp _ -> Method.release_stamp (a 0) (a 1)
   | Interrupt -> Method.interrupt
-  | Shared_window a -> Method.shared_memory_window a
-  | Local_window a -> Method.local_memory_window a
-  | Local_memory (a, p) -> Method.local_memory a ~per_tpc:p
+  | Shared_window _ -> Method.shared_memory_window (a 0)
+  | Local_window _ -> Method.local_memory_window (a 0)
+  | Local_memory _ -> Method.local_memory (a 0) ~per_tpc:(a 1)
   | Invalidate -> Method.invalidate_caches
   | Wait_for_idle -> Method.wait_for_idle
-  | Schedule a -> Method.schedule a
-  | Copy (d, s, n) -> Method.copy ~dst:d ~src:s n
-  | Copy_release (a, v) -> Method.copy_release a v
-  | Copy_release_stamp (a, v) -> Method.copy_release_stamp a v
+  | Schedule _ -> Method.schedule (a 0)
+  | Copy _ -> Method.copy ~dst:(a 0) ~src:(a 1) (a 2)
+  | Copy_release _ -> Method.copy_release (a 0) (a 1)
+  | Copy_release_stamp _ -> Method.copy_release_stamp (a 0) (a 1)
+
+let packet = encode ~slots:false
 
 (* What an operation must write: its operands' methods, in any order, then the
    method that acts on them, whose named fields have the given values. *)
@@ -221,8 +241,8 @@ let copy_semaphore a v =
   ]
 
 (* LAUNCH_DMA of a release: SEMAPHORE_TYPE 4:3 (ONE_WORD 1, FOUR_WORD 2),
-   SEMAPHORE_PAYLOAD_SIZE 27:27 (TWO_WORD 1), FLUSH_ENABLE 2:2, FLUSH_TYPE
-   25:25 SYS (0). *)
+   SEMAPHORE_PAYLOAD_SIZE 27:27 (TWO_WORD 1), FLUSH_ENABLE 2:2, FLUSH_TYPE 25:25
+   SYS (0). *)
 let copy_release ~kind =
   [
     ("SEMAPHORE_TYPE", 3, 2, kind);
@@ -329,6 +349,10 @@ let window =
     (fun n -> Int64.of_int ((1 lsl 40) + n))
     (Gen.int_range 0 ((1 lsl 49) - (1 lsl 40) - 1))
 
+(* A 64-bit payload an unsigned int holds. *)
+let payload =
+  Gen.map (fun v -> Int64.of_int (Int64.to_int v land max_int)) S.u64
+
 let call =
   let open Gen in
   let semaphore = S.address ~bits:40 ~align:3
@@ -344,11 +368,11 @@ let call =
        [
          (let+ e = engine and+ c = int_range 0 0xffff in
           Set_object (e, c));
-         (let+ a = semaphore and+ v = S.u64 in
+         (let+ a = semaphore and+ v = payload in
           Acquire (a, v));
-         (let+ a = semaphore and+ v = S.u64 in
+         (let+ a = semaphore and+ v = payload in
           Release (a, v));
-         (let+ a = stamped and+ v = S.u64 in
+         (let+ a = stamped and+ v = payload in
           Release_stamp (a, v));
          constant Interrupt;
          constant Wait_for_idle;
@@ -369,9 +393,9 @@ let call =
               ]
           in
           Copy (d, s, Int64.of_int n));
-         (let+ a = semaphore and+ v = S.u64 in
+         (let+ a = semaphore and+ v = payload in
           Copy_release (a, v));
-         (let+ a = stamped and+ v = S.u64 in
+         (let+ a = stamped and+ v = payload in
           Copy_release_stamp (a, v));
        ])
 
@@ -456,11 +480,16 @@ let operations =
         call (fun c ->
           List.iter (fun n -> cover n (constructor c = n)) all;
           check c);
+      prop "an operation's slots, filled, are its words with its operands" call
+        (fun c ->
+          cover "a slot" (args c <> []);
+          equal string (packet c).bytes
+            (Template.fill (List.nth (args c)) (encode ~slots:true c)));
       test "a release waits for idle" (fun () ->
           check (Release (0x12_3456_7890L, 0x2_0000_0005L)));
       test "a schedule fetches the descriptor and schedules it" (fun () ->
           (* SEND_SIGNALING_PCAS2_B PCAS_ACTION 3:0: PREFETCH_SCHEDULE 9. *)
-          match List.rev (read (Method.schedule 0xff_ffff_ff00L)) with
+          match List.rev (read (Method.schedule (Int 0xff_ffff_ff00))) with
           | (_, m, v) :: _ when m = send_signaling_pcas2_b ->
               equal int 9 (bits v 0 4)
           | _ -> fail "a schedule ends with SEND_SIGNALING_PCAS2_B");
@@ -481,7 +510,7 @@ let listing () =
        [
          Set_object (Compute, 0xc9c0);
          Set_object (Copy, 0xc9b5);
-         Acquire (0x12_3456_7808L, 0x8000_0000_0000_0001L);
+         Acquire (0x12_3456_7808L, 0x3000_0000_0000_0001L);
          Release (0x12_3456_7808L, 7L);
          Release_stamp (0x12_3456_7810L, 7L);
          Interrupt;
@@ -506,11 +535,11 @@ let words =
               subch 1 SET_OBJECT 0x0000c9c0
             set_object Copy 0xc9b5
               subch 4 SET_OBJECT 0x0000c9b5
-            acquire 0x1234567808 0x8000000000000001
+            acquire 0x1234567808 0x3000000000000001
               host SEM_ADDR_LO 0x34567808
               host SEM_ADDR_HI 0x00000012
               host SEM_PAYLOAD_LO 0x00000001
-              host SEM_PAYLOAD_HI 0x80000000
+              host SEM_PAYLOAD_HI 0x30000000
               host SEM_EXECUTE 0x01000003
             release 0x1234567808 0x7
               host SEM_ADDR_LO 0x34567808

@@ -27,4 +27,4 @@ let entry addr ~offset ~words =
     lor (words lsl D.nvc56f_gp_entry1_length.lo)
   in
   let n = Int64.(logor (of_int offset) (shift_left (of_int flags) 32)) in
-  [ Packet.W64 (Add (Value addr, n)) ]
+  Template.u64 n addr

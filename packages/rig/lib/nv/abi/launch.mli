@@ -44,7 +44,7 @@ val local_bytes : t -> int
 
 val dynamic_shared : t -> int
 (** [dynamic_shared l] is the most dynamic shared memory a block of [l] may
-    take beside its own ({!Qmd.patch_shared}): 100 KiB less the block's own
+    take beside its own ({!Qmd.field-shared}): 100 KiB less the block's own
     shared memory, the kernel's and the driver's 1 KiB rounded up to 128
     bytes. *)
 

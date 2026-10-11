@@ -8,12 +8,11 @@
    entries and pushbuffer headers), clc7c0.h (compute) and clc7b5.h
    (copy). *)
 
-module Packet = Packet
+module Template = Template
 module Method = Method
 module Gpfifo = Gpfifo
 module Gpu = Gpu
 module Local_memory = Local_memory
 module Cubin = Cubin
 module Launch = Launch
-module Structure = Structure
 module Qmd = Qmd

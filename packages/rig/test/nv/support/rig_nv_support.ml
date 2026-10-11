@@ -142,15 +142,14 @@ let at_gpu l at = address l.memory + at
    [a]. *)
 let ring_entry a words =
   let e =
-    A.Packet.encode Int64.of_int
-      (A.Gpfifo.entry a ~offset:0 ~words:(String.length words / 4))
+    (A.Gpfifo.entry (Int a) ~offset:0 ~words:(String.length words / 4)).bytes
   in
   Array.init 2 (fun i ->
       Int32.to_int (String.get_int32_le e (4 * i)) land 0xffff_ffff)
 
-let segment l p =
+let segment l (p : A.Template.t) =
   let at = take l + segment_at in
-  let words = A.Packet.encode Int64.of_int p in
+  let words = p.bytes in
   H.write (at_host l at) words;
   ring_entry (at_gpu l at) words
 
@@ -173,29 +172,32 @@ let schedule g ~addr ~put cubin name entry ~blocks args =
   (match cap.local bytes with Ok () -> () | Error e -> failf "local: %s" e);
   let local = A.Local_memory.make cap bytes in
   let base = entry - kernel.code in
-  let bank q (b : A.Cubin.bank) =
+  let bank (b : A.Cubin.bank) =
     let a = if b.index = 0 then addr + bank_at else base + b.offset in
-    A.Qmd.set_bank b.index a q
+    (b.index, A.Template.Int a)
   in
+  let one = A.Template.Int 1 in
   let q =
-    A.Qmd.make launch
-    |> A.Qmd.set_dim (Grid X) blocks
-    |> A.Qmd.set_dim (Grid Y) 1 |> A.Qmd.set_dim (Grid Z) 1
-    |> A.Qmd.set_dim (Block X) 256
-    |> A.Qmd.set_dim (Block Y) 1 |> A.Qmd.set_dim (Block Z) 1
-    |> A.Qmd.set_program entry
-    |> A.Qmd.set_local_memory local.per_thread
+    {
+      A.Qmd.program = Int entry;
+      local = Int local.per_thread;
+      banks = List.map bank (A.Launch.banks launch);
+      grid = (Int blocks, one, one);
+      block = (Int 256, one, one);
+      shared = None;
+      chain = None;
+      releases = [];
+    }
   in
-  let q = List.fold_left bank q (A.Launch.banks launch) in
-  put bank_at (A.Structure.encode Int64.of_int (A.Qmd.parameters q));
+  put bank_at (A.Qmd.parameters launch q).bytes;
   List.iteri
     (fun i x ->
       let b = Bytes.create 8 in
       Bytes.set_int64_le b 0 (Int64.of_int x);
       put (bank_at + kernel.params_offset + (8 * i)) (Bytes.to_string b))
     args;
-  put 0 (A.Structure.encode Int64.of_int (A.Qmd.structure q));
-  let words = A.Packet.encode Int64.of_int (A.Method.schedule addr) in
+  put 0 (A.Qmd.make launch q).bytes;
+  let words = (A.Method.schedule (Int addr)).bytes in
   put segment_at words;
   ring_entry (addr + segment_at) words
 

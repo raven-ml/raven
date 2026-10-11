@@ -7,19 +7,19 @@
    a cubin of 128 kernels.
 
    [qmd/launch] describes one kernel's launch (its rules, descriptor, sizes,
-   addresses, local memory and release), as tolk does per kernel at link, and
-   [launch] its parts. [qmd/encode] fills that descriptor's holes with integers,
-   as a launch would without a compiler. [method] rows encode what a driver's
-   ring writer sends per submission, a release and one placement (a 16-byte copy
-   and the copy engine's release); [release-template] is the release with its
-   value left, as the writer takes it once. [gpfifo] encodes one ring entry.
+   addresses and local memory), as tolk does per kernel at link, and [launch]
+   its parts. [qmd/encode] fills that descriptor's patches with integers, as a
+   launch would without a compiler. [method] rows encode what a driver's ring
+   writer sends per submission, a release and one placement (a 16-byte copy and
+   the copy engine's release); [release-template] is the release with its value
+   left, as the writer takes it once. [gpfifo] encodes one ring entry.
    [fill-into-bytes] rows copy the encoder's template into bytes allocated
-   beforehand and write its holes, as a writer filling a template does: the
+   beforehand and write its patches, as a writer filling a template does: the
    floor of the encoder above them. [cubin/elf-of-string] reads the ELF object
    alone: the floor of [cubin/of-string]. *)
 
 module Abi = Rig_nv_abi
-module Packet = Abi.Packet
+module Template = Abi.Template
 module Method = Abi.Method
 module Qmd = Abi.Qmd
 
@@ -64,32 +64,40 @@ let launch g = Result.get_ok (Abi.Launch.make g kernel)
 
 (* Launch descriptors *)
 
-(* A launch whose grid is left for each launch, as tolk's are. *)
-let describe g =
-  let q =
-    Qmd.make (launch g)
-    |> Qmd.set_dim (Block X) 256 |> Qmd.set_dim (Block Y) 1
-    |> Qmd.set_dim (Block Z) 1
-    |> Qmd.patch_dim (Grid X) 4096
-    |> Qmd.patch_dim (Grid Y) 1 |> Qmd.patch_dim (Grid Z) 1
-    |> Qmd.set_program program |> Qmd.set_bank 0 bank0
-    |> Qmd.set_local_memory local_per_thread
+(* A launch whose grid is left for each launch, as tolk's are, and which
+   releases a value when it completes. *)
+let values =
+  {
+    Qmd.program = Int program;
+    local = Int local_per_thread;
+    banks = [ (0, Int bank0) ];
+    grid = (Slot 0, Slot 1, Slot 2);
+    block = (Int 256, Int 1, Int 1);
+    shared = None;
+    chain = None;
+    releases = [ Release (Int signal, Int 1) ];
+  }
+
+let grid = function 0 -> 4096L | _ -> 1L
+let describe g = Qmd.make (launch g) values
+
+(* The floor of [Template.fill value t]: a writer that holds [t]'s bytes copies
+   them into bytes allocated beforehand and writes each patch's word, as a
+   driver fills a template. The floor writes a 64-bit word as two 32-bit ones,
+   from values read beforehand, and checks it writes what [fill] does. *)
+let fill_into_bytes value (t : Template.t) =
+  let filled = Template.fill value t in
+  let width bits =
+    if bits <= 8 then 1
+    else if bits <= 16 then 2
+    else if bits <= 32 then 4
+    else 8
   in
-  Qmd.structure (Option.get (Qmd.release signal 1 q))
-
-let encode_structure s = Abi.Structure.encode Int64.of_int s
-let encode p = Packet.encode Int64.of_int p
-
-(* The floor of an encoder whose result is [filled]: a writer that holds
-   [template], [filled] with its holes zero, copies it into bytes allocated
-   beforehand and writes each hole's word, as a driver fills a template. A hole
-   is the offset and width of its word; the floor writes a 64-bit word as two
-   32-bit ones, from values read beforehand, and checks it writes [filled]. *)
-let fill_into_bytes ~template ~filled holes =
-  let split (at, width) =
+  let split (p : Template.patch) =
+    let at = p.at and width = width p.bits in
     if width = 8 then [ (at, 4); (at + 4, 4) ] else [ (at, width) ]
   in
-  let words = Array.of_list (List.concat_map split holes) in
+  let words = Array.of_list (List.concat_map split t.patches) in
   let at = Array.map fst words and width = Array.map snd words in
   let value i =
     match width.(i) with
@@ -101,7 +109,7 @@ let fill_into_bytes ~template ~filled holes =
   let n = String.length filled in
   let b = Bytes.create n in
   let fill () =
-    Bytes.blit_string template 0 b 0 n;
+    Bytes.blit_string t.bytes 0 b 0 n;
     for i = 0 to Array.length at - 1 do
       let at = Array.unsafe_get at i and v = Array.unsafe_get values i in
       match Array.unsafe_get width i with
@@ -115,82 +123,61 @@ let fill_into_bytes ~template ~filled holes =
     failwith "a floor writes other bytes";
   fill
 
-(* The floor of [Packet.encode value p], from [p]'s template with the values
-   [known] leaves. *)
-let packet_floor ?(known = fun _ -> None) value p =
-  let template, holes = Packet.template known p in
-  let width = function Packet.Dword _ | W32 _ -> 4 | W64 _ -> 8 in
-  fill_into_bytes ~template ~filled:(Packet.encode value p)
-    (List.map (fun (i, w) -> (4 * i, width w)) holes)
-
-(* The floor of [encode_structure s]. *)
-let structure_floor (s : int Abi.Structure.t) =
-  let width bits =
-    if bits <= 8 then 1
-    else if bits <= 16 then 2
-    else if bits <= 32 then 4
-    else 8
-  in
-  fill_into_bytes ~template:s.bytes ~filled:(encode_structure s)
-    (List.map
-       (fun (h : int Abi.Structure.hole) -> (h.at, width h.bits))
-       s.holes)
-
 let qmd =
   let launch label g =
     Thumper.bench ("launch/" ^ label) (fun () -> describe (Thumper.black_box g))
   in
-  let s = describe ada in
+  let t = describe ada in
   Thumper.group "qmd"
     [
       launch "ada" ada;
       launch "blackwell" blackwell;
       Thumper.bench "encode/ada" (fun () ->
-          encode_structure (Thumper.black_box s));
-      Thumper.bench "fill-into-bytes/ada" (structure_floor s);
+          Template.fill grid (Thumper.black_box t));
+      Thumper.bench "fill-into-bytes/ada" (fill_into_bytes grid t);
     ]
 
 let launch_group =
-  let q = Abi.Qmd.make (launch ada) in
-  let p = Abi.Structure.encode Fun.id (Abi.Qmd.parameters q) in
+  let l = launch ada in
+  let p = Qmd.parameters l values in
   Thumper.group "launch"
     [
       Thumper.bench "make/ada" (fun () ->
           Abi.Launch.make (Thumper.black_box ada) kernel);
       Thumper.bench "driver-parameters/ada" (fun () ->
-          Abi.Qmd.parameters (Thumper.black_box q));
-      Thumper.bench "driver-parameters-into-bytes/ada"
-        (fill_into_bytes ~template:p ~filled:p []);
+          Qmd.parameters (Thumper.black_box l) values);
+      Thumper.bench "driver-parameters-into-bytes/ada" (fill_into_bytes grid p);
     ]
 
 (* Methods and ring entries *)
 
 (* The ring writer's values: the timeline word it knows, the value it releases
-   on each submission. *)
-type v = Word | V
-
-let value = function Word -> Int64.of_int signal | V -> 0x1234L
-let known = function Word -> Some (value Word) | V -> None
+   on each submission, by slot. *)
+let word = Template.Int signal
+let v = Template.Slot 0
+let value _ = 0x1234L
 
 (* One placement: a 16-byte copy, then the copy engine's release. *)
 let placement () =
-  Method.copy ~dst:0x50_0000_0000 ~src:0x60_0000_0000 16
-  @ Method.copy_release signal 0x1234
+  Template.concat
+    [
+      Method.copy ~dst:(Int 0x50_0000_0000) ~src:(Int 0x60_0000_0000) (Int 16);
+      Method.copy_release (Int signal) (Int 0x1234);
+    ]
 
 let methods =
   Thumper.group "method"
     [
       Thumper.bench "release-encode" (fun () ->
-          Packet.encode value (Method.release (Thumper.black_box Word) V));
+          (Method.release (Thumper.black_box word) (Int 0x1234)).bytes);
       Thumper.bench "release-template" (fun () ->
-          Packet.template known
-            (Method.release (Thumper.black_box Word) V));
+          Method.release (Thumper.black_box word) v);
       Thumper.bench "release-fill-into-bytes"
-        (packet_floor ~known value (Method.release Word V));
+        (fill_into_bytes value (Method.release word v));
       Thumper.bench "placement-encode" (fun () ->
-          encode (Thumper.black_box placement ()));
+          (Thumper.black_box placement ()).Template.bytes);
       Thumper.bench "placement-fill-into-bytes"
-        (packet_floor Int64.of_int (placement ()));
+        (fill_into_bytes value (placement ()));
     ]
 
 let gpfifo =
@@ -198,10 +185,11 @@ let gpfifo =
   Thumper.group "gpfifo"
     [
       Thumper.bench "entry-encode" (fun () ->
-          encode
-            (Abi.Gpfifo.entry 0 ~offset:0x100 ~words:(Thumper.black_box words)));
+          (Abi.Gpfifo.entry (Int 0) ~offset:0x100
+             ~words:(Thumper.black_box words))
+            .bytes);
       Thumper.bench "entry-fill-into-bytes"
-        (packet_floor Int64.of_int (Abi.Gpfifo.entry 0 ~offset:0x100 ~words));
+        (fill_into_bytes value (Abi.Gpfifo.entry (Slot 0) ~offset:0x100 ~words));
     ]
 
 (* Cubins *)

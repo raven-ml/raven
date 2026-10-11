@@ -115,7 +115,7 @@ val launch_at :
 (** [launch_at l ~code bin f ~blocks args] is {!launch} for the kernel [f] of
     the cubin [bin] whose image the caller placed at the address [code]. *)
 
-val segment : launches -> int Rig_nv_abi.Packet.t -> int array
+val segment : launches -> Rig_nv_abi.Template.t -> int array
 (** [segment l p] is the ring entry, as two words, of a segment of the words
     [p]. *)
 

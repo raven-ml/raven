@@ -30,12 +30,17 @@ let amd d ~marker ~arrived ~commands:_ =
     "" )
 
 let nv _ ~marker ~arrived ~commands =
+  let i v = N.Template.Int (Int64.to_int v) in
   let methods =
-    N.Packet.encode Fun.id
-      (N.Method.release marker 1L @ N.Method.acquire arrived 1L)
+    (N.Template.concat
+       [
+         N.Method.release (i marker) (Int 1);
+         N.Method.acquire (i arrived) (Int 1);
+       ])
+      .bytes
   in
   let words = String.length methods / 4 in
-  (N.Packet.encode Fun.id (N.Gpfifo.entry commands ~offset:0 ~words), methods)
+  ((N.Gpfifo.entry (i commands) ~offset:0 ~words).bytes, methods)
 
 (* The 64-bit word at byte [at] of the bytes [a], read while work may write
    them. *)

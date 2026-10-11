@@ -48,9 +48,10 @@ let amd d ~arrived ~commands:_ c =
     "" )
 
 let nv _ ~arrived ~commands c =
-  let methods = N.Packet.encode Fun.id (N.Method.acquire arrived c) in
+  let i v = N.Template.Int (Int64.to_int v) in
+  let methods = (N.Method.acquire (i arrived) (i c)).bytes in
   let words = String.length methods / 4 in
-  (N.Packet.encode Fun.id (N.Gpfifo.entry commands ~offset:0 ~words), methods)
+  ((N.Gpfifo.entry (i commands) ~offset:0 ~words).bytes, methods)
 
 let near () =
   if Rig_amd_amdgpu.count () > 0 then

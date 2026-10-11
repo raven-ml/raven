@@ -141,7 +141,7 @@ val capability : t -> Rig_nv_abi.Gpu.t
     writes its value after its waits and every earlier value.
 
     A launch with dynamic shared memory runs in the multiprocessors'
-    configuration of the most shared memory ({!Rig_nv_abi.Qmd.patch_shared}). *)
+    configuration of the most shared memory ({!Rig_nv_abi.Qmd.field-shared}). *)
 
 (** {1:regions Memory}
 

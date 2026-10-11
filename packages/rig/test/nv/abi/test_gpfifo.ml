@@ -12,9 +12,7 @@ open Rig_nv_abi
 let max_offset = (1 lsl 40) - 1
 
 let entry a ~offset ~words =
-  String.get_int64_le
-    (Packet.encode Int64.of_int (Gpfifo.entry a ~offset ~words))
-    0
+  String.get_int64_le (Gpfifo.entry (Int a) ~offset ~words).bytes 0
 
 (* An entry's fields: its segment's address, from GET and GET_HI, its length and
    its SYNC bit. *)
@@ -51,11 +49,13 @@ let entries =
             (fields (entry a ~offset ~words)));
       prop "an entry adds to the address what offset and words alone decide"
         segment (fun (a, offset, words) ->
-          match Gpfifo.entry a ~offset ~words with
-          | [ W64 (Add (Value a', n)) ] ->
-              equal int a a';
-              equal int64 n (entry 0 ~offset ~words)
-          | _ -> fail "an entry is [W64 (Add (Value addr, n))]");
+          let t = Gpfifo.entry (Slot 0) ~offset ~words in
+          let filled = Template.fill (fun _ -> Int64.of_int a) t in
+          equal int64 ~msg:"the address's sum"
+            (Int64.add (entry 0 ~offset ~words) (Int64.of_int a))
+            (entry a ~offset ~words);
+          equal int64 ~msg:"its slot, filled" (entry a ~offset ~words)
+            (String.get_int64_le filled 0));
       test "an entry of the most words keeps bit 63 clear" (fun () ->
           let a = 0x12_3456_7000 and words = Gpfifo.max_words in
           equal int64
@@ -71,12 +71,12 @@ let entries =
         [ min_int; -1; Gpfifo.max_words + 1; max_int ]
         (fun words ->
           raises_match (Exn.invalid_arg ~substring:"Gpfifo.entry") (fun () ->
-              Gpfifo.entry 0 ~offset:0 ~words));
+              Gpfifo.entry (Int 0) ~offset:0 ~words));
       cases ~name:string_of_int "an offset outside [0;2^40-1] is refused"
         [ min_int; -4; 1 lsl 40; max_int ]
         (fun offset ->
           raises_match (Exn.invalid_arg ~substring:"Gpfifo.entry") (fun () ->
-              Gpfifo.entry 0 ~offset ~words:1));
+              Gpfifo.entry (Int 0) ~offset ~words:1));
     ]
 
 let () = exit (run "rig_nv_abi.gpfifo" [ entries ])

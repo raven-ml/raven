@@ -120,101 +120,61 @@ value caml_rig_nv_doorbell(value v_self, value v_at) {
   return Val_unit;
 }
 
-/* A hole's record, as Template lays it out: 64-bit words, the index of its
-   first word, its value's slot, its words (1 or 2), its operations' count,
-   then each operation and its constant. Template refuses a record outside
-   the bounds; C checks only what keeps its reads and the ring's writes in
-   their arrays, with a fixed message. */
-enum { OP_ADD, OP_SHIFT };
+/* Templates
 
-#define OUT_OF_BOUNDS "Rig_nv: a template or structure is out of bounds"
+   A template crosses as its bytes and its patches, a record of five
+   little-endian 64-bit words each: at, bits, slot, add, shift. C checks
+   what keeps its reads and the writer's writes in their arrays. */
 
-/* Reads the record at [i] of the [n] words at [p] into [f]: whether it lies
-   in them and takes at most HOLE_OPS operations, each shift below 64. */
-static int read_hole(const char *p, size_t n, size_t i, uint64_t *f) {
-  if (n - i < 4) return 0;
-  memcpy(f, p + 8 * i, 4 * 8);
-  if (f[3] > HOLE_OPS || n - i - 4 < 2 * f[3]) return 0;
-  memcpy(f + 4, p + 8 * (i + 4), 2 * 8 * f[3]);
-  for (uint64_t j = 0; j < f[3]; j++)
-    if (f[4 + 2 * j] == OP_SHIFT && f[5 + 2 * j] > 63) return 0;
+#define PATCH_WORDS 5
+#define OUT_OF_BOUNDS "Rig_nv: a template is out of bounds"
+
+/* Sets [t] to the bytes [v_bytes], at most [bytes] of them, and the patches
+   [v_patches], each of a slot below [slots]: whether they lie in [t]'s
+   arrays. */
+static int read_template(struct template *t, value v_bytes, value v_patches,
+                    size_t bytes, uint64_t slots) {
+  size_t n = caml_string_length(v_bytes);
+  size_t np = caml_string_length(v_patches) / (8 * PATCH_WORDS);
+  if (n > bytes || np > PATCHES) return 0;
+  t->nbytes = (uint32_t)n;
+  t->npatches = (uint32_t)np;
+  memcpy(t->bytes, String_val(v_bytes), n);
+  for (size_t i = 0; i < np; i++) {
+    uint64_t f[PATCH_WORDS];
+    memcpy(f, String_val(v_patches) + 8 * PATCH_WORDS * i, sizeof f);
+    uint64_t at = f[0], bits = f[1], slot = f[2], add = f[3], shift = f[4];
+    unsigned width = bits <= 8 ? 1 : bits <= 16 ? 2 : bits <= 32 ? 4 : 8;
+    if (bits < 1 || bits > 64 || slot >= slots || shift > 63 || at > n ||
+        width > n - at)
+      return 0;
+    t->patches[i] = (struct patch){(uint16_t)at, (uint8_t)width,
+                                   (uint8_t)bits, (uint8_t)slot,
+                                   (uint8_t)shift, add};
+  }
   return 1;
 }
 
-/* Sets template [v_k] to the words [v_words], little-endian bytes, and the
-   holes [v_holes], records as above: a refused template leaves the one
-   before. */
-value caml_rig_nv_template(value v_self, value v_k, value v_words,
-                           value v_holes) {
-  struct template c;
-  size_t bytes = caml_string_length(v_words);
-  if (bytes > sizeof c.words) caml_invalid_argument(OUT_OF_BOUNDS);
-  c.nwords = (int)(bytes / 4);
-  memcpy(c.words, String_val(v_words), 4 * (size_t)c.nwords);
-  size_t n = caml_string_length(v_holes) / 8;
-  uint64_t f[4 + 2 * HOLE_OPS];
-  c.nholes = 0;
-  for (size_t i = 0; i < n; i += 4 + 2 * (size_t)f[3]) {
-    if (c.nholes == TEMPLATE_HOLES ||
-        !read_hole(String_val(v_holes), n, i, f) || f[1] > 2 || f[2] < 1 ||
-        f[2] > 2 || f[0] + f[2] > (uint64_t)c.nwords)
-      caml_invalid_argument(OUT_OF_BOUNDS);
-    struct hole *h = &c.holes[c.nholes++];
-    h->at = (uint16_t)f[0];
-    h->slot = (uint8_t)f[1];
-    h->wide = f[2] == 2;
-    h->nops = (uint8_t)f[3];
-    for (int j = 0; j < h->nops; j++) {
-      uint64_t op = f[4 + 2 * j], k = f[5 + 2 * j];
-      h->shift[j] = op == OP_SHIFT ? (uint8_t)k : 0;
-      h->n[j] = op == OP_ADD ? k : 0;
-    }
-  }
-  Device_val(v_self)->t[Int_val(v_k)] = c;
+/* Sets template [v_k] of [v_self] to [v_bytes] and [v_patches], as above:
+   a refused template leaves the one before. */
+value caml_rig_nv_template(value v_self, value v_k, value v_bytes,
+                           value v_patches) {
+  struct template t;
+  if (caml_string_length(v_bytes) % 4 != 0 ||
+      !read_template(&t, v_bytes, v_patches, 4 * TEMPLATE_WORDS,
+                     TEMPLATE_VALUES))
+    caml_invalid_argument(OUT_OF_BOUNDS);
+  Device_val(v_self)->t[Int_val(v_k)] = t;
   return Val_unit;
 }
 
 /* Launches */
 
-/* Sets [s] to the bytes [v_bytes] and the fields [v_fields]: 64-bit words,
-   each field's byte, bits, slot and operations' count, then each operation
-   and its constant. A word's width is the narrowest of 1, 2, 4 and 8 bytes
-   that holds its bits. Whether they lie in [s]'s arrays. */
-static int structure(struct structure *s, value v_bytes, value v_fields) {
-  size_t bytes = caml_string_length(v_bytes);
-  if (bytes > STRUCTURE_BYTES) return 0;
-  s->nbytes = (uint32_t)bytes;
-  memcpy(s->bytes, String_val(v_bytes), bytes);
-  size_t n = caml_string_length(v_fields) / 8;
-  uint64_t f[4 + 2 * HOLE_OPS];
-  s->nfields = 0;
-  for (size_t i = 0; i < n; i += 4 + 2 * (size_t)f[3]) {
-    if (s->nfields == STRUCTURE_FIELDS ||
-        !read_hole(String_val(v_fields), n, i, f) || f[2] >= VALUES ||
-        f[1] < 1 || f[1] > 64)
-      return 0;
-    unsigned width = f[1] <= 8 ? 1 : f[1] <= 16 ? 2 : f[1] <= 32 ? 4 : 8;
-    if (f[0] + width > bytes) return 0;
-    struct field *h = &s->fields[s->nfields++];
-    h->at = (uint16_t)f[0];
-    h->width = (uint8_t)width;
-    h->bits = (uint8_t)f[1];
-    h->slot = (uint8_t)f[2];
-    h->nops = (uint8_t)f[3];
-    for (int j = 0; j < h->nops; j++) {
-      uint64_t op = f[4 + 2 * j], k = f[5 + 2 * j];
-      h->shift[j] = op == OP_SHIFT ? (uint8_t)k : 0;
-      h->n[j] = op == OP_ADD ? k : 0;
-    }
-  }
-  return 1;
-}
-
 /* The fields of [caml_rig_nv_launch]'s ints. */
 enum { l_params_at, l_bank0_bytes, l_max, l_max_threads = l_max + 6,
        l_max_shared, l_fields };
 
-/* A function set up for launch: [v_structures] holds the bytes and fields
+/* A function set up for launch: [v_structures] holds the bytes and patches
    of qmd[0][0], qmd[0][1], qmd[1][0], qmd[1][1] and bank0, in turn, and
    [v_ints] its numbers, as above. The caller frees it with
    [caml_rig_nv_launch_free]. */
@@ -224,12 +184,13 @@ value caml_rig_nv_launch(value v_structures, value v_ints) {
   result = caml_copy_nativeint(0);
   struct launch *l = malloc(sizeof *l);
   if (l == NULL) caml_raise_out_of_memory();
-  struct structure *s[5] = {&l->qmd[0][0], &l->qmd[0][1], &l->qmd[1][0],
-                            &l->qmd[1][1], &l->bank0};
+  struct template *s[5] = {&l->qmd[0][0], &l->qmd[0][1], &l->qmd[1][0],
+                           &l->qmd[1][1], &l->bank0};
   int ok = 1;
   for (int i = 0; i < 5; i++)
-    ok = ok && structure(s[i], Field(v_structures, 2 * i),
-                         Field(v_structures, 2 * i + 1));
+    ok = ok && read_template(s[i], Field(v_structures, 2 * i),
+                        Field(v_structures, 2 * i + 1), STRUCTURE_BYTES,
+                        VALUES);
 #define F(i) ((uint32_t)Long_val(Field(v_ints, i)))
   l->params_at = F(l_params_at);
   l->bank0_bytes = F(l_bank0_bytes);
