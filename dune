@@ -31,7 +31,8 @@
 ;
 ; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout, so a hung test
 ; cannot block a shared watch server. Under tsan it is 15 times longer,
-; ThreadSanitizer's slowdown at most.
+; ThreadSanitizer's slowdown at most, and RIG_TEST_TIME_SCALE makes rig's
+; suites scale their own timeouts as much.
 
 (env
  (dev
@@ -82,6 +83,7 @@
   (env-vars
    (TSAN_OPTIONS
     second_deadlock_stack=1:die_after_fork=0:allocator_may_return_null=1)
+   (RIG_TEST_TIME_SCALE 15)
    (WINDTRAP_TIMEOUT 900))
   (odoc
    (warnings fatal)))

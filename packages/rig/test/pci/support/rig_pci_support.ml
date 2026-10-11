@@ -40,7 +40,17 @@ let on_linux = Sys.file_exists "/sys/bus/pci/devices"
 
 external now_ns : unit -> int = "rig_pci_test_now_ns"
 
-let patience = 10.
+(* The factor RIG_TEST_TIME_SCALE names, which a profile whose build slows
+   every test sets, as Rig_support.time reads it. *)
+let time_scale =
+  match Sys.getenv_opt "RIG_TEST_TIME_SCALE" with
+  | None -> 1.
+  | Some s -> (
+      match float_of_string_opt s with
+      | Some k when k >= 1. -> k
+      | _ -> invalid_arg ("RIG_TEST_TIME_SCALE=" ^ s ^ ": not a factor >= 1"))
+
+let patience = 10. *. time_scale
 let patience_ns = int_of_float (patience *. 1e9)
 
 let poll f =

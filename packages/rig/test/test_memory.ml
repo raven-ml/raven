@@ -15,7 +15,7 @@ module Support = Rig_support
 let submit ?(buffers = [||]) ?waits s =
   Rig.submit ?waits s ~run:(Sub.Run.make ()) ~buffers
 
-let timeout = 60.
+let timeout = Rig_support.time 60.
 let kib = 1024
 
 let out_of_memory d n = function

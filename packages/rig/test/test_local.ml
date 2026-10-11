@@ -6,7 +6,7 @@
 open Windtrap
 module L = Rig.Local
 
-let timeout = 60.
+let timeout = Rig_support.time 60.
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
 (* A name no other case opened. *)

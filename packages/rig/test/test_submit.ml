@@ -9,7 +9,7 @@ module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
-let timeout = 60.
+let timeout = Rig_support.time 60.
 let memory name = Rig.memory_device name
 
 (* [b] borrowed on [d], as a run on [d] takes it. *)

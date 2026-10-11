@@ -26,7 +26,8 @@ let test_limit () =
    made, so the limit is reached well within the timeout. *)
 let tests =
   [
-    test ~timeout:10. "the 65,536th open fails, past closed devices"
+    test ~timeout:(Rig_support.time 10.)
+      "the 65,536th open fails, past closed devices"
       test_limit;
   ]
 

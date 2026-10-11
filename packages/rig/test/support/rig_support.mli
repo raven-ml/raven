@@ -405,6 +405,14 @@ val set_address_space : int -> int
     to [n] bytes: [0], the errno of a refusal, or [-1] off Linux, where the
     limit does not bound allocations. *)
 
+val time : float -> float
+(** [time s] is [s] seconds times the factor [RIG_TEST_TIME_SCALE] names, 1
+    when it is unset. A profile whose build slows every test sets it, as the
+    tsan profile does, and a test's [~timeout] is [time s].
+
+    Raises [Invalid_argument] at the program's start if the factor is not a
+    number of at least 1. *)
+
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)

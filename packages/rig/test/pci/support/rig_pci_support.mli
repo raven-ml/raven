@@ -44,7 +44,9 @@ val on_linux : bool
 
 val patience : float
 (** [patience] is 10 s, how long a test waits for what must happen: the
-    [~timeout] of each suite's top groups, and {!poll}'s bound. *)
+    [~timeout] of each suite's top groups, and {!poll}'s bound. It is
+    multiplied by the factor [RIG_TEST_TIME_SCALE] names, as
+    [Rig_support.time] multiplies. *)
 
 val poll : (unit -> bool) -> bool
 (** [poll f] calls [f] until it is [true] or {!patience} passed, and is [true]

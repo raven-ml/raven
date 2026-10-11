@@ -9,7 +9,7 @@ module Sub = Rig.Submission
 module Run = Sub.Run
 module P = Rig_support.Polled
 
-let timeout = 60.
+let timeout = Rig_support.time 60.
 let strf = Printf.sprintf
 
 let functions d =

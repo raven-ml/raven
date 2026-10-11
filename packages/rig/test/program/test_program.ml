@@ -10,7 +10,7 @@ module P = Rig_support.Polled
 module G = Rig_program
 open Rig_program
 
-let timeout = 60.
+let timeout = Rig_support.time 60.
 let strf = Printf.sprintf
 
 (* Fresh Polled devices: a name opens once. *)

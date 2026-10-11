@@ -8,7 +8,7 @@
 
 open Windtrap
 
-let timeout = 120.
+let timeout = Rig_support.time 120.
 
 let tests =
   [
