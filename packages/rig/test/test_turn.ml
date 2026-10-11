@@ -163,6 +163,24 @@ let test_break_in_wait () =
   equal bool true (breaks (fun () -> Rig.Point.wait first));
   still_works d p ~last:first
 
+(* A signal whose handler returns ends a wait's sleep early, as a system call
+   that a signal interrupts returns: the wait sleeps again, and returns once
+   its value is reached, the device live and nothing assigned. *)
+let test_signal_in_wait () =
+  let d, p = P.open_ "turn:signal-wait" in
+  let first = point (empty_run d) in
+  let handled = ref 0 in
+  P.interrupt p;
+  let before =
+    Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> incr handled))
+  in
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+    (fun () -> Rig.Point.wait first);
+  equal ~msg:"handled" int 1 !handled;
+  greater ~msg:"sleeps" int ~than:1 (count "sleep" p);
+  still_works d p ~last:first
+
 (* A thread waiting for room is interrupted: nothing is assigned to it. *)
 let test_break_waiting_for_room () =
   let d, p = P.open_ ~capacity:1 "turn:break-room" in
@@ -216,6 +234,7 @@ let tests =
     group ~timeout "interruptions"
       [
         test "Sys.Break in a wait loses nothing" test_break_in_wait;
+        test "a signal whose handler returns ends no wait" test_signal_in_wait;
         test "Sys.Break while waiting for room assigns no value"
           test_break_waiting_for_room;
         test "a close Sys.Break interrupted finishes at the next close"
