@@ -52,7 +52,7 @@ their domain.
 | I want to... | Use |
 |---|---|
 | Work with numerical arrays | [Nx](../packages/nx/doc/index.md) |
-| Run compiled work on a GPU or other device | [Rig](../dev/rig/doc/index.md) |
+| Run compiled work on a GPU or other device | [Rig](../packages/rig/doc/index.md) |
 | Compute gradients | [Rune](../packages/rune/doc/index.md) |
 | Solve equations, integrate, interpolate, fit | [Jera](../packages/jera/doc/index.md) |
 | Fit a probabilistic model | [Norn](../packages/norn/doc/index.md) |
@@ -98,7 +98,7 @@ let weights = Rig.Buffer.create gpu (Rig.Buffer.length file)
 let () = Rig.Buffer.copy ~src:file ~dst:weights
 ```
 
-[Rig documentation →](../dev/rig/doc/index.md)
+[Rig documentation →](../packages/rig/doc/index.md)
 
 ## Rune: Automatic Differentiation
 
