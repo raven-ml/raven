@@ -11,14 +11,12 @@ open Windtrap
 (* The descriptors this process holds. *)
 let descriptors () = Array.length (Sys.readdir "/dev/fd")
 
-(* The sockets among them. *)
-let sockets () =
-  let count n f =
-    match Unix.stat (Filename.concat "/dev/fd" f) with
-    | { st_kind = S_SOCK; _ } -> n + 1
-    | _ | (exception Unix.Unix_error _) -> n
-  in
-  Array.fold_left count 0 (Sys.readdir "/dev/fd")
+(* [thread_self ()] is this thread's id, as the system knows it. *)
+external thread_self : unit -> int = "rig_dial_probe_self"
+
+(* [await_select t ms] waits until the thread [t] waits in select, for at most
+   [ms] milliseconds: whether it does. *)
+external await_select : int -> int -> bool = "rig_dial_probe_await_select"
 
 (* A loopback listener whose backlog is full, with the connections that fill
    it: a connection to it waits. *)
@@ -41,27 +39,25 @@ let full () =
   | Unix.ADDR_INET (_, port) -> (l, port, held)
   | Unix.ADDR_UNIX _ -> assert false
 
-(* The signal comes once connect's socket exists, and its handler, which runs
-   on the thread in connect, closes the listener, so the connection is refused
-   after the signal. connect answers the refusal and holds no descriptor after.
-   The thread in connect holds the runtime except while it waits in the system:
-   a yield once its socket exists hands it the runtime if it wants it, so the
-   signal finds it waiting. *)
+(* The signal comes once connect waits in select for its connection, which
+   the full listener leaves waiting, and its handler, which runs on the thread
+   in connect, closes the listener, so the connection is refused after the
+   signal. connect answers the refusal and holds no descriptor after. *)
 let interrupted () =
   let before = descriptors () in
   let l, port, held = full () in
   Sys.set_signal Sys.sigusr1
     (Sys.Signal_handle (fun _ -> List.iter Unix.close (l :: held)));
-  let listening = sockets () in
+  let dialer = thread_self () in
+  let waited = Atomic.make false in
   let interrupter =
     Thread.create
       (fun () ->
         ignore (Thread.sigmask Unix.SIG_BLOCK [ Sys.sigusr1 ]);
-        while sockets () = listening do
-          Thread.yield ()
-        done;
-        Thread.yield ();
-        Unix.kill (Unix.getpid ()) Sys.sigusr1)
+        if await_select dialer 5_000 then begin
+          Atomic.set waited true;
+          Unix.kill (Unix.getpid ()) Sys.sigusr1
+        end)
       ()
   in
   let r =
@@ -70,6 +66,7 @@ let interrupted () =
       [ ("127.0.0.1", port) ]
   in
   Thread.join interrupter;
+  equal ~msg:"connect waited in select" bool true (Atomic.get waited);
   (match r with
   | Ok _ -> fail "connect reached a listener that accepts nothing"
   | Error why ->

@@ -16,9 +16,14 @@
   test_rig_remote_abort
   test_rig_remote_join
   test_rig_remote_ids
-  test_rig_remote_program
+  test_rig_remote_program)
+ (modules
+  :standard
+  \
+  remote_job
+  watchdog
+  test_rig_remote_rail
   test_rig_remote_dial)
- (modules :standard \ remote_job watchdog test_rig_remote_rail)
  (deps
   support/agent.exe
   support/controller.exe
@@ -36,6 +41,16 @@
   threads.posix
   unix
   windtrap))
+
+; test_rig_remote_dial reads, in C, whether its connect waits in select.
+
+(test
+ (name test_rig_remote_dial)
+ (modules test_rig_remote_dial)
+ (foreign_stubs
+  (language c)
+  (names dial_probe_stubs))
+ (libraries rig_remote rig_remote_job threads.posix unix windtrap))
 
 ; test_rig_remote_rail holds a queue of this machine's AMD or NV GPU.
 
