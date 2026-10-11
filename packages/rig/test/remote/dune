@@ -42,7 +42,7 @@
   unix
   windtrap))
 
-; test_rig_remote_dial reads, in C, whether its connect waits in select.
+; test_rig_remote_dial reads, in C, whether its connect waits for its socket.
 
 (test
  (name test_rig_remote_dial)
