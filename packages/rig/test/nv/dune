@@ -11,6 +11,7 @@
   rig_nv_nvidia
   rig_nv_support
   rig_support
+  unix
   windtrap)
  (deps
   (glob_files fixtures/*)))

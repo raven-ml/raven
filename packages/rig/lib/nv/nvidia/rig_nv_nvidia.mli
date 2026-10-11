@@ -44,9 +44,11 @@
     the GPU. [Mapped] memory lies in the GPU's BAR1, whose size the kernel
     driver sets. Host memory that {!Rig_nv.val-map_host} maps lies at a GPU
     address of its own, since the host's address may lie higher. The kernel
-    driver pins those pages for writing while they are mapped, which Linux
-    refuses for a shared mapping of a file, so {!Rig_nv.val-map_host}
-    returns [None] for such pages, as for unmapped ones.
+    driver pins those pages for writing while they are mapped, for the long
+    term on x86-64. From Linux 6.5 on, Linux refuses such a pin of a shared
+    mapping of a file whose file system tracks its dirty pages, such as
+    ext4's but not tmpfs's, so there {!Rig_nv.val-map_host} returns [None]
+    for those pages, as for unmapped ones.
 
     {!buses}, {!count} and an opener's [make] read the machine's files under
     the directory [root] (defaults to ["/"]): its PCI functions under

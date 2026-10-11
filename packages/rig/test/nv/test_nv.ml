@@ -201,6 +201,50 @@ let refused_host () =
   equal bool ~msg:"an unmapped page" true (Option.is_none (N.map_host g p 8));
   equal bool ~msg:"address 0" true (Option.is_none (N.map_host g 0 8))
 
+(* So is a page of a file mapped shared, where Linux refuses the kernel
+   driver's long-term pin for writing: on x86-64 from Linux 6.5 on, for a file
+   whose file system tracks its dirty pages. The file lies beside the suite. *)
+let kernel () =
+  In_channel.with_open_text "/proc/sys/kernel/osrelease" input_line
+
+let pins_refused () =
+  Rig.arch Rig.host = "x86_64"
+  && Scanf.sscanf (kernel ()) "%d.%d" (fun major minor ->
+         major > 6 || (major = 6 && minor >= 5))
+
+(* The type of the file system that holds [path]: that of the mount point in
+   /proc/self/mounts that is its longest prefix. *)
+let file_system path =
+  let mounts =
+    In_channel.with_open_text "/proc/self/mounts" In_channel.input_lines
+  in
+  let within (best, kind) l =
+    match String.split_on_char ' ' l with
+    | _ :: dir :: k :: _ when String.starts_with ~prefix:dir path ->
+        if String.length dir > String.length best then (dir, k)
+        else (best, kind)
+    | _ -> (best, kind)
+  in
+  snd (List.fold_left within ("", "") mounts)
+
+let refused_file () =
+  S.with_driver @@ fun g ->
+  if not (pins_refused ()) then
+    skip ~reason:"Linux takes long-term pins of shared file mappings" ();
+  if file_system (Sys.getcwd ()) = "tmpfs" then
+    skip ~reason:"tmpfs tracks no dirty pages" ();
+  let path = Filename.temp_file ~temp_dir:(Sys.getcwd ()) "rig-nv" ".map" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) @@ fun () ->
+  let fd = Unix.openfile path [ O_RDWR ] 0o600 in
+  let file =
+    Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+    Unix.map_file fd Bigarray.char Bigarray.c_layout true [| H.page |]
+  in
+  let a = H.data (Bigarray.array1_of_genarray file) in
+  equal bool ~msg:"a file's shared mapping" true
+    (Option.is_none (N.map_host g a 8));
+  ignore (Sys.opaque_identity file)
+
 (* Views a GPU's reopened device makes of memory the GPU already maps: each
    region over it keeps it mapped until its own free, in whatever order they
    go. *)
@@ -274,6 +318,9 @@ let memory =
          took"
         refusal;
       test "map_host answers None for host memory no page backs" refused_host;
+      test
+        "map_host answers None for a file's shared mapping Linux will not pin"
+        refused_file;
     ]
 
 (* Work *)
