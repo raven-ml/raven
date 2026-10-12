@@ -45,7 +45,7 @@ let iter_rows box ~into ~at f =
    signalling NaN. Elements narrower than a byte are packed: a row that starts
    and ends on bytes of both buffers is copied as its bytes, any other one
    element at a time. *)
-let blit_box src box dst ~into ~at =
+let blit_box (type a b) (dt : (a, b) Nx_dtype.t) src box dst ~into ~at =
   let box, into, at =
     if Array.length box = 0 then ([| 1 |], [| 1 |], [| 0 |]) else (box, into, at)
   in
@@ -56,26 +56,21 @@ let blit_box src box dst ~into ~at =
       a.(r) <- a.(r) * w;
       a
     in
-    let s = Nx_device.Buffer.bigarray word src
-    and d = Nx_device.Buffer.bigarray word dst in
     let box = scale box in
     let run = box.(Array.length box - 1) in
+    Rig.Buffer.read src word @@ fun s ->
+    Rig.Buffer.write dst word @@ fun d ->
     iter_rows box ~into:(scale into) ~at:(scale at) (fun src_off dst_off ->
         Bigarray.Array1.blit
           (Bigarray.Array1.sub s src_off run)
           (Bigarray.Array1.sub d dst_off run))
   in
-  let packed (type c d) (dt : (c, d) Nx_dtype.t) bits =
-    let as_dt b =
-      Nx_device.Buffer.view b ~offset:0
-        (Nx_dtype.Scalar.of_dtype dt)
-        (Nx_device.Buffer.length b)
-    in
-    let get = Elements.get dt (as_dt src)
-    and set = Elements.set dt (as_dt dst) in
-    let s = Nx_device.Buffer.bigarray Bigarray.int8_unsigned src
-    and d = Nx_device.Buffer.bigarray Bigarray.int8_unsigned dst in
+  let packed bits =
     let run = box.(Array.length box - 1) in
+    Elements.read dt src @@ fun get ->
+    Elements.write dt dst @@ fun set ->
+    Rig.Buffer.read src Bigarray.int8_unsigned @@ fun s ->
+    Rig.Buffer.write dst Bigarray.int8_unsigned @@ fun d ->
     let on_bytes i = i * bits mod 8 = 0 in
     iter_rows box ~into ~at (fun src_off dst_off ->
         if on_bytes src_off && on_bytes dst_off && on_bytes run then
@@ -87,9 +82,8 @@ let blit_box src box dst ~into ~at =
             set (dst_off + i) (get (src_off + i))
           done)
   in
-  match Nx_dtype.Scalar.bitsize (Nx_device.Buffer.dtype src) with
-  | 1 -> packed Nx_dtype.bit 1
-  | 4 -> packed Nx_dtype.uint4 4
+  match Nx_dtype.Scalar.(bitsize (of_dtype dt)) with
+  | (1 | 4) as bits -> packed bits
   | 8 -> words Bigarray.int8_unsigned 1
   | 16 -> words Bigarray.int16_unsigned 1
   | 32 -> words Bigarray.int32 1
@@ -114,7 +108,7 @@ let extents w = Array.map (fun (lo, hi) -> hi - lo) w
    that holds it, and only where it meets the window. Memories read placed
    values, and gather the pieces of a move, this way. *)
 let assemble (type a b) (r : (a, b) resident) window
-    (read : Device.t -> View.t -> Nx_device.Buffer.t) : Nx_device.Buffer.t =
+    (read : Device.t -> View.t -> Rig.Buffer.t) : Rig.Buffer.t =
   let p = r.r_placement in
   let shape = global p (View.shape r.r_view) in
   let pieces =
@@ -136,7 +130,7 @@ let assemble (type a b) (r : (a, b) resident) window
       let dst = Elements.create r.r_dtype (Array.fold_left ( * ) 1 into) in
       List.iter
         (fun ((_, _, i) as p) ->
-          blit_box (piece p) (extents i) dst ~into
+          blit_box r.r_dtype (piece p) (extents i) dst ~into
             ~at:(Array.map fst (within window i)))
         pieces;
       dst
@@ -149,40 +143,38 @@ module Cpu = (val Nx_backend.kernels Nx_cpu.backend)
    than a byte is read whole: its elements may not start on a byte. A strided
    view is gathered by nx.cpu. *)
 let read_view dtype b v =
-  let s = Nx_device.Buffer.dtype b in
   let n = View.numel v in
-  if n = 0 then Nx_device.Buffer.create Nx_device.host s 0
+  if n = 0 then Rig.Buffer.create Rig.host 0
   else
+    let bits = Nx_dtype.Scalar.(bitsize (of_dtype dtype)) in
     let lo, hi =
-      if Nx_dtype.Scalar.bitsize s < 8 then (0, Nx_device.Buffer.length b)
-      else View.extent v
+      if bits < 8 then (0, Elements.length dtype b) else View.extent v
     in
-    let span = Nx_device.Buffer.create Nx_device.host s (hi - lo) in
-    Nx_device.Buffer.copy
+    let span = Rig.Buffer.create Rig.host (Elements.bytes dtype (hi - lo)) in
+    Rig.Buffer.copy
       ~src:
-        (Nx_device.Buffer.view b
-           ~offset:(lo * Nx_dtype.Scalar.bitsize s / 8)
-           s (hi - lo))
+        (Rig.Buffer.view b ~first:(lo * bits / 8)
+           ~length:(Rig.Buffer.length span))
       ~dst:span;
     let view =
       View.create
         ~offset:(View.offset v - lo)
         ~strides:(View.strides v) (View.shape v)
     in
-    if View.is_c_contiguous view then Elements.contiguous span view
+    if View.is_c_contiguous view then Elements.contiguous dtype span view
     else
       let dst = alloc dtype (View.shape view) in
       Cpu.contiguous { dtype; view; buffer = span } ~dst;
       dst.buffer
 
-(* [run_in b v] is the elements of the view [v] of [b], in C order, as a view of
-   [b], when they are a contiguous run of it that starts on a byte. *)
-let run_in b v =
-  let s = Nx_device.Buffer.dtype b in
-  let bits = Nx_dtype.Scalar.bitsize s and n = View.numel v in
+(* [run_in dtype b v] is the elements of [dtype] at the view [v] of [b], in C
+   order, as a view of [b], when they are a contiguous run of it that starts on
+   a byte. *)
+let run_in dtype b v =
+  let bits = Nx_dtype.Scalar.(bitsize (of_dtype dtype)) and n = View.numel v in
   let first = View.offset v * bits in
   if n > 0 && View.is_c_contiguous v && first mod 8 = 0 then
-    Some (Nx_device.Buffer.view b ~offset:(first / 8) s n)
+    Some (Rig.Buffer.view b ~first:(first / 8) ~length:(Elements.bytes dtype n))
   else None
 
 (* [file_windows v ds windows b] is the view each device of [ds] has of its
@@ -191,9 +183,8 @@ let run_in b v =
    every device shares the host's memory, every window has an element and starts
    on a byte, the windows are one view of their storages, and every device
    borrows them. *)
-let file_windows v ds windows b =
-  let s = Nx_device.Buffer.dtype b in
-  let bits = Nx_dtype.Scalar.bitsize s in
+let file_windows dtype v ds windows b =
+  let bits = Nx_dtype.Scalar.(bitsize (of_dtype dtype)) in
   let span w =
     let vw = View.shrink v w in
     if View.numel vw = 0 then None
@@ -203,11 +194,12 @@ let file_windows v ds windows b =
       else
         Some
           ( (View.offset vw - lo, View.strides vw, View.shape vw),
-            Nx_device.Buffer.view b ~offset:(lo * bits / 8) s (hi - lo) )
+            Rig.Buffer.view b ~first:(lo * bits / 8)
+              ~length:(Elements.bytes dtype (hi - lo)) )
   in
   let spans = List.map span windows in
   if
-    List.for_all (fun d -> Nx_device.shares_host_memory (Device.memory d)) ds
+    List.for_all (fun d -> Rig.shares_host_memory (Device.memory d)) ds
     && List.for_all Option.is_some spans
   then
     let spans = List.map Option.get spans in
@@ -215,11 +207,11 @@ let file_windows v ds windows b =
     if List.for_all (fun (v', _) -> v' = view) spans then
       let borrows =
         List.map2
-          (fun d (_, run) -> Nx_device.Buffer.borrow (Device.memory d) run)
+          (fun d (_, run) -> Rig.Buffer.borrow (Device.memory d) run)
           ds spans
       in
-      if List.for_all Result.is_ok borrows then
-        Some (View.create ~offset ~strides shape, List.map Result.get_ok borrows)
+      if List.for_all Option.is_some borrows then
+        Some (View.create ~offset ~strides shape, List.map Option.get borrows)
       else None
     else None
   else None
@@ -227,7 +219,7 @@ let file_windows v ds windows b =
 (* Reading placed values *)
 
 (* The elements of a placed value's view. *)
-let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
+let read_elements (type a b) (r : (a, b) resident) : Rig.Buffer.t =
   Cell.with_borrow r.r_cell (fun () ->
       match r.r_cell.state with
       | Consumed k -> consumed k
@@ -236,30 +228,23 @@ let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
           assemble r
             (Array.map (fun n -> (0, n)) shape)
             (fun d v ->
-              read_view r.r_dtype
-                (read_as r.r_dtype (buffer_on r.r_cell bufs d))
-                v))
+              read_view r.r_dtype (buffer_on r.r_cell bufs d) v))
 
 (* [file_run r] is the file bytes that hold [r]'s storage, when they lie on the
-   disk at a byte aligned to an element, so that the host can read them in
-   place. *)
+   disk, or another io device, at a byte aligned to an element, so that the
+   host can read them in place. *)
 let file_run (type a b) (r : (a, b) resident) =
   match Cell.state r.r_cell with
-  | Live [ b ] when Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk
-    ->
-      let b = read_as r.r_dtype b in
-      let size =
-        Int.max 1 (Nx_dtype.Scalar.bitsize (Nx_device.Buffer.dtype b) / 8)
-      in
-      if Nativeint.to_int (Nx_device.Buffer.address b) mod size = 0 then Some b
-      else None
+  | Live [ b ] when not (Rig.computes (Rig.Buffer.device b)) ->
+      let size = Int.max 1 (Nx_dtype.Scalar.(bitsize (of_dtype r.r_dtype)) / 8) in
+      if Rig.Buffer.offset b mod size = 0 then Some b else None
   | _ -> None
 
 (* A placed value is read once and checked: a buffer of another device or format
    would otherwise reach nx.cpu's kernels. *)
 let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
   let buffer = read_elements r in
-  check_host "Nx.read" r.r_dtype buffer;
+  check_host "Nx.read" buffer;
   { dtype = r.r_dtype; view = View.create (View.shape (whole_view r)); buffer }
 
 (* A value on the disk is read where it lies, in its file's pages, and keeps its
@@ -268,11 +253,10 @@ let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
   match file_run r with
   | Some b -> (
       match
-        Cell.with_borrow r.r_cell (fun () ->
-            Nx_device.Buffer.borrow Nx_device.host b)
+        Cell.with_borrow r.r_cell (fun () -> Rig.Buffer.borrow Rig.host b)
       with
-      | Ok buffer -> { Nx_array.dtype = r.r_dtype; view = whole_view r; buffer }
-      | Error _ -> read_copy r)
+      | Some buffer -> { Nx_array.dtype = r.r_dtype; view = whole_view r; buffer }
+      | None -> read_copy r)
   | None -> read_copy r
 
 (* [host_of x] is [x]'s value as a host tensor: [x] itself on the host, a copy
@@ -297,21 +281,21 @@ let place_at : type a b. Placement.t -> (a, b) t -> (a, b) t =
     match x with
     | Placed r -> (
         match Cell.state r.r_cell with
-        | Live [ b ] -> (r.r_dtype, r.r_view, run_in (read_as r.r_dtype b))
+        | Live [ b ] -> (r.r_dtype, r.r_view, run_in r.r_dtype b)
         | _ -> (r.r_dtype, whole_view r, fun _ -> None))
     | _ ->
         let h = Lazy.force host in
         (h.dtype, h.view, fun _ -> None)
   in
   let shape = View.shape v in
-  let s = Nx_dtype.Scalar.of_dtype dt in
   let ds = Placement.devices p in
   let windows = List.map (fun d -> Placement.window p shape d) ds in
   let local = extents (List.hd windows) in
   let n = Array.fold_left ( * ) 1 local in
   let borrowed =
     match x with
-    | Placed r -> Option.bind (file_run r) (file_windows r.r_view ds windows)
+    | Placed r ->
+        Option.bind (file_run r) (file_windows r.r_dtype r.r_view ds windows)
     | _ -> None
   in
   match borrowed with
@@ -322,13 +306,15 @@ let place_at : type a b. Placement.t -> (a, b) t -> (a, b) t =
         | Some b -> b
         | None ->
             let h = Lazy.force host in
-            Elements.contiguous h.buffer (View.shrink h.view w)
+            Elements.contiguous h.dtype h.buffer (View.shrink h.view w)
       in
       let bufs =
         List.map2
           (fun d w ->
-            let b = Nx_device.Buffer.create (Device.memory d) s n in
-            if n > 0 then Nx_device.Buffer.copy ~src:(piece w) ~dst:b;
+            let b =
+              Rig.Buffer.create (Device.memory d) (Elements.bytes dt n)
+            in
+            if n > 0 then Rig.Buffer.copy ~src:(piece w) ~dst:b;
             b)
           ds windows
       in
@@ -353,7 +339,7 @@ let view_at (type a b) p (x : (a, b) t) : (a, b) t option =
   match x with
   | Host t -> (
       match Placement.devices p with
-      | [ d ] when Nx_device.equal (Device.memory d) Nx_device.host ->
+      | [ d ] when Rig.equal (Device.memory d) Rig.host ->
           Some
             (placed "Nx.place" p t.dtype t.view
                (cell ~placement:p [ t.buffer ]))
@@ -387,14 +373,8 @@ let view_at (type a b) p (x : (a, b) t) : (a, b) t option =
    lies whole in the host's memory. *)
 let host_view (type a b) (r : (a, b) resident) : (a, b) Nx_array.t option =
   match (Placement.devices r.r_placement, Cell.state r.r_cell) with
-  | [ d ], Live [ buffer ] when Nx_device.equal (Device.memory d) Nx_device.host
-    ->
-      Some
-        {
-          dtype = r.r_dtype;
-          view = r.r_view;
-          buffer = read_as r.r_dtype buffer;
-        }
+  | [ d ], Live [ buffer ] when Rig.equal (Device.memory d) Rig.host ->
+      Some { dtype = r.r_dtype; view = r.r_view; buffer }
   | _ -> None
 
 (* [x] at [p]: [x] itself when it is there, and placed there anew otherwise. *)

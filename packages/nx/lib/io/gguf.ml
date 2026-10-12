@@ -62,7 +62,7 @@ type t = {
 }
 
 open Error
-module B = Nx_device.Buffer
+module B = Rig.Buffer
 module A = Bigarray.Array1
 
 let magic = "GGUF"
@@ -331,11 +331,12 @@ let read file =
   let file_len = B.length file in
   if file_len < min_header then
     fail_msg "%d bytes is too short for a GGUF file" file_len;
-  let bytes =
-    match B.borrow Nx_device.host file with
-    | Ok b -> Storage.bytes b
-    | Error why -> failwith why
+  let borrowed =
+    match B.borrow Rig.host file with
+    | Some b -> b
+    | None -> failwith "the system does not map the file"
   in
+  Storage.read_bytes borrowed @@ fun bytes ->
   let c = { bytes; pos = 0 } in
   if chars c 4 <> magic then failwith "the file does not start with GGUF";
   let version = version c in
@@ -349,7 +350,7 @@ let read file =
   { version; metadata; tensors; infos }
 
 let load path =
-  match B.of_file path with
+  match Rig_disk.of_file path with
   | Error why -> failwith why
   | Ok file -> (
       try read file with

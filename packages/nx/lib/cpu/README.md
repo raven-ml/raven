@@ -15,9 +15,9 @@ strided, low-precision, integer, or otherwise ineligible products.
 
 An operand is an `Nx_array.t`, which crosses the FFI as it is: its dtype, its
 view (shape, strides, offset) and its buffer, in that order, the view's fields
-read at their own slots. The buffer is a host `Nx_device.Buffer.t`,
-whose first byte C reads with `nx_device_buffer_host` from nx.device's
-`nx_device.h`; the dtype's constructor index is its C dtype tag. Shapes,
+read at their own slots. The buffer is a `Rig.Buffer.t` the host addresses,
+whose first byte C reads with `rig_buffer_host` from rig's `rig.h`; the
+dtype's constructor index is its C dtype tag. Shapes,
 strides, and offsets are expressed in logical elements. Packed 4-bit dtypes are
 the only exception at the storage boundary. `nx_c.h`'s `_Static_assert` pins
 the tag order, and every dtype and layout crosses the FFI in Nx's suites, which
@@ -32,7 +32,8 @@ and infinity behavior and are never compiled with `-ffast-math`.
 ## Iteration and concurrency
 
 `nx_c_engine.[ch]` owns validation, dimension coalescing, iterator selection,
-error translation, and the shared worker pool. Kernels receive validated C data
+error translation, and the policy over the host's worker pool, rig's
+(`rig_pool.h`), which the host's launches share. Kernels receive validated C data
 only; worker bodies do not inspect OCaml values, allocate on the OCaml heap, or
 call the runtime.
 

@@ -1,4 +1,0 @@
-(library
- (name nx_nv)
- (public_name nx.nv)
- (libraries nx nx.device nx.nv.device))

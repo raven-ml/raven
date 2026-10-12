@@ -441,17 +441,7 @@ let copy x = B.copy x
 (* [f] applied to the reader of [x]'s elements in C order, from index 0, read by
    the surface function [by]. The memory is under a read claim until [f]
    returns, so that no compiled call lends it meanwhile. *)
-let reading ~by x f =
-  let buf = B.read ~by x in
-  Nx_device.Buffer.Claim.read buf;
-  match f (Elements.get (Value.dtype x) buf) with
-  | v ->
-      Nx_device.Buffer.Claim.release buf;
-      v
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      Nx_device.Buffer.Claim.release buf;
-      Printexc.raise_with_backtrace e bt
+let reading ~by x f = Elements.read (Value.dtype x) (B.read ~by x) f
 
 (* [x]'s elements in C order, read by [by]. *)
 let read_array ~by x = reading ~by x (Array.init (numel x))
@@ -470,8 +460,8 @@ let create ctx dtype shape arr =
     err "create" "array size, got %d elements, expected %d" (Array.length arr)
       n;
   let buf = Elements.create dtype n in
-  Array.iteri (Elements.set dtype buf) arr;
-  let tensor_1d = B.from_host ctx dtype buf in
+  Elements.write dtype buf (fun set -> Array.iteri set arr);
+  let tensor_1d = B.from_host ctx dtype n buf in
   if Array.length shape = 1 && shape.(0) = n then tensor_1d
   else B.reshape tensor_1d shape
 
@@ -514,9 +504,7 @@ let to_bigarray x =
       err "to_bigarray" "Bigarray has no %s kind"
         (Nx_dtype.to_string (Value.dtype x))
   | Some k ->
-      let ba =
-        Nx_device.Buffer.bigarray k (B.read ~by:"Nx.to_bigarray" (copy x))
-      in
+      let ba = Rig.Buffer.export (B.read ~by:"Nx.to_bigarray" (copy x)) k in
       Bigarray.reshape (Bigarray.genarray_of_array1 ba) (shape x)
 
 let of_bigarray (type a b) ctx
@@ -531,7 +519,8 @@ let of_bigarray (type a b) ctx
   in
   let shape = Bigarray.Genarray.dims ba in
   let flat = Bigarray.reshape_1 ba (Array.fold_left ( * ) 1 shape) in
-  reshape shape (B.from_host ctx dtype (Nx_device.Buffer.of_bigarray flat))
+  let n = Bigarray.Array1.dim flat in
+  reshape shape (B.from_host ctx dtype n (Rig.Buffer.of_bigarray flat))
 
 let to_array x = read_array ~by:"Nx.to_array" x
 
@@ -6229,11 +6218,11 @@ let map_item f x =
   let sz = size x in
   reading ~by:"Nx.map_item" x @@ fun src ->
   let dst = Elements.create (dtype x) sz in
-  let set = Elements.set (dtype x) dst in
-  for i = 0 to sz - 1 do
-    set i (f (src i))
-  done;
-  reshape (shape x) (B.from_host (Value.context x) (dtype x) dst)
+  ( Elements.write (dtype x) dst @@ fun set ->
+    for i = 0 to sz - 1 do
+      set i (f (src i))
+    done );
+  reshape (shape x) (B.from_host (Value.context x) (dtype x) sz dst)
 
 let iter_item f x =
   reading ~by:"Nx.iter_item" x @@ fun src ->

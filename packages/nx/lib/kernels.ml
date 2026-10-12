@@ -31,11 +31,19 @@ let host =
 let shape_of (a : ('a, 'b) Nx_array.t) = View.shape a.view
 
 (* Kernels read their operands' memory under read claims, so that no compiled
-   call lends it to a result meanwhile. Claims are released however the kernel
+   call lends it to a result meanwhile. A kernel the host runs first waits for
+   the work that wrote its operands. Claims are released however the kernel
    ends, and none allocates. *)
 
-let claim (a : ('a, 'b) Nx_array.t) = Nx_device.Buffer.Claim.read a.buffer
-let release (a : ('a, 'b) Nx_array.t) = Nx_device.Buffer.Claim.release a.buffer
+external claim_device : Rig.Buffer.t -> unit = "caml_nx_claim"
+external claim_host : Rig.Buffer.t -> unit = "caml_nx_claim_host"
+external release_buffer : Rig.Buffer.t -> unit = "caml_nx_release" [@@noalloc]
+
+let claim (a : ('a, 'b) Nx_array.t) =
+  if Rig.runs_on_host (Rig.Buffer.device a.buffer) then claim_host a.buffer
+  else claim_device a.buffer
+
+let release (a : ('a, 'b) Nx_array.t) = release_buffer a.buffer
 
 let release2 a b =
   release a;
@@ -406,10 +414,8 @@ let bitcast (type a b c d) (e : env) (dtype : (c, d) Nx_dtype.t)
     (a : (a, b) Nx_array.t) : (c, d) Nx_array.t =
   let bits dt = Nx_dtype.Scalar.(bitsize (of_dtype dt)) in
   let w = bits a.dtype and w' = bits dtype in
-  let scalar = Nx_dtype.Scalar.of_dtype dtype in
   let over (a : (a, b) Nx_array.t) view : (c, d) Nx_array.t =
-    let n = Nx_device.Buffer.nbytes a.buffer * 8 / w' in
-    { dtype; view; buffer = Nx_device.Buffer.view a.buffer ~offset:0 scalar n }
+    { dtype; view; buffer = a.buffer }
   in
   let v = a.view in
   if w' = w then over a v
@@ -421,10 +427,8 @@ let bitcast (type a b c d) (e : env) (dtype : (c, d) Nx_dtype.t)
     let first = View.offset v * w in
     let aligned =
       let align = Int.max 1 (w' / 8) in
-      let byte =
-        Nativeint.(add (Nx_device.Buffer.address a.buffer) (of_int (first / 8)))
-      in
-      first mod Int.min 8 w' = 0 && Nativeint.(rem byte (of_int align)) = 0n
+      first mod Int.min 8 w' = 0
+      && Rig.Buffer.aligned a.buffer ~at:(first / 8) align
     in
     let a, first =
       if View.is_c_contiguous v && aligned then (a, first)
@@ -436,8 +440,8 @@ let bitcast (type a b c d) (e : env) (dtype : (c, d) Nx_dtype.t)
       dtype;
       view = View.create ~offset:skip (Array.sub s 0 (Array.length s - 1));
       buffer =
-        Nx_device.Buffer.view a.buffer ~offset:(first / 8) scalar
-          (skip + (View.numel a.view / k));
+        Rig.Buffer.view a.buffer ~first:(first / 8)
+          ~length:(Elements.bytes dtype (skip + (View.numel a.view / k)));
     }
 
 let cholesky (e : env) upper a =
@@ -557,21 +561,22 @@ let local (type a b) d (x : (a, b) t) : (a, b) Nx_array.t =
           {
             dtype = r.r_dtype;
             view = r.r_view;
-            buffer = read_as r.r_dtype (buffer_on r.r_cell bufs d);
+            buffer = buffer_on r.r_cell bufs d;
           }
       | Consumed k -> consumed k)
   | Host _ -> invalid_arg "Nx: a host value has no device array"
   | Traced _ -> outside_trace ()
 
-(* Computing on [d] with [kernels]: results in [d]'s memory. *)
+(* Computing on [d] with [kernels]: results in [d]'s memory. The bits of a
+   result's last byte past its last element are 0, as {!Elements.create}
+   leaves them. *)
 let on kernels d =
   let alloc (type a b) (dtype : (a, b) Nx_dtype.t) shape : (a, b) Nx_array.t =
     let n = Array.fold_left ( * ) 1 shape in
-    let s = Nx_dtype.Scalar.of_dtype dtype in
-    {
-      dtype;
-      view = View.create shape;
-      buffer = Nx_device.Buffer.create (Device.memory d) s n;
-    }
+    let bytes = Elements.bytes dtype n in
+    let buffer = Rig.Buffer.create (Device.memory d) bytes in
+    if n * Nx_dtype.Scalar.(bitsize (of_dtype dtype)) mod 8 <> 0 then
+      Rig.Buffer.fill (Rig.Buffer.view buffer ~first:(bytes - 1) ~length:1) '\000';
+    { dtype; view = View.create shape; buffer }
   in
   { device = d; kernels; alloc; arr = (fun x -> local d x) }

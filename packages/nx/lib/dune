@@ -1,5 +1,4 @@
-; nx links no vendor runtime: a vendor's devices come from its own library
-; (nx.cuda, nx.metal, nx.nv, nx.amd).
+; nx links no driver: a program opens its devices with rig's drivers.
 
 (library
  (name nx)
@@ -30,7 +29,10 @@
   nx_array
   nx_backend
   nx_cpu
-  nx_device)
+  rig)
+ (foreign_stubs
+  (language c)
+  (names nx_claim_stubs))
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

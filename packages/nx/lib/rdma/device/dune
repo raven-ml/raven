@@ -1,4 +1,0 @@
-(library
- (name nx_rdma_device)
- (public_name nx.rdma.device)
- (libraries nx.device nx.device.support nx.remote.device unix))

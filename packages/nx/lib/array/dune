@@ -1,7 +1,7 @@
 (library
  (name nx_array)
  (public_name nx.array)
- (libraries nx_dtype nx_device)
+ (libraries nx_dtype rig)
  (foreign_stubs
   (language c)
   (names nx_array_stubs)

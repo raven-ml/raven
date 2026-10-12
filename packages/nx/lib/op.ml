@@ -157,7 +157,7 @@ type _ t =
       -> ('a, 'b) Value.t t
   | Move : ('a, 'b) Value.t * move -> ('a, 'b) Value.t t
   | Place : Placement.t * ('a, 'b) Value.t -> ('a, 'b) Value.t t
-  | Read : { by : string; x : ('a, 'b) Value.t } -> Nx_device.Buffer.t t
+  | Read : { by : string; x : ('a, 'b) Value.t } -> Rig.Buffer.t t
   | Check : {
       ok : (bool, Nx_dtype.bool_elt) Value.t;
       data : Value.packed list;

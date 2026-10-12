@@ -15,13 +15,8 @@ open Nx_array
 
 type ('a, 'b) t = ('a, 'b) Nx_array.t
 
-external device_pool : unit -> nativeint = "caml_nx_device_pool"
-external set_pool : nativeint -> unit = "caml_nx_c_set_pool"
-
-(* The kernels run on the host's one thread pool, nx.device's. *)
-let () = set_pool (device_pool ())
 let name = "nx.cpu"
-let runs_on = Nx_device.runs_on_host
+let runs_on = Rig.runs_on_host
 let owns = runs_on
 let shape (t : ('a, 'b) t) = View.shape t.view
 let of_view (t : ('a, 'b) t) view = { t with view }
@@ -407,14 +402,9 @@ let scatter (type a b) ~mode ~unique ~axis ~indices ~(updates : (a, b) t)
    merges its partial ones, keeping the elements around it. *)
 let update (x : ('a, 'b) t) ~(starts : Nx_backend.index_array) v ~dst =
   caml_copy dst x;
-  let positions =
-    match Nx_device.Buffer.borrow Nx_device.host starts.buffer with
-    | Ok b -> b
-    | Error why -> invalid_arg ("Nx_cpu.update: " ^ why)
-  in
-  let start = Elements.get Nx_dtype.int64 positions in
   let offset = View.offset starts.view and stride = View.stride 0 starts.view in
   let bounds =
+    Elements.read Nx_dtype.int64 starts.buffer @@ fun start ->
     Array.init
       (Array.length (shape x))
       (fun i ->

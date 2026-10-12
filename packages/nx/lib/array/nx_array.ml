@@ -11,5 +11,5 @@ module Elements = Elements
 type ('a, 'b) t = {
   dtype : ('a, 'b) Nx_dtype.t;
   view : View.t;
-  buffer : Nx_device.Buffer.t;
+  buffer : Rig.Buffer.t;
 }

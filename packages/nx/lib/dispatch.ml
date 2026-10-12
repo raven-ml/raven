@@ -38,7 +38,7 @@ let refused op (e : Kernels.env) reason =
        "Nx.%s: %s on %s has no kernel: %s. Compile it with Rune.jit, or place \
         the operands elsewhere."
        op K.name
-       (Nx_device.name (Device.memory e.device))
+       (Rig.name (Device.memory e.device))
        reason)
 
 (* [compute envs s op] is [op] computed where each of [envs] says, its results
@@ -441,10 +441,10 @@ let solve_triangular upper transpose unit_diag a b =
    value's storage when they are one run of it, gathered by nx.cpu under a read
    claim otherwise, and a copy of a placed one's, read from its runtime
    buffers. *)
-let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
+let read_elements_of (type a b) (x : (a, b) t) : Rig.Buffer.t =
   match x with
   | Host t -> (
-      match Place.run_in t.buffer t.view with
+      match Place.run_in t.dtype t.buffer t.view with
       | Some b -> b
       | None -> (Kernels.contiguous Kernels.host t).buffer)
   | Placed r -> Place.read_elements r
@@ -458,13 +458,10 @@ let check_elements ok data fail =
   let n = Shape.numel shape in
   if n > 0 then begin
     let b = read_elements_of ok in
-    Nx_device.Buffer.Claim.read b;
-    let get = Elements.get Nx_dtype.bool b in
-    let rec first i = if i = n || not (get i) then i else first (i + 1) in
     let i =
-      Fun.protect
-        ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
-        (fun () -> first 0)
+      Elements.read Nx_dtype.bool b @@ fun get ->
+      let rec first i = if i = n || not (get i) then i else first (i + 1) in
+      first 0
     in
     if i < n then begin
       let i = Shape.unravel_index i shape in

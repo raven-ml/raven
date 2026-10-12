@@ -1,4 +1,0 @@
-(test
- (name test_nv_cubin)
- (package nx)
- (libraries nx.nv.cubin nx.device.elf windtrap))

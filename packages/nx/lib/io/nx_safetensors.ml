@@ -33,14 +33,13 @@ let kind_of_dtype : Safetensors.dtype -> kind = function
   | I64 -> K Int64
   | U64 -> K UInt64
 
-module B = Nx_device.Buffer
+module B = Rig.Buffer
 
 (* The [n] bytes of [file] from byte [pos]. *)
 let read_string file ~pos n =
-  let b = B.create Nx_device.host Nx_dtype.Scalar.UInt8 n in
-  B.copy ~src:(B.view file ~offset:pos Nx_dtype.Scalar.UInt8 n) ~dst:b;
-  let chars = B.bigarray Bigarray.char b in
-  String.init n (Bigarray.Array1.get chars)
+  let b = Bytes.create n in
+  B.blit_to_bytes file pos b 0 n;
+  Bytes.unsafe_to_string b
 
 (* The header of [file] and the offset of its data, once the file's length is
    the one the header describes. *)
@@ -69,7 +68,7 @@ let read_header file =
       (metadata, prefix + header_len)
 
 let load_safetensors path =
-  match B.of_file path with
+  match Rig_disk.of_file path with
   | Error why -> failwith why
   | Ok file -> (
       try
@@ -130,12 +129,10 @@ let tensor_data (type a b) name (t : (a, b) Nx.t) =
   let size = Nx_dtype.itemsize (Nx.dtype t) in
   if Sys.big_endian && size > 1 then begin
     Storage.reading ~by:"Nx_io.save_safetensors" t @@ fun elements ->
-    let swapped =
-      B.create Nx_device.host (B.dtype elements) (B.length elements)
-    in
+    let swapped = B.create Rig.host (B.length elements) in
     B.copy ~src:elements ~dst:swapped;
-    Nx_io_codec.byteswap (Storage.bytes swapped) ~element_size:size
-      ~elements:(Nx.numel t);
+    Storage.write_bytes swapped (fun bytes ->
+        Nx_io_codec.byteswap bytes ~element_size:size ~elements:(Nx.numel t));
     (dtype, swapped)
   end
   else
@@ -155,7 +152,6 @@ let replace_or_keep temp path =
          a value loaded from [path] and borrowed may hold one until it is
          collected. *)
       Gc.full_major ();
-      Nx_device.synchronize Nx_device.disk;
       try Unix.rename temp path with Unix.Unix_error (e, _, _) -> failed e)
   | Unix.Unix_error (e, _, _) -> failed e
 
@@ -168,7 +164,7 @@ let sibling path n =
   in
   let rec go attempts =
     let temp = Temp_file.name path in
-    match B.create_file temp n with
+    match Rig_disk.create_file temp n with
     | Ok file -> (temp, file)
     | Error _ when attempts > 1 && held temp -> go (attempts - 1)
     | Error why -> raise (Sys_error why)
@@ -179,20 +175,15 @@ let sibling path n =
    the header. *)
 let size header parts =
   String.length header
-  + List.fold_left (fun n (off, src) -> Int.max n (off + B.nbytes src)) 0 parts
+  + List.fold_left (fun n (off, src) -> Int.max n (off + B.length src)) 0 parts
 
 (* Writes the header and the tensors' bytes into [file]. *)
 let write file header parts =
   let hlen = String.length header in
-  let bytes = B.create Nx_device.host Nx_dtype.Scalar.UInt8 hlen in
-  let chars = B.bigarray Bigarray.char bytes in
-  String.iteri (Bigarray.Array1.set chars) header;
-  B.copy ~src:bytes ~dst:(B.view file ~offset:0 Nx_dtype.Scalar.UInt8 hlen);
+  B.blit_from_string header 0 file 0 hlen;
   List.iter
     (fun (off, src) ->
-      B.copy ~src
-        ~dst:
-          (B.view file ~offset:(hlen + off) Nx_dtype.Scalar.UInt8 (B.nbytes src)))
+      B.copy ~src ~dst:(B.view file ~first:(hlen + off) ~length:(B.length src)))
     parts
 
 let save_safetensors ?(overwrite = true) path archive =
@@ -204,7 +195,7 @@ let save_safetensors ?(overwrite = true) path archive =
         let shape = Array.to_list (Nx.shape arr) in
         let dtype, src = tensor_data name arr in
         match
-          Safetensors.tensor_view_new ~dtype ~shape ~nbytes:(B.nbytes src)
+          Safetensors.tensor_view_new ~dtype ~shape ~nbytes:(B.length src)
         with
         | Ok view -> (name, (view, src))
         | Error err ->
@@ -228,7 +219,7 @@ let save_safetensors ?(overwrite = true) path archive =
     let temp, file = sibling path (size header parts) in
     match
       Storage.claiming (List.map snd parts) (fun () -> write file header parts);
-      B.flush file
+      Rig_disk.barrier file
     with
     | () -> replace_or_keep temp path
     | exception e ->

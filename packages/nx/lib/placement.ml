@@ -20,10 +20,10 @@ let select = Grid.select
 let is_host p =
   match Grid.devices p with [ d ] -> Device.equal d Device.host | _ -> false
 
-(* The disk holds values and computes on none. *)
+(* The disk, like every io device, holds values and computes on none. *)
 let on_disk p =
   match Grid.devices p with
-  | [ d ] -> Nx_device.equal (Device.memory d) Nx_device.disk
+  | [ d ] -> not (Rig.computes (Device.memory d))
   | _ -> false
 
 let same_devices p q =

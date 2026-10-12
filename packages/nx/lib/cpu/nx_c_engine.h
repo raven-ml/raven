@@ -20,6 +20,7 @@
 #define NX_C_ENGINE_H
 
 #include "nx_c.h"
+#include "rig_pool.h"
 
 /* Contract for every driver and funnel below (family authors, read this):
    - Call only with the OCaml runtime lock held — as a CAMLprim naturally does.
@@ -114,7 +115,7 @@ NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status status);
    never call back into a driver or into nx_c_parallel_for (it would deadlock on
    the single job slot). nthreads is clamped internally to the pool size, so the
    max worker index never exceeds the nthreads you pass — size scratch by that. */
-typedef nx_device_range_body nx_c_range_body;
+typedef rig_pool_body nx_c_range_body;
 void nx_c_parallel_for(int nthreads, int64_t total, int64_t bytes,
                       nx_c_range_body body, void *ctx, void *free_on_exit);
 

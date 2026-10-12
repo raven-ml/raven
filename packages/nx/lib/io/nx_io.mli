@@ -247,7 +247,7 @@ val load_safetensors : string -> Archive.t
     name.
 
     Loading opens the file and reads its header; it reads no tensor data. Each
-    entry is a value on the disk device ({!Nx_device.disk}), over the entry's
+    entry is a value on the disk device ([Rig_disk.device]), over the entry's
     bytes in the file. The host reads an entry where it lies: an operation on it
     computes on the file's pages, mapped copy-on-write, and so does {!Nx.place}
     onto the host or onto a device whose memory is the host's, such as Metal's,
@@ -282,10 +282,10 @@ val save_safetensors : ?overwrite:bool -> string -> Archive.t -> unit
 (** [save_safetensors ?overwrite path a] writes [a]'s tensors to a SafeTensors
     file.
 
-    The tensors are written to a temporary file in [path]'s directory, which is
-    synced to disk and then renamed to [path]: a reader sees the previous file
-    or the new one, never a partial one, and a failed save leaves the previous
-    file as it was. Each tensor's bytes are copied into the file from where they
+    The tensors are written to a temporary file in [path]'s directory, whose
+    bytes are ordered before the rename to [path] ([Rig_disk.barrier]): a
+    reader sees the previous file or the new one, never a partial one, and a
+    failed save leaves the previous file as it was. Each tensor's bytes are copied into the file from where they
     are: a device writes its memory to the file, and a tensor loaded by
     {!load_safetensors} is copied from its file. If the rename is refused, a
     major collection runs, which closes the files of the tensors no longer
@@ -395,7 +395,7 @@ val load_gguf : string -> Gguf.t
 
     Loading opens the file and reads its header: the key-values and the tensor
     descriptions. It reads no tensor data. Each tensor is a value on the disk
-    device ({!Nx_device.disk}) over its bytes in the file, read where they lie
+    device ([Rig_disk.device]) over its bytes in the file, read where they lie
     as {!load_safetensors} reads its entries: an operation on it computes on the
     file's pages, mapped copy-on-write, and {!Nx.place} onto a device whose
     memory is the host's borrows them without a copy. A tensor whose bytes are

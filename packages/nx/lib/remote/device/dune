@@ -1,4 +1,0 @@
-(library
- (name nx_remote_device)
- (public_name nx.remote.device)
- (libraries nx.device nx.device.support unix))

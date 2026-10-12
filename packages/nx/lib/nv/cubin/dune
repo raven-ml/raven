@@ -1,4 +1,0 @@
-(library
- (name nx_nv_cubin)
- (public_name nx.nv.cubin)
- (libraries nx.device.elf))

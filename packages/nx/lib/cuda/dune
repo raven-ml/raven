@@ -1,4 +1,0 @@
-(library
- (name nx_cuda)
- (public_name nx.cuda)
- (libraries nx nx.device nx.cuda.device))

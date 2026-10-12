@@ -414,9 +414,9 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
           let oc = open_out_gen flags perm out in
           Fun.protect ~finally:(fun () -> close_out oc) @@ fun () ->
           write_comment_lines oc comments newline header;
-          Storage.reading ~by:"Nx_io.save_txt" arr @@ fun b ->
-          let get = Nx_array.Elements.get S.kind b in
-          (match ndim with
+          ( Storage.reading ~by:"Nx_io.save_txt" arr @@ fun b ->
+            Nx_array.Elements.read S.kind b @@ fun get ->
+            match ndim with
           | 0 ->
               S.print oc (get 0);
               output_string oc newline
@@ -435,7 +435,7 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
                   S.print oc (get ((i * cols) + j))
                 done;
                 output_string oc newline
-              done);
+              done );
           write_comment_lines oc comments newline footer;
           Ok ()
         with
@@ -502,15 +502,15 @@ let load ?(sep = " ") ?(comments = "#") ?(skiprows = 0) ?max_rows (type a b)
             let row_count = Array.length rows in
             let n = row_count * cols in
             let buf = Nx_array.Elements.create S.kind n in
-            let set = Nx_array.Elements.set S.kind buf in
-            for i = 0 to row_count - 1 do
-              let row = rows.(i) in
-              for j = 0 to cols - 1 do
-                match S.parse row.(j) with
-                | Ok v -> set ((i * cols) + j) v
-                | Error err -> raise_notrace (Parse_error err)
-              done
-            done;
+            ( Nx_array.Elements.write S.kind buf @@ fun set ->
+              for i = 0 to row_count - 1 do
+                let row = rows.(i) in
+                for j = 0 to cols - 1 do
+                  match S.parse row.(j) with
+                  | Ok v -> set ((i * cols) + j) v
+                  | Error err -> raise_notrace (Parse_error err)
+                done
+              done );
             let t = Nx.of_buffer S.kind [| row_count; cols |] buf in
             let result =
               if row_count = 1 then Nx.reshape [| cols |] t

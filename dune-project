@@ -76,6 +76,8 @@
   dune
   (compress
    (= :version))
+  (rig
+   (= :version))
   ; tests
   (windtrap
    (and

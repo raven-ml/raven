@@ -3,25 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module B = Nx_device.Buffer
+module B = Rig.Buffer
 module S = Nx_dtype.Scalar
 module A = Bigarray.Array1
 
-let check_host fn b =
-  if not (Nx_device.equal (B.device b) Nx_device.host) then
-    invalid_arg
-      (Printf.sprintf "Nx_array.Elements.%s: the buffer is on %s, not CPU" fn
-         (Nx_device.name (B.device b)))
-
-let check fn (type a b) (dt : (a, b) Nx_dtype.t) b =
-  check_host fn b;
-  if not (S.equal (B.dtype b) (S.of_dtype dt)) then
-    invalid_arg
-      (Printf.sprintf "Nx_array.Elements.%s: a %s buffer read as %s" fn
-         (S.to_string (B.dtype b))
-         (Nx_dtype.to_string dt))
-
-let bytes b = B.bigarray Bigarray.int8_unsigned b
+let bits dt = S.bitsize (S.of_dtype dt)
+let bytes dt n = ((n * bits dt) + 7) / 8
+let length dt b = B.length b * 8 / bits dt
 
 (* Elements of [bits] < 8 bits, [8 / bits] to a byte, the first in the low bits:
    element [i] is bits [i * bits mod 8] and up of byte [i * bits / 8]. *)
@@ -42,166 +30,124 @@ let in_bounds fn n i =
     invalid_arg
       (Printf.sprintf "Nx_array.Elements.%s: index %d of %d elements" fn i n)
 
+let u8 = Bigarray.int8_unsigned
+
 (* Creation *)
 
 (* The bits of a fresh buffer past its last element, which belong to no element,
    are 0: what fills the buffer then decides its every byte. *)
 let create dt n =
-  let s = S.of_dtype dt in
-  let b = B.create Nx_device.host s n in
-  let bits = S.bitsize s in
-  if bits < 8 && n * bits land 7 <> 0 then A.set (bytes b) (n * bits / 8) 0;
+  let b = B.create Rig.host (bytes dt n) in
+  let bits = bits dt in
+  if bits < 8 && n * bits land 7 <> 0 then
+    B.write b u8 (fun ba -> A.set ba (n * bits / 8) 0);
   b
 
 (* Access *)
 
-let get (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a =
-  check "get" dt b;
+let read (type a b) (dt : (a, b) Nx_dtype.t) b (f : (int -> a) -> 'c) : 'c =
   match dt with
-  | Float16 ->
-      let ba = B.bigarray Bigarray.float16 b in
-      fun i -> A.get ba i
-  | Float32 ->
-      let ba = B.bigarray Bigarray.float32 b in
-      fun i -> A.get ba i
-  | Float64 ->
-      let ba = B.bigarray Bigarray.float64 b in
-      fun i -> A.get ba i
+  | Float16 -> B.read b Bigarray.float16 (fun ba -> f (fun i -> A.get ba i))
+  | Float32 -> B.read b Bigarray.float32 (fun ba -> f (fun i -> A.get ba i))
+  | Float64 -> B.read b Bigarray.float64 (fun ba -> f (fun i -> A.get ba i))
   | BFloat16 ->
-      let ba = B.bigarray Bigarray.int16_unsigned b in
-      fun i -> S.decode BFloat16 (A.get ba i)
+      B.read b Bigarray.int16_unsigned (fun ba ->
+          f (fun i -> S.decode BFloat16 (A.get ba i)))
   | Float8_e4m3 ->
-      let ba = bytes b in
-      fun i -> S.decode Float8_e4m3 (A.get ba i)
+      B.read b u8 (fun ba -> f (fun i -> S.decode Float8_e4m3 (A.get ba i)))
   | Float8_e5m2 ->
-      let ba = bytes b in
-      fun i -> S.decode Float8_e5m2 (A.get ba i)
+      B.read b u8 (fun ba -> f (fun i -> S.decode Float8_e5m2 (A.get ba i)))
   | Int4 ->
-      let ba = bytes b and n = B.length b in
-      fun i ->
-        in_bounds "get" n i;
-        let v = sub ba 4 i in
-        if v >= 8 then v - 16 else v
+      let n = length dt b in
+      B.read b u8 (fun ba ->
+          f (fun i ->
+              in_bounds "read" n i;
+              let v = sub ba 4 i in
+              if v >= 8 then v - 16 else v))
   | UInt4 ->
-      let ba = bytes b and n = B.length b in
-      fun i ->
-        in_bounds "get" n i;
-        sub ba 4 i
+      let n = length dt b in
+      B.read b u8 (fun ba ->
+          f (fun i ->
+              in_bounds "read" n i;
+              sub ba 4 i))
   | Int8 ->
-      let ba = B.bigarray Bigarray.int8_signed b in
-      fun i -> A.get ba i
-  | UInt8 ->
-      let ba = bytes b in
-      fun i -> A.get ba i
+      B.read b Bigarray.int8_signed (fun ba -> f (fun i -> A.get ba i))
+  | UInt8 -> B.read b u8 (fun ba -> f (fun i -> A.get ba i))
   | Int16 ->
-      let ba = B.bigarray Bigarray.int16_signed b in
-      fun i -> A.get ba i
+      B.read b Bigarray.int16_signed (fun ba -> f (fun i -> A.get ba i))
   | UInt16 ->
-      let ba = B.bigarray Bigarray.int16_unsigned b in
-      fun i -> A.get ba i
-  | Int32 ->
-      let ba = B.bigarray Bigarray.int32 b in
-      fun i -> A.get ba i
-  | UInt32 ->
-      let ba = B.bigarray Bigarray.int32 b in
-      fun i -> A.get ba i
-  | Int64 ->
-      let ba = B.bigarray Bigarray.int64 b in
-      fun i -> A.get ba i
-  | UInt64 ->
-      let ba = B.bigarray Bigarray.int64 b in
-      fun i -> A.get ba i
+      B.read b Bigarray.int16_unsigned (fun ba -> f (fun i -> A.get ba i))
+  | Int32 -> B.read b Bigarray.int32 (fun ba -> f (fun i -> A.get ba i))
+  | UInt32 -> B.read b Bigarray.int32 (fun ba -> f (fun i -> A.get ba i))
+  | Int64 -> B.read b Bigarray.int64 (fun ba -> f (fun i -> A.get ba i))
+  | UInt64 -> B.read b Bigarray.int64 (fun ba -> f (fun i -> A.get ba i))
   | Complex64 ->
-      let ba = B.bigarray Bigarray.complex32 b in
-      fun i -> A.get ba i
+      B.read b Bigarray.complex32 (fun ba -> f (fun i -> A.get ba i))
   | Complex128 ->
-      let ba = B.bigarray Bigarray.complex64 b in
-      fun i -> A.get ba i
-  | Bool ->
-      let ba = bytes b in
-      fun i -> A.get ba i <> 0
+      B.read b Bigarray.complex64 (fun ba -> f (fun i -> A.get ba i))
+  | Bool -> B.read b u8 (fun ba -> f (fun i -> A.get ba i <> 0))
   | Bit ->
-      let ba = bytes b and n = B.length b in
-      fun i ->
-        in_bounds "get" n i;
-        sub ba 1 i <> 0
+      let n = length dt b in
+      B.read b u8 (fun ba ->
+          f (fun i ->
+              in_bounds "read" n i;
+              sub ba 1 i <> 0))
 
-let set (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a -> unit =
-  check "set" dt b;
+let write (type a b) (dt : (a, b) Nx_dtype.t) b (f : (int -> a -> unit) -> 'c)
+    : 'c =
   match dt with
   | Float16 ->
-      let ba = B.bigarray Bigarray.int16_unsigned b in
-      fun i v -> A.set ba i (S.encode Float16 v)
-  | Float32 ->
-      let ba = B.bigarray Bigarray.float32 b in
-      fun i v -> A.set ba i v
-  | Float64 ->
-      let ba = B.bigarray Bigarray.float64 b in
-      fun i v -> A.set ba i v
+      B.write b Bigarray.int16_unsigned (fun ba ->
+          f (fun i v -> A.set ba i (S.encode Float16 v)))
+  | Float32 -> B.write b Bigarray.float32 (fun ba -> f (fun i v -> A.set ba i v))
+  | Float64 -> B.write b Bigarray.float64 (fun ba -> f (fun i v -> A.set ba i v))
   | BFloat16 ->
-      let ba = B.bigarray Bigarray.int16_unsigned b in
-      fun i v -> A.set ba i (S.encode BFloat16 v)
+      B.write b Bigarray.int16_unsigned (fun ba ->
+          f (fun i v -> A.set ba i (S.encode BFloat16 v)))
   | Float8_e4m3 ->
-      let ba = bytes b in
-      fun i v -> A.set ba i (S.encode Float8_e4m3 v)
+      B.write b u8 (fun ba -> f (fun i v -> A.set ba i (S.encode Float8_e4m3 v)))
   | Float8_e5m2 ->
-      let ba = bytes b in
-      fun i v -> A.set ba i (S.encode Float8_e5m2 v)
+      B.write b u8 (fun ba -> f (fun i v -> A.set ba i (S.encode Float8_e5m2 v)))
   | Int4 ->
-      let ba = bytes b and n = B.length b in
-      fun i v ->
-        in_bounds "set" n i;
-        set_sub ba 4 i v
+      let n = length dt b in
+      B.write b u8 (fun ba ->
+          f (fun i v ->
+              in_bounds "write" n i;
+              set_sub ba 4 i v))
   | UInt4 ->
-      let ba = bytes b and n = B.length b in
-      fun i v ->
-        in_bounds "set" n i;
-        set_sub ba 4 i v
+      let n = length dt b in
+      B.write b u8 (fun ba ->
+          f (fun i v ->
+              in_bounds "write" n i;
+              set_sub ba 4 i v))
   | Int8 ->
-      let ba = B.bigarray Bigarray.int8_signed b in
-      fun i v -> A.set ba i v
-  | UInt8 ->
-      let ba = bytes b in
-      fun i v -> A.set ba i v
+      B.write b Bigarray.int8_signed (fun ba -> f (fun i v -> A.set ba i v))
+  | UInt8 -> B.write b u8 (fun ba -> f (fun i v -> A.set ba i v))
   | Int16 ->
-      let ba = B.bigarray Bigarray.int16_signed b in
-      fun i v -> A.set ba i v
+      B.write b Bigarray.int16_signed (fun ba -> f (fun i v -> A.set ba i v))
   | UInt16 ->
-      let ba = B.bigarray Bigarray.int16_unsigned b in
-      fun i v -> A.set ba i v
-  | Int32 ->
-      let ba = B.bigarray Bigarray.int32 b in
-      fun i v -> A.set ba i v
-  | UInt32 ->
-      let ba = B.bigarray Bigarray.int32 b in
-      fun i v -> A.set ba i v
-  | Int64 ->
-      let ba = B.bigarray Bigarray.int64 b in
-      fun i v -> A.set ba i v
-  | UInt64 ->
-      let ba = B.bigarray Bigarray.int64 b in
-      fun i v -> A.set ba i v
+      B.write b Bigarray.int16_unsigned (fun ba -> f (fun i v -> A.set ba i v))
+  | Int32 -> B.write b Bigarray.int32 (fun ba -> f (fun i v -> A.set ba i v))
+  | UInt32 -> B.write b Bigarray.int32 (fun ba -> f (fun i v -> A.set ba i v))
+  | Int64 -> B.write b Bigarray.int64 (fun ba -> f (fun i v -> A.set ba i v))
+  | UInt64 -> B.write b Bigarray.int64 (fun ba -> f (fun i v -> A.set ba i v))
   | Complex64 ->
-      let ba = B.bigarray Bigarray.complex32 b in
-      fun i v -> A.set ba i v
+      B.write b Bigarray.complex32 (fun ba -> f (fun i v -> A.set ba i v))
   | Complex128 ->
-      let ba = B.bigarray Bigarray.complex64 b in
-      fun i v -> A.set ba i v
-  | Bool ->
-      let ba = bytes b in
-      fun i v -> A.set ba i (Bool.to_int v)
+      B.write b Bigarray.complex64 (fun ba -> f (fun i v -> A.set ba i v))
+  | Bool -> B.write b u8 (fun ba -> f (fun i v -> A.set ba i (Bool.to_int v)))
   | Bit ->
-      let ba = bytes b and n = B.length b in
-      fun i v ->
-        in_bounds "set" n i;
-        set_sub ba 1 i (Bool.to_int v)
+      let n = length dt b in
+      B.write b u8 (fun ba ->
+          f (fun i v ->
+              in_bounds "write" n i;
+              set_sub ba 1 i (Bool.to_int v)))
 
 (* Elements of fewer than 8 bits fill whole bytes, then the last ones one at a
    time: the bits after them in their byte keep what they hold, which is 0 in a
    fresh buffer ({!create}) and another value's elements in a view of a larger
    buffer. *)
-let fill_sub b bits v =
-  let ba = bytes b and n = B.length b in
+let fill_sub ba ~n bits v =
   let per = 8 / bits in
   let byte = ref 0 in
   for k = 0 to per - 1 do
@@ -243,19 +189,18 @@ let element (type a b) (dt : (a, b) Nx_dtype.t) width (v : a) =
   e
 
 external fill_bytes :
-  (nativeint[@unboxed]) -> (int[@untagged]) -> Bytes.t -> unit
-  = "caml_nx_array_fill_byte" "caml_nx_array_fill"
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) A.t -> Bytes.t -> unit
+  = "caml_nx_array_fill"
 [@@noalloc]
 
 let fill (type a b) (dt : (a, b) Nx_dtype.t) b (v : a) =
-  check "fill" dt b;
+  let n = length dt b in
+  B.write b u8 @@ fun ba ->
   match dt with
-  | Int4 -> fill_sub b 4 (v land 0xf)
-  | UInt4 -> fill_sub b 4 (v land 0xf)
-  | Bit -> fill_sub b 1 (Bool.to_int v)
-  | _ ->
-      let e = element dt (S.bitsize (B.dtype b) / 8) v in
-      fill_bytes (B.address b) (B.nbytes b) e
+  | Int4 -> fill_sub ba ~n 4 (v land 0xf)
+  | UInt4 -> fill_sub ba ~n 4 (v land 0xf)
+  | Bit -> fill_sub ba ~n 1 (Bool.to_int v)
+  | _ -> fill_bytes ba (element dt (bits dt / 8) v)
 
 (* Gathering *)
 
@@ -305,55 +250,44 @@ let copy_view v ~copy_run ~copy =
 
 let blit s d src dst n = A.blit (A.sub s src n) (A.sub d dst n)
 
-(* Raises unless [v] reaches only elements of [b]. *)
-let check_view fn b v =
-  if not (View.within v (B.length b)) then
+(* Raises unless [v] reaches only elements of [dt] in [b]. *)
+let check_view fn dt b v =
+  let n = length dt b in
+  if not (View.within v n) then
     invalid_arg
       (Printf.sprintf
-         "Nx_array.Elements.%s: the view reaches outside %d elements" fn
-         (B.length b))
+         "Nx_array.Elements.%s: the view reaches outside %d elements" fn n)
 
-let gather b v =
-  check_host "gather" b;
-  check_view "gather" b v;
+(* Copies the view [v] of [b]'s elements of [kind] into [dst]. *)
+let copy_words kind b v dst =
+  B.read b kind @@ fun s ->
+  B.write dst kind @@ fun d ->
+  copy_view v ~copy_run:(blit s d) ~copy:(fun src dst ->
+      A.unsafe_set d dst (A.unsafe_get s src))
+
+let gather dt b v =
+  check_view "gather" dt b v;
   let n = View.numel v in
-  let dst = B.create Nx_device.host (B.dtype b) n in
+  let dst = create dt n in
   if n > 0 then
     (* Each width is its own loop, over its own kind, which the compiler
        specializes. *)
-    begin match S.bitsize (B.dtype b) with
+    begin match bits dt with
     | (1 | 4) as bits ->
-        let s = bytes b and d = bytes dst in
+        B.read b u8 @@ fun s ->
+        B.write dst u8 @@ fun d ->
         iter_view v ~run:1 (fun src dst -> set_sub d bits dst (sub s bits src))
-    | 8 ->
-        let s = bytes b and d = bytes dst in
-        copy_view v ~copy_run:(blit s d) ~copy:(fun src dst ->
-            A.unsafe_set d dst (A.unsafe_get s src))
-    | 16 ->
-        let s = B.bigarray Bigarray.int16_unsigned b
-        and d = B.bigarray Bigarray.int16_unsigned dst in
-        copy_view v ~copy_run:(blit s d) ~copy:(fun src dst ->
-            A.unsafe_set d dst (A.unsafe_get s src))
-    | 32 ->
-        let s = B.bigarray Bigarray.int32 b
-        and d = B.bigarray Bigarray.int32 dst in
-        copy_view v ~copy_run:(blit s d) ~copy:(fun src dst ->
-            A.unsafe_set d dst (A.unsafe_get s src))
-    | bits ->
-        let s = B.bigarray Bigarray.int64 b
-        and d = B.bigarray Bigarray.int64 dst in
-        copy_view
-          (in_words v (bits / 64))
-          ~copy_run:(blit s d)
-          ~copy:(fun src dst -> A.unsafe_set d dst (A.unsafe_get s src))
+    | 8 -> copy_words u8 b v dst
+    | 16 -> copy_words Bigarray.int16_unsigned b v dst
+    | 32 -> copy_words Bigarray.int32 b v dst
+    | bits -> copy_words Bigarray.int64 b (in_words v (bits / 64)) dst
     end;
   dst
 
-let contiguous b v =
-  check_host "contiguous" b;
-  check_view "contiguous" b v;
-  let s = B.dtype b and n = View.numel v in
-  let bits = View.offset v * S.bitsize s in
-  if n > 0 && View.is_c_contiguous v && bits mod 8 = 0 then
-    B.view b ~offset:(bits / 8) s n
-  else gather b v
+let contiguous dt b v =
+  check_view "contiguous" dt b v;
+  let n = View.numel v in
+  let bit = View.offset v * bits dt in
+  if n > 0 && View.is_c_contiguous v && bit mod 8 = 0 then
+    B.view b ~first:(bit / 8) ~length:(bytes dt n)
+  else gather dt b v

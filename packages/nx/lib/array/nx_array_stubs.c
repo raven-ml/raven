@@ -5,15 +5,16 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <caml/bigarray.h>
 #include <caml/mlvalues.h>
 
-/* Fills [nbytes] bytes at [addr] with the bytes of [pattern] repeated: the
-   first copy, then doubling runs of the filled prefix. [nbytes] is a whole
-   number of copies. */
-value caml_nx_array_fill(intnat addr, intnat nbytes, value pattern) {
-  uint8_t *dst = (uint8_t *)addr;
+/* Fills the bytes of the bigarray [ba] with the bytes of [pattern] repeated:
+   the first copy, then doubling runs of the filled prefix. [ba]'s bytes are a
+   whole number of copies. */
+value caml_nx_array_fill(value ba, value pattern) {
+  uint8_t *dst = (uint8_t *)Caml_ba_data_val(ba);
   size_t width = caml_string_length(pattern);
-  size_t n = (size_t)nbytes;
+  size_t n = (size_t)Caml_ba_array_val(ba)->dim[0];
   if (n == 0) return Val_unit;
   if (width == 1) {
     memset(dst, Byte_u(pattern, 0), n);
@@ -27,9 +28,4 @@ value caml_nx_array_fill(intnat addr, intnat nbytes, value pattern) {
     done += run;
   }
   return Val_unit;
-}
-
-value caml_nx_array_fill_byte(value addr, value nbytes, value pattern) {
-  return caml_nx_array_fill((intnat)Nativeint_val(addr), Long_val(nbytes),
-                            pattern);
 }

@@ -69,20 +69,14 @@ type ('a, 'b) t = { offsets : int64_t; values : ('a, 'b) Nx.t }
 
 let shape_string x = Format.asprintf "%a" pp_shape (shape x)
 
-(* [claimed ~by x f] is [f] of a host buffer of the elements of [x] in C order,
-   read by the function [by]. *)
-let claimed ~by x f =
-  let b = Op.eval (Read { by; x }) in
-  Nx_device.Buffer.Claim.read b;
-  Fun.protect
-    ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
-    (fun () -> f b)
+(* [claimed ~by x k f] is [f] of the elements of [x] in C order as a bigarray
+   of kind [k], read by the function [by]. *)
+let claimed ~by x k f = Rig.Buffer.read (Op.eval (Read { by; x })) k f
 
 (* [read ~by x] is the elements of the int64 tensor [x] in C order, read by the
    function [by]. *)
 let read ~by x =
-  claimed ~by x (fun b ->
-      let a = Nx_device.Buffer.bigarray Bigarray.int64 b in
+  claimed ~by x Bigarray.int64 (fun a ->
       Array.init (numel x) (Bigarray.Array1.get a))
 
 (* [full_as x shape v] is a tensor of [shape] filled with [v], of [x]'s dtype
@@ -205,12 +199,11 @@ let to_strings r =
   if ndim r.values <> 1 then
     err op "values of shape %s, not 1-D" (shape_string r.values);
   let n = length r in
-  claimed ~by:op r.offsets @@ fun b ->
-  let o = Nx_device.Buffer.bigarray Bigarray.int64 b in
+  claimed ~by:op r.offsets Bigarray.int64 @@ fun o ->
   let at i = Int64.to_int (Bigarray.Array1.unsafe_get o i) in
   let lo = at 0 in
-  claimed ~by:op (slice [ R (lo, at n) ] r.values) @@ fun b ->
-  let a = Nx_device.Buffer.bigarray Bigarray.int8_unsigned b in
+  claimed ~by:op (slice [ R (lo, at n) ] r.values) Bigarray.int8_unsigned
+  @@ fun a ->
   Array.init n (fun i ->
       let start = at i - lo in
       let s = Bytes.create (at (i + 1) - at i) in

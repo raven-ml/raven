@@ -248,15 +248,17 @@ val to_array : ('a, 'b) t -> 'a array
 
 (** {1:placement Devices, placement and backends}
 
-    Where a value lives is a value too. A {e memory} is storage nx.device opens
-    ({!Nx_device.t}): the host, test memories inside the host's, a GPU through
-    one interface, the disk. A {e backend} ({!Nx_backend.t}) is eager kernels
+    Where a value lives is a value too. A {e memory} is a device rig opens
+    ({!Rig.t}): the host, test memories inside the host's, a GPU through one
+    interface, the disk. A {e backend} ({!Nx_backend.t}) is eager kernels
     for some memories, made once by the library that writes them. A device
     ({!Device.t}) is a memory and the backend that computes on it eagerly, if
     any: {!Device.host} and test devices compute with nx.cpu, and a GPU computes
     eagerly with nothing until {!Device.with_backend} pairs it with a backend. A
-    GPU's device comes from its vendor's library: [Nx_metal.device 0],
-    [Nx_cuda.device 0], and the libraries nx.nv and nx.amd. A placement
+    GPU's device is {!Device.make} of the device rig's driver opens, as in
+    [Nx.Device.make (Result.get_ok (Rig.open_ (Rig_metal.gpu 0)))], and nx.amd
+    computes eagerly on AMD GPUs ([Device.make ~backend:Nx_amd.backend]). A
+    placement
     ({!Placement.t}) is one device, a full copy on each of a list of devices, or
     an equal slice on each along one axis. Values start on the host; {!place}
     moves them, and is the only thing that moves them between devices.
@@ -293,9 +295,9 @@ val to_array : ('a, 'b) t -> 'a array
     released when no value reaches it.
 
     A device whose hardware faults or hangs is lost for good
-    ({!Nx_device.Lost}). From then on, every operation that reads or computes on
+    ({!Rig.Lost}). From then on, every operation that reads or computes on
     a value whose storage the lost device can reach raises
-    [Nx_device.Lost (m, why)], [m] its memory and [why] the fault: eager
+    [Rig.Lost (m, why)], [m] its memory and [why] the fault: eager
     operations, constants beside it, reads, {!place} from it and compiled calls
     with arguments or captures on it. Shapes, dtypes and movements answer.
     Values the lost device cannot reach compute as before, copies {!place} made
@@ -303,7 +305,7 @@ val to_array : ('a, 'b) t -> 'a array
     library gives a fresh device, unequal to the lost one; the lost one's values
     stay lost.
 
-    The disk ({!Nx_device.disk}) holds values in files, such as the tensors
+    The disk ([Rig_disk.device]) holds values in files, such as the tensors
     [Nx_io.load_safetensors] loads, and computes nothing: a value on it takes
     part in an operation as a host value, which the host reads in the file's
     pages, and a movement of it stays on the disk. {!place} onto the host or a
@@ -344,7 +346,7 @@ module Device : sig
   (** [cpu k], [k >= 1], is the test device ["CPU:k"]: a memory inside the
       host's that nx.cpu computes on, distinct from the host and from every
       other [k], so a program runs multi-device work on one machine. Once that
-      memory is lost ({!Nx_device.Lost}), [cpu k] is a fresh one.
+      memory is lost ({!Rig.Lost}), [cpu k] is a fresh one.
 
       Raises [Invalid_argument] if [k < 1]. *)
 
@@ -356,32 +358,31 @@ module Device : sig
 
       Raises [Invalid_argument] unless [b] computes on [d]'s memory. *)
 
-  (** {1:libraries For device libraries} *)
+  (** {1:making Making devices} *)
 
-  val make : ?backend:Nx_backend.t -> Nx_device.t -> t
+  val make : ?backend:Nx_backend.t -> Rig.t -> t
   (** [make ~backend m] is the device over the memory [m] computed eagerly by
       [backend]. [backend] defaults to nx.cpu on the host and test memories, and
-      to none on others. A vendor's library makes its devices with it, as
-      [Nx_amd.device] does with its own backend, and so does a program for a
-      memory no library names, such as the disk ({!Nx_device.disk}) or another
-      machine's GPU.
+      to none on others. A program makes a device so for each memory rig
+      opens, such as a GPU, the disk ([Rig_disk.device]) or another machine's
+      GPU.
 
       Raises [Invalid_argument] unless [backend] computes on [m]. *)
 
   (** {1:queries Queries} *)
 
-  val memory : t -> Nx_device.t
+  val memory : t -> Rig.t
   (** [memory d] is [d]'s memory. *)
 
   val name : t -> string
-  (** [name d] is [d]'s memory's name ([CPU], [CPU:k], [METAL], [CUDA:i],
-      [NV:i], [NV-PCI:i], [AMD:i], [AMD-PCI:i]), then [/] and the backend's name
+  (** [name d] is [d]'s memory's name ({!Rig.val-name}: [CPU], [CPU:k],
+      [METAL], [CUDA], [AMD:1], …), then [/] and the backend's name
       when [d]'s backend is not its memory's own ([Nx_backend.S.owns]), as in
       ["CPU/nx-oxcaml"]. *)
 
   val equal : t -> t -> bool
   (** [equal d d'] is [true] iff [d] and [d'] have one memory
-      ({!Nx_device.equal}) and one backend ({!Nx_backend.equal}), or both have
+      ({!Rig.equal}) and one backend ({!Nx_backend.equal}), or both have
       none. *)
 
   val pp : Format.formatter -> t -> unit
@@ -1626,19 +1627,20 @@ val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
     A value's elements in a device's memory, as file formats read and write
     them, without a copy when they already lie there in C order. *)
 
-val of_buffer : ('a, 'b) dtype -> int array -> Nx_device.Buffer.t -> ('a, 'b) t
+val of_buffer : ('a, 'b) dtype -> int array -> Rig.Buffer.t -> ('a, 'b) t
 (** [of_buffer dtype shape b] is the value of [shape] whose elements, in C
     order, are [b]'s, without a copy, at [Placement.on [Device.make m]] for
     [b]'s device [m]: a buffer of the host gives a value at {!Placement.host}. A
     GPU memory's device made so has no backend, so an eager operation on the
-    value raises: {!place} it onto the vendor's device over the same memory,
-    such as [Nx_amd.device i], a view, to compute on it. [b] is shared with its
+    value raises: {!place} it onto a device over the same memory with a
+    backend, such as [Device.make ~backend:Nx_amd.backend m], a view, to
+    compute on it. [b] is shared with its
     other holders, which must not write it while the value lives.
 
-    Raises [Invalid_argument] if [shape] does not have [b]'s number of elements,
-    or if [b]'s format is not [dtype]'s. *)
+    Raises [Invalid_argument] if [b]'s bytes are not those of [shape]'s
+    elements of [dtype], the last byte whole. *)
 
-val to_buffer : ('a, 'b) t -> Nx_device.Buffer.t
+val to_buffer : ('a, 'b) t -> Rig.Buffer.t
 (** [to_buffer x] is a buffer of exactly [x]'s elements in C order, on [x]'s
     device. It is [x]'s own storage when that holds the elements as one run in C
     order, and a copy otherwise: on the same device, or on the host for a value
@@ -4864,14 +4866,12 @@ val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
     interpretation, and the representation of a value. Programs never need this
     section. *)
 
-val shards : ('a, 'b) t -> Nx_device.Buffer.t list * Nx_array.View.t
+val shards : ('a, 'b) t -> Rig.Buffer.t list * Nx_array.View.t
 (** [shards x] is the buffer of [x]'s storage on each device of
     [Placement.devices (placement x)], in that order, and the view each device
-    has of its buffer, read as [x]'s dtype. A host value is its one buffer. A
-    value of the buffers' format gets the buffers themselves, physically equal
-    for every such value over one storage; a value of another dtype gets a new
-    view of their memory on each call ({!Nx_device.Buffer.view}). Nothing is
-    copied.
+    has of its buffer, read as [x]'s dtype. A host value is its one buffer. The
+    buffers are physically equal for every value over one storage, whatever its
+    dtype. Nothing is copied.
 
     Raises [Invalid_argument] if [x] is traced, or as a read of a consumed value
     raises. *)
@@ -4880,7 +4880,7 @@ val of_shards :
   Placement.t ->
   ('a, 'b) dtype ->
   Nx_array.View.t ->
-  Nx_device.Buffer.t list ->
+  Rig.Buffer.t list ->
   ('a, 'b) t
 (** [of_shards p dtype view buffers] is the value at [p] whose elements, on each
     device, are those [view] reaches in that device's buffer of [buffers], in
@@ -4888,8 +4888,9 @@ val of_shards :
     for [x] at [p] of view [view]. Nothing is copied.
 
     Raises [Invalid_argument] unless there is one buffer per device of [p], each
-    in the memory of its device, of [dtype]'s format and of one length, and
-    [view] reaches no element outside them. *)
+    in the memory of its device and of one length, each starts on a byte
+    aligned to an element of [dtype], and [view] reaches no element outside
+    them. *)
 
 (** Operations as values.
 
@@ -5063,7 +5064,7 @@ module Op : sig
         -> ('a, 'b) value t
     | Move : ('a, 'b) value * move -> ('a, 'b) value t
     | Place : Placement.t * ('a, 'b) value -> ('a, 'b) value t
-    | Read : { by : string; x : ('a, 'b) value } -> Nx_device.Buffer.t t
+    | Read : { by : string; x : ('a, 'b) value } -> Rig.Buffer.t t
         (** [Read { by; x }] is a host buffer of exactly [x]'s elements in C
             order: [x]'s own storage, read-only by contract, when they are one
             run of it on the host, and a copy otherwise. [by] is the qualified
@@ -5172,14 +5173,14 @@ module Repr : sig
     type t
     (** The type for storage. *)
 
-    val v : Placement.t -> Nx_device.Buffer.t list -> t
+    val v : Placement.t -> Rig.Buffer.t list -> t
     (** [v p buffers] is the storage of [buffers], one per device of [p], in
         order, each of the same size in bytes and in the memory of its device.
         A value over it reads its bytes as the value's dtype ({!Placed.v}).
 
         Raises [Invalid_argument] otherwise. *)
 
-    val buffers : t -> Nx_device.Buffer.t list
+    val buffers : t -> Rig.Buffer.t list
     (** [buffers s] is [s]'s buffers, one per device. They are read-only by
         contract: every value over [s] reads the same memory.
 

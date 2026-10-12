@@ -6,7 +6,7 @@
 let remove_if_exists path = try Sys.remove path with Sys_error _ -> ()
 let prng = Domain.DLS.new_key Random.State.make_self_init
 
-(* A written file's permissions, less those the umask removes, as nx.device
+(* A written file's permissions, less those the umask removes, as rig.disk
    creates a file. *)
 let mode = 0o666
 

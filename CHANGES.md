@@ -3607,6 +3607,13 @@ thread.
 
 ### Nx
 
+- **Breaking:** nx's memories are rig's devices and its storage rig's
+  buffers. `Nx.Device.make` takes a `Rig.t`, and `Nx.of_buffer`,
+  `to_buffer`, `shards` and `Storage` take and give `Rig.Buffer.t`. The
+  libraries nx.device (with its support and ELF libraries), nx.metal,
+  nx.cuda, nx.nv, nx.remote.device and nx.rdma.device and nx.amd's runtime
+  are gone: a GPU is `Nx.Device.make` of the device `Rig.open_` opens, and
+  nx.amd's eager kernels are `Nx_amd.backend`.
 - Host operations on large tensors are fast again in programs that link
   `nx.amd.packet`: its GC register table was built at startup and stayed live,
   so each major cycle, which large buffers start every few operations, marked

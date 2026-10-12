@@ -37,7 +37,7 @@
 
 #include <caml/mlvalues.h>
 
-#include "nx_device.h" /* buffer host addresses */
+#include "rig.h"       /* buffer host addresses */
 #include "nx_dtype.h"  /* f16/bf16/fp8 converters */
 
 /* Prefixed to avoid colliding with backend_c's unprefixed complex typedefs
@@ -86,7 +86,7 @@ static inline void nx_c_aligned_free(void *p) {
        Nx_array.t  0 dtype    Nx_dtype.t, a constant constructor whose index
                               is the tag
                    1 view     View.t
-                   2 buffer   a host Nx_device.Buffer.t
+                   2 buffer   a Rig.Buffer.t the host addresses
        View.t      0 shape    int array
                    1 strides  int array, ELEMENT units
                    2 offset   int, ELEMENT units
@@ -634,9 +634,9 @@ NX_C_NORETURN void nx_c_raise_invalid(const char *op, nx_c_status status);
    get the byte steps the kernel ABI wants — that conversion happens in exactly
    one place. Entries [ndim, NX_C_MAX_NDIM) are unspecified; consumers read only
    [0, ndim). `data` is the buffer's first byte; the first live element is at
-   data + offset*elem_size. `length` is the buffer's number of elements. An
-   operand with no elements has offset and strides 0 and a `data` that is a
-   valid address, never NULL. */
+   data + offset*elem_size. `length` is the number of elements the buffer's
+   bytes hold. An operand with no elements has offset and strides 0 and a
+   `data` that is a valid address, never NULL. */
 typedef struct {
   void *data;
   int ndim;
@@ -654,9 +654,9 @@ typedef struct {
    rank cheaply and reports via status; the funnel raises on non-NULL. */
 static inline nx_c_status nx_c_ndarray_of_value(value v, nx_c_ndarray *out) {
   value v_buffer = Field(v, NX_C_FFI_DATA);
-  if (!nx_device_buffer_live(v_buffer)) {
-    snprintf(nx_c_consumed, sizeof nx_c_consumed, "%s",
-             nx_device_buffer_why(v_buffer));
+  const char *why = rig_buffer_why(v_buffer);
+  if (why) {
+    snprintf(nx_c_consumed, sizeof nx_c_consumed, "%s", why);
     return NX_C_ERR_CONSUMED;
   }
   value v_view = Field(v, NX_C_FFI_VIEW);
@@ -665,8 +665,12 @@ static inline nx_c_status nx_c_ndarray_of_value(value v, nx_c_ndarray *out) {
   int ndim = (int)Wosize_val(v_shape);
   if (ndim > NX_C_MAX_NDIM) return NX_C_ERR_NDIM;
   if ((int)Wosize_val(v_strides) != ndim) return NX_C_ERR_RANK_MISMATCH;
-  out->data = nx_device_buffer_host(v_buffer);
-  out->length = nx_device_buffer_length(v_buffer);
+  nx_c_dtype dt = (nx_c_dtype)Long_val(Field(v, NX_C_FFI_DTYPE));
+  int64_t bytes = (int64_t)rig_buffer_bytes(v_buffer);
+  int bits = nx_c_packed_bits(dt);
+  out->data = rig_buffer_host(v_buffer);
+  int64_t size = nx_c_elem_size(dt);
+  out->length = bits ? bytes * 8 / bits : size ? bytes / size : 0;
   out->ndim = ndim;
   out->offset = Long_val(Field(v_view, NX_C_FFI_VIEW_OFFSET));
   for (int i = 0; i < ndim; i++) {

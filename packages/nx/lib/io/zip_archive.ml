@@ -24,7 +24,8 @@ type entry = {
   local_offset : int;
 }
 
-type in_file = { data : bytes; entries : entry list }
+(* [file] is the archive's bytes, the host's borrow of its pages. *)
+type in_file = { file : Rig.Buffer.t; entries : entry list }
 type written_entry = { entry : entry; zip64_sizes : bool }
 
 type out_file = {
@@ -399,7 +400,8 @@ let validate_entries data ~central_offset entries =
   disjoint 0 spans
 
 let open_in path =
-  let data = Storage.file_bytes path in
+  let file = Storage.file path in
+  Storage.read_bytes file @@ fun data ->
   let eocd = find_eocd data in
   let classic_count = u16 data (eocd + 10) in
   let classic_size = u32_i64 data (eocd + 12) in
@@ -415,7 +417,7 @@ let open_in path =
     error "ZIP central directory overlaps its end record";
   let entries = parse_entries data ~count ~central_size ~central_offset in
   validate_entries data ~central_offset entries;
-  { data; entries }
+  { file; entries }
 
 let entries (archive : in_file) = archive.entries
 
@@ -426,8 +428,7 @@ let find_entry (archive : in_file) name =
   | Some entry -> entry
   | None -> raise Not_found
 
-let data_span (archive : in_file) entry =
-  let data = archive.data in
+let data_span data entry =
   let off = entry.local_offset in
   if off > Array1.dim data - 30 then
     error "truncated ZIP local header for %S" entry.name;
@@ -470,38 +471,41 @@ let npy_entries (archive : in_file) =
 
 let read_npy (archive : in_file) name =
   let entry = find_entry archive (name ^ npy_suffix) in
-  let src_off, src_len = data_span archive entry in
+  Storage.read_bytes archive.file @@ fun data ->
+  let src_off, src_len = data_span data entry in
   match entry.method_ with
   | Store ->
-      let header = Npy.parse_header archive.data ~off:src_off ~len:src_len in
+      let header = Npy.parse_header data ~off:src_off ~len:src_len in
       if
         header.data_offset + header.data_size <> src_len
         || entry.uncompressed_size <> src_len
       then error "NPY size mismatch in ZIP entry %S" entry.name;
-      let data = Array1.sub archive.data src_off src_len in
-      if Crc32.bigbytes data <> entry.crc32 then
+      if Crc32.bigbytes (Array1.sub data src_off src_len) <> entry.crc32 then
         error "CRC-32 mismatch in ZIP entry %S" entry.name;
-      Npy.materialize header ~src:archive.data
-        ~off:(src_off + header.data_offset)
+      Npy.materialize header ~src:data ~off:(src_off + header.data_offset)
   | Deflate ->
       (* Deflate expands at most 1032 times: 258 bytes from two bits. *)
       if entry.uncompressed_size / 1032 > src_len then
         error "ZIP entry %S declares more data than its DEFLATE data holds"
           entry.name;
-      let data = Array1.create int8_unsigned c_layout entry.uncompressed_size in
+      let inflated =
+        Array1.create int8_unsigned c_layout entry.uncompressed_size
+      in
       (match
          Compress_deflate.Deflate.decompress_into
-           (Array1.sub archive.data src_off src_len)
-           data
+           (Array1.sub data src_off src_len)
+           inflated
        with
       | Ok () -> ()
       | Error e -> error "invalid DEFLATE data in ZIP entry %S: %s" entry.name e);
-      if Crc32.bigbytes data <> entry.crc32 then
+      if Crc32.bigbytes inflated <> entry.crc32 then
         error "CRC-32 mismatch in ZIP entry %S" entry.name;
-      let header = Npy.parse_header data ~off:0 ~len:(Array1.dim data) in
+      let header =
+        Npy.parse_header inflated ~off:0 ~len:(Array1.dim inflated)
+      in
       if header.data_offset + header.data_size <> entry.uncompressed_size then
         error "NPY size mismatch in ZIP entry %S" entry.name;
-      Npy.view_or_materialize header ~src:data ~off:header.data_offset
+      Npy.view_or_materialize header ~src:inflated ~off:header.data_offset
 
 let le16 value =
   String.init 2 (fun i -> Char.chr ((value lsr (8 * i)) land 0xff))
@@ -614,7 +618,7 @@ let add_npy archive name packed =
     invalid_arg "Zip_archive.add_npy: unsafe or invalid UTF-8 entry name";
   let filename = name ^ npy_suffix in
   if Hashtbl.mem archive.names filename then error "duplicate NPZ entry %S" name;
-  let encoded = Npy.encode packed in
+  Npy.encode packed @@ fun encoded ->
   let method_ = choose_method encoded in
   Hashtbl.add archive.names filename ();
   let uncompressed_size =

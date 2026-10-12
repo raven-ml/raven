@@ -50,7 +50,7 @@ and cell = {
 }
 
 and state =
-  | Live of Nx_device.Buffer.t list
+  | Live of Rig.Buffer.t list
     (* one buffer per device of the cell's placement, in its order *)
   | Consumed of consumption
 
@@ -80,7 +80,11 @@ let alloc (type a b) (dtype : (a, b) Nx_dtype.t) shape : (a, b) Nx_array.t =
 (* A host array of [dtype] and [shape] whose elements are [v]. *)
 let filled dtype shape v =
   let a = alloc dtype shape in
-  Elements.fill dtype a.buffer v;
+  let n = View.numel a.view in
+  Elements.write dtype a.buffer (fun set ->
+      for i = 0 to n - 1 do
+        set i v
+      done);
   a
 
 let id_counter = Atomic.make 0
@@ -128,7 +132,7 @@ module Cell = struct
 
   (* A borrow reads the storage, so it also claims the memory of its buffers for
      reading: the claim raises before [f] if a buffer is dead, or if a lost
-     device can reach its memory ([Nx_device.Lost]), even for no elements. *)
+     device can reach its memory ([Rig.Lost]), even for no elements. *)
   let with_borrow c f =
     borrow c;
     Fun.protect
@@ -136,7 +140,7 @@ module Cell = struct
       (fun () ->
         match c.state with
         | Live bufs ->
-            Nx_device.Buffer.Claim.with_ ~read:bufs ~donate:[] (fun _ -> f ())
+            Rig.Claim.with_ ~read:bufs ~donate:[] (fun _ -> f ())
         | Consumed k -> consumed k)
 
   let upgrade c =
@@ -210,7 +214,7 @@ let whole_view r =
 let cell ~placement storage =
   {
     placement;
-    bytes = Nx_device.Buffer.nbytes (List.hd storage);
+    bytes = Rig.Buffer.length (List.hd storage);
     state = Live storage;
     bound = Atomic.make 0;
     lock = Mutex.create ();
@@ -243,51 +247,25 @@ let placed what placement dtype view cell =
       r_cell = cell;
     }
 
-(* [read_as dtype b] is [b]'s bytes read as [dtype]'s elements: [b] itself when
-   it holds them, a view of its memory otherwise. Raises [Invalid_argument] if
-   [b]'s first byte is not aligned to one of them. *)
-let read_as (type a b) (dtype : (a, b) Nx_dtype.t) b =
-  let s = Nx_dtype.Scalar.of_dtype dtype in
-  if Nx_dtype.Scalar.equal (Nx_device.Buffer.dtype b) s then b
-  else
-    Nx_device.Buffer.view b ~offset:0 s
-      (Nx_device.Buffer.nbytes b * 8 / Nx_dtype.Scalar.bitsize s)
-
 (* [aligned dtype b] is [true] iff [b]'s first byte is aligned to one of
-   [dtype]'s elements, as reading [b] as them needs ({!read_as}). A file's bytes
-   are read at any offset. *)
+   [dtype]'s elements, as reading [b] as them needs. An io device's bytes, such
+   as a file's, are read at any offset. *)
 let aligned (type a b) (dtype : (a, b) Nx_dtype.t) b =
   let size = Int.max 1 (Nx_dtype.Scalar.(bitsize (of_dtype dtype)) / 8) in
-  Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk
-  || Nativeint.rem (Nx_device.Buffer.address b) (Nativeint.of_int size) = 0n
+  (not (Rig.computes (Rig.Buffer.device b))) || Rig.Buffer.aligned b ~at:0 size
 
-(* [capacity dtype c] is the elements of [dtype] that each shard of [c] holds:
-   its buffers' length when they are of [dtype]'s format, which stops a packed
-   format at its last element, and its bytes' worth otherwise. *)
+(* [capacity dtype c] is the elements of [dtype] that each shard of [c]
+   holds. *)
 let capacity (type a b) (dtype : (a, b) Nx_dtype.t) c =
-  let s = Nx_dtype.Scalar.of_dtype dtype in
-  match Cell.state c with
-  | Live (b :: _) when Nx_dtype.Scalar.equal (Nx_device.Buffer.dtype b) s ->
-      Nx_device.Buffer.length b
-  | Live _ | Consumed _ -> c.bytes * 8 / Nx_dtype.Scalar.bitsize s
+  c.bytes * 8 / Nx_dtype.Scalar.(bitsize (of_dtype dtype))
 
-(* Raises unless [b] is of [dtype]'s format. *)
-let check_format what dtype b =
-  let s = Nx_device.Buffer.dtype b in
-  if not (Nx_dtype.Scalar.equal s (Nx_dtype.Scalar.of_dtype dtype)) then
+(* Raises unless [buffer] is a host buffer, as nx.cpu reads it: through its host
+   address. *)
+let check_host what buffer =
+  let d = Rig.Buffer.device buffer in
+  if not (Rig.equal d Rig.host) then
     invalid_arg
-      (Printf.sprintf "%s: a %s buffer read as %s" what
-         (Nx_dtype.Scalar.to_string s)
-         (Nx_dtype.to_string dtype))
-
-(* Raises unless [buffer] is a host buffer of [dtype]'s format, as nx.cpu reads
-   it: through its host address, [dtype]'s elements at a time. *)
-let check_host what dtype buffer =
-  if not (Nx_device.equal (Nx_device.Buffer.device buffer) Nx_device.host) then
-    invalid_arg
-      (Printf.sprintf "%s: the buffer is on %s, not CPU" what
-         (Nx_device.name (Nx_device.Buffer.device buffer)));
-  check_format what dtype buffer
+      (Printf.sprintf "%s: the buffer is on %s, not CPU" what (Rig.name d))
 
 (* Traced constructor *)
 
@@ -359,42 +337,39 @@ let shard_storage what p buffers =
     invalid_arg
       (Printf.sprintf "%s: %d buffers for %d devices" what (List.length buffers)
          (List.length ds));
-  let bytes = Nx_device.Buffer.nbytes (List.hd buffers) in
+  let bytes = Rig.Buffer.length (List.hd buffers) in
   List.iter2
     (fun d b ->
-      if Nx_device.Buffer.nbytes b <> bytes then
+      if Rig.Buffer.length b <> bytes then
         invalid_arg (what ^ ": buffers of different sizes");
-      if Nx_device.Buffer.device b != Device.memory d then
+      if not (Rig.equal (Rig.Buffer.device b) (Device.memory d)) then
         invalid_arg
           (Printf.sprintf "%s: a buffer for %s is on %s" what (Device.name d)
-             (Nx_device.name (Nx_device.Buffer.device b))))
+             (Rig.name (Rig.Buffer.device b))))
     ds buffers;
   cell ~placement:p buffers
 
 (* [host_value what dtype view b] is the host value of [b] under [view]. *)
 let host_value what dtype view b =
-  check_host what dtype b;
-  if not (View.within view (Nx_device.Buffer.length b)) then
+  check_host what b;
+  if not (View.within view (Elements.length dtype b)) then
     invalid_arg (what ^ ": the view reaches outside the buffer");
   Host { dtype; view; buffer = b }
 
 (* [placed_value what p dtype view c] is the value at [p] of [c] under [view].
    Kernels read [view]'s elements of [c]'s bytes as [dtype]'s, so the view lies
-   within them and each buffer starts on a byte aligned to one; bool reads only
-   bool storage. Consumed storage has no bytes to reach. *)
+   within them and each buffer starts on a byte aligned to one. Consumed storage
+   has no bytes to reach. *)
 let placed_value (type a b) what p (dtype : (a, b) Nx_dtype.t) view c =
   if not (View.within view (capacity dtype c)) then
     invalid_arg (what ^ ": the view reaches outside the storage");
-  (match (Cell.state c, dtype) with
-  | Live bufs, Nx_dtype.Bool ->
-      (* A bool's only bytes are 0 and 1, which only bool storage holds. *)
-      List.iter (check_format what dtype) bufs
-  | Live bufs, _ ->
+  (match Cell.state c with
+  | Live bufs ->
       if not (List.for_all (aligned dtype) bufs) then
         invalid_arg
           (Printf.sprintf "%s: a buffer at a byte not aligned to %s" what
              (Nx_dtype.to_string dtype))
-  | Consumed _, _ -> ());
+  | Consumed _ -> ());
   placed what p dtype view c
 
 (* [of_shards what p dtype view buffers] is the value at [p] whose elements, on
@@ -408,25 +383,23 @@ let of_shards (type a b) what p (dtype : (a, b) Nx_dtype.t) view buffers :
         invalid_arg
           (Printf.sprintf "%s: %d buffers for 1 device" what
              (List.length buffers))
-  else begin
-    List.iter (check_format what dtype) buffers;
-    placed_value what p dtype view (shard_storage what p buffers)
-  end
+  else placed_value what p dtype view (shard_storage what p buffers)
 
 (* [of_buffer dtype shape b] is the value of [shape] over [b]'s elements in C
    order. [View.create] reads a negative dimension as [0] in a shape that has a
    [0], so [shape]'s own dimensions are checked. *)
 let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t) shape b : (a, b) t =
   let what = "Nx.of_buffer" in
-  let n = Nx_device.Buffer.length b and view = View.create shape in
+  let bytes = Rig.Buffer.length b and view = View.create shape in
   if
     Array.exists (fun d -> d < 0) shape
-    || not (View.within view n && View.numel view = n)
+    || (not (View.within view (Elements.length dtype b)))
+    || Elements.bytes dtype (View.numel view) <> bytes
   then
     invalid_arg
-      (Printf.sprintf "%s: shape %s for %d elements" what
-         (Shape.to_string shape) n);
-  let p = Placement.on (Device.make (Nx_device.Buffer.device b)) in
+      (Printf.sprintf "%s: shape %s of %s for %d bytes" what
+         (Shape.to_string shape) (Nx_dtype.to_string dtype) bytes);
+  let p = Placement.on (Device.make (Rig.Buffer.device b)) in
   of_shards what p dtype view [ b ]
 
 (* The buffer, of [bufs], one per device of [c]'s placement, that holds [c]'s
@@ -448,7 +421,7 @@ let shards (type a b) (x : (a, b) t) =
       match Cell.state r.r_cell with
       | Live buffers ->
           ( List.map
-              (fun d -> read_as r.r_dtype (buffer_on r.r_cell buffers d))
+              (fun d -> buffer_on r.r_cell buffers d)
               (Placement.devices r.r_placement),
             r.r_view )
       | Consumed k -> consumed k)

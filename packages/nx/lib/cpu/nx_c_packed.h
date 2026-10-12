@@ -24,8 +24,8 @@
    two workers write one byte. A word the destination covers in part is read,
    merged under a mask and written back by its owner, and the store touches
    only bytes that hold destination elements. A destination whose elements
-   are its buffer's last ones writes the bits past them as 0, which belong to
-   no value (nx_backend_intf.mli): the destinations nx.cpu writes are fresh
+   are the last its buffer's bytes hold writes the bits past them as 0, which
+   belong to no value (nx_backend_intf.mli): the destinations nx.cpu writes are fresh
    buffers or windows of them, never another value's storage. A
    destination that is not one run of its storage is written by one worker,
    one row at a time. */

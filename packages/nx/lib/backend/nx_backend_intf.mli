@@ -129,11 +129,11 @@ module type S = sig
   (** [name] is the backend's name, as errors and device names show it, such as
       ["nx.cpu"]. It identifies nothing: {!Nx_backend.equal} does. *)
 
-  val runs_on : Nx_device.t -> bool
+  val runs_on : Rig.t -> bool
   (** [runs_on d] is [true] iff the kernels compute on arrays in [d]'s memory.
   *)
 
-  val owns : Nx_device.t -> bool
+  val owns : Rig.t -> bool
   (** [owns d] is [true] iff the kernels are [d]'s memory's own: those the
       library that opens the memory computes its devices with, so that a device
       over [d] computed by them is named after [d] alone ([Nx.Device.name]). It

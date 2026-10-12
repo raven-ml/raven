@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "nx_c_engine.h"
+#include "rig_pool.h"
 
 /* ── Funnel raisers ────────────────────────────────────────────────────────
    The one place a status becomes an exception. Called only with the runtime
@@ -56,20 +57,12 @@ void nx_c_raise_invalid(const char *op, nx_c_status status) {
 
 /* ── Thread pool ───────────────────────────────────────────────────────────
 
-   The host's one pool is nx.device's (nx_device.h): Nx_cpu hands it to the
-   engine as the module initialises (caml_nx_c_set_pool). This file keeps the
-   policy: how many threads a job takes (nx_c_threads_for) and how finely it is
-   cut (nx_c_chunks_for). */
+   The host's one pool is rig's (rig_pool.h), which the host's launches share.
+   This file keeps the policy: how many threads a job takes (nx_c_threads_for)
+   and how finely it is cut (nx_c_chunks_for). */
 
-static const nx_device_pool *g_pool;
-
-value caml_nx_c_set_pool(value v_pool) {
-  g_pool = (const nx_device_pool *)Nativeint_val(v_pool);
-  return Val_unit;
-}
-
-static int nx_c_ncores(void) { return g_pool->workers(); }
-static int nx_c_pcores(void) { return g_pool->compute_workers(); }
+static int nx_c_ncores(void) { return rig_pool_cores(); }
+static int nx_c_pcores(void) { return rig_pool_performance_cores(); }
 
 /* Chunk count for a published job — the dispatch-granularity half of the
    parallel policy (nx_c_threads_for below is the thread-count half). The cut
@@ -140,8 +133,8 @@ void nx_c_parallel_for(int nthreads, int64_t total, int64_t bytes,
   int release = (nthreads > 1) || (bytes >= NX_C_LOCK_RELEASE_BYTES);
   if (release) caml_enter_blocking_section();
   if (total > 0)
-    g_pool->run(nthreads, total, nx_c_chunks_for(nthreads, total, bytes), body,
-                ctx);
+    rig_pool_run(nthreads, total, nx_c_chunks_for(nthreads, total, bytes), body,
+                 ctx);
   nx_c_aligned_free(free_on_exit);
   if (release) caml_leave_blocking_section();
 }

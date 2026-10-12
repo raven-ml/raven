@@ -15,6 +15,7 @@ depends: [
   "ocaml" {>= "5.5.0"}
   "dune" {>= "3.21"}
   "compress" {= version}
+  "rig" {= version}
   "windtrap" {with-test & >= "0.2.0"}
   "ppx_windtrap" {with-test & >= "0.2.0"}
   "mdx" {with-test}

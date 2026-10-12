@@ -1,7 +1,0 @@
-(test
- (name test_support)
- (package nx)
- (foreign_stubs
-  (language c)
-  (names test_support_stubs))
- (libraries nx.device.support unix windtrap))

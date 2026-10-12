@@ -289,7 +289,7 @@ let full (ctx : context) dtype shape_arr value =
     (* The same expanded element, made without performing its movements: with no
        interpretation to see them, they are view arithmetic. *)
     let buffer = Elements.create dtype 1 in
-    Elements.fill dtype buffer value;
+    Elements.write dtype buffer (fun set -> set 0 value);
     let strides = Array.make (Array.length shape_arr) 0 in
     Host { dtype; view = View.create ~strides shape_arr; buffer })
   else
@@ -301,12 +301,10 @@ let full (ctx : context) dtype shape_arr value =
     let e = place copies (Host (filled dtype [||] value)) in
     place ctx (broadcast e shape_arr)
 
-let from_host (ctx : context) dtype buffer =
-  check_host "Nx.from_host" dtype buffer;
-  let x =
-    Host
-      { dtype; view = View.create [| Nx_device.Buffer.length buffer |]; buffer }
-  in
+(* The value of the [n] elements of [dtype] in the host buffer [buffer]. *)
+let from_host (ctx : context) dtype n buffer =
+  check_host "Nx.from_host" buffer;
+  let x = Host { dtype; view = View.create [| n |]; buffer } in
   if on_host ctx then x else place ctx x
 
 (* The buffer of exactly [x]'s elements in C order, without a copy, when there
@@ -314,24 +312,21 @@ let from_host (ctx : context) dtype buffer =
    view is a contiguous run of its storage. *)
 let run (type a b) (x : (a, b) t) =
   match x with
-  | Host t -> Place.run_in t.buffer t.view
+  | Host t -> Place.run_in t.dtype t.buffer t.view
   | Placed r -> (
       match Cell.state r.r_cell with
-      | Live [ b ] -> Place.run_in (read_as r.r_dtype b) r.r_view
+      | Live [ b ] -> Place.run_in r.r_dtype b r.r_view
       | _ -> None)
   | Traced _ -> outside_trace ()
 
 (* Values over runtime buffers *)
 
-(* An empty buffer of [x]'s dtype on its device. *)
+(* An empty buffer on [x]'s device. *)
 let empty (type a b) (x : (a, b) t) =
-  let s = Nx_dtype.Scalar.of_dtype (dtype x) in
   match x with
   | Placed r when not (Placement.on_disk r.r_placement) ->
-      Nx_device.Buffer.create
-        (Device.memory (List.hd (Placement.devices r.r_placement)))
-        s 0
-  | Host _ | Placed _ | Traced _ -> Nx_device.Buffer.create Nx_device.host s 0
+      Rig.Buffer.create (Device.memory (List.hd (Placement.devices r.r_placement))) 0
+  | Host _ | Placed _ | Traced _ -> Rig.Buffer.create Rig.host 0
 
 (* A value on the disk, which computes nothing, is copied to the host. *)
 let to_buffer (type a b) (x : (a, b) t) =
