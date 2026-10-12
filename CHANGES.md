@@ -3676,6 +3676,9 @@ thread.
 
 ### Nx
 
+- `Nx.Op.shape` of a reshape that its operand's strides cannot express, such
+  as a flattened transpose, is the target shape. It raised, though `Nx.Op.eval`
+  answers the reshape with a copy.
 - `Nx.reshape` of a sharded value whose shards hold one element of the split
   axis, such as a slice of a transpose, is a view of its storage, as the
   shards' strides allow. It copied every shard.

@@ -296,6 +296,7 @@ let cases () =
            b = f32 [| 3; 2 |];
          });
     C (Move (x, Reshape [| 6; 4 |]));
+    C (Move (Nx.transpose x, Reshape [| 24 |]));
     C (Move (f32 [| 2; 1; 4 |], Expand [| 2; 5; 4 |]));
     C (Move (x, Permute [| 2; 0; 1 |]));
     C (Move (x, Shrink [| (0, 1); (1, 3); (0, 4) |]));
@@ -463,7 +464,13 @@ let generated =
   in
   let move =
     let* s = ranked 0 3 in
+    let* strided = bool in
     let r = Array.length s in
+    let rev s = Array.init r (fun i -> s.(r - 1 - i)) in
+    (* A copy of zeros, whose broadcast strides would merge under any reshape. *)
+    let x =
+      if strided then Nx.transpose (Nx.copy (zeros (rev s))) else zeros s
+    in
     let+ m =
       one_of
         [
@@ -482,7 +489,7 @@ let generated =
                   (Array.to_list s)));
         ]
     in
-    C (Move (zeros s, m))
+    C (Move (x, m))
   in
   let window_move =
     let* s = ranked 1 3 in

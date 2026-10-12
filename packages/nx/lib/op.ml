@@ -476,7 +476,10 @@ let shape : type a b. (a, b) Value.t t -> int array =
   | Contiguous x -> s x
   | Cholesky { x; _ } -> s x
   | Solve_triangular { b; _ } -> s b
-  | Move (x, m) -> View.shape (Move.view (Value.view x) m)
+  | Move (x, m) ->
+      (* A C-contiguous view takes every movement, so its shape is the result's
+         whatever [x]'s strides: a reshape they cannot express copies [x]. *)
+      View.shape (Move.view (View.create (s x)) m)
   | Place (_, x) -> s x
   (* A read gives a buffer, whose abstract type the checker cannot tell from a
      value's. *)
