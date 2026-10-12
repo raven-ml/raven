@@ -3,17 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Typed access to host buffers: a store reads back as the dtype rounds it and
-   lands as the format's bits, a fill stays inside its buffer, and a gather
-   keeps every bit of the elements a view reaches. *)
+(* Typed access to buffers the host addresses: a store reads back as the dtype
+   rounds it and lands as the format's bits, a fill stays inside its buffer, and
+   a gather keeps every bit of the elements a view reaches. *)
 
 open Windtrap
-module B = Nx_device.Buffer
+module B = Rig.Buffer
 module E = Nx_array.Elements
 module S = Nx_dtype.Scalar
 module V = Nx_array.View
 
-let bytes b = B.bigarray Bigarray.char b
+let bytes b = B.export b Bigarray.char
 let size s = Int.max 1 (S.bitsize s / 8)
 
 (* The bits of element [i] of [ba], elements of [s] in storage order: an element
@@ -112,9 +112,9 @@ let stores =
            (fun xs ->
              let n = Array.length xs in
              let b = E.create e.dt n in
-             Array.iteri (E.set e.dt b) xs;
+             E.write e.dt b (fun set -> Array.iteri set xs);
              equal (array e.w) (Array.map e.stored xs)
-               (Array.init n (E.get e.dt b));
+               (E.read e.dt b (fun get -> Array.init n get));
              Option.iter
                (fun code ->
                  equal ~msg:"bits" (list string)
@@ -133,10 +133,11 @@ let fills =
           ^ " stores its value as every element, and nothing outside them")
            (Gen.triple e.value (Gen.int_range 0 9) (Gen.int_range 0 3))
            (fun (x, n, k) ->
-             (* The view starts on a byte. *)
-             let first = 2 * k * Int.max 1 (8 / S.bitsize s) in
+             (* The view starts and ends on a byte. *)
+             let per = Int.max 1 (8 / S.bitsize s) in
+             let n = n * per and first = 2 * k * per in
              let m = n + first + 3 in
-             let whole = B.create Nx_device.host s m in
+             let whole = B.create Rig.host (E.bytes e.dt m) in
              let ba = bytes whole in
              for i = 0 to Bigarray.Array1.dim ba - 1 do
                ba.{i} <- Char.chr (((i * 37) + 11) land 0xff)
@@ -147,11 +148,15 @@ let fills =
                  (List.init m (bits s ba))
              in
              let before = others () in
-             let b = B.view whole ~offset:(first * S.bitsize s / 8) s n in
+             let b =
+               B.view whole
+                 ~first:(first * S.bitsize s / 8)
+                 ~length:(E.bytes e.dt n)
+             in
              E.fill e.dt b x;
              equal (array e.w)
                (Array.make n (e.stored x))
-               (Array.init n (E.get e.dt b));
+               (E.read e.dt b (fun get -> Array.init n get));
              equal ~msg:"the elements around" (list string) before (others ())))
        elts)
 
@@ -180,33 +185,48 @@ let pp_view ppf (v, n) =
   Format.fprintf ppf "shape %a strides %a offset %d of %d" Nx_test.pp_shape
     (V.shape v) Nx_test.pp_shape (V.strides v) (V.offset v) n
 
+type format = F : ('a, 'b) Nx_dtype.t -> format
+
 let formats =
   Gen.of_list
-    ~pp:(fun ppf s -> Format.pp_print_string ppf (S.to_string s))
-    S.[ Bool; Bit; Int4; UInt4; UInt8; BFloat16; Float32; Int64; Complex128 ]
+    ~pp:(fun ppf (F dt) -> Format.pp_print_string ppf (Nx_dtype.to_string dt))
+    Nx_dtype.
+      [
+        F bool;
+        F bit;
+        F int4;
+        F uint4;
+        F uint8;
+        F bfloat16;
+        F float32;
+        F int64;
+        F complex128;
+      ]
 
-(* A format, a view and a buffer of that format the view reaches, its bytes
-   drawn from a seed. *)
+(* A format, a view and a buffer of elements of that format the view reaches,
+   its bytes drawn from a seed. *)
 let viewed =
-  Gen.with_pp (fun ppf (s, v, src) ->
-      Format.fprintf ppf "%s, %a" (S.to_string s) pp_view (v, B.length src))
+  Gen.with_pp (fun ppf (F dt, v, src) ->
+      Format.fprintf ppf "%s, %a" (Nx_dtype.to_string dt) pp_view
+        (v, E.length dt src))
   @@ Gen.map
-       (fun (s, (v, n), seed) ->
-         let src = B.create Nx_device.host s n in
+       (fun ((F dt as f), (v, n), seed) ->
+         let src = B.create Rig.host (E.bytes dt n) in
          let ba = bytes src in
          for i = 0 to Bigarray.Array1.dim ba - 1 do
            ba.{i} <- seed.[i mod String.length seed]
          done;
-         (s, v, src))
+         (f, v, src))
        (Gen.triple formats
           (Gen.with_pp pp_view views)
           (Gen.string_of ~size:(Gen.int_range 1 9) Gen.char))
 
 let gather =
   prop "gather is the elements a view reaches in C order, each keeping its bits"
-    viewed (fun (s, v, src) ->
+    viewed (fun (F dt, v, src) ->
+      let s = S.of_dtype dt in
       let ba = bytes src in
-      let g = E.gather src v in
+      let g = E.gather dt src v in
       let expected =
         List.init (V.numel v) (fun k ->
             let idx = Nx_test.unravel (V.shape v) k in
@@ -214,70 +234,58 @@ let gather =
             Array.iteri (fun a i -> p := !p + (i * (V.strides v).(a))) idx;
             bits s ba !p)
       in
-      equal (pair string int)
-        (S.to_string s, V.numel v)
-        (S.to_string (B.dtype g), B.length g);
+      equal ~msg:"bytes" int (E.bytes dt (V.numel v)) (B.length g);
       equal (list string) expected (List.init (V.numel v) (bits s (bytes g))))
 
 let contiguous =
   prop
     "contiguous is gather's elements, over the buffer's own memory exactly \
      when the view is C-contiguous from the start of a byte"
-    viewed (fun (s, v, src) ->
-      let c = E.contiguous src v in
+    viewed (fun (F dt, v, src) ->
+      let s = S.of_dtype dt in
+      let c = E.contiguous dt src v in
       let n = V.numel v in
       equal (list string)
-        (List.init n (bits s (bytes (E.gather src v))))
+        (List.init n (bits s (bytes (E.gather dt src v))))
         (List.init n (bits s (bytes c)));
       let first = V.offset v * S.bitsize s in
       equal ~msg:"over the buffer's memory" bool
         (n > 0 && V.is_c_contiguous v && first mod 8 = 0)
-        (n > 0
-        && Nativeint.equal (B.address c)
-             (Nativeint.add (B.address src) (Nativeint.of_int (first / 8)))))
+        (n > 0 && B.overlaps c src && B.offset c = B.offset src + (first / 8)))
 
-(* A device over host memory, whose buffers are not the host's. *)
-let other =
+(* A file's bytes, which the host does not address. *)
+let file =
   lazy
-    (Nx_device.Driver.device ~name:"OTHER" ~arch:"test" ~budget:max_int
-       (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None }))
+    (let path = Filename.temp_file "test_elements" "" in
+     Out_channel.with_open_bin path (fun oc -> output_string oc "ab");
+     Result.get_ok (Rig_disk.of_file path))
 
 let refusals =
   let f32 = E.create Nx_dtype.float32 2 in
   let open Nx_dtype in
   cases ~name:fst "refuse"
     [
-      ("a buffer of another format", fun () -> ignore (E.get int32 f32 0));
-      ("an index past the last element", fun () -> ignore (E.get float32 f32 2));
-      ("an index of -1", fun () -> ignore (E.get float32 f32 (-1)));
+      ( "an index past the last element",
+        fun () -> ignore (E.read float32 f32 (fun get -> get 2)) );
+      ("an index of -1", fun () -> ignore (E.read float32 f32 (fun get -> get (-1))));
       ( "a 4-bit store past the last element",
-        fun () -> E.set int4 (E.create int4 3) 3 0 );
-      ( "a buffer of another device",
-        fun () -> ignore (E.get uint8 (B.create (Lazy.force other) S.UInt8 1) 0)
-      );
-      ( "a store into another device's buffer",
-        fun () -> E.set uint8 (B.create (Lazy.force other) S.UInt8 1) 0 0 );
-      ( "a fill of another device's buffer",
-        fun () -> E.fill uint8 (B.create (Lazy.force other) S.UInt8 1) 0 );
+        fun () -> E.write int4 (E.create int4 3) (fun set -> set 4 0) );
+      ( "a read of memory the host does not address",
+        fun () -> ignore (E.read uint8 (Lazy.force file) (fun get -> get 0)) );
+      ( "a fill of memory the host does not address",
+        fun () -> E.fill uint8 (Lazy.force file) 0 );
       ( "a gather past the end",
         fun () ->
-          ignore (E.gather f32 (V.create ~offset:1 ~strides:[| 1 |] [| 2 |])) );
+          ignore
+            (E.gather float32 f32 (V.create ~offset:1 ~strides:[| 1 |] [| 2 |]))
+      );
       ( "a gather before the start",
         fun () ->
-          ignore (E.gather f32 (V.create ~offset:0 ~strides:[| -1 |] [| 2 |]))
+          ignore
+            (E.gather float32 f32 (V.create ~offset:0 ~strides:[| -1 |] [| 2 |]))
       );
-      ( "a gather of another device's buffer",
-        fun () ->
-          ignore
-            (E.gather
-               (B.create (Lazy.force other) S.UInt8 2)
-               (V.create [| 2 |])) );
-      ( "contiguous elements of another device's buffer",
-        fun () ->
-          ignore
-            (E.contiguous
-               (B.create (Lazy.force other) S.UInt8 2)
-               (V.create [| 2 |])) );
+      ( "a gather of memory the host does not address",
+        fun () -> ignore (E.gather uint8 (Lazy.force file) (V.create [| 2 |])) );
     ]
     (fun (_, f) -> raises_match Exn.invalid_arg f)
 
@@ -288,7 +296,8 @@ let wrapping =
     (V.create ~offset ~strides shape, E.create Nx_dtype.float32 n)
   in
   cases
-    ~name:(fun (v, b) -> Format.asprintf "%a" pp_view (v, B.length b))
+    ~name:(fun (v, b) ->
+      Format.asprintf "%a" pp_view (v, E.length Nx_dtype.float32 b))
     "gather and contiguous refuse a view whose bounds wrap"
     (List.map row
        [
@@ -298,9 +307,10 @@ let wrapping =
          (0, [| -1; -1 |], [| -2; -2 |], 7);
        ])
     (fun (v, b) ->
-      raises_match ~msg:"gather" Exn.invalid_arg (fun () -> E.gather b v);
+      raises_match ~msg:"gather" Exn.invalid_arg (fun () ->
+          E.gather Nx_dtype.float32 b v);
       raises_match ~msg:"contiguous" Exn.invalid_arg (fun () ->
-          E.contiguous b v))
+          E.contiguous Nx_dtype.float32 b v))
 
 let () =
   exit

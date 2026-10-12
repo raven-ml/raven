@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Lost devices, on test memories whose driver reports a fault a test names
+(* Lost devices, on rig's memory devices that a test closes
    ([Nx_test.Faulty]). Once a device is lost, every operation that reads or
-   computes on a value it holds raises [Nx_device.Lost] naming it and the fault;
+   computes on a value it holds raises [Rig.Lost] naming it and the reason;
    values elsewhere, copies made before the loss included, compute as before;
    opening the device again gives a fresh, unequal device. *)
 
@@ -20,9 +20,9 @@ let iota shape =
 
 let memory_of v = Nx.Device.memory (List.hd (Nx.Placement.devices v))
 
-(* [Lost (m, why)] for [d]'s memory [m]. *)
-let lost_on d why = function
-  | Nx_device.Lost (m, why') -> m == Nx.Device.memory d && why' = why
+(* [Lost (m, "closed")] for [d]'s memory [m], which [Faulty.lose] closed. *)
+let lost_on d = function
+  | Rig.Lost (m, why) -> m == Nx.Device.memory d && why = "closed"
   | _ -> false
 
 (* Operations *)
@@ -74,8 +74,8 @@ let on_lost =
       let d = Faulty.device 1 in
       let x = Nx.place (Nx.Placement.on d) (iota shape) in
       let o = List.find (fun o -> o.name = kind.name) (ops (iota shape)) in
-      Faulty.lose d "memory lost";
-      raises_match (lost_on d "memory lost") (fun () -> o.run x))
+      Faulty.lose d;
+      raises_match (lost_on d) (fun () -> o.run x))
 
 let elsewhere =
   prop "values the lost device does not hold compute as before"
@@ -90,7 +90,7 @@ let elsewhere =
           ("a copy on another device", Nx.place (Nx.Placement.on other) x);
         ]
       in
-      Faulty.lose d "page fault";
+      Faulty.lose d;
       let o = List.find (fun o -> o.name = kind.name) (ops h) in
       List.iter
         (fun (what, v) ->
@@ -105,21 +105,21 @@ let reopening () =
   equal ~msg:"an open of a live device" bool true
     (Nx.Device.equal d (Faulty.device 4));
   let x = Nx.place (Nx.Placement.on d) (iota [| 3 |]) in
-  Faulty.lose d "hardware exception";
+  Faulty.lose d;
   let d' = Faulty.device 4 in
   equal ~msg:"a fresh device" bool false (Nx.Device.equal d d');
   equal ~msg:"of the same name" string (Nx.Device.name d) (Nx.Device.name d');
   let y = Nx.place (Nx.Placement.on d') (iota [| 3 |]) in
   equal ~msg:"computes" elements [| 2.; 4.; 6. |] (Nx.to_array (Nx.add y y));
-  raises_match (lost_on d "hardware exception") (fun () -> Nx.to_array x);
-  raises_match (lost_on d "hardware exception") (fun () ->
+  raises_match (lost_on d) (fun () -> Nx.to_array x);
+  raises_match (lost_on d) (fun () ->
       Nx.place (Nx.Placement.on d) (iota [| 3 |]));
   equal ~msg:"a lost value keeps its shape" (array int) [| 3 |] (Nx.shape x);
   match Nx.to_array x with
   | _ -> fail "read a lost value"
   | exception e ->
       equal ~msg:"printed" string
-        (Nx.Device.name d ^ " lost: hardware exception")
+        (Nx.Device.name d ^ " lost: closed")
         (Printexc.to_string e)
 
 (* The state machine *)
@@ -224,8 +224,8 @@ let read =
     (fun x ->
       match Nx.to_array x.v with
       | a -> Ok a
-      | exception (Nx_device.Lost (m, why) as e) ->
-          if m == memory_of (Nx.placement x.v) && why = "fault" then Error ()
+      | exception (Rig.Lost (m, why) as e) ->
+          if m == memory_of (Nx.placement x.v) && why = "closed" then Error ()
           else raise e)
 
 let commands =
@@ -266,7 +266,7 @@ let commands =
     command "lose"
       (device ^-> returns unit)
       Model.lose
-      (fun d -> Faulty.lose d "fault");
+      (fun d -> Faulty.lose d);
   ]
 
 (* A copy read once its source is lost takes a chain of six calls (world,

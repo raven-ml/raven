@@ -3,4 +3,4 @@
  (foreign_stubs
   (language c)
   (names accuracy_stubs))
- (libraries nx nx.array nx.backend nx.cpu nx.device nx.dtype windtrap))
+ (libraries nx nx.array nx.backend nx.cpu rig rig.disk nx.dtype windtrap))

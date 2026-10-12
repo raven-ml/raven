@@ -88,22 +88,23 @@ let reference f x =
 (* Codecs *)
 
 let codec f x = S.decode f.scalar (S.encode f.scalar x)
-let byte b = Nx_device.Buffer.bigarray Bigarray.int8_unsigned b
+let set dtype b x = E.write dtype b (fun set -> set 0 x)
+let get dtype b = E.read dtype b (fun get -> get 0)
 
 let nx_value dtype x =
   let b = Nx_array.Elements.create dtype 1 in
-  E.set dtype b 0 x;
-  E.get dtype b 0
+  set dtype b x;
+  get dtype b
 
 let nx_code dtype x =
   let b = Nx_array.Elements.create dtype 1 in
-  E.set dtype b 0 x;
-  (byte b).{0}
+  set dtype b x;
+  get Nx_dtype.uint8 b
 
 let nx_decode dtype code =
   let b = Nx_array.Elements.create dtype 1 in
-  (byte b).{0} <- code;
-  E.get dtype b 0
+  set Nx_dtype.uint8 b code;
+  get dtype b
 
 (* Inputs *)
 

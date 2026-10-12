@@ -113,11 +113,11 @@ let op_name : Nx_backend.reduce -> string = function
 (* A destination of [shape], C-contiguous, its bytes a fixed pattern. *)
 let fresh dtype shape =
   let buffer = Nx_array.Elements.create dtype (Array.fold_left ( * ) 1 shape) in
-  Bigarray.Array1.fill (Nx_device.Buffer.bigarray Bigarray.char buffer) '\xa5';
+  Rig.Buffer.fill buffer '\xa5';
   { Nx_array.dtype; view = View.create shape; buffer }
 
 (* The bytes of [a], without a copy: runs compare them in C. *)
-let bytes_of (a : (_, _) arr) = Nx_device.Buffer.bigarray Bigarray.char a.buffer
+let bytes_of (a : (_, _) arr) = Rig.Buffer.export a.buffer Bigarray.char
 
 (* Values. Floats are uniform in [-1, 1), or near 1 for products, so that a long
    sum's or product's last bits depend on its association. With [specials],
@@ -208,11 +208,11 @@ let flipped l =
 let operand st ~specials ~prod dtype l =
   let n = Array.fold_left ( * ) 1 l.base in
   let buffer = Nx_array.Elements.create dtype n in
-  let set = Nx_array.Elements.set dtype buffer in
   let value = value st ~specials ~prod dtype in
-  for i = 0 to n - 1 do
-    set i (value ())
-  done;
+  ( Nx_array.Elements.write dtype buffer @@ fun set ->
+    for i = 0 to n - 1 do
+      set i (value ())
+    done );
   { Nx_array.dtype; view = l.view (View.create l.base); buffer }
 
 (* The law *)
@@ -485,10 +485,10 @@ let groups =
     let st = Random.State.make [| seed |] in
     let n = Array.fold_left ( * ) 1 l.base in
     let buffer = Nx_array.Elements.create Nx_dtype.UInt64 n in
-    let set = Nx_array.Elements.set Nx_dtype.UInt64 buffer in
-    for i = 0 to n - 1 do
-      set i (Random.State.int64 st distinct)
-    done;
+    ( Nx_array.Elements.write Nx_dtype.UInt64 buffer @@ fun set ->
+      for i = 0 to n - 1 do
+        set i (Random.State.int64 st distinct)
+      done );
     let x =
       {
         Nx_array.dtype = Nx_dtype.UInt64;

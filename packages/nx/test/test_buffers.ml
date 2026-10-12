@@ -10,18 +10,14 @@
 
 open Windtrap
 open Nx_test
-module B = Nx_device.Buffer
+module B = Rig.Buffer
 
 let d1 = Devices.d1
 let d2 = Devices.d2
 let r1 = Nx.Device.memory d1
 let placement = Devices.placement
-let disk = Nx.Placement.on (Nx.Device.make Nx_device.disk)
-
-let device =
-  Testable.make
-    ~pp:(fun ppf d -> Format.pp_print_string ppf (Nx_device.name d))
-    ~equal:Nx_device.equal
+let disk = Nx.Placement.on (Nx.Device.make Rig_disk.device)
+let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
 
 (* Where a value is: on the host, or placed on [d1]. *)
 type where = { name : string; at : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
@@ -68,7 +64,9 @@ let round_trip (Stored.Case c) =
     (Gen.pair c.tensors wheres) (fun (t, where) ->
       let x = where.at t in
       let b = Nx.to_buffer x in
-      equal ~msg:"length" int (Nx.numel x) (B.length b);
+      equal ~msg:"bytes" int
+        (Nx_array.Elements.bytes (Nx.dtype x) (Nx.numel x))
+        (B.length b);
       equal ~msg:"device" device (runtime_of x) (B.device b);
       equal ~msg:"elements" Stored.packed (Nx.P t)
         (Nx.P (Nx.of_buffer (Nx.dtype x) (Nx.shape x) b)))
@@ -93,13 +91,13 @@ let to_buffer =
         test "a value on the disk in one run is its file's bytes" (fun () ->
             let x = Runtimes.on_disk (Nx.arange Nx.int32 0 6 1) in
             let b = Nx.to_buffer x in
-            equal device Nx_device.disk (B.device b);
+            equal device Rig_disk.device (B.device b);
             is_true (share_memory b (storage x)));
         test "a value on the disk in no run is copied to the host" (fun () ->
             let t = Nx.reshape [| 2; 3 |] (Nx.arange Nx.int32 0 6 1) in
             let x = Nx.transpose (Runtimes.on_disk t) in
             let b = Nx.to_buffer x in
-            equal device Nx_device.host (B.device b);
+            equal device Rig.host (B.device b);
             equal (array int32)
               (Nx.to_array (Nx.transpose t))
               (Nx.to_array (Nx.of_buffer Nx.int32 [| 3; 2 |] b)));
@@ -154,7 +152,7 @@ let reads_exactly (Stored.Case c) =
     (Gen.pair c.tensors wheres) (fun (t, where) ->
       let x = where.at t in
       let b = Nx.Op.eval (Read { by = "test"; x }) in
-      equal ~msg:"device" device Nx_device.host (B.device b);
+      equal ~msg:"device" device Rig.host (B.device b);
       equal ~msg:"elements" Stored.packed (Nx.P t)
         (Nx.P (Nx.of_buffer (Nx.dtype x) (Nx.shape x) b));
       let on_host = Nx.Placement.equal (Nx.placement x) Nx.Placement.host in
@@ -164,15 +162,11 @@ let reads_exactly (Stored.Case c) =
 
 (* [f ()] while a consuming call holds [b]'s memory exclusively. *)
 let while_consumed b f =
-  B.Claim.read b;
-  is_true ~msg:"exclusive" (B.Claim.try_exclusive b);
-  Fun.protect
-    ~finally:(fun () ->
-      B.Claim.finish b;
-      B.Claim.release b)
-    f
+  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+      is_true ~msg:"exclusive" (Rig.Claim.exclusive c b);
+      f ())
 
-let in_use = Exn.invalid_arg ~substring:"in use by a consuming call"
+let in_use = Exn.invalid_arg ~substring:"held exclusive"
 
 let reads =
   group "Read"
@@ -202,7 +196,7 @@ let of_buffer =
           equal (array int32) [| 0l; 1l; 2l; 3l; 4l; 5l |] (Nx.to_array x));
       test "reads a buffer of a device as a value on that device, in place"
         (fun () ->
-          let b = B.create r1 Nx_dtype.Scalar.Int32 6 in
+          let b = B.create r1 24 in
           B.copy ~src:(Nx.to_buffer (Nx.arange Nx.int32 0 6 1)) ~dst:b;
           let x = Nx.of_buffer Nx.int32 [| 3; 2 |] b in
           equal placement (Nx.Placement.on d1) (Nx.placement x);
@@ -217,10 +211,9 @@ let of_buffer =
       test "refuses a shape of another number of elements" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.of_buffer Nx.int32 [| 2; 3 |] (ints 5)));
-      test "refuses a buffer of another format" (fun () ->
-          raises_match
-            (Exn.invalid_arg ~substring:"int32 buffer read as float32")
-            (fun () -> Nx.of_buffer Nx.float32 [| 4 |] (ints 4)));
+      test "refuses bytes that end inside an element" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.of_buffer Nx.float64 [| 2 |] (ints 3)));
     ]
 
 (* shards and of_shards *)
@@ -297,7 +290,7 @@ let shards =
 let of_shards =
   let p = Nx.Placement.replicated [ d1; d2 ] in
   let view = Nx_array.View.create [| 4 |] in
-  let on r ?(scalar = Nx_dtype.Scalar.Int32) n = B.create r scalar n in
+  let on r n = B.create r (4 * n) in
   let r2 = Nx.Device.memory d2 in
   let refuses what buffers =
     test what (fun () ->
@@ -309,11 +302,6 @@ let of_shards =
       refuses "refuses more buffers than devices" [ on r1 4; on r2 4; on r2 4 ];
       refuses "refuses a buffer on another device than its own"
         [ on r1 4; on r1 4 ];
-      refuses "refuses buffers of another format"
-        [
-          on r1 ~scalar:Nx_dtype.Scalar.Float32 4;
-          on r2 ~scalar:Nx_dtype.Scalar.Float32 4;
-        ];
       refuses "refuses buffers of different lengths" [ on r1 4; on r2 5 ];
       refuses "refuses a view past the buffers' elements" [ on r1 3; on r2 3 ];
       test "refuses a host buffer under a view past its elements" (fun () ->

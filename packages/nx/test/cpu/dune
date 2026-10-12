@@ -7,7 +7,7 @@
 
 (executable
  (name test_planner)
- (libraries nx.cpu nx.array nx.backend nx.dtype nx.device windtrap))
+ (libraries nx.cpu nx.array nx.backend nx.dtype rig windtrap))
 
 (rule
  (alias runtest)

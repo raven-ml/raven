@@ -842,10 +842,9 @@ let file_layouts =
           let scales = Nx.copy (Nx.zeros Nx.uint8 [| rows; k / 32 |]) in
           let blocks = Nx.copy (Nx.zeros Nx.uint8 [| rows; k / 32 * 17 |]) in
           let made f =
-            let before = Nx_device.stats host in
+            let before = Rig.allocated host in
             let w = f () in
-            let s = Nx_device.Stats.diff before (Nx_device.stats host) in
-            (w, Nx_device.Stats.allocated s)
+            (w, Rig.allocated host - before)
           in
           let shares t u = share_memory (storage t) (storage u) in
           let views b = function
@@ -1021,7 +1020,7 @@ let others =
           let codes = place [| 4; 6; 32 |]
           and scales = place [| 4; 6; 2 |]
           and bad = place [| 4; 6; 3 |] in
-          let sent = bytes_out () in
+          Devices.copied (fun () ->
           let w =
             Nx.Ptree.map Nx_quant.ptree
               (fun _ t -> t)
@@ -1039,8 +1038,10 @@ let others =
           equal
             (list (array int))
             [ [| 4; 6; 64 |]; [| 4; 6; 512 |]; [| 4; 6; 64 |] ]
-            [ Nx_quant.shape w; Nx_quant.shape q; Nx_quant.shape g ];
-          equal int 0 (bytes_out () - sent));
+            [ Nx_quant.shape w; Nx_quant.shape q; Nx_quant.shape g ])
+          |> fun (r, _, sent) ->
+          Result.iter_error raise r;
+          equal ~msg:"bytes sent" int 0 sent);
       cases ~name:format_name "dequant and apply read no value's elements"
         formats (fun format ->
           let w = random_weight ~format [| 3; 4; 256 |] in

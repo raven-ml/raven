@@ -305,7 +305,7 @@ let storage t = List.hd (fst (Nx.shards t))
 let elements t = Nx.Op.eval (Read { by = "Nx_test.elements"; x = t })
 
 (* Whether buffers [a] and [b] have a byte of memory in common. *)
-let share_memory = Nx_device.Buffer.overlaps
+let share_memory = Rig.Buffer.overlaps
 
 (* Where each element of [t] is in its storage, in row-major order: element
    [idx] is at [offset + sum idx.(d) * strides.(d)] of its view. *)
@@ -369,7 +369,8 @@ module Ref = struct
     {
       shape = Nx.shape s;
       data =
-        Array.map (Nx_array.Elements.get (Nx.dtype s) (storage s)) (positions s);
+        Nx_array.Elements.read (Nx.dtype s) (storage s) (fun get ->
+            Array.map get (positions s));
     }
 
   let witness w =
@@ -1050,12 +1051,23 @@ end
 
 let renamed = Nx_backend.v (module Renamed)
 
-(* Test devices: nx.cpu over memories of the host's, whose statistics count the
-   bytes they receive and send. *)
+(* [traffic ms f] is [f ()], the bytes that copies while it ran sent into the
+   memory of each of [ms], and those they sent out of it. *)
+let traffic ms f =
+  let y, events = Rig.Profile.take f in
+  let count into m =
+    List.fold_left
+      (fun n -> function
+        | Rig.Profile.Copy { src; dst; bytes; _ } ->
+            if Rig.equal (if into then dst else src) m then n + bytes else n
+        | _ -> n)
+      0 events
+  in
+  (y, List.map (count true) ms, List.map (count false) ms)
+
+(* Test devices: nx.cpu over rig's memory devices. *)
 module Devices = struct
-  let memory name =
-    Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
-      (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
+  let memory = Rig.memory_device
 
   let memories = List.map memory [ "TEST:1"; "TEST:2"; "TEST:3"; "TEST:4" ]
   let runtimes = List.map Nx.Device.make memories
@@ -1068,12 +1080,14 @@ module Devices = struct
   (* A device beside the four. *)
   let other = Nx.Device.make (memory "OTHER")
 
-  let total count =
-    List.fold_left (fun n r -> n + count (Nx_device.stats r)) 0 memories
-
-  (* The bytes the four devices have received, and sent. *)
-  let bytes_in () = total Nx_device.Stats.bytes_in
-  let bytes_out () = total Nx_device.Stats.bytes_out
+  (* [copied f] is [f ()], or the exception it raised, and the bytes the four
+     devices received and sent while it ran. *)
+  let copied f =
+    let sum = List.fold_left ( + ) 0 in
+    let y, received, sent =
+      traffic memories (fun () -> match f () with y -> Ok y | exception e -> Error e)
+    in
+    (y, sum received, sum sent)
   let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
   let device = Testable.make ~pp:Nx.Device.pp ~equal:Nx.Device.equal
 
@@ -1099,10 +1113,10 @@ module Stored = struct
      row-major order. *)
 
   let storage (Nx.P t) =
-    let bytes = Nx_device.Buffer.bigarray Bigarray.char (elements t) in
     ( Nx_dtype.to_string (Nx.dtype t),
       Nx.shape t,
-      String.init (Bigarray.Array1.dim bytes) (Bigarray.Array1.get bytes) )
+      Rig.Buffer.read (elements t) Bigarray.char (fun bytes ->
+          String.init (Bigarray.Array1.dim bytes) (Bigarray.Array1.get bytes)) )
 
   let pp_packed ppf (Nx.P t as p) =
     let _, _, bytes = storage p in
@@ -1300,20 +1314,18 @@ module Runtimes = struct
 
   (* [x] written to a fresh file, as a value on the disk over it. *)
   let on_disk x =
-    let module B = Nx_device.Buffer in
     let src = elements x and path = Filename.concat (temp_dir ()) "file" in
     let pp = Format.pp_print_string in
-    B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
+    Rig.Buffer.copy ~src
+      ~dst:(require_ok ~pp (Rig_disk.create_file path (Rig.Buffer.length src)));
     Nx.of_buffer (Nx.dtype x) (Nx.shape x)
-      (B.view
-         (require_ok ~pp (B.of_file path))
-         ~offset:0 (B.dtype src) (B.length src))
+      (require_ok ~pp (Rig_disk.of_file path))
 
   (* [f ()] with no room in [r]'s budget. *)
   let full r f =
-    let budget = Nx_device.budget r in
-    Fun.protect ~finally:(fun () -> Nx_device.set_budget r budget) @@ fun () ->
-    Nx_device.set_budget r 0;
+    let budget = Rig.budget r in
+    Fun.protect ~finally:(fun () -> Rig.set_budget r budget) @@ fun () ->
+    Rig.set_budget r 0;
     f ()
 
   (* [laws ms] checks the runtimes [ms], each a memory: operations on its device
@@ -1323,17 +1335,13 @@ module Runtimes = struct
     | ms ->
         let ds = List.map Nx.Device.make ms in
         let received f =
-          let before = List.map Nx_device.stats ms in
-          let y = f () in
-          let bytes_in r s =
-            Nx_device.Stats.(bytes_in (diff s (Nx_device.stats r)))
-          in
-          (y, List.map2 bytes_in ms before)
+          let y, received, _ = traffic ms f in
+          (y, received)
         in
         (* A value on the disk is borrowed from its file's pages by devices
            whose memory the host addresses, which receive no byte, unless a
            window of elements narrower than a byte starts inside a byte. *)
-        let borrows = List.for_all Nx_device.shares_host_memory ms in
+        let borrows = List.for_all Rig.shares_host_memory ms in
         let round_trip ~disk (Case c) =
           prop
             (c.name ^ " values"
@@ -1365,11 +1373,11 @@ module Runtimes = struct
         let m = List.hd ms in
         let on_d = Nx.Placement.on (List.hd ds) in
         let out_of_memory n = function
-          | Nx_device.Out_of_memory (m', k) -> Nx_device.equal m m' && k = n
+          | Rig.Out_of_memory (m', k) -> Rig.equal m m' && k = n
           | _ -> false
         in
         let computing =
-          match List.for_all Nx_device.runs_on_host ms with
+          match List.for_all Rig.runs_on_host ms with
           | true ->
               [
                 prop
@@ -1408,7 +1416,7 @@ module Runtimes = struct
                         | Invalid_argument why ->
                             String.starts_with
                               ~prefix:
-                                ("Nx.add: " ^ Nx_device.name m
+                                ("Nx.add: " ^ Rig.name m
                                ^ " has no eager kernels")
                               why
                             && String.ends_with
@@ -1433,128 +1441,16 @@ module Runtimes = struct
         @ computing
 end
 
-module Profiles = struct
-  module P = Nx_device.Profile
-  module B = Nx_device.Buffer
-
-  let profiled f =
-    let p = P.start () in
-    match f () with
-    | () -> P.stop p
-    | exception e ->
-        ignore (P.stop p);
-        raise e
-
-  (* Copies from the host to [d] and back, staged and through a borrow: each is
-     a span of the host named after its devices, and each that [d]'s copy queue
-     ran is also a span of its copy lane within the host's, [slack] nanoseconds
-     either side allowed for the calibration of [d]'s clock. *)
-  let copies ?(slack = 0) = function
-    | [] -> [ test "on no device" (fun () -> skip ~reason:"no device" ()) ]
-    | ds ->
-        List.map
-          (fun d ->
-            let name = Nx_device.name d in
-            test
-              (name
-             ^ "'s copies are spans of the host, and of its copy lane within \
-                them") (fun () ->
-                let host = Nx_device.host and u8 = Nx_dtype.Scalar.UInt8 in
-                let small = B.create host u8 4096
-                and big = B.create host u8 (1 lsl 20) in
-                let small_d = B.create d u8 4096
-                and big_d = B.create d u8 (1 lsl 20) in
-                let borrowed =
-                  require_ok ~pp:Format.pp_print_string (B.borrow d big)
-                in
-                let events =
-                  profiled (fun () ->
-                      B.copy ~src:small ~dst:small_d;
-                      B.copy ~src:small_d ~dst:small;
-                      B.copy ~src:big ~dst:big_d;
-                      B.copy ~src:big_d ~dst:big)
-                in
-                ignore (Sys.opaque_identity borrowed);
-                let spans on lane =
-                  List.filter_map
-                    (function
-                      | P.Span s when Nx_device.equal s.device on && lane s.lane
-                        ->
-                          Some (s.name, s.start, s.stop)
-                      | _ -> None)
-                    events
-                in
-                let hosted = spans host (String.starts_with ~prefix:"domain ")
-                and queued = spans d (String.equal "copy") in
-                let names = [ "CPU -> " ^ name; name ^ " -> CPU" ] in
-                let names = names @ names in
-                let addressed =
-                  Nx_device.Driver.Region.(host_address (of_buffer small_d))
-                  <> None
-                in
-                let name (n, _, _) = n in
-                equal ~msg:"host spans" (list string) names
-                  (List.map name hosted);
-                equal ~msg:"copy lane spans" (list string)
-                  (if addressed then [] else names)
-                  (List.map name queued);
-                if not addressed then
-                  List.iter2
-                    (fun (n, t0, t1) (_, s0, s1) ->
-                      is_true
-                        ~msg:
-                          (Printf.sprintf "%s: %d to %d within %d to %d" n s0 s1
-                             t0 t1)
-                        (s0 <= s1 && t0 - slack <= s0 && s1 <= t1 + slack))
-                    hosted queued))
-          ds
-end
-
-(* Test memories that a test loses: ["FAULTY:k"] holds its values in the host's
-   memory, which nx.cpu computes on, as [Nx.Device.cpu k] does, and its driver
-   reports the fault a test names at its next synchronization, as a GPU's driver
-   reports one at a wait. [device k] is one memory until it is lost, and a fresh
-   one after, as a vendor's library reopens a lost GPU. *)
+(* Test memories that a test loses: ["FAULTY:k"] is a rig memory device, which
+   nx.cpu computes on, as [Nx.Device.cpu k] is, and which [lose] loses as rig
+   loses a device it closes, with the reason ["closed"]. [device k] is one
+   memory until it is lost, and a fresh one after, as rig reopens a lost
+   GPU. *)
 module Faulty = struct
-  type memory = { memory : Nx_device.t; fault : string option Atomic.t }
+  let device k = Nx.Device.make (Rig.memory_device (Printf.sprintf "FAULTY:%d" k))
 
-  let lock = Mutex.create ()
-  let current : (int, memory) Hashtbl.t = Hashtbl.create 4
-  let made = ref []
-
-  let open_memory k =
-    let fault = Atomic.make None in
-    let memory =
-      Nx_device.Driver.device
-        ~name:(Printf.sprintf "FAULTY:%d" k)
-        ~arch:"test" ~budget:max_int
-        ~synchronized:(fun () -> Option.iter failwith (Atomic.get fault))
-        (Host_visible
-           { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
-    in
-    let m = { memory; fault } in
-    Hashtbl.replace current k m;
-    made := m :: !made;
-    m
-
-  let device k =
-    Mutex.protect lock @@ fun () ->
-    match Hashtbl.find_opt current k with
-    | Some m when Nx_device.lost m.memory = None -> Nx.Device.make m.memory
-    | Some _ | None -> Nx.Device.make (open_memory k).memory
-
-  (* [lose d why] loses [d]'s memory with the fault [why], which its driver
-     reports at the synchronization this runs. *)
-  let lose d why =
-    let memory = Nx.Device.memory d in
-    match
-      Mutex.protect lock (fun () ->
-          List.find_opt (fun m -> m.memory == memory) !made)
-    with
-    | None -> invalid_arg "Nx_test.Faulty.lose: not a faulty memory"
-    | Some m -> (
-        Atomic.set m.fault (Some why);
-        try Nx_device.synchronize memory with Nx_device.Lost _ -> ())
+  (* [lose d] loses [d]'s memory. *)
+  let lose d = Rig.close (Nx.Device.memory d)
 end
 
 module Accuracy = Accuracy

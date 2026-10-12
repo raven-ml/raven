@@ -963,6 +963,11 @@ let triple_of g =
 
 let ints = tensor int32
 
+(* [f] is involutive at [x]: [f (f x)] is [x] as a tensor. Windtrap's
+   [Law.involutive] also compares [f x] with [x] by [Stdlib.compare], which a
+   tensor's device buffer does not admit. *)
+let involutive f x = equal ints x (f (f x))
+
 let int_laws =
   let pairs = pair_of int32_tuple and triples = triple_of int32_tuple in
   group "integer laws"
@@ -991,9 +996,8 @@ let int_laws =
           Law.invertible ints Nx.bitwise_xor (Nx.zeros_like x) Fun.id x);
       prop "bitwise_and distributes over bitwise_or" triples
         (Law.distributive ints Nx.bitwise_and ~over:Nx.bitwise_or);
-      prop "neg is involutive" int32s (Law.involutive ints Nx.neg);
-      prop "bitwise_not is involutive" int32s
-        (Law.involutive ints Nx.bitwise_not);
+      prop "neg is involutive" int32s (involutive Nx.neg);
+      prop "bitwise_not is involutive" int32s (involutive Nx.bitwise_not);
       prop "maximum is associative" triples (Law.associative ints Nx.maximum);
       prop "minimum is commutative" pairs (Law.commutative ints Nx.minimum);
     ]
@@ -1464,7 +1468,7 @@ let every_pair (type b c) (name, (q : (int, b) Nx.dtype))
    to no element and is written as 0. *)
 let past_last t =
   let n = Nx.numel t in
-  let b = Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer t) in
+  Rig.Buffer.read (Nx.to_buffer t) Bigarray.int8_unsigned @@ fun b ->
   if n mod 2 = 0 then 0 else b.{n / 2} lsr 4
 
 let fresh_nibbles =

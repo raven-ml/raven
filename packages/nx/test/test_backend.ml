@@ -17,13 +17,22 @@ let floats = tensor float_exact
 let values = list float_exact
 let elements x = Array.to_list (Nx.to_array x)
 
-(* A memory the host addresses that loads programs, as a GPU: it has no default
-   backend. *)
+(* The first GPU of the machine that rig opens through its vendor's runtime or
+   kernel driver, which has no default backend; the test skips without one. *)
 let gpu =
-  Nx.Device.make
-    (Nx_device.Driver.device ~name:"GPU" ~arch:"test" ~budget:max_int
-       ~load:(fun ~binary:_ -> Error "no programs")
-       (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None }))
+  let opened =
+    lazy
+      (List.find_map
+         (fun (path, o) ->
+           if List.mem path [ "METAL"; "CUDA"; "NV"; "AMD" ] then
+             Result.to_option (o ())
+           else None)
+         (Rig_gpus.openers ()))
+  in
+  fun () ->
+    match Lazy.force opened with
+    | Some m -> Nx.Device.make m
+    | None -> skip ~reason:"no GPU" ()
 
 (* Test backends *)
 
@@ -199,12 +208,14 @@ let who_computes =
         commands;
       test "a device without a backend raises before any work, naming remedies"
         (fun () ->
-          let x = Nx.place (Nx.Placement.on gpu) (vec [| 1.; 2. |]) in
+          let d = gpu () in
+          let x = Nx.place (Nx.Placement.on d) (vec [| 1.; 2. |]) in
           raises
             (Invalid_argument
-               "Nx.add: GPU has no eager kernels. Compile it with Rune.jit, \
-                pair the device with a backend (Nx.Device.with_backend), or \
-                place the operands on Nx.Placement.host.") (fun () ->
+               ("Nx.add: " ^ Nx.Device.name d
+              ^ " has no eager kernels. Compile it with Rune.jit, pair the \
+                 device with a backend (Nx.Device.with_backend), or place the \
+                 operands on Nx.Placement.host.")) (fun () ->
               ignore (Nx.add x x)));
       test "a backend paired with the host computes on its views of host values"
         (fun () ->
@@ -260,6 +271,7 @@ let while_intercepting f =
 
 let movement_on (name, d) =
   test name (fun () ->
+      let d = d () in
       while_intercepting @@ fun () ->
       let p = Nx.Placement.on d in
       let host = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -297,7 +309,7 @@ let movement =
        [
          ( "beside a device whose backend refuses every kernel, while another \
             domain is intercepting",
-           Nx.Device.with_backend refusing (Nx.Device.cpu 1) );
+           fun () -> Nx.Device.with_backend refusing (Nx.Device.cpu 1) );
          ( "beside a device without a backend, while another domain is \
             intercepting",
            gpu );
@@ -317,12 +329,9 @@ let movement =
 
 (* Names *)
 
-(* A fresh memory the host does not compute on, and a backend that computes on
-   it and owns it, as a vendor's library's backend owns its memories. *)
-let own_memory name =
-  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
-    ~load:(fun ~binary:_ -> Error "no programs")
-    (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
+(* A memory of its own, and a backend that computes on it and owns it, as a
+   vendor's library's backend owns its memories. *)
+let own_memory = Rig.memory_device
 
 let owning m =
   Nx_backend.v
@@ -330,7 +339,7 @@ let owning m =
       include Refusing
 
       let name = "owning"
-      let runs_on m' = Nx_device.equal m m'
+      let runs_on m' = Rig.equal m m'
       let owns = runs_on
     end)
 
@@ -346,8 +355,7 @@ let names =
           equal string "CPU:1/refusing"
             (Nx.Device.name (Nx.Device.with_backend refusing (Nx.Device.cpu 1))));
       test "a memory without a backend is named alone" (fun () ->
-          equal string "OWN:2"
-            (Nx.Device.name (Nx.Device.make (own_memory "OWN:2"))));
+          equal string "DISK" (Nx.Device.name (Nx.Device.make Rig_disk.device)));
     ]
 
 let () = exit (run "nx backends" [ who_computes; movement; names ])

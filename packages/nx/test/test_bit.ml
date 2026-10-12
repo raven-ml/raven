@@ -1030,7 +1030,7 @@ let arithmetic =
    from element 0. *)
 let tail t =
   let n = Nx.numel t in
-  let b = Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer t) in
+  Rig.Buffer.read (Nx.to_buffer t) Bigarray.int8_unsigned @@ fun b ->
   if n mod 8 = 0 then 0 else b.{n / 8} lsr (n mod 8)
 
 let fresh =
@@ -1119,11 +1119,11 @@ let exact =
              (Nx.cast Nx.bool (Nx.pad [| (13, 13) |] true (Nx.cast Nx.bit big))));
        test "any over a view ending a mapped file reads no byte past it"
          (fun () ->
-           let module B = Nx_device.Buffer in
+           let module B = Rig.Buffer in
            let size = 65536 in
            let path = Filename.concat (temp_dir ()) "file" in
            let pp = Format.pp_print_string in
-           let file = require_ok ~pp (B.create_file path size) in
+           let file = require_ok ~pp (Rig_disk.create_file path size) in
            let ones = Nx.full Nx.uint8 [| size |] 0 in
            let src =
              Nx.to_buffer
@@ -1131,14 +1131,10 @@ let exact =
            in
            B.copy ~src ~dst:file;
            let mapped =
-             require_ok ~pp
-               (B.borrow Nx_device.host (require_ok ~pp (B.of_file path)))
+             Option.get
+               (B.borrow Rig.host (require_ok ~pp (Rig_disk.of_file path)))
            in
-           let m =
-             Nx.of_buffer Nx.bit
-               [| 8 * size |]
-               (B.view mapped ~offset:0 Nx_dtype.Scalar.Bit (8 * size))
-           in
+           let m = Nx.of_buffer Nx.bit [| 8 * size |] mapped in
            let v = Nx.slice [ Nx.R (3, 8 * size) ] m in
            equal bool true (Nx.item [] (Nx.any v));
            equal int64 1L (Nx.item [] (Nx.count v)));

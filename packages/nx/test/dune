@@ -1,9 +1,8 @@
-; nx links no vendor runtime: these suites link nx, and the build refuses them
-; if any vendor's library reaches them.
+; nx links no driver: these suites link nx, and the build refuses them if any
+; of rig's GPU drivers reaches them.
 
 (tests
  (names
-  test_placement
   test_rng
   test_ptree
   test_values
@@ -17,7 +16,6 @@
   test_windows
   test_fft
   test_runtime
-  test_backend
   test_conformance
   test_buffers
   test_intercept
@@ -28,26 +26,41 @@
   test_accuracy
   test_special)
  (package nx)
- (modules :standard \ test_linalg test_format)
+ (modules :standard \ test_linalg test_format test_backend test_placement)
  (libraries
   nx.dtype
   nx
   nx.array
   nx.backend
   nx.cpu
-  nx.device
+  rig
+  rig.disk
   unix
   windtrap
   nx_test)
  (deps
   (glob_files golden/special/*.golden))
- (forbidden_libraries
-  nx.cuda.device
-  nx.nv.device
-  nx.amd.device
-  nx.metal.device
-  nx.remote.device
-  nx.rdma.device))
+ (forbidden_libraries rig.cuda rig.nv rig.amd rig.metal rig.remote rig.mlx5))
+
+; These suites open a GPU, where the machine has one, for a device without a
+; backend.
+
+(tests
+ (names test_backend test_placement)
+ (package nx)
+ (modules test_backend test_placement)
+ (locks %{workspace_root}/gpu)
+ (libraries
+  nx
+  nx.array
+  nx.backend
+  nx.cpu
+  nx.dtype
+  rig
+  rig.disk
+  rig.gpus
+  windtrap
+  nx_test))
 
 ; The linear algebra suite runs as four shards, which dune runs in parallel.
 
@@ -55,13 +68,7 @@
  (name test_linalg)
  (modules test_linalg)
  (libraries nx windtrap nx_test)
- (forbidden_libraries
-  nx.cuda.device
-  nx.nv.device
-  nx.amd.device
-  nx.metal.device
-  nx.remote.device
-  nx.rdma.device))
+ (forbidden_libraries rig.cuda rig.nv rig.amd rig.metal rig.remote rig.mlx5))
 
 (rule
  (alias runtest)

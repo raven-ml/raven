@@ -132,16 +132,24 @@ let placements =
 (* Devices *)
 
 (* A device as plain data: a memory and a backend. [Default] is the memory's own
-   backend, which is nx.cpu on the memories here but [Gpu]. *)
+   backend, which is nx.cpu on the memories here but [Gpu], drawn only on a
+   machine with a GPU. *)
 type memory = Host | Cpu of int | Gpu
 type backend = Default | Cpu_backend | Renamed_a | Renamed_b
 
-(* A memory the host addresses that loads programs, as a GPU: it has no default
-   backend, and nx.cpu does not compute on it. *)
-let gpu_memory =
-  Nx_device.Driver.device ~name:"GPU" ~arch:"test" ~budget:max_int
-    ~load:(fun ~binary:_ -> Error "no programs")
-    (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
+(* The first GPU of the machine that rig opens through its vendor's runtime or
+   kernel driver: it has no default backend, and nx.cpu does not compute on
+   it. *)
+let gpu =
+  List.find_map
+    (fun (path, o) ->
+      if List.mem path [ "METAL"; "CUDA"; "NV"; "AMD" ] then
+        Result.to_option (o ())
+      else None)
+    (Rig_gpus.openers ())
+
+let gpu_memory () =
+  match gpu with Some m -> m | None -> skip ~reason:"no GPU" ()
 
 (* Two backends of the same kernels and name, each made once. *)
 let renamed_a = renamed
@@ -154,9 +162,9 @@ let backend_value = function
   | Renamed_b -> Some renamed_b
 
 let memory_value = function
-  | Host -> Nx_device.host
+  | Host -> Rig.host
   | Cpu k -> Nx.Device.memory (Nx.Device.cpu k)
-  | Gpu -> gpu_memory
+  | Gpu -> gpu_memory ()
 
 (* The device a description names, spelt three ways: by its constructor, by
    pairing an unpaired device, and by pairing a device paired before. *)
@@ -167,7 +175,7 @@ let paired (m, b) =
     match m with
     | Host -> Nx.Device.host
     | Cpu k -> Nx.Device.cpu k
-    | Gpu -> Nx.Device.make gpu_memory
+    | Gpu -> Nx.Device.make (gpu_memory ())
   in
   match backend_value b with Some b -> Nx.Device.with_backend b d | None -> d
 
@@ -200,9 +208,8 @@ let descriptions =
   let open Gen in
   with_pp pp_description
     (one_of
-       [
-         pair (of_list [ Host; Cpu 1; Cpu 2 ]) backends; constant (Gpu, Default);
-       ])
+       (pair (of_list [ Host; Cpu 1; Cpu 2 ]) backends
+       :: (if Option.is_some gpu then [ constant (Gpu, Default) ] else [])))
 
 (* Two descriptions, mostly of one memory, so that their backends decide. *)
 let related =
@@ -269,9 +276,9 @@ let devices =
           not_equal device Nx.Device.host
             (Nx.Device.with_backend twin Nx.Device.host));
       test "the host is nx.cpu over the host's memory" (fun () ->
-          equal device Nx.Device.host (Nx.Device.make Nx_device.host);
+          equal device Nx.Device.host (Nx.Device.make Rig.host);
           equal device Nx.Device.host
-            (Nx.Device.make ~backend:Nx_cpu.backend Nx_device.host);
+            (Nx.Device.make ~backend:Nx_cpu.backend Rig.host);
           equal device Nx.Device.host
             (Nx.Device.with_backend Nx_cpu.backend Nx.Device.host);
           equal string "CPU" (Nx.Device.name Nx.Device.host));
@@ -280,19 +287,16 @@ let devices =
           let d = Nx.Device.cpu 3 in
           equal device d (Nx.Device.cpu 3);
           equal string "CPU:3" (Nx.Device.name d);
-          equal bool true (Nx_device.runs_on_host (Nx.Device.memory d));
+          equal bool true (Rig.runs_on_host (Nx.Device.memory d));
           not_equal device d (Nx.Device.cpu 4);
           not_equal device d Nx.Device.host;
           List.iter
             (fun k -> raises_invalid_arg (fun () -> Nx.Device.cpu k))
             [ 0; -1; min_int ]);
-      test "a memory nx opened is not made again by its vendor interface"
-        (fun () ->
-          ignore (Nx.Device.cpu 5);
-          raises_match (Exn.invalid_arg ~substring:"CPU:5") (fun () ->
-              Nx_device.Driver.device ~name:"CPU:5" ~arch:"test" ~budget:max_int
-                (Host_visible
-                   { memory = Nx_device.Driver.host_memory; mapping = None })));
+      test "a test device is rig's memory device of its name" (fun () ->
+          equal bool true
+            (Rig.equal (Rig.memory_device "CPU:5")
+               (Nx.Device.memory (Nx.Device.cpu 5))));
       cases
         ~name:(fun (d, _) -> Format.asprintf "%a" pp_description d)
         "a name shows a backend that does not own its memory"
@@ -300,9 +304,11 @@ let devices =
           ((Cpu 1, Default), "CPU:1");
           ((Cpu 1, Cpu_backend), "CPU:1");
           ((Cpu 1, Renamed_a), "CPU:1/nx.cpu renamed");
-          ((Gpu, Default), "GPU");
         ]
         (fun (d, name) -> equal string name (Nx.Device.name (made d)));
+      test "a GPU without a backend is named alone" (fun () ->
+          let m = gpu_memory () in
+          equal string (Rig.name m) (Nx.Device.name (made (Gpu, Default))));
       test "pairing refuses a backend that does not compute on the memory"
         (fun () ->
           let module Elsewhere = struct
@@ -315,9 +321,12 @@ let devices =
           raises_invalid_arg (fun () ->
               Nx.Device.with_backend elsewhere (Nx.Device.cpu 2));
           raises_invalid_arg (fun () ->
-              Nx.Device.make ~backend:elsewhere Nx_device.host);
-          raises_invalid_arg (fun () ->
-              Nx.Device.with_backend Nx_cpu.backend (Nx.Device.make gpu_memory)));
+              Nx.Device.make ~backend:elsewhere Rig.host);
+          Option.iter
+            (fun m ->
+              raises_invalid_arg (fun () ->
+                  Nx.Device.with_backend Nx_cpu.backend (Nx.Device.make m)))
+            gpu);
       test "Ptree.place places every tensor of a structure" (fun () ->
           let s = Nx.Ptree.(pair tensor (list tensor)) in
           let x = (iota [| 2 |], [ iota [| 3 |]; iota [| 1; 2 |] ]) in
@@ -535,9 +544,9 @@ let move_both ((shape, where), steps) =
           let m = List.nth cs (pick mod List.length cs) in
           let msg = Format.asprintf "%a" pp_movement m in
           let expected = fate (Nx.shape host) m where in
-          let received = bytes_in () and sent = bytes_out () in
-          match (move m placed, expected) with
-          | exception Invalid_argument e ->
+          let moved, received, sent = Devices.copied (fun () -> move m placed) in
+          match (moved, expected) with
+          | Error (Invalid_argument e), _ ->
               cover "a refusal" true;
               is_true
                 ~msg:(msg ^ " refused, but moves no element")
@@ -545,8 +554,9 @@ let move_both ((shape, where), steps) =
               contains ~msg:"the remedy"
                 ~sub:"place the value replicated or on one device first" e;
               None
-          | _, None -> failf "%s moved elements between devices" msg
-          | moved, Some where ->
+          | Error e, _ -> raise e
+          | Ok _, None -> failf "%s moved elements between devices" msg
+          | Ok moved, Some where ->
               cover "a cut inside one shard"
                 (match (state, where) with
                 | Some (_, _, Split _), One _ -> true
@@ -557,8 +567,8 @@ let move_both ((shape, where), steps) =
                     d = a && lo = hi
                 | _ -> false);
               let host = move m host in
-              equal ~msg (pair int int) (received, sent)
-                (bytes_in (), bytes_out ());
+              equal ~msg:(msg ^ ": bytes copied") (pair int int) (0, 0)
+                (received, sent);
               equal ~msg placement (to_placement where) (Nx.placement moved);
               is_true
                 ~msg:(msg ^ ": the source's storage")
@@ -726,13 +736,17 @@ let results =
             (match (wa, wb, expected) with
             | Some (Copies _), Some (Split _), Ok _ -> true
             | _ -> false);
-          let sent = bytes_out () in
-          match (agreeing (fun () -> Nx.add (at wa x) (at wb y)), expected) with
-          | exception Invalid_argument _ ->
+          let z, _, sent =
+            Devices.copied (fun () ->
+                agreeing (fun () -> Nx.add (at wa x) (at wb y)))
+          in
+          match (z, expected) with
+          | Error (Invalid_argument _), _ ->
               equal ~msg:"refused, having read nothing" (pair bool int) (true, 0)
-                (Result.is_error expected, bytes_out () - sent)
-          | _, Error () -> fail "the operands' devices or splits differ"
-          | z, Ok w ->
+                (Result.is_error expected, sent)
+          | Error e, _ -> raise e
+          | Ok _, Error () -> fail "the operands' devices or splits differ"
+          | Ok z, Ok w ->
               equal placement
                 (Option.fold ~none:Nx.Placement.host ~some:to_placement w)
                 (Nx.placement z);
@@ -920,9 +934,9 @@ let results =
           and split = Nx.place (Nx.Placement.sharded ~axis:0 four) x in
           let sp = Nx.sum p and ss = Nx.sum split in
           let received f =
-            let before = bytes_in () in
-            let y = f () in
-            (bytes_in () - before, y)
+            match Devices.copied f with
+            | Ok y, received, _ -> (received, y)
+            | Error e, _, _ -> raise e
           in
           let made =
             [
@@ -946,15 +960,15 @@ let results =
           let z = snd (List.nth made 1) and filled = snd (List.nth made 4) in
           equal ~msg:"a constant is one element, read with stride 0"
             (pair (list int) (array int))
-            ([ 1 ], [| 0; 0 |])
+            ([ 4 ], [| 0; 0 |])
             (match Nx.Repr.v z with
             | Placed r ->
-                ( List.map Nx_device.Buffer.length
+                ( List.map Rig.Buffer.length
                     (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage r)),
                   Nx_array.View.strides (Nx.Repr.Placed.view r) )
             | Host _ | Traced _ -> fail "a placed constant");
-          equal ~msg:"one element on each device" (list int) [ 1; 1; 1; 1 ]
-            (List.map Nx_device.Buffer.length
+          equal ~msg:"one element on each device" (list int) [ 4; 4; 4; 4 ]
+            (List.map Rig.Buffer.length
                (Nx.Repr.Storage.buffers (storage_of filled)));
           equal (tensor float_exact)
             (Nx.mul_s (iota [| 2; 3 |]) 2.)
@@ -970,10 +984,11 @@ let results =
 
 let bitcasts =
   let cpu1 = Nx.Device.cpu 1 and cpu2 = Nx.Device.cpu 2 in
-  let gpu = Nx.Device.make gpu_memory in
   let wheres =
-    [
-      ("on a device with no kernels", Nx.Placement.on gpu);
+    (match gpu with
+    | Some m -> [ ("on a device with no kernels", Nx.Placement.on (Nx.Device.make m)) ]
+    | None -> [])
+    @ [
       ("on CPU:1", Nx.Placement.on cpu1);
       ( "rows split over CPU:1 and CPU:2",
         Nx.Placement.sharded ~axis:0 [ cpu1; cpu2 ] );
@@ -988,7 +1003,7 @@ let bitcasts =
   let allocated p =
     List.fold_left
       (fun n d ->
-        n + Nx_device.Stats.allocated (Nx_device.stats (Nx.Device.memory d)))
+        n + Rig.allocated (Nx.Device.memory d))
       0 (Nx.Placement.devices p)
   in
   let views =
@@ -1032,6 +1047,7 @@ let bitcasts =
             |> Array.map Int32.to_int));
       test "a widening bitcast that is no view on the host needs a kernel"
         (fun () ->
+          let gpu = Nx.Device.make (gpu_memory ()) in
           let x = Nx.place (Nx.Placement.on gpu) (Nx.copy bytes) in
           raises_match (Exn.invalid_arg ~substring:"has no eager kernels")
             (fun () ->
@@ -1063,9 +1079,9 @@ let reads =
             Nx.place (Nx.Placement.sharded ~axis:0 four) (iota [| 8; 6 |])
           in
           let counted f =
-            let sent = bytes_out () in
-            ignore (f ());
-            bytes_out () - sent
+            match Devices.copied f with
+            | Ok _, _, sent -> sent
+            | Error e, _, _ -> raise e
           in
           equal (list int) [ 4; 24; 4; 36 ]
             [

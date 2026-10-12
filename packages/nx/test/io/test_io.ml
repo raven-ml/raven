@@ -129,14 +129,9 @@ let npy =
       test "a save refuses memory a consuming call holds" (fun () ->
           let x = Nx.arange Nx.int32 0 6 1 in
           let b = Nx.to_buffer x in
-          Nx_device.Buffer.Claim.read b;
-          is_true (Nx_device.Buffer.Claim.try_exclusive b);
-          Fun.protect
-            ~finally:(fun () ->
-              Nx_device.Buffer.Claim.finish b;
-              Nx_device.Buffer.Claim.release b)
-            (fun () ->
-              fails ~naming:"in use by a consuming call" (fun () ->
+          Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+              equal ~msg:"exclusive" Windtrap.bool true (Rig.Claim.exclusive c b);
+              fails ~naming:"held exclusive" (fun () ->
                   Nx_io.save_npy (temp_file ~suffix:".npy" ()) x)));
       test "a save that cannot read its tensor names itself" (fun () ->
           let run : type r. r Nx.Op.t -> r = function
@@ -363,17 +358,15 @@ let safetensors =
       ("{\"" ^ name ^ {|":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|})
     ^ "\042"
   in
-  let disk = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
+  let disk = Nx.Placement.on (Nx.Device.make Rig_disk.device) in
   let on_disk archive =
     List.for_all
       (fun (_, Nx.P t) -> Nx.Placement.equal disk (Nx.placement t))
       (listed archive)
   in
   let reads f =
-    let read () = Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk) in
-    let before = read () in
-    let y = f () in
-    (y, read () - before)
+    let y, _, sent = traffic [ Rig_disk.device ] f in
+    (y, List.hd sent)
   in
   group "safetensors"
     [
@@ -746,7 +739,7 @@ let cached_gguf () =
   List.find_map find dirs
 
 let gguf_group =
-  let disk = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
+  let disk = Nx.Placement.on (Nx.Device.make Rig_disk.device) in
   let off_disk (g : Gguf.t) =
     List.filter_map
       (fun (name, Nx.P t) ->

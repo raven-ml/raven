@@ -30,8 +30,10 @@ let saved save a =
   save path a;
   path
 
-(* Bytes the host has read from files since the disk device started. *)
-let disk_reads () = Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk)
+(* [f ()] and the bytes it read from files. *)
+let disk_reads f =
+  let y, _, sent = Nx_test.traffic [ Rig_disk.device ] f in
+  (y, List.hd sent)
 let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 let fails message f = raises (Failure message) (fun () -> ignore (f ()))
 
@@ -336,12 +338,15 @@ let strictness =
             Nx_io.load_safetensors
               (saved Nx_io.save_safetensors (Archive.of_value model (blocks 3)))
           in
-          let before = disk_reads () in
-          fails
-            (msg "model.blocks.2: an entry in the archive, no leaf in the value")
-            (fun () -> Archive.to_value model ~like:(blocks 2) a);
-          let x = Archive.to_value model ~like:(blocks 3) a in
-          equal ~msg:"bytes read" int 0 (disk_reads () - before);
+          let x, read =
+            disk_reads (fun () ->
+                fails
+                  (msg
+                     "model.blocks.2: an entry in the archive, no leaf in the \
+                      value") (fun () -> Archive.to_value model ~like:(blocks 2) a);
+                Archive.to_value model ~like:(blocks 3) a)
+          in
+          equal ~msg:"bytes read" int 0 read;
           equal model_value (blocks 3) x);
       test "a tensor at the root, which has no name, is refused" (fun () ->
           let x = vec f32 [| 1. |] in
@@ -436,11 +441,12 @@ let by_name =
               (saved Nx_io.save_safetensors
                  (Archive.of_list [ entry "w" (vec f32 [| 1.; -2. |]) ]))
           in
-          let before = disk_reads () in
-          let w = Archive.float ~shape:[| 2 |] f32 "w" a in
-          equal ~msg:"bytes read" int 0 (disk_reads () - before);
+          let w, read =
+            disk_reads (fun () -> Archive.float ~shape:[| 2 |] f32 "w" a)
+          in
+          equal ~msg:"bytes read" int 0 read;
           equal ~msg:"on the disk" placement
-            (Nx.Placement.on (Nx.Device.make Nx_device.disk))
+            (Nx.Placement.on (Nx.Device.make Rig_disk.device))
             (Nx.placement w));
       cases ~name:fst "float refuses what it does not convert"
         [

@@ -3,19 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Values placed on runtime devices, over test runtimes whose memory is host
-   memory: the laws every runtime keeps, and what makes a runtime a device. *)
+(* Values placed on devices, over rig's memory devices, whose memory is host
+   memory: the laws every device keeps, and what makes a memory a device. *)
 
 open Windtrap
 open Nx_test
 
-(* A runtime over host memory. *)
-let runtime name =
-  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
-    (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
-
-let r1 = runtime "R1"
-let r2 = runtime "R2"
+let r1 = Rig.memory_device "R1"
+let r2 = Rig.memory_device "R2"
 
 let devices =
   group "devices"
@@ -30,25 +25,29 @@ let devices =
           let y = Nx.add x x in
           is_true (Nx.Placement.equal (Nx.placement y) p);
           equal (array float_exact) [| 2.; 4.; 6. |] (Nx.to_array y));
+      test
+        "a value placed on a device that shares the host's memory is a copy: \
+         writing its source afterwards leaves it" (fun () ->
+          let ba =
+            Bigarray.Array1.of_array Bigarray.float32 Bigarray.c_layout
+              [| 1.; 2.; 3. |]
+          in
+          let x = Nx.of_bigarray (Bigarray.genarray_of_array1 ba) in
+          let y = Nx.place (Nx.Placement.on (Nx.Device.make r1)) x in
+          Bigarray.Array1.fill ba 9.;
+          equal (array float_exact) [| 1.; 2.; 3. |] (Nx.to_array y));
     ]
 
-(* A buffer a caller hands to the host engine is on the host and of the value's
-   format. *)
+(* A buffer a caller hands to the host engine is on the host. *)
 let host_buffers =
   let not_host = Exn.invalid_arg ~substring:"not CPU"
-  and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
-  and on_device = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 4
-  and float64 = Nx_array.Elements.create Nx.float64 4 in
+  and on_device = Rig.Buffer.create r1 16 in
   group "host buffers"
     [
-      test "Nx.Repr.host refuses a buffer on a device or of another format"
-        (fun () ->
-          let from_host b =
-            let view = Nx_array.View.create [| Nx_device.Buffer.length b |] in
-            Nx.Repr.host { dtype = Nx.float32; view; buffer = b }
-          in
-          raises_match not_host (fun () -> from_host on_device);
-          raises_match other_format (fun () -> from_host float64));
+      test "Nx.Repr.host refuses a buffer on a device" (fun () ->
+          let view = Nx_array.View.create [| 4 |] in
+          raises_match not_host (fun () ->
+              Nx.Repr.host { dtype = Nx.float32; view; buffer = on_device }));
     ]
 
 (* Whether [x] is far from the offsets and strides of small buffers. *)
@@ -74,14 +73,14 @@ let representation =
         buffer = Nx_array.Elements.create Nx.float32 n;
       }
   and placed n view =
-    let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 n in
+    let b = Rig.Buffer.create r1 (4 * n) in
     Nx.Repr.Placed.v p Nx.float32 view (Nx.Repr.Storage.v p [ b ])
   and shards n view =
-    let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 n in
+    let b = Rig.Buffer.create r1 (4 * n) in
     Nx.of_shards p Nx.float32 view [ b ]
   in
   let of_buffer n shape =
-    let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 n in
+    let b = Rig.Buffer.create r1 (4 * n) in
     Nx.of_buffer Nx.float32 shape b
   in
   (* Each constructor that takes a view builds a value exactly when the view is
@@ -151,7 +150,7 @@ let representation =
         (fun (n, shape) ->
           raises_match other_count (fun () -> of_buffer n shape));
       test "Nx.Repr.Placed.v reads a storage's bytes as its dtype" (fun () ->
-          let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float64 4 in
+          let b = Rig.Buffer.create r1 32 in
           let s = Nx.Repr.Storage.v p [ b ] in
           let x =
             Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 8 |]) s
@@ -162,54 +161,29 @@ let representation =
               Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 9 |]) s));
       test "Nx.Repr.Placed.v refuses a buffer not aligned to its dtype"
         (fun () ->
-          let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.UInt8 9 in
-          let s =
-            Nx.Repr.Storage.v p
-              [ Nx_device.Buffer.view b ~offset:1 Nx_dtype.Scalar.UInt8 8 ]
-          in
+          let b = Rig.Buffer.create r1 9 in
+          let s = Nx.Repr.Storage.v p [ Rig.Buffer.view b ~first:1 ~length:8 ] in
           raises_match (Exn.invalid_arg ~substring:"not aligned") (fun () ->
               Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 2 |]) s));
-      test
-        "Nx.Repr.Placed.v reads an odd int4 storage to its last element, and \
-         its bytes to their last nibble as uint4" (fun () ->
-          let s =
-            Nx.Repr.Storage.v p
-              [ Nx_device.Buffer.create r1 Nx_dtype.Scalar.Int4 5 ]
-          in
+      test "Nx.Repr.Placed.v reads a storage's bytes to their last nibble"
+        (fun () ->
+          let s = Nx.Repr.Storage.v p [ Rig.Buffer.create r1 3 ] in
           raises_match (Exn.invalid_arg ~substring:"outside the storage")
             (fun () ->
-              Nx.Repr.Placed.v p Nx.int4 (Nx_array.View.create [| 6 |]) s);
+              Nx.Repr.Placed.v p Nx.int4 (Nx_array.View.create [| 7 |]) s);
           equal int 6
             (Nx.numel
                (Nx.Repr.Placed.v p Nx.uint4 (Nx_array.View.create [| 6 |]) s)));
-      test
-        "Nx.Repr.Placed.v reads bool only from bool storage, whose bytes are 0 \
-         and 1" (fun () ->
-          let s =
-            Nx.Repr.Storage.v p
-              [ Nx_device.Buffer.create r1 Nx_dtype.Scalar.UInt8 4 ]
-          in
-          raises_match (Exn.invalid_arg ~substring:"read as bool") (fun () ->
-              Nx.Repr.Placed.v p Nx.bool (Nx_array.View.create [| 4 |]) s);
-          let s =
-            Nx.Repr.Storage.v p
-              [ Nx_device.Buffer.create r1 Nx_dtype.Scalar.Bool 4 ]
-          in
-          equal int 4
-            (Nx.numel
-               (Nx.Repr.Placed.v p Nx.bool (Nx_array.View.create [| 4 |]) s)));
     ]
 
 (* Values on the disk: files, which the host reads where they lie, in their
    pages, and other devices read into their memory. *)
 let disk =
   let on_disk = Runtimes.on_disk in
-  let disk = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
-  let read () = Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk) in
+  let disk = Nx.Placement.on (Nx.Device.make Rig_disk.device) in
   let reads f =
-    let before = read () in
-    let y = f () in
-    (y, read () - before)
+    let y, _, sent = traffic [ Rig_disk.device ] f in
+    (y, List.hd sent)
   in
   let x = Nx.arange Nx.int32 0 12 1 |> Nx.reshape [| 3; 4 |] in
   let placement = Devices.placement in
@@ -250,13 +224,15 @@ let disk =
           let y = Nx.add on_d1 (on_disk x) in
           equal placement (Nx.Placement.on (Nx.Device.make r1)) (Nx.placement y);
           equal (array int32) (Nx.to_array (Nx.add x x)) (Nx.to_array y));
-      test "placed on a device apart from the host, it is read into it"
-        (fun () ->
+      test
+        "placed on a device that shares the host's memory, it is a view of the \
+         file's pages" (fun () ->
+          let d = on_disk x in
           let y, bytes =
-            reads (fun () ->
-                Nx.place (Nx.Placement.on (Nx.Device.make r1)) (on_disk x))
+            reads (fun () -> Nx.place (Nx.Placement.on (Nx.Device.make r1)) d)
           in
-          equal ~msg:"bytes read" int 48 bytes;
+          equal ~msg:"bytes read" int 0 bytes;
+          equal ~msg:"its pages" bool true (share_memory (storage y) (storage d));
           equal (array int32) (Nx.to_array x) (Nx.to_array y));
       test "a placement onto the disk raises" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"DISK") (fun () ->
@@ -266,8 +242,6 @@ let disk =
 (* A host value's memory is claimed while an operation or a read uses it: a
    compiled call that holds it exclusive, writing over it, is never read. *)
 
-module Claim = Nx_device.Buffer.Claim
-
 let memory x =
   match Nx.Repr.v x with
   | Host a -> a.buffer
@@ -276,15 +250,11 @@ let memory x =
 (* [f ()] with [x]'s memory held exclusive, as a consuming call holds it. *)
 let held_exclusive x f =
   let m = memory x in
-  Claim.read m;
-  is_true ~msg:"exclusive" (Claim.try_exclusive m);
-  Fun.protect
-    ~finally:(fun () ->
-      Claim.finish m;
-      Claim.release m)
-    f
+  Rig.Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
+      equal ~msg:"exclusive" bool true (Rig.Claim.exclusive c m);
+      f ())
 
-let in_use = Exn.invalid_arg ~substring:"in use"
+let in_use = Exn.invalid_arg ~substring:"held exclusive"
 
 let claims =
   group "claims"
