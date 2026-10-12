@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Fits.write` works on Windows, where it raised
+  `Invalid_argument "Unix.fchmod not implemented"`: Windows has no file
+  modes, and the file stays writable there.
 - `Fits.Value.float` reads and prints the same on every system. On Windows,
   msvcrt's strtod misread some decimals, such as `3.839223843572815E-239`,
   and its printf wrote three exponent digits (`6.02214076E+023`) and

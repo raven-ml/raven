@@ -221,8 +221,9 @@ module Fits : sig
 
   val write : string -> hdu list -> (unit, string) result
   (** [write path hdus] writes [hdus] to a new file beside [path], syncs it and
-      renames it over [path], with mode 0640. A failed write leaves [path] as it
-      was. Values read by copy from a replaced file do not change.
+      renames it over [path], with mode 0640 on POSIX systems and writable on
+      Windows, which has no modes. A failed write leaves [path] as it was.
+      Values read by copy from a replaced file do not change.
 
       {b Structure is the writer's.} The structural keywords are [SIMPLE],
       [XTENSION], [BITPIX], [NAXIS], [NAXISn], [EXTEND], [PCOUNT], [GCOUNT], an

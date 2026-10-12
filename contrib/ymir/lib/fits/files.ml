@@ -396,7 +396,9 @@ let write path hdus =
       let result =
         match
           List.iteri (fun i h -> write_hdu fd ~primary:(i = 0) h) hdus;
-          Unix.fchmod fd 0o640;
+          (* Windows has no file modes: the file, created writable, stays
+             so. *)
+          if not Sys.win32 then Unix.fchmod fd 0o640;
           Unix.fsync fd
         with
         | () -> Ok ()
