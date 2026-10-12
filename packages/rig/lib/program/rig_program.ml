@@ -1830,27 +1830,33 @@ let threads = function
         (launches p.t)
   | There p -> p.limits
 
+(* A watched size as [f] sets it, or -1 for one the agent knows. *)
+let watched_size (f : frame) = function
+  | Fixed n -> n
+  | Int i when i < Array.length f.ints -> f.ints.(i)
+  | Int _ | Leaf _ -> -1
+
+(* Whether [n] is a size of at least 1 that a header word holds. *)
+let header_size n = n > 0 && n <= 0xffff_ffff
+
 (* Refuses a watched launch whose threads per group, as the frame's ints set
    them, exceed its function's most. A size outside a header word, or a word
    the frame does not write, is left to the agent. The product is compared a
-   factor at a time, so it never overflows. *)
+   factor at a time, so it never overflows. A loop, so each run allocates
+   nothing here. *)
 let check_threads watch (f : frame) =
-  let size = function
-    | Fixed n -> n
-    | Int i when i < Array.length f.ints -> f.ints.(i)
-    | Int _ | Leaf _ -> -1
-  in
-  Array.iter
-    (fun { kernel; sizes = x, y, z; most } ->
-      let x = size x and y = size y and z = size z in
-      let word n = n >= 0 && n <= 0xffff_ffff in
-      if
-        word x && word y && word z && x > 0 && y > 0 && z > 0
-        && (x > most || y > most / x || z > most / (x * y))
-      then
-        invalid "%s runs at most %d threads per group; the frame sets %dx%dx%d"
-          kernel most x y z)
-    watch
+  for i = 0 to Array.length watch - 1 do
+    let { kernel; sizes = x, y, z; most } = watch.(i) in
+    let x = watched_size f x
+    and y = watched_size f y
+    and z = watched_size f z in
+    if
+      header_size x && header_size y && header_size z
+      && (x > most || y > most / x || z > most / (x * y))
+    then
+      invalid "%s runs at most %d threads per group; the frame sets %dx%dx%d"
+        kernel most x y z
+  done
 
 (* The words are placed on the host's queue when [submit] hands them over, so
    the next run writes them again once it returned. Each input is read once,
