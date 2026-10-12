@@ -131,12 +131,12 @@ val capability : t -> Rig_nv_abi.Gpu.t
     - a launch whose grid or group has an axis of size [0] or exceeds
       {!Rig_nv_abi.Qmd.max_size}, whose group has more threads than
       {!Rig_nv_abi.Launch.max_threads}, or whose dynamic shared memory,
-      rounded up to 128 bytes, exceeds {!Rig_nv_abi.Launch.dynamic_shared};
-    - a launch whose kernel's constant bank 0 takes more than 5120 bytes.
+      rounded up to 128 bytes, exceeds {!Rig_nv_abi.Launch.dynamic_shared}.
 
-    The device's [most_parts] ({!Rig_edge.type-facts}) is the most launches
-    of the largest descriptor and constant bank, or copies of at most 2 GiB,
-    that the empty rings hold.
+    The device's [most_parts] ({!Rig_edge.type-facts}) is the most parts
+    that the empty rings hold, each a launch, whose constant bank 0 {!entry}
+    bounds, or a copy of at most 2 GiB. A longer copy and words take the
+    room their sizes take.
 
     It reads the word first, so [RIG_LATER] means that a value the device
     was given is not yet reached. [rig_nv_submit] returns [RIG_COMMITTED],
@@ -231,7 +231,9 @@ val capability : t -> Rig_nv_abi.Gpu.t
     to serve it ({!Rig_nv_abi.Gpu.t.local}). It answers [No_memory n],
     having made nothing, if the GPU has no memory for the [n] bytes of that
     local memory, and raises [Invalid_argument] with the reason if the
-    function takes more than a launch can. {!unload} frees the launch
+    function takes more than a launch can, such as parameters placed past 1
+    KiB of its constant bank 0, or a constant bank 0 of more than 5120
+    bytes. {!unload} frees the launch
     descriptors of the image's functions, and leaves its code region to
     rig. *)
 

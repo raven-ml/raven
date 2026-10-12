@@ -182,8 +182,7 @@ static int launchable(const struct rig_part *p, const uint8_t *args) {
     threads *= b->threads[i];
   }
   return threads <= l->max_threads &&
-         round_up(b->shared, 128) <= l->max_shared &&
-         l->bank0_bytes <= BANK_MAX;
+         round_up(b->shared, 128) <= l->max_shared;
 }
 
 /* The bytes of [l]'s constant bank 0 with [params] bytes of parameters: the

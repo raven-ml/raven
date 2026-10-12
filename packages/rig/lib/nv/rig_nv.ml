@@ -153,6 +153,12 @@ let dims = Abi.Qmd.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
 (* rig_nv_stubs.h's most bytes of a launch's structure. *)
 let structure_bytes = 1024
 
+(* The most bytes of a launch's constant bank 0: rig_nv_stubs.h's
+   BANK_MAX, which the device's most parts assumes. *)
+external bank_max : unit -> int = "caml_rig_nv_bank_max"
+
+let bank_max = bank_max ()
+
 (* A pending local memory is one word: its address, below 2^40 and 4 KiB
    aligned, and its bytes per cluster in units of 32 KiB above them. The
    submission of value [v] that takes it leaves [v lsl 1 lor 1] in its
@@ -545,6 +551,9 @@ let descriptors l base code per_thread (k : Cubin.kernel) =
   in
   if k.params_offset > structure_bytes then
     invalid_arg "Rig_nv.entry: a launch places parameters past 1 KiB";
+  if bank0_bytes > bank_max then
+    invalid_argf "Rig_nv.entry: a kernel's constant bank 0 takes %d bytes, \
+                  more than %d" bank0_bytes bank_max;
   let ints =
     [ k.params_offset; bank0_bytes ]
     @ List.map Abi.Qmd.max_size dims
