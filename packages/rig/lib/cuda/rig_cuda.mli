@@ -198,19 +198,17 @@ val capability : t -> Rig_cuda_abi.t
     value's work starts once every earlier value's work has completed. A
     failed conversion loses the device.
 
-    The device measures its clock against the host's once, when it opens.
-    It records a reference event on a stream of its own between two
-    readings of the host's clock, and keeps the closest of eight. An
-    event's time is its elapsed time since a reference, so the times are
-    within half that round trip of the host's clock at open, and drift
-    from it at the GPU timer's rate error since open. [rig_cuda_settle]
-    never waits for the device's work. A timed submit, at most once a
-    second, and each settle record the next reference on that stream once
-    the last is a second old, and adopt it once it has completed, its host
-    time carried over from the last by their elapsed time. An event used
-    while the device works is thus within about four seconds of its
-    reference, where the float of milliseconds an elapsed time is resolves
-    half a microsecond, the resolution CUDA states for it.
+    The device measures its clock against the host's when it opens, and
+    again in a timed [rig_cuda_submit] that finds the last measure 8 s old.
+    A measure records a reference event on a stream of the device's own
+    between two readings of the host's clock, asking CUDA until the event
+    has completed, eight times, and keeps the closest. An event's time is
+    its elapsed time since the reference, a float of milliseconds, plus the
+    host's time at the reference. A time is thus within half the closest
+    round trip of the host's clock, plus the GPU timer's rate error since
+    the measure, plus half a float step at its distance from the reference,
+    half a microsecond within 8 s. [rig_cuda_settle] never waits for the
+    device's work.
 
     {2:launches Launches}
 

@@ -607,6 +607,40 @@ let registry_is_the_process () =
   equal bool ~msg:"locked after the last free" false (S.locked p);
   H.free_pages p H.page
 
+(* A device idle past the age of its clock's measure, 8 s, measures again at
+   its next timed submit. That submission's span, and one before the idle,
+   lie within the host's times around their submit and their wait, up to the
+   error rig_cuda.mli states (S.clock_error). *)
+let spans_after_idle () =
+  let opened = Rig.Profile.now () in
+  S.with_ @@ fun t ->
+  let within what =
+    let t0 = Rig.Profile.now () in
+    let (), events =
+      Rig.Profile.take (fun () ->
+          Rig.Point.wait (S.submit_work t [ S.spin t ~ns:100_000 ]))
+    in
+    let t1 = Rig.Profile.now () in
+    let error = S.clock_error ~since:(t1 - opened) in
+    match
+      List.filter_map
+        (function
+          | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+              Some (start, stop)
+          | _ -> None)
+        events
+    with
+    | [ (start, stop) ] ->
+        at_least int ~msg:(what ^ ": the span's start") ~than:(t0 - error)
+          start;
+        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + error) stop
+    | spans ->
+        equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)
+  in
+  within "before the idle";
+  Unix.sleepf 8.5;
+  within "after the idle"
+
 let timeline =
   group ~timeout:60. "timeline"
     [
@@ -615,6 +649,8 @@ let timeline =
         unload_aside;
       test "a close of an idle device leaves the word at the last value"
         stop_idle;
+      test "a span after an idle past the clock's age lies within its window"
+        spans_after_idle;
       test "a stop after the work ended leaves the word at the last value"
         stop_ended;
       test "a loss that stops running work leaves the GPU closed until it ends"
