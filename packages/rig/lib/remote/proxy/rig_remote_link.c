@@ -97,6 +97,11 @@ typedef struct pollfd rig_remote_pollfd;
 /* The most bytes of an abort's reason. */
 #define MAX_WHY 4096
 
+/* The most bytes one send offers. Winsock takes the whole of a send while
+   the socket holds fewer bytes than its buffer's size, so a send of a large
+   frame would leave at once, however little the peer reads. */
+#define SEND_MAX (1 << 20)
+
 /* A rail's counts: [ready], [sent] and [arrived], each in a 128-byte line. */
 #define READY 0
 #define SENT 1
@@ -294,7 +299,7 @@ static int send_all(struct rig_remote_link *l, const void *p, size_t n) {
   int64_t stuck = 0; /* when the peer last acknowledged, once a send waits */
   int64_t seen = 0;  /* [got] then */
   while (n > 0) {
-    int chunk = n > (1u << 30) ? (1 << 30) : (int)n;
+    int chunk = n > SEND_MAX ? SEND_MAX : (int)n;
     long k = (long)send(l->fd, c, chunk, RIG_REMOTE_NOSIGNAL);
     if (k > 0) {
       c += k;
@@ -558,13 +563,13 @@ static void thread_ends(struct rig_remote_link *l) {
    two areas, it sends [p]'s bytes alone, or [b]'s once [n] is 0. */
 static long send_some(struct rig_remote_link *l, const unsigned char *p,
                       size_t n, struct rig_remote_span b) {
-  if (b.n > (1u << 30)) b.n = 1u << 30;
+  if (b.n > SEND_MAX) b.n = SEND_MAX;
 #ifdef _WIN32
   if (n == 0) {
     p = b.p;
     n = b.n;
   }
-  long k = (long)send(l->fd, (const char *)p, n > (1u << 30) ? 1 << 30 : (int)n,
+  long k = (long)send(l->fd, (const char *)p, n > SEND_MAX ? SEND_MAX : (int)n,
                       RIG_REMOTE_NOSIGNAL);
 #else
   struct iovec v[2] = {{(void *)p, n}, {(void *)b.p, b.n}};
