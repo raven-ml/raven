@@ -239,31 +239,86 @@ static int releaser(const struct route *routes, int n, uint64_t v) {
   return routes[n - 1].channel;
 }
 
-/* The most entries and segment bytes [p], routed by [routes], takes of
-   each channel, the words a channel may owe and MAX_WAITS waits counted,
-   and a wrap of the segment ring that wastes a template's words and splits
-   a segment; and the most bytes its launches take of the launch ring. */
-static void need(const struct device *d, const struct route *routes,
-                 const struct rig_part *p, int n, uint64_t *entries,
-                 uint64_t *bytes, uint64_t *launched) {
+/* What a submission takes of the device's room: entries and segment bytes
+   of each channel, and bytes of the launch ring. */
+struct cost {
+  uint64_t entries[CHANNELS], bytes[CHANNELS], launched;
+};
+
+/* The bytes of a release of the value on channel [q]. */
+static uint64_t release_bytes(const struct device *d, int q) {
+  return bytes_of(d, q == COMPUTE ? T_RELEASE : T_COPY_RELEASE);
+}
+
+/* The bytes of a stamp of the value's time on channel [q]. */
+static uint64_t stamp_bytes(const struct device *d, int q) {
+  return bytes_of(d, q == COMPUTE ? T_STAMP : T_COPY_STAMP);
+}
+
+/* The bytes that end the value on the channel [q] that releases it: its
+   release and its last stamp. */
+static uint64_t end_bytes(const struct device *d, int q) {
+  return release_bytes(d, q) + stamp_bytes(d, q);
+}
+
+/* Adds what channel [q] takes when a submission uses it, besides its parts:
+   the words a channel may owe, its first stamp, MAX_WAITS waits, and a wrap
+   of the segment ring that wastes a template's words and splits a
+   segment. */
+static void channel_cost(const struct device *d, int q, struct cost *k) {
+  k->entries[q] += 3;
+  k->bytes[q] += stamp_bytes(d, q) +
+                 (2 + MAX_WAITS) * bytes_of(d, T_ACQUIRE) +
+                 bytes_of(d, q == COMPUTE ? T_SETUP : T_SETUP_COPY) +
+                 4 * TEMPLATE_WORDS;
+  if (q == COMPUTE)
+    k->bytes[q] += bytes_of(d, T_LOCAL) + bytes_of(d, T_INVALIDATE);
+}
+
+/* Adds what a part on channel [q] takes that places [words] ring words,
+   waits for [joins] parts of the other channel, schedules a launch of a
+   [qmd]-byte descriptor and a [bank]-byte constant bank (both 0 for none),
+   and copies [pieces] pieces of at most COPY_MAX bytes. */
+static void part_cost(const struct device *d, int q, uint64_t words,
+                      uint64_t joins, uint64_t qmd, uint64_t bank,
+                      uint64_t pieces, struct cost *k) {
+  k->entries[q] += 2 + words / 2;
+  k->bytes[q] += joins * bytes_of(d, T_ACQUIRE) +
+                 pieces * bytes_of(d, T_COPY) + release_bytes(d, q);
+  if (qmd + bank > 0) {
+    k->bytes[q] += bytes_of(d, T_SCHEDULE);
+    k->launched += qmd + bank;
+  }
+  if (q == COMPUTE) k->bytes[q] += bytes_of(d, T_IDLE);
+}
+
+/* The most a submission may take: fewer entries than a channel's ring
+   holds, its segment ring, and the launch ring. */
+static struct cost room_of(const struct device *d) {
+  struct cost k = {.launched = d->ch[COMPUTE].launches_size};
+  for (int q = 0; q < CHANNELS; q++) {
+    k.entries[q] = d->ch[q].entries - 1;
+    k.bytes[q] = d->ch[q].size;
+  }
+  return k;
+}
+
+/* What [p], routed by [routes], takes, with the most a wrap past the launch
+   ring's end wastes: the largest of its launches' descriptors and banks. */
+static struct cost need(const struct device *d, const struct route *routes,
+                        const struct rig_part *p, int n) {
   uint64_t v = atomic_load_explicit(&d->last, memory_order_relaxed) + 1;
   int r = releaser(routes, n, v);
   int used[CHANNELS] = {0, 0};
   used[r] = 1;
-  for (int q = 0; q < CHANNELS; q++) entries[q] = bytes[q] = 0;
-  /* The most a wrap past the launch ring's end wastes: the largest of the
-     launches' descriptors and banks. */
+  struct cost k = {0};
   uint64_t wasted = 0;
-  *launched = 0;
   for (int i = 0; i < n; i++) {
     const struct route *x = &routes[i];
     int q = x->channel;
     used[q] = 1;
-    entries[q] += 2 + words_of(&p[i]) / 2;
-    bytes[q] += ((uint64_t)p[i].nafter + (x->join >= 0)) *
-                bytes_of(d, T_ACQUIRE);
     const struct launch *l = NULL;
-    uint64_t params = 0;
+    uint64_t params = 0, qmd = 0, bank = 0, pieces = 0;
     if (p[i].kind == RIG_LAUNCH) {
       l = p[i].launch.launch;
       params = p[i].launch.args.params;
@@ -271,32 +326,21 @@ static void need(const struct device *d, const struct route *routes,
       l = d->copy_launch;
       params = COPY_PARAMS;
     } else if (p[i].kind == RIG_COPY)
-      bytes[q] += (p[i].copy.bytes + COPY_MAX - 1) / COPY_MAX *
-                  bytes_of(d, T_COPY);
+      pieces = (p[i].copy.bytes + COPY_MAX - 1) / COPY_MAX;
     if (l != NULL) {
-      uint64_t qmd = l->qmd[0][0].nbytes + QMD_ALIGN - 1;
-      uint64_t bank = bank_bytes(l, params) + BANK_ALIGN - 1;
-      bytes[q] += bytes_of(d, T_SCHEDULE);
-      *launched += qmd + bank;
+      qmd = l->qmd[0][0].nbytes + QMD_ALIGN - 1;
+      bank = bank_bytes(l, params) + BANK_ALIGN - 1;
       if (qmd > wasted) wasted = qmd;
       if (bank > wasted) wasted = bank;
     }
-    bytes[q] += bytes_of(d, q == COMPUTE ? T_RELEASE : T_COPY_RELEASE);
-    if (q == COMPUTE) bytes[q] += bytes_of(d, T_IDLE);
+    part_cost(d, q, words_of(&p[i]),
+              (uint64_t)p[i].nafter + (x->join >= 0), qmd, bank, pieces, &k);
   }
-  for (int q = 0; q < CHANNELS; q++) {
-    if (!used[q]) continue;
-    entries[q] += 3;
-    bytes[q] += bytes_of(d, q == COMPUTE ? T_STAMP : T_COPY_STAMP);
-    bytes[q] += (2 + MAX_WAITS) * bytes_of(d, T_ACQUIRE) +
-                bytes_of(d, q == COMPUTE ? T_SETUP : T_SETUP_COPY) +
-                4 * TEMPLATE_WORDS;
-    if (q == COMPUTE)
-      bytes[q] += bytes_of(d, T_LOCAL) + bytes_of(d, T_INVALIDATE);
-  }
-  bytes[r] += bytes_of(d, r == COMPUTE ? T_RELEASE : T_COPY_RELEASE) +
-              bytes_of(d, r == COMPUTE ? T_STAMP : T_COPY_STAMP);
-  if (*launched > 0) *launched += wasted;
+  for (int q = 0; q < CHANNELS; q++)
+    if (used[q]) channel_cost(d, q, &k);
+  k.bytes[r] += end_bytes(d, r);
+  if (k.launched > 0) k.launched += wasted;
+  return k;
 }
 
 /* The most whole parts of [per] units of room after [fixed] fit in [room],
@@ -308,36 +352,34 @@ static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
   return m < n ? m : n;
 }
 
+static uint64_t larger(uint64_t a, uint64_t b) { return a > b ? a : b; }
+
 /* The most parts an idle device runs in one submission, each of the largest
-   size it admits, as [need] counts them against the bounds [rig_nv_room]
-   holds a submission to: a launch whose descriptor takes STRUCTURE_BYTES
-   and whose constant bank takes BANK_MAX bytes, or a copy of one COPY_MAX
-   piece, each joined to the part before it on its queue and to one of the
-   other queue. Either channel may release the value. */
+   size the guarantee covers, by [need]'s costs and [room_of]'s bounds: a
+   launch whose descriptor takes STRUCTURE_BYTES and whose constant bank
+   takes BANK_MAX bytes, or a copy of one COPY_MAX piece, each joined to the
+   part before it on its queue and to one of the other queue. Both channels
+   are used, and either may release the value. */
 int rig_nv_most_parts(const struct device *d) {
-  uint64_t n = MAX_PARTS;
-  uint64_t compute_release = bytes_of(d, T_RELEASE) + bytes_of(d, T_STAMP);
-  uint64_t copy_release =
-      bytes_of(d, T_COPY_RELEASE) + bytes_of(d, T_COPY_STAMP);
-  uint64_t release =
-      compute_release > copy_release ? compute_release : copy_release;
-  uint64_t joins = 2 * bytes_of(d, T_ACQUIRE);
-  uint64_t fixed = (2 + MAX_WAITS) * bytes_of(d, T_ACQUIRE) +
-                   4 * TEMPLATE_WORDS + release;
-  for (int q = 0; q < CHANNELS; q++)
-    n = least(n, d->ch[q].entries - 1, 3, 2);
-  n = least(n, d->ch[COMPUTE].size,
-            fixed + bytes_of(d, T_STAMP) + bytes_of(d, T_SETUP) +
-                bytes_of(d, T_LOCAL) + bytes_of(d, T_INVALIDATE),
-            joins + bytes_of(d, T_SCHEDULE) + bytes_of(d, T_RELEASE) +
-                bytes_of(d, T_IDLE));
-  n = least(n, d->ch[COPY].size,
-            fixed + bytes_of(d, T_COPY_STAMP) + bytes_of(d, T_SETUP_COPY),
-            joins + bytes_of(d, T_COPY) + bytes_of(d, T_COPY_RELEASE));
+  struct cost room = room_of(d), fixed = {0}, launch = {0}, copy = {0};
+  uint64_t release = larger(end_bytes(d, COMPUTE), end_bytes(d, COPY));
   uint64_t qmd = STRUCTURE_BYTES + QMD_ALIGN - 1;
   uint64_t bank = BANK_MAX + BANK_ALIGN - 1;
-  n = least(n, d->ch[COMPUTE].launches_size, qmd > bank ? qmd : bank,
-            qmd + bank);
+  for (int q = 0; q < CHANNELS; q++) {
+    channel_cost(d, q, &fixed);
+    fixed.bytes[q] += release;
+  }
+  fixed.launched = larger(qmd, bank);
+  part_cost(d, COMPUTE, 0, 2, qmd, bank, 0, &launch);
+  part_cost(d, COPY, 0, 2, 0, 0, 1, &copy);
+  uint64_t n = MAX_PARTS;
+  for (int q = 0; q < CHANNELS; q++) {
+    n = least(n, room.entries[q], fixed.entries[q],
+              larger(launch.entries[q], copy.entries[q]));
+    n = least(n, room.bytes[q], fixed.bytes[q],
+              larger(launch.bytes[q], copy.bytes[q]));
+  }
+  n = least(n, room.launched, fixed.launched, launch.launched);
   return (int)n;
 }
 
@@ -346,23 +388,22 @@ int rig_nv_room(void *self, const struct rig_part *p, int n,
   struct device *d = self;
   if (!runs(p, n, args)) return RIG_NEVER;
   route(d, scratch, p, n);
-  uint64_t entries[CHANNELS], bytes[CHANNELS], launched;
-  need(d, scratch, p, n, entries, bytes, &launched);
+  struct cost k = need(d, scratch, p, n), room = room_of(d);
   for (int q = 0; q < CHANNELS; q++)
-    if (entries[q] > d->ch[q].entries - 1 || bytes[q] > d->ch[q].size)
+    if (k.entries[q] > room.entries[q] || k.bytes[q] > room.bytes[q])
       return RIG_NEVER;
+  if (k.launched > room.launched) return RIG_NEVER;
   const struct channel *compute = &d->ch[COMPUTE];
-  if (launched > compute->launches_size) return RIG_NEVER;
   uint64_t seen = atomic_load_explicit(d->word, memory_order_acquire);
   for (int q = 0; q < CHANNELS; q++) {
     struct channel *c = &d->ch[q];
     reclaim(c, seen);
-    if (c->entries - 1 - (c->put - c->freed) < entries[q] ||
-        c->size - (c->written - c->reclaimed) < bytes[q])
+    if (c->entries - 1 - (c->put - c->freed) < k.entries[q] ||
+        c->size - (c->written - c->reclaimed) < k.bytes[q])
       return RIG_LATER;
   }
   if (compute->launches_size - (compute->launched - compute->landed) <
-      launched)
+      k.launched)
     return RIG_LATER;
   return RIG_FITS;
 }

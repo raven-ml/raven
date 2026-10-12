@@ -171,66 +171,110 @@ static uint64_t arguments(const struct rig_amd_launch *l, uint64_t params) {
   return params > l->kernarg ? params : l->kernarg;
 }
 
-/* The words part [p] places itself, and the bytes it takes from the
-   segment; [kernel] says whether the copy kernel runs it. */
+/* The words part [p] places itself, and in [args] the bytes of arguments it
+   takes from the segment; [kernel] says whether the copy kernel runs it. */
 static uint64_t part_words(const struct rig_amd *d, const struct rig_part *p,
-                           int kernel, uint64_t *bytes) {
+                           int kernel, uint64_t *args) {
+  *args = 0;
   switch (p->kind) {
   case RIG_WORDS: return p->words.n;
   case RIG_LAUNCH: {
     const struct rig_amd_launch *l = p->launch.launch;
-    *bytes += align_up(arguments(l, p->launch.args.params), SEGMENT_ALIGN);
+    *args = align_up(arguments(l, p->launch.args.params), SEGMENT_ALIGN);
     return (uint64_t)l->n + (l->packet ? 0 : words_of(d, T_INVALIDATE));
   }
   default:
     if (kernel) {
       const struct rig_amd_launch *l = d->copy_launch;
-      *bytes += align_up(arguments(l, 3 * sizeof(uint64_t)), SEGMENT_ALIGN);
+      *args = align_up(arguments(l, 3 * sizeof(uint64_t)), SEGMENT_ALIGN);
       return (uint64_t)l->n + (l->packet ? 0 : words_of(d, T_INVALIDATE));
     }
     return copies(d, p->copy.bytes) * words_of(d, S_COPY);
   }
 }
 
-/* The words a submission of the routed [parts] places on each queue, at
-   most, with
-   RIG_AMD_WAITS waits, and the bytes it takes from the segment in one
-   run: its launches', and on an AQL ring the writer's own PM4
-   words, each indirect buffer of them aligned. */
-static void need(const struct rig_amd *d, const struct rig_amd_route *routes,
-                 const struct rig_part *p, int n, uint64_t *words,
-                 uint64_t *bytes) {
-  int c = RIG_AMD_COMPUTE, s = RIG_AMD_COPY;
+/* What a submission takes of the device's room: words of the compute ring,
+   words of the copy ring, and bytes of the segment. On an AQL ring the
+   writer's own PM4 words lie in the segment, each indirect buffer of them
+   aligned. */
+struct cost {
+  uint64_t compute, copy, bytes;
+};
+
+static int aql(const struct rig_amd *d) {
+  return d->rings[RIG_AMD_COMPUTE].kind == RING_AQL;
+}
+
+/* What a submission takes besides its parts: on the compute ring its prefix,
+   RIG_AMD_WAITS waits, the scratch writes, its release and the stamps of its
+   start and end, and on the copy ring its prefix, its two stamps, the fence
+   after them and its release. */
+static struct cost fixed_cost(const struct rig_amd *d) {
   uint64_t pm4 = words_of(d, T_WAIT) +
                  RIG_AMD_SCRATCH_WRITES * words_of(d, T_WRITE) +
                  RIG_AMD_WAITS * words_of(d, T_WAIT64) +
                  words_of(d, T_SIGNAL) + words_of(d, T_WAIT) +
                  words_of(d, T_RELEASE) + 2 * words_of(d, T_STAMP);
-  uint64_t parts = 0, flushes = 2;
-  words[s] = 3 * words_of(d, S_POLL) + words_of(d, S_FENCE) +
-             words_of(d, S_TRAP) + 2 * words_of(d, S_STAMP) +
-             words_of(d, S_FENCE);
-  *bytes = SEGMENT_ALIGN;
+  struct cost k = {
+      .copy = 3 * words_of(d, S_POLL) + words_of(d, S_FENCE) +
+              words_of(d, S_TRAP) + 2 * words_of(d, S_STAMP) +
+              words_of(d, S_FENCE),
+      .bytes = SEGMENT_ALIGN,
+  };
+  if (aql(d)) {
+    k.compute = 2 * words_of(d, A_IB);
+    k.bytes += 4 * pm4 + 2 * SEGMENT_ALIGN;
+  } else
+    k.compute = pm4;
+  return k;
+}
+
+/* What a part routed to [ring] takes that places [w] words itself, takes
+   [args] bytes of arguments, and waits for [joins] parts of the other
+   ring. */
+static struct cost part_cost(const struct rig_amd *d, int ring, uint64_t w,
+                             uint64_t args, uint64_t joins) {
+  struct cost k = {.bytes = args};
+  if (ring == RIG_AMD_COPY) {
+    k.copy = w + words_of(d, S_FENCE) + joins * words_of(d, S_POLL);
+    return k;
+  }
+  uint64_t pm4 = words_of(d, T_FLUSH) + words_of(d, T_ACQUIRE) +
+                 words_of(d, T_SIGNAL) + joins * words_of(d, T_WAIT);
+  if (aql(d)) {
+    k.compute = words_of(d, A_IB) + w;
+    k.bytes += 4 * pm4 + SEGMENT_ALIGN;
+  } else
+    k.compute = pm4 + w;
+  return k;
+}
+
+/* The most a submission may take: fewer words than the compute ring holds,
+   and half the copy ring and half the segment, since a submission's SDMA
+   packets and argument bytes never wrap. */
+static struct cost room_of(const struct rig_amd *d) {
+  return (struct cost){
+      .compute = d->rings[RIG_AMD_COMPUTE].size - 1,
+      .copy = (d->rings[RIG_AMD_COPY].size - 1) / 2,
+      .bytes = d->segment.size / 2,
+  };
+}
+
+/* What a submission of the routed [parts] takes. */
+static struct cost need(const struct rig_amd *d,
+                        const struct rig_amd_route *routes,
+                        const struct rig_part *p, int n) {
+  struct cost k = fixed_cost(d);
   for (int i = 0; i < n; i++) {
     const struct rig_amd_route *x = &routes[i];
-    uint64_t w = part_words(d, &p[i], x->kernel, bytes);
-    int q = x->ring;
+    uint64_t args, w = part_words(d, &p[i], x->kernel, &args);
     uint64_t joins = (uint64_t)p[i].nafter + (x->join >= 0);
-    if (q == c) {
-      parts += w;
-      pm4 += words_of(d, T_FLUSH) + words_of(d, T_ACQUIRE) +
-             words_of(d, T_SIGNAL) +
-             joins * words_of(d, T_WAIT);
-      flushes++;
-    } else
-      words[s] += w + words_of(d, S_FENCE) +
-                  joins * words_of(d, S_POLL);
+    struct cost c = part_cost(d, x->ring, w, args, joins);
+    k.compute += c.compute;
+    k.copy += c.copy;
+    k.bytes += c.bytes;
   }
-  if (d->rings[c].kind != RING_AQL) words[c] = pm4 + parts;
-  else {
-    words[c] = flushes * words_of(d, A_IB) + parts;
-    *bytes += 4 * pm4 + flushes * SEGMENT_ALIGN;
-  }
+  return k;
 }
 
 /* The most whole parts of [per] units of room after [fixed] fit in [room],
@@ -243,40 +287,22 @@ static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
 }
 
 /* The most parts an idle device runs in one submission, each of the largest
-   size the guarantee covers, as [need] counts them against the bounds
-   [rig_amd_room] holds a submission to: a launch whose dispatch takes
-   RIG_AMD_LAUNCH_WORDS words and whose arguments take RIG_AMD_KERNARG bytes,
-   or a copy of one packet, each joined to the part before it on its queue
-   and to one of the other queue. */
+   size the guarantee covers, by [need]'s costs and [room_of]'s bounds: a
+   launch whose dispatch takes RIG_AMD_LAUNCH_WORDS words and whose
+   arguments take RIG_AMD_KERNARG bytes, or a copy of one packet, each
+   joined to the part before it on its queue and to one of the other
+   queue. */
 int rig_amd_most_parts(const struct rig_amd *d) {
-  const struct rig_amd_ring *c = &d->rings[RIG_AMD_COMPUTE];
-  const struct rig_amd_ring *s = &d->rings[RIG_AMD_COPY];
-  const struct rig_amd_segment *g = &d->segment;
-  uint64_t pm4 = words_of(d, T_WAIT) +
-                 RIG_AMD_SCRATCH_WRITES * words_of(d, T_WRITE) +
-                 RIG_AMD_WAITS * words_of(d, T_WAIT64) +
-                 words_of(d, T_SIGNAL) + words_of(d, T_WAIT) +
-                 words_of(d, T_RELEASE) + 2 * words_of(d, T_STAMP);
-  uint64_t pm4_part = words_of(d, T_FLUSH) + words_of(d, T_ACQUIRE) +
-                      words_of(d, T_SIGNAL) + 2 * words_of(d, T_WAIT);
-  uint64_t launch = RIG_AMD_LAUNCH_WORDS + words_of(d, T_INVALIDATE);
-  uint64_t args = align_up(RIG_AMD_KERNARG, SEGMENT_ALIGN);
+  struct cost room = room_of(d), fixed = fixed_cost(d);
+  uint64_t dispatch =
+      RIG_AMD_LAUNCH_WORDS + (aql(d) ? 0 : words_of(d, T_INVALIDATE));
+  struct cost launch = part_cost(d, RIG_AMD_COMPUTE, dispatch,
+                                 align_up(RIG_AMD_KERNARG, SEGMENT_ALIGN), 2);
+  struct cost copy = part_cost(d, RIG_AMD_COPY, words_of(d, S_COPY), 0, 2);
   uint64_t n = RIG_AMD_PARTS;
-  if (c->kind == RING_AQL) {
-    n = least(n, c->size - 1, 2 * words_of(d, A_IB),
-              words_of(d, A_IB) + launch);
-    n = least(n, g->size / 2, 3 * SEGMENT_ALIGN + 4 * pm4,
-              args + 4 * pm4_part + SEGMENT_ALIGN);
-  } else {
-    n = least(n, c->size - 1, pm4, pm4_part + launch);
-    n = least(n, g->size / 2, SEGMENT_ALIGN, args);
-  }
-  n = least(n, (s->size - 1) / 2,
-            3 * words_of(d, S_POLL) + words_of(d, S_FENCE) +
-                words_of(d, S_TRAP) + 2 * words_of(d, S_STAMP) +
-                words_of(d, S_FENCE),
-            words_of(d, S_COPY) + words_of(d, S_FENCE) +
-                2 * words_of(d, S_POLL));
+  n = least(n, room.compute, fixed.compute, launch.compute);
+  n = least(n, room.bytes, fixed.bytes, launch.bytes);
+  n = least(n, room.copy, fixed.copy, copy.copy);
   return (int)n;
 }
 
@@ -339,13 +365,12 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n,
   for (int i = 0; i < n; i++)
     if (!runs(d, &parts[i], i, args)) return RIG_NEVER;
   route(d, routes, parts, n);
-  uint64_t words[RIG_AMD_QUEUES], bytes;
-  need(d, routes, parts, n, words, &bytes);
+  struct cost k = need(d, routes, parts, n), room = room_of(d);
+  if (k.compute > room.compute || k.copy > room.copy || k.bytes > room.bytes)
+    return RIG_NEVER;
   struct rig_amd_ring *c = &d->rings[RIG_AMD_COMPUTE];
   struct rig_amd_ring *s = &d->rings[RIG_AMD_COPY];
   struct rig_amd_segment *g = &d->segment;
-  if (words[0] >= c->size || 2 * words[1] >= s->size || 2 * bytes > g->size)
-    return RIG_NEVER;
   uint64_t word = atomic_load_explicit(d->word, memory_order_acquire);
   c->free = reclaim(&c->marks, c->free, word);
   s->free = reclaim(&s->marks, s->free, word);
@@ -353,9 +378,9 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n,
   int full = c->marks.count == RIG_AMD_MARKS ||
              s->marks.count == RIG_AMD_MARKS ||
              g->marks.count == RIG_AMD_MARKS;
-  if (full || c->put + words[0] - c->free > c->size ||
-      s->put + 2 * words[1] - s->free > s->size ||
-      g->put + 2 * bytes - g->free > g->size)
+  if (full || c->put + k.compute - c->free > c->size ||
+      s->put + 2 * k.copy - s->free > s->size ||
+      g->put + 2 * k.bytes - g->free > g->size)
     return RIG_LATER;
   return RIG_FITS;
 }
@@ -782,8 +807,7 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   }
 
   /* The submission's segment bytes lie in one run, which never wraps. */
-  uint64_t words[RIG_AMD_QUEUES], bytes;
-  need(d, s.routes, parts, nparts, words, &bytes);
+  uint64_t bytes = need(d, s.routes, parts, nparts).bytes;
   struct rig_amd_segment *g = &d->segment;
   if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
 
