@@ -1237,6 +1237,9 @@ thread.
 
 ### Tolk (new)
 
+- `Helpers.system` runs its program directly, without a shell. On Windows
+  cmd.exe ran its built-in `echo` in place of the program and printed the
+  quotes around each argument.
 - On Windows, tolk reads an empty environment variable as empty, where it
   read it as unset: an empty `DEBUG` was refused elsewhere and took the
   default there.

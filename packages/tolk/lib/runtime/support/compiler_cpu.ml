@@ -8,15 +8,7 @@
 (* Clang reads the source from a file and writes its output and its diagnostics
    to others, so that it never waits for this process to read. [run prog args
    src] is the exit status, the output and the diagnostics, or why [prog] does
-   not start. Clang runs as a process of this one, waited for with the runtime
-   released: [Sys.command] goes through the C library's [system], which macOS
-   runs one at a time, so compiling domains would wait for each other.
-
-   Windows hands a new process every inheritable handle of its parent, and
-   [Unix.create_process] makes the child's three inheritable while it starts
-   it: a process another domain starts meanwhile holds them until it ends. The
-   files are opened shared for deletion, so that they are removed whoever
-   holds them. *)
+   not start or its status is lost. *)
 let run prog args src =
   let temp_file contents =
     let path = Filename.temp_file "tolk" "" in
@@ -27,34 +19,12 @@ let run prog args src =
   Fun.protect ~finally:(fun () -> List.iter Sys.remove [ src_file; out; err ])
   @@ fun () ->
   let read path = In_channel.with_open_bin path In_channel.input_all in
-  let started =
-    let open_shared path flag =
-      Unix.openfile path [ flag; O_CLOEXEC; O_SHARE_DELETE ] 0
-    in
-    let stdin = open_shared src_file O_RDONLY
-    and stdout = open_shared out O_WRONLY
-    and stderr = open_shared err O_WRONLY in
-    Fun.protect ~finally:(fun () ->
-        List.iter Unix.close [ stdin; stdout; stderr ])
-    @@ fun () ->
-    try
-      Ok
-        (Unix.create_process prog
-           (Array.of_list (prog :: args))
-           stdin stdout stderr)
-    with Unix.Unix_error (e, _, _) ->
-      Error (prog ^ ": " ^ Unix.error_message e)
-  in
-  let rec wait pid =
-    match Unix.waitpid [] pid with
-    | _, status -> status
-    | exception Unix.Unix_error (EINTR, _, _) -> wait pid
-  in
-  Result.map
-    (fun pid ->
-      let status = wait pid in
-      (status, read out, read err))
-    started
+  match
+    Helpers.run_program ~stdin:src_file ~stdout:out ~stderr:err prog args
+  with
+  | Ok (Some status) -> Ok (status, read out, read err)
+  | Ok None -> Error (prog ^ ": its exit status is lost")
+  | Error why -> Error why
 
 let compile prog args src =
   match run prog args src with

@@ -120,13 +120,7 @@ let signal_name s =
    decides, whatever the exit status says, which is lost when SIGCHLD is
    ignored. A program that ends without a whole reply is [Error] with why and
    its diagnostics. Raises [Failure] if the program cannot be started: that is
-   the machine, not the request.
-
-   Windows hands a new process every inheritable handle of its parent, and
-   [Unix.create_process] makes the child's three inheritable while it starts
-   it: a process another domain starts meanwhile holds the diagnostics until
-   it ends. They are opened shared for deletion, so that they are removed
-   whoever holds them. *)
+   the machine, not the request. *)
 let run program args request =
   let temp_file suffix contents =
     let path = Filename.temp_file "tolk-comgr" suffix in
@@ -139,28 +133,15 @@ let run program args request =
   Fun.protect ~finally:(fun () ->
       List.iter Sys.remove [ request_file; reply_file; diagnostics_file ])
   @@ fun () ->
-  let pid =
-    let null = Unix.openfile Filename.null [ O_RDONLY; O_CLOEXEC ] 0 in
-    let diagnostics =
-      Unix.openfile diagnostics_file [ O_WRONLY; O_CLOEXEC; O_SHARE_DELETE ] 0
-    in
-    Fun.protect ~finally:(fun () -> List.iter Unix.close [ null; diagnostics ])
-    @@ fun () ->
-    let argv =
-      Array.of_list ((program :: args) @ [ request_file; reply_file ])
-    in
-    try Unix.create_process program argv null diagnostics diagnostics
-    with Unix.Unix_error (e, _, _) ->
-      failwith
-        (Printf.sprintf "comgr worker %s: %s" program (Unix.error_message e))
+  let status =
+    match
+      Helpers.run_program ~stdin:Filename.null ~stdout:diagnostics_file
+        ~stderr:diagnostics_file program
+        (args @ [ request_file; reply_file ])
+    with
+    | Ok status -> status
+    | Error why -> failwith ("comgr worker " ^ why)
   in
-  let rec wait () =
-    match Unix.waitpid [] pid with
-    | _, status -> Some status
-    | exception Unix.Unix_error (EINTR, _, _) -> wait ()
-    | exception Unix.Unix_error (ECHILD, _, _) -> None
-  in
-  let status = wait () in
   let read path = In_channel.with_open_bin path In_channel.input_all in
   let diagnostics = read diagnostics_file in
   match reply (read reply_file) with

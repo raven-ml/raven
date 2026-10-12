@@ -248,3 +248,24 @@ val amdgpu_disassemble : string -> unit
 
     Raises [Failure] if there is no [llvm-objdump], or as {!system} if it fails.
 *)
+
+(**/**)
+
+val run_program :
+  ?stdin:string ->
+  stdout:string ->
+  stderr:string ->
+  string ->
+  string list ->
+  (Unix.process_status option, string) result
+(** [run_program ~stdin ~stdout ~stderr prog args] runs the program [prog] with
+    the arguments [args], no shell between, and waits for it: [Ok status], or
+    [Ok None] if its status is lost, as when [SIGCHLD] is ignored. Its standard
+    input is the file [stdin], or the process's without it, and it writes its
+    standard output and standard error to the files [stdout] and [stderr],
+    emptied first, in order when they are the same file. The files can be
+    removed while another process holds them, which on Windows a process started
+    meanwhile does.
+
+    It is [Error] naming [prog] with the reason if [prog] cannot start. Raises
+    [Unix.Unix_error] if a file cannot be opened. *)

@@ -539,6 +539,50 @@ let with_temp_file contents f =
 
 let read_file path = In_channel.with_open_bin path In_channel.input_all
 
+(* The program runs as a process of this one, with no shell between, waited for
+   with the runtime released: [Sys.command] goes through the C library's
+   [system], which macOS runs one at a time, so domains would wait for each
+   other, and its shell reads the command its own way, as Windows' cmd.exe runs
+   its built-in [echo] with the quotes around each argument.
+
+   Windows hands a new process every inheritable handle of its parent, and
+   [Unix.create_process] makes the child's three inheritable while it starts it:
+   a process another domain starts meanwhile holds them until it ends. The files
+   are opened shared for deletion, so that they are removed whoever holds
+   them. *)
+let run_program ?stdin ~stdout ~stderr prog args =
+  let opened = ref [] in
+  let open_file path flags =
+    let fd = Unix.openfile path (O_CLOEXEC :: O_SHARE_DELETE :: flags) 0 in
+    opened := fd :: !opened;
+    fd
+  in
+  let started =
+    Fun.protect ~finally:(fun () -> List.iter Unix.close !opened) @@ fun () ->
+    let input =
+      match stdin with
+      | Some path -> open_file path [ O_RDONLY ]
+      | None -> Unix.stdin
+    in
+    let output = open_file stdout [ O_WRONLY; O_TRUNC ] in
+    let errors =
+      if String.equal stderr stdout then output
+      else open_file stderr [ O_WRONLY; O_TRUNC ]
+    in
+    let argv = Array.of_list (prog :: args) in
+    match Unix.create_process prog argv input output errors with
+    | pid -> Ok pid
+    | exception Unix.Unix_error (e, _, _) ->
+        Error (prog ^ ": " ^ Unix.error_message e)
+  in
+  let rec wait pid =
+    match Unix.waitpid [] pid with
+    | _, status -> Some status
+    | exception Unix.Unix_error (EINTR, _, _) -> wait pid
+    | exception Unix.Unix_error (ECHILD, _, _) -> None
+  in
+  Result.map wait started
+
 let system ?input cmd =
   let start = Unix.gettimeofday () in
   let prog, args =
@@ -552,10 +596,7 @@ let system ?input cmd =
   in
   let status, output =
     with_temp_file "" @@ fun out ->
-    let run stdin =
-      Sys.command
-        (Filename.quote_command prog args ?stdin ~stdout:out ~stderr:out)
-    in
+    let run stdin = run_program ?stdin ~stdout:out ~stderr:out prog args in
     let status =
       match input with
       | None -> run None
@@ -563,10 +604,15 @@ let system ?input cmd =
     in
     (status, strip (read_file out))
   in
-  if status <> 0 then
-    failwith
-      (Printf.sprintf "system: '%s' failed with exit code %d\n%s" cmd status
-         output);
+  let fail why = failwith (Printf.sprintf "system: '%s' %s" cmd why) in
+  (match status with
+  | Ok (Some (WEXITED 0)) -> ()
+  | Ok (Some (WEXITED n)) ->
+      fail (Printf.sprintf "failed with exit code %d\n%s" n output)
+  | Ok (Some (WSIGNALED n | WSTOPPED n)) ->
+      fail (Printf.sprintf "ended by signal %d\n%s" n output)
+  | Ok None -> fail ("ended, its status lost\n" ^ output)
+  | Error why -> fail ("did not run: " ^ why));
   if Setting.value Setting.debug >= 1 then
     Printf.printf "system: '%s' returned %d bytes in %.2f ms\n%!" cmd
       (String.length output)
