@@ -9,14 +9,23 @@
    long double rounded once where long double is wider, and at the 16- and 8-bit
    floats over every value; the special values of C99's Annex F, NaN for a NaN
    operand, and the sign of a zero are exact at every float dtype. The operands
-   are placed on the device, and the oracles computed on the host. *)
+   are placed on the device, the functions called from its domain, and the
+   oracles computed on the host from the test's domain. *)
 
 open Windtrap
 
-(* Where a function computes: its operands placed there. *)
-type device = { put : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+(* Where a function computes: its operands placed there, and the call made
+   from a domain. *)
+type device = {
+  put : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t;
+  call : 'r. (unit -> 'r) -> 'r;
+}
 
-let host = { put = Fun.id }
+let host = { put = Fun.id; call = (fun f -> f ()) }
+
+(* The host, called from a domain the test spawns: a thread other than the
+   program's first, whose floating-point state the C runtime did not set up. *)
+let spawned = { host with call = (fun f -> Domain.join (Domain.spawn f)) }
 let back x = Nx.place Nx.Placement.host x
 
 type unary = { f : 'b. (float, 'b) Nx.t -> (float, 'b) Nx.t }
@@ -239,15 +248,19 @@ let check (type b) ~on k ~bound (xs : (float, b) Nx.t) ys =
         let a = Nx.to_array xs in
         let o = Array.make (Array.length a) 0. in
         ldbl_unary k.index a o;
-        (back (f (on.put xs)), Nx.create Nx.float64 (Nx.shape xs) o)
+        ( on.call (fun () -> back (f (on.put xs))),
+          Nx.create Nx.float64 (Nx.shape xs) o )
     | Binary { g }, Some ys, Float64 ->
         let a = Nx.to_array xs and b = Nx.to_array ys in
         let o = Array.make (Array.length a) 0. in
         ldbl_binary k.index a b o;
-        (back (g (on.put xs) (on.put ys)), Nx.create Nx.float64 (Nx.shape xs) o)
-    | Unary { f }, _, _ -> (back (f (on.put xs)), rounded dt (f (wide xs)))
+        ( on.call (fun () -> back (g (on.put xs) (on.put ys))),
+          Nx.create Nx.float64 (Nx.shape xs) o )
+    | Unary { f }, _, _ ->
+        (on.call (fun () -> back (f (on.put xs))), rounded dt (f (wide xs)))
     | Binary { g }, Some ys, _ ->
-        (back (g (on.put xs) (on.put ys)), rounded dt (g (wide xs) (wide ys)))
+        ( on.call (fun () -> back (g (on.put xs) (on.put ys))),
+          rounded dt (g (wide xs) (wide ys)) )
     | Binary _, None, _ -> invalid_arg "a binary function of one operand"
   in
   within ~bound ~inputs:(xs :: Option.to_list ys) got oracle
@@ -455,8 +468,9 @@ let exact ~on k (Dtype (name, dt)) =
       let t x = Nx.create dt [| 1 |] [| x |] in
       let got =
         match (k.fn, xs) with
-        | Unary { f }, [ x ] -> back (f (on.put (t x)))
-        | Binary { g }, [ x; y ] -> back (g (on.put (t x)) (on.put (t y)))
+        | Unary { f }, [ x ] -> on.call (fun () -> back (f (on.put (t x))))
+        | Binary { g }, [ x; y ] ->
+            on.call (fun () -> back (g (on.put (t x)) (on.put (t y))))
         | _ -> invalid_arg "an operand list of another arity"
       in
       let g = (Nx.to_array got).(0) in

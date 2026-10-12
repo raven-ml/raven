@@ -1860,7 +1860,9 @@ let random =
             (Nx.P (host (Nx.Rng.uniform there Nx.float32 [| size |]))));
     ]
 
-let accuracy = group "accuracy" (Nx_test.Accuracy.groups { put = on_gpu })
+let accuracy =
+  group "accuracy"
+    Nx_test.Accuracy.(groups { host with put = on_gpu })
 
 let () =
   exit

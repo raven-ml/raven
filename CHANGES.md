@@ -3618,6 +3618,11 @@ thread.
 
 ### Nx
 
+- On Windows, a function on the host gives the same result from every
+  domain: mingw-w64's `exp`, `log`, `log1p`, `expm1`, `atan2` and others
+  compute on the x87 unit, which Windows starts at 53-bit precision on every
+  thread but the first, where `Nx.exp` of `200.` was about a hundred ulps
+  off.
 - On Windows, `Nx.sin`, `Nx.cos` and `Nx.tan` on the host, their complex
   forms, complex `Nx.exp`, `Nx.sinh`, `Nx.cosh`, `Nx.tanh` and `Nx.pow`, and
   the FFT's twiddle factors use nx's own sine, cosine and tangent, within 1

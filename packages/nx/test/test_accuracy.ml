@@ -4,6 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 (* The accuracy nx.mli states for its transcendental functions, on the host
-   (Nx_test.Accuracy). *)
+   (Nx_test.Accuracy), called from the program's first domain and from one it
+   spawns. *)
 
-let () = exit (Windtrap.run "nx accuracy" Nx_test.Accuracy.(groups host))
+let () =
+  let open Nx_test.Accuracy in
+  exit
+    (Windtrap.run "nx accuracy"
+       (groups host
+       @ [ Windtrap.group "from a spawned domain" (groups spawned) ]))

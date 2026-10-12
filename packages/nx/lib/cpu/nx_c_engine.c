@@ -115,6 +115,29 @@ static int64_t nx_c_chunks_for(int nthreads, int64_t total, int64_t bytes) {
    would actually delay other domains. */
 #define NX_C_LOCK_RELEASE_BYTES (4 * 1024 * 1024)
 
+#if defined(__MINGW32__) && defined(__x86_64__)
+/* mingw-w64's exp, log, expm1 and others compute on the x87 unit, at the
+   precision its control word sets. The C runtime's startup sets 64 bits on the
+   main thread (fninit), and Windows starts every other thread at 53, where
+   exp rounds 200 log2(e) to 53 bits and exp(200) is off by about a hundred
+   ulps. Each chunk runs at the main thread's precision, so a result does not
+   depend on the thread that computes it. */
+typedef struct {
+  nx_c_range_body body;
+  void *ctx;
+} nx_c_x87_job;
+
+static void nx_c_x87_body(int64_t lo, int64_t hi, int worker, void *vctx) {
+  const nx_c_x87_job *job = vctx;
+  unsigned short cw, wide;
+  __asm__ volatile("fnstcw %0" : "=m"(cw));
+  wide = (unsigned short)(cw | 0x0300); /* precision control: 64 bits */
+  if (wide != cw) __asm__ volatile("fldcw %0" : : "m"(wide));
+  job->body(lo, hi, worker, job->ctx);
+  if (wide != cw) __asm__ volatile("fldcw %0" : : "m"(cw));
+}
+#endif
+
 /* Exported for custom families (nx_c_engine.h documents the full contract).
    Called with the runtime lock HELD; releases it internally iff the work
    warrants (nthreads>1, or bytes over the cutoff), runs the split via the pool,
@@ -131,6 +154,11 @@ static int64_t nx_c_chunks_for(int nthreads, int64_t total, int64_t bytes) {
 void nx_c_parallel_for(int nthreads, int64_t total, int64_t bytes,
                       nx_c_range_body body, void *ctx, void *free_on_exit) {
   int release = (nthreads > 1) || (bytes >= NX_C_LOCK_RELEASE_BYTES);
+#if defined(__MINGW32__) && defined(__x86_64__)
+  nx_c_x87_job job = {body, ctx};
+  body = nx_c_x87_body;
+  ctx = &job;
+#endif
   if (release) caml_enter_blocking_section();
   if (total > 0)
     rig_pool_run(nthreads, total, nx_c_chunks_for(nthreads, total, bytes), body,
