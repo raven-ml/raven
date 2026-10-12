@@ -4273,6 +4273,11 @@ Ops.CMPEQ	dtypes.bool	[True, True]	True	True
 Ops.NEG	dtypes.bool	[True]	True	True
 Ops.WHERE	dtypes.bool	[False, False, True]	True	True
 Ops.WHERE	dtypes.bool	[True, False, True]	True	False
+Ops.SIN	dtypes.double	[3.141592653589793]	True	1.2246467991473532e-16
+Ops.SIN	dtypes.double	[-3.141592653589793]	True	-1.2246467991473532e-16
+Ops.SIN	dtypes.double	[3216.990877275948]	True	-1.2540383223268897e-13
+Ops.SIN	dtypes.double	[3373259426.1305046]	True	-1.314954487872237e-07
+Ops.SIN	dtypes.double	[1e+22]	True	-0.8522008497671888
 Ops.EXP2	dtypes.float	[0]	True	1.0
 Ops.EXP2	dtypes.float	[1]	True	2.0
 Ops.EXP2	dtypes.float	[4]	True	16.0

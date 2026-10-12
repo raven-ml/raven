@@ -1237,6 +1237,9 @@ thread.
 
 ### Tolk (new)
 
+- `Ops.exec_alu` computes `Op.Sin` correctly rounded on every system, by its
+  own exact argument reduction. It called the C library's sine, whose
+  mingw-w64 version folded `sin 1e300` to a value of the wrong sign.
 - `Dtype.pp_const` prints a float's shortest round-tripping digits on every
   system. It used the C library's conversions, which printed
   `-9.564275832644383e-25` for `-0x1.28p-80` on Windows.

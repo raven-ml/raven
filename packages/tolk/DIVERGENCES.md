@@ -3853,3 +3853,22 @@ submission, and a range a loop of rig's program (D146).
   on Windows: the cstyle suite's `sources`, among them `clang_call_out`,
   `clang_call_ret` and `clang_call_stack`; the codegen, realize and jit
   goldens of CPU kernels.
+
+## D150. The folder's sine is correctly rounded
+
+- **tinygrad:** `uop/ops.py:1410` (`python_alu`'s `SIN`, `math.sin`, the C
+  library's).
+- **tolk:** `lib/uop/ops.ml:2483` (`sine`), which `python_alu` calls.
+- **Differs:** `exec_alu` computes a sine on integers: the argument is
+  reduced exactly by pi/2, held to 1200 bits, and the sine or cosine of the
+  remainder is summed in fixed point to 192 bits, then rounded once. The
+  result is correctly rounded on every host, where tinygrad's is the C
+  library's: on an M1 Mac about 3% of drawn float64 sines are one unit off,
+  and mingw-w64's reduces by x87's 66-bit pi. A NaN operand gives `Dtype.nan`.
+- **Reason:** (b). rune's `sin` and `cos` are `SIN` nodes
+  (`packages/rune/lib/lower_arith.ml`), which fold through `exec_alu`, and a
+  fold must not depend on the host: on Windows `sin 1e300` folded to
+  `0.979`, of the wrong sign.
+- **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, whose `SIN`
+  rows include `1e300`, `3.4e38`, pi and floats near multiples of pi, and
+  which fail on Windows with the C library's sine.

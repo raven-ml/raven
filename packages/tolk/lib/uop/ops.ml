@@ -2447,6 +2447,75 @@ let py_exp2 (x : Dtype.value) : Dtype.value =
       `Int (Bigint.shift_left Bigint.one (Value.to_int x))
   | _ -> `Float (Float.pow 2. (Value.to_float x))
 
+(* pi/2 rounded to [half_pi_bits] bits after the point. Its error times the
+   greatest quotient of a float by pi/2, about 2^1024, is far below the smallest
+   remainder of a float, about 2^-62. *)
+let half_pi_bits = 1200
+let half_pi =
+  Bigint.of_string
+    "0x1921fb54442d18469898cc51701b839a252049c1114cf98e804177d4c76273644a\
+     29410f31c6809bbdf2a33679a748636605614dbe4be286e9fc26adadaa3848bc90\
+     b6aecc4bcfd8de89885d34c6fdad617feb96de80d6fdbdc70d7f6b5133f4b5d3e4\
+     822f8963fcc9250cca3d9c8b67b8400f97142c77e0b31b4906c38aba734d22c7f5\
+     1fa499ebf06caba47b9475b2c38c5e6ac410b"
+
+(* [n * 2^-p] rounded to the nearest float, ties to even, for a positive [n]
+   whose value is a normal float. The bits below the 64 kept are folded into the
+   last kept one, so that rounding them once is rounding [n]. *)
+let float_of_fixed n p =
+  let drop = Int.max 0 (Bigint.numbits n - 64) in
+  let top = Bigint.shift_right n drop in
+  let sticky =
+    if Bigint.equal (Bigint.shift_left top drop) n then top
+    else Bigint.logor top Bigint.one
+  in
+  Float.ldexp (Bigint.to_float sticky) (drop - p)
+
+(* The bits [sine] keeps of a reduced argument. *)
+let sine_precision = 192
+
+(* [sine x] is [sin x] for a finite [x], correctly rounded but in cases far past
+   [sine_precision]. It is computed on integers, since C libraries differ:
+   mingw-w64's sine reduces by x87's 66-bit pi, and gave [sin 1e300] the wrong
+   sign. [|x|] is reduced exactly to [r = |x| - k pi/2], [|r| <= pi/4], whose
+   sine or cosine, by [k]'s quadrant, is the sum of its series in fixed point.
+   Below 2^-26, [sin x] rounds to [x]. *)
+let sine x =
+  let a = Float.abs x in
+  if a < 0x1p-26 then x
+  else
+    let f, e = Float.frexp a in
+    let m = Bigint.of_float (Float.ldexp f 53) in
+    let scaled = Bigint.shift_left m (e - 53 + half_pi_bits) in
+    let k = Bigint.(div (scaled + shift_right half_pi 1) half_pi) in
+    let rem = Bigint.(scaled - (k * half_pi)) in
+    let drop = Int.max 0 (Bigint.numbits (Bigint.abs rem) - sine_precision) in
+    let p = half_pi_bits - drop in
+    let r = Bigint.shift_right (Bigint.abs rem) drop in
+    let r2 = Bigint.(shift_right (r * r) p) in
+    (* [t - t1 + t2 - ...], where [t(i+1)] is [ti r^2 / ((j+1)(j+2))] and [j]
+       counts up by 2 from [j]. *)
+    let rec series sum t j =
+      let divisor = Bigint.of_int ((j + 1) * (j + 2)) in
+      let t = Bigint.(div (shift_right (t * r2) p) divisor) in
+      if Bigint.equal t Bigint.zero then sum
+      else
+        let sum = if j mod 4 < 2 then Bigint.(sum - t) else Bigint.(sum + t) in
+        series sum t (j + 2)
+    in
+    let one = Bigint.shift_left Bigint.one p in
+    let sin_r () = series r r 1 and cos_r () = series one one 0 in
+    (* sin |x| is sin r, cos r, -sin r, -cos r by quadrant, and sin r has the
+       sign of [rem]. *)
+    let quadrant = Bigint.to_int (Bigint.logand k (Bigint.of_int 3)) in
+    let y =
+      float_of_fixed (if quadrant land 1 = 0 then sin_r () else cos_r ()) p
+    in
+    let negative =
+      quadrant >= 2 <> (quadrant land 1 = 0 && Bigint.sign rem < 0)
+    in
+    if negative <> Float.sign_bit x then -.y else y
+
 let int_operands op (x : Dtype.value) (y : Dtype.value) =
   match (x, y) with
   | `Float _, _ | _, `Float _ -> invalid_argf "%s needs integers" (Op.name op)
@@ -2498,9 +2567,7 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
   | Op.Sin ->
       unary (fun x ->
           let f = Value.to_float x in
-          `Float
-            (if Float.equal (Float.abs f) Float.infinity then Dtype.nan
-             else Float.sin f))
+          `Float (if Float.is_finite f then sine f else Dtype.nan))
   | Op.Pow -> binary py_pow
   | Op.Trunc ->
       unary (fun x ->
