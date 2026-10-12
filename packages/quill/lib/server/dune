@@ -10,7 +10,10 @@
   jsont
   jsont.bytesrw
   unix
-  threads.posix))
+  threads.posix)
+ (foreign_stubs
+  (language c)
+  (names quill_socket_stubs)))
 
 ; Generate assets.ml from committed frontend/dist
 

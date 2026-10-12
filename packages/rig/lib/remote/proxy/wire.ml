@@ -83,6 +83,12 @@ let same a b =
 external send : Unix.file_descr -> string -> unit = "caml_rig_remote_wire_send"
 external nonce : unit -> string = "caml_rig_remote_wire_nonce"
 
+(* Bounds each send on a socket to a number of seconds, [0.] for none. A send
+   past its bound raises [EAGAIN] or [EWOULDBLOCK] on POSIX, [ETIMEDOUT] on
+   Windows. *)
+external send_timeout : Unix.file_descr -> float -> unit
+  = "caml_rig_remote_wire_send_timeout"
+
 (* The stream ended or broke, an answer came late, or a field is malformed: the
    handshake's [Error], with its cause. *)
 exception Stop of string
@@ -128,7 +134,7 @@ let refusal why =
 (* Runs [f], its sends bounded by the answer's time, and turns the stream's
    failures into [Error]. *)
 let guarded fd f =
-  let set t = Unix.setsockopt_float fd Unix.SO_SNDTIMEO t in
+  let set t = send_timeout fd t in
   match
     set answer_s;
     let r = f () in
@@ -137,7 +143,9 @@ let guarded fd f =
   with
   | r -> r
   | exception Stop why -> Error why
-  | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+  | exception
+      Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.ETIMEDOUT), _, _)
+    ->
       Error (strf "no answer within %.0f s" answer_s)
   | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
 

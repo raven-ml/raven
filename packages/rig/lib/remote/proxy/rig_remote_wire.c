@@ -19,6 +19,7 @@
 #include <caml/threads.h>
 #include <caml/unixsupport.h>
 #include <errno.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,6 +27,7 @@
 
 #if !defined(_WIN32)
 #include <sys/random.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -47,6 +49,25 @@ value caml_rig_remote_wire_send(value fd, value s) {
   free(b);
   if (err != 0) rig_remote_raise_error(err, "send");
   CAMLreturn(Val_unit);
+}
+
+/* Bounds each send on the socket [fd] to [s] seconds, [0.] for none. Winsock
+   takes the bound as a DWORD of milliseconds where POSIX takes a timeval:
+   Unix.setsockopt_float passes a timeval to both, which Windows reads as
+   milliseconds from its seconds. */
+value caml_rig_remote_wire_send_timeout(value fd, value s) {
+  double t = Double_val(s);
+#ifdef _WIN32
+  DWORD bound = (DWORD)ceil(t * 1e3);
+#else
+  long long us = (long long)ceil(t * 1e6);
+  struct timeval bound = {.tv_sec = (time_t)(us / 1000000),
+                          .tv_usec = (suseconds_t)(us % 1000000)};
+#endif
+  if (setsockopt(rig_remote_sock_val(fd), SOL_SOCKET, SO_SNDTIMEO,
+                 (const char *)&bound, sizeof bound) != 0)
+    rig_remote_raise_error(rig_remote_sock_error(), "setsockopt");
+  return Val_unit;
 }
 
 /* [NONCE] bytes from the system's random source. Does not release the

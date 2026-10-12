@@ -7004,6 +7004,8 @@ thread.
 
 ### Quill
 
+- The server's 30 s bound on a connection's reads and writes holds on Windows,
+  where it was 30 ms.
 - The kernel no longer turns markdown data URIs in the toplevel's output into
   displays. Figures display through display tags, as `Hugin.pp` prints them.
 - `Quill_top.install_printer` returns the toplevel's report when a printer does

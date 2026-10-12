@@ -3,6 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* [timeout fd opt s] bounds each read ([SO_RCVTIMEO]) or write
+   ([SO_SNDTIMEO]) on [fd] to [s] seconds on every system: on Windows,
+   [Unix.setsockopt_float] sets these bounds in the wrong unit. *)
+external timeout : Unix.file_descr -> Unix.socket_float_option -> float -> unit
+  = "quill_socket_timeout"
+
 let err_malformed_req = "malformed request line"
 let err_unsupported_meth = "unsupported method"
 let err_missing_ws_key = "missing Sec-WebSocket-Key"
@@ -773,8 +779,8 @@ let handle_ws_upgrade server req fd reader =
          send must be increased — the initial HTTP SO_SNDTIMEO of 30s would
          otherwise kill the connection when the process is paused (e.g. inside a
          debugger). *)
-      Unix.setsockopt_float fd Unix.SO_RCVTIMEO 86400.0;
-      Unix.setsockopt_float fd Unix.SO_SNDTIMEO 86400.0;
+      timeout fd Unix.SO_RCVTIMEO 86400.0;
+      timeout fd Unix.SO_SNDTIMEO 86400.0;
       ws_handshake req fd;
       let ws =
         {
@@ -808,8 +814,8 @@ let dispatch_http server req =
 
 let handle_connection server fd client_addr =
   let reader = reader_create fd in
-  Unix.setsockopt_float fd Unix.SO_RCVTIMEO 30.0;
-  Unix.setsockopt_float fd Unix.SO_SNDTIMEO 30.0;
+  timeout fd Unix.SO_RCVTIMEO 30.0;
+  timeout fd Unix.SO_SNDTIMEO 30.0;
   Unix.setsockopt fd Unix.TCP_NODELAY true;
   let rec loop keep_alive =
     if keep_alive && server.running then
