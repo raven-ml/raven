@@ -26,7 +26,7 @@ Breaking one causes real damage.
 
 | Package | Role |
 |---|---|
-| `packages/nx` | n-dimensional arrays. Libraries: `nx.dtype`, `nx.device` (host, Metal, CUDA, AMD, NV, remote, disk runtimes), `nx.array`, `nx.cpu` (C kernels), `nx`, `nx.io`, `nx.quant`, `nx.ragged` |
+| `packages/nx` | n-dimensional arrays on rig's devices. Libraries: `nx.dtype`, `nx.array`, `nx.cpu` (C kernels), `nx.amd` (AMD GPU kernels), `nx`, `nx.io`, `nx.quant`, `nx.ragged` |
 | `packages/rig` | devices: Metal, CUDA, NVIDIA and AMD GPUs through their kernel drivers or over PCI, files and remote machines; the order of work across them |
 | `packages/rune` | autodiff, vmap and compilation over nx |
 | `packages/tolk` | the compiler, a port of tinygrad. Departures from tinygrad are recorded in `packages/tolk/DIVERGENCES.md` |

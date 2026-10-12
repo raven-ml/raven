@@ -208,6 +208,9 @@ All notable changes to this project will be documented in this file.
   vector that also holds an infinity, a NaN or a value past `2^12` (`2^22`
   in float64). On x86 such a lane could read any value: the reduction
   converted an out-of-range quotient it then discarded.
+- A compiled function runs on the devices rig opens and takes and returns
+  values over rig buffers. Its compile key no longer holds a profile's counters
+  and traces.
 - A compiled `Nx.pad` of an integer tensor cast to a float, padded with a
   value that is a NaN or an infinity in that float, compiles. It raised
   `Invalid_argument "-inf has no integer value"`.
@@ -1242,10 +1245,11 @@ thread.
   link: the Clang renderer holds bfloat16 as `unsigned short` there. They
   aborted clang or failed to link `__truncsfbf2`.
 - **Breaking:** `Tolk_engine` runs compiled schedules as programs of rig
-  (`Rig_program`), and tolk depends on rig instead of nx. The queue
-  encoders (`Ops_metal`, `Ops_cuda`, `Ops_amd`, `Ops_nv`) and `Hcq2`'s
-  batches and host programs are gone; `Tolk_engine.time` sums the kernels'
-  spans in rig's profile on every device.
+  (`Rig_program`), over rig's devices and buffers, and tolk depends on rig
+  instead of nx. The queue encoders (`Ops_metal`, `Ops_cuda`, `Ops_amd`,
+  `Ops_nv`) and `Hcq2`'s batches and host programs are gone;
+  `Tolk_engine.time` sums the kernels' spans in rig's profile on every
+  device. AMD counters and thread traces are not collected meanwhile.
 - Compiled kernels that pad or concatenate an integer quotient no longer die
   with SIGFPE on x86, as `Norn.Nuts`'s compiled transition did: the padding
   divided by the zeros it loads, and now divides by 1.
@@ -3614,13 +3618,21 @@ thread.
 
 ### Nx
 
-- **Breaking:** nx's memories are rig's devices and its storage rig's
-  buffers. `Nx.Device.make` takes a `Rig.t`, and `Nx.of_buffer`,
-  `to_buffer`, `shards` and `Storage` take and give `Rig.Buffer.t`. The
-  libraries nx.device (with its support and ELF libraries), nx.metal,
-  nx.cuda, nx.nv, nx.remote.device and nx.rdma.device and nx.amd's runtime
-  are gone: a GPU is `Nx.Device.make` of the device `Rig.open_` opens, and
-  nx.amd's eager kernels are `Nx_amd.backend`.
+- **Breaking:** nx's values live in rig's memory, and nx's own device runtime
+  goes: `nx.device` (with its support and ELF libraries), `nx.metal`,
+  `nx.cuda`, `nx.nv`, `nx.remote`, `nx.rdma`, `nx-remote` and nx.amd's
+  runtime are removed. A program opens a GPU with rig and makes it a device,
+  `Nx.Device.make (Result.get_ok (Rig.open_ (Rig_metal.gpu 0)))`, and computes
+  eagerly on AMD GPUs with `Nx.Device.make ~backend:Nx_amd.backend`. Devices'
+  memories are `Rig.t`; `Nx.of_buffer`, `to_buffer`, `shards` and `Storage`
+  take and give `Rig.Buffer.t`; files are `Rig_disk.of_file`; and a program
+  waits for the work behind a value with `Rig.Buffer.wait` on its buffers.
+  Copies between GPUs of two machines over RDMA, which `nx.rdma` made, are
+  gone until rig routes copies through its NIC drivers. Metal devices need
+  macOS 15 or later (residency sets); macOS 12–14 no longer open a Metal
+  device. A value's storage now carries runtime state, so `compare`, `=` and
+  `Hashtbl.hash` no longer see tensors by their elements: compare tensors
+  with `Nx.array_equal`, never with OCaml's polymorphic comparison or hash.
 - Host operations on large tensors are fast again in programs that link
   `nx.amd.packet`: its GC register table was built at startup and stayed live,
   so each major cycle, which large buffers start every few operations, marked
@@ -6953,6 +6965,8 @@ thread.
 
 ### Talon
 
+- **Breaking:** `Talon_parquet.sniff` and `source` take a `Rig.Buffer.t`; open
+  a file with `Rig_disk.of_file`.
 - `talon.parquet` decodes definition levels and booleans straight into bits
   and puts a page's values on its rows in one C pass: a 2^20-row file of
   nullable columns reads in 0.6 of the time.

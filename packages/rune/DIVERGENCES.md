@@ -12,7 +12,7 @@ An entry is admitted for one of three reasons only:
 - **(a) an OCaml constraint;**
 - **(b) nx's documented meaning:** the operation's contract in `nx.mli` or
   `nx_backend_intf.mli`, which nx.cpu computes;
-- **(c) the engine's contract:** nx.device's submission protocol.
+- **(c) the engine's contract:** rig's submission protocol.
 
 Each entry gives the reference (tinygrad `79af1ca70`, or none), the raven
 lines, what differs, nx's meaning, the agreement class (RFC 0012: exact, exact

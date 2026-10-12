@@ -13,7 +13,7 @@
    declarations. Everything else in the backend is generated from or built
    against this file; see README.md for the maintained architecture.
 
-   Layering: this header pulls in the caml value header, nx.device's buffer
+   Layering: this header pulls in the caml value header, rig's buffer
    accessor and nx.dtype's f16/bf16/fp8 converters, but NOT
    caml/fail.h or caml/threads.h. A translation unit that includes only this
    header therefore *cannot* raise an OCaml exception or touch the runtime

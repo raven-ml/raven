@@ -24,9 +24,9 @@ rune/jit follow-ups:
 - symbolic shapes through rune (inherit tolk's symbolic shrink/assign): one
   compiled kernel set for all positions, dissolves the fixed-shape kv-cache
   masks in kaun attention and per-prompt-length signatures
-- tolk port onto nx.device: check that per-device budgets, `free_cache` and
-  nx.device's bounded staging bound released storage, a dropped model's cached
-  buffers, and cuda's pinned staging (tolk's allocator cache is unbounded and
+- tolk on rig: check that per-device budgets (`Rig.budget`), `Rig.free_cache`
+  and rig's staging memory bound released storage, a dropped model's cached
+  buffers, and CUDA's pinned staging (tolk's allocator cache is unbounded and
   keyed by size today)
 
 nx follow-ups:

@@ -42,11 +42,12 @@ A result takes the storage of a consumed leaf when writing it there cannot chang
 
 ## Devices and Memory
 
-A call compiles for the memories of its placed arguments and captures, and for the host's when there are none: the backends their devices carry take no part, and the results land on the arguments' devices. A GPU's device comes from its vendor's library (`Nx_metal.device 0` from nx.metal, `Nx_cuda.device 1` from nx.cuda), and a value is put on it with `Nx.place`:
+A call compiles for the memories of its placed arguments and captures, and for the host's when there are none: the backends their devices carry take no part, and the results land on the arguments' devices. A GPU's device is the GPU that rig opens, through the vendor's runtime (`Rig_metal.gpu 0` from rig.metal, `Rig_cuda.gpu 1` from rig.cuda) or its kernel driver (`Rig_amd_amdgpu.gpu 0`, `Rig_nv_nvidia.gpu 0`), made a device with `Nx.Device.make`, and a value is put on it with `Nx.place`:
 
 <!-- $MDX skip -->
 ```ocaml
-let metal = Nx.Placement.on (Nx_metal.device 0)
+let metal =
+  Nx.Placement.on (Nx.Device.make (Result.get_ok (Rig.open_ (Rig_metal.gpu 0))))
 let step = Rune.jit' (fun x -> Nx.tanh (Nx.matmul x x))
 let y = step (Nx.place metal (Nx.rand Nx.float32 [| 64; 64 |]))
 (* compiled for Metal *)
@@ -58,7 +59,7 @@ Values placed on several devices run a program over those devices. A value split
 
 Outputs are values on the device: shape and dtype never transfer, and a read copies the elements it reads and leaves the output where it is. A view of part of a storage is read in place, its strides expressed in the program, so a window of a cache costs no copy.
 
-Device memory that backs an output is held until the output is garbage-collected or consumed. An allocation that fails raises `Nx_device.Out_of_memory` before the call consumes anything.
+Device memory that backs an output is held until the output is garbage-collected or consumed. An allocation that fails raises `Rig.Out_of_memory` before the call consumes anything.
 
 ## Numerics
 
@@ -90,7 +91,8 @@ Outside a compiled function, an operation computes eagerly with the backend of i
 
 <!-- $MDX skip -->
 ```ocaml
-let gpu = Nx.Placement.on (Nx_metal.device 0)
+let gpu =
+  Nx.Placement.on (Nx.Device.make (Result.get_ok (Rig.open_ (Rig_metal.gpu 0))))
 let x = Nx.place gpu (Nx.rand Nx.float32 [| 1024; 1024 |])
 let row = Nx.slice [ I 0 ] x                 (* a view: works *)
 let zeros = Nx.zeros_like x                  (* a constant: works *)
@@ -105,4 +107,4 @@ let z = Nx.sum x                             (* raises *)
 - each retrace, with the first difference from the previous call's key: `rune.jit: retrace: 1.window: int 3 here, int 2 in the previous key`;
 - each call's storage reuse: `rune.jit: 2.0.keys -> result 1.0.keys reused`, with the views a call copies and the storage it copies because it cannot lend.
 
-A leaf is named by its path: the argument's position counted from 0, then its path inside that argument. The runtime counts what compiled code allocates and moves: `Nx_device.stats d` before and after, compared with `Nx_device.Stats.diff`, gives the bytes allocated on `d` and copied into and out of it. A profile taken with `Nx_device.Profile.start` holds one span per kernel on the device's clock, and host spans for a first call's phases (`rune.jit: trace`, `schedule`, `compile`, `link`); `DEBUG=2` prints one line per kernel.
+A leaf is named by its path: the argument's position counted from 0, then its path inside that argument. rig counts what compiled code allocates and moves: `Rig.allocated m` is the bytes allocated on the memory `m`, and a profile taken with `Rig.Profile.take` holds a `Copy` event for each transfer into or out of it. The profile also holds a span of each submission's kernels, named after them, from when the device started them to when it ended them, and host spans for a first call's phases (`rune.jit: trace`, `schedule`, `compile`, `link`); `DEBUG=2` prints one line per kernel.
