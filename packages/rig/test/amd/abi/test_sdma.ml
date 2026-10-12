@@ -34,8 +34,9 @@ let versions =
     (7, 0, 0);
   ]
 
-(* A version, an address pair and a length around its largest copy. *)
-let copies =
+(* A version, an address pair and a length that [length max] draws, [max]
+   the version's largest copy. *)
+let copies_of length =
   let open Gen in
   let addr = int_range 0 ((1 lsl 47) - 1) in
   with_pp
@@ -43,23 +44,34 @@ let copies =
       Format.fprintf ppf "SDMA %s, dst 0x%x, src 0x%x, %d bytes" (version v) dst
         src n)
     (let* v = of_list versions in
-     let max = largest v in
-     let+ dst = addr
-     and+ src = addr
-     and+ n =
-       frequency
-         [
-           (2, int_range 0 4096);
-           (1, constant max);
-           ( 2,
-             map
-               (fun (k, d) -> (k * max) + d)
-               (pair (int_range 0 3) (int_range (-2) 2))
-             |> such_that (fun n -> n >= 0) );
-           (1, int_range 0 (3 * max));
-         ]
-     in
+     let+ dst = addr and+ src = addr and+ n = length (largest v) in
      (v, dst, src, n))
+
+(* Lengths around the largest copy and its multiples. *)
+let copies =
+  copies_of (fun max ->
+      Gen.frequency
+        [
+          (2, Gen.int_range 0 4096);
+          (1, Gen.constant max);
+          ( 2,
+            Gen.map
+              (fun (k, d) -> (k * max) + d)
+              (Gen.pair (Gen.int_range 0 3) (Gen.int_range (-2) 2))
+            |> Gen.such_that (fun n -> n >= 0) );
+          (1, Gen.int_range 0 (3 * max));
+        ])
+
+(* Lengths of one linear copy, from 1 to the largest, its bounds included. *)
+let linear_copies =
+  copies_of (fun max ->
+      Gen.frequency
+        [
+          (1, Gen.constant 1);
+          (1, Gen.constant max);
+          (1, Gen.constant (max - 1));
+          (3, Gen.int_range 1 max);
+        ])
 
 (* A linear copy's 7 words: header, count less one, parameters, source, then
    destination, each address low word first. *)
@@ -88,11 +100,10 @@ let copy =
             (list (triple int int int))
             (expected 0)
             (pieces (words (Sdma.copy (gpu v) ~dst ~src n))));
-      prop "a linear copy is one piece of its bytes, up to the largest" copies
-        (fun (v, dst, src, n) ->
+      prop "a linear copy is one piece of its bytes, up to the largest"
+        linear_copies (fun (v, dst, src, n) ->
           let max = Sdma.max_copy (gpu v) in
           equal int ~msg:"the largest" (largest v) max;
-          let n = 1 + (n mod max) in
           cover "the largest" (n = max);
           equal
             (list (triple int int int))
