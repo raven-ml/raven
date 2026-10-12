@@ -108,7 +108,13 @@ let signal_name s =
    decides, whatever the exit status says, which is lost when SIGCHLD is
    ignored. A program that ends without a whole reply is [Error] with why and
    its diagnostics. Raises [Failure] if the program cannot be started: that is
-   the machine, not the request. *)
+   the machine, not the request.
+
+   Windows hands a new process every inheritable handle of its parent, and
+   [Unix.create_process] makes the child's three inheritable while it starts
+   it: a process another domain starts meanwhile holds the diagnostics until
+   it ends. They are opened shared for deletion, so that they are removed
+   whoever holds them. *)
 let run program args request =
   let temp_file suffix contents =
     let path = Filename.temp_file "tolk-comgr" suffix in
@@ -124,7 +130,7 @@ let run program args request =
   let pid =
     let null = Unix.openfile Filename.null [ O_RDONLY; O_CLOEXEC ] 0 in
     let diagnostics =
-      Unix.openfile diagnostics_file [ O_WRONLY; O_CLOEXEC ] 0
+      Unix.openfile diagnostics_file [ O_WRONLY; O_CLOEXEC; O_SHARE_DELETE ] 0
     in
     Fun.protect ~finally:(fun () -> List.iter Unix.close [ null; diagnostics ])
     @@ fun () ->

@@ -10,7 +10,13 @@
    src] is the exit status, the output and the diagnostics, or why [prog] does
    not start. Clang runs as a process of this one, waited for with the runtime
    released: [Sys.command] goes through the C library's [system], which macOS
-   runs one at a time, so compiling domains would wait for each other. *)
+   runs one at a time, so compiling domains would wait for each other.
+
+   Windows hands a new process every inheritable handle of its parent, and
+   [Unix.create_process] makes the child's three inheritable while it starts
+   it: a process another domain starts meanwhile holds them until it ends. The
+   files are opened shared for deletion, so that they are removed whoever
+   holds them. *)
 let run prog args src =
   let temp_file contents =
     let path = Filename.temp_file "tolk" "" in
@@ -22,9 +28,12 @@ let run prog args src =
   @@ fun () ->
   let read path = In_channel.with_open_bin path In_channel.input_all in
   let started =
-    let stdin = Unix.openfile src_file [ O_RDONLY; O_CLOEXEC ] 0
-    and stdout = Unix.openfile out [ O_WRONLY; O_CLOEXEC ] 0
-    and stderr = Unix.openfile err [ O_WRONLY; O_CLOEXEC ] 0 in
+    let open_shared path flag =
+      Unix.openfile path [ flag; O_CLOEXEC; O_SHARE_DELETE ] 0
+    in
+    let stdin = open_shared src_file O_RDONLY
+    and stdout = open_shared out O_WRONLY
+    and stderr = open_shared err O_WRONLY in
     Fun.protect ~finally:(fun () ->
         List.iter Unix.close [ stdin; stdout; stderr ])
     @@ fun () ->

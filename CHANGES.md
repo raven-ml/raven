@@ -1237,6 +1237,10 @@ thread.
 
 ### Tolk (new)
 
+- On Windows, compiles on several domains at once no longer raise
+  `Sys_error "...: Permission denied"` removing Clang's or comgr's temporary
+  files. A process another domain started meanwhile inherits them, so they are
+  opened shared for deletion.
 - `Shape.symbolic` keeps a selection that guards a float-to-integer
   conversion or an integer divisor. Removing it let a compiled vector
   kernel on x86 read any value in lanes it discarded.
