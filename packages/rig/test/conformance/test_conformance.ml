@@ -621,6 +621,49 @@ let spans (module G : Gpu) () =
   in
   List.iter span shapes
 
+(* How long a device idles before its next submission's span: past every
+   driver's age for a new measure of its clock, a second. *)
+let idle_s = 1.2
+
+(* A submission's span, profiled alone, lies within the host's window from
+   before the submit to after the wait, on the host clock: before and after
+   the device idles past the age at which it measures its clock again, and
+   right after it did. *)
+let spans_after_idle (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  let n = 64 in
+  let src = filled ~memory:Pinned t.d (pattern n 6) in
+  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
+  let s, run, buffers =
+    Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
+  in
+  let within what =
+    let t0 = Rig.Profile.now () in
+    let (), events =
+      Rig.Profile.take (fun () -> Rig.Point.wait (Rig.submit s ~run ~buffers))
+    in
+    let t1 = Rig.Profile.now () in
+    match
+      List.filter_map
+        (function
+          | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+              Some (start, stop)
+          | _ -> None)
+        events
+    with
+    | [ (start, stop) ] ->
+        at_least int ~msg:(what ^ ": the span's start") ~than:t0 start;
+        at_most int ~msg:(what ^ ": the span's stop") ~than:t1 stop;
+        at_most int ~msg:(what ^ ": the span's start") ~than:stop start
+    | spans ->
+        equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)
+  in
+  within "at open";
+  Unix.sleepf idle_s;
+  within "after idling";
+  within "after the measure"
+
 (* A profile around [many] submissions, work and a copy in turn, waited for
    once, records one span of each, and each span ends before the next starts.
    [many] exceeds every driver's ring of stamps, so later submits reuse slots,
@@ -1460,6 +1503,8 @@ let laws (module G : Gpu) =
       test "a profile around a submission records a span that bounds its work"
         (spans g);
       test "spans of consecutive submissions follow each other" (span_order g);
+      test "a span lies within its window after the device idles"
+        (spans_after_idle g);
       prop ~count:30
         "a launch writes what its grid and parameters say, and a launch after \
          it reads that"

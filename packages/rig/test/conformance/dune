@@ -13,6 +13,7 @@
   rig_cuda_support
   rig_nv_support
   rig_amd_support
+  unix
   windtrap)
  (deps
   (glob_files ../metal/fixtures/*.metallib)
