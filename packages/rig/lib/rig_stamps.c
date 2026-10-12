@@ -28,7 +28,7 @@
 #define Run_val(v) (*(struct rig_run **)Data_custom_val(v))
 
 /* A run buffer's address where its memory has none: the -1 OCaml passes. */
-#define NO_ADDRESS UINT64_MAX
+#define UNADDRESSED UINT64_MAX
 
 /* Stamps */
 
@@ -682,7 +682,7 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   struct rig_run *r = Run_val(v_r);
   int own = s->dev->index, nslots = s->nslots;
   for (int k = 0; k < s->nrefs; k++)
-    if (r->addresses[s->refs[k].slot] == NO_ADDRESS)
+    if (r->addresses[s->refs[k].slot] == UNADDRESSED)
       caml_invalid_argument(
           "Rig.submit: a ref names a run buffer whose memory has no "
           "address");

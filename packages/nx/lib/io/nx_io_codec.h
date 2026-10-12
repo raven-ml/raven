@@ -11,6 +11,9 @@
 #include <stdint.h>
 
 #if defined(_WIN32)
+/* windows.h alone pulls in winsock.h, which clashes with the winsock2.h of
+   caml/unixsupport.h. */
+#include <winsock2.h>
 #include <windows.h>
 #else
 #include <unistd.h>

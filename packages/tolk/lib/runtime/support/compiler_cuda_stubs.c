@@ -73,7 +73,7 @@ static value result(int tag, value v) {
 }
 
 #define OK(v) result(0, v)
-#define ERROR(...) result(1, caml_alloc_sprintf(__VA_ARGS__))
+#define ERR(...) result(1, caml_alloc_sprintf(__VA_ARGS__))
 
 /* Called once, by the caller's lock: the pointers it sets are only read by
    compilers made after it returned. */
@@ -81,15 +81,15 @@ value caml_tolk_nvrtc_load(value v_path) {
   CAMLparam1(v_path);
   CAMLlocal1(v_version);
   void *lib = open_library(String_val(v_path));
-  if (lib == NULL) CAMLreturn(ERROR("%s", library_error()));
+  if (lib == NULL) CAMLreturn(ERR("%s", library_error()));
   for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
     if ((*symbols[i].fn = find_symbol(lib, symbols[i].name)) == NULL)
-      CAMLreturn(ERROR("%s: undefined symbol %s", String_val(v_path),
+      CAMLreturn(ERR("%s: undefined symbol %s", String_val(v_path),
                        symbols[i].name));
   int major, minor;
   nvrtcResult status = nvrtc.Version(&major, &minor);
   if (status != 0)
-    CAMLreturn(ERROR("Nvrtc Error %d, %s\n", status,
+    CAMLreturn(ERR("Nvrtc Error %d, %s\n", status,
                      nvrtc.GetErrorString(status)));
   v_version = caml_alloc_tuple(2);
   Store_field(v_version, 0, Val_int(major));
@@ -148,7 +148,7 @@ value caml_tolk_nvrtc_compile(value v_src, value v_options, value v_ptx) {
   if (status != 0) {
     /* The log ends with its NUL. */
     value v_error =
-        ERROR("Nvrtc Error %d, %s\n%s", status, nvrtc.GetErrorString(status),
+        ERR("Nvrtc Error %d, %s\n%s", status, nvrtc.GetErrorString(status),
               log != NULL && log_size > 0 ? log : "");
     free(log);
     CAMLreturn(v_error);
