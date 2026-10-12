@@ -189,14 +189,6 @@ value caml_rig_next_live(value v_i) {
   return Val_int(next_live(Int_val(v_i)));
 }
 
-/* Takes the device of index [v_i], whose resources are freed, out of the
-   walks. */
-value caml_rig_unlive(value v_i) {
-  int i = Int_val(v_i);
-  atomic_fetch_and(&live[i / 64], ~((uint64_t)1 << (i % 64)));
-  return Val_unit;
-}
-
 #ifdef _WIN32
 static rig_mutex table_mu = SRWLOCK_INIT;
 #else
@@ -231,6 +223,11 @@ static int stopping(struct rig_device *d) {
   int s = state(d);
   return s == RIG_LOSING || s == RIG_OWED || s == RIG_STOPPING;
 }
+
+/* Whether the state [s] is Ended or Stopped: a device's whose stop
+   returned. A forked child's orphaned devices are never counted: nothing
+   drains them. */
+static int returned(int s) { return s == RIG_ENDED || s == RIG_STOPPED; }
 
 /* The word is read before the state: a word the stop raised shows its
    loss. An orphaned device's word is never read: it may be a page the child
@@ -281,11 +278,13 @@ static rig_mutex locks_mu = SRWLOCK_INIT;
 static rig_mutex locks_mu = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-/* The process's loss facts: the devices whose stop is owed; the first
-   failure, 0 for none, a device's index for its loss, -1 for [fail]'s;
-   [fail]'s reason; and the forks that made this process, which tell a hold
-   made before a fork. */
+/* The process's loss facts: the devices whose stop is owed; the devices
+   Ended or Stopped whose resources are not freed ([ended]); the
+   first failure, 0 for none, a device's index for its loss, -1 for
+   [fail]'s; [fail]'s reason; and the forks that made this process, which
+   tell a hold made before a fork. */
 static _Atomic int owed;
+static _Atomic int ended;
 static _Atomic int first;
 static _Atomic(char *) failed;
 static _Atomic int generation;
@@ -307,7 +306,8 @@ static char no_memory_why[] = "out of memory";
    An io device's state is its io library's, which decides what a fork does
    to it: rig leaves it as it was, and runs a stop that a thread of the
    parent claimed or owed. A device whose record was freed has stopped: a
-   driver's is orphaned too. A device the child opens is its own. */
+   driver's is orphaned too. [owed] and [ended] are counted anew, without
+   the orphans. A device the child opens is its own. */
 #ifndef _WIN32
 static void forking(void) {
   mutex_lock(&table_mu);
@@ -327,7 +327,7 @@ static void forked_child(void) {
     cond_init(&l->cv);
   }
   atomic_fetch_add(&generation, 1);
-  int n = atomic_load(&top), owing = 0;
+  int n = atomic_load(&top), owing = 0, stopped = 0;
   for (int i = 0; i <= n; i++) {
     struct rig_line *l = line_of(i);
     struct rig_device *d = atomic_load(&devices[i]);
@@ -343,8 +343,12 @@ static void forked_child(void) {
       atomic_compare_exchange_strong(&l->lost, &none, forked_why);
       atomic_store(&l->state, RIG_ORPHANED);
     }
+    uint64_t bit = (uint64_t)1 << (i % 64);
+    stopped += i > 0 && (atomic_load(&live[i / 64]) & bit) != 0 &&
+               returned(line_state(l));
   }
   atomic_store(&owed, owing);
+  atomic_store(&ended, stopped);
 }
 
 static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
@@ -826,15 +830,38 @@ value caml_rig_forget(value v_i) {
 
 /* Records that [d]'s stop returned: ENDED for a driver's device, whose
    work may still run, and STOPPED for an io device, whose work is the
-   caller's. */
+   caller's. [d]'s resources are not freed, since a device's are freed
+   after its stop, so it joins [ended]. The state and the count change in
+   this one call, which runs no OCaml, so no asynchronous exception comes
+   between them. */
 value caml_rig_stopped(value v_d) {
   CAMLparam1(v_d);
   struct rig_device *d = Device_val(v_d);
   int released = take(d);
-  atomic_store(&d->line->state, d->line->io ? RIG_STOPPED : RIG_ENDED);
+  int was = atomic_exchange(&d->line->state,
+                            d->line->io ? RIG_STOPPED : RIG_ENDED);
+  if (!returned(was)) atomic_fetch_add(&ended, 1);
   cv_broadcast(d);
   give(d, released);
   CAMLreturn(Val_unit);
+}
+
+/* Takes the device of index [v_i], whose resources are freed, out of the
+   walks, and out of [ended] if its stop returned, in one call. */
+value caml_rig_unlive(value v_i) {
+  int i = Int_val(v_i);
+  uint64_t bit = (uint64_t)1 << (i % 64);
+  uint64_t was = atomic_fetch_and(&live[i / 64], ~bit);
+  if ((was & bit) != 0 && returned(line_state(line_of(i))))
+    atomic_fetch_sub(&ended, 1);
+  return Val_unit;
+}
+
+/* The number of devices Ended or Stopped whose resources are not
+   freed. */
+value caml_rig_ended(value unit) {
+  (void)unit;
+  return Val_int(atomic_load(&ended));
 }
 
 /* Moves the device of index [v_i] from ENDED to STOPPED once its word

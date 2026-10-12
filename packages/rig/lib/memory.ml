@@ -965,7 +965,7 @@ let rec drain_lost d i =
   | i ->
       let e = Dev.of_index i in
       (match e.live with
-      | Some l when (not (Dev.orphaned e)) && enter l ->
+      | Some l when enter l ->
           (match
              if l.word_end != Given then end_word e;
              if e != d && not (idle l && l.cached = 0) then drain_own e

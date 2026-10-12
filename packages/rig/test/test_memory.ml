@@ -387,6 +387,44 @@ let test_drain_beside_loss () =
   equal ~msg:"frees" int 3
     (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
 
+(* A device stops while another domain's drain, held at a free, gives back the
+   memory of a device stopped before. The second device's buffer outlives that
+   drain, so its memory and its word go back only when a later drain finds the
+   device stopped. *)
+let test_stop_beside_walk () =
+  let d1, p1 = P.open_ "memory:walk-first"
+  and d2, p2 = P.open_ "memory:walk-next" in
+  let at1 = dropped d1 (4 * kib) in
+  let held = ref (Some (B.create d2 (4 * kib))) in
+  let at2 = Support.at (Option.get !held) in
+  let lose p d =
+    P.fail p;
+    try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ()
+  in
+  let frees p at =
+    List.length (List.filter (fun (a, _) -> a = at) (P.frees p))
+  in
+  let words p = List.length (List.filter (( = ) "word") (P.log p)) in
+  lose p1 d1;
+  Gc.full_major ();
+  Gc.full_major ();
+  P.gate_frees p1;
+  let walker = Domain.spawn (fun () -> ignore (B.create Rig.host 8)) in
+  Support.await "the walk's free at the gate" (fun () -> P.freers p1 = 1);
+  lose p2 d2;
+  ignore (B.create Rig.host 8);
+  P.open_frees p1;
+  Domain.join walker;
+  equal ~msg:"the first device's memory, freed once" int 1 (frees p1 at1);
+  equal ~msg:"the first device's word, given back" int 1 (words p1);
+  equal ~msg:"the second device's word, while its buffer lives" int 0
+    (words p2);
+  held := None;
+  collect Rig.host;
+  collect Rig.host;
+  equal ~msg:"the second device's memory, freed once" int 1 (frees p2 at2);
+  equal ~msg:"the second device's word, given back" int 1 (words p2)
+
 (* The host's out-of-memory ladder waits for a device whose work holds back
    host memory, and a fault that wait finds is that device's loss, never the
    allocation's: the host allocation raises Out_of_memory for itself. *)
@@ -940,6 +978,10 @@ let tests =
           test_budget_beside_loss;
         test "a drain beside a loss frees each memory once, then stops"
           test_drain_beside_loss;
+        test
+          "a device that stops while another domain gives back a stopped \
+           device's memory gives back its memory and word"
+          test_stop_beside_walk;
         test "memory goes back after every mapping of it" test_free_after_maps;
         test "memory whose last mapping goes before its stop goes back once"
           test_give_beside_stop;

@@ -220,13 +220,13 @@ val answered : (device -> unit) ref
     {!run_owed}. {!Memory} sets it to {!Memory.drain}. *)
 
 val next_ended : int -> int
-(** [next_ended i] is the least index from [i] on of a device whose stop
-    returned and whose resources are not freed, or [0] for none. In a forked
-    child it includes the devices inherited from the parent, which are
-    orphaned ({!orphaned}). Such a device's memory and mappings may go back
-    long after its stop. The stop's change of state makes a device one of
-    these, so nothing an exception interrupts can leave a stopped device
-    out. It allocates nothing. *)
+(** [next_ended i] is the least index from [i] on of a device that is Ended
+    or Stopped and whose resources are not freed, or [0] for none. Such a
+    device's memory and mappings may go back long after its stop. A forked
+    child's orphaned devices ({!orphaned}) are never among them: nothing
+    drains them. The stop's change of state makes a device one of these, so
+    nothing an exception interrupts can leave a stopped device out. While
+    there are none it reads one count, and it allocates nothing. *)
 
 val free_live : device -> unit
 (** [free_live d] frees [d]'s resources: {!live} raises {!Lost} from then

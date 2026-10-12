@@ -60,9 +60,12 @@ external c_forgotten : unit -> int = "caml_rig_forgotten"
 external c_forget : int -> unit = "caml_rig_forget" [@@noalloc]
 
 (* [c_next_live i] is the least index from [i] on whose device's resources
-   are not freed, 0 for none; [c_unlive i] says index [i]'s are. *)
+   are not freed, 0 for none; [c_unlive i] says index [i]'s are. [c_ended ()]
+   is the number of devices Ended or Stopped whose resources are not
+   freed. *)
 external c_next_live : int -> int = "caml_rig_next_live" [@@noalloc]
 external c_unlive : int -> unit = "caml_rig_unlive" [@@noalloc]
+external c_ended : unit -> int = "caml_rig_ended" [@@noalloc]
 
 (* The C line's states: [rig_stubs.h]'s enum. *)
 let live_state = 0
@@ -374,13 +377,20 @@ let drop_values d = Lock.protect locals_lock drop_locked d
 
 let answered : (device -> unit) ref = ref ignore
 
-(* A device whose stop returned is one whose line's state moved past
-   [ended_state], which [c_stopped] stores in one step: being found among
-   them takes nothing that may raise. *)
-let rec next_ended i =
-  match c_next_live i with
-  | 0 -> 0
-  | i -> if c_state i >= ended_state then i else next_ended (i + 1)
+(* A device whose stop returned is one whose line's state is [ended_state]
+   or [stopped_state], which [c_stopped] stores in the call that counts it
+   in [c_ended]: being found among them takes nothing that may raise. Every
+   drain looks for them, and while there are none it reads the count
+   alone. *)
+let next_ended i =
+  let rec from i =
+    match c_next_live i with
+    | 0 -> 0
+    | i ->
+        let s = c_state i in
+        if s = ended_state || s = stopped_state then i else from (i + 1)
+  in
+  if c_ended () = 0 then 0 else from i
 
 (* Reads a lost device's word behind a transport through its driver, which may
    be called after [stop], so rig's copy of it moves on. *)

@@ -178,6 +178,27 @@ let test_io_used () =
   ignore (P.run p);
   ignore (Sys.opaque_identity !m)
 
+(* An io device closed while a buffer of it lives has stopped and still holds
+   that memory: a child that drops the buffer gives the memory back, as its
+   parent would. *)
+let test_io_closed () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let io = open_store "fork:io-closed" in
+  let before = Atomic.get Store.held in
+  let m = ref (Some (B.create io 8)) in
+  Rig.close io;
+  let lines, ended =
+    in_child (fun () ->
+        m := None;
+        Gc.full_major ();
+        Gc.full_major ();
+        ignore (B.create Rig.host 8);
+        [ Printf.sprintf "held: %d" (Atomic.get Store.held - before) ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "held: 0" ] lines;
+  ignore (Sys.opaque_identity !m)
+
 (* A buffer of [n] bytes on [d] that is unreachable once this returns: its
    address. *)
 let[@inline never] dropped d n = Support.at (B.create d n)
@@ -330,6 +351,8 @@ let tests =
         test "a forked child frees the io memory it drops" test_io_loop;
         test "a forked child frees io memory a parent's device uses"
           test_io_used;
+        test "a forked child frees the memory of an io device closed before"
+          test_io_closed;
         test "a device a forked child opens drains as in any process"
           test_own_device;
         test "a forked child uses rig while a parent's thread held a turn"
