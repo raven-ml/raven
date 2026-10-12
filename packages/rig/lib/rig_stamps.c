@@ -70,30 +70,68 @@ static _Atomic uint64_t *words(struct rig_stamps *s, int keep) {
   return keep ? s->keep : s->use;
 }
 
-/* The use word, or the keep word if [keep], of the device [index] in the
-   stamps [s]: its existing one, or an empty one, claimed with the point
-   (index, 0), in a chunk added if every word is taken. A raise through it
-   allocates nothing. */
-static _Atomic uint64_t *reserve_any(struct rig_stamps *s, int index,
-                                     int keep) {
-  for (;;) {
+/* Whether the word [p] of another device's work is spent: that device's stop
+   was claimed and its point is done or was never raised. A submit checks
+   that its device is not lost under the device's mutex, its turn, before
+   it raises the words it reserved, and a claimed stop means a lost device,
+   so no raise stores to the word again. Indices are never reused, so no
+   later device reserves it by its index. A point a loss dropped is not
+   spent: it stays for good, so an access still raises its loss. */
+static int spent(uint64_t p) {
+  int s = atomic_load_explicit(&rig_lines[RIG_INDEX(p)].state,
+                               memory_order_acquire);
+  if (s != RIG_STOPPING && s != RIG_ENDED && s != RIG_STOPPED) return 0;
+  return RIG_VALUE(p) == 0 || rig_point_done(p);
+}
+
+/* The word of the device [index] among the use words of [s], or its keep
+   words if [keep], or NULL. */
+static _Atomic uint64_t *own_word(struct rig_stamps *s, int index, int keep) {
+  for (; s != NULL; s = atomic_load(&s->next)) {
     _Atomic uint64_t *w = words(s, keep);
     for (int i = 0; i < RIG_USES; i++) {
       uint64_t p = atomic_load(&w[i]);
       if (p != 0 && RIG_INDEX(p) == index) return &w[i];
-      if (p == 0) {
-        uint64_t mine = RIG_POINT(index, 0);
-        if (atomic_compare_exchange_strong(&w[i], &p, mine)) return &w[i];
-        if (RIG_INDEX(p) == index) return &w[i];
+    }
+  }
+  return NULL;
+}
+
+/* The use word, or the keep word if [keep], of the device [index] in the
+   stamps [s]: its existing one, or the first that is empty or spent,
+   claimed with the point (index, 0), in a chunk added if none is. A
+   memory's words thus number the devices whose work on it may still
+   matter, and a walk's cost follows them. A raise through it allocates
+   nothing. Were indices reused, each return on a match of [index], the
+   first word's in [reserve] included, would take a stale word by
+   compare-and-set. */
+static _Atomic uint64_t *reserve_any(struct rig_stamps *s, int index,
+                                     int keep) {
+  uint64_t mine = RIG_POINT(index, 0);
+  for (;;) {
+    _Atomic uint64_t *own = own_word(s, index, keep);
+    if (own != NULL) return own;
+    _Atomic uint64_t *free_ = NULL;
+    uint64_t seen = 0;
+    struct rig_stamps *last = s;
+    for (struct rig_stamps *c = s; c != NULL && free_ == NULL;
+         c = atomic_load(&c->next)) {
+      _Atomic uint64_t *w = words(c, keep);
+      for (int i = 0; i < RIG_USES && free_ == NULL; i++) {
+        uint64_t p = atomic_load(&w[i]);
+        if (p == 0 || spent(p)) {
+          free_ = &w[i];
+          seen = p;
+        }
       }
+      last = c;
     }
-    struct rig_stamps *next = atomic_load(&s->next);
-    if (next == NULL) {
-      struct rig_stamps *grown = chunk();
-      if (!atomic_compare_exchange_strong(&s->next, &next, grown)) free(grown);
-      else next = grown;
+    if (free_ != NULL) {
+      if (atomic_compare_exchange_strong(free_, &seen, mine)) return free_;
+      continue;
     }
-    s = next;
+    struct rig_stamps *grown = chunk(), *none = NULL;
+    if (!atomic_compare_exchange_strong(&last->next, &none, grown)) free(grown);
   }
 }
 
@@ -130,34 +168,32 @@ static void raise_last_write(struct rig_stamps *s, uint64_t p) {
   }
 }
 
-/* [caml_rig_stamps_get]'s answer past the last point: a point of index 0,
-   which no work has. Every other word is a point, -1 among them. */
-#define PAST_LAST RIG_POINT(0, 1)
+/* A walk of stamps reads their last write, then each chunk's words in
+   turn, stepping to the next chunk itself: each read is one load,
+   whatever the number of chunks. */
 
-/* The [v_k]th point of the stamps: 0 the last write, then the uses in
-   order; 0 for an empty slot, PAST_LAST past the last. */
-value caml_rig_stamps_get(value v_s, value v_k) {
-  struct rig_stamps *s = Stamps_val(v_s);
-  intnat k = Long_val(v_k);
-  if (k == 0) return Val_long((intnat)atomic_load(&s->write));
-  k -= 1;
-  for (; s != NULL; s = atomic_load(&s->next)) {
-    if (k < RIG_USES) return Val_long((intnat)use_point(&s->use[k]));
-    k -= RIG_USES;
-  }
-  return Val_long(PAST_LAST);
+value caml_rig_stamps_uses(value unit) {
+  (void)unit;
+  return Val_int(RIG_USES);
 }
 
-/* The [v_k]th keep point of the stamps, in order; 0 for an empty slot,
-   PAST_LAST past the last. */
-value caml_rig_stamps_kept(value v_s, value v_k) {
-  struct rig_stamps *s = Stamps_val(v_s);
-  intnat k = Long_val(v_k);
-  for (; s != NULL; s = atomic_load(&s->next)) {
-    if (k < RIG_USES) return Val_long((intnat)use_point(&s->keep[k]));
-    k -= RIG_USES;
-  }
-  return Val_long(PAST_LAST);
+value caml_rig_stamps_write(value v_s) {
+  return Val_long((intnat)atomic_load(&Stamps_val(v_s)->write));
+}
+
+/* The point of the chunk [v_c]'s use word [v_i], 0 for none. */
+value caml_rig_stamps_use(value v_c, value v_i) {
+  return Val_long((intnat)use_point(&Stamps_val(v_c)->use[Int_val(v_i)]));
+}
+
+/* The point of the chunk [v_c]'s keep word [v_i], 0 for none. */
+value caml_rig_stamps_keep(value v_c, value v_i) {
+  return Val_long((intnat)use_point(&Stamps_val(v_c)->keep[Int_val(v_i)]));
+}
+
+/* The chunk after [v_c], 0 for none. */
+value caml_rig_stamps_next(value v_c) {
+  return Val_long((intnat)atomic_load(&Stamps_val(v_c)->next));
 }
 
 /* Forgets every point of memory taken out of its device's cache: all its

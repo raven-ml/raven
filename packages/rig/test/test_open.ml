@@ -1220,6 +1220,43 @@ let test_ended_kept () =
       at_most int ~msg:"the OCaml heap's growth over a window" ~than:0 ml)
     grown
 
+(* A memory the program keeps across opens and closes keeps nothing of the
+   devices that used it once they ended: each device's work borrows one host
+   buffer, so its use lies in that memory's record. *)
+let test_ended_used () =
+  let h = Rig.Buffer.create Rig.host (1 lsl 16) in
+  let cycle i =
+    let d, _ = P.open_ (Printf.sprintf "open:used%d" (i mod 2)) in
+    let uses =
+      Rig.Submission.make d [| Support.touching [| Rig.Submission.read |] |]
+    in
+    let b = require_some (Rig.Buffer.borrow d h) in
+    Rig.Point.wait (submit uses ~buffers:[| b |]);
+    Rig.close d
+  in
+  let heap () =
+    match Support.heap_bytes () with
+    | Some n -> n
+    | None -> skip ~reason:"the system counts no C heap" ()
+  in
+  let window () =
+    let c = heap () in
+    for i = 1 to opens do
+      cycle i
+    done;
+    settle ();
+    Rig.Buffer.wait h Rig.Read_write;
+    heap () - c
+  in
+  ignore (window ());
+  let cs = List.init windows (fun _ -> window ()) in
+  at_most int
+    ~msg:
+      (Printf.sprintf "the C heap's least growth over a window (%s)"
+         (String.concat ", " (List.map string_of_int cs)))
+    ~than:0
+    (List.fold_left Int.min max_int cs)
+
 (* An open whose opener blocks holds back only opens of its own name. *)
 let test_blocked_opener () =
   let lock = Mutex.create () and cond = Condition.create () in
@@ -1340,6 +1377,8 @@ let tests =
       test "a wait for a reached point of an ended device allocates nothing"
         test_ended_words;
       test "an ended device no value references keeps nothing" test_ended_kept;
+      test "a kept memory keeps nothing of the ended devices that used it"
+        test_ended_used;
     ]
 
 let () = exit (run "rig.open" [ tests ])

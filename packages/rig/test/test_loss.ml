@@ -311,6 +311,28 @@ let test_unreached () =
   raises_match ~msg:"a claim" (lost d) (fun () ->
       Rig.Claim.with_ ~read:[ h ] ~donate:[] ignore)
 
+(* A use a loss dropped stays in its memory for good: devices that read the
+   memory after it, through borrows taken before it, and end, take nothing of
+   it. *)
+let test_unreached_kept () =
+  let d, p = P.open_ "loss:unreached-kept" in
+  let h = B.create Rig.host (1 lsl 16) in
+  let readers =
+    List.init 8 (fun i ->
+        let e, _ = P.open_ (Printf.sprintf "loss:unreached-kept-%d" i) in
+        (e, require_some (B.borrow e h)))
+  in
+  let reads d = Sub.make d [| Support.touching [| Sub.read |] |] in
+  ignore (submit (reads d) ~buffers:[| require_some (B.borrow d h) |]);
+  P.fail p;
+  raises_match (lost d) (fun () -> submit (empty d));
+  List.iter
+    (fun (e, b) ->
+      Rig.Point.wait (submit (reads e) ~buffers:[| b |]);
+      Rig.close e)
+    readers;
+  raises_match (lost d) (fun () -> B.wait h Rig.Read_write)
+
 (* A stop raises the word to the last value whatever ran: work the device did
    not reach before its loss stays unreached. *)
 let test_stop_reaches_nothing () =
@@ -777,6 +799,8 @@ let tests =
           test_others_go_on;
         test "memory a lost device's work did not reach raises its loss"
           test_unreached;
+        test "memory keeps a use a loss dropped while other devices use it"
+          test_unreached_kept;
         test "a stop's last value reaches no unreached work"
           test_stop_reaches_nothing;
         test "a lost device's memory raises its loss through any buffer"

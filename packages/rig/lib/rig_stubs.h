@@ -149,8 +149,11 @@ void rig_device_unref(struct rig_device *d);
 /* A memory's stamps: the point of its last write and, per device, the point
    of its last use. A chunk never moves, so a raise is one store or
    compare-and-set; a submission reserves its device's use word before its
-   hand-over, so a raise allocates nothing. [refs] counts the memories
-   and holds that share it. A hold's stamps hold only uses: those of the
+   hand-over, so a raise allocates nothing. A reservation takes the word of
+   a device whose stop was claimed and whose point is done, so the chunks
+   grow only with the devices that use the memory at once. A word whose
+   point a loss dropped stays for good. [refs] counts the memories and
+   holds that share it. A hold's stamps hold only uses: those of the
    submissions made with it. */
 #define RIG_USES 4
 

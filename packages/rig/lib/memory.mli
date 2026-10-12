@@ -57,9 +57,12 @@ val page : int
     [rig_stubs.h]) as an int, [0] for none. They hold the point of the
     allocation's last write, and per device the point of its last use and
     of its last unordered use, which no access follows and the allocation's
-    return waits for. They count references: the entry or hold that owns
-    them holds one, and the last {!stamps_unref} frees them. Nothing checks a
-    use after that. The stubs never block or release the runtime. *)
+    return waits for. A device's words pass to another device once its stop
+    was claimed and their points are done, so the words, and a walk's cost,
+    follow the devices whose work on the allocation may still matter. They
+    count references: the entry or hold that owns them holds one, and the
+    last {!stamps_unref} frees them. Nothing checks a use after that. The
+    stubs never block or release the runtime. *)
 
 val stamps_new : unit -> int
 (** [stamps_new ()] is new empty stamps with one reference. Raises

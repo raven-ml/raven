@@ -348,6 +348,23 @@ let claim_rows =
         (fun (a, b, c) -> claim_3 a b c);
     ]
 
+(* A device whose memory the host does not address: a copy between it and the
+   host goes through the host's staging memory. *)
+let unaddressed () =
+  incr opened;
+  fst (P.open_ ~host_visible:false (strf "bench:%d" !opened))
+
+(* A staged copy of [n] bytes after [closed] other devices copied through the
+   host's staging memory and were closed: the staging memory's records follow
+   the devices still open. *)
+let staged ~closed n () =
+  for _ = 1 to closed do
+    let d = unaddressed () in
+    B.copy ~src:(B.create Rig.host n) ~dst:(B.create d n);
+    Rig.close d
+  done;
+  (B.create Rig.host n, B.create (unaddressed ()) n)
+
 let copy_rows =
   let pair d n () = (B.create d n, B.create d n) in
   let copy (src, dst) = B.copy ~src ~dst in
@@ -360,16 +377,10 @@ let copy_rows =
       row "memory-4K" (fun () -> pair (memory ()) (4 * kib) ()) copy;
       row "queue-64K"
         (fun () ->
-          incr opened;
-          let d, _ = P.open_ ~host_visible:false (strf "bench:%d" !opened) in
-          (B.create Rig.host (64 * kib), B.create d (64 * kib)))
+          (B.create Rig.host (64 * kib), B.create (unaddressed ()) (64 * kib)))
         copy;
-      row "staged-4K"
-        (fun () ->
-          incr opened;
-          let d, _ = P.open_ ~host_visible:false (strf "bench:%d" !opened) in
-          (B.create Rig.host (4 * kib), B.create d (4 * kib)))
-        copy;
+      row "staged-4K" (staged ~closed:0 (4 * kib)) copy;
+      row "staged-4K/after-1024-closed" (staged ~closed:1024 (4 * kib)) copy;
     ]
 
 (* A collection hands the memory of 1,000 dropped buffers back, and the next
