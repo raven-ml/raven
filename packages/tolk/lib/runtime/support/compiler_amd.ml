@@ -28,6 +28,15 @@ let rec mkdir_p dir =
     try Sys.mkdir dir 0o755 with Sys_error _ when Sys.file_exists dir -> ()
   end
 
+(* The program is read shared for deletion: on Windows, renaming a file holds
+   it open for deletion, and a reader that does not share it fails while
+   another process renames the program into place. *)
+let file_digest path =
+  let fd = Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0 in
+  let ic = Unix.in_channel_of_descr fd in
+  Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+      Digest.channel ic (-1))
+
 let program_file program =
   let digest = Digest.to_hex (Digest.string program) in
   let path =
@@ -35,7 +44,7 @@ let program_file program =
       ("comgr-worker-" ^ digest ^ if Sys.win32 then ".exe" else "")
   in
   let whole () =
-    Sys.file_exists path && Digest.to_hex (Digest.file path) = digest
+    Sys.file_exists path && Digest.to_hex (file_digest path) = digest
   in
   try
     if not (whole ()) then begin
@@ -51,8 +60,11 @@ let program_file program =
     end;
     if not (whole ()) then failwith (path ^ ": differs from the program");
     path
-  with Sys_error e | Unix.Unix_error (_, _, e) ->
-    failwith (Printf.sprintf "comgr worker %s: %s" path e)
+  with
+  | Sys_error e -> failwith (Printf.sprintf "comgr worker %s: %s" path e)
+  | Unix.Unix_error (e, _, _) ->
+      failwith
+        (Printf.sprintf "comgr worker %s: %s" path (Unix.error_message e))
 
 (* Written once, by whichever domain first compiles. A failure is raised to that
    compile and tried again by the next. *)

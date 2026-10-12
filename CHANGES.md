@@ -1237,6 +1237,10 @@ thread.
 
 ### Tolk (new)
 
+- On Windows, `Helpers.Diskcache.get` reads an entry while another domain or
+  process renames one into place, where it raised `Sys_error "...: Permission
+  denied"`. The cache's entries and comgr's worker program are read shared for
+  deletion.
 - On Windows, compiles on several domains at once no longer raise
   `Sys_error "...: Permission denied"` removing Clang's or comgr's temporary
   files. A process another domain started meanwhile inherits them, so they are

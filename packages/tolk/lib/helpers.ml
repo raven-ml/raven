@@ -451,14 +451,25 @@ module Diskcache = struct
         else Some (String.sub contents (start + klen) vlen)
     | _ -> failwith (path ^ ": malformed cache entry")
 
+  (* An entry is opened shared for deletion: on Windows, renaming a file holds
+     it open for deletion, and a reader that does not share it fails while
+     another writer renames the entry into place. *)
+  let read path =
+    let fd = Unix.openfile path [ O_RDONLY; O_CLOEXEC; O_SHARE_DELETE ] 0 in
+    let ic = Unix.in_channel_of_descr fd in
+    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+        In_channel.input_all ic)
+
   let get ~table key =
     if not (enabled ()) then None
     else
       let path = entry_path table key in
-      match In_channel.with_open_bin path In_channel.input_all with
+      match read path with
       | contents -> decode path key contents
-      | exception (Sys_error _ as e) ->
-          if Sys.file_exists path then raise e else None
+      | exception Unix.Unix_error (e, _, _) ->
+          if Sys.file_exists path then
+            raise (Sys_error (path ^ ": " ^ Unix.error_message e))
+          else None
 
   let rec mkdir_p dir =
     if not (Sys.file_exists dir) then begin
@@ -467,7 +478,7 @@ module Diskcache = struct
     end
 
   (* The entry is written aside and renamed into place, so readers never see it
-     half written. On Windows the rename fails while another process holds the
+     half written. On Windows the rename can fail while a reader holds the
      entry open; that entry is complete, so it stays. *)
   let put ~table key value =
     if enabled () then begin
