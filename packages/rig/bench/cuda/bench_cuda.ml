@@ -286,6 +286,13 @@ let image_rows =
           | Error why -> failwith why);
     ]
 
+(* An open of the GPU's device through rig and its close: the device's
+   streams, its events and its first measure of the GPU's clock against the
+   host's. *)
+let open_rows =
+  Thumper.group "open"
+    [ row "close" (fun () -> ()) (fun () -> S.close (S.open_ ())) ]
+
 let () =
   if Sys.file_exists "/dev/nvidiactl" then
     exit
@@ -299,4 +306,5 @@ let () =
            alloc_rows;
            map_host_rows;
            image_rows;
+           open_rows;
          ]

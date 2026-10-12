@@ -463,6 +463,23 @@ static void destroy(struct device *d) {
 /* The round trips a reference is chosen from. */
 #define REFERENCES 8
 
+/* How long a round trip of the open's measure may take. */
+#define ROUND_TRIP_NS UINT64_C(1000000000)
+
+/* Records the trial event on the idle clock stream and waits for it by
+   asking CUDA until it has completed, so that no wake-up of a blocked
+   thread, which a loaded host may delay for milliseconds, adds to the
+   round trip: CUDA's status, or CUDA_ERROR_NOT_READY past ROUND_TRIP_NS. */
+static CUresult round_trip(struct device *d, uint64_t before) {
+  CUresult s = p_cuEventRecord(d->trial, d->clock);
+  while (s == CUDA_SUCCESS || s == CUDA_ERROR_NOT_READY) {
+    s = p_cuEventQuery(d->trial);
+    if (s != CUDA_ERROR_NOT_READY) return s;
+    if (rig_now_ns() - before > ROUND_TRIP_NS) return s;
+  }
+  return s;
+}
+
 /* Takes [d]'s reference: records an event on the idle clock stream
    between two readings of the host's clock, REFERENCES times, and keeps
    the event whose readings lie closest, with the middle of them. A GPU
@@ -472,8 +489,7 @@ static CUresult refer(struct device *d) {
   CUresult s = CUDA_SUCCESS;
   for (int i = 0; i < REFERENCES && s == CUDA_SUCCESS; i++) {
     uint64_t before = rig_now_ns();
-    s = p_cuEventRecord(d->trial, d->clock);
-    if (s == CUDA_SUCCESS) s = p_cuEventSynchronize(d->trial);
+    s = round_trip(d, before);
     uint64_t took = rig_now_ns() - before;
     if (s != CUDA_SUCCESS || took >= best) continue;
     best = took;
@@ -486,19 +502,24 @@ static CUresult refer(struct device *d) {
   return s;
 }
 
-/* Makes the events and the stream that time [d]'s values, and its first
-   reference. */
+/* Makes the stream and the events of [d]'s references, and its first
+   reference. A stamp's events are made at its first timed value, so that
+   a device that never times its work makes none of them. */
 static CUresult clock_start(struct device *d) {
   CUresult s = p_cuStreamCreate(&d->clock, CU_STREAM_NON_BLOCKING);
   if (s == CUDA_SUCCESS) s = p_cuEventCreate(&d->reference, 0);
   if (s == CUDA_SUCCESS) s = p_cuEventCreate(&d->trial, 0);
-  for (int i = 0; i < STAMPS && s == CUDA_SUCCESS; i++) {
-    struct stamp *t = &d->stamps[i];
-    s = p_cuEventCreate(&t->start[0], 0);
-    if (s == CUDA_SUCCESS) s = p_cuEventCreate(&t->start[1], 0);
-    if (s == CUDA_SUCCESS) s = p_cuEventCreate(&t->end, 0);
-  }
   if (s == CUDA_SUCCESS) s = refer(d);
+  return s;
+}
+
+/* Makes [t]'s events unless it has them. */
+static CUresult stamp_events(struct stamp *t) {
+  CUresult s = CUDA_SUCCESS;
+  if (t->start[0] == NULL) s = p_cuEventCreate(&t->start[0], 0);
+  if (s == CUDA_SUCCESS && t->start[1] == NULL)
+    s = p_cuEventCreate(&t->start[1], 0);
+  if (s == CUDA_SUCCESS && t->end == NULL) s = p_cuEventCreate(&t->end, 0);
   return s;
 }
 
@@ -1182,6 +1203,7 @@ static CUresult take_stamp(struct device *d, uint64_t v, struct stamp **t) {
   CUresult s = CUDA_SUCCESS;
   if (x->times != NULL) s = p_cuEventSynchronize(x->end);
   if (s == CUDA_SUCCESS && x->times != NULL) s = convert_upto(d, x->v);
+  if (s == CUDA_SUCCESS) s = stamp_events(x);
   if (d->unconverted == 0) d->converted = v - 1;
   x->entered[0] = x->entered[1] = 0;
   *t = x;
