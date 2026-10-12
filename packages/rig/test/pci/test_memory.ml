@@ -1180,9 +1180,10 @@ type s_pair = {
 let live_regions m = List.filter (fun r -> not r.freed) m.regions
 
 (* Each pair's addresses are a slot of its own, so that the pairs of one program
-   hold no memory in each other's blocks: a space of 62 MiB, then 2 MiB of
-   memory the GPUs borrow. A slot goes back when its pair is released. *)
-let slot_size = 64 * mib
+   hold no memory in each other's blocks: a space of 14 MiB, then 2 MiB of
+   memory the GPUs borrow. A slot goes back when its pair is released. Each
+   capacity check drains the space a page at a time. *)
+let slot_size = 16 * mib
 let slots = 20
 let slots_base = lend_base + slot_size
 let free_slots = Atomic.make (List.init slots Fun.id)
@@ -1212,7 +1213,11 @@ let create_pair () =
   Tree.pagemap root ~page base
     (List.init (slot_size / page) (fun i -> first_frame + i));
   let space = Space.create ~base (borrowed - base) in
-  let gpus = Array.of_list (List.map (take_gpu ~space m) buses) in
+  (* Each capacity check drains the GPU's pool 4 KiB at a time: 8 MiB hold a
+     program's regions. *)
+  let gpus =
+    Array.of_list (List.map (take_gpu ~memory:(8 * mib) ~space m) buses)
+  in
   let lent =
     fst (given (Function.alloc_dma ~va:borrowed gpus.(0).t_fn (2 * page)))
   in

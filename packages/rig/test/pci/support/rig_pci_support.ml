@@ -322,10 +322,17 @@ module Tree = struct
 
   (* The process's trees are under a new temporary directory of its own, so
      that no two runs, of one suite or of two, share a tree. The process that
-     made it removes it at its exit; a child of [fork] leaves it. *)
+     made it removes it at its exit; a child of [fork] leaves it. It is under
+     /dev/shm, a memory file system, where the system has one: a suite makes
+     thousands of trees, which took ten times as long on a CI runner whose
+     temporary directory is on disk. *)
   let trees =
     lazy
-      (let d = Filename.temp_dir "rig-pci-trees" "" in
+      (let temp_dir =
+         if Sys.file_exists "/dev/shm" then "/dev/shm"
+         else Filename.get_temp_dir_name ()
+       in
+       let d = Filename.temp_dir ~temp_dir "rig-pci-trees" "" in
        let maker = Unix.getpid () in
        at_exit (fun () -> if Unix.getpid () = maker then remove d);
        d)
