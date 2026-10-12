@@ -842,16 +842,6 @@ let gen_shapes ~closed =
 let shapes_path ~closed subs =
   build (List.map (fun pts -> Poly (closed, pts)) subs)
 
-(* The region law: inside the box, a cropped polygon winds around every point as
-   the polygon does, and outside it around none. *)
-let crop_keeps_windings (subs, q) =
-  let p = shapes_path ~closed:true subs in
-  let w = winding (polygons (fine (Path.crop crop_box p))) q in
-  let inside = inside_box ~margin:0. crop_box q in
-  cover "a point inside the box" inside;
-  cover "a point the polygons wind around" (winding (polygons (segs p)) q <> 0);
-  equal int (if inside then winding (polygons (segs p)) q else 0) w
-
 let dist_to_segment (px, py) ((x0, y0), (x1, y1)) =
   let dx = x1 -. x0 and dy = y1 -. y0 in
   let l = (dx *. dx) +. (dy *. dy) in
@@ -862,6 +852,35 @@ let dist_to_segment (px, py) ((x0, y0), (x1, y1)) =
         (Float.max 0. ((((px -. x0) *. dx) +. ((py -. y0) *. dy)) /. l))
   in
   Float.hypot (px -. (x0 +. (t *. dx))) (py -. (y0 +. (t *. dy)))
+
+(* [clear polys q] is [true] iff [q] lies more than [1e-9] from every edge of
+   the closed polygons [polys] and of [crop_box]. *)
+let clear polys q =
+  let x0 = Box2.minx crop_box and y0 = Box2.miny crop_box in
+  let x1 = Box2.maxx crop_box and y1 = Box2.maxy crop_box in
+  let box = [ (x0, y0); (x1, y0); (x1, y1); (x0, y1); (x0, y0) ] in
+  let rec pairs = function
+    | a :: (b :: _ as rest) -> (a, b) :: pairs rest
+    | [ _ ] | [] -> []
+  in
+  List.for_all
+    (fun e -> dist_to_segment q e > 1e-9)
+    (List.concat_map pairs (box :: polys))
+
+(* The region law: inside the box, a cropped polygon winds around every point as
+   the polygon does, and outside it around none. A point on an edge, of a
+   polygon or of the box, or within rounding of one, is inside or outside a
+   fill as its arithmetic rounds, and the oracle's winding no better: the law
+   holds for points clear of every edge, which the generator's corners, such
+   as the least subnormal, would otherwise draw beside a vertex. *)
+let crop_keeps_windings (subs, q) =
+  let p = shapes_path ~closed:true subs in
+  assume (clear (polygons (segs p)) q);
+  let w = winding (polygons (fine (Path.crop crop_box p))) q in
+  let inside = inside_box ~margin:0. crop_box q in
+  cover "a point inside the box" inside;
+  cover "a point the polygons wind around" (winding (polygons (segs p)) q <> 0);
+  equal int (if inside then winding (polygons (segs p)) q else 0) w
 
 let edges segs =
   let rec go cur acc = function
@@ -954,6 +973,16 @@ let cropping =
             (segs
                (Path.crop unit_box
                   (Path.polygon [| -1.; 0.5; -1. |] [| 0.5; 0.5; 0.5 |]))));
+      test "crop of a closed subpath cut to two points drops it" (fun () ->
+          (* Two points lie on one line, however near zero their differences
+             are, so whatever crop computes of them has no area. *)
+          let s = Float.min_float *. Float.epsilon in
+          equal segs_exact []
+            (segs
+               (Path.crop crop_box
+                  (Path.polygon
+                     [| 30.001059649773559; -.s |]
+                     [| 2.1822677440245566e-174; s |]))));
       test "crop of a closed subpath along an edge drops it" (fun () ->
           equal segs_exact []
             (segs

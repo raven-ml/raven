@@ -461,7 +461,9 @@ let degenerate x y = function
 
 (* [flat s] is [true] iff every point of [s] lies on one line through its start,
    as computed: as a region, [s] has no area. Points on an edge of the box are
-   found so exactly. *)
+   found so exactly. The two products are compared, each rounded on its own:
+   ocamlopt on arm64 fuses [a *. b -. c *. d] into one multiply-add, whose
+   rounding can put a point off the line through itself. *)
 let flat s =
   let pts =
     List.concat_map
@@ -475,7 +477,7 @@ let flat s =
   | Some (dx, dy) ->
       let ux = dx -. s.sx and uy = dy -. s.sy in
       List.for_all
-        (fun (x, y) -> ((x -. s.sx) *. uy) -. ((y -. s.sy) *. ux) = 0.)
+        (fun (x, y) -> (x -. s.sx) *. uy = (y -. s.sy) *. ux)
         pts
 
 (* [cut h ~region s acc] adds to [acc] the subpaths of [s] within [h], latest

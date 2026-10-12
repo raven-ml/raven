@@ -99,6 +99,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- On arm64, `Path.crop` drops a closed subpath that the box cuts to points on
+  one line, as elsewhere: ocamlopt fused the collinearity test's products into
+  one multiply-add, whose rounding could keep a subpath of two points.
 - hugin writes floats the same on every system: its printers, error messages
   and the numbers of its SVG and PDF output round a float's exact value once,
   ties to even. On Windows they wrote three exponent digits (`1e+016`) and
