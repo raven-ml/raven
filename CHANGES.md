@@ -3618,6 +3618,11 @@ thread.
 
 ### Nx
 
+- On Windows, `Nx.sin`, `Nx.cos` and `Nx.tan` on the host, their complex
+  forms, complex `Nx.exp`, `Nx.sinh`, `Nx.cosh`, `Nx.tanh` and `Nx.pow`, and
+  the FFT's twiddle factors use nx's own sine, cosine and tangent, within 1
+  ulp. mingw-w64's reduced by a 66-bit pi, and missed
+  `sin (-0x1.fffffffffffffp+31)` by 88342 ulps.
 - Floats print as their shortest decimal on Windows: msvcrt's printf rounded
   some digits twice and ties away from zero (float16 `0.0078125` printed as
   `0.007813`), and its strtod misread some powers of two.

@@ -6,7 +6,9 @@
 (* Element-wise arithmetic, math, comparison and bitwise operations. Each is
    checked against OCaml's own function on every element, over every layout and
    over the values that break arithmetic: NaN, infinities, signed zeros,
-   subnormals and the extremes of each type. *)
+   subnormals and the extremes of each type. Sine, cosine and tangent are
+   checked against the accuracy suite's oracle: OCaml's are the C library's,
+   which mingw-w64 computes wrongly past small arguments. *)
 
 open Windtrap
 open Nx_test
@@ -51,9 +53,9 @@ let unary =
     { name = "log1p"; nx = Nx.log1p; ocaml = Float.log1p; exact = false };
     { name = "expm1"; nx = Nx.expm1; ocaml = Float.expm1; exact = false };
     { name = "exp2"; nx = Nx.exp2; ocaml = Float.exp2; exact = false };
-    { name = "sin"; nx = Nx.sin; ocaml = Float.sin; exact = false };
-    { name = "cos"; nx = Nx.cos; ocaml = Float.cos; exact = false };
-    { name = "tan"; nx = Nx.tan; ocaml = Float.tan; exact = false };
+    { name = "sin"; nx = Nx.sin; ocaml = Accuracy.Oracle.sin; exact = false };
+    { name = "cos"; nx = Nx.cos; ocaml = Accuracy.Oracle.cos; exact = false };
+    { name = "tan"; nx = Nx.tan; ocaml = Accuracy.Oracle.tan; exact = false };
     { name = "asin"; nx = Nx.asin; ocaml = Float.asin; exact = false };
     { name = "acos"; nx = Nx.acos; ocaml = Float.acos; exact = false };
     { name = "atan"; nx = Nx.atan; ocaml = Float.atan; exact = false };

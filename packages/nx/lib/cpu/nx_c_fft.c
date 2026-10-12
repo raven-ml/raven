@@ -642,8 +642,8 @@ static fft_plan *build_native(int64_t n, int sign) {
           int64_t q = (int64_t)(((__int128)b * l1 * a) % n);
           double ang = (double)sign * 2.0 * NX_C_PI * (double)q / (double)n;
           int64_t off = (a - 1) + (int64_t)(b - 1) * (ido - 1);
-          p->stages[i].tw[off].r = cos(ang);
-          p->stages[i].tw[off].i = sin(ang);
+          p->stages[i].tw[off].r = nx_c_cos(ang);
+          p->stages[i].tw[off].i = nx_c_sin(ang);
         }
     }
     if (ip != 2 && ip != 3 && ip != 4 && ip != 5 && ip != 7 && ip != 8) {
@@ -652,8 +652,8 @@ static fft_plan *build_native(int64_t n, int sign) {
       if (!p->stages[i].root) { plan_free(p); return NULL; }
       for (int t = 0; t < ip; t++) {
         double ang = (double)sign * 2.0 * NX_C_PI * (double)t / (double)ip;
-        p->stages[i].root[t].r = cos(ang);
-        p->stages[i].root[t].i = sin(ang);
+        p->stages[i].root[t].r = nx_c_cos(ang);
+        p->stages[i].root[t].i = nx_c_sin(ang);
       }
     }
     l1 *= ip;
@@ -666,7 +666,7 @@ static fft_plan *build_native(int64_t n, int sign) {
 static cx2 chirp_at(int64_t j, int64_t n, int sign) {
   int64_t r = (int64_t)(((__int128)j * j) % (2 * n));
   double ang = (double)sign * NX_C_PI * (double)r / (double)n;
-  cx2 c = {cos(ang), sin(ang)};
+  cx2 c = {nx_c_cos(ang), nx_c_sin(ang)};
   return c;
 }
 
@@ -883,8 +883,8 @@ static real_plan *build_real(int64_t n, int sign) {
   }
   for (int64_t k = 0; k <= N / 2; k++) {
     double ang = 2.0 * NX_C_PI * (double)k / (double)n;
-    p->rtw[k].r = -sin(ang);
-    p->rtw[k].i = (double)sign * cos(ang);
+    p->rtw[k].r = -nx_c_sin(ang);
+    p->rtw[k].i = (double)sign * nx_c_cos(ang);
   }
   /* The self-pair entry (even N) sits at θ = π/2 exactly, where cos leaves a
      6.1e-17 residue; pin it so the self-pair iterations multiply by a real

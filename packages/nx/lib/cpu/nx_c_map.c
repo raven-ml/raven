@@ -618,20 +618,57 @@ static const nx_c_map_table nx_c_sign_table = {
   static const nx_c_map_table nx_c_##op##_table = {                             \
       .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_FC)}};
 
-#define NX_C_CUROP exp
-NX_C_TRANS(exp)
-#undef NX_C_CUROP
 #define NX_C_CUROP log
 NX_C_TRANS(log)
 #undef NX_C_CUROP
+
+/* sin, cos and tan, and the complex functions built on them, through
+   nx_c.h's nx_c_ names: nx's own where the C library's reduce by x87's 66-bit
+   pi, the C library's elsewhere. NX_C_TRIG takes both forms from there,
+   NX_C_TRIGC the complex one alone. */
+#define NX_C_TGK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
+  NX_C_UK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
+         NX_C_MFN(NX_C_PASTE(nx_c_, NX_C_CUROP), compute)(vx))
+#define NX_C_TGK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                 \
+  NX_C_UK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
+         NX_C_MFN(NX_C_PASTE(nx_c_c, NX_C_CUROP), compute)(vx))
+#define NX_C_TGK_NX_C_CAT_SINT(sfx, storage, compute, ld, st)
+#define NX_C_TGK_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
+#define NX_C_TGK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
+#define NX_C_TRIG_KROW(sfx, storage, compute, ld, st, cat)                      \
+  NX_C_TGK_##cat(sfx, storage, compute, ld, st)
+
+#define NX_C_TRIG(op)                                                           \
+  NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TRIG_KROW)                                    \
+  static const nx_c_map_table nx_c_##op##_table = {                             \
+      .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_FC)}};
+
+#define NX_C_TCK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
+  NX_C_TRK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)
+#define NX_C_TCK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                 \
+  NX_C_TGK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
+#define NX_C_TCK_NX_C_CAT_SINT(sfx, storage, compute, ld, st)
+#define NX_C_TCK_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
+#define NX_C_TCK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
+#define NX_C_TRIGC_KROW(sfx, storage, compute, ld, st, cat)                     \
+  NX_C_TCK_##cat(sfx, storage, compute, ld, st)
+
+#define NX_C_TRIGC(op)                                                          \
+  NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TRIGC_KROW)                                   \
+  static const nx_c_map_table nx_c_##op##_table = {                             \
+      .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_FC)}};
+
+#define NX_C_CUROP exp
+NX_C_TRIGC(exp)
+#undef NX_C_CUROP
 #define NX_C_CUROP sin
-NX_C_TRANS(sin)
+NX_C_TRIG(sin)
 #undef NX_C_CUROP
 #define NX_C_CUROP cos
-NX_C_TRANS(cos)
+NX_C_TRIG(cos)
 #undef NX_C_CUROP
 #define NX_C_CUROP tan
-NX_C_TRANS(tan)
+NX_C_TRIG(tan)
 #undef NX_C_CUROP
 #define NX_C_CUROP asin
 NX_C_TRANS(asin)
@@ -643,13 +680,13 @@ NX_C_TRANS(acos)
 NX_C_TRANS(atan)
 #undef NX_C_CUROP
 #define NX_C_CUROP sinh
-NX_C_TRANS(sinh)
+NX_C_TRIGC(sinh)
 #undef NX_C_CUROP
 #define NX_C_CUROP cosh
-NX_C_TRANS(cosh)
+NX_C_TRIGC(cosh)
 #undef NX_C_CUROP
 #define NX_C_CUROP tanh
-NX_C_TRANS(tanh)
+NX_C_TRIGC(tanh)
 #undef NX_C_CUROP
 #define NX_C_CUROP sqrt
 NX_C_TRANS(sqrt)
@@ -894,7 +931,7 @@ NX_C_MINMAX(min)
          NX_C_MFN(nx_c_pow, compute)((va), (vb)))
 #define NX_C_POW_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                 \
   NX_C_BK(pow, sfx, storage, compute, ld, st,                                   \
-         NX_C_MFN(cpow, compute)((va), (vb)))
+         NX_C_MFN(nx_c_cpow, compute)((va), (vb)))
 #define NX_C_POW_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
 #define NX_C_POW_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_POW_##cat(sfx, storage, compute, ld, st)

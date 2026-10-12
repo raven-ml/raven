@@ -52,11 +52,12 @@
    -Wall
    -Wextra
    (:include werror_flags.sexp)))
- ; pow gives the same bits on every system only if no compiler fuses its
- ; multiplies and adds: clang does by default where the target has fma.
+ ; pow gives the same bits on every system, and nx's sin, cos and tan (built
+ ; on Windows alone) fdlibm's bits, only if no compiler fuses their multiplies
+ ; and adds: clang does by default where the target has fma.
  (foreign_stubs
   (language c)
-  (names nx_c_pow)
+  (names nx_c_pow nx_c_trig)
   (flags
    :standard
    -std=c11

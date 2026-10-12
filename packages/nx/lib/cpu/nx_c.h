@@ -907,4 +907,48 @@ int nx_c_plan_threads(int threads, nx_c_cost_class cls, int64_t runs,
 double nx_c_pow(double x, double y);
 float nx_c_powf(float x, float y);
 
+/* ── sin, cos and tan ────────────────────────────────────────────────────
+
+   mingw-w64's sin, cos and tan run the x87 unit's fsin, fcos and fptan, which
+   reduce by a 66-bit pi, and its complex exp, sin, cos, tan, sinh, cosh, tanh
+   and pow go through its sincos. There nx computes them itself
+   (nx_c_trig.c); elsewhere they are the C library's. */
+#if defined(__MINGW32__)
+#define NX_C_OWN_TRIG
+#endif
+
+#ifdef NX_C_OWN_TRIG
+#define NX_C_TRIG_FN(name, type) type nx_c_##name(type x);
+#define NX_C_CPOW_FN(name, type) type nx_c_##name(type z, type c);
+#else
+#define NX_C_TRIG_FN(name, type)                                                \
+  static inline type nx_c_##name(type x) { return name(x); }
+#define NX_C_CPOW_FN(name, type)                                                \
+  static inline type nx_c_##name(type z, type c) { return name(z, c); }
+#endif
+NX_C_TRIG_FN(sin, double)
+NX_C_TRIG_FN(cos, double)
+NX_C_TRIG_FN(tan, double)
+NX_C_TRIG_FN(sinf, float)
+NX_C_TRIG_FN(cosf, float)
+NX_C_TRIG_FN(tanf, float)
+NX_C_TRIG_FN(cexp, nx_c_complex64)
+NX_C_TRIG_FN(csin, nx_c_complex64)
+NX_C_TRIG_FN(ccos, nx_c_complex64)
+NX_C_TRIG_FN(ctan, nx_c_complex64)
+NX_C_TRIG_FN(csinh, nx_c_complex64)
+NX_C_TRIG_FN(ccosh, nx_c_complex64)
+NX_C_TRIG_FN(ctanh, nx_c_complex64)
+NX_C_CPOW_FN(cpow, nx_c_complex64)
+NX_C_TRIG_FN(cexpf, nx_c_complex32)
+NX_C_TRIG_FN(csinf, nx_c_complex32)
+NX_C_TRIG_FN(ccosf, nx_c_complex32)
+NX_C_TRIG_FN(ctanf, nx_c_complex32)
+NX_C_TRIG_FN(csinhf, nx_c_complex32)
+NX_C_TRIG_FN(ccoshf, nx_c_complex32)
+NX_C_TRIG_FN(ctanhf, nx_c_complex32)
+NX_C_CPOW_FN(cpowf, nx_c_complex32)
+#undef NX_C_TRIG_FN
+#undef NX_C_CPOW_FN
+
 #endif /* NX_C_C_H */

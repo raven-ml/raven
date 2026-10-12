@@ -64,6 +64,22 @@ external ldbl_unary : int -> float array -> float array -> unit
 external ldbl_binary : int -> float array -> float array -> float array -> unit
   = "nx_test_ldbl_binary"
 
+(* The sine, cosine and tangent of a double from the float64 oracle: the C
+   library's long double functions after an exact reduction, rounded once,
+   within an ulp or two where long double is as narrow as double. OCaml's
+   [Float.sin], [cos] and [tan] are the C library's double ones, which
+   mingw-w64 reduces by a 66-bit pi. *)
+module Oracle = struct
+  let at index x =
+    let o = [| 0. |] in
+    ldbl_unary index [| x |] o;
+    o.(0)
+
+  let sin = at 4
+  let cos = at 5
+  let tan = at 6
+end
+
 (* Distance *)
 
 (* The position of the [w]-bit float whose bits are [b] on the line of its
