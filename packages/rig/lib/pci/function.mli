@@ -53,7 +53,8 @@
     and {!Gpus.attach} are the calls that change the machine.
 
     One owner makes a function's calls one at a time, except that {!pin},
-    {!unpin}, {!alloc_dma} and {!free_dma} may be called from any domain.
+    {!unpin}, {!alloc_dma}, {!free_dma} and {!wait} may be called from any
+    domain.
     {!release} waits for the pins and allocations that run, and those that
     start after it began raise [Invalid_argument]. After {!release}, every
     call but {!free_dma}, {!unpin}, {!wait}, {!machine}, {!bus}, {!addressing}
