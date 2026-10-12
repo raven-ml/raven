@@ -290,11 +290,7 @@ let copy x =
 
 (* [x] moved by [m]. A reshape that [x]'s strides cannot express, such as a
    flattened transpose, moves a C-order copy of [x]. *)
-let move x m =
-  match m with
-  | Move.Reshape s when not (View.can_reshape (view x) s) ->
-      Move.apply (copy x) m
-  | _ -> Move.apply x m
+let move x m = if Move.views x m then Move.apply x m else Move.apply (copy x) m
 
 let scan k axis x =
   match x with

@@ -526,10 +526,23 @@ let kinds host =
           (List.init s.(d) succ));
   ]
 
+(* A storage, equal to itself alone, printed as where it lives and its buffers'
+   byte counts. *)
+let storage_id =
+  let pp ppf s =
+    Format.fprintf ppf "%a over buffers of %a bytes" Nx.Placement.pp
+      (Nx.Repr.Storage.placement s)
+      (Format.pp_print_list
+         ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+         Format.pp_print_int)
+      (List.map Rig.Buffer.length (Nx.Repr.Storage.buffers s))
+  in
+  Testable.make ~pp ~equal:( == )
+
 let move_both ((shape, where), steps) =
   let host = iota shape in
   let placed = Nx.place (to_placement where) host in
-  let storage = storage_of placed in
+  let source = storage_of placed in
   List.fold_left
     (fun state (kind, pick) ->
       match state with
@@ -570,15 +583,15 @@ let move_both ((shape, where), steps) =
               equal ~msg:(msg ^ ": bytes copied") (pair int int) (0, 0)
                 (received, sent);
               equal ~msg placement (to_placement where) (Nx.placement moved);
-              is_true
+              equal
                 ~msg:(msg ^ ": the source's storage")
-                (storage_of moved == storage);
+                storage_id source (storage_of moved);
               equal ~msg (tensor float_exact) host moved;
               Some (host, moved, where)))
     (Some (host, placed, where))
     steps
   |> Option.iter (fun (_, moved, _) ->
-      consume storage ~path:"0";
+      consume source ~path:"0";
       raises_invalid_arg (fun () -> Nx.to_array moved))
 
 let movements =
@@ -600,6 +613,11 @@ let movements =
                keeps the split axis after an empty one. *)
             (([| 3; 8; 1 |], Split (1, [ d1; d2 ])), [ (2, 5142); (4, 0) ]);
             (([| 3; 4; 3 |], Split (1, [ d1; d2 ])), [ (2, 9027); (4, 0) ]);
+            (* Movements that leave one row of the split axis per device, whose
+               stride the shards' view leaves free, then a reshape across it:
+               a view. *)
+            (([| 4; 2; 2 |], Split (0, four)), [ (0, 4); (2, 0); (1, 0) ]);
+            (([| 8 |], Split (0, four)), [ (4, 0); (1, 4348); (1, 0) ]);
           ]
         (Gen.pair
            (Gen.with_pp pp_placed placed_shape)

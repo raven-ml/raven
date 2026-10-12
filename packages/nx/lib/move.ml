@@ -158,21 +158,33 @@ let placement_after p fates =
    moved by [m]. Raises [Invalid_argument] as [split_axis] does. *)
 let placement p shape m = placement_after p (fates p shape m)
 
-(* [split_view p v m] is the placement and per-shard view of a value at [p]
-   whose per-shard view is [v], moved by [m]. *)
-let split_view p v m =
+(* [local p v m] is the placement of a value at [p] whose per-shard view is [v],
+   moved by [m], and [m] as each shard sees it. *)
+let local p v m =
   match Placement.cuts p with
-  | [] -> (p, view v m)
+  | [] -> (p, m)
   | _ ->
       let shape = Value.global p (View.shape v) in
       let fates = fates p shape m in
-      (placement_after p fates, view v (localize shape m fates))
+      (placement_after p fates, localize shape m fates)
+
+(* [views x m] is [true] iff [m] moves [x] as a view of its storage: always,
+   except for a reshape that the strides of [x]'s view cannot express. A placed
+   value's are each shard's, which leave the stride of an axis of one element
+   free. *)
+let views (type a b) (x : (a, b) Value.t) m =
+  let expressible v = function Reshape s -> View.can_reshape v s | _ -> true in
+  match x with
+  | Host a -> expressible a.view m
+  | Placed r -> expressible r.r_view (snd (local r.r_placement r.r_view m))
+  | Traced _ -> Value.outside_trace ()
 
 (* [apply x m] is [x] moved by [m]: view arithmetic over the same storage. *)
 let apply (type a b) (x : (a, b) Value.t) m : (a, b) Value.t =
   match x with
   | Host a -> Host { a with view = view a.view m }
   | Placed r ->
-      let r_placement, r_view = split_view r.r_placement r.r_view m in
-      Placed { r with r_id = Value.fresh_id (); r_placement; r_view }
+      let r_placement, m = local r.r_placement r.r_view m in
+      Placed
+        { r with r_id = Value.fresh_id (); r_placement; r_view = view r.r_view m }
   | Traced _ -> Value.outside_trace ()
