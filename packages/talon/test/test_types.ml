@@ -121,9 +121,17 @@ let instant_conversions =
             (Time.compare (Time.of_ns a) (Time.of_ns b)));
     ]
 
+(* Seconds in 400 Gregorian years, 146097 days. *)
+let cycle = 12_622_780_800L
+
+(* [gmtime_string s] is the UTC time [s] seconds after the epoch, as gmtime
+   gives it. Windows' gmtime refuses a time before the epoch, and the calendar
+   repeats every 400 years, so such a time is read 400 years later. *)
 let gmtime_string s =
+  let s, years = if s < 0L then (Int64.add s cycle, 400) else (s, 0) in
   let tm = Unix.gmtime (Int64.to_float s) in
-  Printf.sprintf "%04d-%02d-%02dT%02d:%02d:%02d" (tm.tm_year + 1900)
+  Printf.sprintf "%04d-%02d-%02dT%02d:%02d:%02d"
+    (tm.tm_year + 1900 - years)
     (tm.tm_mon + 1) tm.tm_mday tm.tm_hour tm.tm_min tm.tm_sec
 
 let instant_pp =
