@@ -971,8 +971,10 @@ module Buffer : sig
       Raises [Invalid_argument] if [b] is dead. *)
 
   val aligned : t -> at:int -> int -> bool
-  (** [aligned b ~at n] is [true] iff byte [at] of [b] lies at a multiple of
-      [n] in the addresses of [b]'s device's work, for [n] a power of two.
+  (** [aligned b ~at n] is [true] iff the address [at] bytes past [b]'s first
+      byte, in the addresses of [b]'s device's work, is a multiple of [n], for
+      [n] a power of two. It is arithmetic on the address, defined for every
+      [at], in [b]'s bytes or outside them.
 
       Raises [Invalid_argument] if [b] is dead, an io device's memory or
       handle-only, or if [n] is not a positive power of two. *)

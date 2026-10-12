@@ -51,13 +51,13 @@ let test_views () =
   equal bool true (B.overlaps b v);
   equal bool false (B.overlaps (B.view b ~first:0 ~length:4) v)
 
-(* A host buffer of 64 KiB or more starts on a page: a byte of it, or of a view
-   into it, lies at a multiple of a power of two up to the page iff its offset
-   into the page is one. *)
+(* A host buffer of 64 KiB or more starts on a page: an address [at] bytes
+   past a view into it, inside the view or outside it, lies at a multiple of a
+   power of two up to the page iff its offset from the page is one. *)
 let aligned_case =
   let open Gen in
   let+ first = int_range 0 4096
-  and+ at = int_range 0 8192
+  and+ at = int_range (-4096) 12288
   and+ k = int_range 0 12 in
   (first, at, k)
 
@@ -72,6 +72,7 @@ let aligned_law (first, at, k) =
   let n = 1 lsl k in
   cover "aligned" ((first + at) mod n = 0);
   cover "not aligned" ((first + at) mod n <> 0);
+  cover "outside the view" (at < 0 || at >= 8192);
   equal bool ((first + at) mod n = 0) (B.aligned b ~at n)
 
 let test_aligned_refusals () =
@@ -1334,7 +1335,7 @@ let tests =
         test "a buffer holds its elements' bytes" test_create;
         test "a buffer refuses bounds it cannot hold" test_refusals;
         test "a view shares its buffer's memory" test_views;
-        prop "a byte is aligned to a power of two iff its address is"
+        prop "an address is aligned to a power of two, in or out of the buffer"
           aligned_case aligned_law;
         test "aligned refuses what is no power of two, and io memory"
           test_aligned_refusals;
