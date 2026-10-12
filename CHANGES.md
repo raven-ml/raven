@@ -215,6 +215,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled function of reductions over one shape whose operands are read
+  apart, such as `Nx.all` and `Nx.any` of `bit` views at different bit
+  offsets, compiles. It raised `Invalid_argument "range 0_0 would run after a
+  loop that depends on it"`.
 - A compiled `Nx.sin`, `Nx.cos` or `Nx.tan` is right in every lane of a
   vector that also holds an infinity, a NaN or a value past `2^12` (`2^22`
   in float64). On x86 such a lane could read any value: the reduction
@@ -1248,6 +1252,9 @@ thread.
 
 ### Tolk (new)
 
+- `Simplify.pm_simplify_ranges` merges two ranges in every reduction that
+  closes them or in none, at the kernel's sink. It merged them in one of the
+  reductions that share their loops, which the linearizer then refused.
 - On Windows, a CUDA or AMD compile whose library does not load names the
   library's file and Windows' reason, as elsewhere. It said only
   `LoadLibrary failed`.

@@ -100,6 +100,19 @@ let merging =
           let inner = sum (Ops.cast s0 Float32) [ s0 ] in
           let outer = sum Ops.O.(inner + Ops.cast s1 Float32) [ s1 ] in
           equal (list int) [ 3; 4 ] (merged_size (store_at (Ops.int 0) outer)));
+      test "reductions that share ranges merge them in all of them" (fun () ->
+          let flat = Ops.cast Ops.O.((s0 * Ops.int 4) + s1) Float32 in
+          let shared =
+            Ops.O.(sum flat [ s0; s1 ] + sum (flat * two) [ s0; s1 ])
+          in
+          equal (list int) [ 12 ] (merged_size (store_at (Ops.int 0) shared)));
+      test "reductions that share ranges keep them when one would divide"
+        (fun () ->
+          let flat = Ops.cast Ops.O.((s0 * Ops.int 4) + s1) Float32 in
+          let apart = Ops.O.(Ops.cast s0 Float32 + Ops.cast s1 Float32) in
+          let shared = Ops.O.(sum flat [ s0; s1 ] + sum apart [ s0; s1 ]) in
+          equal (list int) [ 3; 4 ]
+            (merged_size (store_at (Ops.int 0) shared)));
     ]
 
 let shrinking =

@@ -57,53 +57,81 @@ let merge_rewrite =
       Pattern_matcher.with_ctx pm_flatten_range;
     ]
 
-let simplify_merge_adjacent u =
-  let reduce_ranges =
+(* [merge (r0, r1) scope] is [scope] with [r0] and [r1] the quotient and
+   remainder of one range of their sizes' product, when that leaves it no more
+   floor divisions and remainders. *)
+let merge (r0, r1) scope =
+  let s0 = nth r0 0 and s1 = nth r1 0 in
+  let new_range = replace r0 ~src:[ O.(s0 * s1) ] in
+  let subs = Tbl.create 2 in
+  Tbl.replace subs r0 O.(new_range // s1);
+  Tbl.replace subs r1 O.(new_range % s1);
+  let before = sink scope in
+  let after =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:subs before
+      (After_sources merge_rewrite)
+  in
+  if count_divmod after <= count_divmod before then Some (src after) else None
+
+(* Two ranges of one axis type merge when each reduction, listed in [reduced] by
+   the ranges it runs inside, runs inside both or neither. *)
+let mergeable reduced (r0, r1) =
+  Axis_type.equal (axis_type r0) (axis_type r1)
+  && List.for_all (fun rngs -> Nodes.mem r0 rngs = Nodes.mem r1 rngs) reduced
+
+(* An end merges ranges it closes one after the other, and a reduction any two.
+   Each rewrite makes one merge, so that the next merges the new ranges, not
+   stale pairs of the old ones. *)
+let merge_end u =
+  let reduced =
     Nodes.fold
       (fun x acc -> if op x = Op.Reduce then ranges x :: acc else acc)
       (backward_slice_with_self ~calls:Skip u)
       []
   in
-  let ended = ended_ranges u in
-  (* An end merges only adjacent ranges; a reduction tries every pair. *)
-  let pairs =
-    if op u = Op.End then
-      let rec adjacent = function
-        | r0 :: (r1 :: _ as rest) -> (r0, r1) :: adjacent rest
-        | _ -> []
-      in
-      adjacent ended
-    else
-      List.concat
-        (List.mapi
-           (fun i r0 ->
-             List.filteri (fun j _ -> j <> i) ended
-             |> List.map (fun r1 -> (r0, r1)))
-           ended)
+  let rec adjacent = function
+    | r0 :: (r1 :: _ as rest) -> (r0, r1) :: adjacent rest
+    | _ -> []
   in
   List.find_map
-    (fun (r0, r1) ->
-      if
-        Axis_type.equal (axis_type r0) (axis_type r1)
-        && List.for_all
-             (fun rngs -> Nodes.mem r0 rngs = Nodes.mem r1 rngs)
-             reduce_ranges
-      then begin
-        let s0 = nth r0 0 and s1 = nth r1 0 in
-        let new_range = replace r0 ~src:[ O.(s0 * s1) ] in
-        let subs = Tbl.create 2 in
-        Tbl.replace subs r0 O.(new_range // s1);
-        Tbl.replace subs r1 O.(new_range % s1);
-        let nidx =
-          graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:subs u
-            (After_sources merge_rewrite)
-        in
-        (* Return after one merge, so that the next rewrite merges the new
-           ranges, not stale pairs of the old ones. *)
-        if count_divmod nidx <= count_divmod u then Some nidx else None
-      end
+    (fun pair ->
+      if mergeable reduced pair then Option.map List.hd (merge pair [ u ])
       else None)
-    pairs
+    (adjacent (ended_ranges u))
+
+(* A pair is merged, and judged, in every reduction of the kernel [k] that
+   closes it: reductions of one domain share their loops, and a pair merged in
+   one of them alone would leave the others' loops apart from its own. *)
+let merge_reductions k =
+  let reductions =
+    List.filter (fun u -> op u = Op.Reduce) (toposort ~calls:Skip k)
+  in
+  let reduced = List.map ranges reductions in
+  let closing r =
+    List.filter (fun x -> List.memq r (ended_ranges x)) reductions
+  in
+  let merged ((r0, r1) as pair) =
+    let scope = closing r0 in
+    if not (mergeable reduced pair && List.equal ( == ) scope (closing r1))
+    then None
+    else
+      Option.map
+        (fun merged ->
+          substitute ~calls:Skip ~pass:Fixed_point k
+            (List.combine scope merged))
+        (merge pair scope)
+  in
+  let pairs ended =
+    List.concat_map
+      (fun r0 ->
+        List.filter_map
+          (fun r1 -> if r0 == r1 then None else Some (r0, r1))
+          ended)
+      ended
+  in
+  List.find_map
+    (fun u -> List.find_map merged (pairs (ended_ranges u)))
+    reductions
 
 let mark_gated ctx idx =
   let guards = Tbl.create 4 in
@@ -149,9 +177,7 @@ let do_substitute ctx x sub =
 let pm_simplify_ranges =
   Pattern_matcher.v
     (fun () -> [
-      rule
-        (Upat.v ~op:(Op.Set.of_list [ Op.End; Op.Reduce ]) ~name:"u" ())
-        (fun m -> simplify_merge_adjacent (m "u"));
+      rule (Upat.op Op.End ~name:"u") (fun m -> merge_end (m "u"));
       rule_ctx (Upat.op Op.Index ~name:"idx") (fun ctx m ->
           mark_gated ctx (m "idx");
           None);
@@ -162,7 +188,15 @@ let pm_simplify_ranges =
             (List.tl (src (m "red")));
           None);
       rule_ctx (Upat.op Op.Sink ~name:"x") (fun ctx m ->
-          do_substitute ctx (m "x") (fun r c -> replace r ~src:[ c ]));
+          let x = m "x" in
+          match arg x with
+          (* Only the kernel's root holds every reduction that may share a
+             loop. *)
+          | No_arg -> None
+          | _ -> (
+              match merge_reductions x with
+              | Some _ as merged -> merged
+              | None -> do_substitute ctx x (fun r c -> replace r ~src:[ c ])));
     ])
 
 let mark_range_mod ctx r c =

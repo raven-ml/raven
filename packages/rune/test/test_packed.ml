@@ -251,10 +251,11 @@ let bits : Nx.bit_t family list =
           a);
   ]
 
-let equals_eager name gen families =
+let equals_eager ?examples name gen families =
   group name
     (List.map
-       (fun f -> prop ~count:12 f.name gen (fun (_, a, b) -> f.check a b))
+       (fun f ->
+         prop ~count:12 ?examples f.name gen (fun (_, a, b) -> f.check a b))
        families)
 
 let int4_operands =
@@ -270,7 +271,16 @@ let values =
     [
       equals_eager "int4" int4_operands (integers Nx.int4);
       equals_eager "uint4" uint4_operands (integers Nx.uint4);
-      equals_eager "bit" bit_operands bits;
+      (* Two [4; 4] views, one a bit into its byte: the reductions of a
+         function of both share their loops, which these indices split
+         apart. *)
+      equals_eager "bit" bit_operands bits
+        ~examples:
+          [
+            ( ([], (1, 0)),
+              offset Nx.bit [| 4; 4 |] 1 (Array.make 16 false),
+              offset Nx.bit [| 4; 4 |] 0 (Array.make 16 false) );
+          ];
     ]
 
 (* Four bits are a width *)

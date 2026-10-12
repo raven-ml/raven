@@ -23,14 +23,20 @@ val pm_flatten_range : (unit, Ops.t) Ops.Pattern_matcher.t
 val pm_simplify_ranges : (Ops.t Ops.Tbl.t, Ops.t) Ops.Pattern_matcher.t
 (** [pm_simplify_ranges] simplifies a kernel's ranges, with a context that
     starts empty:
-    - two ranges that an {!Op.End} closes one after the other, or any two that
-      an {!Op.Reduce} closes, of one axis type and in the same reductions, are
-      merged into one of the product of their sizes, when that leaves no more
-      floor divisions and remainders than before;
+    - two ranges that an {!Op.End} closes one after the other, of one axis
+      type and in the same reductions, are merged into one of the product of
+      their sizes, when that leaves the end no more floor divisions and
+      remainders than before;
+    - at the kernel's {!Op.Sink}, two ranges of one axis type that the same
+      reductions ({!Op.Reduce}) close, and the same reductions run inside, are
+      merged in all of them, when that leaves them no more floor divisions and
+      remainders than before. Reductions that share their ranges keep sharing
+      them;
     - a range that every index guards with [r < c] for constants [c], and no
       reduction closes, is shrunk to the greatest such [c] when the kernel's
-      {!Op.Sink} is reached. Only a sink carrying kernel information is
-      rewritten.
+      {!Op.Sink} is reached.
+
+    Only a sink carrying kernel information is rewritten.
 
     The guards must be simplified first ({!Shape.val-symbolic}): a guard [r < c]
     with [c] at least the range's size sets the size to [c]. *)

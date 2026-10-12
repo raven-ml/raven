@@ -3667,9 +3667,12 @@ submission, and a range a loop of rig's program (D146).
   consumers index apart is stored) and `schedule/rangeify.py:50`
   (`remove_bufferize`, which inlines such a store back into each consumer);
   `codegen/__init__.py:177` (`merge_reduce_ends`, which already makes one
-  loop of the reductions that close one range).
+  loop of the reductions that close one range); `codegen/simplify.py:21`
+  (`simplify_merge_adjacent`, which merges a reduction's ranges in that
+  reduction alone).
 - **tolk:** `lib/schedule/indexing.ml:572` (`reaches`), `:583`
   (`reduce_loops`) and `:709` (its use in `assign_ranges`);
+  `lib/codegen/simplify.ml:106` (`merge_reductions`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
 - **Differs:** a reduction whose output is indexed by the same ranges as an
@@ -3680,7 +3683,12 @@ submission, and a range a loop of rig's program (D146).
   alike: a node they share is one node, computed once per element of the
   loop, where tinygrad indexes it by each reduction's ranges, stores it, and
   inlines the store back into each loop. A group of a loop that several
-  reductions close takes a buffer of shared memory for each (D101).
+  reductions close takes a buffer of shared memory for each (D101). Two
+  ranges that reductions close merge, at the kernel's sink, in every
+  reduction that closes them, when that leaves all of them no more floor
+  divisions and remainders: merged in one alone, they would leave its
+  siblings' loops apart from its own, a range that runs again after the loop
+  that ends it, which the linearizer refuses.
 - **Reason:** (b): rune's reverse mode. The cotangent of a value that
   operations broadcast sums one reduction per operation, each over the same
   cotangent computation: the gradient of an aperture's weights over a 104 x
@@ -3696,7 +3704,11 @@ submission, and a range a loop of rig's program (D146).
   `sum_and_max_grouped`, `ten_shared_sums_group` and
   `ten_shared_sums_group_unfit` cases, and the Codegen suite's
   `two_grouped_stores_local`, whose upstream axes count one loop for the two
-  maximums; all from the equally patched tinygrad. Rune's Jit suite:
+  maximums; all from the equally patched tinygrad. The Simplify suite's
+  `pm_simplify_ranges › merging › reductions that share ranges merge them in
+  all of them` and `… keep them when one would divide`. Rune's Packed suite:
+  the bit example of `a compiled call computes eager's values`, two views a
+  bit apart whose sums share their loops. Rune's Jit suite:
   `transformations › a compiled gradient of a parameter broadcast over a grid
   is its gradient`; the rune bench's
   `reverse/jit-of-grad-clipped-disc-float64-104x104-host` row.
