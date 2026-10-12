@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.13"
 # dependencies = ["astropy==7.1.0", "numpy==2.3.2"]
 # ///
 """Write the reference FITS files the ymir.fits tests read.
@@ -10,13 +10,14 @@ Each image holds a pattern the tests recompute: pixel k of an image (C
 order) is pattern(k) below, in the image's stored type. astropy writes the
 files with checksums, so they are also the reference for DATASUM and
 CHECKSUM. With --check, the files are written to a temporary directory and
-compared with the committed ones.
+compared with the committed ones. It runs on x86-64 only.
 """
 
 import filecmp
 from fractions import Fraction
 import hashlib
 import pathlib
+import platform
 import sys
 import tempfile
 
@@ -25,8 +26,15 @@ from astropy.io import fits
 from astropy.io.fits.hdu.compressed import _codecs
 
 # gzip members carry their time of writing; pin it so the files are a
-# function of this script.
+# function of this script. From Python 3.13, gzip.compress writes the
+# member's OS byte as 255 on every platform.
 _codecs.gzip_compress = lambda data: __import__("gzip").compress(data, mtime=0)
+
+# astropy's quantizer and decoder are C. Its arm64 builds fuse a product and
+# a sum into one rounding where the C source rounds each; its x86-64 builds
+# round each, so only they make the reference.
+if platform.machine().lower() not in ("x86_64", "amd64"):
+    sys.exit(f"run on x86-64: astropy's {platform.machine()} build fuses multiply-adds")
 
 GOLDEN = pathlib.Path(__file__).resolve().parent.parent / "golden"
 

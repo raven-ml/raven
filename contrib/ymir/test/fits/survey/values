@@ -410,7 +410,7 @@ ps1-stack-rice 1 image 8x6279 8d67b8b0cece508b85a13e0ca9598d1d
 ps1-mask-gzip hdus 2
 ps1-mask-gzip 1 image 8x6279 04402fa0e094bd9f2f9e6e782d6890d1
 legacy-dr10-image hdus 2
-legacy-dr10-image 1 image 100x300 3b5306358fdcef63a7d2e813768c44cd
+legacy-dr10-image 1 image 100x300 e39f078e9afa512f096f8f72621443b4
 legacy-dr10-maskbits hdus 3
 nicer-rmf hdus 3
 nicer-rmf 1 verify

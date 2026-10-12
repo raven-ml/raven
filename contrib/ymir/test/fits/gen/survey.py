@@ -15,12 +15,14 @@ bytes as stored. The generator writes survey/<name>.fits, survey/README.md
 with each file's provenance and changes, and survey/values with astropy's
 reading of each image and numeric column. With --check, everything is
 written to a temporary directory and compared with the committed files.
+It runs on x86-64 only.
 """
 
 import filecmp
 import hashlib
 import math
 import pathlib
+import platform
 import sys
 import tempfile
 import urllib.request
@@ -28,6 +30,12 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from astropy.io import fits
+
+# astropy's tile decoder is C. Its arm64 builds fuse a product and a sum
+# into one rounding where the C source rounds each; its x86-64 builds round
+# each, so only they make the reference.
+if platform.machine().lower() not in ("x86_64", "amd64"):
+    sys.exit(f"run on x86-64: astropy's {platform.machine()} build fuses multiply-adds")
 
 SURVEY = pathlib.Path(__file__).resolve().parent.parent / "survey"
 BLOCK = 2880
