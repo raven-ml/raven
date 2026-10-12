@@ -249,7 +249,8 @@ static void hook(point at) {
     else if (at == point_waiting && caller && once(caller_waiting)) {
       sig(caller_waiting);
       if (ph == caller_held) await(w_subbed);
-    } else if (at == point_left && id == 1 && once(w_subbed))
+    } else if (at == point_left && id == 1 &&
+               atomic_load(&signalled[w_claimed]) && once(w_subbed))
       sig(w_subbed);
     break;
   case wake_bit:
@@ -318,7 +319,8 @@ typedef struct {
   _Atomic int runs[max_chunks];   /* calls that ran chunk i */
   _Atomic int on[max_chunks];     /* the worker that ran chunk i */
   _Atomic int worked[max_mapped]; /* whether worker w ran a chunk */
-  int sleeper;                    /* a worker whose chunks sleep 20 ms */
+  int holder;                     /* a worker whose chunks last until the
+                                     caller set waiting */
   int awaited;                    /* others' chunks wait until it worked */
   int signals;                    /* the first chunk signals body_began */
   _Atomic int signalled_body;
@@ -333,7 +335,7 @@ static void body(int64_t lo, int64_t hi, int w, void *ctx) {
       atomic_store(&j->on[i], w);
     }
   if (w < max_mapped) atomic_store(&j->worked[w], 1);
-  if (w == j->sleeper) usleep(20000);
+  if (w == j->holder) await(caller_waiting);
   if (j->awaited > 0 && w != j->awaited) {
     int64_t deadline = now_ns() + patience;
     while (!atomic_load(&j->worked[j->awaited]) && now_ns() < deadline)
@@ -347,7 +349,7 @@ static void body(int64_t lo, int64_t hi, int w, void *ctx) {
 }
 
 static void tally_init(tally *j, int64_t chunks) {
-  *j = (tally){.total = chunks, .chunks = chunks, .sleeper = -1, .awaited = -1};
+  *j = (tally){.total = chunks, .chunks = chunks, .holder = -1, .awaited = -1};
 }
 
 static void run_tally(int threads, tally *j) {
@@ -552,8 +554,10 @@ value rig_pool_test_late_entry(value v_worker) {
 }
 
 /* The caller sleeps on done; the last worker out wakes it. W1's chunk
-   sleeps 20 ms, the caller's waits for W1's claim; the caller closes, spins
-   out its window and sleeps; W1 leaves, sees waiting and signals. Held: the
+   lasts until the caller set waiting, the caller's waits for W1's claim;
+   the caller closes, spins out its window and sleeps; W1 leaves, sees
+   waiting and signals. W1's leave counts once it claimed: a leave of the
+   settling job may land after it returned. Held: the
    caller holds between setting waiting and reading inside until W1's leave
    landed, so it reads closed and never sleeps, and W1's signal finds no
    sleeper. Answers: whether the caller set waiting, whether W1 left while it
@@ -567,7 +571,7 @@ value rig_pool_test_caller_sleeps(value v_held) {
   begin(held ? caller_held : caller_sleep);
   tally j;
   tally_init(&j, 2);
-  j.sleeper = 1;
+  j.holder = 1;
   j.awaited = 1;
   atomic_store(&go, 1);
   run_tally(2, &j);
