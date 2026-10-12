@@ -51,6 +51,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig.Profile` records a `Copy` event for every copy part of a submission,
+  on every device, and names each side by the device of its allocation, so a
+  copy through a `Buffer.borrow` of host memory counts as a transfer from the
+  host.
 - Add `rig`, which runs work on GPUs from OCaml through Metal, CUDA, NVIDIA's
   and AMD's kernel drivers, or no kernel driver on Linux, and orders the work
   of every device by the memory it uses (`Rig.submit`, `Rig.Buffer.copy`).

@@ -1846,8 +1846,17 @@ module Profile : sig
         start : int;
         stop : int;
       }
-        (** A transfer of [bytes] from [src]'s memory to [dst]'s by a
-            {!Buffer.copy}, from when it was asked to when the host saw it
+        (** A transfer of [bytes] from [src]'s memory to [dst]'s: a copy part
+            of a submission ({!Submission.copy}), rig's own and those of a
+            {!Buffer.copy} among them, or a copy the host or an io device
+            runs. [src] and [dst] are the devices of the allocations the
+            bytes leave and reach, so a {!Buffer.borrow} names the device
+            whose memory it borrows.
+
+            Each copy part of a submission records an event with the times of
+            the submission's span where its device times the work. Otherwise,
+            as for a copy the host or an io device runs, the event runs from
+            when the copy was asked, at the submit, to when the host saw it
             done. A copy through staging memory records each piece into and
             out of it, with {!host} as one side, and no event of its own. *)
 

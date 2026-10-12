@@ -273,16 +273,24 @@ let test_span_lost () =
   equal (list string) [] (named events)
 
 (* A settle that fails loses the device, with the driver's reason, and the
-   profile has no span of the value it settled. *)
+   profile has no span and no copy of the value it settled. *)
 let test_settle_fails () =
   let d, p = P.open_ "profile:settle-fails" in
-  let arg = B.create Rig.host (1 lsl 16) in
+  let host () = B.create Rig.host (1 lsl 16) in
+  let copy = Sub.copy ~src:(Slot 1) ~dst:(Slot 2) in
   P.fail_settle p;
   let (), events =
     Prof.take (fun () ->
-        Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]))
+        Rig.Point.wait
+          (submit_parts
+             ~buffers:[| host (); host (); host () |]
+             d [| bump; copy |]))
   in
   equal (list string) [] (named events);
+  equal ~msg:"copies" (list int) []
+    (List.filter_map
+       (function Prof.Copy c -> Some c.bytes | _ -> None)
+       events);
   equal (option string) (Some "the settle failed") (Rig.lost d)
 
 (* A pending timing callback may outlive its failed profile. It must keep no
@@ -440,8 +448,8 @@ let test_staged_copy () =
     (copies events)
 
 (* A staged copy's leg on a device's queue spans its transfer: the event of a
-   device-to-host copy's leg into staging stops once the host saw it done, after
-   the device's gate opened. *)
+   device-to-host copy's leg into staging stops when the device ended it, after
+   its gate opened. *)
 let test_staged_span () =
   let d, pd =
     P.open_ ~host_visible:false ~peers:false "profile:staged-span-src"
@@ -464,6 +472,86 @@ let test_staged_span () =
       events
   in
   at_least ~msg:"the leg's stop" int ~than:opened (require_some leg)
+
+(* [n] bytes of a host buffer borrowed by [d]. *)
+let borrowed d n =
+  require_some
+    (B.borrow d (B.view (B.create Rig.host (1 lsl 16)) ~first:0 ~length:n))
+
+let copy_parts =
+  Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1); copy ~src:(Slot 2) ~dst:(Slot 3) |]
+
+(* The times of [events]' copies. *)
+let copy_times events =
+  List.filter_map
+    (function Prof.Copy c -> Some (c.start, c.stop) | _ -> None)
+    events
+
+(* Each copy part records a copy between the devices of the allocations its
+   bytes leave and reach, a borrow's naming the host, with their count. On a
+   device that times no work, it runs from the submit to the wait that saw it
+   done. *)
+let test_copy_parts () =
+  let m = memory "profile:copy-parts" in
+  let buffers =
+    [| borrowed m 64; B.create m 64; B.create m 32; B.create m 32 |]
+  in
+  let before = Prof.now () in
+  let stop = ref 0 in
+  let (), events =
+    Prof.take (fun () ->
+        Rig.Point.wait (submit ~buffers (Sub.make m copy_parts));
+        stop := Prof.now ())
+  in
+  equal
+    (list (triple string string int))
+    [
+      ("CPU", "profile:copy-parts", 64);
+      ("profile:copy-parts", "profile:copy-parts", 32);
+    ]
+    (copies events);
+  List.iter
+    (fun (start, stop') ->
+      at_least ~msg:"the start" int ~than:before start;
+      at_least ~msg:"the stop" int ~than:start stop';
+      at_most ~msg:"the stop" int ~than:!stop stop')
+    (copy_times events)
+
+(* On a device that times its work, each copy part has its submission's span's
+   times. *)
+let test_timed_copy_parts () =
+  let d, _ = P.open_ "profile:timed-copy-parts" in
+  let buffers =
+    [| borrowed d 64; B.create d 64; B.create d 32; B.create d 32 |]
+  in
+  let (), events =
+    Prof.take (fun () ->
+        Rig.Point.wait (submit ~buffers (Sub.make d copy_parts)))
+  in
+  equal
+    (list (triple string string int))
+    [
+      ("CPU", "profile:timed-copy-parts", 64);
+      ("profile:timed-copy-parts", "profile:timed-copy-parts", 32);
+    ]
+    (copies events);
+  match device_spans d events with
+  | [ (_, _, start, stop) ] ->
+      equal
+        (list (pair int int))
+        [ (start, stop); (start, stop) ]
+        (copy_times events)
+  | spans -> failf "%d spans of the device" (List.length spans)
+
+(* No copy of a submission submitted while no profile is taken. *)
+let test_untaken_copy_parts () =
+  let m = memory "profile:untaken-copy-parts" in
+  let buffers =
+    [| borrowed m 64; B.create m 64; B.create m 32; B.create m 32 |]
+  in
+  let p = submit ~buffers (Sub.make m copy_parts) in
+  let (), events = Prof.take (fun () -> Rig.Point.wait p) in
+  equal (list (triple string string int)) [] (copies events)
 
 (* Cost *)
 
@@ -650,6 +738,12 @@ let tests =
         test "a staged copy records only its copies into and out of staging"
           test_staged_copy;
         test "a staged copy's queued leg spans its transfer" test_staged_span;
+        test "a submission records each copy part, with its bytes"
+          test_copy_parts;
+        test "a copy part has its submission's span's times"
+          test_timed_copy_parts;
+        test "no copy part of a submission made before the profile"
+          test_untaken_copy_parts;
       ];
     group ~timeout "cost"
       [ test "a span while no profile is taken allocates nothing" test_untaken ];

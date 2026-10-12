@@ -6,15 +6,15 @@
 (** Profiles: the implementation of {!Rig.Profile}, over the open profiles of
     {!Prof}.
 
-    Events that the host sees as they happen, such as a load, an allocation
-    or a copy the host waited for, are recorded immediately. Events of work a
-    device runs are recorded once a wait finds their value reached. A submit
-    or a copy that a profile times registers a function with {!Dev.after},
-    which reads the times its driver wrote. When {!take}'s function returns,
-    [take] waits for the last value each device has such a function on
-    before it stops its profile, so those events are in. When the function
-    raises, [take] stops the profile immediately and the functions stay
-    registered. A device lost meanwhile has every such function dropped. *)
+    Events that the host sees as they happen, such as a load, an allocation or a
+    copy the host ran, are recorded immediately. Events of work a device runs
+    are recorded once a wait finds their value reached. A submit that a profile
+    times registers a function with {!Dev.after}, which reads the times its
+    driver wrote. When {!take}'s function returns, [take] waits for the last
+    value each device has such a function on before it stops its profile, so
+    those events are in. When the function raises, [take] stops the profile
+    immediately and the functions stay registered. A device lost meanwhile has
+    every such function dropped. *)
 
 open Def
 

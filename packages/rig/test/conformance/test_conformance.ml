@@ -308,6 +308,55 @@ let copies (module G : Gpu) (ka, kb, n, (oa, ob)) =
   Rig.Point.wait v;
   equal octets data (get dst)
 
+(* A profile records a copy per copy part, from the device of the allocation its
+   bytes leave to the one they reach, with its bytes and the times of its
+   submission's span where the device times its work. A borrow of host memory
+   names the host. *)
+let profiled_copies (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  if (G.D.facts t.g).copy_engine = None then
+    skip ~reason:"the device has no copy engine" ();
+  let n = 4096 in
+  let src, from =
+    match borrowed t.d n with
+    | Some b -> (b, Rig.host)
+    | None -> (filled ~memory:Pinned t.d (pattern n 1), t.d)
+  in
+  let a = B.create t.d n and b = B.create ~memory:Pinned t.d n in
+  let (), events =
+    Rig.Profile.take (fun () ->
+        Rig.Point.wait
+          (submit t.d
+             [ copy_part ~dst:a src; copy_part ~dst:b a ]
+             ~uses:[ (src, Rig.Read); (a, Rig.Read_write); (b, Rig.Read_write) ]))
+  in
+  let copies =
+    List.filter_map
+      (function
+        | Rig.Profile.Copy c -> Some (c.src, c.dst, c.bytes, c.start, c.stop)
+        | _ -> None)
+      events
+  in
+  equal
+    (list (triple string string int))
+    [ (Rig.name from, Rig.name t.d, n); (Rig.name t.d, Rig.name t.d, n) ]
+    (List.map (fun (s, d, n, _, _) -> (Rig.name s, Rig.name d, n)) copies);
+  let span =
+    List.find_map
+      (function
+        | Rig.Profile.Span s when Rig.equal s.device t.d ->
+            Some (s.start, s.stop)
+        | _ -> None)
+      events
+  in
+  List.iter
+    (fun (_, _, _, start, stop) ->
+      match span with
+      | Some times ->
+          equal (pair int int) ~msg:"the span's times" times (start, stop)
+      | None -> at_most int ~msg:"untimed" ~than:stop start)
+    copies
+
 (* A chain of copies among three buffers: each copy's source, destination,
    offsets and length. Lengths are 0 or within 16 bytes of a power of two up to
    4 MiB, so that a chain crosses whatever sizes a driver changes engine at. *)
@@ -1537,6 +1586,8 @@ let laws (module G : Gpu) =
       prop ~count:30
         "copies through any two memories on copy queues are the identity" trips
         (copies g);
+      test "a profile records each copy part with its bytes and span times"
+        (profiled_copies g);
       prop ~count:50
         "a copy keeps every byte at any offset and length, in queue order"
         chain (chains g);

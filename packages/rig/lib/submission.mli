@@ -52,8 +52,10 @@
     of submits of one submission run concurrently, each with its own run.
 
     While a profile is being taken, a submit asks its driver for the times of
-    its value and records them as a span once a wait finds the value
-    reached ({!Dev.after}). *)
+    its value and reads, from its buffers, the devices and bytes of each copy
+    part. Once a wait finds the value reached ({!Dev.after}), it records the
+    span and a copy per copy part, with the driver's times, or, where the
+    driver wrote none, from the submit to that wait. *)
 
 open Def
 

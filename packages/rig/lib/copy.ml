@@ -20,11 +20,20 @@ let host_address b = b.mem.host + b.offset
 (* A driver's device of another machine, which no staging memory reaches. *)
 let far d = (not (Dev.same_machine d Dev.host)) && not (Dev.is_io d)
 
-(* Records the transfer of [bytes] from [src]'s memory to [dst]'s asked at
-   [start], which the host sees done now. *)
+(* Records the host's transfer of [bytes] from [src] to [dst] asked at [start],
+   which it sees done now, between the devices of their allocations, as a submit
+   records a copy part. *)
 let record src dst bytes start =
   if Prof.enabled () then
-    Prof.record (Copy { src; dst; bytes; start; stop = Prof.now () })
+    Prof.record
+      (Copy
+         {
+           src = (Memory.root src.mem).dev;
+           dst = (Memory.root dst.mem).dev;
+           bytes;
+           start;
+           stop = Prof.now ();
+         })
 
 (* Staging memory, as copy.mli states it, made at the first copy that needs
    it. Halves of one allocation would order every leg after the other half's
@@ -164,23 +173,16 @@ let mine d m =
   if (not (Dev.same_machine d Dev.host)) && local m then Some m
   else Memory.borrow d m
 
-(* A copy of [n] bytes on [d]'s copy engine between buffers [d] maps, asked at
-   [start] and waited for when [wait]. Unwaited, it is recorded once a wait
-   sees it done. *)
-let on_queue ~wait d src dst n start =
+(* A copy on [d]'s copy engine between buffers [d] maps, waited for when [wait].
+   Its submit records it. *)
+let on_queue ~wait d src dst =
   match ((Dev.live d).copy_engine, mine d src.mem, mine d dst.mem) with
   | Some _, Some s, Some t ->
-      let v =
-        Point.value
-          (Submission.run_copy d ~src:{ src with mem = s }
-             ~dst:{ dst with mem = t })
+      let p =
+        Submission.run_copy d ~src:{ src with mem = s }
+          ~dst:{ dst with mem = t }
       in
-      if wait then begin
-        Dev.wait d v;
-        record src.mem.dev dst.mem.dev n start
-      end
-      else if Prof.enabled () then
-        Dev.after d v (fun () -> record src.mem.dev dst.mem.dev n start);
+      if wait then Dev.wait d (Point.value p);
       true
   | _ -> false
 
@@ -215,14 +217,14 @@ let on_host transfer src dst n start =
   | Move -> memmove (host_address dst) (host_address src) n
   | Io_read -> io_read src dst n
   | Io_write -> io_write src dst n);
-  record src.mem.dev dst.mem.dev n start;
+  record src dst n start;
   true
 
 (* Copies [n] bytes from [src] to [dst] in one transfer, where one runs it: the
    host between memory it addresses or with an io device's, or a device's copy
    queue between memory it maps. A copy on a queue returns at once unless
    [wait]: what reads or writes its buffers later waits for it by their stamps.
-   Records the transfer, and is whether it ran. *)
+   The host records its transfer, a submit a queued one. Is whether it ran. *)
 let direct ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
   let start = Prof.now () in
@@ -238,7 +240,7 @@ let direct ~wait src dst n =
       | Some _ -> side.mem.dev
       | None -> (Memory.root side.mem).dev
     in
-    (not (Dev.is_io runner)) && on_queue ~wait runner src dst n start
+    (not (Dev.is_io runner)) && on_queue ~wait runner src dst
 
 (* The device that runs the legs of a staged copy to or from [b]: its device's
    copy engine, or, for a borrow on a device that runs no copy, its memory's own

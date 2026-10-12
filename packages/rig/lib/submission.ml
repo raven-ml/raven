@@ -205,6 +205,7 @@ type t = {
   span : (string * string) option;
       (** The first part's queue and the launches' functions, or the first
           part's kind. [None] for no parts. *)
+  copies : (side * side) array;  (** The copy parts' sides, in order. *)
 }
 
 let no_block = (0, -1, 0, "")
@@ -732,6 +733,7 @@ let build hold ~fixed d parts =
       !ncodes !ncopies
   in
   let blocks = Array.make (Array.length parts) no_block in
+  let copies = Array.make !ncopies (Slot 0, Slot 0) in
   let at = ref 0 and k = ref 0 and r = ref 0 and j = ref 0 and m = ref 0 in
   let fixed = ref [] and images = ref [] in
   let fix_next b use =
@@ -763,6 +765,7 @@ let build hold ~fixed d parts =
       | Copy { src; dst } ->
           let slot = function Slot k -> k | Buffer _ -> -1 in
           sub_copy c !m i (slot src) (slot dst);
+          copies.(!m) <- (src, dst);
           let side ~dst use = function
             | Slot _ -> ()
             | Buffer b ->
@@ -806,6 +809,7 @@ let build hold ~fixed d parts =
     hold;
     blocks;
     span;
+    copies;
   }
 
 (* A hold of [v]: stamps and a token. Each submit raises the stamps by a use,
@@ -1154,29 +1158,64 @@ let rec go s run buffers waits k =
         release_frame m b0 b1 b2 b3;
         raise e
 
-(* Records, in the profiles [ps], the span of [s]'s value [p] once [p] is
-   reached, from the time pair [pair] its driver wrote: none if the driver left
-   it 0, or if its settle failed or found the device lost. The function holds
-   only [s]'s names: a lost device keeps its functions for good. *)
-let record s (lane, name) ps p pair =
+(* What each copy part of [s] moves, read at the submit from the run's
+   [buffers]: the devices of the allocations its bytes leave and reach, and
+   their count. *)
+let moves_of s buffers =
+  let buffer = function Slot k -> buffers.(k) | Buffer b -> b in
+  Array.map
+    (fun (src, dst) ->
+      let src = buffer src and dst = buffer dst in
+      ((Memory.root src.mem).dev, (Memory.root dst.mem).dev, src.length))
+    s.copies
+
+(* What a submit reads for the profiles taken before it hands its work over: the
+   profiles, each copy part's move, and when the copies were asked. *)
+type taking = {
+  ps : Prof.t list;
+  moves : (device * device * int) array;
+  asked : int;
+}
+
+(* The taking of a submit while no profile is taken. *)
+let untaken = { ps = []; moves = [||]; asked = 0 }
+
+(* Records, in the profiles [t.ps], the span of [s]'s value [p] and a copy per
+   move of [t.moves] once [p] is reached, from the time pair [pair] its driver
+   wrote. A driver that left the pair 0, or no pair, timed nothing: no span, and
+   the copies run from [t.asked] to when the host saw [p] reached. A settle that
+   failed or found the device lost records nothing. The function holds only
+   [s]'s names: a lost device keeps its functions for good. *)
+let record s (lane, name) { ps; moves; asked } p pair =
   let device = s.dev in
   let l = Dev.live device in
+  let copies start stop =
+    Array.iter
+      (fun (src, dst, bytes) ->
+        Prof.add ps (Copy { src; dst; bytes; start; stop }))
+      moves
+  in
   Dev.after device (Point.value p) (fun () ->
-      let settled = Dev.settle device (Point.value p) in
-      match times_read l.c pair with
+      let settled = pair < 0 || Dev.settle device (Point.value p) in
+      match if pair < 0 then (0, 0) else times_read l.c pair with
       | _ when not settled -> ()
-      | 0, 0 -> ()
-      | start, stop -> Prof.add ps (Span { device; lane; name; start; stop }))
+      | 0, 0 -> copies asked (Prof.now ())
+      | start, stop ->
+          Prof.add ps (Span { device; lane; name; start; stop });
+          copies start stop)
 
 (* Submits [s] with [run], which the caller took. The C submit reads [s]'s C
    form, and the stamps and templates it names without a reference, with the
    runtime released: their owners stay reachable until the run is given back.
    While a profile is taken, a submission with parts times its value. *)
 let taken s run buffers waits =
-  let ps =
-    match s.span with Some _ when Prof.enabled () -> Prof.active () | _ -> []
+  let t =
+    match s.span with
+    | Some _ when Prof.enabled () ->
+        { ps = Prof.active (); moves = moves_of s buffers; asked = Prof.now () }
+    | _ -> untaken
   in
-  run_timed run (ps <> []);
+  run_timed run (t != untaken);
   let claimed = ref 0 in
   match
     (* Fixed and part-owned buffers need the same protection as run buffers:
@@ -1195,7 +1234,7 @@ let taken s run buffers waits =
       let pair = run_pair run in
       run_give run;
       (match s.span with
-      | Some span when pair >= 0 -> record s span ps p pair
+      | Some span when t != untaken -> record s span t p pair
       | _ -> ());
       ignore (Sys.opaque_identity s.c);
       ignore (Sys.opaque_identity s.fixed);
