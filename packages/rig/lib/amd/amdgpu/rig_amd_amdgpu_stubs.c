@@ -39,6 +39,7 @@
 #include <linux/types.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "gen/headers/drm.h"
@@ -382,9 +383,12 @@ value caml_rig_amd_amdgpu_store64(value v_at, value v_v) {
 
    AMDKFD_IOC_GET_CLOCK_COUNTERS reads the GPU's clock counter, the counter
    of the queues' timestamps, which ROCr converts its dispatches' times by
-   (amdgpu_amdkfd_get_gpu_clock_counter, GpuAgent::TranslateTime). The
-   kernel's CPU time is CLOCK_MONOTONIC_RAW, so the reader takes the host's
-   time as the middle of two readings of rig's clock around the call. */
+   (amdgpu_amdkfd_get_gpu_clock_counter, GpuAgent::TranslateTime). KFD
+   reads CLOCK_MONOTONIC_RAW right after the counter, so the call's own
+   time, which KFD's locks may stretch, adds no error. The reader shifts
+   that time to rig's clock by the two clocks' difference, from a reading
+   of CLOCK_MONOTONIC_RAW between two of rig's clock right after the call;
+   their interval is the read's width. */
 
 /* A GPU's reader: KFD's file and the GPU's id there. */
 struct counters {
@@ -394,19 +398,23 @@ struct counters {
 };
 
 static int read_counters(struct rig_amd_clock *c, uint64_t *ticks,
-                         uint64_t *host) {
+                         uint64_t *host, uint64_t *width) {
   struct counters *k = (struct counters *)c;
   struct kfd_ioctl_get_clock_counters_args a;
   memset(&a, 0, sizeof a);
   a.gpu_id = k->gpu;
-  uint64_t before = rig_now_ns();
   int r;
   do r = ioctl(k->kfd, AMDKFD_IOC_GET_CLOCK_COUNTERS, &a);
   while (r < 0 && errno == EINTR);
-  uint64_t after = rig_now_ns();
   if (r < 0 || a.gpu_clock_counter == 0) return -1;
+  struct timespec raw;
+  uint64_t before = rig_now_ns();
+  clock_gettime(CLOCK_MONOTONIC_RAW, &raw);
+  uint64_t after = rig_now_ns();
+  uint64_t raw_ns = (uint64_t)raw.tv_sec * 1000000000u + (uint64_t)raw.tv_nsec;
   *ticks = a.gpu_clock_counter;
-  *host = before + (after - before) / 2;
+  *host = a.cpu_clock_counter + (before + (after - before) / 2 - raw_ns);
+  *width = after - before;
   return 0;
 }
 
@@ -419,7 +427,7 @@ value caml_rig_amd_amdgpu_clock(value v_kfd, value v_gpu) {
   k->clock.read = read_counters;
   k->kfd = Int_val(v_kfd);
   k->gpu = (uint32_t)Long_val(v_gpu);
-  return caml_copy_nativeint((intnat)k);
+  return Val_long((intnat)k);
 }
 
 #else

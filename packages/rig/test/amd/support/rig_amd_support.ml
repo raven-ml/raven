@@ -80,9 +80,10 @@ let copy_words t ~dst ~src =
 
 (* kernels.cl's [spin flag n] sleeps [n] times 127 x 64 cycles, at most 2.1 us
    at 4 GHz, then sets its flag, a word of its own here. *)
-(* rig_amd.mli: through KFD, a time is within half the interval of a read
-   of the clock, plus the clock's rate error since the latest read, at most
-   62.5 ms before. Both are below the time the GPU takes to start work the
+(* rig_amd.mli: through KFD, a time is within 5 us of the host's clock, half
+   a read's bound, plus the clock's rate error since the latest read, at
+   most 62.5 ms before; KFD reads its clock right after the GPU's, so a read
+   is far narrower. Both are below the time the GPU takes to start work the
    host submitted and the host takes to see it end, so a span lies within
    the host's times around its submit and its wait. With no kernel driver
    the device measures at open only, by a round trip through its compute

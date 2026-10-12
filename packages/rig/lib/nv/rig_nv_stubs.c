@@ -134,17 +134,26 @@ value caml_rig_nv_stamps(value v_self, value v_host, value v_gpu,
   return Val_true;
 }
 
+/* The reads the first measure may take. */
+#define FIRST_READS 16
+
 /* Sets the timer's source to the path's [struct rig_nv_clock] at
    [v_source], or, if it is [0], to the registers of the GPU's BAR 0 mapped
-   at [v_bar], and takes the first measure: whether it could. */
+   at [v_bar], and takes the first measure whose readings lie within
+   READ_BOUND_NS: whether it could. */
 value caml_rig_nv_clock(value v_self, value v_source, value v_bar) {
   struct device *d = Device_val(v_self);
   struct measure m;
-  d->source = (struct rig_nv_clock *)Nativeint_val(v_source);
+  d->source = Pointer_val(v_source);
   d->bar = Pointer_val(v_bar);
-  if (!rig_nv_measure(d, &m)) return Val_false;
-  d->first = d->latest = m;
-  return Val_true;
+  for (int i = 0; i < FIRST_READS; i++) {
+    int r = rig_nv_measure(d, &m);
+    if (r == MEASURE_FAILED) return Val_false;
+    if (r != MEASURE_OK) continue;
+    d->first = d->latest = m;
+    return Val_true;
+  }
+  return Val_false;
 }
 
 value caml_rig_nv_doorbell(value v_self, value v_at) {

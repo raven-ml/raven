@@ -38,6 +38,7 @@ value caml_rig_nv_nvidia_address(value v_params) {
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -145,9 +146,12 @@ value caml_rig_nv_nvidia_page_size(value unit) {
    NV2080_CTRL_CMD_TIMER_GET_GPU_CPU_TIME_CORRELATION_INFO, with the CPU
    source PLATFORM_API on the CPU, reads the GPU's PTIMER through BAR 0 in
    the kernel, with no call to the GSP (ctrl2080tmr.h,
-   subdevice_ctrl_timer_kernel.c). Its CPU time is CLOCK_MONOTONIC_RAW, so
-   the reader takes the host's time as the middle of two readings of rig's
-   clock around the call. */
+   subdevice_ctrl_timer_kernel.c). RM reads the timer between readings of
+   CLOCK_MONOTONIC_RAW and reports the middle of the closest pair, so the
+   call's own time, which RM's locks may stretch to milliseconds, adds no
+   error. The reader shifts that time to rig's clock by the two clocks'
+   difference, from a reading of CLOCK_MONOTONIC_RAW between two of rig's
+   clock right after the call; their interval is the read's width. */
 
 #define TIMER_CORRELATION 0x20800406
 #define CPU_CLK_PLATFORM_API 0x3
@@ -180,7 +184,8 @@ struct correlation {
   uint32_t client, subdevice;
 };
 
-static int correlate(struct rig_nv_clock *c, uint64_t *gpu, uint64_t *host) {
+static int correlate(struct rig_nv_clock *c, uint64_t *gpu, uint64_t *host,
+                     uint64_t *width) {
   struct correlation *k = (struct correlation *)c;
   struct correlation_params p;
   memset(&p, 0, sizeof p);
@@ -188,14 +193,18 @@ static int correlate(struct rig_nv_clock *c, uint64_t *gpu, uint64_t *host) {
   p.sample_count = 1;
   struct control a = {k->client, k->subdevice, TIMER_CORRELATION, 0,
                       (uint64_t)(uintptr_t)&p, sizeof p, 0};
-  uint64_t before = rig_now_ns();
   int r;
   do r = ioctl(k->fd, k->request, &a);
   while (r < 0 && errno == EINTR);
-  uint64_t after = rig_now_ns();
   if (r < 0 || a.status != 0) return -1;
+  struct timespec raw;
+  uint64_t before = rig_now_ns();
+  clock_gettime(CLOCK_MONOTONIC_RAW, &raw);
+  uint64_t after = rig_now_ns();
+  uint64_t raw_ns = (uint64_t)raw.tv_sec * 1000000000u + (uint64_t)raw.tv_nsec;
   *gpu = p.samples[0].gpu;
-  *host = before + (after - before) / 2;
+  *host = p.samples[0].cpu + (before + (after - before) / 2 - raw_ns);
+  *width = after - before;
   return 0;
 }
 
@@ -212,7 +221,7 @@ value caml_rig_nv_nvidia_clock(value v_fd, value v_request, value v_client,
   k->request = (unsigned long)Long_val(v_request);
   k->client = (uint32_t)Long_val(v_client);
   k->subdevice = (uint32_t)Long_val(v_subdevice);
-  return caml_copy_nativeint((intnat)k);
+  return Val_long((intnat)k);
 }
 
 #else

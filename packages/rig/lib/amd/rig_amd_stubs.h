@@ -265,26 +265,31 @@ _Static_assert(sizeof(struct rig_amd_route) <= RIG_SCRATCH, "a route fits");
    A stamp converts to the host's clock along the line through two
    measures of the clock against the host's clock, the first, at open, and
    the latest, which rig_amd_settle takes again once it is
-   RIG_AMD_MEASURE_NS old from a path's source; at the clock's rate while
-   they are one. A device without a source measures at open only, with
-   stamps the compute queue writes between two readings of the host's
-   clock. Values convert in value order, and a value's start on a queue is
-   never before the end of the last value that ended there. */
+   RIG_AMD_MEASURE_NS old from a path's source, once they lie
+   RIG_AMD_RATE_BASE_NS apart, and at the clock's nominal rate before. A
+   read whose host readings lie more than RIG_AMD_READ_BOUND_NS apart is
+   dropped. A device without a source measures at open only, with stamps
+   the compute queue writes between two readings of the host's clock.
+   Values convert in value order, and a value's start is never before the
+   end of the value converted before it: a value's work starts once the
+   work of every value before it has completed, on every queue. */
 #define RIG_AMD_STAMPS RIG_AMD_MARKS
 #define RIG_AMD_MEASURE_NS UINT64_C(62500000)
+#define RIG_AMD_READ_BOUND_NS UINT64_C(10000)
+#define RIG_AMD_RATE_BASE_NS UINT64_C(1000000000)
 
-/* A slot's records, as the GPU writes them: counts of its clock. */
+/* A slot's records, as the GPU writes them: counts of its clock, and the
+   word the copy queue's fence before its end writes. */
 struct rig_amd_stamps {
-  uint64_t start[RIG_AMD_QUEUES], end;
+  uint64_t start[RIG_AMD_QUEUES], end, fence;
 };
 
 /* The host's side of a slot: its value, where its times go, NULL once
-   they are written or dropped, the queues it entered, a bit each, and the
-   queue that released it. */
+   they are written or dropped, and the queues it entered, a bit each. */
 struct rig_amd_timed {
   uint64_t v;
   uint64_t *times;
-  uint8_t entered, queue;
+  uint8_t entered;
 };
 
 /* A reading of the GPU's clock and of the host's clock at that instant. */
@@ -292,10 +297,7 @@ struct rig_amd_measure {
   uint64_t ticks, host;
 };
 
-/* The last value converted that ended on a queue, and its end. */
-struct rig_amd_ended {
-  uint64_t v, end;
-};
+
 
 struct rig_amd {
   const struct rig_driver *driver;
@@ -326,9 +328,10 @@ struct rig_amd {
   /* the stamp ring, as the host reads it and at the GPU's address, and its
      host side; the clock: the path's source, or NULL, the record a stamp
      of the measure at open writes, the clock's rate, the first and the
-     latest measures; every timed value up to [converted] converted; each
-     queue's last end; and the failure of a conversion a submit made,
-     which the next settle reports */
+     latest measures; every timed value up to [converted] converted, and
+     the timed values whose times are still to write; the end of the last
+     value converted; and the failure of a conversion a submit made, which
+     the next settle reports */
   volatile struct rig_amd_stamps *stamps;
   uint64_t stamps_gpu;
   struct rig_amd_timed timed[RIG_AMD_STAMPS];
@@ -336,15 +339,15 @@ struct rig_amd {
   volatile uint64_t *clock;
   uint64_t clock_gpu, clock_hz;
   struct rig_amd_measure first, latest;
-  uint64_t converted;
-  struct rig_amd_ended ended_on[RIG_AMD_QUEUES];
+  uint64_t converted, unconverted, last_end;
   const char *times_failure;
 };
 
-/* Takes [d]'s first measure of its clock, from its source or, without
-   one, from stamps of the compute queue: [1], or [0] if the source could
-   not read the clock or the GPU wrote no stamp within a second. Called at
-   open, before any submission. */
+/* Takes [d]'s first measure of its clock, from its source, whose host
+   readings lie within RIG_AMD_READ_BOUND_NS, or, without one, from stamps
+   of the compute queue: [1], or [0] if the source could not read the
+   clock, or within the bound, or the GPU wrote no stamp within a second.
+   Called at open, before any submission. */
 int rig_amd_measure(struct rig_amd *d);
 
 /* Orders every store before it before every store after it, as the GPU

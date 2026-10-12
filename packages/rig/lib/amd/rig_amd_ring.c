@@ -208,7 +208,8 @@ static void need(const struct rig_amd *d, const struct rig_amd_route *routes,
                  words_of(d, T_RELEASE) + 2 * words_of(d, T_STAMP);
   uint64_t parts = 0, flushes = 2;
   words[s] = 3 * words_of(d, S_POLL) + words_of(d, S_FENCE) +
-             words_of(d, S_TRAP) + 2 * words_of(d, S_STAMP);
+             words_of(d, S_TRAP) + 2 * words_of(d, S_STAMP) +
+             words_of(d, S_FENCE);
   *bytes = SEGMENT_ALIGN;
   for (int i = 0; i < n; i++) {
     const struct rig_amd_route *x = &routes[i];
@@ -361,12 +362,13 @@ static int64_t clock_ns(const struct rig_amd *d, int64_t ticks) {
 static uint64_t later(uint64_t a, uint64_t b) { return a > b ? a : b; }
 
 /* The host's time at the clock's [ticks], along the line through the first
-   and the latest measures, or at the clock's rate from the latest while
-   they are one. */
+   and the latest measures once they lie RIG_AMD_RATE_BASE_NS apart, and at
+   the clock's nominal rate from the latest before. */
 static uint64_t host_ns(const struct rig_amd *d, uint64_t ticks) {
   const struct rig_amd_measure *a = &d->first, *b = &d->latest;
   int64_t dt = (int64_t)(ticks - b->ticks);
-  if (b->ticks == a->ticks) return b->host + (uint64_t)clock_ns(d, dt);
+  if (b->host - a->host < RIG_AMD_RATE_BASE_NS)
+    return b->host + (uint64_t)clock_ns(d, dt);
   double rate = (double)(int64_t)(b->host - a->host) /
                 (double)(int64_t)(b->ticks - a->ticks);
   double dh = (double)dt * rate;
@@ -376,31 +378,32 @@ static uint64_t host_ns(const struct rig_amd *d, uint64_t ticks) {
 static const char unwritten[] = "a stamp of the GPU's work was never written";
 
 /* Writes the times of slot [k]'s value, whose work has completed and which
-   is the next to convert: the earliest of its queues' starts, each no
-   earlier than the last end on its queue, and its end, no earlier than any
-   start. Its times go, written or not; a stamp the work did not write is
-   the device's failure. */
+   is the next to convert: the earliest of its queues' starts and its end,
+   each no earlier than the end of the value converted before it, which
+   completed first. Its times go, written or not; a stamp the work did not
+   write is the device's failure. */
 static void convert(struct rig_amd *d, uint64_t k) {
   struct rig_amd_timed *t = &d->timed[k];
   volatile const struct rig_amd_stamps *x = &d->stamps[k];
-  uint64_t *times = t->times, start = UINT64_MAX, last = 0;
+  uint64_t *times = t->times, start = UINT64_MAX;
   t->times = NULL;
+  d->unconverted--;
   for (int q = 0; q < RIG_AMD_QUEUES; q++) {
     if (!(t->entered >> q & 1)) continue;
     if (x->start[q] == 0) {
       d->times_failure = unwritten;
       return;
     }
-    uint64_t at = later(host_ns(d, x->start[q]), d->ended_on[q].end);
+    uint64_t at = host_ns(d, x->start[q]);
     if (at < start) start = at;
-    last = later(last, at);
   }
   if (x->end == 0) {
     d->times_failure = unwritten;
     return;
   }
-  uint64_t end = later(host_ns(d, x->end), last);
-  d->ended_on[t->queue] = (struct rig_amd_ended){t->v, end};
+  start = later(start, d->last_end);
+  uint64_t end = later(host_ns(d, x->end), start);
+  d->last_end = end;
   times[0] = start;
   times[1] = end;
 }
@@ -411,7 +414,7 @@ static void convert_upto(struct rig_amd *d, uint64_t v) {
   uint64_t u = d->converted + 1;
   if (v >= RIG_AMD_STAMPS && u < v - RIG_AMD_STAMPS + 1)
     u = v - RIG_AMD_STAMPS + 1;
-  for (; u <= v; u++) {
+  for (; u <= v && d->unconverted > 0; u++) {
     uint64_t k = u % RIG_AMD_STAMPS;
     if (d->timed[k].times != NULL && d->timed[k].v == u) convert(d, k);
   }
@@ -421,15 +424,19 @@ static void convert_upto(struct rig_amd *d, uint64_t v) {
 /* The slot of [v], once the earlier value that held it, whose work has
    completed, and every earlier timed value have their times written; and,
    if [times], its records cleared and [v] kept with [times]. Answers the
-   slot's host side if [times], NULL otherwise. */
+   slot's host side if [times], NULL otherwise. While no timed value waits
+   for its times, every value before [v] counts as converted, so that a
+   conversion never walks values nobody timed. */
 static struct rig_amd_timed *take_slot(struct rig_amd *d, uint64_t v,
                                        uint64_t *times) {
   uint64_t k = v % RIG_AMD_STAMPS;
   struct rig_amd_timed *t = &d->timed[k];
   if (t->times != NULL) convert_upto(d, t->v);
+  if (d->unconverted == 0) d->converted = v - 1;
   if (times == NULL) return NULL;
   memset((void *)&d->stamps[k], 0, sizeof d->stamps[k]);
-  *t = (struct rig_amd_timed){v, times, 0, 0};
+  *t = (struct rig_amd_timed){v, times, 0};
+  d->unconverted++;
   return t;
 }
 
@@ -449,13 +456,14 @@ static void stamp(struct rig_amd *d, int q, uint64_t address) {
 int rig_amd_settle(void *self, uint64_t v, const char **failure) {
   struct rig_amd *d = self;
   struct rig_amd_measure m;
+  uint64_t width;
   if (d->source != NULL &&
       rig_now_ns() - d->latest.host >= RIG_AMD_MEASURE_NS) {
-    if (d->source->read(d->source, &m.ticks, &m.host) != 0) {
+    if (d->source->read(d->source, &m.ticks, &m.host, &width) != 0) {
       *failure = "the GPU's clock could not be read";
       return RIG_FAILED;
     }
-    d->latest = m;
+    if (width <= RIG_AMD_READ_BOUND_NS) d->latest = m;
   }
   convert_upto(d, v);
   if (d->times_failure == NULL) return RIG_OK;
@@ -751,12 +759,13 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   int o = 1 - r;
   if (s.last[o] >= 0) wait_slot(&s, r, s.last[o]);
   if (s.timed != NULL) {
-    uint64_t end = records(d, s.timed) + offsetof(struct rig_amd_stamps, end);
-    s.timed->queue = (uint8_t)r;
+    uint64_t at = records(d, s.timed);
     /* SDMA's timestamp follows its copies once a fence has waited for
-       them; the stamp then overwrites the fence's word. */
-    if (r == RIG_AMD_COPY) emit(d, &d->rings[r], S_FENCE, end, v, 0);
-    stamp(d, r, end);
+       them. */
+    if (r == RIG_AMD_COPY)
+      emit(d, &d->rings[r], S_FENCE,
+           at + offsetof(struct rig_amd_stamps, fence), v, 0);
+    stamp(d, r, at + offsetof(struct rig_amd_stamps, end));
   }
   release(&s, r);
   mark(&g->marks, v, g->put);
@@ -798,11 +807,15 @@ static int calibration(struct rig_amd *d, uint64_t *before, uint64_t *after) {
 
 int rig_amd_measure(struct rig_amd *d) {
   struct rig_amd_measure m;
-  uint64_t best = UINT64_MAX;
+  uint64_t best = UINT64_MAX, width;
   if (d->source != NULL) {
-    if (d->source->read(d->source, &m.ticks, &m.host) != 0) return 0;
-    d->first = d->latest = m;
-    return 1;
+    for (int i = 0; i < CALIBRATIONS * 2; i++) {
+      if (d->source->read(d->source, &m.ticks, &m.host, &width) != 0) return 0;
+      if (width > RIG_AMD_READ_BOUND_NS) continue;
+      d->first = d->latest = m;
+      return 1;
+    }
+    return 0;
   }
   for (int i = 0; i < CALIBRATIONS; i++) {
     uint64_t before, after;

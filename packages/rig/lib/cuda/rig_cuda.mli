@@ -192,19 +192,23 @@ val capability : t -> Rig_cuda_abi.t
     values before it, whose events it reuses, if that value was timed.
     [rig_cuda_settle], or a later timed [rig_cuda_submit], converts the
     earliest start and the end to the host's clock, in value order, with
-    each start no earlier than the end of the last value that ended on its
-    stream. A failed conversion loses the device.
+    each no earlier than the end of the value converted before it, since a
+    value's work starts once every earlier value's work has completed. A
+    failed conversion loses the device.
 
     The device measures its clock against the host's once, when it opens.
     It records a reference event on a stream of its own between two
     readings of the host's clock, and keeps the closest of eight. An
-    event's time is its elapsed time since the reference, so the times are
+    event's time is its elapsed time since a reference, so the times are
     within half that round trip of the host's clock at open, and drift
     from it at the GPU timer's rate error since open. [rig_cuda_settle]
-    never waits for the device's work. To keep the elapsed times short, it
-    records the next reference once the last is a second old and adopts it
-    in a later settle once it has completed, its host time carried over
-    from the last.
+    never waits for the device's work. A timed submit, at most once a
+    second, and each settle record the next reference on that stream once
+    the last is a second old, and adopt it once it has completed, its host
+    time carried over from the last by their elapsed time. An event used
+    while the device works is thus within about four seconds of its
+    reference, where the float of milliseconds an elapsed time is resolves
+    half a microsecond, the resolution CUDA states for it.
 
     {2:launches Launches}
 

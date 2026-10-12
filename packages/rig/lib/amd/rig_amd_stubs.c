@@ -104,7 +104,7 @@ value caml_rig_amd_stamps(value v_self, value v_host, value v_gpu,
    without a source waits for the GPU. */
 value caml_rig_amd_clock(value v_self, value v_source) {
   struct rig_amd *d = Device_val(v_self);
-  d->source = (struct rig_amd_clock *)Nativeint_val(v_source);
+  d->source = Host_val(v_source);
   caml_enter_blocking_section_no_pending();
   int ok = rig_amd_measure(d);
   caml_leave_blocking_section();

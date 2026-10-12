@@ -30,8 +30,7 @@ let set = Rm.set
 let page = 0x1000
 let huge_page = 2 lsl 20
 
-external clock : int -> int -> int -> int -> nativeint
-  = "caml_rig_nv_nvidia_clock"
+external clock : int -> int -> int -> int -> int = "caml_rig_nv_nvidia_clock"
 
 (* Video memory of this size or more takes 2 MiB pages. *)
 let huge_from = 8 lsl 20
@@ -71,7 +70,7 @@ type gpu = {
   facts : Rig_nv.gpu;
   budget : int;
   hang_ms : int option; (* [None] while the RM's watchdog bounds its work *)
-  clock : nativeint; (* its timer's reader, for the process *)
+  clock : int; (* its timer's reader, for the process *)
   index : int; (* its number, in bus order *)
   mutable refused : int list; (* the GPUs peer access was refused with *)
   mutable channels : (int * int) list; (* registered, with their ranges *)

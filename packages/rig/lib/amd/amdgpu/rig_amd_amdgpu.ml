@@ -31,7 +31,7 @@ external map_file : int -> int -> int -> int64 -> int
 
 external unmap_mem : int -> int -> unit = "caml_rig_amd_amdgpu_unmap"
 external store64 : int -> int -> unit = "caml_rig_amd_amdgpu_store64"
-external clock : int -> int -> nativeint = "caml_rig_amd_amdgpu_clock"
+external clock : int -> int -> int = "caml_rig_amd_amdgpu_clock"
 
 (* Errors *)
 
@@ -71,7 +71,7 @@ type gpu = {
   drm : int; (* its render node *)
   hdp : int option; (* the register whose store flushes the HDP *)
   clock_khz : int;
-  clock : nativeint; (* its clock's reader, for the process *)
+  clock : int; (* its clock's reader, for the process *)
   cus : int array; (* its active compute units, as cu_bitmap lays them out *)
   mutable doorbells : (int64 * int) option; (* the page: offset, address *)
   mutable events_mapped : bool;

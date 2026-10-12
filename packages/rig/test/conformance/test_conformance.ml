@@ -671,12 +671,15 @@ let spans_after_idle (module G : Gpu) () =
   within "after idling";
   within "after the measure"
 
-(* A profile around submissions, work and a copy in turn, waited for once:
-   [crossing] of them, then, after the device idled past every driver's age
-   for a new measure of its clock, [many] more. It records one span of each,
-   and on each queue a span ends before the next starts, across the measure.
-   [many] exceeds every driver's ring of stamps, so later submits convert the
-   first values' stamps before the measure, and settles the rest after it. *)
+(* A profile around submissions, waited for once: [crossing] of them, then,
+   after the device idled past every driver's age for a new measure of its
+   clock, [many] more. Where a copy runs beside the first queue they are, in
+   turn, work, a copy, a copy then work, and work then a copy, so that values
+   run on either queue or on both. It records one span of each, and each span
+   ends before the next starts, across the measure, since a value's work
+   starts once every earlier value's has completed. [many] exceeds every
+   driver's ring of stamps, so later submits convert the first values' stamps
+   before the measure, and settles the rest after it. *)
 let crossing = 64
 let many = 33_000
 
@@ -688,11 +691,16 @@ let spans_across (module G : Gpu) () =
   let dst = filled ~memory:Pinned t.d (String.make n '\000') in
   let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
   let prepare ws = Rig_gpu_support.prepare ~fixed:uses t.d ws in
-  let work = prepare [ G.copy_words t ~dst ~src ] in
+  let work () = G.copy_words t ~dst ~src and copy () = copy_part ~dst src in
   let subs =
     if beside f (first_queue f.queues) then
-      [| work; prepare [ copy_part ~dst src ] |]
-    else [| work |]
+      [|
+        prepare [ work () ];
+        prepare [ copy () ];
+        prepare [ copy (); work () ];
+        prepare [ work (); copy () ];
+      |]
+    else [| prepare [ work () ] |]
   in
   let submit i =
     let s, run, buffers = subs.(i mod Array.length subs) in
@@ -713,31 +721,20 @@ let spans_across (module G : Gpu) () =
   let spans =
     List.filter_map
       (function
-        | Rig.Profile.Span { device; lane; start; stop; _ } when device == t.d
-          ->
-            Some (lane, start, stop)
+        | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+            Some (start, stop)
         | _ -> None)
       events
   in
   equal int ~msg:"the device's spans" total (List.length spans);
-  let lanes =
-    List.sort_uniq String.compare (List.map (fun (l, _, _) -> l) spans)
+  let rec follow i = function
+    | (_, stop) :: ((start, _) :: _ as rest) ->
+        at_most int ~msg:(strf "span %d's stop, at most the next start" i)
+          ~than:start stop;
+        follow (i + 1) rest
+    | _ -> ()
   in
-  let follow lane =
-    let rec go i = function
-      | (_, stop) :: ((start, _) :: _ as rest) ->
-          at_most int
-            ~msg:(strf "%s: span %d's stop, at most the next start" lane i)
-            ~than:start stop;
-          go (i + 1) rest
-      | _ -> ()
-    in
-    go 0
-      (List.filter_map
-         (fun (l, start, stop) -> if l = lane then Some (start, stop) else None)
-         spans)
-  in
-  List.iter follow lanes
+  follow 0 spans
 
 (* Launches *)
 
@@ -1528,7 +1525,7 @@ let laws (module G : Gpu) =
         (device_order g);
       test "a profile around a submission records a span that bounds its work"
         (spans g);
-      test "spans on each queue follow each other across a new measure"
+      test "spans follow each other across a new measure, on either queue"
         (spans_across g);
       test "a span lies within its window after the device idles"
         (spans_after_idle g);

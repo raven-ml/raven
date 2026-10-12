@@ -300,19 +300,23 @@ val capability : t -> Rig_amd_abi.Capability.t
     of the clock), on ["COPY:0"] after a fence has waited for its copies
     ({!Rig_amd_abi.Sdma.timestamp}). [settle], or a later [submit],
     converts the earliest start and the end to the host's clock, in value
-    order, with each start no earlier than the end of the last value that
-    ended on its queue. A stamp of a completed value that the work never
-    wrote makes the next [settle] fail, which loses the device.
+    order, with each no earlier than the end of the value converted before
+    it, since a value's work starts once every earlier value's work has
+    completed. A stamp of a completed value that the work never wrote makes
+    the next [settle] fail, which loses the device.
 
     A device measures the clock against the host's clock as the path's
     {!type-clock} says, and converts a stamp along the line through its
-    first measure, at open, and its latest, or at [clock_hz] while it has
-    one. A measure through a {!Source} reads the clock between two readings
-    of the host's clock, whose middle is the host's time, so a time is
-    within half that interval of the host's clock, a few microseconds
-    through KFD, plus the clock's rate error since the latest measure. With
-    {!Round_trip} the device measures at open only, and its times drift
-    from the host's clock at the clock's rate error since open.
+    first measure, at open, and its latest, once they lie a second apart,
+    and at [clock_hz] from the latest before. A measure through a {!Source}
+    takes the time of a host clock between two readings of it and drops a
+    read whose readings lie more than 10 µs apart, so a time is within
+    5 µs of the host's clock, plus the clock's rate error since the latest
+    measure. Through KFD, KFD reads its clock right after the GPU's, and
+    the device maps that clock to the host's with a pair of readings of
+    its own. With {!Round_trip} the device measures at open only, and its
+    times drift from the host's clock at the clock's rate error since
+    open.
 
     {2:stop Stop}
 
@@ -344,7 +348,7 @@ type 'm memory = {
 (** The type for how a device reads the GPU's clock, the clock of its
     stamps, against the host's clock ({!section-c}). *)
 type clock =
-  | Source of nativeint
+  | Source of int
       (** The address of the path's [struct rig_amd_clock] ([rig_amd.h]),
           which the path keeps while a device may read it. A device reads
           it at open and again in [rig_amd_settle], at most every

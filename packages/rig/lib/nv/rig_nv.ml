@@ -55,7 +55,7 @@ type gpu = {
 }
 
 type 'm memory = { address : int; host : int option; handle : int; data : 'm }
-type clock = Source of nativeint | Registers of int
+type clock = Source of int | Registers of int
 
 type 'm path = {
   key : 'm Type.Id.t;
@@ -179,7 +179,7 @@ external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
 external set_stamps : int -> int -> int -> int -> int -> bool
   = "caml_rig_nv_stamps"
 
-external set_clock : int -> nativeint -> int -> bool = "caml_rig_nv_clock"
+external set_clock : int -> int -> int -> bool = "caml_rig_nv_clock"
 
 external set_launches : int -> int -> int -> int -> bool -> unit
   = "caml_rig_nv_launches"
@@ -720,7 +720,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     templates self p.gpu;
     Option.iter (set_flush self) p.flush;
     let source, bar =
-      match p.clock with Source c -> (c, 0) | Registers a -> (0n, a)
+      match p.clock with Source c -> (c, 0) | Registers a -> (0, a)
     in
     let* () =
       if not (set_stamps self stamps_host stamps.address stamps_bytes slots)

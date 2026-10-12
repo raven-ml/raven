@@ -22,7 +22,7 @@ module Sdma = Abi.Sdma
 exception Fault of string
 
 type 'm memory = { address : int; host : int option; data : 'm }
-type clock = Source of nativeint | Round_trip
+type clock = Source of int | Round_trip
 
 type 'm path = {
   key : 'm Type.Id.t;
@@ -128,7 +128,7 @@ external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
 external set_stamps : int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_stamps"
 
-external set_clock : int -> nativeint -> bool = "caml_rig_amd_clock"
+external set_clock : int -> int -> bool = "caml_rig_amd_clock"
 external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"
 external zero : int -> int -> unit = "caml_rig_amd_zero"
 external poke32 : int -> int -> int -> unit = "caml_rig_amd_poke32"
@@ -222,9 +222,9 @@ let segment_bytes = 1 lsl 20
 let slots = 513
 let pointers_bytes = 4096
 
-(* The stamp ring: RIG_AMD_STAMPS slots of three 8-byte records, then the
-   calibration's record. *)
-let stamps_bytes = (4096 * 24) + 8
+(* The stamp ring: RIG_AMD_STAMPS slots of four 8-byte words, then the record
+   of a stamp of the measure at open. *)
+let stamps_bytes = (4096 * 32) + 8
 
 (* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
 let max_waits = 255
@@ -882,7 +882,7 @@ let make (type m) (p : m path) =
     ring 0 compute_kind compute_host compute_bell;
     ring 1 `Sdma copy_host copy_bell;
     set_stamps self stamps_host (mem_address stamps) stamps_bytes p.clock_hz;
-    let source = match p.clock with Source c -> c | Round_trip -> 0n in
+    let source = match p.clock with Source c -> c | Round_trip -> 0 in
     let* () =
       if set_clock self source then Ok ()
       else begin

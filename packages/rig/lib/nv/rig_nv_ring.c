@@ -363,8 +363,12 @@ static uint32_t timer_word(const struct device *d, uint32_t at) {
    while the high word moved, between two readings of the host's clock,
    whose middle is the host's time. */
 int rig_nv_measure(const struct device *d, struct measure *m) {
-  if (d->source != NULL)
-    return d->source->read(d->source, &m->gpu, &m->host) == 0;
+  if (d->source != NULL) {
+    uint64_t width;
+    if (d->source->read(d->source, &m->gpu, &m->host, &width) != 0)
+      return MEASURE_FAILED;
+    return width <= READ_BOUND_NS ? MEASURE_OK : MEASURE_WIDE;
+  }
   uint64_t before = rig_now_ns();
   uint32_t hi, lo;
   do {
@@ -374,17 +378,18 @@ int rig_nv_measure(const struct device *d, struct measure *m) {
   uint64_t after = rig_now_ns();
   m->gpu = (uint64_t)hi << 32 | lo;
   m->host = before + (after - before) / 2;
-  return 1;
+  return after - before <= READ_BOUND_NS ? MEASURE_OK : MEASURE_WIDE;
 }
 
 static uint64_t later(uint64_t a, uint64_t b) { return a > b ? a : b; }
 
 /* The host's time at the timer's [g], along the line through the first and
-   the latest measures, or at the latest's offset while they are one. */
+   the latest measures once they lie RATE_BASE_NS apart, at the timer's
+   nominal rate of one nanosecond a tick from the latest before. */
 static uint64_t host_ns(const struct device *d, uint64_t g) {
   const struct measure *a = &d->first, *b = &d->latest;
   int64_t dg = (int64_t)(g - b->gpu);
-  if (b->gpu == a->gpu) return b->host + (uint64_t)dg;
+  if (b->host - a->host < RATE_BASE_NS) return b->host + (uint64_t)dg;
   double rate = (double)(int64_t)(b->host - a->host) /
                 (double)(int64_t)(b->gpu - a->gpu);
   double dh = (double)dg * rate;
@@ -394,31 +399,32 @@ static uint64_t host_ns(const struct device *d, uint64_t g) {
 static const char unwritten[] = "a stamp of the GPU's work was never written";
 
 /* Writes the times of slot [k]'s value, whose work has completed and which
-   is the next to convert: the earliest of its channels' starts, each no
-   earlier than the last end on its channel, and its end, no earlier than
-   any start. Its times go, written or not; a stamp the work did not write
-   is the device's failure. */
+   is the next to convert: the earliest of its channels' starts and its
+   end, each no earlier than the end of the value converted before it,
+   which completed first. Its times go, written or not; a stamp the work
+   did not write is the device's failure. */
 static void convert(struct device *d, uint64_t k) {
   struct timed *t = &d->timed[k];
   volatile const struct stamps *x = &d->stamps[k];
-  uint64_t *times = t->times, start = UINT64_MAX, last = 0;
+  uint64_t *times = t->times, start = UINT64_MAX;
   t->times = NULL;
+  d->unconverted--;
   for (int q = 0; q < CHANNELS; q++) {
     if (!(t->entered >> q & 1)) continue;
     if (x->start[q].value != t->v) {
       d->failure = unwritten;
       return;
     }
-    uint64_t at = later(host_ns(d, x->start[q].stamp), d->ended_on[q].end);
+    uint64_t at = host_ns(d, x->start[q].stamp);
     if (at < start) start = at;
-    last = later(last, at);
   }
   if (x->end.value != t->v) {
     d->failure = unwritten;
     return;
   }
-  uint64_t end = later(host_ns(d, x->end.stamp), last);
-  d->ended_on[t->channel] = (struct ended){t->v, end};
+  start = later(start, d->last_end);
+  uint64_t end = later(host_ns(d, x->end.stamp), start);
+  d->last_end = end;
   times[0] = start;
   times[1] = end;
 }
@@ -428,7 +434,7 @@ static void convert(struct device *d, uint64_t k) {
 static void convert_upto(struct device *d, uint64_t v) {
   uint64_t u = d->converted + 1;
   if (v >= d->slots && u < v - d->slots + 1) u = v - d->slots + 1;
-  for (; u <= v; u++) {
+  for (; u <= v && d->unconverted > 0; u++) {
     uint64_t k = u & (d->slots - 1);
     if (d->timed[k].times != NULL && d->timed[k].v == u) convert(d, k);
   }
@@ -438,14 +444,18 @@ static void convert_upto(struct device *d, uint64_t v) {
 /* The slot of [v], once the earlier value that held it, whose work has
    completed, and every earlier timed value have their times written; and,
    if [times], its records cleared and [v] kept with [times]. Answers the
-   slot's host side if [times], NULL otherwise. */
+   slot's host side if [times], NULL otherwise. While no timed value waits
+   for its times, every value before [v] counts as converted, so that a
+   conversion never walks values nobody timed. */
 static struct timed *take_slot(struct device *d, uint64_t v, uint64_t *times) {
   uint64_t k = v & (d->slots - 1);
   struct timed *t = &d->timed[k];
   if (t->times != NULL) convert_upto(d, t->v);
+  if (d->unconverted == 0) d->converted = v - 1;
   if (times == NULL) return NULL;
   memset((void *)&d->stamps[k], 0, sizeof d->stamps[k]);
-  *t = (struct timed){v, times, 0, 0};
+  *t = (struct timed){v, times, 0};
+  d->unconverted++;
   return t;
 }
 
@@ -463,11 +473,12 @@ int rig_nv_settle(void *self, uint64_t v, const char **failure) {
   struct device *d = self;
   struct measure m;
   if (d->source != NULL && rig_now_ns() - d->latest.host >= MEASURE_NS) {
-    if (!rig_nv_measure(d, &m)) {
+    int r = rig_nv_measure(d, &m);
+    if (r == MEASURE_FAILED) {
       *failure = "the GPU's timer could not be read";
       return RIG_FAILED;
     }
-    d->latest = m;
+    if (r == MEASURE_OK) d->latest = m;
   }
   convert_upto(d, v);
   if (d->failure == NULL) return RIG_OK;
@@ -699,10 +710,8 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   int o = other(r);
   if (s.used[o])
     emit(d, &d->ch[r], T_ACQUIRE, JOIN_GPU(d, o), tag(v, last[o]), 0);
-  if (s.timed != NULL) {
-    s.timed->channel = (uint8_t)r;
+  if (s.timed != NULL)
     stamp(d, r, records(d, s.timed) + offsetof(struct stamps, end), v);
-  }
   signal_word(d, r, d->word_gpu, v);
   d->ch[r].released = v;
   for (int q = 0; q < CHANNELS; q++) {

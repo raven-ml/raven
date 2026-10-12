@@ -145,20 +145,25 @@ val capability : t -> Rig_nv_abi.Gpu.t
     ({!Rig_nv_abi.Method.release_stamp}). On COMPUTE a stamp waits for the
     channel's earlier work to complete. [rig_nv_settle], the [edge]'s
     [settle], or a later [rig_nv_submit] converts the earliest start and
-    the end to the host's clock, in value order, with each start no earlier
-    than the end of the last value that ended on its channel. A stamp of a
-    completed value that the work never wrote makes the next
-    [rig_nv_settle] fail, which loses the device.
+    the end to the host's clock, in value order, with each no earlier than
+    the end of the value converted before it, since a value's work starts
+    once every earlier value's work has completed. A stamp of a completed
+    value that the work never wrote makes the next [rig_nv_settle] fail,
+    which loses the device.
 
     A device measures the timer against the host's clock through the
     path's {!type-clock}, and converts a stamp along the line through its
-    first measure, at open, and its latest. Each measure reads the timer
-    between two readings of the host's clock, whose middle is the host's
-    time, so a time is within half that interval of the host's clock, a few
-    microseconds through NVIDIA's kernel driver ({!Source}), plus the
-    timer's rate error since the latest measure. With {!Registers} the
-    device measures at open only, and its times drift from the host's clock
-    at the timer's rate error since open.
+    first measure, at open, and its latest, once they lie a second apart,
+    and at the timer's nominal rate of a nanosecond a tick before. A
+    measure takes the time of a host clock between two readings of it and
+    drops a measure whose readings lie more than 10 µs apart, so a time is
+    within 5 µs of the host's clock, plus the timer's rate error since the
+    latest measure. Through NVIDIA's kernel driver ({!Source}) the driver
+    takes the readings around its read of the timer's registers, and the
+    device takes one more pair, to map the driver's clock to the host's.
+    With {!Registers} the device reads the registers itself, at open only,
+    and its times drift from the host's clock at the timer's rate error
+    since open.
 
     A launch with dynamic shared memory runs in the multiprocessors'
     configuration of the most shared memory ({!Rig_nv_abi.Qmd.t.shared}). *)
@@ -313,7 +318,7 @@ type 'm memory = {
 (** The type for how a device reads the GPU's timer, the clock of its
     stamps, against the host's clock ({!section-submitting}). *)
 type clock =
-  | Source of nativeint
+  | Source of int
       (** The address of the path's [struct rig_nv_clock] ([rig_nv.h]),
           which the path keeps while a device may read it. A device reads
           it at open and again in [rig_nv_settle], at most every

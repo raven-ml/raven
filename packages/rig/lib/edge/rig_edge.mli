@@ -215,9 +215,10 @@ type 'region facts = {
        writes the times itself before the word shows the value.
 
        The times are as exact as the driver's correlation of the device's
-       clock with the host's, which its interface states. A conversion
-       never puts a value's start on a queue before the end of the value
-       before it on that queue.}}
+       clock with the host's, which its interface states. A driver converts
+       in value order, and never puts a value's start before the end of the
+       value converted before it, since a value's work starts once every
+       earlier value's work has completed ({e device order}).}}
 
     rig calls the four one at a time for each device, with [room] before
     each [submit]. They must call no function of the OCaml runtime and read
