@@ -11,6 +11,11 @@
 open Windtrap
 module U = Rig_mlx5_uverbs
 
+(* mlx5_0's verbs file under [root], its path joined as the system joins
+   one. *)
+let verbs_file root =
+  Filename.concat (Filename.concat root "dev/infiniband") "uverbs0"
+
 let rec mkdirs d =
   if not (Sys.file_exists d) then begin
     mkdirs (Filename.dirname d);
@@ -100,7 +105,7 @@ let opening =
           | Ok _ -> fail "opened"
           | Error e ->
               starts_with
-                ~affix:(Filename.concat root "dev/infiniband/uverbs0: ")
+                ~affix:(verbs_file root ^ ": ")
                 e);
     ]
 
@@ -116,7 +121,7 @@ let paths =
       refused "a device that does not exist" "mlx5_7" "mlx5_7";
       refused "a device without a verbs file" "irdma0" "irdma0";
       refused "a device whose verbs file cannot be opened" "mlx5_0"
-        "dev/infiniband/uverbs0";
+        (verbs_file "");
     ]
 
 let () = exit (run "rig_mlx5_uverbs" [ listing; opening; paths ])

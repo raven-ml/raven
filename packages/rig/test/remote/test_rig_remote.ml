@@ -109,7 +109,7 @@ let two_controllers () =
   in
   contains ~sub:"another job" refused;
   Fun.protect ~finally:(fun () -> Unix.close admitted) @@ fun () ->
-  Unix.setsockopt_float admitted Unix.SO_RCVTIMEO patience;
+  Rig_support.recv_timeout admitted patience;
   is_ok ~msg:"the join" ~pp:Format.pp_print_string (join_alone admitted a);
   send admitted (frame k_close "");
   equal ~msg:"the agent's close" (option int) (Some k_close)
@@ -202,7 +202,7 @@ let too_many () =
   let dial () =
     let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
     Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port));
-    Unix.setsockopt_float fd Unix.SO_RCVTIMEO patience;
+    Rig_support.recv_timeout fd patience;
     fd
   in
   let held = ref [] in
@@ -1019,9 +1019,32 @@ let serve_failed () =
           failf "the agent exited %d, printing [%s]" code
             (String.concat "; " lines))
 
+(* Launchers are POSIX only: on Windows a process answers RIG_REMOTE_REPORT as
+   naming no descriptor, whatever its number, and starts no job. *)
+let windows_report () =
+  if not Sys.win32 then skip ~reason:"launchers pass the report here" ();
+  let r, w = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process_env launched_exe
+      [| launched_exe; "close" |]
+      (environment [ ("RIG_REMOTE_REPORT", "1") ])
+      Unix.stdin w Unix.stderr
+  in
+  Unix.close w;
+  let said = In_channel.input_all (child_text r) in
+  let code =
+    match snd (Unix.waitpid [] pid) with
+    | Unix.WEXITED n -> n
+    | Unix.WSIGNALED n | Unix.WSTOPPED n -> -n
+  in
+  equal ~msg:"what it said" string
+    "error: RIG_REMOTE_REPORT: launchers are POSIX only\n" said;
+  equal ~msg:"its exit status" int 1 code
+
 let launching =
   group "launched"
     [
+      test "on Windows the report names no descriptor" windows_report;
       test "without the variables it is None, and a second call raises"
         without_variables;
       test "started, then closed, its machines named as the launcher names them"
@@ -1063,6 +1086,7 @@ let refused file =
   starts_with ~msg:"names the file" ~affix:file why
 
 let refused_perm perm =
+  if Sys.win32 then skip ~reason:"Windows has no POSIX file modes" ();
   let file = write_file ~perm key in
   Fun.protect ~finally:(fun () -> Sys.remove file) (fun () -> refused file)
 
@@ -1073,6 +1097,7 @@ let refused_size n =
 (* A FIFO opened for reading waits for a writer: read_key must answer without
    one. If it waits, the test opens a writer to end the wait. *)
 let fifo () =
+  if Sys.win32 then skip ~reason:"Windows has no FIFO" ();
   let file =
     Filename.concat
       (Filename.get_temp_dir_name ())

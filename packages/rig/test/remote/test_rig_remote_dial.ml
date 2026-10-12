@@ -56,6 +56,8 @@ let full () =
    system does not show what a thread waits in, the test closes the listener
    and skips. *)
 let interrupted () =
+  if Sys.win32 then
+    skip ~reason:"Windows has no signal that interrupts a call" ();
   let before = descriptors () in
   let l, port, held = full () in
   Sys.set_signal Sys.sigusr1

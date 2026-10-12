@@ -9,7 +9,15 @@
 
 #include <stdint.h>
 
-typedef void (*ready_fn)(void *counts, uint64_t c);
+/* The ready function is the process's, of the platform's convention: on
+   x86_64 Windows, ms_abi (gen.sh defines RIG_WINDOWS for that object). */
+#ifdef RIG_WINDOWS
+#define PLATFORM __attribute__((ms_abi))
+#else
+#define PLATFORM
+#endif
+
+typedef void(PLATFORM *ready_fn)(void *counts, uint64_t c);
 
 struct params {
   int64_t *out;

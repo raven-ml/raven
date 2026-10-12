@@ -105,9 +105,12 @@ let loopback () =
   | Unix.ADDR_UNIX _ -> assert false
 
 (* A connected pair of loopback TCP sockets. A read on either gives up after
-   [patience]. *)
+   [patience]. The accepted socket takes the listener's small receive buffer,
+   which Windows' loopback otherwise grows to megabytes its peer has not
+   read. *)
 let connected () =
   let l, port = loopback () in
+  Unix.setsockopt_int l Unix.SO_RCVBUF 4096;
   Fun.protect
     ~finally:(fun () -> Unix.close l)
     (fun () ->
@@ -115,7 +118,7 @@ let connected () =
       Unix.connect d (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
       let a, _ = Unix.accept ~cloexec:true l in
       List.iter
-        (fun fd -> Unix.setsockopt_float fd Unix.SO_RCVTIMEO patience)
+        (fun fd -> Rig_support.recv_timeout fd patience)
         [ d; a ];
       (d, a))
 
@@ -129,7 +132,9 @@ let read_n fd n =
       | 0 -> off
       | k -> go (off + k)
       | exception Unix.Unix_error (Unix.ECONNRESET, _, _) -> off
-      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+      | exception
+          Unix.Unix_error
+            ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.ETIMEDOUT), _, _) ->
           failf "no byte within %.0f s" patience
   in
   Bytes.sub_string b 0 (go 0)
@@ -311,7 +316,12 @@ let finish h =
   | Unix.WEXITED 0 -> ()
   | Unix.WEXITED n -> failf "link_peer exited with %d" n
   | Unix.WSIGNALED n | Unix.WSTOPPED n -> failf "link_peer ended by signal %d" n);
-  String.split_on_char '\n' out |> List.filter (( <> ) "")
+  (* Its lines end with CRLF on Windows. *)
+  let line l =
+    if String.ends_with ~suffix:"\r" l then String.sub l 0 (String.length l - 1)
+    else l
+  in
+  String.split_on_char '\n' out |> List.map line |> List.filter (( <> ) "")
 
 let kill h =
   (try Unix.kill h.pid Sys.sigkill with Unix.Unix_error _ -> ());
@@ -1320,14 +1330,6 @@ let areas_until_next () =
   equal ~msg:"the first area, two calls later" string (String.make n 'c')
     (of_area first)
 
-(* This process's resident memory, in bytes. *)
-let resident () =
-  let pid = string_of_int (Unix.getpid ()) in
-  let ic = Unix.open_process_args_in "ps" [| "ps"; "-o"; "rss="; "-p"; pid |] in
-  let kib = int_of_string (String.trim (input_line ic)) in
-  ignore (Unix.close_process_in ic);
-  kib * 1024
-
 (* A job whose controller sends [handover], a hand-over's frame, then its close;
    [next] gives both and the job closes. *)
 let closed_job handover =
@@ -1354,7 +1356,7 @@ let kept_until_close () =
     for _ = 1 to 3 do
       Gc.full_major ()
     done;
-    resident ()
+    Rig_support.resident ()
   in
   closed_job handover;
   let before = settled () in
@@ -1832,6 +1834,8 @@ let rails =
    made first, so without beats it would be the first silent. *)
 
 let stopped_peer () =
+  if Sys.win32 then
+    skip ~reason:"Windows has no signal that stops a process" ();
   with_job @@ fun j ->
   let idle, _ = start j "idle" ~name:"idle" in
   guard idle @@ fun () ->
@@ -2215,8 +2219,9 @@ let domains =
    raises. *)
 let () =
   Watchdog.start ();
-  (* A write to a peer that reset its connection fails with EPIPE. *)
-  Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
+  (* A write to a peer that reset its connection fails with EPIPE. Windows
+     has no SIGPIPE. *)
+  if not Sys.win32 then Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
   exit
     (run "rig_remote_proxy.link"
        [

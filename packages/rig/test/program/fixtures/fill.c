@@ -5,20 +5,30 @@
 
 #include <stdint.h>
 
-int fill_empty(void *queue, const void *params, uint64_t point) {
+/* rig calls a fill as a C function of the process, by the platform's
+   convention: on x86_64 Windows, ms_abi (gen.sh defines RIG_WINDOWS for that
+   object). A host entry the fill calls stays linked code, by System V. */
+#ifdef RIG_WINDOWS
+#define PLATFORM __attribute__((ms_abi))
+#else
+#define PLATFORM
+#endif
+
+PLATFORM int fill_empty(void *queue, const void *params, uint64_t point) {
   (void)queue, (void)params, (void)point;
   return 0;
 }
 
 /* The run supplies a destination through its ref and a word beside it. */
-int fill(void *queue, const uint64_t *params, uint64_t point) {
+PLATFORM int fill(void *queue, const uint64_t *params, uint64_t point) {
   (void)queue, (void)point;
   *(uint64_t *)(uintptr_t)params[0] = params[1];
   return 0;
 }
 
 /* The first parameter names a container initialized with its destination. */
-int fill_indirect(void *queue, const uint64_t *params, uint64_t point) {
+PLATFORM int fill_indirect(void *queue, const uint64_t *params,
+                           uint64_t point) {
   (void)queue, (void)point;
   const uint64_t *container = (const uint64_t *)(uintptr_t)params[0];
   *(uint64_t *)(uintptr_t)container[0] = params[1];
@@ -34,7 +44,7 @@ struct affine {
   int64_t n, a, c;
 };
 
-int fill_call(void *queue, const uint64_t *params, uint64_t point) {
+PLATFORM int fill_call(void *queue, const uint64_t *params, uint64_t point) {
   (void)queue, (void)point;
   const uint64_t *container = (const uint64_t *)(uintptr_t)params[0];
   void (*f)(const struct affine *, int64_t, int64_t) =

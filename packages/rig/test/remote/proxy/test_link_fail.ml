@@ -49,9 +49,13 @@ let stalled_cause = Printf.sprintf "peer: read nothing for %d s" bound
 (* Sockets *)
 
 (* A connected pair of loopback TCP sockets: the link's end, whose send buffer
-   is small, and its peer's, whose reads give up after [quiet]. *)
+   is small, and its peer's, whose receive buffer is small and whose reads give
+   up after [quiet]. The accepted socket takes the listener's receive buffer,
+   which Windows' loopback otherwise grows to megabytes its peer has not
+   read. *)
 let connected () =
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.setsockopt_int l Unix.SO_RCVBUF 4096;
   Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
   Unix.listen l 1;
   Fun.protect ~finally:(fun () -> Unix.close l) @@ fun () ->
@@ -59,7 +63,7 @@ let connected () =
   Unix.setsockopt_int d Unix.SO_SNDBUF 4096;
   Unix.connect d (Unix.getsockname l);
   let p, _ = Unix.accept ~cloexec:true l in
-  Unix.setsockopt_float p Unix.SO_RCVTIMEO quiet;
+  Rig_support.recv_timeout p quiet;
   (d, p)
 
 (* The next [n] bytes of [fd], fewer if its stream ends or no byte comes
@@ -73,7 +77,10 @@ let read_n fd n =
       | 0 -> off
       | k -> go (off + k)
       | exception Unix.Unix_error (Unix.ECONNRESET, _, _) -> off
-      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) -> off
+      | exception
+          Unix.Unix_error
+            ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.ETIMEDOUT), _, _) ->
+          off
   in
   Bytes.sub_string b 0 (go 0)
 

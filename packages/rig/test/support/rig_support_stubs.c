@@ -16,6 +16,7 @@
 
 #include <signal.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,13 +30,19 @@
 #include <caml/threads.h>
 
 #ifdef _WIN32
+#include <winsock2.h>
 #include <malloc.h>
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <pthread.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 #endif
+#include <caml/unixsupport.h>
+#include <math.h>
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -45,7 +52,6 @@
 #include <sys/resource.h>
 #if defined(__GLIBC__)
 #include <linux/futex.h>
-#include <stdio.h>
 #include <sys/syscall.h>
 #endif
 #endif
@@ -1403,5 +1409,58 @@ value rig_test_gcc_asan(value unit) {
   return Val_true;
 #else
   return Val_false;
+#endif
+}
+
+/* Sockets */
+
+/* Winsock takes the bound as a DWORD of milliseconds, POSIX as a timeval. */
+value rig_test_recv_timeout(value fd, value s) {
+  double t = Double_val(s);
+#ifdef _WIN32
+  DWORD bound = (DWORD)ceil(t * 1e3);
+  if (setsockopt(Socket_val(fd), SOL_SOCKET, SO_RCVTIMEO, (const char *)&bound,
+                 sizeof bound) != 0) {
+    caml_win32_maperr(WSAGetLastError());
+    caml_uerror("setsockopt", Nothing);
+  }
+#else
+  long long us = (long long)ceil(t * 1e6);
+  struct timeval bound = {.tv_sec = (time_t)(us / 1000000),
+                          .tv_usec = (suseconds_t)(us % 1000000)};
+  if (setsockopt(Int_val(fd), SOL_SOCKET, SO_RCVTIMEO, &bound, sizeof bound) !=
+      0)
+    caml_uerror("setsockopt", Nothing);
+#endif
+  return Val_unit;
+}
+
+/* Memory */
+
+/* This process's resident memory in bytes: its working set on Windows. */
+value rig_test_resident(value unit) {
+  (void)unit;
+#if defined(_WIN32)
+  PROCESS_MEMORY_COUNTERS c;
+  if (!K32GetProcessMemoryInfo(GetCurrentProcess(), &c, sizeof c))
+    caml_failwith("GetProcessMemoryInfo failed");
+  return Val_long((intnat)c.WorkingSetSize);
+#elif defined(__APPLE__)
+  mach_task_basic_info_data_t info;
+  mach_msg_type_number_t n = MACH_TASK_BASIC_INFO_COUNT;
+  if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info,
+                &n) != KERN_SUCCESS)
+    caml_failwith("task_info failed");
+  return Val_long((intnat)info.resident_size);
+#elif defined(__linux__)
+  long pages = 0, resident = 0;
+  FILE *f = fopen("/proc/self/statm", "r");
+  if (f == NULL) caml_failwith("opening /proc/self/statm failed");
+  int read = fscanf(f, "%ld %ld", &pages, &resident);
+  fclose(f);
+  if (read != 2) caml_failwith("reading /proc/self/statm failed");
+  return Val_long((intnat)resident * sysconf(_SC_PAGESIZE));
+#else
+  caml_failwith("no resident memory on this system");
 #endif
 }

@@ -996,12 +996,18 @@ let test_many_sections () =
     (syms o)
 
 (* The least CPU times of five reads each of [small] and [large], taken in turn
-   so that load on the machine slows both alike. *)
+   so that load on the machine slows both alike. A read repeats until 50 ms of
+   CPU time pass, and its time is their mean: Windows' CPU clock steps every
+   15.6 ms, which a small read can fall within. *)
 let read_times small large =
   let once obj =
     let start = Sys.time () in
-    ignore (Sys.opaque_identity (Elf.of_string obj));
-    Sys.time () -. start
+    let rec go n =
+      ignore (Sys.opaque_identity (Elf.of_string obj));
+      let t = Sys.time () -. start in
+      if t < 0.05 then go (n + 1) else t /. Float.of_int n
+    in
+    go 1
   in
   let s = ref infinity and l = ref infinity in
   for _ = 1 to 5 do

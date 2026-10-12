@@ -27,8 +27,9 @@ let rec remove path =
    [vendor] and [class] files' contents, [None] for a file it lacks, as Linux's
    sysfs shows them, under a directory beside the suite in _build, which a
    killed run may leave. Bus addresses hold colons, which some file systems
-   refuse, so the tree is made here. *)
+   refuse, so the tree is made here, and Windows file names refuse them. *)
 let tree name functions =
+  if Sys.win32 then skip ~reason:"Windows file names hold no PCI address" ();
   let root = Filename.concat "trees" name in
   remove root;
   let put bus file contents =

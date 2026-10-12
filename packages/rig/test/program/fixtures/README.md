@@ -8,4 +8,5 @@
 - `fill`, which stores its second parameter at the address in its first;
   `fill_indirect` follows that address once more; `fill_empty` accepts no
   parameters; `fill_call` reads a host entry from the container in its first
-  parameter and calls it on the buffer in its second.
+  parameter and calls it on the buffer in its second. `fill_x86_64_windows.o`
+  defines them by Windows' convention, by which rig calls a fill there.

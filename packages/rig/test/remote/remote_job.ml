@@ -26,18 +26,13 @@ let key = String.init 32 (fun i -> Char.chr (65 + i))
 
 (* [k] as a job's key. *)
 let as_key k = Result.get_ok (Rig_remote.key k)
-let files = Atomic.make 0
 
-(* A file of this user holding [contents], with permissions [perm]. *)
+(* A file of this user holding [contents], with permissions [perm]. Its name is
+   the system's: a process id names no process alone on Windows, where sibling
+   processes share one. *)
 let write_file ?(perm = 0o600) contents =
-  let file =
-    Filename.concat
-      (Filename.get_temp_dir_name ())
-      (Printf.sprintf "rig-remote-%d-%d.key" (Unix.getpid ())
-         (Atomic.fetch_and_add files 1))
-  in
-  (try Sys.remove file with Sys_error _ -> ());
-  let oc = open_out_gen [ Open_wronly; Open_creat; Open_excl ] 0o600 file in
+  let file = Filename.temp_file "rig-remote-" ".key" in
+  let oc = open_out_gen [ Open_wronly; Open_trunc; Open_binary ] 0o600 file in
   output_string oc contents;
   close_out oc;
   Unix.chmod file perm;
@@ -68,6 +63,13 @@ let environment vars =
   Array.append (Unix.environment ())
     (Array.of_list (List.map (fun (k, v) -> k ^ "=" ^ v) vars))
 
+(* The text a child writes to [fd], its lines ended by LF on every system:
+   Windows ends a child's lines with CRLF. *)
+let child_text fd =
+  let ic = Unix.in_channel_of_descr fd in
+  set_binary_mode_in ic false;
+  ic
+
 (* Starts an agent of the key in [file], with the variables [vars] added to its
    environment. *)
 let start ?(mode = "") ?(vars = []) ?(input = Unix.stdin) file =
@@ -78,8 +80,8 @@ let start ?(mode = "") ?(vars = []) ?(input = Unix.stdin) file =
       Unix.stderr
   in
   Unix.close w;
-  let out = Unix.in_channel_of_descr r in
-  match int_of_string (String.trim (input_line out)) with
+  let out = child_text r in
+  match int_of_string (input_line out) with
   | port -> { pid; port; out; status = None }
   | exception (End_of_file | Failure _) ->
       ignore (Unix.waitpid [] pid);
@@ -98,7 +100,7 @@ let start_controller file mode agents =
   let args = Array.of_list (controller_exe :: file :: mode :: ports) in
   let pid = Unix.create_process controller_exe args Unix.stdin w Unix.stderr in
   Unix.close w;
-  { pid; port = 0; out = Unix.in_channel_of_descr r; status = None }
+  { pid; port = 0; out = child_text r; status = None }
 
 (* The agent's exit code and the lines it printed after its port, once it
    exited. *)
@@ -205,6 +207,7 @@ type launch = {
    [~reader_gone:true] the report's reader is closed before the program starts,
    so each of its report writes fails, and the report reads as no lines. *)
 let launch ?(args = []) ?(reader_gone = false) vars mode =
+  if Sys.win32 then skip ~reason:"launchers are POSIX only" ();
   let rr, rw = Unix.pipe ~cloexec:true () in
   let rr =
     if not reader_gone then rr
@@ -228,8 +231,8 @@ let launch ?(args = []) ?(reader_gone = false) vars mode =
   Unix.close sw;
   {
     lpid;
-    report = Unix.in_channel_of_descr rr;
-    said = Unix.in_channel_of_descr sr;
+    report = child_text rr;
+    said = child_text sr;
     heard = false;
   }
 
@@ -325,7 +328,7 @@ let raw_controller a =
       Unix.close fd;
       failf "dial: %s" why
   | Ok () ->
-      Unix.setsockopt_float fd Unix.SO_RCVTIMEO patience;
+      Rig_support.recv_timeout fd patience;
       fd
 
 let send fd s = ignore (Unix.write_substring fd s 0 (String.length s))
@@ -340,7 +343,9 @@ let read_n fd n =
       | 0 -> off
       | k -> go (off + k)
       | exception Unix.Unix_error (Unix.ECONNRESET, _, _) -> off
-      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+      | exception
+          Unix.Unix_error
+            ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.ETIMEDOUT), _, _) ->
           failf "no byte within %.0f s" patience
   in
   Bytes.sub_string b 0 (go 0)

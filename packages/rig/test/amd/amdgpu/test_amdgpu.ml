@@ -14,7 +14,10 @@ let strf = Printf.sprintf
    tree: an R9700 (gfx1201) behind two bridges of its own, with its audio
    function, as nonnormal's /sys lists them. *)
 
+(* A machine's tree names directories by PCI bus address, whose colons Windows
+   file names refuse. *)
 let rec mkdirs d =
+  if Sys.win32 then skip ~reason:"Windows file names hold no PCI address" ();
   if not (Sys.file_exists d) then begin
     mkdirs (Filename.dirname d);
     Sys.mkdir d 0o755

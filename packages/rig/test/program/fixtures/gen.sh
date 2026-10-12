@@ -28,10 +28,13 @@ fixture() {
   need clang 22.1.7
   case $1 in
   *_x86_64.o) clang $H $X "${1%_x86_64.o}.c" -o "$1" ;;
+  *_x86_64_windows.o)
+    clang $H $X -DRIG_WINDOWS "${1%_x86_64_windows.o}.c" -o "$1" ;;
   *_aarch64.o) clang $H $A "${1%_aarch64.o}.c" -o "$1" ;;
   *) echo "gen.sh: no recipe for $1" >&2; exit 2 ;;
   esac
 }
 
-[ $# -gt 0 ] || set -- fill_x86_64.o fill_aarch64.o spin_x86_64.o spin_aarch64.o
+[ $# -gt 0 ] || set -- fill_x86_64.o fill_aarch64.o fill_x86_64_windows.o \
+  spin_x86_64.o spin_aarch64.o
 for f in "$@"; do fixture "$f"; done

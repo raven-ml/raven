@@ -350,10 +350,21 @@ val descriptors : unit -> int option
     or [None] on Windows. *)
 
 val needs_fork : unit -> unit
-(** [needs_fork ()] skips the running test where the process runs more than one
-    thread and GCC compiled its C with AddressSanitizer. GCC's runtime holds no
-    allocator lock across fork, so a child can inherit one that another thread
-    held, and hang. A test calls it before it forks. *)
+(** [needs_fork ()] skips the running test on Windows, which has no fork, and
+    where the process runs more than one thread and GCC compiled its C with
+    AddressSanitizer. GCC's runtime holds no allocator lock across fork, so a
+    child can inherit one that another thread held, and hang. A test calls it
+    before it forks. *)
+
+val resident : unit -> int
+(** [resident ()] is this process's resident memory in bytes: its working set
+    on Windows. *)
+
+val recv_timeout : Unix.file_descr -> float -> unit
+(** [recv_timeout fd s] bounds each read on the socket [fd] to [s] seconds, [0.]
+    for none, on every system: [Unix.setsockopt_float] hands Windows the bound
+    in a unit it reads as milliseconds. A read past the bound raises
+    [Unix.Unix_error] with [EAGAIN] or [EWOULDBLOCK], [ETIMEDOUT] on Windows. *)
 
 val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts

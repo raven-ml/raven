@@ -623,9 +623,15 @@ let threaded () =
   | exception Sys_error _ -> true
 
 let needs_fork () =
+  if Sys.win32 then Windtrap.skip ~reason:"Windows has no fork" ();
   if gcc_asan () && threaded () then
     Windtrap.skip
       ~reason:"GCC's AddressSanitizer holds no allocator lock across fork" ()
+
+external recv_timeout : Unix.file_descr -> float -> unit
+  = "rig_test_recv_timeout"
+
+external resident : unit -> int = "rig_test_resident"
 
 (* Waiting for a signal *)
 

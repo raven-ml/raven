@@ -5,7 +5,8 @@
  (name rig_remote_job)
  (wrapped false)
  (modules remote_job watchdog)
- (libraries rig rig_remote rig_remote_proxy threads.posix unix windtrap))
+ (libraries rig rig_remote rig_remote_proxy rig_support threads.posix unix
+  windtrap))
 
 (tests
  (names

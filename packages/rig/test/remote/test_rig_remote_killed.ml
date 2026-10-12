@@ -14,6 +14,8 @@ open Windtrap
 open Remote_job
 
 let stopped p f =
+  if Sys.win32 then
+    skip ~reason:"Windows has no signal that stops a process" ();
   Unix.kill p.pid Sys.sigstop;
   Fun.protect ~finally:(fun () -> Unix.kill p.pid Sys.sigcont) f
 

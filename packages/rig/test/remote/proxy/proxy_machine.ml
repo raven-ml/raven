@@ -20,11 +20,15 @@ let patience = 5.
 
 (* Sockets and threads *)
 
+(* A connected pair of loopback TCP sockets. The accepted socket takes the
+   listener's small receive buffer, which Windows' loopback otherwise grows to
+   megabytes its peer has not read. *)
 let connected () =
   let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
   Fun.protect
     ~finally:(fun () -> Unix.close l)
     (fun () ->
+      Unix.setsockopt_int l Unix.SO_RCVBUF 4096;
       Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
       Unix.listen l 1;
       let port =

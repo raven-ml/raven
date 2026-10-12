@@ -104,6 +104,7 @@ let test_missing () =
 
 (* A file that cannot be read is no image, and a refusal says why. *)
 let test_unreadable () =
+  if Sys.win32 then skip ~reason:"Windows has no POSIX file modes" ();
   if Unix.geteuid () = 0 then
     skip ~reason:"root reads a file whatever its mode" ();
   let a = temp_dir () and b = temp_dir () in
@@ -203,23 +204,22 @@ let with_env ~xdg ~home f =
   let restore (v, x) = Unix.putenv v (Option.value x ~default:"") in
   Fun.protect f ~finally:(fun () -> List.iter restore saved)
 
+(* The directory under a data directory or a home, joined as the system joins
+   paths. *)
+let in_data d = Filename.concat d "rig/firmware"
+let in_home h = Filename.concat h ".local/share/rig/firmware"
+
 let test_directory =
   cases "the directory is XDG_DATA_HOME's, else HOME's"
     ~name:(fun (name, _, _, _) -> name)
     [
-      ("XDG_DATA_HOME", "/data", "/home/u", Some "/data/rig/firmware");
+      ("XDG_DATA_HOME", "/data", "/home/u", Some (in_data "/data"));
       ( "XDG_DATA_HOME with a final slash",
         "/data/",
         "/home/u",
-        Some "/data/rig/firmware" );
-      ( "XDG_DATA_HOME empty",
-        "",
-        "/home/u",
-        Some "/home/u/.local/share/rig/firmware" );
-      ( "XDG_DATA_HOME relative",
-        "data",
-        "/home/u",
-        Some "/home/u/.local/share/rig/firmware" );
+        Some (in_data "/data/") );
+      ("XDG_DATA_HOME empty", "", "/home/u", Some (in_home "/home/u"));
+      ("XDG_DATA_HOME relative", "data", "/home/u", Some (in_home "/home/u"));
       ("both empty", "", "", None);
       ("HOME relative", "", "home", None);
     ]

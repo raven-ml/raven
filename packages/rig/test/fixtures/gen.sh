@@ -29,6 +29,8 @@ fixture() {
   case $1 in
   *_x86_64.o) need clang 22.1.7
     clang $H $X "${1%_x86_64.o}.c" -o "$1" ;;
+  *_x86_64_windows.o) need clang 22.1.7
+    clang $H $X -DRIG_WINDOWS "${1%_x86_64_windows.o}.c" -o "$1" ;;
   *_aarch64.o) need clang 22.1.7
     clang $H $A "${1%_aarch64.o}.c" -o "$1" ;;
   *_sm89.cubin) ../gen/nvrtc.sh "${1%_sm89.cubin}.cu" sm_89 "$1" ;;
@@ -40,5 +42,6 @@ fixture() {
   affine_x86_64.o affine_aarch64.o \
   calling_x86_64.o calling_aarch64.o \
   waiting_x86_64.o waiting_aarch64.o ready_x86_64.o ready_aarch64.o \
+  ready_x86_64_windows.o \
   simple_add_sm89.cubin
 for f in "$@"; do fixture "$f"; done

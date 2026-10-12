@@ -212,12 +212,17 @@ let open_on_made () =
       | exception Unix.Unix_error _ -> false)
 
 (* [after_tick path] returns once a file written now gets a later change time
-   than [path]'s: the clock of file times, coarse on Linux, has moved on. *)
+   than [path]'s: the clock of file times, coarse on Linux, has moved on. On
+   Windows, [st_ctime] is the time a file was made, and its change time moves
+   with its write time. *)
 let after_tick path =
-  let changed p = (Unix.stat p).st_ctime in
+  let changed p =
+    let st = Unix.stat p in
+    if Sys.win32 then st.st_mtime else st.st_ctime
+  in
   let t = changed path and probe = new_path () in
   let rec wait k =
-    Out_channel.with_open_bin probe ignore;
+    Out_channel.with_open_bin probe (fun oc -> output_char oc 'x');
     if changed probe <= t then
       if k = 0 then failf "file times did not move past %s's" path
       else begin
@@ -255,7 +260,9 @@ let use_all_others () =
     (use_others others_count)
 
 (* [replace path how] puts another file of the same size at [path], all '#':
-   renamed over it, or made after its file was removed. *)
+   renamed over it, or made after its file was removed. Windows refuses to
+   rename over a file a handle holds open: there the file is moved aside and
+   removed first. *)
 type how = Rename | Recreate
 
 (* The ways [replace] replaces a file. *)
@@ -268,7 +275,14 @@ let pp_how ppf h =
 let replace path how =
   let n = (Unix.stat path).st_size in
   match how with
-  | Rename -> Sys.rename (make_file (String.make n '#')) path
+  | Rename ->
+      let next = make_file (String.make n '#') in
+      if Sys.win32 then begin
+        let aside = path ^ "-aside" in
+        Sys.rename path aside;
+        Sys.remove aside
+      end;
+      Sys.rename next path
   | Recreate ->
       Sys.remove path;
       ignore (make_file ~path (String.make n '#'))
@@ -1021,7 +1035,10 @@ let test_truncated kind =
         b
   in
   equal octets ~msg:"before" s (read file);
-  Unix.truncate path 4;
+  (* Through a descriptor that shares the file: [Unix.truncate] opens it
+     exclusively on Windows, which the disk's descriptor refuses. *)
+  let fd = Unix.openfile path [ Unix.O_WRONLY ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> Unix.ftruncate fd 4);
   raises_match (Exn.sys_error ~substring:path) (fun () ->
       read (B.view file ~first:2 ~length:5));
   equal (option string) ~msg:"the disk lost" None (Rig.lost disk);

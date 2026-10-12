@@ -166,6 +166,8 @@ let test_affinity () =
   let ((out, _, _) as process) =
     Unix.open_process_args_full exe [| exe |] env
   in
+  (* The child's line ends with CRLF on Windows. *)
+  In_channel.set_binary_mode out false;
   let line = In_channel.input_line out in
   ignore (Unix.close_process_full process);
   if line = Some "-1 -1" then skip ~reason:"the host has no affinity to pin" ();

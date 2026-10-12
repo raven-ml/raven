@@ -12,11 +12,11 @@
    In mode "again" it then listens at the same port and serves a second job
    likewise. In mode "linger" it waits 2 s before it exits. In mode "twice" it
    then calls serve again, and prints "serve raised" if that raised
-   Invalid_argument. In mode "helper" it starts a process that prints its
-   readiness after exec and waits for stdin to close. It reaps that process
-   before exiting. In mode "deaf" it is no agent of rig.remote: it proves the
-   key to the controller, then stops listening, so no other agent of the job
-   reaches it, and waits for the job to end.
+   Invalid_argument. In mode "helper" it starts a process, [agent.exe helper],
+   that prints "helper ready" and waits for a line or the end of stdin. It
+   reaps that process before exiting. In mode "deaf" it is no agent of
+   rig.remote: it proves the key to the controller, then stops listening, so no
+   other agent of the job reaches it, and waits for the job to end.
 
    It serves eleven kinds. "MEM" is two memory devices. "POLLED" is two Polled
    devices, which launch Polled's host functions. "TIGHT" is a Polled device
@@ -142,6 +142,11 @@ let deaf key =
       drain ()
 
 let () =
+  if Sys.argv.(1) = "helper" then begin
+    print_endline "helper ready";
+    ignore (In_channel.input_line stdin);
+    exit 0
+  end;
   let key =
     match Rig_remote.read_key Sys.argv.(1) with
     | Ok k -> k
@@ -155,15 +160,10 @@ let () =
     let helper =
       if mode <> "helper" then None
       else
-        let args =
-          [|
-            "/bin/sh";
-            "-c";
-            "printf 'helper ready\\n'; IFS= read -r release || :";
-          |]
-        in
+        let exe = Sys.executable_name in
         Some
-          (Unix.create_process "/bin/sh" args Unix.stdin Unix.stdout Unix.stderr)
+          (Unix.create_process exe [| exe; "helper" |] Unix.stdin Unix.stdout
+             Unix.stderr)
     in
     if mode = "together" then begin
       (* Two domains serve [a] at once: one raises, the other serves. *)

@@ -63,13 +63,13 @@ let descriptors =
        (((1 lsl 32) + d) * g.xccs) + r
      in
      let+ base =
+       (* Each edge base one draw in fifteen: the two past 48 bits come in
+          about one case in eight, which a run of 100 covers. *)
        frequency
-         [
-           (4, int_range 0 ((1 lsl 48) - 1));
-           ( 1,
-             of_list ~pp:Format.pp_print_int
-               [ min_int; -1; (1 lsl 48) - 1; 1 lsl 48; max_int ] );
-         ]
+         ((10, int_range 0 ((1 lsl 48) - 1))
+         :: List.map
+              (fun b -> (1, constant b))
+              [ min_int; -1; (1 lsl 48) - 1; 1 lsl 48; max_int ])
      and+ n =
        frequency
          [
