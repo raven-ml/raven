@@ -263,16 +263,50 @@ let decode_rows =
   and wb = matrix D.Bfloat16 [| 5120; 2880 |] in
   [
     Thumper.bench "einsum-f32-m1x4096x4096" (fun () ->
-        Nx.Repr.array (Nx.einsum rows_by_weight (Thumper.black_box x) w));
+        Nx.Repr.array (Nx.einsum rows_by_weight [ Thumper.black_box x; w ]));
     Thumper.bench "einsum-f32-m1x4096x4096-direct"
       (gemm_direct ~contracting:[| (1, 1) |] x w [| 1; 4096 |]);
     Thumper.bench "einsum-bf16-m1x5120x2880" (fun () ->
-        Nx.Repr.array (Nx.einsum rows_by_weight (Thumper.black_box xb) wb));
+        Nx.Repr.array (Nx.einsum rows_by_weight [ Thumper.black_box xb; wb ]));
   ]
+
+(* A matrix, a matrix and a vector: a (b v) does two matrix-vector products,
+   (a b) v a matrix product first. *)
+let chain_rows =
+  let a = matrix D.Float32 [| 1024; 1024 |]
+  and b = matrix D.Float32 [| 1024; 1024 |]
+  and v = matrix D.Float32 [| 1024 |] in
+  let mmv = Nx.Pattern.v "i j, j k, k -> i | j k" in
+  [
+    Thumper.bench "einsum-f32-mmv-1024" (fun () ->
+        Nx.Repr.array (Nx.einsum mmv [ Thumper.black_box a; b; v ]));
+  ]
+
+(* Planning at the most operands einsum takes: [n] one-element operands in a
+   ring, each sharing a summed name with the two before it and the two after,
+   so that every split of a set meets names. *)
+let plan_row n =
+  let ring i = (i + n) mod n in
+  let name i d = Printf.sprintf "r%d_%d" i d in
+  let layout i =
+    String.concat " "
+      [ name i 1; name i 2; name (ring (i - 1)) 1; name (ring (i - 2)) 2 ]
+  in
+  let sums = List.concat (List.init n (fun i -> [ name i 1; name i 2 ])) in
+  let p =
+    Nx.Pattern.v
+      (String.concat ", " (List.init n layout)
+      ^ " -> | " ^ String.concat " " sums)
+  in
+  let x = matrix D.Float32 [| 1; 1; 1; 1 |] in
+  let xs = List.init n (fun _ -> x) in
+  Thumper.bench (Printf.sprintf "einsum-plan-%d" n) (fun () ->
+      Nx.Repr.array (Nx.einsum p (Thumper.black_box xs)))
 
 let contract_rows =
   Thumper.group "contract"
-    (matmul_rows 4 @ matmul_rows 64 @ matmul_rows 1024 @ decode_rows)
+    (matmul_rows 4 @ matmul_rows 64 @ matmul_rows 1024 @ decode_rows
+   @ chain_rows @ [ plan_row 11 ])
 
 (* Indexing: a row take reads its rows, an add-scatter its updates, a set
    writes its row into a copy of the cache, and concatenate copies its result

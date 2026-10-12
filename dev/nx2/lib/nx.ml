@@ -1609,7 +1609,10 @@ let contract ?sizes ?acc ?init dt p a b =
   let acc = Option.map (fun dt -> D.Any dt) acc in
   Contraction.contract ~by:"Nx.contract" ?sizes ?acc ?init dt p a b
 
-let einsum p a b = Contraction.contract ~by:"Nx.einsum" (dtype a) p a b
+let einsum ?sizes ?acc p xs =
+  let acc = Option.map (fun dt -> D.Any dt) acc in
+  Contraction.einsum ~by:"Nx.einsum" ?sizes ?acc p xs
+
 let matmul a b = Contraction.matmul ~by:"Nx.matmul" a b
 
 (* Compositions *)

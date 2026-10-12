@@ -464,11 +464,11 @@ val repeat : ?axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     A pattern states a layout in words. Names are words separated by spaces,
     parentheses group axes merged into one, [1] is an axis of extent [1], and
     [...] stands for the axes no name covers. One grammar serves {!rearrange},
-    with one operand, and einsum and contract, with two:
+    with one operand, {!contract}, with two, and {!einsum}, with two or more:
 
     {v
     pattern  ::= operands "->" layout [ "|" name { name } ]
-    operands ::= layout [ "," layout ]
+    operands ::= layout { "," layout }
     layout   ::= { axis }
     axis     ::= name | "(" name { name } ")" | "1" | "..."
     name     ::= a letter, then letters, digits and "_"
@@ -493,14 +493,14 @@ module Pattern : sig
       left splits an axis and on the right merges axes; [1] drops a unit axis on
       the left and adds one on the right; [...] is the same axes on both sides.
 
-      With two, a name in both operands and the result is a batch axis, in one
-      operand and the result a free axis, and the names after [|] are summed:
-      each is in both operands and not in the result. Every operand name is in
-      the result or summed. A group in an operand splits that operand's axis,
-      and an extent a group leaves unknown comes from the other operand where
-      the name appears there. [...] stands for the same leading axes in all three
-      layouts, kept as batch axes; [1] drops a unit axis of an operand or adds
-      one to the result.
+      With two or more, a name in the result is a batch axis where two operands
+      or more hold it and a free axis where one does, and the names after [|]
+      are summed: each is in two operands or more and not in the result. Every
+      operand name is in the result or summed. A group in an operand splits
+      that operand's axis, and an extent a group leaves unknown comes from
+      another operand that holds the name. [...] stands for the same leading
+      axes in every layout, kept as batch axes; [1] drops a unit axis of an
+      operand or adds one to the result.
 
       Sums are written out because a name dropped from the result is easy to
       miss. In ["b h q d, b h k d -> h q k | d"], [b] was left out by mistake;
@@ -517,7 +517,7 @@ module Pattern : sig
   (** [inverse p] is the one-operand pattern that undoes [p]: its sides
       exchanged.
 
-      Raises [Invalid_argument] if [p] has two operands. *)
+      Raises [Invalid_argument] if [p] has more than one operand. *)
 end
 
 val rearrange :
@@ -529,12 +529,12 @@ val rearrange :
     gives, the quotient of its axis by the others. A view where strides express
     it, a copy otherwise.
 
-    Raises [Invalid_argument] if [p] has two operands, [p]'s left side names
-    more axes than [x] has or, without [...], other than [x]'s rank, a [1] on
-    the left meets an extent other than [1], a group's extents do not divide or
-    multiply to its axis, a group has two unknown extents, a size disagrees with
-    the extent [x] gives its name, a name in [sizes] is not in [p] or is there
-    twice, or a size is negative. *)
+    Raises [Invalid_argument] if [p] has more than one operand, [p]'s left side
+    names more axes than [x] has or, without [...], other than [x]'s rank, a
+    [1] on the left meets an extent other than [1], a group's extents do not
+    divide or multiply to its axis, a group has two unknown extents, a size
+    disagrees with the extent [x] gives its name, a name in [sizes] is not in
+    [p] or is there twice, or a size is negative. *)
 
 (** {1:indexing Indexing and slicing}
 
@@ -1315,19 +1315,62 @@ val contract :
 
     A donated [init] is consumed as {!donate} states.
 
-    Raises [Invalid_argument] if [dt] is a boolean; [p] has one operand; an
-    operand's rank is not the number of axes [p] gives it; paired extents
-    differ; a group's extents do not multiply to its axis, or it leaves two
-    extents unknown; a unit axis's extent is not [1]; a name in [sizes] is not
-    in [p], or its size is negative; [acc] is omitted for an integer and a float operand, or is a
-    boolean, a float narrower than [float32] or than a float operand, or of
-    another kind than [dt]; or [init]'s shape is not the result's. *)
+    Raises [Invalid_argument] if [dt] is a boolean; [p] has other than two
+    operands; an operand's rank is not the number of axes [p] gives it; [...]
+    covers different numbers of axes in the two operands; paired extents
+    differ; a group's extents do not multiply to its axis, or it leaves
+    two extents unknown; a unit axis's extent is not [1]; a name in [sizes] is
+    not in [p], or its size is negative; [acc] is omitted for an integer and a
+    float operand, or is a boolean, a float narrower than [float32] or than a
+    float operand, or of another kind than [dt]; or [init]'s shape is not the
+    result's. *)
 
-val einsum : Pattern.t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [einsum p a b] is [contract (dtype a) p a b]: two operands, as a contraction
-    has. A product of three is two calls.
+val einsum :
+  ?sizes:(string * int) list ->
+  ?acc:('w, 'q) dtype ->
+  Pattern.t ->
+  ('v, 's, 'd) t list ->
+  ('v, 's, 'd) t
+(** [einsum ~sizes ~acc p [x1; …; xn]] is [round (Σ x1 ⋯ xn)] over [p]'s
+    summed names, for each index of [p]'s result, at the operands' dtype. It
+    is a tree of {!contract}s of two operands, each summing in [acc] and
+    leaving its value in [acc], so that the result rounds once. [acc] defaults
+    as {!contract}'s for two operands of that dtype, and [sizes] is as
+    {!contract}'s.
 
-    Raises [Invalid_argument] as {!contract} does. *)
+    Of the trees whose values have at most {!Nx_array.Layout.max_rank} axes,
+    the tree is the one whose contractions do the fewest multiply-adds in
+    all, a contraction doing the product of the extents of the names its two
+    parts hold. A part's value holds the names that the result or an operand
+    outside it needs, and each of its elements costs at least one
+    multiply-add, so the work bounds the memory too. Of trees doing as many,
+    each contraction's left part holds the earliest of its operands; of such
+    parts, the larger, then the one holding the earliest operand the other
+    lacks: equal work gives [((x1 x2) x3) x4]. The tree, and with it the
+    result's bits, is a function of [p] and the shapes alone. Choosing it
+    takes time in [3^n], so [p] has at most 11 operands.
+
+    {[
+    (* For square matrices, a (b v): j·k multiply-adds, then i·j, where
+       (a b) v does i·j·k, then i·k. *)
+    let mmv = Nx.Pattern.v "i j, j k, k -> i | j k"
+    let y = Nx.einsum mmv [ a; b; v ]
+    ]}
+
+    Before rounding the result is within [γ(N, 2u) Σ |x1| ⋯ |xn|] of the exact
+    sum, where [N = Σ (K + 1)] over the tree's [n - 1] contractions, each
+    summing [K] products per element, and [γ] and [u] are as {!contract}
+    states.
+
+    Raises [Invalid_argument] if [p] has one operand, more than 11, or other
+    than [n]; the dtype is a boolean; an operand's rank is not the number of
+    axes [p] gives it; [...] covers different numbers of axes in two operands;
+    a name's extents differ between operands; every tree holds a value of
+    more than {!Nx_array.Layout.max_rank} axes; a group's extents do not
+    multiply to its axis, or it leaves two extents unknown; a unit axis's
+    extent is not [1]; a name in [sizes] is not in [p], or its size is
+    negative; or [acc] is a boolean, a float narrower than [float32] or than
+    the operands, or of another kind than theirs. *)
 
 val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [matmul a b] is the matrix product over the last two axes, leading axes

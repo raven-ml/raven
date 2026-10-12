@@ -27,9 +27,9 @@ type plan
 (** The type for a pattern's operands. *)
 type kind = private
   | One of { operand : layout; plan : plan }
-  | Two of { a : layout; b : layout; summed : string list }
-      (** [summed] is the names after [|], in order. With two operands, an
-          [Ellipsis] leads all three layouts or none. *)
+  | Many of { operands : layout list; summed : string list }
+      (** Two operands or more. [summed] is the names after [|], in order. An
+          [Ellipsis] leads every layout or none. *)
 
 type t = private {
   text : string;  (** As written, for messages. *)
@@ -46,7 +46,7 @@ val v : by:string -> string -> t
 val inverse : by:string -> t -> t
 (** [inverse ~by p] is [p] with its operand and result exchanged.
 
-    Raises [Invalid_argument] naming [by] if [p] has two operands. *)
+    Raises [Invalid_argument] naming [by] if [p] has more than one operand. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a pattern as its text, quoted. *)

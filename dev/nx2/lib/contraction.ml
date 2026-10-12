@@ -64,6 +64,7 @@ let failf ~by p fmt =
   Format.kasprintf (fun s -> invalid_argf "%s: %a: %s" by Pattern.pp p s) fmt
 
 let render ns = "(" ^ String.concat " " ns ^ ")"
+let axes k = if k = 1 then "1 axis" else string_of_int k ^ " axes"
 
 (* The product of the extents [ds], none negative: [0] if one is, else
    [None] past an int. *)
@@ -186,30 +187,35 @@ let lower ~ext ~summed na nb nr shape =
     shape;
   }
 
-let plan ~by ~sizes (p : Pattern.t) (da, sa) (db, sb) =
+(* The operands' names, with ellipses written out, each name's extent, and
+   the result's names and shape: [p]'s operand layouts [ls] met with the
+   operands [xs], each a label for messages, a dtype's name and a shape. *)
+let prepare ~by ~sizes (p : Pattern.t) ls xs =
   let err fmt = failf ~by p fmt in
-  let la, lb, summed =
-    match p.kind with
-    | Two { a; b; summed } -> (a, b, summed)
-    | One _ -> invalid_argf "%s: %a has one operand" by Pattern.pp p
-  in
-  let ellipsis label dt l s =
+  let covered l (label, dt, s) =
     let w = written l and r = Array.length s in
     let dots = List.mem Pattern.Ellipsis l in
     if (dots && r < w) || ((not dots) && r <> w) then
-      invalid_argf "%s: %a names %d axes for %s; %s is %s %a" by Pattern.pp p w
-        label label dt pp_shape s
+      invalid_argf "%s: %a names %s for %s; %s is %s %a" by Pattern.pp p
+        (axes w) label label dt pp_shape s
     else r - w
   in
-  let na = ellipsis "a" da la sa and nb = ellipsis "b" db lb sb in
-  if na <> nb then err "... is %d axes in a and %d in b" na nb;
-  let la = expand la na and lb = expand lb na and lr = expand p.result na in
-  let all = names la @ names lb in
+  let cs = List.map2 covered ls xs in
+  let c = List.hd cs and first, _, _ = List.hd xs in
+  List.iter2
+    (fun c' (label, _, _) ->
+      if c' <> c then err "... is %s in %s and %d in %s" (axes c) first c' label)
+    cs xs;
+  let ls = List.map (fun l -> expand l c) ls and lr = expand p.result c in
+  let all = List.concat_map names ls in
   List.iter
     (fun (n, _) ->
       if not (List.mem n all) then err "~sizes names %s, which it lacks" n)
     sizes;
-  let ext = extents ~by ~pat:p ~sizes [ ("a", la, sa); ("b", lb, sb) ] in
+  let ext =
+    extents ~by ~pat:p ~sizes
+      (List.map2 (fun l (label, _, s) -> (label, l, s)) ls xs)
+  in
   let entry = function
     | Pattern.Name n -> ext n
     | Group ns -> (
@@ -218,8 +224,22 @@ let plan ~by ~sizes (p : Pattern.t) (da, sa) (db, sb) =
         | None -> err "%s in the result multiplies past an int" (render ns))
     | Unit | Ellipsis -> 1
   in
-  lower ~ext ~summed (names la) (names lb) (names lr)
-    (Array.of_list (List.map entry lr))
+  (List.map names ls, ext, names lr, Array.of_list (List.map entry lr))
+
+let plan ~by ~sizes (p : Pattern.t) (da, sa) (db, sb) =
+  let la, lb, summed =
+    match p.kind with
+    | Many { operands = [ a; b ]; summed } -> (a, b, summed)
+    | Many { operands; _ } ->
+        invalid_argf "%s: %a has %d operands; use Nx.einsum" by Pattern.pp p
+          (List.length operands)
+    | One _ ->
+        invalid_argf "%s: %a has one operand; use Nx.rearrange" by Pattern.pp p
+  in
+  let ns, ext, nr, shape =
+    prepare ~by ~sizes p [ la; lb ] [ ("a", da, sa); ("b", db, sb) ]
+  in
+  lower ~ext ~summed (List.nth ns 0) (List.nth ns 1) nr shape
 
 (* Accumulators *)
 
@@ -383,3 +403,165 @@ let matmul ~by a b =
       (Array.of_list (!shape @ List.map snd rows @ List.map snd cols))
   in
   run ~by (Prim.dtype a) pl a b
+
+(* Several operands *)
+
+(* The most operands [einsum] plans: the tree for [n] takes 3^n steps, about
+   12 ms at this bound on the bench row contract/einsum-plan-11, and each
+   operand more triples it. *)
+let max_operands = 11
+
+(* Counts of multiply-adds, held at [max_int] past it. *)
+let mul a b = if a <> 0 && b > max_int / a then max_int else a * b
+let add a b = if a > max_int - b then max_int else a + b
+let rec popcount s = if s = 0 then 0 else 1 + popcount (s land (s - 1))
+
+(* The names of a pattern of several operands, numbered: the bit set of the
+   operands holding each, whether the result keeps it, and its extent. *)
+type table = { held : int array; kept : bool array; extent : int array }
+
+(* The work of contracting the parts [t] and [u] of the set [s], from the
+   [j]th name on, times [w]: the product of the extents of the names it
+   meets. A name meets it where [s] holds it, unless every operand holding it
+   lies in one part and the result drops it: that part summed it. *)
+let rec work tb s t u j w =
+  if j = Array.length tb.held then w
+  else
+    let h = tb.held.(j) in
+    let summed = (not tb.kept.(j)) && (h land t = h || h land u = h) in
+    let w = if h land s <> 0 && not summed then mul w tb.extent.(j) else w in
+    work tb s t u (j + 1) w
+
+(* The number of names the value of the set [s] holds, from the [j]th name
+   on, plus [r]: those [s] holds that the result or an operand outside [s]
+   needs. *)
+let rec rank tb full s j r =
+  if j = Array.length tb.held then r
+  else
+    let h = tb.held.(j) in
+    let live = h land s <> 0 && (tb.kept.(j) || h land (full lxor s) <> 0) in
+    rank tb full s (j + 1) (if live then r + 1 else r)
+
+(* Whether the part [t] wins a tie with [t']: it holds more operands, or as
+   many and the earliest operand one of them lacks. *)
+let better t t' =
+  let c = popcount t and c' = popcount t' in
+  let d = t lxor t' in
+  c > c' || (c = c' && t land d land -d <> 0)
+
+(* The order in which to contract operands of names [ops] into the names
+   [result], as each set of operands' left part: [split.(s)] for a bit set [s]
+   of two operands or more, [0] where no tree of [s] keeps every value within
+   the layout's ranks. It is the tree with the least work in all among those,
+   and of splits of equal work the left part holds the set's earliest
+   operand, then [better] decides. Each set's best split is found from its
+   subsets' best: 3^n steps for n operands. *)
+let order ~ext ~result ops =
+  let n = Array.length ops in
+  let full = (1 lsl n) - 1 in
+  let names = List.sort_uniq String.compare (List.concat (Array.to_list ops)) in
+  let holders nm =
+    let h = ref 0 in
+    Array.iteri (fun i ns -> if List.mem nm ns then h := !h lor (1 lsl i)) ops;
+    !h
+  in
+  let tb =
+    {
+      held = Array.of_list (List.map holders names);
+      kept = Array.of_list (List.map (fun nm -> List.mem nm result) names);
+      extent = Array.of_list (List.map ext names);
+    }
+  in
+  let total = Array.make (full + 1) 0 and split = Array.make (full + 1) 0 in
+  let built s = s land (s - 1) = 0 || split.(s) <> 0 in
+  for s = 1 to full do
+    let low = s land -s in
+    let rest = s lxor low in
+    let fits = s = full || rank tb full s 0 0 <= Nx_array.Layout.max_rank in
+    (* Each part [t] holding [low], over the subsets of [rest] but itself. *)
+    let sub = ref 0 in
+    while fits && rest <> 0 && !sub <> rest do
+      let t = low lor !sub in
+      let u = s lxor t in
+      if built t && built u then begin
+        let w = add (add total.(t) total.(u)) (work tb s t u 0 1) in
+        if
+          split.(s) = 0 || w < total.(s) || (w = total.(s) && better t split.(s))
+        then begin
+          total.(s) <- w;
+          split.(s) <- t
+        end
+      end;
+      sub := (!sub - rest) land rest
+    done
+  done;
+  split
+
+let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
+    (xs : (v, s, d) Value.t list) : (v, s, d) Value.t =
+  let layouts =
+    match p.kind with
+    | One _ ->
+        invalid_argf "%s: %a has one operand; use Nx.rearrange" by Pattern.pp p
+    | Many { operands; _ } -> operands
+  in
+  let k = List.length layouts and n = List.length xs in
+  if k > max_operands then
+    invalid_argf
+      "%s: %a has %d operands; einsum plans at most %d: contract parts in \
+       separate einsums"
+      by Pattern.pp p k max_operands;
+  if n <> k then
+    invalid_argf "%s: %a has %d operands but the list holds %d" by Pattern.pp p
+      k n;
+  let dt = Prim.dtype (List.hd xs) in
+  if D.is D.Boolean dt then invalid_argf "%s: the operands are booleans" by;
+  let labels =
+    List.mapi
+      (fun i x -> ("x" ^ string_of_int (i + 1), D.name dt, Prim.shape x))
+      xs
+  in
+  let ns, ext, nr, shape = prepare ~by ~sizes p layouts labels in
+  let xs = Array.of_list xs and ns = Array.of_list ns in
+  let (D.Any w) = accumulator ~by ?acc dt (D.Any dt) (D.Any dt) in
+  (* Two parts' contraction into [into], of names [names] and shape [shape]:
+     the names both hold and [names] lacks are summed. *)
+  let pair (type x y) (into : (x, y) D.t) names shape (na, l) (nb, r) :
+      (x, y, d) Value.t =
+    let summed =
+      List.filter (fun n -> List.mem n nb && not (List.mem n names)) na
+    in
+    match (l, r) with
+    | Value.Any a, Value.Any b ->
+        run ~by ~acc:(D.Any w) into (lower ~ext ~summed na nb names shape) a b
+  in
+  let leaf i = (ns.(i), Value.Any xs.(i)) in
+  if n = 2 then pair dt nr shape (leaf 0) (leaf 1)
+  else
+    let split = order ~ext ~result:nr ns in
+    let full = (1 lsl n) - 1 in
+    if split.(full) = 0 then
+      invalid_argf "%s: %a: every order holds a value of more than %d axes" by
+        Pattern.pp p Nx_array.Layout.max_rank;
+    (* The names of the set [s]'s value, in the kernel's order so that no
+       intermediate moves, and the value, in [w]. *)
+    let rec value s =
+      if s land (s - 1) = 0 then leaf (popcount (s - 1))
+      else
+        let t = split.(s) in
+        let ((na, _) as l) = value t and ((nb, _) as r) = value (s lxor t) in
+        let rec outside nm i =
+          i < n
+          && (((1 lsl i) land s = 0 && List.mem nm ns.(i)) || outside nm (i + 1))
+        in
+        let needed nm = List.mem nm nr || outside nm 0 in
+        let names =
+          List.filter (fun nm -> List.mem nm nb && needed nm) na
+          @ List.filter (fun nm -> not (List.mem nm nb)) na
+          @ List.filter (fun nm -> not (List.mem nm na)) nb
+        in
+        let shape = Array.of_list (List.map ext names) in
+        (names, Value.Any (pair w names shape l r))
+    in
+    let t = split.(full) in
+    pair dt nr shape (value t) (value (full lxor t))

@@ -297,11 +297,14 @@ let pattern_error s msg =
 let parsing =
   group "parsing"
     [
-      test "two-operand patterns of the guide parse" (fun () ->
+      test "patterns of several operands parse" (fun () ->
           ignore (Nx.Pattern.v "b (kv g) i d, b kv j d -> b (kv g) i j | d");
           ignore (Nx.Pattern.v "... i k, ... k j -> ... i j | k");
           ignore (Nx.Pattern.v "i, i -> | i");
-          ignore (Nx.Pattern.v "n i, n o -> i o | n"));
+          ignore (Nx.Pattern.v "n i, n o -> i o | n");
+          ignore (Nx.Pattern.v "i j, j k, k -> i | j k");
+          ignore (Nx.Pattern.v "b i k, b k, b k j -> b i j | k");
+          ignore (Nx.Pattern.v "... i, ... i, ... i, ... i -> ... | i"));
       cases ~name:fst "a pattern outside the grammar raises"
         [
           ("b h -> h b c", "c is not on the left");
@@ -321,14 +324,20 @@ let parsing =
           ("2b -> 2b", "unexpected '2' at 0");
           ("b -> b | b", "| needs two operands");
           ("i j -> j i |", "| needs a name");
-          ("a, b, c -> a", "a pattern has one or two operands");
           ( "b h q d, b h k d -> b h q k",
-            "d is in both operands and not in the result; write it after |" );
+            "d is in 2 operands and not in the result; write it after |" );
+          ( "i k, k j, k -> i j",
+            "k is in 3 operands and not in the result; write it after |" );
+          ("a, b, c -> a", "b is in one operand and not in the result");
+          ("i, j, k k -> i j k", "k repeats in operand 3");
           ("b i, b j -> b", "i is in one operand and not in the result");
           ("i k, k j -> i j | k k", "k repeats after |");
           ("i k, k j -> i j k | k", "k is summed and in the result");
-          ("i k, j -> i j | k", "k is summed but not in both operands");
-          ("i ..., ... j -> ... i j", "... leads all three layouts or none");
+          ("i k, j -> i j | k", "k is summed but in fewer than two operands");
+          ( "i k, j, l -> i j l | k",
+            "k is summed but in fewer than two operands" );
+          ("i ..., ... j -> ... i j", "... leads every layout or none");
+          ("... i, ... j, k -> ... i j k", "... leads every layout or none");
         ]
         (fun (s, msg) -> pattern_error s msg);
       test "another einsum notation raises with the pattern it means" (fun () ->
@@ -340,16 +349,21 @@ let parsing =
           raises
             (Invalid_argument
                "Nx.Pattern.v: \"ij->ji\" is in NumPy's einsum notation; write \
-                \"i j -> j i\"") (fun () -> Nx.Pattern.v "ij->ji"));
+                \"i j -> j i\"") (fun () -> Nx.Pattern.v "ij->ji");
+          raises
+            (Invalid_argument
+               "Nx.Pattern.v: \"ij,jk,k->i\" is in NumPy's einsum notation; \
+                write \"i j, j k, k -> i | j k\"") (fun () ->
+              Nx.Pattern.v "ij,jk,k->i"));
       test "a one-letter-per-axis pattern that reads as words is words"
         (fun () ->
           let x, _ = host [| 2 |] in
           equal (array int) [| 2 |]
             (Nx.shape (Nx.rearrange (Nx.Pattern.v "ab->ab") x)));
-      test "inverse refuses two operands" (fun () ->
+      test "inverse refuses several operands" (fun () ->
           raises
             (Invalid_argument
-               "Nx.Pattern.inverse: \"i k, k j -> i j | k\" has two operands")
+               "Nx.Pattern.inverse: \"i k, k j -> i j | k\" has 2 operands")
             (fun () -> Nx.Pattern.inverse (Nx.Pattern.v "i k, k j -> i j | k")));
     ]
 
@@ -397,8 +411,9 @@ let calls =
             ~sizes:[ ("h", max_int); ("d", 2) ]
             "b (h d) t -> b h d t" x ": more elements than an int counts";
           call_error "b 1 t -> b t" x ": axis 1 has extent 6 where it has 1";
-          call_error "i k, k j -> i j | k" x
-            ": has two operands; use Nx.einsum or Nx.contract");
+          call_error "i k, k j -> i j | k" x ": has 2 operands; use Nx.einsum";
+          call_error "i k, k j, j -> i | k j" x
+            ": has 3 operands; use Nx.einsum");
       test "units drop and add axes of extent 1" (fun () ->
           let y = Nx.rearrange (Nx.Pattern.v "b h t -> 1 b 1 (h t) 1") x in
           equal (array int) [| 1; 2; 1; 24; 1 |] (Nx.shape y);

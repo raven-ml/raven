@@ -21,7 +21,7 @@ type plan = {
 
 type kind =
   | One of { operand : layout; plan : plan }
-  | Two of { a : layout; b : layout; summed : string list }
+  | Many of { operands : layout list; summed : string list }
 
 type t = { text : string; result : layout; kind : kind }
 
@@ -127,6 +127,13 @@ let names l =
 
 let has_ellipsis l = List.mem Ellipsis l
 
+(* [ns] without repeats, each name where it first appears. *)
+let uniq ns =
+  List.rev
+    (List.fold_left
+       (fun acc n -> if List.mem n acc then acc else n :: acc)
+       [] ns)
+
 (* Raises if a name of [ns] repeats [where]. *)
 let once ~by s where ns =
   let rec go seen = function
@@ -159,35 +166,36 @@ let check_one ~by s operand result summed =
   if has_ellipsis operand <> has_ellipsis result then
     fail ~by s "... is on one side only"
 
-let check_two ~by s a b result summed =
-  distinct ~by s "in operand 1" a;
-  distinct ~by s "in operand 2" b;
+let check_many ~by s operands result summed =
+  List.iteri
+    (fun i l -> distinct ~by s (Printf.sprintf "in operand %d" (i + 1)) l)
+    operands;
   distinct ~by s "in the result" result;
   once ~by s "after |" summed;
-  let na = names a and nb = names b and nr = names result in
+  let ns = List.map names operands and nr = names result in
+  let holders n = List.length (List.filter (List.mem n) ns) in
   List.iter
     (fun n ->
-      if not (List.mem n na && List.mem n nb) then
-        fail ~by s "%s is summed but not in both operands" n;
+      if holders n < 2 then
+        fail ~by s "%s is summed but in fewer than two operands" n;
       if List.mem n nr then fail ~by s "%s is summed and in the result" n)
     summed;
   List.iter
-    (fun n ->
-      if not (List.mem n na || List.mem n nb) then
-        fail ~by s "%s is not on the left" n)
+    (fun n -> if holders n = 0 then fail ~by s "%s is not on the left" n)
     nr;
   List.iter
     (fun n ->
       if not (List.mem n nr || List.mem n summed) then
-        if List.mem n na && List.mem n nb then
-          fail ~by s
-            "%s is in both operands and not in the result; write it after |" n
-        else fail ~by s "%s is in one operand and not in the result" n)
-    (na @ List.filter (fun n -> not (List.mem n na)) nb);
+        match holders n with
+        | 1 -> fail ~by s "%s is in one operand and not in the result" n
+        | k ->
+            fail ~by s
+              "%s is in %d operands and not in the result; write it after |" n k)
+    (uniq (List.concat ns));
   let leads l = match l with Ellipsis :: _ -> true | _ -> false in
-  let all = [ a; b; result ] in
+  let all = result :: operands in
   if List.exists has_ellipsis all && not (List.for_all leads all) then
-    fail ~by s "... leads all three layouts or none"
+    fail ~by s "... leads every layout or none"
 
 let index_of names n =
   let i = ref 0 in
@@ -243,10 +251,9 @@ let words ~by s =
     | [ operand ] ->
         check_one ~by s operand result summed;
         One { operand; plan = plan operand result }
-    | [ a; b ] ->
-        check_two ~by s a b result summed;
-        Two { a; b; summed }
-    | _ -> fail ~by s "a pattern has one or two operands"
+    | operands ->
+        check_many ~by s operands result summed;
+        Many { operands; summed }
   in
   { text = s; result; kind }
 
@@ -281,14 +288,13 @@ let numpy s =
         when List.exists
                (fun l -> List.length (names l) > 1)
                (result :: operands) ->
+          let ns = List.map names operands in
           let summed =
-            match operands with
-            | [ a; b ] ->
-                List.filter
-                  (fun n ->
-                    List.mem n (names b) && not (List.mem n (names result)))
-                  (names a)
-            | _ -> []
+            List.filter
+              (fun n ->
+                List.length (List.filter (List.mem n) ns) >= 2
+                && not (List.mem n (names result)))
+              (uniq (List.concat ns))
           in
           Some (text ~operands ~result ~summed)
       | _ -> None)
@@ -316,7 +322,10 @@ let inverse ~by p =
         result = operand;
         kind = One { operand = p.result; plan = plan p.result operand };
       }
-  | Two _ -> invalid_arg (Printf.sprintf "%s: %S has two operands" by p.text)
+  | Many { operands; _ } ->
+      invalid_arg
+        (Printf.sprintf "%s: %S has %d operands" by p.text
+           (List.length operands))
 
 (* Movements *)
 
@@ -452,7 +461,8 @@ let arrangement ~by ~text pl ext covered atom split =
 let moves ~by ~sizes p s what =
   let fail fmt = fail ~by p.text fmt in
   match p.kind with
-  | Two _ -> fail "has two operands; use Nx.einsum or Nx.contract"
+  | Many { operands; _ } ->
+      fail "has %d operands; use Nx.einsum" (List.length operands)
   | One { plan; _ } ->
       let text = p.text in
       let ext, covered, atom, split = extents ~by ~text ~sizes plan s what in
