@@ -1276,13 +1276,13 @@ let with_file contents f =
   Out_channel.with_open_bin path (fun oc -> output_string oc contents);
   Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path)
 
-(* [anonymous path s] is [s] with each [path] written [data.csv]. *)
-let anonymous path s =
-  let n = String.length path and b = Buffer.create (String.length s) in
+(* [replace sub by s] is [s] with each [sub] written [by]. *)
+let replace sub by s =
+  let n = String.length sub and b = Buffer.create (String.length s) in
   let i = ref 0 in
   while !i < String.length s do
-    if !i + n <= String.length s && String.sub s !i n = path then begin
-      Buffer.add_string b "data.csv";
+    if !i + n <= String.length s && String.sub s !i n = sub then begin
+      Buffer.add_string b by;
       i := !i + n
     end
     else begin
@@ -1291,6 +1291,15 @@ let anonymous path s =
     end
   done;
   Buffer.contents b
+
+(* [anonymous path s] is [s] with each [path] written [data.csv], bare or
+   quoted as plans quote it, which escapes the backslashes of a Windows
+   path. *)
+let anonymous path s =
+  let quoted = Format.asprintf "%a" Type.pp_quoted in
+  s
+  |> replace (quoted path) (quoted "data.csv")
+  |> replace path "data.csv"
 
 let files =
   group "file"

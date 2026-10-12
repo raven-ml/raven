@@ -9,7 +9,9 @@ module P = Talon_parquet
 
 (* Fixtures *)
 
-let path name = Filename.concat "support" name
+(* [path name] is the fixture [name], written with [/], which every system
+   opens, so that messages name it alike. *)
+let path name = "support/" ^ name
 
 let buffer name =
   match Rig_disk.of_file (path name) with
