@@ -47,8 +47,7 @@ type t = {
   difference : float * float;
       (** The step and the relative tolerance of a central difference of the
           row: [(1e-6, 1e-8)], and wider for the spectral factorizations, whose
-          vectors are judged through derived forms, and [eig], which computes in
-          complex64. *)
+          vectors are judged through derived forms. *)
   smooth : dtype -> instance Windtrap.Gen.t;
       (** Points inside the smooth real domain, at a real or complex dtype whose
           values are cast from float64 ones. *)
@@ -57,9 +56,9 @@ type t = {
   complex : instance Windtrap.Gen.t option;
       (** Complex128 points inside the smooth complex domain, both components
           drawn, for a row nx computes on complex values. *)
-  complex_found : instance list;
-      (** Complex128 points at which a law over {!complex} once failed, run
-          before any drawn point. *)
+  complex_found : (instance * int) list;
+      (** Complex128 points, each with the seed of its directions, at which a
+          law over {!complex} once failed, run before any drawn point. *)
   dtypes : dtype list;  (** The dtypes {!smooth} takes. *)
   derivative : (float -> float) option;
       (** The derivative of an elementwise row of one operand, in OCaml floats.

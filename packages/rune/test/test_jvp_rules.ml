@@ -165,7 +165,7 @@ let laws ~count (c : Case.t) =
     | Some gen ->
         [
           prop ~gen
-            ~examples:(List.map (fun i -> (i, 0)) c.complex_found)
+            ~examples:c.complex_found
             "on complex values the tangent agrees with a central difference"
             (central c.difference);
         ]

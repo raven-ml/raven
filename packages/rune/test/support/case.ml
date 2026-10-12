@@ -33,7 +33,7 @@ type t = {
   smooth : dtype -> instance Gen.t;
   finite : instance Gen.t;
   complex : instance Gen.t option;
-  complex_found : instance list;
+  complex_found : (instance * int) list;
   dtypes : dtype list;
   derivative : (float -> float) option;
 }
@@ -1051,7 +1051,7 @@ let qr_found =
 
 let qr_case =
   case ~dtypes:wide ~complex:(qr_instance complex_values Nx.complex128)
-    ~complex_found:[ qr_found ] Qr (fun (D d) -> qr_instance real_values d)
+    ~complex_found:[ (qr_found, 0) ] Qr (fun (D d) -> qr_instance real_values d)
 
 let diag_matrix d n v = Nx.mul (Nx.eye d n) (Nx.unsqueeze ~axes:[ -2 ] v)
 
@@ -1212,6 +1212,31 @@ let eigh_instance values d =
        (if vectors then "" else ", values"))
     f [ x ]
 
+(* [eig_at ~vectors ~pair x] judges [x]'s eigenvalues through their power sums
+   and its eigenvectors through [Σ λₖ vₖ vₖᴴ]; [pair] only names the case. *)
+let eig_at ~vectors ~pair x =
+  let n = Nx.dim (-1) x in
+  let f x =
+    let w, vecs = Op.eval (Eig { vectors; x = one x }) in
+    let power k = Nx.sum ~axes:[ -1 ] ~keepdims:true (Nx.pow_s w k) in
+    let sums =
+      Nx.concatenate ~axis:(-1)
+        [
+          power Complex.one;
+          power { re = 2.; im = 0. };
+          power { re = 3.; im = 0. };
+        ]
+    in
+    match vecs with
+    | None -> [ sums ]
+    | Some v -> [ sums; Nx.matmul (columns_scaled v w) (adjoint v) ]
+  in
+  instance ~extra:None
+    (Printf.sprintf "eig of %d x %d%s%s" n n
+       (if vectors then "" else ", values")
+       (if pair then ", a complex pair" else ""))
+    f [ x ]
+
 (* [V B V⁻¹] with [V = I + 0.3 Q], [Q] orthonormal, so that [V]'s condition
    number is at most 13/7, and [B] the eigenvalues on a diagonal; on a real
    matrix, when [pair], its first two rows hold [[λ₀, -0.4], [0.4, λ₀]], whose
@@ -1241,26 +1266,22 @@ let eig_instance values d =
       (Nx.matmul v (Nx.cast d (Nx.create Nx.float64 [| n; n |] b)))
       (Nx.inv v)
   in
-  let f x =
-    let w, vecs = Op.eval (Eig { vectors; x = one x }) in
-    let power k = Nx.sum ~axes:[ -1 ] ~keepdims:true (Nx.pow_s w k) in
-    let sums =
-      Nx.concatenate ~axis:(-1)
-        [
-          power Complex.one;
-          power { re = 2.; im = 0. };
-          power { re = 3.; im = 0. };
-        ]
-    in
-    match vecs with
-    | None -> [ sums ]
-    | Some v -> [ sums; Nx.matmul (columns_scaled v w) (adjoint v) ]
-  in
-  instance ~extra:None
-    (Printf.sprintf "eig of %d x %d%s%s" n n
-       (if vectors then "" else ", values")
-       (if pair then ", a complex pair" else ""))
-    f [ x ]
+  eig_at ~vectors ~pair x
+
+(* A matrix along whose direction, of entries up to [2.8] in modulus,
+   [Σ λₖ vₖ vₖᴴ]'s third derivative is about [1.4e4]: a central difference's
+   error, [eps² / 6] times it, is [2.4e-3] at a step of [1e-3] and [2.4e-9] at
+   [1e-6]. *)
+let eig_found =
+  let c re im = { Complex.re; im } in
+  eig_at ~vectors:true ~pair:false
+    (Nx.create Nx.complex128 [| 2; 2 |]
+       [|
+         c 0.32964348263046783 (-0.015667795597719185);
+         c 0.05222598532573061 0.04125852840732719;
+         c (-0.05222598532573061) (-0.04125852840732719);
+         c 0.6047003386793158 0.015667795597719174;
+       |])
 
 let svd_case =
   case ~dtypes:wide ~complex:(svd_instance complex_values Nx.complex128)
@@ -1272,7 +1293,8 @@ let eigh_case =
 
 let eig_case =
   case ~dtypes:wide ~complex:(eig_instance complex_values Nx.complex128)
-    ~difference:(1e-3, 1e-3) Eig (fun (D d) -> eig_instance real_values d)
+    ~complex_found:[ (eig_found, 257297) ] ~difference:(1e-6, 1e-6) Eig
+    (fun (D d) -> eig_instance real_values d)
 
 (* Movements *)
 
