@@ -249,17 +249,20 @@ static value arg(size_t n) {
    GPU submission. Their bigarrays cover whole aligned pages. */
 #define STATE_ALIGNMENT 65536
 
+CAMLextern value caml_ba_sub(value vb, value vofs, value vlen);
+
+/* The aligned pages are a slice of a larger bigarray the runtime allocates
+   and frees, as no C library offers an aligned allocation on every system. */
 static value state(size_t n) {
   CAMLparam0();
   CAMLlocal1(v);
   size_t bytes = (n + STATE_ALIGNMENT - 1) & ~(size_t)(STATE_ALIGNMENT - 1);
-  void *p;
-  if (posix_memalign(&p, STATE_ALIGNMENT, bytes) != 0)
-    caml_raise_out_of_memory();
-  memset(p, 0, bytes);
-  v = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT | CAML_BA_MANAGED,
-                         1, p, (intnat)bytes);
-  CAMLreturn(v);
+  v = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
+                         (intnat)(bytes + STATE_ALIGNMENT));
+  uintptr_t p = (uintptr_t)Caml_ba_data_val(v);
+  uintptr_t at = (p + STATE_ALIGNMENT - 1) & ~(uintptr_t)(STATE_ALIGNMENT - 1);
+  memset((void *)at, 0, bytes);
+  CAMLreturn(caml_ba_sub(v, Val_long(at - p), Val_long(bytes)));
 }
 
 value rig_cuda_test_data(value array) {

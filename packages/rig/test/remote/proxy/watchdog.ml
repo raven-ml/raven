@@ -10,21 +10,23 @@ let limit = 100.
    inside C, where neither a test's timeout nor SIGTERM reaches it, cannot hang
    runtest. The watch is a child process, which the hang cannot stop; it leaves
    within 0.2 s once this process ends. Call it first, before any thread or
-   domain. *)
+   domain. Windows has no fork: a suite runs unwatched there. *)
 let start () =
   let parent = Unix.getpid () in
-  match Unix.fork () with
-  | 0 ->
-      let deadline = Unix.gettimeofday () +. limit in
-      let rec watch () =
-        if Unix.getppid () <> parent then Unix._exit 0;
-        if Unix.gettimeofday () >= deadline then begin
-          prerr_endline "watchdog: the suite ran out of time; killing it";
-          (try Unix.kill parent Sys.sigkill with Unix.Unix_error _ -> ());
-          Unix._exit 0
-        end;
-        Unix.sleepf 0.2;
+  if Sys.win32 then ()
+  else
+    match Unix.fork () with
+    | 0 ->
+        let deadline = Unix.gettimeofday () +. limit in
+        let rec watch () =
+          if Unix.getppid () <> parent then Unix._exit 0;
+          if Unix.gettimeofday () >= deadline then begin
+            prerr_endline "watchdog: the suite ran out of time; killing it";
+            (try Unix.kill parent Sys.sigkill with Unix.Unix_error _ -> ());
+            Unix._exit 0
+          end;
+          Unix.sleepf 0.2;
+          watch ()
+        in
         watch ()
-      in
-      watch ()
-  | _ -> ()
+    | _ -> ()

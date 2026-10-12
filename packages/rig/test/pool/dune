@@ -37,7 +37,7 @@
 (tests
  (names test_interleavings test_threads)
  (modules test_interleavings test_threads)
- (enabled_if
+ (build_if
   (<> %{os_type} Win32))
  (libraries rig_pool_hooked_probe rig_pool_probe rig_pool_thread_probe unix
   windtrap))

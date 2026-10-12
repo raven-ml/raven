@@ -42,7 +42,7 @@ let agent () =
 let controller () =
   let exe = Sys.executable_name in
   let ic = Unix.open_process_args_in exe [| exe; "agent" |] in
-  let port = int_of_string (input_line ic) in
+  let port = int_of_string (String.trim (input_line ic)) in
   let j = Result.get_ok (Rig_remote.connect ~key [ ("127.0.0.1", port) ]) in
 
   (* The agent's machine has a host, and the devices its agent serves. *)

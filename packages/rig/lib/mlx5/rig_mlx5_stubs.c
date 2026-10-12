@@ -18,7 +18,11 @@
 #include <errno.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/mman.h>
+#endif
 
 #define CAML_NAME_SPACE
 #include <caml/bigarray.h>
@@ -51,9 +55,14 @@ static uint32_t be32(uint32_t v) {
 
 /* [v_n] bytes of zeroed memory at a page boundary, which a child process
    does not inherit, so that no copy on write moves a page the NIC reads:
-   their address, or -errno. */
+   their address, or -errno. Windows has no fork: its pages are never
+   copied on write. */
 value caml_rig_mlx5_pages(value v_n) {
   size_t n = (size_t)Long_val(v_n);
+#ifdef _WIN32
+  void *p = VirtualAlloc(NULL, n, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+  return p == NULL ? Val_long(-ENOMEM) : Val_long((intnat)p);
+#else
   void *p = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
                  -1, 0);
   if (p == MAP_FAILED) return Val_long(-errno);
@@ -65,10 +74,16 @@ value caml_rig_mlx5_pages(value v_n) {
   }
 #endif
   return Val_long((intnat)p);
+#endif
 }
 
 value caml_rig_mlx5_free(value v_at, value v_n) {
+#ifdef _WIN32
+  (void)v_n;
+  VirtualFree(PTR(v_at), 0, MEM_RELEASE);
+#else
   munmap(PTR(v_at), (size_t)Long_val(v_n));
+#endif
   return Val_unit;
 }
 

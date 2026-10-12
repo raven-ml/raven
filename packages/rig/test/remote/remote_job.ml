@@ -79,7 +79,7 @@ let start ?(mode = "") ?(vars = []) ?(input = Unix.stdin) file =
   in
   Unix.close w;
   let out = Unix.in_channel_of_descr r in
-  match int_of_string (input_line out) with
+  match int_of_string (String.trim (input_line out)) with
   | port -> { pid; port; out; status = None }
   | exception (End_of_file | Failure _) ->
       ignore (Unix.waitpid [] pid);
