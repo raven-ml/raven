@@ -680,7 +680,14 @@ module Buffer : sig
   type device := t
 
   type t
-  (** The type for buffers. *)
+  (** The type for buffers. Compare buffers with [==]. Polymorphic
+      comparison does not look at their bytes: [compare] terminates, with an
+      order that says nothing about contents, and [(=)] raises
+      [Invalid_argument] when it reaches two buffers of one device, a buffer
+      and itself included, and finds buffers of different devices unequal.
+      [Hashtbl.hash] depends on a buffer's range and on its memory's
+      addresses and state, which can change while the buffer lives, as when
+      a device first borrows host memory. *)
 
   (** {1:making Making buffers} *)
 

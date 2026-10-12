@@ -147,6 +147,10 @@ val make :
     root, with a claim of its own whose bits come from [keep] and [e]. [host]
     and [address] default to [-1], [handle] to [0n] and [token] to none. *)
 
+val root : memory -> memory
+(** [root m] is [m]'s root: the owner's record for a borrow, [m] itself for
+    the owner's. *)
+
 val stamps : memory -> int
 (** [stamps m] is the stamps of the allocation [m] lies in, read from its
     root's entry. *)

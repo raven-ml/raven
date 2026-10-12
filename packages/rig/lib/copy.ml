@@ -138,7 +138,7 @@ let map_halves st b ~pieces h0 h1 =
 (* Whether [m] is the memory of a half of [st]: no closure, so the host's check
    allocates nothing. *)
 let holds_half st m i h =
-  match st.halves.(i).(h) with Some b -> b.mem.root == m.root | None -> false
+  match st.halves.(i).(h) with Some b -> Memory.root b.mem == Memory.root m | None -> false
 
 let holds st m =
   holds_half st m 0 0 || holds_half st m 0 1 || holds_half st m 1 0
@@ -236,7 +236,7 @@ let direct ~wait src dst n =
     let runner =
       match (Dev.live side.mem.dev).copy_engine with
       | Some _ -> side.mem.dev
-      | None -> side.mem.root.dev
+      | None -> (Memory.root side.mem).dev
     in
     (not (Dev.is_io runner)) && on_queue ~wait runner src dst n start
 
@@ -246,7 +246,7 @@ let direct ~wait src dst n =
 let runner b =
   match (Dev.live b.mem.dev).copy_engine with
   | Some _ -> b.mem.dev
-  | None -> b.mem.root.dev
+  | None -> (Memory.root b.mem).dev
 
 (* Whether [b]'s legs run on a device of this machine that maps no host memory,
    which then stages through its own memory. *)
@@ -338,7 +338,7 @@ let rec copy ~src ~dst =
      from its own mapping on macOS's APFS. *)
   if
     Dev.is_io src.mem.dev <> Dev.is_io dst.mem.dev
-    && src.mem.root == dst.mem.root
+    && Memory.root src.mem == Memory.root dst.mem
   then
     invalid_argf "Rig.%s: one buffer is a borrow of the other's io memory" fn;
   if Buffer.access dst = Read then

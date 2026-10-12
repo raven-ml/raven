@@ -278,16 +278,17 @@ type memory = {
   mutable entry : entry;
       (** The allocation's entry, {!Memory.no_entry} for host memory no
           device borrowed. *)
-  mutable root : memory;
-      (** The owner's record for a borrow; the record itself otherwise, set
-          once made. *)
+  root : memory;
+      (** The owner's record for a borrow; for the owner's, a record that
+          stands for the record itself ({!Memory.root}). *)
   mutable token : token;
       (** Puts [entry] on [dev]'s release list once collected; none for a
           borrow. *)
   keep : keep;  (** The host memory it keeps reachable. *)
 }
 (** The type for a device's record of an allocation: the owner's, which is
-    its own root, or a borrow's. *)
+    its own root, or a borrow's. No record points back to itself, so
+    polymorphic comparison of two records ends. *)
 
 type buffer = { mem : memory; offset : int; length : int; generation : int }
 (** {!Rig.Buffer.t}: live while [generation] is its claim's. *)

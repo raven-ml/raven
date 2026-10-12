@@ -373,7 +373,8 @@ val wait_value : device -> int -> unit
 val wait_point : memory -> bool -> int -> unit
 (** [wait_point m every p] is {!wait} on [p]'s device and value, committing
     as it does, except that a point that is done returns, also on a device
-    lost since. [p] is a point of [m]'s stamps that an access follows: their
+    lost since. [m] is an owner's memory record, and [p] is a point of the
+    stamps of its entry that an access follows: their
     last write's and, if [every], their uses'. It raises {!Lost} if [p] is
     not done and its device is or becomes lost, or, before it blocks, if a
     lost device did not reach a point of [m]'s stamps that the access

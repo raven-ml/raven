@@ -744,7 +744,7 @@ let wait_point m every p =
     let w =
       if w >= v || is_lost d then w
       else
-        let q = c_stamps_lost m.root.entry.stamps every in
+        let q = c_stamps_lost m.entry.stamps every in
         if q <> 0 then raise_lost (of_index (Point.index q));
         wait_until_lost d v w
     in

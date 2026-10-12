@@ -203,6 +203,14 @@ static value load_field(value v, int i) {
                               memory_order_relaxed);
 }
 
+/* The root of the memory record [mem], as rig's Memory.root reads it: an
+   owner's record holds Memory.itself, the one record whose root is itself,
+   in place of a pointer back to it. */
+static value root_of(value mem) {
+  value root = Field(mem, MEMORY_ROOT);
+  return Field(root, MEMORY_ROOT) == root ? mem : root;
+}
+
 void *rig_buffer_host(value b) {
   value mem = Field(b, BUFFER_MEM);
   intnat host = Long_val(Field(mem, MEMORY_HOST));
@@ -213,7 +221,7 @@ void *rig_buffer_host(value b) {
 /* An io memory's published pages add a local host alias to its stable span.
    Looking for that alias never asks its device to map any pages. */
 static intnat cached_host(value b) {
-  value root = Field(Field(b, BUFFER_MEM), MEMORY_ROOT);
+  value root = root_of(Field(b, BUFFER_MEM));
   value entry = load_field(root, MEMORY_ENTRY);
   /* [pages] publishes its bigarray with caml_modify's release store. There
      is no claim or device lock here to acquire that publication for us. */
@@ -235,7 +243,7 @@ size_t rig_buffer_bytes(value b) {
    lie at handles a few bytes apart. An io memory retains these coordinates
    when its pages become host-addressable through cached_host. */
 void rig_buffer_span(value b, intnat *space, intnat *first) {
-  value root = Field(Field(b, BUFFER_MEM), MEMORY_ROOT);
+  value root = root_of(Field(b, BUFFER_MEM));
   intnat host = Long_val(Field(root, MEMORY_HOST));
   intnat offset = Long_val(Field(b, BUFFER_OFFSET));
   value machine = Field(Field(root, MEMORY_DEV), DEVICE_MACHINE);
@@ -394,7 +402,7 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
     rig_buffer_release(b);
     return RIG_DEAD;
   }
-  value root = Field(mem, MEMORY_ROOT);
+  value root = root_of(mem);
   if (dev_lost(mem) || (root != mem && dev_lost(root))) return RIG_LOST;
   value entry = load_field(root, MEMORY_ENTRY);
   struct rig_stamps *s =

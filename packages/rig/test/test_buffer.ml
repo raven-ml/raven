@@ -132,6 +132,58 @@ let test_borrow_maps_once () =
   done;
   equal int 1 (List.length (List.filter (( = ) "map_host") (P.log p)))
 
+(* Two buffers that are not [==], made fresh, and whether they are on one
+   device. *)
+type devices = One_device | Two_devices
+
+let distinct =
+  let two f = (f (), f ()) in
+  let viewed () =
+    let b = B.create Rig.host 16 in
+    (B.view b ~first:0 ~length:8, B.view b ~first:0 ~length:8)
+  in
+  let borrowed () =
+    let h = B.create Rig.host 16 in
+    (h, require_some (B.borrow (memory "buffer:compare-borrow") h))
+  in
+  let bigarray () =
+    let a = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 4 in
+    Bigarray.Array1.fill a 'b';
+    B.of_bigarray a
+  in
+  [
+    ("two host buffers", One_device, fun () ->
+        two (fun () -> B.create Rig.host 16));
+    ("two empty host buffers", One_device, fun () ->
+        two (fun () -> B.create Rig.host 0));
+    ("a buffer and its view", One_device, fun () ->
+        let b = B.create Rig.host 16 in
+        (b, B.view b ~first:0 ~length:16));
+    ("two views of one window", One_device, viewed);
+    ("two buffers of a device", One_device, fun () ->
+        let d = memory "buffer:compare" in
+        two (fun () -> B.create d 64));
+    ("buffers of two devices", Two_devices, fun () ->
+        (B.create Rig.host 64, B.create (memory "buffer:compare-other") 64));
+    ("a buffer and its borrow", Two_devices, borrowed);
+    ("two strings' buffers", One_device, fun () ->
+        two (fun () -> B.of_string "abc"));
+    ("two bigarrays' buffers", One_device, fun () -> two bigarray);
+  ]
+
+let test_polymorphic (_, devices, make) =
+  let a, b = make () in
+  let sign x = Int.compare x 0 in
+  equal ~msg:"compare is an order" int
+    (sign (compare a b))
+    (-sign (compare b a));
+  equal ~msg:"compare of lists" int (sign (compare a b))
+    (sign (compare [ a ] [ b ]));
+  raises_match ~msg:"= on itself" Exn.invalid_arg (fun () -> a = a);
+  match devices with
+  | One_device -> raises_match ~msg:"=" Exn.invalid_arg (fun () -> a = b)
+  | Two_devices -> equal ~msg:"=" bool false (a = b)
+
 let test_borrow_small () =
   let d, _ = P.open_ "buffer:small" in
   let paged = B.create Rig.host (1 lsl 16) in
@@ -1365,6 +1417,10 @@ let tests =
         test "a staged copy gives its slot back on every exit"
           test_staging_gives_back;
       ];
+    cases ~timeout
+      ~name:(fun (n, _, _) -> n)
+      "polymorphic comparison ends, and equality refuses one device's buffers"
+      distinct test_polymorphic;
     cases ~timeout
       ~name:(fun (Kind (n, _, _)) -> n)
       "a bigarray's buffer is its bytes" kinds test_kind;

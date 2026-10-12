@@ -14,7 +14,7 @@ type access = Def.access = Read | Read_write
 let generation (c : claim) = Atomic.Loc.get [%atomic.loc c.generation]
 let is_live b = b.generation = generation b.mem.claim
 let dead b = if is_live b then None else Some b.mem.claim.why
-let access b = b.mem.root.entry.access
+let access b = (Memory.root b.mem).entry.access
 
 let refuse_dead fn b =
   invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.claim.why
@@ -55,7 +55,7 @@ let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
 
 let io (type r) b (k : r Type.Id.t) : r option =
   check_live "Buffer.io" b;
-  match b.mem.root.entry.backing with
+  match (Memory.root b.mem).entry.backing with
   | Io_memory { region = Io_region { m; r; _ }; _ } -> (
       let module I = (val m) in
       match Type.Id.provably_equal I.region_key k with
@@ -76,8 +76,8 @@ let length b = b.length
 let offset b = b.offset
 
 let is_borrowed b =
-  b.mem.root != b.mem
-  || match b.mem.root.keep with Bigarray _ -> true | _ -> false
+  Memory.root b.mem != b.mem
+  || match (Memory.root b.mem).keep with Bigarray _ -> true | _ -> false
 
 let view b ~first ~length =
   check_live "Buffer.view" b;
@@ -88,7 +88,7 @@ let view b ~first ~length =
       length first b.length;
   { b with offset = b.offset + first; length }
 
-let spans b = b.offset = 0 && b.length = b.mem.root.bytes
+let spans b = b.offset = 0 && b.length = (Memory.root b.mem).bytes
 
 external overlaps : t -> t -> bool = "caml_rig_buffer_overlaps" [@@noalloc]
 
@@ -144,12 +144,12 @@ let () = Callback.register "rig.buffer.wait" wait
 let host_addressed b =
   Dev.is_host b.mem.dev
   ||
-  let m = b.mem.root in
+  let m = Memory.root b.mem in
   m.host >= 0 && Dev.same_machine m.dev Dev.host
 
 let refuse_unaddressed fn b =
   invalid_argf "Rig.%s: the host does not address the buffer's memory, on %s" fn
-    b.mem.root.dev.name
+    (Memory.root b.mem).dev.name
 
 (* Bigarrays *)
 
@@ -213,7 +213,7 @@ let array_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
        memory stays marked, which costs only its donations. *)
     check_live fn b
   end;
-  let root = b.mem.root in
+  let root = Memory.root b.mem in
   let at = b.mem.host - root.host + b.offset in
   let code = kind_code k and n = bytes / size in
   match root.keep with
@@ -231,9 +231,9 @@ let array fn k b = array_of fn ~export:false k b
 let export b k =
   let fn = "Buffer.export" in
   check_live fn b;
-  if b.mem.root.dev != Dev.host then
+  if (Memory.root b.mem).dev != Dev.host then
     invalid_argf "Rig.%s: the buffer is %s's memory, not the host's" fn
-      b.mem.root.dev.name;
+      (Memory.root b.mem).dev.name;
   wait b Read_write;
   array_of fn ~export:true k b
 

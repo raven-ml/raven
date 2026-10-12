@@ -223,7 +223,7 @@ let kind_name = function
 
 (* The record of [b]'s memory, which holds the stamps a submission raises. *)
 let[@inline] entry_of b =
-  let m = b.mem.root in
+  let m = Memory.root b.mem in
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
   m.entry
 
@@ -242,7 +242,7 @@ let carried d b = b.mem.dev != d && local b && not (Dev.same_machine d Dev.host)
 (* Only the original allocation says whose memory it is and of which kind:
    a peer borrow's device and handle describe the receiving device's mapping. *)
 let owns_device_memory d b =
-  let m = b.mem.root in
+  let m = Memory.root b.mem in
   m.dev == d
   && match m.entry.backing with
      | Driver_memory { memory = Device; _ } -> true
@@ -837,7 +837,7 @@ let block s i =
 
 (* Whether the bytes of [b] lie in those of [f]. *)
 let within b f =
-  b.mem.root == f.mem.root && f.offset <= b.offset
+  Memory.root b.mem == Memory.root f.mem && f.offset <= b.offset
   && b.length <= f.length - (b.offset - f.offset)
 
 let address s b =
@@ -991,7 +991,7 @@ let check_count s buffers =
 let check_owner s b =
   let m = b.mem in
   if m.dev != s.dev && Dev.is_lost m.dev then Dev.raise_lost m.dev;
-  let r = m.root in
+  let r = Memory.root m in
   if r.dev != s.dev && r.dev != m.dev && Dev.is_lost r.dev then
     Dev.raise_lost r.dev
 
@@ -1011,7 +1011,7 @@ let name_one s run use k b =
     invalid_argf "Rig.%s: buffers.(%d) is on %s, not on %s: borrow it" fn k
       b.mem.dev.name s.dev.name;
   check_owner s b;
-  let m = b.mem.root in
+  let m = Memory.root b.mem in
   if m.entry == Memory.no_entry then Memory.ensure_entry m;
   let e = m.entry in
   if use <> Use_read && e.access = Def.Read then

@@ -48,6 +48,12 @@ let iter_write f st =
     let p = stamps_write st in
     if p <> 0 then f p
 
+(* [m]'s root: the owner's record for a borrow, [m] for the owner's, whose root
+   field holds [itself] (below), the one record whose root is itself. *)
+let[@inline] root m =
+  let r = m.root in
+  if r.root == r then m else r
+
 (* Waits for the use points of [m]'s stamps from the chunk [c]'s [i]th word
    on, with no closure: the walk is a host access's every wait. [m], whose
    collection frees the stamps, is an argument of every step, so it stays
@@ -62,7 +68,8 @@ let rec wait_from m c i =
   end
 
 let wait_points m =
-  let st = m.root.entry.stamps in
+  let m = root m in
+  let st = m.entry.stamps in
   if st <> 0 then begin
     let p = stamps_write st in
     if p <> 0 then Dev.wait_point m true p;
@@ -70,7 +77,8 @@ let wait_points m =
   end
 
 let wait_write m =
-  let st = m.root.entry.stamps in
+  let m = root m in
+  let st = m.entry.stamps in
   if st <> 0 then
     let p = stamps_write st in
     if p <> 0 then Dev.wait_point m false p
@@ -99,15 +107,16 @@ let check_points st = iter_points Dev.check st
 let[@inline] check_owner m =
   let d = m.dev in
   if Dev.is_lost d then Dev.raise_lost d;
-  if m.root != m then begin
-    let o = m.root.dev in
+  let r = root m in
+  if r != m then begin
+    let o = r.dev in
     if o != d && Dev.is_lost o then Dev.raise_lost o
   end
 
 (* Raises [Lost] for a use of [m] that depends on every point of its stamps. *)
 let[@inline] check m =
   check_owner m;
-  check_points m.root.entry.stamps
+  check_points (root m).entry.stamps
 
 (* Whether [f] holds of each keep point of the chunk [c] from its [i]th word
    on, and of the chunks after it: the points of work that uses the memory
@@ -232,9 +241,10 @@ let rec export (c : claim) =
     let w' = if w = consumed then exported else w lor outside in
     Atomic.Loc.compare_and_set [%atomic.loc c.count] w w' || export c
 
-(* The root a record holds until it is set to the record itself: a record made
-   recursively would be made twice. *)
-let rec unrooted =
+(* The root an owner's record holds, which stands for the record itself. A
+   record pointing back to itself would send polymorphic comparison of two
+   owners that agree on every other field round that cycle forever. *)
+let rec itself =
   {
     dev = Dev.host;
     bytes = 0;
@@ -245,28 +255,24 @@ let rec unrooted =
     entry = no_entry;
     token = no_token;
     keep = Nothing;
-    root = unrooted;
+    root = itself;
   }
 
 (* An owned memory. Every argument is given, so a host buffer's record allocates
    nothing beside it. *)
 let own ~keep ~host ~address ~handle ~token dev bytes entry =
-  let m =
-    {
-      dev;
-      bytes;
-      host;
-      address;
-      handle;
-      claim = new_claim keep entry;
-      entry;
-      token;
-      keep;
-      root = unrooted;
-    }
-  in
-  m.root <- m;
-  m
+  {
+    dev;
+    bytes;
+    host;
+    address;
+    handle;
+    claim = new_claim keep entry;
+    entry;
+    token;
+    keep;
+    root = itself;
+  }
 
 let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n)
     ?(token = no_token) dev bytes entry =
@@ -286,7 +292,7 @@ let borrow_of (root : memory) dev ~host ~address ~handle =
     root;
   }
 
-let stamps m = m.root.entry.stamps
+let stamps m = (root m).entry.stamps
 
 let locate (Region { m; r; _ }) =
   let module D = (val m) in
@@ -1502,7 +1508,7 @@ let[@inline] host_of (m : memory) =
   if is_io_memory m.entry then pages m else m.host
 
 let borrow d m =
-  let m = m.root in
+  let m = root m in
   if empty_io d m then
     let at = ba_address empty in
     Some (borrow_of m d ~host:at ~address:at ~handle:0n)
@@ -1530,7 +1536,7 @@ let rec mapped_on d = function
   | mp :: maps -> mp.on == d || mapped_on d maps
 
 let maps d m =
-  let m = m.root in
+  let m = root m in
   empty_io d m
   ||
   let host = host_of m in
@@ -1549,7 +1555,7 @@ let maps d m =
    other than the host, reaches through its pages. It is a hint, so its
    failures are dropped. *)
 let prefetch d (m : memory) ~at ~len =
-  match m.root.entry.backing with
+  match (root m).entry.backing with
   | Io_memory { region = Io_region { m = im; h; r }; _ } when not (Dev.is_host d)
     -> (
       let module I = (val im) in
