@@ -13,7 +13,6 @@ open Ymir_fits
 
 let f64 = Nx.float64
 let n = 1_000_000
-let sync () = Nx_device.synchronize Nx_device.host
 let radians x = Quantity.v Unit.radian x
 let in_radians q = Quantity.value Unit.radian q
 
@@ -36,9 +35,7 @@ let galactic_lat v =
 
 let separation a b = in_radians (Direction.separation (icrs a) (icrs b))
 
-let timed f =
-  ignore (Sys.opaque_identity (f ()));
-  sync ()
+let timed f = ignore (Sys.opaque_identity (f ()))
 
 let galactic () =
   Thumper.group "galactic-lat-1m"

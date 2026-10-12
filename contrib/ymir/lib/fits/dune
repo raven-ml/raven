@@ -1,7 +1,15 @@
 (library
  (name ymir_fits)
  (public_name ymir.fits)
- (libraries nx nx.dtype nx.device nx.ragged ymir.units compress.deflate unix)
+ (libraries
+  nx
+  nx.dtype
+  nx.ragged
+  rig
+  rig.disk
+  ymir.units
+  compress.deflate
+  unix)
  (private_modules
   err
   once

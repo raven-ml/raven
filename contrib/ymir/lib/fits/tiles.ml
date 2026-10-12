@@ -526,18 +526,18 @@ let read t bounds : Nx.packed =
   let host = Hdu.host_bytes (n * w) in
   let out =
     match t.zbitpix with
-    | 8 -> U8 (Nx_device.Buffer.bigarray Bigarray.int8_unsigned host)
-    | 16 -> I16 (Nx_device.Buffer.bigarray Bigarray.int16_signed host)
-    | 32 -> I32 (Nx_device.Buffer.bigarray Bigarray.int32 host)
-    | 64 -> I64 (Nx_device.Buffer.bigarray Bigarray.int64 host)
+    | 8 -> U8 (Rig.Buffer.export host Bigarray.int8_unsigned)
+    | 16 -> I16 (Rig.Buffer.export host Bigarray.int16_signed)
+    | 32 -> I32 (Rig.Buffer.export host Bigarray.int32)
+    | 64 -> I64 (Rig.Buffer.export host Bigarray.int64)
     | -32 ->
         F32
-          ( Nx_device.Buffer.bigarray Bigarray.float32 host,
-            Nx_device.Buffer.bigarray Bigarray.int32 host )
+          ( Rig.Buffer.export host Bigarray.float32,
+            Rig.Buffer.export host Bigarray.int32 )
     | _ ->
         F64
-          ( Nx_device.Buffer.bigarray Bigarray.float64 host,
-            Nx_device.Buffer.bigarray Bigarray.int64 host )
+          ( Rig.Buffer.export host Bigarray.float64,
+            Rig.Buffer.export host Bigarray.int64 )
   in
   if n > 0 then begin
     let budget = ref t.table.heap_size in
@@ -605,14 +605,13 @@ let read t bounds : Nx.packed =
     done
   end;
   let shape = Array.map (fun (a, b) -> b - a) bounds in
-  let view s = Nx_device.Buffer.view host ~offset:0 s n in
   match t.zbitpix with
   | 8 -> Nx.P (Nx.of_buffer Nx.uint8 shape host)
-  | 16 -> Nx.P (Nx.of_buffer Nx.int16 shape (view Int16))
-  | 32 -> Nx.P (Nx.of_buffer Nx.int32 shape (view Int32))
-  | 64 -> Nx.P (Nx.of_buffer Nx.int64 shape (view Int64))
-  | -32 -> Nx.P (Nx.of_buffer Nx.float32 shape (view Float32))
-  | _ -> Nx.P (Nx.of_buffer Nx.float64 shape (view Float64))
+  | 16 -> Nx.P (Nx.of_buffer Nx.int16 shape host)
+  | 32 -> Nx.P (Nx.of_buffer Nx.int32 shape host)
+  | 64 -> Nx.P (Nx.of_buffer Nx.int64 shape host)
+  | -32 -> Nx.P (Nx.of_buffer Nx.float32 shape host)
+  | _ -> Nx.P (Nx.of_buffer Nx.float64 shape host)
 
 (* Writing *)
 
@@ -769,8 +768,9 @@ let zdither0 sum = 1 + (sum mod 10000)
 let slab_bytes = 1 lsl 22
 
 (* [code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap] codes the image
-   tile row by tile row: [slab a b] is the big-endian elements, in C order,
-   of the image's indices [a] to [b - 1] on its slowest file axis, and each
+   tile row by tile row: [slab a b f] calls [f] with the big-endian elements,
+   in C order, of the image's indices [a] to [b - 1] on its slowest file axis,
+   which are valid during the call, and each
    coded tile goes to [heap]. It is the table's rows and description. Memory
    beyond the image is one tile row. *)
 let code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap =
@@ -798,7 +798,7 @@ let code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap =
     let a = first * tile.(last) in
     let b = Int.min axes.(last) (a + (group * tile.(last))) in
     band := Int.min counts.(last) (first + group);
-    let be = slab a b in
+    slab a b @@ fun be ->
     let get i = A.unsafe_get be i in
     (* the slab as an image of its own: the slowest axis cut to [a, b) *)
     let saxes = Array.mapi (fun i n -> if i = last then b - a else n) axes in

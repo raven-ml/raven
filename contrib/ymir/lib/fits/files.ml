@@ -6,7 +6,7 @@
 (* HDUs from bytes, header edits, checksums and writing files. *)
 
 open Err
-module B = Nx_device.Buffer
+module B = Rig.Buffer
 
 let strf = Printf.sprintf
 
@@ -327,7 +327,11 @@ let write_hdu fd ~primary (hdu : Hdu.t) =
     match stream with
     | Some st ->
         st.write
-          { Hdu.append = (fun b -> emit (Hdu.bigbytes b) (B.nbytes b)); patch }
+          {
+            Hdu.append =
+              (fun b -> Hdu.reading b (fun a -> emit a (B.length b)));
+            patch;
+          }
     | None ->
         each_chunk (Hdu.store hdu) emit;
         first
@@ -373,7 +377,6 @@ let rename temp path =
     (* Windows refuses to replace a file while a view of its pages is mapped:
        an HDU read from [path] may hold one until it is collected. *)
     Gc.full_major ();
-    Nx_device.synchronize Nx_device.disk;
     Unix.rename temp path
 
 let write path hdus =

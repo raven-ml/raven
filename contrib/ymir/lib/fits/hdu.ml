@@ -8,7 +8,7 @@
    a constructed HDU. *)
 
 open Err
-module B = Nx_device.Buffer
+module B = Rig.Buffer
 
 let strf = Printf.sprintf
 let block = Header.block_size
@@ -79,16 +79,23 @@ let derive (type a) (key : a Type.Id.t) (f : t -> a) h : a =
 
 (* Host bytes *)
 
-let host_bytes n = B.create Nx_device.host Nx_dtype.Scalar.UInt8 n
-let bigbytes b = B.bigarray Bigarray.int8_unsigned b
+let host_bytes n = B.create Rig.host n
+
+(* [bigbytes b] is the bytes of [b], a host buffer of ymir's own, exported for
+   good. *)
+let bigbytes b = B.export b Bigarray.int8_unsigned
+
+(* [reading b f] is [f] of the bytes of the host buffer [b], which may be a
+   value's storage, under a read claim so that no donation writes them while
+   [f] reads. *)
+let reading b f = B.read b Bigarray.int8_unsigned f
 
 (* [copy_in src ~offset dst ~at n] copies [n] bytes from byte [offset] of
    [src] to byte [at] of the host buffer [dst]. *)
 let copy_in src ~offset dst ~at n =
   if n > 0 then
-    B.copy
-      ~src:(B.view src ~offset Nx_dtype.Scalar.UInt8 n)
-      ~dst:(B.view dst ~offset:at Nx_dtype.Scalar.UInt8 n)
+    B.copy ~src:(B.view src ~first:offset ~length:n)
+      ~dst:(B.view dst ~first:at ~length:n)
 
 let read_string src ~offset n =
   let b = host_bytes n in
@@ -273,18 +280,17 @@ let walk ~name src =
     parts
 
 let read path =
-  match B.of_file path with
+  match Rig_disk.of_file path with
   | Error e -> Error e
   | Ok src -> catch (fun () -> walk ~name:path src)
 
-(* The C-order bytes of [t] in a buffer the host reads: its own storage on the
-   host or the disk, a host copy otherwise. *)
+(* The C-order bytes of [t] in a host buffer: its own storage on the host, a
+   host copy otherwise. *)
 let buffer_of (t : (int, Nx.uint8_elt) Nx.t) =
   let b = Nx.to_buffer t in
-  let d = B.device b in
-  if Nx_device.equal d Nx_device.host || Nx_device.equal d Nx_device.disk then b
+  if Rig.equal (B.device b) Rig.host then b
   else begin
-    let h = host_bytes (B.nbytes b) in
+    let h = host_bytes (B.length b) in
     B.copy ~src:b ~dst:h;
     h
   end
@@ -298,7 +304,7 @@ let store h = Once.get h.data
 let data h =
   let s = store h in
   Nx.of_buffer Nx.uint8 [| s.size |]
-    (B.view s.buffer ~offset:s.offset Nx_dtype.Scalar.UInt8 s.size)
+    (B.view s.buffer ~first:s.offset ~length:s.size)
 
 (* Lookup *)
 
@@ -377,4 +383,4 @@ let constructed_lazy ?stream encoded =
 let constructed ?stream header data =
   constructed_lazy ?stream (Once.make (fun () -> (header, Once.get data)))
 
-let host_store b = { buffer = b; offset = 0; size = B.nbytes b }
+let host_store b = { buffer = b; offset = 0; size = B.length b }

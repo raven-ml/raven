@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Err
-module B = Nx_device.Buffer
+module B = Rig.Buffer
 module S = Nx_dtype.Scalar
 
 let strf = Printf.sprintf
@@ -104,7 +104,7 @@ let stored_dtype bitpix : Nx.packed =
 let of_big_endian (type a b) (dtype : (a, b) Nx.dtype) shape bytes : (a, b) Nx.t
     =
   let w = Nx_dtype.itemsize dtype in
-  let n = B.nbytes bytes / w in
+  let n = B.length bytes / w in
   if w = 1 then
     Nx.reshape shape (Nx.bitcast dtype (Nx.of_buffer Nx.uint8 [| n |] bytes))
   else
@@ -121,10 +121,10 @@ let to_big_endian (type a b) (t : (a, b) Nx.t) : B.t =
   if w = 1 || Sys.big_endian then src
   else begin
     (* each element's bytes reversed, in one pass that allocates nothing *)
-    let n = B.nbytes src in
-    let dst = B.create Nx_device.host Nx_dtype.Scalar.UInt8 n in
-    let a = B.bigarray Bigarray.int8_unsigned src
-    and b = B.bigarray Bigarray.int8_unsigned dst in
+    let n = B.length src in
+    let dst = Hdu.host_bytes n in
+    B.read src Bigarray.int8_unsigned @@ fun a ->
+    let b = Hdu.bigbytes dst in
     let i = ref 0 in
     while !i < n do
       for j = 0 to w - 1 do
@@ -547,7 +547,7 @@ let tile_shape fn shape tiles =
    tile row from slabs of [t] along its leading axis. *)
 let tiled header t ~bitpix ~others ~tile plan =
   let axes = Array.of_list (List.rev (Array.to_list (Nx.shape t))) in
-  let slab a b = Hdu.bigbytes (encode (Nx.slice [ Nx.R (a, b) ] t)) in
+  let slab a b f = Hdu.reading (encode (Nx.slice [ Nx.R (a, b) ] t)) f in
   (* a quantized image is read once before it is coded, for its seed *)
   let zdither0 =
     Once.make (fun () ->
@@ -555,7 +555,7 @@ let tiled header t ~bitpix ~others ~tile plan =
         | Tiles.Quantized _ ->
             let s = Checksum.summer () in
             each_slab t (fun b ->
-                Checksum.feed s (Hdu.bigbytes b) 0 (B.nbytes b));
+                Hdu.reading b (fun a -> Checksum.feed s a 0 (B.length b)));
             Tiles.zdither0 (Checksum.total s)
         | Lossless _ -> 0)
   in
