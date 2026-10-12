@@ -11,8 +11,10 @@ open Hugin_gg
    around its start cap, or, for a closed subpath, one loop along each side in
    opposite directions. A join on the inner side of a corner goes through the
    corner's point, so that the outline winds the same way around everything it
-   covers, and the nonzero rule covers it exactly once. Its vertices are mapped
-   to the device as they are made. *)
+   covers, and the nonzero rule covers it exactly once. Every subpath's outline
+   winds that way, so that where the outlines of two subpaths overlap their
+   windings add instead of cancelling. Its vertices are mapped to the device as
+   they are made. *)
 
 type t = {
   cover : Cover.t;
@@ -140,8 +142,9 @@ let polyline p xs ys n ~closed ~dx ~dy =
     match p.cap with
     | `Butt -> ()
     | `Round ->
+        (* Turning as a cap turns, the disc winds as every other outline. *)
         move_to p (x +. p.hw) y;
-        arc p x y p.hw 0. (2. *. Float.pi);
+        arc p x y p.hw 0. (-2. *. Float.pi);
         close p
     | `Square ->
         if dx <> 0. || dy <> 0. then begin

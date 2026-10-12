@@ -105,6 +105,10 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` inks where a stroke's subpaths overlap a dot, the round caps
+  of a subpath shorter than a twentieth of a pixel. The dot wound the other way,
+  so the overlap cancelled to a hole, as at a line's piece cut short by its
+  domain's end.
 - `Hugin_vg_raster` paints nothing of a clipped primitive whose box misses its
   clip's. It painted the product of their coverages in the pixels both reach, a
   faint line beside the clip, which stamps drew for some instances only.

@@ -562,6 +562,22 @@ let strokes =
           curved ~arc:a a
             (coverage
                (render 20. 20. (Picture.stroke (Stroke.v ~cap 4.) red point))));
+      test "a disc of a subpath of zero length adds to the other subpaths"
+        (fun () ->
+          (* A line 12 long and 4 wide holds the disc of the point at its
+             middle, so that the union is the line. *)
+          let q =
+            Path.(
+              empty
+              |> move_to (P2.v 4. 10.)
+              |> line_to (P2.v 16. 10.)
+              |> move_to (P2.v 10. 10.)
+              |> line_to (P2.v 10. 10.))
+          in
+          let p = Picture.stroke (Stroke.v ~cap:`Round 4.) red q in
+          curved ~arc:(4. *. Float.pi)
+            (48. +. (4. *. Float.pi))
+            (coverage (render 20. 20. p)));
       test "a dashed subpath of a start alone is a disc with round caps"
         (fun () ->
           let lone = Path.empty |> Path.move_to (P2.v 10. 10.) in
