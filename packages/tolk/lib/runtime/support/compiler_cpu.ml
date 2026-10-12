@@ -78,6 +78,14 @@ let statement =
 
 (* Clang *)
 
+external mac_fp16 : unit -> bool = "caml_tolk_cpu_mac_fp16"
+
+(* Clang names an arm64 Mac's processor from the family macOS reports, which a
+   virtual Mac reports as 0: [native] is then a generic processor without half
+   arithmetic, whatever features macOS lists. [native] takes the half
+   arithmetic macOS lists, which on a Mac Clang knows changes nothing. *)
+let mac_native = if mac_fp16 () then [ "fp16" ] else []
+
 let clang arch =
   let cc = Setting.value Setting.cc in
   let machine, cpu, feats =
@@ -103,6 +111,9 @@ let clang arch =
     | "arm64" ->
         let feat f =
           if off f then "no" ^ String.sub f 1 (String.length f - 1) else f
+        in
+        let feats =
+          if cpu = "native" then mac_native @ feats else feats
         in
         [
           "-ffixed-x18";

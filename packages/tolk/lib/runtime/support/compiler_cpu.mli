@@ -16,7 +16,9 @@ val clang : string -> Renderer.Compiler.t
     [MACHINE,CPU[,FEATURE]...], as in ["x86_64,znver2,avx,-avx512f"]:
     - [MACHINE] is [x86_64], [arm64] or [riscv64];
     - [CPU] is a processor model that Clang knows, [native] for the host's. On
-      [riscv64], [native] is [rv64g];
+      [riscv64], [native] is [rv64g]. On an arm64 Mac, [native] has the half
+      arithmetic that macOS lists ([hw.optional.arm.FEAT_FP16]), which Clang
+      misses on a virtual Mac;
     - each [FEATURE] is an instruction set extension to enable, or to disable if
       it starts with [-]. On [riscv64] features cannot be disabled: each is an
       extension that the processor model gains.
