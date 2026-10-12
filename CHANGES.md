@@ -7020,6 +7020,11 @@ thread.
 
 ### Talon
 
+- On Windows, a table shows its floats with two exponent digits and rounded
+  once, ties to even (`1.00000e+16`, not `1.00000e+016`), as on other systems.
+  `Expr.pp` writes a float literal in the text `Column.print` writes, with a
+  point when it has neither point nor exponent: `1e20` is
+  `100000000000000000000.`, which was `1e+20`.
 - **Breaking:** `Talon_parquet.sniff` and `source` take a `Rig.Buffer.t`; open
   a file with `Rig_disk.of_file`.
 - `talon.parquet` decodes definition levels and booleans straight into bits

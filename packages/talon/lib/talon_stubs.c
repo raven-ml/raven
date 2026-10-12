@@ -9,8 +9,10 @@
    doubles", 2020), which finds them with three 64x128-bit products. */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
+#include <caml/alloc.h>
 #include <caml/mlvalues.h>
 
 __extension__ typedef unsigned __int128 u128;
@@ -827,4 +829,38 @@ value talon_float_text_byte(value x, value p, value emin, value b)
 {
   return Val_long(
       talon_float_text(Double_val(x), Long_val(p), Long_val(emin), b));
+}
+
+/* Digits rounded to a precision, rounded once. Under mingw-w64, the snprintf
+   of msvcrt, which OCaml's Printf calls, keeps 17 correct digits and rounds
+   from those, so a value rounds twice; it rounds a tie away from zero and
+   writes three exponent digits: 0.125 to two decimals is 0.13, and 1e16 to
+   five 1.00000e+016. mingw-w64's own snprintf rounds once, ties to even. */
+
+#ifdef __MINGW32__
+#define format_double __mingw_snprintf
+#else
+#define format_double snprintf
+#endif
+
+/* [format(fmt, p, x)] is [x] in the conversion [fmt] with the precision
+   [p]. */
+static value format(const char *fmt, value v_p, value v_x)
+{
+  int p = Int_val(v_p);
+  double x = Double_val(v_x);
+  int n = format_double(NULL, 0, fmt, p, x);
+  value s = caml_alloc_string((mlsize_t)n);
+  format_double((char *)Bytes_val(s), (size_t)n + 1, fmt, p, x);
+  return s;
+}
+
+value talon_format_e(value v_p, value v_x)
+{
+  return format("%.*e", v_p, v_x);
+}
+
+value talon_format_f(value v_p, value v_x)
+{
+  return format("%.*f", v_p, v_x);
 }

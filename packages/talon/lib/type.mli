@@ -117,9 +117,25 @@ val pp_list :
 (** [pp_list pp ppf vs] formats [vs] as an OCaml list, [["a"; "b"]], as plans
     write lists. *)
 
+external text :
+  (float[@unboxed]) ->
+  (int[@untagged]) ->
+  (int[@untagged]) ->
+  Bytes.t ->
+  (int[@untagged]) = "talon_float_text_byte" "talon_float_text"
+[@@noalloc]
+(** [text x p emin b] writes at the start of [b], 32 bytes or more, the text of
+    [x], a float of [p] significant bits and least normal exponent [emin], and
+    is its length: the fewest significant digits that read back as [x] at that
+    width, the nearest of them to [x], ties to even, without an exponent from
+    [1e-7] up to [1e21] ([150], [0.0015]) and as C's [%e] writes them otherwise
+    ([1e+21], [1.5e-08]), or [nan], [inf] or [-inf]. *)
+
 val pp_lit : 'a Kind.t -> Format.formatter -> 'a -> unit
 (** [pp_lit k ppf v] formats [v] as [Expr.pp] writes a literal of kind [k]:
-    floats as OCaml literals ([15.], [nan], [neg_infinity]), text quoted as
+    floats as OCaml literals of their float64 {!text}, with a point when it has
+    neither a point nor an exponent ([15.], [0.1], [1e+21], [nan],
+    [neg_infinity]), text quoted as
     {!pp_quoted} quotes it, a record as [<record>] and a tensor by its shape, as
     in [a tensor of shape [2,3]]. *)
 

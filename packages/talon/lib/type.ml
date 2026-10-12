@@ -207,6 +207,14 @@ let pp_list pp ppf vs =
 
 let pp_sep ppf () = Format.pp_print_string ppf ", "
 
+external text :
+  (float[@unboxed]) ->
+  (int[@untagged]) ->
+  (int[@untagged]) ->
+  Bytes.t ->
+  (int[@untagged]) = "talon_float_text_byte" "talon_float_text"
+[@@noalloc]
+
 let pp_float ppf x =
   if Float.is_nan x then Format.pp_print_string ppf "nan"
   else if Float.equal x Float.infinity then
@@ -214,17 +222,11 @@ let pp_float ppf x =
   else if Float.equal x Float.neg_infinity then
     Format.pp_print_string ppf "neg_infinity"
   else
-    let shortest =
-      let s15 = Printf.sprintf "%.15g" x in
-      if Float.equal (float_of_string s15) x then s15
-      else
-        let s16 = Printf.sprintf "%.16g" x in
-        if Float.equal (float_of_string s16) x then s16
-        else Printf.sprintf "%.17g" x
-    in
+    let b = Bytes.create 32 in
+    let s = Bytes.sub_string b 0 (text x 53 (-1022) b) in
     let is_float_char c = Char.equal c '.' || Char.equal c 'e' in
     Format.pp_print_string ppf
-      (if String.exists is_float_char shortest then shortest else shortest ^ ".")
+      (if String.exists is_float_char s then s else s ^ ".")
 
 let rec pp_lit : type a. a Kind.t -> Format.formatter -> a -> unit =
  fun k ppf v ->

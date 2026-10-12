@@ -73,6 +73,9 @@ let literals =
           ((fun () -> p (float Float.nan)), "nan");
           ((fun () -> p (float Float.infinity)), "infinity");
           ((fun () -> p (float 1e300)), "1e+300");
+          ((fun () -> p (float 1e-8)), "1e-08");
+          ((fun () -> p (float 1e20)), "100000000000000000000.");
+          ((fun () -> p (float 0.30000000000000004)), "0.30000000000000004");
         ]
         (fun (print, expected) -> equal Windtrap.string expected (print ()));
       cases

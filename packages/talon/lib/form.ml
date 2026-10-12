@@ -698,20 +698,6 @@ let format_with fmt c =
 
 let pp_text ppf s = Format.pp_print_string ppf s
 
-(* [text x p emin b] writes at the start of [b], 32 bytes or more, the text of
-   [x], a float of [p] significant bits and least normal exponent [emin], and is
-   its length: the fewest significant digits that read back as [x] at that
-   width, the nearest of them to [x], ties to even, without an exponent from
-   [1e-7] up to [1e21] ([150], [0.0015]) and as C's [%e] writes them otherwise
-   ([1e+21], [1.5e-08]), or [nan], [inf] or [-inf]. *)
-external text :
-  (float[@unboxed]) ->
-  (int[@untagged]) ->
-  (int[@untagged]) ->
-  Bytes.t ->
-  (int[@untagged]) = "talon_float_text_byte" "talon_float_text"
-[@@noalloc]
-
 let double = float_width Nx_dtype.float64
 
 let width : type a. a Type.t -> width = function
@@ -723,7 +709,7 @@ let width : type a. a Type.t -> width = function
 let float_text ty x =
   let w = width ty and b = Bytes.create 32 in
   let x = if Float.is_finite x then nearest w x else x in
-  Bytes.sub_string b 0 (text x w.p w.emin b)
+  Bytes.sub_string b 0 (Type.text x w.p w.emin b)
 
 (* [add_date b days] writes the day [days] after 1970-01-01 as [Time.Date.pp]
    does. *)
@@ -794,7 +780,7 @@ let fixed_writer : type a b c.
   | Float16 | Float32 | Float64 ->
       let v = Nx.to_array (Nx.cast Nx.float64 x) in
       let w = width ty and s = Bytes.create 32 in
-      fun b i -> Buffer.add_subbytes b s 0 (text v.(i) w.p w.emin s)
+      fun b i -> Buffer.add_subbytes b s 0 (Type.text v.(i) w.p w.emin s)
   | Categorical d ->
       let v = ints () in
       fun b i -> Buffer.add_string b (Iarray.get d (Int64.to_int v.(i)))
@@ -912,10 +898,15 @@ let max_decimals = 6
 (* Past 10^16 a float64's integer digits are no longer all its own. *)
 let max_fixed = 1e16
 
+(* [format_e p x] and [format_f p x] are [x] in C's [%.*e] and [%.*f] with [p]
+   digits after the point, rounded once on every system. *)
+external format_e : int -> float -> string = "talon_format_e"
+external format_f : int -> float -> string = "talon_format_f"
+
 (* [exponent x] is the decimal exponent of [x] rounded to six significant
    digits: [2] for [99.99996], which rounds to [100.000]. *)
 let exponent x =
-  let s = Printf.sprintf "%.*e" (significant - 1) x in
+  let s = format_e (significant - 1) x in
   let e = String.index s 'e' in
   int_of_string (String.sub s (e + 1) (String.length s - e - 1))
 
@@ -934,5 +925,5 @@ let pp_floats xs =
     if Float.is_nan x then pp_text ppf "nan"
     else if not (Float.is_finite x) then
       pp_text ppf (if x > 0. then "inf" else "-inf")
-    else if scientific then Format.fprintf ppf "%.*e" (significant - 1) x
-    else Format.fprintf ppf "%.*f" decimals x
+    else if scientific then pp_text ppf (format_e (significant - 1) x)
+    else pp_text ppf (format_f decimals x)

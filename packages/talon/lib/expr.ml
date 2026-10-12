@@ -2150,7 +2150,7 @@ let var a = reduce Var a
 let median a = reduce Median a
 
 let quantile p a =
-  if not (0. <= p && p <= 1.) then err "Expr.quantile: %g is not in [0;1]" p;
+  if not (0. <= p && p <= 1.) then err "Expr.quantile: %a is not in [0;1]" (Type.pp_lit Float) p;
   reduce (Quantile p) a
 
 let n_unique a = reduce N_unique a
