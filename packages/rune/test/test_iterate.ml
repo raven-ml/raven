@@ -1349,9 +1349,19 @@ let until_tests =
 
 let two = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
 
+(* The step x / 2 from ones stops after one step at a tolerance of 0.6, and
+   at once from zeros: an example for each label, which 25 drawn cases leave
+   to chance. *)
 let compiled_loop_law =
+  let ones = Nx.ones f64 Expr.shape and zeros = Nx.zeros f64 Expr.shape in
   prop ~count:25
-    ~examples:[ (Expr.X, (Nx.ones f64 Expr.shape, 0.6), 1) ]
+    ~examples:
+      [
+        (Expr.X, (ones, 0.6), 1);
+        (Expr.X, (zeros, 0.6), 1);
+        (Expr.X, (ones, 0.6), 3);
+        (Expr.X, (ones, 0.6), 0);
+      ]
     "compiled, iterate is the loop that tests until before each step"
     Gen.(
       triple Expr.gen (pair Expr.point (float_range 0.01 2.)) (int_range 0 8))
