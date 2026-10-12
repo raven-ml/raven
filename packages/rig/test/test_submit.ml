@@ -1576,9 +1576,15 @@ let shared_commands =
    memory of the device, so its copy engine runs each copy between two of its
    buffers. *)
 let slot_copier =
-  lazy
-    (let d, _ = P.open_ ~host_visible:false "submit:slot-copier" in
-     (d, Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
+  let copier =
+    lazy
+      (let d, _ = P.open_ ~host_visible:false "submit:slot-copier" in
+       (d, Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
+  in
+  (* Two domains may make the first call at once, and a lazy value forced
+     from two domains at once raises [CamlinternalLazy.Undefined]. *)
+  let lock = Mutex.create () in
+  fun () -> Mutex.protect lock (fun () -> Lazy.force copier)
 
 (* A buffer of [d] holding [v], and one to copy it into. *)
 let copy_ends d v =
@@ -1600,7 +1606,7 @@ let copy_commands =
       (Gen.int @-> returns int)
       Fun.id
       (fun v ->
-        let d, s = Lazy.force slot_copier in
+        let d, s = slot_copier () in
         let src, dst = copy_ends d v in
         Rig.Point.wait (submit s ~buffers:[| src; dst |]);
         device_word dst);
@@ -1608,7 +1614,7 @@ let copy_commands =
       (Gen.int @-> returns int)
       Fun.id
       (fun v ->
-        let d, _ = Lazy.force slot_copier in
+        let d, _ = slot_copier () in
         let src, dst = copy_ends d v in
         B.copy ~src ~dst;
         device_word dst);
