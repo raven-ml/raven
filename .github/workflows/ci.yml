@@ -17,6 +17,8 @@ jobs:
           - windows-2025
 
     runs-on: ${{ matrix.os }}
+    # A run takes about an hour; this ends a hang before GitHub's six hours.
+    timeout-minutes: 120
 
     defaults:
       run:
