@@ -1237,6 +1237,9 @@ thread.
 
 ### Tolk (new)
 
+- On Windows, a CUDA or AMD compile whose library does not load names the
+  library's file and Windows' reason, as elsewhere. It said only
+  `LoadLibrary failed`.
 - `Helpers.system` runs its program directly, without a shell. On Windows
   cmd.exe ran its built-in `echo` in place of the program and printed the
   quotes around each argument.

@@ -38,7 +38,26 @@ static void *open_library(const char *path) { return LoadLibraryA(path); }
 static void *find_symbol(void *lib, const char *name) {
   return (void *)GetProcAddress((HMODULE)lib, name);
 }
-static const char *library_error(void) { return "LoadLibrary failed"; }
+/* Why [path] did not load, named first, as dlerror names it. A static buffer:
+   loading is not concurrent. */
+static const char *library_error(const char *path) {
+  static char message[1024];
+  DWORD code = GetLastError();
+  int n = snprintf(message, sizeof message, "%s: ", path);
+  if (n < 0 || (size_t)n >= sizeof message) return path;
+  DWORD m = FormatMessageA(
+      FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, code,
+      0, message + n, (DWORD)(sizeof message - n), NULL);
+  if (m == 0) {
+    snprintf(message + n, sizeof message - n, "error %lu",
+             (unsigned long)code);
+    return message;
+  }
+  /* the system's message ends with a line break */
+  while (m > 0 && strchr(" \r\n", message[n + m - 1]) != NULL)
+    message[n + --m] = '\0';
+  return message;
+}
 #else
 #include <dirent.h>
 #include <dlfcn.h>
@@ -54,7 +73,11 @@ static void *open_library(const char *path) {
 static void *find_symbol(void *lib, const char *name) {
   return dlsym(lib, name);
 }
-static const char *library_error(void) { return dlerror(); }
+/* Why [path] did not load: dlerror's message, which names it. */
+static const char *library_error(const char *path) {
+  const char *e = dlerror();
+  return e != NULL ? e : path;
+}
 #endif
 
 /* The reply */
@@ -220,7 +243,7 @@ static struct {
 static bool load(const char *path) {
   void *lib = open_library(path);
   if (lib == NULL) {
-    reply_error("comgr not available: %s", library_error());
+    reply_error("comgr not available: %s", library_error(path));
     return false;
   }
   for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
