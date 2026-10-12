@@ -110,10 +110,14 @@ let takes fd chunk =
 (* Writes to the non-blocking [fd] until its connection takes no byte for half
    a second: its peer's window is closed, which on loopback acknowledgements
    take microseconds to open. A socket that reports itself unwritable may still
-   take bytes, so it writes rather than waits on select. *)
+   take bytes, so it writes rather than waits on select. Winsock takes a whole
+   write while it holds fewer bytes than the socket's buffer, and Windows'
+   loopback goes on taking a few hundred bytes a second from a peer that reads
+   nothing: writes of 64 KiB leave held far more than that drains within the
+   bound, where writes of 4 KiB left a later small send room. *)
 let fill fd =
   let rec go since =
-    let took = takes fd (String.make 4096 '\000') || takes fd "\000" in
+    let took = takes fd (String.make 65536 '\000') || takes fd "\000" in
     let now = Unix.gettimeofday () in
     if took || now -. since < 0.5 then begin
       Thread.delay 0.05;
