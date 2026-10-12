@@ -11,6 +11,16 @@ let mat rows cols xs = Nx.create Nx.float64 [| rows; cols |] xs
 let labels ls = Nx.create Nx.int64 [| Array.length ls |] ls
 let close ?(eps = 1e-12) expected actual = equal (float eps) expected actual
 
+(* [received m f] is [f ()] and the bytes that copies moved into the memory [m]
+   while it ran. *)
+let received m f =
+  let y, events = Rig.Profile.take f in
+  let count n = function
+    | Rig.Profile.Copy { dst; bytes; _ } when Rig.equal dst m -> n + bytes
+    | _ -> n
+  in
+  (y, List.fold_left count 0 events)
+
 (* Predictions over [classes] classes whose argmax row [i] is [preds.(i)]. *)
 let predicting classes preds =
   let n = Array.length preds in
@@ -235,12 +245,7 @@ let auc_tests =
 let placed_tests =
   let device = Nx.Device.cpu 1 in
   let on_device x = Nx.place (Nx.Placement.on device) x in
-  let stats () = Nx_device.stats (Nx.Device.memory device) in
-  let uploads f =
-    let before = stats () in
-    let r = f () in
-    (r, Nx_device.Stats.(bytes_in (diff before (stats ()))))
-  in
+  let uploads f = received (Nx.Device.memory device) f in
   let preds = predicting 3 [| 0; 2; 1; 2 |]
   and ls = labels [| 0L; 2L; 2L; 2L |] in
   let p = on_device preds and l = on_device ls in

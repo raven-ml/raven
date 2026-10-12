@@ -19,7 +19,7 @@
  (modules
   (:standard \ test_cache_index_metal test_decode_devices))
  (package kaun)
- (libraries kaun rune vega nx nx.dtype nx.device nx.io windtrap unix))
+ (libraries kaun rune vega nx nx.dtype nx.io rig windtrap unix))
 
 (tests
  (names test_cache_index_metal)
@@ -27,7 +27,7 @@
  (package kaun)
  (build_if
   (= %{system} macosx))
- (libraries kaun rune nx nx.metal windtrap))
+ (libraries kaun rune nx rig rig.metal windtrap))
 
 ; Over CPU:1..CPU:4.
 
@@ -35,4 +35,4 @@
  (name test_decode_devices)
  (modules test_decode_devices)
  (package kaun)
- (libraries kaun rune nx nx.device windtrap))
+ (libraries kaun rune nx rig windtrap))

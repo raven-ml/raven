@@ -8,7 +8,7 @@
 
    Usage: bench.exe [--jit DEVICE] [--tokens N] [--steps N]. Every step feeds
    fresh random tokens, so routing varies, and reads the output back, so the
-   device has finished. *)
+   device has finished. One more step, untimed, counts its copies. *)
 
 let experts = 32
 let k = 4
@@ -90,17 +90,13 @@ let () =
   in
   Printf.printf "first call (trace, compile, upload, run): %.2f s\n%!" (run ());
   Printf.printf "second call: %.1f ms\n%!" (1e3 *. run ());
-  let memory = Nx.Device.memory device in
-  let before = Nx_device.stats memory in
   let times = Array.init !steps (fun _ -> run ()) in
   Array.sort compare times;
-  let stats = Nx_device.Stats.diff before (Nx_device.stats memory) in
+  let _, (into, out) = Devices.traffic device (fun () -> ignore (run ())) in
   Printf.printf
     "%s, %d tokens per call, %d calls: min %.1f ms, median %.1f ms, max %.1f ms\n"
     !jit !tokens !steps
     (1e3 *. times.(0))
     (1e3 *. times.(!steps / 2))
     (1e3 *. times.(!steps - 1));
-  Printf.printf "bytes to device %d, from device %d\n%!"
-    (Nx_device.Stats.bytes_in stats)
-    (Nx_device.Stats.bytes_out stats)
+  Printf.printf "bytes per call to device %d, from device %d\n%!" into out

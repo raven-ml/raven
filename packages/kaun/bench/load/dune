@@ -10,11 +10,12 @@
   jsont
   jsont.bytesrw
   nx
-  nx.metal
-  nx.cuda
-  nx.nv
   nx.amd
-  nx.device
+  rig
+  rig.metal
+  rig.cuda
+  rig.nv.nvidia
+  rig.amd.amdgpu
   nx.io
   rune
   unix))

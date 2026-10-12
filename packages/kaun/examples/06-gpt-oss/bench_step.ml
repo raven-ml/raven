@@ -11,8 +11,8 @@
 
    Usage: bench_step.exe [--jit DEVICE] [--layers N] [--tokens N] [--steps N]
    [--context N] [--dtype DT] [--small-vocab]. The first call takes [--tokens]
-   tokens, every later one a single token. Peak memory is [/usr/bin/time -l]'s
-   to read. *)
+   tokens, every later one a single token. One more single-token call, untimed,
+   counts its copies. Peak memory is [/usr/bin/time -l]'s to read. *)
 
 open Kaun
 
@@ -141,22 +141,12 @@ let run ?device c params dt ~tokens ~steps ~context =
     let ids = Nx.create Nx.int64 [| 1; 1 |] [| token |] in
     ((caches, Cache_index.advance index, ids), t)
   in
-  let stats () =
-    Option.map (fun d -> Nx_device.stats (Nx.Device.memory d)) device
-  in
-  let last = ref (stats ()) in
   let report name t =
-    let now = stats () in
-    (match (!last, now) with
-    | Some s, Some s' ->
-        let d = Nx_device.Stats.diff s s' in
-        Printf.printf
-          "%s: %.3f s  (to_device %d, from_device %d, allocated %d)\n%!" name t
-          (Nx_device.Stats.bytes_in d)
-          (Nx_device.Stats.bytes_out d)
-          (Nx_device.Stats.allocated s')
-    | _ -> Printf.printf "%s: %.3f s\n%!" name t);
-    last := now
+    match device with
+    | Some d ->
+        Printf.printf "%s: %.3f s  (allocated %d)\n%!" name t
+          (Rig.allocated (Nx.Device.memory d))
+    | None -> Printf.printf "%s: %.3f s\n%!" name t
   in
   let state, t =
     timed
@@ -183,7 +173,12 @@ let run ?device c params dt ~tokens ~steps ~context =
   Printf.printf "step: min %.1f ms, median %.1f ms, max %.1f ms\n%!"
     (1e3 *. times.(0))
     (1e3 *. times.(steps / 2))
-    (1e3 *. times.(steps - 1))
+    (1e3 *. times.(steps - 1));
+  Option.iter
+    (fun d ->
+      let _, (into, out) = Devices.traffic d (fun () -> timed !state) in
+      Printf.printf "step copies: to device %d, from device %d\n%!" into out)
+    device
 
 let () =
   let jit = ref "METAL" and layers = ref 1 and steps = ref 5 in

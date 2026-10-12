@@ -32,17 +32,25 @@ let caches : Nx.float32_t Attention.Cache.t list Nx.Ptree.t =
 (* Test devices over the host's memory, which the host addresses as it is. *)
 let cpus = List.map Nx.Device.cpu [ 1; 2; 3; 4 ]
 
-(* Where each pool's storage starts on each device: a call that wrote the pools
-   in their own storage returns them at the addresses it was given. *)
-let addresses kv =
+(* Each pool's storage on each device. *)
+let storage kv =
   let of_leaf x =
     match Nx.Repr.v x with
-    | Placed p ->
-        List.map Nx_device.Buffer.address
-          (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p))
+    | Placed p -> Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p)
     | Host _ | Traced _ -> []
   in
   Nx.Ptree.fold caches (fun _ t acc -> acc @ of_leaf t) kv []
+
+(* Buffers compare as the byte of memory they start at: a call that wrote a
+   value in its own storage returns it over the memory it was given. *)
+let at =
+  Testable.make
+    ~pp:(fun ppf b ->
+      Format.fprintf ppf "%s at %d"
+        (Rig.name (Rig.Buffer.device b))
+        (Rig.Buffer.offset b))
+    ~equal:(fun b b' ->
+      Rig.Buffer.overlaps b b' && Rig.Buffer.offset b = Rig.Buffer.offset b')
 
 (* Four query heads and four kv-heads of two features: one of each per
    device. *)
@@ -168,9 +176,10 @@ let generate ~slots ?place m =
   let s = ref (id, kv) and out = ref [ (id, scores, true) ] in
   for _ = 1 to 4 do
     index := Cache_index.advance !index;
-    let before = addresses (snd !s) in
+    let before = storage (snd !s) in
     let (id, scores), kv = step (fst !s) !index (snd !s) in
-    out := (id, scores, before = addresses kv) :: !out;
+    out :=
+      (id, scores, List.equal (Testable.equal at) before (storage kv)) :: !out;
     s := (id, kv)
   done;
   (List.rev !out, snd !s)

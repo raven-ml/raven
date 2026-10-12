@@ -213,9 +213,10 @@ let routed ~run ~tokens device =
   let f = run product in
   let ids = place ids and x = place x in
   ignore (f ids x);
-  fun () -> ignore (f ids x)
+  fun () -> f ids x
 
-let synchronize device = Nx_device.synchronize (Nx.Device.memory device)
+(* [wait y] returns once the work that writes [y] is done. *)
+let wait y = List.iter (fun b -> Rig.Buffer.wait b Rig.Read) (fst (Nx.shards y))
 
 (* Dense quantised products, one per format, at a decode step's shape: one token
    by a [[| 4096; 4096 |]] projection, compiled. MXFP4 is read from a
@@ -273,20 +274,16 @@ let linear make device =
   let f = Rune.jit' (Nx_quant.apply w) in
   let x = place (Nx.full Nx.float32 [| 1; dense |] 0.5) in
   ignore (f x);
-  fun () -> ignore (f x)
+  fun () -> f x
 
-(* A case of [product] on the device [device ()] opens, each call
-   synchronized. *)
+(* A case of [product] on the device [device ()] opens, each call waited for. *)
 let on device name product =
   {
     name;
     setup =
       (fun () ->
-        let d = device () in
-        let call = product d in
-        fun () ->
-          call ();
-          synchronize d);
+        let call = product (device ()) in
+        fun () -> wait (call ()));
   }
 
 let routed_on device ~run ~tokens suffix =
@@ -307,9 +304,15 @@ let host =
   products ~tokens:[ 1; 64 ] device
   @ [ routed_on device ~run:eager ~tokens:1 ", eager" ]
 
+let opened ?backend o = Result.map (Nx.Device.make ?backend) (Rig.open_ o)
+let get_ok = function Ok d -> d | Error e -> failwith e
+
 (* The GPU: CUDA's first, else AMD's first. *)
 let gpu =
-  lazy (match Nx_cuda.get 0 with Ok d -> d | Error _ -> Nx_amd.device 0)
+  lazy
+    (match opened (Rig_cuda.gpu 0) with
+    | Ok d -> d
+    | Error _ -> get_ok (opened ~backend:Nx_amd.backend (Rig_amd_amdgpu.gpu 0)))
 
 (* Whether a [vendor] GPU opens, asked of a fresh process: a GPU's driver must
    not be initialized before the fork that isolates a case. *)
@@ -325,7 +328,11 @@ let opens vendor =
 (* Metal's cases where its device opens, asked of a fresh process too. *)
 let metal () =
   if opens "metal" then
-    [ ("metal", products ~tokens:[ 1; 512 ] (fun () -> Nx_metal.device 0)) ]
+    [
+      ( "metal",
+        products ~tokens:[ 1; 512 ] (fun () ->
+            get_ok (opened (Rig_metal.gpu 0))) );
+    ]
   else []
 
 let quant () =
@@ -339,7 +346,7 @@ let quant () =
 
 (* A GPU case times its calls only: a GPU buffer's release allocates when the
    collector finalises it, so a call's count depends on the collection's phase.
-   Its allocation is measured again once nx.device's release path allocates
+   Its allocation is measured again once rig's release path allocates
    nothing. *)
 let gpu_metrics = [ Thumper.Metric.wall_time ]
 
@@ -350,9 +357,12 @@ let () =
   match Array.to_list Sys.argv with
   | [ _; "--warm" ] ->
       List.iter (fun c -> c.setup () ()) (gpt2 @ List.concat_map snd (quant ()))
-  | [ _; "--cuda" ] -> exit (if Result.is_ok (Nx_cuda.get 0) then 0 else 1)
-  | [ _; "--amd" ] -> exit (if Result.is_ok (Nx_amd.get 0) then 0 else 1)
-  | [ _; "--metal" ] -> exit (if Result.is_ok (Nx_metal.get 0) then 0 else 1)
+  | [ _; "--cuda" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
+  | [ _; "--amd" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0)) then 0 else 1)
+  | [ _; "--metal" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_metal.gpu 0)) then 0 else 1)
   | _ ->
       (* The eager routed product takes over half a second a call, so its trial
          outlasts the default deadline. *)

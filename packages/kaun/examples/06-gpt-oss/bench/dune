@@ -8,9 +8,10 @@
  (modules bench_gpt_oss moe gpt_oss layer_loop)
  (libraries
   nx
-  nx.cuda
   nx.amd
-  nx.device
+  rig
+  rig.cuda
+  rig.amd.amdgpu
   nx.io
   nx.quant
   rune

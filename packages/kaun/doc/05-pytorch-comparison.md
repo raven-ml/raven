@@ -234,7 +234,7 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 
 | PyTorch feature | Status in kaun |
 | --- | --- |
-| GPU / `model.to("cuda")` | Place the weights with `Nx.Ptree.place` on a device (`Nx_cuda.device 0` from nx.cuda, `Nx_metal.device 0` from nx.metal); a step compiled with `Rune.jit` runs there, and an eager operation on a GPU value raises. |
+| GPU / `model.to("cuda")` | Place the weights with `Nx.Ptree.place` on a device (`Nx.Device.make` of a GPU that rig opens, such as `Rig_cuda.gpu 0` from rig.cuda or `Rig_metal.gpu 0` from rig.metal); a step compiled with `Rune.jit` runs there, and an eager operation on a GPU value raises. |
 | `torch.compile` / JIT | `Rune.jit` compiles a step, and a `Rune.scan` in it as a loop. |
 | Layer coverage | Deliberately small: no recurrent layers; `Attention` covers grouped queries, rotary embeddings (`Rope`) and cached decoding (`Attention.cached`) and nothing beyond, no sliding windows or cross-attention layer; `Conv` is im2col-based and not tuned for large inputs. |
 | Mixed precision / AMP | Manual: cast with `Nx.Ptree.cast (module M) dt` and scale losses with `Vega.Loss_scale`; there is no automatic wrapper. |

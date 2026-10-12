@@ -14,6 +14,17 @@
 open Windtrap
 open Kaun
 
+(* Buffers compare as the byte of memory they start at: a call that wrote a
+   value in its own storage returns it over the memory it was given. *)
+let at =
+  Testable.make
+    ~pp:(fun ppf b ->
+      Format.fprintf ppf "%s at %d"
+        (Rig.name (Rig.Buffer.device b))
+        (Rig.Buffer.offset b))
+    ~equal:(fun b b' ->
+      Rig.Buffer.overlaps b b' && Rig.Buffer.offset b = Rig.Buffer.offset b')
+
 (* A Llama-shaped block: RMS norm, grouped-query attention with rotary
    positions, SwiGLU. *)
 
@@ -410,15 +421,12 @@ let test_generation_matches_recomputation () =
       (cache ~slots:context)
   in
   let s = ref (step (ids [| start |]) !index placed) in
-  (* Where each pool's storage starts: a call that wrote the pools in their own
-     storage returns them at the addresses it was given. *)
-  let addresses kv =
+  (* Each pool's storage. *)
+  let storage kv =
     let of_leaf x =
       match Nx.Repr.v x with
-      | Placed p ->
-          List.map Nx_device.Buffer.address
-            (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p))
-      | Host _ | Traced _ -> invalid_arg "addresses: not a placed value"
+      | Placed p -> Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p)
+      | Host _ | Traced _ -> invalid_arg "storage: not a placed value"
     in
     Nx.Ptree.fold caches (fun _ t acc -> acc @ of_leaf t) kv []
   in
@@ -430,13 +438,13 @@ let test_generation_matches_recomputation () =
       equal ~msg:(msg ^ ", token") int next
         (Int64.to_int (Nx.item [ 0; 0 ] (sampled ())));
       if i < steps - 1 then begin
-        let before = addresses (snd !s) in
+        let before = storage (snd !s) in
         index := Cache_index.advance !index;
         s := step (sampled ()) !index (snd !s);
         equal
           ~msg:(msg ^ ", every cache leaf is written in its own storage")
-          (list nativeint) before
-          (addresses (snd !s))
+          (list at) before
+          (storage (snd !s))
       end)
     recomputed
 

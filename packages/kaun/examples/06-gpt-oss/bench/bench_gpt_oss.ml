@@ -120,9 +120,14 @@ let weights () =
   }
 
 let params = Nx.Ptree.instantiate (module Gpt_oss.Params)
+let opened ?backend o = Result.map (Nx.Device.make ?backend) (Rig.open_ o)
+let amd () = opened ~backend:Nx_amd.backend (Rig_amd_amdgpu.gpu 0)
 
 (* The GPU: CUDA's first, else AMD's first. *)
-let gpu () = match Nx_cuda.get 0 with Ok d -> d | Error _ -> Nx_amd.device 0
+let gpu () =
+  match opened (Rig_cuda.gpu 0) with
+  | Ok d -> d
+  | Error _ -> ( match amd () with Ok d -> d | Error e -> failwith e)
 
 (* A step on the GPU warmed past its compilations: [`Decode] feeds back the
    token it predicts at a fixed position in the middle of the cache, [`Prefill]
@@ -173,7 +178,7 @@ let case weights kind =
     name
     (fun call -> call ())
 
-let opens () = Result.is_ok (Nx_cuda.get 0) || Result.is_ok (Nx_amd.get 0)
+let opens () = Result.is_ok (opened (Rig_cuda.gpu 0)) || Result.is_ok (amd ())
 
 (* Whether a GPU opens, asked of a fresh process: the driver must not be
    initialized before the fork that isolates a case. *)

@@ -57,11 +57,9 @@ let profiled file f =
   match file with
   | None -> f ()
   | Some file ->
-      let p = Nx_device.Profile.start () in
-      let r = f () in
-      let events = Nx_device.Profile.stop p in
+      let r, events = Rig.Profile.take f in
       Out_channel.with_open_bin file (fun oc ->
-          Nx_device.Profile.output_chrome_trace oc events);
+          Rig.Profile.output_chrome_trace oc events);
       r
 
 (* [on_token] sees every generated token as it arrives and says whether to stop.

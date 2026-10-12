@@ -5,14 +5,18 @@
 
 (* The devices a command line names, as in ["cuda:0,metal,cpu"]: [cpu] (the
    host), [cpu:k] (a test device), and [metal], [cuda], [nv] or [amd] with an
-   index, 0 when left out, in any case. The GPUs are those of the vendor
-   libraries this example links. *)
+   index, 0 when left out, in any case. Metal and CUDA open through the vendor's
+   runtime, NV and AMD through the kernel driver, and nx.amd computes on AMD
+   GPUs. *)
+
+let opened ?backend o = Result.map (Nx.Device.make ?backend) (Rig.open_ o)
 
 let gpu = function
-  | "metal" -> Some Nx_metal.get
-  | "cuda" -> Some Nx_cuda.get
-  | "nv" -> Some Nx_nv.get
-  | "amd" -> Some Nx_amd.get
+  | "metal" -> Some (fun i -> opened (Rig_metal.gpu i))
+  | "cuda" -> Some (fun i -> opened (Rig_cuda.gpu i))
+  | "nv" -> Some (fun i -> opened (Rig_nv_nvidia.gpu i))
+  | "amd" ->
+      Some (fun i -> opened ~backend:Nx_amd.backend (Rig_amd_amdgpu.gpu i))
   | _ -> None
 
 let index s =
@@ -50,6 +54,19 @@ let first s =
         match device name with Ok d -> d | Error e -> go (e :: reasons) rest)
   in
   go [] (names s)
+
+(* [traffic d f] is [f ()] and the bytes that copies moved into and out of [d]'s
+   memory while it ran, read from rig's profile. *)
+let traffic d f =
+  let m = Nx.Device.memory d in
+  let y, events = Rig.Profile.take f in
+  let count (i, o) = function
+    | Rig.Profile.Copy { src; dst; bytes; _ } ->
+        ( (if Rig.equal dst m then i + bytes else i),
+          if Rig.equal src m then o + bytes else o )
+    | _ -> (i, o)
+  in
+  (y, List.fold_left count (0, 0) events)
 
 (* [all s] is every device [s] names, opened. *)
 let all s =

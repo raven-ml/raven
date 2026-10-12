@@ -2,11 +2,11 @@
  (name bench_decode)
  (libraries
   nx
-  nx.cuda
   nx.amd
-  nx.metal
-  nx.metal.device
-  nx.device
+  rig
+  rig.cuda
+  rig.metal
+  rig.amd.amdgpu
   nx.quant
   rune
   kaun

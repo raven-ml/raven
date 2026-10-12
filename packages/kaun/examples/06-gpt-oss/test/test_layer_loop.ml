@@ -76,19 +76,37 @@ let params () =
     head = Some (linear ~bias:false d cfg.vocab_size);
   }
 
-(* Where each pool's storage starts: a call that wrote a layer's cache in its
-   own storage returns it at the address it was given. *)
-let addresses caches =
+(* Each pool's storage. *)
+let storage caches =
   let of_leaf x =
     match Nx.Repr.v x with
-    | Placed p ->
-        List.map Nx_device.Buffer.address
-          (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p))
-    | Host _ | Traced _ -> invalid_arg "addresses: not a placed value"
+    | Placed p -> Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p)
+    | Host _ | Traced _ -> invalid_arg "storage: not a placed value"
   in
   List.concat_map
     (fun (c : _ Attention.Cache.t) -> of_leaf c.keys @ of_leaf c.values)
     caches
+
+(* Buffers compare as the byte of memory they start at: a call that wrote a
+   value in its own storage returns it over the memory it was given. *)
+let at =
+  Testable.make
+    ~pp:(fun ppf b ->
+      Format.fprintf ppf "%s at %d"
+        (Rig.name (Rig.Buffer.device b))
+        (Rig.Buffer.offset b))
+    ~equal:(fun b b' ->
+      Rig.Buffer.overlaps b b' && Rig.Buffer.offset b = Rig.Buffer.offset b')
+
+(* [received m f] is [f ()] and the bytes that copies moved into the memory [m]
+   while it ran. *)
+let received m f =
+  let y, events = Rig.Profile.take f in
+  let count n = function
+    | Rig.Profile.Copy { dst; bytes; _ } when Rig.equal dst m -> n + bytes
+    | _ -> n
+  in
+  (y, List.fold_left count 0 events)
 
 let test_blocks_read_weights_and_reuse_caches () =
   let p = params () in
@@ -116,21 +134,20 @@ let test_blocks_read_weights_and_reuse_caches () =
     let index_bytes =
       Nx.Ptree.fold Cache_index.ptree (fun _ t n -> n + Nx.nbytes t) !index 0
     in
-    let before = addresses !caches in
-    let s0 = Nx_device.stats (Nx.Device.memory cpu1_device) in
-    let x', caches' = cached !caches !index token in
-    let s1 = Nx_device.stats (Nx.Device.memory cpu1_device) in
+    let before = storage !caches in
+    let (x', caches'), uploaded =
+      received (Nx.Device.memory cpu1_device) (fun () ->
+          cached !caches !index token)
+    in
     equal
       ~msg:(msg ^ ": every pool is written in its own storage")
-      (list nativeint) before (addresses caches');
+      (list at) before (storage caches');
     (* The first single-token call compiles its programs, which upload their
-       host constants once. *)
+       host constants once. The layer loop places the index on CPU:1, and CPU:1,
+       a memory over the host's, reads the token, a host argument, in place:
+       only the index moves. A GPU would upload the token too. *)
     if step > 1 then
-      equal
-        ~msg:(msg ^ ": only the index and the token are uploaded")
-        int
-        (index_bytes + Nx.nbytes token)
-        Nx_device.Stats.(bytes_in (diff s0 s1));
+      equal ~msg:(msg ^ ": only the index is uploaded") int index_bytes uploaded;
     x := x';
     caches := caches'
   done;
