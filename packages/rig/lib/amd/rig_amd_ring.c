@@ -233,6 +233,53 @@ static void need(const struct rig_amd *d, const struct rig_amd_route *routes,
   }
 }
 
+/* The most whole parts of [per] units of room after [fixed] fit in [room],
+   capped at [n]. */
+static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
+                      uint64_t per) {
+  if (room < fixed) return 0;
+  uint64_t m = (room - fixed) / per;
+  return m < n ? m : n;
+}
+
+/* The most parts an idle device runs in one submission, each of the largest
+   size it admits, as [need] counts them against the bounds [rig_amd_room]
+   holds a submission to: a launch whose dispatch takes RIG_AMD_LAUNCH_WORDS
+   words and whose arguments take RIG_AMD_KERNARG bytes, or a copy of one
+   packet, each joined to the part before it on its queue and to one of the
+   other queue. */
+int rig_amd_most_parts(const struct rig_amd *d) {
+  const struct rig_amd_ring *c = &d->rings[RIG_AMD_COMPUTE];
+  const struct rig_amd_ring *s = &d->rings[RIG_AMD_COPY];
+  const struct rig_amd_segment *g = &d->segment;
+  uint64_t pm4 = words_of(d, T_WAIT) +
+                 RIG_AMD_SCRATCH_WRITES * words_of(d, T_WRITE) +
+                 RIG_AMD_WAITS * words_of(d, T_WAIT64) +
+                 words_of(d, T_SIGNAL) + words_of(d, T_WAIT) +
+                 words_of(d, T_RELEASE) + 2 * words_of(d, T_STAMP);
+  uint64_t pm4_part = words_of(d, T_FLUSH) + words_of(d, T_ACQUIRE) +
+                      words_of(d, T_SIGNAL) + 2 * words_of(d, T_WAIT);
+  uint64_t launch = RIG_AMD_LAUNCH_WORDS + words_of(d, T_INVALIDATE);
+  uint64_t args = align_up(RIG_AMD_KERNARG, SEGMENT_ALIGN);
+  uint64_t n = RIG_AMD_PARTS;
+  if (c->kind == RING_AQL) {
+    n = least(n, c->size - 1, 2 * words_of(d, A_IB),
+              words_of(d, A_IB) + launch);
+    n = least(n, g->size / 2, 3 * SEGMENT_ALIGN + 4 * pm4,
+              args + 4 * pm4_part + SEGMENT_ALIGN);
+  } else {
+    n = least(n, c->size - 1, pm4, pm4_part + launch);
+    n = least(n, g->size / 2, SEGMENT_ALIGN, args);
+  }
+  n = least(n, (s->size - 1) / 2,
+            3 * words_of(d, S_POLL) + words_of(d, S_FENCE) +
+                words_of(d, S_TRAP) + 2 * words_of(d, S_STAMP) +
+                words_of(d, S_FENCE),
+            words_of(d, S_COPY) + words_of(d, S_FENCE) +
+                2 * words_of(d, S_POLL));
+  return (int)n;
+}
+
 /* Whether launch [p], whose block is in [args], runs: on the compute ring,
    in the form its ring reads, with the parameters its function reads, over
    a grid and groups of no empty axis, within its function's threads per
@@ -243,7 +290,8 @@ static int launches(const struct rig_amd *d, const struct rig_part *p,
   const struct rig_amd_launch *l = p->launch.launch;
   if (p->queue != RIG_AMD_COMPUTE || l == NULL || args == NULL ||
       l->packet != (d->rings[p->queue].kind == RING_AQL) ||
-      p->launch.args.params < l->explicit_size)
+      p->launch.args.params < l->explicit_size ||
+      l->kernarg > RIG_AMD_KERNARG)
     return 0;
   const struct rig_block *b = (const void *)(args + p->launch.args.block);
   uint64_t threads = 1;

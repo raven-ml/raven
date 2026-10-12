@@ -131,7 +131,12 @@ val capability : t -> Rig_nv_abi.Gpu.t
     - a launch whose grid or group has an axis of size [0] or exceeds
       {!Rig_nv_abi.Qmd.max_size}, whose group has more threads than
       {!Rig_nv_abi.Launch.max_threads}, or whose dynamic shared memory,
-      rounded up to 128 bytes, exceeds {!Rig_nv_abi.Launch.dynamic_shared}.
+      rounded up to 128 bytes, exceeds {!Rig_nv_abi.Launch.dynamic_shared};
+    - a launch whose kernel's constant bank 0 takes more than 5120 bytes.
+
+    The device's [most_parts] ({!Rig_edge.type-facts}) is the most launches
+    of the largest descriptor and constant bank, or copies of at most 2 GiB,
+    that the empty rings hold.
 
     It reads the word first, so [RIG_LATER] means that a value the device
     was given is not yet reached. [rig_nv_submit] returns [RIG_COMMITTED],

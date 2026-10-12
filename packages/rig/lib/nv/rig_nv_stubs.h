@@ -108,6 +108,10 @@ enum {
 #define QMD_ALIGN 256
 #define BANK_ALIGN 64
 
+/* The most bytes of a launch's constant bank 0: the driver's parameters,
+   which end within a structure, then the kernel's. */
+#define BANK_MAX (STRUCTURE_BYTES + RIG_PARAMS)
+
 struct launch {
   /* [qmd[s][c]]: without (s = 0) or with dynamic shared memory, chaining
      no descriptor (c = 0) or the one at V_NEXT */
@@ -337,5 +341,9 @@ int rig_nv_measure(const struct device *d, struct measure *m,
 #define LOCAL_UNIT_SHIFT 15
 /* A pending memory's address is 4 KiB aligned: its bit 0 is clear. */
 #define LOCAL_TAKEN UINT64_C(1)
+
+/* The most parts of the largest size an idle device runs in one
+   submission (rig_nv_ring.c). */
+int rig_nv_most_parts(const struct device *d);
 
 #endif

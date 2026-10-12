@@ -269,9 +269,13 @@ val capability : t -> Rig_amd_abi.Capability.t
     when it is idle, or if a part is one it does not run. An idle device
     holds 512 parts, and the words and argument bytes that fit in the
     compute ring, half the copy ring and half the argument segment, since a
-    submission's SDMA packets and argument bytes never wrap. It does not
-    run:
+    submission's SDMA packets and argument bytes never wrap. The device's
+    [most_parts] ({!Rig_edge.type-facts}) is the most launches of the
+    largest dispatch and arguments, or copies of one SDMA packet, that an
+    idle device holds. It does not run:
     {ul
+    {- a launch whose kernel's arguments take more than 4352 bytes, its
+       parameters and the implicit arguments after them;}
     {- a copy of one byte or more on ["COMPUTE:0"];}
     {- words on an AQL queue that are not whole packets;}
     {- a launch whose parameters end before its kernel's explicit arguments

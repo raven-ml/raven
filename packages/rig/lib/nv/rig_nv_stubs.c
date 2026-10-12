@@ -249,6 +249,10 @@ value caml_rig_nv_launch(value v_structures, value v_ints) {
   CAMLreturn(result);
 }
 
+value caml_rig_nv_most_parts(value v_self) {
+  return Val_long(rig_nv_most_parts(Device_val(v_self)));
+}
+
 value caml_rig_nv_launch_free(value v_launch) {
   free((void *)Nativeint_val(v_launch));
   return Val_unit;

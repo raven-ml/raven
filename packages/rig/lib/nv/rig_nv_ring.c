@@ -182,7 +182,8 @@ static int launchable(const struct rig_part *p, const uint8_t *args) {
     threads *= b->threads[i];
   }
   return threads <= l->max_threads &&
-         round_up(b->shared, 128) <= l->max_shared;
+         round_up(b->shared, 128) <= l->max_shared &&
+         l->bank0_bytes <= BANK_MAX;
 }
 
 /* The bytes of [l]'s constant bank 0 with [params] bytes of parameters: the
@@ -297,6 +298,48 @@ static void need(const struct device *d, const struct route *routes,
   bytes[r] += bytes_of(d, r == COMPUTE ? T_RELEASE : T_COPY_RELEASE) +
               bytes_of(d, r == COMPUTE ? T_STAMP : T_COPY_STAMP);
   if (*launched > 0) *launched += wasted;
+}
+
+/* The most whole parts of [per] units of room after [fixed] fit in [room],
+   capped at [n]. */
+static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
+                      uint64_t per) {
+  if (room < fixed) return 0;
+  uint64_t m = (room - fixed) / per;
+  return m < n ? m : n;
+}
+
+/* The most parts an idle device runs in one submission, each of the largest
+   size it admits, as [need] counts them against the bounds [rig_nv_room]
+   holds a submission to: a launch whose descriptor takes STRUCTURE_BYTES
+   and whose constant bank takes BANK_MAX bytes, or a copy of one COPY_MAX
+   piece, each joined to the part before it on its queue and to one of the
+   other queue. Either channel may release the value. */
+int rig_nv_most_parts(const struct device *d) {
+  uint64_t n = MAX_PARTS;
+  uint64_t compute_release = bytes_of(d, T_RELEASE) + bytes_of(d, T_STAMP);
+  uint64_t copy_release =
+      bytes_of(d, T_COPY_RELEASE) + bytes_of(d, T_COPY_STAMP);
+  uint64_t release =
+      compute_release > copy_release ? compute_release : copy_release;
+  uint64_t joins = 2 * bytes_of(d, T_ACQUIRE);
+  uint64_t fixed = (2 + MAX_WAITS) * bytes_of(d, T_ACQUIRE) +
+                   4 * TEMPLATE_WORDS + release;
+  for (int q = 0; q < CHANNELS; q++)
+    n = least(n, d->ch[q].entries - 1, 3, 2);
+  n = least(n, d->ch[COMPUTE].size,
+            fixed + bytes_of(d, T_STAMP) + bytes_of(d, T_SETUP) +
+                bytes_of(d, T_LOCAL) + bytes_of(d, T_INVALIDATE),
+            joins + bytes_of(d, T_SCHEDULE) + bytes_of(d, T_RELEASE) +
+                bytes_of(d, T_IDLE));
+  n = least(n, d->ch[COPY].size,
+            fixed + bytes_of(d, T_COPY_STAMP) + bytes_of(d, T_SETUP_COPY),
+            joins + bytes_of(d, T_COPY) + bytes_of(d, T_COPY_RELEASE));
+  uint64_t qmd = STRUCTURE_BYTES + QMD_ALIGN - 1;
+  uint64_t bank = BANK_MAX + BANK_ALIGN - 1;
+  n = least(n, d->ch[COMPUTE].launches_size, qmd > bank ? qmd : bank,
+            qmd + bank);
+  return (int)n;
 }
 
 int rig_nv_room(void *self, const struct rig_part *p, int n,

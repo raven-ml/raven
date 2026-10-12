@@ -199,9 +199,13 @@ val most_parts : t -> int
 (** [most_parts d] is the most parts one submission of [d] may hold
     ({!Submission.make}), as [d]'s driver states it ({!Rig_edge.type-facts}):
     [max_int] where its driver has no such limit, and [0] for an io device.
-    For a device of another machine, it is that machine's device's. A
-    submission of fewer parts may still exceed [d]'s queues by the sizes of
-    its parts ({!submit}). *)
+    For a device of another machine, it is that machine's device's.
+
+    An idle [d] runs any submission of at most that many parts whose parts
+    are launches, fills and copies of the largest sizes [d] admits: the most
+    parameter bytes, and a copy of the most bytes its driver moves in one
+    piece. Words parts, and longer copies, take the room their sizes take,
+    and their sizes are the caller's. *)
 
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is the record that [d]'s driver declares under [k]

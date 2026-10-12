@@ -125,6 +125,8 @@ external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
 
 external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
+external most_parts : int -> int = "caml_rig_amd_most_parts"
+
 external set_stamps : int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_stamps"
 
@@ -218,7 +220,7 @@ type t = {
    R9700, MEC firmware 3010. *)
 let wait64_from = [ ((12, 0, 1), 3010) ]
 let ring_bytes = 16 lsl 20
-let segment_bytes = 1 lsl 20
+let segment_bytes = 2 lsl 20
 let slots = 513
 let pointers_bytes = 4096
 
@@ -460,9 +462,6 @@ let freed g =
   let m = { address = g.word_address; host = Some g.word_host; data = () } in
   { bytes = 8; mem = Mem (given, m); flush = None }
 
-(* The most parts of a submission, rig_amd_stubs.h's RIG_AMD_PARTS. *)
-let most_parts = 512
-
 let facts g =
   {
     Rig_edge.arch = Abi.Gpu.processor g.gpu;
@@ -477,7 +476,7 @@ let facts g =
         objects = false;
         most = max_waits;
       };
-    most_parts;
+    most_parts = most_parts g.self;
     may_block = false;
     hang_ms = g.hang_ms;
     maps_host = g.maps_host;

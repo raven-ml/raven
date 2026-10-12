@@ -852,6 +852,36 @@ let empty_launches (module G : Gpu) =
       (Array.init 16 (fun k -> 1 + k))
       (words (get out) ~at:0 16)
 
+(* Past this many parts the law below takes no longer to state. *)
+let most_parts_cap = 1024
+
+(* An idle device runs [min (most_parts d) most_parts_cap] launches in one
+   submission, each with 4096 bytes of parameters, the most a launch gives:
+   launch [i] stores [i + 1] into word [i]. *)
+let largest_launches (module G : Gpu) =
+  let launcher = launcher (module G) in
+  fun () ->
+    G.with_ @@ fun t ->
+    let l = launches_on launcher t in
+    let n = Int.min (Rig.most_parts t.d) most_parts_cap in
+    let out = filled t.d (String.make (4 * n) '\000') in
+    let launch i =
+      launch_work l "ids" ~params:4096
+        [| (out, Rig.Read_write, 0) |]
+        (fun run k ->
+          Sub.Run.groups run k 1 1 1;
+          Sub.Run.threads run k 1 1 1;
+          Sub.Run.int64 run k 0 (4 * i);
+          Sub.Run.int64 run k 8 (i + 1);
+          Sub.Run.int32 run k 16 0;
+          Sub.Run.float32 run k 20 0.)
+    in
+    Rig.Point.wait
+      (submit t.d (List.init n launch) ~uses:[ (out, Rig.Read_write) ]);
+    equal (array int) ~msg:(strf "%d launches' words" n)
+      (Array.init n (fun i -> i + 1))
+      (words (get out) ~at:0 n)
+
 (* What the image states of [ids], whose parameters end at byte 24, holds: a
    launch that gives fewer bytes is refused at make, and so is a ref past them.
    A group of the most threads the image states runs, and one more is refused
@@ -1534,6 +1564,8 @@ let laws (module G : Gpu) =
          it reads that"
         geometry (launches_conform g);
       test "a launch of no size along an axis is refused" (empty_launches g);
+      test "an idle device runs its most parts of the largest launches at once"
+        (largest_launches g);
       test "a launch gives the parameters, and a run sets at most the threads, \
             its image states"
         (entry_facts g);

@@ -171,6 +171,7 @@ external create : int -> int -> int -> int -> int = "caml_rig_nv_create"
 [@@noalloc]
 
 external destroy : int -> unit = "caml_rig_nv_destroy" [@@noalloc]
+external most_parts : int -> int = "caml_rig_nv_most_parts"
 
 external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
 [@@noalloc]
@@ -343,9 +344,6 @@ let queues =
 let waits =
   { Rig_edge.stores = true; hosts = true; objects = false; most = 256 }
 
-(* The most parts of a submission, rig_nv_stubs.h's MAX_PARTS. *)
-let most_parts = 65535
-
 let capability (T d) = d.capability
 
 let facts (T d) =
@@ -356,7 +354,7 @@ let facts (T d) =
     copy_engine = Some 1;
     completion = Store;
     waits;
-    most_parts;
+    most_parts = most_parts d.self;
     may_block = false;
     hang_ms = d.hang_ms;
     maps_host = d.maps_host;

@@ -277,6 +277,10 @@ value caml_rig_amd_launch_free(value v_l) {
   return Val_unit;
 }
 
+value caml_rig_amd_most_parts(value v_self) {
+  return Val_long(rig_amd_most_parts(Device_val(v_self)));
+}
+
 value caml_rig_amd_max_copy(value v_self, value v_n) {
   Device_val(v_self)->max_copy = (uint64_t)Long_val(v_n);
   return Val_unit;
