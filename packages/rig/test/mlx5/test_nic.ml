@@ -13,13 +13,49 @@ module M = Rig_mlx5
 module E = Rig_mlx5_abi.Entry
 module C = Rig_mlx5_abi.Completion
 
-let nic () =
+let read path =
+  match In_channel.with_open_bin path In_channel.input_all with
+  | s -> Some (String.trim s)
+  | exception Sys_error _ -> None
+
+(* Whether [name]'s port 1 carries RDMA, from /sys/class/infiniband: the type
+   file of an unused identifier cannot be read, and a port whose link layer
+   cannot be read is left to opening. *)
+let carries_rdma name =
+  let port = "/sys/class/infiniband/" ^ name ^ "/ports/1" in
+  match read (port ^ "/link_layer") with
+  | Some "Ethernet" ->
+      let types = port ^ "/gid_attrs/types" in
+      let entries = try Sys.readdir types with Sys_error _ -> [||] in
+      Array.exists (fun e -> read (types ^ "/" ^ e) = Some "RoCE v2") entries
+  | _ -> true
+
+(* The NIC these tests drive: the first the mlx5 driver holds whose port 1
+   carries RDMA, as the kernel's files say before anything opens it. A port
+   carries RDMA on InfiniBand, or on Ethernet with a RoCE v2 global identifier.
+   A ConnectX function whose RoCE is off, as a cloud machine's virtual
+   function, lists an Ethernet port with none, which Rig_mlx5_uverbs.open_
+   refuses: these tests skip there. A NIC that carries RDMA and fails to open
+   fails the test. *)
+let nic_name () =
   match Rig_mlx5_uverbs.names () with
   | [] -> skip ~reason:"no NIC the mlx5 driver holds" ()
-  | name :: _ -> (
-      match Rig_mlx5_uverbs.open_ name with
-      | Ok nic -> nic
-      | Error e -> failf "opening %s: %s" name e)
+  | names -> (
+      match List.find_opt carries_rdma names with
+      | Some name -> name
+      | None ->
+          skip
+            ~reason:
+              (Printf.sprintf
+                 "no RDMA on %s: port 1 is Ethernet with no RoCE v2 identifier"
+                 (String.concat ", " names))
+            ())
+
+let nic () =
+  let name = nic_name () in
+  match Rig_mlx5_uverbs.open_ name with
+  | Ok nic -> nic
+  | Error e -> failf "opening %s: %s" name e
 
 let memory n =
   let b = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
@@ -201,12 +237,10 @@ let lifetime =
 let kept =
   test "an object the kernel keeps is destroyed here" (fun () ->
       let p =
-        match Rig_mlx5_uverbs.names () with
-        | [] -> skip ~reason:"no NIC the mlx5 driver holds" ()
-        | name :: _ -> (
-            match Rig_mlx5_uverbs.path name with
-            | Ok p -> p
-            | Error e -> failf "opening %s: %s" name e)
+        let name = nic_name () in
+        match Rig_mlx5_uverbs.path name with
+        | Ok p -> p
+        | Error e -> failf "opening %s: %s" name e
       in
       let destroy kind h =
         match kind with
