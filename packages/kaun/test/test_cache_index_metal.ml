@@ -11,8 +11,14 @@ open Kaun
 let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 
+(* A virtual Mac's paravirtual GPU makes no residency set, so Metal opens no
+   device there. *)
 let metal =
-  Nx.Placement.on (Nx.Device.make (Result.get_ok (Rig.open_ (Rig_metal.gpu 0))))
+  lazy
+    (match Rig.open_ (Rig_metal.gpu 0) with
+    | Ok d -> Nx.Placement.on (Nx.Device.make d)
+    | Error ("Metal made no residency set" as why) -> skip ~reason:why ()
+    | Error why -> fail why)
 
 (* A toy compressed stream, as in test_attention.ml: each token stores its value
    at its position, the token that closes a block of 4 stores the sum of its
@@ -83,7 +89,7 @@ let test_stream_on_metal () =
   let s =
     call
       (Nx.Ptree.map state
-         (fun _ t -> Nx.place metal t)
+         (fun _ t -> Nx.place (Lazy.force metal) t)
          {
            x = Nx.zeros Nx.float32 [| 1; 1; 1 |];
            y = Nx.zeros Nx.float32 [| 1; 1 |];
@@ -128,7 +134,7 @@ let test_one_slot_on_metal () =
       in
       let step = Rune.jit Nx.Ptree.(tensor @-> returns tensor) f in
       equal ~msg (array float_exact) (Array.make 8 expected)
-        (flat (step (Nx.place metal (int64s [| 1; 2 |] pos)))))
+        (flat (step (Nx.place (Lazy.force metal) (int64s [| 1; 2 |] pos)))))
     [
       ("padding after the token", [| 0; -1 |], [| 0 |], 10.);
       ("padding before the token", [| -1; 0 |], [| 0 |], 20.);
