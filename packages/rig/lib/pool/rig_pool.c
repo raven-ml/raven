@@ -414,6 +414,7 @@ typedef struct pool pool;
 typedef struct {
   pool *pool;
   int id;
+  pthread_cond_t wake; /* parked, it waits here for a job it is one of */
 } worker;
 
 struct pool {
@@ -422,7 +423,6 @@ struct pool {
   strip *strips;         /* [0, threads), strip k claimed first by worker k */
   pthread_mutex_t drive; /* one published job at a time */
   pthread_mutex_t mtx;   /* guards parking */
-  pthread_cond_t wake;   /* parked workers wait here for a new generation */
   pthread_cond_t done;   /* a parked caller waits here for the job's end */
   /* The job's number in the high 32 bits and its threads in the low 32,
      so that one load tells a worker that a job began and whether it is one
@@ -557,8 +557,9 @@ static int enter(pool *p) {
    the word it waits on again before it waits, and the thread that changes the
    word reads the flag after the change, both sequentially consistent: one of
    them sees the other, so no wakeup is lost. The signal is sent under the
-   mutex the parked thread waits with. A worker that a broadcast wakes for a
-   job it takes no part in parks again at once, since its window has ended. */
+   mutex the parked thread waits with. Each worker waits on a condition of
+   its own, and a job signals only its own parked workers, so a worker that
+   narrow jobs leave out sleeps through their burst. */
 
 static uint64_t park_worker(pool *p, int id, uint64_t seen) {
   _Atomic uint64_t *word = &p->parked[id / 64];
@@ -568,22 +569,29 @@ static uint64_t park_worker(pool *p, int id, uint64_t seen) {
   RIG_POOL_HOOK(parking);
   uint64_t g;
   while ((g = atomic_load(&p->generation)) == seen)
-    pthread_cond_wait(&p->wake, &p->mtx);
+    pthread_cond_wait(&p->workers[id].wake, &p->mtx);
   atomic_fetch_and(word, ~bit);
   pthread_mutex_unlock(&p->mtx);
   return g;
 }
 
-/* Whether one of a job's workers, 1 to [threads] - 1, is parked: one load
-   for jobs of up to 64 threads. */
-static int participant_parked(pool *p, int threads) {
+/* Wakes the parked ones of a job's workers, 1 to [threads] - 1: one load
+   for jobs of up to 64 threads, and the mutex only if one is parked. */
+static void wake_parked(pool *p, int threads) {
+  int locked = 0;
   for (int w = 0; w * 64 < threads; w++) {
     int below = threads - w * 64;
     uint64_t mask = below >= 64 ? ~(uint64_t)0 : ((uint64_t)1 << below) - 1;
     if (w == 0) mask &= ~(uint64_t)1;
-    if (atomic_load(&p->parked[w]) & mask) return 1;
+    uint64_t bits = atomic_load(&p->parked[w]) & mask;
+    if (bits && !locked) {
+      pthread_mutex_lock(&p->mtx);
+      locked = 1;
+    }
+    for (; bits; bits &= bits - 1)
+      pthread_cond_signal(&p->workers[w * 64 + __builtin_ctzll(bits)].wake);
   }
-  return 0;
+  if (locked) pthread_mutex_unlock(&p->mtx);
 }
 
 /* The generation of the next job after [g] that worker [id] is one of the
@@ -648,8 +656,12 @@ static void start_workers(pool *p, int wanted) {
     worker *w = &p->workers[id];
     w->pool = p;
     w->id = id;
+    if (pthread_cond_init(&w->wake, NULL) != 0) break;
     pthread_t thread;
-    if (pthread_create(&thread, &attr, work, w) != 0) break;
+    if (pthread_create(&thread, &attr, work, w) != 0) {
+      pthread_cond_destroy(&w->wake);
+      break;
+    }
     p->threads = id + 1;
   }
 #if !defined(_WIN32)
@@ -671,13 +683,10 @@ static pool *create(void) {
   if (p->strips == NULL) goto fail_workers;
   if (pthread_mutex_init(&p->drive, NULL) != 0) goto fail_strips;
   if (pthread_mutex_init(&p->mtx, NULL) != 0) goto fail_drive;
-  if (pthread_cond_init(&p->wake, NULL) != 0) goto fail_mtx;
-  if (pthread_cond_init(&p->done, NULL) != 0) goto fail_wake;
+  if (pthread_cond_init(&p->done, NULL) != 0) goto fail_mtx;
   start_workers(p, cores);
   return p;
 
-fail_wake:
-  pthread_cond_destroy(&p->wake);
 fail_mtx:
   pthread_mutex_destroy(&p->mtx);
 fail_drive:
@@ -792,11 +801,7 @@ __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
   uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);
   atomic_store(&p->generation, ((g >> 32) + 1) << 32 | (uint32_t)t);
   RIG_POOL_HOOK(published);
-  if (participant_parked(p, t)) {
-    pthread_mutex_lock(&p->mtx);
-    pthread_cond_broadcast(&p->wake);
-    pthread_mutex_unlock(&p->mtx);
-  }
+  wake_parked(p, t);
 
   in_body = 1;
   claim(p, &j, 0);

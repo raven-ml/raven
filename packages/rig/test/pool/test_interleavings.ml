@@ -97,6 +97,13 @@ let test_narrow_burst =
     ]
     [ 1; 1; 0; 0 ] H.narrow_burst
 
+let test_narrow_wake =
+  scenario
+    [
+      "worker 1 ran a chunk"; "worker 2 parked again"; "chunks not run once";
+    ]
+    [ 1; 0; 0 ] H.narrow_wake
+
 let waiting_tests =
   group ~timeout:P.timeout "waiting and waking"
     [
@@ -118,6 +125,10 @@ let waiting_tests =
         (wake Asleep);
       test "a worker that narrow jobs leave out parks, and a wide job wakes it"
         test_narrow_burst;
+      test
+        "a job wakes only its own parked workers: one it leaves out sleeps on, \
+         sampled for 20 ms"
+        test_narrow_wake;
     ]
 
 (* Fork *)

@@ -107,6 +107,8 @@ typedef enum {
   forked,
   body_began,
   body_done,
+  asleep,
+  w2_parking,
   events
 } event;
 
@@ -129,6 +131,8 @@ static const char *event_names[events] = {
     "the fork",
     "the job's body",
     "the body's end",
+    "workers 1 and 2's sleep",
+    "worker 2's parking",
 };
 
 static _Atomic int signalled[events];
@@ -172,6 +176,7 @@ typedef enum {
   wake_decided,
   wake_slept,
   narrow,
+  narrow_wake,
   fork_parked,
 } phase;
 
@@ -267,6 +272,9 @@ static void hook(point at) {
     break;
   case narrow:
     if (at == point_parking && mine && once(w_bit)) sig(w_bit);
+    break;
+  case narrow_wake:
+    if (at == point_parking && id == 2) sig(w2_parking);
     break;
   case fork_parked:
     if (at == point_parking && mine && take_arm()) {
@@ -404,6 +412,24 @@ static void await_park(event e) {
   await(e);
 }
 
+/* Waits until workers 1 and 2 have set their parked bits, then takes the
+   parking mutex once: a worker holds it from setting its bit until it
+   waits, so both wait. Past patience, records [asleep] as [await] does. */
+static void await_asleep(void) {
+  uint64_t both = (uint64_t)1 << 1 | (uint64_t)1 << 2;
+  int64_t deadline = now_ns() + patience;
+  while ((atomic_load(&g_pool->parked[0]) & both) != both) {
+    if (now_ns() > deadline) {
+      int none = -1;
+      atomic_compare_exchange_strong(&timed_out, &none, (int)asleep);
+      return;
+    }
+    sched_yield();
+  }
+  pthread_mutex_lock(&g_pool->mtx);
+  pthread_mutex_unlock(&g_pool->mtx);
+}
+
 /* Answers */
 
 /* (timed out, values): [timed out] names the event a wait gave up on, ""
@@ -536,7 +562,7 @@ value rig_pool_test_caller_sleeps(value v_held) {
       caller stored the generation; it reads the new one and does not sleep.
    1: W1 decides to park and holds; the caller stores the generation and
       holds until W1 set its bit; W1 reads the new generation.
-   2: W1 sleeps; the caller sees its bit and broadcasts.
+   2: W1 sleeps; the caller sees its bit and signals it.
    Answers: whether W1 ran a chunk of the job (the other chunk waits for it
    up to patience), the chunks not run once. */
 value rig_pool_test_wake(value v_order) {
@@ -591,6 +617,31 @@ value rig_pool_test_narrow_burst(value unit) {
   settle();
   caml_leave_blocking_section();
   return answer(v, 4);
+}
+
+/* A job wakes only its own workers. W1 and W2 sleep; a job of two threads,
+   whose caller's chunk waits for W1's, wakes W1. W2 sleeps on: woken for
+   a job it takes no part in, it would park again at once, so nothing is
+   held for and the test samples 20 ms after the job's end. Answers: whether
+   W1 ran a chunk, whether W2 parked again, the chunks not run once. */
+value rig_pool_test_narrow_wake(value unit) {
+  (void)unit;
+  int v[3] = {0};
+  caml_enter_blocking_section();
+  map_workers();
+  settle();
+  await_asleep();
+  begin(narrow_wake);
+  tally j;
+  tally_init(&j, 2);
+  j.awaited = 1;
+  run_tally(2, &j);
+  v[0] = atomic_load(&j.worked[1]);
+  v[1] = await_for(w2_parking, 20000000);
+  v[2] = not_once(&j);
+  settle();
+  caml_leave_blocking_section();
+  return answer(v, 3);
 }
 
 /* A child made by fork runs a job on every core; it exits with the chunks

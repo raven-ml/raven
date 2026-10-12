@@ -61,6 +61,11 @@ val narrow_burst : unit -> answer
     of three. Its values: whether worker 2 parked, whether it ran a chunk of the
     job of three, the chunks of the narrow jobs and of that job not run once. *)
 
+val narrow_wake : unit -> answer
+(** [narrow_wake ()] runs a job of two threads while workers 1 and 2 sleep,
+    and watches worker 2 for 20 ms after it. Its values: whether worker 1 ran a
+    chunk, whether worker 2 parked again, the chunks not run once. *)
+
 (** {1:fork Fork} *)
 
 val fork_parked : unit -> answer
