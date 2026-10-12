@@ -572,16 +572,13 @@ let device_order (module G : Gpu) () =
 
 (* Profiles *)
 
-(* How far a span may lie from the host's clock. Every GPU driver states its
-   times within microseconds of it, plus its clock's rate error since its
-   last measure, which a test's few seconds keep below a microsecond. *)
-let clock_error = 50_000
-
 (* A profile taken around a submission records one span of its work on the
-   device, which lies within the profile and lasts at least as long as the
-   work: [late] of work on the first queue, alone, and before or after a copy
-   beside it; and a copy alone. *)
+   device, which lies within the profile, up to the error its driver states
+   (G.clock_error), and lasts at least as long as the work: [late] of work on
+   the first queue, alone, and before or after a copy beside it; and a copy
+   alone. *)
 let spans (module G : Gpu) () =
+  let opened = Rig.Profile.now () in
   G.with_ @@ fun t ->
   let f = G.D.facts t.g in
   let late = 20_000_000 and n = 4096 in
@@ -617,10 +614,10 @@ let spans (module G : Gpu) () =
     in
     match spans with
     | [ (start, stop) ] ->
-        at_least int ~msg:(what ^ ": the span's start")
-          ~than:(t0 - clock_error) start;
-        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + clock_error)
-          stop;
+        let error = G.clock_error ~since:(t1 - opened) in
+        at_least int ~msg:(what ^ ": the span's start") ~than:(t0 - error)
+          start;
+        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + error) stop;
         at_least int ~msg:(what ^ ": the span's length") ~than:lasts
           (stop - start)
     | spans ->
@@ -633,10 +630,11 @@ let spans (module G : Gpu) () =
 let idle_s = 1.2
 
 (* A submission's span, profiled alone, lies within the host's window from
-   before the submit to after the wait, on the host clock: before and after
-   the device idles past the age at which it measures its clock again, and
-   right after it did. *)
+   before the submit to after the wait, on the host clock, up to the error
+   its driver states: before and after the device idles past the age at
+   which it measures its clock again, and right after it did. *)
 let spans_after_idle (module G : Gpu) () =
+  let opened = Rig.Profile.now () in
   G.with_ @@ fun t ->
   let n = 64 in
   let src = filled ~memory:Pinned t.d (pattern n 6) in
@@ -660,10 +658,10 @@ let spans_after_idle (module G : Gpu) () =
         events
     with
     | [ (start, stop) ] ->
-        at_least int ~msg:(what ^ ": the span's start")
-          ~than:(t0 - clock_error) start;
-        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + clock_error)
-          stop;
+        let error = G.clock_error ~since:(t1 - opened) in
+        at_least int ~msg:(what ^ ": the span's start") ~than:(t0 - error)
+          start;
+        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + error) stop;
         at_most int ~msg:(what ^ ": the span's start") ~than:stop start
     | spans ->
         equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)

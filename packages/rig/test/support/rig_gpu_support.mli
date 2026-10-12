@@ -208,6 +208,12 @@ module type Conformance = sig
   (** [spin t ~ns] is work on [t]'s first queue that runs at least [ns]
       nanoseconds. *)
 
+  val clock_error : since:int -> int
+  (** [clock_error ~since] is the most, in nanoseconds, by which a span of the
+      GPU's work lies outside the host's clock times around its submit and
+      its wait, [since] nanoseconds after the device opened, from its
+      driver's interface. *)
+
   val launch_binary : unit -> string option
   (** [launch_binary ()] is a binary of the driver's fixtures holding the launch
       laws' kernels, or [None] where the driver runs no launch. Their parameters

@@ -241,6 +241,13 @@ let copy_words t ~dst ~src =
 
 (* The kernel [spin] holds until its flag, a zero word here, is not 0, or for
    its nanoseconds. *)
+(* rig_cuda.mli: a time is within half the closest of eight round trips of
+   a reference event at open, plus the GPU timer's rate error since open.
+   The closest round trip takes under 5 us on an idle GPU (4.8 us at most
+   on kimchi's sm_89), and the timer's rate error stays within 10 ppm,
+   twice the 5.8 ppm measured there. *)
+let clock_error ~since = 2_500 + (since / 100_000)
+
 let spin t ~ns =
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
   launching (modules t.d) "spin" ~params:16

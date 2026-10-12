@@ -135,6 +135,10 @@ let copy_words t ~dst ~src =
 (* The kernel [spin] runs [c] steps of a generator on one thread, then writes
    its state at [out], here a word of its own. A step takes about 29 ns on an M1
    Max: one per 10 ns leaves room for faster GPUs. *)
+(* rig_metal.mli: a value's times are its command buffers' [GPUStartTime]
+   and [GPUEndTime], on the host's clock. *)
+let clock_error ~since:_ = 0
+
 let spin t ~ns =
   let module Run = Rig.Submission.Run in
   let c = Int.min ((ns / 10) + 1) 0xffff_ffff in

@@ -244,6 +244,13 @@ let copy_words t ~dst ~src =
     [| (dst, Rig.Read_write, 8); (src, Rig.Read, 16) |]
     (fun run b -> Sub.Run.int64 run b 24 (B.length src))
 
+(* rig_nv.mli: a time is within half the interval of a read of the timer
+   through the kernel driver, plus the timer's rate error since the latest
+   read, at most 62.5 ms before. Both are below the time the GPU takes to
+   start work the host submitted and the host takes to see it end, so a span
+   lies within the host's times around its submit and its wait. *)
+let clock_error ~since:_ = 0
+
 let spin t ~ns =
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
   launching t "spin" ~params:16 ~blocks:1

@@ -80,6 +80,17 @@ let copy_words t ~dst ~src =
 
 (* kernels.cl's [spin flag n] sleeps [n] times 127 x 64 cycles, at most 2.1 us
    at 4 GHz, then sets its flag, a word of its own here. *)
+(* rig_amd.mli: through KFD, a time is within half the interval of a read
+   of the clock, plus the clock's rate error since the latest read, at most
+   62.5 ms before. Both are below the time the GPU takes to start work the
+   host submitted and the host takes to see it end, so a span lies within
+   the host's times around its submit and its wait. With no kernel driver
+   the device measures at open only, by a round trip through its compute
+   queue: half of one, a few microseconds, plus the clock's rate error
+   since open, taken as 10 ppm. *)
+let clock_error ~since =
+  if driverless () then 5_000 + (since / 100_000) else 0
+
 let spin t ~ns =
   let module Run = Rig.Submission.Run in
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
