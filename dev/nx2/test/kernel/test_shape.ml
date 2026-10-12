@@ -813,18 +813,23 @@ let pp_linalg_case ppf c =
 
 (* A routine on a matrix of a batch of rank 0 to 2, square for most, with
    right-hand sides that fit for most solves, and operands of rank below 2
-   now and then. *)
+   now and then. A solve is drawn a quarter of the time: it is one routine
+   of many, and the law needs fitting solves in every run. *)
 let linalg_case =
   Gen.with_pp pp_linalg_case
     (let open Gen in
-     let* r = of_list ~pp:pp_routine routines in
+     let most = map (fun k -> k > 0) (int_range 0 3) in
+     let others = List.filter (fun r -> r <> Solve) routines in
+     let* r =
+       frequency [ (3, of_list ~pp:pp_routine others); (1, constant ~pp:pp_routine Solve) ]
+     in
      let* batch = array ~size:(int_range 0 2) (int_range 0 3) in
      let* m = int_range 0 5 in
      let* n = int_range 0 5 in
-     let* square = bool in
+     let* square = most in
      let n = if square then m else n in
      let* cols = int_range 0 4 in
-     let* fits = bool in
+     let* fits = most in
      let* rank = int_range 0 1 in
      let a = Array.append batch [| m; n |] in
      let b = Array.append batch [| (if fits then n else n + 1); cols |] in
