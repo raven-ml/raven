@@ -8,6 +8,7 @@
 
 #define _GNU_SOURCE
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -862,9 +863,10 @@ static void check_threads(value b, intnat x, intnat y, intnat z) {
   if (xy <= (uint64_t)most && xy * (uint64_t)z <= (uint64_t)most) return;
   char why[256];
   snprintf(why, sizeof why,
-           "Rig.Submission.Run.threads: %s runs at most %ld threads per group; "
-           "the block sets %ldx%ldx%ld",
-           BLOCK_FN(b), (long)most, (long)x, (long)y, (long)z);
+           "Rig.Submission.Run.threads: %s runs at most %" PRId64
+           " threads per group; the block sets %" PRId64 "x%" PRId64
+           "x%" PRId64,
+           BLOCK_FN(b), (int64_t)most, (int64_t)x, (int64_t)y, (int64_t)z);
   caml_invalid_argument(why);
 }
 
