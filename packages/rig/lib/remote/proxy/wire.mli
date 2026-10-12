@@ -164,7 +164,10 @@ type account = {
   name : string;  (** Its name on its machine, such as ["CUDA:3"]. *)
   arch : string;  (** Its [Rig.arch] there. *)
   budget : int;  (** Its [Rig.budget] there when it opened. *)
-  most_parts : int;  (** Its [Rig.most_parts] there. *)
+  most_parts : int;
+      (** Its [Rig.most_parts] there, and [max_int] for a device that runs no
+          submission of its own, such as an io device: the agent runs each
+          part handed over to it as a copy of its own. *)
   reaches : int list;
       (** The smaller ids of devices whose own memory it reaches there
           ([Rig.reaches]). *)

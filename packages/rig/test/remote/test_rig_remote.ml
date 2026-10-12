@@ -335,6 +335,15 @@ let most_parts () =
     (Exn.invalid_arg ~substring:"at most 3 parts")
     (fun () -> Sub.make d (Array.make 4 copy))
 
+(* A device of another machine that runs no submission of its own, such as an
+   io device, holds any number of parts: its agent runs each part handed over
+   as a copy of its own. *)
+let io_parts () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let d = List.hd (Result.get_ok (Rig_remote.devices h "DISK")) in
+  equal ~msg:"no limit" int max_int (Rig.most_parts d)
+
 let reaches kinds =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
@@ -387,6 +396,8 @@ let machines =
       test "a machine's host is the agent's, of this machine's arch" hosts;
       test "a device holds the parts in a submission its agent's does"
         most_parts;
+      test "an io device of another machine holds any number of parts"
+        io_parts;
       test "devices are the agent's, named after it, the same at each call"
         devices;
       cases

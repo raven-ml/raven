@@ -18,11 +18,11 @@
    key to the controller, then stops listening, so no other agent of the job
    reaches it, and waits for the job to end.
 
-   It serves ten kinds. "MEM" is two memory devices. "POLLED" is two Polled
+   It serves eleven kinds. "MEM" is two memory devices. "POLLED" is two Polled
    devices, which launch Polled's host functions. "TIGHT" is a Polled device
-   whose queue holds 3 parts. "HIDDEN" is a Polled device
-   whose [Device] memory the host does not address. "MAPLESS" is a Polled
-   device that maps no host memory. "FAULTY" is a device whose
+   whose queue holds 3 parts. "DISK" is the io device of files. "HIDDEN" is a
+   Polled device whose [Device] memory the host does not address. "MAPLESS"
+   is a Polled device that maps no host memory. "FAULTY" is a device whose
    next fallible call faults with "the agent's device faulted", which loses it.
    "NONE" is an opener that fails with "no such hardware". "COLLECT" runs a full
    major collection and opens no device. "RAISE" is an opener that raises
@@ -80,6 +80,7 @@ let kinds =
     ("MEM", mem);
     ("POLLED", polled);
     ("TIGHT", tight);
+    ("DISK", fun () -> Ok [ Rig_disk.device ]);
     ("FAULTY", faulty);
     ("HIDDEN", hidden);
     ("MAPLESS", mapless);

@@ -1,7 +1,7 @@
 (executables
  (names agent controller launched)
  (modules agent controller launched)
- (libraries rig rig_remote rig_remote_proxy rig_support unix))
+ (libraries rig rig_disk rig_remote rig_remote_proxy rig_support unix))
 
 (executable
  (name two)
