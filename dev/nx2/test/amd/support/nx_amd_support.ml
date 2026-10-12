@@ -159,7 +159,7 @@ let prepare d works =
   in
   let part i (_, w) =
     match w with
-    | Copied (src, dst) -> Rig.Submission.copy ~src ~dst
+    | Copied (src, dst) -> Rig.Submission.copy ~src:(Buffer src) ~dst:(Buffer dst)
     | Stamp _ -> Rig.Submission.words (Option.get stamps.(i))
     | Launch (image, l) -> launch_work image l
   in

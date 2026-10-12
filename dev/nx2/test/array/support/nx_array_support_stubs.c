@@ -237,8 +237,9 @@ static rig_room_fn late_room;
 static rig_submit_fn late_submit;
 static rig_commit_fn late_commit;
 
+/* No settle: the late device writes no times. */
 static const struct rig_driver late_driver = {late_room, late_submit,
-                                              late_commit};
+                                              late_commit, NULL};
 
 value nx_array_support_late_new(value unit) {
   (void)unit;

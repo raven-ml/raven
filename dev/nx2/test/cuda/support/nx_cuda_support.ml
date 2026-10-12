@@ -180,7 +180,7 @@ let prepare g works =
   let part (_, w) =
     let work =
       match w with
-      | Copied (src, dst) -> Rig.Submission.copy ~src ~dst
+      | Copied (src, dst) -> Rig.Submission.copy ~src:(Buffer src) ~dst:(Buffer dst)
       | Hold -> launch_work (harness g) (delay g)
       | Launch (image, l) -> launch_work image l
     in

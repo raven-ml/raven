@@ -134,6 +134,7 @@ module Driver = struct
       copy_engine = None;
       completion = Host;
       waits = { stores = false; hosts = false; objects = false; most = 0 };
+      most_parts = max_int;
       may_block = false;
       hang_ms = None;
       maps_host = false;
