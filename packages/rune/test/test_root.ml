@@ -360,7 +360,10 @@ let mapped_props =
     (fun (name, linear_solve) ->
       let loss = system_loss ?linear_solve in
       [
-        prop ~count:20 ("grad of vmap: " ^ name) some_thetas (fun ths ->
+        (* 20 cases of one to four lanes miss one lane once in about 300
+           runs: an example holds it. *)
+        prop ~count:20 ~examples:[ vec [| 0.5 |] ] ("grad of vmap: " ^ name)
+          some_thetas (fun ths ->
             cover "one lane" (Nx.dim 0 ths = 1);
             let g = Rune.grad' (fun ths -> Nx.sum (Rune.vmap' loss ths)) ths in
             equal ~msg:"closed form" (close ())
