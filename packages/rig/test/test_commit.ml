@@ -132,6 +132,15 @@ let commands ~note =
       (world ^-> returns unit)
       (fun _ -> ())
       (follow_system ~note);
+    (* Submits on a until its queue is full, then once more, which waits for
+       room: random runs of submits reach a full queue too rarely to count on. *)
+    command "fill"
+      (world ^-> returns unit)
+      (fun _ -> ())
+      (fun w ->
+        for _ = 0 to capacity do
+          submit_system ~note w 0
+        done);
     command "wait"
       (world ^-> index @-> returns bool)
       (fun _ _ -> true)
