@@ -258,3 +258,21 @@ value rig_metal_test_alive(value a) { (void)a, no_metal(); }
 value rig_metal_test_uptime(value a) { (void)a, no_metal(); }
 
 #endif
+
+/* Whether this Mac is a virtual machine. */
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+
+value rig_metal_test_virtual(value unit) {
+  (void)unit;
+  int vm = 0;
+  size_t n = sizeof vm;
+  if (sysctlbyname("kern.hv_vmm_present", &vm, &n, NULL, 0) != 0) vm = 0;
+  return Val_bool(vm);
+}
+#else
+value rig_metal_test_virtual(value unit) {
+  (void)unit;
+  return Val_false;
+}
+#endif

@@ -69,8 +69,8 @@ module type Gpu = sig
       the device. *)
 
   val present : unit -> bool
-  (** [present ()] is [true] iff the machine has the GPU, from its files alone:
-      it starts no vendor library. *)
+  (** [present ()] is [true] iff the machine has a GPU of the class that rig
+      drives, from its files and settings alone: it starts no vendor library. *)
 
   val open_ : unit -> (D.t, string) result
   (** [open_ ()] opens the driver's device of the GPU. *)
@@ -134,8 +134,8 @@ module type S = sig
   (** [class_] names the GPU, as ["CUDA"]. *)
 
   val present : unit -> bool
-  (** [present ()] is [true] iff the machine has the GPU, from its files alone:
-      it starts no vendor library. *)
+  (** [present ()] is [true] iff the machine has a GPU of the class that rig
+      drives, from its files and settings alone: it starts no vendor library. *)
 
   val open_ : unit -> t
   (** [open_ ()] is the GPU opened by its driver and handed to rig under a name

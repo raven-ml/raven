@@ -170,7 +170,9 @@ module Make (G : Gpu) = struct
   (* The driver's device, once the last open's is ended. *)
   let prepare_open () =
     if not (present ()) then
-      skip ~reason:(Printf.sprintf "the machine has no %s GPU" G.class_) ();
+      skip
+        ~reason:(Printf.sprintf "the machine has no %s GPU rig drives" G.class_)
+        ();
     release ()
 
   let open_driver () =

@@ -94,6 +94,11 @@ val resize : nativeint -> groups:int -> threads:int -> unit
 val macos : bool
 (** [macos] is [true] iff the suite was built for macOS. *)
 
+val virtual_mac : bool
+(** [virtual_mac] is [true] iff this Mac is a virtual machine
+    ([kern.hv_vmm_present]), whose paravirtual GPU makes no residency set: the
+    GPU suites count no GPU there. *)
+
 val fixture : dir:string -> string -> string
 (** [fixture ~dir f] is the metallib [f.metallib] of the directory [dir]. *)
 

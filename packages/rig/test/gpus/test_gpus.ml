@@ -24,6 +24,14 @@ let order () =
 let opens () =
   match Rig_gpus.openers () with
   | [] -> skip ~reason:"no driver sees a GPU" ()
+  | ("METAL", open_) :: _ when Rig_metal_support.virtual_mac -> (
+      match open_ () with
+      | Error "Metal made no residency set" ->
+          skip ~reason:"a virtual Mac's GPU makes no residency set" ()
+      | Error why -> fail why
+      | Ok d ->
+          Rig.close d;
+          fail "a virtual Mac's GPU opened a device")
   | (path, open_) :: _ -> (
       match open_ () with
       | Error why -> fail why

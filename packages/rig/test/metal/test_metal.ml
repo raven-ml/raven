@@ -175,7 +175,7 @@ let dev =
 (* A second device of the GPU, beside the fixture's: Metal opens a GPU as often
    as asked. The test stops it. *)
 let second () =
-  if not (S.present ()) then skip ~reason:"the machine has no METAL GPU" ();
+  if not (S.present ()) then skip ~reason:"the machine has no METAL GPU rig drives" ();
   require_ok ((Rig_metal.gpu 0).make ())
 
 let pipeline t f = (found (Rig_metal.entry t.fill f)).code
@@ -1643,6 +1643,11 @@ let opening =
           if S.macos then skip ~reason:"macOS" ();
           equal int 0 (Rig_metal.count ());
           equal (result pass string) (Error "Metal exists on macOS only")
+            ((Rig_metal.gpu 0).make ()));
+      test "a virtual Mac's GPU opens no device, for want of a residency set"
+        (fun () ->
+          if not S.virtual_mac then skip ~reason:"no virtual Mac" ();
+          equal (result pass string) (Error "Metal made no residency set")
             ((Rig_metal.gpu 0).make ()));
     ]
 

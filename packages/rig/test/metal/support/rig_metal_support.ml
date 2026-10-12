@@ -5,11 +5,20 @@
 
 module D = Rig_metal
 
+external virtual_mac : unit -> bool = "rig_metal_test_virtual"
+
+let virtual_mac = virtual_mac ()
+
 include Rig_gpu_support.Make (struct
   module D = Rig_metal
 
   let class_ = "METAL"
-  let present () = Sys.file_exists "/System/Library/Frameworks/Metal.framework"
+
+  (* A virtual Mac's paravirtual GPU makes no residency set, which a device
+     needs. *)
+  let present () =
+    Sys.file_exists "/System/Library/Frameworks/Metal.framework"
+    && not virtual_mac
   let open_ () = (Rig_metal.gpu 0).make ()
 end)
 

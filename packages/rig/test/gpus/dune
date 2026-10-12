@@ -8,6 +8,7 @@
   rig_cuda
   rig_gpus
   rig_metal
+  rig_metal_support
   rig_nv_nvidia
   rig_nv_pci
   windtrap)
