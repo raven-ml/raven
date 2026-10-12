@@ -337,12 +337,14 @@ let test_hang_unwatched () =
   at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
 
 (* A word that moves within the bound loses nothing, however long the work runs
-   in all: here 15 values reached 20 ms apart. *)
+   in all: here 45 values reached 20 ms apart, three times the bound of 300 ms,
+   which leaves a mover the scheduler keeps waiting on a busy machine its
+   slack. *)
 let test_hang_moving () =
-  let d, p = P.open_ ~hang_ms "submit:hang-moving" in
+  let d, p = P.open_ ~hang_ms:300 "submit:hang-moving" in
   let s = empty d and run = Sub.Run.make () in
-  let points = List.init 15 (fun _ -> submit ~run s ~buffers:[||]) in
-  let last_point = List.nth points 14 in
+  let points = List.init 45 (fun _ -> submit ~run s ~buffers:[||]) in
+  let last_point = List.nth points 44 in
   let last = Rig.Point.value last_point in
   P.stall p max_int;
   let move () =
