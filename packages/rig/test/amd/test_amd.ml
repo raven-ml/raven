@@ -844,12 +844,30 @@ let launch_segments_hw () =
     (String.concat "" (List.init (count * rounds) (fun _ -> doubled lanes)))
     (get out)
 
+(* A kernel whose arguments take 8 KiB, past what a submission of the device's
+   [most_parts] launches assumes, runs: a launch takes the room its arguments
+   take. [wide] stores its second argument at its first. *)
+let wide_launch () =
+  S.with_ @@ fun t ->
+  let p = image ~of_:(code_of (lazy (read_fixture "hidden_gfx1201.hsaco"))) t in
+  let out = buffer ~memory:Pinned t 4 in
+  launch t p "wide" ~params:16
+    ~refs:[ (0, 0) ]
+    ~groups:(1, 1, 1) ~threads:(1, 1, 1)
+    ~set:(fun run b ->
+      Sub.Run.int64 run b 0 0;
+      Sub.Run.int32 run b 8 0x2a)
+    ~uses:[ (out, Rig.Read_write) ]
+    ();
+  equal string ~msg:"the stored word" (le32s [ 0x2a ]) (get out)
+
 let launching =
   group ~timeout:60. "launching"
     [
       test "launch arguments survive segment reuse with work in flight"
         launch_segments_hw;
       test "a launch of a kernel that takes scratch computes" scratch_launch;
+      test "a launch of a kernel of 8 KiB of arguments runs" wide_launch;
       cases ~name:string_of_int
         "a launch's dynamic LDS follows the kernel's own" [ 64; 4096; 16320 ]
         (fun n -> lds_launch n ());

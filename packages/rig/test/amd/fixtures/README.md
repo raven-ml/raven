@@ -19,9 +19,11 @@ Code objects for gfx1201, each made from its source by `gen.sh`.
 - `launch_gfx942.hsaco` holds the same kernels for gfx942, a GPU of several
   dies, whose queue reads AQL packets.
 - `hidden_gfx1201.hsaco`, of `hidden.s`, which the ABI suite reads too,
-  holds two kernels and their metadata. `every` names each implicit argument
-  of code object version 5, and bounds its workgroups at 128 work-items.
-  `plain` names none.
+  holds three kernels and their metadata. `every` names each implicit
+  argument of code object version 5, and bounds its workgroups at 128
+  work-items. `plain` names none. `wide` stores its second argument, a
+  32-bit word, at the address its first holds, among 8192 bytes of
+  arguments.
 
 ## Discovery tables
 

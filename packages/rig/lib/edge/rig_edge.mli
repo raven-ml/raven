@@ -131,10 +131,9 @@ type 'region facts = {
   most_parts : int;
       (** The most parts one submission may hold, [max_int] where the driver
           has no such limit. The idle device must run, in one submission,
-          that many parts of the largest sizes it admits: launches and fills
-          of the most parameter bytes and copies of the most bytes the driver
-          moves in one piece. Words parts, and longer copies, take the room
-          their sizes take. *)
+          that many launches and fills up to the argument size, and copies
+          up to the length, that the driver's [.mli] states. Words parts, and
+          larger launches and copies, take the room their sizes take. *)
   may_block : bool;
       (** Whether [room], [submit] and [commit] ({!section-calls}) may block
           on the device's own earlier work, its own transfers or its

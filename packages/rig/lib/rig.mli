@@ -202,10 +202,10 @@ val most_parts : t -> int
     For a device of another machine, it is that machine's device's.
 
     An idle [d] runs any submission of at most that many parts whose parts
-    are launches, fills and copies of the largest sizes [d] admits: the most
-    parameter bytes, and a copy of the most bytes its driver moves in one
-    piece. Words parts, and longer copies, take the room their sizes take,
-    and their sizes are the caller's. *)
+    are launches and fills up to the argument size, and copies up to the
+    length, that its driver's [.mli] states. Words parts, and larger
+    launches and copies, take the room their sizes take, and their sizes are
+    the caller's. *)
 
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is the record that [d]'s driver declares under [k]

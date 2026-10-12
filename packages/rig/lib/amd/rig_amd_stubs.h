@@ -159,8 +159,9 @@ enum {
 #define RIG_AMD_LAUNCH_WORDS 64
 #define RIG_AMD_LAUNCH_HOLES 12
 
-/* The most bytes of a launch's arguments: its parameters and the 256 bytes
-   of implicit arguments code object v5 places after them. */
+/* The bytes of a launch's arguments that a device's most parts assumes:
+   4096 bytes of parameters and the 256 bytes of implicit arguments code
+   object v5 places after them. A launch may take more. */
 #define RIG_AMD_KERNARG (RIG_PARAMS + 256)
 
 struct rig_amd_launch {

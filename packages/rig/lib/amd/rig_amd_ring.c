@@ -243,11 +243,11 @@ static uint64_t least(uint64_t n, uint64_t room, uint64_t fixed,
 }
 
 /* The most parts an idle device runs in one submission, each of the largest
-   size it admits, as [need] counts them against the bounds [rig_amd_room]
-   holds a submission to: a launch whose dispatch takes RIG_AMD_LAUNCH_WORDS
-   words and whose arguments take RIG_AMD_KERNARG bytes, or a copy of one
-   packet, each joined to the part before it on its queue and to one of the
-   other queue. */
+   size the guarantee covers, as [need] counts them against the bounds
+   [rig_amd_room] holds a submission to: a launch whose dispatch takes
+   RIG_AMD_LAUNCH_WORDS words and whose arguments take RIG_AMD_KERNARG bytes,
+   or a copy of one packet, each joined to the part before it on its queue
+   and to one of the other queue. */
 int rig_amd_most_parts(const struct rig_amd *d) {
   const struct rig_amd_ring *c = &d->rings[RIG_AMD_COMPUTE];
   const struct rig_amd_ring *s = &d->rings[RIG_AMD_COPY];
@@ -290,8 +290,7 @@ static int launches(const struct rig_amd *d, const struct rig_part *p,
   const struct rig_amd_launch *l = p->launch.launch;
   if (p->queue != RIG_AMD_COMPUTE || l == NULL || args == NULL ||
       l->packet != (d->rings[p->queue].kind == RING_AQL) ||
-      p->launch.args.params < l->explicit_size ||
-      l->kernarg > RIG_AMD_KERNARG)
+      p->launch.args.params < l->explicit_size)
     return 0;
   const struct rig_block *b = (const void *)(args + p->launch.args.block);
   uint64_t threads = 1;
