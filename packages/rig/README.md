@@ -84,6 +84,7 @@ goes to `Rig.open_`.
 | Two GPUs of one machine reaching each other's memory | the AMD, NVIDIA and CUDA openers | untested |
 | Other machines | `Rig_remote.connect`, `rig run`, `rig agent` | tested between the RTX 5000 Ada and R9700 machines |
 | ConnectX NICs | `Rig_mlx5_uverbs.open_` | run against Linux's Soft-RoCE only, never a real NIC |
+| Broadcom NetXtreme NICs, with no kernel driver | `Rig_bnxt.open_` | written, never run on hardware |
 
 ## When should you not use rig?
 
@@ -119,14 +120,15 @@ goes to `Rig.open_`.
 
 ## Credits and licence
 
-rig learned to drive AMD and NVIDIA GPUs from tinygrad's runtimes,
-driver-less AMD path included. Its register, packet and interface layouts
-are excerpts that generators copy from pinned commits of AMD's `amdgpu`
-and `amdkfd` kernel drivers, ROCm's runtime and profilers, AMD's PAL,
-NVIDIA's open kernel modules and open-gpu-doc, Linux's nouveau and mlx5
-headers, rdma-core, and LLVM. A driver-less open boots the GPU with
-firmware from linux-firmware. rig ships no firmware, and `rig firmware`
-fetches the images it pins by digest.
+rig learned to drive AMD and NVIDIA GPUs and Broadcom NICs from tinygrad's
+runtimes, driver-less AMD path included. Its register, packet and interface
+layouts are excerpts that generators copy from pinned commits of AMD's
+`amdgpu` and `amdkfd` kernel drivers, ROCm's runtime and profilers, AMD's
+PAL, NVIDIA's open kernel modules and open-gpu-doc, Linux's nouveau, mlx5
+and bnxt_re headers, rdma-core, DPDK's bnxt driver, and LLVM. A
+driver-less open boots the GPU with firmware from linux-firmware. rig
+ships no firmware, and `rig firmware` fetches the images it pins by
+digest.
 
 rig is distributed under the ISC licence, as raven is. Each generated file
 names its sources and carries their licences. Code derived from tinygrad

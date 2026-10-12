@@ -1,0 +1,7 @@
+; Broadcom NetXtreme RoCE NICs, driven over PCI with no kernel driver.
+
+(library
+ (name rig_bnxt)
+ (public_name rig.bnxt)
+ (libraries rig_pci)
+ (private_modules defs))

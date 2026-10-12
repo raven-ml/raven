@@ -1,0 +1,7 @@
+; test_bnxt runs everywhere; its transfers run, as root, on the detached
+; BCM57608 the variable RIG_BNXT numbers, and skip without it.
+
+(test
+ (name test_bnxt)
+ (modules test_bnxt)
+ (libraries rig_bnxt rig_pci windtrap))
