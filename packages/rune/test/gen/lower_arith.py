@@ -125,15 +125,40 @@ def expm1_64():
     return function_table(mpmath.expm1, np.expm1, between(-750, 750, 601) + sweep(-40, 10, 200) + between(-2, 2, 201))
 # Beyond the exact parts of pi/2 that rune subtracts (2^12 in float32, 2^22 in
 # float64), up to the greatest double: a sweep, the doubles nearest multiples
-# of pi/2, whose remainders are tiny, and the double of the smallest remainder
-# of all. The results take a precision above the argument's exponent.
+# of pi/2, whose remainders are tiny, the double of the smallest remainder of
+# all, and their roundings to the narrow floats. The results take a precision
+# above the argument's exponent.
 
 def near_quarter_turns():
     with mpmath.workprec(1200):
         return [float(mpmath.mpf(k) * mpmath.pi / 2) for j in range(13, 1020, 17) for k in (2 ** j + 1, 3 * 2 ** j - 1)]
 
 
-FAR = sweep(12, 1020, 400) + near_quarter_turns() + [6381956970095103 * 2.0 ** 797]
+def bfloat16(x):
+    """x rounded to the nearest bfloat16, ties to even."""
+    if not math.isfinite(x) or x == 0:
+        return x
+    m, e = math.frexp(x)
+    r = math.ldexp(round(m * 256), e - 8)
+    return r if abs(r) < 2.0 ** 128 else math.copysign(math.inf, x)
+
+
+def narrowed(xs):
+    """xs, then the roundings to float32, bfloat16 and float16 of each value
+    listed that xs lacks, its own included: a table over them states its
+    function at every input of every narrow type."""
+    seen = {x.hex() for x in xs}
+    out = list(xs)
+    with np.errstate(all="ignore"):
+        for x in out:
+            for r in (float(np.float32(x)), bfloat16(x), float(np.float16(x))):
+                if r.hex() not in seen:
+                    seen.add(r.hex())
+                    out.append(r)
+    return out
+
+
+FAR = narrowed(sweep(12, 1020, 400) + near_quarter_turns() + [6381956970095103 * 2.0 ** 797])
 
 
 def precise(f):

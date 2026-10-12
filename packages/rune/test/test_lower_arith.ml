@@ -336,7 +336,9 @@ let conversions =
    domain, both signs, and the special values. In [float64] the table holds the
    correctly rounded results (mpmath at 200 bits); in [float32] they are the
    double-precision libm's rounded once, which is correctly rounded but within a
-   few units of the 29th bit of a tie. *)
+   few units of the 29th bit of a tie. Far from zero libm's reduction differs
+   across systems, so there the tables hold each input's roundings to the narrow
+   types too, and the narrow types' results are the table's, rounded once. *)
 
 type nary = { n : 'b. (float, 'b) Nx.t array -> (float, 'b) Nx.t }
 
@@ -347,6 +349,26 @@ let columns file =
     (fun name ->
       Array.of_list (List.map (fun cell -> float_of_string (cell name)) rows))
     (Golden.columns ("golden/lower_arith/" ^ file))
+
+(* The function the table [file] states, at its inputs. *)
+let tabulated file =
+  let table =
+    lazy
+      (match columns file with
+      | [ xs; ys ] ->
+          let t = Hashtbl.create (Array.length xs) in
+          Array.iter2
+            (fun x y -> Hashtbl.replace t (Int64.bits_of_float x) y)
+            xs ys;
+          t
+      | _ -> failf "%s is not a table of one input" file)
+  in
+  fun x ->
+    if Float.is_nan x then Float.nan
+    else
+      match Hashtbl.find_opt (Lazy.force table) (Int64.bits_of_float x) with
+      | Some y -> y
+      | None -> failf "%s holds no row at %h" file x
 
 (* How a traced value is computed: by the reference interpreter, or compiled for
    the host. *)
@@ -452,11 +474,14 @@ let transcendentals ?tags name by =
       unary ~by "cos" ~budget:2 Float.cos { f = Nx.cos };
       unary ~by "tan" ~budget:8 Float.tan { f = Nx.tan };
       unary ~by ~file:"sin_far64.golden" "sin of large arguments" ~budget:2
-        Float.sin { f = Nx.sin };
+        (tabulated "sin_far64.golden")
+        { f = Nx.sin };
       unary ~by ~file:"cos_far64.golden" "cos of large arguments" ~budget:2
-        Float.cos { f = Nx.cos };
+        (tabulated "cos_far64.golden")
+        { f = Nx.cos };
       unary ~by ~file:"tan_far64.golden" "tan of large arguments" ~budget:8
-        Float.tan { f = Nx.tan };
+        (tabulated "tan_far64.golden")
+        { f = Nx.tan };
       unary ~by "asin" ~budget:8 Float.asin { f = Nx.asin };
       unary ~by "acos" ~budget:8 Float.acos { f = Nx.acos };
       unary ~by "atan" ~budget:8 Float.atan { f = Nx.atan };
