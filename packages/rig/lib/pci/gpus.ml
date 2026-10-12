@@ -14,9 +14,13 @@ let ( let* ) = Result.bind
    and those lost, which their next open renews; it is held briefly, so that
    stopping a GPU waits for no driver. A GPU is named by its machine and bus
    address. *)
+type siblings = Remove | Keep
+
 type t = {
   name : string;
-  memory_bar : int;
+  noun : string;
+  memory_bar : int option;
+  siblings : siblings;
   nodes : root:string -> string -> string list;
   unreleased : root:string -> string -> string option;
   teardown_ms : int;
@@ -45,10 +49,13 @@ and hold = {
   mutable stopped : [ `Stopped | `Unknown ] option;
 }
 
-let make ~name ~memory_bar ~nodes ~unreleased ~teardown_ms ~reset is_gpu =
+let make ~name ~noun ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms
+    ~reset is_gpu =
   {
     name;
+    noun;
     memory_bar;
+    siblings;
     nodes;
     unreleased;
     teardown_ms;
@@ -63,10 +70,11 @@ let make ~name ~memory_bar ~nodes ~unreleased ~teardown_ms ~reset is_gpu =
 
 (* Work no kernel driver bounds is hung once it has not advanced for 30 s. *)
 let hang_ms = 30_000
-let index fn i = if i < 0 then invalid_argf "Gpus.%s: GPU %d is negative" fn i
+let index g fn i =
+  if i < 0 then invalid_argf "Gpus.%s: %s %d is negative" fn g.noun i
 
 let name g i =
-  index "name" i;
+  index g "name" i;
   if i = 0 then g.name else strf "%s:%d" g.name i
 
 let named g i r = Result.map_error (fun why -> strf "%s: %s" (name g i) why) r
@@ -82,8 +90,9 @@ let buses g m =
 let gpu g m i =
   let all = buses g m in
   match List.nth_opt all i with
-  | None when all = [] -> Error "no such GPU; the machine has none"
-  | None -> Error (strf "no such GPU; the machine has %d" (List.length all))
+  | None when all = [] -> Error (strf "no such %s; the machine has none" g.noun)
+  | None ->
+      Error (strf "no such %s; the machine has %d" g.noun (List.length all))
   | Some bus
     when Mutex.protect g.holds (fun () ->
              List.exists (fun h -> h.machine == m && h.bus = bus) g.held) ->
@@ -234,7 +243,7 @@ let take g m bus =
 (* A GPU this process lost, or one a process that died left reaching memory, is
    renewed before the driver starts; one whose renewal fails is lost. *)
 let open_ g m i f =
-  index "open_" i;
+  index g "open_" i;
   named g i @@ Mutex.protect g.mutex
   @@ fun () ->
   let* bus = gpu g m i in
@@ -281,14 +290,15 @@ let open_ g m i f =
 (* [f l] for GPU [i] of [m], which no process takes while it runs: [l] is the
    lock a take holds. *)
 let change g fn m i (f : 's. 's Sysfs.lock -> 'a) =
-  index fn i;
+  index g fn i;
   named g i @@ Mutex.protect g.mutex
   @@ fun () ->
   match Machine.files m with
   | None ->
       Error
-        (strf "%s is reached through a transport; change its GPUs there"
-           (Option.value (Machine.name m) ~default:"the machine"))
+        (strf "%s is reached through a transport; change its %ss there"
+           (Option.value (Machine.name m) ~default:"the machine")
+           g.noun)
   | Some files ->
       let* bus = gpu g m i in
       Sysfs.locked files bus (fun l -> Fail.result (fun () -> f l))
@@ -377,15 +387,16 @@ let detach g m i =
             let_go g files bus nodes ~bound;
             bound
       in
-      Sysfs.keep_off l;
+      let remove = g.siblings = Remove in
+      Sysfs.keep_off l ~remove;
       let finish () =
-        Sysfs.detach l;
+        Sysfs.detach l ~remove;
         match
           if bound then g.unreleased ~root:(Sysfs.root files) bus else None
         with
         | Some why -> Unreleased why
         | None ->
-            Sysfs.resize l g.memory_bar;
+            Option.iter (Sysfs.resize l) g.memory_bar;
             Detached
       in
       match Fail.result finish with Ok d -> d | Error why -> Part_way why)
@@ -400,7 +411,7 @@ let reset_taken g m taken =
   renew_taken g m (Function.bus fn) fn
 
 let reset g m i =
-  index "reset" i;
+  index g "reset" i;
   named g i @@ Mutex.protect g.mutex
   @@ fun () ->
   let* bus = gpu g m i in

@@ -265,7 +265,7 @@ let group_holders m g =
 let addressing m bus s =
   match s with
   | { driver = Some d; iommu = No_iommu; _ } when d <> vfio_pci ->
-      Error (strf "%s is bound to the driver %s; detach the GPU first" bus d)
+      Error (strf "%s is bound to the driver %s; detach it first" bus d)
   | { driver = Some d; _ } when d <> vfio_pci ->
       Error
         (strf
@@ -280,9 +280,9 @@ let addressing m bus s =
             physical memory; bind it to vfio-pci, or boot Linux with iommu=pt"
            bus)
   | { siblings = s :: _; _ } ->
-      Error (strf "%s shares its device with %s; detach the GPU first" bus s)
+      Error (strf "%s shares its device with %s; detach it first" bus s)
   | { driver = None; enabled = false; _ } ->
-      Error (strf "%s is disabled; detach the GPU first" bus)
+      Error (strf "%s is disabled; detach it first" bus)
   | { locked_down = true; _ } ->
       Error
         (strf
@@ -327,19 +327,33 @@ let stop_mastering m bus =
   end
 
 (* Detach decides before it writes anything whether the function will be
-   takeable once unbound, alone and enabled: one it could not take then could
-   not be reset to go back to its driver. *)
-let keep_off { files = m; bus; _ } =
+   takeable once unbound and enabled, alone if it removes the device's other
+   functions: one it could not take then could not be reset to go back to its
+   driver. A detach that keeps them refuses a function that has any, naming
+   each with its driver. *)
+let keep_off { files = m; bus; _ } ~remove =
   let s = state m bus in
   if s.driver <> Some vfio_pci then begin
-    let detached = { s with driver = None; siblings = []; enabled = true } in
+    if (not remove) && s.siblings <> [] then begin
+      let named f =
+        match driver_of m f with
+        | Some d -> strf "%s (bound to %s)" f d
+        | None -> strf "%s (unbound)" f
+      in
+      Fail.fail
+        "%s shares its device with %s, which detach leaves; remove or detach          them first"
+        bus
+        (String.concat ", " (List.map named s.siblings))
+    end;
+    let siblings = if remove then [] else s.siblings in
+    let detached = { s with driver = None; siblings; enabled = true } in
     Result.iter_error (Fail.fail "%s") (addressing m bus detached);
     write (override m bus) no_driver
   end
 
 (* A function detach leaves on no driver masters the bus no more: without an
    IOMMU it could write any host memory. *)
-let detach { files = m; bus; _ } =
+let detach { files = m; bus; _ } ~remove =
   let s = state m bus in
   (match addressing m bus s with
   | Ok _ -> ()
@@ -350,7 +364,8 @@ let detach { files = m; bus; _ } =
           if driver_of m bus <> None then
             Fail.fail "the driver %s stays bound to %s" d bus
       | _ -> ());
-      List.iter (fun s -> write (path m s "remove") "1") (siblings m bus);
+      if remove then
+        List.iter (fun s -> write (path m s "remove") "1") (siblings m bus);
       if driver_of m bus = None && not (enabled m bus) then
         write (path m bus "enable") "1";
       let s = state m bus in

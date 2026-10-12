@@ -29,21 +29,40 @@
 type t
 (** The type for a vendor's GPUs. *)
 
+(** The type for what {!detach} does with the other functions of a GPU's
+    device, such as its audio function or, for a NIC, its other ports. A
+    function taken physically must be alone on its device. *)
+type siblings =
+  | Remove
+      (** {!detach} removes them from the machine until {!attach} or a
+          reboot. *)
+  | Keep
+      (** {!detach} leaves them, and refuses a GPU that is not bound to
+          [vfio-pci] while its device has any, naming them and their drivers.
+          The caller then frees them as it decides. *)
+
 val make :
   name:string ->
-  memory_bar:int ->
+  noun:string ->
+  memory_bar:int option ->
+  siblings:siblings ->
   nodes:(root:string -> string -> string list) ->
   unreleased:(root:string -> string -> string option) ->
   teardown_ms:int ->
   reset:(Function.t -> (unit, string) result) ->
   (Machine.id -> bool) ->
   t
-(** [make ~name ~memory_bar ~nodes ~unreleased ~teardown_ms ~reset is_gpu] is
-    the GPUs of a vendor, the functions [f] with [is_gpu f], named after [name]
-    ({!val-name}). [nodes] and [unreleased] read the machine's files under
-    [root], which is ["/"] for {!Machine.this}.
+(** [make ~name ~noun ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms
+    ~reset is_gpu] is the GPUs of a vendor, the functions [f] with [is_gpu f],
+    named after [name] ({!val-name}). [nodes] and [unreleased] read the
+    machine's files under [root], which is ["/"] for {!Machine.this}.
+    - [noun] is what the library's messages call one of them, such as
+      ["GPU"], or ["NIC"] for the vendor's network adapters.
     - [memory_bar] is the BAR through which the process reaches the GPUs'
-      memory, which {!detach} enlarges.
+      memory, which {!detach} enlarges, or [None] for a device with no memory
+      to reach.
+    - [siblings] is what {!detach} does with the other functions of a GPU's
+      device.
     - [nodes ~root bus] is the character devices through which the kernel
       driver serves the GPU at [bus] without a [dev] file under the GPU's
       directory in [/sys/bus/pci], as paths from [root], such as
@@ -158,9 +177,10 @@ val hang_ms : int
     without a transport, such as {!Machine.this}. They need [CAP_SYS_ADMIN] and
     write access to the files they write, which root has:
     - {!detach} writes the function's [driver_override], its driver's
-      [unbind], the [remove] file of each other function of its device, and
+      [unbind], the [remove] file of each other function of its device if it
+      removes them ({!type-siblings}), and
       the function's [enable], [config] (its command register) and
-      [resourceN_resize] for its memory BAR;
+      [resourceN_resize] for its memory BAR, if it has one;
     - {!attach} writes [vfio-pci]'s [unbind], the function's [enable] and
       [driver_override], [/sys/bus/pci/rescan] and
       [/sys/bus/pci/drivers_probe].
@@ -221,11 +241,12 @@ val detach : t -> Machine.t -> int -> (progress, string) result
     Otherwise [detach] sets the function's [driver_override] to no driver,
     which keeps every kernel driver off the GPU through probes, rescans and
     module loads until {!attach} or a reboot, and unbinds the driver. It
-    removes the other functions of the GPU's device, such as its audio
-    function. Once unbound, the function is left:
+    removes or keeps the other functions of the GPU's device, as [siblings]
+    of {!make} says. Once unbound, the function is left:
     - enabled;
     - with its bus mastering off, which a kernel driver's unbind may leave on;
-    - with its memory BAR at the largest size the BAR and its bridge take.
+    - with its memory BAR, if it has one, at the largest size the BAR and its
+      bridge take.
 
     The kernel driver's users, a display among them, lose the GPU until
     {!attach} or a reboot.
@@ -235,7 +256,8 @@ val detach : t -> Machine.t -> int -> (progress, string) result
 
     [Error why], changing nothing, if:
     - no process could take its function once detached, such as when an
-      IOMMU translates its addresses and it is not bound to [vfio-pci];
+      IOMMU translates its addresses and it is not bound to [vfio-pci], or
+      when its device keeps other functions ([Keep]);
     - a process, this one included, holds a file of one of its devices,
       naming it, or the kernel still holds one after [teardown_ms];
     - [/proc] cannot be read, or, for a GPU with a DRM device, its list of

@@ -170,7 +170,7 @@ let refusals =
       [ Tree.gpu ~driver:"amdgpu" "0000:03:00.0" ],
       "0000:03:00.0",
       [],
-      [ "0000:03:00.0 is bound to the driver amdgpu"; "detach the GPU" ] );
+      [ "0000:03:00.0 is bound to the driver amdgpu"; "detach it first" ] );
     ( "a driver other than vfio-pci, behind an IOMMU",
       [ Tree.gpu ~driver:"amdgpu" ~group:"12" "0000:03:00.0" ],
       "0000:03:00.0",
@@ -186,7 +186,7 @@ let refusals =
       [ Tree.gpu "0000:03:00.0"; audio "0000:03:00.1" ],
       "0000:03:00.0",
       [],
-      [ "0000:03:00.0 shares its device with 0000:03:00.1"; "detach the GPU" ]
+      [ "0000:03:00.0 shares its device with 0000:03:00.1"; "detach it first" ]
     );
     ( "a device shared with another function, bound to vfio-pci without an IOMMU",
       [ Tree.gpu ~driver:"vfio-pci" "0000:03:00.0"; audio "0000:03:00.1" ],
@@ -202,7 +202,7 @@ let refusals =
       [ Tree.gpu ~enabled:false "0000:03:00.0" ],
       "0000:03:00.0",
       [],
-      [ "0000:03:00.0 is disabled"; "detach the GPU" ] );
+      [ "0000:03:00.0 is disabled"; "detach it first" ] );
     ( "a configuration file the process may not write",
       [ Tree.gpu "0000:03:00.0" ],
       "0000:03:00.0",
@@ -760,7 +760,7 @@ let test_memory_machines () =
   Function.free_dma f w
 
 let fixture_gpus ?(reset = fun _ -> Ok ()) () =
-  Gpus.make ~name:"fixture" ~memory_bar:0
+  Gpus.make ~name:"fixture" ~noun:"GPU" ~memory_bar:(Some 0) ~siblings:Remove
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset

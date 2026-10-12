@@ -544,7 +544,7 @@ let is_bnxt (id : Machine.id) =
    file, and its RoCE driver through files with a [dev] file under the
    function's directory, which {!Gpus.detach} finds itself. *)
 let nics =
-  Gpus.make ~name:"BNXT" ~memory_bar:doorbell_bar
+  Gpus.make ~name:"BNXT" ~noun:"NIC" ~memory_bar:None ~siblings:Keep
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:10_000 ~reset:Function.reset is_bnxt

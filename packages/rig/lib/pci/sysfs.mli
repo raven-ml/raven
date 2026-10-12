@@ -97,19 +97,21 @@ val group_holders : t -> string -> (string * string) list
 
 (** {1:changes Changes} *)
 
-val keep_off : 's lock -> unit
-(** [keep_off l] keeps kernel drivers off the function [l] locks, unless it is
-    bound to [vfio-pci], by setting its [driver_override] to no driver. Raises
-    {!Fail.Failed}, having written nothing, if the function would not be
-    takeable once unbound, alone and enabled, or if the file cannot be
-    written. *)
+val keep_off : 's lock -> remove:bool -> unit
+(** [keep_off l ~remove] keeps kernel drivers off the function [l] locks,
+    unless it is bound to [vfio-pci], by setting its [driver_override] to no
+    driver. Raises {!Fail.Failed}, having written nothing, if the function
+    would not be takeable once unbound and enabled, alone if [remove], or if
+    the file cannot be written. Without [remove] it raises for a function
+    whose device has other functions, naming each with its driver. *)
 
-val detach : 's lock -> unit
-(** [detach l] makes the function [l] locks takeable, after {!keep_off}. It
-    unbinds its driver, unless that is [vfio-pci], removes the other functions
-    of its device and, once unbound, enables it and turns its bus mastering
-    off. Raises {!Fail.Failed} if the function is still not takeable, or a
-    file cannot be written. *)
+val detach : 's lock -> remove:bool -> unit
+(** [detach l ~remove] makes the function [l] locks takeable, after
+    {!keep_off} with the same [remove]. It unbinds its driver, unless that is
+    [vfio-pci], removes the other functions of its device if [remove] and,
+    once unbound, enables it and turns its bus mastering off. Raises
+    {!Fail.Failed} if the function is still not takeable, or a file cannot be
+    written. *)
 
 val attach : 's lock -> unit
 (** [attach l] gives the function [l] locks back to its kernel driver. It

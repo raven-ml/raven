@@ -34,7 +34,8 @@ let memory_bar = 1
 (* NVIDIA's driver holds no file of a GPU's devices past the process that opened
    it, and tells nothing of an unbound GPU. *)
 let gpus =
-  Gpus.make ~name:"NV-PCI" ~memory_bar ~nodes:Held.nodes
+  Gpus.make ~name:"NV-PCI" ~noun:"GPU" ~memory_bar:(Some memory_bar)
+    ~siblings:Remove ~nodes:Held.nodes
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset:Function.reset
     (fun (id : Machine.id) -> Rig_nv.is_gpu ~vendor:id.vendor ~class_:id.class_)

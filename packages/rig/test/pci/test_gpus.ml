@@ -45,8 +45,9 @@ let teardown_ms = 2000
 let name = "AMD-PCI"
 
 let gpus ?(reset = counted) ?(nodes = no_nodes) ?(unreleased = released)
-    ?(teardown_ms = teardown_ms) () =
-  Gpus.make ~name ~memory_bar:0 ~nodes ~unreleased ~teardown_ms ~reset is_gpu
+    ?(teardown_ms = teardown_ms) ?(noun = "GPU") ?(siblings = Gpus.Remove) () =
+  Gpus.make ~name ~noun ~memory_bar:(Some 0) ~siblings ~nodes ~unreleased
+    ~teardown_ms ~reset is_gpu
 
 let pp_progress ppf (d : Gpus.progress) =
   match d with
@@ -234,6 +235,12 @@ let test_no_gpu (_, f, i) =
   starts_with ~msg:"names the GPU" ~affix:(Gpus.name g i) why;
   names 3 why
 
+(* Messages call the vendor's devices by its noun. *)
+let test_noun () =
+  let m = Machine.at (Tree.make []) in
+  let why = unopened (open_ (gpus ~noun:"NIC" ()) m 0) in
+  contains ~sub:"no such NIC" why
+
 let test_none () =
   let m = Machine.at (Tree.make [ audio "0000:03:00.1" ]) in
   let g = gpus () in
@@ -277,6 +284,7 @@ let numbering =
         ~name:(fun (f, _, i) -> strf "%s %d" f i)
         no_gpu test_no_gpu;
       test "a machine without the vendor's GPUs has none to open" test_none;
+      test "an Error calls the devices by the vendor's noun" test_noun;
       cases "a negative GPU number raises Invalid_argument"
         ~name:(fun (f, _, i) -> strf "%s %d" f i)
         negative
@@ -461,7 +469,8 @@ let resets =
 
 let test_this_none () =
   let g =
-    Gpus.make ~name ~memory_bar:0 ~nodes:no_nodes ~unreleased:released
+    Gpus.make ~name ~noun:"GPU" ~memory_bar:(Some 0) ~siblings:Remove
+      ~nodes:no_nodes ~unreleased:released
       ~teardown_ms ~reset:counted (fun _ -> false)
   in
   let this = Machine.this in
@@ -1348,6 +1357,23 @@ let test_vfio_unwaited () =
           (gpus ~unreleased:always ~teardown_ms:60_000 ())
           (Machine.at root) 0))
 
+(* A vendor that keeps a device's other functions, such as a NIC's other
+   ports, has detach refuse a device that has any, naming each with its
+   driver, and write nothing; one alone on its device detaches. *)
+let test_keep_siblings () =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus; audio "0000:03:00.1" ] in
+  let g = gpus ~siblings:Gpus.Keep () in
+  let why = require_error (Gpus.detach g (Machine.at root) 0) in
+  contains ~sub:"0000:03:00.1 (bound to snd_hda_intel)" why;
+  equal ~msg:"the override" string "(null)"
+    (pci_file root (devices gpu_bus "driver_override"));
+  equal ~msg:"the other function" string ""
+    (pci_file root (devices "0000:03:00.1" "remove"));
+  let alone = Tree.make [ Tree.gpu gpu_bus ] in
+  equal progress Detached
+    (require_ok (Gpus.detach g (Machine.at alone) 0))
+
 let tree_changes =
   group ~timeout:patience "changes on a machine's files"
     [
@@ -1355,6 +1381,8 @@ let tree_changes =
         ~name:(fun (n, _, _, _, _) -> n)
         changes test_change;
       test "a GPU the process holds is refused" test_change_held;
+      test "detach keeps a device's other functions when the vendor says so"
+        test_keep_siblings;
       test "detach leaves the GPU's bus mastering off"
         test_detach_stops_mastering;
       test "attach clears what a detach that stopped part-way left"

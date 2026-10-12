@@ -278,9 +278,10 @@ end
 val detach : int -> (Rig_pci.Gpus.progress, string) result
 (** [detach i] takes NIC [i] of this machine from its kernel driver as
     {!Rig_pci.Gpus.detach} does. Its network interfaces and RDMA devices go
-    until {!attach} or a reboot. It removes the other functions of the NIC's
-    card, the card's other ports among them, so a card of two ports gives one
-    NIC once detached.
+    until {!attach} or a reboot. It leaves the other functions of the NIC's
+    device, such as a card's other ports, and so returns [Error msg], naming
+    them and their drivers, while the device has any and the NIC is not bound
+    to [vfio-pci]: a NIC taken physically must be alone on its device.
 
     Raises [Invalid_argument] if [i < 0]. *)
 

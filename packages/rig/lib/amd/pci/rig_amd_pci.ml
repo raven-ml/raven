@@ -80,7 +80,7 @@ let unreleased ~root bus =
 (* The kernel driver serves a GPU through DRM nodes, each with a [dev] file
    under the GPU's directory, which {!Gpus.detach} finds itself. *)
 let gpus =
-  Gpus.make ~name:"AMD-PCI" ~memory_bar:0
+  Gpus.make ~name:"AMD-PCI" ~noun:"GPU" ~memory_bar:(Some 0) ~siblings:Remove
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased ~teardown_ms:30_000 ~reset:Boot.reset
     (fun (id : Machine.id) -> Amd.is_gpu ~vendor:id.vendor ~class_:id.class_)

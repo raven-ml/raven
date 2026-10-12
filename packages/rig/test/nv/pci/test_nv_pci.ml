@@ -238,7 +238,8 @@ let reports =
 (* Stopping *)
 
 let gpus () =
-  Rig_pci.Gpus.make ~name:"NV-PCI" ~memory_bar:1
+  Rig_pci.Gpus.make ~name:"NV-PCI" ~noun:"GPU" ~memory_bar:(Some 1)
+    ~siblings:Remove
     ~nodes:(fun ~root:_ _ -> [])
     ~unreleased:(fun ~root:_ _ -> None)
     ~teardown_ms:0 ~reset:Rig_pci.Function.reset
