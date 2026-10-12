@@ -57,7 +57,11 @@ let ownership =
     Gen.(
       let+ log = int_range 0 22
       and+ count = frequency [ (3, int_range 0 (1 lsl 30)); (1, int_range 0 8) ]
-      and+ op_own = int_range 0 255 in
+      (* One byte in 16 has the invalid opcode; drawn alone, 100 cases miss
+         it on about one seed in 600. *)
+      and+ op_own =
+        frequency [ (3, int_range 0 255); (1, int_range 0xf0 0xff) ]
+      in
       (1 lsl log, count, op_own))
   in
   group "ownership"
