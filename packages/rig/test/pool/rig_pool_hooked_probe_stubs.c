@@ -176,11 +176,14 @@ typedef enum {
   wake_decided,
   wake_slept,
   narrow,
+  narrow_sleep,
   narrow_wake,
   fork_parked,
 } phase;
 
 static _Atomic int current = none;
+static _Atomic int published; /* narrow_sleep's job was published */
+static _Atomic int slept;     /* bit w: worker w parked after it */
 static int target; /* the worker a scenario holds */
 static _Atomic int go;      /* the caller's hooks act only once set */
 static _Atomic int entered; /* the target entered a job it must not */
@@ -272,6 +275,13 @@ static void hook(point at) {
     break;
   case narrow:
     if (at == point_parking && mine && once(w_bit)) sig(w_bit);
+    break;
+  case narrow_sleep:
+    if (at == point_published && caller)
+      atomic_store(&published, 1);
+    else if (at == point_parking && (id == 1 || id == 2) &&
+             atomic_load(&published))
+      atomic_fetch_or(&slept, 1 << id);
     break;
   case narrow_wake:
     if (at == point_parking && id == 2) sig(w2_parking);
@@ -412,13 +422,29 @@ static void await_park(event e) {
   await(e);
 }
 
-/* Waits until workers 1 and 2 have set their parked bits, then takes the
-   parking mutex once: a worker holds it from setting its bit until it
-   waits, so both wait. Past patience, records [asleep] as [await] does. */
+/* Runs a job on every core, then waits until workers 1 and 2 sleep on its
+   generation, with no wakeup pending. A parked bit alone does not say so: a
+   worker the job signalled keeps its bit until it runs. Each worker parks
+   after the job's publication, and from then on the generation stays: a
+   worker whose bit is set while this thread holds the parking mutex waits,
+   and only for a later job. Past patience, records [asleep] as [await]
+   does. */
 static void await_asleep(void) {
-  uint64_t both = (uint64_t)1 << 1 | (uint64_t)1 << 2;
+  int both = 1 << 1 | 1 << 2;
+  uint64_t bits = (uint64_t)both;
+  begin(narrow_sleep);
+  atomic_store(&published, 0);
+  atomic_store(&slept, 0);
+  atomic_store(&go, 1);
+  kick();
   int64_t deadline = now_ns() + patience;
-  while ((atomic_load(&g_pool->parked[0]) & both) != both) {
+  for (;;) {
+    if (atomic_load(&slept) == both) {
+      pthread_mutex_lock(&g_pool->mtx);
+      int asleep_now = (atomic_load(&g_pool->parked[0]) & bits) == bits;
+      pthread_mutex_unlock(&g_pool->mtx);
+      if (asleep_now) return;
+    }
     if (now_ns() > deadline) {
       int none = -1;
       atomic_compare_exchange_strong(&timed_out, &none, (int)asleep);
@@ -426,8 +452,6 @@ static void await_asleep(void) {
     }
     sched_yield();
   }
-  pthread_mutex_lock(&g_pool->mtx);
-  pthread_mutex_unlock(&g_pool->mtx);
 }
 
 /* Answers */
@@ -588,7 +612,9 @@ value rig_pool_test_wake(value v_order) {
 }
 
 /* Narrow jobs (t = 2) leave W2 out past its window: it parks while they
-   run. A wide job (t = 3) then needs it. Answers: whether W2 parked during
+   run. A job on every core opens the burst, so W2 parks once the scenario
+   watches; a W2 that parked before would sleep through every narrow job.
+   A wide job (t = 3) then needs it. Answers: whether W2 parked during
    the burst, whether it ran a chunk of the wide job, the chunks of the
    narrow jobs and of the wide one not run once. */
 value rig_pool_test_narrow_burst(value unit) {
@@ -599,6 +625,7 @@ value rig_pool_test_narrow_burst(value unit) {
   settle();
   begin(narrow);
   target = 2;
+  kick();
   int64_t deadline = now_ns() + patience;
   while (!atomic_load(&signalled[w_bit]) && now_ns() < deadline) {
     tally j;
@@ -619,10 +646,11 @@ value rig_pool_test_narrow_burst(value unit) {
   return answer(v, 4);
 }
 
-/* A job wakes only its own workers. W1 and W2 sleep; a job of two threads,
-   whose caller's chunk waits for W1's, wakes W1. W2 sleeps on: woken for
-   a job it takes no part in, it would park again at once, so nothing is
-   held for and the test samples 20 ms after the job's end. Answers: whether
+/* A job wakes only its own workers. W1 and W2 sleep, no wakeup pending; a
+   job of two threads, whose caller's chunk waits for W1's, wakes W1. W2
+   sleeps on: woken for a job it takes no part in, it would park again at
+   once, so nothing is held for and the test samples 20 ms after the job's
+   end. Answers: whether
    W1 ran a chunk, whether W2 parked again, the chunks not run once. */
 value rig_pool_test_narrow_wake(value unit) {
   (void)unit;
@@ -631,7 +659,7 @@ value rig_pool_test_narrow_wake(value unit) {
   map_workers();
   settle();
   await_asleep();
-  begin(narrow_wake);
+  atomic_store(&current, narrow_wake);
   tally j;
   tally_init(&j, 2);
   j.awaited = 1;
