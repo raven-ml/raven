@@ -3774,3 +3774,34 @@ submission, and a range a loop of rig's program (D146).
   the machine has one), `lanes and words` and `runs`; the jit goldens
   (`test/engine/jit/*_lowered.golden`), which `gen/engine/jit.py` makes
   without batches.
+
+## D147. The x86 host holds bfloat16 as its bits
+
+- **tinygrad:** `renderer/cstyle.py:276` (`ClangRenderer.type_map`, which
+  writes a bfloat16 as Clang's `__bf16` on every machine).
+- **tolk:** `lib/renderer/cstyle.ml:1180` (the Clang renderer's language,
+  which on x86 maps bfloat16 to `unsigned short` and renders its constants as
+  their bits with `pm_bf16_ushort_const`).
+- **Differs:** on x86, a bfloat16 value, pointer or vector is written as
+  `unsigned short`, and a bfloat16 constant as its bits, as HIP writes them
+  on targets without bfloat16. The kernel's graph is tinygrad's; only its C
+  types change. Every bfloat16 operation already computes in float32 through
+  `create_non_native_float_pats` and `pm_manual_bf16_cast`, so a bfloat16
+  value is only loaded, stored, selected and bitcast, which act on its bits.
+  `gen/tinygrad.patch` makes the same choice in tinygrad's Clang renderer on
+  x86, so the goldens state tolk's sources.
+- **Reason:** (b). LLVM's x86 backend without AVX512-BF16 legalises a
+  bfloat16 value it only moves through float32. It aborts on a selection
+  between vectors ("Cannot select: v8bf16 = X86ISD::BLENDV"), and it truncates
+  a merge of a gated load with its alternative, and a bitcast of stacked
+  lanes, with compiler-rt's `__truncsfbf2`, which rig's host linker finds in
+  no library of the process. rune's bfloat16 suites failed on both x86 hosts:
+  `compiled dtypes › bfloat16, compiled, carries hold each lane's bits`, the
+  bfloat16 cases of `Rune.map_segments`' `dtypes`, `Rune.quant`'s routes in
+  blocks and `transcendental functions on the host › pow › bfloat16`.
+- **Pinned by:** the `Codegen` suite's `a selection between bfloat16 vectors
+  takes each lane's arm` and `a gated bfloat16 load takes its alternative
+  where its gate is false`, which run on the host: on an x86 host with clang
+  19, the first aborts the compile and the second fails to link (on a CPU
+  without AVX512-BF16) under `__bf16`. The x86 Clang goldens of bfloat16
+  kernels (`bf16_clang`, `clang_*_bf16`). The rune cases above on x86.

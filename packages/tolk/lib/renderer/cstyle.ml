@@ -1170,21 +1170,37 @@ let clang (target : Helpers.Target.t) =
     || String.starts_with ~prefix:"arm" arch)
     && not (List.mem dt Dtype.fp8s)
   in
+  (* LLVM's x86 backend has no bfloat16 instructions short of AVX512-BF16, and
+     legalises a bfloat16 value it only moves (a selection, a merge of a gated
+     load with its alternative, a bitcast of stacked lanes) through float32:
+     it aborts on a selection between vectors and calls compiler-rt's
+     [__truncsfbf2], which no library of the process defines. Every bfloat16
+     operation computes in float32 here, so on x86 a bfloat16 is held as its
+     bits, an [unsigned short], as HIP holds it. *)
+  let lang =
+    if
+      String.starts_with ~prefix:"arm64" arch
+      || String.starts_with ~prefix:"aarch64" arch
+    then
+      {
+        clang_lang with
+        string_rewrite =
+          Pattern_matcher.append opaque_zero clang_lang.string_rewrite;
+      }
+    else if String.starts_with ~prefix:"x86" arch then
+      {
+        clang_lang with
+        type_map = (Dtype.Bfloat16, "unsigned short") :: clang_lang.type_map;
+        string_rewrite =
+          Pattern_matcher.append pm_bf16_ushort_const
+            clang_lang.string_rewrite;
+      }
+    else clang_lang
+  in
   Renderer.v ~name:"ClangRenderer" ~vector_alu:true ~has_local:false
     ~global_max:[ 1; 0; 0 ] ~extra_matcher:clang_extra_matcher
     ~code_for_op:clang_lang.code_for_op ~native
-    ~render:
-      (render clang_kernel
-         (if
-            String.starts_with ~prefix:"arm64" arch
-            || String.starts_with ~prefix:"aarch64" arch
-          then
-            {
-              clang_lang with
-              string_rewrite =
-                Pattern_matcher.append opaque_zero clang_lang.string_rewrite;
-            }
-          else clang_lang))
+    ~render:(render clang_kernel lang)
     ~compiler:(Compiler_cpu.clang arch) target
 
 (* Metal *)

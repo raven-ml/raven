@@ -2307,6 +2307,71 @@ let bfloat16_casts =
         rounds_once;
     ]
 
+(* Selections between bfloat16 vectors *)
+
+(* The kernel that stores into slot 0, of bfloat16, element [i] of slot 2 where
+   element [i] of slot 1 is above 0, and of slot 3 elsewhere, over [n] elements,
+   upcast by [n]: one selection between vectors of [n] lanes. *)
+let select_bfloat16 n =
+  let open Ops.O in
+  let out = Call.param ~shape:[ Int n ] 0 Bfloat16 in
+  let c = Call.param ~shape:[ Int n ] 1 Float32 in
+  let a = Call.param ~shape:[ Int n ] 2 Bfloat16 in
+  let b = Call.param ~shape:[ Int n ] 3 Bfloat16 in
+  let i = Ops.range (Int n) [ 0 ] in
+  let pick =
+    Ops.where
+      (Ops.index c [ i ] > float 0.)
+      (Ops.index a [ i ]) (Ops.index b [ i ])
+  in
+  let k =
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [ Ops.end_ (Ops.store (Ops.index out [ i ]) pick) [ i ] ]
+  in
+  let upcast =
+    Opt.Split { axis = 0; amount = n; target = Upcast; top = false }
+  in
+  Ops.replace k
+    ~arg:(Kernel { (kernel_info k) with opts_to_apply = Some [ upcast ] })
+
+let selects_bfloat16_lanes () =
+  let floats l = Array.of_list (List.map (fun f -> `Float f) l) in
+  let c = floats [ 1.; -1.; 0.; 2.; -3.; 4.; -0.5; 0.5 ]
+  and a = floats [ 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. ]
+  and b = floats [ -1.; -2.; -3.; -4.; -5.; -6.; -7.; -8. ] in
+  let prg = Codegen.to_program (select_bfloat16 8) (Lazy.force host) in
+  equal (array Dtypes.value)
+    (floats [ 1.; -2.; -3.; 4.; -5.; 6.; -7.; 8. ])
+    (List.assoc 0 (Run.on_host prg [ (1, c); (2, a); (3, b) ]))
+
+(* Gated bfloat16 loads *)
+
+(* The kernel that stores into slot 0, of bfloat16, element [k] of slot 1 where
+   [k < n] and 0 elsewhere, [k] being element [i] of slot 2, over [n] elements:
+   a load gated by data, whose alternative is a bfloat16 zero. *)
+let take_bfloat16 n =
+  let open Ops.O in
+  let out = Call.param ~shape:[ Int n ] 0 Bfloat16 in
+  let x = Call.param ~shape:[ Int n ] 1 Bfloat16 in
+  let ids = Call.param ~shape:[ Int n ] 2 Int32 in
+  let i = Ops.range (Int n) [ 0 ] in
+  let k = Ops.index ids [ i ] in
+  let inside = k < int n in
+  let read = Ops.index x [ Shape.valid k inside ] in
+  let taken = Ops.where inside read (Ops.float ~dtype:Bfloat16 0.) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) taken) [ i ] ]
+
+let takes_bfloat16 () =
+  let floats l = Array.of_list (List.map (fun f -> `Float f) l) in
+  let ints l = Array.of_list (List.map (fun i -> `Int (Bigint.of_int i)) l) in
+  let prg = Codegen.to_program (take_bfloat16 4) (Lazy.force host) in
+  equal (array Dtypes.value)
+    (floats [ 3.; 0.; 1.; 0. ])
+    (List.assoc 0
+       (Run.on_host prg
+          [ (1, floats [ 1.; 2.; 3.; 4. ]); (2, ints [ 2; 7; 0; 9 ]) ]))
+
 (* Lanes all Invalid *)
 
 (* rune's fold of a float32 [4; 1] to [3; 1], kernel [2; 2], dilation [2; 2] and
@@ -2798,6 +2863,11 @@ let () =
          multiply_adds;
          lanes;
          bfloat16_casts;
+         test "a selection between bfloat16 vectors takes each lane's arm"
+           selects_bfloat16_lanes;
+         test
+           "a gated bfloat16 load takes its alternative where its gate is false"
+           takes_bfloat16;
          vectors;
          signed_zeros;
          invalid_lanes;

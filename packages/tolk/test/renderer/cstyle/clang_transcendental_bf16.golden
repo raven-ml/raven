@@ -1,8 +1,8 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void E(__bf16* restrict data0_1, __bf16* restrict data1_1) {
-  __bf16 val0 = (*(data1_1+0));
-  float cast0 = __builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (__bf16)(val0))))<<16u)));
+void E(unsigned short* restrict data0_1, unsigned short* restrict data1_1) {
+  unsigned short val0 = (*(data1_1+0));
+  float cast0 = __builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (unsigned short)(val0))))<<16u)));
   _Bool alu0 = (cast0!=((float)(-__builtin_inff())));
   _Bool alu1 = (cast0!=((float)(__builtin_inff())));
   _Bool alu2 = (cast0!=cast0);
@@ -226,6 +226,6 @@ void E(__bf16* restrict data0_1, __bf16* restrict data1_1) {
   unsigned int cast19 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu201>>16u)))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu134>>16u)))))<<16u))))));
   unsigned int alu202 = (((cast19&65535u)!=0u)?(cast19|65536u):cast19);
   unsigned int alu203 = (((-cast19&2139095040u)!=0u)?(cast19+((cast19>>16u)&1u)+32767u):alu202);
-  *(data0_1+0) = __builtin_bit_cast(__bf16, (unsigned short)(((unsigned short)((alu203>>16u)))));
+  *(data0_1+0) = __builtin_bit_cast(unsigned short, (unsigned short)(((unsigned short)((alu203>>16u)))));
 }
 

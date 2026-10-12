@@ -1230,6 +1230,10 @@ thread.
 
 ### Tolk (new)
 
+- On x86 hosts without AVX512-BF16, compiled bfloat16 kernels that select
+  between vectors, merge a gated load or bitcast stacked lanes compile and
+  link: the Clang renderer holds bfloat16 as `unsigned short` there. They
+  aborted clang or failed to link `__truncsfbf2`.
 - **Breaking:** `Tolk_engine` runs compiled schedules as programs of rig
   (`Rig_program`), and tolk depends on rig instead of nx. The queue
   encoders (`Ops_metal`, `Ops_cuda`, `Ops_amd`, `Ops_nv`) and `Hcq2`'s

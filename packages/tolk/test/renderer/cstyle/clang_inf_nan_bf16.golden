@@ -1,39 +1,39 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-typedef __bf16 __bf164 __attribute__((aligned(8),ext_vector_type(4)));
+typedef unsigned short unsigned_short4 __attribute__((aligned(8),ext_vector_type(4)));
 typedef unsigned short unsigned_short4 __attribute__((aligned(8),ext_vector_type(4)));
 typedef unsigned int unsigned_int4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef short short4 __attribute__((aligned(8),ext_vector_type(4)));
-void E_4_4(__bf16* restrict data0_16, __bf16* restrict data1_16, const int block_lo_, const int block_hi_) {
+void E_4_4(unsigned short* restrict data0_16, unsigned short* restrict data1_16, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);
     int alu1 = (alu0+1);
-    __bf16 val0 = (*(data1_16+alu1));
+    unsigned short val0 = (*(data1_16+alu1));
     int alu2 = (alu0+2);
-    __bf16 val1 = (*(data1_16+alu2));
+    unsigned short val1 = (*(data1_16+alu2));
     int alu3 = (alu0+3);
-    __bf16 val2 = (*(data1_16+alu3));
-    __bf16 val3 = (*(data1_16+alu0));
-    __bf164 cast0 = (__bf164){val3,val0,val1,val2};
-    unsigned_int4 cast1 = __builtin_convertvector(__builtin_bit_cast(unsigned_short4, (__bf164)(cast0)), unsigned_int4);
+    unsigned short val2 = (*(data1_16+alu3));
+    unsigned short val3 = (*(data1_16+alu0));
+    unsigned_short4 cast0 = (unsigned_short4){val3,val0,val1,val2};
+    unsigned_int4 cast1 = __builtin_convertvector(__builtin_bit_cast(unsigned_short4, (unsigned_short4)(cast0)), unsigned_int4);
     float4 cast2 = __builtin_bit_cast(float4, (unsigned_int4)((cast1<<16u)));
-    __bf164 alu4 = (__builtin_convertvector((0.0f<cast2), short4)?cast0:((__bf16)(__builtin_inff())));
-    unsigned_int4 cast3 = __builtin_convertvector(__builtin_bit_cast(unsigned_short4, (__bf164)(alu4)), unsigned_int4);
-    __bf164 alu5 = (__builtin_convertvector((cast2<-1.0f), short4)?((__bf16)(__builtin_nanf(""))):cast0);
-    unsigned_int4 cast4 = __builtin_convertvector(__builtin_bit_cast(unsigned_short4, (__bf164)(alu5)), unsigned_int4);
+    unsigned_short4 alu4 = (__builtin_convertvector((0.0f<cast2), short4)?cast0:32640u);
+    unsigned_int4 cast3 = __builtin_convertvector(__builtin_bit_cast(unsigned_short4, (unsigned_short4)(alu4)), unsigned_int4);
+    unsigned_short4 alu5 = (__builtin_convertvector((cast2<-1.0f), short4)?32704u:cast0);
+    unsigned_int4 cast4 = __builtin_convertvector(__builtin_bit_cast(unsigned_short4, (unsigned_short4)(alu5)), unsigned_int4);
     unsigned_int4 cast5 = __builtin_bit_cast(unsigned_int4, (float4)((__builtin_bit_cast(float4, (unsigned_int4)((cast3<<16u)))+__builtin_bit_cast(float4, (unsigned_int4)((cast4<<16u))))));
     unsigned_int4 alu6 = (((cast5&65535u)!=0u)?(cast5|65536u):cast5);
     unsigned_int4 alu7 = (((-cast5&2139095040u)!=0u)?(cast5+((cast5>>16u)&1u)+32767u):alu6);
     unsigned_short4 cast6 = __builtin_convertvector((alu7>>16u), unsigned_short4);
     unsigned_int4 cast7 = __builtin_convertvector(cast6, unsigned_int4);
-    __bf164 alu8 = (__builtin_convertvector((cast2<1.0f), short4)?((__bf16)(-__builtin_inff())):cast0);
-    unsigned_int4 cast8 = __builtin_convertvector(__builtin_bit_cast(unsigned_short4, (__bf164)(alu8)), unsigned_int4);
+    unsigned_short4 alu8 = (__builtin_convertvector((cast2<1.0f), short4)?65408u:cast0);
+    unsigned_int4 cast8 = __builtin_convertvector(__builtin_bit_cast(unsigned_short4, (unsigned_short4)(alu8)), unsigned_int4);
     unsigned_int4 cast9 = __builtin_bit_cast(unsigned_int4, (float4)((__builtin_bit_cast(float4, (unsigned_int4)((cast7<<16u)))+__builtin_bit_cast(float4, (unsigned_int4)((cast8<<16u))))));
     unsigned_int4 alu9 = (((cast9&65535u)!=0u)?(cast9|65536u):cast9);
     unsigned_int4 alu10 = (((-cast9&2139095040u)!=0u)?(cast9+((cast9>>16u)&1u)+32767u):alu9);
     unsigned_short4 cast10 = __builtin_convertvector((alu10>>16u), unsigned_short4);
-    __bf164 cast11 = __builtin_bit_cast(__bf164, (unsigned_short4)(cast10));
+    unsigned_short4 cast11 = __builtin_bit_cast(unsigned_short4, (unsigned_short4)(cast10));
     *(data0_16+alu1) = cast11[1];
     *(data0_16+alu2) = cast11[2];
     *(data0_16+alu3) = cast11[3];
