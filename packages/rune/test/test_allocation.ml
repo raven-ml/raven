@@ -55,7 +55,7 @@ let replay =
   group "jit replay"
     [
       test "neg of one element" (fun () ->
-          equal int 654 (words (fun () -> neg x)));
+          equal int 643 (words (fun () -> neg x)));
     ]
 
 (* Residuals

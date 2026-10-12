@@ -51,11 +51,16 @@ val span : ('a, 'b) Nx_dtype.t -> Nx_array.View.t -> int * int
     reaches, from the element at or below the first one it reaches whose bits
     start at a multiple of 16 bytes, through the last one: [(start, length)]. *)
 
-val within : ('a, 'b) Nx_dtype.t -> Nx_array.View.t -> Nx_array.View.t
-(** [within dt v] is the non-empty view [v] over the run {!span} gives: of [v]'s
-    shape and strides, offset from the run's start, with the stride of each axis
-    of one element [0], which no read steps along. Views that differ only in
-    those strides, or in where their runs start, give equal views. *)
+type in_run = { shape : int array; offset : int; strides : int array }
+(** The type for where a view lies in its run: its shape, its offset from the
+    run's start and its strides, in elements. *)
+
+val within : ('a, 'b) Nx_dtype.t -> Nx_array.View.t -> in_run
+(** [within dt v] is where the non-empty view [v] lies over the run {!span}
+    gives: [v]'s shape, its offset from the run's start, and [v]'s strides
+    with the stride of each axis of one element [0], which no read steps
+    along. Views that differ only in those strides, or in where their runs
+    start, give equal results. *)
 
 val run :
   ('a, 'b) Nx_dtype.t ->

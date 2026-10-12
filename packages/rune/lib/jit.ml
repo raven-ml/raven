@@ -31,7 +31,8 @@ type layout = {
   dtype : string;
   shape : int array;
   at : Placement.t;
-  view : View.t option; (* Its view over its run, if it reads one. *)
+  view : Lower.in_run option;
+      (* Where its view lies in its run, if it reads one. *)
   phases : int list; (* Where its run starts within 16 bytes, per device. *)
 }
 
@@ -75,7 +76,7 @@ let leaf (Nx.P t) =
           phases = List.map (fun b -> Lower.phase dt b start) buffers;
         }
       in
-      let runs = List.map (Lower.run dt view) buffers in
+      let runs = List.map (fun b -> Lower.run dt view b) buffers in
       { x; view; buffers; runs; layout }
   | _ -> { x; view; buffers; runs = []; layout }
 
@@ -101,7 +102,9 @@ let covers l =
    and a copy of the run stands for it. *)
 let starts_its_run (l : layout) =
   match l.view with
-  | Some v -> View.is_c_contiguous v && View.offset v = 0
+  | Some w ->
+      w.offset = 0
+      && View.is_c_contiguous (View.create ~strides:w.strides w.shape)
   | None -> false
 
 (* Keys *)
@@ -174,8 +177,15 @@ let parts l =
     l.dtype;
     "shape [" ^ ints l.shape ^ "]";
     Format.asprintf "at %a" Placement.pp l.at;
-    "strides [" ^ ints (Option.fold ~none:[||] ~some:View.strides l.view) ^ "]";
-    (match Option.fold ~none:0 ~some:View.offset l.view with
+    "strides ["
+    ^ ints
+        (Option.fold ~none:[||]
+           ~some:(fun (w : Lower.in_run) -> w.strides)
+           l.view)
+    ^ "]";
+    (match
+       Option.fold ~none:0 ~some:(fun (w : Lower.in_run) -> w.offset) l.view
+     with
     | 1 -> "1 element into its run"
     | n -> Printf.sprintf "%d elements into its run" n);
     "a run at [" ^ ints (Array.of_list l.phases) ^ "] bytes past 16";

@@ -556,13 +556,16 @@ let span dt v =
   let start = lo - (lo mod per) in
   (start, hi - start)
 
+type in_run = { shape : int array; offset : int; strides : int array }
+
 let within dt v =
   let start, _ = span dt v and shape = View.shape v in
-  View.create
-    ~offset:(View.offset v - start)
-    ~strides:
-      (Array.mapi (fun d s -> if shape.(d) = 1 then 0 else s) (View.strides v))
-    shape
+  {
+    shape;
+    offset = View.offset v - start;
+    strides =
+      Array.mapi (fun d s -> if shape.(d) = 1 then 0 else s) (View.strides v);
+  }
 
 let run dt v b =
   let start, span = span dt v in
@@ -1005,7 +1008,10 @@ let transferred (type a b) p (x : (a, b) Nx.t) : (a, b) Nx.t =
   let src = run dt v (List.hd bufs) in
   let dst = Rig.Buffer.create (List.hd (memories p)) (Rig.Buffer.length src) in
   Rig.Buffer.copy ~src ~dst;
-  Nx.of_shards p dt (within dt v) [ dst ]
+  let w = within dt v in
+  Nx.of_shards p dt
+    (View.create ~offset:w.offset ~strides:w.strides w.shape)
+    [ dst ]
 
 (* [placed s what p x] is the node of [x], a value that is not traced, at [p]:
    where it lies if that is [p]. A value of one element that lies elsewhere is a
