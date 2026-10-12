@@ -19,7 +19,6 @@
 open Jera
 
 let f64 = Nx.float64
-let sync () = Nx_device.synchronize Nx_device.host
 
 type row = Eager | Compiled | Grad
 
@@ -710,9 +709,7 @@ let compiled f x =
   ignore (Sys.opaque_identity (f x));
   (f, x)
 
-let timed (f, x) =
-  ignore (f x);
-  sync ()
+let timed (f, x) = ignore (f x)
 
 (* A random source is an argument of a compiled call: a Brownian path for a
    stochastic march, a key for quasi-Monte Carlo. *)
@@ -730,9 +727,7 @@ let sde () =
   in
   Thumper.group "sde-euler-maruyama-100"
     [
-      Thumper.bench_with_setup ~setup:path "eager" (fun w ->
-          ignore (gbm w);
-          sync ());
+      Thumper.bench_with_setup ~setup:path "eager" (fun w -> ignore (gbm w));
       Thumper.bench_with_setup
         ~setup:(fun () ->
           let f =
@@ -754,9 +749,7 @@ let qmc () =
   let key () = Nx.Rng.key 7 in
   Thumper.group "quad-qmc-8d"
     [
-      Thumper.bench_with_setup ~setup:key "eager" (fun k ->
-          ignore (mean_exp k);
-          sync ());
+      Thumper.bench_with_setup ~setup:key "eager" (fun k -> ignore (mean_exp k));
       Thumper.bench_with_setup
         ~setup:(fun () ->
           let f =
@@ -770,11 +763,7 @@ let qmc () =
 
 let row w = function
   | Eager ->
-      [
-        Thumper.bench_with_setup ~setup:w.x "eager" (fun x ->
-            ignore (w.f x);
-            sync ());
-      ]
+      [ Thumper.bench_with_setup ~setup:w.x "eager" (fun x -> ignore (w.f x)) ]
   | Compiled ->
       [
         Thumper.bench_with_setup
@@ -798,7 +787,6 @@ let cold id =
   let t0 = Unix.gettimeofday () in
   let f = Rune.jit' w.f in
   ignore (Sys.opaque_identity (f x));
-  sync ();
   Printf.printf "%.3f\n" ((Unix.gettimeofday () -. t0) *. 1000.)
 
 let suite () = List.map rows workloads @ [ sde (); qmc () ]
