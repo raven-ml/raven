@@ -43,6 +43,7 @@ let report fd =
     else None
   in
   match Option.bind n report_open with
+  | _ when Sys.win32 -> Error (strf "%s: launchers are POSIX only" report_var)
   | Some fd ->
       Ok
         {

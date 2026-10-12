@@ -183,6 +183,9 @@ val devices : Rig.t -> string -> (Rig.t list, string) result
       by {!close} or at exit, an agent once {!serve} has dropped what the
       closed job held.
 
+    Launchers are POSIX only: Windows passes no descriptor by its number, and
+    a process there answers [RIG_REMOTE_REPORT] as naming none.
+
     A process takes [RIG_REMOTE_REPORT] out of its environment and sets the
     descriptor close-on-exec, and a child of [fork] writes nothing. The
     launcher gives the controller two more variables:
