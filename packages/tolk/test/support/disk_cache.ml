@@ -44,7 +44,8 @@ let start ?(env = []) ~cachedb part =
 
 let finish (pid, out, err) =
   let _, status = Unix.waitpid [] pid in
-  let read file = In_channel.with_open_bin file In_channel.input_all in
+  (* in text mode: on Windows a child's lines end in CRLF *)
+  let read file = In_channel.with_open_text file In_channel.input_all in
   match status with Unix.WEXITED 0 -> Ok (read out) | _ -> Error (read err)
 
 let child ?env ~cachedb part = finish (start ?env ~cachedb part)

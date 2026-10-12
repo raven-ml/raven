@@ -101,7 +101,8 @@ let start ?(env = []) part args =
 
 let finish (pid, out, err) =
   let _, status = Unix.waitpid [] pid in
-  let read file = In_channel.with_open_bin file In_channel.input_all in
+  (* in text mode: on Windows a child's lines end in CRLF *)
+  let read file = In_channel.with_open_text file In_channel.input_all in
   { status; out = read out; err = read err }
 
 let child ?env part args = finish (start ?env part args)
