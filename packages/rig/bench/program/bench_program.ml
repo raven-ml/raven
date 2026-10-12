@@ -115,6 +115,66 @@ let by_hand steps () =
   in
   { ps; go; n = 0 }
 
+(* One copy part of 8 bytes from memory into an input: from the memory's first
+   byte, or with [moving] from the byte a word of the run's ints names, so the
+   run passes a view of the memory. *)
+let copying ~moving () =
+  let d, p = polled () in
+  let src_offset : _ iarray = if moving then [| (G.Int 0, 8) |] else [||] in
+  let t =
+    {
+      G.devices = [| Rig.arch d |];
+      memory =
+        [|
+          G.Alloc
+            {
+              device = 0;
+              kind = B.Device;
+              bytes = 16;
+              init = { bytes = ""; holes = [||] };
+              copies = One;
+            };
+        |];
+      images = [||];
+      inputs = [| { G.device = 0; bytes = 8 } |];
+      ints = 1;
+      steps =
+        [|
+          G.Submit
+            {
+              device = 0;
+              parts =
+                [|
+                  G.Copy
+                    {
+                      src = 0;
+                      src_offset;
+                      dst = 1;
+                      dst_offset = [||];
+                      length = 8;
+                    };
+                |];
+              slots =
+                [|
+                  G.Memory { memory = 0; offset = 0; length = 16 }; G.Input 0;
+                |];
+              fixed = [||];
+            };
+        |];
+    }
+  in
+  let p' = Result.get_ok (G.load t [| d |]) in
+  let frame = { G.inputs = [| B.create d 8 |]; ints = [| 1 |] } in
+  { ps = [| p |]; go = (fun () -> ignore (G.run p' frame)); n = 0 }
+
+(* The same copy made by hand. *)
+let copy_by_hand () =
+  let d, p = polled () in
+  let src = B.view (B.create d 16) ~first:0 ~length:8 in
+  let s = Sub.make d [| Sub.copy ~src:(Buffer src) ~dst:(Slot 0) |] in
+  let run = Sub.Run.make () and buffers = [| B.create d 8 |] in
+  { ps = [| p |]; go = (fun () -> ignore (Rig.submit s ~run ~buffers)); n = 0 }
+
 let polled_rows =
   let row name setup =
     Thumper.bench_with_setup ~setup name (fun r ->
@@ -127,6 +187,9 @@ let polled_rows =
       row "floor-launch-1" (by_hand 1);
       row "launches-64" (described 64);
       row "floor-launches-64" (by_hand 64);
+      row "copy-1" (copying ~moving:false);
+      row "copy-moving-1" (copying ~moving:true);
+      row "floor-copy-1" copy_by_hand;
     ]
 
 (* A host step's orchestration around the same empty host launch. *)
