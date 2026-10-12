@@ -166,14 +166,18 @@ type search = { rows : int; calls : int }
 let on_host = { rows = 64; calls = 100 }
 let on_gpu = { rows = 1024; calls = 200 }
 
+(* The GPU that [o] opens, if it opens, computed by [backend]. *)
+let opened ?backend o () =
+  Result.to_option (Result.map (Nx.Device.make ?backend) (Rig.open_ o))
+
 (* The devices a search runs on: the host, and each GPU that opens. *)
 let devices =
   [
     ("host", on_host, fun () -> Some Nx.Device.host);
-    ("metal", on_gpu, fun () -> Result.to_option (Nx_metal.get 0));
-    ("cuda", on_gpu, fun () -> Result.to_option (Nx_cuda.get 0));
-    ("nv", on_gpu, fun () -> Result.to_option (Nx_nv.get 0));
-    ("amd", on_gpu, fun () -> Result.to_option (Nx_amd.get 0));
+    ("metal", on_gpu, opened (Rig_metal.gpu 0));
+    ("cuda", on_gpu, opened (Rig_cuda.gpu 0));
+    ("nv", on_gpu, opened (Rig_nv_nvidia.gpu 0));
+    ("amd", on_gpu, opened ~backend:Nx_amd.backend (Rig_amd_amdgpu.gpu 0));
   ]
 
 let search_case search open_device () =
@@ -183,10 +187,9 @@ let search_case search open_device () =
   let f =
     Rune.jit' ~beam:2 ~parallel:search_parallel (fun x -> Nx.matmul x x)
   in
-  let m = Nx.Device.memory d in
   for _ = 0 to search.calls do
-    ignore (Sys.opaque_identity (f x));
-    Nx_device.synchronize m
+    let y = f x in
+    List.iter (fun b -> Rig.Buffer.wait b Rig.Read) (fst (Nx.shards y))
   done
 
 let search_cases =

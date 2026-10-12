@@ -26,8 +26,7 @@ let topk ~k ~n ~rows =
   Thumper.group ~id:"topk" "topk"
     [
       Thumper.bench_with_setup ~setup:x (id ^ "-eager") (fun x ->
-          ignore (top x);
-          Nx_device.synchronize Nx_device.host);
+          ignore (top x));
       Thumper.bench_with_setup
         ~setup:(fun () ->
           let f =
@@ -38,8 +37,7 @@ let topk ~k ~n ~rows =
           (f, x))
         (id ^ "-compiled")
         (fun (f, x) ->
-          ignore (f x);
-          Nx_device.synchronize Nx_device.host);
+          ignore (f x));
     ]
 
 (* [n] float64 queries searched among [m] sorted knots, the knots captured by a
@@ -56,8 +54,7 @@ let searchsorted id ~n ~m =
       (f, uniform n))
     id
     (fun (f, q) ->
-      ignore (f q);
-      Nx_device.synchronize Nx_device.host)
+      ignore (f q))
 
 (* Host programs. Each is compiled in its setup's first call and timed as one
    call of the compiled function. *)
@@ -79,8 +76,7 @@ let compiled_call id signature f inputs =
       (g, inputs))
     id
     (fun (g, inputs) ->
-      ignore (Sys.opaque_identity (inputs g));
-      Nx_device.synchronize Nx_device.host)
+      ignore (Sys.opaque_identity (inputs g)))
 
 (* Outputs of one computation. A double word's high and low parts end one chain:
    compiled, an operation writes both from one kernel, and a sum's halving tree
@@ -193,8 +189,7 @@ let indexed =
           (g, cache, values, i))
         "scatter-16-rows-into-4096x1024-cache-host"
         (fun (g, cache, values, i) ->
-          cache := g !cache values i;
-          Nx_device.synchronize Nx_device.host);
+          cache := g !cache values i);
     ]
 
 (* Rotary embeddings of 512 positions over 64 heads of 64: the cosines and sines
@@ -276,12 +271,10 @@ let masks =
       ~setup:(fun () ->
         let g = Rune.jit Nx.Ptree.(consumes tensor @@ returns tensor) f in
         let m = ref (g (fresh ())) in
-        Nx_device.synchronize Nx_device.host;
         (g, m))
       id
       (fun (g, m) ->
-        m := g !m;
-        Nx_device.synchronize Nx_device.host)
+        m := g !m)
   in
   let writes (type b) name (dt : (bool, b) Nx.dtype) =
     let window = Nx.ones dt [| 1024 |] in
@@ -418,8 +411,7 @@ let factorizations =
     Thumper.group ~id:"eigh" "eigh"
       [
         Thumper.bench_with_setup ~setup:a (id ^ "-eager") (fun a ->
-            ignore (Sys.opaque_identity (Nx.eigh a));
-            Nx_device.synchronize Nx_device.host);
+            ignore (Sys.opaque_identity (Nx.eigh a)));
         compiled_call (id ^ "-host")
           Nx.Ptree.(tensor @-> returns (pair tensor tensor))
           (fun a -> Nx.eigh a)
@@ -430,8 +422,7 @@ let factorizations =
     Thumper.group ~id:"svd" "svd"
       [
         Thumper.bench_with_setup ~setup:a (id ^ "-eager") (fun a ->
-            ignore (Sys.opaque_identity (svd a));
-            Nx_device.synchronize Nx_device.host);
+            ignore (Sys.opaque_identity (svd a)));
         compiled_call (id ^ "-host")
           Nx.Ptree.(tensor @-> returns (pair tensor (pair tensor tensor)))
           svd
@@ -485,8 +476,7 @@ let gaussian =
   Thumper.group ~id:"gaussian" "gaussian"
     [
       Thumper.bench_with_setup ~setup:p (id ^ "-eager") (fun p ->
-          ignore (Sys.opaque_identity (step p));
-          Nx_device.synchronize Nx_device.host);
+          ignore (Sys.opaque_identity (step p)));
       compiled_call (id ^ "-host")
         Nx.Ptree.(params @-> returns (pair tensor params))
         step
@@ -572,8 +562,7 @@ let clipped =
       (g, r))
     "jit-of-grad-clipped-disc-float64-104x104-host"
     (fun (g, r) ->
-      ignore (Sys.opaque_identity (g r));
-      Nx_device.synchronize Nx_device.host)
+      ignore (Sys.opaque_identity (g r)))
 
 (* Reverse mode of a two-layer perceptron's loss over a batch of 32 rows of 64
    inputs, 128 hidden units and 10 outputs: the gradient of the compiled loss, a
@@ -602,8 +591,7 @@ let reverse =
         (p, x))
       id
       (fun (p, x) ->
-        ignore (Sys.opaque_identity (step p x));
-        Nx_device.synchronize Nx_device.host)
+        ignore (Sys.opaque_identity (step p x)))
   in
   Thumper.group ~id:"reverse" "reverse"
     [
@@ -920,14 +908,20 @@ type gpu = {
   sync : unit -> unit;
 }
 
+(* Returns once the work submitted on [d] before it is done: an empty
+   submission follows that work in device order. *)
+let finished d =
+  let s = Rig.Submission.make d [||] and run = Rig.Submission.Run.make () in
+  fun () -> Rig.Point.wait (Rig.submit s ~run ~buffers:[||])
+
 let on_gpu open_device =
   let device = lazy (open_device ()) in
   let placement () = Nx.Placement.on (Lazy.force device) in
+  let sync = lazy (finished (Nx.Device.memory (Lazy.force device))) in
   {
     placement;
     place = (fun x -> Nx.place (placement ()) x);
-    sync =
-      (fun () -> Nx_device.synchronize (Nx.Device.memory (Lazy.force device)));
+    sync = (fun () -> Lazy.force sync ());
   }
 
 let gpu_cases { placement; sync; _ } =
@@ -937,11 +931,17 @@ let gpu_cases { placement; sync; _ } =
 let run_self flag =
   Sys.command (Filename.quote_command Sys.executable_name [ flag ])
 
+(* GPU 0 that [o] opens, computed by [backend]. *)
+let device ?backend o () =
+  match Rig.open_ o with
+  | Ok m -> Nx.Device.make ?backend m
+  | Error e -> failwith ("bench_compiled: " ^ e)
+
 let gpus =
   [
-    ("cuda", fun () -> Nx_cuda.device 0);
-    ("nv", fun () -> Nx_nv.device 0);
-    ("amd", fun () -> Nx_amd.device 0);
+    ("cuda", device (Rig_cuda.gpu 0));
+    ("nv", device (Rig_nv_nvidia.gpu 0));
+    ("amd", device ~backend:Nx_amd.backend (Rig_amd_amdgpu.gpu 0));
   ]
 
 let gpu (name, open_device) =
@@ -957,7 +957,7 @@ let gpu (name, open_device) =
    Mac's Metal GPU. A forked worker cannot reach Metal's compiler, so a fresh
    process ([--metal]) compiles them into the disk cache, which the worker's
    setups then read, and says whether Metal opens. *)
-let on_metal () = on_gpu (fun () -> Nx_metal.device 0)
+let on_metal () = on_gpu (device (Rig_metal.gpu 0))
 
 let metal_setups { placement; place; sync } =
   ignore (finite_setup ~place ~sync ());
@@ -992,29 +992,29 @@ let suite () =
     :: Thumper.group ~id:"finite" "finite"
          [
            finite_checks ~place:Fun.id
-             ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+             ~sync:ignore
              (Printf.sprintf "checks-%d-leaves-host" finite_leaves);
          ]
     :: Thumper.group ~id:"launch" "launch"
          (launches ~place:Fun.id
-            ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+            ~sync:ignore
             ())
     :: Thumper.group ~id:"loop" "loop"
          (loops ~place:Fun.id
-            ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+            ~sync:ignore
             ()
          @ lane_loops ())
     :: Thumper.group ~id:"lorenz" "lorenz"
          [
            lorenz_step ~suffix:"-host"
              (fun () -> Nx.Placement.host)
-             ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+             ~sync:ignore
              lorenz_host;
          ]
     :: Thumper.group ~id:"decode" "decode"
          (decode ~suffix:"-host"
             (fun () -> Nx.Placement.host)
-            ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+            ~sync:ignore
             ())
     :: (List.concat_map gpu gpus @ metal ())
 
@@ -1022,11 +1022,14 @@ let config = Thumper.Config.(default |> deadline 120.)
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--cuda" ] -> exit (if Result.is_ok (Nx_cuda.get 0) then 0 else 1)
-  | [ _; "--nv" ] -> exit (if Result.is_ok (Nx_nv.get 0) then 0 else 1)
-  | [ _; "--amd" ] -> exit (if Result.is_ok (Nx_amd.get 0) then 0 else 1)
+  | [ _; "--cuda" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
+  | [ _; "--nv" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_nv_nvidia.gpu 0)) then 0 else 1)
+  | [ _; "--amd" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0)) then 0 else 1)
   | [ _; "--metal" ] -> (
-      match Nx_metal.get 0 with
+      match Rig.open_ (Rig_metal.gpu 0) with
       | Error _ -> exit 1
       | Ok _ ->
           metal_setups (on_metal ());

@@ -4,11 +4,11 @@
   rune
   nx
   nx.dtype
-  nx.cuda
-  nx.nv
-  nx.amd
-  nx.metal
-  nx.device
+  rig.cuda
+  rig.nv.nvidia
+  nx.amd rig.amd.amdgpu
+  rig.metal
+  rig
   nx.wide
   thumper))
 
