@@ -346,7 +346,7 @@ let echo_alloc bytes =
 (* Jobs *)
 
 let one_open_job () =
-  let j = Link.job () in
+  with_job @@ fun j ->
   raises_match Exn.invalid_arg (fun () -> Link.job ());
   Link.fail j "the test ended";
   ended (Link.job ())
@@ -1983,7 +1983,11 @@ let forks =
 
    Each program has its own job, whose agent's end answers on a thread of this
    process as link_peer does, so a request that took another's answer, or a
-   frame two domains interleaved, shows. *)
+   frame two domains interleaved, shows.
+
+   Its links are over a Unix socket pair. A stateful test makes thousands of
+   jobs, and a loopback TCP connection each would leave as many ports in
+   TIME_WAIT, 30 s on macOS, until a connect fails with EADDRNOTAVAIL. *)
 
 let rec echo a =
   match Link.next a with
@@ -2010,19 +2014,28 @@ let current = ref None
 let connect () =
   match !current with
   | Some s -> s
-  | None ->
+  | None -> (
       let job = Link.job () in
-      let d, a = connected () in
-      let c = Link.make job d ~name:"agent" ~peer:(Wire.Agent 1) in
-      let a = Link.make job a ~name:"controller" ~peer:Wire.Controller in
-      let s = { job; c; served = spawn (fun () -> echo a) } in
-      current := Some s;
-      s
+      match
+        let d, a =
+          Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
+        in
+        let c = Link.make job d ~name:"agent" ~peer:(Wire.Agent 1) in
+        let a = Link.make job a ~name:"controller" ~peer:Wire.Controller in
+        { job; c; served = spawn (fun () -> echo a) }
+      with
+      | s ->
+          current := Some s;
+          s
+      | exception e ->
+          (* No value holds the job, so no release would end it. *)
+          ended job;
+          raise e)
 
 let release s =
+  current := None;
   ended s.job;
-  s.served ();
-  current := None
+  s.served ()
 
 let link = abstract "l" ~release
 let names = result (list string) string
