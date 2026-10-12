@@ -363,9 +363,12 @@ static struct rig_remote_why *reason(const char *fmt, const char *name,
 
 static void error_text(int e, char *buf, size_t n) {
 #if defined(_WIN32)
-  if (FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                     NULL, (DWORD)e, 0, buf, (DWORD)n, NULL) == 0)
-    snprintf(buf, n, "socket error %d", e);
+  DWORD k = FormatMessageA(
+      FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+      (DWORD)e, 0, buf, (DWORD)n, NULL);
+  if (k == 0) snprintf(buf, n, "socket error %d", e);
+  /* Windows ends its messages with CRLF. */
+  while (k > 0 && (buf[k - 1] == '\r' || buf[k - 1] == '\n')) buf[--k] = '\0';
 #elif defined(__GLIBC__)
   char *s = strerror_r(e, buf, n);
   if (s != buf) snprintf(buf, n, "%s", s);
@@ -394,7 +397,10 @@ static struct rig_remote_why *link_reason(struct rig_remote_link *l,
     return reason("%s: a frame larger than this process can hold%s", l->name,
                   "");
   default:
-#ifndef _WIN32
+#ifdef _WIN32
+    if (code == WSAECONNRESET || code == WSAECONNABORTED)
+      return reason("%s: closed its connection%s", l->name, "");
+#else
     if (code == EPIPE || code == ECONNRESET)
       return reason("%s: closed its connection%s", l->name, "");
 #endif
