@@ -13,7 +13,8 @@ type t = Cartesian of { aspect : float option }
 let cartesian ?aspect () =
   (match aspect with
   | Some a when not (is_pos a) ->
-      err "Coord.cartesian" "aspect %g is not finite and positive" a
+      err "Coord.cartesian" "aspect %a is not finite and positive"
+        Float_text.pp a
   | _ -> ());
   Cartesian { aspect }
 
@@ -23,7 +24,7 @@ let equal (Cartesian c) (Cartesian c') =
 let pp ppf (Cartesian { aspect }) =
   match aspect with
   | None -> Format.pp_print_string ppf "cartesian"
-  | Some a -> Format.fprintf ppf "cartesian ~aspect:%g" a
+  | Some a -> Format.fprintf ppf "cartesian ~aspect:%a" Float_text.pp a
 
 (* A cartesian projection maps the unit square onto its box, y up. *)
 type projection = Box of Box2.t

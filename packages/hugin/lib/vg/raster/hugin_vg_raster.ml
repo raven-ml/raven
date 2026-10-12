@@ -605,11 +605,11 @@ let max_pixels = 2147483647.
 
 let render ~density r =
   if not (density > 0. && Float.is_finite density) then
-    err "render: invalid density %g" density;
+    err "render: invalid density %s" (Float_text.g density);
   let w = Float.round (Renderable.w r *. density) in
   let h = Float.round (Renderable.h r *. density) in
   if not (w >= 1. && w <= max_pixels && h >= 1. && h <= max_pixels) then
-    err "render: a page of %g by %g pixels" w h;
+    err "render: a page of %s by %s pixels" (Float_text.g w) (Float_text.g h);
   let s = Surface.create (int_of_float w) (int_of_float h) in
   let ctx = { cover = Cover.create (); outlines = [] } in
   draw ctx s (Surface.whole s)
@@ -620,5 +620,5 @@ let render ~density r =
 let png ~density r =
   let ppm = Float.round (density *. 72. /. 0.0254) in
   if ppm > max_pixels || ppm < 1. then
-    err "png: density %g is beyond a PNG's resolution" density;
+    err "png: density %s is beyond a PNG's resolution" (Float_text.g density);
   Nx_io.encode_png ~dpi:(density *. 72.) ~srgb:true (render ~density r)

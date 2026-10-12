@@ -1065,7 +1065,7 @@ let pp_weights name ppf = function
       Format.fprintf ppf ", %s %a" name
         (Format.pp_print_list
            ~pp_sep:(fun ppf () -> Format.pp_print_string ppf " ")
-           (fun ppf w -> Format.fprintf ppf "%g" w))
+           Float_text.pp)
         ws
 
 let pp_ids =

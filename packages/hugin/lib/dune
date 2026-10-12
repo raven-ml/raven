@@ -34,8 +34,11 @@
   guide
   layout
   read
-  draw)
+  draw
+  float_text)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
+
+(copy_files# gg/float_text.{ml,mli})

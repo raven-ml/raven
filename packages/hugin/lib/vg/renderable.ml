@@ -8,7 +8,9 @@ type t = { w : float; h : float; picture : Picture.t }
 let v w h picture =
   let valid x = x > 0. && Float.is_finite x in
   if not (valid w && valid h) then
-    invalid_arg (Printf.sprintf "Renderable.v: invalid page size %g x %g" w h);
+    invalid_arg
+      (Printf.sprintf "Renderable.v: invalid page size %s x %s" (Float_text.g w)
+         (Float_text.g h));
   { w; h; picture }
 
 let w r = r.w
@@ -20,5 +22,5 @@ let equal r r' =
   && Picture.equal r.picture r'.picture
 
 let pp ppf r =
-  Format.fprintf ppf "@[<1>(renderable %g %g@ %a)@]" r.w r.h Picture.pp
-    r.picture
+  Format.fprintf ppf "@[<1>(renderable %a %a@ %a)@]" Float_text.pp r.w
+    Float_text.pp r.h Picture.pp r.picture

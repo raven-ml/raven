@@ -84,7 +84,9 @@ let italic t = restyle (fun st -> { st with italic = true }) t
 
 let scale s t =
   if not (Float.is_finite s && s > 0.) then
-    invalid_arg (Printf.sprintf "Text.scale: %g is not finite and positive" s);
+    invalid_arg
+      (Printf.sprintf "Text.scale: %s is not finite and positive"
+         (Float_text.g s));
   restyle (fun st -> { st with k = st.k *. s; d = st.d *. s }) t
 
 let color c t =
@@ -118,8 +120,8 @@ let pp_span ppf s =
     Format.fprintf ppf "@[<1>(%a" Literal.pp s.chars;
     if st.bold then Format.fprintf ppf "@ bold";
     if st.italic then Format.fprintf ppf "@ italic";
-    if not (Float.equal st.k 1.) then Format.fprintf ppf "@ size %g" st.k;
-    if not (Float.equal st.d 0.) then Format.fprintf ppf "@ shift %g" st.d;
+    if not (Float.equal st.k 1.) then Format.fprintf ppf "@ size %a" Float_text.pp st.k;
+    if not (Float.equal st.d 0.) then Format.fprintf ppf "@ shift %a" Float_text.pp st.d;
     Option.iter (Format.fprintf ppf "@ %a" Color.pp) st.color;
     Format.fprintf ppf ")@]"
   end
@@ -255,7 +257,7 @@ module Layout = struct
           let u = Uchar.utf_decode_uchar d in
           if not (is_default_ignorable u) then begin
             if not (Float.is_finite s && s > 0.) then
-              err "size %g of U+%04X is not finite and positive" s
+              err "size %s of U+%04X is not finite and positive" (Float_text.g s)
                 (Uchar.to_int u);
             let c = Uchar.to_int u in
             if c = 0x0A && !after_cr then ()
@@ -367,8 +369,8 @@ module Layout = struct
     let faces = Array.of_list fonts in
     if Array.length faces = 0 then err "no fonts";
     if not (Float.is_finite size && size > 0.) then
-      err "size %g is not finite and positive" size;
-    if not (width >= 0.) then err "width %g is negative or nan" width;
+      err "size %s is not finite and positive" (Float_text.g size);
+    if not (width >= 0.) then err "width %s is negative or nan" (Float_text.g width);
     let items, ends, missing = items faces ~size text in
     let xs = Array.make (Array.length items) 0. in
     let lines = Dynarray.create () in

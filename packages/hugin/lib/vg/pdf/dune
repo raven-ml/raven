@@ -2,7 +2,7 @@
  (name hugin_vg_pdf)
  (public_name hugin.vg.pdf)
  (libraries hugin.vg hugin.gg hugin.font nx compress.deflate)
- (private_modules vector instances)
+ (private_modules vector instances float_text)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
@@ -11,3 +11,5 @@
 (copy_files# ../vector/vector.{ml,mli})
 
 (copy_files# ../instances/instances.{ml,mli})
+
+(copy_files# ../../gg/float_text.{ml,mli})

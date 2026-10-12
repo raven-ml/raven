@@ -1,7 +1,7 @@
 (library
  (name hugin_font)
  (public_name hugin.font)
- (private_modules font_data literal)
+ (private_modules font_data literal float_text)
  (libraries hugin.gg)
  (instrumentation
   (backend ppx_windtrap.coverage))
@@ -20,3 +20,5 @@
     fonts/Inter-Regular.ttf
     inter_bold
     fonts/Inter-Bold.ttf))))
+
+(copy_files# ../gg/float_text.{ml,mli})

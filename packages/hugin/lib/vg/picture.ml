@@ -84,7 +84,7 @@ let transform m picture =
   | _, Some _ -> Transform { m; picture }
 
 let opacity a picture =
-  if not (0. <= a && a <= 1.) then err "opacity" "opacity %g not in [0, 1]" a;
+  if not (0. <= a && a <= 1.) then err "opacity" "opacity %s not in [0, 1]" (Float_text.g a);
   match picture with
   | Empty -> Empty
   | _ when a = 1. -> picture
@@ -105,7 +105,7 @@ let stamp ?fills ?strokes ?scales xs ys picture =
   let scales = copy_attribute "scales" n scales in
   Option.iter
     (Array.iter (fun s ->
-         if s < 0. && Float.is_finite s then err "stamp" "negative scale %g" s))
+         if s < 0. && Float.is_finite s then err "stamp" "negative scale %s" (Float_text.g s)))
     scales;
   match picture with
   | Empty -> Empty
@@ -310,7 +310,7 @@ let pp_array pp_elt ppf a =
     (Format.pp_print_array ~pp_sep:Format.pp_print_space pp_elt)
     a
 
-let pp_float ppf x = Format.fprintf ppf "%g" x
+let pp_float = Float_text.pp
 
 let pp_rows ppf = function
   | Rows a ->
@@ -343,7 +343,7 @@ let rec pp ppf = function
   | Transform { m; picture } ->
       Format.fprintf ppf "@[<1>(transform@ %a@ %a)@]" Affine.pp m pp picture
   | Opacity { opacity; picture } ->
-      Format.fprintf ppf "@[<1>(opacity %g@ %a)@]" opacity pp picture
+      Format.fprintf ppf "@[<1>(opacity %a@ %a)@]" Float_text.pp opacity pp picture
   | Stamp { picture; xs; ys; scales; fills; strokes } ->
       let opt name pp_elt ppf = function
         | None -> ()

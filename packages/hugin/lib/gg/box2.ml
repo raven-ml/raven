@@ -13,17 +13,20 @@ let v x y w h =
   let maxx = x +. w and maxy = y +. h in
   if not (finite4 x y maxx maxy) then
     invalid_arg
-      (Printf.sprintf "Box2.v: corner not finite in %g %g %g %g" x y w h);
+      (Printf.sprintf "Box2.v: corner not finite in %s %s %s %s"
+         (Float_text.g x) (Float_text.g y) (Float_text.g w) (Float_text.g h));
   if w < 0. || h < 0. then
-    invalid_arg (Printf.sprintf "Box2.v: negative size %g x %g" w h);
+    invalid_arg
+      (Printf.sprintf "Box2.v: negative size %s x %s" (Float_text.g w)
+         (Float_text.g h));
   { minx = x; miny = y; maxx; maxy }
 
 let of_pts p q =
   let px = P2.x p and py = P2.y p and qx = P2.x q and qy = P2.y q in
   if not (finite4 px py qx qy) then
     invalid_arg
-      (Printf.sprintf "Box2.of_pts: corner not finite in (%g, %g) (%g, %g)" px
-         py qx qy);
+      (Printf.sprintf "Box2.of_pts: corner not finite in (%s, %s) (%s, %s)"
+         (Float_text.g px) (Float_text.g py) (Float_text.g qx) (Float_text.g qy));
   {
     minx = Float.min px qx;
     miny = Float.min py qy;
@@ -59,9 +62,12 @@ let grow d b =
   let minx = b.minx -. d and miny = b.miny -. d in
   let maxx = b.maxx +. d and maxy = b.maxy +. d in
   if not (finite4 minx miny maxx maxy) then
-    invalid_arg (Printf.sprintf "Box2.grow: corner not finite growing by %g" d);
+    invalid_arg
+      (Printf.sprintf "Box2.grow: corner not finite growing by %s"
+         (Float_text.g d));
   if minx > maxx || miny > maxy then
-    invalid_arg (Printf.sprintf "Box2.grow: %g shrinks past a side" d);
+    invalid_arg
+      (Printf.sprintf "Box2.grow: %s shrinks past a side" (Float_text.g d));
   { minx; miny; maxx; maxy }
 
 let transform m b =
@@ -97,4 +103,5 @@ let compare a b =
       if c <> 0 then c else Float.compare a.maxy b.maxy
 
 let pp ppf b =
-  Format.fprintf ppf "@[<1>[(%g, %g)@ (%g, %g)]@]" b.minx b.miny b.maxx b.maxy
+  Format.fprintf ppf "@[<1>[(%a, %a)@ (%a, %a)]@]" Float_text.pp b.minx
+    Float_text.pp b.miny Float_text.pp b.maxx Float_text.pp b.maxy

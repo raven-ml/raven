@@ -51,10 +51,11 @@ let v ?ys ?clusters ~font ~size ~text ~glyphs ~xs () =
       if g < 0 || g >= Font.glyph_count font then
         err "glyph %d not in [0, %d]" g (Font.glyph_count font - 1))
     glyphs;
-  if not (size >= 0. && Float.is_finite size) then err "invalid size %g" size;
+  if not (size >= 0. && Float.is_finite size) then err "invalid size %s" (Float_text.g size);
   let finite what a =
     Array.iter
-      (fun x -> if not (Float.is_finite x) then err "%s holds %g" what x)
+      (fun x ->
+        if not (Float.is_finite x) then err "%s holds %s" what (Float_text.g x))
       a
   in
   finite "xs" xs;
@@ -138,10 +139,11 @@ let equal r r' =
      && Array.for_all2 Int.equal r.clusters r'.clusters
 
 let pp ppf r =
-  Format.fprintf ppf "@[<1>(run %a %g %a" Font.pp r.font r.size Literal.pp
-    r.text;
+  Format.fprintf ppf "@[<1>(run %a %a %a" Font.pp r.font Float_text.pp r.size
+    Literal.pp r.text;
   Array.iteri
     (fun i g ->
-      Format.fprintf ppf "@ %d@@%g,%g#%d" g r.xs.(i) r.ys.(i) r.clusters.(i))
+      Format.fprintf ppf "@ %d@@%a,%a#%d" g Float_text.pp r.xs.(i) Float_text.pp
+        r.ys.(i) r.clusters.(i))
     r.glyphs;
   Format.fprintf ppf ")@]"

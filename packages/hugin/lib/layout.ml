@@ -1264,8 +1264,8 @@ let layout ?prev ?(theme = Theme.default) size r =
         | exception Needs (w, h) -> fits w h
       in
       let w, h = fits w h in
-      err "layout" "the figure needs %.2f × %.2f pt, more than %a" w h Size.pp
-        size
+      err "layout" "the figure needs %s × %s pt, more than %a" (Float_text.f 2 w)
+        (Float_text.f 2 h) Size.pp size
 
 (* Observing and comparing *)
 
@@ -1301,7 +1301,7 @@ let pp_ticks ppf (F f, t) =
 
 let pp ppf l =
   let w, h = l.page in
-  Format.fprintf ppf "@[<v>layout %g × %g" w h;
+  Format.fprintf ppf "@[<v>layout %a × %a" Float_text.pp w Float_text.pp h;
   List.iter
     (fun (p, c) ->
       Format.fprintf ppf "@,panel %a %a %a" pp_id p.id Guide.pp_box p.box

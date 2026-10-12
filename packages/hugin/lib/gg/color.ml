@@ -10,7 +10,8 @@ let in_unit x = 0. <= x && x <= 1.
 
 let check fn what x =
   if not (in_unit x) then
-    invalid_arg (Printf.sprintf "Color.%s: %s %g not in [0, 1]" fn what x)
+    invalid_arg
+      (Printf.sprintf "Color.%s: %s %s not in [0, 1]" fn what (Float_text.g x))
 
 let make fn alpha r g b =
   check fn "red" r;
@@ -148,8 +149,8 @@ let gamut_map alpha l a b =
 let of_oklab ?(alpha = 1.) l a b =
   if not (Float.is_finite l && Float.is_finite a && Float.is_finite b) then
     invalid_arg
-      (Printf.sprintf "Color.of_oklab: coordinates (%g, %g, %g) not finite" l a
-         b);
+      (Printf.sprintf "Color.of_oklab: coordinates (%s, %s, %s) not finite"
+         (Float_text.g l) (Float_text.g a) (Float_text.g b));
   check "of_oklab" "alpha" alpha;
   gamut_map alpha l a b
 
@@ -172,16 +173,18 @@ let to_oklch c =
 let of_oklch ?(alpha = 1.) l c h =
   if not (Float.is_finite l && Float.is_finite c && c >= 0.) then
     invalid_arg
-      (Printf.sprintf "Color.of_oklch: lightness %g or chroma %g invalid" l c);
+      (Printf.sprintf "Color.of_oklch: lightness %s or chroma %s invalid"
+         (Float_text.g l) (Float_text.g c));
   if Float.abs h = Float.infinity then
-    invalid_arg (Printf.sprintf "Color.of_oklch: hue %g infinite" h);
+    invalid_arg
+      (Printf.sprintf "Color.of_oklch: hue %s infinite" (Float_text.g h));
   check "of_oklch" "alpha" alpha;
   let h = if Float.is_nan h then 0. else h in
   gamut_map alpha l (c *. Float.cos h) (c *. Float.sin h)
 
 let mix t c c' =
   if not (in_unit t) then
-    invalid_arg (Printf.sprintf "Color.mix: %g not in [0, 1]" t);
+    invalid_arg (Printf.sprintf "Color.mix: %s not in [0, 1]" (Float_text.g t));
   let w = (1. -. t) *. c.alpha and w' = t *. c'.alpha in
   let alpha = w +. w' in
   if alpha = 0. then transparent

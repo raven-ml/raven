@@ -1113,6 +1113,14 @@ let equality =
           in
           equal string "M 0 0 L 1 0 L 1 1 Z M 2 2 L 3 nan"
             (Format.asprintf "%a" Path.pp p));
+      test "pp writes numbers as %g does, rounded once, ties to even" (fun () ->
+          let p =
+            Path.empty
+            |> Path.move_to (pt 135.5625 1e16)
+            |> Path.line_to (pt 1.2345678e-5 (-0.000123456789))
+          in
+          equal string "M 135.562 1e+16 L 1.23457e-05 -0.000123457"
+            (Format.asprintf "%a" Path.pp p));
     ]
 
 let () =

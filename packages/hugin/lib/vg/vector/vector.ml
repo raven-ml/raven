@@ -66,19 +66,11 @@ let add_fixed b d v =
       end
     end
   end
-  else Buffer.add_string b (trim_zeros (Printf.sprintf "%.*f" d v))
+  else Buffer.add_string b (trim_zeros (Float_text.f d v))
 
 let add_exact b v =
   if v = 0. then Buffer.add_char b '0'
-  else
-    let s = Printf.sprintf "%.15g" v in
-    let s =
-      if float_of_string s = v then s
-      else
-        let s = Printf.sprintf "%.16g" v in
-        if float_of_string s = v then s else Printf.sprintf "%.17g" v
-    in
-    Buffer.add_string b s
+  else Buffer.add_string b (Float_text.exact v)
 
 let rounded d v = Float.round (v *. pow10.(d)) /. pow10.(d)
 

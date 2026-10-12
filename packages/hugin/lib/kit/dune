@@ -2,8 +2,10 @@
  (name hugin_kit)
  (public_name hugin.kit)
  (libraries hugin.gg nx nx.dtype)
- (private_modules decimal steps scheme_data)
+ (private_modules decimal steps scheme_data float_text)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
+
+(copy_files# ../gg/float_text.{ml,mli})

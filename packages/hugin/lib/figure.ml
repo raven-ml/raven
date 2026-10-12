@@ -301,7 +301,7 @@ let check_weights fn = function
       List.iter
         (fun w ->
           if not (is_pos w) then
-            err fn "the weight %g is not finite and positive" w)
+            err fn "the weight %a is not finite and positive" Float_text.pp w)
         ws
 
 let grid ?widths ?heights rows =

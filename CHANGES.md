@@ -99,6 +99,10 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- hugin writes floats the same on every system: its printers, error messages
+  and the numbers of its SVG and PDF output round a float's exact value once,
+  ties to even. On Windows they wrote three exponent digits (`1e+016`) and
+  rounded ties up (`135.5625` as `135.563`).
 - `Nx.bit` values are not real, as `Nx.bool` ones are not: `Stats.histogram`
   refuses them.
 - **Breaking:** hugin is redesigned: a figure (`Hugin.t`) is marks that bind

@@ -750,7 +750,7 @@ let lines cx (g : Guide.t) =
 
 let afresh ~density l =
   if not (is_pos density) then
-    err "draw" "density %g is not finite and positive" density;
+    err "draw" "density %a is not finite and positive" Float_text.pp density;
   let r = Layout.resolved l in
   let ctx =
     {

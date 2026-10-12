@@ -704,8 +704,9 @@ let equal g g' =
   && List.equal equal_element g.elements g'.elements
 
 let pp_box ppf b =
-  Format.fprintf ppf "[(%g, %g) (%g, %g)]" (Box2.minx b) (Box2.miny b)
-    (Box2.maxx b) (Box2.maxy b)
+  Format.fprintf ppf "[(%a, %a) (%a, %a)]" Float_text.pp (Box2.minx b)
+    Float_text.pp (Box2.miny b) Float_text.pp (Box2.maxx b) Float_text.pp
+    (Box2.maxy b)
 
 (* A text and its box are on one line, whatever its length. *)
 let pp_placed ppf p =
@@ -721,7 +722,7 @@ let pp_element ppf = function
   | Rules l -> Format.fprintf ppf "rules %d" (List.length l)
   | Grid_lines l -> Format.fprintf ppf "grid %d" (List.length l)
   | Bar { box; _ } -> Format.fprintf ppf "bar %a" pp_box box
-  | Swatch { box; u; _ } -> Format.fprintf ppf "swatch %g %a" u pp_box box
+  | Swatch { box; u; _ } -> Format.fprintf ppf "swatch %a %a" Float_text.pp u pp_box box
 
 let pp ppf g =
   let kind =

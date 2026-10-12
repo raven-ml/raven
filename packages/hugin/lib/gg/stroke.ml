@@ -25,19 +25,22 @@ let period dash =
 let v ?(cap = `Round) ?(join = `Round) ?(miter_limit = 4.) ?(dash = [])
     ?(dash_offset = 0.) width =
   if not (width >= 0. && Float.is_finite width) then
-    err "invalid width %g" width;
+    err "invalid width %s" (Float_text.g width);
   if not (miter_limit >= 1. && Float.is_finite miter_limit) then
-    err "invalid miter limit %g" miter_limit;
+    err "invalid miter limit %s" (Float_text.g miter_limit);
   if not (Float.is_finite dash_offset) then
-    err "dash offset %g not finite" dash_offset;
-  List.iter (fun l -> if not (l >= 0.) then err "invalid dash length %g" l) dash;
+    err "dash offset %s not finite" (Float_text.g dash_offset);
+  List.iter
+    (fun l ->
+      if not (l >= 0.) then err "invalid dash length %s" (Float_text.g l))
+    dash;
   let dash_offset =
     match dash with
     | [] -> 0.
     | _ :: _ ->
         let l = period dash in
         if not (l > 0. && Float.is_finite l) then
-          err "dash pattern sums to %g" l;
+          err "dash pattern sums to %s" (Float_text.g l);
         (* [o +. l] is [l] for a zero [o], and for a tiny negative one by
            rounding: both are [0.] modulo [l]. *)
         let o = Float.rem dash_offset l in
@@ -101,13 +104,12 @@ let join_name = function
   | `Bevel -> "bevel"
 
 let pp ppf s =
-  Format.fprintf ppf "@[<1>(stroke %g@ cap %s@ join %s@ miter %g" s.width
-    (cap_name s.cap) (join_name s.join) s.miter_limit;
+  Format.fprintf ppf "@[<1>(stroke %a@ cap %s@ join %s@ miter %a" Float_text.pp
+    s.width (cap_name s.cap) (join_name s.join) Float_text.pp s.miter_limit;
   (match s.dash with
   | [] -> ()
   | dash ->
-      Format.fprintf ppf "@ @[<1>dash [%a]@]@ offset %g"
-        (Format.pp_print_list ~pp_sep:Format.pp_print_space (fun ppf l ->
-             Format.fprintf ppf "%g" l))
-        dash s.dash_offset);
+      Format.fprintf ppf "@ @[<1>dash [%a]@]@ offset %a"
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space Float_text.pp)
+        dash Float_text.pp s.dash_offset);
   Format.fprintf ppf ")@]"
