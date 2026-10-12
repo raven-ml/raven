@@ -702,7 +702,7 @@ let silent_peer p =
 
 (* The hand-over refuses a closing job's work; its reason names the close. *)
 let closing_handover () =
-  let job = Link.job () in
+  with_job @@ fun job ->
   let d, p = connected () in
   let closing, drained = silent_peer p in
   let far = Link.make job d ~name:"far" ~peer:(Wire.Agent 1) in
@@ -770,7 +770,7 @@ let grant_alloc p =
 (* The host device of a job with one link, whose peer end [p] the test
    serves, for [f host p]. *)
 let with_raw_host f =
-  let job = Link.job () in
+  with_job @@ fun job ->
   let d, p = connected () in
   let far = Link.make job d ~name:"far" ~peer:(Wire.Agent 1) in
   let machine = fresh_machine () in

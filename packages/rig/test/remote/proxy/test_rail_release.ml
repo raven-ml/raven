@@ -63,8 +63,8 @@ let connected () =
   (fd, peer)
 
 let joined_release () =
-  let job = Link.job () in
   let fd, peer = connected () in
+  let job = Link.job () in
   Fun.protect ~finally:(fun () ->
       Probe.resume ();
       Link.fail job "test ended";
@@ -119,8 +119,8 @@ let joined_release () =
   equal ~msg:"drop id" int64 99L (String.get_int64_le dropped 0)
 
 let with_rail ~send ~receive f =
-  let job = Link.job () in
   let fd, peer = connected () in
+  let job = Link.job () in
   Fun.protect ~finally:(fun () ->
       Probe.resume ();
       Link.fail job "test ended";
@@ -197,9 +197,9 @@ let arrived_after_failure () =
    whole frame, then the abort. The job's other link aborts once the failure
    began, which the test awaits before it lets the transfer go on. *)
 let partial_before_abort () =
-  let job = Link.job () in
   let fd, peer = connected () in
   let fd2, peer2 = connected () in
+  let job = Link.job () in
   Fun.protect ~finally:(fun () ->
       Probe.resume ();
       Link.fail job "test ended";

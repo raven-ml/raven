@@ -267,11 +267,22 @@ let account ?(reached_by = []) id ~reaches : Wire.account =
 let no_rails _ ~send:_ ~receive:_ = Error "no rails"
 let ok_or_fail = function Ok d -> d | Error e -> failf "open: %s" e
 
+(* A job for [f], failed once [f] returns if it is still open, so a case that
+   fails before its own teardown leaves no open job to the cases after it. *)
+let with_job f =
+  let job = Link.job () in
+  Fun.protect
+    ~finally:(fun () ->
+      match Link.wait job ~ms:0 with
+      | Link.Open -> Link.fail job "the test ended"
+      | _ -> ())
+    (fun () -> f job)
+
 (* A job, a link to a fresh machine whose agent serves on a thread, its host
    opened through rig, and a device for each list of [reaches] (the ids the
    device reaches). Ends every device and the job, and joins the agent. *)
 let with_machine ?(reaches = []) ?(room = max_int) f =
-  let job = Link.job () in
+  with_job @@ fun job ->
   let d, a = connected () in
   let far = Link.make job d ~name:"far" ~peer:(Wire.Agent 1) in
   let link = Link.make job a ~name:"controller" ~peer:Wire.Controller in
@@ -397,14 +408,8 @@ let lost_w =
 
 (* A job with one link [far], whose peer end nothing serves. *)
 let with_job_link f =
-  let job = Link.job () in
-  Fun.protect
-    ~finally:(fun () ->
-      match Link.wait job ~ms:0 with
-      | Link.Open -> Link.fail job "the test ended"
-      | _ -> ())
-    (fun () ->
-      let d, a = connected () in
-      let far = Link.make job d ~name:"far" ~peer:(Wire.Agent 1) in
-      ignore (Link.make job a ~name:"controller" ~peer:Wire.Controller);
-      f far)
+  with_job @@ fun job ->
+  let d, a = connected () in
+  let far = Link.make job d ~name:"far" ~peer:(Wire.Agent 1) in
+  ignore (Link.make job a ~name:"controller" ~peer:Wire.Controller);
+  f far

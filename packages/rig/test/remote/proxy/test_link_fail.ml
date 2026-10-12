@@ -249,9 +249,9 @@ let sever s =
 (* Runs [f] on a new job of the two links, [l] the end of a [role] process's
    peer. *)
 let with_scene ?(role = Wire.Agent 1) f =
-  let job = Link.job () in
   let d, p = connected () and e, q = connected () in
   let stop = beating q in
+  let job = Link.job () in
   let h = Link.make job e ~name:"other" ~peer:(Wire.Agent 2) in
   let l = Link.make job d ~name:"peer" ~peer:role in
   let s = { job; l; d; p; h; q; severed = false } in
