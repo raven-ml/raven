@@ -556,8 +556,9 @@ static int enter(pool *p) {
 /* Parking: a thread sets its bit in [parked] (or sets [waiting]) and reads
    the word it waits on again before it waits, and the thread that changes the
    word reads the flag after the change, both sequentially consistent: one of
-   them sees the other, so no wakeup is lost. The signal is sent under the
-   mutex the parked thread waits with. Each worker waits on a condition of
+   them sees the other, so no wakeup is lost. A parked worker's signal
+   follows the publisher's taking the mutex it waits with (see wake_parked),
+   and a parked caller's comes under it. Each worker waits on a condition of
    its own, and a job signals only its own parked workers, so a worker that
    narrow jobs leave out sleeps through their burst. */
 
@@ -576,22 +577,26 @@ static uint64_t park_worker(pool *p, int id, uint64_t seen) {
 }
 
 /* Wakes the parked ones of a job's workers, 1 to [threads] - 1: one load
-   for jobs of up to 64 threads, and the mutex only if one is parked. */
+   for jobs of up to 64 threads, and the mutex only if one is parked. A
+   worker holds the mutex from setting its bit until it waits, so taking
+   and releasing it once puts every worker whose bit was seen in its wait.
+   The signals then go out without the mutex: a woken worker takes it at
+   once, where it would wait for the caller to signal every other one. */
 static void wake_parked(pool *p, int threads) {
-  int locked = 0;
+  int synced = 0;
   for (int w = 0; w * 64 < threads; w++) {
     int below = threads - w * 64;
     uint64_t mask = below >= 64 ? ~(uint64_t)0 : ((uint64_t)1 << below) - 1;
     if (w == 0) mask &= ~(uint64_t)1;
     uint64_t bits = atomic_load(&p->parked[w]) & mask;
-    if (bits && !locked) {
+    if (bits && !synced) {
       pthread_mutex_lock(&p->mtx);
-      locked = 1;
+      pthread_mutex_unlock(&p->mtx);
+      synced = 1;
     }
     for (; bits; bits &= bits - 1)
       pthread_cond_signal(&p->workers[w * 64 + __builtin_ctzll(bits)].wake);
   }
-  if (locked) pthread_mutex_unlock(&p->mtx);
 }
 
 /* The generation of the next job after [g] that worker [id] is one of the
