@@ -147,24 +147,24 @@ let test_upload_fails () =
   P.fail p;
   raises_match (lost d) (fun () -> Image.load d "code:64")
 
-(* A load whose upload loses the device gives its code memory back only once the
-   device counts as stopped: its work may still run until then. *)
-let test_upload_frees_after_stop () =
-  let d, p = P.open_ ~answer:`Unknown "image:upload-unknown" in
-  P.fail p;
-  raises_match (lost d) (fun () -> Image.load d "code:64");
-  let frees () = List.length (P.frees p) in
-  ignore (B.create Rig.host 8);
-  equal ~msg:"before the word drained" int 0 (frees ());
-  P.set_word p (Rig.submitted d);
-  ignore (B.create Rig.host 8);
-  equal ~msg:"once it did" int 1 (frees ())
-
 (* Collects, then drains as an allocation does. *)
 let collect () =
   Gc.full_major ();
   Gc.full_major ();
   ignore (B.create Rig.host 8)
+
+(* A load whose upload loses the device gives its code memory back only once the
+   device counts as stopped: its work may still run until then. The upload's
+   staging memory is pinned, so the device memory held is the code's. *)
+let test_upload_frees_after_stop () =
+  let d, p = P.open_ ~answer:`Unknown "image:upload-unknown" in
+  P.fail p;
+  raises_match (lost d) (fun () -> Image.load d "code:64");
+  collect ();
+  equal ~msg:"before the word drained" int 64 (P.allocated p Device);
+  P.set_word p (Rig.submitted d);
+  collect ();
+  equal ~msg:"once it did" int 0 (P.allocated p Device)
 
 let rec after_stop = function
   | "stop" :: rest -> rest
