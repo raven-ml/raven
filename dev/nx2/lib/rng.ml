@@ -785,6 +785,10 @@ let von_mises ?key kappa =
 let either b x y = bin b Or x y
 let not_ b x = cmp b Equal x (const b D.Bool false)
 
+(* log (2π) / 2 rounded to a double, written out: [Float.log] calls the C
+   library, whose last bit may differ by system, and on Windows by domain. *)
+let half_log_two_pi = 0x1.d67f1c864beb5p-1
+
 (* Log pmfs at integer-valued counts, written so that no term grows with the
    counts: the direct forms cancel terms of size [m log m] to a margin of order
    one, which float32 loses above a mean of ten thousand. With Stirling's
@@ -798,11 +802,12 @@ let not_ b x = cmp b Equal x (const b D.Bool false)
    subtracting two large numbers. The remainder's asymptotic series holds from 8
    up; below, it is read off a shift by eight. Both regimes of each [where] run
    everywhere, so the arithmetic stays finite where it is not selected. *)
+
 let stirlerr b f y =
   let main y =
     f.add
       (f.sub (f.mul (f.add y (f.lit 0.5)) (f.log y)) y)
-      (f.lit (0.5 *. Float.log (2.0 *. Float.pi)))
+      (f.lit half_log_two_pi)
   in
   let tail y =
     let y2 = f.mul y y in
@@ -882,13 +887,6 @@ let log_binomial_pmf b f k n p q =
        (f.lt (f.sub n (f.lit 0.5)) k)
        (f.mul n (f.log p))
        (f.sub saddle (f.mul (f.lit 0.5) spread)))
-
-(* [log i!] for [i] below [n]. *)
-let log_factorials n =
-  let acc = ref 0.0 in
-  Array.init n (fun i ->
-      if i > 0 then acc := !acc +. Float.log (float_of_int i);
-      !acc)
 
 (* Two regimes with a fixed round count each, chosen per element, so the shape
    of the computation does not depend on the rate. Below 10, inversion: one
@@ -1014,26 +1012,22 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
       let small = not_ b (f.le (f.lit 10.0) (f.mul n p)) in
       let k0 = block b ~key (u64 b 0L) and k1 = block b ~key (u64 b 1L) in
       let inversion =
-        (* Term [i] holds [log (n (n - 1) … (n - i + 1) (p / q)^i)]: the
-           logarithms of the ratios [(n - l) p / q], summed over [l < i]. *)
+        (* Term [i] holds [log (n (n - 1) … (n - i + 1) / i! (p / q)^i)]:
+           the logarithms of the ratios [(n - l) p / ((l + 1) q)], summed over
+           [l < i]. *)
         let odds = f.sub (f.log p) (f.log1p (f.neg p)) in
         let base = f.mul n (f.log1p (f.neg p)) in
-        let factorials = log_factorials binomial_inversion_rounds in
-        let falling = ref (f.lit 0.0) and cdf = ref (f.lit 0.0) in
+        let ratios = ref (f.lit 0.0) and cdf = ref (f.lit 0.0) in
         let cdfs =
-          Array.mapi
-            (fun i lf ->
+          Array.init binomial_inversion_rounds (fun i ->
               if i > 0 then begin
-                let l = f.lit (float_of_int (i - 1)) in
-                let ratio =
-                  f.add (f.log (f.max (f.sub n l) (f.lit 0.0))) odds
-                in
-                falling := f.add !falling ratio
+                let l = float_of_int (i - 1) in
+                let left = f.max (f.sub n (f.lit l)) (f.lit 0.0) in
+                let ratio = f.log (f.div left (f.lit (l +. 1.0))) in
+                ratios := f.add !ratios (f.add ratio odds)
               end;
-              let log_pmf = f.sub (f.add base !falling) (f.lit lf) in
-              cdf := f.add !cdf (f.exp log_pmf);
+              cdf := f.add !cdf (f.exp (f.add base !ratios));
               !cdf)
-            factorials
         in
         let u = f.mul (unit b ~key:k0 ~p:bits c j) !cdf in
         Array.fold_left

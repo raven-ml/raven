@@ -1868,11 +1868,15 @@ let hypot x y =
 let big = 0x1p28
 let tiny = 0x1p-28
 
+(* log 2 rounded to a double, written out: [Float.log] calls the C library,
+   whose last bit may differ by system, and on Windows by domain. *)
+let ln2 = 0x1.62e42fefa39efp-1
+
 let asinh x =
   float_map ~by:"Nx.asinh" [ x ] (fun b w ins ->
       let x = ins.(0) in
       let a = un1 b Abs w x in
-      let far = bin2 b Add (un1 b Log w a) (const b w (Float.log 2.)) in
+      let far = bin2 b Add (un1 b Log w a) (const b w ln2) in
       let a2 = bin2 b Mul a a in
       let root = un1 b Sqrt w (bin2 b Add (const b w 1.) a2) in
       let near =
@@ -1886,7 +1890,7 @@ let asinh x =
 let acosh x =
   float_map ~by:"Nx.acosh" [ x ] (fun b w ins ->
       let x = ins.(0) in
-      let far = bin2 b Add (un1 b Log w x) (const b w (Float.log 2.)) in
+      let far = bin2 b Add (un1 b Log w x) (const b w ln2) in
       let root = un1 b Sqrt w (node b (Op3 (Fma, x, x, const b w (-1.)))) in
       let mid =
         un1 b Log w
@@ -2051,12 +2055,13 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
   let by = "Nx.logmeanexp" in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by (Array.length s) axes in
-  let log_n = Float.log (Float.of_int (reduced_count s axes)) in
+  let n = Float.of_int (reduced_count s axes) in
   let (Wide w) = wide dt in
   let l = fold ~by Logsumexp w axes x in
   let y =
     elementwise ~by dt [ Any l ] (fun b ins ->
-        node b (Op1 (Cast, D.Any dt, bin2 b Sub ins.(0) (const b w log_n))))
+        let log_n = un1 b Log w (const b w n) in
+        node b (Op1 (Cast, D.Any dt, bin2 b Sub ins.(0) log_n)))
   in
   kept ~keepdims s axes y
 
