@@ -1237,6 +1237,10 @@ thread.
 
 ### Tolk (new)
 
+- On Windows, the Clang renderer no longer marks kernels and calls through
+  function pointers `__attribute__((ms_abi))`: rig calls host code by
+  System V on every system, so a called function pointer got the wrong
+  convention.
 - On Windows, `Helpers.Diskcache.get` reads an entry while another domain or
   process renames one into place, where it raised `Sys_error "...: Permission
   denied"`. The cache's entries and comgr's worker program are read shared for

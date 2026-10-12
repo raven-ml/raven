@@ -3831,3 +3831,25 @@ submission, and a range a loop of rig's program (D146).
   to an integer is kept in the branches` and `› a guard of an integer divisor
   is kept in the branches`; rune's `a compiled program › computes eager's
   values within the stated rounding`, whose third example is that sine.
+
+## D149. Host code calls by System V on Windows too
+
+- **tinygrad:** `renderer/cstyle.py:286-288` (`ClangRenderer.abi` and
+  `kernel_typedef`, `__attribute__((ms_abi))` on Windows) and `:71` (the
+  `CALL` rule, which casts a function pointer with `abi`).
+- **tolk:** `lib/renderer/cstyle.ml:376` (`base_rewrite`'s call rule) and
+  `:1034` (`clang_lang`).
+- **Differs:** the Clang renderer writes no calling convention, on every
+  system: a kernel and the function pointer a call casts to are both plain C,
+  which Clang's ELF target compiles to System V on x86_64.
+- **Reason:** (c). tinygrad calls a kernel through ctypes, which uses the
+  system's convention, and a callback it passes is a ctypes function. rig's
+  host calls linked code by System V on Windows too, and tolk's kernel is
+  called only by the entry compiled with it (D28). A function the kernel
+  calls through a pointer is another image's, which an entry ref places in
+  the launch's parameters (`Rig.Submission.entry`), so it is linked code,
+  System V as well.
+- **Pinned by:** the Clang goldens, which hold no convention and are checked
+  on Windows: the cstyle suite's `sources`, among them `clang_call_out`,
+  `clang_call_ret` and `clang_call_stack`; the codegen, realize and jit
+  goldens of CPU kernels.

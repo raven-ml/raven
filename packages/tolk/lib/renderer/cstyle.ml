@@ -66,7 +66,6 @@ let format fmt args =
 (* Languages *)
 
 type lang = {
-  abi : string;
   kernel_typedef : int -> string; (* of the launch bounds *)
   buffer_prefix : string;
   buffer_suffix : string;
@@ -388,7 +387,7 @@ let base_rewrite =
             List.map2 (fun t y -> strf "(%s)(%s)" t ctx.%{y}) types args
           in
           Some
-            (strf "(((%s%s(*)(%s))(%s))(%s))%s" l.abi
+            (strf "(((%s(*)(%s))(%s))(%s))%s"
                (render_scalar l (dtype x))
                (String.concat ", " types)
                ctx.%{m "fptr"}
@@ -638,7 +637,6 @@ let code_for_op =
 
 let cstyle =
   {
-    abi = "";
     kernel_typedef = (fun _ -> "void");
     buffer_prefix = "";
     buffer_suffix = "";
@@ -1034,7 +1032,6 @@ let clang_vectors =
       ])
 
 let clang_lang =
-  let abi = if Sys.win32 then "__attribute__((ms_abi)) " else "" in
   let builtin name x dt =
     if Dtype.equal dt Dtype.Float64 then strf "__builtin_%s(%s)" name x
     else strf "__builtin_%sf(%s)" name x
@@ -1063,8 +1060,6 @@ let clang_lang =
             ( Mulacc,
               fma (by_width ~double:"__builtin_fma" ~single:"__builtin_fmaf") );
           ];
-    abi;
-    kernel_typedef = (fun _ -> abi ^ "void");
     string_rewrite = Pattern_matcher.append clang_vectors base_rewrite;
   }
 
