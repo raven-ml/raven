@@ -303,6 +303,11 @@ let boxed_circles =
     (box 2. 3. 6. 5., circle 5. 5. 4.);
   ]
 
+(* A fill under a clip whose box misses its own: they meet the same row of
+   pixels, but share no area. *)
+let apart =
+  Picture.clip (rect 2. 10.6 6. 0.4) (Picture.fill red (rect 2. 10. 6. 0.5))
+
 let clips =
   group "clips"
     [
@@ -349,6 +354,8 @@ let clips =
               (Picture.clip (rect x 0. 2. 10.) (solid 10. 10.))
           in
           equal float_exact 0. (coverage (render 10. 10. p)));
+      test "a fill beside its clip shows nothing" (fun () ->
+          equal float_exact 0. (coverage (render 20. 20. apart)));
     ]
 
 (* Strokes *)
@@ -937,9 +944,21 @@ let ring w = Picture.stroke (Stroke.v w) red (Path.circle (P2.v 0. 0.) 5.)
 let stamps =
   group "stamps"
     [
-      prop "a stamp draws the group of its instances" ~examples:shrunk_opacities
+      prop "a stamp draws the group of its instances"
+        ~examples:(Picture.stamp [| 0. |] [| 0. |] apart :: shrunk_opacities)
         gen_stamp (fun s ->
           same_image ~within:1 (render 60. 60. (instances s)) (render 60. 60. s));
+      test "a stamp under a clip draws the group of its instances under it"
+        (fun () ->
+          (* The second fill of the instance at (5, 5) misses the clip's box,
+             and the first meets it. *)
+          let s =
+            Picture.stamp [| 5.; 12. |] [| 5.; 1. |]
+              (Picture.group
+                 [ solid 2. 2.; Picture.fill blue (rect 0. 2.6 2. 0.4) ])
+          in
+          let under p = render 20. 20. (Picture.clip (rect 0. 0. 20. 7.5) p) in
+          same_image ~within:1 (under (instances s)) (under s));
       prop "an instance is drawn at its position rounded to a quarter pixel"
         (Gen.pair (gen_in 5. 15.) (gen_in 5. 15.))
         (fun (x, y) ->

@@ -18,6 +18,10 @@
       the fraction of the colour equal to the fraction of its square that the
       area covers. Curves are first flattened to within a tenth of a pixel, and
       glyphs are drawn from their outlines, without hinting.
+    - A clipped primitive takes in each pixel the product of its coverage and
+      the clip's. One whose box, as {!Hugin_vg.Picture.val-bounds} takes it,
+      does not meet the boxes of the paths of the clips above it paints
+      nothing.
     - A stroke's outline is covered as the union of the pieces it is made of,
       one per segment, join and cap, with round ones flattened likewise. A pixel
       that the edges of two overlapping pieces cross takes the sum of their

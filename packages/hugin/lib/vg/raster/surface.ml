@@ -20,20 +20,22 @@ let create w h =
 
 let clear s = Array1.fill s.px 0.
 
-(* A clip is a window of pixels, [x1] and [y1] exclusive, and the fraction of
-   each of its pixels that it lets through, row by row over the window, or
-   [None] for all of each. *)
+(* A clip is a window of pixels, [x1] and [y1] exclusive, the fraction of each
+   of its pixels that it lets through, row by row over the window, or [None] for
+   all of each, and the device box of the clip paths it comes from, or [None]
+   for none. *)
 type clip = {
   x0 : int;
   y0 : int;
   x1 : int;
   y1 : int;
   mask : float array option;
+  box : Hugin_gg.Box2.t option;
 }
 
-let whole s = { x0 = 0; y0 = 0; x1 = s.w; y1 = s.h; mask = None }
+let whole s = { x0 = 0; y0 = 0; x1 = s.w; y1 = s.h; mask = None; box = None }
 let is_shut c = c.x1 <= c.x0 || c.y1 <= c.y0
-let shut = { x0 = 0; y0 = 0; x1 = 0; y1 = 0; mask = None }
+let shut = { x0 = 0; y0 = 0; x1 = 0; y1 = 0; mask = None; box = None }
 
 let[@inline] mask_at c x y =
   match c.mask with

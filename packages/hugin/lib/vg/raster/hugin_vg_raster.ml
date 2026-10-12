@@ -211,35 +211,48 @@ let pixel_rect m path =
       else None
   | _ -> None
 
+(* [device m b] is the box [b ()] mapped through [m], or [None] if it has none
+   or lies beyond the range of floats. *)
+let device m b =
+  try Option.map (Box2.transform m) (b ()) with Invalid_argument _ -> None
+
 let clip_by ctx ~w ~h (clip : Surface.clip) m rule path : Surface.clip =
-  match pixel_rect m path with
-  | Some (rx0, ry0, rx1, ry1) ->
-      let x0 = Int.max clip.x0 rx0 and y0 = Int.max clip.y0 ry0 in
-      let x1 = Int.min clip.x1 rx1 and y1 = Int.min clip.y1 ry1 in
-      if x1 <= x0 || y1 <= y0 then Surface.shut
-      else
-        let mask =
-          Option.map
-            (fun _ ->
-              let cw = x1 - x0 and ch = y1 - y0 in
-              Array.init (cw * ch) (fun i ->
-                  Surface.mask_at clip (x0 + (i mod cw)) (y0 + (i / cw))))
-            clip.mask
-        in
-        { x0; y0; x1; y1; mask }
-  | None ->
-      Cover.start ctx.cover ~w ~h clip;
-      area ctx.cover m path;
-      let x0, y0, x1, y1 = Cover.touched ctx.cover in
-      if x1 <= x0 || y1 <= y0 then begin
-        Cover.clear ctx.cover;
-        Surface.shut
-      end
-      else begin
-        let mask = Array.make ((x1 - x0) * (y1 - y0)) 0. in
-        Cover.take ctx.cover clip rule mask ~ox:x0 ~oy:y0 ~dw:(x1 - x0);
-        { x0; y0; x1; y1; mask = Some mask }
-      end
+  let box =
+    match (device m (fun () -> Path.bounds path), clip.box) with
+    | Some b, Some c -> Box2.inter b c
+    | (Some _ as b), None | None, b -> b
+  in
+  (* A clip whose box misses that of the clips above lets nothing through. *)
+  if Option.is_none box && Option.is_some clip.box then Surface.shut
+  else
+    match pixel_rect m path with
+    | Some (rx0, ry0, rx1, ry1) ->
+        let x0 = Int.max clip.x0 rx0 and y0 = Int.max clip.y0 ry0 in
+        let x1 = Int.min clip.x1 rx1 and y1 = Int.min clip.y1 ry1 in
+        if x1 <= x0 || y1 <= y0 then Surface.shut
+        else
+          let mask =
+            Option.map
+              (fun _ ->
+                let cw = x1 - x0 and ch = y1 - y0 in
+                Array.init (cw * ch) (fun i ->
+                    Surface.mask_at clip (x0 + (i mod cw)) (y0 + (i / cw))))
+              clip.mask
+          in
+          { x0; y0; x1; y1; mask; box }
+    | None ->
+        Cover.start ctx.cover ~w ~h clip;
+        area ctx.cover m path;
+        let x0, y0, x1, y1 = Cover.touched ctx.cover in
+        if x1 <= x0 || y1 <= y0 then begin
+          Cover.clear ctx.cover;
+          Surface.shut
+        end
+        else begin
+          let mask = Array.make ((x1 - x0) * (y1 - y0)) 0. in
+          Cover.take ctx.cover clip rule mask ~ox:x0 ~oy:y0 ~dw:(x1 - x0);
+          { x0; y0; x1; y1; mask = Some mask; box }
+        end
 
 (* [extent clip m ~pen p] is the device box of [p] under [m] within [clip], with
    a pixel of margin, its pens' widths multiplied by [pen]. *)
@@ -259,6 +272,32 @@ let extent (clip : Surface.clip) m ~pen p =
       let y0 = within clip.y0 clip.y1 (Float.floor (Box2.miny b -. g)) in
       let y1 = within clip.y0 clip.y1 (Float.ceil (Box2.maxy b +. g)) in
       if x1 <= x0 || y1 <= y0 then None else Some (x0, y0, x1, y1)
+
+(* [misses clip m pen p] is [true] iff [p] is a leaf whose box under [m], its
+   pen's reach multiplied by [pen], misses the box of [clip]. Such a leaf paints
+   nothing, as [Picture.bounds] has it, though the product of its coverage and
+   the clip's is not zero in a pixel that both boxes reach. *)
+let misses (clip : Surface.clip) m pen (p : Picture.t) =
+  match clip.box with
+  | None -> false
+  | Some c -> (
+      let box =
+        match p with
+        | Fill { path; _ } -> device m (fun () -> Path.bounds path)
+        | Stroke { stroke; path; _ } ->
+            device m (fun () ->
+                Option.map
+                  (Box2.grow (pen *. Stroke.reach stroke))
+                  (Path.bounds path))
+        | Glyphs { at; run; _ } ->
+            let at = Affine.translate (P2.x at) (P2.y at) in
+            device Affine.(m * at) (fun () -> Run.bounds run)
+        | Image { box; _ } -> device m (fun () -> Some box)
+        | Empty | Group _ | Clip _ | Transform _ | Opacity _ | Stamp _ | Tag _
+          ->
+            None
+      in
+      match box with Some b -> Option.is_none (Box2.inter b c) | None -> false)
 
 (* Planes
 
@@ -301,7 +340,7 @@ let rec planes ctx ~w ~h clip m ~fills ~strokes style p acc =
     if fills then Fills
     else Fixed (premultiplied (Option.value style.fills ~default:color))
   in
-  if Surface.is_shut clip then acc
+  if Surface.is_shut clip || misses clip m style.pen p then acc
   else
     match (p : Picture.t) with
     | Empty -> acc
@@ -416,7 +455,7 @@ let rec composite (t : Surface.t) (clip : Surface.clip) ox oy ~tw ~th planes
 let max_tile = 1 lsl 16
 
 let rec draw ctx (t : Surface.t) clip m style (p : Picture.t) =
-  if not (Surface.is_shut clip) then
+  if not (Surface.is_shut clip || misses clip m style.pen p) then
     match p with
     | Empty -> ()
     | Fill { rule; color; path } ->
@@ -466,8 +505,10 @@ let rec draw ctx (t : Surface.t) clip m style (p : Picture.t) =
         | None -> ()
         | Some (x0, y0, x1, y1) ->
             let layer = Surface.create (x1 - x0) (y1 - y0) in
-            let m = Affine.(translate (float (-x0)) (float (-y0)) * m) in
-            draw ctx layer (Surface.whole layer) m style picture;
+            let to_layer = Affine.translate (float (-x0)) (float (-y0)) in
+            let box = Option.map (Box2.transform to_layer) clip.box in
+            let m = Affine.(to_layer * m) in
+            draw ctx layer { (Surface.whole layer) with box } m style picture;
             Surface.composite t clip layer x0 y0 opacity)
     | Stamp { picture; xs; ys; scales; fills; strokes } ->
         stamp ctx t clip m style picture xs ys scales fills strokes
@@ -510,19 +551,24 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
          them. *)
       let kept = Instances.reach lin style.pen picture in
       let at qx qy = P2.v (float qx /. 4.) (float qy /. 4.) in
+      (* [full i qx qy s] draws instance [i] at [(qx, qy)] quarters, of scale
+         [s]. *)
+      let full i qx qy s =
+        let at = Affine.translate (float qx /. 4.) (float qy /. 4.) in
+        let m = Affine.(at * lin * scale s s) in
+        (* As [Picture.transform], a map with no inverse paints nothing: that of
+           a scale that is not finite or is 0 among them. *)
+        match Affine.invert m with
+        | None -> ()
+        | Some _ -> draw ctx t clip m (instance i s) picture
+      in
       let in_full () =
         for i = 0 to Array.length xs - 1 do
           let s = match scales with None -> 1. | Some a -> a.(i) in
           match quarters i with
           | Some (qx, qy)
-            when Instances.shows window ~reach:kept (at qx qy) s extent -> (
-              let at = Affine.translate (float qx /. 4.) (float qy /. 4.) in
-              let m = Affine.(at * lin * scale s s) in
-              (* As [Picture.transform], a map with no inverse paints nothing:
-                 that of a scale that is not finite or is 0 among them. *)
-              match Affine.invert m with
-              | None -> ()
-              | Some _ -> draw ctx t clip m (instance i s) picture)
+            when Instances.shows window ~reach:kept (at qx qy) s extent ->
+              full i qx qy s
           | _ -> ()
         done
       in
@@ -555,7 +601,14 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
             | Some planes -> planes
             | None ->
                 let tile =
-                  { Surface.x0 = 0; y0 = 0; x1 = tw; y1 = th; mask = None }
+                  {
+                    Surface.x0 = 0;
+                    y0 = 0;
+                    x1 = tw;
+                    y1 = th;
+                    mask = None;
+                    box = None;
+                  }
                 in
                 let m =
                   Affine.(
@@ -586,15 +639,33 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
             let x = float qx /. 4. and y = float qy /. 4. in
             x >= px0 && x <= px1 && y >= py0 && y <= py1
           in
+          let tiled i qx qy =
+            composite t clip
+              ((qx asr 2) + bx0)
+              ((qy asr 2) + by0)
+              ~tw ~th
+              (phase (qx land 3) (qy land 3))
+              (rgba fills i) (rgba strokes i)
+          in
+          (* Planes know only the clips within the picture. An instance within
+             the box of the clips above has no leaf that misses it, one apart
+             from it paints nothing, and one across it is drawn in full, which
+             leaves out the leaves that miss it. *)
           for i = 0 to Array.length xs - 1 do
             match quarters i with
-            | Some (qx, qy) when shows qx qy ->
-                composite t clip
-                  ((qx asr 2) + bx0)
-                  ((qy asr 2) + by0)
-                  ~tw ~th
-                  (phase (qx land 3) (qy land 3))
-                  (rgba fills i) (rgba strokes i)
+            | Some (qx, qy) when shows qx qy -> (
+                match clip.box with
+                | None -> tiled i qx qy
+                | Some c -> (
+                    let b =
+                      Box2.transform
+                        (Affine.translate (float qx /. 4.) (float qy /. 4.))
+                        extent
+                    in
+                    match Box2.inter b c with
+                    | None -> ()
+                    | Some within when Box2.equal within b -> tiled i qx qy
+                    | Some _ -> full i qx qy 1.))
             | _ -> ()
           done)
 

@@ -99,6 +99,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` paints nothing of a clipped primitive whose box misses its
+  clip's. It painted the product of their coverages in the pixels both reach, a
+  faint line beside the clip, which stamps drew for some instances only.
 - On arm64, `Path.crop` drops a closed subpath that the box cuts to points on
   one line, as elsewhere: ocamlopt fused the collinearity test's products into
   one multiply-add, whose rounding could keep a subpath of two points.
