@@ -4,18 +4,20 @@
   ---------------------------------------------------------------------------*)
 
 (** nx_kinds.h's kinds, called by name through per-target loops compiled with
-    dev/nx2's flags: each call runs the loop nx.cpu would run on this CPU. *)
+    dev/nx2's flags: each call runs the loop nx.cpu would run on this CPU, or a
+    named target's. *)
 
 (** {1 Calls} *)
 
-val f32 : string -> int array -> int
-(** [f32 kind args] is the f32 kind [kind] ([exp], [add], [fma], …) of the
-    operands whose binary32 bits are [args], as binary32 bits. Comparisons give
-    1.0 or 0.0; [where] selects on a non-zero first operand. Raises
-    [Invalid_argument] on an unknown kind or arity. *)
+val f32 : ?target:string -> string -> int array -> int
+(** [f32 ~target kind args] is the f32 kind [kind] ([exp], [add], [fma], …) of
+    the operands whose binary32 bits are [args], as binary32 bits, by
+    [target]'s loop, one of {!targets} (default: the target nx.cpu picked).
+    Comparisons give 1.0 or 0.0; [where] selects on a non-zero first operand.
+    Raises [Invalid_argument] on an unknown target, kind or arity. *)
 
-val f64 : string -> float array -> float
-(** [f64 kind args] is {!f32} at f64, operands and result as floats. *)
+val f64 : ?target:string -> string -> float array -> float
+(** [f64 ~target kind args] is {!f32} at f64, operands and result as floats. *)
 
 val int : string -> string -> int64 array -> int64
 (** [int ty kind args] is the integer kind [kind] at [ty], one of ["i32"],

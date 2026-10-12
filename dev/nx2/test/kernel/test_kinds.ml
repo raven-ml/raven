@@ -467,15 +467,56 @@ let test_binary32 =
           equal t (meaning a b) (K.f32 kind [| a; b |])))
     binary32
 
+(* Triples whose exact a b + c lies below the least normal 2^emin of a format of
+   precision p, as [round] rounds to it: a product near the subnormals with a
+   zero or subnormal addend, or a larger one the addend cancels to its rounding
+   error. There an fma that rounds twice, or rounds the product before the sum,
+   gives other bits or a zero of the other sign. *)
+let tiny ~emin ~p round =
+  let open Gen in
+  let signed =
+    let+ neg = bool and+ u = float_range 1. 2. in
+    if neg then -.u else u
+  in
+  let+ ua = signed
+  and+ ub = signed
+  and+ ea = int_range ((emin / 2) - 20) ((emin / 2) + 20)
+  and+ t = int_range (emin - p - 2) (emin + p - 2)
+  and+ s = float_range (-1.) 1.
+  and+ addend = int_range 0 4 in
+  let a = round (Float.ldexp ua ea) and b = round (Float.ldexp ub (t - ea)) in
+  let ab = round (a *. b) and sub = round (Float.ldexp s emin) in
+  let c =
+    match addend with
+    | 0 -> 0.
+    | 1 -> -0.
+    | 2 -> sub
+    | 3 -> -.ab
+    | _ -> round (sub -. ab)
+  in
+  (a, b, c)
+
+let tiny32 =
+  Gen.map
+    (fun (a, b, c) -> (bits32 a, bits32 b, bits32 c))
+    (tiny ~emin:(-126) ~p:24 (fun x -> f (bits32 x)))
+
 let test_fma32 =
-  prop "fma f32 rounds once" ~count:20000
-    Gen.(triple gen32 gen32 gen32)
-    (fun (a, b, c) ->
-      cover32 "addend" c;
-      equal
-        (testable_of [ a; b; c ])
-        (nan_first [ a; b; c ] (fma32 a b c))
-        (K.f32 "fma" [| a; b; c |]))
+  List.map
+    (fun target ->
+      prop (strf "fma f32 rounds once on %s" target) ~count:20000
+        Gen.(frequency [ (1, triple gen32 gen32 gen32); (1, tiny32) ])
+        (fun (a, b, c) ->
+          let r = nan_first [ a; b; c ] (fma32 a b c) in
+          cover32 "addend" c;
+          cover "subnormal result"
+            (r land 0x7F80_0000 = 0 && r land 0x7F_FFFF <> 0);
+          cover "signed zero result" (r = 0x8000_0000);
+          equal
+            (testable_of [ a; b; c ])
+            r
+            (K.f32 ~target "fma" [| a; b; c |])))
+    (K.targets ())
 
 let test_where32 =
   prop "where f32"
@@ -584,15 +625,23 @@ let test_f64_exact =
             (nan_first64 [ a; b ] (op a b))
             (K.f64 kind [| a; b |])))
     binary
-  @ [
-      prop "fma f64 rounds once" ~count:20000
-        Gen.(triple gen64 gen64 gen64)
-        (fun (a, b, c) ->
-          equal
-            (value64_of [ a; b; c ])
-            (nan_first64 [ a; b; c ] (Float.fma a b c))
-            (K.f64 "fma" [| a; b; c |]));
-    ]
+  @ List.map
+      (fun target ->
+        prop (strf "fma f64 rounds once on %s" target) ~count:20000
+          Gen.(
+            frequency
+              [
+                (1, triple gen64 gen64 gen64);
+                (1, tiny ~emin:(-1022) ~p:53 Fun.id);
+              ])
+          (fun (a, b, c) ->
+            let r = nan_first64 [ a; b; c ] (Float.fma a b c) in
+            cover "subnormal result"
+              (r <> 0. && Float.abs r < Float.min_float);
+            cover "signed zero result" (r = 0. && Float.sign_bit r);
+            equal (value64_of [ a; b; c ]) r
+              (K.f64 ~target "fma" [| a; b; c |])))
+      (K.targets ())
   @ [
       (* fmod promises a NaN, not which *)
       prop "mod f64" ~count:20000
@@ -983,7 +1032,7 @@ let () =
              ]
            @ test_binary_transcendentals);
          group ~timeout:10. "f32"
-           (test_binary32 @ [ test_fma32; test_where32 ] @ test_unary32);
+           (test_binary32 @ test_fma32 @ [ test_where32 ] @ test_unary32);
          group ~timeout:10. "f64" test_f64_exact;
          group ~timeout:10. "integers" test_ints;
          group ~timeout:10. "threefry" [ test_threefry ];

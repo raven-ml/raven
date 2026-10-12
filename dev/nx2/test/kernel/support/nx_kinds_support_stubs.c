@@ -88,8 +88,8 @@ value nx_kinds_support_targets(value unit) {
 
 /* Scalar calls */
 
-value nx_kinds_support_f32(value name, value args) {
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+value nx_kinds_support_f32(value tgt, value name, value args) {
+  const nx_real_loop *k = real_loop(target(tgt), name);
   if ((int)Wosize_val(args) != k->arity) refuse(name);
   float x[3] = {0, 0, 0}, y;
   for (int i = 0; i < k->arity; i++)
@@ -98,9 +98,9 @@ value nx_kinds_support_f32(value name, value args) {
   return Val_long(nx_float_bits(y));
 }
 
-value nx_kinds_support_f64(value name, value args) {
-  CAMLparam2(name, args);
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+value nx_kinds_support_f64(value tgt, value name, value args) {
+  CAMLparam3(tgt, name, args);
+  const nx_real_loop *k = real_loop(target(tgt), name);
   if ((int)(Wosize_val(args) / Double_wosize) != k->arity)
     refuse(name);
   double x[3] = {0, 0, 0}, y;

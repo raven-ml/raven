@@ -90,10 +90,46 @@
 NX_INLINE float nx_fmaf(float a, float b, float c) { return metal::fma(a, b, c); }
 NX_INLINE float nx_sqrtf(float x) { return metal::sqrt(x); }
 #else
-NX_INLINE float nx_fmaf(float a, float b, float c) { return fmaf(a, b, c); }
 NX_INLINE float nx_sqrtf(float x) { return sqrtf(x); }
-NX_INLINE double nx_fmad(double a, double b, double c) { return fma(a, b, c); }
 NX_INLINE double nx_sqrtd(double x) { return sqrt(x); }
+#endif
+
+/* fma rounding once. A C library's fma may not: mingw-w64's fma and fmaf
+   round twice at subnormal results and can lose a zero's sign, and OCaml's
+   configure then leaves HAS_WORKING_FMA undefined. A unit built with the
+   fma instruction (x86-64's -mfma) computes it in hardware. Elsewhere the
+   double fma is the OCaml runtime's emulation, and the float fma rounds the
+   exact product plus c to odd in double, which the rounding to float then
+   rounds as once, since 53 >= 2 * 24 + 2: the product of two floats is
+   exact in double, and TwoSum gives the sum's error. */
+#if defined(__CUDACC__) || defined(__HIP__)
+NX_INLINE float nx_fmaf(float a, float b, float c) { return fmaf(a, b, c); }
+NX_INLINE double nx_fmad(double a, double b, double c) { return fma(a, b, c); }
+#elif !defined(__METAL_VERSION__)
+#include <caml/s.h>
+#if defined(HAS_WORKING_FMA) || defined(__FMA__)
+NX_INLINE float nx_fmaf(float a, float b, float c) { return fmaf(a, b, c); }
+NX_INLINE double nx_fmad(double a, double b, double c) { return fma(a, b, c); }
+#else
+extern double caml_fma(double x, double y, double z);
+
+NX_INLINE double nx_fmad(double a, double b, double c) {
+  return caml_fma(a, b, c);
+}
+
+NX_INLINE float nx_fmaf(float a, float b, float c) {
+  double p = (double)a * (double)b, z = (double)c;
+  double s = p + z, d = s - p;
+  double e = (p - (s - d)) + (z - d);
+  if (e != 0 && isfinite(s)) {
+    uint64_t u;
+    memcpy(&u, &s, sizeof u);
+    if ((u & 1) == 0) u += (e > 0) == (s > 0) ? 1 : (uint64_t)-1;
+    memcpy(&s, &u, sizeof s);
+  }
+  return (float)s;
+}
+#endif
 #endif
 
 /* Integers

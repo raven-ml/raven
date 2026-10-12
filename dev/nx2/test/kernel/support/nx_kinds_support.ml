@@ -3,8 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-external f32 : string -> int array -> int = "nx_kinds_support_f32"
-external f64 : string -> float array -> float = "nx_kinds_support_f64"
+external f32_raw : string -> string -> int array -> int
+  = "nx_kinds_support_f32"
+
+external f64_raw : string -> string -> float array -> float
+  = "nx_kinds_support_f64"
+
 external int : string -> string -> int64 array -> int64 = "nx_kinds_support_int"
 external threefry : int64 -> int64 -> int64 = "nx_kinds_support_threefry"
 external c64 : string -> int array -> int array = "nx_kinds_support_c64"
@@ -45,6 +49,9 @@ let points kind ps = worst (points_raw kind ps)
 let strata kind = Array.map (fun (r, n, w) -> (r, n, worst w)) (strata_raw kind)
 let binary kind ~seed n = binary_raw kind seed n
 let digest ~target kind ty = digest_raw target kind ty
+let best = lazy (List.hd (List.rev (targets ())))
+let f32 ?(target = Lazy.force best) kind args = f32_raw target kind args
+let f64 ?(target = Lazy.force best) kind args = f64_raw target kind args
 
 let f32_bounds =
   [
