@@ -70,7 +70,7 @@ start: a new cause, counted from 1.
   $ ./support/await out joined
   $ kill -KILL $(agent_of b)
   $ ./support/await out "attempt 2"
-  $ ./support/await out joined
+  $ ./support/await out joined 2
   $ agent=$(agent_of b)
   $ rm machines/b/rig-agent-$(id -u).lock
   $ mkdir machines/b/rig-agent-$(id -u).lock
