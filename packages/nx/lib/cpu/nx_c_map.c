@@ -1171,10 +1171,44 @@ static const nx_c_map_table nx_c_where_table = {
     }                                                                          \
   }
 
+/* fma rounding once. Where the C library's fma does not, as mingw-w64's at
+   subnormal results, OCaml's configure leaves HAS_WORKING_FMA undefined: the
+   double fma is then the runtime's emulation, and the float fma rounds the
+   exact product plus [z] to odd in double, which a rounding to float then
+   rounds as once. */
+#ifdef HAS_WORKING_FMA
+static inline double nx_c_fma(double x, double y, double z) {
+  return fma(x, y, z);
+}
+
+static inline float nx_c_fmaf(float x, float y, float z) {
+  return fmaf(x, y, z);
+}
+#else
+CAMLextern double caml_fma(double x, double y, double z);
+
+static inline double nx_c_fma(double x, double y, double z) {
+  return caml_fma(x, y, z);
+}
+
+static inline float nx_c_fmaf(float x, float y, float z) {
+  double p = (double)x * (double)y, c = (double)z;
+  double s = p + c, b = s - p;
+  double err = (p - (s - b)) + (c - b);
+  if (err != 0 && isfinite(s)) {
+    uint64_t u;
+    memcpy(&u, &s, sizeof u);
+    if ((u & 1) == 0) u += (err > 0) == (s > 0) ? 1 : (uint64_t)-1;
+    memcpy(&s, &u, sizeof s);
+  }
+  return (float)s;
+}
+#endif
+
 /* fma over floats, as NX_C_BKN. */
 #define NX_C_FMAKN(sfx, storage, compute, ld, st)                               \
   NX_C_FMAK(fma_nan, sfx, storage, compute, ld, st,                             \
-           NX_C_NAN3(va, vb, vc, NX_C_MFN(fma, compute)(va, vb, vc)))            \
+           NX_C_NAN3(va, vb, vc, NX_C_MFN(nx_c_fma, compute)(va, vb, vc)))            \
   static int nx_c_fma_plain_##sfx(char *const *pp, const int64_t *ssx,         \
                                   int64_t nn) {                                \
     char *out = pp[0];                                                         \
@@ -1188,7 +1222,7 @@ static const nx_c_map_table nx_c_where_table = {
       const storage *pB = (const storage *)in1;                               \
       const storage *pC = (const storage *)in2;                               \
       for (int64_t i = 0; i < nn; i++) {                                       \
-        compute r = NX_C_MFN(fma, compute)((compute)ld(pA[i]),                 \
+        compute r = NX_C_MFN(nx_c_fma, compute)((compute)ld(pA[i]),                 \
                                            (compute)ld(pB[i]),                 \
                                            (compute)ld(pC[i]));                \
         has_nan |= NX_C_ISNAN(r);                                              \
@@ -1196,7 +1230,7 @@ static const nx_c_map_table nx_c_where_table = {
       }                                                                        \
     } else {                                                                   \
       for (int64_t i = 0; i < nn; i++) {                                       \
-        compute r = NX_C_MFN(fma, compute)(nx_c_ld_##sfx(in0 + i * sa),        \
+        compute r = NX_C_MFN(nx_c_fma, compute)(nx_c_ld_##sfx(in0 + i * sa),        \
                                            nx_c_ld_##sfx(in1 + i * sb),        \
                                            nx_c_ld_##sfx(in2 + i * sc));       \
         has_nan |= NX_C_ISNAN(r);                                              \

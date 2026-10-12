@@ -3618,6 +3618,8 @@ thread.
 
 ### Nx
 
+- `Nx.fma` rounds once on Windows, where mingw-w64's `fma` and `fmaf` round
+  twice at subnormal results.
 - **Breaking:** nx's values live in rig's memory, and nx's own device runtime
   goes: `nx.device` (with its support and ELF libraries), `nx.metal`,
   `nx.cuda`, `nx.nv`, `nx.remote`, `nx.rdma`, `nx-remote` and nx.amd's
