@@ -142,6 +142,8 @@ let candidates =
         ("", ".dylib", [ "text" ]);
         ("", "", [ "text"; "dir" ]);
       ]
+  | _ when Sys.win32 ->
+      [ ("", ".dll", [ "text"; "dir" ]); ("lib", ".dll", [ "text" ]) ]
   | _ ->
       [
         ("lib", ".so", [ "elf"; "text"; "dir" ]);
