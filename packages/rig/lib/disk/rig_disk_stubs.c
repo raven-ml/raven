@@ -99,7 +99,15 @@ static int open_file(const char *path, int mode, int64_t size, intnat *handle,
   BY_HANDLE_FILE_INFORMATION info;
   LARGE_INTEGER n;
   if (h == INVALID_HANDLE_VALUE) {
-    code = (int)GetLastError();
+    DWORD e = GetLastError();
+    /* CreateFileW opens no directory, and fails on one as access denied. */
+    DWORD attributes = e == ERROR_ACCESS_DENIED ? GetFileAttributesW(wpath)
+                                                : INVALID_FILE_ATTRIBUTES;
+    if (attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY))
+      code = NOT_REGULAR;
+    else
+      code = (int)e;
   } else if (GetFileType(h) != FILE_TYPE_DISK ||
              !GetFileInformationByHandle(h, &info) ||
              (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
