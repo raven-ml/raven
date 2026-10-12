@@ -173,18 +173,16 @@ val devices : Rig.t -> string -> (Rig.t list, string) result
 
     A {e launcher}, such as [rig run], starts a job's processes and learns how
     the job ends from each process's {e report}: a descriptor open for
-    writing, whose decimal number it passes in [RIG_REMOTE_REPORT]. A process
-    writes on its report at most one ["started"] line and one end line, each
-    in one write. Newlines in a reason are written as spaces.
+    writing, whose decimal number it passes in [RIG_REMOTE_REPORT], on
+    Windows that of a C runtime descriptor. A process writes on its report at
+    most one ["started"] line and one end line, each in one write. Newlines
+    in a reason are written as spaces.
     - ["started"], from the controller, once the job has started;
     - ["failed WHY"] once the job has failed, [WHY] its root cause, before
       the process fails ({!Rig.fail});
     - ["closed"] once the process has ended the job in order, the controller
       by {!close} or at exit, an agent once {!serve} has dropped what the
       closed job held.
-
-    Launchers are POSIX only: Windows passes no descriptor by its number, and
-    a process there answers [RIG_REMOTE_REPORT] as naming none.
 
     A process takes [RIG_REMOTE_REPORT] out of its environment and sets the
     descriptor close-on-exec, and a child of [fork] writes nothing. The

@@ -207,7 +207,7 @@ type launch = {
    [~reader_gone:true] the report's reader is closed before the program starts,
    so each of its report writes fails, and the report reads as no lines. *)
 let launch ?(args = []) ?(reader_gone = false) vars mode =
-  if Sys.win32 then skip ~reason:"launchers are POSIX only" ();
+  if Sys.win32 then skip ~reason:"the launch runs /bin/sh" ();
   let rr, rw = Unix.pipe ~cloexec:true () in
   let rr =
     if not reader_gone then rr

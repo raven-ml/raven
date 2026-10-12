@@ -1019,32 +1019,9 @@ let serve_failed () =
           failf "the agent exited %d, printing [%s]" code
             (String.concat "; " lines))
 
-(* Launchers are POSIX only: on Windows a process answers RIG_REMOTE_REPORT as
-   naming no descriptor, whatever its number, and starts no job. *)
-let windows_report () =
-  if not Sys.win32 then skip ~reason:"launchers pass the report here" ();
-  let r, w = Unix.pipe ~cloexec:true () in
-  let pid =
-    Unix.create_process_env launched_exe
-      [| launched_exe; "close" |]
-      (environment [ ("RIG_REMOTE_REPORT", "1") ])
-      Unix.stdin w Unix.stderr
-  in
-  Unix.close w;
-  let said = In_channel.input_all (child_text r) in
-  let code =
-    match snd (Unix.waitpid [] pid) with
-    | Unix.WEXITED n -> n
-    | Unix.WSIGNALED n | Unix.WSTOPPED n -> -n
-  in
-  equal ~msg:"what it said" string
-    "error: RIG_REMOTE_REPORT: launchers are POSIX only\n" said;
-  equal ~msg:"its exit status" int 1 code
-
 let launching =
   group "launched"
     [
-      test "on Windows the report names no descriptor" windows_report;
       test "without the variables it is None, and a second call raises"
         without_variables;
       test "started, then closed, its machines named as the launcher names them"
