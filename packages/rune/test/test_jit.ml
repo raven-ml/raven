@@ -4682,6 +4682,9 @@ let disk =
           let a = on_disk_at path (x ()) in
           let replacement = new_path () in
           ignore (on_disk_at replacement (y ()));
+          (* Windows refuses to rename over a file a handle holds open: there
+             the file is moved aside first. *)
+          if Sys.win32 then Sys.rename path (new_path ());
           Sys.rename replacement path;
           equal close (poly (x ())) (host (Rune.jit' poly a)));
     ]
