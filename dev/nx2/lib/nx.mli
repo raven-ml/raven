@@ -502,6 +502,11 @@ module Pattern : sig
       layouts, kept as batch axes; [1] drops a unit axis of an operand or adds
       one to the result.
 
+      Sums are written out because a name dropped from the result is easy to
+      miss. In ["b h q d, b h k d -> h q k | d"], [b] was left out by mistake;
+      summing it would give a result of plausible shape and wrong values, so
+      the pattern raises.
+
       Raises [Invalid_argument] naming [s] if it is not in the grammar, a name
       repeats within a layout, [...] appears twice in a layout, or a name breaks
       the rules above. A string in NumPy's einsum notation, such as
