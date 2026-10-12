@@ -79,7 +79,7 @@ type step =
   | Loop of {
       trips : value;
       trip : int option;
-      flag : slot option;
+      flag : (slot * int) option;
       body : step iarray;
     }
 
@@ -292,15 +292,19 @@ let rec check_step t sizes ndev = function
       check_value t trips;
       Option.iter (index "int" t.ints) trip;
       Option.iter
-        (fun slot ->
+        (fun (slot, at) ->
           check_slot t sizes slot;
           let bytes =
             match slot with
-            | Memory v -> v.length
-            | Input i -> (Iarray.get t.inputs i).bytes
-            | Ints -> 8 * t.ints
+            | Memory v -> Some v.length
+            | Ints -> Some (8 * t.ints)
+            | Input _ -> None
           in
-          if bytes < 1 then refuse "a loop's flag of no byte")
+          match bytes with
+          | _ when at < 0 -> refuse "a loop's flag at byte %d" at
+          | Some n when at >= n ->
+              refuse "a loop's flag at byte %d of a slot of %d bytes" at n
+          | _ -> ())
         flag;
       Iarray.iter (check_step t sizes ndev) body
 
@@ -418,7 +422,9 @@ let check_memory t sizes =
             | Words _ -> ())
           s.parts
     | Loop { trips; flag; body; _ } ->
-        value ~on:None ~fixed:[] (views (Option.to_list flag)) trips;
+        value ~on:None ~fixed:[]
+          (views (Option.to_list (Option.map fst flag)))
+          trips;
         Iarray.iter step body
     | Move _ -> ()
   in
@@ -479,7 +485,7 @@ let check t sizes devices =
    count, then its elements; a variant its tag, a byte, then its arguments. *)
 
 let magic = "rig.program\n"
-let version = 12
+let version = 13
 
 module W = struct
   let int b n = Buffer.add_int64_le b (Int64.of_int n)
@@ -632,7 +638,11 @@ module W = struct
         tag b 2;
         value b trips;
         option int b trip;
-        option slot b flag;
+        option
+          (fun b (s, at) ->
+            slot b s;
+            int b at)
+          b flag;
         array step b body
 
   let t b t =
@@ -865,7 +875,14 @@ module R = struct
     | 2 ->
         let trips = value r in
         let trip = option int r in
-        let flag = option slot r in
+        let flag =
+          option
+            (fun r ->
+              let s = slot r in
+              let at = int r in
+              (s, at))
+            r
+        in
         let body = array step r in
         Loop { trips; trip; flag; body }
     | n -> bad r "a step" n
@@ -970,7 +987,7 @@ type lstep =
   | Lloop of {
       trips : known array; (* By copy. *)
       trip : int option;
-      flag : slot option;
+      flag : (slot * int) option;
       body : lstep array;
     }
 
@@ -1735,10 +1752,19 @@ let submit_step p k waits (spec : submit) copies =
       unpass q;
       raise e
 
-(* Whether [flag]'s first byte is not [0], once the work that wrote it is
-   done. *)
-let flag_holds p k slot =
-  B.copy ~src:(B.view (slot_buffer p k slot) ~first:0 ~length:1) ~dst:p.flag;
+(* Whether byte [at] of [slot]'s buffer is not [0], once the work that wrote
+   it is done. *)
+let flag_holds p k (slot, at) =
+  let b, first =
+    match slot with
+    | Memory v -> (p.mem.(v.memory).(copy_of p v.memory k), v.offset + at)
+    | Ints -> (ints_buffer p k, at)
+    | Input j -> (bound p j (Iarray.get p.t.inputs j).device, at)
+  in
+  if first >= B.length b then
+    invalid "a loop's flag at byte %d of an input of %d bytes" at
+      (B.length b);
+  B.copy ~src:(B.view b ~first ~length:1) ~dst:p.flag;
   let c = Bytes.create 1 in
   B.blit_to_bytes p.flag 0 c 0 1;
   Bytes.get c 0 <> '\000'

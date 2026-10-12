@@ -1223,7 +1223,7 @@ let memory_hole_refusals () =
                 {
                   trips = Leaf (addr 0);
                   trip = None;
-                  flag = Some (Memory (whole 0));
+                  flag = Some (Memory (whole 0), 0);
                   body = [||];
                 };
             |];
@@ -1237,7 +1237,7 @@ let memory_hole_refusals () =
                 {
                   trips = Leaf (Handle 0);
                   trip = None;
-                  flag = Some (Memory (short 0));
+                  flag = Some (Memory (short 0), 0);
                   body = [||];
                 };
             |];
@@ -1377,9 +1377,31 @@ let loop_law k =
   equal ~msg:"trips" int (max 0 k) (word_of counter);
   equal ~msg:"the last trip's index" int (max 0 (k - 1)) (word_of last)
 
+(* Host code that stores [0] into word [w] of the run's ints. *)
+let clear_int w =
+  submit 1
+    ~buffers:[| (G.Ints, Rig.Read_write) |]
+    [|
+      Launch
+        {
+          image = 1;
+          name = "affine";
+          params =
+            data (le64 (8 * w) ^ le64 (8 * w) ^ le64 1 ^ le64 0 ^ le64 0);
+          refs =
+            [|
+              { G.slot = 0; at = 0; use = Write };
+              { G.slot = 0; at = 8; use = Read };
+            |];
+          groups = (Fixed 1, Fixed 1, Fixed 1);
+          threads = (Fixed 1, Fixed 1, Fixed 1);
+          shared = Fixed 0;
+        };
+    |]
+
 (* A loop whose flag a step clears in its first trip runs once, in memory the
-   program makes, in an input and in the ints: the flag is read after that
-   work. *)
+   program makes, in an input and in the ints, the flag's byte inside its slot:
+   the flag is read after that work. *)
 let test_flag () =
   let d, _ = polled "flag" in
   let mem = G.Memory { memory = 0; offset = 0; length = 8 } in
@@ -1393,7 +1415,7 @@ let test_flag () =
       with_host d
         {
           G.devices = [||];
-          ints = 1;
+          ints = 3;
           memory = [| alloc ~init:(data (le64 1)) 0 8 |];
           images = [||];
           inputs = [| { device = 0; bytes = 8 }; { device = 0; bytes = 8 } |];
@@ -1415,15 +1437,40 @@ let test_flag () =
     let p = load_ok t [ d; Rig.host ] in
     let counter = one_word d in
     let frame =
-      { G.inputs = [| counter; of_bytes d (le64 1) |]; ints = [| 1 |] }
+      { G.inputs = [| counter; of_bytes d (le64 1) |]; ints = [| 1; 1; 1 |] }
     in
     ignore (G.run p frame);
     word_of counter
   in
-  equal ~msg:"memory" int 1 (trips mem (clear mem));
-  equal ~msg:"an input" int 1 (trips (Input 1) (clear (Input 1)));
-  equal ~msg:"the ints" int 1
-    (trips Ints (step_affine Ints ~a:(Fixed 0) ~c:(Fixed 0)))
+  equal ~msg:"memory" int 1 (trips (mem, 0) (clear mem));
+  equal ~msg:"an input" int 1 (trips (Input 1, 0) (clear (Input 1)));
+  equal ~msg:"the ints" int 1 (trips (Ints, 0) (clear_int 0));
+  equal ~msg:"word 2 of the ints" int 1 (trips (Ints, 16) (clear_int 2))
+
+(* A loop's flag past its input's bytes raises at the run, which load cannot
+   know. *)
+let test_flag_outside () =
+  let d, _ = polled "flag-outside" in
+  let t =
+    {
+      (base d) with
+      steps =
+        [|
+          Loop
+            {
+              trips = Fixed 1;
+              trip = None;
+              flag = Some (Input 0, 8);
+              body = [||];
+            };
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let ones = of_bytes d (String.make 64 '\001') in
+  ignore (G.run p { inputs = [| ones |]; ints = [||] });
+  raises_match ~msg:"byte 8 of 8" Exn.invalid_arg (fun () ->
+      G.run p { inputs = [| of_bytes d (le64 1) |]; ints = [||] })
 
 (* [calling], image 1, calls [affine], image 0, through its address, an
    [Entry] leaf in its parameters: three trips of a loop add 3. *)
@@ -1540,35 +1587,50 @@ let host_refusals =
                 {
                   trips = Fixed 1;
                   trip = None;
-                  flag = Some (Memory { memory = 0; offset = 0; length = 0 });
+                  flag =
+                    Some (Memory { memory = 0; offset = 0; length = 0 }, 0);
                   body = [||];
                 };
             |]),
         two );
-      ( "a flag in an input of no byte",
-        (fun d ->
-          {
-            (with_steps d
-               [|
-                 Loop
-                   {
-                     trips = Fixed 1;
-                     trip = None;
-                     flag = Some (Input 1);
-                     body = [||];
-                   };
-               |])
-            with
-            inputs =
-              [| { device = 0; bytes = 64 }; { device = 0; bytes = 0 } |];
-          }),
-        two );
-      ( "a flag in ints of no word",
+      ( "a flag past its view",
         (fun d ->
           with_steps d
             [|
               Loop
-                { trips = Fixed 1; trip = None; flag = Some Ints; body = [||] };
+                {
+                  trips = Fixed 1;
+                  trip = None;
+                  flag =
+                    Some (Memory { memory = 0; offset = 0; length = 8 }, 8);
+                  body = [||];
+                };
+            |]),
+        two );
+      ( "a flag at a negative byte",
+        (fun d ->
+          with_steps d
+            [|
+              Loop
+                {
+                  trips = Fixed 1;
+                  trip = None;
+                  flag = Some (Input 0, -1);
+                  body = [||];
+                };
+            |]),
+        two );
+      ( "a flag past the ints",
+        (fun d ->
+          with_steps ~ints:1 d
+            [|
+              Loop
+                {
+                  trips = Fixed 1;
+                  trip = None;
+                  flag = Some (Ints, 8);
+                  body = [||];
+                };
             |]),
         two );
     ]
@@ -1753,7 +1815,7 @@ let gen_t =
       one_of
         ((let+ trips = value
           and+ trip = option n
-          and+ flag = option slot
+          and+ flag = option (pair slot n)
           and+ body = few (step (depth - 1)) in
           Loop { trips; trip; flag; body })
         :: leaves)
@@ -1817,7 +1879,7 @@ let test_version () =
   let s = Bytes.of_string (G.to_string (base (fst (polled "version")))) in
   Bytes.set_int64_le s 12 7L;
   let why = require_error (G.of_string (Bytes.to_string s)) in
-  contains ~msg:"names the versions" ~sub:"version 7, not 12" why
+  contains ~msg:"names the versions" ~sub:"version 7, not 13" why
 
 (* A description cut inside its version is malformed where the cut is. *)
 let test_cut_version () =
@@ -2956,6 +3018,7 @@ let tests =
            negative count, each trip's index in the ints"
           (Gen.int_range (-2) 6) loop_law;
         test "a loop stops at a flag a step cleared" test_flag;
+        test "run raises for a loop's flag past its input" test_flag_outside;
         test "a host launch calls a function an Entry leaf names"
           test_entry_leaf;
         test "run keeps the host function an Entry leaf names"

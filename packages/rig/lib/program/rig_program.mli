@@ -285,13 +285,13 @@ type step =
   | Loop of {
       trips : value;
       trip : int option;
-      flag : slot option;
+      flag : (slot * int) option;
       body : step iarray;
     }
       (** [body], [trips] times, none where [trips <= 0], storing each trip's
-          index from [0] into word [trip] of the run's ints. With [flag], it
-          reads the first byte of [flag]'s buffer before each trip, once the
-          work that wrote it is done, and stops at [0]. *)
+          index from [0] into word [trip] of the run's ints. With
+          [flag = Some (s, at)], it reads byte [at] of [s]'s buffer before
+          each trip, once the work that wrote it is done, and stops at [0]. *)
 
 type input = { device : int; bytes : int }
 (** The type for inputs: a buffer of [device] of at least [bytes] bytes. *)
@@ -355,8 +355,9 @@ val load :
        copies, an [Entry] names a later image, or an [Address] is of memory
        its driver names by handle only;}
     {- a device that names memory cannot borrow it ({!Rig.Buffer.borrow});}
-    {- an [Int] or a loop's [trip] is past the ints, or a loop's flag has no
-       byte, as an input of no [bytes] or ints of no word;}
+    {- an [Int] or a loop's [trip] is past the ints, or a loop's flag lies
+       at a negative byte or past its slot where load knows the slot's
+       length: a [Memory] view's [length] and [8 * ints] for the ints;}
     {- a ref or a copy names no slot of its submit, a slot is named by no
        ref or copy, or a slot is named by both an [Unordered] ref and a
        [Read] or [Write] ref or a copy;}
@@ -417,7 +418,8 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
     {- at a step, after the earlier steps ran, if the run refuses a launch's
        geometry, shared memory or a parameter's value read from the ints
        ({!Rig.Submission.Run}), if a copy's offset puts its end outside its
-       slot's buffer, and as {!Rig.submit} and {!Rig.Buffer.copy} raise.}}
+       slot's buffer, if a loop's flag lies past its input's bytes, and as
+       {!Rig.submit} and {!Rig.Buffer.copy} raise.}}
     Raises {!Rig.Lost} as the devices raise it. *)
 
 (** {1:machines Programs of another machine}
