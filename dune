@@ -6,14 +6,14 @@
 ; on a warning a future compiler adds.
 ;
 ; The sanitize profile, run on Linux, builds the C under AddressSanitizer and
-; UndefinedBehaviorSanitizer and links the debug runtime with a stressed
-; collector, so a value a stub holds unrooted fails at once. A domain's thread
+; UndefinedBehaviorSanitizer. rig's env adds the debug runtime and a stressed
+; collector, which check a heap so often that suites holding large heaps, such
+; as compress's, outran their time. A domain's thread
 ; exits on the signal stack the OCaml runtime allocated, which
 ; AddressSanitizer would unmap as its own (use_sigaltstack=0). A refused
 ; allocation returns NULL as libc's does (allocator_may_return_null=1). CUDA
 ; and NV map GPU addresses below 2^40, in the shadow gap
-; (protect_shadow_gap=0). v=0 silences the debug runtime's banner, which a
-; cram test would read as output. dune links mdx's toplevel without the
+; (protect_shadow_gap=0). dune links mdx's toplevel without the
 ; profile's link_flags, so sanitized C cannot link into it: an mdx stanza whose
 ; libraries hold C is off under sanitize.
 ;
@@ -50,9 +50,8 @@
     -fno-omit-frame-pointer
     -fsanitize=address,undefined))
   (link_flags
-   (:standard -runtime-variant d -cclib -fsanitize=address,undefined))
+   (:standard -cclib -fsanitize=address,undefined))
   (env-vars
-   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1,v=0)
    (ASAN_OPTIONS
     halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1:protect_shadow_gap=0)
    (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)

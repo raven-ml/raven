@@ -1,3 +1,17 @@
+; Under the sanitize profile rig's executables link the debug runtime and
+; stress the collector, so a value a stub holds unrooted, or memory a
+; finaliser frees while it is still used, fails at once. OCAMLRUNPARAM gives a
+; 32 KiB minor heap (s=4k), major cycles far more often (o=20), pushed at once
+; by custom blocks (M=1, m=1), and a heap check at the end of each (V=1); v=0
+; silences the debug runtime's banner, which a cram test would read as output.
+
+(env
+ (sanitize
+  (link_flags
+   (:standard -runtime-variant d))
+  (env-vars
+   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1,v=0))))
+
 ; README.md's program runs under mdx. dune links mdx's toplevel without the
 ; profile's link_flags, so rig's sanitized stubs cannot link into it.
 
