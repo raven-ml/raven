@@ -1237,6 +1237,9 @@ thread.
 
 ### Tolk (new)
 
+- On Windows, tolk reads an empty environment variable as empty, where it
+  read it as unset: an empty `DEBUG` was refused elsewhere and took the
+  default there.
 - `Ops.exec_alu` computes `Op.Sin` correctly rounded on every system, by its
   own exact argument reduction. It called the C library's sine, whose
   mingw-w64 version folded `sin 1e300` to a value of the wrong sign.

@@ -369,13 +369,13 @@ let to_function_name s =
 let expanduser path =
   let home =
     if Sys.win32 then
-      match (Sys.getenv_opt "USERPROFILE", Sys.getenv_opt "HOMEPATH") with
+      match (Setting.getenv "USERPROFILE", Setting.getenv "HOMEPATH") with
       | Some home, _ -> Some home
       | None, Some p ->
-          Some (Option.value (Sys.getenv_opt "HOMEDRIVE") ~default:"" ^ p)
+          Some (Option.value (Setting.getenv "HOMEDRIVE") ~default:"" ^ p)
       | None, None -> None
     else
-      match Sys.getenv_opt "HOME" with
+      match Setting.getenv "HOME" with
       | Some home -> Some home
       | None -> (
           try Some (Unix.getpwuid (Unix.getuid ())).pw_dir
@@ -387,7 +387,7 @@ let expanduser path =
 
 let cache_dir =
   let base =
-    match Sys.getenv_opt "XDG_CACHE_HOME" with
+    match Setting.getenv "XDG_CACHE_HOME" with
     | Some dir -> dir
     | None ->
         expanduser
@@ -396,7 +396,7 @@ let cache_dir =
   Filename.concat base "tolk"
 
 let cachedb =
-  match Sys.getenv_opt "CACHEDB" with
+  match Setting.getenv "CACHEDB" with
   | Some dir -> dir
   | None ->
       let dir = Filename.concat cache_dir "cache" in
@@ -587,7 +587,7 @@ let which program =
       with Unix.Unix_error _ -> false
   in
   if Filename.is_implicit program then
-    let path = Option.value (Sys.getenv_opt "PATH") ~default:"" in
+    let path = Option.value (Setting.getenv "PATH") ~default:"" in
     String.split_on_char (if Sys.win32 then ';' else ':') path
     |> List.exists (fun dir -> executable (Filename.concat dir program))
   else executable program

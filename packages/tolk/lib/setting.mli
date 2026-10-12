@@ -392,3 +392,10 @@ val dbgtv : string t
 (** [dbgtv], when not empty, makes code generation print the instructions of a
     program that fails its specification check ({!Codegen}), from [DBGTV].
     Defaults to [""]. *)
+
+(**/**)
+
+val getenv : string -> string option
+(** [getenv key] is the value of the environment variable [key], [Some ""] if
+    it is empty, on every system, and [None] if it is unset. Tolk reads every
+    variable with it. *)

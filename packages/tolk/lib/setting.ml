@@ -70,8 +70,23 @@ let parse_float s =
   | Some x -> Ok x
   | None -> Error (Printf.sprintf "%S is not a number" s)
 
-let read key parse default =
+(* On Windows [Sys.getenv_opt] asks GetEnvironmentVariable, whose result is 0
+   for an empty variable as for an unset one, and reads both as unset. An unset
+   reading is checked there against the process's environment block, whose names
+   Windows compares without case. *)
+let getenv key =
   match Sys.getenv_opt key with
+  | Some _ as v -> v
+  | None when Sys.win32 ->
+      let empty = String.uppercase_ascii key ^ "=" in
+      let is_empty binding =
+        String.equal (String.uppercase_ascii binding) empty
+      in
+      if Array.exists is_empty (Unix.environment ()) then Some "" else None
+  | None -> None
+
+let read key parse default =
+  match getenv key with
   | None -> default
   | Some s -> (
       match parse s with

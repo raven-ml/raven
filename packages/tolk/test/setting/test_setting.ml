@@ -33,22 +33,118 @@ let declared_with value make =
 let int_setting key = Setting.int ~reach:Process key 0
 let float_setting key = Setting.float ~reach:Process key 0.
 
+(* Children
+
+   A child is this suite started again with [role] set: it plays that role and
+   exits. *)
+
+let role = "TOLK_TEST_SETTING_ROLE"
+
+type ended = { status : Unix.process_status; out : string; err : string }
+
+(* [start ~env part args] starts playing [part] with [args] in an environment
+   where each [(name, Some v)] of [env] is set and each [(name, None)] unset. *)
+let start ?(env = []) part args =
+  let unchanged binding =
+    match String.index_opt binding '=' with
+    | Some i -> not (List.mem_assoc (String.sub binding 0 i) env)
+    | None -> true
+  in
+  let set =
+    List.filter_map
+      (fun (k, v) -> Option.map (fun v -> k ^ "=" ^ v) v)
+      ((role, Some part) :: env)
+  in
+  let environment =
+    Array.of_list
+      (set @ List.filter unchanged (Array.to_list (Unix.environment ())))
+  in
+  let out = temp_file () and err = temp_file () in
+  let fd file = Unix.openfile file [ Unix.O_WRONLY ] 0 in
+  let out_fd = fd out and err_fd = fd err in
+  let argv = Array.of_list (Sys.executable_name :: args) in
+  let pid =
+    Unix.create_process_env Sys.executable_name argv environment Unix.stdin
+      out_fd err_fd
+  in
+  Unix.close out_fd;
+  Unix.close err_fd;
+  (pid, out, err)
+
+let finish (pid, out, err) =
+  let _, status = Unix.waitpid [] pid in
+  (* in text mode: on Windows a child's lines end in CRLF *)
+  let read file = In_channel.with_open_text file In_channel.input_all in
+  { status; out = read out; err = read err }
+
+let child ?env part args = finish (start ?env part args)
+
+let status =
+  Testable.make
+    ~pp:(fun ppf s ->
+      match s with
+      | Unix.WEXITED n -> Format.fprintf ppf "exited %d" n
+      | Unix.WSIGNALED n -> Format.fprintf ppf "killed by signal %d" n
+      | Unix.WSTOPPED n -> Format.fprintf ppf "stopped by signal %d" n)
+    ~equal:( = )
+
+let succeeds ended =
+  equal ~msg:ended.err status (Unix.WEXITED 0) ended.status;
+  ended.out
+
+(* Settings of each kind, declared from a variable by name, each value shown as
+   tinygrad prints it. *)
+let kinds =
+  [
+    ("int", fun key -> string_of_int (Setting.value (int_setting key)));
+    ( "float",
+      fun key ->
+        Format.asprintf "%a" Dtype.pp_const
+          (`Float (Setting.value (float_setting key))) );
+    ("string", fun key -> Setting.value (Setting.string ~reach:Process key "d"));
+    ( "int_option",
+      fun key ->
+        match Setting.value (Setting.int_option ~reach:Process key) with
+        | Some n -> string_of_int n
+        | None -> "None" );
+  ]
+
+let empty = "TOLK_TEST_EMPTY_VARIABLE"
+
+(* [read_empty kind] is the value a [kind] setting reads from an empty variable,
+   shown, or why it refuses it. The variable is bound in a child's environment,
+   since on Windows a process that sets a variable to the empty string unbinds
+   it. *)
+let read_empty kind =
+  let ended = child ~env:[ (empty, Some "") ] "declare" [ kind ] in
+  if ended.status = Unix.WEXITED 0 then Ok ended.out else Error ended.err
+
+let refuses_empty kind =
+  contains ~sub:"Invalid_argument"
+    (require_error ~pp:Format.pp_print_string (read_empty kind))
+
 (* The environment *)
 
-let parses_like_tinygrad make w of_cell column cell =
-  let value = Some (literal (cell "input")) in
-  let expected = cell column in
-  if raised expected then refuses (fun () -> declared_with value make)
-  else equal w (of_cell expected) (declared_with value make)
+let parses_like_tinygrad ~kind make w of_cell column cell =
+  let input = literal (cell "input") and expected = cell column in
+  if input = "" then
+    if raised expected then refuses_empty kind
+    else
+      equal string expected
+        (require_ok ~pp:Format.pp_print_string (read_empty kind))
+  else if raised expected then
+    refuses (fun () -> declared_with (Some input) make)
+  else equal w (of_cell expected) (declared_with (Some input) make)
 
 let environment =
   group "Environment"
     [
       as_tinygrad "an int setting reads an integer as tinygrad does"
         "env.golden"
-        (parses_like_tinygrad int_setting int int_of_string "int");
+        (parses_like_tinygrad ~kind:"int" int_setting int int_of_string "int");
       as_tinygrad "a float setting reads a number as tinygrad does" "env.golden"
-        (parses_like_tinygrad float_setting float_exact float_of_string "float");
+        (parses_like_tinygrad ~kind:"float" float_setting float_exact
+           float_of_string "float");
       (* Python accepts these, but tolk does not port CPython's Unicode leniency
          in int() and float() (README, Exclusions). *)
       cases ~name:(Printf.sprintf "%S")
@@ -108,13 +204,14 @@ let environment =
       test "a string setting starts from its variable as written" (fun () ->
           let word key = Setting.string ~reach:Process key "d" in
           equal string " x " (declared_with (Some " x ") word);
-          equal string "" (declared_with (Some "") word);
+          equal string ""
+            (require_ok ~pp:Format.pp_print_string (read_empty "string"));
           equal string "d" (declared_with None word));
       test "an optional setting holds its variable's integer, if set" (fun () ->
           let opt key = Setting.int_option ~reach:Process key in
           equal (option int) (Some (-3)) (declared_with (Some " -3 ") opt);
           equal (option int) None (declared_with None opt);
-          refuses (fun () -> declared_with (Some "") opt));
+          refuses_empty "int_option");
     ]
 
 (* Declarations *)
@@ -690,67 +787,13 @@ let library_settings =
 
 (* Processes
 
-   What a process reads when it starts is observed in a child: this suite,
-   started again with [role] set, plays that role and exits. *)
-
-let role = "TOLK_TEST_SETTING_ROLE"
+   What a process reads when it starts is observed in a child. *)
 
 let play = function
   | "settings" ->
       List.iter (fun s -> Printf.printf "%s=%s\n" (key s) (shown s)) settings
+  | "declare" -> print_string (List.assoc Sys.argv.(1) kinds empty)
   | role -> failwith ("unknown role " ^ role)
-
-type ended = { status : Unix.process_status; out : string; err : string }
-
-(* [start ~env part args] starts playing [part] with [args] in an environment
-   where each [(name, Some v)] of [env] is set and each [(name, None)] unset. *)
-let start ?(env = []) part args =
-  let unchanged binding =
-    match String.index_opt binding '=' with
-    | Some i -> not (List.mem_assoc (String.sub binding 0 i) env)
-    | None -> true
-  in
-  let set =
-    List.filter_map
-      (fun (k, v) -> Option.map (fun v -> k ^ "=" ^ v) v)
-      ((role, Some part) :: env)
-  in
-  let environment =
-    Array.of_list
-      (set @ List.filter unchanged (Array.to_list (Unix.environment ())))
-  in
-  let out = temp_file () and err = temp_file () in
-  let fd file = Unix.openfile file [ Unix.O_WRONLY ] 0 in
-  let out_fd = fd out and err_fd = fd err in
-  let argv = Array.of_list (Sys.executable_name :: args) in
-  let pid =
-    Unix.create_process_env Sys.executable_name argv environment Unix.stdin
-      out_fd err_fd
-  in
-  Unix.close out_fd;
-  Unix.close err_fd;
-  (pid, out, err)
-
-let finish (pid, out, err) =
-  let _, status = Unix.waitpid [] pid in
-  (* in text mode: on Windows a child's lines end in CRLF *)
-  let read file = In_channel.with_open_text file In_channel.input_all in
-  { status; out = read out; err = read err }
-
-let child ?env part args = finish (start ?env part args)
-
-let status =
-  Testable.make
-    ~pp:(fun ppf s ->
-      match s with
-      | Unix.WEXITED n -> Format.fprintf ppf "exited %d" n
-      | Unix.WSIGNALED n -> Format.fprintf ppf "killed by signal %d" n
-      | Unix.WSTOPPED n -> Format.fprintf ppf "stopped by signal %d" n)
-    ~equal:( = )
-
-let succeeds ended =
-  equal ~msg:ended.err status (Unix.WEXITED 0) ended.status;
-  ended.out
 
 let settings_read env =
   let pair line =

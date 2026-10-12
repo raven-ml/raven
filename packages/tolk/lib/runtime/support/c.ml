@@ -11,7 +11,7 @@ let is_symlink p =
   try (Unix.lstat p).st_kind = Unix.S_LNK with Unix.Unix_error _ -> false
 
 let env_dirs var =
-  match Sys.getenv_opt var with
+  match Setting.getenv var with
   | None -> []
   | Some s ->
       String.split_on_char (if Sys.win32 then ';' else ':') s
@@ -70,7 +70,7 @@ let findlib ?(extra_paths = []) name paths =
     String.map (function '-' -> '_' | c -> c) (String.uppercase_ascii name)
     ^ "_PATH"
   in
-  let path = Option.value (Sys.getenv_opt var) ~default:"" in
+  let path = Option.value (Setting.getenv var) ~default:"" in
   let dirs p =
     let posix =
       env_dirs "LD_LIBRARY_PATH"
