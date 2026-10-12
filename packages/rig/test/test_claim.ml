@@ -96,20 +96,18 @@ let case =
         { n; views; claimed; outside; raises })
       (triple (views n) (pair bool outside) bool)
   in
-  (* The whole memory donated with no other claim, the one case held
-     exclusive, drawn by construction as one case in four: [any] reaches it in
-     one of about thirty. *)
+  (* The whole memory donated with no other view, drawn by construction as one
+     case in four: [any] reaches it in one of about thirty. Half of these have
+     no other claim, the one case held exclusive; the others are claimed or
+     outside the claims, which holds the donation for reading. *)
   let alone n =
     map
-      (fun raises ->
-        {
-          n;
-          views = [ (0, n, Donate) ];
-          claimed = false;
-          outside = Inside;
-          raises;
-        })
-      bool
+      (fun ((claimed, outside), raises) ->
+        { n; views = [ (0, n, Donate) ]; claimed; outside; raises })
+      (pair
+         (frequency [ (1, pair (constant false) (constant Inside));
+                      (1, pair bool outside) ])
+         bool)
   in
   with_pp pp_case
     (bind (int_range 1 32) (fun n ->
