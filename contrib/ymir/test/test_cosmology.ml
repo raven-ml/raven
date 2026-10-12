@@ -487,17 +487,43 @@ let central fn x e =
   let fine = richardson (h /. 2.) in
   (fine, Float.abs (fine -. richardson h))
 
+let pp_model ppf m =
+  Format.fprintf ppf
+    "{ h0 = %h; omega_cb = %h; omega_k = %h; w0 = %h; wa = %h; t_cmb = %h; \
+     n_eff = %h; m_nu = [%s] }"
+    m.h0 m.omega_cb m.omega_k m.w0 m.wa m.t_cmb m.n_eff
+    (String.concat "; " (List.map (Printf.sprintf "%h") m.m_nu))
+
+(* The point of index [i]: a model with photons and massive neutrinos, over
+   the ranges of [models], and a redshift in [0.05, 20], drawn from [i]. A law
+   that differentiates every function along every field costs about a second
+   a run, so the derivatives' cases are indices, whose shrink search tries a
+   few dozen other points and not hundreds of nearby ones. *)
+let point_of_index i =
+  let st = Random.State.make [| i |] in
+  let range lo hi = lo +. Random.State.float st (hi -. lo) in
+  let omega_cb = range 0.1 1. in
+  let omega_k = range (-0.3) 0.3 in
+  let w0 = range (-1.5) (-0.5) in
+  let wa = range (-1.) 0.5 in
+  let h0 = range 40. 100. in
+  let t_cmb = range 1. 3. in
+  let n_eff = range 0. 5. in
+  let m_nu = List.init (1 + Random.State.int st 3) (fun _ -> range 0. 1.) in
+  let z = range 0.05 20. in
+  ({ planck_like with omega_cb; omega_k; w0; wa; h0; t_cmb; n_eff; m_nu }, z)
+
 let derivatives =
   let point_gen =
-    Gen.(
-      map
-        (fun (m, z) ->
-          let m = { m with t_cmb = (if m.t_cmb = 0. then 2. else m.t_cmb) } in
-          let m =
-            { m with m_nu = (match m.m_nu with [] -> [ 0.1 ] | l -> l) }
-          in
-          (cosmology Nx.float64 m, f64 z))
-        (pair models (float_range 0.05 20.)))
+    Gen.map
+      (fun i ->
+        let m, z = point_of_index i in
+        (cosmology Nx.float64 m, f64 z))
+      (Gen.with_pp
+         (fun ppf i ->
+           let m, z = point_of_index i in
+           Format.fprintf ppf "point %d: %a at z = %h" i pp_model m z)
+         (Gen.int_range 0 0x3fff_ffff))
   in
   (* A point where the universe has no past is the domain's, with its own
      tests. *)
@@ -515,8 +541,21 @@ let derivatives =
       ~msg:(Printf.sprintf "%s d/d%s" fn name)
       (float_rel ~rel:1e-7 ~abs) fd got
   in
-  (* Forward and reverse mode add the same terms in two orders. *)
-  let paired = float_rel ~rel:1e-12 ~abs:1e-300 in
+  (* Forward and reverse mode add the same terms in two orders, among them the
+     quadrature's few dozen nodes: each order is within [n] ulps of the sum of
+     the terms' magnitudes, [n] = 64 covering the nodes and the steps around
+     them. A term is of the order of the value per unit of the coordinate's
+     scale, [|f| / max 0.05 |x_i|], the scale [central] steps by, so the two
+     agree within [2 n] ulps of that however much the terms cancel. Relative
+     to the derivative itself they can differ far more: comoving_volume_element
+     along Omega_k differs by 2e-12 of it. Over 400 points the largest
+     difference seen is 24 ulps of the scale. *)
+  let paired fn x e =
+    let f = Float.abs (item (value fn x)) in
+    let scale = f /. Float.max 0.05 (Float.abs (dot e x)) in
+    let ulps = 2. *. 64. *. epsilon_float in
+    float_rel ~rel:0. ~abs:(Float.max (ulps *. scale) 1e-300)
+  in
   group "derivatives"
     [
       prop ~count:20
@@ -543,7 +582,7 @@ let derivatives =
                   let _, d = Rune.jvp point Nx.Ptree.tensor (value fn) x e in
                   equal
                     ~msg:(Printf.sprintf "%s d/d%s" fn name)
-                    paired (dot g e) (item d))
+                    (paired fn x e) (dot g e) (item d))
                 (axes x))
             functions);
       test "a compiled gradient equals the eager one" (fun () ->
