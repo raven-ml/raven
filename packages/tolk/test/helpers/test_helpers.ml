@@ -145,30 +145,40 @@ let macos () =
     ~finally:(fun () -> ignore (Unix.close_process_in uname))
     (fun () -> String.equal "Darwin" (String.trim (In_channel.input_all uname)))
 
+(* [path dir names] is [names] joined under [dir] by the system's separator. *)
+let path dir names = List.fold_left Filename.concat dir names
+
 let cache_directory =
   group "cache directory"
     [
       test "puts the cache in tolk under XDG_CACHE_HOME" (fun () ->
           read_at_start
             [ ("XDG_CACHE_HOME", Some "/xdg"); ("CACHEDB", None) ]
-            [ ("cache_dir", "/xdg/tolk"); ("cachedb", "/xdg/tolk/cache") ]);
+            [
+              ("cache_dir", path "/xdg" [ "tolk" ]);
+              ("cachedb", path "/xdg" [ "tolk"; "cache" ]);
+            ]);
       test
         "puts the cache in the platform's cache directory without \
          XDG_CACHE_HOME" (fun () ->
           let home =
-            if macos () then "/home/Library/Caches/tolk"
-            else "/home/.cache/tolk"
+            path "/home"
+              [ (if macos () then "Library/Caches" else ".cache"); "tolk" ]
           in
+          (* Windows' home is USERPROFILE, elsewhere it is HOME *)
           read_at_start
             [
-              ("XDG_CACHE_HOME", None); ("HOME", Some "/home"); ("CACHEDB", None);
+              ("XDG_CACHE_HOME", None);
+              ("HOME", Some "/home");
+              ("USERPROFILE", Some "/home");
+              ("CACHEDB", None);
             ]
-            [ ("cache_dir", home); ("cachedb", home ^ "/cache") ]);
+            [ ("cache_dir", home); ("cachedb", path home [ "cache" ]) ]);
       test "makes the default cache directory absolute" (fun () ->
           read_at_start
             [ ("XDG_CACHE_HOME", Some "relative"); ("CACHEDB", None) ]
             [
-              ("cachedb", Filename.concat (Sys.getcwd ()) "relative/tolk/cache");
+              ("cachedb", path (Sys.getcwd ()) [ "relative"; "tolk"; "cache" ]);
             ]);
       test "reads the cache's directory from CACHEDB" (fun () ->
           read_at_start [ ("CACHEDB", Some "/db") ] [ ("cachedb", "/db") ]);

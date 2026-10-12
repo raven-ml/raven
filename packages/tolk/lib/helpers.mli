@@ -180,7 +180,9 @@ val to_function_name : string -> string
 val cache_dir : string
 (** [cache_dir] is the directory of the files tolk caches: [tolk] in
     [XDG_CACHE_HOME] if that variable is set, and otherwise in
-    [~/Library/Caches] on macOS and [~/.cache] elsewhere. *)
+    [~/Library/Caches] on macOS and [~/.cache] elsewhere. [~] is the home
+    directory, from [USERPROFILE] on Windows and [HOME] elsewhere. Paths are
+    joined with the system's separator. *)
 
 val cachedb : string
 (** [cachedb] is the directory of the {!Diskcache}, from the variable [CACHEDB].
