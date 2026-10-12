@@ -66,7 +66,7 @@
 (package
  (name nx)
  (dir packages/nx)
- (license ISC)
+ (license "ISC AND MIT")
  (synopsis "N-dimensional arrays for OCaml")
  (description
   "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem.")

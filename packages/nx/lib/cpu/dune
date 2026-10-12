@@ -52,6 +52,20 @@
    -Wall
    -Wextra
    (:include werror_flags.sexp)))
+ ; pow gives the same bits on every system only if no compiler fuses its
+ ; multiplies and adds: clang does by default where the target has fma.
+ (foreign_stubs
+  (language c)
+  (names nx_c_pow)
+  (flags
+   :standard
+   -std=c11
+   -O3
+   -fwrapv
+   -ffp-contract=off
+   -Wall
+   -Wextra
+   (:include werror_flags.sexp)))
  ; The only platform conditional: nx_c_matmul.c links the OS-shipped Accelerate
  ; framework on macOS for eligible float and complex GEMMs. Off macOS the hook
  ; compiles out and no flag is emitted, leaving the owned implementation as the

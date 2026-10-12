@@ -3618,6 +3618,9 @@ thread.
 
 ### Nx
 
+- `Nx.pow` on the host gives the same bits on every system, from nx's own
+  `pow` and `powf`: a result may change in its last bit, toward the correctly
+  rounded one. mingw-w64's `pow` was 3 ulps off at some `float64` inputs.
 - `Nx.fma` rounds once on Windows, where mingw-w64's `fma` and `fmaf` round
   twice at subnormal results.
 - **Breaking:** nx's values live in rig's memory, and nx's own device runtime

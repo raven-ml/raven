@@ -857,14 +857,15 @@ NX_C_MINMAX(min)
 #undef NX_C_CURSYM
 #undef NX_C_CUROP
 
-/* pow: integer power by squaring in the compute width (wrap on store), powf/pow
-   for floats, cpow for complex. */
+/* pow: integer power by squaring in the compute width (wrap on store),
+   nx_c_powf/nx_c_pow (nx_c_pow.c) for floats, cpow for complex. */
 #define NX_C_POW_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                    \
   NX_C_BK(pow, sfx, storage, compute, ld, st, nx_c_ipow_s((va), (vb)))
 #define NX_C_POW_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                    \
   NX_C_BK(pow, sfx, storage, compute, ld, st, nx_c_ipow_u((va), (vb)))
 #define NX_C_POW_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
-  NX_C_BK(pow, sfx, storage, compute, ld, st, NX_C_MFN(pow, compute)((va), (vb)))
+  NX_C_BK(pow, sfx, storage, compute, ld, st,                                   \
+         NX_C_MFN(nx_c_pow, compute)((va), (vb)))
 #define NX_C_POW_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                 \
   NX_C_BK(pow, sfx, storage, compute, ld, st,                                   \
          NX_C_MFN(cpow, compute)((va), (vb)))

@@ -900,4 +900,11 @@ int nx_c_threads_for(nx_c_cost_class cls, int64_t runs, int64_t run_len,
 int nx_c_plan_threads(int threads, nx_c_cost_class cls, int64_t runs,
                       int64_t run_len, int64_t bytes);
 
+/* ── pow ─────────────────────────────────────────────────────────────────
+
+   x to the y, the same bits on every system: the C libraries' pow differ.
+   Implemented in nx_c_pow.c. */
+double nx_c_pow(double x, double y);
+float nx_c_powf(float x, float y);
+
 #endif /* NX_C_C_H */
