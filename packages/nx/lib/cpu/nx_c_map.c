@@ -681,14 +681,40 @@ NX_C_FLOATOP(expm1)
 #undef NX_C_CUROP
 
 /* Rounding: identity on integers, the libm rounder on floats, rejected on
-   complex (NULL). */
+   complex (NULL). Where the C library's round is wrong, as mingw-w64's at the
+   float just below 1/2, which it rounds to 1, OCaml's configure leaves
+   HAS_WORKING_ROUND undefined: round then moves away from [trunc x] by one
+   when the exact remainder [x - trunc x] is at least a half. */
+#define NX_C_LIBM_ROUNDER(fn, sfx, type)                                        \
+  static inline type nx_c_##fn##sfx(type x) { return fn##sfx(x); }
+NX_C_LIBM_ROUNDER(trunc, , double)
+NX_C_LIBM_ROUNDER(trunc, f, float)
+NX_C_LIBM_ROUNDER(ceil, , double)
+NX_C_LIBM_ROUNDER(ceil, f, float)
+NX_C_LIBM_ROUNDER(floor, , double)
+NX_C_LIBM_ROUNDER(floor, f, float)
+#ifdef HAS_WORKING_ROUND
+NX_C_LIBM_ROUNDER(round, , double)
+NX_C_LIBM_ROUNDER(round, f, float)
+#else
+static inline double nx_c_round(double x) {
+  double t = trunc(x);
+  return fabs(x - t) >= 0.5 ? t + copysign(1.0, x) : t;
+}
+
+static inline float nx_c_roundf(float x) {
+  float t = truncf(x);
+  return fabsf(x - t) >= 0.5f ? t + copysignf(1.0f, x) : t;
+}
+#endif
+
 #define NX_C_RNK_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                    \
   NX_C_UK(NX_C_CUROP, sfx, storage, compute, ld, st, (vx))
 #define NX_C_RNK_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                    \
   NX_C_UK(NX_C_CUROP, sfx, storage, compute, ld, st, (vx))
 #define NX_C_RNK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
   NX_C_UK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
-         NX_C_MFN(NX_C_CUROP, compute)(vx))
+         NX_C_MFN(NX_C_PASTE(nx_c_, NX_C_CUROP), compute)(vx))
 #define NX_C_RNK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_RNK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
 #define NX_C_RND_KROW(sfx, storage, compute, ld, st, cat)                       \
