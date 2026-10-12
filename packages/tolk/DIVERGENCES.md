@@ -3805,3 +3805,29 @@ submission, and a range a loop of rig's program (D146).
   19, the first aborts the compile and the second fails to link (on a CPU
   without AVX512-BF16) under `__bf16`. The x86 Clang goldens of bfloat16
   kernels (`bf16_clang`, `clang_*_bf16`). The rune cases above on x86.
+
+## D148. A selection keeps its guard of a conversion or a division
+
+- **tinygrad:** `uop/symbolic.py:228-235` (`fold_where_closure`, which
+  assumes a selection's condition true in its true branch and false in the
+  other, unless an `INDEX` is involved).
+- **tolk:** `lib/uop/shape.ml:2447` (`guards_partial`) and `:2457`
+  (`fold_where_closure`).
+- **Differs:** the condition is not assumed in the branches where it reaches
+  the operand of a conversion of a float to an integer or of an integer
+  divisor in one of them. tinygrad folds `where c (cast (where c q 0)) f` to
+  `where c (cast q) f`, and `where c (x // where c d 1) 0` to
+  `where c (x // d) 0`. `gen/tinygrad.patch` makes the same exception, and no
+  golden changes.
+- **Reason:** (b). C leaves a conversion of a float outside the integer's
+  range undefined, and a division by zero traps on x86. Clang computes an
+  operation in every lane of a vector and selects between vectors with masks,
+  which keep an undefined lane the selection discards; LLVM then folds it into
+  any value. rune guards such an operand, as the quadrant of a sine's
+  reduction, by a selection on the condition that discards it, and the fold
+  removed the guard: the compiled sine of `[0; inf]` on x86 read
+  `0x1.c9e8dep+97` for `sin 0`.
+- **Pinned by:** the `Symbolic` suite's `selections › a guard of a conversion
+  to an integer is kept in the branches` and `› a guard of an integer divisor
+  is kept in the branches`; rune's `a compiled program › computes eager's
+  values within the stated rounding`, whose third example is that sine.

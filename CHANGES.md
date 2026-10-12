@@ -1230,6 +1230,9 @@ thread.
 
 ### Tolk (new)
 
+- `Shape.symbolic` keeps a selection that guards a float-to-integer
+  conversion or an integer divisor. Removing it let a compiled vector
+  kernel on x86 read any value in lanes it discarded.
 - On x86 hosts without AVX512-BF16, compiled bfloat16 kernels that select
   between vectors, merge a gated load or bitcast stacked lanes compile and
   link: the Clang renderer holds bfloat16 as `unsigned short` there. They

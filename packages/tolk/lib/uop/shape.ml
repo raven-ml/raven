@@ -2429,6 +2429,30 @@ let commutative =
           else None);
     ])
 
+(* The operand C leaves [u] undefined for some values of: a float converted to
+   an integer, outside the integer's range, and an integer divisor, at zero. *)
+let partial_operand u =
+  match op u with
+  | Op.Cast when Dtype.is_int (dtype u) && Dtype.is_float (dtype (nth u 0)) ->
+      Some (nth u 0)
+  | (Op.Cdiv | Op.Cmod | Op.Floordiv | Op.Floormod)
+    when Dtype.is_int (dtype u) ->
+      Some (nth u 1)
+  | _ -> None
+
+let partial_ops = Op.[ Cast; Cdiv; Cmod; Floordiv; Floormod ]
+
+(* Whether [u] holds an undefined-prone operation whose operand reads [cond]: a
+   selection by [cond] may be its guard. *)
+let guards_partial cond u =
+  op_in_backward_slice_with_self ~calls:Skip u partial_ops
+  && List.exists
+       (fun n ->
+         match partial_operand n with
+         | Some o -> reaches ~calls:Skip o cond
+         | None -> false)
+       (toposort ~calls:Skip u)
+
 (* in cond.where(t, f), cond is True within t and False within f *)
 let fold_where_closure cond t f =
   if not (Dtype.equal (dtype cond) Dtype.Bool) then None
@@ -2445,6 +2469,12 @@ let fold_where_closure cond t f =
       [ cond; t; f ]
   then None
   else if not (reaches ~calls:Enter t cond || reaches ~calls:Enter f cond)
+  then None
+  else if
+    (* a conversion or a division that the selection keeps from an operand it
+       is undefined for stays guarded: C computes it in every lane of a
+       vector, and a selection of vectors keeps an undefined lane it discards *)
+    guards_partial cond t || guards_partial cond f
   then None
   else
     let assume b u =

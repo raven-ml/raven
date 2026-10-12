@@ -690,6 +690,16 @@ let symbolic_selections =
           let c = Ops.O.(load < float 1.) in
           let sel = Ops.where c (Ops.where c f g) (Call.param 3 Dtype.Float32) in
           equal uop sel (symbolic sel));
+      test "a guard of a conversion to an integer is kept in the branches"
+        (fun () ->
+          let near = Ops.O.(f < float 4096.) in
+          let q = Ops.cast (Ops.where near f (Ops.O.float 0.)) Dtype.Int32 in
+          let sel = Ops.where near q x in
+          equal uop sel (symbolic sel));
+      test "a guard of an integer divisor is kept in the branches" (fun () ->
+          let d = Ops.where cond y (Ops.int 1) in
+          let sel = Ops.where cond Ops.O.(x // d) (Ops.int 0) in
+          equal uop sel (symbolic sel));
       test "where g x 0 <> 0 is g land (x <> 0)" (fun () ->
           by_symbolic
             Ops.O.(Ops.where cond b (int 0) <> int 0)
