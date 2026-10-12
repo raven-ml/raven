@@ -219,6 +219,10 @@ type rdev = {
   mutable made : rmem list;  (** Memories the device allocated. *)
   mutable followers : rdev list;
       (** Devices whose queue may wait on this device's work. *)
+  mutable halves : int;
+      (** The halves of its own staging memory known made ({!own_stage}). *)
+  mutable stagers : rdev list;
+      (** Devices whose work may have used its own staging memory. *)
 }
 
 (* A memory's stamps as the reference knows them: the device of its last write
@@ -291,6 +295,8 @@ let new_dev w kind =
       seen = 0;
       made = [];
       followers = [];
+      halves = 0;
+      stagers = [];
     }
   in
   w.next_dev <- w.next_dev + 1;
@@ -577,6 +583,52 @@ let made_bytes d =
       if counts m || m.mkind = Owned B.Mapped then n + Bytes.length m.data
       else n)
     0 d.made
+
+(* Staging memory *)
+
+(* A copy that no device runs in one transfer goes through staging memory: two
+   slots of two halves of 32 MiB, each half an allocation (copy.mli). *)
+let half_bytes = 32 * 1024 * 1024
+
+(* The device whose own staging memory a copy between [b] and host memory goes
+   through, where its halves count in that device's budget. Memory the host
+   addresses the host copies. A copy of other memory runs on [b]'s device, or
+   on its memory's where [b]'s runs no copy, and a device that maps no host
+   memory stages through its own [Pinned] memory, which counts in its budget
+   where the host addresses its memory (rig.mli, Buffer.copy and budgets). *)
+let own_stage b =
+  if b.local <> Remote then None
+  else
+    let runner =
+      match b.on.kind with
+      | Polled { copies = false; _ } -> b.mem.owner
+      | _ -> b.on
+    in
+    match runner.kind with
+    | Polled ({ maps_host = false; _ } as c) when host_addresses c ->
+        Some runner
+    | _ -> None
+
+(* The halves of [r]'s own staging memory known made: none once a device whose
+   work may name them may be lost, as rig replaces a half whose stamps name a
+   lost device's unfinished work. *)
+let known_halves r =
+  if List.exists (fun d -> d.state <> Fine) (r :: r.stagers) then 0
+  else r.halves
+
+(* A copy through [r]'s own staging memory, whose legs may run on [users]: the
+   budget may refuse a half of the slot it takes while one is not made. *)
+let stages w v r users =
+  r.stagers <- List.fold_left (fun l d -> add d l) r.stagers users;
+  let missing = 2 - known_halves r in
+  if
+    missing > 0 && v.oom = `No
+    && may_refuse w r (made_bytes r) (missing * half_bytes)
+  then v.oom <- `May
+
+(* A copy through [r]'s own staging memory returned: on one domain it took the
+   first slot, whose two halves are then made. On two, either slot. *)
+let staged w r = if not w.two then r.halves <- 2
 
 (* The system *)
 
@@ -1199,11 +1251,14 @@ let fill_ref seed last c outcome =
     owned vd b;
     if b.on.kind = Host then waits_all vd b.mem
     else if b.length > 0 then waits_all vd b.mem;
+    let stage = if b.length > 0 then own_stage b else None in
+    Option.iter (fun r -> stages c.w vd r []) stage;
     let lost () =
       unknown b;
       if device_work b.on then maybe_write b.mem.stamps b.on
     in
     judge ~lost c.w vd outcome (fun () ->
+        Option.iter (staged c.w) stage;
         seen c.w "a fill whose buffer is unreachable during it" last;
         if b.on.kind <> Host && b.local = Remote && b.length > 0 then begin
           follows b.on vd;
@@ -1231,8 +1286,11 @@ let read_ref last c outcome =
   invalid_if vd (dead b);
   owned vd b;
   if b.on.kind = Host || b.length > 0 then reads vd b.mem;
+  let stage = if b.length > 0 then own_stage b else None in
+  Option.iter (fun r -> stages c.w vd r []) stage;
   let lost () = if device_work b.on then maybe_use b.mem.stamps b.on in
   judge ~lost c.w vd outcome (fun s ->
+      Option.iter (staged c.w) stage;
       if
         b.on.kind <> Host && b.local = Remote && device_work b.on
         && b.length > 0
@@ -1266,11 +1324,16 @@ let copy_judge ~invalid last src a b outcome =
   invalid_if vd (read_only b.mem);
   owned vd a;
   owned vd b;
+  let w = src.w in
   if a.length > 0 then begin
     reads vd a.mem;
-    waits_all vd b.mem
+    waits_all vd b.mem;
+    (* Whether the copy stages depends on what the runner maps of the other
+       side: the allowance holds whichever route it takes. *)
+    List.iter
+      (fun r -> stages w vd r [ a.on; a.mem.owner; b.on; b.mem.owner ])
+      (List.filter_map own_stage [ a; b ])
   end;
-  let w = src.w in
   let lost () =
     unknown b;
     List.iter
