@@ -7020,6 +7020,12 @@ thread.
 
 ### Talon
 
+- On Windows, `Column.parse`, `Expr.Str.parse` and `talon.csv` read a float as
+  the nearest value of its type, as elsewhere. msvcrt's strtod misread some
+  float64 texts near a power of two, and texts close to halfway between two
+  `float32` or `float16` values rounded the wrong way. A float text of more
+  than 15 digits or a far exponent no longer goes through strtod, and reads
+  in about 0.6 of the time.
 - On Windows, a table shows its floats with two exponent digits and rounded
   once, ties to even (`1.00000e+16`, not `1.00000e+016`), as on other systems.
   `Expr.pp` writes a float literal in the text `Column.print` writes, with a

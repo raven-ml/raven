@@ -5,7 +5,8 @@
 
 (* Filter, group, join and sort over the 40k-row fixture, the same work as
    bench_talon.py does in pandas; then the operations that read validities, over
-   a generated table with nulls, and a read of a Parquet file with nulls. *)
+   a generated table with nulls, a read of float texts, and a read of a Parquet
+   file with nulls. *)
 
 open Talon
 
@@ -196,6 +197,16 @@ let joined_nulls =
 
 let parquet = Filename.concat data_dir "nulls.parquet"
 
+(* Texts *)
+
+(* 2^16 float64 texts of 17 significant digits, as a writer that keeps every
+   bit of a float writes them, read as float64. *)
+let texts =
+  let xs = Nx.to_array (Nx.Rng.uniform (Nx.Rng.key 23) Nx.float64 [| 1 lsl 16 |]) in
+  Column.v Type.string (Array.map (fun x -> Printf.sprintf "%.17g" (1000. *. x)) xs)
+
+let parse_floats () = Result.get_ok (Column.parse float64 texts)
+
 let read_parquet () =
   run (Query.of_source (Error.get_ok (Talon_parquet.file parquet)))
 
@@ -226,6 +237,8 @@ let () =
                   |> aggregate ~by:[ "key" ] Expr.[ "f" := sum (Col.float "f") ]));
           Thumper.bench "Nulls/join-left" (fun () -> run joined_nulls);
         ];
+      Thumper.group "Talon_text"
+        [ Thumper.bench "parse-float64-17-digits" parse_floats ];
       Thumper.group "Talon_parquet"
         [ Thumper.bench "read-nullable" read_parquet ];
     ]

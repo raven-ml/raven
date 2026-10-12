@@ -8,6 +8,7 @@
    digits come from Schubfach (R. Giulietti, "The Schubfach way to render
    doubles", 2020), which finds them with three 64x128-bit products. */
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -829,6 +830,82 @@ value talon_float_text_byte(value x, value p, value emin, value b)
 {
   return Val_long(
       talon_float_text(Double_val(x), Long_val(p), Long_val(emin), b));
+}
+
+/* Reading a decimal: the float64 nearest w' 10^q, where w' is w, or lies
+   strictly between w and w + 1 when digits past w's were dropped. G's entry
+   for 10^q is g, and 10^q = t 2^r with g - 1 <= t < g, so w' 10^q / 2^r lies
+   in [w (g - 1), (w + 1) g), or [w (g - 1), w g) when nothing was dropped.
+   When both ends have the same top 54 bits, every value between rounds to the
+   same float, which those bits name; otherwise, at an exact midpoint, past G's
+   powers or outside the normal floats, the reader is NaN and its caller reads
+   the text exactly. This is Eisel and Lemire's test (D. Lemire, "Number
+   Parsing at a Gigabyte per Second", 2021) with Schubfach's table. */
+
+/* A 192-bit natural, hi 2^64 + lo. */
+typedef struct {
+  u128 hi;
+  uint64_t lo;
+} u192;
+
+/* [mul_g(w, g1, g0)] is w g for g = g1 2^63 + g0 and w below 2^61. */
+static u192 mul_g(uint64_t w, uint64_t g1, uint64_t g0)
+{
+  u128 x = (u128)w * g0;
+  u128 y = (u128)w * g1;
+  u128 low = ((u128)(uint64_t)(y & 1) << 63) + (uint64_t)x;
+  u192 r = { (y >> 1) + (x >> 64) + (low >> 64), (uint64_t)low };
+  return r;
+}
+
+static int bits_u128(u128 x)
+{
+  uint64_t h = (uint64_t)(x >> 64);
+  return h ? 128 - __builtin_clzll(h)
+           : (uint64_t)x ? 64 - __builtin_clzll((uint64_t)x) : 0;
+}
+
+/* [talon_float_of_decimal(w, q, dropped)] is the float64 nearest w' 10^q, w
+   from 1 to 10^18, or NaN when the products above cannot tell it. */
+double talon_float_of_decimal(intnat w, intnat q, intnat dropped)
+{
+  if (w < 1 || q < -292 || q > 324) return NAN;
+  uint64_t g1 = G[-q - K_MIN][0], g0 = G[-q - K_MIN][1];
+  int r = flog2_pow10((int)q) - 125;
+  u192 p = mul_g((uint64_t)w, g1, g0);
+  u192 h = dropped ? mul_g((uint64_t)w + 1, g1, g0) : p;
+  /* p = w g - w, the low end; w g's high limb is at least 2^61. */
+  p.hi -= p.lo < (uint64_t)w;
+  p.lo -= (uint64_t)w;
+  /* The top 54 bits of each end, above [s] bits of hi and all of lo. */
+  int s = bits_u128(p.hi) - 54;
+  uint64_t a = (uint64_t)(p.hi >> s), b = (uint64_t)(h.hi >> s);
+  if (a != b) return NAN;
+  int exact = p.lo == 0 && (p.hi & (((u128)1 << s) - 1)) == 0;
+  /* a's last bit is the half below the 53 bits: clear, the ends lie below the
+     midpoint above them; set, at or above the one below. */
+  uint64_t n = a >> 1;
+  if (a & 1) {
+    if (exact) return NAN;
+    n++;
+  }
+  int e = r + s + 64 + 1;
+  if (n == (uint64_t)1 << 53) {
+    n >>= 1;
+    e++;
+  }
+  int biased = e + 52 + 1023;
+  if (biased < 1 || biased > 2046) return NAN;
+  uint64_t bits = (uint64_t)biased << 52 | (n & (((uint64_t)1 << 52) - 1));
+  double x;
+  memcpy(&x, &bits, 8);
+  return x;
+}
+
+value talon_float_of_decimal_byte(value w, value q, value dropped)
+{
+  return caml_copy_double(
+      talon_float_of_decimal(Long_val(w), Long_val(q), Long_val(dropped)));
 }
 
 /* Digits rounded to a precision, rounded once. Under mingw-w64, the snprintf

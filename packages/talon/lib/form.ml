@@ -99,98 +99,22 @@ let int64 b pos len a i =
 let uint64 b pos len a i =
   wide ~max:"18446744073709551615" ~min:"0" b pos len a i
 
-let pow10 = Array.init 23 (fun e -> float_of_string ("1e" ^ string_of_int e))
+(* 10^0 to 10^22, exact doubles: each product is exact. *)
+let pow10 =
+  let a = Array.make 23 1. in
+  for e = 1 to 22 do
+    a.(e) <- 10. *. a.(e - 1)
+  done;
+  a
 
-(* [float] reads a decimal number, [inf], [infinity] or [nan] as the nearest
-   float64. The fast path is exact: a significand of at most 2^53 and a power of
-   ten of at most 10^22 are exact doubles, and the product or quotient rounds
-   once. Past 2^53 the significand stops growing, which leaves the fast path. *)
-let float b pos len (a : float64s) k =
-  let stop = pos + len in
-  let first = after_sign b pos len in
-  let rest = stop - first in
-  if
-    equals ~caseless:true b first rest "inf"
-    || equals ~caseless:true b first rest "infinity"
-  then A1.unsafe_set a k (if is_minus b pos len then neg_infinity else infinity)
-  else if equals ~caseless:true b first rest "nan" then A1.unsafe_set a k nan
-  else begin
-    let i = ref first and m = ref 0 and exp = ref 0 in
-    let frac = ref false and any = ref false in
-    while
-      !i < stop
-      &&
-      let c = get b !i in
-      is_digit c || (c = '.' && not !frac)
-    do
-      if get b !i = '.' then frac := true
-      else begin
-        any := true;
-        if !m <= 1 lsl 53 then begin
-          m := (10 * !m) + digit b !i;
-          if !frac then decr exp
-        end
-      end;
-      incr i
-    done;
-    if not !any then invalid "not a number";
-    if !i < stop && (get b !i = 'e' || get b !i = 'E') then begin
-      incr i;
-      let negative = !i < stop && get b !i = '-' in
-      if !i < stop && (negative || get b !i = '+') then incr i;
-      if not (!i < stop && is_digit (get b !i)) then invalid "not a number";
-      let e = ref 0 in
-      while !i < stop && is_digit (get b !i) do
-        if !e < 100_000 then e := (10 * !e) + digit b !i;
-        incr i
-      done;
-      exp := if negative then !exp - !e else !exp + !e
-    end;
-    if !i <> stop then invalid "not a number";
-    if !m <= 1 lsl 53 && -22 <= !exp && !exp <= 22 then begin
-      let v = Float.of_int !m in
-      let v = if !exp >= 0 then v *. pow10.(!exp) else v /. pow10.(- !exp) in
-      A1.unsafe_set a k (if is_minus b pos len then -.v else v)
-    end
-    else A1.unsafe_set a k (float_of_string (sub_string b pos len))
-  end
+(* Exact decimals *)
 
-(* Rounding to a narrower type: [float] rounds once to float64, and a cast to
-   the narrower type rounds again. Only a float64 halfway between two values of
-   that type can round wrong then, so such a float64 moves one step towards the
-   text's value, found by comparing their exact digits, unless the text is the
-   float64 itself. *)
-
-type width = { p : int; emin : int; max : float }
-
-(* The width of the float dtype [dt], read from its limits: [emin] is the
-   exponent of its least normal value. *)
-let float_width dt =
-  {
-    p = Nx_dtype.precision dt;
-    emin = snd (Float.frexp (Nx_dtype.min_normal dt)) - 1;
-    max = Nx_dtype.max_finite dt;
-  }
-
-let half = float_width Nx_dtype.float16
-let single = float_width Nx_dtype.float32
-
-(* [nearest w v] is the value of width [w] nearest to [v], ties to even. *)
-let nearest w v =
-  let biased =
-    Int64.to_int (Int64.shift_right_logical (Int64.bits_of_float v) 52)
-  in
-  let e = Int.max ((biased land 0x7FF) - 1023) w.emin in
-  let ulp = Float.ldexp 1. (e - w.p + 1) in
-  let q = v /. ulp in
-  let r = Float.round q in
-  let r =
-    if Float.abs (r -. q) = 0.5 && Float.rem r 2. <> 0. then
-      r -. Float.copy_sign 1. q
-    else r
-  in
-  let r = r *. ulp in
-  if Float.abs r > w.max then Float.copy_sign Float.infinity v else r
+(* A float that strtod reads, where {!of_decimal} cannot tell the float, is
+   checked against the text exactly: the C library's strtod is not correctly
+   rounded everywhere, and under mingw-w64 both msvcrt's and mingw-w64's read
+   3.839223843572815e-239 as 2^-792, one float above its nearest. Numbers are
+   compared as naturals times powers of 2 and 5, the naturals in little-endian
+   limbs of 30 bits without a zero limb last. *)
 
 (* [magnitude s] is the significant digits of the decimal number [s], without
    leading and trailing zeros, and the exponent [e] of its value [0.digits ×
@@ -226,25 +150,340 @@ let magnitude s =
   if !lead = !stop then ("", 0)
   else (String.sub d !lead (!stop - !lead), point - !lead + !exp)
 
-let compare_magnitude (d0, e0) (d1, e1) =
-  match (d0, d1) with
-  | "", "" -> 0
-  | "", _ -> -1
-  | _, "" -> 1
-  | _ -> if e0 <> e1 then Int.compare e0 e1 else String.compare d0 d1
+let limb_bits = 30
+let limb_mask = (1 lsl limb_bits) - 1
+
+let nat_trim a =
+  let n = ref (Array.length a) in
+  while !n > 0 && a.(!n - 1) = 0 do
+    decr n
+  done;
+  if !n = Array.length a then a else Array.sub a 0 !n
+
+(* [nat_of_int n] is the natural [n], at least [0]. *)
+let nat_of_int n =
+  let rec limbs n =
+    if n = 0 then [] else (n land limb_mask) :: limbs (n lsr limb_bits)
+  in
+  Array.of_list (limbs n)
+
+(* [nat_mul_add a k c] is [a × k + c], for [k] and [c] below [2^30]. Each sum
+   stays below [2^60], so each carry below [2^30]. *)
+let nat_mul_add a k c =
+  let la = Array.length a in
+  let r = Array.make (la + 1) 0 in
+  let carry = ref c in
+  for i = 0 to la - 1 do
+    let t = (a.(i) * k) + !carry in
+    r.(i) <- t land limb_mask;
+    carry := t lsr limb_bits
+  done;
+  r.(la) <- !carry;
+  nat_trim r
+
+let nat_mul a b =
+  let la = Array.length a and lb = Array.length b in
+  let r = Array.make (la + lb + 1) 0 in
+  for i = 0 to la - 1 do
+    (* Each sum stays below [2^30 + 2^60 + 2^32], within an [int]. *)
+    let carry = ref 0 in
+    for j = 0 to lb - 1 do
+      let t = r.(i + j) + (a.(i) * b.(j)) + !carry in
+      r.(i + j) <- t land limb_mask;
+      carry := t lsr limb_bits
+    done;
+    let k = ref (i + lb) in
+    while !carry > 0 do
+      let t = r.(!k) + !carry in
+      r.(!k) <- t land limb_mask;
+      carry := t lsr limb_bits;
+      incr k
+    done
+  done;
+  nat_trim r
+
+(* [nat_shift a s] is [a × 2^s], for [s] at least [0]. *)
+let nat_shift a s =
+  let q = s / limb_bits and r = s mod limb_bits in
+  let la = Array.length a in
+  let res = Array.make (la + q + 1) 0 in
+  for i = 0 to la - 1 do
+    let v = a.(i) lsl r in
+    res.(i + q) <- res.(i + q) lor (v land limb_mask);
+    res.(i + q + 1) <- v lsr limb_bits
+  done;
+  nat_trim res
+
+let nat_compare a b =
+  let la = Array.length a and lb = Array.length b in
+  if la <> lb then Int.compare la lb
+  else
+    let rec loop i =
+      if i < 0 then 0
+      else
+        let c = Int.compare a.(i) b.(i) in
+        if c <> 0 then c else loop (i - 1)
+    in
+    loop (la - 1)
+
+(* [5^12], the greatest power of five below [2^30]. *)
+let pow5_12 = 244_140_625
+
+let nat_pow5 k =
+  let r = ref [| 1 |] in
+  for _ = 1 to k / 12 do
+    r := nat_mul_add !r pow5_12 0
+  done;
+  let rest = ref 1 in
+  for _ = 1 to k mod 12 do
+    rest := !rest * 5
+  done;
+  nat_mul_add !r !rest 0
+
+(* [nat_of_digits s] is the natural the decimal digits [s] write, read nine at
+   a time. *)
+let nat_of_digits s =
+  let a = ref [||] and chunk = ref 0 and scale = ref 1 in
+  String.iter
+    (fun c ->
+      chunk := (10 * !chunk) + Char.code c - 48;
+      scale := 10 * !scale;
+      if !scale = 1_000_000_000 then begin
+        a := nat_mul_add !a !scale !chunk;
+        chunk := 0;
+        scale := 1
+      end)
+    s;
+  if !scale > 1 then nat_mul_add !a !scale !chunk else !a
+
+(* [versus digits k b f] compares [digits × 10^k], [digits] the decimal digits
+   of a natural, with [b × 2^f]: negative, zero or positive as it is less,
+   equal or greater. [versus digits k] may be applied once and reused. *)
+let versus digits k =
+  let a = nat_of_digits digits in
+  let p5 = nat_pow5 (Int.abs k) in
+  let big = if k >= 0 then nat_mul a p5 else p5 in
+  fun b f ->
+    let e = f - k in
+    let l, r = if k >= 0 then (big, b) else (a, nat_mul b big) in
+    if e >= 0 then nat_compare l (nat_shift r e)
+    else nat_compare (nat_shift l (-e)) r
+
+(* [versus_float vs y] is [vs]'s comparison with the finite float64 [y], at
+   least [0.]. *)
+let versus_float vs y =
+  let f, e = Float.frexp y in
+  vs (nat_of_int (Float.to_int (Float.ldexp f 53))) (e - 53)
+
+(* [place vs y] is negative, zero or positive as the number that [vs] compares,
+   at least [0], rounds, ties to even, below the finite float64 [y], at least
+   [0.], to [y] or above it. It compares the number with the midpoints between
+   [y] and its neighbours. *)
+let place vs y =
+  if y = 0. then if vs [| 1 |] (-1075) <= 0 then 0 else 1
+  else
+    let _, e = Float.frexp y in
+    let u = Int.max (e - 53) (-1074) in
+    let m = Float.to_int (Float.ldexp y (-u)) in
+    let even = m land 1 = 0 in
+    let lo =
+      if m = 1 lsl 52 && u > -1074 then vs (nat_of_int ((4 * m) - 1)) (u - 2)
+      else vs (nat_of_int ((2 * m) - 1)) (u - 1)
+    in
+    if lo < 0 || (lo = 0 && not even) then -1
+    else
+      let hi = vs (nat_of_int ((2 * m) + 1)) (u - 1) in
+      if hi > 0 || (hi = 0 && not even) then 1 else 0
+
+(* [exact s x] is the float64 nearest the decimal number [s], ties to even,
+   searched from [x], strtod's reading of [s], which may be any float: msvcrt's
+   reads some subnormal texts far from their value. Steps that double away
+   from [x] bracket the nearest float, at most 64 of them, and halving the
+   bracket finds it, at most 64 times more. A number of [10^309] or more is an
+   infinity and one below [10^-324] a zero, whatever its digits. *)
+let exact s x =
+  let digits, e = magnitude s in
+  let y =
+    if digits = "" || e <= -324 then 0.
+    else if e >= 310 then Float.infinity
+    else
+      let vs = versus digits (e - String.length digits) in
+      (* The nonnegative floats ordered by their bits, the infinity last.
+         [side b] is negative, zero or positive as the nearest float lies
+         below, at or above the float of bits [b]. *)
+      let inf = Int64.bits_of_float Float.infinity in
+      let side b =
+        if b = inf then if place vs Float.max_float > 0 then 0 else -1
+        else place vs (Int64.float_of_bits b)
+      in
+      (* The nearest float lies strictly between [lo] and [hi]. *)
+      let rec bisect lo hi =
+        if Int64.sub hi lo <= 1L then assert false;
+        let mid = Int64.add lo (Int64.div (Int64.sub hi lo) 2L) in
+        match side mid with
+        | 0 -> mid
+        | c when c < 0 -> bisect lo mid
+        | _ -> bisect mid hi
+      in
+      (* It lies below [hi], or above [lo]: [side 0] is never negative and
+         [side inf] never positive, so each walk stops. *)
+      let rec down hi step =
+        let lo = if Int64.compare hi step <= 0 then 0L else Int64.sub hi step in
+        match side lo with
+        | 0 -> lo
+        | c when c < 0 -> down lo (Int64.mul step 2L)
+        | _ -> bisect lo hi
+      in
+      let rec up lo step =
+        let hi =
+          if Int64.compare (Int64.sub inf lo) step <= 0 then inf
+          else Int64.add lo step
+        in
+        match side hi with
+        | 0 -> hi
+        | c when c > 0 -> up hi (Int64.mul step 2L)
+        | _ -> bisect lo hi
+      in
+      let h = Int64.bits_of_float (Float.abs x) in
+      let h = if Int64.compare h inf > 0 then inf else h in
+      let b =
+        match side h with 0 -> h | c when c < 0 -> down h 1L | _ -> up h 1L
+      in
+      Int64.float_of_bits b
+  in
+  if String.length s > 0 && s.[0] = '-' then -.y else y
+
+(* [of_decimal w q dropped] is the float64 nearest [w' 10^q], where [w'] is
+   [w], from [1] to [10^18], or lies strictly between [w] and [w + 1] when
+   [dropped] is [1]: digits past [w]'s were dropped. It is NaN when 128-bit
+   products of [w] and [10^q] cannot tell it: close to a midpoint between two
+   floats, for [q] outside [-292] to [324], and outside the normal floats. *)
+external of_decimal :
+  (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> (float[@unboxed])
+  = "talon_float_of_decimal_byte" "talon_float_of_decimal"
+[@@noalloc]
+
+(* Significant digits kept of a float's text: 10^18 is below [max_int]. *)
+let kept_digits = 18
+
+(* [float] reads a decimal number, [inf], [infinity] or [nan] as the nearest
+   float64. It keeps the first 18 significant digits [w] and the exponent [q]
+   of [w 10^q]. A [w] of at most 2^53 with a power of ten of at most 10^22,
+   both exact doubles, rounds once in a product or quotient; any other float
+   is {!of_decimal}'s, or, where that cannot tell, strtod's made {!exact}. *)
+let float b pos len (a : float64s) k =
+  let stop = pos + len in
+  let first = after_sign b pos len in
+  let rest = stop - first in
+  if
+    equals ~caseless:true b first rest "inf"
+    || equals ~caseless:true b first rest "infinity"
+  then A1.unsafe_set a k (if is_minus b pos len then neg_infinity else infinity)
+  else if equals ~caseless:true b first rest "nan" then A1.unsafe_set a k nan
+  else begin
+    let i = ref first and w = ref 0 and kept = ref 0 and q = ref 0 in
+    let frac = ref false and any = ref false and dropped = ref false in
+    while
+      !i < stop
+      &&
+      let c = get b !i in
+      is_digit c || (c = '.' && not !frac)
+    do
+      if get b !i = '.' then frac := true
+      else begin
+        any := true;
+        let d = digit b !i in
+        if !kept < kept_digits then begin
+          w := (10 * !w) + d;
+          if !w > 0 then incr kept;
+          if !frac then decr q
+        end
+        else begin
+          if d > 0 then dropped := true;
+          if not !frac then incr q
+        end
+      end;
+      incr i
+    done;
+    if not !any then invalid "not a number";
+    if !i < stop && (get b !i = 'e' || get b !i = 'E') then begin
+      incr i;
+      let negative = !i < stop && get b !i = '-' in
+      if !i < stop && (negative || get b !i = '+') then incr i;
+      if not (!i < stop && is_digit (get b !i)) then invalid "not a number";
+      let e = ref 0 in
+      while !i < stop && is_digit (get b !i) do
+        if !e < 100_000 then e := (10 * !e) + digit b !i;
+        incr i
+      done;
+      q := if negative then !q - !e else !q + !e
+    end;
+    if !i <> stop then invalid "not a number";
+    let w = !w and q = !q in
+    let v =
+      if w = 0 then 0.
+      else if (not !dropped) && w <= 1 lsl 53 && -22 <= q && q <= 22 then
+        let v = Float.of_int w in
+        if q >= 0 then v *. pow10.(q) else v /. pow10.(-q)
+      else
+        let v = of_decimal w q (Bool.to_int !dropped) in
+        if Float.is_nan v then
+          let s = sub_string b pos len in
+          Float.abs (exact s (float_of_string s))
+        else v
+    in
+    A1.unsafe_set a k (if is_minus b pos len then -.v else v)
+  end
+
+(* Rounding to a narrower type: [float] rounds once to float64, and a cast to
+   the narrower type rounds again. Only a float64 halfway between two values of
+   that type can round wrong then, so such a float64 moves one step towards the
+   text's value, found by comparing the two exactly, unless the text is the
+   float64 itself. *)
+
+type width = { p : int; emin : int; max : float }
+
+(* The width of the float dtype [dt], read from its limits: [emin] is the
+   exponent of its least normal value. *)
+let float_width dt =
+  {
+    p = Nx_dtype.precision dt;
+    emin = snd (Float.frexp (Nx_dtype.min_normal dt)) - 1;
+    max = Nx_dtype.max_finite dt;
+  }
+
+let half = float_width Nx_dtype.float16
+let single = float_width Nx_dtype.float32
+
+(* [nearest w v] is the value of width [w] nearest to [v], ties to even. *)
+let nearest w v =
+  let biased =
+    Int64.to_int (Int64.shift_right_logical (Int64.bits_of_float v) 52)
+  in
+  let e = Int.max ((biased land 0x7FF) - 1023) w.emin in
+  let ulp = Float.ldexp 1. (e - w.p + 1) in
+  let q = v /. ulp in
+  let r = Float.round q in
+  let r =
+    if Float.abs (r -. q) = 0.5 && Float.rem r 2. <> 0. then
+      r -. Float.copy_sign 1. q
+    else r
+  in
+  let r = r *. ulp in
+  if Float.abs r > w.max then Float.copy_sign Float.infinity v else r
 
 (* [narrow w] reads the text as [float] does, and stores a float64 that rounds
    to the value of width [w] nearest to the text, ties to even. It allocates
    when the float64 nearest to the text is halfway between two values of [w],
-   whose digits it then compares exactly. *)
+   which it then compares exactly with the text. *)
 let narrow w b pos len a k =
   float b pos len a k;
   let x = A1.unsafe_get a k in
   if Float.is_finite x && nearest w (Float.pred x) <> nearest w (Float.succ x)
   then
-    (* 1100 digits write every float64 exactly. *)
-    let text = magnitude (sub_string b pos len) in
-    match compare_magnitude text (magnitude (Printf.sprintf "%.1100e" x)) with
+    let digits, e = magnitude (sub_string b pos len) in
+    let vs = versus digits (e - String.length digits) in
+    match versus_float vs (Float.abs x) with
     | 0 -> ()
     | c ->
         A1.unsafe_set a k

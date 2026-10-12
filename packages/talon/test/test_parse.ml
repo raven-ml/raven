@@ -75,6 +75,8 @@ let values =
             2.2250738585072011e-308;
             1.2345678901234568e+20;
           ] );
+      (* The float below 2^-792, which some C libraries' strtod read as 2^-792. *)
+      Case (float64, [ "3.839223843572815e-239" ], [ 0x1.fffffffffffffp-793 ]);
       Case (float32, [ "0.1"; "16777217" ], [ 0.10000000149011612; 16777216. ]);
       Case
         ( float32,
