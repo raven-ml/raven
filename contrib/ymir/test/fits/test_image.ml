@@ -239,16 +239,21 @@ let window_gen shape =
         (fun (a, b) -> (Int.min a b, Int.max a b))
         (pair (int_range 0 n) (int_range 0 n))
     in
-    let some =
+    let pixel n = map (fun a -> (a, a + 1)) (int_range 0 (n - 1)) in
+    (* [each g] is a window whose range on an axis of [n] pixels [g n] draws. *)
+    let each g =
       match shape with
-      | [| a; b |] -> map (fun (x, y) -> [| x; y |]) (pair (axis a) (axis b))
+      | [| a; b |] -> map (fun (x, y) -> [| x; y |]) (pair (g a) (g b))
       | [| a; b; c |] ->
-          map
-            (fun (x, y, z) -> [| x; y; z |])
-            (triple (axis a) (axis b) (axis c))
+          map (fun (x, y, z) -> [| x; y; z |]) (triple (g a) (g b) (g c))
       | _ -> assert false
     in
-    frequency [ (1, constant (Array.map (fun n -> (0, n)) shape)); (9, some) ])
+    frequency
+      [
+        (1, constant (Array.map (fun n -> (0, n)) shape));
+        (1, each pixel);
+        (8, each axis);
+      ])
 
 let windows =
   let law name shape =
