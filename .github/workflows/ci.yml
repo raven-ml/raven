@@ -73,6 +73,12 @@ jobs:
           opam exec -- dune build --release otherlibs/compress
           opam exec -- dune build --release @otherlibs/compress/runtest
 
+      # rig's GPU suites skip on runners without the GPU they drive.
+      - name: Build and test rig
+        run: |
+          opam exec -- dune build --release packages/rig
+          opam exec -- dune build --release @packages/rig/runtest
+
       # The decoders parse untrusted bytes: their suites run with the C built
       # under AddressSanitizer and UndefinedBehaviorSanitizer, each property
       # over 1000 inputs.
