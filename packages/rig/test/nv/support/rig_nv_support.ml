@@ -244,9 +244,11 @@ let copy_words t ~dst ~src =
     [| (dst, Rig.Read_write, 8); (src, Rig.Read, 16) |]
     (fun run b -> Sub.Run.int64 run b 24 (B.length src))
 
-(* rig_nv.mli: through the kernel driver, a time is within 5 us of the host's
-   clock, half a read's bound, plus the timer's rate error since the latest
-   read, at most 62.5 ms before, taken as 10 ppm. *)
+(* rig_nv.mli: "5 us once a measure within the bound is taken, plus the
+   line's rate error over the time since the latest measure, at most
+   62.5 ms. That rate error is at most 10 us over the measures' distance,
+   10 ppm, and the timer's own until they are a second apart." The timer's
+   own is taken within the same 10 ppm. *)
 let clock_error ~since:_ = 5_000 + 625
 
 let spin t ~ns =

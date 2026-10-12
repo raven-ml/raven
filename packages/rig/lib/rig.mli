@@ -1570,11 +1570,12 @@ val submit :
     [submit] reads each element of [buffers] once, and a store into [run]
     after it returns changes nothing of [v]'s work.
 
-    [submit] blocks while [d]'s queues have no room for the work, and while
-    it waits for a point on the host. It allocates nothing unless it waits
-    or a profile is being taken. Once it has assigned [v], [d]'s driver
-    receives [v]'s work or [d] is lost, and the stamps of every allocation
-    the work uses name [(d, v)] either way.
+    [submit] blocks while [d]'s queues have no room for the work, while it
+    waits for a point on the host, and where its driver's interface says it
+    blocks, as some do while a profile is being taken. It allocates nothing
+    unless it waits or a profile is being taken. Once it has assigned [v],
+    [d]'s driver receives [v]'s work or [d] is lost, and the stamps of every
+    allocation the work uses name [(d, v)] either way.
 
     Raises [Invalid_argument] if:
     {ul
@@ -1760,7 +1761,9 @@ end
     ({!Profile.take}). Profiles nest and overlap, in any domains, and each
     holds the events recorded while it is taken. Every time is on the host
     clock ({!Profile.now}). When no profile is being taken, recording costs
-    one atomic read and allocates nothing. *)
+    one atomic read and allocates nothing. Taking a profile may slow the
+    submits of a device whose driver times its work, as the driver's
+    interface states. *)
 module Profile : sig
   type device := t
 

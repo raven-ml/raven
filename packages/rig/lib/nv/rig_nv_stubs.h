@@ -290,13 +290,15 @@ struct device {
   uint64_t stamps_gpu, slots;
   struct timed *timed;
   /* the timer: the path's source, or NULL for the registers of the GPU's
-     BAR 0 mapped at [bar]; the first and the latest measures; every timed
+     BAR 0 mapped at [bar]; the first and the latest measures, and whether
+     the first's readings lie wider than READ_BOUND_NS; every timed
      value up to [converted] converted, and the timed values whose times
      are still to write; the end of the last value converted; and the
      failure of a conversion a submit made, which the next settle reports */
   struct rig_nv_clock *source;
   volatile const uint8_t *bar;
   struct measure first, latest;
+  int first_wide;
   uint64_t converted, unconverted, last_end;
   const char *failure;
 };

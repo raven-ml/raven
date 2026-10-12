@@ -339,6 +339,7 @@ struct rig_amd {
   volatile uint64_t *clock;
   uint64_t clock_gpu, clock_hz;
   struct rig_amd_measure first, latest;
+  int first_wide; /* the first's readings lie wider than the bound */
   uint64_t converted, unconverted, last_end;
   const char *times_failure;
 };

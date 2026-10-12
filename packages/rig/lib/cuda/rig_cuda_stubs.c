@@ -458,6 +458,11 @@ static void destroy(struct device *d) {
 /* The round trips a reference is chosen from. */
 #define REFERENCES 8
 
+/* The round trip a measure's closest must be within, unless the measure
+   runs out of its REFERENCES_MOST tries. */
+#define ROUND_TRIP_BOUND_NS UINT64_C(10000)
+#define REFERENCES_MOST 16
+
 /* How long a round trip of the open's measure may take. */
 #define ROUND_TRIP_NS UINT64_C(1000000000)
 
@@ -476,13 +481,16 @@ static CUresult round_trip(struct device *d, uint64_t before) {
 }
 
 /* Takes [d]'s reference: records an event on the idle clock stream
-   between two readings of the host's clock, REFERENCES times, and keeps
-   the event whose readings lie closest, with the middle of them. A GPU
-   that idled may take milliseconds to answer the first. */
+   between two readings of the host's clock, REFERENCES times, and more
+   while the closest is over ROUND_TRIP_BOUND_NS, and keeps the event whose
+   readings lie closest, with the middle of them. A GPU that idled may take
+   milliseconds to answer the first. */
 static CUresult refer(struct device *d) {
   uint64_t best = UINT64_MAX;
   CUresult s = CUDA_SUCCESS;
-  for (int i = 0; i < REFERENCES && s == CUDA_SUCCESS; i++) {
+  for (int i = 0; s == CUDA_SUCCESS && i < REFERENCES_MOST &&
+                  (i < REFERENCES || best > ROUND_TRIP_BOUND_NS);
+       i++) {
     uint64_t before = rig_now_ns();
     s = round_trip(d, before);
     uint64_t took = rig_now_ns() - before;

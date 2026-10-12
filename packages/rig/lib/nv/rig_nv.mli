@@ -158,9 +158,12 @@ val capability : t -> Rig_nv_abi.Gpu.t
     measure takes the time of a host clock between two readings of it. A
     re-measure whose readings lie more than 10 µs apart is dropped, and the
     measure at open keeps the first of sixteen reads within 10 µs, or the
-    narrowest. A time is thus within half its measure's interval, 5 µs once
-    a measure within the bound is taken, plus the timer's rate error since
-    the latest measure. Through NVIDIA's kernel driver ({!Source}) the driver
+    narrowest, which the first re-measure within 10 µs replaces. A time is
+    thus within half its measure's interval, 5 µs once a measure within the
+    bound is taken, plus the line's rate error over the time since the
+    latest measure, at most 62.5 ms. That rate error is at most 10 µs over
+    the measures' distance, 10 ppm, and the timer's own until they are a
+    second apart. Through NVIDIA's kernel driver ({!Source}) the driver
     takes the readings around its read of the timer's registers, and the
     device takes one more pair, to map the driver's clock to the host's.
     With {!Registers} the device reads the registers itself, at open only,

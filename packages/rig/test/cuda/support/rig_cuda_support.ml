@@ -239,13 +239,13 @@ let copy_words t ~dst ~src =
   in
   w
 
-(* rig_cuda.mli: a time is within half the closest of eight round trips of
-   its reference, plus the GPU timer's rate error since that measure, at
-   most since open, plus half a float step, half a microsecond. The closest
-   round trip takes under 5 us on an idle GPU (4.8 us at most on kimchi's
-   sm_89), and the timer's rate error stays within 10 ppm, twice the 5.8 ppm
-   measured there. *)
-let clock_error ~since = 3_000 + (since / 100_000)
+(* rig_cuda.mli: "within half the closest round trip of the host's clock,
+   5 us once a round trip within 10 us is seen, plus the GPU timer's rate
+   error since the measure, plus half a float step at its distance from the
+   reference, half a microsecond within 8 s". The timer's rate error, which
+   the interface leaves to the GPU, is taken within 10 ppm, twice the 5.8 ppm
+   measured on kimchi's sm_89, over at most the time since open. *)
+let clock_error ~since = 5_500 + (since / 100_000)
 
 (* The kernel [spin] holds until its flag, a zero word here, is not 0, or for
    its nanoseconds. *)

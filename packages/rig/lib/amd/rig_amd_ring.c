@@ -464,6 +464,10 @@ int rig_amd_settle(void *self, uint64_t v, const char **failure) {
       return RIG_FAILED;
     }
     if (width <= RIG_AMD_READ_BOUND_NS) d->latest = m;
+    if (width <= RIG_AMD_READ_BOUND_NS && d->first_wide) {
+      d->first = m;
+      d->first_wide = 0;
+    }
   }
   convert_upto(d, v);
   if (d->times_failure == NULL) return RIG_OK;
@@ -816,6 +820,7 @@ int rig_amd_measure(struct rig_amd *d) {
       best = width;
       d->first = d->latest = m;
     }
+    d->first_wide = best > RIG_AMD_READ_BOUND_NS;
     return 1;
   }
   for (int i = 0; i < CALIBRATIONS; i++) {

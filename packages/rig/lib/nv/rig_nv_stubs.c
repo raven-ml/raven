@@ -154,6 +154,7 @@ value caml_rig_nv_clock(value v_self, value v_source, value v_bar) {
     best = width;
     d->first = d->latest = m;
   }
+  d->first_wide = best > READ_BOUND_NS;
   return Val_true;
 }
 

@@ -78,11 +78,14 @@ let copy_words t ~dst ~src =
   in
   w
 
-(* rig_amd.mli: through KFD, a time is within 5 us of the host's clock, half
-   a read's bound, plus the clock's rate error since the latest read, at
-   most 62.5 ms before, taken as 10 ppm. With no kernel driver the device
-   measures at open only, by a round trip through its compute queue: half
-   of one, a few microseconds, plus the clock's rate error since open. *)
+(* rig_amd.mli, through KFD: "5 us once a measure within the bound is taken,
+   plus the line's rate error over the time since the latest measure, at
+   most 62.5 ms. That rate error is at most 10 us over the measures'
+   distance, 10 ppm, and the clock's own until they are a second apart."
+   The clock's own is taken within the same 10 ppm. With no kernel driver
+   the device measures at open only, by a round trip through its compute
+   queue, taken as within 10 us as CUDA's is, plus the clock's rate error
+   since open. *)
 let clock_error ~since =
   if driverless () then 5_000 + (since / 100_000) else 5_000 + 625
 

@@ -311,10 +311,13 @@ val capability : t -> Rig_amd_abi.Capability.t
     and at [clock_hz] from the latest before. A measure through a {!Source}
     takes the time of a host clock between two readings of it. A re-measure
     whose readings lie more than 10 µs apart is dropped, and the measure at
-    open keeps the first of sixteen reads within 10 µs, or the narrowest. A
-    time is thus within half its measure's interval, 5 µs once a measure
-    within the bound is taken, plus the clock's rate error since the latest
-    measure. Through KFD, KFD reads its clock right after the GPU's, and
+    open keeps the first of sixteen reads within 10 µs, or the narrowest,
+    which the first re-measure within 10 µs replaces. A time is thus within
+    half its measure's interval, 5 µs once a measure within the bound is
+    taken, plus the line's rate error over the time since the latest
+    measure, at most 62.5 ms. That rate error is at most 10 µs over the
+    measures' distance, 10 ppm, and the clock's own until they are a second
+    apart. Through KFD, KFD reads its clock right after the GPU's, and
     the device maps that clock to the host's with a pair of readings of
     its own. With {!Round_trip} the device measures at open only, and its
     times drift from the host's clock at the clock's rate error since

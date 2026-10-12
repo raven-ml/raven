@@ -185,7 +185,10 @@ val capability : t -> Rig_cuda_abi.t
 
     [rig_cuda_room] never returns [RIG_LATER], since a stream takes any
     amount of work. [rig_cuda_submit] and [rig_cuda_commit] instead block
-    while a stream is full, until the device's earlier work frees it.
+    while a stream is full, until the device's earlier work frees it. A
+    timed submit that measures blocks for its round trips, tens of
+    microseconds, and one timed 1,024 values after an unconverted value
+    waits for that value.
     While a profile is taken, [rig_cuda_submit] records a timing event on
     each stream a value's work enters, after the value's waits, and one
     after its work on the stream it ends on, into one of 1,024 stamps,
@@ -202,12 +205,14 @@ val capability : t -> Rig_cuda_abi.t
     again in a timed [rig_cuda_submit] that finds the last measure 8 s old.
     A measure records a reference event on a stream of the device's own
     between two readings of the host's clock, asking CUDA until the event
-    has completed, eight times, and keeps the closest. An event's time is
-    its elapsed time since the reference, a float of milliseconds, plus the
+    has completed, eight times, and keeps the closest; while that is over
+    10 µs it tries again, up to sixteen times. An event's time is its
+    elapsed time since the reference, a float of milliseconds, plus the
     host's time at the reference. A time is thus within half the closest
-    round trip of the host's clock, plus the GPU timer's rate error since
-    the measure, plus half a float step at its distance from the reference,
-    half a microsecond within 8 s. [rig_cuda_settle] never waits for the
+    round trip of the host's clock, 5 µs once a round trip within 10 µs is
+    seen, plus the GPU timer's rate error since the measure, plus half a
+    float step at its distance from the reference, half a microsecond
+    within 8 s. [rig_cuda_settle] never waits for the
     device's work.
 
     {2:launches Launches}

@@ -481,6 +481,10 @@ int rig_nv_settle(void *self, uint64_t v, const char **failure) {
       return RIG_FAILED;
     }
     if (r == MEASURE_OK) d->latest = m;
+    if (r == MEASURE_OK && d->first_wide) {
+      d->first = m;
+      d->first_wide = 0;
+    }
   }
   convert_upto(d, v);
   if (d->failure == NULL) return RIG_OK;
