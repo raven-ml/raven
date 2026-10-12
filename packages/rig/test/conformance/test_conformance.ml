@@ -572,6 +572,11 @@ let device_order (module G : Gpu) () =
 
 (* Profiles *)
 
+(* How far a span may lie from the host's clock. Every GPU driver states its
+   times within microseconds of it, plus its clock's rate error since its
+   last measure, which a test's few seconds keep below a microsecond. *)
+let clock_error = 50_000
+
 (* A profile taken around a submission records one span of its work on the
    device, which lies within the profile and lasts at least as long as the
    work: [late] of work on the first queue, alone, and before or after a copy
@@ -612,8 +617,10 @@ let spans (module G : Gpu) () =
     in
     match spans with
     | [ (start, stop) ] ->
-        at_least int ~msg:(what ^ ": the span's start") ~than:t0 start;
-        at_most int ~msg:(what ^ ": the span's stop") ~than:t1 stop;
+        at_least int ~msg:(what ^ ": the span's start")
+          ~than:(t0 - clock_error) start;
+        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + clock_error)
+          stop;
         at_least int ~msg:(what ^ ": the span's length") ~than:lasts
           (stop - start)
     | spans ->
@@ -653,8 +660,10 @@ let spans_after_idle (module G : Gpu) () =
         events
     with
     | [ (start, stop) ] ->
-        at_least int ~msg:(what ^ ": the span's start") ~than:t0 start;
-        at_most int ~msg:(what ^ ": the span's stop") ~than:t1 stop;
+        at_least int ~msg:(what ^ ": the span's start")
+          ~than:(t0 - clock_error) start;
+        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + clock_error)
+          stop;
         at_most int ~msg:(what ^ ": the span's start") ~than:stop start
     | spans ->
         equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)
@@ -664,13 +673,16 @@ let spans_after_idle (module G : Gpu) () =
   within "after idling";
   within "after the measure"
 
-(* A profile around [many] submissions, work and a copy in turn, waited for
-   once, records one span of each, and each span ends before the next starts.
-   [many] exceeds every driver's ring of stamps, so later submits reuse slots,
-   and consecutive spans compare the two queues' clocks. *)
+(* A profile around submissions, work and a copy in turn, waited for once:
+   [crossing] of them, then, after the device idled past every driver's age
+   for a new measure of its clock, [many] more. It records one span of each,
+   and on each queue a span ends before the next starts, across the measure.
+   [many] exceeds every driver's ring of stamps, so later submits convert the
+   first values' stamps before the measure, and settles the rest after it. *)
+let crossing = 64
 let many = 33_000
 
-let span_order (module G : Gpu) () =
+let spans_across (module G : Gpu) () =
   G.with_ @@ fun t ->
   let f = G.D.facts t.g in
   let n = 64 in
@@ -688,30 +700,46 @@ let span_order (module G : Gpu) () =
     let s, run, buffers = subs.(i mod Array.length subs) in
     Rig.submit s ~run ~buffers
   in
+  let total = crossing + many in
   let (), events =
     Rig.Profile.take (fun () ->
-        for i = 0 to many - 2 do
+        for i = 0 to crossing - 1 do
           ignore (submit i)
         done;
-        Rig.Point.wait (submit (many - 1)))
+        Unix.sleepf idle_s;
+        for i = crossing to total - 2 do
+          ignore (submit i)
+        done;
+        Rig.Point.wait (submit (total - 1)))
   in
   let spans =
     List.filter_map
       (function
-        | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
-            Some (start, stop)
+        | Rig.Profile.Span { device; lane; start; stop; _ } when device == t.d
+          ->
+            Some (lane, start, stop)
         | _ -> None)
       events
   in
-  equal int ~msg:"the device's spans" many (List.length spans);
-  let rec follow i = function
-    | (_, stop) :: ((start, _) :: _ as rest) ->
-        at_most int ~msg:(strf "span %d's stop, at most the next start" i)
-          ~than:start stop;
-        follow (i + 1) rest
-    | _ -> ()
+  equal int ~msg:"the device's spans" total (List.length spans);
+  let lanes =
+    List.sort_uniq String.compare (List.map (fun (l, _, _) -> l) spans)
   in
-  follow 0 spans
+  let follow lane =
+    let rec go i = function
+      | (_, stop) :: ((start, _) :: _ as rest) ->
+          at_most int
+            ~msg:(strf "%s: span %d's stop, at most the next start" lane i)
+            ~than:start stop;
+          go (i + 1) rest
+      | _ -> ()
+    in
+    go 0
+      (List.filter_map
+         (fun (l, start, stop) -> if l = lane then Some (start, stop) else None)
+         spans)
+  in
+  List.iter follow lanes
 
 (* Launches *)
 
@@ -1502,7 +1530,8 @@ let laws (module G : Gpu) =
         (device_order g);
       test "a profile around a submission records a span that bounds its work"
         (spans g);
-      test "spans of consecutive submissions follow each other" (span_order g);
+      test "spans on each queue follow each other across a new measure"
+        (spans_across g);
       test "a span lies within its window after the device idles"
         (spans_after_idle g);
       prop ~count:30

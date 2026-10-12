@@ -92,6 +92,10 @@ val control :
 val rm : t -> Rig_nv.rm
 (** [rm c] is the RM as the driver calls it. *)
 
+val control_request : int
+(** [control_request] is the ioctl of a control on the control file
+    ([NV_ESC_RM_CONTROL]). *)
+
 (** {1:uvm Unified memory} *)
 
 val uvm :

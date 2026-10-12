@@ -23,7 +23,6 @@
 #include <caml/fail.h>
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
-#include <caml/signals.h>
 
 #include "rig_nv_stubs.h"
 
@@ -118,32 +117,34 @@ value caml_rig_nv_launches(value v_self, value v_host, value v_gpu,
 }
 
 /* Sets the stamp ring to the [v_slots] slots, a power of two, at the host
-   address [v_host] and the GPU's [v_gpu], zeroed, followed by the
-   calibration's record: [true], or [false] without memory for their host
-   side. */
+   address [v_host] and the GPU's [v_gpu], zeroed: [true], or [false]
+   without memory for their host side. Raises [Invalid_argument] if the
+   [v_bytes] bytes there hold fewer slots. */
 value caml_rig_nv_stamps(value v_self, value v_host, value v_gpu,
-                         value v_slots) {
+                         value v_bytes, value v_slots) {
   struct device *d = Device_val(v_self);
   uint64_t slots = (uint64_t)Long_val(v_slots);
+  if ((uint64_t)Long_val(v_bytes) / sizeof(struct stamps) < slots)
+    caml_invalid_argument("Rig_nv: the stamp ring is too small");
   d->timed = calloc(slots, sizeof *d->timed);
   if (d->timed == NULL) return Val_false;
   d->stamps = Pointer_val(v_host);
   d->stamps_gpu = (uint64_t)Long_val(v_gpu);
   d->slots = slots;
-  d->clock = (volatile struct record *)(d->stamps + slots);
-  d->clock_gpu = d->stamps_gpu + slots * sizeof(struct stamps);
   return Val_true;
 }
 
-/* Measures the GPU's timer against the host's clock (rig_nv_calibrate):
-   whether a stamp showed. Releases the runtime: the GPU may take long to
-   start the channel. */
-value caml_rig_nv_calibrate(value v_self) {
+/* Sets the timer's source to the path's [struct rig_nv_clock] at
+   [v_source], or, if it is [0], to the registers of the GPU's BAR 0 mapped
+   at [v_bar], and takes the first measure: whether it could. */
+value caml_rig_nv_clock(value v_self, value v_source, value v_bar) {
   struct device *d = Device_val(v_self);
-  caml_enter_blocking_section_no_pending();
-  int ok = rig_nv_calibrate(d);
-  caml_leave_blocking_section();
-  return Val_bool(ok);
+  struct measure m;
+  d->source = (struct rig_nv_clock *)Nativeint_val(v_source);
+  d->bar = Pointer_val(v_bar);
+  if (!rig_nv_measure(d, &m)) return Val_false;
+  d->first = d->latest = m;
+  return Val_true;
 }
 
 value caml_rig_nv_doorbell(value v_self, value v_at) {
@@ -359,7 +360,7 @@ value caml_rig_nv_end(value v_self) {
   free(d->timed);
   d->timed = NULL;
   d->stamps = NULL;
-  d->clock = NULL;
+  d->bar = NULL;
   return Val_unit;
 }
 

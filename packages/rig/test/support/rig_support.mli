@@ -106,6 +106,11 @@ module Polled : sig
   val fail_commit : t -> unit
   (** [fail_commit d] makes [d]'s next commit of uncommitted values fail. *)
 
+  val fail_settle : t -> unit
+  (** [fail_settle d] makes [d]'s next settle fail. Its other settles do
+      nothing, since its queue's run writes a value's times before the word
+      shows the value. *)
+
   val fault : t -> string -> unit
   (** [fault d why] makes [d]'s sleeps, allocations, mappings, loads and reads
       of its budget raise [Fault why] from now on, as a faulted device's do,

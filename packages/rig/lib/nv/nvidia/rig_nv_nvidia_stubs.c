@@ -21,7 +21,12 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
+#include <caml/fail.h>
 #include <caml/unixsupport.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "rig_nv.h"
 
 #define PTR(v) ((void *)Long_val(v))
 
@@ -135,6 +140,81 @@ value caml_rig_nv_nvidia_page_size(value unit) {
   return Val_long(sysconf(_SC_PAGESIZE));
 }
 
+/* The GPU's timer
+
+   NV2080_CTRL_CMD_TIMER_GET_GPU_CPU_TIME_CORRELATION_INFO, with the CPU
+   source PLATFORM_API on the CPU, reads the GPU's PTIMER through BAR 0 in
+   the kernel, with no call to the GSP (ctrl2080tmr.h,
+   subdevice_ctrl_timer_kernel.c). Its CPU time is CLOCK_MONOTONIC_RAW, so
+   the reader takes the host's time as the middle of two readings of rig's
+   clock around the call. */
+
+#define TIMER_CORRELATION 0x20800406
+#define CPU_CLK_PLATFORM_API 0x3
+
+/* NVOS54_PARAMETERS (nvos.h), a control's arguments. */
+struct control {
+  uint32_t client, object, cmd, flags;
+  uint64_t params;
+  uint32_t params_size, status;
+};
+_Static_assert(sizeof(struct control) == 32, "NVOS54_PARAMETERS");
+
+/* NV2080_CTRL_TIMER_GET_GPU_CPU_TIME_CORRELATION_INFO_PARAMS, with room for
+   one sample of its sixteen. */
+struct correlation_params {
+  uint8_t cpu_clk_id, sample_count;
+  uint8_t pad[6];
+  struct {
+    uint64_t cpu, gpu;
+  } samples[16];
+};
+_Static_assert(sizeof(struct correlation_params) == 264, "its layout");
+
+/* A GPU's reader: the control file, the ioctl of a control, and the
+   client and subdevice the control runs on. */
+struct correlation {
+  struct rig_nv_clock clock;
+  int fd;
+  unsigned long request;
+  uint32_t client, subdevice;
+};
+
+static int correlate(struct rig_nv_clock *c, uint64_t *gpu, uint64_t *host) {
+  struct correlation *k = (struct correlation *)c;
+  struct correlation_params p;
+  memset(&p, 0, sizeof p);
+  p.cpu_clk_id = CPU_CLK_PLATFORM_API;
+  p.sample_count = 1;
+  struct control a = {k->client, k->subdevice, TIMER_CORRELATION, 0,
+                      (uint64_t)(uintptr_t)&p, sizeof p, 0};
+  uint64_t before = rig_now_ns();
+  int r;
+  do r = ioctl(k->fd, k->request, &a);
+  while (r < 0 && errno == EINTR);
+  uint64_t after = rig_now_ns();
+  if (r < 0 || a.status != 0) return -1;
+  *gpu = p.samples[0].gpu;
+  *host = before + (after - before) / 2;
+  return 0;
+}
+
+/* A reader of the GPU's timer through the control file [v_fd], whose
+   control ioctl is [v_request], on the subdevice [v_subdevice] of the
+   client [v_client]: the address of its struct rig_nv_clock, which lives
+   for the process. Raises [Out_of_memory] without memory for it. */
+value caml_rig_nv_nvidia_clock(value v_fd, value v_request, value v_client,
+                               value v_subdevice) {
+  struct correlation *k = malloc(sizeof *k);
+  if (k == NULL) caml_raise_out_of_memory();
+  k->clock.read = correlate;
+  k->fd = Int_val(v_fd);
+  k->request = (unsigned long)Long_val(v_request);
+  k->client = (uint32_t)Long_val(v_client);
+  k->subdevice = (uint32_t)Long_val(v_subdevice);
+  return caml_copy_nativeint((intnat)k);
+}
+
 #else
 
 value caml_rig_nv_nvidia_page_size(value unit) {
@@ -152,6 +232,15 @@ value caml_rig_nv_nvidia_close(value v_fd) {
 }
 
 static value nosys(void) { caml_unix_error(ENOSYS, "ioctl", Nothing); }
+
+value caml_rig_nv_nvidia_clock(value v_fd, value v_request, value v_client,
+                               value v_subdevice) {
+  (void)v_fd;
+  (void)v_request;
+  (void)v_client;
+  (void)v_subdevice;
+  return nosys();
+}
 
 value caml_rig_nv_nvidia_ioctl(value v_fd, value v_request, value v_params) {
   (void)v_fd;

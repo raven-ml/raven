@@ -623,7 +623,10 @@ let commit_once d =
 
 let rec commit d v = if committed d < v && not (commit_once d) then commit d v
 
-let rec settle d v = if c_settle (live d).c v = Answer.busy then settle d v
+let rec settle d v =
+  let r = c_settle (live d).c v in
+  if r = Answer.failed then run_owed ();
+  if r = Answer.busy then settle d v else r = Answer.ok
 
 let signaled = word
 

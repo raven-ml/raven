@@ -100,6 +100,9 @@ let iowr ~type_ nr size =
     invalid_arg (strf "Rm.escape: %d bytes of parameters, past 16 KiB" size);
   (ioc_read_write lsl 30) lor (size lsl 16) lor (type_ lsl 8) lor nr
 
+let control_request =
+  iowr ~type_:D.nv_ioctl_magic D.nv_esc_rm_control D.Nvos54.sizeof
+
 (* An escape ioctl of the driver's magic, with the parameters [p]. *)
 let escape fd nr p what =
   let request = iowr ~type_:D.nv_ioctl_magic nr (Bigarray.Array1.dim p) in

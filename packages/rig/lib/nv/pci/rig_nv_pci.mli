@@ -168,6 +168,10 @@ val report :
     Two GPUs map each other's memory only if both are taken physically, on
     one machine, and each BAR reaches all of its GPU's memory.
 
+    A device reads the GPU's timer registers through BAR 0
+    ({!Rig_nv.Registers}) at open only, so the times of its profiles drift
+    from the host's clock at the timer's rate error since open.
+
     Any domain may call any function. Opens and changes of NVIDIA GPUs run
     one at a time, so a boot delays the others. *)
 

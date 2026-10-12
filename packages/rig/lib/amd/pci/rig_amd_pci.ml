@@ -265,6 +265,7 @@ let path g h fn ~index : Memory.region Amd.path =
     waves = gc.waves * simds_per_cu gpu;
     lds = gc.lds;
     clock_hz;
+    clock = Round_trip;
     mec = Boot.mec g;
     wgps = Boot.wgps g;
     budget = Boot.budget g;

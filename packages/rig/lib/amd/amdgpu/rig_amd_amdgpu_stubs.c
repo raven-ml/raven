@@ -19,6 +19,7 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CAML_NAME_SPACE
@@ -28,6 +29,8 @@
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 #include <caml/unixsupport.h>
+
+#include "rig_amd.h"
 
 #define Ptr_val(v) ((void *)Long_val(v))
 
@@ -375,6 +378,50 @@ value caml_rig_amd_amdgpu_store64(value v_at, value v_v) {
   return Val_unit;
 }
 
+/* The GPU's clock
+
+   AMDKFD_IOC_GET_CLOCK_COUNTERS reads the GPU's clock counter, the counter
+   of the queues' timestamps, which ROCr converts its dispatches' times by
+   (amdgpu_amdkfd_get_gpu_clock_counter, GpuAgent::TranslateTime). The
+   kernel's CPU time is CLOCK_MONOTONIC_RAW, so the reader takes the host's
+   time as the middle of two readings of rig's clock around the call. */
+
+/* A GPU's reader: KFD's file and the GPU's id there. */
+struct counters {
+  struct rig_amd_clock clock;
+  int kfd;
+  uint32_t gpu;
+};
+
+static int read_counters(struct rig_amd_clock *c, uint64_t *ticks,
+                         uint64_t *host) {
+  struct counters *k = (struct counters *)c;
+  struct kfd_ioctl_get_clock_counters_args a;
+  memset(&a, 0, sizeof a);
+  a.gpu_id = k->gpu;
+  uint64_t before = rig_now_ns();
+  int r;
+  do r = ioctl(k->kfd, AMDKFD_IOC_GET_CLOCK_COUNTERS, &a);
+  while (r < 0 && errno == EINTR);
+  uint64_t after = rig_now_ns();
+  if (r < 0 || a.gpu_clock_counter == 0) return -1;
+  *ticks = a.gpu_clock_counter;
+  *host = before + (after - before) / 2;
+  return 0;
+}
+
+/* A reader of the clock of the GPU [v_gpu] through KFD's file [v_kfd]: the
+   address of its struct rig_amd_clock, which lives for the process. Raises
+   [Out_of_memory] without memory for it. */
+value caml_rig_amd_amdgpu_clock(value v_kfd, value v_gpu) {
+  struct counters *k = malloc(sizeof *k);
+  if (k == NULL) caml_raise_out_of_memory();
+  k->clock.read = read_counters;
+  k->kfd = Int_val(v_kfd);
+  k->gpu = (uint32_t)Long_val(v_gpu);
+  return caml_copy_nativeint((intnat)k);
+}
+
 #else
 
 #define NONE(name, ...)                                                   \
@@ -407,5 +454,6 @@ NONE(reserve, value a UNUSED)
 NONE(map, value a UNUSED, value b UNUSED, value c UNUSED, value d UNUSED)
 NONE(unmap, value a UNUSED, value b UNUSED)
 NONE(store64, value a UNUSED, value b UNUSED)
+NONE(clock, value a UNUSED, value b UNUSED)
 
 #endif

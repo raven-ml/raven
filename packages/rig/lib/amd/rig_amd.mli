@@ -252,19 +252,7 @@ val capability : t -> Rig_amd_abi.Capability.t
     [edge]'s [room], [submit] and [settle] are [rig_amd_room],
     [rig_amd_submit] and [rig_amd_settle], declared in [rig_amd.h]. Its
     [commit] does nothing, since [submit] places each value's release and
-    returns [RIG_COMMITTED]. While a profile is taken, each queue a value's
-    work enters writes the GPU's clock after the value's waits, and the
-    queue that releases the value writes it before the release: on
-    ["COMPUTE:0"] once the dispatches before it have completed
-    ({!Rig_amd_abi.Pm4.copy_data} of the clock), on ["COPY:0"] in turn
-    ({!Rig_amd_abi.Sdma.timestamp}). [settle], or a later [submit],
-    converts the earliest start and the end to the host's clock by
-    [clock_hz] and an offset. {!make} measures the offset, and [settle]
-    measures it again when the device is idle, every value it was given
-    reached, and the offset is a second old. A stamp behind work would
-    measure the work's queue, so a device kept busy keeps its offset, and
-    its times drift from the host's clock at its clock's rate error, a few
-    parts per million, until it is next idle. A part is:
+    returns [RIG_COMMITTED]. A part is:
     {ul
     {- words, whole packets of the queue's kind: PM4, or AQL in multiples of
        16 words, on ["COMPUTE:0"], and SDMA on ["COPY:0"];}
@@ -305,6 +293,27 @@ val capability : t -> Rig_amd_abi.Capability.t
     the earlier values have completed, and every later [submit] returns
     [RIG_FAILED] too and places nothing.
 
+    {b Times.} While a profile is taken, each queue a value's work enters
+    writes the GPU's clock after the value's waits, and the queue that
+    releases the value writes it before the release: on ["COMPUTE:0"] once
+    the dispatches before it have completed ({!Rig_amd_abi.Pm4.copy_data}
+    of the clock), on ["COPY:0"] after a fence has waited for its copies
+    ({!Rig_amd_abi.Sdma.timestamp}). [settle], or a later [submit],
+    converts the earliest start and the end to the host's clock, in value
+    order, with each start no earlier than the end of the last value that
+    ended on its queue. A stamp of a completed value that the work never
+    wrote makes the next [settle] fail, which loses the device.
+
+    A device measures the clock against the host's clock as the path's
+    {!type-clock} says, and converts a stamp along the line through its
+    first measure, at open, and its latest, or at [clock_hz] while it has
+    one. A measure through a {!Source} reads the clock between two readings
+    of the host's clock, whose middle is the host's time, so a time is
+    within half that interval of the host's clock, a few microseconds
+    through KFD, plus the clock's rate error since the latest measure. With
+    {!Round_trip} the device measures at open only, and its times drift
+    from the host's clock at the clock's rate error since open.
+
     {2:stop Stop}
 
     {!val-stop} passes [fault] to the path's [stop], which destroys the
@@ -332,6 +341,19 @@ type 'm memory = {
 }
 (** The type for memory a path gives a device. *)
 
+(** The type for how a device reads the GPU's clock, the clock of its
+    stamps, against the host's clock ({!section-c}). *)
+type clock =
+  | Source of nativeint
+      (** The address of the path's [struct rig_amd_clock] ([rig_amd.h]),
+          which the path keeps while a device may read it. A device reads
+          it at open and again in [rig_amd_settle], at most every
+          62.5 ms. *)
+  | Round_trip
+      (** The device measures at open only, with a stamp its compute queue
+          writes between two readings of the host's clock, the closest of
+          eight. *)
+
 type 'm path = {
   key : 'm Type.Id.t;
       (** The path's key: devices whose paths share [key] are of one
@@ -343,6 +365,8 @@ type 'm path = {
   waves : int;  (** The most waves a compute unit runs concurrently. *)
   lds : int;  (** The local data share of a workgroup, in bytes. *)
   clock_hz : int;  (** The frequency of the GPU's clock, in hertz. *)
+  clock : clock;
+      (** How a device reads the GPU's clock against the host's clock. *)
   mec : int;  (** The version of the firmware of its compute queues. *)
   wgps : int array array;
       (** The work-group processors that run work: [wgps.(e).(a)] has bit [w]
@@ -449,11 +473,10 @@ val make : 'm path -> (t, string) result
     {- if [p]'s [Pinned] memory has no host address;}
     {- if this library's copy kernel for the GPU's processor does not load,
        naming the kernel and the processor and saying why;}
-    {- if the GPU writes no stamp of its clock within a second.}}
+    {- if [p.clock] cannot read the GPU's clock, or, with {!Round_trip},
+       the GPU writes no stamp of its clock within a second.}}
 
-    It measures the offset of the GPU's clock from the host's with eight
-    stamps, each between two readings of the host's clock, and keeps the
-    closest pair's.
+    It takes its first measure of the GPU's clock as [p.clock] says.
 
     Raises [Invalid_argument] if [p.interrupt] is [0], if [p.clock_hz] is
     below [1], or if a count of [p.gpu] ({!Rig_amd_abi.Gpu.t}) is below

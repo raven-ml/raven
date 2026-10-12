@@ -70,6 +70,7 @@ let path_of gpu : unit A.path =
     waves = 32;
     lds = 65536;
     clock_hz = 100_000_000;
+    clock = Round_trip;
     mec = 1;
     wgps = [| [| 1 |] |];
     budget = 1 lsl 30;

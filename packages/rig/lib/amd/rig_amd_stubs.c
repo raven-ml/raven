@@ -3,8 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Rig_amd's C state, filled from OCaml. Only the calibration releases the
-   runtime, while it waits for the GPU; no other stub blocks. A device's
+/* Rig_amd's C state, filled from OCaml. Only the first measure of the
+   clock releases the runtime, while it may wait for the GPU; no other stub
+   blocks. A device's
    state is named in OCaml by its address, an int. */
 
 #define _GNU_SOURCE
@@ -80,11 +81,15 @@ value caml_rig_amd_memory(value v_self, value v_word, value v_word_gpu,
 }
 
 /* The stamp ring, of RIG_AMD_STAMPS slots, at the host address [v_host]
-   and the GPU's [v_gpu], zeroed, followed by the calibration's record; and
-   the clock's rate [v_hz], positive. */
+   and the GPU's [v_gpu], zeroed, followed by the record of a stamp of the
+   measure at open; and the clock's rate [v_hz], positive. Raises
+   [Invalid_argument] if its [v_bytes] bytes hold less. */
 value caml_rig_amd_stamps(value v_self, value v_host, value v_gpu,
-                          value v_hz) {
+                          value v_bytes, value v_hz) {
   struct rig_amd *d = Device_val(v_self);
+  if ((uint64_t)Long_val(v_bytes) <
+      RIG_AMD_STAMPS * sizeof(struct rig_amd_stamps) + sizeof(uint64_t))
+    caml_invalid_argument("Rig_amd: the stamp ring is too small");
   d->stamps = Host_val(v_host);
   d->stamps_gpu = (uint64_t)Long_val(v_gpu);
   d->clock = (volatile uint64_t *)(d->stamps + RIG_AMD_STAMPS);
@@ -93,12 +98,15 @@ value caml_rig_amd_stamps(value v_self, value v_host, value v_gpu,
   return Val_unit;
 }
 
-/* Measures the GPU's clock against the host's (rig_amd_calibrate):
-   whether a stamp showed. Releases the runtime. */
-value caml_rig_amd_calibrate(value v_self) {
+/* Sets the clock's source to the path's [struct rig_amd_clock] at
+   [v_source], or none if it is [0], and takes the first measure
+   (rig_amd_measure): whether it could. Releases the runtime, as a measure
+   without a source waits for the GPU. */
+value caml_rig_amd_clock(value v_self, value v_source) {
   struct rig_amd *d = Device_val(v_self);
+  d->source = (struct rig_amd_clock *)Nativeint_val(v_source);
   caml_enter_blocking_section_no_pending();
-  int ok = rig_amd_calibrate(d);
+  int ok = rig_amd_measure(d);
   caml_leave_blocking_section();
   return Val_bool(ok);
 }
@@ -312,7 +320,7 @@ value caml_rig_amd_signaled(value v_self) {
 /* Raises the word to the last value submit was given, with a release
    store, unless it is there already: the queues are destroyed, so nothing
    else writes it. */
-value caml_rig_amd_settle(value v_self) {
+value caml_rig_amd_raise(value v_self) {
   struct rig_amd *d = Device_val(v_self);
   rig_raise(d->word, atomic_load_explicit(&d->last, memory_order_relaxed));
   return Val_unit;

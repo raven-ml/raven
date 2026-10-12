@@ -31,6 +31,7 @@ external map_file : int -> int -> int -> int64 -> int
 
 external unmap_mem : int -> int -> unit = "caml_rig_amd_amdgpu_unmap"
 external store64 : int -> int -> unit = "caml_rig_amd_amdgpu_store64"
+external clock : int -> int -> nativeint = "caml_rig_amd_amdgpu_clock"
 
 (* Errors *)
 
@@ -70,6 +71,7 @@ type gpu = {
   drm : int; (* its render node *)
   hdp : int option; (* the register whose store flushes the HDP *)
   clock_khz : int;
+  clock : nativeint; (* its clock's reader, for the process *)
   cus : int array; (* its active compute units, as cu_bitmap lays them out *)
   mutable doorbells : (int64 * int) option; (* the page: offset, address *)
   mutable events_mapped : bool;
@@ -397,6 +399,7 @@ let acquire fd ~root ~gpus (node : Topology.node) =
           node;
           drm;
           hdp = remap_hdp fd node.gpu_id;
+          clock = clock fd node.gpu_id;
           clock_khz;
           cus;
           doorbells = None;
@@ -674,6 +677,7 @@ let path d ~gpus ~index : mem Amd.path =
     waves = g.node.waves_per_cu;
     lds = g.node.lds;
     clock_hz = g.clock_khz * 1000;
+    clock = Source g.clock;
     mec = g.node.mec;
     wgps =
       wgps_of g.node.gpu ~arrays:g.node.arrays ~per_array:g.node.cu_per_array

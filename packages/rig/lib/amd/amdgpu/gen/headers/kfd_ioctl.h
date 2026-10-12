@@ -60,6 +60,16 @@ struct kfd_ioctl_destroy_queue_args {
 	__u32 pad;
 };
 
+struct kfd_ioctl_get_clock_counters_args {
+	__u64 gpu_clock_counter;	/* from KFD */
+	__u64 cpu_clock_counter;	/* from KFD */
+	__u64 system_clock_counter;	/* from KFD */
+	__u64 system_clock_freq;	/* from KFD */
+
+	__u32 gpu_id;		/* to KFD */
+	__u32 pad;
+};
+
 #define KFD_IOC_EVENT_SIGNAL			0
 
 #define KFD_IOC_EVENT_HW_EXCEPTION		3
@@ -214,6 +224,9 @@ struct kfd_ioctl_runtime_enable_args {
 
 #define AMDKFD_IOC_DESTROY_QUEUE		\
 		AMDKFD_IOWR(0x03, struct kfd_ioctl_destroy_queue_args)
+
+#define AMDKFD_IOC_GET_CLOCK_COUNTERS		\
+		AMDKFD_IOWR(0x05, struct kfd_ioctl_get_clock_counters_args)
 
 #define AMDKFD_IOC_CREATE_EVENT			\
 		AMDKFD_IOWR(0x08, struct kfd_ioctl_create_event_args)

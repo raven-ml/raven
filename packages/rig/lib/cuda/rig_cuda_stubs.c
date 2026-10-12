@@ -156,6 +156,7 @@ enum {
   X(cuEventDestroy_v2, (CUevent))                                              \
   X(cuEventRecord, (CUevent, CUstream))                                        \
   X(cuEventSynchronize, (CUevent))                                             \
+  X(cuEventQuery, (CUevent))                                                   \
   X(cuEventElapsedTime, (float *, CUevent, CUevent))                           \
   X(cuMemAlloc_v2, (CUdeviceptr *, size_t))                                    \
   X(cuMemFree_v2, (CUdeviceptr))                                               \
@@ -361,23 +362,39 @@ static int copies(const struct rig_part *p, int n) {
   return 0;
 }
 
-/* The values a device times at once: a timed submit whose stamp is still
-   unconverted waits for that stamp's value. */
-#define STAMPS 1024
+/* Times
 
-/* How long a reference stays in use before a settle takes another: an
-   event's time is a float of milliseconds since the reference, whose
-   precision falls as they grow apart. */
+   A timed value records an event on each stream it enters, after its
+   waits, and one after its work on the stream it ends on, into the stamp
+   of its value modulo STAMPS. A submit whose value's stamp still holds an
+   earlier value's events waits for that value's end. An event's time is
+   its float of milliseconds since the reference event, plus the host's
+   time at the reference, measured once, at open, between two readings of
+   the host's clock. The times drift from the host's clock at the GPU
+   timer's rate error since open. A float's precision falls as the two
+   events grow apart, so a settle that finds the reference REFERENCE_NS
+   old records the next one on the clock stream, and a later settle adopts
+   it once it has completed, its host time carried over from the last by
+   their elapsed time. Times are converted in value order, and a value's
+   start on a stream is never before the end of the last value that ended
+   there. */
+
+#define STAMPS 1024
 #define REFERENCE_NS 1000000000
 
 /* The stamp of a timed value: the events recorded when its work started on
-   each stream it entered and when it ended, and where its times go, NULL
-   once they are written. */
+   each stream it entered and when it ended on stream [tail], and where its
+   times go, NULL once they are written or dropped. */
 struct stamp {
   CUevent start[2], end;
-  int entered[2];
+  int entered[2], tail;
   uint64_t v;
   uint64_t *times;
+};
+
+/* The last value converted that ended on a stream, and its end. */
+struct ended {
+  uint64_t v, end;
 };
 
 /* A device: its context, its two streams and the events that order them,
@@ -396,14 +413,18 @@ struct device {
   CUevent done[2];     /* the latest part of a stream another one waits for */
   CUevent ended;       /* the end of the last value, for the other stream */
   CUevent waited;      /* the foreign waits of the value being submitted */
-  /* Times: a stream that runs nothing but references; the reference event
-     and the host's time at it, and the event a measure records into; the
-     stamps, the next one taken at [stamped] modulo STAMPS. */
+  /* Times: a stream that runs nothing but references; the reference event,
+     the host's time at it and when it was taken; the event a reference is
+     recorded into, and whether it holds the next one; the stamps; the
+     values converted, every timed one up to [converted]; and each stream's
+     last end. */
   CUstream clock;
   CUevent reference, trial;
-  uint64_t reference_ns;
+  uint64_t reference_ns, referred;
+  int pending;
   struct stamp stamps[STAMPS];
-  uint64_t stamped;
+  uint64_t converted;
+  struct ended ended_on[2];
   unsigned int groups[3], threads[3]; /* a launch's most along x, y, z */
   _Atomic uint64_t *word;
   uint64_t last;       /* the last value submit received */
@@ -464,6 +485,7 @@ static CUresult refer(struct device *d) {
     d->trial = e;
     d->reference_ns = before + took / 2;
   }
+  d->referred = rig_now_ns();
   return s;
 }
 
@@ -1113,34 +1135,81 @@ static CUresult host_time(const struct device *d, CUevent e, uint64_t *ns) {
   return s;
 }
 
-/* Writes [t]'s times, unless written, from its events, whose work has
-   completed: the earliest start of the streams it entered and its end. A
-   time CUDA does not answer leaves both 0. */
-static void convert(const struct device *d, struct stamp *t) {
-  uint64_t *times = t->times, start = UINT64_MAX, end, x;
-  if (times == NULL) return;
+static uint64_t later(uint64_t a, uint64_t b) { return a > b ? a : b; }
+
+/* Writes the times of [t], whose work has completed and whose value is
+   the next to convert, from its events: the earliest of its streams'
+   starts, each no earlier than the last end on its stream, and its end, no
+   earlier than any start. Its times go, written or not. */
+static CUresult convert(struct device *d, struct stamp *t) {
+  uint64_t *times = t->times, start = UINT64_MAX, last = 0, end, x;
   t->times = NULL;
   for (int q = 0; q < 2; q++) {
     if (!t->entered[q]) continue;
-    if (host_time(d, t->start[q], &x) != CUDA_SUCCESS) return;
+    CUresult s = host_time(d, t->start[q], &x);
+    if (s != CUDA_SUCCESS) return s;
+    x = later(x, d->ended_on[q].end);
     if (x < start) start = x;
+    last = later(last, x);
   }
-  if (start == UINT64_MAX || host_time(d, t->end, &end) != CUDA_SUCCESS)
-    return;
+  CUresult s = host_time(d, t->end, &end);
+  if (s != CUDA_SUCCESS) return s;
+  end = later(end, last);
+  d->ended_on[t->tail] = (struct ended){t->v, end};
   times[0] = start;
   times[1] = end;
+  return CUDA_SUCCESS;
 }
 
-/* The stamp of the next timed value into [*t]: the earlier value that
-   held it waited for and its times written first. */
-static CUresult take_stamp(struct device *d, struct stamp **t) {
-  struct stamp *x = &d->stamps[d->stamped % STAMPS];
+/* Writes, in value order, the times of every timed value up to [v] not
+   yet written, whose work has completed with [v]'s. */
+static CUresult convert_upto(struct device *d, uint64_t v) {
+  uint64_t u = d->converted + 1;
+  if (v >= STAMPS && u < v - STAMPS + 1) u = v - STAMPS + 1;
+  for (; u <= v; u++) {
+    struct stamp *t = &d->stamps[u % STAMPS];
+    if (t->times == NULL || t->v != u) continue;
+    CUresult s = convert(d, t);
+    if (s != CUDA_SUCCESS) return s;
+  }
+  d->converted = later(d->converted, v);
+  return CUDA_SUCCESS;
+}
+
+/* The stamp of [v] into [*t], once the earlier value that held it has
+   completed and its times, with every earlier value's, are written. */
+static CUresult take_stamp(struct device *d, uint64_t v, struct stamp **t) {
+  struct stamp *x = &d->stamps[v % STAMPS];
   CUresult s = CUDA_SUCCESS;
   if (x->times != NULL) s = p_cuEventSynchronize(x->end);
-  if (s == CUDA_SUCCESS) convert(d, x);
+  if (s == CUDA_SUCCESS && x->times != NULL) s = convert_upto(d, x->v);
   x->entered[0] = x->entered[1] = 0;
   *t = x;
   return s;
+}
+
+/* Keeps the reference near the events it times without waiting: adopts
+   the next reference once it has completed, or records one on the clock
+   stream once the reference is REFERENCE_NS old. */
+static CUresult refresh(struct device *d) {
+  if (d->pending) {
+    CUresult s = p_cuEventQuery(d->trial);
+    if (s == CUDA_ERROR_NOT_READY) return CUDA_SUCCESS;
+    float ms;
+    if (s == CUDA_SUCCESS)
+      s = p_cuEventElapsedTime(&ms, d->reference, d->trial);
+    if (s != CUDA_SUCCESS) return s;
+    CUevent e = d->reference;
+    d->reference = d->trial;
+    d->trial = e;
+    d->reference_ns += (uint64_t)ns_of_ms(ms);
+    d->referred = rig_now_ns();
+    d->pending = 0;
+    return CUDA_SUCCESS;
+  }
+  if (rig_now_ns() - d->referred < REFERENCE_NS) return CUDA_SUCCESS;
+  d->pending = 1;
+  return p_cuEventRecord(d->trial, d->clock);
 }
 
 /* Writes [v] into the word after the last value's end, which follows every
@@ -1233,15 +1302,15 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
   CUresult e = own(d->context, &pushed);
   if (e == CUDA_SUCCESS) {
     if (!d->failed && times != NULL && nparts > 0)
-      e = in_step(&s, timing, take_stamp(d, &s.stamp));
+      e = in_step(&s, timing, take_stamp(d, v, &s.stamp));
     if (!d->failed && e == CUDA_SUCCESS) e = run(&s, v, parts, nparts);
     if (e == CUDA_SUCCESS && s.stamp != NULL)
       e = in_step(&s, timing,
                   p_cuEventRecord(s.stamp->end, d->streams[d->tail]));
     if (e == CUDA_SUCCESS && s.stamp != NULL) {
       s.stamp->v = v;
+      s.stamp->tail = d->tail;
       s.stamp->times = times;
-      d->stamped++;
     }
     if (e == CUDA_SUCCESS && !d->failed &&
         (v - d->committed >= COMMIT_EVERY || copies(parts, nparts)))
@@ -1258,22 +1327,31 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
   return RIG_FAILED;
 }
 
-/* Waits for [v]'s end event, so that an event CUDA does not yet report
-   complete still gives its time, takes a new reference if the last is
-   older than REFERENCE_NS, and writes [v]'s times. The reference runs on
-   the device's own clock stream, which nothing else delays. */
-void rig_cuda_settle(void *self, uint64_t v) {
+/* Writes [v]'s times, with every earlier timed value's, and keeps the
+   reference near. The end event precedes the word's write of [v] on its
+   stream, so the synchronize returns at once. A failure loses the device,
+   as a failed submit does. */
+int rig_cuda_settle(void *self, uint64_t v, const char **failure) {
   struct device *d = self;
+  struct stamp *t = &d->stamps[v % STAMPS];
+  struct submission s = {.d = d, .step = timing};
   int pushed;
-  struct stamp *t = &d->stamps[0];
-  while (t < d->stamps + STAMPS && (t->times == NULL || t->v != v)) t++;
-  if (t == d->stamps + STAMPS || own(d->context, &pushed) != CUDA_SUCCESS)
-    return;
-  CUresult s = p_cuEventSynchronize(t->end);
-  if (s == CUDA_SUCCESS && rig_now_ns() - d->reference_ns > REFERENCE_NS)
-    s = refer(d);
-  if (s == CUDA_SUCCESS) convert(d, t);
-  restore(pushed, s);
+  if (d->failed) {
+    *failure = d->failure;
+    return RIG_FAILED;
+  }
+  CUresult e = own(d->context, &pushed);
+  if (e == CUDA_SUCCESS) {
+    if (t->times != NULL && t->v == v) e = p_cuEventSynchronize(t->end);
+    if (e == CUDA_SUCCESS) e = convert_upto(d, v);
+    if (e == CUDA_SUCCESS) e = refresh(d);
+    e = restore(pushed, e);
+  }
+  if (e == CUDA_SUCCESS) return RIG_OK;
+  fail(d, &s, e);
+  d->failed = 1;
+  *failure = d->failure;
+  return RIG_FAILED;
 }
 
 int rig_cuda_commit(void *self, uint64_t v, const char **failure) {

@@ -260,19 +260,41 @@ _Static_assert(sizeof(struct rig_amd_route) <= RIG_SCRATCH, "a route fits");
    RIG_AMD_MARKS - 1 values unreached, one segment mark each, so one that
    reuses a slot finds its earlier value completed, and converts that
    value's stamps to the host's clock unless rig_amd_settle did. A record
-   the GPU did not write stays 0. */
+   the GPU did not write stays 0.
+
+   A stamp converts to the host's clock along the line through two
+   measures of the clock against the host's clock, the first, at open, and
+   the latest, which rig_amd_settle takes again once it is
+   RIG_AMD_MEASURE_NS old from a path's source; at the clock's rate while
+   they are one. A device without a source measures at open only, with
+   stamps the compute queue writes between two readings of the host's
+   clock. Values convert in value order, and a value's start on a queue is
+   never before the end of the last value that ended there. */
 #define RIG_AMD_STAMPS RIG_AMD_MARKS
+#define RIG_AMD_MEASURE_NS UINT64_C(62500000)
 
 /* A slot's records, as the GPU writes them: counts of its clock. */
 struct rig_amd_stamps {
   uint64_t start[RIG_AMD_QUEUES], end;
 };
 
-/* The host's side of a slot: its value and where its times go, NULL once
-   they are written. */
+/* The host's side of a slot: its value, where its times go, NULL once
+   they are written or dropped, the queues it entered, a bit each, and the
+   queue that released it. */
 struct rig_amd_timed {
   uint64_t v;
   uint64_t *times;
+  uint8_t entered, queue;
+};
+
+/* A reading of the GPU's clock and of the host's clock at that instant. */
+struct rig_amd_measure {
+  uint64_t ticks, host;
+};
+
+/* The last value converted that ended on a queue, and its end. */
+struct rig_amd_ended {
+  uint64_t v, end;
 };
 
 struct rig_amd {
@@ -302,21 +324,28 @@ struct rig_amd {
   const char *failure;
   char failure_text[96];
   /* the stamp ring, as the host reads it and at the GPU's address, and its
-     host side; the record the clock's calibration writes; the clock's
-     rate; and its nanoseconds less the host's clock */
+     host side; the clock: the path's source, or NULL, the record a stamp
+     of the measure at open writes, the clock's rate, the first and the
+     latest measures; every timed value up to [converted] converted; each
+     queue's last end; and the failure of a conversion a submit made,
+     which the next settle reports */
   volatile struct rig_amd_stamps *stamps;
   uint64_t stamps_gpu;
   struct rig_amd_timed timed[RIG_AMD_STAMPS];
+  struct rig_amd_clock *source;
   volatile uint64_t *clock;
   uint64_t clock_gpu, clock_hz;
-  int64_t offset;
-  uint64_t calibrated; /* the host's clock at the last calibration */
+  struct rig_amd_measure first, latest;
+  uint64_t converted;
+  struct rig_amd_ended ended_on[RIG_AMD_QUEUES];
+  const char *times_failure;
 };
 
-/* Measures [d]'s offset: [1], or [0] if the GPU wrote no stamp within a
-   second. Called at open, before any submission, and by rig_amd_settle on
-   an idle device. */
-int rig_amd_calibrate(struct rig_amd *d);
+/* Takes [d]'s first measure of its clock, from its source or, without
+   one, from stamps of the compute queue: [1], or [0] if the source could
+   not read the clock or the GPU wrote no stamp within a second. Called at
+   open, before any submission. */
+int rig_amd_measure(struct rig_amd *d);
 
 /* Orders every store before it before every store after it, as the GPU
    sees them: on arm64 the full-system barrier stores to a BAR need; on

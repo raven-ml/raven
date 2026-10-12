@@ -206,9 +206,18 @@ type 'region facts = {
        writes the word, with no host code between the work's end and the
        word, has the work stamp its start and end in the driver's own
        memory, and converts the stamps to the host's clock in [settle], or
-       in a later [submit] once [v]'s work has completed. [settle] may be
-       [NULL] for a driver that writes the times itself before the word
-       shows the value.}}
+       in a later [submit] once [v]'s work has completed. [settle] never
+       waits for the device's work. It may read a clock of the device, with
+       one call of the operating system or a read of the device's
+       registers. It returns [RIG_OK], or [RIG_FAILED] if it
+       could not write the times, such as for a stamp the work never wrote,
+       which loses the device. [settle] may be [NULL] for a driver that
+       writes the times itself before the word shows the value.
+
+       The times are as exact as the driver's correlation of the device's
+       clock with the host's, which its interface states. A conversion
+       never puts a value's start on a queue before the end of the value
+       before it on that queue.}}
 
     rig calls the four one at a time for each device, with [room] before
     each [submit]. They must call no function of the OCaml runtime and read

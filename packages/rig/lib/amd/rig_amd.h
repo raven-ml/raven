@@ -57,8 +57,20 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                    const char **failure);
 
 /* Writes the times of [v], whose work has completed, from its stamps,
-   unless a later rig_amd_submit wrote them (rig_settle_fn). The host's
-   clock is the GPU's clock at its rate less an offset measured at open. */
-void rig_amd_settle(void *self, uint64_t v);
+   unless a later rig_amd_submit wrote them (rig_settle_fn), and those of
+   every earlier timed value first. Answers RIG_FAILED if a stamp of a
+   completed value was never written, or the GPU's clock cannot be read. */
+int rig_amd_settle(void *self, uint64_t v, const char **failure);
+
+/* A path's reader of the GPU's clock against the host's clock (Rig_amd's
+   [Source] clock), which the path keeps while a device may read it,
+   usually as the first member of a structure of its own. [read] stores the
+   clock's count into [*ticks] and the host's clock (rig_now_ns) at the
+   same instant into [*host], and answers 0, or -1 if it could not read
+   them. It never waits for the GPU's work, takes a few microseconds at
+   most, and calls nothing of the OCaml runtime. */
+struct rig_amd_clock {
+  int (*read)(struct rig_amd_clock *c, uint64_t *ticks, uint64_t *host);
+};
 
 #endif

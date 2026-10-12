@@ -66,7 +66,7 @@ NAMES = [
     "AMDKFD_IOC_GET_VERSION", "AMDKFD_IOC_CREATE_QUEUE", "AMDKFD_IOC_DESTROY_QUEUE", "AMDKFD_IOC_CREATE_EVENT",
     "AMDKFD_IOC_DESTROY_EVENT", "AMDKFD_IOC_RESET_EVENT", "AMDKFD_IOC_WAIT_EVENTS", "AMDKFD_IOC_ACQUIRE_VM",
     "AMDKFD_IOC_ALLOC_MEMORY_OF_GPU", "AMDKFD_IOC_FREE_MEMORY_OF_GPU", "AMDKFD_IOC_MAP_MEMORY_TO_GPU",
-    "AMDKFD_IOC_UNMAP_MEMORY_FROM_GPU", "AMDKFD_IOC_RUNTIME_ENABLE",
+    "AMDKFD_IOC_UNMAP_MEMORY_FROM_GPU", "AMDKFD_IOC_RUNTIME_ENABLE", "AMDKFD_IOC_GET_CLOCK_COUNTERS",
     "DRM_IOCTL_AMDGPU_INFO", "DRM_IOCTL_AMDGPU_CTX",
     # structures
     "kfd_ioctl_get_version_args", "kfd_ioctl_create_queue_args", "kfd_ioctl_destroy_queue_args",
@@ -74,6 +74,7 @@ NAMES = [
     "kfd_ioctl_wait_events_args", "kfd_event_data", "kfd_ioctl_acquire_vm_args",
     "kfd_ioctl_alloc_memory_of_gpu_args", "kfd_ioctl_free_memory_of_gpu_args",
     "kfd_ioctl_map_memory_to_gpu_args", "kfd_ioctl_unmap_memory_from_gpu_args", "kfd_ioctl_runtime_enable_args",
+    "kfd_ioctl_get_clock_counters_args",
     "drm_amdgpu_info", "drm_amdgpu_info_device", "drm_amdgpu_ctx",
 ]
 

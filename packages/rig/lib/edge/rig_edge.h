@@ -188,9 +188,13 @@ typedef int rig_commit_fn(void *self, uint64_t v, const char **failure);
    possibly never, as for a device lost first. A driver whose GPU writes
    the word has the work write stamps into the driver's own memory, and
    converts them to the host's clock here, or in a later submit once [v]'s
-   work has completed. A driver that writes the times before the word
+   work has completed. Settle never waits for the device's work. It may
+   read a clock of the device, with one system call or register read.
+   Answers RIG_OK, or RIG_FAILED with [*failure] set as a submission's if
+   it could not write the times, such as for a stamp the work never wrote,
+   which loses the device. A driver that writes the times before the word
    shows [v] sets [settle] to NULL. */
-typedef void rig_settle_fn(void *self, uint64_t v);
+typedef int rig_settle_fn(void *self, uint64_t v, const char **failure);
 
 /* A driver's functions, which the first member of its state for each
    device points to. */

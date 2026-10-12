@@ -105,6 +105,11 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> int
 
 (** {1:opening Opening}
 
+    {b Times.} A device measures the GPU's clock against the host's at open
+    only, with stamps of its compute queue ({!Rig_amd.Round_trip}), so the
+    times of its profiles drift from the host's clock at the clock's rate
+    error since open.
+
     {b Sessions.} An open writes a {e mark}, a value in one of the GC's
     scratch registers that says this library booted the GPU and whether its
     session ended cleanly. The process stops every GPU it holds at exit. A

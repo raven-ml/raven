@@ -55,6 +55,7 @@ type gpu = {
 }
 
 type 'm memory = { address : int; host : int option; handle : int; data : 'm }
+type clock = Source of nativeint | Registers of int
 
 type 'm path = {
   key : 'm Type.Id.t;
@@ -76,6 +77,7 @@ type 'm path = {
   unregister : int -> (unit, string) result;
   check : unit -> unit;
   hang_ms : int option;
+  clock : clock;
   stop : unit -> [ `Stopped | `Unknown ];
 }
 
@@ -109,10 +111,9 @@ let segment_bytes = 1 lsl 20
 
 (* The stamp ring's slots, one per value modulo their number, rig_nv_stubs.h's
    Times: more than the values the two channels' rings may hold unreached. A
-   slot is three records of 16 bytes, and the calibration's record follows
-   the slots. *)
+   slot is three records of 16 bytes. *)
 let slots = 2 * entries
-let stamps_bytes = (slots * 48) + 16
+let stamps_bytes = slots * 48
 
 (* The compute channel's launch ring holds [launch_bytes] bytes of launches'
    descriptors and banks, a power of two: a launch takes about 1 KiB. *)
@@ -175,8 +176,10 @@ external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
 [@@noalloc]
 
 external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
-external set_stamps : int -> int -> int -> int -> bool = "caml_rig_nv_stamps"
-external calibrate : int -> bool = "caml_rig_nv_calibrate"
+external set_stamps : int -> int -> int -> int -> int -> bool
+  = "caml_rig_nv_stamps"
+
+external set_clock : int -> nativeint -> int -> bool = "caml_rig_nv_clock"
 
 external set_launches : int -> int -> int -> int -> bool -> unit
   = "caml_rig_nv_launches"
@@ -716,11 +719,14 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     set_launches self launches_host launches.address launch_bytes launches_bar;
     templates self p.gpu;
     Option.iter (set_flush self) p.flush;
+    let source, bar =
+      match p.clock with Source c -> (c, 0) | Registers a -> (0n, a)
+    in
     let* () =
-      if not (set_stamps self stamps_host stamps.address slots) then
-        Error "no host memory for the stamp ring's state"
-      else if not (calibrate self) then
-        Error "the GPU wrote no stamp of its timer within a second"
+      if not (set_stamps self stamps_host stamps.address stamps_bytes slots)
+      then Error "no host memory for the stamp ring's state"
+      else if not (set_clock self source bar) then
+        Error "the GPU's timer could not be read"
       else Ok ()
     in
     (* The private copy kernel. On sm_80, sm_86, sm_87 and sm_89, a copy of

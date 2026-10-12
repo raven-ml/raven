@@ -212,7 +212,14 @@ struct flush {
    v modulo the ring's slots, which are more than the values a submission
    may find unreached: a submission that reuses a slot finds its earlier
    value completed, and converts that value's stamps to the host's clock
-   unless rig_nv_settle did. */
+   unless rig_nv_settle did.
+
+   A stamp converts to the host's clock along the line through two
+   measures of the timer against the host's clock, the first, at open, and
+   the latest, which rig_nv_settle takes again once it is MEASURE_NS old
+   from a path's source. A device of the timer's registers measures at
+   open only. Values convert in value order, and a value's start on a
+   channel is never before the end of the last value that ended there. */
 
 /* A release with the timer: the value released and the timer's
    nanoseconds. */
@@ -225,12 +232,28 @@ struct stamps {
   struct record start[CHANNELS], end;
 };
 
-/* The host's side of a slot: its value and where its times go, NULL once
-   they are written. */
+/* The host's side of a slot: its value, where its times go, NULL once
+   they are written or dropped, the channels it entered, a bit each, and
+   the channel that released it. */
 struct timed {
   uint64_t v;
   uint64_t *times;
+  uint8_t entered, channel;
 };
+
+/* A reading of the GPU's timer and of the host's clock at that instant. */
+struct measure {
+  uint64_t gpu, host;
+};
+
+/* The last value converted that ended on a channel, and its end. */
+struct ended {
+  uint64_t v, end;
+};
+
+/* How old the latest measure of a path's source gets before a settle
+   takes another, as often as ROCr's clock correlation. */
+#define MEASURE_NS UINT64_C(62500000)
 
 /* A device. The fields up to [last] live for the process; the channels'
    memory ends at a stop that answered Stopped. */
@@ -255,15 +278,20 @@ struct device {
   /* a notification's error fields */
   uint32_t info32_at, status_at;
   /* the stamp ring: its [slots] slots, a power of two, as the host reads
-     them and at the GPU's address, and their host side; the record the
-     timer's calibration writes; and the timer less the host's clock */
+     them and at the GPU's address, and their host side */
   volatile struct stamps *stamps;
   uint64_t stamps_gpu, slots;
   struct timed *timed;
-  volatile struct record *clock;
-  uint64_t clock_gpu;
-  int64_t offset;
-  uint64_t calibrated; /* the host's clock at the last calibration */
+  /* the timer: the path's source, or NULL for the registers of the GPU's
+     BAR 0 mapped at [bar]; the first and the latest measures; every timed
+     value up to [converted] converted; each channel's last end; and the
+     failure of a conversion a submit made, which the next settle reports */
+  struct rig_nv_clock *source;
+  volatile const uint8_t *bar;
+  struct measure first, latest;
+  uint64_t converted;
+  struct ended ended_on[CHANNELS];
+  const char *failure;
 };
 
 /* Makes the host's writes through the BARs that [d]'s work may read reach
@@ -285,10 +313,9 @@ static inline void rig_nv_flush(struct device *d, int launched) {
   if (!read) store_fence();
 }
 
-/* Measures [d]'s offset: [1], or [0] if the GPU wrote no stamp within a
-   second. Called at open, before any submission, and by rig_nv_settle on
-   an idle device. */
-int rig_nv_calibrate(struct device *d);
+/* Reads [d]'s timer against the host's clock into [*m]: 1, or 0 if its
+   source could not. */
+int rig_nv_measure(const struct device *d, struct measure *m);
 
 /* The join word of channel [q]: its GPU address. */
 #define JOIN_GPU(d, q) ((d)->word_gpu + 8 * (1 + (q)))

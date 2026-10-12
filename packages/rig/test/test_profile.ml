@@ -272,6 +272,19 @@ let test_span_lost () =
   in
   equal (list string) [] (named events)
 
+(* A settle that fails loses the device, with the driver's reason, and the
+   profile has no span of the value it settled. *)
+let test_settle_fails () =
+  let d, p = P.open_ "profile:settle-fails" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  P.fail_settle p;
+  let (), events =
+    Prof.take (fun () ->
+        Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]))
+  in
+  equal (list string) [] (named events);
+  equal (option string) (Some "the settle failed") (Rig.lost d)
+
 (* A pending timing callback may outlive its failed profile. It must keep no
    discarded image binary, even when loss prevents the callback from running. *)
 let test_failed_history failure =
@@ -623,6 +636,7 @@ let tests =
         test "a span goes to the profiles taken at its submit"
           test_span_profiles;
         test "a profile leaves out a lost device's unread span" test_span_lost;
+        test "a settle that fails loses the device" test_settle_fails;
         cases ~name:fst "failed histories release their image binaries"
           [ ("body", `Body); ("loss", `Lost); ("pending read", `Read) ]
           (fun (_, failure) -> test_failed_history failure);

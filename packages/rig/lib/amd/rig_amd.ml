@@ -22,6 +22,7 @@ module Sdma = Abi.Sdma
 exception Fault of string
 
 type 'm memory = { address : int; host : int option; data : 'm }
+type clock = Source of nativeint | Round_trip
 
 type 'm path = {
   key : 'm Type.Id.t;
@@ -30,6 +31,7 @@ type 'm path = {
   waves : int;
   lds : int;
   clock_hz : int;
+  clock : clock;
   mec : int;
   wgps : int array array;
   budget : int;
@@ -123,8 +125,10 @@ external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
 
 external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
-external set_stamps : int -> int -> int -> int -> unit = "caml_rig_amd_stamps"
-external calibrate : int -> bool = "caml_rig_amd_calibrate"
+external set_stamps : int -> int -> int -> int -> int -> unit
+  = "caml_rig_amd_stamps"
+
+external set_clock : int -> nativeint -> bool = "caml_rig_amd_clock"
 external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"
 external zero : int -> int -> unit = "caml_rig_amd_zero"
 external poke32 : int -> int -> int -> unit = "caml_rig_amd_poke32"
@@ -877,12 +881,13 @@ let make (type m) (p : m path) =
     in
     ring 0 compute_kind compute_host compute_bell;
     ring 1 `Sdma copy_host copy_bell;
-    set_stamps self stamps_host (mem_address stamps) p.clock_hz;
+    set_stamps self stamps_host (mem_address stamps) stamps_bytes p.clock_hz;
+    let source = match p.clock with Source c -> c | Round_trip -> 0n in
     let* () =
-      if calibrate self then Ok ()
+      if set_clock self source then Ok ()
       else begin
         destroy self;
-        Error "the GPU wrote no stamp of its clock within a second"
+        Error "the GPU's clock could not be read against the host's"
       end
     in
     let rec g =
@@ -945,7 +950,7 @@ external last : int -> int = "caml_rig_amd_last" [@@noalloc]
 
 (* Timeline *)
 
-external settle : int -> unit = "caml_rig_amd_settle"
+external raise_word : int -> unit = "caml_rig_amd_raise"
 
 let signaled g = signaled_word g.self
 
@@ -961,7 +966,7 @@ let halt g l ~fault =
   | exception Fault _ -> ()
   | `Unknown -> ()
   | `Stopped ->
-      settle g.self;
+      raise_word g.self;
       if l.copy_launch <> 0 then free_launch l.copy_launch;
       let st = l.scratch in
       let buffers = Option.to_list st.installed @ Option.to_list st.pending in

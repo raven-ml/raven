@@ -284,6 +284,7 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
       gpu;
       budget = Page_table.main_pool tables;
       doorbell = Window.address c.regs + doorbell_at;
+      clock = Registers (Window.address c.regs);
       flush;
       alloc = alloc g;
       (* A GPU taken physically would keep writing the process's pages after its

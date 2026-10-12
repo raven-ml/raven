@@ -144,13 +144,21 @@ val capability : t -> Rig_nv_abi.Gpu.t
     releases the value writes one before the release
     ({!Rig_nv_abi.Method.release_stamp}). On COMPUTE a stamp waits for the
     channel's earlier work to complete. [rig_nv_settle], the [edge]'s
-    [settle], converts the earliest start and the end to the host's clock by
-    an offset, as does a later [rig_nv_submit]. [make] measures the offset,
-    and [rig_nv_settle] measures it again when the device is idle, every
-    value it was given reached, and the offset is a second old. A stamp
-    behind work would measure the work's queue, so a device kept busy keeps
-    its offset, and its times drift from the host's clock at its timer's
-    rate error, a few parts per million, until it is next idle.
+    [settle], or a later [rig_nv_submit] converts the earliest start and
+    the end to the host's clock, in value order, with each start no earlier
+    than the end of the last value that ended on its channel. A stamp of a
+    completed value that the work never wrote makes the next
+    [rig_nv_settle] fail, which loses the device.
+
+    A device measures the timer against the host's clock through the
+    path's {!type-clock}, and converts a stamp along the line through its
+    first measure, at open, and its latest. Each measure reads the timer
+    between two readings of the host's clock, whose middle is the host's
+    time, so a time is within half that interval of the host's clock, a few
+    microseconds through NVIDIA's kernel driver ({!Source}), plus the
+    timer's rate error since the latest measure. With {!Registers} the
+    device measures at open only, and its times drift from the host's clock
+    at the timer's rate error since open.
 
     A launch with dynamic shared memory runs in the multiprocessors'
     configuration of the most shared memory ({!Rig_nv_abi.Qmd.t.shared}). *)
@@ -302,6 +310,19 @@ type 'm memory = {
 }
 (** The type for memory a path gives a device. *)
 
+(** The type for how a device reads the GPU's timer, the clock of its
+    stamps, against the host's clock ({!section-submitting}). *)
+type clock =
+  | Source of nativeint
+      (** The address of the path's [struct rig_nv_clock] ([rig_nv.h]),
+          which the path keeps while a device may read it. A device reads
+          it at open and again in [rig_nv_settle], at most every
+          62.5 ms. *)
+  | Registers of int
+      (** The host address at which the GPU's BAR 0 is mapped, whose timer
+          registers ([NV_PTIMER_TIME_0] and [_1]) a device reads at open
+          only. *)
+
 type 'm path = {
   key : 'm Type.Id.t;
       (** The path's key. Devices whose paths have one key are of one
@@ -361,6 +382,8 @@ type 'm path = {
           milliseconds hung, where nothing else bounds the GPU's work; [None]
           where the path's kernel driver bounds it. It is the [hang_ms] of
           the device's facts ({!Rig_edge.type-facts}). *)
+  clock : clock;
+      (** How a device reads the GPU's timer against the host's clock. *)
   stop : unit -> [ `Stopped | `Unknown ];
       (** [stop ()] ends the path's hold of the GPU after the device has freed
           its channels. It must return [`Stopped] only once none of the
@@ -382,13 +405,11 @@ val make : 'm path -> (t, string) result
     allocates a channel group with one context share, the two channels and
     their memory, and asks the RM to run the GPU at its highest clocks.
 
-    It then measures the offset of the GPU's timer from the host's clock
-    with eight stamps, each between two readings of the host's clock, and
-    keeps the closest pair's.
+    It then takes its first measure of the GPU's timer through [p.clock].
 
     [Error msg] if [p.rm.release] is none of [570], [580], [610] and [615], if
-    the RM refuses an object, if [p] lacks the memory, or if the GPU writes
-    no stamp within a second. A failed [make] frees
+    the RM refuses an object, if [p] lacks the memory, or if [p.clock]
+    cannot read the timer. A failed [make] frees
     what it allocated. [p]'s own objects stay allocated, and another [make] may
     use them once this one has failed or its device has stopped. *)
 

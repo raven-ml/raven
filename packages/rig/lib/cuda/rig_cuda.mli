@@ -188,13 +188,23 @@ val capability : t -> Rig_cuda_abi.t
     while a stream is full, until the device's earlier work frees it.
     While a profile is taken, [rig_cuda_submit] records a timing event on
     each stream a value's work enters, after the value's waits, and one
-    after its work on the stream it ends on. [rig_cuda_settle], or a later
-    timed [rig_cuda_submit], converts the earliest start and the end to the
-    host's clock through a reference event, which the device records on a
-    stream of its own, the closest of eight round trips to the host's
-    clock, when it opens, and again in [rig_cuda_settle] once the last is
-    a second old. A timed submit waits for the value timed
-    1,024 timed values before it, whose events it reuses.
+    after its work on the stream it ends on. It waits for the value 1,024
+    values before it, whose events it reuses, if that value was timed.
+    [rig_cuda_settle], or a later timed [rig_cuda_submit], converts the
+    earliest start and the end to the host's clock, in value order, with
+    each start no earlier than the end of the last value that ended on its
+    stream. A failed conversion loses the device.
+
+    The device measures its clock against the host's once, when it opens.
+    It records a reference event on a stream of its own between two
+    readings of the host's clock, and keeps the closest of eight. An
+    event's time is its elapsed time since the reference, so the times are
+    within half that round trip of the host's clock at open, and drift
+    from it at the GPU timer's rate error since open. [rig_cuda_settle]
+    never waits for the device's work. To keep the elapsed times short, it
+    records the next reference once the last is a second old and adopts it
+    in a later settle once it has completed, its host time carried over
+    from the last.
 
     {2:launches Launches}
 

@@ -1308,8 +1308,9 @@ value caml_rig_commit(value v_d) {
 
 /* Has [d]'s driver write the times of its value [v_v] under the turn
    ([rig_settle_fn]). Answers SUBMIT_OK, SUBMIT_BUSY (the turn stayed held
-   past the still interval) or SUBMIT_LOST. Releases the runtime while it
-   waits for the turn and, for a driver that may block, while it settles. */
+   past the still interval), SUBMIT_LOST, or SUBMIT_FAILED if the settle
+   failed and lost [d]. Releases the runtime while it waits for the turn
+   and, for a driver that may block, while it settles. */
 value caml_rig_settle(value v_d, value v_v) {
   struct rig_device *d = Device_val(v_d);
   uint64_t v = (uint64_t)Long_val(v_v);
@@ -1318,10 +1319,13 @@ value caml_rig_settle(value v_d, value v_v) {
   if (!lock_turn(d, &released)) return Val_int(SUBMIT_BUSY);
   int r = SUBMIT_LOST;
   if (!is_lost(d)) {
+    const char *why = NULL;
     begin_turn(d);
-    d->driver.settle(d->self, v);
+    int a = d->driver.settle(d->self, v, &why);
     end_turn(d);
-    r = SUBMIT_OK;
+    r = a == RIG_OK
+            ? SUBMIT_OK
+            : fail_locked(d, why != NULL ? why : "the driver's settle failed");
   }
   return Val_int(give_turn(d, released, r));
 }

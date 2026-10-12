@@ -30,6 +30,9 @@ let set = Rm.set
 let page = 0x1000
 let huge_page = 2 lsl 20
 
+external clock : int -> int -> int -> int -> nativeint
+  = "caml_rig_nv_nvidia_clock"
+
 (* Video memory of this size or more takes 2 MiB pages. *)
 let huge_from = 8 lsl 20
 
@@ -68,6 +71,7 @@ type gpu = {
   facts : Rig_nv.gpu;
   budget : int;
   hang_ms : int option; (* [None] while the RM's watchdog bounds its work *)
+  clock : nativeint; (* its timer's reader, for the process *)
   index : int; (* its number, in bus order *)
   mutable refused : int list; (* the GPUs peer access was refused with *)
   mutable channels : (int * int) list; (* registered, with their ranges *)
@@ -768,6 +772,7 @@ let make_gpu c ~dev ~index bus =
           };
         budget;
         hang_ms;
+        clock = clock c.ctl Rm.control_request c.root subdevice;
         index;
         refused = [];
         channels = [];
@@ -872,6 +877,7 @@ let path g =
        device could not free may still run. *)
     check = ignore;
     hang_ms = g.hang_ms;
+    clock = Rig_nv.Source g.clock;
     stop =
       (fun () ->
         Mutex.protect gpus_lock (fun () -> g.opened <- false);

@@ -1787,7 +1787,13 @@ module Profile : sig
             the functions its launches run, in the order of its parts,
             joined by [", "], or, with no launch, after its first part's
             kind, ["copies"], ["fills"] or ["words"]. A device whose driver
-            cannot time a submission's work records no span of it. *)
+            cannot time a submission's work records no span of it.
+
+            A device's span is as exact as its driver's correlation of the
+            device's clock with the host's, which the driver's interface
+            states: within microseconds where the driver reads the device's
+            clock directly, and off by the device clock's rate error since
+            open where the driver measures it at open only. *)
     | Allocation of { device : device; time : int; allocated : int }
         (** The bytes of memory [device] allocated from [time] on. *)
     | Load of { image : Image.t; binary : string; time : int }

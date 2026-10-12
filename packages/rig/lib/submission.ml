@@ -1156,14 +1156,15 @@ let rec go s run buffers waits k =
 
 (* Records, in the profiles [ps], the span of [s]'s value [p] once [p] is
    reached, from the time pair [pair] its driver wrote: none if the driver left
-   it 0. The function holds only [s]'s names: a lost device keeps its functions
-   for good. *)
+   it 0, or if its settle failed or found the device lost. The function holds
+   only [s]'s names: a lost device keeps its functions for good. *)
 let record s (lane, name) ps p pair =
   let device = s.dev in
   let l = Dev.live device in
   Dev.after device (Point.value p) (fun () ->
-      Dev.settle device (Point.value p);
+      let settled = Dev.settle device (Point.value p) in
       match times_read l.c pair with
+      | _ when not settled -> ()
       | 0, 0 -> ()
       | start, stop -> Prof.add ps (Span { device; lane; name; start; stop }))
 

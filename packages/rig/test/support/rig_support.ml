@@ -9,6 +9,7 @@ external polled_new : int -> bool -> int -> polled = "rig_test_polled_new"
 external polled_edge : polled -> nativeint = "rig_test_polled_edge"
 external polled_fail : polled -> unit = "rig_test_polled_fail"
 external polled_fail_commit : polled -> unit = "rig_test_polled_fail_commit"
+external polled_fail_settle : polled -> unit = "rig_test_polled_fail_settle"
 external polled_run : polled -> int = "rig_test_polled_run"
 external polled_drive : polled -> int = "rig_test_polled_drive"
 external polled_start : polled -> unit = "rig_test_polled_start"
@@ -489,6 +490,7 @@ module Polled = struct
   let submits d = polled_submits d.c
   let fail d = polled_fail d.c
   let fail_commit d = polled_fail_commit d.c
+  let fail_settle d = polled_fail_settle d.c
   let fault d why = Mutex.protect d.lock (fun () -> d.fault <- Some why)
 
   let before d call f =

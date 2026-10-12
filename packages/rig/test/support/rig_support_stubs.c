@@ -215,6 +215,7 @@ struct polled {
   int may_block;     /* a full queue's submit waits instead of [room] */
   int fail;          /* the next submit fails */
   int fail_commit;   /* the next commit of uncommitted values fails */
+  int fail_settle;   /* the next settle fails */
   int held;          /* parts queued */
   int n, c;
   struct queued *q;
@@ -250,9 +251,10 @@ struct polled {
 static rig_room_fn polled_room;
 static rig_submit_fn polled_submit;
 static rig_commit_fn polled_commit;
+static rig_settle_fn polled_settle;
 
 static const struct rig_driver polled_driver = {polled_room, polled_submit,
-                                                polled_commit, NULL};
+                                                polled_commit, polled_settle};
 
 /* Every Polled device not yet collected, linked through the devices so
    that enrolling allocates nothing: a sleep runs the ones whose words the
@@ -351,6 +353,14 @@ value rig_test_polled_fail_commit(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
   p->fail_commit = 1;
+  unlock(&p->mu);
+  return Val_unit;
+}
+
+value rig_test_polled_fail_settle(value v_p) {
+  struct polled *p = Polled_val(v_p);
+  lock(&p->mu);
+  p->fail_settle = 1;
   unlock(&p->mu);
   return Val_unit;
 }
@@ -857,6 +867,21 @@ static int polled_commit(void *self, uint64_t v, const char **failure) {
   commit_upto(p, v);
   unlock(&p->mu);
   return RIG_OK;
+}
+
+/* A settle does nothing, since the queue's run writes a value's times
+   before its word shows it, or fails as [rig_test_polled_fail_settle]
+   asked. */
+static int polled_settle(void *self, uint64_t v, const char **failure) {
+  struct polled *p = self;
+  (void)v;
+  lock(&p->mu);
+  int fail = p->fail_settle;
+  p->fail_settle = 0;
+  unlock(&p->mu);
+  if (!fail) return RIG_OK;
+  *failure = "the settle failed";
+  return RIG_FAILED;
 }
 
 /* The host address of the device [v_p]'s word. */

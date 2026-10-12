@@ -22,6 +22,6 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
 
 int rig_cuda_commit(void *self, uint64_t v, const char **failure);
 
-void rig_cuda_settle(void *self, uint64_t v);
+int rig_cuda_settle(void *self, uint64_t v, const char **failure);
 
 #endif
