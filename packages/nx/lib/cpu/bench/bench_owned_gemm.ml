@@ -16,7 +16,7 @@ let make ?strides shape =
   ( {
       Nx_array.dtype = Nx_dtype.float32;
       view = Nx_array.View.create ?strides shape;
-      buffer = Nx_device.Buffer.of_bigarray values;
+      buffer = Rig.Buffer.of_bigarray values;
     },
     values )
 

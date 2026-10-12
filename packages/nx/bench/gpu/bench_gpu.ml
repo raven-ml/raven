@@ -27,14 +27,26 @@
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
 
+(* GPU 0 of the AMD and NV kernel drivers, opened by rig. *)
+let amd_gpu () = Rig.open_ (Rig_amd_amdgpu.gpu 0)
+let nv_gpu () = Rig.open_ (Rig_nv_nvidia.gpu 0)
+
+let device opened =
+  match opened () with Ok m -> m | Error e -> failwith ("bench_gpu: " ^ e)
+
+(* The AMD GPU, computed by nx.amd. *)
+let amd () = Nx.Device.make ~backend:Nx_amd.backend (device amd_gpu)
+
+(* Returns once the work that computes [y] is done. *)
+let wait y = List.iter (fun b -> Rig.Buffer.wait b Rig.Read) (fst (Nx.shards y))
+
 (* The first use: what the child process runs. *)
 let first_use_child = "--first-use"
 
 let first_use () =
-  let d = Nx_amd.device 0 in
+  let d = amd () in
   let x = Nx.place (Nx.Placement.on d) (Nx.ones Nx.bfloat16 [| 4096 |]) in
-  ignore (Nx.cast Nx.float32 x);
-  Nx_device.synchronize (Nx.Device.memory d)
+  wait (Nx.cast Nx.float32 x)
 
 (* The first use of a dozen operations at each of six dtypes: what a program
    loads once the kernels it calls span families and dtypes. *)
@@ -45,29 +57,28 @@ let operations (type a b) p (dt : (a, b) Nx.dtype) =
   let y = Nx.place p (Nx.cast dt (Nx.arange Nx.int32 4096 0 (-1))) in
   let indices = Nx.place p (Nx.arange Nx.int64 0 4096 7) in
   [
-    (fun () -> ignore (Nx.add x y));
-    (fun () -> ignore (Nx.mul x y));
-    (fun () -> ignore (Nx.sub x y));
-    (fun () -> ignore (Nx.maximum x y));
-    (fun () -> ignore (Nx.sum x));
-    (fun () -> ignore (Nx.max x));
-    (fun () -> ignore (Nx.cumsum x));
-    (fun () -> ignore (Nx.take ~indices x));
-    (fun () -> ignore (Nx.concatenate ~axis:0 [ x; y ]));
-    (fun () -> ignore (Nx.where (Nx.less x y) x y));
-    (fun () -> ignore (Nx.cast Nx.float32 x));
-    (fun () -> ignore (Nx.sort x));
+    (fun () -> wait (Nx.add x y));
+    (fun () -> wait (Nx.mul x y));
+    (fun () -> wait (Nx.sub x y));
+    (fun () -> wait (Nx.maximum x y));
+    (fun () -> wait (Nx.sum x));
+    (fun () -> wait (Nx.max x));
+    (fun () -> wait (Nx.cumsum x));
+    (fun () -> wait (Nx.take ~indices x));
+    (fun () -> wait (Nx.concatenate ~axis:0 [ x; y ]));
+    (fun () -> wait (Nx.where (Nx.less x y) x y));
+    (fun () -> wait (Nx.cast Nx.float32 x));
+    (fun () -> wait (fst (Nx.sort x)));
   ]
 
 let first_uses () =
-  let d = Nx_amd.device 0 in
+  let d = amd () in
   let p = Nx.Placement.on d in
   List.iter
     (fun f -> f ())
     (operations p Nx.float32 @ operations p Nx.float16
    @ operations p Nx.bfloat16 @ operations p Nx.int32 @ operations p Nx.int64
-   @ operations p Nx.uint8);
-  Nx_device.synchronize (Nx.Device.memory d)
+   @ operations p Nx.uint8)
 
 (* The device's cache holds memory for [f]'s results. A result's memory returns
    to the cache once the result is collected, and a result that finds none there
@@ -77,11 +88,10 @@ let first_uses () =
    cache, not when the collector last ran. *)
 let warmups = 8
 
-let warm m f =
+let warm f =
   for _ = 1 to warmups do
-    ignore (Sys.opaque_identity (f ()))
+    wait (f ())
   done;
-  Nx_device.synchronize m;
   Gc.full_major ()
 
 (* The rows of [op] over [input n], named [name] and [name ^ "-host"]; [put]
@@ -96,15 +106,13 @@ let rows ~put ~gpu name (label, n) ~input ~op =
     [
       Thumper.bench_with_setup
         ~setup:(fun () ->
-          let d = Nx_amd.device 0 in
-          let m = Nx.Device.memory d
-          and x = put (Nx.Placement.on d) (input n) in
-          warm m (fun () -> op x);
-          (m, x))
+          let x = put (Nx.Placement.on (amd ())) (input n) in
+          warm (fun () -> op x);
+          x)
         name
-        (fun (m, x) ->
+        (fun x ->
           let y = op x in
-          Nx_device.synchronize m;
+          wait y;
           y);
       host;
     ]
@@ -161,7 +169,9 @@ let cases ~gpu size =
       ~input:(fun n -> ((Nx.Rng.key 7 :> Nx.int32_t), n))
       ~op:(fun (k, n) -> Nx.Rng.uniform (Nx.Rng.of_tensor k) Nx.float32 [| n |])
   @ (if snd size > 1 lsl 20 then []
-     else rows ~put:one ~gpu "sort" size ~input:floats ~op:(fun x -> Nx.sort x))
+     else
+       rows ~put:one ~gpu "sort" size ~input:floats ~op:(fun x ->
+           fst (Nx.sort x)))
   @ rows ~put:two ~gpu "gather" size
       ~input:(fun n -> (floats n, positions n))
       ~op:(fun (x, indices) -> Nx.take ~indices x)
@@ -207,18 +217,17 @@ let product_chain (x, w) =
 let product_chain_case () =
   Thumper.bench_with_setup
     ~setup:(fun () ->
-      let d = Nx_amd.device 0 in
-      let m = Nx.Device.memory d and p = Nx.Placement.on d in
+      let p = Nx.Placement.on (amd ()) in
       let n = product_rows in
       let scale = sqrt (12. /. Float.of_int n) in
       let w = Nx.mul_s (Nx.sub_s (Nx.rand Nx.float32 [| n; n |]) 0.5) scale in
       let x = (Nx.place p (matrix n), Nx.place p w) in
-      warm m (fun () -> product_chain x);
-      (m, x))
+      warm (fun () -> product_chain x);
+      x)
     (Printf.sprintf "matmul-%d-chain%d" product_rows products)
-    (fun (m, x) ->
+    (fun x ->
       let y = product_chain x in
-      Nx_device.synchronize m;
+      wait y;
       y)
 
 (* A fresh process running [flag]. *)
@@ -249,19 +258,17 @@ let nv_cases () =
   [
     Thumper.bench_with_setup
       ~setup:(fun () ->
-        let d = Nx_nv.device 0 in
-        let m = Nx.Device.memory d and p = Nx.Placement.on d in
+        let p = Nx.Placement.on (Nx.Device.make (device nv_gpu)) in
         let x = Nx.ones Nx.float32 [| 4 |] in
         for _ = 1 to placements do
-          ignore (Nx.place p x)
+          wait (Nx.place p x)
         done;
-        Nx_device.synchronize m;
         Gc.full_major ();
-        (m, p, x))
+        (p, x))
       "place-16B"
-      (fun (m, p, x) ->
+      (fun (p, x) ->
         let y = Nx.place p x in
-        Nx_device.synchronize m;
+        wait y;
         y);
   ]
 
@@ -278,8 +285,8 @@ let () =
   | [ _; flag ] when flag = first_uses_child ->
       first_uses ();
       exit 0
-  | [ _; "--amd" ] -> exit (if Result.is_ok (Nx_amd.get 0) then 0 else 1)
-  | [ _; "--nv" ] -> exit (if Result.is_ok (Nx_nv.get 0) then 0 else 1)
+  | [ _; "--amd" ] -> exit (if Result.is_ok (amd_gpu ()) then 0 else 1)
+  | [ _; "--nv" ] -> exit (if Result.is_ok (nv_gpu ()) then 0 else 1)
   | _ -> ());
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let gpu = opens "--amd" in

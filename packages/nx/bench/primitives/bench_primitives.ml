@@ -328,16 +328,14 @@ external run_copy :
 
 (* The run-copy twin allocates its results as host buffers, as nx does. *)
 let copy_runs (offsets, bytes, perm) =
-  let host = Nx_device.host in
-  let buffer s n = Nx_device.Buffer.create host s n in
   let total = run_copy_total offsets perm in
-  let out = buffer Nx_dtype.Scalar.UInt8 total in
+  let out = Rig.Buffer.create Rig.host total in
   let out_offsets =
-    buffer Nx_dtype.Scalar.Int64 (Bigarray.Array1.dim perm + 1)
+    Rig.Buffer.create Rig.host (8 * (Bigarray.Array1.dim perm + 1))
   in
-  run_copy offsets bytes perm
-    (Nx_device.Buffer.bigarray Bigarray.int64 out_offsets)
-    (Nx_device.Buffer.bigarray Bigarray.int8_unsigned out);
+  Rig.Buffer.write out_offsets Bigarray.int64 (fun out_offsets ->
+      Rig.Buffer.write out Bigarray.int8_unsigned (fun out ->
+          run_copy offsets bytes perm out_offsets out));
   Nx.of_buffer Nx.uint8 [| total |] out
 
 let ragged_take =
@@ -443,14 +441,14 @@ let groups =
    A collection returns dead arrays' bytes within the next rise, so the call
    runs with the collector held off. *)
 let transient f results =
-  let host = Nx_device.host in
+  let host = Rig.host in
   let collections () =
     let s = Gc.quick_stat () in
     (s.minor_collections, s.major_collections)
   in
   let gc = Gc.get () in
   Gc.full_major ();
-  let base = Nx_device.Stats.allocated (Nx_device.stats host) in
+  let base = Rig.allocated host in
   Gc.set
     {
       gc with
@@ -459,16 +457,14 @@ let transient f results =
       custom_minor_ratio = 1_000_000;
     };
   let before = collections () in
-  let p = Nx_device.Profile.start () in
-  let r = f () in
-  let events = Nx_device.Profile.stop p in
+  let r, events = Rig.Profile.take f in
   let collected = collections () <> before in
   Gc.set gc;
   if collected then None
   else
     let rise (level, total) = function
-      | Nx_device.Profile.Allocation { device; allocated; _ }
-        when Nx_device.equal device host ->
+      | Rig.Profile.Allocation { device; allocated; _ }
+        when Rig.equal device host ->
           (allocated, total + Int.max 0 (allocated - level))
       | _ -> (level, total)
     in

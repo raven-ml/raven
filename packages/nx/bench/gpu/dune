@@ -1,7 +1,7 @@
 (executable
  (name bench_gpu)
  (modules bench_gpu)
- (libraries nx nx.amd nx.nv nx.device thumper unix))
+ (libraries nx nx.amd rig rig.amd.amdgpu rig.nv.nvidia thumper unix))
 
 (rule
  (alias bench)
