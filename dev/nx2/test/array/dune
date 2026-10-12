@@ -1,4 +1,5 @@
 (tests
  (names test_dtype test_move test_layout test_array)
  (modules test_dtype test_move test_layout test_array)
- (libraries nx_array nx_array_support nx_array_gen rig windtrap))
+ (libraries nx_array nx_array_support nx_array_gen rig windtrap)
+ (deps golden/float_text.txt))

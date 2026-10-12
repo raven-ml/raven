@@ -403,10 +403,14 @@ let of_float : type v s. (v, s) t -> float -> v =
 
 let digits m = String.length (string_of_int m)
 
-(* The [p]-digit decimal nearest to [x], not negative and finite: printf rounds
-   the exact binary value to it, ties to even. *)
+(* [format_e p x] is [x] in C's [%.*e] with [p] digits after the point, rounded
+   once, ties to even, on every system. *)
+external format_e : int -> float -> string = "nx_dtype_format_e"
+
+(* The [p]-digit decimal nearest to [x], not negative and finite, ties to
+   even. *)
 let nearest p x =
-  let s = Printf.sprintf "%.*e" (p - 1) x in
+  let s = format_e (p - 1) x in
   let i = String.index s 'e' in
   let m = ref 0 in
   for j = 0 to i - 1 do
@@ -433,50 +437,94 @@ let decimal_text (m, e) =
   else if !n <= e + 1 then ds ^ String.make (e + 1 - !n) '0'
   else String.sub ds 0 (e + 1) ^ "." ^ String.sub ds (e + 1) (!n - e - 1)
 
-(* Whether the magnitude [a] rounds into the float format [f] with its exponent
-   unbounded above: up to half a step past the largest finite value, the tie
-   included when that value's last fraction bit is even. A store saturates past
-   it, so a decimal there would read back without naming the value. *)
-let rounds_into f a =
-  let top = f.max_finite in
-  let step = Float.ldexp 1. (snd (Float.frexp top) - 1 - f.fraction_bits) in
-  let limit = top +. (step /. 2.) in
-  a < limit || (a = limit && Float.rem (top /. step) 2. = 0.)
+(* Exact comparison of nonnegative numbers [n 2^p 5^q], [n] an int: the C
+   library's strtod is not correctly rounded everywhere, and under mingw-w64
+   reads 3.839223843572815e-239 as 2^-792, one float above its nearest. *)
+module Exact = struct
+  let bits = 24
+  let mask = (1 lsl bits) - 1
 
-(* The significant digits of the unsigned decimal [t], without leading or
-   trailing zeros, and the exponent of the first: ["0.0125"] is [("125", -2)],
-   zero [("0", 0)]. *)
-let scientific t =
-  let m, e =
-    match String.index_opt t 'e' with
-    | Some i ->
-        ( String.sub t 0 i,
-          int_of_string (String.sub t (i + 1) (String.length t - i - 1)) )
-    | None -> (t, 0)
-  in
-  let point =
-    Option.value (String.index_opt m '.') ~default:(String.length m)
-  in
-  let ds = String.concat "" (String.split_on_char '.' m) in
-  let n = String.length ds in
-  let first = ref 0 and last = ref n in
-  while !first < n && ds.[!first] = '0' do
-    incr first
-  done;
-  while !last > !first && ds.[!last - 1] = '0' do
-    decr last
-  done;
-  if !first = n then ("0", 0)
-  else (String.sub ds !first (!last - !first), e + point - 1 - !first)
+  (* Little-endian limbs of [bits] bits. *)
+  let of_int n =
+    let rec go n acc =
+      if n = 0 then List.rev acc else go (n lsr bits) ((n land mask) :: acc)
+    in
+    Array.of_list (go n [])
 
-(* The order of two decimals as [scientific] gives them, both non-zero or both
-   zero. *)
-let compare_decimal (d, e) (d', e') =
-  if e <> e' then Int.compare e e'
-  else
-    let n = max (String.length d) (String.length d') in
-    let pad s = s ^ String.make (n - String.length s) '0' in
-    String.compare (pad d) (pad d')
+  (* [a * k] for [k] below 2^30. *)
+  let mul a k =
+    let n = Array.length a in
+    let r = Array.make (n + 2) 0 and carry = ref 0 in
+    for i = 0 to n - 1 do
+      let v = (a.(i) * k) + !carry in
+      r.(i) <- v land mask;
+      carry := v lsr bits
+    done;
+    r.(n) <- !carry land mask;
+    r.(n + 1) <- !carry lsr bits;
+    r
+
+  (* 5^0 to 5^12: a limb times 5^12 fits an int. *)
+  let fives =
+    let a = Array.make 13 1 in
+    for k = 1 to 12 do
+      a.(k) <- 5 * a.(k - 1)
+    done;
+    a
+
+  let rec pow5 a q =
+    if q > 12 then pow5 (mul a fives.(12)) (q - 12) else mul a fives.(q)
+
+  let pow2 a p =
+    let a = Array.append (Array.make (p / bits) 0) a in
+    mul a (1 lsl (p mod bits))
+
+  let top a =
+    let i = ref (Array.length a - 1) in
+    while !i >= 0 && a.(!i) = 0 do
+      decr i
+    done;
+    !i
+
+  let compare_nat a b =
+    let ta = top a and tb = top b in
+    if ta <> tb then Int.compare ta tb
+    else
+      let rec go i =
+        if i < 0 then 0
+        else if a.(i) <> b.(i) then Int.compare a.(i) b.(i)
+        else go (i - 1)
+      in
+      go ta
+
+  let compare (n1, p1, q1) (n2, p2, q2) =
+    let p = Int.min p1 p2 and q = Int.min q1 q2 in
+    let side n pn qn = pow2 (pow5 (of_int n) (qn - q)) (pn - p) in
+    compare_nat (side n1 p1 q1) (side n2 p2 q2)
+end
+
+(* Whether a decimal rounds to the positive finite [a] in the format [f], with
+   its exponent unbounded above. With [a] as [n] units of 2{^u}, the decimals
+   that do lie between the midpoints to its neighbours, [(2n - 1) 2{^u - 1}]
+   and [(2n + 1) 2{^u - 1}], the midpoints included when [n] is even. At the
+   bottom of a binade above the subnormals the unit below is half, and the
+   lower midpoint [(4n - 1) 2{^u - 2}]. Past the largest finite value only
+   the next half step rounds to it: a store saturates beyond, so a decimal
+   there would not name the value. *)
+let reads_as f a =
+  let emin = snd (Float.frexp f.min_normal) - 1 in
+  let u = Int.max (snd (Float.frexp a) - 1) emin - f.fraction_bits in
+  let n = Float.to_int (Float.ldexp a (-u)) in
+  let low =
+    if n = 1 lsl f.fraction_bits && u > emin - f.fraction_bits then
+      ((4 * n) - 1, u - 2, 0)
+    else ((2 * n) - 1, u - 1, 0)
+  in
+  let high = ((2 * n) + 1, u - 1, 0) and even = n land 1 = 0 in
+  fun (m, e) ->
+    let k = e - digits m + 1 in
+    let l = Exact.compare (m, k, k) low and h = Exact.compare (m, k, k) high in
+    (l > 0 || (l = 0 && even)) && (h < 0 || (h = 0 && even))
 
 (* The shortest decimal that rounds to [x] in [dt]'s format, and of those the
    nearest to [x]: a float32 [0.1] prints as [0.1], though the double it holds
@@ -484,32 +532,9 @@ let compare_decimal (d, e) (d', e') =
    tries the decimal nearest to [x], then the next one up in magnitude, then the
    next one down: at the bottom of a binade the gap below [x] is half the gap
    above, so the nearest decimal can fall outside [x]'s rounding interval where
-   the next one up lies inside.
-
-   A decimal is read through the double nearest to it. Where that double is a
-   boundary between two values of a format narrower than a double, the read may
-   have moved the decimal onto it: the decimal's own digits, compared with the
-   boundary's exact expansion, say which side it lies on. *)
+   the next one up lies inside. *)
 let float_text code x =
   let ax = Float.abs x and sign = if Float.sign_bit x then "-" else "" in
-  let format = Option.get rows.(code).format in
-  let boundary v =
-    format.fraction_bits < 52
-    && not (Float.equal (round code (Float.pred v)) (round code (Float.succ v)))
-  in
-  let reads_back t =
-    let v = float_of_string t in
-    let v =
-      if not (boundary v) then v
-      else
-        let c =
-          compare_decimal (scientific t)
-            (scientific (Printf.sprintf "%.200e" v))
-        in
-        if c > 0 then Float.succ v else if c < 0 then Float.pred v else v
-    in
-    rounds_into format v && Float.equal (round code v) ax
-  in
   (* The decimal [k] units in the last place from [(m, e)], [p] digits wide. *)
   let beside p (m, e) k =
     let m = m + k in
@@ -517,22 +542,16 @@ let float_text code x =
     else if m > 0 && digits m < p then ((m * 10) + 9, e - 1)
     else (m, e)
   in
-  let rec shortest p =
+  let rec shortest reads p =
     let d = nearest p ax in
-    let first = decimal_text d in
-    if reads_back first then sign ^ first
-    else
-      let up = decimal_text (beside p d 1) in
-      if reads_back up then sign ^ up
-      else
-        let down = decimal_text (beside p d (-1)) in
-        if reads_back down then sign ^ down
-        else if p >= 17 then sign ^ first
-        else shortest (p + 1)
+    match List.find_opt reads [ d; beside p d 1; beside p d (-1) ] with
+    | Some d -> sign ^ decimal_text d
+    | None -> if p >= 17 then sign ^ decimal_text d else shortest reads (p + 1)
   in
   if Float.is_nan x then "nan"
   else if ax = Float.infinity then sign ^ "inf"
-  else shortest 1
+  else if ax = 0. then sign ^ "0"
+  else shortest (reads_as (Option.get rows.(code).format) ax) 1
 
 let pp_float dt ppf x = Format.pp_print_string ppf (float_text (code dt) x)
 

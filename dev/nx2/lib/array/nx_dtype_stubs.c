@@ -3,10 +3,27 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+#include <stdio.h>
+
 #include <caml/alloc.h>
 #include <caml/mlvalues.h>
 
 #include "nx_dtype.h"
+
+/* [x] in [%.*e] with [p] digits after the point, rounded once. Under
+   mingw-w64 the snprintf of msvcrt, which OCaml's Printf calls, keeps 17
+   correct digits and rounds from those, so a value rounds twice, and rounds
+   a tie away from zero: float16 0.0078125 printed 4 digits as 7.813e-03.
+   mingw-w64's own snprintf rounds once, ties to even. */
+value nx_dtype_format_e(value v_p, value v_x) {
+  char buf[64];
+#ifdef __MINGW32__
+  __mingw_snprintf(buf, sizeof buf, "%.*e", Int_val(v_p), Double_val(v_x));
+#else
+  snprintf(buf, sizeof buf, "%.*e", Int_val(v_p), Double_val(v_x));
+#endif
+  return caml_copy_string(buf);
+}
 
 /* The value [x] has once stored in the float dtype [dt]. */
 double nx_dtype_round(intnat dt, double x) {

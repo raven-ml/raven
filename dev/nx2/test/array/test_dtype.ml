@@ -1000,6 +1000,11 @@ let reads_back f v t =
   Testable.equal float_exact v (nearest f x)
 
 let check_printed (F (dt, f)) v =
+  (* float_of_string and Printf call the C library, whose strtod under
+     mingw-w64 reads 3.839223843572815e-239 as 2^-792, and whose printf rounds
+     a tie away from zero. *)
+  if Sys.win32 then
+    skip ~reason:"this C library's strtod and printf are no oracle" ();
   let s = Format.asprintf "%a" (D.pp_value dt) v in
   let reads_back = reads_back f v in
   let special =
@@ -1053,6 +1058,50 @@ let law_printed (F (dt, f)) =
   in
   prop (D.name dt) ~examples:powers (Gen.with_pp pp_hex Gen.any_float) (fun x ->
       equal (option string) None (check_printed (F (dt, f)) (D.of_float dt x)))
+
+(* The golden of gen/float_text.py: under each format's name, values as their
+   bits in hexadecimal and the text numpy's shortest repr or an exact search
+   gives them. *)
+let golden =
+  let format name =
+    match List.find_opt (fun fd -> format_name fd = name) formats with
+    | Some fd -> fd
+    | None -> failf "golden: unknown dtype %s" name
+  in
+  let ic = open_in "golden/float_text.txt" in
+  let rec read acc =
+    match In_channel.input_line ic with
+    | None -> List.rev_map (fun (fd, rows) -> (fd, List.rev rows)) acc
+    | Some line when String.starts_with ~prefix:"#" line -> read acc
+    | Some line -> (
+        match (String.split_on_char ' ' line, acc) with
+        | [ name ], _ -> read ((format name, []) :: acc)
+        | [ hex; text ], (fd, rows) :: acc ->
+            read ((fd, (hex, text) :: rows) :: acc)
+        | _ -> failf "golden: bad line %S" line)
+  in
+  Fun.protect ~finally:(fun () -> close_in ic) (fun () -> read [])
+
+let golden_name (fd, _) = format_name fd
+
+let test_golden ((F (dt, f) as fd), rows) =
+  let value hex =
+    match dt with
+    | D.Float64 -> Int64.float_of_bits (Int64.of_string ("0x" ^ hex))
+    | D.Float32 -> Int32.float_of_bits (Int32.of_string ("0x" ^ hex))
+    | _ -> decode f (int_of_string ("0x" ^ hex))
+  in
+  let wrong =
+    List.filter_map
+      (fun (hex, text) ->
+        let s = Format.asprintf "%a" (D.pp_value dt) (value hex) in
+        if s = text then None else Some (strf "%s: %s, not %s" hex s text))
+      rows
+  in
+  equal
+    ~msg:(strf "%s: %d values misprinted" (format_name fd) (List.length wrong))
+    (list string) []
+    (List.filteri (fun i _ -> i < 8) wrong)
 
 (* The suite *)
 
@@ -1141,6 +1190,10 @@ let tests =
         cases ~name:printed_name "values print in their dtype's reading" printed
           test_printed;
         group "integers print in their dtype's reading" printing_integers;
+        cases ~name:golden_name
+          "ties of the narrow formats and powers of two of the wide print as \
+           numpy's shortest repr"
+          golden test_golden;
         cases ~name:format_name
           "every value prints as the shortest decimal that reads back, the \
            nearest of those"
