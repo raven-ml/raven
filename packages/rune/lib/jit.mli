@@ -15,9 +15,8 @@
     change around a call that changes the program: every setting of tolk that
     shapes what it compiles ({!Tolk.Setting.shaping}), the search's widths
     [BEAM] and [JITBEAM] among them or, with an explicit [beam], that width in
-    their place, whether batches stamp their kernels for the engine's reports
-    ({!Tolk_engine.profile}), and the counters and traces of the profile being
-    taken ({!Nx_device.Profile}).
+    their place, and whether the engine links each kernel as a submission of
+    its own for its reports ({!Tolk_engine.link}).
 
     A key being compiled makes the other calls with that key wait. A compile
     that raises installs nothing: its waiters, and later calls, trace again. A
@@ -65,7 +64,7 @@
     difference between its key and the previous call's, and each consumed leaf's
     fate, as in ["rune.jit: 2.0.keys -> result 1.0.keys reused"].
 
-    While a profile is taken ({!Nx_device.Profile}), a first call's phases are
+    While a profile is taken ({!Rig.Profile}), a first call's phases are
     host spans: ["rune.jit: trace"], ["rune.jit: schedule"],
     ["rune.jit: compile"] and ["rune.jit: link"]; and the traces that fix the
     residuals of reverse mode through a call ({!Split}),

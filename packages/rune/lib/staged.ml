@@ -5,6 +5,30 @@
 
 open Tolk
 
+(* Whether the calls of the loop [e] run on devices of several kinds, such as
+   the host and a GPU, [devices] mapping their names to devices. *)
+let mixed devices e =
+  let kinds = ref [] in
+  let add n =
+    let k = (Tolk_engine.target (devices n)).device in
+    if not (List.mem k !kinds) then kinds := k :: !kinds
+  in
+  let rec visit u =
+    match Ops.op u with
+    | Op.End | Op.Backedge -> visit (Ops.nth u 0)
+    | Op.Linear -> List.iter visit (Ops.src u)
+    | _ -> (
+        match Realize.get_call_arg_uops u with
+        | a :: _ -> (
+            match Ops.device a with
+            | Some (Ops.Single n) -> add n
+            | Some (Ops.Multi ns) -> List.iter add ns
+            | None -> ())
+        | [] -> ())
+  in
+  visit e;
+  List.length !kinds > 1
+
 (* Whether [x] is a value of the trace: traced by its lowering, or one it
    captures. *)
 let ours x =
@@ -142,7 +166,7 @@ let stage ~here ~inside s (r : Trips.request) =
      on a device cannot run a step on it. *)
   let host =
     Ops.Single
-      (Nx_device.name
+      (Rig.name
          (Nx.Device.memory (List.hd (Nx.Placement.devices Nx.Placement.host))))
   in
   let to_host v = Ops.op v = Op.Copy && Ops.device v = Some host in
@@ -159,7 +183,7 @@ let stage ~here ~inside s (r : Trips.request) =
        devices of two kinds";
   let device =
     Ops.Single
-      (Nx_device.name (Nx.Device.memory (List.hd (Nx.Placement.devices p))))
+      (Rig.name (Nx.Device.memory (List.hd (Nx.Placement.devices p))))
   in
   (* The node of [x] on the loop's device: placed there, and a constant held
      there, since a call reads storage. *)
@@ -418,8 +442,9 @@ let stage ~here ~inside s (r : Trips.request) =
         Ops.backedge c ~loop:range ~cond:(List.assoc flag args)
     | _ -> Ops.end_ c [ range ]
   in
-  (* Before answering, the loop must run: as one batch, or trip by trip, which a
-     probe of its schedule tells. A loop of one trip is its calls, which run. *)
+  (* Before answering, the loop must run, which a probe of its schedule tells:
+     its calls run on devices of one kind. A loop of one trip is its calls,
+     which run. *)
   let scalar u = Ops.addrspace u = Some Tolk.Dtype.Alu in
   let probe =
     List.map
@@ -442,7 +467,7 @@ let stage ~here ~inside s (r : Trips.request) =
     List.exists
       (fun e ->
         loop e
-        && not (Hcq2.runs ~devices:(fun d -> (Lower.engine s d).compiler) e))
+        && mixed (fun n -> List.assoc n (Lower.devices s)) e)
       (Ops.src linear)
   then
     decline

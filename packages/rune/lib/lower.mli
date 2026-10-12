@@ -60,12 +60,12 @@ val within : ('a, 'b) Nx_dtype.t -> Nx_array.View.t -> Nx_array.View.t
 val run :
   ('a, 'b) Nx_dtype.t ->
   Nx_array.View.t ->
-  Nx_device.Buffer.t ->
-  Nx_device.Buffer.t
+  Rig.Buffer.t ->
+  Rig.Buffer.t
 (** [run dt v b] is the run of [b]'s elements of [dt] that {!span} gives for the
     view [v]: the buffer a parameter of a value of view [v] over [b] binds. *)
 
-val phase : ('a, 'b) Nx_dtype.t -> Nx_device.Buffer.t -> int -> int
+val phase : ('a, 'b) Nx_dtype.t -> Rig.Buffer.t -> int -> int
 (** [phase dt b start] is the bytes by which the byte holding the first bit of
     element [start] of [dt] in [b] lies past a 16-byte boundary of [b]'s memory:
     the phase of storage that starts there ({!Tolk.Ops.param_arg}). [start] is a
@@ -88,7 +88,7 @@ type scope
 (** The type for traces in progress: the renderer of each device, the device of
     every name its nodes carry, and the captures it has bound. *)
 
-val scope : renderer:(Nx_device.t -> Renderer.t) -> scope
+val scope : renderer:(Rig.t -> Renderer.t) -> scope
 (** [scope ~renderer] is an empty trace in which the programs of a device [d]
     are rendered by [renderer d], which decides the dtypes [d] computes
     ({!Decomp_dtype.computes}). [renderer] is called once per device of the
@@ -237,10 +237,6 @@ val argument :
 
     Raises as {!param} does. *)
 
-val engine : scope -> string -> Tolk_engine.device
-(** [engine s] is the engine's device of each name [s]'s nodes carry, and of the
-    host of each, which submits its work ({!Tolk_engine.device}). *)
-
 val value : scope -> ('a, 'b) Nx.t -> Ops.t
 (** [value s x] is the node of [x] in [s] at [x]'s placement: its own if [x] is
     traced, and its capture ({!op}) otherwise. *)
@@ -271,11 +267,11 @@ val uop : scope -> ('a, 'b) Nx.t -> Ops.t
     saying the function reads it through its closure; and if [x] is not traced.
 *)
 
-val devices : scope -> (string * Nx_device.t) list
+val devices : scope -> (string * Rig.t) list
 (** [devices s] is the device of each name that [s]'s nodes carry, in the order
     [s] met them. *)
 
-val captures : scope -> (Ops.t * Nx_device.Buffer.t list) list
+val captures : scope -> (Ops.t * Rig.Buffer.t list) list
 (** [captures s] is the storage node of each capture [s] holds and the buffers
     it binds, one per device of the node, in the order [s] met them. A node
     holds the run of its capture's storage from the element at or below the

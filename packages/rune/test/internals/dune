@@ -14,7 +14,7 @@
   nx.dtype
   nx.array
   nx.backend
-  nx.device
+  rig
   tolk
   tolk.engine)
  (instrumentation

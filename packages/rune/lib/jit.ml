@@ -11,8 +11,8 @@ module Ptree = Nx.Ptree
 module Repr = Nx.Repr
 module Placement = Nx.Placement
 module View = Nx_array.View
-module B = Nx_device.Buffer
-module Claim = Nx_device.Buffer.Claim
+module B = Rig.Buffer
+module Claim = Rig.Claim
 
 let debug = Tolk.Setting.bool ~reach:Process "RUNE_JIT_DEBUG" false
 let debugging () = Tolk.Setting.value debug
@@ -46,12 +46,10 @@ type leaf = {
   layout : layout;
 }
 
-let disk = Nx_device.disk
-
 let leaf (Nx.P t) =
   let t =
     match Nx.Placement.devices (Nx.placement t) with
-    | [ d ] when Nx_device.equal (Nx.Device.memory d) disk ->
+    | [ d ] when not (Rig.computes (Nx.Device.memory d)) ->
         Nx.place Nx.Placement.host t
     | _ -> t
   in
@@ -81,13 +79,22 @@ let leaf (Nx.P t) =
       { x; view; buffers; runs; layout }
   | _ -> { x; view; buffers; runs = []; layout }
 
+(* The runs [l] binds over the buffers [bufs] of its storage. *)
+let runs_over l bufs =
+  match l.runs with
+  | [] -> []
+  | _ ->
+      let (Nx.P t) = l.x in
+      List.map (Lower.run (Nx.dtype t) l.view) bufs
+
 (* Whether [l]'s view covers its storage, C-contiguous from its first element: a
    result written over the storage is then the whole of it. *)
 let covers l =
   let length = match l.buffers with b :: _ -> B.length b | [] -> 0 in
+  let (Nx.P t) = l.x in
   View.is_c_contiguous l.view
   && View.offset l.view = 0
-  && View.numel l.view = length
+  && Nx_array.Elements.bytes (Nx.dtype t) (View.numel l.view) = length
 
 (* Whether a leaf of layout [l] is its run, C-contiguous from the run's first
    element: a result of its size written over the run is then the whole of it,
@@ -100,16 +107,10 @@ let starts_its_run (l : layout) =
 (* Keys *)
 
 (* The settings a program depends on that a caller may change around a call:
-   each setting that shapes what tolk compiles ([Tolk.Setting.shaping]), whether
-   the program's batches stamp their kernels for the engine's reports
-   ([Engine.profile]), and the counters and traces of the profile being taken,
-   which a device's batches count and trace. *)
-type settings = {
-  shaping : (string * string) list;
-  profile : Tolk.Hcq2.profile;
-  counters : string list;
-  traced : bool;
-}
+   each setting that shapes what tolk compiles ([Tolk.Setting.shaping]), and
+   whether the engine links each kernel as a submission of its own, as it does
+   for its reports ([Engine.link]). *)
+type settings = { shaping : (string * string) list; separate : bool }
 
 (* [shaping beam] reads tolk's [shaping] for a compiled function searched at the
    width [beam]. An explicit width stands for what [BEAM] and [JITBEAM] decide:
@@ -139,24 +140,13 @@ let shaping = function
 let settings shaping =
   {
     shaping = shaping ();
-    profile = Engine.profile ();
-    counters = Nx_device.Profile.counters ();
-    traced = Nx_device.Profile.traced ();
+    separate = Tolk.Setting.value Tolk.Setting.debug >= 2;
   }
 
 (* [s]'s settings by name, each value printed so that two values print alike
    only if they are equal. *)
 let entries s =
-  s.shaping
-  @ [
-      ( "profile",
-        match s.profile with Stamped -> "stamped" | Unstamped -> "unstamped" );
-      ( "counters",
-        "["
-        ^ String.concat "; " (List.map (Printf.sprintf "%S") s.counters)
-        ^ "]" );
-      ("traced", string_of_bool s.traced);
-    ]
+  s.shaping @ [ ("separate", string_of_bool s.separate) ]
 
 type key = {
   skeleton : Ptree.Skeleton.t;
@@ -284,7 +274,7 @@ type 'r program = {
   rebuild : Nx.packed list -> 'r;
 }
 
-let span phase f = Nx_device.Profile.span ("rune.jit: " ^ phase) f
+let span phase f = Rig.Profile.span ("rune.jit: " ^ phase) f
 let numel shape = Array.fold_left ( * ) 1 shape
 
 let id (Nx.P y) =
@@ -460,9 +450,8 @@ let paths args_s roles args =
     Array.of_list (List.map consumed at) )
 
 (* [compile args_s result_s g args leaves ~paths ~consumed] traces [g] at
-   [args], whose leaves are [leaves], and compiles and links its program, its
-   batches stamping their kernels as [profile] says. *)
-let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
+   [args], whose leaves are [leaves], and compiles and links its program. *)
+let compile ?beam ?parallel (type a r) (args_s : a Ptree.t)
     (result_s : r Ptree.t) (g : a -> r) (args : a) leaves ~paths ~consumed =
   let s = Lower.scope ~renderer:Engine.renderer in
   let slots = Array.map (fun _ -> Ops.unique_num ()) leaves in
@@ -630,7 +619,7 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
            makes it only when it traces, which no interpretation may see. *)
         let like =
           let buffer = Nx_array.Elements.create dt 1 in
-          Nx_array.Elements.fill dt buffer (Nx_dtype.zero dt);
+          Nx_array.Elements.write dt buffer (fun set -> set 0 (Nx_dtype.zero dt));
           let view =
             Nx_array.View.create ~strides:(Array.map (fun _ -> 0) shape) shape
           in
@@ -668,7 +657,19 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
   let linked =
     if !stores = [] then None
     else
-      let devices = Lower.engine s in
+      (* The devices the trace names, and the host of each, on which a search
+         times its candidates. *)
+      let devices n =
+        let named = Lower.devices s in
+        match List.assoc_opt n named with
+        | Some d -> d
+        | None ->
+            let host (_, d) =
+              let h = Rig.host_of d in
+              if String.equal (Rig.name h) n then Some h else None
+            in
+            Option.get (List.find_map host named)
+      in
       let linear =
         span "schedule" (fun () ->
             fst (Tolk.Schedule.create_linear_with_vars ~capturing:true sink))
@@ -703,8 +704,8 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
       in
       let linear =
         span "compile" (fun () ->
-            Tolk.Jit.jit_lower ?beam ~search ~profile
-              ~devices:(fun n -> (devices n).compiler)
+            Tolk.Jit.jit_lower ?beam ~search
+              ~targets:(fun n -> Engine.target (devices n))
               ~held_bufs:(List.map fst bound)
               ~inputs:(List.map (Hashtbl.find buffers) order)
               linear)
@@ -768,7 +769,7 @@ let check entry consumed paths leaves =
 let fresh at dt shape =
   let n = numel (local at shape) in
   List.map
-    (fun d -> B.create (Nx.Device.memory d) (Nx_dtype.Scalar.of_dtype dt) n)
+    (fun d -> B.create (Nx.Device.memory d) (Nx_array.Elements.bytes dt n))
     (Placement.devices at)
 
 let value r bufs =
@@ -817,73 +818,77 @@ let run entry p leaves =
   let read, donate =
     Array.fold_right
       (fun (i, l) (read, donate) ->
-        if p.consumed.(i) then (read, claimed l :: donate)
+        if p.consumed.(i) then (read, claimed l @ donate)
         else (claimed l @ read, donate))
       (Array.mapi (fun i l -> (i, l)) leaves)
       ([], [])
   in
-  Claim.with_ ~read ~donate @@ fun c ->
-  let consumable =
-    Array.mapi
-      (fun i l ->
-        p.consumed.(i)
-        && List.for_all B.spans l.buffers
-        && not (Pins.hold l.buffers))
-      leaves
-  in
-  let lendable i =
-    let l = leaves.(i) in
-    consumable.(i) && covers l && List.for_all (Claim.exclusive c) (claimed l)
-  in
-  let consume i =
-    List.map (Claim.consume c ~why:(why p.paths.(i))) leaves.(i).buffers
-  in
-  let lends = Array.make n false in
-  let storage =
-    Array.map
-      (fun r ->
-        let (Nx.P t) = r.like in
-        match r.out with
-        | Empty | Fresh _ -> fresh r.at (Nx.dtype t) r.shape
-        | Lent i when lendable i ->
-            lends.(i) <- true;
-            []
-        | Lent i ->
-            let copy = fresh r.at (Nx.dtype t) r.shape in
-            List.iter2 (fun src dst -> B.copy ~src ~dst) leaves.(i).runs copy;
-            copy)
-      p.results
-  in
-  let bufs =
-    Array.mapi (fun i l -> if lends.(i) then consume i else l.runs) leaves
-  in
-  let results =
-    Array.mapi
-      (fun j r ->
-        match r.out with Lent i when lends.(i) -> bufs.(i) | _ -> storage.(j))
-      p.results
-  in
-  Option.iter
-    (fun linked ->
-      let slots =
-        Array.make (Array.length leaves + Array.length p.results) []
-      in
-      Array.iteri (fun i k -> if k >= 0 then slots.(k) <- bufs.(i)) p.slots;
-      Array.iteri
-        (fun j r ->
+  (* rig runs no work on memory a claim holds exclusive, so the leaves are
+     consumed under the claims, and the copies of the leaves that lend nothing
+     and the program run once the claims are released, on the buffers the
+     consumptions return. *)
+  let lends, bufs, results =
+    Claim.with_ ~read ~donate @@ fun c ->
+    let consumable =
+      Array.mapi
+        (fun i l ->
+          p.consumed.(i)
+          && List.for_all B.spans l.buffers
+          && not (Pins.hold l.buffers))
+        leaves
+    in
+    let lendable i =
+      let l = leaves.(i) in
+      consumable.(i) && covers l && List.for_all (Claim.exclusive c) (claimed l)
+    in
+    let consume i =
+      List.map (Claim.consume c ~why:(why p.paths.(i))) leaves.(i).buffers
+    in
+    let lends = Array.make n false in
+    let storage =
+      Array.map
+        (fun r ->
+          let (Nx.P t) = r.like in
           match r.out with
-          | Fresh k -> slots.(k) <- results.(j)
-          | Lent i ->
-              (* A leaf returned as it is and read by no kernel has no slot. *)
-              let k = p.slots.(i) in
-              if k >= 0 then slots.(k) <- results.(j)
-          | Empty -> ())
-        p.results;
-      Engine.run linked slots)
-    p.linked;
+          | Empty | Fresh _ -> fresh r.at (Nx.dtype t) r.shape
+          | Lent i when lendable i ->
+              lends.(i) <- true;
+              []
+          | Lent _ -> fresh r.at (Nx.dtype t) r.shape)
+        p.results
+    in
+    let bufs =
+      Array.mapi
+        (fun i l ->
+          if lends.(i) then consume i
+          else if consumable.(i) then runs_over l (consume i)
+          else l.runs)
+        leaves
+    in
+    let results =
+      Array.mapi
+        (fun j r ->
+          match r.out with Lent i when lends.(i) -> bufs.(i) | _ -> storage.(j))
+        p.results
+    in
+    (lends, bufs, results)
+  in
+  let slots = Array.make (Array.length leaves + Array.length p.results) [] in
+  Array.iteri (fun i k -> if k >= 0 then slots.(k) <- bufs.(i)) p.slots;
   Array.iteri
-    (fun i _ -> if consumable.(i) && not lends.(i) then ignore (consume i))
-    leaves;
+    (fun j r ->
+      match r.out with
+      | Fresh k -> slots.(k) <- results.(j)
+      | Lent i ->
+          (* A leaf that lends nothing is copied into its result's storage. *)
+          if not lends.(i) then
+            List.iter2 (fun src dst -> B.copy ~src ~dst) bufs.(i) results.(j);
+          (* A leaf returned as it is and read by no kernel has no slot. *)
+          let k = p.slots.(i) in
+          if k >= 0 then slots.(k) <- results.(j)
+      | Empty -> ())
+    p.results;
+  Option.iter (fun linked -> Engine.run linked slots) p.linked;
   if debugging () then
     Array.iteri
       (fun i _ ->
@@ -980,8 +985,8 @@ let rec compiler : type a r.
     let p =
       Programs.find table key ~miss:retrace (fun () ->
           let paths, consumed = paths args_s roles args in
-          compile ?beam ?parallel ~profile:key.settings.profile args_s result_s
-            g args leaves ~paths ~consumed)
+          compile ?beam ?parallel args_s result_s g args leaves ~paths
+            ~consumed)
     in
     Atomic.set last (Some key);
     check entry p.consumed p.paths leaves;

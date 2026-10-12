@@ -300,7 +300,7 @@ let strided flat v origin =
 
 (* The storage of a value, compared by identity: a host buffer, or the storage
    every view of a placed value shares. *)
-type storage = Host_buffer of Nx_device.Buffer.t | Placed of Repr.Storage.t
+type storage = Host_buffer of Rig.Buffer.t | Placed of Repr.Storage.t
 
 let same_storage s0 s1 =
   match (s0, s1) with
@@ -317,7 +317,7 @@ type capture = {
   at : Placement.t;
   node : Ops.t;
   buffer : Ops.t;
-  buffers : Nx_device.Buffer.t list;
+  buffers : Rig.Buffer.t list;
 }
 
 type write = { result : Ops.t; into : Ops.t; regions : Lower_index.region list }
@@ -330,9 +330,9 @@ type check = {
 }
 
 type scope = {
-  renderer : Nx_device.t -> Renderer.t;
-  mutable dtypes : (Nx_device.t * Dtype.t list) list;
-  mutable names : (string * Nx_device.t) list;
+  renderer : Rig.t -> Renderer.t;
+  mutable dtypes : (Rig.t * Dtype.t list) list;
+  mutable names : (string * Rig.t) list;
   mutable captures : capture list;
   mutable writes : write list;
   mutable checks : check list;
@@ -385,9 +385,9 @@ let memories p = List.map Nx.Device.memory (Placement.devices p)
 
 (* The name that [s]'s nodes give the memory [d]. *)
 let name s d =
-  let n = Nx_device.name d in
+  let n = Rig.name d in
   (match List.assoc_opt n s.names with
-  | Some d' when Nx_device.equal d d' -> ()
+  | Some d' when Rig.equal d d' -> ()
   | Some _ ->
       invalid_arg
         (Printf.sprintf "two devices are named %s in one compiled function" n)
@@ -421,7 +421,7 @@ let check : type a b.
   | Some tdt ->
       List.iter
         (fun d ->
-          if not (supports s d tdt) then refuse (" on " ^ Nx_device.name d))
+          if not (supports s d tdt) then refuse (" on " ^ Rig.name d))
         (memories p);
       tdt
 
@@ -466,15 +466,15 @@ let device_of s p =
 (* Whether values of [shape] at [p] and [q] lie alike in the same memories,
    whatever computes on them. *)
 let same_layout p q shape =
-  List.equal Nx_device.equal (memories p) (memories q)
+  List.equal Rig.equal (memories p) (memories q)
   && List.for_all2
        (fun d e -> Placement.window p shape d = Placement.window q shape e)
        (Placement.devices p) (Placement.devices q)
 
-let same_devices p q = List.equal Nx_device.equal (memories p) (memories q)
+let same_devices p q = List.equal Rig.equal (memories p) (memories q)
 
 let disk p =
-  match memories p with [ d ] -> Nx_device.equal d Nx_device.disk | _ -> false
+  match memories p with [ d ] -> not (Rig.computes d) | _ -> false
 
 let on_disk x = disk (Nx.placement x)
 
@@ -566,15 +566,16 @@ let within dt v =
 
 let run dt v b =
   let start, span = span dt v in
-  Nx_device.Buffer.view b
-    ~offset:(start * bits dt / 8)
-    (Nx_device.Buffer.dtype b) span
+  Rig.Buffer.view b ~first:(start * bits dt / 8)
+    ~length:(Nx_array.Elements.bytes dt span)
 
+(* The phase is the [j] below 16 for which byte [at - j] lies on 16 bytes. *)
 let phase dt b start =
-  if Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk then 0
+  if not (Rig.computes (Rig.Buffer.device b)) then 0
   else
-    let at = Nx_device.Buffer.address b in
-    Nativeint.(to_int (rem (add at (of_int (start * bits dt / 8))) 16n))
+    let at = start * bits dt / 8 in
+    let rec find j = if Rig.Buffer.aligned b ~at:(at - j) 16 then j else find (j + 1) in
+    find 0
 
 (* The phase of element [start] of [bufs], the buffers of one placement: the
    same for every buffer. *)
@@ -819,8 +820,6 @@ let uop : type a b. scope -> (a, b) Nx.t -> Ops.t =
 
 (* The engine's devices *)
 
-let engine s = Tolk_engine.device (devices s)
-
 (* Captures *)
 
 let same_view v0 v1 =
@@ -845,17 +844,13 @@ let element (type a b) (x : (a, b) Nx.t) : a =
   let start, _ = span dt v in
   let src = run dt v (List.hd bufs) in
   let host =
-    if Nx_device.equal (Nx_device.Buffer.device src) Nx_device.host then src
+    if Rig.equal (Rig.Buffer.device src) Rig.host then src
     else
-      let dst =
-        Nx_device.Buffer.create Nx_device.host
-          (Nx_device.Buffer.dtype src)
-          (Nx_device.Buffer.length src)
-      in
-      Nx_device.Buffer.copy ~src ~dst;
+      let dst = Rig.Buffer.create Rig.host (Rig.Buffer.length src) in
+      Rig.Buffer.copy ~src ~dst;
       dst
   in
-  Nx_array.Elements.get (Nx.dtype x) host (lo - start)
+  Nx_array.Elements.read (Nx.dtype x) host (fun get -> get (lo - start))
 
 (* [inlined tdt x] is [x], a value of one element that is not traced, as a
    constant of dtype [tdt]: its element is read now. *)
@@ -871,7 +866,7 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
   let format = Nx_dtype.Scalar.of_dtype dt in
   let owned =
     match key with
-    | Host_buffer b -> not (Nx_device.Buffer.is_borrowed b)
+    | Host_buffer b -> not (Rig.Buffer.is_borrowed b)
     | Placed _ -> true
   in
   if View.numel v = 0 then
@@ -950,12 +945,8 @@ let follow s q u =
             let buffers =
               List.map
                 (fun d ->
-                  let dst =
-                    Nx_device.Buffer.create d
-                      (Nx_device.Buffer.dtype src)
-                      (Nx_device.Buffer.length src)
-                  in
-                  Nx_device.Buffer.copy ~src ~dst;
+                  let dst = Rig.Buffer.create d (Rig.Buffer.length src) in
+                  Rig.Buffer.copy ~src ~dst;
                   dst)
                 (memories q)
             in
@@ -1012,13 +1003,8 @@ let moved s what p q u shape =
 let transferred (type a b) p (x : (a, b) Nx.t) : (a, b) Nx.t =
   let dt = Nx.dtype x and bufs, v = Nx.shards x in
   let src = run dt v (List.hd bufs) in
-  let dst =
-    Nx_device.Buffer.create
-      (List.hd (memories p))
-      (Nx_device.Buffer.dtype src)
-      (Nx_device.Buffer.length src)
-  in
-  Nx_device.Buffer.copy ~src ~dst;
+  let dst = Rig.Buffer.create (List.hd (memories p)) (Rig.Buffer.length src) in
+  Rig.Buffer.copy ~src ~dst;
   Nx.of_shards p dt (within dt v) [ dst ]
 
 (* [placed s what p x] is the node of [x], a value that is not traced, at [p]:
