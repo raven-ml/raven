@@ -1,12 +1,15 @@
 ; Settings are read when the program starts, so CACHEDB is set here, to a
 ; directory of the sandbox. The tests tagged no-library run in a second
 ; process, where COMGR_PATH names a file that is no library, and those tagged
-; no-spawn in a third, which may start no process.
+; no-spawn in a third, which they forbid to start any process.
 
 (test
  (name test_compiler_amd)
  (package tolk)
  (libraries windtrap tolk)
+ (foreign_stubs
+  (language c)
+  (names forbid_spawn_stubs))
  (deps
   (sandbox always)
   not_a_library)
@@ -21,7 +24,7 @@
      ./not_a_library
      (progn
       (run %{test} --tag no-library)
-      (run bash -c "ulimit -u 1 && exec \"$0\" --tag no-spawn" %{test})))))))
+      (run %{test} --tag no-spawn)))))))
 
 (rule
  (target not_a_library)

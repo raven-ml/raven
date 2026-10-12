@@ -204,12 +204,16 @@ let process =
     ]
 
 (* A process that cannot start: these tests run in a process of their own, where
-   COMGR_PATH names a file and no process can be spawned. *)
+   COMGR_PATH names a file, and forbid it to start any other for the rest of its
+   life. *)
+
+external forbid_spawn : unit -> unit = "tolk_test_forbid_spawn"
 
 let no_spawn =
   group ~tags:[ "no-spawn" ] "a process that cannot start"
     [
       test "a compile raises Failure naming the worker" (fun () ->
+          forbid_spawn ();
           raises_match (Exn.failure ~substring:"comgr worker") (fun () ->
               compile kernel));
     ]
