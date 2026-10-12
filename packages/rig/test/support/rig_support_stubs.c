@@ -252,7 +252,7 @@ static rig_submit_fn polled_submit;
 static rig_commit_fn polled_commit;
 
 static const struct rig_driver polled_driver = {polled_room, polled_submit,
-                                                polled_commit};
+                                                polled_commit, NULL};
 
 /* Every Polled device not yet collected, linked through the devices so
    that enrolling allocates nothing: a sleep runs the ones whose words the

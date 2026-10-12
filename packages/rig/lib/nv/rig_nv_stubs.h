@@ -40,6 +40,8 @@ enum {
   T_INVALIDATE,   /* (): the compute engine's caches */
   T_IDLE,         /* (): wait for the compute engine's launches */
   T_SCHEDULE,     /* (address): schedule the launch descriptor there */
+  T_STAMP,        /* (address, value): T_RELEASE, and the timer at +8 */
+  T_COPY_STAMP,   /* (address, value): T_COPY_RELEASE, and the timer at +8 */
   TEMPLATES
 };
 
@@ -201,6 +203,35 @@ struct flush {
 /* The device's own BAR's word first, then other devices' BAR words. */
 #define FLUSHES 8
 
+/* Times
+
+   A timed value's channels write stamps, each a release of the value with
+   the GPU's timer, into the value's slot of the stamp ring, in memory the
+   host reads: one on each channel it enters, after the waits, and one on
+   the channel that releases it, before the release. Value v takes slot
+   v modulo the ring's slots, which are more than the values a submission
+   may find unreached: a submission that reuses a slot finds its earlier
+   value completed, and converts that value's stamps to the host's clock
+   unless rig_nv_settle did. */
+
+/* A release with the timer: the value released and the timer's
+   nanoseconds. */
+struct record {
+  uint64_t value, stamp;
+};
+
+/* A slot's records, as the GPU writes them. */
+struct stamps {
+  struct record start[CHANNELS], end;
+};
+
+/* The host's side of a slot: its value and where its times go, NULL once
+   they are written. */
+struct timed {
+  uint64_t v;
+  uint64_t *times;
+};
+
 /* A device. The fields up to [last] live for the process; the channels'
    memory ends at a stop that answered Stopped. */
 struct device {
@@ -223,6 +254,16 @@ struct device {
   struct flush flushes[FLUSHES];
   /* a notification's error fields */
   uint32_t info32_at, status_at;
+  /* the stamp ring: its [slots] slots, a power of two, as the host reads
+     them and at the GPU's address, and their host side; the record the
+     timer's calibration writes; and the timer less the host's clock */
+  volatile struct stamps *stamps;
+  uint64_t stamps_gpu, slots;
+  struct timed *timed;
+  volatile struct record *clock;
+  uint64_t clock_gpu;
+  int64_t offset;
+  uint64_t calibrated; /* the host's clock at the last calibration */
 };
 
 /* Makes the host's writes through the BARs that [d]'s work may read reach
@@ -243,6 +284,11 @@ static inline void rig_nv_flush(struct device *d, int launched) {
   }
   if (!read) store_fence();
 }
+
+/* Measures [d]'s offset: [1], or [0] if the GPU wrote no stamp within a
+   second. Called at open, before any submission, and by rig_nv_settle on
+   an idle device. */
+int rig_nv_calibrate(struct device *d);
 
 /* The join word of channel [q]: its GPU address. */
 #define JOIN_GPU(d, q) ((d)->word_gpu + 8 * (1 + (q)))

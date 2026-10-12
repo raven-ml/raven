@@ -77,7 +77,7 @@ static int family(id<MTLDevice> device) {
 }
 
 static const struct rig_driver driver = {rig_metal_room, rig_metal_submit,
-                                         rig_metal_commit};
+                                         rig_metal_commit, NULL};
 
 static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
   id<MTLDevice> device = MTLCreateSystemDefaultDevice();

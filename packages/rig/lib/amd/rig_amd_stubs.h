@@ -62,6 +62,8 @@ enum {
   S_COPY,      /* copy: 2 bytes from 1 to 0, at most the engine's packet */
   A_IB,        /* AQL compute: the 1 words of PM4 packets at 0 */
   T_INVALIDATE, /* compute: invalidate the caches above the L2 */
+  T_STAMP,     /* compute: the dispatches before completed, the clock at 0 */
+  S_STAMP,     /* copy: the clock at 0 */
   RIG_AMD_TEMPLATES
 };
 
@@ -249,6 +251,30 @@ struct rig_amd_route {
 /* A submission's routes lie in the scratch rig hands the driver. */
 _Static_assert(sizeof(struct rig_amd_route) <= RIG_SCRATCH, "a route fits");
 
+/* Times
+
+   A timed value's queues write the GPU's clock into the value's slot of
+   the stamp ring, in memory the host reads: each queue it enters after
+   the waits, and the queue that releases it before the release. Value v
+   takes slot v modulo RIG_AMD_STAMPS. A submission finds at most
+   RIG_AMD_MARKS - 1 values unreached, one segment mark each, so one that
+   reuses a slot finds its earlier value completed, and converts that
+   value's stamps to the host's clock unless rig_amd_settle did. A record
+   the GPU did not write stays 0. */
+#define RIG_AMD_STAMPS RIG_AMD_MARKS
+
+/* A slot's records, as the GPU writes them: counts of its clock. */
+struct rig_amd_stamps {
+  uint64_t start[RIG_AMD_QUEUES], end;
+};
+
+/* The host's side of a slot: its value and where its times go, NULL once
+   they are written. */
+struct rig_amd_timed {
+  uint64_t v;
+  uint64_t *times;
+};
+
 struct rig_amd {
   const struct rig_driver *driver;
   _Atomic uint64_t *word;
@@ -275,7 +301,22 @@ struct rig_amd {
   _Atomic uint64_t last;
   const char *failure;
   char failure_text[96];
+  /* the stamp ring, as the host reads it and at the GPU's address, and its
+     host side; the record the clock's calibration writes; the clock's
+     rate; and its nanoseconds less the host's clock */
+  volatile struct rig_amd_stamps *stamps;
+  uint64_t stamps_gpu;
+  struct rig_amd_timed timed[RIG_AMD_STAMPS];
+  volatile uint64_t *clock;
+  uint64_t clock_gpu, clock_hz;
+  int64_t offset;
+  uint64_t calibrated; /* the host's clock at the last calibration */
 };
+
+/* Measures [d]'s offset: [1], or [0] if the GPU wrote no stamp within a
+   second. Called at open, before any submission, and by rig_amd_settle on
+   an idle device. */
+int rig_amd_calibrate(struct rig_amd *d);
 
 /* Orders every store before it before every store after it, as the GPU
    sees them: on arm64 the full-system barrier stores to a BAR need; on

@@ -1162,6 +1162,7 @@ let record s (lane, name) ps p pair =
   let device = s.dev in
   let l = Dev.live device in
   Dev.after device (Point.value p) (fun () ->
+      Dev.settle device (Point.value p);
       match times_read l.c pair with
       | 0, 0 -> ()
       | start, stop -> Prof.add ps (Span { device; lane; name; start; stop }))

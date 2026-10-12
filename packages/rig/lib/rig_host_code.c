@@ -333,7 +333,7 @@ static int host_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver host_driver = {host_room, host_submit,
-                                              host_commit};
+                                              host_commit, NULL};
 
 void *rig_host_state(void) {
   host.driver = &host_driver;

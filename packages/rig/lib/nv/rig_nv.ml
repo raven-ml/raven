@@ -107,6 +107,13 @@ let words_bytes = 8 * 3
 let entries = 16384
 let segment_bytes = 1 lsl 20
 
+(* The stamp ring's slots, one per value modulo their number, rig_nv_stubs.h's
+   Times: more than the values the two channels' rings may hold unreached. A
+   slot is three records of 16 bytes, and the calibration's record follows
+   the slots. *)
+let slots = 2 * entries
+let stamps_bytes = (slots * 48) + 16
+
 (* The compute channel's launch ring holds [launch_bytes] bytes of launches'
    descriptors and banks, a power of two: a launch takes about 1 KiB. *)
 let launch_bytes = 1 lsl 20
@@ -127,6 +134,8 @@ let t_setup_copy = 6
 let t_invalidate = 7
 let t_idle = 8
 let t_schedule = 9
+let t_stamp = 10
+let t_copy_stamp = 11
 
 (* rig_nv_stubs.h's launch values, by slot: the grid's sizes along X, Y and Z,
    the group's, bank 0's address, the next descriptor's, the dynamic shared
@@ -166,6 +175,8 @@ external set_channel : int -> int -> int array -> bool = "caml_rig_nv_channel"
 [@@noalloc]
 
 external set_doorbell : int -> int -> unit = "caml_rig_nv_doorbell" [@@noalloc]
+external set_stamps : int -> int -> int -> int -> bool = "caml_rig_nv_stamps"
+external calibrate : int -> bool = "caml_rig_nv_calibrate"
 
 external set_launches : int -> int -> int -> int -> bool -> unit
   = "caml_rig_nv_launches"
@@ -471,6 +482,8 @@ let templates self (g : gpu) =
   template self t_invalidate Method.invalidate_caches;
   template self t_idle Method.wait_for_idle;
   template self t_schedule (Method.schedule a);
+  template self t_stamp (Method.release_stamp a b);
+  template self t_copy_stamp (Method.copy_release_stamp a b);
   (* An entry is its segment's address plus a constant plus its words times
      another: the address is its own field, and the words another. *)
   let entry words =
@@ -579,6 +592,9 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     zero h page;
     Ok (m, h)
   in
+  let* stamps = alloc Pinned stamps_bytes "stamp ring" in
+  let* stamps_host = host "stamp ring" stamps in
+  zero stamps_host stamps_bytes;
   let* compute_notifier = notifier 0 in
   let* copy_notifier = notifier 1 in
   (* The GPU reads a launch's descriptor and bank as the launch before it
@@ -700,6 +716,13 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     set_launches self launches_host launches.address launch_bytes launches_bar;
     templates self p.gpu;
     Option.iter (set_flush self) p.flush;
+    let* () =
+      if not (set_stamps self stamps_host stamps.address slots) then
+        Error "no host memory for the stamp ring's state"
+      else if not (calibrate self) then
+        Error "the GPU wrote no stamp of its timer within a second"
+      else Ok ()
+    in
     (* The private copy kernel. On sm_80, sm_86, sm_87 and sm_89, a copy of
        at least 256 KiB between two of the device's own [Device] allocations
        runs as this kernel on the compute channel (rig_nv_ring.c's
@@ -718,7 +741,9 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
           let* code_host = host "copy kernel" code in
           Ok (Some (c, k, code, code_host))
     in
-    let owned = [ block; launches; fst compute_notifier; fst copy_notifier ] in
+    let owned =
+      [ block; launches; stamps; fst compute_notifier; fst copy_notifier ]
+    in
     let owned =
       match copy_kernel with
       | Some (_, _, code, _) -> code :: owned

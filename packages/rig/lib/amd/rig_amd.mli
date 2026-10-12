@@ -249,11 +249,22 @@ val capability : t -> Rig_amd_abi.Capability.t
 
     {2:c C functions}
 
-    [edge]'s [room] and [submit] are [rig_amd_room] and [rig_amd_submit],
-    declared in [rig_amd.h]. Its [commit] does nothing, since [submit]
-    places each value's release and returns [RIG_COMMITTED]. [submit]
-    leaves a value's times [0], so a profile records no span of its work. A
-    part is:
+    [edge]'s [room], [submit] and [settle] are [rig_amd_room],
+    [rig_amd_submit] and [rig_amd_settle], declared in [rig_amd.h]. Its
+    [commit] does nothing, since [submit] places each value's release and
+    returns [RIG_COMMITTED]. While a profile is taken, each queue a value's
+    work enters writes the GPU's clock after the value's waits, and the
+    queue that releases the value writes it before the release: on
+    ["COMPUTE:0"] once the dispatches before it have completed
+    ({!Rig_amd_abi.Pm4.copy_data} of the clock), on ["COPY:0"] in turn
+    ({!Rig_amd_abi.Sdma.timestamp}). [settle], or a later [submit],
+    converts the earliest start and the end to the host's clock by
+    [clock_hz] and an offset. {!make} measures the offset, and [settle]
+    measures it again when the device is idle, every value it was given
+    reached, and the offset is a second old. A stamp behind work would
+    measure the work's queue, so a device kept busy keeps its offset, and
+    its times drift from the host's clock at its clock's rate error, a few
+    parts per million, until it is next idle. A part is:
     {ul
     {- words, whole packets of the queue's kind: PM4, or AQL in multiples of
        16 words, on ["COMPUTE:0"], and SDMA on ["COPY:0"];}
@@ -437,10 +448,16 @@ val make : 'm path -> (t, string) result
     {- if [p] lacks the memory the device needs, naming what it was for;}
     {- if [p]'s [Pinned] memory has no host address;}
     {- if this library's copy kernel for the GPU's processor does not load,
-       naming the kernel and the processor and saying why.}}
+       naming the kernel and the processor and saying why;}
+    {- if the GPU writes no stamp of its clock within a second.}}
 
-    Raises [Invalid_argument] if [p.interrupt] is [0], or if a count of
-    [p.gpu] ({!Rig_amd_abi.Gpu.t}) is below [1]. *)
+    It measures the offset of the GPU's clock from the host's with eight
+    stamps, each between two readings of the host's clock, and keeps the
+    closest pair's.
+
+    Raises [Invalid_argument] if [p.interrupt] is [0], if [p.clock_hz] is
+    below [1], or if a count of [p.gpu] ({!Rig_amd_abi.Gpu.t}) is below
+    [1]. *)
 
 val is_gpu : vendor:int -> class_:int -> bool
 (** [is_gpu ~vendor ~class_] is [true] iff a PCI function of vendor [vendor]

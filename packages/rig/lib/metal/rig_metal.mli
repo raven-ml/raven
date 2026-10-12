@@ -160,7 +160,9 @@ val capability : t -> Rig_metal_abi.t
 (** {1:work Work}
 
     The device's [struct rig_driver] holds [rig_metal_room],
-    [rig_metal_submit] and [rig_metal_commit], which [rig_metal.h] declares.
+    [rig_metal_submit] and [rig_metal_commit], which [rig_metal.h] declares,
+    and no [settle]: the command buffers' completion handlers write a
+    value's times before they raise the word.
     [rig_metal_submit] encodes the parts of a value, in order, into the open
     command buffer, and opens one if none is open. A command buffer has one
     compute encoder, which runs its commands one after the other

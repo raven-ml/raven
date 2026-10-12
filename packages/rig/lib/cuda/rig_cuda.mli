@@ -153,9 +153,10 @@ val capability : t -> Rig_cuda_abi.t
 
 (** {1:work Work}
 
-    The device's [struct rig_driver] holds [rig_cuda_room], [rig_cuda_submit]
-    and [rig_cuda_commit], which [rig_cuda.h] declares. A part on queue [0]
-    runs on ["COMPUTE:0"], one on queue [1] on ["COPY:0"].
+    The device's [struct rig_driver] holds [rig_cuda_room], [rig_cuda_submit],
+    [rig_cuda_commit] and [rig_cuda_settle], which [rig_cuda.h] declares. A
+    part on queue [0] runs on ["COMPUTE:0"], one on queue [1] on
+    ["COPY:0"].
 
     The device commits a value by enqueueing a write of it into the word
     ([cuStreamWriteValue64]) on the stream the last value ended on. The
@@ -185,8 +186,15 @@ val capability : t -> Rig_cuda_abi.t
     [rig_cuda_room] never returns [RIG_LATER], since a stream takes any
     amount of work. [rig_cuda_submit] and [rig_cuda_commit] instead block
     while a stream is full, until the device's earlier work frees it.
-    [rig_cuda_submit] writes no times, so a profile has no span of the
-    device's work.
+    While a profile is taken, [rig_cuda_submit] records a timing event on
+    each stream a value's work enters, after the value's waits, and one
+    after its work on the stream it ends on. [rig_cuda_settle], or a later
+    timed [rig_cuda_submit], converts the earliest start and the end to the
+    host's clock through a reference event, which the device records on a
+    stream of its own, the closest of eight round trips to the host's
+    clock, when it opens, and again in [rig_cuda_settle] once the last is
+    a second old. A timed submit waits for the value timed
+    1,024 timed values before it, whose events it reuses.
 
     {2:launches Launches}
 

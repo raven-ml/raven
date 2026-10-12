@@ -37,6 +37,13 @@
    has not waited for starts with a wait for idle, as kernels a channel
    schedules run at once.
 
+   Times: a timed value stamps, after its waits, each channel it enters,
+   and, before its release, the channel that releases it (rig_nv_stubs.h's
+   Times). A calibration writes a stamp between two readings of the host's
+   clock, the closest pair of eight kept: at open, and in a settle that
+   finds the device idle and the offset a second old. A stamp behind work
+   would measure the work's queue, so a busy device keeps its offset.
+
    Launches: a submission's launches get their descriptors and constant
    banks 0 in COMPUTE's launch ring, in part order; the ring is the GPU's
    memory where its BAR had room, which the GPU reads faster than host
@@ -283,13 +290,15 @@ static void need(const struct device *d, const struct route *routes,
   for (int q = 0; q < CHANNELS; q++) {
     if (!used[q]) continue;
     entries[q] += 3;
+    bytes[q] += bytes_of(d, q == COMPUTE ? T_STAMP : T_COPY_STAMP);
     bytes[q] += (2 + MAX_WAITS) * bytes_of(d, T_ACQUIRE) +
                 bytes_of(d, q == COMPUTE ? T_SETUP : T_SETUP_COPY) +
                 4 * TEMPLATE_WORDS;
     if (q == COMPUTE)
       bytes[q] += bytes_of(d, T_LOCAL) + bytes_of(d, T_INVALIDATE);
   }
-  bytes[r] += bytes_of(d, r == COMPUTE ? T_RELEASE : T_COPY_RELEASE);
+  bytes[r] += bytes_of(d, r == COMPUTE ? T_RELEASE : T_COPY_RELEASE) +
+              bytes_of(d, r == COMPUTE ? T_STAMP : T_COPY_STAMP);
   if (*launched > 0) *launched += wasted;
 }
 
@@ -339,7 +348,111 @@ struct submission {
   int used[CHANNELS];
   struct pending open;
   int running; /* whether COMPUTE has launches it has not waited for */
+  uint64_t stamps; /* the GPU's address of its slot's records, or 0 */
 };
+
+/* Times */
+
+/* Writes [v]'s times, unless written, from the records of its slot [x],
+   whose work has completed: the earliest of its channels' starts and its
+   end, less the offset. A record that does not hold [v] leaves both 0. */
+static void convert(const struct device *d, struct timed *t,
+                    volatile const struct stamps *x) {
+  uint64_t *times = t->times, start = UINT64_MAX;
+  if (times == NULL) return;
+  t->times = NULL;
+  for (int q = 0; q < CHANNELS; q++)
+    if (x->start[q].value == t->v && x->start[q].stamp < start)
+      start = x->start[q].stamp;
+  if (start == UINT64_MAX || x->end.value != t->v) return;
+  times[0] = start - (uint64_t)d->offset;
+  times[1] = x->end.stamp - (uint64_t)d->offset;
+}
+
+/* The slot of [v]: the times of the earlier value that held it written,
+   and, if [times], its records cleared and [v] with [times] kept. Answers
+   the GPU's address of its records if [times], 0 otherwise. */
+static uint64_t take_slot(struct device *d, uint64_t v, uint64_t *times) {
+  uint64_t k = v & (d->slots - 1);
+  struct timed *t = &d->timed[k];
+  convert(d, t, &d->stamps[k]);
+  if (times == NULL) return 0;
+  memset((void *)&d->stamps[k], 0, sizeof d->stamps[k]);
+  *t = (struct timed){v, times};
+  return d->stamps_gpu + k * sizeof(struct stamps);
+}
+
+/* Places a stamp of [v] at [address] on channel [q]. */
+static void stamp(struct device *d, int q, uint64_t address, uint64_t v) {
+  emit(d, &d->ch[q], q == COMPUTE ? T_STAMP : T_COPY_STAMP, address, v, 0);
+}
+
+/* The age of an offset that a settle on an idle device measures again. */
+#define RECALIBRATE_NS UINT64_C(1000000000)
+
+/* Whether every value [d] was given is reached. */
+static int idle(const struct device *d) {
+  return atomic_load_explicit(d->word, memory_order_acquire) ==
+         atomic_load_explicit(&d->last, memory_order_relaxed);
+}
+
+void rig_nv_settle(void *self, uint64_t v) {
+  struct device *d = self;
+  uint64_t k = v & (d->slots - 1);
+  if (idle(d) && rig_now_ns() - d->calibrated >= RECALIBRATE_NS)
+    rig_nv_calibrate(d);
+  if (d->timed[k].v == v) convert(d, &d->timed[k], &d->stamps[k]);
+}
+
+/* The calibrations kept from. */
+#define CALIBRATIONS 8
+
+/* Writes a stamp of [i] into the calibration record on COMPUTE, after the
+   channel's setup if owed, and waits for it: the host's clock just before
+   the doorbell into [*before], just after the stamp shows into [*after].
+   Answers 0 if no stamp shows within a second. The channel's reached
+   submissions are reclaimed first, so that the words fit, and the words
+   are marked as value 0's, which every room check reclaims. */
+static int calibration(struct device *d, uint64_t i, uint64_t *before,
+                       uint64_t *after) {
+  struct channel *c = &d->ch[COMPUTE];
+  reclaim(c, atomic_load_explicit(d->word, memory_order_acquire));
+  c->open = c->written;
+  c->open_words = 0;
+  if (c->owes_setup) {
+    emit(d, c, T_SETUP, 0, 0, 0);
+    c->owes_setup = 0;
+  }
+  d->clock->stamp = 0;
+  stamp(d, COMPUTE, d->clock_gpu, i);
+  close_segment(d, c);
+  c->marks[(c->first + c->count++) & (c->entries - 1)] =
+      (struct mark){0, c->put, c->written, c->launched};
+  store_fence();
+  *c->gp_put = (uint32_t)(c->put & (c->entries - 1));
+  rig_nv_flush(d, 0);
+  *before = rig_now_ns();
+  *d->doorbell = c->token;
+  while (d->clock->value != i || d->clock->stamp == 0) {
+    *after = rig_now_ns();
+    if (*after - *before > 1000000000) return 0;
+  }
+  *after = rig_now_ns();
+  return 1;
+}
+
+int rig_nv_calibrate(struct device *d) {
+  uint64_t best = UINT64_MAX;
+  d->calibrated = rig_now_ns();
+  for (uint64_t i = 1; i <= CALIBRATIONS; i++) {
+    uint64_t before, after;
+    if (!calibration(d, i, &before, &after)) return 0;
+    if (after - before >= best) continue;
+    best = after - before;
+    d->offset = (int64_t)(d->clock->stamp - (before + best / 2));
+  }
+  return 1;
+}
 
 /* Opens channel [q] for the work of [s], once per submission: its owed
    words, its wait for v-1 and the foreign waits. */
@@ -357,6 +470,8 @@ static void enter(struct submission *s, int q) {
   if (c->released != s->v - 1) emit(d, c, T_ACQUIRE, d->word_gpu, s->v - 1, 0);
   for (int i = 0; i < s->nwaits; i++)
     emit(d, c, T_ACQUIRE, s->waits[i].at, s->waits[i].value, 0);
+  if (s->stamps != 0)
+    stamp(d, q, s->stamps + (uint64_t)q * sizeof(struct record), s->v);
   if (q != COMPUTE) return;
   /* Only the OCaml side writes a pending memory, so an exchange after the
      load takes a pending one too: the newer, if it replaced it. */
@@ -516,14 +631,17 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
                   void *scratch, const uint8_t *args,
                   const uint64_t *slots, int nslots, uint64_t *times,
                   const char **failure) {
-  (void)times;
   (void)nslots;
   (void)failure;
   struct device *d = self;
   struct channel *compute = &d->ch[COMPUTE];
   struct route *routes = scratch;
-  struct submission s = {
-      .d = d, .routes = routes, .v = v, .waits = waits, .nwaits = nwaits};
+  struct submission s = {.d = d,
+                         .routes = routes,
+                         .v = v,
+                         .waits = waits,
+                         .nwaits = nwaits,
+                         .stamps = take_slot(d, v, n > 0 ? times : NULL)};
   route(d, routes, p, n);
   int r = releaser(routes, n, v);
   int last[CHANNELS] = {-1, -1};
@@ -557,6 +675,8 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
   int o = other(r);
   if (s.used[o])
     emit(d, &d->ch[r], T_ACQUIRE, JOIN_GPU(d, o), tag(v, last[o]), 0);
+  if (s.stamps != 0)
+    stamp(d, r, s.stamps + offsetof(struct stamps, end), v);
   signal_word(d, r, d->word_gpu, v);
   d->ch[r].released = v;
   for (int q = 0; q < CHANNELS; q++) {

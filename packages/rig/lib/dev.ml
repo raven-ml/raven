@@ -22,6 +22,7 @@ external c_host_word : unit -> int = "caml_rig_host_word"
 external c_publish : c -> unit = "caml_rig_publish"
 external c_committed : c -> int = "caml_rig_committed" [@@noalloc]
 external c_commit : c -> int = "caml_rig_commit"
+external c_settle : c -> int -> int = "caml_rig_settle"
 external c_done : int -> bool = "caml_rig_done" [@@noalloc]
 
 (* A device's line, read by its index for the life of the process. *)
@@ -621,6 +622,8 @@ let commit_once d =
   r <> Answer.busy
 
 let rec commit d v = if committed d < v && not (commit_once d) then commit d v
+
+let rec settle d v = if c_settle (live d).c v = Answer.busy then settle d v
 
 let signaled = word
 

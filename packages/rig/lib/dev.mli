@@ -350,6 +350,12 @@ val commit : device -> int -> unit
     waiting while another call is submitting or committing on [d]. A commit
     that fails loses [d]; on a lost device it does nothing. *)
 
+val settle : device -> int -> unit
+(** [settle d v] has [d]'s driver write the times of [d]'s value [v], which
+    its submit was given while a profile was taken, waiting while another
+    call is submitting or committing on [d]. [v] must be reached. On a lost
+    device it does nothing. *)
+
 val signaled : device -> int
 (** [signaled d] is {!Rig.signaled}[ d]. *)
 

@@ -5,11 +5,11 @@
 
 /* Submitting to an AMD device from C.
 
-   A device's room check and submit, for the caller that holds its
+   A device's room check, submit and settle, for the caller that holds its
    submissions in C, over the structures and codes of rig_edge.h. [self] is
-   the edge of Rig_amd's facts, whose struct rig_driver holds them. Both are
+   the edge of Rig_amd's facts, whose struct rig_driver holds them. They are
    called without the OCaml runtime: they call no function of it and read no
-   OCaml value, and neither blocks, but the submit may wait out the
+   OCaml value, and none blocks, but the submit may wait out the
    publication of a new AQL scratch, a few stores.
 
    Queue 0 is the logical compute queue "COMPUTE:0", queue 1 the copy queue
@@ -47,11 +47,18 @@ int rig_amd_room(void *self, const struct rig_part *parts, int n,
    waits are more than the device holds or ones it cannot
    make. The queues then run none of [parts], and the timeline word still
    reaches [v]. After a failure every call answers RIG_FAILED with the first
-   failure's message, which lives as long as the process. */
+   failure's message, which lives as long as the process. With [times], the
+   queues stamp [v]'s work with the GPU's clock, which rig_amd_settle
+   converts to the host's clock. */
 int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                    int nwaits, const struct rig_part *parts, int nparts,
                    void *routes, const uint8_t *args,
                    const uint64_t *slots, int nslots, uint64_t *times,
                    const char **failure);
+
+/* Writes the times of [v], whose work has completed, from its stamps,
+   unless a later rig_amd_submit wrote them (rig_settle_fn). The host's
+   clock is the GPU's clock at its rate less an offset measured at open. */
+void rig_amd_settle(void *self, uint64_t v);
 
 #endif

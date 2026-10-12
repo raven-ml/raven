@@ -23,6 +23,7 @@
 #include <caml/fail.h>
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
+#include <caml/signals.h>
 
 #include "rig_nv_stubs.h"
 
@@ -40,7 +41,7 @@ static int rig_nv_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver driver = {rig_nv_room, rig_nv_submit,
-                                         rig_nv_commit};
+                                         rig_nv_commit, rig_nv_settle};
 
 /* A device whose timeline word is the host's 64-bit word at [v_word], the
    GPU's at [v_word_gpu], followed by its two join words, and whose
@@ -66,6 +67,7 @@ value caml_rig_nv_destroy(value v_self) {
   struct device *d = Device_val(v_self);
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
   free(d->copy_launch);
+  free(d->timed);
   free(d);
   return Val_unit;
 }
@@ -113,6 +115,35 @@ value caml_rig_nv_launches(value v_self, value v_host, value v_gpu,
   c->launches_size = (uint64_t)Long_val(v_size);
   c->bar = Bool_val(v_bar);
   return Val_unit;
+}
+
+/* Sets the stamp ring to the [v_slots] slots, a power of two, at the host
+   address [v_host] and the GPU's [v_gpu], zeroed, followed by the
+   calibration's record: [true], or [false] without memory for their host
+   side. */
+value caml_rig_nv_stamps(value v_self, value v_host, value v_gpu,
+                         value v_slots) {
+  struct device *d = Device_val(v_self);
+  uint64_t slots = (uint64_t)Long_val(v_slots);
+  d->timed = calloc(slots, sizeof *d->timed);
+  if (d->timed == NULL) return Val_false;
+  d->stamps = Pointer_val(v_host);
+  d->stamps_gpu = (uint64_t)Long_val(v_gpu);
+  d->slots = slots;
+  d->clock = (volatile struct record *)(d->stamps + slots);
+  d->clock_gpu = d->stamps_gpu + slots * sizeof(struct stamps);
+  return Val_true;
+}
+
+/* Measures the GPU's timer against the host's clock (rig_nv_calibrate):
+   whether a stamp showed. Releases the runtime: the GPU may take long to
+   start the channel. */
+value caml_rig_nv_calibrate(value v_self) {
+  struct device *d = Device_val(v_self);
+  caml_enter_blocking_section_no_pending();
+  int ok = rig_nv_calibrate(d);
+  caml_leave_blocking_section();
+  return Val_bool(ok);
 }
 
 value caml_rig_nv_doorbell(value v_self, value v_at) {
@@ -325,6 +356,10 @@ value caml_rig_nv_end(value v_self) {
   }
   d->doorbell = NULL;
   for (int i = 0; i < FLUSHES; i++) d->flushes[i].word = NULL;
+  free(d->timed);
+  d->timed = NULL;
+  d->stamps = NULL;
+  d->clock = NULL;
   return Val_unit;
 }
 

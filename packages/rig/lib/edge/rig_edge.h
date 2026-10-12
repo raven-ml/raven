@@ -6,12 +6,12 @@
 /* Handing work to a device from C.
 
    A device's driver keeps its C state for one device, [self], whose first
-   member is a pointer to the driver's struct rig_driver: three functions
-   in the shapes rig_room_fn, rig_submit_fn and rig_commit_fn, which the
-   caller that holds its submissions in C calls with [self] and the
-   structures below. The functions are called one at a time per device,
-   the room check before its submission, without the OCaml runtime: they
-   call no function of it and read no OCaml value.
+   member is a pointer to the driver's struct rig_driver: four functions
+   in the shapes rig_room_fn, rig_submit_fn, rig_commit_fn and
+   rig_settle_fn, which the caller that holds its submissions in C calls
+   with [self] and the structures below. The functions are called one at a
+   time per device, the room check before its submission, without the
+   OCaml runtime: they call no function of it and read no OCaml value.
 
    A submission is the work of one value [v] of the device's timeline: an
    array of parts, each on one of the device's queues, and the waits on
@@ -162,10 +162,12 @@ typedef int rig_room_fn(void *self, const struct rig_part *parts, int n,
    being taken; otherwise the driver stores at [times[0]] and [times[1]] the
    nanoseconds of rig's host clock (Rig.Profile.now: CLOCK_UPTIME_RAW on
    macOS, CLOCK_MONOTONIC elsewhere) at which [v]'s work started and ended
-   on the device, before the word shows [v], or leaves both 0 if it cannot
-   time the work. Answers RIG_COMMITTED if every value up to [v] is
-   committed, RIG_OK if [v] is encoded only, or RIG_FAILED with [*failure]
-   set to the driver's message, which lives as long as the device. */
+   on the device: before the word shows [v] if its settle is NULL, and
+   before its settle of [v] returns otherwise (rig_settle_fn). [times]
+   stays valid until then. It leaves both 0 if it cannot time the work.
+   Answers RIG_COMMITTED if every value up to [v] is committed, RIG_OK if
+   [v] is encoded only, or RIG_FAILED with [*failure] set to the driver's
+   message, which lives as long as the device. */
 typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
                          void *scratch, const uint8_t *args,
@@ -180,12 +182,23 @@ typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,
    submission's. */
 typedef int rig_commit_fn(void *self, uint64_t v, const char **failure);
 
+/* Writes the times of [v], whose submission was given [times], unless the
+   driver wrote them already. The caller calls it after the word shows [v]
+   and before it reads the times, at most once for each such value, and
+   possibly never, as for a device lost first. A driver whose GPU writes
+   the word has the work write stamps into the driver's own memory, and
+   converts them to the host's clock here, or in a later submit once [v]'s
+   work has completed. A driver that writes the times before the word
+   shows [v] sets [settle] to NULL. */
+typedef void rig_settle_fn(void *self, uint64_t v);
+
 /* A driver's functions, which the first member of its state for each
    device points to. */
 struct rig_driver {
   rig_room_fn *room;
   rig_submit_fn *submit;
   rig_commit_fn *commit;
+  rig_settle_fn *settle;
 };
 
 /* The functions of the driver whose C state for one device is [self]. */

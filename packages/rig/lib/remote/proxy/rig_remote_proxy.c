@@ -230,7 +230,7 @@ static int proxy_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver proxy_driver = {proxy_room, proxy_submit,
-                                               proxy_commit};
+                                               proxy_commit, NULL};
 
 /* Stubs */
 

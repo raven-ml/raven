@@ -171,7 +171,7 @@ type 'region facts = {
 
 (** {1:calls The C functions}
 
-    A driver's [struct rig_driver] holds three C functions, which rig calls
+    A driver's [struct rig_driver] holds four C functions, which rig calls
     with the facts' [edge]. They return the constants of [rig_edge.h].
     {ul
     {- [room] returns [RIG_FITS] if the parts fit the device's queues now,
@@ -189,16 +189,28 @@ type 'region facts = {
        may hold it until it is committed. It returns [RIG_COMMITTED] if every
        value up to its own is committed, [RIG_OK] if its value is only
        encoded, and [RIG_FAILED] if it failed, which loses the device. While a
-       profile is taken, it must write when the value's work started and ended
-       on the device, on the host's clock, before the word shows the value, or
-       leave both times [0] for work it cannot time.}
+       profile is taken, it is given a pair of times, where it must write
+       when the value's work started and ended on the device, on the host's
+       clock, or leave both [0] for work it cannot time. It writes them
+       before the word shows the value if [settle] is [NULL], and before
+       [settle] of the value returns otherwise.}
     {- [commit] is given a value [v] no greater than the last value given to
        [submit], and lets the work up to [v] run. Once that work has
        completed, the device writes [v] or a later value into the word.
        Committing a committed value must do nothing. It returns [RIG_OK], or
-       [RIG_FAILED], which loses the device.}}
+       [RIG_FAILED], which loses the device.}
+    {- [settle] is given a value [v] that [submit] timed, once the word
+       shows [v], and must write [v]'s times if it has not. rig calls it
+       just before it reads them, at most once for each such value. A value
+       of a device lost first may get no call. A driver whose device's work
+       writes the word, with no host code between the work's end and the
+       word, has the work stamp its start and end in the driver's own
+       memory, and converts the stamps to the host's clock in [settle], or
+       in a later [submit] once [v]'s work has completed. [settle] may be
+       [NULL] for a driver that writes the times itself before the word
+       shows the value.}}
 
-    rig calls the three one at a time for each device, with [room] before
+    rig calls the four one at a time for each device, with [room] before
     each [submit]. They must call no function of the OCaml runtime and read
     no OCaml value, since rig may call them with the runtime released.
 

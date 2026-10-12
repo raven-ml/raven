@@ -5,11 +5,11 @@
 
 /* Submitting to an NVIDIA device from C.
 
-   The device's room check and submission, over the structures and codes of
-   rig_edge.h, for rig and any caller that holds its submissions in C.
-   [self] is the device's [edge] fact, whose struct rig_driver holds them.
-   Both are called without the OCaml runtime: they call no function of it
-   and read no OCaml value.
+   The device's room check, submission and settle, over the structures and
+   codes of rig_edge.h, for rig and any caller that holds its submissions
+   in C. [self] is the device's [edge] fact, whose struct rig_driver holds
+   them. They are called without the OCaml runtime: they call no function
+   of it and read no OCaml value.
 
    Queue 0 is "COMPUTE:0", queue 1 "COPY:0". A part
    is ring entries, two words each, low first (Rig_nv_abi.Gpfifo), a copy
@@ -42,11 +42,17 @@ int rig_nv_room(void *self, const struct rig_part *parts, int n,
    submitted since, into the device's rings as the work of [v], the value
    after the last one it received, and wakes the channels. It answers
    RIG_COMMITTED: its stores are to this machine's memory and cannot fail.
-   It never blocks. */
+   It never blocks. With [times], the channels stamp [v]'s work with the
+   GPU's timer, which rig_nv_settle converts to the host's clock. */
 int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
                   int nwaits, const struct rig_part *parts, int nparts,
                   void *scratch, const uint8_t *args,
                   const uint64_t *slots, int nslots, uint64_t *times,
                   const char **failure);
+
+/* Writes the times of [v], whose work has completed, from its stamps,
+   unless a later rig_nv_submit wrote them (rig_settle_fn). The host's
+   clock is the GPU's timer less an offset measured at open. */
+void rig_nv_settle(void *self, uint64_t v);
 
 #endif

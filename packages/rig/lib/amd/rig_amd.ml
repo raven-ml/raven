@@ -123,6 +123,8 @@ external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
 
 external set_max_copy : int -> int -> unit = "caml_rig_amd_max_copy"
+external set_stamps : int -> int -> int -> int -> unit = "caml_rig_amd_stamps"
+external calibrate : int -> bool = "caml_rig_amd_calibrate"
 external hdp_count : int -> int -> int -> bool = "caml_rig_amd_hdp"
 external zero : int -> int -> unit = "caml_rig_amd_zero"
 external poke32 : int -> int -> int -> unit = "caml_rig_amd_poke32"
@@ -216,6 +218,10 @@ let segment_bytes = 1 lsl 20
 let slots = 513
 let pointers_bytes = 4096
 
+(* The stamp ring: RIG_AMD_STAMPS slots of three 8-byte records, then the
+   calibration's record. *)
+let stamps_bytes = (4096 * 24) + 8
+
 (* RIG_AMD_WAITS, the waits a submission's reserved room holds *)
 let max_waits = 255
 
@@ -274,6 +280,8 @@ let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
     Sdma.copy_linear ~dst:0 ~src:1 ~bytes:2;
     Abi.Aql.indirect_buffer 0 ~dwords:1;
     Pm4.acquire_mem g Agent;
+    Pm4.event_write Cs_partial_flush @ once (Pm4.copy_data Confirmed Clock 0);
+    Sdma.timestamp 0;
   ]
 
 let set_templates self g ~interrupt ~waits64 ~aql =
@@ -751,6 +759,9 @@ let unload _ m =
 let make (type m) (p : m path) =
   if p.interrupt = 0 then
     invalid_arg "Rig_amd.make: the release's interrupt context is 0";
+  if p.clock_hz < 1 then
+    invalid_argf "Rig_amd.make: the clock's rate is %d Hz, expected at least 1"
+      p.clock_hz;
   let count field n =
     if n < 1 then
       invalid_argf "Rig_amd.make: the GPU's %s is %d, expected at least 1"
@@ -793,6 +804,9 @@ let make (type m) (p : m path) =
     let* compute = alloc "compute ring" ring_bytes in
     let* copy = alloc "copy ring" ring_bytes in
     let* pointers = alloc "queue positions" pointers_bytes in
+    let* stamps = alloc "stamp ring" stamps_bytes in
+    let* stamps_host = host_of "stamp ring" stamps in
+    zero stamps_host stamps_bytes;
     let* word_host = host_of "timeline word" word in
     let* slots_host = host_of "slot words" slot_words in
     let* segment_host = host_of "argument segment" segment in
@@ -863,6 +877,14 @@ let make (type m) (p : m path) =
     in
     ring 0 compute_kind compute_host compute_bell;
     ring 1 `Sdma copy_host copy_bell;
+    set_stamps self stamps_host (mem_address stamps) p.clock_hz;
+    let* () =
+      if calibrate self then Ok ()
+      else begin
+        destroy self;
+        Error "the GPU wrote no stamp of its clock within a second"
+      end
+    in
     let rec g =
       {
         self;
@@ -895,7 +917,9 @@ let make (type m) (p : m path) =
           Some
             {
               ops;
-              own = copy_code @ [ slot_words; segment; compute; copy; pointers ];
+              own =
+                copy_code
+                @ [ slot_words; segment; compute; copy; pointers; stamps ];
               copy_launch = !copy_launch;
               desc = mem_address pointers;
               scratch = { installed = None; pending = None; retired = [] };

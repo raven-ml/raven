@@ -3,8 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Rig_amd's C state, filled from OCaml. No stub here releases the runtime:
-   none blocks. A device's state is named in OCaml by its address, an int. */
+/* Rig_amd's C state, filled from OCaml. Only the calibration releases the
+   runtime, while it waits for the GPU; no other stub blocks. A device's
+   state is named in OCaml by its address, an int. */
 
 #define _GNU_SOURCE
 
@@ -18,6 +19,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/signals.h>
 
 #include "rig_amd_stubs.h"
 
@@ -37,7 +39,7 @@ static int rig_amd_commit(void *self, uint64_t v, const char **failure) {
 }
 
 static const struct rig_driver driver = {rig_amd_room, rig_amd_submit,
-                                         rig_amd_commit};
+                                         rig_amd_commit, rig_amd_settle};
 
 value caml_rig_amd_create(value unit) {
   (void)unit;
@@ -75,6 +77,30 @@ value caml_rig_amd_memory(value v_self, value v_word, value v_word_gpu,
   d->slots_gpu = (uint64_t)Long_val(v_slots_gpu);
   for (int i = 0; i < RIG_AMD_SLOTS; i++) d->slots[2 * i] = UINT32_MAX;
   return Val_unit;
+}
+
+/* The stamp ring, of RIG_AMD_STAMPS slots, at the host address [v_host]
+   and the GPU's [v_gpu], zeroed, followed by the calibration's record; and
+   the clock's rate [v_hz], positive. */
+value caml_rig_amd_stamps(value v_self, value v_host, value v_gpu,
+                          value v_hz) {
+  struct rig_amd *d = Device_val(v_self);
+  d->stamps = Host_val(v_host);
+  d->stamps_gpu = (uint64_t)Long_val(v_gpu);
+  d->clock = (volatile uint64_t *)(d->stamps + RIG_AMD_STAMPS);
+  d->clock_gpu = d->stamps_gpu + RIG_AMD_STAMPS * sizeof(struct rig_amd_stamps);
+  d->clock_hz = (uint64_t)Long_val(v_hz);
+  return Val_unit;
+}
+
+/* Measures the GPU's clock against the host's (rig_amd_calibrate):
+   whether a stamp showed. Releases the runtime. */
+value caml_rig_amd_calibrate(value v_self) {
+  struct rig_amd *d = Device_val(v_self);
+  caml_enter_blocking_section_no_pending();
+  int ok = rig_amd_calibrate(d);
+  caml_leave_blocking_section();
+  return Val_bool(ok);
 }
 
 value caml_rig_amd_segment(value v_self, value v_host, value v_gpu,

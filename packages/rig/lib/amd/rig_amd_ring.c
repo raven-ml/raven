@@ -17,7 +17,13 @@
    wrote. A launch's parameters go in the segment. A submission without
    compute parts invalidates no cache: none of its work reads. It then
    flushes the host data path if the host wrote GPU memory through the BAR,
-   and rings the doorbells. */
+   and rings the doorbells.
+
+   A timed value also places its stamps (rig_amd_stubs.h's Times). A
+   calibration places a stamp between two readings of the host's clock,
+   the closest pair of eight kept: at open, and in a settle that finds the
+   device idle and the offset a second old. A stamp behind work would
+   measure the work's queue, so a busy device keeps its offset. */
 
 #define _GNU_SOURCE
 
@@ -200,10 +206,10 @@ static void need(const struct rig_amd *d, const struct rig_amd_route *routes,
                  RIG_AMD_SCRATCH_WRITES * words_of(d, T_WRITE) +
                  RIG_AMD_WAITS * words_of(d, T_WAIT64) +
                  words_of(d, T_SIGNAL) + words_of(d, T_WAIT) +
-                 words_of(d, T_RELEASE);
+                 words_of(d, T_RELEASE) + 2 * words_of(d, T_STAMP);
   uint64_t parts = 0, flushes = 2;
   words[s] = 3 * words_of(d, S_POLL) + words_of(d, S_FENCE) +
-             words_of(d, S_TRAP);
+             words_of(d, S_TRAP) + 2 * words_of(d, S_STAMP);
   *bytes = SEGMENT_ALIGN;
   for (int i = 0; i < n; i++) {
     const struct rig_amd_route *x = &routes[i];
@@ -318,6 +324,7 @@ struct submission {
   int last[RIG_AMD_QUEUES]; /* the queue's last part, or -1 */
   int nsignalled;
   int slot[RIG_AMD_SLOTS];
+  uint64_t stamps; /* the GPU's address of its slot's records, or 0 */
 };
 
 static uint64_t slot_gpu(const struct rig_amd *d, int i) {
@@ -344,8 +351,74 @@ static void scratch(struct submission *s, struct rig_amd_ring *r) {
   atomic_store_explicit(&d->scratch_lock, 0, memory_order_release);
 }
 
+/* Times */
+
+/* [ticks] of the clock as nanoseconds. */
+static uint64_t clock_ns(const struct rig_amd *d, uint64_t ticks) {
+  uint64_t hz = d->clock_hz;
+  return ticks / hz * UINT64_C(1000000000) +
+         ticks % hz * UINT64_C(1000000000) / hz;
+}
+
+/* [ticks] of the clock as nanoseconds of the host's clock. */
+static uint64_t host_ns(const struct rig_amd *d, uint64_t ticks) {
+  return clock_ns(d, ticks) - (uint64_t)d->offset;
+}
+
+/* Writes [t]'s times, unless written, from the records of its slot [x],
+   whose work has completed: the earliest of its queues' starts and its
+   end. A record the GPU did not write leaves both 0. */
+static void convert(const struct rig_amd *d, struct rig_amd_timed *t,
+                    volatile const struct rig_amd_stamps *x) {
+  uint64_t *times = t->times, start = UINT64_MAX;
+  if (times == NULL) return;
+  t->times = NULL;
+  for (int q = 0; q < RIG_AMD_QUEUES; q++)
+    if (x->start[q] != 0 && x->start[q] < start) start = x->start[q];
+  if (start == UINT64_MAX || x->end == 0) return;
+  times[0] = host_ns(d, start);
+  times[1] = host_ns(d, x->end);
+}
+
+/* The slot of [v]: the times of the earlier value that held it written,
+   and, if [times], its records cleared and [v] with [times] kept. Answers
+   the GPU's address of its records if [times], 0 otherwise. */
+static uint64_t take_slot(struct rig_amd *d, uint64_t v, uint64_t *times) {
+  uint64_t k = v % RIG_AMD_STAMPS;
+  struct rig_amd_timed *t = &d->timed[k];
+  convert(d, t, &d->stamps[k]);
+  if (times == NULL) return 0;
+  memset((void *)&d->stamps[k], 0, sizeof d->stamps[k]);
+  *t = (struct rig_amd_timed){v, times};
+  return d->stamps_gpu + k * sizeof(struct rig_amd_stamps);
+}
+
+/* Places a stamp at [address] on queue [q]. */
+static void stamp(struct rig_amd *d, int q, uint64_t address) {
+  emit(d, &d->rings[q], q == RIG_AMD_COMPUTE ? T_STAMP : S_STAMP, address, 0,
+       0);
+}
+
+/* The age of an offset that a settle on an idle device measures again. */
+#define RECALIBRATE_NS UINT64_C(1000000000)
+
+/* Whether every value [d] was given is reached. */
+static int idle(struct rig_amd *d) {
+  return atomic_load_explicit(d->word, memory_order_acquire) ==
+         atomic_load_explicit(&d->last, memory_order_relaxed);
+}
+
+void rig_amd_settle(void *self, uint64_t v) {
+  struct rig_amd *d = self;
+  uint64_t k = v % RIG_AMD_STAMPS;
+  if (idle(d) && rig_now_ns() - d->calibrated >= RECALIBRATE_NS)
+    rig_amd_calibrate(d);
+  if (d->timed[k].v == v) convert(d, &d->timed[k], &d->stamps[k]);
+}
+
 /* Places the queue's prefix once per submission: its own wait for v-1
-   where the other queue released it, and on compute the waits. */
+   where the other queue released it, and on compute the waits. A timed
+   value then stamps its start. */
 static void enter(struct submission *s, int q, const struct rig_wait *waits,
                   int nwaits, int copy_parts) {
   struct rig_amd *d = s->d;
@@ -356,6 +429,7 @@ static void enter(struct submission *s, int q, const struct rig_wait *waits,
     if (r->released != s->v - 1) emit(d, r, T_WAIT, d->word_gpu, s->v - 1, 0);
     for (int i = 0; i < nwaits; i++)
       emit(d, r, T_WAIT64, waits[i].at, waits[i].value, 0);
+    if (s->stamps != 0) stamp(d, q, s->stamps);
     if (nwaits > 0 && copy_parts) {
       emit(d, r, T_SIGNAL, slot_gpu(d, RIG_AMD_SLOT_W), s->v, 0);
       s->slot[s->nsignalled++] = RIG_AMD_SLOT_W;
@@ -364,6 +438,7 @@ static void enter(struct submission *s, int q, const struct rig_wait *waits,
   }
   if (r->released != s->v - 1) emit(d, r, S_POLL, d->word_gpu, s->v - 1, 0);
   if (nwaits > 0) emit(d, r, S_POLL, slot_gpu(d, RIG_AMD_SLOT_W), s->v, 0);
+  if (s->stamps != 0) stamp(d, q, s->stamps + 8 * (uint64_t)q);
 }
 
 static void wait_slot(struct submission *s, int q, int j) {
@@ -564,7 +639,6 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                    void *routes, const uint8_t *args,
                    const uint64_t *slots, int nslots, uint64_t *times,
                    const char **failure) {
-  (void)times;
   (void)nslots;
   struct rig_amd *d = self;
   if (d->failure) {
@@ -603,6 +677,7 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
 
   struct rig_amd_ring *compute = &d->rings[RIG_AMD_COMPUTE];
+  s.stamps = take_slot(d, v, nparts > 0 ? times : NULL);
   if (nwaits > 0) enter(&s, RIG_AMD_COMPUTE, waits, nwaits, copy_parts);
   int placed[RIG_AMD_QUEUES] = {0};
   for (int i = 0; i < nparts; i++) {
@@ -623,10 +698,60 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
   enter(&s, r, waits, nwaits, copy_parts);
   int o = 1 - r;
   if (s.last[o] >= 0) wait_slot(&s, r, s.last[o]);
+  if (s.stamps != 0)
+    stamp(d, r, s.stamps + offsetof(struct rig_amd_stamps, end));
   release(&s, r);
   mark(&g->marks, v, g->put);
   hand_over(&s);
   for (int i = 0; i < s.nsignalled; i++) d->slot_last[s.slot[i]] = v;
   atomic_store_explicit(&d->last, v, memory_order_release);
   return RIG_COMMITTED;
+}
+
+/* Calibration */
+
+/* The calibrations kept from. */
+#define CALIBRATIONS 8
+
+/* Places a stamp into the calibration record on the compute queue and
+   waits for it: the host's clock just before the doorbell into [*before],
+   just after the stamp shows into [*after]. Answers 0 if none shows within
+   a second. The queue's and the segment's reached submissions are
+   reclaimed first, so that the words fit, the segment's run of them never
+   wraps, and they are marked as value 0's, which every room check
+   reclaims. */
+static int calibration(struct rig_amd *d, uint64_t *before, uint64_t *after) {
+  struct submission s = {.d = d, .v = 0, .used = {1, 0}};
+  struct rig_amd_ring *r = &d->rings[RIG_AMD_COMPUTE];
+  struct rig_amd_segment *g = &d->segment;
+  uint64_t word = atomic_load_explicit(d->word, memory_order_acquire);
+  uint64_t bytes = SEGMENT_ALIGN + 4 * RIG_AMD_TEMPLATE_WORDS;
+  r->free = reclaim(&r->marks, r->free, word);
+  g->free = reclaim(&g->marks, g->free, word);
+  if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
+  *d->clock = 0;
+  stamp(d, RIG_AMD_COMPUTE, d->clock_gpu);
+  flush(d, r);
+  mark(&d->segment.marks, 0, d->segment.put);
+  *before = rig_now_ns();
+  hand_over(&s);
+  while (*d->clock == 0) {
+    *after = rig_now_ns();
+    if (*after - *before > 1000000000) return 0;
+  }
+  *after = rig_now_ns();
+  return 1;
+}
+
+int rig_amd_calibrate(struct rig_amd *d) {
+  uint64_t best = UINT64_MAX;
+  d->calibrated = rig_now_ns();
+  for (int i = 0; i < CALIBRATIONS; i++) {
+    uint64_t before, after;
+    if (!calibration(d, &before, &after)) return 0;
+    if (after - before >= best) continue;
+    best = after - before;
+    d->offset = (int64_t)(clock_ns(d, *d->clock) - (before + best / 2));
+  }
+  return 1;
 }

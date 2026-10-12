@@ -570,6 +570,106 @@ let device_order (module G : Gpu) () =
   Rig.Point.wait (submit t.d [ r ] ~uses:[ (o, Rig.Read_write) ]);
   equal octets ~msg:"work after a copy" data (get o)
 
+(* Profiles *)
+
+(* A profile taken around a submission records one span of its work on the
+   device, which lies within the profile and lasts at least as long as the
+   work: [late] of work on the first queue, alone, and before or after a copy
+   beside it; and a copy alone. *)
+let spans (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  let f = G.D.facts t.g in
+  let late = 20_000_000 and n = 4096 in
+  let src = filled ~memory:Pinned t.d (pattern n 9) in
+  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
+  let work () = G.spin t ~ns:late and copy () = copy_part ~dst src in
+  let shapes =
+    ("work", late, fun () -> [ work () ])
+    ::
+    (if beside f (first_queue f.queues) then
+       [
+         ("work, then a copy", late, fun () -> [ work (); copy () ]);
+         ("a copy, then work", late, fun () -> [ copy (); work () ]);
+         ("a copy", 0, fun () -> [ copy () ]);
+       ]
+     else [])
+  in
+  let span (what, lasts, ws) =
+    let ws = ws () in
+    let t0 = Rig.Profile.now () in
+    let (), events =
+      Rig.Profile.take (fun () -> Rig.Point.wait (submit t.d ws ~uses))
+    in
+    let t1 = Rig.Profile.now () in
+    let spans =
+      List.filter_map
+        (function
+          | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+              Some (start, stop)
+          | _ -> None)
+        events
+    in
+    match spans with
+    | [ (start, stop) ] ->
+        at_least int ~msg:(what ^ ": the span's start") ~than:t0 start;
+        at_most int ~msg:(what ^ ": the span's stop") ~than:t1 stop;
+        at_least int ~msg:(what ^ ": the span's length") ~than:lasts
+          (stop - start)
+    | spans ->
+        equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)
+  in
+  List.iter span shapes
+
+(* A profile around [many] submissions, work and a copy in turn, waited for
+   once, records one span of each, and each span ends before the next starts.
+   [many] exceeds every driver's ring of stamps, so later submits reuse slots,
+   and consecutive spans compare the two queues' clocks. *)
+let many = 33_000
+
+let span_order (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  let f = G.D.facts t.g in
+  let n = 64 in
+  let src = filled ~memory:Pinned t.d (pattern n 4) in
+  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
+  let prepare ws = Rig_gpu_support.prepare ~fixed:uses t.d ws in
+  let work = prepare [ G.copy_words t ~dst ~src ] in
+  let subs =
+    if beside f (first_queue f.queues) then
+      [| work; prepare [ copy_part ~dst src ] |]
+    else [| work |]
+  in
+  let submit i =
+    let s, run, buffers = subs.(i mod Array.length subs) in
+    Rig.submit s ~run ~buffers
+  in
+  let (), events =
+    Rig.Profile.take (fun () ->
+        for i = 0 to many - 2 do
+          ignore (submit i)
+        done;
+        Rig.Point.wait (submit (many - 1)))
+  in
+  let spans =
+    List.filter_map
+      (function
+        | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+            Some (start, stop)
+        | _ -> None)
+      events
+  in
+  equal int ~msg:"the device's spans" many (List.length spans);
+  let rec follow i = function
+    | (_, stop) :: ((start, _) :: _ as rest) ->
+        at_most int ~msg:(strf "span %d's stop, at most the next start" i)
+          ~than:start stop;
+        follow (i + 1) rest
+    | _ -> ()
+  in
+  follow 0 spans
+
 (* Launches *)
 
 (* A launch of [ids] over [groups] of [threads], into a view that starts [first]
@@ -1357,6 +1457,9 @@ let laws (module G : Gpu) =
         (fun () -> blits g (Device, (64 lsl 20) + 8));
       test "a value's work starts once every earlier value's completed"
         (device_order g);
+      test "a profile around a submission records a span that bounds its work"
+        (spans g);
+      test "spans of consecutive submissions follow each other" (span_order g);
       prop ~count:30
         "a launch writes what its grid and parameters say, and a launch after \
          it reads that"
