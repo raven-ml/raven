@@ -1227,9 +1227,11 @@ end
     arm64. x86_64 Windows has its own convention, but the host still calls a
     function by System V. A function of the process's libraries follows the
     platform's convention, so on x86_64 Windows linked code declares those it
-    calls [__attribute__((ms_abi))]. Code for an ELF target has no stack
-    probes, and Windows commits a thread's stack one guard page at a time,
-    so code for Windows must keep each stack frame within 4 KiB.
+    calls [__attribute__((ms_abi))]. Code for an ELF target probes no stack,
+    and Windows commits a thread's stack one guard page at a time, so on
+    Windows a thread's stack is committed, but for its last 64 KiB, before
+    the thread first runs linked code: a stack frame of any size within it
+    runs, as elsewhere.
 
     {3:host_platforms Platform support}
 

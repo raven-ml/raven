@@ -73,7 +73,43 @@ static _Atomic uint64_t installed;
 static _Thread_local uint64_t synchronized;
 #endif
 
+/* Stacks
+
+   Linked code is compiled for ELF, which probes no stack: a function whose
+   frame is larger than a page writes first below the page under the stack
+   pointer. Windows commits a thread's stack a page at a time, as the guard
+   page below its committed pages is touched, so such a write lands in
+   reserved memory and faults. Before a thread first runs linked code, the
+   rest of its stack is committed, but for its last STACK_TAIL bytes, which
+   stay reserved so that an overflow still faults. A commit charges the
+   system's commit limit; a page takes memory only once written. If the
+   system refuses the commit, a large frame faults as it would without it. */
+
+#if defined(_WIN32)
+#define STACK_TAIL (64 * 1024)
+
+static _Thread_local int stack_committed;
+
+static void commit_stack(void) {
+  if (stack_committed) return;
+  stack_committed = 1;
+  volatile char here = 0;
+  MEMORY_BASIC_INFORMATION used, below;
+  if (VirtualQuery((LPCVOID)&here, &used, sizeof used) == 0) return;
+  char *top = used.BaseAddress;
+  if (VirtualQuery(top - 1, &below, sizeof below) == 0) return;
+  /* The guard page, if any, stays as it is: the system moves it down. */
+  if (below.State == MEM_COMMIT) top = below.BaseAddress;
+  char *bottom = (char *)used.AllocationBase + STACK_TAIL;
+  if (top > bottom)
+    VirtualAlloc(bottom, (SIZE_T)(top - bottom), MEM_COMMIT, PAGE_READWRITE);
+}
+#endif
+
 static inline void synchronize(void) {
+#if defined(_WIN32)
+  commit_stack();
+#endif
 #if defined(__aarch64__)
   uint64_t n = atomic_load_explicit(&installed, memory_order_acquire);
   if (n == synchronized) return;

@@ -51,6 +51,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- On Windows, linked host code whose stack frame is larger than a page no
+  longer dies with an access violation: a thread's stack is committed before
+  the thread first runs linked code, which probes no stack. tolk's compiled
+  derivatives of the incomplete beta have frames of 18 to 52 KiB.
 - `Rig.Profile` records a `Copy` event for every copy part of a submission,
   on every device, and names each side by the device of its allocation, so a
   copy through a `Buffer.borrow` of host memory counts as a transfer from the

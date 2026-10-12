@@ -134,6 +134,26 @@ let test_profiled () =
          | _ -> None)
        events)
 
+(* deep.c over [groups] groups of one thread, each on whichever thread the
+   pool gives it, the caller's included: each element of its output. *)
+let deep_launch groups =
+  let out = S.words groups in
+  ignore
+    (launch (load "deep") "deep"
+       ~refs:Sub.[| write 0 ~at:0 |]
+       ~params:16
+       ~set:(fun run k -> Run.int64 run k 8 0)
+       ~grid:{ one with groups = (groups, 1, 1) }
+       (words [| out |]));
+  Array.init groups (fun i -> Int64.to_int out.{i})
+
+let test_deep () =
+  List.iter
+    (fun groups ->
+      equal ~msg:(strf "%d groups" groups) (array int) (Array.make groups 2)
+        (deep_launch groups))
+    [ 1; 4 * S.workers () ]
+
 let program_tests =
   group ~timeout "launches"
     [
@@ -145,6 +165,10 @@ let program_tests =
          its constants"
         test_linked;
       test "a launch follows the work on the memory its refs name" test_follows;
+      test
+        "a function whose stack frame spans 256 KiB, written at its far end \
+         first, runs on every thread"
+        test_deep;
     ]
 
 (* Splits *)
