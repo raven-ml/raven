@@ -689,14 +689,9 @@ let ascii_real s d =
       sign ^ String.sub digits 0 k ^ "." ^ String.sub digits k d
   in
   let text = if exp = "" then mant else mant ^ "E" ^ exp in
-  if not (Value.real_grammar text) then None
-  else
-    match
-      float_of_string_opt
-        (String.map (function 'D' | 'd' -> 'E' | c -> c) text)
-    with
-    | Some x -> Some x
-    | None -> None
+  match Value.float_of_token text with
+  | Some x -> Ok x
+  | None -> Error (if Value.real_grammar text then `Past_range else `Not_real)
 
 (* An ASCII column's values in its element (int64 or float64 holding
    them), with undefined fields. *)
@@ -752,8 +747,11 @@ let ascii_values c (cells : bigbytes) n a : Nx.packed * Nx.bool_t =
           else
             let s = field_string cells off w in
             match ascii_real s decimals with
-            | Some x -> out.(r) <- x
-            | None ->
+            | Ok x -> out.(r) <- x
+            | Error `Past_range ->
+                fail_at (row_place r) "%s is past float64's range"
+                  (String.trim s)
+            | Error `Not_real ->
                 fail_at (row_place r) "%S is not a FITS %c field"
                   (String.trim s) code
         done;

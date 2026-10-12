@@ -44,7 +44,8 @@ module Fits : sig
     (** [float] is integer or real text (FITS 4.0 §4.2.4), read correctly
         rounded. [NAN], [INF], hexadecimal floats, underscores and a real past
         float64's range do not read. It prints the fewest significant digits
-        that read back to the float, with a point or an exponent. *)
+        that read back to the float, the nearest of them, with a point or an
+        exponent. *)
 
     val string : string t
     (** [string] is a quoted string, with doubled quotes read as one, the
@@ -421,8 +422,9 @@ module Fits : sig
       holding every w-character integer ([int8] to w = 2, [int16] to 4, [int32]
       to 9, [int64] beyond), and a field past int64 is an [Error] naming its
       row; [Fw.d], [Ew.d] and [Dw.d] are float64, with §7.2.5's implied
-      decimals. A field equal to TNULLn padded to w is undefined, and a blank
-      numeric field is 0. *)
+      decimals, read correctly rounded, and a field past float64's range is an
+      [Error] naming its row. A field equal to TNULLn padded to w is
+      undefined, and a blank numeric field is 0. *)
   module Table : sig
     (** The type for how a column reads: {!read} gives the {!type-data} case of
         the same name. *)

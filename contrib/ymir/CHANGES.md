@@ -4,6 +4,14 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Fits.Value.float` reads and prints the same on every system. On Windows,
+  msvcrt's strtod misread some decimals, such as `3.839223843572815E-239`,
+  and its printf wrote three exponent digits (`6.02214076E+023`) and
+  rounded some digits twice. Printing now gives the nearest of the fewest
+  digits on every system, so a few values print differently: `2^56` prints
+  as `72057594037927940.0`, not `72057594037927936.0`.
+- An ASCII table's real field past float64's range, such as `1E400`, is an
+  `Error` naming its row, as a header value past it is; it read as infinity.
 - Quantized float tiles decode to the same values on every platform: on
   arm64, `Fits.Image.raw` and `Fits.Image.values` rounded `I × ZSCALE +
   ZZERO` once instead of twice, and could differ in the last bit.

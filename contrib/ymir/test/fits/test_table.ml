@@ -276,6 +276,28 @@ let ascii_fields () =
     (Ok [| 0; 0; 9 |])
     (Result.map Nx.to_array (T.raw Nx.int16 "n" hdu))
 
+(* A real past float64's range in an ASCII table. *)
+let ascii_past_range () =
+  let h =
+    H.(
+      empty
+      |> set V.string "XTENSION" "TABLE"
+      |> set V.int "BITPIX" 8 |> set V.int "NAXIS" 2 |> set V.int "NAXIS1" 8
+      |> set V.int "NAXIS2" 2 |> set V.int "PCOUNT" 0 |> set V.int "GCOUNT" 1
+      |> set V.int "TFIELDS" 1 |> set V.string "TTYPE1" "e"
+      |> set V.string "TFORM1" "E8.1" |> set V.int "TBCOL1" 1)
+  in
+  let data = " 1.5E-3  1.0E400" in
+  let hdu =
+    Fits.v h
+      (Nx.init Nx.uint8
+         [| String.length data |]
+         (fun i -> Char.code data.[i.(0)]))
+  in
+  match T.raw Nx.float64 "e" hdu with
+  | Ok _ -> fail "a field past float64's range read"
+  | Error e -> contains ~sub:"1.0E400 is past float64's range" e
+
 let descriptor_error () =
   (* The RFC's error format: places first, then what. *)
   let h =
@@ -551,6 +573,8 @@ let () =
          test "descriptions" described;
          test "a new header describes anew" reheaded;
          test "ASCII fields" ascii_fields;
+         test "an ASCII real past float64's range is an Error"
+           ascii_past_range;
          test "descriptor errors" descriptor_error;
          group "writing"
            [

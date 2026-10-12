@@ -161,32 +161,55 @@ let real_grammar t =
         digits () > 0 && !i = n
     | _ -> false
 
+(* The float nearest the real text [t], correctly rounded. An exponent past
+   an int's range puts it at zero or past the largest float, which the C
+   library's reading gets right. *)
 let float_of_token t =
   if not (real_grammar t) then None
   else
-    let t = String.map (function 'D' | 'd' -> 'E' | c -> c) t in
-    match float_of_string_opt t with
-    | Some x when Float.is_finite x -> Some x
-    | _ -> None
+    match Exact.split t with
+    | Some (negative, digits, e) ->
+        Option.map
+          (fun x -> if negative then -.x else x)
+          (Exact.read digits e)
+    | None -> (
+        match
+          float_of_string_opt
+            (String.map (function 'D' | 'd' -> 'E' | c -> c) t)
+        with
+        | Some x when Float.is_finite x -> Some x
+        | _ -> None)
 
 (* The fewest significant digits that read back to [x], with a point or an
-   exponent so the text never reads as an integer. *)
+   exponent so the text never reads as an integer: positional when it is as
+   short as twenty bytes, as 1288.4 or 0.001, and otherwise as C's %E writes
+   them, as 6.02214076E+23. *)
 let print_float x =
-  let rec shortest p =
-    if p >= 17 || Float.equal (float_of_string (strf "%.*E" (p - 1) x)) x then p
-    else shortest (p + 1)
-  in
-  let p = shortest 1 in
-  let e =
-    if x = 0. then 0 else int_of_float (Float.floor (Float.log10 (Float.abs x)))
-  in
-  (* Positional text when it is as short as twenty bytes, as 1288.4 or
-     0.001; otherwise the exponent form, as 6.02214076E+23. *)
-  let fixed = strf "%.*f" (Int.max 0 (p - 1 - e)) x in
-  let fixed = if String.contains fixed '.' then fixed else fixed ^ ".0" in
-  if String.length fixed <= 20 && Float.equal (float_of_string fixed) x then
-    fixed
-  else strf "%.*E" (p - 1) x
+  let sign = if Float.sign_bit x then "-" else "" in
+  if x = 0. then sign ^ "0.0"
+  else
+    let m, e = Exact.shortest (Float.abs x) in
+    let d = string_of_int m in
+    (* [m] ends in zeros after a carry, as [99 + 1]. *)
+    let p = ref (String.length d) in
+    while d.[!p - 1] = '0' do
+      decr p
+    done;
+    let p = !p in
+    let exp = e + String.length d - 1 in
+    let d = String.sub d 0 p in
+    let fixed =
+      if exp >= p - 1 then d ^ String.make (exp - p + 1) '0' ^ ".0"
+      else if exp >= 0 then
+        String.sub d 0 (exp + 1) ^ "." ^ String.sub d (exp + 1) (p - exp - 1)
+      else "0." ^ String.make (-exp - 1) '0' ^ d
+    in
+    if String.length sign + String.length fixed <= 20 then sign ^ fixed
+    else
+      let fraction = if p > 1 then "." ^ String.sub d 1 (p - 1) else "" in
+      strf "%s%c%sE%c%02d" sign d.[0] fraction
+        (if exp < 0 then '-' else '+')
+        (Int.abs exp)
 
 (* A complex value: two reals in parentheses, separated by a comma. *)
 let is_complex t =

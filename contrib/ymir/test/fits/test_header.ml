@@ -62,6 +62,11 @@ let floats =
       ("5.", Some 5.);
       ("-0.0", Some (-0.));
       ("2.2250738585072011E-308", Some 0x0.fffffffffffffp-1022);
+      ("3.839223843572815E-239", Some 0x1.fffffffffffffp-793);
+      ("9007199254740993", Some 0x1p53);
+      ("4.9406564584124654D-324", Some 0x0.0000000000001p-1022);
+      ("1.7976931348623158E308", Some Float.max_float);
+      ("1.7976931348623159E308", None);
       ("NAN", None);
       ("NaN", None);
       ("INF", None);
@@ -78,6 +83,27 @@ let floats =
       match expected with
       | Some x -> equal (result_w float_exact) (Ok x) (H.get V.float "K" h)
       | None -> is_error (H.get V.float "K" h))
+
+let printed_floats =
+  cases
+    ~name:(fun (_, text) -> text)
+    "float prints the fewest digits that read back, the nearest of them"
+    [
+      (1288.4, "1288.4");
+      (0.001, "0.001");
+      (2., "2.0");
+      (-0., "-0.0");
+      (0.1 +. 0.2, "0.30000000000000004");
+      (0x1p56, "72057594037927940.0");
+      (1e21, "1E+21");
+      (6.02214076e23, "6.02214076E+23");
+      (1.23456789e-25, "1.23456789E-25");
+      (0x1p-1024, "5.562684646268003E-309");
+      (0x0.0000000000001p-1022, "5E-324");
+    ]
+    (fun (x, text) ->
+      equal (result_w string) (Ok text)
+        (H.get V.text "K" (H.set V.float "K" x H.empty)))
 
 let nan_names_card () =
   let h =
@@ -429,6 +455,7 @@ let () =
          group "printing"
            [
              test "fixed and free formats" printing;
+             printed_floats;
              test "set replaces in place" set_in_place;
              test "set raises on what FITS cannot hold" set_raises;
              test "remove takes CONTINUE records" remove_continued;
