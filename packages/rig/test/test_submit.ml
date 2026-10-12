@@ -381,21 +381,22 @@ let test_hang_spread () =
 
 (* A device whose queue waits for another device's work loses nothing to its
    bound while that work runs, however long: its clock starts once the work is
-   reached. The producer's kernel runs three bounds; the consumer's first two
-   sleeps return with its work unrun. *)
+   reached. The producer's work runs only when a sleep runs its queue, and the
+   consumer's first two sleeps run nothing: the consumer waits two still
+   intervals, past its bound, on a value its producer has not reached. *)
 let test_hang_in_queue () =
-  let producer, _ = P.open_ ~runs:`Itself "submit:in-queue-producer" in
+  let producer, _ = P.open_ "submit:in-queue-producer" in
   let consumer, pc =
     P.open_ ~hang_ms ~waits_on:[ `Host ] "submit:in-queue-consumer"
   in
-  let s = Sub.make producer [| Sub.fill Support.slow ~params:8 |]
-  and run = Sub.Run.make () in
-  Sub.Run.int64 run (Sub.block s 0) 0 (3 * hang_ms);
-  let a = submit ~run s ~buffers:[||] in
+  let a = submit (empty producer) in
   let b = submit (empty consumer) ~waits:[| a |] in
   P.stall pc 2;
+  let t0 = Rig.Profile.now () in
   Rig.Point.wait b;
-  equal (option string) None (Rig.lost consumer)
+  let waited = (Rig.Profile.now () - t0) / 1_000_000 in
+  equal (option string) None (Rig.lost consumer);
+  at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
 
 let test_refusals () =
   let d = memory "submit:refusals" in

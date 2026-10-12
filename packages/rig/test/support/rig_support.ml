@@ -50,7 +50,6 @@ external poke : unit -> nativeint = "rig_test_poke"
 external carry : unit -> nativeint = "rig_test_carry"
 external countdown : unit -> nativeint = "rig_test_countdown"
 external ready : unit -> nativeint = "rig_test_ready"
-external slow : unit -> nativeint = "rig_test_slow"
 external interrupt : unit -> unit = "rig_test_interrupt"
 external park : unit -> unit = "rig_test_park"
 external parked : unit -> bool = "rig_test_parked"
@@ -83,7 +82,6 @@ let poke = poke ()
 let carry = carry ()
 let countdown = countdown ()
 let ready = ready ()
-let slow = slow ()
 
 module Driver = struct
   type kind = Rig_edge.memory

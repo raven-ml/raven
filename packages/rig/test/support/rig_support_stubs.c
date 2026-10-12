@@ -986,20 +986,6 @@ value rig_test_poke(value unit) {
   return caml_copy_nativeint((intnat)&poke);
 }
 
-/* A fill that runs for the milliseconds in the 64-bit word its argument
-   points at, as a long kernel does. */
-static int slow(void *queue, void *arg, uint64_t v) {
-  (void)queue;
-  (void)v;
-  sleep_ms(*(const uint64_t *)arg);
-  return 0;
-}
-
-value rig_test_slow(value unit) {
-  (void)unit;
-  return caml_copy_nativeint((intnat)&slow);
-}
-
 /* The parked thread: one that blocks outside OCaml, holding no runtime lock,
    until it is unparked or [park_ticks] ticks of 10 ms pass. */
 static const int park_ticks = 500;
