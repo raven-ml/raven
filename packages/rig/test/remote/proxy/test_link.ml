@@ -2021,9 +2021,7 @@ let connect () =
   | None -> (
       let job = Link.job () in
       match
-        let d, a =
-          Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
-        in
+        let d, a = Link.socket_pair () in
         let c = Link.make job d ~name:"agent" ~peer:(Wire.Agent 1) in
         let a = Link.make job a ~name:"controller" ~peer:Wire.Controller in
         { job; c; served = spawn (fun () -> echo a) }
@@ -2197,6 +2195,67 @@ let callback_commands =
       (fun r -> count r.endpoint ready);
   ]
 
+(* Pairs made at once from four domains, in a temporary directory that holds
+   what a killed process of this process's id left. Windows' [Unix.socketpair]
+   binds the [n]th pair of a process at [%TEMP%\ocaml_sp_PID_N], and removes
+   the name once the pair is connected: a process killed in between leaves it
+   behind. *)
+
+let pair_domains = 4
+let pairs = 16 (* each domain's *)
+
+(* The names Windows' [Unix.socketpair] binds for this process's next [n]
+   pairs, read from the one it binds for a pair now: the name ends with the
+   pair's count, 8 hexadecimal digits. Elsewhere a pair binds no name, and the
+   list is empty. *)
+let next_names n =
+  let a, b = Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0 in
+  let name = Unix.getsockname b in
+  Unix.close a;
+  Unix.close b;
+  match name with
+  | Unix.ADDR_UNIX path when path <> "" ->
+      let stem = String.length path - 8 in
+      let count = int_of_string ("0x" ^ String.sub path stem 8) in
+      List.init n (fun i ->
+          Printf.sprintf "%s%08x" (String.sub path 0 stem) (count + 1 + i))
+  | _ -> []
+
+let touch file = close_out (open_out_gen [ Open_wronly; Open_creat ] 0o600 file)
+let remove file = try Sys.remove file with Sys_error _ -> ()
+
+let read_byte fd =
+  let b = Bytes.create 1 in
+  let n = Unix.read fd b 0 1 in
+  Bytes.sub_string b 0 n
+
+(* Makes a pair and sends a byte each way: what each end read, the second end
+   first. *)
+let round_trip () =
+  let a, b = Link.socket_pair () in
+  Fun.protect ~finally:(fun () ->
+      Unix.close a;
+      Unix.close b)
+  @@ fun () ->
+  Rig_support.recv_timeout a patience;
+  Rig_support.recv_timeout b patience;
+  ignore (Unix.write_substring a "a" 0 1);
+  ignore (Unix.write_substring b "b" 0 1);
+  read_byte b ^ read_byte a
+
+let pairs_at_once () =
+  let names = next_names (pair_domains * pairs) in
+  Fun.protect ~finally:(fun () -> List.iter remove names) @@ fun () ->
+  List.iter touch names;
+  let made =
+    List.init pair_domains (fun _ ->
+        Domain.spawn (fun () -> List.init pairs (fun _ -> round_trip ())))
+  in
+  equal
+    (list (list string))
+    (List.init pair_domains (fun _ -> List.init pairs (fun _ -> "ab")))
+    (List.map Domain.join made)
+
 let domains =
   group "domains"
     [
@@ -2210,6 +2269,8 @@ let domains =
       stateful ~count:50 ~domains:2
         "ready callbacks and release follow an order of the calls"
         callback_commands;
+      test "pairs made at once beside a killed process's names carry bytes"
+        pairs_at_once;
     ]
 
 (* The fork test runs before the domains are spawned: after them, fork

@@ -227,3 +227,13 @@ val release_rail : t -> int -> unit
     transfer of it that arrives later is discarded, as is one of a rail [l]
     never had. It does nothing if [l] has no rail [id]. It takes no lock an
     OCaml thread holds, so a finaliser may call it. *)
+
+(**/**)
+
+val socket_pair : unit -> Unix.file_descr * Unix.file_descr
+(** [socket_pair ()] is two connected stream sockets of this process,
+    close-on-exec. No file makes it fail: on Windows the pair is a loopback
+    TCP connection, where [Unix.socketpair] binds a name in the temporary
+    directory that a killed process of the same id may have left.
+
+    Raises [Unix.Unix_error] if the system makes no pair. *)

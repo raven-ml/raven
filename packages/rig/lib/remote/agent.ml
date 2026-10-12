@@ -631,9 +631,7 @@ let rec apply s =
 
 (* Serves one job, reporting its end on [report]. *)
 let run a kinds report =
-  let wake, waker =
-    Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
-  in
+  let wake, waker = Link.socket_pair () in
   let acceptor = Thread.create (accept_loop a) wake in
   let job, self, link =
     Mutex.protect a.lock @@ fun () ->

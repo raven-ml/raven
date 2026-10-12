@@ -51,6 +51,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- On Windows, `Rig_remote.serve` no longer fails with `EADDRINUSE` in a
+  process whose id a killed OCaml process had: `Unix.socketpair` there binds a
+  file named after the process id, which the killed process left behind.
 - On Windows, linked host code whose stack frame is larger than a page no
   longer dies with an access violation: a thread's stack is committed before
   the thread first runs linked code, which probes no stack. tolk's compiled

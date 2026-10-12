@@ -540,3 +540,40 @@ let rail l ~id ~send ~receive =
   e
 
 let release_rail l id = release_rail_c l.c id
+
+(* Pairs *)
+
+(* Windows has no socketpair. OCaml's binds a socket at a name in the temporary
+   directory made of the process id and a count, and removes it once the pair
+   is connected: a process killed in between leaves it there. Process ids are
+   reused, so a later process of the same id fails to bind it, with
+   EADDRINUSE. A loopback connection names no file. Its listener takes the
+   connection from the other end, and closes any other, from another process
+   of the machine. *)
+let tcp_pair () =
+  let socket () = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  let l = socket () in
+  Fun.protect ~finally:(fun () -> Unix.close l) @@ fun () ->
+  Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  Unix.listen l 1;
+  let a = socket () in
+  let rec from me =
+    let b, peer = Unix.accept ~cloexec:true l in
+    if peer = me then b
+    else begin
+      Unix.close b;
+      from me
+    end
+  in
+  match
+    Unix.connect a (Unix.getsockname l);
+    from (Unix.getsockname a)
+  with
+  | b -> (a, b)
+  | exception e ->
+      Unix.close a;
+      raise e
+
+let socket_pair () =
+  if Sys.win32 then tcp_pair ()
+  else Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
