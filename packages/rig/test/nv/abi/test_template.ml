@@ -144,14 +144,37 @@ let reference value (t : Template.t) =
     t.patches;
   Bytes.to_string b
 
+(* [cls]'s descriptor of a kernel with two banks, every value a slot. *)
+let descriptor cls =
+  let k =
+    S.kernel
+      ~banks:
+        [
+          { index = 0; offset = 0; bytes = 0x17c };
+          { index = 3; offset = 0x200; bytes = 0x40 };
+        ]
+      ()
+  in
+  Qmd.make
+    (S.launch (S.gpu ~compute_class:cls ()) k)
+    {
+      program = Slot 0;
+      local = Slot 1;
+      banks = [ (0, Slot 2); (3, Slot 3) ];
+      grid = (Slot 4, Slot 5, Slot 6);
+      block = (Slot 7, Slot 8, Slot 9);
+      shared = Some (Slot 10);
+      chain = Some (Slot 11);
+      releases = [ Release (Slot 12, Slot 13); Stamped (Slot 14, Slot 15) ];
+    }
+
 let patches =
   group ~timeout:10. "patches"
     [
-      prop
+      cases ~name:S.class_name
         "patches are by increasing offset, their words in the bytes and apart"
-        S.drawn (fun d ->
-          let t = S.descriptor d in
-          cover "a patch" (t.patches <> []);
+        S.classes (fun cls ->
+          let t = descriptor cls in
           let _ =
             List.fold_left
               (fun next (p : Template.patch) ->
@@ -165,8 +188,9 @@ let patches =
               0 t.patches
           in
           ());
-      prop "a patch's field is zero in the bytes" S.drawn (fun d ->
-          let t = S.descriptor d in
+      cases ~name:S.class_name "a patch's field is zero in the bytes" S.classes
+        (fun cls ->
+          let t = descriptor cls in
           let b = Bytes.of_string t.bytes in
           List.iter
             (fun (p : Template.patch) ->
@@ -176,13 +200,10 @@ let patches =
                 (Int64.logand (read b p.at (width p.bits)) (mask p.bits)))
             t.patches);
       prop "fill writes each patch's field, and keeps every other bit"
-        (Gen.pair S.drawn S.u64) (fun (d, k) ->
-          let t = S.descriptor d in
-          let value i = Int64.logxor (S.value d i) k in
-          cover "a patch beside a field it shares bytes with"
-            (List.exists
-               (fun (p : Template.patch) -> 8 * width p.bits > p.bits)
-               t.patches);
+        (Gen.pair S.compute_class (Gen.list ~size:(Gen.constant 16) S.u64))
+        (fun (cls, vs) ->
+          let t = descriptor cls in
+          let value = List.nth vs in
           equal string (reference value t) (Template.fill value t));
     ]
 

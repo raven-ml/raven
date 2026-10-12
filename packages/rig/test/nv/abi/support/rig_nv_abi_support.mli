@@ -3,8 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** What the NV ABI suites share: GPUs, kernels, words, descriptor fields, and
-    descriptors drawn with the setters that made them. *)
+(** What the NV ABI suites share: GPUs, kernels, words and patches. *)
 
 open Rig_nv_abi
 
@@ -76,72 +75,7 @@ val le64 : int64 -> string
 val round_up : int -> int -> int
 (** [round_up n a] is the least multiple of [a] at or above [n], [a > 0]. *)
 
-val address : bits:int -> align:int -> int64 Windtrap.Gen.t
-(** [address ~bits ~align] draws addresses below [2{^bits}], multiples of
-    [2{^align}]. *)
-
 (** {1:templates Templates} *)
-
-val pp_operand : Format.formatter -> Template.operand -> unit
-(** [pp_operand] prints an operand as its constructor. *)
 
 val pp_patch : Format.formatter -> Template.patch -> unit
 (** [pp_patch] prints a patch record. *)
-
-(** {1:fields Descriptor fields} *)
-
-val field : string -> int * int -> int
-(** [field b (hi, lo)] is the field [MW(hi:lo)] of the bytes [b], the notation
-    of NVIDIA's QMD headers: bits [lo] to [hi] of [b] read as one little-endian
-    integer. At most 62 bits. *)
-
-(** {1:descriptors Descriptors} *)
-
-val dims : Qmd.dim list
-(** [dims] is the six sizes of a launch. *)
-
-val dim_name : Qmd.dim -> string
-(** [dim_name d] is ["Grid X"], ["Block Z"], ... *)
-
-val dim : Qmd.dim Windtrap.Gen.t
-(** [dim] draws one of {!dims}. *)
-
-type drawn = {
-  gpu : Gpu.t;
-  kernel : Cubin.kernel;
-  values : int array;  (** Each value of [desc], known or not, by slot. *)
-  desc : Qmd.t;
-}
-(** The type for descriptors drawn: a launch of [kernel] on [gpu] with the
-    values [desc], each known or left to its slot. *)
-
-val grid_slot : int
-val block_slot : int
-val program_slot : int
-val local_slot : int
-val shared_slot : int
-val chain_slot : int
-val bank_slot : int -> int
-
-val release_slot : int -> int
-(** The slots of [desc]'s values: the grid's sizes from [grid_slot], the block's
-    from [block_slot], bank [i]'s address at [bank_slot i], and release [j]'s
-    address and value from [release_slot j]. *)
-
-val descriptor : drawn -> Template.t
-(** [descriptor d] is [Qmd.make] of [d]'s launch and values. *)
-
-val value : drawn -> int -> int64
-(** [value d i] is the value of slot [i]. *)
-
-val filled : drawn -> string
-(** [filled d] is {!descriptor} filled with [d]'s values. *)
-
-val drawn : drawn Windtrap.Gen.t
-(** [drawn] draws launches of each class, of kernels whose fields fit their
-    descriptor fields, and values each within the range its [.mli] states: sizes
-    up to their {!Qmd.max_size}, addresses aligned and below [2{^49}] ([2{^40}]
-    for chains), local memory a multiple of 16 below 1 MiB and at least the
-    launch's {!Launch.local_bytes}, dynamic shared memory a multiple of 128 up
-    to {!Launch.dynamic_shared}, and up to two releases, each stamped or not.
-    Each value is known or a slot. *)
