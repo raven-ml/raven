@@ -178,7 +178,7 @@ let test_signal_in_wait () =
     ~finally:(fun () -> Sys.set_signal Sys.sigint before)
     (fun () -> Rig.Point.wait first);
   equal ~msg:"handled" int 1 !handled;
-  greater ~msg:"sleeps" int ~than:1 (count "sleep" p);
+  greater ~msg:"sleeps" int ~than:1 (P.sleeps p);
   still_works d p ~last:first
 
 (* A thread waiting for room is interrupted: nothing is assigned to it. *)

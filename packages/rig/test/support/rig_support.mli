@@ -162,7 +162,11 @@ module Polled : sig
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
       ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["word"] (the
       timeline word's free), ["sleep"], ["stop"], ["image"], ["entry"],
-      ["unload"]. *)
+      ["unload"]. Consecutive sleeps are one ["sleep"]; {!sleeps} counts
+      them. *)
+
+  val sleeps : t -> int
+  (** [sleeps d] is the number of [d]'s sleeps. *)
 
   val frees : t -> (int * int) list
   (** [frees d] is the address of each region [d] freed, oldest first, with

@@ -103,6 +103,7 @@ module Driver = struct
     lock : Mutex.t;
     opened : Condition.t;
     mutable calls : string list;
+    mutable sleeps : int;
     mutable frees : (int * int) list;
     mutable allocs : (kind * int * bool) list;
     mutable maps : int list;
@@ -143,6 +144,7 @@ module Driver = struct
 
   let note d call = Mutex.protect d.lock (fun () -> d.calls <- call :: d.calls)
   let log d = Mutex.protect d.lock (fun () -> List.rev d.calls)
+  let sleeps d = Mutex.protect d.lock (fun () -> d.sleeps)
   let key : t Type.Id.t = Type.Id.make ()
 
   (* Counts a fallible call: the call [fail_at] fails raises, and the one it
@@ -379,9 +381,17 @@ module Driver = struct
         `Stall
     | None -> `Run
 
+  (* Consecutive sleeps are one entry of the log: two domains' waits sleep
+     without bound, and a device the program keeps would hold every one. *)
   let sleep d ~seen ~still_ms =
-    note d "sleep";
-    match Mutex.protect d.lock (fun () -> next d) with
+    match
+      Mutex.protect d.lock (fun () ->
+          d.sleeps <- d.sleeps + 1;
+          (match d.calls with
+          | "sleep" :: _ -> ()
+          | calls -> d.calls <- "sleep" :: calls);
+          next d)
+    with
     | `Fault why -> raise (Fault why)
     | `Interrupt -> interrupt ()
     | `Stall -> Thread.delay (float still_ms /. 1000.)
@@ -436,6 +446,7 @@ module Polled = struct
         lock = Mutex.create ();
         opened = Condition.create ();
         calls = [];
+        sleeps = 0;
         frees = [];
         allocs = [];
         maps = [];

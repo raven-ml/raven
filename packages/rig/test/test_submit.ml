@@ -302,7 +302,7 @@ let test_still () =
   P.stall p 3;
   Rig.Point.wait pt;
   equal (option string) None (Rig.lost d);
-  equal int 4 (List.length (List.filter (( = ) "sleep") (P.log p)))
+  equal int 4 (P.sleeps p)
 
 (* Hang bounds *)
 
