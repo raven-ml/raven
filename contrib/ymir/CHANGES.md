@@ -4,6 +4,10 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- Quantized float tiles decode to the same values on every platform: on
+  arm64, `Fits.Image.raw` and `Fits.Image.values` rounded `I × ZSCALE +
+  ZZERO` once instead of twice, and could differ in the last bit.
+  `Fits.Image.quantized` rounds its zero point the same way.
 - `Fits.Image.hdu ~tiles` raises `Invalid_argument` on an int64 or uint64
   image: cfitsio, behind funpack, imcopy and ds9, cannot decompress 64-bit
   integer tiles. Write such an image plain; reading these tiles still works.

@@ -64,6 +64,15 @@ let advance s =
     s.next <- index s s.r.(s.iseed)
   end
 
+(* [scaled out k x ~scale ~zero] writes [x × scale + zero] to [out.{k}],
+   the product rounded before the sum. ocamlopt fuses a product and a sum
+   into one multiply-add on arm64, which rounds once; reading the product
+   back from [out] keeps two roundings on every platform, and boxes
+   nothing in a loop. *)
+let[@inline] scaled (out : floats) k x ~scale ~zero =
+  Bigarray.Array1.unsafe_set out k (x *. scale);
+  Bigarray.Array1.unsafe_set out k (Bigarray.Array1.unsafe_get out k +. zero)
+
 (* [dequantize ~dither ~row ~scale ~zero ~blank i n out] writes the
    physical values of the [n] quantized [i] to [out]: [I × ZSCALE + ZZERO],
    or [((I − R) + 0.5) × ZSCALE + ZZERO] dithered, each operation rounded in
@@ -75,19 +84,17 @@ let dequantize ~dither ~row ~scale ~zero ~blank (i : ints) n (out : floats) =
   | No_dither ->
       for k = 0 to n - 1 do
         let v = Bigarray.Array1.unsafe_get i k in
-        Bigarray.Array1.unsafe_set out k
-          (if is_blank v then Float.nan else (Float.of_int v *. scale) +. zero)
+        if is_blank v then Bigarray.Array1.unsafe_set out k Float.nan
+        else scaled out k (Float.of_int v) ~scale ~zero
       done
   | Subtractive_1 | Subtractive_2 ->
       let s = start ~f32:true row in
       for k = 0 to n - 1 do
         let v = Bigarray.Array1.unsafe_get i k in
-        let x =
-          if is_blank v then Float.nan
-          else if dither = Subtractive_2 && v = zero_value then 0.
-          else ((Float.of_int v -. s.r.(s.next) +. 0.5) *. scale) +. zero
-        in
-        Bigarray.Array1.unsafe_set out k x;
+        if is_blank v then Bigarray.Array1.unsafe_set out k Float.nan
+        else if dither = Subtractive_2 && v = zero_value then
+          Bigarray.Array1.unsafe_set out k 0.
+        else scaled out k (Float.of_int v -. s.r.(s.next) +. 0.5) ~scale ~zero;
         advance s
       done
 
@@ -309,10 +316,15 @@ let quantize ~dither ~row ~q (data : floats) nx ny (out : ints) =
     then None
     else begin
       let seq = start ~f32:false row in
+      (* the zero point below the null value, its product rounded before
+         the difference, which arm64 would otherwise fuse *)
+      let below_null () =
+        minval
+        -. Sys.opaque_identity (delta *. Float.of_int (null_value + n_reserved))
+      in
       let zeropt =
         if s.ngood = n then
-          if dither = Subtractive_2 then
-            minval -. (delta *. Float.of_int (null_value + n_reserved))
+          if dither = Subtractive_2 then below_null ()
           else if
             (maxval -. minval) /. delta < 2147483647. -. Float.of_int n_reserved
           then
@@ -320,7 +332,7 @@ let quantize ~dither ~row ~q (data : floats) nx ny (out : ints) =
               (Int64.to_int (Int64.of_float ((minval /. delta) +. 0.5)))
             *. delta
           else (minval +. maxval) /. 2.
-        else minval -. (delta *. Float.of_int (null_value + n_reserved))
+        else below_null ()
       in
       for k = 0 to n - 1 do
         let x = Bigarray.Array1.unsafe_get data k in
