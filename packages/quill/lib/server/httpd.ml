@@ -852,7 +852,9 @@ let run ?(after_start = ignore) server =
   if not Sys.win32 then
     ignore (Unix.sigprocmask Unix.SIG_BLOCK [ Sys.sigpipe ] : int list);
   let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-  Unix.setsockopt sock Unix.SO_REUSEADDR true;
+  (* On POSIX, a port whose closed connections linger binds again; on Windows
+     the option would let two sockets bind one port. *)
+  if not Sys.win32 then Unix.setsockopt sock Unix.SO_REUSEADDR true;
   let inet_addr = Unix.inet_addr_of_string server.addr in
   Unix.bind sock (Unix.ADDR_INET (inet_addr, server.port));
   Unix.listen sock 128;

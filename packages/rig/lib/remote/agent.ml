@@ -218,7 +218,9 @@ let listen ~key host port =
       let domain = Unix.domain_of_sockaddr addr in
       let fd = Unix.socket ~cloexec:true domain Unix.SOCK_STREAM 0 in
       match
-        Unix.setsockopt fd Unix.SO_REUSEADDR true;
+        (* On POSIX, a port whose closed connections linger binds again; on
+           Windows the option would let two sockets bind one port. *)
+        if Sys.unix then Unix.setsockopt fd Unix.SO_REUSEADDR true;
         Unix.bind fd addr;
         Unix.listen fd max_pending
       with

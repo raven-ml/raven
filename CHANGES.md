@@ -7015,6 +7015,8 @@ thread.
 
 ### Quill
 
+- The server refuses a port another socket listens at on Windows, where a
+  second server could bind it.
 - The server's 30 s bound on a connection's reads and writes holds on Windows,
   where it was 30 ms.
 - The kernel no longer turns markdown data URIs in the toplevel's output into
