@@ -3,17 +3,4 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let open_ interface i =
-  Result.map
-    (Nx.Device.make ~backend:Backend.backend)
-    (Nx_amd_device.get ~interface i)
-
-let ok = function Ok d -> d | Error e -> failwith e
-let get i = open_ Kernel i
-let device i = ok (get i)
-let get_pci i = open_ Pci i
-let device_pci i = ok (get_pci i)
-let detach = Nx_amd_device.detach
-let attach = Nx_amd_device.attach
-let reset = Nx_amd_device.reset
-let fetch_firmware = Nx_amd_device.fetch_firmware
+let backend = Backend.backend

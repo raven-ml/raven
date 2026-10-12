@@ -3,56 +3,33 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* AMD GPUs as nx devices through the kernel driver, on real hardware: what
-   Nx_amd opens is the runtime's GPU computed by nx.amd's backend, and only a
-   call of [get_pci] or [device_pci] reaches PCI. The backend copies and casts
-   every served dtype bit for bit as the host does, under every layout and for
-   every value of the dtypes of 8 and 16 bits, from two domains at once, and
-   refuses the rest naming the remedies. Tests needing a GPU skip without
-   one. *)
+(* nx.amd's backend on AMD GPUs that rig opens through the kernel driver, on
+   real hardware. The backend copies and casts every served dtype bit for bit
+   as the host does, under every layout and for every value of the dtypes of 8
+   and 16 bits, from two domains at once, and refuses the rest naming the
+   remedies. Tests needing a GPU skip without one. *)
 
 open Windtrap
 open Nx_test
 
 let device = Testable.make ~pp:Nx.Device.pp ~equal:Nx.Device.equal
-let memory = Testable.make ~pp:Nx_device.pp ~equal:Nx_device.equal
-let gpu () = match Nx_amd.get 0 with Ok d -> d | Error e -> skip ~reason:e ()
+
+let gpu () =
+  match Rig.open_ (Rig_amd_amdgpu.gpu 0) with
+  | Ok m -> Nx.Device.make ~backend:Nx_amd.backend m
+  | Error e -> skip ~reason:e ()
 
 let opening =
-  group "opening"
+  group "devices"
     [
-      test "device i is the runtime's GPU i of the kernel driver" (fun () ->
-          let d = gpu () in
-          let m = Result.get_ok (Nx_amd_device.get ~interface:Kernel 0) in
-          equal device d (Nx_amd.device 0);
-          equal memory m (Nx.Device.memory d);
-          equal string (Nx_device.name m) (Nx.Device.name d);
-          not_equal device Nx.Device.host d);
-      test "get fails without touching PCI where the kernel driver is absent"
+      test "a GPU's device is named after the GPU, which the backend owns"
         (fun () ->
-          if Sys.file_exists "/dev/kfd" then skip ~reason:"/dev/kfd exists" ();
-          let why = require_error (Nx_amd.get 0) in
-          raises (Failure why) (fun () -> ignore (Nx_amd.device 0)));
-      test "the changes to the machine are the runtime's" (fun () ->
-          let n = Nx_amd_device.count () in
-          List.iter
-            (fun (call, f, g) ->
-              equal ~msg:call (result unit string) (g n) (f n))
-            [
-              ("detach", Nx_amd.detach, Nx_amd_device.detach);
-              ("attach", Nx_amd.attach, Nx_amd_device.attach);
-              ("reset", Nx_amd.reset, Nx_amd_device.reset);
-              ( "fetch_firmware",
-                Nx_amd.fetch_firmware,
-                Nx_amd_device.fetch_firmware );
-            ]);
-      test "a negative index raises Invalid_argument" (fun () ->
-          List.iter
-            (fun f -> raises_match Exn.invalid_arg (fun () -> ignore (f (-1))))
-            [ Nx_amd.get; Nx_amd.get_pci ];
-          List.iter
-            (fun f -> raises_match Exn.invalid_arg (fun () -> ignore (f (-1))))
-            [ Nx_amd.device; Nx_amd.device_pci ]);
+          let d = gpu () in
+          equal string (Rig.name (Nx.Device.memory d)) (Nx.Device.name d);
+          not_equal device Nx.Device.host d);
+      test "the backend computes on no other memory" (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
+              ignore (Nx.Device.make ~backend:Nx_amd.backend Rig.host)));
     ]
 
 (* Computing *)
@@ -402,10 +379,7 @@ let computing =
       test "a value over a bare GPU buffer computes once placed on the device"
         (fun () ->
           let d = gpu () in
-          let b =
-            Nx_device.Buffer.create (Nx.Device.memory d) Nx_dtype.Scalar.Float32
-              4
-          in
+          let b = Rig.Buffer.create (Nx.Device.memory d) 16 in
           let x = Nx.of_buffer Nx.float32 [| 4 |] b in
           raises_match (Exn.invalid_arg ~substring:"has no eager kernels")
             (fun () -> ignore (Nx.cast Nx.int32 x));

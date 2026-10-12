@@ -1,3 +1,2 @@
 (executables
- (names pack pins)
- (libraries nx.device.support))
+ (names pack pins))

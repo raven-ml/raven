@@ -9,10 +9,9 @@
   nx
   nx.array
   nx.backend
-  nx.device
   nx.dtype
-  nx.amd.code_object
-  nx.amd.device)
+  rig
+  rig.amd.abi)
  (foreign_stubs
   (language c)
   (names nx_amd_stubs)

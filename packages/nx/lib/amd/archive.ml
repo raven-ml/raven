@@ -49,8 +49,8 @@ let member =
         let m =
           Option.map
             (fun binary ->
-              match Nx_amd_code_object.of_string binary with
-              | Ok co -> { binary; kernels = Nx_amd_code_object.kernels co }
+              match Rig_amd_abi.Code_object.of_string binary with
+              | Ok co -> { binary; kernels = Rig_amd_abi.Code_object.kernels co }
               | Error e -> failwith (Printf.sprintf "nx.amd: %s: %s" key e))
             (find key)
         in

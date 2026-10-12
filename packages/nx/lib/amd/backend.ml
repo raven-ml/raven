@@ -14,11 +14,15 @@
    matrix products take paths of their own. A module is loaded on a device at
    the first use of one of its kernels, and kept while the device is. A GPU that
    no carried target covers refuses every kernel, as do the operations, dtypes
-   and layouts the kernels do not serve. *)
+   and layouts the kernels do not serve.
+
+   An operation's kernels run as one rig submission, made once per layout of
+   their parameters and kept with the device: each address parameter is a ref
+   to a slot, the operation's buffers, and a run holds the other words. *)
 
 module View = Nx_array.View
-module Program = Nx_device.Program
-module Code_object = Nx_amd_code_object
+module Code_object = Rig_amd_abi.Code_object
+module Sub = Rig.Submission
 
 let name = "nx.amd"
 let refuse fmt = Printf.ksprintf (fun r -> raise (Nx_backend.Refused r)) fmt
@@ -40,9 +44,8 @@ let waves = 8
 (* Shipped targets *)
 
 (* The carried target whose code objects GPU [gpu] runs, by their generic
-   processor's members. A GPU of several dies takes AQL packets, which launches
-   do not encode. *)
-let target ~gpu ~aql =
+   processor's members. *)
+let target gpu =
   let targets =
     List.map
       (fun (t, co) ->
@@ -51,15 +54,13 @@ let target ~gpu ~aql =
         | Error e -> failwith (Printf.sprintf "nx.amd: %s: %s" t e))
       (Lazy.force Archive.targets)
   in
-  if aql then Error (gpu ^ " takes AQL packets, on its several dies")
-  else
-    match List.find_opt (fun (_, co) -> Code_object.runs_on co gpu) targets with
-    | Some (t, _) -> Ok t
-    | None ->
-        Error
-          (Printf.sprintf "nx.amd ships kernels for %s; this GPU is %s"
-             (String.concat ", " (List.map fst targets))
-             gpu)
+  match List.find_opt (fun (_, co) -> Code_object.runs_on co gpu) targets with
+  | Some (t, _) -> Ok t
+  | None ->
+      Error
+        (Printf.sprintf "nx.amd ships kernels for %s; this GPU is %s"
+           (String.concat ", " (List.map fst targets))
+           (Rig_amd_abi.Gpu.processor gpu))
 
 (* Modules *)
 
@@ -83,66 +84,166 @@ let width_name = function
   | 8 -> "8"
   | w -> string_of_int w
 
+(* Kernels and launches *)
+
+(* A kernel: its code object's image on a device, its name there, and the key
+   of its code object, which names it in a submission's layout. *)
+type kernel = { image : Rig.Image.t; kernel : string; co : string }
+
+(* An address parameter: byte [off] of [buffer], or the null address. *)
+type addr = Null | At of Rig.Buffer.t * int
+
+(* A kernel's parameters: 64-bit words in the platform's C ABI, and the
+   positions of the words that are addresses. *)
+type args = { words : string; addrs : (int * addr) list }
+
+type dispatch = {
+  program : kernel;
+  groups : int * int * int;  (** The grid's workgroups along x, y and z. *)
+  args : args;
+}
+
+(* The layout of a submission: per dispatch, its kernel, its parameter bytes
+   and its refs as slot, position and whether it writes. *)
+type layout = (string * string * int * (int * int * bool) list) list
+
 (* Devices *)
 
 (* What a device needs to run kernels: its carried target, or why it has none,
-   its properties, and the kernels looked up on it, by modname and form, loaded
-   or not carried. *)
+   its compute units, its modules by key, loaded or not carried, and its
+   submissions by layout. *)
 type device = {
   target : (string, string) result;
-  props : Nx_amd_device.props;
-  programs : (modname * string, Program.t option) Hashtbl.t;
+  units : int;
+  images : (string, Rig.Image.t option) Hashtbl.t;
+  programs : (modname * string, kernel option) Hashtbl.t;
+  subs : (layout, Sub.t) Hashtbl.t;
+  lock : Mutex.t;
 }
 
-let devices : (Nx_device.t * device) list ref = ref []
-let lock = Mutex.create ()
+let devices =
+  Rig.Local.new_key (fun d ->
+      let c = Option.get (Rig.capability d Rig_amd_abi.Capability.key) in
+      let gpu = c.gpu in
+      {
+        target = target gpu;
+        units = gpu.compute_units * gpu.xccs;
+        images = Hashtbl.create 16;
+        programs = Hashtbl.create 16;
+        subs = Hashtbl.create 16;
+        lock = Mutex.create ();
+      })
 
-let device d =
-  Mutex.protect lock @@ fun () ->
-  match List.find_opt (fun (d', _) -> Nx_device.equal d d') !devices with
-  | Some (_, s) -> s
+let find s t k = Mutex.protect s.lock (fun () -> Hashtbl.find_opt t k)
+let remember s t k v = Mutex.protect s.lock (fun () -> Hashtbl.replace t k v)
+
+(* The image of code object [co] on [d], if the library carries it. Two domains
+   that load one module at once both load it, and keep the last. *)
+let image d s co =
+  match find s s.images co with
+  | Some i -> i
   | None ->
-      let a = Option.get (Nx_amd_device.of_device d) in
-      let s =
-        {
-          target = target ~gpu:(Nx_device.arch d) ~aql:(Nx_amd_device.aql a);
-          props = Nx_amd_device.props a;
-          programs = Hashtbl.create 16;
-        }
+      let i =
+        Option.map
+          (fun binary ->
+            match Rig.Image.load d binary with
+            | Ok i -> i
+            | Error why -> failwith why)
+          (Option.map (fun (m : Archive.member) -> m.binary) (Archive.member co))
       in
-      devices := (d, s) :: !devices;
-      s
+      remember s s.images co i;
+      i
 
-(* [find t k] under the lock, which [Hashtbl.find_opt] never raises from. *)
-let find t k =
-  Mutex.lock lock;
-  let v = Hashtbl.find_opt t k in
-  Mutex.unlock lock;
-  v
-
-let remember t k v = Mutex.protect lock (fun () -> Hashtbl.replace t k v)
-
-(* The kernel of form [form] of [m] on [d], if [target] carries it. Two domains
-   that load one kernel at once both load it, and find the same load. *)
+(* The kernel of form [form] of [m] on [d], if [target] carries it. *)
 let program d s target m form =
   let carried =
-    match find s.programs (m, form) with
+    match find s s.programs (m, form) with
     | Some p -> p
     | None ->
         let co = target ^ "/" ^ join "." m.family m.dtype
-        and name = join "_" form m.kind in
+        and kernel = join "_" form m.kind in
         let p =
           match Archive.member co with
-          | Some { binary; kernels } when List.mem name kernels -> (
-              match Program.load d ~binary ~name with
-              | Ok p -> Some p
-              | Error why -> failwith why)
+          | Some { kernels; _ } when List.mem kernel kernels ->
+              Option.map (fun image -> { image; kernel; co }) (image d s co)
           | Some _ | None -> None
         in
-        remember s.programs (m, form) p;
+        remember s s.programs (m, form) p;
         p
   in
   match carried with Some p -> p | None -> refuse "no kernel %s" (key_of m)
+
+(* The slot of [b] among [slots], added at the end if absent. *)
+let slot slots b =
+  let rec go i = function
+    | [] -> None
+    | b' :: rest -> if b' == b then Some i else go (i + 1) rest
+  in
+  match go 0 !slots with
+  | Some i -> i
+  | None ->
+      slots := !slots @ [ b ];
+      List.length !slots - 1
+
+(* The submission of [layout] on [d], made once. *)
+let submission d s layout ds =
+  match find s s.subs layout with
+  | Some sub -> sub
+  | None ->
+      let part (_, _, params, refs) { program; _ } =
+        let refs =
+          List.map
+            (fun (i, at, w) -> if w then Sub.write i ~at else Sub.read i ~at)
+            refs
+        in
+        let params =
+          Option.fold ~none:params
+            ~some:(fun n -> Int.max n params)
+            (Rig.Image.params program.image program.kernel)
+        in
+        Sub.launch ~refs:(Array.of_list refs) program.image program.kernel
+          ~params
+      in
+      let sub = Sub.make d (Array.of_list (List.map2 part layout ds)) in
+      remember s s.subs layout sub;
+      sub
+
+(* Runs the kernels of [ds] on [d] in order, each once the writes of the one
+   before are visible, as one submission. The kernels write [writes] and read
+   every other buffer their addresses name. *)
+let launch d ~writes ds =
+  let s = Rig.Local.get devices d in
+  let slots = ref [] in
+  let layout =
+    List.map
+      (fun { program; args; _ } ->
+        let refs =
+          List.filter_map
+            (fun (at, a) ->
+              match a with
+              | Null -> None
+              | At (b, _) -> Some (slot slots b, at, List.memq b writes))
+            args.addrs
+        in
+        (program.co, program.kernel, String.length args.words, refs))
+      ds
+  in
+  let sub = submission d s layout ds in
+  let run = Sub.Run.make () in
+  List.iteri
+    (fun i { groups = gx, gy, gz; args; _ } ->
+      let b = Sub.block sub i in
+      Sub.Run.groups run b gx gy gz;
+      Sub.Run.threads run b threads 1 1;
+      for w = 0 to (String.length args.words / 8) - 1 do
+        (* Two halves, so that a word's 64th bit is stored too. *)
+        let v = String.get_int64_le args.words (8 * w) in
+        Sub.Run.int32 run b (8 * w) (Int64.to_int v);
+        Sub.Run.int32 run b ((8 * w) + 4)
+          (Int64.to_int (Int64.shift_right_logical v 32))
+      done)
+    ds;
+  ignore (Rig.submit sub ~run ~buffers:(Array.of_list !slots))
 
 (* The name of a dtype the kernels serve, as the archive spells it. *)
 let served (type a b) (dt : (a, b) Nx_dtype.t) =
@@ -157,49 +258,58 @@ let served (type a b) (dt : (a, b) Nx_dtype.t) =
 
 type operand = Operand : ('a, 'b) Nx_array.t -> operand
 
-let address (Operand a) = Nativeint.to_int (Nx_device.Buffer.address a.buffer)
+let address (Operand a) = At (a.buffer, 0)
 let itemsize (Operand a) = Nx_dtype.itemsize a.dtype
 let view (Operand a) = a.view
 let buffer (Operand a) = a.buffer
+let device (Operand a) = Rig.Buffer.device a.buffer
 let served_name (Operand a) = served a.dtype
-let at o v = address o + (View.offset v * itemsize o)
+let at o v = At (buffer o, View.offset v * itemsize o)
 let cdiv a b = (a + b - 1) / b
 let unit_stride v = View.ndim v = 0 || View.strides v = [| 1 |]
 
 (* The state of [dst]'s device, and the kernels of [m] on it, by form. *)
-let locate m (Operand d) =
-  let dev = Nx_device.Buffer.device d.buffer in
-  let s = device dev in
+let locate m dst =
+  let dev = device dst in
+  let s = Rig.Local.get devices dev in
   let target = match s.target with Ok t -> t | Error e -> refuse "%s" e in
   (s, program dev s target m)
 
-let units s = s.props.compute_units * s.props.xccs
+let units s = s.units
 
 (* Scratch on [dst]'s device of two runs of [n] 64-bit words, and their
    addresses. *)
-let scratch_words (Operand d) n =
-  let b =
-    Nx_device.Buffer.create (Nx_device.Buffer.device d.buffer) Int64 (2 * n)
-  in
-  let a = Nativeint.to_int (Nx_device.Buffer.address b) in
-  (b, a, a + (8 * n))
+let scratch_words dst n =
+  let b = Rig.Buffer.create (device dst) (16 * n) in
+  (b, At (b, 0), At (b, 8 * n))
 
 (* Kernel parameters, as 64-bit words, then [raw] whole, written in a domain's
-   scratch and copied out at their length. *)
+   scratch and copied out at their length. [f] stores words with [i64] and
+   addresses with [a64]. *)
 let scratch = Domain.DLS.new_key (fun () -> Bytes.create 4096)
 
 let args ?raw f =
   let b = Domain.DLS.get scratch in
-  let n = ref 0 in
-  f (fun x ->
-      Bytes.set_int64_le b !n (Int64.of_int x);
-      n := !n + 8);
+  let n = ref 0 and addrs = ref [] in
+  let i64 x =
+    Bytes.set_int64_le b !n (Int64.of_int x);
+    n := !n + 8
+  in
+  let a64 a =
+    (match a with
+    | Null -> Bytes.set_int64_le b !n 0L
+    | At (_, off) ->
+        Bytes.set_int64_le b !n (Int64.of_int off);
+        addrs := (!n, a) :: !addrs);
+    n := !n + 8
+  in
+  f i64 a64;
   Option.iter
     (fun w ->
       Bytes.set_int64_le b !n w;
       n := !n + 8)
     raw;
-  Bytes.sub_string b 0 !n
+  { words = Bytes.sub_string b 0 !n; addrs = List.rev !addrs }
 
 (* [a] padded with zeros to [max_rank] words. *)
 let words i64 a =
@@ -207,8 +317,7 @@ let words i64 a =
     i64 (if i < Array.length a then a.(i) else 0)
   done
 
-let dispatch program groups args : Nx_amd_device.dispatch =
-  { program; groups = (groups, 1, 1); threads = (threads, 1, 1); args }
+let dispatch program groups args = { program; groups = (groups, 1, 1); args }
 
 (* The words of a strided form's [meta]: [n], the extents of [views]' shape,
    which they share, [groups], and each view's offset and strides. *)
@@ -246,24 +355,23 @@ let elementwise ?(extra = []) key ~dst srcs =
     @@
     if List.for_all unit_stride views then
       dispatch (kernel "c") groups
-      @@ args (fun i64 ->
-          List.iter2 (fun o v -> i64 (at o v)) ops views;
+      @@ args (fun i64 a64 ->
+          List.iter2 (fun o v -> a64 (at o v)) ops views;
           i64 n;
           i64 groups;
           List.iter i64 extra)
     else
       dispatch (kernel "s") groups
-      @@ args (fun i64 ->
-          i64 (at dst (List.hd views));
-          List.iter (fun o -> i64 (address o)) srcs;
+      @@ args (fun i64 a64 ->
+          a64 (at dst (List.hd views));
+          List.iter (fun o -> a64 (address o)) srcs;
           meta i64 ~n ~groups (List.tl views);
           List.iter i64 extra)
 
 (* Runs [key]'s kernels writing [dst] from [srcs]. *)
 let run ?extra key ~dst srcs =
   Option.iter
-    (fun d ->
-      Nx_amd_device.launch ~touches:(List.map buffer (dst :: srcs)) [ d ])
+    (fun d -> launch (device dst) ~writes:[ buffer dst ] [ d ])
     (elementwise ?extra key ~dst srcs)
 
 (* Moves
@@ -280,7 +388,7 @@ let width (Operand a) =
 let bits (type a b) (dt : (a, b) Nx_dtype.t) (v : a) =
   let e = Nx_array.Elements.create dt 1 in
   Nx_array.Elements.fill dt e v;
-  let bytes = Nx_device.Buffer.bigarray Bigarray.char e in
+  Rig.Buffer.read e Bigarray.char @@ fun bytes ->
   let w = ref 0L in
   for i = Bigarray.Array1.dim bytes - 1 downto 0 do
     w :=
@@ -324,19 +432,19 @@ let place key ~dst x ~offset ~corner:(starts, rank, off, str, dstr) =
     @@
     if List.for_all unit_stride views then
       dispatch (kernel "c") groups
-      @@ args (fun i64 ->
-          i64 (at dst w);
-          i64 (at x xv);
-          i64 starts;
+      @@ args (fun i64 a64 ->
+          a64 (at dst w);
+          a64 (at x xv);
+          a64 starts;
           i64 n;
           i64 groups;
           corner i64)
     else
       dispatch (kernel "s") groups
-      @@ args (fun i64 ->
-          i64 (address dst);
-          i64 (address x);
-          i64 starts;
+      @@ args (fun i64 a64 ->
+          a64 (address dst);
+          a64 (address x);
+          a64 starts;
           meta i64 ~n ~groups views;
           corner i64)
 
@@ -372,21 +480,20 @@ let pad padding fill x ~dst =
     let lo = Array.map fst padding in
     let hi = Array.mapi (fun i l -> l + (View.shape (view x)).(i)) lo in
     let args =
-      args ~raw:fill (fun i64 ->
-          i64 (at dst d.view);
-          i64 (address x);
+      args ~raw:fill (fun i64 a64 ->
+          a64 (at dst d.view);
+          a64 (address x);
           List.iter i64 [ n; rank; groups; View.offset (view x) ];
           words i64 shape;
           words i64 lo;
           words i64 hi;
           words i64 (View.strides (view x)))
     in
-    Nx_amd_device.launch
-      ~touches:[ buffer dst; buffer x ]
+    launch (device dst) ~writes:[ buffer dst ]
       [ dispatch (kernel "s") groups args ]
   end
 
-let no_corner = (0, 0, 0, 0, [||])
+let no_corner = (Null, 0, 0, 0, [||])
 
 let cat ~axis xs ~dst =
   let (Operand d) = dst in
@@ -400,10 +507,7 @@ let cat ~axis xs ~dst =
         (pos + (View.shape (view x)).(axis), Option.to_list r @ runs))
       (0, []) xs
   in
-  if runs <> [] then
-    Nx_amd_device.launch
-      ~touches:(buffer dst :: List.map buffer xs)
-      (List.rev runs)
+  if runs <> [] then launch (device dst) ~writes:[ buffer dst ] (List.rev runs)
 
 let update x ~(starts : Nx_backend.index_array) v ~dst =
   let (Operand d) = dst in
@@ -423,10 +527,7 @@ let update x ~(starts : Nx_backend.index_array) v ~dst =
   in
   match Option.to_list copy @ Option.to_list write with
   | [] -> ()
-  | runs ->
-      Nx_amd_device.launch
-        ~touches:[ buffer dst; buffer x; buffer v; starts.buffer ]
-        runs
+  | runs -> launch (device dst) ~writes:[ buffer dst ] runs
 
 (* Reductions
 
@@ -462,7 +563,7 @@ let parts_of s ~rows ~len =
 (* Scratch for the partials of [items] runs, and the addresses of their
    accumulators and positions. *)
 let partials dst ~parts ~items =
-  if parts = 1 then (None, 0, 0)
+  if parts = 1 then (None, Null, Null)
   else
     let b, pv, pi = scratch_words dst items in
     (Some b, pv, pi)
@@ -485,19 +586,19 @@ let fold_pass s kernel ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
     || (unit_stride xr && (View.ndim xo = 0 || View.strides xo = [| len |]))
   then
     dispatch (kernel "c") g
-    @@ args (fun i64 ->
-        i64 (at dst (view dst));
-        i64 (at x xo);
-        i64 pv;
-        i64 pi;
+    @@ args (fun i64 a64 ->
+        a64 (at dst (view dst));
+        a64 (at x xo);
+        a64 pv;
+        a64 pi;
         List.iter i64 [ rows; len; lanes; parts; chunk; g ])
   else
     dispatch (kernel "s") g
-    @@ args (fun i64 ->
-        i64 (at dst (view dst));
-        i64 (address x);
-        i64 pv;
-        i64 pi;
+    @@ args (fun i64 a64 ->
+        a64 (at dst (view dst));
+        a64 (address x);
+        a64 pv;
+        a64 pi;
         List.iter i64 [ rows; len; lanes; parts; chunk; g ];
         List.iter i64 [ View.ndim xo; View.ndim xr; View.offset xo ];
         words i64 (View.shape xo);
@@ -530,12 +631,14 @@ let fold key ~dst x ~axes =
       let lanes = Int.min threads (pow2 parts) in
       let g = Int.min (cdiv rows (threads / lanes)) (waves * units s) in
       dispatch (kernel "f") g
-      @@ args (fun i64 ->
-          i64 (at dst (view dst));
-          List.iter i64 [ pv; pi; rows; parts; lanes; g ])
+      @@ args (fun i64 a64 ->
+          a64 (at dst (view dst));
+          a64 pv;
+          a64 pi;
+          List.iter i64 [ rows; parts; lanes; g ])
     in
-    let touches = buffer dst :: buffer x :: Option.to_list scratch in
-    Nx_amd_device.launch ~touches
+    let writes = buffer dst :: Option.to_list scratch in
+    launch (device dst) ~writes
       (if parts = 1 then [ first ] else [ first; second () ])
   end
 
@@ -576,10 +679,10 @@ let scan key ~fold_key ~dst x ~axis =
     in
     let run =
       dispatch (kernel (if thread then "t" else "w")) g
-      @@ args (fun i64 ->
-          i64 (at dst dov);
-          i64 (address x);
-          i64 pv;
+      @@ args (fun i64 a64 ->
+          a64 (at dst dov);
+          a64 (address x);
+          a64 pv;
           List.iter i64 [ rows; len; parts; chunk; g; View.ndim dov ];
           i64 (View.offset xov);
           i64 (View.stride axis (view x));
@@ -594,8 +697,8 @@ let scan key ~fold_key ~dst x ~axis =
       let _, fold = locate fold_key dst in
       fold_pass s fold ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi
     in
-    Nx_amd_device.launch
-      ~touches:(buffer dst :: buffer x :: Option.to_list scratch)
+    launch (device dst)
+      ~writes:(buffer dst :: Option.to_list scratch)
       (if parts = 1 then [ run ] else [ totals (); run ])
   end
 
@@ -642,20 +745,25 @@ let sort_rows key sorted ~descending ~axis x ~dst =
     let run name groups f = dispatch (kernel name) groups (args f) in
     let pairs =
       let g = groups_of s total in
-      run "k" g (fun i64 ->
-          i64 (address x);
-          i64 keys;
-          i64 pos;
+      run "k" g (fun i64 a64 ->
+          a64 (address x);
+          a64 keys;
+          a64 pos;
           meta i64 g)
     in
     let local klo khi =
       let g = Int.min (cdiv total block) (waves * units) in
-      run "l" g (fun i64 ->
-          List.iter i64 [ keys; pos; total; plog; klo; khi; g ])
+      run "l" g (fun i64 a64 ->
+          a64 keys;
+          a64 pos;
+          List.iter i64 [ total; plog; klo; khi; g ])
     in
     let step k j =
       let g = groups_of s (total / 2) in
-      run "g" g (fun i64 -> List.iter i64 [ keys; pos; total; plog; k; j; g ])
+      run "g" g (fun i64 a64 ->
+          a64 keys;
+          a64 pos;
+          List.iter i64 [ total; plog; k; j; g ])
     in
     (* Stages past a block: their long steps over all slots, then the short ones
        in blocks. *)
@@ -671,22 +779,21 @@ let sort_rows key sorted ~descending ~axis x ~dst =
       let g = groups_of s (rows * len) in
       match sorted with
       | Elements ->
-          run "v" g (fun i64 ->
-              i64 (at dst dov);
-              i64 (address x);
-              i64 pos;
+          run "v" g (fun i64 a64 ->
+              a64 (at dst dov);
+              a64 (address x);
+              a64 pos;
               meta i64 g)
       | Positions ->
-          run "i" g (fun i64 ->
-              i64 (at dst dov);
-              i64 pos;
+          run "i" g (fun i64 a64 ->
+              a64 (at dst dov);
+              a64 pos;
               meta i64 g)
     in
     let network =
       if p = 1 then [] else local 2 (Int.min p block) :: stages (2 * block) []
     in
-    Nx_amd_device.launch
-      ~touches:[ buffer dst; buffer x; scratch ]
+    launch (device dst) ~writes:[ buffer dst; scratch ]
       ((pairs :: network) @ [ result ])
   end
 
@@ -736,54 +843,60 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
       | `Set when unique ->
           [
             ( None,
-              run "u" gu (fun i64 ->
-                  List.iter i64 [ dst_at; idx; up ];
+              run "u" gu (fun i64 a64 ->
+                  List.iter a64 [ dst_at; idx; up ];
                   meta i64) );
           ]
       | `Set ->
           let b, pa, _ = scratch_words dst positions in
           [
-            (Some b, run "c" gp (fun i64 -> List.iter i64 [ pa; positions; gp ]));
+            ( Some b,
+              run "c" gp (fun i64 a64 ->
+                  a64 pa;
+                  List.iter i64 [ positions; gp ]) );
             ( None,
-              run "w" gu (fun i64 ->
-                  List.iter i64 [ pa; idx ];
+              run "w" gu (fun i64 a64 ->
+                  List.iter a64 [ pa; idx ];
                   meta i64) );
             ( None,
-              run "v" gu (fun i64 ->
-                  List.iter i64 [ dst_at; pa; idx; up ];
+              run "v" gu (fun i64 a64 ->
+                  List.iter a64 [ dst_at; pa; idx; up ];
                   meta i64) );
           ]
       | `Add ->
           let b, pa, pb = scratch_words dst positions in
           [
             ( Some b,
-              run "i" gp (fun i64 ->
-                  List.iter i64 [ dst_at; pa; pb; positions; gp ]) );
+              run "i" gp (fun i64 a64 ->
+                  List.iter a64 [ dst_at; pa; pb ];
+                  List.iter i64 [ positions; gp ]) );
             ( None,
-              run "a" gu (fun i64 ->
-                  List.iter i64 [ pa; pb; idx; up ];
+              run "a" gu (fun i64 a64 ->
+                  List.iter a64 [ pa; pb; idx; up ];
                   meta i64) );
             ( None,
-              run "s" gp (fun i64 ->
-                  List.iter i64 [ dst_at; pa; pb; positions; gp ]) );
+              run "s" gp (fun i64 a64 ->
+                  List.iter a64 [ dst_at; pa; pb ];
+                  List.iter i64 [ positions; gp ]) );
           ]
       | `Max | `Min ->
           let b, pa, pb = scratch_words dst positions in
           [
             ( Some b,
-              run "i" gp (fun i64 ->
-                  List.iter i64 [ dst_at; pa; pb; positions; gp ]) );
+              run "i" gp (fun i64 a64 ->
+                  List.iter a64 [ dst_at; pa; pb ];
+                  List.iter i64 [ positions; gp ]) );
             ( None,
-              run "k" gu (fun i64 ->
-                  List.iter i64 [ pa; idx; up ];
+              run "k" gu (fun i64 a64 ->
+                  List.iter a64 [ pa; idx; up ];
                   meta i64) );
             ( None,
-              run "n" gu (fun i64 ->
-                  List.iter i64 [ dst_at; pa; pb; idx; up ];
+              run "n" gu (fun i64 a64 ->
+                  List.iter a64 [ dst_at; pa; pb; idx; up ];
                   meta i64) );
             ( None,
-              run "s" gp (fun i64 ->
-                  List.iter i64 [ dst_at; pa; pb; idx; up ];
+              run "s" gp (fun i64 a64 ->
+                  List.iter a64 [ dst_at; pa; pb; idx; up ];
                   meta i64;
                   List.iter i64 [ positions; gp ]) );
           ]
@@ -791,10 +904,8 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
   match Option.to_list copy @ List.map snd runs with
   | [] -> ()
   | ds ->
-      Nx_amd_device.launch
-        ~touches:
-          (buffer dst :: buffer x :: buffer updates :: indices.buffer
-         :: List.filter_map fst runs)
+      launch (device dst)
+        ~writes:(buffer dst :: List.filter_map fst runs)
         ds
 
 (* Windows
@@ -828,13 +939,12 @@ let window_run m name ~dst x ~lead ~kernel_size ~stride ~dilation ~padding
     let kprod = Array.fold_left ( * ) 1 kernel_size
     and l = Array.fold_left ( * ) 1 win in
     let groups = groups_of s n in
-    Nx_amd_device.launch
-      ~touches:[ buffer dst; buffer x ]
+    launch (device dst) ~writes:[ buffer dst ]
       [
         dispatch (kernel name) groups
-        @@ args (fun i64 ->
-            i64 (at dst (view dst));
-            i64 (address x);
+        @@ args (fun i64 a64 ->
+            a64 (at dst (view dst));
+            a64 (address x);
             List.iter i64 [ n; groups; View.ndim lv; k; kprod; l ];
             List.iter i64 [ View.offset lv; kstep; lstep ];
             words i64 (View.shape lv);
@@ -887,14 +997,13 @@ let threefry key counter ~dst =
   fits "merged operands" (View.ndim (List.hd views));
   if n > 0 then begin
     let groups = groups_of s n in
-    Nx_amd_device.launch
-      ~touches:[ buffer dst; buffer key; buffer counter ]
+    launch (device dst) ~writes:[ buffer dst ]
       [
         dispatch (kernel "s") groups
-        @@ args (fun i64 ->
-            i64 (at dst (view dst));
-            i64 (address key);
-            i64 (address counter);
+        @@ args (fun i64 a64 ->
+            a64 (at dst (view dst));
+            a64 (address key);
+            a64 (address counter);
             meta i64 ~n ~groups (List.tl views);
             i64 (View.stride last (view key));
             i64 (View.stride last (view counter)));
@@ -947,10 +1056,10 @@ let product key ~dst a b =
     let rows v = (View.strides v).(View.ndim v - 2)
     and cols v = (View.strides v).(View.ndim v - 1) in
     let args =
-      args (fun i64 ->
-          i64 (at dst (view dst));
-          i64 (address a);
-          i64 (address b);
+      args (fun i64 a64 ->
+          a64 (at dst (view dst));
+          a64 (address a);
+          a64 (address b);
           List.iter i64 [ m; n; k; View.ndim d ];
           List.iter i64 [ View.offset av; rows av; cols av ];
           List.iter i64 [ View.offset bv; rows bv; cols bv ];
@@ -958,16 +1067,8 @@ let product key ~dst a b =
           words i64 (View.strides va);
           words i64 (View.strides vb))
     in
-    Nx_amd_device.launch
-      ~touches:[ buffer dst; buffer a; buffer b ]
-      [
-        {
-          program = kernel "s";
-          groups = (cdiv n tile, cdiv m tile, nb);
-          threads = (threads, 1, 1);
-          args;
-        };
-      ]
+    launch (device dst) ~writes:[ buffer dst ]
+      [ { program = kernel "s"; groups = (cdiv n tile, cdiv m tile, nb); args } ]
   end
 
 (* Kernels *)
@@ -1031,7 +1132,7 @@ let arg_reduce_name : Nx_backend.arg_reduce -> string = function
 
 module Kernels : Nx_backend.S = struct
   let name = name
-  let runs_on d = Option.is_some (Nx_amd_device.of_device d)
+  let runs_on d = Option.is_some (Rig.capability d Rig_amd_abi.Capability.key)
   let owns = runs_on
   let no what = refuse "no %s" what
 
