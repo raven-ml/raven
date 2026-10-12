@@ -26,10 +26,9 @@ let read ?slice_length f s = Csv.decode f (Reader.of_string ?slice_length s)
 let names t = List.map fst (Schema.columns (schema t))
 let all_columns t = List.map (column t) (names t)
 
-(* The shortest of [%.15g], [%.16g] and [%.17g] that reads back as [x]. *)
-let float_text x =
-  let fits p = float_of_string (Printf.sprintf "%.*g" p x) = x in
-  Printf.sprintf "%.*g" (if fits 15 then 15 else if fits 16 then 16 else 17) x
+(* [float_text x] is the fewest digits that read back as the float64 [x], as nx
+   writes them on every system. *)
+let float_text x = Nx.to_string (Nx.scalar Nx.float64 x)
 
 let valid c =
   match Column.validity c with
@@ -620,7 +619,7 @@ let values =
          1.2345678901234568e+20]" );
       ( any Type.float64,
         "inf\n-Infinity\nNaN\n1e400\n-1e-400\n4.9e-324\n",
-        "float64 [inf; -inf; nan; inf; -0; 4.94065645841247e-324]" );
+        "float64 [inf; -inf; nan; inf; -0; 5e-324]" );
       ( any Type.float64,
         "9007199254740993\n0.30000000000000004\n2.2250738585072011e-308\n",
         "float64 [9007199254740992; 0.30000000000000004; \

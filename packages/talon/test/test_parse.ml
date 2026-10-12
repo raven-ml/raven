@@ -354,6 +354,170 @@ let errors =
               ]);
     ]
 
+(* Exact decimals *)
+
+(* The tests write a float's digits from its exact decimal, computed here: the C
+   library's printf does not write them on every system, and under mingw-w64
+   msvcrt's keeps 17 digits and rounds from those. A decimal [(d, e)] is the
+   natural of digits [d], most significant first, times [10^e], without
+   leading or trailing zero; zero is [("", 0)]. *)
+
+let normalize d e =
+  let n = String.length d in
+  let lead = ref 0 and stop = ref n in
+  while !lead < n && d.[!lead] = '0' do
+    incr lead
+  done;
+  while !stop > !lead && d.[!stop - 1] = '0' do
+    decr stop
+  done;
+  if !lead = !stop then ("", 0)
+  else (String.sub d !lead (!stop - !lead), e + n - !stop)
+
+(* [times ds f] is the little-endian decimal digits [ds] times [f], below
+   [2^20], without zero digits on top. *)
+let times ds f =
+  let n = Array.length ds in
+  let r = Array.make (n + 7) 0 and carry = ref 0 in
+  for i = 0 to n + 6 do
+    let t = (if i < n then ds.(i) * f else 0) + !carry in
+    r.(i) <- t mod 10;
+    carry := t / 10
+  done;
+  let top = ref (n + 7) in
+  while !top > 0 && r.(!top - 1) = 0 do
+    decr top
+  done;
+  Array.sub r 0 !top
+
+(* [dyadic n k] is the decimal of [n × 2^k], for [n] at least [0]: [n] times
+   [2^k], or times [5^-k] and [10^k]. *)
+let dyadic n k =
+  let rec digits n = if n = 0 then [] else (n mod 10) :: digits (n / 10) in
+  let ds = ref (Array.of_list (digits n)) in
+  let base, step = if k >= 0 then (2, 19) else (5, 8) in
+  let left = ref (Int.abs k) in
+  while !left > 0 do
+    let j = Int.min step !left in
+    let rec pow k = if k = 0 then 1 else base * pow (k - 1) in
+    ds := times !ds (pow j);
+    left := !left - j
+  done;
+  let d = !ds in
+  let n = Array.length d in
+  normalize (String.init n (fun i -> Char.chr (48 + d.(n - 1 - i)))) (Int.min k 0)
+
+(* [decimal x] is the decimal of [|x|], [x] finite. *)
+let decimal x =
+  let f, e = Float.frexp (Float.abs x) in
+  dyadic (Float.to_int (Float.ldexp f 53)) (e - 53)
+
+(* [decimal_of_text s] is the decimal the unsigned text [s] writes, as
+   [12.5e-3]. *)
+let decimal_of_text s =
+  let mantissa, exp =
+    match String.index_opt s 'e' with
+    | None -> (s, 0)
+    | Some i ->
+        ( String.sub s 0 i,
+          int_of_string (String.sub s (i + 1) (String.length s - i - 1)) )
+  in
+  let int, frac =
+    match String.index_opt mantissa '.' with
+    | None -> (mantissa, "")
+    | Some i ->
+        ( String.sub mantissa 0 i,
+          String.sub mantissa (i + 1) (String.length mantissa - i - 1) )
+  in
+  normalize (int ^ frac) (exp - String.length frac)
+
+let compare_decimal (d0, e0) (d1, e1) =
+  match (d0, d1) with
+  | "", "" -> 0
+  | "", _ -> -1
+  | _, "" -> 1
+  | _ ->
+      let m0 = String.length d0 + e0 and m1 = String.length d1 + e1 in
+      if m0 <> m1 then Int.compare m0 m1 else String.compare d0 d1
+
+(* [increment d] is the decimal digits [d] plus one, as long as [d] unless all
+   nines. *)
+let increment d =
+  let b = Bytes.of_string d in
+  let rec carry i =
+    if i < 0 then "1" ^ Bytes.to_string b
+    else if Bytes.get b i = '9' then begin
+      Bytes.set b i '0';
+      carry (i - 1)
+    end
+    else begin
+      Bytes.set b i (Char.chr (Char.code (Bytes.get b i) + 1));
+      Bytes.to_string b
+    end
+  in
+  carry (String.length d - 1)
+
+(* [format_e p negative (d, e)] is C's [%.*e] with [p] digits after the point
+   of the decimal [(d, e)], negative if [negative], rounded once, ties to
+   even. *)
+let format_e p negative (d, e) =
+  let n = p + 1 and len = String.length d in
+  let kept, exp =
+    if d = "" then (String.make n '0', 0)
+    else if len <= n then (d ^ String.make (n - len) '0', len - 1 + e)
+    else
+      let head = String.sub d 0 n and tail = String.sub d n (len - n) in
+      (* [tail] has no trailing zero: it is half a unit exactly iff it is [5]. *)
+      let odd = (Char.code head.[n - 1] - 48) land 1 = 1 in
+      let up = tail.[0] > '5' || (tail.[0] = '5' && (len - n > 1 || odd)) in
+      let head = if up then increment head else head in
+      if String.length head > n then (String.sub head 0 n, len + e)
+      else (head, len - 1 + e)
+  in
+  Printf.sprintf "%s%c%se%c%02d"
+    (if negative then "-" else "")
+    kept.[0]
+    (if p > 0 then "." ^ String.sub kept 1 p else "")
+    (if exp < 0 then '-' else '+')
+    (Int.abs exp)
+
+(* [distance a b] is [|a - b|]. *)
+let distance (d0, e0) (d1, e1) =
+  let e = Int.min e0 e1 in
+  let a = d0 ^ String.make (e0 - e) '0' and b = d1 ^ String.make (e1 - e) '0' in
+  let big, small =
+    if compare_decimal (d0, e0) (d1, e1) >= 0 then (a, b) else (b, a)
+  in
+  (* [digit s k] is the [k]th digit of [s] from the right, from [1]. *)
+  let digit s k =
+    let n = String.length s in
+    if k > n then 0 else Char.code s.[n - k] - 48
+  in
+  let n = String.length big in
+  let r = Bytes.make n '0' and borrow = ref 0 in
+  for k = 1 to n do
+    let x = digit big k - digit small k - !borrow in
+    Bytes.set r (n - k) (Char.chr (48 + ((x + 10) mod 10)));
+    borrow := if x < 0 then 1 else 0
+  done;
+  normalize (Bytes.to_string r) e
+
+(* [nearest_of t x] is the float64 nearest the decimal [t], ties to even, of the
+   float64 [x], at least [0.], and its neighbours. An infinity counts as
+   [2^1024], where the next float would be. A reading [x] of [t] is right iff
+   it is its own nearest. *)
+let nearest_of t x =
+  let value y = if y = Float.infinity then dyadic 1 1024 else decimal y in
+  let even y = Int64.(logand (bits_of_float y) 1L) = 0L in
+  let nearer y z =
+    let c = compare_decimal (distance t (value y)) (distance t (value z)) in
+    c < 0 || (c = 0 && even y)
+  in
+  List.fold_left
+    (fun best y -> if y >= 0. && nearer y best then y else best)
+    x
+    [ Float.pred x; Float.succ x ]
+
 (* Laws *)
 
 let float_texts =
@@ -387,12 +551,23 @@ let halfway ~subnormal ~top of_bits =
     map
       (fun (m, negative) ->
         let sign x = if negative then -.x else x in
-        (m < subnormal, sign (of_bits m), sign (of_bits (m + 1)), m))
-      (pair (one_of [ int_range 0 (top - 1); int_range 0 subnormal ]) bool))
+        (m < subnormal, sign (of_bits m), sign (of_bits (Int64.succ m)), m))
+      (pair
+         (one_of [ int64_range 0L (Int64.pred top); int64_range 0L subnormal ])
+         bool))
 
-(* The texts of [mid] exactly, just above it and just below it, in magnitude. *)
-let around mid =
-  let s = Printf.sprintf "%.1100e" (Float.abs mid) in
+(* [midpoint a b] is the decimal of the magnitude halfway between the
+   consecutive floats [a] and [b] of one sign: [(2 n + 1) 2^(u - 1)], the
+   smaller magnitude being [n 2^u] and their gap [2^u]. *)
+let midpoint a b =
+  let a = Float.abs a and b = Float.abs b in
+  let u = snd (Float.frexp (Float.abs (b -. a))) - 1 in
+  dyadic ((2 * Float.to_int (Float.ldexp (Float.min a b) (-u))) + 1) (u - 1)
+
+(* The texts of the decimal [mid], negative if [negative], exactly, just above
+   it and just below it, in magnitude. *)
+let around negative mid =
+  let s = format_e 1100 false mid in
   let e = String.index s 'e' in
   let digits = String.sub s 0 e
   and exp = String.sub s e (String.length s - e) in
@@ -407,42 +582,48 @@ let around mid =
       (fun i c -> if i = last then Char.chr (Char.code c - 1) else c)
       digits
   in
-  let sign = if mid < 0. then "-" else "" in
+  let sign = if negative then "-" else "" in
   ( sign ^ digits ^ exp,
     sign ^ digits ^ String.make 40 '0' ^ "1" ^ exp,
     sign ^ below ^ String.make 40 '9' ^ exp )
 
 let rounds_halfway ty (subnormal, a, b, m) =
-  let mid = (a +. b) /. 2. in
-  let exact, above, below = around mid in
-  cover "negative" (a < 0.);
+  let exact, above, below = around (b < 0.) (midpoint a b) in
+  cover "negative" (b < 0.);
   cover "subnormal" subnormal;
-  equal int64 (bits (if m land 1 = 0 then a else b)) (bits (read_one ty exact));
+  let even = Int64.logand m 1L = 0L in
+  equal int64 (bits (if even then a else b)) (bits (read_one ty exact));
   equal int64 (bits b) (bits (read_one ty above));
   equal int64 (bits a) (bits (read_one ty below))
 
 let laws =
   group "laws"
     [
-      prop "float64 reads a decimal number as float_of_string does"
+      prop "float64 reads a decimal number as the float64 nearest it"
         (Gen.with_pp Format.pp_print_string float_texts) (fun s ->
-          equal int64
-            (bits (float_of_string s))
-            (bits (read_one Type.float64 s)));
+          let x = read_one Type.float64 s in
+          equal int64 (bits (nearest_of (decimal_of_text s) x)) (bits x));
       prop "float64 reads a float written with 17 digits as itself" Gen.float
         (fun x ->
           Law.round_trip (G.witness Type.float64) string
             (Printf.sprintf "%.17g") (read_one Type.float64) x);
       prop
+        "float64 rounds a halfway text to even, and texts beside it to the \
+         nearer value"
+        (halfway ~subnormal:0x10000000000000L ~top:0x7fefffffffffffffL
+           Int64.float_of_bits)
+        (rounds_halfway Type.float64);
+      prop
         "float32 rounds a halfway text to even, and texts beside it to the \
          nearer value"
-        (halfway ~subnormal:0x800000 ~top:0x7f7fffff (fun m ->
-             Int32.float_of_bits (Int32.of_int m)))
+        (halfway ~subnormal:0x800000L ~top:0x7f7fffffL (fun m ->
+             Int32.float_of_bits (Int64.to_int32 m)))
         (rounds_halfway Type.float32);
       prop
         "float16 rounds a halfway text to even, and texts beside it to the \
          nearer value"
-        (halfway ~subnormal:0x400 ~top:0x7bff half_of_bits)
+        (halfway ~subnormal:0x400L ~top:0x7bffL (fun m ->
+             half_of_bits (Int64.to_int m)))
         (rounds_halfway Type.float16);
       prop "int64 reads an int64 written in decimal as itself" Gen.int64
         (fun x ->
@@ -508,6 +689,7 @@ let reference ty xs =
     else Some (if x > 0. then "inf" else "-inf")
   in
   let out = Array.map text xs in
+  let decimals = Array.map (fun x -> if Float.is_finite x then decimal x else ("", 0)) xs in
   for p = 1 to 17 do
     let open_ =
       Array.of_seq
@@ -515,7 +697,11 @@ let reference ty xs =
            (fun i -> out.(i) = None)
            (Seq.init (Array.length xs) Fun.id))
     in
-    let ss = Array.map (fun i -> Printf.sprintf "%.*e" (p - 1) xs.(i)) open_ in
+    let ss =
+      Array.map
+        (fun i -> format_e (p - 1) (Float.sign_bit xs.(i)) decimals.(i))
+        open_
+    in
     let back = rows ty (List.map Option.some (Array.to_list ss)) in
     Array.iteri
       (fun k i ->
