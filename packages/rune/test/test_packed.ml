@@ -51,10 +51,9 @@ let agrees ?msg f g =
 
 (* The bytes of the buffer [b], copied to the host. *)
 let buffer_bytes b =
-  let n = Nx_device.Buffer.nbytes b
-  and u8 = Nx_dtype.Scalar.of_dtype Nx.uint8 in
-  let host = Nx_device.Buffer.create Nx_device.host u8 n in
-  Nx_device.Buffer.copy ~src:(Nx_device.Buffer.view b ~offset:0 u8 n) ~dst:host;
+  let n = Rig.Buffer.length b in
+  let host = Rig.Buffer.create Rig.host n in
+  Rig.Buffer.copy ~src:b ~dst:host;
   Nx.to_array
     (Nx.of_shards Nx.Placement.host Nx.uint8
        (Nx_array.View.create [| n |])
@@ -415,24 +414,20 @@ let stated =
          storage and clears its tail" (fun () ->
           (* A bit value over bytes whose bits past its 13 elements are set. *)
           let u8 = Nx.create Nx.uint8 [| 2 |] [| 0xAA; 0xFF |] in
-          let b =
-            Nx_device.Buffer.view (storage u8) ~offset:0
-              (Nx_dtype.Scalar.of_dtype Nx.bit)
-              13
-          in
+          let b = storage u8 in
           let m =
             Nx.of_shards Nx.Placement.host Nx.bit
               (Nx_array.View.create [| 13 |])
               [ b ]
           in
           let expected = Nx.logical_not m in
-          let before = Witness.addresses m in
+          let before = Witness.buffers m in
           let r =
             Rune.jit
               Nx.Ptree.(consumes tensor @@ returns tensor)
               Nx.logical_not m
           in
-          equal ~msg:"storage" (list nativeint) before (Witness.addresses r);
+          equal ~msg:"storage" Witness.storage before (Witness.buffers r);
           agrees (fun () -> expected) (fun () -> r);
           equal ~msg:"tail" (list int) [ 0 ] (tails r));
       cases ~name:fst "a consumed set or scatter of bits is eager's, in place"
@@ -462,9 +457,9 @@ let stated =
                   m
           in
           let m = fresh () in
-          let before = Witness.addresses m in
+          let before = Witness.buffers m in
           let r = Rune.jit Nx.Ptree.(consumes tensor @@ returns tensor) f m in
-          equal ~msg:"storage" (list nativeint) before (Witness.addresses r);
+          equal ~msg:"storage" Witness.storage before (Witness.buffers r);
           agrees (fun () -> f (fresh ())) (fun () -> r));
       test "a consumed set and scatter of int4 nibbles are eager's, in place"
         (fun () ->
@@ -484,11 +479,11 @@ let stated =
           List.iter
             (fun (msg, f) ->
               let q = fresh () in
-              let before = Witness.addresses q in
+              let before = Witness.buffers q in
               let r =
                 Rune.jit Nx.Ptree.(consumes tensor @@ returns tensor) f q
               in
-              equal ~msg (list nativeint) before (Witness.addresses r);
+              equal ~msg Witness.storage before (Witness.buffers r);
               agrees ~msg (fun () -> f (fresh ())) (fun () -> r))
             [ ("set", set); ("scatter", scatter) ]);
       test "a window set into bits at an odd offset keeps the bits around it"
@@ -589,13 +584,9 @@ let stated =
 (* The names of the host kernels that [f ()] runs, once warmed. *)
 let kernels f =
   ignore (f ());
-  Nx_device.synchronize Nx_device.host;
-  let p = Nx_device.Profile.start () in
-  ignore (f ());
-  Nx_device.synchronize Nx_device.host;
   List.filter_map
-    (function Nx_device.Profile.Span s -> Some s.name | _ -> None)
-    (Nx_device.Profile.stop p)
+    (function Rig.Profile.Span s -> Some s.name | _ -> None)
+    (snd (Rig.Profile.take (fun () -> ignore (f ()))))
 
 (* The elements a kernel's name says it spans: the product of its sizes. *)
 let extent name =
@@ -852,9 +843,10 @@ let mxfp4 =
 (* Metal *)
 
 let metal =
-  match Result.to_option (Nx_metal.get 0) with
-  | None -> slow "no Metal device" (fun () -> skip ~reason:"no Metal device" ())
-  | Some d ->
+  match Rig.open_ (Rig_metal.gpu 0) with
+  | Error _ -> slow "no Metal device" (fun () -> skip ~reason:"no Metal device" ())
+  | Ok m ->
+      let d = Nx.Device.make m in
       group ~tags:[ "slow" ] "metal"
         [
           test "values on Metal" (fun () -> placed_values (Nx.Placement.on d));

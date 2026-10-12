@@ -580,23 +580,18 @@ let placements =
 let peak device f =
   let d = Nx.Device.memory device in
   Gc.full_major ();
-  Nx_device.synchronize d;
-  let before = Nx_device.Stats.allocated (Nx_device.stats d) in
-  let p = Nx_device.Profile.start () in
-  match f () with
-  | y ->
-      let most =
-        List.fold_left
-          (fun most -> function
-            | Nx_device.Profile.Allocation a when Nx_device.equal a.device d ->
-                max most a.allocated
-            | _ -> most)
-          before (Nx_device.Profile.stop p)
-      in
-      (y, most - before)
-  | exception e ->
-      ignore (Nx_device.Profile.stop p);
-      raise e
+  Rig.free_cache d;
+  let before = Rig.allocated d in
+  let y, events = Rig.Profile.take f in
+  let most =
+    List.fold_left
+      (fun most -> function
+        | Rig.Profile.Allocation a when Rig.equal a.device d ->
+            max most a.allocated
+        | _ -> most)
+      before events
+  in
+  (y, most - before)
 
 (* A routed product gathers each expert's codes and scales at its ids: compiled,
    the gather reads them in place, and an index it stores has the size of the
@@ -931,9 +926,14 @@ let () =
          undifferentiated;
          group ~tags:[ "slow" ] "gpus"
            [
-             on_device "Metal" (Nx_metal.get 0);
-             on_device "CUDA" (Nx_cuda.get 0);
-             on_device "AMD" (Nx_amd.get 0);
+             on_device "Metal"
+               (Result.map Nx.Device.make (Rig.open_ (Rig_metal.gpu 0)));
+             on_device "CUDA"
+               (Result.map Nx.Device.make (Rig.open_ (Rig_cuda.gpu 0)));
+             on_device "AMD"
+               (Result.map
+                  (Nx.Device.make ~backend:Nx_amd.backend)
+                  (Rig.open_ (Rig_amd_amdgpu.gpu 0)));
            ];
          dtypes;
        ])

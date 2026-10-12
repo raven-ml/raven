@@ -610,9 +610,10 @@ let grad1 f x = Rune.grad' (fun x -> Nx.sum (f x)) x
 let held loss x =
   let allocated () =
     for _ = 1 to 4 do
-      Gc.full_major ()
+      Gc.full_major ();
+      Rig.free_cache Rig.host
     done;
-    Nx_device.Stats.allocated (Nx_device.stats Nx_device.host)
+    Rig.allocated Rig.host
   in
   let measure () =
     let base = allocated () in

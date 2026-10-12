@@ -91,10 +91,8 @@ let bound s = List.length (Lower.captures s)
    tensor mapped from a file may. *)
 let past_boundary n =
   let ba = Bigarray.Array1.create Float32 C_layout (n + 4) in
-  let at b =
-    Nativeint.to_int (Nativeint.rem (Nx_device.Buffer.address b) 16n)
-  in
-  let k = (4 - at (Nx_device.Buffer.of_bigarray ba) + 16) mod 16 / 4 in
+  let at = Lower.phase Nx.uint8 (Rig.Buffer.of_bigarray ba) 0 in
+  let k = (4 - at + 16) mod 16 / 4 in
   let sub = Bigarray.Array1.sub ba k n in
   for i = 0 to n - 1 do
     sub.{i} <- float_of_int i
@@ -164,7 +162,7 @@ let captures =
           let s, _ = copied (Nx.slice [ R (5, 9) ] (arange 16)) in
           match Lower.captures s with
           | [ (u, [ b ]) ] ->
-              equal int 5 (Nx_device.Buffer.length b);
+              equal int 20 (Rig.Buffer.length b);
               equal (list int) [ 5 ]
                 (List.map
                    (function Ops.Int n -> n | Ops.Sym _ -> -1)
@@ -240,7 +238,7 @@ let parameters =
           exact (Nx.add x (Nx.mul x x)) (Programs.compiled s y));
       test "a buffer on the disk has phase 0" (fun () ->
           let path = Filename.concat (temp_dir ()) "file" in
-          let b = Result.get_ok (Nx_device.Buffer.create_file path 64) in
+          let b = Result.get_ok (Rig_disk.create_file path 64) in
           equal int 0 (Lower.phase Nx.uint8 b 3));
       test "a parameter binds nothing when traced" (fun () ->
           let s = scope () in
@@ -302,7 +300,7 @@ let placements =
           exact (grid 2 2) (value s y);
           match Lower.captures s with
           | [ (_, [ b ]) ] ->
-              equal string "CPU:1" (Nx_device.name (Nx_device.Buffer.device b))
+              equal string "CPU:1" (Rig.name (Rig.Buffer.device b))
           | _ -> fail "one capture on one device");
       test "a placed capture is bound where it lies, without a copy" (fun () ->
           let x = Nx.place (Nx.Placement.on d1) (grid 2 3) in

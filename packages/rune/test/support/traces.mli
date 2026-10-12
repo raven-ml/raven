@@ -13,11 +13,11 @@
 
 open Rune_internals
 
-val host : Nx_device.t -> Tolk.Renderer.t
+val host : Rig.t -> Tolk.Renderer.t
 (** [host d] is the host's renderer, whatever [d]: the programs of every device
     of a test are rendered for the host. *)
 
-val scope : ?renderer:(Nx_device.t -> Tolk.Renderer.t) -> unit -> Lower.scope
+val scope : ?renderer:(Rig.t -> Tolk.Renderer.t) -> unit -> Lower.scope
 (** [scope ~renderer ()] is a new scope with [renderer] (defaults to {!host}).
 *)
 
@@ -25,7 +25,7 @@ val within : Lower.scope -> (unit -> 'a) -> 'a
 (** [within s f] is [f ()] traced under [s]. *)
 
 val trace :
-  ?renderer:(Nx_device.t -> Tolk.Renderer.t) -> (unit -> 'a) -> Lower.scope * 'a
+  ?renderer:(Rig.t -> Tolk.Renderer.t) -> (unit -> 'a) -> Lower.scope * 'a
 (** [trace ~renderer f] is [f ()] traced under a new scope, and that scope. *)
 
 val node : ('a, 'b) Nx.t -> Tolk.Ops.t

@@ -2,7 +2,7 @@
  (name rune_test)
  (wrapped false)
  (modules expr formula oracle witness)
- (libraries windtrap nx nx.dtype nx.device))
+ (libraries windtrap nx nx.dtype rig))
 
 ; The lowering suites' support: traced functions and the values their graphs
 ; compute. It links rune_internals, so a suite that links it links no rune.
@@ -20,7 +20,7 @@
   tolk.engine
   nx
   nx.array
-  nx.device
+  rig
   nx.dtype))
 
 ; The rule suites' cases, rows and references.
@@ -29,4 +29,4 @@
  (name rune_rules)
  (wrapped false)
  (modules case reference row)
- (libraries windtrap rune nx nx.backend nx.cpu nx.device nx.dtype))
+ (libraries windtrap rune nx nx.backend nx.cpu rig nx.dtype))

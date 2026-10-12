@@ -7,7 +7,7 @@ open Rune_internals
 open Tolk
 
 let host =
-  let clang = lazy (Tolk_engine.renderer Nx_device.host) in
+  let clang = lazy (Tolk_engine.renderer Rig.host) in
   fun _ -> Lazy.force clang
 
 let scope ?(renderer = host) () = Lower.scope ~renderer
@@ -93,16 +93,16 @@ let of_const : type a b. (a, b) Nx_dtype.t -> Dtype.const -> a =
 
 (* The elements of [b], a buffer of [dt]'s elements on any device. *)
 let elements (Dtype dt) b =
-  let n = Nx_device.Buffer.length b in
+  let n = Nx_array.Elements.length dt b in
   let h =
-    if Nx_device.equal (Nx_device.Buffer.device b) Nx_device.host then b
+    if Rig.equal (Rig.Buffer.device b) Rig.host then b
     else
-      let h = Nx_array.Elements.create dt n in
-      Nx_device.Buffer.copy ~src:b ~dst:h;
+      let h = Rig.Buffer.create Rig.host (Rig.Buffer.length b) in
+      Rig.Buffer.copy ~src:b ~dst:h;
       h
   in
-  let get = Nx_array.Elements.get dt h in
-  Array.init n (fun i -> to_value dt (get i))
+  Nx_array.Elements.read dt h (fun get ->
+      Array.init n (fun i -> to_value dt (get i)))
 
 (* The run of [x]'s host storage that a parameter binds: from the element at or
    below the first one its view reaches whose offset is a multiple of 16 bytes,
@@ -115,8 +115,8 @@ let run (Nx.P x) =
       let lo, hi = Nx_array.View.extent a.view in
       let per = Int.max 1 (16 / Nx_dtype.itemsize dt) in
       let start = lo - (lo mod per) in
-      let get = Nx_array.Elements.get dt a.buffer in
-      Array.init (hi - start) (fun i -> to_value dt (get (start + i)))
+      Nx_array.Elements.read dt a.buffer (fun get ->
+          Array.init (hi - start) (fun i -> to_value dt (get (start + i))))
   | Nx.Repr.Placed _ | Nx.Repr.Traced _ ->
       invalid_arg "an argument off the host"
 

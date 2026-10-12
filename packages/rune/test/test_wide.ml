@@ -162,8 +162,7 @@ let error_terms =
 
 (* The kernels [f ()] runs, by their names. *)
 let kernels f =
-  let p = Nx_device.Profile.start () in
-  ignore (Sys.opaque_identity (f ()));
+  let (), events = Rig.Profile.take (fun () -> ignore (Sys.opaque_identity (f ()))) in
   let kernel name =
     String.length name >= 1
     && (name.[0] = 'E' || name.[0] = 'r')
@@ -171,9 +170,9 @@ let kernels f =
   in
   List.filter_map
     (function
-      | Nx_device.Profile.Span { name; _ } when kernel name -> Some name
+      | Rig.Profile.Span { name; _ } when kernel name -> Some name
       | _ -> None)
-    (Nx_device.Profile.stop p)
+    events
 
 (* A double word's two parts are the ends of one computation: compiled, an
    operation writes both from one kernel. *)

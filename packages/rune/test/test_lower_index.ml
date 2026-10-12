@@ -572,7 +572,7 @@ let quantised =
           else acc)
         0
         (Tolk.Ops.toposort ~calls:Enter
-           (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
+           (Tolk.Codegen.full_rewrite_to_sink k (host Rig.host)))
     in
     List.fold_left
       (fun acc k -> acc + bytes k)
@@ -626,7 +626,7 @@ let quantised =
                    || Tolk.Op.equal (Tolk.Ops.op u) Shr)
                    && Tolk.Dtype.equal (Tolk.Ops.dtype u) Uint8)
                  (Tolk.Ops.toposort ~calls:Enter
-                    (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host))))
+                    (Tolk.Codegen.full_rewrite_to_sink k (host Rig.host))))
           in
           equal (list int) [ 0 ]
             (List.map narrow (Tolk.Ops.src (Programs.kernels (product w)))));
@@ -650,7 +650,7 @@ let quantised =
                 then Some (Tolk.Shape.shape u)
                 else None)
               (Tolk.Ops.toposort ~calls:Enter
-                 (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
+                 (Tolk.Codegen.full_rewrite_to_sink k (host Rig.host)))
           in
           let lanes = function
             | [ Tolk.Ops.Int n ] -> n
@@ -687,7 +687,7 @@ let quantised =
                 then sources u
                 else [])
               (Tolk.Ops.toposort ~calls:Enter
-                 (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
+                 (Tolk.Codegen.full_rewrite_to_sink k (host Rig.host)))
           in
           let lanes =
             List.concat_map converted

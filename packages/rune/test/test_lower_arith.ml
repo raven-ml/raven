@@ -627,7 +627,7 @@ let kernels_reading c y =
       (fun u ->
         match Tolk.Ops.arg u with Tolk.Ops.Const v -> v = c | _ -> false)
       (Tolk.Ops.toposort ~calls:Enter
-         (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
+         (Tolk.Codegen.full_rewrite_to_sink k (host Rig.host)))
   in
   List.length (List.filter reads (Tolk.Ops.src (Programs.kernels y)))
 

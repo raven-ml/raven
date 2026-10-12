@@ -26,7 +26,7 @@
  (name test_allocation)
  (modules test_allocation)
  (package rune)
- (libraries windtrap rune nx nx.device)
+ (libraries windtrap rune nx rig)
  (action
   (progn
    (run %{test} --corrected)
@@ -42,9 +42,9 @@
   nx_test
   nx
   nx.array
-  nx.device
+  rig
   nx.dtype
-  nx.metal
+  rig.metal
   nx.quant
   rune_test))
 
@@ -70,7 +70,7 @@
  (name test_bodies)
  (modules test_bodies)
  (package rune)
- (libraries windtrap rune_internals rune_test nx nx.dtype nx.device))
+ (libraries windtrap rune_internals rune_test nx nx.dtype rig))
 
 (test
  (name test_staging)
@@ -116,7 +116,8 @@
   nx_test
   nx
   nx.dtype
-  nx.device
+  rig
+  rig.disk
   nx.quant
   tolk)
  (deps
@@ -137,7 +138,7 @@
   nx_test
   nx
   nx.dtype
-  nx.device
+  rig
   tolk))
 
 (rule
@@ -206,13 +207,16 @@
   nx.array
   nx.backend
   nx.cpu
-  nx.device
+  rig
   nx.dtype
   nx.ragged
-  nx.metal
-  nx.cuda
-  nx.nv
+  rig.disk
+  rig.gpus
+  rig.metal
+  rig.cuda
+  rig.nv.nvidia
   nx.amd
+  rig.amd.amdgpu
   tolk))
 
 (rule
@@ -270,7 +274,7 @@
  (name test_jit_transformations)
  (modules test_jit_transformations)
  (package rune)
- (libraries windtrap rune rune_test nx nx.dtype nx.device))
+ (libraries windtrap rune rune_test nx nx.dtype rig))
 
 ; Generated programs, compiled on the host against eager nx. The property on
 ; bits runs in a process of its own, beside the rest of the suite.
@@ -305,10 +309,11 @@
   nx_test
   nx
   nx.quant
-  nx.device
-  nx.metal
-  nx.cuda
-  nx.amd))
+  rig
+  rig.metal
+  rig.cuda
+  nx.amd
+  rig.amd.amdgpu))
 
 (test
  (name test_segments)
@@ -319,7 +324,7 @@
 (executable
  (name reports)
  (modules reports)
- (libraries rune nx nx.device tolk))
+ (libraries rune nx rig tolk))
 
 (cram
  (applies_to reports)
@@ -339,7 +344,7 @@
  (name test_special)
  (modules test_special)
  (package rune)
- (libraries windtrap rune nx_test nx nx.metal)
+ (libraries windtrap rune nx_test nx rig rig.metal)
  (deps
   (glob_files %{project_root}/packages/nx/test/golden/special/*.golden)
   (glob_files golden/special_grad/*.golden))
@@ -352,4 +357,4 @@
  (name test_wide)
  (modules test_wide)
  (package rune)
- (libraries windtrap rune rune_test nx nx.device nx.wide))
+ (libraries windtrap rune rune_test nx rig nx.wide))

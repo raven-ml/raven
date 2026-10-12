@@ -262,22 +262,17 @@ let consumed =
 (* [profiled f] is [f ()] and the names of the compiled call's host spans
    meanwhile. *)
 let profiled f =
-  let p = Nx_device.Profile.start () in
-  match f () with
-  | y ->
-      let spans =
-        List.filter_map
-          (function
-            | Nx_device.Profile.Span s
-              when String.starts_with ~prefix:"rune.jit: " s.name ->
-                Some s.name
-            | _ -> None)
-          (Nx_device.Profile.stop p)
-      in
-      (y, spans)
-  | exception e ->
-      ignore (Nx_device.Profile.stop p);
-      raise e
+  let y, events = Rig.Profile.take f in
+  let spans =
+    List.filter_map
+      (function
+        | Rig.Profile.Span s when String.starts_with ~prefix:"rune.jit: " s.name
+          ->
+            Some s.name
+        | _ -> None)
+      events
+  in
+  (y, spans)
 
 (* The residual traces and the other traces while [f ()] runs. *)
 let traces f =
@@ -415,9 +410,11 @@ let settled () =
   let m = Nx.Device.memory device in
   for _ = 1 to 4 do
     Gc.full_major ();
-    Nx_device.synchronize m
+    (* An allocation on the device returns its collected memory. *)
+    ignore (Rig.Buffer.create m 0);
+    Rig.free_cache m
   done;
-  Nx_device.Stats.allocated (Nx_device.stats m)
+  Rig.allocated m
 
 (* [held f] is the bytes [f ()]'s result holds on the device. *)
 let held f =

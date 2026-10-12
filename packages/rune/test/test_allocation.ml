@@ -37,13 +37,13 @@ let reverse =
   group "reverse mode"
     [
       test "grad of a product" (fun () ->
-          equal int 1346
+          equal int 1241
             (words (fun () -> Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x)));
       test "grad of a selection" (fun () ->
-          equal int 1703
+          equal int 1585
             (words (fun () -> Rune.grad' (fun x -> Nx.sum (relu x)) x)));
       test "grad of a matrix product" (fun () ->
-          equal int 1220
+          equal int 1155
             (words (fun () -> Rune.grad' (fun w -> Nx.sum (Nx.matmul row w)) w)));
     ]
 
@@ -55,7 +55,7 @@ let replay =
   group "jit replay"
     [
       test "neg of one element" (fun () ->
-          equal int 808 (words (fun () -> neg x)));
+          equal int 654 (words (fun () -> neg x)));
     ]
 
 (* Residuals
@@ -72,9 +72,11 @@ let settled () =
   let m = Nx.Device.memory device in
   for _ = 1 to 4 do
     Gc.full_major ();
-    Nx_device.synchronize m
+    (* An allocation on the device returns its collected memory. *)
+    ignore (Rig.Buffer.create m 0);
+    Rig.free_cache m
   done;
-  Nx_device.Stats.allocated (Nx_device.stats m)
+  Rig.allocated m
 
 let elements = 4096
 

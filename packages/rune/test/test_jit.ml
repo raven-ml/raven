@@ -30,8 +30,17 @@ let x () = Nx.create Nx.float32 [| 4 |] [| 1.; -2.; 3.; 0.5 |]
 let y () = Nx.create Nx.float32 [| 4 |] [| 2.; 0.; -1.; 4. |]
 let poly x = Nx.add (Nx.mul x x) x
 let host t = Nx.place Nx.Placement.host t
-let address t = List.hd (Witness.addresses t)
+let address t = List.hd (Witness.buffers t)
+
+(* Buffers compared by where they start in memory ({!Witness.same}). *)
+let at_memory =
+  Testable.make
+    ~pp:(fun ppf b -> Format.fprintf ppf "%d bytes in" (Rig.Buffer.offset b))
+    ~equal:Witness.same
 let consumes = Nx.Ptree.(consumes tensor @@ returns tensor)
+
+(* The trips of a long scan. *)
+let long_scan = 1024
 let two = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
 
 (* Observing a call *)
@@ -39,48 +48,36 @@ let two = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
 (* [profiled f] is [f ()] and the host spans the compiled call recorded
    meanwhile, in order. *)
 let profiled f =
-  let p = Nx_device.Profile.start () in
-  match f () with
-  | y ->
-      let spans =
-        List.filter_map
-          (function
-            | Nx_device.Profile.Span s
-              when String.starts_with ~prefix:"rune.jit: " s.name ->
-                Some s.name
-            | _ -> None)
-          (Nx_device.Profile.stop p)
-      in
-      (y, spans)
-  | exception e ->
-      ignore (Nx_device.Profile.stop p);
-      raise e
+  let y, events = Rig.Profile.take f in
+  let spans =
+    List.filter_map
+      (function
+        | Rig.Profile.Span s when String.starts_with ~prefix:"rune.jit: " s.name
+          ->
+            Some s.name
+        | _ -> None)
+      events
+  in
+  (y, spans)
 
 (* [traces f] is the number of traces while [f ()] runs. *)
 let traces f =
   let (), spans = profiled f in
   List.length (List.filter (String.equal "rune.jit: trace") spans)
 
-(* [loaded_on d f] is [f ()] and the number of kernels loaded on [d] meanwhile:
-   the programs of a host's batches, which call the kernels, are none. *)
+(* [loaded_on d f] is [f ()] and the number of images loaded on [d]
+   meanwhile. *)
 let loaded_on d f =
-  let p = Nx_device.Profile.start () in
-  match f () with
-  | y ->
-      let loads =
-        List.filter
-          (function
-            | Nx_device.Profile.Load l ->
-                Nx_device.equal (Nx.Device.memory d)
-                  (Nx_device.Program.device l.program)
-                && Nx_device.Program.name l.program <> "host_batch"
-            | _ -> false)
-          (Nx_device.Profile.stop p)
-      in
-      (y, List.length loads)
-  | exception e ->
-      ignore (Nx_device.Profile.stop p);
-      raise e
+  let y, events = Rig.Profile.take f in
+  let loads =
+    List.filter
+      (function
+        | Rig.Profile.Load l ->
+            Rig.equal (Nx.Device.memory d) (Rig.Image.device l.image)
+        | _ -> false)
+      events
+  in
+  (y, List.length loads)
 
 (* [counted f] is [f] and the number of times it ran. *)
 let counted f =
@@ -97,9 +94,10 @@ let raises_jit_error f =
 
 let message f = Oracle.message (fun () -> ignore (f ()))
 
-(* [opened get] is GPU 0 of the vendor library whose [get] it is, if it opens on
-   this machine. *)
-let opened get = Result.to_option (get 0)
+(* [opened ?backend o] is the GPU that rig's opener [o] opens, if it opens on
+   this machine, computed by [backend]. *)
+let opened ?backend o =
+  Result.to_option (Result.map (Nx.Device.make ?backend) (Rig.open_ o))
 
 (* Test devices over the host's memory, whose programs are the host's *)
 
@@ -108,20 +106,32 @@ let d1, d2, d3, d4 =
 
 let on d = Nx.Placement.on d
 
-(* A device only compiled functions compute on, as on a GPU: it shares the
-   host's memory, so its programs are the host's, and loads programs, so nx.cpu
-   does not compute there. *)
+(* A device only compiled functions compute on: the first GPU that rig opens
+   through a vendor's runtime or kernel driver, with no backend. A test that
+   needs it skips without one. *)
 let gpu =
-  Nx.Device.make
-    (Nx_device.Driver.device ~name:"GPU" ~arch:"test" ~budget:max_int
-       ~load:(fun ~binary:_ -> Error "programs run on the host")
-       (Host_visible
-          { memory = Nx_device.Driver.host_memory; mapping = Some Identity }))
+  let opened =
+    lazy
+      (List.find_map
+         (fun (path, o) ->
+           if List.mem path [ "METAL"; "CUDA"; "NV"; "AMD" ] then
+             Result.to_option (o ())
+           else None)
+         (Rig_gpus.openers ()))
+  in
+  fun () ->
+    match Lazy.force opened with
+    | Some m -> Nx.Device.make m
+    | None -> skip ~reason:"no GPU" ()
 
 let placed d t = Nx.place (on d) t
-let stats d = Nx_device.stats (Nx.Device.memory d)
-let bytes_in d = Nx_device.Stats.bytes_in (stats d)
-let allocated d = Nx_device.Stats.allocated (stats d)
+let allocated d = Rig.allocated (Nx.Device.memory d)
+
+(* [received ds f] is [f ()] and the bytes that copies sent into the memories
+   of [ds] while it ran. *)
+let received ds f =
+  let y, into, _ = Nx_test.traffic (List.map Nx.Device.memory ds) f in
+  (y, List.fold_left ( + ) 0 into)
 
 (* [allocated d] once the memory of what was dropped has returned to [d]. A
    device buffer returns one major cycle after the last value holding it dies,
@@ -133,7 +143,9 @@ let allocated d = Nx_device.Stats.allocated (stats d)
 let settled d =
   for _ = 1 to 4 do
     Gc.full_major ();
-    Nx_device.synchronize (Nx.Device.memory d)
+    (* An allocation on the device returns its collected memory. *)
+    ignore (Rig.Buffer.create (Nx.Device.memory d) 0);
+    Rig.free_cache (Nx.Device.memory d)
   done;
   allocated d
 
@@ -802,7 +814,7 @@ let keys =
 
 let distinct a b =
   is_false ~msg:"distinct storage"
-    (List.exists2 Nativeint.equal (Witness.addresses a) (Witness.addresses b))
+    (List.exists2 Witness.same (Witness.buffers a) (Witness.buffers b))
 
 let results =
   group "results"
@@ -861,13 +873,13 @@ let window b first n =
     {
       Nx_array.dtype = Nx.float32;
       view = Nx_array.View.create [| n |];
-      buffer = Nx_device.Buffer.view b ~offset:(4 * first) Float32 n;
+      buffer = Rig.Buffer.view b ~first:(4 * first) ~length:(4 * n);
     }
 
 let floats_buffer v =
-  let b = Nx_device.Buffer.create Nx_device.host Float32 (Array.length v) in
-  let ba = Nx_device.Buffer.bigarray Bigarray.float32 b in
-  Array.iteri (Bigarray.Array1.set ba) v;
+  let b = Rig.Buffer.create Rig.host (4 * Array.length v) in
+  Rig.Buffer.write b Bigarray.float32 (fun ba ->
+      Array.iteri (Bigarray.Array1.set ba) v);
   b
 
 let test_consumed_window () =
@@ -907,18 +919,14 @@ let memory a =
 let test_consumed_while_read () =
   let a = x () in
   let m = memory a in
-  let address = Nx_device.Buffer.address m in
-  let elements = Nx_device.Buffer.bigarray Bigarray.float32 m in
-  Nx_device.Buffer.Claim.read m;
   let r =
-    Fun.protect ~finally:(fun () -> Nx_device.Buffer.Claim.release m)
-    @@ fun () ->
+    Rig.Buffer.read m Bigarray.float32 @@ fun elements ->
     let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
     equal ~msg:"the read's elements" (array float_exact) [| 1.; -2.; 3.; 0.5 |]
       (Array.init 4 (Bigarray.Array1.get elements));
     r
   in
-  is_false ~msg:"lent" (Witness.addresses r = [ address ]);
+  is_false ~msg:"lent" (Witness.same (List.hd (Witness.buffers r)) m);
   equal floats (Nx.add_s (x ()) 1.) r;
   raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
       Nx.to_array a)
@@ -928,15 +936,11 @@ let test_consumed_while_read () =
 let test_read_while_lent () =
   let a = x () in
   let m = memory a in
-  Nx_device.Buffer.Claim.read m;
-  is_true ~msg:"exclusive" (Nx_device.Buffer.Claim.try_exclusive m);
-  Fun.protect
-    ~finally:(fun () ->
-      Nx_device.Buffer.Claim.finish m;
-      Nx_device.Buffer.Claim.release m)
-    (fun () ->
-      raises_match (Exn.invalid_arg ~substring:"in use") (fun () -> Nx.neg a);
-      raises_match (Exn.invalid_arg ~substring:"in use") (fun () ->
+  Rig.Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
+      equal ~msg:"exclusive" bool true (Rig.Claim.exclusive c m);
+      raises_match (Exn.invalid_arg ~substring:"held exclusive") (fun () ->
+          Nx.neg a);
+      raises_match (Exn.invalid_arg ~substring:"held exclusive") (fun () ->
           Nx.to_array a));
   equal floats (x ()) a
 
@@ -1117,8 +1121,7 @@ let indices l = Nx.create Nx.int64 [| List.length l |] (Array.of_list l)
 
 (* [kernels f] is [f ()] and the names of the kernels it ran, in order. *)
 let kernels f =
-  let p = Nx_device.Profile.start () in
-  let y = f () in
+  let y, events = Rig.Profile.take f in
   let kernel name =
     String.length name >= 1
     && (name.[0] = 'E' || name.[0] = 'r')
@@ -1127,9 +1130,9 @@ let kernels f =
   ( y,
     List.filter_map
       (function
-        | Nx_device.Profile.Span { name; _ } when kernel name -> Some name
+        | Rig.Profile.Span { name; _ } when kernel name -> Some name
         | _ -> None)
-      (Nx_device.Profile.stop p) )
+      events )
 
 (* The elements a kernel ranges over, read from its name: [E_2_4], 8. *)
 let ranged name =
@@ -1445,7 +1448,7 @@ let lending =
           let before = address a in
           let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
           equal floats (Nx.add_s (x ()) 1.) r;
-          equal nativeint before (address r));
+          equal at_memory before (address r));
       test "a result takes the consumed leaf it derives from at its own index"
         (fun () ->
           let a = x () and b = y () in
@@ -1453,7 +1456,7 @@ let lending =
           let r1, r2 =
             Rune.jit state (fun (a, b) -> (Nx.add_s b 1., Nx.mul_s a 2.)) (a, b)
           in
-          equal (pair nativeint nativeint) ab (address r2, address r1));
+          equal (pair at_memory at_memory) ab (address r2, address r1));
       test
         "a result read through a flip of a leaf takes a leaf it does not read, \
          and the leaf goes to a result derived at its own index" (fun () ->
@@ -1469,7 +1472,7 @@ let lending =
           in
           equal floats (Nx.add_s (Nx.flip (x ())) 1.) flipped;
           equal floats (Nx.mul_s (x ()) 2.) own;
-          equal (pair nativeint nativeint) ab (address own, address flipped));
+          equal (pair at_memory at_memory) ab (address own, address flipped));
       test "an indexed write takes the leaf it writes before any other result"
         (fun () ->
           let a = x () and b = y () in
@@ -1482,7 +1485,7 @@ let lending =
               (a, b)
           in
           equal floats (Nx.set [ I 0 ] (Nx.scalar Nx.float32 9.) (x ())) r2;
-          equal (pair nativeint nativeint) ab (address r2, address r1));
+          equal (pair at_memory at_memory) ab (address r2, address r1));
       test "the other results take the free leaves in walk order" (fun () ->
           let a = x () and b = y () in
           let ab = (address a, address b) in
@@ -1494,7 +1497,7 @@ let lending =
                 (r1, r2))
               (a, b)
           in
-          equal (pair nativeint nativeint) ab (address r1, address r2));
+          equal (pair at_memory at_memory) ab (address r1, address r2));
       test "a storage lends to one result" (fun () ->
           let a = x () in
           let before = address a in
@@ -1504,7 +1507,7 @@ let lending =
               (fun a -> (Nx.add_s a 1., Nx.mul_s a 2.))
               a
           in
-          equal nativeint before (address r1);
+          equal at_memory before (address r1);
           distinct r1 r2;
           equal floats (Nx.mul_s (x ()) 2.) r2);
       cases ~name:fst
@@ -1530,7 +1533,7 @@ let lending =
           let before = address a in
           let r = Rune.jit consumes f a in
           equal floats (Nx.create Nx.float32 [| 8 |] expected) r;
-          is_false (Nativeint.equal before (address r));
+          is_false (Witness.same before (address r));
           raises_invalid_arg (fun () -> Nx.to_array a));
       test "a result derived through an equal-width bitcast takes the leaf"
         (fun () ->
@@ -1541,7 +1544,7 @@ let lending =
           in
           let r = Rune.jit consumes f a in
           equal floats (f (x ())) r;
-          equal nativeint before (address r));
+          equal at_memory before (address r));
       test "a result of another dtype does not take the leaf" (fun () ->
           let a = x () in
           let before = address a in
@@ -1552,13 +1555,13 @@ let lending =
               a
           in
           equal (tensor float_exact) (Nx.cast Nx.float64 (x ())) r;
-          is_false (Nativeint.equal before (address r)));
+          is_false (Witness.same before (address r)));
       test "a consumed leaf returned unchanged is lent with no store" (fun () ->
           let a = x () in
           let before = address a in
           let r = Rune.jit consumes Fun.id a in
           equal floats (x ()) r;
-          equal nativeint before (address r));
+          equal at_memory before (address r));
       test "a borrowed consumed argument is copied, and still consumed"
         (fun () ->
           let ba =
@@ -1569,7 +1572,7 @@ let lending =
           let before = address a in
           let r = Rune.jit consumes (fun a -> Nx.mul_s a 2.) a in
           equal floats (Nx.create Nx.float32 [| 4 |] [| 2.; 4.; 6.; 8. |]) r;
-          is_false (Nativeint.equal before (address r));
+          is_false (Witness.same before (address r));
           raises_invalid_arg (fun () -> Nx.to_array a));
       test
         "a window written at a position read when the call runs reuses the \
@@ -1590,7 +1593,7 @@ let lending =
               (Nx.zeros Nx.float32 [| 4; 3 |])
           in
           equal floats expected r;
-          equal nativeint before (address r));
+          equal at_memory before (address r));
       test "two programs alternating on one consumed state keep its storage"
         (fun () ->
           let a = x () in
@@ -1607,7 +1610,7 @@ let lending =
               (x ()) [ 1; 2; 3 ]
           in
           equal floats expected !r;
-          equal nativeint before (address !r));
+          equal at_memory before (address !r));
       test "every leaf of a consumed state derived at its own index is lent"
         (fun () ->
           let s = Nx.Ptree.(list tensor) in
@@ -1623,7 +1626,7 @@ let lending =
               (List.map (fun l -> Nx.add_s l 1.))
               ls
           in
-          equal (list nativeint) before (List.map address r));
+          equal (list at_memory) before (List.map address r));
       (* A momentum step: the parameters read the new velocity, which reads the
          parameters. Each result is written over its own state, the velocity
          first, and the parameters read it from there. *)
@@ -1642,7 +1645,7 @@ let lending =
             let before = (address (fst !compiled), address (snd !compiled)) in
             compiled := g !compiled;
             eager := step !eager;
-            equal (pair nativeint nativeint) before
+            equal (pair at_memory at_memory) before
               (address (fst !compiled), address (snd !compiled))
           done;
           equal floats (fst !eager) (fst !compiled);
@@ -1658,8 +1661,8 @@ let lending =
             let a = address (fst !compiled) and b = address (snd !compiled) in
             compiled := g !compiled;
             eager := step !eager;
-            equal nativeint a (address (fst !compiled));
-            is_false (Nativeint.equal b (address (snd !compiled)))
+            equal at_memory a (address (fst !compiled));
+            is_false (Witness.same b (address (snd !compiled)))
           done;
           equal floats (fst !eager) (fst !compiled);
           equal floats (snd !eager) (snd !compiled));
@@ -1694,9 +1697,9 @@ let together fs =
 (* Whether a call that consumes [w] lends its storage to its result, which it
    does unless a program pins it. It consumes [w]. *)
 let lends w =
-  let before = Witness.addresses w in
+  let before = Witness.buffers w in
   let r = Rune.jit consumes (fun a -> Nx.add_s a 0.) w in
-  Witness.addresses r = before
+  List.for_all2 Witness.same before (Witness.buffers r)
 
 let captures =
   group "captures"
@@ -1719,11 +1722,9 @@ let captures =
           let f a = Nx.add (Nx.mul_s a 3.) half in
           let g = Rune.jit' f in
           let a = placed d2 (x ()) in
-          let before = stats d2 in
-          let r = g a in
-          let moved = Nx_device.Stats.diff before (stats d2) in
-          equal ~msg:"bytes received" int 0 (Nx_device.Stats.bytes_in moved);
-          equal ~msg:"bytes sent" int 0 (Nx_device.Stats.bytes_out moved);
+          let r, into, out = Nx_test.traffic [ Nx.Device.memory d2 ] (fun () -> g a) in
+          equal ~msg:"bytes received" (list int) [ 0 ] into;
+          equal ~msg:"bytes sent" (list int) [ 0 ] out;
           equal close (f (x ())) (host r));
       test "a host capture of a call on a device is placed there once"
         (fun () ->
@@ -1731,11 +1732,13 @@ let captures =
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           let a = placed d2 (x ()) in
           ignore (g a);
-          let before = bytes_in d2 in
-          for _ = 1 to 3 do
-            ignore (g a)
-          done;
-          equal ~msg:"bytes received by later calls" int before (bytes_in d2));
+          let (), bytes =
+            received [ d2 ] (fun () ->
+                for _ = 1 to 3 do
+                  ignore (g a)
+                done)
+          in
+          equal ~msg:"bytes received by later calls" int 0 bytes);
       test "a capture decides the device of a call of host arguments" (fun () ->
           let w = placed d1 (y ()) in
           let r = Rune.jit' (fun a -> Nx.mul a w) (x ()) in
@@ -1795,9 +1798,7 @@ let captures =
             ignore (host (g (placed d4 (x ()))))
           in
           run ();
-          Gc.full_major ();
-          Nx_device.synchronize (Nx.Device.memory d4);
-          equal int before (allocated d4));
+          equal int before (settled d4));
       test "two compiled functions binding one capture run from two domains"
         (fun () ->
           let w = placed d1 (y ()) in
@@ -2336,35 +2337,6 @@ let reports =
             first;
           let _, again = profiled (fun () -> g (y ())) in
           equal (list string) [] again);
-      test
-        "a call compiles once for each set of counters and traces a profile \
-         asks for, and for none" (fun () ->
-          let g = Rune.jit' poly in
-          let compiles ?counters ?trace () =
-            let p = Nx_device.Profile.start ?counters ?trace () in
-            let r = Nx.to_array (g (x ())) in
-            let n =
-              List.length
-                (List.filter
-                   (function
-                     | Nx_device.Profile.Span s -> s.name = "rune.jit: compile"
-                     | _ -> false)
-                   (Nx_device.Profile.stop p))
-            in
-            equal ~msg:"its result" (array float_exact) [| 2.; 2.; 12.; 0.75 |]
-              r;
-            n
-          in
-          equal ~msg:"uncounted" int 1 (compiles ());
-          equal ~msg:"counted" int 1 (compiles ~counters:[ "A" ] ());
-          equal ~msg:"uncounted again" int 0 (compiles ());
-          equal ~msg:"other counters" int 1 (compiles ~counters:[ "B" ] ());
-          equal ~msg:"the first counters again" int 0
-            (compiles ~counters:[ "A" ] ());
-          equal ~msg:"traced" int 1 (compiles ~trace:true ());
-          equal ~msg:"counted and traced" int 1
-            (compiles ~counters:[ "A" ] ~trace:true ());
-          equal ~msg:"traced again" int 0 (compiles ~trace:true ()));
     ]
 
 (* Domains *)
@@ -2501,10 +2473,10 @@ let transformations =
         "grad of a compiled function computes on a device where only compiled \
          functions compute" (fun () ->
           let f a = Nx.sum (Nx.mul (Nx.tanh a) a) in
-          let on_gpu = Nx.place (Nx.Placement.on gpu) (x ()) in
+          let on_gpu = Nx.place (Nx.Placement.on (gpu ())) (x ()) in
           raises_invalid_arg (fun () -> ignore (Rune.grad' f on_gpu));
           let g = Rune.grad' (Rune.jit' f) on_gpu in
-          equal Nx_test.Devices.placement (Nx.Placement.on gpu) (Nx.placement g);
+          equal Nx_test.Devices.placement (Nx.Placement.on (gpu ())) (Nx.placement g);
           equal close (Rune.grad' f (x ())) (host g));
       test "jvp of a compiled function compiles its forward derivative"
         (fun () ->
@@ -2590,14 +2562,32 @@ let transformations =
 let placement =
   group "placement"
     [
+      (* An upload is a copy part of the call's submission, which rig's
+         profile records as a Copy event: the count needs rig to record
+         copy parts. *)
       test "a host argument of a call on a device is uploaded at each call"
         (fun () ->
           let g = Rune.jit two Nx.mul in
           let a = placed d2 (x ()) in
           ignore (g a (y ()));
-          let before = bytes_in d2 in
-          ignore (g a (y ()));
-          equal ~msg:"bytes received" int (before + 16) (bytes_in d2));
+          let _, bytes = received [ d2 ] (fun () -> g a (y ())) in
+          equal ~msg:"bytes received" int 16 bytes);
+      test
+        "a host argument written right after the call returns leaves the \
+         call's result" (fun () ->
+          let g = Rune.jit two Nx.mul in
+          let check d =
+            let ba =
+              Bigarray.Array1.of_array Bigarray.float32 Bigarray.c_layout
+                [| 2.; 0.; -1.; 4. |]
+            in
+            let b = Nx.of_bigarray (Bigarray.genarray_of_array1 ba) in
+            let r = g (placed d (x ())) b in
+            Bigarray.Array1.fill ba 100.;
+            equal close (Nx.mul (x ()) (y ())) (host r)
+          in
+          check d2;
+          check (gpu ()));
       slow
         "a state starting on the host retraces once on a device, then replays"
         (fun () ->
@@ -2623,9 +2613,9 @@ let placement =
       test "a consumed split state is lent on every device" (fun () ->
           let p = Nx.Placement.sharded ~axis:0 [ d3; d4 ] in
           let a = Nx.place p (x ()) in
-          let before = Witness.addresses a in
+          let before = Witness.buffers a in
           let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
-          equal (list nativeint) before (Witness.addresses r);
+          equal Witness.storage before (Witness.buffers r);
           is_true (Nx.Placement.equal p (Nx.placement r)));
       slow "a product and a sum over four devices equal one device" (fun () ->
           let p = Nx.Placement.sharded ~axis:0 [ d1; d2; d3; d4 ] in
@@ -2890,6 +2880,13 @@ let to_count s ~max ~f n c =
 
 let rec repeat k f x = if k = 0 then x else repeat (k - 1) f (f x)
 
+(* Whether the devices of [at] compute eagerly: an addition there runs. *)
+let eager at =
+  let one = Nx.place at (Nx.ones Nx.float32 [| 1 |]) in
+  match Nx.add one one with
+  | _ -> true
+  | exception Invalid_argument _ -> false
+
 (* [counted_loops at] checks loops compiled with their arguments at [at] whose
    trips a count argument fixes: the carries the program keeps from trip to
    trip, a program run again at other counts, nesting at each level's shortest
@@ -3101,7 +3098,7 @@ let counted_loops at =
                (Rune.vmap three (Rune.jit three f) (Nx.place at xs)
                   (Nx.place at ns) (Nx.place at ms))));
       test "an iterate whose step scans more rows than a batch holds" (fun () ->
-          let n = Tolk.Hcq2.chunk_calls + 77 in
+          let n = long_scan + 77 in
           let g =
             Rune.jit n_and (fun x k ->
                 to_count Nx.Ptree.tensor ~max:3
@@ -3127,7 +3124,7 @@ let counted_loops at =
         (fun () ->
           (* Row [i] holds [i mod 3], and the step's loop adds one to the carry
              that many times, so each row adds twice its value. *)
-          let n = Tolk.Hcq2.chunk_calls + 77 in
+          let n = long_scan + 77 in
           let f xs =
             Rune.scan'
               ~f:(fun c r ->
@@ -3158,7 +3155,7 @@ let counted_loops at =
           equal ~msg:"outputs" floats ys (host ys'));
       (* A total collected around a compiled function adds its result eagerly,
          which a device without eager kernels refuses, loop or none. *)
-      (if Nx.Placement.equal at Nx.Placement.host then Fun.id
+      (if eager at then Fun.id
        else
          xfail
            ~reason:
@@ -3480,7 +3477,7 @@ let held_by_steps at ~than a b =
         memory of one of %d"
        b than a) (fun () ->
       let held k =
-        let n = k * Tolk.Hcq2.chunk_calls in
+        let n = k * long_scan in
         let xs = Nx.place at (rows n 4) in
         let g =
           Rune.jit' (fun xs -> Rune.scan' ~f:sum ~init:(zeros 4) xs |> snd)
@@ -3918,7 +3915,7 @@ let staged_scans d =
           let u = Nx.place at (x ()) and v = Nx.place at (rows 6 4) in
           let before = address u in
           let u', v' = g (u, v) in
-          equal ~msg:"lent" nativeint before (address u');
+          equal ~msg:"lent" at_memory before (address u');
           equal near (Nx.add_s (x ()) 1.) (host u');
           equal near
             (fst (Rune.scan' ~f:sum ~init:(zeros 4) (rows 6 4)))
@@ -4277,19 +4274,21 @@ let device_lists =
       slow "a result fed back to the call moves no bytes" (fun () ->
           let g = Rune.jit' (fun a -> Nx.mul_s a 0.5) in
           let r = ref (g (Nx.place (split pair) (grid 4 3))) in
-          let before = bytes_in d1 + bytes_in d2 in
-          for _ = 1 to 3 do
-            r := g !r
-          done;
-          equal int before (bytes_in d1 + bytes_in d2));
+          let (), bytes =
+            received [ d1; d2 ] (fun () ->
+                for _ = 1 to 3 do
+                  r := g !r
+                done)
+          in
+          equal int 0 bytes);
       test "a capture copied to every device is bound on each" (fun () ->
           let w = Nx.place (copies pair) (y ()) in
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           let a = Nx.place (copies pair) (x ()) in
           ignore (g a);
-          let before = bytes_in d1 + bytes_in d2 in
-          equal close (Nx.mul (x ()) (y ())) (host (g a));
-          equal int before (bytes_in d1 + bytes_in d2));
+          let r, bytes = received [ d1; d2 ] (fun () -> g a) in
+          equal close (Nx.mul (x ()) (y ())) (host r);
+          equal int 0 bytes);
       slow "one shard's slice of a split value computes on its device alone"
         (fun () ->
           let a = Nx.place (split pair) (grid 4 3) in
@@ -4416,9 +4415,9 @@ let device_lists =
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           let a = Nx.place (split pair) (grid 4 3) in
           ignore (g a);
-          let before = bytes_in d1 + bytes_in d2 in
-          equal floats (Nx.mul (grid 4 3) (Nx.mul_s (grid 4 3) 2.)) (host (g a));
-          equal int before (bytes_in d1 + bytes_in d2));
+          let r, bytes = received [ d1; d2 ] (fun () -> g a) in
+          equal floats (Nx.mul (grid 4 3) (Nx.mul_s (grid 4 3) 2.)) (host r);
+          equal int 0 bytes);
       slow "a value placed inside the function is split as it says" (fun () ->
           let r =
             Rune.jit' (fun a -> Nx.place (split pair) (poly a)) (grid 4 3)
@@ -4525,41 +4524,30 @@ let device_lists =
 (* The float32 values of the file at [path], four of them, as a value on the
    disk. *)
 let on_disk_at_read path =
-  let module B = Nx_device.Buffer in
   let pp = Format.pp_print_string in
-  let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
+  let p = Nx.Placement.on (Nx.Device.make Rig_disk.device) in
   Nx.Repr.Placed.v p Nx.float32
     (Nx_array.View.create [| 4 |])
     (Nx.Repr.Storage.v p
-       [
-         B.view
-           (require_ok ~pp (B.of_file path))
-           ~offset:0 Nx_dtype.Scalar.Float32 4;
-       ])
+       [ Rig.Buffer.view (require_ok ~pp (Rig_disk.of_file path)) ~first:0 ~length:16 ])
 
 (* A path that names nothing, where [on_disk_at] makes a file. *)
 let new_path () = Filename.concat (temp_dir ()) "file"
 
 (* [x] written to a new file at [path], as a value on the disk over it. *)
 let on_disk_at path x =
-  let module B = Nx_device.Buffer in
   let src = elements x in
   let pp = Format.pp_print_string in
-  B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
-  let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
+  Rig.Buffer.copy ~src
+    ~dst:(require_ok ~pp (Rig_disk.create_file path (Rig.Buffer.length src)));
+  let p = Nx.Placement.on (Nx.Device.make Rig_disk.device) in
   Nx.Repr.Placed.v p (Nx.dtype x)
     (Nx_array.View.create (Nx.shape x))
-    (Nx.Repr.Storage.v p
-       [
-         B.view
-           (require_ok ~pp (B.of_file path))
-           ~offset:0 (B.dtype src) (B.length src);
-       ])
+    (Nx.Repr.Storage.v p [ require_ok ~pp (Rig_disk.of_file path) ])
 
 (* The int32 values [v] in a file, two bytes after its start, as a value on the
    disk whose elements are not aligned to their width. *)
 let unaligned_on_disk v =
-  let module B = Nx_device.Buffer in
   let n = Array.length v in
   let path = new_path () in
   let bytes =
@@ -4573,14 +4561,14 @@ let unaligned_on_disk v =
           land 255)
   in
   ignore (on_disk_at path bytes);
-  let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
+  let p = Nx.Placement.on (Nx.Device.make Rig_disk.device) in
   Nx.Repr.Placed.v p Nx.int32
     (Nx_array.View.create [| n |])
     (Nx.Repr.Storage.v p
        [
-         B.view
-           (require_ok ~pp:Format.pp_print_string (B.of_file path))
-           ~offset:2 Nx_dtype.Scalar.Int32 n;
+         Rig.Buffer.view
+           (require_ok ~pp:Format.pp_print_string (Rig_disk.of_file path))
+           ~first:2 ~length:(4 * n);
        ])
 
 (* [captured ()] is a host constant, a one-element value on the disk and a value
@@ -4672,16 +4660,17 @@ let disk =
       test
         "a consumed weight that is a window of its file is computed from a \
          copy and stays readable, as its sibling does" (fun () ->
-          let module B = Nx_device.Buffer in
           let path = new_path () in
           ignore (on_disk_at path (Nx.concatenate ~axis:0 [ x (); y () ]));
-          let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
-          let file = require_ok ~pp:Format.pp_print_string (B.of_file path) in
+          let p = Nx.Placement.on (Nx.Device.make Rig_disk.device) in
+          let file =
+            require_ok ~pp:Format.pp_print_string (Rig_disk.of_file path)
+          in
           let weight first =
             Nx.Repr.Placed.v p Nx.float32
               (Nx_array.View.create [| 4 |])
               (Nx.Repr.Storage.v p
-                 [ B.view file ~offset:(4 * first) Float32 4 ])
+                 [ Rig.Buffer.view file ~first:(4 * first) ~length:16 ])
           in
           let sibling = weight 0 and w = weight 4 in
           let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) w in
@@ -5051,7 +5040,9 @@ let on_one_device ~name d =
             (f (x ()))
             (host (Rune.jit' ~beam:1 ~parallel:2 f (placed d (x ())))));
       (* The gather broadcasts its indices to the rows it reads: the copy moves
-         the indices, and the broadcast is taken on the device. *)
+         the indices, and the broadcast is taken on the device. The copy is a
+         part of the call's submission, counted as rig's profile records copy
+         parts. *)
       test "a host index a gather reads uploads its own bytes" (fun () ->
           let table = placed d (grid 16 4) in
           let g =
@@ -5060,9 +5051,8 @@ let on_one_device ~name d =
           in
           let ids = Nx.create Nx.int64 [| 1; 4 |] [| 3L; 1L; 2L; 0L |] in
           ignore (g ids);
-          let before = bytes_in d in
-          let r = g ids in
-          equal ~msg:"bytes received" int (Nx.nbytes ids) (bytes_in d - before);
+          let r, bytes = received [ d ] (fun () -> g ids) in
+          equal ~msg:"bytes received" int (Nx.nbytes ids) bytes;
           equal close
             (Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] ids) (grid 16 4))
             (host r));
@@ -5070,16 +5060,14 @@ let on_one_device ~name d =
           let g = Rune.jit' poly in
           let a = placed d (x ()) in
           ignore (g a);
-          let before = bytes_in d in
-          ignore (g a);
-          equal int before (bytes_in d));
+          let _, bytes = received [ d ] (fun () -> g a) in
+          equal int 0 bytes);
       test "a placed view is read where it lies" (fun () ->
           let g = Rune.jit' poly in
           let a = Nx.transpose (placed d (grid 2 3)) in
           ignore (g a);
-          let before = bytes_in d in
-          let r = g a in
-          equal ~msg:"bytes received" int before (bytes_in d);
+          let r, bytes = received [ d ] (fun () -> g a) in
+          equal ~msg:"bytes received" int 0 bytes;
           equal close (poly (Nx.transpose (grid 2 3))) (host r));
       test
         "a float16 argument starting 2 bytes further retraces once, and is \
@@ -5134,9 +5122,9 @@ let on_one_device ~name d =
           ignore (Sys.opaque_identity a));
       test "a consumed placed argument lends its storage" (fun () ->
           let a = placed d (x ()) in
-          let before = Witness.addresses a in
+          let before = Witness.buffers a in
           let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
-          equal (list nativeint) before (Witness.addresses r);
+          equal Witness.storage before (Witness.buffers r);
           equal close (Nx.add_s (x ()) 1.) (host r));
       test "a capture placed where the call computes is bound, not uploaded"
         (fun () ->
@@ -5144,9 +5132,8 @@ let on_one_device ~name d =
           let g = Rune.jit' (fun a -> Nx.mul a w) in
           let a = placed d (x ()) in
           ignore (g a);
-          let before = bytes_in d in
-          let r = g a in
-          equal ~msg:"bytes received" int before (bytes_in d);
+          let r, bytes = received [ d ] (fun () -> g a) in
+          equal ~msg:"bytes received" int 0 bytes;
           equal close (Nx.mul (x ()) (y ())) (host r);
           is_false ~msg:"pinned" (lends w);
           equal ~msg:"the program after" close
@@ -5165,9 +5152,8 @@ let on_one_device ~name d =
           let g = Rune.jit' (f (on d)) in
           let a = placed d (x ()) in
           ignore (g a);
-          let before = bytes_in d in
-          let r = g a in
-          equal ~msg:"bytes received" int before (bytes_in d);
+          let r, bytes = received [ d ] (fun () -> g a) in
+          equal ~msg:"bytes received" int 0 bytes;
           equal close (f Nx.Placement.host (x ())) (host r));
       test "a loop consuming its state holds two generations of it" (fun () ->
           let n = 1 lsl 16 in
@@ -5195,7 +5181,7 @@ let on_one_device ~name d =
           let path = new_path () in
           let elements = Nx.create Nx.float32 [| 4 |] [| 5.; 6.; 1.; 2. |] in
           let pool = Nx.place (on d) (on_disk_at path elements) in
-          let before = Witness.addresses pool in
+          let before = Witness.buffers pool in
           let indices = Nx.create Nx.int64 [| 2 |] [| 0L; 2L |] in
           let values = Nx.create Nx.float32 [| 2 |] [| 10.; 30. |] in
           let r =
@@ -5207,15 +5193,15 @@ let on_one_device ~name d =
           (* A device that shares the host's memory borrows the file's pages,
              which it must not lend; another copies them into its own. *)
           let copied =
-            not (Nx_device.shares_host_memory (Nx.Device.memory d))
+            not (Rig.shares_host_memory (Nx.Device.memory d))
           in
           equal bool ~msg:"lent" copied
-            (List.equal Nativeint.equal before (Witness.addresses r));
+            (List.for_all2 Witness.same before (Witness.buffers r));
           raises_invalid_arg (fun () -> Nx.to_array pool);
           equal floats elements (host (on_disk_at_read path)));
       slow "a compiled gradient through remats keeps under half the activations"
         (fun () ->
-          let layers = 8 and batch = 256 and dim = 32 in
+          let layers = 8 and dim = 32 in
           let hidden = 8 * dim in
           let weights =
             List.init layers (fun i ->
@@ -5228,7 +5214,6 @@ let on_one_device ~name d =
                 in
                 (w dim hidden, w hidden dim))
           in
-          let a = placed d (Nx.ones Nx.float32 [| batch; dim |]) in
           let loss remat a =
             Nx.sum
               (List.fold_left
@@ -5238,7 +5223,8 @@ let on_one_device ~name d =
                    else block w a)
                  a weights)
           in
-          let peak remat =
+          let peak remat batch =
+            let a = placed d (Nx.ones Nx.float32 [| batch; dim |]) in
             let g = Rune.jit' (Rune.grad' (loss remat)) in
             let base = settled d in
             let r = g a in
@@ -5246,8 +5232,14 @@ let on_one_device ~name d =
             ignore (host r);
             (used, g)
           in
-          let plain = warmed (fun () -> peak false) in
-          let recomputed = warmed (fun () -> peak true) in
+          (* A device whose memory holds the code of its kernels counts it,
+             and remat compiles more kernels. Activations grow with the batch
+             and the code does not, so the activations are what a call holds
+             at a batch of 512 beyond what it holds at 256. *)
+          let held remat =
+            warmed (fun () -> peak remat 512) - warmed (fun () -> peak remat 256)
+          in
+          let plain = held false and recomputed = held true in
           less
             ~msg:
               (Printf.sprintf "%d bytes with remat, %d without" recomputed plain)
@@ -5295,11 +5287,10 @@ let on_gpu kind = function
       let why = "no " ^ kind ^ " device" in
       [ slow why (fun () -> skip ~reason:why ()) ]
 
-(* Lost devices: memories of [Nx_test.Faulty], whose driver reports a fault a
-   test names. *)
+(* Lost devices: memories of [Nx_test.Faulty], which a test closes. *)
 
-let lost_on d why = function
-  | Nx_device.Lost (m, why') -> m == Nx.Device.memory d && why' = why
+let lost_on d = function
+  | Rig.Lost (m, why) -> m == Nx.Device.memory d && why = "closed"
   | _ -> false
 
 let lost_devices =
@@ -5311,9 +5302,9 @@ let lost_devices =
           let g = Rune.jit' poly in
           let a = placed d (x ()) in
           equal ~msg:"before the loss" close (poly (x ())) (host (g a));
-          Faulty.lose d "fault";
-          raises_match (lost_on d "fault") (fun () -> g a);
-          raises_match (lost_on d "fault") (fun () -> Rune.jit' Nx.neg a));
+          Faulty.lose d;
+          raises_match (lost_on d) (fun () -> g a);
+          raises_match (lost_on d) (fun () -> Rune.jit' Nx.neg a));
       test "a call whose capture is on a lost device raises Lost naming it"
         (fun () ->
           let d = Faulty.device 2 in
@@ -5323,9 +5314,9 @@ let lost_devices =
           equal ~msg:"before the loss" close
             (Nx.mul (x ()) (y ()))
             (host (g (x ())));
-          Faulty.lose d "fault";
-          raises_match (lost_on d "fault") (fun () -> g (x ()));
-          raises_match (lost_on d "fault") (fun () -> h (x ())));
+          Faulty.lose d;
+          raises_match (lost_on d) (fun () -> g (x ()));
+          raises_match (lost_on d) (fun () -> h (x ())));
       test
         "a reopened device compiles anew, and devices the loss does not reach \
          compute as before" (fun () ->
@@ -5334,7 +5325,7 @@ let lost_devices =
           ignore (g (placed d (x ())));
           let b = placed other (x ()) in
           ignore (g b);
-          Faulty.lose d "fault";
+          Faulty.lose d;
           let d' = Faulty.device 3 in
           equal ~msg:"another device" close (poly (x ())) (host (g b));
           equal ~msg:"the reopened device" close
@@ -5678,8 +5669,11 @@ let () =
          on_one_device ~name:"one device" d4;
          sums_fuse_products Nx.Device.host;
          lost_devices;
-         group ~tags:[ "slow" ] "metal" (on_gpu "Metal" (opened Nx_metal.get));
-         group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" (opened Nx_cuda.get));
-         group ~tags:[ "slow" ] "nv" (on_gpu "NV" (opened Nx_nv.get));
-         group ~tags:[ "slow" ] "amd" (on_gpu "AMD" (opened Nx_amd.get));
+         group ~tags:[ "slow" ] "metal"
+           (on_gpu "Metal" (opened (Rig_metal.gpu 0)));
+         group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" (opened (Rig_cuda.gpu 0)));
+         group ~tags:[ "slow" ] "nv" (on_gpu "NV" (opened (Rig_nv_nvidia.gpu 0)));
+         group ~tags:[ "slow" ] "amd"
+           (on_gpu "AMD"
+              (opened ~backend:Nx_amd.backend (Rig_amd_amdgpu.gpu 0)));
        ])

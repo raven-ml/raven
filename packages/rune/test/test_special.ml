@@ -55,7 +55,8 @@ let compiled3 at { c } =
           (f (Nx.place at a.(0)) (Nx.place at a.(1)) (Nx.place at a.(2))));
   }
 
-let metal = Result.to_option (Nx_metal.get 0)
+let metal =
+  Result.to_option (Result.map Nx.Device.make (Rig.open_ (Rig_metal.gpu 0)))
 
 let on_devices name ~bound compile =
   let host = check ~bound (golden name) (compile Nx.Placement.host) in
