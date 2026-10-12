@@ -808,16 +808,18 @@ let test_wait_in_queue () =
   equal ~msg:"the producer's word" int (Rig.Point.value a)
     (Rig.signaled producer)
 
-(* A submission holds at most the parts its device's driver states: make
-   refuses one more, naming the limit. *)
+(* A device's most parts is what it always runs, not a cap: a submission of
+   more parts runs where the device's queues have room for it, and only room
+   refuses one they never hold. *)
 let test_most_parts () =
-  let d, _ = P.open_ ~capacity:3 "submit:most-parts" in
-  equal ~msg:"the device's limit" int 3 (Rig.most_parts d);
+  let d, _ = P.open_ ~capacity:4 ~most_parts:2 "submit:most-parts" in
+  equal ~msg:"the device's count" int 2 (Rig.most_parts d);
   equal ~msg:"the host's" int max_int (Rig.most_parts Rig.host);
-  ignore (Sub.make d (Array.make 3 idle));
-  raises_match ~msg:"one part more"
-    (Exn.invalid_arg ~substring:"at most 3 parts")
-    (fun () -> Sub.make d (Array.make 4 idle))
+  let four = Sub.make d (Array.make 4 idle) in
+  Rig.Point.wait (submit four);
+  let five = Sub.make d (Array.make 5 idle) in
+  raises_match ~msg:"more than the queue holds"
+    (Exn.invalid_arg ~substring:"never fit") (fun () -> submit five)
 
 (* A full queue answers Later: the submit waits for one more value. *)
 let test_room () =
@@ -1015,10 +1017,11 @@ let test_part_word () =
 (* Blocks of 4096 bytes of parameters each, one per part, together reach 2^32
    bytes: [make] refuses them, with every part placed and ordered first. *)
 let test_blocks_bound () =
+  let d, _ = P.open_ "submit:blocks-bound" in
   let params = 4096 in
-  let n = (1 lsl 32) / params in
-  let d, _ = P.open_ ~capacity:n "submit:blocks-bound" in
-  let parts = Array.make n (Sub.fill Support.noop ~params) in
+  let parts =
+    Array.make ((1 lsl 32) / params) (Sub.fill Support.noop ~params)
+  in
   raises_match
     (Exn.invalid_arg ~substring:"exceed 2^32 - 1 bytes")
     (fun () -> Sub.make d parts)
@@ -1728,7 +1731,8 @@ let tests =
           test_negative_max_waits;
         test "a queue that waits on objects waits on the producer's object"
           test_in_queue_object;
-        test "make refuses more parts than the device holds" test_most_parts;
+        test "a submission of more than the most parts runs where room has it"
+          test_most_parts;
         test "a full queue's submit waits for room" test_room;
       ];
     group ~timeout "lifetime"

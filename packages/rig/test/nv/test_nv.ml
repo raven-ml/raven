@@ -392,8 +392,8 @@ let high_word () =
   N.free t.g b
 
 (* Parts NV's channels have no room for, refused when submitted: a ring entry
-   cut in half and more ring words than a segment holds; and more parts than
-   the device's most parts, refused when made. No value is assigned. *)
+   cut in half, more ring words than a segment holds, and more parts than the
+   rings hold. No value is assigned. *)
 let refused () =
   S.with_ @@ fun t ->
   let refuses msg ps =
@@ -402,10 +402,7 @@ let refused () =
   in
   refuses "one ring word" [| S.words [| 0 |] |];
   refuses "32,768 ring words" [| S.words (Array.make 32_768 0) |];
-  let n = Rig.most_parts t.d + 1 in
-  raises_match ~msg:(Printf.sprintf "%d parts" n)
-    (Exn.invalid_arg ~substring:"holds at most") (fun () ->
-      S.submit t (Array.make n (S.words [||])));
+  refuses "65,536 parts" (Array.make 65_536 (S.words [||]));
   equal int ~msg:"values assigned" 0 (Rig.submitted t.d)
 
 let work =

@@ -15,6 +15,7 @@ module Polled : sig
 
   val make :
     ?capacity:int ->
+    ?most_parts:int ->
     ?copies:bool ->
     ?host_visible:bool ->
     ?addresses:bool ->
@@ -37,7 +38,9 @@ module Polled : sig
     t
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
       1024), the most one submission holds: beyond it [room] answers
-      [`Later], or, with [may_block], submit waits for room. Without
+      [`Later], or, with [may_block], submit waits for room, and it answers
+      [`Never] for a submission of more. Its facts state [most_parts]
+      (defaults to [capacity]). Without
       [copies] (defaults to [true]) it lists no copy queue. Its compute queue
       takes words, and does nothing for them.
       Without [host_visible] (defaults to [true]) the host does not address
@@ -73,6 +76,7 @@ module Polled : sig
 
   val open_ :
     ?capacity:int ->
+    ?most_parts:int ->
     ?copies:bool ->
     ?host_visible:bool ->
     ?addresses:bool ->

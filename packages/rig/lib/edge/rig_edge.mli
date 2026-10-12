@@ -129,11 +129,14 @@ type 'region facts = {
   completion : completion;  (** How the word advances. *)
   waits : waits;  (** The producers its queues wait for. *)
   most_parts : int;
-      (** The most parts one submission may hold, [max_int] where the driver
-          has no such limit. The idle device must run, in one submission,
-          that many launches and fills up to the argument size, and copies
-          up to the length, that the driver's [.mli] states. Words parts, and
-          larger launches and copies, take the room their sizes take. *)
+      (** The most parts the idle device always runs in one submission,
+          [max_int] where the driver has no such bound: that many launches
+          and fills up to the argument size, and copies up to the length,
+          that the driver's [.mli] states. [room] must never answer
+          [RIG_NEVER] for such a submission of parts the device runs
+          ({!section-calls}). Words parts,
+          and larger launches and copies, take the room their sizes take,
+          and [room] alone judges a submission of more parts. *)
   may_block : bool;
       (** Whether [room], [submit] and [commit] ({!section-calls}) may block
           on the device's own earlier work, its own transfers or its

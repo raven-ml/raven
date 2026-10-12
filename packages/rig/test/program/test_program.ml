@@ -2620,6 +2620,34 @@ let test_copy_outside () =
   raises_match ~msg:"an offset past an int" Exn.invalid_arg (fun () ->
       run twice max_int)
 
+(* A Submit step of more parts than its device's most parts loads and runs
+   where the device's queues have room for it: three fills of one word each,
+   on a device that always runs two. *)
+let test_past_most_parts () =
+  let d, _ =
+    P.open_ ~capacity:4 ~most_parts:2
+      (strf "program:past-most-parts-%d" (Atomic.fetch_and_add opened 1))
+  in
+  let t =
+    {
+      (base d) with
+      steps =
+        [|
+          submit 0
+            ~buffers:[| (Input 0, Rig.Read_write) |]
+            [|
+              fill ~image:0 ~groups:1 1;
+              fill ~image:0 ~groups:1 2;
+              fill ~image:0 ~groups:1 3;
+            |];
+        |];
+    }
+  in
+  let p = load_ok t [ d ] in
+  let x = of_bytes d (String.make 64 '\000') in
+  Array.iter Rig.Point.wait (G.run p { inputs = [| x |]; ints = [||] });
+  equal ~msg:"the last fill's word" int 3 (word_of x)
+
 (* A copy within the ints, both ends at offsets the run reads from them: word
    1 into word 3. *)
 let test_copy_ints () =
@@ -3184,6 +3212,8 @@ let tests =
           test_copy_outside;
         test "a Copy part copies within the ints at offsets they hold"
           test_copy_ints;
+        test "a step of more parts than its device's most parts runs"
+          test_past_most_parts;
         test "memory only copies name takes no slot of the submission"
           test_renumbered;
         test "an init Address comes from a step fixing its run's copy"

@@ -196,16 +196,16 @@ val runs_on_host : t -> bool
     device's memory as on its own. *)
 
 val most_parts : t -> int
-(** [most_parts d] is the most parts one submission of [d] may hold
-    ({!Submission.make}), as [d]'s driver states it ({!Rig_edge.type-facts}):
-    [max_int] where its driver has no such limit, and [0] for an io device.
-    For a device of another machine, it is that machine's device's.
+(** [most_parts d] is the most parts that an idle [d] always runs in one
+    submission, as [d]'s driver states it ({!Rig_edge.type-facts}): [max_int]
+    where its driver has no such bound, and [0] for an io device. For a
+    device of another machine, it is that machine's device's.
 
-    An idle [d] runs any submission of at most that many parts whose parts
-    are launches and fills up to the argument size, and copies up to the
-    length, that its driver's [.mli] states. Words parts, and larger
-    launches and copies, take the room their sizes take, and their sizes are
-    the caller's. *)
+    The count holds for launches and fills up to the argument size, and
+    copies up to the length, that [d]'s driver's [.mli] states. Words parts,
+    and larger launches and copies, take the room their sizes take, and
+    their sizes are the caller's. A submission of more parts may still run:
+    {!submit} decides by the room [d]'s queues have. *)
 
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is the record that [d]'s driver declares under [k]
@@ -1416,8 +1416,6 @@ module Submission : sig
 
       Raises [Invalid_argument] if:
       {ul
-      {- [parts] are more than {!most_parts}[ d], the message stating that
-         limit;}
       {- [d] is an io device, no queue of [d] runs a part's kind, such as a
          copy, a fill or words on {!host}, or [d] has no copy engine and a
          copy follows no earlier part on a queue that runs copies;}

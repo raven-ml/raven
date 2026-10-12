@@ -46,9 +46,9 @@ type dev = { d : Rig.t; p : P.t; mutable n : int }
 
 let opened = ref 0
 
-let dev ?capacity () =
+let dev () =
   incr opened;
-  let d, p = P.open_ ?capacity (strf "bench:%d" !opened) in
+  let d, p = P.open_ (strf "bench:%d" !opened) in
   { d; p; n = 0 }
 
 let drained t =
@@ -148,7 +148,7 @@ let launching () =
 let many = 4096
 
 let making () =
-  let t = dev ~capacity:many () in
+  let t = dev () in
   let allocs = Array.init 16 (fun _ -> B.create t.d 256) in
   let view k =
     B.view allocs.(k mod 16) ~first:(64 * (k / 16 mod 4)) ~length:64

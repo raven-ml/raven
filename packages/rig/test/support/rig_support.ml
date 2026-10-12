@@ -86,7 +86,7 @@ module Driver = struct
   type t = {
     c : polled;
     word_at : int;  (** The word's host address. *)
-    capacity : int;  (** The parts its queue holds. *)
+    most_parts : int;  (** The parts its facts state an idle queue runs. *)
     copies : bool;
     host_visible : bool;
     addresses : bool;
@@ -191,7 +191,7 @@ module Driver = struct
           objects = has `Object;
           most = d.max_waits;
         };
-      most_parts = d.capacity;
+      most_parts = d.most_parts;
       may_block = d.may_block;
       hang_ms = d.hang_ms;
       maps_host = d.maps_host;
@@ -413,12 +413,12 @@ end
 module Polled = struct
   include Driver
 
-  let make ?(capacity = 1024) ?(copies = true) ?(host_visible = true)
-      ?(addresses = true) ?(transport = false) ?(peers = true)
-      ?(maps_host = true) ?(budget = 1 lsl 30) ?(memory = max_int)
-      ?(window = max_int) ?(may_block = false) ?(completion = `Host)
-      ?(waits_on = []) ?(max_waits = max_int) ?(answer = `Stopped)
-      ?(runs = `When_slept) ?(lag = 1) ?hang_ms
+  let make ?(capacity = 1024) ?most_parts ?(copies = true)
+      ?(host_visible = true) ?(addresses = true) ?(transport = false)
+      ?(peers = true) ?(maps_host = true) ?(budget = 1 lsl 30)
+      ?(memory = max_int) ?(window = max_int) ?(may_block = false)
+      ?(completion = `Host) ?(waits_on = []) ?(max_waits = max_int)
+      ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
       ?(capability = Rig_edge.Capability (capability_key, ())) () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
     let limits = function
@@ -431,7 +431,7 @@ module Polled = struct
       {
         c;
         word_at = polled_word_at c;
-        capacity;
+        most_parts = Option.value most_parts ~default:capacity;
         copies;
         host_visible;
         addresses;
@@ -474,13 +474,13 @@ module Polled = struct
     if runs = `Itself then polled_start d.c;
     d
 
-  let open_ ?capacity ?copies ?host_visible ?addresses ?transport ?peers
-      ?maps_host ?budget ?memory ?window ?may_block ?completion ?waits_on
-      ?max_waits ?answer ?runs ?lag ?hang_ms name =
+  let open_ ?capacity ?most_parts ?copies ?host_visible ?addresses ?transport
+      ?peers ?maps_host ?budget ?memory ?window ?may_block ?completion
+      ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms name =
     let p =
-      make ?capacity ?copies ?host_visible ?addresses ?transport ?peers
-        ?maps_host ?budget ?memory ?window ?may_block ?completion ?waits_on
-        ?max_waits ?answer ?runs ?lag ?hang_ms ()
+      make ?capacity ?most_parts ?copies ?host_visible ?addresses ?transport
+        ?peers ?maps_host ?budget ?memory ?window ?may_block ?completion
+        ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms ()
     in
     match
       Rig.open_ { name; driver = (module Driver); make = (fun () -> Ok p) }
