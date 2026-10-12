@@ -1237,6 +1237,9 @@ thread.
 
 ### Tolk (new)
 
+- `Dtype.pp_const` prints a float's shortest round-tripping digits on every
+  system. It used the C library's conversions, which printed
+  `-9.564275832644383e-25` for `-0x1.28p-80` on Windows.
 - On Windows, the Clang renderer no longer marks kernels and calls through
   function pointers `__attribute__((ms_abi))`: rig calls host code by
   System V on every system, so a called function pointer got the wrong

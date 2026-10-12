@@ -154,7 +154,8 @@ def const():
 def const_repr():
     floats = [0.0, -0.0, 1.0, -1.0, 0.1, 1.5, 100.0, 0.30000000000000004, 12345.678, 1e15, 9007199254740993.0, 9999999999999998.0, 1234567890123456.5, 1e16,
               1.5e16, 123456789012345678.0, 1e22, 1e100, 1e-4, 0.0001234, 1e-5, 2.5e-05, -1e-7, 5e-324,
-              1.7976931348623157e308, float("inf"), float("-inf"), float("nan")]
+              1.7976931348623157e308, -9.564275832644382e-25, 2.0**-1022, 2.0**-1000, 2.0**60, 1e23, 5e-310,
+              float("inf"), float("-inf"), float("nan")]
     consts = [(x.hex(), dtypes.float64.const(x)) for x in floats]
     consts += [(repr(x), dtypes.weakint.const(x)) for x in [0, -1, 2**64, -2**799]]
     consts += [(repr(x), dtypes.bool.const(x)) for x in [True, False]] + [("Invalid", Invalid)]

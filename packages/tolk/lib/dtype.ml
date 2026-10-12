@@ -29,57 +29,103 @@ let hash_const (c : [< const ]) =
   | `Float x -> Hashtbl.hash (Int64.bits_of_float x)
   | c -> Hashtbl.hash c
 
-(* The fewest significant digits that read back as [x], a finite float, and
-   where their decimal point goes: [x] reads as 0.[digits] times 10 to the
-   [point]. Just above a power of two the floats below are closer than those
-   above, so digits rounded to nearest can miss [x] where their neighbour does
-   not. *)
+(* A positive finite float [x] as [(m, e)], [x = m * 2^e] with [m] its
+   significand. *)
+let significand x =
+  let bits = Int64.bits_of_float x in
+  let biased = Int64.to_int (Int64.shift_right_logical bits 52) land 0x7ff in
+  let fraction = Int64.logand bits 0xF_FFFF_FFFF_FFFFL in
+  if biased = 0 then (fraction, -1074)
+  else (Int64.logor fraction 0x10_0000_0000_0000L, biased - 1075)
+
+(* The fewest significant digits that read back as [x], a positive finite float,
+   the nearest such to [x], and where their decimal point goes: [x] reads as
+   0.[digits] times 10 to the [point]. Burger and Dybvig's free-format algorithm
+   ("Printing Floating-Point Numbers Quickly and Accurately", 1996), on
+   integers: [r / s] is [x], and [m_plus / s] and [m_minus / s] are the
+   distances to the midpoints with its neighbours, which read as [x] iff its
+   significand is even. Just above a power of two the float below is twice as
+   close. The C library's conversions are not used: they round wrongly on some
+   systems. *)
 let shortest_digits x =
-  let rec shortest n =
-    let s = strf "%.*e" (n - 1) (Float.abs x) in
-    let e = String.index s 'e' in
-    let mantissa =
-      Bigint.of_string
-        (String.concat "" (String.split_on_char '.' (String.sub s 0 e)))
-    in
-    let exponent =
-      int_of_string (String.sub s (e + 1) (String.length s - e - 1)) - n + 1
-    in
-    let reads m =
-      Float.equal
-        (float_of_string (strf "%se%d" (Bigint.to_string m) exponent))
-        (Float.abs x)
-    in
-    match
-      List.find_opt reads
-        [ mantissa; Bigint.succ mantissa; Bigint.pred mantissa ]
-    with
-    | Some m -> (Bigint.to_string m, exponent)
-    | None -> shortest (n + 1)
+  let module Z = Bigint in
+  let m, e = significand x in
+  let inclusive = Int64.equal (Int64.logand m 1L) 0L in
+  let power_of_two = Int64.equal m 0x10_0000_0000_0000L && e > -1074 in
+  let m = Z.of_int64 m and ten = Z.of_int 10 in
+  let two_to n = Z.shift_left Z.one n in
+  let r, s, m_plus, m_minus =
+    match (e >= 0, power_of_two) with
+    | true, false -> (Z.shift_left m (e + 1), Z.of_int 2, two_to e, two_to e)
+    | true, true ->
+        (Z.shift_left m (e + 2), Z.of_int 4, two_to (e + 1), two_to e)
+    | false, false -> (Z.shift_left m 1, two_to (1 - e), Z.one, Z.one)
+    | false, true -> (Z.shift_left m 2, two_to (2 - e), Z.of_int 2, Z.one)
   in
-  let digits, exponent = shortest 1 in
-  (digits, exponent + String.length digits)
+  (* [k] estimates the exponent of the first digit, within one: [x < 10^k]. *)
+  let k = int_of_float (Float.ceil (Float.log10 x -. 1e-10)) in
+  let r, s, m_plus, m_minus =
+    if k >= 0 then (r, Z.mul s (Z.pow ten k), m_plus, m_minus)
+    else
+      let p = Z.pow ten (-k) in
+      (Z.mul r p, s, Z.mul m_plus p, Z.mul m_minus p)
+  in
+  let above a b = if inclusive then Z.geq a b else Z.gt a b in
+  let below a b = if inclusive then Z.leq a b else Z.lt a b in
+  (* The upper midpoint is below [10^k], and the lower one is not below
+     [10^(k-1)]. *)
+  let rec fix k s r m_plus m_minus =
+    if above (Z.add r m_plus) s then fix (k + 1) (Z.mul s ten) r m_plus m_minus
+    else if not (above (Z.mul ten (Z.add r m_plus)) s) then
+      fix (k - 1) s (Z.mul ten r) (Z.mul ten m_plus) (Z.mul ten m_minus)
+    else (k, s, r, m_plus, m_minus)
+  in
+  let k, s, r, m_plus, m_minus = fix k s r m_plus m_minus in
+  let digits = Buffer.create 17 in
+  let add d = Buffer.add_char digits (Char.chr (Char.code '0' + d)) in
+  (* Each digit, until one leaves [x] the nearest float: the last is rounded to
+     the nearer of its two candidates, ties to an even digit. *)
+  let rec generate r m_plus m_minus =
+    let r = Z.mul ten r
+    and m_plus = Z.mul ten m_plus
+    and m_minus = Z.mul ten m_minus in
+    let d = Z.to_int (Z.div r s) in
+    let r = Z.sub r (Z.mul (Z.of_int d) s) in
+    match (below r m_minus, above (Z.add r m_plus) s) with
+    | false, false ->
+        add d;
+        generate r m_plus m_minus
+    | true, false -> add d
+    | false, true -> add (d + 1)
+    | true, true ->
+        let c = Z.compare (Z.shift_left r 1) s in
+        add (if c < 0 || (c = 0 && d land 1 = 0) then d else d + 1)
+  in
+  generate r m_plus m_minus;
+  (Buffer.contents digits, k)
 
 let float_repr x =
   if Float.is_nan x then "nan"
   else if not (Float.is_finite x) then
     if Float.sign_bit x then "-inf" else "inf"
-  else if Float.is_integer x && Float.abs x < 1e16 then strf "%.0f.0" x
   else
     let sign = if Float.sign_bit x then "-" else "" in
-    let digits, point = shortest_digits x in
-    let n = String.length digits in
-    if point > 16 || point < -3 then
-      let exponent = point - 1 and rest = String.sub digits 1 (n - 1) in
-      strf "%s%c%s%se%+03d" sign digits.[0]
-        (if rest = "" then "" else ".")
-        rest exponent
-    else if point <= 0 then
-      strf "%s0.%s%s" sign (String.make (-point) '0') digits
+    if Float.is_integer x && Float.abs x < 1e16 then
+      sign ^ Bigint.to_string (Bigint.of_float (Float.abs x)) ^ ".0"
     else
-      strf "%s%s.%s" sign
-        (String.sub digits 0 point)
-        (String.sub digits point (n - point))
+      let digits, point = shortest_digits (Float.abs x) in
+      let n = String.length digits in
+      if point > 16 || point < -3 then
+        let exponent = point - 1 and rest = String.sub digits 1 (n - 1) in
+        strf "%s%c%s%se%+03d" sign digits.[0]
+          (if rest = "" then "" else ".")
+          rest exponent
+      else if point <= 0 then
+        strf "%s0.%s%s" sign (String.make (-point) '0') digits
+      else
+        strf "%s%s.%s" sign
+          (String.sub digits 0 point)
+          (String.sub digits point (n - point))
 
 let pp_const ppf (c : [< const ]) =
   match c with
