@@ -237,8 +237,9 @@ let frame_w =
       Format.fprintf ppf "kind %d, %a" k pp_bytes p)
 
 let pp_account ppf (a : Wire.account) =
-  Format.fprintf ppf "{id %d; %S; %S; budget %d; reaches [%s]; reached_by [%s]}"
-    a.id a.name a.arch a.budget
+  Format.fprintf ppf
+    "{id %d; %S; %S; budget %d; most_parts %d; reaches [%s]; reached_by [%s]}"
+    a.id a.name a.arch a.budget a.most_parts
     (String.concat "; " (List.map string_of_int a.reaches))
     (String.concat "; " (List.map string_of_int a.reached_by))
 
@@ -334,6 +335,7 @@ let echo_open kind =
         name = kind;
         arch = "echo";
         budget = 0;
+        most_parts = 1;
         reaches = [];
         reached_by = [];
       };
@@ -939,9 +941,10 @@ let account_g =
   let+ name = text
   and+ arch = text
   and+ budget = id
+  and+ most_parts = int_range 1 max_int
   and+ reaches = peers
   and+ reached_by = peers in
-  { Wire.id = device_id; name; arch; budget; reaches; reached_by }
+  { Wire.id = device_id; name; arch; budget; most_parts; reaches; reached_by }
 
 (* A request and an answer the agent gives it. *)
 let case_g =
@@ -2120,7 +2123,15 @@ let answers_in_order () =
   let second = opened () in
   let name = String.make (15 lsl 20) 'a' in
   let large =
-    { Wire.id = 0; name; arch = ""; budget = 0; reaches = []; reached_by = [] }
+    {
+      Wire.id = 0;
+      name;
+      arch = "";
+      budget = 0;
+      most_parts = 1;
+      reaches = [];
+      reached_by = [];
+    }
   in
   let rec answer_second () =
     match Link.answer l second (Ok []) with
@@ -2136,7 +2147,9 @@ let answers_in_order () =
   let a2 = size (next_frame p) in
   Domain.join d1;
   Domain.join d2;
-  let large_bytes = 1 + 4 + 8 + (4 + String.length name) + 4 + 8 + 4 + 4 in
+  let large_bytes =
+    1 + 4 + 8 + (4 + String.length name) + 4 + 8 + 8 + 4 + 4
+  in
   equal
     (list (option (pair int int)))
     [ Some (k_answer, large_bytes); Some (k_answer, 5) ]

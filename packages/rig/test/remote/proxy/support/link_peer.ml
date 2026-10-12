@@ -25,6 +25,7 @@ let answer : type a. a Wire.request -> (a, string) result = function
             name = kind;
             arch = "echo";
             budget = 0;
+            most_parts = 1;
             reaches = [];
             reached_by = [];
           };

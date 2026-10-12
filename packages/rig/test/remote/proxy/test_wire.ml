@@ -31,7 +31,7 @@ let u32 n =
   Bytes.to_string b
 
 (* The protocol's version, as wire.mli states it. *)
-let version = 5
+let version = 6
 
 let random_bytes n = String.init n (fun _ -> Char.chr (Random.int 256))
 let greeting ~version nonce = "rig-job\n" ^ u32 version ^ "\000" ^ nonce
@@ -515,7 +515,7 @@ let greetings =
     [
       cases
         ~name:(Printf.sprintf "dial refuses version %d, naming both")
-        "another version" [ 0; 4; 0xffff_ffff ] other_version;
+        "another version" [ 0; 5; 0xffff_ffff ] other_version;
       cases
         ~name:(fun (n, _) -> "dial refuses " ^ n)
         "malformed" malformed_greetings

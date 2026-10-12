@@ -115,6 +115,7 @@ type device = {
   kind : kind;  (** What it is, with the module and handle that run it. *)
   arch : string;  (** Its architecture, as its driver names it. *)
   maps_host : bool;  (** Whether it maps host memory. *)
+  most_parts : int;  (** {!Rig.most_parts}. *)
   host_addresses : bool;  (** Whether the host addresses all its regions. *)
   key : int;
       (** The uid of its driver's key or its io library's region key, [-1]

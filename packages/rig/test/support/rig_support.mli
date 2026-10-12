@@ -36,9 +36,10 @@ module Polled : sig
     unit ->
     t
   (** [make ()] is a device whose queue holds [capacity] parts (defaults to
-      1024): beyond it [room] answers [`Later], or, with [may_block], submit
-      waits for room. Without [copies] (defaults to [true]) it lists no copy
-      queue. Its compute queue takes words, and does nothing for them.
+      1024), the most one submission holds: beyond it [room] answers
+      [`Later], or, with [may_block], submit waits for room. Without
+      [copies] (defaults to [true]) it lists no copy queue. Its compute queue
+      takes words, and does nothing for them.
       Without [host_visible] (defaults to [true]) the host does not address
       its [Device] memory. Without [addresses] (defaults to [true]) its
       [Device] memory has no address: its work names it by handle alone. With

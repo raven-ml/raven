@@ -124,8 +124,8 @@ module Strings = Tbl.Make (String)
 let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most = 0 }
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
-    ~completion ~waits ~hang_ms ~maps_host ~host_addresses ~word ~word_region
-    ~key ~memory_device ~fault ~capability ~budget =
+    ~completion ~waits ~hang_ms ~maps_host ~most_parts ~host_addresses ~word
+    ~word_region ~key ~memory_device ~fault ~capability ~budget =
   let live =
     {
       c;
@@ -164,6 +164,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     kind;
     arch;
     maps_host;
+    most_parts;
     host_addresses;
     key;
     memory_device;
@@ -181,7 +182,8 @@ let host =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues ~copy_engine:None
       ~completion:Host_writes ~waits:no_waits ~hang_ms:None ~maps_host:false
-      ~host_addresses:false ~word:(c_host_word ()) ~word_region:None ~key:(-1)
+      ~most_parts:max_int ~host_addresses:false ~word:(c_host_word ())
+      ~word_region:None ~key:(-1)
       ~memory_device:false
       ~fault:(fun _ -> None)
       ~capability:None ~budget:max_int
@@ -199,6 +201,7 @@ let forgotten =
     kind = Ended;
     arch = "";
     maps_host = false;
+    most_parts = 0;
     host_addresses = false;
     key = -1;
     memory_device = false;
@@ -981,6 +984,10 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
         invalid_argf "Rig.open_: %s's hang bound is %d ms, expected at least 1"
           name n)
     f.hang_ms;
+  if f.most_parts < 1 then
+    invalid_argf
+      "Rig.open_: %s's submissions hold at most %d parts, expected at least 1"
+      name f.most_parts;
   let queues = Array.of_list f.queues in
   Option.iter
     (fun i ->
@@ -998,7 +1005,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~kind:(Driver { m; h; rid })
       ~c ~arch:f.arch ~queues ~copy_engine:f.copy_engine
       ~completion:(completion_of f.completion) ~waits:f.waits
-      ~hang_ms:f.hang_ms ~maps_host:f.maps_host
+      ~hang_ms:f.hang_ms ~maps_host:f.maps_host ~most_parts:f.most_parts
       ~host_addresses:f.host_addresses ~word
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
@@ -1048,7 +1055,8 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
           make_device ~index ~name:full ~machine
             ~kind:(Io { m = (module I); h })
             ~c ~arch:"" ~queues:[||] ~copy_engine:None ~completion:Host_writes
-            ~waits:no_waits ~hang_ms:None ~maps_host:false ~host_addresses:false
+            ~waits:no_waits ~hang_ms:None ~maps_host:false ~most_parts:0
+            ~host_addresses:false
             ~word:0 ~word_region:None ~key ~memory_device:false
             ~fault:(function I.Fault why -> Some why | _ -> None)
             ~capability:None ~budget

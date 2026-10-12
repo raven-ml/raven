@@ -16,6 +16,7 @@ let arch d = d.arch
 let computes d =
   match d.kind with Host | Driver _ -> true | Io _ | Ended -> false
 let runs_on_host d = Dev.is_host d || d.memory_device
+let most_parts d = d.most_parts
 let reaches = Dev.reaches
 let shares_host_memory d = Dev.reaches Dev.host d && Dev.reaches d Dev.host
 let budget d = d.budget

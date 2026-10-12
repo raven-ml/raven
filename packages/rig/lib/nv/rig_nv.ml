@@ -343,6 +343,9 @@ let queues =
 let waits =
   { Rig_edge.stores = true; hosts = true; objects = false; most = 256 }
 
+(* The most parts of a submission, rig_nv_stubs.h's MAX_PARTS. *)
+let most_parts = 65535
+
 let capability (T d) = d.capability
 
 let facts (T d) =
@@ -353,6 +356,7 @@ let facts (T d) =
     copy_engine = Some 1;
     completion = Store;
     waits;
+    most_parts;
     may_block = false;
     hang_ms = d.hang_ms;
     maps_host = d.maps_host;

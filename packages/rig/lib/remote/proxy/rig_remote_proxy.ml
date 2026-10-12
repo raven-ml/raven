@@ -70,6 +70,7 @@ let facts d =
     copy_engine = Some 1;
     completion = Host;
     waits = { stores = false; hosts = true; objects = false; most = max_int };
+    most_parts = d.account.most_parts;
     may_block = true;
     hang_ms = None;
     maps_host = false;

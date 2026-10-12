@@ -128,6 +128,11 @@ type 'region facts = {
           first queue lets copies run beside the first queue's work. *)
   completion : completion;  (** How the word advances. *)
   waits : waits;  (** The producers its queues wait for. *)
+  most_parts : int;
+      (** The most parts one submission may hold, [max_int] where the driver
+          has no such limit. [room] answers [RIG_NEVER] for more
+          ({!section-calls}); a submission of fewer may still exceed the
+          device's empty queues by the sizes of its parts. *)
   may_block : bool;
       (** Whether [room], [submit] and [commit] ({!section-calls}) may block
           on the device's own earlier work, its own transfers or its
@@ -166,8 +171,8 @@ type 'region facts = {
 (** The type for the facts of a device. A {!Driver.Fault} while rig reads
     them makes the open return [Error]. The open raises [Invalid_argument]
     if [copy_engine] names no queue of [queues] or one whose [runs] lacks
-    [Copy], [hang_ms] is below [1], [edge] is [0n], or the state's first
-    member is [NULL]. rig checks nothing else of [edge]. *)
+    [Copy], [most_parts] or [hang_ms] is below [1], [edge] is [0n], or the
+    state's first member is [NULL]. rig checks nothing else of [edge]. *)
 
 (** {1:calls The C functions}
 

@@ -86,6 +86,7 @@ module Driver = struct
   type t = {
     c : polled;
     word_at : int;  (** The word's host address. *)
+    capacity : int;  (** The parts its queue holds. *)
     copies : bool;
     host_visible : bool;
     addresses : bool;
@@ -190,6 +191,7 @@ module Driver = struct
           objects = has `Object;
           most = d.max_waits;
         };
+      most_parts = d.capacity;
       may_block = d.may_block;
       hang_ms = d.hang_ms;
       maps_host = d.maps_host;
@@ -429,6 +431,7 @@ module Polled = struct
       {
         c;
         word_at = polled_word_at c;
+        capacity;
         copies;
         host_visible;
         addresses;

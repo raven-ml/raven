@@ -320,6 +320,21 @@ let devices () =
   let why = require_error (Rig.Image.load d0 "code") in
   contains ~msg:"says it loads no code" ~sub:"loads no code" why
 
+(* A device of another machine holds as many parts in a submission as the
+   agent's device: TIGHT's 3. *)
+let most_parts () =
+  with_job @@ fun j _ ->
+  let h = List.hd (Rig_remote.hosts j) in
+  let d = List.hd (Result.get_ok (Rig_remote.devices h "TIGHT")) in
+  equal ~msg:"the agent's device's limit" int 3 (Rig.most_parts d);
+  let copy =
+    Sub.copy ~src:(Buffer (B.create d 8)) ~dst:(Buffer (B.create d 8))
+  in
+  ignore (Sub.make d (Array.make 3 copy));
+  raises_match ~msg:"one part more"
+    (Exn.invalid_arg ~substring:"at most 3 parts")
+    (fun () -> Sub.make d (Array.make 4 copy))
+
 let reaches kinds =
   with_job @@ fun j _ ->
   let h = List.hd (Rig_remote.hosts j) in
@@ -370,6 +385,8 @@ let machines =
   group "machine"
     [
       test "a machine's host is the agent's, of this machine's arch" hosts;
+      test "a device holds the parts in a submission its agent's does"
+        most_parts;
       test "devices are the agent's, named after it, the same at each call"
         devices;
       cases

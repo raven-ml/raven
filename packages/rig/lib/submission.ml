@@ -675,6 +675,10 @@ let build hold ~fixed d parts =
   let parts = Array.copy parts in
   let fn = "Submission.make" in
   check_device fn d;
+  if Array.length parts > d.most_parts then
+    invalid_argf
+      "Rig.%s: %d parts, but a submission of %s holds at most %d parts" fn
+      (Array.length parts) d.name d.most_parts;
   let uses, naming = slot_uses fn parts in
   let check_buffer = Buffer.check_live fn in
   let nfixed = ref 0 and nrefs = ref 0 and ncodes = ref 0 in

@@ -79,10 +79,13 @@ let test_fault_waiting () =
   equal int 1 (Rig.submitted d)
 
 let test_never () =
-  let d, _ = P.open_ ~capacity:1 "turn:never" in
-  let never = Sub.make d [| idle (); idle () |] in
+  let d, _ = P.open_ "turn:never" in
+  let image =
+    require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
+  in
+  let never = Sub.make d [| Sub.launch image "main" ~params:0 |] in
   let run = Sub.Run.make () in
-  Sub.Run.groups run (Sub.block never 1) 0 0 0;
+  Sub.Run.groups run (Sub.block never 0) 0 0 0;
   raises_match Exn.invalid_arg (fun () ->
       Rig.submit never ~run ~buffers:[||]);
   equal int 0 (Rig.submitted d);

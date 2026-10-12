@@ -195,6 +195,14 @@ val runs_on_host : t -> bool
     holds for {!host} and a {!memory_device}. The host computes on such a
     device's memory as on its own. *)
 
+val most_parts : t -> int
+(** [most_parts d] is the most parts one submission of [d] may hold
+    ({!Submission.make}), as [d]'s driver states it ({!Rig_edge.type-facts}):
+    [max_int] where its driver has no such limit, and [0] for an io device.
+    For a device of another machine, it is that machine's device's. A
+    submission of fewer parts may still exceed [d]'s queues by the sizes of
+    its parts ({!submit}). *)
+
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is the record that [d]'s driver declares under [k]
     ({!Rig_edge.type-capability}), filled when [d] opened, or [None] if it
@@ -1404,6 +1412,8 @@ module Submission : sig
 
       Raises [Invalid_argument] if:
       {ul
+      {- [parts] are more than {!most_parts}[ d], the message stating that
+         limit;}
       {- [d] is an io device, no queue of [d] runs a part's kind, such as a
          copy, a fill or words on {!host}, or [d] has no copy engine and a
          copy follows no earlier part on a queue that runs copies;}

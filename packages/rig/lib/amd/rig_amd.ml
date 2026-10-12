@@ -460,6 +460,9 @@ let freed g =
   let m = { address = g.word_address; host = Some g.word_host; data = () } in
   { bytes = 8; mem = Mem (given, m); flush = None }
 
+(* The most parts of a submission, rig_amd_stubs.h's RIG_AMD_PARTS. *)
+let most_parts = 512
+
 let facts g =
   {
     Rig_edge.arch = Abi.Gpu.processor g.gpu;
@@ -474,6 +477,7 @@ let facts g =
         objects = false;
         most = max_waits;
       };
+    most_parts;
     may_block = false;
     hang_ms = g.hang_ms;
     maps_host = g.maps_host;

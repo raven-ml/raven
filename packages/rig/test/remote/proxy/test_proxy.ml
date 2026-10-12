@@ -51,13 +51,15 @@ let driver_facts () =
   equal bool false f.maps_host;
   equal rec_w c (Proxy.capability p);
   equal string "mem3" f.arch;
-  equal int ((1 lsl 30) + 3) f.budget
+  equal int ((1 lsl 30) + 3) f.budget;
+  equal ~msg:"the account's most parts" int 103 f.most_parts
 
 let rig_facts () =
   with_machine ~reaches:[ [] ] @@ fun m ->
   let d = m.devices.(0) in
   equal string "mem1" (Rig.arch d);
   equal int ((1 lsl 30) + 1) (Rig.budget d);
+  equal ~msg:"most parts" int 101 (Rig.most_parts d);
   equal bool true (Rig.equal m.host (Rig.host_of d));
   equal bool true (Rig.computes d);
   equal bool false (Rig.shares_host_memory m.host);

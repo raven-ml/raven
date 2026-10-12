@@ -18,8 +18,9 @@
    key to the controller, then stops listening, so no other agent of the job
    reaches it, and waits for the job to end.
 
-   It serves nine kinds. "MEM" is two memory devices. "POLLED" is two Polled
-   devices, which launch Polled's host functions. "HIDDEN" is a Polled device
+   It serves ten kinds. "MEM" is two memory devices. "POLLED" is two Polled
+   devices, which launch Polled's host functions. "TIGHT" is a Polled device
+   whose queue holds 3 parts. "HIDDEN" is a Polled device
    whose [Device] memory the host does not address. "MAPLESS" is a Polled
    device that maps no host memory. "FAULTY" is a device whose
    next fallible call faults with "the agent's device faulted", which loses it.
@@ -53,6 +54,11 @@ let polled () =
   opened := a :: b :: !opened;
   Ok [ a; b ]
 
+let tight () =
+  let d, _ = Rig_support.Polled.open_ ~capacity:3 "TIGHT:0" in
+  opened := d :: !opened;
+  Ok [ d ]
+
 let hidden () =
   let d, _ = Rig_support.Polled.open_ ~host_visible:false "HIDDEN:0" in
   opened := d :: !opened;
@@ -73,6 +79,7 @@ let kinds =
   [
     ("MEM", mem);
     ("POLLED", polled);
+    ("TIGHT", tight);
     ("FAULTY", faulty);
     ("HIDDEN", hidden);
     ("MAPLESS", mapless);
