@@ -362,12 +362,12 @@ static uint32_t timer_word(const struct device *d, uint32_t at) {
 /* The timer's registers are read high, low, high, as RM reads them, again
    while the high word moved, between two readings of the host's clock,
    whose middle is the host's time. */
-int rig_nv_measure(const struct device *d, struct measure *m) {
+int rig_nv_measure(const struct device *d, struct measure *m,
+                   uint64_t *width) {
   if (d->source != NULL) {
-    uint64_t width;
-    if (d->source->read(d->source, &m->gpu, &m->host, &width) != 0)
+    if (d->source->read(d->source, &m->gpu, &m->host, width) != 0)
       return MEASURE_FAILED;
-    return width <= READ_BOUND_NS ? MEASURE_OK : MEASURE_WIDE;
+    return *width <= READ_BOUND_NS ? MEASURE_OK : MEASURE_WIDE;
   }
   uint64_t before = rig_now_ns();
   uint32_t hi, lo;
@@ -378,7 +378,8 @@ int rig_nv_measure(const struct device *d, struct measure *m) {
   uint64_t after = rig_now_ns();
   m->gpu = (uint64_t)hi << 32 | lo;
   m->host = before + (after - before) / 2;
-  return after - before <= READ_BOUND_NS ? MEASURE_OK : MEASURE_WIDE;
+  *width = after - before;
+  return *width <= READ_BOUND_NS ? MEASURE_OK : MEASURE_WIDE;
 }
 
 static uint64_t later(uint64_t a, uint64_t b) { return a > b ? a : b; }
@@ -473,7 +474,8 @@ int rig_nv_settle(void *self, uint64_t v, const char **failure) {
   struct device *d = self;
   struct measure m;
   if (d->source != NULL && rig_now_ns() - d->latest.host >= MEASURE_NS) {
-    int r = rig_nv_measure(d, &m);
+    uint64_t width;
+    int r = rig_nv_measure(d, &m, &width);
     if (r == MEASURE_FAILED) {
       *failure = "the GPU's timer could not be read";
       return RIG_FAILED;

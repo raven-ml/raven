@@ -309,9 +309,11 @@ val capability : t -> Rig_amd_abi.Capability.t
     {!type-clock} says, and converts a stamp along the line through its
     first measure, at open, and its latest, once they lie a second apart,
     and at [clock_hz] from the latest before. A measure through a {!Source}
-    takes the time of a host clock between two readings of it and drops a
-    read whose readings lie more than 10 µs apart, so a time is within
-    5 µs of the host's clock, plus the clock's rate error since the latest
+    takes the time of a host clock between two readings of it. A re-measure
+    whose readings lie more than 10 µs apart is dropped, and the measure at
+    open keeps the first of sixteen reads within 10 µs, or the narrowest. A
+    time is thus within half its measure's interval, 5 µs once a measure
+    within the bound is taken, plus the clock's rate error since the latest
     measure. Through KFD, KFD reads its clock right after the GPU's, and
     the device maps that clock to the host's with a pair of readings of
     its own. With {!Round_trip} the device measures at open only, and its

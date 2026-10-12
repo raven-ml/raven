@@ -320,10 +320,12 @@ static inline void rig_nv_flush(struct device *d, int launched) {
   if (!read) store_fence();
 }
 
-/* Reads [d]'s timer against the host's clock into [*m]: MEASURE_OK,
-   MEASURE_WIDE if the readings lie more than READ_BOUND_NS apart, or
-   MEASURE_FAILED if its source could not read them. */
-int rig_nv_measure(const struct device *d, struct measure *m);
+/* Reads [d]'s timer against the host's clock into [*m], and the interval
+   of its host readings into [*width]: MEASURE_OK, MEASURE_WIDE if the
+   readings lie more than READ_BOUND_NS apart, or MEASURE_FAILED if its
+   source could not read them. */
+int rig_nv_measure(const struct device *d, struct measure *m,
+                   uint64_t *width);
 
 /* The join word of channel [q]: its GPU address. */
 #define JOIN_GPU(d, q) ((d)->word_gpu + 8 * (1 + (q)))

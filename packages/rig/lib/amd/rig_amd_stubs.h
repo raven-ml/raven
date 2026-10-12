@@ -343,11 +343,11 @@ struct rig_amd {
   const char *times_failure;
 };
 
-/* Takes [d]'s first measure of its clock, from its source, whose host
-   readings lie within RIG_AMD_READ_BOUND_NS, or, without one, from stamps
-   of the compute queue: [1], or [0] if the source could not read the
-   clock, or within the bound, or the GPU wrote no stamp within a second.
-   Called at open, before any submission. */
+/* Takes [d]'s first measure of its clock: from its source, the first of
+   sixteen reads whose host readings lie within RIG_AMD_READ_BOUND_NS, or
+   the narrowest; without one, from stamps of the compute queue. Answers
+   [1], or [0] if the source could not read the clock or the GPU wrote no
+   stamp within a second. Called at open, before any submission. */
 int rig_amd_measure(struct rig_amd *d);
 
 /* Orders every store before it before every store after it, as the GPU

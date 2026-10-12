@@ -155,10 +155,12 @@ val capability : t -> Rig_nv_abi.Gpu.t
     path's {!type-clock}, and converts a stamp along the line through its
     first measure, at open, and its latest, once they lie a second apart,
     and at the timer's nominal rate of a nanosecond a tick before. A
-    measure takes the time of a host clock between two readings of it and
-    drops a measure whose readings lie more than 10 µs apart, so a time is
-    within 5 µs of the host's clock, plus the timer's rate error since the
-    latest measure. Through NVIDIA's kernel driver ({!Source}) the driver
+    measure takes the time of a host clock between two readings of it. A
+    re-measure whose readings lie more than 10 µs apart is dropped, and the
+    measure at open keeps the first of sixteen reads within 10 µs, or the
+    narrowest. A time is thus within half its measure's interval, 5 µs once
+    a measure within the bound is taken, plus the timer's rate error since
+    the latest measure. Through NVIDIA's kernel driver ({!Source}) the driver
     takes the readings around its read of the timer's registers, and the
     device takes one more pair, to map the driver's clock to the host's.
     With {!Registers} the device reads the registers itself, at open only,

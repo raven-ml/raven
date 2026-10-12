@@ -809,13 +809,14 @@ int rig_amd_measure(struct rig_amd *d) {
   struct rig_amd_measure m;
   uint64_t best = UINT64_MAX, width;
   if (d->source != NULL) {
-    for (int i = 0; i < CALIBRATIONS * 2; i++) {
+    for (int i = 0; i < CALIBRATIONS * 2 && best > RIG_AMD_READ_BOUND_NS;
+         i++) {
       if (d->source->read(d->source, &m.ticks, &m.host, &width) != 0) return 0;
-      if (width > RIG_AMD_READ_BOUND_NS) continue;
+      if (width >= best) continue;
+      best = width;
       d->first = d->latest = m;
-      return 1;
     }
-    return 0;
+    return 1;
   }
   for (int i = 0; i < CALIBRATIONS; i++) {
     uint64_t before, after;

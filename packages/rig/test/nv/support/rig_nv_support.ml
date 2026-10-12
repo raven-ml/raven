@@ -246,11 +246,8 @@ let copy_words t ~dst ~src =
 
 (* rig_nv.mli: through the kernel driver, a time is within 5 us of the host's
    clock, half a read's bound, plus the timer's rate error since the latest
-   read, at most 62.5 ms before; RM reads its clock around the timer's
-   registers, so a read is far narrower. Both are below the time the GPU
-   takes to start work the host submitted and the host takes to see it end,
-   so a span lies within the host's times around its submit and its wait. *)
-let clock_error ~since:_ = 0
+   read, at most 62.5 ms before, taken as 10 ppm. *)
+let clock_error ~since:_ = 5_000 + 625
 
 let spin t ~ns =
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
