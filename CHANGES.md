@@ -204,6 +204,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.sin`, `Nx.cos` or `Nx.tan` is right in every lane of a
+  vector that also holds an infinity, a NaN or a value past `2^12` (`2^22`
+  in float64). On x86 such a lane could read any value: the reduction
+  converted an out-of-range quotient it then discarded.
 - A compiled `Nx.pad` of an integer tensor cast to a float, padded with a
   value that is a NaN or an infinity in that float, compiles. It raised
   `Invalid_argument "-inf has no integer value"`.

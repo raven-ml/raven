@@ -308,7 +308,9 @@ let pi_2_cw x =
 (* [quarter_turns a] is [(r, q)] with [a = q pi/2 + r] and [|r|] about [pi/4],
    for finite [a >= 0], [q] an [int32] node whose value modulo 4 is the
    quadrant: [q pi/2] subtracted in exact parts below the limit, and beyond it
-   the bits of [2/pi] (Payne-Hanek). *)
+   the bits of [2/pi] (Payne-Hanek). Only a quotient below the limit is
+   converted: a far one is outside [int32]'s range, whose conversion C leaves
+   undefined, and a selection of vectors that discards it can keep it. *)
 let quarter_turns a =
   let limit, parts = pi_2_cw a in
   let near = Ops.lt a (float a limit) in
@@ -317,7 +319,8 @@ let quarter_turns a =
   let far_r, far_q =
     Transcendental.payne_hanek_reduction (where near (float a limit) a)
   in
-  (where near r far_r, where near (Ops.cast q Int32) far_q)
+  let near_q = Ops.cast (where near q (float a 0.)) Int32 in
+  (where near r far_r, where near near_q far_q)
 
 (* [within_quarter_turn r] is [r], a remainder of at most about [pi/4], clamped
    to [[-pi/2, pi/2]]: no value moves, and the target's sine knows the remainder

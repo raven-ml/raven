@@ -1466,6 +1466,19 @@ let rounded_found =
               ( F32,
                 Reduce (Sum, [ 0 ], false, leaf I32 [| 1; 1; 2 |] [| -2.; 2. |])
               ) ) );
+    (* The sine of [0] and [inf] in one vector: the far lane's quadrant, out
+       of [int32]'s range, was converted, and the selection that discarded it
+       kept the undefined value on x86. *)
+    Fn
+      ( Sin,
+        Cast
+          ( F32,
+            Transpose
+              ( [ 1; 0 ],
+                Pad
+                  ( [| (0, 0); (0, 1) |],
+                    Float.infinity,
+                    leaf ~capture:true F16 [| 1; 1 |] [| 0. |] ) ) ) );
   ]
 
 let suite =
