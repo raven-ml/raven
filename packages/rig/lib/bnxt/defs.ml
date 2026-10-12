@@ -7,14 +7,41 @@
    edit. The command that regenerates this file is in gen/gen.py.
 
    The values are copied from DPDK's header, under the BSD-3-Clause
-   licence, and from Linux's, which offer the GNU General Public License
-   version 2 or the BSD licence below; raven takes the BSD licence.
+   licence, and from Linux's and rdma-core's, which offer the GNU General
+   Public License version 2 or the BSD licences below; raven takes the BSD
+   licence.
 
    SPDX-License-Identifier: BSD-3-Clause
    Copyright (c) 2014-2024 Broadcom Inc.
    All rights reserved.
 
    Copyright (c) 2016 - 2017, Broadcom. All rights reserved.  The term
+   Broadcom refers to Broadcom Limited and/or its subsidiaries.
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+   2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in
+   the documentation and/or other materials provided with the
+   distribution.
+
+   THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS''
+   AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+   THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+   PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS
+   BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+   CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+   SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+   BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+   WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+   OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
+   IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+   Copyright (c) 2015-2017, Broadcom. All rights reserved.  The term
    Broadcom refers to Broadcom Limited and/or its subsidiaries.
 
    Redistribution and use in source and binary forms, with or without
@@ -57,6 +84,7 @@ let hwrm_vnic_cfg = 0x42
 let hwrm_cfa_l2_filter_alloc = 0x90
 let hwrm_max_req_len = 0x80
 let hwrm_func_backing_store_cfg_v2_input_flags_bs_cfg_all_done = 2
+let hwrm_func_backing_store_qcaps_v2_output_flags_enable_ctx_kind_init = 1
 let hwrm_ring_alloc_input_ring_type_nq = 5
 let hwrm_ring_alloc_input_ring_type_l2_cmpl = 0
 let hwrm_ring_alloc_input_ring_type_rx = 2
@@ -77,6 +105,8 @@ let cmdq_base_opcode_create_qp = 1
 let cmdq_base_opcode_modify_qp = 3
 let cmdq_base_opcode_register_mr = 0xf
 let cmdq_base_opcode_deregister_mr = 0x10
+let cmdq_base_opcode_destroy_qp = 2
+let cmdq_base_opcode_destroy_cq = 10
 let cmdq_init_cmdq_size_sft = 2
 let cmdq_initialize_fw_flags_hw_requester_retx_supported = 2
 let creq_base_v = 1
@@ -92,8 +122,8 @@ let cmdq_modify_qp_path_mtu_mtu_4096 = 0x40
 let cmdq_modify_qp_new_state_init = 1
 let cmdq_modify_qp_new_state_rtr = 2
 let cmdq_modify_qp_new_state_rts = 3
+let cmdq_modify_qp_new_state_err = 6
 let cmdq_modify_qp_access_local_write = 1
-let cmdq_modify_qp_access_remote_write = 2
 let cmdq_modify_qp_modify_mask_state = 1
 let cmdq_modify_qp_modify_mask_access = 4
 let cmdq_modify_qp_modify_mask_pkey = 8
@@ -115,7 +145,6 @@ let cmdq_register_mr_flags_alloc_mr = 1
 let cmdq_register_mr_lvl_sft = 0
 let cmdq_register_mr_log2_pg_size_sft = 2
 let cmdq_register_mr_access_local_write = 1
-let cmdq_register_mr_access_remote_write = 4
 let sq_base_wqe_type_send = 0
 let sq_send_flags_signal_comp = 1
 let rq_wqe_wqe_type_rcv = 0x80
@@ -150,8 +179,14 @@ let rcfw_pf_vf_comm_prod_offset = 0xc
 let rcfw_comm_trig_offset = 0x100
 let rcfw_cmdq_trig_val = 1
 let firmware_first_flag = 0x1f
-let bnxt_qplib_dbr_valid = 0x4000000
-let bnxt_qplib_dbr_epoch_shift = 0x18
+let bnxt_re_db_indx_mask = 0xffffff
+let bnxt_re_db_qid_mask = 0xfffff
+let bnxt_re_db_typ_shift = 0x1c
+let bnxt_re_db_valid_shift = 0x1a
+let bnxt_re_db_epoch_shift = 0x18
+let bnxt_re_que_type_sq = 0
+let bnxt_re_que_type_rq = 1
+let bnxt_re_que_type_cq = 4
 
 (* Structures: each field is (byte offset, bytes), an array's of all its
    elements. *)
@@ -744,6 +779,32 @@ module Cmdq_deregister_mr = struct
   let unused_0 = (20, 4)
 end
 
+module Cmdq_destroy_qp = struct
+  let sizeof = 24
+  let opcode = (0, 1)
+  let cmd_size = (1, 1)
+  let flags = (2, 2)
+  let cookie = (4, 2)
+  let resp_size = (6, 1)
+  let reserved8 = (7, 1)
+  let resp_addr = (8, 8)
+  let qp_cid = (16, 4)
+  let unused_0 = (20, 4)
+end
+
+module Cmdq_destroy_cq = struct
+  let sizeof = 24
+  let opcode = (0, 1)
+  let cmd_size = (1, 1)
+  let flags = (2, 2)
+  let cookie = (4, 2)
+  let resp_size = (6, 1)
+  let reserved8 = (7, 1)
+  let resp_addr = (8, 8)
+  let cq_cid = (16, 4)
+  let unused_0 = (20, 4)
+end
+
 module Creq_create_qp_resp = struct
   let sizeof = 16
   let type_ = (0, 1)
@@ -810,4 +871,17 @@ module Cq_res_rc = struct
   let status = (25, 1)
   let flags = (26, 2)
   let srq_or_rq_wr_id = (28, 4)
+end
+
+module Cq_terminal = struct
+  let sizeof = 32
+  let qp_handle = (0, 8)
+  let sq_cons_idx = (8, 2)
+  let rq_cons_idx = (10, 2)
+  let reserved32_1 = (12, 4)
+  let reserved64_3 = (16, 8)
+  let cqe_type_toggle = (24, 1)
+  let status = (25, 1)
+  let reserved16 = (26, 2)
+  let reserved32_2 = (28, 4)
 end

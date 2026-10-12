@@ -11,12 +11,13 @@ Run from the worktree root:
   uv run packages/rig/lib/bnxt/gen/gen.py --check
   uv run packages/rig/lib/bnxt/gen/gen.py --excerpt [--check]
 
-The inputs are excerpts of DPDK's and Linux's headers, in headers/: each is a
+The inputs are excerpts of DPDK's, Linux's and rdma-core's headers, in headers/: each is a
 header's licence notice, the URL it is cut from, and the lines this script
 reads, verbatim and in the header's order (a #define, a whole enumeration, a
 whole structure). SOURCES names the header each comes from, at its version.
-DPDK's header is under the BSD-3-Clause licence. Linux's are under the GPL
-version 2 or a BSD licence, at the user's choice; raven takes the BSD licence.
+DPDK's header is under the BSD-3-Clause licence. Linux's and rdma-core's are
+under the GPL version 2 or a BSD licence, at the user's choice; raven takes the
+BSD licence.
 Linux's own firmware header (include/linux/bnxt/hsi.h) is under the GPL alone,
 so the firmware's requests come from DPDK's copy of the same interface.
 --excerpt makes the excerpts from the upstream headers, each pinned in
@@ -47,6 +48,7 @@ LIB = HERE.parent
 
 DPDK = "https://raw.githubusercontent.com/DPDK/dpdk/v24.11/"
 LINUX = "https://raw.githubusercontent.com/torvalds/linux/v6.18/"
+RDMA_CORE = "https://raw.githubusercontent.com/linux-rdma/rdma-core/v56.0/"
 
 # Each header, what the library reads of it, and its licence. FreeBSD's copy
 # of the firmware interface (sys/dev/bnxt/bnxt_en/hsi_struct_def.h) is not
@@ -59,14 +61,15 @@ SOURCES = {
     "roce_hsi.h": LINUX + "drivers/infiniband/hw/bnxt_re/roce_hsi.h",
     # The command queue's registers; GPL-2.0 or BSD.
     "qplib_rcfw.h": LINUX + "drivers/infiniband/hw/bnxt_re/qplib_rcfw.h",
-    # The doorbell's valid bit and epoch; GPL-2.0 or BSD.
-    "qplib_res.h": LINUX + "drivers/infiniband/hw/bnxt_re/qplib_res.h",
+    # The doorbell's fields; GPL-2.0 or BSD.
+    "bnxt_re-abi.h": RDMA_CORE + "providers/bnxt_re/bnxt_re-abi.h",
 }
 
 HWRM = ["ver_get", "func_reset", "func_qcaps", "func_drv_rgtr", "func_drv_unrgtr", "func_qcfg",
         "func_backing_store_qcaps_v2", "func_backing_store_cfg_v2", "ring_alloc", "stat_ctx_alloc",
         "vnic_alloc", "vnic_cfg", "cfa_l2_filter_alloc"]
-RCFW = ["initialize_fw", "add_gid", "create_cq", "create_qp", "modify_qp", "register_mr", "deregister_mr"]
+RCFW = ["initialize_fw", "add_gid", "create_cq", "create_qp", "modify_qp", "register_mr", "deregister_mr",
+        "destroy_qp", "destroy_cq"]
 
 # What the library reads: (header, C name) of constants, and (header, C name,
 # OCaml module) of structures.
@@ -75,6 +78,7 @@ CONSTANTS = [
     ("hsi_struct_def_dpdk.h", n) for n in [
         *[f"HWRM_{r.upper()}" for r in HWRM], "HWRM_MAX_REQ_LEN",
         "HWRM_FUNC_BACKING_STORE_CFG_V2_INPUT_FLAGS_BS_CFG_ALL_DONE",
+        "HWRM_FUNC_BACKING_STORE_QCAPS_V2_OUTPUT_FLAGS_ENABLE_CTX_KIND_INIT",
         "HWRM_RING_ALLOC_INPUT_RING_TYPE_NQ", "HWRM_RING_ALLOC_INPUT_RING_TYPE_L2_CMPL",
         "HWRM_RING_ALLOC_INPUT_RING_TYPE_RX", "HWRM_RING_ALLOC_INPUT_INT_MODE_MSIX",
         "HWRM_RING_ALLOC_INPUT_ENABLES_NQ_RING_ID_VALID", "HWRM_RING_ALLOC_INPUT_ENABLES_RX_BUF_SIZE_VALID",
@@ -90,14 +94,13 @@ CONSTANTS = [
         "PTU_PTE_VALID", "PTU_PTE_LAST", "PTU_PTE_NEXT_TO_LAST",
         "CMDQ_CREATE_QP_TYPE_RC", "CMDQ_MODIFY_QP_QP_TYPE_RC", "CMDQ_MODIFY_QP_NETWORK_TYPE_ROCEV2_IPV4",
         "CMDQ_MODIFY_QP_PATH_MTU_MTU_4096", "CMDQ_MODIFY_QP_NEW_STATE_INIT", "CMDQ_MODIFY_QP_NEW_STATE_RTR",
-        "CMDQ_MODIFY_QP_NEW_STATE_RTS", "CMDQ_MODIFY_QP_ACCESS_LOCAL_WRITE",
-        "CMDQ_MODIFY_QP_ACCESS_REMOTE_WRITE",
+        "CMDQ_MODIFY_QP_NEW_STATE_RTS", "CMDQ_MODIFY_QP_NEW_STATE_ERR", "CMDQ_MODIFY_QP_ACCESS_LOCAL_WRITE",
         *[f"CMDQ_MODIFY_QP_MODIFY_MASK_{m}" for m in [
             "STATE", "ACCESS", "PKEY", "DGID", "SGID_INDEX", "HOP_LIMIT", "DEST_MAC", "PATH_MTU", "RQ_PSN",
             "MIN_RNR_TIMER", "MAX_DEST_RD_ATOMIC", "DEST_QP_ID", "TIMEOUT", "RETRY_CNT", "RNR_RETRY",
             "MAX_RD_ATOMIC", "SQ_PSN"]],
         "CMDQ_REGISTER_MR_FLAGS_ALLOC_MR", "CMDQ_REGISTER_MR_LVL_SFT", "CMDQ_REGISTER_MR_LOG2_PG_SIZE_SFT",
-        "CMDQ_REGISTER_MR_ACCESS_LOCAL_WRITE", "CMDQ_REGISTER_MR_ACCESS_REMOTE_WRITE",
+        "CMDQ_REGISTER_MR_ACCESS_LOCAL_WRITE",
         "SQ_BASE_WQE_TYPE_SEND", "SQ_SEND_FLAGS_SIGNAL_COMP", "RQ_WQE_WQE_TYPE_RCV",
         "SQ_MSN_SEARCH_START_IDX_SFT", "SQ_MSN_SEARCH_NEXT_PSN_SFT", "CQ_BASE_TOGGLE",
         "CQ_BASE_CQE_TYPE_MASK", "CQ_BASE_CQE_TYPE_REQ", "CQ_BASE_CQE_TYPE_RES_RC",
@@ -115,7 +118,9 @@ CONSTANTS = [
     ("qplib_rcfw.h", n) for n in ["RCFW_COMM_BASE_OFFSET", "RCFW_PF_VF_COMM_PROD_OFFSET",
                                   "RCFW_COMM_TRIG_OFFSET", "RCFW_CMDQ_TRIG_VAL", "FIRMWARE_FIRST_FLAG"]
 ] + [
-    ("qplib_res.h", n) for n in ["BNXT_QPLIB_DBR_VALID", "BNXT_QPLIB_DBR_EPOCH_SHIFT"]
+    ("bnxt_re-abi.h", n) for n in ["BNXT_RE_DB_INDX_MASK", "BNXT_RE_DB_QID_MASK", "BNXT_RE_DB_TYP_SHIFT",
+                                   "BNXT_RE_DB_VALID_SHIFT", "BNXT_RE_DB_EPOCH_SHIFT", "BNXT_RE_QUE_TYPE_SQ",
+                                   "BNXT_RE_QUE_TYPE_RQ", "BNXT_RE_QUE_TYPE_CQ"]
 ]
 
 
@@ -134,7 +139,7 @@ STRUCTS = [
 ] + [
     ("roce_hsi.h", s, module(s)) for s in [
         "cmdq_init", "cmdq_base", "creq_base", *[f"cmdq_{c}" for c in RCFW], "creq_create_qp_resp",
-        "sq_send_hdr", "sq_sge", "rq_wqe_hdr", "cq_base", "cq_res_rc"]
+        "sq_send_hdr", "sq_sge", "rq_wqe_hdr", "cq_base", "cq_res_rc", "cq_terminal"]
 ]
 
 # Reading C headers
@@ -361,8 +366,9 @@ def notice(h):
         "   edit. The command that regenerates this file is in gen/gen.py.",
         "",
         "   The values are copied from DPDK's header, under the BSD-3-Clause",
-        "   licence, and from Linux's, which offer the GNU General Public License",
-        "   version 2 or the BSD licence below; raven takes the BSD licence.",
+        "   licence, and from Linux's and rdma-core's, which offer the GNU General",
+        "   Public License version 2 or the BSD licences below; raven takes the BSD",
+        "   licence.",
         "",
     ]
     seen = []
@@ -402,7 +408,7 @@ def generate(h):
 def check_layouts(h):
     """The facts the library takes for granted, which the headers state."""
     size = lambda s: layout(h["roce_hsi.h"], s)[0]
-    if size("cq_base") != 32 or size("cq_res_rc") != 32:
+    if size("cq_base") != 32 or size("cq_res_rc") != 32 or size("cq_terminal") != 32:
         sys.exit("a completion is not 32 bytes")
     if size("cmdq_base") > 16 or size("creq_base") != 16:
         sys.exit("a command's base or a completion of one is not 16 bytes")

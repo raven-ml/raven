@@ -1,6 +1,6 @@
 {
  "https://raw.githubusercontent.com/DPDK/dpdk/v24.11/drivers/net/bnxt/hsi_struct_def_dpdk.h": "a495632002b25ea514ba28303b5e3eeef9c6ae05b215a3a3949e298978acb8d3",
+ "https://raw.githubusercontent.com/linux-rdma/rdma-core/v56.0/providers/bnxt_re/bnxt_re-abi.h": "78e739ea7002f9efe6eff041f934c6adf4acedf4100f28261d3347c2c0ea8d01",
  "https://raw.githubusercontent.com/torvalds/linux/v6.18/drivers/infiniband/hw/bnxt_re/qplib_rcfw.h": "66b3bdc5cab53a66e401ef3edf42628140ec397b866acbf97274415acaf111ef",
- "https://raw.githubusercontent.com/torvalds/linux/v6.18/drivers/infiniband/hw/bnxt_re/qplib_res.h": "8ac637f48116e60403e370e701da897431299b44a1f67f24764804de935f0eba",
  "https://raw.githubusercontent.com/torvalds/linux/v6.18/drivers/infiniband/hw/bnxt_re/roce_hsi.h": "e216b594566ea0cb396842651f13f1e4e7e66fc88b5583f0ad50a5ddddd7078d"
 }

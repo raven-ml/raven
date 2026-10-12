@@ -5,8 +5,9 @@
 
 (* The boot follows Linux v6.18's drivers/net/ethernet/broadcom/bnxt (the
    firmware's requests and context memory) and drivers/infiniband/hw/bnxt_re
-   (the RoCE engine's command queue, queue pairs and doorbells), as tinygrad's
-   runtime/support/rdma/bnxtdev.py does it without a kernel driver. *)
+   (the RoCE engine's command queue, queue pairs, doorbells and the handling of
+   a failed queue pair), as tinygrad's runtime/support/rdma/bnxtdev.py does it
+   without a kernel driver. *)
 
 module D = Defs
 module Machine = Rig_pci.Machine
@@ -24,17 +25,13 @@ exception Refused of string
 let fail fmt = Printf.ksprintf (fun s -> raise (Refused s)) fmt
 let guard f = match f () with v -> Ok v | exception Refused why -> Error why
 
-(* Linux's include/linux/bnxt/hsi.h and bnxt/bnxt_hwrm.h are under the GPL
-   alone, so their values are written here by hand: the fields of a doorbell's
-   high word, and the target and completion ring of a request answered in memory
-   alone. *)
-let db_xid_mask = 0xfffff
-let db_index_mask = 0xffffff
+(* Values of Linux's include/linux/bnxt/hsi.h and bnxt/bnxt_hwrm.h, which are
+   under the GPL alone and which no header under another licence defines,
+   written here by hand: the doorbell type that arms a notification queue, the
+   path of a RoCE doorbell, and the target and completion ring of a request
+   answered in memory alone. *)
+let db_nq_arm = 0xb
 let db_path_roce = 0
-let db_sq = 0
-let db_rq = 0x1000_0000
-let db_cq = 0x4000_0000
-let db_nq_arm = 0xb000_0000
 let hwrm_target = 0xffff
 let no_ring = 0xffff
 
@@ -67,6 +64,9 @@ let rcfw_us = 20_000_000
 let qp_contexts = (0, 64)
 let contexts = [ (1, 0); (2, 128); (3, 0); (4, 2); (5, 0); (6, 0); (14, 1024) ]
 let last_type = 15
+
+(* A terminal completion's consumer index when it names no send. *)
+let no_index = 0xffff
 let ceildiv a b = (a + b - 1) / b
 
 (* Structures *)
@@ -92,14 +92,18 @@ let get s (off, n) =
 
 (* The firmware's channel *)
 
+(* [lock] serializes the requests and commands and guards [allocs]. Every
+   allocation is freed at the NIC's stop, once it masters the bus no more. *)
 type hw = {
   fn : Function.t;
   bar0 : Window.t;
+  dbs : Window.t; (* the doorbell BAR *)
   resp : Window.t; (* the firmware's answers *)
   resp_bus : int;
-  lock : Mutex.t; (* the requests and commands, and [allocs] *)
+  lock : Mutex.t;
   mutable seq : int;
-  mutable allocs : Window.t list; (* system memory, freed at close *)
+  mutable allocs : Window.t list;
+  mutable registered : bool; (* with the firmware, which stop undoes *)
 }
 
 let alloc fn n =
@@ -175,7 +179,8 @@ let page_list hw ?(queue = false) addrs =
           (2, fst (List.hd runs), [ table; top ]))
 
 (* Sends the request [req_type], filled by [fill], and is the answer once the
-   firmware has written it whole. *)
+   firmware has written it whole: the answer page, zeroed past the answer, so
+   that a field a short answer lacks reads as zero. *)
 let hwrm hw ?(us = hwrm_us) name ~req_type fill =
   hw.seq <- (hw.seq + 1) land 0xffff;
   let b = Bytes.make D.hwrm_max_req_len '\000' in
@@ -191,10 +196,9 @@ let hwrm hw ?(us = hwrm_us) name ~req_type fill =
   write_registers hw.bar0 chimp_comm (Bytes.unsafe_to_string b);
   Window.set32 hw.bar0 chimp_comm_trigger 1;
   let module R = D.Hwrm_resp_hdr in
-  let header () = Window.read hw.resp 0 R.sizeof in
   (* The answer's last byte is its valid flag, written last. *)
   let answered () =
-    let h = header () in
+    let h = Window.read hw.resp 0 R.sizeof in
     let n = get h R.resp_len in
     n > 0
     && n <= Window.length hw.resp
@@ -202,7 +206,7 @@ let hwrm hw ?(us = hwrm_us) name ~req_type fill =
     && Window.get8 hw.resp (n - 1) <> 0
   in
   wait hw ~us ("HWRM " ^ name) answered;
-  let out = Window.read hw.resp 0 (get (header ()) R.resp_len) in
+  let out = Window.read hw.resp 0 (Window.length hw.resp) in
   match get out R.error_code with
   | 0 -> out
   | e -> fail "HWRM %s: error %d" name e
@@ -218,12 +222,15 @@ let ring_alloc hw fill =
    the high word, then the index and the parity of its pass over the ring. *)
 let db_value xid typ index epoch =
   let high =
-    xid land db_xid_mask lor db_path_roce lor typ lor D.bnxt_qplib_dbr_valid
+    xid land D.bnxt_re_db_qid_mask lor db_path_roce
+    lor (typ lsl D.bnxt_re_db_typ_shift)
+    lor (1 lsl D.bnxt_re_db_valid_shift)
   in
   Int64.logor
     (Int64.shift_left (Int64.of_int high) 32)
     (Int64.of_int
-       (index land db_index_mask lor (epoch lsl D.bnxt_qplib_dbr_epoch_shift)))
+       (index land D.bnxt_re_db_indx_mask
+       lor (epoch lsl D.bnxt_re_db_epoch_shift)))
 
 let doorbell db xid typ index epoch =
   Window.barrier ();
@@ -236,22 +243,23 @@ let ring db ~xid ~typ n =
 
 (* Queues *)
 
-(* A ring of [entries] of [stride] bytes in system memory, and its page list.
-   [aux] follows the ring with 8 bytes an entry. *)
+(* A ring of [entries] of [stride] bytes in system memory, its page list, and
+   the memory both take. [aux] follows the ring with 8 bytes an entry. *)
 type queue = {
   ring : Window.t;
   stride : int;
   entries : int;
   level : int;
   pbl : int;
+  memory : Window.t list;
 }
 
 let queue hw ?(stride = 16) ?(aux = false) ?(entries = page / 16) () =
   let size = entries * stride in
   let bytes = size + if aux then entries * 8 else 0 in
   let ring, runs = sysmem hw bytes in
-  let level, pbl, _ = page_list hw ~queue:true (pages ~bytes runs) in
-  { ring; stride; entries; level; pbl }
+  let level, pbl, list = page_list hw ~queue:true (pages ~bytes runs) in
+  { ring; stride; entries; level; pbl; memory = ring :: list }
 
 let slot q i = i mod q.entries * q.stride
 
@@ -264,6 +272,9 @@ let ring_fields b (q : queue) =
 
 (* The RoCE engine's commands *)
 
+(* [stopped] once a command went unanswered: the channel's state is then
+   unknown, so no command is sent on it again, and the memory such a command
+   named stays until the NIC stops. *)
 type rcfw = {
   cmdq : queue;
   creq : queue;
@@ -272,16 +283,24 @@ type rcfw = {
   mutable prod : int; (* the command slots written *)
   mutable cons : int; (* the completions read *)
   mutable first : bool;
+  mutable stopped : bool;
 }
 
 (* Writes the command [opcode] of [size] bytes, filled by [fill], into the
-   command queue, rings it, and is its completion. The completions of
-   asynchronous events, such as a queue pair's error, are skipped. *)
+   command queue, rings it, and is its completion. Its cookie, the low bits of
+   its first slot's index, tells its completion from those of earlier commands
+   and of asynchronous events, such as a queue pair's error, which are
+   skipped. *)
 let rcfw hw rc ?(us = rcfw_us) name ~opcode ~size fill =
+  if rc.stopped then
+    fail "RCFW %s: the firmware stopped answering; close the NIC and open it"
+      name;
   let slots = ceildiv size 16 in
+  let cookie = rc.prod land 0xffff in
   let b = Bytes.make (slots * 16) '\000' in
   set b D.Cmdq_base.opcode opcode;
   set b D.Cmdq_base.cmd_size slots;
+  set b D.Cmdq_base.cookie cookie;
   fill b;
   for i = 0 to slots - 1 do
     Window.blit_string (Bytes.unsafe_to_string b) (i * 16) rc.cmdq.ring
@@ -302,13 +321,17 @@ let rcfw hw rc ?(us = rcfw_us) name ~opcode ~size fill =
     (D.rcfw_comm_base_offset + D.rcfw_comm_trig_offset)
     D.rcfw_cmdq_trig_val;
   let creq = rc.creq in
+  let ready () =
+    Window.get8 creq.ring (slot creq rc.cons + fst D.Creq_base.v)
+    land D.creq_base_v
+    <> rc.cons / creq.entries land 1
+  in
   let rec next () =
-    let ready () =
-      Window.get8 creq.ring (slot creq rc.cons + fst D.Creq_base.v)
-      land D.creq_base_v
-      <> rc.cons / creq.entries land 1
-    in
-    wait hw ~us ("RCFW " ^ name) ready;
+    (match Function.wait hw.fn ~us ("RCFW " ^ name) ready with
+    | Ok () -> ()
+    | Error why ->
+        rc.stopped <- true;
+        fail "%s" why);
     Window.barrier ();
     let r = Window.read creq.ring (slot creq rc.cons) creq.stride in
     rc.cons <- rc.cons + 1;
@@ -319,6 +342,7 @@ let rcfw hw rc ?(us = rcfw_us) name ~opcode ~size fill =
     if
       get r D.Creq_base.type_ = D.creq_base_type_qp_event
       && get r D.Creq_base.event < D.creq_qp_event_event_qp_error_notification
+      && get r D.Creq_create_qp_resp.cookie = cookie
     then r
     else next ()
   in
@@ -333,7 +357,8 @@ let xid r = get r D.Creq_create_qp_resp.xid
 (* Booting *)
 
 (* The context memory the RoCE engine keeps its queue pairs, regions and
-   completion queues in, per type and instance. *)
+   completion queues in, per type and instance. An instance whose type asks for
+   it starts with a value at an offset, in doublewords, of each entry. *)
 let backing hw =
   let module Q = D.Hwrm_func_backing_store_qcaps_v2_output in
   let module C = D.Hwrm_func_backing_store_cfg_v2_input in
@@ -370,17 +395,22 @@ let backing hw =
       | [] -> [ 0 ]
       | l -> l
     in
+    let init =
+      get caps Q.flags
+      land D.hwrm_func_backing_store_qcaps_v2_output_flags_enable_ctx_kind_init
+      <> 0
+    in
     let instance i =
       let bytes = ceildiv (n * size) page * page in
       let mem, runs = sysmem hw bytes in
-      (match get caps Q.ctx_init_value with
-      | 0 -> ()
-      | v ->
-          let off = ref (get caps Q.ctx_init_offset) in
-          while !off < bytes do
-            Window.set8 mem !off v;
-            off := !off + size
-          done);
+      if init then begin
+        let v = get caps Q.ctx_init_value in
+        let off = ref (4 * get caps Q.ctx_init_offset) in
+        while !off < bytes do
+          Window.set8 mem !off v;
+          off := !off + size
+        done
+      end;
       let level, dir, _ = page_list hw (pages ~bytes runs) in
       ignore
         (hwrm hw "func_backing_store_cfg_v2"
@@ -425,7 +455,18 @@ let open_rcfw hw db =
     ((cmdq.entries lsl D.cmdq_init_cmdq_size_sft) lor cmdq.level);
   Window.barrier ();
   write_registers hw.bar0 D.rcfw_comm_base_offset (Bytes.unsafe_to_string init);
-  let rc = { cmdq; creq; creq_id; db; prod = 0; cons = 0; first = true } in
+  let rc =
+    {
+      cmdq;
+      creq;
+      creq_id;
+      db;
+      prod = 0;
+      cons = 0;
+      first = true;
+      stopped = false;
+    }
+  in
   let _, stats = sysmem hw page in
   let module S = D.Hwrm_stat_ctx_alloc_input in
   let stat_ctx =
@@ -522,6 +563,7 @@ type t = {
   mac : string;
   gid : string;
   gid_index : int;
+  random : Random.State.t; (* the queue pairs' first packets, under the lock *)
   mutable closed : bool;
 }
 
@@ -557,27 +599,48 @@ let map fn i =
   | Ok w -> w
   | Error why -> fail "%s" why
 
-(* Resets the NIC, registers with its firmware, gives the RoCE engine its
-   context memory and command queue, opens the Ethernet receive path, and adds
-   the NIC's address. [registered] is set once the firmware knows the process,
-   which the NIC's stop then undoes. *)
-let boot ~name ~channel ~registered h fn =
-  (match Function.reset fn with Ok () -> () | Error why -> fail "%s" why);
-  Function.set_bus_master fn true;
+(* The NIC's registers and the page its firmware answers in, before anything is
+   written to it. *)
+let channel fn =
   let bar0 = map fn 0 and dbs = map fn doorbell_bar in
   let resp, runs = alloc fn page in
-  let hw =
-    {
-      fn;
-      bar0;
-      resp;
-      resp_bus = fst (List.hd runs);
-      lock = Mutex.create ();
-      seq = 0;
-      allocs = [ resp ];
-    }
+  {
+    fn;
+    bar0;
+    dbs;
+    resp;
+    resp_bus = fst (List.hd runs);
+    lock = Mutex.create ();
+    seq = 0;
+    allocs = [ resp ];
+    registered = false;
+  }
+
+(* The NIC's stop: a NIC registered with its firmware, whose machine still
+   answers, unregisters. The NIC then masters the bus no more, so its memory is
+   freed. A NIC stopped otherwise is reset at its next open, as every open
+   does. *)
+let stop hw () =
+  Mutex.protect hw.lock @@ fun () ->
+  let clean =
+    hw.registered
+    && Function.failed hw.fn = None
+    &&
+    match hwrm hw "func_drv_unrgtr" ~req_type:D.hwrm_func_drv_unrgtr ignore with
+    | _ -> true
+    | exception Refused _ -> false
   in
-  channel := Some hw;
+  Function.set_bus_master hw.fn false;
+  List.iter (Function.free_dma hw.fn) hw.allocs;
+  hw.allocs <- [];
+  if clean then `Clean else `Lost
+
+(* Resets the NIC, registers with its firmware, gives the RoCE engine its
+   context memory and command queue, opens the Ethernet receive path, and adds
+   the NIC's address. *)
+let boot ~name h hw =
+  (match Function.reset hw.fn with Ok () -> () | Error why -> fail "%s" why);
+  Function.set_bus_master hw.fn true;
   ignore (hwrm hw "ver_get" ~req_type:D.hwrm_ver_get ignore);
   ignore (hwrm hw ~us:reset_us "func_reset" ~req_type:D.hwrm_func_reset ignore);
   let caps =
@@ -586,13 +649,16 @@ let boot ~name ~channel ~registered h fn =
   in
   let mac = String.sub caps (fst D.Hwrm_func_qcaps_output.mac_address) 6 in
   ignore (hwrm hw "func_drv_rgtr" ~req_type:D.hwrm_func_drv_rgtr ignore);
-  registered := true;
+  hw.registered <- true;
   let cfg =
     hwrm hw "func_qcfg" ~req_type:D.hwrm_func_qcfg (fun b ->
         set b D.Hwrm_func_qcfg_input.fid 0xffff)
   in
   let db_off = get cfg D.Hwrm_func_qcfg_output.legacy_l2_db_size_kb * 1024 in
-  let db = Window.sub dbs db_off 8 in
+  if db_off + 8 > Window.length hw.dbs then
+    fail "the firmware puts the doorbell at %#x, past BAR %d" db_off
+      doorbell_bar;
+  let db = Window.sub hw.dbs db_off 8 in
   backing hw;
   let rc, nq_id = open_rcfw hw db in
   open_l2 hw ~nq_id ~mac;
@@ -611,28 +677,18 @@ let boot ~name ~channel ~registered h fn =
              Bytes.set b (fst G.src_mac + i) mac.[i lxor 1]
            done))
   in
-  { name; hold = h; hw; rc; nq_id; mac; gid; gid_index; closed = false }
-
-(* The NIC's stop: a NIC registered with its firmware, whose machine still
-   answers, unregisters, and the hold then turns its bus mastering off. A NIC
-   stopped otherwise is reset at its next open, as every open does. *)
-let stop channel registered () =
-  match !channel with
-  | Some hw when !registered && Function.failed hw.fn = None -> (
-      Mutex.protect hw.lock @@ fun () ->
-      match
-        hwrm hw "func_drv_unrgtr" ~req_type:D.hwrm_func_drv_unrgtr ignore
-      with
-      | _ -> `Clean
-      | exception Refused _ -> `Lost)
-  | Some _ | None -> `Lost
-
-(* Frees the system memory of a NIC whose function is released, which reaches it
-   no more. *)
-let release hw =
-  Mutex.protect hw.lock (fun () ->
-      List.iter (Function.free_dma hw.fn) hw.allocs;
-      hw.allocs <- [])
+  {
+    name;
+    hold = h;
+    hw;
+    rc;
+    nq_id;
+    mac;
+    gid;
+    gid_index;
+    random = Random.State.make_self_init ();
+    closed = false;
+  }
 
 let index what i =
   if i < 0 then invalid_argf "Rig_bnxt.%s: NIC %d is negative" what i
@@ -640,25 +696,16 @@ let index what i =
 let open_ ?(machine = Machine.this) i =
   index "open_" i;
   let name = Gpus.name nics i in
-  let channel = ref None and registered = ref false in
-  let start h fn =
-    Gpus.set_stop h (stop channel registered);
-    guard (fun () -> boot ~name ~channel ~registered h fn)
-  in
-  match Gpus.open_ nics machine i start with
-  | Ok nic -> Ok nic
-  | Error why ->
-      Option.iter release !channel;
-      Error why
-  | exception e ->
-      Option.iter release !channel;
-      raise e
+  Gpus.open_ nics machine i (fun h fn ->
+      guard @@ fun () ->
+      let hw = channel fn in
+      Gpus.set_stop h (stop hw);
+      boot ~name h hw)
 
 let close nic =
   if not nic.closed then begin
     nic.closed <- true;
-    ignore (Gpus.stop nic.hold);
-    release nic.hw
+    ignore (Gpus.stop nic.hold)
   end
 
 let detach i =
@@ -677,7 +724,8 @@ module Region = struct
     key : int;
     va : int;
     bytes : int;
-    memory : Window.t list; (* its page list's, then any it was made over *)
+    host : Window.t option; (* the memory {!host} made *)
+    memory : Window.t list; (* freed at deregistration *)
     mutable gone : (unit, string) result option;
   }
 
@@ -691,14 +739,16 @@ module Region = struct
       12
       [ 12; 13; 16; 18; 20; 21; 22; 30 ]
 
-  (* The region over the pages of [runs], under which the NIC reads and writes
-     [va, va + bytes), [va] being the first run's address. [own] is memory the
-     region frees at its deregistration, or now if the firmware refuses it. *)
-  let register nic runs ~bytes ~own =
+  (* The region over the pages of [runs], under which the NIC writes [va, va +
+     bytes), [va] being the first run's address. [host] is memory it was made
+     over, which it frees at its deregistration. A refused registration frees
+     its memory, unless the firmware stopped answering and may still read the
+     page list. *)
+  let register nic runs ~bytes ~host =
     let va = fst (List.hd runs) in
     let log = log_page ~va runs in
     let level, pbl, list = page_list nic.hw (pages ~log ~bytes runs) in
-    let memory = list @ own in
+    let memory = list @ Option.to_list host in
     let module M = D.Cmdq_register_mr in
     match
       rcfw nic.hw nic.rc "register_mr" ~opcode:D.cmdq_base_opcode_register_mr
@@ -707,24 +757,22 @@ module Region = struct
           set b M.log2_pg_size_lvl
             ((level lsl D.cmdq_register_mr_lvl_sft)
             lor (log lsl D.cmdq_register_mr_log2_pg_size_sft));
-          set b M.access
-            (D.cmdq_register_mr_access_local_write
-           lor D.cmdq_register_mr_access_remote_write);
+          set b M.access D.cmdq_register_mr_access_local_write;
           set b M.log2_pbl_pg_size 12;
           set b M.pbl pbl;
           set b M.va va;
           set b M.mr_size bytes)
     with
-    | r -> { nic; key = xid r; va; bytes; memory; gone = None }
+    | r -> { nic; key = xid r; va; bytes; host; memory; gone = None }
     | exception e ->
-        List.iter (free nic.hw) memory;
+        if not nic.rc.stopped then List.iter (free nic.hw) memory;
         raise e
 
   let host nic n =
     if n <= 0 then invalid_argf "Rig_bnxt.Region.host: %d bytes" n;
     command nic "Region.host" @@ fun () ->
     let w, runs = sysmem nic.hw n in
-    (register nic runs ~bytes:(Window.length w) ~own:[ w ], w)
+    register nic runs ~bytes:(Window.length w) ~host:(Some w)
 
   let device nic runs =
     if runs = [] then invalid_arg "Rig_bnxt.Region.device: no runs";
@@ -738,7 +786,27 @@ module Region = struct
       fail
         "the NIC is behind an IOMMU, which maps no other device's memory for it";
     let bytes = List.fold_left (fun s (_, n) -> s + n) 0 runs in
-    register nic runs ~bytes ~own:[]
+    register nic runs ~bytes ~host:None
+
+  let length r = r.bytes
+
+  (* The memory {!host} made of [r], whose [n] bytes at [at] it holds. *)
+  let memory r what at n =
+    live r.nic what;
+    if Option.is_some r.gone then
+      invalid_argf "Rig_bnxt.%s: a deregistered region" what;
+    if at < 0 || n < 0 || at > r.bytes - n then
+      invalid_argf "Rig_bnxt.%s: %d bytes at %d of a region of %d" what n at
+        r.bytes;
+    match r.host with
+    | Some w -> w
+    | None ->
+        invalid_argf "Rig_bnxt.%s: a region over another device's memory" what
+
+  let read r at n = Window.read (memory r "Region.read" at n) at n
+
+  let write r at s =
+    Window.write (memory r "Region.write" at (String.length s)) at s
 
   let deregister r =
     match r.gone with
@@ -760,8 +828,28 @@ end
 (* Queue pairs *)
 
 module Qp = struct
-  type endpoint = { qp : int; gid : string; mac : string }
+  type endpoint = { qp : int; psn : int; gid : string; mac : string }
   type side = Send | Receive
+
+  (* A ring of a queue pair, its completion queue, and how far each has gone.
+     [cq_read] counts the completions read, which a terminal completion puts
+     ahead of the entries completed. Once the queue pair fails, the entries
+     before [ok_until] complete without error, and the others with the
+     failure. *)
+  type ring = {
+    entries : queue;
+    cq : queue;
+    cq_id : int;
+    typ : int; (* its doorbell's *)
+    kind : int; (* its completions' *)
+    statuses : (int * string) list;
+    lengths : int array; (* the bytes of each entry in the ring *)
+    waiting : string; (* what a wait for it is called *)
+    mutable posted : int;
+    mutable taken : int;
+    mutable cq_read : int;
+    mutable ok_until : int;
+  }
 
   (* The states {!connect} takes a queue pair through, so that a connect the
      firmware refused part-way resumes where it stopped. *)
@@ -770,27 +858,17 @@ module Qp = struct
   type nonrec t = {
     nic : t;
     qpn : int;
-    sq : queue;
-    rq : queue;
-    scq : queue;
-    rcq : queue;
-    scq_id : int;
-    rcq_id : int;
+    sends : ring;
+    receives : ring;
+    first_psn : int;
+    mutable psn : int; (* the first packet of the next send *)
     mutable state : state;
     mutable failed : string option;
-        (* why the queue pair failed: its entries without a completion then
-           complete with this error *)
-    lengths : int array; (* the bytes of each send in the ring *)
-    mutable sent : int; (* sends posted *)
-    mutable sends_done : int; (* their completions taken *)
-    mutable received : int;
-    mutable receives_done : int;
-    mutable psn : int; (* the first packet of the next send *)
+    mutable destroyed : (unit, string) result option;
   }
 
-  let access =
-    D.cmdq_modify_qp_access_local_write lor D.cmdq_modify_qp_access_remote_write
-
+  let rings qp = function Send -> qp.sends | Receive -> qp.receives
+  let access = D.cmdq_modify_qp_access_local_write
   let ( ||| ) = List.fold_left ( lor ) 0
 
   let init_mask =
@@ -841,6 +919,43 @@ module Qp = struct
            set b M.network_type_en_sqd_async_notify_new_state (state lor network);
            fill b))
 
+  let send_statuses =
+    D.
+      [
+        (cq_req_status_bad_response_err, "the peer's response was malformed");
+        (cq_req_status_local_length_err, "its length exceeds the region");
+        (cq_req_status_local_qp_operation_err, "the queue pair failed");
+        ( cq_req_status_local_protection_err,
+          "it names a byte outside its region" );
+        (cq_req_status_memory_mgt_operation_err, "a region operation failed");
+        ( cq_req_status_remote_invalid_request_err,
+          "the peer refused it, such as for a receive too short for it" );
+        (cq_req_status_remote_access_err, "the peer refused access");
+        (cq_req_status_remote_operation_err, "the peer failed to complete it");
+        ( cq_req_status_rnr_nak_retry_cnt_err,
+          "the peer posted no receive in time" );
+        ( cq_req_status_transport_retry_cnt_err,
+          "the peer did not acknowledge it after 7 retries" );
+        ( cq_req_status_work_request_flushed_err,
+          "the queue pair failed before it ran" );
+      ]
+
+  let receive_statuses =
+    D.
+      [
+        (cq_res_rc_status_local_access_error, "its region refused the bytes");
+        (cq_res_rc_status_local_length_err, "the message is longer than it");
+        ( cq_res_rc_status_local_protection_err,
+          "it names a byte outside its region" );
+        (cq_res_rc_status_local_qp_operation_err, "the queue pair failed");
+        (cq_res_rc_status_memory_mgt_operation_err, "a region operation failed");
+        ( cq_res_rc_status_remote_invalid_request_err,
+          "the peer sent an invalid request" );
+        ( cq_res_rc_status_work_request_flushed_err,
+          "the queue pair failed before it ran" );
+        (cq_res_rc_status_hw_flush_err, "the NIC flushed it");
+      ]
+
   let make nic =
     command nic "Qp.make" @@ fun () ->
     let hw = nic.hw in
@@ -881,30 +996,51 @@ module Qp = struct
       (fun b ->
         set b D.Cmdq_modify_qp.access access;
         set b D.Cmdq_modify_qp.pkey 0xffff);
+    let ring entries cq cq_id typ kind statuses what =
+      {
+        entries;
+        cq;
+        cq_id;
+        typ;
+        kind;
+        statuses;
+        lengths = Array.make ring_entries 0;
+        waiting = strf "%s: queue pair %d's %s" nic.name qpn what;
+        posted = 0;
+        taken = 0;
+        cq_read = 0;
+        ok_until = 0;
+      }
+    in
+    let first_psn = Random.State.bits nic.random land 0xffffff in
     {
       nic;
       qpn;
-      sq;
-      rq;
-      scq;
-      rcq;
-      scq_id;
-      rcq_id;
+      sends =
+        ring sq scq scq_id D.bnxt_re_que_type_sq D.cq_base_cqe_type_req
+          send_statuses "send";
+      receives =
+        ring rq rcq rcq_id D.bnxt_re_que_type_rq D.cq_base_cqe_type_res_rc
+          receive_statuses "receive";
+      first_psn;
+      psn = first_psn;
       state = Initialized;
       failed = None;
-      lengths = Array.make ring_entries 0;
-      sent = 0;
-      sends_done = 0;
-      received = 0;
-      receives_done = 0;
-      psn = 0;
+      destroyed = None;
     }
 
-  let endpoint qp = { qp = qp.qpn; gid = qp.nic.gid; mac = qp.nic.mac }
+  let usable qp what =
+    live qp.nic what;
+    if Option.is_some qp.destroyed then
+      invalid_argf "Rig_bnxt.%s: queue pair %d is destroyed" what qp.qpn
+
+  let endpoint qp =
+    { qp = qp.qpn; psn = qp.first_psn; gid = qp.nic.gid; mac = qp.nic.mac }
 
   let connect qp (e : endpoint) =
     if String.length e.gid <> 16 || String.length e.mac <> 6 then
       invalid_arg "Rig_bnxt.Qp.connect: a GID is 16 bytes, a MAC address 6";
+    usable qp "Qp.connect";
     command qp.nic "Qp.connect" @@ fun () ->
     let module M = D.Cmdq_modify_qp in
     let nic = qp.nic in
@@ -924,6 +1060,7 @@ module Qp = struct
           set b M.min_rnr_timer 1;
           set b M.path_mtu_pingpong_push_enable
             D.cmdq_modify_qp_path_mtu_mtu_4096;
+          set b M.rq_psn (e.psn land 0xffffff);
           set b M.max_dest_rd_atomic 4;
           set b M.dest_qp_id e.qp);
       qp.state <- Ready_to_receive
@@ -935,26 +1072,27 @@ module Qp = struct
         set b M.max_rd_atomic 1;
         set b M.rnr_retry 7;
         set b M.retry_cnt 7;
-        set b M.timeout 14);
+        set b M.timeout 14;
+        set b M.sq_psn qp.first_psn);
     qp.state <- Ready_to_send
 
   (* A ring keeps one slot free, as the kernel's driver does, so that its
-     completion queue, of as many entries, has room for the entry that reports
-     the queue pair's failure. *)
-  let room qp = function
-    | Send -> ring_entries - 1 - (qp.sent - qp.sends_done)
-    | Receive -> ring_entries - 1 - (qp.received - qp.receives_done)
+     completion queue, of as many entries, has room for the completion that
+     reports the queue pair's failure. *)
+  let room qp side =
+    let r = rings qp side in
+    ring_entries - 1 - (r.posted - r.taken)
 
   (* Writes the SGE of the entry in slot [slot] of [q]: the [n] bytes at [at] of
      [r]. The caller writes the entry's header. *)
-  let entry (q : queue) slot (r : Region.t) at n =
+  let sge (q : queue) slot (r : Region.t) at n =
     let sge = (slot * q.stride) + D.Sq_send_hdr.sizeof in
     Window.set64 q.ring (sge + fst D.Sq_sge.va_or_pa) (Int64.of_int (r.va + at));
     Window.set32 q.ring (sge + fst D.Sq_sge.l_key) r.key;
     Window.set32 q.ring (sge + fst D.Sq_sge.size) n
 
   let check qp what side (r : Region.t) at n =
-    live qp.nic what;
+    usable qp what;
     if r.nic != qp.nic then
       invalid_argf "Rig_bnxt.%s: a region of another NIC" what;
     if Option.is_some r.gone then
@@ -973,11 +1111,12 @@ module Qp = struct
      pair's failure. *)
   let send qp r ~at n =
     check qp "Qp.send" Send r at n;
-    let q = qp.sq and i = qp.sent in
-    let s = i mod ring_entries in
-    qp.lengths.(s) <- n;
+    let s = qp.sends in
+    let q = s.entries and i = s.posted in
+    let slot = i mod ring_entries in
+    s.lengths.(slot) <- n;
     if Option.is_none qp.failed then begin
-      let base = s * q.stride in
+      let base = slot * q.stride in
       Window.fill q.ring base (D.Sq_send_hdr.sizeof + D.Sq_sge.sizeof) '\000';
       Window.set8 q.ring
         (base + fst D.Sq_send_hdr.wqe_type)
@@ -987,108 +1126,85 @@ module Qp = struct
         D.sq_send_flags_signal_comp;
       Window.set8 q.ring (base + fst D.Sq_send_hdr.wqe_size) 3;
       Window.set32 q.ring (base + fst D.Sq_send_hdr.length) n;
-      entry q s r at n;
+      sge q slot r at n;
       (* The retransmission table's entry of the send: its slot, the packet
          after it and its first packet. *)
       let psn = qp.psn land 0xffffff in
       let next = (psn + packets n) land 0xffffff in
       Window.set64 q.ring
-        ((ring_entries * q.stride) + (s * 8))
+        ((ring_entries * q.stride) + (slot * 8))
         (Int64.of_int
-           ((s lsl D.sq_msn_search_start_idx_sft)
+           ((slot lsl D.sq_msn_search_start_idx_sft)
            lor (next lsl D.sq_msn_search_next_psn_sft)
            lor psn));
       qp.psn <- next;
-      ring qp.nic.rc.db ~xid:qp.qpn ~typ:db_sq (i + 1)
+      ring qp.nic.rc.db ~xid:qp.qpn ~typ:s.typ (i + 1)
     end;
-    qp.sent <- i + 1
+    s.posted <- i + 1
 
   let receive qp r ~at n =
     check qp "Qp.receive" Receive r at n;
-    let q = qp.rq and i = qp.received in
+    let s = qp.receives in
+    let q = s.entries and i = s.posted in
+    let slot = i mod ring_entries in
+    s.lengths.(slot) <- n;
     if Option.is_none qp.failed then begin
-      let s = i mod ring_entries in
-      let base = s * q.stride in
+      let base = slot * q.stride in
       Window.fill q.ring base (D.Rq_wqe_hdr.sizeof + D.Sq_sge.sizeof) '\000';
       Window.set8 q.ring
         (base + fst D.Rq_wqe_hdr.wqe_type)
         D.rq_wqe_wqe_type_rcv;
       Window.set8 q.ring (base + fst D.Rq_wqe_hdr.wqe_size) 3;
-      entry q s r at n;
-      ring qp.nic.rc.db ~xid:qp.qpn ~typ:db_rq (i + 1)
+      sge q slot r at n;
+      ring qp.nic.rc.db ~xid:qp.qpn ~typ:s.typ (i + 1)
     end;
-    qp.received <- i + 1
+    s.posted <- i + 1
 
-  let send_statuses =
-    D.
-      [
-        (cq_req_status_bad_response_err, "the peer's response was malformed");
-        (cq_req_status_local_length_err, "its length exceeds the region");
-        (cq_req_status_local_qp_operation_err, "the queue pair failed");
-        ( cq_req_status_local_protection_err,
-          "it names a byte outside its region" );
-        (cq_req_status_memory_mgt_operation_err, "a region operation failed");
-        ( cq_req_status_remote_invalid_request_err,
-          "the peer refused it, such as for a receive too short for it" );
-        (cq_req_status_remote_access_err, "the peer refused access");
-        (cq_req_status_remote_operation_err, "the peer failed to complete it");
-        ( cq_req_status_rnr_nak_retry_cnt_err,
-          "the peer posted no receive in time" );
-        ( cq_req_status_transport_retry_cnt_err,
-          "the peer did not acknowledge it after 7 retries" );
-        ( cq_req_status_work_request_flushed_err,
-          "the queue pair failed before it ran" );
-      ]
+  (* Fails [qp] for [why], once. A failure the library detects, which the NIC
+     may not know of, also moves the queue pair to the error state, so that the
+     NIC runs none of its entries. *)
+  let fail_qp qp ~detected why =
+    if Option.is_none qp.failed then begin
+      qp.failed <-
+        Some (strf "%s: queue pair %d failed: %s" qp.nic.name qp.qpn why);
+      if detected then
+        ignore
+          (command qp.nic "Qp" (fun () ->
+               modify qp.nic qp.qpn ~state:D.cmdq_modify_qp_new_state_err
+                 ~mask:D.cmdq_modify_qp_modify_mask_state ignore))
+    end
 
-  let receive_statuses =
-    D.
-      [
-        (cq_res_rc_status_local_access_error, "its region refused the bytes");
-        (cq_res_rc_status_local_length_err, "the message is longer than it");
-        ( cq_res_rc_status_local_protection_err,
-          "it names a byte outside its region" );
-        (cq_res_rc_status_local_qp_operation_err, "the queue pair failed");
-        (cq_res_rc_status_memory_mgt_operation_err, "a region operation failed");
-        ( cq_res_rc_status_remote_invalid_request_err,
-          "the peer sent an invalid request" );
-        ( cq_res_rc_status_work_request_flushed_err,
-          "the queue pair failed before it ran" );
-        (cq_res_rc_status_hw_flush_err, "the NIC flushed it");
-      ]
+  (* Completes the oldest due entry of [r] of the failed queue pair: one before
+     [ok_until] moved its bytes. *)
+  let flush r why =
+    let n = r.taken in
+    r.taken <- n + 1;
+    if n < r.ok_until then Ok r.lengths.(n mod ring_entries) else Error why
 
-  let what = function Send -> "send" | Receive -> "receive"
-
-  (* Marks [qp] failed, for the reason the completion of [side] gives, and is
-     that reason. *)
-  let fail_with qp side why =
-    let why =
-      strf "%s: queue pair %d: a %s failed: %s" qp.nic.name qp.qpn (what side)
-        why
-    in
-    qp.failed <- Some why;
-    Error why
-
-  let cq qp = function Send -> qp.scq | Receive -> qp.rcq
-  let next qp = function Send -> qp.sends_done | Receive -> qp.receives_done
-
-  let complete qp side n =
-    match side with
-    | Send -> qp.sends_done <- n + 1
-    | Receive -> qp.receives_done <- n + 1
-
-  (* Whether the completion [n] of [q] is written: its toggle bit differs from
-     the parity of the pass over the queue that reads it. *)
+  (* Whether [q]'s completion [n] is written: its toggle bit differs from the
+     parity of the pass over the queue that reads it. *)
   let written (q : queue) n =
     Window.get8 q.ring (slot q n + fst D.Cq_base.cqe_type_toggle)
     land D.cq_base_toggle
     <> n / q.entries land 1
 
-  (* Takes the written completion [n] of [side], acknowledges it, and is the
-     bytes its entry moved. An entry that failed, or a completion of another
-     type, such as the one that reports the queue pair's failure, fails the
-     queue pair. So does a machine that failed, whose reads are all ones. *)
-  let take qp side n =
-    let q = cq qp side in
+  (* A terminal completion reports the queue pair's failure, and the sends
+     before the one at its consumer index, which completed. *)
+  let terminal qp (q : queue) at =
+    let index = Window.get32 q.ring (at + fst D.Cq_terminal.sq_cons_idx) in
+    let index = index land 0xffff in
+    if index <> no_index then begin
+      let s = qp.sends in
+      let done_ = (index - s.taken) land (ring_entries - 1) in
+      s.ok_until <- Int.min s.posted (s.taken + done_)
+    end;
+    fail_qp qp ~detected:false "the NIC reported its failure"
+
+  (* Reads [r]'s written completion and acknowledges it. The entry completed, or
+     it failed, which fails the queue pair; a terminal completion fails it and
+     completes no entry. *)
+  let take qp r =
+    let q = r.cq and n = r.cq_read in
     Window.barrier ();
     let at = slot q n in
     let kind =
@@ -1096,71 +1212,84 @@ module Qp = struct
       land D.cq_base_cqe_type_mask
     in
     let status = Window.get8 q.ring (at + fst D.Cq_base.status) in
-    let bytes =
-      match side with
-      | Send -> qp.lengths.(n mod ring_entries)
-      | Receive -> Window.get32 q.ring (at + fst D.Cq_res_rc.length)
-    in
-    complete qp side n;
-    let id = match side with Send -> qp.scq_id | Receive -> qp.rcq_id in
-    ring qp.nic.rc.db ~xid:id ~typ:db_cq (n + 1);
-    let expected =
-      match side with
-      | Send -> D.cq_base_cqe_type_req
-      | Receive -> D.cq_base_cqe_type_res_rc
-    in
-    match Machine.failed (Function.machine qp.nic.hw.fn) with
-    | Some why -> fail_with qp side why
-    | None when kind = D.cq_base_cqe_type_terminal ->
-        fail_with qp side "the queue pair failed"
-    | None when kind <> expected ->
-        fail_with qp side (strf "a completion of type %d" (kind lsr 1))
-    | None when status <> 0 ->
-        let statuses =
-          match side with Send -> send_statuses | Receive -> receive_statuses
-        in
-        fail_with qp side
-          (match List.assoc_opt status statuses with
-          | Some why -> why
-          | None -> strf "status %d" status)
-    | None -> Ok bytes
+    let length = Window.get32 q.ring (at + fst D.Cq_res_rc.length) in
+    if kind = D.cq_base_cqe_type_terminal then terminal qp q at;
+    r.cq_read <- n + 1;
+    ring qp.nic.rc.db ~xid:r.cq_id ~typ:D.bnxt_re_que_type_cq (n + 1);
+    if kind = D.cq_base_cqe_type_terminal then ()
+    else if kind <> r.kind then
+      fail_qp qp ~detected:true (strf "a completion of type %d" (kind lsr 1))
+    else if status <> 0 then
+      fail_qp qp ~detected:false
+        (match List.assoc_opt status r.statuses with
+        | Some why -> why
+        | None -> strf "status %d" status)
+    else begin
+      let i = r.taken in
+      r.taken <- i + 1;
+      if r == qp.receives then r.lengths.(i mod ring_entries) <- length
+    end
 
-  (* Completes the entry [n] of [side] of the failed queue pair. *)
-  let flush qp side n why =
-    complete qp side n;
-    Error why
-
-  (* Why [qp] failed, if it has or its machine has. *)
-  let failure qp side =
+  (* The completion of [r]'s oldest due entry, if it has one, which a failed
+     queue pair or machine gives at once. *)
+  let rec next qp r =
     match qp.failed with
-    | Some _ as failed -> failed
+    | Some why -> Some (flush r why)
+    | None when written r.cq r.cq_read ->
+        let i = r.taken in
+        take qp r;
+        if r.taken > i then Some (Ok r.lengths.(i mod ring_entries))
+        else next qp r
     | None -> (
         match Machine.failed (Function.machine qp.nic.hw.fn) with
         | None -> None
         | Some why ->
-            ignore (fail_with qp side why);
-            qp.failed)
+            fail_qp qp ~detected:false why;
+            next qp r)
+
+  let due r = r.posted > r.taken
 
   let poll qp side =
-    live qp.nic "Qp.poll";
-    let n = next qp side in
-    if room qp side = ring_entries - 1 then None
-    else if written (cq qp side) n then Some (take qp side n)
-    else
-      match failure qp side with
-      | Some why -> Some (flush qp side n why)
-      | None -> None
+    usable qp "Qp.poll";
+    let r = rings qp side in
+    if due r then next qp r else None
 
   let wait qp side ~us =
     if us < 0 then invalid_argf "Rig_bnxt.Qp.wait: %d us" us;
-    live qp.nic "Qp.wait";
-    if room qp side = ring_entries - 1 then
-      invalid_arg "Rig_bnxt.Qp.wait: no entry is due";
-    let n = next qp side and q = cq qp side in
-    let ended () = written q n || Option.is_some qp.failed in
-    let what = strf "%s: queue pair %d's %s" qp.nic.name qp.qpn (what side) in
-    match Function.wait qp.nic.hw.fn ~us what ended with
-    | Error why -> Error why
-    | Ok () when written q n -> take qp side n
-    | Ok () -> flush qp side n (Option.get qp.failed)
+    usable qp "Qp.wait";
+    let r = rings qp side in
+    if not (due r) then invalid_arg "Rig_bnxt.Qp.wait: no entry is due";
+    let ended () = written r.cq r.cq_read || Option.is_some qp.failed in
+    (match Function.wait qp.nic.hw.fn ~us r.waiting ended with
+    | Ok () -> ()
+    | Error _ ->
+        Option.iter (fail_qp qp ~detected:false) (Function.failed qp.nic.hw.fn));
+    next qp r
+
+  let destroy qp =
+    match qp.destroyed with
+    | Some result -> result
+    | None ->
+        let result =
+          command qp.nic "Qp.destroy" @@ fun () ->
+          let nic = qp.nic in
+          ignore
+            (rcfw nic.hw nic.rc "destroy_qp"
+               ~opcode:D.cmdq_base_opcode_destroy_qp
+               ~size:D.Cmdq_destroy_qp.sizeof (fun b ->
+                 set b D.Cmdq_destroy_qp.qp_cid qp.qpn));
+          List.iter
+            (fun r ->
+              ignore
+                (rcfw nic.hw nic.rc "destroy_cq"
+                   ~opcode:D.cmdq_base_opcode_destroy_cq
+                   ~size:D.Cmdq_destroy_cq.sizeof (fun b ->
+                     set b D.Cmdq_destroy_cq.cq_cid r.cq_id)))
+            [ qp.sends; qp.receives ];
+          List.iter
+            (fun r -> List.iter (free nic.hw) (r.entries.memory @ r.cq.memory))
+            [ qp.sends; qp.receives ]
+        in
+        qp.destroyed <- Some result;
+        result
 end

@@ -376,6 +376,20 @@ struct creq_create_qp_resp {
 	u8	reserved48[5];
 };
 
+struct cmdq_destroy_qp {
+	u8	opcode;
+	#define CMDQ_DESTROY_QP_OPCODE_DESTROY_QP 0x2UL
+	#define CMDQ_DESTROY_QP_OPCODE_LAST      CMDQ_DESTROY_QP_OPCODE_DESTROY_QP
+	u8	cmd_size;
+	__le16	flags;
+	__le16	cookie;
+	u8	resp_size;
+	u8	reserved8;
+	__le64	resp_addr;
+	__le32	qp_cid;
+	__le32	unused_0;
+};
+
 struct cmdq_modify_qp {
 	u8	opcode;
 	#define CMDQ_MODIFY_QP_OPCODE_MODIFY_QP 0x3UL
@@ -569,6 +583,20 @@ struct cmdq_create_cq {
 	#define CMDQ_CREATE_CQ_UNUSED12_MASK             0xfff00000UL
 	#define CMDQ_CREATE_CQ_UNUSED12_SFT              20
 	__le64  reserved64;
+};
+
+struct cmdq_destroy_cq {
+	u8	opcode;
+	#define CMDQ_DESTROY_CQ_OPCODE_DESTROY_CQ 0xaUL
+	#define CMDQ_DESTROY_CQ_OPCODE_LAST      CMDQ_DESTROY_CQ_OPCODE_DESTROY_CQ
+	u8	cmd_size;
+	__le16	flags;
+	__le16	cookie;
+	u8	resp_size;
+	u8	reserved8;
+	__le64	resp_addr;
+	__le32	cq_cid;
+	__le32	unused_0;
 };
 
 struct cmdq_register_mr {
@@ -852,6 +880,25 @@ struct cq_res_rc {
 	__le32	srq_or_rq_wr_id;
 	#define CQ_RES_RC_SRQ_OR_RQ_WR_ID_MASK 0xfffffUL
 	#define CQ_RES_RC_SRQ_OR_RQ_WR_ID_SFT 0
+};
+
+struct cq_terminal {
+	__le64	qp_handle;
+	__le16	sq_cons_idx;
+	__le16	rq_cons_idx;
+	__le32	reserved32_1;
+	__le64	reserved64_3;
+	u8	cqe_type_toggle;
+	#define CQ_TERMINAL_TOGGLE           0x1UL
+	#define CQ_TERMINAL_CQE_TYPE_MASK    0x1eUL
+	#define CQ_TERMINAL_CQE_TYPE_SFT     1
+	#define CQ_TERMINAL_CQE_TYPE_TERMINAL  (0xeUL << 1)
+	#define CQ_TERMINAL_CQE_TYPE_LAST     CQ_TERMINAL_CQE_TYPE_TERMINAL
+	u8	status;
+	#define CQ_TERMINAL_STATUS_OK 0x0UL
+	#define CQ_TERMINAL_STATUS_LAST CQ_TERMINAL_STATUS_OK
+	__le16	reserved16;
+	__le32	reserved32_2;
 };
 
 	#define PTU_PTE_VALID            0x1UL

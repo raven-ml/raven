@@ -1,7 +1,7 @@
 /*
- * Broadcom NetXtreme-E RoCE driver.
+ * Broadcom NetXtreme-E User Space RoCE driver
  *
- * Copyright (c) 2016 - 2017, Broadcom. All rights reserved.  The term
+ * Copyright (c) 2015-2017, Broadcom. All rights reserved.  The term
  * Broadcom refers to Broadcom Limited and/or its subsidiaries.
  *
  * This software is available to you under a choice of one of two
@@ -33,11 +33,37 @@
  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * Description: QPLib resource manager (header)
+ * Description: ABI data structure definition
  */
 
-/* Excerpt of https://raw.githubusercontent.com/torvalds/linux/v6.18/drivers/infiniband/hw/bnxt_re/qplib_res.h. */
+/* Excerpt of https://raw.githubusercontent.com/linux-rdma/rdma-core/v56.0/providers/bnxt_re/bnxt_re-abi.h. */
 
-#define BNXT_QPLIB_DBR_VALID		(0x1UL << 26)
+enum bnxt_re_db_que_type {
+	BNXT_RE_QUE_TYPE_SQ		= 0x00,
+	BNXT_RE_QUE_TYPE_RQ		= 0x01,
+	BNXT_RE_QUE_TYPE_SRQ		= 0x02,
+	BNXT_RE_QUE_TYPE_SRQ_ARM	= 0x03,
+	BNXT_RE_QUE_TYPE_CQ		= 0x04,
+	BNXT_RE_QUE_TYPE_CQ_ARMSE	= 0x05,
+	BNXT_RE_QUE_TYPE_CQ_ARMALL	= 0x06,
+	BNXT_RE_QUE_TYPE_CQ_ARMENA	= 0x07,
+	BNXT_RE_QUE_TYPE_SRQ_ARMENA	= 0x08,
+	BNXT_RE_QUE_TYPE_CQ_CUT_ACK	= 0x09,
+	BNXT_RE_PUSH_TYPE_START		= 0x0C,
+	BNXT_RE_PUSH_TYPE_END		= 0x0D,
+	BNXT_RE_QUE_TYPE_NULL		= 0x0F
+};
 
-#define BNXT_QPLIB_DBR_EPOCH_SHIFT	24
+enum bnxt_re_db_mask {
+	BNXT_RE_DB_INDX_MASK		= 0xFFFFFFUL,
+	BNXT_RE_DB_PILO_MASK		= 0x0FFUL,
+	BNXT_RE_DB_PILO_SHIFT		= 0x18,
+	BNXT_RE_DB_QID_MASK		= 0xFFFFFUL,
+	BNXT_RE_DB_PIHI_MASK            = 0xF00UL,
+	BNXT_RE_DB_PIHI_SHIFT           = 0x0C, /* Because mask is 0xF00 */
+	BNXT_RE_DB_TYP_MASK             = 0x0FUL,
+	BNXT_RE_DB_TYP_SHIFT            = 0x1C,
+	BNXT_RE_DB_VALID_SHIFT          = 0x1A,
+	BNXT_RE_DB_EPOCH_SHIFT          = 0x18,
+	BNXT_RE_DB_TOGGLE_SHIFT		= 0x19,
+};
