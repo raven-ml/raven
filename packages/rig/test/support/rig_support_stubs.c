@@ -1381,6 +1381,26 @@ value rig_test_host_held(value unit) {
   return Val_long(rig_heap_held());
 }
 
+#if defined(__GLIBC__) && !defined(RIG_TEST_SANITIZER)
+/* glibc keeps a cache per thread of the chunks it freed last, up to 7 of
+   each size from 32 to 1040 bytes by its defaults, and counts them as
+   allocated: the count moved by what the cache held, with the order of the
+   thread's last frees. Taking more chunks of each size than the cache holds,
+   then freeing them, leaves the calling thread's cache full: it then adds the
+   same bytes to every count. */
+#define CACHED_SIZES 64
+#define CACHE_FILL 16
+
+static void fill_cache(void) {
+  /* Volatile, so that the compiler keeps each allocation and its free. */
+  void *volatile p[CACHE_FILL];
+  for (size_t chunk = 32; chunk < 32 + 16 * CACHED_SIZES; chunk += 16) {
+    for (int i = 0; i < CACHE_FILL; i++) p[i] = malloc(chunk - sizeof(size_t));
+    for (int i = 0; i < CACHE_FILL; i++) free(p[i]);
+  }
+}
+#endif
+
 /* The bytes the C heap holds allocated, or -1 where its allocator does not
    say. */
 value rig_test_heap_bytes(value unit) {
@@ -1392,6 +1412,7 @@ value rig_test_heap_bytes(value unit) {
   malloc_zone_statistics(NULL, &s);
   return Val_long((intnat)s.size_in_use);
 #elif defined(__GLIBC__)
+  fill_cache();
   struct mallinfo2 m = mallinfo2();
   return Val_long((intnat)(m.uordblks + m.hblkhd));
 #else

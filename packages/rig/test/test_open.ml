@@ -1178,10 +1178,9 @@ let test_ended_words () =
 (* Opens and closes keep nothing once the program holds no value of the
    devices. A window opens and closes [opens] devices, then the rounds of
    [settle] return their memory and end their words. After a warm window,
-   the OCaml heap ends each window where it started it. The C heap moves
-   either way by what the allocator's per-thread caches hold (glibc's),
-   while a leak grows it in every window: the law checks the least growth
-   of [windows]. *)
+   the OCaml heap ends each window where it started it. macOS's count of
+   the C heap can step by 16 KiB over one window, while a leak grows it in
+   every window: the law checks the least growth of [windows]. *)
 let opens = 1024
 let windows = 3
 
