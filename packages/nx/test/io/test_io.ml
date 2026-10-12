@@ -460,7 +460,11 @@ let safetensors =
           let path = temp_file () in
           save_safetensors path (Nx.P (Nx.arange Nx.int32 0 1024 1));
           let (Nx.P t) = load_entry path "t" in
-          Unix.truncate path 100;
+          (* Through a descriptor that shares the file: [Unix.truncate] opens
+             it exclusively on Windows, which the loaded file refuses. *)
+          let fd = Unix.openfile path [ Unix.O_WRONLY ] 0 in
+          Fun.protect ~finally:(fun () -> Unix.close fd) (fun () ->
+              Unix.ftruncate fd 100);
           raises_match (Exn.sys_error ~substring:path) (fun () -> Nx.to_array t));
       (let whole = typed_file () in
        let with_length n =
@@ -1358,6 +1362,7 @@ let every_format =
          never through the file's name. *)
       cases ~name "a save writes under a umask that denies the owner write"
         formats (fun f ->
+          if Sys.win32 then skip ~reason:"no umask on Windows" ();
           if Unix.geteuid () <> 0 then begin
             let path = file f.suffix "old"
             and fresh = missing ("x" ^ f.suffix) in
