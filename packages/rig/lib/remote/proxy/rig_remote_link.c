@@ -18,16 +18,17 @@
    measures silence on its own.
 
    A job fails once, in two steps. Whoever finds the failure, a thread or
-   a caller, sets the root cause under the job's lock; from then on no link
-   starts a frame, and each owes its peer an abort. A link sends it at once
-   if no frame is being sent, else the frame's sender sends it after, then
-   ends its stream; a link whose send failed sends none, its stream cut
-   mid-frame. A sender whose send failed begins the failure before it
-   releases the send claim, so no frame follows the cut. Once the last
-   abort left, the job is marked failed: each link is marked failed, its
-   rails' counts raised, and every waiter woken. Nothing in the process
-   learns of the failure before, so a process that ends on its failure ends
-   after every peer was sent the root cause.
+   a caller, makes each link owe its peer an abort, then sets the root
+   cause, under the job's lock; from then on no link starts a frame. A
+   link sends its abort at once if no frame is being sent, else the
+   frame's sender sends it after, then ends its stream; a link whose send
+   failed sends none, its stream cut mid-frame. A sender whose send failed
+   begins the failure before it releases the send claim, so no frame
+   follows the cut. Once the last abort left, the job is marked failed:
+   each link is marked failed, its rails' counts raised, and every waiter
+   woken. Nothing in the process learns of the failure before, so a
+   process that ends on its failure ends after every peer was sent the
+   root cause.
 
    The receiving thread of a failing link discards frames until the peer
    ends its stream, so that no unread byte makes the system reset the
@@ -502,16 +503,18 @@ static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
     why_free(why);
     return;
   }
-  atomic_store(&j->why, why != NULL ? why : &failed_why);
   /* This call's share keeps the count above 0 until every link owes. */
   j->owed = 1;
   for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
     l->abort_owed = !l->fd_closed;
     j->owed += l->abort_owed;
-    pthread_cond_signal(&l->wake);
     pthread_mutex_unlock(&l->mu);
   }
+  /* Set once every link owes: a link's thread that sees the cause settles
+     its abort, and one that found none owed would end the stream without
+     it. */
+  atomic_store(&j->why, why != NULL ? why : &failed_why);
   struct rig_remote_link *links = j->links;
   pthread_mutex_unlock(&j->mu);
   hook(RIG_REMOTE_LINK_FAILING, 0);
@@ -520,6 +523,7 @@ static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
      prepended, so the list read under the job's lock stays whole. */
   for (struct rig_remote_link *l = links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
+    pthread_cond_signal(&l->wake);
     int settled = abort_link(l);
     pthread_mutex_unlock(&l->mu);
     if (settled) abort_left(j);

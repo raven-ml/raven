@@ -45,6 +45,7 @@ let large = 32 lsl 20
 let reset_cause = "peer: closed its connection"
 let silent_cause = Printf.sprintf "peer: silent for %d s" bound
 let stalled_cause = Printf.sprintf "peer: read nothing for %d s" bound
+let why = "the test fails the job"
 
 (* Sockets *)
 
@@ -318,6 +319,28 @@ let stalled_idle () =
     [ (k_abort, str silent_cause) ]
     (frames s.p)
 
+(* A link's thread may see the failure before the thread that began it
+   reaches the link. That thread is held once it set the root cause, before
+   it sends any abort: the well link's sending thread, which wakes for its
+   beat within a second, sees the failure first and sends the abort itself,
+   which its peer reads while the failing thread is held. *)
+let seen_first () =
+  with_scene @@ fun s ->
+  Probe.arm Failing;
+  let failed = spawn (fun () -> Link.fail s.job why) in
+  equal ~msg:"the failing thread is held" bool true (Probe.held ());
+  let first =
+    match header s.q with
+    | Some (k, n) -> Some (k, read_n s.q n)
+    | None -> None
+  in
+  Probe.resume ();
+  failed ();
+  equal ~msg:"the other link's peer's first frame" (option frame)
+    (Some (k_abort, str why))
+    first;
+  equal ~msg:"what it received after" (list frame) [] (frames s.q)
+
 (* The bytes of [s] from its first that is not [c], if any. *)
 let stray c s =
   match String.to_seq s |> Seq.find_index (fun x -> x <> c) with
@@ -450,8 +473,6 @@ let stalled_release () =
    starts. A fault then leaves the root cause as it was, and [fail] returns,
    after the bound if the peer reads nothing. *)
 
-let why = "the test fails the job"
-
 let severed_abort () =
   with_scene @@ fun s ->
   let woke = waiters s in
@@ -495,6 +516,8 @@ let () =
                severed_idle;
              slow "a silent peer fails the job, and is sent the abort"
                stalled_idle;
+             slow "a link's thread that sees the failure first sends its abort"
+               seen_first;
            ];
          group ~timeout:30. "mid-frame"
            [

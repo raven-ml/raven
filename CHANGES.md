@@ -51,6 +51,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- A remote job that fails sends every peer the root cause: a link whose
+  thread saw the failure before the failing thread reached it could end its
+  stream without the abort, and the peer learned only that the link closed.
 - On Windows, `Rig_remote.serve` no longer fails with `EADDRINUSE` in a
   process whose id a killed OCaml process had: `Unix.socketpair` there binds a
   file named after the process id, which the killed process left behind.
