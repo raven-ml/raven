@@ -28,11 +28,8 @@ let strings =
     [
       (8, Gen.string);
       (2, Gen.string_of (Gen.char_range 'a' 'c'));
-      ( 1,
-        Gen.string_of
-          ~size:(Gen.int_range 60_000 200_000)
-          (Gen.char_range 'a' 'd') );
-      (1, Gen.string_of ~size:(Gen.int_range 60_000 200_000) Gen.char);
+      (1, F.long 'a' 'd');
+      (1, F.long '\000' '\255');
     ]
 
 let round_trips =

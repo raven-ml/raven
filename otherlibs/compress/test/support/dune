@@ -1,2 +1,3 @@
 (library
- (name compress_fixtures))
+ (name compress_fixtures)
+ (libraries windtrap))

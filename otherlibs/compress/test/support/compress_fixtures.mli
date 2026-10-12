@@ -36,3 +36,10 @@ val runs : string
 
 val random : string
 (** [random] is 20000 pseudo-random bytes. *)
+
+val long : ?size:int Windtrap.Gen.t -> char -> char -> string Windtrap.Gen.t
+(** [long ~size lo hi] draws strings of [size] bytes (defaults to 60000 to
+    200000), each from [lo] to [hi], made from a drawn seed in one pass. It
+    shrinks their length and seed. A string drawn a character at a time costs
+    a shrink tree for each, which made a property of 1000 such cases run a
+    minute. *)

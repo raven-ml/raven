@@ -58,3 +58,12 @@ let runs = String.init 100000 (fun i -> Char.chr (i / 1000 mod 256))
 let random =
   let next = xorshift 0x2545F4914F6CDD1DL in
   String.init 20000 (fun _ -> Char.chr (Int64.to_int (next ()) land 0xFF))
+
+let long ?(size = Windtrap.Gen.int_range 60_000 200_000) lo hi =
+  let span = Char.code hi - Char.code lo + 1 in
+  Windtrap.Gen.map
+    (fun (n, seed) ->
+      let st = Random.State.make [| seed |] in
+      String.init n (fun _ ->
+          Char.chr (Char.code lo + Random.State.int st span)))
+    (Windtrap.Gen.pair size Windtrap.Gen.nat)

@@ -125,13 +125,8 @@ let returns_or_errors f s n =
   ignore (decompress_into f s n)
 
 let strings =
-  let long = Gen.int_range 60_000 200_000 in
   Gen.frequency
-    [
-      (18, Gen.string);
-      (1, Gen.string_of ~size:long (Gen.char_range 'a' 'd'));
-      (1, Gen.string_of ~size:long Gen.char);
-    ]
+    [ (18, Gen.string); (1, F.long 'a' 'd'); (1, F.long '\000' '\255') ]
 
 (* Round trips *)
 
@@ -148,10 +143,7 @@ let levels =
        (Gen.frequency
           [
             (8, Gen.string);
-            ( 1,
-              Gen.string_of
-                ~size:(Gen.int_range 60_000 140_000)
-                (Gen.char_range 'a' 'd') );
+            (1, F.long ~size:(Gen.int_range 60_000 140_000) 'a' 'd');
           ])
        (Gen.int_range 1 70_000))
     (fun (level, s, k) ->
@@ -527,9 +519,7 @@ let encoders =
                (frequency
                   [
                     (4, string);
-                    ( 1,
-                      string_of ~size:(int_range 32_800 36_000)
-                        (char_range 'a' 'e') );
+                    (1, F.long ~size:(int_range 32_800 36_000) 'a' 'e');
                   ])))
         (fun calls ->
           (* each call reuses the state the one before it left *)
@@ -571,7 +561,7 @@ let encoders =
            (Gen.frequency
               [
                 (3, Gen.string);
-                (1, Gen.string_of ~size:(Gen.int_range 60_000 140_000) Gen.char);
+                (1, F.long ~size:(Gen.int_range 60_000 140_000) '\000' '\255');
               ]))
         (fun (level, s) ->
           let n = String.length s in
