@@ -237,9 +237,8 @@ val leave : device -> live -> unit
 val hold_word : device -> bool
 (** [hold_word d] counts a mapping of [d]'s word about to be made, unless
     [d]'s word has moved to its C record's copy or gone back to its driver:
-    whether it counted. The mapping is
-    then given back with {!give}, or, if none was made, the count with
-    {!word_unmapped}. *)
+    whether it counted. The mapping is then given back with {!give}, or, if
+    none was made, the count with {!word_unmapped}. *)
 
 val give : device -> region -> mapped -> unit
 (** [give d r m] gives back [d]'s mapping [r] of [m], now or once [d]

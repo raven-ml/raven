@@ -600,6 +600,40 @@ let test_close_word () =
     (List.filter (( = ) "word") (after (P.log p)));
   equal ~msg:"the last value" int 1 (Rig.signaled d)
 
+(* A consumer's map of a producer's word that the producer's end overtakes
+   keeps no mapping: the word goes back while the consumer stays open. The
+   consumer's map waits at Polled's [map_peer] in another domain while the
+   producer closes and its word ends, which finds no mapping of it yet. *)
+let test_map_beside_word_end () =
+  let producer, pp = P.open_ "loss:overtaken-producer" in
+  let consumer, pc = P.open_ ~waits_on:[ `Host ] "loss:overtaken-consumer" in
+  let v = submit (empty producer) in
+  let at_map = Atomic.make false and go = Atomic.make false in
+  P.before pc "map_peer" (fun () ->
+      Atomic.set at_map true;
+      while not (Atomic.get go) do
+        Unix.sleepf 0.001
+      done);
+  let waiter =
+    Domain.spawn (fun () ->
+        match Rig.Point.wait (submit (empty consumer) ~waits:[| v |]) with
+        | () -> "ran"
+        | exception Rig.Lost (d, _) -> Rig.name d ^ " lost")
+  in
+  Support.await "the consumer's map" (fun () -> Atomic.get at_map);
+  Rig.close producer;
+  collect ();
+  collect ();
+  Atomic.set go true;
+  (* The submit then waits on the host, for a producer lost since. *)
+  mem ~msg:"the consumer's submit" string (Domain.join waiter)
+    [ "ran"; Rig.name producer ^ " lost" ];
+  collect ();
+  collect ();
+  equal ~msg:"the producer's word" int 1 (count "word" pp);
+  equal ~msg:"the consumer" (option string) None (Rig.lost consumer);
+  Rig.close consumer
+
 (* A word another device's queue waits on goes back only once that wait ran,
    after that device's mapping of it. *)
 let test_word_waited () =
@@ -788,6 +822,8 @@ let tests =
           test_close_word;
         test "a word another queue waits on goes back once the wait ran"
           test_word_waited;
+        test "a map of a word whose end overtakes it keeps no mapping"
+          test_map_beside_word_end;
         test
           "a release on a device still stopping waits for its stop and raises \
            nothing"

@@ -811,8 +811,10 @@ let parks_then_raises () =
 
 (* An open that an exception ends wakes the opens of its name waiting for it,
    and the next one opens. The first opener raises only once the second open
-   waits, and the second returns well within the 200 ms after which a wait
-   looks again unwoken: the end wakes it. These guard the end of an
+   waits. The time runs from the unpark: a wait runs no signal handler, so
+   the handler unparks when the open's wait returns to OCaml, and the open
+   starts its next wait right after. Unwoken, that wait returns 200 ms after
+   its start; the end wakes it well within 150 ms. These guard the end of an
    interrupted open by the next open. *)
 let test_ended_wakes_waiter () =
   if not Support.sees_waits then
@@ -841,7 +843,7 @@ let test_ended_wakes_waiter () =
   equal ~msg:"the second open waited" bool true waited;
   equal ~msg:"the first open" string "raised Exit" !first;
   less ~msg:"seconds from the end to the second open's return" float_exact
-    ~than:0.19 took;
+    ~than:0.15 took;
   Rig.close (require_ok ~pp:Format.pp_print_string second)
 
 (* A close of a machine's host waits for the opens in flight on the machine,

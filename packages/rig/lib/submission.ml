@@ -859,10 +859,14 @@ let rig_word = 0
 let rig_object = 1
 let host_wait = -1
 
-(* Keeps [d]'s mapping [pm] of a producer's word while [d]'s own word is read:
-   whether it kept it. *)
-let keep_pair_map (l, pm) =
+(* Keeps [d]'s mapping [pm] of a producer's word while both words are read:
+   whether it kept it. Once the producer's word moved, its end's walk may
+   have passed [d] already, so a kept mapping would hold the word until [d]
+   ends. The producer's [word_end] is read under [d]'s lock alone, as a plain
+   field: a change after the read is one the walk then finds. *)
+let keep_pair_map (l, ((p, _) as pm)) =
   l.word_end = Read
+  && (match p.live with Some pl -> pl.word_end = Read | None -> false)
   && begin
     l.pair_maps <- pm :: l.pair_maps;
     true

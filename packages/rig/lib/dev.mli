@@ -223,10 +223,10 @@ val next_ended : int -> int
 (** [next_ended i] is the least index from [i] on of a device whose stop
     returned and whose resources are not freed, or [0] for none. In a forked
     child it includes the devices inherited from the parent, which are
-    orphaned ({!orphaned}). Its memory
-    and mappings may be given back long after the stop. The stop's change
-    of state makes it one, so nothing an exception interrupts can leave a
-    stopped device out. It allocates nothing. *)
+    orphaned ({!orphaned}). Such a device's memory and mappings may go back
+    long after its stop. The stop's change of state makes a device one of
+    these, so nothing an exception interrupts can leave a stopped device
+    out. It allocates nothing. *)
 
 val free_live : device -> unit
 (** [free_live d] frees [d]'s resources: {!live} raises {!Lost} from then

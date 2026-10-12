@@ -839,16 +839,27 @@ let pop_pair_map (l, d) =
       l.pair_maps <- rest @ others;
       Some r
 
-(* Gives back [c]'s mappings of [d]'s word, one at a time. *)
+(* Gives back [c]'s mappings of [d]'s word, one at a time, each while it
+   holds [c]'s drains: [c]'s resources then outlive the mapping in hand. A
+   [c] whose drains are closed has freed its resources, and has no mapping
+   left. *)
 let rec give_word_maps d c =
   match c.live with
-  | None -> ()
-  | Some l -> (
-      match Lock.protect l.lock pop_pair_map (l, d) with
-      | Some r ->
-          give c r (Word d);
-          give_word_maps d c
-      | None -> ())
+  | Some l when enter l -> (
+      match
+        match Lock.protect l.lock pop_pair_map (l, d) with
+        | Some r ->
+            give c r (Word d);
+            true
+        | None -> false
+      with
+      | more ->
+          leave c l;
+          if more then give_word_maps d c
+      | exception e ->
+          leave c l;
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+  | _ -> ()
 
 (* Whether this drain gives the word back: no other drain took that step. *)
 let give_word l =
