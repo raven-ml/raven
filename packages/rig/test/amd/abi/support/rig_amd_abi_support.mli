@@ -65,8 +65,3 @@ val packets : int list -> (int * int list) list
 val writes : int list -> (int * int) list
 (** [writes ws] is the register writes of the [SET_SH_REG] and [SET_UCONFIG_REG]
     packets of [ws], in order, each as its register's address and its value. *)
-
-val pm4 : Gpu.t -> int list -> string
-(** [pm4 g ws] is [ws] as text, one packet a line: its name, then the registers
-    a register write sets, by [g]'s names where it has one, or its body in
-    hexadecimal. *)

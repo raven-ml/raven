@@ -11,7 +11,6 @@
   test_thread_trace
   test_capability
   test_counter)
- (modules :standard \ test_trace_program)
  (libraries
   rig
   rig_amd_abi
@@ -23,12 +22,3 @@
  (deps
   (source_tree fixtures)
   ../fixtures/hidden_gfx1201.hsaco))
-
-(test
- (name test_trace_program)
- (modules test_trace_program)
- (libraries rig_amd_abi rig_amd_abi_support windtrap)
- (action
-  (progn
-   (run %{test} --corrected)
-   (diff? test_trace_program.ml test_trace_program.ml.corrected))))

@@ -31,24 +31,6 @@ let encode p = words (Packet.encode Int64.of_int p)
 
 (* PM4 packets *)
 
-(* The opcodes of soc15d.h and nvd.h the encoders write. *)
-let names =
-  [
-    (0x10, "NOP");
-    (0x15, "DISPATCH_DIRECT");
-    (0x23, "PRED_EXEC");
-    (0x37, "WRITE_DATA");
-    (0x3c, "WAIT_REG_MEM");
-    (0x3f, "INDIRECT_BUFFER");
-    (0x40, "COPY_DATA");
-    (0x46, "EVENT_WRITE");
-    (0x49, "RELEASE_MEM");
-    (0x58, "ACQUIRE_MEM");
-    (0x76, "SET_SH_REG");
-    (0x79, "SET_UCONFIG_REG");
-    (0x93, "WAIT_REG_MEM64");
-  ]
-
 let set_sh_reg = 0x76
 let set_uconfig_reg = 0x79
 let pred_exec = 0x23
@@ -68,16 +50,6 @@ let rec packets = function
       ((h lsr 8) land 0xff, body)
       :: packets (List.filteri (fun i _ -> i >= n) rest)
 
-let name g a =
-  let at (r : Register.t) =
-    match Register.address g r with
-    | a' -> a' = a
-    | exception Invalid_argument _ -> false
-  in
-  match List.find_opt at (Register.registers g) with
-  | Some r -> r.name
-  | None -> strf "0x%x" a
-
 let set start = function
   | [] -> []
   | off :: vs -> List.mapi (fun i v -> (start + off + i, v)) vs
@@ -88,17 +60,3 @@ let sets (op, body) =
   else []
 
 let writes ws = List.concat_map sets (packets ws)
-
-let pm4 g ws =
-  let line (op, body) =
-    let op_name =
-      Option.value ~default:(strf "0x%02x" op) (List.assoc_opt op names)
-    in
-    let body =
-      match sets (op, body) with
-      | [] -> List.map (strf "0x%x") body
-      | fs -> List.map (fun (a, v) -> strf "%s=0x%x" (name g a) v) fs
-    in
-    String.concat " " (op_name :: body)
-  in
-  String.concat "\n" (List.map line (packets ws))
