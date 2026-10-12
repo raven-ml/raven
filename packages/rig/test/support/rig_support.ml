@@ -421,6 +421,9 @@ module Polled = struct
       ?(answer = `Stopped) ?(runs = `When_slept) ?(lag = 1) ?hang_ms
       ?(capability = Rig_edge.Capability (capability_key, ())) () =
     if lag < 1 then invalid_arg "Polled.make: lag is below 1";
+    let most_parts = Option.value most_parts ~default:capacity in
+    if most_parts > capacity then
+      invalid_arg "Polled.make: most_parts is above capacity";
     let limits = function
       | Rig_edge.Device -> memory
       | Mapped -> window
@@ -431,7 +434,7 @@ module Polled = struct
       {
         c;
         word_at = polled_word_at c;
-        most_parts = Option.value most_parts ~default:capacity;
+        most_parts;
         copies;
         host_visible;
         addresses;

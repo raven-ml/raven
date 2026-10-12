@@ -134,9 +134,9 @@ type 'region facts = {
           and fills up to the argument size, and copies up to the length,
           that the driver's [.mli] states. [room] must never answer
           [RIG_NEVER] for such a submission of parts the device runs
-          ({!section-calls}). Words parts,
-          and larger launches and copies, take the room their sizes take,
-          and [room] alone judges a submission of more parts. *)
+          ({!section-calls}). Words parts, and larger launches and copies,
+          take the room their sizes take, and [room] alone judges a
+          submission of more parts. *)
   may_block : bool;
       (** Whether [room], [submit] and [commit] ({!section-calls}) may block
           on the device's own earlier work, its own transfers or its

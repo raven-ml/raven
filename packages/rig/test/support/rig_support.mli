@@ -40,7 +40,8 @@ module Polled : sig
       1024), the most one submission holds: beyond it [room] answers
       [`Later], or, with [may_block], submit waits for room, and it answers
       [`Never] for a submission of more. Its facts state [most_parts]
-      (defaults to [capacity]). Without
+      (defaults to [capacity]), at most [capacity], so that an idle queue
+      runs that many parts. Without
       [copies] (defaults to [true]) it lists no copy queue. Its compute queue
       takes words, and does nothing for them.
       Without [host_visible] (defaults to [true]) the host does not address
@@ -72,7 +73,7 @@ module Polled : sig
       (defaults to no bound). Its facts declare [capability] (defaults to [()]
       under {!capability_key}).
 
-      Raises [Invalid_argument] if [lag < 1]. *)
+      Raises [Invalid_argument] if [lag < 1] or [most_parts > capacity]. *)
 
   val open_ :
     ?capacity:int ->
