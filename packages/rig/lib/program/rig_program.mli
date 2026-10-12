@@ -247,12 +247,14 @@ type part =
       (** A copy of [length] bytes from byte [src_offset] of the submit's slot
           [src] into byte [dst_offset] of its slot [dst], as
           {!Rig.Submission.copy}. An offset is the sum, over its terms, of
-          each value times its factor, computed as a hole's sum
-          ({!type-hole}), so a copy in a loop may move with the loop's
-          trips. An end whose slot is [Memory] and whose offset reads no
-          [Int] is those bytes of the memory, set once at load. Any other end
-          is a [Slot] end ({!Rig.Submission.type-side}), whose buffer each run
-          passes. *)
+          each value times its factor, an [Int] read when the step runs, so a
+          copy in a loop may move with the loop's trips. The sum is exact: a
+          product or a partial sum past an OCaml [int] is refused, by {!load}
+          for an offset of [Fixed] terms and by the run at the step for one
+          that reads an [Int]. An end whose slot is [Memory] and whose offset
+          reads no [Int] is those bytes of the memory, set once at load. Any
+          other end is a [Slot] end ({!Rig.Submission.type-side}), whose
+          buffer each run passes. *)
   | Launch of {
       image : int;
       name : string;
@@ -361,10 +363,10 @@ val load :
     {- a ref or a copy names no slot of its submit, a slot is named by no
        ref or copy, or a slot is named by both an [Unordered] ref and a
        [Read] or [Write] ref or a copy;}
-    {- a copy's [length] is negative, or an end's offset that reads no
-       [Int] is negative or puts the end past its slot where load knows the
-       slot's length: a [Memory] view's [length] and [8 * ints] for the
-       ints;}
+    {- a copy's [length] is negative, an offset names a [Leaf], or an end's
+       offset that reads no [Int] is past an [int], is negative or puts the
+       end past its slot where load knows the slot's length: a [Memory]
+       view's [length] and [8 * ints] for the ints;}
     {- a copy's two ends share a byte of the ints or of one input, at offsets
        that read no [Int];}
     {- [Rail] memory or a [Ready] names a rail that [rails] does not give;}
@@ -417,9 +419,9 @@ val run : ?waits:Rig.Point.t array -> loaded -> frame -> Rig.Point.t array
        or cannot be borrowed by a device that names it;}
     {- at a step, after the earlier steps ran, if the run refuses a launch's
        geometry, shared memory or a parameter's value read from the ints
-       ({!Rig.Submission.Run}), if a copy's offset puts its end outside its
-       slot's buffer, if a loop's flag lies past its input's bytes, and as
-       {!Rig.submit} and {!Rig.Buffer.copy} raise.}}
+       ({!Rig.Submission.Run}), if a copy's offset is past an [int] or puts
+       its end outside its slot's buffer, if a loop's flag lies past its
+       input's bytes, and as {!Rig.submit} and {!Rig.Buffer.copy} raise.}}
     Raises {!Rig.Lost} as the devices raise it. *)
 
 (** {1:machines Programs of another machine}

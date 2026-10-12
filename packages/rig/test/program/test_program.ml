@@ -204,6 +204,20 @@ let gen_case =
               dst_at = fit dst_at;
               per_run;
             } );
+        (* A copy within one slot, between its two halves. *)
+        ( 1,
+          let+ dev = dev
+          and+ at = loc
+          and+ length = int_range 0 (size / 2)
+          and+ a = int_range 0 size
+          and+ b = int_range 0 size
+          and+ down = bool
+          and+ per_run = bool in
+          let half = size / 2 in
+          let low = a mod (half - length + 1)
+          and high = half + (b mod (half - length + 1)) in
+          let src_at, dst_at = if down then (high, low) else (low, high) in
+          Pcopy { dev; src = at; dst = at; length; src_at; dst_at; per_run } );
         ( 1,
           let+ src, dst = two_locs in
           Move { src; dst } );
@@ -388,6 +402,10 @@ let model_law c =
   cover "a copy part of part of its slots"
     (List.exists
        (function Pcopy { length; _ } -> length < size | _ -> false)
+       c.ops);
+  cover "a copy part within one slot"
+    (List.exists
+       (function Pcopy { src; dst; _ } -> src = dst | _ -> false)
        c.ops);
   cover "a copy part at offsets the run reads"
     (List.exists
@@ -948,6 +966,19 @@ let refusals =
       one );
     ( "a copy between overlapping bytes of an input",
       copying ~dst_offset:[| (Fixed 4, 1) |] ~length:8 [| Input 0; Input 0 |],
+      one );
+    ( "a copy offset of a leaf",
+      copying ~src_offset:[| (Leaf (Handle 0), 1) |] ~length:8
+        [| all 0; Input 0 |],
+      one );
+    ( "a copy offset past an int",
+      copying ~src_offset:[| (Fixed max_int, 2) |] ~length:8
+        [| all 0; Input 0 |],
+      one );
+    ( "a copy offset whose sum passes an int",
+      copying
+        ~src_offset:[| (Fixed max_int, 1); (Fixed 1, 1) |]
+        ~length:8 [| all 0; Input 0 |],
       one );
     ( "a copy offset of an int past the ints",
       copying ~ints:1
@@ -2555,27 +2586,71 @@ let test_copy_loop () =
     (String.concat "" (List.map le64 (List.rev rows)))
     (read x)
 
-(* A copy's end that a run's ints put outside its slot is refused at that
-   step: [load] cannot know where it lies. *)
+(* A copy's end that a run's ints put outside its slot, or whose offset is past
+   an int, is refused at that step: [load] cannot know where it lies. *)
 let test_copy_outside () =
   let d, _ = polled "copy-outside" in
+  let load copy =
+    load_ok
+      {
+        (base d) with
+        ints = 1;
+        steps =
+          [|
+            submit 0
+              ~buffers:[| (all 0, Rig.Read); (Input 0, Rig.Read_write) |]
+              [| copy |];
+          |];
+      }
+      [ d ]
+  in
+  let input = of_bytes d (String.make 64 '\000') in
+  let run p v = G.run p { inputs = [| input |]; ints = [| v |] } in
+  let src = load (pcopy ~src_offset:[| (Int 0, 1) |] 8)
+  and dst = load (pcopy ~dst_offset:[| (Int 0, 1) |] 8)
+  and twice = load (pcopy ~src_offset:[| (Int 0, 2) |] 8) in
+  ignore (run src 56);
+  ignore (run dst 56);
+  raises_match ~msg:"a source from byte 60 of 64" Exn.invalid_arg (fun () ->
+      run src 60);
+  raises_match ~msg:"a destination from byte 60 of 64" Exn.invalid_arg
+    (fun () -> run dst 60);
+  raises_match ~msg:"a negative offset" Exn.invalid_arg (fun () ->
+      run src (-8));
+  raises_match ~msg:"an offset past an int" Exn.invalid_arg (fun () ->
+      run twice max_int)
+
+(* A copy within the ints, both ends at offsets the run reads from them: word
+   1 into word 3. *)
+let test_copy_ints () =
+  let d, _ = polled "copy-ints" in
   let t =
     {
-      (base d) with
-      ints = 1;
+      G.devices = [| Rig.arch d |];
+      ints = 4;
+      memory = [||];
+      images = [||];
+      inputs = [| { G.device = 0; bytes = 32 } |];
       steps =
         [|
           submit 0
-            ~buffers:[| (all 0, Rig.Read); (Input 0, Rig.Read_write) |]
-            [| pcopy ~src_offset:[| (Int 0, 1) |] 8 |];
+            ~buffers:[| (Ints, Rig.Read); (Ints, Rig.Read_write) |]
+            [|
+              pcopy
+                ~src_offset:[| (Int 0, 1) |]
+                ~dst_offset:[| (Int 1, 1) |]
+                8;
+            |];
+          G.Move { src = Ints; dst = Input 0 };
         |];
     }
   in
   let p = load_ok t [ d ] in
-  let input = of_bytes d (String.make 64 '\000') in
-  ignore (G.run p { inputs = [| input |]; ints = [| 56 |] });
-  raises_match ~msg:"8 bytes from byte 60 of 64" Exn.invalid_arg (fun () ->
-      G.run p { inputs = [| input |]; ints = [| 60 |] })
+  let x = of_bytes d (String.make 32 '\000') in
+  ignore (G.run p { inputs = [| x |]; ints = [| 8; 24; 42 |] });
+  equal ~msg:"the ints" string
+    (le64 8 ^ le64 24 ^ le64 42 ^ le64 24)
+    (read x)
 
 (* A memory slot that only copies name takes no slot of the step's
    submission, and the slots after it are numbered without it: memory 0, named
@@ -3107,6 +3182,8 @@ let tests =
         test "a Copy part in a loop moves with its trips" test_copy_loop;
         test "run raises for a copy its ints put outside its slot"
           test_copy_outside;
+        test "a Copy part copies within the ints at offsets they hold"
+          test_copy_ints;
         test "memory only copies name takes no slot of the submission"
           test_renumbered;
         test "an init Address comes from a step fixing its run's copy"

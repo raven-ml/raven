@@ -99,6 +99,19 @@ exception Refused of string
 
 let refuse fmt = Printf.ksprintf (fun why -> raise (Refused why)) fmt
 
+(* An offset's sum past an OCaml [int]. *)
+exception Overflow
+
+let add_exn a b =
+  let s = a + b in
+  if a >= 0 = (b >= 0) && s >= 0 <> (a >= 0) then raise Overflow else s
+
+let mul_exn a b =
+  if a = 0 then 0
+  else
+    let p = a * b in
+    if (a = -1 && b = min_int) || p / a <> b then raise Overflow else p
+
 (* The run's ints are memory [Iarray.length t.memory] of two copies, which
    [load] makes on the host: a slot [Ints] is its view. *)
 let ints_view t =
@@ -186,8 +199,12 @@ let check_part t sizes = function
       check_holes "fill parameters" n (check_value t) params.holes
   | Copy { src_offset; dst_offset; length; _ } ->
       if length < 0 then refuse "a copy of %d bytes" length;
-      Iarray.iter (fun (x, _) -> check_value t x) src_offset;
-      Iarray.iter (fun (x, _) -> check_value t x) dst_offset
+      let term = function
+        | Leaf _, _ -> refuse "a copy's offset names a leaf"
+        | x, _ -> check_value t x
+      in
+      Iarray.iter term src_offset;
+      Iarray.iter term dst_offset
   | Launch
       { image; params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
       index "image" (Iarray.length t.images) image;
@@ -204,12 +221,14 @@ let check_part t sizes = function
 
 (* An offset's value where it holds only constants, which [load] knows. *)
 let fixed_offset terms =
-  Iarray.fold_left
-    (fun sum (x, factor) ->
-      match (sum, x) with
-      | Some s, Fixed n -> Some (s + (n * factor))
-      | _ -> None)
-    (Some 0) terms
+  try
+    Iarray.fold_left
+      (fun sum (x, factor) ->
+        match (sum, x) with
+        | Some s, Fixed n -> Some (add_exn s (mul_exn n factor))
+        | _ -> None)
+      (Some 0) terms
+  with Overflow -> refuse "a copy's offset past an int"
 
 (* Refuses a copy whose end lies outside its slot, or whose two ends share a
    byte of one buffer, where load knows the offsets. A view's and the ints'
@@ -416,10 +435,7 @@ let check_memory t sizes =
               ->
                 terms params.holes check;
                 List.iter check [ gx; gy; gz; tx; ty; tz; shared ]
-            | Copy { src_offset; dst_offset; _ } ->
-                Iarray.iter (fun (x, _) -> check x) src_offset;
-                Iarray.iter (fun (x, _) -> check x) dst_offset
-            | Words _ -> ())
+            | Words _ | Copy _ -> ())
           s.parts
     | Loop { trips; flag; body; _ } ->
         value ~on:None ~fixed:[]
@@ -1263,12 +1279,13 @@ let per_copy t (s : submit) =
     | Leaf l -> leaf_two t l
     | Fixed _ | Int _ -> false
   in
-  let terms = Iarray.exists (fun (x, _) -> value x) in
-  let holes = Iarray.exists (fun h -> terms h.terms) in
+  let holes =
+    Iarray.exists (fun h -> Iarray.exists (fun (x, _) -> value x) h.terms)
+  in
   let part = function
     | Words v -> view v
     | Fill { fill; params; _ } -> leaf_two t fill || holes params.holes
-    | Copy { src_offset; dst_offset; _ } -> terms src_offset || terms dst_offset
+    | Copy _ -> false
     | Launch { params; groups = gx, gy, gz; threads = tx, ty, tz; shared; _ } ->
         holes params.holes
         || List.exists value [ gx; gy; gz; tx; ty; tz; shared ]
@@ -1347,15 +1364,7 @@ let prepared p k (s : submit) =
           let terms =
             Iarray.to_array (Iarray.map (fun (x, f) -> (known x, f)) offset)
           in
-          let at =
-            Array.fold_left
-              (fun sum (x, f) ->
-                match (sum, x) with
-                | Some s, Known n -> Some (s + (n * f))
-                | _ -> None)
-              (Some 0) terms
-          in
-          match (Iarray.get s.slots i, at) with
+          match (Iarray.get s.slots i, fixed_offset offset) with
           | Memory v, Some o ->
               Sub.Buffer (B.view (view p k d v) ~first:o ~length)
           | slot, _ ->
@@ -1726,10 +1735,14 @@ let submit_step p k waits (spec : submit) copies =
     let e = q.moving.(x) in
     let held = match e.from with Input j -> bound p j d | _ -> e.held in
     let o = ref 0 in
-    for t = 0 to Array.length e.offset - 1 do
-      let v, factor = e.offset.(t) in
-      o := !o + (run_value p k v * factor)
-    done;
+    (try
+       for t = 0 to Array.length e.offset - 1 do
+         let v, factor = e.offset.(t) in
+         o := add_exn !o (mul_exn (run_value p k v) factor)
+       done
+     with Overflow ->
+       unpass q;
+       invalid "a copy's offset past an int");
     let o = !o and n = B.length held in
     if o < 0 || o > n - e.count then begin
       unpass q;
