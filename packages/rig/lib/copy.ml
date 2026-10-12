@@ -44,7 +44,9 @@ let stage owner =
     in_use = [| false; false |];
   }
 
-let host_stage = lazy (stage Dev.host)
+(* The host's stage, made at load: its halves wait for a copy, and a lazy
+   that two domains' first copies force at once raises in one of them. *)
+let host_stage = stage Dev.host
 
 (* The stages of devices that map no host memory, by device index. *)
 module Stages = Tbl.Make (Int)
@@ -148,7 +150,7 @@ let staged_in m =
 (* Whether [m] is a staging slot's memory: a copy through it that no device runs
    goes no further. *)
 let is_slot m =
-  (Lazy.is_val host_stage && holds (Lazy.force host_stage) m)
+  holds host_stage m
   || Stages.length device_stages > 0
      && Lock.protect slots_lock staged_in m
 
@@ -255,7 +257,7 @@ let needs_own b =
 (* The stage a transfer between the host's values and [b] goes through: its
    device's own where it needs one, and the host's otherwise. *)
 let stage_with b =
-  if needs_own b then stage_of (runner b) else Lazy.force host_stage
+  if needs_own b then stage_of (runner b) else host_stage
 
 (* The stage a copy between [src] and [dst] goes through. Two devices that need
    their own share no staging memory. *)
