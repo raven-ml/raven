@@ -143,11 +143,15 @@ let test_blocks_read_weights_and_reuse_caches () =
       ~msg:(msg ^ ": every pool is written in its own storage")
       (list at) before (storage caches');
     (* The first single-token call compiles its programs, which upload their
-       host constants once. The layer loop places the index on CPU:1, and CPU:1,
-       a memory over the host's, reads the token, a host argument, in place:
-       only the index moves. A GPU would upload the token too. *)
+       host constants once. After it, a call uploads the index, which the layer
+       loop places on CPU:1, and the token, a host argument, which every call
+       uploads. *)
     if step > 1 then
-      equal ~msg:(msg ^ ": only the index is uploaded") int index_bytes uploaded;
+      equal
+        ~msg:(msg ^ ": only the index and the token are uploaded")
+        int
+        (index_bytes + Nx.nbytes token)
+        uploaded;
     x := x';
     caches := caches'
   done;
