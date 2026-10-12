@@ -32,16 +32,22 @@
   rig)
  (foreign_stubs
   (language c)
-  (names nx_claim_stubs))
+  (names nx_claim_stubs nx_format_stubs))
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
+
+; The toplevel prints a float through the C library's printf, whose digits and
+; exponents Windows' msvcrt writes otherwise (5.5511151231257827e-017): the
+; examples' expected floats are POSIX's.
 
 (mdx
  (package nx)
  (files nx.mli)
  (preludes prelude.ml)
  (enabled_if
-  (<> %{profile} sanitize))
+  (and
+   (<> %{profile} sanitize)
+   (<> %{os_type} Win32)))
  (libraries nx unix))

@@ -9,39 +9,139 @@ module B = Entry
 let err op fmt =
   Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
+(* [format_e p x] is [x] in C's [%.*e] with [p] digits after the point,
+   rounded once on every system. *)
+external format_e : int -> float -> string = "caml_nx_format_e"
+
+(* Exact comparison of nonnegative numbers [n 2^p 5^q], [n] an int: the C
+   library's strtod is not correctly rounded everywhere, and under mingw-w64
+   reads 3.839223843572815e-239 as 2^-792, one float above its nearest. *)
+module Exact = struct
+  let bits = 24
+  let mask = (1 lsl bits) - 1
+
+  (* Little-endian limbs of [bits] bits. *)
+  let of_int n =
+    let rec go n acc =
+      if n = 0 then List.rev acc else go (n lsr bits) ((n land mask) :: acc)
+    in
+    Array.of_list (go n [])
+
+  (* [a * k] for [k] below 2^30. *)
+  let mul a k =
+    let n = Array.length a in
+    let r = Array.make (n + 2) 0 and carry = ref 0 in
+    for i = 0 to n - 1 do
+      let v = (a.(i) * k) + !carry in
+      r.(i) <- v land mask;
+      carry := v lsr bits
+    done;
+    r.(n) <- !carry land mask;
+    r.(n + 1) <- !carry lsr bits;
+    r
+
+  (* 5^0 to 5^12: a limb times 5^12 fits an int. *)
+  let fives =
+    let a = Array.make 13 1 in
+    for k = 1 to 12 do
+      a.(k) <- 5 * a.(k - 1)
+    done;
+    a
+
+  let rec pow5 a q =
+    if q > 12 then pow5 (mul a fives.(12)) (q - 12) else mul a fives.(q)
+
+  let pow2 a p =
+    let a = Array.append (Array.make (p / bits) 0) a in
+    mul a (1 lsl (p mod bits))
+
+  let top a =
+    let i = ref (Array.length a - 1) in
+    while !i >= 0 && a.(!i) = 0 do
+      decr i
+    done;
+    !i
+
+  let compare_nat a b =
+    let ta = top a and tb = top b in
+    if ta <> tb then Int.compare ta tb
+    else
+      let rec go i =
+        if i < 0 then 0
+        else if a.(i) <> b.(i) then Int.compare a.(i) b.(i)
+        else go (i - 1)
+      in
+      go ta
+
+  let compare (n1, p1, q1) (n2, p2, q2) =
+    let p = Int.min p1 p2 and q = Int.min q1 q2 in
+    let side n pn qn = pow2 (pow5 (of_int n) (qn - q)) (pn - p) in
+    compare_nat (side n1 p1 q1) (side n2 p2 q2)
+
+  (* The positive float [x] as [(n, p, 0)]. *)
+  let of_float x =
+    let f, e = Float.frexp x in
+    (Int64.to_int (Int64.of_float (Float.ldexp f 53)), e - 53, 0)
+
+  (* The midpoint of the positive floats [x] and [y] whose exponents differ by
+     at most one, such as two neighbours. *)
+  let mid x y =
+    let ny, py, _ = of_float y in
+    if x = 0. then (ny, py - 1, 0)
+    else
+      let nx, px, _ = of_float x in
+      let p = Int.min px py in
+      ((nx lsl (px - p)) + (ny lsl (py - p)), p - 1, 0)
+end
+
 (* [float_text s x] is the fewest significant digits that round to [x] in the
    format [s]: the float32 [0.1] is [0.1], not [0.100000001]. It
    is written in full for decimal exponents from -4 to 15, as [1234567900] or
    [0.0001], and with an exponent beyond, as [1e+16] or [1.5e-05]. NaN is [nan]
    whatever its sign, which C libraries print differently. *)
 let float_text s x =
-  let round =
-    match (s : Nx_dtype.Scalar.t) with
-    | Float64 -> Fun.id
-    | Float32 -> fun f -> Int32.float_of_bits (Int32.bits_of_float f)
-    | s ->
-        let open Nx_dtype.Scalar in
-        (* The float8 formats store a value past their largest finite one as
-           that value, but only those within half a step above it round to it:
-           e4m3's 448 prints as [450], not [500]. *)
-        let top = decode s (encode s Float.max_float) in
-        let limit =
-          if Float.is_finite top then
-            top +. ((top -. decode s (encode s top - 1)) /. 2.)
-          else Float.infinity
-        in
-        fun f -> if Float.abs f > limit then Float.nan else decode s (encode s f)
-  in
   let sign = if Float.sign_bit x then "-" else "" in
   let a = Float.abs x in
-  let reads (m, e) = round (float_of_string (Printf.sprintf "%de%d" m e)) = a in
+  (* Whether [m 10^e] rounds to the positive [a]. The floats of the format next
+     to [a], below and above, as doubles, and whether [a]'s encoding is even. *)
+  let reads () =
+    let below, above, even =
+      match (s : Nx_dtype.Scalar.t) with
+      | Float64 ->
+          (Float.pred a, Float.succ a, Int64.(logand (bits_of_float a) 1L) = 0L)
+      | Float32 ->
+          let b = Int32.bits_of_float a in
+          let at k = Int32.float_of_bits (Int32.add b (Int32.of_int k)) in
+          (at (-1), at 1, Int32.logand b 1l = 0l)
+      | s ->
+          let open Nx_dtype.Scalar in
+          let c = encode s a in
+          (decode s (c - 1), decode s (c + 1), c land 1 = 0)
+    in
+    (* The decimals that round to [a] lie between the midpoints to its
+       neighbours, ending ones included when [a] is even. Past the largest
+       float, which a float8 format may store as itself, the upper midpoint is
+       as far above as the lower one is below: e4m3's 448 prints as [450], not
+       [500]. *)
+    let low = Exact.mid below a in
+    let high =
+      if Float.is_finite above then Exact.mid a above
+      else
+        let n, p, _ = Exact.mid below a and na, pa, _ = Exact.of_float a in
+        ((na lsl (pa - p + 1)) - n, p, 0)
+    in
+    fun (m, e) ->
+      let d = (m, e, e) in
+      let l = Exact.compare d low and h = Exact.compare d high in
+      (l > 0 || (l = 0 && even)) && (h < 0 || (h = 0 && even))
+  in
   let rec pow10 p = if p = 0 then 1 else 10 * pow10 (p - 1) in
   (* The [p] digits [m] and the exponent [e] of [m 10^e] nearest [a], or the
      next decimal above or below it: the values that read back to [a] are an
      interval around it, which holds a [p]-digit decimal only if it holds one of
      the two around [a]. Seventeen digits read back to any float. *)
-  let rec shortest p =
-    let t = Printf.sprintf "%.*e" (p - 1) a in
+  let rec shortest reads p =
+    let t = format_e (p - 1) a in
     let i = String.index t 'e' in
     let m =
       int_of_string
@@ -55,13 +155,13 @@ let float_text s x =
     in
     match List.find_opt reads [ (m, e); (m + 1, e); below ] with
     | Some c -> c
-    | None -> if p >= 17 then (m, e) else shortest (p + 1)
+    | None -> if p >= 17 then (m, e) else shortest reads (p + 1)
   in
   if Float.is_nan x then "nan"
   else if a = Float.infinity then sign ^ "inf"
   else if a = 0. then sign ^ "0"
   else
-    let m, e = shortest 1 in
+    let m, e = shortest (reads ()) 1 in
     let digits = string_of_int m in
     let exp = e + String.length digits - 1 in
     (* [m] ends in zeros after a carry, as [m + 1] at [99] gives [100]. *)

@@ -163,6 +163,11 @@ let neighbours (type b) (dt : (float, b) Nx.dtype) x =
    and for a finite [x] it is at most half a step past the largest finite value,
    beyond which the float8 dtypes saturate instead of rounding. *)
 let reads_back dt x text =
+  (* float_of_string calls the C library's strtod, which under mingw-w64
+     misreads decimals near a power of two: 3.839223843572815e-239 as
+     2^-792. *)
+  if Sys.win32 then
+    skip ~reason:"this C library's strtod is no oracle for reading back" ();
   let v = float_of_string text in
   let top = Nx_dtype.max_finite dt in
   let below, _ = neighbours dt top in
