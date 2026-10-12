@@ -692,10 +692,11 @@ NX_C_TRIGC(tanh)
 NX_C_TRANS(sqrt)
 #undef NX_C_CUROP
 
-/* erf, log1p and expm1: float only (C has no complex forms). */
+/* erf, log1p and expm1: float only (C has no complex forms), each the
+   function NX_C_CURFN names. */
 #define NX_C_FOK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
   NX_C_UK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
-         NX_C_MFN(NX_C_CUROP, compute)(vx))
+         NX_C_MFN(NX_C_CURFN, compute)(vx))
 #define NX_C_FOK_NX_C_CAT_SINT(sfx, storage, compute, ld, st)
 #define NX_C_FOK_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
 #define NX_C_FOK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
@@ -708,13 +709,19 @@ NX_C_TRANS(sqrt)
       .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_FLOAT)}};
 
 #define NX_C_CUROP erf
+#define NX_C_CURFN erf
 NX_C_FLOATOP(erf)
+#undef NX_C_CURFN
 #undef NX_C_CUROP
 #define NX_C_CUROP log1p
+#define NX_C_CURFN log1p
 NX_C_FLOATOP(log1p)
+#undef NX_C_CURFN
 #undef NX_C_CUROP
 #define NX_C_CUROP expm1
+#define NX_C_CURFN nx_c_expm1
 NX_C_FLOATOP(expm1)
+#undef NX_C_CURFN
 #undef NX_C_CUROP
 
 /* Rounding: identity on integers, the libm rounder on floats, rejected on

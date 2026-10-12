@@ -479,8 +479,20 @@ let exact ~on k (Dtype (name, dt)) =
       else equal ~msg:"bit for bit" int 0 (distances got (t r)).(0))
 
 (* The groups of tests of the functions computed on [on]. *)
+(* float32 arguments a C library missed, which random draws find rarely:
+   mingw-w64's expm1f rounds x / ln 2 to float before 2^t - 1. *)
+let missed ~on =
+  cases
+    ~name:(fun (name, x) -> Printf.sprintf "%s of %h" name x)
+    "float32 arguments a C library missed"
+    [ ("expm1", 0x1.7f5ef4p-2) ]
+    (fun (name, x) ->
+      let k = List.find (fun k -> k.name = name) kinds in
+      check ~on k ~bound:k.f32 (Nx.create Nx.float32 [| 1 |] [| x |]) None)
+
 let groups on =
   [
+    missed ~on;
     group "float32" (List.map (at_float32 ~on) kinds);
     group "float64" (List.map (at_float64 ~on) kinds);
     group "narrow floats"

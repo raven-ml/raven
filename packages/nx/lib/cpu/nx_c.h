@@ -951,4 +951,19 @@ NX_C_CPOW_FN(cpowf, nx_c_complex32)
 #undef NX_C_TRIG_FN
 #undef NX_C_CPOW_FN
 
+/* ── expm1 ───────────────────────────────────────────────────────────────
+
+   mingw-w64's expm1f takes 2^(x / ln 2) - 1 with x / ln 2 rounded to float,
+   2 ulps off at 0x1.7f5ef4p-2. There the float one is the double one rounded
+   once; elsewhere both are the C library's. */
+static inline double nx_c_expm1(double x) { return expm1(x); }
+
+static inline float nx_c_expm1f(float x) {
+#if defined(__MINGW32__)
+  return (float)expm1((double)x);
+#else
+  return expm1f(x);
+#endif
+}
+
 #endif /* NX_C_C_H */

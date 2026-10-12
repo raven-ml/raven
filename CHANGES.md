@@ -3618,6 +3618,9 @@ thread.
 
 ### Nx
 
+- On Windows, `Nx.expm1` at `float32` and narrower is within its 1 ulp:
+  mingw-w64's `expm1f` rounds `x / ln 2` to float first, and was 2 ulps off
+  at `0x1.7f5ef4p-2`. It now rounds the `float64` result once.
 - On Windows, a function on the host gives the same result from every
   domain: mingw-w64's `exp`, `log`, `log1p`, `expm1`, `atan2` and others
   compute on the x87 unit, which Windows starts at 53-bit precision on every
