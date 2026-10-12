@@ -12,17 +12,11 @@ module P = Talon_parquet
 let path name = Filename.concat "support" name
 
 let buffer name =
-  match Nx_device.Buffer.of_file (path name) with
+  match Rig_disk.of_file (path name) with
   | Ok b -> b
   | Error why -> failwith why
 
 let file_bytes name = In_channel.with_open_bin (path name) In_channel.input_all
-
-let of_string s =
-  Nx_device.Buffer.of_bigarray
-    (Bigarray.Array1.init Bigarray.int8_unsigned Bigarray.c_layout
-       (String.length s) (fun i -> Char.code s.[i]))
-
 let sniff name = Error.get_ok (P.sniff (buffer name))
 let format_text f = Format.asprintf "%a" P.pp_format f
 let error_text e = Format.asprintf "%a" Error.pp e
@@ -241,7 +235,9 @@ let sniffing =
           "names.parquet";
           "empty.parquet";
         ] (fun name ->
-          let bytes = Error.get_ok (P.sniff (of_string (file_bytes name))) in
+          let bytes =
+            Error.get_ok (P.sniff (Rig.Buffer.of_string (file_bytes name)))
+          in
           equal text (format_text (sniff name)) (format_text bytes));
       test "refuses what talon cannot read in full" (fun () ->
           let refused =
@@ -303,7 +299,8 @@ let sniffing =
           in
           List.iter
             (fun (what, s) ->
-              Printf.printf "%s: %s\n" what (outcome (P.sniff (of_string s))))
+              Printf.printf "%s: %s\n" what
+                (outcome (P.sniff (Rig.Buffer.of_string s))))
             cases;
           expect (output ())
           @@ __POS_OF__
@@ -761,7 +758,7 @@ let row_groups ?(column = []) groups =
   let len = Bytes.create 4 in
   Bytes.set_int32_le len 0 (Int32.of_int (String.length meta));
   let pages = String.concat "" (List.map (fun (_, _, p) -> p) groups) in
-  of_string ("PAR1" ^ pages ^ meta ^ Bytes.to_string len ^ "PAR1")
+  Rig.Buffer.of_string ("PAR1" ^ pages ^ meta ^ Bytes.to_string len ^ "PAR1")
 
 let parquet ?column ?(chunk = []) ~rows pages =
   row_groups ?column [ (rows, chunk, pages) ]

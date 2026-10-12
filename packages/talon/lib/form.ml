@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 module A1 = Bigarray.Array1
-module B = Nx_device.Buffer
 
 type int64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) A1.t
 type float64s = (float, Bigarray.float64_elt, Bigarray.c_layout) A1.t
@@ -548,15 +547,12 @@ let rows r valid read =
       None
     with Invalid why -> Some (!i, why)
   in
-  Strings.reading ~by (Nx_ragged.offsets r) @@ fun o ->
-  Strings.reading ~by (Nx_ragged.values r) @@ fun b ->
-  let o = B.bigarray Bigarray.int64 o
-  and b = B.bigarray Bigarray.int8_unsigned b in
+  Strings.reading ~by (Nx_ragged.offsets r) Bigarray.int64 @@ fun o ->
+  Strings.reading ~by (Nx_ragged.values r) Bigarray.int8_unsigned @@ fun b ->
   match valid with
   | None -> scan o b (Fun.const false)
   | Some m ->
-      Strings.reading ~by m @@ fun m ->
-      let m = B.bigarray Bigarray.int8_unsigned m in
+      Strings.reading ~by m Bigarray.int8_unsigned @@ fun m ->
       scan o b (fun i -> (A1.unsafe_get m (i lsr 3) lsr (i land 7)) land 1 = 0)
 
 (* [fixed kind zero r valid read] is the array that [read] fills at each row

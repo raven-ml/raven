@@ -1,6 +1,6 @@
 (executable
  (name main)
- (libraries talon talon.csv talon.parquet bytesrw nx.device))
+ (libraries talon talon.csv talon.parquet bytesrw rig.disk))
 
 (rule
  (deps carriers.parquet)

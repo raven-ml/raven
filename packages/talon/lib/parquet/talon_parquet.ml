@@ -12,18 +12,14 @@ type format = column array
 (* [with_bytes ?file b f] is [f] applied to the bytes of [b], mapped on the
    host, with the errors of the private modules as [Error]. *)
 let with_bytes ?file b f =
-  match Nx_device.Buffer.borrow Nx_device.host b with
-  | Error why -> Error (Error.v ?file why)
-  | Ok host ->
-      let bytes = Nx_device.Buffer.bigarray Bigarray.int8_unsigned host in
-      let r =
-        try Ok (f bytes)
-        with Meta.Error { row_group; bytes; text; msg } ->
-          Error (Error.v ?file ?row_group ?bytes ?text msg)
-      in
-      (* The bigarray of a borrowed file does not keep its mapping alive. *)
-      ignore (Sys.opaque_identity host);
-      r
+  match Rig.Buffer.borrow Rig.host b with
+  | exception Sys_error why -> Error (Error.v ?file why)
+  | None -> Error (Error.v ?file "the host cannot map the bytes")
+  | Some host -> (
+      Rig.Buffer.read host Bigarray.int8_unsigned @@ fun bytes ->
+      try Ok (f bytes)
+      with Meta.Error { row_group; bytes; text; msg } ->
+        Error (Error.v ?file ?row_group ?bytes ?text msg))
 
 let open_ bytes =
   let m = Meta.footer bytes in
@@ -297,7 +293,7 @@ let make fn ?file ?rows f b =
 let source f b = make "source" f b
 
 let file ?format path =
-  match Nx_device.Buffer.of_file path with
+  match Rig_disk.of_file path with
   | Error why -> Error (Error.v why)
   | Ok b ->
       with_bytes ~file:path b (fun bytes ->

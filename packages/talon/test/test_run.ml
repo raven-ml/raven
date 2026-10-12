@@ -34,6 +34,14 @@ let rec all = function
 
 exception Boom of (int * int)
 
+(* [hash t v] hashes the value [v] of type [t]: a tensor by its elements, since
+   its representation holds the state of its storage. *)
+let hash : type a. a Type.t -> a -> int =
+ fun t v ->
+  match Kind.provably_equal (Type.kind t) (Kind.tensor Nx.float32) with
+  | Some Equal -> Hashtbl.hash (Nx.to_array v)
+  | None -> Hashtbl.hash v
+
 let palette =
   Type.
     [
@@ -272,13 +280,13 @@ and lift : int Type.t -> _ -> int -> int R.expr Gen.t =
             let f = function
               | None -> Some k
               | Some v ->
-                  let h = Hashtbl.hash v in
+                  let h = hash t v in
                   if h mod 3 = 0 then None else Some (value h)
             in
             R.Bind (ty, f, a)
           else
             let f v =
-              let h = Hashtbl.hash v in
+              let h = hash t v in
               if h mod p = 0 then raise (Boom (label, h)) else value h
             in
             R.Map (ty, f, a))
@@ -877,10 +885,8 @@ let hex (type a b) (x : (a, b) Nx.t) =
     match Nx.dtype x with
     | Bool -> Nx.to_array (Nx.cast Nx.uint8 x)
     | _ when bits < 8 ->
-        let raw =
-          Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer x)
-        in
-        Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i})
+        Rig.Buffer.read (Nx.to_buffer x) Bigarray.int8_unsigned (fun raw ->
+            Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i}))
     | _ -> Nx.to_array (Nx.flatten (Nx.bitcast Nx.uint8 x))
   in
   String.concat "" (List.map (Printf.sprintf "%02x") (Array.to_list bytes))
@@ -2855,10 +2861,8 @@ let validity_bytes c =
   | None -> None
   | Some b ->
       let n = Nx.numel b in
-      let raw =
-        Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer b)
-      in
-      Some (Array.init ((n + 7) / 8) (fun i -> raw.{i}))
+      Rig.Buffer.read (Nx.to_buffer b) Bigarray.int8_unsigned (fun raw ->
+          Some (Array.init ((n + 7) / 8) (fun i -> raw.{i})))
 
 let under_nulls_cases =
   let s x = Some x in

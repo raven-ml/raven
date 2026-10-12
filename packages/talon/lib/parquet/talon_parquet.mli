@@ -8,7 +8,7 @@
     A {{:https://parquet.apache.org/docs/file-format/}Parquet} file stores a
     table column by column, in row groups, and describes them in a footer at its
     end. Talon reads Parquet files mapped in memory: open one with
-    {!Nx_device.Buffer.of_file}, then {!sniff} its footer into a {!type-format}.
+    {!Rig_disk.of_file}, then {!sniff} its footer into a {!type-format}.
 
     A format says how talon reads a file's columns: each column's name, its
     Parquet type, and the talon type it reads as. Print it with {!pp_format},
@@ -57,15 +57,14 @@ type format
     describes columns, not where a file stores them, so it holds no row groups
     and no file. *)
 
-val sniff : Nx_device.Buffer.t -> (format, Talon.Error.t) result
+val sniff : Rig.Buffer.t -> (format, Talon.Error.t) result
 (** [sniff b] is the format of the Parquet file whose bytes are [b], read from
     its footer: each column of the file's schema, in order, reading as
     {{!types}its Parquet type} says. Nothing but the footer is read.
 
-    [b] is a buffer of the {!Nx_device.disk}, as {!Nx_device.Buffer.of_file}
-    makes, which [sniff] maps into host memory ({!Nx_device.Buffer.borrow}), or
-    a buffer the {!Nx_device.host} addresses, such as one that
-    {!Nx_device.Buffer.of_bigarray} makes.
+    [b] is a buffer of the disk ({!Rig_disk.device}), as {!Rig_disk.of_file}
+    makes, which [sniff] maps into host memory ({!Rig.Buffer.borrow}), or a
+    buffer the host addresses, such as one that {!Rig.Buffer.of_bigarray} makes.
 
     [Error e] if [b] cannot be borrowed on the host, if [b] is not a Parquet
     file or its footer is malformed, or if the file is one talon
@@ -106,7 +105,7 @@ val pp_format : Format.formatter -> format -> unit
 
 (** {1:reading Reading} *)
 
-val source : format -> Nx_device.Buffer.t -> Talon.Source.t
+val source : format -> Rig.Buffer.t -> Talon.Source.t
 (** [source f b] is the source, named [parquet], of the rows of the Parquet file
     whose bytes are [b], read as [f] says. [b] is a buffer as {!sniff} takes.
     Each read of the source reads [b]'s footer again.
@@ -130,10 +129,10 @@ val source : format -> Nx_device.Buffer.t -> Talon.Source.t
     names the column and the types it reads as. *)
 
 val file : ?format:format -> string -> (Talon.Source.t, Talon.Error.t) result
-(** [file ?format path] maps the file [path] ({!Nx_device.Buffer.of_file}),
-    reads its footer, and is its {!source}, read as [format], or as {!sniff}
-    gives when [format] is absent, named [parquet "path"], with its number of
-    rows. Its errors name the file.
+(** [file ?format path] maps the file [path] ({!Rig_disk.of_file}), reads its
+    footer, and is its {!source}, read as [format], or as {!sniff} gives when
+    [format] is absent, named [parquet "path"], with its number of rows. Its
+    errors name the file.
 
     [Error e] if the file cannot be mapped, or as {!sniff}.
 

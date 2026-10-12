@@ -705,10 +705,8 @@ let nulls =
           in
           let v = Option.get (Column.validity (column t "c1")) in
           equal (array bool) (Array.init 13 (fun i -> i <> 4)) (Nx.to_array v);
-          let raw =
-            Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer v)
-          in
-          equal int 0 (raw.{1} lsr 5));
+          Rig.Buffer.read (Nx.to_buffer v) Bigarray.int8_unsigned (fun raw ->
+              equal int 0 (raw.{1} lsr 5)));
       test "every row valid has no validity" (fun () ->
           let t = Error.get_ok (read (columns [ any Type.int64 ]) "1\n2\n") in
           match Column.validity (column t "c1") with

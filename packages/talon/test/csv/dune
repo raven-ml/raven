@@ -2,7 +2,7 @@
  (name test_csv)
  (modules test_csv)
  (package talon)
- (libraries windtrap talon talon.csv talon_gen nx nx.device bytesrw)
+ (libraries windtrap talon talon.csv talon_gen nx rig bytesrw)
  (action
   (progn
    (run %{test} --corrected)

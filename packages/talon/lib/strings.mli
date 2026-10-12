@@ -17,10 +17,15 @@
 type bytes = (int, Nx.uint8_elt) Nx_ragged.t
 (** The type for rows of bytes. *)
 
-val reading : by:string -> ('a, 'b) Nx.t -> (Nx_device.Buffer.t -> 'c) -> 'c
-(** [reading ~by x f] is [f b] for [b] a host buffer of [x]'s elements in C
-    order, under a read claim so that no compiled call lends its memory while
-    [f] reads it.
+val reading :
+  by:string ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Bigarray.kind ->
+  (('c, 'd, Bigarray.c_layout) Bigarray.Array1.t -> 'e) ->
+  'e
+(** [reading ~by x k f] is [f a] for [a] the bytes of a host buffer of [x]'s
+    elements in C order, as elements of [k], under a read claim so that no
+    compiled call lends its memory while [f] reads it ({!Rig.Buffer.read}).
 
     Raises [Invalid_argument] starting with [by] if [x] cannot be read, as under
     a compiled function. *)

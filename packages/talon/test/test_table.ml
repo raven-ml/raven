@@ -141,10 +141,8 @@ let hex (type a b) (x : (a, b) Nx.t) =
     match Nx.dtype x with
     | Bool -> Nx.to_array (Nx.flatten (Nx.cast Nx.uint8 x))
     | _ when bits < 8 ->
-        let raw =
-          Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer x)
-        in
-        Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i})
+        Rig.Buffer.read (Nx.to_buffer x) Bigarray.int8_unsigned (fun raw ->
+            Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i}))
     | _ -> Nx.to_array (Nx.flatten (Nx.bitcast Nx.uint8 x))
   in
   String.concat "" (List.map (Printf.sprintf "%02x") (Array.to_list bytes))

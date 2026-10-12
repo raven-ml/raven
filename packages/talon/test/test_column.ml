@@ -1129,10 +1129,8 @@ let nulls_cases =
           equal int 1 (Column.null_count c);
           let t = Error.get_ok Query.(run (of_table (v [ ("x", c) ]))) in
           let b = Option.get (Column.validity (column t "x")) in
-          let raw =
-            Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer b)
-          in
-          equal int 0 (raw.{1} lsr 5));
+          Rig.Buffer.read (Nx.to_buffer b) Bigarray.int8_unsigned (fun raw ->
+              equal int 0 (raw.{1} lsr 5)));
       test "run drops a validity with no null" (fun () ->
           let c = column_of [| true; true |] in
           let t = Error.get_ok Query.(run (of_table (v [ ("x", c) ]))) in

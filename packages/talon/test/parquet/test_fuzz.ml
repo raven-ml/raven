@@ -53,11 +53,6 @@ let file_bytes =
 let names = List.map fst corpus
 let pick = Gen.of_list ~pp:Format.pp_print_string names
 
-let of_string s =
-  Nx_device.Buffer.of_bigarray
-    (Bigarray.Array1.init Bigarray.int8_unsigned Bigarray.c_layout
-       (String.length s) (fun i -> Char.code s.[i]))
-
 (* [footer s] is the position of the footer of the Parquet file [s]. *)
 let footer s =
   let n = String.length s in
@@ -110,7 +105,7 @@ let conjuncts schema =
    went. A read is a table or an error; [P.source] raises only on an undeclared
    decimal, as it documents. *)
 let decode decimals s =
-  let b = of_string s in
+  let b = Rig.Buffer.of_string s in
   match P.sniff b with
   | Error _ -> "sniff fails"
   | Ok f -> (
@@ -261,6 +256,6 @@ let footers =
     (fun (name, k) ->
       let s = file_bytes name in
       let len = String.length s - 8 - footer s in
-      is_error (P.sniff (of_string (cut_footer s (1 + (k mod len))))))
+      is_error (P.sniff (Rig.Buffer.of_string (cut_footer s (1 + (k mod len))))))
 
 let () = exit (run "talon.parquet fuzz" [ mutated; footers ])

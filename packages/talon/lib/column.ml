@@ -764,9 +764,9 @@ let canonical_packed x =
   let used = Nx.numel x * bitsize x in
   Nx.contiguous x == x
   && (used land 7 = 0
-     || Strings.reading ~by:"Column.canonical" x (fun bytes ->
-         let bytes = Nx_device.Buffer.bigarray Bigarray.int8_unsigned bytes in
-         Bigarray.Array1.get bytes (used / 8) lsr (used land 7) = 0))
+     || Strings.reading ~by:"Column.canonical" x Bigarray.int8_unsigned
+          (fun bytes ->
+            Bigarray.Array1.get bytes (used / 8) lsr (used land 7) = 0))
 
 let rec canonical c =
   let validity =

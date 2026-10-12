@@ -5,7 +5,9 @@
   talon
   nx
   nx.dtype
-  nx.device
+  nx.array
+  rig
+  rig.disk
   compress.deflate
   compress.snappy
   compress.zstd

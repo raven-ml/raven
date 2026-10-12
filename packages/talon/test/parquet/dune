@@ -2,7 +2,7 @@
  (name test_parquet)
  (modules test_parquet)
  (package talon)
- (libraries windtrap talon talon.parquet nx nx.device)
+ (libraries windtrap talon talon.parquet nx rig rig.disk)
  (deps
   (source_tree golden)
   (source_tree support))
@@ -15,6 +15,6 @@
  (name test_fuzz)
  (modules test_fuzz)
  (package talon)
- (libraries windtrap talon talon.parquet nx.device)
+ (libraries windtrap talon talon.parquet rig)
  (deps
   (source_tree support)))

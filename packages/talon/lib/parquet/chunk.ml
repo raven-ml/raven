@@ -103,10 +103,7 @@ let bits b n =
    a read claim. *)
 let reading x f =
   let b = Nx.Op.eval (Read { by = "Talon_parquet.source"; x }) in
-  Nx_device.Buffer.Claim.read b;
-  Fun.protect
-    ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
-    (fun () -> f (Nx_device.Buffer.bigarray Bigarray.int8_unsigned b))
+  Rig.Buffer.read b Bigarray.int8_unsigned f
 
 let type_name (Type.Any t) = Format.asprintf "%a" Type.pp t
 
@@ -461,9 +458,9 @@ let kernel_error = function
 let spread_values (type a b) (v : (a, b) Nx.t) ~valid ~rows =
   let dt = Nx.dtype v in
   let s = Nx_dtype.Scalar.of_dtype dt in
-  let out = Nx_device.Buffer.create Nx_device.host s rows in
-  let dst = Nx_device.Buffer.bigarray Bigarray.int8_unsigned out in
+  let out = Nx_array.Elements.create dt rows in
   let taken =
+    Rig.Buffer.write out Bigarray.int8_unsigned @@ fun dst ->
     reading v (fun src ->
         spread_fixed valid src (Nx_dtype.Scalar.bitsize s) rows dst)
   in

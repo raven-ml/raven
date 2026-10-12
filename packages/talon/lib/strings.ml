@@ -3,7 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module B = Nx_device.Buffer
 module A = Bigarray.Array1
 
 type bytes = (int, Nx.uint8_elt) Nx_ragged.t
@@ -13,13 +12,7 @@ type bytes = (int, Nx.uint8_elt) Nx_ragged.t
 type buf = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) A.t
 type int64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
 
-(* [reading ~by x f] is [f b] for [b] a host buffer of [x]'s elements in C
-   order, under a read claim so that no compiled call lends its memory while [f]
-   reads it. *)
-let reading ~by x f =
-  let b = Nx.Op.eval (Read { by; x }) in
-  B.Claim.read b;
-  Fun.protect ~finally:(fun () -> B.Claim.release b) (fun () -> f b)
+let reading ~by x k f = Rig.Buffer.read (Nx.Op.eval (Read { by; x })) k f
 
 (* Host bytes *)
 
@@ -27,15 +20,12 @@ let reading ~by x f =
    and [m] the bytes of the bit mask [mask], read on the host from its first
    element: row [i]'s bit is bit [i mod 8] of byte [i / 8]. *)
 let host ~by ?mask r f =
-  let read x f = reading ~by x f in
-  read (Nx_ragged.offsets r) @@ fun o ->
-  read (Nx_ragged.values r) @@ fun v ->
-  let o : int64s = B.bigarray Bigarray.int64 o
-  and v : buf = B.bigarray Bigarray.int8_unsigned v in
+  reading ~by (Nx_ragged.offsets r) Bigarray.int64 @@ fun (o : int64s) ->
+  reading ~by (Nx_ragged.values r) Bigarray.int8_unsigned @@ fun (v : buf) ->
   match mask with
   | None -> f o v None
   | Some mask ->
-      read mask @@ fun m -> f o v (Some (B.bigarray Bigarray.int8_unsigned m))
+      reading ~by mask Bigarray.int8_unsigned @@ fun (m : buf) -> f o v (Some m)
 
 (* [rows ~by ?mask r f] calls [f i v first stop] on each row [i] of [r] that
    [mask] holds, [v] the bytes and [\[first, stop)] the row's. *)
@@ -136,8 +126,7 @@ let slice ~by ?mask ~offset ~length r =
     A.create Bigarray.int8_unsigned Bigarray.c_layout
       (Int64.to_int (A.unsafe_get offsets n))
   in
-  reading ~by (Nx_ragged.values r) (fun v ->
-      let v = B.bigarray Bigarray.int8_unsigned v in
+  reading ~by (Nx_ragged.values r) Bigarray.int8_unsigned (fun (v : buf) ->
       for i = 0 to n - 1 do
         let at = Int64.to_int (A.unsafe_get offsets i) in
         blit v lo.(i) bytes at (hi.(i) - lo.(i))

@@ -39,9 +39,7 @@ let bad_field () =
 
 let read_parquet () =
   let path = "carriers.parquet" in
-  let* b =
-    Nx_device.Buffer.of_file path |> Result.map_error (Error.v ~file:path)
-  in
+  let* b = Rig_disk.of_file path |> Result.map_error (Error.v ~file:path) in
   let* f = Talon_parquet.sniff b in
   Format.printf "%a@.@." Talon_parquet.pp_format f;
 
