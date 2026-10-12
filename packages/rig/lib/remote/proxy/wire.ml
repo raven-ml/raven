@@ -89,6 +89,14 @@ external nonce : unit -> string = "caml_rig_remote_wire_nonce"
 external send_timeout : Unix.file_descr -> float -> unit
   = "caml_rig_remote_wire_send_timeout"
 
+(* Whether [e], raised by a send that [send_timeout] bounds, means the bound
+   passed. On POSIX, [ETIMEDOUT] means instead that the connection died, its
+   retransmissions unacknowledged. *)
+let timed_out = function
+  | Unix.EAGAIN | Unix.EWOULDBLOCK -> true
+  | Unix.ETIMEDOUT -> Sys.win32
+  | _ -> false
+
 (* The stream ended or broke, an answer came late, or a field is malformed: the
    handshake's [Error], with its cause. *)
 exception Stop of string
@@ -143,9 +151,7 @@ let guarded fd f =
   with
   | r -> r
   | exception Stop why -> Error why
-  | exception
-      Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.ETIMEDOUT), _, _)
-    ->
+  | exception Unix.Unix_error (e, _, _) when timed_out e ->
       Error (strf "no answer within %.0f s" answer_s)
   | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
 

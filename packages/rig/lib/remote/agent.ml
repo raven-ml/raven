@@ -220,7 +220,7 @@ let listen ~key host port =
       match
         (* On POSIX, a port whose closed connections linger binds again; on
            Windows the option would let two sockets bind one port. *)
-        if Sys.unix then Unix.setsockopt fd Unix.SO_REUSEADDR true;
+        if not Sys.win32 then Unix.setsockopt fd Unix.SO_REUSEADDR true;
         Unix.bind fd addr;
         Unix.listen fd max_pending
       with
