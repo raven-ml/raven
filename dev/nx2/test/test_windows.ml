@@ -6,7 +6,11 @@
 (* The window law, through the engine's private Prim, Route and Exec, copied
    here: on one device, an operation over the windows its rule gives its
    operands equals that window of its whole result, bitwise. Each device of a
-   set computes its window so, so this is the law a set's results rest on. *)
+   set computes its window so, so this is the law a set's results rest on.
+
+   Then the law at work: an operation over operands on a set of two devices
+   whose kernels decline what nx expands, each device computing its window by
+   the expansion, equals it on one device of such kernels, bitwise. *)
 
 open Windtrap
 module A = Nx_array
@@ -38,6 +42,23 @@ let term =
 let f32 shape =
   Gen.map
     (fun data -> value D.Float32 shape data)
+    (Gen.array ~size:(Gen.constant (numel shape)) term)
+
+(* Matrices of [term]s but NaN: a routine's iterations converge on them. *)
+let matrix shape =
+  let finite =
+    Gen.of_list ~pp:Format.pp_print_float
+      [ 1e7; -1e7; 1.; 0.1; 3.3; -2.5e-3; 0.; -0. ]
+  in
+  Gen.map
+    (fun data -> value D.Float32 shape data)
+    (Gen.array ~size:(Gen.constant (numel shape)) finite)
+
+let c64 shape =
+  Gen.map
+    (fun re ->
+      let data = Array.map (fun re -> { Complex.re; im = -.re }) re in
+      value D.Complex64 shape data)
     (Gen.array ~size:(Gen.constant (numel shape)) term)
 
 let positions shape bound =
@@ -85,85 +106,124 @@ let map_op =
          loads = [| Plain x; Plain y |];
        })
 
-let pad_of rank =
+(* A pad of an operand of shape [s] along one axis: crops, pads, an interior
+   and possibly a window of 2, with [hi] grown where the padded extent would
+   hold no window or be negative. *)
+let pad_of s =
   let open Gen in
+  let rank = Array.length s in
   let* a = axis_of rank in
   let* lo = int_range (-1) 2 in
   let* hi = int_range (-1) 2 in
   let* interior = int_range 0 1 in
   let+ windowed = bool in
+  let d = s.(a) in
+  let extent = lo + hi + d + (interior * max 0 (d - 1)) in
+  let hi = hi + max 0 ((if windowed then 2 else 0) - extent) in
   let at v = Array.init rank (fun i -> if i = a then v else 0) in
-  ( a,
-    {
-      Nx_kernel.lo = at lo;
-      hi = at hi;
-      interior = at interior;
-      windows =
-        (if windowed then [| { M.axis = a; size = 2; step = 1; dilation = 1 } |]
-         else [||]);
-    } )
+  {
+    Nx_kernel.lo = at lo;
+    hi = at hi;
+    interior = at interior;
+    windows =
+      (if windowed then [| { M.axis = a; size = 2; step = 1; dilation = 1 } |]
+       else [||]);
+  }
 
-(* A padded shape its pad admits, or [None]. *)
-let padded pad s = Result.to_option (Nx_kernel.Shape.padded pad s)
+(* The loop's shape a padded load by [pad] of [s] gives. *)
+let loop_of pad s =
+  match Nx_kernel.Shape.padded pad s with
+  | Ok loop -> loop
+  | Error e -> failwith ("pad_of drew a pad its operand refuses: " ^ e)
 
-let padded_map_op =
+(* A loop's shape and its load of an operand of rank 1 to 3, padded or
+   plain. *)
+let operand ~padded =
   let open Gen in
   let* rank = int_range 1 3 in
   let* s = shape_of rank in
-  let* _, pad = pad_of rank in
-  match padded pad s with
-  | None -> map_op
-  | Some loop ->
-      let* x = f32 s in
-      let+ y = f32 loop in
-      Op
-        (Value.Map
-           {
-             layout = L.contiguous loop;
-             prog = coords;
-             outs = Value.[ D.Float32; D.Float32 ];
-             loads = [| Padded { x; fill = 0.5; pad }; Plain y |];
-           })
+  if not padded then
+    let+ x = f32 s in
+    (s, Value.Plain x)
+  else
+    let* pad = pad_of s in
+    let+ x = f32 s in
+    (loop_of pad s, Value.Padded { x; fill = 0.5; pad })
 
-let reduce_op =
+let padded_map_op =
   let open Gen in
-  let* rank = int_range 1 3 in
-  let* s =
-    (* Arg finds no extreme of no term. *)
-    array ~size:(constant rank) (int_range 1 6)
-  in
-  let* keep = array ~size:(constant rank) bool in
+  let* loop, load = operand ~padded:true in
+  let+ y = f32 loop in
+  Op
+    (Value.Map
+       {
+         layout = L.contiguous loop;
+         prog = coords;
+         outs = Value.[ D.Float32; D.Float32 ];
+         loads = [| load; Plain y |];
+       })
+
+(* A sum and an argmax along some axes of a loop; the sum alone where an axis
+   reduced has no element, of which Arg finds no extreme. *)
+let reduce_op ~padded =
+  let open Gen in
+  let* loop, load = operand ~padded in
+  let rank = Array.length loop in
+  let+ keep = array ~size:(constant rank) bool in
   let axes =
     Array.of_list (List.filter (fun a -> not keep.(a)) (List.init rank Fun.id))
   in
   let axes = if axes = [||] then [| rank - 1 |] else axes in
-  let+ x = f32 s in
-  Op
-    (Value.Reduce
-       {
-         layout = L.contiguous s;
-         axes;
-         prog = one;
-         reductions =
-           Value.[ Monoid (Sum, 0, D.Float32); Arg (Max, 0, D.Float32) ];
-         loads = [| Plain x |];
-       })
+  let layout = L.contiguous loop and loads = [| load |] in
+  if Array.for_all (fun a -> loop.(a) > 0) axes then
+    Op
+      (Value.Reduce
+         {
+           layout;
+           axes;
+           prog = one;
+           reductions =
+             Value.[ Monoid (Sum, 0, D.Float32); Arg (Max, 0, D.Float32) ];
+           loads;
+         })
+  else
+    Op
+      (Value.Reduce
+         {
+           layout;
+           axes;
+           prog = one;
+           reductions = Value.[ Monoid (Sum, 0, D.Float32) ];
+           loads;
+         })
 
-let scan_op =
+(* A running sum or argmax. *)
+let scan_op ~padded =
   let open Gen in
-  let* rank = int_range 1 3 in
-  let* s = shape_of rank in
-  let* axis = axis_of rank in
-  let+ x = f32 s in
-  Op
-    (Value.Scan
-       {
-         layout = L.contiguous s;
-         axis;
-         prog = one;
-         reduction = Monoid (Sum, 0, D.Float32);
-         loads = [| Plain x |];
-       })
+  let* loop, load = operand ~padded in
+  let* axis = axis_of (Array.length loop) in
+  let+ arg = bool in
+  let layout = L.contiguous loop and loads = [| load |] in
+  if arg then
+    Op
+      (Value.Scan
+         {
+           layout;
+           axis;
+           prog = one;
+           reduction = Arg (Max, 0, D.Float32);
+           loads;
+         })
+  else
+    Op
+      (Value.Scan
+         {
+           layout;
+           axis;
+           prog = one;
+           reduction = Monoid (Sum, 0, D.Float32);
+           loads;
+         })
 
 let gather_op =
   let open Gen in
@@ -188,36 +248,55 @@ let scatter_op =
   let+ into = f32 s in
   Op (Value.Scatter { combine = Add; unique = false; axis; idx; updates; into })
 
+(* A sort, or its first [k] along the axis. *)
 let sort_op =
   let open Gen in
   let* rank = int_range 1 3 in
   let* s = shape_of rank in
   let* axis = axis_of rank in
   let* descending = bool in
+  let* first = bool in
+  let* k = int_range 0 s.(axis) in
   let+ x = f32 s in
-  Op (Value.Sort { axis; descending; k = None; x })
+  let k = if first then Some k else None in
+  Op (Value.Sort { axis; descending; k; x })
 
 let fold_op =
   let open Gen in
   let* rank = int_range 1 3 in
   let* s = shape_of rank in
-  let* _, pad = pad_of rank in
-  match padded pad s with
-  | None -> sort_op
-  | Some loop ->
-      let+ x = f32 loop in
-      Op (Value.Fold { shape = s; pad; x })
+  let* pad = pad_of s in
+  let+ x = f32 (loop_of pad s) in
+  Op (Value.Fold { shape = s; pad; x })
 
 let fft_op =
   let open Gen in
   let* rank = int_range 1 3 in
   let* s = shape_of rank in
   let* axis = axis_of rank in
-  let+ re = array ~size:(constant (numel s)) term in
-  let x =
-    value D.Complex64 s (Array.map (fun re -> { Complex.re; im = -.re }) re)
-  in
-  Op (Value.Fft (C2c { direction = Forward; axes = [| axis |]; x }))
+  let* inverse = bool in
+  let+ x = c64 s in
+  let direction : Nx_kernel.direction = if inverse then Inverse else Forward in
+  Op (Value.Fft (C2c { direction; axes = [| axis |]; x }))
+
+let r2c_op =
+  let open Gen in
+  let* rank = int_range 1 3 in
+  let* s = shape_of rank in
+  let* axis = axis_of rank in
+  let+ x = f32 s in
+  Op (Value.Fft (R2c { dtype = D.Complex64; axes = [| axis |]; x }))
+
+(* A real inverse of [n] points from its [n/2 + 1] bins. *)
+let c2r_op =
+  let open Gen in
+  let* rank = int_range 1 3 in
+  let* s = shape_of rank in
+  let* axis = axis_of rank in
+  let* n = int_range 0 6 in
+  let s = Array.mapi (fun a d -> if a = axis then (n / 2) + 1 else d) s in
+  let+ x = c64 s in
+  Op (Value.Fft (C2r { dtype = D.Float32; n; axes = [| axis |]; x }))
 
 let lu_op =
   let open Gen in
@@ -226,26 +305,96 @@ let lu_op =
   let+ a = f32 [| batch; n; n |] in
   Op (Value.Linalg (Lu a))
 
-(* A contraction of a batch, rows, columns and contracted extents from 0 to 9,
-   in the order nx gives it: windows of rows and columns cross the extents
-   that order is chosen by. *)
-let contract_op =
+let solve_op =
+  let open Gen in
+  let* batch = int_range 0 3 in
+  let* n = int_range 1 4 in
+  let* r = int_range 0 3 in
+  let* lower = bool in
+  let* adjoint = bool in
+  let* unit_diagonal = bool in
+  let* a = matrix [| batch; n; n |] in
+  let+ b = matrix [| batch; n; r |] in
+  let triangle : Nx_kernel.triangle = if lower then Lower else Upper in
+  Op
+    (Value.Linalg
+       (Solve_triangular { triangle; adjoint; unit_diagonal; a; b }))
+
+(* A routine of two results of other shapes than its operand's. *)
+let qr_op =
+  let open Gen in
+  let* batch = int_range 0 3 in
+  let* rows = int_range 1 4 in
+  let* cols = int_range 1 4 in
+  let* complete = bool in
+  let+ a = matrix [| batch; rows; cols |] in
+  let factors : Nx_kernel.factors = if complete then Complete else Reduced in
+  Op (Value.Linalg (Qr { factors; a }))
+
+(* Singular values, with or without the reduced vectors beside them. *)
+let svd_op =
+  let open Gen in
+  let* batch = int_range 0 3 in
+  let* rows = int_range 1 4 in
+  let* cols = int_range 1 4 in
+  let* vectors = bool in
+  let+ a = matrix [| batch; rows; cols |] in
+  if vectors then
+    Op (Value.Linalg (Svd { vectors = Vectors Nx_kernel.Reduced; a }))
+  else Op (Value.Linalg (Svd { vectors = No_vectors; a }))
+
+(* Eigenvalues of the symmetric matrix each lower triangle names, with or
+   without their vectors. *)
+let eigh_op =
+  let open Gen in
+  let* batch = int_range 0 3 in
+  let* n = int_range 1 4 in
+  let* vectors = bool in
+  let+ a = matrix [| batch; n; n |] in
+  if vectors then Op (Value.Linalg (Eigh { vectors = Vectors (); a }))
+  else Op (Value.Linalg (Eigh { vectors = No_vectors; a }))
+
+let copy_op =
+  let open Gen in
+  let* rank = int_range 1 3 in
+  let* s = shape_of rank in
+  let+ x = f32 s in
+  Op (Value.Copy x)
+
+(* Axes of [extents], tagged, in some order: the shape and where each tag
+   lies. *)
+let permuted extents =
+  Gen.map
+    (fun order ->
+      let shape = Array.of_list (List.map snd order) in
+      let at tag = Option.get (List.find_index (fun (t, _) -> t = tag) order) in
+      (shape, at))
+    (Gen.permutation extents)
+
+(* A contraction of a batch, rows and columns of [extents] and one or two
+   contracted pairs, the first of extents from 0 to 40, each operand's axes in
+   any order, in the order nx gives it. *)
+let contract_of extents =
   let open Gen in
   let* nb = int_range 0 1 in
-  let extent = of_list [ 0; 1; 3; 5; 8; 9 ] in
+  let* nc = int_range 1 2 in
+  let extent = of_list extents in
   let* rows = extent in
   let* cols = extent in
   let* k = of_list [ 0; 1; 3; 17; 40 ] in
+  let* k2 = of_list [ 0; 1; 2; 5 ] in
   let* init = bool in
-  let shape = if nb = 0 then [||] else [| 3 |] in
-  let batch = if nb = 0 then [||] else [| (0, 0) |] in
-  let contracting = [| (nb + 1, nb) |] in
-  let* a = f32 (Array.append shape [| rows; k |]) in
-  let* b = f32 (Array.append shape [| k; cols |]) in
-  let+ init =
-    if init then map Option.some (f32 (Array.append shape [| rows; cols |]))
-    else constant None
-  in
+  let batch_axes = if nb = 0 then [] else [ (`Batch, 3) ] in
+  let ks = if nc = 1 then [ (`K 0, k) ] else [ (`K 0, k); (`K 1, k2) ] in
+  let* sa, at_a = permuted (batch_axes @ ((`Free, rows) :: ks)) in
+  let* sb, at_b = permuted (batch_axes @ ks @ [ (`Free, cols) ]) in
+  let pair tag = (at_a tag, at_b tag) in
+  let batch = Array.of_list (List.map (fun (t, _) -> pair t) batch_axes) in
+  let contracting = Array.of_list (List.map (fun (t, _) -> pair t) ks) in
+  let* a = f32 sa in
+  let* b = f32 sb in
+  let result = Array.of_list (List.map snd batch_axes @ [ rows; cols ]) in
+  let+ init = if init then map Option.some (f32 result) else constant None in
   let order = Prim.contract_order ~batch ~contracting a b in
   Op
     (Value.Contract
@@ -260,23 +409,68 @@ let contract_op =
          init;
        })
 
+let contract_op = contract_of [ 0; 1; 3; 5; 8; 9 ]
+
+(* Rows and columns either side of where nx's order changes: 4 or fewer, or
+   fewer than 64 outputs, in lane order; more in chain order. *)
+let threshold_op = contract_of [ 5; 8; 9; 16 ]
+
+(* The families nx expands where a device's kernels decline, then those it does
+   not. *)
+let expanding =
+  [
+    map_op;
+    padded_map_op;
+    reduce_op ~padded:false;
+    reduce_op ~padded:true;
+    scan_op ~padded:false;
+    scan_op ~padded:true;
+    scatter_op;
+    sort_op;
+    fold_op;
+    fft_op;
+    r2c_op;
+    c2r_op;
+    contract_op;
+  ]
+
+let ops =
+  expanding @ [ gather_op; lu_op; solve_op; qr_op; svd_op; eigh_op; copy_op ]
+
+(* Each case's family, as the covers name it. *)
+let family (Op op) =
+  let loop kind loads =
+    if Array.exists Prim.is_padded loads then "padded " ^ kind else kind
+  in
+  match op with
+  | Value.Map { loads; _ } -> loop "Map" loads
+  | Value.Reduce { loads; _ } -> loop "Reduce" loads
+  | Value.Scan { loads; _ } -> loop "Scan" loads
+  | Value.Sort { k = Some _; _ } -> "Sort k"
+  | Value.Fft (C2c _) -> "C2c"
+  | Value.Fft (R2c _) -> "R2c"
+  | Value.Fft (C2r _) -> "C2r"
+  | Value.Linalg l -> Prim.routine_name l
+  | op -> Prim.name op
+
+let families =
+  [
+    "Map"; "padded Map"; "Reduce"; "padded Reduce"; "Scan"; "padded Scan";
+    "Gather"; "Scatter"; "Sort"; "Sort k"; "Fold"; "C2c"; "R2c"; "C2r"; "Lu";
+    "Solve_triangular"; "Qr"; "Svd"; "Eigh"; "Copy"; "Contract";
+  ]
+
+(* Covers [what] of each family, demanded whatever the case's family. *)
+let cover_families what o cond =
+  let f = family o in
+  List.iter (fun g -> cover (what ^ " " ^ g) (cond && f = g)) families
+
 (* The law *)
 
-(* Whether the results keep their axis [a] whole by [rule]: every device's
-   window holds all of it. *)
-let kept (rule : Route.rule) a =
-  match rule with
-  | Elementwise | Gather _ | Contract _ -> false
-  | Reduce { axes; whole } ->
-      List.exists
-        (fun b ->
-          (not (Array.mem b axes))
-          && b - List.length (List.filter (fun c -> c < b) (Array.to_list axes))
-             = a)
-        (Array.to_list whole)
-  | Whole axes -> Array.mem a axes
-  | Into axis -> a = axis
-  | Move _ | Replicated -> true
+let operand_shapes (Op op) =
+  let shapes = ref [] in
+  Prim.iteri (fun _ x -> shapes := Prim.shape x :: !shapes) op;
+  Array.of_list (List.rev !shapes)
 
 let shape_of_results (Op op) =
   let first = ref [||] in
@@ -295,26 +489,12 @@ let shape_of_results (Op op) =
 
 let case =
   let open Gen in
-  let* (Op op as o) =
-    one_of
-      [
-        map_op;
-        padded_map_op;
-        reduce_op;
-        scan_op;
-        gather_op;
-        scatter_op;
-        sort_op;
-        fold_op;
-        fft_op;
-        lu_op;
-        contract_op;
-      ]
-  in
+  let* (Op op as o) = one_of ops in
   let rule = Prim.rule op and s = shape_of_results o in
+  let shapes = operand_shapes o in
   let+ w =
     let range a d =
-      if kept rule a || d = 0 then constant (full d)
+      if Route.keeps rule shapes a || d = 0 then constant (full d)
       else
         let* start = int_range 0 (d - 1) in
         let+ count = int_range 0 (d - start) in
@@ -367,33 +547,234 @@ let agrees (Op op, w) =
   in
   let local = Prim.local (Prim.mapi view op) w in
   let part = Exec.run ~by:"t" local in
-  (* A result of another rank than the first, a routine's pivots, has the
-     window's batch and is whole after it. *)
-  let window i s =
-    if i = 0 || Array.length s = Array.length w then
-      Array.mapi (fun a d -> if a < Array.length w then w.(a) else full d) s
-    else Array.mapi (fun a d -> if a = 0 then w.(0) else full d) s
+  (* Each result is cut where the first is, and whole along any other axis: a
+     routine's pivots or [r] factor share the first's batch alone. *)
+  let first = shape_of_results (Op op) in
+  let window _ s =
+    Array.mapi
+      (fun a d ->
+        if a < Array.length w && w.(a) <> full first.(a) then w.(a) else full d)
+      s
   in
   let whole = bytes window op whole in
-  let part =
-    bytes (fun _ s -> Array.map full s) local part
-  in
+  let part = bytes (fun _ s -> Array.map full s) local part in
   Array.iteri
     (fun i expected ->
       equal (array int) ~msg:(Printf.sprintf "result %d" i) expected part.(i))
     whole
 
-(* Rows of [1e7 + 0.1 - 1e7]: a window of 4 of 8 rows sums each in the order of
-   8. *)
-let law ((Op op as o), w) =
+let law (o, w) =
   let cut =
     Array.exists2 (fun (r : M.range) d -> r.count <> d) w (shape_of_results o)
   in
-  cover "a cut window" cut;
-  cover "a cut contraction"
-    (cut && match op with Value.Contract _ -> true | _ -> false);
+  cover_families "a cut window of" o cut;
   agrees (o, w)
 
+(* A contraction either side of where nx's order changes, cut to rows and
+   columns of a few counts either side of it, and to any part of its batch. *)
+let threshold_case =
+  let open Gen in
+  let* (Op op as o) = threshold_op in
+  let nb = match op with Value.Contract c -> Array.length c.batch | _ -> 0 in
+  let s = shape_of_results o in
+  let range a d =
+    let* count =
+      if a < nb then int_range 0 d
+      else of_list (List.filter (fun c -> c <= d) [ 0; 1; 4; 5; 7; 8; 9; 13; 16 ])
+    in
+    let+ start = int_range 0 (d - count) in
+    { M.start; count; step = 1 }
+  in
+  let rec all a =
+    if a = Array.length s then constant []
+    else
+      let* r = range a s.(a) in
+      let+ rest = all (a + 1) in
+      r :: rest
+  in
+  let+ w = all 0 in
+  (o, Array.of_list w)
+
+(* The law where a window's rows and columns would give it another order than
+   the whole's. *)
+let threshold_law ((Op op as o), (w : M.range array)) =
+  (match op with
+  | Value.Contract { order; batch; _ } ->
+      let nb = Array.length batch and s = shape_of_results o in
+      let m = w.(nb).count and n = w.(nb + 1).count in
+      let cut = m < s.(nb) || n < s.(nb + 1) in
+      let chain = order = Nx_kernel.Chain and some = m > 0 && n > 0 in
+      cover "a chain order's window of 4 rows or fewer"
+        (chain && some && m <= 4);
+      cover "a chain order's window of 4 columns or fewer"
+        (chain && some && n <= 4);
+      cover "a chain order's window of fewer than 64 outputs, rows and \
+             columns above 4"
+        (chain && m > 4 && n > 4 && m * n < 64);
+      cover "a chain order's cut window of 64 outputs or more"
+        (chain && cut && m > 4 && n > 4 && m * n >= 64);
+      cover "a lane order's cut window" ((not chain) && cut && some)
+  | _ -> ());
+  agrees (o, w)
+
+(* Over two devices *)
+
+let declines = Atomic.make 0
+
+let decline () =
+  Atomic.incr declines;
+  A.Declined
+
+(* nx.cpu, declining each case nx expands: a map of several nodes or a padded
+   load, a loop of another reduction than one core monoid or with a padded
+   load, a scatter whose targets may repeat, a sort, a fold, a transform and a
+   contraction. *)
+module Expanding = struct
+  include Nx_cpu
+
+  let name = "nx.expanding"
+
+  let core : (Nx_kernel.reduction * int) array -> bool = function
+    | [| (Monoid (Sum | Prod | Max | Min), _) |] -> true
+    | _ -> false
+
+  let plain (loads : Nx_kernel.load array) =
+    Array.for_all
+      (function Nx_kernel.Plain _ -> true | Nx_kernel.Padded _ -> false)
+      loads
+
+  let map _ ~dsts:_ _ = decline ()
+
+  let reduce p ~axes rs ~dsts loads =
+    if core rs && plain loads then Nx_cpu.reduce p ~axes rs ~dsts loads
+    else decline ()
+
+  let scan p ~axis r ~dsts loads =
+    if core [| r |] && plain loads then Nx_cpu.scan p ~axis r ~dsts loads
+    else decline ()
+
+  let scatter combine ~unique ~axis ~dst ~into idx updates =
+    if unique then Nx_cpu.scatter combine ~unique ~axis ~dst ~into idx updates
+    else decline ()
+
+  let sort ~axis:_ ~descending:_ ~values:_ ~positions:_ _ = decline ()
+  let fold _ ~dst:_ _ = decline ()
+  let contract ~order:_ ~batch:_ ~contracting:_ ~acc:_ ~dst:_ ~init:_ _ _ =
+    decline ()
+  let c2c _ ~axes:_ ~dst:_ _ = decline ()
+  let r2c ~axes:_ ~dst:_ _ = decline ()
+  let c2r ~axes:_ ~dst:_ _ = decline ()
+end
+
+let alone : b Devices.t =
+  Devices.mint ~by:"t" ~kernels:(module Expanding) [ m 1 ]
+
+let pair : b Devices.t =
+  Devices.mint ~by:"t" ~kernels:(module Expanding) [ m 2; m 3 ]
+
+let on_alone (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let a = A.to_device (m 1) (Iarray.get (Prim.arrays x) 0) in
+  let at = Devices.rebrand (Devices.one alone 0) in
+  Value.Array { at; a; dead = Value.Live }
+
+(* [x] on [pair], split along [axis], or whole on each device. *)
+let on_pair axis (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let p =
+    match axis with
+    | Some axis -> Devices.split ~by:"t" ~axis pair
+    | None -> Devices.on pair
+  in
+  let a = A.to_device (m 2) (Iarray.get (Prim.arrays x) 0) in
+  let at = Devices.rebrand (Devices.one pair 0) in
+  let x = Value.Array { at; a; dead = Value.Live } in
+  Exec.run ~by:"t" (Value.Place (Devices.rebrand p, x))
+
+(* The axis of [x], operand [i], that becomes the results' axis [r], of results
+   of shape [s], by [rule]: the one a window of the results cut along [r] alone
+   cuts. *)
+let becoming rule i x s r =
+  let w =
+    Array.mapi
+      (fun a d ->
+        if a = r then { M.start = 0; count = d / 2; step = 1 } else full d)
+      s
+  in
+  let sx = Prim.shape x in
+  let win = Route.window rule ~operand:i sx w in
+  List.find_opt
+    (fun a -> win.(a).M.count <> sx.(a))
+    (List.init (Array.length sx) Fun.id)
+
+let expandable =
+  [
+    "Map"; "padded Map"; "Reduce"; "padded Reduce"; "Scan"; "padded Scan";
+    "Scatter"; "Sort"; "Sort k"; "Fold"; "C2c"; "R2c"; "C2r"; "Contract";
+  ]
+
+(* Each operand is split along its axis that becomes the results' axis [axis],
+   whole on each device where none does or there is no [axis]. *)
+let pair_law ((Op op as o), axis) =
+  let whole (_ : int) s = Array.map full s in
+  let one = Prim.mapi (fun _ x -> on_alone x) op in
+  let expected = bytes whole one (Exec.run ~by:"t" one) in
+  let rule = Prim.rule op and s = shape_of_results o in
+  let split i x = Option.bind axis (becoming rule i x s) in
+  let two = Prim.mapi (fun i x -> on_pair (split i x) x) op in
+  let before = Atomic.get declines in
+  let r = Exec.run ~by:"t" two in
+  let declined = Atomic.get declines > before in
+  let cut = ref false in
+  Prim.iter_results
+    (fun x -> if Grid.is_cut (Devices.grid (Prim.placement x)) then cut := true)
+    two r;
+  let f = family o in
+  List.iter
+    (fun g ->
+      cover
+        ("a decline on a cut over two devices of " ^ g)
+        (declined && !cut && f = g))
+    expandable;
+  let actual = bytes whole two r in
+  Array.iteri
+    (fun i e ->
+      equal (array int) ~msg:(Printf.sprintf "result %d" i) e actual.(i))
+    expected
+
+(* An operation and a result axis to split its operands along: one the results
+   do not keep whole, of an even extent, where there is one. *)
+let split_case ops =
+  let open Gen in
+  let* (Op op as o) = ops in
+  let rule = Prim.rule op and s = shape_of_results o in
+  let shapes = operand_shapes o in
+  let free =
+    List.filter
+      (fun a ->
+        (not (Route.keeps rule shapes a)) && s.(a) > 0 && s.(a) mod 2 = 0)
+      (List.init (Array.length s) Fun.id)
+  in
+  let+ axis =
+    if free = [] then constant None else map Option.some (of_list free)
+  in
+  (o, axis)
+
+(* Three in four cases of a family nx expands, and three in four split: the
+   scarcest expanding family then declines on a cut over 20 times in 1000
+   cases. *)
+let pair_case =
+  let open Gen in
+  let any = split_case (frequency [ (3, one_of expanding); (1, one_of ops) ]) in
+  frequency
+    [ (3, such_that (fun (_, axis) -> Option.is_some axis) any); (1, any) ]
+
+let pp_pair_case ppf (Op op, axis) =
+  match axis with
+  | Some a ->
+      Format.fprintf ppf "%a split along the results' axis %d" Prim.pp op a
+  | None -> Format.fprintf ppf "%a whole on each device" Prim.pp op
+
+(* Rows of [1e7 + 0.1 - 1e7]: a window of 4 of 8 rows sums each in the order of
+   8. *)
 let test_contract_rows () =
   let a =
     value D.Float32 [| 8; 3 |]
@@ -426,6 +807,13 @@ let () =
              prop ~count:1000
                "an operation over its operands' windows is that window"
                (Gen.with_pp pp_case case) law;
+             prop ~count:1000
+               "two devices that expand an operation compute it as one"
+               (Gen.with_pp pp_pair_case pair_case) pair_law;
+             prop ~count:300
+               "a contraction's window adds in the whole's order"
+               (Gen.with_pp pp_case threshold_case)
+               threshold_law;
              test "a contraction's rows keep the whole's order"
                test_contract_rows;
            ];

@@ -128,11 +128,18 @@ val route :
     ({!Nx_array.Move.shape}), and as an internal fault if [ps] and [shapes]
     differ in length or [ps] is empty. *)
 
+val keeps : rule -> int array array -> int -> bool
+(** [keeps r shapes a] is whether the results of an operation of rule [r] over
+    operands of [shapes] keep their axis [a] whole: every window of them that
+    the engine computes holds all of it: an axis a reduction keeps of those it
+    reads whole, an axis of [Whole] or [Into], an axis that no axis of a moved
+    operand becomes in order ({!moved}), and every axis of [Replicated]. *)
+
 val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
 (** [at ~by r shapes p] routes an operation of rule [r] over operands of
     [shapes] whose results are wanted at [p]: the result lies at [p] with each
-    axis [r] keeps whole in the results whole, and each operand is read at that
-    target moved back to its axes.
+    axis [r] keeps whole in the results whole ({!keeps}), and each operand is
+    read at that target moved back to its axes.
 
     Raises [Invalid_argument] naming [by] if a placement an operand is read at
     does not divide its shape. *)
