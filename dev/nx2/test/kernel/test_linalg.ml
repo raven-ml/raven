@@ -1830,6 +1830,10 @@ let law_cpu_units b c =
   cover "units on the threads" (Domain.recommended_domain_count () > 1);
   threads_agree b { c with batch = [||]; n = 256; r = 160 }
 
+(* One matrix of order 272: Cholesky's update of its trailing 136
+   columns runs in more than one panel, reading a transposed operand. *)
+let law_cpu_large b c = law_cholesky b { c with batch = [||]; n = 272 }
+
 (* A routine's operand [a], right-hand sides [b] for a solve, and
    destinations [dsts], each near a fit. *)
 type misfit = {
@@ -2129,6 +2133,8 @@ let cpu (b : Support.backend) =
         case (run (law_cpu_threads b));
       prop ~count:8 "a solve's units of columns give one thread's bits" case
         (run (law_cpu_units b));
+      prop ~count:4 "Cholesky's factor of order 272 meets its relation" case
+        (run (law_cpu_large b));
       prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
         (run (law_cpu_refuses b));
       test "refuses dtypes and shapes" (fun () ->

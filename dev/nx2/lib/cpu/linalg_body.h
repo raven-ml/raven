@@ -23,6 +23,26 @@
 
 /* Products */
 
+#if !CPLX
+/* w ← −x for the [r] × [c] x, element (i, j) at x[i·rs + j·cs], w's rows
+   [c] long: row by row, or by blocks of 8 rows where x's rows lie
+   adjacent, as a transposed operand's do, so that x is read a line at a
+   time, once. */
+static void F(negated)(const T *x, int64_t r, int64_t c, int64_t rs,
+                       int64_t cs, T *w) {
+  if (rs != 1 || cs == 1) {
+    for (int64_t i = 0; i < r; i++)
+      for (int64_t j = 0; j < c; j++) w[i * c + j] = -x[i * rs + j * cs];
+    return;
+  }
+  for (int64_t i0 = 0; i0 < r; i0 += 8) {
+    int64_t i1 = i0 + 8 < r ? i0 + 8 : r;
+    for (int64_t j = 0; j < c; j++)
+      for (int64_t i = i0; i < i1; i++) w[i * c + j] = -x[i + j * cs];
+  }
+}
+#endif
+
 /* c += sign · op(a) op(b) for c of [m] rows and [n] columns, rows [ldc]
    apart and its columns adjacent, and [k] products an element, by the
    contraction (product). Answers 0 if an allocation failed.
@@ -48,16 +68,14 @@ static int F(gemm)(int64_t m, int64_t n, int64_t k, int sign, operand a,
   if (sign < 0 && m * k <= k * n) {
     T *w = room(s, m * k * (int64_t)sizeof(T));
     if (w == NULL) return 0;
-    for (int64_t i = 0; i < m; i++)
-      for (int64_t p = 0; p < k; p++) w[i * k + p] = -ap[i * ars + p * acs];
+    F(negated)(ap, m, k, ars, acs, w);
     ap = w;
     ars = k;
     acs = 1;
   } else if (sign < 0) {
     T *w = room(s, k * n * (int64_t)sizeof(T));
     if (w == NULL) return 0;
-    for (int64_t p = 0; p < k; p++)
-      for (int64_t j = 0; j < n; j++) w[p * n + j] = -bp[p * brs + j * bcs];
+    F(negated)(bp, k, n, brs, bcs, w);
     bp = w;
     brs = n;
     bcs = 1;
