@@ -146,6 +146,32 @@ let test_split () =
   let two = sum_of (Nx.place (Count2.split ~axis:0) (host a)) ~fill:0. p in
   equal ~msg:"as on one device" (array float_exact) (read one) (read two)
 
+(* A load and a fold keep the cut of an axis they neither pad nor window, as
+   their rule reads only the padded and windowed axes whole. *)
+let test_split_kept () =
+  let a =
+    A.of_array D.Float32 [| 2; 4 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+  in
+  let p =
+    pad ~lo:[| 0; 1 |] ~hi:[| 0; 1 |] ~interior:[| 0; 0 |]
+      [| { (window 3 1) with axis = 1 } |]
+  in
+  let split = Count2.split ~axis:0 in
+  let one = sum_of (Nx.place Count.on (host a)) ~fill:0. p in
+  let two = sum_of (Nx.place split (host a)) ~fill:0. p in
+  equal ~msg:"the load keeps the cut" bool true
+    (Nx.Placement.equal split (Option.get (Nx.placement two)));
+  equal ~msg:"as on one device" (array float_exact) (read one) (read two);
+  let fold x = Nx.Prim.eval ~by:"t" (Fold { shape = [| 2; 4 |]; pad = p; x }) in
+  let x =
+    A.of_array D.Float32 (loaded (host a) p) (Array.init 24 Float.of_int)
+  in
+  let one = fold (Nx.place Count.on (host x)) in
+  let two = fold (Nx.place split (host x)) in
+  equal ~msg:"the fold keeps the cut" bool true
+    (Nx.Placement.equal split (Option.get (Nx.placement two)));
+  equal ~msg:"as on one device" (array float_exact) (read one) (read two)
+
 (* Declines *)
 
 module Dec2 = (val Nx.devices ~kernels:(module Unpadded) [ m 2; m 3 ])
@@ -342,6 +368,8 @@ let () =
              test "a fold counts the taps" test_fold;
              test "the rules raise before any kernel" test_rules;
              test "a split value loads as on one device" test_split;
+             test "a load and a fold keep the cut of an axis they do not pad"
+               test_split_kept;
              prop "a declined fold adds as nx.cpu's" fold_case law_fold;
              test "a declined fold of 25 taps, in two maps" test_many_taps;
              prop "a padded load is the padded operand's windows" padded_case

@@ -216,17 +216,21 @@ let map_fft : type d r.
   | R2c f -> R2c { f with x = m f.x }
   | C2r f -> C2r { f with x = m f.x }
 
+(* [l] with its operand [x] at position [i] replaced by [m i x]. *)
 let map_linalg : type d r.
-    ('v 's. ('v, 's, d) t -> ('v, 's, d) t) -> (d, r) linalg -> (d, r) linalg
-    =
+    ('v 's. int -> ('v, 's, d) t -> ('v, 's, d) t) ->
+    (d, r) linalg ->
+    (d, r) linalg =
  fun m -> function
-  | Cholesky l -> Cholesky { l with a = m l.a }
-  | Lu a -> Lu (m a)
-  | Qr l -> Qr { l with a = m l.a }
-  | Svd l -> Svd { l with a = m l.a }
-  | Eigh l -> Eigh { l with a = m l.a }
-  | Eig l -> Eig { l with a = m l.a }
-  | Solve_triangular l -> Solve_triangular { l with a = m l.a; b = m l.b }
+  | Cholesky l -> Cholesky { l with a = m 0 l.a }
+  | Lu a -> Lu (m 0 a)
+  | Qr l -> Qr { l with a = m 0 l.a }
+  | Svd l -> Svd { l with a = m 0 l.a }
+  | Eigh l -> Eigh { l with a = m 0 l.a }
+  | Eig l -> Eig { l with a = m 0 l.a }
+  | Solve_triangular l ->
+      let a = m 0 l.a in
+      Solve_triangular { l with a; b = m 1 l.b }
 
 let name : type r. r prim -> string = function
   | Map _ -> "Map"
@@ -349,40 +353,52 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
   | Place (_, x) -> f x
   | Check { ok; data; _ } -> f ok || List.exists (fun (Any x) -> f x) data
 
-let map : type r.
-    ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
+let mapi : type r.
+    ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
  fun m op ->
-  let map_load (type d) (l : d load) : d load =
+  let map_load (type d) i (l : d load) : d load =
     match l with
-    | Plain x -> Plain (m x)
-    | Padded p -> Padded { p with x = m p.x }
+    | Plain x -> Plain (m i x)
+    | Padded p -> Padded { p with x = m i p.x }
   in
   match op with
-  | Map p -> Map { p with loads = Array.map map_load p.loads }
-  | Reduce p -> Reduce { p with loads = Array.map map_load p.loads }
-  | Scan p -> Scan { p with loads = Array.map map_load p.loads }
-  | Gather g -> Gather { g with idx = m g.idx; x = m g.x }
+  | Map p -> Map { p with loads = Array.mapi map_load p.loads }
+  | Reduce p -> Reduce { p with loads = Array.mapi map_load p.loads }
+  | Scan p -> Scan { p with loads = Array.mapi map_load p.loads }
+  | Gather g ->
+      let idx = m 0 g.idx in
+      Gather { g with idx; x = m 1 g.x }
   | Scatter s ->
-      Scatter { s with idx = m s.idx; updates = m s.updates; into = m s.into }
-  | Sort s -> Sort { s with x = m s.x }
-  | Fold f -> Fold { f with x = m f.x }
-  | Fft f -> Fft (map_fft m f)
+      let idx = m 0 s.idx in
+      let updates = m 1 s.updates in
+      Scatter { s with idx; updates; into = m 2 s.into }
+  | Sort s -> Sort { s with x = m 0 s.x }
+  | Fold f -> Fold { f with x = m 0 f.x }
+  | Fft f -> Fft (map_fft (fun x -> m 0 x) f)
   | Linalg l -> Linalg (map_linalg m l)
   | Assemble a ->
-      Assemble { a with pieces = List.map (fun (r, x) -> (r, m x)) a.pieces }
+      Assemble
+        { a with pieces = List.mapi (fun i (r, x) -> (r, m i x)) a.pieces }
   | Contract c ->
-      Contract { c with a = m c.a; b = m c.b; init = Option.map m c.init }
-  | Copy x -> Copy (m x)
-  | Move (mv, x) -> Move (mv, m x)
-  | Bitcast (dt, x) -> Bitcast (dt, m x)
-  | Place (p, x) -> Place (p, m x)
+      let a = m 0 c.a in
+      let b = m 1 c.b in
+      Contract { c with a; b; init = Option.map (m 2) c.init }
+  | Copy x -> Copy (m 0 x)
+  | Move (mv, x) -> Move (mv, m 0 x)
+  | Bitcast (dt, x) -> Bitcast (dt, m 0 x)
+  | Place (p, x) -> Place (p, m 0 x)
   | Check c ->
+      let ok = m 0 c.ok in
       Check
         {
           c with
-          ok = m c.ok;
-          data = List.map (fun (Any x) -> Any (m x)) c.data;
+          ok;
+          data = List.mapi (fun i (Any x) -> Any (m (i + 1) x)) c.data;
         }
+
+let map : type r.
+    ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
+ fun m op -> mapi (fun _ x -> m x) op
 
 (* Printing *)
 
@@ -611,10 +627,6 @@ let pp : type r. Format.formatter -> r prim -> unit =
 (* Rules *)
 
 let same_dtype a b = D.code a = D.code b
-let load_placement (type d) (l : d load) : d Devices.placement option =
-  let (Any x) = load_any l in
-  at x
-
 (* The shape [l] gives its loop, or its refusal raised naming [by]: a padded
    load's fill is an element of its dtype, and its pad fits its operand. *)
 let load_shape (type d) ~by (l : d load) =
@@ -765,31 +777,90 @@ let reduced shape axes =
   Array.of_list
     (List.filteri (fun a _ -> not (Array.mem a axes)) (Array.to_list shape))
 
-(* Each operation's route: where it reads its operands, in [operands]'s order,
-   and where its results lie. [results] and [prepare] take placements from it
-   alone. *)
+(* Each operation's rule ({!rule}) and route: where it reads its operands, in
+   [operands]'s order, and where its results lie. [results] and [prepare] take
+   placements from it alone. *)
 
-(* A map's route, its loads of the map's layout's shape by its rule. *)
-(* A loop with a padded load reads its operands whole and computes the whole
-   result on each device: a device's window of a padded, windowed read is no
-   window of its operand. *)
-let padded_route (type d) ~by (loads : d load array) =
-  let operand l =
-    let (Any x) = load_any l in
-    shape x
-  in
-  Route.route ~by Replicated
-    (Array.map load_placement loads)
-    (Array.map operand loads)
+(* Marks in [whole] the axes of a loop of rank [Array.length whole] that a
+   padded load by [p] reads whole: those it pads, crops or windows, and those
+   its windows append. *)
+let mark_padded whole (p : Nx_kernel.pad) =
+  let r = Array.length p.lo in
+  Array.iteri
+    (fun a _ ->
+      if a >= r || p.lo.(a) <> 0 || p.hi.(a) <> 0 || p.interior.(a) <> 0 then
+        whole.(a) <- true)
+    whole;
+  Array.iter
+    (fun (w : Nx_array.Move.window) -> whole.(w.axis) <- true)
+    p.windows
 
-let map_route (type d) ~by layout (loads : d load array) : d Route.t option =
-  if Array.length loads = 0 then None
-  else if Array.exists is_padded loads then padded_route ~by loads
+let marked whole =
+  Array.of_list
+    (List.filter (fun a -> whole.(a)) (List.init (Array.length whole) Fun.id))
+
+(* The axes of a loop of [layout] that its loads read whole, beside [axes]. *)
+let padded_axes (type d) layout ?(axes = [||]) (loads : d load array) =
+  let whole = Array.make (Array.length (L.shape layout)) false in
+  Array.iter (fun a -> whole.(a) <- true) axes;
+  Array.iter
+    (fun (l : d load) ->
+      match l with Plain _ -> () | Padded { pad; _ } -> mark_padded whole pad)
+    loads;
+  marked whole
+
+(* A map's rule: elementwise, but for the axes padded loads read whole. *)
+let map_rule (type d) layout (loads : d load array) =
+  if Array.exists is_padded loads then Route.Along (padded_axes layout loads)
+  else Route.Elementwise
+
+(* A loop's rules. A loop of no load is its expansion, which computes it
+   whole. *)
+let reduce_rule (type d) layout axes (loads : d load array) =
+  if Array.length loads = 0 then Route.Replicated
   else
-    let shape = L.shape layout in
-    Route.route ~by Elementwise
-      (Array.map load_placement loads)
-      (Array.make (Array.length loads) shape)
+    let along =
+      if Array.exists is_padded loads then padded_axes layout loads else [||]
+    in
+    Route.Reduce { axes; along }
+
+let scan_rule (type d) layout axis (loads : d load array) =
+  if Array.length loads = 0 then Route.Replicated
+  else Route.Along (padded_axes layout ~axes:[| axis |] loads)
+
+(* A fold's rule: the axes of its operand that the padded load it sums back
+   reads whole. *)
+let fold_rule pad x =
+  let whole = Array.make (rank x) false in
+  mark_padded whole pad;
+  Route.Along (marked whole)
+
+(* A routine acts along its matrices' last two axes. *)
+let linalg_rule l =
+  let (Any a) = List.hd (linalg_operands l) in
+  let r = rank a in
+  Route.Along [| r - 2; r - 1 |]
+
+(* The route of an operation of [rule] over [xs]; [None] for no operand. *)
+let routed (type d) ~by rule (xs : d any array) : d Route.t option =
+  if Array.length xs = 0 then None
+  else
+    Route.route ~by rule
+      (Array.map (fun (Any x) -> at x) xs)
+      (Array.map (fun (Any x) -> shape x) xs)
+
+(* A loop's route by [rule], over loads of [layout]'s shape but where padded. *)
+let loads_route (type d) ~by rule layout (loads : d load array) =
+  if Array.length loads = 0 then None
+  else
+    let s = L.shape layout in
+    let placement (l : d load) =
+      match l with Plain x -> at x | Padded { x; _ } -> at x
+    in
+    let shape (l : d load) =
+      match l with Plain _ -> s | Padded { x; _ } -> shape x
+    in
+    Route.route ~by rule (Array.map placement loads) (Array.map shape loads)
 
 let rec make_outs : type d r.
     ('a 'b 'c. int -> ('a, 'b, 'c) form -> ('a, 'b, 'c) t) ->
@@ -834,17 +905,6 @@ let rec make_reductions : type d r.
       let v = make_reduction m k layout placement r in
       (v, make_reductions m (k + reduction_width r) layout placement rest)
 
-(* A loop's route by [rule], its loads of [layout]'s shape. *)
-let loop_route (type d) ~by rule layout (loads : d load array) :
-    d Route.t option =
-  if Array.length loads = 0 then None
-  else if Array.exists is_padded loads then padded_route ~by loads
-  else
-    let shape = L.shape layout in
-    Route.route ~by rule
-      (Array.map load_placement loads)
-      (Array.make (Array.length loads) shape)
-
 let one_route ~by rule x = Route.route ~by rule [| at x |] [| shape x |]
 
 (* Where an operation of one operand by [rule], not [Replicated], reads [x] and
@@ -881,8 +941,109 @@ let moved_shape ~by mv x =
   | exception Invalid_argument e -> invalid_argf "%s: %s" by e
 
 let bitcast_rule dt x =
-  if D.bits dt > D.bits (dtype x) then Route.Reduce [| rank x - 1 |]
+  if D.bits dt > D.bits (dtype x) then
+    Route.Reduce { axes = [| rank x - 1 |]; along = [||] }
   else Route.Elementwise
+
+let rule : type r. r prim -> Route.rule = function
+  | Map { layout; loads; _ } -> map_rule layout loads
+  | Reduce { layout; axes; loads; _ } -> reduce_rule layout axes loads
+  | Scan { layout; axis; loads; _ } -> scan_rule layout axis loads
+  | Gather { axis; _ } -> Gather axis
+  | Scatter { axis; _ } -> Into axis
+  | Sort { axis; _ } -> Along [| axis |]
+  | Fold { pad; x; _ } -> fold_rule pad x
+  | Fft f -> Along (fft_axes f)
+  | Linalg l -> linalg_rule l
+  | Assemble _ -> Replicated
+  | Contract { batch; contracting; _ } -> Contract { batch; contracting }
+  | Copy _ -> Elementwise
+  | Move (m, _) -> Move m
+  | Bitcast (dt, x) -> bitcast_rule dt x
+  | Place _ | Check _ -> Elementwise
+
+(* Whether [nd] is a [Coord] of an axis whose window starts at [first > 0]. *)
+let shifted first (nd : P.node) =
+  match nd with Coord c -> first.(c) <> 0 | _ -> false
+
+(* [prog] with each [Coord] of an axis whose window starts at [s > 0] replaced
+   by [Coord + s], so that a device computes its window. Each node keeps its
+   place after the two it gains, [at] mapping old indices to new. *)
+let with_offsets (prog : P.t) (first : int array) =
+  if
+    Array.for_all (fun s -> s = 0) first
+    || not (Iarray.exists (shifted first) prog.nodes)
+  then prog
+  else begin
+    let nodes = ref ([] : P.node list) and count = ref 0 in
+    let push nd =
+      nodes := List.cons nd !nodes;
+      incr count;
+      !count - 1
+    in
+    let index = Array.make (Iarray.length prog.nodes) 0 in
+    let at j = index.(j) in
+    Iarray.iteri
+      (fun i nd ->
+        index.(i) <-
+          (match (nd : P.node) with
+          | Coord c when first.(c) <> 0 ->
+              let coord = push nd in
+              let start = P.bits D.Int64 (Int64.of_int first.(c)) in
+              let start = push (Const (D.Any D.Int64, start)) in
+              push (Op2 (Binary Add, coord, start))
+          | Op1 (k, dt, j) -> push (Op1 (k, dt, at j))
+          | Op2 (k, j, l) -> push (Op2 (k, at j, at l))
+          | Op3 (k, j, l, m) -> push (Op3 (k, at j, at l, at m))
+          | In _ | Coord _ | Const _ -> push nd))
+      prog.nodes;
+    let nodes = Iarray.of_list (List.rev !nodes) in
+    P.v ~ins:prog.ins nodes ~outs:(Iarray.map at prog.outs)
+  end
+
+let local : type r. r prim -> Nx_array.Move.range array -> r prim =
+ fun op w ->
+  let starts w = Array.map (fun (r : Nx_array.Move.range) -> r.start) w in
+  let extents w = Array.map (fun (r : Nx_array.Move.range) -> r.count) w in
+  (* A loop's window: the window of a load of its shape. *)
+  let loop layout =
+    match rule op with
+    | Route.Elementwise -> w
+    | r -> Route.window r 0 (L.shape layout) w
+  in
+  match op with
+  | Map m ->
+      let l = loop m.layout in
+      Map
+        {
+          m with
+          layout = L.contiguous (extents l);
+          prog = with_offsets m.prog (starts l);
+        }
+  | Reduce m ->
+      let l = loop m.layout in
+      Reduce
+        {
+          m with
+          layout = L.contiguous (extents l);
+          prog = with_offsets m.prog (starts l);
+        }
+  | Scan m ->
+      let l = loop m.layout in
+      Scan
+        {
+          m with
+          layout = L.contiguous (extents l);
+          prog = with_offsets m.prog (starts l);
+        }
+  | Fold f -> Fold { f with shape = extents w }
+  | Assemble a ->
+      if extents w <> a.shape then
+        invalid_arg "Prim.local: an assembly is computed whole";
+      op
+  | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
+  | Move _ | Bitcast _ | Place _ | Check _ ->
+      op
 
 (* A bitcast's layout and shape: one width keeps them; a narrower dtype appends
    an axis of the ratio, a wider one removes it where strides allow, and a
@@ -941,9 +1102,6 @@ let check_gather ~by axis idx x =
     invalid_argf "%s: positions %a do not fit an operand %a along axis %d" by
       pp_shape si pp_shape sx axis
 
-let gather_route ~by axis idx x =
-  Route.route ~by (Gather axis) [| at idx; at x |] [| shape idx; shape x |]
-
 let check_scatter ~by (combine : Nx_kernel.combine) axis idx updates into =
   let si = shape idx and su = shape updates and st = shape into in
   check_axis ~by axis (Array.length st);
@@ -956,27 +1114,14 @@ let check_scatter ~by (combine : Nx_kernel.combine) axis idx updates into =
   if combine = Add && not (P.accepts2 (Binary Add) (dtype into)) then
     invalid_argf "%s: Add does not take %s" by (D.name (dtype into))
 
-let scatter_route ~by axis idx updates into =
-  Route.route ~by (Into axis)
-    [| at idx; at updates; at into |]
-    [| shape idx; shape updates; shape into |]
-
 (* A sort's values' shape, and its positions': its rule. *)
 let sort_shape ~by axis k x =
   match Shape.sort ~axis ~k (shape x) with
   | Ok s -> s
   | Error e -> invalid_argf "%s: %s" by e
 
-let sort_route ~by axis x =
-  Route.route ~by (Along [| axis |]) [| at x |] [| shape x |]
-
 (* [r]'s value, or its error raised naming [by]. *)
 let shaped ~by = function Ok s -> s | Error e -> invalid_argf "%s: %s" by e
-
-let route_along ~by axes (xs : _ any list) =
-  let at_ = Array.of_list (List.map (fun (Any x) -> at x) xs) in
-  let shapes = Array.of_list (List.map (fun (Any x) -> shape x) xs) in
-  Route.route ~by (Along axes) at_ shapes
 
 let check_fft (type d r) ~by (f : (d, r) fft) =
   let into x y fits =
@@ -1000,8 +1145,6 @@ let fft_shape (type d r) ~by (f : (d, r) fft) =
     | C2c { axes; x; _ } -> Shape.c2c ~axes (shape x)
     | R2c { axes; x; _ } -> Shape.r2c ~axes (shape x)
     | C2r { axes; n; x; _ } -> Shape.c2r ~axes ~n (shape x))
-
-let fft_route ~by f = route_along ~by (fft_axes f) [ fft_operand f ]
 
 (* A routine's results' shapes, in their order: its rule. *)
 let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
@@ -1040,13 +1183,6 @@ let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
     | Solve_triangular { a; b; _ } ->
         one (Shape.solve_triangular (shape a) (shape b)))
 
-(* A routine acts along its matrices' last two axes. *)
-let linalg_route ~by l =
-  let xs = linalg_operands l in
-  let (Any a) = List.hd xs in
-  let r = rank a in
-  route_along ~by [| r - 2; r - 1 |] xs
-
 (* A fold's rule: [whole] is a shape a layout admits, and [x] has the shape a
    padded load of it gives, and a dtype {!Nx_kernel.Prog.Add} takes. *)
 let check_fold ~by whole pad x =
@@ -1059,8 +1195,6 @@ let check_fold ~by whole pad x =
   if not (has_shape x s) then
     invalid_argf "%s: an operand of shape %a, not %a" by pp_shape (shape x)
       pp_shape s
-
-let fold_route ~by x = Route.route ~by Replicated [| at x |] [| shape x |]
 
 let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
     (pieces : (Nx_array.Move.range array * (v, s, d) t) list) =
@@ -1079,18 +1213,6 @@ let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
               pp_shape (shape x) pp_shape s
       | exception Invalid_argument e -> invalid_argf "%s: piece %d: %s" by i e)
     pieces
-
-(* An assembly reads each piece whole and lies whole on every device of their
-   set: no piece's window is any device's alone. *)
-let assemble_route (type v s d) ~by
-    (pieces : (Nx_array.Move.range array * (v, s, d) t) list) : d Route.t option
-    =
-  match pieces with
-  | [] -> None
-  | _ ->
-      Route.route ~by Replicated
-        (Array.of_list (List.map (fun (_, x) -> at x) pieces))
-        (Array.of_list (List.map (fun (_, x) -> shape x) pieces))
 
 (* A contraction's operand shapes, [a], [b], then [init] where there is one. *)
 let contract_shapes a b init =
@@ -1135,10 +1257,9 @@ let contract_order ~batch ~contracting a b : Nx_kernel.order =
       Devices.contract_order (Devices.set p) ~rows ~columns
   | None, None -> Devices.contract_order Devices.host ~rows ~columns
 
-(* A contraction reads its operands whole on each device that computes it: where
-   they lie at one placement that cuts no axis, there; else on every device of
-   their set, each holding them whole. *)
-let contract_route (type a b c e v s d) ~by (a : (a, b, d) t)
+(* A contraction's route by [rule]: where its operands lie at one placement that
+   cuts no axis, there, with nothing more allocated. *)
+let contract_route (type a b c e v s d) ~by rule (a : (a, b, d) t)
     (b : (c, e, d) t) (init : (v, s, d) t option) : d Route.t option =
   let ps =
     match init with
@@ -1149,7 +1270,8 @@ let contract_route (type a b c e v s d) ~by (a : (a, b, d) t)
   | Route.Every_set -> None
   | Route.Uncut p ->
       Some { Route.operands = Array.make (Array.length ps) p; result = p }
-  | Route.Other -> Route.route ~by Replicated ps (contract_shapes a b init)
+  | Route.Cut _ | Route.Other ->
+      Route.route ~by rule ps (contract_shapes a b init)
 
 let linalg_results : type d r.
     by:string ->
@@ -1158,7 +1280,9 @@ let linalg_results : type d r.
     r =
  fun ~by m l ->
   let shapes = linalg_shapes ~by l in
-  let placement = result (linalg_route ~by l) in
+  let placement =
+    result (routed ~by (linalg_rule l) (Array.of_list (linalg_operands l)))
+  in
   let one : type v s. int -> (v, s) dtype -> (v, s, d) t =
    fun k dtype -> m k (of_layout dtype (L.contiguous shapes.(k)) placement)
   in
@@ -1195,34 +1319,36 @@ let results : type r.
   match op with
   | Map { layout; prog; outs; loads } ->
       check_map ~by layout prog outs loads;
-      let placement = result (map_route ~by layout loads) in
+      let placement = result (loads_route ~by (rule op) layout loads) in
       make_outs m 0 layout placement outs
   | Reduce { layout; axes; prog; reductions; loads } ->
       check_reduce ~by layout axes prog reductions loads;
-      let placement = result (loop_route ~by (Reduce axes) layout loads) in
+      let placement = result (loads_route ~by (rule op) layout loads) in
       let out = L.contiguous (reduced (L.shape layout) axes) in
       make_reductions m 0 out placement reductions
   | Scan { layout; axis; prog; reduction; loads } ->
       check_scan ~by layout axis prog reduction loads;
-      let placement = result (loop_route ~by (Along [| axis |]) layout loads) in
+      let placement = result (loads_route ~by (rule op) layout loads) in
       make_reduction m 0 layout placement reduction
   | Gather { axis; idx; x } ->
       check_gather ~by axis idx x;
-      let placement = result (gather_route ~by axis idx x) in
+      let placement = result (routed ~by (rule op) [| Any idx; Any x |]) in
       m 0 (of_layout (dtype x) (L.contiguous (shape idx)) placement)
   | Scatter { combine; axis; idx; updates; into; _ } ->
       check_scatter ~by combine axis idx updates into;
-      let placement = result (scatter_route ~by axis idx updates into) in
+      let placement =
+        result (routed ~by (rule op) [| Any idx; Any updates; Any into |])
+      in
       m 0 (of_layout (dtype into) (L.contiguous (shape into)) placement)
   | Sort { axis; k; x; _ } ->
       let s = sort_shape ~by axis k x in
-      let placement = result (sort_route ~by axis x) in
+      let placement = result (routed ~by (rule op) [| Any x |]) in
       let layout = L.contiguous s in
       let values = m 0 (of_layout (dtype x) layout placement) in
       (values, m 1 (of_layout D.Int64 layout placement))
   | Fft f ->
       let layout = L.contiguous (fft_shape ~by f) in
-      let placement = result (fft_route ~by f) in
+      let placement = result (routed ~by (rule op) [| fft_operand f |]) in
       (match f with
       | C2c { x; _ } -> m 0 (of_layout (dtype x) layout placement)
       | R2c { dtype; _ } -> m 0 (of_layout dtype layout placement)
@@ -1230,15 +1356,19 @@ let results : type r.
   | Linalg l -> linalg_results ~by m l
   | Fold { shape; pad; x } ->
       check_fold ~by shape pad x;
-      let placement = result (fold_route ~by x) in
+      let placement = result (routed ~by (rule op) [| Any x |]) in
       m 0 (of_layout (dtype x) (L.contiguous shape) placement)
   | Assemble { dtype; shape; fill; pieces } ->
       check_assemble ~by dtype shape fill pieces;
-      let placement = result (assemble_route ~by pieces) in
+      let placement =
+        result
+          (routed ~by (rule op)
+             (Array.of_list (List.map (fun (_, x) -> Any x) pieces)))
+      in
       m 0 (of_layout dtype (L.contiguous shape) placement)
   | Contract { batch; contracting; acc; out; a; b; init; _ } ->
       let shape = contract_shape ~by ~batch ~contracting ~acc a b init in
-      let placement = result (contract_route ~by a b init) in
+      let placement = result (contract_route ~by (rule op) a b init) in
       m 0 (of_layout out (L.contiguous shape) placement)
   | Copy x ->
       let placement = one_result ~by Elementwise x in
@@ -1372,29 +1502,31 @@ let prepare : type r.
   match op with
   | Map p -> (
       check_map ~by p.layout p.prog p.outs p.loads;
-      match placed place (map_route ~by p.layout p.loads) p.loads with
+      match
+        placed place (loads_route ~by (rule op) p.layout p.loads) p.loads
+      with
       | Some loads -> Map { p with loads }
       | None -> op)
   | Reduce p -> (
       check_reduce ~by p.layout p.axes p.prog p.reductions p.loads;
-      let r = loop_route ~by (Reduce p.axes) p.layout p.loads in
+      let r = loads_route ~by (rule op) p.layout p.loads in
       match placed place r p.loads with
       | Some loads -> Reduce { p with loads }
       | None -> op)
   | Scan p -> (
       check_scan ~by p.layout p.axis p.prog p.reduction p.loads;
-      let r = loop_route ~by (Along [| p.axis |]) p.layout p.loads in
+      let r = loads_route ~by (rule op) p.layout p.loads in
       match placed place r p.loads with
       | Some loads -> Scan { p with loads }
       | None -> op)
   | Gather g ->
       check_gather ~by g.axis g.idx g.x;
-      let r = gather_route ~by g.axis g.idx g.x in
+      let r = routed ~by (rule op) [| Any g.idx; Any g.x |] in
       Gather
         { g with idx = place (read_at r 0) g.idx; x = place (read_at r 1) g.x }
   | Scatter s ->
       check_scatter ~by s.combine s.axis s.idx s.updates s.into;
-      let r = scatter_route ~by s.axis s.idx s.updates s.into in
+      let r = routed ~by (rule op) [| Any s.idx; Any s.updates; Any s.into |] in
       Scatter
         {
           s with
@@ -1404,34 +1536,29 @@ let prepare : type r.
         }
   | Sort s ->
       ignore (sort_shape ~by s.axis s.k s.x);
-      let r = sort_route ~by s.axis s.x in
+      let r = routed ~by (rule op) [| Any s.x |] in
       Sort { s with x = place (read_at r 0) s.x }
   | Fold f ->
       check_fold ~by f.shape f.pad f.x;
-      Fold { f with x = place (read_at (fold_route ~by f.x) 0) f.x }
+      Fold
+        {
+          f with
+          x = place (read_at (routed ~by (rule op) [| Any f.x |]) 0) f.x;
+        }
   | Fft f ->
       ignore (fft_shape ~by f);
-      let r = fft_route ~by f in
+      let r = routed ~by (rule op) [| fft_operand f |] in
       Fft (map_fft (fun x -> place (read_at r 0) x) f)
   | Linalg l ->
       ignore (linalg_shapes ~by l);
-      let r = linalg_route ~by l in
-      (* CR: Pass operand indices through map_linalg and remove this counter.
-         Record fields do not guarantee a-then-b callbacks: reversed calls
-         gather batch-split b[2;2;1] onto both devices and slice replicated
-         a[2;2;2]. Use a=0, b=1, and 0 for unary routines;
-         Prim.map can ignore the index. Preserve the route's views. *)
-      (* The operands in order: [a], then [b]. *)
-      let i = ref (-1) in
-      Linalg
-        (map_linalg
-           (fun x ->
-             incr i;
-             place (read_at r !i) x)
-           l)
+      let r = routed ~by (rule op) (Array.of_list (linalg_operands l)) in
+      Linalg (map_linalg (fun i x -> place (read_at r i) x) l)
   | Assemble a ->
       check_assemble ~by a.dtype a.shape a.fill a.pieces;
-      let r = assemble_route ~by a.pieces in
+      let r =
+        routed ~by (rule op)
+          (Array.of_list (List.map (fun (_, x) -> Any x) a.pieces))
+      in
       Assemble
         {
           a with
@@ -1442,7 +1569,7 @@ let prepare : type r.
       ignore
         (contract_shape ~by ~batch:c.batch ~contracting:c.contracting
            ~acc:c.acc c.a c.b c.init);
-      let r = contract_route ~by c.a c.b c.init in
+      let r = contract_route ~by (rule op) c.a c.b c.init in
       let a = place (read_at r 0) c.a and b = place (read_at r 1) c.b in
       let init = Option.map (fun i -> place (read_at r 2) i) c.init in
       if a == c.a && b == c.b && init == c.init then op

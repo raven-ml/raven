@@ -1580,6 +1580,9 @@ let repeated (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     in
     apply ~by (Value.Move (Slice w, x))
   in
+  (* No position leaves [into], copied: no result is an operand. *)
+  if s.(axis) = 0 then apply ~by (Value.Copy into)
+  else
   let acc = ref into in
   for i = 0 to s.(axis) - 1 do
     acc :=
@@ -1890,7 +1893,15 @@ let run : type r.
         (fun i _ ->
           values.(i) <- Some (node_map apply ~by layout prog loads value i))
         values;
-      Some (results outs (List.map value (Iarray.to_list prog.outs)))
+      (* An output that is an operand is its copy: no result is an operand. *)
+      let out o =
+        match Iarray.get prog.nodes o with
+        | In _ ->
+            let (Value.Any x) = value o in
+            Value.Any (apply ~by (Value.Copy x))
+        | Const _ | Coord _ | Op1 _ | Op2 _ | Op3 _ -> value o
+      in
+      Some (results outs (List.map out (Iarray.to_list prog.outs)))
   | Value.Reduce { layout; axes; prog; reductions; loads }
     when Array.exists Prim.is_padded loads || not (core_reduce prog reductions)
     ->
@@ -1910,6 +1921,13 @@ let run : type r.
   | Value.Sort { axis; descending; k; x } -> sort apply ~by axis descending k x
   | Value.Fold { shape; pad; x } -> Some (fold apply ~by shape pad x)
   | Value.Fft f -> Some (fft apply ~by f)
-  | Value.Reduce _ | Value.Scan _ | Value.Linalg _ | Value.Copy _ | Value.Move _
+  | Value.Copy x ->
+      (* A copy is the map of one [Copy]. *)
+      let dt = Prim.dtype x in
+      let prog = P.of_node ~ins:[| D.Any dt |] (Op1 (Copy, D.Any dt, 0)) in
+      let layout = L.contiguous (Prim.shape x) in
+      Option.map fst
+        (widened apply ~by layout prog Value.[ dt ] [| Value.Plain x |])
+  | Value.Reduce _ | Value.Scan _ | Value.Linalg _ | Value.Move _
   | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       None

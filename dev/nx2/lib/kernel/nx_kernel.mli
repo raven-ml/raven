@@ -334,17 +334,24 @@ end
     caller's error.
 
     A kernel claims its destinations and operands for the extent of its call
-    through a door: [nx_read] of [nx_array.h] for host kernels,
-    {!Nx_array.door} for kernels that submit device work. [nx_read] waits,
-    under its claims, for earlier device work on the operands;
-    {!Nx_array.door} holds its claims until the work is submitted. A kernel
-    answers [Done] once its work is done on the host or queued on the device's
-    timeline; the door's refusal, before any write; [Declined] if it does not
-    compute the case, before any write or queued work. Value-dependent
-    failures are NaN. A kernel's result is a function of its operands' values
-    alone: neither layouts nor threads change a bit. A kernel raises
-    [Out_of_memory] if host memory runs out and {!Rig.Out_of_memory} if its
-    device's does.
+    through a door: [nx_read] of [nx_array.h] for host kernels, {!Nx_array.door}
+    for kernels that submit device work. [nx_read] waits, under its claims, for
+    earlier device work on the operands; {!Nx_array.door} holds its claims until
+    the work is submitted. A kernel answers [Done] once its work is done on the
+    host or queued on the device's timeline; the door's refusal, before any
+    write; [Declined] if it does not compute the case, before any write or
+    queued work. Value-dependent failures are NaN. A kernel's result is a
+    function of its operands' values alone: neither layouts nor threads change a
+    bit. Nor do windows: nx computes an operation over a set one window of its
+    results at a time, each device over the parts of the operands its window
+    reads, and every element keeps the bits the whole operation gives it. Its
+    association, its algorithm and whether the kernel declines depend on the
+    extents the element reads whole (a reduction's, a scan's, a sort's or a
+    transform's axes, the contracted extents, a routine's matrices, a gather's
+    or a scatter's axis, the axes a padded load or a fold pads or windows), the
+    dtypes, the attributes and the device's architecture, never on the result's
+    other extents. A kernel raises [Out_of_memory] if host memory runs out and
+    {!Rig.Out_of_memory} if its device's does.
 
     A kernel answers [Wrong_dtype] for dtypes its doc does not take. A decline
     of [apply0] to [apply3] at a base dtype (float32, float64, the 8- to 64-bit

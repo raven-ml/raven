@@ -10,22 +10,31 @@
     calls anything. An operation whose every operand is a constant, a creation
     included, gives constants; [Place] and [Check] compute. Otherwise it
     computes each constant operand where the route reads it, places operands the
-    route moves, allocates each result at the route's placement, and calls the
-    set's kernels once per device. [Done] is the result; a refusal raises
-    through {!Nx_array.refused} naming [by]; a map, an assembly, a sort, a
-    gather or a scatter of a sub-byte dtype, or a scatter whose targets may
-    repeat, that a device's kernels decline runs as its expansion
-    ({!Expand.run}) on that device, over its own operands. Any other decline
-    raises naming the kernels, the kind, the dtypes, the device and the move the
-    program makes, [Nx.place] onto a set whose kernels compute it: no data moves
-    between devices on its own. The decline of a routine also says that its
-    expansion is not available yet. Movements and bitcasts are views where a
+    route moves, and allocates each result at the route's placement. Each device
+    of that placement then computes its window of the results by the set's
+    kernels, over each operand's window there ({!Route.window}); a program that
+    reads coordinates adds the window's first index to them. [Done] is the
+    result; a refusal raises through {!Nx_array.refused} naming [by]. A device
+    whose kernels decline computes its window by the expansion ({!Expand.run})
+    over its own operands there, copied into its window where the results lie on
+    several devices. A decline nx has no expansion for raises naming the
+    kernels, the kind, the dtypes, the device and the move the program makes,
+    [Nx.place] onto a set whose kernels compute it: no data moves between
+    devices on its own. The decline of a routine also says that its expansion is
+    not available yet. A result shares an operand's memory only as its view, or
+    where the operand was donated. Movements and bitcasts are views where a
     layout expresses them, and a copy, then a view, otherwise. [Check] reduces
     its flags where they lie and reads only scalars on the host: whether all
     hold, then the first failing index, from which it raises its exception.
 
-    A program that reads coordinates computes each device's window with that
-    window's first index added to them. *)
+    Over devices of one architecture, a result's bits are those of the same
+    operation on one device, by the window law ({!Route.window}), wherever the
+    operands lie. One exception holds on GPUs: a window of a batched
+    contraction's batch, where the contracted extent is long, can add in another
+    order than the whole, as a GPU library chooses how many parts to split the
+    contracted extent into from every extent, the batch's included. Over devices
+    of several architectures, each device's window has its own architecture's
+    bits. *)
 
 val run : by:string -> 'r Value.prim -> 'r
 (** [run ~by op] is [op]'s meaning where no interpretation reaches it.

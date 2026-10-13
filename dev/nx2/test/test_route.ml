@@ -33,10 +33,19 @@ let pp_ints ppf a =
 
 let pp_rule ppf = function
   | Route.Elementwise -> Format.pp_print_string ppf "Elementwise"
-  | Reduce a -> Format.fprintf ppf "Reduce %a" pp_ints a
+  | Reduce { axes; along } ->
+      Format.fprintf ppf "Reduce %a along %a" pp_ints axes pp_ints along
   | Along a -> Format.fprintf ppf "Along %a" pp_ints a
   | Gather a -> Format.fprintf ppf "Gather %d" a
   | Into a -> Format.fprintf ppf "Into %d" a
+  | Contract { batch; contracting } ->
+      let pairs ps =
+        String.concat "; "
+          (Array.to_list
+             (Array.map (fun (a, b) -> Printf.sprintf "%d,%d" a b) ps))
+      in
+      Format.fprintf ppf "Contract batch [%s] contracting [%s]" (pairs batch)
+        (pairs contracting)
   | Replicated -> Format.pp_print_string ppf "Replicated"
   | Move _ -> Format.pp_print_string ppf "Move"
 
@@ -55,69 +64,119 @@ let pp_case ppf c =
       Format.fprintf ppf " %a at %a," pp_ints c.shapes.(i) pp_at p)
     c.ps
 
+(* A placement of a value of [rank]; of a scalar, uncut. *)
 let placement_of rank =
-  let axis = Gen.int_range 0 (rank - 1) in
-  Gen.one_of
+  let uncut =
     [
       Gen.constant None;
       Gen.map (fun k -> Some (Devices.one s4 k)) (Gen.int_range 0 3);
       Gen.constant (Some (Devices.on s4));
-      Gen.map (fun axis -> Some (Devices.split ~by:"t" ~axis s4)) axis;
-      Gen.map
-        (fun (x, y) ->
-          Some
-            (if x = y then Devices.mesh ~by:"t" mesh [ (x, [ "a"; "b" ]) ]
-             else Devices.mesh ~by:"t" mesh [ (x, [ "a" ]); (y, [ "b" ]) ]))
-        (Gen.pair axis axis);
     ]
+  in
+  if rank = 0 then Gen.one_of uncut
+  else
+    let axis = Gen.int_range 0 (rank - 1) in
+    Gen.one_of
+      (uncut
+      @ [
+          Gen.map (fun axis -> Some (Devices.split ~by:"t" ~axis s4)) axis;
+          Gen.map
+            (fun (x, y) ->
+              Some
+                (if x = y then Devices.mesh ~by:"t" mesh [ (x, [ "a"; "b" ]) ]
+                 else Devices.mesh ~by:"t" mesh [ (x, [ "a" ]); (y, [ "b" ]) ]))
+            (Gen.pair axis axis);
+        ])
 
 let axes_of rank =
   Gen.map
     (fun l -> Array.of_list (List.sort_uniq Int.compare l))
     (Gen.list ~size:(Gen.int_range 1 rank) (Gen.int_range 0 (rank - 1)))
 
-let case =
+let shaped =
   let open Gen in
-  with_pp pp_case
-    (let* rank = int_range 1 3 in
-     let* shape = array ~size:(constant rank) (of_list [ 4; 8 ]) in
-     let* rule =
-       one_of
-         [
-           constant Route.Elementwise;
-           map (fun a -> Route.Reduce a) (axes_of rank);
-           map (fun a -> Route.Along a) (axes_of rank);
-           map (fun a -> Route.Gather a) (int_range 0 (rank - 1));
-           map (fun a -> Route.Into a) (int_range 0 (rank - 1));
-           constant Route.Replicated;
-         ]
-     in
-     let* n =
-       match rule with Route.Gather _ -> constant 2 | _ -> int_range 1 3
-     in
-     (* Operands differ along an axis the rule reads whole, as a gather's source
-        or a scatter's updates do. *)
-     let* along = array ~size:(constant n) (of_list [ 4; 8 ]) in
-     let shapes =
-       Array.init n (fun i ->
-           let s = Array.copy shape in
-           (match rule with
-           | Route.Gather a when i = 1 -> s.(a) <- along.(i)
-           | Route.Into a -> s.(a) <- along.(i)
-           | _ -> ());
-           s)
-     in
-     let+ ps = array ~size:(constant n) (placement_of rank) in
-     { rule; ps; shapes })
+  let* rank = int_range 1 3 in
+  let* shape = array ~size:(constant rank) (of_list [ 4; 8 ]) in
+  let* rule =
+    one_of
+      [
+        constant Route.Elementwise;
+        map (fun a -> Route.Reduce { axes = a; along = [||] }) (axes_of rank);
+        map (fun a -> Route.Along a) (axes_of rank);
+        map (fun a -> Route.Gather a) (int_range 0 (rank - 1));
+        map (fun a -> Route.Into a) (int_range 0 (rank - 1));
+        constant Route.Replicated;
+      ]
+  in
+  let* n =
+    match rule with Route.Gather _ -> constant 2 | _ -> int_range 1 3
+  in
+  (* Operands differ along an axis the rule reads whole, as a gather's source or
+     a scatter's updates do. *)
+  let* along = array ~size:(constant n) (of_list [ 4; 8 ]) in
+  let shapes =
+    Array.init n (fun i ->
+        let s = Array.copy shape in
+        (match rule with
+        | Route.Gather a when i = 1 -> s.(a) <- along.(i)
+        | Route.Into a -> s.(a) <- along.(i)
+        | _ -> ());
+        s)
+  in
+  let+ ps = array ~size:(constant n) (placement_of rank) in
+  { rule; ps; shapes }
+
+(* A contraction: logical axes [0, nb) the batch, then [nc] contracted, then
+   [a]'s and [b]'s own, each operand's in an order of its own; [init] of the
+   result's shape where there is one. *)
+let contracted =
+  let open Gen in
+  let* nb = int_range 0 1 in
+  let* nc = int_range 1 2 in
+  let* fa = int_range 0 1 in
+  let* fb = int_range 0 1 in
+  let* ext = array ~size:(constant (nb + nc + fa + fb)) (of_list [ 4; 8 ]) in
+  let shared = List.init (nb + nc) Fun.id in
+  let* la = permutation (shared @ List.init fa (fun f -> nb + nc + f)) in
+  let* lb = permutation (shared @ List.init fb (fun f -> nb + nc + fa + f)) in
+  let la = Array.of_list la and lb = Array.of_list lb in
+  let pos l id = Option.get (Array.find_index (( = ) id) l) in
+  let pairs lo n = Array.init n (fun j -> (pos la (lo + j), pos lb (lo + j))) in
+  let batch = pairs 0 nb and contracting = pairs nb nc in
+  let sa = Array.map (fun id -> ext.(id)) la in
+  let sb = Array.map (fun id -> ext.(id)) lb in
+  let result =
+    Result.get_ok (Nx_kernel.Shape.contract ~batch ~contracting sa sb)
+  in
+  let* init = bool in
+  let shapes = if init then [| sa; sb; result |] else [| sa; sb |] in
+  let rec placements i =
+    if i = Array.length shapes then constant []
+    else
+      let* p = placement_of (Array.length shapes.(i)) in
+      let+ rest = placements (i + 1) in
+      p :: rest
+  in
+  let+ ps = placements 0 in
+  {
+    rule = Route.Contract { batch; contracting };
+    ps = Array.of_list ps;
+    shapes;
+  }
+
+let case = Gen.with_pp pp_case (Gen.one_of [ shaped; contracted ])
 
 (* The shape of the results. *)
 let result_shape c =
   let s = c.shapes.(0) in
   match c.rule with
-  | Route.Reduce axes ->
+  | Route.Reduce { axes; _ } ->
       Array.of_list
         (List.filteri (fun a _ -> not (Array.mem a axes)) (Array.to_list s))
   | Into _ -> c.shapes.(Array.length c.shapes - 1)
+  | Contract { batch; contracting } ->
+      Result.get_ok
+        (Nx_kernel.Shape.contract ~batch ~contracting s c.shapes.(1))
   | Elementwise | Along _ | Gather _ | Replicated -> s
   | Move mv -> R.shape mv s
 
@@ -127,7 +186,7 @@ let depends c i (w : R.range array) =
   let full a = { R.start = 0; count = s.(a); step = 1 } in
   match c.rule with
   | Route.Elementwise -> w
-  | Reduce axes ->
+  | Reduce { axes; _ } ->
       let k = ref 0 in
       Array.init (Array.length s) (fun a ->
           if Array.mem a axes then full a
@@ -141,7 +200,40 @@ let depends c i (w : R.range array) =
       if i = 1 then Array.mapi (fun a r -> if a = axis then full a else r) w
       else w
   | Into axis -> Array.mapi (fun a r -> if a = axis then full a else r) w
+  | Contract { batch; contracting } ->
+      (* The result has the batch pairs' axes, then [a]'s free axes in order,
+         then [b]'s; [init] has its shape. *)
+      if i = 2 then w
+      else
+        let side j (p, q) = if j = 0 then p else q in
+        let paired j ps a = Array.exists (fun p -> side j p = a) ps in
+        let free j =
+          List.filter
+            (fun a -> not (paired j batch a || paired j contracting a))
+            (List.init (Array.length c.shapes.(j)) Fun.id)
+        in
+        let first =
+          Array.length batch + if i = 0 then 0 else List.length (free 0)
+        in
+        Array.init (Array.length s) (fun a ->
+            match Array.find_index (fun p -> side i p = a) batch with
+            | Some j -> w.(j)
+            | None ->
+                if paired i contracting a then full a
+                else
+                  let f = Option.get (List.find_index (( = ) a) (free i)) in
+                  w.(first + f))
   | Replicated | Move _ -> Array.init (Array.length s) full
+
+let pp_ranges ppf (w : R.range array) =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; "
+       (Array.to_list
+          (Array.map
+             (fun (r : R.range) -> Printf.sprintf "%d+%d" r.start r.count)
+             w)))
+
+let ranges = Testable.make ~pp:pp_ranges ~equal:( = )
 
 let contains (outer : R.range array) (inner : R.range array) =
   Array.for_all2
@@ -175,6 +267,9 @@ let law =
             let rs = result_shape c in
             let target = Devices.grid r.result in
             cover "a split result" (Grid.cuts target <> [||]);
+            cover "a split contraction"
+              ((match c.rule with Route.Contract _ -> true | _ -> false)
+              && Grid.cuts target <> [||]);
             Array.iteri
               (fun j k ->
                 let w = Devices.window ~by:"t" r.result rs j in
@@ -187,7 +282,9 @@ let law =
                     let have = Devices.window ~by:"t" p c.shapes.(i) pos in
                     equal bool ~msg:"the window holds what the result reads"
                       true
-                      (contains have (depends c i w)))
+                      (contains have (depends c i w));
+                    equal ranges ~msg:"the rule's window" (depends c i w)
+                      (Route.window c.rule i c.shapes.(i) w))
                   r.operands)
               (Grid.devices target)
           end)
@@ -228,6 +325,41 @@ let keeps =
           equal placement p r.result
       | _ -> ())
 
+(* A constant computed for results at [p]: its route keeps [p]'s devices, keeps
+   every cut of [p] its rule allows, and reads each operand where each device's
+   window of the results depends on it. *)
+let at_law =
+  let wanted =
+    let open Gen in
+    with_pp
+      (fun ppf (c, p) ->
+        Format.fprintf ppf "%a wanted at %a" pp_case c Devices.pp_placement p)
+      (let* c = case in
+       let+ p = placement_of (Array.length (result_shape c)) in
+       (c, Option.value ~default:(Devices.on s4) p))
+  in
+  prop ~count:500 "a constant's results are computed where it reads operands"
+    wanted (fun (c, p) ->
+      let r = Route.at ~by:"Nx.f" c.rule c.shapes p in
+      let rs = result_shape c in
+      equal (list int) ~msg:"the devices wanted" (devices_of p)
+        (devices_of r.result);
+      cover "a cut kept" (Grid.cuts (Devices.grid r.result) <> [||]);
+      Array.iteri
+        (fun j k ->
+          let w = Devices.window ~by:"t" r.result rs j in
+          let wp = Devices.window ~by:"t" p rs (require_some (position p k)) in
+          equal bool ~msg:"the window holds the one wanted" true
+            (contains w wp);
+          Array.iteri
+            (fun i q ->
+              let pos = require_some (position q k) in
+              let have = Devices.window ~by:"t" q c.shapes.(i) pos in
+              equal bool ~msg:"the operand's window holds what it reads" true
+                (contains have (depends c i w)))
+            r.operands)
+        (Grid.devices (Devices.grid r.result)))
+
 let cases_ =
   group "routes"
     [
@@ -255,21 +387,50 @@ let cases_ =
           equal placement x r.operands.(1));
       test "a reduction of a split axis is whole on each device" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r = placed (Reduce [| 1 |]) [| x |] [| [| 4; 8 |] |] in
+          let r =
+            placed
+              (Reduce { axes = [| 1 |]; along = [||] })
+              [| x |]
+              [| [| 4; 8 |] |]
+          in
           equal placement (Devices.on s4) r.result;
           equal placement (Devices.on s4) r.operands.(0));
       test "a reduction keeps the cut of an axis it does not reduce" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r = placed (Reduce [| 0 |]) [| x |] [| [| 4; 8 |] |] in
+          let r =
+            placed
+              (Reduce { axes = [| 0 |]; along = [||] })
+              [| x |]
+              [| [| 4; 8 |] |]
+          in
           equal placement (Devices.split ~by:"t" ~axis:0 s4) r.result;
           equal bool true (r.operands.(0) == x));
       test "a scatter writes where its target lies" (fun () ->
           let into = Devices.split ~by:"t" ~axis:1 s4 and u = Devices.on s4 in
           let r = placed (Into 0) [| u; into |] [| [| 4; 8 |]; [| 8; 8 |] |] in
           equal placement into r.result);
-      test "the result of a replicated operation is on every device" (fun () ->
+      test "a replicated operation lies on its operands' devices" (fun () ->
           let r = placed Replicated [| Devices.one s4 2 |] [| [| 4 |] |] in
+          equal placement (Devices.one s4 2) r.result;
+          let x = Devices.split ~by:"t" ~axis:0 s4 in
+          let r = placed Replicated [| x |] [| [| 8 |] |] in
           equal placement (Devices.on s4) r.result);
+      test "replicated operands alone on two devices raise" (fun () ->
+          invalid (fun () ->
+              placed Replicated
+                [| Devices.one s4 0; Devices.one s4 1 |]
+                [| [| 4 |]; [| 4 |] |]));
+      test "a contraction keeps its batch and free cuts" (fun () ->
+          let x = Devices.split ~by:"t" ~axis:0 s4 in
+          let rule =
+            Route.Contract { batch = [||]; contracting = [| (1, 0) |] }
+          in
+          let r =
+            placed rule [| x; Devices.on s4 |] [| [| 8; 4 |]; [| 4; 4 |] |]
+          in
+          equal placement x r.result;
+          equal bool true (r.operands.(0) == x);
+          equal placement (Devices.on s4) r.operands.(1));
       test "operands on two sets raise" (fun () ->
           invalid (fun () ->
               placed Elementwise
@@ -287,7 +448,9 @@ let cases_ =
                 [| [| 6 |] |]));
       test "an axis the operand lacks raises" (fun () ->
           invalid (fun () ->
-              placed (Along [| 2 |]) [| Devices.on s4 |] [| [| 4; 4 |] |]));
+              placed (Gather 2)
+                [| Devices.on s4; Devices.on s4 |]
+                [| [| 4; 4 |]; [| 4; 4 |] |]));
       test "placements and shapes of two lengths raise" (fun () ->
           invalid (fun () -> placed Elementwise [| Devices.on s4 |] [||]));
     ]
@@ -402,4 +565,5 @@ let move_law =
 
 let () =
   exit
-    (run "nx route" [ group "laws" [ law; exact; keeps; move_law ]; cases_ ])
+    (run "nx route"
+       [ group "laws" [ law; exact; keeps; at_law; move_law ]; cases_ ])

@@ -525,7 +525,65 @@ let donation =
       test "a strided operand is not written" test_no_reuse_strided;
     ]
 
+(* Expansions return values of their own: an output that is an operand, and a
+   scatter of no update, are copies. *)
+let own_memory (type v s) (x : (v, s, b) Value.t) (y : (v, s, b) Value.t) =
+  equal bool ~msg:"another value" false (Obj.repr x == Obj.repr y);
+  equal bool ~msg:"memory of its own" false
+    (Rig.Buffer.overlaps
+       (A.buffer (Iarray.get (Prim.arrays x) 0))
+       (A.buffer (Iarray.get (Prim.arrays y) 0)))
+
+let expansions =
+  group "expansions"
+    [
+      test "a map's output that is an operand is a copy" (fun () ->
+          (* x0, then x0 + x0 *)
+          let prog =
+            P.v ~ins:[| D.Any D.Float32 |]
+              [| In 0; Op2 (Binary Add, 0, 0) |]
+              ~outs:[| 0; 1 |]
+          in
+          let x = f32 [| 1.; 2. |] in
+          let op =
+            Value.Map
+              {
+                layout = A.Layout.contiguous [| 2 |];
+                prog;
+                outs = Value.[ D.Float32; D.Float32 ];
+                loads = [| Plain x |];
+              }
+          in
+          let y, _ = Option.get (Expand.run Exec.run ~by:"t" op) in
+          own_memory x y;
+          equal (array bits) [| 1.; 2. |] (elements y));
+      test "a scatter of no update is a copy" (fun () ->
+          let into = f32 [| 1.; 2. |] and u = f32 [||] in
+          let idx : (int64, D.int64_elt, b) Value.t =
+            Value.Array
+              {
+                at = at1;
+                a = A.to_device (m 0) (A.of_array D.Int64 [| 0 |] [||]);
+                dead = Value.Live;
+              }
+          in
+          let op =
+            Value.Scatter
+              {
+                combine = Add;
+                unique = false;
+                axis = 0;
+                idx;
+                updates = u;
+                into;
+              }
+          in
+          let y = Option.get (Expand.run Exec.run ~by:"t" op) in
+          own_memory into y;
+          equal (array bits) [| 1.; 2. |] (elements y));
+    ]
+
 let () =
   exit
     (run "nx maps"
-       [ maps; checks; constants; forced; rules; donation ])
+       [ maps; checks; constants; forced; rules; donation; expansions ])

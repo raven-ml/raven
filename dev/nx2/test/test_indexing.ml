@@ -635,10 +635,9 @@ let test_declined_scatter_raises () =
   let x = on D.Float32 [| 2 |] [| 0.; 0. |] in
   raises
     (Invalid_argument
-       "Nx.scatter: nx.no-scatters does not compute Scatter on float32, \
-        int64, float32 (m2); place its operands with Nx.place on a set whose \
-        kernels compute it")
-    (fun () -> Nx.scatter ~combine:Nx.Add ~axis:0 p u x)
+       "Nx.scatter: nx.no-scatters does not compute Scatter on int64, float32, \
+        float32 (m2); place its operands with Nx.place on a set whose kernels \
+        compute it") (fun () -> Nx.scatter ~combine:Nx.Add ~axis:0 p u x)
 
 (* A narrow float's sum of repeated updates, rounded once from float32: 2048
    plus [1; 1] is 2050 at float16, where rounding after each update gives
@@ -656,9 +655,25 @@ let test_declined_narrow_sum () =
     [| 0x6801 (* 2050 *); nan |]
     (elements (Nx.bitcast D.Uint16 y))
 
+(* A declined scatter of no update is a value of its own: donated, its target
+   dies and the result reads; not donated, the result's donation leaves the
+   target alive. *)
+let test_declined_empty_scatter () =
+  let on dt shape data = Nx.place Unique.on (host dt shape data) in
+  let p = on D.Int64 [| 0 |] [||] and u = on D.Float32 [| 0 |] [||] in
+  let x = on D.Float32 [| 2 |] [| 1.; 2. |] in
+  let y = Nx.scatter ~combine:Nx.Add ~axis:0 p u (Nx.donate x) in
+  equal (array float_exact) [| 1.; 2. |] (elements y);
+  let x = on D.Float32 [| 2 |] [| 3.; 4. |] in
+  let y = Nx.scatter ~combine:Nx.Add ~axis:0 p u x in
+  ignore (Nx.neg (Nx.donate y));
+  equal (array float_exact) [| 3.; 4. |] (elements x)
+
 let declines =
   group "declines"
     [
+      test "a declined scatter of no update is a value of its own"
+        test_declined_empty_scatter;
       prop "a declined scatter combines repeated targets in C order"
         declined_case law_declined;
       test "a declined narrow float sum rounds once" test_declined_narrow_sum;

@@ -72,10 +72,6 @@ let ran_loads ~by answer dsts loads =
       A.refused by refusal
         (Array.to_list dsts @ List.map load_array (Array.to_list loads))
 
-(* As [ran], [None] where done and the operands [ops] where declined. *)
-let outcome ~by answer dsts ops =
-  if ran ~by answer dsts ops then None else Some ops
-
 (* Values from arrays *)
 
 let make = Prim.of_arrays
@@ -334,10 +330,7 @@ let reuse (type d r) ~by layout (outs : (d, r) Value.outs)
    reads. *)
 let view_of a = Rig.Claim.share (A.buffer a)
 
-(* The whole of an axis of extent [d]. *)
-let whole d = { M.start = 0; count = d; step = 1 }
 let extents (w : M.range array) = Array.map (fun (r : M.range) -> r.count) w
-let starts (w : M.range array) = Array.map (fun (r : M.range) -> r.start) w
 
 (* Fresh C-contiguous arrays of a value of [shape] at [p]: each device's
    window. *)
@@ -369,45 +362,6 @@ let alloc (type v s d) ~by ?(at : unit Devices.placement option) ?where ?into k
 
 (* Programs on one device *)
 
-(* Whether [nd] is a [Coord] of an axis whose window starts at [first > 0]. *)
-let shifted first (nd : P.node) =
-  match nd with Coord c -> first.(c) <> 0 | _ -> false
-
-(* [prog] with each [Coord] of an axis whose window starts at [s > 0] replaced
-   by [Coord + s], so that a device computes its window. Each node keeps its
-   place after the two it gains, [at] mapping old indices to new. *)
-let with_offsets (prog : P.t) (first : int array) =
-  if
-    Array.for_all (fun s -> s = 0) first
-    || not (Iarray.exists (shifted first) prog.nodes)
-  then prog
-  else begin
-    let nodes = ref [] and count = ref 0 in
-    let push nd =
-      nodes := nd :: !nodes;
-      incr count;
-      !count - 1
-    in
-    let index = Array.make (Iarray.length prog.nodes) 0 in
-    let at j = index.(j) in
-    Iarray.iteri
-      (fun i nd ->
-        index.(i) <-
-          (match (nd : P.node) with
-          | Coord c when first.(c) <> 0 ->
-              let coord = push nd in
-              let start = P.bits D.Int64 (Int64.of_int first.(c)) in
-              let start = push (Const (D.Any D.Int64, start)) in
-              push (Op2 (Binary Add, coord, start))
-          | Op1 (k, dt, j) -> push (Op1 (k, dt, at j))
-          | Op2 (k, j, l) -> push (Op2 (k, at j, at l))
-          | Op3 (k, j, l, m) -> push (Op3 (k, at j, at l, at m))
-          | In _ | Coord _ | Const _ -> push nd))
-      prog.nodes;
-    let nodes = Iarray.of_list (List.rev !nodes) in
-    P.v ~ins:prog.ins nodes ~outs:(Iarray.map at prog.outs)
-  end
-
 (* [node]'s kernel into [dst], over [ops]. *)
 let apply_node (module K : Nx_kernel.S) node (A.Any dst) (ops : A.any array) =
   match (node : P.node) with
@@ -426,14 +380,18 @@ let apply_node (module K : Nx_kernel.S) node (A.Any dst) (ops : A.any array) =
       K.apply3 k ~dst c (A.expect dt ops.(1)) (A.expect dt ops.(2))
   | In _ -> Declined
 
-(* [prog] over [ops] into [dsts] on device [d], whose window starts at [first]:
-   its kernel where it is one node, else the kernels' map. [false] where the
-   kernels decline the map; a one-node program they decline raises, since its
-   node is core. *)
-let map_on ~by (module K : Nx_kernel.S) d prog first ops dsts =
-  let prog = with_offsets prog first in
+(* [prog] over [loads] into [dsts] on device [d]: its kernel where it is one
+   node over plain loads, else the kernels' map. [false] where the kernels
+   decline the map; a one-node program they decline raises, since its node is
+   core. *)
+let map_on ~by (module K : Nx_kernel.S) d (prog : P.t) loads dsts =
+  let plain = function
+    | Nx_kernel.Plain _ -> true
+    | Nx_kernel.Padded _ -> false
+  in
   match Expand.single prog with
-  | Some node ->
+  | Some node when Array.for_all plain loads ->
+      let ops = Array.map load_array loads in
       let arrays = Array.append dsts ops in
       ran ~by (apply_node (module K) node dsts.(0) ops) dsts ops
       ||
@@ -442,25 +400,7 @@ let map_on ~by (module K : Nx_kernel.S) d prog first ops dsts =
       if Array.for_all (fun (A.Any a) -> Expand.base (D.Any (A.dtype a))) arrays
       then declined ~by ~kernels:K.name node d (Array.to_list arrays)
       else false
-  | None ->
-      let loads = Array.map (fun (A.Any a) -> Nx_kernel.Plain a) ops in
-      ran ~by (K.map prog ~dsts loads) dsts ops
-
-(* A load's operand on device [k] for its window [w] of the loop: a padded
-   load's whole operand, which its route reads on each device. *)
-let load_view (type d) ~by k w (l : d Value.load) =
-  match l with
-  | Value.Plain x -> A.Any (Place.view ~by x k w)
-  | Value.Padded { x; _ } ->
-      A.Any (Place.view ~by x k (Array.map whole (Prim.shape x)))
-
-(* As [load_view], the load a kernel reads. *)
-let kernel_load (type d) ~by k w (l : d Value.load) : Nx_kernel.load =
-  match l with
-  | Value.Plain x -> Nx_kernel.Plain (Place.view ~by x k w)
-  | Value.Padded { x; fill; pad } ->
-      let x = Place.view ~by x k (Array.map whole (Prim.shape x)) in
-      Nx_kernel.Padded { x; fill; pad }
+  | Some _ | None -> ran_loads ~by (K.map prog ~dsts loads) dsts loads
 
 (* [K]'s copy of [a] into [dst]; where it declines [a]'s dtype, its copy of
    their bits in the dtype {!Expand.kept} gives, where that has their width. *)
@@ -550,20 +490,23 @@ let unravel i shape =
 (* Whether [p] cuts no axis: one device, or the whole on each. *)
 let uncut p = not (Grid.is_cut (Devices.grid p))
 
-(* The constant operation at [p] reads its operands at this placement: [p] for a
-   map, whose operands have its shape, and for a placement that cuts no axis;
-   the whole on every device otherwise. *)
-(* CR: Keep [p] only for maps without Prim.is_padded loads.
-   Padding deferred ones[4] to [6], then placing it split over two
-   devices, forces [2] operands although load_view needs the whole [4].
-   Use the existing whole [q] and final crop for padded maps too,
-   so their kernels receive whole operands and destinations. *)
-let operand_at : type r.
-    r Value.prim -> unit Devices.placement -> unit Devices.placement =
- fun op p ->
-  match op with
-  | Value.Map _ -> p
-  | _ -> if uncut p then p else Devices.on (Devices.set p)
+(* The route of the constant operation [op] whose results are wanted at [p]:
+   where it computes them and reads each operand ({!Route.at}); [None] where
+   that is [p] for all: [p] cuts no axis, or the rule is elementwise. *)
+let route_at : type r.
+    by:string -> r Value.prim -> unit Devices.placement -> unit Route.t option =
+ fun ~by op p ->
+  let rule = Prim.rule op in
+  if uncut p || rule = Route.Elementwise then None
+  else begin
+    let shapes = ref [] in
+    Prim.iteri (fun _ x -> shapes := Prim.shape x :: !shapes) op;
+    Some (Route.at ~by rule (Array.of_list (List.rev !shapes)) p)
+  end
+
+(* Where a route [r] from [route_at] for [p] reads operand [i]. *)
+let read_at (r : unit Route.t option) p i =
+  match r with None -> p | Some r -> r.operands.(i)
 
 (* How a constant's results are read: from its memo, where they are kept, or
    computed into memory of their own. *)
@@ -590,16 +533,17 @@ let rec remember memo p a =
 (* The constant operands of [node] at [p] not yet computed where it reads
    them. *)
 let pending (Value.Node n) p =
-  let (Prim.Operands xs) = Prim.operands n.op in
-  let q = operand_at n.op p in
-  List.filter_map
-    (fun (Value.Any x) ->
+  let r = route_at ~by:n.by n.op p in
+  let found = ref [] in
+  Prim.iteri
+    (fun i x ->
       match x with
       | Value.Deferred { node = Value.Node m as node; _ } ->
-          if find m.memo q = None then Some (node, q) else None
-      | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
-          None)
-    xs
+          let q = read_at r p i in
+          if find m.memo q = None then found := (node, q) :: !found
+      | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> ())
+    n.op;
+  List.rev !found
 
 (* The host's device, at the brand of a value this library reads there: a
    check's flag, a value read out ({!on_host}). No value at it reaches a
@@ -609,116 +553,151 @@ let host () = Devices.rebrand (Devices.one Devices.host 0)
 (* The next node's id. *)
 let nodes = Atomic.make 0
 
-(* The results of a map into arrays of the dtypes of [dsts]. *)
-type 'd outs = Outs : ('d, 'r) Value.outs -> 'd outs
+(* A layout no result has, before its first is known. *)
+let no_layout = L.contiguous [||]
 
-let rec outs_of : type d. A.any list -> d outs = function
-  | [] -> Outs Value.[]
-  | A.Any a :: rest ->
-      let (Outs o) = outs_of rest in
-      Outs Value.(A.dtype a :: o)
+(* The one array of [x], a value on one device. *)
+let one (type v s d) (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) 0
 
-(* [f j k w] for each device [k] of [p], [j] its position, [w] its window of a
-   value of [shape]. *)
-let each_device ~by p shape f =
-  match Grid.one (Devices.grid p) with
-  | Some k -> f 0 k (Array.map whole shape)
-  | None ->
-      Array.iteri
-        (fun j k -> f j k (Devices.window ~by p shape j))
-        (Grid.devices (Devices.grid p))
+(* The load a kernel reads of [l], over a value on one device. *)
+let kernel_load (type d) (l : d Value.load) : Nx_kernel.load =
+  match l with
+  | Value.Plain x -> Nx_kernel.Plain (one x)
+  | Value.Padded { x; fill; pad } -> Nx_kernel.Padded { x = one x; fill; pad }
 
-(* The first device of [p] whose kernels decline, with the operands they were
-   given: [f j k w] runs device [k]'s kernels, [j] its position and [w] its
-   window of a value of [shape], and is [None] once done, [Some ops] where they
-   declined over [ops]. No device runs after a decline. *)
-let first_decline ~by p shape f =
-  let declined = ref None in
-  each_device ~by p shape (fun j k w ->
-      if Option.is_none !declined then
-        Option.iter
-          (fun ops -> declined := Some (Devices.rig (Devices.set p) k, ops))
-          (f j k w));
-  !declined
+(* The arrays at position [j] of [x] and of the results [r] of [op]. *)
+let nth (type v s d) j (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) j
+let dsts_at op r j = Array.map (fun per -> per.(j)) (Prim.result_arrays op r)
 
-(* The window [w] of an operand of [shape] read whole along [axis]. *)
-let along axis shape w =
-  let w = Array.copy w in
-  w.(axis) <- whole shape.(axis);
-  w
-
-(* The window of an operand of [shape] whose leading axes are [w]'s first, read
-   whole along the rest: a routine's matrices, below a batch window. *)
-let batch w shape =
-  let b = min (Array.length w) (Array.length shape - 2) in
-  Array.mapi (fun a d -> if a < b then w.(a) else whole d) shape
-
-(* The transform [f] on device [d] into the result [y]'s array at position
-   [j], for its window [w], as {!first_decline}'s [f] answers. *)
-let fft_on (type d r) ~by (f : (d, r) Value.fft) (module K : Nx_kernel.S)
-    (y : r) j d w =
-  let view x =
-    let s = Prim.shape x in
-    Place.view ~by x d
-      (Array.fold_left (fun w a -> along a s w) w (Prim.fft_axes f))
-  in
-  match f with
-  | Value.C2c { direction; axes; x } ->
-      let dst = Iarray.get (Prim.arrays y) j and x = view x in
-      outcome ~by (K.c2c direction ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
-  | Value.R2c { axes; x; _ } ->
-      let dst = Iarray.get (Prim.arrays y) j and x = view x in
-      outcome ~by (K.r2c ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
-  | Value.C2r { axes; x; _ } ->
-      let dst = Iarray.get (Prim.arrays y) j and x = view x in
-      outcome ~by (K.c2r ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
-
-(* The routine [l] on device [d] into the results [y]'s arrays at position
-   [j], for its window [w] of the first, as {!first_decline}'s [f] answers. *)
-let linalg_on (type d r) ~by (l : (d, r) Value.linalg)
-    (module K : Nx_kernel.S) (y : r) j d w =
-  let view x = Place.view ~by x d (batch w (Prim.shape x)) in
-  let at x = Iarray.get (Prim.arrays x) j in
-  match (l, y) with
-  | Value.Cholesky { triangle; a }, y ->
-      let dst = at y and a = view a in
-      outcome ~by (K.cholesky triangle ~dst a) [| A.Any dst |] [| A.Any a |]
-  | Value.Lu a, (lu, pivots, perm) ->
-      let lu = at lu and pivots = at pivots and perm = at perm and a = view a in
-      outcome ~by
-        (K.lu ~lu ~pivots ~perm a)
-        [| A.Any lu; A.Any pivots; A.Any perm |]
-        [| A.Any a |]
-  | Value.Qr { a; _ }, (q, r) ->
-      let q = at q and r = at r and a = view a in
-      outcome ~by (K.qr ~q ~r a) [| A.Any q; A.Any r |] [| A.Any a |]
-  | Value.Svd { vectors = No_vectors; a }, (s, ()) ->
-      let s = at s and a = view a in
-      outcome ~by (K.svd ~s a) [| A.Any s |] [| A.Any a |]
-  | Value.Svd { vectors = Vectors _; a }, (s, (u, vh)) ->
-      let s = at s and u = at u and vh = at vh and a = view a in
-      outcome ~by
-        (K.svd ~s ~vectors:(~u, ~vh) a)
-        [| A.Any s; A.Any u; A.Any vh |]
-        [| A.Any a |]
-  | Value.Eigh { vectors = No_vectors; a }, (w, ()) ->
-      let w = at w and a = view a in
-      outcome ~by (K.eigh ~w a) [| A.Any w |] [| A.Any a |]
-  | Value.Eigh { vectors = Vectors (); a }, (w, v) ->
-      let w = at w and v = at v and a = view a in
-      outcome ~by (K.eigh ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
-  | Value.Eig { vectors = No_vectors; a; _ }, (w, ()) ->
-      let w = at w and a = view a in
-      outcome ~by (K.eig ~w a) [| A.Any w |] [| A.Any a |]
-  | Value.Eig { vectors = Vectors (); a; _ }, (w, v) ->
-      let w = at w and v = at v and a = view a in
-      outcome ~by (K.eig ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
-  | Value.Solve_triangular { triangle; adjoint; unit_diagonal; a; b }, y ->
-      let dst = at y and a = view a and b = view b in
-      outcome ~by
-        (K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst a b)
+(* [op]'s kernel on device [d], over its operands' arrays there, into the
+   results [r]'s arrays at position [j]: [false] where it declines. A refusal
+   raises naming [by]. *)
+let call : type r.
+    by:string ->
+    (module Nx_kernel.S) ->
+    Rig.t ->
+    r Value.prim ->
+    r ->
+    int ->
+    bool =
+ fun ~by kernels d op r j ->
+  let (module K : Nx_kernel.S) = kernels in
+  match op with
+  | Value.Map { prog; loads; _ } ->
+      map_on ~by kernels d prog (Array.map kernel_load loads) (dsts_at op r j)
+  | Value.Reduce { axes; prog; reductions; loads; _ } ->
+      let dsts = dsts_at op r j and loads = Array.map kernel_load loads in
+      let rs = Prim.reductions reductions in
+      ran_loads ~by (K.reduce prog ~axes rs ~dsts loads) dsts loads
+  | Value.Scan { axis; prog; reduction; loads; _ } ->
+      let dsts = dsts_at op r j and loads = Array.map kernel_load loads in
+      let reduction = Prim.reduction reduction in
+      ran_loads ~by (K.scan prog ~axis reduction ~dsts loads) dsts loads
+  | Value.Contract { order; batch; contracting; acc; a; b; init; _ } ->
+      let dst = nth j r and a = one a and b = one b in
+      let init = Option.map one init in
+      let ops =
+        match init with
+        | None -> [| A.Any a; A.Any b |]
+        | Some i -> [| A.Any a; A.Any b; A.Any i |]
+      in
+      ran ~by
+        (K.contract ~order ~batch ~contracting ~acc ~dst ~init a b)
+        [| A.Any dst |] ops
+  | Value.Gather { axis; idx; x } ->
+      let dst = nth j r and i = one idx and x = one x in
+      ran ~by (K.gather ~axis ~dst i x) [| A.Any dst |] [| A.Any i; A.Any x |]
+  | Value.Scatter { combine; unique; axis; idx; updates; into } ->
+      let dst = nth j r and into = one into in
+      let i = one idx and u = one updates in
+      ran ~by
+        (K.scatter combine ~unique ~axis ~dst ~into i u)
         [| A.Any dst |]
-        [| A.Any a; A.Any b |]
+        [| A.Any into; A.Any i; A.Any u |]
+  | Value.Sort { axis; descending; x; _ } ->
+      let values, positions = r in
+      let v = nth j values and q = nth j positions and a = one x in
+      ran ~by
+        (K.sort ~axis ~descending ~values:v ~positions:q a)
+        [| A.Any v; A.Any q |] [| A.Any a |]
+  | Value.Fold { pad; x; _ } ->
+      let dst = nth j r and v = one x in
+      ran ~by (K.fold pad ~dst v) [| A.Any dst |] [| A.Any v |]
+  | Value.Fft (Value.C2c { direction; axes; x }) ->
+      let dst = nth j r and x = one x in
+      ran ~by (K.c2c direction ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
+  | Value.Fft (Value.R2c { axes; x; _ }) ->
+      let dst = nth j r and x = one x in
+      ran ~by (K.r2c ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
+  | Value.Fft (Value.C2r { axes; x; _ }) ->
+      let dst = nth j r and x = one x in
+      ran ~by (K.c2r ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
+  | Value.Linalg l -> (
+      match (l, r) with
+      | Value.Cholesky { triangle; a }, y ->
+          let dst = nth j y and a = one a in
+          ran ~by (K.cholesky triangle ~dst a) [| A.Any dst |] [| A.Any a |]
+      | Value.Lu a, (lu, pivots, perm) ->
+          let lu = nth j lu and pivots = nth j pivots and perm = nth j perm in
+          let a = one a in
+          ran ~by (K.lu ~lu ~pivots ~perm a)
+            [| A.Any lu; A.Any pivots; A.Any perm |]
+            [| A.Any a |]
+      | Value.Qr { a; _ }, (q, r) ->
+          let q = nth j q and r = nth j r and a = one a in
+          ran ~by (K.qr ~q ~r a) [| A.Any q; A.Any r |] [| A.Any a |]
+      | Value.Svd { vectors = No_vectors; a }, (s, ()) ->
+          let s = nth j s and a = one a in
+          ran ~by (K.svd ~s a) [| A.Any s |] [| A.Any a |]
+      | Value.Svd { vectors = Vectors _; a }, (s, (u, vh)) ->
+          let s = nth j s and u = nth j u and vh = nth j vh and a = one a in
+          ran ~by
+            (K.svd ~s ~vectors:(~u, ~vh) a)
+            [| A.Any s; A.Any u; A.Any vh |]
+            [| A.Any a |]
+      | Value.Eigh { vectors = No_vectors; a }, (w, ()) ->
+          let w = nth j w and a = one a in
+          ran ~by (K.eigh ~w a) [| A.Any w |] [| A.Any a |]
+      | Value.Eigh { vectors = Vectors (); a }, (w, v) ->
+          let w = nth j w and v = nth j v and a = one a in
+          ran ~by (K.eigh ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
+      | Value.Eig { vectors = No_vectors; a; _ }, (w, ()) ->
+          let w = nth j w and a = one a in
+          ran ~by (K.eig ~w a) [| A.Any w |] [| A.Any a |]
+      | Value.Eig { vectors = Vectors (); a; _ }, (w, v) ->
+          let w = nth j w and v = nth j v and a = one a in
+          ran ~by (K.eig ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
+      | Value.Solve_triangular { triangle; adjoint; unit_diagonal; a; b }, y ->
+          let dst = nth j y and a = one a and b = one b in
+          ran ~by
+            (K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst a b)
+            [| A.Any dst |] [| A.Any a; A.Any b |])
+  | Value.Assemble { fill; pieces; _ } ->
+      let dst = nth j r in
+      let pieces =
+        Array.of_list (List.map (fun (rs, x) -> (rs, one x)) pieces)
+      in
+      ran ~by
+        (K.assemble ~fill ~dst pieces)
+        [| A.Any dst |]
+        (Array.map (fun (_, v) -> A.Any v) pieces)
+  | Value.Copy x ->
+      let dst = nth j r and x = one x in
+      ran ~by (copy_into kernels ~dst x) [| A.Any dst |] [| A.Any x |]
+  | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+      invalid_arg "Exec.call: an operation no kernel computes"
+
+(* Raises for [op], whose kernels on [d] declined it and which nx does not
+   expand: a core case, or a routine whose expansion is not available yet. *)
+let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
+    =
+ fun ~by ~kernels d op ->
+  let dts = ref [] in
+  Prim.iteri (fun _ x -> dts := A.Any (one x) :: !dts) op;
+  let dts = List.rev !dts in
+  match op with
+  | Value.Linalg l -> unexpanded ~by ~kernels (Prim.routine_name l) d dts
+  | _ -> refuses ~by ~kernels (Prim.name op) d dts
 
 (* Two handles of one donor in [op] raise before any operand's death does: the
    operation is malformed whatever has died. *)
@@ -853,81 +832,16 @@ and compute : type r.
   match op with
   | Value.Reduce { loads = [||]; _ } | Value.Scan { loads = [||]; _ } -> (
       match at with
-      | Some q -> expanded ~by ~at:q q op
-      | None -> invalid_arg "Exec.compute: a loop of no load at no placement")
-  | Value.Map { prog; loads; _ } when Array.exists Prim.is_padded loads ->
-      each_result ~by ?at op ~kind:"Map" (fun (module K) r j k w ->
-          let dsts = Array.map (fun per -> per.(j)) (Prim.result_arrays op r) in
-          let loads = Array.map (kernel_load ~by k w) loads in
-          if ran_loads ~by (K.map prog ~dsts loads) dsts loads then None
-          else Some (Array.map load_array loads))
-  | Value.Map { layout; prog; loads; _ } ->
-      let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where ?into k f) op in
-      map_devices ~by (Option.get !where) (L.shape layout) prog
-        (fun k w -> Array.map (load_view ~by k w) loads)
-        (Prim.result_arrays op r);
-      r
-  | Value.Reduce { layout; axes; prog; reductions; loads } ->
-      let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
-      let rs = Prim.reductions reductions in
-      let reduce (module K : Nx_kernel.S) prog dsts loads =
-        K.reduce prog ~axes rs ~dsts loads
-      in
-      if
-        loop_devices ~by (Option.get !where) (L.shape layout) ~axes reduce prog
-          (fun k w -> Array.map (kernel_load ~by k w) loads)
-          (Prim.result_arrays op r)
-      then r
-      else expanded ~by ?at (Option.get !where) op
-  | Value.Scan { layout; axis; prog; reduction; loads } ->
-      let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
-      let reduction = Prim.reduction reduction in
-      let scan (module K : Nx_kernel.S) prog dsts loads =
-        K.scan prog ~axis reduction ~dsts loads
-      in
-      if
-        loop_devices ~by (Option.get !where) (L.shape layout) ~axes:[||] scan
-          prog
-          (fun k w -> Array.map (kernel_load ~by k w) loads)
-          (Prim.result_arrays op r)
-      then r
-      else expanded ~by ?at (Option.get !where) op
-  | Value.Contract { order; batch; contracting; acc; a; b; init; _ } ->
-      let where = ref None in
-      let r =
-        Prim.results ~by (fun k f -> alloc ~by ?at ~where ?into k f) op
-      in
-      let p = Option.get !where in
-      let (module K) = kernels_of ~by ~op:"Contract" (Devices.set p) in
-      let view x k = Place.view ~by x k (Array.map whole (Prim.shape x)) in
-      let dsts = Prim.arrays r in
-      let declined =
-        first_decline ~by p (Prim.shape r) (fun j k _ ->
-            let dst = Iarray.get dsts j in
-            let a = view a k and b = view b k in
-            let init = Option.map (fun i -> view i k) init in
-            let ops =
-              match init with
-              | None -> [| A.Any a; A.Any b |]
-              | Some i -> [| A.Any a; A.Any b; A.Any i |]
-            in
-            outcome ~by
-              (K.contract ~order ~batch ~contracting ~acc ~dst ~init a b)
-              [| A.Any dst |] ops)
-      in
-      if Option.is_none declined then r else expanded ~by ?at p op
-  | Value.Copy x ->
-      let where = ref None in
-      let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
-      let dt = D.Any (Prim.dtype x) in
-      let prog = P.of_node ~ins:[| dt |] (Op1 (Copy, dt, 0)) in
-      map_devices ~by (Option.get !where) (Prim.shape x) prog
-        (fun k w -> [| A.Any (Place.view ~by x k w) |])
-        (Prim.result_arrays op r);
-      r
+      | None -> invalid_arg "Exec.compute: a loop of no load at no placement"
+      | Some q -> (
+          match expand ~by ~at:q op with
+          | Some r -> r
+          | None ->
+              let (module K) =
+                kernels_of ~by ~op:(Prim.name op) (Devices.set q)
+              in
+              invalid_argf "%s: %s does not compute %a; %s" by K.name Prim.pp op
+                move))
   | Value.Move (mv, x) ->
       let xp = Prim.placement x and shape = Prim.shape x in
       let xs = Prim.arrays x in
@@ -940,55 +854,109 @@ and compute : type r.
       let xp = Prim.placement x and xs = Prim.arrays x in
       let set = Devices.set xp in
       shard_views ~by op xp (fun () -> Iarray.map (cast ~by set dt) xs)
-  | Value.Gather { axis; idx; x } ->
-      let r, p = alloc_one ~by ?at op in
-      let (module K) = kernels_of ~by ~op:"Gather" (Devices.set p) in
-      let dsts = Prim.arrays r in
-      first_decline ~by p (Prim.shape r) (fun j k w ->
-          let dst = Iarray.get dsts j and i = Place.view ~by idx k w in
-          let v = Place.view ~by x k (along axis (Prim.shape x) w) in
-          outcome ~by (K.gather ~axis ~dst i v) [| A.Any dst |]
-            [| A.Any i; A.Any v |])
-      |> or_expanded ~by ~kernels:K.name ?at op r
-  | Value.Scatter { combine; unique; axis; idx; updates; into = t } ->
-      let r, p = alloc_one ~by ?at op in
-      let (module K) = kernels_of ~by ~op:"Scatter" (Devices.set p) in
-      let dsts = Prim.arrays r and s = Prim.shape updates in
-      first_decline ~by p (Prim.shape r) (fun j k w ->
-          let dst = Iarray.get dsts j and into = Place.view ~by t k w in
-          let w' = along axis s w in
-          let i = Place.view ~by idx k w' and u = Place.view ~by updates k w' in
-          outcome ~by
-            (K.scatter combine ~unique ~axis ~dst ~into i u)
-            [| A.Any dst |]
-            [| A.Any into; A.Any i; A.Any u |])
-      |> or_expanded ~by ~kernels:K.name ?at op r
-  | Value.Sort { axis; descending; x; _ } ->
-      let where = ref None in
-      let ((values, positions) as r) =
-        Prim.results ~by (fun j f -> alloc ~by ?at ~where j f) op
-      in
-      let p = Option.get !where in
-      let (module K) = kernels_of ~by ~op:"Sort" (Devices.set p) in
-      let vs = Prim.arrays values and ps = Prim.arrays positions in
-      first_decline ~by p (Prim.shape values) (fun j d w ->
-          let v = Iarray.get vs j and q = Iarray.get ps j in
-          let a = Place.view ~by x d (along axis (Prim.shape x) w) in
-          outcome ~by
-            (K.sort ~axis ~descending ~values:v ~positions:q a)
-            [| A.Any v; A.Any q |] [| A.Any a |])
-      |> or_expanded ~by ~kernels:K.name ?at op r
-  | Value.Fold { pad; x; _ } ->
-      each_result ~by ?at op ~kind:"Fold" (fun (module K) r j d _ ->
-          let dst = Iarray.get (Prim.arrays r) j in
-          let v = Place.view ~by x d (Array.map whole (Prim.shape x)) in
-          outcome ~by (K.fold pad ~dst v) [| A.Any dst |] [| A.Any v |])
-  | Value.Fft f -> each_result ~by ?at op ~kind:"Fft" (fft_on ~by f)
-  | Value.Linalg l ->
-      each_result ~by ?at op ~kind:(Prim.routine_name l) (linalg_on ~by l)
-  | Value.Assemble { dtype; shape; fill; pieces } ->
-      assemble ~by ?at dtype shape fill pieces
   | Value.Place _ | Value.Check _ -> run ~by op
+  | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
+  | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
+  | Value.Assemble _ | Value.Contract _ | Value.Copy _ ->
+      sharded ~by ?into ?at op
+
+(* [op]'s results, fresh where its route places them or at [at], each device's
+   window [w] of the first computed there by its kernels over each operand's
+   window ({!Route.window}). A device whose kernels decline computes its window
+   by the expansion, over its own operands: no data leaves the device. On one
+   device the expansion's results are the results; on several, or into a donated
+   operand's memory, they are copied into the device's window. *)
+and sharded : type r.
+    by:string -> ?into:A.any -> ?at:unit Devices.placement -> r Value.prim -> r
+    =
+ fun ~by ?into ?at op ->
+  let where = ref None and first = ref no_layout in
+  let r =
+    Prim.results ~by
+      (fun k f ->
+        if k = 0 then first := f.layout;
+        alloc ~by ?at ~where ?into k f)
+      op
+  in
+  let p = Option.get !where in
+  let set = Devices.set p in
+  let kernels = kernels_of ~by ~op:(Prim.name op) set in
+  match Grid.one (Devices.grid p) with
+  | Some k when Option.is_none into ->
+      (* On one device the expansion's results are the results: no result of an
+         expansion is an operand ({!Expand.run}), so nothing is copied. *)
+      let d = Devices.rig set k in
+      if call ~by kernels d op r 0 then r
+      else
+        begin match expand ~by ?at op with
+        | Some y -> y
+        | None ->
+            let (module K : Nx_kernel.S) = kernels in
+            refused ~by ~kernels:K.name d op
+        end
+  | Some k ->
+      on_device ~by kernels set op r 0 k op;
+      r
+  | None ->
+      let rule = Prim.rule op and first = L.shape !first in
+      Array.iteri
+        (fun j k ->
+          let w = Devices.window ~by p first j in
+          let view i x =
+            let at = Devices.one (Devices.set (Prim.placement x)) k in
+            let a = Place.view ~by x k (Route.window rule i (Prim.shape x) w) in
+            Value.Array { at; a; dead = Value.Live }
+          in
+          on_device ~by kernels set op r j k (Prim.local (Prim.mapi view op) w))
+        (Grid.devices (Devices.grid p));
+      r
+
+(* [local], [op] on device [k] of [set] at position [j], into [op]'s results
+   [r]: by the kernels, or where they decline by the expansion copied there. *)
+and on_device : type r.
+    by:string ->
+    (module Nx_kernel.S) ->
+    unit Devices.t ->
+    r Value.prim ->
+    r ->
+    int ->
+    int ->
+    r Value.prim ->
+    unit =
+ fun ~by kernels set op r j k local ->
+  let d = Devices.rig set k in
+  if not (call ~by kernels d local r j) then
+    match expand ~by ~at:(Devices.one set k) local with
+    | Some y -> copied ~by kernels d local y op r j
+    | None ->
+        let (module K : Nx_kernel.S) = kernels in
+        refused ~by ~kernels:K.name d local
+
+(* [y], [local]'s results on device [d], copied into the results [r] of [op] at
+   position [j]. *)
+and copied : type r.
+    by:string ->
+    (module Nx_kernel.S) ->
+    Rig.t ->
+    r Value.prim ->
+    r ->
+    r Value.prim ->
+    r ->
+    int ->
+    unit =
+ fun ~by kernels d local y op r j ->
+  let (module K) = kernels in
+  let dsts = Prim.result_arrays op r in
+  Array.iteri
+    (fun i per ->
+      let (A.Any dst) = dsts.(i).(j) in
+      let v = A.expect (A.dtype dst) per.(0) in
+      if not (ran ~by (copy_into kernels ~dst v) [| A.Any dst |] [| A.Any v |])
+      then
+        declined ~by ~kernels:K.name
+          (Op1 (Copy, D.Any (A.dtype v), 0))
+          d [ A.Any v ])
+    (Prim.result_arrays local y)
 
 (* [op]'s expansion, its operations applied where their operands lie, or at
    [at] for a constant's evaluation; [None] for a core case. *)
@@ -1007,145 +975,6 @@ and apply_at : type r. unit Devices.placement -> by:string -> r Value.prim -> r
  fun q ~by op ->
   if Prim.exists is_concrete op then run ~by op
   else compute ~by ~at:q (Prim.map (fun y -> at (Devices.rebrand q) y) op)
-
-(* [op]'s results [r], fresh where its rule places them, computed on each
-   device by [kernel kernels r j d w] for device [d], at position [j], and its
-   window [w] of the first result, which answers as {!first_decline}'s [f].
-   Where a device's kernels decline it, its expansion; an optional case nx has
-   no expansion for raises, naming [kind]. *)
-and each_result : type r.
-    by:string ->
-    ?at:unit Devices.placement ->
-    r Value.prim ->
-    kind:string ->
-    ((module Nx_kernel.S) ->
-    r ->
-    int ->
-    int ->
-    M.range array ->
-    A.any array option) ->
-    r =
- fun ~by ?at op ~kind kernel ->
-  let where = ref None and shape = ref [||] in
-  let r =
-    Prim.results ~by
-      (fun k f ->
-        if k = 0 then shape := L.shape f.layout;
-        alloc ~by ?at ~where k f)
-      op
-  in
-  let p = Option.get !where in
-  let ((module K) as kernels) = kernels_of ~by ~op:kind (Devices.set p) in
-  match first_decline ~by p !shape (kernel kernels r) with
-  | None -> r
-  | Some (d, ops) -> (
-      match expand ~by ?at op with
-      | Some r -> r
-      | None -> unexpanded ~by ~kernels:K.name kind d (Array.to_list ops))
-
-(* [op], a loop the kernels of [p]'s set declined, as its expansion. A plain
-   loop has none: the decline raises naming the kernels. *)
-and expanded : type r.
-    by:string -> ?at:unit Devices.placement -> unit Devices.placement ->
-    r Value.prim -> r =
- fun ~by ?at p op ->
-  match expand ~by ?at op with
-  | Some r -> r
-  | None ->
-      let (module K) = kernels_of ~by ~op:(Prim.name op) (Devices.set p) in
-      invalid_argf "%s: %s does not compute %a; %s" by K.name Prim.pp op move
-
-(* [op]'s result [r] where every device computed it. Where a device's kernels
-   declined it, with operands [ops] on device [d], its expansion, on the
-   devices that computed [r]; else the decline's error. *)
-and or_expanded : type r.
-    by:string ->
-    kernels:string ->
-    ?at:unit Devices.placement ->
-    r Value.prim ->
-    r ->
-    (Rig.t * A.any array) option ->
-    r =
- fun ~by ~kernels ?at op r declined ->
-  match declined with
-  | None -> r
-  | Some (d, ops) -> (
-      match expand ~by ?at op with
-      | Some r -> r
-      | None -> refuses ~by ~kernels (Prim.name op) d (Array.to_list ops))
-
-(* A loop's results [dsts] at [p], each device's window of them computed there
-   by [kernel] over its loads [loads k w] for its window [w] of the loop's
-   iteration of [shape]: the results' window, whole along the reduced [axes].
-   [false] where the kernels decline it. *)
-and loop_devices ~by (p : unit Devices.placement) shape ~axes kernel prog loads
-    dsts =
-  let kernels = kernels_of ~by ~op:"Reduce" (Devices.set p) in
-  let widen (w : M.range array) =
-    let j = ref 0 in
-    Array.mapi
-      (fun a extent ->
-        if Array.mem a axes then whole extent
-        else begin
-          let r = w.(!j) in
-          incr j;
-          r
-        end)
-      shape
-  in
-  let computed = ref true in
-  each_device ~by p (Prim.reduced shape axes) (fun j k w ->
-      if !computed then begin
-        let w = widen w in
-        let loads = loads k w and dsts = Array.map (fun per -> per.(j)) dsts in
-        computed :=
-          ran_loads ~by
-            (kernel kernels (with_offsets prog (starts w)) dsts loads)
-            dsts loads
-      end);
-  !computed
-
-(* An assembly's result at [at], or where its rule places it: its kernel on each
-   device, or its expansion where the kernels decline it. *)
-and assemble : type v s d.
-    by:string ->
-    ?at:unit Devices.placement ->
-    (v, s) D.t ->
-    int array ->
-    v ->
-    (M.range array * (v, s, d) Value.t) list ->
-    (v, s, d) Value.t =
- fun ~by ?at dtype shape fill pieces ->
-  let op = Value.Assemble { dtype; shape; fill; pieces } in
-  let r, p = alloc_one ~by ?at op in
-  let (module K) = kernels_of ~by ~op:"Assemble" (Devices.set p) in
-  let dsts = Prim.arrays r in
-  let declined =
-    first_decline ~by p shape (fun j k _ ->
-        let view (rs, x) =
-          (rs, Place.view ~by x k (Array.map whole (Prim.shape x)))
-        in
-        let pieces = Array.of_list (List.map view pieces) in
-        let dst = Iarray.get dsts j in
-        outcome ~by
-          (K.assemble ~fill ~dst pieces)
-          [| A.Any dst |]
-          (Array.map (fun (_, v) -> A.Any v) pieces))
-  in
-  if Option.is_none declined then r
-  else expanded ~by ?at (Devices.rebrand p) op
-
-(* [op]'s one result, fresh at [at] or at the placement its rule gives, and that
-   placement. *)
-and alloc_one : type v s d.
-    by:string ->
-    ?at:unit Devices.placement ->
-    (v, s, d) Value.t Value.prim ->
-    (v, s, d) Value.t * d Devices.placement =
- fun ~by ?at op ->
-  let where = ref None in
-  let r = Prim.results ~by (fun k f -> alloc ~by ?at ~where k f) op in
-  (r, Devices.rebrand (Option.get !where))
 
 (* The one result of [op] over the arrays [views ()], one per device of [xp] in
    order: at [op]'s placement, whose devices hold them. [views] runs once [op]'s
@@ -1262,7 +1091,7 @@ and through_views : type v s d.
         | Value.Move (_, Value.Deferred { node = m; _ })
         | Value.Bitcast (_, Value.Deferred { node = m; _ }) ->
             views := (!node, !key) :: !views;
-            key := operand_at n.op !key;
+            key := read_at (route_at ~by:n.by n.op !key) !key 0;
             node := m
         | Value.Move _ | Value.Bitcast _ | Value.Map _ | Value.Reduce _
         | Value.Scan _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
@@ -1357,71 +1186,6 @@ and evaluate_all root p =
   done;
   compute_node ~resolve root p
 
-(* A map's results [dsts] at [p], computed per device: [ops k w] are the
-   operands on device [k] for its window [w]. A device whose kernels decline the
-   map expands it over its own operands. *)
-and map_devices ~by (p : unit Devices.placement) shape prog ops dsts =
-  let set = Devices.set p in
-  let kernels = kernels_of ~by ~op:"Map" set in
-  match Grid.one (Devices.grid p) with
-  | Some k ->
-      let whole =
-        Array.map (fun count -> { M.start = 0; count; step = 1 }) shape
-      in
-      let first = Array.make (Array.length shape) 0 in
-      let ops = ops k whole and dsts = Array.map (fun per -> per.(0)) dsts in
-      if not (map_on ~by kernels (Devices.rig set k) prog first ops dsts) then
-        expand_on ~by set k prog shape first ops dsts
-  | None ->
-      Array.iteri
-        (fun j k ->
-          let w = Devices.window ~by p shape j in
-          let shape = extents w and first = starts w in
-          let ops = ops k w and dsts = Array.map (fun per -> per.(j)) dsts in
-          if not (map_on ~by kernels (Devices.rig set k) prog first ops dsts)
-          then expand_on ~by set k prog shape first ops dsts)
-        (Grid.devices (Devices.grid p))
-
-(* [prog] over [ops] into [dsts] on device [k] of [set], whose window of [shape]
-   starts at [first], as the map's expansion ({!Expand.run}): one-node maps over
-   the device's arrays, computed there, then copied into [dsts]. *)
-and expand_on ~by (set : unit Devices.t) k prog shape first ops dsts =
-  let at = Devices.one set k in
-  let loads =
-    Array.map
-      (fun (A.Any a) -> Value.Plain (Value.Array { at; a; dead = Value.Live }))
-      ops
-  in
-  let (Outs outs) = outs_of (Array.to_list dsts) in
-  let op =
-    Value.Map
-      {
-        layout = L.contiguous shape;
-        prog = with_offsets prog first;
-        outs;
-        loads;
-      }
-  in
-  match expand ~by ~at op with
-  | None ->
-      let (module K) = kernels_of ~by ~op:"Map" set in
-      invalid_argf "%s: %s does not compute %a; %s" by K.name Prim.pp op move
-  | Some r ->
-      let ((module K) as kernels) = kernels_of ~by ~op:"Copy" set in
-      Array.iteri
-        (fun i per ->
-          let (A.Any dst) = dsts.(i) in
-          let (A.Any v) = per.(0) in
-          let v = A.expect (A.dtype dst) (A.Any v) in
-          if
-            not
-              (ran ~by (copy_into kernels ~dst v) [| A.Any dst |] [| A.Any v |])
-          then
-            declined ~by ~kernels:K.name
-              (Op1 (Copy, D.Any (A.dtype v), 0))
-              (Devices.rig set k) [ A.Any v ])
-        (Prim.result_arrays op r)
-
 (* [node]'s results at [p], its constant operands already computed where it
    reads them. *)
 and compute_node :
@@ -1443,26 +1207,44 @@ and compute_node :
       let xs = Prim.arrays (resolve (Devices.rebrand p) x) in
       [| Prim.any (Iarray.map (cast ~by (Devices.set p) dt) xs) |]
   | op ->
-      (* Its rule held when it was made. Its operands lie at [q], and its
-         results are allocated there, where its rule may place them nowhere (a
-         creation) or elsewhere (a replicated rule). *)
-      let q = operand_at op p in
-      let op' = Prim.map (fun y -> resolve (Devices.rebrand q) y) op in
+      (* Its rule held when it was made. It computes at its route's result, [p]
+         with the axes its rule keeps whole made whole, over operands where the
+         route reads them; a creation computes there too. *)
+      let route = route_at ~by op p in
+      let q = match route with None -> p | Some r -> r.result in
+      let op' =
+        Prim.mapi
+          (fun i y -> resolve (Devices.rebrand (read_at route p i)) y)
+          op
+      in
       let arrays = Prim.result_arrays op' (compute ~by ~at:q op') in
       if Devices.equal q p then arrays
       else
-        (* Whole on every device: each device of [p] keeps its window, in memory
-           of its own, so that no memo holds the whole on each. *)
+        (* Each device of [p] keeps its window, cut from its window at [q], in
+           memory of its own, so that no memo holds more. *)
+        let gq = Devices.grid q in
+        let qs = Grid.devices gq and ps = Grid.devices (Devices.grid p) in
         Array.map
           (fun per ->
             let (A.Any a0) = per.(0) in
-            let shape = L.shape (A.layout a0) in
+            let shape = Array.copy (L.shape (A.layout a0)) in
+            Array.iter
+              (fun (a, t) -> shape.(a) <- shape.(a) * t)
+              (Grid.cuts gq);
             Array.mapi
               (fun j k ->
-                let (A.Any a) = per.(k) in
-                let w = Devices.window ~by p shape j in
+                let jq = Option.get (Array.find_index (( = ) k) qs) in
+                let wp = Devices.window ~by p shape j in
+                let wq = Devices.window ~by q shape jq in
+                let w =
+                  Array.map2
+                    (fun (rp : M.range) (rq : M.range) ->
+                      { rp with M.start = rp.start - rq.start })
+                    wp wq
+                in
+                let (A.Any a) = per.(jq) in
                 A.Any (A.copy (Option.get (A.move (Slice w) a))))
-              (Grid.devices (Devices.grid p)))
+              ps)
           arrays
 
 (* The fast path *)

@@ -909,6 +909,25 @@ let placements =
           equal (array float_exact)
             (read (Nx.contract Nx.float32 p a b))
             (read (Nx.contract Nx.float32 p a' b')));
+      test "a split operand's rows keep their cut" (fun () ->
+          let a = x [| 16; 3 |] and b = x [| 3; 8 |] in
+          let split = S2.split ~axis:0 in
+          let y =
+            Nx.contract Nx.float32 p (Nx.place split a) (Nx.place S2.on b)
+          in
+          equal bool ~msg:"the result's cut" true
+            (Nx.Placement.equal split (Option.get (Nx.placement y)));
+          equal (array float_exact)
+            (read (Nx.contract Nx.float32 p a b))
+            (read y));
+      test "operands alone on two devices raise" (fun () ->
+          let a = x [| 4; 3 |] and b = x [| 3; 2 |] in
+          let on k =
+            Nx.place (Nx.Placement.device S2.v (Nx_support.memory k))
+          in
+          raises_match
+            (Exn.invalid_arg ~substring:"alone; place one beside the other")
+            (fun () -> Nx.contract Nx.float32 p (on 0 a) (on 1 b)));
     ]
 
 (* Errors *)

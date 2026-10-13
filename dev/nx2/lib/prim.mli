@@ -114,6 +114,25 @@ val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
 val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
 
+val mapi :
+  ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
+(** [mapi m op] is [op] with each operand [x] at position [i] in {!operands}
+    replaced by [m i x]. *)
+
+val rule : 'r prim -> Route.rule
+(** [rule op] is how [op]'s results depend on its operands: its route and each
+    device's windows of its operands ({!Route.window}) come from it alone. A
+    loop of no load is [Replicated]: its expansion computes it whole. *)
+
+val local : 'r prim -> Nx_array.Move.range array -> 'r prim
+(** [local op w] is [op] computing the window [w] of its first result, over
+    operands the caller gives at their windows ({!Route.window}): a loop over
+    its window of its shape, its programs' coordinates offset by that window's
+    start, and a fold of [w]'s shape.
+
+    Raises [Invalid_argument] for a window of an assembly that is not the whole:
+    its rule computes it whole. *)
+
 val results :
   by:string ->
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->

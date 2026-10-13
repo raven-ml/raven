@@ -29,17 +29,22 @@
     arrangement holds both, and moving one is a choice the program makes with
     [Nx.place]. *)
 
-(** The type for how an operation's results depend on its operands. *)
+(** The type for how an operation's results depend on its operands. Each case
+    gives every operand's window for a window of the results ({!window}). *)
 type rule =
   | Elementwise
       (** Operands and results of one shape; a result's element reads each
           operand at its own index. *)
-  | Reduce of int array
-      (** Operands of one shape; results drop these axes, each read whole. *)
+  | Reduce of { axes : int array; along : int array }
+      (** Operands of one shape, but for trailing axes [along] holds; results
+          drop [axes] and keep the others, [axes] and [along] read whole: a
+          reduction whose loads pad or window [along]'s axes. *)
   | Along of int array
-      (** Operands and results of one rank, the operation acting along these
-          axes, each read whole: a scan, a sort, a transform's axes, a
-          factorisation's last two. *)
+      (** Operands and results that share their leading axes, the operation
+          acting along these axes, each read whole; an axis that not all of them
+          have is one of these: a scan, a sort, a transform's axes, a
+          factorisation's last two, the axes a padded load or a fold pads, crops
+          or windows and those its windows append. *)
   | Gather of int
       (** Operands [idx; x] of one rank, and results of [idx]'s shape: [x] is
           read whole along this axis. *)
@@ -47,12 +52,17 @@ type rule =
       (** Operands of one rank, results of the last one's shape, written into it
           along this axis, which every operand reads whole: the target is the
           last operand's placement where it lies on the set. *)
+  | Contract of { batch : (int * int) array; contracting : (int * int) array }
+      (** Operands [a; b], then possibly [init] of the result's shape, the
+          result's axes the batch pairs', then [a]'s other axes, then [b]'s
+          ({!Nx_kernel.Shape.contract}): the contracting pairs' axes are read
+          whole. *)
   | Move of Nx_array.Move.t
       (** One operand, moved: an axis that keeps its elements in order keeps its
           cut, where it moves to (a permutation, a broadcast that does not
           stretch it, a reshape that keeps it with the product of the extents
           before it, a slice that keeps all of it); any other is read whole. *)
-  | Replicated  (** Results whole on every device of the set. *)
+  | Replicated  (** Operands read whole, results whole on each device. *)
 
 val moved : Nx_array.Move.t -> int array -> int -> int option
 (** [moved m s a] is the axis that axis [a] of a value of shape [s] becomes
@@ -60,6 +70,26 @@ val moved : Nx_array.Move.t -> int array -> int -> int option
     broadcast that does not stretch it, a reshape that keeps its extent and the
     product of the extents before it, a slice that keeps all of it. [None] for
     any other. *)
+
+val window :
+  rule ->
+  int ->
+  int array ->
+  Nx_array.Move.range array ->
+  Nx_array.Move.range array
+(** [window r i s w] is the window of operand [i], of shape [s], that the window
+    [w] of an operation's results reads by [r]: whole along each axis [r] reads
+    whole, [w]'s range along an axis the results keep. Where an operation has
+    several results, [w] is a window of the first.
+
+    The engine computes an operation one window at a time, each device over its
+    operands' windows, under the {e window law}: for every window [w] of the
+    results, the operation over each operand's [window r i s w] equals the
+    window [w] of the operation over the whole operands, bitwise. A kernel
+    library meets it where an element's association, its algorithm and whether
+    the library declines depend on the extents the element reads whole, the
+    dtypes, the attributes, the library and the device's architecture, never on
+    the extents its window cuts. *)
 
 type 'd t = {
   operands : 'd Devices.placement array;
@@ -72,6 +102,9 @@ type 'd common =
   | Every_set  (** Every operand is of every set. *)
   | Uncut of 'd Devices.placement
       (** Every operand not of every set lies at this placement, which cuts no
+          axis. *)
+  | Cut of 'd Devices.placement
+      (** Every operand not of every set lies at this placement, which cuts an
           axis. *)
   | Other  (** Any other arrangement. *)
 
@@ -92,6 +125,17 @@ val route :
 
     Raises [Invalid_argument] naming [by] if operands lie on two sets or on two
     devices alone, if a placement an operand is read at does not divide its
-    shape ({!Grid.window}), if an axis of [r] is not an axis of an operand or a
-    movement does not fit its operand ({!Nx_array.Move.shape}), and as an
-    internal fault if [ps] and [shapes] differ in length or [ps] is empty. *)
+    shape ({!Grid.window}), if an axis of [r] is negative, a gather's or a
+    scatter's axis is not an axis of an operand, operands are too many or too
+    few for [r], or a movement does not fit its operand
+    ({!Nx_array.Move.shape}), and as an internal fault if [ps] and [shapes]
+    differ in length or [ps] is empty. *)
+
+val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
+(** [at ~by r shapes p] routes an operation of rule [r] over operands of
+    [shapes] whose results are wanted at [p]: the result lies at [p] with each
+    axis [r] keeps whole in the results whole, and each operand is read at that
+    target moved back to its axes.
+
+    Raises [Invalid_argument] naming [by] if a placement an operand is read at
+    does not divide its shape. *)
