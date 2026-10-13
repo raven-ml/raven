@@ -7,9 +7,9 @@
    domain's run and submits the submission of the launch's sequence, made
    once per device, through the door:
 
-   contract --> device (Rig.Local) --> Plan.choose --> workspace, submission
-   --> frame (the domain's, or a fresh one) --> Plan.write into its run -->
-   door --> Rig.submit
+   contract --> device (Rig.Local) --> Plan.choose --> submission
+   --> frame (the domain's, or a fresh one) --> door --> each piece:
+   Plan.write into the run, Rig.submit
 
    A call that finds every cache warm allocates its view, its launch, its
    buffers and the door's work, and nothing that outlives it. *)
@@ -27,55 +27,22 @@ let apple d = String.starts_with ~prefix:"Apple" (Rig.arch d)
 
 (* Devices *)
 
-(* The workspace holds the parts of a call's split sum. Each call that uses it
-   names it [Read_write], so rig orders the calls that share it. It grows to
-   [kept] bytes and is kept; a call that needs more takes a buffer of its own. *)
-let kept = 64 * 1024 * 1024
-
 (* What this library keeps for a device: [subs]
    holds the submissions by {!Plan.sequence}, made on first use. *)
-type device = {
-  image : Rig.Image.t;
-  workspace : Rig.Buffer.t Atomic.t;
-  subs : Sub.t option array;
-}
+type device = { image : Rig.Image.t; subs : Sub.t option array }
 
 let load d =
   if not (apple d) then None
   else
     match Rig.Image.load d (metallib ()) with
     | Error _ -> None
-    | Ok image ->
-        Some
-          {
-            image;
-            workspace = Atomic.make (Rig.Buffer.create d 0);
-            subs = Array.make Plan.sequences None;
-          }
+    | Ok image -> Some { image; subs = Array.make Plan.sequences None }
 
 (* Each device's [load], [None] where it does not compute. *)
 let devices = Rig.Local.new_key load
 let device d = Rig.Local.get devices d
 
 let computes_on d = Option.is_some (device d)
-
-(* The workspace of at least [need] bytes. A race stores only a larger one, so
-   it never shrinks. *)
-let workspace d dv need =
-  let w = Atomic.get dv.workspace in
-  if Rig.Buffer.length w >= need then w
-  else if need > kept then Rig.Buffer.create d need
-  else begin
-    let bytes = Int.min kept (Int.max need (2 * Rig.Buffer.length w)) in
-    let fresh = Rig.Buffer.create d bytes in
-    let rec store () =
-      let w = Atomic.get dv.workspace in
-      if Rig.Buffer.length w >= need then w
-      else if Atomic.compare_and_set dv.workspace w fresh then fresh
-      else store ()
-    in
-    store ()
-  end
 
 (* The submission of [l]'s sequence on [d]. Two domains that make one at once
    each make it, and the last store wins. *)
@@ -111,18 +78,18 @@ let reads ~init a b =
   | None -> [| A.Any a; A.Any b |]
   | Some i -> [| A.Any a; A.Any b; A.Any i |]
 
-(* The door's work: a launch's submission, with the run its parameters are
-   written into and its buffers. *)
-let issue (sub, run, buffers) = ignore (Rig.submit sub ~run ~buffers)
+(* The door's work: each piece of a launch written into the run and its
+   submission submitted with its buffers. *)
+let issue (l, sub, run, buffers) =
+  for piece = 0 to Plan.pieces l - 1 do
+    Plan.write l ~piece run sub;
+    ignore (Rig.submit sub ~run ~buffers)
+  done
 
-(* [write]s a launch of [sub] into a frame's run and submits [sub] with
-   [buffers] through the door. *)
-let submit ~written ~read sub buffers write =
+(* Submits the pieces of [l] through the door, in a frame's run. *)
+let submit ~written ~read l sub buffers =
   let f = take () in
-  match
-    write f.run sub;
-    A.door ~written ~read issue (sub, f.run, buffers)
-  with
+  match A.door ~written ~read issue (l, sub, f.run, buffers) with
   | answer ->
       release f;
       answer
@@ -158,10 +125,8 @@ let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
         | Error answer -> answer
         | Ok Nothing -> A.door ~written ~read nothing ()
         | Ok (Launch l) ->
-            let workspace = workspace d dv (Plan.workspace l) in
             let sub = submission d dv l in
-            let buffers = Plan.buffers l ~workspace in
-            submit ~written ~read sub buffers (Plan.write l))
+            submit ~written ~read l sub (Plan.buffers l))
 
 (* Elementwise *)
 

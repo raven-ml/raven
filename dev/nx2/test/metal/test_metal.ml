@@ -458,12 +458,16 @@ let launched t r =
     events
 
 (* A dense kernel's tile, by its name's last part: [l] checked large, [s]
-   small, [w] and an order wide, an order alone large. *)
+   small, [g] general, [w] and an order wide, [v] and an order narrow, [r]
+   and an order short, an order alone large. *)
 let tile k =
   match List.rev (String.split_on_char '_' k) with
   | "l" :: _ -> `Checked
   | "s" :: _ -> `Small
+  | "g" :: _ -> `General
   | last :: _ when last.[0] = 'w' -> `Wide
+  | last :: _ when last.[0] = 'v' -> `Narrow
+  | last :: _ when last.[0] = 'r' -> `Short
   | _ -> `Large
 
 let dense k =
@@ -535,7 +539,9 @@ let contract_bound =
       (* A stored [k][m] of 16 MiB: read where it lies, never copied. *)
       example (Dt.Any Dt.Float32) ~a_t:true ~b_t:false ~m:1024 ~n:32 ~k:4096
         ~init:No_init;
-      (* Few rows of a split along k, on wide tiles. *)
+      (* Few rows on short tiles, then on narrow ones. *)
+      example (Dt.Any Dt.Bfloat16) ~a_t:false ~b_t:false ~m:8 ~n:200 ~k:300
+        ~init:Full;
       {
         (example (Dt.Any Dt.Float16) ~a_t:false ~b_t:true ~m:9 ~n:200 ~k:2880
            ~init:Full)
@@ -580,13 +586,13 @@ let contract_bound =
       cover "checked 64 x 64 tiles, float32" (launches "contract_f32_l");
       cover "checked 64 x 64 tiles, bfloat16" (launches "contract_bf16_l");
       cover "32 x 32 tiles" (tiles `Small);
-      cover "16 x 64 tiles" (tiles `Wide);
+      cover "16 x 32 tiles" (tiles `Narrow);
+      cover "8 x 32 tiles" (tiles `Short);
       cover "a skinny product, b stored [k][n]"
         (List.exists (String.starts_with ~prefix:"skinny_") kernels
         && not c.b_t);
       cover "a skinny product, b stored [n][k]"
         (List.exists (String.starts_with ~prefix:"skinny_") kernels && c.b_t);
-      cover "a split along k" (launches "contract_combine");
       let worst, at = S.contract_error ?init dims ~a ~b ~out in
       at_most
         ~msg:(strf "output %d's error over its bound" at)
@@ -783,8 +789,9 @@ let every_kernel () =
   let orders = [ (false, false); (false, true); (true, false); (true, true) ] in
   (* Large tiles take 128 or more whole ones, or, checked, as many past the
      matrix that fill seven eighths of their rows (float32, bfloat16); small
-     ones fewer, or tiles past the matrix; wide ones few rows; the skinny
-     kernel one row in lane order, the skinny4 kernel more. *)
+     ones fewer, or tiles past the matrix; wide ones few rows in 256 or more
+     of their tiles, narrow ones fewer, short ones fewer of at most 8 rows;
+     the skinny kernel one row in lane order, the skinny4 kernel more. *)
   let shapes =
     let open Nx_kernel in
     [
@@ -793,6 +800,8 @@ let every_kernel () =
       (1, 64, 64, 32, Chain);
       (1, 33, 33, 33, Chain);
       (1, 9, 70, 40, Chain);
+      (1, 5, 70, 40, Chain);
+      (32, 9, 520, 40, Chain);
       (1, 1, 70, 40, Lane);
       (1, 6, 70, 40, Lane);
       (1, 40, 40, 1024, Chain);
@@ -818,6 +827,37 @@ let every_kernel () =
                 float_exact ~than:1. worst)
             shapes)
         orders)
+    floats_dt;
+  (* The general instances: operands with no axis of unit stride, every
+     other element of their stored rows. *)
+  List.iter
+    (fun dt ->
+      let (Dt.Any d) = dt in
+      let spaced ~rows ~cols ~seed =
+        let x =
+          matrix t dt ~trans:false ~batch:1 ~rows ~cols:(2 * cols) ~pad:0
+            ~bpad:0 ~first:0 ~seed ~spread:0
+        in
+        S.arg (S.arg_operand x.arg) d (2 * rows * cols, 2 * cols, 2)
+      in
+      let m = 33 and n = 70 and k = 40 in
+      let a = spaced ~rows:m ~cols:k ~seed:1
+      and b = spaced ~rows:k ~cols:n ~seed:2 in
+      let out =
+        (matrix t dt ~trans:false ~batch:1 ~rows:m ~cols:n ~pad:0 ~bpad:0
+           ~first:0 ~seed:5 ~spread:0)
+          .arg
+      in
+      let dims = (1, m, n, k) in
+      let run =
+        require_some ~msg:"the planner declined"
+          (S.plan_contract ~order:Nx_kernel.Chain t dims ~a ~b ~out)
+      in
+      List.iter (fun k -> Hashtbl.replace seen k ()) (launched t run);
+      let worst, at = S.contract_error dims ~a ~b ~out in
+      at_most
+        ~msg:(strf "%s, spaced: output %d's error over its bound" (Dt.name d) at)
+        float_exact ~than:1. worst)
     floats_dt;
   let ints =
     List.concat_map
@@ -1136,7 +1176,6 @@ let orders_agree c =
   let kernels, nn = outputs a b in
   cover "a skinny product"
     (List.exists (String.starts_with ~prefix:"skinny_") kernels);
-  cover "a split along k" (List.mem "contract_combine" kernels);
   List.iter
     (fun (name, a, b) ->
       let _, y = outputs a b in
@@ -1185,8 +1224,7 @@ let orders =
          kernel. *)
       example (Dt.Any Dt.Bfloat16) ~m:3 ~n:70 ~k:2880 ~order:Lane;
       example (Dt.Any Dt.Float32) ~m:6 ~n:70 ~k:300 ~order:Lane;
-      (* 40 rows past whole tiles: 32 x 32 tiles count 158 and split k in 2, 16
-         x 64 tiles count 120 and would split it in 4. *)
+      (* 40 rows past whole tiles, on 32 x 32 tiles. *)
       example (Dt.Any Dt.Float32) ~m:40 ~n:2500 ~k:4096 ~order:Chain;
       (* Checked large tiles, which read every order from one instance. *)
       example (Dt.Any Dt.Bfloat16) ~m:120 ~n:4100 ~k:48 ~order:Chain;
@@ -1200,6 +1238,425 @@ let orders =
   in
   prop ~count:30 ~examples "a contraction's bits do not depend on its orders"
     case orders_agree
+
+(* Windows: a window of a contraction's results computed alone, over the
+   windows of the operands it reads, has the bits the whole contraction gives
+   it, in either order of summation. *)
+
+(* How a and b lie: as stored, every other element along both axes, or with
+   their free axis reversed: a's rows, b's columns. *)
+type layout = Plain | Spaced | Flipped
+
+type window = {
+  whole : case;
+  origin : int * int * int; (* its first batch element, row and column *)
+  size : int * int * int; (* its batch elements, rows and columns *)
+  layout : layout;
+}
+
+let pp_window ppf w =
+  let p, r, q = w.origin and pb, wm, wn = w.size in
+  Format.fprintf ppf "%a%s, window %d x %d x %d at (%d, %d, %d)" pp_case
+    w.whole
+    (match w.layout with
+    | Plain -> ""
+    | Spaced -> ", spaced"
+    | Flipped -> ", flipped")
+    pb wm wn p r q
+
+(* Extents at the tiles' edges (64, 32, 16), the skinny threadgroups' (4, 32)
+   and past them. *)
+let window_extent =
+  Gen.of_list [ 1; 2; 3; 4; 5; 8; 15; 16; 17; 31; 32; 33; 63; 64; 65; 100; 129 ]
+
+(* A range of [e]: an offset and a length, one more often than drawn. *)
+let cut e =
+  let open Gen in
+  let* l = frequency [ (1, constant 1); (1, constant e); (2, int_range 1 e) ] in
+  let+ o = int_range 0 (e - l) in
+  (o, l)
+
+(* Either order at any extents: a caller of the library may give lane order
+   past one row. *)
+let window =
+  let open Gen in
+  let* whole =
+    let+ dt = of_list floats_dt
+    and+ out = of_list floats_dt
+    and+ a_t = bool
+    and+ b_t = bool
+    and+ batch = int_range 1 3
+    and+ m = window_extent
+    and+ n = window_extent
+    and+ k = of_list [ 1; 7; 8; 9; 33; 300; 2880 ]
+    and+ order = of_list Nx_kernel.[ Chain; Lane ]
+    and+ init = of_list [ No_init; Full; Bias ]
+    and+ values =
+      let* seed = int_range 0 1_000_000 in
+      frequency [ (3, constant Drawn); (1, constant (Special seed)) ]
+    in
+    {
+      dt;
+      out;
+      a_t;
+      b_t;
+      batch;
+      m;
+      n;
+      k;
+      order;
+      init;
+      pad = 0;
+      bpad = 0;
+      first = 0;
+      spread = 8;
+      values;
+    }
+  in
+  let+ layout =
+    frequency [ (4, constant Plain); (1, constant Spaced); (1, constant Flipped) ]
+  and+ p0, pb = cut whole.batch
+  and+ r0, wm = cut whole.m
+  and+ q0, wn = cut whole.n in
+  { whole; origin = (p0, r0, q0); size = (pb, wm, wn); layout }
+
+let window = Gen.with_pp pp_window window
+
+(* [x]'s window from batch element p, row r and column q: its strides are
+   [x]'s. *)
+let view (Dt.Any dt) x (p, r, q) =
+  let o = x.at 0 0 0 in
+  let strides = (x.at 1 0 0 - o, x.at 0 1 0 - o, x.at 0 0 1 - o) in
+  S.arg ~first:(x.at p r q) (S.arg_operand x.arg) dt strides
+
+let windows_agree w =
+  let c = w.whole in
+  let p0, r0, q0 = w.origin and pb, wm, wn = w.size in
+  cover "chain order" (c.order = Chain);
+  cover "lane order" (c.order = Lane);
+  cover "the batch cut" (pb < c.batch);
+  cover "rows cut" (wm < c.m);
+  cover "columns cut" (wn < c.n);
+  cover "one row of several" (wm = 1 && c.m > 1);
+  cover "4 rows or more cut below 4" (c.m >= 4 && wm < 4);
+  cover "16 rows or fewer of more" (wm <= 16 && c.m > 16);
+  cover "an init" (c.init <> No_init);
+  cover "operands at strides" (w.layout = Spaced);
+  cover "operands with a negative stride" (w.layout = Flipped);
+  let t = dev () in
+  let operand ~trans ~rows ~cols ~seed ~free =
+    let s = if w.layout = Spaced then 2 else 1 in
+    let x =
+      matrix t c.dt ~trans ~batch:c.batch ~rows:(s * rows) ~cols:(s * cols)
+        ~pad:c.pad ~bpad:c.bpad ~first:c.first ~seed ~spread:c.spread
+    in
+    let at =
+      match (w.layout, free) with
+      | Plain, _ -> x.at
+      | Spaced, _ -> fun p r q -> x.at p (2 * r) (2 * q)
+      | Flipped, `Rows -> fun p r q -> x.at p (rows - 1 - r) q
+      | Flipped, `Columns -> fun p r q -> x.at p r (cols - 1 - q)
+    in
+    if w.layout = Plain then x
+    else { x with arg = view c.dt { x with at } (0, 0, 0); at }
+  in
+  let a = operand ~trans:c.a_t ~rows:c.m ~cols:c.k ~seed:1 ~free:`Rows in
+  let b = operand ~trans:c.b_t ~rows:c.k ~cols:c.n ~seed:2 ~free:`Columns in
+  write_values c a b;
+  let out ~batch ~rows ~cols =
+    matrix t c.out ~trans:false ~batch ~rows ~cols ~pad:0 ~bpad:0 ~first:0
+      ~seed:5 ~spread:0
+  in
+  let init =
+    match c.init with
+    | No_init -> None
+    | Full -> Some (out ~batch:c.batch ~rows:c.m ~cols:c.n)
+    | Bias ->
+        let (Dt.Any dt) = c.out in
+        let o = S.operand t (Dt.bytes dt c.n) in
+        S.generate ~spread:c.spread t o dt c.n ~seed:4;
+        Some { arg = S.arg o dt (0, 0, 1); len = c.n; at = (fun _ _ q -> q) }
+  in
+  let y = out ~batch:c.batch ~rows:c.m ~cols:c.n in
+  let yw = out ~batch:pb ~rows:wm ~cols:wn in
+  let product dims ~a ~b ~init ~out =
+    launched t
+      (require_some ~msg:"the planner declined"
+         (S.plan_contract ?init ~order:c.order t dims ~a ~b ~out))
+  in
+  let kernels =
+    product (c.batch, c.m, c.n, c.k) ~a:a.arg ~b:b.arg
+      ~init:(Option.map (fun i -> i.arg) init)
+      ~out:y.arg
+    @ product (pb, wm, wn, c.k)
+        ~a:(view c.dt a (p0, r0, 0))
+        ~b:(view c.dt b (p0, 0, q0))
+        ~init:(Option.map (fun i -> view c.out i (p0, r0, q0)) init)
+        ~out:yw.arg
+  in
+  let tiles x = List.exists (fun k -> dense k && tile k = x) kernels in
+  cover "64 x 64 tiles" (tiles `Large);
+  cover "checked 64 x 64 tiles" (tiles `Checked);
+  cover "32 x 32 tiles" (tiles `Small);
+  cover "16 x 64 tiles" (tiles `Wide);
+  cover "16 x 32 tiles" (tiles `Narrow);
+  cover "8 x 32 tiles" (tiles `Short);
+  cover "the general instances" (tiles `General);
+  cover "the skinny kernels"
+    (List.exists (String.starts_with ~prefix:"skinny") kernels);
+  let (Dt.Any out_dt) = c.out in
+  let size = Dt.bytes out_dt 1 in
+  let get, _ = codes y size and get_w, _ = codes yw size in
+  let wrong = ref [] in
+  for p = pb - 1 downto 0 do
+    for r = wm - 1 downto 0 do
+      for q = wn - 1 downto 0 do
+        let whole = get (y.at (p0 + p) (r0 + r) (q0 + q)) in
+        let part = get_w (yw.at p r q) in
+        if part <> whole then
+          wrong := strf "(%d, %d, %d): %#x, whole %#x" p r q part whole :: !wrong
+      done
+    done
+  done;
+  equal ~msg:"window outputs unlike the whole's" (list string) []
+    (List.filteri (fun j _ -> j < 4) !wrong)
+
+let windows =
+  let example ?(batch = 1) ?(b_t = false) ?(layout = Plain) dt order ~m ~n ~k
+      ~origin ~size =
+    {
+      whole =
+        {
+          dt;
+          out = dt;
+          a_t = false;
+          b_t;
+          batch;
+          m;
+          n;
+          k;
+          order;
+          init = Full;
+          pad = 0;
+          bpad = 0;
+          first = 0;
+          spread = 8;
+          values = Drawn;
+        };
+      origin;
+      size;
+      layout;
+    }
+  in
+  let f32 = Dt.Any Dt.Float32 and f16 = Dt.Any Dt.Float16 in
+  let bf16 = Dt.Any Dt.Bfloat16 in
+  let examples =
+    Nx_kernel.
+      [
+        (* A batch of 2 of few rows and a long k cut to 1. *)
+        example ~batch:2 f32 Chain ~m:8 ~n:8 ~k:3000 ~origin:(1, 0, 0)
+          ~size:(1, 8, 8);
+        example ~batch:2 ~b_t:true f16 Chain ~m:9 ~n:200 ~k:2880
+          ~origin:(1, 0, 0) ~size:(1, 9, 200);
+        (* 9 rows on wide tiles, 288 of them, cut to a batch element on
+           narrow ones. *)
+        example ~batch:32 ~b_t:true bf16 Chain ~m:9 ~n:520 ~k:300
+          ~origin:(5, 0, 0) ~size:(1, 9, 520);
+        example ~batch:32 f32 Chain ~m:9 ~n:520 ~k:300 ~origin:(31, 2, 7)
+          ~size:(1, 7, 500);
+        (* 40 rows on small tiles cut to 16 on narrow ones and to 5 on
+           short ones. *)
+        example f32 Chain ~m:40 ~n:300 ~k:300 ~origin:(0, 30, 0)
+          ~size:(1, 5, 300);
+        example f32 Chain ~m:40 ~n:300 ~k:300 ~origin:(0, 8, 0)
+          ~size:(1, 16, 300);
+        (* Checked 64 x 64 tiles, 130 of them, cut to small ones. *)
+        example bf16 Chain ~m:120 ~n:4100 ~k:48 ~origin:(0, 7, 33)
+          ~size:(1, 100, 4000);
+        (* 1024 x 512 on large tiles cut past a tile's edge. *)
+        example bf16 Chain ~m:1024 ~n:512 ~k:64 ~origin:(0, 32, 0)
+          ~size:(1, 65, 512);
+        (* 3 rows in lane order, one threadgroup's 4, cut to 1, b read along
+           k. *)
+        example ~b_t:true bf16 Lane ~m:3 ~n:70 ~k:2880 ~origin:(0, 1, 0)
+          ~size:(1, 1, 70);
+        (* 8 rows in lane order, two threadgroups' 4 rows, cut to 3 rows
+           across both. *)
+        example ~b_t:true f16 Lane ~m:8 ~n:70 ~k:300 ~origin:(0, 3, 0)
+          ~size:(1, 3, 70);
+        (* b read along n, cut to 3 columns, read along k. *)
+        example f32 Lane ~m:1 ~n:70 ~k:300 ~origin:(0, 0, 64) ~size:(1, 1, 3);
+        example f32 Lane ~m:40 ~n:5 ~k:300 ~origin:(0, 0, 1) ~size:(1, 40, 3);
+        (* Operands with no axis of unit stride, cut to one row. *)
+        example ~layout:Spaced f16 Chain ~m:33 ~n:70 ~k:300 ~origin:(0, 1, 5)
+          ~size:(1, 1, 64);
+        example ~layout:Spaced f32 Lane ~m:6 ~n:70 ~k:300 ~origin:(0, 2, 0)
+          ~size:(1, 1, 70);
+      ]
+  in
+  prop ~count:60 ~examples "a window computed alone has the whole's bits"
+    window windows_agree
+
+let pp_order ppf o =
+  Format.pp_print_string ppf
+    (match o with Nx_kernel.Chain -> "chain" | Lane -> "lane")
+
+(* Far operands: a's rows 2^30 + 8 elements apart, its last row past 2^31
+   elements from its first, in a buffer whose untouched pages are never
+   written. A contraction's bits do not depend on its operands' layouts:
+   the call has the bits of the same contraction of a compact copy of a, in
+   either order. *)
+let far_case =
+  lazy
+    (let t = dev () in
+     let m = 3 and n = 70 and k = 40 in
+     let row = (1 lsl 30) + 8 in
+     let f16 = Dt.Float16 in
+     let compact = S.operand t (Dt.bytes f16 (m * k)) in
+     S.generate ~spread:4 t compact f16 (m * k) ~seed:1;
+     let far = S.operand t (Dt.bytes f16 (((m - 1) * row) + k)) in
+     let src = S.view Bigarray.int16_unsigned compact in
+     let dst = S.view Bigarray.int16_unsigned far in
+     for r = 0 to m - 1 do
+       for l = 0 to k - 1 do
+         dst.{(r * row) + l} <- src.{(r * k) + l}
+       done
+     done;
+     let b = S.operand t (Dt.bytes f16 (k * n)) in
+     S.generate ~spread:4 t b f16 (k * n) ~seed:2;
+     let near = S.arg compact f16 (m * k, k, 1) in
+     (t, (m, n, k), near, S.arg far f16 (m * row, row, 1), S.arg b f16 (k * n, n, 1)))
+
+let far_operands =
+  let order = Gen.with_pp pp_order (Gen.of_list Nx_kernel.[ Chain; Lane ]) in
+  prop ~count:4 ~examples:Nx_kernel.[ Chain; Lane ]
+    "operands past 2^31 elements have a compact copy's bits" order
+    (fun order ->
+      let t, (m, n, k), near, far, b = Lazy.force far_case in
+      let f16 = Dt.Float16 in
+      let product a =
+        let out = S.arg (S.operand t (Dt.bytes f16 (m * n))) f16 (m * n, n, 1) in
+        let run =
+          require_some ~msg:"the planner declined"
+            (S.plan_contract ~order t (1, m, n, k) ~a ~b ~out)
+        in
+        (launched t run, bytes_of out (Dt.bytes f16 (m * n)))
+      in
+      let _, want = product near in
+      let kernels, got = product far in
+      cover "the general instances" (List.mem "contract_f16_g" kernels);
+      cover "the skinny kernels"
+        (List.exists (String.starts_with ~prefix:"skinny") kernels);
+      equal ~msg:"the far call's bytes" string want got)
+
+(* Pieces: 2^26 + 1 columns run in two launches. An int8 product of
+   broadcast operands into int8: every output is the same, the first piece's
+   and the second's alike, and none is left unwritten. Batches and rows past
+   2^30 run pieces by the same rule, but launch 2^24 threadgroups or more a
+   piece, too slow for the suite. *)
+let column_pieces () =
+  let t = dev () in
+  let n = (1 lsl 26) + 1 in
+  let i8 = Dt.Int8 in
+  let one x =
+    let o = S.operand t 1 in
+    (S.view Bigarray.int8_signed o).{0} <- x;
+    S.arg o i8 (0, 0, 0)
+  in
+  let a = one 7 and b = one (-9) and init = one 5 in
+  let o = S.operand t n in
+  Bigarray.Array1.fill (S.view Bigarray.char o) '\xaa';
+  let out = S.arg o i8 (n, n, 1) in
+  ignore
+    (require_some ~msg:"the planner declined"
+       (S.plan_contract ~init ~acc:(Dt.Any Dt.Int32) ~order:Nx_kernel.Chain t
+          (1, 1, n, 1) ~a ~b ~out));
+  (* 7 · -9 + 5 = -58. Every 4093rd output, and those about the pieces'
+     boundary and the last. *)
+  let v = S.view Bigarray.int8_signed o in
+  let wrong = ref [] in
+  let check i = if v.{i} <> -58 then wrong := (i, v.{i}) :: !wrong in
+  let i = ref 0 in
+  while !i < n do
+    check !i;
+    i := !i + 4093
+  done;
+  for i = (1 lsl 26) - 4 to n - 1 do
+    check i
+  done;
+  equal ~msg:"outputs unlike -58" (list (pair int int)) []
+    (List.filteri (fun j _ -> j < 4) !wrong)
+
+(* Reversed operands: a, b and init stored with both axes reversed, so that
+   k and every free axis run at negative strides, have the bits of compact
+   copies, on the dense tiles, the skinny kernels and the integer kernel. *)
+type reversed = { dt : Dt.any; acc : Dt.any; out : Dt.any; m : int; ord : Nx_kernel.order }
+
+let pp_reversed ppf r =
+  let name (Dt.Any d) = Dt.name d in
+  Format.fprintf ppf "%s, acc %s -> %s, %d x 70 x 300, %s" (name r.dt)
+    (name r.acc) (name r.out) r.m
+    (match r.ord with Nx_kernel.Chain -> "chain" | Lane -> "lane")
+
+let reversed_operands =
+  let f32 = Dt.Any Dt.Float32 and f16 = Dt.Any Dt.Float16 in
+  let i16 = Dt.Any Dt.Int16 and i32 = Dt.Any Dt.Int32 in
+  let examples =
+    Nx_kernel.
+      [
+        { dt = f32; acc = f32; out = f32; m = 40; ord = Chain };
+        { dt = f16; acc = f32; out = f16; m = 5; ord = Chain };
+        { dt = f16; acc = f32; out = f16; m = 3; ord = Lane };
+        { dt = i16; acc = i32; out = i32; m = 17; ord = Chain };
+      ]
+  in
+  prop ~count:4 ~examples "operands at negative strides have compact copies' bits"
+    (Gen.with_pp pp_reversed (Gen.of_list examples))
+    (fun r ->
+      let t = dev () in
+      let m = r.m and n = 70 and k = 300 in
+      let compact dt ~rows ~cols ~seed =
+        matrix t dt ~trans:false ~batch:1 ~rows ~cols ~pad:0 ~bpad:0 ~first:0
+          ~seed ~spread:4
+      in
+      (* [x]'s values stored with both axes reversed. *)
+      let reversed (Dt.Any d as dt) x ~rows ~cols =
+        let y = compact dt ~rows ~cols ~seed:0 in
+        let at p i j = y.at p (rows - 1 - i) (cols - 1 - j) in
+        let size = Dt.bytes d 1 in
+        let get, _ = codes x size and _, set = codes y size in
+        for i = 0 to rows - 1 do
+          for j = 0 to cols - 1 do
+            set (at 0 i j) (get (x.at 0 i j))
+          done
+        done;
+        view dt { y with at } (0, 0, 0)
+      in
+      let a = compact r.dt ~rows:m ~cols:k ~seed:1 in
+      let b = compact r.dt ~rows:k ~cols:n ~seed:2 in
+      let init = compact r.out ~rows:m ~cols:n ~seed:3 in
+      let (Dt.Any out_dt) = r.out in
+      let product ~a ~b ~init =
+        let out = (compact r.out ~rows:m ~cols:n ~seed:5).arg in
+        let run =
+          require_some ~msg:"the planner declined"
+            (S.plan_contract ~init ~acc:r.acc ~order:r.ord t (1, m, n, k) ~a ~b
+               ~out)
+        in
+        (launched t run, bytes_of out (Dt.bytes out_dt (m * n)))
+      in
+      let _, want = product ~a:a.arg ~b:b.arg ~init:init.arg in
+      let kernels, got =
+        product
+          ~a:(reversed r.dt a ~rows:m ~cols:k)
+          ~b:(reversed r.dt b ~rows:k ~cols:n)
+          ~init:(reversed r.out init ~rows:m ~cols:n)
+      in
+      cover "the dense tiles" (List.exists dense kernels);
+      cover "the skinny kernels"
+        (List.exists (String.starts_with ~prefix:"skinny") kernels);
+      cover "the integer kernel" (List.mem "contract_int" kernels);
+      equal ~msg:"the reversed call's bytes" string want got)
 
 let chooses =
   let order =
@@ -1238,13 +1695,16 @@ let contract =
       test "the plan declines or is right" every_quadruple;
       determinism;
       orders;
+      windows;
+      far_operands;
+      reversed_operands;
+      test "columns past 2^26 run in pieces" column_pieces;
     ]
 
 (* Calls *)
 
-(* A float16 product of few rows whose sum splits along k: the workspace and
-   the combine's launch. *)
-let split_case =
+(* A float16 product of few rows with an init, the most a launch holds. *)
+let init_case =
   {
     dt = Dt.Any Dt.Float16;
     out = Dt.Any Dt.Float16;
@@ -1263,7 +1723,7 @@ let split_case =
     values = Drawn;
   }
 
-let split_bytes = Dt.bytes Dt.Float16 (9 * 200)
+let init_bytes = Dt.bytes Dt.Float16 (9 * 200)
 
 (* The words the program allocated on either heap. *)
 let allocated () =
@@ -1289,17 +1749,17 @@ let warm_words t ~count run =
   ignore (S.run t run);
   int_of_float words
 
-(* No warm call allocates more words than one of [split_case], which has
-   every piece a launch holds: an init and a workspace. Its operands'
-   extents and layouts do not change the count. *)
+(* No warm call allocates more words than one of [init_case], which has
+   every slot a launch holds. Its operands' extents and layouts do not
+   change the count. *)
 let warm_calls_bounded =
   let most =
     lazy
       (let t = dev () in
-       let _, _, _, _, _, run = call t split_case in
+       let _, _, _, _, _, run = call t init_case in
        warm_words t ~count:8 run)
   in
-  prop ~count:30 "a warm call allocates no more than one with every piece"
+  prop ~count:30 "a warm call allocates no more than one with every slot"
     case (fun c ->
       let t = dev () in
       let _, _, _, _, _, run = call t c in
@@ -1319,7 +1779,7 @@ let[@inline never] dropped t c =
    collected, its destination's buffer goes. *)
 let calls_keep_nothing () =
   let t = dev () in
-  let weak = dropped t split_case in
+  let weak = dropped t init_case in
   for _ = 1 to 3 do
     Gc.full_major ()
   done;
@@ -1332,7 +1792,7 @@ let dead_buffers_refused () =
   let t = dev () in
   List.iter
     (fun (which, at) ->
-      let _, a, _, out, _, run = call t { split_case with init = No_init } in
+      let _, a, _, out, _, run = call t { init_case with init = No_init } in
       let o = S.arg_operand (match which with `Out -> out | `A -> a) in
       Rig.Claim.with_ ~read:[] ~donate:[ S.buffer o ] (fun claims ->
           ignore (Rig.Claim.consume claims ~why:"donated" (S.buffer o)));
@@ -1345,33 +1805,33 @@ let dead_buffers_refused () =
         (fun () -> S.run t run))
     [ (`Out, 1); (`A, 2) ]
 
-(* A run of [split_case] on its own operands, and its result. *)
-let split_run : (unit, S.arg * S.run) abstract = abstract "r"
+(* A run of [init_case] on its own operands, and its result. *)
+let init_run : (unit, S.arg * S.run) abstract = abstract "r"
 
-(* Two domains running [split_case] at once, each on its own operands or both
+(* Two domains running [init_case] at once, each on its own operands or both
    on one's, get the bits one call alone gets. *)
 let domains_call_alike =
   let want =
     lazy
       (let t = dev () in
-       let _, _, _, out, _, run = call t split_case in
+       let _, _, _, out, _, run = call t init_case in
        ignore (S.run t run);
-       bytes_of out split_bytes)
+       bytes_of out init_bytes)
   in
   let make () =
     ignore (Lazy.force want);
-    let _, _, _, out, _, run = call (dev ()) split_case in
+    let _, _, _, out, _, run = call (dev ()) init_case in
     (out, run)
   in
   let run (out, r) =
     ignore (S.run (dev ()) r);
-    bytes_of out split_bytes
+    bytes_of out init_bytes
   in
   stateful ~domains:2 ~count:4 "domains calling at once get one call's bits"
     [
-      command "make" (Gen.unit @-> makes split_run) (fun () -> ()) make;
+      command "make" (Gen.unit @-> makes init_run) (fun () -> ()) make;
       command "run"
-        (split_run ^-> returns string)
+        (init_run ^-> returns string)
         (fun () -> Lazy.force want)
         run;
     ]

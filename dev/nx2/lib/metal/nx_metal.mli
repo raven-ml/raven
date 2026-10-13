@@ -22,25 +22,29 @@
     float32 accumulator; and integers, whose operands, [init], result and
     accumulator are 8- to 64-bit integers, which wrap. [a] and [b] are of one
     dtype, and the layouts are ones {!Nx_kernel.Contract_view} groups. It
-    declines the other cases, an extent above [2{^32} - 1], an operand whose
-    elements in a batch element lie [2{^32}] elements or more apart, and a
-    float operand with neither axis of unit stride.
+    declines the other cases and a [k] above [2{^31} - 1]: over layouts it
+    groups, whether it declines depends on the dtypes and [k] alone.
 
     [contract_order ~rows ~columns] is [Lane] at 1 row, and [Chain]
     otherwise.
 
-    In chain order, a float sum runs on the matrix units, each output adding
-    its products in increasing k, 8 at a time in the GPU's matrix product,
-    over one range of k from [0], or ranges whose count the plan chooses
-    from the extents, their sums added in increasing k. In lane order, k is
-    cut into runs of 8, and strand [s] of 32 adds the products of the runs
-    [s], [s + 32], [s + 64], ... in increasing k, by fused multiply-adds;
-    the strands then add pairwise, [s] with [s + 1] for even [s], those sums
-    2 apart, then 4, 8 and 16. [init] then enters the sum, and the result
-    rounds once to [dst]'s dtype. The extents enter a float sum's bits
-    through the count of ranges alone, and through the limits past which it
-    declines. Another library's sum in the same order may differ in its
-    bits. Integer sums wrap, so every order gives them the same bits.
+    A float output's association depends on [k], the dtypes and the order
+    alone, never on the batch, rows, columns or layouts, so a window of a
+    result computed alone has the bits the whole result gives it. An
+    output's terms are numbered by their index along k, from [0]:
+    {ul
+    {- In chain order the terms are added in increasing number, eight at a
+       time in the GPU's 8 × 8 matrix product, from [+0]. A float16
+       product's operands enter the matrix product as float16, the other
+       dtypes' as float32.}
+    {- In lane order, the terms are cut into runs of 8, and strand [s] of
+       32 adds, from [+0], the terms of the runs [s], [s + 32], [s + 64],
+       ... in increasing number, by fused multiply-adds; the strands then add
+       pairwise, [s] with [s + 1] for even [s], those sums 2 apart, then 4,
+       8 and 16.}}
+    [init] then enters the sum, and the result rounds once to [dst]'s
+    dtype. Another library's sum in the same order may differ in its bits.
+    Integer sums wrap, so every order gives them the same bits.
 
     Float32 and bfloat16 subnormal operands read as a zero of their sign, and
     float32 subnormal products, sums and results store as a zero of their

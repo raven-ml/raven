@@ -19,10 +19,12 @@ type instance =
   | Large of dtype * order
   | Small of dtype
   | Wide of dtype * order
+  | Narrow of dtype * order
+  | Short of dtype * order
   | Checked of dtype
+  | General of dtype
   | Int8 of order
-  | Skinny of dtype * bool * int (* b stored [n][k]; rows a threadgroup *)
-  | Combine
+  | Skinny of dtype * bool * int (* b read along k; rows a threadgroup *)
   | Int
 
 let nn = { a_t = false; b_t = false }
@@ -60,8 +62,35 @@ let kernels =
     ("contract_bf16_wnt", Wide (Bf16, nt));
     ("contract_bf16_wtn", Wide (Bf16, tn));
     ("contract_bf16_wtt", Wide (Bf16, tt));
+    ("contract_f32_vnn", Narrow (F32, nn));
+    ("contract_f32_vnt", Narrow (F32, nt));
+    ("contract_f32_vtn", Narrow (F32, tn));
+    ("contract_f32_vtt", Narrow (F32, tt));
+    ("contract_f16_vnn", Narrow (F16, nn));
+    ("contract_f16_vnt", Narrow (F16, nt));
+    ("contract_f16_vtn", Narrow (F16, tn));
+    ("contract_f16_vtt", Narrow (F16, tt));
+    ("contract_bf16_vnn", Narrow (Bf16, nn));
+    ("contract_bf16_vnt", Narrow (Bf16, nt));
+    ("contract_bf16_vtn", Narrow (Bf16, tn));
+    ("contract_bf16_vtt", Narrow (Bf16, tt));
+    ("contract_f32_rnn", Short (F32, nn));
+    ("contract_f32_rnt", Short (F32, nt));
+    ("contract_f32_rtn", Short (F32, tn));
+    ("contract_f32_rtt", Short (F32, tt));
+    ("contract_f16_rnn", Short (F16, nn));
+    ("contract_f16_rnt", Short (F16, nt));
+    ("contract_f16_rtn", Short (F16, tn));
+    ("contract_f16_rtt", Short (F16, tt));
+    ("contract_bf16_rnn", Short (Bf16, nn));
+    ("contract_bf16_rnt", Short (Bf16, nt));
+    ("contract_bf16_rtn", Short (Bf16, tn));
+    ("contract_bf16_rtt", Short (Bf16, tt));
     ("contract_f32_l", Checked F32);
     ("contract_bf16_l", Checked Bf16);
+    ("contract_f32_g", General F32);
+    ("contract_f16_g", General F16);
+    ("contract_bf16_g", General Bf16);
     ("contract_i8_nn", Int8 nn);
     ("contract_i8_nt", Int8 nt);
     ("contract_i8_tn", Int8 tn);
@@ -78,7 +107,6 @@ let kernels =
     ("skinny4_f16_t", Skinny (F16, true, 4));
     ("skinny4_bf16_n", Skinny (Bf16, false, 4));
     ("skinny4_bf16_t", Skinny (Bf16, true, 4));
-    ("contract_combine", Combine);
     ("contract_int", Int);
   |]
 
@@ -88,24 +116,28 @@ let kernels =
 let threads = 128
 
 (* The dense tiles, rows by columns: NX_METAL_LARGE, NX_METAL_SMALL, and
-   NX_METAL_WIDE_M by NX_METAL_WIDE_N. *)
+   NX_METAL_WIDE_M by NX_METAL_WIDE_N, narrow, NX_METAL_WIDE_M by
+   NX_METAL_NARROW_N, and short, NX_METAL_SHORT_M by NX_METAL_NARROW_N. *)
 let large = 64
 let small = 32
 let wide_m = 16
 let wide_n = 64
+let narrow_n = 32
+let short_m = 8
 
 (* The steps of k a dense tile stages: NX_METAL_BK_HALF, NX_METAL_BK and
    NX_METAL_BK_WIDE. *)
 let bk_half = 32
 let bk = 16
 let bk_wide = 32
+let bk_short = 64
 
-(* The columns of out a skinny threadgroup computes, b stored [n][k]
-   (NX_METAL_SKINNY_T) or [k][n] (NX_METAL_SKINNY_N). *)
+(* The columns of out a skinny threadgroup computes, b read along k
+   (NX_METAL_SKINNY_T) or along n (NX_METAL_SKINNY_N). *)
 let skinny_t = 4
 let skinny_n = 32
 
-(* NX_METAL_SKINNY_ROWS: the rows of a a skinny4 threadgroup sums. *)
+(* NX_METAL_SKINNY_ROWS: the rows a skinny4 threadgroup sums. *)
 let skinny_rows = 4
 
 (* The SIMD integer kernel's tile side and threads: NX_METAL_INT_TILE and
@@ -125,44 +157,30 @@ let no_init = 21
 (* Each struct's size and its fields' byte offsets. *)
 
 module Contract_params = struct
-  let size = 120
+  let size = 160
   let a = 0
   let b = 8
   let init = 16
   let out = 24
   let a_batch = 32
-  let b_batch = 40
-  let init_batch = 48
-  let a_m = 56
-  let a_k = 60
+  let a_m = 40
+  let a_k = 48
+  let b_batch = 56
   let b_k = 64
-  let b_n = 68
-  let init_m = 72
-  let init_n = 76
-  let batch = 80
-  let m = 84
-  let n = 88
-  let k = 92
-  let init_dtype = 96
-  let out_dtype = 100
-  let swizzle = 104
-  let dtype = 108
-  let acc = 112
-  let order = 116
-end
-
-module Combine_params = struct
-  let size = 64
-  let out = 0
-  let parts = 8
-  let init = 16
-  let init_batch = 24
-  let init_m = 32
-  let init_n = 36
-  let batch = 40
-  let m = 44
-  let n = 48
-  let split = 52
-  let init_dtype = 56
-  let out_dtype = 60
+  let b_n = 72
+  let init_batch = 80
+  let init_m = 88
+  let init_n = 96
+  let out_batch = 104
+  let out_m = 112
+  let batch = 120
+  let m = 124
+  let n = 128
+  let k = 132
+  let init_dtype = 136
+  let out_dtype = 140
+  let swizzle = 144
+  let dtype = 148
+  let acc = 152
+  let order = 156
 end

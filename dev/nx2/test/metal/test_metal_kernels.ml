@@ -39,12 +39,14 @@ let name = function
   | K.Large (d, o) -> "contract_" ^ dtype d ^ "_" ^ order o
   | Small d -> "contract_" ^ dtype d ^ "_s"
   | Wide (d, o) -> "contract_" ^ dtype d ^ "_w" ^ order o
+  | Narrow (d, o) -> "contract_" ^ dtype d ^ "_v" ^ order o
+  | Short (d, o) -> "contract_" ^ dtype d ^ "_r" ^ order o
   | Checked d -> "contract_" ^ dtype d ^ "_l"
+  | General d -> "contract_" ^ dtype d ^ "_g"
   | Int8 o -> "contract_i8_" ^ order o
   | Skinny (d, b_t, rows) ->
       "skinny" ^ (if rows = 1 then "" else string_of_int rows) ^ "_" ^ dtype d
       ^ "_" ^ side b_t
-  | Combine -> "contract_combine"
   | Int -> "contract_int"
 
 (* Tests *)
@@ -69,9 +71,12 @@ let constants () =
       ("small", K.small);
       ("wide_m", K.wide_m);
       ("wide_n", K.wide_n);
+      ("narrow_n", K.narrow_n);
+      ("short_m", K.short_m);
       ("bk_half", K.bk_half);
       ("bk", K.bk);
       ("bk_wide", K.bk_wide);
+      ("bk_short", K.bk_short);
       ("skinny_t", K.skinny_t);
       ("skinny_n", K.skinny_n);
       ("skinny_rows", K.skinny_rows);
@@ -109,26 +114,26 @@ let fields_tile () =
 
 let offsets () =
   let module C = K.Contract_params in
-  let module Q = K.Combine_params in
   equal
     (list (pair string int))
     (named (H.structs ()) @ named (H.fields ()))
     [
       ("nx_metal_contract", C.size);
-      ("nx_metal_combine", Q.size);
       ("nx_metal_contract.a", C.a);
       ("nx_metal_contract.b", C.b);
       ("nx_metal_contract.init", C.init);
       ("nx_metal_contract.out", C.out);
       ("nx_metal_contract.a_batch", C.a_batch);
-      ("nx_metal_contract.b_batch", C.b_batch);
-      ("nx_metal_contract.init_batch", C.init_batch);
       ("nx_metal_contract.a_m", C.a_m);
       ("nx_metal_contract.a_k", C.a_k);
+      ("nx_metal_contract.b_batch", C.b_batch);
       ("nx_metal_contract.b_k", C.b_k);
       ("nx_metal_contract.b_n", C.b_n);
+      ("nx_metal_contract.init_batch", C.init_batch);
       ("nx_metal_contract.init_m", C.init_m);
       ("nx_metal_contract.init_n", C.init_n);
+      ("nx_metal_contract.out_batch", C.out_batch);
+      ("nx_metal_contract.out_m", C.out_m);
       ("nx_metal_contract.batch", C.batch);
       ("nx_metal_contract.m", C.m);
       ("nx_metal_contract.n", C.n);
@@ -139,18 +144,6 @@ let offsets () =
       ("nx_metal_contract.dtype", C.dtype);
       ("nx_metal_contract.acc", C.acc);
       ("nx_metal_contract.order", C.order);
-      ("nx_metal_combine.out", Q.out);
-      ("nx_metal_combine.parts", Q.parts);
-      ("nx_metal_combine.init", Q.init);
-      ("nx_metal_combine.init_batch", Q.init_batch);
-      ("nx_metal_combine.init_m", Q.init_m);
-      ("nx_metal_combine.init_n", Q.init_n);
-      ("nx_metal_combine.batch", Q.batch);
-      ("nx_metal_combine.m", Q.m);
-      ("nx_metal_combine.n", Q.n);
-      ("nx_metal_combine.split", Q.split);
-      ("nx_metal_combine.init_dtype", Q.init_dtype);
-      ("nx_metal_combine.out_dtype", Q.out_dtype);
     ]
 
 (* Stamp *)

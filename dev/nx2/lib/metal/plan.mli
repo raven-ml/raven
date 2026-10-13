@@ -5,13 +5,15 @@
 
 (** A contraction's launches on Apple GPUs.
 
-    A call's launch is chosen from the contraction's dtypes, its view's
-    extents and strides, and its operands' alignment, never from the GPU's
-    size or clocks, so that a result's bits depend on its shape alone. *)
+    A call's launch is chosen from the contraction's dtypes, its order of
+    summation, its view's extents and strides, and its operands'
+    alignment, never from the GPU's size or clocks. Each output's
+    association depends on [k], the dtypes and the order alone, so that a
+    window of a result computed alone has the whole's bits. *)
 
 type launch
-(** The type for launches: a call's operands, kernels, geometry and
-    workspace, as {!choose} decided them. *)
+(** The type for launches: a call's operands, kernel and geometry, as
+    {!choose} decided them. *)
 
 (** The type for what a plan does with a call that does work or none. *)
 type verdict =
@@ -30,33 +32,34 @@ val choose :
   (verdict, Nx_array.answer) result
 (** [choose ~order ~batch ~contracting ~acc ~dst ~init a b] plans the
     contraction of [a] with [b], computed in [acc], into [dst], as
-    {!Nx_kernel.S.contract} takes it: a float product given lane order runs
-    on the skinny kernels, a threadgroup summing 1 row, or 4 where m is above
-    1, and one given chain order on the matrix units. It is [Error] of what
-    {!Nx_kernel.Contract_view.v} answers where the axes do not group, and
-    [Error Declined] where its kernels do not compute the call. The
-    operands' buffers are live. *)
+    {!Nx_kernel.S.contract} takes it: a float product given chain order runs
+    on the matrix units, and one given lane order on the skinny kernels, a
+    threadgroup summing 1 row, or 4 where m is above 1. It is [Error] of
+    what {!Nx_kernel.Contract_view.v} answers where the axes do not group,
+    and [Error Declined] where its kernels do not compute the call: a and b
+    of different dtypes, dtypes outside the float and integer families, or a
+    k above [2{^31} - 1]. The operands' buffers are live. *)
 
-val workspace : launch -> int
-(** [workspace l] is the bytes of workspace [l] addresses. *)
+val pieces : launch -> int
+(** [pieces l] is the number of launches [l] runs: one, unless its batch or
+    rows pass [2{^30}] or its columns [2{^26}]. *)
 
 val sequences : int
 (** [sequences] bounds {!sequence}. *)
 
 val sequence : launch -> int
-(** [sequence l] is [l]'s kernels and slots as a key below {!sequences}. *)
+(** [sequence l] is [l]'s kernel and slots as a key below {!sequences}. *)
 
 val parts : int -> Rig.Image.t -> Rig.Submission.part array
-(** [parts key i] is the launches of the sequence [key] of [i]'s kernels,
-    their refs into the slots {!buffers} fills.
+(** [parts key i] is the launch of the sequence [key] of [i]'s kernels, its
+    refs into the slots {!buffers} fills.
 
     Raises [Invalid_argument] if [key] is not below {!sequences}. *)
 
-val write : launch -> Rig.Submission.Run.t -> Rig.Submission.t -> unit
-(** [write l r s] stores the geometry and parameters of [l] into [r]'s blocks
-    of [s], a submission of [parts (sequence l)]. *)
+val write : launch -> piece:int -> Rig.Submission.Run.t -> Rig.Submission.t -> unit
+(** [write l ~piece r s] stores the geometry and parameters of [l]'s piece
+    [piece], below {!pieces}, into [r]'s block of [s], a submission of
+    [parts (sequence l)]. *)
 
-val buffers : launch -> workspace:Rig.Buffer.t -> Rig.Buffer.t array
-(** [buffers l ~workspace] is the buffers of a submit of [l], in slot order,
-    [workspace] among them where [workspace l > 0]. [workspace] must hold
-    [workspace l] bytes. *)
+val buffers : launch -> Rig.Buffer.t array
+(** [buffers l] is the buffers of a submit of [l], in slot order. *)

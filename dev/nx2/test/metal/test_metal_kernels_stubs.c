@@ -34,8 +34,11 @@ typedef struct {
 static const fact constants[] = {
     {"threads", NX_METAL_THREADS, 0},     {"large", NX_METAL_LARGE, 0},
     {"small", NX_METAL_SMALL, 0},         {"wide_m", NX_METAL_WIDE_M, 0},
-    {"wide_n", NX_METAL_WIDE_N, 0},       {"bk_half", NX_METAL_BK_HALF, 0},
+    {"wide_n", NX_METAL_WIDE_N, 0},       {"narrow_n", NX_METAL_NARROW_N, 0},
+    {"short_m", NX_METAL_SHORT_M, 0},
+    {"bk_half", NX_METAL_BK_HALF, 0},
     {"bk", NX_METAL_BK, 0},               {"bk_wide", NX_METAL_BK_WIDE, 0},
+    {"bk_short", NX_METAL_BK_SHORT, 0},
     {"skinny_t", NX_METAL_SKINNY_T, 0},   {"skinny_n", NX_METAL_SKINNY_N, 0},
     {"skinny_rows", NX_METAL_SKINNY_ROWS, 0},
     {"int_tile", NX_METAL_INT_TILE, 0},   {"int_threads", NX_METAL_INT_THREADS, 0},
@@ -49,26 +52,21 @@ static const fact constants[] = {
 static const fact fields[] = {
     F(nx_metal_contract, a),          F(nx_metal_contract, b),
     F(nx_metal_contract, init),       F(nx_metal_contract, out),
-    F(nx_metal_contract, a_batch),    F(nx_metal_contract, b_batch),
-    F(nx_metal_contract, init_batch), F(nx_metal_contract, a_m),
-    F(nx_metal_contract, a_k),        F(nx_metal_contract, b_k),
-    F(nx_metal_contract, b_n),        F(nx_metal_contract, init_m),
-    F(nx_metal_contract, init_n),     F(nx_metal_contract, batch),
+    F(nx_metal_contract, a_batch),    F(nx_metal_contract, a_m),
+    F(nx_metal_contract, a_k),        F(nx_metal_contract, b_batch),
+    F(nx_metal_contract, b_k),        F(nx_metal_contract, b_n),
+    F(nx_metal_contract, init_batch), F(nx_metal_contract, init_m),
+    F(nx_metal_contract, init_n),     F(nx_metal_contract, out_batch),
+    F(nx_metal_contract, out_m),      F(nx_metal_contract, batch),
     F(nx_metal_contract, m),          F(nx_metal_contract, n),
     F(nx_metal_contract, k),          F(nx_metal_contract, init_dtype),
     F(nx_metal_contract, out_dtype),  F(nx_metal_contract, swizzle),
     F(nx_metal_contract, dtype),      F(nx_metal_contract, acc),
-    F(nx_metal_contract, order),      F(nx_metal_combine, out),
-    F(nx_metal_combine, parts),       F(nx_metal_combine, init),
-    F(nx_metal_combine, init_batch),  F(nx_metal_combine, init_m),
-    F(nx_metal_combine, init_n),      F(nx_metal_combine, batch),
-    F(nx_metal_combine, m),           F(nx_metal_combine, n),
-    F(nx_metal_combine, split),       F(nx_metal_combine, init_dtype),
-    F(nx_metal_combine, out_dtype)};
+    F(nx_metal_contract, order)};
 
 #define S(s) {#s, sizeof(s), 0}
 
-static const fact structs[] = {S(nx_metal_contract), S(nx_metal_combine)};
+static const fact structs[] = {S(nx_metal_contract)};
 
 #define COUNT(xs) (sizeof xs / sizeof xs[0])
 
