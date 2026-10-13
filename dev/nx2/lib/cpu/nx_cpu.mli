@@ -86,8 +86,8 @@
       each column of [b], [op a] the triangle read, conjugate-transposed
       under [adjoint].
     - [eigh]: with [g = γ(16n)], [‖a - v diag w vᴴ‖_F <= g ‖a‖_F] and
-      [‖vᴴv - I‖_F <= g]; each eigenvalue within [g ‖a‖₂] of the exact one.
-      [w] alone has the bits it has with [v]. *)
+      [‖vᴴv - I‖_F <= g]; each eigenvalue within [g ‖a‖₂] of the exact one,
+      with [v] or without. *)
 
 include Nx_kernel.S
 

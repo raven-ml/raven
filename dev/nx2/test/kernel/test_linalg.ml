@@ -590,83 +590,121 @@ let law_qr (b : Support.backend) c =
       check_worst w
 
 (* a v = v diag w with ‖a − v diag w vᴴ‖_F <= γ(16n) ‖a‖_F and
-   ‖vᴴv − I‖_F <= γ(16n); w ascending and real; the values alone the bits
-   of the vectors' call. *)
+   ‖vᴴv − I‖_F <= γ(16n), for the [count] matrices of order [n] of [a]; w
+   ascending and real. *)
+let check_eigh dt ~count ~n (a : Complex.t array) (w : Complex.t array)
+    (v : Complex.t array) =
+  let g = gamma dt (16 * n) in
+  let worst = { ratio = 0.; where = "" } in
+  for t = 0 to count - 1 do
+    let wt j = w.((t * n) + j) in
+    for j = 0 to n - 1 do
+      equal ~msg:"w is real" int64 0L (Int64.bits_of_float (wt j).im);
+      if j > 0 && not ((wt (j - 1)).re <= (wt j).re) then
+        failf "matrix %d: w not ascending at %d" t j
+    done;
+    let res = ref 0. and norm = ref 0. and orth = ref 0. in
+    for i = 0 to n - 1 do
+      for j = 0 to n - 1 do
+        let aij = at a ~rows:n ~cols:n t i j in
+        let s = sum () and o = sum () in
+        add s.re aij.re;
+        add s.im aij.im;
+        if i = j then add o.re (-1.);
+        for p = 0 to n - 1 do
+          let vip = at v ~rows:n ~cols:n t i p in
+          add_cprod ~conj:true s
+            (Complex.mul vip { Complex.re = -.(wt p).re; im = 0. })
+            (at v ~rows:n ~cols:n t j p);
+          add_cprod ~conj:true o
+            (at v ~rows:n ~cols:n t p i)
+            (at v ~rows:n ~cols:n t p j)
+        done;
+        res := !res +. Complex.norm2 (total s);
+        orth := !orth +. Complex.norm2 (total o);
+        norm := !norm +. Complex.norm2 aij
+      done
+    done;
+    worse worst ~bound:(g *. sqrt !norm) ~residual:(sqrt !res) (fun () ->
+        Printf.sprintf "matrix %d: a - v diag w vᴴ" t);
+    worse worst ~bound:g ~residual:(sqrt !orth) (fun () ->
+        Printf.sprintf "matrix %d: vᴴv - I" t)
+  done;
+  check_worst worst
+
+(* eigh's results meet check_eigh's relations, and the values alone lie
+   within 2 γ(16n) ‖a‖_F of the vectors' call's, each within γ(16n) ‖a‖₂ of
+   the exact ones. *)
 let law_eigh (b : Support.backend) c =
   let x = laid_out c.how (eigh_operand c) in
   match (run b (Eigh true) [| x |], run b (Eigh false) [| x |]) with
-  | None, _ | _, None -> ()
   | Some y, Some y' ->
-      equal ~msg:"the values alone" same_bits (bits y.(0)) (bits y'.(0));
-      let a = values x and w = values y.(0) and v = values y.(1) and n = c.n in
-      let g = gamma c.dt (16 * n) in
+      let a = values x and w = values y.(0) and n = c.n in
+      check_eigh c.dt ~count:(count c) ~n a w (values y.(1));
+      let w' = values y'.(0) and g = gamma c.dt (16 * n) in
       let worst = { ratio = 0.; where = "" } in
       for t = 0 to count c - 1 do
-        let wt j = w.((t * n) + j) in
+        let norm = ref 0. in
+        for k = 0 to (n * n) - 1 do
+          norm := !norm +. Complex.norm2 a.((t * n * n) + k)
+        done;
         for j = 0 to n - 1 do
-          equal ~msg:"w is real" int64 0L (Int64.bits_of_float (wt j).im);
-          if j > 0 && not ((wt (j - 1)).re <= (wt j).re) then
-            failf "matrix %d: w not ascending at %d" t j
-        done;
-        let res = ref 0. and norm = ref 0. and orth = ref 0. in
-        for i = 0 to n - 1 do
-          for j = 0 to n - 1 do
-            let aij = at a ~rows:n ~cols:n t i j in
-            let s = sum () and o = sum () in
-            add s.re aij.re;
-            add s.im aij.im;
-            if i = j then add o.re (-1.);
-            for p = 0 to n - 1 do
-              let vip = at v ~rows:n ~cols:n t i p in
-              add_cprod ~conj:true s
-                (Complex.mul vip { Complex.re = -.(wt p).re; im = 0. })
-                (at v ~rows:n ~cols:n t j p);
-              add_cprod ~conj:true o
-                (at v ~rows:n ~cols:n t p i)
-                (at v ~rows:n ~cols:n t p j)
-            done;
-            res := !res +. Complex.norm2 (total s);
-            orth := !orth +. Complex.norm2 (total o);
-            norm := !norm +. Complex.norm2 aij
-          done
-        done;
-        worse worst ~bound:(g *. sqrt !norm) ~residual:(sqrt !res) (fun () ->
-            Printf.sprintf "matrix %d: a - v diag w vᴴ" t);
-        worse worst ~bound:g ~residual:(sqrt !orth) (fun () ->
-            Printf.sprintf "matrix %d: vᴴv - I" t)
+          let k = (t * n) + j in
+          worse worst ~bound:(2. *. g *. sqrt !norm)
+            ~residual:(Float.abs (w.(k).re -. w'.(k).re)) (fun () ->
+              Printf.sprintf "matrix %d: eigenvalue %d alone" t j)
+        done
       done;
       check_worst worst
+  | _ -> ()
 
-(* Of a = H diag λ H, H = I − 2 u uᵀ / uᵀu, the eigenvalues are λ's within
-   γ(16n) max |λ|, ascending; λ draws repeats. *)
+(* Of a = H diag λ H, H the product of the reflectors I − 2 u uᵀ / uᵀu of
+   u on rows [0, k) and on rows [k, n), the eigenvalues are λ's within
+   γ(16n) max |λ|, ascending, with and without the vectors, and the
+   vectors meet their relations; λ draws repeats, which a merge of divide
+   and conquer deflates, and a's two blocks are uncoupled. *)
 let law_eigh_spectrum (b : Support.backend) c =
   let n = c.n and r = Random.State.make [| c.seed |] in
+  let k = c.seed mod (n + 1) in
+  let block i = if i < k then 0 else 1 in
   let l = Array.init n (fun _ -> Float.round (8. *. uniform r) /. 8.) in
   let u = Array.init n (fun _ -> uniform r) in
-  let uu = Array.fold_left (fun s x -> s +. (x *. x)) 0. u in
-  let lu = ref 0. in
-  Array.iteri (fun k x -> lu := !lu +. (l.(k) *. x *. x)) u;
+  let uu = [| 0.; 0. |] and lu = [| 0.; 0. |] in
+  Array.iteri
+    (fun i x ->
+      uu.(block i) <- uu.(block i) +. (x *. x);
+      lu.(block i) <- lu.(block i) +. (l.(i) *. x *. x))
+    u;
   let a =
-    Array.init (n * n) (fun k ->
-        let i = k / n and j = k mod n in
-        let h = u.(i) *. u.(j) /. uu in
-        let d = if i = j then l.(i) else 0. in
-        { Complex.re = d -. (2. *. h *. (l.(i) +. l.(j))) +. (4. *. h *. !lu /. uu); im = 0. })
+    Array.init (n * n) (fun p ->
+        let i = p / n and j = p mod n in
+        if block i <> block j then Complex.zero
+        else
+          let q = block i in
+          let h = u.(i) *. u.(j) /. uu.(q) in
+          let d = if i = j then l.(i) else 0. in
+          let re = d -. (2. *. h *. (l.(i) +. l.(j))) +. (4. *. h *. lu.(q) /. uu.(q)) in
+          { Complex.re; im = 0. })
   in
-  match run b (Eigh false) [| of_values c.dt [| n; n |] a |] with
-  | None -> ()
-  | Some y ->
-      let w = values y.(0) in
-      Array.sort compare l;
-      let big = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. l in
-      let g = gamma c.dt (16 * n) *. big in
-      let worst = { ratio = 0.; where = "" } in
-      Array.iteri
-        (fun j x ->
-          worse worst ~bound:g ~residual:(Float.abs (w.(j).re -. x)) (fun () ->
-              Printf.sprintf "eigenvalue %d: %h, not %h" j w.(j).re x))
-        l;
-      check_worst worst
+  let x = of_values c.dt [| n; n |] a in
+  Array.sort compare l;
+  let big = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. l in
+  let g = gamma c.dt (16 * n) *. big in
+  let spectrum ~msg w =
+    let worst = { ratio = 0.; where = "" } in
+    Array.iteri
+      (fun j x ->
+        worse worst ~bound:g ~residual:(Float.abs (w.(j).Complex.re -. x))
+          (fun () -> Printf.sprintf "%s: eigenvalue %d: %h, not %h" msg j w.(j).re x))
+      l;
+    check_worst worst
+  in
+  match (run b (Eigh false) [| x |], run b (Eigh true) [| x |]) with
+  | Some y, Some y' ->
+      spectrum ~msg:"alone" (values y.(0));
+      spectrum ~msg:"with vectors" (values y'.(0));
+      check_eigh c.dt ~count:1 ~n (values x) (values y'.(0)) (values y'.(1))
+  | _ -> ()
 
 (* lu's pivot: a scan of the column from the diagonal down that
    moves to each later row of greater magnitude, |re| + |im| on complex

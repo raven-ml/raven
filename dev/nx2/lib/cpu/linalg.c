@@ -251,14 +251,15 @@ static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
 /* The elements of scratch a matrix of [c] takes besides its products':
    a solve's triangle; QR's factored matrix, its τ, a block's V and T,
    two products of a block and a row; eigh's reduced matrix, its τ, a
-   panel's W or a block's V, T, two products of a block, then T's
-   diagonals, rotations and Z, as reals (linalg_body.h). */
+   panel's W or a block's V, T, two products of a block, then as reals
+   T's diagonals, Z and divide and conquer's work, and its indices
+   (linalg_body.h). */
 static int64_t scratch(const call *c) {
   int64_t m = c->m, n = c->n, big = m > n ? m : n, k = m < n ? m : n;
   switch (c->routine) {
     case SOLVE_TRIANGULAR: return n * n;
     case QR: return m * n + k + (m + NB + 2 * big + 1) * NB;
-    case EIGH: return 2 * n * n + 5 * n + (3 * n + NB) * NB;
+    case EIGH: return 4 * n * n + 16 * n + 2 + (3 * n + NB) * NB;
     default: return 0;
   }
 }
