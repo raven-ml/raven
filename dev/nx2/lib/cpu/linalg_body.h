@@ -3628,6 +3628,23 @@ static int F(eig)(const call *c, int64_t b, T *x, arena *s) {
        !F(back)(&M(a, lo + 1, lo), 1, n, AS_STORED, tau + lo, hi - lo,
                 hi - lo, n, v + (lo + 1) * n, n, ws, s)))
     return 0;
+  /* Each column scaled to a largest |re| + |im| of 1, a pair's two
+     together, as xTREVC3 leaves the back-transformed vectors, so that
+     the balancing's scales cannot overflow them. */
+  for (int64_t j = 0; j < n; j++) {
+    int pair = !CPLX && wi[j] > 0;
+    R emax = 0;
+    for (int64_t i = 0; i < n; i++) {
+      R e = F(magnitude)(v[i * n + j]);
+      if (pair) e += F(magnitude)(v[i * n + j + 1]);
+      emax = e > emax ? e : emax;
+    }
+    for (int64_t i = 0; emax > 0 && i < n; i++) {
+      v[i * n + j] *= 1 / emax;
+      if (pair) v[i * n + j + 1] *= 1 / emax;
+    }
+    j += pair;
+  }
   /* The balancing undone (xGEBAK): rows scaled, then swapped back. */
   for (int64_t i = lo; i <= hi && lo < hi; i++)
     for (int64_t j = 0; j < n; j++) v[i * n + j] *= scale[i];

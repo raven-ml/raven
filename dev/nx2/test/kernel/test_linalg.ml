@@ -1291,6 +1291,50 @@ let test_eig_extremes (b : Support.backend) () =
   case (D.Any D.Float64) [| 1.; 1e300; 1e-300; 1. |] [ 0.; 2. ];
   case (D.Any D.Complex128) [| 1.; 1e300; 1e-300; 1. |] [ 0.; 2. ]
 
+(* A graded cycle, which xTREVC3's normalisation of each back-transformed
+   column keeps finite: a = D b D⁻¹ of order 30, b bidiagonal with
+   b_ii = 1 + i 2^-20 and b_(i, i+1) = 1, closed by b_(29, 0) = 1e-8, and
+   D = diag (2^(-30 i)). Every result is a number and each column of v
+   has a norm within g of 1. *)
+let test_eig_graded_cycle (b : Support.backend) () =
+  let n = 30 in
+  let bm i j =
+    if i = j then 1. +. Float.ldexp (float_of_int i) (-20)
+    else if j = i + 1 then 1.
+    else if i = n - 1 && j = 0 then 1e-8
+    else 0.
+  in
+  let a =
+    Array.init (n * n) (fun p ->
+        let i = p / n and j = p mod n in
+        { Complex.re = Float.ldexp (bm i j) (30 * (j - i)); im = 0. })
+  in
+  List.iter
+    (fun dt ->
+      let x = of_values dt [| n; n |] a in
+      match run b (Eig true) [| x |] with
+      | None -> ()
+      | Some y ->
+          let w = values y.(0) and v = values y.(1) in
+          let msg = Format.asprintf "%a" pp_dtype dt in
+          equal ~msg:(msg ^ ": numbers in w") int (2 * n) (numbers (D.Any D.Complex128) w);
+          equal ~msg:(msg ^ ": numbers in v") int (2 * n * n)
+            (numbers (D.Any D.Complex128) v);
+          let g = eig_bound dt n and worst = { ratio = 0.; where = "" } in
+          for j = 0 to n - 1 do
+            let len = dd () in
+            for i = 0 to n - 1 do
+              let z = v.((i * n) + j) in
+              add_prod len z.re z.re;
+              add_prod len z.im z.im
+            done;
+            worse worst ~bound:g
+              ~residual:(Float.abs (sqrt (len.hi +. len.lo) -. 1.))
+              (fun () -> Printf.sprintf "%s: ‖v_%d‖ - 1" msg j)
+          done;
+          check_worst worst)
+    [ D.Any D.Float64; D.Any D.Complex128 ]
+
 (* The Jacobi matrix whose eigenvalues are [l] and whose eigenvectors'
    first components are [q], ‖q‖ = 1, by Lanczos on diag l from q,
    reorthogonalised twice against every earlier vector: its diagonal and
@@ -1991,6 +2035,8 @@ let laws (b : Support.backend) =
           b.around (test_eig_balanced b));
       test "eig balances before it scales" (fun () ->
           b.around (test_eig_extremes b));
+      test "eig keeps a graded cycle's vectors finite" (fun () ->
+          b.around (test_eig_graded_cycle b));
       test "svd keeps Reference-LAPACK issue 255's bidiagonal's vectors"
         (fun () -> b.around (test_svd_deflation b));
       test "routines take floats and complex numbers alone" (fun () ->
