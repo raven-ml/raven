@@ -312,15 +312,18 @@ value caml_rig_amd_hdp(value v_self, value v_reg, value v_delta) {
   if (d == NULL) return Val_true;
   for (int i = 0; i < RIG_AMD_HDPS; i++) {
     struct rig_amd_hdp *h = &d->hdps[i];
-    if (h->reg == reg) {
+    volatile uint32_t *r = atomic_load(&h->reg);
+    if (r == reg) {
       atomic_fetch_add_explicit(&h->count, Int_val(v_delta),
                                 memory_order_acq_rel);
       return Val_true;
     }
-    if (free == NULL && h->reg == NULL) free = h;
+    /* The first entry is the GPU's own register for good. */
+    if (free == NULL && (r == NULL || (i > 0 && atomic_load(&h->count) == 0)))
+      free = h;
   }
   if (free == NULL) return Val_false;
-  free->reg = reg;
+  atomic_store_explicit(&free->reg, reg, memory_order_release);
   atomic_store_explicit(&free->count, Int_val(v_delta), memory_order_release);
   return Val_true;
 }

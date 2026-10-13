@@ -238,9 +238,11 @@ struct rig_amd_segment {
 
 /* A register whose store flushes a GPU's host data path, and the regions
    that need it: the device's BAR allocations, or its views of another
-   device's. */
+   device's. An entry for another device's register whose count fell to 0
+   serves another register: its register is stored before its count, and a
+   submission reads the count first. */
 struct rig_amd_hdp {
-  volatile uint32_t *reg;
+  _Atomic(volatile uint32_t *) reg;
   _Atomic int count;
 };
 

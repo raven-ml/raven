@@ -728,9 +728,11 @@ static void hand_over(struct submission *s) {
   struct rig_amd *d = s->d;
   for (int i = 0; i < RIG_AMD_HDPS; i++)
     if (atomic_load_explicit(&d->hdps[i].count, memory_order_acquire) > 0) {
+      volatile uint32_t *reg =
+          atomic_load_explicit(&d->hdps[i].reg, memory_order_acquire);
       rig_amd_barrier();
-      d->hdps[i].reg[0] = 0;
-      (void)d->hdps[i].reg[0];
+      reg[0] = 0;
+      (void)reg[0];
     }
   rig_amd_barrier();
   for (int q = 0; q < RIG_AMD_QUEUES; q++) {
