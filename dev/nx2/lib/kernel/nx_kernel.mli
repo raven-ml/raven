@@ -132,10 +132,14 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
     [i + 2] for [i] below 2, then lane 0 takes lane 1. The blocks are combined
     by a binary tree whose left part holds the largest power of two of blocks
     below their count, each part combined the same way; then [init] is added.
+    *)
 
-    A contraction's own order is chain order where its view's [Row] and
-    [Column] extents ({!Contract_view.extent}) are both above 4 and multiply
-    to at least 64, and lane order otherwise. *)
+type order =
+  | Chain  (** {e Chain order}. *)
+  | Lane  (** {e Lane order}. *)
+(** The type for the order of summation a contraction is asked for. A library
+    that states it follows {!section-orders} adds in it; another states the
+    association it computes for each. *)
 
 (** {1:scatters Scatters} *)
 
@@ -492,7 +496,15 @@ module type S = sig
 
   (** {1:contraction Contraction} *)
 
+  val contract_order : rows:int -> columns:int -> order
+  (** [contract_order ~rows ~columns] is the order these kernels choose for a
+      contraction of [rows] rows, the product of [a]'s extents along the axes
+      no pair names, by [columns] columns, [b]'s likewise. nx asks it once of
+      the whole contraction, whatever part of it each call computes, so that
+      every part sums in the whole's order. *)
+
   val contract :
+    order:order ->
     batch:(int * int) array ->
     contracting:(int * int) array ->
     acc:Nx_array.Dtype.any ->
@@ -501,15 +513,24 @@ module type S = sig
     ('a, 'b) a ->
     ('c, 'e) a ->
     answer
-  (** [contract ~batch ~contracting ~acc ~dst ~init a b] stores into [dst] the
-      contraction of [a] with [b], of the shape {!Shape.contract} gives:
+  (** [contract ~order ~batch ~contracting ~acc ~dst ~init a b] stores into
+      [dst] the contraction of [a] with [b], of the shape {!Shape.contract}
+      gives:
       {[
       dst[B, I, J] = init[B, I, J] + Σ_K a[B, I, K] · b[B, K, J]
       ]}
       computed in [acc], a dtype {!accumulates} takes, and rounded once to
       [dst]'s dtype. Without [init] the sum starts from [+0]. Integers wrap in
       [acc]. A float [acc] errs by at most twice its unit roundoff per
-      addition, barring underflow, in the order {!section-orders} states. *)
+      addition, barring underflow.
+
+      A float sum's association, which fixes its bits, is a function of
+      [order], the dtypes, and the factors its library names as depending on
+      the extents, such as a count of splits of the contracted axes; the
+      kernels of one order never compute a call given the other. A library
+      that states it follows {!section-orders} adds each output's products in
+      [order], whatever the extents. Another states the association it
+      computes for each order. *)
 
   (** {1:fft Fourier transforms}
 

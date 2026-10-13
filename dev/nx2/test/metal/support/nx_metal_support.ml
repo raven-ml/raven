@@ -297,7 +297,7 @@ let same_dtype : type v s. (v, s) Nx_array.t -> Nx_array.any -> (v, s) Nx_array.
 let batch_pairs = [| (0, 0) |]
 let contracting_pairs = [| (2, 1) |]
 
-let plan_contract ?init ?(acc = float32) t (batch, m, n, k) ~a ~b ~out =
+let plan_contract ?init ?(acc = float32) ~order t (batch, m, n, k) ~a ~b ~out =
   let (Nx_array.Any y) = array out [| batch; m; n |] in
   let (Nx_array.Any x) = array a [| batch; m; k |] in
   let (Nx_array.Any w) = array b [| batch; k; n |] in
@@ -306,7 +306,7 @@ let plan_contract ?init ?(acc = float32) t (batch, m, n, k) ~a ~b ~out =
     {
       contract =
         (fun () ->
-          Nx_metal.contract ~batch:batch_pairs
+          Nx_metal.contract ~order ~batch:batch_pairs
             ~contracting:contracting_pairs ~acc ~dst:y ~init:i x w);
       arrays =
         Nx_array.Any y :: Nx_array.Any x :: Nx_array.Any w

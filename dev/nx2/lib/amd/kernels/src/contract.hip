@@ -5,7 +5,7 @@
 
 /* Contract: y[z, i, j] = init[z, i, j] + sum_k a[z, i, k] * b[z, j, k]
    (kernels.h's contract_params), four bodies, each its own association,
-   fixed by the dtypes and the shape and never by a layout:
+   fixed by the dtypes, the shape and the order given, never by a layout:
 
    - wmma: bfloat16 or float16 operands summed in float32, int8 in int32,
      on gfx12's WMMA 16 x 16 x 16. Each output sums its k in steps of 16
@@ -17,16 +17,17 @@
        k --8 k a lane--> fragments --WMMA-->
        accumulators --> combine (splits) --> + init --> y
 
-   - simt (m > 16): float32 or float64 sums by fma, integer sums wrapping
-     in 64 bits (a 32-bit accumulator's wrap to 32 bits at the store: the
-     same sum modulo 2^32); each output summed in increasing k.
-   - skinny (m <= 16): lane l of 32 sums the runs k0 + 128 t + 4 l + u,
-     u < 4, of its range in increasing k, and the 32 lane sums combine by
-     the balanced tree (l, l + 16), then (l, l + 8), (l, l + 4), (l, l + 2),
-     (l, l + 1).
-   - lane (float sums with a row or column extent of at most 4, or fewer
-     than 64 rows times columns): Nx_kernel's lane order, the same
-     bits as nx.cpu's; it never splits.
+   - simt (float sums a call gives chain order, and integer sums past 16
+     rows): float32 or float64 sums by fma, integer sums wrapping in 64
+     bits (a 32-bit accumulator's wrap to 32 bits at the store: the same
+     sum modulo 2^32); each output summed in increasing k.
+   - skinny (integer sums of 16 rows or fewer): lane l of 32 sums the runs
+     k0 + 128 t + 4 l + u, u < 4, of its range in increasing k, and the 32
+     lane sums combine by the balanced tree (l, l + 16), then (l, l + 8),
+     (l, l + 4), (l, l + 2), (l, l + 1).
+   - lane (float sums a call gives lane order, at any extents):
+     Nx_kernel's lane order, the same bits as nx.cpu's; it never
+     splits.
 
    In the others, [splits] ranges of k (whole k-tiles for wmma and simt)
    combine in range order (combine.h). In each, init then enters the sum,
@@ -489,25 +490,32 @@ DEVICE void wmma_contract(const contract_params &p) {
 
 /* The SIMT kernels */
 
-/* A BM x BM tile of outputs per workgroup of 256 work-items (16 x 16),
-   k-tiles of 64 bytes of k (16 floats), each work-item TM x TM outputs in
-   two halves BM / 2 apart each way. Both operands are stored k-major in the
-   local data share, the next k-tile loaded into registers while the
-   current one computes. A work-item loads E = BM * BK / 256 elements of
-   each operand per k-tile: E consecutive k of a row, or E consecutive rows
-   of a k, whichever axis is contiguous, as vectors where it can. */
-template <typename T, int BM, int BK> struct Simt_operand {
-  static constexpr int E = BM * BK / 256;
+/* A BM x BN tile of outputs per workgroup of 256 work-items, TY rows of
+   them by TX, each TM x TN outputs in two halves BM / 2 and BN / 2 apart:
+   16 x 16 on a square tile, 4 x 64 on a short one (16 or 8 rows), which
+   keeps a sum of few rows from computing rows past m. k-tiles of 64 bytes
+   of k (16 floats). Both operands are stored k-major in the local data
+   share, the next k-tile loaded into registers while the current one
+   computes. Per k-tile, the R * BK elements of an operand of R rows are
+   loaded E at a time, E consecutive k of a row or E consecutive rows of a
+   k, whichever axis is contiguous, as vectors where it can: E = R * BK /
+   256, or 1 by the first R * BK work-items where a tile holds fewer
+   elements than a workgroup has work-items. */
+template <typename T, int R, int BK> struct Simt_operand {
+  static constexpr int E = R * BK >= 256 ? R * BK / 256 : 1;
+  static constexpr int LOADERS = R * BK / E;
+  static_assert(E <= BK && E <= R, "a work-item loads a run of a row or a k");
   const char *base;
   int64_t s_row, s_k;
   int rows, k, r0;
   bool rows_contiguous, vectors;
 
   DEVICE void load(T (&v)[E], int64_t k0, int tid) const {
-    const int row = rows_contiguous ? r0 + tid % (BM / E) * E : r0 + tid / (BK / E);
+    if (tid >= LOADERS) return;
+    const int row = rows_contiguous ? r0 + tid % (R / E) * E : r0 + tid / (BK / E);
     const int64_t kk =
-        rows_contiguous ? k0 + tid / (BM / E) : k0 + tid % (BK / E) * E;
-    if (vectors &&
+        rows_contiguous ? k0 + tid / (R / E) : k0 + tid % (BK / E) * E;
+    if (E * sizeof(T) % 8 == 0 && vectors &&
         (rows_contiguous ? kk < k && row + E - 1 < rows : row < rows && kk + E - 1 < k)) {
       const char *src = base + (row * s_row + kk * s_k) * sizeof(T);
 #pragma unroll
@@ -524,11 +532,12 @@ template <typename T, int BM, int BK> struct Simt_operand {
   }
 
   /* The loaded elements into the k-major tile [s]. */
-  DEVICE void stash(T (*s)[BM], const T (&v)[E], int tid) const {
+  DEVICE void stash(T (*s)[R], const T (&v)[E], int tid) const {
+    if (tid >= LOADERS) return;
 #pragma unroll
     for (int e = 0; e < E; e++)
       if (rows_contiguous)
-        s[tid / (BM / E)][tid % (BM / E) * E + e] = v[e];
+        s[tid / (R / E)][tid % (R / E) * E + e] = v[e];
       else
         s[tid % (BK / E) * E + e][tid / (BK / E)] = v[e];
   }
@@ -538,20 +547,24 @@ DEVICE float fma_(float a, float b, float c) { return __builtin_fmaf(a, b, c); }
 DEVICE double fma_(double a, double b, double c) { return __builtin_fma(a, b, c); }
 DEVICE u64 fma_(u64 a, u64 b, u64 c) { return a * b + c; }
 
-template <typename T, int BM> DEVICE void simt_contract(const contract_params &p) {
-  constexpr int BK = 64 / sizeof(T), TM = BM / 16, H = TM / 2;
+template <typename T, int BM, int BN> DEVICE void simt_contract(const contract_params &p) {
   constexpr int THREADS = NX_CONTRACT_THREADS;
+  constexpr int TY = BM >= 32 ? 16 : 4, TX = THREADS / TY;
+  constexpr int TM = BM / TY, TN = BN / TX, HM = TM / 2, HN = TN / 2;
+  constexpr int BK = 64 / sizeof(T);
+  static_assert(TM % 2 == 0 && TN % 2 == 0, "a work-item's outputs in two halves each way");
   /* Two k-tiles of each operand, then a half tile of outputs. */
-  constexpr int TILES = 2 * 2 * BK * BM, HALF = BM / 2 * BM;
+  constexpr int TILES = 2 * BK * (BM + BN), HALF = BM / 2 * BN;
   static SHARED __attribute__((aligned(16))) T smem[TILES > HALF ? TILES : HALF];
-  T(*as)[BK][BM] = (T(*)[BK][BM])smem, (*bs)[BK][BM] = as + 2;
-  const int tid = item(), tx = tid % 16, ty = tid / 16, z = group_z();
+  T(*as)[BK][BM] = (T(*)[BK][BM])smem;
+  T(*bs)[BK][BN] = (T(*)[BK][BN])(smem + 2 * BK * BM);
+  const int tid = item(), tx = tid % TX, ty = tid / TX, z = group_z();
   /* Grouped rasterisation, as the WMMA kernels'. */
-  const int tiles_m = ceil_div(p.m, BM), tiles_n = ceil_div(p.n, BM);
+  const int tiles_m = ceil_div(p.m, BM), tiles_n = ceil_div(p.n, BN);
   const int pid = group(), groups = 8 * tiles_n, first = pid / groups * 8;
   const int gsz = min_(tiles_m - first, 8);
   const int tm = first + pid % groups % gsz, tn = pid % groups / gsz;
-  const int m0 = tm * BM, n0 = tn * BM;
+  const int m0 = tm * BM, n0 = tn * BN;
   const int kts = ceil_div(p.k, BK), split = group_y();
   const int kt0 = (int)range_start(kts, split, p.splits);
   const int kt1 = (int)range_start(kts, split + 1, p.splits);
@@ -560,17 +573,17 @@ template <typename T, int BM> DEVICE void simt_contract(const contract_params &p
                                      p.sa[1], p.sa[2], p.m, p.k, m0,
                                      p.sa[1] == 1 && p.sa[2] != 1,
                                      (p.aligned & NX_CONTRACT_A_VECTORS) != 0};
-  const Simt_operand<T, BM, BK> b = {(const char *)p.b + z * p.sb[0] * sizeof(T),
+  const Simt_operand<T, BN, BK> b = {(const char *)p.b + z * p.sb[0] * sizeof(T),
                                      p.sb[1], p.sb[2], p.n, p.k, n0,
                                      p.sb[1] == 1 && p.sb[2] != 1,
                                      (p.aligned & NX_CONTRACT_B_VECTORS) != 0};
 
-  T acc[TM][TM];
+  T acc[TM][TN];
 #pragma unroll
   for (int i = 0; i < TM; i++)
 #pragma unroll
-    for (int j = 0; j < TM; j++) acc[i][j] = T(0);
-  T ra[Simt_operand<T, BM, BK>::E], rb[Simt_operand<T, BM, BK>::E];
+    for (int j = 0; j < TN; j++) acc[i][j] = T(0);
+  T ra[Simt_operand<T, BM, BK>::E], rb[Simt_operand<T, BN, BK>::E];
   if (kt0 < kt1) {
     a.load(ra, (int64_t)kt0 * BK, tid);
     b.load(rb, (int64_t)kt0 * BK, tid);
@@ -589,16 +602,17 @@ template <typename T, int BM> DEVICE void simt_contract(const contract_params &p
        registers. */
 #pragma unroll 2
     for (int k = 0; k < BK; k++) {
-      T va[TM], vb[TM];
+      T va[TM], vb[TN];
 #pragma unroll
-      for (int e = 0; e < H; e++) {
-        va[e] = as[buf][k][ty * H + e], va[H + e] = as[buf][k][BM / 2 + ty * H + e];
-        vb[e] = bs[buf][k][tx * H + e], vb[H + e] = bs[buf][k][BM / 2 + tx * H + e];
-      }
+      for (int e = 0; e < HM; e++)
+        va[e] = as[buf][k][ty * HM + e], va[HM + e] = as[buf][k][BM / 2 + ty * HM + e];
+#pragma unroll
+      for (int e = 0; e < HN; e++)
+        vb[e] = bs[buf][k][tx * HN + e], vb[HN + e] = bs[buf][k][BN / 2 + tx * HN + e];
 #pragma unroll
       for (int i = 0; i < TM; i++)
 #pragma unroll
-        for (int j = 0; j < TM; j++) acc[i][j] = fma_(va[i], vb[j], acc[i][j]);
+        for (int j = 0; j < TN; j++) acc[i][j] = fma_(va[i], vb[j], acc[i][j]);
     }
     if (more) {
       a.stash(as[buf ^ 1], ra, tid);
@@ -608,29 +622,29 @@ template <typename T, int BM> DEVICE void simt_contract(const contract_params &p
   }
 
   if (p.splits > 1) {
-    T(&flat)[TM * TM] = *reinterpret_cast<T(*)[TM * TM]>(acc);
+    T(&flat)[TM * TN] = *reinterpret_cast<T(*)[TM * TN]>(acc);
     const int64_t tile = (int64_t)z * tiles_m * tiles_n + pid;
-    if (!combine(flat, (T *)p.partials + (size_t)tile * p.splits * TM * TM * THREADS,
+    if (!combine(flat, (T *)p.partials + (size_t)tile * p.splits * TM * TN * THREADS,
                  p.tickets + tile, p.splits, split, THREADS))
       return;
   }
   /* The outputs through the local data share, a half of the rows a pass:
-     work-item (tx, ty)'s first H rows, then its last H. */
+     work-item (tx, ty)'s first HM rows, then its last HM. */
 #pragma unroll
   for (int half = 0; half < 2; half++) {
 #pragma unroll
-    for (int i = 0; i < H; i++)
+    for (int i = 0; i < HM; i++)
 #pragma unroll
-      for (int j = 0; j < TM; j++)
-        smem[(ty * H + i) * BM + (j < H ? tx * H + j : BM / 2 + tx * H + j - H)] =
-            acc[half * H + i][j];
+      for (int j = 0; j < TN; j++)
+        smem[(ty * HM + i) * BN + (j < HN ? tx * HN + j : BN / 2 + tx * HN + j - HN)] =
+            acc[half * HM + i][j];
     barrier();
-    store_rows(p, smem, BM, BM / 2, BM, z, m0 + half * BM / 2, n0, THREADS);
+    store_rows(p, smem, BN, BM / 2, BN, z, m0 + half * BM / 2, n0, THREADS);
     barrier();
   }
 }
 
-/* The skinny kernels (m <= 16): lane l of 32 sums, for each t, the run of
+/* The skinny kernels (integer sums, m <= 16): lane l of 32 sums, for each t, the run of
    four k0 + 128 t + 4 l + u, u < 4, in increasing k, and the 32 lane sums
    combine by the balanced tree (l, l + 16), then (l, l + 8), (l, l + 4),
    (l, l + 2), (l, l + 1). Two forms, each its own kernel so that each has
@@ -1121,9 +1135,9 @@ NX_AMD_TILES(TILE)
   KERNEL SIZED(tile::THREADS) void name(contract_params p) {                   \
     wmma_contract<KIND_##kind, AXIS_##la, AXIS_##lb, tile>(p);                 \
   }
-#define SIMT(name, acc, bm)                                                    \
+#define SIMT(name, acc, bm, bn)                                                \
   KERNEL SIZED(NX_CONTRACT_THREADS) void name(contract_params p) {             \
-    simt_contract<ACC_##acc, bm>(p);                                           \
+    simt_contract<ACC_##acc, bm, bn>(p);                                       \
   }
 #define SKINNY(name, acc, form)                                                \
   KERNEL SIZED(NX_CONTRACT_THREADS) void name(contract_params p) {             \

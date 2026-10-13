@@ -5,13 +5,14 @@
 
 /* Contract: y[z, i, j] = init[z, i, j] + sum_k a[z, i, k] * b[z, j, k]
    (kernels.h's contract_params), by three bodies, each its own
-   association, fixed by the dtypes and the shape and never by a layout:
-   mma (mma.cuh), SIMT and skinny (below), over the elements of
-   elements.cuh. In each, [splits] ranges of k (whole k-tiles for mma and
-   SIMT) combine in range order (combine.cuh); init then enters the sum,
-   and the result rounds once to y's dtype. Each body reads its operands in
-   the layout and dtype the plan packs them into (the pack, below): the
-   same values in the same tiles, so the same bits. */
+   association, fixed by the dtypes, the shape and the order the call is
+   given, never by a layout: mma (mma.cuh), SIMT and skinny (below), over
+   the elements of elements.cuh. In each, [splits] ranges of k (whole
+   k-tiles for mma and SIMT) combine in range order (combine.cuh); init
+   then enters the sum, and the result rounds once to y's dtype. Each body
+   reads its operands in the layout and dtype the plan packs them into
+   (the pack, below): the same values in the same tiles, so the same
+   bits. */
 
 #include "combine.cuh"
 #include "kernels.h"
@@ -28,14 +29,16 @@ typedef unsigned long long u64;
 
 /* SIMT */
 
-/* The SIMT kernels (m > 16): float32 or float64 sums by fma, integer sums
-   wrapping; each output summed in increasing k. */
+/* The SIMT kernels (a call given chain order): float32 or float64 sums by
+   fma, integer sums wrapping; each output summed in increasing k. */
 
 /* A block of THREADS computes a BM x BN tile of outputs: warps of 4 x 8
-   lanes, a lane TM x TN outputs in blocks of 4 x 4, its blocks' rows 4
-   apart across lanes and 16 apart in a lane, their columns 4 apart across
-   lanes and 32 apart in a lane, so that a k's fragments are 16-byte loads
-   of which a warp's touch 4 and 8 addresses. The k-tiles, of NX_SIMT_BK,
+   lanes, a lane TM x TN outputs in blocks of RM x 4, RM = min(TM, 4), its
+   blocks' rows RM apart across lanes and 4 RM apart in a lane, their
+   columns 4 apart across lanes and 32 apart in a lane, so that a k's
+   fragments are loads of RM and 4 elements of which a warp's touch 4 and 8
+   addresses. A tile of 8 rows (TM = 2) keeps a sum of few rows from
+   computing rows past m. The k-tiles, of NX_SIMT_BK,
    NX_SIMT_STAGES of them in flight, are copied by cp.async straight into
    shared memory, k-major: element (k, r) at [k][r], each k's row padded
    by 16 bytes, so that a warp's copies of a k-contiguous operand, an
@@ -134,7 +137,8 @@ __device__ void simt_contract(const contract_params &p) {
   const int tid = threadIdx.x, lane = tid % 32, warp = tid / 32;
   const int z = blockIdx.z;
   /* This lane's first row and column in the tile. */
-  const int lm = (warp / WARPS_N) * 4 * TM + lane / 8 * 4;
+  constexpr int RM = TM < 4 ? TM : 4;
+  const int lm = (warp / WARPS_N) * 4 * TM + lane / 8 * RM;
   const int ln = (warp % WARPS_N) * 8 * TN + lane % 8 * 4;
   /* Grouped rasterisation, as the mma kernels'. */
   const int tiles_m = (p.m + BM - 1) / BM, tiles_n = (p.n + BN - 1) / BN;
@@ -166,7 +170,7 @@ __device__ void simt_contract(const contract_params &p) {
     const T(*as)[A::LD] = (const T(*)[A::LD])(smem + s * STAGE);
     const T(*bs)[B::LD] = (const T(*)[B::LD])(smem + s * STAGE + A::BYTES);
 #pragma unroll
-    for (int i = 0; i < TM; i++) va[f][i] = as[k][lm + i / 4 * 16 + i % 4];
+    for (int i = 0; i < TM; i++) va[f][i] = as[k][lm + i / RM * 4 * RM + i % RM];
 #pragma unroll
     for (int j = 0; j < TN; j++) vb[f][j] = bs[k][ln + j / 4 * 32 + j % 4];
   };
@@ -223,22 +227,22 @@ __device__ void simt_contract(const contract_params &p) {
   for (int i = 0; i < TM; i++)
 #pragma unroll
     for (int j = 0; j < TN; j += 2)
-      store_pair(p, z, m0 + lm + i / 4 * 16 + i % 4,
+      store_pair(p, z, m0 + lm + i / RM * 4 * RM + i % RM,
                  n0 + ln + j / 4 * 32 + j % 4, acc[i][j], acc[i][j + 1]);
 }
 
 /* Skinny */
 
-/* The skinny kernels (m <= 16): lane l of 32 sums, for each t, the run of
-   four k0 + 128 t + 4 l + u, u < 4, in increasing k, and the 32 lane sums
-   combine by the balanced tree (l, l + 16), then (l, l + 8), (l, l + 4),
-   (l, l + 2), (l, l + 1). A block computes NX_SKINNY_ROWS rows of 32
-   columns: few rows a thread keep its registers few, so that an SM holds
-   enough warps to cover a load's latency. When b's k axis is contiguous,
-   warp w takes the columns w + 8 q, q < 4, lanes across k, a run one
-   vector, and loads each of a's runs once for its four columns; otherwise
-   thread (x, y) sums the lane classes y, y + 8, y + 16, y + 24 of column
-   x, reading rows of b across x. */
+/* The skinny kernels (a call given lane order): lane l of 32 sums, for
+   each t, the run of four k0 + 128 t + 4 l + u, u < 4, in increasing k,
+   and the 32 lane sums combine by the balanced tree (l, l + 16), then
+   (l, l + 8), (l, l + 4), (l, l + 2), (l, l + 1). A block computes
+   NX_SKINNY_ROWS rows of 32 columns: few rows a thread keep its registers
+   few, so that an SM holds enough warps to cover a load's latency. When
+   b's k axis is contiguous, warp w takes the columns w + 8 q, q < 4, lanes
+   across k, a run one vector, and loads each of a's runs once for its four
+   columns; otherwise thread (x, y) sums the lane classes y, y + 8, y + 16,
+   y + 24 of column x, reading rows of b across x. */
 
 /* The 32 lane sums [v] combined by the tree, the root in every lane. */
 template <typename T> __device__ T tree32(T v) {

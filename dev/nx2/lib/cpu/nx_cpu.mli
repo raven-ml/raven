@@ -30,7 +30,10 @@
     integers of at most 16 bits and the floats of at most 32; [float64] also
     [int32], [uint32] and [float64].
 
-    A float contraction adds in its own order ({!Nx_kernel.section-orders}).
+    A float contraction adds in the order it is given
+    ({!Nx_kernel.section-orders}), at any shape. [contract_order ~rows
+    ~columns] is [Chain] where [rows] and [columns] are both above 4 and
+    multiply to at least 64, and [Lane] otherwise.
     With no products, an output is [init]'s bits, or [+0]. Otherwise a NaN
     result's payload is unspecified.
 

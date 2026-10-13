@@ -22,7 +22,7 @@ type instance =
   | Zero
   | Pack
   | Wmma of kind * axis * axis * tile
-  | Simt of acc * int
+  | Simt of acc * int * int
   | Skinny of acc * form
   | Lane of acc * kind option * form
 
@@ -42,19 +42,18 @@ let kernels =
     ("contract_f16_mk_t128x128", Wmma (F16, M, K, T128x128));
     ("contract_f16_mn_t128x128", Wmma (F16, M, N, T128x128));
     ("contract_f16_kk_t64x64", Wmma (F16, K, K, T64x64));
+    ("contract_f16_kk_t16x64", Wmma (F16, K, K, T16x64));
     ("contract_s8_kk_t128x128", Wmma (S8, K, K, T128x128));
-    ("contract_simt_f32_128", Simt (F32, 128));
-    ("contract_simt_f32_64", Simt (F32, 64));
-    ("contract_skinny_f32", Skinny (F32, Column));
-    ("contract_skinny_across_f32", Skinny (F32, Across));
+    ("contract_simt_f32_128", Simt (F32, 128, 128));
+    ("contract_simt_f32_64", Simt (F32, 64, 64));
+    ("contract_simt_f32_16x128", Simt (F32, 16, 128));
     ("contract_lane_bf16", Lane (F32, Some Bf16, Column));
     ("contract_lane_f32", Lane (F32, None, Column));
     ("contract_lane_across_f32", Lane (F32, None, Across));
-    ("contract_simt_f64_64", Simt (F64, 64));
-    ("contract_simt_i64_64", Simt (I64, 64));
-    ("contract_skinny_f64", Skinny (F64, Column));
+    ("contract_simt_f64_64", Simt (F64, 64, 64));
+    ("contract_simt_f64_8x128", Simt (F64, 8, 128));
+    ("contract_simt_i64_64", Simt (I64, 64, 64));
     ("contract_skinny_i64", Skinny (I64, Column));
-    ("contract_skinny_across_f64", Skinny (F64, Across));
     ("contract_skinny_across_i64", Skinny (I64, Across));
     ("contract_lane_f64", Lane (F64, None, Column));
     ("contract_lane_across_f64", Lane (F64, None, Across));

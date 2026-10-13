@@ -1109,6 +1109,32 @@ let contract_shape ~by ~batch ~contracting ~acc a b init =
   | Some _ | None -> ());
   s
 
+(* The product of [s]'s extents along the axes no pair names on [side],
+   [max_int] past it. *)
+let free_extent ~batch ~contracting s side =
+  let named i =
+    Array.exists (fun p -> side p = i) batch
+    || Array.exists (fun p -> side p = i) contracting
+  in
+  let n = ref 1 in
+  Array.iteri
+    (fun i e ->
+      if not (named i) then
+        n :=
+          if !n = 0 || e = 0 then 0
+          else if !n > max_int / e then max_int
+          else !n * e)
+    s;
+  !n
+
+let contract_order ~batch ~contracting a b : Nx_kernel.order =
+  let rows = free_extent ~batch ~contracting (shape a) fst in
+  let columns = free_extent ~batch ~contracting (shape b) snd in
+  match (at a, at b) with
+  | Some p, _ | None, Some p ->
+      Devices.contract_order (Devices.set p) ~rows ~columns
+  | None, None -> Devices.contract_order Devices.host ~rows ~columns
+
 (* A contraction reads its operands whole on each device that computes it: where
    they lie at one placement that cuts no axis, there; else on every device of
    their set, each holding them whole. *)
@@ -1210,7 +1236,7 @@ let results : type r.
       check_assemble ~by dtype shape fill pieces;
       let placement = result (assemble_route ~by pieces) in
       m 0 (of_layout dtype (L.contiguous shape) placement)
-  | Contract { batch; contracting; acc; out; a; b; init } ->
+  | Contract { batch; contracting; acc; out; a; b; init; _ } ->
       let shape = contract_shape ~by ~batch ~contracting ~acc a b init in
       let placement = result (contract_route ~by a b init) in
       m 0 (of_layout out (L.contiguous shape) placement)

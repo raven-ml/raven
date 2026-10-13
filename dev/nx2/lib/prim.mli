@@ -193,6 +193,20 @@ val contract_shape :
     [b], [init] has another shape, or [acc] is a boolean or a float narrower
     than float32. *)
 
+val contract_order :
+  batch:(int * int) array ->
+  contracting:(int * int) array ->
+  ('a, 'b, 'd) t ->
+  ('c, 'e, 'd) t ->
+  Nx_kernel.order
+(** [contract_order ~batch ~contracting a b] is the order of summation
+    ({!Nx_kernel.section-orders}) of a contraction of [a] with [b]: the one the
+    kernels of [a]'s set, or of [b]'s where [a] is of every set, choose
+    ({!Nx_kernel.S.contract_order}) for its rows, the product of [a]'s extents
+    along the axes no pair names, and its columns, [b]'s likewise, each
+    [max_int] past it. Where that set has no kernels, as one of devices of
+    several kinds, or both are of every set, it is the one nx.cpu chooses. *)
+
 (** {1:loads Loads} *)
 
 val load_any : 'd load -> 'd any

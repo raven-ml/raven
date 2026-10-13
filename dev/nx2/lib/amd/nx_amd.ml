@@ -136,7 +136,19 @@ let rec any_dead xs i =
 
 (* Contractions *)
 
-let contract ~batch ~contracting ~acc ~dst ~init a b =
+(* Lane order, on the lane kernels, at 1 row or at 4 columns or fewer, which
+   a lane workgroup takes as its short extent; chain order, on WMMA or SIMT,
+   at every other shape. On the R9700, by 20480 x 2880, float32 takes 1.54
+   ms in lane order at 1 row, but 2.7-4.9 ms at 2 to 4 rows against 1.6 ms
+   in chain (bfloat16 at 4 rows: 3.2 and 1.6 ms); 20480 rows by 1 column
+   0.40 ms in lane and 1.16 ms in chain (float64: 0.77 and 18 ms). Float64
+   at 2 rows is the cost: 3.0 ms in lane, 3.9 ms in chain. *)
+let lane_most = 4
+
+let contract_order ~rows ~columns : Nx_kernel.order =
+  if rows = 1 || columns <= lane_most then Lane else Chain
+
+let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
   let d = A.device dst in
   match device d with
   | None -> A.Declined
@@ -147,7 +159,7 @@ let contract ~batch ~contracting ~acc ~dst ~init a b =
            address. *)
         A.door ~written ~read nothing ()
       else
-        match Plan.choose ~batch ~contracting ~acc ~dst ~init a b with
+        match Plan.choose ~order ~batch ~contracting ~acc ~dst ~init a b with
         | Error answer -> answer
         | Ok Nothing -> A.door ~written ~read nothing ()
         | Ok (Launch l) ->

@@ -79,14 +79,16 @@ let rec find_wmma_from k kind a b t =
 
 let find_wmma kind a b t = find_wmma_from 0 kind a b t
 
-let rec find_simt_from k sum side =
+let rec find_simt_from k sum rows columns =
   if k = count then -1
   else
     match snd K.kernels.(k) with
-    | Simt (sum', side') when sum' == sum && side' = side -> k
-    | _ -> find_simt_from (k + 1) sum side
+    | Simt (sum', rows', columns')
+      when sum' == sum && rows' = rows && columns' = columns ->
+        k
+    | _ -> find_simt_from (k + 1) sum rows columns
 
-let find_simt sum side = find_simt_from 0 sum side
+let find_simt sum rows columns = find_simt_from 0 sum rows columns
 
 let rec find_skinny_from k sum form =
   if k = count then -1
@@ -164,6 +166,7 @@ type call = {
   sy : int array;
   init : init option;
   acc : D.any;
+  order : Nx_kernel.order;
   batch : int;
   m : int;
   n : int;
@@ -349,7 +352,7 @@ let efficiency : K.tile -> int = function
 (* The index in [K.tiles] of the WMMA tile of a product among those [kind] has
    an instance of with k contiguous: the one of least cost, by its shape alone;
    m <= 16 takes the 16-row tile, and only it. -1 if [kind] has none for the
-   shape: the SIMT or skinny kernels sum it. *)
+   shape, int8 at 16 rows or fewer: the skinny kernels sum it. *)
 let wmma_tile (c : call) kind =
   let best = ref (-1) and least = ref 0. in
   for i = 0 to Array.length K.tiles - 1 do
@@ -436,17 +439,15 @@ let packed_own (c : call) sum =
       in
       Some (read a, read b, used)
 
-(* The skinny kernel of [sum], m <= 16, in its column form, or across when b's n
-   axis is contiguous. Both forms split by the column form's grid, so the
-   association is the shape's. *)
+(* The skinny kernel of an integer [sum], m <= 16, in its column form, or
+   across when b's n axis is contiguous. *)
 let plan_skinny (c : call) ((a, b, _) as read) ~wmma_s8 sum =
   let across = free_contiguous b.s in
   launch c read
     ~kernel:(find_skinny sum (if across then Across else Column))
     ~blocks:(if across then ceil_div c.n 32 else ceil_div c.n 8)
     ~splits:(split_count (ceil_div c.n 8 * c.batch) 256 c.k 1024)
-    ~threads:K.threads ~values:2
-    ~sum_bytes:(if sum == K.F32 then 4 else 8)
+    ~threads:K.threads ~values:2 ~sum_bytes:8
     ~aligned:
       ((if (not across) && rows_vectors b then K.b_vectors else 0)
       lor
@@ -454,10 +455,9 @@ let plan_skinny (c : call) ((a, b, _) as read) ~wmma_s8 sum =
     ~wmma_s8 sum
 
 (* Whether a float sum of [c] adds in lane order, as Nx_kernel's orders
-   section puts it: unless its row and column extents are both above 4 and
-   multiply to at least 64. *)
+   section puts it: where it is given that order. *)
 let in_lane_order (c : call) (sum : K.acc) =
-  sum != K.I64 && not (c.m > 4 && c.n > 4 && c.m * c.n >= 64)
+  sum != K.I64 && c.order = Nx_kernel.Lane
 
 (* A lane kernel's workgroup, as contract.hip's lane_contract shapes it: the
    blocks of 1024 of a column it sums at once, G, k's between 1 and 8, and its
@@ -481,8 +481,7 @@ let swap (c : call) =
 
 (* The lane kernel of [sum], a the operand of the short extent when its rows
    pass a workgroup's: bfloat16 operands read as they are, others packed into
-   [sum]'s dtype; across when b's n axis is contiguous. In lane order, the short
-   extent is at most 7, so a's rows take at most two workgroups. *)
+   [sum]'s dtype; across when b's n axis is contiguous. *)
 let plan_lane (c : call) ~wmma_s8 sum =
   let c = if c.m > K.lane_rows && c.n < c.m then swap c else c in
   let bf16s = sum == K.F32 && same c.a.dtype bf16 && same c.b.dtype bf16 in
@@ -505,19 +504,24 @@ let plan_lane (c : call) ~wmma_s8 sum =
           lor if k_vectors a then K.a_vectors else 0)
         ~wmma_s8 sum
 
-(* The SIMT tile of least cost among [sum]'s instances, m > 16: on the R9700 the
-   64-wide tile computes half as fast as the 128-wide one (39-56% at 2048 and
-   4096 cubed, float32). *)
+(* The SIMT tile of [sum]: where m is 16 or fewer, its short tile, 16 x 128
+   for float32 and 8 x 128 for float64, whose float64 sums are compute bound;
+   otherwise the square tile of least cost among its instances: on the R9700
+   the 64-wide tile computes half as fast as the 128-wide one (39-56% at 2048
+   and 4096 cubed, float32). *)
 let plan_simt (c : call) ((a, b, _) as read) ~wmma_s8 sum =
   let cheaper = cost c 64 64 50 < cost c 128 128 100 in
-  let side =
-    if find_simt sum 128 >= 0 && (find_simt sum 64 < 0 || not cheaper) then 128
-    else 64
+  let bm, bn =
+    if c.m <= 16 then ((if sum == K.F64 then 8 else 16), 128)
+    else if
+      find_simt sum 128 128 >= 0 && (find_simt sum 64 64 < 0 || not cheaper)
+    then (128, 128)
+    else (64, 64)
   in
-  let blocks = ceil_div c.m side * ceil_div c.n side in
-  launch c read ~kernel:(find_simt sum side) ~blocks
+  let blocks = ceil_div c.m bm * ceil_div c.n bn in
+  launch c read ~kernel:(find_simt sum bm bn) ~blocks
     ~splits:(split_count (blocks * c.batch) 64 c.k 128)
-    ~threads:K.threads ~values:(side * side / K.threads)
+    ~threads:K.threads ~values:(bm * bn / K.threads)
     ~sum_bytes:(if sum == K.F32 then 4 else 8)
     ~aligned:
       ((if rows_vectors a then K.a_vectors else 0)
@@ -583,7 +587,11 @@ let rules (c : call) =
                 match packed_own c sum with
                 | None -> None
                 | Some read ->
-                    if m <= 16 then plan_skinny c read ~wmma_s8 sum
+                    (* An integer sum is exact in its wrapping, so every
+                       order gives it the same bits: few rows take the skinny
+                       kernels. *)
+                    if m <= 16 && sum == K.I64 then
+                      plan_skinny c read ~wmma_s8 sum
                     else plan_simt c read ~wmma_s8 sum)
           in
           match planned with None -> declined | Some l -> Ok (Launch l))
@@ -611,7 +619,7 @@ let operand v slot which (free : V.axis) x =
 let strides v which : int array =
   [| V.stride v which Batch; V.stride v which Row; V.stride v which Column |]
 
-let choose ~batch ~contracting ~acc ~dst ~init a b =
+let choose ~order ~batch ~contracting ~acc ~dst ~init a b =
   match V.v ~batch ~contracting ~dst ~init a b with
   | Error answer -> Error answer
   | Ok v ->
@@ -642,6 +650,7 @@ let choose ~batch ~contracting ~acc ~dst ~init a b =
           sy = strides v Dst;
           init;
           acc;
+          order;
           batch = V.extent v Batch;
           m = V.extent v Row;
           n = V.extent v Column;

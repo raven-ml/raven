@@ -282,10 +282,28 @@ external fold :
 
 (* Contractions (gemm.c) *)
 
-(* [contract_c ~batch ~contracting acc ~dst ~init a b] contracts [a] and
-   [b], with [init] if given, in the dtype of code [acc], over the view C
-   groups from the pairs on its stack ([nx_contract_view_fill]). *)
+(* Chain order where a contraction has the outputs to keep every target's
+   chains in flight, 64 (NEON keeps 16 vectors of 4 chains, 4 pipes of 4
+   cycles; AVX2 8 of 8); lane order where its rows or columns are few, as
+   decoding a token's are, so that b streams once in the order it lies. *)
+let chain_outputs = 64
+let lane_most = 4
+
+let contract_order ~rows ~columns : Nx_kernel.order =
+  (* [rows · columns >= chain_outputs], without overflow: a factor of
+     chain_outputs or more makes it, and below that the product fits. *)
+  let outputs =
+    rows >= chain_outputs || columns >= chain_outputs
+    || rows * columns >= chain_outputs
+  in
+  if rows > lane_most && columns > lane_most && outputs then Chain else Lane
+
+(* [contract_c order ~batch ~contracting acc ~dst ~init a b] contracts [a]
+   and [b], with [init] if given, in [order] and the dtype of code [acc],
+   over the view C groups from the pairs on its stack
+   ([nx_contract_view_fill]). *)
 external contract_c :
+  Nx_kernel.order ->
   batch:(int * int) array ->
   contracting:(int * int) array ->
   int ->
@@ -295,9 +313,10 @@ external contract_c :
   ('c, 'd) Nx_array.t ->
   Nx_array.answer = "nx_cpu_contract_byte" "nx_cpu_contract"
 
-let contract ~batch ~contracting ~acc ~dst ~init a b =
+let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
   let (Nx_array.Dtype.Any acc) = acc in
-  contract_c ~batch ~contracting (Nx_array.Dtype.code acc) ~dst ~init a b
+  contract_c order ~batch ~contracting (Nx_array.Dtype.code acc) ~dst ~init a
+    b
 
 (* Fourier transforms: declined at the dtypes they take. *)
 

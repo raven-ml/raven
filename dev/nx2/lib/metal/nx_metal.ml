@@ -138,7 +138,12 @@ let rec any_dead xs i =
 
 (* Contractions *)
 
-let contract ~batch ~contracting ~acc ~dst ~init a b =
+(* Lane order at one row, on the skinny kernel that reads b once; chain order,
+   on the matrix units, at every other shape. *)
+let contract_order ~rows ~columns:_ : Nx_kernel.order =
+  if rows = 1 then Lane else Chain
+
+let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
   let d = A.device dst in
   match device d with
   | None -> A.Declined
@@ -149,7 +154,7 @@ let contract ~batch ~contracting ~acc ~dst ~init a b =
            address. *)
         A.door ~written ~read nothing ()
       else
-        match Plan.choose ~batch ~contracting ~acc ~dst ~init a b with
+        match Plan.choose ~order ~batch ~contracting ~acc ~dst ~init a b with
         | Error answer -> answer
         | Ok Nothing -> A.door ~written ~read nothing ()
         | Ok (Launch l) ->

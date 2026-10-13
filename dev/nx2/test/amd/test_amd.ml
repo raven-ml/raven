@@ -280,7 +280,7 @@ type draw = Spread of int | Cancel | Edges | Overflow
 (* A contraction y[z, i, j] = init[z, i, j] + Σ_k a[z, i, k] · b[z, j, k] of
    [batch], [m], [n], [k], a and b of [dt] in the layout whose [`K] or [`Free]
    axis is contiguous, [pad] elements between batch elements, accumulated in
-   [acc], y of [out]. *)
+   [acc] in [order], y of [out]. *)
 type case = {
   dt : any;
   acc : any;
@@ -289,6 +289,7 @@ type case = {
   m : int;
   n : int;
   k : int;
+  order : Nx_kernel.order;
   la : [ `K | `Free ];
   lb : [ `K | `Free ];
   init : [ `None | `Bias | `Full ];
@@ -300,6 +301,7 @@ and any = D.any
 
 let code (D.Any dt) = D.code dt
 let width (D.Any dt) = D.bits dt / 8
+let order_name = function Nx_kernel.Chain -> "chain" | Lane -> "lane"
 
 let case_name c =
   let name (D.Any dt) = D.name dt in
@@ -311,8 +313,9 @@ let case_name c =
     | Edges -> "edges"
     | Overflow -> "overflow"
   in
-  strf "%s->%s acc %s %dx%dx%dx%d %s%s%s %s pad %d" (name c.dt) (name c.out)
-    (name c.acc) c.batch c.m c.n c.k (l c.la) (l c.lb)
+  strf "%s->%s acc %s %dx%dx%dx%d %s %s%s%s %s pad %d" (name c.dt)
+    (name c.out) (name c.acc) c.batch c.m c.n c.k (order_name c.order)
+    (l c.la) (l c.lb)
     (match c.init with `None -> "" | `Bias -> " bias" | `Full -> " init")
     draw c.pad
 
@@ -476,7 +479,7 @@ let contract g c ?(skip = 0) ?(seed = 1) () =
         Some { y with buffer }
   in
   match
-    S.contract g ~a ~b ?init ~y
+    S.contract g ~order:c.order ~a ~b ?init ~y
       ~batch:[ (0, 0) ]
       ~contracting:[ (2, 2) ]
       ~acc:(code c.acc) ()
@@ -495,23 +498,26 @@ let within_bound c =
   equal ~msg:(strf "wrong outputs, the first %d" r.at) int 0 r.wrong;
   at_most ~msg:(strf "worst at output %d" r.at) float_exact ~than:1. r.worst
 
+(* Shapes with the order nx gives each: chain where m and n are both above 4
+   and make at least 64 outputs. *)
 let shapes =
+  let open Nx_kernel in
   [
-    (1, 1, 1, 1);
-    (1, 1, 64, 300);
-    (1, 16, 128, 64);
-    (1, 17, 129, 65);
-    (1, 127, 128, 33);
-    (1, 128, 127, 32);
-    (1, 129, 1, 0);
-    (1, 200, 257, 1000);
-    (3, 33, 70, 129);
-    (1, 64, 64, 8192);
-    (1, 1, 64, 20000);
-    (1, 5, 300, 4100);
+    (1, 1, 1, 1, Lane);
+    (1, 1, 64, 300, Lane);
+    (1, 16, 128, 64, Chain);
+    (1, 17, 129, 65, Chain);
+    (1, 127, 128, 33, Chain);
+    (1, 128, 127, 32, Chain);
+    (1, 129, 1, 0, Lane);
+    (1, 200, 257, 1000, Chain);
+    (3, 33, 70, 129, Chain);
+    (1, 64, 64, 8192, Chain);
+    (1, 1, 64, 20000, Lane);
+    (1, 5, 300, 4100, Chain);
     (* The 128 x 128 tile, partial in m, n and k, its rows and k whole
        vectors: each layout reads its operands as they lie. *)
-    (2, 1032, 1160, 72);
+    (2, 1032, 1160, 72, Chain);
   ]
 
 let configs =
@@ -540,14 +546,15 @@ let cases_of ?(layouts = [ (`K, `K); (`K, `Free); (`Free, `K); (`Free, `Free) ])
   List.concat_map
     (fun (dt, acc, out) ->
       List.concat_map
-        (fun (batch, m, n, k) ->
+        (fun (batch, m, n, k, order) ->
           List.mapi
             (fun i (la, lb) ->
               let init =
                 match i mod 3 with 0 -> `None | 1 -> `Bias | _ -> `Full
               in
               let draw = Spread (if dt = D.Any D.Float16 then 2 else 6) in
-              { dt; acc; out; batch; m; n; k; la; lb; init; draw; pad = 0 })
+              { dt; acc; out; batch; m; n; k; order; la; lb; init; draw;
+                pad = 0 })
             layouts)
         shapes)
     configs
@@ -556,9 +563,9 @@ let cases_of ?(layouts = [ (`K, `K); (`K, `Free); (`Free, `K); (`Free, `Free) ])
    stores nothing shows. *)
 let sentinel n = String.make n '\xa5'
 
-(* The bits depend on the shape alone. The same values in the other layouts,
-   behind an element that breaks the 16-byte vectors, and computed again beside
-   the hog over a sentinel, give the same bytes. *)
+(* The bits depend on the shape and the order alone. The same values in the
+   other layouts, behind an element that breaks the 16-byte vectors, and
+   computed again beside the hog over a sentinel, give the same bytes. *)
 let same_bits c =
   let g = S.gpu () in
   let _, _, _, (y : S.operand), p = contract g c () in
@@ -578,7 +585,7 @@ let shape_cases =
   List.concat_map
     (fun (dt, acc, out) ->
       List.map
-        (fun (batch, m, n, k) ->
+        (fun (batch, m, n, k, order) ->
           let draw = Spread 6 and pad = 0 in
           {
             dt;
@@ -588,19 +595,21 @@ let shape_cases =
             m;
             n;
             k;
+            order;
             la = `K;
             lb = `K;
             init = `Bias;
             draw;
             pad;
           })
-        [
-          (1, 17, 129, 65);
-          (2, 130, 200, 300);
-          (1, 64, 64, 8192);
-          (1, 3, 100, 5000);
-          (2, 1032, 1160, 72);
-        ])
+        Nx_kernel.
+          [
+            (1, 17, 129, 65, Chain);
+            (2, 130, 200, 300, Chain);
+            (1, 64, 64, 8192, Chain);
+            (1, 3, 100, 5000, Lane);
+            (2, 1032, 1160, 72, Chain);
+          ])
     configs
 
 (* Lane order *)
@@ -658,16 +667,9 @@ let stored (D.Any d) xs = stored_of d xs
    nx.cpu computes the case again into the accumulator's dtype from host copies
    of the operands, init cast to that dtype, and its sums are stored into
    y's. *)
-let in_lane_order c =
+let cpu_bits c =
   let g = S.gpu () in
   let a, b, init, y, _ = contract g c () in
-  cover "row and column extents above 4" (c.m > 4 && c.n > 4);
-  cover "a row or column extent of 1" (c.m = 1 || c.n = 1);
-  cover "more than 16 blocks of k" (c.k > 16 * 1024);
-  cover "no products" (c.k = 0);
-  cover "b's free axis contiguous" (c.lb = `Free);
-  cover "an init" (c.init <> `None);
-  cover "y of another dtype than the sums" (c.out <> c.acc);
   let sums =
     Rig.Buffer.create (Lazy.force host) (width c.acc * c.batch * c.m * c.n)
   in
@@ -682,8 +684,8 @@ let in_lane_order c =
     :: Option.to_list (Option.map (fun i -> Nx_array.Any i) init)
   in
   (match
-     Nx_cpu.contract ~batch:[| (0, 0) |] ~contracting:[| (2, 2) |] ~acc:c.acc
-       ~dst ~init ha hb
+     Nx_cpu.contract ~order:Lane ~batch:[| (0, 0) |] ~contracting:[| (2, 2) |]
+       ~acc:c.acc ~dst ~init ha hb
    with
   | Nx_array.Done -> ()
   | r -> Nx_array.refused "Nx_cpu.contract" r arrays);
@@ -700,6 +702,16 @@ let in_lane_order c =
       (fun e -> strf "output %d: %h, nx.cpu %h" e (value got e) (value want e))
   in
   no_difference wrong
+
+let in_lane_order c =
+  cover "row and column extents above 4" (c.m > 4 && c.n > 4);
+  cover "a row or column extent of 1" (c.m = 1 || c.n = 1);
+  cover "more than 16 blocks of k" (c.k > 16 * 1024);
+  cover "no products" (c.k = 0);
+  cover "b's free axis contiguous" (c.lb = `Free);
+  cover "an init" (c.init <> `None);
+  cover "y of another dtype than the sums" (c.out <> c.acc);
+  cpu_bits c
 
 (* Cases in lane order: a row or column extent of at most 4, or 5 to 7 rows
    against fewer columns than make 64, at most 4M products. *)
@@ -735,7 +747,43 @@ let lane_cases =
   let draw =
     if edges then Edges else Spread (if dt = D.Any D.Float16 then 2 else 6)
   in
-  { dt; acc; out; batch; m; n; k; la; lb; init; draw; pad = 0 }
+  let order = Nx_kernel.Lane in
+  { dt; acc; out; batch; m; n; k; order; la; lb; init; draw; pad = 0 }
+
+(* Lane order at shapes nx gives chain order: rows and columns above 7 and
+   past a workgroup's 4 rows, so that the plan trades a and b where a has
+   more rows, or runs several workgroups along them. *)
+let chain_shaped_lane_cases =
+  let open D in
+  let lane ?(lb = `K) ?(init = `Bias) (dt, acc, out) (batch, m, n, k) =
+    let draw = Spread (if dt = Any Float16 then 2 else 6) in
+    { dt; acc; out; batch; m; n; k; order = Nx_kernel.Lane; la = `K; lb; init;
+      draw; pad = 0 }
+  in
+  [
+    lane (Any Float32, Any Float32, Any Float32) (1, 8, 8, 300);
+    lane (Any Bfloat16, Any Float32, Any Bfloat16) (2, 40, 70, 1025);
+    lane ~lb:`Free (Any Float16, Any Float32, Any Float16) (1, 17, 129, 65);
+    lane (Any Float64, Any Float64, Any Float64) (1, 100, 9, 4100);
+    lane ~init:`Full (Any Float32, Any Float64, Any Float32) (2, 129, 33, 2049);
+  ]
+
+(* Chain order at shapes nx gives lane order: 4 rows or fewer, which the
+   16-row SIMT and WMMA tiles sum. *)
+let lane_shaped_chain_cases =
+  let open D in
+  let chain ?(lb = `K) (dt, acc, out) (batch, m, n, k) =
+    let draw = Spread (if dt = Any Float16 then 2 else 6) in
+    { dt; acc; out; batch; m; n; k; order = Nx_kernel.Chain; la = `K; lb;
+      init = `Bias; draw; pad = 0 }
+  in
+  [
+    chain (Any Float32, Any Float32, Any Float32) (1, 1, 64, 300);
+    chain ~lb:`Free (Any Float32, Any Float32, Any Float32) (2, 4, 100, 2000);
+    chain (Any Float64, Any Float64, Any Float64) (1, 3, 40, 1025);
+    chain (Any Float16, Any Float32, Any Float16) (1, 1, 64, 300);
+    chain ~lb:`Free (Any Bfloat16, Any Float32, Any Bfloat16) (2, 4, 100, 2000);
+  ]
 
 (* Edge inputs: wide and no spread, cancellation, special values and integer
    extremes, batch elements apart by 0, 1 and 4 elements. *)
@@ -744,16 +792,21 @@ let edge_cases =
   List.concat_map
     (fun (dt, acc, out) ->
       List.concat_map
-        (fun (batch, m, n, k) ->
+        (fun (batch, m, n, k, order) ->
           List.mapi
             (fun i draw ->
               let pad = List.nth [ 0; 1; 4 ] (i mod 3) in
               let la, lb = if i mod 2 = 0 then (`K, `K) else (`Free, `K) in
-              { dt; acc; out; batch; m; n; k; la; lb; init = `Bias; draw; pad })
+              { dt; acc; out; batch; m; n; k; order; la; lb; init = `Bias; draw;
+                pad })
             draws)
-        [
-          (2, 17, 129, 65); (2, 64, 64, 64); (1, 1, 64, 300); (1, 64, 64, 8192);
-        ])
+        Nx_kernel.
+          [
+            (2, 17, 129, 65, Chain);
+            (2, 64, 64, 64, Chain);
+            (1, 1, 64, 300, Lane);
+            (1, 64, 64, 8192, Chain);
+          ])
     configs
 
 (* Float64 sums whose every product passes double's range: each output is
@@ -763,12 +816,18 @@ let edge_cases =
 let overflow_cases =
   let f64 = D.Any D.Float64 in
   List.mapi
-    (fun i (batch, m, n, k) ->
+    (fun i (batch, m, n, k, order) ->
       let la, lb = if i mod 2 = 0 then (`K, `K) else (`Free, `K) in
       let draw = Overflow and pad = 0 in
-      { dt = f64; acc = f64; out = f64; batch; m; n; k; la; lb; init = `Bias;
-        draw; pad })
-    [ (1, 1, 64, 1); (1, 5, 40, 2); (2, 17, 33, 3); (1, 20, 70, 1) ]
+      { dt = f64; acc = f64; out = f64; batch; m; n; k; order; la; lb;
+        init = `Bias; draw; pad })
+    Nx_kernel.
+      [
+        (1, 1, 64, 1, Lane);
+        (1, 5, 40, 2, Chain);
+        (2, 17, 33, 3, Chain);
+        (1, 20, 70, 1, Chain);
+      ]
 
 (* An int32 sum reaches a wider output as a cast from int32 does, by its sign:
    -1 times 1 over 64 terms is -64. *)
@@ -784,7 +843,7 @@ let past_memory g () =
   let a = operand (S.buffer g 2) [| 1; m; k |] [| 0; 0; 0 |] in
   let b = operand (S.buffer g (2 * n * k)) [| 1; n; k |] [| n * k; k; 1 |] in
   let y = operand (S.buffer g (2 * m * n)) [| 1; m; n |] [| m * n; n; 1 |] in
-  S.contract g ~a ~b ~y
+  S.contract g ~order:Nx_kernel.Chain ~a ~b ~y
     ~batch:[ (0, 0) ]
     ~contracting:[ (2, 2) ]
     ~acc:(D.code D.Float32) ()
@@ -832,7 +891,7 @@ let keeps_subnormals =
           ~pad:0
       in
       match
-        S.contract g ~a ~b ~init ~y
+        S.contract g ~order:Nx_kernel.Lane ~a ~b ~init ~y
           ~batch:[ (0, 0) ]
           ~contracting:[ (2, 2) ]
           ~acc:(D.code D.Float32) ()
@@ -870,7 +929,7 @@ let sign_extends () =
         }
       in
       match
-        S.contract g ~a ~b ~y
+        S.contract g ~order:Nx_kernel.Lane ~a ~b ~y
           ~batch:[ (0, 0) ]
           ~contracting:[ (2, 2) ]
           ~acc:(D.code D.Int32) ()
@@ -933,7 +992,7 @@ let tail (y : S.operand) bytes =
 
 let edge_contract g ~a ~b ~y ~acc =
   match
-    S.contract g ~a ~b ~y
+    S.contract g ~order:Nx_kernel.Lane ~a ~b ~y
       ~batch:[ (0, 0) ]
       ~contracting:[ (2, 2) ]
       ~acc:(D.code acc) ()
@@ -1034,7 +1093,7 @@ let rows_past_k (dt, acc, out) =
     }
   in
   match
-    S.contract g ~a ~b ~y
+    S.contract g ~order:Nx_kernel.Chain ~a ~b ~y
       ~batch:[ (0, 0) ]
       ~contracting:[ (2, 2) ]
       ~acc:(code acc) ()
@@ -1087,7 +1146,7 @@ let admits (D.Any d) =
 (* For every operand, accumulator and output dtypes, the plan declines, or its
    result is within the error bound (float sums) or exact (integer sums), the
    output written as a cast from the accumulator writes it. *)
-let quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
+let quadruple ((a, b, acc, out), init, (batch, m, n, k, order), broadcast) =
   let g = S.gpu () in
   let x = any_operand g a ~batch ~rows:m ~k ~broadcast:false ~seed:1 in
   let w = any_operand g b ~batch ~rows:n ~k ~broadcast ~seed:2 in
@@ -1110,7 +1169,7 @@ let quadruple ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
   in
   let float_dt (D.Any d) = D.is D.Float d in
   match
-    S.contract g ~a:x ~b:w ?init ~y
+    S.contract g ~order ~a:x ~b:w ?init ~y
       ~batch:[ (0, 0) ]
       ~contracting:[ (2, 2) ]
       ~acc:(code acc) ()
@@ -1172,12 +1231,14 @@ let quadruples =
         (1, any);
       ]
   in
-  let shape = of_list [ (2, 40, 70, 300); (2, 3, 70, 300) ] in
-  let pp ppf ((a, b, acc, out), init, (batch, m, n, k), broadcast) =
-    Format.fprintf ppf "%a x %a acc %a -> %a%s, %dx%dx%dx%d%s" pp_dtype a
+  let shape =
+    of_list Nx_kernel.[ (2, 40, 70, 300, Chain); (2, 3, 70, 300, Lane) ]
+  in
+  let pp ppf ((a, b, acc, out), init, (batch, m, n, k, order), broadcast) =
+    Format.fprintf ppf "%a x %a acc %a -> %a%s, %dx%dx%dx%d %s%s" pp_dtype a
       pp_dtype b pp_dtype acc pp_dtype out
       (if init then ", init" else "")
-      batch m n k
+      batch m n k (order_name order)
       (if broadcast then ", b broadcast" else "")
   in
   with_pp pp (quad (quad operand operand acc any) bool shape bool)
@@ -1199,7 +1260,7 @@ let declines (a, b, acc, out, init) =
     else None
   in
   let p =
-    S.contract g ~a:x ~b:w ?init ~y
+    S.contract g ~order:Nx_kernel.Lane ~a:x ~b:w ?init ~y
       ~batch:[ (0, 0) ]
       ~contracting:[ (2, 2) ]
       ~acc:(code (dt acc))
@@ -1305,6 +1366,7 @@ let packed_split =
     m = 64;
     n = 64;
     k = 8191;
+    order = Nx_kernel.Chain;
     la = `K;
     lb = `K;
     init = `Bias;
@@ -1337,7 +1399,7 @@ let warm_words g ~count p =
   int_of_float words
 
 (* Contractions of bfloat16, float16 and float32 operands into float32 over
-   extents around the tiles, both layouts and every init. *)
+   extents around the tiles, either order, both layouts and every init. *)
 let shape_case =
   let open Gen in
   let extent = of_list [ 1; 3; 16; 17; 64; 100 ] in
@@ -1346,11 +1408,13 @@ let shape_case =
   and+ m = extent
   and+ n = extent
   and+ k = of_list [ 0; 1; 7; 64; 300; 8191 ]
+  and+ order = of_list Nx_kernel.[ Chain; Lane ]
   and+ la = of_list [ `K; `Free ]
   and+ lb = of_list [ `K; `Free ]
   and+ init = of_list [ `None; `Bias; `Full ] in
   let f32 = D.Any D.Float32 in
-  { packed_split with dt; acc = f32; out = f32; batch; m; n; k; la; lb; init }
+  { packed_split with
+    dt; acc = f32; out = f32; batch; m; n; k; order; la; lb; init }
 
 let shape_case =
   Gen.with_pp (fun ppf c -> Format.pp_print_string ppf (case_name c)) shape_case
@@ -1364,6 +1428,7 @@ let swapped_lane =
     m = 17;
     n = 3;
     k = 64;
+    order = Nx_kernel.Lane;
     init = `Full;
   }
 
@@ -1413,7 +1478,8 @@ let on_the_host g () =
   let a, b, init, y, _ = contract g packed_split () in
   let host = Rig.Buffer.create Rig.host (Rig.Buffer.length a.S.buffer) in
   ignore
-    (S.contract g ~a:{ a with S.buffer = host } ~b ?init ~y
+    (S.contract g ~order:packed_split.order ~a:{ a with S.buffer = host } ~b
+       ?init ~y
        ~batch:[ (0, 0) ]
        ~contracting:[ (2, 2) ]
        ~acc:(code packed_split.acc) ())
@@ -1438,7 +1504,8 @@ let split_cases =
     packed_split;
     { packed_split with m = 256; n = 256 };
     { packed_split with dt = f32; k = 8192; init = `None };
-    { packed_split with dt = f32; m = 1; k = 20000; init = `None };
+    { packed_split with dt = f32; m = 1; k = 20000; order = Nx_kernel.Lane;
+      init = `None };
   ]
 
 let splits_count_from_zero () =
@@ -1510,6 +1577,32 @@ let domains_call_alike =
         run;
     ]
 
+let chooses =
+  let order =
+    Testable.make
+      ~pp:(fun ppf o ->
+        Format.pp_print_string ppf
+          (match o with Nx_kernel.Chain -> "Chain" | Lane -> "Lane"))
+      ~equal:( = )
+  in
+  cases "contract_order chooses lane order at 1 row or 4 columns or fewer"
+    ~name:(fun (rows, columns, _) -> strf "%d by %d" rows columns)
+    Nx_kernel.
+      [
+        (1, 0, Lane);
+        (1, 5120, Lane);
+        (2, 5120, Chain);
+        (4, 5120, Chain);
+        (0, 5120, Chain);
+        (5120, 1, Lane);
+        (5120, 4, Lane);
+        (5120, 5, Chain);
+        (max_int, max_int, Chain);
+        (max_int, 4, Lane);
+      ]
+    (fun (rows, columns, want) ->
+      equal order want (Nx_amd.contract_order ~rows ~columns))
+
 let tests =
   [
     group "launches"
@@ -1549,6 +1642,7 @@ let tests =
       ];
     group "contract"
       [
+        chooses;
         cases ~name:case_name "within the error bound" (cases_of ())
           within_bound;
         cases ~name:case_name "bits fixed by the shape" shape_cases same_bits;
@@ -1556,6 +1650,12 @@ let tests =
           (Gen.with_pp (fun ppf c -> Format.pp_print_string ppf (case_name c))
              lane_cases)
           in_lane_order;
+        cases ~name:case_name "in lane order at chain's shapes, nx.cpu's bits"
+          chain_shaped_lane_cases cpu_bits;
+        cases ~name:case_name "in chain order at lane's shapes"
+          lane_shaped_chain_cases (fun c ->
+            within_bound c;
+            same_bits c);
         cases ~name:case_name "edge inputs within the error bound" edge_cases
           within_bound;
         cases ~name:case_name "float64 sums past double's range" overflow_cases

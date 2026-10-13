@@ -19,6 +19,7 @@ type verdict =
   | Launch of launch  (** {!parts} and {!write} launch it. *)
 
 val choose :
+  order:Nx_kernel.order ->
   batch:(int * int) array ->
   contracting:(int * int) array ->
   acc:Nx_array.Dtype.any ->
@@ -27,9 +28,11 @@ val choose :
   ('a, 'b) Nx_array.t ->
   ('c, 'e) Nx_array.t ->
   (verdict, Nx_array.answer) result
-(** [choose ~batch ~contracting ~acc ~dst ~init a b] plans the contraction
-    of [a] with [b], computed in [acc], into [dst], as
-    {!Nx_kernel.S.contract} takes it. It is [Error] of what
+(** [choose ~order ~batch ~contracting ~acc ~dst ~init a b] plans the
+    contraction of [a] with [b], computed in [acc], into [dst], as
+    {!Nx_kernel.S.contract} takes it: a float product given lane order runs
+    on the skinny kernels, a threadgroup summing 1 row, or 4 where m is above
+    1, and one given chain order on the matrix units. It is [Error] of what
     {!Nx_kernel.Contract_view.v} answers where the axes do not group, and
     [Error Declined] where its kernels do not compute the call. The
     operands' buffers are live. *)

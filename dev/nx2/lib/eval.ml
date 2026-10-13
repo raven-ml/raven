@@ -103,9 +103,9 @@ let replayed : type r d.
   | Assemble { dtype; shape; fill; pieces } ->
       let pieces = List.map (fun (r, x) -> (r, sub x)) pieces in
       one (Assemble { dtype; shape; fill; pieces })
-  | Contract { batch; contracting; acc; out; a; b; init } ->
+  | Contract { order; batch; contracting; acc; out; a; b; init } ->
       let a = sub a and b = sub b and init = Option.map sub init in
-      one (Contract { batch; contracting; acc; out; a; b; init })
+      one (Contract { order; batch; contracting; acc; out; a; b; init })
   | Fft (C2c { direction; axes; x }) ->
       one (Fft (C2c { direction; axes; x = sub x }))
   | Fft (R2c { dtype; axes; x }) -> one (Fft (R2c { dtype; axes; x = sub x }))
@@ -262,15 +262,17 @@ let apply3 ~by k c x y =
       else eval3 ~by k c x y
 
 let contract ~by ~batch ~contracting ~acc dt a b init =
+  let order = Prim.contract_order ~batch ~contracting a b in
   let fast =
     if Interp.quiet () then
-      Exec.contract ~by ~batch ~contracting ~acc dt a b init
+      Exec.contract ~by ~order ~batch ~contracting ~acc dt a b init
     else None
   in
   match fast with
   | Some y -> y
   | None ->
-      eval ~by (Contract { batch; contracting; acc; out = dt; a; b; init })
+      eval ~by
+        (Contract { order; batch; contracting; acc; out = dt; a; b; init })
 
 let place ~by p x =
   match x with

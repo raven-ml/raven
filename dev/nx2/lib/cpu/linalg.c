@@ -159,8 +159,8 @@ typedef struct {
 
 /* c += a·b for c of [m] rows and [n] columns, rows [ldc] apart and its
    columns adjacent, and [k] products an element, in [dt], float32 or
-   float64, by the contraction (gemm.c), c its own init. Answers 0 if an
-   allocation failed. */
+   float64, by the contraction (gemm.c) in chain order, c its own init.
+   Answers 0 if an allocation failed. */
 static int product(int dt, int64_t m, int64_t n, int64_t k, strided a,
                    strided b, void *c, int64_t ldc) {
   int bits = 8 * nx_cpu_width(dt);
@@ -177,7 +177,7 @@ static int product(int dt, int64_t m, int64_t n, int64_t k, strided a,
     v.stride[o][NX_VIEW_COLUMN] = 1;
   }
   const nx_array *op[4] = {&x[0], &x[1], &x[2], &x[2]};
-  return nx_cpu_contract_on(dt, &v, op);
+  return nx_cpu_contract_on(dt, NX_CPU_CHAIN, &v, op);
 }
 
 /* Sets the [n] reals of the dtype [dt] at [p] to NaN: a failed matrix's

@@ -525,7 +525,16 @@ let contractions =
       =
     Op
       (Contract
-         { batch = [||]; contracting; acc; out = D.Float32; a; b; init })
+         {
+           order = Lane;
+           batch = [||];
+           contracting;
+           acc;
+           out = D.Float32;
+           a;
+           b;
+           init;
+         })
   in
   group "contractions"
     [
@@ -544,6 +553,65 @@ let contractions =
           refuses op;
           let (Op o) = op in
           invalid (fun () -> Prim.prepare ~by:"Nx.f" (fun _ x -> x) o));
+    ]
+
+(* Contraction orders *)
+
+let order =
+  Testable.make
+    ~pp:(fun ppf o ->
+      Format.pp_print_string ppf
+        (match o with Nx_kernel.Chain -> "Chain" | Lane -> "Lane"))
+    ~equal:( = )
+
+(* Kernels that choose [o] at every shape. *)
+let choosing o : (module Nx_kernel.S) =
+  (module struct
+    include Nx_cpu
+
+    let contract_order ~rows:_ ~columns:_ = o
+  end)
+
+let orders =
+  group "contraction orders"
+    [
+      prop "the set's kernels choose at the products of the free extents"
+        Gen.(
+          let free = int_range 0 6 in
+          let named = of_list [ 0; 1; 3 ] in
+          quad (pair free free) (int_range 0 12) named named)
+        (fun ((r1, r2), c, batch, k) ->
+          (* a [r1; batch; r2; k] by b [k; batch; c]. *)
+          let o =
+            Prim.contract_order ~batch:[| (1, 1) |] ~contracting:[| (3, 0) |]
+              (f32 [| r1; batch; r2; k |])
+              (f32 [| k; batch; c |])
+          in
+          let want = Nx_cpu.contract_order ~rows:(r1 * r2) ~columns:c in
+          cover "chain order" (want = Chain);
+          cover "lane order" (want = Lane);
+          equal order want o);
+      cases "a set minted with kernels takes their order"
+        ~name:(fun (o, rows, cols) ->
+          Printf.sprintf "%s at %d by %d"
+            (match o with Nx_kernel.Chain -> "chain" | Lane -> "lane")
+            rows cols)
+        Nx_kernel.[ (Chain, 1, 1); (Chain, 8, 8); (Lane, 1, 1); (Lane, 8, 8) ]
+        (fun (o, rows, cols) ->
+          let s : b Devices.t =
+            Devices.mint ~by:"t" ~kernels:(choosing o) [ m 2 ]
+          in
+          let on x =
+            Value.Array
+              {
+                at = Devices.one s 0;
+                a = A.to_device (m 2) (A.of_array D.Float32 x (floats x));
+                dead = Value.Live;
+              }
+          in
+          equal order o
+            (Prim.contract_order ~batch:[||] ~contracting:[| (1, 0) |]
+               (on [| rows; 3 |]) (on [| 3; cols |])));
     ]
 
 let operations =
@@ -594,4 +662,4 @@ let operations =
 let () =
   exit
     (run "nx prim"
-       [ maps; movements; bitcasts; others; contractions; operations ])
+       [ maps; movements; bitcasts; others; contractions; orders; operations ])

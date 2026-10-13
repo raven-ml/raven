@@ -167,7 +167,18 @@ let rec any_dead xs i =
 
 (* Contractions *)
 
-let contract ~batch ~contracting ~acc ~dst ~init a b =
+(* Lane order, on the skinny kernels, where rows or columns are 4 or fewer;
+   chain order, on the SIMT kernels, past them. On the RTX 5000 Ada, float32
+   at 2 to 4 rows by 20480 x 2880 takes 1.8-1.9 ms in lane order and 3.2 ms
+   in chain; 20480 rows by 1 or 4 columns 0.60 ms in lane and 0.83 ms in
+   chain (float64 by 1: 4.1 and 8.7 ms); 8 rows by 5120 x 2880 0.72 ms in
+   chain and 0.77 ms in lane. *)
+let lane_most = 4
+
+let contract_order ~rows ~columns : Nx_kernel.order =
+  if rows <= lane_most || columns <= lane_most then Lane else Chain
+
+let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
   let d = A.device dst in
   match device d with
   | None -> A.Declined
@@ -178,7 +189,7 @@ let contract ~batch ~contracting ~acc ~dst ~init a b =
            address. *)
         A.door ~written ~read nothing ()
       else
-        match Plan.choose ~batch ~contracting ~acc ~dst ~init a b with
+        match Plan.choose ~order ~batch ~contracting ~acc ~dst ~init a b with
         | Error answer -> answer
         | Ok Nothing -> A.door ~written ~read nothing ()
         | Ok (Launch l) ->

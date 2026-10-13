@@ -245,6 +245,11 @@ and _ prim =
           whose region, a [Slice] of [shape] by its ranges, holds it, and [fill]
           where none does. Each piece has its region's shape. *)
   | Contract : {
+      order : Nx_kernel.order;
+          (** The order a kernel library adds its sums in: the whole
+              contraction's ({!Prim.contract_order}). Where no kernel
+              computes it, its expansion sums rounded products by a
+              reduction, in the reduction's order. *)
       batch : (int * int) array;
       contracting : (int * int) array;
       acc : Nx_array.Dtype.any;

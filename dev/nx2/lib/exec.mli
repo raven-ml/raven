@@ -107,6 +107,7 @@ val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
 
 val contract :
   by:string ->
+  order:Nx_kernel.order ->
   batch:(int * int) array ->
   contracting:(int * int) array ->
   acc:Nx_array.Dtype.any ->
@@ -115,12 +116,12 @@ val contract :
   ('c, 'e, 'd) Value.t ->
   ('v, 's, 'd) Value.t option ->
   ('v, 's, 'd) Value.t option
-(** [contract ~by ~batch ~contracting ~acc dt a b init] is [Some] the
-    contraction [Value.Contract] of [a] and [b] from [init] into [dt] where no
-    interpretation reaches it, its operands are live arrays on one device at
-    physically one placement whose set has kernels, and the kernels compute
-    it: it builds no operation and allocates the C-contiguous result. [None]
-    otherwise, for the operation to decide.
+(** [contract ~by ~order ~batch ~contracting ~acc dt a b init] is [Some] the
+    contraction [Value.Contract] of [a] and [b] from [init] into [dt], in
+    [order], where no interpretation reaches it, its operands are live arrays
+    on one device at physically one placement whose set has kernels, and the
+    kernels compute it: it builds no operation and allocates the C-contiguous
+    result. [None] otherwise, for the operation to decide.
 
     Raises [Invalid_argument] naming [by] where such operands break the
     contraction's rule ({!Prim.contract_shape}), as the operation does. *)

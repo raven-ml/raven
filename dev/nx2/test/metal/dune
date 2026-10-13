@@ -5,7 +5,7 @@
  (names test_metal)
  (locks %{workspace_root}/gpu)
  (modules test_metal)
- (libraries nx_array nx_metal_support rig windtrap))
+ (libraries nx_array nx_kernel nx_metal nx_metal_support rig windtrap))
 
 (tests
  (names test_metal_place)

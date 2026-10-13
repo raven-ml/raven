@@ -45,7 +45,8 @@ let kernel_row (name, instance) =
     | K.Zero -> [ "ZERO" ]
     | Pack -> [ "PACK" ]
     | Wmma (k, a, b, t) -> [ "WMMA"; kind k; axis a; axis b; tile t ]
-    | Simt (sum, side) -> [ "SIMT"; acc sum; string_of_int side ]
+    | Simt (sum, rows, columns) ->
+        [ "SIMT"; acc sum; string_of_int rows; string_of_int columns ]
     | Skinny (sum, f) -> [ "SKINNY"; acc sum; form f ]
     | Lane (sum, k, f) ->
         [ "LANE"; acc sum; Option.fold ~none:(acc sum) ~some:kind k; form f ]

@@ -41,7 +41,9 @@ let name = function
   | Wide (d, o) -> "contract_" ^ dtype d ^ "_w" ^ order o
   | Checked d -> "contract_" ^ dtype d ^ "_l"
   | Int8 o -> "contract_i8_" ^ order o
-  | Skinny (d, b_t) -> "skinny_" ^ dtype d ^ "_" ^ side b_t
+  | Skinny (d, b_t, rows) ->
+      "skinny" ^ (if rows = 1 then "" else string_of_int rows) ^ "_" ^ dtype d
+      ^ "_" ^ side b_t
   | Combine -> "contract_combine"
   | Int -> "contract_int"
 
@@ -72,6 +74,7 @@ let constants () =
       ("bk_wide", K.bk_wide);
       ("skinny_t", K.skinny_t);
       ("skinny_n", K.skinny_n);
+      ("skinny_rows", K.skinny_rows);
       ("int_tile", K.int_tile);
       ("int_threads", K.int_threads);
       ("a_t", K.a_t);

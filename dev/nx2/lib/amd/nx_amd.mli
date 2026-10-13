@@ -28,10 +28,21 @@
     [2{^31} - 1] output tiles in a batch element, and an operand it would
     repack whose elements, rows padded to 16 bytes, pass [2{^40}].
 
-    A float contraction whose own order ({!Nx_kernel.section-orders}) is
-    lane order adds in that order, and with no products an output is
-    [init]'s bits, or [+0]. The bits of other contractions depend on the
-    dtypes and the view's extents alone. A NaN result's payload is
-    unspecified. *)
+    [contract_order ~rows ~columns] is [Lane] where [rows] is 1 or [columns]
+    are 4 or fewer, and [Chain] otherwise.
+
+    A float contraction given lane order ({!Nx_kernel.section-orders}) adds
+    in that order, and with no products an output is [init]'s bits, or [+0].
+    In one given chain order, operands each bfloat16 or float8, or both
+    float16, into [float32] sum on the matrix units, each output adding its
+    products in steps of 16 in increasing k, one matrix product a step;
+    other float sums add each output's products in increasing k, one fused
+    multiply-add each. A chain sum covers one range of k from [0], or ranges
+    whose count the plan chooses from the extents, their sums added in
+    increasing k; [init] then enters the sum, and the result rounds once to
+    [dst]'s dtype. The extents enter a chain sum's bits through that count
+    alone, and a float sum's through the limits past which it declines.
+    Integer sums wrap, so every order gives them the same bits. A NaN
+    result's payload is unspecified. *)
 
 include Nx_kernel.S

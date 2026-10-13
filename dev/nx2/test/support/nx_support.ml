@@ -65,9 +65,9 @@ module Counting = struct
     Atomic.incr count;
     Nx_cpu.fold p ~dst x
 
-  let contract ~batch ~contracting ~acc ~dst ~init a b =
+  let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
     Atomic.incr count;
-    Nx_cpu.contract ~batch ~contracting ~acc ~dst ~init a b
+    Nx_cpu.contract ~order ~batch ~contracting ~acc ~dst ~init a b
 end
 
 module Declining = struct

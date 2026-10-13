@@ -85,9 +85,11 @@ let value (D.Any dt) r =
 
 (* Cases *)
 
-(* A contraction: its pairs, accumulator, operands and result dtype, and the
-   views its operands were drawn through. [init] has the result's dtype. *)
+(* A contraction: its order, pairs, accumulator, operands and result dtype,
+   and the views its operands were drawn through. [init] has the result's
+   dtype. *)
 type case = {
+  order : Nx_kernel.order;
   batch : (int * int) array;
   contracting : (int * int) array;
   acc : D.any;
@@ -103,10 +105,10 @@ let pp_case ppf c =
     | None -> ()
     | Some i -> Format.fprintf ppf "; init %a" pp_any i
   in
-  Format.fprintf ppf "batch %a contracting %a acc %a out %a; a %a; b %a%a"
-    pp_ints
-    (Array.map fst c.batch)
-    pp_ints
+  let order = match c.order with Nx_kernel.Chain -> "chain" | Lane -> "lane" in
+  Format.fprintf ppf
+    "%s order, batch %a contracting %a acc %a out %a; a %a; b %a%a" order
+    pp_ints (Array.map fst c.batch) pp_ints
     (Array.map fst c.contracting)
     pp_dtype c.acc pp_dtype c.out pp_any c.a pp_any c.b pp_init c.init
 
@@ -204,10 +206,11 @@ let ranks (batch, rows, cols, con) =
   (nb + Array.length rows + nk, nb + nk + Array.length cols,
    nb + Array.length rows + Array.length cols)
 
-(* The case of the extents [e] in [acc] into [out]: [a] and [b] of the dtypes
-   and through the views given, an init of [out] through the view [init]
-   gives, values drawn from [seed]. *)
-let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
+(* The case of the extents [e] in [order] and [acc] into [out]: [a] and [b]
+   of the dtypes and through the views given, an init of [out] through the
+   view [init] gives, values drawn from [seed]. *)
+let make ~order ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed
+    =
   let nb = Array.length batch and fa = Array.length rows in
   let sa = Array.concat [ batch; rows; con ] in
   let sb = Array.concat [ batch; con; cols ] in
@@ -229,12 +232,14 @@ let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
     operand out (Array.map (fun i -> y.(i)) (inverse vi.perm)) 0 vi (seed + 2)
   in
   let views = names va @ names vb @ Option.fold ~none:[] ~some:names init in
-  { batch = pairs; contracting; acc; a; b; init = Option.map made init; out;
-    views }
+  { order; batch = pairs; contracting; acc; a; b; init = Option.map made init;
+    out; views }
 
-(* A case in [acc] into [out], each operand of [acc] or of [dts]. *)
+(* A case in either order, in [acc] into [out], each operand of [acc] or of
+   [dts]. *)
 let case_of ~acc ~out ~dts =
   let open Gen in
+  let* order = of_list Nx_kernel.[ Chain; Lane ] in
   let* ((batch, _, _, _) as e) = extents in
   let nb = Array.length batch in
   let ra, rb, ry = ranks e in
@@ -246,42 +251,49 @@ let case_of ~acc ~out ~dts =
   let* vi = view ry 0 in
   let* with_init = bool in
   let+ seed = int in
-  make ~acc ~out e (da, va) (db, vb) (if with_init then Some vi else None) seed
+  make ~order ~acc ~out e (da, va) (db, vb)
+    (if with_init then Some vi else None)
+    seed
 
 (* A case of each regime the covers name, in [acc], C-contiguous: no output;
    one; no product; 64 outputs or more in 4 rows or fewer, and in 4 columns or
-   fewer; either side of lane order's bound of 4 rows or columns over several
-   blocks of lanes; fewer than 64 outputs over several blocks of lanes;
-   few rows over several groups of columns, on several threads;
-   several panels and several groups of few rows; 40 rows by 40 and by 17
-   columns over several blocks of the contraction, a tile's partial rows
-   and columns; AVX2's most few rows against an edge of b's columns; the
-   chain path over several blocks of the contraction, over several panels,
-   without init, and with no product and no init. The few rows' case again,
-   and in float64 the chain path over several groups, with a and b stored
-   transposed. The drawn cases reach each a few times in a hundred or
+   fewer; either side of 4 rows or columns over several blocks of lanes;
+   fewer than 64 outputs over several blocks of lanes; few rows over several
+   groups of columns, on several threads; several panels and several groups
+   of few rows; 40 rows by 40 and by 17 columns over several blocks of the
+   contraction, a tile's partial rows and columns; AVX2's most few rows
+   against an edge of b's columns; the chain path over several blocks of the
+   contraction, over several panels, without init, and with no product and
+   no init. The few rows' case again, and in float64 the chain path over
+   several groups, with a and b stored transposed. Each in the order whose
+   path it names, then cases in the other order: chain order in few rows or
+   columns, lane order in many rows and columns over several passes and
+   blocks of lanes. The drawn cases reach each a few times in a hundred or
    never, so a run of a hundred can miss one. *)
 let regimes acc =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
-  let case (init, e) =
+  let case (order, init, e) =
     let ra, rb, ry = ranks e in
     let ti = if init then Some (plain ry) else None in
-    make ~acc ~out:acc e (acc, plain ra) (acc, plain rb) ti 1
+    make ~order ~acc ~out:acc e (acc, plain ra) (acc, plain rb) ti 1
   in
   (* [case] with a and b stored transposed, which every table packs. *)
-  let apart (init, e) =
+  let apart (order, init, e) =
     let ra, rb, ry = ranks e in
     let swap r =
       { (plain r) with
         perm = Array.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i) }
     in
     let ti = if init then Some (plain ry) else None in
-    let c = make ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
+    let c = make ~order ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
     let copy (A.Any x) = A.Any (A.copy x) in
     { c with a = copy c.a; b = copy c.b }
   in
+  let chain = Nx_kernel.Chain and lane = Nx_kernel.Lane in
   let rows = few_rows_most + 1 in
-  let few = (true, ([||], [| few_rows_most |], [| few_rows_most + 3 |], [| 3 |])) in
+  let few =
+    (chain, true, ([||], [| few_rows_most |], [| few_rows_most + 3 |], [| 3 |]))
+  in
   (* Several groups of the chain path, both operands packed, take some 135
      million products in float64; float32's packs are half as large, and
      its groups need twice the products: float64 alone draws them. *)
@@ -289,31 +301,44 @@ let regimes acc =
     match acc with
     | D.Any D.Float64 ->
         let batch = (panels / (2 * rows * kc_least * 8)) + 1 in
-        [ apart (true, ([| batch |], [| rows |], [| rows |], [| kc_least |])) ]
+        let e = ([| batch |], [| rows |], [| rows |], [| kc_least |]) in
+        [ apart (chain, true, e) ]
     | _ -> []
   in
   [ apart few ] @ groups
   @ List.map case
     ([
-       (true, ([||], [| 0 |], [| 3 |], [| 2 |]));
-       (true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
-       (true, ([||], [| 3 |], [| 2 |], [| 0 |]));
-       (true, ([||], [| 3 |], [| 64 |], [| 600 |]));
-       (true, ([||], [| 64 |], [| 3 |], [| 600 |]));
-       (true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
-       (true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
-       (true, ([||], [| 40 |], [| 4 |], [| 1100 |]));
-       (false, ([||], [| 40 |], [| 5 |], [| 1100 |]));
-       (true, ([||], [| 40 |], [| 40 |], [| 1100 |]));
-       (true, ([||], [| 40 |], [| 17 |], [| 1100 |]));
-       (true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
-       (true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
-       (true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
-       (true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
+       (lane, true, ([||], [| 0 |], [| 3 |], [| 2 |]));
+       (lane, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
+       (lane, true, ([||], [| 3 |], [| 2 |], [| 0 |]));
+       (lane, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
+       (lane, true, ([||], [| 64 |], [| 3 |], [| 600 |]));
+       (lane, true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
+       (chain, true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
+       (lane, true, ([||], [| 40 |], [| 4 |], [| 1100 |]));
+       (chain, false, ([||], [| 40 |], [| 5 |], [| 1100 |]));
+       (chain, true, ([||], [| 40 |], [| 40 |], [| 1100 |]));
+       (chain, true, ([||], [| 40 |], [| 17 |], [| 1100 |]));
+       (lane, true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
+       (lane, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
+       (lane, true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
+       (chain, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
        few;
-       (true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
-       (false, ([||], [| rows |], [| 3100 |], [| 3 |]));
-       (false, ([||], [| rows |], [| rows |], [| 0 |]));
+       (chain, true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
+       (chain, false, ([||], [| rows |], [| 3100 |], [| 3 |]));
+       (chain, false, ([||], [| rows |], [| rows |], [| 0 |]));
+       (* The other order. *)
+       (chain, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
+       (chain, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
+       (chain, false, ([||], [| 64 |], [| 3 |], [| 600 |]));
+       (chain, true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
+       (chain, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
+       (lane, true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
+       (lane, false, ([||], [| 40 |], [| 40 |], [| 1100 |]));
+       (lane, true, ([||], [| 40 |], [| 17 |], [| 2100 |]));
+       (lane, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
+       (lane, true, ([||], [| rows |], [| rows + 3 |], [| 30 |]));
+       (lane, false, ([||], [| rows |], [| rows |], [| 0 |]));
      ])
 
 (* The dtypes each accumulator holds, as nx_cpu.mli lists them. *)
@@ -510,8 +535,8 @@ let operands c = Array.of_list ([ c.a; c.b ] @ Option.to_list c.init)
 let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) (A.Any a) (A.Any b)
     init =
   let init = Option.map (A.expect (A.dtype d)) init in
-  K.contract ~batch:c.batch ~contracting:c.contracting ~acc:c.acc ~dst:d ~init
-    a b
+  K.contract ~order:c.order ~batch:c.batch ~contracting:c.contracting
+    ~acc:c.acc ~dst:d ~init a b
 
 (* Whether nx_cpu.mli says nx.cpu computes [c]: its dtypes, and a layout
    Contract_view groups. *)
@@ -544,12 +569,6 @@ let rows_cols c =
   let fa = Array.length (shape_of c.a) - nb - Array.length c.contracting in
   (total (Array.sub y nb fa), total (Array.sub y (nb + fa) (Array.length y - nb - fa)))
 
-(* Whether nx.cpu adds [c]'s outputs in chain order: more than 4 rows, more
-   than 4 columns, and at least 64 outputs per batch element. *)
-let chain_order c =
-  let m, n = rows_cols c in
-  m > 4 && n > 4 && m * n >= 64
-
 let covers c =
   let y, k, batch = sizes c in
   let per = per_batch c in
@@ -557,7 +576,14 @@ let covers c =
   cover "one output" (total y = 1);
   cover "no product" (k = 0 && total y > 0);
   let m, n = rows_cols c in
-  let lanes = per > 0 && not (chain_order c) in
+  let lanes = per > 0 && c.order = Lane in
+  cover "chain order in 4 rows or fewer" (per > 0 && c.order = Chain && m <= 4);
+  cover "chain order in 4 columns or fewer"
+    (per > 0 && c.order = Chain && n <= 4);
+  cover "lane order in 64 outputs or more, rows and columns above 4"
+    (lanes && m > 4 && n > 4 && per >= 64);
+  cover "lane order in passes: more than 8 rows and columns"
+    (lanes && m > 8 && n > 8);
   cover "fewer than 64 outputs" (per > 0 && per < 64);
   cover "64 outputs or more" (per >= 64);
   cover "init" (c.init <> None);
@@ -570,7 +596,9 @@ let covers c =
   cover "4 columns over several blocks of lanes" (n = 4 && m > 16 && k > 1024);
   cover "5 columns over several blocks of lanes" (n = 5 && m > 16 && k > 1024);
   cover "4 rows over several groups of columns" (m <= 4 && n > 1024 && k > 1024);
-  let chain = per >= 64 && m > few_rows_most && n > few_rows_most in
+  let chain =
+    c.order = Chain && per >= 64 && m > few_rows_most && n > few_rows_most
+  in
   let w = match c.acc with D.Any D.Float32 -> 4 | _ -> 8 in
   cover "the chain path" chain;
   cover "chain without init" (chain && c.init = None);
@@ -738,7 +766,7 @@ let law_declined (b : Support.backend) c =
   | A.Done -> cover "computed" true
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
-(* nx.cpu's order *)
+(* The order given *)
 
 (* [x] rounded to float32. *)
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
@@ -756,7 +784,7 @@ let fma32 a b c =
 (* float32's addition, rounded once through a double for the same reason. *)
 let add32 x y = round32 (x +. y)
 
-(* [o]'s result in nx.cpu's order, with [fma] and [add] of the accumulator:
+(* [o]'s result in the order given, with [fma] and [add] of the accumulator:
    chain order, one fused chain from init or +0; or lane order, blocks of
    1024 terms in 16 lanes, summed by trees, then init, with no term init as
    it is. *)
@@ -804,7 +832,7 @@ let law_order b c =
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
   | None -> cover "a layout the view does not group" true
   | Some y ->
-      let chain = chain_order c in
+      let chain = c.order = Chain in
       let fma, add =
         if c.acc = D.Any D.Float32 then (fma32, add32)
         else (Float.fma, ( +. ))
@@ -823,32 +851,35 @@ let law_computes b c =
   equal ~msg:"computed" bool computes (Option.is_some (run b c))
 
 (* With no products nx.cpu gives each output init's bits, -0 and a
-   signalling NaN included, below 64 outputs and from 64: [ud] is an
-   unsigned dtype of [fd]'s width, [bits] init's values in it. *)
+   signalling NaN included, below 64 outputs and from 64, in either order:
+   [ud] is an unsigned dtype of [fd]'s width, [bits] init's values in it. *)
 let empty (type u ue f fe) (b : Support.backend) (ud : (u, ue) D.t)
     (fd : (f, fe) D.t) ty (bits : u array) () =
   let module K = (val b.kernels) in
-  let at (m, n) =
+  let at order (m, n) =
     let want = Array.init (m * n) (fun i -> bits.(i mod Array.length bits)) in
     let init = Option.get (A.bitcast fd (A.of_array ud [| m; n |] want)) in
     let a = A.create Rig.host fd [| m; 0 |] and b = A.create Rig.host fd [| 0; n |] in
     let dst = A.create Rig.host fd [| m; n |] in
     (match
-       K.contract ~batch:[||] ~contracting:[| (1, 0) |] ~acc:(D.Any fd) ~dst
-         ~init:(Some init) a b
+       K.contract ~order ~batch:[||] ~contracting:[| (1, 0) |] ~acc:(D.Any fd)
+         ~dst ~init:(Some init) a b
      with
     | A.Done -> ()
     | r -> failf "contract answered %a" Nx_array_support.pp_answer r);
     equal (array ty) want (A.to_array (Option.get (A.bitcast ud dst)))
   in
-  List.iter at [ (1, 3); (8, 24) ]
+  List.iter
+    (fun o -> List.iter (at o) [ (1, 3); (8, 24) ])
+    Nx_kernel.[ Chain; Lane ]
 
 (* On a thread that has run no product, an empty product gives +0, or
-   init's bits, on the few-rows path and the chain path: a thread's first
-   product makes the buffers nx.cpu keeps for it. *)
+   init's bits, in chain order on the few-rows path and the chain path, and
+   in lane order: a thread's first product makes the buffers nx.cpu keeps
+   for it. *)
 let fresh (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let at (m, n) init =
+  let at order (m, n) init =
     let a = A.create Rig.host D.Float32 [| m; 0 |] in
     let b = A.create Rig.host D.Float32 [| 0; n |] in
     let dst = A.of_array D.Float32 [| m; n |] (Array.make (m * n) 7.) in
@@ -857,7 +888,7 @@ let fresh (b : Support.backend) () =
     let call () =
       try
         Ok
-          (K.contract ~batch:[||] ~contracting:[| (1, 0) |]
+          (K.contract ~order ~batch:[||] ~contracting:[| (1, 0) |]
              ~acc:(D.Any D.Float32) ~dst ~init a b)
       with e -> Error e
     in
@@ -869,7 +900,10 @@ let fresh (b : Support.backend) () =
     equal (array int32) (Array.make (m * n) want)
       (Array.map Int32.bits_of_float (A.to_array dst))
   in
-  List.iter (fun mn -> at mn false; at mn true) [ (8, 8); (200, 200) ]
+  List.iter
+    (fun o ->
+      List.iter (fun mn -> at o mn false; at o mn true) [ (8, 8); (200, 200) ])
+    Nx_kernel.[ Chain; Lane ]
 
 (* The suite *)
 
@@ -894,7 +928,7 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop ~examples "each output adds its products in nx.cpu's order"
+      prop ~examples "each output adds its products in the order given"
         computed (run (law_order b));
       prop "computes the cases nx_cpu.mli lists, declines others"
         any_case (run (law_computes b));
@@ -908,7 +942,45 @@ let cpu (b : Support.backend) =
         (run (fresh b));
     ]
 
+let order =
+  Testable.make
+    ~pp:(fun ppf o ->
+      Format.pp_print_string ppf
+        (match o with Nx_kernel.Chain -> "Chain" | Lane -> "Lane"))
+    ~equal:( = )
+
+let orders =
+  cases "nx.cpu chooses chain order at rows and columns above 4 and 64 outputs"
+    ~name:(fun (m, n, _) -> Printf.sprintf "%d by %d" m n)
+    Nx_kernel.
+      [
+        (0, 1000, Lane);
+        (1000, 0, Lane);
+        (1, 1, Lane);
+        (4, 1000, Lane);
+        (5, 1000, Chain);
+        (1000, 4, Lane);
+        (1000, 5, Chain);
+        (5, 5, Lane);
+        (5, 12, Lane);
+        (5, 13, Chain);
+        (12, 5, Lane);
+        (13, 5, Chain);
+        (7, 9, Lane);
+        (9, 7, Lane);
+        (8, 8, Chain);
+        (16, 4, Lane);
+        (max_int, max_int, Chain);
+        (max_int, 5, Chain);
+        (5, max_int, Chain);
+        (max_int, 4, Lane);
+        (4, max_int, Lane);
+        (max_int, 0, Lane);
+      ]
+    (fun (rows, columns, want) ->
+      equal order want (Nx_cpu.contract_order ~rows ~columns))
+
 let () =
   exit
     (Windtrap.run "nx_kernel.contract"
-       (List.map laws Support.backends @ List.map cpu Support.cpus))
+       ((orders :: List.map laws Support.backends) @ List.map cpu Support.cpus))

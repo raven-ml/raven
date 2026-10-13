@@ -67,6 +67,12 @@
   X(skinny_f32_n) X(skinny_f32_t)                                          \
   X(skinny_f16_n) X(skinny_f16_t)                                          \
   X(skinny_bf16_n) X(skinny_bf16_t)                                        \
+  /* lane order at 2 to 4 rows, b read once for them: -2x2880x5120 to      \
+     -4x2880x5120 and their -nn rows; summing 1 row, they slowed decode    \
+     1.1-2.5 times */                                                      \
+  X(skinny4_f32_n) X(skinny4_f32_t)                                        \
+  X(skinny4_f16_n) X(skinny4_f16_t)                                        \
+  X(skinny4_bf16_n) X(skinny4_bf16_t)                                      \
   /* every split sum; every other integer contraction */                  \
   X(contract_combine) X(contract_int)
 
@@ -95,6 +101,9 @@
    [k][n] (N). */
 #define NX_METAL_SKINNY_T 4
 #define NX_METAL_SKINNY_N 32
+
+/* The rows of a a skinny4 threadgroup sums, reading b once for them. */
+#define NX_METAL_SKINNY_ROWS 4
 
 /* The SIMD integer kernel's tile side and threads. */
 #define NX_METAL_INT_TILE 64

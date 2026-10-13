@@ -81,9 +81,9 @@ let floors =
 
 (* The operands of y[z, i, j] = Σ_k a[z, i, k] · b[z, j, k], a [m; k] and b [n;
    k] per batch element of [d], in the layouts [la] and [lb] ([`K] or [`Free]
-   axis contiguous), y [m; n] of [o], and the plan's run. *)
-let plan g ?(batch = 1) ?(la = `K) ?(lb = `K) (D.Any d) (D.Any c) (D.Any o) m n
-    k =
+   axis contiguous), y [m; n] of [o], and the plan's run in [order]. *)
+let plan g ?(batch = 1) ?(la = `K) ?(lb = `K) ~order (D.Any d) (D.Any c)
+    (D.Any o) m n k =
   let operand (type v s) (d : (v, s) D.t) rows cols layout : S.operand =
     let buffer = S.buffer g (D.bits d / 8 * batch * rows * cols) in
     let draw = if D.is D.Float d then S.Uniform else S.Small in
@@ -95,14 +95,17 @@ let plan g ?(batch = 1) ?(la = `K) ?(lb = `K) (D.Any d) (D.Any c) (D.Any o) m n
   in
   let a = operand d m k la and b = operand d n k lb and y = operand o m n `K in
   let contracting = [ (2, 2) ] and acc = D.code c in
-  match S.contract g ~a ~b ~y ~batch:[ (0, 0) ] ~contracting ~acc () with
+  match
+    S.contract g ~order ~a ~b ~y ~batch:[ (0, 0) ] ~contracting ~acc ()
+  with
   | Some run -> (a, b, y, run)
   | None -> failwith "the plan declines"
 
-(* The contraction, checked once at 512 outputs against the error bound. A
-   product with m <= 16 is memory-bound: its floor reads its operands. *)
-let contract ?(batch = 1) ?(la = `K) ?(lb = `K) (D.Any d as dt) (D.Any c as acc)
-    out m n k =
+(* The contraction in [order], checked once at 512 outputs against the error
+   bound. A product with m <= 16 is memory-bound: its floor reads its
+   operands. *)
+let contract ?(batch = 1) ?(la = `K) ?(lb = `K) ~order (D.Any d as dt)
+    (D.Any c as acc) out m n k =
   let l = function `K -> "k" | `Free -> "f" in
   let name =
     strf "contract/%s-%s%dx%dx%d%s" (D.name d)
@@ -111,7 +114,7 @@ let contract ?(batch = 1) ?(la = `K) ?(lb = `K) (D.Any d as dt) (D.Any c as acc)
       (if la = `K && lb = `K then "" else "-" ^ l la ^ l lb)
   in
   let make g =
-    let a, b, y, run = plan g ~batch ~la ~lb dt acc out m n k in
+    let a, b, y, run = plan g ~batch ~la ~lb ~order dt acc out m n k in
     S.run g run;
     let view (x : S.operand) =
       {
@@ -145,38 +148,48 @@ let contracts =
   let bf16 = Any Bfloat16 and f16 = Any Float16 and f32 = Any Float32 in
   let i8 = Any Int8 and i32 = Any Int32 and f64 = Any Float64 in
   let i16 = Any Int16 and i64 = Any Int64 and e4m3 = Any Float8_e4m3fn in
+  let chain = Nx_kernel.Chain and lane = Nx_kernel.Lane in
   let squares dt =
     List.map
-      (fun s -> contract dt f32 dt s s s)
+      (fun s -> contract ~order:chain dt f32 dt s s s)
       [ 256; 512; 1024; 2048; 4096; 8192 ]
   in
   let layouts dt =
     List.map
-      (fun (la, lb) -> contract ~la ~lb dt f32 dt 4096 4096 4096)
+      (fun (la, lb) -> contract ~la ~lb ~order:chain dt f32 dt 4096 4096 4096)
       [ (`K, `Free); (`Free, `K); (`Free, `Free) ]
   in
   List.concat_map squares [ bf16; f16; f32 ]
   @ List.concat_map layouts [ bf16; f16; f32 ]
   @ [
-      contract i8 i32 i32 4096 4096 4096;
-      contract bf16 f32 bf16 512 5120 2880;
-      contract bf16 f32 bf16 512 2880 4096;
-      contract bf16 f32 bf16 512 201088 2880;
-      contract bf16 f32 bf16 1 5120 2880;
-      contract f16 f32 f16 1 5120 2880;
+      contract ~order:chain i8 i32 i32 4096 4096 4096;
+      contract ~order:chain bf16 f32 bf16 512 5120 2880;
+      contract ~order:chain bf16 f32 bf16 512 2880 4096;
+      contract ~order:chain bf16 f32 bf16 512 201088 2880;
+      contract ~order:lane bf16 f32 bf16 1 5120 2880;
+      contract ~order:lane f16 f32 f16 1 5120 2880;
       (* float8 weights, packed to bfloat16 *)
-      contract e4m3 f32 bf16 1 5120 2880;
-      contract bf16 f32 bf16 1 201088 2880;
-      contract bf16 f32 bf16 4096 14336 4096;
-      contract ~batch:64 bf16 f32 bf16 512 512 512;
-      contract f32 f32 f32 1 5120 2880;
+      contract ~order:lane e4m3 f32 bf16 1 5120 2880;
+      contract ~order:lane bf16 f32 bf16 1 201088 2880;
+      contract ~order:chain bf16 f32 bf16 4096 14336 4096;
+      contract ~batch:64 ~order:chain bf16 f32 bf16 512 512 512;
+      contract ~order:lane f32 f32 f32 1 5120 2880;
       (* float64 and integer sums, which the core computes *)
-      contract f64 f64 f64 1024 1024 1024;
-      contract f64 f64 f64 1 5120 2880;
-      contract i16 i64 i64 1024 1024 1024;
-      contract i8 i32 i32 1 5120 2880;
-      contract i16 i64 i64 1 5120 2880;
-      contract i32 i32 i32 1 5120 2880;
+      contract ~order:chain f64 f64 f64 1024 1024 1024;
+      contract ~order:lane f64 f64 f64 1 5120 2880;
+      contract ~order:chain i16 i64 i64 1024 1024 1024;
+      contract ~order:lane i8 i32 i32 1 5120 2880;
+      contract ~order:lane i16 i64 i64 1 5120 2880;
+      contract ~order:lane i32 i32 i32 1 5120 2880;
+      (* Chain order at 5 to 16 rows, on the SIMT kernels *)
+      contract ~order:chain f32 f32 f32 8 5120 2880;
+      contract ~order:chain f32 f32 f32 16 5120 2880;
+      contract ~order:chain f64 f64 f64 8 5120 2880;
+      contract ~order:chain i32 i32 i32 8 5120 2880;
+      (* A @ x, in the order nx.cuda chooses: lane, on the skinny kernels. *)
+      contract
+        ~order:(Nx_cuda.contract_order ~rows:20480 ~columns:1)
+        f32 f32 f32 20480 1 2880;
     ]
 
 let all = floors @ contracts

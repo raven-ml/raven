@@ -334,11 +334,11 @@ let apply_rows =
       [ D.Any f32; D.Any D.Float64 ]
 
 (* Contractions: [a] and [b] laid out by [layout] from C-contiguous arrays of
-   the shapes it is given, contracted over [contracting], with [init] if
-   given; the floor runs their flops at the host's peak and, with [streams],
-   reads that many bytes. *)
-let contract ?streams ?(init = false) ~acc name ~sa ~sb ~layout ~contracting
-    ~flops =
+   the shapes it is given, contracted over [contracting] in [order], with
+   [init] if given; the floor runs their flops at the host's peak and, with
+   [streams], reads that many bytes. *)
+let contract ?streams ?(init = false) ~acc ~order name ~sa ~sb ~layout
+    ~contracting ~flops =
   let (D.Any dt) = acc in
   let bench (module K : Nx_kernel.S) =
     let shape (A.Any x) = A.Layout.shape (A.layout x) in
@@ -356,16 +356,16 @@ let contract ?streams ?(init = false) ~acc name ~sa ~sb ~layout ~contracting
         let init = if init then Some (filled dt y) else None in
         (A.create Rig.host dt y, init, a, b))
       (fun (dst, init, A.Any a, A.Any b) ->
-        ok (K.contract ~batch:[||] ~contracting ~acc ~dst ~init a b))
+        ok (K.contract ~order ~batch:[||] ~contracting ~acc ~dst ~init a b))
   in
   let read = Option.to_list (Option.map (fun n -> F.Read n) streams) in
   { bench; work = F.Fma (acc, flops) :: read }
 
 let plain a b = (a, b)
 
-(* The product of [m × k] and [k × n] C-contiguous matrices. *)
-let gemm ?init ~acc name m n k =
-  contract ?init ~acc name ~sa:[| m; k |] ~sb:[| k; n |] ~layout:plain
+(* The product of [m × k] and [k × n] C-contiguous matrices in [order]. *)
+let gemm ?init ~acc ~order name m n k =
+  contract ?init ~acc ~order name ~sa:[| m; k |] ~sb:[| k; n |] ~layout:plain
     ~contracting:[| (1, 0) |] ~flops:(2 * m * n * k)
 
 let f64 = D.Float64
@@ -377,12 +377,15 @@ let f64 = D.Float64
    takes a microcode assist. The row guards x86 only (on the M1
    it times a plain 100³ product), and only when the worker that packed
    the 111-column edge takes the 100-column edge: always on one thread,
-   by chance where threads steal units. *)
+   by chance where threads steal units. Both products sum in chain order,
+   as nx gives them. *)
 let after_subnormals =
   let acc = D.Any f32 and contracting = [| (1, 0) |] in
   let bench (module K : Nx_kernel.S) =
     let product dst a b =
-      ok (K.contract ~batch:[||] ~contracting ~acc ~dst ~init:None a b)
+      ok
+        (K.contract ~order:Nx_kernel.Chain ~batch:[||] ~contracting ~acc ~dst
+           ~init:None a b)
     in
     row "contract-f32-100-after-subnormals"
       (fun () ->
@@ -396,7 +399,11 @@ let after_subnormals =
 
 let contract_rows =
   let acc32 = D.Any f32 and acc64 = D.Any f64 in
-  let square acc dt n = gemm ~acc (Printf.sprintf "contract-%s-%d" dt n) n n n in
+  let chain = Nx_kernel.Chain and lane = Nx_kernel.Lane in
+  (* Squares of 8 or more: chain order. *)
+  let square acc dt n =
+    gemm ~acc ~order:chain (Printf.sprintf "contract-%s-%d" dt n) n n n
+  in
   (* 8³ is a call's fixed cost: the view, the door, the jobs. *)
   List.map (square acc32 "f32") [ 8; 64; 128; 256; 512; 1024; 2048; 4096 ]
   @ List.map (square acc64 "f64") [ 256; 1024 ]
@@ -409,33 +416,37 @@ let contract_rows =
       square acc64 "f64" 50;
       (* Few columns, many rows, [4096 × 256] by [256 × 64]: computed as
          its transpose, whose columns lie apart in dst. *)
-      gemm ~acc:acc32 "contract-f32-4096x64x256" 4096 64 256;
-      gemm ~init:true ~acc:acc32 "contract-f32-1024-init" 1024 1024 1024;
+      gemm ~acc:acc32 ~order:chain "contract-f32-4096x64x256" 4096 64 256;
+      gemm ~init:true ~acc:acc32 ~order:chain "contract-f32-1024-init" 1024
+        1024 1024;
       (* a transposed: the [k × m] array viewed as [m × k]. *)
-      contract ~acc:acc32 "contract-f32-1024-tn" ~sa:[| 1024; 1024 |]
+      contract ~acc:acc32 ~order:chain "contract-f32-1024-tn"
+        ~sa:[| 1024; 1024 |]
         ~sb:[| 1024; 1024 |]
         ~layout:(fun (A.Any a) b ->
           (A.Any (Option.get (A.move (M.Permute [| 1; 0 |]) a)), b))
         ~contracting:[| (1, 0) |] ~flops:(2 * 1024 * 1024 * 1024);
       (* A dot of 10 Mi elements. *)
-      contract ~acc:acc32 "contract-dot-f32-10M" ~sa:[| 10 * mib |]
+      contract ~acc:acc32 ~order:lane "contract-dot-f32-10M"
+        ~sa:[| 10 * mib |]
         ~sb:[| 10 * mib |] ~layout:plain
         ~contracting:[| (0, 0) |] ~flops:(2 * 10 * mib)
         ~streams:(2 * 4 * 10 * mib);
     ]
   (* Decoding: [m] rows against a 4096 × 4096 weight stored as [n × k]. *)
   @ List.map
-      (fun m ->
-        contract ~acc:acc32
+      (fun (m, order) ->
+        contract ~acc:acc32 ~order
           (Printf.sprintf "contract-f32-m%dx4096x4096" m)
           ~sa:[| m; 4096 |] ~sb:[| 4096; 4096 |] ~layout:plain
           ~contracting:[| (1, 1) |]
           ~flops:(2 * m * 4096 * 4096)
           ~streams:(4 * 4096 * 4096))
-      [ 1; 4; 8; 32; 128 ]
+      [ (1, lane); (4, lane); (8, chain); (32, chain); (128, chain) ]
   (* One row against the weight stored as [k × n]. *)
   @ [
-      contract ~acc:acc32 "contract-f32-m1x4096x4096-kn" ~sa:[| 1; 4096 |]
+      contract ~acc:acc32 ~order:lane "contract-f32-m1x4096x4096-kn"
+        ~sa:[| 1; 4096 |]
         ~sb:[| 4096; 4096 |] ~layout:plain ~contracting:[| (1, 0) |]
         ~flops:(2 * 4096 * 4096) ~streams:(4 * 4096 * 4096);
     ]

@@ -4,7 +4,7 @@
 (executable
  (name bench_cuda)
  (modules rows bench_cuda)
- (libraries nx_array nx_cuda_support nx_gpu_ref rig thumper unix))
+ (libraries nx_array nx_kernel nx_cuda nx_cuda_support nx_gpu_ref rig thumper unix))
 
 (rule
  (alias bench)

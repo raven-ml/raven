@@ -178,12 +178,9 @@ static int F(upper)(const T *u, int64_t n, int64_t ld, T *x, int64_t r,
 
 /* A solve by units of columns of x, which are independent, on the
    call's threads: one a thread, of SOLVE_COLUMNS columns at least, each
-   solved whole. gemm.c computes a product in chain order where its rows
-   and columns are above LANE_MOST, 4, and its outputs at least
-   CHAIN_OUTPUTS, 64: a unit's products have more than 8 rows, since the
-   recursion splits above LEAF, and SOLVE_COLUMNS columns, so they keep it,
-   and each column's arithmetic and bits are the whole solve's, whatever
-   the units and threads.
+   solved whole. Every product adds in chain order (product), whatever
+   its shape, so each column's arithmetic and bits are the whole solve's,
+   whatever the units and threads.
 
    ADJOINT_LOWER's x is r × n and solved as l t' = t for t = xᴴ, since
    x lᴴ is the old x: a unit copies its rows of x conjugate transposed into

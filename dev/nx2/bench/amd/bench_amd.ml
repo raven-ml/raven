@@ -35,7 +35,7 @@ let host =
   let bf16 = D.Any D.Bfloat16 and f32 = D.Any D.Float32 in
   let setup () =
     let g = S.gpu () in
-    let _, _, _, run = Rows.plan g bf16 f32 bf16 1 1 1 in
+    let _, _, _, run = Rows.plan g ~order:Nx_kernel.Lane bf16 f32 bf16 1 1 1 in
     (g, run)
   in
   [

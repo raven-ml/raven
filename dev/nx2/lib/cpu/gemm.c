@@ -15,20 +15,20 @@
    Lane order reads b in place where it is acc and adjacent along the axis
    it streams.
 
-   The order of each output's sum is a function of M, N and K alone:
+   Each output's sum adds in the order the caller gives, at any M, N and
+   K:
 
-   - Chain order, M and N above LANE_MOST and M·N >= CHAIN_OUTPUTS: one
-     fused multiply-add chain per output, in increasing k, from init or +0.
-     The microkernels of every target add each product fused, and the
-     blocking stores and reloads the sum in acc exactly, so tile shapes,
-     block sizes and threads change no bit.
-   - Lane order, otherwise: the products fall into blocks of FOLD_BLOCK
-     consecutive k and, within a block, into LANES lanes by k modulo LANES,
-     each lane a fused chain from +0; a fixed balanced tree sums the lanes,
-     the left-complete binary tree the blocks, then init is added. A single
-     chain runs at one fused add per latency; CHAIN_OUTPUTS outputs or more
-     keep every target's pipes full in chain order. A product of LANE_MOST
-     rows or fewer, as decoding a token is, reads b once in the order it
+   - Chain order: one fused multiply-add chain per output, in increasing
+     k, from init or +0. The microkernels of every target add each product
+     fused, and the blocking stores and reloads the sum in acc exactly, so
+     tile shapes, block sizes and threads change no bit. A single chain
+     runs at one fused add per latency: many rows and columns keep every
+     target's pipes full.
+   - Lane order: the products fall into blocks of FOLD_BLOCK consecutive k
+     and, within a block, into LANES lanes by k modulo LANES, each lane a
+     fused chain from +0; a fixed balanced tree sums the lanes, the
+     left-complete binary tree the blocks, then init is added. A product
+     of few rows, as decoding a token is, reads b once in the order it
      lies, at the memory's speed, where chain order's tiles would pack it.
 
    Chain order follows BLIS's loops (Goto and van de Geijn, "Anatomy of
@@ -74,13 +74,9 @@
 
 #include "cpu.h"
 
-/* Outputs per batch element from which chain order fills the pipes:
-   NEON keeps 16 vectors of 4 chains in flight (4 pipes, 4 cycles), AVX2 8
-   of 8. */
-#define CHAIN_OUTPUTS 64
-
-/* Rows or columns at most which a product runs in lane order. */
-#define LANE_MOST 4
+/* Rows of a pass of lane order: a product of more runs in passes, each
+   reading b again. */
+#define LANE_ROWS 8
 
 /* Lane order's units: dots take DOT_COLUMNS columns of b, rows ROW_BYTES
    of each row of b, a page. */
@@ -833,9 +829,9 @@ done:
 
 /* Lane order */
 
-/* Rows are the fewer of the two (lanes transposes the product): at most 7,
-   since M·N < CHAIN_OUTPUTS where LANE_MOST < M. b, the large operand, is
-   read once, in the order it lies:
+/* Rows are the fewer of the two (lanes transposes the product), at most
+   LANE_ROWS a pass. b, the large operand, is read once a pass, in the
+   order it lies:
 
    - Dots, where b is adjacent along k, as a weight stored [n × k] is: a
      unit is (element, DOT_COLUMNS columns, range of blocks), and each
@@ -1241,8 +1237,7 @@ static void rows(problem *p, int64_t bytes, double cost) {
   free(f.lanes);
 }
 
-static void lanes(problem *p) {
-  if (p->ext[COL] < p->ext[ROW]) transpose(p);
+static void lane_pass(problem *p) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w;
   if (k == 0) {
@@ -1256,14 +1251,19 @@ static void lanes(problem *p) {
   else rows(p, bytes, cost);
 }
 
-/* The entry */
-
-/* Whether [p] adds in chain order: more than LANE_MOST rows and columns,
-   and CHAIN_OUTPUTS outputs or more per element. */
-static int chain_order(const problem *p) {
-  int64_t m = p->ext[ROW], n = p->ext[COL];
-  return m > LANE_MOST && n > LANE_MOST && m * n >= CHAIN_OUTPUTS;
+/* Passes of LANE_ROWS rows: each moves a, init and dst on by its rows. */
+static void lanes(problem *p) {
+  if (p->ext[COL] < p->ext[ROW]) transpose(p);
+  int64_t m = p->ext[ROW];
+  for (int64_t i = 0; i < m && !atomic_load(&p->failed); i += LANE_ROWS) {
+    p->ext[ROW] = min64(LANE_ROWS, m - i);
+    lane_pass(p);
+    for (int o = 0; o < 4; o++)
+      p->op[o].first += p->ext[ROW] * p->op[o].st[ROW];
+  }
 }
+
+/* The entry */
 
 /* Whether chain order reads operand [o] of [p] in place: in acc, adjacent
    along the axis the kernel streams (b along its columns, a along k where
@@ -1309,7 +1309,7 @@ static int init_is_dst(const problem *p) {
   return 1;
 }
 
-int nx_cpu_contract_on(int acc, const nx_contract_view *v,
+int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
                        const nx_array *const *op) {
   problem p = {.acc = acc, .w = nx_cpu_width(acc)};
   p.g = &nx_cpu_table->gemm[acc];
@@ -1322,7 +1322,7 @@ int nx_cpu_contract_on(int acc, const nx_contract_view *v,
   if (p.ext[BATCH] == 0 || p.ext[ROW] == 0 || p.ext[COL] == 0) return 1;
   p.init_is_dst = init_is_dst(&p);
   atomic_init(&p.failed, 0);
-  if (!chain_order(&p)) lanes(&p);
+  if (order == NX_CPU_LANE) lanes(&p);
   else {
     if (p.ext[COL] < p.ext[ROW]) {
       transpose(&p);
@@ -1346,10 +1346,10 @@ double nx_cpu_core_speed(int acc) {
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
    on the stack, answering what the fill answers where it does not group,
    declines what it does not compute, then reads the operands through the
-   door. [vacc] is acc's dtype code and [vi] the init, an
-   option. */
-value nx_cpu_contract(value vbatch, value vcontracting, value vacc,
-                      value vdst, value vi, value va, value vb) {
+   door. [vorder] is the order, [vacc] acc's dtype code and [vi] the init,
+   an option. */
+value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
+                      value vacc, value vdst, value vi, value va, value vb) {
   int acc = Int_val(vacc), init = Is_block(vi);
   value vinit = init ? Field(vi, 0) : va;
   nx_contract_view v;
@@ -1369,7 +1369,7 @@ value nx_cpu_contract(value vbatch, value vcontracting, value vacc,
   int e = nx_read(n, in, a);
   if (e) return Val_int(e);
   const nx_array *op[4] = {&a[0], &a[1], init ? &a[3] : NULL, &a[2]};
-  int done = nx_cpu_contract_on(acc, &v, op);
+  int done = nx_cpu_contract_on(acc, Int_val(vorder), &v, op);
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();
   return Val_int(NX_OK);
@@ -1378,5 +1378,5 @@ value nx_cpu_contract(value vbatch, value vcontracting, value vacc,
 value nx_cpu_contract_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_contract(argv[0], argv[1], argv[2], argv[3], argv[4],
-                         argv[5], argv[6]);
+                         argv[5], argv[6], argv[7]);
 }

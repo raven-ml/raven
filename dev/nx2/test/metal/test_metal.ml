@@ -204,6 +204,7 @@ type case = {
   m : int;
   n : int;
   k : int;
+  order : Nx_kernel.order; (* of summation *)
   init : init;
   pad : int; (* extra elements per row of a and b *)
   bpad : int; (* extra elements per batch of a and b *)
@@ -223,12 +224,13 @@ let pp_values ppf = function
 let pp_case ppf c =
   let name (Dt.Any dt) = Dt.name dt in
   Format.fprintf ppf
-    "%s -> %s, a%s b%s, %d x (%d x %d x %d), init %s, pad %d, bpad %d, first \
-     %d, spread %d, %a"
+    "%s -> %s, a%s b%s, %d x (%d x %d x %d), %s, init %s, pad %d, bpad %d, \
+     first %d, spread %d, %a"
     (name c.dt) (name c.out)
     (if c.a_t then "^T" else "")
     (if c.b_t then "^T" else "")
     c.batch c.m c.n c.k
+    (match c.order with Nx_kernel.Chain -> "chain" | Lane -> "lane")
     (match c.init with No_init -> "none" | Full -> "full" | Bias -> "bias")
     c.pad c.bpad c.first c.spread pp_values c.values
 
@@ -244,6 +246,8 @@ let extent_gen tile =
       Gen.map (fun x -> tile * x) (Gen.int_range 1 3);
     ]
 
+(* One row takes lane order, as nx gives it; other
+   extents either order. *)
 let case =
   let open Gen in
   let+ dt = of_list floats_dt
@@ -251,7 +255,12 @@ let case =
   and+ a_t = bool
   and+ b_t = bool
   and+ batch = int_range 1 3
-  and+ m = frequency [ (1, of_list [ 1 ]); (4, extent_gen 64) ]
+  and+ m, order =
+    frequency
+      [
+        (1, constant (1, Nx_kernel.Lane));
+        (4, pair (extent_gen 64) (of_list Nx_kernel.[ Chain; Lane ]));
+      ]
   and+ n = extent_gen 64
   and+ k = Gen.one_of [ extent_gen 16; Gen.of_list [ 300; 1000; 2880 ] ]
   and+ init = of_list [ No_init; Full; Bias ]
@@ -269,7 +278,23 @@ let case =
         (1, constant (Subnormal seed));
       ]
   in
-  { dt; out; a_t; b_t; batch; m; n; k; init; pad; bpad; first; spread; values }
+  {
+    dt;
+    out;
+    a_t;
+    b_t;
+    batch;
+    m;
+    n;
+    k;
+    order;
+    init;
+    pad;
+    bpad;
+    first;
+    spread;
+    values;
+  }
 
 let case = Gen.with_pp pp_case case
 
@@ -417,7 +442,7 @@ let call ?acc t c =
   let a = a.arg and b = b.arg in
   let run =
     require_some ~msg:"the planner declined"
-      (S.plan_contract ?init ?acc t dims ~a ~b ~out)
+      (S.plan_contract ?init ?acc ~order:c.order t dims ~a ~b ~out)
   in
   (dims, a, b, out, init, run)
 
@@ -458,6 +483,7 @@ let contract_bound =
       m = 65;
       n = 3;
       k = 0;
+      order = Nx_kernel.Lane;
       init = Bias;
       pad = 0;
       bpad = 0;
@@ -466,9 +492,11 @@ let contract_bound =
       values = Drawn;
     }
   in
-  (* A product in [dt] throughout, of operands near 1, over 2 batch elements. *)
+  (* A product in [dt] throughout, of operands near 1, over 2 batch elements,
+     in chain order, as nx gives each of these shapes. *)
   let example dt ~a_t ~b_t ~m ~n ~k ~init =
-    { empty with dt; out = dt; a_t; b_t; m; n; k; init; spread = 0 }
+    let order = Nx_kernel.Chain in
+    { empty with dt; out = dt; a_t; b_t; m; n; k; order; init; spread = 0 }
   in
   let examples =
     [
@@ -523,6 +551,7 @@ let contract_bound =
         m = 40;
         n = 40;
         k = 64;
+        order = Nx_kernel.Chain;
         spread = 40;
         values = Subnormal 7;
       };
@@ -563,6 +592,55 @@ let contract_bound =
         ~msg:(strf "output %d's error over its bound" at)
         float_exact ~than:1. worst)
 
+(* A float product of one row in chain order runs on the dense kernels, the
+   skinny one never, within its bound: a's rows stored apart by k and more, a
+   stored [k][m] with its k contiguous and apart, b stored either way, and
+   operands past their memory's start. *)
+let one_row_chain =
+  let example ?(a_t = false) ?(b_t = false) ?(pad = 0) ?(first = 0) dt ~n ~k =
+    {
+      dt;
+      out = dt;
+      a_t;
+      b_t;
+      batch = 2;
+      m = 1;
+      n;
+      k;
+      order = Nx_kernel.Chain;
+      init = Bias;
+      pad;
+      bpad = 0;
+      first;
+      spread = 8;
+      values = Drawn;
+    }
+  in
+  let f32 = Dt.Any Dt.Float32 and f16 = Dt.Any Dt.Float16 in
+  let bf16 = Dt.Any Dt.Bfloat16 in
+  cases
+    ~name:(Format.asprintf "%a" pp_case)
+    "one row in chain order: the dense kernels, within the bound"
+    [
+      example f32 ~n:70 ~k:300;
+      example ~pad:3 ~b_t:true f32 ~n:129 ~k:2880;
+      example ~pad:1 ~first:1 f16 ~n:64 ~k:33;
+      example ~a_t:true bf16 ~n:200 ~k:1000;
+      example ~a_t:true ~pad:3 ~b_t:true f32 ~n:65 ~k:64;
+    ]
+    (fun c ->
+      let t = dev () in
+      let dims, a, b, out, init, run = call t c in
+      let kernels = launched t run in
+      let skinny = String.starts_with ~prefix:"skinny_" in
+      equal ~msg:"skinny launches" (list string) []
+        (List.filter skinny kernels);
+      equal ~msg:"a dense launch" bool true (List.exists dense kernels);
+      let worst, at = S.contract_error ?init dims ~a ~b ~out in
+      at_most
+        ~msg:(strf "output %d's error over its bound" at)
+        float_exact ~than:1. worst)
+
 (* Integer contractions wrap in the accumulator and reach out as a cast from it
    does. *)
 
@@ -598,7 +676,7 @@ let int_case =
     int_case
 
 let int_example ?(out = Dt.Any Dt.Int32) ?(acc = Dt.Any Dt.Int32) ?(batch = 1)
-    ?(bpad = 0) ?(values = Drawn) dt ~m ~k =
+    ?(bpad = 0) ?(values = Drawn) dt ~m ~k ~order =
   {
     case =
       {
@@ -610,6 +688,7 @@ let int_example ?(out = Dt.Any Dt.Int32) ?(acc = Dt.Any Dt.Int32) ?(batch = 1)
         m;
         n = m;
         k;
+        order;
         init = Full;
         pad = 0;
         bpad;
@@ -621,40 +700,43 @@ let int_example ?(out = Dt.Any Dt.Int32) ?(acc = Dt.Any Dt.Int32) ?(batch = 1)
   }
 
 let int_examples =
+  let open Nx_kernel in
   [
     (* int8 into 32 bits sums on the matrix units in float32 chunks of 1,024
        terms, in whole tiles: sums longer than a chunk, and the extremes'
        longest; past whole tiles, and uint8, on the SIMD units. *)
-    int_example (Dt.Any Dt.Int8) ~m:64 ~k:2112;
-    int_example (Dt.Any Dt.Int8) ~m:65 ~k:2101;
-    int_example (Dt.Any Dt.Uint8) ~m:64 ~k:608;
-    int_example (Dt.Any Dt.Uint8) ~m:65 ~k:601;
-    int_example ~values:Extreme (Dt.Any Dt.Int8) ~m:64 ~k:2112;
-    int_example ~values:Extreme (Dt.Any Dt.Uint8) ~m:64 ~k:608;
-    int_example ~values:Extreme (Dt.Any Dt.Int16) ~m:20 ~k:100;
+    int_example (Dt.Any Dt.Int8) ~m:64 ~k:2112 ~order:Chain;
+    int_example (Dt.Any Dt.Int8) ~m:65 ~k:2101 ~order:Chain;
+    int_example (Dt.Any Dt.Uint8) ~m:64 ~k:608 ~order:Chain;
+    int_example (Dt.Any Dt.Uint8) ~m:65 ~k:601 ~order:Chain;
+    int_example ~values:Extreme (Dt.Any Dt.Int8) ~m:64 ~k:2112 ~order:Chain;
+    int_example ~values:Extreme (Dt.Any Dt.Uint8) ~m:64 ~k:608 ~order:Chain;
+    int_example ~values:Extreme (Dt.Any Dt.Int16) ~m:20 ~k:100 ~order:Chain;
     (* Negative sums in 32 bits into a 64-bit out, on the matrix units and on
        the SIMD units. *)
-    int_example ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int8) ~m:64 ~k:64;
-    int_example ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int16) ~m:64 ~k:64;
+    int_example ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int8) ~m:64 ~k:64
+      ~order:Chain;
+    int_example ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int16) ~m:64 ~k:64
+      ~order:Chain;
     (* Unsigned sums of 2^31 or more into a 64-bit out widen by no sign, on the
        SIMD units, the matrix units and one row. *)
     int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Uint64)
-      (Dt.Any Dt.Uint16) ~m:17 ~k:300;
+      (Dt.Any Dt.Uint16) ~m:17 ~k:300 ~order:Chain;
     int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Int64) ~values:Extreme
-      (Dt.Any Dt.Uint8) ~m:64 ~k:608;
+      (Dt.Any Dt.Uint8) ~m:64 ~k:608 ~order:Chain;
     int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Uint64)
-      (Dt.Any Dt.Int8) ~m:64 ~k:64;
+      (Dt.Any Dt.Int8) ~m:64 ~k:64 ~order:Chain;
     int_example ~acc:(Dt.Any Dt.Uint32) ~out:(Dt.Any Dt.Uint64)
-      (Dt.Any Dt.Uint16) ~m:1 ~k:300;
+      (Dt.Any Dt.Uint16) ~m:1 ~k:300 ~order:Lane;
     (* Accumulators narrower than 32 bits wrap to their width, then reach out
        widened by their sign. *)
     int_example ~acc:(Dt.Any Dt.Int16) ~out:(Dt.Any Dt.Int64) (Dt.Any Dt.Int16)
-      ~m:17 ~k:300;
+      ~m:17 ~k:300 ~order:Chain;
     int_example ~acc:(Dt.Any Dt.Uint8) ~out:(Dt.Any Dt.Int32) (Dt.Any Dt.Int8)
-      ~m:17 ~k:300;
+      ~m:17 ~k:300 ~order:Chain;
     (* Batches whose bytes start off 16-byte alignment. *)
-    int_example ~batch:2 ~bpad:1 (Dt.Any Dt.Int8) ~m:64 ~k:64;
-    int_example ~batch:2 ~bpad:2 (Dt.Any Dt.Int8) ~m:64 ~k:64;
+    int_example ~batch:2 ~bpad:1 (Dt.Any Dt.Int8) ~m:64 ~k:64 ~order:Chain;
+    int_example ~batch:2 ~bpad:2 (Dt.Any Dt.Int8) ~m:64 ~k:64 ~order:Chain;
   ]
 
 let contract_wraps =
@@ -689,6 +771,7 @@ let every_kernel () =
       m = 1;
       n = 1;
       k = 1;
+      order = Nx_kernel.Lane;
       init = No_init;
       pad = 0;
       bpad = 0;
@@ -700,17 +783,20 @@ let every_kernel () =
   let orders = [ (false, false); (false, true); (true, false); (true, true) ] in
   (* Large tiles take 128 or more whole ones, or, checked, as many past the
      matrix that fill seven eighths of their rows (float32, bfloat16); small
-     ones fewer, or tiles past the matrix; wide ones few rows. *)
+     ones fewer, or tiles past the matrix; wide ones few rows; the skinny
+     kernel one row in lane order, the skinny4 kernel more. *)
   let shapes =
+    let open Nx_kernel in
     [
-      (128, 64, 64, 32);
-      (32, 65, 65, 3);
-      (1, 64, 64, 32);
-      (1, 33, 33, 33);
-      (1, 9, 70, 40);
-      (1, 1, 70, 40);
-      (1, 40, 40, 1024);
-      (1, 120, 4100, 32);
+      (128, 64, 64, 32, Chain);
+      (32, 65, 65, 3, Chain);
+      (1, 64, 64, 32, Chain);
+      (1, 33, 33, 33, Chain);
+      (1, 9, 70, 40, Chain);
+      (1, 1, 70, 40, Lane);
+      (1, 6, 70, 40, Lane);
+      (1, 40, 40, 1024, Chain);
+      (1, 120, 4100, 32, Chain);
     ]
   in
   List.iter
@@ -718,8 +804,10 @@ let every_kernel () =
       List.iter
         (fun (a_t, b_t) ->
           List.iter
-            (fun (batch, m, n, k) ->
-              let c = { base with dt; out = dt; a_t; b_t; batch; m; n; k } in
+            (fun (batch, m, n, k, order) ->
+              let c =
+                { base with dt; out = dt; a_t; b_t; batch; m; n; k; order }
+              in
               let dims, a, b, out, init = launch c in
               let worst, at = S.contract_error ?init dims ~a ~b ~out in
               at_most
@@ -747,9 +835,13 @@ let every_kernel () =
         (Dt.Any Dt.Int16, false, false, 20, 20, Dt.Any Dt.Int64);
       ]
   in
+  (* Squares of 20 rows or more: chain order. *)
   List.iter
     (fun (dt, a_t, b_t, m, k, acc) ->
-      let c = { base with dt; out = Dt.Any Dt.Int32; a_t; b_t; m; n = m; k } in
+      let order = Nx_kernel.Chain in
+      let c =
+        { base with dt; out = Dt.Any Dt.Int32; a_t; b_t; m; n = m; k; order }
+      in
       let dims, a, b, out, init = launch ~acc c in
       let wrong, first = S.contract_wrong ?init ~acc dims ~a ~b ~out in
       equal
@@ -801,9 +893,17 @@ let every_quadruple () =
       Dt.all
   in
   (* Small and wide tiles, one row, and a shape of the SIMD integer tile. *)
-  let shapes = [ (64, 64, 64); (3, 70, 300); (1, 70, 300); (17, 129, 30) ] in
+  let shapes =
+    Nx_kernel.
+      [
+        (64, 64, 64, Chain);
+        (3, 70, 300, Lane);
+        (1, 70, 300, Lane);
+        (17, 129, 30, Chain);
+      ]
+  in
   List.iter
-    (fun (m, n, k) ->
+    (fun (m, n, k, order) ->
       (* Room for [len] elements of the widest dtype, complex128. *)
       let mem len = S.operand t (16 * len) in
       let am = mem (m * k) and bm = mem (k * n) and om = mem (m * n) in
@@ -831,7 +931,9 @@ let every_quadruple () =
                         draw bm db (k * n) 2;
                         Bigarray.Array1.fill (S.view Bigarray.char om) '\xaa'
                       end;
-                      let plan = S.plan_contract ~acc t dims ~a ~b ~out in
+                      let plan =
+                        S.plan_contract ~acc ~order t dims ~a ~b ~out
+                      in
                       let name (Dt.Any dt) = Dt.name dt in
                       let call () =
                         strf "%s x %s, acc %s -> %s, %d x %d x %d" (name da)
@@ -883,6 +985,7 @@ let nan_output =
           m = 8;
           n = 8;
           k = 4;
+          order = Nx_kernel.Chain;
           init = No_init;
           pad = 0;
           bpad = 0;
@@ -907,7 +1010,8 @@ let declines_float64 () =
       .arg
   in
   let plan =
-    S.plan_contract ~acc:(Dt.Any Dt.Float64) t (1, 4, 4, 4) ~a:m ~b:m ~out:m
+    S.plan_contract ~acc:(Dt.Any Dt.Float64) ~order:Nx_kernel.Lane t
+      (1, 4, 4, 4) ~a:m ~b:m ~out:m
   in
   is_none ~pp:(fun ppf _ -> Format.pp_print_string ppf "a run") plan
 
@@ -929,7 +1033,7 @@ let deterministic c () =
   equal ~msg:"run twice" string first (bytes_of out n)
 
 let determinism =
-  let case dt ~batch ~m ~n ~k ~b_t =
+  let case dt ~batch ~m ~n ~k ~order ~b_t =
     {
       dt;
       out = dt;
@@ -939,6 +1043,7 @@ let determinism =
       m;
       n;
       k;
+      order;
       init = Full;
       pad = 0;
       bpad = 0;
@@ -950,15 +1055,23 @@ let determinism =
   cases
     ~name:(Format.asprintf "%a" pp_case)
     "determinism"
-    [
-      case (Dt.Any Dt.Float32) ~batch:2 ~m:200 ~n:300 ~k:1000 ~b_t:false;
-      case (Dt.Any Dt.Bfloat16) ~batch:2 ~m:130 ~n:257 ~k:2000 ~b_t:true;
-      case (Dt.Any Dt.Float16) ~batch:1 ~m:768 ~n:776 ~k:300 ~b_t:false;
-      case (Dt.Any Dt.Float16) ~batch:2 ~m:1 ~n:1000 ~k:3000 ~b_t:true;
-      case (Dt.Any Dt.Bfloat16) ~batch:2 ~m:1 ~n:1000 ~k:3000 ~b_t:false;
-      case (Dt.Any Dt.Float32) ~batch:2 ~m:9 ~n:1000 ~k:3000 ~b_t:false;
-      case (Dt.Any Dt.Float32) ~batch:1 ~m:64 ~n:100 ~k:2048 ~b_t:false;
-    ]
+    Nx_kernel.
+      [
+        case (Dt.Any Dt.Float32) ~batch:2 ~m:200 ~n:300 ~k:1000 ~order:Chain
+          ~b_t:false;
+        case (Dt.Any Dt.Bfloat16) ~batch:2 ~m:130 ~n:257 ~k:2000 ~order:Chain
+          ~b_t:true;
+        case (Dt.Any Dt.Float16) ~batch:1 ~m:768 ~n:776 ~k:300 ~order:Chain
+          ~b_t:false;
+        case (Dt.Any Dt.Float16) ~batch:2 ~m:1 ~n:1000 ~k:3000 ~order:Lane
+          ~b_t:true;
+        case (Dt.Any Dt.Bfloat16) ~batch:2 ~m:1 ~n:1000 ~k:3000 ~order:Lane
+          ~b_t:false;
+        case (Dt.Any Dt.Float32) ~batch:2 ~m:9 ~n:1000 ~k:3000 ~order:Chain
+          ~b_t:false;
+        case (Dt.Any Dt.Float32) ~batch:1 ~m:64 ~n:100 ~k:2048 ~order:Chain
+          ~b_t:false;
+      ]
     (fun c -> deterministic c ())
 
 (* Layouts: a contraction's bits are a function of its operands' values and
@@ -1013,8 +1126,8 @@ let orders_agree c =
     in
     let run =
       require_some ~msg:"the planner declined"
-        (S.plan_contract ?init t (c.batch, c.m, c.n, c.k) ~a:a.arg ~b:b.arg
-           ~out:out.arg)
+        (S.plan_contract ?init ~order:c.order t (c.batch, c.m, c.n, c.k)
+           ~a:a.arg ~b:b.arg ~out:out.arg)
     in
     let kernels = launched t run in
     let get, _ = codes out size in
@@ -1043,7 +1156,7 @@ let orders_agree c =
     ]
 
 let orders =
-  let example dt ~m ~n ~k =
+  let example dt ~m ~n ~k ~order =
     {
       dt;
       out = Dt.Any Dt.Float32;
@@ -1053,6 +1166,7 @@ let orders =
       m;
       n;
       k;
+      order;
       init = No_init;
       pad = 0;
       bpad = 0;
@@ -1062,19 +1176,24 @@ let orders =
     }
   in
   let examples =
+    let open Nx_kernel in
     [
-      (* One row: the skinny kernel, b read along either axis. *)
-      example (Dt.Any Dt.Bfloat16) ~m:1 ~n:70 ~k:2880;
-      example (Dt.Any Dt.Float32) ~m:1 ~n:70 ~k:300;
+      (* One row in lane order: the skinny kernel, b read along either axis. *)
+      example (Dt.Any Dt.Bfloat16) ~m:1 ~n:70 ~k:2880 ~order:Lane;
+      example (Dt.Any Dt.Float32) ~m:1 ~n:70 ~k:300 ~order:Lane;
+      (* More rows in lane order, a last group of fewer than 4: the skinny4
+         kernel. *)
+      example (Dt.Any Dt.Bfloat16) ~m:3 ~n:70 ~k:2880 ~order:Lane;
+      example (Dt.Any Dt.Float32) ~m:6 ~n:70 ~k:300 ~order:Lane;
       (* 40 rows past whole tiles: 32 x 32 tiles count 158 and split k in 2, 16
          x 64 tiles count 120 and would split it in 4. *)
-      example (Dt.Any Dt.Float32) ~m:40 ~n:2500 ~k:4096;
+      example (Dt.Any Dt.Float32) ~m:40 ~n:2500 ~k:4096 ~order:Chain;
       (* Checked large tiles, which read every order from one instance. *)
-      example (Dt.Any Dt.Bfloat16) ~m:120 ~n:4100 ~k:48;
+      example (Dt.Any Dt.Bfloat16) ~m:120 ~n:4100 ~k:48 ~order:Chain;
       (* Sums of -0 over 48 terms: 16-step tiles end on k, 32-step tiles pass
          it. *)
       {
-        (example (Dt.Any Dt.Float32) ~m:17 ~n:17 ~k:48) with
+        (example (Dt.Any Dt.Float32) ~m:17 ~n:17 ~k:48 ~order:Chain) with
         values = Underflow;
       };
     ]
@@ -1082,10 +1201,36 @@ let orders =
   prop ~count:30 ~examples "a contraction's bits do not depend on its orders"
     case orders_agree
 
+let chooses =
+  let order =
+    Testable.make
+      ~pp:(fun ppf o ->
+        Format.pp_print_string ppf
+          (match o with Nx_kernel.Chain -> "Chain" | Lane -> "Lane"))
+      ~equal:( = )
+  in
+  cases "contract_order chooses lane order at 1 row only"
+    ~name:(fun (rows, columns, _) -> strf "%d by %d" rows columns)
+    Nx_kernel.
+      [
+        (1, 0, Lane);
+        (1, 1, Lane);
+        (1, 201088, Lane);
+        (0, 5120, Chain);
+        (2, 5120, Chain);
+        (4, 5120, Chain);
+        (5120, 1, Chain);
+        (max_int, max_int, Chain);
+      ]
+    (fun (rows, columns, want) ->
+      equal order want (Nx_metal.contract_order ~rows ~columns))
+
 let contract =
   group ~timeout:120. "contract"
     [
+      chooses;
       contract_bound;
+      one_row_chain;
       contract_wraps;
       nan_output;
       test "float64 declines" declines_float64;
@@ -1109,6 +1254,7 @@ let split_case =
     m = 9;
     n = 200;
     k = 2880;
+    order = Nx_kernel.Chain;
     init = Full;
     pad = 0;
     bpad = 0;

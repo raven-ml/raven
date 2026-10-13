@@ -241,12 +241,15 @@ let matrix dt s =
     (A.of_array dt s (Array.make (Array.fold_left ( * ) 1 s) 1.))
 
 let gemm_direct ~contracting a b s =
+  let order =
+    Nx.Prim.contract_order ~batch:[||] ~contracting a b
+  in
   let a = Option.get (Nx.Repr.array a) and b = Option.get (Nx.Repr.array b) in
   fun () ->
     let dst = A.create Rig.host D.Float32 s in
     match
-      Nx_cpu.contract ~batch:[||] ~contracting ~acc:(D.Any D.Float32) ~dst
-        ~init:None a b
+      Nx_cpu.contract ~order ~batch:[||] ~contracting ~acc:(D.Any D.Float32)
+        ~dst ~init:None a b
     with
     | Done -> dst
     | refusal -> A.refused "contract-direct" refusal [ A.Any dst ]

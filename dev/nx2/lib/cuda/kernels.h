@@ -65,6 +65,8 @@
   X(contract_simt_f32_64x64, SIMT, f32, 8, 4, 2, 2)                         \
   /* f32 decode 1x5120x2880 */                                              \
   X(contract_skinny_f32, SKINNY, f32)                                       \
+  /* f32 chain order at 16 rows or fewer: 8x5120x2880, 16x5120x2880 */      \
+  X(contract_simt_f32_16x128, SIMT, f32, 4, 4, 1, 4)                        \
   /* float64 and integer sums, which every library computes: float64-       \
      1024x1024x1024 and -1x5120x2880, int16-1024x1024x1024 and              \
      -1x5120x2880 (int64 sums) */                                           \
@@ -72,6 +74,8 @@
   X(contract_simt_i64_64x64, SIMT, i64, 4, 4, 4, 2)                         \
   X(contract_skinny_f64, SKINNY, f64)                                       \
   X(contract_skinny_i64, SKINNY, i64)                                       \
+  /* f64 chain order at 16 rows or fewer: float64-8x5120x2880 */            \
+  X(contract_simt_f64_8x128, SIMT, f64, 2, 4, 1, 4)                         \
   /* reductions whose terms run along the operand: sum-rows-*, sum-all-* */ \
   X(reduce_rows, REDUCE)                                                    \
   /* reductions across outputs, and few terms: sum-cols-*, sum-rows-4-4M */ \

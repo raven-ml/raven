@@ -32,6 +32,7 @@ let accepts (type v s) r (dt : (v, s) D.t) =
   | (Monoid Logsumexp | Moments), _ -> false
   | _ -> true
 
+type order = Chain | Lane
 type combine = Set | Add | Max | Min
 
 let accumulates (type v s) (dt : (v, s) D.t) =
@@ -406,8 +407,10 @@ module type S = sig
     answer
 
   val fold : pad -> dst:('v, 's) a -> ('v, 's) a -> answer
+  val contract_order : rows:int -> columns:int -> order
 
   val contract :
+    order:order ->
     batch:(int * int) array ->
     contracting:(int * int) array ->
     acc:Nx_array.Dtype.any ->

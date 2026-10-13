@@ -177,17 +177,18 @@ val arg_operand : arg -> operand
 val plan_contract :
   ?init:arg ->
   ?acc:Nx_array.Dtype.any ->
+  order:Nx_kernel.order ->
   t ->
   int * int * int * int ->
   a:arg ->
   b:arg ->
   out:arg ->
   run option
-(** [plan_contract ~init ~acc t (batch, m, n, k) ~a ~b ~out] computes the
-    contraction of a [(batch, m, k)] and b [(batch, k, n)] into out
+(** [plan_contract ~init ~acc ~order t (batch, m, n, k) ~a ~b ~out] computes
+    the contraction of a [(batch, m, k)] and b [(batch, k, n)] into out
     [(batch, m, n)], C-contiguous, plus [init], accumulated in [acc] (defaults
-    to float32), with {!Nx_metal.contract}, waits for it, and is the run that
-    computes it again; or [None] if nx.metal declines it.
+    to float32) in [order], with {!Nx_metal.contract}, waits for it, and is
+    the run that computes it again; or [None] if nx.metal declines it.
 
     Raises what {!Nx_metal.contract} raises, and [Invalid_argument] for a
     refusal. *)

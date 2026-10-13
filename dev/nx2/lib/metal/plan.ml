@@ -53,11 +53,11 @@ let rec index_from k instance =
 
 let index instance = index_from 0 instance
 
-(* The instances by dtype and order, in [K.kernels]' indices, made once. *)
+(* The instances by dtype and layout, in [K.kernels]' indices, made once. *)
 let dtypes = [| K.F32; F16; Bf16 |]
-let orders = [| K.nn; K.nt; K.tn; K.tt |]
-let large = Array.map (fun d -> Array.map (fun o -> index (Large (d, o))) orders) dtypes
-let wide = Array.map (fun d -> Array.map (fun o -> index (Wide (d, o))) orders) dtypes
+let layouts = [| K.nn; K.nt; K.tn; K.tt |]
+let large = Array.map (fun d -> Array.map (fun o -> index (Large (d, o))) layouts) dtypes
+let wide = Array.map (fun d -> Array.map (fun o -> index (Wide (d, o))) layouts) dtypes
 let small = Array.map (fun d -> index (Small d)) dtypes
 
 (* Each dtype's checked large instance, if it has one. *)
@@ -69,10 +69,15 @@ let checked =
       else None)
     dtypes
 
-let int8 = Array.map (fun o -> index (Int8 o)) orders
+let int8 = Array.map (fun o -> index (Int8 o)) layouts
 
-let skinny =
-  Array.map (fun d -> [| index (Skinny (d, false)); index (Skinny (d, true)) |]) dtypes
+let skinny rows =
+  Array.map
+    (fun d -> [| index (Skinny (d, false, rows)); index (Skinny (d, true, rows)) |])
+    dtypes
+
+let skinny1 = skinny 1
+let skinny4 = skinny K.skinny_rows
 
 let combine_kernel = index Combine
 let int_kernel = index Int
@@ -140,6 +145,7 @@ type call = {
   y_first : int;
   init : operand option;
   acc : D.any;
+  order : Nx_kernel.order;
   batch : int;
   m : int;
   n : int;
@@ -157,7 +163,7 @@ type launch = {
   groups_z : int;
   threads : int;
   swizzle : int;
-  order : int;
+  layout : int;
   parts : int;
   used : int;
 }
@@ -245,13 +251,13 @@ let tile_of c d =
 let aligned vector_first row batch count =
   vector_first && row mod 16 = 0 && (count = 1 || batch mod 16 = 0)
 
-let order_index order =
-  (Bool.to_int (order land K.a_t <> 0) * 2)
-  + Bool.to_int (order land K.b_t <> 0)
+let layout_index layout =
+  (Bool.to_int (layout land K.a_t <> 0) * 2)
+  + Bool.to_int (layout land K.b_t <> 0)
 
 (* An integer contraction on the SIMD units: any strides, operands widened to
    64 bits. *)
-let plan_integer c ~order =
+let plan_integer c ~layout =
   {
     call = c;
     kernel = int_kernel;
@@ -260,30 +266,33 @@ let plan_integer c ~order =
     groups_z = c.batch;
     threads = K.int_threads;
     swizzle = 0;
-    order;
+    layout;
     parts = 1;
     used = 0;
   }
 
-(* A float product of one row of a. *)
-let plan_skinny c d ~order =
-  let b_t = order land K.b_t <> 0 in
+(* A float product in lane order: one row of a a threadgroup, or up to
+   [K.skinny_rows]. *)
+let plan_skinny c d ~layout =
+  let b_t = layout land K.b_t <> 0 in
   let per = if b_t then K.skinny_t else K.skinny_n in
+  let rows = if c.m = 1 then 1 else K.skinny_rows in
+  let kernels = if rows = 1 then skinny1 else skinny4 in
   {
     call = c;
-    kernel = skinny.(dtype_index d).(Bool.to_int b_t);
+    kernel = kernels.(dtype_index d).(Bool.to_int b_t);
     groups_x = ceil_div c.n per;
-    groups_y = 1;
+    groups_y = ceil_div c.m rows;
     groups_z = c.batch;
     threads = K.threads;
     swizzle = 0;
-    order;
+    layout;
     parts = 1;
     used = 0;
   }
 
 (* Products on the matrix units read each operand where it lies, as the
-   order says. The tile the shape picks fixes the split, so every output's
+   layout says. The tile the shape picks fixes the split, so every output's
    association is the shape's. A float product of few tiles splits along k
    into parts of equal length: a batch of float32 contractions, part q
    reading k from q · part_k, whose outputs contract_combine adds in order,
@@ -293,7 +302,7 @@ let plan_skinny c d ~order =
 (* [kernel] on the grid of [size] tiles over the product, a column of
    [1 lsl swizzle] tiles to consecutive threadgroups, in [parts] parts along
    k, whose float32 sums the workspace holds. *)
-let gridded c size ~order ~kernel ~parts =
+let gridded c size ~layout ~kernel ~parts =
   let tiles_m = ceil_div c.m (tile_rows size) in
   let tiles_n = ceil_div c.n (tile_cols size) in
   let swizzle = if tiles_m >= 2 * (1 lsl swizzle) then swizzle else 0 in
@@ -307,19 +316,19 @@ let gridded c size ~order ~kernel ~parts =
     groups_z = (if split then parts else c.batch);
     threads = K.threads;
     swizzle;
-    order;
+    layout;
     parts;
     used = (if split then ceil_div (parts * c.m * c.n * 4) 16 * 16 else 0);
   }
 
 (* int8 into 32 bits: whole large tiles, which never split. *)
-let plan_int8 c ~order =
-  gridded c Large ~order ~kernel:int8.(order_index order) ~parts:1
+let plan_int8 c ~layout =
+  gridded c Large ~layout ~kernel:int8.(layout_index layout) ~parts:1
 
 (* Floats of the dense dtype [d]. *)
-let plan_float c d ~order =
+let plan_float c d ~layout =
   let size = tile_of c d in
-  let o = order_index order and i = dtype_index d in
+  let o = layout_index layout and i = dtype_index d in
   let kernel =
     match size with
     | Large -> large.(i).(o)
@@ -327,7 +336,7 @@ let plan_float c d ~order =
     | Checked -> Option.get checked.(i)
     | Wide -> wide.(i).(o)
   in
-  gridded c size ~order ~kernel ~parts:(split c (tiles c size))
+  gridded c size ~layout ~kernel ~parts:(split c (tiles c size))
 
 (* The rules of nx.metal's contraction, over [c] and whether a's and b's
    first elements lie on 16-byte boundaries. *)
@@ -360,7 +369,7 @@ let rules c ~a_vector ~b_vector =
       (not (a_t && sa.(1) <> 1 && c.m > 1))
       && not (b_t && sb.(1) <> 1 && c.k > 1)
     in
-    let order = (if a_t then K.a_t else 0) lor if b_t then K.b_t else 0 in
+    let layout = (if a_t then K.a_t else 0) lor if b_t then K.b_t else 0 in
     (* int8 into 32 bits runs on the matrix units, exactly, in whole tiles
        whose stored rows start on 16-byte boundaries, which its 16-byte loads
        need; every other integer contraction on the SIMD units. *)
@@ -375,13 +384,14 @@ let rules c ~a_vector ~b_vector =
          || aligned a_vector (if a_t then sa.(2) else sa.(1)) sa.(0) c.batch
             && aligned b_vector (if b_t then sb.(2) else sb.(1)) sb.(0) c.batch)
     in
-    if ints && not i8 then Ok (Launch (plan_integer c ~order))
+    if ints && not i8 then Ok (Launch (plan_integer c ~layout))
     else if not ordered then declined
     else
       match dense a with
-      | _ when i8 -> Ok (Launch (plan_int8 c ~order))
-      | Some d when c.m = 1 -> Ok (Launch (plan_skinny c d ~order))
-      | Some d -> Ok (Launch (plan_float c d ~order))
+      | _ when i8 -> Ok (Launch (plan_int8 c ~layout))
+      | Some d when c.order = Nx_kernel.Lane ->
+          Ok (Launch (plan_skinny c d ~layout))
+      | Some d -> Ok (Launch (plan_float c d ~layout))
       | None -> declined
   end
 
@@ -395,7 +405,7 @@ let operand v which (r : V.axis) (c : V.axis) x =
     s = [| V.stride v which Batch; V.stride v which r; V.stride v which c |];
   }
 
-let choose ~batch ~contracting ~acc ~dst ~init a b =
+let choose ~order ~batch ~contracting ~acc ~dst ~init a b =
   match V.v ~batch ~contracting ~dst ~init a b with
   | Error answer -> Error answer
   | Ok v ->
@@ -409,6 +419,7 @@ let choose ~batch ~contracting ~acc ~dst ~init a b =
           y_first = V.offset v Dst * bytes y_dtype;
           init = Option.map (operand v Init Row Column) init;
           acc;
+          order;
           batch = V.extent v Batch;
           m = V.extent v Row;
           n = V.extent v Column;
@@ -529,7 +540,7 @@ let write l run sub =
   Run.int32 run at P.swizzle l.swizzle;
   Run.int32 run at P.dtype (code c.a.dtype);
   Run.int32 run at P.acc (code c.acc);
-  Run.int32 run at P.order l.order;
+  Run.int32 run at P.order l.layout;
   if split then begin
     let module Q = K.Combine_params in
     let at = Rig.Submission.block sub 1 in

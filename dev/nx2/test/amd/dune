@@ -5,7 +5,7 @@
  (names test_amd)
  (locks %{workspace_root}/gpu)
  (modules test_amd)
- (libraries nx_array nx_kernel nx_cpu nx_amd_support nx_gpu_ref rig windtrap))
+ (libraries nx_array nx_kernel nx_cpu nx_amd nx_amd_support nx_gpu_ref rig windtrap))
 
 ; The library's kernels.ml, built here beside a stub that reads kernels.h.
 

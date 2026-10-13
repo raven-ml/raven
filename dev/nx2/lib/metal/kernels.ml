@@ -21,7 +21,7 @@ type instance =
   | Wide of dtype * order
   | Checked of dtype
   | Int8 of order
-  | Skinny of dtype * bool (* b stored [n][k] *)
+  | Skinny of dtype * bool * int (* b stored [n][k]; rows a threadgroup *)
   | Combine
   | Int
 
@@ -66,12 +66,18 @@ let kernels =
     ("contract_i8_nt", Int8 nt);
     ("contract_i8_tn", Int8 tn);
     ("contract_i8_tt", Int8 tt);
-    ("skinny_f32_n", Skinny (F32, false));
-    ("skinny_f32_t", Skinny (F32, true));
-    ("skinny_f16_n", Skinny (F16, false));
-    ("skinny_f16_t", Skinny (F16, true));
-    ("skinny_bf16_n", Skinny (Bf16, false));
-    ("skinny_bf16_t", Skinny (Bf16, true));
+    ("skinny_f32_n", Skinny (F32, false, 1));
+    ("skinny_f32_t", Skinny (F32, true, 1));
+    ("skinny_f16_n", Skinny (F16, false, 1));
+    ("skinny_f16_t", Skinny (F16, true, 1));
+    ("skinny_bf16_n", Skinny (Bf16, false, 1));
+    ("skinny_bf16_t", Skinny (Bf16, true, 1));
+    ("skinny4_f32_n", Skinny (F32, false, 4));
+    ("skinny4_f32_t", Skinny (F32, true, 4));
+    ("skinny4_f16_n", Skinny (F16, false, 4));
+    ("skinny4_f16_t", Skinny (F16, true, 4));
+    ("skinny4_bf16_n", Skinny (Bf16, false, 4));
+    ("skinny4_bf16_t", Skinny (Bf16, true, 4));
     ("contract_combine", Combine);
     ("contract_int", Int);
   |]
@@ -98,6 +104,9 @@ let bk_wide = 32
    (NX_METAL_SKINNY_T) or [k][n] (NX_METAL_SKINNY_N). *)
 let skinny_t = 4
 let skinny_n = 32
+
+(* NX_METAL_SKINNY_ROWS: the rows of a a skinny4 threadgroup sums. *)
+let skinny_rows = 4
 
 (* The SIMD integer kernel's tile side and threads: NX_METAL_INT_TILE and
    NX_METAL_INT_THREADS. *)

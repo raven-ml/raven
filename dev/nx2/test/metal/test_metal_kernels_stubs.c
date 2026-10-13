@@ -37,6 +37,7 @@ static const fact constants[] = {
     {"wide_n", NX_METAL_WIDE_N, 0},       {"bk_half", NX_METAL_BK_HALF, 0},
     {"bk", NX_METAL_BK, 0},               {"bk_wide", NX_METAL_BK_WIDE, 0},
     {"skinny_t", NX_METAL_SKINNY_T, 0},   {"skinny_n", NX_METAL_SKINNY_N, 0},
+    {"skinny_rows", NX_METAL_SKINNY_ROWS, 0},
     {"int_tile", NX_METAL_INT_TILE, 0},   {"int_threads", NX_METAL_INT_THREADS, 0},
     {"a_t", NX_METAL_A_T, 0},             {"b_t", NX_METAL_B_T, 0},
     {"no_init", NX_DTYPE_COUNT, 0}};

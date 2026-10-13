@@ -163,6 +163,7 @@ type call = {
   sy : int array;
   init : init option;
   acc : D.any;
+  order : Nx_kernel.order;
   batch : int;
   m : int;
   n : int;
@@ -384,13 +385,14 @@ let read_into (c : call) into =
     ~pack_a:(not (reads_as c.a.dtype into))
     ~pack_b:(not (reads_as c.b.dtype into))
 
-(* The SIMT kernels of the accumulator [sum], m > 16: the instance of least
-   cost among its. They read their accumulator's own dtype. *)
+(* The SIMT kernels of the accumulator [sum], in chain order: the instance of
+   least cost among its, of 16 rows or fewer where m is 16 or fewer and of more
+   rows otherwise. They read their accumulator's own dtype. *)
 let plan_simt (c : call) sum ~whole =
   let best = ref (-1) and least = ref 0. in
   for k = 0 to count - 1 do
     match snd K.kernels.(k) with
-    | Simt (sum', s) when sum' == sum ->
+    | Simt (sum', s) when sum' == sum && simt_bm s <= 16 = (c.m <= 16) ->
         let cost = cost c (simt_bm s) (simt_bn s) (simt_efficiency s) in
         if !best < 0 || cost < !least then begin
           least := cost;
@@ -423,8 +425,9 @@ let plan_simt (c : call) sum ~whole =
              ~whole)
   | _ -> None
 
-(* The skinny kernel of the accumulator [sum], m <= 16. It reads a float
-   accumulator's own dtype, or one integer dtype both operands hold. *)
+(* The skinny kernel of the accumulator [sum]: float sums in lane order and
+   integer sums of 16 rows or fewer. It reads a float accumulator's own dtype,
+   or one integer dtype both operands hold. *)
 let plan_skinny (c : call) sum ~whole =
   let kernel = find_skinny sum in
   let blocks = ceil_div c.m K.skinny_rows * ceil_div c.n 32 in
@@ -532,9 +535,16 @@ let rules (c : call) =
           let planned =
             match kind with
             | Some kd when t >= 0 -> plan_mma c kd K.tiles.(t) ~whole
-            | _ ->
-                if m <= 16 then plan_skinny c sum ~whole
-                else plan_simt c sum ~whole
+            | _ -> (
+                (* An integer sum is exact in its wrapping, so every order
+                   gives it the same bits: few rows take the skinny kernels
+                   whatever the order. *)
+                match c.order with
+                | _ when sum == K.I64 ->
+                    if m <= 16 then plan_skinny c sum ~whole
+                    else plan_simt c sum ~whole
+                | Nx_kernel.Lane -> plan_skinny c sum ~whole
+                | Chain -> plan_simt c sum ~whole)
           in
           match planned with None -> declined | Some l -> Ok (Launch l))
 
@@ -560,7 +570,7 @@ let operand v which (free : V.axis) x =
 let strides v which : int array =
   [| V.stride v which Batch; V.stride v which Row; V.stride v which Column |]
 
-let choose ~batch ~contracting ~acc ~dst ~init a b =
+let choose ~order ~batch ~contracting ~acc ~dst ~init a b =
   match V.v ~batch ~contracting ~dst ~init a b with
   | Error answer -> Error answer
   | Ok v ->
@@ -591,6 +601,7 @@ let choose ~batch ~contracting ~acc ~dst ~init a b =
           sy = strides v Dst;
           init;
           acc;
+          order;
           batch = V.extent v Batch;
           m = V.extent v Row;
           n = V.extent v Column;

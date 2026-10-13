@@ -51,12 +51,16 @@ let kernels =
     ( "contract_simt_f32_64x64",
       Simt (F32, { tm = 8; tn = 4; warps_m = 2; warps_n = 2 }) );
     ("contract_skinny_f32", Skinny F32);
+    ( "contract_simt_f32_16x128",
+      Simt (F32, { tm = 4; tn = 4; warps_m = 1; warps_n = 4 }) );
     ( "contract_simt_f64_64x64",
       Simt (F64, { tm = 4; tn = 4; warps_m = 4; warps_n = 2 }) );
     ( "contract_simt_i64_64x64",
       Simt (I64, { tm = 4; tn = 4; warps_m = 4; warps_n = 2 }) );
     ("contract_skinny_f64", Skinny F64);
     ("contract_skinny_i64", Skinny I64);
+    ( "contract_simt_f64_8x128",
+      Simt (F64, { tm = 2; tn = 4; warps_m = 1; warps_n = 4 }) );
     ("reduce_rows", Reduce);
     ("reduce_cols", Reduce);
     ("reduce_tree", Reduce);

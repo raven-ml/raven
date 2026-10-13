@@ -149,6 +149,7 @@ type operand = {
 
 val contract :
   gpu ->
+  order:Nx_kernel.order ->
   a:operand ->
   b:operand ->
   ?init:operand ->
@@ -158,10 +159,11 @@ val contract :
   acc:int ->
   unit ->
   run option
-(** [contract g ~a ~b ~init ~y ~batch ~contracting ~acc ()] computes the
-    contraction with {!Nx_cuda.contract} into [y], its work queued on [g], and
-    is the run that computes it again; or [None] if nx.cuda declines it. [batch]
-    and [contracting] pair an axis of [a] with one of [b].
+(** [contract g ~order ~a ~b ~init ~y ~batch ~contracting ~acc ()] computes
+    the contraction in [order] with {!Nx_cuda.contract} into [y], its work
+    queued on [g], and is the run that computes it again; or [None] if
+    nx.cuda declines it. [batch] and [contracting] pair an axis of [a] with
+    one of [b].
 
     Raises what {!Nx_cuda.contract} raises, and [Invalid_argument] for a
     refusal or an [init] of another dtype than [y]'s. *)

@@ -5,7 +5,7 @@
  (names test_cuda)
  (locks %{workspace_root}/gpu)
  (modules test_cuda)
- (libraries nx_array nx_kernel nx_cuda_support nx_gpu_ref rig windtrap))
+ (libraries nx_array nx_kernel nx_cuda nx_cuda_support nx_gpu_ref rig windtrap))
 
 (rule
  (alias runtest)

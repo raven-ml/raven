@@ -445,7 +445,7 @@ let same_dtype : type v s. (v, s) A.t -> A.any -> (v, s) A.t =
   | Some Equal -> i
   | None -> invalid_arg "Nx_cuda_support.contract: init is not y's dtype"
 
-let contract (_ : gpu) ~a ~b ?init ~y ~batch ~contracting ~acc () =
+let contract (_ : gpu) ~order ~a ~b ?init ~y ~batch ~contracting ~acc () =
   let batch = Array.of_list batch and contracting = Array.of_list contracting in
   let acc = dtype acc in
   let (A.Any dst) = array y in
@@ -455,7 +455,8 @@ let contract (_ : gpu) ~a ~b ?init ~y ~batch ~contracting ~acc () =
   let c =
     {
       contract =
-        (fun () -> Nx_cuda.contract ~batch ~contracting ~acc ~dst ~init:i x w);
+        (fun () ->
+          Nx_cuda.contract ~order ~batch ~contracting ~acc ~dst ~init:i x w);
       arrays =
         A.Any dst :: A.Any x :: A.Any w
         :: Option.to_list (Option.map (fun i -> A.Any i) i);

@@ -24,7 +24,8 @@
    - ZERO, PACK: none.
    - WMMA (contract.hip): the operands' kind (bf16, f16, s8), a's and b's
      contiguous axis (k, or their free axis m and n) and the tile.
-   - SIMT (contract.hip): the accumulator's type and the tile's side.
+   - SIMT (contract.hip): the accumulator's type and the tile's rows and
+     columns.
    - SKINNY (contract.hip): the accumulator's type and the form: column,
      b's k axis contiguous, or across, its n axis.
    - LANE (contract.hip): the accumulator's type, the operands' and the
@@ -56,16 +57,16 @@
   X(contract_f16_mn_t128x128, WMMA, f16, m, n, t128x128)                    \
   /* f16 256, 512 */                                                         \
   X(contract_f16_kk_t64x64, WMMA, f16, k, k, t64x64)                        \
+  /* f16 in chain order at 16 rows or fewer: f16 16x4096x4096 */             \
+  X(contract_f16_kk_t16x64, WMMA, f16, k, k, t16x64)                        \
   /* int8 4096 */                                                            \
   X(contract_s8_kk_t128x128, WMMA, s8, k, k, t128x128)                      \
   /* f32 2048 to 8192 and the 4096 layouts */                                \
-  X(contract_simt_f32_128, SIMT, f32, 128)                                  \
+  X(contract_simt_f32_128, SIMT, f32, 128, 128)                             \
   /* f32 256 to 1024 */                                                      \
-  X(contract_simt_f32_64, SIMT, f32, 64)                                    \
-  /* f32 decode 8x20480x2880 */                                              \
-  X(contract_skinny_f32, SKINNY, f32, column)                               \
-  /* f32 decode 8x20480x2880, b stored k by n */                             \
-  X(contract_skinny_across_f32, SKINNY, f32, across)                        \
+  X(contract_simt_f32_64, SIMT, f32, 64, 64)                                \
+  /* f32 in chain order at 16 rows or fewer: 8x20480x2880, both layouts */   \
+  X(contract_simt_f32_16x128, SIMT, f32, 16, 128)                           \
   /* bf16 decode: 1x5120x2880, 1x201088x2880, 1x2880x4096, 1x1024x16384 */   \
   X(contract_lane_bf16, LANE, f32, bf16, column)                             \
   /* f32 decode 1x5120x2880, 1x20480x2880 */                                 \
@@ -73,11 +74,11 @@
   /* f32 decode 1x5120x2880, 1x20480x2880, b stored k by n */                \
   X(contract_lane_across_f32, LANE, f32, f32, across)                        \
   /* float64 and integer sums: no row; they make the family total */         \
-  X(contract_simt_f64_64, SIMT, f64, 64)                                    \
-  X(contract_simt_i64_64, SIMT, i64, 64)                                    \
-  X(contract_skinny_f64, SKINNY, f64, column)                               \
+  X(contract_simt_f64_64, SIMT, f64, 64, 64)                                \
+  /* f64 in chain order at 16 rows or fewer */                              \
+  X(contract_simt_f64_8x128, SIMT, f64, 8, 128)                             \
+  X(contract_simt_i64_64, SIMT, i64, 64, 64)                                \
   X(contract_skinny_i64, SKINNY, i64, column)                               \
-  X(contract_skinny_across_f64, SKINNY, f64, across)                        \
   X(contract_skinny_across_i64, SKINNY, i64, across)                         \
   X(contract_lane_f64, LANE, f64, f64, column)                               \
   X(contract_lane_across_f64, LANE, f64, f64, across)

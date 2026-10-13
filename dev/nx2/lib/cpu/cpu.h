@@ -370,11 +370,15 @@ int nx_cpu_threads_at(int64_t bytes, double cost, double thread_bytes);
 
 /* Matrices */
 
+/* A contraction's order of summation, numbered as Nx_kernel.order's
+   constructors are. */
+enum { NX_CPU_CHAIN = 0, NX_CPU_LANE = 1 };
+
 /* Stores into op[NX_VIEW_DST] the contraction in [acc], float32 or
-   float64, of op[NX_VIEW_A], op[NX_VIEW_B] and op[NX_VIEW_INIT] (or NULL),
-   arrays of [acc] laid out as [v] (gemm.c). Answers 0 if an allocation
-   failed. */
-int nx_cpu_contract_on(int acc, const nx_contract_view *v,
+   float64, and in [order], of op[NX_VIEW_A], op[NX_VIEW_B] and
+   op[NX_VIEW_INIT] (or NULL), arrays of [acc] laid out as [v] (gemm.c).
+   Answers 0 if an allocation failed. */
+int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
                        const nx_array *const *op);
 
 /* The speed (nx_cpu_micro) of the core's vector kernel of products in

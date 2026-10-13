@@ -712,8 +712,8 @@ let test_declined_contract (b : Support.backend) () =
   let y = on b (A.of_array D.Float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |]) in
   let before = bits_of (host y) in
   match
-    K.contract ~batch:[||] ~contracting:[| (1, 0) |] ~acc:(D.Any D.Float32)
-      ~dst:y ~init:None x z
+    K.contract ~order:Lane ~batch:[||] ~contracting:[| (1, 0) |]
+      ~acc:(D.Any D.Float32) ~dst:y ~init:None x z
   with
   | A.Declined -> equal (array int) before (bits_of (host y))
   | A.Done -> ()

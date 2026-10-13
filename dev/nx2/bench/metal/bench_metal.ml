@@ -99,15 +99,17 @@ let peak_row name kernel (Dt.Any dt) ~flops_per_round =
           ~words:[ iters; 0 ]);
   }
 
-(* Contractions of a [batch][m][k] and b [batch][k][n], stored transposed where
-   [trans] says ("nt": b stored [n][k]), against the simdgroup-matrix peak of
+(* Contractions of a [batch][m][k] and b [batch][k][n] in [order], stored
+   transposed where [trans] says ("nt": b stored [n][k]), against the
+   simdgroup-matrix peak of
    the type their fragments hold. A skinny product (m at most 16) streams b: its
    floor reads as many bytes. Each row's setup runs it once and checks 512 of
    its outputs, against the error bound for floats and exactly for integers: a
    row whose results are wrong fails instead of timing them. *)
 let samples = 512
 
-let contract_row ?(batch = 1) ?name ?acc ?out (Dt.Any dt) ~m ~k ~n trans =
+let contract_row ?(batch = 1) ?name ?acc ?out (Dt.Any dt) ~m ~k ~n ~order
+    trans =
   let a_t = trans.[0] = 't' and b_t = trans.[1] = 't' in
   let short = function
     | "float32" -> "f32"
@@ -156,7 +158,7 @@ let contract_row ?(batch = 1) ?name ?acc ?out (Dt.Any dt) ~m ~k ~n trans =
             (m * n, n, 1)
         in
         let dims = (batch, m, n, k) in
-        let run = Option.get (S.plan_contract ?acc t dims ~a ~b ~out) in
+        let run = Option.get (S.plan_contract ?acc ~order t dims ~a ~b ~out) in
         ignore (S.run t run);
         (match acc with
         | Some acc ->
@@ -176,45 +178,53 @@ let contract_row ?(batch = 1) ?name ?acc ?out (Dt.Any dt) ~m ~k ~n trans =
    and a batch of small products. *)
 let contract_rows =
   let floats = [ Dt.Any Dt.Bfloat16; Dt.Any Dt.Float16; Dt.Any Dt.Float32 ] in
+  let chain = Nx_kernel.Chain and lane = Nx_kernel.Lane in
   List.concat_map
     (fun dt ->
       List.map
-        (fun s -> contract_row ~name:(string_of_int s) dt ~m:s ~k:s ~n:s "nn")
+        (fun s ->
+          contract_row ~name:(string_of_int s) dt ~m:s ~k:s ~n:s ~order:chain
+            "nn")
         [ 256; 512; 1024; 2048; 4096 ]
       @ List.map
           (fun tr ->
-            contract_row ~name:("4096-" ^ tr) dt ~m:4096 ~k:4096 ~n:4096 tr)
+            contract_row ~name:("4096-" ^ tr) dt ~m:4096 ~k:4096 ~n:4096
+              ~order:chain tr)
           [ "nt"; "tn"; "tt" ]
       @ List.map
-          (fun (m, k, n) -> contract_row dt ~m ~k ~n "nt")
+          (fun (m, k, n, order) -> contract_row dt ~m ~k ~n ~order "nt")
           [
-            (512, 2880, 5120);
-            (512, 4096, 2880);
-            (512, 2880, 201088);
-            (1, 2880, 5120);
-            (3, 2880, 5120);
-            (8, 2880, 5120);
-            (16, 2880, 5120);
-            (1, 2880, 201088);
-            (4096, 4096, 14336);
+            (512, 2880, 5120, chain);
+            (512, 4096, 2880, chain);
+            (512, 2880, 201088, chain);
+            (1, 2880, 5120, lane);
+            (3, 2880, 5120, Nx_metal.contract_order ~rows:3 ~columns:5120);
+            (8, 2880, 5120, chain);
+            (16, 2880, 5120, chain);
+            (1, 2880, 201088, lane);
+            (4096, 4096, 14336, chain);
           ]
       @ [
-          contract_row dt ~m:1 ~k:2880 ~n:5120 "nn";
-          contract_row dt ~m:8 ~k:2880 ~n:5120 "nn";
+          contract_row dt ~m:1 ~k:2880 ~n:5120 ~order:lane "nn";
+          contract_row dt ~m:8 ~k:2880 ~n:5120 ~order:chain "nn";
         ]
-      @ [ contract_row ~batch:64 ~name:"64x512" dt ~m:512 ~k:512 ~n:512 "nn" ])
+      @ [
+          contract_row ~batch:64 ~name:"64x512" dt ~m:512 ~k:512 ~n:512
+            ~order:chain "nn";
+        ])
     floats
   @ [
       contract_row ~name:"4096" ~acc:(Dt.Any Dt.Int32) ~out:(Dt.Any Dt.Int32)
-        (Dt.Any Dt.Int8) ~m:4096 ~k:4096 ~n:4096 "nn";
+        (Dt.Any Dt.Int8) ~m:4096 ~k:4096 ~n:4096 ~order:chain "nn";
     ]
+  (* Each of 32 rows or more: chain order. *)
   @ List.concat_map
       (fun dt ->
         List.map
-          (fun (m, k, n) -> contract_row dt ~m ~k ~n "nt")
+          (fun (m, k, n) -> contract_row dt ~m ~k ~n ~order:chain "nt")
           [ (32, 2880, 201088); (48, 5120, 2880); (1000, 1000, 1000) ]
         @ List.map
-            (fun (m, k, n) -> contract_row dt ~m ~k ~n "nn")
+            (fun (m, k, n) -> contract_row dt ~m ~k ~n ~order:chain "nn")
             [ (32, 2880, 201088); (48, 5120, 2880); (1000, 1000, 1000) ])
       [ Dt.Any Dt.Bfloat16; Dt.Any Dt.Float16; Dt.Any Dt.Float32 ]
 
@@ -460,8 +470,8 @@ let host =
     let arg o = S.arg o Dt.Float32 (1, 1, 1) in
     let run =
       Option.get
-        (S.plan_contract t (1, 1, 1, 1) ~a:(arg (o ())) ~b:(arg (o ()))
-           ~out:(arg (o ())))
+        (S.plan_contract ~order:Nx_kernel.Lane t (1, 1, 1, 1) ~a:(arg (o ()))
+           ~b:(arg (o ())) ~out:(arg (o ())))
     in
     (t, run)
   in
