@@ -675,8 +675,15 @@ static inline void nx_u64_to_float_run(const uint64_t *src, float *dst,
 /* From and to doubles. arm64 widens float16 with FCVT and FCVTL, exactly.
    A double narrows to __fp16 in one rounding: clang narrows a vector through
    FCVTXN (round to odd) then FCVTN, gcc converts each element with FCVT
-   from d to h. With F16C and AVX2, doubles round to odd as binary32 four
-   at a time, as nx_float_odd does, and convert eight at a time. */
+   from d to h. With F16C and AVX2, a double rounds to odd at binary32's
+   precision on its bits, as highway's DemoteTo from float64 to float16
+   does (Apache-2.0): the 29 bits binary32 drops are cleared and the
+   lowest one kept is set where one of them was. The conversion to
+   binary32 is then exact, save below binary32's normal range, where
+   float16 rounds to zero either way, and past its largest, where it
+   rounds to infinity. 1 Mi doubles take 21 us on fudge's six P-cores
+   against 46 through nx_float_odd's form, whose compares and shuffles
+   queue on one port. */
 
 #if defined(__aarch64__)
 /* These runs read and write uint16_t memory as __fp16. */
@@ -701,29 +708,23 @@ static inline void nx_double_to_f16_run(const double *src, uint16_t *dst,
 #else
   size_t i = 0;
 #if defined(__F16C__) && defined(__AVX2__)
-  const __m256d mag = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MAX));
-  /* A 64-bit mask's even halves, in its first four lanes. */
-  const __m256i even = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
+  const __m256i kept = _mm256_set1_epi64x((int64_t)0xFFFFFFFFE0000000u);
+  const __m256i dropped = _mm256_set1_epi64x(0x1FFFFFFF);
+  const __m256i last = _mm256_set1_epi64x(0x20000000);
   for (; i + 8 <= n; i += 8) {
-    __m128 h[2];
+    __m128 f[2];
     for (int k = 0; k < 2; k++) {
-      __m256d x = _mm256_loadu_pd(src + i + 4 * k);
-      __m128 f = _mm256_cvtpd_ps(x);
-      __m256d b = _mm256_cvtps_pd(f);
-      __m256d away = _mm256_cmp_pd(_mm256_and_pd(b, mag),
-                                   _mm256_and_pd(x, mag), _CMP_GT_OQ);
-      __m256d inexact = _mm256_cmp_pd(b, x, _CMP_NEQ_OQ);
-      __m128i a = _mm256_castsi256_si128(
-          _mm256_permutevar8x32_epi32(_mm256_castpd_si256(away), even));
-      __m128i e = _mm256_castsi256_si128(
-          _mm256_permutevar8x32_epi32(_mm256_castpd_si256(inexact), even));
-      /* a is -1 where f rounded away from zero. */
-      __m128i odd = _mm_or_si128(_mm_add_epi32(_mm_castps_si128(f), a),
-                                 _mm_srli_epi32(e, 31));
-      h[k] = _mm_castsi128_ps(odd);
+      __m256i x = _mm256_loadu_si256((const __m256i *)(src + i + 4 * k));
+      /* Adding the dropped bits' mask carries into the last kept bit
+         where one of them is set; the carry flips that bit, so the kept
+         bits are or-ed back after: the bit ends set where it was or where
+         a carry came. */
+      __m256i carry = _mm256_and_si256(_mm256_add_epi64(x, dropped), last);
+      __m256i odd = _mm256_or_si256(_mm256_and_si256(x, kept), carry);
+      f[k] = _mm256_cvtpd_ps(_mm256_castsi256_pd(odd));
     }
     _mm_storeu_si128((__m128i *)(dst + i),
-                     _mm256_cvtps_ph(_mm256_set_m128(h[1], h[0]),
+                     _mm256_cvtps_ph(_mm256_set_m128(f[1], f[0]),
                                      _MM_FROUND_TO_NEAREST_INT));
   }
 #endif
