@@ -84,9 +84,6 @@ let make = Prim.of_arrays
 let typed dt (per : A.any array) =
   Iarray.init (Array.length per) (fun j -> A.expect dt per.(j))
 
-let any arrays =
-  Array.init (Iarray.length arrays) (fun j -> A.Any (Iarray.get arrays j))
-
 (* Raises unless operand [i], [x], is alive and concrete or a constant: an
    interpretation receives every operation on its traced values before eager
    execution can. *)
@@ -1355,10 +1352,10 @@ and compute_node :
       (* A view at a placement that cuts no axis: each device's whole operand
          there, moved. Its rule held when it was made. *)
       let xs = Prim.arrays (resolve (Devices.rebrand p) x) in
-      [| any (Iarray.map (moved ~by (Devices.set p) mv) xs) |]
+      [| Prim.any (Iarray.map (moved ~by (Devices.set p) mv) xs) |]
   | Value.Bitcast (dt, x) when uncut p ->
       let xs = Prim.arrays (resolve (Devices.rebrand p) x) in
-      [| any (Iarray.map (cast ~by (Devices.set p) dt) xs) |]
+      [| Prim.any (Iarray.map (cast ~by (Devices.set p) dt) xs) |]
   | op ->
       (* Its rule held when it was made. Its operands lie at [q], and its
          results are allocated there, where its rule may place them nowhere (a

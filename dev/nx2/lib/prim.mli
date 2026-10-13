@@ -47,6 +47,9 @@ val arrays : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
 (** [arrays x] is [x]'s arrays, one per device of its placement, whether [x]
     lives or not. Raises [Invalid_argument] for a constant or a traced value. *)
 
+val any : ('v, 's) Nx_array.t iarray -> Nx_array.any array
+(** [any xs] is [xs] untyped, in order. *)
+
 val rank : ('v, 's, 'd) t -> int
 
 val dim : ('v, 's, 'd) t -> int -> int

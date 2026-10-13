@@ -1490,12 +1490,13 @@ let iter_results : type r.
   | Place _ -> f r
   | Check _ -> ()
 
+let any xs =
+  Array.init (Iarray.length xs) (fun j -> Nx_array.Any (Iarray.get xs j))
+
 (* [x]'s arrays untyped; a value on one device builds no [iarray] on the way. *)
 let any_arrays : type v s d. (v, s, d) t -> Nx_array.any array = function
   | Array { a; _ } -> [| Nx_array.Any a |]
-  | x ->
-      let xs = arrays x in
-      Array.init (Iarray.length xs) (fun j -> Nx_array.Any (Iarray.get xs j))
+  | x -> any (arrays x)
 
 let result_arrays op r =
   let acc = ref ([] : Nx_array.any array list) in
