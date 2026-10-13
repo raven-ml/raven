@@ -245,7 +245,8 @@ val capability : t -> Rig_metal_abi.t
 
     {!locate} returns a region's GPU address ([gpuAddress]), which kernels
     read and write, its host address, and its [MTLBuffer]. {!free} takes the
-    region out of the device's residency set and releases its [MTLBuffer].
+    region out of the device's residency set, unless the device stopped, and
+    releases its [MTLBuffer].
 
     Metal wraps only memory that starts at a page, so {!map_host}[ d p n]
     wraps the pages that hold the [n] bytes at [p], without a copy, and the
@@ -318,9 +319,11 @@ val capability : t -> Rig_metal_abi.t
     word, and no work of the device writes memory again. Otherwise the
     committed work may write memory while it runs. Once the last such
     command buffer has completed, its handler writes the last value into the
-    word, whatever that work did. The stop releases the device's Metal
-    command queue, which each committed command buffer keeps until it
-    completes. The word and the device's C state stay for the process. *)
+    word, whatever that work did. The stop gives back what the device runs
+    work with: its Metal command queue, fence, residency set and command
+    buffer ring, which each committed command buffer keeps until its handler
+    returns. The word, and the few bytes of C state that read it, stay for
+    the process. {!sleep} on a stopped device raises [Invalid_argument]. *)
 
 (** {1:references References}
     - Apple's Metal framework headers (macOS 26 SDK): [MTLCommandQueue.h]

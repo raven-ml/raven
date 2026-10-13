@@ -54,6 +54,9 @@ void rig_metal_ring_init(struct rig_metal_ring *r,
                             struct rig_metal_slot *slots, int n,
                             uint64_t *word);
 
+/* Ends [r], which nothing uses any more: its mutex and condition. */
+void rig_metal_ring_end(struct rig_metal_ring *r);
+
 /* The index of the next slot, once one is free. */
 int rig_metal_ring_take(struct rig_metal_ring *r);
 

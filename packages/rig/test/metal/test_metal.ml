@@ -419,7 +419,7 @@ let failing_fill () =
   raises_match
     (function Rig.Lost (_, w) -> String.equal w why | _ -> false)
     (fun () -> submit t [| ok; S.failing 7 |]);
-  raises (Rig_metal.Fault why) (fun () ->
+  raises (Invalid_argument "Rig_metal.sleep: the device stopped") (fun () ->
       Rig_metal.sleep t.g ~seen:reached ~still_ms:10);
   S.close s;
   while Rig.signaled t.d < reached + 1 do

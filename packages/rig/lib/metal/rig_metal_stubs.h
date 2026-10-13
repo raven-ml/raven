@@ -22,13 +22,15 @@
    past it, a submission waits for the oldest to complete. */
 enum { ring_slots = 1024 };
 
+struct rig_metal_run;
+
 /* What a fill's [queue] points to: the open encoder first, as fills read
    it, then the command buffer that holds it and its slot (-1 for none). */
 struct rig_metal_queue {
   id<MTLComputeCommandEncoder> encoder;
   id<MTLCommandBuffer> buffer;
   int slot;
-  struct rig_metal *d;
+  struct rig_metal_run *r;
 };
 
 /* What a launch of a function reads, the [launch] of its entry: its
@@ -42,20 +44,20 @@ struct rig_metal_entry {
   int64_t params;
 };
 
-/* A device, kept for the process with its word: rig never frees the word.
-   Its stop releases the command queue, and rig calls the C functions no
-   more. Its residency set has a mutex of its own, which no completion
+/* What a device runs work with, from its open to its stop and the end of
+   the work committed before it: each committed command buffer holds it
+   until its completion handler returns, and the device until its stop
+   ([holds]). Its residency set has a mutex of its own, which no completion
    handler takes; [changed] says whether the set holds additions it has not
    committed. */
-struct rig_metal {
-  const struct rig_driver *driver;
+struct rig_metal_run {
+  _Atomic int holds;
   id<MTLDevice> device;
   id<MTLCommandQueue> queue;
   id<MTLFence> fence;
   id<MTLResidencySet> set;
   pthread_mutex_t set_mutex;
   int changed;
-  id<MTLBuffer> word;
   uint64_t last; /* the last value submit received */
   pthread_mutex_t open_mutex; /* held by a submit, a commit and a stop */
   struct rig_metal_queue open; /* the open command buffer, slot -1 for none */
@@ -66,10 +68,25 @@ struct rig_metal {
   struct rig_metal_slot slots[ring_slots];
 };
 
+/* A device, kept for the process with its word: rig never frees the word.
+   Its run state goes at its stop, and rig calls the C functions no more. */
+struct rig_metal {
+  const struct rig_driver *driver;
+  id<MTLBuffer> word;
+  uint64_t *at; /* the word's contents */
+  struct rig_metal_run *run; /* NULL once stopped */
+};
+
+/* Takes a hold of [r]'s, as a committed command buffer does. */
+void rig_metal_hold(struct rig_metal_run *r);
+
+/* Gives back a hold of [r]'s: the last frees it. */
+void rig_metal_release(struct rig_metal_run *r);
+
 /* The [split] of the device's capability record. */
 int rig_metal_split(void *queue, uint64_t *start, uint64_t *end);
 
 /* Drops the open command buffer uncommitted, for a stop. */
-void rig_metal_drop(struct rig_metal *d);
+void rig_metal_drop(struct rig_metal_run *r);
 
 #endif

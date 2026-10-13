@@ -63,6 +63,11 @@ void rig_metal_ring_init(struct rig_metal_ring *r,
   r->failure[0] = '\0';
 }
 
+void rig_metal_ring_end(struct rig_metal_ring *r) {
+  pthread_mutex_destroy(&r->mutex);
+  pthread_cond_destroy(&r->changed);
+}
+
 int rig_metal_ring_take(struct rig_metal_ring *r) {
   pthread_mutex_lock(&r->mutex);
   while (r->tail - r->head == r->nslots)

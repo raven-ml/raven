@@ -46,6 +46,7 @@ enum {
 #include "rig_metal_stubs.h"
 
 #define Device_val(v) ((struct rig_metal *)Long_val(v))
+#define Run_val(v) (Device_val(v)->run)
 #define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
 
 static value object(id o) { return caml_copy_nativeint((intnat)o); }
@@ -84,35 +85,57 @@ static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
   if (device == nil) return -no_device;
   int f = family(device);
   struct rig_metal *d = f >= 0 ? calloc(1, sizeof *d) : NULL;
-  if (d == NULL) {
+  struct rig_metal_run *r = f >= 0 ? calloc(1, sizeof *r) : NULL;
+  if (d == NULL || r == NULL) {
+    free(d), free(r);
     [device release];
     return f >= 0 ? -no_memory : -no_family;
   }
   MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
   d->driver = &driver;
-  d->device = device;
-  d->queue = [device newCommandQueueWithMaxCommandBufferCount:ring_slots];
-  d->fence = [device newFence];
-  d->set = [device newResidencySetWithDescriptor:desc error:NULL];
+  r->device = device;
+  r->queue = [device newCommandQueueWithMaxCommandBufferCount:ring_slots];
+  r->fence = [device newFence];
+  r->set = [device newResidencySetWithDescriptor:desc error:NULL];
   d->word = [device newBufferWithLength:sizeof(uint64_t)
                                 options:MTLResourceStorageModeShared];
   [desc release];
-  int missing = !d->queue   ? no_queue
-                : !d->fence ? no_fence
-                : !d->set   ? no_set
+  int missing = !r->queue   ? no_queue
+                : !r->fence ? no_fence
+                : !r->set   ? no_set
                 : !d->word  ? no_word
                             : 0;
   if (missing) {
-    [d->queue release], [d->fence release], [d->set release];
-    [d->word release], [device release], free(d);
+    [r->queue release], [r->fence release], [r->set release];
+    [d->word release], [device release], free(r), free(d);
     return -missing;
   }
-  [d->queue addResidencySet:d->set];
-  pthread_mutex_init(&d->set_mutex, NULL);
-  pthread_mutex_init(&d->open_mutex, NULL);
-  d->open = (struct rig_metal_queue){nil, nil, -1, d};
-  rig_metal_ring_init(&d->ring, d->slots, ring_slots, d->word.contents);
+  [r->queue addResidencySet:r->set];
+  pthread_mutex_init(&r->set_mutex, NULL);
+  pthread_mutex_init(&r->open_mutex, NULL);
+  r->open = (struct rig_metal_queue){nil, nil, -1, r};
+  d->at = d->word.contents;
+  rig_metal_ring_init(&r->ring, r->slots, ring_slots, d->at);
+  r->holds = 1;
+  d->run = r;
   return (intnat)d;
+}
+
+void rig_metal_hold(struct rig_metal_run *r) {
+  atomic_fetch_add_explicit(&r->holds, 1, memory_order_relaxed);
+}
+
+/* The last release frees [r]: no handler and no call of rig's uses it
+   then. */
+void rig_metal_release(struct rig_metal_run *r) {
+  if (atomic_fetch_sub_explicit(&r->holds, 1, memory_order_acq_rel) != 1)
+    return;
+  [r->queue release], [r->fence release], [r->set release];
+  [r->device release];
+  pthread_mutex_destroy(&r->set_mutex);
+  pthread_mutex_destroy(&r->open_mutex);
+  rig_metal_ring_end(&r->ring);
+  free(r);
 }
 
 value caml_rig_metal_open(value unit) {
@@ -140,52 +163,57 @@ value caml_rig_metal_facts(value v_d) {
   CAMLparam1(v_d);
   CAMLlocal1(word);
   struct rig_metal *d = Device_val(v_d);
+  id<MTLDevice> device = d->run->device;
   word = location(d->word);
-  intnat budget = (intnat)d->device.recommendedMaxWorkingSetSize;
-  CAMLreturn(triple(Val_int(family(d->device)), Val_long(budget), word));
+  intnat budget = (intnat)device.recommendedMaxWorkingSetSize;
+  CAMLreturn(triple(Val_int(family(device)), Val_long(budget), word));
 }
 
 /* Memory */
 
 /* [Some (location b)], resident from the device's next submission, or
    [None] for nil. */
-static value resident(struct rig_metal *d, id<MTLBuffer> b) {
+static value resident(struct rig_metal_run *r, id<MTLBuffer> b) {
   if (b == nil) return Val_none;
-  pthread_mutex_lock(&d->set_mutex);
-  [d->set addAllocation:b];
-  d->changed = 1;
-  pthread_mutex_unlock(&d->set_mutex);
+  pthread_mutex_lock(&r->set_mutex);
+  [r->set addAllocation:b];
+  r->changed = 1;
+  pthread_mutex_unlock(&r->set_mutex);
   return caml_alloc_some(location(b));
 }
 
 value caml_rig_metal_alloc(value v_d, value v_n) {
-  struct rig_metal *d = Device_val(v_d);
-  return resident(d,
-                  [d->device newBufferWithLength:(NSUInteger)Long_val(v_n)
+  struct rig_metal_run *r = Run_val(v_d);
+  return resident(r,
+                  [r->device newBufferWithLength:(NSUInteger)Long_val(v_n)
                                          options:MTLResourceStorageModeShared]);
 }
 
 /* The pages holding the [v_n] bytes at [v_p], wrapped without a copy. */
 value caml_rig_metal_map_host(value v_d, value v_p, value v_n) {
-  struct rig_metal *d = Device_val(v_d);
+  struct rig_metal_run *r = Run_val(v_d);
   uintptr_t page = (uintptr_t)getpagesize(), p = (uintptr_t)Long_val(v_p);
   uintptr_t first = p & ~(page - 1);
   uintptr_t last = (p + (uintptr_t)Long_val(v_n) + page - 1) & ~(page - 1);
   return resident(
-      d, [d->device newBufferWithBytesNoCopy:(void *)first
+      r, [r->device newBufferWithBytesNoCopy:(void *)first
                                       length:last - first
                                      options:MTLResourceStorageModeShared
                                  deallocator:nil]);
 }
 
-/* Takes [v_buffer] out of the residency set at once, then releases it. */
+/* Takes [v_buffer] out of the residency set at once, then releases it. A
+   stopped device's set goes with its run state. The caller excludes the
+   stop. */
 value caml_rig_metal_free(value v_d, value v_buffer) {
-  struct rig_metal *d = Device_val(v_d);
-  pthread_mutex_lock(&d->set_mutex);
-  [d->set removeAllocation:Object_val(v_buffer)];
-  [d->set commit];
-  d->changed = 0;
-  pthread_mutex_unlock(&d->set_mutex);
+  struct rig_metal_run *r = Run_val(v_d);
+  if (r != NULL) {
+    pthread_mutex_lock(&r->set_mutex);
+    [r->set removeAllocation:Object_val(v_buffer)];
+    [r->set commit];
+    r->changed = 0;
+    pthread_mutex_unlock(&r->set_mutex);
+  }
   [Object_val(v_buffer) release];
   return Val_unit;
 }
@@ -198,7 +226,7 @@ value caml_rig_metal_free(value v_d, value v_buffer) {
 value caml_rig_metal_image(value v_d, value v_b) {
   CAMLparam2(v_d, v_b);
   CAMLlocal3(names, why, lib);
-  id<MTLDevice> device = Device_val(v_d)->device;
+  id<MTLDevice> device = Run_val(v_d)->device;
   dispatch_data_t data =
       dispatch_data_create(String_val(v_b), caml_string_length(v_b), NULL,
                            DISPATCH_DATA_DESTRUCTOR_DEFAULT);
@@ -357,7 +385,7 @@ value caml_rig_metal_icb(value v_d, value v_buffer, value v_pipelines,
                             value v_sizes) {
   CAMLparam4(v_d, v_buffer, v_pipelines, v_sizes);
   CAMLlocal2(objects, v);
-  struct rig_metal *d = Device_val(v_d);
+  struct rig_metal_run *r = Run_val(v_d);
   id<MTLBuffer> args = Object_val(v_buffer);
   int n = (int)Wosize_val(v_pipelines);
   /* Allocate every OCaml result before acquiring native objects. */
@@ -375,7 +403,7 @@ value caml_rig_metal_icb(value v_d, value v_buffer, value v_pipelines,
   desc.inheritBuffers = NO;
   desc.inheritPipelineState = NO;
   desc.maxKernelBufferBindCount = 1;
-  b->icb = [d->device newIndirectCommandBufferWithDescriptor:desc
+  b->icb = [r->device newIndirectCommandBufferWithDescriptor:desc
                                              maxCommandCount:n > 0 ? n : 1
                                                      options:0];
   [desc release];
@@ -418,37 +446,39 @@ value caml_rig_metal_icb_release(value v_icb) {
 /* The timeline */
 
 intnat caml_rig_metal_signaled(intnat d) {
-  return (intnat)__atomic_load_n(((struct rig_metal *)d)->ring.word,
+  return (intnat)__atomic_load_n(((struct rig_metal *)d)->at,
                                  __ATOMIC_ACQUIRE);
 }
 
 /* 0 once the word differs from [v_seen] or [v_ms] passed, 1 if a
-   submission failed. */
+   submission failed. Raises [Invalid_argument] once the device stopped. */
 value caml_rig_metal_sleep(value v_d, value v_seen, value v_ms) {
-  struct rig_metal *d = Device_val(v_d);
+  struct rig_metal_run *r = Run_val(v_d);
+  if (r == NULL) caml_invalid_argument("Rig_metal.sleep: the device stopped");
   uint64_t seen = (uint64_t)Long_val(v_seen);
   int ms = Int_val(v_ms);
   caml_enter_blocking_section_no_pending();
-  const char *why = rig_metal_ring_sleep(&d->ring, seen, ms);
+  const char *why = rig_metal_ring_sleep(&r->ring, seen, ms);
   caml_leave_blocking_section();
   return Val_int(why != NULL);
 }
 
 /* The device's first failure. */
 value caml_rig_metal_failure(value v_d) {
-  const char *why = rig_metal_ring_failure(&Device_val(v_d)->ring);
+  const char *why = rig_metal_ring_failure(&Run_val(v_d)->ring);
   return caml_copy_string(why ? why : "");
 }
 
 /* Stops the device: the word shows its last value once its ring is
-   empty. The command queue goes: each committed command buffer keeps it
-   until it completes. */
+   empty. The run state goes with the device's hold: each committed command
+   buffer holds it, and the command queue, until it completes. */
 value caml_rig_metal_stop(value v_d) {
   struct rig_metal *d = Device_val(v_d);
-  rig_metal_drop(d);
-  rig_metal_ring_stop(&d->ring, d->last);
-  [d->queue release];
-  d->queue = nil;
+  struct rig_metal_run *r = d->run;
+  d->run = NULL;
+  rig_metal_drop(r);
+  rig_metal_ring_stop(&r->ring, r->last);
+  rig_metal_release(r);
   return Val_unit;
 }
 
