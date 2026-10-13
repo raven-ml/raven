@@ -711,3 +711,10 @@ statistics/std-f32-1024x1024-rows	alloc_words	exact	7687
 statistics/std-f32-1024x1024-rows	wall_time	batch=8	n=20	1.699e-04	1.401e-04 1.428e-04 1.433e-04 1.482e-04 1.506e-04 1.531e-04 1.535e-04 1.610e-04 1.694e-04 1.696e-04 1.703e-04 1.717e-04 1.750e-04 1.780e-04 1.835e-04 1.860e-04 1.996e-04 2.170e-04 2.488e-04 2.765e-04
 statistics/var-f32-1M	alloc_words	exact	6362
 statistics/var-f32-1M	wall_time	batch=8	n=20	1.700e-04	1.405e-04 1.468e-04 1.493e-04 1.508e-04 1.559e-04 1.566e-04 1.598e-04 1.609e-04 1.616e-04 1.700e-04 1.701e-04 1.726e-04 1.772e-04 1.870e-04 1.932e-04 1.945e-04 2.039e-04 2.293e-04 2.350e-04 2.892e-04
+
+# machine: baccbeca132e3ae9
+# host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+contract/contract-i8-i32-n1x4096x4096	alloc_words	exact	810
+contract/contract-i8-i32-n1x4096x4096	wall_time	batch=2	n=20	3.363e-03	3.350e-03 3.350e-03 3.353e-03 3.354e-03 3.354e-03 3.355e-03 3.355e-03 3.356e-03 3.359e-03 3.362e-03 3.363e-03 3.363e-03 3.364e-03 3.365e-03 3.366e-03 3.366e-03 3.366e-03 3.367e-03 3.370e-03 3.401e-03
