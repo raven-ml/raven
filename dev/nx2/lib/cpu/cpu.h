@@ -185,6 +185,8 @@ typedef struct {
   /* The bytes of L2 cache of a core, as the host reports them when the
      program starts (target.c). */
   int64_t l2;
+  /* The bytes of L1 data cache of the cores a job runs on (target.c). */
+  int64_t l1;
   /* convert[s][d] converts elements of the dtype s into the dtype d, as a
      cast does, where s is a carrier, or where s is a narrow float and d
      float32. A sub-byte dtype has one element per byte, in its low bits:

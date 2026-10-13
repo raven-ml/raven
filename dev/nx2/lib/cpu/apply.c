@@ -31,14 +31,23 @@
    carrier, so that an operand staged into a slot fits it and the block's
    rows stay in L1. Blocks of 64 Ki elements where no input is staged ran
    fill-f32-1M and where-f32-1M slower on kimchi (29-37 against 28-33 us,
-   44-60 against 44-54): fewer units for the job's threads to share. */
+   44-60 against 44-54): fewer units for the job's threads to share. The
+   slots of the operands a block stages, as a kind of narrow dtypes stages
+   all of them, hold at most half the L1 together: on fudge's P-cores, of
+   48 KiB L1, add-bf16-1M took 45.1 us in three full slots on six of them,
+   36.6 in 8 KiB slots. */
+
 static int64_t most(int n, const nx_array *a) {
-  int w = 1;
+  int w = 1, staged = 0;
   for (int k = 0; k < n; k++) {
-    int c = nx_cpu_width(nx_cpu_carrier(a[k].dtype));
-    if (c > w) w = c;
+    int c = nx_cpu_carrier(a[k].dtype);
+    if (nx_cpu_width(c) > w) w = nx_cpu_width(c);
+    staged += c != a[k].dtype;
   }
-  return NX_CPU_SLOT / w;
+  int64_t slot = NX_CPU_SLOT / w;
+  int64_t staged_bytes = nx_cpu_table->l1 / 2;
+  int64_t budget = staged > 0 ? staged_bytes / (staged * w) : slot;
+  return budget < slot ? budget : slot;
 }
 
 /* The operands of a kind: its destination and at most three. */

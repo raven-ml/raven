@@ -15,11 +15,62 @@
 
 #include "cpu.h"
 
-#if defined(__x86_64__)
-#include <cpuid.h>
-#endif
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
+#elif defined(__linux__)
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#endif
+
+/* The bytes of L1 data cache of the cores a job runs on: the performance
+   cores' where cores differ, macOS's perflevel0, on Linux the largest
+   level-1 data cache of any CPU (sysfs-devices-system-cpu's
+   cache/indexN). 32 KiB, the smallest of the hosts here, where the host
+   does not say. */
+#define L1_UNKNOWN (32 * 1024)
+
+#if defined(__linux__)
+/* Reads the one line of cpu/cpuC/cache/indexI/[file] into [buf]. */
+static int sysfs(int c, int i, const char *file, char *buf, int n) {
+  char path[96];
+  snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cache/index%d/%s",
+           c, i, file);
+  FILE *f = fopen(path, "r");
+  if (f == NULL) return 0;
+  int ok = fgets(buf, n, f) != NULL;
+  fclose(f);
+  buf[strcspn(buf, "\n")] = 0;
+  return ok;
+}
+#endif
+
+static int64_t l1_bytes(void) {
+  int64_t most = 0;
+#if defined(__APPLE__)
+  size_t n = sizeof most;
+  if (sysctlbyname("hw.perflevel0.l1dcachesize", &most, &n, NULL, 0) != 0)
+    most = 0;
+#elif defined(__linux__)
+  long cpus = sysconf(_SC_NPROCESSORS_CONF);
+  for (int c = 0; c < cpus; c++)
+    for (int i = 0; i < 4; i++) {
+      char level[8], type[16], size[16];
+      if (!sysfs(c, i, "level", level, sizeof level)) break;
+      if (strcmp(level, "1") != 0) continue;
+      if (!sysfs(c, i, "type", type, sizeof type)) break;
+      if (strcmp(type, "Data") != 0) continue;
+      if (!sysfs(c, i, "size", size, sizeof size)) break;
+      int64_t kib = strtoll(size, NULL, 10);
+      if (kib * 1024 > most) most = kib * 1024;
+    }
+#endif
+  return most > 0 ? most : L1_UNKNOWN;
+}
+
+#if defined(__x86_64__)
+#include <cpuid.h>
 #endif
 
 #if defined(__x86_64__)
@@ -80,6 +131,7 @@ static int64_t l2_bytes(void) {
 
 __attribute__((constructor)) static void init(void) {
   nx_cpu_base.l2 = l2_bytes();
+  nx_cpu_base.l1 = l1_bytes();
   nx_cpu_set_convert_base(&nx_cpu_base);
   nx_cpu_set_gemm_base(&nx_cpu_base);
   nx_cpu_set_rows_base(&nx_cpu_base);
@@ -98,6 +150,7 @@ __attribute__((constructor)) static void init(void) {
 #if defined(__x86_64__)
   if (!has_v3()) return;
   nx_cpu_v3.l2 = nx_cpu_base.l2;
+  nx_cpu_v3.l1 = nx_cpu_base.l1;
   nx_cpu_set_convert_v3(&nx_cpu_v3);
   nx_cpu_set_gemm_v3(&nx_cpu_v3);
   nx_cpu_set_rows_v3(&nx_cpu_v3);
