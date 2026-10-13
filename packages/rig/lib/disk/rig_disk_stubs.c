@@ -257,10 +257,28 @@ static int fsync_retrying(int fd) {
 /* macOS's fsync reaches the drive, which may still reorder the writes
    (fsync(2)); a barrier orders them before later ones. A file system without
    barriers may take a full flush to the medium, which orders too, and one
-   with neither, such as some network file systems, only fsync. */
+   with neither, such as some network file systems, only fsync. Only a file
+   system's refusal of a call falls through to the next: any other failure,
+   such as a write the drive could not make, is the sync's, since a later
+   call's success would hide it. */
+static int refused(int code) {
+  return code == ENOTSUP || code == ENOTTY || code == EINVAL;
+}
+
+static int fcntl_retrying(int fd, int cmd) {
+  int r;
+  do
+    r = fcntl(fd, cmd);
+  while (r == -1 && errno == EINTR);
+  return r == -1 ? errno : 0;
+}
+
 static int sync_file(intnat h) {
   int fd = (int)h;
-  if (fcntl(fd, F_BARRIERFSYNC) == 0 || fcntl(fd, F_FULLFSYNC) == 0) return 0;
+  int code = fcntl_retrying(fd, F_BARRIERFSYNC);
+  if (code == 0 || !refused(code)) return code;
+  code = fcntl_retrying(fd, F_FULLFSYNC);
+  if (code == 0 || !refused(code)) return code;
   return fsync_retrying(fd);
 }
 

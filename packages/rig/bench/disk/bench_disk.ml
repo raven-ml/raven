@@ -137,7 +137,26 @@ let read_rows =
          ])
        sizes)
 
+(* More files than the disk keeps descriptors for. *)
+let many = 128
+
+(* Writes: a copy into a file at each size, and a copy of 4 KiB into each of
+   [many] files followed by a barrier of each, beside the system's calls. The
+   disk syncs a written file before it closes the file's descriptor to open
+   another. *)
+
 let write_rows =
+  let small = 4 * kib in
+  let writings () =
+    ( host small,
+      Array.init many (fun i ->
+          ok (Rig_disk.create_file (fresh (strf "write-many-%d" i)) small)) )
+  in
+  let floors () =
+    ( memory small,
+      Array.init many (fun i ->
+          opened (data (strf "write-floor-many-%d" i) small) ~writable:true) )
+  in
   let writing n () =
     (host n, ok (Rig_disk.create_file (fresh (strf "write-%s" (size n))) n))
   in
@@ -155,7 +174,15 @@ let write_rows =
              (floor n)
              (fun (h, (_, a)) -> moved "pwrite" n (pwrite h 0 a n));
          ])
-       sizes)
+       sizes
+    @ [
+        row "many-128" writings (fun (h, files) ->
+            Array.iter (fun file -> B.copy ~src:h ~dst:file) files;
+            Array.iter Rig_disk.barrier files);
+        row "floor-many-128" floors (fun ((_, a), hs) ->
+            Array.iter (fun h -> moved "pwrite" small (pwrite h 0 a small)) hs;
+            Array.iter (fun h -> moved "sync" 0 (sync h)) hs);
+      ])
 
 (* Cold reads: each run first drops the file's pages from the system's cache, so
    the read reaches the storage device; the floor drops them too. Only on Linux,
@@ -272,8 +299,6 @@ let borrow_rows =
 
 (* Opens: one file, and more files than the disk keeps descriptors for, each
    open evicting the least recently used. *)
-
-let many = 128
 
 let open_rows =
   let small i = data (strf "small-%d" i) (4 * kib) in

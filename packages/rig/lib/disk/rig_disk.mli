@@ -119,12 +119,23 @@ val barrier : Rig.Buffer.t -> unit
 (** [barrier b] returns once the bytes written to [b]'s file before it, by
     copies or through a borrow, are ordered before every later change to the
     file system ({!copies}). It first waits for the device work that writes
-    [b] through a borrow ({!Rig.Buffer.wait}).
+    [b] through a borrow ({!Rig.Buffer.wait}). A barrier on a file
+    {!create_file} made and nothing wrote returns without ordering the file's
+    creation or size.
+
+    The disk orders a file's bytes by syncing the file, which asks the system
+    to store the bytes written to it. It syncs a file at a barrier, and before
+    it closes the descriptor of a file copies wrote since its last sync
+    ({!descriptors}). Once the system reports that it could not store bytes
+    already written to the file, the file's next barrier raises [Sys_error],
+    and so does every later one on its buffers. The system reports such a
+    failure once, and the bytes it could not store may be lost.
 
     Raises [Invalid_argument] if [b] is dead or is neither a buffer of
-    {!device} nor a borrow of one, [Sys_error] if the system cannot order
-    the file's writes or reopen the file ({!descriptors}), and {!Rig.Lost}
-    if work it waits for is on a lost device. *)
+    {!device} nor a borrow of one, [Sys_error] for a failure to store the
+    file's bytes, as above, or if the file cannot be reopened
+    ({!descriptors}), and {!Rig.Lost} if work it waits for is on a lost
+    device. *)
 
 (** {1:borrows Borrows}
 
@@ -160,11 +171,12 @@ val barrier : Rig.Buffer.t -> unit
     [Sys_error] naming the file. A copy never reads or writes another file's
     bytes.
 
-    The disk keeps at most 64 descriptors open, more only while copies use
-    them. It reopens a file by its path when it needs it again, once the
-    system confirms that the path still names it: by its file handle on
-    Linux, its inode and birth time on macOS's APFS and HFS+, and its file ID
-    on Windows.
+    The disk keeps at most 64 descriptors open, more only while copies or
+    barriers use them. It reopens a file by its path when it needs it again,
+    once the system confirms that the path still names it: by its file handle
+    on Linux, its inode and birth time on macOS's APFS and HFS+, and its file
+    ID on Windows. Before it closes the descriptor of a file copies wrote since
+    its last sync, it syncs the file ({!barrier}).
 
     A file whose system gives no such identity keeps its descriptor until its
     buffers are collected, beyond the 64. Such are the files of a Linux file

@@ -58,7 +58,14 @@ let not_regular = -1
 (* A file is named by its path and its identity, bytes that name it exactly and
    that no other file has, or [""] where the system gives none. A file without
    an identity keeps its descriptor until it is freed: nothing could tell its
-   path's file apart at a reopen. *)
+   path's file apart at a reopen.
+
+   A sync's failure is the file's for good. Linux reports a write it could not
+   make to one sync and may then drop the bytes, so a later sync would return
+   though they are lost. It may also forget the failure once no descriptor holds
+   the file, so a descriptor closed for others' sake syncs the copies' writes
+   first ([evict]). Syncs of one file take turns under its sync lock
+   ([sync_file]): the system reports the failure to the first only. *)
 type file = {
   path : string;
   writable : bool;
@@ -70,11 +77,38 @@ type file = {
       (* links in the table's ring, [f] itself out of it *)
   mutable older : file;
   mutable pages : pages option; (* its mapping, once a borrow made it *)
+  mutable unsynced : bool; [@atomic] (* written since its last sync *)
+  mutable failure : exn; [@atomic]
+      (* its first sync's [Unix_error], [No_failure] before one *)
+  mutable syncing : int * Mutex.t; [@atomic]
+      (* its sync lock and the forks it was made after, [no_lock] before *)
 }
 
-(* A file not yet open, out of the ring. *)
+exception No_failure
+
+let no_lock = (-1, Mutex.create ())
+
+(* The ring's ends: a file of no path, never open. *)
+let rec ring =
+  {
+    path = "";
+    writable = false;
+    size = 0;
+    identity = "";
+    fd = -1;
+    users = 0;
+    newer = ring;
+    older = ring;
+    pages = None;
+    unsynced = false;
+    failure = No_failure;
+    syncing = no_lock;
+  }
+
+(* A file not yet open, out of the ring. Its links are set to itself after it
+   is made, since a [let rec] would allocate the record twice. *)
 let file ~path ~writable ~size ~identity =
-  let rec f =
+  let f =
     {
       path;
       writable;
@@ -82,16 +116,41 @@ let file ~path ~writable ~size ~identity =
       identity;
       fd = -1;
       users = 0;
-      newer = f;
-      older = f;
+      newer = ring;
+      older = ring;
       pages = None;
+      unsynced = false;
+      failure = No_failure;
+      syncing = no_lock;
     }
   in
+  f.newer <- f;
+  f.older <- f;
   f
 
 let sys_error f why = raise (Sys_error (strf "%s: %s" f.path why))
 
 let unix_error f e = sys_error f (Unix.error_message e)
+
+(* Keeps [x], the [Unix_error] a sync of [f] raised, unless an earlier one is
+   kept. It allocates nothing, so no asynchronous exception falls between the
+   failure and its keeping. *)
+let keep f x =
+  ignore (Atomic.Loc.compare_and_set [%atomic.loc f.failure] No_failure x : bool)
+
+(* [f]'s sync lock, made at its first use, and anew in a forked child: a thread
+   of its parent may have held it. It is taken before the table's lock, never
+   after. *)
+let rec sync_lock f =
+  let ((made, m) as l) = f.syncing and n = forks () in
+  if made = n then m
+  else begin
+    ignore
+      (Atomic.Loc.compare_and_set [%atomic.loc f.syncing] l
+         (n, Mutex.create ())
+        : bool);
+    sync_lock f
+  end
 
 (* Descriptors *)
 
@@ -133,9 +192,6 @@ let locked g x =
       Mutex.unlock m;
       Printexc.raise_with_backtrace e bt
 
-(* The ring's ends: a file of no path, never open. *)
-let ring = file ~path:"" ~writable:false ~size:0 ~identity:""
-
 (* Whether the table holds [f]'s descriptor while it is open. *)
 let listed f = f.identity <> ""
 
@@ -171,9 +227,21 @@ let close_fd f =
   end
 
 (* Closes [f]'s descriptor unless a copy pins it. It claims [users] at 0, so no
-   pin starts meanwhile. *)
+   pin, and so no write, starts meanwhile. A file written since its last sync is
+   synced first and its failure kept, under the table's lock. It is marked
+   synced only then, so a barrier that finds it synced finds the failure. An
+   asynchronous exception in the sync leaves it open and unsynced. *)
 let evict f =
-  if Atomic.Loc.compare_and_set [%atomic.loc f.users] 0 (-1) then close_fd f
+  if Atomic.Loc.compare_and_set [%atomic.loc f.users] 0 (-1) then
+    match
+      if f.unsynced then try sync f.fd with Unix.Unix_error _ as x -> keep f x
+    with
+    | () ->
+        f.unsynced <- false;
+        close_fd f
+    | exception e ->
+        f.users <- 0;
+        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 (* Closes the least recently used unpinned descriptors while more than [keep]
    are open. *)
@@ -320,10 +388,23 @@ module Io = struct
         (strf "the file ends at byte %d, before byte %d" (at + k) (at + len))
 
   (* Rig writes no file opened for reading: its memory admits only reads
-     ([Rig.Buffer.access]). *)
+     ([Rig.Buffer.access]). The write marks [f] unsynced while it pins the
+     descriptor, so an eviction after it syncs it, and a barrier's sync that
+     began before it leaves it marked. *)
   let write () f ~at ~src ~len =
-    try ignore (moved f pwrite at src len : int)
-    with Unix.Unix_error (e, _, _) -> unix_error f e
+    let fd = pin f in
+    match pwrite fd at src len with
+    | (_ : int) ->
+        f.unsynced <- true;
+        unpin f
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        f.unsynced <- true;
+        unpin f;
+        begin match e with
+        | Unix.Unix_error (e, _, _) -> unix_error f e
+        | e -> Printexc.raise_with_backtrace e bt
+        end
 
   (* Whether a mapping's failure says the file system can never map the file,
      whatever the moment: no mapping for its kind of file, or a file too large
@@ -410,6 +491,39 @@ let create_file path n =
   if n < 0 then invalid_argf "Rig_disk.create_file: %d bytes is negative" n;
   open_file path create_mode n
 
+(* Syncs [f] and keeps a failure before it unpins the descriptor. It marks [f]
+   synced while it pins the descriptor, so no eviction falls between the mark
+   and the sync. Writes through a shared mapping reach the file by the mapping's
+   own flush, which the descriptor's sync does not cover. *)
+let synced f =
+  let fd = pin f in
+  f.unsynced <- false;
+  match
+    (try
+       Option.iter msync f.pages;
+       sync fd
+     with Unix.Unix_error _ as x -> keep f x)
+  with
+  | () -> unpin f
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      unpin f;
+      Printexc.raise_with_backtrace e bt
+
+(* [synced f] under [f]'s sync lock, unless nothing wrote [f] since its last
+   sync. The system reports a failure to one sync of a descriptor, so a
+   barrier's sync would return while another's, or an eviction's, has yet to
+   keep the failure: it waits for that one to end. A file with a mapping always
+   syncs, since nothing marks writes through it. *)
+let sync_file f =
+  let m = sync_lock f in
+  Mutex.lock m;
+  match if f.unsynced || Option.is_some f.pages then synced f with
+  | () -> Mutex.unlock m
+  | exception e ->
+      Mutex.unlock m;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 let barrier b =
   (* The message is formatted only on failure: a partial application of a format
      builds its closure at every call. *)
@@ -428,11 +542,7 @@ let barrier b =
       (* A device's work writing through a borrow writes the file once done: the
          barrier orders after it, as a copy reading [b] would. *)
       Rig.Buffer.wait b Read;
-      (* Writes through a shared mapping reach the file by the mapping's own
-         flush, which the descriptor's sync does not cover. *)
-      (try
-         Option.iter msync f.pages;
-         using f sync
-       with Unix.Unix_error (e, _, _) -> unix_error f e);
+      sync_file f;
       (* Until the descriptor is unpinned: collecting [b] would close it. *)
-      ignore (Sys.opaque_identity b)
+      ignore (Sys.opaque_identity b);
+      match f.failure with Unix.Unix_error (e, _, _) -> unix_error f e | _ -> ()

@@ -1127,6 +1127,182 @@ let test_barrier_lost () =
   raises_match ~msg:"the barrier" lost (fun () -> Rig_disk.barrier file);
   is_none ~msg:"the disk's loss" (Rig.lost disk)
 
+(* A failing device
+
+   An ext4 file system without a journal on a device-mapper device over a loop
+   device, whose table can make one block fail every write: Linux's dm-error, as
+   a drive that cannot write the block. Making one takes root and
+   device-mapper's tools; a test skips without them. With no journal, a failed
+   write of a file's bytes fails no write of the file system's own. *)
+
+type failing = { name : string; loop : string; sectors : int; mount : string }
+
+let failing_bytes = 64 lsl 20
+let fs_block = 4096
+let devices = Atomic.make 0
+
+let sh fmt =
+  Printf.ksprintf
+    (fun c -> if Sys.command c <> 0 then failwith ("failed: " ^ c))
+    fmt
+
+let sh_out fmt =
+  Printf.ksprintf
+    (fun c ->
+      let ic = Unix.open_process_in c in
+      let s = In_channel.input_all ic in
+      match Unix.close_process_in ic with
+      | WEXITED 0 -> String.trim s
+      | _ -> failwith ("failed: " ^ c))
+    fmt
+
+let tools = [ "dmsetup"; "losetup"; "mkfs.ext4"; "filefrag" ]
+
+let can_fail () =
+  Sys.file_exists "/dev/mapper/control"
+  && Unix.geteuid () = 0
+  && List.for_all
+       (fun t -> Sys.command (strf "command -v %s > /dev/null" t) = 0)
+       tools
+
+(* [load d lines] gives [d] the table [lines], one target each, without flushing
+   what the system holds in memory first. *)
+let load d lines =
+  let table = Filename.temp_file "rig-disk-table" "" in
+  Fun.protect ~finally:(fun () -> Sys.remove table) @@ fun () ->
+  Out_channel.with_open_text table (fun oc ->
+      List.iter (fun l -> output_string oc (l ^ "\n")) lines);
+  sh "dmsetup suspend --nolockfs --noflush %s" d.name;
+  sh "dmsetup load %s %s" d.name (Filename.quote table);
+  sh "dmsetup resume %s" d.name
+
+(* [fail_block d path] makes [d] fail every write to the first block of the file
+   at [path], which must have one. *)
+let fail_block d path =
+  let first_block =
+    String.split_on_char '\n'
+      (sh_out "filefrag -v -b%d %s" fs_block (Filename.quote path))
+    |> List.find_map (fun line ->
+        match List.filter (( <> ) "") (String.split_on_char ' ' line) with
+        | "0:" :: _ :: _ :: physical :: _ ->
+            int_of_string_opt (List.hd (String.split_on_char '.' physical))
+        | _ -> None)
+    |> Option.get
+  in
+  let at = first_block * (fs_block / 512) and n = fs_block / 512 in
+  load d
+    [
+      strf "0 %d linear %s 0" at d.loop;
+      strf "%d %d error" at n;
+      strf "%d %d linear %s %d" (at + n) (d.sectors - at - n) d.loop (at + n);
+    ]
+
+let heal d = load d [ strf "0 %d linear %s 0" d.sectors d.loop ]
+
+(* Unmounts [d]'s file system and mounts it again. The system writes back its
+   dirty pages, then forgets its inodes, as it may forget an inode nothing holds
+   when memory runs low. The unmount fails while a descriptor of one of its
+   files is open. *)
+let remount d =
+  sh "umount %s" (Filename.quote d.mount);
+  sh "mount -o errors=continue /dev/mapper/%s %s" d.name (Filename.quote d.mount)
+
+(* [with_failing f] is [f d] for a new device [d] that fails no write yet, in a
+   new directory of the system's temporary files. Every step of its teardown
+   runs. An exception of [f] or of the setup raises after them; otherwise the
+   first step to fail does. The teardown is lazy, since the disk may still hold
+   descriptors of the device's files. *)
+let with_failing f =
+  if Sys.win32 || not (can_fail ()) then
+    skip ~reason:"making a failing device takes root and device-mapper" ();
+  let n = Atomic.fetch_and_add devices 1 in
+  let name = strf "rig-disk-test-%d-%d" (Unix.getpid ()) n in
+  let dir = Filename.concat (Filename.get_temp_dir_name ()) name in
+  let image = Filename.concat dir "image" in
+  let mount = Filename.concat dir "mount" in
+  let undo = ref [] in
+  let teardown () =
+    let first = ref None in
+    List.iter
+      (fun g -> try g () with e -> if !first = None then first := Some e)
+      !undo;
+    Option.iter raise !first
+  in
+  let run () =
+    Sys.mkdir dir 0o700;
+    undo := (fun () -> Sys.rmdir dir) :: !undo;
+    sh "truncate -s %d %s" failing_bytes (Filename.quote image);
+    undo := (fun () -> Sys.remove image) :: !undo;
+    let loop = sh_out "losetup -f --show %s" (Filename.quote image) in
+    undo := (fun () -> sh "losetup -d %s" loop) :: !undo;
+    let d = { name; loop; sectors = failing_bytes / 512; mount } in
+    sh "dmsetup create %s --table '0 %d linear %s 0'" name d.sectors loop;
+    undo := (fun () -> sh "dmsetup remove --deferred %s" name) :: !undo;
+    sh "mkfs.ext4 -q -F -b %d -O ^has_journal /dev/mapper/%s" fs_block name;
+    Sys.mkdir mount 0o755;
+    undo := (fun () -> Sys.rmdir mount) :: !undo;
+    sh "mount -o errors=continue /dev/mapper/%s %s" name (Filename.quote mount);
+    undo := (fun () -> sh "umount -l %s" (Filename.quote mount)) :: !undo;
+    f d
+  in
+  match run () with
+  | r ->
+      teardown ();
+      r
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      (try teardown ()
+       with t -> prerr_endline ("teardown: " ^ Printexc.to_string t));
+      Printexc.raise_with_backtrace e bt
+
+(* [failing_file d] is a file of 8 bytes on [d], written and ordered, whose
+   block [d] then fails, and written again: the system holds the second write in
+   memory only. *)
+let failing_file d =
+  let path = Filename.concat d.mount "failing" in
+  let file =
+    require_ok ~pp:Format.pp_print_string (Rig_disk.create_file path 8)
+  in
+  write file "abcdefgh";
+  Rig_disk.barrier file;
+  fail_block d path;
+  write file "ABCDEFGH";
+  (path, file)
+
+let barrier_fails ~msg path file =
+  raises_match ~msg (Exn.sys_error ~substring:path) (fun () ->
+      Rig_disk.barrier file)
+
+(* The device fails a barrier's write. The barriers after it raise too, once the
+   device is healed and through a reopened descriptor, while another file's
+   return. *)
+let test_failed_barrier () =
+  with_failing @@ fun d ->
+  let path, file = failing_file d in
+  let fine =
+    require_ok ~pp:Format.pp_print_string
+      (Rig_disk.create_file (Filename.concat d.mount "fine") 8)
+  in
+  write fine "abcdefgh";
+  barrier_fails ~msg:"the failed barrier" path file;
+  heal d;
+  barrier_fails ~msg:"the next barrier" path file;
+  use_all_others ();
+  barrier_fails ~msg:"a barrier after its descriptor closed" path file;
+  Rig_disk.barrier fine
+
+(* The disk closes a written file's descriptor to open others while the device
+   fails the file's block. The system then fails the write and forgets the
+   failure with the file's inode at a remount, and the device is healed. The
+   file's next barrier raises. *)
+let test_failed_close () =
+  with_failing @@ fun d ->
+  let path, file = failing_file d in
+  use_all_others ();
+  remount d;
+  heal d;
+  barrier_fails ~msg:"the barrier after the close" path file
+
 let barriers =
   group ~timeout "barriers"
     [
@@ -1145,6 +1321,12 @@ let barriers =
       test "barrier refuses a dead buffer" test_barrier_dead;
       test "barrier raises the loss of a device whose work writes the file"
         test_barrier_lost;
+      test "every barrier on a file raises once one failed to write its bytes"
+        test_failed_barrier;
+      test
+        "a barrier raises a failure to write the file met as its descriptor \
+         closed"
+        test_failed_close;
       test "barrier returns on an empty buffer of the disk" (fun () ->
           Rig_disk.barrier (B.create disk 0));
       test "barrier returns on a lost device's borrow of an empty file"
