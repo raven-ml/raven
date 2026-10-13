@@ -188,9 +188,9 @@ type t = private {
 }
 (** The type for programs. A program runs at each index of a shape, reading
     its operands at that index. Each node's value is its exact result rounded
-    once to its dtype ({!dtype}). {!v} makes every program, so its fields
-    hold together as {!v} states; programs are plain data, compared and hashed
-    structurally. *)
+    once to its dtype ({!dtype}). {!v}, {!of_node} and {!of_exprs} make
+    every program, so its fields hold together as {!v} states; programs are
+    plain data, compared and hashed structurally. *)
 
 val max_operands : int
 (** [max_operands] is [16], the most operands plus outputs a program has. *)
@@ -229,3 +229,201 @@ val dtype : t -> int -> Nx_array.Dtype.any
 val is_identity : t -> bool
 (** [is_identity p] is [true] iff [p] has one operand and one output, and its
     output is that operand's [In] node: [p] gives its operand back. *)
+
+(** {1:exprs Expressions} *)
+
+(** Programs written as values.
+
+    An {e expression} is a node whose operands are expressions, typed by the
+    dtype {!Prog.dtype} gives its node. Each constructor's type states its
+    kind's domain where a type can: float kinds take floats, comparisons give
+    [bool], and two operands of one kind share a dtype. Where it cannot, the
+    constructor checks its operands' dtypes as {!Prog.v} does, raising
+    [Invalid_argument] where {!Prog.v} refuses the node. An expression used
+    twice is one value: a [let] shares it. {!Prog.of_exprs} lowers
+    expressions into a program.
+
+    This is a Box-Muller normal draw from two uniform draws [u1] and [u2] of
+    float32, written with the operators of a local open:
+    {[
+      let lit x = E.const Nx_array.Dtype.Float32 x in
+      E.(sqrt (lit (-2.) * log u1) * cos (lit (2. *. Float.pi) * u2))
+    ]} *)
+module E : sig
+  type ('v, 's) t
+  (** The type for expressions of dtype [('v, 's) Nx_array.Dtype.t]. *)
+
+  type any
+  (** The type for expressions of any dtype. *)
+
+  val any : ('v, 's) t -> any
+  (** [any e] is [e]. *)
+
+  val dtype : ('v, 's) t -> ('v, 's) Nx_array.Dtype.t
+  (** [dtype e] is [e]'s dtype. *)
+
+  (** {1:nodes Nodes} *)
+
+  val input : int -> ('v, 's) Nx_array.Dtype.t -> ('v, 's) t
+  (** [input k dt] is [In k], operand [k] of dtype [dt].
+
+      Raises [Invalid_argument] unless [k] is an operand below
+      {!max_operands}. *)
+
+  val coord : int -> (int64, Nx_array.Dtype.int64_elt) t
+  (** [coord i] is [Coord i].
+
+      Raises [Invalid_argument] unless [i] is an axis below
+      {!Nx_array.Layout.max_rank}. *)
+
+  val const : ('v, 's) Nx_array.Dtype.t -> 'v -> ('v, 's) t
+  (** [const dt x] is [Const (dt, bits dt x)] ({!Prog.bits}).
+
+      Raises [Invalid_argument] as {!Prog.bits} does. *)
+
+  val op1 : op1 -> ('w, 'r) Nx_array.Dtype.t -> ('v, 's) t -> ('w, 'r) t
+  (** [op1 k dt x] is [Op1 (k, dt, x)]. *)
+
+  val binary : binary -> ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [binary k x y] is [Op2 (Binary k, x, y)]. *)
+
+  val compare :
+    compare -> ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  (** [compare k x y] is [Op2 (Compare k, x, y)]. *)
+
+  val op3 : op3 -> ('c, 'e) t -> ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [op3 k c x y] is [Op3 (k, c, x, y)]. *)
+
+  (** {1:kinds Kinds}
+
+      Each function makes the node of the kind it names: [sqrt x] is
+      [op1 (Unary Sqrt) (dtype x) x], [rem x y] is [binary Mod x y],
+      [less x y] is [compare Less x y], [cast dt x] is [op1 Cast dt x] and
+      [where c x y] is [op3 Where c x y]. *)
+
+  val neg : ('v, 's) t -> ('v, 's) t
+  val recip : ('v, 's) t -> ('v, 's) t
+  val abs : ('v, 's) t -> ('v, 's) t
+  val sign : ('v, 's) t -> ('v, 's) t
+  val sqrt : (float, 's) t -> (float, 's) t
+  val exp : (float, 's) t -> (float, 's) t
+  val exp2 : (float, 's) t -> (float, 's) t
+  val log : (float, 's) t -> (float, 's) t
+  val log2 : (float, 's) t -> (float, 's) t
+  val log1p : (float, 's) t -> (float, 's) t
+  val expm1 : (float, 's) t -> (float, 's) t
+  val sin : (float, 's) t -> (float, 's) t
+  val cos : (float, 's) t -> (float, 's) t
+  val tan : (float, 's) t -> (float, 's) t
+  val asin : (float, 's) t -> (float, 's) t
+  val acos : (float, 's) t -> (float, 's) t
+  val atan : (float, 's) t -> (float, 's) t
+  val sinh : (float, 's) t -> (float, 's) t
+  val cosh : (float, 's) t -> (float, 's) t
+  val tanh : (float, 's) t -> (float, 's) t
+  val erf : (float, 's) t -> (float, 's) t
+  val floor : ('v, 's) t -> ('v, 's) t
+  val ceil : ('v, 's) t -> ('v, 's) t
+  val round : ('v, 's) t -> ('v, 's) t
+  val trunc : ('v, 's) t -> ('v, 's) t
+  val add : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val sub : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val mul : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val fdiv : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val idiv : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val rem : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val pow : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val atan2 : (float, 's) t -> (float, 's) t -> (float, 's) t
+  val maximum : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val minimum : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val logand : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val logor : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val logxor : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+
+  val threefry :
+    (int64, Nx_array.Dtype.uint64_elt) t ->
+    (int64, Nx_array.Dtype.uint64_elt) t ->
+    (int64, Nx_array.Dtype.uint64_elt) t
+
+  val equal : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  val not_equal : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  val less : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  val less_equal : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  val copy : ('v, 's) t -> ('v, 's) t
+  val cast : ('w, 'r) Nx_array.Dtype.t -> ('v, 's) t -> ('w, 'r) t
+  val bitcast : ('w, 'r) Nx_array.Dtype.t -> ('v, 's) t -> ('w, 'r) t
+  val where : (bool, 'c) t -> ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  val fma : ('v, 's) t -> ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+
+  (** {1:operators Operators}
+
+      For a local open, [E.( … )], where they shadow [Stdlib]'s. *)
+
+  val ( ~- ) : ('v, 's) t -> ('v, 's) t
+  (** [~- x] is [neg x]. *)
+
+  val ( + ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x + y] is [add x y]. *)
+
+  val ( - ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x - y] is [sub x y]. *)
+
+  val ( * ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x * y] is [mul x y]. *)
+
+  val ( / ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x / y] is [idiv x y] on integers and [fdiv x y] on other dtypes. *)
+
+  val ( mod ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x mod y] is [rem x y]. *)
+
+  val ( ** ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x ** y] is [pow x y]. *)
+
+  val ( land ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x land y] is [logand x y]. *)
+
+  val ( lor ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x lor y] is [logor x y]. *)
+
+  val ( lxor ) : ('v, 's) t -> ('v, 's) t -> ('v, 's) t
+  (** [x lxor y] is [logxor x y]. *)
+
+  val ( && ) : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
+  (** [x && y] is [logand x y], at the precedence of [Stdlib.( && )], below
+      the comparisons. *)
+
+  val ( || ) : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
+  (** [x || y] is [logor x y], at the precedence of [Stdlib.( || )]. *)
+
+  val ( = ) : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  (** [x = y] is [equal x y]. *)
+
+  val ( <> ) : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  (** [x <> y] is [not_equal x y]. *)
+
+  val ( < ) : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  (** [x < y] is [less x y]. *)
+
+  val ( <= ) : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  (** [x <= y] is [less_equal x y]. *)
+
+  val ( > ) : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  (** [x > y] is [less y x]. *)
+
+  val ( >= ) : ('v, 's) t -> ('v, 's) t -> (bool, Nx_array.Dtype.bool_elt) t
+  (** [x >= y] is [less_equal y x]. *)
+end
+
+val of_exprs : ins:Nx_array.Dtype.any iarray -> E.any iarray -> t
+(** [of_exprs ~ins outs] is the program over operands of dtypes [ins] whose
+    results are the expressions [outs]. Its nodes are [outs]' distinct
+    subexpressions, each once, in the order a depth-first walk from the
+    outputs, operands left to right, finishes them. Two expressions are
+    distinct unless they are leaves of one kind, dtype and field, or nodes of
+    one kind and dtype over the same operands: a program depends on its
+    expressions' values alone, never on which of them are one OCaml value.
+
+    Raises [Invalid_argument] if an [In] of [outs] reads no operand of [ins]
+    or is not of its dtype, or if [outs] is empty or [ins] and [outs] are
+    more than {!max_operands}. *)

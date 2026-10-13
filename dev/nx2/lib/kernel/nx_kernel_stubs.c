@@ -4,9 +4,12 @@
   ---------------------------------------------------------------------------*/
 
 #include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <caml/alloc.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
@@ -192,4 +195,289 @@ value nx_kernel_view_byte(value *argv, int argn) {
   (void)argn;
   return nx_kernel_view(argv[0], argv[1], argv[2], argv[3], argv[4],
                         argv[5]);
+}
+
+/* Expressions */
+
+/* Prog.E.t's layout (prog.ml): In of operand and dtype, Coord of axis,
+   Const of dtype and bits, then Op1, Op2 and Op3 of kind and dtype, whose
+   operands, tag - 2 of them, follow from field 2. */
+enum { NX_E_IN, NX_E_COORD, NX_E_CONST, NX_E_OP1, NX_E_OP2, NX_E_OP3 };
+
+static int nx_operands(value e) {
+  return Tag_val(e) >= NX_E_OP1 ? (int)Tag_val(e) - 2 : 0;
+}
+
+/* A node's structure: its tag, its fields as ints (an operand, an axis, a
+   dtype's code, a kind's code), its operands' nodes, and a constant's bits. */
+typedef struct {
+  int32_t tag, x0, x1, ops[3];
+  value bits;
+} nx_shape;
+
+/* A block being walked, and the nodes of the operands walked so far. */
+typedef struct {
+  value e;
+  int next;
+  int32_t ops[3];
+} nx_frame;
+
+/* Each buffer starts at 128 nodes and grows eightfold: a large program
+   pays for few fresh buffers and rehashes. */
+enum { NX_FIRST = 128, NX_GROWTH = 8 };
+
+/* A walk's state, all of it outside the OCaml heap: a table from block
+   addresses to their nodes; the nodes' shapes, and a table from shapes to
+   nodes, both open addressing grown at half load; and the stack of blocks
+   being walked. */
+typedef struct {
+  value *keys;
+  int32_t *vals;
+  size_t mask, used;
+  nx_shape *shapes;
+  size_t nodes, shapes_cap;
+  int32_t *slots;
+  size_t slots_mask;
+  nx_frame *stack;
+  size_t depth, stack_cap;
+  int32_t *outs;
+} nx_walk;
+
+static void nx_walk_free(nx_walk *w) {
+  free(w->keys);
+  free(w->vals);
+  free(w->shapes);
+  free(w->slots);
+  free(w->stack);
+  free(w->outs);
+}
+
+static void nx_walk_fail(nx_walk *w) {
+  nx_walk_free(w);
+  caml_raise_out_of_memory();
+}
+
+/* Grows the capacity [*cap] of [*p] NX_GROWTH times, of elements of [size] bytes. */
+static void nx_walk_grow(nx_walk *w, void **p, size_t *cap, size_t size) {
+  void *q = malloc(NX_GROWTH * *cap * size);
+  if (q == NULL) nx_walk_fail(w);
+  memcpy(q, *p, *cap * size);
+  free(*p);
+  *p = q;
+  *cap *= NX_GROWTH;
+}
+
+/* The slot of hash [h] in a table of [mask + 1] slots, a power of two:
+   the top bits of Fibonacci hashing, one multiply. */
+static size_t nx_index(uint64_t h, size_t mask) {
+  return (size_t)((h * 0x9E3779B97F4A7C15ull) >> __builtin_clzll(mask));
+}
+
+static size_t nx_slot(value v, size_t mask) {
+  return nx_index((uint64_t)v, mask);
+}
+
+static int32_t nx_find(const nx_walk *w, value v) {
+  for (size_t i = nx_slot(v, w->mask);; i = (i + 1) & w->mask) {
+    if (w->keys[i] == 0) return -1;
+    if (w->keys[i] == v) return w->vals[i];
+  }
+}
+
+static void nx_put(value *keys, int32_t *vals, size_t mask, value v,
+                   int32_t k) {
+  size_t i = nx_slot(v, mask);
+  while (keys[i] != 0) i = (i + 1) & mask;
+  keys[i] = v;
+  vals[i] = k;
+}
+
+static void nx_insert(nx_walk *w, value v, int32_t k) {
+  if (2 * (w->used + 1) > w->mask + 1) {
+    size_t mask = NX_GROWTH * (w->mask + 1) - 1;
+    value *keys = calloc(mask + 1, sizeof(value));
+    int32_t *vals = malloc((mask + 1) * sizeof(int32_t));
+    if (keys == NULL || vals == NULL) {
+      free(keys);
+      free(vals);
+      nx_walk_fail(w);
+    }
+    for (size_t i = 0; i <= w->mask; i++)
+      if (w->keys[i] != 0) nx_put(keys, vals, mask, w->keys[i], w->vals[i]);
+    free(w->keys);
+    free(w->vals);
+    w->keys = keys;
+    w->vals = vals;
+    w->mask = mask;
+  }
+  nx_put(w->keys, w->vals, w->mask, v, k);
+  w->used++;
+}
+
+/* The shape of the block of [f], whose operands are walked. */
+static nx_shape nx_shape_of(const nx_frame *f) {
+  value e = f->e, k = Field(e, 0);
+  nx_shape s = {(int32_t)Tag_val(e), 0, 0, {-1, -1, -1}, 0};
+  switch (s.tag) {
+  case NX_E_IN:
+    s.x0 = (int32_t)Long_val(k);
+    s.x1 = (int32_t)Long_val(Field(e, 1));
+    break;
+  case NX_E_COORD:
+    s.x0 = (int32_t)Long_val(k);
+    break;
+  case NX_E_CONST:
+    s.x0 = (int32_t)Long_val(k);
+    s.bits = Field(e, 1);
+    break;
+  case NX_E_OP1:
+    s.x0 = NX_OP1_CODE(k);
+    s.x1 = (int32_t)Long_val(Field(e, 1));
+    break;
+  case NX_E_OP2:
+    s.x0 = NX_OP2_CODE(k);
+    break;
+  default:
+    s.x0 = (int32_t)Long_val(k);
+  }
+  for (int i = 0; i < nx_operands(e); i++) s.ops[i] = f->ops[i];
+  return s;
+}
+
+/* The shape's fields packed into three words, mixed by independent
+   multiplies; a constant's bits, of at most 16 bytes, into a fourth. */
+static uint64_t nx_hash(const nx_shape *s) {
+  uint64_t a = (uint64_t)(uint32_t)s->tag | (uint64_t)(uint32_t)s->x0 << 8 |
+               (uint64_t)(uint32_t)s->x1 << 40;
+  uint64_t b = (uint64_t)(uint32_t)s->ops[0] |
+               (uint64_t)(uint32_t)s->ops[1] << 32;
+  uint64_t c = (uint32_t)s->ops[2];
+  uint64_t h = a * 0xC2B2AE3D27D4EB4Full + b * 0x165667B19E3779F9ull +
+               c * 0x27D4EB2F165667C5ull;
+  if (s->bits != 0) {
+    uint64_t q[2] = {0, 0};
+    mlsize_t n = caml_string_length(s->bits);
+    memcpy(q, String_val(s->bits), n < sizeof q ? n : sizeof q);
+    h += q[0] * 0x9FB21C651E98DF25ull + q[1] * 0xFF51AFD7ED558CCDull;
+  }
+  return h ^ (h >> 29);
+}
+
+static int nx_same(const nx_shape *a, const nx_shape *b) {
+  if (a->tag != b->tag || a->x0 != b->x0 || a->x1 != b->x1 ||
+      a->ops[0] != b->ops[0] || a->ops[1] != b->ops[1] ||
+      a->ops[2] != b->ops[2])
+    return 0;
+  if (a->bits == 0) return 1;
+  mlsize_t n = caml_string_length(a->bits);
+  return n == caml_string_length(b->bits) &&
+         memcmp(String_val(a->bits), String_val(b->bits), n) == 0;
+}
+
+/* The node of [s]: the node of that shape, made now if there is none. */
+static int32_t nx_node(nx_walk *w, const nx_shape *s) {
+  uint64_t h = nx_hash(s);
+  size_t i = nx_index(h, w->slots_mask);
+  for (; w->slots[i] != 0; i = (i + 1) & w->slots_mask)
+    if (nx_same(&w->shapes[w->slots[i] - 1], s)) return w->slots[i] - 1;
+  if (w->nodes == w->shapes_cap)
+    nx_walk_grow(w, (void **)&w->shapes, &w->shapes_cap, sizeof(nx_shape));
+  w->shapes[w->nodes] = *s;
+  w->slots[i] = (int32_t)++w->nodes;
+  if (2 * w->nodes > w->slots_mask + 1) {
+    size_t mask = NX_GROWTH * (w->slots_mask + 1) - 1;
+    int32_t *slots = calloc(mask + 1, sizeof(int32_t));
+    if (slots == NULL) nx_walk_fail(w);
+    for (size_t n = 0; n < w->nodes; n++) {
+      size_t j = nx_index(nx_hash(&w->shapes[n]), mask);
+      while (slots[j] != 0) j = (j + 1) & mask;
+      slots[j] = (int32_t)n + 1;
+    }
+    free(w->slots);
+    w->slots = slots;
+    w->slots_mask = mask;
+  }
+  return (int32_t)w->nodes - 1;
+}
+
+/* Walks [root], not met before, and is its node. */
+static int32_t nx_walk_root(nx_walk *w, value root) {
+  int32_t k = -1;
+  w->stack[w->depth++] = (nx_frame){root, 0, {-1, -1, -1}};
+  while (w->depth > 0) {
+    nx_frame *f = &w->stack[w->depth - 1];
+    if (f->next < nx_operands(f->e)) {
+      value c = Field(f->e, 2 + f->next);
+      int32_t j = nx_find(w, c);
+      if (j >= 0) {
+        f->ops[f->next++] = j;
+        continue;
+      }
+      if (w->depth == w->stack_cap)
+        nx_walk_grow(w, (void **)&w->stack, &w->stack_cap, sizeof(nx_frame));
+      w->stack[w->depth++] = (nx_frame){c, 0, {-1, -1, -1}};
+      continue;
+    }
+    nx_shape s = nx_shape_of(f);
+    k = nx_node(w, &s);
+    nx_insert(w, f->e, k);
+    if (--w->depth > 0) {
+      nx_frame *p = &w->stack[w->depth - 1];
+      p->ops[p->next++] = k;
+    }
+  }
+  return k;
+}
+
+/* Prog.walk: no OCaml allocation runs until the nodes are copied out, so
+   no collection moves a block while the tables hold its address. */
+value nx_kernel_prog_walk(value outs) {
+  CAMLparam1(outs);
+  CAMLlocal1(r);
+  size_t nouts = Wosize_val(outs);
+  nx_walk w = {calloc(2 * NX_FIRST, sizeof(value)),
+               malloc(2 * NX_FIRST * sizeof(int32_t)), 2 * NX_FIRST - 1, 0,
+               malloc(NX_FIRST * sizeof(nx_shape)), 0, NX_FIRST,
+               calloc(2 * NX_FIRST, sizeof(int32_t)), 2 * NX_FIRST - 1,
+               malloc(NX_FIRST * sizeof(nx_frame)), 0, NX_FIRST,
+               malloc((nouts > 0 ? nouts : 1) * sizeof(int32_t))};
+  if (!w.keys || !w.vals || !w.shapes || !w.slots || !w.stack || !w.outs)
+    nx_walk_fail(&w);
+  for (size_t o = 0; o < nouts; o++) {
+    value root = Field(outs, o);
+    int32_t k = nx_find(&w, root);
+    w.outs[o] = k >= 0 ? k : nx_walk_root(&w, root);
+  }
+  /* Six words per node, then the constants' bits, each padded to whole
+     words. */
+  size_t words = 2 + nouts + 6 * w.nodes;
+  for (size_t n = 0; n < w.nodes; n++)
+    if (w.shapes[n].bits != 0)
+      words += (caml_string_length(w.shapes[n].bits) + 3) / 4;
+  /* The walk is over: allocation may move blocks from here on, so the
+     nodes, bits included, are copied out before it. */
+  int32_t *buf = malloc(words * sizeof(int32_t));
+  if (buf == NULL) nx_walk_fail(&w);
+  int32_t *at = buf, *bits = buf + 2 + nouts + 6 * w.nodes;
+  *at++ = (int32_t)w.nodes;
+  *at++ = (int32_t)nouts;
+  for (size_t o = 0; o < nouts; o++) *at++ = w.outs[o];
+  for (size_t n = 0; n < w.nodes; n++) {
+    const nx_shape *s = &w.shapes[n];
+    int32_t rec[6] = {s->tag, s->x0, s->x1, s->ops[0], s->ops[1], s->ops[2]};
+    if (s->bits != 0) {
+      mlsize_t len = caml_string_length(s->bits);
+      rec[2] = (int32_t)(bits - buf);
+      rec[3] = (int32_t)len;
+      memset(bits, 0, (len + 3) / 4 * sizeof(int32_t));
+      memcpy(bits, String_val(s->bits), len);
+      bits += (len + 3) / 4;
+    }
+    memcpy(at, rec, sizeof rec);
+    at += 6;
+  }
+  nx_walk_free(&w);
+  r = caml_alloc_initialized_string(words * sizeof(int32_t), (char *)buf);
+  free(buf);
+  CAMLreturn(r);
 }

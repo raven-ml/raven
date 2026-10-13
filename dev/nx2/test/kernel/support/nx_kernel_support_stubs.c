@@ -212,6 +212,8 @@ static const struct {
     CODE(NX_OP2_EQUAL),         CODE(NX_OP2_NOT_EQUAL),
     CODE(NX_OP2_LESS),          CODE(NX_OP2_LESS_EQUAL),
     CODE(NX_OP3_WHERE),         CODE(NX_OP3_FMA),
+    CODE(NX_OP1_COUNT),         CODE(NX_OP2_COUNT),
+    CODE(NX_OP3_COUNT),
 #undef CODE
 };
 
