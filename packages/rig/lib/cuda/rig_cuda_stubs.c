@@ -395,12 +395,11 @@ struct stamp {
    and its timeline word, whose host address CUDA's work also uses
    (cuMemHostAlloc's memory, not write-combined, under unified
    addressing). A value ends on one stream, after its work on both; a value
-   that starts on the other stream waits for that end. It is freed with
-   its word. The context is the GPU's primary context, which the process
-   keeps: memory, modules and graphs are the context's, and outlive the
-   device. */
+   that starts on the other stream waits for that end. It lives from the
+   open to the stop; the word lives for the process. The context is the
+   GPU's primary context, which the process keeps: memory, modules and
+   graphs are the context's, and outlive the device. */
 struct device {
-  const struct rig_driver *driver;
   CUdevice device;
   CUcontext context;
   CUstream streams[2]; /* COMPUTE:0, COPY:0 */
@@ -427,7 +426,18 @@ struct device {
   char failure[256];
 };
 
-#define Device_val(v) ((struct device *)Long_val(v))
+/* A device's edge, kept for the process: its word, the last value its
+   submit received, as the stop found it, and its state, NULL once
+   stopped. */
+struct edge {
+  const struct rig_driver *driver;
+  _Atomic uint64_t *word;
+  uint64_t last;
+  struct device *d;
+};
+
+#define Edge_val(v) ((struct edge *)Long_val(v))
+#define Device_val(v) (Edge_val(v)->d)
 #define Context_val(v) ((CUcontext)Long_val(v))
 
 /* Destroys the streams and events [d] has; CUDA's answers are dropped. */
@@ -576,9 +586,13 @@ static CUresult limits(struct device *d) {
    create the context. */
 value caml_rig_cuda_open(value v_device) {
   struct device *d = calloc(1, sizeof *d);
+  struct edge *e = calloc(1, sizeof *e);
   int flush = 0;
-  if (d == NULL) caml_raise_out_of_memory();
-  d->driver = &driver;
+  if (d == NULL || e == NULL) {
+    free(d);
+    free(e);
+    caml_raise_out_of_memory();
+  }
   d->device = Int_val(v_device);
   caml_enter_blocking_section_no_pending();
   CUresult s = p_cuDeviceGetAttribute(
@@ -590,11 +604,14 @@ value caml_rig_cuda_open(value v_device) {
     IN_CONTEXT(s, d->context, start(d));
     if (s != CUDA_SUCCESS) p_cuDevicePrimaryCtxRelease_v2(d->device);
   }
-  if (s != CUDA_SUCCESS) free(d);
+  if (s != CUDA_SUCCESS) free(d), free(e);
   caml_leave_blocking_section();
   if (s != CUDA_SUCCESS) return Val_long(-s);
   d->flush = flush != 0;
-  return Val_long((intnat)d);
+  e->driver = &driver;
+  e->word = d->word;
+  e->d = d;
+  return Val_long((intnat)e);
 }
 
 /* The primary context of [v_self]'s GPU. */
@@ -1270,7 +1287,7 @@ static int runs(const struct device *d, const struct rig_part *p,
 int rig_cuda_room(void *self, const struct rig_part *p, int n,
                   void *scratch, const uint8_t *args) {
   (void)scratch;
-  const struct device *d = self;
+  const struct device *d = ((struct edge *)self)->d;
   for (int i = 0; i < n; i++) {
     if (p[i].queue < 0 || p[i].queue > 1) return RIG_NEVER;
     switch (p[i].kind) {
@@ -1293,7 +1310,7 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
                     const uint64_t *slots, int nslots, uint64_t *times,
                     const char **failure) {
   (void)scratch;
-  struct device *d = self;
+  struct device *d = ((struct edge *)self)->d;
   struct submission s = {
       .d = d, .waits = waits, .nwaits = nwaits, .args = args, .slots = slots};
   int pushed;
@@ -1336,7 +1353,7 @@ int rig_cuda_submit(void *self, uint64_t v, const struct rig_wait *waits,
    precedes the word's write of [v] on its stream, so the synchronize
    returns at once. A failure loses the device, as a failed submit does. */
 int rig_cuda_settle(void *self, uint64_t v, const char **failure) {
-  struct device *d = self;
+  struct device *d = ((struct edge *)self)->d;
   struct stamp *t = &d->stamps[v % STAMPS];
   struct submission s = {.d = d, .step = timing};
   int pushed;
@@ -1358,7 +1375,7 @@ int rig_cuda_settle(void *self, uint64_t v, const char **failure) {
 }
 
 int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
-  struct device *d = self;
+  struct device *d = ((struct edge *)self)->d;
   int pushed;
   if (!d->failed && v > d->committed) {
     CUresult e = own(d->context, &pushed);
@@ -1378,17 +1395,18 @@ int rig_cuda_commit(void *self, uint64_t v, const char **failure) {
 /* Timeline */
 
 value caml_rig_cuda_signaled(value v_self) {
-  struct device *d = Device_val(v_self);
-  return Val_long(atomic_load_explicit(d->word, memory_order_acquire));
+  return Val_long(
+      atomic_load_explicit(Edge_val(v_self)->word, memory_order_acquire));
 }
 
 /* The host address of the device's word, which lives for the process. */
 value caml_rig_cuda_word(value v_self) {
-  return Val_long((intnat)Device_val(v_self)->word);
+  return Val_long((intnat)Edge_val(v_self)->word);
 }
 
 /* The error a stream of the device met, which ended the context's work and
-   which CUDA answers to every call on its streams, or [0]. */
+   which CUDA answers to every call on its streams, or [0]; [0] once
+   stopped, its streams gone. */
 static CUresult streams_failed(struct device *d) {
   CUresult s = query(d->streams[0]);
   return s != CUDA_SUCCESS ? s : query(d->streams[1]);
@@ -1397,6 +1415,7 @@ static CUresult streams_failed(struct device *d) {
 value caml_rig_cuda_failed(value v_self) {
   struct device *d = Device_val(v_self);
   CUresult s;
+  if (d == NULL) return Val_int(0);
   IN_CONTEXT(s, d->context, streams_failed(d));
   return Val_int(s);
 }
@@ -1412,12 +1431,20 @@ value caml_rig_cuda_failed(value v_self) {
    ends. A fault counts as an end because CUDA then runs none of the
    context's queued work: its reference does not state this, and the 615
    driver behaves so. The streams and events are destroyed whether work
-   runs or not: CUDA frees them once their work ends. */
+   runs or not: CUDA frees them once their work ends. The state goes with
+   them, but for the edge; a context that cannot be made current keeps its
+   streams and events, unreachable. */
 value caml_rig_cuda_stop(value v_self) {
-  struct device *d = Device_val(v_self);
+  struct edge *e = Edge_val(v_self);
+  struct device *d = e->d;
+  e->last = d->last;
+  e->d = NULL;
   uint64_t w = atomic_load_explicit(d->word, memory_order_acquire);
   int stopped = (int64_t)(w - d->last) >= 0, running = 0;
-  if (push(d->context) != CUDA_SUCCESS) return Val_false;
+  if (push(d->context) != CUDA_SUCCESS) {
+    free(d);
+    return Val_false;
+  }
   for (int q = 0; q < 2 && !stopped; q++) {
     CUresult s = p_cuStreamQuery(d->streams[q]);
     if (s == CUDA_ERROR_NOT_READY) running = 1;
@@ -1429,13 +1456,14 @@ value caml_rig_cuda_stop(value v_self) {
   if (stopped) rig_raise(d->word, d->last);
   destroy(d);
   pop(CUDA_SUCCESS);
+  free(d);
   return Val_bool(stopped);
 }
 
 /* Whether a device that a stop found running has since ended its work: its
    word holds the last value. */
 value caml_rig_cuda_ended(value v_self) {
-  struct device *d = Device_val(v_self);
-  uint64_t w = atomic_load_explicit(d->word, memory_order_acquire);
-  return Val_bool((int64_t)(w - d->last) >= 0);
+  struct edge *e = Edge_val(v_self);
+  uint64_t w = atomic_load_explicit(e->word, memory_order_acquire);
+  return Val_bool((int64_t)(w - e->last) >= 0);
 }

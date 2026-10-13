@@ -62,7 +62,7 @@ let refused step self x = match failed self with 0 -> x | e -> fault step e
 type graph_cleanup = { pid : int; dispose : unit -> unit }
 
 (* A GPU's holder: [unheld]; [taken], while a device of it is open or being
-   opened; or the C state, negated, of a device stopped while its work still
+   opened; or the C edge, negated, of a device stopped while its work still
    ran. [first] keeps its primary context. Its pending graph destruction
    survives close and is drained only by that GPU's later blocking calls. *)
 type gpus = {
