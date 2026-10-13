@@ -1203,11 +1203,15 @@ let pp_moments ppf (c : moments) =
     (A.dtype x) L.pp (A.layout x)
     (String.concat ", " c.views)
 
+(* A fifth of the operands are one axis of more than 4096 terms, the law's
+   "long" case, which [shape_gen] alone draws too rarely for every run to
+   cover. *)
 let moments_case =
   Gen.with_pp pp_moments
     (let open Gen in
      let* d = of_list ~pp:pp_dtype floats in
-     let* s = shape_gen in
+     let long = map (fun n -> [| n |]) (int_range 4097 6000) in
+     let* s = frequency [ (4, shape_gen); (1, long) ] in
      let s = if Array.length s = 0 then [| 3 |] else s in
      let* axis = int_range 0 (Array.length s - 1) in
      let* v = view_of (Array.length s) in
