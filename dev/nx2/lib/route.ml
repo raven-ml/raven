@@ -7,8 +7,8 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 type rule =
   | Elementwise
-  | Reduce of { axes : int array; along : int array }
-  | Along of int array
+  | Reduce of { axes : int array; whole : int array }
+  | Whole of int array
   | Gather of int
   | Into of int
   | Contract of { batch : (int * int) array; contracting : (int * int) array }
@@ -36,8 +36,8 @@ let dropped axes a =
 let whole rule i shape =
   match rule with
   | Elementwise | Move _ -> [||]
-  | Reduce { axes; along } -> within shape (Array.append axes along)
-  | Along axes -> within shape axes
+  | Reduce { axes; whole } -> within shape (Array.append axes whole)
+  | Whole axes -> within shape axes
   | Gather axis -> if i = 1 then [| axis |] else [||]
   | Into axis -> [| axis |]
   | Contract { contracting; _ } ->
@@ -94,7 +94,7 @@ let kept_free rule shapes =
   match rule with
   | Contract { batch; contracting } ->
       Array.length shapes.(0) - Array.length batch - Array.length contracting
-  | Elementwise | Reduce _ | Along _ | Gather _ | Into _ | Move _ | Replicated
+  | Elementwise | Reduce _ | Whole _ | Gather _ | Into _ | Move _ | Replicated
     ->
       0
 
@@ -120,20 +120,20 @@ let to_result rule ~free i shape a =
             done;
             Some (Array.length batch + (if i = 0 then 0 else free) + !before)
         end
-  | Elementwise | Along _ | Gather _ | Into _ | Replicated -> Some a
+  | Elementwise | Whole _ | Gather _ | Into _ | Replicated -> Some a
 
 let full d = { Nx_array.Move.start = 0; count = d; step = 1 }
 
-let window rule i shape (w : Nx_array.Move.range array) =
+let window rule ~operand:i shape (w : Nx_array.Move.range array) =
   match rule with
   | Elementwise -> w
-  | Reduce _ | Along _ | Gather _ | Into _ | Contract _ | Move _ | Replicated ->
+  | Reduce _ | Whole _ | Gather _ | Into _ | Contract _ | Move _ | Replicated ->
       (* [b]'s free axes follow [a]'s, whose number the result's rank gives. *)
       let free =
         match rule with
         | Contract { contracting; _ } ->
             Array.length w - Array.length shape + Array.length contracting
-        | Elementwise | Reduce _ | Along _ | Gather _ | Into _ | Move _
+        | Elementwise | Reduce _ | Whole _ | Gather _ | Into _ | Move _
         | Replicated ->
             0
       in
@@ -224,10 +224,10 @@ let check ~by rule shapes =
     done
   in
   match rule with
-  | Reduce { axes; along } ->
+  | Reduce { axes; whole } ->
       natural axes;
-      natural along
-  | Along axes -> natural axes
+      natural whole
+  | Whole axes -> natural axes
   | Contract _ ->
       if n <> 2 && n <> 3 then
         invalid_argf "%s: a contraction reads 2 or 3 operands, not %d" by n
@@ -331,11 +331,11 @@ let route ~by rule ps shapes =
 let keeps rule shapes a' =
   match rule with
   | Elementwise | Gather _ | Contract _ -> false
-  | Reduce { axes; along } ->
+  | Reduce { axes; whole } ->
       Array.exists
         (fun a -> (not (Array.mem a axes)) && dropped axes a = a')
-        along
-  | Along axes -> Array.mem a' axes
+        whole
+  | Whole axes -> Array.mem a' axes
   | Into axis -> a' = axis
   | Move m ->
       let s = shapes.(0) in

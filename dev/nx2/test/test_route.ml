@@ -33,9 +33,9 @@ let pp_ints ppf a =
 
 let pp_rule ppf = function
   | Route.Elementwise -> Format.pp_print_string ppf "Elementwise"
-  | Reduce { axes; along } ->
-      Format.fprintf ppf "Reduce %a along %a" pp_ints axes pp_ints along
-  | Along a -> Format.fprintf ppf "Along %a" pp_ints a
+  | Reduce { axes; whole } ->
+      Format.fprintf ppf "Reduce %a whole %a" pp_ints axes pp_ints whole
+  | Whole a -> Format.fprintf ppf "Whole %a" pp_ints a
   | Gather a -> Format.fprintf ppf "Gather %d" a
   | Into a -> Format.fprintf ppf "Into %d" a
   | Contract { batch; contracting } ->
@@ -101,8 +101,8 @@ let shaped =
     one_of
       [
         constant Route.Elementwise;
-        map (fun a -> Route.Reduce { axes = a; along = [||] }) (axes_of rank);
-        map (fun a -> Route.Along a) (axes_of rank);
+        map (fun a -> Route.Reduce { axes = a; whole = [||] }) (axes_of rank);
+        map (fun a -> Route.Whole a) (axes_of rank);
         map (fun a -> Route.Gather a) (int_range 0 (rank - 1));
         map (fun a -> Route.Into a) (int_range 0 (rank - 1));
         constant Route.Replicated;
@@ -177,7 +177,7 @@ let result_shape c =
   | Contract { batch; contracting } ->
       Result.get_ok
         (Nx_kernel.Shape.contract ~batch ~contracting s c.shapes.(1))
-  | Elementwise | Along _ | Gather _ | Replicated -> s
+  | Elementwise | Whole _ | Gather _ | Replicated -> s
   | Move mv -> R.shape mv s
 
 (* The part of operand [i] that result window [w] depends on. *)
@@ -194,7 +194,7 @@ let depends c i (w : R.range array) =
             let r = w.(!k) in
             incr k;
             r)
-  | Along axes ->
+  | Whole axes ->
       Array.mapi (fun a r -> if Array.mem a axes then full a else r) w
   | Gather axis ->
       if i = 1 then Array.mapi (fun a r -> if a = axis then full a else r) w
@@ -284,7 +284,7 @@ let law =
                       true
                       (contains have (depends c i w));
                     equal ranges ~msg:"the rule's window" (depends c i w)
-                      (Route.window c.rule i c.shapes.(i) w))
+                      (Route.window c.rule ~operand:i c.shapes.(i) w))
                   r.operands)
               (Grid.devices target)
           end)
@@ -389,7 +389,7 @@ let cases_ =
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let r =
             placed
-              (Reduce { axes = [| 1 |]; along = [||] })
+              (Reduce { axes = [| 1 |]; whole = [||] })
               [| x |]
               [| [| 4; 8 |] |]
           in
@@ -399,7 +399,7 @@ let cases_ =
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let r =
             placed
-              (Reduce { axes = [| 0 |]; along = [||] })
+              (Reduce { axes = [| 0 |]; whole = [||] })
               [| x |]
               [| [| 4; 8 |] |]
           in

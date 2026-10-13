@@ -267,14 +267,14 @@ let contract_op =
 let kept (rule : Route.rule) a =
   match rule with
   | Elementwise | Gather _ | Contract _ -> false
-  | Reduce { axes; along } ->
+  | Reduce { axes; whole } ->
       List.exists
         (fun b ->
           (not (Array.mem b axes))
           && b - List.length (List.filter (fun c -> c < b) (Array.to_list axes))
              = a)
-        (Array.to_list along)
-  | Along axes -> Array.mem a axes
+        (Array.to_list whole)
+  | Whole axes -> Array.mem a axes
   | Into axis -> a = axis
   | Move _ | Replicated -> true
 
@@ -361,7 +361,7 @@ let agrees (Op op, w) =
   let rule = Prim.rule op in
   let whole = Exec.run ~by:"t" op in
   let view i x =
-    let win = Route.window rule i (Prim.shape x) w in
+    let win = Route.window rule ~operand:i (Prim.shape x) w in
     let a = Option.get (A.move (Slice win) (Iarray.get (Prim.arrays x) 0)) in
     Value.Array { at = Prim.placement x; a; dead = Value.Live }
   in

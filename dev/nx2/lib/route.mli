@@ -35,23 +35,23 @@ type rule =
   | Elementwise
       (** Operands and results of one shape; a result's element reads each
           operand at its own index. *)
-  | Reduce of { axes : int array; along : int array }
-      (** Operands of one shape, but for trailing axes [along] holds; results
-          drop [axes] and keep the others, [axes] and [along] read whole: a
-          reduction whose loads pad or window [along]'s axes. *)
-  | Along of int array
-      (** Operands and results that share their leading axes, the operation
-          acting along these axes, each read whole; an axis that not all of them
-          have is one of these: a scan, a sort, a transform's axes, a
-          factorisation's last two, the axes a padded load or a fold pads, crops
-          or windows and those its windows append. *)
+  | Reduce of { axes : int array; whole : int array }
+      (** Operands of one shape, but for trailing axes [whole] holds; results
+          drop [axes] and keep the others, [axes] and [whole] read whole: a
+          reduction whose loads pad or window [whole]'s axes. *)
+  | Whole of int array
+      (** Operands and results that share their leading axes, these axes read
+          whole: those the operation acts along (a scan's, a sort's, a
+          transform's, a factorisation's last two), and those a padded load or
+          a fold pads, crops or windows and those its windows append. An axis
+          that not all of them have is one of these. *)
   | Gather of int
       (** Operands [idx; x] of one rank, and results of [idx]'s shape: [x] is
           read whole along this axis. *)
   | Into of int
-      (** Operands of one rank, results of the last one's shape, written into it
-          along this axis, which every operand reads whole: the target is the
-          last operand's placement where it lies on the set. *)
+      (** [Whole [| axis |]]'s windows, written into the last operand: operands
+          of one rank, results of the last one's shape, and the target the last
+          operand's placement where it lies on the set. *)
   | Contract of { batch : (int * int) array; contracting : (int * int) array }
       (** Operands [a; b], then possibly [init] of the result's shape, the
           result's axes the batch pairs', then [a]'s other axes, then [b]'s
@@ -73,19 +73,19 @@ val moved : Nx_array.Move.t -> int array -> int -> int option
 
 val window :
   rule ->
-  int ->
+  operand:int ->
   int array ->
   Nx_array.Move.range array ->
   Nx_array.Move.range array
-(** [window r i s w] is the window of operand [i], of shape [s], that the window
-    [w] of an operation's results reads by [r]: whole along each axis [r] reads
-    whole, [w]'s range along an axis the results keep. Where an operation has
-    several results, [w] is a window of the first.
+(** [window r ~operand:i s w] is the window of operand [i], of shape [s], that
+    the window [w] of an operation's results reads by [r]: whole along each axis
+    [r] reads whole, [w]'s range along an axis the results keep. Where an
+    operation has several results, [w] is a window of the first.
 
     The engine computes an operation one window at a time, each device over its
     operands' windows, under the {e window law}: for every window [w] of the
-    results, the operation over each operand's [window r i s w] equals the
-    window [w] of the operation over the whole operands, bitwise. A kernel
+    results, the operation over each operand's [window r ~operand:i s w] equals
+    the window [w] of the operation over the whole operands, bitwise. A kernel
     library meets it where an element's association, its algorithm and whether
     the library declines depend on the extents the element reads whole, the
     dtypes, the attributes, the library and the device's architecture, never on

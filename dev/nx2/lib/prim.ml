@@ -811,7 +811,7 @@ let padded_axes (type d) layout ?(axes = [||]) (loads : d load array) =
 
 (* A map's rule: elementwise, but for the axes padded loads read whole. *)
 let map_rule (type d) layout (loads : d load array) =
-  if Array.exists is_padded loads then Route.Along (padded_axes layout loads)
+  if Array.exists is_padded loads then Route.Whole (padded_axes layout loads)
   else Route.Elementwise
 
 (* A loop's rules. A loop of no load is its expansion, which computes it
@@ -819,33 +819,33 @@ let map_rule (type d) layout (loads : d load array) =
 let reduce_rule (type d) layout axes (loads : d load array) =
   if Array.length loads = 0 then Route.Replicated
   else
-    let along =
+    let whole =
       if Array.exists is_padded loads then padded_axes layout loads else [||]
     in
-    Route.Reduce { axes; along }
+    Route.Reduce { axes; whole }
 
 let scan_rule (type d) layout axis (loads : d load array) =
   if Array.length loads = 0 then Route.Replicated
   else if Array.exists is_padded loads then
-    Route.Along (padded_axes layout ~axes:[| axis |] loads)
-  else Route.Along [| axis |]
+    Route.Whole (padded_axes layout ~axes:[| axis |] loads)
+  else Route.Whole [| axis |]
 
 (* A fold's rule: the axes of its operand that the padded load it sums back
    reads whole. *)
 let fold_rule pad x =
   let whole = Array.make (rank x) false in
   mark_padded whole pad;
-  Route.Along (marked whole)
+  Route.Whole (marked whole)
 
 (* A routine acts along its matrices' last two axes. *)
 let linalg_rule l =
   let (Any a) = List.hd (linalg_operands l) in
   let r = rank a in
-  Route.Along [| r - 2; r - 1 |]
+  Route.Whole [| r - 2; r - 1 |]
 
 let bitcast_rule dt x =
   if D.bits dt > D.bits (dtype x) then
-    Route.Reduce { axes = [| rank x - 1 |]; along = [||] }
+    Route.Reduce { axes = [| rank x - 1 |]; whole = [||] }
   else Route.Elementwise
 
 let rule : type r. r prim -> Route.rule = function
@@ -854,9 +854,9 @@ let rule : type r. r prim -> Route.rule = function
   | Scan { layout; axis; loads; _ } -> scan_rule layout axis loads
   | Gather { axis; _ } -> Gather axis
   | Scatter { axis; _ } -> Into axis
-  | Sort { axis; _ } -> Along [| axis |]
+  | Sort { axis; _ } -> Whole [| axis |]
   | Fold { pad; x; _ } -> fold_rule pad x
-  | Fft f -> Along (fft_axes f)
+  | Fft f -> Whole (fft_axes f)
   | Linalg l -> linalg_rule l
   | Assemble _ -> Replicated
   | Contract { batch; contracting; _ } -> Contract { batch; contracting }
@@ -1023,7 +1023,7 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
   let loop layout =
     match rule op with
     | Route.Elementwise -> w
-    | r -> Route.window r 0 (L.shape layout) w
+    | r -> Route.window r ~operand:0 (L.shape layout) w
   in
   match op with
   | Map m ->

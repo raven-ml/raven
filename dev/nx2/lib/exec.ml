@@ -906,7 +906,8 @@ and sharded : type r.
           let w = Devices.window ~by p first j in
           let view i x =
             let at = Devices.one (Devices.set (Prim.placement x)) k in
-            let a = Place.view ~by x k (Route.window rule i (Prim.shape x) w) in
+            let w' = Route.window rule ~operand:i (Prim.shape x) w in
+            let a = Place.view ~by x k w' in
             Value.Array { at; a; dead = Value.Live }
           in
           on_device ~by kernels set op r j k (Prim.local (Prim.mapi view op) w))
