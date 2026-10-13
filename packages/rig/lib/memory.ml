@@ -627,9 +627,17 @@ let take_all_cached (l, freed) =
   l.cached <- 0;
   freed
 
+(* Empties [l]'s pairs, and takes its mappings of producers' words. *)
+let take_word_maps l =
+  let maps = l.word_maps in
+  l.word_maps <- [];
+  l.pairs <- [||];
+  maps
+
 (* Takes what became due: retiring memory no bigarray reads and whose uses are
-   reached enters the cache, or is freed if [d] is lost and counts as stopped;
-   pending releases whose value [d] reached. Is the memory to free. *)
+   reached enters the cache, or is freed if [d] is lost and counts as stopped,
+   with its mappings of producers' words; pending releases whose value [d]
+   reached. Is the memory to free. *)
 let due d =
   let lost = Dev.is_lost d in
   let free_lost = lost && Dev.stopped d in
@@ -640,7 +648,10 @@ let due d =
   Lock.release l.lock;
   let freed = judge d ~lost ~free_lost [] retiring in
   if not free_lost then freed
-  else Lock.protect l.lock take_all_cached (l, freed)
+  else begin
+    List.iter (unmap d) (Lock.protect l.lock take_word_maps l);
+    Lock.protect l.lock take_all_cached (l, freed)
+  end
 
 (* Takes [l]'s pending releases up to the value [w]. *)
 let take_pending (l, w) =
@@ -711,11 +722,13 @@ let idle l =
   l.retiring == [] && fst l.pending == [] && not (released_any l.release)
 
 (* An orphaned device's objects are forgotten: nothing of it drains. A lost
-   device's cache returns once it is Stopped. *)
+   device's cache and its mappings of producers' words return once it is
+   Stopped. *)
 let drain d =
   if not (Dev.orphaned d) then begin
     let l = d.live in
-    if not (idle l && (l.cached = 0 || not (Dev.is_lost d))) then drain_own d;
+    let kept = l.cached > 0 || l.word_maps != [] in
+    if not (idle l && ((not kept) || not (Dev.is_lost d))) then drain_own d;
     if released_any holds_list then List.iter (route d) (released holds_list);
     drain_holds ()
   end

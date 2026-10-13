@@ -60,10 +60,14 @@ module Polled : sig
       completions [waits_on] lists (defaults to none), at most [max_waits] of
       them per submission (defaults to [max_int]). With [answer] [`Stopped] (the
       default) its stop drops its queued work and writes the last value it
-      received into its word; with [`Unknown] it leaves both, as a driver whose
-      work may still run. With [runs] [`Itself] (the default is [`When_slept]) a
-      thread of the driver also runs its queue as work arrives, as a device runs
-      its own work: its work is done at no point a test chooses. With [lag]
+      received into its word, and frees what it ran work with: its queue, and
+      the records {!last_waits}, {!layout}, {!copy_sides},
+      {!copy_device_memory}, {!blocked} and {!launches} read, which then read
+      none. With [`Unknown] it leaves all of it, as a driver whose work may
+      still run. With [runs] [`Itself] (the default is [`When_slept]) a thread
+      of the driver also runs its queue as work arrives, until the stop, as a
+      device runs its own work: its work is done at no point a test chooses.
+      With [lag]
       (defaults to [1]) it commits on its own once [lag] values are uncommitted,
       and before a submit waits for room: with [1] each hand-over commits its
       value. Its queue runs only committed submissions, and a sleep that finds
@@ -168,11 +172,6 @@ module Polled : sig
   val word_at : t -> int
   (** [word_at d] is the host address of [d]'s word, which is also its object
       ([completion]). *)
-
-  val state_bytes : int
-  (** [state_bytes] is the bytes of the C heap a device's state takes, kept
-      while its handle lives: rig keeps a device's handle for the
-      process. *)
 
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],

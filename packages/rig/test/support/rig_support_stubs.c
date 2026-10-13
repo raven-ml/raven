@@ -214,15 +214,10 @@ struct launched {
   uint8_t block[sizeof(struct rig_block) + RIG_PARAMS];
 };
 
-struct polled {
-  const struct rig_driver *driver; /* first, with the word in its page */
-  _Atomic uint64_t word;
+/* What a device runs work with, from its make to its stop. */
+struct polled_run {
   _Atomic uint64_t committed; /* the last value committed */
   uint64_t lag;               /* the uncommitted values that commit */
-  lock_t mu;
-  cond_t cv;
-  cond_t work;       /* signalled by a submit to a device that runs itself */
-  int itself;        /* a thread of the driver runs the queue */
   int capacity;      /* parts the queue holds */
   int may_block;     /* a full queue's submit waits instead of [room] */
   int fail;          /* the next submit fails */
@@ -231,7 +226,6 @@ struct polled {
   int held;          /* parts queued */
   int n, c;
   struct queued *q;
-  _Atomic int submits;
   int blocked; /* submits waiting for room */
   int nlast;   /* the waits of the last submit, the first [LAST] of them */
   struct rig_wait last[LAST];
@@ -244,15 +238,29 @@ struct polled {
   int layout_queue[LAST_PARTS], layout_nafter[LAST_PARTS];
   int layout_after[LAST_PARTS][LAST_AFTER];
   uint64_t received; /* the last value a submit received */
-  intnat steps;     /* fallible calls made */
-  intnat fail_from; /* the step from which every call fails, or 0 */
-  intnat refuse_from, refuse_to; /* the steps from one below the other refuse */
-  char why[64]; /* what a hand-over failing from [fail_from] reports */
   /* The blocks of the first LAST_LAUNCHES launches run since they were
      last read, as they ran: fixed, so a device that launches holds no more
      memory as it runs. */
   int nlaunched;
   struct launched launched[LAST_LAUNCHES];
+};
+
+/* A device: its word, what reads it, as its [signaled] counts a fallible
+   call, and its run state, NULL once stopped. rig keeps it for the
+   process. */
+struct polled {
+  const struct rig_driver *driver; /* first */
+  _Atomic uint64_t word;
+  lock_t mu;         /* guards the fields below and [run]'s */
+  cond_t cv;
+  cond_t work;       /* signalled by a submit to a device that runs itself */
+  int itself;        /* a thread of the driver runs the queue */
+  _Atomic int submits;
+  intnat steps;     /* fallible calls made */
+  intnat fail_from; /* the step from which every call fails, or 0 */
+  intnat refuse_from, refuse_to; /* the steps from one below the other refuse */
+  char why[64]; /* what a hand-over failing from [fail_from] reports */
+  struct polled_run *run;
   struct polled *prev, *next; /* in the list of every device ([all]) */
 };
 
@@ -300,26 +308,32 @@ static void unenrol(struct polled *p) {
   unlock(&all_mu);
 }
 
-/* Frees a collected device's state, with its queue. A device that runs
-   itself keeps it for its thread, which runs for the life of the process.
-   rig holds the handle of a device it opened, and so the block, for the
-   process. */
+/* Frees [r] with its queued work, which never runs. */
+static void free_run(struct polled_run *r) {
+  if (r == NULL) return;
+  for (int i = 0; i < r->n; i++) {
+    free(r->q[i].waits);
+    free(r->q[i].parts);
+    free(r->q[i].blocks);
+  }
+  free(r->q);
+  free(r);
+}
+
+/* Frees a collected device's state. A device that runs itself keeps it for
+   its thread. rig holds the handle of a device it opened, and so the block,
+   for the process. */
 static void polled_finalize(value v) {
   struct polled *p = Polled_val(v);
   if (p->itself) return;
   unenrol(p);
-  for (int i = 0; i < p->n; i++) {
-    free(p->q[i].waits);
-    free(p->q[i].parts);
-    free(p->q[i].blocks);
-  }
-  free(p->q);
+  free_run(p->run);
 #ifndef _WIN32
   pthread_mutex_destroy(&p->mu);
   pthread_cond_destroy(&p->cv);
   pthread_cond_destroy(&p->work);
 #endif
-  aligned_free(p);
+  free(p);
 }
 
 static struct custom_operations polled_ops = {
@@ -332,16 +346,21 @@ value rig_test_polled_new(value v_capacity, value v_may_block,
                           value v_lag) {
   CAMLparam3(v_capacity, v_may_block, v_lag);
   CAMLlocal1(v);
-  struct polled *p = aligned(page(), page() > sizeof *p ? page() : sizeof *p);
-  if (p == NULL) caml_raise_out_of_memory();
-  memset(p, 0, sizeof *p);
+  struct polled *p = calloc(1, sizeof *p);
+  struct polled_run *r = calloc(1, sizeof *r);
+  if (p == NULL || r == NULL) {
+    free(p);
+    free(r);
+    caml_raise_out_of_memory();
+  }
   p->driver = &polled_driver;
   lock_init(&p->mu);
   cond_init(&p->cv);
   cond_init(&p->work);
-  p->capacity = Int_val(v_capacity);
-  p->may_block = Bool_val(v_may_block);
-  p->lag = (uint64_t)Long_val(v_lag);
+  r->capacity = Int_val(v_capacity);
+  r->may_block = Bool_val(v_may_block);
+  r->lag = (uint64_t)Long_val(v_lag);
+  p->run = r;
   enrol(p);
   v = caml_alloc_custom(&polled_ops, sizeof p, 0, 1);
   Polled_val(v) = p;
@@ -356,7 +375,7 @@ value rig_test_polled_edge(value v_p) {
 value rig_test_polled_fail(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
-  p->fail = 1;
+  if (p->run != NULL) p->run->fail = 1;
   unlock(&p->mu);
   return Val_unit;
 }
@@ -364,7 +383,7 @@ value rig_test_polled_fail(value v_p) {
 value rig_test_polled_fail_commit(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
-  p->fail_commit = 1;
+  if (p->run != NULL) p->run->fail_commit = 1;
   unlock(&p->mu);
   return Val_unit;
 }
@@ -372,7 +391,7 @@ value rig_test_polled_fail_commit(value v_p) {
 value rig_test_polled_fail_settle(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
-  p->fail_settle = 1;
+  if (p->run != NULL) p->run->fail_settle = 1;
   unlock(&p->mu);
   return Val_unit;
 }
@@ -431,7 +450,7 @@ value rig_test_polled_submits(value v_p) {
 value rig_test_polled_blocked(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
-  int n = p->blocked;
+  int n = p->run != NULL ? p->run->blocked : 0;
   unlock(&p->mu);
   return Val_int(n);
 }
@@ -442,9 +461,12 @@ value rig_test_polled_last_waits(value v_p) {
   CAMLlocal1(a);
   struct polled *p = Polled_val(v_p);
   struct rig_wait w[LAST];
+  int n = 0;
   lock(&p->mu);
-  int n = p->nlast;
-  memcpy(w, p->last, sizeof w);
+  if (p->run != NULL) {
+    n = p->run->nlast;
+    memcpy(w, p->run->last, sizeof w);
+  }
   unlock(&p->mu);
   a = caml_alloc_tuple(3 * (mlsize_t)n);
   for (int i = 0; i < n; i++) {
@@ -463,11 +485,12 @@ value rig_test_polled_layout(value v_p) {
   struct polled *p = Polled_val(v_p);
   int words[LAST_PARTS * (2 + LAST_AFTER)], n = 0;
   lock(&p->mu);
-  for (int i = 0; i < p->nlayout; i++) {
-    words[n++] = p->layout_queue[i];
-    words[n++] = p->layout_nafter[i];
-    for (int j = 0; j < p->layout_nafter[i]; j++)
-      words[n++] = p->layout_after[i][j];
+  const struct polled_run *r = p->run;
+  for (int i = 0; r != NULL && i < r->nlayout; i++) {
+    words[n++] = r->layout_queue[i];
+    words[n++] = r->layout_nafter[i];
+    for (int j = 0; j < r->layout_nafter[i]; j++)
+      words[n++] = r->layout_after[i][j];
   }
   unlock(&p->mu);
   a = caml_alloc_tuple((mlsize_t)n);
@@ -480,11 +503,13 @@ value rig_test_polled_copy_facts(value v_p) {
   CAMLparam1(v_p);
   CAMLlocal2(a, facts);
   struct polled *p = Polled_val(v_p);
-  int s[LAST_COPIES], m[LAST_COPIES];
+  int s[LAST_COPIES], m[LAST_COPIES], n = 0;
   lock(&p->mu);
-  int n = p->nsides;
-  memcpy(s, p->sides, sizeof s);
-  memcpy(m, p->device_memory, sizeof m);
+  if (p->run != NULL) {
+    n = p->run->nsides;
+    memcpy(s, p->run->sides, sizeof s);
+    memcpy(m, p->run->device_memory, sizeof m);
+  }
   unlock(&p->mu);
   a = caml_alloc_tuple((mlsize_t)n);
   for (int i = 0; i < n; i++) {
@@ -521,7 +546,7 @@ value rig_test_rig_object(value unit) {
 value rig_test_polled_queued(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
-  int n = p->n;
+  int n = p->run != NULL ? p->run->n : 0;
   unlock(&p->mu);
   return Val_int(n);
 }
@@ -539,28 +564,29 @@ static int waits_hold(struct queued *s) {
   return 1;
 }
 
-static int committed(struct polled *p, struct queued *s) {
-  return s->v <= atomic_load_explicit(&p->committed, memory_order_relaxed);
+static int committed(struct polled_run *r, struct queued *s) {
+  return s->v <= atomic_load_explicit(&r->committed, memory_order_relaxed);
 }
 
 /* Commits [p]'s values up to [v]. [p]'s lock is held. */
 static void commit_upto(struct polled *p, uint64_t v) {
-  if (v <= atomic_load_explicit(&p->committed, memory_order_relaxed)) return;
-  atomic_store_explicit(&p->committed, v, memory_order_release);
+  struct polled_run *r = p->run;
+  if (v <= atomic_load_explicit(&r->committed, memory_order_relaxed)) return;
+  atomic_store_explicit(&r->committed, v, memory_order_release);
   if (p->itself) cond_broadcast(&p->work);
 }
 
 /* Keeps the [n] bytes of the block [b] as run, among the first
    LAST_LAUNCHES. [p]'s lock is held. */
-static void keep_launch(struct polled *p, const void *b, uint32_t n) {
-  if (p->nlaunched == LAST_LAUNCHES) return;
-  p->launched[p->nlaunched].bytes = n;
-  memcpy(p->launched[p->nlaunched++].block, b, n);
+static void keep_launch(struct polled_run *r, const void *b, uint32_t n) {
+  if (r->nlaunched == LAST_LAUNCHES) return;
+  r->launched[r->nlaunched].bytes = n;
+  memcpy(r->launched[r->nlaunched++].block, b, n);
 }
 
 /* Runs the launch [part] of [s]: its function once per group, x fastest.
    Kept out of [run_one], whose fills and copies the floors time. */
-NOINLINE static void launch(struct polled *p, struct queued *s,
+NOINLINE static void launch(struct polled_run *r, struct queued *s,
                    const struct rig_part *part) {
   const struct rig_block *b =
       (const struct rig_block *)(s->blocks + part->launch.args.block);
@@ -570,7 +596,7 @@ NOINLINE static void launch(struct polled *p, struct queued *s,
     for (g[1] = 0; g[1] < b->groups[1]; g[1]++)
       for (g[0] = 0; g[0] < b->groups[0]; g[0]++)
         k->run(g, b, part->launch.args.params);
-  keep_launch(p, b, (uint32_t)sizeof *b + part->launch.args.params);
+  keep_launch(r, b, (uint32_t)sizeof *b + part->launch.args.params);
 }
 
 #if defined(__clang__)
@@ -578,6 +604,7 @@ NOINLINE static void launch(struct polled *p, struct queued *s,
 __attribute__((no_sanitize("function")))
 #endif
 static void run_one(struct polled *p, struct queued *s) {
+  struct polled_run *r = p->run;
   if (s->times != NULL) s->times[0] = host_ns();
   for (int i = 0; i < s->nparts; i++) {
     struct rig_part *part = &s->parts[i];
@@ -587,21 +614,21 @@ static void run_one(struct polled *p, struct queued *s) {
                     s->blocks + part->fill.args.block + sizeof(struct rig_block),
                     s->v);
     } else if (part->kind == RIG_LAUNCH)
-      launch(p, s, part);
+      launch(r, s, part);
     else if (part->kind == RIG_COPY) {
       /* A side that copy.local names holds a host address, as Polled's own
          handles do. */
       move_bytes((uintptr_t)part->copy.dst + part->copy.dst_offset,
                  (uintptr_t)part->copy.src + part->copy.src_offset,
                  (size_t)part->copy.bytes);
-      if (p->nsides < LAST_COPIES) {
-        p->sides[p->nsides] = part->copy.local;
-        p->device_memory[p->nsides++] = part->copy.device_memory;
+      if (r->nsides < LAST_COPIES) {
+        r->sides[r->nsides] = part->copy.local;
+        r->device_memory[r->nsides++] = part->copy.device_memory;
       }
     }
   }
   if (s->times != NULL) s->times[1] = host_ns();
-  p->held -= s->nparts;
+  r->held -= s->nparts;
   free(s->waits);
   free(s->parts);
   if (s->blocks != NULL) free(s->blocks);
@@ -609,14 +636,18 @@ static void run_one(struct polled *p, struct queued *s) {
 }
 
 /* Runs the queued submissions whose waits hold, in order: answers how
-   many ran. */
+   many ran, none once stopped. */
 static int run(struct polled *p) {
   lock(&p->mu);
+  struct polled_run *r = p->run;
   int k = 0;
-  while (k < p->n && committed(p, &p->q[k]) && waits_hold(&p->q[k]))
-    run_one(p, &p->q[k++]);
-  if (k > 0) memmove(p->q, p->q + k, (size_t)(p->n - k) * sizeof *p->q);
-  p->n -= k;
+  while (r != NULL && k < r->n && committed(r, &r->q[k]) &&
+         waits_hold(&r->q[k]))
+    run_one(p, &r->q[k++]);
+  if (k > 0) {
+    memmove(r->q, r->q + k, (size_t)(r->n - k) * sizeof *r->q);
+    r->n -= k;
+  }
   cond_broadcast(&p->cv);
   unlock(&p->mu);
   return k;
@@ -641,9 +672,10 @@ static int drive(struct polled *p, int depth) {
   struct polled *wanted[LAST];
   int n = 0, stuck = 0;
   lock(&p->mu);
-  if (p->n > 0) {
-    struct queued *s = &p->q[0];
-    stuck = !committed(p, s);
+  struct polled_run *r = p->run;
+  if (r != NULL && r->n > 0) {
+    struct queued *s = &r->q[0];
+    stuck = !committed(r, s);
     for (int i = 0; i < s->nwaits && n < LAST && depth > 0; i++) {
       struct polled *q = enrolled((uintptr_t)s->waits[i].at);
       if (q != NULL && !wait_holds(&s->waits[i])) wanted[n++] = q;
@@ -662,12 +694,15 @@ value rig_test_polled_drive(value v_p) {
 
 /* A device that runs itself: its thread runs the queue as work arrives and,
    while the first submission waits on a word that has not moved, again after
-   a nap, as a device runs its own work. */
+   a nap, as a device runs its own work. It ends at the stop. */
 static void engine(struct polled *p) {
   for (;;) {
     lock(&p->mu);
-    while (p->n == 0 || !committed(p, &p->q[0])) cond_wait(&p->work, &p->mu);
+    struct polled_run *r;
+    while ((r = p->run) != NULL && (r->n == 0 || !committed(r, &r->q[0])))
+      cond_wait(&p->work, &p->mu);
     unlock(&p->mu);
+    if (r == NULL) return;
     if (run(p) == 0) nap();
   }
 }
@@ -726,6 +761,7 @@ static int scribble(void *scratch, int n) {
 static int polled_room(void *self, const struct rig_part *parts, int n,
                        void *scratch, const uint8_t *args) {
   struct polled *p = self;
+  struct polled_run *r = p->run;
   if (!scribble(scratch, n)) return RIG_NEVER;
   for (int i = 0; i < n; i++) {
     int kind = parts[i].kind;
@@ -734,10 +770,10 @@ static int polled_room(void *self, const struct rig_part *parts, int n,
                                  kind != RIG_WORDS)
       return RIG_NEVER;
   }
-  if (n > p->capacity) return RIG_NEVER;
-  if (p->may_block) return RIG_FITS;
+  if (n > r->capacity) return RIG_NEVER;
+  if (r->may_block) return RIG_FITS;
   lock(&p->mu);
-  int full = p->held + n > p->capacity;
+  int full = r->held + n > r->capacity;
   unlock(&p->mu);
   return full ? RIG_LATER : RIG_FITS;
 }
@@ -782,51 +818,52 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
                          const char **failure) {
   (void)nslots;
   struct polled *p = self;
+  struct polled_run *r = p->run;
   if (!scribble(scratch, nparts)) {
     *failure = "no scratch for the parts";
     return RIG_FAILED;
   }
   atomic_fetch_add(&p->submits, 1);
   lock(&p->mu);
-  p->received = v;
+  r->received = v;
   if (step(p) == STEP_FAIL) {
     unlock(&p->mu);
     *failure = p->why;
     return RIG_FAILED;
   }
-  if (p->fail) {
-    p->fail = 0;
+  if (r->fail) {
+    r->fail = 0;
     unlock(&p->mu);
     *failure = "the submission failed";
     return RIG_FAILED;
   }
-  while (p->may_block && p->held + nparts > p->capacity) {
+  while (r->may_block && r->held + nparts > r->capacity) {
     commit_upto(p, v - 1);
-    p->blocked++;
+    r->blocked++;
     cond_wait(&p->cv, &p->mu);
-    p->blocked--;
+    r->blocked--;
   }
-  if (p->n == p->c) {
-    int c = p->c == 0 ? 8 : 2 * p->c;
-    struct queued *q = realloc(p->q, (size_t)c * sizeof *q);
+  if (r->n == r->c) {
+    int c = r->c == 0 ? 8 : 2 * r->c;
+    struct queued *q = realloc(r->q, (size_t)c * sizeof *q);
     if (q == NULL) {
       unlock(&p->mu);
       *failure = "no memory for the queue";
       return RIG_FAILED;
     }
-    p->q = q;
-    p->c = c;
+    r->q = q;
+    r->c = c;
   }
-  p->nlast = nwaits < LAST ? nwaits : LAST;
-  p->nlayout = nparts < LAST_PARTS ? nparts : LAST_PARTS;
-  for (int i = 0; i < p->nlayout; i++) {
-    p->layout_queue[i] = parts[i].queue;
-    p->layout_nafter[i] =
+  r->nlast = nwaits < LAST ? nwaits : LAST;
+  r->nlayout = nparts < LAST_PARTS ? nparts : LAST_PARTS;
+  for (int i = 0; i < r->nlayout; i++) {
+    r->layout_queue[i] = parts[i].queue;
+    r->layout_nafter[i] =
         parts[i].nafter < LAST_AFTER ? parts[i].nafter : LAST_AFTER;
-    for (int j = 0; j < p->layout_nafter[i]; j++)
-      p->layout_after[i][j] = parts[i].after[j];
+    for (int j = 0; j < r->layout_nafter[i]; j++)
+      r->layout_after[i][j] = parts[i].after[j];
   }
-  if (p->nlast > 0) memcpy(p->last, waits, (size_t)p->nlast * sizeof *waits);
+  if (r->nlast > 0) memcpy(r->last, waits, (size_t)r->nlast * sizeof *waits);
   struct rig_wait *ws = malloc((size_t)(nwaits + 1) * sizeof *waits);
   struct rig_part *ps = malloc((size_t)(nparts + 1) * sizeof *parts);
   uint8_t *bs = NULL;
@@ -838,7 +875,7 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
     *failure = "no memory for the submission";
     return RIG_FAILED;
   }
-  struct queued *s = &p->q[p->n++];
+  struct queued *s = &r->q[r->n++];
   s->v = v;
   s->nwaits = nwaits;
   s->nparts = nparts;
@@ -848,11 +885,11 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   s->times = times;
   if (nwaits > 0) memcpy(s->waits, waits, (size_t)nwaits * sizeof *waits);
   if (nparts > 0) memcpy(s->parts, parts, (size_t)nparts * sizeof *parts);
-  p->held += nparts;
-  if (v - atomic_load_explicit(&p->committed, memory_order_relaxed) >= p->lag)
+  r->held += nparts;
+  if (v - atomic_load_explicit(&r->committed, memory_order_relaxed) >= r->lag)
     commit_upto(p, v);
   int committed =
-      v <= atomic_load_explicit(&p->committed, memory_order_relaxed);
+      v <= atomic_load_explicit(&r->committed, memory_order_relaxed);
   unlock(&p->mu);
   return committed ? RIG_COMMITTED : RIG_OK;
 }
@@ -862,11 +899,12 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
    began, without counting a call. */
 static int polled_commit(void *self, uint64_t v, const char **failure) {
   struct polled *p = self;
-  if (v <= atomic_load_explicit(&p->committed, memory_order_acquire))
+  struct polled_run *r = p->run;
+  if (v <= atomic_load_explicit(&r->committed, memory_order_acquire))
     return RIG_OK;
   lock(&p->mu);
-  if (p->fail_commit) {
-    p->fail_commit = 0;
+  if (r->fail_commit) {
+    r->fail_commit = 0;
     unlock(&p->mu);
     *failure = "the commit failed";
     return RIG_FAILED;
@@ -888,19 +926,12 @@ static int polled_settle(void *self, uint64_t v, const char **failure) {
   struct polled *p = self;
   (void)v;
   lock(&p->mu);
-  int fail = p->fail_settle;
-  p->fail_settle = 0;
+  int fail = p->run->fail_settle;
+  p->run->fail_settle = 0;
   unlock(&p->mu);
   if (!fail) return RIG_OK;
   *failure = "the settle failed";
   return RIG_FAILED;
-}
-
-/* The bytes a device's state takes: whole pages, as it starts on one. */
-value rig_test_polled_state_bytes(value unit) {
-  (void)unit;
-  size_t n = sizeof(struct polled);
-  return Val_long((intnat)((n + page() - 1) / page() * page()));
 }
 
 /* The host address of the device [v_p]'s word. */
@@ -912,21 +943,20 @@ value rig_test_polled_word(value v_p) {
   return Val_long((intnat)atomic_load(&Polled_val(v_p)->word));
 }
 
-/* Stops the device: drops its queued work, which never runs, and writes the
-   last value it received into the word, as a stopped driver does. */
+/* Stops the device: frees its run state with its queued work, which never
+   runs, and writes the last value it received into the word, as a stopped
+   driver does. A device that runs itself ends its thread. */
 value rig_test_polled_stop(value v_p) {
   struct polled *p = Polled_val(v_p);
   lock(&p->mu);
-  for (int i = 0; i < p->n; i++) {
-    free(p->q[i].waits);
-    free(p->q[i].parts);
-    free(p->q[i].blocks);
-  }
-  p->n = 0;
-  p->held = 0;
-  atomic_store_explicit(&p->word, p->received, memory_order_release);
+  struct polled_run *r = p->run;
+  p->run = NULL;
+  if (r != NULL)
+    atomic_store_explicit(&p->word, r->received, memory_order_release);
   cond_broadcast(&p->cv);
+  cond_broadcast(&p->work);
   unlock(&p->mu);
+  free_run(r);
   return Val_unit;
 }
 
@@ -1277,12 +1307,16 @@ value rig_test_polled_launches(value v_p) {
   CAMLparam1(v_p);
   CAMLlocal2(a, s);
   struct polled *p = Polled_val(v_p);
-  struct launched *copy = malloc(sizeof p->launched);
+  struct launched *copy = malloc(LAST_LAUNCHES * sizeof *copy);
   if (copy == NULL) caml_raise_out_of_memory();
+  int n = 0;
   lock(&p->mu);
-  int n = p->nlaunched;
-  memcpy(copy, p->launched, sizeof p->launched);
-  p->nlaunched = 0;
+  struct polled_run *r = p->run;
+  if (r != NULL) {
+    n = r->nlaunched;
+    memcpy(copy, r->launched, LAST_LAUNCHES * sizeof *copy);
+    r->nlaunched = 0;
+  }
   unlock(&p->mu);
   a = caml_alloc_tuple((mlsize_t)n);
   for (int i = 0; i < n; i++) {

@@ -995,30 +995,53 @@ let test_points_name_device () =
   equal bool true (Rig.Point.reached p);
   raises_match lost (fun () -> Rig.Point.wait p)
 
+(* A closed device that waited in its queue for another's values gives back
+   its mapping of the other's word. *)
+let test_close_unmaps_word () =
+  let producer, _ = P.open_ "open:pair-producer" in
+  let consumer, cp = P.open_ ~waits_on:[ `Host ] "open:pair-consumer" in
+  let a = submit (Rig.Submission.make producer [||]) in
+  Rig.Point.wait (submit (Rig.Submission.make consumer [||]) ~waits:[| a |]);
+  equal ~msg:"the consumer's wait in its queue" int 1
+    (List.length (P.last_waits cp));
+  Rig.close consumer;
+  settle ();
+  let count call = List.length (List.filter (String.equal call) (P.log cp)) in
+  equal ~msg:"its mappings" int 1 (count "map_peer");
+  equal ~msg:"its mappings given back" int 1 (count "unmap")
+
 (* Opens and closes in a loop keep a fixed record per device: rig's line,
-   records and reason, and the driver's state, whatever work the device did.
-   Each device allocates, borrows a host buffer the program keeps, and waits
-   for a submit, then closes. After a warm window, each window of [opens]
-   devices grows the C heap by at most Polled's state and [record] bytes a
-   device, and the OCaml heap by at most [record_ml]. macOS's count of the C
-   heap can step by 16 KiB over one window: the law checks the least growth of
-   [windows]. *)
+   records and reason, and the driver's word with what reading it needs,
+   whatever work the device did. The driver's stop gives back the rest of its
+   state, and rig its mappings of other devices' words. Each cycle opens a
+   producer and a consumer whose queue waits for the producer's value; the
+   consumer allocates, borrows a host buffer the program keeps, and waits for
+   its submit, then both close. After a warm window, each window of [opens]
+   cycles grows the C heap by at most [record] and [word] bytes a device, and
+   the OCaml heap by at most [record_ml]. macOS's count of the C heap can step
+   by 16 KiB over one window: the law checks the least growth of [windows]. *)
 let opens = 1024
 let windows = 3
 let record = 2048
+let word = 1024
 let record_ml = 4096
 
 let test_open_close () =
   let h = Rig.Buffer.create Rig.host (1 lsl 16) in
   let cycle i =
-    let d, _ = P.open_ (Printf.sprintf "open:cycle%d" (i mod 2)) in
+    let p, _ = P.open_ (Printf.sprintf "open:producer%d" (i mod 2)) in
+    let d, _ =
+      P.open_ ~waits_on:[ `Host ] (Printf.sprintf "open:cycle%d" (i mod 2))
+    in
     let uses =
       Rig.Submission.make d [| Support.touching [| Rig.Submission.read |] |]
     in
     ignore (Rig.Buffer.create d 64 : Rig.Buffer.t);
     let b = require_some (Rig.Buffer.borrow d h) in
-    Rig.Point.wait (submit uses ~buffers:[| b |]);
-    Rig.close d
+    let a = submit (Rig.Submission.make p [||]) in
+    Rig.Point.wait (submit uses ~buffers:[| b |] ~waits:[| a |]);
+    Rig.close d;
+    Rig.close p
   in
   let heap () =
     match Support.heap_bytes () with
@@ -1042,12 +1065,12 @@ let test_open_close () =
     ~msg:
       (Printf.sprintf "the C heap's least growth over a window (%s)"
          (String.concat ", " (List.map string_of_int cs)))
-    ~than:(opens * (P.state_bytes + record))
+    ~than:(2 * opens * (record + word))
     (List.fold_left Int.min max_int cs);
   List.iter
     (fun (_, ml) ->
       at_most int ~msg:"the OCaml heap's growth over a window"
-        ~than:(opens * record_ml) ml)
+        ~than:(2 * opens * record_ml) ml)
     grown
 
 (* An open whose opener blocks holds back only opens of its own name. *)
@@ -1158,6 +1181,8 @@ let tests =
       test "a closed device answers as it did before its close" test_ended;
       test "a point names its device after the program let go of it"
         test_points_name_device;
+      test "a closed device gives back its mappings of other devices' words"
+        test_close_unmaps_word;
       test "opens and closes keep a fixed record per device" test_open_close;
     ]
 

@@ -137,6 +137,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       retiring = [];
       pending = ([], []);
       pairs = [||];
+      word_maps = [];
       afters = [];
     }
   in

@@ -39,7 +39,6 @@ external rig_local : unit -> int * int * int = "rig_test_rig_local"
 external rig_word : unit -> int = "rig_test_rig_word"
 external rig_object : unit -> int = "rig_test_rig_object"
 external polled_word_at : polled -> int = "rig_test_polled_word_at"
-external polled_state_bytes : unit -> int = "rig_test_polled_state_bytes"
 external polled_word : polled -> int = "rig_test_polled_word"
 external polled_stop : polled -> unit = "rig_test_polled_stop"
 external polled_set_word : polled -> int -> unit = "rig_test_polled_set_word"
@@ -523,7 +522,6 @@ module Polled = struct
 
   let set_word d v = polled_set_word d.c v
   let word_at d = d.word_at
-  let state_bytes = polled_state_bytes ()
   let stop_fault d = Mutex.protect d.lock (fun () -> d.stop_fault)
   let blocked d = polled_blocked d.c
 

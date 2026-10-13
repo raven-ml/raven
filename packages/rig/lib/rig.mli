@@ -161,9 +161,11 @@ val close : t -> unit
 
     A device's properties are set when it opens, and keep their values once
     it is lost. rig keeps a device's properties, timeline and reason for the
-    life of the process, a few kilobytes in rig and in its driver, so its
-    points name it for good. Its driver's stop releases what the device
-    needs only to run work, such as its queues. *)
+    life of the process, and its driver keeps its word and what reading the
+    word needs, so its points name it for good. Its driver's stop releases
+    what the device needs only to run work, such as its queues, and once
+    its work has ended rig gives back its mappings of other devices'
+    words. *)
 
 val name : t -> string
 (** [name d] is [d]'s name for people: its opener's [name], with

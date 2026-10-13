@@ -865,8 +865,8 @@ let host_wait = -1
 
 (* How [d] waits for [p]'s word in its queue, mapping the word region [r]: a
    device of the producer's driver maps the region, another the host page that
-   holds the word. Is the way, with the mapping, which lives for the process as
-   both words do. *)
+   holds the word. Is the way, with the mapping, which [d] keeps until it is
+   Stopped. *)
 let map_word d p r =
   let word = p.live.word in
   let start = word - (word mod Memory.page) in
@@ -907,12 +907,17 @@ let undecided = min_int
 
 let known_pair pairs i = if i < Array.length pairs then pairs.(i) else undecided
 
-(* Sets [l]'s pair of the producer of index [i] to [way], growing [l.pairs] by
-   replacement, unless another decision came first: that decision's way. *)
-let set_pair (l, i, way) =
+(* Sets [d]'s pair of the producer of index [i] to [way], growing [l.pairs] by
+   replacement, and keeps its [mapping], unless another decision came first:
+   that decision's way. A device whose stop returned keeps no mapping: its
+   drain gives back the ones it keeps. *)
+let set_pair (d, i, way, mapping) =
+  let l = d.live in
   let known = known_pair l.pairs i in
   if known <> undecided then Some known
+  else if Option.is_some mapping && Dev.stop_returned d then Some host_wait
   else begin
+    Option.iter (fun m -> l.word_maps <- m :: l.word_maps) mapping;
     if i >= Array.length l.pairs then begin
       let n = Int.max (i + 1) (2 * Array.length l.pairs) in
       let a = Array.make n undecided in
@@ -932,7 +937,7 @@ let pair d p =
   if known <> undecided then known
   else
     let way, mapping = decide d p in
-    match Lock.protect l.lock set_pair (l, i, way) with
+    match Lock.protect l.lock set_pair (d, i, way, mapping) with
     | None -> way
     | Some first ->
         Option.iter (Memory.unmap d) mapping;

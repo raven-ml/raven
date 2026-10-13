@@ -158,8 +158,11 @@ and live = {
       (** By producer index, how its queues wait for the producer's values:
           [min_int] undecided, [-1] on the host, otherwise the producer's
           object or its word's address as this device maps it. Grown by
-          replacement, written under the lock, and read without it. A
-          mapping of a producer's word lives for the process. *)
+          replacement, written under the lock, and read without it. Emptied
+          once the device is Stopped. *)
+  mutable word_maps : region list; [@atomic]
+      (** Its mappings of producers' words that [pairs] names, written under
+          the lock. They go back to its driver once it is Stopped. *)
   mutable afters : (int * (unit -> unit)) list;
       (** Functions a wait runs once it finds their value reached. *)
 }
