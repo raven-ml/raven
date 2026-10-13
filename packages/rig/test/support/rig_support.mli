@@ -169,6 +169,11 @@ module Polled : sig
   (** [stop_fault d] is the [fault] [d]'s stop was given, [None] before a stop.
   *)
 
+  val stops : t -> int
+  (** [stops d] is the number of calls of [d]'s stop, each counted before the
+      stop allocates: also a call that an exception at its first allocation
+      ended, which {!log} misses. *)
+
   val word_at : t -> int
   (** [word_at d] is the host address of [d]'s word, which is also its object
       ([completion]). *)

@@ -261,12 +261,18 @@ let waiting =
 (* Interrupts a close of a machine's host, which holds a device of the
    machine, from its [n]-th allocation, then checks that the machine answers
    as the close left it: an open host opens devices and a closed one opens
-   none. A second close ends the machine however the close was interrupted.
-   Is whether the allocation was reached. *)
+   none. A second close ends the machine however the close was interrupted:
+   rig has called the stop of each of its devices exactly once. Is whether the
+   allocation was reached. *)
 let interrupt_close n =
   let at = Printf.sprintf ", interrupted from allocation %d" n in
   in_child at (fun () ->
-      let polled () = Ok (P.make ()) in
+      let drivers = ref [] in
+      let polled () =
+        let p = P.make () in
+        drivers := p :: !drivers;
+        Ok p
+      in
       let host =
         Rig.open_host ~machine:(fresh "close")
           { name = "CPU"; driver = (module P); make = polled }
@@ -296,6 +302,9 @@ let interrupt_close n =
       equal ~msg:"an open once closed" string closed (gpu "last");
       equal ~msg:"the host once closed" (option string) (Some "closed")
         (Rig.lost host);
+      List.iter
+        (fun p -> equal ~msg:"a device's stops" int 1 (P.stops p))
+        !drivers;
       got = "raised Injected")
 
 let test_close () =

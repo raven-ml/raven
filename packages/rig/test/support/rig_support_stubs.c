@@ -256,6 +256,7 @@ struct polled {
   cond_t work;       /* signalled by a submit to a device that runs itself */
   int itself;        /* a thread of the driver runs the queue */
   _Atomic int submits;
+  _Atomic int stops; /* calls of its stop */
   intnat steps;     /* fallible calls made */
   intnat fail_from; /* the step from which every call fails, or 0 */
   intnat refuse_from, refuse_to; /* the steps from one below the other refuse */
@@ -445,6 +446,17 @@ value rig_test_polled_fail_at(value v_p, value v_n, value v_k, value v_why) {
 
 value rig_test_polled_submits(value v_p) {
   return Val_int(atomic_load(&Polled_val(v_p)->submits));
+}
+
+/* Counts a call of the device's stop. Neither allocates nor polls, so an
+   exception that the stop's first allocation raises comes after it. */
+value rig_test_polled_stopping(value v_p) {
+  atomic_fetch_add(&Polled_val(v_p)->stops, 1);
+  return Val_unit;
+}
+
+value rig_test_polled_stops(value v_p) {
+  return Val_int(atomic_load(&Polled_val(v_p)->stops));
 }
 
 value rig_test_polled_blocked(value v_p) {

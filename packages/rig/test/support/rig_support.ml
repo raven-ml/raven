@@ -15,6 +15,9 @@ external polled_drive : polled -> int = "rig_test_polled_drive"
 external polled_start : polled -> unit = "rig_test_polled_start"
 external polled_queued : polled -> int = "rig_test_polled_queued"
 external polled_submits : polled -> int = "rig_test_polled_submits"
+external polled_stopping : polled -> unit = "rig_test_polled_stopping"
+[@@noalloc]
+external polled_stops : polled -> int = "rig_test_polled_stops" [@@noalloc]
 external polled_blocked : polled -> int = "rig_test_polled_blocked"
 external polled_step : polled -> int = "rig_test_polled_step" [@@noalloc]
 external polled_steps : polled -> int = "rig_test_polled_steps"
@@ -404,6 +407,7 @@ module Driver = struct
           failwith "Polled: nothing committed"
 
   let stop d ~fault =
+    polled_stopping d.c;
     note d "stop";
     run_before d "stop";
     Mutex.protect d.lock (fun () -> d.stop_fault <- fault);
@@ -523,6 +527,7 @@ module Polled = struct
   let set_word d v = polled_set_word d.c v
   let word_at d = d.word_at
   let stop_fault d = Mutex.protect d.lock (fun () -> d.stop_fault)
+  let stops d = polled_stops d.c
   let blocked d = polled_blocked d.c
 
   let last_waits d =
