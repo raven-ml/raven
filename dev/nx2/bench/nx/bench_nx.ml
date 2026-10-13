@@ -327,10 +327,38 @@ let plan_row n =
   Thumper.bench (Printf.sprintf "einsum-plan-%d" n) (fun () ->
       Nx.Repr.array (Nx.einsum p (Thumper.black_box xs)))
 
+(* Products at the dtypes beside float32. *)
+let filled dt s v =
+  Nx.Repr.of_array Nx.Host.v
+    (A.of_array dt s (Array.make (Array.fold_left ( * ) 1 s) v))
+
+let square_rows (type v s) name (dt : (v, s) D.t) (v : v) sizes =
+  List.map
+    (fun n ->
+      let a = filled dt [| n; n |] v and b = filled dt [| n; n |] v in
+      Thumper.bench (Printf.sprintf "matmul-%s-%d" name n) (fun () ->
+          Nx.Repr.array (Nx.matmul (Thumper.black_box a) b)))
+    sizes
+
+(* A complex vector by a matrix: the lane order's path where b, the larger
+   operand, is copied into its blocks. *)
+let vector_rows =
+  let x = filled D.Complex64 [| 2048 |] Complex.one
+  and w = filled D.Complex64 [| 2048; 2048 |] Complex.one in
+  [
+    Thumper.bench "matmul-c64-1x2048x2048" (fun () ->
+        Nx.Repr.array (Nx.matmul (Thumper.black_box x) w));
+  ]
+
+let dtype_rows =
+  square_rows "c64" D.Complex64 Complex.one [ 64; 256; 1024 ]
+  @ square_rows "c128" D.Complex128 Complex.one [ 64; 256; 1024 ]
+  @ vector_rows
+
 let contract_rows =
   Thumper.group "contract"
     (matmul_rows 4 @ matmul_rows 64 @ matmul_rows 1024 @ decode_rows
-   @ chain_rows @ [ plan_row 11 ])
+   @ chain_rows @ [ plan_row 11 ] @ dtype_rows)
 
 (* Indexing: a row take reads its rows, an add-scatter its updates, a set
    writes its row into a copy of the cache, and concatenate copies its result

@@ -236,6 +236,67 @@ let within_bound =
             (Float.abs (y.(o) -. exact)))
         (reference c.meaning xa xb))
 
+(* Complex operands whose parts are {!operand}'s: each part of every product
+   and partial sum is exact in float64. *)
+let complex_within_bound =
+  prop "a complex contract is within the bound of the exact sum"
+    cases_of_sizes (fun c ->
+      let k =
+        numel (Array.of_list (List.map c.meaning.extent c.meaning.summed))
+      in
+      let draw n =
+        let re = operand n and im = operand n in
+        Array.init n (fun i -> { Complex.re = re.(i); im = im.(i) })
+      in
+      let xa = draw (numel c.sa) and xb = draw (numel c.sb) in
+      let a = host D.Complex64 c.sa xa and b = host D.Complex64 c.sb xb in
+      let y = read (Nx.contract Nx.complex64 (Nx.Pattern.v c.pattern) a b) in
+      let u = Float.ldexp 1. (-24) in
+      List.iteri
+        (fun o ts ->
+          let exact, abs =
+            List.fold_left
+              (fun (s, abs) (i, j) ->
+                (Complex.add s (Complex.mul xa.(i) xb.(j)),
+                 abs +. (Complex.norm xa.(i) *. Complex.norm xb.(j))))
+              (Complex.zero, 0.) ts
+          in
+          let bound = gamma (k + 1) (2. *. u) *. abs in
+          less float_exact ~than:(bound +. Float.min_float)
+            (Complex.norm (Complex.sub y.(o) exact)))
+        (terms c.meaning))
+
+(* A result of another dtype than its accumulator is the contraction into the
+   accumulator, cast once: bit for bit, from operands whose products round. *)
+let widened =
+  prop "a narrower result is the cast of the contraction into acc"
+    cases_of_sizes (fun c ->
+      let p = Nx.Pattern.v c.pattern in
+      let draw n =
+        Array.init n (fun _ ->
+            { Complex.re = Random.float 2. -. 1.; im = Random.float 2. -. 1. })
+      in
+      let a = host D.Complex64 c.sa (draw (numel c.sa)) in
+      let b = host D.Complex64 c.sb (draw (numel c.sb)) in
+      let bits y =
+        Array.concat
+          (List.map
+             (fun z ->
+               [| Int64.bits_of_float z.Complex.re; Int64.bits_of_float z.im |])
+             (Array.to_list (read y)))
+      in
+      equal (array int64)
+        (bits
+           (Nx.cast Nx.complex64
+              (Nx.contract ~acc:D.Complex128 Nx.complex128 p a b)))
+        (bits (Nx.contract ~acc:D.Complex128 Nx.complex64 p a b));
+      let int8 n = Array.init n (fun _ -> Random.int 256 - 128) in
+      let a = host D.Int8 c.sa (int8 (numel c.sa)) in
+      let b = host D.Int8 c.sb (int8 (numel c.sb)) in
+      equal (array int)
+        (read (Nx.cast Nx.int8 (Nx.contract Nx.int32 p a b)))
+        (read (Nx.contract ~acc:D.Int32 Nx.int8 p a b)))
+
 let bitwise =
   prop "on the host, contract sums in nx.cpu's stated order" cases_of_sizes
     (fun c ->
@@ -1105,6 +1166,8 @@ let () =
     (run "nx contractions"
        [
          within_bound;
+         complex_within_bound;
+         widened;
          bitwise;
          long_sum;
          einsum_is_contract;

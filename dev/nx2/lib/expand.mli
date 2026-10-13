@@ -62,11 +62,11 @@
     at the same targets keeps the bits of each target no update reaches: twice
     the scatters.
 
-    A contraction whose accumulator is a float other than its output's dtype
-    first runs as a contraction into the accumulator, then casts to the output.
-    Any other expands into a map of each pair of elements multiplied in the
-    accumulator, a sum over the contracted axes, the [init] added, and a cast to
-    the output's dtype. A sort of another dtype sorts positions by its order
+    A contraction whose accumulator is not its output's dtype first runs as a
+    contraction into the accumulator, then casts to the output. Any other
+    expands into a map of each pair of elements multiplied in the accumulator,
+    a sum over the contracted axes, and the [init] added.
+    A sort of another dtype sorts positions by its order
     keys, int64 values below [2^32], one for an integer or a float of at most 32
     bits, two for one of 64 and per part for a complex number, the least
     significant first: each pass a bitonic network over the key packed above its

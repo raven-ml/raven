@@ -121,7 +121,11 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
     contraction's terms are each output's products, a reduction's its terms,
     numbered from [0] by the contracting pairs' or the reduced axes' indices,
     taken in C order. A contraction's product is fused into the addition that
-    takes it.
+    takes it. A complex contraction sums each part of an output as a float
+    sum of products of parts: with [a = ar + i·ai] and [b = br + i·bi], its
+    product [p]'s terms are numbered [2p] and [2p + 1], [ar·br] and
+    [ai·(-bi)] in the real part, [ar·bi] and [ai·br] in the imaginary
+    part.
 
     {e Chain order} adds the terms in increasing number, from [init] or [+0].
 
@@ -533,8 +537,9 @@ module type S = sig
       ]}
       computed in [acc], a dtype {!accumulates} takes, and rounded once to
       [dst]'s dtype. Without [init] the sum starts from [+0]. Integers wrap in
-      [acc]. A float [acc] errs by at most twice its unit roundoff per
-      addition, barring underflow.
+      [acc]. A float or complex [acc] errs by at most twice its unit
+      roundoff, its parts' for a complex one, per addition, barring
+      underflow.
 
       A float sum's association, which fixes its bits, is a function of
       [order], the dtypes, and the factors its library names as depending on

@@ -29,8 +29,8 @@
 
    On reals, the smaller of a and b is copied negated where sign is -1.
    On complex numbers, the product is a real one, with no more flops (the
-   1m method, Van Zee and Smith, 2017): a's [m] rows of [k] complex
-   numbers are [m] rows of [2k] reals, and c's are [m] rows of [2n] reals,
+   1m method, Van Zee, 2020): a's [m] rows of [k] complex numbers are [m]
+   rows of [2k] reals, and c's are [m] rows of [2n] reals,
    where b is copied into [2k] rows of [2n] reals, sign · op(b)'s element
    (p, j) = x + iy as
 

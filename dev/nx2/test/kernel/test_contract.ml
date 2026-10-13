@@ -53,15 +53,37 @@ let to64 x =
   cast_into d x;
   d
 
+(* The dtype of [dt]'s parts: a complex dtype's, or [dt] itself. *)
+let part_of (D.Any dt as d) =
+  match dt with
+  | D.Complex64 -> D.Any D.Float32
+  | D.Complex128 -> D.Any D.Float64
+  | _ -> d
+
+let is_complex acc = part_of acc <> acc
+
+(* [x]'s values read in [acc] as float64 planes in C order: one, or the real
+   then the imaginary parts for a complex [acc]. *)
+let planes acc x =
+  if not (is_complex acc) then [| A.to_array (to64 x) |]
+  else
+    let d = A.create Rig.host D.Complex128 (shape_of x) in
+    cast_into d x;
+    let z = A.to_array d in
+    [|
+      Array.map (fun z -> z.Complex.re) z; Array.map (fun z -> z.Complex.im) z;
+    |]
+
 (* Values *)
 
 (* Values every float format holds, float4 included. *)
 let grid = [| 0.; -0.; 0.5; -0.5; 1.; -1.; 1.5; -1.5; 2.; -3.; 4.; -6. |]
 
 (* A value of [dt] from [r]: on the grid, an integer in the range of every
-   integer dtype of its kind, or, for float32 and float64, one of 24 or 53
-   significant bits in (-4, 4), the same scaled to the smallest normal's
-   exponent, subnormal or near it, an infinity or a NaN. *)
+   integer dtype of its kind, or, for float32 and float64 and each part of
+   complex64 and complex128, one of 24 or 53 significant bits in (-4, 4),
+   the same scaled to the smallest normal's exponent, subnormal or near it,
+   an infinity or a NaN. *)
 let value (D.Any dt) r =
   let pick a = a.(Random.State.int r (Array.length a)) in
   let full p =
@@ -77,9 +99,10 @@ let value (D.Any dt) r =
   in
   match (D.kind dt, dt) with
   | D.Boolean, _ -> float_of_int (Random.State.int r 2)
+  | _, (D.Complex64 | D.Float32) -> float 23
+  | _, D.Complex128 -> float 52
   | D.Unsigned, _ -> float_of_int (Random.State.int r 16)
   | D.Signed, _ -> float_of_int (Random.State.int r 16 - 8)
-  | _, D.Float32 -> float 23
   | _, D.Float64 -> float 52
   | _ -> pick grid
 
@@ -138,8 +161,8 @@ let names v =
   if v.perm <> Array.init (Array.length v.perm) Fun.id then [ "permuted" ]
   else []
 
-(* An array of [dt] of shape [s] through the view [v], its values drawn from
-   [seed]. *)
+(* An array of [dt] of shape [s] through the view [v], its values, or each
+   part of them, drawn from [seed]. *)
 let operand dt s nb v seed =
   let r = Random.State.make [| seed |] in
   let last = Array.length s - 1 in
@@ -151,8 +174,19 @@ let operand dt s nb v seed =
         else e)
       s
   in
-  let xs = Array.init (total made) (fun _ -> value dt r) in
-  let (A.Any x) = cast_to dt (A.Any (A.of_array D.Float64 made xs)) in
+  let draw () = value dt r in
+  let xs =
+    if is_complex dt then
+      A.Any
+        (A.of_array D.Complex128 made
+           (Array.init (total made) (fun _ ->
+                let re = draw () in
+                { Complex.re; im = draw () })))
+    else
+      A.Any
+        (A.of_array D.Float64 made (Array.init (total made) (fun _ -> draw ())))
+  in
+  let (A.Any x) = cast_to dt xs in
   let move m x = Option.get (A.move m x) in
   let step i e =
     if i = last then { M.start = 1; count = s.(i); step = 2 }
@@ -270,7 +304,11 @@ let case_of ~acc ~out ~dts =
    path it names, then cases in the other order: chain order in few rows or
    columns, lane order in many rows and columns over several passes and
    blocks of lanes. The drawn cases reach each a few times in a hundred or
-   never, so a run of a hundred can miss one. *)
+   never, so a run of a hundred can miss one. A complex contraction is a
+   real one of twice the columns and products, whose paths the real
+   accumulators' cases reach: its own are few, each order over several
+   blocks of its parts' products, no product, a batch, and the few rows'
+   case stored transposed, which copies a. *)
 let regimes acc =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let case (order, init, e) =
@@ -306,46 +344,61 @@ let regimes acc =
         [ apart (chain, true, e) ]
     | _ -> []
   in
-  [ apart few ] @ groups
-  @ List.map case
-    ([
-       (lane, true, ([||], [| 0 |], [| 3 |], [| 2 |]));
-       (lane, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
-       (lane, true, ([||], [| 3 |], [| 2 |], [| 0 |]));
-       (lane, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
-       (lane, true, ([||], [| 64 |], [| 3 |], [| 600 |]));
-       (lane, true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
-       (chain, true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
-       (lane, true, ([||], [| 40 |], [| 4 |], [| 1100 |]));
-       (chain, false, ([||], [| 40 |], [| 5 |], [| 1100 |]));
-       (chain, true, ([||], [| 40 |], [| 40 |], [| 1100 |]));
-       (chain, true, ([||], [| 40 |], [| 17 |], [| 1100 |]));
-       (lane, true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
-       (lane, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
-       (lane, true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
-       (chain, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
-       few;
-       (chain, true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
-       (chain, false, ([||], [| rows |], [| 3100 |], [| 3 |]));
-       (chain, false, ([||], [| rows |], [| rows |], [| 0 |]));
-       (chain, true, ([||], [| 300 |], [| 16 |], [| 600 |]));
-       (chain, true, ([||], [| 1024 |], [| 16 |], [| 16 |]));
-       (* The other order. *)
-       (chain, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
-       (chain, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
-       (chain, false, ([||], [| 64 |], [| 3 |], [| 600 |]));
-       (chain, true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
-       (chain, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
-       (lane, true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
-       (lane, false, ([||], [| 40 |], [| 40 |], [| 1100 |]));
-       (lane, true, ([||], [| 40 |], [| 17 |], [| 2100 |]));
-       (lane, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
-       (lane, true, ([||], [| rows |], [| rows + 3 |], [| 30 |]));
-       (lane, false, ([||], [| rows |], [| rows |], [| 0 |]));
-     ])
+  let complex =
+    [
+      (lane, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
+      (lane, false, ([||], [| 40 |], [| 4 |], [| 600 |]));
+      (chain, true, ([||], [| 40 |], [| 17 |], [| 600 |]));
+      (chain, true, ([||], [| 3 |], [| 2 |], [| 0 |]));
+      (chain, false, ([| 50 |], [| 8 |], [| 8 |], [| 2 |]));
+    ]
+  in
+  if is_complex acc then apart few :: List.map case complex
+  else
+    [ apart few ] @ groups
+    @ List.map case
+      ([
+         (lane, true, ([||], [| 0 |], [| 3 |], [| 2 |]));
+         (lane, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
+         (lane, true, ([||], [| 3 |], [| 2 |], [| 0 |]));
+         (lane, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
+         (lane, true, ([||], [| 64 |], [| 3 |], [| 600 |]));
+         (lane, true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
+         (chain, true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
+         (lane, true, ([||], [| 40 |], [| 4 |], [| 1100 |]));
+         (chain, false, ([||], [| 40 |], [| 5 |], [| 1100 |]));
+         (chain, true, ([||], [| 40 |], [| 40 |], [| 1100 |]));
+         (chain, true, ([||], [| 40 |], [| 17 |], [| 1100 |]));
+         (lane, true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
+         (lane, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
+         (lane, true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
+         (chain, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
+         few;
+         (chain, true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
+         (chain, false, ([||], [| rows |], [| 3100 |], [| 3 |]));
+         (chain, false, ([||], [| rows |], [| rows |], [| 0 |]));
+         (chain, true, ([||], [| 300 |], [| 16 |], [| 600 |]));
+         (chain, true, ([||], [| 1024 |], [| 16 |], [| 16 |]));
+         (* The other order. *)
+         (chain, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
+         (chain, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
+         (chain, false, ([||], [| 64 |], [| 3 |], [| 600 |]));
+         (chain, true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
+         (chain, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
+         (lane, true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
+         (lane, false, ([||], [| 40 |], [| 40 |], [| 1100 |]));
+         (lane, true, ([||], [| 40 |], [| 17 |], [| 2100 |]));
+         (lane, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
+         (lane, true, ([||], [| rows |], [| rows + 3 |], [| 30 |]));
+         (lane, false, ([||], [| rows |], [| rows |], [| 0 |]));
+       ])
 
-(* The dtypes each accumulator holds, as nx_cpu.mli lists them. *)
-let held = function
+(* The dtypes each accumulator holds, as nx_cpu.mli lists them: a complex
+   one its parts' and the complex numbers of at most its width. *)
+let rec held = function
+  | D.Any D.Complex64 -> D.Any D.Complex64 :: held (D.Any D.Float32)
+  | D.Any D.Complex128 ->
+      D.[ Any Complex128; Any Complex64 ] @ held (D.Any D.Float64)
   | D.Any D.Float32 ->
       D.
         [
@@ -377,7 +430,7 @@ let held = function
           Any Bool;
         ]
 
-let accs = D.[ Any Float32; Any Float64 ]
+let accs = D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
 
 let computed =
   Gen.with_pp pp_case
@@ -392,22 +445,32 @@ let any_case =
   let open Gen in
   let dts = D.[ Any Float64; Any Float32; Any Int32; Any Int64; Any Bfloat16; Any Complex64 ] in
   Gen.with_pp pp_case
-    (let* acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64; Any Int32; Any Complex64 ] in
+    (let* acc =
+       of_list ~pp:pp_dtype
+         D.
+           [
+             Any Float32; Any Float64; Any Int32; Any Complex64; Any Complex128;
+           ]
+     in
      let* out = frequency [ (2, constant ~pp:pp_dtype acc); (1, of_list ~pp:pp_dtype D.all) ] in
      case_of ~acc ~out ~dts)
 
 (* The reference *)
 
 (* An output's init and the factors of its products, in increasing order of
-   the contracted index: the contracting pairs' indices in C order. *)
+   the contracted index: the contracting pairs' indices in C order. A
+   complex output is two, its parts', each of the 2K terms nx_kernel.mli's
+   orders give them. *)
 type output = { init : float option; av : float array; bv : float array }
 
-(* The result's shape, and [each f], which calls [f yi k o] on each output
-   in C order: [yi] its index, [k] its position in C order, [o] its init and
-   factors. The operands are read as C-contiguous float64 arrays, each
-   output's factors at offsets computed once. *)
+(* The result's shape, and [each f], which calls [f yi k parts] on each
+   output in C order: [yi] its index, [k] its position in C order, [parts]
+   its init and factors, one for a real accumulator, the real then the
+   imaginary part's for a complex one. The operands are read as
+   C-contiguous float64 planes, each output's factors at offsets computed
+   once. *)
 let outputs c =
-  let flat x = A.to_array (to64 x) in
+  let flat = planes c.acc in
   let strides s =
     let st = Array.make (Array.length s) 1 in
     for i = Array.length s - 2 downto 0 do
@@ -479,14 +542,29 @@ let outputs c =
         ra := !ra + (i * ya.(d));
         rb := !rb + (i * yb.(d))
       done;
-      let o =
-        {
-          init = Option.map (fun x -> x.(k)) init;
-          av = Array.map (fun t -> a.(!ra + t)) oa;
-          bv = Array.map (fun t -> b.(!rb + t)) ob;
-        }
+      let pick x r = Array.map (fun t -> x.(r + t)) in
+      let part p av bv =
+        { init = Option.map (fun x -> x.(p).(k)) init; av; bv }
       in
-      f yi k o
+      let pairs x y =
+        Array.init
+          (2 * Array.length x)
+          (fun t -> (if t land 1 = 0 then x else y).(t / 2))
+      in
+      let parts =
+        if Array.length a = 1 then
+          [| part 0 (pick a.(0) !ra oa) (pick b.(0) !rb ob) |]
+        else
+          (* a's parts in turn against b's (br, −bi) for the real part and
+             (bi, br) for the imaginary part. *)
+          let ar = pick a.(0) !ra oa and ai = pick a.(1) !ra oa in
+          let br = pick b.(0) !rb ob and bi = pick b.(1) !rb ob in
+          [|
+            part 0 (pairs ar ai) (pairs br (Array.map Float.neg bi));
+            part 1 (pairs ar ai) (pairs bi br);
+          |]
+      in
+      f yi k parts
     done
   in
   (y, each)
@@ -514,8 +592,11 @@ let exact o =
     o.av;
   (!hi +. !lo, !mag)
 
-let unit_roundoff (D.Any dt) = if D.bits dt = 32 then 0x1p-24 else 0x1p-53
-let smallest_subnormal (D.Any dt) = if D.bits dt = 32 then 0x1p-149 else 0x1p-1074
+let unit_roundoff acc =
+  if part_of acc = D.Any D.Float32 then 0x1p-24 else 0x1p-53
+
+let smallest_subnormal acc =
+  if part_of acc = D.Any D.Float32 then 0x1p-149 else 0x1p-1074
 
 (* The extents of [c]'s result, its contracted index and its batch. *)
 let sizes c =
@@ -572,6 +653,34 @@ let rows_cols c =
   let fa = Array.length (shape_of c.a) - nb - Array.length c.contracting in
   (total (Array.sub y nb fa), total (Array.sub y (nb + fa) (Array.length y - nb - fa)))
 
+(* gemm.c's complex paths: a copied where its numbers lie apart along k or
+   are of another dtype, b's blocks once where it is broadcast along the
+   batch, and one contraction per part where init's columns lie apart. *)
+let complex_covers c =
+  let complex = is_complex c.acc and _, k, batch = sizes c in
+  let strides (A.Any x) = L.strides (A.layout x) in
+  let real (A.Any x) = not (is_complex (D.Any (A.dtype x))) in
+  let along x (i, _) = (strides x).(i) in
+  let last x = Array.length (shape_of x) - 1 in
+  cover "complex in chain order" (complex && c.order = Chain);
+  cover "complex in lane order" (complex && c.order = Lane);
+  cover "complex with a real operand" (complex && (real c.a || real c.b));
+  cover "complex with a copied"
+    (complex && k > 1
+    && (real c.a
+       || along c.a c.contracting.(Array.length c.contracting - 1) <> 1));
+  cover "complex with b broadcast along the batch"
+    (complex && batch > 1
+    && Array.exists (fun (_, j) -> (strides c.b).(j) = 0) c.batch);
+  cover "complex with init's columns apart"
+    (complex
+    && Option.fold ~none:false
+         ~some:(fun i ->
+           last i >= 0
+           && (shape_of i).(last i) > 1
+           && (strides i).(last i) <> 1)
+         c.init)
+
 let covers c =
   let y, k, batch = sizes c in
   let per = per_batch c in
@@ -590,6 +699,7 @@ let covers c =
   cover "fewer than 64 outputs" (per > 0 && per < 64);
   cover "64 outputs or more" (per >= 64);
   cover "init" (c.init <> None);
+  complex_covers c;
   cover "several blocks of the contraction" (per >= 64 && k > 512);
   cover "several blocks of lanes" (lanes && k > 1024);
   cover "4 rows or fewer" (per >= 64 && m <= 4);
@@ -602,7 +712,7 @@ let covers c =
   let chain =
     c.order = Chain && per >= 64 && m > few_rows_most && n > few_rows_most
   in
-  let w = match c.acc with D.Any D.Float32 -> 4 | _ -> 8 in
+  let w = if part_of c.acc = D.Any D.Float32 then 4 else 8 in
   cover "the chain path" chain;
   cover "chain without init" (chain && c.init = None);
   cover "chain with no product" (chain && k = 0);
@@ -630,16 +740,22 @@ let run (b : Support.backend) c =
 let bits x =
   if Float.is_nan x then Int64.bits_of_float nan else Int64.bits_of_float x
 
-(* The first outputs of [y] at which [check] answers why it is wrong. *)
+(* The first outputs of [y] at which [check] answers why a part is wrong. *)
 let wrong c y check =
   let _, each = outputs c in
-  let g = A.to_array (to64 y) in
+  let g = planes c.acc y in
   let bad = ref [] in
-  each (fun yi k o ->
-      match check o g.(k) with
-      | Some why when List.length !bad < 8 ->
-          bad := Format.asprintf "%a: %s" pp_ints yi why :: !bad
-      | _ -> ());
+  each (fun yi k parts ->
+      let name p =
+        if Array.length parts = 1 then "" else [| " re"; " im" |].(p)
+      in
+      Array.iteri
+        (fun p o ->
+          match check o g.(p).(k) with
+          | Some why when List.length !bad < 8 ->
+              bad := Format.asprintf "%a%s: %s" pp_ints yi (name p) why :: !bad
+          | _ -> ())
+        parts);
   List.rev !bad
 
 (* The laws of S *)
@@ -678,16 +794,22 @@ let law_bound b c =
       cover "computed" true;
       equal (list string) [] (wrong c y (within c))
 
-(* The first outputs whose bits differ between [y] and [y'], the second
-   named [other]. *)
-let differ_bits ~other y y' =
-  let g = to64 y and g' = to64 y' in
-  let differs i = bits (A.get g i) <> bits (A.get g' i) in
-  let bad = List.filter differs (indices (shape_of y)) in
-  let show i =
-    Format.asprintf "%a: %h, %s %h" pp_ints i (A.get g i) other (A.get g' i)
-  in
-  List.filteri (fun n _ -> n < 8) (List.map show bad)
+(* The first outputs whose bits, or a part's, differ between [y] and [y'] of
+   [acc], the second named [other]. *)
+let differ_bits acc ~other y y' =
+  let g = planes acc y and g' = planes acc y' in
+  let bad = ref [] in
+  List.iteri
+    (fun k i ->
+      Array.iteri
+        (fun p x ->
+          let x' = g'.(p).(k) in
+          if bits x.(k) <> bits x' && List.length !bad < 8 then
+            bad :=
+              Format.asprintf "%a: %h, %s %h" pp_ints i x.(k) other x' :: !bad)
+        g)
+    (indices (shape_of y));
+  List.rev !bad
 
 (* Each operand as a C-contiguous copy of its view gives the same bits,
    where both layouts are computed. *)
@@ -700,7 +822,7 @@ let law_layouts b c =
   | Some y, Some y' ->
       cover "computed" true;
       cover "computed from views" (c.views <> []);
-      equal (list string) [] (differ_bits ~other:"contiguous" y y')
+      equal (list string) [] (differ_bits c.acc ~other:"contiguous" y y')
   | _ -> cover "declined" true
 
 (* An init given as dst itself, an operand identical to the written one,
@@ -720,7 +842,7 @@ let law_init_as_dst (b : Support.backend) (c : case) =
           cover "fewer than 64 outputs" (per > 0 && per < 64);
           cover "64 outputs or more" (per >= 64);
           equal (list string) []
-            (differ_bits ~other:"in place" y (host donated))
+            (differ_bits c.acc ~other:"in place" y (host donated))
       | None, A.Declined -> cover "declined" true
       | _, r -> failf "in place, contract answered %a" Nx_array_support.pp_answer r
       end
@@ -740,15 +862,8 @@ let law_in_place (b : Support.backend) (c : case) =
       match (run b c, answer) with
       | Some y, A.Done ->
           cover "computed" true;
-          let g = to64 y and g' = to64 (host alias) in
-          let differs i = bits (A.get g i) <> bits (A.get g' i) in
-          let bad = List.filter differs (indices (shape_of y)) in
-          let show i =
-            Format.asprintf "%a: %h, in place %h" pp_ints i (A.get g i)
-              (A.get g' i)
-          in
           equal (list string) []
-            (List.filteri (fun n _ -> n < 8) (List.map show bad))
+            (differ_bits c.acc ~other:"in place" y (host alias))
       | None, A.Declined -> cover "declined" true
       | y, r ->
           failf "a fresh destination %s, in place %a"
@@ -760,12 +875,12 @@ let law_declined (b : Support.backend) c =
   let y, _, _ = sizes c in
   let threes = A.Any (A.of_array D.Float64 y (Array.make (total y) 3.)) in
   let dst = on b (cast_to c.out threes) in
-  let before = A.to_array (to64 (host dst)) in
+  let before = planes c.out (host dst) in
   let init = Option.map (on b) c.init in
   match contract b.kernels c ~dst (on b c.a) (on b c.b) init with
   | A.Declined ->
       cover "declined" true;
-      equal (array float_exact) before (A.to_array (to64 (host dst)))
+      equal (array (array float_exact)) before (planes c.out (host dst))
   | A.Done -> cover "computed" true
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
@@ -837,7 +952,7 @@ let law_order b c =
   | Some y ->
       let chain = c.order = Chain in
       let fma, add =
-        if c.acc = D.Any D.Float32 then (fma32, add32)
+        if part_of c.acc = D.Any D.Float32 then (fma32, add32)
         else (Float.fma, ( +. ))
       in
       let want = ordered ~chain ~fma ~add in

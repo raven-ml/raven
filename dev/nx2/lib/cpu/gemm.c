@@ -191,17 +191,26 @@ static uint8_t *scratch(problem *p, int64_t bytes) {
 
 /* Dtypes */
 
-/* Whether every value of [d] is one of [acc]'s, float32 or float64, as
-   nx_cpu.mli lists them: the booleans, the floats of at most [acc]'s
-   width, and the integers of at most half of it. */
+/* The dtype of [acc]'s parts: float32 or float64 for a complex [acc],
+   [acc] itself otherwise. */
+static int part_of(int acc) {
+  if (acc == NX_COMPLEX64) return NX_FLOAT32;
+  return acc == NX_COMPLEX128 ? NX_FLOAT64 : acc;
+}
+
+/* Whether every value of [d] is one of [acc]'s, as nx_cpu.mli lists them:
+   the booleans, the floats of at most the width of [acc]'s parts, the
+   integers of at most half of it, and for a complex [acc] the complex
+   numbers of at most its width. */
 static int holds(int acc, int d) {
-  nx_dtype_row r = nx_dtype_row_of(d);
-  int width = nx_dtype_row_of(acc).bits;
+  nx_dtype_row r = nx_dtype_row_of(d), a = nx_dtype_row_of(acc);
+  int width = nx_dtype_row_of(part_of(acc)).bits;
   switch (r.kind) {
     case NX_KIND_BOOLEAN: return 1;
     case NX_KIND_FLOAT: return r.bits <= width;
     case NX_KIND_SIGNED:
     case NX_KIND_UNSIGNED: return r.bits <= width / 2;
+    case NX_KIND_COMPLEX: return a.kind == NX_KIND_COMPLEX && r.bits <= a.bits;
     default: return 0;
   }
 }
@@ -209,7 +218,8 @@ static int holds(int acc, int d) {
 /* Whether nx.cpu computes a contraction in [acc] into a dst of [out] of
    the [n] operands of dtypes [dts]. */
 static int computes(int acc, int out, const int *dts, int n) {
-  if (out != acc || nx_cpu_table->gemm[acc].kernel.f == NULL) return 0;
+  if (out != acc || nx_cpu_table->gemm[part_of(acc)].kernel.f == NULL)
+    return 0;
   for (int i = 0; i < n; i++)
     if (!holds(acc, dts[i])) return 0;
   return 1;
@@ -1308,6 +1318,169 @@ int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
   return !atomic_load(&p.failed);
 }
 
+/* Complex */
+
+/* A complex contraction is one in its parts' dtype, of twice the columns
+   and twice the products (the 1m method, Van Zee, "Implementing
+   high-performance complex matrix multiplication via the 1m method", SIAM
+   J. Sci. Comput. 2020, its variant for row-stored c). a's K complex
+   numbers along the contraction are 2K reals, real and imaginary parts in
+   turn, read in place where its numbers lie adjacent along k; b's element
+   (k, j) = x + iy is copied as the block
+
+     row 2k:      … x   y …
+     row 2k + 1:  … −y  x …
+
+   so that column 2j sums re·x then im·(−y) for each k, output j's real
+   part, and column 2j + 1 re·y then im·x, its imaginary part. Each part is
+   a float contraction of 2K terms, whose bits the real contraction keeps
+   at any layout and thread count. Where dst's or init's numbers lie apart
+   along the columns, each part is a contraction of its own over b's
+   columns of that part. */
+
+/* Rows 2k and 2k + 1 of the block of [n] complex numbers at [x], [sx]
+   parts apart: (x, y) into [even] and (−y, x) into [odd]. Adjacent
+   numbers take a loop of their own, which vectorises. */
+#define BLOCK_ROWS(T, name)                                                \
+  static void name(const T *x, int64_t sx, T *restrict even,               \
+                   T *restrict odd, int64_t n) {                           \
+    if (sx == 2) {                                                         \
+      for (int64_t j = 0; j < 2 * n; j += 2) {                             \
+        T re = x[j], im = x[j + 1];                                        \
+        even[j] = re, even[j + 1] = im, odd[j] = -im, odd[j + 1] = re;     \
+      }                                                                    \
+      return;                                                              \
+    }                                                                      \
+    for (int64_t j = 0; j < n; j++) {                                      \
+      T re = x[j * sx], im = x[j * sx + 1];                                \
+      even[2 * j] = re, even[2 * j + 1] = im;                              \
+      odd[2 * j] = -im, odd[2 * j + 1] = re;                               \
+    }                                                                      \
+  }
+BLOCK_ROWS(float, block_rows_f32)
+BLOCK_ROWS(double, block_rows_f64)
+
+/* b's blocks: batch element e's rows 2k and 2k + 1 at
+   d + (e·2K + 2k)·2N·w, w the parts' width. A unit is a row k of b, read
+   in place where b is acc, staged into the odd row first otherwise. */
+typedef struct {
+  const nx_array *b;
+  const nx_contract_view *v;
+  int acc, w;
+  uint8_t *d;
+} blocks_job;
+
+static void blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const blocks_job *j = ctx;
+  const int64_t *s = j->v->stride[B];
+  int64_t n = j->v->extent[COL], k = j->v->extent[CON], row = 2 * n * j->w;
+  for (int64_t u = lo; u < hi; u++) {
+    int64_t at = j->v->offset[B] + u / k * s[BATCH] + u % k * s[CON];
+    uint8_t *even = j->d + 2 * u * row, *odd = even + row;
+    const uint8_t *x = j->b->base + at * 2 * j->w;
+    int64_t sx = 2 * s[COL];
+    if (j->b->dtype != j->acc) {
+      nx_cpu_stage_as(j->b, at, s[COL], 0, n, 1, j->acc, odd, 0);
+      x = memcpy(even, odd, (size_t)row);
+      sx = 2;
+    }
+    if (j->w == 4)
+      block_rows_f32((const float *)x, sx, (float *)even, (float *)odd, n);
+    else
+      block_rows_f64((const double *)x, sx, (double *)even, (double *)odd,
+                     n);
+  }
+}
+
+/* [x]'s numbers read as their parts, of the dtype [r]. */
+static nx_array as_parts(const nx_array *x, int r) {
+  nx_array y = *x;
+  y.dtype = r;
+  y.bits = x->bits / 2;
+  return y;
+}
+
+/* Operand [o] of [v], rows along the axis [x1] of numbers along [x0], as
+   [u]'s operand [y] of parts: in place, or under [copy] copied into [acc]
+   in memory of its own, each batch element's rows C-contiguous, one
+   element where [o] steps 0 along the batch. Answers the copy, NULL in
+   place or if allocation fails. */
+static uint8_t *parts_of(const nx_contract_view *v, const nx_array *const *op,
+                         int o, int x0, int x1, int acc, int copy,
+                         nx_contract_view *u, nx_array *y) {
+  const int64_t *s = v->stride[o];
+  int r = part_of(acc), w = nx_cpu_width(r);
+  int64_t n0 = v->extent[x0], n1 = v->extent[x1];
+  if (!copy) {
+    *y = as_parts(op[o], r);
+    u->offset[o] = 2 * v->offset[o];
+    for (int x = BATCH; x <= CON; x++) u->stride[o][x] = 2 * s[x];
+    return NULL;
+  }
+  int64_t ne = s[BATCH] == 0 ? 1 : v->extent[BATCH];
+  uint8_t *d = alloc(ne * n1 * n0 * 2 * w);
+  if (d == NULL) return NULL;
+  for (int64_t e = 0; e < ne; e++)
+    nx_cpu_stage_as(op[o], v->offset[o] + e * s[BATCH], s[x0], s[x1], n0, n1,
+                    acc, d + e * n1 * n0 * 2 * w, n0);
+  *y = (nx_array){.base = d, .dtype = r, .bits = 8 * w};
+  u->offset[o] = 0;
+  u->stride[o][BATCH] = s[BATCH] == 0 ? 0 : 2 * n1 * n0;
+  u->stride[o][x1] = 2 * n0;
+  u->stride[o][x0] = 2;
+  return d;
+}
+
+static int complex_on(int acc, int order, const nx_contract_view *v,
+                      const nx_array *const *op) {
+  int r = part_of(acc), w = nx_cpu_width(r);
+  int64_t batch = v->extent[BATCH], m = v->extent[ROW], n = v->extent[COL];
+  int64_t k = v->extent[CON];
+  if (batch == 0 || m == 0 || n == 0) return 1;
+  nx_contract_view u = {.extent = {batch, m, 2 * n, 2 * k}};
+  nx_array x[4];
+  const nx_array *ops[4] = {&x[A], &x[B], op[INIT] ? &x[INIT] : NULL, &x[DST]};
+  int copy_a = op[A]->dtype != acc || (v->stride[A][CON] != 1 && k > 1);
+  int64_t eb = v->stride[B][BATCH] == 0 ? 1 : batch;
+  uint8_t *ab = parts_of(v, op, A, CON, ROW, acc, copy_a, &u, &x[A]);
+  uint8_t *bb = nx_cpu_take(eb * 4 * k * n * w);
+  if (op[INIT]) parts_of(v, op, INIT, COL, ROW, acc, 0, &u, &x[INIT]);
+  parts_of(v, op, DST, COL, ROW, acc, 0, &u, &x[DST]);
+  int done = 0;
+  if ((copy_a && ab == NULL) || bb == NULL) goto out;
+  u.stride[A][CON] = 1;
+  blocks_job j = {.b = op[B], .v = v, .acc = acc, .w = w, .d = bb};
+  /* Each number of b read, two parts, and its block written, four. */
+  int64_t bytes = eb * k * n * 6 * w;
+  nx_cpu_job(eb * k, bytes, bytes, blocks, &j);
+  x[B] = (nx_array){.base = bb, .dtype = r, .bits = 8 * w};
+  u.stride[B][BATCH] = eb == 1 ? 0 : 4 * k * n;
+  u.stride[B][CON] = 2 * n;
+  /* Each part's columns, in turn where dst's or init's numbers lie apart. */
+  int apart = n > 1 && (u.stride[DST][COL] != 2 ||
+                        (op[INIT] && u.stride[INIT][COL] != 2));
+  if (!apart) {
+    u.stride[B][COL] = 1;
+    u.stride[DST][COL] = 1;
+    if (op[INIT]) u.stride[INIT][COL] = 1;
+    done = nx_cpu_contract_on(r, order, &u, ops);
+    goto out;
+  }
+  u.extent[COL] = n;
+  u.stride[B][COL] = 2;
+  done = 1;
+  for (int part = 0; part < 2 && done; part++) {
+    nx_contract_view up = u;
+    for (int o = B; o <= DST; o++) up.offset[o] += part;
+    done = nx_cpu_contract_on(r, order, &up, ops);
+  }
+out:
+  free(ab);
+  nx_cpu_give(bb);
+  return done;
+}
+
 double nx_cpu_core_speed(int acc) {
   const nx_cpu_gemm *g = &nx_cpu_table->gemm[acc];
   if (g->kernel.shared > 1 && g->other != NULL) g = g->other;
@@ -1340,7 +1513,9 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   int e = nx_read(n, in, a);
   if (e) return Val_int(e);
   const nx_array *op[4] = {&a[0], &a[1], init ? &a[3] : NULL, &a[2]};
-  int done = nx_cpu_contract_on(acc, Int_val(vorder), &v, op);
+  int order = Int_val(vorder), done;
+  if (part_of(acc) != acc) done = complex_on(acc, order, &v, op);
+  else done = nx_cpu_contract_on(acc, order, &v, op);
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();
   return Val_int(NX_OK);

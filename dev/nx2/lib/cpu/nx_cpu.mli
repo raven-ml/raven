@@ -23,19 +23,33 @@
     answers [Declined] for the others and for a program that bitcasts a
     sub-byte dtype.
 
-    [contract] computes contractions in [float32] or [float64] whose [dst]
-    has their [acc]'s dtype, whose [a], [b] and [init] each convert exactly
-    into [acc], and whose layouts {!Nx_kernel.Contract_view} groups; it
-    answers [Declined] for the others. [float32] holds [bool], [bit], the
-    integers of at most 16 bits and the floats of at most 32; [float64] also
-    [int32], [uint32] and [float64].
+    [contract] computes contractions in [float32], [float64], [complex64] or
+    [complex128] whose [dst] has their [acc]'s dtype, whose [a], [b] and
+    [init] each convert exactly into [acc], and whose layouts
+    {!Nx_kernel.Contract_view} groups; it answers [Declined] for the others.
+    [float32] holds [bool], [bit], the integers of at most 16 bits and the
+    floats of at most 32; [float64] also [int32], [uint32] and [float64]. A
+    complex dtype holds what its parts' dtype holds and the complex numbers
+    of at most its width.
 
-    A float contraction adds in the order it is given
-    ({!Nx_kernel.section-orders}), at any shape. [contract_order ~rows
-    ~columns] is [Chain] where [rows] and [columns] are both above 4 and
-    multiply to at least 64, and [Lane] otherwise.
+    A float or complex contraction adds in the order it is given
+    ({!Nx_kernel.section-orders}), at any shape.
+    [contract_order ~rows ~columns] is [Chain] where [rows] and [columns]
+    are both above 4 and multiply to at least 64, and [Lane] otherwise.
     With no products, an output is [init]'s bits, or [+0]. Otherwise a NaN
     result's sign and payload are unspecified.
+
+    A complex output of [K] products is within
+    [γ(2K + 2) (|init| + Σ|a||b|)] of the exact one, where
+    [γ(n) = n u / (1 - n u)] and [u] is its parts' unit roundoff, barring
+    overflow and underflow. A rounding errs by at most [u] times the modulus
+    of the partial sum it rounds, both parts at once, and a partial sum of
+    any of the terms has a modulus of at most [|init| + Σ|a||b|]: chain
+    order rounds [2K] times. Lane order holds a product's two terms in
+    neighbouring lanes until lane 0 takes lane 1: before, a term passes at
+    most [⌈2K/16⌉ + 3] roundings and a product's two weigh at most
+    [√2 |a||b|]; after, at most [log₂] of the blocks [+ 2]. Both stay within
+    [2K + 2] roundings.
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand into its own dtype, read plain or padded, at

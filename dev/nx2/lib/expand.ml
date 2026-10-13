@@ -1470,12 +1470,12 @@ let spread (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   if units = full then x else move (M.Broadcast full) x
 
 (* The contraction of [a] and [b] by the pairs [batch] and [contracting] from
-   [init], computed in [acc] into [out], as other operations. A float result
-   narrower than its accumulator is the contraction into the accumulator,
-   which kernels compute in [order], rounded once. Any other is the products
-   in the accumulator at every index of the result's axes then the contracted
-   ones, each rounded, a sum over the contracted ones, [init] added, and one
-   rounding to [out]. That sum is a reduction's, in the reduction's order
+   [init], computed in [acc] into [out], as other operations. A result of
+   another dtype than its accumulator is the contraction into the
+   accumulator, which kernels compute in [order], rounded once. Any other is
+   the products in the accumulator at every index of the result's axes then
+   the contracted ones, each rounded, a sum over the contracted ones, and
+   [init] added. That sum is a reduction's, in the reduction's order
    whatever [order]: no kernel's bits, and the same for any window of the
    result only where that order depends on the count of terms alone, as
    nx.cpu's reduction order does. *)
@@ -1483,7 +1483,7 @@ let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     ~by ~order ~batch ~contracting ~acc:(D.Any acc) (out : (v, s) D.t)
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t)
     (init : (v, s, d) Value.t option) : (v, s, d) Value.t =
-  if D.is D.Float acc && not (D.equal acc out) then
+  if not (D.equal acc out) then
     let init = Option.map (cast_to apply ~by acc) init in
     let y =
       apply ~by
