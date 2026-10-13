@@ -15,10 +15,10 @@
     donated buffer that spans its memory, it turns the word, if it holds that
     one claim and no bit, into {!Memory.exclusive}. {!consume} raises the
     generation from its buffer's own, which kills every buffer made before,
-    then moves an exclusive word to {!Memory.consumed}. When {!with_}'s
-    function returns or raises, each word still negative goes back to one
-    read claim, outside the claims if the consumer exported the memory, and
-    every read claim is released.
+    then gives an exclusive word back to the one read claim, so the buffer
+    it returns is claimed as any other. When {!with_}'s function returns or
+    raises, each word still exclusive goes back to one read claim, and every
+    read claim is released.
 
     {!consume} makes its check and its effects in one C step. The end of the
     claims waits for a step under way, so a consumption that races the end
@@ -26,10 +26,12 @@
     buffer, the step lets one raise the generation, and the other raises.
 
     A claim is taken before the buffer is checked live. A consumption on
-    another domain has raised the generation before it releases its claims,
-    so a compare-and-set that reads the word after that release is followed
-    by a check that sees the new generation. A claim refused by a hold that
-    has since ended is tried again.
+    another domain raises the generation before it gives the word back, so a
+    compare-and-set that reads the word given back, or any later one, is
+    followed by a check that sees the new generation. Every path that claims
+    checks under its claim, since a check before the claim would pass a
+    buffer that a consumption kills between the two. A claim refused by a
+    hold that has since ended is tried again.
 
     {!with_} takes its claims in one C call, the last step before its
     function's handler. Both exits begin with [finish], which ends the
@@ -43,8 +45,8 @@
 
     {!Submission.submit} takes read claims of its own, in C, on the buffers
     of a run and the fixed memory, and releases them once the driver's
-    [submit] has returned. A transfer through staging memory ({!Copy})
-    holds read claims on its buffers until it returns ({!hold}). *)
+    [submit] has returned. A copy, blit or fill ({!Copy}) holds read claims
+    on its buffers until it returns ({!hold2}, {!wait}). *)
 
 val read_bytes :
   Def.buffer ->
@@ -60,6 +62,18 @@ val write_bytes :
   (('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> 'c) ->
   'c
 (** [write_bytes b k f] is {!Rig.Buffer.write}[ b k f]. *)
+
+val wait : string -> Def.access -> Def.buffer -> unit
+(** [wait fn access b] takes a read claim on [b]'s memory for a call of [fn],
+    then checks [b] under it and waits as {!Rig.Buffer.wait}[ b access] does.
+    The caller ends the claim with {!drop}. It allocates nothing when the
+    work the access follows is done.
+
+    Raises as {!hold} does, and {!Rig.Lost} as {!Rig.Buffer.wait} does,
+    holding no claim. *)
+
+val drop : Def.buffer -> unit
+(** [drop b] ends a read claim on [b]'s memory, in C, with no poll point. *)
 
 val hold : string -> Def.buffer -> (unit -> 'a) -> 'a
 (** [hold fn b f] is [f ()] under a read claim on [b]'s memory for a call of

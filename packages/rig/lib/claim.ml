@@ -55,18 +55,27 @@ let hold2 fn a b f x =
           drop b;
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
-(* Host access to [b]'s bytes under a read claim: [f] runs on them once the
-   work [access] follows is done, and the claim ends as [f] returns or
-   raises. A loss raises where the wait for [access] meets it, so a read
-   depends on every device's last write alone. *)
-let scope fn (access : access) b k f =
+(* [Buffer.wait]'s checks and wait under a read claim. A loss raises where the
+   wait for [access] meets it, so a read depends on every device's last write
+   alone. *)
+let wait fn (access : access) b =
   read_claim fn b.mem.claim;
   match
     Buffer.check_live fn b;
     Memory.check_owner b.mem;
-    Buffer.wait_points b access;
-    Buffer.array fn k b
+    Buffer.wait_points b access
   with
+  | () -> ()
+  | exception e ->
+      drop b;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
+(* Host access to [b]'s bytes under a read claim: [f] runs on them once the
+   work [access] follows is done, and the claim ends as [f] returns or
+   raises. *)
+let scope fn access b k f =
+  wait fn access b;
+  match Buffer.array fn k b with
   | exception e ->
       drop b;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
@@ -88,19 +97,9 @@ let write_bytes b k f =
     invalid_argf "Rig.%s: the buffer's memory admits only reads" fn;
   scope fn Read_write b k f
 
-(* Sets [c]'s outside bit, or is [false] while claims hold it exclusive,
-   consumed or not: shared memory is never held exclusive, so [exclusive] need
-   not read the word. *)
-let rec mark_outside c =
-  let n = count c in
-  n >= 0
-  && (n land Memory.outside <> 0
-     || swap c n (n lor Memory.outside)
-     || mark_outside c)
-
 let mark b =
   Buffer.check_live "Claim.share" b;
-  if not (mark_outside b.mem.claim) then
+  if not (Memory.mark_outside b.mem.claim) then
     invalid_arg "Rig.Claim.share: the memory is held exclusive by claims";
   (* A consumption between the check and the mark killed [b]: the memory stays
      marked, which costs only its donations. *)

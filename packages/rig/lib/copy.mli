@@ -29,14 +29,16 @@
     and the next leg on its half follows it by the half's stamps. A half whose
     stamps name unfinished work of a lost device is replaced, so a loss
     reaches no later copy. A copy returns once its last transfer is done.
-    It holds a read claim on both sides until then: the host's legs move
-    bytes that no stamp orders, and a donation between two legs would kill
-    the buffer the next leg names.
 
     The host's values reach memory the host addresses by its own copy, and
     other memory through staging memory, as a copy whose one side the host
     fills or empties. A fill writes its byte into the halves for the first
-    two pieces only, after which both hold it. *)
+    two pieces only, after which both hold it.
+
+    A copy, blit or fill takes a read claim on its buffers before it checks
+    them and waits, and holds it until it returns: the host moves bytes that
+    no stamp orders, so a donation meanwhile would write them, or kill the
+    buffer the next leg names. *)
 
 val copy : src:Def.buffer -> dst:Def.buffer -> unit
 (** [copy ~src ~dst] is {!Rig.Buffer.copy}[ ~src ~dst]. *)

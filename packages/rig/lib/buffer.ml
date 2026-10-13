@@ -212,11 +212,8 @@ let array_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
        elements"
       fn bytes b.offset size;
   if export then begin
-    if not (Memory.export b.mem.claim) then
-      invalid_argf
-        "Rig.%s: the memory is held exclusive by claims that have not consumed \
-         it"
-        fn;
+    if not (Memory.mark_outside b.mem.claim) then
+      invalid_argf "Rig.%s: the memory is held exclusive" fn;
     (* A consumption between the first check and the export killed [b]: the
        memory stays marked, which costs only its donations. *)
     check_live fn b

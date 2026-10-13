@@ -19,11 +19,11 @@ function writes elsewhere.
 
 Three things in the Claims section are easy to miss. Work already submitted
 on the memory holds no claim, since the stamps order a write in place after
-it. A function that writes its result with device work returns the consumed
-buffer from `with_`'s function and submits after `with_` returns, since
-`Rig.submit` refuses memory held exclusive. A prepared submission claims its
-buffers only while a submit runs, so a donation between two submits can kill
-one of them.
+it. A function consumes an input it holds exclusive before it touches its
+bytes. Until then every call that touches them refuses the memory, a copy
+the host runs included. The consumed buffer then works with every call,
+`Rig.submit` included. A prepared submission claims its buffers only while
+a submit runs, so a donation between two submits can kill one of them.
 
 ## Example
 
@@ -35,14 +35,13 @@ donates:
 # let incr b =
     Claim.with_ ~read:[] ~donate:[ b ] @@ fun c ->
     let n = Buffer.length b in
+    let in_place = Claim.exclusive c b in
+    let b = if in_place then Claim.consume c ~why:"donated to incr" b else b in
     let bytes = Bytes.create n in
     Buffer.blit_to_bytes b 0 bytes 0 n;
     let up ch = Char.chr ((Char.code ch + 1) land 255) in
     let s = String.map up (Bytes.to_string bytes) in
-    let out =
-      if Claim.exclusive c b then Claim.consume c ~why:"donated to incr" b
-      else Buffer.create host n
-    in
+    let out = if in_place then b else Buffer.create host n in
     Buffer.blit_from_string s 0 out 0 n;
     out;;
 val incr : Rig.Buffer.t -> Rig.Buffer.t = <fun>

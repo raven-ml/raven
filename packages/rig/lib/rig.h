@@ -54,7 +54,8 @@ const char *rig_buffer_why(value b);
    claim answers RIG_CLAIMED, and after rig_buffer_wait if it answers
    RIG_WAIT; on RIG_LOST, whose wait raises, it touches nothing. Memory the
    caller holds exclusive (Rig.Claim.with_) is claimed already; claiming it
-   again answers RIG_EXCLUSIVE. */
+   again answers RIG_EXCLUSIVE until the caller consumes it. The buffer
+   Rig.Claim.consume returns is claimed as any other. */
 
 enum rig_access { RIG_READ, RIG_READ_WRITE };
 

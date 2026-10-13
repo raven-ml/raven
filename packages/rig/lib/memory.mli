@@ -180,9 +180,8 @@ val proxy : entry -> int
     or a value {!Rig.Claim.share} marked. Bit 1 ({!read_only}) is set for
     memory that admits only reads. The read claims count in steps of
     {!one_claim}. Only the word {!one_claim}, one claim and no bit, may
-    become {!exclusive}, then {!consumed} once the claims have consumed
-    the memory, then {!exported} once the consumer has exported it. {!make}
-    sets the bits. *)
+    become {!exclusive}, and it is {!one_claim} again once the claims have
+    consumed the memory. {!make} sets the bits. *)
 
 val outside : int
 (** [outside] is bit 0, set for memory outside the claims. *)
@@ -196,16 +195,9 @@ val one_claim : int
 val exclusive : int
 (** [exclusive] is the word of memory one {!Claim.with_} holds exclusive. *)
 
-val consumed : int
-(** [consumed] is the word of exclusive memory its claims consumed. *)
-
-val exported : int
-(** [exported] is the word of consumed memory the consumer exported. *)
-
-val export : claim -> bool
-(** [export c] marks [c]'s memory outside the claims for good. It is
-    [false], changing nothing, while claims that have not consumed the
-    memory hold it exclusive. *)
+val mark_outside : claim -> bool
+(** [mark_outside c] marks [c]'s memory outside the claims for good. It is
+    [false], changing nothing, while claims hold the memory exclusive. *)
 
 (** {1:borrows Mappings and borrows}
 

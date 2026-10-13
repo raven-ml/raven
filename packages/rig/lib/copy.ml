@@ -330,8 +330,6 @@ let through st n ~sides ~ahead ~into ~out_of =
           raise x)
 
 let rec copy ~src ~dst =
-  Buffer.check_live fn src;
-  Buffer.check_live fn dst;
   let n = Buffer.length src in
   if n <> Buffer.length dst then
     invalid_argf "Rig.%s: %d bytes into %d" fn n (Buffer.length dst);
@@ -346,19 +344,19 @@ let rec copy ~src ~dst =
     invalid_argf "Rig.%s: one buffer is a borrow of the other's io memory" fn;
   if Buffer.access dst = Read then
     invalid_argf "Rig.%s: the destination's memory admits only reads" fn;
+  Claim.hold2 fn src dst claimed n
+
+(* [copy] under read claims on both sides, which keep a donation from writing
+   either while the copy waits and runs. The claims' release after it keeps the
+   buffers reachable: a read, a write or a move hands over addresses only, and a
+   collection could otherwise free their memory under it. *)
+and claimed src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
   Memory.check_owner src.mem;
   Memory.check_owner dst.mem;
   Memory.drain sd;
   if dd != sd then Memory.drain dd;
-  if n > 0 then begin
-    route ~wait:true src dst n;
-    (* A read, a write or a move hands over addresses only: the buffers stay
-       reachable until it returned, or a collection could free their memory
-       under it. *)
-    ignore (Sys.opaque_identity src);
-    ignore (Sys.opaque_identity dst)
-  end
+  if n > 0 then route ~wait:true src dst n
 
 (* Copies [n] bytes from [src] to [dst], directly or through the staging memory,
    recording each transfer that ran. *)
@@ -369,12 +367,9 @@ and route ~wait src dst n =
     invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name dd.name
   else staged src dst n
 
-(* Through staging memory, holding read claims on both sides until it
-   returns. *)
-and staged src dst n = Claim.hold2 fn src dst pieces n
-
-(* Where a device runs the legs out of [src], each runs one piece ahead. *)
-and pieces src dst n =
+(* Through staging memory. Where a device runs the legs out of [src], each runs
+   one piece ahead. *)
+and staged src dst n =
   let piece b at h = Buffer.view b ~first:at ~length:(Buffer.length h) in
   through (stage_for src dst) n ~sides:[ src; dst ] ~ahead:(runs src)
     ~into:(fun h at -> leg ~src:(piece src at h) ~dst:h)
@@ -388,49 +383,54 @@ and leg ~src ~dst = route ~wait:false src dst (Buffer.length src)
 (* The host's values *)
 
 let writable fn b =
-  Buffer.check_live fn b;
   if Buffer.access b = Read then
     invalid_argf "Rig.%s: the buffer's memory admits only reads" fn
 
 (* The bytes of [dst], which the host does not address, through staging
-   memory, holding a read claim on it as a staged copy does: [put h at] writes
-   the bytes from [dst]'s byte [at] into the half [h], after the half's last
+   memory, holding a read claim on it as a copy does: [put h at] writes the
+   bytes from [dst]'s byte [at] into the half [h], after the half's last
    leg. *)
 let upload fn dst put =
-  Memory.check_owner dst.mem;
-  Memory.drain dst.mem.dev;
-  let n = Buffer.length dst in
-  if n > 0 then
-    Claim.hold fn dst (fun () ->
+  Claim.hold fn dst (fun () ->
+      Memory.check_owner dst.mem;
+      Memory.drain dst.mem.dev;
+      let n = Buffer.length dst in
+      if n > 0 then begin
         through (stage_with dst) n ~sides:[ dst ] ~ahead:false ~into:put
           ~out_of:(fun h at ->
             leg ~src:h
               ~dst:(Buffer.view dst ~first:at ~length:(Buffer.length h)));
-        Buffer.wait dst Buffer.Read_write)
+        Buffer.wait dst Buffer.Read_write
+      end)
 
 (* The bytes of [src], which the host does not address, through staging
    memory, holding a read claim on it: [take h at] reads the bytes from
    [src]'s byte [at] out of the half [h], after the leg that wrote it. *)
 let download fn src take =
-  Memory.check_owner src.mem;
-  Memory.drain src.mem.dev;
-  let n = Buffer.length src in
-  if n > 0 then
-    Claim.hold fn src (fun () ->
+  Claim.hold fn src (fun () ->
+      Memory.check_owner src.mem;
+      Memory.drain src.mem.dev;
+      let n = Buffer.length src in
+      if n > 0 then
         through (stage_with src) n ~sides:[ src ] ~ahead:true
           ~into:(fun h at ->
             leg ~src:(Buffer.view src ~first:at ~length:(Buffer.length h))
               ~dst:h)
           ~out_of:take)
 
+(* Where the host addresses the buffer, the blits and [fill] claim and wait,
+   move the bytes, and drop the claim. The move neither raises nor polls in
+   native code, so no handler is needed and no asynchronous exception keeps
+   the claim. *)
 let blit_from_string s i b j n =
   let fn = "Buffer.blit_from_string" in
   Buffer.check_range fn "string" (String.length s) i n;
   Buffer.check_range fn "buffer" (Buffer.length b) j n;
   writable fn b;
   if Buffer.host_addressed b then begin
-    Buffer.wait b Buffer.Read_write;
-    Buffer.blit_string s i b j n
+    Claim.wait fn Buffer.Read_write b;
+    Buffer.blit_string s i b j n;
+    Claim.drop b
   end
   else
     upload fn (Buffer.view b ~first:j ~length:n) (fun h at ->
@@ -441,10 +441,10 @@ let blit_to_bytes b i s j n =
   let fn = "Buffer.blit_to_bytes" in
   Buffer.check_range fn "buffer" (Buffer.length b) i n;
   Buffer.check_range fn "bytes" (Bytes.length s) j n;
-  Buffer.check_live fn b;
   if Buffer.host_addressed b then begin
-    Buffer.wait b Buffer.Read;
-    Buffer.blit_bytes b i s j n
+    Claim.wait fn Buffer.Read b;
+    Buffer.blit_bytes b i s j n;
+    Claim.drop b
   end
   else
     download fn (Buffer.view b ~first:i ~length:n) (fun h at ->
@@ -452,14 +452,16 @@ let blit_to_bytes b i s j n =
         Buffer.blit_bytes h 0 s (j + at) (Buffer.length h))
 
 let fill b c =
-  writable "Buffer.fill" b;
+  let fn = "Buffer.fill" in
+  writable fn b;
   if Buffer.host_addressed b then begin
-    Buffer.wait b Buffer.Read_write;
-    Buffer.set_bytes b 0 (Buffer.length b) c
+    Claim.wait fn Buffer.Read_write b;
+    Buffer.set_bytes b 0 (Buffer.length b) c;
+    Claim.drop b
   end
   else
     (* The halves keep [c] once the first two pieces filled them. *)
-    upload "Buffer.fill" b (fun h at ->
+    upload fn b (fun h at ->
         if at < 2 * half_bytes then begin
           Buffer.wait h Buffer.Read_write;
           Buffer.set_bytes h 0 (Buffer.length h) c

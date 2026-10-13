@@ -208,14 +208,10 @@ enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS,
 
 /* The claim word as rig's Memory module lays it out: from 0 up, bits for
    memory outside the claims and memory that admits only reads, and the
-   step per read claim; below 0, held exclusive, consumed, or exported by
-   the consumer of memory held exclusive. */
-#define CLAIM_OUTSIDE 1
+   step per read claim; -1, held exclusive. */
 #define CLAIM_READ_ONLY 2
 #define CLAIM_ONE 4
 #define CLAIM_EXCLUSIVE (-1)
-#define CLAIM_CONSUMED (-2)
-#define CLAIM_EXPORTED (-3)
 
 /* A field another domain writes. Read after the claim's compare-and-set,
    which acquires, so it shows what the release of any earlier claim
@@ -551,8 +547,9 @@ static _Atomic value *claims_state(value v_c) {
 
 /* Claim.consume's effects, as one step against the end of the claims
    [v_c]: raises the generation of [v_b]'s memory from [v_b]'s own,
-   records [v_why] and moves the word from exclusive to consumed. The new
-   generation, or CONSUME_ENDED or CONSUME_DEAD, doing nothing. */
+   records [v_why] and gives an exclusive word back to the claims' one read
+   claim. The new generation, or CONSUME_ENDED or CONSUME_DEAD, doing
+   nothing. */
 value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
   _Atomic value *state = claims_state(v_c);
   if (Long_val(atomic_fetch_add(state, CLAIMS_CONSUMING)) & 1) {
@@ -564,15 +561,17 @@ value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
   value g = Field(v_b, BUFFER_GEN);
   /* The reason before the generation, so that a buffer found dead shows
      it; a consumption that loses the race below wrote it too. The
-     generation before the word: an export that finds the word consumed
-     then finds every earlier buffer dead. */
+     generation before the word: a claim whose compare-and-set reads the
+     word given back follows the raise, so its check finds every earlier
+     buffer dead. Word first, such a claim would pass its check and read
+     beside the consumer's writes. */
   if (atomic_load(gen) == g) caml_modify(&Field(claim, CLAIM_WHY), v_why);
   if (!atomic_compare_exchange_strong(gen, &g, Val_long(Long_val(g) + 1))) {
     atomic_fetch_sub(state, CLAIMS_CONSUMING);
     return Val_long(CONSUME_DEAD);
   }
   value w = Val_long(CLAIM_EXCLUSIVE);
-  atomic_compare_exchange_strong(claim_word(v_b), &w, Val_long(CLAIM_CONSUMED));
+  atomic_compare_exchange_strong(claim_word(v_b), &w, Val_long(CLAIM_ONE));
   atomic_fetch_sub(state, CLAIMS_CONSUMING);
   return Val_long(Long_val(g) + 1);
 }
@@ -592,19 +591,13 @@ value caml_rig_claim_await(value v_c) {
 }
 
 /* Gives each memory of [v_donate] still held exclusive back to its read
-   claim, outside the claims if the consumer exported it, then ends the
-   read claims of [v_read] and [v_donate]. Only an export of the consumer's
-   buffer races the give back. */
+   claim, then ends the read claims of [v_read] and [v_donate]. A word is
+   still exclusive where the claims did not consume the memory. */
 value caml_rig_claim_release_all(value v_read, value v_donate) {
   for (value l = v_donate; l != Val_emptylist; l = Field(l, 1)) {
-    _Atomic value *word = claim_word(Field(l, 0));
-    value w = atomic_load(word);
-    while (Long_val(w) < 0) {
-      value back = w == Val_long(CLAIM_EXPORTED)
-                       ? Val_long(CLAIM_ONE | CLAIM_OUTSIDE)
-                       : Val_long(CLAIM_ONE);
-      if (atomic_compare_exchange_weak(word, &w, back)) break;
-    }
+    value w = Val_long(CLAIM_EXCLUSIVE);
+    atomic_compare_exchange_strong(claim_word(Field(l, 0)), &w,
+                                   Val_long(CLAIM_ONE));
   }
   end_claims(v_read, v_donate, Max_long);
   return Val_unit;

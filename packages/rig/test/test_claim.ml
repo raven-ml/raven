@@ -242,48 +242,57 @@ let test_claims () =
       raises_match Exn.invalid_arg (fun () ->
           Claim.with_ ~read:[ b ] ~donate:[] ignore))
 
-(* A donor writes memory it holds exclusive by a copy, a blit or a fill the
-   host runs, which takes no claim. One a device runs claims both sides,
-   through staging memory too, so it is refused, and so are the host's reads
-   and writes in place. *)
+(* A donor uses memory it holds exclusive only through the buffer that
+   consumes it. Before the consumption, the host's reads and writes in place
+   and every copy, blit or fill, whether the host, a device or staging memory
+   runs it, are refused. After it, each of them runs on the consumed
+   buffer. *)
 let test_exclusive_writes () =
   let d, _ = P.open_ ~host_visible:false "claim:exclusive-writes" in
+  let staging, _ =
+    P.open_ ~maps_host:false ~host_visible:false "claim:exclusive-staged"
+  in
   let src = B.of_string "abcdefgh" in
   let written b =
     let s = Bytes.create 8 in
     B.blit_to_bytes b 0 s 0 8;
     Bytes.to_string s
   in
-  let donated b f =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        equal ~msg:"exclusive" bool true (Claim.exclusive c b);
-        f (Claim.consume c ~why:"donated" b))
-  in
   let refused msg f =
     raises_match ~msg (Exn.invalid_arg ~substring:"held exclusive") f
   in
-  let h =
-    donated (B.create Rig.host 8) (fun h ->
-        B.copy ~src ~dst:h;
-        B.blit_from_string "ijkl" 0 h 4 4;
-        B.fill (B.view h ~first:0 ~length:2) 'z';
-        refused "a read" (fun () -> B.read h Bigarray.char ignore);
-        refused "a write" (fun () -> B.write h Bigarray.char ignore);
-        h)
+  let unconsumed b =
+    refused "a read" (fun () -> B.read b Bigarray.char ignore);
+    refused "a write" (fun () -> B.write b Bigarray.char ignore);
+    refused "a copy into it" (fun () -> B.copy ~src ~dst:b);
+    refused "a copy to the host" (fun () ->
+        B.copy ~src:b ~dst:(B.create Rig.host 8));
+    refused "a copy through staging memory" (fun () ->
+        B.copy ~src:b ~dst:(B.create staging 8));
+    refused "a blit into it" (fun () -> B.blit_from_string "ijkl" 0 b 4 4);
+    refused "a blit out of it" (fun () ->
+        B.blit_to_bytes b 0 (Bytes.create 8) 0 8);
+    refused "a fill" (fun () -> B.fill b 'z')
   in
+  let consumed b =
+    B.copy ~src ~dst:b;
+    B.blit_from_string "ijkl" 0 b 4 4;
+    B.fill (B.view b ~first:0 ~length:2) 'z';
+    let s = B.create staging 8 in
+    B.copy ~src:b ~dst:s;
+    B.copy ~src:s ~dst:b;
+    b
+  in
+  let donated b =
+    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+        equal ~msg:"exclusive" bool true (Claim.exclusive c b);
+        unconsumed b;
+        consumed (Claim.consume c ~why:"donated" b))
+  in
+  let h = donated (B.create Rig.host 8) in
   equal string ~msg:"host memory" "zzcdijkl" (written h);
-  donated (B.create d 8) (fun m ->
-      refused "a copy into it" (fun () -> B.copy ~src ~dst:m);
-      refused "a copy out of it" (fun () -> B.copy ~src:m ~dst:h);
-      refused "a blit" (fun () -> B.blit_from_string "ijkl" 0 m 4 4);
-      refused "a fill" (fun () -> B.fill m 'z'));
-  let staging, _ =
-    P.open_ ~maps_host:false ~host_visible:false "claim:exclusive-staged"
-  in
-  let s = B.create staging 8 in
-  donated (B.create Rig.host 8) (fun h ->
-      refused "a staged copy out of it" (fun () -> B.copy ~src:h ~dst:s);
-      refused "a staged copy into it" (fun () -> B.copy ~src:s ~dst:h))
+  let m = donated (B.create d 8) in
+  equal string ~msg:"memory the host does not address" "zzcdijkl" (written m)
 
 (* A borrow and the memory it maps share one count. *)
 let test_borrow_counts () =
@@ -405,22 +414,13 @@ let test_dead_claims () =
   claim_read live;
   claim_release live
 
-(* Sharing a dead buffer, or memory claims hold exclusive, before or after they
-   consumed it, raises and changes nothing. *)
+(* Sharing a dead buffer, or memory claims hold exclusive, raises and changes
+   nothing. The buffer a consumption gives is shared as any other. *)
 let test_share_refused () =
   let b = B.create Rig.host 16 in
   Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       raises_match ~msg:"held" Exn.invalid_arg (fun () -> Claim.share b);
       equal ~msg:"held, after the refusal" bool true (Claim.exclusive c b));
-  equal ~msg:"unshared" bool true (donated_exclusive b);
-  let b =
-    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-        let b' = Claim.consume c ~why:"consumed" b in
-        raises_match ~msg:"consumed" Exn.invalid_arg (fun () -> Claim.share b');
-        equal ~msg:"consumed, after the refusal" bool true
-          (Claim.exclusive c b');
-        b')
-  in
   equal ~msg:"unshared" bool true (donated_exclusive b);
   let b' =
     Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
@@ -429,8 +429,17 @@ let test_share_refused () =
   raises_match ~msg:"dead" (dead "donated") (fun () -> Claim.share b);
   equal ~msg:"the live buffer" bool true (donated_exclusive b');
   Claim.share b';
+  equal ~msg:"the live buffer, shared" bool false (donated_exclusive b');
   raises_match ~msg:"dead, its memory shared" (dead "donated") (fun () ->
-      Claim.share b)
+      Claim.share b);
+  let b = B.create Rig.host 16 in
+  let b' =
+    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+        let b' = Claim.consume c ~why:"consumed" b in
+        Claim.share b';
+        b')
+  in
+  equal ~msg:"shared while consumed" bool false (donated_exclusive b')
 
 (* Claims that outlive their with_ hold nothing: beside a live with_ over the
    same memory, a stale claim is not exclusive and consumes nothing. *)
@@ -1093,6 +1102,234 @@ let test_dead_fact () =
   equal ~msg:"consumed" (option string) (Some "donated") (B.dead b);
   equal ~msg:"its successor" (option string) None (B.dead b')
 
+(* Host copies beside a donation *)
+
+let text b =
+  let s = Bytes.create (B.length b) in
+  B.blit_to_bytes b 0 s 0 (B.length b);
+  Bytes.to_string s
+
+let filled n c =
+  let b = B.create Rig.host n in
+  B.fill b c;
+  b
+
+(* A copy, blit or fill the host runs claims its memory before it waits. In
+   another domain, [access] waits at [p]'s gate for work on memory of [p]'s
+   device; meanwhile [b] is donated, and a donation that holds its memory
+   exclusive gives [donor] the consumed buffer to write in place. It is that
+   buffer if the donation held the memory, and how [access] ended. *)
+let donate_while_waiting p b access donor =
+  P.gate p;
+  let ended =
+    Domain.spawn (fun () ->
+        match access () with
+        | () -> "returned"
+        | exception e -> Printexc.to_string e)
+  in
+  Rig_support.await "the host access waiting at the gate" (fun () ->
+      P.sleepers p = 1);
+  let donated = Claim.take ~why:"donated" b in
+  Option.iter donor donated;
+  P.open_gate p;
+  (donated, Domain.join ended)
+
+(* The copy reads the source after the wait for its destination's last use. *)
+let test_host_copy_source () =
+  let d, p = P.open_ "claim:host-copy-source" in
+  let src = filled 64 's' and dst = B.create d 64 in
+  write d dst;
+  let donated, ended =
+    donate_while_waiting p src
+      (fun () -> B.copy ~src ~dst)
+      (fun b -> B.fill b 'X')
+  in
+  equal ~msg:"the copy" string "returned" ended;
+  equal ~msg:"donated during the copy" bool false (Option.is_some donated);
+  equal ~msg:"the copy's bytes" string (String.make 64 's') (text dst)
+
+(* The copy writes the destination after the wait for its source's last
+   write. *)
+let test_host_copy_destination () =
+  let d, p = P.open_ "claim:host-copy-destination" in
+  let src = B.create d 64 in
+  B.fill src 's';
+  write d src;
+  let dst = filled 64 'd' in
+  let donated, ended =
+    donate_while_waiting p dst
+      (fun () -> B.copy ~src ~dst)
+      (fun b -> B.fill b 'X')
+  in
+  Option.iter
+    (fun b -> equal ~msg:"the donor's bytes" string (String.make 64 'X') (text b))
+    donated;
+  equal ~msg:"the copy" string "returned" ended;
+  equal ~msg:"donated during the copy" bool false (Option.is_some donated);
+  equal ~msg:"the copy's bytes" string (String.make 64 's') (text dst)
+
+(* A blit or fill on memory of [d] the host addresses waits for the work on
+   it, and keeps a donation to a read claim meanwhile. *)
+let host_accesses =
+  [
+    ("a blit to bytes", fun b -> B.blit_to_bytes b 0 (Bytes.create 64) 0 64);
+    ("a blit from a string", fun b -> B.blit_from_string (String.make 64 'a') 0 b 0 64);
+    ("a fill", fun b -> B.fill b 'f');
+  ]
+
+let test_host_access_claims () =
+  List.iter
+    (fun (name, access) ->
+      let d, p = P.open_ ("claim:host-access-" ^ name) in
+      let b = B.create d 64 in
+      write d b;
+      let donated, ended =
+        donate_while_waiting p b (fun () -> access b) ignore
+      in
+      equal ~msg:(name ^ " returned") string "returned" ended;
+      equal ~msg:(name ^ ", donated during it") bool false
+        (Option.is_some donated))
+    host_accesses
+
+(* A donor submits work on the buffer it consumed before its with_ returns:
+   the work writes the memory in place, and the host reads the write. *)
+let test_donor_submits () =
+  let module Sub = Rig.Submission in
+  let d, _ = P.open_ "claim:donor-submits" in
+  let b = B.create d 8 in
+  Rig_support.store (R.host b) 0;
+  let b' =
+    Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+        let b' = Claim.consume c ~why:"donated" b in
+        let s =
+          Sub.make ~fixed:[ (b', Rig.Read_write) ] d
+            [| Sub.fill Rig_support.poke ~params:16 |]
+        in
+        let run = Sub.Run.make () in
+        Sub.Run.int64 run (Sub.block s 0) 0 (Sub.address s b');
+        Sub.Run.int64 run (Sub.block s 0) 8 42;
+        Rig.Point.wait (Rig.submit s ~run ~buffers:[||]);
+        b')
+  in
+  equal ~msg:"the word the work stored" int 42
+    (B.read b' Bigarray.int64 (fun a -> Int64.to_int a.{0}))
+
+(* The consumed buffer *)
+
+type place = Host | Addressed | Unaddressed
+
+let pp_place ppf = function
+  | Host -> Format.pp_print_string ppf "host"
+  | Addressed -> Format.pp_print_string ppf "addressed"
+  | Unaddressed -> Format.pp_print_string ppf "unaddressed"
+
+let addressed = lazy (fst (P.open_ "claim:consumed-addressed"))
+
+let unaddressed =
+  lazy (fst (P.open_ ~host_visible:false "claim:consumed-unaddressed"))
+
+let device = function
+  | Host -> Rig.host
+  | Addressed -> Lazy.force addressed
+  | Unaddressed -> Lazy.force unaddressed
+
+let consumed_case =
+  Gen.pair
+    (Gen.of_list ~pp:pp_place [ Host; Addressed; Unaddressed ])
+    (Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 8; 4096 ])
+
+(* [exclusive c b] holds until [c] consumes [b], and is false after it for
+   both buffers. The consumed buffer is then used as any buffer its holder
+   made: work submitted on it, the host's reads and writes, a copy a device
+   runs, a share. *)
+let consumed_law (place, n) =
+  cover "host memory" (place = Host);
+  cover "memory the host addresses" (place = Addressed);
+  cover "memory the host does not address" (place = Unaddressed);
+  let d = device place in
+  let b = B.create d n in
+  let other = B.create (device Unaddressed) n in
+  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+      equal ~msg:"before the consumption" bool true (Claim.exclusive c b);
+      let b' = Claim.consume c ~why:"consumed" b in
+      equal ~msg:"after, the consumed buffer" (pair bool bool) (false, false)
+        (Claim.exclusive c b, Claim.exclusive c b');
+      if place <> Host then write d b';
+      (* A device's memory of no bytes has no host address. *)
+      if place = Host || (place = Addressed && n > 0) then begin
+        B.write b' Bigarray.char (fun a -> Bigarray.Array1.fill a 'w');
+        equal ~msg:"read back" string (String.make n 'w')
+          (B.read b' Bigarray.char (fun a ->
+               String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)))
+      end
+      else B.fill b' 'w';
+      B.copy ~src:b' ~dst:other;
+      Claim.share b';
+      equal ~msg:"shared" bool false (Claim.exclusive c b'));
+  equal ~msg:"the copy" string (String.make n 'w') (text other)
+
+(* Two domains: host copies, blits and fills of a memory beside donations of
+   it. A donation that holds the memory exclusive consumes it, fills the
+   buffer it gets and reads it back. Every access writes or reads the byte the
+   memory was made with, so while the memory is live they agree whatever their
+   order. An access after a consumption finds the buffer dead; one beside a
+   donation may find it held exclusive, which an order with the donation first
+   explains. *)
+type copied = { mutable gone : bool }
+
+let copied =
+  abstract ~pp:(fun ppf r -> Format.fprintf ppf "dead %b" r.gone) "m"
+
+let made = 's'
+
+let judge_bytes r = function
+  | Ok s ->
+      equal ~msg:"dead" bool false r.gone;
+      equal ~msg:"bytes" string (String.make 64 made) s
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.gone
+  | Error e -> raise e
+
+let judge_access r = function
+  | Ok () -> equal ~msg:"dead" bool false r.gone
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.gone
+  | Error e -> raise e
+
+let judge_donor r = function
+  | Ok None -> equal ~msg:"dead" bool false r.gone
+  | Ok (Some s) ->
+      equal ~msg:"dead" bool false r.gone;
+      equal ~msg:"the donor's bytes" string (String.make 64 'X') s;
+      r.gone <- true
+  | Error (Invalid_argument _) -> equal ~msg:"dead" bool true r.gone
+  | Error e -> raise e
+
+let copy_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes copied)
+      (fun () -> { gone = false })
+      (fun () -> filled 64 made);
+    command "copy out" (copied ^-> judges string) judge_bytes (fun b ->
+        let dst = B.create Rig.host 64 in
+        B.copy ~src:b ~dst;
+        text dst);
+    command "copy in" (copied ^-> judges unit) judge_access (fun b ->
+        B.copy ~src:(filled 64 made) ~dst:b);
+    command "blit out" (copied ^-> judges string) judge_bytes text;
+    command "blit in" (copied ^-> judges unit) judge_access (fun b ->
+        B.blit_from_string (String.make 64 made) 0 b 0 64);
+    command "fill" (copied ^-> judges unit) judge_access (fun b ->
+        B.fill b made);
+    command "donate"
+      (copied ^-> judges (option string))
+      judge_donor
+      (fun b ->
+        Claim.take ~why:"donated" b
+        |> Option.map (fun b' ->
+               B.fill b' 'X';
+               text b'));
+  ]
+
 let tests =
   [
     group ~timeout "claims"
@@ -1119,7 +1356,7 @@ let tests =
         test "memories with no address are claimed apart" test_io_spans;
         test "readers share a memory, an exclusive claim excludes them"
           test_claims;
-        test "a donor writes exclusive memory only by what the host runs"
+        test "a donor uses memory it holds exclusive once it consumes it"
           test_exclusive_writes;
         test "a borrow and the memory it maps share one count"
           test_borrow_counts;
@@ -1130,6 +1367,12 @@ let tests =
           test_shards;
         test "an export under an exclusive claim waits for the consumption"
           test_export_exclusive;
+        test "a donor submits work on the consumed buffer inside with_"
+          test_donor_submits;
+        prop
+          "exclusive holds until the consumption, and the consumed buffer is \
+           used as any other"
+          consumed_case consumed_law;
       ];
     group ~timeout "consumption"
       [
@@ -1194,6 +1437,16 @@ let tests =
           "reads, exports and shares beside a consuming donation are ordered \
            with it"
           donation_commands;
+        test "a host copy waiting holds its source from a donation"
+          test_host_copy_source;
+        test "a host copy waiting holds its destination from a donation"
+          test_host_copy_destination;
+        test "a host blit or fill waiting holds its memory from a donation"
+          test_host_access_claims;
+        stateful ~domains:2
+          "host copies, blits and fills beside donations are ordered with \
+           them"
+          copy_commands;
         stateful ~domains:2
           "a consumption through handed claims beside their return and \
            donations is ordered with them"

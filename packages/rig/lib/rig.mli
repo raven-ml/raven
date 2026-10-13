@@ -834,8 +834,7 @@ module Buffer : sig
       dead, the host does not address its memory, its bytes are not a whole
       number of elements of [k] starting at a multiple of their size (of one
       component's size for complex kinds), or a {!Claim.with_} holds the
-      memory exclusive. {!export} raises for exclusive memory only until the
-      claims have consumed it ({!Claim.consume}). *)
+      memory exclusive. *)
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work that a host access [access] of
@@ -909,26 +908,25 @@ module Buffer : sig
       The blits copy between a buffer and an OCaml string or bytes, and
       {!fill} sets a buffer's bytes. They are ordered as copies. Where the
       host addresses the buffer ({!section-host_access}), the host copies
-      once the work the copy follows is done, and takes no claim. Otherwise
-      the bytes pass through staging memory, and a device copies them to or
-      from the buffer as {!copy} does. Each returns once its bytes are where
-      they go. *)
+      once the work the copy follows is done. Otherwise the bytes pass
+      through staging memory, and a device copies them to or from the buffer
+      as {!copy} does. Each returns once its bytes are where they go.
+
+      A copy, blit or fill holds a read claim on its buffers' memory until it
+      returns, so that no donation writes the memory meanwhile
+      ({!Rig.section-claims}). *)
 
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they
-      are there. A copy the host runs takes no claim. A copy a device runs
-      holds a read claim on both sides while it hands the work over, as
-      {!submit} does, and until it returns if it passes through staging
-      memory ({!Rig.section-claims}).
+      are there.
 
       Raises [Invalid_argument] if [src] or [dst] is dead, they differ in
       length or overlap ({!overlaps}), [dst]'s memory admits only [Read], one
-      side is an io device's memory and the other a borrow of it, a device
-      would copy and a side's memory is held exclusive, or the copy has bytes
-      and no device can copy between the two sides. Raises {!Lost} if a
-      device that runs the copy is lost or the copy loses it,
-      {!Out_of_memory} if staging memory cannot be allocated or mapped, and
-      what an io device's read or write raises. *)
+      side is an io device's memory and the other a borrow of it, a side's
+      memory is held exclusive, or the copy has bytes and no device can copy
+      between the two sides. Raises {!Lost} if a device that runs the copy is
+      lost or the copy loses it, {!Out_of_memory} if staging memory cannot be
+      allocated or mapped, and what an io device's read or write raises. *)
 
   val blit_from_string : string -> int -> t -> int -> int -> unit
   (** [blit_from_string s i b j n] copies the [n] bytes of [s] from [i] into
@@ -1676,15 +1674,13 @@ end
     {- A {e read claim} marks an allocation as being read. The host holds
        one during {!Buffer.read} and {!Buffer.write}, and {!Claim.with_} on
        every buffer it is given. {!submit} holds one on every allocation
-       the work uses until it returns. A copy, blit or fill that a device
-       runs ({!Buffer.section-copying}) holds one on both sides while it
-       hands the work over, and until it returns if it passes through
-       staging memory. Work on a device holds none, since
-       the stamps order a write in place after that work. A copy, blit or
-       fill that the host runs takes no claim.}
+       the work uses until it returns, and a copy, blit or fill
+       ({!Buffer.section-copying}) on its buffers until it returns. Work on
+       a device holds none, since the stamps order a write in place after
+       that work.}
     {- Only {!Claim.with_} holds memory exclusive, for an input its call
-       donates. The holder may write the memory in place, and no reader sees
-       the write. Every other claim is a read claim.}
+       donates, until it consumes the memory. Every other claim is a read
+       claim.}
     {- Memory that something outside rig can read or write is
        {e outside the claims}
        and never exclusive. This holds for memory {!Buffer.of_bigarray} and
@@ -1694,7 +1690,11 @@ end
     {- {!Claim.consume} consumes an allocation. A call that uses a dead
        buffer's bytes raises [Invalid_argument] with the reason given to the
        consumption. Consuming frees nothing, and the memory lives on in the
-       buffer that {!Claim.consume} returns.}}
+       buffer that {!Claim.consume} returns. Where the memory was held
+       exclusive, that buffer's holder may write it in place, and no holder
+       of a buffer made before the consumption sees the write. Code that the
+       holder hands the new buffer sees it, and the holder orders that
+       code's accesses as for a buffer it made.}}
 
     Taking a claim never waits. A read claim on memory held exclusive raises
     [Invalid_argument], and a donated input whose memory another claim holds
@@ -1718,18 +1718,15 @@ end
     claim on that memory for as long as it keeps the submission, or passes
     the memory to {!Claim.share}.
 
-    A donor takes its inputs with {!Claim.with_}. While its function runs,
-    the donor writes the buffer that {!Claim.consume} returns from the host,
-    with a copy, blit or fill that the host runs ({!Buffer.section-copying}),
-    or {!Buffer.export}, which puts the memory outside the claims once
-    [with_] returns. {!Buffer.read}, {!Buffer.write}, {!submit} and a copy,
-    blit or fill that a device runs raise [Invalid_argument] for memory held
-    exclusive. A donor that
-    writes its result with device work returns the consumed buffer from its
-    function, and submits after [with_] returns. Every buffer made over the
-    memory before the consumption is dead by then. A donor of one input may
-    take it with {!Claim.take}, which returns the consumed buffer where it
-    held the memory exclusive. *)
+    A donor takes its inputs with {!Claim.with_}. It consumes an input it
+    holds exclusive before it uses it, since every call that touches the
+    bytes of memory held exclusive raises [Invalid_argument]. While its
+    function runs, the donor uses the buffer that {!Claim.consume} returns as
+    a buffer it made. It may write it from the host, copy into it, submit
+    work on it, export it or share it. Every buffer made over the memory
+    before the consumption is dead. A donor of one input may take it with
+    {!Claim.take}, which returns the consumed buffer where it held the
+    memory exclusive. *)
 module Claim : sig
   val share : Buffer.t -> unit
   (** [share b] puts [b]'s memory outside the claims for good, through every
@@ -1738,8 +1735,8 @@ module Claim : sig
       what that value reads. {!Buffer.export} does the same to the memory it
       exports.
 
-      Raises [Invalid_argument] if [b] is dead, or claims hold its memory
-      exclusive, whether or not they consumed it ({!consume}). *)
+      Raises [Invalid_argument] if [b] is dead, or a {!with_} holds its
+      memory exclusive. *)
 
   type t
   (** The type for the claims of a {!with_}. *)
@@ -1766,14 +1763,16 @@ module Claim : sig
 
   val exclusive : t -> Buffer.t -> bool
   (** [exclusive c b] is [true] iff [c] holds [b]'s memory exclusive, so
-      that the caller may write it in place through the buffer {!consume}
-      returns ({!Rig.section-claims}). *)
+      that the caller may consume it and write the buffer {!consume} returns
+      in place ({!Rig.section-claims}). It is [false] once [c] has consumed
+      the memory. *)
 
   val consume : t -> why:string -> Buffer.t -> Buffer.t
   (** [consume c ~why b] consumes [b]'s memory with the reason [why], so [b]
       and every buffer made over that memory until then are dead. It is a live
-      buffer over the same memory, which the caller writes in place only if
-      [c] holds it {!exclusive}.
+      buffer over the same memory, the only one, which the caller writes in
+      place only if [exclusive c b] was [true] before the call. [c] no longer
+      holds the memory exclusive, and the buffer is claimed as any other.
 
       Raises [Invalid_argument] if [c]'s {!with_} has returned or raised, [c]
       does not claim [b]'s memory, or [b] is dead or does not

@@ -193,8 +193,6 @@ let outside = 1
 let read_only = 2
 let one_claim = 4
 let exclusive = -1
-let consumed = -2
-let exported = -3
 
 let new_claim keep (e : entry) =
   let reached =
@@ -211,13 +209,12 @@ let new_claim keep (e : entry) =
   in
   { count = word; generation = 0; why = "" }
 
-let rec export (c : claim) =
+let rec mark_outside (c : claim) =
   let w = Atomic.Loc.get [%atomic.loc c.count] in
-  if w = exclusive then false
-  else if w = exported || (w >= 0 && w land outside <> 0) then true
-  else
-    let w' = if w = consumed then exported else w lor outside in
-    Atomic.Loc.compare_and_set [%atomic.loc c.count] w w' || export c
+  w >= 0
+  && (w land outside <> 0
+     || Atomic.Loc.compare_and_set [%atomic.loc c.count] w (w lor outside)
+     || mark_outside c)
 
 (* The root an owner's record holds, which stands for the record itself. A
    record pointing back to itself would send polymorphic comparison of two

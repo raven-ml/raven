@@ -25,8 +25,8 @@
     live, and raises [Invalid_argument] naming the public function
     ({!check_live}). {!export} waits for the stamps. {!array},
     {!blit_string}, {!blit_bytes} and {!set_bytes} wait for nothing, and
-    their callers take the wait, as {!Copy.blit_to_bytes} does, and the
-    claim, as {!Claim.read_bytes} does. *)
+    their callers take the claim and the wait, as {!Copy.blit_to_bytes} and
+    {!Claim.read_bytes} do. *)
 
 open Def
 
@@ -126,7 +126,7 @@ val array :
 val export :
   t -> ('a, 'b) Bigarray.kind -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
 (** [export b k] is {!Rig.Buffer.export}[ b k]. It takes the memory out of
-    the claims for good ({!Memory.export}). *)
+    the claims for good ({!Memory.mark_outside}). *)
 
 val of_string : string -> t
 (** [of_string s] is {!Rig.Buffer.of_string}[ s]. *)
