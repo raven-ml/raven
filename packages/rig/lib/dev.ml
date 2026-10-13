@@ -505,11 +505,12 @@ let now_ms () = Prof.now () / 1_000_000
    [d] was idle at this look or the last, and runs on while the same committed
    value stays above the word. A device whose queue waits for a producer's
    unreached value counts as idle: its own work may not have started. The word
-   is read again here: [w] was read before a commit that may have waited for
-   the turn as long as the still interval. *)
-let bounded d w ~still_ms hang =
+   is read again here, through the driver where it has no host address: [w]
+   was read before a commit that may have waited for the turn as long as the
+   still interval. *)
+let bounded (d : device) w ~still_ms hang =
+  let w = Int.max w (word d) in
   let l = d.live in
-  let w = Int.max w (c_word d.index) in
   let now = now_ms () and p = l.progress in
   let idle = committed d <= w || c_waits_in_queue l.c in
   if idle || p.idle || p.seen <> w then begin
