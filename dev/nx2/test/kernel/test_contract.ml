@@ -60,7 +60,8 @@ let grid = [| 0.; -0.; 0.5; -0.5; 1.; -1.; 1.5; -1.5; 2.; -3.; 4.; -6. |]
 
 (* A value of [dt] from [r]: on the grid, an integer in the range of every
    integer dtype of its kind, or, for float32 and float64, one of 24 or 53
-   significant bits in (-4, 4), an infinity or a NaN. *)
+   significant bits in (-4, 4), the same scaled to the smallest normal's
+   exponent, subnormal or near it, an infinity or a NaN. *)
 let value (D.Any dt) r =
   let pick a = a.(Random.State.int r (Array.length a)) in
   let full p =
@@ -70,6 +71,7 @@ let value (D.Any dt) r =
   let float p =
     match Random.State.int r 40 with
     | 0 -> pick [| infinity; neg_infinity; nan |]
+    | 1 -> Float.ldexp (full p) (if p = 23 then -126 else -1022)
     | n when n < 15 -> pick grid
     | _ -> full p
   in
@@ -251,8 +253,10 @@ let case_of ~acc ~out ~dts =
    fewer; either side of lane order's bound of 4 rows or columns over several
    blocks of lanes; fewer than 64 outputs over several blocks of lanes;
    few rows over several groups of columns, on several threads;
-   several panels and several groups of few rows; the
-   chain path over several blocks of the contraction, over several panels
+   several panels and several groups of few rows; 40 rows by 40 and by 17
+   columns over several blocks of the contraction, a tile's partial rows
+   and columns; the chain path over several blocks of the contraction,
+   over several panels
    without init, with no product and no init, and, in float64, over several
    groups. The drawn cases reach each a few times in a hundred or never, so
    a run of a hundred can miss one. *)
@@ -285,6 +289,8 @@ let regimes acc =
        (true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
        (true, ([||], [| 40 |], [| 4 |], [| 1100 |]));
        (false, ([||], [| 40 |], [| 5 |], [| 1100 |]));
+       (true, ([||], [| 40 |], [| 40 |], [| 1100 |]));
+       (true, ([||], [| 40 |], [| 17 |], [| 1100 |]));
        (true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
        (true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
        (true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
@@ -466,6 +472,7 @@ let exact o =
   (!hi +. !lo, !mag)
 
 let unit_roundoff (D.Any dt) = if D.bits dt = 32 then 0x1p-24 else 0x1p-53
+let smallest_subnormal (D.Any dt) = if D.bits dt = 32 then 0x1p-149 else 0x1p-1074
 
 (* The extents of [c]'s result, its contracted index and its batch. *)
 let sizes c =
@@ -592,8 +599,9 @@ let wrong c y check =
 (* The laws of S *)
 
 (* An output [x] of [c] is within γ(K + 1, 2u) (|init| + Σ|a·b|) of the exact
-   sum of [o], u being [acc]'s unit roundoff; a NaN or infinite sum is
-   matched. *)
+   sum of [o], u being [acc]'s unit roundoff, and (K + 1) η where results
+   underflow, η [acc]'s smallest subnormal, twice the most a rounding into
+   the subnormals errs; a NaN or infinite sum is matched. *)
 let within c o x =
   let naive =
     Array.fold_left ( +. )
@@ -608,7 +616,8 @@ let within c o x =
     let u = unit_roundoff c.acc in
     let n = float_of_int (Array.length o.av + 1) in
     let g = n *. 2. *. u /. (1. -. (n *. 2. *. u)) in
-    let bound = (g *. mag) +. (0x1p-100 *. mag) in
+    let eta = smallest_subnormal c.acc in
+    let bound = (g *. mag) +. (0x1p-100 *. mag) +. (n *. eta) in
     if Float.abs (x -. want) <= bound then None
     else
       Some

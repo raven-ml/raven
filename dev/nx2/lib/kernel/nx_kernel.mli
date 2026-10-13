@@ -483,7 +483,7 @@ module type S = sig
       computed in [acc], a dtype {!accumulates} takes, and rounded once to
       [dst]'s dtype. Without [init] the sum starts from [+0]. Integers wrap in
       [acc]. A float [acc] errs by at most twice its unit roundoff per
-      addition, in the order {!section-orders} states. *)
+      addition, barring underflow, in the order {!section-orders} states. *)
 
   (** {1:fft Fourier transforms}
 
