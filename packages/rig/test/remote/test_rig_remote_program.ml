@@ -188,7 +188,9 @@ let host_point () =
   let points = G.run p { inputs = [| x; c |]; ints = [| 1; 0 |] } in
   equal ~msg:"the host's point" (list string)
     [ Rig.name h ]
-    (List.map (fun p -> Rig.name (Rig.Point.device p)) (Array.to_list points));
+    (List.map
+       (fun p -> Option.fold ~none:"" ~some:Rig.name (Rig.Point.device p))
+       (Array.to_list points));
   Rig.Point.wait points.(0)
 
 (* A binary that is no program is the agent's refusal. *)

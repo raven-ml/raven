@@ -6,14 +6,17 @@
 (** Dev keeps the table of open devices, and runs each device's timeline
     and loss.
 
-    A device is four records, which live for the process, so a point names
-    its device by index for good. The C line ([struct rig_line] in
-    [rig_stubs.h]) holds its timeline, its state and its loss. The OCaml
-    record ({!Def.device}) holds its facts, and its {!Def.live} its memory
-    lists and what only its work needs. The C record ([struct rig_device])
-    holds its counted calls, its turn and the waits its queues hold on
-    other devices. Its driver keeps its word for the process, and its stop
-    releases what the device needs only to run work. This module
+    A device is four records. It takes a slot, its index, whose C line
+    ([struct rig_line] in [rig_stubs.h]) holds its timeline and state, and
+    whose word, in rig's array, lives for the process. The OCaml record
+    ({!Def.device}) holds its facts, and its {!Def.live} its memory lists and
+    what only its work needs. The C record ([struct rig_device]) holds its
+    reason, its counted calls, its turn and the waits its queues hold on
+    other devices. Its stop releases what the device needs only to run work.
+    Once it has stopped and nothing of it remains to give back, its slot
+    goes to a later device ({!free_slot}), whose timeline goes on from the
+    slot's word ({!Def.device.base}), and an earlier device's points are
+    answered from the slot's line. This module
     implements {!Rig}'s opening and closing
     ({!Rig.section-devices}), waits on a timeline ({!Rig.section-timeline})
     and loss ({!Rig.section-loss}).
@@ -44,8 +47,17 @@ val protect : device -> ('a -> 'b) -> 'a -> 'b
 (** {1:table The table of devices} *)
 
 val of_index : int -> device
-(** [of_index i] is the device of index [i], {!host} for [0]. [i] must be
-    the index of a device made. *)
+(** [of_index i] is the last device that took the slot [i], {!host} for [0]
+    or a slot no device took. *)
+
+val owns : device -> int -> bool
+(** [owns d p] is [true] iff [p] is a point of [d]: of [d]'s slot, and above
+    the value [d]'s timeline started after. *)
+
+val drain_all : (unit -> unit) ref
+(** [drain_all] drains every device ({!Memory.drain_all}), which may free
+    their slots. {!Memory} sets it. An open that finds every slot held
+    collects and calls it once before it is [Error]. *)
 
 val iter : (device -> unit) -> unit
 (** [iter f] applies [f] to each published device other than the host, lost
@@ -168,8 +180,19 @@ val stop_returned : device -> bool
 val stopped : device -> bool
 (** [stopped d] is [true] iff [d] is Stopped: Ended, and its word reads its
     last submitted value, so no work of [d] runs and its objects may be
-    given back. For a word with no host address it asks the driver for the
+    given back. For a word of its driver's own it asks the driver for the
     word. *)
+
+val free_slot : device -> bool
+(** [free_slot d] frees [d]'s slot if [d] is Stopped and nothing of it
+    remains to give back: no token of its release list that its drains have
+    not routed, nothing in its cache, among its retiring memory or waiting
+    for a value. [d] must not be the process's first {!failure}, which
+    keeps its slot. A [d] lost before it reached every value it was given
+    leaves those values on the slot's line as a range that holds [d], so
+    its dropped points raise its loss for good. It is whether the slot is
+    free. A later open takes the slot: [d] answers from then on as it
+    stood, and its points from the slot's line. *)
 
 val answered : (device -> unit) ref
 (** [answered] is called with each device whose stop returned, from
@@ -239,11 +262,10 @@ val committed : device -> int
     by a driver's [submit] that returned [RIG_COMMITTED]; [0] before any. *)
 
 val word : device -> int
-(** [word d] is the last value [d]'s word showed: read at its host address,
-    or, for a word with no host address, asked of the driver as a {!counted}
-    call, which may raise {!Lost}. It is [0] on the host and an io device.
-    For a lost device whose word has no host address it is the last value
-    read. *)
+(** [word d] is the last value [d]'s word showed: read in its slot, or, for
+    a word of its driver's own, asked of the driver as a {!counted} call,
+    which may raise {!Lost}. It is [d]'s base on an io device. For a lost
+    device whose word is its driver's own it is the last value read. *)
 
 (** What [caml_rig_submit] and [caml_rig_commit] in [rig_device.c] return.
     The C enum also returns that the device is lost, before or after its
@@ -298,15 +320,16 @@ val wait_value : device -> int -> unit
 (** [wait_value d v] is {!wait} for a value [d] assigned, such as a point's,
     which it does not check against [submitted d]. *)
 
-val wait_point : memory -> bool -> int -> unit
-(** [wait_point m every p] is {!wait} on [p]'s device and value, committing
+val wait_point : int -> bool -> int -> unit
+(** [wait_point st every p] is {!wait} on [p]'s device and value, committing
     as it does, except that a point that is done returns, also on a device
-    lost since. [m] is an owner's memory record, and [p] is a point of the
-    stamps of its entry that an access follows: their uses' if [every], their
-    writes' otherwise. It raises {!Lost} if [p] is
-    not done and its device is or becomes lost, or, before it blocks, if a
-    lost device did not reach a point of [m]'s stamps that the access
-    depends on. It never raises [Invalid_argument]. *)
+    lost since, and a point of a device that gave its slot to a later one
+    raises {!Lost} only if its loss dropped it. [st] is [0] or the stamps
+    that [p] is a point of, which the caller keeps reachable, an access
+    following their uses' points if [every], their writes' otherwise. It
+    raises {!Lost} if [p] is not done and its device is or becomes lost, or,
+    before it blocks, if a lost device did not reach a point of [st] that
+    the access depends on. It never raises [Invalid_argument]. *)
 
 val after : device -> int -> (unit -> unit) -> unit
 (** [after d v f] runs [f] in the first {!wait} or {!wait_point} on [d] that
@@ -314,14 +337,21 @@ val after : device -> int -> (unit -> unit) -> unit
 
 val is_done : int -> bool
 (** [is_done p] is [true] iff [p] is done. It may raise {!Lost} as {!word}
-    does. *)
+    does. A point of a device that gave its slot to a later one is done. *)
 
 val settled : int -> bool
 (** [settled p] is [true] iff [p] is settled. A point whose device the read
-    of its word loses has not settled. *)
+    of its word loses has not settled. A point of a device that gave its slot
+    to a later one is settled: the slot's free required its device to have
+    stopped. *)
 
 val check : int -> unit
 (** [check p] raises {!Lost} if [p]'s device is lost and [p] is not done. *)
+
+val raise_point_lost : int -> 'a
+(** [raise_point_lost p] raises {!Lost} for [p], which a lost device did not
+    reach, with that device: the device of [p]'s slot, or the earlier one
+    whose lost range of the slot holds [p]. *)
 
 val release_list : unit -> int
 (** [release_list ()] is a new, empty C release list, never freed. *)

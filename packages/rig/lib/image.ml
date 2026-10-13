@@ -83,6 +83,11 @@ let load d binary =
         Memory.token d.live.release (Image (loaded, code)) bytes
           (Memory.room d) (-1)
       in
+      if itoken == Memory.no_token then begin
+        Memory.unload d loaded;
+        Option.iter Memory.free_entry code;
+        Dev.raise_lost d
+      end;
       let image = { idev = d; loaded; itoken } in
       if Prof.enabled () then
         Prof.record (Load { image; binary; time = Prof.now () });

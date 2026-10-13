@@ -189,15 +189,16 @@ let test_lag_bounded () =
    while the device runs what it was given, until a wait commits them. *)
 let test_signaled_reads () =
   let d, _ = P.open_ ~lag ~runs:`Itself (fresh "signaled") in
+  let base = Rig.submitted d in
   let points = List.init (lag - 1) (fun _ -> submit (empty d)) in
   let last = List.nth points (lag - 2) in
   for _ = 1 to 10 do
     Unix.sleepf 0.001;
-    equal ~msg:"signaled" int 0 (Rig.signaled d);
+    equal ~msg:"signaled" int base (Rig.signaled d);
     equal ~msg:"reached" bool false (Rig.Point.reached last)
   done;
   Rig.Point.wait last;
-  equal ~msg:"after the wait" int (lag - 1) (Rig.signaled d)
+  equal ~msg:"after the wait" int (base + lag - 1) (Rig.signaled d)
 
 (* Loss *)
 
@@ -205,13 +206,14 @@ let test_signaled_reads () =
    finds the values uncommitted. *)
 let test_lost_uncommitted () =
   let d, p = P.open_ ~lag (fresh "lost") in
+  let base = Rig.submitted d in
   let first = submit (empty d) in
   let second = submit (empty d) in
   P.fault p "the engine hung";
   raises_match (lost d) (fun () -> B.create d 4096);
   raises_match (lost d) (fun () -> Rig.Point.wait second);
   raises_match (lost d) (fun () -> Rig.Point.wait first);
-  equal ~msg:"the word after the stop" int 2 (Rig.signaled d)
+  equal ~msg:"the word after the stop" int (base + 2) (Rig.signaled d)
 
 (* A submit that blocks in its driver holds the turn: a wait for an earlier
    value goes on without its commit and returns once the work runs. *)

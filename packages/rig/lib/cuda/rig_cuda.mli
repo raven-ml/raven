@@ -152,7 +152,11 @@ val capability : t -> Rig_cuda_abi.t
     On a GPU that registers no host memory, or when the word [make] was
     given lies outside rig's array, the word is eight bytes of the device's
     own page-locked memory, which starts at that value and has no host
-    address in its location: rig reads it through {!signaled}.
+    address in its location: rig reads it through {!signaled}. That word
+    stays for the process, since another device's queue may still wait on
+    it after the device's slot passed on: each such open keeps one 8-byte
+    [cuMemHostAlloc] allocation, whose page-locked footprint the CUDA driver
+    rounds up.
 
     The streams wait on any aligned 64-bit word the device's work addresses,
     whoever writes it. A submission's waits go to its stream in batches, as
@@ -379,14 +383,14 @@ val capability : t -> Rig_cuda_abi.t
     CUDA signals no fault, so after one the GPU's next open raises the word
     to the last value, and until then the device does not count as
     stopped; that open's [make] answers the fault's error. The stop frees
-    [g]'s C state but for what reading the word needs, which stays with the
-    device. Once the word shows the last value and the stop has returned, no
-    work of [g] writes it: a stream's write of the last value is its last
-    command, and the stop and the next open raise the word only once both
-    streams are idle or one has met an error, after which CUDA runs none of
-    the context's queued work, as the 615 driver does (CUDA's reference
-    states only that such an error is returned to every later call).
-    Compiled code may still call the [symbol] and [graph]
+    [g]'s C state but for what reading the word needs, the 64-byte edge,
+    which stays for the process. Once the word shows the last value and the
+    stop has returned, no work of [g] writes it: a stream's write of the
+    last value is its last command, and the stop and the next open raise the
+    word only once both streams are idle or one has met an error, after
+    which CUDA runs none of the context's queued work, as the 615 driver
+    does (CUDA's reference states only that such an error is returned to
+    every later call). Compiled code may still call the [symbol] and [graph]
     functions of {!val-capability} after {!stop}, and rig's {!free} and
     {!unload} may come after the GPU has opened again, since the device's
     modules lie in the GPU's primary context, which the process keeps. *)

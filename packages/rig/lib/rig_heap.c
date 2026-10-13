@@ -67,8 +67,9 @@ value caml_rig_arch(value unit) {
    the token, as a generational global root. When the collector frees the
    token, in whichever domain sweeps it, its finaliser links the node onto
    its device's list, with no allocation and no lock. The device takes the
-   list at its next drain. A device's list lies in its C record, which lives
-   for the process. */
+   list at its next drain. A device's list lies in its C record, and counts
+   the tokens made for it whose records its drains have not yet routed: the
+   device keeps its slot, and so its record, while one remains. */
 
 struct release_node {
   struct release_node *next;
@@ -91,6 +92,7 @@ value caml_rig_release_list(value unit) {
 static void token_finalize(value v) {
   struct token *t = Data_custom_val(v);
   struct release_node *n = t->node;
+  if (t->list == NULL) return; /* a token its list refused, or never made */
   struct release_node *head =
       atomic_load_explicit(&t->list->head, memory_order_relaxed);
   do
@@ -140,20 +142,30 @@ static mlsize_t pace(mlsize_t mem, mlsize_t room, intnat live) {
 
 /* A token that puts [v_record] on the list [v_list] once it is collected,
    and paces the collector by the [v_mem] bytes it holds, out of [v_room] its
-   device has left, with [v_live] for memory the host shares ([pace]). The
-   node is made here, so that the finaliser allocates nothing. */
+   device has left, with [v_live] for memory the host shares ([pace]); or
+   [()] if the list is closed. The node is made here, so that the finaliser
+   allocates nothing. */
 value caml_rig_token(value v_list, value v_record, value v_mem,
                              value v_room, value v_live) {
   CAMLparam5(v_list, v_record, v_mem, v_room, v_live);
   CAMLlocal1(v);
   mlsize_t mem = (mlsize_t)Long_val(v_mem);
   struct release_list *l = (struct release_list *)Long_val(v_list);
-  struct release_node *n = malloc(sizeof *n);
-  if (n == NULL) caml_raise_out_of_memory();
+  /* What may raise comes first, so a raise leaves the count as it was. */
   v = caml_alloc_custom(&token_ops, sizeof(struct token), mem,
                         pace(mem, (mlsize_t)Long_val(v_room),
                              Long_val(v_live)));
   struct token *t = Data_custom_val(v);
+  t->list = NULL;
+  t->node = NULL;
+  struct release_node *n = malloc(sizeof *n);
+  if (n == NULL) caml_raise_out_of_memory();
+  atomic_fetch_add(&l->count, 1);
+  if (atomic_load(&l->closed)) {
+    atomic_fetch_sub(&l->count, 1);
+    free(n);
+    CAMLreturn(Val_unit);
+  }
   n->next = NULL;
   n->record = v_record;
   caml_register_generational_global_root(&n->record);
@@ -162,10 +174,14 @@ value caml_rig_token(value v_list, value v_record, value v_mem,
   CAMLreturn(v);
 }
 
-/* The records the list [v_list] holds, which it no longer does. */
-value caml_rig_released(value v_list) {
-  CAMLparam1(v_list);
+/* The records the list [v_list] holds, which it no longer does, their
+   number stored into the ref [v_n] in the same call: a caller that counts
+   them as routed ([caml_rig_routed]) from a handler set before the call
+   misses none. */
+value caml_rig_released(value v_list, value v_n) {
+  CAMLparam2(v_list, v_n);
   CAMLlocal2(l, cell);
+  intnat k = 0;
   struct release_list *rl = (struct release_list *)Long_val(v_list);
   struct release_node *n =
       atomic_exchange_explicit(&rl->head, NULL, memory_order_acquire);
@@ -179,7 +195,9 @@ value caml_rig_released(value v_list) {
     struct release_node *next = n->next;
     free(n);
     n = next;
+    k++;
   }
+  Field(v_n, 0) = Val_long(k);
   CAMLreturn(l);
 }
 

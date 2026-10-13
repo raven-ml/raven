@@ -113,8 +113,13 @@ val token : int -> released -> int -> int -> int -> token
     [list] once collected, in whichever domain sweeps it, pacing the
     collector by [bytes] out of [room] ([live] for memory the host shares,
     [-1] otherwise). [record] must not reach the token, which would then
-    never be collected. Raises [Stdlib.Out_of_memory] if the C heap has no
-    room for it. *)
+    never be collected. It is [no_token], putting nothing anywhere, if the
+    list is a device's whose slot was freed or is being freed: a token on it
+    could outlive the device's record. Raises [Stdlib.Out_of_memory] if the C
+    heap has no room for it. *)
+
+val no_token : token
+(** [no_token] is no token: one that puts nothing on any list. *)
 
 val holds_list : int
 (** [holds_list] is the release list of holds, which every drain reads. *)
@@ -163,7 +168,8 @@ val ensure_entry : memory -> unit
 (** [ensure_entry m] gives [m], host memory with {!no_entry}, an entry with
     stamps and a token, under [m]'s device's lock, unless another call did.
     Once [m] is collected and its uses are settled, the token's release
-    unmaps the entry's mappings. *)
+    unmaps the entry's mappings. Raises {!Dev.Lost} if the device's slot was
+    freed. *)
 
 val proxy : entry -> int
 (** [proxy e] is the C proxy that bigarrays over [e]'s allocation share,
@@ -240,7 +246,8 @@ val prefetch : device -> memory -> at:int -> len:int -> unit
 val of_io : device -> io_region -> access:access -> int -> memory
 (** [of_io d r ~access n] is a memory record over [n] bytes of the region [r]
     an io library gave the io device [d], admitting [access], after draining
-    [d]. Its memory starts outside the claims and counts in no budget. *)
+    [d]. Its memory starts outside the claims and counts in no budget.
+    Raises {!Dev.Lost} if [d] is lost. *)
 
 (** {1:allocation Allocation and drains}
 
@@ -308,7 +315,8 @@ val alloc_entry : device -> Rig_edge.memory -> int -> entry
 
 val alloc : device -> Rig_edge.memory -> int -> memory
 (** [alloc d kind n] is a memory record over [alloc_entry d kind n], with
-    its token. *)
+    its token. Raises {!Dev.Lost}, giving the entry back, if [d]'s slot was
+    freed meanwhile. *)
 
 val host_memory : int -> memory
 (** [host_memory n] is a new memory record of [n] bytes of the host's heap,

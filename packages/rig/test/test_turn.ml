@@ -55,19 +55,21 @@ let outcome = Testable.make ~pp:pp_outcome ~equal:( = )
    no parts, which fits, is handed over meanwhile. *)
 let test_later_releases () =
   let d, p = P.open_ ~capacity:1 "turn:later" in
-  equal int 1 (value (one_part d));
+  let base = Rig.submitted d in
+  equal int (base + 1) (value (one_part d));
   P.gate p;
   let waiting = spawn (fun () -> value (one_part d)) in
   Support.await "a sleep at the gate" (fun () -> P.sleepers p = 1);
-  equal int 2 (value (empty_run d));
+  equal int (base + 2) (value (empty_run d));
   P.open_gate p;
-  equal outcome (Ok 3) (waiting ())
+  equal outcome (Ok (base + 3)) (waiting ())
 
 (* A fault found while a submit waits for room loses the device, and the submit
    commits nothing. *)
 let test_fault_waiting () =
   let d, p = P.open_ ~capacity:1 "turn:fault-room" in
-  equal int 1 (value (one_part d));
+  let base = Rig.submitted d in
+  equal int (base + 1) (value (one_part d));
   P.gate p;
   let waiting = spawn (fun () -> value (one_part d)) in
   Support.await "a sleep at the gate" (fun () -> P.sleepers p = 1);
@@ -76,10 +78,11 @@ let test_fault_waiting () =
   (match waiting () with
   | Error e -> equal bool true (lost d e)
   | Ok v -> failf "the waiting submit returned %d" v);
-  equal int 1 (Rig.submitted d)
+  equal int (base + 1) (Rig.submitted d)
 
 let test_never () =
   let d, _ = P.open_ "turn:never" in
+  let base = Rig.submitted d in
   let image =
     require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
   in
@@ -88,8 +91,8 @@ let test_never () =
   Sub.Run.groups run (Sub.block never 0) 0 0 0;
   raises_match Exn.invalid_arg (fun () ->
       Rig.submit never ~run ~buffers:[||]);
-  equal int 0 (Rig.submitted d);
-  equal int 1 (value (one_part d))
+  equal int base (Rig.submitted d);
+  equal int (base + 1) (value (one_part d))
 
 (* Turns of a driver that blocks *)
 
@@ -97,19 +100,22 @@ let test_never () =
    device's. *)
 let test_turn_per_device () =
   let d, p = P.open_ ~capacity:1 ~may_block:true "turn:blocking" in
+  let base = Rig.submitted d in
   let e, _ = P.open_ "turn:other" in
-  equal int 1 (value (one_part d));
+  let base_e = Rig.submitted e in
+  equal int (base + 1) (value (one_part d));
   let blocked = spawn (fun () -> value (one_part d)) in
   Support.await "a blocked submit" (fun () -> P.blocked p = 1);
-  equal int 1 (value (empty_run e));
+  equal int (base_e + 1) (value (empty_run e));
   ignore (P.run p);
-  equal outcome (Ok 2) (blocked ())
+  equal outcome (Ok (base + 2)) (blocked ())
 
 (* Two threads of one domain submit to a device whose driver blocks; the domain
    runs the device's queue meanwhile. *)
 let test_two_threads () =
   let d, p = P.open_ ~capacity:1 ~may_block:true "turn:two-threads" in
-  equal int 1 (value (one_part d));
+  let base = Rig.submitted d in
+  equal int (base + 1) (value (one_part d));
   let a = spawn (fun () -> value (one_part d)) in
   let b = spawn (fun () -> value (one_part d)) in
   Support.await "a blocked submit" (fun () -> P.blocked p = 1);
@@ -117,8 +123,10 @@ let test_two_threads () =
   Support.await "the second blocked submit" (fun () ->
       P.blocked p = 1 && P.queued p = 1);
   ignore (P.run p);
-  equal (slist outcome compare) [ Ok 2; Ok 3 ] [ a (); b () ];
-  equal int 3 (Rig.submitted d)
+  equal (slist outcome compare)
+    [ Ok (base + 2); Ok (base + 3) ]
+    [ a (); b () ];
+  equal int (base + 3) (Rig.submitted d)
 
 (* A device lost while a submit blocks in its driver is stopped once that submit
    returned, and the submit raises Lost. *)
@@ -160,8 +168,9 @@ let still_works d p ~last =
 
 let test_break_in_wait () =
   let d, p = P.open_ "turn:break-wait" in
+  let base = Rig.submitted d in
   let first = point (empty_run d) in
-  equal int 1 (Rig.Point.value first);
+  equal int (base + 1) (Rig.Point.value first);
   P.interrupt p;
   equal bool true (breaks (fun () -> Rig.Point.wait first));
   still_works d p ~last:first
@@ -187,8 +196,9 @@ let test_signal_in_wait () =
 (* A thread waiting for room is interrupted: nothing is assigned to it. *)
 let test_break_waiting_for_room () =
   let d, p = P.open_ ~capacity:1 "turn:break-room" in
+  let base = Rig.submitted d in
   let first = point (one_part d) in
-  equal int 1 (Rig.Point.value first);
+  equal int (base + 1) (Rig.Point.value first);
   P.gate p;
   let broke =
     breaks (fun () ->
@@ -205,8 +215,9 @@ let test_break_waiting_for_room () =
    the next close finishes it: the device is lost as closed, stopped once. *)
 let test_break_in_close () =
   let d, p = P.open_ "turn:break-close" in
+  let base = Rig.submitted d in
   let first = point (empty_run d) in
-  equal int 1 (Rig.Point.value first);
+  equal int (base + 1) (Rig.Point.value first);
   P.interrupt p;
   equal bool true (breaks (fun () -> Rig.close d));
   equal (option string) ~msg:"after the interrupted close" None (Rig.lost d);

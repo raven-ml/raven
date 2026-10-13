@@ -848,6 +848,7 @@ let handover_layout () =
           copy ~src:(Buffer dst) ~dst:(Buffer back);
         |]
   in
+  let v = Rig.submitted host + 1 in
   let _, submitted = spawn (fun () -> submit s) in
   let h = read_n p 9 in
   let payload = read_n p (Int64.to_int (String.get_int64_le h 0)) in
@@ -855,7 +856,7 @@ let handover_layout () =
   equal ~msg:"the frame's kind" int 3 (Char.code h.[8]);
   let region = "\000" ^ u64 id ^ u64 0 and local = "\001" in
   let expected =
-    u64 0 ^ u64 1 ^ u32 0 ^ u32 2
+    u64 0 ^ u64 v ^ u32 0 ^ u32 2
     ^ ("\001" ^ u64 16 ^ local ^ region)
     ^ ("\001" ^ u64 16 ^ region ^ local)
     ^ "0123456789abcdef"

@@ -69,13 +69,14 @@ let names_lost b =
   | exception Dev.Lost _ -> true
 
 (* The stage of [d], made at its first staged copy; the stages of lost devices
-   go then, so that their memory returns. *)
+   go then, so that their memory returns. A stage of the slot that is another
+   device's belongs to a device that gave the slot to [d]. *)
 let find_stage d =
   let lost i st is = if Dev.is_lost st.owner then i :: is else is in
   List.iter (Stages.remove device_stages) (Stages.fold lost device_stages []);
   match Stages.find_opt device_stages d.index with
-  | Some st -> st
-  | None ->
+  | Some st when st.owner == d -> st
+  | Some _ | None ->
       let st = stage d in
       Stages.replace device_stages d.index st;
       st

@@ -178,11 +178,12 @@ value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
 
    A buffer is the record { mem; offset; length; generation }, its
    memory { dev; bytes; host; address; handle; claim; entry; root; ... },
-   its claim { count; generation; why } and the entry of its root
-   { owner; backing; bytes; access; stamps; ... },
-   as rig's Def module lays them out. */
+   its claim { count; generation; why }, the entry of its root
+   { owner; backing; bytes; access; stamps; ... } and its device
+   { index; name; machine; ...; opened }, as rig's Def module lays them
+   out. */
 
-enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE };
+enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_OPENED = 15 };
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
 enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
        MEMORY_CLAIM, MEMORY_ENTRY, MEMORY_ROOT };
@@ -337,11 +338,16 @@ const char *rig_buffer_why(value b) {
 /* Claims */
 
 /* Whether the device of the memory record [mem] is lost: a borrow's
-   device, or the device whose memory a root is. */
+   device, or the device whose memory a root is. Its slot's line answers
+   while it names the device ([struct rig_line]): a device whose slot passed
+   on has ended. */
 static int dev_lost(value mem) {
-  int i = Int_val(Field(Field(mem, MEMORY_DEV), DEVICE_INDEX));
-  return atomic_load_explicit(&rig_lines[i].state, memory_order_acquire) !=
-         RIG_LIVE;
+  value d = Field(mem, MEMORY_DEV);
+  struct rig_line *l = &rig_lines[Int_val(Field(d, DEVICE_INDEX))];
+  int s = atomic_load_explicit(&l->state, memory_order_acquire);
+  return s != RIG_LIVE ||
+         atomic_load_explicit(&l->owner, memory_order_acquire) !=
+             Long_val(Field(d, DEVICE_OPENED));
 }
 
 /* What [a], the answer for the points before [p], becomes with [p]: a
@@ -353,34 +359,48 @@ static enum rig_claim follow(enum rig_claim a, uint64_t p) {
 }
 
 /* The answer for the work of the stamps [s] an access must follow: that of
-   each device's last write, or of every use if [every]. Out of line, so
-   that a claim of memory with no stamps saves no registers for it. */
+   each device's last write, or of every use if [every], and of the point
+   folded into the head, read after the words. Out of line, so that a claim
+   of memory with no stamps saves no registers for it. */
 static __attribute__((noinline)) enum rig_claim follow_stamps(struct rig_stamps *s, int every) {
+  struct rig_stamps *head = s;
   enum rig_claim a = RIG_CLAIMED;
-  for (; s != NULL && a != RIG_LOST;
+  for (int end = 0; s != NULL && a != RIG_LOST && !end;
        s = atomic_load_explicit(&s->next, memory_order_acquire))
-    for (int i = 0; i < RIG_USES; i++) {
+    for (int i = 0; i < RIG_USES && !end; i++) {
       int64_t p = rig_stamps_followed(s, i, every);
-      if (p < 0) return a;
-      if (p != 0) a = follow(a, (uint64_t)p);
+      if (p < 0) end = 1;
+      else if (p != 0) a = follow(a, (uint64_t)p);
     }
-  return a;
+  uint64_t folded = rig_stamps_folded(head, every);
+  return folded != 0 ? follow(a, folded) : a;
 }
 
 /* The first point of the stamps [v_st] a lost device did not reach: of
-   their uses if [v_every], of their writes otherwise; 0 for none. A wait
-   that would block reads it first, so it waits out no work ahead of a
-   loss. */
+   their uses if [v_every], of their writes otherwise, then the point folded
+   into their head; 0 for none. A wait that would block reads it first, so
+   it waits out no work ahead of a loss. */
 value caml_rig_stamps_lost(value v_st, value v_every) {
   int every = Bool_val(v_every);
-  for (struct rig_stamps *s = (struct rig_stamps *)Long_val(v_st); s != NULL;
+  struct rig_stamps *head = (struct rig_stamps *)Long_val(v_st);
+  int end = 0;
+  for (struct rig_stamps *s = head; s != NULL && !end;
        s = atomic_load_explicit(&s->next, memory_order_acquire))
-    for (int i = 0; i < RIG_USES; i++) {
+    for (int i = 0; i < RIG_USES && !end; i++) {
       int64_t p = rig_stamps_followed(s, i, every);
-      if (p < 0) return Val_long(0);
-      if (p != 0 && rig_point_lost((uint64_t)p)) return Val_long((intnat)p);
+      if (p < 0) end = 1;
+      else if (p != 0 && rig_point_lost((uint64_t)p))
+        return Val_long((intnat)p);
     }
-  return Val_long(0);
+  uint64_t p = rig_stamps_folded(head, every);
+  return Val_long(p != 0 && rig_point_lost(p) ? (intnat)p : 0);
+}
+
+/* The point folded into the head of the stamps [v_st] that an access
+   follows, its uses' if [v_every], its writes' otherwise; 0 for none. */
+value caml_rig_stamps_folded(value v_st, value v_every) {
+  return Val_long((intnat)rig_stamps_folded(
+      (struct rig_stamps *)Long_val(v_st), Bool_val(v_every)));
 }
 
 /* Claims first, then checks [b] under the claim: the compare-and-set

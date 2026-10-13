@@ -490,7 +490,7 @@ let room_from_the_word steps =
   waits_on g;
   let rs = regions g in
   let flag = Option.get (A.alloc g Pinned 8) in
-  let last = ref 0 in
+  let last = ref (A.signaled g) in
   let hold () =
     H.set64 (host flag) 0;
     incr last;
@@ -1259,10 +1259,11 @@ let queue_order =
 
 (* Through the C entries *)
 
-(* A device's values, numbered as the test hands them to its C entries. *)
+(* A device's values, numbered on from its word's as the test hands them to its
+   C entries. *)
 type run = { g : A.t; mutable v : int }
 
-let device g = { g; v = 0 }
+let device g = { g; v = A.signaled g }
 
 let go r ps =
   r.v <- r.v + 1;
@@ -1291,6 +1292,7 @@ let failures_hw =
     [
       test "a failed submission runs none of its parts" (fun () ->
           S.with_ @@ fun { g; _ } ->
+          let v = A.signaled g + 1 in
           let n = 4096 in
           let src = Option.get (A.alloc g Pinned n) in
           let dst = Option.get (A.alloc g Pinned n) in
@@ -1298,10 +1300,10 @@ let failures_hw =
           H.write (host dst) (String.make n '\000');
           equal answer ~msg:"submit"
             (`Failed "256 waits; the device holds at most 255")
-            (E.submit g ~v:1
+            (E.submit g ~v
                ~waits:(Array.make 256 (0, 0))
                [| E.copy ~dst:(address dst) ~src:(address src) n |]);
-          S.reached g 1;
+          S.reached g v;
           equal string ~msg:"dst" (String.make n '\000') (H.read (host dst) n));
       test "a value failed behind running work is reached once it ends"
         (fun () ->
@@ -1317,15 +1319,16 @@ let failures_hw =
               (dispatch (A.capability g).gpu (entry m) "spin"
                  ~args:(address args) ~groups:1)
           in
-          equal answer ~msg:"the work" `Ok (submit g ~v:2 [| spin |]);
+          let v = r.v + 1 in
+          equal answer ~msg:"the work" `Ok (submit g ~v [| spin |]);
           equal answer ~msg:"the failure"
             (`Failed "256 waits; the device holds at most 255")
-            (E.submit g ~v:3 ~waits:(Array.make 256 (0, 0)) [||]);
-          S.reached g 3;
+            (E.submit g ~v:(v + 1) ~waits:(Array.make 256 (0, 0)) [||]);
+          S.reached g (v + 1);
           equal string ~msg:"the work's flag" (le32s [ 1 ])
             (H.read (host flag) 4);
           S.close t;
-          equal int ~msg:"the word" 3 (A.signaled g));
+          equal int ~msg:"the word" (v + 1) (A.signaled g));
     ]
 
 (* Rings wrap
@@ -1489,7 +1492,8 @@ module Wrap = struct
   let law goals =
     S.with_ @@ fun { g; _ } ->
     let k = sink g in
-    let submit = submitter g k ~first:1 in
+    let first = A.signaled g + 1 in
+    let submit = submitter g k ~first in
     let shapes = ref [] in
     let go shape =
       submit shape;
@@ -1543,7 +1547,7 @@ module Wrap = struct
     in
     cover "the compute ring wrapped twice" (twice "COMPUTE:0");
     cover "the copy ring wrapped twice" (twice "COPY:0");
-    check g k ~first:1 (List.rev !shapes)
+    check g k ~first (List.rev !shapes)
 
   (* Values from 2^32 - [k], where a value's release goes on the queue of its
      submission's last part and slot words compare 32 bits: the edge's own
@@ -1563,15 +1567,15 @@ module Wrap = struct
       (pair (int_range 1 4) (list ~size:(int_range 1 8) shape))
 
   let across_carry (k, shapes) =
-    let first = (1 lsl 32) - k in
-    let at_carry =
-      List.filteri (fun i _ -> (first + i) land 0xffff_ffff = 0) shapes
-    in
+    let at_carry = List.filteri (fun i _ -> i = k) shapes in
     cover "the value at 2^32 ends on COPY:0"
       (List.exists (function Zeros _ | Both _ -> true | _ -> false) at_carry);
     cover "the value at 2^32 ends on COMPUTE:0"
       (List.exists (function Nops _ -> true | _ -> false) at_carry);
     S.with_ @@ fun { g; _ } ->
+    (* The first carry the word can still reach k values ahead of. *)
+    let carry = (((A.signaled g + k) lsr 32) + 1) lsl 32 in
+    let first = carry - k in
     A.renumber g first;
     run g ~first shapes
 end
@@ -1599,6 +1603,7 @@ let crossing =
 let held (w0, t) =
   S.with_ @@ fun { g; _ } ->
   waits_on g;
+  let base = A.signaled g in
   let word = Option.get (A.alloc g Pinned 8) in
   let src = Option.get (A.alloc g Pinned 64)
   and dst = Option.get (A.alloc g Pinned 64) in
@@ -1616,7 +1621,7 @@ let held (w0, t) =
     (List.mem ((1 lsl 32) - 1) below);
   cover "a wait for a value whose low half is 0" (t land 0xffff_ffff = 0);
   equal answer ~msg:"submit" `Ok
-    (E.submit g ~v:1
+    (E.submit g ~v:(base + 1)
        ~waits:[| (address word, t) |]
        [| E.copy ~dst:(address dst) ~src:(address src) 64 |]);
   List.iter
@@ -1627,10 +1632,12 @@ let held (w0, t) =
         string zeros
         (fun () -> H.read (host dst) 64)
         ~ms:20;
-      equal int ~msg:(strf "the timeline, the word at %d" x) 0 (A.signaled g))
+      equal int
+        ~msg:(strf "the timeline, the word at %d" x)
+        base (A.signaled g))
     below;
   H.write (host word) (le64 t);
-  S.reached g 1;
+  S.reached g (base + 1);
   equal string ~msg:"the copy, the word reached" (String.make 64 'w')
     (H.read (host dst) 64);
   List.iter (A.free g) [ word; src; dst ]
@@ -1639,16 +1646,18 @@ let held (w0, t) =
 let wait_bound () =
   S.with_ @@ fun { g; _ } ->
   waits_on g;
+  let v = A.signaled g + 1 in
   let word = Option.get (A.alloc g Pinned 8) in
   H.write (host word) (le64 1);
   let waits n = Array.make n (address word, 1) in
-  equal answer ~msg:"255 waits" `Ok (E.submit g ~v:1 ~waits:(waits 255) [||]);
-  S.reached g 1;
-  match E.submit g ~v:2 ~waits:(waits 256) [||] with
+  equal answer ~msg:"255 waits" `Ok (E.submit g ~v ~waits:(waits 255) [||]);
+  S.reached g v;
+  match E.submit g ~v:(v + 1) ~waits:(waits 256) [||] with
   | `Ok -> fail "256 waits handed over"
   | `Failed why ->
-      S.reached g 2;
-      equal answer ~msg:"the next submit" (`Failed why) (submit g ~v:3 [||])
+      S.reached g (v + 1);
+      equal answer ~msg:"the next submit" (`Failed why)
+        (submit g ~v:(v + 2) [||])
 
 let waits =
   group ~timeout:120. "waits"
@@ -1680,8 +1689,9 @@ let aged_slots () =
   let token k m = ((k * 1000) + m + 1) land 0xffff_ffff in
   let at r k m = address r + (4 * ((k * most) + m)) in
   let pairs k = if k mod 100 = 0 then most else 8 in
-  let base = 1 lsl 31 in
-  A.renumber ~age:(base - 600) g base;
+  let age = (1 lsl 31) - 600 in
+  let base = max (1 lsl 31) (A.signaled g + 1) in
+  A.renumber ~age g base;
   let rec room ps =
     match E.room g ps with
     | `Fits -> ()

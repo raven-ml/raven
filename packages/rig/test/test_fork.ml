@@ -199,6 +199,28 @@ let test_io_closed () =
   equal (list string) [ "freed: 1" ] lines;
   ignore (Sys.opaque_identity !m)
 
+(* A device that takes the slot a closed io device left is a driver's device:
+   a forked child sees it lost. A memory device's last value, which the io
+   device's slot keeps and the Polled device starts from, shows that the slot
+   passed from one to the next. *)
+let test_slot_of_io () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let m = Rig.memory_device "fork:before-io" in
+  let p = submit (empty m) in
+  Rig.Point.wait p;
+  Rig.close m;
+  Rig.free_cache m;
+  let io = open_store "fork:io-slot" in
+  Rig.close io;
+  Rig.free_cache io;
+  let d, _ = P.open_ "fork:after-io" in
+  equal ~msg:"the slot passed on" int (Rig.Point.value p) (Rig.submitted d);
+  let lines, ended =
+    in_child (fun () -> [ Option.value ~default:"not lost" (Rig.lost d) ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "forked" ] lines
+
 (* A buffer of [n] bytes on [d] that is unreachable once this returns: its
    address. *)
 let[@inline never] dropped d n = Support.at (B.create d n)
@@ -348,6 +370,8 @@ let tests =
       [
         test "a forked child's devices are lost for good" test_child;
         test "a forked child's io devices stay its library's" test_io_child;
+        test "a forked child loses a device on a closed io device's slot"
+          test_slot_of_io;
         test "a forked child frees the io memory it drops" test_io_loop;
         test "a forked child frees io memory a parent's device uses"
           test_io_used;

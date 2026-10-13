@@ -1278,7 +1278,8 @@ let hung (module G : Gpu) () =
    of its own calls it 20 ms after it starts to watch, as the consumer may wait
    in its submit. *)
 let holds (module G : Gpu) (t : G.t) point go =
-  let pd = Rig.Point.device point and vp = Rig.Point.value point in
+  let pd = Option.get (Rig.Point.device point)
+  and vp = Rig.Point.value point in
   let n = 4096 in
   let dst, read = watched t.G.d n in
   let old = String.make n '\000' in

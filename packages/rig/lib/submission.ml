@@ -945,20 +945,21 @@ let decide d p =
     | _, Some r when d.key = p.key -> map_word d r
     | _, _ -> (host_wait, None)
 
-(* An undecided pair: no way is negative but [host_wait], and an address or an
-   object fits in 62 bits. *)
-let undecided = min_int
+(* An undecided pair: no device has [opened] [-1]. *)
+let undecided = { occupant = -1; way = host_wait }
 
 let known_pair pairs i = if i < Array.length pairs then pairs.(i) else undecided
 
-(* Sets [d]'s pair of the producer of index [i] to [way], growing [l.pairs] by
-   replacement, and keeps its [mapping], unless another decision came first:
-   that decision's way. A device whose stop returned keeps no mapping: its
-   drain gives back the ones it keeps. *)
-let set_pair (d, i, way, mapping) =
-  let l = d.live in
+(* Sets [d]'s pair of [p] to [way], growing [l.pairs] by replacement, and
+   keeps its [mapping], unless another decision for [p] came first: that
+   decision's way. A pair decided for an earlier device of [p]'s slot is
+   replaced, its mapping kept until [d] is Stopped, as its queued waits may
+   read it. A device whose stop returned keeps no mapping: its drain gives
+   back the ones it keeps. *)
+let set_pair (d, (p : device), way, mapping) =
+  let l = d.live and i = p.index in
   let known = known_pair l.pairs i in
-  if known <> undecided then Some known
+  if known.occupant = p.opened then Some known.way
   else if Option.is_some mapping && Dev.stop_returned d then Some host_wait
   else begin
     Option.iter (fun m -> l.word_maps <- m :: l.word_maps) mapping;
@@ -968,20 +969,20 @@ let set_pair (d, i, way, mapping) =
       Array.blit l.pairs 0 a 0 (Array.length l.pairs);
       l.pairs <- a
     end;
-    l.pairs.(i) <- way;
+    l.pairs.(i) <- { occupant = p.opened; way };
     None
   end
 
-(* [l.pairs] is replaced whole under [d]'s lock and its cells are ints, so a
-   read takes no lock. Racy: a stale [undecided] decides the pair again, and
-   the decision that comes second gives its mapping back. *)
-let pair d p =
-  let i = p.index and l = d.live in
-  let known = known_pair l.pairs i in
-  if known <> undecided then known
+(* [l.pairs] is replaced whole under [d]'s lock and its cells are immutable
+   pairs, so a read takes no lock. A pair decided for another device of [p]'s
+   slot, or a stale undecided one, decides it again: the decision that comes
+   second gives its mapping back. *)
+let pair d (p : device) =
+  let known = known_pair d.live.pairs p.index in
+  if known.occupant = p.opened then known.way
   else
     let way, mapping = decide d p in
-    match Lock.protect l.lock set_pair (d, i, way, mapping) with
+    match Lock.protect d.live.lock set_pair (d, p, way, mapping) with
     | None -> way
     | Some first ->
         Option.iter (Memory.unmap d) mapping;
@@ -1048,7 +1049,7 @@ let rec wait_points s run n i count =
     if Dev.is_done p then wait_points s run n (i + 1) count
     else
       let producer = Dev.of_index (Point.index p) and v = Point.value p in
-      if Dev.is_lost producer then begin
+      if Dev.is_lost producer || not (Dev.owns producer p) then begin
         Dev.check p;
         wait_points s run n (i + 1) count
       end
@@ -1093,8 +1094,7 @@ let rec hand_over s run nwaits =
       "Rig.%s: the parts never fit %s's queues, name work its driver does not \
        run, or hold a launch whose block it refuses"
       fn d.name
-  else if r = Dev.Answer.producer_lost then
-    Dev.raise_lost (Dev.of_index (run_producer run))
+  else if r = Dev.Answer.producer_lost then Dev.raise_point_lost (run_producer run)
   else Dev.raise_lost d
 
 external claim_hold : buffer -> bool = "caml_rig_claim_hold" [@@noalloc]

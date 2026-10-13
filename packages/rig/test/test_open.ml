@@ -934,7 +934,9 @@ let settle d =
 
 let lost = function Rig.Lost _ -> true | _ -> false
 
-(* A closed device answers its properties and timeline as it did. *)
+(* A closed device answers its properties and timeline as it did, also once
+   a later device took its slot: its points then name no device, and their
+   waits return. *)
 let test_ended () =
   let key : string list Type.Id.t = Type.Id.make () in
   let cap = [ "add" ] in
@@ -948,6 +950,7 @@ let test_ended () =
   let k = Rig.Local.new_key (fun _ -> ()) in
   Rig.Local.get k d;
   ignore (Rig.Buffer.create d 64 : Rig.Buffer.t);
+  let base = Rig.submitted d in
   let p = submit (Rig.Submission.make d [||]) in
   Rig.Point.wait p;
   let facts d =
@@ -972,41 +975,66 @@ let test_ended () =
   equal int 4096 (Rig.budget d);
   equal int 0 (Rig.allocated d);
   equal (option string) (Some "closed") (Rig.lost d);
-  equal int 1 (Rig.submitted d);
-  equal int 1 (Rig.signaled d);
-  equal device d (Rig.Point.device p);
-  equal bool true (Rig.Point.reached p);
-  equal string "open:ended:1" (Format.asprintf "%a" Rig.Point.pp p);
-  raises_match lost (fun () -> Rig.Point.wait p);
-  raises_match lost (fun () -> Rig.Buffer.create d 1);
-  raises_match lost (fun () -> Rig.Local.get k d);
-  raises_match lost (fun () -> submit (Rig.Submission.make d [||]))
+  let answers () =
+    equal int (base + 1) (Rig.submitted d);
+    equal int (base + 1) (Rig.signaled d);
+    equal bool true (Rig.Point.reached p);
+    Rig.Point.wait p;
+    raises_match lost (fun () -> Rig.Buffer.create d 1);
+    raises_match lost (fun () -> Rig.Local.get k d);
+    raises_match lost (fun () -> submit (Rig.Submission.make d [||]))
+  in
+  answers ();
+  equal (option device) (Some d) (Rig.Point.device p);
+  equal string
+    (Printf.sprintf "open:ended:%d" (base + 1))
+    (Format.asprintf "%a" Rig.Point.pp p);
+  let later, _ = P.open_ "open:ended-later" in
+  equal ~msg:"the later device's first value" int (base + 1)
+    (Rig.submitted later);
+  answers ();
+  equal (option device) None (Rig.Point.device p);
+  equal string
+    (Printf.sprintf "ended:%d" (base + 1))
+    (Format.asprintf "%a" Rig.Point.pp p)
 
-(* A point names its device for the life of the process, after the program
-   let go of the device: two closed devices' points name two devices, each
-   lost with its own reason. *)
+(* A point names its device after the program let go of the device, until a
+   later device takes its slot. A lost device's slot passes on too: a point it
+   reached waits as reached, and one its loss dropped raises the loss with
+   that device and its reason, whatever device the slot holds. *)
 let test_points_name_device () =
   let point name =
     let d, p = P.open_ name in
-    let q = submit (Rig.Submission.make d [||]) in
-    Rig.Point.wait q;
+    let reached = submit (Rig.Submission.make d [||]) in
+    Rig.Point.wait reached;
     P.fault p (name ^ " faulted");
-    (try Rig.Point.wait (submit (Rig.Submission.make d [||]))
-     with Rig.Lost _ -> ());
+    let dropped = submit (Rig.Submission.make d [||]) in
+    (try Rig.Point.wait dropped with Rig.Lost _ -> ());
     Rig.close d;
-    q
+    (d, reached, dropped)
   in
-  let p = point "open:named-a" and q = point "open:named-b" in
+  (* The process's first failure keeps its slot: one comes first. *)
+  ignore (point "open:named-first");
+  let d, p, dropped = point "open:named-a" in
   Gc.full_major ();
-  let d = Rig.Point.device p and e = Rig.Point.device q in
+  equal ~msg:"before its slot passes on" (option device) (Some d)
+    (Rig.Point.device p);
+  let e, q, _ = point "open:named-b" in
   not_equal device d e;
-  equal string "open:named-a" (Rig.name d);
-  equal string "open:named-b" (Rig.name e);
+  equal ~msg:"once its slot passed on" (option device) None
+    (Rig.Point.device p);
+  equal (option device) (Some e) (Rig.Point.device q);
   equal (option string) (Some "open:named-a faulted") (Rig.lost d);
-  equal (option string) (Some "open:named-b faulted") (Rig.lost e);
-  equal string "open:named-a:1" (Format.asprintf "%a" Rig.Point.pp p);
+  equal string
+    (Printf.sprintf "ended:%d" (Rig.Point.value p))
+    (Format.asprintf "%a" Rig.Point.pp p);
   equal bool true (Rig.Point.reached p);
-  raises_match lost (fun () -> Rig.Point.wait p)
+  Rig.Point.wait p;
+  raises_match
+    (function
+      | Rig.Lost (d', why) -> Rig.equal d d' && why = "open:named-a faulted"
+      | _ -> false)
+    (fun () -> Rig.Point.wait dropped)
 
 (* A device that waits in its queue for the values of other devices, closed or
    not, maps rig's words once for all of them, and gives that mapping back once

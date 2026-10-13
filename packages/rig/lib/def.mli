@@ -91,15 +91,23 @@ type backing =
     of the monotonic clock. *)
 type progress = { seen : int; idle : bool; since : int }
 
+type pair = { occupant : int; way : int }
+(** How a device's queues wait for the values of a producer slot's device
+    [occupant] (its [opened]): [way] is [-1] on the host, otherwise the
+    producer's object or its word's address as the waiting device maps
+    it. *)
+
 type c
 (** The type for custom blocks that hold a device's C record
-    ([struct rig_device] in [rig_stubs.h]), which lives for the process. *)
+    ([struct rig_device] in [rig_stubs.h]), which goes with the block once
+    the device's slot is freed. *)
 
 (** The type for devices: {!Rig.t}. A device is its facts, fixed at open,
-    and its {!live} state. The table of devices holds it for the life of the
-    process. *)
+    and its {!live} state. The table of devices holds it at its index until
+    a later device takes its slot. *)
 type device = {
-  index : int;  (** Its index in the table of devices, [0] for the host. *)
+  index : int;
+      (** Its slot, its index in the table of devices, [0] for the host. *)
   name : string;
       (** The opener's name, followed by ["@machine"] on another machine. *)
   machine : machine;  (** The machine it belongs to. *)
@@ -119,6 +127,11 @@ type device = {
       (** The closes of this machine's host under way: each adds one under
           the table's lock and takes it back with one atomic step. *)
   live : live;  (** Its state. *)
+  base : int;
+      (** The value its timeline started after, which its slot's word held
+          when it opened: its points' values lie above it, and those of the
+          earlier devices of its slot at or below it. *)
+  opened : int;  (** The open that made it, unique for the process. *)
 }
 
 (** The type for a device's state: its C record, its lock, its memory and
@@ -156,10 +169,10 @@ and live = {
   mutable pending : (int * pending) list * (int * pending) list; [@atomic]
       (** Releases by nondecreasing value of it, replaced whole: the front in
           order, the back reversed, and the front empty only when both are. *)
-  mutable pairs : int array;
-      (** By producer index, how its queues wait for the producer's values:
-          [min_int] undecided, [-1] on the host, otherwise the producer's
-          object or its word's address as this device maps it. Grown by
+  mutable pairs : pair array;
+      (** By producer index, how its queues wait for the values of the slot's
+          device it was decided for. A cell holds an immutable pair, so a
+          read without the lock sees its two fields together. Grown by
           replacement, written under the lock, and read without it. Emptied
           once the device is Stopped. *)
   mutable words : int; [@atomic]

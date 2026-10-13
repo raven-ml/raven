@@ -211,15 +211,17 @@ let test_unknown () =
   collect d;
   equal int 1 (count "free" p)
 
-(* A wait checks the loss after its value: a reached value of a lost device
-   raises. *)
+(* A wait for a point its device reached before its loss returns, and a wait
+   for one the loss dropped raises. *)
 let test_reached () =
   let d, p = P.open_ "loss:reached" in
   let pt = submit (empty d) in
   Rig.Point.wait pt;
+  let dropped = submit (empty d) in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
-  raises_match (lost d) (fun () -> Rig.Point.wait pt)
+  Rig.Point.wait pt;
+  raises_match (lost d) (fun () -> Rig.Point.wait dropped)
 
 (* Two domains sleep on a device that faults: each raises its Lost, and the
    device is lost and stopped once. *)
@@ -252,6 +254,7 @@ let test_facts transport () =
       (if transport then "loss:facts-transport" else "loss:facts")
   in
   Rig.set_budget d 4096;
+  let base = Rig.submitted d in
   ignore (submit (empty d));
   ignore (submit (empty d));
   ignore (P.run p);
@@ -262,8 +265,8 @@ let test_facts transport () =
   equal string "polled" (Rig.arch d);
   equal int 4096 (Rig.budget d);
   is_some (Rig.capability d P.capability_key);
-  equal int 3 (Rig.submitted d);
-  equal int 2 (Rig.signaled d);
+  equal int (base + 3) (Rig.submitted d);
+  equal int (base + 2) (Rig.signaled d);
   equal (option string) (Some "the engine hung") (Rig.lost d)
 
 let test_printed () =
@@ -461,11 +464,14 @@ let test_two_closes () =
 (* A closed device's name opens a new device. *)
 let test_close_reopen () =
   let d, _ = P.open_ "loss:reopen" in
+  ignore (submit (empty d));
   Rig.close d;
   let d', _ = P.open_ "loss:reopen" in
   equal bool false (Rig.equal d d');
   equal (option string) None (Rig.lost d');
-  equal int 1 (Rig.Point.value (submit (empty d')))
+  equal ~msg:"its timeline goes on from the closed device's" int
+    (Rig.submitted d) (Rig.submitted d');
+  equal int (Rig.submitted d + 1) (Rig.Point.value (submit (empty d')))
 
 (* A closed device's memory and images that values reach after the close
    return to the driver, each once, at the first of [d]'s calls [returns] makes
@@ -749,7 +755,7 @@ let tests =
         test "a submit waiting for a lost device's unreached value raises"
           test_waits_unreached;
         test "an Unknown answer keeps memory until the word drains" test_unknown;
-        test "a wait on a lost device raises once its value is reached"
+        test "a wait for a lost device's point raises iff the loss dropped it"
           test_reached;
         test "a fault two domains' sleeps find loses the device once"
           test_two_sleeps;

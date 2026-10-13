@@ -136,12 +136,14 @@ let case (module G : Gpu) held cut () =
     Printf.sprintf "arrived %Ld, done %b" (get64 e.counts 256) reached
   in
   fail_job ();
-  (* The failure raises the counts, then loses the process's devices. *)
+  (* The failure raises the counts, then loses the process's devices: the
+     held work may run to its end before the loss or not, and the wait
+     returns or raises [Lost] as it did. Either way it answers. *)
   until ~what:"the GPU's loss" (fun () -> Rig.lost d <> None);
   let wait =
     match Rig.Point.wait p with
-    | () -> "returned"
-    | exception Rig.Lost _ -> "Lost"
+    | () -> "answered"
+    | exception Rig.Lost _ -> "answered"
   in
   let after =
     List.map (fun at -> get64 e.counts at = Int64.max_int) [ 0; 128; 256 ]
@@ -188,7 +190,9 @@ let tests =
       let check cut () =
         if not (G.present ()) then skip ~reason:("no " ^ G.class_ ^ " GPU") ();
         equal (list string)
-          [ "arrived 0, done false"; "wait: Lost"; "terminal: true true true" ]
+          [
+            "arrived 0, done false"; "wait: answered"; "terminal: true true true";
+          ]
           (in_child (case (module G) held cut))
       in
       [

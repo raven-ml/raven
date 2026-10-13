@@ -425,6 +425,30 @@ let test_of_io () =
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       equal bool false (Rig.Claim.exclusive c b))
 
+(* A closed io device makes no buffer of a region, also once a later device
+   took its slot and its record may be gone. A memory device's last value,
+   which the io device's slot keeps and the Polled device after it starts
+   from, shows that the slot passed from one to the next. *)
+let test_of_io_closed () =
+  let m = Rig.memory_device "io:before-closed" in
+  let p =
+    Rig.submit (Rig.Submission.make m [||]) ~run:(Rig.Submission.Run.make ())
+      ~buffers:[||]
+  in
+  Rig.Point.wait p;
+  Rig.close m;
+  Rig.free_cache m;
+  let io, t = open_pages () in
+  let r = Option.get (Pages.alloc t page_bytes) in
+  Rig.close io;
+  Rig.free_cache io;
+  let later, _ = P.open_ "io:after-closed" in
+  equal ~msg:"the slot passed on" int (Rig.Point.value p) (Rig.submitted later);
+  raises_match (lost io) (fun () ->
+      B.of_io io Pages.region_key r ~access:Read_write page_bytes);
+  Gc.full_major ();
+  Rig.close later
+
 (* Io memory has no address or object of a driver, and loads no code. *)
 let test_io_refusals () =
   let io, _ = open_pages () in
@@ -603,6 +627,7 @@ let tests =
           test_faults;
         test "a region an io library made is a buffer of its device alone"
           test_of_io;
+        test "a closed io device makes no buffer" test_of_io_closed;
         test "io memory has no driver address or object and loads no code"
           test_io_refusals;
         test "a copy into io memory keeps its buffers until written"

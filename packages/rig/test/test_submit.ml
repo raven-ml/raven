@@ -262,14 +262,18 @@ let ends_law cases =
       end)
     cases
 
+let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
+
 let test_values () =
   let d = memory "submit:values" in
+  let base = Rig.submitted d in
   let s = empty d and run = Sub.Run.make () in
   let values = List.init 5 (fun _ -> Rig.Point.value (submit ~run s ~buffers:[||])) in
-  equal (list int) [ 1; 2; 3; 4; 5 ] values;
-  equal int 5 (Rig.submitted d);
-  equal int 5 (Rig.signaled d);
-  equal bool true (Rig.equal d (Rig.Point.device (submit ~run s ~buffers:[||])))
+  equal (list int) (List.init 5 (fun i -> base + i + 1)) values;
+  equal int (base + 5) (Rig.submitted d);
+  equal int (base + 5) (Rig.signaled d);
+  equal (option device) (Some d)
+    (Rig.Point.device (submit ~run s ~buffers:[||]))
 
 let test_fill () =
   let d = memory "submit:fill" in
@@ -286,11 +290,12 @@ let test_fill () =
 (* Polled runs nothing until a wait reaches its sleep. *)
 let test_polled () =
   let d, p = P.open_ "submit:polled" in
+  let base = Rig.submitted d in
   let s = empty d and run = Sub.Run.make () in
   let a = submit ~run s ~buffers:[||] in
   let b = submit ~run s ~buffers:[||] in
   equal int 2 (P.queued p);
-  equal int 0 (Rig.signaled d);
+  equal int base (Rig.signaled d);
   Rig.Point.wait b;
   equal int 0 (P.queued p);
   equal bool true (Rig.Point.value a < Rig.Point.value b)
@@ -521,6 +526,7 @@ let test_overlapping_copy () =
    submission waits for none of its points. *)
 let test_cleared_on_raise () =
   let d = memory "submit:cleared" in
+  let base = Rig.submitted d in
   let producer, pp = P.open_ "submit:cleared-producer" in
   let point = submit (empty producer) in
   P.fail pp;
@@ -530,23 +536,25 @@ let test_cleared_on_raise () =
   raises_match
     (function Rig.Lost _ -> true | _ -> false)
     (fun () -> submit ~run s ~buffers:[| b |] ~waits:[| point |]);
-  equal int 1 (Rig.Point.value (submit ~run s ~buffers:[| b |]))
+  equal int (base + 1) (Rig.Point.value (submit ~run s ~buffers:[| b |]))
 
 (* A run's buffer whose memory was consumed through another buffer refuses the
    submit. *)
 let test_dead_slot () =
   let d = memory "submit:dead-slot" in
+  let base = Rig.submitted d in
   let b = B.create Rig.host 8 in
   let s = empty ~uses:[| Sub.read |] d and borrowed = on d b in
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       ignore (Rig.Claim.consume c ~why:"donated" b));
   raises_match Exn.invalid_arg (fun () -> submit s ~buffers:[| borrowed |]);
-  equal int 0 (Rig.submitted d)
+  equal int base (Rig.submitted d)
 
 (* A submission checks the buffers it was made with: a part's buffer that died
    refuses the submit after the caller's parts array changed. *)
 let test_parts_changed () =
   let d = memory "submit:parts-changed" in
+  let base = Rig.submitted d in
   let a = B.create d 8 and b = B.create d 8 and dst = B.create d 8 in
   let copy src =
     Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
@@ -557,7 +565,7 @@ let test_parts_changed () =
   Rig.Claim.with_ ~read:[] ~donate:[ a ] (fun c ->
       ignore (Rig.Claim.consume c ~why:"donated" a));
   raises_match Exn.invalid_arg (fun () -> submit s);
-  equal int 0 (Rig.submitted d)
+  equal int base (Rig.submitted d)
 
 (* A submission keeps its parts' buffers after the caller's array changes. *)
 let test_parts_kept () =
@@ -864,13 +872,14 @@ let test_most_parts () =
 (* A full queue answers Later: the submit waits for one more value. *)
 let test_room () =
   let d, p = P.open_ ~capacity:1 "submit:room" in
+  let base = Rig.submitted d in
   let s = Sub.make d [| idle |] in
   let run = Sub.Run.make () in
   Sub.Run.groups run (Sub.block s 0) 0 0 0;
   ignore (submit ~run s ~buffers:[||]);
   ignore (submit ~run s ~buffers:[||]);
   equal int 1 (P.queued p);
-  equal int 1 (Rig.signaled d)
+  equal int (base + 1) (Rig.signaled d)
 
 (* Runs *)
 
@@ -879,6 +888,7 @@ let test_room () =
 let test_run_beside_wait () =
   let producer, pp = P.open_ "submit:beside-producer" in
   let d, p = P.open_ "submit:beside" in
+  let base = Rig.submitted d in
   let image =
     require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
   in
@@ -906,10 +916,10 @@ let test_run_beside_wait () =
       finished := Some (Domain.join waiting))
     (fun () ->
       Support.await "a sleep at the gate" (fun () -> P.sleepers pp = 1);
-      equal ~msg:"the submit beside the wait" int 1
+      equal ~msg:"the submit beside the wait" int (base + 1)
         (Rig.Point.value (submit ~run:second s ~buffers:[||])));
   let finished = Option.get !finished in
-  equal ~msg:"the waiting submit" int 2 (Rig.Point.value finished);
+  equal ~msg:"the waiting submit" int (base + 2) (Rig.Point.value finished);
   Rig.Point.wait finished;
   equal ~msg:"each launch reads its run's parameter" (list int) [ 42; 41 ]
     (List.map
@@ -922,6 +932,7 @@ let test_run_beside_wait () =
 let test_run_reentrant () =
   let producer, pp = P.open_ "submit:reentrant-producer" in
   let d, _ = P.open_ "submit:reentrant" in
+  let base = Rig.submitted d in
   let s = empty d and point = submit (empty producer) in
   let held = Sub.Run.make () in
   let inner = ref None and refused = ref None in
@@ -940,8 +951,8 @@ let test_run_reentrant () =
       ~finally:(fun () -> Sys.set_signal Sys.sigint before)
       (fun () -> submit ~run:held s ~waits:[| point |] ~buffers:[||])
   in
-  equal ~msg:"the submit inside the wait" (option int) (Some 1) !inner;
-  equal ~msg:"the waiting submit" int 2 (Rig.Point.value outer);
+  equal ~msg:"the submit inside the wait" (option int) (Some (base + 1)) !inner;
+  equal ~msg:"the waiting submit" int (base + 2) (Rig.Point.value outer);
   is_some ~msg:"a submit with the held run raised" !refused;
   contains ~msg:"its reason" ~sub:"another submit is using the run"
     (Option.get !refused)

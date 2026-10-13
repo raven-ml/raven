@@ -414,6 +414,26 @@ let test_dead_claims () =
   claim_read live;
   claim_release live
 
+(* A buffer of a closed device answers that device's loss, also once a later
+   device holds its slot: the C claim reads the slot as the device's only while
+   the slot's line names it. The later device's first value shows that it took
+   the slot. *)
+let test_closed_slot_claim () =
+  let d, _ = P.open_ "claim:closed" in
+  let p =
+    Rig.submit (Rig.Submission.make d [||]) ~run:(Rig.Submission.Run.make ())
+      ~buffers:[||]
+  in
+  Rig.Point.wait p;
+  let b = B.create d 0 in
+  Rig.close d;
+  Rig.free_cache d;
+  let later, _ = P.open_ "claim:later" in
+  equal ~msg:"the later device took the closed one's slot" int
+    (Rig.Point.value p) (Rig.submitted later);
+  equal ~msg:"the C claim" answer R.Lost (R.claim b Rig.Read);
+  Rig.close later
+
 (* Sharing a dead buffer, or memory claims hold exclusive, raises and changes
    nothing. The buffer a consumption gives is shared as any other. *)
 let test_share_refused () =
@@ -1391,6 +1411,8 @@ let tests =
           test_consume_refusals;
         test "a dead buffer refuses claims and accepts a release"
           test_dead_claims;
+        test "the C claim of a closed device's buffer answers its loss"
+          test_closed_slot_claim;
         test "sharing a dead buffer or memory held exclusive is refused"
           test_share_refused;
         test "a claim whose with_ returned holds nothing" test_stale_returned;

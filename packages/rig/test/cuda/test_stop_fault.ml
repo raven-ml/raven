@@ -47,6 +47,7 @@ let fault_after_stop () =
     S.close t;
     skip ~reason:"a display watchdog ends long kernels" ()
   end;
+  let base = Rig.submitted t.d in
   let flag = require_some (C.alloc t.g Pinned 8) in
   H.set64 (host flag) 0;
   let spin = S.launch t "spin" (address flag) (10 * second) in
@@ -55,7 +56,7 @@ let fault_after_stop () =
   (match S.submit_work t [ spin; fault; fails ] with
   | _ -> fail "the failed fill lost no device"
   | exception Rig.Lost _ -> ());
-  equal ~msg:"the word at the stop" int 0 (C.signaled t.g);
+  equal ~msg:"the word at the stop" int base (C.signaled t.g);
   H.set64 (host flag) 1;
   let reopened = reopen () in
   equal ~msg:"the word, raised by the reopen" int (Rig.submitted t.d)

@@ -47,11 +47,22 @@ let pp ppf (d : t) = Format.pp_print_string ppf d.name
 module Point = struct
   type t = int
 
-  let device p = Dev.of_index (Point.index p)
   let value = Point.value
-  let wait p = Dev.wait_value (device p) (value p)
-  let reached p = Dev.signaled (device p) >= value p
-  let pp ppf p = Format.fprintf ppf "%s:%d" (device p).name (value p)
+
+  let device p =
+    let d = Dev.of_index (Point.index p) in
+    if Dev.owns d p then Some d else None
+
+  let wait p = Dev.wait_point 0 true p
+
+  let reached p =
+    let d = Dev.of_index (Point.index p) in
+    (not (Dev.owns d p)) || Dev.word d >= value p
+
+  let pp ppf p =
+    match device p with
+    | Some d -> Format.fprintf ppf "%s:%d" d.name (value p)
+    | None -> Format.fprintf ppf "ended:%d" (value p)
 end
 
 let submitted = Dev.submitted

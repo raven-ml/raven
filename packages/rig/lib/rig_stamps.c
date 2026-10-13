@@ -79,46 +79,83 @@ static _Atomic uint64_t *write_word(_Atomic uint64_t *use) {
   return (_Atomic uint64_t *)((char *)use + at);
 }
 
-/* Whether the word [p] of another device's work is spent: that device's stop
-   was claimed and its point is done or was never raised. A submit checks
-   that its device is not lost under the device's mutex, its turn, before
-   it raises the words it reserved, and a claimed stop means a lost device,
-   so no raise stores to the word again. Indices are never reused, so no
-   later device reserves it by its index. A point a loss dropped is not
-   spent: it stays for good, so an access still raises its loss. */
-static int spent(uint64_t p) {
-  int s = atomic_load_explicit(&rig_lines[RIG_INDEX(p)].state,
-                               memory_order_acquire);
-  if (s != RIG_STOPPING && s != RIG_ENDED) return 0;
-  return RIG_VALUE(p) == 0 || rig_point_done(p);
+/* Whether [p] is a point of an earlier device of its slot: at most the
+   value [base] the slot's device started after, read from its slot's line,
+   never its device. */
+static int below(uint64_t p, uint64_t base) {
+  return RIG_VALUE(p) != 0 && RIG_VALUE(p) <= base;
 }
 
-/* The word of the device [index] among the use words of [s], or its keep
-   words if [keep], or NULL. */
-static _Atomic uint64_t *own_word(struct rig_stamps *s, int index, int keep) {
+/* Whether [p] is the word of the device of slot [index] that started after
+   [base]: its reservation, which holds no point, or a point above [base].
+   An earlier device's point of the slot is another device's. */
+static int is_own(uint64_t p, int index, uint64_t base) {
+  return p != 0 && RIG_INDEX(p) == index &&
+         (RIG_VALUE(p) == 0 || RIG_VALUE(p) > base);
+}
+
+/* The word of the device of slot [index] that started after [base] among
+   the use words of [s], or its keep words if [keep], or NULL. */
+static _Atomic uint64_t *own_word(struct rig_stamps *s, int index,
+                                  uint64_t base, int keep) {
   for (; s != NULL; s = atomic_load(&s->next)) {
     _Atomic uint64_t *w = words(s, keep);
-    for (int i = 0; i < RIG_USES; i++) {
-      uint64_t p = atomic_load(&w[i]);
-      if (p != 0 && RIG_INDEX(p) == index) return &w[i];
-    }
+    for (int i = 0; i < RIG_USES; i++)
+      if (is_own(atomic_load(&w[i]), index, base)) return &w[i];
   }
   return NULL;
 }
 
-/* The use word, or the keep word if [keep], of the device [index] in the
-   stamps [s]: its existing one, or the first that is empty or spent,
-   claimed with the point (index, 0), in a chunk added if none is. A
-   memory's words thus number the devices whose work on it may still
-   matter, and a walk's cost follows them. A raise through it allocates
-   nothing. Were indices reused, each return on a match of [index], the
-   first word's in [reserve] included, would take a stale word by
-   compare-and-set. */
+/* Whether another device's reservation may take the word [w] of the stamps
+   [s], which holds [p]:
+   - an empty word;
+   - a point of a device whose stop was claimed, done: a submit checks that
+     its device is not lost under its turn before it raises, so no raise
+     stores to the word again;
+   - an earlier device's point of its slot that is done;
+   - one a loss dropped: a keep word, whose point is settled, or a use word
+     once its point, and its write word's if a loss dropped it too, are
+     folded into [s]'s head. The fold comes before the take, so a walk that
+     misses the point in the word finds it in the head. The first use word
+     is not folded while the second is empty, so that a folded point
+     implies a second use word: memory whose first word is its device's and
+     second is empty has nothing folded.
+   A reservation that holds no point is never taken: only the next device
+   of its slot adopts it, under that device's turn. */
+static int takeable(struct rig_stamps *s, _Atomic uint64_t *w, uint64_t p,
+                    int keep) {
+  if (p == 0) return 1;
+  if (RIG_VALUE(p) == 0) return 0;
+  if (!below(p, rig_line_base(RIG_INDEX(p)))) {
+    int st = atomic_load_explicit(&rig_lines[RIG_INDEX(p)].state,
+                                  memory_order_acquire);
+    return (st == RIG_STOPPING || st == RIG_ENDED) && rig_point_done(p);
+  }
+  if (!rig_point_lost(p) || keep) return 1;
+  if (w == &s->use[0] &&
+      atomic_load_explicit(&s->use[1], memory_order_acquire) == 0)
+    return 0;
+  uint64_t none = 0;
+  atomic_compare_exchange_strong(&s->lost_use, &none, p);
+  uint64_t wp = atomic_load(write_word(w));
+  none = 0;
+  if (below(wp, rig_line_base(RIG_INDEX(wp))) && rig_point_lost(wp))
+    atomic_compare_exchange_strong(&s->lost_write, &none, wp);
+  return 1;
+}
+
+/* The use word, or the keep word if [keep], of the device of slot [index] that
+   started after [base] in the stamps [s]: its existing one, or the first
+   another may take ([takeable]), claimed with the point (index, 0), in a chunk
+   added if none is. A memory's words thus number the devices whose work on it
+   may still matter, and a walk's cost follows them. A raise through it
+   allocates nothing. A word is taken only by compare-and-set, so a reservation
+   that races a reclaim of the same word takes it once. */
 static _Atomic uint64_t *reserve_any(struct rig_stamps *s, int index,
-                                     int keep) {
+                                     uint64_t base, int keep) {
   uint64_t mine = RIG_POINT(index, 0);
   for (;;) {
-    _Atomic uint64_t *own = own_word(s, index, keep);
+    _Atomic uint64_t *own = own_word(s, index, base, keep);
     if (own != NULL) return own;
     _Atomic uint64_t *free_ = NULL;
     uint64_t seen = 0;
@@ -128,7 +165,7 @@ static _Atomic uint64_t *reserve_any(struct rig_stamps *s, int index,
       _Atomic uint64_t *w = words(c, keep);
       for (int i = 0; i < RIG_USES && free_ == NULL; i++) {
         uint64_t p = atomic_load(&w[i]);
-        if (p == 0 || spent(p)) {
+        if (takeable(s, &w[i], p, keep)) {
           free_ = &w[i];
           seen = p;
         }
@@ -146,10 +183,11 @@ static _Atomic uint64_t *reserve_any(struct rig_stamps *s, int index,
 
 /* [reserve_any], first trying the first word, which a memory one device
    uses holds. */
-static inline _Atomic uint64_t *reserve(struct rig_stamps *s, int index) {
+static inline _Atomic uint64_t *reserve(struct rig_stamps *s, int index,
+                                        uint64_t base) {
   uint64_t p = atomic_load_explicit(&s->use[0], memory_order_relaxed);
-  if (p != 0 && RIG_INDEX(p) == index) return &s->use[0];
-  return reserve_any(s, index, 0);
+  if (is_own(p, index, base)) return &s->use[0];
+  return reserve_any(s, index, base, 0);
 }
 
 /* The point the use word [w] holds: none while it holds the (index, 0) its
@@ -198,6 +236,8 @@ value caml_rig_stamps_next(value v_c) {
    writes these stamps, so the stores race with nothing. */
 value caml_rig_stamps_clear(value v_s) {
   struct rig_stamps *s = Stamps_val(v_s);
+  atomic_store(&s->lost_use, 0);
+  atomic_store(&s->lost_write, 0);
   for (; s != NULL; s = atomic_load(&s->next))
     for (int i = 0; i < RIG_USES; i++) {
       atomic_store(&s->use[i], 0);
@@ -630,15 +670,35 @@ static void grow(void **a, int *c, int want, size_t size) {
   *c = n;
 }
 
-/* Keeps the greatest point per device, leaving out [own]'s: its own order
-   covers its work. */
-static void add_point(struct rig_run *r, int own, uint64_t p) {
-  if (p == 0 || RIG_INDEX(p) == own) return;
-  for (int i = 0; i < r->npoints; i++)
-    if (RIG_INDEX(r->points[i]) == RIG_INDEX(p)) {
-      if (r->points[i] < p) r->points[i] = p;
-      return;
+/* Keeps the greatest point per device, leaving out the points of [own], the
+   device of slot [own] that started after [own_base]: its own order covers
+   its work. Two points of one slot are judged by its line only when they
+   differ: an earlier device's point that is done is left out, and one a
+   loss dropped is kept apart, since a later device's points of the slot
+   follow no earlier one's, and the submit raises its loss. The line is read
+   after the stamp word that held the point; a base read too early takes it
+   for the slot's device's, whose points lie above every earlier one's,
+   which only waits for more. Inlined into each walk of a submit's
+   buffers. */
+static inline __attribute__((always_inline)) void
+add_point(struct rig_run *r, int own, uint64_t own_base, uint64_t p) {
+  if (p == 0) return;
+  if (RIG_INDEX(p) == own && RIG_VALUE(p) > own_base) return;
+  uint64_t base = 0;
+  int based = 0;
+  for (int i = 0; i < r->npoints; i++) {
+    uint64_t q = r->points[i];
+    if (q == p) return;
+    if (RIG_INDEX(q) != RIG_INDEX(p)) continue;
+    if (!based) {
+      base = rig_line_base(RIG_INDEX(p));
+      based = 1;
+      if (below(p, base) && rig_point_done(p)) return;
     }
+    if (below(p, base) || below(q, base)) continue;
+    if (q < p) r->points[i] = p;
+    return;
+  }
   grow((void **)&r->points, &r->cpoints, r->npoints + 1, sizeof *r->points);
   r->points[r->npoints++] = p;
 }
@@ -649,32 +709,41 @@ static void add_point(struct rig_run *r, int own, uint64_t p) {
    for an unordered use. The walk is rig_stamps_followed's, and it finds
    [own]'s use word on the way, before that word's write word is read: its
    device order covers its own work, and the write word beside its use word
-   holds its own write or a spent device's done point. */
-static _Atomic uint64_t *add_memory(struct rig_run *r, int own,
+   holds its own write or a spent device's done point. The points folded
+   into the head come after the words. [own] is the device of slot [own]
+   that started after [base]. */
+static _Atomic uint64_t *add_memory(struct rig_run *r, int own, uint64_t base,
                                     struct rig_stamps *st, enum rig_use u) {
-  if (u == RIG_USE_UNORDERED) return reserve_any(st, own, 1);
+  if (u == RIG_USE_UNORDERED) return reserve_any(st, own, base, 1);
+  int every = u == RIG_USE_WRITE;
   /* Memory that only [own] uses, the common case, has nothing to follow:
-     its first use word is [own]'s and its second empty. */
+     its first use word is [own]'s and its second empty, so nothing is
+     folded ([takeable]). */
   uint64_t first = atomic_load_explicit(&st->use[0], memory_order_acquire);
-  if (first != 0 && RIG_INDEX(first) == own &&
+  if (is_own(first, own, base) &&
       atomic_load_explicit(&st->use[1], memory_order_acquire) == 0)
     return &st->use[0];
-  int every = u == RIG_USE_WRITE;
   _Atomic uint64_t *mine = NULL;
   for (struct rig_stamps *c = st; c != NULL;
-       c = atomic_load_explicit(&c->next, memory_order_acquire))
-    for (int i = 0; i < RIG_USES; i++) {
+       c = atomic_load_explicit(&c->next, memory_order_acquire)) {
+    int end = 0;
+    for (int i = 0; i < RIG_USES && !end; i++) {
       uint64_t w = atomic_load_explicit(&c->use[i], memory_order_acquire);
-      if (w == 0) return mine != NULL ? mine : reserve_any(st, own, 0);
-      if (RIG_INDEX(w) == own) {
+      if (w == 0) end = 1;
+      else if (is_own(w, own, base)) {
         if (mine == NULL) mine = &c->use[i];
-        continue;
+      } else {
+        uint64_t p = every ? w
+                           : atomic_load_explicit(&c->write[i],
+                                                  memory_order_acquire);
+        if (RIG_VALUE(p) != 0) add_point(r, own, base, p);
       }
-      uint64_t p =
-          every ? w : atomic_load_explicit(&c->write[i], memory_order_acquire);
-      if (RIG_VALUE(p) != 0) add_point(r, own, p);
     }
-  return mine != NULL ? mine : reserve_any(st, own, 0);
+    if (end) break;
+  }
+  uint64_t folded = rig_stamps_folded(st, every);
+  if (folded != 0) add_point(r, own, base, folded);
+  return mine != NULL ? mine : reserve_any(st, own, base, 0);
 }
 
 /* Writes each entry ref's value into the run [v_r]'s blocks, which the
@@ -689,6 +758,7 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   const struct rig_sub *s = Sub_val(v_s);
   struct rig_run *r = Run_val(v_r);
   int own = s->dev->index, nslots = s->nslots;
+  uint64_t base = s->dev->base;
   for (int k = 0; k < s->nrefs; k++)
     if (r->addresses[s->refs[k].slot] == UNADDRESSED)
       caml_invalid_argument(
@@ -700,13 +770,14 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   r->npoints = r->nwaits = 0;
   r->hold = Stamps_val(v_hold);
   for (int k = 0; k < s->nfixed; k++)
-    r->fixed[k] = add_memory(r, own, s->fixed[k].stamps, s->fixed[k].use);
+    r->fixed[k] =
+        add_memory(r, own, base, s->fixed[k].stamps, s->fixed[k].use);
   for (int k = 0; k < nslots; k++)
-    r->slots[k].use =
-        add_memory(r, own, r->slots[k].stamps, (enum rig_use)s->uses[k]);
+    r->slots[k].use = add_memory(r, own, base, r->slots[k].stamps,
+                                 (enum rig_use)s->uses[k]);
   for (mlsize_t k = 0; k < Wosize_val(v_waits); k++)
-    add_point(r, own, Unsigned_long_val(Field(v_waits, k)));
-  if (r->hold != NULL) r->hold_use = reserve(r->hold, own);
+    add_point(r, own, base, Unsigned_long_val(Field(v_waits, k)));
+  if (r->hold != NULL) r->hold_use = reserve(r->hold, own, base);
   return Val_int(r->npoints);
 }
 
@@ -770,7 +841,7 @@ value caml_rig_run_no_room_at(value v_r) {
 }
 
 value caml_rig_run_producer(value v_r) {
-  return Val_int(Run_val(v_r)->producer);
+  return Val_long((intnat)Run_val(v_r)->producer);
 }
 
 /* Blocks */

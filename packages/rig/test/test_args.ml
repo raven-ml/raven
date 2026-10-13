@@ -107,6 +107,7 @@ let test_refs () =
 
 let test_refusals () =
   let d, _ = P.open_ "args:refusals" in
+  let base = Rig.submitted d in
   let make params refs =
     Sub.make d
       [| fill ~params ~refs Support.noop |]
@@ -136,7 +137,7 @@ let test_refusals () =
       submit s (Run.make ()) [||]);
   raises_match ~msg:"too many buffers" Exn.invalid_arg (fun () ->
       submit s (Run.make ()) [| out; out |]);
-  equal ~msg:"a fresh run takes the blocks" int 1
+  equal ~msg:"a fresh run takes the blocks" int (base + 1)
     (Rig.Point.value (submit s (Run.make ()) [| out |]));
   let run = Run.make () in
   store run (Sub.block other 0) ~offset:0 1;
@@ -145,6 +146,7 @@ let test_refusals () =
 
 let test_handle_only () =
   let d, _ = P.open_ ~addresses:false "args:handle-only" in
+  let base = Rig.submitted d in
   let out = B.create d 8 in
   let s =
     Sub.make
@@ -156,7 +158,7 @@ let test_handle_only () =
   let run = Run.make () in
   store run (Sub.block s 0) ~offset:0 1;
   raises_match Exn.invalid_arg (fun () -> submit s run [| out |]);
-  equal int 0 (Rig.submitted d)
+  equal int base (Rig.submitted d)
 
 let test_address () =
   let d, _ = P.open_ "args:address" in

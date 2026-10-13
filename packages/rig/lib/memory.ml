@@ -19,6 +19,12 @@ external stamps_followed : int -> int -> bool -> int
 
 external stamps_keep : int -> int -> int = "caml_rig_stamps_keep" [@@noalloc]
 external stamps_next : int -> int = "caml_rig_stamps_next" [@@noalloc]
+
+(* The point folded into the stamps' head that an access follows, its uses'
+   if [every], 0 for none: a lost point of an earlier device of a slot, which
+   a walk reads after the words. *)
+external stamps_folded : int -> bool -> int = "caml_rig_stamps_folded"
+[@@noalloc]
 external stamps_clear : int -> unit = "caml_rig_stamps_clear" [@@noalloc]
 external stamps_uses : unit -> int = "caml_rig_stamps_uses"
 
@@ -41,7 +47,10 @@ let rec iter_from f c i =
         iter_from f c (i + 1)
       end
 
-let iter_points f st = iter_from f st 0
+let iter_points f st =
+  iter_from f st 0;
+  let p = stamps_folded st true in
+  if p <> 0 then f p
 
 (* [m]'s root: the owner's record for a borrow, [m] for the owner's, whose root
    field holds [itself] (below), the one record whose root is itself. *)
@@ -55,23 +64,24 @@ let[@inline] root m =
    an argument of every step, so it stays reachable through every wait and
    every read. *)
 let rec wait_from m every c i =
-  if c = 0 then ignore (Sys.opaque_identity m)
-  else if i = uses then wait_from m every (stamps_next c) 0
+  if c <> 0 && i = uses then wait_from m every (stamps_next c) 0
   else
-    let p = stamps_followed c i every in
-    if p = ended then ignore (Sys.opaque_identity m)
-    else begin
-      if p <> 0 then Dev.wait_point m every p;
+    let p = if c = 0 then ended else stamps_followed c i every in
+    if p <> ended then begin
+      if p <> 0 then Dev.wait_point m.entry.stamps every p;
       wait_from m every c (i + 1)
     end
 
-let wait_points m =
-  let m = root m in
-  wait_from m true m.entry.stamps 0
+(* The walk, then the point folded into the head. *)
+let wait_all m every =
+  let st = m.entry.stamps in
+  wait_from m every st 0;
+  let p = stamps_folded st every in
+  if p <> 0 then Dev.wait_point m.entry.stamps every p;
+  ignore (Sys.opaque_identity m)
 
-let wait_write m =
-  let m = root m in
-  wait_from m false m.entry.stamps 0
+let wait_points m = wait_all (root m) true
+let wait_write m = wait_all (root m) false
 
 (* Visit every point even after a refusal: reading a later transport word may
    discover a loss and stop its device. The walk carries no allocated state. *)
@@ -121,12 +131,21 @@ let reached st = for_all_points Dev.settled st && all_kept Dev.settled st 0
 
 (* Tokens and release lists *)
 
+(* A token on a release list, or [no_token] if the list is closed: its
+   device's slot was freed, or is being freed. *)
 external token : int -> released -> int -> int -> int -> token
   = "caml_rig_token"
 
 external no_token : unit -> token = "%identity"
-external released : int -> released list = "caml_rig_released"
+
+(* The records a list holds, their number stored into the ref in the same
+   call. *)
+external released : int -> int ref -> released list = "caml_rig_released"
 external released_any : int -> bool = "caml_rig_released_any" [@@noalloc]
+
+(* Notes [n] records of a release list routed: a device's slot frees once
+   every token of its list is ({!Dev.free_slot}). *)
+external routed : int -> int -> unit = "caml_rig_routed" [@@noalloc]
 external page_size : unit -> int = "caml_rig_page_size"
 
 let no_token = no_token ()
@@ -497,12 +516,19 @@ let holds_lock = Lock.create ()
 let holds : hold_release list ref = ref []
 
 (* A hold's release is due once each of its points is reached on a live device,
-   and each of its lost devices is Stopped. *)
+   and each of its lost devices is Stopped. A point of a device that gave its
+   slot to a later one is settled. *)
 let hold_due (Hold_release { stamps = st; _ }) =
   for_all_points
     (fun p ->
       let d = Dev.of_index (Point.index p) in
-      if Dev.is_lost d then Dev.stopped d else Dev.settled p)
+      (not (Dev.owns d p))
+      ||
+      if Dev.is_lost d then Dev.stopped d
+      else
+        match Dev.word d >= Point.value p with
+        | r -> r
+        | exception Dev.Lost _ -> false)
     st
 
 (* A hold made before a fork is forgotten in the child: its release would call
@@ -769,10 +795,21 @@ let rec run_all d = function
       run_pending d p;
       run_all d l
 
-(* Drains [d]'s own list and what became due on it. *)
+(* Drains [d]'s own list and what became due on it. A record is routed before
+   it is counted, so [d]'s slot stays until the memory it routed is given
+   back. The handler is set before the records are taken, which counts them
+   in the same call, so a routing that raises, asynchronously too, counts
+   them. *)
 let drain_own d =
   let l = d.live in
-  if released_any l.release then route_all d (released l.release);
+  if released_any l.release then begin
+    let n = ref 0 in
+    match route_all d (released l.release n) with
+    | () -> routed l.release !n
+    | exception e ->
+        routed l.release !n;
+        raise e
+  end;
   free_all (due d);
   run_all d (due_pending d)
 
@@ -789,12 +826,16 @@ let kept d =
   let l = d.live in
   l.cached > 0 || l.word_maps != [] || Dev.protect d maps_any l
 
-(* An orphaned device's objects are forgotten: nothing of it drains. *)
+(* An orphaned device's objects are forgotten: nothing of it drains. A
+   device whose stop returned frees its slot once its last memory went
+   back. *)
 let drain d =
   if not (Dev.orphaned d) then begin
     if not (idle d.live) || (Dev.is_lost d && kept d) then drain_own d;
-    if released_any holds_list then List.iter (route d) (released holds_list);
-    drain_holds ()
+    if released_any holds_list then
+      List.iter (route d) (released holds_list (ref 0));
+    drain_holds ();
+    if Dev.stop_returned d then ignore (Dev.free_slot d : bool)
   end
 
 let () = Dev.answered := drain
@@ -922,6 +963,8 @@ let drain_all () =
   drain Dev.host;
   Dev.iter (fun d -> if not (busy d) then drain d)
 
+let () = Dev.drain_all := drain_all
+
 (* A round of the ladder for [pool]'s budget: every cached memory on any device
    that counts in it returns once its device's handed work is done, waited for;
    for the host, its kept buffers too. A device whose handed work holds back the
@@ -998,6 +1041,12 @@ let of_entry d e =
   let l = d.live in
   let live = if m.host >= 0 then l.used else -1 in
   m.token <- token l.release (Memory e) e.bytes (room d) live;
+  if m.token == no_token then begin
+    (* A refused token means [d] has stopped: its driver takes [e] back
+       now. *)
+    free_entry e;
+    Dev.raise_lost d
+  end;
   m
 
 (* [new_entry] within the budget memory of [kind] counts in: its room is taken
@@ -1104,8 +1153,13 @@ let make_entry m =
   if m.entry == no_entry then begin
     let d = m.dev in
     let e = entry d (Kept m.keep) m.bytes (stamps_new ()) in
+    let t = token d.live.release (Memory e) 0 max_int (-1) in
+    if t == no_token then begin
+      stamps_unref e.stamps;
+      Dev.raise_lost d
+    end;
     m.entry <- e;
-    m.token <- token d.live.release (Memory e) 0 max_int (-1)
+    m.token <- t
   end
 
 let ensure_entry m = Dev.protect m.dev make_entry m
@@ -1330,10 +1384,15 @@ let prefetch d (m : memory) ~at ~len =
   | _ -> ()
 
 let of_io d r ~access n =
+  if Dev.is_lost d then Dev.raise_lost d;
   drain d;
   let e = entry ~access d (Io_memory { origin = Given; region = r }) n (stamps_new ()) in
   let m = make d n e in
   m.token <- token d.live.release (Memory e) n max_int (-1);
+  if m.token == no_token then begin
+    stamps_unref e.stamps;
+    Dev.raise_lost d
+  end;
   m
 
 let set_device_budget (d, n) = d.budget <- n

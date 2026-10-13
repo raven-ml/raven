@@ -162,20 +162,20 @@ let output_chrome_trace oc events =
     output_string oc "}}"
   in
   let pid d =
-    match Hashtbl.find_opt pids d.index with
+    match Hashtbl.find_opt pids d.opened with
     | Some pid -> pid
     | None ->
         let pid = Hashtbl.length pids + 1 in
-        Hashtbl.add pids d.index pid;
+        Hashtbl.add pids d.opened pid;
         meta ~pid ~tid:0 "process_name" d.name;
         pid
   in
   let tid d pid lane =
-    match Hashtbl.find_opt tids (d.index, lane) with
+    match Hashtbl.find_opt tids (d.opened, lane) with
     | Some tid -> tid
     | None ->
         let tid = Hashtbl.length tids + 1 in
-        Hashtbl.add tids (d.index, lane) tid;
+        Hashtbl.add tids (d.opened, lane) tid;
         meta ~pid ~tid "thread_name" lane;
         tid
   in

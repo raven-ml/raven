@@ -145,10 +145,11 @@ static int64_t now_ms(void) { return (int64_t)(rig_now_ns() / 1000000); }
 
 /* The table of devices
 
-   A device's line and record live at its index for the life of the
-   process, from its publication on. Code that walks the records holds
-   [table_mu], so the fork handler finds the table whole, and holds no
-   runtime lock meanwhile. Code that asks a device by index for its
+   A device's record lives at its index from its publication until its slot
+   is freed, once the device has stopped and nothing of it remains to give
+   back ([caml_rig_free]). A line lives for the process. Code that walks the
+   records holds [table_mu], so the fork handler finds the table whole, and
+   holds no runtime lock meanwhile. Code that asks a point's slot for its
    timeline reads its line. */
 
 struct rig_line rig_lines[RIG_SLOTS];
@@ -196,6 +197,12 @@ static rig_mutex table_mu = SRWLOCK_INIT;
 static rig_mutex table_mu = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
+/* The free slots, taken last freed first, and the next slot no device has
+   taken, under [table_mu]. */
+static int free_slots[RIG_SLOTS];
+static int nfree;
+static int fresh = 1;
+
 /* The published device record of index [i], or NULL. */
 static struct rig_device *device_of(int i) {
   if (i <= 0 || i >= RIG_SLOTS) return NULL;
@@ -233,8 +240,22 @@ static int line_state(struct rig_line *l) {
   return atomic_load_explicit(&l->state, memory_order_acquire);
 }
 
-static uint64_t device_word(struct rig_device *d) { return line_word(d->line); }
-static int state(struct rig_device *d) { return line_state(d->line); }
+/* Whether [d] owns its line: read after the field it guards. */
+static int owner(struct rig_device *d) {
+  return atomic_load_explicit(&d->line->owner, memory_order_acquire) ==
+         d->opened;
+}
+
+static uint64_t device_word(struct rig_device *d) {
+  uint64_t w = line_word(d->line);
+  return owner(d) ? w : d->final;
+}
+
+static int state(struct rig_device *d) {
+  int s = line_state(d->line);
+  return owner(d) ? s : RIG_ENDED;
+}
+
 static int is_lost(struct rig_device *d) { return state(d) != RIG_LIVE; }
 
 /* Whether [d] is lost and its stop has not returned. */
@@ -243,33 +264,67 @@ static int stopping(struct rig_device *d) {
   return s == RIG_LOSING || s == RIG_OWED || s == RIG_STOPPING;
 }
 
+/* The range of the line [l] that holds [v], or NULL: one compare for a
+   value above every range, as every value of the slot's device is. Ranges
+   are disjoint and newest first, the highest. */
+static struct rig_range *range_of(struct rig_line *l, uint64_t v) {
+  if (v > atomic_load_explicit(&l->lost_top, memory_order_acquire)) return NULL;
+  for (struct rig_range *r = atomic_load_explicit(&l->ranges, memory_order_acquire);
+       r != NULL && r->hi >= v; r = r->next)
+    if (v > r->lo) return r;
+  return NULL;
+}
+
 /* The word is read before the state: a word the stop raised shows its
-   loss. An orphaned device's points are never done: its work is the
-   parent's. The point 0 is the host's value 0, which its word holds. */
+   loss. The ranges are read last: a reader that read the line of a later
+   device sees the range its slot's free published before. The point 0 is
+   the host's value 0, which its word holds. */
 int rig_point_done(uint64_t p) {
   struct rig_line *l = line_of(RIG_INDEX(p));
-  if (line_state(l) == RIG_ORPHANED) return 0;
-  uint64_t w = line_word(l);
-  int s = line_state(l);
-  if (s == RIG_LIVE) return w >= RIG_VALUE(p);
-  return s != RIG_ORPHANED &&
-         atomic_load_explicit(&l->reached, memory_order_relaxed) >=
-             RIG_VALUE(p);
+  uint64_t v = RIG_VALUE(p);
+  int done;
+  if (line_state(l) == RIG_ORPHANED)
+    done = v <= atomic_load_explicit(&l->base, memory_order_acquire);
+  else {
+    /* A line becomes orphaned only in a forked child, before any other
+       thread runs. */
+    uint64_t w = line_word(l);
+    done = line_state(l) == RIG_LIVE
+               ? w >= v
+               : atomic_load_explicit(&l->reached, memory_order_acquire) >= v;
+  }
+  return done && range_of(l, v) == NULL;
 }
 
 /* The reached value is stored before the state leaves RIG_LIVE, and never
-   after: a point found lost stays lost. */
+   after, and a range is never removed: a point found lost stays lost. */
 int rig_point_lost(uint64_t p) {
   struct rig_line *l = line_of(RIG_INDEX(p));
+  uint64_t v = RIG_VALUE(p);
   int s = line_state(l);
-  if (s == RIG_LIVE) return 0;
-  return s == RIG_ORPHANED ||
-         atomic_load_explicit(&l->reached, memory_order_relaxed) <
-             RIG_VALUE(p);
+  int lost = s == RIG_LIVE ? 0
+             : s == RIG_ORPHANED
+                 ? v > atomic_load_explicit(&l->base, memory_order_acquire)
+                 : atomic_load_explicit(&l->reached, memory_order_acquire) < v;
+  return lost || range_of(l, v) != NULL;
+}
+
+/* The device whose range of its slot holds the point [v_p]: [Some d] if
+   one does. */
+value caml_rig_range_device(value v_p) {
+  CAMLparam1(v_p);
+  uint64_t p = Unsigned_long_val(v_p);
+  struct rig_range *r = range_of(line_of(RIG_INDEX(p)), RIG_VALUE(p));
+  if (r == NULL) CAMLreturn(Val_none);
+  CAMLreturn(caml_alloc_some(r->device));
 }
 
 value caml_rig_done(value v_p) {
   return Val_bool(rig_point_done(Unsigned_long_val(v_p)));
+}
+
+value caml_rig_lost(value v_p) {
+  return Val_bool(rig_point_lost(Unsigned_long_val(v_p)));
 }
 
 /* Locks */
@@ -344,12 +399,12 @@ static void forked_child(void) {
     if (d == NULL) continue;
     mu_init(d);
     d->turn = d->inside = 0;
-    if (l->io) {
+    if (d->io) {
       if (stopping(d)) atomic_store(&l->state, RIG_OWED);
       owing += line_state(l) == RIG_OWED;
     } else if (i > 0) {
       char *none = NULL;
-      atomic_compare_exchange_strong(&l->lost, &none, forked_why);
+      atomic_compare_exchange_strong(&d->lost, &none, forked_why);
       atomic_store(&l->state, RIG_ORPHANED);
       set_running(i, 0);
     }
@@ -443,17 +498,28 @@ value caml_rig_lock_broadcast(value v_l) {
 
 /* Device records */
 
-/* A published record lives for the process. A record that no open
-   published, as when an exception ended its open, goes with its block. */
+/* A record goes with its block, unless its slot still holds it: a
+   published record stays until its slot is freed, and its block lives as
+   long as rig's table of devices holds it. A record that no open published,
+   as when an exception ended its open, goes with its block. A freed
+   record's tokens have all been routed and its list takes no more, so no
+   token points into it; a record whose list still counts one stays, which
+   leaks it rather than let the token's finaliser write freed memory. */
 static void device_finalize(value v) {
   struct rig_device *d = Device_val(v);
-  if (atomic_load_explicit(&devices[d->index], memory_order_acquire) == d)
+  if (atomic_load_explicit(&devices[d->index], memory_order_acquire) == d ||
+      atomic_load(&d->release.count) != 0)
     return;
 #ifndef _WIN32
   pthread_mutex_destroy(&d->mu);
   pthread_cond_destroy(&d->cv);
   pthread_mutex_destroy(&d->times.mu);
 #endif
+  if (d->own_why) free(atomic_load(&d->lost));
+  for (int i = 0; i < d->times.nchunks; i++) free(d->times.chunks[i]);
+  free(d->times.chunks);
+  free(d->times.free);
+  free(d->record);
   free(d->name);
   free(d);
 }
@@ -468,7 +534,8 @@ static struct custom_operations device_ops = {
    in a new custom block [*v] that names it. The record lives for the
    process once published. Its timeline starts after the value its slot's
    word holds. */
-static struct rig_device *record(value *v, value v_index, value v_name) {
+static struct rig_device *record(value *v, value v_index, value v_name,
+                                 intnat opened) {
   int index = Int_val(v_index);
   struct rig_device *d = calloc(1, sizeof *d);
   char *name = strdup(String_val(v_name));
@@ -481,11 +548,18 @@ static struct rig_device *record(value *v, value v_index, value v_name) {
   d->index = index;
   d->line = line_of(index);
   d->name = name;
+  d->opened = opened;
+  /* The owner comes first, then the base ([struct rig_line]). */
+  struct rig_line *l = d->line;
+  atomic_store_explicit(&l->owner, opened, memory_order_release);
   _Atomic uint64_t *word = slot_word(index);
   uint64_t base = atomic_load_explicit(word, memory_order_acquire);
+  d->base = base;
   atomic_store(&d->committed, base);
-  atomic_store_explicit(&d->line->submitted, base, memory_order_release);
-  atomic_store_explicit(&d->line->word, word, memory_order_release);
+  atomic_store_explicit(&l->base, base, memory_order_release);
+  atomic_store_explicit(&l->reached, base, memory_order_release);
+  atomic_store_explicit(&l->submitted, base, memory_order_release);
+  atomic_store_explicit(&l->word, word, memory_order_release);
   *v = caml_alloc_custom(&device_ops, sizeof d, 0, 1);
   Device_val(*v) = d;
   return d;
@@ -494,13 +568,13 @@ static struct rig_device *record(value *v, value v_index, value v_name) {
 /* A driver's device of index [v_index] whose driver blocks ([v_may_block]),
    with its driver's C state [v_edge]. */
 value caml_rig_device_new(value v_index, value v_name, value v_may_block,
-                          value v_edge) {
-  CAMLparam4(v_index, v_name, v_may_block, v_edge);
+                          value v_edge, value v_opened) {
+  CAMLparam5(v_index, v_name, v_may_block, v_edge, v_opened);
   CAMLlocal1(v);
   void *self = (void *)Nativeint_val(v_edge);
   if (self == NULL || rig_driver_of(self) == NULL)
     caml_invalid_argument("Rig.open_: the driver's edge names no rig_driver");
-  struct rig_device *d = record(&v, v_index, v_name);
+  struct rig_device *d = record(&v, v_index, v_name, Long_val(v_opened));
   d->may_block = Bool_val(v_may_block);
   d->self = self;
   d->driver = *rig_driver_of(self);
@@ -509,15 +583,16 @@ value caml_rig_device_new(value v_index, value v_name, value v_may_block,
 
 /* An io device of index [v_index]: no queue and no word; its state is its
    io library's. */
-value caml_rig_io_new(value v_index, value v_name) {
-  CAMLparam2(v_index, v_name);
+value caml_rig_io_new(value v_index, value v_name, value v_opened) {
+  CAMLparam3(v_index, v_name, v_opened);
   CAMLlocal1(v);
-  struct rig_device *d = record(&v, v_index, v_name);
-  d->line->io = 1;
+  struct rig_device *d = record(&v, v_index, v_name, Long_val(v_opened));
+  d->io = 1;
   CAMLreturn(v);
 }
 
 static void put(struct rig_device *d) {
+  atomic_store_explicit(&d->line->state, RIG_LIVE, memory_order_release);
   atomic_store(&devices[d->index], d);
   int t = atomic_load(&top);
   while (t < d->index && !atomic_compare_exchange_weak(&top, &t, d->index)) {
@@ -525,12 +600,131 @@ static void put(struct rig_device *d) {
   if (d->index > 0) set_running(d->index, 1);
 }
 
+/* Slots */
+
+/* An open's slot, an [int Atomic.t] (dev.ml's [request]): a take and a
+   give store it in the same call as the move of the slot, which runs no
+   OCaml code, so no asynchronous exception comes between them. An index is
+   an immediate, which a plain store writes. */
+#define Slot_field(v) (*(_Atomic value *)&Field(v, 0))
+
+/* Takes a slot for an open: the last freed one, or one no device has taken;
+   stores it in [v_a] and answers it, or 0 if every slot is held. */
+value caml_rig_take(value v_a) {
+  CAMLparam1(v_a);
+  int released = take_mutex(&table_mu), i = 0;
+  if (nfree > 0) i = free_slots[--nfree];
+  else if (fresh < RIG_SLOTS) i = fresh++;
+  mutex_unlock(&table_mu);
+  if (released) caml_leave_blocking_section();
+  atomic_store(&Slot_field(v_a), Val_int(i));
+  CAMLreturn(Val_int(i));
+}
+
+static void push(int i) { free_slots[nfree++] = i; }
+
+/* Gives back the slot an open stored in [v_a], and zeroes [v_a]: giving it
+   twice gives it once, and a slot that [caml_rig_publish] marked, negating
+   it, stays with its device. */
+value caml_rig_give(value v_a) {
+  CAMLparam1(v_a);
+  int i = Int_val(atomic_exchange(&Slot_field(v_a), Val_int(0)));
+  if (i > 0) {
+    int released = take_mutex(&table_mu);
+    push(i);
+    mutex_unlock(&table_mu);
+    if (released) caml_leave_blocking_section();
+  }
+  CAMLreturn(Val_unit);
+}
+
+/* Notes [v_n] records of the release list [v_l] routed. */
+value caml_rig_routed(value v_l, value v_n) {
+  struct release_list *l = (struct release_list *)Long_val(v_l);
+  atomic_fetch_sub_explicit(&l->count, Long_val(v_n), memory_order_release);
+  return Val_unit;
+}
+
+/* Frees the slot of [d] if [d] has stopped: its stop returned and its word
+   shows its last value, so nothing of it writes the word again (the stop's
+   obligation, [Rig_edge.Driver.stop]); its release list has routed every
+   token; and it is not the process's first failure, which [Rig.failure]
+   names by its slot. The caller saw the rest of its memory given back. A
+   device lost before it reached every value it was given leaves those
+   values on the slot as the range [r], which the caller made and which then
+   holds the device: [*used] says so. The range is published before the slot
+   is given back. The record keeps final copies of its line and answers from
+   them from then on; the slot goes to a later device, whose timeline goes
+   on from the word. Answers whether it freed the slot, or freed it before.
+   Under [table_mu] and [d]'s mutex. */
+static int free_locked(struct rig_device *d, struct rig_range *r, int *used) {
+  if (atomic_load(&devices[d->index]) != d) return 1;
+  struct rig_line *l = d->line;
+  uint64_t w = line_word(l), v = atomic_load(&l->submitted);
+  uint64_t reached = atomic_load_explicit(&l->reached, memory_order_acquire);
+  if (d->index <= 0 || line_state(l) != RIG_ENDED || w < v ||
+      atomic_load(&first) == d->index || (reached < v && r == NULL))
+    return 0;
+  /* A token made from here on is refused, and one made before is seen. */
+  atomic_store(&d->release.closed, 1);
+  if (atomic_load(&d->release.count) != 0) {
+    atomic_store(&d->release.closed, 0);
+    return 0;
+  }
+  if (reached < v) {
+    r->lo = reached;
+    r->hi = v;
+    r->next = atomic_load(&l->ranges);
+    atomic_store_explicit(&l->ranges, r, memory_order_release);
+    atomic_store_explicit(&l->lost_top, v, memory_order_release);
+    *used = 1;
+  }
+  d->final = w;
+  /* The line names no open until the next device's record: the record
+     answers its final value even if that device's make raises the word. */
+  atomic_store_explicit(&l->owner, -1, memory_order_release);
+  atomic_store(&devices[d->index], NULL);
+  push(d->index);
+  return 1;
+}
+
+/* Frees the slot of [v_d], the C record of the device [v_dev]
+   ([free_locked]). The range a lost device may leave is made first, with
+   the runtime, which its root needs, and given back if the free left
+   none. */
+value caml_rig_free(value v_d, value v_dev) {
+  CAMLparam2(v_d, v_dev);
+  struct rig_device *d = Device_val(v_d);
+  struct rig_range *r = NULL;
+  if (atomic_load(&devices[d->index]) == d &&
+      atomic_load(&d->line->reached) < atomic_load(&d->line->submitted)) {
+    r = malloc(sizeof *r);
+    if (r != NULL) {
+      r->device = v_dev;
+      caml_register_generational_global_root(&r->device);
+    }
+  }
+  int used = 0;
+  caml_enter_blocking_section_no_pending();
+  mutex_lock(&table_mu);
+  mu_lock(d);
+  int freed = free_locked(d, r, &used);
+  mu_unlock(d);
+  mutex_unlock(&table_mu);
+  caml_leave_blocking_section();
+  if (r != NULL && !used) {
+    caml_remove_generational_global_root(&r->device);
+    free(r);
+  }
+  CAMLreturn(Val_bool(freed));
+}
+
 /* The host's record, of index 0: never lost, with its driver, whose work
    runs at its hand-over and may take long. */
 value caml_rig_host_new(value v_name) {
   CAMLparam1(v_name);
   CAMLlocal1(v);
-  struct rig_device *d = record(&v, Val_int(0), v_name);
+  struct rig_device *d = record(&v, Val_int(0), v_name, 0);
   d->may_block = 1;
   d->self = rig_host_state();
   d->driver = *rig_driver_of(d->self);
@@ -538,10 +732,40 @@ value caml_rig_host_new(value v_name) {
   CAMLreturn(v);
 }
 
-/* The timeline of the device of index [v_i], read from its line. */
+/* The timeline of the device of index [v_i] whose [opened] is [v_o], read
+   from its line while it owns the line; -1 for the word and the last value
+   given, and RIG_ENDED for the state, once a later device's record wrote
+   it, which its record's [final] then answers. */
 
-value caml_rig_word(value v_i) {
-  return Val_long((intnat)line_word(line_of(Int_val(v_i))));
+static int owns_line(struct rig_line *l, value v_o) {
+  return atomic_load_explicit(&l->owner, memory_order_acquire) == Long_val(v_o);
+}
+
+value caml_rig_word(value v_i, value v_o) {
+  struct rig_line *l = line_of(Int_val(v_i));
+  uint64_t w = line_word(l);
+  return Val_long(owns_line(l, v_o) ? (intnat)w : -1);
+}
+
+value caml_rig_submitted(value v_i, value v_o) {
+  struct rig_line *l = line_of(Int_val(v_i));
+  uint64_t v = atomic_load_explicit(&l->submitted, memory_order_acquire);
+  return Val_long(owns_line(l, v_o) ? (intnat)v : -1);
+}
+
+value caml_rig_state(value v_i, value v_o) {
+  struct rig_line *l = line_of(Int_val(v_i));
+  int s = line_state(l);
+  return Val_int(owns_line(l, v_o) ? s : RIG_ENDED);
+}
+
+value caml_rig_final(value v_d) {
+  return Val_long((intnat)Device_val(v_d)->final);
+}
+
+/* The value [v_d]'s timeline started after. */
+value caml_rig_base(value v_d) {
+  return Val_long((intnat)Device_val(v_d)->base);
 }
 
 /* Raises the slot word of the device of index [v_i] to [v], read from the
@@ -551,19 +775,9 @@ value caml_rig_raise_word(value v_i, value v) {
   return Val_unit;
 }
 
-value caml_rig_submitted(value v_i) {
-  return Val_long((intnat)atomic_load_explicit(
-      &line_of(Int_val(v_i))->submitted, memory_order_acquire));
-}
-
-value caml_rig_state(value v_i) {
-  return Val_int(line_state(line_of(Int_val(v_i))));
-}
-
-/* The reason of the device of index [v_i], "" if it is not lost. */
-value caml_rig_why(value v_i) {
-  char *why =
-      atomic_load_explicit(&line_of(Int_val(v_i))->lost, memory_order_acquire);
+/* The reason of the device of the record [v_d], "" if it is not lost. */
+value caml_rig_why(value v_d) {
+  char *why = atomic_load_explicit(&Device_val(v_d)->lost, memory_order_acquire);
   return caml_copy_string(why == NULL ? "" : why);
 }
 
@@ -580,16 +794,18 @@ value caml_rig_committed(value v_d) {
 
 /* Loss */
 
-/* Loses [d] with the reason [why], which the record keeps: answers 1 if
-   this call lost it, 0 if it was lost already. A loss that [counts] is the
-   process's first failure if none came before. Its stop is owed once its
-   loser finished spreading it ([finish]). The mutex is held. */
-static int lose_locked(struct rig_device *d, char *why, int counts) {
+/* Loses [d] with the reason [why], which the record keeps, and frees if
+   [own]: answers 1 if this call lost it, 0 if it was lost already. A loss
+   that [counts] is the process's first failure if none came before. Its
+   stop is owed once its loser finished spreading it ([finish]). The mutex
+   is held. */
+static int lose_locked(struct rig_device *d, char *why, int own, int counts) {
   char *none = NULL;
   if (!atomic_compare_exchange_strong_explicit(
-          &d->line->lost, &none, why, memory_order_acq_rel, memory_order_acquire))
+          &d->lost, &none, why, memory_order_acq_rel, memory_order_acquire))
     return 0;
-  atomic_store_explicit(&d->line->reached, device_word(d), memory_order_relaxed);
+  d->own_why = own;
+  atomic_store_explicit(&d->line->reached, device_word(d), memory_order_release);
   atomic_store_explicit(&d->line->state, RIG_LOSING, memory_order_release);
   int zero = 0;
   if (counts) atomic_compare_exchange_strong(&first, &zero, d->index);
@@ -648,7 +864,8 @@ static void spread(struct rig_device *p, char *shared) {
     for (int j = 0; j < c->nrecord && !won; j++) {
       struct rig_entry *e = &c->record[j];
       if (e->producer == p->index && e->w > pw && e->u > cw)
-        won = lose_locked(c, why != NULL ? why : no_memory_why, 1);
+        won = why != NULL ? lose_locked(c, why, why != shared, 1)
+                          : lose_locked(c, no_memory_why, 0, 1);
     }
     mu_unlock(c);
     if (!won) continue;
@@ -669,7 +886,7 @@ value caml_rig_lose(value v_d, value v_why, value v_fault) {
   if (why == NULL) caml_raise_out_of_memory();
   caml_enter_blocking_section_no_pending();
   mu_lock(d);
-  int won = lose_locked(d, why, Bool_val(v_fault));
+  int won = lose_locked(d, why, 1, Bool_val(v_fault));
   if (won) d->faulted = Bool_val(v_fault);
   mu_unlock(d);
   if (won) {
@@ -694,15 +911,16 @@ value caml_rig_faulted(value v_d) {
    record is stored, and [caml_rig_fail] stores it before it walks the
    table, so a device that opens during a failure is lost by one or the
    other. */
-value caml_rig_publish(value v_d) {
-  CAMLparam1(v_d);
+value caml_rig_publish(value v_d, value v_a) {
+  CAMLparam2(v_d, v_a);
   struct rig_device *d = Device_val(v_d);
   put(d);
+  atomic_store(&Slot_field(v_a), Val_int(-d->index));
   char *why = atomic_load(&failed);
   if (why == NULL) CAMLreturn(Val_unit);
   caml_enter_blocking_section_no_pending();
   mu_lock(d);
-  int won = lose_locked(d, why, 0);
+  int won = lose_locked(d, why, 0, 0);
   mu_unlock(d);
   if (won) finish(d);
   caml_leave_blocking_section();
@@ -728,7 +946,7 @@ value caml_rig_fail(value v_why) {
     struct rig_device *d = device_of(i);
     if (d == NULL) continue;
     mu_lock(d);
-    int won = lose_locked(d, why, 0);
+    int won = lose_locked(d, why, 0, 0);
     mu_unlock(d);
     if (!won) continue;
     spread(d, why);
@@ -973,7 +1191,8 @@ static void end_turn(struct rig_device *d) {
    it was lost already. The mutex is held. */
 static int fail_locked(struct rig_device *d, const char *why) {
   char *copy = strdup(why);
-  if (lose_locked(d, copy != NULL ? copy : no_memory_why, 1))
+  if (copy != NULL ? lose_locked(d, copy, 1, 1)
+                   : lose_locked(d, no_memory_why, 0, 1))
     return SUBMIT_FAILED;
   free(copy);
   return SUBMIT_LOST;
@@ -998,8 +1217,9 @@ static int give_turn(struct rig_device *d, int released, int r) {
 /* Submitting */
 
 /* Records the run [r]'s in-queue waits in [d]'s record, for spread, after
-   dropping the entries [d]'s word shows reached, and refuses if a producer
-   is lost. The mutex is held. */
+   dropping the entries [d]'s word shows reached, and refuses a wait for a
+   point a lost device did not reach, of the slot's device or an earlier
+   one: [r]'s [producer] is then that point. The mutex is held. */
 static int record_waits(struct rig_device *d, struct rig_run *r) {
   /* Nothing to drop or record reads no word: the device writes its line,
      so a read is a cache miss on every submit. */
@@ -1017,9 +1237,10 @@ static int record_waits(struct rig_device *d, struct rig_run *r) {
         (struct rig_entry){r->producers[j], r->waits[j].value, u};
   d->nrecord = k + r->nwaits;
   for (int j = 0; j < r->nwaits; j++) {
-    if (line_state(line_of(r->producers[j])) != RIG_LIVE) {
+    uint64_t p = RIG_POINT(r->producers[j], r->waits[j].value);
+    if (rig_point_lost(p)) {
       d->nrecord = k;
-      r->producer = r->producers[j];
+      r->producer = p;
       return SUBMIT_PRODUCER_LOST;
     }
   }

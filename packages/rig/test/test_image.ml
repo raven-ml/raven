@@ -53,11 +53,12 @@ let test_load (copies, host_visible) =
 
 let test_refused () =
   let d, _ = P.open_ "image:refused" in
+  let base = Rig.submitted d in
   match Image.load d "not code" with
   | Ok _ -> failf "a refused binary loaded"
   | Error why ->
       equal bool true (String.starts_with ~prefix:"image:refused" why);
-      equal int 1 (Rig.Point.value (submit (Sub.make d [||])))
+      equal int (base + 1) (Rig.Point.value (submit (Sub.make d [||])))
 
 let test_no_code () =
   raises_match Exn.invalid_arg (fun () ->

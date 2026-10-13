@@ -348,9 +348,10 @@ val capability : t -> Rig_amd_abi.Capability.t
     their work.
 
     Either way the stop frees the C state the device ran work with, its
-    rings' and timed values' records, which the queues never read. A word of
-    the device's own, and the edge that reads the word, stay for the
-    process.
+    rings' and timed values' records, which the queues never read. The edge
+    that reads the word, 24 bytes, stays for the process, and so does a word
+    of the device's own, since another device's queue may still wait on it
+    after the device's slot passed on.
 
     Once the word shows the last value and {!val-stop} has returned, no work
     of the device writes it: the queues release values in order, and the

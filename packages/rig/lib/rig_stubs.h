@@ -37,9 +37,10 @@ typedef pthread_cond_t rig_cond;
 #define RIG_INDEX(p) ((int)((p) >> RIG_VALUE_BITS))
 #define RIG_VALUE(p) ((p) & RIG_VALUE_MASK)
 
-/* Device indices run from 1 to RIG_SLOTS - 1 and are never reused. A
-   device's index is its slot in rig's array of timeline words
-   ([rig_edge.h]). */
+/* A device's index is its slot, from 1 to RIG_SLOTS - 1, and its line in
+   rig's array of timeline words ([rig_edge.h]). A slot passes to a later
+   device once its device has stopped, and that device's timeline goes on
+   from the value the slot's word holds. */
 
 /* A device's state. A loss moves a live device to LOSING while its loser
    spreads it, then to OWED, until a claimant takes its stop (STOPPING).
@@ -75,41 +76,81 @@ struct rig_times {
   int nfree;
 };
 
-/* A device's timeline line: what a point of the device asks, kept for the
-   life of the process at the device's index, as the device's word and
-   reason are. [word] is the slot's word in rig's array, which a device whose
-   own word lies elsewhere, such as behind a transport, raises as rig reads
-   its word. [state], [lost] and [reached] change under the device's mutex,
-   and every field is read without it. */
+/* A slot's timeline line: what a point of the slot's devices asks, kept for the
+   life of the process. [word] is the slot's word in rig's array, which a device
+   whose own word lies elsewhere, such as behind a transport, raises as rig
+   reads its word. [owner] is the [opened] of the device whose record wrote the
+   line. [base] is the value the slot's device started after: every point of an
+   earlier device on the slot is at most [base]. [state] and [reached] change
+   under the device's mutex, and every field is read without it. A device that
+   takes the slot stores [owner] first and the rest after it with release order,
+   [state] last, so a record that reads a field of its line and then finds
+   itself the owner read its own. [ranges] holds, newest first, the values each
+   earlier device of the slot was given and lost, under [lost_top], the highest:
+   a reader checks them after the rest of the line. The free of a slot publishes
+   its device's range before the slot passes on, and ranges are never moved or
+   freed. */
+struct rig_range;
+
 struct rig_line {
+  _Atomic intnat owner;
   _Atomic(_Atomic uint64_t *) word;
+  _Atomic uint64_t base;
   _Atomic uint64_t submitted;
   _Atomic int state;
-  _Atomic(char *) lost;     /* NULL, or the loss's reason */
   _Atomic uint64_t reached; /* once lost, the word's value at the loss */
-  int io;                   /* an io device's, whose state its library holds */
+  _Atomic(struct rig_range *) ranges;
+  _Atomic uint64_t lost_top;
+};
+
+/* The values (lo, hi] that a device lost: it was given them, and had not
+   reached them when it was lost. [device] is its OCaml record, a global
+   root, which a stale point in the range raises [Lost] with. */
+struct rig_range {
+  uint64_t lo, hi;
+  value device;
+  struct rig_range *next; /* the slot's earlier range, below this one */
 };
 
 extern struct rig_line rig_lines[RIG_SLOTS];
 
+/* The [base] of slot [index]'s line. */
+static inline uint64_t rig_line_base(int index) {
+  return atomic_load_explicit(&rig_lines[index].base, memory_order_acquire);
+}
+
 /* A list of release records ([rig_heap.c]): those of a device lie in its
-   record. */
+   record. [count] counts the tokens made for the list whose records its
+   drains have not yet routed: a device's slot frees at none. [closed] says
+   that the list takes no more tokens, as its device's slot is being freed:
+   a token counts itself before it reads [closed], and the free closes the
+   list before it reads [count], so one of the two sees the other. */
 struct release_node;
 
 struct release_list {
   _Atomic(struct release_node *) head;
+  _Atomic intnat count;
+  _Atomic int closed;
 };
 
-/* A device's record, kept for the life of the process. The mutex guards
-   [turn], [inside], the record of waits and the moves of the line's
-   state. */
+/* A device's record, which lives as long as the program holds the device.
+   The mutex guards [turn], [inside], the record of waits, the moves of the
+   line's state and the free. Once its line names another owner, the slot
+   is no longer the device's: it has ended, and its word and its last value
+   given are [final]. */
 struct rig_device {
   rig_mutex mu;
   rig_cond cv;
   int index;
   struct rig_line *line;
+  uint64_t base; /* the value its timeline started after */
+  intnat opened; /* unique for the process */
+  uint64_t final;
+  _Atomic(char *) lost; /* NULL, or the loss's reason */
+  int own_why;          /* whether the record frees [lost] */
   char *name;
   int may_block;
+  int io; /* an io device, whose state its library holds */
   void *self; /* the driver's state, whose first member points to [driver] */
   struct rig_driver driver; /* copied at open: a call loads no pointer */
   _Atomic uint64_t committed; /* the last value known committed */
@@ -137,9 +178,12 @@ struct rig_device {
    writes. A reservation scans from the first chunk and takes the first
    empty or spent word of its kind, and a use word never empties, so every
    use word after an empty one is empty: a walk ends at the first empty use
-   word. A word whose point a loss dropped stays for good. [refs] counts the
-   memories and holds that share it. A hold's stamps hold only uses: those
-   of the submissions made with it. */
+   word. A word whose point a loss dropped stays until a later device takes
+   its slot: its point is then folded into the first chunk's [lost_use] or
+   [lost_write], which keep the first such point, and the word can be taken.
+   A walk reads them after the words. [refs] counts the memories and holds
+   that share it. A hold's stamps hold only uses: those of the submissions
+   made with it. */
 #define RIG_USES 4
 
 struct rig_stamps {
@@ -150,7 +194,22 @@ struct rig_stamps {
   _Atomic uint64_t keep[RIG_USES];
   _Atomic(struct rig_stamps *) next;
   _Atomic int refs; /* in the first chunk only */
+  /* In the first chunk only: a lost point of an earlier device of a slot,
+     folded from a use word, and from a write word. */
+  _Atomic uint64_t lost_use, lost_write;
 };
+
+/* The point folded into the stamps [s] that an access follows: [lost_write],
+   or, if [every], [lost_use] when [lost_write] holds none; 0 for none, and
+   for no stamps. Every reader reads the head after a word, with acquire
+   order, and a fold comes before the take that changes the word: a reader
+   that saw the change sees the fold, so the head's loads are relaxed. */
+static inline uint64_t rig_stamps_folded(struct rig_stamps *s, int every) {
+  if (s == NULL) return 0;
+  uint64_t p = atomic_load_explicit(&s->lost_write, memory_order_relaxed);
+  if (p != 0 || !every) return p;
+  return atomic_load_explicit(&s->lost_use, memory_order_relaxed);
+}
 
 /* The point of the chunk [s]'s [i]th words that an access follows: its use
    word's if [every], its write word's otherwise, 0 for none; or -1 from
@@ -277,10 +336,11 @@ struct rig_run {
   struct rig_wait *waits;
   int *producers;
   uint64_t sub; /* the submission the fixed and slot arrays were fitted to */
-  /* What the submit answered. */
+  /* What the submit answered: for a producer the device's queue would wait
+     for that is lost, the point it did not reach. */
   uint64_t no_room_at, v;
   const char *why;
-  int producer;
+  uint64_t producer;
   /* The blocks the setters store into: [nargs] bytes reach the
      end of the last block stored into, of [cargs] allocated. */
   uint8_t *args;
@@ -299,13 +359,14 @@ struct rig_run {
 /* Whether the work up to the point [p] is done: its device's word, as the
    host last read it, reached [p]'s value, before the loss for a lost
    device, whose stop raises the word to its last value whatever ran. A
-   point of a device a forked child inherited is never done: its work is
-   the parent's. */
+   point of an earlier device of its slot is done unless its range holds
+   it. A point of a device a forked child inherited is not done: its work
+   is the parent's. */
 int rig_point_done(uint64_t p);
 
 /* Whether the point [p] is a lost device's and was not reached when the
-   device was lost: no wait gets past it. A point of a device a forked
-   child inherited is lost. */
+   device was lost, or lies in a range of its slot: no wait gets past it. A
+   point of a device a forked child inherited is lost. */
 int rig_point_lost(uint64_t p);
 
 /* The host's page size in bytes. */

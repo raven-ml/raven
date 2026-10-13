@@ -21,9 +21,9 @@
 
     Work on a GPU runs asynchronously. The call that submits it returns
     before the work has run. So that the host can tell what has run, rig
-    numbers the work submitted to a device 1, 2, 3, … in the order the device
-    accepts it. These numbers are the {e values} of the device's
-    {e timeline}. A value [v] is {e reached} once the work of every value up
+    numbers the work submitted to a device with consecutive integers, in the
+    order the device accepts it. These numbers are the {e values} of the
+    device's {e timeline}. A value [v] is {e reached} once the work of every value up
     to [v] has completed. A {e point} is a device together with one of its
     values ({!Point}). Work or host access {e follows} other work when it
     starts after that work has completed, and so sees its writes. It follows
@@ -103,9 +103,25 @@ val host : t
     [Invalid_argument] when it is misused. Every open is [Error] after the
     process has failed ({!fail}), while the name's device is lost and its
     driver's stop ({!Rig_edge.Driver.val-stop}) has not returned, when the
-    machine's host ({!section-machines}) is lost or closed, and once the
-    process has called openers 65,535 times, failed opens included. For a
-    lost or closed host, [why] is what that host's {!Lost} prints.
+    machine's host ({!section-machines}) is lost or closed, and while 65,535
+    devices hold every device slot. For a lost or closed host, [why] is what
+    that host's {!Lost} prints.
+
+    A device holds a slot of the process's 65,535, a bound that comes from a
+    point fitting an OCaml int ({!Point}). It holds its slot while it is
+    open, while memory of it remains to return, and while it is lost and has
+    not stopped ({!section-stops}). A device that never stops and the
+    process's first {!failure} hold theirs for the rest of the process. A
+    device that opens takes a free slot, and its values go on past every
+    value the slot's earlier devices were given, so the number of opens a
+    process makes has no bound. Each open still costs what its driver keeps
+    for the process, as the driver's documentation states: the GPU drivers
+    keep a few dozen bytes of C state per open, and a timeline word of the
+    device's own where it has one. A device whose queue waited on another
+    device's word of its own keeps its mapping of that word until it stops:
+    one per producer device it waited on. A device lost before it reached
+    every value it was given leaves its slot too, and keeps its record for
+    the rest of the process, which its dropped points raise {!Lost} with.
 
     An exception raised inside an open, by the opener's [make] or
     asynchronously ({!section-errors}), is raised again. The name is then
@@ -163,12 +179,12 @@ val close : t -> unit
 (** {2:properties Properties}
 
     A device's properties are set when it opens, and keep their values once
-    it is lost. rig keeps a device's properties, timeline and reason for the
-    life of the process, and its driver keeps its word and what reading the
-    word needs, so its points name it for good. Its driver's stop releases
-    what the device needs only to run work, such as its queues, and once
-    its work has ended rig gives back its mappings of other devices' words
-    and memory. *)
+    it is lost. A device's properties, timeline and reason live as long as
+    the program holds the device. Its points name it until a later device
+    takes its slot ({!Point.val-device}), and answer {!Point.wait} and
+    {!Point.reached} for good. Its driver's stop releases what the device
+    needs only to run work, such as its queues, and once its work has ended
+    rig gives back its mappings of other devices' words and memory. *)
 
 val name : t -> string
 (** [name d] is [d]'s name for people: its opener's [name], with
@@ -298,36 +314,47 @@ module Point : sig
   type t [@@immediate]
   (** The type for points. *)
 
-  val device : t -> device
-  (** [device p] is [p]'s device. *)
+  val device : t -> device option
+  (** [device p] is [Some d], [p]'s device [d], until [d] has stopped and a
+      later device took its slot ({!section-opening}), and [None] from
+      then on. *)
 
   val value : t -> int
-  (** [value p] is [p]'s value, [1] or more. *)
+  (** [value p] is [p]'s value, above the value its device's timeline
+      started after ({!submitted}). *)
 
   val wait : t -> unit
   (** [wait p] returns once [p]'s device has reached [p]'s value. It commits
       the device's work up to that value, then blocks however long that work
       runs, unless the device has a hang bound ({!section-hangs}). While it
-      blocks it releases the domain lock ({!section-domains}).
+      blocks it releases the domain lock ({!section-domains}). It returns at
+      once for a point its device reached before a loss, whatever device its
+      slot holds now.
 
-      Raises {!Lost} if the device is lost or is lost during the wait. *)
+      Raises {!Lost} if the device was lost before it reached [p]'s value,
+      or is lost during the wait before it does. *)
 
   val reached : t -> bool
-  (** [reached p] is [true] iff {!signaled}[ (device p)] is at least
-      [value p]. It commits nothing and waits for no work. While the device
-      is live, a [true] means the device has reached [p]'s value. On a lost
-      device it may also be [true] for a dropped value, whose work may not
-      have run ({!section-loss}).
+  (** [reached p] is [true] iff [p]'s device's word, as {!signaled} reads
+      it, is at least [value p]: always, once a later device took its slot.
+      It commits nothing and waits for no work. While the device is live, a
+      [true] means the device has reached [p]'s value. On a lost device it
+      may also be [true] for a dropped value, whose work may not have run
+      ({!section-loss}).
 
       Raises as {!signaled} does. *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp] formats a point as [NAME:v]. *)
+  (** [pp] formats a point as [NAME:v], or [ended:v] once {!val-device} is
+      [None]. *)
 end
 
 val submitted : t -> int
 (** [submitted d] is the last value assigned on [d]'s timeline
-    ({!section-timeline}), [0] before any. It never decreases. *)
+    ({!section-timeline}), or, before any, the value [d]'s timeline started
+    after: [0] for a device that took a slot no device took before, and the
+    last value the slot's earlier device was given otherwise. It never
+    decreases. *)
 
 val signaled : t -> int
 (** [signaled d] is the last value [d] has reported. While [d] is live,
@@ -742,7 +769,7 @@ module Buffer : sig
       to {!Rig_edge.Io.free} once unreachable.
 
       Raises [Invalid_argument] if [d] is not an io device, its library's key
-      is not [k], or [n < 0]. *)
+      is not [k], or [n < 0], and {!Lost} if [d] is lost or closed. *)
 
   val view : t -> first:int -> length:int -> t
   (** [view b ~first ~length] is the [length] bytes of [b] from its byte

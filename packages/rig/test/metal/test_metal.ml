@@ -1670,8 +1670,9 @@ let two_devices () =
   let b = second () in
   Fun.protect ~finally:(fun () -> Rig_metal.stop b ~fault:None) @@ fun () ->
   S.with_ @@ fun a ->
+  let base = Rig.submitted a.d in
   Rig.Point.wait (S.submit a [||]);
-  equal int 1 (Rig_metal.signaled a.g);
+  equal int (base + 1) (Rig_metal.signaled a.g);
   equal int 0 (Rig_metal.signaled b)
 
 (* rig finds the record the device's facts declare, and none on the host. *)

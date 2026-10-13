@@ -13,24 +13,39 @@ exception Out_of_memory of device * int
 
 (* The C record *)
 
-external c_new : int -> string -> bool -> nativeint -> c
+external c_new : int -> string -> bool -> nativeint -> int -> c
   = "caml_rig_device_new"
 
-external c_io_new : int -> string -> c = "caml_rig_io_new"
+external c_io_new : int -> string -> int -> c = "caml_rig_io_new"
 external c_host_new : string -> c = "caml_rig_host_new"
 external c_slot_word : int -> nativeint = "caml_rig_slot_word"
-external c_publish : c -> unit = "caml_rig_publish"
+(* Publishes a device's record and marks the slot its open took published,
+   negating it, in one call: the open's end gives back only an unpublished
+   slot. *)
+external c_publish : c -> int Atomic.t -> unit = "caml_rig_publish"
 external c_committed : c -> int = "caml_rig_committed" [@@noalloc]
 external c_commit : c -> int = "caml_rig_commit"
 external c_settle : c -> int -> int = "caml_rig_settle"
 external c_done : int -> bool = "caml_rig_done" [@@noalloc]
+external c_lost : int -> bool = "caml_rig_lost" [@@noalloc]
 
-(* A device's line, read by its index for the life of the process. *)
-external c_word : int -> int = "caml_rig_word" [@@noalloc]
+(* The device whose lost range of its slot holds a point, if one does. *)
+external c_range_device : int -> device option = "caml_rig_range_device"
+
+(* The timeline of the device of a slot and an [opened] id, read from the
+   slot's line while the line names it: the word and the last value given
+   are -1 and the state Ended once a later device's record wrote the line,
+   and [c_final] of its record answers the values. *)
+external c_word : int -> int -> int = "caml_rig_word" [@@noalloc]
+external c_submitted : int -> int -> int = "caml_rig_submitted" [@@noalloc]
+external c_state : int -> int -> int = "caml_rig_state" [@@noalloc]
+external c_final : c -> int = "caml_rig_final" [@@noalloc]
+external c_why : c -> string = "caml_rig_why"
+external c_base : c -> int = "caml_rig_base" [@@noalloc]
+
+(* A slot's word, raised to the value read from the word of its device's
+   own. *)
 external c_raise_word : int -> int -> unit = "caml_rig_raise_word" [@@noalloc]
-external c_submitted : int -> int = "caml_rig_submitted" [@@noalloc]
-external c_state : int -> int = "caml_rig_state" [@@noalloc]
-external c_why : int -> string = "caml_rig_why"
 
 (* The first point of the stamps [st] that a lost device did not reach, among
    their uses' if [every] and every device's last write's otherwise, [0] for
@@ -42,6 +57,7 @@ external c_faulted : c -> bool = "caml_rig_faulted" [@@noalloc]
 external c_stopped : c -> unit = "caml_rig_stopped"
 external c_await_stop : c -> int -> bool = "caml_rig_await_stop"
 external c_owed : unit -> int = "caml_rig_owed" [@@noalloc]
+external c_free : c -> device -> bool = "caml_rig_free"
 external c_claim : unit -> int = "caml_rig_claim"
 external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
@@ -116,7 +132,7 @@ let no_waits = { Rig_edge.stores = false; hosts = false; objects = false; most =
 
 let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     ~completion ~waits ~hang_ms ~maps_host ~most_parts ~host_addresses ~word
-    ~word_region ~key ~memory_device ~fault ~capability ~budget =
+    ~word_region ~key ~memory_device ~fault ~capability ~budget ~opened =
   let live =
     {
       c;
@@ -158,6 +174,8 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     budget;
     closing = 0;
     live;
+    base = c_base c;
+    opened;
   }
 
 (* The host runs launches of linked code ([rig_host_code.c]) on its one queue,
@@ -173,18 +191,22 @@ let host =
       ~word_region:None ~key:(-1)
       ~memory_device:false
       ~fault:(fun _ -> None)
-      ~capability:None ~budget:max_int
+      ~capability:None ~budget:max_int ~opened:0
   in
   d
 
 (* The table of devices *)
 
-(* Every device by index, for the life of the process; an index whose open
-   failed holds the host. *)
+(* Every device by its slot: the last device that took the slot, which keeps
+   it until a later one does; the host for a slot no device took. *)
 let devices = Table.make host
 
 let of_index i = Table.get devices i
 let register d = Table.set devices d.index d
+
+(* Whether [d] is the device of the point [p]: [p] lies on [d]'s slot, after
+   the value [d]'s timeline started after. *)
+let[@inline] owns d p = d.index = Point.index p && Point.value p > d.base
 
 let iter f =
   let rec from i =
@@ -207,21 +229,27 @@ let () =
 let is_host d = match d.kind with Host -> true | _ -> false
 let is_io d = match d.kind with Io _ -> true | _ -> false
 
-(* Whether the device of index [i] is lost, read from its line alone. The host
-   is never lost: a use of its memory reads no C line. *)
-let[@inline] lost_at i = i <> 0 && c_state i <> live_state
-let[@inline] is_lost d = lost_at d.index
-let orphaned_at i = c_state i = orphaned_state
-let orphaned d = orphaned_at d.index
+(* Whether [d] is lost. The host is never lost: a use of its memory reads no C
+   record. *)
+let[@inline] state (d : device) = c_state d.index d.opened
+let[@inline] is_lost d = d.index <> 0 && state d <> live_state
+let orphaned d = state d = orphaned_state
 
-let why d = c_why d.index
+let why d = c_why d.live.c
 let lost d = if is_lost d then Some (why d) else None
 let raise_lost d = raise (Lost (d, why d))
 
 (* [d]'s loss as {!Lost} prints it. *)
 let printed d = strf "%s lost: %s" d.name (why d)
 
-let submitted d = c_submitted d.index
+let submitted (d : device) =
+  let v = c_submitted d.index d.opened in
+  if v >= 0 then v else c_final d.live.c
+
+(* [d]'s slot word, or its record's final value once its slot passed on. *)
+let slot_word (d : device) =
+  let w = c_word d.index d.opened in
+  if w >= 0 then w else c_final d.live.c
 let committed d = c_committed d.live.c
 
 (* Locks *)
@@ -259,7 +287,8 @@ let rec machine_name = function
    finds its value reads it without the lock. Once a device's stop returned,
    its values leave every key. A store keeps nothing on a lost device, so a
    store that raced the stop keeps nothing after the drop, which comes after
-   the loss. Indices are never reused. *)
+   the loss. A slot passes to a later device only after its stop returned,
+   so the later device finds no value of an earlier one. *)
 type 'a key = { init : device -> 'a; values : 'a option Table.t }
 type any_key = Key : 'a key -> any_key
 
@@ -300,9 +329,12 @@ let drop_values d = Lock.protect locals_lock drop_locked d
 
 (* The table of names *)
 
-(* An open of a name: its slot is [k], the machine's name and the device's.
-   [opening] says whether the slot reads [Opening] for it, [index] is the
-   index it took, and [ended] says that an exception ended it. *)
+(* An open of a name: its slot in the table of names is [k], the machine's
+   name and the device's. [opening] says whether the slot reads [Opening] for
+   it, [index] holds the device slot it took, [0] for none and negated once
+   its device is published, which the C stubs that take, give back and
+   publish store, [ended] says that an exception ended it, and [id] is unique
+   for the process. *)
 type request = {
   fn : string;
   machine : machine;
@@ -311,9 +343,19 @@ type request = {
   key : int;
   host : bool;
   mutable opening : bool;
-  mutable index : int;
+  index : int Atomic.t;
   mutable ended : bool; [@atomic]
+  id : int;
 }
+
+(* Takes a device slot and stores it in [a] ([0] if every slot is held), and
+   gives [a]'s back, zeroing it. Each runs no OCaml code, so no asynchronous
+   exception comes between the move of the slot and its record. *)
+external c_take : int Atomic.t -> int = "caml_rig_take"
+external c_give : int Atomic.t -> unit = "caml_rig_give"
+
+(* Drains every device ({!Memory.drain_all}), which may free slots. *)
+let drain_all : (unit -> unit) ref = ref ignore
 
 type slot = Opening of request | Open of device
 
@@ -325,7 +367,7 @@ module Names = Tbl.Make (struct
 end)
 
 let table : slot Names.t = Names.create 16
-let next_index = Atomic.make 1
+let opens = Atomic.make 1
 
 (* Under the table's lock: removes [d]'s names, so an open of them makes a new
    device. A stop removes them, so the table holds the devices whose stop has
@@ -351,16 +393,28 @@ let refresh d =
       | exception D.Fault _ -> ())
   | _ -> ()
 
-let stop_returned (d : device) = c_state d.index >= ended_state
+let stop_returned (d : device) = state d >= ended_state
 
 (* Whether the stop of [d] returned and its word shows its last submitted
    value: no work of it runs. An orphaned device's work is its parent's. *)
 let stopped (d : device) =
-  c_state d.index = ended_state
+  state d = ended_state
   && begin
     refresh d;
-    c_word d.index >= c_submitted d.index
+    slot_word d >= submitted d
   end
+
+(* Frees [d]'s slot once [d] has stopped and nothing of it remains to give
+   back: no token its drains have not routed, nothing in its cache, among its
+   retiring memory or waiting for a value. [caml_rig_free] checks the rest.
+   Its record then answers as it stood, and a later device takes the slot,
+   continuing its timeline. Whether it is free. *)
+let free_slot d =
+  let l = d.live in
+  d.index > 0 && stopped d
+  && l.cached = 0 && l.retiring == []
+  && fst l.pending == []
+  && c_free l.c d
 
 let stop_handle d =
   match d.kind with
@@ -485,7 +539,7 @@ let failure () =
    that a read allocates nothing. *)
 let word d =
   let l = d.live in
-  if l.word <> 0 || is_lost d then c_word d.index
+  if l.word <> 0 || is_lost d then slot_word d
   else
     match d.kind with
     | Driver { m; h; _ } ->
@@ -500,7 +554,7 @@ let word d =
         in
         c_raise_word d.index w;
         w
-    | _ -> c_word d.index
+    | _ -> slot_word d
 
 let now_ms () = Prof.now () / 1_000_000
 
@@ -594,7 +648,8 @@ let after d v f =
   Lock.protect l.lock add_after (l, (v, f))
 
 (* A device whose unreached work waits in its queue on another's surfaces that
-   producer's unseen fault: its sleep raises it. *)
+   producer's unseen fault: its sleep raises it. A producer is the device its
+   slot holds, as no entry of an earlier device's points is unreached. *)
 let look_at_producers d =
   Array.iter
     (fun i ->
@@ -605,7 +660,7 @@ let look_at_producers d =
 
 (* Reads [d]'s word until it reaches [v] or the clock [until]: the word. *)
 let rec spin_held (d : device) v until =
-  let w = c_word d.index in
+  let w = slot_word d in
   if w >= v || Prof.now () >= until then w
   else begin
     Domain.cpu_relax ();
@@ -663,49 +718,60 @@ let wait_until_lost d v w =
   | w -> w
   | exception Lost (d', _) when d' == d -> 0
 
-let check p =
-  let i = Point.index p in
-  if lost_at i && not (c_done p) then raise_lost (of_index i)
+(* Points
+
+   A point's slot answers it from its line ([rig_point_done],
+   [rig_point_lost]) whatever device the slot holds now. Only the device that
+   owns a point ([owns]) is asked for it. *)
+
+(* Raises [Lost] for the point [p] that a lost device did not reach: the
+   device of [p]'s slot, or the earlier one whose lost range holds [p]. A lost
+   point of an earlier device lies in a range: the free leaves one for every
+   value it dropped. *)
+let raise_point_lost p =
+  let d = of_index (Point.index p) in
+  if owns d p then raise_lost d
+  else
+    match c_range_device p with
+    | Some d -> raise_lost d
+    | None -> invalid_arg "Rig: an earlier device's lost point lies in no range"
+
+let check p = if c_lost p then raise_point_lost p
 
 (* A lost device's point is done if its word reached it before the loss: its
    stop raises the word whatever ran. The word is read before the loss is, so a
    word the stop raised shows the loss. Before it blocks, it raises the loss of
-   any point of [m]'s stamps a lost device did not reach, so that it waits out
-   no work ahead of a loss. The stamps are read from [m] there: [m] holds them
-   until then. *)
-let wait_point m every p =
-  let i = Point.index p in
-  if lost_at i then check p
+   any point of the stamps [st] a lost device did not reach, so that it waits
+   out no work ahead of a loss. *)
+let wait_point st every p =
+  let d = of_index (Point.index p) in
+  if not (owns d p) then check p
   else
-    let d = of_index i and v = Point.value p in
+    let v = Point.value p in
     let w = word d in
     let w =
       if w >= v || is_lost d then w
       else
-        let q = c_stamps_lost m.entry.stamps every in
-        if q <> 0 then raise_lost (of_index (Point.index q));
+        let q = c_stamps_lost st every in
+        if q <> 0 then raise_point_lost q;
         wait_until_lost d v w
     in
-    if not (is_lost d) then
-      begin if d.live.afters != [] then run_afters d w
-      end
-    else if not (c_done p) then raise_lost d
+    if is_lost d then check p
+    else if d.live.afters != [] then run_afters d w
 
 (* The word is read before the loss is, as [wait_point] reads them. *)
 let is_done p =
-  let i = Point.index p in
-  if lost_at i then c_done p
+  let d = of_index (Point.index p) in
+  if not (owns d p) then c_done p
   else
-    let w = word (of_index i) in
-    if lost_at i then c_done p else w >= Point.value p
+    let w = word d in
+    if is_lost d then c_done p else w >= Point.value p
 
 let settled p =
-  let i = Point.index p in
-  if lost_at i then orphaned_at i || c_word i >= Point.value p
-  else
-    match word (of_index i) >= Point.value p with
-    | r -> r
-    | exception Lost _ -> false
+  let d = of_index (Point.index p) in
+  if not (owns d p) then true
+  else if is_lost d then orphaned d || slot_word d >= Point.value p
+  else match word d >= Point.value p with r -> r | exception Lost _ -> false
 
 (* Closing *)
 
@@ -726,10 +792,12 @@ let close_one d =
 (* Opening *)
 
 
-(* The device [r] published, if any. *)
+(* The device [r] published, if any: [r]'s slot holds a device of [r]'s open,
+   which may have stopped and given the slot to a later one. *)
 let made r =
-  let i = r.index in
-  if i <> 0 && c_next i = i then Ok (of_index i) else Error ""
+  let i = abs (Atomic.get r.index) in
+  if i <> 0 && c_next i = i && (of_index i).opened = r.id then Ok (of_index i)
+  else Error ""
 
 (* Under the table's lock: ends [r]'s open with [result]. The name's slot
    changes last, so an open that an exception stopped half way still reads
@@ -741,7 +809,9 @@ let end_open (r, result) =
       if r.host then
         Option.iter (fun m -> Strings.replace machines m d) (fst r.k);
       Names.replace table r.k (Open d)
-  | Error _ -> Names.remove table r.k);
+  | Error _ ->
+      c_give r.index;
+      Names.remove table r.k);
   Lock.broadcast table_lock
 
 (* Under the table's lock: ends the opens an exception ended, as they stand:
@@ -833,8 +903,9 @@ let open_named ~fn ~machine ~name ~key make =
       key;
       host;
       opening = false;
-      index = 0;
+      index = Atomic.make 0;
       ended = false;
+      id = Atomic.fetch_and_add opens 1;
     }
   in
   let finish result =
@@ -846,13 +917,22 @@ let open_named ~fn ~machine ~name ~key make =
     | `Open d -> Ok d
     | `Error e -> Error e
     | `Make ->
-        r.index <- Atomic.fetch_and_add next_index 1;
-        if r.index > Point.max_index then
+        let index =
+          match c_take r.index with
+          | 0 ->
+              (* Every slot is held: a collection may return the last memory
+                 of stopped devices, whose drains then free their slots. *)
+              Gc.full_major ();
+              !drain_all ();
+              c_take r.index
+          | i -> i
+        in
+        if index = 0 then
           finish
             (Error
-               (strf "%s: the process opened %d devices, the most it can" full
+               (strf "%s: %d devices hold every device slot" full
                   Point.max_index))
-        else finish (make ~index:r.index ~name:full)
+        else finish (make ~index ~slot:r.index ~opened:r.id ~name:full)
   with
   | result -> result
   | exception e when r.opening ->
@@ -872,15 +952,15 @@ let completion_of = function
 (* Publishes the C record of [d], which is in the tables: spreads, failures and
    the fork handler walk it for good. A device lost at birth by a failure of the
    process is stopped here. *)
-let publish d =
-  c_publish d.live.c;
+let publish d slot =
+  c_publish d.live.c slot;
   run_owed ()
 
 (* The device of the driver's handle [h], in the tables and not published.
    Every fact is read before the C record is published: a fault reading one
    leaves nothing made. *)
 let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
-    (h : a) ~index ~name ~machine ~memory_device =
+    (h : a) ~index ~opened ~name ~machine ~memory_device =
   let m : (a, D.region, D.image) dm = (module D) in
   let rid : D.region Type.Id.t = Type.Id.make () in
   let f = D.facts h in
@@ -910,7 +990,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
     let slot = Nativeint.to_int (c_slot_word index) in
     if (D.locate f.word).host = Some slot then slot else 0
   in
-  let c = c_new index name f.may_block f.edge in
+  let c = c_new index name f.may_block f.edge opened in
   let d =
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })
@@ -921,7 +1001,7 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
       ~word_region:(Some (Region { m; h; r = f.word; rid }))
       ~key:(Type.Id.uid D.key) ~memory_device
       ~fault:(function D.Fault why -> Some why | _ -> None)
-      ~capability:(Some f.capability) ~budget:f.budget
+      ~capability:(Some f.capability) ~budget:f.budget ~opened
   in
   register d;
   d
@@ -930,7 +1010,7 @@ let open_driver (type a) ?(memory_device = false)
     (module D : Rig_edge.Driver with type t = a) ~machine ~name make =
   let fn = if memory_device then "memory_device" else "open_" in
   open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key)
-  @@ fun ~index ~name:full ->
+  @@ fun ~index ~slot ~opened ~name:full ->
   match make ~word:(c_slot_word index) with
   | Error e -> Error e
   | Ok h -> (
@@ -938,10 +1018,11 @@ let open_driver (type a) ?(memory_device = false)
          a loss, and any other exception, such as facts that break the
          contract, is raised again. *)
       match
-        driver_device (module D) h ~index ~name:full ~machine ~memory_device
+        driver_device (module D) h ~index ~opened ~name:full ~machine
+          ~memory_device
       with
       | d ->
-          publish d;
+          publish d slot;
           Ok d
       | exception D.Fault why ->
           (try D.stop h ~fault:(Some why) with D.Fault _ -> ());
@@ -954,14 +1035,14 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
     make =
   let key = Type.Id.uid I.region_key in
   open_named ~fn:"open_io" ~machine ~name ~key
-  @@ fun ~index ~name:full ->
+  @@ fun ~index ~slot ~opened ~name:full ->
   match make () with
   | Error e -> Error e
   | Ok h -> (
       (* As for a driver's device. *)
       match
         let budget = I.budget h in
-        let c = c_io_new index full in
+        let c = c_io_new index full opened in
         let d =
           make_device ~index ~name:full ~machine
             ~kind:(Io { m = (module I); h })
@@ -970,13 +1051,13 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
             ~host_addresses:false
             ~word:0 ~word_region:None ~key ~memory_device:false
             ~fault:(function I.Fault why -> Some why | _ -> None)
-            ~capability:None ~budget
+            ~capability:None ~budget ~opened
         in
         register d;
         d
       with
       | d ->
-          publish d;
+          publish d slot;
           Ok d
       | exception I.Fault why ->
           (try I.stop h with I.Fault _ -> ());
