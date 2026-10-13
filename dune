@@ -23,9 +23,10 @@
 ; may start threads of its own, as rig's pool does (die_after_fork=0). A
 ; refused allocation returns NULL as libc's does (allocator_may_return_null=1).
 ;
-; dune links mdx's toplevel in bytecode without the profile's link_flags, so
-; no sanitizer's runtime reaches it and sanitized C cannot link into it: an
-; mdx stanza whose libraries hold C is off under sanitize and tsan.
+; Since dune 3.24 mdx's generator links with the profile's link_flags, so a
+; sanitizer's runtime reaches it and sanitized C can link into it. An mdx
+; stanza whose libraries hold C is still off under sanitize and tsan: no run
+; has shown it passes there on Linux.
 ;
 ; An odoc warning is an error in every profile.
 ;
