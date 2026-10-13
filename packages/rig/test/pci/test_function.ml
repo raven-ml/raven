@@ -17,7 +17,7 @@ let map ?combine ?off ?length f i =
 let alloc_dma ?contiguous ?va f n =
   require_some (require_ok (Function.alloc_dma ?contiguous ?va f n))
 
-let pin f a n = require_ok (Function.pin f a n)
+let pin f a n = require_some (require_ok (Function.pin f a n))
 
 let addressing =
   Testable.make
@@ -150,9 +150,10 @@ let test_vfio () =
 
 let entry_limit = "/sys/module/vfio_iommu_type1/parameters/dma_entry_limit"
 
-(* Each page alloc_dma gives behind an IOMMU is one of the container's
-   [dma_entry_limit] mappings and counts against the process's locked-memory
-   limit: whichever runs out first, the next alloc_dma is [Ok None]. *)
+(* Each page alloc_dma gives or pin pins behind an IOMMU is one of the
+   container's [dma_entry_limit] mappings and counts against the process's
+   locked-memory limit: whichever runs out first, the next alloc_dma and pin
+   are [Ok None]. *)
 let test_vfio_limit () =
   let _, f = vfio_function () in
   Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
@@ -161,6 +162,7 @@ let test_vfio_limit () =
     |> String.trim |> int_of_string
   in
   let page = Machine.page Machine.this in
+  let own = round_up (memory (2 * page)) page in
   let rec fill ws k =
     match Function.alloc_dma f page with
     | Ok (Some (w, _)) when k < limit -> fill (w :: ws) (k + 1)
@@ -169,11 +171,18 @@ let test_vfio_limit () =
   let last, ws = fill [] 0 in
   Fun.protect ~finally:(fun () -> List.iter (Function.free_dma f) ws)
   @@ fun () ->
-  match require_ok ~msg:"a limit is no refusal" last with
+  (match require_ok ~msg:"alloc_dma: a limit is no refusal" last with
   | None -> ()
   | Some (w, _) ->
       Function.free_dma f w;
-      failf "%d mappings, beyond the limit of %d" (limit + 1) limit
+      failf "%d mappings, beyond the limit of %d" (limit + 1) limit);
+  match
+    require_ok ~msg:"pin: a limit is no refusal" (Function.pin f own page)
+  with
+  | None -> ()
+  | Some _ ->
+      Function.unpin f own page;
+      failf "a pin beyond the limit"
 
 (* A machine's files *)
 
@@ -1493,7 +1502,9 @@ let pin_ref w =
   end
 
 let pin_sys (s, w) =
-  Result.is_ok (Function.pin s.f (Window.address w) (Window.length w))
+  match Function.pin s.f (Window.address w) (Window.length w) with
+  | Ok (Some _) -> true
+  | Ok None | Error _ -> false
 
 let unpin_ref w =
   if w.pins = 0 then invalid_arg "not pinned";

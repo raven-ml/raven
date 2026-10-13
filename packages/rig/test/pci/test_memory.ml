@@ -788,7 +788,7 @@ let test_map_host_transport () =
       forget = unused;
       alloc_dma = (fun ~contiguous:_ ~va:_ _ -> unused ());
       free_dma = (fun _ -> unused ());
-      pin = (fun a n -> Ok [ (a, n) ]);
+      pin = (fun a n -> Ok (Some [ (a, n) ]));
       unpin = (fun _ _ -> ());
       release = (fun () -> ());
     }
@@ -836,7 +836,7 @@ let far_gpu ?(reserved = true) () =
       forget = unused;
       alloc_dma = (fun ~contiguous:_ ~va:_ _ -> Ok None);
       free_dma = (fun _ -> unused ());
-      pin = (fun a n -> Ok [ (a, n) ]);
+      pin = (fun a n -> Ok (Some [ (a, n) ]));
       unpin = (fun _ _ -> ());
       release = (fun () -> ());
     }

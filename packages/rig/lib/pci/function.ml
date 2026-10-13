@@ -347,15 +347,15 @@ let pin_entered f a n =
 let pin f a n =
   enter f "pin";
   match pin_entered f a n with
-  | Ok _ as runs ->
+  | Ok (Some _) as runs ->
       Mutex.lock f.lock;
       Tables.Range.add f.pins (a, n) ();
       leave_locked f;
       Mutex.unlock f.lock;
       runs
-  | Error _ as e ->
+  | (Ok None | Error _) as r ->
       leave f;
-      e
+      r
   | exception e ->
       leave f;
       raise e

@@ -150,7 +150,7 @@ type fn = Ops.fn = {
     ((Window.t * (int * int) list) option, string) result;
       (** {!Function.alloc_dma}. *)
   free_dma : Window.t -> unit;  (** {!Function.free_dma}. *)
-  pin : int -> int -> ((int * int) list, string) result;
+  pin : int -> int -> ((int * int) list option, string) result;
       (** {!Function.pin}. *)
   unpin : int -> int -> unit;  (** {!Function.unpin}. *)
   release : unit -> unit;

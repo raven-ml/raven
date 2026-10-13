@@ -51,6 +51,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig_pci.Function.pin` and the `pin` of `Rig_pci.Machine.fn` return
+  `(int * int) list option`: `Ok None` at the locked-memory and
+  `dma_entry_limit` limits, as `Function.alloc_dma` does. A limit was an
+  `Error`, like a refusal.
 - `Rig_pci.Function.alloc_dma` behind an IOMMU returns `Ok None` once the
   container holds `dma_entry_limit` mappings, as it does at the locked-memory
   limit. It returned `Error`, so a caller could not tell a limit from a refusal.

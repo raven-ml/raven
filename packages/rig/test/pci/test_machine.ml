@@ -286,7 +286,7 @@ let recorder () =
       pin =
         (fun a n ->
           log "pin 0x%x %d" a n;
-          Ok [ (a, n) ]);
+          Ok (Some [ (a, n) ]));
       unpin = (fun a n -> log "unpin 0x%x %d" a n);
       release = (fun () -> log "release");
     }
@@ -351,8 +351,8 @@ let test_far_function () =
   misuse "past the range" (fun () ->
       Function.alloc_dma ~va:(base + (3 * far_page)) f (far_page + 1));
   misuse "a pin off a page" (fun () -> Function.pin f (base + 1) far_page);
-  ignore (require_ok (Function.pin f base far_page));
-  ignore (require_ok (Function.pin f base far_page));
+  ignore (require_some (require_ok (Function.pin f base far_page)));
+  ignore (require_some (require_ok (Function.pin f base far_page)));
   Function.unpin f base far_page;
   Function.unpin f base far_page;
   misuse "an unpin past the pins" (fun () -> Function.unpin f base far_page);
@@ -391,7 +391,7 @@ let test_far_released () =
   require_ok (Machine.reserve r.m ~base far_page);
   let f = require_ok (Function.take r.m far_bus) in
   let w, _ = require_some (require_ok (Function.alloc_dma f 1)) in
-  ignore (require_ok (Function.pin f base far_page));
+  ignore (require_some (require_ok (Function.pin f base far_page)));
   ignore (asked r);
   Function.release f;
   Function.release f;

@@ -29,7 +29,7 @@ type fn = {
     int ->
     ((Window.t * (int * int) list) option, string) result;
   free_dma : Window.t -> unit;
-  pin : int -> int -> ((int * int) list, string) result;
+  pin : int -> int -> ((int * int) list option, string) result;
   unpin : int -> int -> unit;
   release : unit -> unit;
 }

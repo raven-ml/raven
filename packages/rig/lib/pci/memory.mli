@@ -130,8 +130,9 @@ val host : region -> Window.t option
 (** {1:alloc Allocating and mapping}
 
     {!val-alloc}, {!map_host} and {!map_peer} each return [Ok None] if the
-    GPU's memory, its space or a page table has no room, and freeing memory
-    makes room. Each returns [Error why] if the machine refuses, naming what is
+    machine's system memory ({!Function.alloc_dma}, {!Function.pin}), the GPU's
+    memory, its space or a page table has no room, and freeing memory makes
+    room. Each returns [Error why] if the machine refuses, naming what is
     missing as {!Function.alloc_dma} does, or if the GPU's entries cannot hold
     the memory's addresses ({!Page_table.val-pa_bits}). Each gives back what it
     took before it returns [None] or [Error]. *)

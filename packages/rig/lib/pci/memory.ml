@@ -262,8 +262,8 @@ let alloc ?(uncached = false) m kind n =
 (* Pinned pages map at [va], with what [r] needs to give them back. *)
 let map_pinned m h tables ~va ~source ~host a n =
   match Function.pin h.fn a n with
-  | Error _ as e -> e
-  | Ok runs -> (
+  | (Error _ | Ok None) as r -> r
+  | Ok (Some runs) -> (
       let unpin () = Function.unpin h.fn a n in
       match beyond m tables runs with
       | Some why ->

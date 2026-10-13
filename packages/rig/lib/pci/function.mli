@@ -322,21 +322,24 @@ val free_dma : t -> Window.t -> unit
     Raises [Invalid_argument] if [w] is not a live window {!alloc_dma} returned
     for [f]. *)
 
-val pin : t -> int -> int -> ((int * int) list, string) result
+val pin : t -> int -> int -> ((int * int) list option, string) result
 (** [pin f a n] locks the [n] bytes at [a] of [f]'s machine, which start on a
-    page, and is the runs at which [f] reaches them. Pins are counted. The
-    memory stays locked until each pin is {!unpin}ned, and behind an IOMMU
-    [(a, n)] stays mapped for [f] as long. Behind an IOMMU, a child of [fork]
-    gets copies of pinned pages of private mappings, and the parent keeps the
-    pinned pages.
+    page, and is [Some runs], with [runs] the addresses at which [f] reaches
+    them. Pins are counted. The memory stays locked until each pin is
+    {!unpin}ned, and behind an IOMMU [(a, n)] stays mapped for [f] as long.
+    Behind an IOMMU, a child of [fork] gets copies of pinned pages of private
+    mappings, and the parent keeps the pinned pages.
 
     Taken physically, [f] pins only memory that {!alloc_dma} gave on [f]'s
     machine, for [f] or another function, since the process's own pages go back
     to the system when it dies with [f] still writing them. The pinned memory
     then outlives the process ({{!dma}system memory}).
 
-    [Error why] as for {!alloc_dma}, if the pages cannot be locked or their
-    addresses read, or if [f] is taken physically and the pages are not memory
+    [Ok None] if the machine has no room to pin them now, within the limits
+    {{!dma}system memory} names. Unpinning or freeing memory makes room.
+
+    [Error why] if the system refuses to lock the pages or to read their
+    addresses, or if [f] is taken physically and the pages are not memory
     {!alloc_dma} gave on [f]'s machine.
 
     Raises [Invalid_argument] if [a] is not on a page or [n <= 0]. *)

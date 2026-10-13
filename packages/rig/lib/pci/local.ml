@@ -216,7 +216,7 @@ let pin t a n =
   match t.way with
   | Physical_take s -> (
       match Sysmem.reach ~root:(Sysmem.root s) ~bus:t.bus a (round_page n) with
-      | Some runs -> runs
+      | Some _ as runs -> runs
       | None ->
           Fail.fail
             "%s reaches memory without an IOMMU and pins only memory alloc_dma \
@@ -224,17 +224,9 @@ let pin t a n =
              system when it dies; take it behind an IOMMU, bound to vfio-pci, \
              or give it memory from alloc_dma"
             t.bus)
-  | Iommu_take c -> (
+  | Iommu_take c ->
       let n = round_page n in
-      match Vfio.map_dma "pin" t.bus c a n with
-      | Some iova -> [ (iova, n) ]
-      | None ->
-          Fail.fail
-            "%s has no device addresses left for %d bytes, the process \
-             reached its locked-memory limit, or the IOMMU holds as many \
-             mappings as Linux allows; %s, or raise \
-             /sys/module/vfio_iommu_type1/parameters/dma_entry_limit"
-            t.bus n Fail.memlock)
+      Option.map (fun iova -> [ (iova, n) ]) (Vfio.map_dma "pin" t.bus c a n)
 
 let unpin t a n =
   match t.way with
