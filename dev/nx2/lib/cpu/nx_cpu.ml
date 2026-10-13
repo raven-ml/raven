@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+module D = Nx_array.Dtype
+
 let name = "nx.cpu"
 let computes_on = Rig.shares_host_memory
 
@@ -82,46 +84,114 @@ external map :
   Nx_kernel.load array ->
   Nx_array.answer = "nx_cpu_map"
 
-(* Reductions and scans (fold.c). [fill_bits loads] is the bits of the
-   first load's fill where it is padded: C computes one load. *)
+(* Reductions and scans (reduce.c). nx.cpu computes a program's one operand,
+   unchanged, into its own dtype: one [Sum], [Prod], [Max] or [Min] at a
+   dtype the kernels reduce, or a [Moments] scan at float32 or float64. The
+   externals take the monoid, read as an int, a padded load's pad and its
+   fill's bits, and [threads]: [1] for one thread, [0] for as many as the
+   job gives. *)
 
 external reduce_c :
-  Nx_kernel.Prog.t ->
+  Nx_kernel.monoid ->
   int array ->
-  (Nx_kernel.reduction * int) array ->
-  Nx_array.any array ->
-  Nx_kernel.load array ->
-  string ->
+  Nx_array.any ->
+  ('v, 's) Nx_array.t ->
+  (Nx_kernel.pad * string) option ->
+  int ->
   Nx_array.answer = "nx_cpu_reduce_byte" "nx_cpu_reduce"
 
 external scan_c :
-  Nx_kernel.Prog.t ->
+  Nx_kernel.monoid ->
   int ->
-  Nx_kernel.reduction * int ->
-  Nx_array.any array ->
-  Nx_kernel.load array ->
-  string ->
+  Nx_array.any ->
+  ('v, 's) Nx_array.t ->
+  (Nx_kernel.pad * string) option ->
+  int ->
   Nx_array.answer = "nx_cpu_scan_byte" "nx_cpu_scan"
 
-let fill_bits (loads : Nx_kernel.load array) =
-  if Array.length loads = 0 then ""
-  else
-    match loads.(0) with
-    | Plain _ -> ""
-    | Padded { x; fill; _ } -> Nx_kernel.Prog.bits (Nx_array.dtype x) fill
+external moments_c :
+  int ->
+  Nx_array.any ->
+  Nx_array.any ->
+  ('v, 's) Nx_array.t ->
+  (Nx_kernel.pad * string) option ->
+  int ->
+  Nx_array.answer = "nx_cpu_moments_scan_byte" "nx_cpu_moments_scan"
+
+(* Whether the kernels reduce terms of [dt] by [m]: the four monoids at
+   float32, float64 and the 8- to 64-bit integers, extremes at bool. *)
+let reduces (type v s) (m : Nx_kernel.monoid) (dt : (v, s) D.t) =
+  match (m, dt) with
+  | Logsumexp, _ -> false
+  | ( (Sum | Prod | Max | Min),
+      ( Float32 | Float64 | Int8 | Uint8 | Int16 | Uint16 | Int32 | Uint32
+      | Int64 | Uint64 ) ) ->
+      true
+  | (Max | Min), Bool -> true
+  | (Sum | Prod), Bool -> false
+  | ( (Sum | Prod | Max | Min),
+      ( Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn
+      | Int4 | Uint4 | Complex128 | Complex64 | Bit ) ) ->
+      false
+
+(* Whether the kernels scan terms of [dt] by Moments. *)
+let moments_dtype (type v s) (dt : (v, s) D.t) =
+  match dt with Float32 | Float64 -> true | _ -> false
+
+let same (Nx_array.Any d) x = D.equal (Nx_array.dtype d) (Nx_array.dtype x)
+
+(* A load's operand, and a padded one's pad and its fill's bits. *)
+let operand : Nx_kernel.load -> Nx_array.any = function
+  | Plain x -> Any x
+  | Padded { x; _ } -> Any x
+
+let padding : Nx_kernel.load -> _ = function
+  | Plain _ -> None
+  | Padded { x; fill; pad } ->
+      Some (pad, Nx_kernel.Prog.bits (Nx_array.dtype x) fill)
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
 let accepted (p : Nx_kernel.Prog.t) (r, k) =
-  let (Nx_array.Dtype.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
+  let (D.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
   Nx_kernel.accepts r dt
 
-let reduce p ~axes rs ~dsts loads =
-  if not (Array.for_all (accepted p) rs) then Nx_array.Wrong_dtype
-  else reduce_c p axes rs dsts loads (fill_bits loads)
+let rec all_accepted p rs i =
+  i = Array.length rs || (accepted p rs.(i) && all_accepted p rs (i + 1))
 
-let scan p ~axis rk ~dsts loads =
+(* nx.cpu computes a program that is its one operand's identity. A padded
+   load passes its pad and its fill's bits. *)
+let reduce_on ~threads p ~axes rs ~dsts (loads : Nx_kernel.load array) =
+  if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
+  else if not (Nx_kernel.Prog.is_identity p) then Nx_array.Declined
+  else
+    match (rs, dsts, loads) with
+    | [| (Monoid m, 0) |], [| dst |], [| l |] ->
+        let (Any x) = operand l in
+        if not (reduces m (Nx_array.dtype x) && same dst x) then
+          Nx_array.Declined
+        else reduce_c m axes dst x (padding l) threads
+    | _ -> Nx_array.Declined
+
+let scan_on ~threads p ~axis rk ~dsts (loads : Nx_kernel.load array) =
   if not (accepted p rk) then Nx_array.Wrong_dtype
-  else scan_c p axis rk dsts loads (fill_bits loads)
+  else if not (Nx_kernel.Prog.is_identity p) then Nx_array.Declined
+  else
+    match (rk, dsts, loads) with
+    | (Monoid m, 0), [| dst |], [| l |] ->
+        let (Any x) = operand l in
+        if not (reduces m (Nx_array.dtype x) && same dst x) then
+          Nx_array.Declined
+        else scan_c m axis dst x (padding l) threads
+    | (Moments, 0), [| mean; var |], [| l |] ->
+        let (Any x) = operand l in
+        let dt = Nx_array.dtype x in
+        if not (moments_dtype dt && same mean x && same var x) then
+          Nx_array.Declined
+        else moments_c axis mean var x (padding l) threads
+    | _ -> Nx_array.Declined
+
+let reduce p ~axes rs ~dsts loads = reduce_on ~threads:0 p ~axes rs ~dsts loads
+let scan p ~axis rk ~dsts loads = scan_on ~threads:0 p ~axis rk ~dsts loads
 
 (* Gathers and scatters (index.c) *)
 

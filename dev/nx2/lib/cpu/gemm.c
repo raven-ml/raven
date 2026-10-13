@@ -894,7 +894,8 @@ static void dots_columns(const dots_job *f, uint8_t *bp, uint8_t *mine,
   _Alignas(64) uint8_t l[NX_CPU_DOT_ROWS * NX_CPU_LANES * 8];
   for (int64_t j = 0; j < c; j++)
     for (int64_t x = x0; x < x1; x++) {
-      int64_t k0 = x * NX_CPU_FOLD_BLOCK, len = min64(NX_CPU_FOLD_BLOCK, k - k0);
+      int64_t k0 = x * NX_CPU_LANE_BLOCK;
+      int64_t len = min64(NX_CPU_LANE_BLOCK, k - k0);
       int64_t at = pos(p, B, e, 0, j0 + j, k0);
       const uint8_t *b = bp;
       if (in_place) b = p->op[B].x->base + at * w;
@@ -918,7 +919,7 @@ static void dots_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   const dots_job *f = ctx;
   problem *p = f->p;
   int64_t m = p->ext[ROW], n = p->ext[COL], w = p->w;
-  int64_t b_bytes = NX_CPU_FOLD_BLOCK * w;
+  int64_t b_bytes = NX_CPU_LANE_BLOCK * w;
   int64_t own = f->ranges == 1 ? m * DOT_COLUMNS * f->blocks * w : 0;
   uint8_t *bp = scratch(p, b_bytes + own);
   if (bp == NULL) return;
@@ -957,7 +958,7 @@ static void dots(problem *p, int64_t bytes, double cost) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w, outputs = batch * m * n;
   dots_job f = {.p = p,
-                .blocks = ceil_div(k, NX_CPU_FOLD_BLOCK),
+                .blocks = ceil_div(k, NX_CPU_LANE_BLOCK),
                 .groups = ceil_div(n, DOT_COLUMNS)};
   uint8_t *staged = NULL;
   if (adjacent(p, A, CON)) {
@@ -1021,13 +1022,13 @@ static void rows_block(const rows_job *f, uint8_t *ap, int64_t e, int64_t x,
                        uint8_t *l, int64_t ls, int64_t ldy) {
   const problem *p = f->p;
   const int64_t *sa = p->op[A].st, *sb = p->op[B].st;
-  int64_t m = p->ext[ROW], w = p->w, k0 = x * NX_CPU_FOLD_BLOCK;
-  int64_t len = min64(NX_CPU_FOLD_BLOCK, p->ext[CON] - k0);
+  int64_t m = p->ext[ROW], w = p->w, k0 = x * NX_CPU_LANE_BLOCK;
+  int64_t len = min64(NX_CPU_LANE_BLOCK, p->ext[CON] - k0);
   for (int64_t q = q0; q < q1; q++)
     for (int64_t i = 0; i < m; i++)
       memset(l + (q * ls + i * ldy) * w, 0, (size_t)(c * w));
   stage_acc(p, A, pos(p, A, e, 0, 0, k0), sa[ROW], sa[CON], m, len, ap, m);
-  uint8_t *bp = ap + m * NX_CPU_FOLD_BLOCK * w;
+  uint8_t *bp = ap + m * NX_CPU_LANE_BLOCK * w;
   nx_cpu_axpy axpy = nx_cpu_table->axpy[p->acc];
   for (int64_t t = 0; t + q0 < len; t += NX_CPU_LANES) {
     int64_t r = min64(q1, len - t), at = pos(p, B, e, 0, j0, k0 + t + q0);
@@ -1150,10 +1151,10 @@ static void rows(problem *p, int64_t bytes, double cost) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t w = p->w, cols = min64(n, ROW_BYTES / w);
   rows_job f = {.p = p,
-                .blocks = ceil_div(p->ext[CON], NX_CPU_FOLD_BLOCK),
+                .blocks = ceil_div(p->ext[CON], NX_CPU_LANE_BLOCK),
                 .cols = cols,
                 .groups = ceil_div(n, cols),
-                .staged = (m * NX_CPU_FOLD_BLOCK + NX_CPU_LANES * cols) * w};
+                .staged = (m * NX_CPU_LANE_BLOCK + NX_CPU_LANES * cols) * w};
   int64_t sums = m * cols * f.blocks * w;
   if (batch * f.groups >= units(bytes, cost)) {
     f.own = f.staged + NX_CPU_LANES * m * cols * w + sums;

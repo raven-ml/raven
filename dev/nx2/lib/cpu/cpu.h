@@ -40,10 +40,10 @@
 typedef void (*nx_cpu_run)(const void *src, void *dst, int64_t n);
 
 /* The lanes of a sum whose order is fixed by shape: term t of a block of
-   NX_CPU_FOLD_BLOCK consecutive terms adds into lane t modulo
+   NX_CPU_LANE_BLOCK consecutive terms adds into lane t modulo
    NX_CPU_LANES. */
 #define NX_CPU_LANES 16
-#define NX_CPU_FOLD_BLOCK 1024
+#define NX_CPU_LANE_BLOCK 1024
 
 /* Where a microkernel's sums start: the tile's outputs, or +0, the tile
    then only written. */
@@ -143,10 +143,11 @@ typedef void (*nx_cpu_row3)(int64_t n, uint8_t *d, int64_t sd,
 typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
                             const uint8_t *bits);
 
-/* The monoids nx.cpu folds: NX_MONOID_SUM to NX_MONOID_MIN (nx_kernel.h). */
+/* The monoids nx.cpu reduces by: NX_MONOID_SUM to NX_MONOID_MIN
+   (nx_kernel.h). */
 enum { NX_CPU_MONOIDS = NX_MONOID_MIN + 1 };
 
-/* A monoid's fold at a dtype (folds.c). [lanes] adds the [n] terms at [x],
+/* A monoid's kernels at a dtype (reduce.c). [lanes] adds the [n] terms at [x],
    stepping [s] elements, into the NX_CPU_LANES lanes at [l]: term i into
    lane (first + i) mod NX_CPU_LANES. [combine] adds the [n] elements at
    [x], stepping [s], into the [n] contiguous accumulators at [a], element
@@ -154,7 +155,7 @@ enum { NX_CPU_MONOIDS = NX_MONOID_MIN + 1 };
    j adds the [n] elements at [x + j·xs], stepping [s], into the
    accumulator [a]'s element j in order, storing each sum at
    [y + j·ys], stepping [sy]. [blocks] stores into [v] the values of the [n] blocks of
-   NX_CPU_FOLD_BLOCK contiguous terms from [x], each its lanes from the
+   NX_CPU_LANE_BLOCK contiguous terms from [x], each its lanes from the
    identity [e] and the lanes' tree, as [lanes] and [combine] give them.
    [few] stores the values of [h] rows of [w] outputs of [n] terms each, n
    at most NX_CPU_LANES, output j of row i at [y + i·sy2 + j·sy]: its term
@@ -175,7 +176,7 @@ typedef struct {
               int64_t sy, int64_t sy2);
   void (*column)(uint8_t *a, const uint8_t *x, int64_t st, int64_t n,
                  int64_t s, int64_t w);
-} nx_cpu_fold;
+} nx_cpu_monoid;
 
 /* The bytes of the largest tile of any target's microkernel: 32 × 32
    float32 on the matrix unit. */
@@ -207,13 +208,13 @@ typedef struct {
   /* where[i] and fill[i] move elements of 2^i bytes, i in 0..4. */
   nx_cpu_row3 where[5];
   nx_cpu_row0 fill[5];
-  /* fold[m][dt] folds the monoid m (NX_MONOID_SUM to NX_MONOID_MIN) at dt:
-     lanes NULL where the table declines. */
-  nx_cpu_fold fold[NX_CPU_MONOIDS][NX_DTYPE_COUNT];
+  /* monoid[m][dt] reduces by the monoid m (NX_MONOID_SUM to
+     NX_MONOID_MIN) at dt: lanes NULL where the table declines. */
+  nx_cpu_monoid monoid[NX_CPU_MONOIDS][NX_DTYPE_COUNT];
 } nx_cpu_target;
 
 /* The tables, each set when the program starts on a host that runs it, by
-   convert.c, gemm_generic.c, rows.c and folds.c compiled for its target,
+   convert.c, gemm_generic.c, rows.c and reduce.c compiled for its target,
    then by the kernels of its instructions: gemm_neon.c's on arm64,
    gemm_avx2.c's for v3. amx is base's table with gemm_amx.c's kernels for
    the matrix unit of Apple's M1. */
@@ -221,7 +222,7 @@ extern nx_cpu_target nx_cpu_base;
 void nx_cpu_set_convert_base(nx_cpu_target *t);
 void nx_cpu_set_gemm_base(nx_cpu_target *t);
 void nx_cpu_set_rows_base(nx_cpu_target *t);
-void nx_cpu_set_folds_base(nx_cpu_target *t);
+void nx_cpu_set_reduce_base(nx_cpu_target *t);
 #if defined(__aarch64__)
 void nx_cpu_set_neon(nx_cpu_target *t);
 #endif
@@ -235,7 +236,7 @@ extern nx_cpu_target nx_cpu_v3;
 void nx_cpu_set_convert_v3(nx_cpu_target *t);
 void nx_cpu_set_gemm_v3(nx_cpu_target *t);
 void nx_cpu_set_rows_v3(nx_cpu_target *t);
-void nx_cpu_set_folds_v3(nx_cpu_target *t);
+void nx_cpu_set_reduce_v3(nx_cpu_target *t);
 void nx_cpu_set_avx2(nx_cpu_target *t);
 #endif
 
@@ -288,20 +289,6 @@ void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
    the time a job takes to start (job.c). */
 int nx_cpu_threads(int64_t bytes, double cost);
 #define NX_CPU_THREAD_BYTES (128 * 1024)
-
-/* Folds */
-
-/* nx.cpu's reduce and scan (fold.c): their externals' arguments, then
-   [threads], on one thread where it is 1, on as many as the job gives
-   where it is 0. The bits do not change. A reduce takes the program [p],
-   the axes [axes], the reductions [rs], the destinations [dsts], the
-   loads [loads] and [fill], the bits of the first load's fill where it is
-   padded; a scan takes its axis and its one reduction in place of [axes]
-   and [rs]. */
-value nx_cpu_reduce_on(value p, value axes, value rs, value dsts,
-                       value loads, value fill, int threads);
-value nx_cpu_scan_on(value p, value axis, value r, value dsts, value loads,
-                     value fill, int threads);
 
 /* Matrices */
 

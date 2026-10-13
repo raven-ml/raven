@@ -99,3 +99,28 @@
       under [adjoint]. *)
 
 include Nx_kernel.S
+
+(**/**)
+
+val reduce_on :
+  threads:int ->
+  Nx_kernel.Prog.t ->
+  axes:int array ->
+  (Nx_kernel.reduction * int) array ->
+  dsts:Nx_array.any array ->
+  Nx_kernel.load array ->
+  Nx_array.answer
+(** [reduce_on ~threads] is {!reduce} on one thread where [threads] is [1],
+    on as many as its job gives where it is [0]. The bits are the same. *)
+
+val scan_on :
+  threads:int ->
+  Nx_kernel.Prog.t ->
+  axis:int ->
+  Nx_kernel.reduction * int ->
+  dsts:Nx_array.any array ->
+  Nx_kernel.load array ->
+  Nx_array.answer
+(** [scan_on ~threads] is {!scan}, threaded as {!reduce_on}. *)
+
+(**/**)

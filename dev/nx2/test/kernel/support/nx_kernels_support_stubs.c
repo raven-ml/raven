@@ -71,29 +71,6 @@ value nx_kernels_support_use(value name) {
       "Nx_kernels_support.with_target: not a target the host runs");
 }
 
-/* nx.cpu's reductions and scans on one thread. */
-value nx_kernels_support_serial_reduce(value p, value axes, value rs,
-                                       value dsts, value loads, value fill) {
-  return nx_cpu_reduce_on(p, axes, rs, dsts, loads, fill, 1);
-}
-
-value nx_kernels_support_serial_reduce_byte(value *argv, int argn) {
-  (void)argn;
-  return nx_kernels_support_serial_reduce(argv[0], argv[1], argv[2], argv[3],
-                                          argv[4], argv[5]);
-}
-
-value nx_kernels_support_serial_scan(value p, value axis, value r, value dsts,
-                                     value loads, value fill) {
-  return nx_cpu_scan_on(p, axis, r, dsts, loads, fill, 1);
-}
-
-value nx_kernels_support_serial_scan_byte(value *argv, int argn) {
-  (void)argn;
-  return nx_kernels_support_serial_scan(argv[0], argv[1], argv[2], argv[3],
-                                        argv[4], argv[5]);
-}
-
 /* Jobs begun from jobs' bodies: [n] outer units of [cost] bytes, each
    adding 0 to n − 1 by a job of [n] units of that cost begun in its
    body. */

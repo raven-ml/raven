@@ -85,51 +85,12 @@ let backends = cpus @ gpus ()
 external nested : int -> int -> int = "nx_kernels_support_nested"
 
 (* nx.cpu with its reductions, scans and matrices on one thread: the serial
-   entries of cpu.h, reductions and scans with nx_cpu.ml's dtype rule and
-   fill bits. *)
+   entries of cpu.h for the matrices. *)
 module Serial = struct
   include Nx_cpu
 
-  external reduce_c :
-    Nx_kernel.Prog.t ->
-    int array ->
-    (Nx_kernel.reduction * int) array ->
-    Nx_array.any array ->
-    Nx_kernel.load array ->
-    string ->
-    Nx_array.answer
-    = "nx_kernels_support_serial_reduce_byte" "nx_kernels_support_serial_reduce"
-
-  external scan_c :
-    Nx_kernel.Prog.t ->
-    int ->
-    Nx_kernel.reduction * int ->
-    Nx_array.any array ->
-    Nx_kernel.load array ->
-    string ->
-    Nx_array.answer
-    = "nx_kernels_support_serial_scan_byte" "nx_kernels_support_serial_scan"
-
-  let fill_bits (loads : Nx_kernel.load array) =
-    if Array.length loads = 0 then ""
-    else
-      match loads.(0) with
-      | Plain _ -> ""
-      | Padded { x; fill; _ } -> Nx_kernel.Prog.bits (Nx_array.dtype x) fill
-
-  let accepted (p : Nx_kernel.Prog.t) (r, k) =
-    let (Nx_array.Dtype.Any dt) =
-      Nx_kernel.Prog.dtype p (Iarray.get p.outs k)
-    in
-    Nx_kernel.accepts r dt
-
-  let reduce p ~axes rs ~dsts loads =
-    if not (Array.for_all (accepted p) rs) then Nx_array.Wrong_dtype
-    else reduce_c p axes rs dsts loads (fill_bits loads)
-
-  let scan p ~axis rk ~dsts loads =
-    if not (accepted p rk) then Nx_array.Wrong_dtype
-    else scan_c p axis rk dsts loads (fill_bits loads)
+  let reduce = Nx_cpu.reduce_on ~threads:1
+  let scan = Nx_cpu.scan_on ~threads:1
 
   external cholesky :
     Nx_kernel.triangle ->
