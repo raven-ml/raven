@@ -31,25 +31,26 @@
     mean within [γ(n) Σ|x| / n], and the variance [V] within
     [γ(n + 3) V + (1 + γ(n + 3)) γ(n)² (Σ|x| / n)²], for [n] exact in the
     accumulator. A scan of [Logsumexp], [Moments] or [Arg], the first two in
-    the accumulator, doubles: along an axis of [n] it is [K = ⌈log₂ n⌉] maps,
-    at least one, pass [k] combining each index's state with the state [2^k]
-    before it, the earlier one first: O(n log n).
-    [Logsumexp] combines [a] and [b] into [M + log1p (exp (m - M))], [M] the
-    two's [Maximum] and [m] their [Minimum], or [M] where [M] is not finite,
-    [a] taken as [-∞] where none is before; a result of [n] terms of largest
-    finite magnitude [X] is within [K (u (X + ln n + 1) + ε)] of the exact
-    one, [ε] the error [Exp] and [Log1p] add. [Moments] combines the means
-    [μ] and sums of squared deviations [S] of the terms less the slice's
-    first term [c], [c] taken as [0] where it is not finite: [na] and [nb]
-    terms into [μa + δ nb / n] and [Sa + Sb + δ² na nb / n], [δ = μb - μa]
-    and [n = na + nb], or the mean [μa + μb] where either is not finite. At
-    [n] terms the mean is [c + μ] and the variance [S / n], or [μ - μ] where
-    [μ] is not finite. With [R] the terms' range, the mean [μ] is within
-    [(4K + 1) u R + u|μ|] of the exact one and the variance [V] within
-    [(8K + 1) u V + (6K² + 2) u R √V]. These bounds hold to first order,
-    barring overflow, for [n] exact in the accumulator. [Arg] combines pairs
-    of an extreme and its position, keeping the earlier pair unless the
-    later extreme is past it in [Max]'s or [Min]'s order: exact.
+    the accumulator, combines its terms' states by {!pairwise}: output [i]
+    through at most [D_i = max(0, 2⌈log₂(i+1)⌉ - 1)] combinations, the
+    earlier state first, O(n) along an axis of [n]. [Logsumexp] combines [a]
+    and [b] into [M + log1p (exp (m - M))], [M] the two's [Maximum] and [m]
+    their [Minimum], or [M] where [M] is not finite; index [0] is its term
+    plus [+0]. Its result at [i] is within [D_i (u (X + ln(i+1) + 1) + ε)]
+    of the exact one, [X] the largest finite magnitude among the terms up to
+    [i] and [ε] the error [Exp] and [Log1p] add. [Moments] combines states
+    of [na] and [nb] terms less the slice's first term [c], [c] taken as [0]
+    where it is not finite, holding their means [μ] and sums of squared
+    deviations [S], into [μa + δ (nb / n)] and [(Sa + Sb) + δ² (na nb / n)],
+    [δ = μb - μa] and [n = na + nb], or the mean [μa + μb] where either is
+    not finite. At index [i] the mean is [c + μ] and the variance
+    [S / (i + 1)], or [μ - μ] where [μ] is not finite. With [R] the range of
+    the terms up to [i], the mean [μ] is within [(4 D_i + 1) u R + u|μ|] of
+    the exact one and the variance [V] within
+    [(7 D_i + 1) u V + (4 D_i² - 2 D_i) u R √V]. These bounds hold to first
+    order, barring overflow, for [i + 1] exact in the accumulator. [Arg]
+    combines pairs of an extreme and its position, keeping the earlier pair
+    unless the later extreme is past it in [Max]'s or [Min]'s order: exact.
 
     A one-node map at a dtype other than a base one ({!base}), but a cast, a
     bitcast or a copy, computes at its dtypes' accumulators, which hold their
@@ -121,3 +122,30 @@ val run :
   'r option
 (** [run apply ~by op] is [Some r], [r] [op]'s expansion applied through
     [apply], or [None] for a core case. *)
+
+val pairwise :
+  ('q. by:string -> 'q Value.prim -> 'q) ->
+  by:string ->
+  int array ->
+  int ->
+  ?first:(Build.t -> int array -> int array) ->
+  (Build.t -> int array -> int array -> int array) ->
+  'd Value.any array ->
+  'd Value.any array
+(** [pairwise apply ~by shape axis ?first combine states] scans [states],
+    the components of each term's state, values of [shape], along [axis] by
+    the odd/even recursion, through [apply]. [combine b earlier later] is the
+    nodes of the state of [earlier]'s terms followed by [later]'s, and
+    [first b s] the nodes of index [0]'s result from its state [s], [s]
+    itself if [first] is absent.
+
+    Of [m] states [s], pairs [p_j = combine s_2j s_2j+1] for [j < ⌊m/2⌋]
+    scan recursively into [q]; then [y_2j+1 = q_j], [y_0 = s_0] and
+    [y_2j = combine q_j-1 s_2j]. One state is itself. So output [i] is a
+    tree of at most [D_i = max(0, 2⌈log₂(i+1)⌉ - 1)] combinations over the
+    states up to [i], whose shape depends on [i] alone: the scan of a prefix
+    of the axis is the prefix of the scan, bit for bit. No combination lacks
+    a state, so none needs an identity. A level is a map of the pairs, a
+    map of the even indices past [0] and an assembly of the three parts:
+    fewer than [2n] combinations and [4n] elements written along an axis of
+    [n], in about [3⌈log₂ n⌉] steps. *)

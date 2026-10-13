@@ -1224,11 +1224,10 @@ val ewma : ?axis:int -> alpha:float -> (float, 's, 'd) t -> (float, 's, 'd) t
     along [axis]: [y₀ = x₀], then [yᵢ = (1 - alpha) yᵢ₋₁ + alpha xᵢ];
     without [axis], of its elements in C order, in [x]'s shape.
 
-    It composes the affine maps [y ↦ a y + b] of the recurrence in
-    [⌈log₂ n⌉] rounds of maps for [n] elements, element [i] with element
-    [i - 2ᵏ] at round [k]: [O(n log n)] work. Each output's association
-    depends on its index alone, so the average of a prefix of [x] is the
-    prefix of its average, bit for bit. A NaN reaches every later element,
+    The average of a prefix of [x] is the prefix of its average, bit for
+    bit. Element [i] passes through at most [max(0, 2⌈log₂(i+1)⌉ - 1)]
+    compositions of the recurrence's affine maps [y ↦ a y + b], in [O(n)]
+    work for [n] elements. A NaN reaches every later element,
     and an infinity as the recurrence carries it; a finite term whose weight
     underflows to [0] drops out.
 

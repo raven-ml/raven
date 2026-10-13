@@ -448,70 +448,114 @@ let map_n (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   let layout = L.contiguous shape in
   Array.of_list (read (apply ~by (Value.Map { layout; prog; outs; loads })))
 
-(* [x] padded along [axis] by [d] before and cropped by [d] after, of [x]'s
-   shape: each index reads [x] at [d] before it, [fill] where none is. *)
-let shifted (type v s d) axis d fill (x : (v, s, d) Value.t) : d Value.load =
-  let r = Array.length (Prim.shape x) in
-  let lo = Array.make r 0 and hi = Array.make r 0 in
-  lo.(axis) <- d;
-  hi.(axis) <- -d;
-  Value.Padded
-    { x; fill; pad = { lo; hi; interior = Array.make r 0; windows = [||] } }
-
-(* A pass of {!doubling}: its shift [d], and the nodes of [at], the index along
-   the scan's axis as an [int64], and of [valid], whether [at >= d]. *)
-type pass = { d : int; at : int; valid : int }
-
-(* A reduction scanned along [axis] by doubling (Hillis and Steele): [state]
-   is the reduction's state of each term, and pass [k], one map, combines each
-   index's state with the one [d = 2^k] before it, so that after it each index
-   holds the state of its last [2^(k+1)] terms. [combine b p earlier later] is
-   the nodes of the combined state from those of the two, the earlier one
-   zeros where [p.valid] is [false]. ⌈log₂ n⌉ passes along an axis of [n], at
-   least one, so each element passes through ⌈log₂ n⌉ combinations. *)
-let doubling (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
-    axis combine (state : d Value.any array) : d Value.any array =
-  let dts = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) state in
-  let before (Value.Any x) d = shifted axis d (D.zero (Prim.dtype x)) x in
-  let plain (Value.Any x) = Value.Plain x in
-  let rec pass state d =
-    let b = Build.make () in
-    let earlier = Array.map (input b) dts in
-    let later = Array.map (input b) dts in
-    let at = push b (Coord axis) in
-    let shift = const b D.Int64 (Int64.of_int d) in
-    let valid = push b (Op2 (Compare Less_equal, shift, at)) in
-    let outs = combine b { d; at; valid } earlier later in
-    let prog = program b (Iarray.of_array outs) in
-    let loads =
-      Array.append
-        (Array.map (fun x -> before x d) state)
-        (Array.map plain state)
-    in
-    let state = map_n apply ~by shape prog dts loads in
-    if 2 * d >= shape.(axis) then state else pass state (2 * d)
+(* The ranges of [shape] that keep its elements [start + j step], [j < count],
+   along [axis] and all others elsewhere. *)
+let along_axis shape axis start count step =
+  let keep a e =
+    if a = axis then { M.start; count; step }
+    else { M.start = 0; count = e; step = 1 }
   in
-  pass state 1
+  Array.mapi keep shape
+
+(* [x]'s elements [start + j step], [j < count], along [axis]. *)
+let part (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
+    start count step (Value.Any x : d Value.any) : d Value.any =
+  let ranges = along_axis (Prim.shape x) axis start count step in
+  Value.Any (apply ~by (Value.Move (Slice ranges, x)))
+
+let plain (Value.Any x) = Value.Plain x
+
+(* Ladner and Fischer's prefix circuit at its least size, the tree of Brent
+   and Kung:
+
+     s     s0  s1  s2  s3  s4
+     p     c(s0,s1)  c(s2,s3)          the pairs
+     q     the scan of p, recursively
+     y     s0  q0  c(q0,s2)  q1  c(q1,s4)
+
+   Output [i]'s depth [f(i)] follows [f(0) = 0], [f(2j+1) = 1 + f(j)] and
+   [f(2j) = 2 + f(j-1)], so [f(i) <= max(0, 2⌈log₂(i+1)⌉ - 1)]. *)
+let pairwise (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
+    axis ?first combine (state : d Value.any array) : d Value.any array =
+  let dts = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) state in
+  let along e =
+    let s = Array.copy shape in
+    s.(axis) <- e;
+    s
+  in
+  let parts start count step =
+    Array.map (part apply ~by axis start count step)
+  in
+  (* The states [combine earlier later] of the [e] indices of the two. *)
+  let combined e earlier later =
+    let b = Build.make () in
+    let ea = Array.map (input b) dts in
+    let la = Array.map (input b) dts in
+    let prog = program b (Iarray.of_array (combine b ea la)) in
+    let loads = Array.map plain (Array.append earlier later) in
+    map_n apply ~by (along e) prog dts loads
+  in
+  (* Index [0]'s result, from [state]'s first. *)
+  let head first state =
+    let s0 = parts 0 1 1 state in
+    match first with
+    | None -> s0
+    | Some first ->
+        let b = Build.make () in
+        let s = Array.map (input b) dts in
+        let prog = program b (Iarray.of_array (first b s)) in
+        map_n apply ~by (along 1) prog dts (Array.map plain s0)
+  in
+  let rec level first state m =
+    if m = 0 || (m = 1 && Option.is_none first) then state
+    else if m = 1 then head first state
+    else
+      let half = m / 2 and rows = (m + 1) / 2 in
+      let p = combined half (parts 0 half 2 state) (parts 1 half 2 state) in
+      let q = level None p half in
+      let evens =
+        if rows = 1 then [||]
+        else
+          combined (rows - 1) (parts 0 (rows - 1) 1 q)
+            (parts 2 (rows - 1) 2 state)
+      in
+      let h = head first state in
+      let shape = along m in
+      Array.mapi
+        (fun k (Value.Any y0) ->
+          let dt = Prim.dtype y0 in
+          let piece start count v =
+            (along_axis shape axis start count 2, Prim.expect dt v)
+          in
+          let pieces =
+            piece 0 1 (Value.Any y0)
+            :: piece 1 half q.(k)
+            :: (if rows = 1 then [] else [ piece 2 (rows - 1) evens.(k) ])
+          in
+          let fill = D.zero dt in
+          Value.Any
+            (apply ~by (Value.Assemble { dtype = dt; shape; fill; pieces })))
+        h
+  in
+  level first state shape.(axis)
 
 (* The node of whether [v] is finite: [|v| < ∞], [false] for a NaN. *)
 let finite b (D.Any dt) v =
   let inf = const b dt (D.of_float dt Float.infinity) in
   push b (Op2 (Compare Less, push b (Op1 (Unary Abs, D.Any dt, v)), inf))
 
-(* Logsumexp by doubling: results [a] and [b] combine as
+(* Logsumexp by {!pairwise}: results [a] and [b] combine as
    [M + log1p (exp (m - M))], [M] their [Maximum] and [m] their [Minimum], or
    as [M] where [M] is not finite: [-∞] for terms all [-∞], [+∞] past a [+∞],
-   the first NaN with its bits. [a] is [-∞] where none is before, so one term
-   [x] gives [x + 0]. Each combination shifts by its own maximum, so no prefix
-   is lost below a later one. *)
+   the first NaN with its bits. Index [0] is its term [x] as [x + 0], so that
+   a lone [-0] gives [+0], as the reduction does. Each combination shifts by
+   its own maximum, so no prefix is lost below a later one. *)
 let running_logsumexp (type v s d)
     (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape axis
     (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let dt = Prim.dtype x in
-  let combine b p earlier later =
-    let none = const b dt (D.of_float dt Float.neg_infinity) in
-    let a = push b (Op3 (Where, p.valid, earlier.(0), none)) in
-    let y = later.(0) in
+  let combine b earlier later =
+    let a = earlier.(0) and y = later.(0) in
     let big = push b (Op2 (Binary Maximum, a, y)) in
     let small = push b (Op2 (Binary Minimum, a, y)) in
     let gap = push b (Op2 (Binary Sub, small, big)) in
@@ -520,17 +564,40 @@ let running_logsumexp (type v s d)
     let sum = push b (Op2 (Binary Add, big, l)) in
     [| push b (Op3 (Where, finite b (D.Any dt) big, sum, big)) |]
   in
-  Prim.expect dt (doubling apply ~by shape axis combine [| Value.Any x |]).(0)
+  let first b s =
+    [| push b (Op2 (Binary Add, s.(0), const b dt (D.of_float dt 0.))) |]
+  in
+  let y = pairwise apply ~by shape axis ~first combine [| Value.Any x |] in
+  Prim.expect dt y.(0)
 
-(* Moments by doubling Chan, Golub and LeVeque's combination of the mean [μ]
-   and the sum [S] of squared deviations of the terms less the slice's first
-   term [c], taken as [0] where it is not finite, so that the rounding scales
-   with the terms' range rather than their magnitude. States of [na] and [nb]
-   terms, counted from the index, combine as [μa + δ nb / n] and
-   [Sa + Sb + δ² na nb / n], [δ = μb - μa] and [n = na + nb]; where [μa] or
-   [μb] is not finite the mean is [μa + μb], so infinities add and a NaN
-   keeps its bits. At [n] terms the mean is [c + μ] and the variance [S / n],
-   or [μ - μ] where [μ] is not finite: a NaN, [μ]'s bits where it is one. *)
+(* Moments by {!pairwise}, over Chan, Golub and LeVeque's combination,
+   their (1.5b), of states [(μ, S, n)].
+
+   The derivation of its bounds, to first order, at index [i] of [N = i + 1]
+   terms through [D = D_i] combinations, with [R] the terms' range and [V]
+   their variance. The shift [c] is one of the terms, so each shifted term,
+   each state's mean and each [δ] is within [R] of [0].
+   - Mean. A term's shift rounds once, within [u R]. A combination's [μ] is
+     [(1 - w) μa + w μb], [w = nb / n], a convex combination of its states'
+     means, plus the roundings of [δ], [nb / n] and their product,
+     [3 u |δ| w <= 3 u R], and of the sum, [u R]: its error is its states'
+     largest plus [4 u R]. Through [D] combinations, [(4 D + 1) u R]; the
+     sum [c + μ] adds [u |μ|].
+   - Variance. Errors in [S] add up the tree. A combination rounds
+     [Sa + Sb] within [u (Sa + Sb)], [δ δ (na nb / n)] within a relative
+     [6 u] (the rounding of [δ] twice through its square, the square,
+     [na nb], the division and the product) and the sum within [u S]: at
+     most [7 u S], as [Sa + Sb] and [δ² na nb / n] are at most [S]. The
+     nodes at one distance from the root hold disjoint terms, and a union's
+     [S] is at least the sum of its parts', so the [D] distances add at most
+     [7 D u N V]. The states' mean errors [ea] and [eb] reach [δ²] as
+     [2 |δ| (ea + eb)], and below a node at distance [k] from the root each
+     is at most [(4 (D - k) - 3) u R]. With [w' = na nb / n <= n / 4],
+     Cauchy and Schwarz over the nodes at distance [k] give
+     [Σ |δ| w' <= √(Σ δ² w') √(Σ w') <= √(N V) √(N / 4)], so distance [k]
+     adds [2 (4 (D - k) - 3) u R N √V], and the [D] distances
+     [(4 D² - 2 D) u R N √V]. Divided by [N] and rounded once more, the
+     variance is within [(7 D + 1) u V + (4 D² - 2 D) u R √V]. *)
 let running_moments (type v s d)
     (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape axis
     (x : (v, s, d) Value.t) : (v, s, d) Value.t * (v, s, d) Value.t =
@@ -558,23 +625,21 @@ let running_moments (type v s d)
       let x0 = apply ~by (Value.Move (Slice (Array.mapi keep shape), x)) in
       apply ~by (Value.Move (Broadcast (Array.copy shape), x0))
     in
-    let mu, s =
+    let dts = Array.make 3 (D.Any dt) in
+    let terms =
       let b = Build.make () in
       let t = input b (D.Any dt) in
       let t0 = input b (D.Any dt) in
       let d = push b (Op2 (Binary Sub, t, shift b t0)) in
-      two
-        (program b [| d; f b 0. |])
+      map_n apply ~by shape
+        (program b [| d; f b 0.; f b 1. |])
+        dts
         [| Value.Plain x; Value.Plain first |]
     in
-    let combine b p earlier later =
-      let ma = earlier.(0) and sa = earlier.(1) in
-      let mb = later.(0) and sb = later.(1) in
+    let combine b earlier later =
+      let ma = earlier.(0) and sa = earlier.(1) and na = earlier.(2) in
+      let mb = later.(0) and sb = later.(1) and nb = later.(2) in
       let op2 k x y = push b (Op2 (k, x, y)) in
-      let d = const b D.Int64 (Int64.of_int p.d) in
-      let next = op2 (Binary Add) p.at (const b D.Int64 1L) in
-      let count n = push b (Op1 (Cast, D.Any dt, op2 (Binary Minimum) n d)) in
-      let na = count (op2 (Binary Sub) next d) and nb = count next in
       let n = op2 (Binary Add) na nb in
       let delta = op2 (Binary Sub) mb ma in
       let step = op2 (Binary Mul) delta (op2 (Binary Fdiv) nb n) in
@@ -584,14 +649,9 @@ let running_moments (type v s d)
       let w = op2 (Binary Fdiv) (op2 (Binary Mul) na nb) n in
       let between = op2 (Binary Mul) (op2 (Binary Mul) delta delta) w in
       let s = op2 (Binary Add) (op2 (Binary Add) sa sb) between in
-      [|
-        push b (Op3 (Where, p.valid, mean, mb));
-        push b (Op3 (Where, p.valid, s, sb));
-      |]
+      [| mean; s; n |]
     in
-    let state =
-      doubling apply ~by shape axis combine [| Value.Any mu; Value.Any s |]
-    in
+    let state = pairwise apply ~by shape axis combine terms in
     let b = Build.make () in
     let m = input b (D.Any dt) in
     let s = input b (D.Any dt) in
@@ -611,13 +671,13 @@ let running_moments (type v s d)
         Value.Plain first;
       |]
 
-(* Arg by doubling the pair of an extreme and its position: the earlier pair
-   holds unless the later's extreme is past it in [Max]'s or [Min]'s order, so
-   ties keep the first position and the first NaN holds. The order reads the
-   extreme's keys, itself or a complex number's parts, carried beside it: a
-   NaN key is past every number, then the keys compare in turn, by [Less], and
-   a float's equal keys by their reciprocals, so that [-0] is below [+0].
-   Exact. *)
+(* Arg by {!pairwise} over the pair of an extreme and its position: the
+   earlier pair holds unless the later's extreme is past it in [Max]'s or
+   [Min]'s order, so ties keep the first position and the first NaN holds.
+   The order reads the extreme's keys, itself or a complex number's parts,
+   carried beside it: a NaN key is past every number, then the keys compare
+   in turn, by [Less], and a float's equal keys by their reciprocals, so that
+   [-0] is below [+0]. Exact. *)
 let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     ~by shape axis (e : Nx_kernel.extreme) (x : (v, s, d) Value.t) :
     (v, s, d) Value.t * (int64, D.int64_elt, d) Value.t =
@@ -637,7 +697,7 @@ let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
   in
   let (D.Any kdt) = kt in
   let floats = match D.kind kdt with D.Float -> true | _ -> false in
-  let combine b p earlier later =
+  let combine b earlier later =
     let op2 k x y = push b (Op2 (k, x, y)) in
     let where c x y = push b (Op3 (Where, c, x, y)) in
     let recip x = push b (Op1 (Unary Recip, kt, x)) in
@@ -674,11 +734,10 @@ let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
         in
         where (nan ka) no (where (nan kb) yes past)
     in
-    let keep = where past no p.valid in
-    Array.map2 (where keep) earlier later
+    Array.map2 (fun a l -> where past l a) earlier later
   in
   let state =
-    doubling apply ~by shape axis combine
+    pairwise apply ~by shape axis combine
       (Array.append [| Value.Any x; Value.Any position |] carried)
   in
   (Prim.expect dt state.(0), Prim.expect D.Int64 state.(1))

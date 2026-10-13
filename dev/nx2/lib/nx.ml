@@ -2061,76 +2061,39 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
   in
   kept ~keepdims s axes y
 
-(* The affine maps [y -> a y + b] of the recurrence, composed in rounds: at
-   round [k], element [i >= 2^k] is element [i - 2^k] then itself, a map over
-   the elements past [2^k] assembled behind the first [2^k]. An [a] that
+(* The affine maps [y -> a y + b] of the recurrence, composed by
+   {!Expand.pairwise}: [(a1, b1)] then [(a2, b2)] is [(a1 a2, a2 b1 + b2)],
+   one fma, or [b1 + b2] where [b1] is infinite, so that an [a] that
    underflowed to [0] still carries an infinite [b] past it. *)
 let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
   let s = shape x and dt = dtype x in
-  let n = s.(axis) in
   let go (type w) (w : (float, w) D.t) =
-    let part start count v =
-      move ~by (Slice (region (shape v) axis start count)) v
-    in
-    (* The two outputs of [body b ins] over [vs], of shape [s'] each. *)
-    let pairs s' (vs : (float, w, d) t list) body =
+    let terms =
       let b = Build.make () in
-      let nodes =
-        Array.map (fun v -> input b (D.Any (dtype v))) (Array.of_list vs)
+      let t = input b (D.Any w) in
+      let first =
+        push b (Op2 (Compare Equal, push b (Coord axis), const b D.Int64 0L))
       in
-      let a, c = body b nodes in
+      let a = pick b first (const b w 0.) (const b w (1. -. alpha)) in
+      let c = pick b first t (bin2 b Mul (const b w alpha) t) in
       let prog = program b [| a; c |] in
-      let loads = Array.of_list (List.map (fun v -> Value.Plain v) vs) in
-      let layout = Nx_array.Layout.contiguous s' in
+      let layout = Nx_array.Layout.contiguous s in
       let a, (c, ()) =
+        let loads = [| Value.Plain (cast w x) |] in
         Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ w; w ]; loads })
       in
-      (a, c)
+      [| Value.Any a; Value.Any c |]
     in
-    let a, c =
-      let x = cast w x in
-      pairs s [ x ] (fun b ins ->
-          let first =
-            push b
-              (Op2 (Compare Equal, push b (Coord axis), const b D.Int64 0L))
-          in
-          let a = pick b first (const b w 0.) (const b w (1. -. alpha)) in
-          (a, pick b first ins.(0) (bin2 b Mul (const b w alpha) ins.(0))))
+    let combine b earlier later =
+      let a1 = earlier.(0) and b1 = earlier.(1) in
+      let a2 = later.(0) and b2 = later.(1) in
+      let inf = const b w Float.infinity in
+      let infinite = push b (Op2 (Compare Equal, un1 b Abs w b1, inf)) in
+      let fma = push b (Op3 (Fma, a2, b1, b2)) in
+      [| bin2 b Mul a1 a2; pick b infinite (bin2 b Add b1 b2) fma |]
     in
-    let joined d first rest =
-      assemble ~by w s 0.
-        [ (region s axis 0 d, part 0 d first); (region s axis d (n - d), rest) ]
-    in
-    let rec round d a c =
-      if d >= n then c
-      else
-        let s' = Array.copy s in
-        s'.(axis) <- n - d;
-        let ca, cc =
-          pairs s'
-            [
-              part 0 (n - d) a;
-              part 0 (n - d) c;
-              part d (n - d) a;
-              part d (n - d) c;
-            ]
-            (fun b ins ->
-              let a1 = ins.(0)
-              and b1 = ins.(1)
-              and a2 = ins.(2)
-              and b2 = ins.(3) in
-              let inf =
-                push b
-                  (Op2 (Compare Equal, un1 b Abs w b1, const b w Float.infinity))
-              in
-              ( bin2 b Mul a1 a2,
-                pick b inf (bin2 b Add b1 b2) (push b (Op3 (Fma, a2, b1, b2)))
-              ))
-        in
-        let c = joined d c cc in
-        if 2 * d >= n then c else round (2 * d) (joined d a ca) c
-    in
-    cast dt (round 1 a c)
+    let y = Expand.pairwise Eval.eval ~by s axis combine terms in
+    cast dt (Prim.expect w y.(1))
   in
   let (Wide w) = wide dt in
   go w

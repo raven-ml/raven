@@ -578,56 +578,133 @@ let scan_moments (type v s) path axis (a : (v, s) A.t) =
       let m, v = scan1 (Moments (0, dt)) axis (value a) in
       (read m, read v)
 
-(* float32 terms near an offset [c], as {!moments_case}'s, along one axis, at
-   times long enough for several passes of a doubling. *)
-let moments_scan_case =
-  let open Gen in
-  with_pp
-    (fun ppf (s, axis, c, _) ->
-      Format.fprintf ppf "%a along %d near %g" pp_ints s axis c)
-    (let* s = shape in
-     let s = if Array.length s = 0 then [| 3 |] else Array.copy s in
-     let* axis = int_range 0 (Array.length s - 1) in
-     let* n = frequency [ (3, constant s.(axis)); (1, int_range 5 40) ] in
-     s.(axis) <- n;
-     let* c = of_list [ 0.; 1e3; 1e5 ] in
-     let+ xs =
-       array
-         ~size:(constant (Array.fold_left ( * ) 1 s))
-         (map
-            (fun d -> Int32.float_of_bits (Int32.bits_of_float (c +. d)))
-            (float_range (-10.) 10.))
-     in
-     (s, axis, c, xs))
+(* Each slice of [s] along [axis], in C order of the other axes, as the
+   position in C order of its index [j]. *)
+let slices s axis =
+  let n = s.(axis) in
+  let r = Array.length s in
+  let after = Array.sub s (axis + 1) (r - axis - 1) in
+  let stride = Array.fold_left ( * ) 1 after in
+  let total = Array.fold_left ( * ) 1 s in
+  if n = 0 then []
+  else
+    List.init (total / n) (fun o ->
+        let base = (o / stride * n * stride) + (o mod stride) in
+        fun j -> base + (j * stride))
 
 (* Each prefix of each slice of [s] along [axis]: its terms' positions in C
    order, the last one the result's. *)
 let prefixes s axis =
-  let outer = Array.mapi (fun a n -> if a = axis then 1 else n) s in
   List.concat_map
-    (fun idx ->
-      let at j =
-        let i = Array.copy idx in
-        i.(axis) <- j;
-        Array.fold_left (fun p (k, n) -> (p * n) + k) 0
-          (Array.map2 (fun k n -> (k, n)) i s)
-      in
-      List.init s.(axis) (fun j -> List.init (j + 1) at))
-    (indices outer)
+    (fun at -> List.init s.(axis) (fun j -> List.init (j + 1) at))
+    (slices s axis)
 
-(* The expansion's bounds, with [K = ⌈log₂ n⌉] and [R] the terms' range: the
-   mean within [(4K + 1) u R + u|μ|], the variance [V] within
-   [(8K + 1) u V + (6K² + 2) u R √V]; nx.cpu's: the mean within
+(* The most combinations output [i] of a scan's expansion passes through,
+   [D_i = max(0, 2⌈log₂(i+1)⌉ - 1)], for [n = i + 1] terms. *)
+let depth n =
+  let rec log2_up b = if 1 lsl b >= n then b else log2_up (b + 1) in
+  Float.of_int (Int.max 0 ((2 * log2_up 0) - 1))
+
+(* Values near [N(0, 1)]: a sum of three uniforms. *)
+let gauss =
+  let open Gen in
+  let u = float_range (-1.) 1. in
+  map (fun (a, b, c) -> a +. b +. c) (triple u u u)
+
+let float32 v = Int32.float_of_bits (Int32.bits_of_float v)
+
+(* What a Moments scan's terms are: near an offset, as {!moments_case}'s; a
+   first term of [1e4] above [N(0, 1)]; runs of [±1e3]; [N(1e4, 1)]; and
+   [N(0, 1)] past nx.cpu's chunks of 4096. *)
+type terms = Near of float | Outlier | Runs of int | Offset | Long
+
+let terms_name = function
+  | Near c -> Printf.sprintf "near %g" c
+  | Outlier -> "an outlier first"
+  | Runs l -> Printf.sprintf "runs of %d of ±1e3" l
+  | Offset -> "N(1e4, 1)"
+  | Long -> "N(0, 1), long"
+
+(* float32 terms of a kind of {!terms} along one axis, at times long enough
+   for several levels of the expansion's recursion. *)
+let moments_scan_case =
+  let open Gen in
+  let along_n n =
+    let* outer = int_range 1 2 in
+    let+ axis = int_range 0 1 in
+    ((if axis = 0 then [| n; outer |] else [| outer; n |]), axis)
+  in
+  let terms_of kind s axis =
+    let size = constant (Array.fold_left ( * ) 1 s) in
+    let n = s.(axis) in
+    let r = Array.length s in
+    let after = Array.sub s (axis + 1) (r - axis - 1) in
+    let stride = Array.fold_left ( * ) 1 after in
+    let index p = p / stride mod n in
+    match kind with
+    | Near c -> array ~size (map (fun d -> c +. d) (float_range (-10.) 10.))
+    | Outlier ->
+        let+ xs = array ~size gauss in
+        Array.mapi (fun p x -> if index p = 0 then 1e4 else x) xs
+    | Runs l ->
+        let+ xs = array ~size gauss in
+        Array.mapi
+          (fun p x -> if index p / l mod 2 = 0 then 1e3 +. x else x -. 1e3)
+          xs
+    | Offset -> array ~size (map (fun x -> 1e4 +. x) gauss)
+    | Long -> array ~size gauss
+  in
+  let case kind (s, axis) =
+    let+ xs = terms_of kind s axis in
+    (kind, s, axis, Array.map float32 xs)
+  in
+  with_pp
+    (fun ppf (kind, s, axis, _) ->
+      Format.fprintf ppf "%a along %d, %s" pp_ints s axis (terms_name kind))
+    (one_of
+       [
+         (let* s = shape in
+          let s = if Array.length s = 0 then [| 3 |] else Array.copy s in
+          let* axis = int_range 0 (Array.length s - 1) in
+          let* n = frequency [ (3, constant s.(axis)); (1, int_range 5 40) ] in
+          s.(axis) <- n;
+          let* c = of_list [ 0.; 1e3; 1e5 ] in
+          case (Near c) (s, axis));
+         (let* n = int_range 64 1024 in
+          let* sa = along_n n in
+          case Outlier sa);
+         (let* l = int_range 16 128 in
+          let* n = int_range (4 * l) 1024 in
+          let* sa = along_n n in
+          case (Runs l) sa);
+         (let* n = int_range 64 1024 in
+          let* sa = along_n n in
+          case Offset sa);
+         (let* n = int_range 4096 4200 in
+          let* sa = along_n n in
+          case Long sa);
+       ])
+
+(* The expansion's bounds, with [D] the depth of the result and [R] the
+   terms' range: the mean within [(4 D + 1) u R + u|μ|], the variance [V]
+   within [(7 D + 1) u V + (4 D² - 2 D) u R √V]; nx.cpu's: the mean within
    [(n + 9) u X / 2], the variance within [(2n + 21) u X²], [X] the terms'
-   largest magnitude. *)
-let law_moments_scan (s, axis, _, xs) =
+   largest magnitude. The references run Welford's update in float64 over
+   the terms less the slice's first, whose own error, within
+   [n ε (R + V + R²)] with room to spare, is the slack. *)
+let law_moments_scan (kind, s, axis, xs) =
+  cover "near an offset" (match kind with Near _ -> true | _ -> false);
+  cover "an outlier first" (kind = Outlier);
+  cover "runs of ±1e3" (match kind with Runs _ -> true | _ -> false);
+  cover "N(1e4, 1)" (kind = Offset);
+  cover "N(0, 1) past 4096 terms" (kind = Long);
   let x = A.of_array D.Float32 s xs in
   let u = ldexp 1. (-24) in
   let expansion n ~m ~v ~range ~big:_ =
-    let k = Float.ceil (Float.log2 (Float.of_int n)) in
-    ( (((4. *. k) +. 1.) *. u *. range) +. (u *. Float.abs m),
-      (((8. *. k) +. 1.) *. u *. v)
-      +. (((6. *. k *. k) +. 2.) *. u *. range *. Float.sqrt v) )
+    let d = depth n in
+    ( (((4. *. d) +. 1.) *. u *. range) +. (u *. Float.abs m),
+      (((7. *. d) +. 1.) *. u *. v)
+      +. (((4. *. d *. d) -. (2. *. d)) *. u *. range *. Float.sqrt v) )
   in
   let welford n ~m:_ ~v:_ ~range:_ ~big =
     let nf = Float.of_int n in
@@ -638,31 +715,35 @@ let law_moments_scan (s, axis, _, xs) =
       let by = path_name path in
       let mean, var = scan_moments path axis x in
       List.iter
-        (fun ps ->
-          let ts = List.map (fun p -> xs.(p)) ps in
-          let at = List.nth ps (List.length ps - 1) in
-          let n = List.length ts in
-          let nf = Float.of_int n in
-          let m = List.fold_left ( +. ) 0. ts /. nf in
-          let v =
-            List.fold_left (fun a t -> a +. ((t -. m) *. (t -. m))) 0. ts /. nf
-          in
-          let range =
-            List.fold_left Float.max Float.neg_infinity ts
-            -. List.fold_left Float.min Float.infinity ts
-          in
-          let big =
-            List.fold_left (fun a t -> Float.max a (Float.abs t)) 0. ts
-          in
-          let bm, bv = bound n ~m ~v ~range ~big in
-          let slack = 4. *. nf *. epsilon_float *. (v +. (big *. big)) in
-          cover "one term" (n = 1);
-          cover "terms" (n > 1);
-          at_most ~msg:(by ^ " mean") float_exact ~than:(bm +. slack)
-            (Float.abs (mean.(at) -. m));
-          at_most ~msg:(by ^ " variance") float_exact ~than:(bv +. slack)
-            (Float.abs (var.(at) -. v)))
-        (prefixes s axis))
+        (fun at ->
+          let c = xs.(at 0) in
+          let mu = ref 0. and q = ref 0. in
+          let lo = ref c and hi = ref c and big = ref 0. in
+          for j = 0 to s.(axis) - 1 do
+            let t = xs.(at j) in
+            let n = j + 1 in
+            let nf = Float.of_int n in
+            let d = t -. c in
+            let delta = d -. !mu in
+            mu := !mu +. (delta /. nf);
+            q := !q +. (delta *. (d -. !mu));
+            lo := Float.min !lo t;
+            hi := Float.max !hi t;
+            big := Float.max !big (Float.abs t);
+            let m = c +. !mu and v = !q /. nf and range = !hi -. !lo in
+            let bm, bv = bound n ~m ~v ~range ~big:!big in
+            let slack =
+              8. *. nf *. epsilon_float *. (range +. v +. (range *. range))
+            in
+            cover "one term" (n = 1);
+            cover "terms" (n > 1);
+            at_most ~msg:(by ^ " mean") float_exact
+              ~than:(bm +. slack +. (epsilon_float *. Float.abs m))
+              (Float.abs (mean.(at j) -. m));
+            at_most ~msg:(by ^ " variance") float_exact ~than:(bv +. slack)
+              (Float.abs (var.(at j) -. v))
+          done)
+        (slices s axis))
     [ (Expansion, expansion); (Cpu, welford) ]
 
 (* Both paths: no result along an empty axis; one term's own mean and a
@@ -869,7 +950,7 @@ let element_bits (type v s) (a : (v, s) A.t) =
   Array.init (Array.length b / w) (fun i -> Array.sub b (i * w) w)
 
 (* A shape of rank at least one and an axis of it, at times long enough for
-   several passes of a doubling. *)
+   several levels of the expansion's recursion. *)
 let along =
   let open Gen in
   let* s = shape in
@@ -932,7 +1013,8 @@ let rounded (type s) (dt : (float, s) D.t) v =
   (A.to_array (A.of_array dt [| 1 |] [| v |])).(0)
 
 (* The expansion's bound: at [n] terms of largest finite magnitude [X], within
-   [⌈log₂ n⌉ (u (X + ln n + 1) + ε)] in the accumulator, [ε] the error [Exp]
+   [D (u (X + ln n + 1) + ε)] in the accumulator, [D] the result's {!depth}
+   and [ε] the error [Exp]
    and [Log1p] add, at most [(2 + 1/2) 2u] and [(2 + 1/2) 2u ln 2]; then
    rounded once, so between the roundings of the bound's ends. The reference,
    float64 over each prefix from its maximum, adds its own [2n] units. *)
@@ -978,9 +1060,9 @@ let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
                       else a)
                     0. terms
                 in
-                let passes = Float.ceil (Float.log2 n) in
+                let d = depth (List.length terms) in
                 let bound =
-                  (passes *. u *. (big +. log n +. 1. +. 8.5))
+                  (d *. u *. (big +. log n +. 1. +. 8.5))
                   +. (2. *. n *. epsilon_float *. (Float.abs want +. 1.))
                 in
                 let msg = Printf.sprintf "%s: %h against %h" by g want in
@@ -1207,6 +1289,150 @@ let test_arg_scan_cases () =
         (want [| z 1. 0.; z 2. a; z 2. a |] [| 0L; 1L; 1L |])
         (parts (arg Max D.Complex128 [| 3 |] [| z 1. 0.; z 2. a; z 5. 0. |])))
 
+(* The prefix law: a scan's result at an index is a function of the terms up
+   to it alone, for each reduction, by the expansion on {!Core} and on the
+   host. Axes and prefixes are 1 or 2 long, a power of two or next to one,
+   or next to nx.cpu's chunks of 4096, so that a network or a path chosen
+   by the axis's length would give the prefix other bits. *)
+
+let chunk = 4096
+
+type prefix_case =
+  | Prefix_case :
+      (float, 's) D.t * int array * int * int * float array
+      -> prefix_case
+
+let pow2 k = k > 0 && k land (k - 1) = 0
+let next_to_pow2 k = k > 2 && (pow2 (k - 1) || pow2 (k + 1))
+
+(* Lengths of 1 or 2, of a power of two or next to one, short ones, and ones
+   next to a chunk's end. *)
+let length =
+  let open Gen in
+  let near_pow2 =
+    let* j = int_range 1 12 in
+    let+ d = of_list [ -1; 0; 1 ] in
+    max 1 ((1 lsl j) + d)
+  in
+  frequency
+    [
+      (1, of_list [ 1; 2 ]);
+      (3, near_pow2);
+      (2, int_range 1 40);
+      (1, int_range (chunk - 1) (chunk + 64));
+    ]
+
+(* Terms of either sign, with NaNs of two payloads, infinities and signed
+   zeros one in twenty. *)
+let prefix_term =
+  let open Gen in
+  let special =
+    of_list
+      [
+        nan_with 5L; nan_with 9L; Float.infinity; Float.neg_infinity; -0.; 0.;
+      ]
+  in
+  frequency
+    [
+      (15, float_range 0.5 2.); (4, float_range (-2.) (-0.5)); (1, special);
+    ]
+
+(* Terms along an axis of a slice or two and the length of a prefix of it. *)
+let prefix_case =
+  let open Gen in
+  let make (type s) (dt : (float, s) D.t) =
+    let* n = length in
+    let* k = frequency [ (2, map (min n) length); (1, int_range 1 n) ] in
+    let* outer = int_range 1 2 in
+    let* axis = int_range 0 1 in
+    let s = if axis = 0 then [| n; outer |] else [| outer; n |] in
+    let+ xs = array ~size:(constant (n * outer)) prefix_term in
+    Prefix_case (dt, s, axis, k, xs)
+  in
+  with_pp
+    (fun ppf (Prefix_case (dt, s, axis, k, _)) ->
+      Format.fprintf ppf "%a %a along %d, a prefix of %d" D.pp dt pp_ints s
+        axis k)
+    (one_of [ make D.Float32; make D.Float64 ])
+
+(* The bits of each result of the scan of [x] by [r] along [axis]. *)
+let scanned (type s d) (r : Nx_kernel.reduction) (dt : (float, s) D.t) axis
+    (x : (float, s, d) Nx.t) =
+  match r with
+  | Monoid m -> [ element_bits (host_array (scan1 (Monoid (m, 0, dt)) axis x)) ]
+  | Moments ->
+      let m, v = scan1 (Moments (0, dt)) axis x in
+      [ element_bits (host_array m); element_bits (host_array v) ]
+  | Arg e ->
+      let v, p = scan1 (Arg (e, 0, dt)) axis x in
+      [ element_bits (host_array v); element_bits (host_array p) ]
+
+(* Cases the generator draws too rarely for every run: lengths 1 and 2, a
+   power of two and its neighbours on either side, specials. *)
+let prefix_examples =
+  let specials =
+    [| 1.5; nan_with 5L; Float.infinity; -0.; Float.neg_infinity; 0.75 |]
+  in
+  let terms n = Array.init n (fun i -> specials.(i mod 6)) in
+  let along dt n k = Prefix_case (dt, [| 1; n |], 1, k, terms n) in
+  [
+    along D.Float64 2 1;
+    along D.Float32 1 1;
+    along D.Float32 9 8;
+    along D.Float64 8 7;
+    along D.Float32 4100 4097;
+    Prefix_case (D.Float64, [| 17; 2 |], 0, 16, terms 34);
+  ]
+
+let law_scan_prefix (Prefix_case (dt, s, axis, k, xs)) =
+  let n = s.(axis) in
+  let outer = Array.length xs / n in
+  cover "an axis of 1 or 2" (n <= 2);
+  cover "a prefix of 1 or 2" (k <= 2 && k < n);
+  cover "an axis next to a power of two" (next_to_pow2 n);
+  cover "a prefix next to a power of two" (next_to_pow2 k && k < n);
+  cover "a prefix a power of two, the axis not" (pow2 k && not (pow2 n));
+  cover "an axis a power of two, the prefix not" (pow2 n && not (pow2 k));
+  cover "a prefix next to a chunk's end" (abs (k - chunk) <= 1 && k < n);
+  cover "a term not finite or -0"
+    (Array.exists
+       (fun x -> (not (Float.is_finite x)) || 1. /. x = Float.neg_infinity)
+       xs);
+  cover "float64" (D.equal dt D.Float64);
+  cover "along axis 0 of several" (axis = 0 && outer > 1);
+  let at len o j = if axis = 0 then (j * outer) + o else (o * len) + j in
+  let part = Array.copy s in
+  part.(axis) <- k;
+  (* [from.(p)] is the position in [xs] of the prefix's term at [p]. *)
+  let from = Array.make (k * outer) 0 in
+  for o = 0 to outer - 1 do
+    for j = 0 to k - 1 do
+      from.(at k o j) <- at n o j
+    done
+  done;
+  let pxs = Array.map (fun p -> xs.(p)) from in
+  each_path (fun by place ->
+      let whole = place false (A.of_array dt s xs) in
+      let prefix = place false (A.of_array dt part pxs) in
+      List.iter
+        (fun (name, r) ->
+          let msg = Printf.sprintf "%s, %s" name by in
+          List.iter2
+            (fun w p ->
+              let kept = Array.map (fun i -> w.(i)) from in
+              equal ~msg (array (array int)) kept p)
+            (scanned r dt axis whole) (scanned r dt axis prefix))
+        [
+          ("sum", Nx_kernel.Monoid Sum);
+          ("prod", Monoid Prod);
+          ("max", Monoid Max);
+          ("min", Monoid Min);
+          ("logsumexp", Monoid Logsumexp);
+          ("moments", Moments);
+          ("arg max", Arg Max);
+          ("arg min", Arg Min);
+        ])
+
 let test_optional_rules () =
   let x = vector D.Int32 [| 1l; 2l |] in
   raises (Invalid_argument "t: Logsumexp does not take int32") (fun () ->
@@ -1237,6 +1463,9 @@ let optional_group =
       prop "arg scans are each prefix's extreme and its first position"
         arg_scan_case law_arg_scan;
       test "arg scans' cases" test_arg_scan_cases;
+      prop ~examples:prefix_examples
+        "a scan's prefix is the prefix of its scan, bit for bit" prefix_case
+        law_scan_prefix;
       test "their rules raise naming the caller" test_optional_rules;
     ]
 
