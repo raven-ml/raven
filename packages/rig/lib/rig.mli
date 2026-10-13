@@ -104,8 +104,8 @@ val host : t
     process has failed ({!fail}), while the name's device is lost and its
     driver's stop ({!Rig_edge.Driver.val-stop}) has not returned, when the
     machine's host ({!section-machines}) is lost or closed, and once the
-    process has called openers 65,535 times, failed opens included. For a lost or closed host, [why] is
-    what that host's {!Lost} prints.
+    process has called openers 65,535 times, failed opens included. For a
+    lost or closed host, [why] is what that host's {!Lost} prints.
 
     An exception raised inside an open, by the opener's [make] or
     asynchronously ({!section-errors}), is raised again. The name is then
@@ -925,10 +925,10 @@ module Buffer : sig
       length or overlap ({!overlaps}), [dst]'s memory admits only [Read], one
       side is an io device's memory and the other a borrow of it, a device
       would copy and a side's memory is held exclusive, or the copy has bytes
-      and no device can copy between the two sides. Raises {!Lost} if a device that runs the copy
-      is lost or the copy loses it, {!Out_of_memory} if staging
-      memory cannot be allocated or mapped, and what an io device's read or
-      write raises. *)
+      and no device can copy between the two sides. Raises {!Lost} if a
+      device that runs the copy is lost or the copy loses it,
+      {!Out_of_memory} if staging memory cannot be allocated or mapped, and
+      what an io device's read or write raises. *)
 
   val blit_from_string : string -> int -> t -> int -> int -> unit
   (** [blit_from_string s i b j n] copies the [n] bytes of [s] from [i] into
@@ -1100,9 +1100,13 @@ end
 
     {!host} runs code that the process links from relocatable ELF objects,
     on its own cores. {!Image.load} on {!host} links an object into
-    executable memory once, and the image's functions are the named symbols
-    of its executable sections. The host's queue runs only launches. A
-    launch runs on the thread that submits it and on the workers of the
+    executable memory once ({!section-host_linking}), and the image's
+    functions are the named symbols of its executable sections. The host's
+    queue runs only launches. *)
+
+(** {3:host_launches Launches}
+
+    A launch runs on the thread that submits it and on the workers of the
     host's pool, which the host's other parallel code, such as nx's CPU
     kernels, shares, and it is done when {!submit} returns.
 
@@ -1115,10 +1119,26 @@ end
     with x fastest. Each call of [f] runs the threads [first] to [end - 1],
     which are whole groups, and the calls together run each thread once. The
     calls run in any order and in parallel, on at most as many threads as the
-    host has {e performance cores} ({!section-host_platforms}), so a call
-    must not write what another reads. A launch with shared memory, with an
-    axis of zero groups or threads, or with more than 2{^62} threads never
-    runs, and {!submit} raises.
+    host has {e performance cores} ({!section-host_cores}), so a call must
+    not write what another reads. A launch with shared memory, with an axis
+    of zero groups or threads, or with more than 2{^62} threads never runs,
+    and {!submit} raises. *)
+
+(** {3:host_cores Performance cores}
+
+    The performance cores are the host's cores that run compute-bound work
+    at more than half the speed of its fastest, bounded by the cores the
+    process may occupy. Their count is taken at its first use and stays the
+    same for the life of the process. They are:
+    {ul
+    {- On Linux, the CPUs in the affinity mask of the first thread to ask
+       whose reported capacity is more than half the largest, or all of them
+       where no capacity is reported, and at most the process's cgroup
+       quotas allow.}
+    {- On macOS, the performance cores where the system reports them.}
+    {- Otherwise, the cores the process may occupy.}} *)
+
+(** {3:host_objects Objects}
 
     A C compiler makes such an object, for instance with
     {v clang -c -O2 -fPIC --target=x86_64-none-unknown-elf f.c v}
@@ -1145,18 +1165,9 @@ end
     Submission.Run.threads run k ((n + 63) / 64) 1 1;
     Submission.Run.int64 run k 24 n;
     ignore (submit s ~run ~buffers:[| x; y; z |])
-    ]}
+    ]} *)
 
-    {b References.}
-    {ul
-    {- The {{:https://gitlab.com/x86-psABIs/x86-64-ABI}x86-64 psABI}, chapter
-       4.4: relocation types and their formulas.}
-    {- The
-       {{:https://github.com/ARM-software/abi-aa/blob/main/aaelf64/aaelf64.rst}
-        ELF for the Arm 64-bit Architecture}, section 5.7: relocation types,
-       their formulas and fields, and the registers a veneer may use.}}
-
-    {3:host_linking Linking}
+(** {3:host_linking Linking}
 
     {!Image.load} on {!host} links an object that meets these rules, and is
     [Error] for any other:
@@ -1179,9 +1190,9 @@ end
     and read-only data, in one image, each at an address that is a multiple
     of its alignment ([sh_addralign]). It writes the image once, applies its
     relocations, then makes the memory executable. The memory is never
-    writable and executable at the same time ({!section-host_platforms}).
+    writable and executable at the same time ({!section-host_platforms}). *)
 
-    {3:host_relocations Relocations}
+(** {3:host_relocations Relocations}
 
     The relocations are those a compiler emits for position-independent code
     of the small code model, with [-fPIC], that calls functions and reads its
@@ -1203,7 +1214,16 @@ end
     jumps through the word and uses no register. An arm64 stub loads the word
     into [x17], which a veneer may use.
 
-    {3:host_symbols Symbols}
+    {b References.}
+    {ul
+    {- The {{:https://gitlab.com/x86-psABIs/x86-64-ABI}x86-64 psABI}, chapter
+       4.4: relocation types and their formulas.}
+    {- The
+       {{:https://github.com/ARM-software/abi-aa/blob/main/aaelf64/aaelf64.rst}
+        ELF for the Arm 64-bit Architecture}, section 5.7: relocation types,
+       their formulas and fields, and the registers a veneer may use.}} *)
+
+(** {3:host_symbols Symbols}
 
     A symbol the object refers to is its definition in the object, or else
     its definition in the libraries the process loaded into its global
@@ -1216,9 +1236,9 @@ end
     conversion, or [memcpy] for a large copy. The object defines these, or
     they come from the process and follow the process's convention. On x86_64
     Windows that convention differs from the object's, so code for Windows
-    must define every function the compiler calls.
+    must define every function the compiler calls. *)
 
-    {3:host_abi Calling conventions}
+(** {3:host_abi Calling conventions}
 
     Linked code follows its object's convention. A compiler that targets ELF
     without an operating system uses System V AMD64 on x86_64 and AAPCS64 on
@@ -1229,15 +1249,17 @@ end
     and Windows commits a thread's stack one guard page at a time, so on
     Windows a thread's stack is committed, but for its last 64 KiB, before
     the thread first runs linked code: a stack frame of any size within it
-    runs, as elsewhere.
+    runs, as elsewhere. *)
 
-    {3:host_platforms Platform support}
+(** {3:host_platforms Platform support}
 
     The host links code on x86_64 and arm64 hosts running Linux, macOS or
     Windows. On arm64 macOS the code's memory is mapped with [MAP_JIT],
     whose write protection only the linking thread lifts while it writes.
     Elsewhere the memory is mapped writable, then made executable and
-    read-only once written.
+    read-only once written. *)
+
+(** {3:host_macos Executable memory on macOS}
 
     On macOS, a program built with the hardened runtime maps executable memory
     only with the [com.apple.security.cs.allow-jit] entitlement (arm64) or
@@ -1255,27 +1277,14 @@ end
     process at its first load. Link the stubs into its executable, or give it
     the [com.apple.security.cs.jit-write-allowlist-freeze-late] entitlement
     and call [pthread_jit_write_freeze_callbacks_np] once the stubs are
-    loaded, before its first load.
-
-    The performance cores are the host's cores that run compute-bound work
-    at more than half the speed of its fastest, bounded by the cores the
-    process may occupy. Their count is taken at its first use and stays the
-    same for the life of the process. They are:
-    {ul
-    {- On Linux, the CPUs in the affinity mask of the first thread to ask
-       whose reported capacity is more than half the largest, or all of them
-       where no capacity is reported, and at most the process's cgroup
-       quotas allow.}
-    {- On macOS, the performance cores where the system reports them.}
-    {- Otherwise, the cores the process may occupy.}} *)
+    loaded, before its first load. *)
 
 (** {2:prepared Submissions} *)
 
 (** Prepared submissions.
 
     A submission is work for one device, made of {e parts}, such as copies
-    and launches, which run in the order their memory requires
-    ({!Submission.make}). It is made once and run many times. The buffers
+    and launches. It is made once and run many times. The buffers
     and the points to wait for change from one run to the next, so they are
     arguments of {!submit}, and so are the launch parameters, which a
     {!Submission.Run} holds. A submission holds nothing of a run, so any
@@ -1287,6 +1296,20 @@ end
     the memory its addresses name. Each is fixed with an access, and each
     submit orders it by that access. A buffer may be fixed in any number of
     submissions.
+
+    Rule 2 of {!Rig.section-order} orders a submission's parts by the memory
+    they use. A copy reads its [src] and writes its [dst], words read their
+    buffer, a buffer ref uses its slot as its kind says, and every part uses
+    the fixed memory with its access. Two uses may share memory where their
+    buffers overlap ({!Buffer.overlaps}), or where either is a slot, whose
+    buffer only a run gives. An {!Submission.unordered} ref orders nothing.
+
+    A launch or a fill runs on the first of the device's queues that runs
+    its kind ({!Rig_edge.type-facts}). Words run on the first queue that
+    runs both launches and words, and otherwise on the first that runs
+    words. A copy runs on the queue of the last earlier part it follows,
+    where that queue runs copies, and otherwise on the device's copy engine,
+    the queue that [copy_engine] names in its facts.
 
     A submission keeps every buffer and image its parts name, its fixed
     memory and its [keep] reachable while it is reachable, so that memory is
@@ -1334,9 +1357,10 @@ module Submission : sig
   val entry : Image.t -> string -> at:int -> ref
   (** [entry image f ~at] is a ref whose 8 bytes hold, when the work runs,
       the value by which the device's work refers to [image]'s function [f]
-      ({!Image.entry}). rig writes it over the run's bytes there. The submission keeps [image] reachable,
-      so the work may call [f] through it. [image] must be loaded on the
-      device and have a function [f] ({!Image.mem}). *)
+      ({!Image.entry}). rig writes it over the run's bytes there. The
+      submission keeps [image] reachable, so the work may call [f] through
+      it. [image] must be loaded on the device and have a function [f]
+      ({!Image.mem}). *)
 
   (** {1:parts Parts} *)
 
@@ -1386,9 +1410,9 @@ module Submission : sig
       and [b]'s length must be a multiple of 4. Words may do what rig cannot
       see, such as start a thread trace or invalidate caches before a
       launch, so rule 2 of {!Rig.section-order} orders them after every
-      earlier part, and {!make} says which queue runs them. Memory the words
-      address is ordered against other work only if it is among the
-      submission's fixed memory. *)
+      earlier part, and {!Rig.section-prepared} says which queue runs them.
+      Memory the words address is ordered against other work only if it is
+      among the submission's fixed memory. *)
 
   (** {1:making Making} *)
 
@@ -1407,21 +1431,8 @@ module Submission : sig
       submission keeps it reachable until the submission is unreachable and
       the work of its every submit is done, or, on a lost device, until the
       device has stopped ({!Rig.section-stops}). In a child of [fork] it
-      keeps nothing. [keep] orders no memory.
-
-      Rule 2 of {!Rig.section-order} orders the parts by the memory they use.
-      A copy reads its [src] and writes its [dst], words read their buffer, a
-      buffer ref uses its slot as its kind says, and every part uses the fixed
-      memory with its access. Two uses may share memory where their buffers
-      overlap ({!Buffer.overlaps}), or where either is a slot, whose buffer
-      only a run gives. An {!unordered} ref orders nothing.
-
-      A launch or a fill runs on the first of [d]'s queues that runs its
-      kind ({!Rig_edge.type-facts}). Words run on the first queue that runs
-      both launches and words, and otherwise on the first that runs words. A
-      copy runs on the queue of the last earlier part it follows, where that
-      queue runs copies, and otherwise on the device's copy engine, the queue
-      that [copy_engine] names in its facts.
+      keeps nothing. [keep] orders no memory. {!Rig.section-prepared} states
+      how the parts are ordered and which queue runs each.
 
       Raises [Invalid_argument] if:
       {ul

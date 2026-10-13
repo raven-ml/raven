@@ -10,7 +10,7 @@
 
 val link : string -> (Def.linked, string) result
 (** [link obj] is [obj] linked into new executable memory, or [Error why] for
-    an object that breaks a rule of {!Rig.section-host_code}, or that the
+    an object that breaks a rule of {!Rig.section-host_linking}, or that the
     process cannot map ([why] is the system's reason). The memory is unmapped
     once the result is collected. *)
 
