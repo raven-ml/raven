@@ -178,12 +178,6 @@ module Polled : sig
   (** [word_at d] is the host address of [d]'s word, which is also its object
       ([completion]). *)
 
-  val kept_bytes : int
-  (** [kept_bytes] is the most bytes of the C heap that a stopped device
-      keeps while rig holds its handle, for the process: its state, with its
-      word, and the mutex and condition of its record, each allocation
-      counted as [record_bytes] counts it. *)
-
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
       ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["sleep"],
@@ -365,13 +359,6 @@ val heap_bytes : unit -> int option
     calling thread's cache of freed chunks, which glibc counts as allocated, so
     two counts on one thread differ by what was allocated and not freed
     between them. *)
-
-val record_bytes : name:string -> why:string -> int
-(** [record_bytes ~name ~why] is the most bytes of the C heap that rig keeps
-    for a closed device named [name] and lost for [why]: its record, its
-    name, its reason, its record of waits at its first size and the lock of
-    its state. Each allocation counts its size rounded up to the allocator's
-    16-byte quantum, plus 16 bytes of header. *)
 
 val descriptors : unit -> int option
 (** [descriptors ()] is the number of file descriptors the process holds open,

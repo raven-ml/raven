@@ -83,7 +83,6 @@ size_t __sanitizer_get_current_allocated_bytes(void);
 
 #include "rig.h"
 #include "rig_edge.h"
-#include "rig_stubs.h"
 
 /* Locks, conditions and aligned memory, on Windows and on POSIX. */
 
@@ -1454,30 +1453,6 @@ static void fill_cache(void) {
   }
 }
 #endif
-
-/* The most bytes of the C heap one allocation of [n] bytes takes: [n]
-   rounded up to the allocator's 16-byte quantum, with 16 bytes of header. */
-static size_t block(size_t n) { return ((n + 15) & ~(size_t)15) + 16; }
-
-/* What rig keeps of a closed device: its record, its name, its reason, its
-   record of waits at its first size and the lock of its OCaml state. */
-value rig_test_record_bytes(value v_name, value v_why) {
-  size_t n = block(sizeof(struct rig_device)) +
-             block(caml_string_length(v_name) + 1) +
-             block(caml_string_length(v_why) + 1) +
-             block(RIG_RECORD_MIN * sizeof(struct rig_entry)) +
-             block(sizeof(struct rig_lock));
-  return Val_long((intnat)n);
-}
-
-/* What a stopped Polled device keeps: its state, with its word, and the
-   mutex and condition of its OCaml record. */
-value rig_test_polled_kept_bytes(value unit) {
-  (void)unit;
-  size_t n = block(sizeof(struct polled)) + block(sizeof(lock_t)) +
-             block(sizeof(cond_t));
-  return Val_long((intnat)n);
-}
 
 /* The bytes the C heap holds allocated, or -1 where its allocator does not
    say. */

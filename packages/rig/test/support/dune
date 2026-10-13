@@ -7,7 +7,6 @@
  (libraries rig rig_edge threads.posix unix windtrap)
  (foreign_stubs
   (language c)
-  (include_dirs ../../lib)
   (names rig_support_stubs)))
 
 ; What the GPU suites and benches share: host memory, and a GPU of one

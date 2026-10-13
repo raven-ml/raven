@@ -1035,15 +1035,12 @@ let test_pair_race () =
   equal ~msg:"the maps given back" int 1 (count "unmap")
 
 (* Opens and closes in a loop keep a fixed record per device, whatever work
-   the device did: in the C heap, rig's records, name and reason
-   ([Support.record_bytes]) and the driver's state with its word
-   ([P.kept_bytes]); in the OCaml heap, all that one closed device reaches,
-   its record and the driver's handle, and two words for its entry in the
-   table of devices, whose chunks hold 256 devices. The driver's stop gives
-   back the rest of its state, and rig its mappings of other devices' words
-   and memory once the device is Stopped. Polled's handle also keeps a log
-   of the driver's calls, which grows with the work and which the OCaml
-   laws leave out. Each cycle opens a producer and a consumer whose queue
+   the device did: rig's records, name and reason, and the driver's state
+   with its word ([kept_c], [kept_ml]). The driver's stop gives back the
+   rest of its state, and rig its mappings of other devices' words and
+   memory once the device is Stopped. Polled's handle also keeps a log of
+   the driver's calls, which grows with the work and which the OCaml laws
+   leave out. Each cycle opens a producer and a consumer whose queue
    waits for the producer's value; the consumer allocates, then both close.
    After a warm window of each kind, each window of [opens] cycles grows
    each heap by at most that a device.
@@ -1063,7 +1060,12 @@ let opens = 1024
 let windows = 3
 let kept = 2
 let step = 16 * 1024
-let table_words = 2
+
+(* What a closed Polled device keeps, per device, baselines measured on the
+   M1 Max: about 1.1 KiB of C heap and 1.5 KiB of OCaml heap, Polled's log
+   left out. *)
+let kept_c = 1536
+let kept_ml = 2048
 
 type cycles = Bare | Mapping | Reading
 
@@ -1120,15 +1122,6 @@ let test_open_close () =
     (heap () - c, live () - ml - logs)
   in
   let kinds = [ ("bare", Bare); ("mappings", Mapping); ("reads", Reading) ] in
-  let record_c =
-    Support.record_bytes ~name:"open:producer0" ~why:"closed" + P.kept_bytes
-  in
-  let record_ml =
-    let closed = cycle Reading 0 in
-    settle closed;
-    let kept (d, p) = words d - logged p + (table_words * Sys.word_size / 8) in
-    List.fold_left (fun n c -> Int.max n (kept c)) 0 closed
-  in
   List.iter (fun (_, kind) -> ignore (window kind)) kinds;
   let grown =
     List.init windows (fun _ -> List.map (fun (_, kind) -> window kind) kinds)
@@ -1158,8 +1151,58 @@ let test_open_close () =
   List.iteri
     (fun i (name, _) ->
       List.iter (law i name)
-        [ ("C", fst, record_c); ("OCaml", snd, record_ml) ])
+        [ ("C", fst, kept_c); ("OCaml", snd, kept_ml) ])
     kinds
+
+(* A borrower that maps [peak] allocations at once keeps, once they are
+   freed and it closed, no more than one that mapped a single allocation:
+   no bucket of its record of mappings outlives the mappings. Each allocation
+   is 64 bytes of another Polled device, which the borrower maps as a
+   peer's. [order] frees the allocations before the close or after it. The
+   law takes the least growth of [windows] runs, as the law above does. *)
+let peak = 8192
+
+type order = Freed_first | Closed_first
+
+let test_mapped_peak order () =
+  let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
+  let run n =
+    let ml = live () in
+    let o, po = P.open_ "open:peak-owner" and d, pd = P.open_ "open:peak" in
+    let[@inline never] borrowed () =
+      let bs = List.init n (fun _ -> Rig.Buffer.create o 64) in
+      List.iter (fun b -> ignore (require_some (Rig.Buffer.borrow d b))) bs;
+      ref bs
+    in
+    let bs = borrowed () in
+    let free () =
+      bs := [];
+      Gc.full_major ();
+      Rig.free_cache Rig.host;
+      Rig.free_cache o
+    in
+    (match order with
+    | Freed_first ->
+        free ();
+        Rig.close d
+    | Closed_first ->
+        Rig.close d;
+        Rig.free_cache d;
+        free ());
+    Rig.close o;
+    Gc.full_major ();
+    List.iter Rig.free_cache [ o; d ];
+    live () - ml - logged po - logged pd
+  in
+  let least n =
+    List.fold_left Int.min max_int (List.init windows (fun _ -> run n))
+  in
+  ignore (run peak);
+  let one = least 1 and many = least peak in
+  at_most int
+    ~msg:
+      (Printf.sprintf "a borrower of %d's growth past one of 1 (%d)" peak one)
+    ~than:step (many - one)
 
 (* An open whose opener blocks holds back only opens of its own name. *)
 let test_blocked_opener () =
@@ -1276,6 +1319,10 @@ let tests =
          one mapping of its word"
         test_pair_race;
       test "opens and closes keep a fixed record per device" test_open_close;
+      test "a borrower closed after its peak's memory went keeps no more"
+        (test_mapped_peak Freed_first);
+      test "a borrower closed before its peak's memory went keeps no more"
+        (test_mapped_peak Closed_first);
     ]
 
 let () = exit (run "rig.open" [ tests ])

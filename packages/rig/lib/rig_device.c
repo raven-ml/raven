@@ -265,6 +265,15 @@ value caml_rig_done(value v_p) {
 
 /* Locks */
 
+/* A lock of rig's OCaml state, with a condition, owned by a custom block
+   and freed with it. Every lock is on one list, under [locks_mu], so a
+   forked child can make each anew. */
+struct rig_lock {
+  rig_mutex mu;
+  rig_cond cv;
+  struct rig_lock *prev, *next;
+};
+
 static struct rig_lock *locks;
 
 #ifdef _WIN32
@@ -888,7 +897,7 @@ value caml_rig_ensure_record(value v_d, value v_n) {
   int want = d->nrecord + n, have = d->crecord;
   give(d, released);
   if (want <= have) CAMLreturn(Val_unit);
-  int c = 2 * want < RIG_RECORD_MIN ? RIG_RECORD_MIN : 2 * want;
+  int c = 2 * want < 8 ? 8 : 2 * want;
   struct rig_entry *grown = malloc((size_t)c * sizeof *grown);
   if (grown == NULL) caml_raise_out_of_memory();
   released = take(d);
