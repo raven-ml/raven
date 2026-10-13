@@ -100,17 +100,14 @@ type 'd t = {
 (** The type for where operands lie together. *)
 type 'd common =
   | Every_set  (** Every operand is of every set. *)
-  | Uncut of 'd Devices.placement
-      (** Every operand not of every set lies at this placement, which cuts no
-          axis. *)
-  | Cut of 'd Devices.placement
-      (** Every operand not of every set lies at this placement, which cuts an
-          axis. *)
+  | One of 'd Devices.placement
+      (** Every operand not of every set lies at this placement. *)
   | Other  (** Any other arrangement. *)
 
 val common : 'd Devices.placement option array -> 'd common
 (** [common ps] is where operands at [ps] lie together, [None] for an operand of
-    every set. *)
+    every set. Operands at [One p], [p] cutting no axis, are read at [p] and
+    their results lie there, whatever the rule ({!route}). *)
 
 val route :
   by:string ->

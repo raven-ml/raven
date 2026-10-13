@@ -496,13 +496,15 @@ let uncut p = not (Grid.is_cut (Devices.grid p))
 let route_at : type r.
     by:string -> r Value.prim -> unit Devices.placement -> unit Route.t option =
  fun ~by op p ->
-  let rule = Prim.rule op in
-  if uncut p || rule = Route.Elementwise then None
-  else begin
-    let shapes = ref [] in
-    Prim.iteri (fun _ x -> shapes := Prim.shape x :: !shapes) op;
-    Some (Route.at ~by rule (Array.of_list (List.rev !shapes)) p)
-  end
+  if uncut p then None
+  else
+    let rule = Prim.rule op in
+    if rule = Route.Elementwise then None
+    else begin
+      let shapes = ref [] in
+      Prim.iteri (fun _ x -> shapes := Prim.shape x :: !shapes) op;
+      Some (Route.at ~by rule (Array.of_list (List.rev !shapes)) p)
+    end
 
 (* Where a route [r] from [route_at] for [p] reads operand [i]. *)
 let read_at (r : unit Route.t option) p i =

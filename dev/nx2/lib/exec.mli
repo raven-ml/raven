@@ -32,9 +32,7 @@
     operands lie. One exception holds on GPUs: a window of a batched
     contraction's batch, where the contracted extent is long, can add in another
     order than the whole, as a GPU library chooses how many parts to split the
-    contracted extent into from every extent, the batch's included. Over devices
-    of several architectures, each device's window has its own architecture's
-    bits. *)
+    contracted extent into from every extent, the batch's included. *)
 
 val run : by:string -> 'r Value.prim -> 'r
 (** [run ~by op] is [op]'s meaning where no interpretation reaches it.

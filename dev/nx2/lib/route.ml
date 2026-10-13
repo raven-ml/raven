@@ -191,14 +191,7 @@ let covers g want =
   in
   Grid.equal g want || ((not (Grid.is_cut g)) && same_devices ())
 
-(* Placements an elementwise operation or a movement reads its operands at with
-   nothing to work out: every operand of every set, or every one at one
-   placement [p], those of every set apart, that cuts no axis. *)
-type 'd common =
-  | Every_set
-  | Uncut of 'd Devices.placement
-  | Cut of 'd Devices.placement
-  | Other
+type 'd common = Every_set | One of 'd Devices.placement | Other
 
 let common (type d) (ps : d Devices.placement option array) : d common =
   let n = Array.length ps in
@@ -212,42 +205,48 @@ let common (type d) (ps : d Devices.placement option array) : d common =
   in
   match go 0 None with
   | None -> Every_set
-  | Some p -> if Grid.is_cut (Devices.grid p) then Cut p else Uncut p
+  | Some p -> One p
   | exception Exit -> Other
 
-(* Any route, worked out from the operands' grids. *)
-let general ~by rule ps shapes =
-  let n = Array.length ps in
-  let rank i = Array.length shapes.(i) in
-  let check axes i =
-    Array.iter
-      (fun a ->
-        if a < 0 || a >= rank i then
-          invalid_argf "%s: axis %d is not an axis of an operand of rank %d" by
-            a (rank i))
-      axes
+(* Raises naming [by] where [rule] does not fit operands of [shapes]. *)
+let check ~by rule shapes =
+  let n = Array.length shapes in
+  let fits axis i =
+    let rank = Array.length shapes.(i) in
+    if axis < 0 || axis >= rank then
+      invalid_argf "%s: axis %d is not an axis of an operand of rank %d" by axis
+        rank
   in
   (* Axes the results may have beyond every operand's. *)
   let natural axes =
-    Array.iter
-      (fun a -> if a < 0 then invalid_argf "%s: a negative axis %d" by a)
-      axes
+    for j = 0 to Array.length axes - 1 do
+      if axes.(j) < 0 then invalid_argf "%s: a negative axis %d" by axes.(j)
+    done
   in
-  (match rule with
-  | Reduce { axes; along } -> natural (Array.append axes along)
+  match rule with
+  | Reduce { axes; along } ->
+      natural axes;
+      natural along
   | Along axes -> natural axes
   | Contract _ ->
       if n <> 2 && n <> 3 then
         invalid_argf "%s: a contraction reads 2 or 3 operands, not %d" by n
   | Gather axis ->
       if n <> 2 then invalid_argf "%s: a gather reads 2 operands, not %d" by n;
-      check [| axis |] 1
-  | Into axis -> Array.iteri (fun i _ -> check [| axis |] i) ps
+      fits axis 1
+  | Into axis ->
+      for i = 0 to n - 1 do
+        fits axis i
+      done
   | Move m -> (
       if n <> 1 then invalid_argf "%s: a movement reads 1 operand, not %d" by n;
       try ignore (Nx_array.Move.shape m shapes.(0))
       with Invalid_argument e -> invalid_argf "%s: %s" by e)
-  | Elementwise | Replicated -> ());
+  | Elementwise | Replicated -> ()
+
+(* Any route, worked out from the operands' grids. *)
+let general ~by rule ps shapes =
+  let n = Array.length ps in
   let placed i = Option.get ps.(i) in
   let concrete = List.filter (fun i -> ps.(i) <> None) (List.init n Fun.id) in
   match concrete with
@@ -312,33 +311,20 @@ let route ~by rule ps shapes =
   if n = 0 || n <> Array.length shapes then
     invalid_argf "%s: a route of %d placements and %d shapes" by n
       (Array.length shapes);
-  let simple p =
-    match rule with
-    | Elementwise -> Some (Some { operands = Array.make n p; result = p })
-    | Move m when n = 1 -> (
-        match Nx_array.Move.shape m shapes.(0) with
-        | _ -> Some (Some { operands = [| p |]; result = p })
-        | exception Invalid_argument e -> invalid_argf "%s: %s" by e)
-    | Move _ | Reduce _ | Along _ | Gather _ | Into _ | Contract _ | Replicated
-      ->
-        None
-  in
-  let fast =
-    match (common ps, rule) with
-    | Every_set, (Elementwise | Replicated) -> Some None
-    | Every_set, Move m -> (
-        match Nx_array.Move.shape m shapes.(0) with
-        | _ -> Some None
-        | exception Invalid_argument e -> invalid_argf "%s: %s" by e)
-    | Uncut p, _ -> simple p
-    | Cut p, Elementwise -> (
-        (* Operands of one shape: one that [p] divides is all of them. *)
-        match Grid.window (Devices.grid p) shapes.(0) 0 with
-        | Ok _ -> Some (Some { operands = Array.make n p; result = p })
-        | Error e -> invalid_argf "%s: %s" by e)
-    | Cut _, _ | (Every_set | Other), _ -> None
-  in
-  match fast with Some r -> r | None -> general ~by rule ps shapes
+  check ~by rule shapes;
+  (* Operands at one placement that cuts no axis are read there, and the
+     results lie there: each device reads them whole and computes all of the
+     results. *)
+  match common ps with
+  | Every_set -> None
+  | One p when not (Grid.is_cut (Devices.grid p)) ->
+      Some { operands = Array.make n p; result = p }
+  | One p when rule = Elementwise -> (
+      (* Operands of one shape: one that [p] divides is all of them. *)
+      match Grid.window (Devices.grid p) shapes.(0) 0 with
+      | Ok _ -> Some { operands = Array.make n p; result = p }
+      | Error e -> invalid_argf "%s: %s" by e)
+  | One _ | Other -> general ~by rule ps shapes
 
 (* Whether the results keep their axis [a'] whole by [rule], over operands of
    [shapes]. *)
