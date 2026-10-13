@@ -24,7 +24,8 @@
 
 #include "rig_amd_stubs.h"
 
-#define Device_val(v) ((struct rig_amd *)Long_val(v))
+#define Edge_val(v) ((struct rig_amd_edge *)Long_val(v))
+#define Device_val(v) (Edge_val(v)->d)
 #define Host_val(v) ((void *)Long_val(v))
 
 static intnat at(value a, int i) { return Long_val(Field(a, i)); }
@@ -44,15 +45,30 @@ static const struct rig_driver driver = {rig_amd_room, rig_amd_submit,
 
 value caml_rig_amd_create(value unit) {
   (void)unit;
+  struct rig_amd_edge *e = calloc(1, sizeof *e);
   struct rig_amd *d = calloc(1, sizeof *d);
-  if (d == NULL) caml_raise_out_of_memory();
-  d->driver = &driver;
-  return Val_long((intnat)d);
+  if (e == NULL || d == NULL) {
+    free(e);
+    free(d);
+    caml_raise_out_of_memory();
+  }
+  e->driver = &driver;
+  e->d = d;
+  return Val_long((intnat)e);
+}
+
+/* Frees the run state of a stopped device: its edge and word stay. */
+value caml_rig_amd_end(value v_self) {
+  struct rig_amd_edge *e = Edge_val(v_self);
+  free(e->d);
+  e->d = NULL;
+  return Val_unit;
 }
 
 /* Frees the state of a device whose open failed: nothing holds it. */
 value caml_rig_amd_destroy(value v_self) {
   free(Device_val(v_self));
+  free(Edge_val(v_self));
   return Val_unit;
 }
 
@@ -72,6 +88,7 @@ value caml_rig_amd_memory(value v_self, value v_word, value v_word_gpu,
                              value v_slots, value v_slots_gpu) {
   struct rig_amd *d = Device_val(v_self);
   d->word = Host_val(v_word);
+  Edge_val(v_self)->word = d->word;
   atomic_store_explicit(d->word, 0, memory_order_release);
   d->word_gpu = (uint64_t)Long_val(v_word_gpu);
   d->slots = Host_val(v_slots);
@@ -287,11 +304,13 @@ value caml_rig_amd_max_copy(value v_self, value v_n) {
 }
 
 /* Adds [delta] to the regions that need the HDP register at host address
-   [reg] flushed. The caller serialises calls for one device. */
+   [reg] flushed; a stopped device flushes nothing. The caller serialises
+   calls for one device. */
 value caml_rig_amd_hdp(value v_self, value v_reg, value v_delta) {
   struct rig_amd *d = Device_val(v_self);
   volatile uint32_t *reg = Host_val(v_reg);
   struct rig_amd_hdp *free = NULL;
+  if (d == NULL) return Val_true;
   for (int i = 0; i < RIG_AMD_HDPS; i++) {
     struct rig_amd_hdp *h = &d->hdps[i];
     if (h->reg == reg) {
@@ -317,8 +336,8 @@ value caml_rig_amd_last(value v_self) {
 /* Timeline */
 
 value caml_rig_amd_signaled(value v_self) {
-  struct rig_amd *d = Device_val(v_self);
-  return Val_long(atomic_load_explicit(d->word, memory_order_acquire));
+  return Val_long(
+      atomic_load_explicit(Edge_val(v_self)->word, memory_order_acquire));
 }
 
 /* Raises the word to the last value submit was given, with a release

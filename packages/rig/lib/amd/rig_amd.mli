@@ -338,8 +338,9 @@ val capability : t -> Rig_amd_abi.Capability.t
     the word reaches that value only if the queues still run and complete
     their work.
 
-    The word, and the device's C state, which reading it needs, stay for
-    the process. *)
+    Either way the stop frees the C state the device ran work with, its
+    rings' and timed values' records, which the queues never read. The word,
+    and the edge that reads it, stay for the process. *)
 
 (** {1:paths Paths}
 

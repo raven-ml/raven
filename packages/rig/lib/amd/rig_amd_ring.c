@@ -360,7 +360,7 @@ static int runs(const struct rig_amd *d, const struct rig_part *p, int i,
 
 int rig_amd_room(void *self, const struct rig_part *parts, int n,
                  void *routes, const uint8_t *args) {
-  struct rig_amd *d = self;
+  struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
   if (n > RIG_AMD_PARTS) return RIG_NEVER;
   for (int i = 0; i < n; i++)
     if (!runs(d, &parts[i], i, args)) return RIG_NEVER;
@@ -526,7 +526,7 @@ static void stamp(struct rig_amd *d, int q, uint64_t address) {
 }
 
 int rig_amd_settle(void *self, uint64_t v, const char **failure) {
-  struct rig_amd *d = self;
+  struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
   struct rig_amd_measure m;
   uint64_t width;
   if (d->source != NULL &&
@@ -776,7 +776,7 @@ int rig_amd_submit(void *self, uint64_t v, const struct rig_wait *waits,
                    const uint64_t *slots, int nslots, uint64_t *times,
                    const char **failure) {
   (void)nslots;
-  struct rig_amd *d = self;
+  struct rig_amd *d = ((struct rig_amd_edge *)self)->d;
   if (d->failure) {
     *failure = d->failure;
     return RIG_FAILED;

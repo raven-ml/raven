@@ -108,6 +108,7 @@ let region ?flush n m = { bytes = n; mem = m; flush }
 
 external create : unit -> int = "caml_rig_amd_create"
 external destroy : int -> unit = "caml_rig_amd_destroy" [@@noalloc]
+external end_state : int -> unit = "caml_rig_amd_end" [@@noalloc]
 
 external set_memory : int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_memory"
@@ -198,7 +199,7 @@ type t = {
   hang_ms : int option;
   waits64 : bool; (* its queues run 64-bit waits *)
   maps_host : bool;
-  word : region; (* kept, with the C state, for the process *)
+  word : region; (* kept, with the C edge, for the process *)
   reaches : int -> bool; (* the path's *)
   capability : Abi.Capability.t;
   guard : Mutex.t;
@@ -952,6 +953,8 @@ let halt g l ~fault =
       List.iter give_back
         (List.map fst (buffers @ st.retired) @ traces @ l.own)
 
+(* The C state's run part goes whatever the path's stop answered: the queues
+   read none of it. *)
 let stop g ~fault =
   let l =
     Mutex.protect g.guard @@ fun () ->
@@ -959,7 +962,8 @@ let stop g ~fault =
     g.live <- None;
     l
   in
-  Option.iter (fun l -> halt g l ~fault) l
+  Option.iter (fun l -> halt g l ~fault) l;
+  Mutex.protect g.hdps (fun () -> end_state g.self)
 
 (* Tests *)
 

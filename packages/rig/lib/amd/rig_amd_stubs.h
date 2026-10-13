@@ -304,8 +304,8 @@ struct rig_amd_measure {
 
 
 
+/* What a device runs work with, from its open to its stop. */
 struct rig_amd {
-  const struct rig_driver *driver;
   _Atomic uint64_t *word;
   uint64_t word_gpu;
   volatile uint32_t *slots;     /* 64 bits apart, their low 32 bits used */
@@ -347,6 +347,14 @@ struct rig_amd {
   int first_wide; /* the first's readings lie wider than the bound */
   uint64_t converted, unconverted, last_end;
   const char *times_failure;
+};
+
+/* A device's edge, kept for the process: its word, and its run state,
+   NULL once stopped. */
+struct rig_amd_edge {
+  const struct rig_driver *driver;
+  _Atomic uint64_t *word;
+  struct rig_amd *d;
 };
 
 /* Takes [d]'s first measure of its clock: from its source, the first of
