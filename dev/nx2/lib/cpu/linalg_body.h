@@ -385,6 +385,9 @@ static int F(lu)(T *a, int64_t m, int64_t n, int64_t ld, int64_t *pivots,
 
 static R F(abs)(R x) { return x < 0 ? -x : x; }
 
+/* |a| with the sign of b. */
+static R F(sign)(R a, R b) { return (R)copysign(a, b); }
+
 /* The 2-norm of the [n] elements at [x], [s] apart: the plain sum of
    squares where it lies where every square that matters is exact, else
    scaled by the largest part. */
@@ -1370,8 +1373,18 @@ static int F(laed4)(int64_t n, int64_t i, const R *d, const R *z, R *delta,
         return 0;
       if (w * eta >= 0) eta = -w / dw;
     }
-    if (tau + eta > ub || tau + eta < lb)
-      eta = w < 0 ? (ub - tau) / 2 : (lb - tau) / 2;
+    /* Out of [lb, ub], half the way to the bound, or where Newton's step
+       stays inside, the geometric mean of the two steps
+       (Reference-LAPACK's PR 1191, on the last root's first step and the
+       others' later ones). */
+    if (tau + eta > ub || tau + eta < lb) {
+      R half = w < 0 ? (ub - tau) / 2 : (lb - tau) / 2, newton = -w / dw;
+      int mean = (last ? step == 0 : step > 0) && lb <= tau + newton &&
+                 tau + newton <= ub;
+      eta = mean ? F(sign)(1, newton) * SQRT(F(abs)(newton)) *
+                       SQRT(F(abs)(half))
+                 : half;
+    }
     prew = w;
     for (int64_t j = 0; j < n; j++) delta[j] -= eta;
     tau += eta;
@@ -1699,9 +1712,6 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
    the vectors' call's iteration. Matrices are column-major; V_B's
    vectors are its columns, where LAPACK keeps Vᵀ's rows, so that every
    rotation moves adjacent memory. */
-
-/* |a| with the sign of b. */
-static R F(sign)(R a, R b) { return (R)copysign(a, b); }
 
 /* The singular values [smin] <= [smax] of [f g; 0 h] (xLAS2). */
 static void F(las2)(R f, R g, R h, R *smin, R *smax) {

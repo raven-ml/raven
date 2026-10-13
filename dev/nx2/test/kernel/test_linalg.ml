@@ -878,6 +878,99 @@ let law_svd_spectrum (b : Support.backend) c =
         (values y'.(1)) (values y'.(2))
   | _ -> ()
 
+(* The Jacobi matrix whose eigenvalues are [l] and whose eigenvectors'
+   first components are [q], ‖q‖ = 1, by Lanczos on diag l from q,
+   reorthogonalised twice against every earlier vector: its diagonal and
+   subdiagonal. *)
+let jacobi l q =
+  let n = Array.length l in
+  let dot x y = Array.fold_left ( +. ) 0. (Array.map2 ( *. ) x y) in
+  let vs = Array.make n q in
+  let alpha = Array.make n 0. and beta = Array.make (max 0 (n - 1)) 0. in
+  for j = 0 to n - 1 do
+    let w = Array.mapi (fun i x -> l.(i) *. x) vs.(j) in
+    alpha.(j) <- dot vs.(j) w;
+    for _ = 1 to 2 do
+      for p = 0 to j do
+        let c = dot vs.(p) w in
+        Array.iteri (fun i x -> w.(i) <- w.(i) -. (c *. x)) vs.(p)
+      done
+    done;
+    if j < n - 1 then begin
+      beta.(j) <- sqrt (dot w w);
+      vs.(j + 1) <- Array.map (fun x -> x /. beta.(j)) w
+    end
+  done;
+  (alpha, beta)
+
+(* Reference-LAPACK issue 1166's secular equation, 29 values and its 23rd
+   root next to its pole, which LAPACK 3.12's laed4 does not solve in its 30
+   steps, as the one merge of a tridiagonal matrix of order 30: halves of
+   15, Jacobi matrices from their values and parts of z, the first's
+   reversed so that its last row carries them, coupled by ρ / 2. The
+   value 1.68e-5 sits in both halves, its weight split so that they weigh
+   alike, and the merge deflates the two back into one. eigh's results
+   meet check_eigh's relations. *)
+let test_eigh_secular (b : Support.backend) () =
+  let d =
+    [| -8.9907411945275305e-17; 3.1527281176230556e-06; 7.8104209108493992e-06;
+       1.4528378412105169e-05; 1.6571840586254615e-05; 1.6791959834500457e-05;
+       1.6951003434697501e-05; 1.6961635049587819e-05; 1.6969218460422806e-05;
+       1.7028037406879576e-05; 1.9135232081591496e-05; 2.1876238530929982e-05;
+       2.1920146416725336e-05; 3.9357203097119847e-05; 1.0557423781645928e-04;
+       1.3686127039388258e-04; 1.3686300570614894e-04; 1.3686313427158908e-04;
+       1.3686314099616321e-04; 1.3686314127052412e-04; 1.3686314210337733e-04;
+       1.3686314231692531e-04; 1.3686314257213152e-04; 5.3532577970471340e-02;
+       9.9996866934433004e-01; 1.0000000849390769e+00; 1.0000000901678945e+00;
+       1.0000000918404301e+00; 1.0000001095998177e+00 |]
+  and z =
+    [| 1.6700411548440888e-07; 2.2704845744451106e-06; -6.8596999842130412e-06;
+       -1.9813464524908256e-04; 3.4676472662621390e-03; 5.8131816598176476e-02;
+       -2.4389840480820292e-03; 2.2571085689296944e-03; -2.0150012240231657e-03;
+       -9.7432047705138750e-03; 7.3184880793391433e-04; -2.9319792346511997e-02;
+       8.3364827297377855e-07; -8.9722126354645391e-09; 7.0412738449665979e-01;
+       -1.4042299148200350e-06; 3.8731670039916887e-06; -5.4330381400333468e-07;
+       4.4026694557354993e-07; 2.2528424563293299e-07; 3.6064772311683760e-06;
+       2.8472995783701232e-07; 8.3086036055888118e-07; 2.8464273601162125e-02;
+       -7.0642255076744132e-01; -5.2009238883566685e-08; 8.6348330718758654e-08;
+       -2.9664496252475970e-08; 1.4932776629316714e-09 |]
+  and rho = 6.2964808955495258e-05 in
+  (* The first half: d's 9th to 22nd values and the split one, 5th; the
+     second: the others. Its weights z² sum to half the whole's. *)
+  let split = 5 in
+  let first = Array.append (Array.init 14 (fun i -> 9 + i)) [| split |] in
+  let second = Array.of_list (List.filter (fun i -> i < 9 || i > 22) (List.init 29 Fun.id)) in
+  let w = Array.map (fun x -> x *. x) z in
+  let total = Array.fold_left ( +. ) 0. w in
+  let part ix = Array.fold_left (fun s i -> if i = split then s else s +. w.(i)) 0. ix in
+  let x = (total /. 2.) -. part first in
+  let weights ix share =
+    let v = Array.map (fun i -> if i = split then share else w.(i)) ix in
+    let t = Array.fold_left ( +. ) 0. v in
+    Array.map (fun x -> sqrt (x /. t)) v
+  in
+  let a1, b1 = jacobi (Array.map (fun i -> d.(i)) first) (weights first x) in
+  let a2, b2 =
+    jacobi (Array.map (fun i -> d.(i)) second) (weights second (w.(split) -. x))
+  in
+  let rev v = Array.init (Array.length v) (fun i -> v.(Array.length v - 1 - i)) in
+  let coupling = rho *. total /. 2. in
+  let diag = Array.append (rev a1) a2 and off = Array.concat [ rev b1; [| coupling |]; b2 ] in
+  diag.(14) <- diag.(14) +. coupling;
+  diag.(15) <- diag.(15) +. coupling;
+  let n = 30 in
+  let a =
+    Array.init (n * n) (fun p ->
+        let i = p / n and j = p mod n in
+        let v = if i = j then diag.(i) else if abs (i - j) = 1 then off.(min i j) else 0. in
+        { Complex.re = v; im = 0. })
+  in
+  let dt = D.Any D.Float64 in
+  let x = of_values dt [| n; n |] a in
+  match run b (Eigh true) [| x |] with
+  | Some y -> check_eigh dt ~count:1 ~n (values x) (values y.(0)) (values y.(1))
+  | None -> ()
+
 (* lu's pivot: a scan of the column from the diagonal down that
    moves to each later row of greater magnitude, |re| + |im| on complex
    numbers, a NaN never greater and nothing greater than a NaN. Each case is
@@ -1382,6 +1475,8 @@ let laws (b : Support.backend) =
         (run (law_solve_reads b));
       prop "bits do not depend on layouts" case (run (law_layouts b));
       test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
+      test "eigh solves Reference-LAPACK issue 1166's secular equation"
+        (fun () -> b.around (test_eigh_secular b));
       test "routines take floats and complex numbers alone" (fun () ->
           b.around (test_dtypes b));
     ]
