@@ -1131,26 +1131,54 @@ let words_of f =
   f ();
   allocated () -. b -. (b -. a)
 
-(* The words a warm call allocates at most: its launch and the operands it
-   reads, the buffers of its submit and the door's work, all of which die with
-   the call. [split_case] has them all: an init and a workspace. *)
-let call_words = 72
-
-(* A call that finds nx.metal's device, submission and workspace made, and its
-   domain's frame free, allocates at most [call_words]. *)
-let warm_calls_within_budget () =
-  let t = dev () in
-  let _, _, _, _, _, run = call t split_case in
-  S.call run;
+(* The words [count] warm calls of [run] allocate, the first one uncounted. *)
+let warm_words t ~count run =
+  ignore (S.run t run);
   let words =
     words_of (fun () ->
-        for _ = 1 to 64 do
+        for _ = 1 to count do
           S.call run
         done)
   in
   ignore (S.run t run);
-  at_most ~msg:"words for 64 calls" int ~than:(64 * call_words)
-    (int_of_float words)
+  int_of_float words
+
+(* No warm call allocates more words than one of [split_case], which has
+   every piece a launch holds: an init and a workspace. Its operands'
+   extents and layouts do not change the count. *)
+let warm_calls_bounded =
+  let most =
+    lazy
+      (let t = dev () in
+       let _, _, _, _, _, run = call t split_case in
+       warm_words t ~count:8 run)
+  in
+  prop ~count:30 "a warm call allocates no more than one with every piece"
+    case (fun c ->
+      let t = dev () in
+      let _, _, _, _, _, run = call t c in
+      at_most ~msg:"words for 8 calls" int ~than:(Lazy.force most)
+        (warm_words t ~count:8 run))
+
+(* [c]'s call, run until its work is done and dropped, leaving only a weak
+   pointer to its destination's buffer. *)
+let[@inline never] dropped t c =
+  let weak = Weak.create 1 in
+  let _, _, _, out, _, run = call t c in
+  Weak.set weak 0 (Some (S.buffer (S.arg_operand out)));
+  ignore (S.run t run);
+  weak
+
+(* A call keeps none of its arrays once it returns and its work is done:
+   collected, its destination's buffer goes. *)
+let calls_keep_nothing () =
+  let t = dev () in
+  let weak = dropped t split_case in
+  for _ = 1 to 3 do
+    Gc.full_major ()
+  done;
+  equal ~msg:"the destination's buffer outlives the call" bool false
+    (Weak.check weak 0)
 
 (* A call on a consumed buffer is refused as dead, the destination's or an
    operand's, and nx.metal reads nothing of it. *)
@@ -1205,7 +1233,8 @@ let domains_call_alike =
 let calls =
   group ~timeout:120. "calls"
     [
-      test "warm calls stay within their words" warm_calls_within_budget;
+      warm_calls_bounded;
+      test "a call keeps none of its arrays" calls_keep_nothing;
       test "a consumed buffer is refused as dead" dead_buffers_refused;
       domains_call_alike;
     ]

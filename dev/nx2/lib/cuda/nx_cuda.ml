@@ -122,33 +122,11 @@ let reduce_submission d dv l =
 
 (* A call's state: one per domain, guarded by [busy]. A call that finds it busy,
    such as one of another systhread of the domain or a signal handler's, uses a
-   fresh frame it does not keep. The door's arrays sit in arrays of their
-   count, made once: [read] and [written], up to 3. *)
-type frame = {
-  busy : bool Atomic.t;
-  view : V.t;
-  run : Sub.Run.t;
-  read_arrays : A.any array array;
-  written_arrays : A.any array array;
-  mutable read : A.any array;
-  mutable written : A.any array;
-}
-
-(* What a frame holds between calls: no user array. *)
-let no_array = A.Any (A.create Rig.host A.Dtype.Uint8 [| 0 |])
-let by_count most x = Array.init (most + 1) (fun n -> Array.make n x)
+   fresh frame it does not keep. *)
+type frame = { busy : bool Atomic.t; view : V.t; run : Sub.Run.t }
 
 let frame ~busy =
-  let read_arrays = by_count 3 no_array in
-  {
-    busy = Atomic.make busy;
-    view = V.make ();
-    run = Sub.Run.make ();
-    read_arrays;
-    written_arrays = by_count 3 no_array;
-    read = read_arrays.(0);
-    written = read_arrays.(0);
-  }
+  { busy = Atomic.make busy; view = V.make (); run = Sub.Run.make () }
 
 let frames = Domain.DLS.new_key (fun () -> frame ~busy:false)
 
@@ -156,28 +134,13 @@ let take () =
   let f = Domain.DLS.get frames in
   if Atomic.compare_and_set f.busy false true then f else frame ~busy:true
 
-let release f =
-  for n = 1 to 3 do
-    Array.fill f.read_arrays.(n) 0 n no_array;
-    Array.fill f.written_arrays.(n) 0 n no_array
-  done;
-  Atomic.set f.busy false
+let release f = Atomic.set f.busy false
 
-(* Makes the door's arrays hold [dst] written and [a], [b], then [init] where
-   given, read. *)
-let hold f ~dst ~init a b =
-  f.written <- f.written_arrays.(1);
-  f.written.(0) <- A.Any dst;
+(* The arrays a call reads: [a], [b], then [init] where given. *)
+let reads ~init a b =
   match init with
-  | None ->
-      f.read <- f.read_arrays.(2);
-      f.read.(0) <- A.Any a;
-      f.read.(1) <- A.Any b
-  | Some i ->
-      f.read <- f.read_arrays.(3);
-      f.read.(0) <- A.Any a;
-      f.read.(1) <- A.Any b;
-      f.read.(2) <- A.Any i
+  | None -> [| A.Any a; A.Any b |]
+  | Some i -> [| A.Any a; A.Any b; A.Any i |]
 
 (* The door's work: a launch's submission, with the run its parameters are
    written into and its buffers. *)
@@ -194,21 +157,21 @@ let rec any_dead xs i =
 let run d dv f ~batch ~contracting ~acc ~dst ~init a b =
   if not (V.fill f.view ~batch ~contracting ~dst ~init a b) then A.Declined
   else begin
-    hold f ~dst ~init a b;
-    if any_dead f.written 0 || any_dead f.read 0 then
+    let written = [| A.Any dst |] and read = reads ~init a b in
+    if any_dead written 0 || any_dead read 0 then
       (* The door refuses a dead buffer, before the plan reads its address. *)
-      A.door ~written:f.written ~read:f.read nothing ()
+      A.door ~written ~read nothing ()
     else
       match Plan.choose f.view ~acc ~dst ~init a b with
       | Declined -> A.Declined
-      | Nothing -> A.door ~written:f.written ~read:f.read nothing ()
+      | Nothing -> A.door ~written ~read nothing ()
       | Launch l ->
           let workspace = workspace d dv (Plan.workspace l) in
           let tickets = tickets d dv (Plan.tickets l) in
           let sub = submission d dv l in
           Plan.write l f.run sub;
           let buffers = Plan.buffers l ~workspace ~tickets in
-          A.door ~written:f.written ~read:f.read issue (sub, f.run, buffers)
+          A.door ~written ~read issue (sub, f.run, buffers)
   end
 
 let contract ~batch ~contracting ~acc ~dst ~init a b =
@@ -229,19 +192,16 @@ let contract ~batch ~contracting ~acc ~dst ~init a b =
 
 (* The call Reduce planned as [verdict], of [x] into [dst]. *)
 let run_reduce d dv f ~dst x (verdict : Reduce.verdict) =
-  f.written <- f.written_arrays.(1);
-  f.written.(0) <- dst;
-  f.read <- f.read_arrays.(1);
-  f.read.(0) <- A.Any x;
+  let written = [| dst |] and read = [| A.Any x |] in
   match verdict with
   | Declined -> A.Declined
-  | Nothing -> A.door ~written:f.written ~read:f.read nothing ()
+  | Nothing -> A.door ~written ~read nothing ()
   | Launch l ->
       let workspace = workspace d dv (Reduce.workspace l) in
       let sub = reduce_submission d dv l in
       Reduce.write l f.run sub;
       let buffers = Reduce.buffers l ~workspace in
-      A.door ~written:f.written ~read:f.read issue (sub, f.run, buffers)
+      A.door ~written ~read issue (sub, f.run, buffers)
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
 let accepted (p : Nx_kernel.Prog.t) (r, k) =

@@ -898,39 +898,95 @@ let words_of f =
   f ();
   allocated () -. b -. (b -. a)
 
-(* The words a warm call allocates at most: its launch and the operands it
-   reads, the buffers of its submit and the door's work, all of which die with
-   the call. [packed_split] has them all: packs, a split and an init. *)
-let call_words = 123
-
-(* Calls of [p] allocate at most [call_words] each, [p] warm: its device,
-   submission and workspace made and its domain's frame free. *)
-let calls_within_budget g p ~msg =
-  S.call p;
+(* The words [count] warm calls of [p] allocate, the first one uncounted. *)
+let warm_words g ~count p =
+  S.run g p;
   let words =
     words_of (fun () ->
-        for _ = 1 to 64 do
+        for _ = 1 to count do
           S.call p
         done)
   in
   S.run g p;
-  at_most ~msg int ~than:(64 * call_words) (int_of_float words)
+  int_of_float words
 
-let warm_calls_within_budget () =
-  let g = S.gpu () in
-  let _, _, _, _, p = contract g packed_split () in
-  calls_within_budget g p ~msg:"words for 64 calls"
+(* Contractions of bfloat16, float16 and float32 operands into float32 over
+   extents around the tiles, both layouts and every init. *)
+let shape_case =
+  let open Gen in
+  let extent = of_list [ 1; 3; 16; 17; 64; 100 ] in
+  let+ dt = of_list [ D.Any D.Bfloat16; D.Any D.Float16; D.Any D.Float32 ]
+  and+ batch = int_range 1 3
+  and+ m = extent
+  and+ n = extent
+  and+ k = of_list [ 0; 1; 7; 64; 300; 8191 ]
+  and+ la = of_list [ `K; `Free ]
+  and+ lb = of_list [ `K; `Free ]
+  and+ init = of_list [ `None; `Bias; `Full ] in
+  let f32 = D.Any D.Float32 in
+  { packed_split with dt; acc = f32; out = f32; batch; m; n; k; la; lb; init }
 
-(* A call that raises leaves its domain's frame free, so the warm calls after
-   it stay within their words. *)
+let shape_case =
+  Gen.with_pp (fun ppf c -> Format.pp_print_string ppf (case_name c)) shape_case
+
+(* No warm call allocates more words than one of [packed_split], which has
+   every piece a launch holds: packs, a split and an init. Its operands'
+   extents and layouts do not change the count. *)
+let warm_calls_bounded =
+  let most =
+    lazy
+      (let g = S.gpu () in
+       let _, _, _, _, p = contract g packed_split () in
+       warm_words g ~count:8 p)
+  in
+  prop ~count:30 "a warm call allocates no more than one with every piece"
+    shape_case (fun c ->
+      let g = S.gpu () in
+      let _, _, _, _, p = contract g c () in
+      at_most ~msg:"words for 8 calls" int ~than:(Lazy.force most)
+        (warm_words g ~count:8 p))
+
+(* [packed_split]'s call, run until its work is done and dropped, leaving
+   only a weak pointer to its destination's buffer. *)
+let[@inline never] dropped g =
+  let weak = Weak.create 1 in
+  let _, _, _, y, p = contract g packed_split () in
+  Weak.set weak 0 (Some y.S.buffer);
+  S.run g p;
+  weak
+
+(* A call keeps none of its arrays once it returns and its work is done:
+   collected, its destination's buffer goes. *)
+let calls_keep_nothing () =
+  let weak = dropped (S.gpu ()) in
+  for _ = 1 to 3 do
+    Gc.full_major ()
+  done;
+  equal ~msg:"the destination's buffer outlives the call" bool false
+    (Weak.check weak 0)
+
+(* [packed_split] with [a] in host memory, which the GPU's submit refuses
+   once the call has written its launch. *)
+let on_the_host g () =
+  let a, b, init, y, _ = contract g packed_split () in
+  let host = Rig.Buffer.create Rig.host (Rig.Buffer.length a.S.buffer) in
+  ignore
+    (S.contract g ~a:{ a with S.buffer = host } ~b ?init ~y
+       ~batch:[ (0, 0) ]
+       ~contracting:[ (2, 2) ]
+       ~acc:(code packed_split.acc) ())
+
+(* A call that raises from its submit leaves its domain's frame free, so the
+   warm calls after it allocate as many words as before it. *)
 let raise_frees_the_frame () =
   let g = S.gpu () in
   let _, _, _, _, p = contract g packed_split () in
-  S.call p;
+  let before = warm_words g ~count:64 p in
   raises_match
-    (function Rig.Out_of_memory _ -> true | _ -> false)
-    (past_memory g);
-  calls_within_budget g p ~msg:"words for 64 calls after a raise"
+    (function Invalid_argument _ -> true | _ -> false)
+    (on_the_host g);
+  let after = warm_words g ~count:64 p in
+  equal ~msg:"words for 64 calls after a raise" int before after
 
 (* Split sums of different tile counts, run back to back over a sentinel, give
    their first run's bits: each call leaves the tickets that the next counts on
@@ -1057,7 +1113,8 @@ let tests =
         test "an int32 sum sign-extends into int64" sign_extends;
         test "extents past 2^30 decline" extent_bound;
         test "scratch past the GPU's memory raises" scratch_out_of_memory;
-        test "warm calls stay within their words" warm_calls_within_budget;
+        warm_calls_bounded;
+        test "a call keeps none of its arrays" calls_keep_nothing;
         test "a call that raises frees its frame" raise_frees_the_frame;
         test "split sums leave their tickets zero" splits_leave_tickets_zero;
         test "a consumed buffer is refused as dead" dead_buffers_refused;

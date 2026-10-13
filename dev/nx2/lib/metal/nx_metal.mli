@@ -12,7 +12,9 @@
     later call does. [computes_on d] raises {!Rig.Lost} if [d] is lost.
     Kernels claim through {!Nx_array.door} until their work is submitted, and
     answer [Done] once it is on [d]'s timeline; on a lost [d] they raise
-    {!Rig.Lost}, as the door does.
+    {!Rig.Lost}, as the door does. A kernel allocates a number of words its
+    operands' extents do not change, and keeps none once it returns but the
+    caches it fills for later calls on [d].
 
     Every entry but [contract] answers [Declined] for every case of the
     dtypes it takes. [contract] computes in two families: floats, whose

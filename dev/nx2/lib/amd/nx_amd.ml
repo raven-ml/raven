@@ -92,30 +92,10 @@ let submission d dv l =
 (* A call's state: one per domain, guarded by [busy]. A call that finds it busy,
    such as one of another systhread of the domain or a signal handler's, uses a
    fresh frame it does not keep. *)
-type frame = {
-  busy : bool Atomic.t;
-  view : V.t;
-  run : Sub.Run.t;
-  read2 : A.any array;
-  read3 : A.any array;
-  written : A.any array;
-  mutable read : A.any array;
-}
-
-(* What a frame holds between calls: no user array. *)
-let no_array = A.Any (A.create Rig.host A.Dtype.Uint8 [| 0 |])
+type frame = { busy : bool Atomic.t; view : V.t; run : Sub.Run.t }
 
 let frame ~busy =
-  let read2 = Array.make 2 no_array in
-  {
-    busy = Atomic.make busy;
-    view = V.make ();
-    run = Sub.Run.make ();
-    read2;
-    read3 = Array.make 3 no_array;
-    written = Array.make 1 no_array;
-    read = read2;
-  }
+  { busy = Atomic.make busy; view = V.make (); run = Sub.Run.make () }
 
 let frames = Domain.DLS.new_key (fun () -> frame ~busy:false)
 
@@ -123,26 +103,13 @@ let take () =
   let f = Domain.DLS.get frames in
   if Atomic.compare_and_set f.busy false true then f else frame ~busy:true
 
-let release f =
-  Array.fill f.read3 0 3 no_array;
-  Array.fill f.read2 0 2 no_array;
-  f.written.(0) <- no_array;
-  Atomic.set f.busy false
+let release f = Atomic.set f.busy false
 
-(* Makes the frame's [read] and [written] hold the call's arrays: [a], [b],
-   then [init] where given, and [dst]. *)
-let hold f ~dst ~init a b =
-  f.written.(0) <- A.Any dst;
+(* The arrays a call reads: [a], [b], then [init] where given. *)
+let reads ~init a b =
   match init with
-  | None ->
-      f.read <- f.read2;
-      f.read2.(0) <- A.Any a;
-      f.read2.(1) <- A.Any b
-  | Some i ->
-      f.read <- f.read3;
-      f.read3.(0) <- A.Any a;
-      f.read3.(1) <- A.Any b;
-      f.read3.(2) <- A.Any i
+  | None -> [| A.Any a; A.Any b |]
+  | Some i -> [| A.Any a; A.Any b; A.Any i |]
 
 (* The door's work: a launch's submission, with the run its parameters are
    written into and its buffers. *)
@@ -159,20 +126,20 @@ let rec any_dead xs i =
 let run d dv f ~batch ~contracting ~acc ~dst ~init a b =
   if not (V.fill f.view ~batch ~contracting ~dst ~init a b) then A.Declined
   else begin
-    hold f ~dst ~init a b;
-    if any_dead f.written 0 || any_dead f.read 0 then
+    let written = [| A.Any dst |] and read = reads ~init a b in
+    if any_dead written 0 || any_dead read 0 then
       (* The door refuses a dead buffer, before the plan reads its address. *)
-      A.door ~written:f.written ~read:f.read nothing ()
+      A.door ~written ~read nothing ()
     else
       match Plan.choose f.view ~acc ~dst ~init a b with
       | Declined -> A.Declined
-      | Nothing -> A.door ~written:f.written ~read:f.read nothing ()
+      | Nothing -> A.door ~written ~read nothing ()
       | Launch l ->
           let workspace = workspace d dv (Plan.workspace l) in
           let sub = submission d dv l in
           Plan.write l f.run sub;
           let buffers = Plan.buffers l ~workspace in
-          A.door ~written:f.written ~read:f.read issue (sub, f.run, buffers)
+          A.door ~written ~read issue (sub, f.run, buffers)
   end
 
 let contract ~batch ~contracting ~acc ~dst ~init a b =
