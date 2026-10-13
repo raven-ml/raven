@@ -886,8 +886,6 @@ let packed_split =
     pad = 0;
   }
 
-(* Calls of [p] allocate nothing, [p] warm: its device, submission and
-   workspace made and its domain's frame free. *)
 (* The words the program allocated on either heap. *)
 let allocated () =
   let minor, promoted, major = Gc.counters () in
@@ -900,7 +898,14 @@ let words_of f =
   f ();
   allocated () -. b -. (b -. a)
 
-let calls_allocate_nothing g p ~msg =
+(* The words a warm call allocates at most: its launch and the operands it
+   reads, the buffers of its submit and the door's work, all of which die with
+   the call. [packed_split] has them all: packs, a split and an init. *)
+let call_words = 123
+
+(* Calls of [p] allocate at most [call_words] each, [p] warm: its device,
+   submission and workspace made and its domain's frame free. *)
+let calls_within_budget g p ~msg =
   S.call p;
   let words =
     words_of (fun () ->
@@ -909,15 +914,15 @@ let calls_allocate_nothing g p ~msg =
         done)
   in
   S.run g p;
-  equal ~msg int 0 (int_of_float words)
+  at_most ~msg int ~than:(64 * call_words) (int_of_float words)
 
-let warm_calls_allocate_nothing () =
+let warm_calls_within_budget () =
   let g = S.gpu () in
   let _, _, _, _, p = contract g packed_split () in
-  calls_allocate_nothing g p ~msg:"words for 64 calls"
+  calls_within_budget g p ~msg:"words for 64 calls"
 
 (* A call that raises leaves its domain's frame free, so the warm calls after
-   it allocate nothing. *)
+   it stay within their words. *)
 let raise_frees_the_frame () =
   let g = S.gpu () in
   let _, _, _, _, p = contract g packed_split () in
@@ -925,7 +930,7 @@ let raise_frees_the_frame () =
   raises_match
     (function Rig.Out_of_memory _ -> true | _ -> false)
     (past_memory g);
-  calls_allocate_nothing g p ~msg:"words for 64 calls after a raise"
+  calls_within_budget g p ~msg:"words for 64 calls after a raise"
 
 (* Split sums of different tile counts, run back to back over a sentinel, give
    their first run's bits: each call leaves the tickets that the next counts on
@@ -1052,7 +1057,7 @@ let tests =
         test "an int32 sum sign-extends into int64" sign_extends;
         test "extents past 2^30 decline" extent_bound;
         test "scratch past the GPU's memory raises" scratch_out_of_memory;
-        test "warm calls allocate nothing" warm_calls_allocate_nothing;
+        test "warm calls stay within their words" warm_calls_within_budget;
         test "a call that raises frees its frame" raise_frees_the_frame;
         test "split sums leave their tickets zero" splits_leave_tickets_zero;
         test "a consumed buffer is refused as dead" dead_buffers_refused;

@@ -3,16 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A call fills its domain's plan, writes the plan into its run's blocks and
-   submits the submission of the plan's sequence, made once per device,
-   through the door:
+(* A call fills its domain's view, chooses its launch, writes the launch into
+   its run's blocks and submits the submission of the launch's sequence, made
+   once per device, through the door:
 
    contract --> device (Rig.Local) --> frame (the domain's, or a fresh one) -->
    View.fill, Plan.choose --> workspace, submission --> Plan.write into the run
    --> door --> Rig.submit
 
-   reduce and scan take the same path with Reduce's plan. A call that finds
-   every cache warm allocates nothing. *)
+   reduce and scan take the same path with Reduce's launch. A call that finds
+   every cache warm allocates its launch, its buffers and the door's work,
+   and nothing that outlives it. *)
 
 module A = Nx_array
 module V = Nx_kernel.Contract_view
@@ -28,7 +29,8 @@ external cubin : string -> string option = "nx_cuda_cubin"
    it, so rig orders those calls: the workspace, which holds a call's packed
    operands and split sums, grows to [kept] bytes and is kept, a call that
    needs more taking a buffer of its own; the tickets of split sums are zero
-   words, which every call leaves zero. *)
+   words, which every call leaves zero: combine.cuh's last block stores its
+   tile's ticket back to zero, so no launch zeroes them. *)
 let kept = 64 * 1024 * 1024
 
 (* What this library keeps for a device: [subs] and [reduce_subs] hold the
@@ -96,52 +98,43 @@ let tickets d dv need =
   if Rig.Buffer.length w >= need then w
   else grow dv.tickets need ~cap:max_int (zeros d)
 
-(* The submission of [p]'s sequence on [d]. Two domains that make one at once
+(* The submission of [l]'s sequence on [d]. Two domains that make one at once
    each make it, and the last store wins. *)
-let submission d dv p =
-  let key = Plan.sequence p in
+let submission d dv l =
+  let key = Plan.sequence l in
   match dv.subs.(key) with
-  | Some _ as s -> s
+  | Some s -> s
   | None ->
-      let parts = Plan.parts p dv.image in
-      let s = Some (Sub.make d parts) in
-      dv.subs.(key) <- s;
+      let s = Sub.make d (Plan.parts key dv.image) in
+      dv.subs.(key) <- Some s;
       s
 
-let reduce_submission d dv p =
-  let key = Reduce.sequence p in
+let reduce_submission d dv l =
+  let key = Reduce.sequence l in
   match dv.reduce_subs.(key) with
-  | Some _ as s -> s
+  | Some s -> s
   | None ->
-      let parts = Reduce.parts p dv.image in
-      let s = Some (Sub.make d parts) in
-      dv.reduce_subs.(key) <- s;
+      let s = Sub.make d (Reduce.parts key dv.image) in
+      dv.reduce_subs.(key) <- Some s;
       s
 
 (* Frames *)
 
 (* A call's state: one per domain, guarded by [busy]. A call that finds it busy,
    such as one of another systhread of the domain or a signal handler's, uses a
-   fresh frame it does not keep. A call's buffers and arrays sit in arrays of
-   their count, made once: [buffers] are the submit's, up to 6, in its slot
-   order, and [read] and [written] the door's, up to 3. *)
+   fresh frame it does not keep. The door's arrays sit in arrays of their
+   count, made once: [read] and [written], up to 3. *)
 type frame = {
   busy : bool Atomic.t;
   view : V.t;
-  plan : Plan.t;
-  reduce : Reduce.t;
   run : Sub.Run.t;
-  mutable sub : Sub.t option;
-  buffer_arrays : Rig.Buffer.t array array;
   read_arrays : A.any array array;
   written_arrays : A.any array array;
-  mutable buffers : Rig.Buffer.t array;
   mutable read : A.any array;
   mutable written : A.any array;
 }
 
-(* What a frame holds between calls: no user buffer. *)
-let no_buffer = Rig.Buffer.of_string ""
+(* What a frame holds between calls: no user array. *)
 let no_array = A.Any (A.create Rig.host A.Dtype.Uint8 [| 0 |])
 let by_count most x = Array.init (most + 1) (fun n -> Array.make n x)
 
@@ -150,14 +143,9 @@ let frame ~busy =
   {
     busy = Atomic.make busy;
     view = V.make ();
-    plan = Plan.make ();
-    reduce = Reduce.make ();
     run = Sub.Run.make ();
-    sub = None;
-    buffer_arrays = by_count 6 no_buffer;
     read_arrays;
     written_arrays = by_count 3 no_array;
-    buffers = [||];
     read = read_arrays.(0);
     written = read_arrays.(0);
   }
@@ -169,17 +157,11 @@ let take () =
   if Atomic.compare_and_set f.busy false true then f else frame ~busy:true
 
 let release f =
-  for n = 1 to 6 do
-    Array.fill f.buffer_arrays.(n) 0 n no_buffer
-  done;
   for n = 1 to 3 do
     Array.fill f.read_arrays.(n) 0 n no_array;
     Array.fill f.written_arrays.(n) 0 n no_array
   done;
-  f.sub <- None;
   Atomic.set f.busy false
-
-let buffer (A.Any x) = A.buffer x
 
 (* Makes the door's arrays hold [dst] written and [a], [b], then [init] where
    given, read. *)
@@ -197,10 +179,9 @@ let hold f ~dst ~init a b =
       f.read.(1) <- A.Any b;
       f.read.(2) <- A.Any i
 
-(* The door's work: [f.sub], which the call stored before it entered the
-   door. *)
-let issue f =
-  ignore (Rig.submit (Option.get f.sub) ~run:f.run ~buffers:f.buffers)
+(* The door's work: a launch's submission, with the run its parameters are
+   written into and its buffers. *)
+let issue (sub, run, buffers) = ignore (Rig.submit sub ~run ~buffers)
 
 let nothing () = ()
 let dead (A.Any x) = Option.is_some (Rig.Buffer.dead (A.buffer x))
@@ -218,30 +199,16 @@ let run d dv f ~batch ~contracting ~acc ~dst ~init a b =
       (* The door refuses a dead buffer, before the plan reads its address. *)
       A.door ~written:f.written ~read:f.read nothing ()
     else
-      match Plan.choose f.plan f.view ~acc ~dst ~init a b with
+      match Plan.choose f.view ~acc ~dst ~init a b with
       | Declined -> A.Declined
       | Nothing -> A.door ~written:f.written ~read:f.read nothing ()
-      | Launches ->
-          let ws = workspace d dv (Plan.workspace f.plan) in
-          let tk = tickets d dv (Plan.tickets f.plan) in
-          let sub = submission d dv f.plan in
-          f.sub <- sub;
-          Plan.write f.run (Option.get sub) f.plan;
-          (* {!Plan.access}'s slots: [a], [b], [dst], then [init], the
-             workspace and the tickets where the plan has them. *)
-          let n = Array.length f.read in
-          let uses_ws = Plan.workspace f.plan > 0 in
-          let uses_tk = Plan.tickets f.plan > 0 in
-          let k = n + 1 + Bool.to_int uses_ws + Bool.to_int uses_tk in
-          let bs = f.buffer_arrays.(k) in
-          f.buffers <- bs;
-          bs.(0) <- buffer f.read.(0);
-          bs.(1) <- buffer f.read.(1);
-          bs.(2) <- buffer f.written.(0);
-          if n = 3 then bs.(3) <- buffer f.read.(2);
-          if uses_ws then bs.(n + 1) <- ws;
-          if uses_tk then bs.(k - 1) <- tk;
-          A.door ~written:f.written ~read:f.read issue f
+      | Launch l ->
+          let workspace = workspace d dv (Plan.workspace l) in
+          let tickets = tickets d dv (Plan.tickets l) in
+          let sub = submission d dv l in
+          Plan.write l f.run sub;
+          let buffers = Plan.buffers l ~workspace ~tickets in
+          A.door ~written:f.written ~read:f.read issue (sub, f.run, buffers)
   end
 
 let contract ~batch ~contracting ~acc ~dst ~init a b =
@@ -268,25 +235,56 @@ let run_reduce d dv f ~dst x (verdict : Reduce.verdict) =
   f.read.(0) <- A.Any x;
   match verdict with
   | Declined -> A.Declined
-  | Refused r -> r
   | Nothing -> A.door ~written:f.written ~read:f.read nothing ()
-  | Launches ->
-      let ws = workspace d dv (Reduce.workspace f.reduce) in
-      let sub = reduce_submission d dv f.reduce in
-      f.sub <- sub;
-      Reduce.write f.run (Option.get sub) f.reduce;
-      (* {!Reduce.access}'s slots: [x], [dst], then the workspace. *)
-      let uses_ws = Reduce.workspace f.reduce > 0 in
-      f.buffers <- f.buffer_arrays.(2 + Bool.to_int uses_ws);
-      f.buffers.(0) <- A.buffer x;
-      f.buffers.(1) <- buffer dst;
-      if uses_ws then f.buffers.(2) <- ws;
-      A.door ~written:f.written ~read:f.read issue f
+  | Launch l ->
+      let workspace = workspace d dv (Reduce.workspace l) in
+      let sub = reduce_submission d dv l in
+      Reduce.write l f.run sub;
+      let buffers = Reduce.buffers l ~workspace in
+      A.door ~written:f.written ~read:f.read issue (sub, f.run, buffers)
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
 let accepted (p : Nx_kernel.Prog.t) (r, k) =
   let (Nx_array.Dtype.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
   Nx_kernel.accepts r dt
+
+(* What a reduction or scan of [x] into [dst] refuses, where [shape] gives
+   the destination's shape for [x]'s: an [x] of another dtype than [p]'s
+   operand, and a destination of another shape. *)
+let refusal (p : Nx_kernel.Prog.t) x ~dst shape =
+  let (A.Any y) = dst in
+  let shape_of a = A.Layout.shape (A.layout a) in
+  let wrong_dtype =
+    Iarray.length p.ins = 1
+    &&
+    let (A.Dtype.Any operand) = Iarray.get p.ins 0 in
+    not (A.Dtype.equal (A.dtype x) operand)
+  in
+  if wrong_dtype then Some A.Wrong_dtype
+  else
+    match shape (shape_of x) with
+    | Ok s when s = shape_of y -> None
+    | Ok _ | Error _ -> Some A.Shape_mismatch
+
+(* Plans the call of [x] into [dst] with [plan] on [dst]'s device, once
+   [refusal] finds nothing to refuse. *)
+let reduce_on p x ~dst shape plan =
+  let (A.Any y) = dst in
+  let d = A.device y in
+  match device d with
+  | None -> A.Declined
+  | Some dv -> (
+      match refusal p x ~dst shape with
+      | Some refused -> refused
+      | None -> (
+          let f = take () in
+          match run_reduce d dv f ~dst x (plan ()) with
+          | answer ->
+              release f;
+              answer
+          | exception e ->
+              release f;
+              raise e))
 
 (* Reduce computes a monoid of output 0 of the program into one destination,
    read plain. *)
@@ -294,44 +292,19 @@ let reduce p ~axes rs ~dsts loads =
   if not (Array.for_all (accepted p) rs) then A.Wrong_dtype
   else
     match (rs, dsts, loads) with
-    | [| (Nx_kernel.Monoid m, 0) |], [| dst |], [| Nx_kernel.Plain x |] -> (
-        let (A.Any y) = dst in
-        let d = A.device y in
-        match device d with
-        | None -> A.Declined
-        | Some dv -> (
-            let f = take () in
-            match
-              run_reduce d dv f ~dst x (Reduce.reduce f.reduce ~axes m p ~dst x)
-            with
-            | answer ->
-                release f;
-                answer
-            | exception e ->
-                release f;
-                raise e))
+    | [| (Nx_kernel.Monoid m, 0) |], [| dst |], [| Nx_kernel.Plain x |] ->
+        reduce_on p x ~dst
+          (Nx_kernel.Shape.reduce ~axes [| Nx_kernel.Monoid m |])
+          (fun () -> Reduce.reduce ~axes m p ~dst x)
     | _ -> A.Declined
 
 let scan p ~axis r ~dsts loads =
   if not (accepted p r) then A.Wrong_dtype
   else
     match (r, dsts, loads) with
-    | (Nx_kernel.Monoid m, 0), [| dst |], [| Nx_kernel.Plain x |] -> (
-        let (A.Any y) = dst in
-        let d = A.device y in
-        match device d with
-        | None -> A.Declined
-        | Some dv -> (
-            let f = take () in
-            match
-              run_reduce d dv f ~dst x (Reduce.scan f.reduce ~axis m p ~dst x)
-            with
-            | answer ->
-                release f;
-                answer
-            | exception e ->
-                release f;
-                raise e))
+    | (Nx_kernel.Monoid m, 0), [| dst |], [| Nx_kernel.Plain x |] ->
+        reduce_on p x ~dst (Nx_kernel.Shape.scan ~axis) (fun () ->
+            Reduce.scan ~axis m p ~dst x)
     | _ -> A.Declined
 
 (* Elementwise *)

@@ -30,7 +30,7 @@ let case (r : Rows.row) =
 
 (* The host's share of a call: 64 calls of the smallest contraction issued
    behind a hold, then their work once released. A call that finds nx.cuda's
-   caches warm allocates nothing. *)
+   caches warm allocates its launch, which dies with it. *)
 let host =
   let bf16 = D.Any D.Bfloat16 and f32 = D.Any D.Float32 in
   let setup () =

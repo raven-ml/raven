@@ -30,7 +30,7 @@ let case (r : Rows.row) =
 
 (* The host's share of a call: 64 calls of the smallest contraction, then
    the wait for their work. A call that finds nx.amd's caches warm allocates
-   nothing. *)
+   its launch, which dies with it. *)
 let host =
   let bf16 = D.Any D.Bfloat16 and f32 = D.Any D.Float32 in
   let setup () =

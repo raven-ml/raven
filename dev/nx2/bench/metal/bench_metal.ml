@@ -451,8 +451,8 @@ let case r =
     (fun go -> go ())
 
 (* The host's share of a call: 64 warm calls of the smallest contraction,
-   then their work. A call that finds nx.metal's caches warm allocates
-   nothing. *)
+   then their work. A call that finds nx.metal's caches warm allocates its
+   launch, which dies with it. *)
 let host =
   let setup () =
     let t = dev () in

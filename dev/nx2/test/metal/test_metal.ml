@@ -1131,9 +1131,14 @@ let words_of f =
   f ();
   allocated () -. b -. (b -. a)
 
+(* The words a warm call allocates at most: its launch and the operands it
+   reads, the buffers of its submit and the door's work, all of which die with
+   the call. [split_case] has them all: an init and a workspace. *)
+let call_words = 72
+
 (* A call that finds nx.metal's device, submission and workspace made, and its
-   domain's frame free, allocates nothing. *)
-let warm_calls_allocate_nothing () =
+   domain's frame free, allocates at most [call_words]. *)
+let warm_calls_within_budget () =
   let t = dev () in
   let _, _, _, _, _, run = call t split_case in
   S.call run;
@@ -1144,7 +1149,8 @@ let warm_calls_allocate_nothing () =
         done)
   in
   ignore (S.run t run);
-  equal ~msg:"words for 64 calls" int 0 (int_of_float words)
+  at_most ~msg:"words for 64 calls" int ~than:(64 * call_words)
+    (int_of_float words)
 
 (* A call on a consumed buffer is refused as dead, the destination's or an
    operand's, and nx.metal reads nothing of it. *)
@@ -1199,7 +1205,7 @@ let domains_call_alike =
 let calls =
   group ~timeout:120. "calls"
     [
-      test "warm calls allocate nothing" warm_calls_allocate_nothing;
+      test "warm calls stay within their words" warm_calls_within_budget;
       test "a consumed buffer is refused as dead" dead_buffers_refused;
       domains_call_alike;
     ]

@@ -54,8 +54,7 @@ let rec index_from k instance =
 
 let index instance = index_from 0 instance
 
-(* The instances by dtype and order, in [K.kernels]' indices: tables made
-   once, so that a plan allocates nothing. *)
+(* The instances by dtype and order, in [K.kernels]' indices, made once. *)
 let dtypes = [| K.F32; F16; Bf16 |]
 let orders = [| K.nn; K.nt; K.tn; K.tt |]
 let large = Array.map (fun d -> Array.map (fun o -> index (Large (d, o))) orders) dtypes
@@ -122,75 +121,52 @@ let tile_cols = function
   | Small -> K.small
   | Wide -> K.wide_n
 
-type t = {
-  mutable batch : int;
-  mutable m : int;
-  mutable n : int;
-  mutable k : int;
-  mutable acc : D.any;
-  mutable init : bool;
-  mutable a_dtype : D.any;
-  mutable b_dtype : D.any;
-  mutable y_dtype : D.any;
-  mutable i_dtype : D.any;
-  (* Each operand's first element, bytes into its slot, as the device
-     addresses it, and its strides: a (batch, m, k), b (batch, k, n), init
-     (batch, m, n); y is C-contiguous. *)
-  mutable a_first : int;
-  mutable b_first : int;
-  mutable y_first : int;
-  mutable i_first : int;
-  mutable a_vector_first : bool;
-  mutable b_vector_first : bool;
-  sa : int array;
-  sb : int array;
-  si : int array;
-  (* The plan: the contraction kernel's launch, the parts of a split sum (1
-     for none), and the workspace bytes the parts' sums take. *)
-  mutable kernel : int;
-  mutable groups_x : int;
-  mutable groups_y : int;
-  mutable groups_z : int;
-  mutable threads : int;
-  mutable swizzle : int;
-  mutable order : int;
-  mutable parts : int;
-  mutable used : int;
+
+(* An operand as the kernels read it: its buffer, its dtype, its first
+   element, bytes into the buffer as the device addresses it, and its strides
+   in elements: a (batch, m, k), b (batch, k, n), init (batch, m, n). *)
+type operand = {
+  buffer : Rig.Buffer.t;
+  dtype : D.any;
+  first : int;
+  s : int array;
 }
 
-let make () =
-  {
-    batch = 0;
-    m = 0;
-    n = 0;
-    k = 0;
-    acc = f32;
-    init = false;
-    a_dtype = f32;
-    b_dtype = f32;
-    y_dtype = f32;
-    i_dtype = f32;
-    a_first = 0;
-    b_first = 0;
-    y_first = 0;
-    i_first = 0;
-    a_vector_first = false;
-    b_vector_first = false;
-    sa = Array.make 3 0;
-    sb = Array.make 3 0;
-    si = Array.make 3 0;
-    kernel = 0;
-    groups_x = 0;
-    groups_y = 0;
-    groups_z = 0;
-    threads = 0;
-    swizzle = 0;
-    order = 0;
-    parts = 1;
-    used = 0;
-  }
+(* A call as the rules read it; y is C-contiguous. *)
+type call = {
+  a : operand;
+  b : operand;
+  y : Rig.Buffer.t;
+  y_dtype : D.any;
+  y_first : int;
+  init : operand option;
+  acc : D.any;
+  batch : int;
+  m : int;
+  n : int;
+  k : int;
+}
 
-type verdict = Declined | Nothing | Launches
+(* A call's launches: the contraction kernel's grid and parameters, the parts
+   of a split sum (1 for none), and the workspace bytes the parts' sums
+   take. *)
+type launch = {
+  call : call;
+  kernel : int;
+  groups_x : int;
+  groups_y : int;
+  groups_z : int;
+  threads : int;
+  swizzle : int;
+  order : int;
+  parts : int;
+  used : int;
+}
+
+type verdict = Declined | Nothing | Launch of launch
+
+(* The strides of an absent init. *)
+let no_strides = [| 0; 0; 0 |]
 
 let fits32 x = x >= 0 && x <= max_uint32
 
@@ -227,7 +203,7 @@ let tile_k c size =
   match size with
   | Wide -> K.bk_wide
   | Large | Small | Checked -> (
-      match c.a_dtype with Any Float16 -> K.bk_half | Any _ -> K.bk)
+      match c.a.dtype with Any Float16 -> K.bk_half | Any _ -> K.bk)
 
 (* Whether tiles of [size] leave at most an eighth of a product's rows
    empty. *)
@@ -260,7 +236,7 @@ let tile_of c d =
       Option.is_some checked.(dtype_index d)
       && large >= small_tiles && fills c Checked
     then Checked
-    else if same c.a_dtype f32 || fills c Small then Small
+    else if same c.a.dtype f32 || fills c Small then Small
     else Wide
 
 (* Whether an operand's stored rows start on 16-byte boundaries: its first
@@ -268,26 +244,42 @@ let tile_of c d =
 let aligned vector_first row batch count =
   vector_first && row mod 16 = 0 && (count = 1 || batch mod 16 = 0)
 
-let order_index c = (Bool.to_int (c.order land K.a_t <> 0) * 2) + Bool.to_int (c.order land K.b_t <> 0)
+let order_index order =
+  (Bool.to_int (order land K.a_t <> 0) * 2)
+  + Bool.to_int (order land K.b_t <> 0)
 
 (* An integer contraction on the SIMD units: any strides, operands widened to
    64 bits. *)
-let plan_integer c =
-  c.kernel <- int_kernel;
-  c.groups_x <- ceil_div c.n K.int_tile;
-  c.groups_y <- ceil_div c.m K.int_tile;
-  c.groups_z <- c.batch;
-  c.threads <- K.int_threads
+let plan_integer c ~order =
+  {
+    call = c;
+    kernel = int_kernel;
+    groups_x = ceil_div c.n K.int_tile;
+    groups_y = ceil_div c.m K.int_tile;
+    groups_z = c.batch;
+    threads = K.int_threads;
+    swizzle = 0;
+    order;
+    parts = 1;
+    used = 0;
+  }
 
 (* A float product of one row of a. *)
-let plan_skinny c d =
-  let b_t = c.order land K.b_t <> 0 in
+let plan_skinny c d ~order =
+  let b_t = order land K.b_t <> 0 in
   let per = if b_t then K.skinny_t else K.skinny_n in
-  c.kernel <- skinny.(dtype_index d).(Bool.to_int b_t);
-  c.groups_x <- ceil_div c.n per;
-  c.groups_y <- 1;
-  c.groups_z <- c.batch;
-  c.threads <- K.threads
+  {
+    call = c;
+    kernel = skinny.(dtype_index d).(Bool.to_int b_t);
+    groups_x = ceil_div c.n per;
+    groups_y = 1;
+    groups_z = c.batch;
+    threads = K.threads;
+    swizzle = 0;
+    order;
+    parts = 1;
+    used = 0;
+  }
 
 (* Products on the matrix units read each operand where it lies, as the
    order says. The tile the shape picks fixes the split, so every output's
@@ -297,74 +289,77 @@ let plan_skinny c d =
    then init. Integers sum in chunks within one threadgroup: they never
    split. *)
 
-(* The grid of [size] tiles over the product, a column of [1 lsl swizzle]
-   tiles to consecutive threadgroups. *)
-let grid c size =
+(* [kernel] on the grid of [size] tiles over the product, a column of
+   [1 lsl swizzle] tiles to consecutive threadgroups, in [parts] parts along
+   k, whose float32 sums the workspace holds. *)
+let gridded c size ~order ~kernel ~parts =
   let tiles_m = ceil_div c.m (tile_rows size) in
   let tiles_n = ceil_div c.n (tile_cols size) in
-  c.swizzle <- (if tiles_m >= 2 * (1 lsl swizzle) then swizzle else 0);
-  let column = 1 lsl c.swizzle in
-  c.groups_x <- tiles_n * column;
-  c.groups_y <- ceil_div tiles_m column;
-  c.groups_z <- c.batch;
-  c.threads <- K.threads
+  let swizzle = if tiles_m >= 2 * (1 lsl swizzle) then swizzle else 0 in
+  let column = 1 lsl swizzle in
+  let split = parts > 1 in
+  {
+    call = c;
+    kernel;
+    groups_x = tiles_n * column;
+    groups_y = ceil_div tiles_m column;
+    groups_z = (if split then parts else c.batch);
+    threads = K.threads;
+    swizzle;
+    order;
+    parts;
+    used = (if split then ceil_div (parts * c.m * c.n * 4) 16 * 16 else 0);
+  }
 
 (* int8 into 32 bits: whole large tiles, which never split. *)
-let plan_int8 c =
-  grid c Large;
-  c.kernel <- int8.(order_index c)
+let plan_int8 c ~order =
+  gridded c Large ~order ~kernel:int8.(order_index order) ~parts:1
 
-(* Floats of the dense dtype [d]; the workspace holds the parts' float32
-   sums. *)
-let plan_float c d =
+(* Floats of the dense dtype [d]. *)
+let plan_float c d ~order =
   let size = tile_of c d in
-  grid c size;
-  let o = order_index c and i = dtype_index d in
-  c.kernel <-
-    (match size with
+  let o = order_index order and i = dtype_index d in
+  let kernel =
+    match size with
     | Large -> large.(i).(o)
     | Small -> small.(i)
     | Checked -> Option.get checked.(i)
-    | Wide -> wide.(i).(o));
-  c.parts <- split c (tiles c size);
-  if c.parts > 1 then begin
-    c.used <- ceil_div (c.parts * c.m * c.n * 4) 16 * 16;
-    c.groups_z <- c.parts
-  end
-
-(* The plan of the call whose fields [choose] read: the rules of nx.metal's
-   contraction, reading nothing but [c]. *)
-let rules c =
-  let a = c.a_dtype and y = c.y_dtype and i = c.i_dtype in
-  let ints =
-    integer a && integer c.acc && integer y && ((not c.init) || integer i)
+    | Wide -> wide.(i).(o)
   in
+  gridded c size ~order ~kernel ~parts:(split c (tiles c size))
+
+(* The rules of nx.metal's contraction, over [c] and whether a's and b's
+   first elements lie on 16-byte boundaries. *)
+let rules c ~a_vector ~b_vector =
+  (* Without init, [i] is y, which the families constrain alike. *)
+  let a = c.a.dtype and y = c.y_dtype in
+  let i, si =
+    match c.init with None -> (y, no_strides) | Some i -> (i.dtype, i.s)
+  in
+  let ints = integer a && integer c.acc && integer y && integer i in
   let floats =
     same c.acc f32 && Option.is_some (dense a) && Option.is_some (dense y)
-    && ((not c.init) || Option.is_some (dense i))
+    && Option.is_some (dense i)
   in
-  if (not (same a c.b_dtype)) || not (ints || floats) then Declined
+  let sa = c.a.s and sb = c.b.s in
+  if (not (same a c.b.dtype)) || not (ints || floats) then Declined
+  else if not (fits32 c.batch && fits32 c.m && fits32 c.n && fits32 c.k) then
+    Declined
   else if
-    not (fits32 c.batch && fits32 c.m && fits32 c.n && fits32 c.k)
-  then Declined
-  else if
-    (not (spans32 c.sa c.m c.k))
-    || (not (spans32 c.sb c.k c.n))
-    || not (spans32 c.si c.m c.n)
+    (not (spans32 sa c.m c.k))
+    || (not (spans32 sb c.k c.n))
+    || not (spans32 si c.m c.n)
   then Declined
   else if c.batch = 0 || c.m = 0 || c.n = 0 then Nothing
   else begin
-    c.used <- 0;
-    c.parts <- 1;
-    c.swizzle <- 0;
     (* The kernels read an operand with one axis of unit stride, or of one
        element; t names the operands whose other axis it is. *)
-    let a_t = c.sa.(2) <> 1 && c.k > 1 and b_t = c.sb.(2) <> 1 && c.n > 1 in
+    let a_t = sa.(2) <> 1 && c.k > 1 and b_t = sb.(2) <> 1 && c.n > 1 in
     let ordered =
-      (not (a_t && c.sa.(1) <> 1 && c.m > 1))
-      && not (b_t && c.sb.(1) <> 1 && c.k > 1)
+      (not (a_t && sa.(1) <> 1 && c.m > 1))
+      && not (b_t && sb.(1) <> 1 && c.k > 1)
     in
-    c.order <- (if a_t then K.a_t else 0) lor if b_t then K.b_t else 0;
+    let order = (if a_t then K.a_t else 0) lor if b_t then K.b_t else 0 in
     (* int8 into 32 bits runs on the matrix units, exactly, in whole tiles
        whose stored rows start on 16-byte boundaries, which its 16-byte loads
        need; every other integer contraction on the SIMD units. *)
@@ -376,63 +371,48 @@ let rules c =
       && ordered && c.m mod side = 0 && c.n mod side = 0
       && c.k mod K.bk_half = 0
       && (c.k = 0
-         || aligned c.a_vector_first
-              (if a_t then c.sa.(2) else c.sa.(1))
-              c.sa.(0) c.batch
-            && aligned c.b_vector_first
-                 (if b_t then c.sb.(2) else c.sb.(1))
-                 c.sb.(0) c.batch)
+         || aligned a_vector (if a_t then sa.(2) else sa.(1)) sa.(0) c.batch
+            && aligned b_vector (if b_t then sb.(2) else sb.(1)) sb.(0) c.batch)
     in
-    if ints && not i8 then begin
-      plan_integer c;
-      Launches
-    end
+    if ints && not i8 then Launch (plan_integer c ~order)
     else if not ordered then Declined
     else
       match dense a with
-      | _ when i8 ->
-          plan_int8 c;
-          Launches
-      | Some d when c.m = 1 ->
-          plan_skinny c d;
-          Launches
-      | Some d ->
-          plan_float c d;
-          Launches
+      | _ when i8 -> Launch (plan_int8 c ~order)
+      | Some d when c.m = 1 -> Launch (plan_skinny c d ~order)
+      | Some d -> Launch (plan_float c d ~order)
       | None -> Declined
   end
 
-let strides into v which (x : V.axis) (y : V.axis) =
-  into.(0) <- V.stride v which Batch;
-  into.(1) <- V.stride v which x;
-  into.(2) <- V.stride v which y
+(* [x] as the operand [which] of [v], over the axes [r] and [c]. *)
+let operand v which (r : V.axis) (c : V.axis) x =
+  let dtype = dtype_of x in
+  {
+    buffer = Nx_array.buffer x;
+    dtype;
+    first = V.offset v which * bytes dtype;
+    s = [| V.stride v which Batch; V.stride v which r; V.stride v which c |];
+  }
 
-let choose c v ~acc ~dst ~init a b =
-  c.batch <- V.extent v Batch;
-  c.m <- V.extent v Row;
-  c.n <- V.extent v Column;
-  c.k <- V.extent v Contracted;
-  c.init <- Option.is_some init;
-  c.acc <- acc;
-  c.a_dtype <- dtype_of a;
-  c.b_dtype <- dtype_of b;
-  c.y_dtype <- dtype_of dst;
-  c.a_first <- V.offset v A * bytes c.a_dtype;
-  c.b_first <- V.offset v B * bytes c.b_dtype;
-  c.y_first <- V.offset v Dst * bytes c.y_dtype;
-  c.a_vector_first <- Rig.Buffer.aligned (Nx_array.buffer a) ~at:c.a_first 16;
-  c.b_vector_first <- Rig.Buffer.aligned (Nx_array.buffer b) ~at:c.b_first 16;
-  strides c.sa v A Row Contracted;
-  strides c.sb v B Contracted Column;
-  (match init with
-  | Some i ->
-      c.i_dtype <- dtype_of i;
-      c.i_first <- V.offset v Init * bytes c.i_dtype;
-      strides c.si v Init Row Column
-  | None ->
-      c.i_dtype <- c.y_dtype;
-      Array.fill c.si 0 3 0);
-  rules c
+let choose v ~acc ~dst ~init a b =
+  let y_dtype = dtype_of dst in
+  let c =
+    {
+      a = operand v A Row Contracted a;
+      b = operand v B Contracted Column b;
+      y = Nx_array.buffer dst;
+      y_dtype;
+      y_first = V.offset v Dst * bytes y_dtype;
+      init = Option.map (operand v Init Row Column) init;
+      acc;
+      batch = V.extent v Batch;
+      m = V.extent v Row;
+      n = V.extent v Column;
+      k = V.extent v Contracted;
+    }
+  in
+  let vector o = Rig.Buffer.aligned o.buffer ~at:o.first 16 in
+  rules c ~a_vector:(vector c.a) ~b_vector:(vector c.b)
 
 (* Sequences *)
 
@@ -440,49 +420,50 @@ let choose c v ~acc ~dst ~init a b =
    whether it has an init, dense over [count] kernels. *)
 let flags = 4
 let sequences = count * flags
+let split_flag = 1
+let init_flag = 2
 
-let sequence c =
-  c.kernel + (count * (Bool.to_int (c.parts > 1) lor (Bool.to_int c.init lsl 1)))
+let sequence l =
+  let has_init = Option.is_some l.call.init in
+  let split = if l.parts > 1 then split_flag else 0 in
+  l.kernel + (count * (split lor if has_init then init_flag else 0))
 
 (* The workspace is a slot of the sequence whenever it splits, whatever its
    bytes. *)
-let workspace c = if c.parts > 1 then Int.max 1 c.used else 0
+let workspace l = if l.parts > 1 then Int.max 1 l.used else 0
 
 (* The slots: [a] 0, [b] 1 and [y] 2, then [init] and the workspace where the
    sequence has them. *)
 let y_slot = 2
 let init_slot = 3
-let ws_slot c = init_slot + Bool.to_int c.init
 
-let access c =
-  let module B = Rig.Buffer in
-  Array.concat
-    [
-      [| Rig.Read; Rig.Read; Rig.Read_write |];
-      (if c.init then [| Rig.Read |] else [||]);
-      (if c.parts > 1 then [| Rig.Read_write |] else [||]);
-    ]
+let buffers l ~workspace =
+  let c = l.call in
+  match (c.init, l.parts > 1) with
+  | None, false -> [| c.a.buffer; c.b.buffer; c.y |]
+  | Some i, false -> [| c.a.buffer; c.b.buffer; c.y; i.buffer |]
+  | None, true -> [| c.a.buffer; c.b.buffer; c.y; workspace |]
+  | Some i, true -> [| c.a.buffer; c.b.buffer; c.y; i.buffer; workspace |]
 
-(* [c]'s launches in order: each kernel, its parameter bytes and its refs
-   into the slots [access] lists. *)
-let launches c =
-  let y = y_slot and ws = ws_slot c in
-  let acc = access c in
-  let ref at slot =
-    match acc.(slot) with
-    | Rig.Read -> Sub.read slot ~at
-    | Read_write -> Sub.write slot ~at
-  in
-  let init at = if c.init then [ ref at init_slot ] else [] in
+(* The launches of the sequence [key] in order: each kernel, its parameter
+   bytes and its refs into the slots [buffers] lists. *)
+let launches key =
+  if key < 0 || key >= sequences then
+    invalid_arg "Plan.parts: a key past sequences";
+  let kernel = key mod count and flags = key / count in
+  let has_init = flags land init_flag <> 0 in
+  let ws = init_slot + Bool.to_int has_init in
+  let read slot at = Sub.read slot ~at and write slot at = Sub.write slot ~at in
+  let init at = if has_init then [ read init_slot at ] else [] in
   let module P = K.Contract_params in
   let module Q = K.Combine_params in
-  let split = c.parts > 1 in
+  let split = flags land split_flag <> 0 in
   let contract =
-    ( c.kernel,
+    ( kernel,
       P.size,
       Array.of_list
-        ([ ref P.a 0; ref P.b 1 ] @ init P.init
-        @ [ ref P.out (if split then ws else y) ]) )
+        ([ read 0 P.a; read 1 P.b ] @ init P.init
+        @ [ write (if split then ws else y_slot) P.out ]) )
   in
   if not split then [ contract ]
   else
@@ -490,15 +471,16 @@ let launches c =
       contract;
       ( combine_kernel,
         Q.size,
-        Array.of_list ([ ref Q.out y; ref Q.parts ws ] @ init Q.init) );
+        Array.of_list
+          ([ write y_slot Q.out; write ws Q.parts ] @ init Q.init) );
     ]
 
-let parts c image =
+let parts key image =
   let part (kernel, params, refs) =
     let kernel = fst K.kernels.(kernel) in
     Sub.launch ~refs image kernel ~params
   in
-  Array.of_list (List.map part (launches c))
+  Array.of_list (List.map part (launches key))
 
 (* Writing a run *)
 
@@ -506,38 +488,44 @@ let parts c image =
    shows that kernels.ml's fields tile each struct: every parameter byte is
    stored before each submit, so bytes another submission left in the run
    never reach a kernel. *)
-let write run sub c =
+let write l run sub =
   let module P = K.Contract_params in
-  let split = c.parts > 1 in
-  let part_k = c.k / c.parts in
+  let c = l.call in
+  let split = l.parts > 1 in
+  let part_k = c.k / l.parts in
+  let sa = c.a.s and sb = c.b.s in
+  let i_first, si, i_code =
+    match c.init with
+    | Some i -> (i.first, i.s, code i.dtype)
+    | None -> (0, no_strides, K.no_init)
+  in
   let at = Rig.Submission.block sub 0 in
-  Run.groups run at c.groups_x c.groups_y c.groups_z;
-  Run.threads run at c.threads 1 1;
+  Run.groups run at l.groups_x l.groups_y l.groups_z;
+  Run.threads run at l.threads 1 1;
   Run.shared run at 0;
-  Run.int64 run at P.a c.a_first;
-  Run.int64 run at P.b c.b_first;
-  Run.int64 run at P.init (if c.init then c.i_first else 0);
+  Run.int64 run at P.a c.a.first;
+  Run.int64 run at P.b c.b.first;
+  Run.int64 run at P.init i_first;
   Run.int64 run at P.out (if split then 0 else c.y_first);
-  Run.int64 run at P.a_batch (if split then part_k * c.sa.(2) else c.sa.(0));
-  Run.int64 run at P.b_batch (if split then part_k * c.sb.(1) else c.sb.(0));
-  Run.int64 run at P.init_batch c.si.(0);
-  Run.int32 run at P.a_m c.sa.(1);
-  Run.int32 run at P.a_k c.sa.(2);
-  Run.int32 run at P.b_k c.sb.(1);
-  Run.int32 run at P.b_n c.sb.(2);
-  Run.int32 run at P.init_m c.si.(1);
-  Run.int32 run at P.init_n c.si.(2);
-  Run.int32 run at P.batch (if split then c.parts else c.batch);
+  Run.int64 run at P.a_batch (if split then part_k * sa.(2) else sa.(0));
+  Run.int64 run at P.b_batch (if split then part_k * sb.(1) else sb.(0));
+  Run.int64 run at P.init_batch si.(0);
+  Run.int32 run at P.a_m sa.(1);
+  Run.int32 run at P.a_k sa.(2);
+  Run.int32 run at P.b_k sb.(1);
+  Run.int32 run at P.b_n sb.(2);
+  Run.int32 run at P.init_m si.(1);
+  Run.int32 run at P.init_n si.(2);
+  Run.int32 run at P.batch (if split then l.parts else c.batch);
   Run.int32 run at P.m c.m;
   Run.int32 run at P.n c.n;
   Run.int32 run at P.k part_k;
-  Run.int32 run at P.init_dtype
-    (if c.init && not split then code c.i_dtype else K.no_init);
+  Run.int32 run at P.init_dtype (if split then K.no_init else i_code);
   Run.int32 run at P.out_dtype (if split then code f32 else code c.y_dtype);
-  Run.int32 run at P.swizzle c.swizzle;
-  Run.int32 run at P.dtype (code c.a_dtype);
+  Run.int32 run at P.swizzle l.swizzle;
+  Run.int32 run at P.dtype (code c.a.dtype);
   Run.int32 run at P.acc (code c.acc);
-  Run.int32 run at P.order c.order;
+  Run.int32 run at P.order l.order;
   if split then begin
     let module Q = K.Combine_params in
     let at = Rig.Submission.block sub 1 in
@@ -546,14 +534,14 @@ let write run sub c =
     Run.shared run at 0;
     Run.int64 run at Q.out c.y_first;
     Run.int64 run at Q.parts 0;
-    Run.int64 run at Q.init (if c.init then c.i_first else 0);
-    Run.int64 run at Q.init_batch c.si.(0);
-    Run.int32 run at Q.init_m c.si.(1);
-    Run.int32 run at Q.init_n c.si.(2);
+    Run.int64 run at Q.init i_first;
+    Run.int64 run at Q.init_batch si.(0);
+    Run.int32 run at Q.init_m si.(1);
+    Run.int32 run at Q.init_n si.(2);
     Run.int32 run at Q.batch 1;
     Run.int32 run at Q.m c.m;
     Run.int32 run at Q.n c.n;
-    Run.int32 run at Q.split c.parts;
-    Run.int32 run at Q.init_dtype (if c.init then code c.i_dtype else K.no_init);
+    Run.int32 run at Q.split l.parts;
+    Run.int32 run at Q.init_dtype i_code;
     Run.int32 run at Q.out_dtype (code c.y_dtype)
   end

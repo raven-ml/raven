@@ -5,25 +5,21 @@
 
 (** A contraction's launches on Apple GPUs.
 
-    A plan is chosen from the contraction's dtypes, its view's extents and
-    strides, and its operands' alignment, never from the GPU's size or clocks,
-    so that a result's bits depend on its shape alone. *)
+    A call's launch is chosen from the contraction's dtypes, its view's
+    extents and strides, and its operands' alignment, never from the GPU's
+    size or clocks, so that a result's bits depend on its shape alone. *)
 
-type t
-(** The type for plans: a call's kernels, geometry and workspace pieces,
-    rewritten by {!choose}. *)
-
-val make : unit -> t
-(** [make ()] is a plan to {!choose}. *)
+type launch
+(** The type for launches: a call's operands, kernels, geometry and
+    workspace, as {!choose} decided them. *)
 
 (** The type for what a plan does with a call. *)
 type verdict =
   | Declined  (** Its kernels do not compute the call. *)
   | Nothing  (** The result has no element: no work. *)
-  | Launches  (** {!parts} and {!write} launch it. *)
+  | Launch of launch  (** {!parts} and {!write} launch it. *)
 
 val choose :
-  t ->
   Nx_kernel.Contract_view.t ->
   acc:Nx_array.Dtype.any ->
   dst:('v, 's) Nx_array.t ->
@@ -31,29 +27,30 @@ val choose :
   ('a, 'b) Nx_array.t ->
   ('c, 'e) Nx_array.t ->
   verdict
-(** [choose p v ~acc ~dst ~init a b] plans the contraction of [a] with [b],
+(** [choose v ~acc ~dst ~init a b] plans the contraction of [a] with [b],
     computed in [acc], into [dst], whose axes [v] groups. The operands'
-    buffers are live. It allocates nothing. *)
+    buffers are live. *)
 
-val workspace : t -> int
-(** [workspace p] is the bytes of workspace [p]'s launches address. *)
+val workspace : launch -> int
+(** [workspace l] is the bytes of workspace [l] addresses. *)
 
 val sequences : int
 (** [sequences] bounds {!sequence}. *)
 
-val sequence : t -> int
-(** [sequence p] is [p]'s kernels and slots as a key below {!sequences}: two
-    plans of one key make the same {!parts}. *)
+val sequence : launch -> int
+(** [sequence l] is [l]'s kernels and slots as a key below {!sequences}. *)
 
-val access : t -> Rig.access array
-(** [access p] is the access of each buffer of a run of [p], in slot order: [a],
-    [b], the result, then [init] where given, then the workspace where
-    [workspace p > 0]. *)
+val parts : int -> Rig.Image.t -> Rig.Submission.part array
+(** [parts key i] is the launches of the sequence [key] of [i]'s kernels,
+    their refs into the slots {!buffers} fills.
 
-val parts : t -> Rig.Image.t -> Rig.Submission.part array
-(** [parts p i] is the launches of [p]'s sequence of [i]'s kernels, their
-    refs into the slots {!access} lists, each with its slot's access. *)
+    Raises [Invalid_argument] if [key] is not below {!sequences}. *)
 
-val write : Rig.Submission.Run.t -> Rig.Submission.t -> t -> unit
-(** [write r s p] stores the geometry and parameters of [p]'s launches into
-    [r]'s blocks of [s], a submission of [parts p]. *)
+val write : launch -> Rig.Submission.Run.t -> Rig.Submission.t -> unit
+(** [write l r s] stores the geometry and parameters of [l] into [r]'s blocks
+    of [s], a submission of [parts (sequence l)]. *)
+
+val buffers : launch -> workspace:Rig.Buffer.t -> Rig.Buffer.t array
+(** [buffers l ~workspace] is the buffers of a submit of [l], in slot order,
+    [workspace] among them where [workspace l > 0]. [workspace] must hold
+    [workspace l] bytes. *)

@@ -115,116 +115,83 @@ let max_int32 = 0x7fff_ffff
 let max_uint32 = 0xffff_ffff
 let ceil_div a b = (a + b - 1) / b
 
-(* An operand a or b as the contraction kernel reads it, and, when packed, as it
-   is: the pack copies it into the workspace. [slot] is the call's operand it
-   is, 0 or 1: a lane plan makes the operand of the short extent a. *)
-type operand = {
-  mutable slot : int;
-  (* As the kernel reads it: its dtype, as the kernel's parameters name it; its
-     first element, bytes into its slot or into the workspace once packed;
-     whether that element lies on a 16-byte boundary as the device addresses it,
-     the workspace being 256-byte aligned; and its strides along batch, its row
-     or column, and k. *)
-  mutable dtype : D.any;
-  mutable first : int;
-  mutable vector_first : bool;
-  s : int array;
-  (* As it is, once packed: its dtype, the dtype its pack writes, its first
-     element (bytes into its slot) and strides; its rows, and the elements a
-     packed row. *)
-  mutable packed : bool;
-  mutable own : D.any;
-  mutable into : D.any;
-  mutable src : int;
+(* An operand a or b as it lies, which a pack copies into the workspace: its
+   dtype, the dtype its pack writes, its first element (bytes into its slot)
+   and strides; its rows, and the elements a packed row. *)
+type pack = {
+  own : D.any;
+  into : D.any;
+  src : int;
   ps : int array;
-  mutable rows : int;
-  mutable lead : int;
+  rows : int;
+  lead : int;
 }
 
-let operand () =
-  {
-    slot = 0;
-    dtype = f32;
-    first = 0;
-    vector_first = false;
-    s = Array.make 3 0;
-    packed = false;
-    own = f32;
-    into = f32;
-    src = 0;
-    ps = Array.make 3 0;
-    rows = 0;
-    lead = 0;
-  }
+(* An operand a or b as the contraction kernel reads it. [slot] is the call's
+   operand it is, 0 or 1: a lane plan makes the operand of the short extent a.
+   Its buffer; its dtype, as the kernel's parameters name it; its first
+   element, bytes into its slot or into the workspace once packed; whether
+   that element lies on a 16-byte boundary as the device addresses it, the
+   workspace being 256-byte aligned; its strides along batch, its row or
+   column, and k; and its pack, if packed. *)
+type operand = {
+  slot : int;
+  buffer : Rig.Buffer.t;
+  dtype : D.any;
+  first : int;
+  vector_first : bool;
+  s : int array;
+  pack : pack option;
+}
 
-type t = {
-  mutable a : operand;
-  mutable b : operand;
-  sy : int array;
+(* init as the kernel reads it: its buffer, dtype, first element (bytes into
+   its slot) and strides along batch, m and n. *)
+type init = {
+  i_buffer : Rig.Buffer.t;
+  i_dtype : D.any;
+  i_first : int;
   si : int array;
-  mutable y_first : int;
-  mutable y_vector_first : bool;
-  mutable y_dtype : D.any;
-  mutable i_first : int;
-  mutable i_dtype : D.any;
-  mutable init : bool;
-  mutable acc : D.any;
-  mutable batch : int;
-  mutable m : int;
-  mutable n : int;
-  mutable k : int;
-  (* The contraction kernel's launch: its [blocks] x [splits] x batch workgroups
-     of [threads] work-items, and the [values] partial sums each work-item holds
-     when it splits, [sum_bytes] each. *)
-  mutable kernel : int;
-  mutable splits : int;
-  mutable blocks : int;
-  mutable threads : int;
-  mutable values : int;
-  mutable sum_bytes : int;
-  mutable aligned : int;
-  (* The workspace: its bytes taken, and the split sum's pieces: its partials,
-     its tickets, and its output tiles, a ticket each. *)
-  mutable used : int;
-  mutable partials : int;
-  mutable tickets : int;
-  mutable tiles : int;
-  (* Two tiles' costs while choosing one: floats unboxed. *)
-  costs : Float.Array.t;
 }
 
-let make () =
-  {
-    a = operand ();
-    b = operand ();
-    sy = Array.make 3 0;
-    si = Array.make 3 0;
-    y_first = 0;
-    y_vector_first = false;
-    y_dtype = f32;
-    i_first = 0;
-    i_dtype = f32;
-    init = false;
-    acc = f32;
-    batch = 0;
-    m = 0;
-    n = 0;
-    k = 0;
-    kernel = 0;
-    splits = 1;
-    blocks = 0;
-    threads = 0;
-    values = 0;
-    sum_bytes = 0;
-    aligned = 0;
-    used = 0;
-    partials = 0;
-    tickets = 0;
-    tiles = 0;
-    costs = Float.Array.make 2 0.;
-  }
+(* A call as the rules read it, a and b as they lie. *)
+type call = {
+  a : operand;
+  b : operand;
+  y : Rig.Buffer.t;
+  y_dtype : D.any;
+  y_first : int;
+  y_vector_first : bool;
+  sy : int array;
+  init : init option;
+  acc : D.any;
+  batch : int;
+  m : int;
+  n : int;
+  k : int;
+}
 
-type verdict = Declined | Nothing | Launches
+(* A call's launches: the call, its a and b traded where a lane plan swaps
+   them; a and b as the kernel reads them; the contraction kernel's [blocks] x
+   [splits] x batch workgroups of [threads] work-items; the workspace bytes
+   taken; and the split sum's
+   pieces: its partials and tickets in the workspace, and its output tiles, a
+   ticket each. *)
+type launch = {
+  call : call;
+  a : operand;
+  b : operand;
+  kernel : int;
+  splits : int;
+  blocks : int;
+  threads : int;
+  aligned : int;
+  used : int;
+  partials : int;
+  tickets : int;
+  tiles : int;
+}
+
+type verdict = Declined | Nothing | Launch of launch
 
 (* Whether rows along [contiguous] (stride 1) load as 16-byte vectors: every
    other stride a whole number of vectors, and the first element on a vector. *)
@@ -243,39 +210,50 @@ let rows_vectors o =
     vectors o.vector_first s.(1) s.(2) s.(0) (bytes o.dtype)
   else vectors o.vector_first s.(2) s.(1) s.(0) (bytes o.dtype)
 
-(* [bytes] of the workspace after those taken: their offset, each piece on a
-   256-byte boundary. *)
-let take c bytes =
-  let at = (c.used + 255) land lnot 255 in
-  c.used <- at + bytes;
-  at
+(* Each workspace piece starts on a 256-byte boundary. *)
+let align used = (used + 255) land lnot 255
 
-(* Packs [o], of [rows] rows, into the workspace as elements of [into] with k
-   contiguous and rows of whole vectors, a work-item an element, and makes the
-   kernel read the copy; [false] if its elements outnumber the work-items a grid
-   holds. With no k, the kernel reads no element, and nothing is packed. *)
-let pack c o ~rows ~into =
+(* [o], of [rows] rows, packed into the workspace after its [used] bytes as
+   elements of [into] with k contiguous and rows of whole vectors, a work-item
+   an element: the kernel reads the copy. [None] if its elements outnumber the
+   work-items a grid holds. With no k, the kernel reads no element, and [o]
+   is not packed. *)
+let pack (c : call) o ~rows ~into ~used =
   let es = bytes into in
   let per = 16 / es in
   let lead = ceil_div c.k per * per in
-  if c.k = 0 then true
-  else if c.batch * rows * lead > max_uint32 * K.threads then false
-  else begin
-    let at = take c (c.batch * rows * lead * es) in
-    o.packed <- true;
-    o.own <- o.dtype;
-    o.into <- into;
-    o.src <- o.first;
-    Array.blit o.s 0 o.ps 0 3;
-    o.rows <- rows;
-    o.lead <- lead;
-    o.first <- at;
-    o.vector_first <- at mod 16 = 0;
-    o.s.(0) <- rows * lead;
-    o.s.(1) <- lead;
-    o.s.(2) <- 1;
-    true
-  end
+  if c.k = 0 then Some o
+  else if c.batch * rows * lead > max_uint32 * K.threads then None
+  else
+    let at = align used in
+    Some
+      {
+        o with
+        first = at;
+        vector_first = at mod 16 = 0;
+        s = [| rows * lead; lead; 1 |];
+        pack =
+          Some { own = o.dtype; into; src = o.first; ps = o.s; rows; lead };
+      }
+
+(* The workspace bytes taken up to the end of [o]'s copy, [used] if it has
+   none. *)
+let used_after (c : call) used o =
+  match o.pack with
+  | None -> used
+  | Some p -> o.first + (c.batch * o.s.(0) * bytes p.into)
+
+(* a and b of [c], each packed into [into] where [pack_a] and [pack_b] say,
+   a's copy first, and the workspace bytes the copies take; [None] if a pack
+   fails. *)
+let packed_as (c : call) ~into ~pack_a ~pack_b =
+  let a = if pack_a then pack c c.a ~rows:c.m ~into ~used:0 else Some c.a in
+  match a with
+  | None -> None
+  | Some a -> (
+      let used = used_after c 0 a in
+      let b = if pack_b then pack c c.b ~rows:c.n ~into ~used else Some c.b in
+      match b with None -> None | Some b -> Some (a, b, used_after c used b))
 
 (* The split count of a grid of [grid] workgroups: doubled while the grid has
    fewer than [target] workgroups and each range keeps at least [k_min] of k, at
@@ -291,22 +269,71 @@ let split_count grid target k k_min =
   done;
   !s
 
+(* Outputs stored 16 bytes at once: no init, y's j contiguous, its rows on
+   16-byte boundaries, and its dtype one the kernels store as they are, or
+   bfloat16 or float16 from float32 (store8). *)
+let whole (c : call) ~wmma_s8 (sum : K.acc) =
+  let yd = c.y_dtype in
+  let yb = bytes yd in
+  let natural =
+    if wmma_s8 then same yd i32 || unsigned_32 yd
+    else
+      match sum with
+      | F32 -> same yd f32 || same yd bf16 || same yd f16
+      | F64 -> same yd f64
+      | I64 ->
+          (same yd i64 || unsigned_64 yd)
+          && (same c.acc i64 || unsigned_64 c.acc)
+  in
+  Option.is_none c.init && natural
+  && c.sy.(2) = 1
+  && c.sy.(1) * yb mod 16 = 0
+  && c.sy.(0) * yb mod 16 = 0
+  && c.y_vector_first
+
+(* [c]'s launch of [kernel] over a and b as [packed_as] gives them, [None]
+   past the grid's workgroups along x. With [splits] above 1, its partials,
+   [values] of [sum_bytes] a work-item, then its tickets follow the copies in
+   the workspace: combine.h's last workgroup leaves its tile's ticket counted,
+   so a launch zeroes the tickets before each contraction, and no buffer
+   stays zero across calls. [whole]'s stores add y_whole to [aligned]. *)
+let launch (c : call) (a, b, used) ~kernel ~blocks ~splits ~threads ~values
+    ~sum_bytes ~aligned ~wmma_s8 sum =
+  if blocks > max_int32 then None
+  else
+    let split = splits > 1 in
+    let tiles = if split then c.batch * blocks else 0 in
+    let partials = if split then align used else 0 in
+    let sums = tiles * splits * values * threads * sum_bytes in
+    let tickets = if split then align (partials + sums) else 0 in
+    let whole = whole c ~wmma_s8 sum in
+    Some
+      {
+        call = c;
+        a;
+        b;
+        kernel;
+        splits;
+        blocks;
+        threads;
+        aligned = (if whole then aligned lor K.y_whole else aligned);
+        used = (if split then tickets + (tiles * 4) else used);
+        partials;
+        tickets;
+        tiles;
+      }
+
 (* Workgroups run in waves of [wave] on gfx1201: the 128 x 128 tile's time steps
    every 96 workgroups, three to each of the R9700's 32 work-group processors. A
    GPU of another size runs the same tiles, with the same bits. *)
 let wave = 96
 
-(* Stores the cost of [bm] x [bn] tiles of [efficiency] into [c.costs]'s [slot],
-   waves times outputs per tile over its efficiency: an array of floats, so that
-   no float is boxed. *)
-let cost c slot bm bn efficiency =
+(* The cost of [bm] x [bn] tiles of [efficiency], waves times outputs per tile
+   over its efficiency. Inlined, so that its float is never boxed. *)
+let[@inline] cost (c : call) bm bn efficiency =
   let groups = c.batch * ceil_div c.m bm * ceil_div c.n bn in
-  Float.Array.unsafe_set c.costs slot
-    (Float.of_int (ceil_div groups wave)
-    *. Float.of_int bm *. Float.of_int bn /. Float.of_int efficiency)
-
-let cheaper c =
-  Float.Array.unsafe_get c.costs 1 < Float.Array.unsafe_get c.costs 0
+  Float.of_int (ceil_div groups wave)
+  *. Float.of_int bm *. Float.of_int bn /. Float.of_int efficiency
 
 (* The WMMA tiles' outputs per unit of time against the 128 x 128 tile's, in
    percent, on the R9700: the 64 x 64 tile makes 76-83% at 2048 and 4096 cubed,
@@ -321,15 +348,15 @@ let efficiency : K.tile -> int = function
    an instance of with k contiguous: the one of least cost, by its shape alone;
    m <= 16 takes the 16-row tile, and only it. -1 if [kind] has none for the
    shape: the SIMT or skinny kernels sum it. *)
-let wmma_tile c kind =
-  let best = ref (-1) in
+let wmma_tile (c : call) kind =
+  let best = ref (-1) and least = ref 0. in
   for i = 0 to Array.length K.tiles - 1 do
     let t = K.tiles.(i) in
     if find_wmma kind K.K K.K t >= 0 && c.m <= 16 = (t == K.T16x64) then begin
       let s = K.shape t in
-      cost c 1 s.bm s.bn (efficiency t);
-      if !best < 0 || cheaper c then begin
-        Float.Array.unsafe_set c.costs 0 (Float.Array.unsafe_get c.costs 1);
+      let cost = cost c s.bm s.bn (efficiency t) in
+      if !best < 0 || cost < !least then begin
+        least := cost;
         best := i
       end
     end
@@ -349,42 +376,38 @@ let readable o rows per whole =
    [t] has no instance of, is packed into the workspace with k contiguous, its
    rows padded with zeros. The parameters keep the operands' own dtypes: a pack
    changes none. *)
-let plan_wmma c kind t =
+let plan_wmma (c : call) kind t ~wmma_s8 sum =
   let s = K.shape t in
-  let a = c.a and b = c.b in
   let width = if kind == K.S8 then 1 else 2 in
   let per = 16 / width in
   let whole = c.k mod per = 0 in
-  let la = if free_contiguous a.s then K.M else K.K in
-  let lb = if free_contiguous b.s then K.N else K.K in
+  let la = if free_contiguous c.a.s then K.M else K.K in
+  let lb = if free_contiguous c.b.s then K.N else K.K in
   let pack_a =
-    (not (readable a c.m per whole))
+    (not (readable c.a c.m per whole))
     || (la != K.K && find_wmma kind la K.K t < 0)
   in
   let la = if pack_a then K.K else la in
   let pack_b =
-    (not (readable b c.n per whole))
+    (not (readable c.b c.n per whole))
     || (lb != K.K && find_wmma kind la lb t < 0)
   in
   let lb = if pack_b then K.K else lb in
   let into = match kind with S8 -> i8 | F16 -> f16 | Bf16 -> bf16 in
-  let packs_a = (not pack_a) || pack c a ~rows:c.m ~into in
-  let packs_b = packs_a && ((not pack_b) || pack c b ~rows:c.n ~into) in
-  if not packs_b then false
-  else begin
-    c.kernel <- find_wmma kind la lb t;
-    c.blocks <- ceil_div c.m s.bm * ceil_div c.n s.bn;
-    (* A split sum stores and reloads its partials: worth it to fill a GPU short
-       of workgroups, or to stream a long k for a few rows. *)
-    c.splits <-
-      (if c.m <= 16 then
-         split_count (c.blocks * c.batch) 128 c.k (4 * s.bkb / width)
-       else split_count (c.blocks * c.batch) 64 c.k 1024);
-    c.threads <- tile_threads s;
-    c.values <- s.bm * s.bn / c.threads;
-    c.sum_bytes <- 4;
-    true
-  end
+  match packed_as c ~into ~pack_a ~pack_b with
+  | None -> None
+  | Some read ->
+      let blocks = ceil_div c.m s.bm * ceil_div c.n s.bn in
+      let threads = tile_threads s in
+      launch c read ~kernel:(find_wmma kind la lb t) ~blocks
+        (* A split sum stores and reloads its partials: worth it to fill a GPU
+           short of workgroups, or to stream a long k for a few rows. *)
+        ~splits:
+          (if c.m <= 16 then
+             split_count (blocks * c.batch) 128 c.k (4 * s.bkb / width)
+           else split_count (blocks * c.batch) 64 c.k 1024)
+        ~threads ~values:(s.bm * s.bn / threads) ~sum_bytes:4 ~aligned:0
+        ~wmma_s8 sum
 
 (* Whether [d] is the dtype the SIMT and skinny kernels of [sum] read. *)
 let reads_own (sum : K.acc) d =
@@ -396,38 +419,42 @@ let reads_own (sum : K.acc) d =
 let own_dtype : K.acc -> D.any = function F32 -> f32 | F64 -> f64 | I64 -> i64
 
 (* SIMT and skinny kernels read their accumulator's own dtype: an operand of
-   another is packed into it, exactly, with k contiguous. *)
-let pack_own c sum =
+   another is packed into it, exactly, with k contiguous, and read as it. *)
+let packed_own (c : call) sum =
   let into = own_dtype sum in
-  let packs_a = reads_own sum c.a.dtype || pack c c.a ~rows:c.m ~into in
-  let packs_b =
-    packs_a && (reads_own sum c.b.dtype || pack c c.b ~rows:c.n ~into)
-  in
-  if packs_a && c.a.packed then c.a.dtype <- into;
-  if packs_b && c.b.packed then c.b.dtype <- into;
-  packs_b
+  match
+    packed_as c ~into
+      ~pack_a:(not (reads_own sum c.a.dtype))
+      ~pack_b:(not (reads_own sum c.b.dtype))
+  with
+  | None -> None
+  | Some (a, b, used) ->
+      let read o =
+        match o.pack with None -> o | Some _ -> { o with dtype = into }
+      in
+      Some (read a, read b, used)
 
 (* The skinny kernel of [sum], m <= 16, in its column form, or across when b's n
    axis is contiguous. Both forms split by the column form's grid, so the
    association is the shape's. *)
-let plan_skinny c sum =
-  let across = free_contiguous c.b.s in
-  c.kernel <- find_skinny sum (if across then Across else Column);
-  c.blocks <- (if across then ceil_div c.n 32 else ceil_div c.n 8);
-  c.splits <- split_count (ceil_div c.n 8 * c.batch) 256 c.k 1024;
-  c.values <- 2;
-  c.threads <- K.threads;
-  c.sum_bytes <- (if sum == K.F32 then 4 else 8);
-  c.aligned <-
-    ((if (not across) && rows_vectors c.b then K.b_vectors else 0)
-    lor
-    if (not (free_contiguous c.a.s)) && rows_vectors c.a then K.a_vectors else 0
-    )
+let plan_skinny (c : call) ((a, b, _) as read) ~wmma_s8 sum =
+  let across = free_contiguous b.s in
+  launch c read
+    ~kernel:(find_skinny sum (if across then Across else Column))
+    ~blocks:(if across then ceil_div c.n 32 else ceil_div c.n 8)
+    ~splits:(split_count (ceil_div c.n 8 * c.batch) 256 c.k 1024)
+    ~threads:K.threads ~values:2
+    ~sum_bytes:(if sum == K.F32 then 4 else 8)
+    ~aligned:
+      ((if (not across) && rows_vectors b then K.b_vectors else 0)
+      lor
+      if (not (free_contiguous a.s)) && rows_vectors a then K.a_vectors else 0)
+    ~wmma_s8 sum
 
 (* Whether a float sum of [c] adds in lane order, as Nx_kernel's orders
    section puts it: unless its row and column extents are both above 4 and
    multiply to at least 64. *)
-let in_lane_order c (sum : K.acc) =
+let in_lane_order (c : call) (sum : K.acc) =
   sum != K.I64 && not (c.m > 4 && c.n > 4 && c.m * c.n >= 64)
 
 (* A lane kernel's workgroup, as contract.hip's lane_contract shapes it: the
@@ -436,68 +463,64 @@ let in_lane_order c (sum : K.acc) =
 let lane_blocks k = Int.max 1 (Int.min 8 (ceil_div k 1024))
 let lane_columns k ~across = if across then 32 * (8 / lane_blocks k) else 32
 
-(* Makes a the operand of the short extent: a's rows and b's columns trade
+(* [c] with a the operand of the short extent: a's rows and b's columns trade
    places, as y's and init's do. *)
-let swap c =
-  let a = c.a and m = c.m in
-  c.a <- c.b;
-  c.b <- a;
-  c.m <- c.n;
-  c.n <- m;
-  let flip s =
-    let r = s.(1) in
-    s.(1) <- s.(2);
-    s.(2) <- r
-  in
-  flip c.sy;
-  flip c.si
+let swap (c : call) =
+  let flip s = [| s.(0); s.(2); s.(1) |] in
+  {
+    c with
+    a = c.b;
+    b = c.a;
+    m = c.n;
+    n = c.m;
+    sy = flip c.sy;
+    init = Option.map (fun i -> { i with si = flip i.si }) c.init;
+  }
 
 (* The lane kernel of [sum], a the operand of the short extent when its rows
    pass a workgroup's: bfloat16 operands read as they are, others packed into
    [sum]'s dtype; across when b's n axis is contiguous. In lane order, the short
    extent is at most 7, so a's rows take at most two workgroups. *)
-let plan_lane c sum =
-  if c.m > K.lane_rows && c.n < c.m then swap c;
+let plan_lane (c : call) ~wmma_s8 sum =
+  let c = if c.m > K.lane_rows && c.n < c.m then swap c else c in
   let bf16s = sum == K.F32 && same c.a.dtype bf16 && same c.b.dtype bf16 in
-  let packs = bf16s || pack_own c sum in
-  packs
-  && begin
-    let across = (not bf16s) && free_contiguous c.b.s in
-    let reads = if bf16s then Some K.Bf16 else None in
-    c.kernel <- find_lane sum reads (if across then Across else Column);
-    c.blocks <-
-      ceil_div c.m K.lane_rows * ceil_div c.n (lane_columns c.k ~across);
-    c.splits <- 1;
-    c.values <- 0;
-    c.threads <- lane_blocks c.k * lane_columns c.k ~across;
-    c.sum_bytes <- (if sum == K.F32 then 4 else 8);
-    let k_vectors o = (not (free_contiguous o.s)) && rows_vectors o in
-    c.aligned <-
-      ((if k_vectors c.b then K.b_vectors else 0)
-      lor if k_vectors c.a then K.a_vectors else 0);
-    true
-  end
+  let read = if bf16s then Some (c.a, c.b, 0) else packed_own c sum in
+  match read with
+  | None -> None
+  | Some ((a, b, _) as read) ->
+      let across = (not bf16s) && free_contiguous b.s in
+      let reads = if bf16s then Some K.Bf16 else None in
+      let k_vectors o = (not (free_contiguous o.s)) && rows_vectors o in
+      launch c read
+        ~kernel:(find_lane sum reads (if across then Across else Column))
+        ~blocks:
+          (ceil_div c.m K.lane_rows * ceil_div c.n (lane_columns c.k ~across))
+        ~splits:1 ~threads:(lane_blocks c.k * lane_columns c.k ~across)
+        ~values:0
+        ~sum_bytes:(if sum == K.F32 then 4 else 8)
+        ~aligned:
+          ((if k_vectors b then K.b_vectors else 0)
+          lor if k_vectors a then K.a_vectors else 0)
+        ~wmma_s8 sum
 
 (* The SIMT tile of least cost among [sum]'s instances, m > 16: on the R9700 the
    64-wide tile computes half as fast as the 128-wide one (39-56% at 2048 and
    4096 cubed, float32). *)
-let plan_simt c sum =
-  cost c 0 128 128 100;
-  cost c 1 64 64 50;
+let plan_simt (c : call) ((a, b, _) as read) ~wmma_s8 sum =
+  let cheaper = cost c 64 64 50 < cost c 128 128 100 in
   let side =
-    if find_simt sum 128 >= 0 && (find_simt sum 64 < 0 || not (cheaper c)) then
-      128
+    if find_simt sum 128 >= 0 && (find_simt sum 64 < 0 || not cheaper) then 128
     else 64
   in
-  c.kernel <- find_simt sum side;
-  c.blocks <- ceil_div c.m side * ceil_div c.n side;
-  c.splits <- split_count (c.blocks * c.batch) 64 c.k 128;
-  c.values <- side * side / K.threads;
-  c.threads <- K.threads;
-  c.sum_bytes <- (if sum == K.F32 then 4 else 8);
-  c.aligned <-
-    ((if rows_vectors c.a then K.a_vectors else 0)
-    lor if rows_vectors c.b then K.b_vectors else 0)
+  let blocks = ceil_div c.m side * ceil_div c.n side in
+  launch c read ~kernel:(find_simt sum side) ~blocks
+    ~splits:(split_count (blocks * c.batch) 64 c.k 128)
+    ~threads:K.threads ~values:(side * side / K.threads)
+    ~sum_bytes:(if sum == K.F32 then 4 else 8)
+    ~aligned:
+      ((if rows_vectors a then K.a_vectors else 0)
+      lor if rows_vectors b then K.b_vectors else 0)
+    ~wmma_s8 sum
 
 (* The WMMA kind of operands of [a] and [b] into [acc], if one sums them. float8
    operands decode exactly to bfloat16 and sum on its matrix unit, whose sums
@@ -532,110 +555,93 @@ let sum_of ~acc a b : K.acc option =
   then if is_int a && is_int b then Some I64 else None
   else None
 
-(* Outputs stored 16 bytes at once: no init, y's j contiguous, its rows on
-   16-byte boundaries, and its dtype one the kernels store as they are, or
-   bfloat16 or float16 from float32 (store8). *)
-let whole c ~wmma_s8 (sum : K.acc) =
-  let yd = c.y_dtype in
-  let yb = bytes yd in
-  let natural =
-    if wmma_s8 then same yd i32 || unsigned_32 yd
-    else
-      match sum with
-      | F32 -> same yd f32 || same yd bf16 || same yd f16
-      | F64 -> same yd f64
-      | I64 ->
-          (same yd i64 || unsigned_64 yd)
-          && (same c.acc i64 || unsigned_64 c.acc)
-  in
-  (not c.init) && natural
-  && c.sy.(2) = 1
-  && c.sy.(1) * yb mod 16 = 0
-  && c.sy.(0) * yb mod 16 = 0
-  && c.y_vector_first
-
-(* The plan of the call whose fields [choose] read: the rules of nx.amd's
-   contraction, reading nothing but [c]. *)
-let rules c =
+(* The rules of nx.amd's contraction, reading nothing but [c]. *)
+let rules (c : call) =
   let batch = c.batch and m = c.m and n = c.n and k = c.k in
   if batch > 65535 || m > max_int32 || n > max_int32 || k > max_int32 then
     Declined
   else if batch * m * n = 0 then Nothing
   else
     let a = c.a.dtype and b = c.b.dtype and acc = c.acc in
-    if declines ~a ~b ~y:c.y_dtype ~i:c.i_dtype ~init:c.init ~acc then Declined
+    let init = Option.is_some c.init in
+    let i = match c.init with Some i -> i.i_dtype | None -> c.y_dtype in
+    if declines ~a ~b ~y:c.y_dtype ~i ~init ~acc then Declined
     else
       let kind = wmma_kind a b acc in
       let t = match kind with None -> -1 | Some kd -> wmma_tile c kd in
+      let wmma_s8 = match kind with Some S8 -> t >= 0 | _ -> false in
       match sum_of ~acc a b with
       | None -> Declined
-      | Some sum ->
-          c.used <- 0;
-          c.aligned <- 0;
+      | Some sum -> (
           let planned =
             match kind with
-            | _ when in_lane_order c sum -> plan_lane c sum
-            | Some kd when t >= 0 -> plan_wmma c kd K.tiles.(t)
-            | _ ->
-                pack_own c sum
-                && begin
-                  if m <= 16 then plan_skinny c sum else plan_simt c sum;
-                  true
-                end
+            | _ when in_lane_order c sum -> plan_lane c ~wmma_s8 sum
+            | Some kd when t >= 0 -> plan_wmma c kd K.tiles.(t) ~wmma_s8 sum
+            | _ -> (
+                match packed_own c sum with
+                | None -> None
+                | Some read ->
+                    if m <= 16 then plan_skinny c read ~wmma_s8 sum
+                    else plan_simt c read ~wmma_s8 sum)
           in
-          if (not planned) || c.blocks > max_int32 then Declined
-          else begin
-            let wmma_s8 = match kind with Some S8 -> t >= 0 | _ -> false in
-            if whole c ~wmma_s8 sum then c.aligned <- c.aligned lor K.y_whole;
-            (* The split sum's partials and tickets, the tickets zeroed
-               first. *)
-            if c.splits > 1 then begin
-              c.tiles <- batch * c.blocks;
-              c.partials <-
-                take c (c.tiles * c.splits * c.values * c.threads * c.sum_bytes);
-              c.tickets <- take c (c.tiles * 4)
-            end;
-            Launches
-          end
+          match planned with None -> Declined | Some l -> Launch l)
 
-(* [o] as the operand [which] of [v], read from the array [x]. *)
-let read o v which x =
-  o.dtype <- dtype_of x;
-  o.first <- V.offset v which * bytes o.dtype;
-  o.vector_first <- Rig.Buffer.aligned (Nx_array.buffer x) ~at:o.first 16;
-  o.packed <- false
+(* [x] as the operand [slot] of [v], [which], over its axis [free] and k. *)
+let operand v slot which (free : V.axis) x =
+  let dtype = dtype_of x in
+  let first = V.offset v which * bytes dtype in
+  let buffer = Nx_array.buffer x in
+  {
+    slot;
+    buffer;
+    dtype;
+    first;
+    vector_first = Rig.Buffer.aligned buffer ~at:first 16;
+    s =
+      [|
+        V.stride v which Batch;
+        V.stride v which free;
+        V.stride v which Contracted;
+      |];
+    pack = None;
+  }
 
-let strides into v which (row : V.axis) (col : V.axis) =
-  into.(0) <- V.stride v which Batch;
-  into.(1) <- V.stride v which row;
-  into.(2) <- V.stride v which col
+let strides v which : int array =
+  [| V.stride v which Batch; V.stride v which Row; V.stride v which Column |]
 
-let choose c v ~acc ~dst ~init a b =
-  c.batch <- V.extent v Batch;
-  c.m <- V.extent v Row;
-  c.n <- V.extent v Column;
-  c.k <- V.extent v Contracted;
-  c.init <- Option.is_some init;
-  c.acc <- acc;
-  c.a.slot <- 0;
-  read c.a v A a;
-  strides c.a.s v A Row Contracted;
-  c.b.slot <- 1;
-  read c.b v B b;
-  strides c.b.s v B Column Contracted;
-  c.y_dtype <- dtype_of dst;
-  c.y_first <- V.offset v Dst * bytes c.y_dtype;
-  c.y_vector_first <- Rig.Buffer.aligned (Nx_array.buffer dst) ~at:c.y_first 16;
-  strides c.sy v Dst Row Column;
-  (match init with
-  | Some i ->
-      c.i_dtype <- dtype_of i;
-      c.i_first <- V.offset v Init * bytes c.i_dtype;
-      strides c.si v Init Row Column
-  | None ->
-      c.i_dtype <- c.y_dtype;
-      Array.blit c.sy 0 c.si 0 3);
-  rules c
+let choose v ~acc ~dst ~init a b =
+  let y_dtype = dtype_of dst in
+  let y_first = V.offset v Dst * bytes y_dtype in
+  let y = Nx_array.buffer dst in
+  let init =
+    match init with
+    | None -> None
+    | Some i ->
+        let i_dtype = dtype_of i in
+        Some
+          {
+            i_buffer = Nx_array.buffer i;
+            i_dtype;
+            i_first = V.offset v Init * bytes i_dtype;
+            si = strides v Init;
+          }
+  in
+  rules
+    {
+      a = operand v 0 A Row a;
+      b = operand v 1 B Column b;
+      y;
+      y_dtype;
+      y_first;
+      y_vector_first = Rig.Buffer.aligned y ~at:y_first 16;
+      sy = strides v Dst;
+      init;
+      acc;
+      batch = V.extent v Batch;
+      m = V.extent v Row;
+      n = V.extent v Column;
+      k = V.extent v Contracted;
+    }
 
 (* Sequences *)
 
@@ -643,41 +649,66 @@ let choose c v ~acc ~dst ~init a b =
    swap, dense over [count] kernels, so no count collides. *)
 let flags = 32
 let sequences = count * flags
+let pack_a_flag = 1
+let pack_b_flag = 2
+let split_flag = 4
+let init_flag = 8
+let swap_flag = 16
+let packed o = Option.is_some o.pack
+let has_init l = Option.is_some l.call.init
+let flag f b = if b then f else 0
 
-let sequence c =
-  c.kernel
+let sequence l =
+  l.kernel
   + count
-    * (Bool.to_int c.a.packed
-      lor (Bool.to_int c.b.packed lsl 1)
-      lor (Bool.to_int (c.splits > 1) lsl 2)
-      lor (Bool.to_int c.init lsl 3)
-      lor (c.a.slot lsl 4))
+    * (flag pack_a_flag (packed l.a)
+      lor flag pack_b_flag (packed l.b)
+      lor flag split_flag (l.splits > 1)
+      lor flag init_flag (has_init l)
+      lor flag swap_flag (l.a.slot = 1))
 
 (* The workspace is a slot of the sequence whenever a launch addresses it,
    whatever its bytes: a pack of no element takes none. *)
-let uses_workspace c = c.a.packed || c.b.packed || c.splits > 1
-let workspace c = if uses_workspace c then Int.max 1 c.used else 0
+let uses_workspace l = packed l.a || packed l.b || l.splits > 1
+let workspace l = if uses_workspace l then Int.max 1 l.used else 0
 
-(* The slots: [a] 0, [b] 1 and [y] 2, then [init] and the workspace where the
-   sequence has them. *)
+(* The slots: the call's [a] 0, [b] 1 and [y] 2, then [init] and the
+   workspace where the sequence has them. *)
 let y_slot = 2
 let init_slot = 3
-let ws_slot c = init_slot + Bool.to_int c.init
+let ws_slot l = init_slot + Bool.to_int (has_init l)
 
-let access c =
-  let module B = Rig.Buffer in
-  Array.concat
-    [
-      [| Rig.Read; Rig.Read; Rig.Read_write |];
-      (if c.init then [| Rig.Read |] else [||]);
-      (if uses_workspace c then [| Rig.Read_write |] else [||]);
-    ]
+let buffers l ~workspace =
+  let c = l.call in
+  let ws = uses_workspace l in
+  let bs = Array.make (3 + Bool.to_int (has_init l) + Bool.to_int ws) c.y in
+  bs.(l.a.slot) <- l.a.buffer;
+  bs.(l.b.slot) <- l.b.buffer;
+  (match c.init with Some i -> bs.(init_slot) <- i.i_buffer | None -> ());
+  if ws then bs.(ws_slot l) <- workspace;
+  bs
 
-(* [c]'s launches in order: each kernel, its parameter bytes and its refs into
-   the slots [access] lists. *)
-let launches c =
-  let ws = ws_slot c in
-  let acc = access c in
+(* The launches of the sequence [key] in order: each kernel, its parameter
+   bytes and its refs into the slots [buffers] fills, each with its slot's
+   access. a reads the call's operand 1 where the sequence swaps. *)
+let launches key =
+  if key < 0 || key >= sequences then
+    invalid_arg "Plan.parts: a key past sequences";
+  let kernel = key mod count and flags = key / count in
+  let has flag = flags land flag <> 0 in
+  let pack_a = has pack_a_flag and pack_b = has pack_b_flag in
+  let split = has split_flag and init = has init_flag in
+  let a_slot = Bool.to_int (has swap_flag) in
+  let b_slot = 1 - a_slot in
+  let ws = init_slot + Bool.to_int init in
+  let acc =
+    Array.concat
+      [
+        [| Rig.Read; Rig.Read; Rig.Read_write |];
+        (if init then [| Rig.Read |] else [||]);
+        (if pack_a || pack_b || split then [| Rig.Read_write |] else [||]);
+      ]
+  in
   let slot_ref at slot =
     match acc.(slot) with
     | Rig.Read -> Sub.read slot ~at
@@ -689,13 +720,12 @@ let launches c =
       [| slot_ref K.Pack_params.src slot; slot_ref K.Pack_params.dst ws |] )
   in
   let module P = K.Contract_params in
-  let split = c.splits > 1 in
   let refs =
     List.concat
       [
-        [ slot_ref P.a (if c.a.packed then ws else c.a.slot) ];
-        [ slot_ref P.b (if c.b.packed then ws else c.b.slot) ];
-        (if c.init then [ slot_ref P.init init_slot ] else []);
+        [ slot_ref P.a (if pack_a then ws else a_slot) ];
+        [ slot_ref P.b (if pack_b then ws else b_slot) ];
+        (if init then [ slot_ref P.init init_slot ] else []);
         [ slot_ref P.y y_slot ];
         (if split then [ slot_ref P.partials ws; slot_ref P.tickets ws ]
          else []);
@@ -703,43 +733,43 @@ let launches c =
   in
   List.concat
     [
-      (if c.a.packed then [ pack c.a.slot ] else []);
-      (if c.b.packed then [ pack c.b.slot ] else []);
+      (if pack_a then [ pack a_slot ] else []);
+      (if pack_b then [ pack b_slot ] else []);
       (if split then
          [
            (zero_kernel, K.Zero_params.size, [| slot_ref K.Zero_params.p ws |]);
          ]
        else []);
-      [ (c.kernel, P.size, Array.of_list refs) ];
+      [ (kernel, P.size, Array.of_list refs) ];
     ]
 
-let parts c image =
+let parts key image =
   let part (kernel, params, refs) =
     let kernel = fst K.kernels.(kernel) in
     Sub.launch ~refs image kernel ~params
   in
-  Array.of_list (List.map part (launches c))
+  Array.of_list (List.map part (launches key))
 
 (* Writing a run *)
 
-let write_pack run at c o =
+let write_pack run at (c : call) o (p : pack) =
   let module P = K.Pack_params in
-  let n = c.batch * o.rows * o.lead in
+  let n = c.batch * p.rows * p.lead in
   Run.groups run at (ceil_div n K.threads) 1 1;
   Run.threads run at K.threads 1 1;
   Run.shared run at 0;
-  Run.int64 run at P.src o.src;
+  Run.int64 run at P.src p.src;
   Run.int64 run at P.dst o.first;
-  Run.int64 run at P.s o.ps.(0);
-  Run.int64 run at (P.s + 8) o.ps.(1);
-  Run.int64 run at (P.s + 16) o.ps.(2);
-  Run.int64 run at P.lead o.lead;
+  Run.int64 run at P.s p.ps.(0);
+  Run.int64 run at (P.s + 8) p.ps.(1);
+  Run.int64 run at (P.s + 16) p.ps.(2);
+  Run.int64 run at P.lead p.lead;
   Run.int32 run at P.batch c.batch;
-  Run.int32 run at P.rows o.rows;
+  Run.int32 run at P.rows p.rows;
   Run.int32 run at P.k c.k;
-  Run.int32 run at P.dtype (code o.own);
-  Run.int32 run at P.out (code o.into);
-  Run.int32 run at P.bytes (bytes o.into)
+  Run.int32 run at P.dtype (code p.own);
+  Run.int32 run at P.out (code p.into);
+  Run.int32 run at P.bytes (bytes p.into)
 
 let write_strides run at field s =
   Run.int64 run at field s.(0);
@@ -750,45 +780,57 @@ let write_strides run at field s =
    that kernels.ml's fields tile each struct, [zero] included: every parameter
    byte is stored before each submit, so bytes another submission left in the
    run never reach a kernel. *)
-let write run sub c =
+let write l run sub =
   (* Parts in [launches]' order: a's pack, b's pack, the tickets' zeroing, the
      contraction. *)
-  let a = Bool.to_int c.a.packed and b = Bool.to_int c.b.packed in
-  let split = c.splits > 1 in
-  if c.a.packed then write_pack run (Rig.Submission.block sub 0) c c.a;
-  if c.b.packed then write_pack run (Rig.Submission.block sub a) c c.b;
+  let c = l.call in
+  (match l.a.pack with
+  | Some p -> write_pack run (Rig.Submission.block sub 0) c l.a p
+  | None -> ());
+  let a = Bool.to_int (packed l.a) in
+  (match l.b.pack with
+  | Some p -> write_pack run (Rig.Submission.block sub a) c l.b p
+  | None -> ());
+  let b = Bool.to_int (packed l.b) in
+  let split = l.splits > 1 in
   if split then begin
     let at = Rig.Submission.block sub (a + b) in
-    Run.groups run at (ceil_div c.tiles K.threads) 1 1;
+    Run.groups run at (ceil_div l.tiles K.threads) 1 1;
     Run.threads run at K.threads 1 1;
     Run.shared run at 0;
-    Run.int64 run at K.Zero_params.p c.tickets;
-    Run.int64 run at K.Zero_params.n c.tiles
+    Run.int64 run at K.Zero_params.p l.tickets;
+    Run.int64 run at K.Zero_params.n l.tiles
   end;
+  (* Without init, the kernel reads y's dtype and strides in its place. *)
+  let i_first, si, i_dtype =
+    match c.init with
+    | Some i -> (i.i_first, i.si, i.i_dtype)
+    | None -> (0, c.sy, c.y_dtype)
+  in
   let module P = K.Contract_params in
   let at = Rig.Submission.block sub (a + b + Bool.to_int split) in
-  Run.groups run at c.blocks c.splits c.batch;
-  Run.threads run at c.threads 1 1;
+  Run.groups run at l.blocks l.splits c.batch;
+  Run.threads run at l.threads 1 1;
   Run.shared run at 0;
-  Run.int64 run at P.a c.a.first;
-  Run.int64 run at P.b c.b.first;
-  Run.int64 run at P.init (if c.init then c.i_first else 0);
+  Run.int64 run at P.a l.a.first;
+  Run.int64 run at P.b l.b.first;
+  Run.int64 run at P.init i_first;
   Run.int64 run at P.y c.y_first;
-  Run.int64 run at P.partials (if split then c.partials else 0);
-  Run.int64 run at P.tickets (if split then c.tickets else 0);
-  write_strides run at P.sa c.a.s;
-  write_strides run at P.sb c.b.s;
-  write_strides run at P.si c.si;
+  Run.int64 run at P.partials (if split then l.partials else 0);
+  Run.int64 run at P.tickets (if split then l.tickets else 0);
+  write_strides run at P.sa l.a.s;
+  write_strides run at P.sb l.b.s;
+  write_strides run at P.si si;
   write_strides run at P.sy c.sy;
   Run.int32 run at P.batch c.batch;
   Run.int32 run at P.m c.m;
   Run.int32 run at P.n c.n;
   Run.int32 run at P.k c.k;
-  Run.int32 run at P.splits c.splits;
-  Run.int32 run at P.a_dtype (code c.a.dtype);
-  Run.int32 run at P.b_dtype (code c.b.dtype);
-  Run.int32 run at P.init_dtype (code c.i_dtype);
+  Run.int32 run at P.splits l.splits;
+  Run.int32 run at P.a_dtype (code l.a.dtype);
+  Run.int32 run at P.b_dtype (code l.b.dtype);
+  Run.int32 run at P.init_dtype (code i_dtype);
   Run.int32 run at P.y_dtype (code c.y_dtype);
   Run.int32 run at P.acc_dtype (code c.acc);
-  Run.int32 run at P.aligned c.aligned;
+  Run.int32 run at P.aligned l.aligned;
   Run.int32 run at P.zero 0

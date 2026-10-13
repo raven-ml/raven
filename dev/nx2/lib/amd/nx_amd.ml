@@ -3,15 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A call fills its domain's view and plan, writes the plan into its run's
-   blocks and submits the submission of the plan's sequence, made once per
-   device, through the door:
+(* A call fills its domain's view, chooses its launch, writes the launch into
+   its run's blocks and submits the submission of the launch's sequence, made
+   once per device, through the door:
 
    contract --> device (Rig.Local) --> frame (the domain's, or a fresh one) -->
    View.fill, Plan.choose --> workspace, submission --> Plan.write into the run
    --> door --> Rig.submit
 
-   A call that finds every cache warm allocates nothing. *)
+   A call that finds every cache warm allocates its launch, its buffers and
+   the door's work, and nothing that outlives it. *)
 
 module A = Nx_array
 module V = Nx_kernel.Contract_view
@@ -75,16 +76,15 @@ let workspace d dv need =
     store ()
   end
 
-(* The submission of [p]'s sequence on [d]. Two domains that make one at once
+(* The submission of [l]'s sequence on [d]. Two domains that make one at once
    each make it, and the last store wins. *)
-let submission d dv p =
-  let key = Plan.sequence p in
+let submission d dv l =
+  let key = Plan.sequence l in
   match dv.subs.(key) with
-  | Some _ as s -> s
+  | Some s -> s
   | None ->
-      let parts = Plan.parts p dv.image in
-      let s = Some (Sub.make d parts) in
-      dv.subs.(key) <- s;
+      let s = Sub.make d (Plan.parts key dv.image) in
+      dv.subs.(key) <- Some s;
       s
 
 (* Frames *)
@@ -95,38 +95,25 @@ let submission d dv p =
 type frame = {
   busy : bool Atomic.t;
   view : V.t;
-  plan : Plan.t;
   run : Sub.Run.t;
-  mutable sub : Sub.t option;
-  buffers3 : Rig.Buffer.t array;
-  buffers4 : Rig.Buffer.t array;
-  buffers5 : Rig.Buffer.t array;
   read2 : A.any array;
   read3 : A.any array;
   written : A.any array;
-  mutable buffers : Rig.Buffer.t array;
   mutable read : A.any array;
 }
 
-(* What a frame holds between calls: no user buffer. *)
-let no_buffer = Rig.Buffer.of_string ""
+(* What a frame holds between calls: no user array. *)
 let no_array = A.Any (A.create Rig.host A.Dtype.Uint8 [| 0 |])
 
 let frame ~busy =
-  let buffers3 = Array.make 3 no_buffer and read2 = Array.make 2 no_array in
+  let read2 = Array.make 2 no_array in
   {
     busy = Atomic.make busy;
     view = V.make ();
-    plan = Plan.make ();
     run = Sub.Run.make ();
-    sub = None;
-    buffers3;
-    buffers4 = Array.make 4 no_buffer;
-    buffers5 = Array.make 5 no_buffer;
     read2;
     read3 = Array.make 3 no_array;
     written = Array.make 1 no_array;
-    buffers = buffers3;
     read = read2;
   }
 
@@ -137,16 +124,10 @@ let take () =
   if Atomic.compare_and_set f.busy false true then f else frame ~busy:true
 
 let release f =
-  Array.fill f.buffers3 0 3 no_buffer;
-  Array.fill f.buffers4 0 4 no_buffer;
-  Array.fill f.buffers5 0 5 no_buffer;
   Array.fill f.read3 0 3 no_array;
   Array.fill f.read2 0 2 no_array;
   f.written.(0) <- no_array;
-  f.sub <- None;
   Atomic.set f.busy false
-
-let buffer (A.Any x) = A.buffer x
 
 (* Makes the frame's [read] and [written] hold the call's arrays: [a], [b],
    then [init] where given, and [dst]. *)
@@ -163,25 +144,9 @@ let hold f ~dst ~init a b =
       f.read3.(1) <- A.Any b;
       f.read3.(2) <- A.Any i
 
-(* Makes the frame's buffers those of the held arrays in {!Plan.access}'s
-   slot order: [a], [b], [dst], then [init] and the workspace where the plan
-   has them. *)
-let bind f ws =
-  let n = Array.length f.read in
-  let uses_ws = Plan.workspace f.plan > 0 in
-  let k = n + 1 + Bool.to_int uses_ws in
-  f.buffers <-
-    (if k = 5 then f.buffers5 else if k = 4 then f.buffers4 else f.buffers3);
-  f.buffers.(0) <- buffer f.read.(0);
-  f.buffers.(1) <- buffer f.read.(1);
-  f.buffers.(2) <- buffer f.written.(0);
-  if n = 3 then f.buffers.(3) <- buffer f.read.(2);
-  if uses_ws then f.buffers.(n + 1) <- ws
-
-(* The door's work: [f.sub], which the call stored before it entered the
-   door. *)
-let issue f =
-  ignore (Rig.submit (Option.get f.sub) ~run:f.run ~buffers:f.buffers)
+(* The door's work: a launch's submission, with the run its parameters are
+   written into and its buffers. *)
+let issue (sub, run, buffers) = ignore (Rig.submit sub ~run ~buffers)
 
 let nothing () = ()
 let dead (A.Any x) = Option.is_some (Rig.Buffer.dead (A.buffer x))
@@ -199,16 +164,15 @@ let run d dv f ~batch ~contracting ~acc ~dst ~init a b =
       (* The door refuses a dead buffer, before the plan reads its address. *)
       A.door ~written:f.written ~read:f.read nothing ()
     else
-      match Plan.choose f.plan f.view ~acc ~dst ~init a b with
+      match Plan.choose f.view ~acc ~dst ~init a b with
       | Declined -> A.Declined
       | Nothing -> A.door ~written:f.written ~read:f.read nothing ()
-      | Launches ->
-          let ws = workspace d dv (Plan.workspace f.plan) in
-          let sub = submission d dv f.plan in
-          f.sub <- sub;
-          Plan.write f.run (Option.get sub) f.plan;
-          bind f ws;
-          A.door ~written:f.written ~read:f.read issue f
+      | Launch l ->
+          let workspace = workspace d dv (Plan.workspace l) in
+          let sub = submission d dv l in
+          Plan.write l f.run sub;
+          let buffers = Plan.buffers l ~workspace in
+          A.door ~written:f.written ~read:f.read issue (sub, f.run, buffers)
   end
 
 let contract ~batch ~contracting ~acc ~dst ~init a b =
