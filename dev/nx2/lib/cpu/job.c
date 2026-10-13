@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Jobs: on how many threads a piece of work runs, and when it releases the
-   runtime.
+/* Jobs: on how many threads a piece of work runs, when it releases the
+   runtime, and the scratch its threads keep.
 
    A job's threads follow from its cost, the bytes memcpy would move in the
    time it takes: one thread per NX_CPU_THREAD_BYTES (cpu.h), the bytes a
@@ -35,6 +35,9 @@
    body runs on any thread, says so: rig_pool's own test of a body is not
    enough, since a released job of one thread runs its body inline, outside
    the pool. */
+
+#include <pthread.h>
+#include <stdlib.h>
 
 #include <caml/signals.h>
 
@@ -95,4 +98,93 @@ void nx_cpu_job_at(int64_t total, int64_t bytes, double cost,
   caml_enter_blocking_section_no_pending();
   rig_pool_run((int)threads, total, chunks, run_released, &j);
   caml_leave_blocking_section();
+}
+
+/* Scratch
+
+   Each thread keeps KEPT buffers from call to call, each up to KEPT_BYTES:
+   an allocation past 32 KiB goes to the system and back, 0.7 us on the
+   M1, as long as packing a 128^3 product takes, and keeping the
+   transforms' buffers saved 0.13 to 0.23 us a call of 64 to 1024 points
+   (fft.c). KEPT is the most a kernel holds at once:
+   Bluestein's rows, the four steps' grid and a pass's two lane buffers
+   (fft.c). A thread's buffers are freed when it ends. */
+#define KEPT 4
+#define KEPT_BYTES (4 * 1024 * 1024)
+#define ALIGN 128
+
+typedef struct {
+  void *p;
+  int64_t n;
+  int held;
+} buffer;
+
+typedef struct {
+  buffer b[KEPT];
+} kept;
+
+static pthread_key_t kept_key;
+static pthread_once_t kept_once = PTHREAD_ONCE_INIT;
+
+/* The calling thread's buffers, or NULL: one load, where the key's lookup
+   is two calls. */
+static _Thread_local kept *kept_here;
+
+static void kept_drop(void *v) {
+  kept *k = v;
+  for (int i = 0; i < KEPT; i++) free(k->b[i].p);
+  free(k);
+  kept_here = NULL;
+}
+
+static void kept_init(void) { pthread_key_create(&kept_key, kept_drop); }
+
+/* The calling thread's buffers, made at its first take; NULL if they
+   cannot be. */
+static kept *mine(void) {
+  if (kept_here != NULL) return kept_here;
+  pthread_once(&kept_once, kept_init);
+  kept *k = calloc(1, sizeof *k);
+  if (k != NULL && pthread_setspecific(kept_key, k) == 0)
+    return kept_here = k;
+  free(k);
+  return NULL;
+}
+
+static void *fresh(int64_t bytes) {
+  int64_t n = bytes > 0 ? (bytes + ALIGN - 1) / ALIGN * ALIGN : ALIGN;
+  return aligned_alloc(ALIGN, (size_t)n);
+}
+
+/* The first free buffer that fits, else the smallest free one grown, so
+   the larger ones stay for the calls that need them. */
+void *nx_cpu_take(int64_t bytes) {
+  kept *k = bytes > KEPT_BYTES ? NULL : mine();
+  if (k == NULL) return fresh(bytes);
+  buffer *grow = NULL;
+  for (int i = 0; i < KEPT; i++) {
+    buffer *b = &k->b[i];
+    if (b->held) continue;
+    if (b->p != NULL && b->n >= bytes) {
+      b->held = 1;
+      return b->p;
+    }
+    if (grow == NULL || b->n < grow->n) grow = b;
+  }
+  if (grow == NULL) return fresh(bytes);
+  free(grow->p);
+  grow->p = fresh(bytes);
+  grow->n = grow->p ? bytes : 0;
+  grow->held = grow->p != NULL;
+  return grow->p;
+}
+
+void nx_cpu_give(void *p) {
+  kept *k = kept_here;
+  for (int i = 0; k != NULL && i < KEPT; i++)
+    if (k->b[i].p == p && k->b[i].held) {
+      k->b[i].held = 0;
+      return;
+    }
+  free(p);
 }

@@ -318,18 +318,64 @@ let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
   contract_c order ~batch ~contracting (Nx_array.Dtype.code acc) ~dst ~init a
     b
 
-(* Fourier transforms: declined at the dtypes they take. *)
+(* Fourier transforms (fft.c). The shapes are checked here; the externals take
+   [threads] as reduce's do, and the direction as its int. *)
 
-let declined takes = if takes then Nx_array.Declined else Nx_array.Wrong_dtype
-let c2c _ ~axes:_ ~dst:_ _ = Nx_array.Declined
+external c2c_c :
+  int ->
+  Nx_kernel.direction ->
+  int array ->
+  (Complex.t, 's) Nx_array.t ->
+  (Complex.t, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_c2c"
 
-let r2c ~axes:_ ~dst x =
-  declined
-    (Nx_kernel.same_precision (Nx_array.dtype x) (Nx_array.dtype dst))
+external r2c_c :
+  int ->
+  int array ->
+  (Complex.t, 'c) Nx_array.t ->
+  (float, 'r) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_r2c"
 
-let c2r ~axes:_ ~dst x =
-  declined
-    (Nx_kernel.same_precision (Nx_array.dtype dst) (Nx_array.dtype x))
+external c2r_c :
+  int ->
+  int array ->
+  (float, 'r) Nx_array.t ->
+  (Complex.t, 'c) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_c2r"
+
+let shape a = Nx_array.Layout.shape (Nx_array.layout a)
+
+(* Whether [dst] has the shape [Nx_kernel.Shape] gives, if it gives one. *)
+let fits want dst = match want with Ok s -> s = shape dst | Error _ -> false
+
+let c2c_on ~threads d ~axes ~dst x =
+  if not (fits (Nx_kernel.Shape.c2c ~axes (shape x)) dst) then
+    Nx_array.Shape_mismatch
+  else c2c_c threads d axes dst x
+
+let r2c_on ~threads ~axes ~dst x =
+  if not (Nx_kernel.same_precision (Nx_array.dtype x) (Nx_array.dtype dst)) then
+    Nx_array.Wrong_dtype
+  else if not (fits (Nx_kernel.Shape.r2c ~axes (shape x)) dst) then
+    Nx_array.Shape_mismatch
+  else r2c_c threads axes dst x
+
+let c2r_on ~threads ~axes ~dst x =
+  if not (Nx_kernel.same_precision (Nx_array.dtype dst) (Nx_array.dtype x)) then
+    Nx_array.Wrong_dtype
+  else
+    let s = shape dst and k = Array.length axes - 1 in
+    let n =
+      if k >= 0 && axes.(k) >= 0 && axes.(k) < Array.length s then s.(axes.(k))
+      else -1
+    in
+    if n < 0 || not (fits (Nx_kernel.Shape.c2r ~axes ~n (shape x)) dst) then
+      Nx_array.Shape_mismatch
+    else c2r_c threads axes dst x
+
+let c2c d ~axes ~dst x = c2c_on ~threads:0 d ~axes ~dst x
+let r2c ~axes ~dst x = r2c_on ~threads:0 ~axes ~dst x
+let c2r ~axes ~dst x = c2r_on ~threads:0 ~axes ~dst x
 
 (* Matrices (linalg.c) *)
 

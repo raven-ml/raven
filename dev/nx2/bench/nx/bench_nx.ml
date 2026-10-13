@@ -657,6 +657,34 @@ let order_rows =
           Nx.histogram [ (edges100, Thumper.black_box u1m64) ]);
     ]
 
+(* Fourier transforms of host values, each against vDSP and pocketfft at the
+   same size: complex64 lines of 2^10, 2^16 and 2^20 points, a float32 line of
+   2^20, and a complex64 1024 × 1024 along both axes. *)
+let fft f = Nx.Prim.eval ~by:"bench" (Fft f)
+let c1k = on_host (Nx.slice [ R (0, 1024) ] c1m)
+let c64k = on_host (Nx.slice [ R (0, 1 lsl 16) ] c1m)
+let c1024x1024 = Nx.reshape [| 1024; 1024 |] c1m
+
+let c2c axes x =
+  fft (C2c { direction = Forward; axes; x = Thumper.black_box x })
+
+let fft_rows =
+  Thumper.group "fft"
+    [
+      Thumper.bench "c2c-1K-c64" (fun () -> c2c [| 0 |] c1k);
+      Thumper.bench "c2c-64K-c64" (fun () -> c2c [| 0 |] c64k);
+      Thumper.bench "c2c-1M-c64" (fun () -> c2c [| 0 |] c1m);
+      Thumper.bench "rfft-1M-f32" (fun () ->
+          fft
+            (R2c
+               {
+                 dtype = D.Complex64;
+                 axes = [| 0 |];
+                 x = Thumper.black_box f1m;
+               }));
+      Thumper.bench "fft2-1024x1024-c64" (fun () -> c2c [| 0; 1 |] c1024x1024);
+    ]
+
 let () =
   exit
   @@ Thumper.run "nx"
@@ -674,4 +702,5 @@ let () =
          statistics_rows;
          scan_rows;
          order_rows;
+         fft_rows;
        ]

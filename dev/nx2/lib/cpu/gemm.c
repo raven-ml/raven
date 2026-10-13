@@ -64,7 +64,6 @@
    R, the sum in acc, is dst itself: nx.cpu computes a dst of acc's dtype.
    Each tile starts as init, or +0, when its first KC block is computed. */
 
-#include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -178,78 +177,9 @@ static void *alloc(int64_t bytes) {
                        (size_t)ceil_div(bytes > 0 ? bytes : 1, ALIGN) * ALIGN);
 }
 
-/* Each thread keeps two buffers for its next product: the packed operands
-   of the products it calls, and its scratch as a worker, each up to KEPT
-   bytes. An allocation past 32 KiB goes to the system and back, 0.7 µs on
-   the M1, as long as packing a 128³ product takes. */
-#define KEPT (4 * 1024 * 1024)
-
-/* A thread's kept buffers. */
-enum { OPS, SCRATCH };
-
-typedef struct {
-  uint8_t *p;
-  int64_t n;
-} slot;
-
-typedef struct {
-  slot s[2];
-} kept;
-
-static pthread_key_t kept_key;
-static pthread_once_t kept_once = PTHREAD_ONCE_INIT;
-
-/* The calling thread's kept buffers, or NULL: one load, where the key's
-   lookup is two calls. The key frees them when the thread ends. */
-static _Thread_local kept *kept_here;
-
-static void kept_drop(void *v) {
-  kept *k = v;
-  free(k->s[OPS].p);
-  free(k->s[SCRATCH].p);
-  free(k);
-  kept_here = NULL;
-}
-
-static void kept_init(void) { pthread_key_create(&kept_key, kept_drop); }
-
-/* The calling thread's kept buffers, made at its first product; NULL if
-   they cannot be. */
-static kept *mine(void) {
-  if (kept_here != NULL) return kept_here;
-  pthread_once(&kept_once, kept_init);
-  kept *k = calloc(1, sizeof *k);
-  if (k != NULL && pthread_setspecific(kept_key, k) == 0)
-    return kept_here = k;
-  free(k);
-  return NULL;
-}
-
-/* [b], of at least [bytes]; NULL if allocation fails. A slot holds no
-   buffer before the thread's first product, even for 0 bytes. */
-static uint8_t *grow(slot *b, int64_t bytes) {
-  if (b->p != NULL && b->n >= bytes) return b->p;
-  free(b->p);
-  b->p = alloc(bytes);
-  b->n = b->p ? bytes : 0;
-  return b->p;
-}
-
-/* [bytes] of the calling thread's kept buffer [s], NULL if allocation
-   fails; given back by [give]. */
-static uint8_t *take(int s, int64_t bytes) {
-  kept *k = bytes > KEPT ? NULL : mine();
-  return k == NULL ? alloc(bytes) : grow(&k->s[s], bytes);
-}
-
-static void give(int s, uint8_t *p) {
-  kept *k = mine();
-  if (k == NULL || k->s[s].p != p) free(p);
-}
-
-/* The calling worker's scratch of [bytes], given back by [give]. */
+/* The calling worker's scratch of [bytes], given back by nx_cpu_give. */
 static uint8_t *scratch(problem *p, int64_t bytes) {
-  uint8_t *s = take(SCRATCH, bytes);
+  uint8_t *s = nx_cpu_take(bytes);
   if (s == NULL) atomic_store(&p->failed, 1);
   return s;
 }
@@ -615,7 +545,7 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
       tile(p, k, c->pc, c->kc, a, b, e, i0, j, mc, n);
     }
   }
-  give(SCRATCH, s);
+  nx_cpu_give(s);
 }
 
 /* Products of few rows (streams). One job packs a whole, each KC block as
@@ -665,7 +595,7 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
       pc += kc;
     }
   }
-  give(SCRATCH, bp);
+  nx_cpu_give(bp);
 }
 
 /* A job of the table's kernels, each of its bodies run between the table's
@@ -741,7 +671,7 @@ static void few_rows(problem *p) {
                     .kblocks = ceil_div(k, g->kc),
                     .slivers = ceil_div(n, km.nr)};
   int64_t packed = p->a_in ? 0 : batch * k * r.lda * w;
-  if (!p->a_in) r.a = take(OPS, packed);
+  if (!p->a_in) r.a = nx_cpu_take(packed);
   if (!p->a_in && r.a == NULL) {
     atomic_store(&p->failed, 1);
     return;
@@ -753,7 +683,7 @@ static void few_rows(problem *p) {
   if (!p->a_in)
     job(p, batch * r.kblocks, packed, PACK_COST * packed, few_rows_pack, &r);
   job(p, batch * r.slivers, bytes, cost, few_rows_unit, &r);
-  if (!p->a_in) give(OPS, r.a);
+  if (!p->a_in) nx_cpu_give(r.a);
 }
 
 /* Blocks of a hold equal rows, a multiple of MR, so that a job's units
@@ -774,7 +704,7 @@ static void chain(problem *p) {
   int64_t b_all = ceil_div(group * b_bytes, ALIGN) * ALIGN;
   int64_t a_all = ceil_div(group * a_bytes, ALIGN) * ALIGN;
   int64_t states = p->b_in ? 0 : group * slivers;
-  uint8_t *b = take(OPS, b_all + a_all + states * sizeof(atomic_int));
+  uint8_t *b = nx_cpu_take(b_all + a_all + states * sizeof(atomic_int));
   if (b == NULL) {
     atomic_store(&p->failed, 1);
     return;
@@ -824,7 +754,7 @@ static void chain(problem *p) {
     }
   }
 done:
-  give(OPS, b);
+  nx_cpu_give(b);
 }
 
 /* Lane order */
@@ -992,7 +922,7 @@ static void dots_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
         total(p, e, i, j0 + j, sums_of(f, mine, e, i, j0, c, j), f->blocks,
               at_r(p, e, i, j0 + j));
   }
-  give(SCRATCH, bp);
+  nx_cpu_give(bp);
 }
 
 /* A unit is an element: each output's total of its blocks. */
@@ -1157,7 +1087,7 @@ static void rows_whole(int64_t lo, int64_t hi, int worker, void *ctx) {
     }
     totals(f, e, j0, c, s);
   }
-  give(SCRATCH, ap);
+  nx_cpu_give(ap);
 }
 
 /* A unit is (element, block, group of columns): its lanes into the job's
@@ -1178,7 +1108,7 @@ static void rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
     rows_block(f, ap, e, x, q0, q0 + lanes, j0, c, lane_at(f, e, x, 0, 0, j0),
                m * n, n);
   }
-  give(SCRATCH, ap);
+  nx_cpu_give(ap);
 }
 
 /* A unit is (element, group of columns): each block's lanes summed into
@@ -1197,7 +1127,7 @@ static void rows_finish(int64_t lo, int64_t hi, int worker, void *ctx) {
       block_sums(f, lane_at(f, e, x, 0, 0, j0), m * n, n, c, x, s);
     totals(f, e, j0, c, s);
   }
-  give(SCRATCH, s);
+  nx_cpu_give(s);
 }
 
 /* A unit takes a group of columns whole where the groups are enough for

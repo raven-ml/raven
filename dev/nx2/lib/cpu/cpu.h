@@ -369,6 +369,14 @@ void nx_cpu_job_at(int64_t total, int64_t bytes, double cost,
                    double thread_bytes, rig_pool_body body, void *ctx);
 int nx_cpu_threads_at(int64_t bytes, double cost, double thread_bytes);
 
+/* Scratch */
+
+/* [bytes] of scratch on 128 bytes, NULL if they cannot be allocated: one
+   of the calling thread's kept buffers where one is free and [bytes] fit
+   in it (job.c), else a new allocation. nx_cpu_give gives it back. */
+void *nx_cpu_take(int64_t bytes);
+void nx_cpu_give(void *p);
+
 /* Matrices */
 
 /* A contraction's order of summation, numbered as Nx_kernel.order's

@@ -202,12 +202,24 @@ let test_rules () =
   raises (fun () -> fft (C2c { direction = Forward; axes = [| 1 |]; x = c }));
   equal ~msg:"kernel calls" int 0 (Atomic.get Dft.calls)
 
-(* Declines: nx.cpu declines every transform, so a transform on the host is nx's
+(* Declines: on a library that declines every transform, a transform is nx's
    expansion. Against the direct sums, within the bound Expand states: [‖ŷ - y‖₂
    <= 20 u P √N ‖x‖₂], [N] the points transformed, [P] the passes, [log₂ n] for
    an axis of a power of two [n] and [3 log₂ M + 2] for another, [M] the power
    of two its convolution runs at, and [u] the parts' unit roundoff; a C2r's
    [‖x‖₂] is its completed bins', at most [√2] times its operand's. *)
+
+(* nx.cpu, declining every transform. *)
+module Untransformed = struct
+  include Nx_cpu
+
+  let name = "nx.untransformed"
+  let c2c _ ~axes:_ ~dst:_ _ = A.Declined
+  let r2c ~axes:_ ~dst:_ _ = A.Declined
+  let c2r ~axes:_ ~dst:_ _ = A.Declined
+end
+
+module Dec = (val Nx.devices ~kernels:(module Untransformed) [ m 2 ])
 
 type transform =
   | Complex of Nx_kernel.direction
@@ -323,12 +335,7 @@ let law_declined c =
         let x = on (A.of_array D.Complex64 s c.xs) in
         complexes (read (fft (C2r { dtype = Nx.float32; n; axes; x })))
   in
-  (* CR: Run this law on a provider that explicitly declines fft.
-     Nx.Host.on exercises the expansion only while nx.cpu has no FFT
-     kernel; adding that kernel silently removes expansion coverage.
-     Include Nx_cpu and override fft with Declined, as the sort and
-     fold suites do, keeping the direct-sum provider as the oracle. *)
-  let want = compute One.on and got = compute Nx.Host.on in
+  let want = compute One.on and got = compute Dec.on in
   equal ~msg:"shape" int (Array.length want) (Array.length got);
   let err =
     sqrt
@@ -340,6 +347,201 @@ let law_declined c =
             want got))
   in
   at_most ~msg:"‖ŷ - y‖₂ within the bound" float_exact ~than:bound err
+
+(* Accuracy: nx.cpu's transforms are no less accurate than the expansion, on
+   each of its routes, against sums in double-double. Errors are summed in
+   squares over fixed seeds, so the law is deterministic, and over at least
+   4096 points, which few roundings would sway on a short line. *)
+
+let two_sum a b =
+  let s = a +. b in
+  let bb = s -. a in
+  (s, a -. (s -. bb) +. (b -. bb))
+
+let dd_add (ah, al) (bh, bl) =
+  let s, e = two_sum ah bh in
+  two_sum s (e +. al +. bl)
+
+let dd_mul (ah, al) (bh, bl) =
+  let p = ah *. bh in
+  two_sum p (Float.fma ah bh (-.p) +. (ah *. bl) +. (al *. bh))
+
+let dd_neg (h, l) = (-.h, -.l)
+
+let dd_div (h, l) d =
+  let q = h /. d in
+  let p = q *. d in
+  two_sum q ((h -. p -. Float.fma q d (-.p) +. l) /. d)
+
+(* e^(-2πi m/n), 0 <= m < n, in double-double: the angle within its quarter
+   taken from the nearer end, sin and cos by their series. *)
+let unit m n =
+  let q = 4 * m / n in
+  let r = (4 * m) - (q * n) in
+  let far = 2 * r > n in
+  let pi_2 = (1.5707963267948966, 6.123233995736766e-17) in
+  let phi =
+    dd_mul pi_2
+      (dd_div (Float.of_int (if far then n - r else r), 0.) (Float.of_int n))
+  in
+  let s = ref (0., 0.) and c = ref (0., 0.) and t = ref (1., 0.) in
+  for k = 0 to 27 do
+    (match k mod 4 with
+    | 0 -> c := dd_add !c !t
+    | 1 -> s := dd_add !s !t
+    | 2 -> c := dd_add !c (dd_neg !t)
+    | _ -> s := dd_add !s (dd_neg !t));
+    t := dd_div (dd_mul !t phi) (Float.of_int (k + 1))
+  done;
+  let c, s = if far then (!s, !c) else (!c, !s) in
+  let re, im =
+    match q with
+    | 0 -> (c, s)
+    | 1 -> (dd_neg s, c)
+    | 2 -> (dd_neg c, dd_neg s)
+    | _ -> (s, dd_neg c)
+  in
+  (re, dd_neg im)
+
+(* A sum in double-double, its low parts added without renormalising, which
+   errs by about n u² of double over n terms. *)
+type sum = { mutable hi : float; mutable lo : float }
+
+(* [s] plus [a·(bh + bl)], [a] a double. *)
+let[@inline] add s a bh bl =
+  let p = a *. bh in
+  let e = Float.fma a bh (-.p) +. (a *. bl) in
+  let t = s.hi +. p in
+  let bb = t -. s.hi in
+  s.lo <- s.lo +. (s.hi -. (t -. bb)) +. (p -. bb) +. e;
+  s.hi <- t
+
+(* The transform of [direction] of [x], each part a double-double. *)
+let exact direction (x : Complex.t array) =
+  let n = Array.length x in
+  let w = Array.init n (fun m -> unit m n) in
+  let sign = match direction with Nx_kernel.Forward -> 1. | Inverse -> -1. in
+  let wrh = Array.map (fun ((h, _), _) -> h) w
+  and wrl = Array.map (fun ((_, l), _) -> l) w
+  and wih = Array.map (fun (_, (h, _)) -> sign *. h) w
+  and wil = Array.map (fun (_, (_, l)) -> sign *. l) w in
+  Array.init n (fun k ->
+      let re = { hi = 0.; lo = 0. } and im = { hi = 0.; lo = 0. } in
+      for j = 0 to n - 1 do
+        let t = j * k mod n and xr = x.(j).re and xi = x.(j).im in
+        add re xr wrh.(t) wrl.(t);
+        add re xi (-.wih.(t)) (-.wil.(t));
+        add im xr wih.(t) wil.(t);
+        add im xi wrh.(t) wrl.(t)
+      done;
+      ((re.hi, re.lo), (im.hi, im.lo)))
+
+module Cpu = (val Nx.devices [ m 3 ])
+
+(* What a route's case transforms: [n] points, of 64-bit parts where [wide]. *)
+type accuracy = { route : string; kind : transform; n : int; wide : bool }
+
+(* ‖ŷ - y‖₂² of nx.cpu's and of the expansion's [c] on the values of [seed]. *)
+let errors c seed =
+  let rs = Random.State.make [| seed; c.n |] in
+  let part () =
+    let v = Random.State.float rs 2. -. 1. in
+    if c.wide then v else Int32.float_of_bits (Int32.bits_of_float v)
+  in
+  let n = c.n in
+  let count = match c.kind with Back _ -> (n / 2) + 1 | _ -> n in
+  let xs =
+    Array.init count (fun _ ->
+        let re = part () in
+        { Complex.re; im = (if c.kind = Real then 0. else part ()) })
+  in
+  let want =
+    match c.kind with
+    | Complex d -> exact d xs
+    | Real -> Array.sub (exact Forward xs) 0 ((n / 2) + 1)
+    | Back _ ->
+        let full =
+          Array.init n (fun k ->
+              if k <= n / 2 then xs.(k) else Complex.conj xs.(n - k))
+        in
+        Array.map (fun (re, _) -> (re, (0., 0.))) (exact Inverse full)
+  in
+  let compute p =
+    let on a = Nx.place p (Nx.Repr.of_array Nx.Host.v a) in
+    let axes = [| 0 |] and s = [| count |] in
+    let reals = Array.map (fun (z : Complex.t) -> z.re) in
+    let complexes = Array.map (fun re -> { Complex.re; im = 0. }) in
+    match (c.kind, c.wide) with
+    | Complex direction, true ->
+        let x = on (A.of_array D.Complex128 s xs) in
+        read (fft (C2c { direction; axes; x }))
+    | Complex direction, false ->
+        let x = on (A.of_array D.Complex64 s xs) in
+        read (fft (C2c { direction; axes; x }))
+    | Real, true ->
+        let x = on (A.of_array D.Float64 s (reals xs)) in
+        read (fft (R2c { dtype = Nx.complex128; axes; x }))
+    | Real, false ->
+        let x = on (A.of_array D.Float32 s (reals xs)) in
+        read (fft (R2c { dtype = Nx.complex64; axes; x }))
+    | Back n, true ->
+        let x = on (A.of_array D.Complex128 s xs) in
+        complexes (read (fft (C2r { dtype = Nx.float64; n; axes; x })))
+    | Back n, false ->
+        let x = on (A.of_array D.Complex64 s xs) in
+        complexes (read (fft (C2r { dtype = Nx.float32; n; axes; x })))
+  in
+  let error (got : Complex.t array) =
+    let sum = ref 0. in
+    Array.iteri
+      (fun k ((rh, rl), (ih, il)) ->
+        let dr = got.(k).re -. rh -. rl and di = got.(k).im -. ih -. il in
+        sum := !sum +. (dr *. dr) +. (di *. di))
+      want;
+    !sum
+  in
+  (error (compute Cpu.on), error (compute Dec.on))
+
+let accuracy_cases =
+  let each route ns kinds =
+    List.concat_map
+      (fun n ->
+        List.concat_map
+          (fun kind ->
+            List.map
+              (fun wide -> { route; kind = kind n; n; wide })
+              [ false; true ])
+          kinds)
+      ns
+  in
+  let complex = [ (fun _ -> Complex Forward); (fun _ -> Complex Inverse) ] in
+  let real = [ (fun _ -> Real); (fun n -> Back n) ] in
+  each "passes" [ 7; 60; 64; 241 ] complex
+  @ each "the four steps" [ 100; 1000; 1024 ] complex
+  @ each "Bluestein's" [ 257; 1031 ] (complex @ real)
+  @ each "Bluestein's, halved" [ 514 ] real
+  @ each "real lines" [ 6; 8; 16; 32; 64; 128; 256; 512; 1024 ] real
+
+let test_accuracy () =
+  List.iter
+    (fun c ->
+      let k = ref 0. and e = ref 0. in
+      for seed = 1 to Int.max 8 (4096 / c.n) do
+        let ek, ee = errors c seed in
+        k := !k +. ek;
+        e := !e +. ee
+      done;
+      let msg =
+        Format.asprintf "%s, %d points, %s %s" c.route c.n
+          (match c.kind with
+          | Complex Forward -> "forward"
+          | Complex Inverse -> "inverse"
+          | Real -> "r2c"
+          | Back _ -> "c2r")
+          (if c.wide then "64-bit parts" else "32-bit parts")
+      in
+      at_most ~msg float_exact ~than:(sqrt !e) (sqrt !k))
+    accuracy_cases
 
 let () =
   exit
@@ -355,5 +557,7 @@ let () =
            [
              test "the rule raises before any kernel" test_rules;
              prop "a declined transform is within its bound" case law_declined;
+             test "nx.cpu is as accurate as the expansion on each route"
+               test_accuracy;
            ];
        ])

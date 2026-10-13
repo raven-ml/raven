@@ -91,9 +91,33 @@
     not fit.
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
-    for dtypes {!Nx_kernel.S} does not take. The transforms decline the
-    others. [cholesky], [lu], [qr], [solve_triangular], [eigh], [svd] and
-    [eig] compute them. The seven refuse with [Shape_mismatch] what
+    for dtypes {!Nx_kernel.S} does not take, and compute the others.
+
+    The transforms refuse with [Shape_mismatch] what {!Nx_kernel.Shape}
+    answers [Error] for and results of other shapes. A transform's result
+    is a function of its operand's values alone, whatever its layout, its
+    batch or the threads; a NaN result's payload is unspecified. Barring
+    underflow and overflow, a transform [ŷ] of [N] points, the product of
+    the points along each of [axes], is within [‖ŷ - y‖₂ <= ε u √N ‖x‖₂]
+    of the exact [y], [u] the unit roundoff of [x]'s parts and [‖x‖₂] its
+    norm, a [c2r]'s that of its completed bins, at most [√2] times its
+    operand's. [ε] is the sum over [axes] of [e(n)], [n] the points along
+    the axis:
+    - [e(n) = 8 Σ p{^3/2} + 8] over [n]'s prime factors [p], with
+      multiplicity: a line computes by passes of radix 2, 3, 4, 5 and
+      [n]'s other primes, or by Bailey's four steps.
+    - Where a prime factor of [n] exceeds 250, [e(n) = 6 e(m) + 26], [m]
+      the least power of two at least [2n - 1]: the line computes by
+      Bluestein's convolution of [m] points, unless the transform of the
+      conjugate chirp [e{^πi j²/n}], wrapped at [m], exceeds
+      [2 √(2n - 1)] in magnitude, when it computes by passes within the
+      first [e(n)].
+    - The last axis of a real transform of even [n >= 512] counts
+      [e(n/2) + 8] in place of [e(n)]: its lines compute through complex
+      ones of [n/2] points.
+
+    [cholesky], [lu], [qr], [solve_triangular], [eigh], [svd] and [eig]
+    refuse with [Shape_mismatch] what
     {!Nx_kernel.Shape} answers [Error] for and results of other shapes. A
     matrix's results are a function of its values alone, whatever its
     batch, its layout or the threads. With [γ(k) = k u / (1 - k u)] and
@@ -169,5 +193,30 @@ val scan_on :
   Nx_kernel.load array ->
   Nx_array.answer
 (** [scan_on ~threads] is {!scan}, threaded as {!reduce_on}. *)
+
+val c2c_on :
+  threads:int ->
+  Nx_kernel.direction ->
+  axes:int array ->
+  dst:(Complex.t, 's) Nx_array.t ->
+  (Complex.t, 's) Nx_array.t ->
+  Nx_array.answer
+(** [c2c_on ~threads] is {!c2c}, threaded as {!reduce_on}. *)
+
+val r2c_on :
+  threads:int ->
+  axes:int array ->
+  dst:(Complex.t, 'c) Nx_array.t ->
+  (float, 'r) Nx_array.t ->
+  Nx_array.answer
+(** [r2c_on ~threads] is {!r2c}, threaded as {!reduce_on}. *)
+
+val c2r_on :
+  threads:int ->
+  axes:int array ->
+  dst:(float, 'r) Nx_array.t ->
+  (Complex.t, 'c) Nx_array.t ->
+  Nx_array.answer
+(** [c2r_on ~threads] is {!c2r}, threaded as {!reduce_on}. *)
 
 (**/**)
