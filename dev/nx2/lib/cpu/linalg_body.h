@@ -507,43 +507,43 @@ static void F(reflect)(const T *v, int64_t ldv, T tau, int64_t m, int64_t n,
 
 /* QR
 
-   a = Q R by Householder reflectors, as LAPACK's blocked xGEQRF, in place
+   a = Q R by Householder reflectors, as LAPACK's blocked xGEQRT, in place
    in the m × n [a]: R on and above the diagonal, each reflector's v below
-   it, its τ in [tau]. By blocks of NB columns: a block's columns by
-   reflectors one at a time, each applied to the block's columns to its
-   right (xGEQR2), on a contiguous copy; then the block's product H = I −
-   V T Vᴴ (xLARFT) applied to the columns right of the block as Hᴴ = I −
-   V Tᴴ Vᴴ by products (xLARFB). The scratch [q] holds the block's V, T,
-   two NB × n products and a row: qr_scratch elements. Answers 1, or 0 if
-   an allocation failed. */
+   it, its τ in [tau]. By blocks of QR_NB columns: a block's reflectors and
+   their product H = I − V T Vᴴ by the recursive panel (xGEQRT3), then Hᴴ =
+   I − V Tᴴ Vᴴ applied to the columns right of the block by products
+   (xLARFB). Each block's T is kept for [form_q] in [ts], QR_NB × QR_NB a
+   block, rows QR_NB apart. The scratch [q] holds a block's dense V, a
+   leaf's copy and row, and two QR_NB × max m n products, as qr_scratch
+   counts them. Answers 1, or 0 if an allocation failed. */
 
-/* T of the block of the [jb] reflectors in the dense [h] × jb [v]:
-   T[i][i] = τ_i, T[0:i][i] = −τ_i T[0:i][0:i] V[:, 0:i]ᴴ v_i, zeros below
-   (xLARFT), the products Vᴴ V by a product into [g], jb × jb. Answers 0
-   if an allocation failed. */
+/* T of the block of the [jb] reflectors in the dense [h] × jb [v], into
+   [t], rows [ldt] apart: T[i][i] = τ_i, T[0:i][i] = −τ_i T[0:i][0:i]
+   V[:, 0:i]ᴴ v_i, zeros below (xLARFT), the products Vᴴ V by a product
+   into [g], jb × jb. Answers 0 if an allocation failed. */
 static int F(block_t)(const T *v, int64_t h, int64_t jb, const T *tau, T *t,
-                      T *g, arena *s) {
+                      int64_t ldt, T *g, arena *s) {
   memset(g, 0, sizeof(T) * jb * jb);
   if (!F(gemm)(jb, jb, h, 1, F(op_h)(v, jb), F(op)(v, jb, 1), g, jb, s))
     return 0;
   for (int64_t i = 0; i < jb; i++) {
     for (int64_t p = 0; p < i; p++) {
       T x = 0;
-      for (int64_t q = p; q < i; q++) x += t[p * jb + q] * g[q * jb + i];
-      t[p * jb + i] = -tau[i] * x;
+      for (int64_t q = p; q < i; q++) x += t[p * ldt + q] * g[q * jb + i];
+      t[p * ldt + i] = -tau[i] * x;
     }
-    t[i * jb + i] = tau[i];
-    for (int64_t p = i + 1; p < jb; p++) t[p * jb + i] = 0;
+    t[i * ldt + i] = tau[i];
+    for (int64_t p = i + 1; p < jb; p++) t[p * ldt + i] = 0;
   }
   return 1;
 }
 
-/* [v]'s [h] × jb reflectors in place, below its diagonal, made the dense
-   V: ones on the diagonal, zeros above. */
-static void F(dense_v)(T *v, int64_t h, int64_t jb) {
+/* [v]'s [h] × jb reflectors in place, below its diagonal, rows [ld]
+   apart, made the dense V: ones on the diagonal, zeros above. */
+static void F(dense_v)(T *v, int64_t h, int64_t jb, int64_t ld) {
   for (int64_t r = 0; r < h && r < jb; r++) {
-    for (int64_t p = r + 1; p < jb; p++) v[r * jb + p] = 0;
-    v[r * jb + r] = 1;
+    for (int64_t p = r + 1; p < jb; p++) v[r * ld + p] = 0;
+    v[r * ld + r] = 1;
   }
 }
 
@@ -556,63 +556,113 @@ static void F(rows)(const T *x, int64_t ls, int64_t h, int64_t jb, T *y,
 }
 
 /* c ← (I − V op(T) Vᴴ) c for c of [m2] × [n2], rows [ldc] apart; [v] the
-   dense m2 × jb V, [t] op(T): c −= V (op(T) (Vᴴ c)). [w] holds 2·jb·n2
-   elements. */
-static int F(larfb)(const T *v, operand t, int64_t jb, int64_t m2,
-                    int64_t n2, T *c, int64_t ldc, T *w, arena *s) {
+   dense m2 × jb V, rows [ldv] apart, [t] op(T): c −= V (op(T) (Vᴴ c)).
+   [w] holds 2·jb·n2 elements. */
+static int F(larfb)(const T *v, int64_t ldv, operand t, int64_t jb,
+                    int64_t m2, int64_t n2, T *c, int64_t ldc, T *w,
+                    arena *s) {
   T *w1 = w, *w2 = w + jb * n2;
   memset(w, 0, sizeof(T) * 2 * jb * n2);
-  return F(gemm)(jb, n2, m2, 1, F(op_h)(v, jb), F(op)(c, ldc, 1), w1, n2,
+  return F(gemm)(jb, n2, m2, 1, F(op_h)(v, ldv), F(op)(c, ldc, 1), w1, n2,
                  s) &&
          F(gemm)(jb, n2, jb, 1, t, F(op)(w1, n2, 1), w2, n2, s) &&
-         F(gemm)(m2, n2, jb, -1, F(op)(v, jb, 1), F(op)(w2, n2, 1), c, ldc,
+         F(gemm)(m2, n2, jb, -1, F(op)(v, ldv, 1), F(op)(w2, n2, 1), c, ldc,
                  s);
 }
 
-static int F(qr)(T *a, int64_t m, int64_t n, int64_t ld, T *tau, T *q,
-                 arena *s) {
-  int64_t k = m < n ? m : n;
-  T *vb = q, *t = vb + m * NB, *w = t + NB * NB, *row = w + 2 * NB * n;
-  for (int64_t j0 = 0; j0 < k; j0 += NB) {
-    int64_t jb = NB < k - j0 ? NB : k - j0, j1 = j0 + jb, h = m - j0;
-    /* The panel, contiguous: its rows a power of two apart would share one
+/* The [h] × [n] panel [a], rows [ld] apart, factored: its reflectors in
+   place and τ in [tau], its dense V into [v] and its T into [t], both rows
+   QR_NB apart. As LAPACK's recursive xGEQRT3: the left half's reflectors
+   V1, T1, applied to the right half, then the right half's V2, T2 below
+   the left half's rows, and
+
+     T = [T1  −T1 (V1ᴴ V2) T2]
+         [0    T2            ],
+
+   since (I − V1 T1 V1ᴴ) (I − V2 T2 V2ᴴ) = I − V T Vᴴ. A panel of fewer
+   than 2·LEAF columns is a leaf, whose halves would be fewer than LEAF
+   columns and cost more in products than in scalar loops: on the M1, 16
+   QRs of 32 × 32 float32 took 56.5 µs in halves against 35.4 as one
+   leaf. A leaf takes the reflectors one at a time, each applied to the
+   columns to its right (xGEQR2), on a contiguous copy in [c], which holds
+   (h + 1)·2·LEAF elements, then T (xLARFT). [w] holds 2·QR_NB·QR_NB
+   elements. */
+static int F(qr_panel)(T *a, int64_t h, int64_t n, int64_t ld, T *tau,
+                       T *v, T *t, T *c, T *w, arena *s) {
+  if (n < 2 * LEAF) {
+    /* Contiguous: the panel's rows a power of two apart would share one
        set of the cache. */
-    F(rows)(a + j0 * ld + j0, ld, h, jb, vb, jb);
-    for (int64_t j = 0; j < jb; j++) {
-      T *ajj = vb + j * jb + j;
-      tau[j0 + j] = F(reflector)(ajj, ajj + jb, h - j - 1, jb);
-      F(reflect)(ajj, jb, CONJ(tau[j0 + j]), h - j, jb - j - 1, ajj + 1, jb,
-                 row);
+    T *row = c + h * n;
+    F(rows)(a, ld, h, n, c, n);
+    for (int64_t j = 0; j < n; j++) {
+      T *cjj = c + j * n + j;
+      tau[j] = F(reflector)(cjj, cjj + n, h - j - 1, n);
+      F(reflect)(cjj, n, CONJ(tau[j]), h - j, n - j - 1, cjj + 1, n, row);
     }
-    F(rows)(vb, jb, h, jb, a + j0 * ld + j0, ld);
-    if (j1 == n) continue;
-    F(dense_v)(vb, h, jb);
-    if (!F(block_t)(vb, h, jb, tau + j0, t, w, s) ||
-        !F(larfb)(vb, F(op_h)(t, jb), jb, h, n - j1, a + j0 * ld + j1, ld, w,
-                  s))
+    F(rows)(c, n, h, n, a, ld);
+    F(dense_v)(c, h, n, n);
+    F(rows)(c, n, h, n, v, QR_NB);
+    return F(block_t)(c, h, n, tau, t, QR_NB, w, s);
+  }
+  int64_t n1 = split(n), n2 = n - n1;
+  T *g = w, *x = w + n1 * n2, *t12 = t + n1;
+  if (!F(qr_panel)(a, h, n1, ld, tau, v, t, c, w, s) ||
+      !F(larfb)(v, QR_NB, F(op_h)(t, QR_NB), n1, h, n2, a + n1, ld, w, s) ||
+      !F(qr_panel)(a + n1 * ld + n1, h - n1, n2, ld, tau + n1,
+                   v + n1 * QR_NB + n1, t + n1 * QR_NB + n1, c, w, s))
+    return 0;
+  for (int64_t r = 0; r < n1; r++) {
+    memset(v + r * QR_NB + n1, 0, sizeof(T) * n2);
+    memset(t12 + r * QR_NB, 0, sizeof(T) * n2);
+  }
+  for (int64_t r = n1; r < n; r++) memset(t + r * QR_NB, 0, sizeof(T) * n1);
+  memset(w, 0, sizeof(T) * 2 * n1 * n2);
+  return F(gemm)(n1, n2, h - n1, 1, F(op_h)(v + n1 * QR_NB, QR_NB),
+                 F(op)(v + n1 * QR_NB + n1, QR_NB, 1), g, n2, s) &&
+         F(gemm)(n1, n2, n1, 1, F(op)(t, QR_NB, 1), F(op)(g, n2, 1), x, n2,
+                 s) &&
+         F(gemm)(n1, n2, n2, -1, F(op)(x, n2, 1),
+                 F(op)(t + n1 * QR_NB + n1, QR_NB, 1), t12, QR_NB, s);
+}
+
+static int F(qr)(T *a, int64_t m, int64_t n, int64_t ld, T *tau, T *ts,
+                 T *q, arena *s) {
+  int64_t k = m < n ? m : n;
+  T *v = q, *c = v + m * QR_NB, *w = c + (m + 1) * 2 * LEAF;
+  for (int64_t j0 = 0; j0 < k; j0 += QR_NB) {
+    int64_t jb = QR_NB < k - j0 ? QR_NB : k - j0, j1 = j0 + jb, h = m - j0;
+    T *t = ts + j0 * QR_NB;
+    if (!F(qr_panel)(a + j0 * ld + j0, h, jb, ld, tau + j0, v, t, c, w, s))
+      return 0;
+    if (j1 < n &&
+        !F(larfb)(v, QR_NB, F(op_h)(t, QR_NB), jb, h, n - j1,
+                  a + j0 * ld + j1, ld, w, s))
       return 0;
   }
   return 1;
 }
 
 /* q ← the first [qc] columns of H_0 ⋯ H_(k−1), m × qc, rows [ldq] apart,
-   from [qr]'s reflectors in [a]: from the identity, the blocks applied
-   last first (LAPACK's xORGQR and xUNGQR). The scratch [w] as for [qr]. */
+   from [qr]'s reflectors in [a] and its blocks' T in [ts]: from the
+   identity, the blocks applied last first (LAPACK's xORGQR and xUNGQR).
+   The scratch [w] as [qr] left it, the last block's dense V first, which
+   saves a matrix of one block its second copy. */
 static int F(form_q)(const T *a, int64_t m, int64_t n, int64_t ld,
-                     const T *tau, T *q, int64_t qc, int64_t ldq, T *w,
+                     const T *ts, T *q, int64_t qc, int64_t ldq, T *w,
                      arena *s) {
   int64_t k = m < n ? m : n;
-  T *vb = w, *t = vb + m * NB, *ww = t + NB * NB;
+  T *v = w, *ww = v + m * QR_NB;
   for (int64_t i = 0; i < m; i++)
     for (int64_t j = 0; j < qc; j++) q[i * ldq + j] = i == j;
-  for (int64_t j0 = k == 0 ? 0 : (k - 1) / NB * NB; k > 0 && j0 >= 0;
-       j0 -= NB) {
-    int64_t jb = NB < k - j0 ? NB : k - j0, h = m - j0;
-    F(rows)(a + j0 * ld + j0, ld, h, jb, vb, jb);
-    F(dense_v)(vb, h, jb);
-    if (!F(block_t)(vb, h, jb, tau + j0, t, ww, s) ||
-        !F(larfb)(vb, F(op)(t, jb, 1), jb, h, qc - j0, q + j0 * ldq + j0, ldq,
-                  ww, s))
+  int64_t last = k == 0 ? 0 : (k - 1) / QR_NB * QR_NB;
+  for (int64_t j0 = last; k > 0 && j0 >= 0; j0 -= QR_NB) {
+    int64_t jb = QR_NB < k - j0 ? QR_NB : k - j0, h = m - j0;
+    if (j0 < last) {
+      F(rows)(a + j0 * ld + j0, ld, h, jb, v, QR_NB);
+      F(dense_v)(v, h, jb, QR_NB);
+    }
+    if (!F(larfb)(v, QR_NB, F(op)(ts + j0 * QR_NB, QR_NB, 1), jb, h, qc - j0,
+                  q + j0 * ldq + j0, ldq, ww, s))
       return 0;
   }
   return 1;
@@ -634,9 +684,10 @@ static int F(back)(const T *x, int64_t rs, int64_t cs, reading how,
         T v = x[(j0 + r) * rs + (j0 + p) * cs];
         w[r * jb + p] = how == CONJUGATED ? CONJ(v) : v;
       }
-    F(dense_v)(w, hb, jb);
-    if (!F(block_t)(w, hb, jb, tau + j0, t, ww, s) ||
-        !F(larfb)(w, F(op)(t, jb, 1), jb, hb, n, c + j0 * ldc, ldc, ww, s))
+    F(dense_v)(w, hb, jb, jb);
+    if (!F(block_t)(w, hb, jb, tau + j0, t, jb, ww, s) ||
+        !F(larfb)(w, jb, F(op)(t, jb, 1), jb, hb, n, c + j0 * ldc, ldc, ww,
+                  s))
       return 0;
   }
   return 1;
@@ -2808,7 +2859,7 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
   int qrf = mm >= (CPLX ? k * 17 / 9 : k * 11 / 6);
   int64_t xc = wide ? vr : uc, ld = qrf ? k : mm;
   T *a = x, *r = a + mm * k, *tau = r + k * k, *tauq = tau + k,
-    *taup = tauq + k, *ws = taup + k, *tmp = ws + (3 * mm + NB + 1) * NB;
+    *taup = tauq + k, *ws = taup + k, *tmp = ws + svd_scratch(mm, k);
   R *d = (R *)(tmp + (wide ? mm * xc : k * k)), *e = d + k, *ub = e + k,
     *vb = ub + k * k, *work = vb + k * k;
   R *iw = work + 3 * (k + 1) * (k + 1) + 4 * k;
@@ -2834,7 +2885,7 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
   T *bd = a;
   int64_t lb = mm;
   if (finite && qrf) {
-    if (!F(qr)(a, mm, k, k, tau, ws, s)) return 0;
+    if (!F(qr)(a, mm, k, k, tau, ws, ws + qr_ts(k), s)) return 0;
     for (int64_t j = 0; j < k; j++)
       for (int64_t i = 0; i < k; i++) r[i + j * k] = i <= j ? a[i * k + j] : 0;
     bd = r;
@@ -3738,13 +3789,14 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
   if (c->routine == QR) {
     /* a factored in w, then R and Q out. */
     int64_t k = m < n ? m : n, qc = c->complete ? m : k;
-    T *f = w, *tau = f + m * n, *rest = tau + k;
+    int64_t lf = n + PAD;
+    T *f = w, *tau = f + m * lf, *ts = tau + k, *rest = ts + qr_ts(k);
     T *r = (T *)matrix_at(c, c->nops + 1, b);
-    stage(c, 0, b, f, n, 0);
-    if (!F(qr)(f, m, n, n, tau, rest, s)) return 0;
+    stage(c, 0, b, f, lf, 0);
+    if (!F(qr)(f, m, n, lf, tau, ts, rest, s)) return 0;
     for (int64_t i = 0; i < qc; i++)
-      for (int64_t j = 0; j < n; j++) r[i * n + j] = j >= i ? f[i * n + j] : 0;
-    return F(form_q)(f, m, n, n, tau, d, qc, qc, rest, s);
+      for (int64_t j = 0; j < n; j++) r[i * n + j] = j >= i ? f[i * lf + j] : 0;
+    return F(form_q)(f, m, n, lf, ts, d, qc, qc, rest, s);
   }
   if (c->routine == LU) {
     stage(c, 0, b, d, n, 0);

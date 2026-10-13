@@ -44,12 +44,46 @@
 #include "cpu.h"
 
 /* The most columns a recursive routine computes by scalar loops; the
-   columns of QR's blocks; the columns of Cholesky's update panels; the
-   least columns of a triangular solve's units on the call's threads. */
+   columns of the blocks of reflectors eigh, svd and eig reduce and apply;
+   the columns of Cholesky's update panels; the least columns of a
+   triangular solve's units on the call's threads. */
 #define LEAF 24
 #define NB 32
 #define HERK 128
 #define SOLVE_COLUMNS 32
+
+/* The elements each row of QR's factored matrix takes past its n, so that
+   for a power-of-two n its rows lie no power of two apart: a block's
+   products read down its columns, and rows that far apart share one set
+   of the cache. */
+#define PAD 8
+
+/* The columns of QR's blocks. On one core of the i9-9900K, blocks of 32,
+   48 and 64 columns took 1.71, 1.69 and 1.92 ms on qr-f64-256, 74.0,
+   67.5 and 67.8 ms on qr-f64-1024, and 6.59, 6.76 and 7.72 ms on
+   qr-c128-256; on 16 threads 48 beat 64 at every size. On the M1, 64
+   took 2-3% less than 48 at 512 and 1024 float64 columns and 3-8% more
+   at 256 and in complex128; on fudge's six cores 4-7% more at each. */
+#define QR_NB 48
+
+/* The elements QR's blocks' T take for [k] reflectors, QR_NB × QR_NB a
+   block. */
+static int64_t qr_ts(int64_t k) { return (k + QR_NB) * QR_NB; }
+
+/* The elements of scratch QR of [m] × [n] takes besides its factored
+   matrix and τ: its blocks' T, a block's V, a leaf's copy and row, and two
+   products of a block (linalg_body.h). */
+static int64_t qr_scratch(int64_t m, int64_t n) {
+  int64_t k = m < n ? m : n, big = m > n ? m : n;
+  return qr_ts(k) + m * QR_NB + (m + 1) * 2 * LEAF + 2 * QR_NB * big;
+}
+
+/* The elements of scratch svd's reductions of [mm] × [k] take: QR's, or
+   a block's V, T and products (linalg_body.h). */
+static int64_t svd_scratch(int64_t mm, int64_t k) {
+  int64_t qr = qr_scratch(mm, k), block = (3 * mm + NB + 1) * NB;
+  return qr > block ? qr : block;
+}
 
 /* The columns a recursive routine on [n] computes first: half, a
    multiple of 8 from 16 on (ReLAPACK's split). */
@@ -308,12 +342,11 @@ static double flops(const call *c) {
 }
 
 /* The elements of scratch a matrix of [c] takes besides its products':
-   a solve's triangle; QR's factored matrix, its τ, a block's V and T,
-   two products of a block and a row; eigh's reduced matrix, its τ, a
-   panel's W or a block's V, T, two products of a block, then as reals
-   T's diagonals, Z and divide and conquer's work, and its indices; svd's
-   B, QR's R, the τ, a panel's X and Y or the scratch of QR or of a
-   block's V, T and products, X or W, then as reals B's diagonals, U_B,
+   a solve's triangle; QR's factored matrix, its τ and qr_scratch; eigh's
+   reduced matrix, its τ, a panel's W or a block's V, T, two products of a
+   block, then as reals T's diagonals, Z and divide and conquer's work,
+   and its indices; svd's B, QR's R, the τ, a panel's X and Y, svd_scratch,
+   X or W, then as reals B's diagonals, U_B,
    V_B and divide and conquer's work, and its indices; eig's balanced
    matrix, H, Z, X, v on reals, Q's τ, the scratch of its blocks, then as
    reals the eigenvalues, the scales and S's column norms, and a complex
@@ -322,12 +355,12 @@ static int64_t scratch(const call *c) {
   int64_t m = c->m, n = c->n, big = m > n ? m : n, k = m < n ? m : n;
   switch (c->routine) {
     case SOLVE_TRIANGULAR: return n * n;
-    case QR: return m * n + k + (m + NB + 2 * big + 1) * NB;
+    case QR: return m * (n + PAD) + k + qr_scratch(m, n);
     case EIGH: return 4 * n * n + 16 * n + 2 + (3 * n + NB) * NB;
     case SVD: {
       int64_t tmp = m >= n ? k * k : big * (c->complete ? big : k);
       return big * k + 3 * k * k + 3 * (k + 1) * (k + 1) + 19 * k + 2 +
-             (3 * big + NB + 1) * NB + tmp;
+             svd_scratch(big, k) + tmp;
     }
     case EIG: return 5 * n * n + 7 * n + (3 * n + NB) * NB;
     default: return 0;
