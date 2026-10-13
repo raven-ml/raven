@@ -49,8 +49,9 @@ struct rig_wait {
 /* A part's kinds. 0 is no part: a room check answers RIG_NEVER for it. */
 enum { RIG_WORDS = 1, RIG_FILL, RIG_COPY, RIG_LAUNCH };
 
-/* The most parameter bytes a launch or fill has: the least of the drivers'
-   limits (Metal's setBytes, CUDA's launch). */
+/* The most parameter bytes a launch or fill has: Metal's limit for setBytes,
+   4 KB in Apple's Metal Feature Set Tables, the least of the drivers' limits.
+   CUDA's has been 32,764 bytes since CUDA 12.1. */
 #define RIG_PARAMS 4096
 
 /* A launch's or a fill's block in a run's [args]: the groups of its grid

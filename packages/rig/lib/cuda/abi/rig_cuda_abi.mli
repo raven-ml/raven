@@ -106,8 +106,11 @@ type graph = private {
     kernels live while the value is reachable.
 
     {b Warning.} A submission whose work launches [handle] must keep the
-    value ([Rig.Submission.make ~keep:graph]), or the graph may be destroyed
-    while its work runs. *)
+    value ([Rig.Submission.make ~keep:graph]). Otherwise the graph may be
+    destroyed, and its modules unloaded, while its work runs. A graph
+    collected between two of the submission's submits is destroyed at the
+    next operation {!section-graphs} names, and the next submit's fill
+    launches the destroyed graph. *)
 
 val graph :
   handle:nativeint -> nodes:nativeint array -> collect:(unit -> unit) -> graph

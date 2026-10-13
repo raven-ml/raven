@@ -562,9 +562,11 @@ let queue d kind ~ring ~bytes ~read ~write =
       d.queues <- (id, taken) :: d.queues;
       Ok (Mutex.protect opening (fun () -> doorbell d doorbell_offset))
 
-(* Records the fault [why]. A fault leaves the process's queues on the GPU
-   unscheduled, those made after it too, so the GPU keeps the first for every
-   later sleep and open. *)
+(* Records the fault [why]. rig refuses the GPU for the rest of the process
+   once its work faulted, since by default (amdgpu's
+   no_queue_eviction_on_vm_fault=0) the kernel driver schedules none of the
+   process's queues on it again, those made after the fault too. The GPU keeps
+   the first fault for every later sleep and open. *)
 let report g why = ignore (Atomic.compare_and_set g.faulted None (Some why))
 
 let raise_fault g =

@@ -84,8 +84,10 @@ val gpu : ?root:string -> int -> Rig_amd.t Rig_edge.opener
 
     An open after a device of the GPU was lost makes new queues in that
     address space. Once the kernel driver has reported a fault of the GPU's
-    work, though, it schedules none of the process's queues on that GPU
-    again. Every later [make] of the GPU then returns [Error], every
+    work, though, rig refuses the GPU for the rest of the process, since by
+    default ([no_queue_eviction_on_vm_fault] of the [amdgpu] module is [0])
+    the kernel driver schedules none of the process's queues on it again.
+    Every later [make] of the GPU then returns [Error], every
     {!Rig_amd.val-sleep} of its devices raises the fault, and only another
     process can use the GPU. A forked child opens a GPU anew, in an address
     space of its own, and the parent keeps its devices.

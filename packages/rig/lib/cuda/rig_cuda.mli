@@ -101,8 +101,8 @@ val gpu : int -> t Rig_edge.opener
        function of CUDA 12.4;}
     {- if [i >= count ()], or the GPU lacks what {!section-opening}
        requires;}
-    {- with CUDA's error, such as the error a fault left in the GPU's
-       context.}}
+    {- with CUDA's error, such as the error of a fault earlier in the
+       process.}}
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -323,9 +323,9 @@ val capability : t -> Rig_cuda_abi.t
 
     rig loses a device when CUDA reports a fault of its work, such as an
     illegal address or a kernel that a display's watchdog ended, at a later
-    call. A fault leaves its error in the GPU's context for the rest of the
-    process. Every later CUDA call in the context returns that error, and the
-    GPU cannot be opened again.
+    call. A fault leaves the process in an inconsistent state: every later
+    CUDA call returns the fault's error, and to use CUDA again the process
+    must be terminated and relaunched. So the GPU cannot be opened again.
 
     On a GPU whose kernels no display's watchdog bounds, rig also loses the
     device once its work has kept the word still for 30 s, even work that
@@ -334,14 +334,14 @@ val capability : t -> Rig_cuda_abi.t
     Before a fault, {!alloc}, {!map_host}, {!val-image} and {!entry} return
     CUDA's refusals as their result, [None], [Error] or [Absent], and
     {!unload} raises {!exception-Fault} if CUDA refuses to unload the module.
-    Once a fault has left an error in the context, the calls of {!alloc},
-    {!map_host}, {!val-image}, {!entry}, {!unload} and {!sleep} that call
-    CUDA raise {!exception-Fault} with it, and the others answer as before
-    the fault, such as an {!entry} for a function already found or a
-    {!sleep} once the word has moved. [rig_cuda_submit] and
-    [rig_cuda_commit] then return [RIG_FAILED] once they call CUDA, and the
-    [graph] function of {!val-capability} returns [Error]. {!free} and
-    {!stop} ignore CUDA's errors and raise nothing.
+    After a fault, the calls of {!alloc}, {!map_host}, {!val-image},
+    {!entry}, {!unload} and {!sleep} that call CUDA raise {!exception-Fault}
+    with its error, and the others answer as before the fault, such as an
+    {!entry} for a function already found or a {!sleep} once the word has
+    moved. [rig_cuda_submit] and [rig_cuda_commit] then return [RIG_FAILED]
+    once they call CUDA, and the [graph] function of {!val-capability}
+    returns [Error]. {!free} and {!stop} ignore CUDA's errors and raise
+    nothing.
 
     A [rig_cuda_submit] or [rig_cuda_commit] that fails returns [RIG_FAILED]
     with what it was doing and the error of the first CUDA call that failed,

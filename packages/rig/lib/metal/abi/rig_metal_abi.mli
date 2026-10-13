@@ -89,7 +89,9 @@ type icb = private {
 
     {b Warning.} A submission whose work runs [handle] must keep the value
     ([Rig.Submission.make ~keep:icb]), or the buffer may be released while
-    its work runs. *)
+    its work runs. A buffer collected between two of the submission's submits
+    is released with its pipelines, and the next submit's fill encodes the
+    released buffer. *)
 
 val icb :
   handle:nativeint -> commands:nativeint array -> collect:(unit -> unit) -> icb
