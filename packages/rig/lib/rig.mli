@@ -142,7 +142,8 @@ val close : t -> unit
     [d] with the reason ["closed"] and returns once its driver's stop
     ({!Rig_edge.Driver.val-stop}) has returned, which may be before [d] has
     stopped ({!section-stops}). From then on, uses of [d] raise {!Lost}, and
-    buffers over its memory return that memory once collected, through
+    buffers over its memory return that memory once collected and [d] has
+    stopped, at {!free_cache}[ d] or a {!Buffer.create} on [d], or through
     reclamation ({!section-reclaim}). Work that another domain submits on [d]
     during the close may be lost with [d].
     {ul
@@ -574,10 +575,11 @@ val failure : unit -> string option
     calls, on any domain. {!Buffer.create}, {!Buffer.of_string},
     {!Buffer.of_io} and {!Buffer.copy} first move the collected memory whose
     points are reached or dropped on the devices they use, and let go of the
-    values that collected submissions keep once their work is done.
-    Reclamation moves memory on every device, and a lost device's stop moves
-    its own. Memory collected while a domain blocks returns through other
-    domains' calls. A device reports its values up to [k] values late
+    values that collected submissions keep once their work is done, also
+    when they then raise {!Lost}. {!free_cache} moves memory on its device,
+    reclamation on every device, and a lost device's stop on its own.
+    Memory collected while a domain blocks returns through other domains'
+    calls. A device reports its values up to [k] values late
     ({!section-timeline}), and memory and kept values return by what it
     reports.
 
@@ -621,9 +623,11 @@ val set_budget : t -> int -> unit
     Raises [Invalid_argument] if [n < 0]. *)
 
 val free_cache : t -> unit
-(** [free_cache d] returns [d]'s cached memory to its driver once the work
-    using it is done. On {!host}, it frees the collected buffers the host
-    keeps for reuse. *)
+(** [free_cache d] first moves [d]'s collected memory ({!section-reclaim}),
+    then returns [d]'s cached memory to its driver once the work using it is
+    done. On a lost [d] that has stopped ({!section-stops}), that is all of
+    its memory that is collected. On {!host}, it frees the collected buffers
+    the host keeps for reuse. *)
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes,

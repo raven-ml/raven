@@ -27,7 +27,11 @@ let of_memory mem length =
 
 let create ?(memory = Device) d n =
   if n < 0 then invalid_argf "Rig.Buffer.create: %d bytes is negative" n;
-  if Dev.is_lost d then Dev.raise_lost d;
+  if Dev.is_lost d then begin
+    (* A lost device's own calls return its collected memory. *)
+    Memory.drain d;
+    Dev.raise_lost d
+  end;
   let mem =
     if Dev.is_host d then Memory.host_memory n
     else if n = 0 then begin
@@ -114,7 +118,11 @@ let places b =
 
 let borrow d b =
   check_live "Buffer.borrow" b;
-  if Dev.is_lost d then Dev.raise_lost d;
+  if Dev.is_lost d then begin
+    (* A lost device's own calls return its collected memory. *)
+    Memory.drain d;
+    Dev.raise_lost d
+  end;
   Memory.check b.mem;
   if b.mem.dev == d then Some b
   else

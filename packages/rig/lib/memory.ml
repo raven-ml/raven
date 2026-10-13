@@ -1262,5 +1262,8 @@ let set_budget d n =
   Dev.protect d set_device_budget (d, n);
   if Dev.is_host d then heap_trim n else release_cache ~upto:n ~wait:false d
 
+(* [d]'s drain first returns what was collected since its last call, and a
+   Stopped device's cache with it. *)
 let free_cache d =
+  drain d;
   if Dev.is_host d then heap_drop () else release_cache ~wait:false d

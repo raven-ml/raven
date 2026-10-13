@@ -434,13 +434,6 @@ val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)
 
-val reclaim : unit -> unit
-(** [reclaim ()] runs the rounds of reclamation ({!Rig.section-reclaim}),
-    which drain every device whose lock is free: an allocation that a full
-    budget refuses reclaims, then raises {!Rig.Out_of_memory}, which
-    [reclaim] drops. A lost device's memory collected after its stop
-    returns so. *)
-
 val io : string -> Rig.t
 (** [io name] is the io device named [name], whose memory holds nothing, opened
     unless it is open. *)

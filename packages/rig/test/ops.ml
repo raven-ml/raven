@@ -213,17 +213,13 @@ let peer_devices () =
   | _ -> []
 
 (* Collects what the caller dropped, then returns memory in the order it comes
-   back: reclamation, which drains every device, the host and the lost ones
-   included, and the drain of the peer move [d]'s mappings of their memory into
-   [d]'s cache, and [d]'s cache returns them; the memory they mapped is then
-   unreachable, and reclamation takes it back. *)
+   back: the frees of the host's, the peer's and [d]'s caches drain each first,
+   which moves [d]'s mappings of their memory into [d]'s cache, which [d]'s
+   free returns; the memory they mapped is then unreachable, and the same
+   frees again take it back. *)
 let settle d =
+  let devices = Rig.host :: peer_devices () @ [ d ] in
   collect ();
-  let drain d = if Rig.lost d = None then ignore (B.create d 0) in
-  let devices = peer_devices () @ [ d ] in
-  S.reclaim ();
-  List.iter drain devices;
   List.iter Rig.free_cache devices;
   collect ();
-  S.reclaim ();
-  Rig.free_cache Rig.host
+  List.iter Rig.free_cache devices

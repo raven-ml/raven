@@ -95,11 +95,13 @@ let lose d p =
   P.fail p;
   try ignore (submit (empty d)) with Rig.Lost _ -> ()
 
-(* Collects, then reclaims, which drains every device: a lost device's memory
-   collected after its stop returns so. *)
-let collect () =
+(* Collects, then frees the host's cache and [d]'s, which first drains them: the
+   memory of [d], lost, collected after its stop returns so, as do [d]'s
+   mappings of host memory collected since. *)
+let collect d =
   Gc.full_major ();
-  Support.reclaim ()
+  Rig.free_cache Rig.host;
+  Rig.free_cache d
 
 (* Memory of a stopped device dropped once its stop answered is still freed
    through its driver. *)
@@ -108,7 +110,7 @@ let test_free_after_stop () =
   let b = ref (Some (B.create d 64)) in
   lose d p;
   b := None;
-  collect ();
+  collect d;
   equal int 1 (count "free" p)
 
 (* A faulted device's frees after its stop raise its fault, which rig drops:
@@ -124,8 +126,8 @@ let test_faulted_frees () =
   ignore (Sys.opaque_identity (!kept, !mapped));
   kept := [];
   mapped := None;
-  collect ();
-  collect ();
+  collect d;
+  collect d;
   equal ~msg:"held" (list int) [] (P.outstanding p);
   equal ~msg:"frees and unmaps" (list int) [ 2; 1 ]
     (List.map (fun call -> count call p) [ "free"; "unmap" ]);
@@ -140,7 +142,7 @@ let test_unmap_after_stop () =
   equal ~msg:"mapped" (list int) [ 1 lsl 16 ] (P.host_maps p);
   lose d p;
   h := None;
-  collect ();
+  collect d;
   equal int 1 (count "unmap" p)
 
 (* A device whose stop answered Unknown frees memory dropped after its word read
@@ -153,7 +155,7 @@ let test_free_after_unknown () =
   P.set_word p (Rig.submitted d);
   ignore (B.create Rig.host 8);
   b := None;
-  collect ();
+  collect d;
   equal int 1 (count "free" p)
 
 (* A device whose queue waits on a lost device's unreached value is lost with
@@ -203,10 +205,10 @@ let test_unknown () =
   P.fail p;
   (try ignore (submit (empty d)) with Rig.Lost _ -> ());
   ignore (Sys.opaque_identity b);
-  collect ();
+  collect d;
   equal int 0 (count "free" p);
   P.set_word p (Rig.submitted d);
-  collect ();
+  collect d;
   equal int 1 (count "free" p)
 
 (* A wait checks the loss after its value: a reached value of a lost device
@@ -466,9 +468,11 @@ let test_close_reopen () =
   equal int 1 (Rig.Point.value (submit (empty d')))
 
 (* A closed device's memory and images that values reach after the close
-   return to the driver as they are collected, each once. *)
-let test_close_frees () =
-  let d, p = P.open_ "loss:close-frees" in
+   return to the driver, each once, at the first of [d]'s calls [returns] makes
+   after they are collected: [free_cache], or a [Buffer.create] that raises the
+   loss. *)
+let close_frees name returns =
+  let d, p = P.open_ name in
   let kept = ref [ B.create d 64; B.create ~memory:Pinned d 128 ] in
   let image = ref (Some (require_ok (Rig.Image.load d "functions"))) in
   Rig.close d;
@@ -478,10 +482,17 @@ let test_close_frees () =
   ignore (Sys.opaque_identity (!kept, !image));
   kept := [];
   image := None;
-  collect ();
+  Gc.full_major ();
+  returns d;
   equal ~msg:"once the buffers are collected" (list int) [] (P.outstanding p);
   equal ~msg:"frees" int 2 (count "free" p);
   equal ~msg:"unloads" int 1 (count "unload" p)
+
+let test_close_frees () = close_frees "loss:close-frees" Rig.free_cache
+
+let test_create_frees () =
+  close_frees "loss:create-frees" (fun d ->
+      raises_match (lost d) (fun () -> B.create d 8))
 
 (* A close of a lost device only waits for its stop: the device keeps its
    loss's reason. *)
@@ -499,14 +510,14 @@ let outlived name ends =
   ignore (require_some (B.borrow d (Option.get !peer)));
   let other = ref (Some (require_some (B.borrow e (Option.get !h)))) in
   ends d p;
-  collect ();
+  collect d;
   equal ~msg:"at the end" int 0 (count "unmap" p);
   raises_match (lost d) (fun () -> B.borrow d (Option.get !h));
   ignore (Sys.opaque_identity (!h, !peer, !other));
   h := None;
   peer := None;
   other := None;
-  collect ();
+  collect d;
   Rig.free_cache e;
   equal ~msg:"once the memory is freed" int 2 (count "unmap" p);
   equal ~msg:"held by the device" (list int) [] (P.outstanding p);
@@ -523,11 +534,11 @@ let test_memory_first () =
   ignore (require_some (B.borrow d (Option.get !h)));
   ignore (Sys.opaque_identity !h);
   h := None;
-  collect ();
+  collect d;
   equal ~msg:"with the memory" int 1 (count "unmap" p);
   Rig.close d;
-  collect ();
-  collect ();
+  collect d;
+  collect d;
   equal ~msg:"after the close" int 1 (count "unmap" p)
 
 (* The memory's death and its mapper's close race over one mapping: the
@@ -542,22 +553,22 @@ let test_unmap_race_memory_first () =
         ignore (require_some (B.borrow d (Option.get !h)));
         ignore (Sys.opaque_identity !h);
         h := None;
-        collect ())
+        collect d)
   in
   Support.await "the memory's unmap at the gate" (fun () -> P.freers p = 1);
   (* The unmap is a counted call of [d], which [d]'s stop waits for. *)
   let closer =
     Domain.spawn (fun () ->
         Rig.close d;
-        collect ();
-        collect ())
+        collect d;
+        collect d)
   in
   Support.await "the close's loss" (fun () -> Rig.lost d <> None);
   equal ~msg:"stopped while the unmap waits" int 0 (count "stop" p);
   P.open_frees p;
   Domain.join dropper;
   Domain.join closer;
-  collect ();
+  collect d;
   equal ~msg:"unmaps" int 1 (count "unmap" p)
 
 let test_close_lost () =
@@ -681,8 +692,14 @@ let tests =
            it (sampled for 50 ms)"
           test_two_closes;
         test "a closed device's name opens a new device" test_close_reopen;
-        test "a closed device's memory and images return once collected"
+        test
+          "a closed device's memory and images return once collected, at \
+           free_cache"
           test_close_frees;
+        test
+          "a closed device's memory and images return once collected, at a \
+           Buffer.create that raises"
+          test_create_frees;
         test
           "a closed device's mappings of memory that outlives it end with the \
            memory, once"

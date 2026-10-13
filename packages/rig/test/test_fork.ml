@@ -179,8 +179,8 @@ let test_io_used () =
   ignore (Sys.opaque_identity !m)
 
 (* An io device closed while a buffer of it lives has stopped and still holds
-   that memory: a child that drops the buffer gives the memory back at
-   reclamation, as its parent would. *)
+   that memory: a child that drops the buffer gives the memory back at the
+   device's free_cache, as its parent would. *)
 let test_io_closed () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let io = open_store "fork:io-closed" in
@@ -188,11 +188,11 @@ let test_io_closed () =
   Rig.close io;
   let lines, ended =
     in_child (fun () ->
-        Support.reclaim ();
+        Rig.free_cache io;
         let before = Atomic.get Store.held in
         m := None;
         Gc.full_major ();
-        Support.reclaim ();
+        Rig.free_cache io;
         [ Printf.sprintf "freed: %d" (before - Atomic.get Store.held) ])
   in
   equal string "exited 0" (status ended);

@@ -914,11 +914,11 @@ let test_reopen () =
   not_equal device d d';
   equal (option string) None (Rig.lost d')
 
-(* Collects, then reclaims, which drains every device: a closed device's
-   memory collected after its close returns so. *)
-let settle () =
+(* Collects, then frees [d]'s cache, which first drains [d]: a closed device's
+   memory collected after its stop returns so. *)
+let settle d =
   Gc.full_major ();
-  Support.reclaim ()
+  Rig.free_cache d
 
 let lost = function Rig.Lost _ -> true | _ -> false
 
@@ -948,7 +948,7 @@ let test_ended () =
   let before = facts d and arch = Rig.arch d in
   Rig.set_budget d 4096;
   Rig.close d;
-  settle ();
+  settle d;
   equal string "open:ended" (Rig.name d);
   equal string arch (Rig.arch d);
   equal (list bool) before (facts d);
@@ -983,7 +983,6 @@ let test_points_name_device () =
     q
   in
   let p = point "open:named-a" and q = point "open:named-b" in
-  settle ();
   Gc.full_major ();
   let d = Rig.Point.device p and e = Rig.Point.device q in
   not_equal device d e;
@@ -1005,7 +1004,7 @@ let test_close_unmaps_word () =
   equal ~msg:"the consumer's wait in its queue" int 1
     (List.length (P.last_waits cp));
   Rig.close consumer;
-  settle ();
+  settle consumer;
   let count call = List.length (List.filter (String.equal call) (P.log cp)) in
   equal ~msg:"its mappings" int 1 (count "map_peer");
   equal ~msg:"its mappings given back" int 1 (count "unmap")
@@ -1041,7 +1040,8 @@ let test_open_close () =
     let a = submit (Rig.Submission.make p [||]) in
     Rig.Point.wait (submit uses ~buffers:[| b |] ~waits:[| a |]);
     Rig.close d;
-    Rig.close p
+    Rig.close p;
+    [ p; d ]
   in
   let heap () =
     match Support.heap_bytes () with
@@ -1051,10 +1051,9 @@ let test_open_close () =
   let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
   let window () =
     let c = heap () and ml = live () in
-    for i = 1 to opens do
-      cycle i
-    done;
-    settle ();
+    let closed = List.concat (List.init opens (fun i -> cycle (i + 1))) in
+    Gc.full_major ();
+    List.iter Rig.free_cache closed;
     Rig.Buffer.wait h Rig.Read_write;
     (heap () - c, live () - ml)
   in

@@ -147,11 +147,11 @@ let test_upload_fails () =
   P.fail p;
   raises_match (lost d) (fun () -> Image.load d "code:64")
 
-(* Collects, then reclaims, which drains every device: a lost device's memory
-   collected after its stop returns so. *)
-let collect () =
+(* Collects, then frees [d]'s cache, which first drains [d]: a lost device's
+   memory collected after its stop returns so. *)
+let collect d =
   Gc.full_major ();
-  Support.reclaim ()
+  Rig.free_cache d
 
 (* A load whose upload loses the device gives its code memory back only once the
    device counts as stopped: its work may still run until then. The upload's
@@ -160,10 +160,10 @@ let test_upload_frees_after_stop () =
   let d, p = P.open_ ~answer:`Unknown "image:upload-unknown" in
   P.fail p;
   raises_match (lost d) (fun () -> Image.load d "code:64");
-  collect ();
+  collect d;
   equal ~msg:"before the word drained" int 64 (P.allocated p Device);
   P.set_word p (Rig.submitted d);
-  collect ();
+  collect d;
   equal ~msg:"once it did" int 0 (P.allocated p Device)
 
 let rec after_stop = function
@@ -182,7 +182,7 @@ let test_unload_after_stop () =
   equal ~msg:"by the stop" int 0 (count "unload" p);
   raises_match (lost d) (fun () -> Image.mem (Option.get !i) "main");
   i := None;
-  collect ();
+  collect d;
   equal ~msg:"after the stop" (list string) [ "unload" ]
     (List.filter (( = ) "unload") (after_stop (P.log p)));
   equal ~msg:"its code's memory" bool true
@@ -197,10 +197,10 @@ let test_unload_after_unknown () =
   P.fail p;
   raises_match (lost d) (fun () -> submit (Sub.make d [||]));
   i := None;
-  collect ();
+  collect d;
   equal ~msg:"with the word short" int 0 (count "unload" p);
   P.set_word p (Rig.submitted d);
-  collect ();
+  collect d;
   equal ~msg:"once the word drained" int 1 (count "unload" p)
 
 let drain d = ignore (Sys.opaque_identity (B.create d 0))
@@ -274,10 +274,10 @@ let test_unloads_beside_loss () =
   equal ~msg:"the fault is recorded" (option string) (Some "the engine hung")
     (Rig.lost d);
   equal ~msg:"later unloads wait" int 1 (count "unload" p);
-  collect ();
+  collect d;
   equal ~msg:"the unknown stop keeps them" int 1 (count "unload" p);
   P.set_word p (Rig.submitted d);
-  collect ();
+  collect d;
   equal ~msg:"the final release retries once stopped" int 2 (count "unload" p)
 
 (* Two domains drop images and drain their device while its work waits to run:

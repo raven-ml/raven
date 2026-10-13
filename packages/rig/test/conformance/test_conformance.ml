@@ -1090,7 +1090,7 @@ let idle_close (module G : Gpu) () =
    open waits for a Polled producer's value, which the device's queue waits
    for where it maps the producer's word: its close gives the mapping back.
    A warm run of as many opens fills the caches and tables the opens grow to,
-   and reclamation returns each closed device's memory. *)
+   and each closed device's memory returns at its [free_cache]. *)
 let opens = 32
 
 (* What an open keeps of the C heap past its close, per device: rig's records,
@@ -1105,9 +1105,9 @@ let kept_c = 4096
    the driver's handle. *)
 let kept_ml = 2048
 
-let settle () =
+let settle ds =
   Gc.full_major ();
-  Rig_support.reclaim ()
+  List.iter Rig.free_cache ds
 
 let open_close (module G : Gpu) () =
   let cycle () =
@@ -1118,7 +1118,8 @@ let open_close (module G : Gpu) () =
     ignore (P.run pp : int);
     Rig.Point.wait p;
     G.close t;
-    Rig.close pd
+    Rig.close pd;
+    [ t.d; pd ]
   in
   let heap () =
     match Rig_support.heap_bytes () with
@@ -1126,15 +1127,10 @@ let open_close (module G : Gpu) () =
     | None -> skip ~reason:"the system counts no C heap" ()
   in
   let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
-  for _ = 1 to opens do
-    cycle ()
-  done;
-  settle ();
+  let cycles () = List.concat (List.init opens (fun _ -> cycle ())) in
+  settle (cycles ());
   let c = heap () and ml = live () in
-  for _ = 1 to opens do
-    cycle ()
-  done;
-  settle ();
+  settle (cycles ());
   at_most int ~msg:"the C heap's growth over the opens"
     ~than:(2 * opens * kept_c) (heap () - c);
   at_most int ~msg:"the OCaml heap's growth over the opens"

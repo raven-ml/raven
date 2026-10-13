@@ -149,11 +149,11 @@ let test_budget_beside_loss () =
   equal ~msg:"frees" int 3
     (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
 
-(* Collects, then reclaims, which drains every device: a closed device's
-   memory collected after its close returns so. *)
-let settle () =
+(* Collects, then frees the cache of each of [ds], which first drains it: a
+   closed device's memory collected after its stop returns so. *)
+let settle ds =
   Gc.full_major ();
-  Support.reclaim ()
+  List.iter Rig.free_cache ds
 
 (* A closed device's cache returns its memory to the driver once the device
    stopped. Buffers of 40 sizes fill 40 keys of the cache, which grows. *)
@@ -168,7 +168,7 @@ let test_closed_cache () =
   let cached = List.fold_left ( + ) 0 sizes in
   greater ~msg:"bytes in the cache" int ~than:(cached - 1) (Rig.allocated d);
   Rig.close d;
-  settle ();
+  settle [ d ];
   equal ~msg:"regions left with the driver" (list int) []
     (List.filter (fun n -> n = 8 || List.mem n sizes) (P.outstanding p))
 
@@ -205,7 +205,7 @@ let test_give_beside_stop () =
   collect c;
   P.open_frees po;
   Domain.join freer;
-  settle ();
+  settle [ o; c ];
   let frees at = List.length (List.filter (fun (a, _) -> a = at) (P.frees po)) in
   equal ~msg:"the other memory's frees" int 1 (frees other);
   equal ~msg:"the mapped memory's frees" int 1 (frees at)
@@ -256,13 +256,13 @@ let test_close_beside_borrow () =
   Support.await "the borrow's locate at the gate" (fun () ->
       P.locaters pd = 1);
   Rig.close d;
-  settle ();
+  settle [ d ];
   P.open_locates pd;
   mem ~msg:"the borrow" string (Domain.join borrower) [ "borrowed"; "lost" ];
   held := None;
   collect o;
   Rig.set_budget o 0;
-  settle ();
+  settle [ d; o ];
   equal ~msg:"the mapper's regions" (list int) [] (P.outstanding pd);
   equal ~msg:"the memory's frees" int 1
     (List.length (List.filter (fun (a, _) -> a = at) (P.frees po)))
@@ -336,10 +336,10 @@ let test_mapper_beside_free () =
   in
   P.open_frees po';
   Rig.close other;
-  settle ();
+  settle [ other ];
   P.open_frees gated;
   equal ~msg:"the memory's free" string "freed" (Domain.join freer);
-  settle ();
+  settle [ o; a; b ];
   equal ~msg:"the closed mapper's regions" (list int) [] (P.outstanding po');
   equal ~msg:"the held mapping" bool true (List.mem "unmap" (P.log gated));
   equal ~msg:"the memory's frees" int 1

@@ -190,14 +190,14 @@ let reopen () =
       Rig_nv.stop g ~fault:None)
 
 (* Opening and closing a GPU through rig again and again keeps at most one
-   device's mappings per open, once reclamation returned its memory. *)
+   device's mappings per open, once its memory returned. *)
 let reclose () =
   if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   cycles (fun () ->
       let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
       Rig.close d;
       Gc.full_major ();
-      Rig_support.reclaim ())
+      Rig.free_cache d)
 
 let () =
   exit

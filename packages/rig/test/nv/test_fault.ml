@@ -44,11 +44,11 @@ let in_child (f : unit -> 'a) : ('a, string) result =
       ignore (Unix.waitpid [] pid);
       result
 
-(* Collects, then reclaims, which drains every device: a lost device's memory
-   collected after its stop returns so. *)
-let collect () =
+(* Collects, then frees [d]'s cache, which first drains [d]: a lost device's
+   memory collected after its stop returns so. *)
+let collect d =
   Gc.full_major ();
-  Rig_support.reclaim ()
+  Rig.free_cache d
 
 (* Launches [double_index] on [t] over [out], an address of [t]'s. *)
 let double t out =
@@ -74,7 +74,9 @@ let double t out =
 
 (* Opens the GPU and launches the kernel over pinned memory: whether its words
    are the kernel's. *)
-let launch_correctly () =
+(* Launches on a device it then closes: whether the launch wrote what it should,
+   and the device. *)
+let launched () =
   let t = S.open_ () in
   let out = Rig.Buffer.create ~memory:Pinned t.d (4 * n) in
   double t (Some out);
@@ -87,7 +89,9 @@ let launch_correctly () =
           (List.init n Fun.id))
   in
   S.close t;
-  ok
+  (ok, t.d)
+
+let launch_correctly () = fst (launched ())
 
 let lost d = function
   | Rig.Lost (d', why) when Rig.equal d d' -> Some why
@@ -113,8 +117,7 @@ type report = {
    process keeps for good: a fault, what it answers, and the process's files and
    mappings once the device's memory is collected. *)
 let fault () =
-  ignore (launch_correctly ());
-  collect ();
+  collect (snd (launched ()));
   let files = open_files () and maps = Rig_nv_nvidia_support.mappings () in
   let t = S.open_ () in
   let d = t.d in
@@ -133,7 +136,7 @@ let fault () =
     ]
   in
   let lost = Rig.lost d in
-  collect ();
+  collect d;
   {
     run;
     lost;

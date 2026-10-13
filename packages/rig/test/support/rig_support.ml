@@ -668,27 +668,6 @@ let await what f =
     Thread.yield ()
   done
 
-(* A device whose budget one live buffer fills, opened at the first
-   [reclaim], and again in a forked child, which inherits it lost. *)
-let reclaimer = ref None
-let reclaimer_lock = Mutex.create ()
-
-let full () =
-  Mutex.protect reclaimer_lock @@ fun () ->
-  match !reclaimer with
-  | Some ((d, _) as r) when Rig.lost d = None -> r
-  | _ ->
-      let d, _ = Polled.open_ ~budget:64 "support:reclaim" in
-      let r = (d, Rig.Buffer.create d 64) in
-      reclaimer := Some r;
-      r
-
-let reclaim () =
-  let d, kept = full () in
-  match Rig.Buffer.create d 64 with
-  | _ -> failwith "reclaim: a full budget took another buffer"
-  | exception Rig.Out_of_memory _ -> ignore (Sys.opaque_identity kept)
-
 (* Io devices and machines *)
 
 module Empty = struct
