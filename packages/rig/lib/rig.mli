@@ -716,9 +716,9 @@ module Buffer : sig
       io device the memory is what {!Rig_edge.Io.alloc} makes, whatever
       [memory].
 
-      Raises [Invalid_argument] if [n < 0] or [d] is an io device that makes
-      no memory of its own, and {!Lost} if [d] is lost or the allocation
-      loses it. *)
+      Raises [Invalid_argument] if [n < 0], or if [n > 0] and [d] is an io
+      device whose library allocates nothing ({!Rig_edge.Io.alloc}), and
+      {!Lost} if [d] is lost or the allocation loses it. *)
 
   val of_string : string -> t
   (** [of_string s] is a buffer on {!host} holding [s]'s bytes, placed as
