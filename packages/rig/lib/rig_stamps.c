@@ -71,6 +71,14 @@ static _Atomic uint64_t *words(struct rig_stamps *s, int keep) {
   return keep ? s->keep : s->use;
 }
 
+/* The write word beside the use word [use]: its chunk's write[i] for its
+   use[i]. */
+static _Atomic uint64_t *write_word(_Atomic uint64_t *use) {
+  ptrdiff_t at = (ptrdiff_t)offsetof(struct rig_stamps, write) -
+                 (ptrdiff_t)offsetof(struct rig_stamps, use);
+  return (_Atomic uint64_t *)((char *)use + at);
+}
+
 /* Whether the word [p] of another device's work is spent: that device's stop
    was claimed and its point is done or was never raised. A submit checks
    that its device is not lost under the device's mutex, its turn, before
@@ -151,40 +159,28 @@ static uint64_t use_point(_Atomic uint64_t *w) {
   return RIG_VALUE(p) == 0 ? 0 : p;
 }
 
-/* Raises a submission's device's use word to its value [p]. Only that
-   device's submissions raise the word, one at a time under its turn, each
-   with a greater value than the last, so the raise is a store. */
+/* Raises a submission's device's use or write word to its value [p]. Only
+   that device's submissions raise the word, one at a time under its turn,
+   each with a greater value than the last, so the raise is a store. */
 static void raise_own(_Atomic uint64_t *slot, uint64_t p) {
   atomic_store_explicit(slot, p, memory_order_release);
 }
 
-/* Makes [p] the last write. A write of another device replaces the last
-   write: its caller ordered the two writes. */
-static void raise_last_write(struct rig_stamps *s, uint64_t p) {
-  uint64_t cur = atomic_load(&s->write);
-  for (;;) {
-    uint64_t next = RIG_INDEX(cur) == RIG_INDEX(p) && cur > p ? cur : p;
-    if (next == cur || atomic_compare_exchange_weak(&s->write, &cur, next))
-      break;
-  }
-}
-
-/* A walk of stamps reads their last write, then each chunk's words in
-   turn, stepping to the next chunk itself: each read is one load,
-   whatever the number of chunks. */
+/* A walk of stamps reads each chunk's words in turn, stepping to the next
+   chunk itself: each read is one call, whatever the number of chunks. */
 
 value caml_rig_stamps_uses(value unit) {
   (void)unit;
   return Val_int(RIG_USES);
 }
 
-value caml_rig_stamps_write(value v_s) {
-  return Val_long((intnat)atomic_load(&Stamps_val(v_s)->write));
-}
-
-/* The point of the chunk [v_c]'s use word [v_i], 0 for none. */
-value caml_rig_stamps_use(value v_c, value v_i) {
-  return Val_long((intnat)use_point(&Stamps_val(v_c)->use[Int_val(v_i)]));
+/* rig_stamps_followed of the chunk [v_c]'s words [v_i], for [v_every], with
+   OCaml's min_int for its -1: a point from index 32768 on is a negative
+   OCaml int, and min_int, whose value bits are 0, is no point. */
+value caml_rig_stamps_followed(value v_c, value v_i, value v_every) {
+  int64_t p = rig_stamps_followed(Stamps_val(v_c), Int_val(v_i),
+                                  Bool_val(v_every));
+  return Val_long(p < 0 ? Min_long : (intnat)p);
 }
 
 /* The point of the chunk [v_c]'s keep word [v_i], 0 for none. */
@@ -202,10 +198,10 @@ value caml_rig_stamps_next(value v_c) {
    writes these stamps, so the stores race with nothing. */
 value caml_rig_stamps_clear(value v_s) {
   struct rig_stamps *s = Stamps_val(v_s);
-  atomic_store(&s->write, 0);
   for (; s != NULL; s = atomic_load(&s->next))
     for (int i = 0; i < RIG_USES; i++) {
       atomic_store(&s->use[i], 0);
+      atomic_store(&s->write[i], 0);
       atomic_store(&s->keep[i], 0);
     }
   return Val_unit;
@@ -650,24 +646,38 @@ static void add_point(struct rig_run *r, int own, uint64_t p) {
   r->points[r->npoints++] = p;
 }
 
-static void add_uses(struct rig_run *r, int own, struct rig_stamps *st) {
-  for (; st != NULL; st = atomic_load(&st->next))
-    for (int i = 0; i < RIG_USES; i++)
-      add_point(r, own, use_point(&st->use[i]));
-}
-
-/* Adds the points the use [u] of the memory of the stamps [st] follows: its
-   last write, and every use if the work writes it; none if it is unordered.
-   Is [own]'s use word in the stamps, reserved, its keep word for an
-   unordered use. */
+/* Adds the points the use [u] of the memory of the stamps [st] follows:
+   each device's last write, and every use if the work writes it; none if it
+   is unordered. Is [own]'s use word in the stamps, reserved, its keep word
+   for an unordered use. The walk is rig_stamps_followed's, and it finds
+   [own]'s use word on the way, before that word's write word is read: its
+   device order covers its own work, and the write word beside its use word
+   holds its own write or a spent device's done point. */
 static _Atomic uint64_t *add_memory(struct rig_run *r, int own,
                                     struct rig_stamps *st, enum rig_use u) {
   if (u == RIG_USE_UNORDERED) return reserve_any(st, own, 1);
-  _Atomic uint64_t *use = reserve(st, own);
-  uint64_t w = atomic_load_explicit(&st->write, memory_order_acquire);
-  if (w != 0 && RIG_INDEX(w) != own) add_point(r, own, w);
-  if (u == RIG_USE_WRITE) add_uses(r, own, st);
-  return use;
+  /* Memory that only [own] uses, the common case, has nothing to follow:
+     its first use word is [own]'s and its second empty. */
+  uint64_t first = atomic_load_explicit(&st->use[0], memory_order_acquire);
+  if (first != 0 && RIG_INDEX(first) == own &&
+      atomic_load_explicit(&st->use[1], memory_order_acquire) == 0)
+    return &st->use[0];
+  int every = u == RIG_USE_WRITE;
+  _Atomic uint64_t *mine = NULL;
+  for (struct rig_stamps *c = st; c != NULL;
+       c = atomic_load_explicit(&c->next, memory_order_acquire))
+    for (int i = 0; i < RIG_USES; i++) {
+      uint64_t w = atomic_load_explicit(&c->use[i], memory_order_acquire);
+      if (w == 0) return mine != NULL ? mine : reserve_any(st, own, 0);
+      if (RIG_INDEX(w) == own) {
+        if (mine == NULL) mine = &c->use[i];
+        continue;
+      }
+      uint64_t p =
+          every ? w : atomic_load_explicit(&c->write[i], memory_order_acquire);
+      if (RIG_VALUE(p) != 0) add_point(r, own, p);
+    }
+  return mine != NULL ? mine : reserve_any(st, own, 0);
 }
 
 /* Writes each entry ref's value into the run [v_r]'s blocks, which the
@@ -744,12 +754,11 @@ value caml_rig_run_wait(value v_r, value v_producer, value v_at,
 /* Raises the stamps [s]'s work names in [r] to [p]. */
 void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p) {
   for (int k = 0; k < s->nfixed; k++) {
-    if (s->fixed[k].use == RIG_USE_WRITE)
-      raise_last_write(s->fixed[k].stamps, p);
+    if (s->fixed[k].use == RIG_USE_WRITE) raise_own(write_word(r->fixed[k]), p);
     raise_own(r->fixed[k], p);
   }
   for (int k = 0; k < s->nslots; k++) {
-    if (s->uses[k] == RIG_USE_WRITE) raise_last_write(r->slots[k].stamps, p);
+    if (s->uses[k] == RIG_USE_WRITE) raise_own(write_word(r->slots[k].use), p);
     raise_own(r->slots[k].use, p);
   }
   if (r->hold != NULL) raise_own(r->hold_use, p);

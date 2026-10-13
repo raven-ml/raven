@@ -350,38 +350,33 @@ static enum rig_claim follow(enum rig_claim a, uint64_t p) {
   return rig_point_lost(p) ? RIG_LOST : RIG_WAIT;
 }
 
-static enum rig_claim follow_uses(enum rig_claim a, struct rig_stamps *s) {
+/* The answer for the work of the stamps [s] an access must follow: that of
+   each device's last write, or of every use if [every]. Out of line, so
+   that a claim of memory with no stamps saves no registers for it. */
+static __attribute__((noinline)) enum rig_claim follow_stamps(struct rig_stamps *s, int every) {
+  enum rig_claim a = RIG_CLAIMED;
   for (; s != NULL && a != RIG_LOST;
        s = atomic_load_explicit(&s->next, memory_order_acquire))
     for (int i = 0; i < RIG_USES; i++) {
-      uint64_t p = atomic_load_explicit(&s->use[i], memory_order_acquire);
-      if (RIG_VALUE(p) != 0) a = follow(a, p);
+      int64_t p = rig_stamps_followed(s, i, every);
+      if (p < 0) return a;
+      if (p != 0) a = follow(a, (uint64_t)p);
     }
   return a;
 }
 
-/* The answer for the work of the stamps [s] an access must follow: that
-   of the last write, or of every use if [every]. A use word that a
-   submission reserved holds no value until its first raise. Out of line,
-   so that a claim of memory with no stamps saves no registers for it. */
-static __attribute__((noinline)) enum rig_claim follow_stamps(struct rig_stamps *s, int every) {
-  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
-  enum rig_claim a = w != 0 ? follow(RIG_CLAIMED, w) : RIG_CLAIMED;
-  return every ? follow_uses(a, s) : a;
-}
-
-/* The first point of the stamps [v_st] a lost device did not reach: their
-   last write's, then, if [v_every], their uses'; 0 for none. A wait that
-   would block reads it first, so it waits out no work ahead of a loss. */
+/* The first point of the stamps [v_st] a lost device did not reach: of
+   their uses if [v_every], of their writes otherwise; 0 for none. A wait
+   that would block reads it first, so it waits out no work ahead of a
+   loss. */
 value caml_rig_stamps_lost(value v_st, value v_every) {
-  struct rig_stamps *s = (struct rig_stamps *)Long_val(v_st);
-  uint64_t w = atomic_load_explicit(&s->write, memory_order_acquire);
-  if (w != 0 && rig_point_lost(w)) return Val_long((intnat)w);
-  if (!Bool_val(v_every)) return Val_long(0);
-  for (; s != NULL; s = atomic_load_explicit(&s->next, memory_order_acquire))
+  int every = Bool_val(v_every);
+  for (struct rig_stamps *s = (struct rig_stamps *)Long_val(v_st); s != NULL;
+       s = atomic_load_explicit(&s->next, memory_order_acquire))
     for (int i = 0; i < RIG_USES; i++) {
-      uint64_t p = atomic_load_explicit(&s->use[i], memory_order_acquire);
-      if (RIG_VALUE(p) != 0 && rig_point_lost(p)) return Val_long((intnat)p);
+      int64_t p = rig_stamps_followed(s, i, every);
+      if (p < 0) return Val_long(0);
+      if (p != 0 && rig_point_lost((uint64_t)p)) return Val_long((intnat)p);
     }
   return Val_long(0);
 }
@@ -389,9 +384,9 @@ value caml_rig_stamps_lost(value v_st, value v_every) {
 /* Claims first, then checks [b] under the claim: the compare-and-set
    follows the release of any donation that consumed the memory, so the
    checks see its consumption and its stamps, those of every use if
-   [every], else of the last write. Work that is not done keeps the claim:
-   the caller waits under it, so no donation consumes the memory between
-   the wait and the access, and a loss's wait raises it. */
+   [every], else of every device's last write. Work that is not done keeps
+   the claim: the caller waits under it, so no donation consumes the memory
+   between the wait and the access, and a loss's wait raises it. */
 static inline enum rig_claim claim_checked(value b, enum rig_access access,
                                            int every) {
   value mem = Field(b, BUFFER_MEM);

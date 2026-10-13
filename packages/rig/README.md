@@ -29,8 +29,8 @@ hello
 ```
 
 The blit back reads `on_d`, so rig starts it after the first blit has
-written it. Whatever reads memory follows its last write, and whatever
-writes memory follows every use (the Order section of
+written it. Whatever reads memory follows every device's last write of
+it, and whatever writes memory follows every use (the Order section of
 [`rig.mli`](lib/rig.mli)).
 
 On a GPU, only the line that opens the device changes. On a Mac:

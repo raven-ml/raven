@@ -34,7 +34,8 @@ external c_why : int -> string = "caml_rig_why"
 external c_upgrade : int -> bool = "caml_rig_upgrade" [@@noalloc]
 
 (* The first point of the stamps [st] that a lost device did not reach, among
-   their last write's and, if [every], their uses', [0] for none. *)
+   their uses' if [every] and every device's last write's otherwise, [0] for
+   none. *)
 external c_stamps_lost : int -> bool -> int = "caml_rig_stamps_lost"
 [@@noalloc]
 external c_lose : c -> string -> bool -> bool = "caml_rig_lose"

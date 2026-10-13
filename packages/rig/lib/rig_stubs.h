@@ -146,26 +146,47 @@ struct rig_device {
 void rig_device_ref(struct rig_device *d);
 void rig_device_unref(struct rig_device *d);
 
-/* A memory's stamps: the point of its last write and, per device, the point
-   of its last use. A chunk never moves, so a raise is one store or
-   compare-and-set; a submission reserves its device's use word before its
-   hand-over, so a raise allocates nothing. A reservation takes the word of
-   a device whose stop was claimed and whose point is done, so the chunks
-   grow only with the devices that use the memory at once. A word whose
-   point a loss dropped stays for good. [refs] counts the memories and
-   holds that share it. A hold's stamps hold only uses: those of the
-   submissions made with it. */
+/* A memory's stamps: per device, the point of its last use and the point of
+   its last write. A chunk's write[i] belongs to the device of its use[i],
+   and only that device's submissions store to the two, one at a time under
+   its turn, so two devices' writes never replace each other. A chunk never
+   moves, so a raise is one store; a submission reserves its device's use
+   word before its hand-over, so a raise allocates nothing. A reservation
+   takes the word of a device whose stop was claimed and whose point is
+   done, so the chunks grow only with the devices that use the memory at
+   once. Its write word keeps that device's done point until the new device
+   writes. A reservation scans from the first chunk and takes the first
+   empty or spent word of its kind, and a use word never empties, so every
+   use word after an empty one is empty: a walk ends at the first empty use
+   word. A word whose point a loss dropped stays for good. [refs] counts the
+   memories and holds that share it. A hold's stamps hold only uses: those
+   of the submissions made with it. */
 #define RIG_USES 4
 
 struct rig_stamps {
-  _Atomic uint64_t write;
   _Atomic uint64_t use[RIG_USES];
+  _Atomic uint64_t write[RIG_USES];
   /* Per device, the last point of its work that uses the memory unordered:
      the memory returns after it, and no access follows it. */
   _Atomic uint64_t keep[RIG_USES];
   _Atomic(struct rig_stamps *) next;
   _Atomic int refs; /* in the first chunk only */
 };
+
+/* The point of the chunk [s]'s [i]th words that an access follows: its use
+   word's if [every], its write word's otherwise, 0 for none; or -1 from
+   the chunk's first empty use word on, where a walk of the stamps ends. A
+   write raises its device's use word too, so the use words cover every
+   write. A use word that a submission reserved holds no value until its
+   first raise. */
+static inline int64_t rig_stamps_followed(struct rig_stamps *s, int i,
+                                          int every) {
+  uint64_t u = atomic_load_explicit(&s->use[i], memory_order_acquire);
+  if (u == 0) return -1;
+  uint64_t p =
+      every ? u : atomic_load_explicit(&s->write[i], memory_order_acquire);
+  return RIG_VALUE(p) == 0 ? 0 : (int64_t)p;
+}
 
 /* How a submission's work uses a buffer, as Submission.use orders its
    constructors. */

@@ -13,40 +13,35 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 external stamps_new : unit -> int = "caml_rig_stamps_new"
 external stamps_ref : int -> unit = "caml_rig_stamps_ref" [@@noalloc]
 external stamps_unref : int -> unit = "caml_rig_stamps_unref" [@@noalloc]
-external stamps_write : int -> int = "caml_rig_stamps_write" [@@noalloc]
-external stamps_use : int -> int -> int = "caml_rig_stamps_use" [@@noalloc]
+external stamps_followed : int -> int -> bool -> int
+  = "caml_rig_stamps_followed"
+[@@noalloc]
+
 external stamps_keep : int -> int -> int = "caml_rig_stamps_keep" [@@noalloc]
 external stamps_next : int -> int = "caml_rig_stamps_next" [@@noalloc]
 external stamps_clear : int -> unit = "caml_rig_stamps_clear" [@@noalloc]
 external stamps_uses : unit -> int = "caml_rig_stamps_uses"
 
-(* The number of use words, and of keep words, in a chunk of stamps. A walk
-   reads the last write, then each chunk's words from the first chunk, the
-   stamps themselves, on; a point 0 is an empty word. *)
+(* The number of use words, of write words and of keep words in a chunk of
+   stamps. A walk reads each chunk's words from the first chunk, the stamps
+   themselves, on, and ends where [stamps_followed] answers [ended]; a point
+   0 is a word with no point. *)
 let uses = stamps_uses ()
+let ended = min_int
 
 (* [f] over the use points of the chunk [c] from its [i]th word on, and of
    the chunks after it. *)
 let rec iter_from f c i =
   if c <> 0 then
     if i = uses then iter_from f (stamps_next c) 0
-    else begin
-      let p = stamps_use c i in
-      if p <> 0 then f p;
-      iter_from f c (i + 1)
-    end
+    else
+      let p = stamps_followed c i true in
+      if p <> ended then begin
+        if p <> 0 then f p;
+        iter_from f c (i + 1)
+      end
 
-let iter_points f st =
-  if st <> 0 then begin
-    let p = stamps_write st in
-    if p <> 0 then f p;
-    iter_from f st 0
-  end
-
-let iter_write f st =
-  if st <> 0 then
-    let p = stamps_write st in
-    if p <> 0 then f p
+let iter_points f st = iter_from f st 0
 
 (* [m]'s root: the owner's record for a borrow, [m] for the owner's, whose root
    field holds [itself] (below), the one record whose root is itself. *)
@@ -54,34 +49,29 @@ let[@inline] root m =
   let r = m.root in
   if r.root == r then m else r
 
-(* Waits for the use points of [m]'s stamps from the chunk [c]'s [i]th word
-   on, with no closure: the walk is a host access's every wait. [m], whose
-   collection frees the stamps, is an argument of every step, so it stays
-   reachable through every wait and every read. *)
-let rec wait_from m c i =
+(* Waits for the use points of [m]'s stamps if [every], their write points
+   otherwise, from the chunk [c]'s [i]th word on, with no closure: the walk
+   is a host access's every wait. [m], whose collection frees the stamps, is
+   an argument of every step, so it stays reachable through every wait and
+   every read. *)
+let rec wait_from m every c i =
   if c = 0 then ignore (Sys.opaque_identity m)
-  else if i = uses then wait_from m (stamps_next c) 0
-  else begin
-    let p = stamps_use c i in
-    if p <> 0 then Dev.wait_point m true p;
-    wait_from m c (i + 1)
-  end
+  else if i = uses then wait_from m every (stamps_next c) 0
+  else
+    let p = stamps_followed c i every in
+    if p = ended then ignore (Sys.opaque_identity m)
+    else begin
+      if p <> 0 then Dev.wait_point m every p;
+      wait_from m every c (i + 1)
+    end
 
 let wait_points m =
   let m = root m in
-  let st = m.entry.stamps in
-  if st <> 0 then begin
-    let p = stamps_write st in
-    if p <> 0 then Dev.wait_point m true p;
-    wait_from m st 0
-  end
+  wait_from m true m.entry.stamps 0
 
 let wait_write m =
   let m = root m in
-  let st = m.entry.stamps in
-  if st <> 0 then
-    let p = stamps_write st in
-    if p <> 0 then Dev.wait_point m false p
+  wait_from m false m.entry.stamps 0
 
 (* Visit every point even after a refusal: reading a later transport word may
    discover a loss and stop its device. The walk carries no allocated state. *)
@@ -89,16 +79,13 @@ let rec all_from f c i ok =
   if c = 0 then ok
   else if i = uses then all_from f (stamps_next c) 0 ok
   else
-    let p = stamps_use c i in
-    let ok = (p = 0 || f p) && ok in
-    all_from f c (i + 1) ok
+    let p = stamps_followed c i true in
+    if p = ended then ok
+    else
+      let ok = (p = 0 || f p) && ok in
+      all_from f c (i + 1) ok
 
-let for_all_points f st =
-  st = 0
-  ||
-  let p = stamps_write st in
-  let ok = p = 0 || f p in
-  all_from f st 0 ok
+let for_all_points f st = all_from f st 0 true
 
 let check_points st = iter_points Dev.check st
 

@@ -32,9 +32,9 @@
     An {e allocation} is the memory that one call, such as {!Buffer.create},
     makes on a device. A {e buffer} is a range of bytes in an allocation, and
     a {e borrow} is a buffer on another device over the same allocation,
-    without a copy ({!Buffer.borrow}). Each allocation records the point of
-    its last write and, for each device, the point of its last use. These
-    points are its {e stamps}.
+    without a copy ({!Buffer.borrow}). Each allocation records, for each
+    device, the point of its last write and the point of its last use.
+    These points are its {e stamps}.
 
     rig orders work and host access by the stamps of the memory they use
     ({!section-order}). Two pieces of work need an order only when they
@@ -360,14 +360,14 @@ val signaled : t -> int
        each runs on. A {!Submission.words} part, whose effect rig cannot see,
        also follows every earlier part, and a later part on its queue follows
        it. Parts that need no order may run concurrently.}
-    {- {e Memory.} Work that reads an allocation follows the allocation's
-       last write. Work that writes it follows every use of it, by any
+    {- {e Memory.} Work that reads an allocation follows every device's last
+       write of it. Work that writes it follows every use of it, by any
        device.}
     {- {e Waits.} The work of {!submit} follows the points of its [waits].}
     {- {e Host access.} Host code after {!Point.wait}[ p] follows [p]'s work.
-       {!Buffer.read}'s function follows the last write of the buffer's
-       memory, and {!Buffer.write}'s every use of it, as host code after
-       {!Buffer.wait}[ b Read] or [b Read_write] does. {!Buffer.copy},
+       {!Buffer.read}'s function follows every device's last write of the
+       buffer's memory, and {!Buffer.write}'s every use of it, as host code
+       after {!Buffer.wait}[ b Read] or [b Read_write] does. {!Buffer.copy},
        {!Buffer.blit_to_bytes}, {!Buffer.blit_from_string} and
        {!Buffer.fill} order themselves the same way, as work that reads the
        buffer they copy from and writes the buffer they write.}
@@ -395,11 +395,13 @@ val signaled : t -> int
     the stamps order two calls only where the program orders the calls
     themselves. If two domains concurrently submit work on two devices that
     uses one allocation, and either work writes it, nothing makes either
-    follow the other. The program orders the two, such as by starting the
-    second submit after the first has returned. In the same way, a wait
-    orders the host after the work submitted before it returns, and after
-    nothing that another domain submits later. On one device, device order
-    orders all work. *)
+    follow the other. Work and host access that start after both submits
+    have returned follow both. Bytes that both works write hold either
+    work's values or a mix of them. A program that needs one work to follow
+    the other orders the two, such as by starting the second submit after
+    the first has returned. In the same way, a wait orders the host after
+    the work submitted before it returns, and after nothing that another
+    domain submits later. On one device, device order orders all work. *)
 
 (** {1:domains Domains}
 
@@ -453,10 +455,11 @@ val signaled : t -> int
     A use of memory {e depends on} the points whose work must have
     completed for the use to be valid.
     {ul
-    {- A read depends on the point of the memory's last write. This holds
-       for {!Buffer.wait}[ b Read], {!Buffer.read}, {!Buffer.blit_to_bytes},
-       the source of a {!Buffer.copy}, a submit's read, and a claim that
-       [rig_buffer_claim] takes for reading ({!Buffer.section-low}).}
+    {- A read depends on the points of every device's last write of the
+       memory. This holds for {!Buffer.wait}[ b Read], {!Buffer.read},
+       {!Buffer.blit_to_bytes}, the source of a {!Buffer.copy}, a submit's
+       read, and a claim that [rig_buffer_claim] takes for reading
+       ({!Buffer.section-low}).}
     {- A use through an {!Submission.unordered} ref depends on no point.}
     {- Every other use depends on every point of the stamps, such as a
        write, a borrow, {!Buffer.wait}[ b Read_write], {!Buffer.write},
@@ -470,8 +473,8 @@ val signaled : t -> int
        of a borrow on it;}
     {- every use of other memory that depends on a point the lost device
        never reached, since that point's work may never have run.}}
-    A point the lost device never reached stays so. Memory whose last write
-    is such a point raises {!Lost} at every use through rig's calls but an
+    A point the lost device never reached stays so. Memory with a last write
+    at such a point raises {!Lost} at every use through rig's calls but an
     {!Submission.unordered} one, for the rest of the process. Memory that
     the lost device only read raises it only for the uses that depend on
     every point. An array {!Buffer.export} made over such memory before the
@@ -841,9 +844,9 @@ module Buffer : sig
 
   val wait : t -> access -> unit
   (** [wait b access] returns once the work that a host access [access] of
-      [b] must follow is done. For [Read] it waits for the last write of
-      [b]'s memory, and for [Read_write] for every use of it by any device.
-      It allocates nothing when that work is already done.
+      [b] must follow is done. For [Read] it waits for every device's last
+      write of [b]'s memory, and for [Read_write] for every use of it by any
+      device. It allocates nothing when that work is already done.
       {ul
       {- Host memory and an io device's memory have work to wait for only
          where a device borrowed them.}
@@ -862,9 +865,9 @@ module Buffer : sig
     (('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> 'c) ->
     'c
   (** [read b k f] is [f a], where [a] is [b]'s bytes as elements of [k],
-      once the last write of [b]'s memory is done. [a] is the memory itself,
-      so the host must address it; {!blit_to_bytes} copies out of any
-      memory. *)
+      once every device's last write of [b]'s memory is done. [a] is the
+      memory itself, so the host must address it; {!blit_to_bytes} copies
+      out of any memory. *)
 
   val write :
     t ->

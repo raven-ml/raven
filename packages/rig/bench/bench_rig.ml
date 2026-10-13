@@ -282,6 +282,19 @@ let written d n =
   Rig.Point.wait p;
   bs
 
+(* Host memory that two memory devices wrote through borrows, each write
+   reached. *)
+let written_twice () =
+  let b = host 8 in
+  let write d =
+    let w = costing_sub ~uses:[| Sub.write |] d in
+    let bd = Option.get (B.borrow d b) in
+    Rig.Point.wait (Rig.submit w ~run:(Sub.Run.make ()) ~buffers:[| bd |])
+  in
+  write (memory ());
+  write (memory ());
+  b
+
 let row name setup f = Thumper.bench_with_setup ~setup name f
 let create d n () = ignore (B.create d n)
 
@@ -297,6 +310,7 @@ let buffer_rows =
           for i = 0 to slots - 1 do
             B.wait (Array.unsafe_get bs i) Rig.Read_write
           done);
+      row "wait-written-2-devices" written_twice (fun b -> B.wait b Rig.Read);
       (* A view of 64 MiB a memory device holds, read by the host directly: the
          view paces no collection. *)
       Thumper.bench_with_setup

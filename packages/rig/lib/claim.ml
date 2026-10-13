@@ -58,7 +58,7 @@ let hold2 fn a b f x =
 (* Host access to [b]'s bytes under a read claim: [f] runs on them once the
    work [access] follows is done, and the claim ends as [f] returns or
    raises. A loss raises where the wait for [access] meets it, so a read
-   depends on the last write alone. *)
+   depends on every device's last write alone. *)
 let scope fn (access : access) b k f =
   read_claim fn b.mem.claim;
   match

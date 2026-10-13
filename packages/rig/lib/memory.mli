@@ -54,9 +54,9 @@ val page : int
 (** {1:stamps Stamps}
 
     Stamps are the address of a C record ([struct rig_stamps] in
-    [rig_stubs.h]) as an int, [0] for none. They hold the point of the
-    allocation's last write, and per device the point of its last use and
-    of its last unordered use, which no access follows and the allocation's
+    [rig_stubs.h]) as an int, [0] for none. They hold, per device, the
+    point of the allocation's last write, of its last use and of its last
+    unordered use, which no access follows and the allocation's
     return waits for. A device's words pass to another device once its stop
     was claimed and their points are done, so the words, and a walk's cost,
     follow the devices whose work on the allocation may still matter. They
@@ -76,12 +76,8 @@ val stamps_unref : int -> unit
     last. *)
 
 val iter_points : (int -> unit) -> int -> unit
-(** [iter_points f st] is [f] over the points of [st], the last write first,
-    then each device's last use; none for [0]. It allocates nothing. *)
-
-val iter_write : (int -> unit) -> int -> unit
-(** [iter_write f st] is [f] of [st]'s last write, if any. It allocates
-    nothing. *)
+(** [iter_points f st] is [f] over the points of [st], each device's last
+    use, which a write also raises; none for [0]. It allocates nothing. *)
 
 val wait_points : memory -> unit
 (** [wait_points m] is {!Dev.wait_point} of each point of [m]'s stamps, as
@@ -89,8 +85,9 @@ val wait_points : memory -> unit
     stays reachable until it returns. *)
 
 val wait_write : memory -> unit
-(** [wait_write m] is {!Dev.wait_point} of the last write of [m]'s stamps,
-    if any, for an access that follows the last write. *)
+(** [wait_write m] is {!Dev.wait_point} of each device's last write of [m]'s
+    stamps, for an access that follows every last write. [m] stays
+    reachable until it returns. *)
 
 val check_points : int -> unit
 (** [check_points st] raises {!Dev.Lost} if a point of [st] is on a lost
