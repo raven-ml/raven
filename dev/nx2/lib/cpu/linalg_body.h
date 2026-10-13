@@ -1718,8 +1718,8 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
 
    a = u diag s vh as LAPACK's xGESDD computes it. A wide matrix is
    decomposed as its conjugate transpose, which swaps u and vh; one with
-   at least 11/6 as many rows as columns is factored a = Q R first, and R
-   decomposed. The matrix B is reduced to Qᴴ B P, upper bidiagonal with
+   at least 11/6 as many rows as columns, 17/9 on complex numbers, is
+   factored a = Q R first, and R decomposed. The matrix B is reduced to Qᴴ B P, upper bidiagonal with
    real d and e (xGEBRD); that one's SVD U_B diag s V_Bᵀ is found by divide
    and conquer (xBDSDC); then u = Q U_B and vh = (P V_B)ᴴ by the
    reflectors' blocks (back). Values alone run implicit QR on the
@@ -2784,9 +2784,11 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
     return 1;
   }
   /* B is a, or aᴴ where a is wide, mm × k, column-major, or row-major
-     where QR comes first (xGESDD's MNTHR). X = Q diag (U_B, I), mm × xc,
-     and W = P V_B, k × k, are u and vhᴴ, or vhᴴ and u where a is wide. */
-  int qrf = mm >= k * 11 / 6;
+     where QR comes first: from 11/6 k rows on reals (DGESDD's MNTHR),
+     17/9 k on complex numbers (ZGESDD's MNTHR1). X = Q diag (U_B, I),
+     mm × xc, and W = P V_B, k × k, are u and vhᴴ, or vhᴴ and u where a is
+     wide. */
+  int qrf = mm >= (CPLX ? k * 17 / 9 : k * 11 / 6);
   int64_t xc = wide ? vr : uc, ld = qrf ? k : mm;
   T *a = x, *r = a + mm * k, *tau = r + k * k, *tauq = tau + k,
     *taup = tauq + k, *ws = taup + k, *tmp = ws + (3 * mm + NB + 1) * NB;
