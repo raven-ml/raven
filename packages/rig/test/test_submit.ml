@@ -398,6 +398,41 @@ let test_hang_in_queue () =
   equal (option string) None (Rig.lost consumer);
   at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
 
+(* A word that moved while a wait was held between its read and the hang check
+   loses nothing: the check judges the word as it stands at the check. The wait
+   is held at its producer's gate, since a wait whose word stood still for a
+   still interval looks at the producers its queue waits on before it sleeps.
+   The clock started at the wait's previous sleep, more than the bound before
+   the check. *)
+let test_hang_held_read () =
+  let producer, pp = P.open_ "submit:held-read-producer" in
+  let d, p =
+    P.open_ ~hang_ms ~completion:`Object ~waits_on:[ `Host ]
+      "submit:held-read"
+  in
+  let a = submit (empty producer) in
+  ignore (submit (empty d) ~waits:[| a |]);
+  let b = submit (empty d) in
+  Rig.Point.wait a;
+  P.stall pp max_int;
+  P.gate p;
+  P.stall p 1;
+  let waiting =
+    Domain.spawn (fun () ->
+        match Rig.Point.wait b with
+        | () -> None
+        | exception Rig.Lost (_, why) -> Some why)
+  in
+  Support.await "the clock's first sleep" (fun () -> P.sleepers p = 1);
+  P.gate pp;
+  P.open_gate p;
+  Support.await "the wait held after its read" (fun () -> P.sleepers pp = 1);
+  P.set_word p 1;
+  Thread.delay (2. *. Float.of_int hang_ms /. 1000.);
+  P.open_gate pp;
+  equal (option string) ~msg:"the wait's loss" None (Domain.join waiting);
+  equal (option string) ~msg:"the loss" None (Rig.lost d)
+
 let test_refusals () =
   let d = memory "submit:refusals" in
   raises_match Exn.invalid_arg (fun () ->
@@ -1682,6 +1717,8 @@ let tests =
         test "a queue waiting on a hung device is lost with it" test_hang_spread;
         test "a queue waiting on longer work elsewhere loses nothing"
           test_hang_in_queue;
+        test "a word that moved while a wait was held loses nothing"
+          test_hang_held_read;
       ];
     group ~timeout "runs"
       [
