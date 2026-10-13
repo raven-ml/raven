@@ -52,12 +52,14 @@ const nx_cpu_target *nx_cpu_table = &nx_cpu_base;
    x86-64 and Apple cores nx.cpu tunes for. */
 #define L2_BYTES (256 * 1024)
 
-int64_t nx_cpu_l2_bytes = L2_BYTES;
-
-/* x86-64 reports the L2 of the core it runs on in KiB, CPUID leaf
-   0x80000006, ECX bits 31-16 (Intel SDM vol. 2A; AMD APM vol. 3), a core's
-   own on both vendors' cores. Apple's arm64 reports its performance
-   cores' L2 and how many share it. */
+/* x86-64 reports, in KiB, the L2 of the core the program starts on
+   (CPUID leaf 0x80000006, ECX bits 31-16; Intel SDM vol. 2A, AMD APM
+   vol. 3): a core's own, which its hardware threads share, on AMD's cores
+   and Intel's performance cores; an Intel efficient core reports the L2
+   its cluster of four shares, so that on a hybrid host the figure changes
+   with that core, and speed with it, never bits. Apple's arm64 reports
+   its performance cores' L2 and how many cores share it, and a core's
+   share is taken. */
 static int64_t l2_bytes(void) {
   int64_t bytes = 0;
 #if defined(__x86_64__)
@@ -77,7 +79,7 @@ static int64_t l2_bytes(void) {
 }
 
 __attribute__((constructor)) static void init(void) {
-  nx_cpu_l2_bytes = l2_bytes();
+  nx_cpu_base.l2 = l2_bytes();
   nx_cpu_set_convert_base(&nx_cpu_base);
   nx_cpu_set_gemm_base(&nx_cpu_base);
   nx_cpu_set_rows_base(&nx_cpu_base);
@@ -95,6 +97,7 @@ __attribute__((constructor)) static void init(void) {
 #endif
 #if defined(__x86_64__)
   if (!has_v3()) return;
+  nx_cpu_v3.l2 = nx_cpu_base.l2;
   nx_cpu_set_convert_v3(&nx_cpu_v3);
   nx_cpu_set_gemm_v3(&nx_cpu_v3);
   nx_cpu_set_rows_v3(&nx_cpu_v3);

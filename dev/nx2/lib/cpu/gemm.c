@@ -88,16 +88,10 @@
 
 /* The bytes of a's element up to which chain order reads a in place,
    where it allows: each tile streams its MR rows, which stay in the caches
-   from one sliver of b to the next. On kimchi a 1024³ float32 product
-   takes 6% longer where a is packed.
-
-   b's sliver, kc rows a row of b apart, is read again for each tile of
-   a's rows: b is read in place up to half the L2 a core has
-   (nx_cpu_l2_bytes), past which its rows fall out between tiles. On the
-   i9-9900K (256 KiB) a 256³ float32 product takes 432 µs on one core with
-   b in place, 245 with b packed; on kimchi (3 MiB) a 512³ one 11% less in
-   place (363 against 408 µs), a 4096³ one twice as long (205 against 102
-   ms). */
+   from one sliver of b to the next, and no job packs it. On the i9-9900K
+   a 128³ float32 product takes 6.1 µs on 16 threads with a in place
+   against 11.8 packed, a 256³ one 36.6 against 49.3; a 1024³ one the
+   same either way. */
 #define IN_PLACE_BYTES (2 * 1024 * 1024)
 
 /* The bytes of a job's packed b: a group of batch elements shares one job
@@ -1192,13 +1186,19 @@ static int chain_order(const problem *p) {
   return m > LANE_MOST && n > LANE_MOST && m * n >= CHAIN_OUTPUTS;
 }
 
-/* Whether chain order reads operand [o] of [p] in place: in acc, at most
-   IN_PLACE_BYTES an element for a, half a core's L2 for b, and adjacent
-   along the axis the kernel streams, b along its columns, a along k where
-   the kernel reads it an element at a time. */
+/* Whether chain order reads operand [o] of [p] in place: in acc, adjacent
+   along the axis the kernel streams (b along its columns, a along k where
+   the kernel reads it an element at a time), and within its bound: a,
+   IN_PLACE_BYTES an element; b, half a core's L2. b's sliver, kc rows a
+   row of b apart, is read again for each tile of a's rows, and past the
+   bound its rows fall out between tiles. On the i9-9900K (256 KiB) a 256³
+   float32 product takes 406 µs on one core with b in place against 244
+   packed, a 512³ one 683 against 322 µs on 16 threads; a 128³ one, within
+   the bound, 33.2 against 33.9 µs on one core. On kimchi (3 MiB) a 4096³
+   one took twice as long in place (205 against 102 ms). */
 static int in_place(const problem *p, int o) {
   int64_t n = o == A ? p->ext[ROW] : p->ext[COL];
-  int64_t most = o == A ? IN_PLACE_BYTES : nx_cpu_l2_bytes / 2;
+  int64_t most = o == A ? IN_PLACE_BYTES : nx_cpu_table->l2 / 2;
   if (p->ext[CON] > most / p->w / n) return 0;
   if (o == B) return adjacent(p, B, COL);
   return p->g->kernel.a == NX_CPU_A_ELEMENTS && adjacent(p, A, CON);

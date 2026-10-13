@@ -182,6 +182,9 @@ typedef struct {
 
 typedef struct {
   const char *name;
+  /* The bytes of L2 cache of a core, as the host reports them when the
+     program starts (target.c). */
+  int64_t l2;
   /* convert[s][d] converts elements of the dtype s into the dtype d, as a
      cast does, where s is a carrier, or where s is a narrow float and d
      float32. A sub-byte dtype has one element per byte, in its low bits:
@@ -236,10 +239,6 @@ void nx_cpu_set_avx2(nx_cpu_target *t);
 /* The table the kernels run: the best one whose instructions the host
    has. */
 extern const nx_cpu_target *nx_cpu_table;
-
-/* The bytes of L2 cache a performance core of the host has to itself, read
-   when the program starts (target.c). */
-extern int64_t nx_cpu_l2_bytes;
 
 /* The dtype a block of [dt] is staged in: float32 for a narrow float, int8
    for int4, uint8 for uint4, bool for bit, and [dt] itself otherwise. */
