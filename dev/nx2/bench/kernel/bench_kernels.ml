@@ -835,6 +835,21 @@ let linalg_rows =
       work = [ F.Fma (D.Any f64, n * n * r) ];
     }
   in
+  let qr_complete batch m n =
+    let call (module K : Nx_kernel.S) =
+      let a = filled f64 [| batch; m; n |] in
+      let q, r = Result.get_ok (Nx_kernel.Shape.qr Complete (shape a)) in
+      let q = like a q and r = like a r in
+      fun () -> K.qr ~q ~r a
+    in
+    let k = min m n in
+    let r = (m * n * k) - (k * k * k / 3) in
+    let q = (2 * m * m * k) - (2 * m * k * k) + (2 * k * k * k / 3) in
+    {
+      bench = linalg (strf "qr-f64-%dx%dx%d-complete" batch m n) call;
+      work = [ F.Fma (D.Any f64, batch * (r + q)) ];
+    }
+  in
   [
     cholesky f64 32;
     cholesky f64 256;
@@ -855,6 +870,7 @@ let linalg_rows =
     qr f64 1024;
     qr D.Complex128 256;
     qr f32 ~batch:16 32;
+    qr_complete 8 64 16;
     eigh f64 64;
     eigh f64 256;
     eigh f64 1024;

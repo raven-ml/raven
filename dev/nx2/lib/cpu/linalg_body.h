@@ -233,8 +233,7 @@ static void F(solve_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
 static int F(solve)(solve kind, const T *l, int64_t n, int64_t ld, T *x,
                     int64_t r, int64_t ldx, arena *s) {
   int64_t bytes = n * (n + r) * (int64_t)sizeof(T);
-  double flops = (double)n * n * r * (CPLX ? 4 : 1);
-  double cost = bytes + flops / nx_cpu_core_speed(RDT);
+  double cost = job_cost(bytes, (double)n * n * r, RDT, CPLX);
   int64_t units = nx_cpu_threads(bytes, cost);
   if (units > r / SOLVE_COLUMNS) units = r / SOLVE_COLUMNS;
   F(solve_job) j = {.l = l, .x = x, .n = n, .ld = ld, .r = r, .ldx = ldx,

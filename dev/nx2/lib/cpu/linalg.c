@@ -189,6 +189,17 @@ static void nans(void *p, int64_t n, int dt) {
     for (int64_t i = 0; i < n; i++) ((double *)p)[i] = NAN;
 }
 
+/* The cost of a job (job.c) on [bytes] that computes [flops] in the
+   real dtype [rdt], [cplx] 1 for its complex numbers, whose flops are
+   four real ones each. A unit of the job runs on one thread: its larger
+   products run on the M1's matrix unit, which four cores share, at about
+   3.25 flops a byte in float32 and 0.81 in float64 a thread, and its
+   leaves on scalar loops. Flops are priced at the speed of the core's
+   vector kernel, which lies between, an estimate. */
+static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
+  return bytes + (cplx ? 4 : 1) * flops / nx_cpu_core_speed(rdt);
+}
+
 /* The routines, per dtype */
 
 #define CAT2(a, b) a##_##b
@@ -264,6 +275,27 @@ static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
       default: ok = matrix_c128(c, b, w, s); break;
     }
     if (!ok) __atomic_store_n(&c->failed, 1, __ATOMIC_RELAXED);
+  }
+}
+
+/* A matrix's flops, two a multiply-add as gemm.c counts them, with k the
+   lesser extent: a solve's n² r; Cholesky's n³/3 (xPOTRF); LU's
+   m n k − k³/3 (xGETRF); QR's 2 m n k − 2k³/3 for R (xGEQRF) and, for Q
+   (xORGQR), 2 m k² − 2k³/3 of k columns or 4 m² k − 4 m k² + 4k³/3 of m;
+   eigh's about 10/3 n³ with vectors, 4/3 n³ without (xHEEVD); svd's
+   about 4 m n k without, three times as many with (xGESDD). */
+static double flops(const call *c) {
+  double m = c->m, n = c->n, k = m < n ? m : n, k3 = k * k * k;
+  switch (c->routine) {
+    case SOLVE_TRIANGULAR: return n * n * c->r;
+    case CHOLESKY: return n * n * n / 3;
+    case LU: return m * n * k - k3 / 3;
+    case QR:
+      return 2 * m * n * k - 2 * k3 / 3 +
+             (c->complete ? 4 * m * m * k - 4 * m * k * k + 4 * k3 / 3
+                          : 2 * m * k * k - 2 * k3 / 3);
+    case EIGH: return (c->vectors ? 10 : 4) * n * n * n / 3;
+    default: return (c->vectors ? 12 : 4) * m * n * k;
   }
 }
 
@@ -408,27 +440,11 @@ static value run(call c, const value *arrays, int threads) {
   c.a = a;
   c.w = nx_cpu_width(c.dt);
   c.scratch = scratch(&c);
-  int64_t order = c.m > c.n ? c.m : c.n, least = c.m < c.n ? c.m : c.n;
-  /* Flops, two a multiply-add as gemm.c counts them, with k the lesser
-     extent: a solve's n² r; Cholesky's n³/3; LU's about 2/3 m n k; QR's
-     about 4/3 m n k for R and as many for Q; eigh's about 10/3 n³ with
-     vectors, 4/3 n³ without (xHEEVD); svd's about 4 m n k without, three
-     times as many with (xGESDD). A complex flop is four real ones. They
-     are priced at the real dtype's speed on a core: a unit runs on one
-     thread. */
-  int64_t per = solve                    ? c.r
-                : c.routine == SVD       ? (c.vectors ? 12 : 4) * least
-                : c.routine == CHOLESKY  ? order / 3 + 1
-                : c.routine == LU        ? 2 * least / 3 + 1
-                : c.routine == QR        ? 8 * least / 3 + 1
-                : c.vectors              ? 10 * order / 3
-                                         : 4 * order / 3 + 1;
   int cplx = c.dt == NX_COMPLEX64 || c.dt == NX_COMPLEX128;
   int rdt = c.dt == NX_FLOAT32 || c.dt == NX_COMPLEX64 ? NX_FLOAT32
                                                         : NX_FLOAT64;
-  double flops = (double)c.matrices * c.m * c.n * per * (cplx ? 4 : 1);
   int64_t bytes = c.matrices * c.m * (c.n + c.r) * c.w;
-  double cost = bytes + flops / nx_cpu_core_speed(rdt);
+  double cost = job_cost(bytes, c.matrices * flops(&c), rdt, cplx);
   /* A matrix a unit where there are enough for the threads, else one unit
      of all, whose GEMM updates take the threads. */
   c.per = c.matrices >= nx_cpu_threads(bytes, cost) ? 1 : c.matrices;

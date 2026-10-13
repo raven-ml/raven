@@ -330,10 +330,10 @@ int nx_cpu_threads_at(int64_t bytes, double cost, double thread_bytes);
 int nx_cpu_contract_on(int acc, const nx_contract_view *v,
                        const nx_array *const *op);
 
-/* The speed (nx_cpu_micro) of the kernel of products in [acc], float32 or
-   float64, on a core's own hardware: the table's, or its other kernels'
-   where the table's shares a unit between cores (gemm.c). It prices work
-   whose units each run on one thread. */
+/* The speed (nx_cpu_micro) of the core's vector kernel of products in
+   [acc], float32 or float64: the table's, or its other kernels' where the
+   table's runs on a unit that cores share, as the M1's matrix unit
+   (gemm.c). It prices work whose units each run on one thread. */
 double nx_cpu_core_speed(int acc);
 
 /* nx.cpu's matrix routines (linalg.c): each external's arguments, its
