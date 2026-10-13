@@ -84,16 +84,16 @@ static inline uint64_t key64(double f) {
   return f != f ? ~0ull : rank64(nx_double_bits(f));
 }
 
-/* The key of the element at [p]; a complex128's is its imaginary part's,
-   real_key gives the other. */
-static uint64_t key_of(const sorter *s, const uint8_t *p) {
-  switch (s->dt) {
+/* The key of the element of dtype [dt] at [p]; a complex128's is its
+   imaginary part's, real_key gives the other. */
+static inline uint64_t key_of(int dt, const uint8_t *p) {
+  switch (dt) {
     case NX_FLOAT32: return key32(*(const float *)p);
     case NX_FLOAT64: return key64(*(const double *)p);
     case NX_FLOAT16:
-    case NX_BFLOAT16: return key32(nx_bits_to_float(s->dt, *(const uint16_t *)p));
+    case NX_BFLOAT16: return key32(nx_bits_to_float(dt, *(const uint16_t *)p));
     case NX_FLOAT8_E4M3FN:
-    case NX_FLOAT8_E5M2: return key32(nx_bits_to_float(s->dt, *p));
+    case NX_FLOAT8_E5M2: return key32(nx_bits_to_float(dt, *p));
     case NX_INT64: return *(const uint64_t *)p ^ 0x8000000000000000ull;
     case NX_INT32: return *(const uint32_t *)p ^ 0x80000000u;
     case NX_INT16: return (uint16_t)(*(const uint16_t *)p ^ 0x8000u);
@@ -285,7 +285,7 @@ static void span_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
     block_range(p, b, &i0, &i1);
     uint64_t least = ~0ull, most = 0;
     for (int64_t i = i0; i < i1; i++) {
-      uint64_t k = key_of(s, p->x + i * s->sx * s->w) ^ p->flip;
+      uint64_t k = key_of(s->dt, p->x + i * s->sx * s->w) ^ p->flip;
       least = k < least ? k : least;
       most = k > most ? k : most;
     }
@@ -302,7 +302,7 @@ static void key_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
     int64_t i0, i1;
     block_range(p, b, &i0, &i1);
     for (int64_t i = i0; i < i1; i++) {
-      uint64_t k = (key_of(s, p->x + i * s->sx * s->w) ^ p->flip) - p->least;
+      uint64_t k = (key_of(s->dt, p->x + i * s->sx * s->w) ^ p->flip) - p->least;
       if (p->psrc == NULL) p->src[i] = k << 32 | (uint64_t)i;
       else {
         p->src[i] = k;
@@ -489,21 +489,49 @@ static int sort_long(const sorter *s, int64_t blocks, int64_t bytes) {
 
 /* Slices */
 
-/* Sorts the slice at [x] by radix over its keys' span, stably, through
-   [k2] and [p2]: makes its keys into [k], finding their least and greatest
-   on the way, then sorts them less the least, above their positions where
-   they span at most 4 bytes. The kept positions land in [p]. */
-static void by_span(const sorter *s, const uint8_t *x, uint64_t flip,
-                    uint64_t *k, int64_t *p, uint64_t *k2, int64_t *p2) {
-  int64_t n = s->n;
-  uint64_t least = ~0ull, most = 0;
-  for (int64_t i = 0; i < n; i++) {
-    uint64_t y = key_of(s, x + i * s->sx * s->w) ^ flip;
-    k[i] = y;
-    least = y < least ? y : least;
-    most = y > most ? y : most;
+/* Makes the keys of the slice at [x] into [k], xored with [flip], and
+   their least and greatest into [span]. The common dtypes have loops of
+   their own, where key_of's switch folds away and the loop vectorises;
+   keys of at most 4 bytes find their span in 32 bits, which x86's base
+   vectors compare and 64 bits they do not. Through key_of's switch,
+   fudge's sort-f32-rows-512x512 ran 7% slower. */
+static __attribute__((flatten)) void make_keys(const sorter *s,
+                                               const uint8_t *x, uint64_t flip,
+                                               uint64_t *k, uint64_t span[2]) {
+  int64_t n = s->n, step = s->sx * s->w;
+#define KEYS(U, dt)                                                          \
+  do {                                                                       \
+    U least = (U)~0ull, most = 0;                                            \
+    for (int64_t i = 0; i < n; i++) {                                        \
+      U y = (U)(key_of(dt, x + i * step) ^ flip);                            \
+      k[i] = y;                                                              \
+      least = y < least ? y : least;                                         \
+      most = y > most ? y : most;                                            \
+    }                                                                        \
+    span[0] = least;                                                         \
+    span[1] = most;                                                          \
+  } while (0)
+  switch (s->dt) {
+    case NX_FLOAT32: KEYS(uint32_t, NX_FLOAT32); break;
+    case NX_INT32: KEYS(uint32_t, NX_INT32); break;
+    case NX_FLOAT64: KEYS(uint64_t, NX_FLOAT64); break;
+    case NX_INT64: KEYS(uint64_t, NX_INT64); break;
+    default:
+      if (s->kb <= 4) KEYS(uint32_t, s->dt);
+      else KEYS(uint64_t, s->dt);
   }
-  int kb = span_bytes(most - least);
+#undef KEYS
+}
+
+/* Sorts the slice's keys [k], whose least and greatest are [span], by radix
+   over their span, stably, through [k2] and [p2]: less the least, above
+   their positions where they span at most 4 bytes. The kept positions land
+   in [p]. */
+static void by_span(const sorter *s, const uint64_t span[2], uint64_t *k,
+                    int64_t *p, uint64_t *k2, int64_t *p2) {
+  int64_t n = s->n, keep = s->keep;
+  uint64_t least = span[0];
+  int kb = span_bytes(span[1] - least);
   if (kb > 4 || n > UINT32_MAX) {
     for (int64_t i = 0; i < n; i++) {
       k[i] -= least;
@@ -514,7 +542,7 @@ static void by_span(const sorter *s, const uint8_t *x, uint64_t flip,
   }
   for (int64_t i = 0; i < n; i++) k[i] = (k[i] - least) << 32 | (uint64_t)i;
   radix_packed(k, k2, n, kb);
-  for (int64_t i = 0; i < s->keep; i++) p[i] = (int64_t)(k[i] & 0xFFFFFFFFu);
+  for (int64_t i = 0; i < keep; i++) p[i] = (int64_t)(k[i] & 0xFFFFFFFFu);
 }
 
 static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
@@ -524,16 +552,14 @@ static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
   int64_t *p = (int64_t *)(scratch + 2 * n), *p2 = (int64_t *)(scratch + 3 * n);
   const uint8_t *x = s->a[2].base + px * s->w;
   uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1;
-  uint64_t flip = s->descending ? mask : 0;
+  uint64_t flip = s->descending ? mask : 0, span[2];
+  make_keys(s, x, flip, k, span);
   int64_t keep = s->keep;
   int few = keep <= KEEP && keep * SPARE <= n;
   if (s->dt != NX_COMPLEX128 && n >= SMALL && !few)
-    by_span(s, x, flip, k, p, k2, p2);
+    by_span(s, span, k, p, k2, p2);
   else {
-    for (int64_t i = 0; i < n; i++) {
-      k[i] = key_of(s, x + i * s->sx * s->w) ^ flip;
-      p[i] = i;
-    }
+    for (int64_t i = 0; i < n; i++) p[i] = i;
     if (s->dt == NX_COMPLEX128) {
       /* The imaginary parts' order, then the real parts' over it. */
       radix(k, p, k2, p2, n, 8);
