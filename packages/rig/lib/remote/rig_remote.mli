@@ -267,8 +267,9 @@ val listen : key:key -> string -> int -> (agent, string) result
 (** [listen ~key host port] listens at [host] and [port] for the processes of
     one job that prove [key]. Port [0] lets the system choose ({!port}). It
     opens no device and joins no job until a controller proves [key].
-    Connections beyond 64 waiting for their proofs are told it has too many,
-    and a connection that proves nothing within 10 seconds is dropped.
+    Each connection proves the key on a thread of its own, and one that
+    proves nothing within 10 seconds is dropped. A connection is refused only
+    when the system refuses it a thread.
 
     [Error why] if [host] does not resolve or the process cannot listen
     there. *)

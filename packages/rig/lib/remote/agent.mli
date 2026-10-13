@@ -8,11 +8,10 @@
     within a bound.
 
     An agent's listener accepts on a thread of its own and runs each handshake
-    on another, at most 64 concurrently. [serve] applies the controller's
-    commands from its caller's domain, one after another. A [Handover]
-    command's parts run there in order, each copy into the controller's
-    memory sending its bytes back as it runs, and its [word] message follows
-    once every part has run. *)
+    on another. [serve] applies the controller's commands from its caller's
+    domain, one after another. A [Handover] command's parts run there in
+    order, each copy into the controller's memory sending its bytes back as
+    it runs, and its [word] message follows once every part has run. *)
 
 type t
 (** {!Rig_remote.agent}. *)

@@ -187,40 +187,46 @@ let helper_holds_nothing () =
         outcome);
   equal exit_w (0, [ "closed"; "helper exited" ]) (finish a)
 
-(* The connections an agent keeps waiting for their proofs. *)
-let max_waiting = 64
+(* More handshakes than a job of 65 machines has its last agent run at once:
+   one dial from each agent before it. *)
+let held = 100
 
 (* An accepting end's greeting: "rig-job\n", its version (u32), 0 and its
-   nonce (32 bytes). *)
+   nonce (32 bytes). A refusal has 1 in place of the 0. *)
 let greeting_bytes = 8 + 4 + 1 + 32
+let status_at = 12
 
-(* Each connection holds a handshake once its greeting came; the one past
-   [max_waiting] is told the agent has too many. *)
-let too_many () =
-  with_agents @@ fun agents ->
-  let a = List.hd agents in
+(* A job joins through an agent past [held] handshakes in flight: the test's
+   connections, each greeted and proving nothing, then the controller's and
+   the first agent's. The agent greets every one and serves the job. *)
+let many_waiting () =
+  with_agents ~n:2 @@ fun agents ->
+  let a = List.nth agents 1 in
   let dial () =
     let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
     Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port));
     Rig_support.recv_timeout fd patience;
     fd
   in
-  let held = ref [] in
-  Fun.protect ~finally:(fun () -> List.iter Unix.close !held) @@ fun () ->
-  for _ = 1 to max_waiting do
+  let fds = ref [] in
+  Fun.protect ~finally:(fun () -> List.iter Unix.close !fds) @@ fun () ->
+  for i = 1 to held do
     let fd = dial () in
-    held := fd :: !held;
-    equal ~msg:"a greeting" int greeting_bytes
-      (String.length (read_n fd greeting_bytes))
+    fds := fd :: !fds;
+    let greeting = read_n fd greeting_bytes in
+    equal
+      ~msg:(Printf.sprintf "connection %d's greeting status" i)
+      int 0
+      (Char.code greeting.[status_at])
   done;
-  let fd = dial () in
-  held := fd :: !held;
-  let module Wire = Rig_remote_proxy.Wire in
-  let why =
-    require_error
-      (Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1))
-  in
-  contains ~sub:"too many" why
+  let j = connect agents in
+  let h = List.nth (Rig_remote.hosts j) 1 in
+  let s = "to " ^ machine a in
+  equal string s (read (far_of_string (List.hd (mem h)) s));
+  Rig_remote.close j;
+  equal (list exit_w)
+    [ (0, [ "closed" ]); (0, [ "closed" ]) ]
+    (List.map finish agents)
 
 (* An agent opens a kind at the controller's first call for it, and once: the
    other agent, never asked, opens nothing. *)
@@ -263,8 +269,8 @@ let connecting =
         listen_unresolved;
       test "listen answers Error at a port another agent listens at"
         listen_taken;
-      test "a connection past 64 waiting for their proofs is told too many"
-        too_many;
+      test "a job joins through an agent with 100 handshakes in flight"
+        many_waiting;
       test "an agent opens a kind at the first devices call for it, once"
         opens_when_asked;
       test "a second job at one address is another machine, named #2"

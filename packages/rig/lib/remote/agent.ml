@@ -8,9 +8,10 @@ module Link = Rig_remote_proxy.Link
 
 let strf = Printf.sprintf
 
-(* The connections waiting for their handshakes beyond which the listener
-   refuses more. *)
-let max_pending = 64
+(* The largest listen backlog: Windows' SOMAXCONN, which asks for the system's
+   largest, and POSIX systems cut a larger one to their own bound (somaxconn on
+   Linux and macOS). *)
+let backlog = 0x7fff_ffff
 
 (* How long a connection and the job's other agents' connections take at
    most. *)
@@ -203,7 +204,6 @@ type t = {
   lock : Mutex.t;
   changed : Condition.t;
   mutable phase : phase;
-  mutable pending : int;  (** Handshakes in flight. *)
   accepted : (int, Unix.file_descr) Hashtbl.t;
       (** Connections of the job's agents before this one, admitted, waiting for
           the join that names their machines. *)
@@ -222,7 +222,7 @@ let listen ~key host port =
            Windows the option would let two sockets bind one port. *)
         if not Sys.win32 then Unix.setsockopt fd Unix.SO_REUSEADDR true;
         Unix.bind fd addr;
-        Unix.listen fd max_pending
+        Unix.listen fd backlog
       with
       | exception Unix.Unix_error (e, _, _) ->
           Unix.close fd;
@@ -241,7 +241,6 @@ let listen ~key host port =
               lock = Mutex.create ();
               changed = Condition.create ();
               phase = Listening;
-              pending = 0;
               accepted = Hashtbl.create 4;
               peers = Hashtbl.create 4;
               stopped = false;
@@ -272,12 +271,6 @@ let admit a mine p =
 (* Runs one connection's handshake, and makes its link if it is admitted. A
    controller admitted whose handshake then fails gives its job back. *)
 let handshake a fd =
-  let finish () =
-    Mutex.protect a.lock (fun () ->
-        a.pending <- a.pending - 1;
-        Condition.broadcast a.changed)
-  in
-  Fun.protect ~finally:finish @@ fun () ->
   let mine = ref None in
   let r = Wire.accept fd ~key:a.key ~admit:(admit a mine) in
   Mutex.protect a.lock @@ fun () ->
@@ -286,7 +279,8 @@ let handshake a fd =
       let controller =
         Link.make job fd ~name:"controller" ~peer:Wire.Controller
       in
-      a.phase <- Serving { job; self; controller }
+      a.phase <- Serving { job; self; controller };
+      Condition.broadcast a.changed
   | Ok (Wire.Agent i, _), None ->
       if a.stopped || Hashtbl.mem a.accepted i || Hashtbl.mem a.peers i then
         close_quietly fd
@@ -298,7 +292,9 @@ let handshake a fd =
   | _, None -> close_quietly fd
 
 (* Accepts connections until [wake] is readable, each handshake on a thread of
-   its own. *)
+   its own. A job assumes a trusted network, so only the job's processes
+   connect: the listener takes every connection, and the system's bound on
+   threads alone refuses one. *)
 let accept_loop a wake =
   let rec loop () =
     match Unix.select [ a.socket; wake ] [] [] (-1.) with
@@ -311,16 +307,13 @@ let accept_loop a wake =
         loop ()
     | exception Unix.Unix_error _ -> ()
     | fd, _ ->
-        let refuse =
-          Mutex.protect a.lock @@ fun () ->
-          if a.pending >= max_pending then true
-          else begin
-            a.pending <- a.pending + 1;
-            false
-          end
-        in
-        if refuse then Wire.refuse fd "the agent has too many connections"
-        else ignore (Thread.create (handshake a) fd);
+        (match Thread.create (handshake a) fd with
+        | _ -> ()
+        | exception Sys_error why ->
+            Wire.refuse fd ("the agent cannot start a handshake: " ^ why)
+        | exception Out_of_memory ->
+            Wire.refuse fd
+              "the agent cannot start a handshake: no memory for a thread");
         loop ()
   in
   loop ()
