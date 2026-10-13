@@ -237,8 +237,14 @@ typedef struct {
 /* A Moments scan of [w] slices of [n] terms side by side (reduce.c), w at
    most NX_CPU_MOMENTS_LANES: slice l's term t at x + t xs + l xl, its mean
    and variance at mean + t ms + l ml and var + t vs + l vl, in elements;
-   [scratch] holds 12 w nx_cpu_moments_levels(n) elements. */
+   [scratch] holds (12 nx_cpu_moments_levels(n) + 3 NX_CPU_MOMENTS_TILE) w
+   elements. */
 #define NX_CPU_MOMENTS_LANES 64
+
+/* A Moments scan's terms per tile. On fudge,
+   scan-moments-f32-4096x1024-axis1 took 1.18 ms at 16, 1.04 at 32, 1.12 at
+   64. */
+#define NX_CPU_MOMENTS_TILE 32
 
 /* The levels of a Moments scan's network over [n] terms, n >= 1: one per
    bit of n. */

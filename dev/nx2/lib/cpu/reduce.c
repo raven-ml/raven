@@ -302,7 +302,10 @@ MONOID(min_b, uint8_t, ALL)
 
 /* Moments scans. A unit scans [w] slices side by side by the network of
    nx_kernel.mli, a state rows of [w] lanes: its mu, S and n, and in the
-   exact pass z, whether one of its terms is a NaN, 0 or 1.
+   exact pass z, whether one of its terms is a NaN, 0 or 1. Every lane's
+   state at a place in the network counts the same terms, so n is held once,
+   in its row's first element, and a join's weight nb / n is one division
+   for all its lanes.
 
    The terms enter in order, term t at index t of level 0. A state at an
    odd index joins the one before it, and the pair enters the next level at
@@ -332,6 +335,21 @@ MONOID(min_b, uint8_t, ALL)
 #define LANES_OF(D, E)                                                        \
   for (int64_t l = 0; l < w; l++) (D)[l] = E
 
+/* Prefetches, for a write where [rw] is 1, the row of [w] lanes at [y].
+   Where a scan's lanes are contiguous, its terms' rows lie a row of the
+   array apart. x86's stride prefetchers follow steps of at most 2 KiB and
+   stay within a 4 KiB page (Intel's optimization manual), so rows further
+   apart are not fetched ahead; rows closer, as few slices make, are, and
+   their prefetches are redundant. */
+#define PREFETCH_ROW(y, w, rw)                                                \
+  for (int64_t b = 0; b < (w) * (int64_t)sizeof *(y); b += 64)                \
+    __builtin_prefetch((const char *)(y) + b, rw)
+
+/* The terms ahead whose rows a Moments scan prefetches: on fudge,
+   scan-moments-f32-1024x4096-axis0 took 1.41 ms without, 0.89 at 8 terms,
+   0.95 at 16. */
+#define MOMENTS_AHEAD 8
+
 /* A pass's arithmetic. */
 typedef enum { FAST, EXACT } arith;
 
@@ -339,53 +357,69 @@ typedef enum { FAST, EXACT } arith;
   /* State [b] after state [a], into [r], each [w] elements a row. */       \
   static void fast_##S(int64_t w, const T *restrict a, const T *restrict b,  \
                        T *restrict r) {                                       \
+    T na = a[2 * w], nb = b[2 * w], k = na + nb, f = nb / k, g = na * f;      \
     for (int64_t l = 0; l < w; l++) {                                         \
-      T ma = a[l], va = a[w + l], na = a[2 * w + l];                          \
-      T mb = b[l], vb = b[w + l], nb = b[2 * w + l];                          \
-      T k = na + nb, d = mb - ma, f = nb / k;                                 \
+      T ma = a[l], d = b[l] - ma;                                             \
       r[l] = ma + d * f;                                                      \
-      r[w + l] = (va + vb) + (d * d) * (na * f);                              \
-      r[2 * w + l] = k;                                                       \
+      r[w + l] = (a[w + l] + b[w + l]) + (d * d) * g;                         \
     }                                                                        \
+    r[2 * w] = k;                                                             \
   }                                                                          \
   static void exact_##S(int64_t w, const T *restrict a, const T *restrict b, \
                         T *restrict r) {                                      \
-    const T *ma = a, *va = a + w, *na = a + 2 * w, *za = a + 3 * w;           \
-    const T *mb = b, *vb = b + w, *nb = b + 2 * w, *zb = b + 3 * w;           \
-    T *k = r + 2 * w, d[NX_CPU_MOMENTS_LANES], f[NX_CPU_MOMENTS_LANES],       \
-      t[NX_CPU_MOMENTS_LANES], sum[NX_CPU_MOMENTS_LANES];                     \
-    LANES_OF(k, nx_add_##S(na[l], nb[l]));                                    \
+    const T *ma = a, *va = a + w, *za = a + 3 * w;                            \
+    const T *mb = b, *vb = b + w, *zb = b + 3 * w;                            \
+    T na = a[2 * w], nb = b[2 * w], k = nx_add_##S(na, nb);                   \
+    T f = nx_fdiv_##S(nb, k), g = nx_mul_##S(na, f);                          \
+    T d[NX_CPU_MOMENTS_LANES], t[NX_CPU_MOMENTS_LANES],                       \
+        sum[NX_CPU_MOMENTS_LANES];                                            \
     LANES_OF(d, nx_sub_##S(mb[l], ma[l]));                                    \
-    LANES_OF(f, nx_fdiv_##S(nb[l], k[l]));                                    \
-    LANES_OF(t, nx_mul_##S(d[l], f[l]));                                      \
+    LANES_OF(t, nx_mul_##S(d[l], f));                                         \
     LANES_OF(t, nx_add_##S(ma[l], t[l]));                                     \
     LANES_OF(sum, nx_add_##S(ma[l], mb[l]));                                  \
     LANES_OF(r, (FINITE(ma[l]) & FINITE(mb[l]))                               \
                     ? t[l]                                                    \
                     : za[l] != 0 ? ma[l] : zb[l] != 0 ? mb[l] : sum[l]);      \
-    LANES_OF(f, nx_mul_##S(na[l], f[l]));                                     \
     LANES_OF(d, nx_mul_##S(d[l], d[l]));                                      \
-    LANES_OF(d, nx_mul_##S(d[l], f[l]));                                      \
+    LANES_OF(d, nx_mul_##S(d[l], g));                                         \
     LANES_OF(t, nx_add_##S(va[l], vb[l]));                                    \
     LANES_OF(r + w, nx_add_##S(t[l], d[l]));                                  \
+    r[2 * w] = k;                                                             \
     LANES_OF(r + 3 * w, (T)((za[l] != 0) | (zb[l] != 0)));                    \
   }                                                                          \
-  /* The states of term [x] of each lane, [xl] apart, shifted by [c]. */    \
-  static void leaf_##S(arith a, int64_t w, const T *restrict x, int64_t xl,   \
+  /* The states of the terms [x] of each lane, shifted by [c]. */             \
+  static void leaf_##S(arith a, int64_t w, const T *restrict x,               \
                        const T *restrict c, T *restrict r) {                  \
-    if (a == EXACT) LANES_OF(r, nx_sub_##S(x[l * xl], c[l]));                 \
-    else LANES_OF(r, x[l * xl] - c[l]);                                       \
+    if (a == EXACT) LANES_OF(r, nx_sub_##S(x[l], c[l]));                      \
+    else LANES_OF(r, x[l] - c[l]);                                            \
     LANES_OF(r + w, 0);                                                       \
-    LANES_OF(r + 2 * w, 1);                                                   \
-    if (a == EXACT) LANES_OF(r + 3 * w, (T)(x[l * xl] != x[l * xl]));         \
+    r[2 * w] = 1;                                                             \
+    if (a == EXACT) LANES_OF(r + 3 * w, (T)(x[l] != x[l]));                   \
   }                                                                          \
-  /* One pass: 0, or 1 where the fast pass met a value not finite. */       \
+  /* [tn] rows of [w] elements from [y] into [r], row i lane l from           \
+     y[i ys + l yl]. Element by element: nx_copy_box's transposed tiles       \
+     took scan-moments-f32-4096x1024-axis1 1.04 times as long on fudge. */    \
+  static void rows_##S(int64_t tn, int64_t w, const T *restrict y,            \
+                       int64_t ys, int64_t yl, T *restrict r) {               \
+    for (int64_t l = 0; l < w; l++)                                           \
+      for (int64_t i = 0; i < tn; i++) r[i * w + l] = y[i * ys + l * yl];     \
+  }                                                                          \
+  /* [tn] rows of [w] elements from [r] into [y], as rows_ reads them. */     \
+  static void unrows_##S(int64_t tn, int64_t w, const T *restrict r, T *y,    \
+                         int64_t ys, int64_t yl) {                            \
+    for (int64_t l = 0; l < w; l++)                                           \
+      for (int64_t i = 0; i < tn; i++) y[i * ys + l * yl] = r[i * w + l];     \
+  }                                                                          \
+  /* One pass: 0, or 1 where the fast pass met a value not finite. Terms      \
+     go in tiles of NX_CPU_MOMENTS_TILE, and lanes not contiguous in [x],     \
+     or in a result, through rows of the scratch, so that every loop over     \
+     the lanes reads and writes contiguous elements. */                       \
   static int pass_##S(arith a, const T *x, int64_t xs, int64_t xl, T *ym,     \
                       int64_t ms, int64_t ml, T *yv, int64_t vs, int64_t vl,  \
                       int64_t n, int64_t w, T *scratch) {                     \
     void (*join)(int64_t, const T *, const T *, T *) =                        \
         a == EXACT ? exact_##S : fast_##S;                                    \
-    int64_t size = 4 * w;                                                     \
+    int64_t size = 4 * w, tile = NX_CPU_MOMENTS_TILE;                         \
     int bad = 0, levels = nx_cpu_moments_levels(n);                           \
     T c[NX_CPU_MOMENTS_LANES];                                                \
     LANES_OF(c, FINITE(x[l * xl]) ? x[l * xl] : 0);                           \
@@ -397,42 +431,52 @@ typedef enum { FAST, EXACT } arith;
       in[k] = held[k] + size;                                                 \
       joined[k] = in[k] + size;                                               \
     }                                                                        \
-    for (int64_t t = 0; t < n; t++) {                                         \
-      leaf_##S(a, w, x + t * xs, xl, c, in[0]);                               \
-      int k = 0;                                                              \
-      int64_t j = t;                                                          \
-      for (; j & 1; k++, j >>= 1) join(w, held[k], in[k], in[k + 1]);         \
-      if (j == 0) got[k] = in[k];                                             \
-      else {                                                                  \
-        join(w, got[k + 1], in[k], joined[k]);                                \
-        got[k] = joined[k];                                                   \
-      }                                                                      \
-      T *e = held[k];                                                         \
-      held[k] = in[k];                                                        \
-      in[k] = e;                                                              \
-      for (int i = 0; i < k; i++) got[i] = got[k];                            \
-      /* The mean c + mu, the variance S over the count, or mu less        \
-         itself where mu is not finite. */                                  \
-      const T *r = got[0];                                                    \
-      T m = (T)t + 1, *dm = ym + t * ms, *dv = yv + t * vs;                   \
-      if (a == EXACT) {                                                       \
-        T mean[NX_CPU_MOMENTS_LANES], var[NX_CPU_MOMENTS_LANES],              \
-            nan[NX_CPU_MOMENTS_LANES];                                        \
-        LANES_OF(mean, nx_add_##S(c[l], r[l]));                               \
-        LANES_OF(var, nx_fdiv_##S(r[w + l], m));                              \
-        LANES_OF(nan, nx_sub_##S(r[l], r[l]));                                \
-        for (int64_t l = 0; l < w; l++) {                                     \
-          dm[l * ml] = mean[l];                                               \
-          dv[l * vl] = FINITE(r[l]) ? var[l] : nan[l];                        \
+    T *tx = scratch + 3 * levels * size, *tm = tx + tile * w,                 \
+      *tv = tm + tile * w;                                                    \
+    for (int64_t t0 = 0; t0 < n; t0 += tile) {                                \
+      int64_t tn = n - t0 < tile ? n - t0 : tile;                             \
+      if (xl != 1) rows_##S(tn, w, x + t0 * xs, xs, xl, tx);                  \
+      for (int64_t i = 0; i < tn; i++) {                                      \
+        int64_t t = t0 + i, p = t + MOMENTS_AHEAD;                            \
+        if (p < n && xl == 1) PREFETCH_ROW(x + p * xs, w, 0);                 \
+        if (p < n && ml == 1) PREFETCH_ROW(ym + p * ms, w, 1);                \
+        if (p < n && vl == 1) PREFETCH_ROW(yv + p * vs, w, 1);                \
+        leaf_##S(a, w, xl == 1 ? x + t * xs : tx + i * w, c, in[0]);          \
+        int k = 0;                                                            \
+        int64_t j = t;                                                        \
+        for (; j & 1; k++, j >>= 1) join(w, held[k], in[k], in[k + 1]);       \
+        if (j == 0) got[k] = in[k];                                           \
+        else {                                                                \
+          join(w, got[k + 1], in[k], joined[k]);                              \
+          got[k] = joined[k];                                                 \
         }                                                                    \
-        continue;                                                             \
+        T *e = held[k];                                                       \
+        held[k] = in[k];                                                      \
+        in[k] = e;                                                            \
+        for (int h = 0; h < k; h++) got[h] = got[k];                          \
+        /* The mean c + mu, the variance S over the count, or mu less         \
+           itself where mu is not finite. */                                  \
+        const T *r = got[0];                                                  \
+        T m = (T)t + 1;                                                       \
+        T *dm = ml == 1 ? ym + t * ms : tm + i * w;                           \
+        T *dv = vl == 1 ? yv + t * vs : tv + i * w;                           \
+        if (a == EXACT) {                                                     \
+          T nan[NX_CPU_MOMENTS_LANES];                                        \
+          LANES_OF(dm, nx_add_##S(c[l], r[l]));                               \
+          LANES_OF(dv, nx_fdiv_##S(r[w + l], m));                             \
+          LANES_OF(nan, nx_sub_##S(r[l], r[l]));                              \
+          LANES_OF(dv, FINITE(r[l]) ? dv[l] : nan[l]);                        \
+          continue;                                                           \
+        }                                                                    \
+        for (int64_t l = 0; l < w; l++) {                                     \
+          T mean = c[l] + r[l], var = r[w + l] / m;                           \
+          bad |= !(FINITE(mean) & FINITE(var));                               \
+          dm[l] = mean;                                                       \
+          dv[l] = var;                                                        \
+        }                                                                    \
       }                                                                      \
-      for (int64_t l = 0; l < w; l++) {                                       \
-        T mean = c[l] + r[l], var = r[w + l] / m;                             \
-        bad |= !(FINITE(mean) & FINITE(var));                                 \
-        dm[l * ml] = mean;                                                    \
-        dv[l * vl] = var;                                                     \
-      }                                                                      \
+      if (ml != 1) unrows_##S(tn, w, tm, ym + t0 * ms, ms, ml);               \
+      if (vl != 1) unrows_##S(tn, w, tv, yv + t0 * vs, vs, vl);               \
     }                                                                        \
     return bad;                                                               \
   }                                                                          \
@@ -1665,7 +1709,8 @@ static void moments_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   int64_t inner = l->extent[last], most = NX_CPU_MOMENTS_LANES;
   int64_t lanes = inner < most ? inner : most;
   int64_t levels = nx_cpu_moments_levels(q->len);
-  uint8_t *scratch = malloc((size_t)(12 * levels * lanes * w8));
+  int64_t states = 12 * levels + 3 * NX_CPU_MOMENTS_TILE;
+  uint8_t *scratch = malloc((size_t)(states * lanes * w8));
   if (scratch == NULL) {
     q->failed = 1;
     return;

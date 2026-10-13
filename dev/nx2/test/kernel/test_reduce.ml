@@ -1277,18 +1277,42 @@ let pp_moments ppf (c : moments) =
     (A.dtype x) L.pp (A.layout x)
     (String.concat ", " c.views)
 
-(* A fifth of the operands are one axis of more than 4096 terms, the law's
+(* A ninth of the operands are one axis of more than 4096 terms, the law's
    "long" case, which [shape_gen] alone draws too rarely for every run to
-   cover. *)
+   cover. Four ninths are tiles: 2 to 130 slices of 32, 33 or more terms,
+   scanned along the last axis, whose lanes the results hold a row apart,
+   or along the first through a transposed operand, whose lanes it holds a
+   row apart. *)
 let moments_case =
   Gen.with_pp pp_moments
     (let open Gen in
      let* d = of_list ~pp:pp_dtype floats in
-     let long = map (fun n -> [| n |]) (int_range 4097 6000) in
-     let* s = frequency [ (4, shape_gen); (1, long) ] in
-     let s = if Array.length s = 0 then [| 3 |] else s in
-     let* axis = int_range 0 (Array.length s - 1) in
+     let any =
+       let* s = shape_gen in
+       let s = if Array.length s = 0 then [| 3 |] else s in
+       let+ axis = int_range 0 (Array.length s - 1) in
+       (s, axis, false)
+     in
+     let long = map (fun n -> ([| n |], 0, false)) (int_range 4097 6000) in
+     let tiles =
+       let* len =
+         frequency
+           [
+             (1, constant 32);
+             (1, constant 33);
+             ( 3,
+               let* k = int_range 1 9 in
+               let+ r = int_range 1 31 in
+               (32 * k) + r );
+           ]
+       in
+       let* slices = int_range 2 130 in
+       let+ last = bool in
+       if last then ([| slices; len |], 1, false) else ([| len; slices |], 0, true)
+     in
+     let* s, axis, transposed = frequency [ (4, any); (1, long); (4, tiles) ] in
      let* v = view_of (Array.length s) in
+     let v = if transposed then { v with perm = [| 1; 0 |] } else v in
      let* specials =
        frequency [ (3, constant 0); (1, constant 300); (1, constant 4) ]
      in
@@ -1433,6 +1457,16 @@ let law_moments (b : Support.backend) (c : moments) =
   cover "one term" (len = 1);
   cover "slices past a unit's" (len > 0 && total s / len > 64);
   cover "long" (len > 4096);
+  cover "a tile's terms, or one more" (len = 32 || len = 33);
+  (* Lanes a row apart go through rows of the scratch in tiles of 32 terms. *)
+  let partial = len > 32 && len mod 32 <> 0 && total s / len > 1 in
+  let rank = Array.length s in
+  cover "a partial tile written through rows"
+    (partial && rank >= 2 && c.axis = rank - 1);
+  cover "a partial tile read through rows"
+    (partial && rank = 2 && c.axis = 0
+    && List.mem "permuted" c.views
+    && not (List.mem "broadcast" c.views));
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
