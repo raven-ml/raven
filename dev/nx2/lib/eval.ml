@@ -15,7 +15,7 @@ let applied i ~by op =
       Prim.iter_results
         (fun y ->
           match y with
-          | Deferred { node = Node n; _ } -> Hashtbl.replace i.formulas n.id ()
+          | Deferred { node = Node n; _ } -> Interp.add_formula i n.id
           | Array _ | Shards _ | Donated _ | Traced _ -> ())
         op r);
   r
@@ -139,10 +139,10 @@ let replayed : type r d.
    is. *)
 let replay (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
   let results : (int, d any array) Hashtbl.t = Hashtbl.create 8 in
-  let known id = Hashtbl.mem i.formulas id || Hashtbl.mem results id in
+  let known id = Interp.is_formula i id || Hashtbl.mem results id in
   let sub : type w q e. (w, q, e) t -> (w, q, d) t = function
     | Deferred { form; node = Node n as node; k } ->
-        if Hashtbl.mem i.formulas n.id then
+        if Interp.is_formula i n.id then
           Deferred { form = { form with placement = None }; node; k }
         else Prim.expect form.dtype (Hashtbl.find results n.id).(k)
     | Array _ | Shards _ | Donated _ | Traced _ ->
@@ -182,7 +182,7 @@ let changes (type v s d) i (x : (v, s, d) t) =
   | Donated _ -> true
   | Deferred { node = Node n; _ } -> (
       match i.reach with
-      | Extent -> not (Hashtbl.mem i.formulas n.id)
+      | Extent -> not (Interp.is_formula i n.id)
       | Values -> false)
   | Array _ | Shards _ | Traced _ -> false
 

@@ -36,6 +36,14 @@ val interpret :
     the operations it reaches the meaning [rule i ~by op]. [i] is live until [f]
     returns or raises. *)
 
+val add_formula : interpretation -> int -> unit
+(** [add_formula i id] records the node [id] as one of a formula [i]'s rule
+    returned. *)
+
+val is_formula : interpretation -> int -> bool
+(** [is_formula i id] is [true] iff [add_formula i id] was called. It allocates
+    nothing. *)
+
 val traced :
   interpretation -> ('v, 's, 'd) form -> ('v, 's, 'd) payload -> ('v, 's, 'd) t
 (** [traced i f p] is a value of form [f] that [i] owns, keeping [p]. *)

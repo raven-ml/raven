@@ -99,11 +99,11 @@ and interpretation = {
       (** What it makes of the operations it receives. *)
   start : int;  (** Its order of start on [domain]. *)
   domain : Domain.id;  (** Where it started. *)
-  extents : int Atomic.t;  (** [domain]'s count of live [Extent]s. *)
   live : bool Atomic.t;  (** Cleared when its extent ends. *)
   mutable running : bool;  (** Whether its rule runs, on [domain]. *)
-  formulas : (int, unit) Hashtbl.t;
-      (** Nodes of the formulas an [Extent]'s rule returned. *)
+  mutable formulas : (int, unit) Hashtbl.t option;
+      (** Nodes of the formulas an [Extent]'s rule returned, made when it
+          returns its first. *)
 }
 (** An interpretation. Only {!Interp} writes its fields. *)
 

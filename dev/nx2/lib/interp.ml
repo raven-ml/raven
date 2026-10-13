@@ -47,10 +47,9 @@ let interpret ~name reach
       rule;
       start;
       domain = Domain.self ();
-      extents = d.extents;
       live = Atomic.make true;
       running = false;
-      formulas = Hashtbl.create 16;
+      formulas = None;
     }
   in
   match reach with
@@ -60,13 +59,24 @@ let interpret ~name reach
       (* The count is the start domain's, decremented there whichever domain the
          fiber ends on. *)
       Atomic.incr all_extents;
-      Atomic.incr i.extents;
+      Atomic.incr d.extents;
       Fun.protect
         ~finally:(fun () ->
           Atomic.set i.live false;
-          Atomic.decr i.extents;
+          Atomic.decr d.extents;
           Atomic.decr all_extents)
         (fun () -> Effect.Deep.try_with f i (handler i))
+
+let add_formula i id =
+  match i.formulas with
+  | Some t -> Hashtbl.replace t id ()
+  | None ->
+      let t = Hashtbl.create 16 in
+      Hashtbl.replace t id ();
+      i.formulas <- Some t
+
+let is_formula i id =
+  match i.formulas with Some t -> Hashtbl.mem t id | None -> false
 
 let traced i form payload = Traced { form; owner = i; payload }
 

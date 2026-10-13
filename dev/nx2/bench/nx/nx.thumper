@@ -360,9 +360,9 @@ interp/add-1-100-eager	alloc_words	exact	4200
 interp/add-1-100-eager	wall_time	batch=512	n=20	1.641e-05	1.611e-05 1.617e-05 1.618e-05 1.620e-05 1.620e-05 1.621e-05 1.626e-05 1.628e-05 1.636e-05 1.641e-05 1.641e-05 1.641e-05 1.641e-05 1.645e-05 1.672e-05 1.679e-05 1.681e-05 1.710e-05 1.741e-05 1.743e-05
 interp/add-1-100-fiber-beside-extent	alloc_words	exact	39800
 interp/add-1-100-fiber-beside-extent	wall_time	batch=64	n=20	9.123e-05	9.007e-05 9.014e-05 9.023e-05 9.029e-05 9.035e-05 9.040e-05 9.046e-05 9.058e-05 9.097e-05 9.121e-05 9.124e-05 9.127e-05 9.144e-05 9.148e-05 9.153e-05 9.186e-05 9.191e-05 9.205e-05 9.238e-05 9.260e-05
-interp/add-1-100-under-values	alloc_words	exact	4247
+interp/add-1-100-under-values	alloc_words	exact	4224
 interp/add-1-100-under-values	wall_time	batch=512	n=20	1.622e-05	1.606e-05 1.608e-05 1.609e-05 1.611e-05 1.616e-05 1.616e-05 1.620e-05 1.621e-05 1.621e-05 1.622e-05 1.622e-05 1.623e-05 1.632e-05 1.640e-05 1.640e-05 1.641e-05 1.642e-05 1.644e-05 1.649e-05 1.718e-05
-interp/traced-add-1-100	alloc_words	exact	21457
+interp/traced-add-1-100	alloc_words	exact	21434
 interp/traced-add-1-100	wall_time	batch=256	n=20	3.346e-05	3.276e-05 3.297e-05 3.301e-05 3.311e-05 3.317e-05 3.324e-05 3.329e-05 3.335e-05 3.345e-05 3.345e-05 3.348e-05 3.353e-05 3.362e-05 3.371e-05 3.378e-05 3.379e-05 3.380e-05 3.391e-05 3.420e-05 3.432e-05
 move/copy-1M	alloc_words	exact	188
 move/copy-1M	wall_time	batch=16	n=20	5.443e-05	3.876e-05 4.336e-05 4.472e-05 4.570e-05 5.050e-05 5.069e-05 5.072e-05 5.277e-05 5.321e-05 5.437e-05 5.448e-05 5.559e-05 6.045e-05 6.380e-05 6.430e-05 6.480e-05 6.558e-05 6.819e-05 7.179e-05 7.297e-05
