@@ -551,40 +551,75 @@ let bumps_across (mine, theirs) =
   done;
   List.iter (Rig_metal.free t.g) [ out; args ]
 
-(* The spin kernel's result after [n] steps: [out[0]] of [fill.metal]'s
-   [spin]. *)
-let spun n =
-  let x = ref 0 in
-  for _ = 1 to n do
-    x := ((!x * 1664525) + 1013904223) land 0xffff_ffff
-  done;
-  !x
+(* Rounds of [fill.metal]'s [gate] far more than a loss, its stop and a close
+   take: about 3 s on the M1 Max. The gate opens long before, and its write
+   says whether it saw that. *)
+let gate_rounds = 1 lsl 24
 
-(* Steps of a spin that runs far longer than a loss and its stop take: about
-   a quarter of a second on the M1 Max. *)
-let long_spin = 10_000_000
+(* A device of the GPU beside the test's, under a name of its own, whose queue
+   runs beside the test device's. *)
+let beside () =
+  let g = require_ok ((Rig_metal.gpu 0).make ()) in
+  let opener =
+    { (Rig_metal.gpu 0) with name = "METAL:beside"; make = (fun () -> Ok g) }
+  in
+  dev_of { S.d = require_ok (Rig.open_ opener); g }
+
+(* Waits for [d]'s word to show [v], for at most 10 s of the host's monotonic
+   clock. *)
+let await_word d v =
+  let t0 = Rig.Profile.now () in
+  while Rig.signaled d < v do
+    if Rig.Profile.now () - t0 > 10_000_000_000 then
+      failf "the word shows %d, not %d, after 10 s" (Rig.signaled d) v;
+    Domain.cpu_relax ()
+  done
 
 (* A command buffer in flight when a loss stops the device completes and
    writes its memory, and the word reaches the last value: the buffer keeps
-   the command queue the stop releases. *)
+   the command queue the stop releases. The buffer runs [gate], which a kernel
+   of a device beside opens once the close returned, so it is in flight at the
+   stop. *)
 let stop_in_flight () =
   S.with_ @@ fun s ->
-  let t = dev_of s in
-  let out = alloc t 256 and args = alloc t args_bytes in
-  H.set32 (host out) 0;
-  set_args args ~at:0 ~out:(gpu out) ~c:long_spin;
-  let f = S.dispatch ~pipeline:(pipeline t "spin") args ~groups:1 ~threads:1 in
-  let spin = Rig.Point.value (submit t [| f |]) in
+  let t = dev_of s and o = beside () in
+  let page = H.pages H.page in
+  H.set32 page 0;
+  H.set32 (page + 4) 0;
+  let flag = require_some (Rig_metal.map_host t.g page H.page) in
+  let flag' = require_some (Rig_metal.map_host o.g page H.page) in
+  let args = alloc t args_bytes and args' = alloc o args_bytes in
+  set_args args ~at:0 ~out:(gpu flag) ~c:gate_rounds;
+  set_args args' ~at:0 ~out:(gpu flag') ~c:1;
+  let gate =
+    S.dispatch ~pipeline:(pipeline t "gate") args ~groups:1 ~threads:1
+  in
+  let unlock =
+    S.dispatch ~pipeline:(pipeline o "unlock") args' ~groups:1 ~threads:1
+  in
+  let opened = ref false in
+  let open_gate () =
+    if not !opened then begin
+      opened := true;
+      wait o (submit o [| unlock |])
+    end
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      open_gate ();
+      List.iter (Rig_metal.free o.g) [ flag'; args' ];
+      Rig.close o.d)
+  @@ fun () ->
+  let gated = Rig.Point.value (submit t [| gate |]) in
   raises_match
     (function Rig.Lost _ -> true | _ -> false)
     (fun () -> submit t [| S.failing 7 |]);
-  equal ~msg:"the spin, at the stop" bool false (Rig.signaled t.d >= spin);
   S.close s;
-  let last = Rig.submitted t.d in
-  while Rig.signaled t.d < last do
-    Domain.cpu_relax ()
-  done;
-  equal ~msg:"the spin's write" int (spun long_spin) (H.get32 (host out))
+  equal ~msg:"the gated work, at the stop" bool false
+    (Rig.signaled t.d >= gated);
+  open_gate ();
+  await_word t.d (Rig.submitted t.d);
+  equal ~msg:"the gate's write: it saw the gate open" int 1 (H.get32 page)
 
 (* A loss that finds work waiting in the open command buffer drops it, and the
    stop brings the word to the last value. *)

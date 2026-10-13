@@ -1,3 +1,5 @@
+#include <metal_atomic>
+
 // out[i] = 3i + c for each thread i of the grid.
 
 struct args {
@@ -22,6 +24,27 @@ kernel void spin(constant args &a [[buffer(0)]]) {
   uint x = 0;
   for (uint k = 0; k < a.c; k++) x = x * 1664525u + 1013904223u;
   a.out[0] = x;
+}
+
+// Waits until out[1] is not 0, for at most c rounds, then sets out[0] to 1
+// if it saw out[1] set and to 2 if its rounds ran out: work that runs until
+// a kernel on another queue opens its gate. A running kernel never sees the
+// host's stores, and reads another kernel's only by a read-modify-write.
+kernel void gate(constant args &a [[buffer(0)]]) {
+  device coherent(device) metal::atomic_uint *open =
+      (device coherent(device) metal::atomic_uint *)&a.out[1];
+  uint k = 0;
+  while (k < a.c &&
+         metal::atomic_fetch_or_explicit(open, 0u,
+                                         metal::memory_order_relaxed) == 0)
+    k++;
+  a.out[0] = k < a.c ? 1 : 2;
+}
+
+// Sets out[1] to c: work on another queue that opens a gate.
+kernel void unlock(constant args &a [[buffer(0)]]) {
+  device metal::atomic_uint *open = (device metal::atomic_uint *)&a.out[1];
+  metal::atomic_store_explicit(open, a.c, metal::memory_order_relaxed);
 }
 
 // Adds 1 to each of the c bytes at out.
