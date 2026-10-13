@@ -96,6 +96,14 @@ typedef void (*nx_cpu_quads_dot)(const uint32_t *a, int64_t lda,
                                  const uint32_t *b, int64_t ldb, int64_t n,
                                  uint32_t *y, int64_t ldy);
 
+/* A quads axpy adds into y[j], for each of [n] columns j, the sum over
+   the [k] elements t of a row of a, adjacent, of a[t] · b[t·ldb + j], b's
+   rows adjacent along their columns: elements of quads[d]'s 8-bit dtype,
+   the sum in 32 bits (gemm.c, Quads). */
+typedef void (*nx_cpu_quads_axpy)(const uint8_t *a, const uint8_t *b,
+                                  int64_t ldb, int64_t k, int64_t n,
+                                  uint32_t *y);
+
 /* A pack moves [n1] rows of [n0] elements of acc from [s], stepping [s0]
    along a row and [s1] across rows, one of them 1, into [d]: element i of
    row j to d + (j·pitch + i)·w. [pitch] is the next multiple of the
@@ -287,11 +295,12 @@ typedef struct {
      chain order, each element of a and b a 32-bit word of four of d along
      k, each product of words the sum of their four products (gemm.c,
      Quads); its kernel is NULL where the target has none. quads_dot[d]
-     is its dot for products of few rows, or NULL where the target has
-     none. */
+     and quads_axpy[d] are its dot and axpy for products of few rows, or
+     NULL where the target has none. */
   nx_cpu_gemm gemm[NX_DTYPE_COUNT];
   nx_cpu_gemm quads[NX_DTYPE_COUNT];
   nx_cpu_quads_dot quads_dot[NX_DTYPE_COUNT];
+  nx_cpu_quads_axpy quads_axpy[NX_DTYPE_COUNT];
   nx_cpu_dot dot[NX_DTYPE_COUNT];
   nx_cpu_axpy axpy[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k

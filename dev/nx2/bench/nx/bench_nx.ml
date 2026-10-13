@@ -345,7 +345,10 @@ let weight_by_vector = Nx.Pattern.v "n k, k -> n | k"
 
 (* int8 operands into an int32 accumulator, as quantized weights are: squares,
    a decode step and a prefill of 128 rows against a weight stored [n × k],
-   and that weight by a vector; and int32's prefill, past a core's L2. *)
+   a decode step against a weight stored [k × n] read from memory, a call
+   each of six weights in turn (96 MiB, past the M1 Max's 48 MB system
+   cache) as a model's layers are, and the first weight by a vector; and
+   int32's prefill, past a core's L2. *)
 let widened_rows =
   List.map
     (fun n ->
@@ -375,6 +378,14 @@ let widened_rows =
         Nx.Repr.array
           (Nx.contract ~acc:D.Int32 D.Int32 rows_by_weight
              (Thumper.black_box xi) wi));
+    (let ws = lazy (Array.init 6 (fun _ -> filled D.Int8 [| 4096; 4096 |] 1)) in
+     let turn = ref 0 in
+     Thumper.bench "contract-i8-i32-m1x4096x4096-kn-memory" (fun () ->
+         let ws = Lazy.force ws in
+         turn := (!turn + 1) mod Array.length ws;
+         Nx.Repr.array
+           (Nx.contract ~acc:D.Int32 D.Int32 rows_by_columns
+              (Thumper.black_box x) ws.(!turn))));
     Thumper.bench "contract-i8-i32-n1x4096x4096" (fun () ->
         Nx.Repr.array
           (Nx.contract ~acc:D.Int32 D.Int32 weight_by_vector w

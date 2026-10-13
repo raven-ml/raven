@@ -224,8 +224,16 @@ let kc_least = 256
 let nc_least = 1024
 let panels = 8 * 1024 * 1024
 
-(* The most rows gemm.c's quads' dots take. *)
+(* The most rows gemm.c's quads' dots and its axpys take, and the most
+   bytes of a unit's sums in the axpys, AXPY_SUMS: more columns than fit
+   take several units whatever the threads. *)
 let quad_rows = 32
+let axpy_rows = 128
+let axpy_sums = 32 * 1024
+
+(* The rows of the quads kernel's tile, MR, from which the axpys run it
+   over b's rows zipped. *)
+let quad_mr = 8
 
 (* Extents of the batch, row, column and contracted axes, in profiles: any
    ranks over a few elements; one output; 64 outputs or more with edge
@@ -1039,13 +1047,16 @@ let shifted (A.Any x as a) =
 
 (* Quads in place: a as made, and b stored [n × k], adjacent along k, over
    several of chain order's blocks of words, past the dots' rows and
-   columns; b interleaved; a copied tail;
+   columns; b interleaved past the axpys' rows; a copied tail;
    operands adjacent along k at an odd offset; an empty batch of operands
    adjacent along k. Quads' dots: a batch of few rows by b stored [n × k],
    over columns and words that do not fill the dot's 4 columns and 4
    words; 11 words, a step of 8 and a tail, by odd rows and columns; the
    most rows; one column of b, copied; few columns, with a and b swapped,
-   alone and in a batch. *)
+   alone and in a batch. Quads' axpys, b stored [k × n]: a batch over
+   partial blocks of columns and of b's rows, and the same by the tile at
+   its rows; the most rows over several groups of columns, past the most
+   sums a unit holds. *)
 let quad_examples =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let by_rows r =
@@ -1065,7 +1076,7 @@ let quad_examples =
       in
       [
         stored Chain ([||], [| 130 |], [| 40 |], [| 2052 |]) (by_rows 2);
-        case Chain ([||], [| 3 |], [| 50 |], [| 64 |]) (plain 2);
+        case Chain ([||], [| axpy_rows + 1 |], [| 50 |], [| 64 |]) (plain 2);
         case Lane ([||], [| 9 |], [| 33 |], [| 7 |]) (by_rows 2);
         (let c = case Chain ([||], [| 5 |], [| 9 |], [| 64 |]) (by_rows 2) in
          { c with a = shifted c.a; b = shifted c.b });
@@ -1076,6 +1087,9 @@ let quad_examples =
         case Chain ([||], [| 2 |], [| 1 |], [| 7 |]) (plain 2);
         stored Chain ([||], [| 40 |], [| 3 |], [| 20 |]) (by_rows 2);
         stored Lane ([| 2 |], [| 5 |], [| 2 |], [| 8 |]) (by_rows 3);
+        case Lane ([| 2 |], [| 3 |], [| 70 |], [| 130 |]) (plain 3);
+        case Chain ([||], [| quad_mr |], [| 70 |], [| 130 |]) (plain 2);
+        case Chain ([||], [| axpy_rows |], [| 130 |], [| 20 |]) (plain 2);
       ])
     D.[ (Any Int32, Any Int8); (Any Uint32, Any Uint8) ]
 
@@ -1116,8 +1130,9 @@ let integer_covers (c : case) =
 
 (* The quads path reads an operand in place where k is a multiple of 4,
    the operand is adjacent along k and its offset and other steps are
-   multiples of 4; it interleaves b's rows where b's columns are adjacent,
-   and copies any other operand element by element, padded with zeros. *)
+   multiples of 4. Where b's columns are adjacent instead, it reads b in
+   place by axpys for few rows and interleaves b's rows for more; it
+   copies any other operand element by element, padded with zeros. *)
 let quad_covers (c : case) =
   let _, k, _ = sizes c in
   let strides (A.Any x) = L.strides (A.layout x) in
@@ -1160,8 +1175,16 @@ let quad_covers (c : case) =
     (fours
     && ((adjacent c.a fst && not (aligned c.a fst))
        || (adjacent c.b snd && not (aligned c.b snd))));
-  cover "b's rows interleaved" (k >= 4 && not (adjacent c.b snd) && columns_adjacent);
   let m, n = rows_cols c in
+  let by_rows = k > 1 && not (adjacent c.b snd) && columns_adjacent in
+  cover "b's rows interleaved" (by_rows && k >= 4 && m > axpy_rows);
+  let axpys = by_rows && m > 0 && m <= axpy_rows in
+  cover "few rows by quads' axpys" axpys;
+  cover "quads' axpys over several groups of columns"
+    (axpys && n > axpy_sums / 4 / m / 64 * 64);
+  cover "quads' axpys over k not a multiple of 4" (axpys && k mod 4 <> 0);
+  cover "quads' axpys below the tile" (axpys && m < quad_mr);
+  cover "quads' axpys by the tile" (axpys && m >= quad_mr);
   let dots = m > 0 && n > 0 && (in_place c.b snd || n = 1) in
   cover "few rows by quads' dots" (dots && m <= n && m <= quad_rows);
   cover "few columns by quads' dots" (dots && n < m && n <= quad_rows);

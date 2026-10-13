@@ -145,6 +145,64 @@ KERNEL(kernel_udot, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
   }
 QDOT(quads_dot_s8, SDOT)
 QDOT(quads_dot_u8, UDOT)
+
+/* Quads' axpys: four rows of b, read in place, zipped in registers into
+   words of four elements along k per column, each column's word against
+   the broadcast word of a's four by SDOT (UDOT for uint8): 64 columns at
+   a time in 16 accumulators of 4 lanes, half the vector registers, then
+   16 in 4, then one at a time. Rows past k repeat the last, which a's elements
+   there, zeros, cancel. */
+#define QZIP(DOT, c0, c1, c2, c3, x, r0, r1, r2, r3, at)          \
+  {                                                               \
+    uint8x16_t v0 = vld1q_u8(r0 + at), v1 = vld1q_u8(r1 + at);    \
+    uint8x16_t v2 = vld1q_u8(r2 + at), v3 = vld1q_u8(r3 + at);    \
+    uint16x8_t l01 = vreinterpretq_u16_u8(vzip1q_u8(v0, v1));     \
+    uint16x8_t h01 = vreinterpretq_u16_u8(vzip2q_u8(v0, v1));     \
+    uint16x8_t l23 = vreinterpretq_u16_u8(vzip1q_u8(v2, v3));     \
+    uint16x8_t h23 = vreinterpretq_u16_u8(vzip2q_u8(v2, v3));     \
+    c0 = DOT(c0, vreinterpretq_u32_u16(vzip1q_u16(l01, l23)), x); \
+    c1 = DOT(c1, vreinterpretq_u32_u16(vzip2q_u16(l01, l23)), x); \
+    c2 = DOT(c2, vreinterpretq_u32_u16(vzip1q_u16(h01, h23)), x); \
+    c3 = DOT(c3, vreinterpretq_u32_u16(vzip2q_u16(h01, h23)), x); \
+  }
+/* Rows t to t + 3 of b from [j], and a's word at t. */
+#define QZIP_ROWS                                                 \
+  const uint8_t *r0 = b + t * ldb + j;                            \
+  const uint8_t *r1 = t + 1 < k ? r0 + ldb : r0;                  \
+  const uint8_t *r2 = t + 2 < k ? r1 + ldb : r1;                  \
+  const uint8_t *r3 = t + 3 < k ? r2 + ldb : r2;                  \
+  uint32x4_t x = vld1q_dup_u32((const uint32_t *)(a + t));
+#define QAXPY(name, DOT, T)                                               \
+  static void name(const uint8_t *a, const uint8_t *b, int64_t ldb,       \
+                   int64_t k, int64_t n, uint32_t *y) {                   \
+    int64_t j = 0;                                                        \
+    for (; j + 64 <= n; j += 64) {                                        \
+      uint32x4_t c[16];                                                   \
+      for (int v = 0; v < 16; v++) c[v] = vld1q_u32(y + j + 4 * v);       \
+      for (int64_t t = 0; t < k; t += 4) {                                \
+        QZIP_ROWS                                                         \
+        QZIP(DOT, c[0], c[1], c[2], c[3], x, r0, r1, r2, r3, 0)           \
+        QZIP(DOT, c[4], c[5], c[6], c[7], x, r0, r1, r2, r3, 16)          \
+        QZIP(DOT, c[8], c[9], c[10], c[11], x, r0, r1, r2, r3, 32)        \
+        QZIP(DOT, c[12], c[13], c[14], c[15], x, r0, r1, r2, r3, 48)      \
+      }                                                                   \
+      for (int v = 0; v < 16; v++) vst1q_u32(y + j + 4 * v, c[v]);        \
+    }                                                                     \
+    for (; j + 16 <= n; j += 16) {                                        \
+      uint32x4_t c[4];                                                    \
+      for (int v = 0; v < 4; v++) c[v] = vld1q_u32(y + j + 4 * v);        \
+      for (int64_t t = 0; t < k; t += 4) {                                \
+        QZIP_ROWS                                                         \
+        QZIP(DOT, c[0], c[1], c[2], c[3], x, r0, r1, r2, r3, 0)           \
+      }                                                                   \
+      for (int v = 0; v < 4; v++) vst1q_u32(y + j + 4 * v, c[v]);         \
+    }                                                                     \
+    for (; j < n; j++)                                                    \
+      for (int64_t t = 0; t < k; t++)                                     \
+        y[j] += (uint32_t)((T)a[t] * (T)b[t * ldb + j]);                  \
+  }
+QAXPY(quads_axpy_s8, SDOT, int8_t)
+QAXPY(quads_axpy_u8, UDOT, uint8_t)
 #endif
 
 /* Lane order's dots and axpys: 16 lanes are 4 vectors of float32, 8 of
@@ -233,6 +291,8 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
   t->quads[NX_UINT8] = integers(kernel_udot, 4);
   t->quads_dot[NX_INT8] = quads_dot_s8;
   t->quads_dot[NX_UINT8] = quads_dot_u8;
+  t->quads_axpy[NX_INT8] = quads_axpy_s8;
+  t->quads_axpy[NX_UINT8] = quads_axpy_u8;
 #endif
 }
 

@@ -1644,16 +1644,54 @@ static const uint32_t *words_at(const problem *p, int o, int64_t e,
   return (const uint32_t *)p->op[o].x->base + pos(p, o, e, i, j, 0);
 }
 
+/* A product of few rows whose b lies adjacent along its columns, as a
+   weight stored [k × n] does: each row of a times b's rows, read in place
+   in the order they lie, where chain order would interleave all of b into
+   words and pack it. A unit is a group of a batch element's columns, in
+   multiples of AXPY_TILE, UNITS of them a thread, so that a busy core
+   takes fewer: with one core busy elsewhere, one unit a thread took 1 row
+   from memory in 250-400 µs against 225-275, 8 rows in 660-900 against
+   435-585. Its rows' sums, at most AXPY_SUMS bytes, stay in L1.
+   Below the quads kernel's MR rows, the axpy zips four rows of b in
+   registers for each row of a, AXPY_STEP rows of b at a time; from MR,
+   AXPY_ZIPS bytes of b's rows are zipped into words once, by
+   interleave(), and the quads kernel runs all rows over them, as chain
+   order would without padding a's rows.
+
+   On the M1 Max, int8 rows by a 4096 × 4096 weight stored [k × n] take,
+   against chain order (from the system cache unless said): 1 row 142-149
+   µs against 825-831, and 192-227 from memory against 880-920 (148 to
+   read the weight); 8 rows 268-287 against 810-877; 32 rows 694-735
+   against 1.31-1.35 ms; 64 1.25 ms against 2.0; 128 2.6 against 3.1.
+   Zipping into L1 for fewer than MR rows took 1 row 1.7 times as long;
+   the axpy for MR or more, 1.3 to 1.9 times as long. Steps of 16 rows ran
+   1 row in 140 µs where 64 and 256 swung from 120 to 320. Splitting k
+   across units as well read a cached weight 1.4 times faster but one
+   from memory 1.15 times slower, and memory is where a model's weights
+   lie. */
+#define AXPY_ROWS 128
+#define AXPY_STEP 16
+/* A unit's zipped rows and sums, 96 KiB, within the M1's 128 KiB L1. */
+#define AXPY_ZIPS (64 * 1024)
+#define AXPY_SUMS (32 * 1024)
+#define AXPY_TILE 64 /* the axpy's columns at once */
+_Static_assert(AXPY_SUMS / 4 / AXPY_ROWS >= AXPY_TILE,
+               "a unit of the most rows holds a tile of columns");
+
 /* Row [i] of element [e]'s outputs [j0, j0 + c): init, or 0, plus [y]. */
 static void quad_row(const problem *p, int64_t e, int64_t i, int64_t j0,
                      int64_t c, const uint32_t *y) {
-  uint32_t init[DOT_COLUMNS] = {0};
-  if (p->op[INIT].x)
-    stage_acc(p, INIT, pos(p, INIT, e, i, j0, 0), p->op[INIT].st[COL], 0, c,
-              1, (uint8_t *)init, c);
-  uint32_t *d = (uint32_t *)at_r(p, e, i, j0);
+  uint32_t *d = (uint32_t *)at_r(p, e, i, j0), init[DOT_COLUMNS];
   int64_t sy = p->op[DST].st[COL];
-  for (int64_t q = 0; q < c; q++) d[q * sy] = init[q] + y[q];
+  for (int64_t q0 = 0; q0 < c; q0 += DOT_COLUMNS) {
+    int64_t cq = min64(DOT_COLUMNS, c - q0);
+    memset(init, 0, sizeof init);
+    if (p->op[INIT].x)
+      stage_acc(p, INIT, pos(p, INIT, e, i, j0 + q0, 0), p->op[INIT].st[COL],
+                0, cq, 1, (uint8_t *)init, cq);
+    for (int64_t q = 0; q < cq; q++)
+      d[(q0 + q) * sy] = init[q] + y[q0 + q];
+  }
 }
 
 static void quad_dots(int64_t lo, int64_t hi, int worker, void *ctx) {
@@ -1697,6 +1735,102 @@ static void quad_dots_on(nx_cpu_quads_dot dot, const nx_cpu_gemm *g, int acc,
   nx_cpu_job(batch * groups, bytes, cost, quad_dots, &j);
 }
 
+typedef struct {
+  problem *p; /* a of words, b of its own elements */
+  nx_cpu_quads_axpy axpy;
+  int64_t k;            /* in elements */
+  int64_t cols, groups; /* columns a group, groups */
+} quad_axpys_job;
+
+/* Rows [q, q + kb) of b from column [j0] of element [e], zipped as
+   interleave() does into rows of words of [c] columns at [d], a row past
+   k repeating the last. */
+static void zip_rows(const problem *p, int64_t e, int64_t j0, int64_t c,
+                     int64_t q, int64_t kb, uint32_t *d) {
+  const uint8_t *b = p->op[B].x->base + pos(p, B, e, 0, j0, q);
+  int64_t ldb = p->op[B].st[CON];
+  for (int64_t w = 0; w < ceil_div(kb, 4); w++) {
+    const uint8_t *r0 = b + 4 * w * ldb;
+    const uint8_t *r1 = 4 * w + 1 < kb ? r0 + ldb : r0;
+    const uint8_t *r2 = 4 * w + 2 < kb ? r1 + ldb : r1;
+    const uint8_t *r3 = 4 * w + 3 < kb ? r2 + ldb : r2;
+    interleave(r0, r1, r2, r3, (uint8_t *)(d + w * c), c);
+  }
+}
+
+/* A unit's sums [s], [c] columns from [j0] of element [e]: by the axpy
+   below the quads kernel's MR rows, else by that kernel over b's rows
+   zipped into [z], AXPY_ZIPS bytes. */
+static void quad_unit(const quad_axpys_job *j, int64_t e, int64_t j0,
+                      int64_t c, uint32_t *s, uint32_t *z) {
+  const problem *p = j->p;
+  int64_t m = p->ext[ROW], ldb = p->op[B].st[CON];
+  nx_cpu_micro km = p->g->kernel;
+  if (m < km.mr) {
+    for (int64_t q = 0; q < j->k; q += AXPY_STEP) {
+      const uint8_t *b = p->op[B].x->base + pos(p, B, e, 0, j0, q);
+      for (int64_t i = 0; i < m; i++) {
+        const uint8_t *a = (const uint8_t *)words_at(p, A, e, i, 0) + q;
+        j->axpy(a, b, ldb, min64(AXPY_STEP, j->k - q), c, s + i * c);
+      }
+    }
+    return;
+  }
+  int64_t step = AXPY_ZIPS / c / 16 * 16;
+  for (int64_t q = 0; q < j->k; q += step) {
+    int64_t kb = min64(step, j->k - q), words = ceil_div(kb, 4);
+    zip_rows(p, e, j0, c, q, kb, z);
+    const uint32_t *a = words_at(p, A, e, 0, 0) + q / 4;
+    for (int64_t jj = 0; jj < c; jj += km.nr)
+      km.f(m, min64(km.nr, c - jj), words, a, p->op[A].st[ROW], 1, z + jj, c,
+           s + jj, c, NX_CPU_FROM_TILE);
+  }
+}
+
+static void quad_axpys(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const quad_axpys_job *j = ctx;
+  problem *p = j->p;
+  int64_t m = p->ext[ROW], n = p->ext[COL];
+  _Alignas(16) uint32_t s[AXPY_SUMS / 4];
+  /* A tile reads past its last column: a sliver's width beyond the zips. */
+  uint32_t *z = NULL;
+  if (m >= p->g->kernel.mr) {
+    z = (uint32_t *)scratch(p, AXPY_ZIPS + 4 * p->g->kernel.nr);
+    if (z == NULL) return;
+  }
+  for (int64_t t = lo; t < hi; t++) {
+    int64_t e = t / j->groups, j0 = t % j->groups * j->cols;
+    int64_t c = min64(j->cols, n - j0);
+    memset(s, 0, (size_t)(m * c * 4));
+    quad_unit(j, e, j0, c, s, z);
+    for (int64_t i = 0; i < m; i++) quad_row(p, e, i, j0, c, s + i * c);
+  }
+  nx_cpu_give(z);
+}
+
+/* [u]'s product in [acc] of a's words and b's [k] elements along k by
+   quads' axpys: 0 if a worker's scratch could not be allocated. */
+static int quad_axpys_on(nx_cpu_quads_axpy axpy, const nx_cpu_gemm *g,
+                         int acc, int64_t k, const nx_contract_view *u,
+                         const nx_array *const *op) {
+  problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
+  lay_out(&p, u, op);
+  atomic_init(&p.failed, 0);
+  int64_t batch = p.ext[BATCH], m = p.ext[ROW], n = p.ext[COL];
+  int64_t bytes = batch * (m + n) * k;
+  /* Each element's product counts as a word's does in the dots: the
+     zips spend about three instructions on each SDOT. */
+  double cost = flop_cost(g->kernel, 2.0 * batch * m * n * k) + bytes;
+  int64_t share = ceil_div(n, units(bytes, cost, NX_CPU_THREAD_BYTES));
+  int64_t cols = min64(ceil_div(share, AXPY_TILE),
+                       AXPY_SUMS / 4 / m / AXPY_TILE) * AXPY_TILE;
+  quad_axpys_job j = {.p = &p, .axpy = axpy, .k = k, .cols = cols,
+                      .groups = ceil_div(n, cols)};
+  nx_cpu_job(batch * j.groups, bytes, cost, quad_axpys, &j);
+  return !atomic_load(&p.failed);
+}
+
 /* The table's quads kernels for a contraction in [acc] of operands of
    [da] and [db], or NULL. */
 static const nx_cpu_gemm *quads_for(int acc, int da, int db) {
@@ -1712,16 +1846,24 @@ static int quads_on(const nx_cpu_gemm *g, int acc, const nx_contract_view *v,
     return 1;
   nx_contract_view u = *v;
   u.extent[CON] = ceil_div(v->extent[CON], 4);
-  nx_array x[2];
-  int copy_a = !words_in_place(v, A), copy_b = !words_in_place(v, B);
-  uint8_t *ab = words_of(v, op, A, acc, copy_a, &u, &x[A]);
-  uint8_t *bb = words_of(v, op, B, acc, copy_b, &u, &x[B]);
+  int64_t m = v->extent[ROW], n = v->extent[COL];
+  nx_cpu_quads_axpy axpy = nx_cpu_table->quads_axpy[op[A]->dtype];
+  int by_rows = axpy && m <= AXPY_ROWS && v->stride[B][CON] != 1 &&
+                v->stride[B][COL] == 1;
+  nx_array x[2] = {*op[A], *op[B]};
+  int copy_a = !words_in_place(v, A);
+  int copy_b = !by_rows && !words_in_place(v, B);
+  uint8_t *ab = words_of(v, op, A, acc, copy_a, &u, &x[A]), *bb = NULL;
+  if (!by_rows) bb = words_of(v, op, B, acc, copy_b, &u, &x[B]);
   int done = 0;
   if ((copy_a && ab == NULL) || (copy_b && bb == NULL)) goto out;
   const nx_array *ops[4] = {&x[A], &x[B], op[INIT], op[DST]};
+  if (by_rows) {
+    done = quad_axpys_on(axpy, g, acc, v->extent[CON], &u, ops);
+    goto out;
+  }
   /* a's words lie adjacent along k; the dots need b's to as well. */
   nx_cpu_quads_dot dot = nx_cpu_table->quads_dot[op[A]->dtype];
-  int64_t m = v->extent[ROW], n = v->extent[COL];
   if (dot && u.stride[B][CON] == 1 && min64(m, n) <= QUAD_ROWS) {
     quad_dots_on(dot, g, acc, &u, ops);
     done = 1;
