@@ -385,7 +385,7 @@ int rig_nv_most_parts(const struct device *d) {
 
 int rig_nv_room(void *self, const struct rig_part *p, int n,
                 void *scratch, const uint8_t *args) {
-  struct device *d = self;
+  struct device *d = ((struct rig_nv_edge *)self)->d;
   if (!runs(p, n, args)) return RIG_NEVER;
   route(d, scratch, p, n);
   struct cost k = need(d, scratch, p, n), room = room_of(d);
@@ -554,7 +554,7 @@ static void stamp(struct device *d, int q, uint64_t address, uint64_t v) {
 }
 
 int rig_nv_settle(void *self, uint64_t v, const char **failure) {
-  struct device *d = self;
+  struct device *d = ((struct rig_nv_edge *)self)->d;
   struct measure m;
   if (d->source != NULL && rig_now_ns() - d->latest.host >= MEASURE_NS) {
     uint64_t width;
@@ -757,7 +757,7 @@ int rig_nv_submit(void *self, uint64_t v, const struct rig_wait *waits,
                   const char **failure) {
   (void)nslots;
   (void)failure;
-  struct device *d = self;
+  struct device *d = ((struct rig_nv_edge *)self)->d;
   struct channel *compute = &d->ch[COMPUTE];
   struct route *routes = scratch;
   struct submission s = {.d = d,

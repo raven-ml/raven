@@ -26,7 +26,8 @@
 
 #include "rig_nv_stubs.h"
 
-#define Device_val(v) ((struct device *)Long_val(v))
+#define Edge_val(v) ((struct rig_nv_edge *)Long_val(v))
+#define Device_val(v) (Edge_val(v)->d)
 #define Pointer_val(v) ((void *)Long_val(v))
 
 /* Making a device */
@@ -45,19 +46,26 @@ static const struct rig_driver driver = {rig_nv_room, rig_nv_submit,
 /* A device whose timeline word is the host's 64-bit word at [v_word], the
    GPU's at [v_word_gpu], followed by its two join words, and whose
    notifications hold their error at [v_info32] and its status at
-   [v_status]; or [0] without memory. The state lives until its word is
-   freed. */
+   [v_status]; or [0] without memory. Its edge lives for the process, its
+   state until its stop. */
 value caml_rig_nv_create(value v_word, value v_word_gpu, value v_info32,
                          value v_status) {
+  struct rig_nv_edge *e = calloc(1, sizeof *e);
   struct device *d = calloc(1, sizeof *d);
-  if (d == NULL) return Val_long(0);
-  d->driver = &driver;
+  if (e == NULL || d == NULL) {
+    free(e);
+    free(d);
+    return Val_long(0);
+  }
+  e->driver = &driver;
+  e->word = Pointer_val(v_word);
+  e->d = d;
   d->word = Pointer_val(v_word);
   d->word_gpu = (uint64_t)Long_val(v_word_gpu);
   d->info32_at = (uint32_t)Long_val(v_info32);
   d->status_at = (uint32_t)Long_val(v_status);
   for (int q = 0; q < CHANNELS; q++) d->ch[q].owes_setup = 1;
-  return Val_long((intnat)d);
+  return Val_long((intnat)e);
 }
 
 /* Frees the state of a device whose open failed: nothing holds it. */
@@ -67,6 +75,7 @@ value caml_rig_nv_destroy(value v_self) {
   free(d->copy_launch);
   free(d->timed);
   free(d);
+  free(Edge_val(v_self));
   return Val_unit;
 }
 
@@ -296,6 +305,7 @@ value caml_rig_nv_flush(value v_self, value v_word, value v_delta) {
   struct device *d = Device_val(v_self);
   volatile const uint32_t *word = Pointer_val(v_word);
   struct flush *free = NULL;
+  if (d == NULL) return Val_true;
   for (int i = 0; i < FLUSHES; i++) {
     struct flush *f = &d->flushes[i];
     if (f->word == word) {
@@ -340,7 +350,7 @@ value caml_rig_nv_owe_invalidate(value v_self) {
 
 value caml_rig_nv_signaled(value v_self) {
   return Val_long(
-      atomic_load_explicit(Device_val(v_self)->word, memory_order_acquire));
+      atomic_load_explicit(Edge_val(v_self)->word, memory_order_acquire));
 }
 
 /* The error the RM wrote into channel [q]'s notifier, its code and its
@@ -364,22 +374,18 @@ value caml_rig_nv_raise(value v_self) {
   return Val_unit;
 }
 
-/* Ends the channels' state once the RM freed them: their marks, and every
-   pointer into the memory the path gives back. */
-value caml_rig_nv_end(value v_self) {
-  struct device *d = Device_val(v_self);
-  free(d->copy_launch);
-  d->copy_launch = NULL;
-  for (int q = 0; q < CHANNELS; q++) {
-    free(d->ch[q].marks);
-    memset(&d->ch[q], 0, sizeof d->ch[q]);
-  }
-  d->doorbell = NULL;
-  for (int i = 0; i < FLUSHES; i++) d->flushes[i].word = NULL;
+/* Frees the state of a stopped device, which the channels never read: its
+   edge and word stay. The copy kernel's launch goes only if the channels
+   stopped ([v_stopped]). */
+value caml_rig_nv_end(value v_self, value v_stopped) {
+  struct rig_nv_edge *e = Edge_val(v_self);
+  struct device *d = e->d;
+  if (d == NULL) return Val_unit;
+  if (Bool_val(v_stopped)) free(d->copy_launch);
+  for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
   free(d->timed);
-  d->timed = NULL;
-  d->stamps = NULL;
-  d->bar = NULL;
+  free(d);
+  e->d = NULL;
   return Val_unit;
 }
 

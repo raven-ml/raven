@@ -178,7 +178,7 @@ static void release(struct device *d, struct channel *c, uint64_t v) {
    for the last. The rows' gap is the releases' cost on the GPU; their gap
    to [rig_nv_bench_entries] is the driver's on the host. */
 value rig_nv_bench_rung(value v_words, value v_each) {
-  struct device *d = self;
+  struct device *d = ((struct rig_nv_edge *)self)->d;
   struct channel *c = &d->ch[COMPUTE];
   uint32_t words[2 * ENTRIES];
   struct rig_part parts[ENTRIES];

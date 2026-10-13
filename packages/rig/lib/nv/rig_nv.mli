@@ -264,8 +264,9 @@ val capability : t -> Rig_nv_abi.Gpu.t
     and that memory stays allocated for the life of the process. Regions rig
     allocated return as {!Rig_edge.Driver.val-stop} states, in both cases.
 
-    The word, and the device's C state, which reading it needs, stay for
-    the process. *)
+    Either way the stop frees the C state the device ran work with, its
+    templates and the channels' records, which the channels never read. The
+    word, and the edge that reads it, stay for the process. *)
 
 (** {1:paths Paths}
 

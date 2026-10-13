@@ -266,10 +266,8 @@ struct measure {
    failed. */
 enum { MEASURE_OK, MEASURE_WIDE, MEASURE_FAILED };
 
-/* A device. The fields up to [last] live for the process; the channels'
-   memory ends at a stop that answered Stopped. */
+/* What a device runs work with, from its open to its stop. */
 struct device {
-  const struct rig_driver *driver;
   _Atomic uint64_t *word; /* the timeline word, then the two join words */
   uint64_t word_gpu;
   _Atomic uint64_t last; /* the last value submitted */
@@ -305,6 +303,14 @@ struct device {
   int first_wide;
   uint64_t converted, unconverted, last_end;
   const char *failure;
+};
+
+/* A device's edge, kept for the process: its word, and its run state,
+   NULL once stopped. */
+struct rig_nv_edge {
+  const struct rig_driver *driver;
+  _Atomic uint64_t *word;
+  struct device *d;
 };
 
 /* Makes the host's writes through the BARs that [d]'s work may read reach

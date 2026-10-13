@@ -221,7 +221,7 @@ external install_copy : int -> nativeint -> int -> string -> unit
 [@@noalloc]
 
 external raise_word : int -> unit = "caml_rig_nv_raise" [@@noalloc]
-external end_channels : int -> unit = "caml_rig_nv_end" [@@noalloc]
+external end_state : int -> bool -> unit = "caml_rig_nv_end" [@@noalloc]
 
 (* RM parameters *)
 
@@ -1109,9 +1109,9 @@ let halt d l =
     && ok (fun () -> rm.free ~parent:l.path.device l.group)
   in
   let path = try l.path.stop () with Fault _ -> `Unknown in
-  if (unregistered && freed) || path = `Stopped then begin
+  let stopped = (unregistered && freed) || path = `Stopped in
+  if stopped then begin
     raise_word d.self;
-    end_channels d.self;
     (* The work no longer runs: what it used goes back, and a failure to give
        some back leaves the device stopped. *)
     List.iter (give l.path.free) l.owned;
@@ -1122,7 +1122,8 @@ let halt d l =
     (* The RM stopped the channels on a fault: nothing runs, though their
        objects stay. Otherwise their own releases bring the word up as their
        work ends; a word raised here could be lowered by a late release. *)
-  else if notified d then raise_word d.self
+  else if notified d then raise_word d.self;
+  Mutex.protect d.flush_lock (fun () -> end_state d.self stopped)
 
 let stop (T d) ~fault:_ =
   let l =
