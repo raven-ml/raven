@@ -301,7 +301,8 @@ value caml_rig_nv_entry(value v_self, value v_base, value v_word) {
 /* The word of the device's own BAR a submission reads (struct flush), the
    path's flush word. */
 value caml_rig_nv_bar(value v_self, value v_at) {
-  Device_val(v_self)->flushes[0].word = Pointer_val(v_at);
+  atomic_store_explicit(&Device_val(v_self)->flushes[0].word,
+                        Pointer_val(v_at), memory_order_release);
   return Val_unit;
 }
 
@@ -315,16 +316,18 @@ value caml_rig_nv_flush(value v_self, value v_word, value v_delta) {
   if (d == NULL) return Val_true;
   for (int i = 0; i < FLUSHES; i++) {
     struct flush *f = &d->flushes[i];
-    if (f->word == word) {
+    if (atomic_load(&f->word) == word) {
       atomic_fetch_add_explicit(&f->count, Long_val(v_delta),
                                 memory_order_acq_rel);
       return Val_true;
     }
-    if (free == NULL && i > 0 && f->word == NULL) free = f;
+    if (free == NULL && i > 0 &&
+        (atomic_load(&f->word) == NULL || atomic_load(&f->count) == 0))
+      free = f;
   }
   if (free == NULL) return Val_false;
+  atomic_store_explicit(&free->word, word, memory_order_release);
   atomic_store_explicit(&free->count, Long_val(v_delta), memory_order_release);
-  free->word = word;
   return Val_true;
 }
 

@@ -198,9 +198,11 @@ static inline void full_fence(void) {
    returns once the host's writes through that BAR reached the GPU, while
    [count] regions written through it are live: the device's own BAR, or
    the BAR of the GPU whose Mapped memory the device's views reach. The
-   path keeps each word mapped while a device may read it. */
+   path keeps each word mapped while a device may read it. An entry whose
+   count fell to 0 serves another word: its word is stored before its
+   count, and a submission reads the count first. */
 struct flush {
-  volatile const uint32_t *word;
+  _Atomic(volatile const uint32_t *) word;
   _Atomic long count;
 };
 
@@ -322,13 +324,15 @@ static inline void rig_nv_flush(struct device *d, int launched) {
   int read = 0;
   for (int i = 0; i < FLUSHES; i++) {
     struct flush *f = &d->flushes[i];
-    if (f->word == NULL) continue;
     if (atomic_load_explicit(&f->count, memory_order_acquire) <= 0 &&
         !(i == 0 && launched))
       continue;
+    volatile const uint32_t *w =
+        atomic_load_explicit(&f->word, memory_order_acquire);
+    if (w == NULL) continue;
     if (!read) full_fence();
     read = 1;
-    (void)*f->word;
+    (void)*w;
   }
   if (!read) store_fence();
 }
