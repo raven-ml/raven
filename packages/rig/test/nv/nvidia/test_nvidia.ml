@@ -166,40 +166,38 @@ let other_root () =
   contains ~sub:"has a device open" e;
   Rig_nv.stop g' ~fault:None
 
-(* Opening and stopping a GPU again and again, its word freed after each stop,
-   leaves its mappings as one open and stop left them. *)
+(* [cycles cycle] runs [cycle] once, then once more and sixteen times after,
+   and checks that each run past the first keeps at most what the second
+   kept of the GPU's mappings: a stopped device's word, which lives for the
+   process. *)
+let cycles cycle =
+  cycle ();
+  let first = List.length (S.mappings ()) in
+  cycle ();
+  let one = List.length (S.mappings ()) - first in
+  for _ = 1 to 16 do
+    cycle ()
+  done;
+  at_most int ~msg:"the GPU's mappings" ~than:(first + (17 * one))
+    (List.length (S.mappings ()))
+
+(* Opening and stopping a GPU again and again keeps at most one device's
+   mappings per open. *)
 let reopen () =
   if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let cycle () =
-    let g = require_ok ((N.gpu 0).make ()) in
-    Rig_nv.stop g ~fault:None;
-    Rig_nv.free g (Rig_nv.facts g).word
-  in
-  cycle ();
-  let before = S.mappings () in
-  for _ = 1 to 16 do
-    cycle ()
-  done;
-  equal (list string) ~msg:"the GPU's mappings" before (S.mappings ())
+  cycles (fun () ->
+      let g = require_ok ((N.gpu 0).make ()) in
+      Rig_nv.stop g ~fault:None)
 
-(* Opening and closing a GPU through rig again and again leaves its mappings
-   as one open and close left them: rig gives each stopped device's word back. *)
+(* Opening and closing a GPU through rig again and again keeps at most one
+   device's mappings per open, once reclamation returned its memory. *)
 let reclose () =
   if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let cycle () =
-    let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
-    Rig.close d;
-    Gc.full_major ();
-    ignore (Rig.Buffer.create Rig.host 8);
-    Gc.full_major ();
-    ignore (Rig.Buffer.create Rig.host 8)
-  in
-  cycle ();
-  let before = S.mappings () in
-  for _ = 1 to 16 do
-    cycle ()
-  done;
-  equal (list string) ~msg:"the GPU's mappings" before (S.mappings ())
+  cycles (fun () ->
+      let d = require_ok ~pp:Format.pp_print_string (Rig.open_ (N.gpu 0)) in
+      Rig.close d;
+      Gc.full_major ();
+      Rig_support.reclaim ())
 
 let () =
   exit
@@ -238,9 +236,11 @@ let () =
              test "a GPU has one device until it is stopped" once;
              test "a GPU has one device whatever the root" other_root;
              test "a GPU without a display bounds hangs at 30 s" hang_bound;
-             test "opening and stopping a GPU leaves no mapping behind" reopen;
+             test "opening and stopping a GPU keeps a device's mappings each"
+               reopen;
              test
-               "opening and closing a GPU through rig leaves no mapping behind"
+               "opening and closing a GPU through rig keeps a device's \
+                mappings each"
                reclose;
            ];
        ]

@@ -290,12 +290,8 @@ type 'm dev = {
   reaches : int -> bool; (* the path's *)
   capability : Abi.Gpu.t;
   flush : int option; (* the path's flush word *)
-  flush_lock : Mutex.t; (* serialises count_flush and [word] *)
-  mutable word : 'm reg option;
-      (* [None] once rig freed it, and the C state with it *)
-  (* Where the word is, which the facts report also once it is freed. *)
-  word_address : int;
-  word_host : int;
+  flush_lock : Mutex.t; (* serialises count_flush *)
+  word : 'm reg; (* kept, with the C state, for the process *)
   local_lock : Mutex.t; (* held by [grow], and by stop over [live] *)
   mutable live : 'm live option; (* [None] once stop began *)
 }
@@ -314,9 +310,7 @@ and 'm reg = {
 
 type t = T : 'm dev -> t
 
-(* A region, or a device's word once rig freed it, of which the facts keep
-   where it was. *)
-type region = R : 'm reg -> region | Given of { address : int; host : int }
+type region = R : 'm reg -> region
 
 let key : t Type.Id.t = Type.Id.make ()
 
@@ -366,10 +360,7 @@ let facts (T d) =
     maps_host = d.maps_host;
     host_addresses = false;
     capability = Abi.Gpu.declare d.capability;
-    word =
-      (match d.word with
-      | Some w -> R w
-      | None -> Given { address = d.word_address; host = d.word_host });
+    word = R d.word;
     edge = Nativeint.of_int d.self;
   }
 
@@ -789,10 +780,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
             local_window;
             local = (fun n -> local d n);
           };
-        word =
-          Some { dev = d; mem = words; free = p.free; bytes = 8; flush = None };
-        word_address = words.address;
-        word_host = words_host;
+        word = { dev = d; mem = words; free = p.free; bytes = 8; flush = None };
         flush = p.flush;
         flush_lock = Mutex.create ();
         local_lock = Mutex.create ();
@@ -859,11 +847,9 @@ let region d (p : _ path) flush bytes m =
   R { dev = d; mem = m; free = p.free; bytes; flush }
 
 (* Counts [delta] regions written through the BAR of the flush word [w] in
-   [d]'s flushes: [false] if [d] has no free entry for [w]. Once [d]'s word is
-   freed nothing flushes, and the count is left. *)
+   [d]'s flushes: [false] if [d] has no free entry for [w]. *)
 let count d w delta =
-  Mutex.protect d.flush_lock (fun () ->
-      Option.is_some d.word && count_flush d.self w delta)
+  Mutex.protect d.flush_lock (fun () -> count_flush d.self w delta)
 
 let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
@@ -883,31 +869,18 @@ let alloc (T d) (memory : Rig_edge.memory) n =
               ignore (count d w 1 : bool);
               Some (region d p (Some w) n m)))
 
-(* Frees [d]'s C state with its word. rig frees the word after the stop, but
-   may free other regions and unload images after it. *)
-let free_state d =
-  Mutex.protect d.flush_lock (fun () ->
-      d.word <- None;
-      destroy d.self)
-
 (* A region holds its device: rig frees it on that device. *)
-let free (T _) = function
-  | Given _ -> ()
-  | R r -> (
-      give r.free r.mem;
-      match (r.dev.word, r.flush) with
-      | Some w, _ when r == w -> free_state r.dev
-      | _, None -> ()
-      | _, Some w -> ignore (count r.dev w (-1) : bool))
+let free (T _) (R r) =
+  give r.free r.mem;
+  Option.iter (fun w -> ignore (count r.dev w (-1) : bool)) r.flush
 
-let address = function R r -> r.mem.address | Given w -> w.address
+let address (R r) = r.mem.address
 
-let locate r =
-  let host = match r with R r -> r.mem.host | Given w -> Some w.host in
+let locate (R r as region) =
   {
-    Rig_edge.address = Some (address r);
-    host;
-    handle = Nativeint.of_int (address r);
+    Rig_edge.address = Some (address region);
+    host = r.mem.host;
+    handle = Nativeint.of_int (address region);
   }
 
 let peer (T d) (T d') =
@@ -918,24 +891,21 @@ let peer (T d) (T d') =
 (* [r] holds its device, the other one. A view of Mapped memory makes [d]'s
    submissions flush the host's writes through the BAR behind it, which [d]'s
    own doorbell does not order. *)
-let map_peer (T d) (T _) = function
-  | Given _ -> None
-  | R r -> (
-      match Type.Id.provably_equal d.key r.dev.key with
+let map_peer (T d) (T _) (R r) =
+  match Type.Id.provably_equal d.key r.dev.key with
+  | None -> None
+  | Some Type.Equal -> (
+      let l = live d in
+      let m = l.path.map_peer r.mem in
+      match below r.bytes m with
       | None -> None
-      | Some Type.Equal -> (
-          let l = live d in
-          let m = l.path.map_peer r.mem in
-          match below r.bytes m with
-          | None -> None
-          | Some m -> (
-              match r.flush with
-              | None -> Some (region d l.path None r.bytes m)
-              | Some w when count d w 1 ->
-                  Some (region d l.path (Some w) r.bytes m)
-              | Some _ ->
-                  give l.path.free m;
-                  None)))
+      | Some m -> (
+          match r.flush with
+          | None -> Some (region d l.path None r.bytes m)
+          | Some w when count d w 1 -> Some (region d l.path (Some w) r.bytes m)
+          | Some _ ->
+              give l.path.free m;
+              None))
 
 let map_host (T d) a n =
   if n < 1 then invalid_argf "Rig_nv.map_host: %d bytes, expected at least 1" n;

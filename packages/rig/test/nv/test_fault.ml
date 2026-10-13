@@ -6,7 +6,8 @@
 (* A fault on the GPU, through rig. A kernel stores to address 0, which no page
    table maps: the RM stops the channel and reports the fault. The device is
    lost with the report, every later use of it raises Lost, the process's files
-   and mappings come back once its memory is collected, and a fresh process
+   and mappings come back once its memory is collected, but the page of its
+   timeline word, which the device keeps for the process, and a fresh process
    opens the GPU and launches the kernel correctly. Each runs in a forked child,
    one fault per run; the suite forks before any call to NVIDIA's driver. *)
 
@@ -43,14 +44,11 @@ let in_child (f : unit -> 'a) : ('a, string) result =
       ignore (Unix.waitpid [] pid);
       result
 
-(* Collects and drains twice: a stopped device's word goes back at the second
-   drain, once every domain passed a minor collection since the first. *)
+(* Collects, then reclaims, which drains every device: a lost device's memory
+   collected after its stop returns so. *)
 let collect () =
-  for _ = 1 to 2 do
-    Gc.full_major ();
-    Gc.full_major ();
-    ignore (Rig.Buffer.create Rig.host 8)
-  done
+  Gc.full_major ();
+  Rig_support.reclaim ()
 
 (* Launches [double_index] on [t] over [out], an address of [t]'s. *)
 let double t out =
@@ -164,10 +162,14 @@ let address_access l =
   | first :: (_ :: _ as rest) -> (first, List.nth rest (List.length rest - 1))
   | _ -> (l, "")
 
+(* The bytes and the permissions of a line of [/proc/self/maps]. *)
+let bytes_of line = Scanf.sscanf line "%x-%x" (fun a b -> b - a)
+let perms line = Scanf.sscanf line "%x-%x %s" (fun _ _ p -> p)
+
 (* The device is lost with the RM's report, which every later use raises again:
    the channel group's error once, by number and name, then the MMU's fault at
-   address 0 on a write. The files and mappings the device took come back, its
-   timeline word's included. *)
+   address 0 on a write. The files the device took come back, and its
+   mappings but one shared page, its timeline word's. *)
 let test_fault () =
   need_gpu ();
   let r = require_ok (in_child fault) in
@@ -185,7 +187,12 @@ let test_fault () =
       equal ~msg:("a later " ^ use) string ("Lost: " ^ why) got)
     r.later;
   equal ~msg:"files" int (fst r.files) (snd r.files);
-  equal ~msg:"GPU mappings" (list string) (fst r.maps) (snd r.maps)
+  let before, after = r.maps in
+  let kept =
+    List.filter (fun l -> perms l <> "---p" && not (List.mem l before)) after
+  in
+  equal ~msg:"the bytes of each GPU mapping the device keeps" (list int)
+    [ 4096 ] (List.map bytes_of kept)
 
 let test_fresh () =
   need_gpu ();

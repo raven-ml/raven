@@ -66,10 +66,6 @@ let mem_address (Mem (_, m)) = m.address
 let mem_host (Mem (_, m)) = m.host
 let free_mem (Mem (o, m)) = o.free m
 
-(* The owner of memory given back, of which a region keeps only the
-   addresses. *)
-let given : unit owner = { key = Type.Id.make (); free = ignore }
-
 (* The path's functions over memory whose type the owner hides. *)
 type ops = {
   alloc : Rig_edge.memory -> int -> mem option;
@@ -197,16 +193,12 @@ type t = {
   aql : bool; (* the compute queue reads AQL packets *)
   lds : int;
   hdp : int option;
-  hdps : Mutex.t; (* the HDP registers' counts and [word] *)
+  hdps : Mutex.t; (* the HDP registers' counts *)
   budget : int;
   hang_ms : int option;
   waits64 : bool; (* its queues run 64-bit waits *)
   maps_host : bool;
-  mutable word : region option;
-      (* [None] once rig freed it, and the C state with it *)
-  (* Where the word is, which the facts report also once it is freed. *)
-  word_address : int;
-  word_host : int;
+  word : region; (* kept, with the C state, for the process *)
   reaches : int -> bool; (* the path's *)
   capability : Abi.Capability.t;
   guard : Mutex.t;
@@ -457,11 +449,6 @@ let is_gpu ~vendor ~class_ =
 
 let key = Type.Id.make ()
 
-(* [g]'s word once rig freed it: where it was. *)
-let freed g =
-  let m = { address = g.word_address; host = Some g.word_host; data = () } in
-  { bytes = 8; mem = Mem (given, m); flush = None }
-
 let facts g =
   {
     Rig_edge.arch = Abi.Gpu.processor g.gpu;
@@ -482,7 +469,7 @@ let facts g =
     maps_host = g.maps_host;
     host_addresses = false;
     capability = Abi.Capability.declare g.capability;
-    word = (match g.word with Some w -> w | None -> freed g);
+    word = g.word;
     edge = Nativeint.of_int g.self;
   }
 
@@ -497,11 +484,9 @@ let live g =
 (* Memory *)
 
 (* Counts a region that needs [reg] flushed before a doorbell: [false] if the
-   device keeps no more registers. Once [g]'s word is freed no doorbell rings,
-   and the count is left. *)
+   device keeps no more registers. *)
 let count_hdp g reg delta =
-  Mutex.protect g.hdps (fun () ->
-      Option.is_some g.word && hdp_count g.self reg delta)
+  Mutex.protect g.hdps (fun () -> hdp_count g.self reg delta)
 
 let alloc g (kind : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_amd.alloc: %d bytes, expected at least 1" n;
@@ -522,17 +507,9 @@ let alloc g (kind : Rig_edge.memory) n =
    act on. *)
 let give_back m = try free_mem m with Fault _ -> ()
 
-(* Frees [g]'s C state with its word. rig frees the word after the stop, but
-   may free other regions and unload images after it. *)
-let free_state g =
-  Mutex.protect g.hdps (fun () ->
-      g.word <- None;
-      destroy g.self)
-
 let free g r =
   Option.iter (fun reg -> ignore (count_hdp g reg (-1))) r.flush;
-  give_back r.mem;
-  match g.word with Some w when r == w -> free_state g | _ -> ()
+  give_back r.mem
 
 (* The GPU names memory by address: the handle is the address. *)
 let locate r =
@@ -907,9 +884,7 @@ let make (type m) (p : m path) =
         hang_ms = p.hang_ms;
         waits64;
         maps_host = Option.is_some ops.map_host;
-        word = Some (region 8 word);
-        word_address = mem_address word;
-        word_host;
+        word = region 8 word;
         reaches = p.reaches;
         capability =
           {

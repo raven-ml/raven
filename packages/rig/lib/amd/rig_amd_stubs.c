@@ -50,7 +50,7 @@ value caml_rig_amd_create(value unit) {
   return Val_long((intnat)d);
 }
 
-/* Frees the state of a device whose word rig freed: nothing holds it. */
+/* Frees the state of a device whose open failed: nothing holds it. */
 value caml_rig_amd_destroy(value v_self) {
   free(Device_val(v_self));
   return Val_unit;

@@ -338,7 +338,8 @@ val capability : t -> Rig_amd_abi.Capability.t
     the word reaches that value only if the queues still run and complete
     their work.
 
-    The device's C state is freed when rig frees its word. *)
+    The word, and the device's C state, which reading it needs, stay for
+    the process. *)
 
 (** {1:paths Paths}
 

@@ -60,8 +60,7 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_info32,
   return Val_long((intnat)d);
 }
 
-/* Frees the state of a device whose open failed, or whose word rig freed:
-   nothing holds it. */
+/* Frees the state of a device whose open failed: nothing holds it. */
 value caml_rig_nv_destroy(value v_self) {
   struct device *d = Device_val(v_self);
   for (int q = 0; q < CHANNELS; q++) free(d->ch[q].marks);
