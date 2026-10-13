@@ -18,7 +18,9 @@ Breaking one causes real damage.
 - NEVER silence a warning or prefix a variable with `_` to hide it. A warning
   is a bug in the change.
 - NEVER add an nx backend operation without being asked.
-- NEVER add a dependency to the project, raven is purposefully zero-dependency.
+- NEVER add a dependency without being asked. raven depends only on OCaml
+  libraries whose types its public interfaces expose for composition
+  (`doc/dev/design.md`).
 - NEVER cite an RFC or a ledger from code or an `.mli`. The `.mli` and the code
   are the source of truth.
 
@@ -76,6 +78,10 @@ instead of a long-running one.
 - **Release.** When your task is done, kill your server, leave the tree
   clean and detached at main, then `git worktree unlock <path>`. A lock
   whose session has ended is stale; the lead clears it.
+- **Remote machines.** Never end a turn while a job on another machine
+  runs: nothing wakes an agent when it finishes. Run it in the foreground
+  with a timeout, or wait on a local command that blocks until it ends,
+  and if word is late, check its pid or log yourself.
 
 ## Commands
 
@@ -89,50 +95,10 @@ instead of a long-running one.
 
 ## How we design
 
-The bar is the design a careful library author would still defend in ten
-years: few concepts, each with something a caller can point at; total
-functions over plain data; illegal states unrepresentable; no knobs and no
-modes; call sites that read as prose. Judge a design by what a production 1.0
-needs, never by "nothing uses it yet". When a question has a principled
-answer, decide it and say why; ask only for the maintainer's own calls.
-
-- **Make the right change.** Every change moves the code toward the one true
-  design, however much it touches. Diff size is never the measure; elegant
-  designs usually take fewer lines, and that follows from the design.
-- **Change every consumer in the same sweep.** No compatibility shims, bridge
-  modules or dead fields, even if the build is broken in between.
-- **Ask whether the layer is right before the second fix.** A mechanism that
-  needs a second patch for the same class of bug is usually in the wrong
-  place.
-- **Lines are a signal.** A large diff or module usually means duplicated
-  machinery or broken design. Look for it before adding more.
-- **Dependencies.** No external OCaml packages and no system libraries;
-  implement the small subset you need. Copy a small helper rather than create a
-  shared library.
-- **Library boundaries.** Each library has one job and a minimal set of dependencies.
-  Always prefer to solve problems through composition rather than dependencies and
-  abstractions.
-- **Layers.** Each layer talks only to the one directly below it. Low-level
-  mechanics (drivers, raw I/O, byte layouts) stay behind their layer; callers
-  work with domain values.
-- **Visibility.** Everything stays out of the `.mli` unless the design needs it
-  exported. Adding to a public `.mli` is a design change that should be weighted
-  as such.
-- **Fix upstream.** A capability missing in nx, rune or tolk is built there,
-  never worked around downstream.
-- **Argue for the most elegant shape.** Each new concept (a module type,
-  functor, scope, cache, mode or optional argument) weighs its alternatives —
-  plain data, an existing noun, composition, not exporting it — and shows the
-  chosen one captures the problem's structure with the fewest concepts and each
-  fact in one place. The simplest mechanism often wins, but not when it
-  scatters a fact across callers. A design that can't make the case is not
-  ready.
-- **Review the shape before landing.** A change to a public `.mli` lands only
-  after a review of its API shape against this section. Passing tests and a
-  correctness review don't make it ready.
-- **Briefs state problems.** A brief to an agent gives the problem, its
-  constraints and the decisions already made, never a mechanism nobody
-  weighed.
+Before any design or semantic decision, work through `doc/dev/design.md`:
+the constraint we design for, how to trade correctness, understanding and
+speed, the hard constraints, how to shape a design, how to become certain
+of it from references, and how to review it.
 
 ## Code and docs
 
@@ -182,7 +148,9 @@ promises, through the public interface, never what the code does today.
   baseline, written as `expect`.
 - Draw inputs that break the code: zero-size and one-element shapes, bounds
   and their neighbours, every dtype, strided and broadcast views, NaN,
-  `-0.`, infinities, int extremes. `cover` the cases a law needs.
+  `-0.`, infinities, int extremes. `cover` the cases a law needs, and draw
+  each covered case often enough that every run reaches it: a cover that
+  some seeds miss is a flaky test.
 - Assert with verbs that print the data (`equal`, `less ~than`, `raises`)
   and floats with a stated tolerance, never `is_true`.
 - Write a test where a user would get a wrong answer or a crash. Fixing a
