@@ -148,6 +148,33 @@ let test_vfio () =
   Function.unpin f (Window.address w) (Window.length w);
   List.iter (fun (w, _) -> Function.free_dma f w) allocs
 
+let entry_limit = "/sys/module/vfio_iommu_type1/parameters/dma_entry_limit"
+
+(* Each page alloc_dma gives behind an IOMMU is one of the container's
+   [dma_entry_limit] mappings and counts against the process's locked-memory
+   limit: whichever runs out first, the next alloc_dma is [Ok None]. *)
+let test_vfio_limit () =
+  let _, f = vfio_function () in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  let limit =
+    In_channel.with_open_bin entry_limit In_channel.input_all
+    |> String.trim |> int_of_string
+  in
+  let page = Machine.page Machine.this in
+  let rec fill ws k =
+    match Function.alloc_dma f page with
+    | Ok (Some (w, _)) when k < limit -> fill (w :: ws) (k + 1)
+    | r -> (r, ws)
+  in
+  let last, ws = fill [] 0 in
+  Fun.protect ~finally:(fun () -> List.iter (Function.free_dma f) ws)
+  @@ fun () ->
+  match require_ok ~msg:"a limit is no refusal" last with
+  | None -> ()
+  | Some (w, _) ->
+      Function.free_dma f w;
+      failf "%d mappings, beyond the limit of %d" (limit + 1) limit
+
 (* A machine's files *)
 
 (* [take_on fns bus] takes [bus] on a machine whose functions are [fns]. *)
@@ -1709,6 +1736,8 @@ let this_machine =
       test "a GPU taken here refuses a second take until released"
         test_held_here;
       test "a GPU behind an IOMMU reaches its memory at one run apart" test_vfio;
+      test "a GPU behind an IOMMU out of mappings or locked memory gets none"
+        test_vfio_limit;
     ]
 
 let () =

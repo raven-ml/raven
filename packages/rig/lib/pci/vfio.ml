@@ -85,18 +85,6 @@ let not_viable files bus g =
         g bus
         (String.concat ", " (List.map (fun (f, d) -> strf "%s (%s)" f d) held))
 
-(* Mapping memory behind an IOMMU pins it, and the kernel counts the pinned
-   bytes against the process's locked-memory limit. *)
-let map_error bus n (e : Unix.error) =
-  match e with
-  | ENOSPC ->
-      strf
-        "mapping %d bytes for %s: the IOMMU holds as many mappings as Linux \
-         allows; raise the limit in \
-         /sys/module/vfio_iommu_type1/parameters/dma_entry_limit"
-        n bus
-  | e -> strf "mapping %d bytes for %s: %s" n bus (Unix.error_message e)
-
 (* Opening *)
 
 (* Opens [bus]'s group in a container of its own with the IOMMU model [m], then
@@ -272,12 +260,16 @@ let map_dma fn bus c a n =
           | () ->
               Tables.Range.replace c.maps (a, n) (iova, 1);
               Some iova
-          | exception Unix.Unix_error (ENOMEM, _, _) ->
+          (* Mapping memory pins it: the kernel counts the pinned bytes
+             against the process's locked-memory limit (ENOMEM) and the
+             mapping against the container's dma_entry_limit (ENOSPC). *)
+          | exception Unix.Unix_error ((ENOMEM | ENOSPC), _, _) ->
               Space.free c.iova iova;
               None
           | exception Unix.Unix_error (e, _, _) ->
               Space.free c.iova iova;
-              Fail.fail "%s" (map_error bus n e)))
+              Fail.fail "mapping %d bytes for %s: %s" n bus
+                (Unix.error_message e)))
 
 (* Drops a count of the [n] bytes at [a], unmapping them with the last. A
    released function's container has unmapped them already. *)

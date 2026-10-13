@@ -57,8 +57,9 @@ val device : t -> Unix.file_descr
 val map_dma : string -> string -> t -> int -> int -> int option
 (** [map_dma fn bus c a n] is the device address at which [c] maps the [n] bytes
     at [a]. Maps are counted, and each map of the same [(a, n)] adds a count.
-    It is [None] if the process reached its locked-memory limit or [c] has no
-    device addresses left. [fn] is the public function that asks, named in the
+    It is [None] if the process reached its locked-memory limit, or [c] holds
+    as many mappings as [dma_entry_limit] allows or has no device addresses
+    left. [fn] is the public function that asks, named in the
     [Invalid_argument] for a released function. *)
 
 val unmap_dma : string -> t -> int -> int -> unit

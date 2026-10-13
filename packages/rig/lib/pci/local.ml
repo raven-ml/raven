@@ -230,8 +230,10 @@ let pin t a n =
       | Some iova -> [ (iova, n) ]
       | None ->
           Fail.fail
-            "%s has no device addresses left for %d bytes, or the process \
-             reached its limit; %s"
+            "%s has no device addresses left for %d bytes, the process \
+             reached its locked-memory limit, or the IOMMU holds as many \
+             mappings as Linux allows; %s, or raise \
+             /sys/module/vfio_iommu_type1/parameters/dma_entry_limit"
             t.bus n Fail.memlock)
 
 let unpin t a n =

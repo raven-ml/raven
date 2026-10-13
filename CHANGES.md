@@ -51,6 +51,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig_pci.Function.alloc_dma` behind an IOMMU returns `Ok None` once the
+  container holds `dma_entry_limit` mappings, as it does at the locked-memory
+  limit. It returned `Error`, so a caller could not tell a limit from a refusal.
 - A remote job that fails sends every peer the root cause: a link whose
   thread saw the failure before the failing thread reached it could end its
   stream without the abort, and the peer learned only that the link closed.
