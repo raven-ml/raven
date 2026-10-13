@@ -135,8 +135,15 @@ static void commit(struct rig_metal_queue *q, uint64_t v, uint64_t *start,
   s->start = start;
   s->end = end;
   if (q->encoder) close_encoder(q);
+  /* The hold comes first, since the handler may run before [commit]
+     returns; a commit that raises gives it back, as no handler will. */
   rig_metal_hold(q->r);
-  [q->buffer commit];
+  @try {
+    [q->buffer commit];
+  } @catch (NSException *e) {
+    rig_metal_release(q->r);
+    @throw;
+  }
   [q->buffer release];
   *q = (struct rig_metal_queue){nil, nil, -1, q->r};
 }

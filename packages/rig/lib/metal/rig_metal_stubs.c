@@ -463,9 +463,13 @@ value caml_rig_metal_sleep(value v_d, value v_seen, value v_ms) {
   return Val_int(why != NULL);
 }
 
-/* The device's first failure. */
+/* The device's first failure. Raises [Invalid_argument] once the device
+   stopped. */
 value caml_rig_metal_failure(value v_d) {
-  const char *why = rig_metal_ring_failure(&Run_val(v_d)->ring);
+  struct rig_metal_run *r = Run_val(v_d);
+  if (r == NULL)
+    caml_invalid_argument("Rig_metal.failure: the device stopped");
+  const char *why = rig_metal_ring_failure(&r->ring);
   return caml_copy_string(why ? why : "");
 }
 
