@@ -197,6 +197,7 @@ static void nans(void *p, int64_t n, int dt) {
 #define REAL(x) (x)
 #define IMAG(x) ((R)0)
 #define SQRT sqrtf
+#define COPYSIGN copysignf
 #include "linalg_body.h"
 
 #define T double
@@ -208,6 +209,7 @@ static void nans(void *p, int64_t n, int dt) {
 #define REAL(x) (x)
 #define IMAG(x) ((R)0)
 #define SQRT sqrt
+#define COPYSIGN copysign
 #include "linalg_body.h"
 
 #define T float complex
@@ -219,6 +221,7 @@ static void nans(void *p, int64_t n, int dt) {
 #define REAL crealf
 #define IMAG cimagf
 #define SQRT sqrtf
+#define COPYSIGN copysignf
 #include "linalg_body.h"
 
 #define T double complex
@@ -230,6 +233,7 @@ static void nans(void *p, int64_t n, int dt) {
 #define REAL creal
 #define IMAG cimag
 #define SQRT sqrt
+#define COPYSIGN copysign
 #include "linalg_body.h"
 
 /* The job */
@@ -398,12 +402,12 @@ static value run(call c, const value *arrays, int threads) {
   c.w = nx_cpu_width(c.dt);
   c.scratch = scratch(&c);
   int64_t order = c.m > c.n ? c.m : c.n, least = c.m < c.n ? c.m : c.n;
-  /* eigh's flops: about 9 n³ with vectors, 4/3 n³ without (xHEEV); svd's
-     about 4 m n k without, three times as many with (xGESDD). */
+  /* eigh's flops: about 10/3 n³ with vectors, 4/3 n³ without (xHEEVD);
+     svd's about 4 m n k without, three times as many with (xGESDD). */
   int64_t per = solve                  ? c.r
                 : c.routine == SVD     ? (c.vectors ? 12 : 4) * least
                 : c.routine != EIGH    ? order / 3 + 1
-                : c.vectors            ? 9 * order
+                : c.vectors            ? 10 * order / 3
                                        : 4 * order / 3 + 1;
   int64_t flops = c.matrices * c.m * c.n * per;
   int64_t bytes = c.matrices * c.m * (c.n + c.r) * c.w;

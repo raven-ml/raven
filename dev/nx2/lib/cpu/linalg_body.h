@@ -12,8 +12,8 @@
 
 /* linalg.c's routines on matrices of one dtype, included once per dtype
    with T the element, R its real part's type, RDT that real type's dtype
-   code, CPLX 1 for complex, and CONJ, REAL, IMAG and SQRT for T and R,
-   which it undefines at its end. F(name) names the dtype's instance.
+   code, CPLX 1 for complex, and CONJ, REAL, IMAG, SQRT and COPYSIGN for T
+   and R, which it undefines at its end. F(name) names the dtype's instance.
 
    Matrices are dense and row-major, row i at a + i·ld. Each routine runs
    by scalar loops on blocks of at most LEAF columns and updates the rest
@@ -348,7 +348,8 @@ static int F(panel)(T *a, int64_t m, int64_t width, int64_t ld, int64_t j0,
       pivots[j0 + j] = j0 + p;
       if (p != j) {
         F(swap)(a + (j0 + j) * ld, a + (j0 + p) * ld, width);
-        for (int64_t c = 0; c < n; c++) F(swap)(q + c * h + j, q + c * h + p, 1);
+        for (int64_t c = 0; c < n; c++)
+          F(swap)(q + c * h + j, q + c * h + p, 1);
         int64_t t = perm[j0 + j];
         perm[j0 + j] = perm[j0 + p];
         perm[j0 + p] = t;
@@ -388,12 +389,13 @@ static int F(lu)(T *a, int64_t m, int64_t n, int64_t ld, int64_t *pivots,
 /* The least normal number over the unit roundoff, below which LAPACK's
    reflector rescales its norm. */
 #define SAFMIN \
-  ((R)(sizeof(R) == 4 ? FLT_MIN / (FLT_EPSILON / 2) : DBL_MIN / (DBL_EPSILON / 2)))
+  ((R)(sizeof(R) == 4 ? FLT_MIN / (FLT_EPSILON / 2)                         \
+                      : DBL_MIN / (DBL_EPSILON / 2)))
 
 static R F(abs)(R x) { return x < 0 ? -x : x; }
 
 /* |a| with the sign of b. */
-static R F(sign)(R a, R b) { return (R)copysign(a, b); }
+static R F(sign)(R a, R b) { return COPYSIGN(a, b); }
 
 /* The 2-norm of the [n] elements at [x], [s] apart: the plain sum of
    squares where it lies where every square that matters is exact, else
@@ -492,11 +494,11 @@ static void F(reflect)(const T *v, int64_t ldv, T tau, int64_t m, int64_t n,
    in the m × n [a]: R on and above the diagonal, each reflector's v below
    it, its τ in [tau]. By blocks of NB columns: a block's columns by
    reflectors one at a time, each applied to the block's columns to its
-   right (xGEQR2), on a contiguous copy; then the block's product H = I − V T Vᴴ (xLARFT)
-   applied to the columns right of the block as Hᴴ = I − V Tᴴ Vᴴ by
-   products (xLARFB). The scratch [q] holds the block's V, T, two NB × n
-   products and a row: qr_scratch elements. Answers 1, or 0 if an
-   allocation failed. */
+   right (xGEQR2), on a contiguous copy; then the block's product H = I −
+   V T Vᴴ (xLARFT) applied to the columns right of the block as Hᴴ = I −
+   V Tᴴ Vᴴ by products (xLARFB). The scratch [q] holds the block's V, T,
+   two NB × n products and a row: qr_scratch elements. Answers 1, or 0 if
+   an allocation failed. */
 
 /* T of the block of the [jb] reflectors in the dense [h] × jb [v]:
    T[i][i] = τ_i, T[0:i][i] = −τ_i T[0:i][0:i] V[:, 0:i]ᴴ v_i, zeros below
@@ -532,7 +534,8 @@ static void F(dense_v)(T *v, int64_t h, int64_t jb) {
    [ld] apart. */
 static void F(rows)(const T *x, int64_t ls, int64_t h, int64_t jb, T *y,
                     int64_t ld) {
-  for (int64_t r = 0; r < h; r++) memcpy(y + r * ld, x + r * ls, sizeof(T) * jb);
+  for (int64_t r = 0; r < h; r++)
+    memcpy(y + r * ld, x + r * ls, sizeof(T) * jb);
 }
 
 /* c ← (I − V op(T) Vᴴ) c for c of [m2] × [n2], rows [ldc] apart; [v] the
@@ -1506,7 +1509,8 @@ static int F(merge)(int64_t n, int64_t n1, R *d, R *q, int64_t ldq,
     t = d[pj] * (cs * cs) + d[nj] * (sn * sn);
     d[nj] = d[pj] * (sn * sn) + d[nj] * (cs * cs);
     d[pj] = t;
-    /* pj into the deflated values, kept ascending. */
+    /* pj into the deflated values, indxp[k2..n), kept descending: lamrg
+       reads them by −1. */
     int64_t p = --k2;
     for (; p + 1 < n && d[pj] < d[indxp[p + 1]]; p++) indxp[p] = indxp[p + 1];
     indxp[p] = pj;
@@ -1534,7 +1538,8 @@ static int F(merge)(int64_t n, int64_t n1, R *d, R *q, int64_t ldq,
     if (i >= k) memcpy(defl + (i - k) * n, col, sizeof(R) * n);
     else {
       if (i < n12) memcpy(top + i * n1, col, sizeof(R) * n1);
-      if (i >= ctot[0]) memcpy(bot + (i - ctot[0]) * n2, col + n1, sizeof(R) * n2);
+      if (i >= ctot[0])
+        memcpy(bot + (i - ctot[0]) * n2, col + n1, sizeof(R) * n2);
     }
   }
   for (int64_t i = k; i < n; i++) {
@@ -1559,7 +1564,7 @@ static int F(merge)(int64_t n, int64_t n1, R *d, R *q, int64_t ldq,
     for (int64_t c = 0; c < k; c++)
       for (int64_t i = 0; i < k; i++)
         if (i != c) w[i] *= q[i + c * ldq] / (dlambda[i] - dlambda[c]);
-    for (int64_t i = 0; i < k; i++) w[i] = copysign(SQRT(-w[i]), s[i]);
+    for (int64_t i = 0; i < k; i++) w[i] = F(sign)(SQRT(-w[i]), s[i]);
     for (int64_t c = 0; c < k; c++) {
       R *qc = q + c * ldq, big = 0, sum = 0;
       for (int64_t i = 0; i < k; i++) {
@@ -1663,8 +1668,10 @@ static int F(stedc)(int64_t n, R *d, R *e, R *z, int64_t ldz, R *work,
 static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
   int64_t n = c->n;
   T *a = x, *tau = a + n * n, *w = tau + n;
-  R *d = (R *)(w + (3 * n + NB) * NB), *e = d + n, *z = e + n, *work = z + n * n;
-  int64_t *iwork = (int64_t *)(((uintptr_t)(work + 3 * n + 2 * n * n) + 7) & ~(uintptr_t)7);
+  R *d = (R *)(w + (3 * n + NB) * NB), *e = d + n, *z = e + n,
+    *work = z + n * n;
+  int64_t *iwork = (int64_t *)(((uintptr_t)(work + 3 * n + 2 * n * n) + 7) &
+                               ~(uintptr_t)7);
   T *wo = (T *)matrix_at(c, c->nops, b);
   T *v = c->vectors ? (T *)matrix_at(c, c->nops + 1, b) : NULL;
   stage(c, 0, b, a, n, 1);
@@ -1991,8 +1998,10 @@ static int F(bdsqr)(int64_t n, R *d, R *e, R *u, int64_t nru, int64_t ldu,
     /* The sweep's rotations on the vectors: the right ones on v, the left
        ones on u. */
     int64_t w = m - ll + 1;
-    if (nrv) F(rotate)(v + ll * ldv, nrv, ldv, w, dir == 1 ? c1 : c2, dir == 1 ? s1 : s2, dir != 1);
-    if (nru) F(rotate)(u + ll * ldu, nru, ldu, w, dir == 1 ? c2 : c1, dir == 1 ? s2 : s1, dir != 1);
+    R *cr = dir == 1 ? c1 : c2, *sr = dir == 1 ? s1 : s2,
+      *cl = dir == 1 ? c2 : c1, *sl = dir == 1 ? s2 : s1;
+    if (nrv) F(rotate)(v + ll * ldv, nrv, ldv, w, cr, sr, dir != 1);
+    if (nru) F(rotate)(u + ll * ldu, nru, ldu, w, cl, sl, dir != 1);
     R *last = dir == 1 ? e + m - 1 : e + ll;
     if (F(abs)(*last) <= thresh) *last = 0;
   }
@@ -2153,7 +2162,8 @@ static int F(lasd4)(int64_t n, int64_t i, const R *d, const R *z, R *delta,
       }
     } else {
       sglb = -ds2 / (d[ip1] + sq2);
-      R a = c * delsq - z[i] * z[i] - z[ip1] * z[ip1], b = z[ip1] * z[ip1] * delsq;
+      R a = c * delsq - z[i] * z[i] - z[ip1] * z[ip1];
+      R b = z[ip1] * z[ip1] * delsq;
       R q = SQRT(F(abs)(a * a + 4 * b * c));
       R tau2 = a < 0 ? 2 * b / (a - q) : -(a + q) / (2 * c);
       tau = tau2 / (d[ip1] + SQRT(F(abs)(d[ip1] * d[ip1] + tau2)));
@@ -2775,7 +2785,8 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
     *taup = tauq + k, *ws = taup + k, *tmp = ws + (3 * mm + NB + 1) * NB;
   R *d = (R *)(tmp + (wide ? mm * xc : k * k)), *e = d + k, *ub = e + k,
     *vb = ub + k * k, *work = vb + k * k;
-  int64_t *iwork = (int64_t *)(((uintptr_t)(work + 3 * (k + 1) * (k + 1) + 4 * k) + 7) & ~(uintptr_t)7);
+  R *iw = work + 3 * (k + 1) * (k + 1) + 4 * k;
+  int64_t *iwork = (int64_t *)(((uintptr_t)iw + 7) & ~(uintptr_t)7);
   stage(c, 0, b, a, ld, qrf == wide);
   R big = 0;
   int finite = 1;
@@ -2788,7 +2799,9 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
   /* Scaled into [small, 1 / small] where its largest magnitude lies
      outside. */
   const R small = SQRT(TINY) / (2 * EPS);
-  R sigma = big > 0 && big < small ? small / big : big > 1 / small ? 1 / small / big : 1;
+  R sigma = big > 0 && big < small ? small / big
+            : big > 1 / small        ? 1 / small / big
+                                     : 1;
   if (sigma != 1)
     for (int64_t i = 0; i < mm * k; i++) a[i] *= sigma;
   T *bd = a;
@@ -2909,6 +2922,7 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
 #undef REAL
 #undef IMAG
 #undef SQRT
+#undef COPYSIGN
 #undef SAFMIN
 #undef EPS
 #undef TINY
