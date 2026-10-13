@@ -2395,7 +2395,7 @@ static int F(lasd1)(int64_t nl, int64_t nr, int sqre, R *d, R alpha, R beta,
         coltyp[j] = 4;
         continue;
       }
-      if (F(abs)(d[j] - d[jprev]) > tol) {
+      if (!(d[j] - d[jprev] <= tol)) {
         u2[k] = z[jprev];
         dsigma[k] = d[jprev];
         idxp[k++] = jprev;
@@ -2415,7 +2415,11 @@ static int F(lasd1)(int64_t nl, int64_t nr, int sqre, R *d, R alpha, R beta,
       F(rot)(v + pj * ldv, v + nj * ldv, m, c, s);
       if (coltyp[j] != coltyp[jprev]) coltyp[j] = 3;
       coltyp[jprev] = 4;
-      idxp[--k2] = jprev;
+      /* jprev goes above the values deflated since it, which move down
+         one, so that the deflated ones stay descending (Reference-LAPACK's
+         PR 1140). */
+      k2--;
+      for (int64_t jp = jprev; jp < j; jp++) idxp[k2 + j - 1 - jp] = jp;
       jprev = j;
     }
     u2[k] = z[jprev];
