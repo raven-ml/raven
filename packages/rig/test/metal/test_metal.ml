@@ -551,6 +551,41 @@ let bumps_across (mine, theirs) =
   done;
   List.iter (Rig_metal.free t.g) [ out; args ]
 
+(* The spin kernel's result after [n] steps: [out[0]] of [fill.metal]'s
+   [spin]. *)
+let spun n =
+  let x = ref 0 in
+  for _ = 1 to n do
+    x := ((!x * 1664525) + 1013904223) land 0xffff_ffff
+  done;
+  !x
+
+(* Steps of a spin that runs far longer than a loss and its stop take: about
+   a quarter of a second on the M1 Max. *)
+let long_spin = 10_000_000
+
+(* A command buffer in flight when a loss stops the device completes and
+   writes its memory, and the word reaches the last value: the buffer keeps
+   the command queue the stop releases. *)
+let stop_in_flight () =
+  S.with_ @@ fun s ->
+  let t = dev_of s in
+  let out = alloc t 256 and args = alloc t args_bytes in
+  H.set32 (host out) 0;
+  set_args args ~at:0 ~out:(gpu out) ~c:long_spin;
+  let f = S.dispatch ~pipeline:(pipeline t "spin") args ~groups:1 ~threads:1 in
+  let spin = Rig.Point.value (submit t [| f |]) in
+  raises_match
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> submit t [| S.failing 7 |]);
+  equal ~msg:"the spin, at the stop" bool false (Rig.signaled t.d >= spin);
+  S.close s;
+  let last = Rig.submitted t.d in
+  while Rig.signaled t.d < last do
+    Domain.cpu_relax ()
+  done;
+  equal ~msg:"the spin's write" int (spun long_spin) (H.get32 (host out))
+
 (* A loss that finds work waiting in the open command buffer drops it, and the
    stop brings the word to the last value. *)
 let lost_open () =
@@ -592,6 +627,10 @@ let commits =
         "a loss drops the open command buffer, and the stop brings the word to \
          the last value"
         lost_open;
+      test
+        "a command buffer in flight at a loss's stop completes and writes its \
+         memory"
+        stop_in_flight;
     ]
 
 (* Indirect command buffers *)
@@ -1564,12 +1603,6 @@ let stopped_running () =
   done;
   await_release w
 
-(* A stopped device's word frees after the stop. *)
-let word_after_stop () =
-  let g = S.driver () in
-  S.stop_driver g;
-  Rig_metal.free g (Rig_metal.facts g).word
-
 (* Images still loaded when the device stops stay loaded: their unload after the
    stop releases them. *)
 let unload_after_stop () =
@@ -1597,7 +1630,6 @@ let timeline =
         stopped_running;
       test "an image a stop left loaded is released by its unload"
         unload_after_stop;
-      test "a stopped device's word frees after the stop" word_after_stop;
     ]
 
 (* Opening and misuse *)

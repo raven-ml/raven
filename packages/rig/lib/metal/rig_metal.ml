@@ -22,7 +22,6 @@ external map_buffer : int -> int -> int -> buffer option
   = "caml_rig_metal_map_host"
 
 external free_buffer : int -> nativeint -> unit = "caml_rig_metal_free"
-external destroy : int -> unit = "caml_rig_metal_destroy"
 external release : nativeint -> unit = "caml_rig_metal_release"
 
 external load : int -> string -> string * nativeint * string array
@@ -98,9 +97,8 @@ type t = {
   self : int;
   facts : region Rig_edge.facts;
   cap : Rig_metal_abi.t;
-  guard : Mutex.t; (* held by an icb call, by stop, over [tables] and [gone] *)
+  guard : Mutex.t; (* held by an icb call, by stop, over [tables] *)
   tables : tables option ref; (* [None] once stop began *)
-  mutable gone : bool; (* the word was freed, and with it the C state *)
 }
 
 let device_name i =
@@ -252,7 +250,7 @@ let open_ i =
           edge = Nativeint.of_int self;
         }
       in
-      Ok { self; facts; cap; guard; tables; gone = false }
+      Ok { self; facts; cap; guard; tables }
 
 (* Facts *)
 
@@ -320,16 +318,10 @@ let peer _ _ = false
 
 let map_peer _ _ _ = None
 
-(* Frees [r] under [d.guard]. The word goes last, and the C state with it: a
-   free after it only releases the buffer. *)
+(* Frees [r] under [d.guard]. *)
 let give d (r : region) =
   Option.iter (fun t -> Hashtbl.remove t.regions r.handle) !(d.tables);
-  if r == d.facts.word then begin
-    d.gone <- true;
-    destroy d.self
-  end
-  else if d.gone then release_object r.handle
-  else free_buffer d.self r.handle
+  free_buffer d.self r.handle
 
 let free d r = locked d give r
 

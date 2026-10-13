@@ -42,12 +42,11 @@ struct rig_metal_entry {
   int64_t params;
 };
 
-/* A device, freed with its word: rig gives the word back after the stop,
-   once the word shows the last value and nothing reads it, and calls the
-   C functions no more. A completion handler reads the device after its
-   last store into the word, so the free waits until [handlers] is 0. Its
-   residency set has a mutex of its own, which no completion handler takes;
-   [changed] says whether the set holds additions it has not committed. */
+/* A device, kept for the process with its word: rig never frees the word.
+   Its stop releases the command queue, and rig calls the C functions no
+   more. Its residency set has a mutex of its own, which no completion
+   handler takes; [changed] says whether the set holds additions it has not
+   committed. */
 struct rig_metal {
   const struct rig_driver *driver;
   id<MTLDevice> device;
@@ -63,7 +62,6 @@ struct rig_metal {
   uint64_t open_v;             /* the last value whose work is encoded */
   _Atomic int open_values;     /* the values the open buffer ends */
   _Atomic int wanted;          /* a handler found the open mutex held */
-  _Atomic int handlers; /* committed command buffers whose handler runs */
   struct rig_metal_ring ring;
   struct rig_metal_slot slots[ring_slots];
 };

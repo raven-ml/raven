@@ -190,21 +190,6 @@ value caml_rig_metal_free(value v_d, value v_buffer) {
   return Val_unit;
 }
 
-/* Frees the stopped device with its word, once the last completion
-   handler returned: the word shows the last value, so every committed
-   command buffer completed, and its handler is past its last store. */
-value caml_rig_metal_destroy(value v_d) {
-  struct rig_metal *d = Device_val(v_d);
-  caml_enter_blocking_section_no_pending();
-  while (atomic_load_explicit(&d->handlers, memory_order_acquire) > 0)
-    sched_yield();
-  caml_leave_blocking_section();
-  [d->word release], [d->set release], [d->fence release];
-  [d->queue release], [d->device release];
-  free(d);
-  return Val_unit;
-}
-
 /* Images */
 
 /* The metallib [v_b], which makes no pipeline: [("", library, names)],
@@ -456,11 +441,14 @@ value caml_rig_metal_failure(value v_d) {
 }
 
 /* Stops the device: the word shows its last value once its ring is
-   empty. */
+   empty. The command queue goes: each committed command buffer keeps it
+   until it completes. */
 value caml_rig_metal_stop(value v_d) {
   struct rig_metal *d = Device_val(v_d);
   rig_metal_drop(d);
   rig_metal_ring_stop(&d->ring, d->last);
+  [d->queue release];
+  d->queue = nil;
   return Val_unit;
 }
 
@@ -493,7 +481,6 @@ NO_METAL1(caml_rig_metal_facts)
 NO_METAL2(caml_rig_metal_alloc)
 NO_METAL3(caml_rig_metal_map_host)
 NO_METAL2(caml_rig_metal_free)
-NO_METAL1(caml_rig_metal_destroy)
 NO_METAL1(caml_rig_metal_release)
 NO_METAL2(caml_rig_metal_image)
 NO_METAL2(caml_rig_metal_pipeline)

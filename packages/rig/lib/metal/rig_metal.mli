@@ -318,9 +318,9 @@ val capability : t -> Rig_metal_abi.t
     word, and no work of the device writes memory again. Otherwise the
     committed work may write memory while it runs. Once the last such
     command buffer has completed, its handler writes the last value into the
-    word, whatever that work did. The device's Metal queue and C state are
-    freed when rig frees its word, once the last completion handler has
-    returned. *)
+    word, whatever that work did. The stop releases the device's Metal
+    command queue, which each committed command buffer keeps until it
+    completes. The word and the device's C state stay for the process. *)
 
 (** {1:references References}
     - Apple's Metal framework headers (macOS 26 SDK): [MTLCommandQueue.h]

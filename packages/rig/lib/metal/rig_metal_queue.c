@@ -119,7 +119,6 @@ static const char *begin(struct rig_metal_queue *q) {
       atomic_store(&d->wanted, 1);
       if (pthread_mutex_trylock(&d->open_mutex) == 0) unlock_open(d);
     }
-    atomic_fetch_sub_explicit(&d->handlers, 1, memory_order_release);
   }];
   return NULL;
 }
@@ -135,7 +134,6 @@ static void commit(struct rig_metal_queue *q, uint64_t v, uint64_t *start,
   s->start = start;
   s->end = end;
   if (q->encoder) close_encoder(q);
-  atomic_fetch_add_explicit(&q->d->handlers, 1, memory_order_relaxed);
   [q->buffer commit];
   [q->buffer release];
   *q = (struct rig_metal_queue){nil, nil, -1, q->d};
