@@ -18,9 +18,12 @@
    place wherever they lie. A tile of fewer rows points its missing rows at
    its last and stores only its own; one of fewer columns loads b and its
    outputs and stores them through masks, so that it reads no column past
-   its own (NX_CPU_B_COLUMNS). Before a tile, the next tile's first lines
-   of a and of the outputs are prefetched: its rows start cold, where the
-   hardware's prefetchers follow each row once it streams. */
+   its own (NX_CPU_B_COLUMNS). That rests on VMASKMOV's masked-off lanes
+   never faulting, which Intel's SDM states and AMD's APM leaves to the
+   implementation; no AMD core has run it. Before a tile, the next tile's
+   first lines of a and of the outputs are prefetched: its rows start
+   cold, where the hardware's prefetchers follow each row once it
+   streams. */
 
 #include <math.h>
 
