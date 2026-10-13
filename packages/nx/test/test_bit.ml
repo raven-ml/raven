@@ -606,10 +606,20 @@ let reduced_shape =
           [| a; b; c |]) );
     ]
 
+(* Any axes to reduce, and the leading or the last axis alone on branches of
+   their own: a subsequence of several axes is rarely one of them alone. *)
+let reduced_axes s =
+  let n = Array.length s in
+  Gen.frequency
+    [
+      (2, Gen.subsequence (List.init n Fun.id));
+      (1, Gen.constant [ 0 ]);
+      (1, Gen.constant [ n - 1 ]);
+    ]
+
 let reduction =
   Gen.bind reduced_shape (fun s ->
-      let axes = Gen.subsequence (List.init (Array.length s) Fun.id) in
-      Gen.pair (Gen.bind rare (fun value -> mask_of ~value s)) axes)
+      Gen.pair (Gen.bind rare (fun value -> mask_of ~value s)) (reduced_axes s))
 
 (* A reduction of masks to bool or to their dtype. *)
 type r = {
