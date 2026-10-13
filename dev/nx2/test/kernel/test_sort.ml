@@ -15,8 +15,10 @@ module Support = Nx_kernels_support
 
 (* How an operand's elements are drawn: from a few values, so that ties are
    common; within a narrow span of keys, a base element's high bytes over its
-   given number of random low ones; or each at random. *)
-type draw = Tied | Narrow of int | Spread
+   given number of random low ones; each at random; or from one value three
+   times in four, else at random, so that a long slice's top digit leaves one
+   bucket of most elements. *)
+type draw = Tied | Narrow of int | Spread | Skewed
 
 type case = {
   axis : int;
@@ -37,7 +39,8 @@ let pp_case ppf c =
     (match c.draw with
     | Tied -> "tied"
     | Narrow low -> Printf.sprintf "narrow over %d bytes" low
-    | Spread -> "spread")
+    | Spread -> "spread"
+    | Skewed -> "skewed")
     (String.concat ", " c.views)
 
 (* Sub-byte dtypes sort through bytes: nx.cpu declines them. *)
@@ -70,6 +73,7 @@ let drawn draw d s v seed =
       | Tied ->
           if Random.State.int rs 3 = 0 then element d rs
           else pool.(Random.State.int rs 6)
+      | Skewed -> if Random.State.int rs 4 = 0 then element d rs else base
       | Narrow low ->
           String.mapi
             (fun j c ->
@@ -201,6 +205,8 @@ let law_large (b : Support.backend) c =
   in
   let wide = long && (let (D.Any d) = dtype_of c.x in D.bits d = 64) in
   cover "one long slice" long;
+  cover "long wide keys spread" (wide && c.draw = Spread);
+  cover "long wide keys skewed" (wide && c.draw = Skewed);
   cover "long wide keys, keeping all" (wide && c.k = None);
   agrees b c
 
@@ -314,13 +320,17 @@ let large =
        ())
 
 (* One long slice of 4-byte keys packed with positions; of 8-byte keys beside
-   them, keeping some or all; and of 8-byte keys of a narrow span, packed. *)
+   them, keeping some or all, spread, so that they take their top digit first,
+   or skewed, so that they fall back to LSD passes; and of 8-byte keys of a
+   narrow span, packed. *)
 let large_examples =
   [
     example (D.Any D.Float32) [| 200_000 |];
     example (D.Any D.Int64) [| 200_000 |] ~descending:true ~k:150_000;
     example (D.Any D.Int64) [| 200_000 |] ~draw:Spread;
     example (D.Any D.Float64) [| 200_000 |] ~draw:Spread ~descending:true;
+    example (D.Any D.Uint64) [| 200_000 |] ~draw:Skewed;
+    example (D.Any D.Float64) [| 200_000 |] ~draw:Skewed ~k:150_000;
     example (D.Any D.Int64) [| 200_000 |] ~draw:(Narrow 3);
   ]
 

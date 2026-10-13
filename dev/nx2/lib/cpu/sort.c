@@ -20,11 +20,12 @@
    elements; into k slots where a sort keeps k of many; otherwise by LSD
    radix of 8-bit digits of each key less the slice's least, over the
    digits their span takes, skipping a digit every key shares, from one
-   pass that counts every digit. Keys that span at most 4 bytes travel
-   above their positions in one word: integers of a narrow range sort as
-   32-bit keys whatever their width. A complex128's two keys sort by the
-   imaginary part's, then stably by the real part's. Values then move once,
-   by position, their bits unchanged. */
+   pass that counts every digit; a long slice's keys wider than 4 bytes
+   take their top digit first. Keys that span at most 4 bytes travel above
+   their positions in one word: integers of a narrow range sort as 32-bit
+   keys whatever their width. A complex128's two keys sort by the
+   imaginary part's, then stably by the real part's. Values then move
+   once, by position, their bits unchanged. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,12 @@
    times longer, keeps them in slots. */
 #define KEEP 64
 #define SPARE 8
+
+/* A long slice's buckets of at most this many items sort in the cache: an
+   item's key and position, 16 bytes, through two buffers, 1 MiB a bucket,
+   within the 3 MiB L2 of fudge's performance cores, where it was
+   measured. */
+#define BUCKET (32 * 1024)
 
 /* A single slice at least this long sorts on several threads. */
 #define LONG (64 * 1024)
@@ -239,6 +246,12 @@ static void radix_packed(uint64_t *t, uint64_t *t2, int64_t n, int kb) {
    order, so the pass stays stable. Keys spanning at most 4 bytes travel
    packed above their positions, wider ones beside them.
 
+   Wide keys take their top digit first, as an MSD radix does, where that
+   leaves buckets of at most BUCKET items: each bucket's passes below the
+   top then run in the cache. On fudge's six performance cores 1 Mi random
+   int64 keys sort in 6.1 ms this way, in 7.0 by LSD passes alone. Packed
+   keys, half the bytes, sorted 4% slower this way and keep LSD passes.
+
    Where the slice keeps every element, the positions' destination, and a
    wide key's values', serve as two of the passes' arrays: fresh pages from
    the system cost about as much as a pass over them. */
@@ -249,12 +262,13 @@ typedef struct {
   uint64_t *src, *dst;
   int64_t *psrc, *pdst; /* positions beside wide keys, else NULL */
   int64_t n, blocks;
-  int shift;
+  int shift, digits;
   uint64_t least, flip; /* subtracted from, and xored into, each key */
   uint64_t (*span)[2];  /* each block's least and greatest key */
   int64_t (*count)[256];
-  int64_t *pos; /* the positions' destination */
-  uint8_t *v;   /* the values' destination */
+  int64_t start[257]; /* each bucket's first item, after the first pass */
+  int64_t *pos;       /* the positions' destination */
+  uint8_t *v;         /* the values' destination */
 } spread;
 
 static void block_range(const spread *p, int64_t b, int64_t *lo, int64_t *hi) {
@@ -329,8 +343,8 @@ static void move_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* Counts digit [d] of every block's items and makes the counts each
-   block's offsets, digit by digit and block by block; answers the most
-   items of one digit. */
+   block's offsets, digit by digit and block by block, each digit's first
+   item in [start]; answers the most items of one digit. */
 static int64_t count_digit(spread *p, int d, int64_t bytes) {
   p->shift = (p->psrc == NULL ? 32 : 0) + 8 * d;
   nx_cpu_job(p->blocks, bytes, bytes, count_blocks, p);
@@ -342,8 +356,10 @@ static int64_t count_digit(spread *p, int d, int64_t bytes) {
       p->count[b][g] = at;
       at += c;
     }
+    p->start[g] = first;
     most = at - first > most ? at - first : most;
   }
+  p->start[256] = at;
   return most;
 }
 
@@ -357,6 +373,19 @@ static void move(spread *p, int64_t bytes) {
   int64_t *q = p->psrc;
   p->psrc = p->pdst;
   p->pdst = q;
+}
+
+/* Sorts each bucket of the first pass's items by the digits below its
+   own, in the cache, landing them back where the pass put them. */
+static void bucket_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const spread *p = ctx;
+  for (int64_t b = lo; b < hi; b++) {
+    int64_t i = p->start[b], m = p->start[b + 1] - i;
+    if (m < 2) continue;
+    if (p->psrc == NULL) radix_packed(p->src + i, p->dst + i, m, p->digits);
+    else radix(p->src + i, p->psrc + i, p->dst + i, p->pdst + i, m, p->digits);
+  }
 }
 
 /* Writes the positions and values of the sorted items' blocks. An item
@@ -387,9 +416,24 @@ static uint64_t *take(uint64_t *there, int64_t n, uint64_t **own, int *owned) {
   return t;
 }
 
+/* Distributes the items of [p] by their top digit, and, where every
+   bucket fits BUCKET items, sorts each by the digits below, a job's unit
+   each, and writes the result. Answers 0, having moved nothing, where a
+   bucket is larger. */
+static int msd(spread *p, int kb, int64_t bytes) {
+  if (count_digit(p, kb - 1, bytes) > BUCKET) return 0;
+  move(p, bytes);
+  p->digits = kb - 1;
+  nx_cpu_job(256, bytes, (double)bytes * kb, bucket_blocks, p);
+  nx_cpu_job(p->blocks, bytes, bytes, emit_blocks, p);
+  return 1;
+}
+
 /* Runs the passes of [p], over [kb] bytes of keys, and writes the result. */
 static void passes(spread *p, int kb, int64_t bytes) {
   nx_cpu_job(p->blocks, bytes, bytes, key_blocks, p);
+  /* Past 256 buckets of BUCKET items, some bucket is always larger. */
+  if (p->psrc != NULL && p->n <= 256 * BUCKET && msd(p, kb, bytes)) return;
   /* A digit every key shares leaves its pass out. */
   for (int d = 0; d < kb; d++)
     if (count_digit(p, d, bytes) < p->n) move(p, bytes);
