@@ -1374,6 +1374,36 @@ let test_eig_graded_cycle (b : Support.backend) () =
           check_worst worst)
     [ D.Any D.Float64; D.Any D.Complex128 ]
 
+(* A complex matrix whose largest element is finite but of a modulus past
+   the largest float, diag (0.9 max (1 + i), 1): a matrix of numbers, on
+   which svd's and eig's results are no NaN, svd's values +inf and 1.
+   Scaled by the modulus, the routines would scale by 0 and give NaN. *)
+let test_overflowing_modulus (b : Support.backend) () =
+  let big = 0.9 *. Float.max_float in
+  let a =
+    [| { Complex.re = big; im = big }; Complex.zero; Complex.zero; Complex.one |]
+  in
+  let dt = D.Any D.Complex128 in
+  let x = of_values dt [| 2; 2 |] a in
+  List.iter
+    (fun (msg, r) ->
+      match run b r [| x |] with
+      | Some y ->
+          Array.iteri
+            (fun k y ->
+              let v = values y in
+              equal ~msg:(Printf.sprintf "%s: numbers in result %d" msg k) int
+                (2 * Array.length v) (numbers dt v))
+            y
+      | None -> ())
+    [ ("svd", Svd (Some Reduced)); ("eig", Eig true) ];
+  match run b (Svd None) [| x |] with
+  | Some y ->
+      let s = values y.(0) in
+      equal ~msg:"svd's values" (array float_exact) [| infinity; 1. |]
+        (Array.map (fun (z : Complex.t) -> z.re) s)
+  | None -> ()
+
 (* The Jacobi matrix whose eigenvalues are [l] and whose eigenvectors'
    first components are [q], ‖q‖ = 1, by Lanczos on diag l from q,
    reorthogonalised twice against every earlier vector: its diagonal and
@@ -2076,6 +2106,8 @@ let laws (b : Support.backend) =
           b.around (test_eig_extremes b));
       test "eig keeps a graded cycle's vectors finite" (fun () ->
           b.around (test_eig_graded_cycle b));
+      test "svd and eig scale an element whose modulus overflows" (fun () ->
+          b.around (test_overflowing_modulus b));
       test "svd keeps Reference-LAPACK issue 255's bidiagonal's vectors"
         (fun () -> b.around (test_svd_deflation b));
       test "routines take floats and complex numbers alone" (fun () ->

@@ -1684,8 +1684,8 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
     for (int64_t i = j; i < n; i++) {
       R re = REAL(a[j * n + i]), im = IMAG(a[j * n + i]);
       finite &= re - re == 0 && im - im == 0;
-      R m = F(lapy3)(re, im, 0);
-      big = m > big ? m : big;
+      big = F(abs)(re) > big ? F(abs)(re) : big;
+      big = F(abs)(im) > big ? F(abs)(im) : big;
     }
   }
   const R rmin = SQRT(TINY / (2 * EPS)), rmax = 1 / rmin;
@@ -2802,9 +2802,10 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
   R big = 0;
   int finite = 1;
   for (int64_t i = 0; i < mm * k; i++) {
-    R re = REAL(a[i]), im = IMAG(a[i]), mag = F(lapy3)(re, im, 0);
+    R re = REAL(a[i]), im = IMAG(a[i]);
     finite &= re - re == 0 && im - im == 0;
-    big = mag > big ? mag : big;
+    big = F(abs)(re) > big ? F(abs)(re) : big;
+    big = F(abs)(im) > big ? F(abs)(im) : big;
     if (wide) a[i] = CONJ(a[i]);
   }
   /* Scaled into [small, 1 / small] where its largest magnitude lies
