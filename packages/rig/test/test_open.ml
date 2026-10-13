@@ -1009,6 +1009,31 @@ let test_close_unmaps_word () =
   equal ~msg:"its mappings" int 1 (count "map_peer");
   equal ~msg:"its mappings given back" int 1 (count "unmap")
 
+(* Two submits on two domains that decide at once how a consumer waits for one
+   producer keep one mapping of the producer's word: the first decision waits
+   in its map, at Polled's [before] seam, until the second has decided and its
+   submit returned; it then takes the second's way and gives its own mapping
+   back. Both waits run. *)
+let test_pair_race () =
+  let producer, _ = P.open_ "open:race-producer" in
+  let consumer, cp = P.open_ ~waits_on:[ `Host ] "open:race-consumer" in
+  let a = submit (Rig.Submission.make producer [||]) in
+  let mapping = Atomic.make false and second = Atomic.make false in
+  P.before cp "map_peer" (fun () ->
+      Atomic.set mapping true;
+      Support.await "the second submit" (fun () -> Atomic.get second));
+  let wait () = submit (Rig.Submission.make consumer [||]) ~waits:[| a |] in
+  let first = Domain.spawn wait in
+  Support.await "the first decision's map" (fun () -> Atomic.get mapping);
+  let q = wait () in
+  Atomic.set second true;
+  let p = Domain.join first in
+  Rig.Point.wait p;
+  Rig.Point.wait q;
+  let count call = List.length (List.filter (String.equal call) (P.log cp)) in
+  equal ~msg:"the maps of the word" int 2 (count "map_peer");
+  equal ~msg:"the maps given back" int 1 (count "unmap")
+
 (* Opens and closes in a loop keep a fixed record per device: rig's line,
    records and reason, and the driver's word with what reading it needs,
    whatever work the device did. The driver's stop gives back the rest of its
@@ -1218,6 +1243,10 @@ let tests =
         test_points_name_device;
       test "a closed device gives back its mappings of other devices' words"
         test_close_unmaps_word;
+      test
+        "two domains that decide at once how a device waits for another keep \
+         one mapping of its word"
+        test_pair_race;
       test "opens and closes keep a fixed record per device" test_open_close;
     ]
 
