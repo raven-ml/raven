@@ -170,8 +170,8 @@ let move_rows =
    block per element for bits, uniform and float32 normal, and fixed rounds of
    proposals for the rejection samplers. bernoulli-f32-1Kx1K draws a
    probability array of rank 2. The one-element draws time a draw's fixed
-   cost: a sampler's program is written and lowered per call, and beta's
-   has two thousand nodes. *)
+   cost: a sampler's program is lowered once per dtype, and beta's has two
+   thousand nodes. *)
 
 let mib = 1 lsl 20
 let key = Nx.Rng.key 0

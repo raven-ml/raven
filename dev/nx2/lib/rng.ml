@@ -111,27 +111,28 @@ let uniforms (type s) ~key ~p (c : (float, s) D.t) j n : (float, s) E.t array =
           let t = blocks.(m / 2) in
           of_word ~p c (if m mod 2 = 0 then word0 t else word1 t))
 
-(* The flat index in C order, a uint64 node, of each element in the last
-   [Array.length s] axes, of extents [s], of a shape of rank [rank]. *)
-let position ~rank s =
-  let r = Array.length s in
-  let flat = ref None and weight = ref 1 in
-  for c = r - 1 downto 0 do
-    let at = E.coord (rank - r + c) in
-    let w = E.const D.Int64 (Int64.of_int !weight) in
-    let term = if !weight = 1 then at else E.(at * w) in
-    flat := Some (match !flat with None -> term | Some f -> E.(f + term));
-    weight := !weight * s.(c)
-  done;
-  match !flat with None -> u64 0L | Some f -> E.bitcast D.Uint64 f
-
-(* A sampler's program for a draw of shape [s] in the last axes of a shape
-   of rank [rank], whose element at position [j] is [body ~key ~j]: operand
-   0 is the element's key, a uint64, then come operands of dtypes [ins]. *)
-let sampler ins body ~rank s =
-  let ins = Array.append [| D.Any D.Uint64 |] ins in
-  let key = E.input 0 D.Uint64 and j = position ~rank s in
+(* A sampler's program, whose element at position [j] of its draw is [body
+   ~key ~j]: operand 0 is the element's key and operand 1 its position, both
+   uint64, then come operands of dtypes [ins]. *)
+let sampler ins body =
+  let ins = Array.append [| D.Any D.Uint64; D.Any D.Uint64 |] ins in
+  let key = E.input 0 D.Uint64 and j = E.input 1 D.Uint64 in
   P.of_exprs ~ins:(Iarray.of_array ins) [| E.any (body ~key ~j) |]
+
+(* Programs by dtype. A sampler's program depends on its dtypes alone, so it
+   is lowered once per dtype, into the slot of the dtype's code, and kept.
+   Programs are immutable data: two domains that race to fill a slot build
+   equal programs, and either may stay. *)
+let programs () = Array.init (List.length D.all) (fun _ -> Atomic.make None)
+
+let lowered table dt ins body =
+  let slot = table.(D.code dt) in
+  match Atomic.get slot with
+  | Some p -> p
+  | None ->
+      let p = sampler ins body in
+      Atomic.set slot (Some p);
+      p
 
 (* Draws *)
 
@@ -167,7 +168,61 @@ let map ~by shape prog dt loads =
   in
   x
 
-(* A draw of [dt] and shape [s] per key of [k], by the sampler [prog]:
+(* The sampler program [prog] with its position operand replaced by each
+   element's position: its flat index in C order in the last [Array.length s]
+   axes, of extents [s], of a shape of rank [rank]. The position's nodes come
+   first, then [prog]'s, each in its order. *)
+let positioned ~rank s (prog : P.t) =
+  let r = Array.length s and n = Iarray.length prog.nodes in
+  (* An axis takes at most four nodes: its coordinate, its weight, their
+     product and the sum; the position one more. *)
+  let nodes = Array.make ((4 * r) + 1 + n) (P.Coord 0) and count = ref 0 in
+  let push nd =
+    nodes.(!count) <- nd;
+    incr count;
+    !count - 1
+  in
+  let flat = ref None and weight = ref 1 in
+  for c = r - 1 downto 0 do
+    let at = push (P.Coord (rank - r + c)) in
+    let term =
+      if !weight = 1 then at
+      else
+        let w = P.bits D.Int64 (Int64.of_int !weight) in
+        push (P.Op2 (Binary Mul, at, push (P.Const (D.Any D.Int64, w))))
+    in
+    flat :=
+      Some
+        (match !flat with
+        | None -> term
+        | Some f -> push (P.Op2 (Binary Add, f, term)));
+    weight := !weight * s.(c)
+  done;
+  let j =
+    match !flat with
+    | None -> push (P.Const (D.Any D.Uint64, P.bits D.Uint64 0L))
+    | Some f -> push (P.Op1 (Bitcast, D.Any D.Uint64, f))
+  in
+  let index = Array.make n 0 in
+  let at i = index.(i) in
+  for i = 0 to n - 1 do
+    index.(i) <-
+      (match Iarray.get prog.nodes i with
+      | In 1 -> j
+      | In k -> push (P.In (if k = 0 then 0 else k - 1))
+      | (Coord _ | Const _) as nd -> push nd
+      | Op1 (k, dt, x) -> push (Op1 (k, dt, at x))
+      | Op2 (k, x, y) -> push (Op2 (k, at x, at y))
+      | Op3 (k, x, y, z) -> push (Op3 (k, at x, at y, at z)))
+  done;
+  let ins =
+    Iarray.init (Iarray.length prog.ins - 1) (fun i ->
+        Iarray.get prog.ins (if i = 0 then 0 else i + 1))
+  in
+  let nodes = Iarray.init !count (Array.get nodes) in
+  P.v ~ins nodes ~outs:(Iarray.map at prog.outs)
+
+(* A draw of [dt] and shape [s] per key of [k], by the sampler program [prog]:
    one map over the key's batch then [s], each element reading its key, its
    position in [s], and [params], each stretched to the draw's shape. *)
 let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
@@ -180,11 +235,12 @@ let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
       [| Value.Any (stretch ~by shape w) |]
       (Array.map (fun (Value.Any x) -> Value.Any (stretch ~by shape x)) params)
   in
-  map ~by shape (prog ~rank:(Array.length shape) s) dt loads
+  let prog = positioned ~rank:(Array.length shape) s prog in
+  map ~by shape prog dt loads
 
-(* Parameter [i] of a draw, of dtype [dt], as a node of its program: operand
-   0 is the key. *)
-let operand i dt = E.input (i + 1) dt
+(* Parameter [i] of a draw, of dtype [dt], as a node of its program: operands 0
+   and 1 are the key and the position. *)
+let operand i dt = E.input (i + 2) dt
 
 (* Keys *)
 
@@ -320,16 +376,20 @@ let place p k = Eval.place ~by:"Nx.Rng.place" p k
 
 (* Samplers *)
 
+let bits_programs = programs ()
+
 let bits ?key s =
   let prog =
-    sampler [||] (fun ~key ~j ->
+    lowered bits_programs D.Int32 [||] (fun ~key ~j ->
         E.cast D.Int32 (word ~key j))
   in
   draw ~by:"Nx.Rng.bits" (resolve key) D.Int32 s prog
 
+let uniform_programs = programs ()
+
 let uniform ?key dt s =
   let prog =
-    sampler [||] (fun ~key ~j ->
+    lowered uniform_programs dt [||] (fun ~key ~j ->
         let (C c) = compute dt in
         rounded dt (unit ~key ~p:(precision dt) c j))
   in
@@ -349,9 +409,11 @@ let box_muller ~p c u1 u2 =
 
 (* Elements [2q] and [2q + 1] are one Box-Muller transform's pair, from the
    two draws in [0, 1) of pair [q]. *)
+let normal_programs = programs ()
+
 let normal ?key dt s =
   let prog =
-    sampler [||] (fun ~key ~j ->
+    lowered normal_programs dt [||] (fun ~key ~j ->
         let (C c) = compute dt in
         let p = precision c in
         let u = uniforms ~key ~p c E.(j / u64 2L) 2 in
@@ -362,9 +424,11 @@ let normal ?key dt s =
 
 (* Exponential(1) by inverse CDF, from [1 - u], which is never 0. The draw is [0
    - log (1 - u)], where a negation would make -0 of u = 0. *)
+let exponential_programs = programs ()
+
 let exponential ?key dt s =
   let prog =
-    sampler [||] (fun ~key ~j ->
+    lowered exponential_programs dt [||] (fun ~key ~j ->
         let (C c) = compute dt in
         let u = unit ~key ~p:(precision c) c j in
         rounded dt E.(lit c 0. - log (lit c 1. - u)))
@@ -379,7 +443,8 @@ let fits v = v >= -0x8000_0000 && v <= 0x7FFF_FFFF
    next block: element [j] owns blocks [2j] and [2j + 1], and the second's [hi]
    stands whatever its [lo]. [hi] comes from 32-bit halves, [r] being at most
    2^32 - 1: [hi = (w_hi r + (w_lo r) / 2^32) / 2^32], each term below 2^64.
-   [low] is added in uint32, where the sum wraps into the int32 it names. *)
+   [low] is added in uint32, where the sum wraps into the int32 it names. The
+   program holds the range, so it is lowered per call. *)
 let randint ?key ?(low = 0) ~high s =
   let by = "Nx.Rng.randint" in
   if low >= high then invalid_argf "%s: low %d is not below high %d" by low high;
@@ -473,12 +538,14 @@ let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
 
 (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw is 53
    bits of block [j] below it, rounded up, at every dtype. *)
+let bernoulli_programs = programs ()
+
 let bernoulli ?key p =
   let by = "Nx.Rng.bernoulli" in
   require ~by "p" probability p;
   let dt = Prim.dtype p in
   let prog =
-    sampler [| D.Any dt |] (fun ~key ~j ->
+    lowered bernoulli_programs dt [| D.Any dt |] (fun ~key ~j ->
         let (C c) = compute dt in
         let scaled = E.(param c 0 dt * lit c (Float.ldexp 1. 53)) in
         E.(bits53 (block ~key j) < cast D.Uint64 (ceil scaled)))
@@ -553,12 +620,14 @@ let marsaglia ~p c a (u : _ array) =
   let boost = E.maximum u.(2 * rounds) tiny in
   (draw, below, boost)
 
+let gamma_programs = programs ()
+
 let gamma ?key a =
   let by = "Nx.Rng.gamma" in
   require ~by "a" positive a;
   let dt = Prim.dtype a in
   let prog =
-    sampler [| D.Any dt |] (fun ~key ~j ->
+    lowered gamma_programs dt [| D.Any dt |] (fun ~key ~j ->
         let (C c) = compute dt in
         let p = precision c in
         let a = param c 0 dt in
@@ -580,6 +649,8 @@ let gamma ?key a =
    and its quotient by [s] is [d]'s shift, an infinity only where the draw is 0
    or 1. The quotient is a division, where [q · (1 / s)] would make NaN of a
    zero [q]. *)
+let beta_programs = programs ()
+
 let beta ?key a b =
   let by = "Nx.Rng.beta" in
   require ~by "a" positive a;
@@ -587,7 +658,7 @@ let beta ?key a b =
   let dt = Prim.dtype a in
   let s = Prim.broadcast_shape ~by (Prim.shape a) (Prim.shape b) in
   let prog =
-    sampler [| D.Any dt; D.Any dt |] (fun ~key ~j ->
+    lowered beta_programs dt [| D.Any dt; D.Any dt |] (fun ~key ~j ->
         let (C c) = compute dt in
         let p = precision c and lit = lit c in
         let a = param c 0 dt and b = param c 1 dt in
@@ -653,12 +724,14 @@ let wrapped_cauchy c kappa =
   let a = E.(where large (w * w / (lit 4. * d)) (gap * gap / (lit 4. * dd))) in
   (rho, one_minus_rho, a)
 
+let von_mises_programs = programs ()
+
 let von_mises ?key kappa =
   let by = "Nx.Rng.von_mises" in
   require ~by "k" non_negative kappa;
   let dt = Prim.dtype kappa in
   let prog =
-    sampler [| D.Any dt |] (fun ~key ~j ->
+    lowered von_mises_programs dt [| D.Any dt |] (fun ~key ~j ->
         let (C c) = compute dt in
         let p = precision c and lit = lit c in
         let rho, one_minus_rho, a = wrapped_cauchy c (param c 0 dt) in
@@ -776,12 +849,14 @@ let log_binomial_pmf lit k n p q =
 let poisson_inversion_rounds = 48
 let poisson_rejection_rounds = 16
 
+let poisson_programs = programs ()
+
 let poisson ?key rate =
   let by = "Nx.Rng.poisson" in
   require ~by "rate" counted rate;
   let dt = Prim.dtype rate in
   let prog =
-    sampler [| D.Any dt |] (fun ~key ~j ->
+    lowered poisson_programs dt [| D.Any dt |] (fun ~key ~j ->
         let (C c) = compute dt in
         let p = precision c and lit = lit c in
         let rate = param c 0 dt in
@@ -842,6 +917,8 @@ let poisson ?key rate =
 let binomial_inversion_rounds = 48
 let binomial_rejection_rounds = 18
 
+let binomial_programs = programs ()
+
 let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   let by = "Nx.Rng.binomial" in
   require_counts ~by "n" count;
@@ -849,7 +926,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   let dt = Prim.dtype prob in
   let s = Prim.broadcast_shape ~by (Prim.shape count) (Prim.shape prob) in
   let prog =
-    sampler [| D.Any D.Int32; D.Any dt |] (fun ~key ~j ->
+    lowered binomial_programs dt [| D.Any D.Int32; D.Any dt |] (fun ~key ~j ->
         let (C c) = compute dt in
         let bits = precision c and lit = lit c in
         let count = operand 0 D.Int32 in
