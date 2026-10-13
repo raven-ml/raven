@@ -24,6 +24,12 @@ let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 let dtypes = D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
 let is_complex (D.Any dt) = D.is D.Complex dt
 
+(* The complex dtype of [dt]'s precision: eig's results'. *)
+let complex_of (D.Any dt) =
+  match dt with
+  | D.Float32 | D.Complex64 -> D.Any D.Complex64
+  | _ -> D.Any D.Complex128
+
 (* The dtype's unit roundoff. *)
 let unit_roundoff (D.Any dt) =
   match dt with D.Float32 | D.Complex64 -> 0x1p-24 | _ -> 0x1p-53
@@ -301,6 +307,7 @@ type routine =
   | Qr of Nx_kernel.factors
   | Eigh of bool  (** with vectors *)
   | Svd of Nx_kernel.factors option  (** the vectors' shapes, or values alone *)
+  | Eig of bool  (** with vectors *)
   | Solve of {
       triangle : Nx_kernel.triangle;
       adjoint : bool;
@@ -308,8 +315,8 @@ type routine =
     }
 
 (* [k]'s results of [r] on [ops], or [None] if it declined: Lu's positions
-   int64, every other result of a's dtype, of the shapes Nx_kernel.Shape
-   gives. *)
+   int64, eig's results complex of a's precision, every other result of a's
+   dtype, of the shapes Nx_kernel.Shape gives. *)
 let run ?(k : (module Nx_kernel.S) option) (b : Support.backend) r ops =
   let module K = (val Option.value k ~default:b.kernels) in
   let module Shape = Nx_kernel.Shape in
@@ -346,6 +353,18 @@ let run ?(k : (module Nx_kernel.S) option) (b : Support.backend) r ops =
         let ss, (su, sv) = ok (Shape.svd (Vectors f) (shape ops.(0))) in
         let s = make ss and u = make su and vh = make sv in
         ([| A.Any s; A.Any u; A.Any vh |], K.svd ~s ~vectors:(~u, ~vh) a)
+    | Eig vectors -> (
+        let sw, sv = ok (Shape.eig (Vectors ()) (shape ops.(0))) in
+        let eig (type c) (cdt : (Complex.t, c) D.t) =
+          let w = A.create Rig.host cdt sw in
+          if vectors then
+            let v = A.create Rig.host cdt sv in
+            ([| A.Any w; A.Any v |], K.eig ~w ~v a)
+          else ([| A.Any w |], K.eig ~w a)
+        in
+        match dt with
+        | D.Float32 | D.Complex64 -> eig D.Complex64
+        | _ -> eig D.Complex128)
     | Solve { triangle; adjoint; unit_diagonal } ->
         let rhs = A.expect dt ops.(1) in
         let dst =
@@ -379,6 +398,27 @@ let cholesky_operand c =
 let eigh_operand c =
   let r = Random.State.make [| c.seed |] in
   let v = Array.concat (List.init (count c) (fun _ -> hermitian r c.dt c.n)) in
+  of_values c.dt (square c)
+    (shrink c (grade c ~symmetric:true ~rows:c.n ~cols:c.n v))
+
+(* A matrix of order [n] with |a_ij| = |a_ji|, which eig's balancing
+   leaves as it is: its lower triangle drawn, and each element above the
+   one below times a sign, or on complex numbers a phase, drawn. *)
+let mirrored r dt n =
+  let m = Array.init (n * n) (fun _ -> draw r dt) in
+  Array.init (n * n) (fun k ->
+      let i = k / n and j = k mod n in
+      if i >= j then m.(k)
+      else
+        let p = draw r dt in
+        let q = Complex.norm p in
+        if q = 0. then m.((j * n) + i)
+        else
+          Complex.mul m.((j * n) + i) { Complex.re = p.re /. q; im = p.im /. q })
+
+let eig_operand c =
+  let r = Random.State.make [| c.seed |] in
+  let v = Array.concat (List.init (count c) (fun _ -> mirrored r c.dt c.n)) in
   of_values c.dt (square c)
     (shrink c (grade c ~symmetric:true ~rows:c.n ~cols:c.n v))
 
@@ -970,6 +1010,253 @@ let law_svd_spectrum (b : Support.backend) c =
         (values y'.(1)) (values y'.(2))
   | _ -> ()
 
+(* eig's bound γ(16n), and its absolute term ε(16n) times 2^e. *)
+let eig_bound dt n = gamma dt (16 * n)
+let eig_term ~e dt n = epsilon ~e dt (16 * n)
+
+(* On real a, w's values not real come in adjacent conjugate pairs, the
+   one of positive imaginary part first, and its real values have +0
+   imaginary parts; [v]'s columns, where given, are conjugate in a pair
+   and real, with +0 imaginary parts, for a real value. *)
+let check_real ~msg ~count ~n (w : Complex.t array) v =
+  let b = Int64.bits_of_float in
+  for t = 0 to count - 1 do
+    let wt j = w.((t * n) + j) in
+    let col j = Array.init n (fun i -> v.((((t * n) + i) * n) + j)) in
+    let j = ref 0 in
+    while !j < n do
+      let x = wt !j in
+      if x.im = 0. then begin
+        equal ~msg:(msg ^ ": a real value's imaginary part") int64 0L (b x.im);
+        if v <> [||] then
+          Array.iteri
+            (fun i (y : Complex.t) ->
+              if b y.im <> 0L then
+                failf "%s: matrix %d: v (%d, %d) of a real value is %h%+hi"
+                  msg t i !j y.re y.im)
+            (col !j);
+        incr j
+      end
+      else begin
+        if not (x.im > 0. && !j + 1 < n) then
+          failf "%s: matrix %d: value %d, %h%+hi, starts no pair" msg t !j
+            x.re x.im;
+        let pair_bits (z : Complex.t) = (b z.re, b z.im) in
+        equal ~msg:(msg ^ ": a pair is conjugate") (pair int64 int64)
+          (pair_bits (Complex.conj x)) (pair_bits (wt (!j + 1)));
+        if v <> [||] then
+          equal ~msg:(msg ^ ": a pair's vectors are conjugate")
+            (array (pair int64 int64))
+            (Array.map (fun z -> pair_bits (Complex.conj z)) (col !j))
+            (Array.map pair_bits (col (!j + 1)));
+        j := !j + 2
+      end
+    done
+  done
+
+(* a v = v diag w with each column v_j of norm within g of 1, an element
+   of largest magnitude real, positive on complex [dt], and
+   ‖a v_j − w_j v_j‖₂ <= g ‖a‖_F + h, g = eig_bound and h = eig_term, for
+   the [count] matrices of order [n] of [a]. [a] and [w] are scaled by
+   2^e. *)
+let check_eig dt ~e ~count ~n (a : Complex.t array) (w : Complex.t array)
+    (v : Complex.t array) =
+  let g = eig_bound dt n and h = eig_term ~e dt n in
+  let worst = { ratio = 0.; where = "" } in
+  for t = 0 to count - 1 do
+    let norm = ref 0. in
+    for p = 0 to (n * n) - 1 do
+      norm := !norm +. Complex.norm2 a.((t * n * n) + p)
+    done;
+    for j = 0 to n - 1 do
+      let wj = w.((t * n) + j) and vij i = at v ~rows:n ~cols:n t i j in
+      let len = dd () and res = ref 0. in
+      for i = 0 to n - 1 do
+        let x = vij i in
+        add_prod len x.re x.re;
+        add_prod len x.im x.im;
+        let s = sum () in
+        for p = 0 to n - 1 do
+          add_cprod s (at a ~rows:n ~cols:n t i p) (vij p)
+        done;
+        add_cprod s (Complex.neg wj) x;
+        res := !res +. Complex.norm2 (total s)
+      done;
+      worse worst ~bound:g
+        ~residual:(Float.abs (sqrt (len.hi +. len.lo) -. 1.))
+        (fun () -> Printf.sprintf "matrix %d: ‖v_%d‖ - 1" t j);
+      (* Magnitudes within 4 u of the largest tie, as the routine rounds
+         them. *)
+      let big =
+        List.fold_left (fun m i -> Float.max m (Complex.norm (vij i))) 0.
+          (List.init n Fun.id)
+      in
+      let real i =
+        let x = vij i in
+        Complex.norm x >= big *. (1. -. (4. *. unit_roundoff dt))
+        && x.im = 0.
+        && ((not (is_complex dt)) || x.re > 0.)
+      in
+      if n > 0 && not (List.exists real (List.init n Fun.id)) then
+        failf "matrix %d: no element of v_%d's largest is real%s" t j
+          (if is_complex dt then " and positive" else "");
+      worse worst
+        ~bound:((g *. sqrt !norm) +. h)
+        ~residual:(sqrt !res)
+        (fun () -> Printf.sprintf "matrix %d: a v_%d - w_%d v_%d" t j j j)
+    done
+  done;
+  check_worst worst
+
+(* eig's results meet check_eig's relations, and on real a check_real's,
+   with the vectors and without, on matrices that balancing leaves, so
+   that the bounds read with a itself. *)
+let law_eig (b : Support.backend) c =
+  let x = laid_out c.how (eig_operand c) in
+  match (run b (Eig true) [| x |], run b (Eig false) [| x |]) with
+  | Some y, Some y' ->
+      let d = down c and n = c.n and count = count c in
+      let w = values y.(0) and v = values y.(1) and w' = values y'.(0) in
+      check_eig c.dt ~e:d ~count ~n (up d (values x)) (up d w) v;
+      let real = not (is_complex c.dt) in
+      cover "a real matrix's complex pair"
+        (real && Array.exists (fun (z : Complex.t) -> z.im <> 0.) w);
+      if real then begin
+        check_real ~msg:"with vectors" ~count ~n w v;
+        check_real ~msg:"alone" ~count ~n w' [||]
+      end
+  | _ -> ()
+
+(* Of the normal a = H B H, H the reflector I − 2 u uᵀ / uᵀu and B diagonal
+   with values on a grid of eighths, or on reals block diagonal with 2 × 2
+   blocks [α β; −β α] for the pairs α ± iβ, each eigenvalue is within
+   g ‖a‖_F + h of one of B's, with the vectors and without, and the
+   vectors meet check_eig's relations. *)
+let law_eig_spectrum (b : Support.backend) c =
+  let n = c.n and r = Random.State.make [| c.seed |] in
+  let grid () = Float.round (8. *. uniform r) /. 8. in
+  let real = not (is_complex c.dt) in
+  let l = Array.make n Complex.zero in
+  let bm = Array.make (n * n) Complex.zero in
+  let set i j re = bm.((i * n) + j) <- { Complex.re; im = 0. } in
+  let i = ref 0 in
+  while !i < n do
+    if real && !i + 1 < n && Random.State.bool r then begin
+      let al = grid () and be = Float.abs (grid ()) +. 0.125 in
+      set !i !i al;
+      set !i (!i + 1) be;
+      set (!i + 1) !i (-.be);
+      set (!i + 1) (!i + 1) al;
+      l.(!i) <- { Complex.re = al; im = be };
+      l.(!i + 1) <- { Complex.re = al; im = -.be };
+      i := !i + 2
+    end
+    else begin
+      let x = { Complex.re = grid (); im = (if real then 0. else grid ()) } in
+      bm.((!i * n) + !i) <- x;
+      l.(!i) <- x;
+      incr i
+    end
+  done;
+  let u = Array.init n (fun _ -> uniform r) in
+  let uu = Array.fold_left (fun s x -> s +. (x *. x)) 0. u in
+  let hm i j = (if i = j then 1. else 0.) -. (2. *. u.(i) *. u.(j) /. uu) in
+  let mul f g =
+    Array.init (n * n) (fun p ->
+        let i = p / n and j = p mod n and s = sum () in
+        for k = 0 to n - 1 do
+          add_cprod s (f i k) (g k j)
+        done;
+        total s)
+  in
+  let real_of f i j = { Complex.re = f i j; im = 0. } in
+  let hb = mul (real_of hm) (fun i j -> bm.((i * n) + j)) in
+  let a = mul (fun i j -> hb.((i * n) + j)) (real_of hm) in
+  let x = of_values c.dt [| n; n |] a in
+  let norm = sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. bm) in
+  let bound = (eig_bound c.dt n *. norm) +. eig_term ~e:0 c.dt n in
+  let spectrum ~msg w =
+    let worst = { ratio = 0.; where = "" } in
+    Array.iteri
+      (fun j (z : Complex.t) ->
+        let near =
+          Array.fold_left
+            (fun m y -> Float.min m (Complex.norm (Complex.sub z y)))
+            infinity l
+        in
+        worse worst ~bound ~residual:near (fun () ->
+            Printf.sprintf "%s: eigenvalue %d, %h%+hi" msg j z.re z.im))
+      w;
+    check_worst worst
+  in
+  match (run b (Eig false) [| x |], run b (Eig true) [| x |]) with
+  | Some y, Some y' ->
+      spectrum ~msg:"alone" (values y.(0));
+      spectrum ~msg:"with vectors" (values y'.(0));
+      check_eig c.dt ~e:0 ~count:1 ~n (values x) (values y'.(0))
+        (values y'.(1))
+  | _ -> ()
+
+(* Balancing at work: a = G A G⁻¹ for A tridiagonal [1 2 1] and G =
+   diag (2^30, 1, 2^-30), whose eigenvalues are A's, 2 and 2 ± √2. xGEBAL
+   balances it with D = diag (2^35, 2^7, 2^-21) and no permutation (as
+   LAPACK 3.12 computes it), to b = D⁻¹ a D = S⁻¹ A S, S = diag (2^5, 2^7,
+   2^9). eig's results meet the bound on ‖D⁻¹ (a v_j − w_j v_j)‖₂, and its
+   eigenvalues, by Bauer and Fike's theorem, are within κ(S) = 16 times
+   g ‖b‖_F + h of A's. *)
+let test_eig_balanced (b : Support.backend) () =
+  let n = 3 and g = [| 30; 0; -30 |] and d = [| 35; 7; -21 |] in
+  let am i j = if i = j then 2. else if abs (i - j) = 1 then 1. else 0. in
+  let a =
+    Array.init (n * n) (fun p ->
+        let i = p / n and j = p mod n in
+        { Complex.re = Float.ldexp (am i j) (g.(i) - g.(j)); im = 0. })
+  in
+  let bnorm =
+    sqrt
+      (Array.fold_left ( +. ) 0.
+         (Array.init (n * n) (fun p ->
+              let i = p / n and j = p mod n in
+              Float.ldexp (am i j) (g.(i) - g.(j) - d.(i) + d.(j)) ** 2.)))
+  in
+  let exact = [| 2. -. sqrt 2.; 2.; 2. +. sqrt 2. |] in
+  List.iter
+    (fun dt ->
+      let x = of_values dt [| n; n |] a in
+      match run b (Eig true) [| x |] with
+      | None -> ()
+      | Some y ->
+          let w = values y.(0) and v = values y.(1) in
+          let bound = (eig_bound dt n *. bnorm) +. eig_term ~e:0 dt n in
+          let worst = { ratio = 0.; where = "" } in
+          for j = 0 to n - 1 do
+            let res = ref 0. and len = ref 0. in
+            for i = 0 to n - 1 do
+              let s = sum () in
+              for p = 0 to n - 1 do
+                add_cprod s a.((i * n) + p) v.((p * n) + j)
+              done;
+              add_cprod s (Complex.neg w.(j)) v.((i * n) + j);
+              res := !res +. Complex.norm2 (ldexp (-d.(i)) (total s));
+              len := !len +. Complex.norm2 (ldexp (-d.(i)) v.((i * n) + j))
+            done;
+            worse worst ~bound:(bound *. sqrt !len) ~residual:(sqrt !res)
+              (fun () ->
+                Format.asprintf "%a: D⁻¹ (a v_%d - w_%d v_%d)" pp_dtype dt
+                  j j j);
+            let near =
+              Array.fold_left
+                (fun m e ->
+                  let e = { Complex.re = e; im = 0. } in
+                  Float.min m (Complex.norm (Complex.sub w.(j) e)))
+                infinity exact
+            in
+            worse worst ~bound:(16. *. bound) ~residual:near (fun () ->
+                Format.asprintf "%a: eigenvalue %d" pp_dtype dt j)
+          done;
+          check_worst worst)
+    dtypes
+
 (* The Jacobi matrix whose eigenvalues are [l] and whose eigenvectors'
    first components are [q], ‖q‖ = 1, by Lanczos on diag l from q,
    reorthogonalised twice against every earlier vector: its diagonal and
@@ -1165,7 +1452,8 @@ let matrix v ~rows ~cols m = Array.sub v (m * rows * cols) (rows * cols)
 
 (* A matrix that fails, between two that do not, is NaN, and leaves theirs
    the bits they have alone. [spoil] makes a matrix's values fail. *)
-let check_alone (b : Support.backend) r ~dt ~rows ~cols ~spoil ops =
+let check_alone (b : Support.backend) r ~dt ?(result = dt) ~rows ~cols ~spoil
+    ops =
   let n = Array.length ops in
   let vs = Array.map values ops in
   let three k = Array.concat [ vs.(k); (if k = 0 then spoil vs.(k) else vs.(k)); vs.(k) ] in
@@ -1179,12 +1467,12 @@ let check_alone (b : Support.backend) r ~dt ~rows ~cols ~spoil ops =
       let yv = values y.(0) in
       let want = bits alone.(0) in
       let mat m =
-        bits (of_values dt [| rows; cols |] (matrix yv ~rows ~cols m))
+        bits (of_values result [| rows; cols |] (matrix yv ~rows ~cols m))
       in
       equal ~msg:"the first is alone" same_bits want (mat 0);
       equal ~msg:"the last is alone" same_bits want (mat 2);
       equal ~msg:"numbers in the failing one" int 0
-        (numbers dt (matrix yv ~rows ~cols 1))
+        (numbers result (matrix yv ~rows ~cols 1))
   | _ -> ()
 
 let one c = { c with batch = [||] }
@@ -1216,6 +1504,23 @@ let law_eigh_fails (b : Support.backend) c =
     List.iter
       (fun r -> check_alone b r ~dt:c.dt ~rows:c.n ~cols:1 ~spoil [| eigh_operand c |])
       [ Eigh true; Eigh false ]
+
+(* NaN or an infinity anywhere. *)
+let law_eig_fails (b : Support.backend) c =
+  let c = one c in
+  if c.n > 0 then
+    let p = c.seed mod (c.n * c.n) in
+    let bad = [| Float.nan; Float.infinity; Float.neg_infinity |].(c.seed mod 3) in
+    let spoil v =
+      let v = Array.copy v in
+      v.(p) <- { Complex.re = bad; im = 0. };
+      v
+    in
+    List.iter
+      (fun r ->
+        check_alone b r ~dt:c.dt ~result:(complex_of c.dt) ~rows:c.n ~cols:1
+          ~spoil [| eig_operand c |])
+      [ Eig true; Eig false ]
 
 (* NaN or an infinity anywhere. *)
 let law_svd_fails (b : Support.backend) c =
@@ -1306,6 +1611,12 @@ let law_layouts (b : Support.backend) c =
       equal ~msg:"eigh's w" same_bits (bits y.(0)) (bits z.(0));
       equal ~msg:"eigh's v" same_bits (bits y.(1)) (bits z.(1))
   | _ -> ());
+  let x = eig_operand c in
+  (match (run b (Eig true) [| x |], run b (Eig true) [| laid_out c.how x |]) with
+  | Some y, Some z ->
+      equal ~msg:"eig's w" same_bits (bits y.(0)) (bits z.(0));
+      equal ~msg:"eig's v" same_bits (bits y.(1)) (bits z.(1))
+  | _ -> ());
   let _, _, x = svd_operand c in
   let f = Svd (Some (factors c)) in
   (match (run b f [| x |], run b f [| laid_out c.how x |]) with
@@ -1350,6 +1661,7 @@ let threads_agree (b : Support.backend) c =
       ("qr", Qr (factors c), [| lu |]);
       ("eigh", Eigh true, [| eigh_operand c |]);
       ("svd", Svd (Some (factors c)), [| (let _, _, x = svd_operand c in x) |]);
+      ("eig", Eig true, [| eig_operand c |]);
     ]
 
 (* nx.cpu computes its routines at the four dtypes, and
@@ -1383,6 +1695,8 @@ let routine_name = function
   | Svd None -> "svd's values"
   | Svd (Some Reduced) -> "svd reduced"
   | Svd (Some Complete) -> "svd complete"
+  | Eig true -> "eig"
+  | Eig false -> "eig's values"
   | Solve _ -> "solve_triangular"
 
 let pp_misfit ppf c =
@@ -1403,12 +1717,16 @@ let shapes c =
   | Svd None -> Result.map (fun (s, ()) -> [| s |]) (S.svd No_vectors c.a)
   | Svd (Some f) ->
       Result.map (fun (s, (u, vh)) -> [| s; u; vh |]) (S.svd (Vectors f) c.a)
+  | Eig v ->
+      Result.map
+        (fun (w, x) -> if v then [| w; x |] else [| w |])
+        (S.eig (Vectors ()) c.a)
   | Solve _ -> Result.map (fun y -> [| y |]) (S.solve_triangular c.a c.b)
 
 let arity = function
-  | Cholesky _ | Solve _ | Eigh false | Svd None -> 1
+  | Cholesky _ | Solve _ | Eigh false | Svd None | Eig false -> 1
   | Lu | Svd (Some _) -> 3
-  | Qr _ | Eigh true -> 2
+  | Qr _ | Eigh true | Eig true -> 2
 
 (* Square matrices half the time, and a vector now and then. *)
 let misfits =
@@ -1429,6 +1747,8 @@ let misfits =
            Svd None;
            Svd (Some Reduced);
            Svd (Some Complete);
+           Eig true;
+           Eig false;
            solve;
          ]
      in
@@ -1462,6 +1782,7 @@ let law_cpu_refuses (b : Support.backend) c =
   let zeros s = A.of_array D.Float32 s (Array.make (Elements.total s) 0.) in
   let dst i = A.create Rig.host D.Float32 c.dsts.(i) in
   let ints i = A.create Rig.host D.Int64 c.dsts.(i) in
+  let cdst i = A.create Rig.host D.Complex64 c.dsts.(i) in
   let a = zeros c.a in
   let got =
     match c.routine with
@@ -1472,6 +1793,8 @@ let law_cpu_refuses (b : Support.backend) c =
     | Eigh false -> K.eigh ~w:(dst 0) a
     | Svd None -> K.svd ~s:(dst 0) a
     | Svd (Some _) -> K.svd ~s:(dst 0) ~vectors:(~u:(dst 1), ~vh:(dst 2)) a
+    | Eig true -> K.eig ~w:(cdst 0) ~v:(cdst 1) a
+    | Eig false -> K.eig ~w:(cdst 0) a
     | Solve { triangle; adjoint; unit_diagonal } ->
         K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst:(dst 0) a
           (zeros c.b)
@@ -1522,16 +1845,7 @@ let test_cpu_refusals (b : Support.backend) () =
   refuses ~msg:"a reduced q with a complete r" float_exact
     A.Shape_mismatch
     (K.qr ~q ~r:(sentinel D.Float32 7. [| 3; 2 |]) tall)
-    q 7.;
-  let c64 = A.of_array D.Complex64 [| 2; 2 |] (Array.make 4 Complex.one) in
-  let w () = A.create Rig.host D.Complex64 [| 2 |] in
-  let declines ~msg got =
-    equal ~msg:("declines the routines it does not compute: " ^ msg) answer
-      A.Declined got
-  in
-  let sq () = A.create Rig.host D.Complex64 [| 2; 2 |] in
-  declines ~msg:"eig" (K.eig ~w:(w ()) ~v:(sq ()) c64);
-  declines ~msg:"eig's values" (K.eig ~w:(w ()) c64)
+    q 7.
 
 (* Every routine answers Wrong_dtype at the dtypes routines do not take,
    and computes or declines float32, float64, complex64 and complex128.
@@ -1618,6 +1932,12 @@ let laws (b : Support.backend) =
         case (run (law_svd_spectrum b));
       prop "svd of a matrix with NaN or an infinity is NaN alone" case
         (run (law_svd_fails b));
+      prop "eig's results meet their relations within γ(16n)" case
+        (run (law_eig b));
+      prop "eig's eigenvalues of a normal matrix are within γ(16n) ‖a‖_F"
+        case (run (law_eig_spectrum b));
+      prop "eig of a matrix with NaN or an infinity is NaN alone" case
+        (run (law_eig_fails b));
       prop "a matrix that is not definite is NaN alone" case
         (run (law_cholesky_fails b));
       prop "a singular triangle is NaN alone" case (run (law_solve_fails b));
@@ -1633,6 +1953,8 @@ let laws (b : Support.backend) =
       test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
       test "eigh solves Reference-LAPACK issue 1166's secular equation"
         (fun () -> b.around (test_eigh_secular b));
+      test "eig balances a graded matrix" (fun () ->
+          b.around (test_eig_balanced b));
       test "svd keeps Reference-LAPACK issue 255's bidiagonal's vectors"
         (fun () -> b.around (test_svd_deflation b));
       test "routines take floats and complex numbers alone" (fun () ->
@@ -1649,7 +1971,7 @@ let cpu (b : Support.backend) =
         (run (law_cpu_units b));
       prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
         (run (law_cpu_refuses b));
-      test "refuses dtypes and shapes, declines the other routines" (fun () ->
+      test "refuses dtypes and shapes" (fun () ->
           b.around (test_cpu_refusals b));
     ]
 

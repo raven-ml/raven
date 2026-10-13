@@ -11,7 +11,7 @@
   ---------------------------------------------------------------------------*/
 
 /* Factorisations, triangular solves and decompositions: Nx_kernel.S's
-   cholesky, lu, qr, solve_triangular, eigh and svd.
+   cholesky, lu, qr, solve_triangular, eigh, svd and eig.
 
    A call computes a routine on each matrix of its operands' batch. Each
    matrix is copied once from its operand, whatever its layout, into its
@@ -77,7 +77,7 @@ static void *room(arena *s, int64_t bytes) {
 }
 
 /* The routines. */
-enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR, EIGH, SVD };
+enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR, EIGH, SVD, EIG };
 
 /* A triangular solve: x ← t⁻¹ x for the triangle t, its diagonal read
    or taken as ones; or x ← x l⁻ᴴ for the lower l. */
@@ -93,7 +93,7 @@ typedef enum { AS_STORED, CONJUGATED } reading;
 /* A call: its routine and attributes, 0 where it has none: [upper] for the
    triangle Upper, [complete] for complete factors, which q's or u's and
    vh's shapes state, [adjoint] and [unit] for a solve's, [vectors] where
-   eigh computes v or svd u and vh; its operand's [m] rows and [n]
+   eigh or eig computes v or svd u and vh; its operand's [m] rows and [n]
    columns and, for a solve, the right-hand sides' count [r]; its arrays,
    the operands then the results, whose first [batch] axes are the batch. */
 typedef struct {
@@ -210,6 +210,7 @@ static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
 #define R float
 #define RDT NX_FLOAT32
 #define SFX f32
+#define C float complex
 #define CPLX 0
 #define CONJ(x) (x)
 #define REAL(x) (x)
@@ -222,6 +223,7 @@ static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
 #define R double
 #define RDT NX_FLOAT64
 #define SFX f64
+#define C double complex
 #define CPLX 0
 #define CONJ(x) (x)
 #define REAL(x) (x)
@@ -234,6 +236,8 @@ static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
 #define R float
 #define RDT NX_FLOAT32
 #define SFX c64
+#define C T
+#define CSQRT csqrtf
 #define CPLX 1
 #define CONJ conjf
 #define REAL crealf
@@ -246,6 +250,8 @@ static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
 #define R double
 #define RDT NX_FLOAT64
 #define SFX c128
+#define C T
+#define CSQRT csqrt
 #define CPLX 1
 #define CONJ conj
 #define REAL creal
@@ -283,7 +289,8 @@ static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
    m n k − k³/3 (xGETRF); QR's 2 m n k − 2k³/3 for R (xGEQRF) and, for Q
    (xORGQR), 2 m k² − 2k³/3 of k columns or 4 m² k − 4 m k² + 4k³/3 of m;
    eigh's about 10/3 n³ with vectors, 4/3 n³ without (xHEEVD); svd's
-   about 4 m n k without, three times as many with (xGESDD). */
+   about 4 m n k without, three times as many with (xGESDD); eig's about
+   25 n³ with vectors, 10 n³ without (xGEEV, Golub and Van Loan). */
 static double flops(const call *c) {
   double m = c->m, n = c->n, k = m < n ? m : n, k3 = k * k * k;
   switch (c->routine) {
@@ -295,6 +302,7 @@ static double flops(const call *c) {
              (c->complete ? 4 * m * m * k - 4 * m * k * k + 4 * k3 / 3
                           : 2 * m * k * k - 2 * k3 / 3);
     case EIGH: return (c->vectors ? 10 : 4) * n * n * n / 3;
+    case EIG: return (c->vectors ? 25 : 10) * n * n * n;
     default: return (c->vectors ? 12 : 4) * m * n * k;
   }
 }
@@ -306,7 +314,10 @@ static double flops(const call *c) {
    T's diagonals, Z and divide and conquer's work, and its indices; svd's
    B, QR's R, the τ, a panel's X and Y or the scratch of QR or of a
    block's V, T and products, X or W, then as reals B's diagonals, U_B,
-   V_B and divide and conquer's work, and its indices (linalg_body.h). */
+   V_B and divide and conquer's work, and its indices; eig's balanced
+   matrix, H, Z, X, v on reals, Q's τ, the scratch of its blocks, then as
+   reals the eigenvalues, the scales and S's column norms, and a complex
+   column (linalg_body.h). */
 static int64_t scratch(const call *c) {
   int64_t m = c->m, n = c->n, big = m > n ? m : n, k = m < n ? m : n;
   switch (c->routine) {
@@ -318,6 +329,7 @@ static int64_t scratch(const call *c) {
       return big * k + 3 * k * k + 3 * (k + 1) * (k + 1) + 19 * k + 2 +
              (3 * big + NB + 1) * NB + tmp;
     }
+    case EIG: return 5 * n * n + 7 * n + (3 * n + NB) * NB;
     default: return 0;
   }
 }
@@ -355,7 +367,8 @@ static int results(const call *c, const int64_t *x, int xr, const int64_t *z,
       y[1][xr - 2] = q;
       return 1;
     }
-    case EIGH: ranks[0] = xr - 1; return 1;
+    case EIGH:
+    case EIG: ranks[0] = xr - 1; return 1;
     case SVD:
       ranks[0] = xr - 1;
       y[0][xr - 2] = k;
@@ -408,8 +421,10 @@ static value run(call c, const value *arrays, int threads) {
   int solve = c.routine == SOLVE_TRIANGULAR;
   c.nops = 1 + solve;
   c.nres = c.routine == LU || (c.routine == SVD && c.vectors) ? 3
-           : c.routine == QR || (c.routine == EIGH && c.vectors) ? 2
-                                                                 : 1;
+           : c.routine == QR || ((c.routine == EIGH || c.routine == EIG) &&
+                                 c.vectors)
+               ? 2
+               : 1;
   c.dt = nx_array_dtype(arrays[0]);
   if (!takes(c.dt)) return Val_int(NX_DTYPE);
   int64_t x[2 * NX_MAX_RANK], z[2 * NX_MAX_RANK], y[3][NX_MAX_RANK], off;
@@ -517,6 +532,13 @@ value nx_cpu_eigh_on(value w, value v, value a, int threads) {
   CAMLreturn(run((call){.routine = EIGH, .vectors = vectors}, arrays, threads));
 }
 
+value nx_cpu_eig_on(value w, value v, value a, int threads) {
+  CAMLparam3(w, v, a);
+  int vectors = Is_some(v);
+  value arrays[] = {a, w, vectors ? Some_val(v) : Val_unit};
+  CAMLreturn(run((call){.routine = EIG, .vectors = vectors}, arrays, threads));
+}
+
 value nx_cpu_svd_on(value s, value vectors, value a, int threads) {
   CAMLparam3(s, vectors, a);
   CAMLlocal2(u, vh);
@@ -557,6 +579,10 @@ value nx_cpu_solve_triangular_byte(value *argv, int argn) {
 
 value nx_cpu_eigh(value w, value v, value a) {
   return nx_cpu_eigh_on(w, v, a, 0);
+}
+
+value nx_cpu_eig(value w, value v, value a) {
+  return nx_cpu_eig_on(w, v, a, 0);
 }
 
 value nx_cpu_svd(value s, value vectors, value a) {

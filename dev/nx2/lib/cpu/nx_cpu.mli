@@ -87,16 +87,15 @@
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take. The transforms decline the
-    others. [cholesky], [lu], [qr], [solve_triangular], [eigh] and [svd]
-    compute them; [eig] declines them. The six refuse with
-    [Shape_mismatch] what {!Nx_kernel.Shape} answers [Error] for and results
-    of other shapes. A matrix's results are a function of its values alone,
-    whatever its batch, its layout or the threads. With
-    [γ(k) = k u / (1 - k u)] and [ε(k) = k η], [u] the dtype's unit
-    roundoff and [η] its least positive subnormal (2{^-149} or 2{^-1074}),
-    [k] doubled on complex dtypes, and [|·|] taken elementwise, the bounds
-    below hold. Their [ε] terms bound what rounding below the least normal
-    number adds:
+    others. [cholesky], [lu], [qr], [solve_triangular], [eigh], [svd] and
+    [eig] compute them. The seven refuse with [Shape_mismatch] what
+    {!Nx_kernel.Shape} answers [Error] for and results of other shapes. A
+    matrix's results are a function of its values alone, whatever its
+    batch, its layout or the threads. With [γ(k) = k u / (1 - k u)] and
+    [ε(k) = k η], [u] the dtype's unit roundoff and [η] its least positive
+    subnormal (2{^-149} or 2{^-1074}), [k] doubled on complex dtypes, and
+    [|·|] taken elementwise, the bounds below hold. Their [ε] terms bound
+    what rounding below the least normal number adds:
     - [cholesky]: [L Lᴴ = a + Δ] with
       [|Δ_ij| <= γ(n + 1) (|L| |Lᴴ|)_ij + ε(n + 1) (1 + L_jj)]. The
       [Upper] factor is the [Lower] one's conjugate transpose, bit for bit.
@@ -124,7 +123,22 @@
       [vectors] or without. The 100 is the iteration's test of convergence
       on the bidiagonal, which drops a superdiagonal element below
       [max(10, min(100, u{^-1/8})) u] times its neighbours. Values alone
-      may differ from the vectors' call's in their last bits. *)
+      may differ from the vectors' call's in their last bits.
+    - [eig]: [a] is first balanced, [b = D⁻¹ Pᵀ a P D] with [P] a
+      permutation and [D] diagonal, of powers of 2 that bring each row's
+      norm near its column's; [D = I] where they are equal already, as on
+      a normal matrix or one with [|a_ij| = |a_ji|]. With [g = γ(16n)]
+      and [h = ε(16n)], [w] is the spectrum of [a + E] with
+      [‖D⁻¹ Pᵀ E P D‖_F <= g ‖b‖_F + h], with [v] or without, and each
+      column [v_j] has [|‖v_j‖₂ - 1| <= g] and
+      [‖D⁻¹ Pᵀ (a v_j - w_j v_j)‖₂ <= (g ‖b‖_F + h) ‖D⁻¹ Pᵀ v_j‖₂]. On
+      real [a], [w]'s values that are not real come in adjacent conjugate
+      pairs, the one of positive imaginary part first, with conjugate
+      columns of [v]; a real value has a [+0] imaginary part and its
+      column of [v] [+0] imaginary parts. [w] is in the order the Schur
+      form's diagonal leaves it, and each column of [v] has an element of
+      largest magnitude real, positive on complex [a]. Values alone may
+      differ from the vectors' call's. *)
 
 include Nx_kernel.S
 

@@ -79,6 +79,14 @@ end
 
 let m = Nx_support.memory
 
+(* nx.cpu without eig. *)
+module Declining = struct
+  include Nx_cpu
+
+  let name = "nx.declining"
+  let eig ~w:_ ?v:_ _ = A.Declined
+end
+
 module One = (val Nx.devices ~kernels:(module Filling) [ m 0 ])
 module Two = (val Nx.devices ~kernels:(module Filling) [ m 0; m 1 ])
 
@@ -282,7 +290,11 @@ let test_split () =
   equal ~msg:"v" (array float_exact) (Array.make 18 2.) (read v)
 
 let test_declined () =
-  let a = Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Complex64 [| 2; 2 |]) in
+  let module Declines = (val Nx.devices ~kernels:(module Declining) [ m 0 ]) in
+  let a =
+    Nx.place Declines.on
+      (Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Complex64 [| 2; 2 |]))
+  in
   match linalg (Eig { vectors = No_vectors; dtype = D.Complex64; a }) with
   | _ -> fail "a declined factorisation computed"
   | exception Invalid_argument e ->
@@ -290,7 +302,7 @@ let test_declined () =
         (fun sub -> contains ~msg:sub ~sub e)
         [
           "t: ";
-          "nx.cpu";
+          "nx.declining";
           "Eig";
           "complex64";
           "not available yet";

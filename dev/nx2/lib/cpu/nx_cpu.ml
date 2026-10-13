@@ -359,9 +359,17 @@ external svd_c :
 
 let svd ~s ?vectors a = svd_c ~s vectors a
 
-(* nx.cpu computes no other decomposition by iteration yet. *)
-let takes a = Nx_kernel.full_precision (Nx_array.dtype a)
-let eig ~w ?v:_ a =
-  declined
-    (takes a
-    && Nx_kernel.same_precision (Nx_array.dtype a) (Nx_array.dtype w))
+external eig_c :
+  w:(Complex.t, 'c) Nx_array.t ->
+  (Complex.t, 'c) Nx_array.t option ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_eig"
+
+let eig ~w ?v a =
+  let dt = Nx_array.dtype a in
+  let fits (x : (Complex.t, _) Nx_array.t) =
+    Nx_kernel.same_precision dt (Nx_array.dtype x)
+  in
+  let fit = fits w && Option.fold ~none:true ~some:fits v in
+  if not (Nx_kernel.full_precision dt && fit) then Nx_array.Wrong_dtype
+  else eig_c ~w v a
