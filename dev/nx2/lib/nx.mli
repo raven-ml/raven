@@ -1201,6 +1201,10 @@ val cumsum : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     up to that index, inclusive; without [axis], of its elements in C order up
     to that one, in [x]'s shape. Every dtype but booleans.
 
+    The result at an index is a function of the elements up to it alone: the
+    cumsum of a prefix of the axis is the prefix of the cumsum, bit for bit.
+    Its last element need not equal {!sum}'s of the same elements.
+
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank or a
     dtype it does not take. *)
 
@@ -2216,8 +2220,10 @@ module Prim : sig
       }
         -> 'r t
         (** The reduction of [prog]'s output over the indices along [axis] up to
-            each index's, inclusive, of [layout]'s shape: a running [Moments]
-            is the running mean and variance. *)
+            each index's, inclusive, of [layout]'s shape, as
+            {!Nx_kernel.S.scan} says: a running [Moments] is the running mean
+            and variance. The scan of a prefix of the axis is the prefix of
+            the scan, bit for bit. *)
     | Gather : {
         axis : int;
         idx : (int64, Dtype.int64_elt, 'd) nx;

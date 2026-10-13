@@ -69,7 +69,8 @@ type extreme = Max | Min
       [-∞] for no term or terms all [-∞], [+∞] where a term is [+∞] and none is
       NaN.
     - [Moments] is the terms' population mean, then their variance; NaN for no
-      term.
+      term. With an infinite term and no NaN term, the mean is the sum of the
+      infinities, a NaN where both signs occur, and the variance a NaN.
     - [Arg e] is the extreme [e] of the terms, as [Monoid Max] or [Monoid Min]
       finds it, then its position: the first term with its bits, as an
       [int64].
@@ -388,8 +389,11 @@ module type S = sig
       of output [k] of [p] over the indices along [axis] up to that index's,
       inclusive, in that output's dtype, rounded once to its destination's: a
       running sum for [Monoid Sum], the running population mean and variance
-      for [Moments]. Destinations are as {!reduce}'s, each of the loaded
-      shape ({!Shape.scan}). It answers [Wrong_dtype] where {!accepts} is
+      for [Moments]. The result at an index is a function of the terms up to
+      it alone: the scan of a prefix of the axis is the prefix of the scan,
+      bit for bit. A scan's last result need not equal the reduction of the
+      same terms. Destinations are as {!reduce}'s, each of the loaded shape
+      ({!Shape.scan}). It answers [Wrong_dtype] where {!accepts} is
       [false] of [r] and output [k]'s dtype. *)
 
   (** {1:index Gathers and scatters} *)
