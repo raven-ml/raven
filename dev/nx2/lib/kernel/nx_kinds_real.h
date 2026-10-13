@@ -364,19 +364,26 @@ NX_INLINE NX_(nx_pair) NX_(nx_cos_kernel)(NX_T hi, NX_T lo) {
   return p;
 }
 
+/* y with its sign flipped where bit 1 of k is set. */
+NX_INLINE NX_T NX_(nx_flip2)(NX_T y, uint32_t k) {
+  return NX_OF_BITS(NX_BITS(y) ^ ((NX_U)(k & 2) << (8 * sizeof(NX_U) - 2)));
+}
+
+/* sin x is x where x is a NaN or below NX_C(TRIG_TINY); elsewhere y is a
+   NaN only at an infinity. */
 NX_INLINE NX_T NX_(nx_sin_at)(NX_T x, NX_(nx_rem) r) {
   NX_(nx_pair) s = NX_(nx_sin_kernel)(r.hi, r.lo);
   NX_(nx_pair) c = NX_(nx_cos_kernel)(r.hi, r.lo);
-  NX_T y = (r.q & 1) ? c.hi + c.lo : s.hi + s.lo;
-  y = (r.q & 2) ? -y : y;
-  return NX_(nx_nan1)(x, NX_(nx_abs_bits)(x) < NX_C(TRIG_TINY) ? x : y);
+  NX_T y = NX_(nx_flip2)((r.q & 1) ? c.hi + c.lo : s.hi + s.lo, r.q);
+  y = y != y ? NX_C(NAN) : y;
+  return !(NX_(nx_abs_bits)(x) >= NX_C(TRIG_TINY)) ? x : y;
 }
 
 NX_INLINE NX_T NX_(nx_cos_at)(NX_T x, NX_(nx_rem) r) {
   NX_(nx_pair) s = NX_(nx_sin_kernel)(r.hi, r.lo);
   NX_(nx_pair) c = NX_(nx_cos_kernel)(r.hi, r.lo);
   NX_T y = (r.q & 1) ? s.hi + s.lo : c.hi + c.lo;
-  return NX_(nx_nan1)(x, ((r.q + 1) & 2) ? -y : y);
+  return NX_(nx_nan1)(x, NX_(nx_flip2)(y, r.q + 1));
 }
 
 NX_INLINE NX_T NX_(nx_tan_at)(NX_T x, NX_(nx_rem) r) {
@@ -387,13 +394,17 @@ NX_INLINE NX_T NX_(nx_tan_at)(NX_T x, NX_(nx_rem) r) {
   NX_(nx_pair) n = {odd ? -c.hi : s.hi, odd ? -c.lo : s.lo};
   NX_(nx_pair) d = {odd ? s.hi : c.hi, odd ? s.lo : c.lo};
   NX_(nx_pair) q = NX_(nx_div_pair)(n, d);
-  return NX_(nx_nan1)(x, NX_(nx_abs_bits)(x) < NX_C(TRIG_TINY) ? x : q.hi + q.lo);
+  NX_T y = q.hi + q.lo;
+  y = y != y ? NX_C(NAN) : y;
+  return !(NX_(nx_abs_bits)(x) >= NX_C(TRIG_TINY)) ? x : y;
 }
 
-/* Whether x takes the integer reduction. */
+/* Whether x takes the integer reduction: |x| in [NX_C(PIO2_BIG), inf) as
+   one unsigned compare of its bits, those below the switch wrapping past
+   the range's top. */
 NX_INLINE int NX_(nx_trig_big)(NX_T x) {
-  NX_T a = NX_(nx_abs_bits)(x);
-  return a >= NX_C(PIO2_BIG) && a < NX_C(INF);
+  NX_U a = (NX_BITS(x) & ~NX_SIGN_BIT) - NX_BITS(NX_C(PIO2_BIG));
+  return a < NX_BITS(NX_C(INF)) - NX_BITS(NX_C(PIO2_BIG));
 }
 
 /* sin, cos and tan below the switch */
