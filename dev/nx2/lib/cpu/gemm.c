@@ -211,13 +211,16 @@ static void kept_drop(void *v) {
 static void kept_init(void) { pthread_key_create(&kept_key, kept_drop); }
 
 /* The calling thread's kept buffers, made at its first product; NULL if
-   they cannot be. */
+   they cannot be. A thread-local pointer finds them in one load, where the
+   key's lookup is two calls; the key frees them when the thread ends. */
+static _Thread_local kept *kept_here;
+
 static kept *mine(void) {
+  if (kept_here != NULL) return kept_here;
   pthread_once(&kept_once, kept_init);
-  kept *k = pthread_getspecific(kept_key);
-  if (k != NULL) return k;
-  k = calloc(1, sizeof *k);
-  if (k != NULL && pthread_setspecific(kept_key, k) == 0) return k;
+  kept *k = calloc(1, sizeof *k);
+  if (k != NULL && pthread_setspecific(kept_key, k) == 0)
+    return kept_here = k;
   free(k);
   return NULL;
 }
@@ -403,6 +406,7 @@ static uint8_t *block(const panel *c, int64_t e, int64_t ib, int64_t *m,
    through it on two threads, a 512³ one through the stage on eight. */
 static nx_cpu_pack mover(const problem *p, int64_t total, int64_t bytes,
                          double cost) {
+  if (p->g->pack == NULL) return NULL;
   int64_t threads = min64(total, nx_cpu_threads(bytes, cost));
   return threads <= engines(p->g->kernel) ? p->g->pack : NULL;
 }
