@@ -1,8 +1,8 @@
-; test_fault makes the GPU's context fail for the rest of its process, so it
-; is a suite of its own.
+; test_fault and test_stop_fault make the GPU's context fail for the rest of
+; their process, so each is a suite of its own.
 
 (tests
- (names test_cuda test_fault test_graph_fork)
+ (names test_cuda test_fault test_stop_fault test_graph_fork)
  (locks %{workspace_root}/gpu)
  (libraries
   rig

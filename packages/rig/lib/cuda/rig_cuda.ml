@@ -353,9 +353,9 @@ let graph context guard stopped images pending
   end
 
 (* Takes a GPU's [held] for a new device: unheld, or held by a stopped device
-   whose work has since ended. A GPU has one device at a time: two would wait
-   on each other's words through the context's shared hardware queues, an
-   order CUDA does not see. *)
+   whose work has since ended, by completing or by a fault. A GPU has one
+   device at a time: two would wait on each other's words through the
+   context's shared hardware queues, an order CUDA does not see. *)
 let claim held =
   Mutex.protect held_lock @@ fun () ->
   let p = Atomic.get held in

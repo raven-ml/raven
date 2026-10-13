@@ -410,13 +410,20 @@ let lose (t : S.t) flag =
   let fails = S.part t.d (S.failing 1) in
   ignore (lost (fun () -> S.submit_work t [ spinning t flag; fails ]))
 
-(* GPU 0, opened once the work a stop left running ended. *)
-let rec reopened () =
-  match (C.gpu 0).make () with
-  | Ok g -> g
-  | Error _ ->
-      Domain.cpu_relax ();
-      reopened ()
+(* GPU 0, opened once the work a stop left running ended, within 10 s of the
+   host's monotonic clock: the bound of that work's kernel. *)
+let reopened () =
+  let t0 = Rig.Profile.now () in
+  let rec go () =
+    match (C.gpu 0).make () with
+    | Ok g -> g
+    | Error e when Rig.Profile.now () - t0 > 10 * second ->
+        failf "GPU 0 does not open again within 10 s: %s" e
+    | Error _ ->
+        Domain.cpu_relax ();
+        go ()
+  in
+  go ()
 
 (* A collection needs every domain at a safe point, so it waits for a domain
    whose C call holds the runtime: here, an unload that CUDA holds until the

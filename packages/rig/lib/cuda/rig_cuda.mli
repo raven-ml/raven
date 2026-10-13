@@ -363,15 +363,17 @@ val capability : t -> Rig_cuda_abi.t
     completed, its streams are idle, or a fault has ended the context's
     work), it writes the last value. Otherwise it commits that value, and
     the word reaches it once the work ends, unless the work waits on a word
-    of another device that never reaches its value. Either way it destroys
-    [g]'s streams and events, which CUDA frees once their work ends. The
-    GPU can be opened again once that work ends. The stop frees [g]'s C
-    state but for the word and what reading it needs, which stay for the
-    process. Compiled code may still
-    call the [symbol] and [graph] functions of {!val-capability} after
-    {!stop}, and rig's {!free} and {!unload} may come after the GPU has
-    opened again, since the device's modules lie in the GPU's primary
-    context, which the process keeps. *)
+    of another device that never reaches its value, and it keeps an event
+    behind the work on each stream. Either way it destroys [g]'s streams
+    and its other events, which CUDA frees once their work ends. The GPU
+    can be opened again once that work ends, by completing or by a fault,
+    which then also brings the word to the last value; after a fault,
+    [make] answers its error. The stop frees [g]'s C state but for the
+    word and what reading it needs, which stay for the process. Compiled
+    code may still call the [symbol] and [graph] functions of
+    {!val-capability} after {!stop}, and rig's {!free} and {!unload} may
+    come after the GPU has opened again, since the device's modules lie in
+    the GPU's primary context, which the process keeps. *)
 
 (** {1:references References}
     - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}:

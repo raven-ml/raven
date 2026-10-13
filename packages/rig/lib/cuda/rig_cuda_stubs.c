@@ -428,12 +428,18 @@ struct device {
 
 /* A device's edge, kept for the process: its word, the last value its
    submit received, as the stop found it, and its state, NULL once
-   stopped. */
+   stopped. A stop that finds work running leaves its context, an event
+   behind the work on each stream, which [caml_rig_cuda_ended] asks, or,
+   where it cannot ask CUDA, the state, which [caml_rig_cuda_ended] stops
+   again. */
 struct edge {
   const struct rig_driver *driver;
   _Atomic uint64_t *word;
   uint64_t last;
   struct device *d;
+  CUcontext context;
+  CUevent ends[2];
+  struct device *unstopped;
 };
 
 #define Edge_val(v) ((struct edge *)Long_val(v))
@@ -1420,50 +1426,109 @@ value caml_rig_cuda_failed(value v_self) {
   return Val_int(s);
 }
 
-/* Stops a device: [true] if its work no longer writes memory, after
-   raising the word to the last value by compare-and-set; [false] if work
-   still runs, or the context cannot be made current to ask. The work no
-   longer writes once the word holds the last value (its write is the
-   work's last command), or once both streams are idle or one met an error.
-   The streams are asked before any write is enqueued, since a write would
-   keep an idle stream busy. Work that still runs gets the write of the
-   last value, if no commit wrote it, so the word reaches it once the work
-   ends. A fault counts as an end because CUDA then runs none of the
+/* Whether the word of [e]'s device holds the last value. */
+static int reached(const struct edge *e) {
+  uint64_t w = atomic_load_explicit(e->word, memory_order_acquire);
+  return (int64_t)(w - e->last) >= 0;
+}
+
+/* Stops [d], the state of [e]'s device, in its context, made current:
+   [true] if its work no longer writes memory, after raising the word to
+   the last value by compare-and-set. The work no longer writes once the
+   word holds the last value (its write is the work's last command), or
+   once both streams are idle or one met an error. The streams are asked
+   before any write is enqueued, since a write would keep an idle stream
+   busy. A fault counts as an end because CUDA then runs none of the
    context's queued work: its reference does not state this, and the 615
-   driver behaves so. The streams and events are destroyed whether work
-   runs or not: CUDA frees them once their work ends. The state goes with
-   them, but for the edge; a context that cannot be made current keeps its
-   streams and events, unreachable. */
-value caml_rig_cuda_stop(value v_self) {
-  struct edge *e = Edge_val(v_self);
-  struct device *d = e->d;
-  e->last = d->last;
-  e->d = NULL;
-  uint64_t w = atomic_load_explicit(d->word, memory_order_acquire);
-  int stopped = (int64_t)(w - d->last) >= 0, running = 0;
-  if (push(d->context) != CUDA_SUCCESS) {
-    free(d);
-    return Val_false;
-  }
+   driver behaves so.
+
+   Work that still runs gets the write of the last value, if no commit
+   wrote it, so the word reaches it once the work ends; and each stream
+   records its [done] event behind its work, which the edge takes, so a
+   later [caml_rig_cuda_ended] finds the work's end or its fault once the
+   streams are gone. The streams and the other events are then destroyed:
+   CUDA frees them once their work ends. If CUDA records no event, [d]
+   stays whole in the edge, unstopped. */
+static int stop_in(struct edge *e, struct device *d) {
+  int stopped = reached(e), running = 0;
   for (int q = 0; q < 2 && !stopped; q++) {
     CUresult s = p_cuStreamQuery(d->streams[q]);
     if (s == CUDA_ERROR_NOT_READY) running = 1;
     else if (s != CUDA_SUCCESS) stopped = 1;
   }
   stopped |= !running;
-  if (!stopped && !d->failed && d->committed != d->last)
-    write_word(d, d->last);
-  if (stopped) rig_raise(d->word, d->last);
+  if (stopped) rig_raise(e->word, e->last);
+  else {
+    if (!d->failed && d->committed != d->last) write_word(d, d->last);
+    for (int q = 0; q < 2; q++)
+      if (p_cuEventRecord(d->done[q], d->streams[q]) != CUDA_SUCCESS) {
+        e->unstopped = d;
+        return 0;
+      }
+    for (int q = 0; q < 2; q++) {
+      e->ends[q] = d->done[q];
+      d->done[q] = NULL;
+    }
+  }
   destroy(d);
-  pop(CUDA_SUCCESS);
   free(d);
+  return stopped;
+}
+
+/* Stops a device: [true] if its work no longer writes memory ([stop_in]);
+   [false] if work still runs, or the context cannot be made current to
+   ask, which leaves the state to [caml_rig_cuda_ended]. The state but for
+   the edge goes. */
+value caml_rig_cuda_stop(value v_self) {
+  struct edge *e = Edge_val(v_self);
+  struct device *d = e->d;
+  e->last = d->last;
+  e->context = d->context;
+  e->d = NULL;
+  if (push(d->context) != CUDA_SUCCESS) {
+    e->unstopped = d;
+    return Val_false;
+  }
+  int stopped = stop_in(e, d);
+  pop(CUDA_SUCCESS);
   return Val_bool(stopped);
 }
 
-/* Whether a device that a stop found running has since ended its work: its
-   word holds the last value. */
+/* Whether the work a stop found running has since ended: its word holds
+   the last value, or both of its streams' end events have completed or
+   met an error, a fault which ends the context's work. A state the stop
+   left unstopped is stopped again first. Once the work has ended, the
+   word is raised to the last value, which a fault or a refused write left
+   short, and the events go. A context that cannot be made current answers
+   [false], and the next call asks again. */
 value caml_rig_cuda_ended(value v_self) {
   struct edge *e = Edge_val(v_self);
-  uint64_t w = atomic_load_explicit(e->word, memory_order_acquire);
-  return Val_bool((int64_t)(w - e->last) >= 0);
+  if (e->unstopped == NULL && e->ends[0] == NULL) return Val_bool(reached(e));
+  if (push(e->context) != CUDA_SUCCESS) return Val_false;
+  int ended;
+  if (e->unstopped != NULL) {
+    struct device *d = e->unstopped;
+    e->unstopped = NULL;
+    ended = stop_in(e, d);
+  } else {
+    ended = 1;
+    for (int q = 0; q < 2; q++) {
+      CUresult s = p_cuEventQuery(e->ends[q]);
+      if (s == CUDA_ERROR_NOT_READY) ended = 0;
+      else if (s != CUDA_SUCCESS) {
+        ended = 1;
+        break;
+      }
+    }
+    ended |= reached(e);
+  }
+  if (ended && e->ends[0] != NULL) {
+    rig_raise(e->word, e->last);
+    for (int q = 0; q < 2; q++) {
+      p_cuEventDestroy_v2(e->ends[q]);
+      e->ends[q] = NULL;
+    }
+  }
+  pop(CUDA_SUCCESS);
+  return Val_bool(ended);
 }
