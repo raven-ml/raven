@@ -927,39 +927,46 @@ and on_device : type r.
     r Value.prim ->
     unit =
  fun ~by kernels set op r j k local ->
-  let d = Devices.rig set k in
+  let d = Devices.rig set k and q = Devices.one set k in
   if not (call ~by kernels d local r j) then
-    match expand ~by ~at:(Devices.one set k) local with
-    | Some y -> copied ~by kernels d local y op r j
+    match expand ~by ~at:q local with
+    | Some y -> copied ~by kernels q local y op r j
     | None ->
         let (module K : Nx_kernel.S) = kernels in
         refused ~by ~kernels:K.name d local
 
-(* [y], [local]'s results on device [d], copied into the results [r] of [op] at
-   position [j]. *)
+(* [y], [local]'s results at [q], copied into the results [r] of [op] at
+   position [j]. A result may be a constant, a creation that an expansion of
+   one of the expansion's operations defers: it is computed at [q]. *)
 and copied : type r.
     by:string ->
     (module Nx_kernel.S) ->
-    Rig.t ->
+    unit Devices.placement ->
     r Value.prim ->
     r ->
     r Value.prim ->
     r ->
     int ->
     unit =
- fun ~by kernels d local y op r j ->
+ fun ~by kernels q local y op r j ->
   let (module K) = kernels in
   let dsts = Prim.result_arrays op r in
-  Array.iteri
-    (fun i per ->
+  let srcs = ref [] in
+  Prim.iter_results
+    (fun x ->
+      let x = if Prim.is_constant x then at (Devices.rebrand q) x else x in
+      srcs := A.Any (one x) :: !srcs)
+    local y;
+  List.iteri
+    (fun i (A.Any src) ->
       let (A.Any dst) = dsts.(i).(j) in
-      let v = A.expect (A.dtype dst) per.(0) in
+      let v = A.expect (A.dtype dst) (A.Any src) in
       if not (ran ~by (copy_into kernels ~dst v) [| A.Any dst |] [| A.Any v |])
       then
         declined ~by ~kernels:K.name
           (Op1 (Copy, D.Any (A.dtype v), 0))
-          d [ A.Any v ])
-    (Prim.result_arrays local y)
+          (A.device v) [ A.Any v ])
+    (List.rev !srcs)
 
 (* [op]'s expansion, its operations applied where their operands lie, or at
    [at] for a constant's evaluation; [None] for a core case. *)
