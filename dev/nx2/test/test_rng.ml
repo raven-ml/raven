@@ -40,8 +40,14 @@ let pp_shape ppf s =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
+(* Shapes up to rank 6, half of them of rank 5 or 6 with no extent below 2,
+   whose positions weigh every axis. *)
 let shapes =
-  Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 5)
+  Gen.one_of
+    [
+      Gen.array ~size:(Gen.int_range 0 6) (Gen.int_range 0 4);
+      Gen.array ~size:(Gen.int_range 5 6) (Gen.int_range 2 3);
+    ]
   |> Gen.with_pp pp_shape
 
 let seeds = Gen.int
@@ -126,6 +132,21 @@ let variance xs =
 let near ~var want x =
   let se = sqrt var /. sqrt (Float.of_int n) in
   at_most float_exact ~than:(6. *. se) (Float.abs (x -. want))
+
+(* The [n] draws [xs] follow the continuous CDF [cdf]: their
+   Kolmogorov-Smirnov statistic is below [3 / √n], which a sample of the
+   distribution exceeds with probability about [2 e^-18]. *)
+let ks cdf xs =
+  let xs = Array.copy xs in
+  Array.sort Float.compare xs;
+  let nf = Float.of_int (Array.length xs) in
+  let d = ref 0. in
+  Array.iteri
+    (fun i x ->
+      let f = cdf x in
+      d := Float.max !d (Float.max (Float.of_int (i + 1) /. nf -. f) (f -. Float.of_int i /. nf)))
+    xs;
+  at_most float_exact ~than:(3. /. sqrt nf) !d
 
 (* Two draws are uncorrelated: the mean product of two standard normal draws of
    [n] is within 6 standard errors, [1 / √n], of 0. *)
@@ -275,11 +296,11 @@ let bits53 ws i =
     (Int64.shift_left (Int64.logand (u32 ws.(2 * i)) 0x1F_FFFFL) 32)
     (u32 ws.((2 * i) + 1))
 
-(* Lemire's multiply-shift of the range [low, high) at element [j] of [n]:
-   block [j]'s 64 bits times the range, shifted down by 64, unless its low 64
-   bits fall below [2^64 mod range], where block [n + j] stands whatever its
-   low bits. The flag is whether element [j] took the second block. *)
-let lemire ws ~low ~high ~n j =
+(* Lemire's multiply-shift of the range [low, high) at element [j]: block
+   [2j]'s 64 bits times the range, shifted down by 64, unless its low 64 bits
+   fall below [2^64 mod range], where block [2j + 1] stands whatever its low
+   bits. The flag is whether element [j] took the second block. *)
+let lemire ws ~low ~high j =
   let r = Int64.of_int (high - low) in
   let t = Int64.unsigned_rem (Int64.neg r) r in
   let pick i =
@@ -293,8 +314,8 @@ let lemire ws ~low ~high ~n j =
     in
     (hi, Int64.unsigned_compare (Int64.mul w r) t < 0)
   in
-  let hi, rejected = pick j in
-  let hi = if rejected then fst (pick (n + j)) else hi in
+  let hi, rejected = pick (2 * j) in
+  let hi = if rejected then fst (pick ((2 * j) + 1)) else hi in
   (Int32.of_int (low + Int64.to_int hi), rejected)
 
 (* A range [low, high) inside int32: small ones, ones at its extremes, and the
@@ -316,10 +337,10 @@ let ranges =
   |> such_that (fun (l, h) -> fits l && fits h && l < h)
   |> with_pp pp
 
-(* Block 0 of the key of words [(1343584651, 2)], times [0xFFFF0001], falls
+(* Block 0 of the key of words [(-1235405770, 2)], times [0xFFFF0001], falls
    below [2^64 mod 0xFFFF0001]: its first round is rejected. *)
 let second_round =
-  ( host_of Nx.int32 [| 2 |] [| 1343584651l; 2l |],
+  ( host_of Nx.int32 [| 2 |] [| -1235405770l; 2l |],
     (-0x8000_0000, 0x7FFF_0001),
     1 )
 
@@ -345,6 +366,8 @@ let draws =
             (read (Rng.bits ~key:k [| n |])));
       prop "a draw is its flat draw reshaped" (Gen.pair keys shapes)
         (fun (k, s) ->
+          cover "rank 5 or more, no extent below 2"
+            (Array.length s >= 5 && Array.for_all (fun d -> d >= 2) s);
           equal (array int32)
             (read (Rng.bits ~key:k [| numel s |]))
             (read (Rng.bits ~key:k s)));
@@ -367,6 +390,18 @@ let draws =
           equal (array float_exact)
             (read (Rng.uniform ~key:(Rng.key 9) Nx.float32 [| 5 |]))
             (shard x));
+      (* A cut of an inner axis has no contiguous image in a draw flattened
+         to rows: a draw keeps its parameters' shape, and their placement. *)
+      test "a draw over a split parameter is split as it is" (fun () ->
+          let p =
+            host_of Nx.float32 [| 4; 6 |]
+              (Array.init 24 (fun i -> Float.of_int i /. 24.))
+          in
+          let k = Rng.key 3 in
+          let at = S2.split ~axis:1 in
+          let x = Rng.bernoulli ~key:k (Nx.place at p) in
+          equal bool true (Nx.Placement.equal at (Option.get (Nx.placement x)));
+          equal (array bool) (read (Rng.bernoulli ~key:k p)) (read x));
       prop "a batch of keys draws each key's draw"
         (Gen.triple keys (Gen.int_range 1 4) shapes)
         (fun (k, n, s) ->
@@ -404,7 +439,7 @@ let draws =
         (fun (k, (low, high), n) ->
           let k = Rng.of_tensor k in
           let ws = words (Rng.split_batch ~n:(max 1 (2 * n)) k) in
-          let want = Array.init n (lemire ws ~low ~high ~n) in
+          let want = Array.init n (lemire ws ~low ~high) in
           cover "a second round" (Array.exists snd want);
           equal (array int32) (Array.map fst want)
             (read (Rng.randint ~key:k ~low ~high [| n |])));
@@ -472,14 +507,43 @@ let distributions =
             xs;
           near ~var:1. 0. (mean xs);
           near ~var:2. 1. (variance xs));
-      (* Key 3743's float32 uniform draw is 0 at index 1386, where the
+      prop "normal: Kolmogorov-Smirnov against the normal CDF"
+        (Gen.pair keys wide)
+        (fun (k, F dt) ->
+          let cdf x = 0.5 *. (1. +. Float.erf (x /. Float.sqrt 2.)) in
+          ks cdf (read (Rng.normal ~key:k dt [| n |])));
+      (* Draws 2q and 2q + 1 are r cos θ and r sin θ, r = √(-2 log u1) and θ =
+         2π u2, of the uniform draws u1 = 2q and u2 = 2q + 1, u1 floored at
+         2^-53: within 2^-46 of the transform computed here, 8 ulps of the
+         radius's bound √(-2 log 2^-53) < 9. *)
+      prop "float64 normal is the Box-Muller transform of uniform pairs" keys
+        (fun k ->
+          let u = read (Rng.uniform ~key:k Nx.float64 [| 64 |]) in
+          let want =
+            Array.init 64 (fun j ->
+                let q = j / 2 * 2 in
+                let u1 = Float.max u.(q) (Float.ldexp 1. (-53)) in
+                let r = sqrt (-2. *. log u1) in
+                let angle = 2. *. Float.pi *. u.(q + 1) in
+                if j mod 2 = 0 then r *. cos angle else r *. sin angle)
+          in
+          equal (array (float (Float.ldexp 1. (-46)))) want
+            (read (Rng.normal ~key:k Nx.float64 [| 64 |])));
+      (* Elements 2q and 2q + 1 are one Box-Muller pair: independent standard
+         normals, whose mean product is 0 within 6 standard errors. *)
+      prop "normal: a draw's pairs are uncorrelated" (Gen.pair keys wide)
+        (fun (k, F dt) ->
+          let xs = read (Rng.normal ~key:k dt [| 2 * n |]) in
+          let products = Array.init n (fun q -> xs.(2 * q) *. xs.((2 * q) + 1)) in
+          near ~var:1. 0. (mean products));
+      (* Key 443's float32 uniform draw is 0 at index 646, where the
          exponential is -log 1: +0, never -0. *)
       test "exponential of a zero uniform draw is +0" (fun () ->
-          let k = Rng.key 3743 in
+          let k = Rng.key 443 in
           equal float_exact 0.
-            (read (Rng.uniform ~key:k Nx.float32 [| 4096 |])).(1386);
+            (read (Rng.uniform ~key:k Nx.float32 [| 4096 |])).(646);
           let x =
-            (read (Rng.exponential ~key:k Nx.float32 [| 4096 |])).(1386)
+            (read (Rng.exponential ~key:k Nx.float32 [| 4096 |])).(646)
           in
           equal (pair float_exact bool) (0., false) (x, Float.sign_bit x));
       prop "exponential: finite, never negative, mean 1, variance 1"
@@ -492,7 +556,8 @@ let distributions =
               then failf "draw %g" x)
             xs;
           near ~var:1. 1. (mean xs);
-          near ~var:8. 1. (variance xs));
+          near ~var:8. 1. (variance xs);
+          ks (fun x -> -.Float.expm1 (-.x)) xs);
       prop "randint draws every value of [low, high), uniformly"
         (Gen.pair keys ranges)
         (fun (k, (low, high)) ->
@@ -623,8 +688,8 @@ let rejection =
         (fun (k, F dt, a) ->
           let a = at dt a in
           gamma_moments a (read (Rng.gamma ~key:k (full dt a))));
-      (* beta's draw is x = 1 / (1 + exp d), d = log G(b) - log G(a), for the
-         gammas its key's two split keys draw. d is a sum of logarithms, each
+      (* beta's draw j is x = 1 / (1 + exp d), d = log G(b) - log G(a), for
+         the gammas 2j and 2j + 1 its key draws from a and b interleaved. d is a sum of logarithms, each
          rounded, so its error is a few ulps of their magnitudes, and x moves by
          x (1 - x) per unit of d: the draw lies within 16 ε x (1 - x) (2 + |log
          G(a)| + |log G(b)|), plus 4 ulps for the exponential, the sum, the
@@ -636,9 +701,10 @@ let rejection =
               ~pp:(fun ppf (a, b) -> Format.fprintf ppf "(%g, %g)" a b)
               [ (0.5, 0.5); (0.3, 4.); (2., 3.); (9., 0.7); (40., 25.) ]))
         (fun (k, (a, b)) ->
-          let ks = Rng.split k in
-          let ga = read (Rng.gamma ~key:ks.(0) (full Nx.float64 a)) in
-          let gb = read (Rng.gamma ~key:ks.(1) (full Nx.float64 b)) in
+          let ab = Array.init (2 * n) (fun i -> if i mod 2 = 0 then a else b) in
+          let g = read (Rng.gamma ~key:k (host_of Nx.float64 [| 2 * n |] ab)) in
+          let ga = Array.init n (fun i -> g.(2 * i)) in
+          let gb = Array.init n (fun i -> g.((2 * i) + 1)) in
           let xs =
             read (Rng.beta ~key:k (full Nx.float64 a) (full Nx.float64 b))
           in
@@ -898,7 +964,72 @@ let scope =
           equal (pair bool int) (true, 2) (Domain.join (Domain.spawn run)));
     ]
 
+(* Goldens *)
+
+(* Each sampler's first draws under key 0, as exact bits: a baseline that a
+   change to the generator's layout or a sampler's arithmetic moves. *)
+let goldens =
+  test "each sampler's first draws under key 0" (fun () ->
+      let k = Rng.key 0 and s = [| 4 |] in
+      let full dt v = host_of dt s (Array.make 4 v) in
+      let counts v = host_of Nx.int32 s (Array.make 4 v) in
+      let floats name xs =
+        Printf.printf "%s:%s\n" name
+          (String.concat "" (Array.to_list (Array.map (Printf.sprintf " %h") xs)))
+      in
+      let ints name xs =
+        Printf.printf "%s:%s\n" name
+          (String.concat ""
+             (Array.to_list (Array.map (Printf.sprintf " %ld") xs)))
+      in
+      ints "bits" (read (Rng.bits ~key:k s));
+      floats "uniform f16" (read (Rng.uniform ~key:k Nx.float16 s));
+      floats "uniform f32" (read (Rng.uniform ~key:k Nx.float32 s));
+      floats "uniform f64" (read (Rng.uniform ~key:k Nx.float64 s));
+      floats "normal f32" (read (Rng.normal ~key:k Nx.float32 s));
+      floats "normal f64" (read (Rng.normal ~key:k Nx.float64 s));
+      floats "exponential f32" (read (Rng.exponential ~key:k Nx.float32 s));
+      floats "exponential f64" (read (Rng.exponential ~key:k Nx.float64 s));
+      ints "randint" (read (Rng.randint ~key:k ~low:(-9) ~high:1000 s));
+      Printf.printf "bernoulli:%s\n"
+        (String.concat ""
+           (Array.to_list
+              (Array.map
+                 (fun b -> if b then " 1" else " 0")
+                 (read (Rng.bernoulli ~key:k (full Nx.float32 0.3))))));
+      floats "gamma f32" (read (Rng.gamma ~key:k (full Nx.float32 0.7)));
+      floats "gamma f64" (read (Rng.gamma ~key:k (full Nx.float64 2.5)));
+      floats "beta f64"
+        (read (Rng.beta ~key:k (full Nx.float64 2.) (full Nx.float64 0.5)));
+      floats "von_mises f32" (read (Rng.von_mises ~key:k (full Nx.float32 3.)));
+      ints "poisson f32" (read (Rng.poisson ~key:k (full Nx.float32 4.)));
+      ints "poisson f64" (read (Rng.poisson ~key:k (full Nx.float64 30.)));
+      ints "binomial f32"
+        (read (Rng.binomial ~key:k (counts 40l) (full Nx.float32 0.25)));
+      ints "binomial f64"
+        (read (Rng.binomial ~key:k (counts 10l) (full Nx.float64 0.3)));
+      expect (output ()) @@ __POS_OF__ {|
+        bits: 1797259609 -1715843330 1351547692 -1059176654
+        uniform f16: 0x1.59p-3 0x1.bf8p-1 0x1.96p-2 0x1.cc8p-1
+        uniform f32: 0x1.000ac8p-3 0x1.749dfcp-1 0x1.1df658p-1 0x1.bc7e64p-1
+        uniform f64: 0x1.5999ba4efep-13 0x1.df65981bc7e64p-2 0x1.89bb3f05795ccp-3 0x1.789a20a6fd70cp-2
+        normal f32: -0x1.22c006p-2 -0x1.027b5cp+1 0x1.7595cap-1 -0x1.9733b4p-1
+        normal f64: -0x1.05cdacf43155ap+2 0x1.a8abde6ea3f96p-1 -0x1.397a40a15a62ep+0 0x1.574fd27204757p+0
+        exponential f32: 0x1.11853ap-3 0x1.4d14e4p+0 0x1.a29f72p-1 0x1.03576p+1
+        exponential f64: 0x1.59a104c24e8a4p-13 0x1.4348c112b2bcdp-1 0x1.b541fa2f2a75dp-3 0x1.d583d0aa77246p-2
+        randint: 596 984 651 668
+        bernoulli: 1 0 1 0
+        gamma f32: 0x1.00f66cp-1 0x1.8618a8p-2 0x1.121b52p-2 0x1.34a13cp+2
+        gamma f64: 0x1.d0cc931992a18p+1 0x1.339beb47338d6p+1 0x1.15078c6b06a44p-1 0x1.130a3f54a8a4bp+1
+        beta f64: 0x1.8e9a8ced5c868p-1 0x1.d346b21cc65a2p-3 0x1.c9ec7abf3da78p-1 0x1.9faa399316489p-2
+        von_mises f32: 0x1.b5cdd6p-4 0x1.5b2948p+0 0x1.aaf66ep-2 0x1.8a843ap-1
+        poisson f32: 2 1 6 4
+        poisson f64: 29 37 35 24
+        binomial f32: 12 4 13 10
+        binomial f64: 0 2 2 5
+        |})
+
 let () =
   exit
     (run "nx random"
-       [ known; keys_group; draws; distributions; rejection; scope ])
+       [ known; keys_group; draws; distributions; rejection; scope; goldens ])

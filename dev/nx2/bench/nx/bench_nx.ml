@@ -167,11 +167,11 @@ let move_rows =
 
 (* Random draws computed on the host: each row places a draw of a fixed key,
    which computes it. The samplers' programs differ in length: one Threefry
-   block per element for bits and uniform, two for normal, and fixed rounds of
-   proposals for the rejection samplers. bernoulli-f32-1Kx1K draws at rank 2:
-   its loop holds the draw, the key, the probabilities and two coordinates.
-   The one-element draws time a sampler's program, written and lowered per
-   call: beta's has two thousand nodes. *)
+   block per element for bits, uniform and float32 normal, and fixed rounds of
+   proposals for the rejection samplers. bernoulli-f32-1Kx1K draws a
+   probability array of rank 2. The one-element draws time a draw's fixed
+   cost: a sampler's program is written and lowered per call, and beta's
+   has two thousand nodes. *)
 
 let mib = 1 lsl 20
 let key = Nx.Rng.key 0

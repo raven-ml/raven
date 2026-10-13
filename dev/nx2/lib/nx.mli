@@ -1845,8 +1845,10 @@ module Rng : sig
 
   val normal :
     ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
-  (** [normal dt shape] is standard normal draws, by the Box-Muller transform of
-      two uniform draws.
+  (** [normal dt shape] is standard normal draws, by the Box-Muller transform:
+      draws [2q] and [2q + 1] in C order are the cosine's and the sine's of one
+      transform, of the {!uniform} draws [2q] and [2q + 1] at the compute
+      dtype.
 
       Raises [Invalid_argument] if an extent is negative. *)
 
@@ -1897,7 +1899,9 @@ module Rng : sig
   (** [beta a b] is beta draws on [[0, 1]] of concentrations [a] and [b],
       elementwise over their broadcast shape: [G(a) / (G(a) + G(b))] for two
       independent {!gamma} draws, formed from their logarithms so that two draws
-      that underflow keep their ratio. It inherits {!gamma}'s rounds.
+      that underflow keep their ratio. Draw [j] in C order is formed from the
+      draws [2j] and [2j + 1] that {!gamma} gives from its key over [a] and [b]
+      interleaved. It inherits {!gamma}'s rounds.
 
       Raises [Invalid_argument] if the shapes do not broadcast or an element of
       [a] or [b] is outside [(0, inf)]. *)
