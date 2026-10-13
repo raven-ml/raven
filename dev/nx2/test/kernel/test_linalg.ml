@@ -253,6 +253,7 @@ type routine =
   | Lu
   | Qr of Nx_kernel.factors
   | Eigh of bool  (** with vectors *)
+  | Svd of Nx_kernel.factors option  (** the vectors' shapes, or values alone *)
   | Solve of {
       triangle : Nx_kernel.triangle;
       adjoint : bool;
@@ -285,12 +286,19 @@ let run ?(k : (module Nx_kernel.S) option) (b : Support.backend) r ops =
         let q = make sq and r = make sr in
         ([| A.Any q; A.Any r |], K.qr ~q ~r a)
     | Eigh vectors ->
-        let sw, sv = ok (Shape.eigh (shape ops.(0))) in
+        let sw, sv = ok (Shape.eigh (Vectors ()) (shape ops.(0))) in
         let w = make sw in
         if vectors then
           let v = make sv in
           ([| A.Any w; A.Any v |], K.eigh ~w ~v a)
         else ([| A.Any w |], K.eigh ~w a)
+    | Svd None ->
+        let s = make (fst (ok (Shape.svd No_vectors (shape ops.(0))))) in
+        ([| A.Any s |], K.svd ~s a)
+    | Svd (Some f) ->
+        let ss, (su, sv) = ok (Shape.svd (Vectors f) (shape ops.(0))) in
+        let s = make ss and u = make su and vh = make sv in
+        ([| A.Any s; A.Any u; A.Any vh |], K.svd ~s ~vectors:(~u, ~vh) a)
     | Solve { triangle; adjoint; unit_diagonal } ->
         let rhs = A.expect dt ops.(1) in
         let dst =
@@ -470,6 +478,20 @@ let lu_operand c =
   in
   let v = grade c ~rows:c.n ~cols v in
   (cols, of_values c.dt (Array.append c.batch [| c.n; cols |]) v)
+
+(* svd's operand: lu_operand's, or its transpose by the seed, so that it has
+   fewer, as many or more rows than columns; its rows and columns. *)
+let svd_operand c =
+  let cols, x = lu_operand c in
+  if c.seed / 3 mod 2 = 0 then (c.n, cols, x)
+  else
+    let v = values x and m = cols and n = c.n in
+    let t =
+      Array.init (count c * m * n) (fun p ->
+          let b = p / (m * n) and i = p / n mod m and j = p mod n in
+          v.((b * m * n) + (j * m) + i))
+    in
+    (m, n, of_values c.dt (Array.append c.batch [| m; n |]) t)
 
 let int64s (A.Any x) =
   match A.dtype x with
@@ -706,6 +728,156 @@ let law_eigh_spectrum (b : Support.backend) c =
       check_eigh c.dt ~count:1 ~n (values x) (values y'.(0)) (values y'.(1))
   | _ -> ()
 
+(* svd's bound: γ(16 max (m, n) + 100), the 100 for the bidiagonal
+   iteration's test of convergence, which drops an e below u^(7/8) times
+   its neighbours. *)
+let svd_bound dt ~m ~n = gamma dt ((16 * max m n) + 100)
+
+(* a = u diag s vh with ‖a − u diag s vh‖_F <= g ‖a‖_F, ‖uᴴu − I‖_F <= g
+   and ‖vh vhᴴ − I‖_F <= g, g = svd_bound, for the [count] matrices
+   of [m] × [n] of [a], u of [uc] columns and vh of [vr] rows; s real,
+   descending and not negative. *)
+let check_svd dt ~count ~m ~n ~uc ~vr (a : Complex.t array)
+    (s : Complex.t array) (u : Complex.t array) (vh : Complex.t array) =
+  let k = min m n and g = svd_bound dt ~m ~n in
+  let worst = { ratio = 0.; where = "" } in
+  for t = 0 to count - 1 do
+    let st j = s.((t * k) + j) in
+    for j = 0 to k - 1 do
+      equal ~msg:"s is real" int64 0L (Int64.bits_of_float (st j).im);
+      if not ((st j).re >= 0.) then failf "matrix %d: s %d is %h" t j (st j).re;
+      if j > 0 && not ((st (j - 1)).re >= (st j).re) then
+        failf "matrix %d: s not descending at %d" t j
+    done;
+    let res = ref 0. and norm = ref 0. in
+    for i = 0 to m - 1 do
+      for j = 0 to n - 1 do
+        let aij = at a ~rows:m ~cols:n t i j in
+        let r = sum () in
+        add r.re aij.re;
+        add r.im aij.im;
+        for p = 0 to k - 1 do
+          add_cprod r
+            (Complex.mul (at u ~rows:m ~cols:uc t i p)
+               { Complex.re = -.(st p).re; im = 0. })
+            (at vh ~rows:vr ~cols:n t p j)
+        done;
+        res := !res +. Complex.norm2 (total r);
+        norm := !norm +. Complex.norm2 aij
+      done
+    done;
+    worse worst ~bound:(g *. sqrt !norm) ~residual:(sqrt !res) (fun () ->
+        Printf.sprintf "matrix %d: a - u diag s vh" t);
+    (* ‖xᴴx − I‖_F for the [size] columns of [len] elements [el p i]. *)
+    let gram ~msg size len el =
+      let o = ref 0. in
+      for i = 0 to size - 1 do
+        for j = 0 to size - 1 do
+          let x = sum () in
+          if i = j then add x.re (-1.);
+          for p = 0 to len - 1 do
+            add_cprod ~conj:true x (el p j) (el p i)
+          done;
+          o := !o +. Complex.norm2 (total x)
+        done
+      done;
+      worse worst ~bound:g ~residual:(sqrt !o) (fun () ->
+          Printf.sprintf "matrix %d: %s" t msg)
+    in
+    gram ~msg:"uᴴu - I" uc m (fun p i -> at u ~rows:m ~cols:uc t p i);
+    gram ~msg:"vh vhᴴ - I" vr n (fun p i -> at vh ~rows:vr ~cols:n t i p)
+  done;
+  check_worst worst
+
+let svd_columns f ~m ~n =
+  let k = min m n in
+  if f = Nx_kernel.Complete then (m, n) else (k, k)
+
+(* svd's results meet check_svd's relations, reduced or complete, on
+   matrices of fewer, as many and more rows than columns, and the values
+   alone lie within 2 svd_bound ‖a‖_F of the vectors' call's. *)
+let law_svd (b : Support.backend) c =
+  let m, n, x = svd_operand c in
+  let f = factors c in
+  cover "wide" (m < n);
+  cover "square" (m = n);
+  cover "tall" (m > n);
+  let x' = laid_out c.how x in
+  match (run b (Svd (Some f)) [| x' |], run b (Svd None) [| x' |]) with
+  | Some y, Some y' ->
+      let k = min m n and a = values x in
+      let uc, vr = svd_columns f ~m ~n in
+      check_svd c.dt ~count:(count c) ~m ~n ~uc ~vr a (values y.(0))
+        (values y.(1)) (values y.(2));
+      let s = values y.(0) and s' = values y'.(0) in
+      let g = svd_bound c.dt ~m ~n in
+      let worst = { ratio = 0.; where = "" } in
+      for t = 0 to count c - 1 do
+        let norm = ref 0. in
+        for p = 0 to (m * n) - 1 do
+          norm := !norm +. Complex.norm2 a.((t * m * n) + p)
+        done;
+        for j = 0 to k - 1 do
+          let p = (t * k) + j in
+          worse worst ~bound:(2. *. g *. sqrt !norm)
+            ~residual:(Float.abs (s.(p).re -. s'.(p).re)) (fun () ->
+              Printf.sprintf "matrix %d: value %d alone" t j)
+        done
+      done;
+      check_worst worst
+  | _ -> ()
+
+(* Of a = H_m Σ H_n, H_k the reflector I − 2 h hᵀ / hᵀh of order k and Σ
+   of [m] × [n] with σ on its diagonal, the singular values are |σ|'s,
+   descending, within svd_bound max |σ|, with the vectors and
+   without, and the vectors meet their relations; σ draws repeats and
+   zeros, which a merge of divide and conquer deflates. *)
+let law_svd_spectrum (b : Support.backend) c =
+  let rows = c.n in
+  let cols = match c.seed mod 3 with 0 -> c.n | 1 -> c.r | _ -> c.n + c.r in
+  let m, n = if c.seed / 3 mod 2 = 0 then (rows, cols) else (cols, rows) in
+  let k = min m n and r = Random.State.make [| c.seed |] in
+  let sigma = Array.init k (fun _ -> Float.round (8. *. uniform r) /. 8.) in
+  let reflector size =
+    let h = Array.init size (fun _ -> uniform r) in
+    let hh = Array.fold_left (fun s x -> s +. (x *. x)) 0. h in
+    fun i j ->
+      (if i = j then 1. else 0.)
+      -. if hh = 0. then 0. else 2. *. h.(i) *. h.(j) /. hh
+  in
+  let hm = reflector m and hn = reflector n in
+  let a =
+    Array.init (m * n) (fun p ->
+        let i = p / n and j = p mod n in
+        let s = dd () in
+        for q = 0 to k - 1 do
+          add_prod s (hm i q *. sigma.(q)) (hn q j)
+        done;
+        { Complex.re = s.hi +. s.lo; im = 0. })
+  in
+  let x = of_values c.dt [| m; n |] a in
+  let exact = Array.map Float.abs sigma in
+  Array.sort (fun x y -> Float.compare y x) exact;
+  let g = svd_bound c.dt ~m ~n *. Array.fold_left Float.max 0. exact in
+  let spectrum ~msg s =
+    let worst = { ratio = 0.; where = "" } in
+    Array.iteri
+      (fun j x ->
+        worse worst ~bound:g ~residual:(Float.abs (s.(j).Complex.re -. x))
+          (fun () -> Printf.sprintf "%s: value %d: %h, not %h" msg j s.(j).re x))
+      exact;
+    check_worst worst
+  in
+  let f = factors c in
+  match (run b (Svd None) [| x |], run b (Svd (Some f)) [| x |]) with
+  | Some y, Some y' ->
+      spectrum ~msg:"alone" (values y.(0));
+      spectrum ~msg:"with vectors" (values y'.(0));
+      let uc, vr = svd_columns f ~m ~n in
+      check_svd c.dt ~count:1 ~m ~n ~uc ~vr (values x) (values y'.(0))
+        (values y'.(1)) (values y'.(2))
+  | _ -> ()
+
 (* lu's pivot: a scan of the column from the diagonal down that
    moves to each later row of greater magnitude, |re| + |im| on complex
    numbers, a NaN never greater and nothing greater than a NaN. Each case is
@@ -797,6 +969,21 @@ let law_eigh_fails (b : Support.backend) c =
     check_alone b (Eigh true) ~dt:c.dt ~rows:c.n ~cols:1 ~spoil
       [| eigh_operand c |]
 
+(* NaN or an infinity anywhere. *)
+let law_svd_fails (b : Support.backend) c =
+  let c = one c in
+  let m, n, x = svd_operand c in
+  if m > 0 && n > 0 then
+    let p = c.seed mod (m * n) in
+    let bad = [| Float.nan; Float.infinity; Float.neg_infinity |].(c.seed / 7 mod 3) in
+    let spoil v =
+      let v = Array.copy v in
+      v.(p) <- { Complex.re = bad; im = 0. };
+      v
+    in
+    check_alone b (Svd (Some (factors c))) ~dt:c.dt ~rows:(min m n) ~cols:1
+      ~spoil [| x |]
+
 let law_solve_fails (b : Support.backend) c =
   let c = { (one c) with unit_diagonal = false; r = max 1 c.r } in
   if c.n > 0 then
@@ -870,6 +1057,14 @@ let law_layouts (b : Support.backend) c =
       equal ~msg:"eigh's w" same_bits (bits y.(0)) (bits z.(0));
       equal ~msg:"eigh's v" same_bits (bits y.(1)) (bits z.(1))
   | _ -> ());
+  let _, _, x = svd_operand c in
+  let f = Svd (Some (factors c)) in
+  (match (run b f [| x |], run b f [| laid_out c.how x |]) with
+  | Some y, Some z ->
+      equal ~msg:"svd's s" same_bits (bits y.(0)) (bits z.(0));
+      equal ~msg:"svd's u" same_bits (bits y.(1)) (bits z.(1));
+      equal ~msg:"svd's vh" same_bits (bits y.(2)) (bits z.(2))
+  | _ -> ());
   let ops = solve_operands { c with batch = [| 1 |] } in
   let k = 3 in
   let (A.Any a) = ops.(0) in
@@ -905,6 +1100,7 @@ let threads_agree (b : Support.backend) c =
       ("lu", Lu, [| lu |]);
       ("qr", Qr (factors c), [| lu |]);
       ("eigh", Eigh true, [| eigh_operand c |]);
+      ("svd", Svd (Some (factors c)), [| (let _, _, x = svd_operand c in x) |]);
     ]
 
 (* nx.cpu computes its routines at the four dtypes, and
@@ -935,6 +1131,9 @@ let routine_name = function
   | Qr Complete -> "qr complete"
   | Eigh true -> "eigh"
   | Eigh false -> "eigh's values"
+  | Svd None -> "svd's values"
+  | Svd (Some Reduced) -> "svd reduced"
+  | Svd (Some Complete) -> "svd complete"
   | Solve _ -> "solve_triangular"
 
 let pp_misfit ppf c =
@@ -951,12 +1150,15 @@ let shapes c =
   | Lu -> Result.map (fun (l, p, q) -> [| l; p; q |]) (S.lu c.a)
   | Qr f -> Result.map (fun (q, r) -> [| q; r |]) (S.qr f c.a)
   | Eigh v ->
-      Result.map (fun (w, x) -> if v then [| w; x |] else [| w |]) (S.eigh c.a)
+      Result.map (fun (w, x) -> if v then [| w; x |] else [| w |]) (S.eigh (Vectors ()) c.a)
+  | Svd None -> Result.map (fun (s, ()) -> [| s |]) (S.svd No_vectors c.a)
+  | Svd (Some f) ->
+      Result.map (fun (s, (u, vh)) -> [| s; u; vh |]) (S.svd (Vectors f) c.a)
   | Solve _ -> Result.map (fun y -> [| y |]) (S.solve_triangular c.a c.b)
 
 let arity = function
-  | Cholesky _ | Solve _ | Eigh false -> 1
-  | Lu -> 3
+  | Cholesky _ | Solve _ | Eigh false | Svd None -> 1
+  | Lu | Svd (Some _) -> 3
   | Qr _ | Eigh true -> 2
 
 (* Square matrices half the time, and a vector now and then. *)
@@ -968,7 +1170,18 @@ let misfits =
      in
      let* routine =
        of_list
-         [ Cholesky Lower; Lu; Qr Reduced; Qr Complete; Eigh true; Eigh false; solve ]
+         [
+           Cholesky Lower;
+           Lu;
+           Qr Reduced;
+           Qr Complete;
+           Eigh true;
+           Eigh false;
+           Svd None;
+           Svd (Some Reduced);
+           Svd (Some Complete);
+           solve;
+         ]
      in
      let* batch = array ~size:(int_range 0 2) (int_range 0 3) in
      let* m = int_range 0 4 in
@@ -1008,17 +1221,22 @@ let law_cpu_refuses (b : Support.backend) c =
     | Qr _ -> K.qr ~q:(dst 0) ~r:(dst 1) a
     | Eigh true -> K.eigh ~w:(dst 0) ~v:(dst 1) a
     | Eigh false -> K.eigh ~w:(dst 0) a
+    | Svd None -> K.svd ~s:(dst 0) a
+    | Svd (Some _) -> K.svd ~s:(dst 0) ~vectors:(~u:(dst 1), ~vh:(dst 2)) a
     | Solve { triangle; adjoint; unit_diagonal } ->
         K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst:(dst 0) a
           (zeros c.b)
   in
-  (* A QR's destinations fit as either factors' shapes. *)
+  (* A QR's or an SVD's destinations fit as either factors' shapes. *)
+  let either r =
+    List.exists
+      (fun f -> shapes { c with routine = r f } = Ok c.dsts)
+      [ Nx_kernel.Reduced; Complete ]
+  in
   let fit =
     match c.routine with
-    | Qr _ ->
-        List.exists
-          (fun f -> shapes { c with routine = Qr f } = Ok c.dsts)
-          [ Nx_kernel.Reduced; Complete ]
+    | Qr _ -> either (fun f -> Qr f)
+    | Svd (Some _) -> either (fun f -> Svd (Some f))
     | _ -> shapes c = Ok c.dsts
   in
   cover "fits" fit;
@@ -1063,8 +1281,6 @@ let test_cpu_refusals (b : Support.backend) () =
       A.Declined got
   in
   let sq () = A.create Rig.host D.Complex64 [| 2; 2 |] in
-  declines ~msg:"svd" (K.svd ~s:(w ()) ~vectors:(~u:(sq ()), ~vh:(sq ())) c64);
-  declines ~msg:"svd's values" (K.svd ~s:(w ()) c64);
   declines ~msg:"eig" (K.eig ~w:(w ()) ~v:(sq ()) c64);
   declines ~msg:"eig's values" (K.eig ~w:(w ()) c64)
 
@@ -1147,6 +1363,12 @@ let laws (b : Support.backend) =
         (run (law_eigh b));
       prop "eigh's eigenvalues are within γ(16n) ‖a‖₂ of the exact ones" case
         (run (law_eigh_spectrum b));
+      prop "svd's results meet their relations within γ(16 max (m, n) + 100)"
+        case (run (law_svd b));
+      prop "svd's values are within γ(16 max (m, n) + 100) ‖a‖₂ of the exact ones"
+        case (run (law_svd_spectrum b));
+      prop "svd of a matrix with NaN or an infinity is NaN alone" case
+        (run (law_svd_fails b));
       prop "a matrix that is not definite is NaN alone" case
         (run (law_cholesky_fails b));
       prop "a singular triangle is NaN alone" case (run (law_solve_fails b));

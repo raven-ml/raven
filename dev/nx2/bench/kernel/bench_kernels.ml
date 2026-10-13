@@ -736,8 +736,9 @@ let assembly_rows =
    conditioned; a solve's triangle is its Cholesky factor. The floors are
    the peak of fused multiply-adds at LAPACK's flop counts: n³/3 for
    Cholesky, 2n³/3 for LU, 4n³/3 for QR and as many to form Q, 4n³/3 for
-   eigh's reduction and 2n³ to apply it to the vectors, n² r for a solve,
-   four real flops a complex one. *)
+   eigh's reduction and 2n³ to apply it to the vectors, 8n³/3 for svd's
+   bidiagonalisation and 4n³ to apply it to the vectors, n² r for a
+   solve, four real flops a complex one. *)
 
 let definite (type v s) (dt : (v, s) D.t) ~batch n : (v, s) A.t =
   let v i j = float_of_int ((((i * n) + j) * 7919 mod 251) - 125) /. 125. in
@@ -802,10 +803,20 @@ let linalg_rows =
   let eigh dt ?batch n =
     routine "eigh"
       (fun (module K : Nx_kernel.S) a ->
-        let w, v = Result.get_ok (Nx_kernel.Shape.eigh (shape a)) in
+        let w, v = Result.get_ok (Nx_kernel.Shape.eigh (Vectors ()) (shape a)) in
         let w = like a w and v = like a v in
         fun () -> K.eigh ~w ~v a)
       dt ?batch n ~count:(10 * n * n * n / 3)
+  in
+  let svd dt ?batch n =
+    routine "svd"
+      (fun (module K : Nx_kernel.S) a ->
+        let s, (u, vh) =
+          Result.get_ok (Nx_kernel.Shape.svd (Vectors Reduced) (shape a))
+        in
+        let s = like a s and u = like a u and vh = like a vh in
+        fun () -> K.svd ~s ~vectors:(~u, ~vh) a)
+      dt ?batch n ~count:(20 * n * n * n / 3)
   in
   let solve n r =
     let call (module K : Nx_kernel.S) =
@@ -844,6 +855,10 @@ let linalg_rows =
     eigh f64 256;
     eigh f64 1024;
     eigh f64 ~batch:64 32;
+    svd f64 64;
+    svd f64 256;
+    svd f64 1024;
+    svd f64 ~batch:64 32;
   ]
 
 let rows =

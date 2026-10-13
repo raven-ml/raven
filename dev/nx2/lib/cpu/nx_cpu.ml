@@ -317,9 +317,16 @@ external eigh_c :
 
 let eigh ~w ?v a = eigh_c ~w v a
 
+external svd_c :
+  s:('v, 's) Nx_array.t ->
+  (u:('v, 's) Nx_array.t * vh:('v, 's) Nx_array.t) option ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_svd"
+
+let svd ~s ?vectors a = svd_c ~s vectors a
+
 (* nx.cpu computes no other decomposition by iteration yet. *)
 let takes a = Nx_kernel.full_precision (Nx_array.dtype a)
-let svd ~s:_ ?vectors:_ a = declined (takes a)
 let eig ~w ?v:_ a =
   declined
     (takes a

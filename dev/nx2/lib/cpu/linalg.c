@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Factorisations, triangular solves and eigendecompositions: Nx_kernel.S's
-   cholesky, lu, qr, solve_triangular and eigh.
+/* Factorisations, triangular solves and decompositions: Nx_kernel.S's
+   cholesky, lu, qr, solve_triangular, eigh and svd.
 
    A call computes a routine on each matrix of its operands' batch. Each
    matrix is copied once from its operand, whatever its layout, into its
@@ -70,15 +70,16 @@ static void *room(arena *s, int64_t bytes) {
 }
 
 /* The routines. */
-enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR, EIGH };
+enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR, EIGH, SVD };
 
 /* A triangular solve: x ← t⁻¹ x for the triangle t, its diagonal read
    or taken as ones; or x ← x l⁻ᴴ for the lower l. */
 typedef enum { LOWER, UPPER, UNIT_LOWER, UNIT_UPPER, ADJOINT_LOWER } solve;
 
 /* A call: its routine and attributes, 0 where it has none: [upper] for the
-   triangle Upper, [complete] for complete factors, which q's shape states,
-   [adjoint] and [unit] for a solve's, [vectors] where eigh computes v; its operand's [m] rows and [n]
+   triangle Upper, [complete] for complete factors, which q's or u's and
+   vh's shapes state, [adjoint] and [unit] for a solve's, [vectors] where
+   eigh computes v or svd u and vh; its operand's [m] rows and [n]
    columns and, for a solve, the right-hand sides' count [r]; its arrays,
    the operands then the results, whose first [batch] axes are the batch. */
 typedef struct {
@@ -252,14 +253,21 @@ static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
    a solve's triangle; QR's factored matrix, its τ, a block's V and T,
    two products of a block and a row; eigh's reduced matrix, its τ, a
    panel's W or a block's V, T, two products of a block, then as reals
-   T's diagonals, Z and divide and conquer's work, and its indices
-   (linalg_body.h). */
+   T's diagonals, Z and divide and conquer's work, and its indices; svd's
+   B, QR's R, the τ, a panel's X and Y or the scratch of QR or of a
+   block's V, T and products, X or W, then as reals B's diagonals, U_B,
+   V_B and divide and conquer's work, and its indices (linalg_body.h). */
 static int64_t scratch(const call *c) {
   int64_t m = c->m, n = c->n, big = m > n ? m : n, k = m < n ? m : n;
   switch (c->routine) {
     case SOLVE_TRIANGULAR: return n * n;
     case QR: return m * n + k + (m + NB + 2 * big + 1) * NB;
     case EIGH: return 4 * n * n + 16 * n + 2 + (3 * n + NB) * NB;
+    case SVD: {
+      int64_t tmp = m >= n ? k * k : big * (c->complete ? big : k);
+      return big * k + 3 * k * k + 3 * (k + 1) * (k + 1) + 19 * k + 2 +
+             (3 * big + NB + 1) * NB + tmp;
+    }
     default: return 0;
   }
 }
@@ -279,7 +287,7 @@ static int results(const call *c, const int64_t *x, int xr, const int64_t *z,
                    int zr, int64_t y[][NX_MAX_RANK], int *ranks) {
   if (xr < 2) return 0;
   int64_t m = x[xr - 2], n = x[xr - 1], k = m < n ? m : n;
-  int square = c->routine != LU && c->routine != QR;
+  int square = c->routine != LU && c->routine != QR && c->routine != SVD;
   if (square && m != n) return 0;
   for (int j = 0; j < c->nres; j++) {
     memcpy(y[j], x, sizeof(int64_t) * xr);
@@ -298,6 +306,13 @@ static int results(const call *c, const int64_t *x, int xr, const int64_t *z,
       return 1;
     }
     case EIGH: ranks[0] = xr - 1; return 1;
+    case SVD:
+      ranks[0] = xr - 1;
+      y[0][xr - 2] = k;
+      if (c->nres == 1) return 1;
+      y[1][xr - 1] = c->complete ? m : k;
+      y[2][xr - 2] = c->complete ? n : k;
+      return 1;
     case SOLVE_TRIANGULAR:
       if (zr != xr) return 0;
       for (int i = 0; i < xr - 1; i++)
@@ -317,6 +332,16 @@ static int complete(value q, const int64_t *x, int xr) {
   return xr >= 2 && r >= 1 && d[r - 1] == x[xr - 2];
 }
 
+/* Whether [u] and [vh], an SVD's factors for an operand of shape [x] of
+   rank [xr], are complete: u of as many columns as the operand has rows,
+   vh of as many rows as it has columns. */
+static int complete_svd(value u, value vh, const int64_t *x, int xr) {
+  int64_t d[2 * NX_MAX_RANK], e[2 * NX_MAX_RANK], off;
+  int r = nx_array_layout(u, d, &off), s = nx_array_layout(vh, e, &off);
+  return xr >= 2 && r >= 1 && s >= 2 && d[r - 1] == x[xr - 2] &&
+         e[s - 2] == x[xr - 1];
+}
+
 /* Whether the array [v] has the shape [s] of rank [r]. */
 static int has_shape(value v, const int64_t *s, int r) {
   int64_t d[2 * NX_MAX_RANK], off;
@@ -332,7 +357,7 @@ static int has_shape(value v, const int64_t *s, int r) {
 static value run(call c, const value *arrays, int threads) {
   int solve = c.routine == SOLVE_TRIANGULAR;
   c.nops = 1 + solve;
-  c.nres = c.routine == LU                         ? 3
+  c.nres = c.routine == LU || (c.routine == SVD && c.vectors) ? 3
            : c.routine == QR || (c.routine == EIGH && c.vectors) ? 2
                                                                  : 1;
   c.dt = nx_array_dtype(arrays[0]);
@@ -342,6 +367,8 @@ static value run(call c, const value *arrays, int threads) {
   int xr = nx_array_layout(arrays[0], x, &off);
   int zr = solve ? nx_array_layout(arrays[1], z, &off) : 0;
   if (c.routine == QR) c.complete = complete(arrays[1], x, xr);
+  if (c.routine == SVD && c.vectors)
+    c.complete = complete_svd(arrays[2], arrays[3], x, xr);
   if (!results(&c, x, xr, z, zr, y, ranks)) return Val_int(NX_SHAPE);
   for (int j = 0; j < c.nres; j++)
     if (!has_shape(arrays[c.nops + j], y[j], ranks[j]))
@@ -363,12 +390,14 @@ static value run(call c, const value *arrays, int threads) {
   c.a = a;
   c.w = nx_cpu_width(c.dt);
   c.scratch = scratch(&c);
-  int64_t order = c.m > c.n ? c.m : c.n;
-  /* eigh's flops: about 9 n³ with vectors, 4/3 n³ without (xHEEV). */
-  int64_t per = solve                 ? c.r
-                : c.routine != EIGH ? order / 3 + 1
-                : c.vectors           ? 9 * order
-                                      : 4 * order / 3 + 1;
+  int64_t order = c.m > c.n ? c.m : c.n, least = c.m < c.n ? c.m : c.n;
+  /* eigh's flops: about 9 n³ with vectors, 4/3 n³ without (xHEEV); svd's
+     about 4 m n k without, three times as many with (xGESDD). */
+  int64_t per = solve                  ? c.r
+                : c.routine == SVD     ? (c.vectors ? 12 : 4) * least
+                : c.routine != EIGH    ? order / 3 + 1
+                : c.vectors            ? 9 * order
+                                       : 4 * order / 3 + 1;
   int64_t flops = c.matrices * c.m * c.n * per;
   int64_t bytes = c.matrices * c.m * (c.n + c.r) * c.w;
   /* A matrix a unit where there are enough for the threads, else one unit
@@ -443,6 +472,18 @@ value nx_cpu_eigh_on(value w, value v, value a, int threads) {
   CAMLreturn(run((call){.routine = EIGH, .vectors = vectors}, arrays, threads));
 }
 
+value nx_cpu_svd_on(value s, value vectors, value a, int threads) {
+  CAMLparam3(s, vectors, a);
+  CAMLlocal2(u, vh);
+  int some = Is_some(vectors);
+  if (some) {
+    u = Field(Some_val(vectors), 0);
+    vh = Field(Some_val(vectors), 1);
+  }
+  value arrays[] = {a, s, some ? u : Val_unit, some ? vh : Val_unit};
+  CAMLreturn(run((call){.routine = SVD, .vectors = some}, arrays, threads));
+}
+
 value nx_cpu_cholesky(value triangle, value dst, value a) {
   return nx_cpu_cholesky_on(Int_val(triangle) == NX_TRIANGLE_UPPER, dst, a,
                             0);
@@ -471,4 +512,8 @@ value nx_cpu_solve_triangular_byte(value *argv, int argn) {
 
 value nx_cpu_eigh(value w, value v, value a) {
   return nx_cpu_eigh_on(w, v, a, 0);
+}
+
+value nx_cpu_svd(value s, value vectors, value a) {
+  return nx_cpu_svd_on(s, vectors, a, 0);
 }

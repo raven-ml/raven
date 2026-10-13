@@ -66,8 +66,8 @@
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take. The transforms decline the
-    others. [cholesky], [lu], [qr], [solve_triangular] and [eigh] compute
-    them; [svd] and [eig] decline them. The five refuse with
+    others. [cholesky], [lu], [qr], [solve_triangular], [eigh] and [svd]
+    compute them; [eig] declines them. The six refuse with
     [Shape_mismatch] what {!Nx_kernel.Shape} answers [Error] for and results
     of other shapes. A matrix's results are a function of its values alone, whatever
     its batch, its layout or the threads. With [γ(k) = k u / (1 - k u)],
@@ -87,7 +87,15 @@
       under [adjoint].
     - [eigh]: with [g = γ(16n)], [‖a - v diag w vᴴ‖_F <= g ‖a‖_F] and
       [‖vᴴv - I‖_F <= g]; each eigenvalue within [g ‖a‖₂] of the exact one,
-      with [v] or without. *)
+      with [v] or without.
+    - [svd]: with [g = γ(16 max(m, n) + 100)],
+      [‖a - u diag s vh‖_F <= g ‖a‖_F] over [u]'s first [k] columns and
+      [vh]'s first [k] rows, [‖uᴴu - I‖_F <= g] and [‖vh vhᴴ - I‖_F <= g],
+      reduced or complete; each singular value within [g ‖a‖₂] of the exact
+      one, with [vectors] or without. The 100 is the iteration's test of
+      convergence on the bidiagonal, which drops a superdiagonal element
+      below [u{^7/8}] times its neighbours. Values alone may differ from
+      the vectors' call's in their last bits. *)
 
 include Nx_kernel.S
 

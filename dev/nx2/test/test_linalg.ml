@@ -282,8 +282,8 @@ let test_split () =
   equal ~msg:"v" (array float_exact) (Array.make 18 2.) (read v)
 
 let test_declined () =
-  let a = Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Float32 [| 2; 2 |]) in
-  match linalg (Svd { vectors = No_vectors; a }) with
+  let a = Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Complex64 [| 2; 2 |]) in
+  match linalg (Eig { vectors = No_vectors; dtype = D.Complex64; a }) with
   | _ -> fail "a declined factorisation computed"
   | exception Invalid_argument e ->
       List.iter
@@ -291,8 +291,8 @@ let test_declined () =
         [
           "t: ";
           "nx.cpu";
-          "Svd";
-          "float32";
+          "Eig";
+          "complex64";
           "not available yet";
           "Nx.place";
         ]

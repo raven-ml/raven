@@ -588,6 +588,30 @@ static int F(form_q)(const T *a, int64_t m, int64_t n, int64_t ld,
   return 1;
 }
 
+/* c ← H_0 ⋯ H_(k−1) c for c of [h] rows, rows [ldc] apart, and [n]
+   columns, H_j = I − τ_j v_j v_jᴴ with v_j[j] = 1 and v_j[r], r > j, at
+   [x] + r·rs + j·cs, conjugated under [conjugate]: by blocks of NB
+   reflectors, the last first (xUNMQR, xUNMLQ). The scratch [w] holds
+   (h + NB + 2n) NB elements. Answers 0 if an allocation failed. */
+static int F(back)(const T *x, int64_t rs, int64_t cs, int conjugate,
+                   const T *tau, int64_t k, int64_t h, int64_t n, T *c,
+                   int64_t ldc, T *w, arena *s) {
+  T *t = w + h * NB, *ww = t + NB * NB;
+  for (int64_t j0 = k <= 0 ? -1 : (k - 1) / NB * NB; j0 >= 0; j0 -= NB) {
+    int64_t jb = NB < k - j0 ? NB : k - j0, hb = h - j0;
+    for (int64_t r = 0; r < hb; r++)
+      for (int64_t p = 0; p < jb; p++) {
+        T v = x[(j0 + r) * rs + (j0 + p) * cs];
+        w[r * jb + p] = conjugate ? CONJ(v) : v;
+      }
+    F(dense_v)(w, hb, jb);
+    if (!F(block_t)(w, hb, jb, tau + j0, t, ww, s) ||
+        !F(larfb)(w, F(op)(t, jb, 1), jb, hb, n, c + j0 * ldc, ldc, ww, s))
+      return 0;
+  }
+  return 1;
+}
+
 /* Eigh
 
    a = Q T Qᴴ with T real tridiagonal, then T = Z diag w Zᵀ, so that
@@ -797,6 +821,15 @@ static void F(laev2)(R a, R b, R c, R *rt1, R *rt2, R *cs, R *sn) {
   *sn = s1;
 }
 
+/* [x; y] ← [c s; −s c] [x; y] over [n] elements (xROT). */
+static void F(rot)(R *x, R *y, int64_t n, R c, R s) {
+  for (int64_t i = 0; i < n; i++) {
+    R yi = y[i];
+    y[i] = c * yi - s * x[i];
+    x[i] = s * yi + c * x[i];
+  }
+}
+
 /* Columns [j0, j0 + k) of the [n]-row [z], columns [ldz] apart, times the
    rotations (c[j], s[j]) of columns j0 + j and j0 + j + 1, the last first
    under [backward] (xLASR's 'R', 'V'). */
@@ -804,14 +837,8 @@ static void F(rotate)(R *z, int64_t n, int64_t ldz, int64_t k, const R *c,
                       const R *s, int backward) {
   for (int64_t t = 0; t < k - 1; t++) {
     int64_t j = backward ? k - 2 - t : t;
-    R ct = c[j], st = s[j];
-    if (ct == 1 && st == 0) continue;
-    R *x = z + j * ldz, *y = x + ldz;
-    for (int64_t i = 0; i < n; i++) {
-      R yi = y[i];
-      y[i] = ct * yi - st * x[i];
-      x[i] = st * yi + ct * x[i];
-    }
+    if (c[j] == 1 && s[j] == 0) continue;
+    F(rot)(z + j * ldz, z + (j + 1) * ldz, n, c[j], s[j]);
   }
 }
 
@@ -823,23 +850,31 @@ static void F(scale)(R *d, R *e, int64_t l, int64_t lend, R from, R to) {
   }
 }
 
-/* d[0..n) ascending, by selection as xSTEQR and xSTEDC, with the [nz]
-   rows of z's columns, [ldz] apart, where [z] is not NULL. */
-static void F(ascend)(int64_t n, R *d, R *z, int64_t nz, int64_t ldz) {
+/* Swaps the [n] elements at [x] and [y]. */
+static void F(rswap)(R *x, R *y, int64_t n) {
+  for (int64_t r = 0; r < n; r++) {
+    R t = x[r];
+    x[r] = y[r];
+    y[r] = t;
+  }
+}
+
+/* d[0..n) ascending, or descending under [down], by selection as
+   xSTEQR, xSTEDC, xLASDQ and xBDSDC, with the [nz] rows of z's columns,
+   [ldz] apart, and the [ny] rows of y's, [ldy] apart, where they are not
+   NULL. */
+static void F(sort)(int64_t n, R *d, int down, R *z, int64_t nz, int64_t ldz,
+                    R *y, int64_t ny, int64_t ldy) {
   for (int64_t i = 0; i < n - 1; i++) {
     int64_t k = i;
     for (int64_t j = i + 1; j < n; j++)
-      if (d[j] < d[k]) k = j;
+      if (down ? d[j] > d[k] : d[j] < d[k]) k = j;
     if (k == i) continue;
     R t = d[k];
     d[k] = d[i];
     d[i] = t;
-    if (z)
-      for (int64_t r = 0; r < nz; r++) {
-        t = z[k * ldz + r];
-        z[k * ldz + r] = z[i * ldz + r];
-        z[i * ldz + r] = t;
-      }
+    if (z) F(rswap)(z + k * ldz, z + i * ldz, nz);
+    if (y) F(rswap)(y + k * ldy, y + i * ldy, ny);
   }
 }
 
@@ -981,7 +1016,7 @@ static int F(steqr)(int64_t n, R *d, R *e, R *z, int64_t nz, int64_t ldz,
     }
     if (sc != anorm) F(scale)(d, e, lsv, lendsv, sc, anorm);
   }
-  F(ascend)(n, d, z, nz, ldz);
+  F(sort)(n, d, 0, z, nz, ldz, NULL, 0, 0);
   return 1;
 }
 
@@ -1345,14 +1380,20 @@ static int F(laed4)(int64_t n, int64_t i, const R *d, const R *z, R *delta,
   return 0;
 }
 
-/* c ← a b for column-major c of [m] × [n], [ldc] apart, a of m × [k], [lda]
+/* c += a b for column-major c of [m] × [n], [ldc] apart, a of m × [k], [lda]
    apart, b of k × n, [ldb] apart, all of reals, by the contraction on
    cᵀ = bᵀ aᵀ. Answers 0 if an allocation failed. */
+static int F(raccum)(int64_t m, int64_t n, int64_t k, const R *a,
+                     int64_t lda, const R *b, int64_t ldb, R *c, int64_t ldc) {
+  return k == 0 || product(RDT, n, m, k, (strided){b, ldb, 1},
+                           (strided){a, lda, 1}, c, ldc);
+}
+
+/* c ← a b, as raccum. */
 static int F(rgemm)(int64_t m, int64_t n, int64_t k, const R *a, int64_t lda,
                     const R *b, int64_t ldb, R *c, int64_t ldc) {
   for (int64_t j = 0; j < n; j++) memset(c + j * ldc, 0, sizeof(R) * m);
-  return k == 0 || product(RDT, n, m, k, (strided){b, ldb, 1},
-                           (strided){a, lda, 1}, c, ldc);
+  return F(raccum)(m, n, k, a, lda, b, ldb, c, ldc);
 }
 
 /* Merges the spectra of the halves of [n] values, the first [n1], each
@@ -1587,7 +1628,7 @@ static int F(stedc)(int64_t n, R *d, R *e, R *z, int64_t ldz, R *work,
       memcpy(zs + i * ldz, work + m + i * m, sizeof(R) * m);
     }
   }
-  F(ascend)(n, d, z, n, ldz);
+  F(sort)(n, d, 0, z, n, ldz, NULL, 0, 0);
   return 1;
 }
 
@@ -1601,8 +1642,8 @@ static int F(stedc)(int64_t n, R *d, R *e, R *z, int64_t ldz, R *work,
    failed. */
 static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
   int64_t n = c->n;
-  T *a = x, *tau = a + n * n, *w = tau + n, *t = w + n * NB, *ww = t + NB * NB;
-  R *d = (R *)(ww + 2 * NB * n), *e = d + n, *z = e + n, *work = z + n * n;
+  T *a = x, *tau = a + n * n, *w = tau + n;
+  R *d = (R *)(w + (3 * n + NB) * NB), *e = d + n, *z = e + n, *work = z + n * n;
   int64_t *iwork = (int64_t *)(((uintptr_t)(work + 3 * n + 2 * n * n) + 7) & ~(uintptr_t)7);
   T *wo = (T *)matrix_at(c, c->nops, b);
   T *v = c->vectors ? (T *)matrix_at(c, c->nops + 1, b) : NULL;
@@ -1642,17 +1683,1136 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
     for (int64_t j = 0; j < n; j++) v[i * n + j] = z[j * n + i];
   /* Q = H_0 ⋯ H_(n−2) on rows 1 on: reflector j is a's column j from row
      j + 1, so that they are the reflectors of a QR of rows 1 on. */
-  int64_t k = n - 1;
-  for (int64_t j0 = k <= 0 ? -1 : (k - 1) / NB * NB; j0 >= 0; j0 -= NB) {
-    int64_t jb = NB < k - j0 ? NB : k - j0, h = k - j0;
-    for (int64_t r = 0; r < h; r++)
-      for (int64_t p = 0; p < jb; p++)
-        w[r * jb + p] = a[(1 + j0 + r) + (j0 + p) * n];
-    F(dense_v)(w, h, jb);
-    if (!F(block_t)(w, h, jb, tau + j0, t, ww, s) ||
-        !F(larfb)(w, F(op)(t, jb, 1), jb, h, n, v + (1 + j0) * n, n, ww, s))
+  return F(back)(a + 1, 1, n, 0, tau, n - 1, n - 1, n, v + n, n, w, s);
+}
+
+/* Singular value decomposition
+
+   a = u diag s vh as LAPACK's xGESDD computes it. A wide matrix is
+   decomposed as its conjugate transpose, which swaps u and vh; one with
+   at least 11/6 as many rows as columns is factored a = Q R first, and R
+   decomposed. The matrix B is reduced to Qᴴ B P, upper bidiagonal with
+   real d and e (xGEBRD); that one's SVD U_B diag s V_Bᵀ is found by divide
+   and conquer (xBDSDC); then u = Q U_B and vh = (P V_B)ᴴ by the
+   reflectors' blocks (back). Values alone run implicit QR on the
+   bidiagonal without vectors (xBDSQR), which for at most SMLSIZ values is
+   the vectors' call's iteration. Matrices are column-major; V_B's
+   vectors are its columns, where LAPACK keeps Vᵀ's rows, so that every
+   rotation moves adjacent memory. */
+
+/* |a| with the sign of b. */
+static R F(sign)(R a, R b) { return (R)copysign(a, b); }
+
+/* The singular values [smin] <= [smax] of [f g; 0 h] (xLAS2). */
+static void F(las2)(R f, R g, R h, R *smin, R *smax) {
+  R fa = F(abs)(f), ga = F(abs)(g), ha = F(abs)(h);
+  R mn = fa < ha ? fa : ha, mx = fa > ha ? fa : ha;
+  if (mn == 0) {
+    R lo = mx < ga ? mx : ga, hi = mx > ga ? mx : ga;
+    *smin = 0;
+    *smax = mx == 0 ? ga : hi * SQRT(1 + (lo / hi) * (lo / hi));
+    return;
+  }
+  if (ga < mx) {
+    R as = 1 + mn / mx, at = (mx - mn) / mx, au = (ga / mx) * (ga / mx);
+    R c = 2 / (SQRT(as * as + au) + SQRT(at * at + au));
+    *smin = mn * c;
+    *smax = mx / c;
+    return;
+  }
+  R au = mx / ga;
+  if (au == 0) {
+    *smin = (mn * mx) / ga;
+    *smax = ga;
+    return;
+  }
+  R as = 1 + mn / mx, at = (mx - mn) / mx;
+  R c = 1 / (SQRT(1 + (as * au) * (as * au)) + SQRT(1 + (at * au) * (at * au)));
+  *smin = 2 * ((mn * c) * au);
+  *smax = ga / (c + c);
+}
+
+/* The singular values of [f g; 0 h], |smax| >= |smin|, and the rotations
+   with [cl sl; −sl cl] [f g; 0 h] [cr −sr; sr cr] = diag (smax, smin)
+   (xLASV2). */
+static void F(lasv2)(R f, R g, R h, R *smin, R *smax, R *sr, R *cr, R *sl,
+                     R *cl) {
+  R ft = f, fa = F(abs)(f), ht = h, ha = F(abs)(h), gt = g, ga = F(abs)(g);
+  int pmax = 1, swap = ha > fa;
+  if (swap) {
+    pmax = 3;
+    ft = h;
+    ht = f;
+    fa = F(abs)(h);
+    ha = F(abs)(f);
+  }
+  R mn = ha, mx = fa, clt = 1, crt = 1, slt = 0, srt = 0;
+  if (ga != 0 && ga > fa && fa / ga < EPS) {
+    /* g dominates. */
+    pmax = 2;
+    mx = ga;
+    mn = ha > 1 ? fa / (ga / ha) : (fa / ga) * ha;
+    slt = ht / gt;
+    srt = 1;
+    crt = ft / gt;
+  } else if (ga != 0) {
+    if (ga > fa) pmax = 2;
+    R dd = fa - ha, l = dd == fa ? 1 : dd / fa, m = gt / ft, t = 2 - l;
+    R mm = m * m, s = SQRT(t * t + mm);
+    R r = l == 0 ? F(abs)(m) : SQRT(l * l + mm), a = (s + r) / 2;
+    mn = ha / a;
+    mx = fa * a;
+    if (mm != 0) t = (m / (s + t) + m / (r + l)) * (1 + a);
+    else if (l == 0) t = F(sign)(2, ft) * F(sign)(1, gt);
+    else t = gt / F(sign)(dd, ft) + m / t;
+    l = SQRT(t * t + 4);
+    crt = 2 / l;
+    srt = t / l;
+    clt = (crt + srt * m) / a;
+    slt = (ht / ft) * srt / a;
+  }
+  *cl = swap ? srt : clt;
+  *sl = swap ? crt : slt;
+  *cr = swap ? slt : crt;
+  *sr = swap ? clt : srt;
+  R sg = pmax == 1   ? F(sign)(1, *cr) * F(sign)(1, *cl) * F(sign)(1, f)
+         : pmax == 2 ? F(sign)(1, *sr) * F(sign)(1, *cl) * F(sign)(1, g)
+                     : F(sign)(1, *sr) * F(sign)(1, *sl) * F(sign)(1, h);
+  *smax = F(sign)(mx, sg);
+  *smin = F(sign)(mn, sg * F(sign)(1, f) * F(sign)(1, h));
+}
+
+/* The singular values of the upper bidiagonal B of the diagonal [d] and
+   superdiagonal [e], [n] of them, not negative, into d, by QR sweeps
+   with a zero or a shifted start, each chasing the bulge from the end of
+   larger magnitude (xBDSQR, whose dqds for values alone is left out): u
+   ← u Q_l for the [nru] rows of [u] and v ← v Q_r for the [nrv] rows of
+   [v], columns [ldu] and [ldv] apart, where B = Q_l diag d Q_rᵀ. [work]
+   holds 4n reals. Answers 0 if the iteration takes more than 6 n²
+   steps. */
+static int F(bdsqr)(int64_t n, R *d, R *e, R *u, int64_t nru, int64_t ldu,
+                    R *v, int64_t nrv, int64_t ldv, R *work) {
+  R tol = (R)pow(EPS, -0.125);
+  tol = (tol < 10 ? 10 : tol > 100 ? 100 : tol) * EPS;
+  int64_t maxit = 6 * n, sweeps = 0, iter = -1, oldll = -1, oldm = -1;
+  int dir = 0;
+  R *c1 = work, *s1 = c1 + n, *c2 = s1 + n, *s2 = c2 + n;
+  /* The threshold below which an e is negligible: tol times an estimate
+     of the least singular value. */
+  R sminoa = n > 0 ? F(abs)(d[0]) : 0, mu = sminoa;
+  for (int64_t i = 1; i < n && sminoa != 0; i++) {
+    mu = F(abs)(d[i]) * (mu / (mu + F(abs)(e[i - 1])));
+    sminoa = mu < sminoa ? mu : sminoa;
+  }
+  sminoa /= SQRT((R)n);
+  R thresh = 6 * ((R)n * ((R)n * TINY));
+  thresh = tol * sminoa > thresh ? tol * sminoa : thresh;
+  for (int64_t m = n - 1; m > 0;) {
+    if (iter >= n) {
+      iter -= n;
+      if (++sweeps >= maxit) return 0;
+    }
+    /* The block [ll, m]: up from m to the first negligible e. */
+    R smax = F(abs)(d[m]);
+    int64_t ll = m - 1;
+    for (; ll >= 0; ll--) {
+      R abss = F(abs)(d[ll]), abse = F(abs)(e[ll]);
+      if (abse <= thresh) break;
+      smax = abss > smax ? abss : smax;
+      smax = abse > smax ? abse : smax;
+    }
+    if (ll >= 0) {
+      e[ll] = 0;
+      if (ll == m - 1) {
+        m--;
+        continue;
+      }
+    }
+    ll++;
+    if (ll == m - 1) {
+      R smin, sx, sr, cr, sl, cl;
+      F(lasv2)(d[m - 1], e[m - 1], d[m], &smin, &sx, &sr, &cr, &sl, &cl);
+      d[m - 1] = sx;
+      e[m - 1] = 0;
+      d[m] = smin;
+      if (nrv) F(rot)(v + (m - 1) * ldv, v + m * ldv, nrv, cr, sr);
+      if (nru) F(rot)(u + (m - 1) * ldu, u + m * ldu, nru, cl, sl);
+      m -= 2;
+      continue;
+    }
+    /* A new block chases from its end of larger magnitude. */
+    if (ll > oldm || m < oldll) dir = F(abs)(d[ll]) >= F(abs)(d[m]) ? 1 : 2;
+    /* An e negligible relative to its neighbours splits the block. */
+    int split = 0;
+    R smin = 0;
+    if (dir == 1) {
+      if (F(abs)(e[m - 1]) <= tol * F(abs)(d[m])) {
+        e[m - 1] = 0;
+        continue;
+      }
+      mu = smin = F(abs)(d[ll]);
+      for (int64_t l = ll; l < m; l++) {
+        if (F(abs)(e[l]) <= tol * mu) {
+          e[l] = 0;
+          split = 1;
+          break;
+        }
+        mu = F(abs)(d[l + 1]) * (mu / (mu + F(abs)(e[l])));
+        smin = mu < smin ? mu : smin;
+      }
+    } else {
+      if (F(abs)(e[ll]) <= tol * F(abs)(d[ll])) {
+        e[ll] = 0;
+        continue;
+      }
+      mu = smin = F(abs)(d[m]);
+      for (int64_t l = m - 1; l >= ll; l--) {
+        if (F(abs)(e[l]) <= tol * mu) {
+          e[l] = 0;
+          split = 1;
+          break;
+        }
+        mu = F(abs)(d[l]) * (mu / (mu + F(abs)(e[l])));
+        smin = mu < smin ? mu : smin;
+      }
+    }
+    if (split) continue;
+    oldll = ll;
+    oldm = m;
+    /* The shift: the least singular value of the trailing 2 × 2, or zero
+       where it would spoil the relative accuracy of the least value. */
+    R shift = 0, lim = (R)0.01 * tol;
+    lim = EPS > lim ? EPS : lim;
+    if (!((R)n * tol * (smin / smax) <= lim)) {
+      R sll, r;
+      if (dir == 1) {
+        sll = F(abs)(d[ll]);
+        F(las2)(d[m - 1], e[m - 1], d[m], &shift, &r);
+      } else {
+        sll = F(abs)(d[m]);
+        F(las2)(d[ll], e[ll], d[ll + 1], &shift, &r);
+      }
+      if (sll > 0 && (shift / sll) * (shift / sll) < EPS) shift = 0;
+    }
+    iter += m - ll;
+    R cs = 1, sn = 0, ocs = 1, osn = 0, r, f, g;
+    if (dir == 1 && shift == 0) {
+      for (int64_t i = ll; i < m; i++) {
+        F(rotation)(d[i] * cs, e[i], &cs, &sn, &r);
+        if (i > ll) e[i - 1] = osn * r;
+        F(rotation)(ocs * r, d[i + 1] * sn, &ocs, &osn, &d[i]);
+        c1[i - ll] = cs;
+        s1[i - ll] = sn;
+        c2[i - ll] = ocs;
+        s2[i - ll] = osn;
+      }
+      R h = d[m] * cs;
+      d[m] = h * ocs;
+      e[m - 1] = h * osn;
+    } else if (dir == 1) {
+      f = (F(abs)(d[ll]) - shift) * (F(sign)(1, d[ll]) + shift / d[ll]);
+      g = e[ll];
+      for (int64_t i = ll; i < m; i++) {
+        F(rotation)(f, g, &cs, &sn, &r);
+        if (i > ll) e[i - 1] = r;
+        f = cs * d[i] + sn * e[i];
+        e[i] = cs * e[i] - sn * d[i];
+        g = sn * d[i + 1];
+        d[i + 1] = cs * d[i + 1];
+        F(rotation)(f, g, &ocs, &osn, &r);
+        d[i] = r;
+        f = ocs * e[i] + osn * d[i + 1];
+        d[i + 1] = ocs * d[i + 1] - osn * e[i];
+        if (i < m - 1) {
+          g = osn * e[i + 1];
+          e[i + 1] = ocs * e[i + 1];
+        }
+        c1[i - ll] = cs;
+        s1[i - ll] = sn;
+        c2[i - ll] = ocs;
+        s2[i - ll] = osn;
+      }
+      e[m - 1] = f;
+    } else if (shift == 0) {
+      for (int64_t i = m; i > ll; i--) {
+        F(rotation)(d[i] * cs, e[i - 1], &cs, &sn, &r);
+        if (i < m) e[i] = osn * r;
+        F(rotation)(ocs * r, d[i - 1] * sn, &ocs, &osn, &d[i]);
+        c1[i - ll - 1] = cs;
+        s1[i - ll - 1] = -sn;
+        c2[i - ll - 1] = ocs;
+        s2[i - ll - 1] = -osn;
+      }
+      R h = d[ll] * cs;
+      d[ll] = h * ocs;
+      e[ll] = h * osn;
+    } else {
+      f = (F(abs)(d[m]) - shift) * (F(sign)(1, d[m]) + shift / d[m]);
+      g = e[m - 1];
+      for (int64_t i = m; i > ll; i--) {
+        F(rotation)(f, g, &cs, &sn, &r);
+        if (i < m) e[i] = r;
+        f = cs * d[i] + sn * e[i - 1];
+        e[i - 1] = cs * e[i - 1] - sn * d[i];
+        g = sn * d[i - 1];
+        d[i - 1] = cs * d[i - 1];
+        F(rotation)(f, g, &ocs, &osn, &r);
+        d[i] = r;
+        f = ocs * e[i - 1] + osn * d[i - 1];
+        d[i - 1] = ocs * d[i - 1] - osn * e[i - 1];
+        if (i > ll + 1) {
+          g = osn * e[i - 2];
+          e[i - 2] = ocs * e[i - 2];
+        }
+        c1[i - ll - 1] = cs;
+        s1[i - ll - 1] = -sn;
+        c2[i - ll - 1] = ocs;
+        s2[i - ll - 1] = -osn;
+      }
+      e[ll] = f;
+    }
+    /* The sweep's rotations on the vectors: the right ones on v, the left
+       ones on u. */
+    int64_t w = m - ll + 1;
+    if (nrv) F(rotate)(v + ll * ldv, nrv, ldv, w, dir == 1 ? c1 : c2, dir == 1 ? s1 : s2, dir != 1);
+    if (nru) F(rotate)(u + ll * ldu, nru, ldu, w, dir == 1 ? c2 : c1, dir == 1 ? s2 : s1, dir != 1);
+    R *last = dir == 1 ? e + m - 1 : e + ll;
+    if (F(abs)(*last) <= thresh) *last = 0;
+  }
+  for (int64_t i = 0; i < n; i++) {
+    if (!(d[i] < 0)) continue;
+    d[i] = -d[i];
+    for (int64_t r = 0; r < nrv; r++) v[i * ldv + r] = -v[i * ldv + r];
+  }
+  return 1;
+}
+
+/* The singular values of the upper bidiagonal B, [n] × (n + [sqre]), of
+   the diagonal [d] and superdiagonal [e], ascending into d, with u ← u
+   U_B for the n rows of [u] and v ← v V_B for the n + sqre rows of [v],
+   where they are not NULL, B = U_B [diag d 0] V_Bᵀ (xLASDQ): a B of
+   n + 1 columns made square by rotations from the right, which leave it
+   lower, then upper by rotations from the left, then bdsqr. [work] holds
+   4n reals. Answers as bdsqr. */
+static int F(lasdq)(int64_t n, int sqre, R *d, R *e, R *u, int64_t ldu,
+                    R *v, int64_t ldv, R *work) {
+  int64_t nv = n + sqre;
+  R *cs = work, *sn = work + n, r;
+  if (sqre) {
+    for (int64_t i = 0; i < n; i++) {
+      F(rotation)(d[i], e[i], &cs[i], &sn[i], &r);
+      d[i] = r;
+      e[i] = i + 1 < n ? sn[i] * d[i + 1] : 0;
+      if (i + 1 < n) d[i + 1] = cs[i] * d[i + 1];
+    }
+    if (v) F(rotate)(v, nv, ldv, nv, cs, sn, 0);
+    for (int64_t i = 0; i + 1 < n; i++) {
+      F(rotation)(d[i], e[i], &cs[i], &sn[i], &r);
+      d[i] = r;
+      e[i] = sn[i] * d[i + 1];
+      d[i + 1] = cs[i] * d[i + 1];
+    }
+    if (u) F(rotate)(u, n, ldu, n, cs, sn, 0);
+  }
+  if (!F(bdsqr)(n, d, e, u, u ? n : 0, ldu, v, v ? nv : 0, ldv, work))
+    return 0;
+  F(sort)(n, d, 0, u, n, ldu, v, nv, ldv);
+  return 1;
+}
+
+/* Root [i] of the secular equation of two values, 0 <= d[0] < d[1], into
+   [sigma], with delta_j = d_j − σ and work_j = d_j + σ (xLASD5). */
+static void F(lasd5)(int i, const R *d, const R *z, R *delta, R rho,
+                     R *sigma, R *work) {
+  R del = d[1] - d[0], delsq = del * (d[1] + d[0]);
+  R z0 = z[0] * z[0], z1 = z[1] * z[1], tau, b, c;
+  if (i == 0 &&
+      1 + 4 * rho * (z1 / (d[0] + 3 * d[1]) - z0 / (3 * d[0] + d[1])) / del >
+          0) {
+    b = delsq + rho * (z0 + z1);
+    c = rho * z0 * delsq;
+    tau = 2 * c / (b + SQRT(F(abs)(b * b - 4 * c)));
+    tau = tau / (d[0] + SQRT(d[0] * d[0] + tau));
+    *sigma = d[0] + tau;
+    delta[0] = -tau;
+    delta[1] = del - tau;
+    work[0] = 2 * d[0] + tau;
+    work[1] = (d[0] + tau) + d[1];
+    return;
+  }
+  b = -delsq + rho * (z0 + z1);
+  c = rho * z1 * delsq;
+  if (i == 0) {
+    tau = b > 0 ? -2 * c / (b + SQRT(b * b + 4 * c))
+                : (b - SQRT(b * b + 4 * c)) / 2;
+    tau = tau / (d[1] + SQRT(F(abs)(d[1] * d[1] + tau)));
+  } else {
+    tau = b > 0 ? (b + SQRT(b * b + 4 * c)) / 2
+                : 2 * c / (-b + SQRT(b * b + 4 * c));
+    tau = tau / (d[1] + SQRT(d[1] * d[1] + tau));
+  }
+  *sigma = d[1] + tau;
+  delta[0] = -(del + tau);
+  delta[1] = -tau;
+  work[0] = d[0] + tau + d[1];
+  work[1] = 2 * d[1] + tau;
+}
+
+/* Root [i] of 1 + ρ Σ z_j² / ((d_j − σ)(d_j + σ)) = 0 for d ascending and
+   not negative, z without zeros and ρ > 0, into [sigma], with delta_j =
+   d_j − σ and work_j = d_j + σ, each from the pole nearer the root so
+   that it keeps its accuracy (xLASD4): laed4's iteration on σ², each step
+   η in σ² mapped back to σ as η / (σ + √(σ² + η)). Answers 0 after 400
+   steps. */
+static int F(lasd4)(int64_t n, int64_t i, const R *d, const R *z, R *delta,
+                    R rho, R *sigma, R *work) {
+  if (n == 1) {
+    *sigma = SQRT(d[0] * d[0] + rho * z[0] * z[0]);
+    delta[0] = 1;
+    work[0] = 1;
+    return 1;
+  }
+  if (n == 2) {
+    F(lasd5)((int)i, d, z, delta, rho, sigma, work);
+    return 1;
+  }
+  const R rhoinv = 1 / rho;
+  int last = i == n - 1, orgati = 1, geomavg = 0;
+  int64_t ip1 = i + 1;
+  R tau, sglb = 0, sgub = 0, delsq = 0;
+  /* The first guess, from the two poles about the root and the rest at
+     the midpoint. */
+  if (last) {
+    R dn = d[n - 1], dp = d[n - 2], t = rho / 2;
+    R t1 = t / (dn + SQRT(dn * dn + t)), psi = 0;
+    for (int64_t j = 0; j < n; j++) {
+      work[j] = d[j] + dn + t1;
+      delta[j] = (d[j] - dn) - t1;
+    }
+    for (int64_t j = 0; j < n - 2; j++)
+      psi += z[j] * z[j] / (delta[j] * work[j]);
+    R c = rhoinv + psi;
+    R w = c + z[n - 2] * z[n - 2] / (delta[n - 2] * work[n - 2]) +
+          z[n - 1] * z[n - 1] / (delta[n - 1] * work[n - 1]);
+    R ds = (dn - dp) * (dn + dp);
+    R a = -c * ds + z[n - 2] * z[n - 2] + z[n - 1] * z[n - 1];
+    R b = z[n - 1] * z[n - 1] * ds;
+    R tau2 = a < 0 ? 2 * b / (SQRT(a * a + 4 * b * c) - a)
+                   : (a + SQRT(a * a + 4 * b * c)) / (2 * c);
+    tau = tau2 / (dn + SQRT(dn * dn + tau2));
+    if (w <= 0) {
+      R t2 = SQRT(dn * dn + rho);
+      R lim = z[n - 2] * z[n - 2] / ((dp + t2) * (dn - dp + rho / (dn + t2))) +
+              z[n - 1] * z[n - 1] / rho;
+      if (c <= lim) tau = rho;
+    }
+  } else {
+    delsq = (d[ip1] - d[i]) * (d[ip1] + d[i]);
+    R ds2 = delsq / 2, sq2 = SQRT((d[i] * d[i] + d[ip1] * d[ip1]) / 2);
+    R t = ds2 / (d[i] + sq2), psi = 0, phi = 0;
+    for (int64_t j = 0; j < n; j++) {
+      work[j] = d[j] + d[i] + t;
+      delta[j] = (d[j] - d[i]) - t;
+    }
+    for (int64_t j = 0; j < i; j++) psi += z[j] * z[j] / (work[j] * delta[j]);
+    for (int64_t j = n - 1; j > i + 1; j--)
+      phi += z[j] * z[j] / (work[j] * delta[j]);
+    R c = rhoinv + psi + phi;
+    R w = c + z[i] * z[i] / (work[i] * delta[i]) +
+          z[ip1] * z[ip1] / (work[ip1] * delta[ip1]);
+    orgati = w > 0;
+    if (orgati) {
+      sgub = ds2 / (d[i] + sq2);
+      R a = c * delsq + z[i] * z[i] + z[ip1] * z[ip1], b = z[i] * z[i] * delsq;
+      R q = SQRT(F(abs)(a * a - 4 * b * c));
+      R tau2 = a > 0 ? 2 * b / (a + q) : (a - q) / (2 * c);
+      tau = tau2 / (d[i] + SQRT(d[i] * d[i] + tau2));
+      /* A tiny d_i with a tiny z_i: the root is near d_i's square root
+         of products, which bisection by geometric means finds. */
+      R e = SQRT(EPS);
+      if (d[i] <= e * d[ip1] && F(abs)(z[i]) <= e && d[i] > 0) {
+        tau = 10 * d[i] < sgub ? 10 * d[i] : sgub;
+        geomavg = 1;
+      }
+    } else {
+      sglb = -ds2 / (d[ip1] + sq2);
+      R a = c * delsq - z[i] * z[i] - z[ip1] * z[ip1], b = z[ip1] * z[ip1] * delsq;
+      R q = SQRT(F(abs)(a * a + 4 * b * c));
+      R tau2 = a < 0 ? 2 * b / (a - q) : -(a + q) / (2 * c);
+      tau = tau2 / (d[ip1] + SQRT(F(abs)(d[ip1] * d[ip1] + tau2)));
+    }
+  }
+  /* ψ sums the poles below the root's nearer one [ii], φ those above. */
+  int64_t ii = last ? n - 1 : orgati ? i : ip1;
+  R org = d[ii], s = org + tau, prew = 0;
+  for (int64_t j = 0; j < n; j++) {
+    delta[j] = (d[j] - org) - tau;
+    work[j] = d[j] + org + tau;
+  }
+  int swtch3 = 0, swtch = 0;
+  for (int64_t step = 0;; step++) {
+    R psi = 0, dpsi = 0, phi = 0, dphi = 0, err = 0, w, dw;
+    for (int64_t j = 0; j < ii; j++) {
+      R t = z[j] / (work[j] * delta[j]);
+      psi += z[j] * t;
+      dpsi += t * t;
+      err += psi;
+    }
+    err = F(abs)(err);
+    for (int64_t j = n - 1; j > ii; j--) {
+      R t = z[j] / (work[j] * delta[j]);
+      phi += z[j] * t;
+      dphi += t * t;
+      err += phi;
+    }
+    R t = z[ii] / (work[ii] * delta[ii]);
+    if (last) {
+      /* The root's pole is φ's, the last. */
+      phi = z[ii] * t;
+      dphi = t * t;
+      err = 8 * (-phi - psi) + err - phi + rhoinv;
+      w = rhoinv + phi + psi;
+      dw = dpsi + dphi;
+    } else {
+      w = rhoinv + phi + psi;
+      if (step == 0)
+        swtch3 = (orgati ? w < 0 : w > 0) && ii != 0 && ii != n - 1;
+      dw = dpsi + dphi + t * t;
+      t *= z[ii];
+      w += t;
+      err = 8 * (phi - psi) + err + 2 * rhoinv + 3 * F(abs)(t);
+      if (step == 1)
+        swtch = orgati ? -w > F(abs)(prew) / 10 : w > F(abs)(prew) / 10;
+      else if (step > 1 && w * prew > 0 && F(abs)(w) > F(abs)(prew) / 10)
+        swtch = !swtch;
+    }
+    if (step == 399) break;
+    if (F(abs)(w) <= EPS * err) {
+      *sigma = s;
+      return 1;
+    }
+    R eta = 0, a, b, c;
+    if (last) {
+      R d1 = work[n - 2] * delta[n - 2], d2 = work[n - 1] * delta[n - 1];
+      c = w - d1 * dpsi - d2 * dphi;
+      a = (d2 + d1) * w - d2 * d1 * (dpsi + dphi);
+      b = d2 * d1 * w;
+      if (step == 0 && c < 0) c = F(abs)(c);
+      if (step == 0 && c == 0) eta = rho - s * s;
+      else if (a >= 0) eta = (a + SQRT(F(abs)(a * a - 4 * b * c))) / (2 * c);
+      else eta = 2 * b / (a - SQRT(F(abs)(a * a - 4 * b * c)));
+      if (w * eta > 0) eta = -w / dw;
+      if (step == 0 && eta - d2 > rho) eta = rho + d2;
+      else if (step > 0 && eta - d2 <= 0) eta /= 2;
+      eta = eta / (s + SQRT(eta + s * s));
+    } else {
+      if (w <= 0) sglb = sglb > tau ? sglb : tau;
+      else sgub = sgub < tau ? sgub : tau;
+      int done = 0;
+      if (swtch3) {
+        /* Three poles, by laed6, where two would step the wrong way. */
+        R dm = work[ii - 1] * delta[ii - 1], dp = work[ii + 1] * delta[ii + 1];
+        R base = rhoinv + psi + phi, zz[3], dd[3];
+        if (swtch) {
+          c = base - dm * dpsi - dp * dphi;
+          zz[0] = dm * dm * dpsi;
+          zz[2] = dp * dp * dphi;
+        } else if (orgati) {
+          R q = z[ii - 1] / dm;
+          q *= q;
+          c = base - dp * (dpsi + dphi) -
+              (d[ii - 1] - d[ii + 1]) * (d[ii - 1] + d[ii + 1]) * q;
+          zz[0] = z[ii - 1] * z[ii - 1];
+          zz[2] = dpsi < q ? dp * dp * dphi : dp * dp * ((dpsi - q) + dphi);
+        } else {
+          R q = z[ii + 1] / dp;
+          q *= q;
+          c = base - dm * (dpsi + dphi) -
+              (d[ii + 1] - d[ii - 1]) * (d[ii - 1] + d[ii + 1]) * q;
+          zz[0] = dphi < q ? dm * dm * dpsi : dm * dm * (dpsi + (dphi - q));
+          zz[2] = z[ii + 1] * z[ii + 1];
+        }
+        zz[1] = z[ii] * z[ii];
+        dd[0] = dm;
+        dd[1] = delta[ii] * work[ii];
+        dd[2] = dp;
+        done = F(laed6)(step + 2, orgati, c, dd, zz, w, &eta);
+        swtch3 = done;
+      }
+      if (!done) {
+        R di = work[i] * delta[i], dj = work[ip1] * delta[ip1];
+        if (swtch) {
+          R q = z[ii] / (work[ii] * delta[ii]);
+          if (orgati) dpsi += q * q;
+          else dphi += q * q;
+          c = w - di * dpsi - dj * dphi;
+        } else if (orgati) {
+          R q = z[i] / di;
+          c = w - dj * dw + delsq * (q * q);
+        } else {
+          R q = z[ip1] / dj;
+          c = w - di * dw - delsq * (q * q);
+        }
+        a = (dj + di) * w - dj * di * dw;
+        b = dj * di * w;
+        if (c == 0) {
+          if (a == 0)
+            a = swtch    ? di * di * dpsi + dj * dj * dphi
+                : orgati ? z[i] * z[i] + dj * dj * (dpsi + dphi)
+                         : z[ip1] * z[ip1] + di * di * (dpsi + dphi);
+          eta = b / a;
+        } else if (a <= 0)
+          eta = (a - SQRT(F(abs)(a * a - 4 * b * c))) / (2 * c);
+        else
+          eta = 2 * b / (a + SQRT(F(abs)(a * a - 4 * b * c)));
+      }
+      if (w * eta >= 0) eta = -w / dw;
+      eta = eta / (s + SQRT(s * s + eta));
+      if (tau + eta > sgub || tau + eta < sglb) {
+        eta = w < 0 ? (sgub - tau) / 2 : (sglb - tau) / 2;
+        if (geomavg && w < 0 && tau > 0) eta = SQRT(sgub * tau) - tau;
+        else if (geomavg && w >= 0 && sglb > 0) eta = SQRT(sglb * tau) - tau;
+      }
+      prew = w;
+    }
+    tau += eta;
+    s += eta;
+    for (int64_t j = 0; j < n; j++) {
+      work[j] += eta;
+      delta[j] -= eta;
+    }
+  }
+  *sigma = s;
+  return 0;
+}
+
+/* The 2-norm of the [n] reals at [x], as norm's. */
+static R F(rnorm)(const R *x, int64_t n) {
+  R q = 0, big = 0, t = 0;
+  for (int64_t i = 0; i < n; i++) q += x[i] * x[i];
+  if ((q >= SAFMIN && q <= 1 / SAFMIN) || q != q) return SQRT(q);
+  for (int64_t i = 0; i < n; i++) big = F(abs)(x[i]) > big ? F(abs)(x[i]) : big;
+  if (big == 0) return 0;
+  for (int64_t i = 0; i < n; i++) t += (x[i] / big) * (x[i] / big);
+  return big * SQRT(t);
+}
+
+/* Merges the SVDs of the halves of the upper bidiagonal B of [n] = nl + 1
+   + nr rows and n + [sqre] columns, torn at row nl, whose (nl, nl) and
+   (nl, nl + 1) elements are [alpha] and [beta] (xLASD1). The halves, nl ×
+   (nl + 1) and nr × (nr + sqre), have their values in d, each ascending
+   as idxq orders it, their left vectors in the diagonal blocks of the
+   columns of u and their right ones in those of v, [ldu] and [ldv] apart.
+   On return d, u and v hold B's, its values' order in idxq. A merge
+   deflates the values whose part of z is negligible, or which a rotation
+   makes equal to a neighbour (xLASD2), finds the others as the roots of
+   the secular equation (lasd4) and their vectors from Gu and Eisenstat's
+   recomputed z (xLASD3); the product with the halves' vectors is the
+   merge's O(n³), by products on their nonzero blocks. [work] holds n + m
+   + 2n² + m² reals, m = n + sqre, and [iwork] 4n indices. Answers 1, 0 if
+   a root does not converge, or −1 if an allocation failed. */
+static int F(lasd1)(int64_t nl, int64_t nr, int sqre, R *d, R alpha, R beta,
+                    R *u, int64_t ldu, R *v, int64_t ldv, int64_t *idxq,
+                    R *work, int64_t *iwork) {
+  int64_t n = nl + nr + 1, m = n + sqre, k = 1, k2 = n, ctot[4] = {0}, psm[4];
+  R *z = work, *dsigma = z + m, *u2 = dsigma + n, *v2 = u2 + n * n,
+    *q = v2 + m * m;
+  int64_t *idx = iwork, *idxc = idx + n, *coltyp = idxc + n,
+          *idxp = coltyp + n;
+  R big = F(abs)(alpha) > F(abs)(beta) ? F(abs)(alpha) : F(abs)(beta);
+  d[nl] = 0;
+  for (int64_t i = 0; i < n; i++) big = F(abs)(d[i]) > big ? F(abs)(d[i]) : big;
+  for (int64_t i = 0; i < n; i++) d[i] /= big;
+  alpha /= big;
+  beta /= big;
+  /* z: the torn row in the halves' right vectors, α times the last row
+     of the first's and β times the first row of the second's; d[0] = 0
+     its value, the halves' values after it. */
+  R z1 = alpha * v[nl + nl * ldv];
+  z[0] = z1;
+  for (int64_t i = nl - 1; i >= 0; i--) {
+    z[i + 1] = alpha * v[nl + i * ldv];
+    d[i + 1] = d[i];
+    idxq[i + 1] = idxq[i] + 1;
+  }
+  for (int64_t i = nl + 1; i < m; i++) z[i] = beta * v[(nl + 1) + i * ldv];
+  /* Column types: 1 nonzero in the first nl rows of u alone, 2 in the
+     last nr alone, 3 in both (two mixed by a rotation), 4 deflated. */
+  for (int64_t i = 1; i < n; i++) coltyp[i] = i <= nl ? 1 : 2;
+  for (int64_t i = nl + 1; i < n; i++) idxq[i] += nl + 1;
+  for (int64_t i = 1; i < n; i++) {
+    dsigma[i] = d[idxq[i]];
+    u2[i] = z[idxq[i]];
+    idxc[i] = coltyp[idxq[i]];
+  }
+  F(lamrg)(nl, nr, dsigma + 1, 1, 1, idx + 1);
+  for (int64_t i = 1; i < n; i++) {
+    int64_t p = 1 + idx[i];
+    d[i] = dsigma[p];
+    z[i] = u2[p];
+    coltyp[i] = idxc[p];
+  }
+  R tol = F(abs)(alpha) > F(abs)(beta) ? F(abs)(alpha) : F(abs)(beta);
+  tol = 8 * EPS * (F(abs)(d[n - 1]) > tol ? F(abs)(d[n - 1]) : tol);
+  int64_t j = 1, jprev = 0;
+  for (; j < n && F(abs)(z[j]) <= tol; j++) {
+    idxp[--k2] = j;
+    coltyp[j] = 4;
+  }
+  if (j < n) {
+    for (jprev = j++; j < n; j++) {
+      if (F(abs)(z[j]) <= tol) {
+        idxp[--k2] = j;
+        coltyp[j] = 4;
+        continue;
+      }
+      if (F(abs)(d[j] - d[jprev]) > tol) {
+        u2[k] = z[jprev];
+        dsigma[k] = d[jprev];
+        idxp[k++] = jprev;
+        jprev = j;
+        continue;
+      }
+      /* Two close values: a rotation zeroes jprev's part of z. */
+      R s = z[jprev], c = z[j], tau = F(lapy3)(c, s, 0);
+      c /= tau;
+      s = -s / tau;
+      z[j] = tau;
+      z[jprev] = 0;
+      int64_t pj = idxq[idx[jprev] + 1], nj = idxq[idx[j] + 1];
+      if (pj <= nl) pj--;
+      if (nj <= nl) nj--;
+      F(rot)(u + pj * ldu, u + nj * ldu, n, c, s);
+      F(rot)(v + pj * ldv, v + nj * ldv, m, c, s);
+      if (coltyp[j] != coltyp[jprev]) coltyp[j] = 3;
+      coltyp[jprev] = 4;
+      idxp[--k2] = jprev;
+      jprev = j;
+    }
+    u2[k] = z[jprev];
+    dsigma[k] = d[jprev];
+    idxp[k++] = jprev;
+  }
+  /* The vectors grouped by type into u2 and v2, the deflated ones last,
+     where they go back to u and v. */
+  for (int64_t i = 1; i < n; i++) ctot[coltyp[i] - 1]++;
+  psm[0] = 1;
+  for (int t = 1; t < 4; t++) psm[t] = psm[t - 1] + ctot[t - 1];
+  for (int64_t i = 1; i < n; i++) idxc[psm[coltyp[idxp[i]] - 1]++] = i;
+  for (int64_t i = 1; i < n; i++) {
+    dsigma[i] = d[idxp[i]];
+    int64_t col = idxq[idx[idxp[idxc[i]]] + 1];
+    if (col <= nl) col--;
+    memcpy(u2 + i * n, u + col * ldu, sizeof(R) * n);
+    memcpy(v2 + i * m, v + col * ldv, sizeof(R) * m);
+  }
+  dsigma[0] = 0;
+  if (F(abs)(dsigma[1]) <= tol / 2) dsigma[1] = tol / 2;
+  /* With n + 1 columns, a rotation of v's columns nl and n folds z's last
+     element into its first. */
+  R c = 1, s = 0;
+  if (m > n) {
+    z[0] = F(lapy3)(z1, z[m - 1], 0);
+    if (z[0] <= tol) z[0] = tol;
+    else {
+      c = z1 / z[0];
+      s = z[m - 1] / z[0];
+    }
+  } else z[0] = F(abs)(z1) <= tol ? tol : z1;
+  memcpy(z + 1, u2 + 1, sizeof(R) * (k - 1));
+  memset(u2, 0, sizeof(R) * n);
+  u2[nl] = 1;
+  if (m > n) {
+    R *vl = v + nl * ldv, *vm = v + (m - 1) * ldv;
+    for (int64_t i = 0; i <= nl; i++) {
+      vm[i] = -s * vl[i];
+      v2[i] = c * vl[i];
+    }
+    for (int64_t i = nl + 1; i < m; i++) {
+      v2[i] = s * vm[i];
+      vm[i] = c * vm[i];
+    }
+    memcpy(v2 + (m - 1) * m, vm, sizeof(R) * m);
+  } else memcpy(v2, v + nl * ldv, sizeof(R) * m);
+  for (int64_t i = k; i < n; i++) {
+    d[i] = dsigma[i];
+    memcpy(u + i * ldu, u2 + i * n, sizeof(R) * n);
+    memcpy(v + i * ldv, v2 + i * m, sizeof(R) * m);
+  }
+  /* The k roots (xLASD3): deltas into u's first k columns, the sums
+     d_j + σ into v's, then z recomputed from the roots (Gu and
+     Eisenstat), so that the vectors are orthogonal to working
+     accuracy. */
+  if (k == 1) {
+    d[0] = F(abs)(z[0]);
+    memcpy(v, v2, sizeof(R) * m);
+    for (int64_t i = 0; i < n; i++) u[i] = z[0] > 0 ? u2[i] : -u2[i];
+  } else {
+    memcpy(q, z, sizeof(R) * k);
+    R rho = F(rnorm)(z, k);
+    for (int64_t i = 0; i < k; i++) z[i] /= rho;
+    rho *= rho;
+    for (int64_t i = 0; i < k; i++)
+      if (!F(lasd4)(k, i, dsigma, z, u + i * ldu, rho, d + i, v + i * ldv))
+        return 0;
+    for (int64_t i = 0; i < k; i++) {
+      R zi = u[i + (k - 1) * ldu] * v[i + (k - 1) * ldv];
+      for (int64_t p = 0; p < i; p++)
+        zi *= u[i + p * ldu] * v[i + p * ldv] / (dsigma[i] - dsigma[p]) /
+              (dsigma[i] + dsigma[p]);
+      for (int64_t p = i; p < k - 1; p++)
+        zi *= u[i + p * ldu] * v[i + p * ldv] / (dsigma[i] - dsigma[p + 1]) /
+              (dsigma[i] + dsigma[p + 1]);
+      z[i] = F(sign)(SQRT(F(abs)(zi)), q[i]);
+    }
+    /* The secular vectors, normalised, rows by type: u's into q. */
+    for (int64_t i = 0; i < k; i++) {
+      R *ui = u + i * ldu, *wi = v + i * ldv;
+      wi[0] = z[0] / ui[0] / wi[0];
+      ui[0] = -1;
+      for (int64_t p = 1; p < k; p++) {
+        wi[p] = z[p] / ui[p] / wi[p];
+        ui[p] = dsigma[p] * wi[p];
+      }
+      R t = 1 / F(rnorm)(ui, k);
+      q[i * k] = ui[0] * t;
+      for (int64_t p = 1; p < k; p++) q[p + i * k] = ui[idxc[p]] * t;
+    }
+    /* u = u2 q: its first nl rows from types 1 and 3, row nl from q's
+       first row, the last nr from types 2 and 3. */
+    int64_t c1 = ctot[0], c2 = ctot[1], c3 = ctot[2], k3 = 1 + c1 + c2;
+    if (k == 2) {
+      if (!F(rgemm)(n, k, k, u2, n, q, k, u, ldu)) return -1;
+    } else {
+      if (!F(rgemm)(nl, k, c1, u2 + n, n, q + 1, k, u, ldu) ||
+          !F(raccum)(nl, k, c3, u2 + k3 * n, n, q + k3, k, u, ldu))
+        return -1;
+      for (int64_t i = 0; i < k; i++) u[nl + i * ldu] = q[i * k];
+      if (!F(rgemm)(nr, k, c2 + c3, u2 + (nl + 1) + (1 + c1) * n, n,
+                    q + 1 + c1, k, u + nl + 1, ldu))
+        return -1;
+    }
+    /* v's into q, then v = v2 q likewise. */
+    for (int64_t i = 0; i < k; i++) {
+      R *wi = v + i * ldv, t = 1 / F(rnorm)(wi, k);
+      q[i * k] = wi[0] * t;
+      for (int64_t p = 1; p < k; p++) q[p + i * k] = wi[idxc[p]] * t;
+    }
+    if (k == 2) {
+      if (!F(rgemm)(m, k, k, v2, m, q, k, v, ldv)) return -1;
+    } else {
+      if (!F(rgemm)(nl + 1, k, 1 + c1, v2, m, q, k, v, ldv) ||
+          !F(raccum)(nl + 1, k, c3, v2 + k3 * m, m, q + k3, k, v, ldv))
+        return -1;
+      /* The last rows take column 0 and types 2 and 3: column 0 moved
+         next to them, over the last of type 1. */
+      if (c1 > 0) {
+        for (int64_t i = 0; i < k; i++) q[c1 + i * k] = q[i * k];
+        for (int64_t i = nl + 1; i < m; i++) v2[i + c1 * m] = v2[i];
+      }
+      if (!F(rgemm)(nr + sqre, k, 1 + c2 + c3, v2 + (nl + 1) + c1 * m, m,
+                    q + c1, k, v + nl + 1, ldv))
+        return -1;
+    }
+  }
+  for (int64_t i = 0; i < n; i++) d[i] *= big;
+  F(lamrg)(k, n - k, d, 1, -1, idxq);
+  return 1;
+}
+
+/* The SVD of the upper bidiagonal B, [n] × (n + [sqre]), of the diagonal
+   [d] and superdiagonal [e], into d, u and v as lasd1 leaves them, from
+   the identity: torn in two at row n / 2 [levels] times, the first half
+   of n + 1 columns, the last of its parent's, the leaves by lasdq, then
+   merged (xLASD0, its subproblems solved depth first); [idxq] orders d
+   ascending. [work] and [iwork] as for lasd1. Answers as lasd1. */
+static int F(lasd0)(int64_t n, int sqre, int levels, R *d, R *e, R *u,
+                    int64_t ldu, R *v, int64_t ldv, int64_t *idxq, R *work,
+                    int64_t *iwork) {
+  if (levels == 0) {
+    for (int64_t i = 0; i < n; i++) idxq[i] = i;
+    return F(lasdq)(n, sqre, d, e, u, ldu, v, ldv, work);
+  }
+  int64_t nl = n / 2, nr = n - nl - 1, c = nl + 1;
+  int ok = F(lasd0)(nl, 1, levels - 1, d, e, u, ldu, v, ldv, idxq, work,
+                    iwork);
+  if (ok == 1)
+    ok = F(lasd0)(nr, sqre, levels - 1, d + c, e + c, u + c + c * ldu, ldu,
+                  v + c + c * ldv, ldv, idxq + c, work, iwork);
+  return ok == 1 ? F(lasd1)(nl, nr, sqre, d, d[nl], e[nl], u, ldu, v, ldv,
+                            idxq, work, iwork)
+                 : ok;
+}
+
+/* The singular values of the upper bidiagonal B of the diagonal [d] and
+   superdiagonal [e], [n] of them, descending into d, and where [u] is not
+   NULL, B = U diag d Vᵀ into u and v, n × n, columns [ldu] and [ldv]
+   apart, as LAPACK's xBDSDC: B's unreduced blocks, split where an e is
+   below 0.9 u after B is scaled to a largest magnitude of one, by divide
+   and conquer (lasd0); B of at most SMLSIZ values, or without vectors, by
+   lasdq. [work] holds 3(n + 1)² + 4n reals and [iwork] 5n indices.
+   Answers 1, 0 if an iteration does not converge, or −1 if an allocation
+   failed. */
+static int F(bdsdc)(int64_t n, R *d, R *e, R *u, int64_t ldu, R *v,
+                    int64_t ldv, R *work, int64_t *iwork) {
+  for (int64_t j = 0; u && j < n; j++)
+    for (int64_t i = 0; i < n; i++) {
+      u[i + j * ldu] = i == j;
+      v[i + j * ldv] = i == j;
+    }
+  if (u == NULL || n <= SMLSIZ) {
+    if (!F(lasdq)(n, 0, d, e, u, ldu, v, ldv, work)) return 0;
+    F(sort)(n, d, 1, u, n, ldu, v, n, ldv);
+    return 1;
+  }
+  R big = 0;
+  for (int64_t i = 0; i < n; i++) {
+    R x = F(abs)(d[i]), y = i < n - 1 ? F(abs)(e[i]) : 0;
+    big = x > big ? x : big;
+    big = y > big ? y : big;
+  }
+  if (big == 0) return 1;
+  F(scale)(d, e, 0, n - 1, big, 1);
+  const R eps = (R)0.9 * EPS;
+  for (int64_t i = 0; i < n; i++)
+    if (F(abs)(d[i]) < eps) d[i] = F(sign)(eps, d[i]);
+  for (int64_t start = 0, i = 0; i < n - 1; i++) {
+    int small = F(abs)(e[i]) < eps;
+    if (!small && i < n - 2) continue;
+    int64_t size = !small ? n - start : i - start + 1;
+    if (small && i == n - 2) {
+      /* The last value alone. */
+      u[(n - 1) + (n - 1) * ldu] = F(sign)(1, d[n - 1]);
+      d[n - 1] = F(abs)(d[n - 1]);
+    }
+    int levels = 0;
+    if (size > SMLSIZ)
+      for (levels = 1; (int64_t)(SMLSIZ + 1) << levels <= size;) levels++;
+    int ok = F(lasd0)(size, 0, levels, d + start, e + start,
+                      u + start + start * ldu, ldu, v + start + start * ldv,
+                      ldv, iwork, work, iwork + n);
+    if (ok != 1) return ok;
+    start = i + 1;
+  }
+  for (int64_t i = 0; i < n; i++) d[i] *= big;
+  F(sort)(n, d, 1, u, n, ldu, v, n, ldv);
+  return 1;
+}
+
+/* y[j·ys] += s Σ_i conj(a[i + j·lda]) x[i] for j < [n], i < [m]: y += s aᴴ
+   x for the column-major a (xGEMV's 'C'). By four columns at a time,
+   which share x's loads, each product in four parts by the index mod 4
+   as dot's, so that a column's bits do not depend on its neighbours. */
+static void F(mvh)(int64_t m, int64_t n, const T *a, int64_t lda,
+                   const T *x, T *y, int64_t ys, R s) {
+  int64_t j = 0;
+  for (; j + 4 <= n; j += 4) {
+    const T *c[4] = {a + j * lda, a + (j + 1) * lda, a + (j + 2) * lda,
+                     a + (j + 3) * lda};
+    T p[4][4] = {{0}};
+    int64_t r = 0;
+    for (; r + 4 <= m; r += 4)
+      for (int l = 0; l < 4; l++)
+        for (int q = 0; q < 4; q++) p[q][l] += CONJ(c[q][r + l]) * x[r + l];
+    for (; r < m; r++)
+      for (int q = 0; q < 4; q++) p[q][r & 3] += CONJ(c[q][r]) * x[r];
+    for (int q = 0; q < 4; q++)
+      y[(j + q) * ys] += s * ((p[q][0] + p[q][1]) + (p[q][2] + p[q][3]));
+  }
+  for (; j < n; j++) y[j * ys] += s * F(dot)(a + j * lda, x, m);
+}
+
+/* y[i] += s Σ_j a[i + j·lda] x[j·xs] for i < [m], j < [n]: y += s a x for
+   the column-major a (xGEMV's 'N'), by four columns at a time, which
+   share y's loads and stores. */
+static void F(mvn)(int64_t m, int64_t n, const T *a, int64_t lda,
+                   const T *x, int64_t xs, T *y, R s) {
+  int64_t j = 0;
+  for (; j + 4 <= n; j += 4) {
+    const T *c0 = a + j * lda, *c1 = c0 + lda, *c2 = c1 + lda, *c3 = c2 + lda;
+    T t0 = s * x[j * xs], t1 = s * x[(j + 1) * xs], t2 = s * x[(j + 2) * xs],
+      t3 = s * x[(j + 3) * xs];
+    for (int64_t i = 0; i < m; i++) {
+      T u = y[i];
+      u += c0[i] * t0;
+      u += c1[i] * t1;
+      u += c2[i] * t2;
+      u += c3[i] * t3;
+      y[i] = u;
+    }
+  }
+  for (; j < n; j++) {
+    const T *aj = a + j * lda;
+    T t = s * x[j * xs];
+    for (int64_t i = 0; i < m; i++) y[i] += aj[i] * t;
+  }
+}
+
+/* The panel of the first [nb] columns and rows of the [m] × [n] [a], m >=
+   n, by reflectors, as LAPACK's xLABRD: column i, the products of the
+   panel's earlier reflectors deferred until now applied to it, is reduced
+   below its diagonal by H_i, its diagonal into d[i]; then row i likewise,
+   on its conjugate, right of its superdiagonal by G_i, its superdiagonal
+   into e[i]. v_i and u_i are stored where they reduced, their first
+   elements 1. [x], m × nb, and [y], n × nb, columns [ldx] and [ldy]
+   apart, get X and Y with the rest of a updated as a − V Yᴴ − X U. [r]
+   holds n + nb elements: the conjugated row, contiguous, and a short
+   vector. */
+static void F(labrd)(T *a, int64_t m, int64_t n, int64_t nb, int64_t lda,
+                     R *d, R *e, T *tauq, T *taup, T *x, int64_t ldx, T *y,
+                     int64_t ldy, T *r) {
+  T *row = r + nb;
+  for (int64_t i = 0; i < nb; i++) {
+    T *ai = a + i * lda, *xi = x + i * ldx, *yi = y + i * ldy,
+      *xr = xi + i + 1, *yr = yi + i + 1;
+    int64_t mr = m - i - 1, nr = n - i - 1;
+    for (int64_t p = 0; p < i; p++) r[p] = CONJ(y[i + p * ldy]);
+    F(mvn)(m - i, i, a + i, lda, r, 1, ai + i, -1);
+    F(mvn)(m - i, i, x + i, ldx, ai, 1, ai + i, -1);
+    T alpha = ai[i];
+    tauq[i] = F(reflector)(&alpha, ai + i + 1, mr, 1);
+    d[i] = REAL(alpha);
+    if (nr == 0) continue;
+    /* Y's column i: τ_i times aᴴ v_i less the panel's products. */
+    ai[i] = 1;
+    memset(yi, 0, sizeof(T) * n);
+    F(mvh)(m - i, nr, ai + lda + i, lda, ai + i, yr, 1, 1);
+    F(mvh)(m - i, i, a + i, lda, ai + i, yi, 1, 1);
+    F(mvn)(nr, i, y + i + 1, ldy, yi, 1, yr, -1);
+    memset(yi, 0, sizeof(T) * i);
+    F(mvh)(m - i, i, x + i, ldx, ai + i, yi, 1, 1);
+    F(mvh)(i, nr, ai + lda, lda, yi, yr, 1, -1);
+    for (int64_t p = 0; p < nr; p++) yr[p] *= tauq[i];
+    /* Row i, conjugated into row, then G_i. */
+    for (int64_t p = 0; p < nr; p++) row[p] = CONJ(ai[(p + 1) * lda + i]);
+    for (int64_t p = 0; p <= i; p++) r[p] = CONJ(a[i + p * lda]);
+    F(mvn)(nr, i + 1, y + i + 1, ldy, r, 1, row, -1);
+    for (int64_t p = 0; p < i; p++) r[p] = CONJ(x[i + p * ldx]);
+    F(mvh)(i, nr, ai + lda, lda, r, row, 1, -1);
+    T beta = row[0];
+    taup[i] = F(reflector)(&beta, row + 1, nr - 1, 1);
+    e[i] = REAL(beta);
+    row[0] = 1;
+    /* X's column i: τ_i times a u_i less the panel's products. */
+    memset(xi, 0, sizeof(T) * m);
+    F(mvn)(mr, nr, ai + lda + i + 1, lda, row, 1, xr, 1);
+    F(mvh)(nr, i + 1, y + i + 1, ldy, row, xi, 1, 1);
+    F(mvn)(mr, i + 1, a + i + 1, lda, xi, 1, xr, -1);
+    memset(xi, 0, sizeof(T) * i);
+    F(mvn)(i, nr, ai + lda, lda, row, 1, xi, 1);
+    F(mvn)(mr, i, x + i + 1, ldx, xi, 1, xr, -1);
+    for (int64_t p = 0; p < mr; p++) xr[p] *= taup[i];
+    for (int64_t p = 0; p < nr; p++) ai[(p + 1) * lda + i] = CONJ(row[p]);
+  }
+}
+
+/* a = Q B Pᴴ in place in the [m] × [n] [a], m >= n, columns [lda] apart,
+   as LAPACK's blocked xGEBRD: B upper bidiagonal, its diagonal into [d]
+   and superdiagonal into [e]; Q = H_0 ⋯ H_(n−1) with v_i below a's
+   diagonal in column i, P = G_0 ⋯ G_(n−2) with u_i's conjugate right of
+   its superdiagonal in row i, their τ in [tauq] and [taup]. By panels of
+   NB columns and rows (labrd), each followed by the rest's update a − V
+   Yᴴ − X U by products on its transpose, row-major. The scratch [w] holds
+   (m + n + 1) NB + n elements. Answers 0 if an allocation failed. */
+static int F(gebrd)(T *a, int64_t m, int64_t n, int64_t lda, R *d, R *e,
+                    T *tauq, T *taup, T *w, arena *s) {
+  T *x = w, *y = x + m * NB, *r = y + n * NB;
+  for (int64_t i = 0; i < n; i += NB) {
+    int64_t nb = NB < n - i ? NB : n - i, m2 = m - i - nb, n2 = n - i - nb;
+    T *p = a + i + i * lda, *c = p + nb + nb * lda;
+    F(labrd)(p, m - i, n - i, nb, lda, d + i, e + i, tauq + i, taup + i, x,
+             m, y, n, r);
+    if (n2 == 0) continue;
+    if (!F(gemm)(n2, m2, nb, -1, (operand){y + nb, 1, n, CPLX},
+                 F(op)(p + nb, lda, 1), c, lda, s) ||
+        !F(gemm)(n2, m2, nb, -1, F(op)(p + nb * lda, lda, 1),
+                 F(op)(x + nb, m, 1), c, lda, s))
       return 0;
   }
+  return 1;
+}
+
+/* SVD on matrix [b] of [c] in the scratch [x]: s, and u and vh where the
+   call has vectors. A matrix that holds NaN or an infinity, or on which
+   an iteration does not converge, is NaN in each. Answers 0 if an
+   allocation failed. */
+static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
+  int64_t m = c->m, n = c->n, wide = m < n, mm = wide ? n : m;
+  int64_t k = wide ? m : n, uc = c->complete ? m : k, vr = c->complete ? n : k;
+  T *so = (T *)matrix_at(c, c->nops, b);
+  T *uo = c->vectors ? (T *)matrix_at(c, c->nops + 1, b) : NULL;
+  T *vo = c->vectors ? (T *)matrix_at(c, c->nops + 2, b) : NULL;
+  if (k == 0) {
+    for (int64_t i = 0; uo && i < m; i++)
+      for (int64_t j = 0; j < uc; j++) uo[i * uc + j] = i == j;
+    for (int64_t i = 0; vo && i < vr; i++)
+      for (int64_t j = 0; j < n; j++) vo[i * n + j] = i == j;
+    return 1;
+  }
+  /* B is a, or aᴴ where a is wide, mm × k, column-major, or row-major
+     where QR comes first (xGESDD's MNTHR). X = Q diag (U_B, I), mm × xc,
+     and W = P V_B, k × k, are u and vhᴴ, or vhᴴ and u where a is wide. */
+  int qrf = mm >= k * 11 / 6;
+  int64_t xc = wide ? vr : uc, ld = qrf ? k : mm;
+  T *a = x, *r = a + mm * k, *tau = r + k * k, *tauq = tau + k,
+    *taup = tauq + k, *ws = taup + k, *tmp = ws + (3 * mm + NB + 1) * NB;
+  R *d = (R *)(tmp + (wide ? mm * xc : k * k)), *e = d + k, *ub = e + k,
+    *vb = ub + k * k, *work = vb + k * k;
+  int64_t *iwork = (int64_t *)(((uintptr_t)(work + 3 * (k + 1) * (k + 1) + 4 * k) + 7) & ~(uintptr_t)7);
+  stage(c, 0, b, a, ld, qrf == wide);
+  R big = 0;
+  int finite = 1;
+  for (int64_t i = 0; i < mm * k; i++) {
+    R re = REAL(a[i]), im = IMAG(a[i]), mag = F(lapy3)(re, im, 0);
+    finite &= re - re == 0 && im - im == 0;
+    big = mag > big ? mag : big;
+    if (wide) a[i] = CONJ(a[i]);
+  }
+  /* Scaled into [small, 1 / small] where its largest magnitude lies
+     outside. */
+  const R small = SQRT(TINY) / (2 * EPS);
+  R sigma = big > 0 && big < small ? small / big : big > 1 / small ? 1 / small / big : 1;
+  if (sigma != 1)
+    for (int64_t i = 0; i < mm * k; i++) a[i] *= sigma;
+  T *bd = a;
+  int64_t lb = mm;
+  if (finite && qrf) {
+    if (!F(qr)(a, mm, k, k, tau, ws, s)) return 0;
+    for (int64_t j = 0; j < k; j++)
+      for (int64_t i = 0; i < k; i++) r[i + j * k] = i <= j ? a[i * k + j] : 0;
+    bd = r;
+    lb = k;
+  }
+  if (finite && !F(gebrd)(bd, lb, k, lb, d, e, tauq, taup, ws, s)) return 0;
+  int ok = finite ? F(bdsdc)(k, d, e, uo ? ub : NULL, k, uo ? vb : NULL, k,
+                             work, iwork)
+                  : 0;
+  if (ok < 0) return 0;
+  if (!ok) {
+    nans(so, k * (CPLX + 1), RDT);
+    if (uo) nans(uo, m * uc * (CPLX + 1), RDT);
+    if (vo) nans(vo, vr * n * (CPLX + 1), RDT);
+    return 1;
+  }
+  for (int64_t j = 0; j < k; j++) so[j] = d[j] * (1 / sigma) + 0;
+  if (!uo) return 1;
+  T *xo = wide ? tmp : uo, *wo = wide ? uo : tmp;
+  for (int64_t i = 0; i < mm; i++)
+    for (int64_t j = 0; j < xc; j++)
+      xo[i * xc + j] = i < k && j < k ? ub[i + j * k] : i == j;
+  for (int64_t i = 0; i < k; i++)
+    for (int64_t j = 0; j < k; j++) wo[i * k + j] = vb[i + j * k];
+  /* Q is the bidiagonalisation's, after QR's where it came first; P's
+     reflectors are B's rows right of the diagonal, conjugated. */
+  if (qrf && !F(back)(r, 1, k, 0, tauq, k, k, k, xo, xc, ws, s)) return 0;
+  if (!F(back)(a, qrf ? k : 1, qrf ? 1 : mm, 0, qrf ? tau : tauq, k, mm, xc,
+               xo, xc, ws, s) ||
+      !F(back)(bd + lb, lb, 1, 1, taup, k - 1, k - 1, k, wo + k, k, ws, s))
+    return 0;
+  const T *src = wide ? xo : wo;
+  int64_t rows = wide ? vr : k;
+  for (int64_t i = 0; i < rows; i++)
+    for (int64_t j = 0; j < n; j++) vo[i * n + j] = CONJ(src[j * rows + i]);
   return 1;
 }
 
@@ -1665,6 +2825,7 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
   int64_t m = c->m, n = c->n;
   T *d = (T *)matrix_at(c, c->nops, b);
   if (c->routine == EIGH) return F(eigh)(c, b, w, s);
+  if (c->routine == SVD) return F(svd)(c, b, w, s);
   if (c->routine == QR) {
     /* a factored in w, then R and Q out. */
     int64_t k = m < n ? m : n, qc = c->complete ? m : k;
