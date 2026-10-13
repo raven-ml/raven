@@ -45,20 +45,20 @@
                   R tile += a · b
 
    The kernel reads both operands through their strides, and runs the
-   block's MR-row tiles itself. An operand of at most IN_PLACE_BYTES is
-   read in place where its layout streams along the axis the kernel loads
-   (in_place), as BLIS's path for small products does: it is not packed,
-   and with both operands in place job 1 is gone. An edge sliver of b in
-   place is packed where the kernel reads NR columns, so that it reads no
-   column past b's.
+   block's MR-row tiles itself. An operand is read in place where its
+   layout streams along the axis the kernel loads and it stays in the
+   caches between its reads (in_place), as BLIS's path for small products
+   does: it is not packed, and with both operands in place job 1 is gone.
+   An edge sliver of b in place is packed where the kernel reads NR
+   columns, so that it reads no column past b's.
 
    A product of few rows, at most the table's few, packs a whole and then
    streams b: each unit packs a sliver of b and adds it in, so that b is
    read once and no panel passes between jobs. One of few columns, and
-   fewer columns than rows, is computed as its transpose. Where a table names other kernels,
-   a product runs on those that take less time for its rows (fastest): on
-   the M1, the cores' vector units take products of few rows from its
-   matrix unit.
+   fewer columns than rows, is computed as its transpose. Where a table
+   names other kernels, a product runs on those that take less time for
+   its rows (fastest): on the M1, the cores' vector units take products of
+   few rows from its matrix unit.
 
    R, the sum in acc, is dst itself: nx.cpu computes a dst of acc's dtype.
    Each tile starts as init, or +0, when its first KC block is computed. */
@@ -573,11 +573,12 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
   if (bp) give(SCRATCH, bp);
 }
 
-/* Products of few rows: at most MC. One job packs a whole, each element's
-   rows side by side over all of k, unless a is read in place; then a unit
-   is a sliver of b's columns of one element, which it reads in place or
-   packs, KC block by KC block, and adds into R. b, the large operand, is
-   read once, by one thread, and no panel is shared between jobs. */
+/* Products of few rows, at most the table's few. One job packs a whole,
+   each KC block as the kernel reads it (packed_a), unless a is read in
+   place; then a unit is a sliver of b's columns of one element, which it
+   reads in place or packs, KC block by KC block, and adds into R. b, the
+   large operand, is read once, by one thread, and no panel is shared
+   between jobs. */
 typedef struct {
   problem *p;
   nx_cpu_micro k;
@@ -1028,6 +1029,9 @@ static void rows_block(const rows_job *f, uint8_t *ap, int64_t e, int64_t x,
   nx_cpu_axpy axpy = nx_cpu_table->axpy[p->acc];
   for (int64_t t = 0; t < len; t += NX_CPU_LANES) {
     int64_t r = min64(NX_CPU_LANES, len - t), at = pos(p, B, e, 0, j0, k0 + t);
+    /* The last row to prefetch: in place, the block's, so that the next
+       group's first row comes ahead too; staged, the group's, the last the
+       buffer holds. */
     const uint8_t *vb = bp;
     int64_t ldb = c, last = r - 1;
     if (adjacent(p, B, COL)) {
