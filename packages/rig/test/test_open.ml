@@ -1034,41 +1034,50 @@ let test_pair_race () =
   equal ~msg:"the maps of the word" int 2 (count "map_peer");
   equal ~msg:"the maps given back" int 1 (count "unmap")
 
-(* Opens and closes in a loop keep a fixed record per device: rig's line,
-   records and reason, and the driver's word with what reading it needs,
-   whatever work the device did. The driver's stop gives back the rest of its
-   state, and rig its mappings of other devices' words. Each cycle opens a
-   producer and a consumer whose queue waits for the producer's value; both
-   borrow [kept] host buffers that the program keeps, which keep each
-   borrower's mapping until they return; the consumer allocates, then both
-   close. After a warm window of each kind, each window of [opens] cycles
-   grows the C heap by at most [record] and [word] bytes a device, and the
-   OCaml heap by at most [record_ml].
+(* Opens and closes in a loop keep a fixed record per device, whatever work
+   the device did: in the C heap, rig's records, name and reason
+   ([Support.record_bytes]) and the driver's state with its word
+   ([P.kept_bytes]); in the OCaml heap, all that one closed device reaches,
+   its record and the driver's handle, and two words for its entry in the
+   table of devices, whose chunks hold 256 devices. The driver's stop gives
+   back the rest of its state, and rig its mappings of other devices' words
+   and memory once the device is Stopped. Polled's handle also keeps a log
+   of the driver's calls, which grows with the work and which the OCaml
+   laws leave out. Each cycle opens a producer and a consumer whose queue
+   waits for the producer's value; the consumer allocates, then both close.
+   After a warm window of each kind, each window of [opens] cycles grows
+   each heap by at most that a device.
 
-   In a window of [Reading] cycles, both devices also read the kept buffers.
-   Their stamps reuse the slots of stopped devices, so the reads keep nothing:
-   such a window grows the C heap no more than one of [Mapping] cycles, which
-   differ by the reads alone, up to [step]. Slots kept per device would add a
-   112-byte chunk of stamps every four devices and buffer, 112 KiB a window.
-   macOS's count of the C heap can
-   step by 16 KiB or more over one window: the laws check the least growth of
-   [windows] of each kind. *)
+   Windows differ by what both devices do with [kept] host buffers that the
+   program keeps: nothing in a [Bare] window; in a [Mapping] one each
+   borrows them, which maps them; in a [Reading] one each also reads them.
+   A mapping kept per device and buffer would add at least a mapping
+   record, its cell in the buffer's list and its region to the OCaml heap,
+   13 words, 416 KiB a window, and slots of stamps kept per device would add
+   a 112-byte chunk to the C heap every four devices and buffer, 112 KiB a
+   window. So a window of each kind grows each heap no more than a bare
+   one, up to [step]: macOS's count of the C heap can step by 16 KiB or more
+   over one window, and the laws check the least growth of [windows] of each
+   kind. *)
 let opens = 1024
 let windows = 3
-let record = 2048
-let word = 1024
-let record_ml = 4096
 let kept = 2
 let step = 16 * 1024
+let table_words = 2
 
-type cycles = Reading | Mapping
+type cycles = Bare | Mapping | Reading
+
+let words v = Obj.reachable_words (Obj.repr v) * (Sys.word_size / 8)
+
+(* The bytes of Polled's log of [p]'s calls. *)
+let logged p = words (P.log p, P.frees p, P.allocs p, P.host_maps p)
 
 let test_open_close () =
   let hs = List.init kept (fun _ -> Rig.Buffer.create Rig.host (1 lsl 16)) in
   let reads = Support.touching (Array.make kept Rig.Submission.read) in
   let cycle kind i =
-    let p, _ = P.open_ (Printf.sprintf "open:producer%d" (i mod 2)) in
-    let d, _ =
+    let p, pp = P.open_ (Printf.sprintf "open:producer%d" (i mod 2)) in
+    let d, dp =
       P.open_ ~waits_on:[ `Host ] (Printf.sprintf "open:cycle%d" (i mod 2))
     in
     ignore (Rig.Buffer.create d 64 : Rig.Buffer.t);
@@ -1077,10 +1086,12 @@ let test_open_close () =
         (List.map (fun h -> require_some (Rig.Buffer.borrow d h)) hs)
     in
     let work d =
-      let bs = borrows d in
       match kind with
-      | Reading -> (Rig.Submission.make d [| reads |], bs)
-      | Mapping -> (Rig.Submission.make d [||], [||])
+      | Bare -> (Rig.Submission.make d [||], [||])
+      | Mapping ->
+          ignore (borrows d : Rig.Buffer.t array);
+          (Rig.Submission.make d [||], [||])
+      | Reading -> (Rig.Submission.make d [| reads |], borrows d)
     in
     let s, buffers = work p in
     let a = submit s ~buffers in
@@ -1088,7 +1099,7 @@ let test_open_close () =
     Rig.Point.wait (submit s ~buffers ~waits:[| a |]);
     Rig.close d;
     Rig.close p;
-    [ p; d ]
+    [ (p, pp); (d, dp) ]
   in
   let heap () =
     match Support.heap_bytes () with
@@ -1096,42 +1107,59 @@ let test_open_close () =
     | None -> skip ~reason:"the system counts no C heap" ()
   in
   let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
+  let settle closed =
+    Gc.full_major ();
+    List.iter (fun (d, _) -> Rig.free_cache d) closed;
+    List.iter (fun h -> Rig.Buffer.wait h Rig.Read_write) hs
+  in
   let window kind =
     let c = heap () and ml = live () in
     let closed = List.concat (List.init opens (fun i -> cycle kind (i + 1))) in
-    Gc.full_major ();
-    List.iter Rig.free_cache closed;
-    List.iter (fun h -> Rig.Buffer.wait h Rig.Read_write) hs;
-    (heap () - c, live () - ml)
+    settle closed;
+    let logs = List.fold_left (fun n (_, p) -> n + logged p) 0 closed in
+    (heap () - c, live () - ml - logs)
   in
-  ignore (window Reading);
-  ignore (window Mapping);
-  let grown = List.init windows (fun _ -> (window Reading, window Mapping)) in
-  let cs f = List.map (fun g -> fst (f g)) grown in
-  let least l = List.fold_left Int.min max_int l in
-  let shown l = String.concat ", " (List.map string_of_int l) in
-  List.iter
-    (fun (kind, f) ->
-      at_most int
-        ~msg:
-          (Printf.sprintf "the C heap's least growth over a window of %s (%s)"
-             kind (shown (cs f)))
-        ~than:(2 * opens * (record + word))
-        (least (cs f)))
-    [ ("reads", fst); ("mappings", snd) ];
-  at_most int
-    ~msg:
-      (Printf.sprintf
-         "the C heap's least growth over a window of reads (%s), past the \
-          least of mappings (%s)"
-         (shown (cs fst)) (shown (cs snd)))
-    ~than:step
-    (least (cs fst) - least (cs snd));
-  List.iter
-    (fun ((_, reading), (_, mapping)) ->
-      at_most int ~msg:"the OCaml heap's growth over a window"
-        ~than:(2 * opens * record_ml) (Int.max reading mapping))
-    grown
+  let kinds = [ ("bare", Bare); ("mappings", Mapping); ("reads", Reading) ] in
+  let record_c =
+    Support.record_bytes ~name:"open:producer0" ~why:"closed" + P.kept_bytes
+  in
+  let record_ml =
+    let closed = cycle Reading 0 in
+    settle closed;
+    let kept (d, p) = words d - logged p + (table_words * Sys.word_size / 8) in
+    List.fold_left (fun n c -> Int.max n (kept c)) 0 closed
+  in
+  List.iter (fun (_, kind) -> ignore (window kind)) kinds;
+  let grown =
+    List.init windows (fun _ -> List.map (fun (_, kind) -> window kind) kinds)
+  in
+  let least heap i =
+    List.fold_left (fun n g -> Int.min n (heap (List.nth g i))) max_int grown
+  in
+  let shown heap i =
+    String.concat ", "
+      (List.map (fun g -> string_of_int (heap (List.nth g i))) grown)
+  in
+  let law i name (what, heap, record) =
+    at_most int
+      ~msg:
+        (Printf.sprintf "the %s heap's least growth over a window of %s (%s)"
+           what name (shown heap i))
+      ~than:(2 * opens * record) (least heap i);
+    at_most int
+      ~msg:
+        (Printf.sprintf
+           "the %s heap's least growth over a window of %s (%s), past the \
+            least of bare ones (%s)"
+           what name (shown heap i) (shown heap 0))
+      ~than:step
+      (least heap i - least heap 0)
+  in
+  List.iteri
+    (fun i (name, _) ->
+      List.iter (law i name)
+        [ ("C", fst, record_c); ("OCaml", snd, record_ml) ])
+    kinds
 
 (* An open whose opener blocks holds back only opens of its own name. *)
 let test_blocked_opener () =

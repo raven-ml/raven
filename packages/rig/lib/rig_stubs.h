@@ -57,6 +57,9 @@ struct rig_entry {
   uint64_t w, u;
 };
 
+/* The entries a device's record of waits holds when it is first made. */
+#define RIG_RECORD_MIN 8
+
 /* A device's time pairs for timed values, chunks of RIG_TIMES pairs that
    never move, and the indices of the free pairs, under [mu]. A hand-over
    takes a pair for a value it times; its driver writes the pair before the
@@ -97,6 +100,15 @@ struct release_node;
 
 struct release_list {
   _Atomic(struct release_node *) head;
+};
+
+/* A lock of rig's OCaml state, with a condition, owned by a custom block
+   and freed with it. Every lock is on one list, under [locks_mu], so a
+   forked child can make each anew. */
+struct rig_lock {
+  rig_mutex mu;
+  rig_cond cv;
+  struct rig_lock *prev, *next;
 };
 
 /* A device's record, kept for the life of the process. The mutex guards

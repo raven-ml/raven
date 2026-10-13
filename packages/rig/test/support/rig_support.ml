@@ -67,6 +67,8 @@ external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 
 external host_held : unit -> int = "rig_test_host_held"
 external heap_bytes : unit -> int = "rig_test_heap_bytes"
+external record_bytes : string -> string -> int = "rig_test_record_bytes"
+external polled_kept_bytes : unit -> int = "rig_test_polled_kept_bytes"
 external gcc_asan : unit -> bool = "rig_test_gcc_asan" [@@noalloc]
 external load : int -> int = "rig_test_load"
 external store : int -> int -> unit = "rig_test_store"
@@ -526,6 +528,7 @@ module Polled = struct
 
   let set_word d v = polled_set_word d.c v
   let word_at d = d.word_at
+  let kept_bytes = polled_kept_bytes ()
   let stop_fault d = Mutex.protect d.lock (fun () -> d.stop_fault)
   let stops d = polled_stops d.c
   let blocked d = polled_blocked d.c
@@ -616,6 +619,7 @@ end
 (* Census *)
 
 let heap_bytes () = match heap_bytes () with -1 -> None | n -> Some n
+let record_bytes ~name ~why = record_bytes name why
 
 let descriptors () =
   if Sys.win32 then None else Some (Array.length (Sys.readdir "/dev/fd"))

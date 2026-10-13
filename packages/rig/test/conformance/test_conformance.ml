@@ -1084,26 +1084,24 @@ let idle_close (module G : Gpu) () =
   G.close t;
   equal int ~msg:"the word" 2 (Rig.signaled t.d)
 
-(* Opens and closes of a device keep a fixed record per open: rig's line,
-   records and reason, and the driver's word and the state reading it needs,
-   which live for the process, beside what the vendor's library keeps. Each
-   open waits for a Polled producer's value, which the device's queue waits
-   for where it maps the producer's word: its close gives the mapping back.
-   A warm run of as many opens fills the caches and tables the opens grow to,
-   and each closed device's memory returns at its [free_cache]. *)
+(* Opens and closes of a device keep a fixed record per open in the heaps:
+   rig's records, the driver's word and the state reading it needs, which
+   live for the process, beside what the vendor's library keeps. Each open
+   waits for a Polled producer's value, which the device's queue waits for
+   where it maps the producer's word: its drain gives the mapping back once
+   it is Stopped. The law bounds the heaps, which a mapping a kernel driver
+   holds is not in. A warm run of as many opens fills the caches and tables
+   the opens grow to, and each closed device's memory returns at its
+   [free_cache]. *)
 let opens = 32
 
-(* What an open keeps of the C heap past its close, per device: rig's records,
-   about 1 KiB, the driver's word and what reading it needs, and the vendor's
-   library's own, which neither rig nor the driver can give back. The
-   driver's stop gives back the state it made to run work. Metal's library
-   keeps about 30 bytes of CoreAnalytics messages, and caches that grow by
-   about 10 KB over the first hundreds of opens. *)
-let kept_c = 4096
-
-(* What an open keeps of the OCaml heap, per device: rig's device record and
-   the driver's handle. *)
-let kept_ml = 2048
+(* What a GPU device keeps of the C heap past its close, beside rig's record
+   ([Rig_support.record_bytes]): the driver's word and what reading it
+   needs, and the vendor's library's own, which neither rig nor the driver
+   can give back. The driver's stop gives back the state it made to run
+   work. Metal's library keeps about 30 bytes of CoreAnalytics messages, and
+   caches that grow by about 10 KB over the first hundreds of opens. *)
+let driver_c = 3072
 
 let settle ds =
   Gc.full_major ();
@@ -1128,7 +1126,20 @@ let open_close (module G : Gpu) () =
   in
   let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
   let cycles () = List.concat (List.init opens (fun _ -> cycle ())) in
-  settle (cycles ());
+  (* The most a closed device keeps: in the OCaml heap, all it reaches, its
+     record and its driver's handle. *)
+  let most f = List.fold_left (fun n d -> Int.max n (f d)) 0 in
+  let closed = cycles () in
+  settle closed;
+  let kept_ml =
+    most (fun d -> Obj.reachable_words (Obj.repr d)) closed
+    * (Sys.word_size / 8)
+  in
+  let kept_c =
+    most (fun d -> Rig_support.record_bytes ~name:(Rig.name d) ~why:"closed")
+      closed
+    + Int.max P.kept_bytes driver_c
+  in
   let c = heap () and ml = live () in
   settle (cycles ());
   at_most int ~msg:"the C heap's growth over the opens"
