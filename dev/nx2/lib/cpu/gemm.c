@@ -52,10 +52,10 @@
    place is packed where the kernel reads NR columns, so that it reads no
    column past b's.
 
-   A product of at most MC rows packs a whole and then streams b: each unit
-   packs a sliver of b and adds it in, so that b is read once and no panel
-   passes between jobs. One of at most MC columns, and fewer columns than
-   rows, is computed as its transpose. Where a table names other kernels,
+   A product of few rows, at most the table's few, packs a whole and then
+   streams b: each unit packs a sliver of b and adds it in, so that b is
+   read once and no panel passes between jobs. One of few columns, and
+   fewer columns than rows, is computed as its transpose. Where a table names other kernels,
    a product runs on those that take less time for its rows (fastest): on
    the M1, the cores' vector units take products of few rows from its
    matrix unit.
@@ -1225,11 +1225,11 @@ int nx_cpu_contract_on(int acc, const nx_contract_view *v,
   atomic_init(&p.failed, 0);
   if (!chain_order(&p)) lanes(&p);
   else {
-    if (p.ext[COL] < p.ext[ROW] && p.ext[COL] <= p.g->mc) transpose(&p);
+    if (p.ext[COL] < p.ext[ROW] && p.ext[COL] <= p.g->few) transpose(&p);
     p.g = fastest(p.g, p.ext[ROW]);
     p.a_in = in_place(&p, A);
     p.b_in = in_place(&p, B);
-    if (p.ext[ROW] <= p.g->mc) few_rows(&p);
+    if (p.ext[ROW] <= p.g->few) few_rows(&p);
     else chain(&p);
   }
   return !atomic_load(&p.failed);

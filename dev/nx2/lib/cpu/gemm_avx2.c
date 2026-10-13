@@ -154,19 +154,29 @@ DOT(dot2_f64, double, 4, 4, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 4, fma)
 
+/* The rows up to which a product streams b past all of a (gemm.c): its
+   one job, which packs b's slivers as it computes them, takes less time
+   than chain order's jobs, which pack a panel of b on few threads before
+   computing it. On the i9-9900K's 16 threads a 256³ float32 product takes
+   36.5 µs so against 51, a 4096 × 4096 weight against 128 rows 5.10 ms
+   against 8.35. */
+#define FEW 256
+
 void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = {kernel_f32, MR, 16, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
                  SPEED, 1},
       .mc = 96,
       .kc = 384,
-      .nc = 3072};
+      .nc = 3072,
+      .few = FEW};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
       .kernel = {kernel_f64, MR, 8, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
                  SPEED, 1},
       .mc = 96,
       .kc = 256,
-      .nc = 3072};
+      .nc = 3072,
+      .few = FEW};
   t->dot[NX_FLOAT32] = dot_f32;
   t->dot[NX_FLOAT64] = dot_f64;
   t->axpy[NX_FLOAT32] = axpy_f32;

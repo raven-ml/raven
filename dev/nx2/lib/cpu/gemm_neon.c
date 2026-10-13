@@ -112,13 +112,15 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
                  SPEED32, 1},
       .mc = 128,
       .kc = 512,
-      .nc = 3072};
+      .nc = 3072,
+      .few = 128};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
       .kernel = {kernel_f64, MR, 6, NX_CPU_A_ELEMENTS, NX_CPU_B_SLIVER,
                  SPEED64, 1},
       .mc = 128,
       .kc = 256,
-      .nc = 3072};
+      .nc = 3072,
+      .few = 128};
   t->dot[NX_FLOAT32] = dot_f32;
   t->dot[NX_FLOAT64] = dot_f64;
   t->axpy[NX_FLOAT32] = axpy_f32;

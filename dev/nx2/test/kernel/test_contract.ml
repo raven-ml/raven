@@ -161,11 +161,11 @@ let operand dt s nb v seed =
   A.Any (move (M.Permute v.perm) x)
 
 (* The bounds gemm.c's paths turn on, on every table: a product of more
-   rows and columns than [few_rows_most] (NEON's MC, the largest) takes the
-   chain path; [kc_least] and [nc_least] are the smallest blocks of the
+   rows and columns than [few_rows_most] (AVX2's few, the largest) takes
+   the chain path; [kc_least] and [nc_least] are the smallest blocks of the
    contraction and of b's columns, KC and NC, and [panels] the bytes of
    packed operands a group of batch elements shares, b's panel at least. *)
-let few_rows_most = 128
+let few_rows_most = 256
 let kc_least = 256
 let nc_least = 1024
 let panels = 8 * 1024 * 1024

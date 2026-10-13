@@ -89,13 +89,15 @@ static void set(nx_cpu_target *t) {
                  SPEED, 1},
       .mc = 64,
       .kc = 256,
-      .nc = 1024};
+      .nc = 1024,
+      .few = 64};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
       .kernel = {kernel_f64, MR, NR, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
                  SPEED, 1},
       .mc = 64,
       .kc = 256,
-      .nc = 1024};
+      .nc = 1024,
+      .few = 64};
   t->dot[NX_FLOAT32] = dot_f32;
   t->dot[NX_FLOAT64] = dot_f64;
   t->axpy[NX_FLOAT32] = axpy_f32;
