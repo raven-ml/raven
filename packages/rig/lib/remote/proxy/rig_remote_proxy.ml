@@ -24,7 +24,8 @@ type t = {
   word : region;
 }
 
-external make_c : Link.t -> int -> nativeint = "caml_rig_remote_proxy_make"
+external make_c : Link.t -> int -> nativeint -> nativeint
+  = "caml_rig_remote_proxy_make"
 external word_at : nativeint -> int = "caml_rig_remote_proxy_word"
 external signaled_c : nativeint -> int = "caml_rig_remote_proxy_signaled"
 
@@ -33,14 +34,14 @@ external sleep_c : nativeint -> int -> int -> bool
 
 external stop_c : nativeint -> unit = "caml_rig_remote_proxy_stop"
 
-let make l (a : Wire.account) c =
+let make l (a : Wire.account) c ~word =
   (match c with
   | Rig_remote_abi.Host _ when a.id <> 0 ->
       invalid_arg "Rig_remote_proxy.device: a host's record for a device"
   | Rig_remote_abi.Device { id } when id <> a.id ->
       invalid_arg "Rig_remote_proxy.device: a record of another device"
   | _ -> ());
-  let c' = make_c l a.id in
+  let c' = make_c l a.id word in
   {
     c = c';
     link = l;
@@ -192,5 +193,5 @@ let device l (a : Wire.account) c : t Rig_edge.opener =
   {
     name = a.name;
     driver = (module Driver);
-    make = (fun ~word:_ -> Ok (make l a c));
+    make = (fun ~word -> Ok (make l a c ~word));
   }

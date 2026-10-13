@@ -195,12 +195,13 @@ struct rig_remote_flight {
 };
 
 /* A proxy's C state. Every field but [driver] and [word] is guarded by its
-   link's lock; [word] is written there too, and read without it. */
+   link's lock; the word, rig's word its open was given, is written there
+   too, and read without it. */
 struct rig_remote_dev {
   const struct rig_driver *driver;
   struct rig_remote_link *link;
   uint64_t id;
-  _Atomic uint64_t word; /* the shadow */
+  _Atomic uint64_t *word; /* the shadow, rig's word */
   uint64_t handed;       /* the last value handed over */
   uint64_t written;      /* the last value that copies into local memory */
   uint64_t flying;       /* bytes of [flights] */

@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* Proxies: the C edge of a device of another machine, whose hand-overs are
-   frames on its link (rig_remote_link.c), and its word, a shadow the link's
-   receiving thread advances. A wait between proxies of one link reaches the
+   frames on its link (rig_remote_link.c), and its word, rig's word for the
+   device, a shadow the link's receiving thread advances. A wait between proxies of one link reaches the
    edge with [at] the producer's id on the agent. */
 
 #define _GNU_SOURCE
@@ -54,7 +54,7 @@ static int proxy_room(void *self, const struct rig_part *parts, int n,
   }
   struct rig_remote_link *l = d->link;
   pthread_mutex_lock(&l->mu);
-  int later = d->flying > WINDOW_BYTES && d->handed > atomic_load(&d->word);
+  int later = d->flying > WINDOW_BYTES && d->handed > atomic_load(d->word);
   pthread_mutex_unlock(&l->mu);
   return later ? RIG_LATER : RIG_FITS;
 }
@@ -65,11 +65,11 @@ static int proxy_room(void *self, const struct rig_part *parts, int n,
 static int followed(struct rig_remote_dev *d, const struct rig_wait *waits,
                     int nwaits) {
   struct rig_remote_link *l = d->link;
-  if (atomic_load(&d->word) < d->written) return 0;
+  if (atomic_load(d->word) < d->written) return 0;
   for (int i = 0; i < nwaits; i++) {
     uint64_t id = waits[i].at;
     struct rig_remote_dev *p = id < l->ndevs ? l->devs[id] : NULL;
-    if (p != NULL && atomic_load(&p->word) < waits[i].value) return 0;
+    if (p != NULL && atomic_load(p->word) < waits[i].value) return 0;
   }
   return 1;
 }
@@ -234,14 +234,17 @@ static const struct rig_driver proxy_driver = {proxy_room, proxy_submit,
 
 /* Stubs */
 
-/* The C state of the proxy of the agent's device [id] on the link. Does not
+/* The C state of the proxy of the agent's device [id] on the link, whose
+   shadow is the 8 bytes at [word]; its values start after theirs. Does not
    release the runtime. */
-value caml_rig_remote_proxy_make(value link, value id) {
+value caml_rig_remote_proxy_make(value link, value id, value word) {
   struct rig_remote_dev *d = calloc(1, sizeof *d);
   if (d == NULL) caml_raise_out_of_memory();
   d->driver = &proxy_driver;
   d->link = Link_c(link);
   d->id = (uint64_t)Long_val(id);
+  d->word = (_Atomic uint64_t *)Nativeint_val(word);
+  d->handed = d->written = atomic_load(d->word);
   int r = rig_remote_add_dev(d);
   if (r != 0) free(d);
   if (r == -2) caml_raise_out_of_memory();
@@ -253,11 +256,11 @@ value caml_rig_remote_proxy_make(value link, value id) {
 
 /* The host address of the proxy's shadow. */
 value caml_rig_remote_proxy_word(value vd) {
-  return Val_long((intnat)(uintptr_t)&Dev_val(vd)->word);
+  return Val_long((intnat)(uintptr_t)Dev_val(vd)->word);
 }
 
 value caml_rig_remote_proxy_signaled(value vd) {
-  return Val_long((intnat)atomic_load(&Dev_val(vd)->word));
+  return Val_long((intnat)atomic_load(Dev_val(vd)->word));
 }
 
 static int64_t now_ns(void) {
@@ -278,7 +281,7 @@ value caml_rig_remote_proxy_sleep(value vd, value vseen, value vms) {
   pthread_mutex_lock(&l->mu);
   int64_t until = now_ns() + (int64_t)ms * 1000000LL;
   for (int64_t now = now_ns();
-       !atomic_load(&l->failed) && atomic_load(&d->word) == seen && now < until;
+       !atomic_load(&l->failed) && atomic_load(d->word) == seen && now < until;
        now = now_ns())
     rig_remote_wait_ns(&l->cv, &l->mu, until - now);
   int failed = atomic_load(&l->failed);
@@ -294,7 +297,7 @@ value caml_rig_remote_proxy_stop(value vd) {
   struct rig_remote_dev *d = Dev_val(vd);
   struct rig_remote_link *l = d->link;
   if (rig_remote_forked(l->job)) {
-    atomic_store(&d->word, d->handed);
+    atomic_store(d->word, d->handed);
     return Val_unit;
   }
   pthread_mutex_lock(&l->mu);

@@ -1000,11 +1000,11 @@ static int recv_word(struct rig_remote_link *l, uint64_t n, struct reader *rd) {
   struct rig_remote_dev *d = dev_of(l, id);
   /* A stopped proxy's word took its last value already, maybe before this
      report. */
-  if (d != NULL && d->stopped && v <= atomic_load(&d->word)) {
+  if (d != NULL && d->stopped && v <= atomic_load(d->word)) {
     pthread_mutex_unlock(&l->mu);
     return 0;
   }
-  if (d == NULL || v <= atomic_load(&d->word) || v > d->handed ||
+  if (d == NULL || v <= atomic_load(d->word) || v > d->handed ||
       (d->locals != NULL && d->locals->value <= v)) {
     pthread_mutex_unlock(&l->mu);
     return MALFORMED;
@@ -1016,7 +1016,7 @@ static int recv_word(struct rig_remote_link *l, uint64_t n, struct reader *rd) {
     free(f);
   }
   if (d->flights == NULL) d->flights_last = NULL;
-  atomic_store_explicit(&d->word, v, memory_order_release);
+  atomic_store_explicit(d->word, v, memory_order_release);
   pthread_cond_broadcast(&l->cv);
   pthread_mutex_unlock(&l->mu);
   return 0;
@@ -1054,8 +1054,8 @@ static int recv_bytes(struct rig_remote_link *l, uint64_t n, struct reader *rd) 
 void rig_remote_settle(struct rig_remote_dev *d) {
   struct rig_remote_link *l = d->link;
   if (!d->stopped || (d->locals != NULL && l->receiving)) return;
-  if (atomic_load(&d->word) < d->handed)
-    atomic_store_explicit(&d->word, d->handed, memory_order_release);
+  if (atomic_load(d->word) < d->handed)
+    atomic_store_explicit(d->word, d->handed, memory_order_release);
   pthread_cond_broadcast(&l->cv);
 }
 

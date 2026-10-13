@@ -41,9 +41,11 @@ val device : Link.t -> Wire.account -> Rig_remote_abi.t -> t Rig_edge.opener
     record is [c]. Its name is [a.name]. Constructing it registers nothing and
     sends nothing: [a] is the agent's answer for a device it opened.
 
-    Its [make ()] registers the proxy on [l] and returns it. It sends nothing.
+    Its [make ~word] registers the proxy on [l], with the 8 bytes at [word]
+    as its timeline word, and returns it. It sends nothing. The proxy's
+    values start after the value those bytes hold.
 
-    [make ()] raises [Invalid_argument] if [c] is [Host _] and [a]'s id is not
+    [make] raises [Invalid_argument] if [c] is [Host _] and [a]'s id is not
     [0], if [c] is [Device { id }] and [id] is not [a]'s, or if [l] has a proxy
     of [a]'s device. Closing a proxy does not permit another proxy of that
     account on the same link. *)
@@ -70,7 +72,7 @@ val capability : t -> Rig_remote_abi.t
       | [maps_host]      | [false]                                           |
       | [host_addresses] | [false]                                           |
       | [capability]     | {!capability} ({!Rig_remote_abi.declare})         |
-      | [word]           | Eight bytes of this process's memory              |
+      | [word]           | The word [make] was given                         |
     }
 
     Each queue runs [Copy], and on the machine's host [Words] too. The
@@ -157,13 +159,13 @@ val capability : t -> Rig_remote_abi.t
 
 (** {1:progress Timeline, failure and stopping}
 
-    The proxy's timeline word is eight bytes of this process's memory that
-    hold, as an unsigned 64-bit integer in the host's byte order, the last
-    value [v] the agent has reported done. The receiving thread writes [v]
-    with release order, after it has written the bytes of the copies into
-    this process's memory of every value up to [v]. After {!stop} the word
-    holds the last value submitted. It never decreases and is never freed,
-    and the edge's state holds it. {!signaled} reads it with acquire order.
+    The proxy's timeline word is the eight bytes of this process's memory
+    that [make] was given. They hold, as an unsigned 64-bit integer in the
+    host's byte order, the last value [v] the agent has reported done. The
+    receiving thread writes [v] with release order, after it has written the
+    bytes of the copies into this process's memory of every value up to
+    [v]. After {!stop} the word holds the last value submitted. It never
+    decreases, and the edge's state holds its address. {!signaled} reads it with acquire order.
     {!sleep} returns once the word differs from [seen], immediately if it
     does already, or after [still_ms] milliseconds; it raises {!Fault} if the
     job has failed, before or meanwhile.
@@ -183,7 +185,9 @@ val capability : t -> Rig_remote_abi.t
     into this process's memory may still land: immediately if none is
     pending or the link's receiving thread has ended, and otherwise as the
     last pending copy's bytes land or the thread ends. It waits for nothing,
-    and ignores [fault]. *)
+    and ignores [fault]. Once the word holds that value, nothing writes it:
+    the receiving thread writes it under the link's lock, as the stop does,
+    and drops a report of a stopped proxy that the word has passed. *)
 
 (**/**)
 
