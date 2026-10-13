@@ -205,7 +205,8 @@ let eval ~by op =
       in
       applied i ~by op
 
-(* The one-node maps, built and evaluated: the paths off the fast one. *)
+(* The one-node maps, built and evaluated: the paths an interpretation may
+   reach. *)
 let eval1 ~by k dt x =
   let v, () = eval ~by (Prim.op1 ~by k dt x) in
   v
@@ -218,17 +219,28 @@ let eval3 ~by k c x y =
   let v, () = eval ~by (Prim.op3 ~by k c x y) in
   v
 
+(* No traced operand and no live [Extent] on the domain is the condition under
+   which {!Interp.receiver} gives [None], checked on the operands before the
+   operation is built. *)
 let apply1 ~by k dt x =
-  if Interp.quiet () then Exec.apply1 ~slow:eval1 ~by k dt x
-  else eval1 ~by k dt x
+  match x with
+  | Traced _ -> eval1 ~by k dt x
+  | Array _ | Shards _ | Donated _ | Deferred _ ->
+      if Interp.quiet () then Exec.apply1 ~by k dt x else eval1 ~by k dt x
 
 let apply2 ~by k dt x y =
-  if Interp.quiet () then Exec.apply2 ~slow:eval2 ~by k dt x y
-  else eval2 ~by k dt x y
+  match (x, y) with
+  | Traced _, _ | _, Traced _ -> eval2 ~by k dt x y
+  | _ ->
+      if Interp.quiet () then Exec.apply2 ~by k dt x y
+      else eval2 ~by k dt x y
 
 let apply3 ~by k c x y =
-  if Interp.quiet () then Exec.apply3 ~slow:eval3 ~by k c x y
-  else eval3 ~by k c x y
+  match (c, x, y) with
+  | Traced _, _, _ | _, Traced _, _ | _, _, Traced _ -> eval3 ~by k c x y
+  | _ ->
+      if Interp.quiet () then Exec.apply3 ~by k c x y
+      else eval3 ~by k c x y
 
 let contract ~by ~batch ~contracting ~acc dt a b init =
   let fast =

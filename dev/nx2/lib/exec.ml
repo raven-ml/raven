@@ -1439,50 +1439,63 @@ let value_of at a = Value.Array { at; a; dead = Value.Live }
 (* [at]'s kernels, where [handle_at] holds. *)
 let kernels_at at = Option.get (Devices.kernels (Devices.set at))
 
-let apply1 (type v s w r d) ~slow ~by k (dt : (w, r) D.t)
+(* The one-node maps, built and run: the paths off the fast one. *)
+let run1 ~by k dt x =
+  let v, () = run ~by (Prim.op1 ~by k dt x) in
+  v
+
+let run2 ~by k dt x y =
+  let v, () = run ~by (Prim.op2 ~by k dt x y) in
+  v
+
+let run3 ~by k c x y =
+  let v, () = run ~by (Prim.op3 ~by k c x y) in
+  v
+
+let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
     (x : (v, s, d) Value.t) : (w, r, d) Value.t =
   match x with
   | Value.Array rx when rx.dead == Value.Live -> (
       let at = rx.at and a = rx.a in
       match Devices.kernels (Devices.set at) with
-      | None -> slow ~by k dt x
+      | None -> run1 ~by k dt x
       | Some (module K) -> (
           let dst = destination dt a in
           match K.apply1 k ~dst a with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined | Wrong_dtype -> slow ~by k dt x
+          | Declined | Wrong_dtype -> run1 ~by k dt x
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ]))
   | Value.Donated dx when handle_at dx.at x ->
       let (module K) = kernels_at dx.at in
       donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
           match K.apply1 k ~dst a with
           | Done -> value_of dx.at dst
-          | Declined | Wrong_dtype -> slow ~by k dt (value_of dx.at a)
+          | Declined | Wrong_dtype -> run1 ~by k dt (value_of dx.at a)
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a ])
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _
   | Value.Traced _ ->
-      slow ~by k dt x
+      run1 ~by k dt x
 
 (* [k] into [dst] over the arrays [a] and [b] at [at]: [Done] is the result, a
-   decline or a dtype or shape refusal the slow path over them as live
+   decline or a dtype or shape refusal the operation run over them as live
    values. *)
-let kernel2 (type v s w r d) ~slow ~by (module K : Nx_kernel.S) k
+let kernel2 (type v s w r d) ~by (module K : Nx_kernel.S) k
     (dt : (w, r) D.t) (at : d Devices.placement) (dst : (w, r) A.t)
     (a : (v, s) A.t) (b : (v, s) A.t) : (w, r, d) Value.t =
   match K.apply2 k ~dst a b with
   | Done -> value_of at dst
   | Declined | Wrong_dtype | Shape_mismatch ->
-      slow ~by k dt (value_of at a) (value_of at b)
+      run2 ~by k dt (value_of at a) (value_of at b)
   | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]
 
 (* As [kernel2], for [apply3]. *)
-let kernel3 (type a b v s d) ~slow ~by (module K : Nx_kernel.S) k
+let kernel3 (type a b v s d) ~by (module K : Nx_kernel.S) k
     (at : d Devices.placement) (dst : (v, s) A.t) (c : (a, b) A.t)
     (x : (v, s) A.t) (y : (v, s) A.t) : (v, s, d) Value.t =
   match K.apply3 k ~dst c x y with
   | Done -> value_of at dst
   | Declined | Wrong_dtype | Shape_mismatch ->
-      slow ~by k (value_of at c) (value_of at x) (value_of at y)
+      run3 ~by k (value_of at c) (value_of at x) (value_of at y)
   | refusal -> A.refused by refusal [ A.Any dst; A.Any c; A.Any x; A.Any y ]
 
 (* Whether the one-node map [k] over [x] and [y] is well formed. A constant is
@@ -1495,50 +1508,43 @@ let well_formed3 k c x y =
   && Prim.same_shape c x && Prim.same_shape x y
 
 let rec apply2 : type v s w r d.
-    slow:
-      (by:string ->
-      P.op2 ->
-      (w, r) D.t ->
-      (v, s, d) Value.t ->
-      (v, s, d) Value.t ->
-      (w, r, d) Value.t) ->
     by:string ->
     P.op2 ->
     (w, r) D.t ->
     (v, s, d) Value.t ->
     (v, s, d) Value.t ->
     (w, r, d) Value.t =
- fun ~slow ~by k dt x y ->
+ fun ~by k dt x y ->
   match (x, y) with
   | Value.Array rx, Value.Array ry
     when rx.at == ry.at && rx.dead == Value.Live && ry.dead == Value.Live -> (
       let at = rx.at and a = rx.a and b = ry.a in
       match Devices.kernels (Devices.set at) with
-      | None -> slow ~by k dt x y
+      | None -> run2 ~by k dt x y
       | Some (module K) -> (
           let dst = destination dt a in
           match K.apply2 k ~dst a b with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined | Wrong_dtype | Shape_mismatch -> slow ~by k dt x y
+          | Declined | Wrong_dtype | Shape_mismatch -> run2 ~by k dt x y
           | refusal -> A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
   | Value.Donated dx, Value.Array ry when handle_at ry.at x && live_at ry.at y
     ->
       let (module K) = kernels_at ry.at in
       donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
-          kernel2 ~slow ~by (module K) k dt ry.at dst a ry.a)
+          kernel2 ~by (module K) k dt ry.at dst a ry.a)
   | Value.Array rx, Value.Donated dy when handle_at rx.at y && live_at rx.at x
     ->
       let (module K) = kernels_at rx.at in
       donated ~by 1 dt y (Iarray.get dy.arrays 0) (fun dst b ->
-          kernel2 ~slow ~by (module K) k dt rx.at dst rx.a b)
+          kernel2 ~by (module K) k dt rx.at dst rx.a b)
   | Value.Array rx, Value.Deferred _
     when rx.dead == Value.Live && well_formed2 k x y ->
       (* A constant beside a value is read where the value lies. *)
-      apply2 ~slow ~by k dt x (at rx.at y)
+      apply2 ~by k dt x (at rx.at y)
   | Value.Deferred _, Value.Array ry
     when ry.dead == Value.Live && well_formed2 k x y ->
-      apply2 ~slow ~by k dt (at ry.at x) y
-  | _ -> slow ~by k dt x y
+      apply2 ~by k dt (at ry.at x) y
+  | _ -> run2 ~by k dt x y
 
 (* Where the constants among [c], [x] and [y] are read: the one placement of the
    live arrays among them, where every other is a constant. *)
@@ -1558,55 +1564,48 @@ let beside3 (type a b v s d) (c : (a, b, d) Value.t) (x : (v, s, d) Value.t)
   | _ -> None
 
 let rec apply3 : type a b v s d.
-    slow:
-      (by:string ->
-      P.op3 ->
-      (a, b, d) Value.t ->
-      (v, s, d) Value.t ->
-      (v, s, d) Value.t ->
-      (v, s, d) Value.t) ->
     by:string ->
     P.op3 ->
     (a, b, d) Value.t ->
     (v, s, d) Value.t ->
     (v, s, d) Value.t ->
     (v, s, d) Value.t =
- fun ~slow ~by k c x y ->
+ fun ~by k c x y ->
   match (c, x, y) with
   | Value.Array rc, Value.Array rx, Value.Array ry
     when rc.at == rx.at && rc.at == ry.at && rc.dead == Value.Live
          && rx.dead == Value.Live && ry.dead == Value.Live -> (
       let at = rc.at and ca = rc.a and a = rx.a and b = ry.a in
       match Devices.kernels (Devices.set at) with
-      | None -> slow ~by k c x y
+      | None -> run3 ~by k c x y
       | Some (module K) -> (
           let dst = destination (A.dtype a) a in
           match K.apply3 k ~dst ca a b with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined | Wrong_dtype | Shape_mismatch -> slow ~by k c x y
+          | Declined | Wrong_dtype | Shape_mismatch -> run3 ~by k c x y
           | refusal ->
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
   | Value.Donated dc, Value.Array rx, Value.Array ry
     when handle_at rx.at c && live_at rx.at x && live_at rx.at y ->
       let (module K) = kernels_at rx.at in
       donated ~by 0 (A.dtype rx.a) c (Iarray.get dc.arrays 0)
-        (fun dst c' -> kernel3 ~slow ~by (module K) k rx.at dst c' rx.a ry.a)
+        (fun dst c' -> kernel3 ~by (module K) k rx.at dst c' rx.a ry.a)
   | Value.Array rc, Value.Donated dx, Value.Array ry
     when handle_at rc.at x && live_at rc.at c && live_at rc.at y ->
       let (module K) = kernels_at rc.at in
       donated ~by 1 (A.dtype ry.a) x (Iarray.get dx.arrays 0)
-        (fun dst x' -> kernel3 ~slow ~by (module K) k rc.at dst rc.a x' ry.a)
+        (fun dst x' -> kernel3 ~by (module K) k rc.at dst rc.a x' ry.a)
   | Value.Array rc, Value.Array rx, Value.Donated dy
     when handle_at rc.at y && live_at rc.at c && live_at rc.at x ->
       let (module K) = kernels_at rc.at in
       donated ~by 2 (A.dtype rx.a) y (Iarray.get dy.arrays 0)
-        (fun dst y' -> kernel3 ~slow ~by (module K) k rc.at dst rc.a rx.a y')
+        (fun dst y' -> kernel3 ~by (module K) k rc.at dst rc.a rx.a y')
   | (Value.Deferred _, _, _ | _, Value.Deferred _, _ | _, _, Value.Deferred _)
     when well_formed3 k c x y -> (
       match beside3 c x y with
-      | Some p -> apply3 ~slow ~by k (at p c) (at p x) (at p y)
-      | None -> slow ~by k c x y)
-  | _ -> slow ~by k c x y
+      | Some p -> apply3 ~by k (at p c) (at p x) (at p y)
+      | None -> run3 ~by k c x y)
+  | _ -> run3 ~by k c x y
 
 (* The contraction of live arrays on one device, at physically one placement
    whose set has kernels, computed by them without building the operation.

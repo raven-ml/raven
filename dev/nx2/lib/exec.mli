@@ -33,12 +33,6 @@ val run : by:string -> 'r Value.prim -> 'r
     interpretation receives the operation first ({!Eval.eval}). *)
 
 val apply1 :
-  slow:
-    (by:string ->
-    Nx_kernel.Prog.op1 ->
-    ('w, 'r) Value.dtype ->
-    ('v, 's, 'd) Value.t ->
-    ('w, 'r, 'd) Value.t) ->
   by:string ->
   Nx_kernel.Prog.op1 ->
   ('w, 'r) Value.dtype ->
@@ -46,13 +40,6 @@ val apply1 :
   ('w, 'r, 'd) Value.t
 
 val apply2 :
-  slow:
-    (by:string ->
-    Nx_kernel.Prog.op2 ->
-    ('w, 'r) Value.dtype ->
-    ('v, 's, 'd) Value.t ->
-    ('v, 's, 'd) Value.t ->
-    ('w, 'r, 'd) Value.t) ->
   by:string ->
   Nx_kernel.Prog.op2 ->
   ('w, 'r) Value.dtype ->
@@ -61,29 +48,23 @@ val apply2 :
   ('w, 'r, 'd) Value.t
 
 val apply3 :
-  slow:
-    (by:string ->
-    Nx_kernel.Prog.op3 ->
-    ('a, 'b, 'd) Value.t ->
-    ('v, 's, 'd) Value.t ->
-    ('v, 's, 'd) Value.t ->
-    ('v, 's, 'd) Value.t) ->
   by:string ->
   Nx_kernel.Prog.op3 ->
   ('a, 'b, 'd) Value.t ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t
-(** [applyN ~slow ~by k dt x …] is the one-node map [k] over [x …], of one
-    shape, with result dtype [dt] (the second operand's for [apply3]), where no
+(** [applyN ~by k dt x …] is the one-node map [k] over [x …], of one shape,
+    with result dtype [dt] (the second operand's for [apply3]), where no
     interpretation reaches it. For operands on one device at physically one
     placement, and constants beside them, read there once [k] takes the
     operands' dtypes and shapes, it builds no operation: it allocates the
     result, sharing the first operand's layout when that is C-contiguous at
     offset 0 and of the result's dtype, and calls the set's kernel, which checks
     the dtypes and shapes. Otherwise, and where the kernel declines or refuses
-    them, it is [slow ~by k dt x …], the operation built and evaluated, whose
-    rule raises. *)
+    them, it is {!run} of the operation ({!Prim.op1} to {!Prim.op3}), whose
+    rule raises on operands it does not take; a traced operand raises as in
+    {!run}. *)
 
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p] for an operation that reads it:

@@ -43,11 +43,6 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
 
 let first (x, ()) = x
 
-(* A one-node map built and run: no interpretation reaches the engine here. *)
-let slow1 ~by k dt x = first (Exec.run ~by (Prim.op1 ~by k dt x))
-let slow2 ~by k dt x y = first (Exec.run ~by (Prim.op2 ~by k dt x y))
-let slow3 ~by k c x y = first (Exec.run ~by (Prim.op3 ~by k c x y))
-
 let maps =
   group "maps"
     [
@@ -169,11 +164,9 @@ let constants =
         "a constant read computes once per placement, its intermediates once \
          per read" (fun () ->
           let one = fresh_one () in
-          let c =
-            Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one
-          in
-          let d = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 c c in
-          let e = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 c d in
+          let c = Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one in
+          let d = Exec.apply2 ~by:"t" (Binary Mul) D.Float32 c c in
+          let e = Exec.apply2 ~by:"t" (Binary Add) D.Float32 c d in
           C.reset ();
           ignore (Exec.at at1 e);
           (* one, c, d, e: four nodes. *)
@@ -190,10 +183,8 @@ let constants =
       test "a read keeps the read constant's results, and no intermediate's"
         (fun () ->
           let one = fresh_one () in
-          let c =
-            Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one
-          in
-          let d = Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 c c in
+          let c = Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one in
+          let d = Exec.apply2 ~by:"t" (Binary Mul) D.Float32 c c in
           let kept (type v s) (x : (v, s, b) Value.t) =
             match x with
             | Value.Deferred { node = Value.Node n; _ } ->
@@ -213,12 +204,10 @@ let constants =
           let rec chain k x =
             if k = 0 then x
             else
-              chain (k - 1)
-                (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 x one)
+              chain (k - 1) (Exec.apply2 ~by:"t" (Binary Add) D.Float32 x one)
           in
           let x =
-            chain n
-              (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32 one one)
+            chain n (Exec.apply2 ~by:"t" (Binary Mul) D.Float32 one one)
           in
           C.reset ();
           let v = Exec.at at1 x in
@@ -255,8 +244,8 @@ let constants =
       test "domains racing to compute a constant agree bit for bit" (fun () ->
           let one = fresh_one () in
           let c =
-            Exec.apply2 ~slow:slow2 ~by:"t" (Binary Mul) D.Float32
-              (Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 one one)
+            Exec.apply2 ~by:"t" (Binary Mul) D.Float32
+              (Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one)
               one
           in
           let work () = elements (Exec.at at1 c) in
@@ -410,7 +399,7 @@ let test_reuse_fast () =
   let x = f32 [| 1.; 2. |] in
   let d = Exec.donate ~by:"t" x in
   let y =
-    Exec.apply2 ~slow:slow2 ~by:"t" (Binary Add) D.Float32 (f32 [| 1.; 1. |]) d
+    Exec.apply2 ~by:"t" (Binary Add) D.Float32 (f32 [| 1.; 1. |]) d
   in
   equal ~msg:"written in place" bool true
     (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
@@ -419,10 +408,7 @@ let test_reuse_fast () =
 (* The fast paths of one and three operands, each operand donated in turn. *)
 let test_reuse_fast1 () =
   let x = f32 [| 1.; 2. |] in
-  let y =
-    Exec.apply1 ~slow:slow1 ~by:"t" (Unary Neg) D.Float32
-      (Exec.donate ~by:"t" x)
-  in
+  let y = Exec.apply1 ~by:"t" (Unary Neg) D.Float32 (Exec.donate ~by:"t" x) in
   equal ~msg:"written in place" bool true
     (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
   equal ~msg:"the result" (array bits) [| -1.; -2. |] (elements y)
@@ -440,7 +426,7 @@ let test_reuse_fast3 () =
     let ops = [| f32 [| 1.; 2. |]; f32 [| 3.; 4. |] |] in
     let x = ops.(i) in
     ops.(i) <- Exec.donate ~by:"t" x;
-    let y = Exec.apply3 ~slow:slow3 ~by:"t" Where (c ()) ops.(0) ops.(1) in
+    let y = Exec.apply3 ~by:"t" Where (c ()) ops.(0) ops.(1) in
     equal ~msg:"the result" (array bits) [| 1.; 4. |] (elements y);
     Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y))
   in
@@ -448,7 +434,7 @@ let test_reuse_fast3 () =
   equal ~msg:"into the third, in place" bool true (where 1);
   let d = c () in
   let y =
-    Exec.apply3 ~slow:slow3 ~by:"t" Where (Exec.donate ~by:"t" d)
+    Exec.apply3 ~by:"t" Where (Exec.donate ~by:"t" d)
       (f32 [| 1.; 2. |])
       (f32 [| 3.; 4. |])
   in
