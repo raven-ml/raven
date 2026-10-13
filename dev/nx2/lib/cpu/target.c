@@ -89,9 +89,11 @@ static int has_v3(void) {
 }
 #endif
 
-nx_cpu_target nx_cpu_base = {.name = "base"};
 #if defined(__x86_64__)
-nx_cpu_target nx_cpu_v3 = {.name = "v3"};
+nx_cpu_target nx_cpu_base = {.name = "base", .copy_strided = 1};
+nx_cpu_target nx_cpu_v3 = {.name = "v3", .copy_strided = 1};
+#else
+nx_cpu_target nx_cpu_base = {.name = "base"};
 #endif
 #if defined(__APPLE__) && defined(__aarch64__)
 nx_cpu_target nx_cpu_amx;

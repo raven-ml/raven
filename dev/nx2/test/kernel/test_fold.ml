@@ -35,10 +35,27 @@ let loaded (p : Nx_kernel.pad) s = Result.to_option (Nx_kernel.Shape.padded p s)
 let folded =
   D.[ Any Float32; Any Float64; Any Int32; Any Int8; Any Uint16; Any Int64 ]
 
+(* How a case's first axis leads: as drawn; unwindowed and unpadded, so
+   that the fold's units are slabs of the result; or unwindowed and padded,
+   so that the fold zeroes the whole result first. The last two window the
+   last axis, of a result of two or three axes. *)
+type lead = Drawn | Slabs | Padded
+
 let case_gen ?(dtypes = folded) () =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
-  let* shape = array ~size:(int_range 0 3) (int_range 0 5) in
+  let* lead =
+    frequency
+      [ (2, constant Drawn); (1, constant Slabs); (1, constant Padded) ]
+  in
+  let* shape =
+    match lead with
+    | Drawn -> array ~size:(int_range 0 3) (int_range 0 5)
+    | Slabs | Padded ->
+        map
+          (fun s -> Array.mapi (fun a v -> if a = 0 then max v 2 else v) s)
+          (array ~size:(int_range 2 3) (int_range 1 5))
+  in
   let r = Array.length shape in
   let small = int_range (-2) 3 in
   let* lo = array ~size:(constant r) small in
@@ -48,6 +65,14 @@ let case_gen ?(dtypes = folded) () =
   let* sizes = array ~size:(constant r) (int_range 1 3) in
   let* steps = array ~size:(constant r) (int_range 1 3) in
   let* dilations = array ~size:(constant r) (int_range 1 2) in
+  let first a v z = if lead <> Drawn && a = 0 then z else v in
+  let lo0 = if lead = Padded then 1 else 0 in
+  let lo = Array.mapi (fun a v -> first a v lo0) lo in
+  let hi = Array.mapi (fun a v -> first a v (max v 0)) hi in
+  let interior = Array.mapi (fun a v -> first a v 0) interior in
+  let on =
+    Array.mapi (fun a v -> (lead <> Drawn && a = r - 1) || first a v false) on
+  in
   let windows =
     Array.of_list
       (List.filter_map
@@ -75,10 +100,15 @@ let case_gen ?(dtypes = folded) () =
       let x = operand d xs v (fun _ -> element d rs) in
       Some { shape; pad; x; views = view_names v }
 
+(* Folds into a destination of other elements: the fold writes each. *)
 let fold_on (b : Support.backend) c =
   let module K = (val b.kernels) in
   let (A.Any x) = c.x in
-  let dst = A.create Rig.host (A.dtype x) c.shape in
+  let d = D.Any (A.dtype x) and rs = Random.State.make [| 5 |] in
+  let dst =
+    A.expect (A.dtype x)
+      (operand d c.shape (plain (Array.length c.shape)) (fun _ -> element d rs))
+  in
   match K.fold c.pad ~dst x with
   | A.Done -> Some (A.Any dst)
   | A.Declined -> None
@@ -126,12 +156,40 @@ let expected c =
   done;
   acc
 
+(* The axes before the first a window takes. *)
+let leading c =
+  let r = Array.length c.shape in
+  let windowed a =
+    Array.exists (fun (w : M.window) -> w.axis = a) c.pad.windows
+  in
+  let rec go a = if a < r && not (windowed a) then go (a + 1) else a in
+  go 0
+
+(* Whether every result index along the leading axes receives an operand
+   index: the fold then zeroes and adds its result a slab at a time. *)
+let slabs c =
+  let p = c.pad in
+  let covers a =
+    p.lo.(a) = 0 && p.hi.(a) >= 0 && (p.interior.(a) = 0 || c.shape.(a) <= 1)
+  in
+  List.for_all covers (List.init (leading c) Fun.id)
+
 let law_reference (b : Support.backend) = function
   | None -> assume false
   | Some c -> (
+      let n = leading c and r = Array.length c.shape in
+      let work =
+        c.pad.windows <> [||] && total c.shape > 0 && total (shape_of c.x) > 0
+      in
+      let units = total (Array.sub c.shape 0 n) in
       cover "windows" (c.pad.windows <> [||]);
       cover "interior" (Array.exists (fun i -> i > 0) c.pad.interior);
       cover "cropped" (Array.exists (fun l -> l < 0) c.pad.lo);
+      cover "slabs zeroed per unit" (work && n > 0 && units > 1 && slabs c);
+      cover "whole zeroed, a leading axis padded"
+        (work && n > 0 && not (slabs c));
+      let taps = Array.sub (shape_of c.x) r (Array.length c.pad.windows) in
+      cover "taps innermost" (work && n < r && total taps > 1);
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
       | Some y -> equal (array string) (expected c) (elements y))

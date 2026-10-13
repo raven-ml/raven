@@ -264,6 +264,12 @@ typedef struct {
   int64_t l2;
   /* The bytes of L1 data cache of the cores a job runs on (target.c). */
   int64_t l1;
+  /* Whether a kernel that reads operand rows several times at a step other
+     than one copies them into unit steps first: on x86-64, where strided
+     loads cost more than the copy. In cache, adding rows 9 elements apart
+     took 0.26 ns an element on an Arrow Lake core and 0.15 on an M1 Max
+     one, whose strided adds outrun the copy. */
+  int copy_strided;
   /* convert[s][d] converts elements of the dtype s into the dtype d, as a
      cast does, where s is a carrier, or where s is a narrow float and d
      float32. A sub-byte dtype has one element per byte, in its low bits:
