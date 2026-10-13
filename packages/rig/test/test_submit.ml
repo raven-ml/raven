@@ -809,12 +809,14 @@ let test_negative_max_waits () =
   equal ~msg:"waits in the queue" int 0 (List.length (P.last_waits cp));
   equal ~msg:"the producer's work" int 0 (P.queued pp)
 
-(* A producer whose word the device cannot map is waited for on the host: the
-   submit returns with the producer's work done and no wait in the queue. *)
+(* A producer whose word the device cannot map, as a device that maps no host
+   memory, is waited for on the host: the submit returns with the producer's
+   work done and no wait in the queue. *)
 let test_unmapped_wait () =
   let producer, pp = P.open_ "submit:unmapped-producer" in
   let consumer, cp =
-    P.open_ ~peers:false ~waits_on:[ `Host ] "submit:unmapped-consumer"
+    P.open_ ~peers:false ~maps_host:false ~waits_on:[ `Host ]
+      "submit:unmapped-consumer"
   in
   let a = submit (empty producer) in
   ignore (submit (empty consumer) ~waits:[| a |]);

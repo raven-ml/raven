@@ -160,9 +160,14 @@ and live = {
           object or its word's address as this device maps it. Grown by
           replacement, written under the lock, and read without it. Emptied
           once the device is Stopped. *)
+  mutable words : int; [@atomic]
+      (** How its queues read rig's array of words: [0] undecided, [-1] they
+          do not, or the array's address as its work addresses it, through
+          one mapping. Set once under the lock, and read without it. *)
   mutable word_maps : region list; [@atomic]
-      (** Its mappings of producers' words that [pairs] names, written under
-          the lock. They go back to its driver once it is Stopped. *)
+      (** Its mappings of rig's array and of producers' words outside it that
+          [pairs] names, written under the lock. They go back to its driver
+          once it is Stopped. *)
   mapped : (entry * mapping) Tbl.Make(Int).t;
       (** The entries it maps, by [id], with its mapping of each, under the
           lock: the mapping goes back with the entry, or once it is Stopped,

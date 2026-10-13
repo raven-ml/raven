@@ -137,6 +137,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       retiring = [];
       pending = ([], []);
       pairs = [||];
+      words = 0;
       word_maps = [];
       mapped = Cache.create 4;
       afters = [];

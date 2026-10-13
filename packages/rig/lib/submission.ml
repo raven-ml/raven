@@ -863,10 +863,56 @@ let rig_word = 0
 let rig_object = 1
 let host_wait = -1
 
-(* How [d] waits for [p]'s word in its queue, mapping the word region [r]: a
-   device of the producer's driver maps the region, another the host page that
-   holds the word. Is the way, with the mapping, which [d] keeps until it is
-   Stopped. *)
+(* rig's array of timeline words, where every device's word lies but for one
+   that has none on this process's host. *)
+external array_of_words : unit -> int * int = "caml_rig_edge_words"
+
+let words_start, words_bytes = array_of_words ()
+let in_words a = a >= words_start && a < words_start + words_bytes
+
+(* [d]'s mapping of the array, made at its first wait on a word in it: its
+   first byte's address as [d]'s work addresses it, or [host_wait] if [d] maps
+   none. *)
+let map_words d =
+  match Memory.map_host_range d words_start words_bytes with
+  | None -> (host_wait, None)
+  | Some m -> (
+      match (Memory.locate m).address with
+      | Some at -> (at, Some m)
+      | None ->
+          Memory.unmap d m;
+          (host_wait, None))
+
+(* Keeps [d]'s mapping of the array, unless another decision came first or
+   [d]'s stop returned, as [set_pair] does for a pair. *)
+let set_words (d, at, mapping) =
+  let l = d.live in
+  if l.words <> 0 then Some l.words
+  else if Option.is_some mapping && Dev.stop_returned d then Some host_wait
+  else begin
+    Option.iter (fun m -> l.word_maps <- m :: l.word_maps) mapping;
+    l.words <- at;
+    None
+  end
+
+(* Where [d]'s work reads the array: one mapping for every producer, which [d]
+   keeps until it is Stopped. Racy, as [pair]: the decision that comes second
+   gives its mapping back. *)
+let words_at d =
+  let l = d.live in
+  if l.words <> 0 then l.words
+  else
+    let at, mapping = map_words d in
+    match Lock.protect l.lock set_words (d, at, mapping) with
+    | None -> at
+    | Some first ->
+        Option.iter (Memory.unmap d) mapping;
+        first
+
+(* How [d] waits in its queue for [p]'s word outside rig's array, mapping the
+   word region [r]: a device of the producer's driver maps the region, another
+   the host page that holds the word. Is the way, with the mapping, which [d]
+   keeps until it is Stopped. *)
 let map_word d p r =
   let word = p.live.word in
   let start = word - (word mod Memory.page) in
@@ -885,7 +931,8 @@ let map_word d p r =
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the producer's object for an object completion, or
-   the address of [p]'s word as [d] maps it, with the mapping. *)
+   the address of [p]'s word as [d] maps it: inside [d]'s one mapping of rig's
+   array, or a mapping of [p]'s own, which comes with the way. *)
 let decide d p =
   let l = d.live and pl = p.live in
   let waits =
@@ -898,6 +945,9 @@ let decide d p =
   else
     match (pl.completion, pl.word_region) with
     | Object o, _ -> (o, None)
+    | _, _ when d.maps_host && in_words pl.word ->
+        let at = words_at d in
+        ((if at = host_wait then at else at + (pl.word - words_start)), None)
     | _, None -> (host_wait, None)
     | _, Some r -> map_word d p r
 

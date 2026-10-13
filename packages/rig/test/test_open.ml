@@ -1008,32 +1008,36 @@ let test_points_name_device () =
   equal bool true (Rig.Point.reached p);
   raises_match lost (fun () -> Rig.Point.wait p)
 
-(* A closed device that waited in its queue for another's values gives back
-   its mapping of the other's word. *)
+(* A device that waits in its queue for the values of other devices, closed or
+   not, maps rig's words once for all of them, and gives that mapping back once
+   it is closed. *)
 let test_close_unmaps_word () =
-  let producer, _ = P.open_ "open:pair-producer" in
   let consumer, cp = P.open_ ~waits_on:[ `Host ] "open:pair-consumer" in
-  let a = submit (Rig.Submission.make producer [||]) in
-  Rig.Point.wait (submit (Rig.Submission.make consumer [||]) ~waits:[| a |]);
-  equal ~msg:"the consumer's wait in its queue" int 1
-    (List.length (P.last_waits cp));
+  for i = 1 to 3 do
+    let producer, _ = P.open_ (Printf.sprintf "open:pair-producer-%d" i) in
+    let a = submit (Rig.Submission.make producer [||]) in
+    Rig.Point.wait (submit (Rig.Submission.make consumer [||]) ~waits:[| a |]);
+    equal ~msg:"the consumer's wait in its queue" int 1
+      (List.length (P.last_waits cp));
+    Rig.close producer
+  done;
   Rig.close consumer;
   settle consumer;
   let count call = List.length (List.filter (String.equal call) (P.log cp)) in
-  equal ~msg:"its mappings" int 1 (count "map_peer");
+  equal ~msg:"its mappings" int 1 (count "map_host");
   equal ~msg:"its mappings given back" int 1 (count "unmap")
 
 (* Two submits on two domains that decide at once how a consumer waits for one
-   producer keep one mapping of the producer's word: the first decision waits
-   in its map, at Polled's [before] seam, until the second has decided and its
-   submit returned; it then takes the second's way and gives its own mapping
-   back. Both waits run. *)
+   producer keep one mapping of rig's words: the first decision waits in its
+   map, at Polled's [before] seam, until the second has decided and its submit
+   returned; it then takes the second's way and gives its own mapping back.
+   Both waits run. *)
 let test_pair_race () =
   let producer, _ = P.open_ "open:race-producer" in
   let consumer, cp = P.open_ ~waits_on:[ `Host ] "open:race-consumer" in
   let a = submit (Rig.Submission.make producer [||]) in
   let mapping = Atomic.make false and second = Atomic.make false in
-  P.before cp "map_peer" (fun () ->
+  P.before cp "map_host" (fun () ->
       Atomic.set mapping true;
       Support.await "the second submit" (fun () -> Atomic.get second));
   let wait () = submit (Rig.Submission.make consumer [||]) ~waits:[| a |] in
@@ -1045,7 +1049,7 @@ let test_pair_race () =
   Rig.Point.wait p;
   Rig.Point.wait q;
   let count call = List.length (List.filter (String.equal call) (P.log cp)) in
-  equal ~msg:"the maps of the word" int 2 (count "map_peer");
+  equal ~msg:"the maps of the words" int 2 (count "map_host");
   equal ~msg:"the maps given back" int 1 (count "unmap")
 
 (* Opens and closes in a loop keep a fixed record per device, whatever work
@@ -1326,7 +1330,7 @@ let tests =
       test "a closed device answers as it did before its close" test_ended;
       test "a point names its device after the program let go of it"
         test_points_name_device;
-      test "a closed device gives back its mappings of other devices' words"
+      test "a device maps other devices' words once and gives them back"
         test_close_unmaps_word;
       test
         "two domains that decide at once how a device waits for another keep \

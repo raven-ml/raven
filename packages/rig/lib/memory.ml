@@ -643,9 +643,11 @@ let take_all_cached (l, freed) =
   l.cached <- 0;
   freed
 
-(* Empties [l]'s pairs, and takes one of its mappings of producers' words. *)
+(* Empties [l]'s pairs and its way to rig's array, and takes one of its
+   mappings of words. *)
 let pop_word_map l =
   l.pairs <- [||];
+  l.words <- -1;
   match l.word_maps with
   | r :: rest ->
       l.word_maps <- rest;
