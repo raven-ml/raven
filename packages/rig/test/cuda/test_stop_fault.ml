@@ -23,7 +23,7 @@ let patience_ns = 10 * second
 let reopen () =
   let t0 = Rig.Profile.now () in
   let rec go () =
-    match (C.gpu 0).make () with
+    match Rig_gpu_support.opened (C.gpu 0) with
     | Error e
       when Rig.Profile.now () - t0 < patience_ns
            && String.ends_with ~suffix:"still runs the work of a stopped device"

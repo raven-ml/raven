@@ -31,7 +31,10 @@ module Host = struct
 
   let page = page_size ()
   let pages ?(read_only = false) n = pages n read_only
+  let word () = Nativeint.of_int (pages 8)
 end
+
+let opened (o : _ Rig_edge.opener) = o.make ~word:(Host.word ())
 
 let still ?msg w x f ~ms =
   let t0 = Rig.Profile.now () in
@@ -46,7 +49,7 @@ module type Gpu = sig
 
   val class_ : string
   val present : unit -> bool
-  val open_ : unit -> (D.t, string) result
+  val open_ : word:nativeint -> (D.t, string) result
 end
 
 (* Work *)
@@ -177,17 +180,19 @@ module Make (G : Gpu) = struct
 
   let open_driver () =
     prepare_open ();
-    match G.open_ () with Ok g -> g | Error why -> failf "%s: %s" name why
+    match G.open_ ~word:(Host.word ()) with
+    | Ok g -> g
+    | Error why -> failf "%s: %s" name why
 
   let open_as driver =
     prepare_open ();
     let raw = ref None in
-    let make () =
+    let make ~word =
       Result.map
         (fun g ->
           raw := Some g;
           g)
-        (G.open_ ())
+        (G.open_ ~word)
     in
     match Rig.open_ { name; driver; make } with
     | Ok d ->

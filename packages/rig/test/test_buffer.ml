@@ -420,7 +420,10 @@ let test_copy_machines () =
            name;
            driver = (module P);
            make =
-             (fun () -> Ok (P.make ?copies ~host_visible:false ~peers:false ()));
+             (fun ~word ->
+               Ok
+                 (P.bind ~word
+                    (P.make ?copies ~host_visible:false ~peers:false ())));
          })
   in
   let g = gpu "buffer:far-gpu" and g' = gpu "buffer:far-other" in
@@ -449,7 +452,7 @@ let test_copy_across () =
            {
              name = "buffer:across";
              driver = (module P);
-             make = (fun () -> Ok p);
+             make = (fun ~word -> Ok (P.bind p ~word));
            }),
       p )
   in
@@ -502,7 +505,7 @@ let test_map_host_paged () =
          {
            name = "buffer:paged";
            driver = (module Paged);
-           make = (fun () -> Ok (P.make ()));
+           make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
          })
   in
   let m = memory "buffer:paged-memory" in
@@ -1248,7 +1251,7 @@ let unaddressed_memory name =
          {
            name = "buffer:" ^ name ^ "-far";
            driver = (module P);
-           make = (fun () -> Ok (P.make ()));
+           make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
          })
   in
   [

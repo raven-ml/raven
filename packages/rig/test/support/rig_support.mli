@@ -79,6 +79,16 @@ module Polled : sig
 
       Raises [Invalid_argument] if [lag < 1] or [most_parts > capacity]. *)
 
+  val bind : ?start:int -> t -> word:nativeint -> t
+  (** [bind d ~word] is [d], whose word is now the 8 bytes at [word], as an
+      opener's [make] does with the word rig gives it ({!Rig_edge.type-opener}):
+      [d]'s values start after the value they hold. With [start] it first
+      raises them to [start], as a [make] that raises its word does. *)
+
+  val opener : ?start:int -> string -> t -> t Rig_edge.opener
+  (** [opener name d] opens [d] as the device [name], whose [make] binds [d]
+      to its word ({!bind}). *)
+
   val open_ :
     ?capacity:int ->
     ?most_parts:int ->

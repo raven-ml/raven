@@ -109,7 +109,7 @@ let test_copy_memory_sequence () =
   let d =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_ ~machine
-         { name = "copy-memory"; driver = (module P); make = (fun () -> Ok p) })
+         (P.opener "copy-memory" p))
   in
   let a = B.create d 8 and b = B.create d 8 in
   let mapped = B.create ~memory:B.Mapped d 8 in

@@ -614,7 +614,7 @@ let gpus =
            (module Rig_metal)
            ~sleeps:true ~copies:false "metal"
            ~opened:(fixture (module Rig_metal_support))
-           (fun () -> (Rig_metal.gpu 0).make ())
+           (fun () -> Rig_gpu_support.opened (Rig_metal.gpu 0))
            ~kernel:metal_kernel
        else []);
       (if Rig_cuda_support.present () then
@@ -622,7 +622,7 @@ let gpus =
            (module Rig_cuda)
            "cuda"
            ~opened:(fixture (module Rig_cuda_support))
-           (fun () -> (Rig_cuda.gpu 0).make ())
+           (fun () -> Rig_gpu_support.opened (Rig_cuda.gpu 0))
            ~kernel:cuda_kernel ~graph:cuda_graph
        else []);
       (if Rig_nv_support.present () then
@@ -630,7 +630,7 @@ let gpus =
            (module Rig_nv)
            "nv"
            ~opened:(fixture (module Rig_nv_support))
-           (fun () -> (Rig_nv_nvidia.gpu 0).make ())
+           (fun () -> Rig_gpu_support.opened (Rig_nv_nvidia.gpu 0))
            ~kernel:nv_kernel
        else []);
       (if Rig_amd_support.present () then
@@ -638,7 +638,9 @@ let gpus =
            (module Rig_amd)
            "amd"
            ~opened:(fixture (module Rig_amd_support))
-           Rig_amd_support.open_gpu ~kernel:amd_kernel
+           (fun () ->
+             Rig_amd_support.open_gpu ~word:(Rig_gpu_support.Host.word ()))
+           ~kernel:amd_kernel
        else []);
     ]
 

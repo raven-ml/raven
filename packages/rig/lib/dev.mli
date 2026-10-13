@@ -76,10 +76,11 @@ val open_driver :
   (module Rig_edge.Driver with type t = 'a) ->
   machine:machine ->
   name:string ->
-  (unit -> ('a, string) result) ->
+  (word:nativeint -> ('a, string) result) ->
   (device, string) result
 (** [open_driver (module D) ~machine ~name make] is {!Rig.open_} on
-    [machine], or {!Rig.open_host} for [Hosts]. Concurrent opens of one name
+    [machine], or {!Rig.open_host} for [Hosts]. [make] is given the device's
+    slot's word ({!Rig_edge.type-opener}). Concurrent opens of one name
     wait for the first. It reads the device's facts before it puts the
     device in the table. A fault while reading them stops the handle and is
     [Error], and facts that break the driver's contract stop the handle and

@@ -12,7 +12,7 @@ module A = Rig_amd
 module P = Rig_amd_amdgpu
 
 let open_stop () =
-  match (P.gpu 0).make () with
+  match Rig_gpu_support.opened (P.gpu 0) with
   | Ok g -> A.stop g ~fault:None
   | Error why -> failwith why
 

@@ -45,6 +45,8 @@ external polled_word_at : polled -> int = "rig_test_polled_word_at"
 external polled_word : polled -> int = "rig_test_polled_word"
 external polled_stop : polled -> unit = "rig_test_polled_stop"
 external polled_set_word : polled -> int -> unit = "rig_test_polled_set_word"
+external polled_bind : polled -> nativeint -> int -> unit
+  = "rig_test_polled_bind"
 external host_alloc : int -> int = "rig_test_alloc"
 external host_free : int -> unit = "rig_test_free"
 external noop : unit -> nativeint = "rig_test_noop"
@@ -91,7 +93,7 @@ module Driver = struct
 
   type t = {
     c : polled;
-    word_at : int;  (** The word's host address. *)
+    mutable word_at : int;  (** The word's host address. *)
     most_parts : int;  (** The parts its facts state an idle queue runs. *)
     copies : bool;
     host_visible : bool;
@@ -482,6 +484,18 @@ module Polled = struct
     if runs = `Itself then polled_start d.c;
     d
 
+  let bind ?(start = 0) d ~word =
+    polled_bind d.c word start;
+    d.word_at <- polled_word_at d.c;
+    d
+
+  let opener ?start name d =
+    {
+      Rig_edge.name;
+      driver = (module Driver : Rig_edge.Driver with type t = t);
+      make = (fun ~word -> Ok (bind ?start d ~word));
+    }
+
   let open_ ?capacity ?most_parts ?copies ?host_visible ?addresses ?transport
       ?peers ?maps_host ?budget ?memory ?window ?may_block ?completion
       ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms name =
@@ -490,9 +504,7 @@ module Polled = struct
         ?peers ?maps_host ?budget ?memory ?window ?may_block ?completion
         ?waits_on ?max_waits ?answer ?runs ?lag ?hang_ms ()
     in
-    match
-      Rig.open_ { name; driver = (module Driver); make = (fun () -> Ok p) }
-    with
+    match Rig.open_ (opener name p) with
     | Ok d -> (d, p)
     | Error e -> failwith e
 
@@ -698,8 +710,10 @@ let io name =
   | Error e -> failwith e
 
 let machine m =
-  let make () =
-    Ok (Polled.make ~host_visible:false ~peers:false ~maps_host:false ())
+  let make ~word =
+    Ok
+      (Polled.bind ~word
+         (Polled.make ~host_visible:false ~peers:false ~maps_host:false ()))
   in
   match
     Rig.open_host ~machine:m { name = "CPU"; driver = (module Polled); make }

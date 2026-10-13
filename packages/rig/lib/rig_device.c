@@ -151,9 +151,9 @@ static int64_t now_ms(void) { return (int64_t)(rig_now_ns() / 1000000); }
    runtime lock meanwhile. Code that asks a device by index for its
    timeline reads its line. */
 
-struct rig_line rig_lines[RIG_DEVICES];
+struct rig_line rig_lines[RIG_SLOTS];
 
-static _Atomic(struct rig_device *) devices[RIG_DEVICES];
+static _Atomic(struct rig_device *) devices[RIG_SLOTS];
 static _Atomic int top;
 
 /* The devices whose stop has not returned, a bit per index, the host's
@@ -161,7 +161,7 @@ static _Atomic int top;
    and a close cost the same however many devices the process ended. [put]
    sets a device's bit and [caml_rig_stopped] clears it. Readers take no
    lock. */
-static _Atomic uint64_t running[RIG_DEVICES / 64];
+static _Atomic uint64_t running[RIG_SLOTS / 64];
 
 static int low_bit(uint64_t w) {
 #ifdef _MSC_VER
@@ -176,7 +176,7 @@ static int low_bit(uint64_t w) {
 /* The least index from [i] on whose device's stop has not returned, or 0
    for none. */
 static int next_running(int i) {
-  for (int k = i / 64; k < RIG_DEVICES / 64; k++) {
+  for (int k = i / 64; k < RIG_SLOTS / 64; k++) {
     uint64_t w = atomic_load_explicit(&running[k], memory_order_acquire);
     if (k == i / 64) w &= ~(uint64_t)0 << (i % 64);
     if (w != 0) return k * 64 + low_bit(w);
@@ -198,7 +198,7 @@ static rig_mutex table_mu = PTHREAD_MUTEX_INITIALIZER;
 
 /* The published device record of index [i], or NULL. */
 static struct rig_device *device_of(int i) {
-  if (i <= 0 || i >= RIG_DEVICES) return NULL;
+  if (i <= 0 || i >= RIG_SLOTS) return NULL;
   return atomic_load_explicit(&devices[i], memory_order_acquire);
 }
 
@@ -211,6 +211,17 @@ value caml_rig_next(value v_i) {
 }
 
 static struct rig_line *line_of(int i) { return &rig_lines[i]; }
+
+/* The timeline word of slot [i] in rig's array. */
+static _Atomic uint64_t *slot_word(int i) {
+  return (_Atomic uint64_t *)((char *)rig_words() + (size_t)i * RIG_LINE);
+}
+
+/* The host address of slot [v_i]'s word, which an opener's make is
+   given. */
+value caml_rig_slot_word(value v_i) {
+  return caml_copy_nativeint((intnat)slot_word(Int_val(v_i)));
+}
 
 /* The last value the word of [l] showed. */
 static uint64_t line_word(struct rig_line *l) {
@@ -457,7 +468,8 @@ static struct custom_operations device_ops = {
 
 /* A device record of index [v_index] named [v_name], not yet published,
    in a new custom block [*v] that names it. The record lives for the
-   process once published. */
+   process once published. Its timeline starts after the value its slot's
+   word holds. */
 static struct rig_device *record(value *v, value v_index, value v_name) {
   int index = Int_val(v_index);
   struct rig_device *d = calloc(1, sizeof *d);
@@ -471,6 +483,10 @@ static struct rig_device *record(value *v, value v_index, value v_name) {
   d->index = index;
   d->line = line_of(index);
   d->name = name;
+  uint64_t base = atomic_load_explicit(slot_word(index), memory_order_acquire);
+  atomic_store(&d->committed, base);
+  atomic_store(&d->line->seen, base);
+  atomic_store_explicit(&d->line->submitted, base, memory_order_release);
   *v = caml_alloc_custom(&device_ops, sizeof d, 0, 1);
   Device_val(*v) = d;
   return d;

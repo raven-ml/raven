@@ -30,22 +30,13 @@
 
 /* Memory devices
 
-   A memory device's state is its driver and its word, on a line of its own.
-   The states lie in pages that hold nothing else, which other devices may
-   map, one line per device made: a state lives for the process, and the
-   process makes fewer than RIG_DEVICES devices. The pages are the
-   process's zeroed data, resident once a state is made in them. */
+   A memory device's state is its driver and the address of its word, the
+   word rig gave its open. */
 
 struct memory_device {
   const struct rig_driver *driver;
-  _Atomic uint64_t word;
+  _Atomic uint64_t *word;
 };
-
-#define LINE 64
-#define MOST_PAGE (1 << 16)
-
-static char lines[RIG_DEVICES * LINE + MOST_PAGE];
-static _Atomic int taken;
 
 static void *aligned(size_t align, size_t n) {
 #ifdef _WIN32
@@ -115,7 +106,7 @@ static int memory_submit(void *self, uint64_t v, const struct rig_wait *waits,
               (const char *)(uintptr_t)p->copy.src + p->copy.src_offset,
               (size_t)p->copy.bytes);
   }
-  atomic_store_explicit(&m->word, v, memory_order_release);
+  atomic_store_explicit(m->word, v, memory_order_release);
   return RIG_COMMITTED;
 }
 
@@ -130,23 +121,20 @@ static int memory_commit(void *self, uint64_t v, const char **failure) {
 static const struct rig_driver memory_driver = {memory_room, memory_submit,
                                                 memory_commit, NULL};
 
-/* A new memory device's state, from the first whole page of [lines] on. */
-value caml_rig_memory_new(value unit) {
-  (void)unit;
-  uintptr_t page = (uintptr_t)rig_page_bytes();
-  uintptr_t first = ((uintptr_t)lines + page - 1) & ~(page - 1);
-  int i = atomic_fetch_add(&taken, 1);
-  if (i >= RIG_DEVICES) caml_raise_out_of_memory();
-  struct memory_device *m =
-      (struct memory_device *)(first + (uintptr_t)i * LINE);
+/* A new memory device's state, whose word lies at [v_word]. */
+value caml_rig_memory_new(value v_word) {
+  struct memory_device *m = malloc(sizeof *m);
+  if (m == NULL) caml_raise_out_of_memory();
   m->driver = &memory_driver;
+  m->word = (_Atomic uint64_t *)Nativeint_val(v_word);
   return caml_copy_nativeint((intnat)m);
 }
 
-/* The host address of the word of the memory device [v_m]. */
-value caml_rig_memory_word(value v_m) {
-  struct memory_device *m = (struct memory_device *)Nativeint_val(v_m);
-  return Val_long((intnat)&m->word);
+/* Frees the state [v_m] at its device's stop, after which rig calls none of
+   its functions. */
+value caml_rig_memory_drop(value v_m) {
+  free((void *)Nativeint_val(v_m));
+  return Val_unit;
 }
 
 value caml_rig_load64(value v_addr) {

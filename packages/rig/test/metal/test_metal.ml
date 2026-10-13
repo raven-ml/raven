@@ -176,7 +176,7 @@ let dev =
    as asked. The test stops it. *)
 let second () =
   if not (S.present ()) then skip ~reason:"the machine has no METAL GPU rig drives" ();
-  require_ok ((Rig_metal.gpu 0).make ())
+  require_ok (Rig_gpu_support.opened (Rig_metal.gpu 0))
 
 let pipeline t f = (found (Rig_metal.entry t.fill f)).code
 
@@ -568,11 +568,15 @@ let gate_rounds = 1 lsl 24
 (* A device of the GPU beside the test's, under a name of its own, whose queue
    runs beside the test device's. *)
 let beside () =
-  let g = require_ok ((Rig_metal.gpu 0).make ()) in
-  let opener =
-    { (Rig_metal.gpu 0) with name = "METAL:beside"; make = (fun () -> Ok g) }
+  let g = ref None in
+  let make ~word =
+    let r = (Rig_metal.gpu 0).make ~word in
+    Result.iter (fun x -> g := Some x) r;
+    r
   in
-  dev_of { S.d = require_ok (Rig.open_ opener); g }
+  let opener = { (Rig_metal.gpu 0) with name = "METAL:beside"; make } in
+  let d = require_ok (Rig.open_ opener) in
+  dev_of { S.d; g = Option.get !g }
 
 (* A command buffer in flight when a loss stops the device completes and
    writes its memory, and the word reaches the last value: the buffer keeps
@@ -1688,9 +1692,10 @@ let opening =
   group ~timeout:60. "opening"
     [
       test "a device other than 0 is an error" (fun () ->
-          is_error ((Rig_metal.gpu 1).make ()));
+          is_error (Rig_gpu_support.opened (Rig_metal.gpu 1)));
       test "a negative device is misuse" (fun () ->
-          raises_match Exn.invalid_arg (fun () -> (Rig_metal.gpu (-1)).make ());
+          raises_match Exn.invalid_arg (fun () ->
+              Rig_gpu_support.opened (Rig_metal.gpu (-1)));
           raises_match Exn.invalid_arg (fun () -> (Rig_metal.gpu (-1)).name));
       test "device names" (fun () ->
           equal (list string)
@@ -1703,12 +1708,12 @@ let opening =
           if S.macos then skip ~reason:"macOS" ();
           equal int 0 (Rig_metal.count ());
           equal (result pass string) (Error "Metal exists on macOS only")
-            ((Rig_metal.gpu 0).make ()));
+            (Rig_gpu_support.opened (Rig_metal.gpu 0)));
       test "a virtual Mac's GPU opens no device, for want of a residency set"
         (fun () ->
           if not S.virtual_mac then skip ~reason:"no virtual Mac" ();
           equal (result pass string) (Error "Metal made no residency set")
-            ((Rig_metal.gpu 0).make ()));
+            (Rig_gpu_support.opened (Rig_metal.gpu 0)));
     ]
 
 let () =

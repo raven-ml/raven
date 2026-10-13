@@ -19,7 +19,7 @@ include Rig_gpu_support.Make (struct
   let present () =
     Sys.file_exists "/System/Library/Frameworks/Metal.framework"
     && not virtual_mac
-  let open_ () = (Rig_metal.gpu 0).make ()
+  let open_ ~word = (Rig_metal.gpu 0).make ~word
 end)
 
 (* A device's ring, by hand *)
@@ -122,7 +122,7 @@ let binary () =
   ( fixture ~dir:"../metal/fixtures" "fill",
     [ "fill"; "step"; "spin"; "bump"; "copy" ] )
 
-let second () = Some ((Rig_metal.gpu 0).make ())
+let second () = Some (Rig_gpu_support.opened (Rig_metal.gpu 0))
 let launch_binary () = Some (fixture ~dir:"../metal/fixtures" "launch")
 let images = Rig_gpu_support.loader (fun () -> fst (binary ()))
 

@@ -27,7 +27,7 @@ let firmware () =
         ()
 
 let open_ firmware =
-  match (Rig_amd_pci.gpu ~firmware 0).make () with
+  match Rig_gpu_support.opened (Rig_amd_pci.gpu ~firmware 0) with
   | Ok g -> g
   | Error why -> failf "GPU 0 did not open: %s" why
 

@@ -228,7 +228,7 @@ let unreadable file =
   | exception Sys_error _ -> ());
   equal (list string) [] (P.buses ~root ());
   equal int 0 (P.count ~root ());
-  let e = require_error ((P.gpu ~root 0).make ()) in
+  let e = require_error (Rig_gpu_support.opened (P.gpu ~root 0)) in
   contains ~sub:"reading the machine's GPUs" e
 
 let numbering =
@@ -462,10 +462,10 @@ let names =
       test "constructing an opener reads no machine files" (fun () ->
           let o = P.gpu ~root:"no-such-directory" max_int in
           equal string ("AMD:" ^ string_of_int max_int) o.name;
-          is_error (o.make ()));
+          is_error (Rig_gpu_support.opened o));
       test "a GPU past the machine's is refused, naming their number" (fun () ->
           let n = P.count () in
-          match (P.gpu n).make () with
+          match Rig_gpu_support.opened (P.gpu n) with
           | Ok _ -> fail "opened a GPU past the machine's"
           | Error why ->
               equal string
@@ -477,7 +477,7 @@ let names =
    at its first open and kept, and the kernel driver's files. *)
 let opening =
   let refusal ?(root = "/") i =
-    match (P.gpu ~root i).make () with
+    match Rig_gpu_support.opened (P.gpu ~root i) with
     | Ok _ -> fail "a GPU opened"
     | Error why -> why
   in

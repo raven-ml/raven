@@ -368,7 +368,7 @@ let gpu ?machine ?(firmware = []) i : Rig_amd.t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Rig_amd);
-    make = (fun () -> open_ ?machine ~firmware i);
+    make = (fun ~word:_ -> open_ ?machine ~firmware i);
   }
 
 (* Formats *)

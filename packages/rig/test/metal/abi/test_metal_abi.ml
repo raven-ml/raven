@@ -11,7 +11,7 @@ module P = Rig_support.Polled
 
 (* A device whose facts declare [capability], open in rig until [f] returns. *)
 let with_device capability f =
-  let make () = Ok (P.make ~capability ()) in
+  let make ~word = Ok (P.bind (P.make ~capability ()) ~word) in
   match Rig.open_ { name = "metal"; driver = (module P); make } with
   | Error why -> fail why
   | Ok d -> Fun.protect ~finally:(fun () -> Rig.close d) (fun () -> f d)

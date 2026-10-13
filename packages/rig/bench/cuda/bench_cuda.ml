@@ -86,7 +86,7 @@ let run t s =
 
 (* The floor's calls, found by a device's capability. *)
 let floor () =
-  let g = get ((C.gpu 0).make ()) in
+  let g = get (Rig_gpu_support.opened (C.gpu 0)) in
   let symbol = (C.capability g).symbol in
   bind (Array.map (fun n -> Option.get (symbol n)) (names ()));
   start ();

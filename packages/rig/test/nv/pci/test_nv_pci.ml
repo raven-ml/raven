@@ -54,7 +54,7 @@ let opening =
     [
       test "an open past the last GPU names the GPU and the count" (fun () ->
           let machine = Rig_pci.Machine.at (machine ()) in
-          match (Rig_nv_pci.gpu ~machine 2).make () with
+          match Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 2) with
           | Ok _ -> fail "GPU 2 opened"
           | Error why ->
               equal string "NV-PCI:2: no such GPU; the machine has 2" why);
@@ -394,7 +394,9 @@ let test_left how expected () =
   Unix.close said;
   equal ~msg:"the child" status expected (ended pid);
   let machine = Rig_pci.Machine.at root in
-  let why = require_error ((Rig_nv_pci.gpu ~machine 0).make ()) in
+  let why =
+    require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0))
+  in
   equal ~msg:"reset" string "1" (resets root);
   contains ~msg:"the firmware outlived the reset" ~sub:"after its reset" why
 
@@ -405,7 +407,9 @@ let test_stopped_here () =
   let g = gpus () and machine = Rig_pci.Machine.at root in
   equal ~msg:"the stop" state `Stopped (require_ok (stop g machine));
   ignore (Rig_pci.Gpus.stop (require_ok (hold g machine)));
-  let why = require_error ((Rig_nv_pci.gpu ~machine 0).make ()) in
+  let why =
+    require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0))
+  in
   equal ~msg:"reset" string "1" (resets root);
   contains ~msg:"the firmware outlived the reset" ~sub:"after its reset" why
 
@@ -416,7 +420,7 @@ let test_outlived () =
   let machine = Rig_pci.Machine.at root in
   let opened () =
     let why =
-      require_error ((Rig_nv_pci.gpu ~machine 0).make ())
+      require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0))
     in
     let reset = resets root in
     Tree.add root (strf "sys/bus/pci/devices/%s/reset" gpu_bus) "";
@@ -442,7 +446,7 @@ let test_held () =
       equal ~msg:"the child holds" (option string) (Some "holding") line;
       let machine = Rig_pci.Machine.at root in
       let why =
-        require_error ((Rig_nv_pci.gpu ~machine 0).make ())
+        require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0))
       in
       contains ~msg:"the take's reason" ~sub:"taken already" why;
       equal ~msg:"no reset" string "" (resets root))
@@ -455,7 +459,10 @@ let test_failed_early () =
   let firmware = firmware () in
   let machine = Rig_pci.Machine.at root in
   for _ = 1 to 2 do
-    let why = require_error ((Rig_nv_pci.gpu ~machine ~firmware 0).make ()) in
+    let why =
+      require_error
+        (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine ~firmware 0))
+    in
     contains ~msg:"refused" ~sub:"wrote no memory size" why
   done;
   equal ~msg:"no reset" string "" (resets root)
@@ -489,7 +496,8 @@ let test_search () =
       (fun () ->
         let machine = Rig_pci.Machine.at root in
         require_error
-          ((Rig_nv_pci.gpu ~machine ~firmware:[ mine ] 0).make ()))
+          (Rig_gpu_support.opened
+             (Rig_nv_pci.gpu ~machine ~firmware:[ mine ] 0)))
   in
   contains ~msg:"the directories in order"
     ~sub:
@@ -554,7 +562,10 @@ let test_failed_boot () =
   let page = Rig_pci.Machine.page machine in
   Tree.pagemap root ~page system_base
     (List.init (256 * mib / page) (fun i -> 0x10_0000 + i));
-  let why = require_error ((Rig_nv_pci.gpu ~machine ~firmware 0).make ()) in
+  let why =
+    require_error
+      (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine ~firmware 0))
+  in
   contains ~msg:"the falcon failed" ~sub:"DMA" why;
   let f = fwsec root in
   let frts = gpu_memory - (2 * mib) in
@@ -574,7 +585,7 @@ let test_failed_boot () =
   in
   equal ~msg:"bus mastering" int 0 (command land 0x4);
   equal ~msg:"system memory left" (list string) [] (memory_files root);
-  ignore (require_error ((Rig_nv_pci.gpu ~machine 0).make ()));
+  ignore (require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0)));
   equal ~msg:"the next open's reset" string "1" (resets root)
 
 let booted =

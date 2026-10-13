@@ -282,7 +282,7 @@ let numbering =
           equal string name (Rig_amd_pci.gpu i).name);
       test "an open past the last GPU names the GPU and the count" (fun () ->
           let machine = Rig_pci.Machine.at (machine ()) in
-          match (Rig_amd_pci.gpu ~machine 3).make () with
+          match Rig_gpu_support.opened (Rig_amd_pci.gpu ~machine 3) with
           | Ok _ -> fail "GPU 3 opened"
           | Error why ->
               equal string "AMD-PCI:3: no such GPU; the machine has 3" why);
@@ -316,7 +316,8 @@ let refusal root =
   if not Rig_pci_support.on_linux then
     skip ~reason:"flock on a function's file needs Linux" ();
   match
-    (Rig_amd_pci.gpu ~machine:(Rig_pci.Machine.at root) 0).make ()
+    Rig_gpu_support.opened
+      (Rig_amd_pci.gpu ~machine:(Rig_pci.Machine.at root) 0)
   with
   | Ok _ -> fail "a GPU opened"
   | Error why -> why

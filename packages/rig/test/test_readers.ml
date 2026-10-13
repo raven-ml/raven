@@ -53,8 +53,11 @@ let far =
             name = "readers:far-gpu";
             driver = (module Rig_support.Polled);
             make =
-              (fun () ->
-                Ok (Rig_support.Polled.make ~host_visible:false ~peers:false ()));
+              (fun ~word ->
+                Ok
+                  (Rig_support.Polled.bind ~word
+                     (Rig_support.Polled.make ~host_visible:false ~peers:false
+                        ())));
           }))
 
 (* Host memory lies at host addresses in space 0, a view at its own first

@@ -147,7 +147,9 @@ let open_attempt failure =
   let p = P.make () in
   let heap, fds = census () in
   inject p failure;
-  let make () = if failure = Raise then raise Exit else Ok p in
+  let make ~word =
+    if failure = Raise then raise Exit else Ok (P.bind p ~word)
+  in
   let got =
     match Rig.open_ { name; driver = (module P); make } with
     | Ok _ -> "done"
@@ -168,7 +170,7 @@ let open_attempt failure =
   ignore
     (require_ok
        (Rig.open_
-          { name; driver = (module P); make = (fun () -> Ok (P.make ())) }));
+          (P.opener name (P.make ()))));
   match (heap, heap') with Some h, Some h' -> h' - h | _ -> 0
 
 (* A fact refuses nothing: the walk faults them, and raises in the opener. *)
@@ -178,7 +180,7 @@ let test_open () =
   ignore
     (require_ok
        (Rig.open_
-          { name = fresh "open"; driver = (module P); make = (fun () -> Ok p) }));
+          (P.opener (fresh "open") p)));
   let k = P.steps p in
   greater ~msg:"facts" int ~than:0 k;
   List.iter

@@ -146,7 +146,7 @@ type device = Fresh | Used
 (* Whether [name] answers [d]: an open of it returns [d] without calling its
    opener. *)
 let answers name d =
-  let again () = Error "the opener ran again" in
+  let again ~word:_ = Error "the opener ran again" in
   match Rig.open_ { name; driver = (module P); make = again } with
   | Ok d' -> Rig.equal d d'
   | Error _ -> false
@@ -268,10 +268,10 @@ let interrupt_close n =
   let at = Printf.sprintf ", interrupted from allocation %d" n in
   in_child at (fun () ->
       let drivers = ref [] in
-      let polled () =
+      let polled ~word =
         let p = P.make () in
         drivers := p :: !drivers;
-        Ok p
+        Ok (P.bind p ~word)
       in
       let host =
         Rig.open_host ~machine:(fresh "close")

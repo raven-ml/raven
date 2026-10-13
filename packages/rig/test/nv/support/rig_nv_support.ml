@@ -19,7 +19,7 @@ include Rig_gpu_support.Make (struct
 
   let class_ = "NV"
   let present () = Rig_nv_nvidia.count () > 0
-  let open_ () = (Rig_nv_nvidia.gpu 0).make ()
+  let open_ ~word = (Rig_nv_nvidia.gpu 0).make ~word
 end)
 
 (* The C entries *)
@@ -231,7 +231,7 @@ let binary () =
 
 let second () =
   if Rig_nv_nvidia.count () < 2 then None
-  else Some ((Rig_nv_nvidia.gpu 1).make ())
+  else Some (Rig_gpu_support.opened (Rig_nv_nvidia.gpu 1))
 
 let images = Rig_gpu_support.loader (fun () -> fst (binary ()))
 

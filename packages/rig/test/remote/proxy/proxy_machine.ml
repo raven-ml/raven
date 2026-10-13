@@ -332,12 +332,12 @@ let with_machine ?(reaches = []) ?(room = max_int) f =
            threads = Proxy.threads;
          })
   in
-  let make () =
+  let make ~word =
     Result.map
       (fun p ->
         raw := Some p;
         p)
-      (opener.make ())
+      (opener.make ~word)
   in
   match Rig.open_host ~machine { opener with make } with
   | Error e ->

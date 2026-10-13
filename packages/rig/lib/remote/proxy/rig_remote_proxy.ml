@@ -192,5 +192,5 @@ let device l (a : Wire.account) c : t Rig_edge.opener =
   {
     name = a.name;
     driver = (module Driver);
-    make = (fun () -> Ok (make l a c));
+    make = (fun ~word:_ -> Ok (make l a c));
   }

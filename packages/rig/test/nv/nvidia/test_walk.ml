@@ -107,7 +107,7 @@ let take on op =
   in
   match (op, on.g) with
   | Open, _ -> (
-      match (P.gpu 0).make () with
+      match Rig_gpu_support.opened (P.gpu 0) with
       | Ok g -> ("Ok", fun () -> N.stop g ~fault:None)
       | Error e -> ("Error " ^ e, ignore))
   | Alloc kind, Some g -> region g (N.alloc g kind page)
@@ -138,7 +138,8 @@ type report = {
    lifted. *)
 let attempt ?(cold = false) op lim =
   let g =
-    if op = Open then None else Some (Result.get_ok ((P.gpu 0).make ()))
+    if op = Open then None
+    else Some (Result.get_ok (Rig_gpu_support.opened (P.gpu 0)))
   in
   let host = H.pages host_bytes in
   Fun.protect ~finally:(fun () -> H.free_pages host host_bytes) @@ fun () ->
@@ -151,7 +152,8 @@ let attempt ?(cold = false) op lim =
   let again = run_once on op in
   Option.iter (N.stop ~fault:None) g;
   let reopened =
-    Result.is_ok (Result.map (N.stop ~fault:None) ((P.gpu 0).make ()))
+    Result.is_ok
+      (Result.map (N.stop ~fault:None) (Rig_gpu_support.opened (P.gpu 0)))
   in
   { got; files; maps; again; reopened }
 
@@ -217,7 +219,7 @@ let too_large () =
   let got =
     require_ok ~pp:Format.pp_print_string
       (in_child (fun () ->
-           let g = Result.get_ok ((P.gpu 0).make ()) in
+           let g = Result.get_ok (Rig_gpu_support.opened (P.gpu 0)) in
            let got = N.alloc g Device (2 * (N.facts g).budget) in
            Option.iter (N.free g) got;
            N.stop g ~fault:None;

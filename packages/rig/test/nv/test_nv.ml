@@ -52,7 +52,7 @@ let handed =
   fun g ->
     let name = strf "NV:own-%d" (Atomic.fetch_and_add n 1) in
     require_ok
-      (Rig.open_ { name; driver = (module N); make = (fun () -> Ok g) })
+      (Rig.open_ { name; driver = (module N); make = (fun ~word:_ -> Ok g) })
 
 (* GPUs *)
 

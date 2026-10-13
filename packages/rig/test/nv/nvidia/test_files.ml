@@ -43,7 +43,7 @@ let in_child (f : unit -> 'a) : ('a, string) result =
       result
 
 let open_ () =
-  match (P.gpu 0).make () with
+  match Rig_gpu_support.opened (P.gpu 0) with
   | Ok g -> Ok g
   | Error why -> Error why
   | exception e -> Error ("raised " ^ Printexc.to_string e)

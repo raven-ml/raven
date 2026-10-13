@@ -8,6 +8,7 @@
   rig_amd_pci
   rig_amd_support
   rig
+  rig_gpu_support
   rig_edge
   thumper
   unix)

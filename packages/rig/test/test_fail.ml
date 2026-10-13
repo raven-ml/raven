@@ -160,9 +160,9 @@ let test_fail =
           name;
           driver = (module P);
           make =
-            (fun () ->
+            (fun ~word ->
               incr calls;
-              Ok (P.make ()));
+              Ok (P.bind (P.make ()) ~word));
         }
     with
     | Ok _ -> "Ok"
@@ -223,7 +223,7 @@ let test_fail_beside_opens () =
           let name = Printf.sprintf "fail:race-%d" i in
           let p = P.make () in
           match
-            Rig.open_ { name; driver = (module P); make = (fun () -> Ok p) }
+            Rig.open_ (P.opener name p)
           with
           | Ok d ->
               if after then Atomic.incr late;

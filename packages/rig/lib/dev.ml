@@ -18,7 +18,7 @@ external c_new : int -> string -> bool -> nativeint -> nativeint -> c
 
 external c_io_new : int -> string -> c = "caml_rig_io_new"
 external c_host_new : string -> c = "caml_rig_host_new"
-external c_host_word : unit -> int = "caml_rig_host_word"
+external c_slot_word : int -> nativeint = "caml_rig_slot_word"
 external c_publish : c -> unit = "caml_rig_publish"
 external c_committed : c -> int = "caml_rig_committed" [@@noalloc]
 external c_commit : c -> int = "caml_rig_commit"
@@ -167,7 +167,8 @@ let host =
     make_device ~index:0 ~name:"CPU" ~machine:Here ~kind:Host
       ~c:(c_host_new "CPU") ~arch:(host_arch ()) ~queues ~copy_engine:None
       ~completion:Host_writes ~waits:no_waits ~hang_ms:None ~maps_host:false
-      ~most_parts:max_int ~host_addresses:false ~word:(c_host_word ())
+      ~most_parts:max_int ~host_addresses:false
+      ~word:(Nativeint.to_int (c_slot_word 0))
       ~word_region:None ~key:(-1)
       ~memory_device:false
       ~fault:(fun _ -> None)
@@ -924,7 +925,7 @@ let open_driver (type a) ?(memory_device = false)
   let fn = if memory_device then "memory_device" else "open_" in
   open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key)
   @@ fun ~index ~name:full ->
-  match make () with
+  match make ~word:(c_slot_word index) with
   | Error e -> Error e
   | Ok h -> (
       (* Until the device is published, a failure stops the handle: a fault is

@@ -238,6 +238,23 @@ static inline void rig_params(uint8_t *dst, const struct rig_args *a,
   }
 }
 
+/* Timeline words
+
+   rig keeps every device's timeline word in one static array of RIG_SLOTS
+   lines of RIG_LINE bytes, the word of slot [i] in the first 8 bytes of
+   line [i]. The array starts on a 64 KiB boundary and fills its pages,
+   which hold nothing else, so a driver may map them whole. It lives for
+   the process, and a slot's word passes from one device to the next that
+   takes the slot. rig_words () is its first line. */
+#define RIG_SLOTS 65536
+#define RIG_LINE 64
+#define RIG_WORDS_BYTES ((size_t)RIG_SLOTS * RIG_LINE)
+
+_Atomic uint64_t *rig_words(void);
+
+/* The OCaml primitive [caml_rig_edge_words : unit -> int * int] answers the
+   array's address and RIG_WORDS_BYTES, for OCaml code that maps it whole. */
+
 /* rig_now_ns () is the host's clock: nanoseconds of the system's monotonic
    clock from an unspecified start; on macOS, mach time, the time base of
    Metal's command buffer times. A driver writes a value's times and

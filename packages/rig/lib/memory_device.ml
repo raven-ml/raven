@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-external state : unit -> nativeint = "caml_rig_memory_new"
-external word_of : nativeint -> int = "caml_rig_memory_word"
+external state : nativeint -> nativeint = "caml_rig_memory_new"
+external drop : nativeint -> unit = "caml_rig_memory_drop"
 external malloc : int -> int = "caml_rig_memory_alloc"
 external free : int -> unit = "caml_rig_memory_free"
 external load : int -> int = "caml_rig_load64"
@@ -61,13 +61,12 @@ module D = struct
   let unload _ () = ()
   let signaled d = load d.word
   let sleep _ ~seen:_ ~still_ms:_ = ()
-  let stop _ ~fault:_ = ()
+  let stop d ~fault:_ = drop d.self
 end
 
 let open_ name =
   Dev.open_driver ~memory_device:true
     (module D)
     ~machine:Def.Here ~name
-    (fun () ->
-      let self = state () in
-      Ok { D.self; word = word_of self })
+    (fun ~word ->
+      Ok { D.self = state word; word = Nativeint.to_int word })

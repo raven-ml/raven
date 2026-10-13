@@ -53,8 +53,8 @@ include Rig_gpu_support.Make (struct
   let class_ = "CUDA"
   let present () = Sys.file_exists "/dev/nvidiactl"
 
-  let open_ () =
-    let g = (Rig_cuda.gpu 0).make () in
+  let open_ ~word =
+    let g = (Rig_cuda.gpu 0).make ~word in
     Result.iter bind g;
     g
 end)
@@ -223,7 +223,8 @@ let launch t kernel a b =
 (* Conformance *)
 
 let second () =
-  if Rig_cuda.count () < 2 then None else Some ((Rig_cuda.gpu 1).make ())
+  if Rig_cuda.count () < 2 then None
+  else Some (Rig_gpu_support.opened (Rig_cuda.gpu 1))
 
 (* fixtures/launch.ptx's [copy dst src n] copies [n] 32-bit words, one a
    thread. *)

@@ -179,7 +179,8 @@ end
 
 let open_as (module D : Rig_edge.Driver with type t = P.t) name p =
   require_ok ~pp:Format.pp_print_string
-    (Rig.open_ { name; driver = (module D); make = (fun () -> Ok p) })
+    (Rig.open_
+       { name; driver = (module D); make = (fun ~word -> Ok (P.bind p ~word)) })
 
 (* Bytes into memory of [d] the host does not address and back, which [d]'s
    copy queue runs: the copies [p] ran and the bytes back. *)
@@ -232,7 +233,7 @@ let test_copy_engine_refused () =
   let refuses name driver =
     let p = P.make () in
     raises_match ~msg:name (Exn.invalid_arg ~substring:"copy engine") (fun () ->
-        Rig.open_ { name; driver; make = (fun () -> Ok p) });
+        Rig.open_ { name; driver; make = (fun ~word -> Ok (P.bind p ~word)) });
     equal ~msg:(name ^ ": stopped") bool true (List.mem "stop" (P.log p))
   in
   refuses "open:engine-past" (engine (module P) (Some 2));
@@ -256,7 +257,7 @@ let test_hang_refused () =
       let name = Printf.sprintf "open:hang-%d" i in
       raises_match ~msg:(Printf.sprintf "hang_ms %d" n)
         (Exn.invalid_arg ~substring:"hang bound") (fun () ->
-          Rig.open_ { name; driver = (module P); make = (fun () -> Ok p) });
+          Rig.open_ (P.opener name p));
       equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
     [ 0; -1; min_int ]
 
@@ -290,7 +291,9 @@ let test_edge_refused () =
     (fun (name, driver) ->
       let p = P.make () in
       raises_match ~msg:name (Exn.invalid_arg ~substring:"rig_driver")
-        (fun () -> Rig.open_ { name; driver; make = (fun () -> Ok p) });
+        (fun () ->
+          Rig.open_
+            { name; driver; make = (fun ~word -> Ok (P.bind p ~word)) });
       equal ~msg:("stopped, " ^ name) bool true (List.mem "stop" (P.log p));
       ignore (open_as (module P) name (P.make ())))
     [
@@ -305,7 +308,7 @@ let open_store name =
 (* Opens [machine]'s host [name], a driver's device. *)
 let open_host machine name =
   Rig.open_host ~machine
-    { name; driver = (module P); make = (fun () -> Ok (P.make ())) }
+    (P.opener name (P.make ()))
 
 let test_io () =
   let io = open_store "open:io" in
@@ -355,7 +358,7 @@ let test_machine () =
   let beside machine name =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_ ~machine
-         { name; driver = (module P); make = (fun () -> Ok (P.make ())) })
+         (P.opener name (P.make ())))
   in
   let g = beside far "open:gpu" in
   let g' = beside g "open:gpu-beside" in
@@ -391,7 +394,7 @@ let test_host_for_life () =
   let host =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_host ~machine:"life-lost"
-         { name = "CPU"; driver = (module P); make = (fun () -> Ok lost) })
+         (P.opener "CPU" lost))
   in
   P.fault lost "unplugged";
   (try ignore (Rig.Buffer.create host 8) with Rig.Lost _ -> ());
@@ -418,7 +421,7 @@ let test_close_machine () =
          {
            name = "open:closing-gpu";
            driver = (module P);
-           make = (fun () -> Ok (P.make ()));
+           make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
          })
   in
   Rig.close far;
@@ -435,7 +438,7 @@ let test_open_on_ended_host () =
       {
         name = "open:ended-gpu";
         driver = (module P);
-        make = (fun () -> Ok (P.make ()));
+        make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
       }
   in
   let closed =
@@ -446,7 +449,7 @@ let test_open_on_ended_host () =
   let host =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_host ~machine:"ended-lost"
-         { name = "CPU"; driver = (module P); make = (fun () -> Ok lost) })
+         (P.opener "CPU" lost))
   in
   P.fault lost "unplugged";
   (try ignore (Rig.Buffer.create host 8) with Rig.Lost _ -> ());
@@ -465,7 +468,7 @@ let test_host_loss_spares_devices () =
   let far =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_host ~machine:"host-loss"
-         { name = "CPU"; driver = (module P); make = (fun () -> Ok lost) })
+         (P.opener "CPU" lost))
   in
   let g =
     require_ok ~pp:Format.pp_print_string
@@ -473,7 +476,7 @@ let test_host_loss_spares_devices () =
          {
            name = "open:host-loss-gpu";
            driver = (module P);
-           make = (fun () -> Ok (P.make ()));
+           make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
          })
   in
   P.fault lost "unplugged";
@@ -489,7 +492,7 @@ let test_close_lost_host () =
   let far =
     require_ok ~pp:Format.pp_print_string
       (Rig.open_host ~machine:"closing-lost"
-         { name = "CPU"; driver = (module P); make = (fun () -> Ok lost) })
+         (P.opener "CPU" lost))
   in
   let g =
     require_ok ~pp:Format.pp_print_string
@@ -497,7 +500,7 @@ let test_close_lost_host () =
          {
            name = "open:closing-lost-gpu";
            driver = (module P);
-           make = (fun () -> Ok (P.make ()));
+           make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
          })
   in
   P.fault lost "unplugged";
@@ -512,7 +515,7 @@ let test_fault_at_open () =
   P.fault p "no device";
   equal (result device string) (Error "open:faulted: no device")
     (Rig.open_
-       { name = "open:faulted"; driver = (module P); make = (fun () -> Ok p) });
+       (P.opener "open:faulted" p));
   equal (list string) [ "stop" ] (P.log p)
 
 let test_point () =
@@ -522,7 +525,7 @@ let test_point () =
 
 (* An opener's error is the open's, and leaves the name free. *)
 let test_failed_open () =
-  let fails () = Error "no hardware" in
+  let fails ~word:_ = Error "no hardware" in
   equal (result device string) (Error "no hardware")
     (Rig.open_ { name = "open:failed"; driver = (module P); make = fails });
   let d, _ = P.open_ "open:failed" in
@@ -535,7 +538,7 @@ let test_opener_raises () =
         {
           name = "open:raises";
           driver = (module P);
-          make = (fun () -> raise Exit);
+          make = (fun ~word:_ -> raise Exit);
         });
   let d, _ = P.open_ "open:raises" in
   equal string "open:raises" (Rig.name d)
@@ -576,14 +579,16 @@ module Stops = struct
   let stop stops = incr stops
 end
 
-(* [raise_anywhere what handle stops opens] opens names with [opens name make]
-   over handles of [handle ()], whose stops [stops] counts. *)
-let raise_anywhere what handle stops opens () =
+(* [raise_anywhere what handle bind stops opens] opens names with [opens name
+   make] over handles of [handle ()], whose stops [stops] counts. [make word]
+   hands the handle, bound with [bind] to the word of a driver's opener, which
+   [opens] passes it. *)
+let raise_anywhere what handle bind stops opens () =
   let rec from n =
     let name = Printf.sprintf "open:raise-%s-%d" what n in
     let h = handle () and handed = ref false in
-    let make () =
-      let r = Ok h in
+    let make word =
+      let r = Ok (match word with Some word -> bind h ~word | None -> h) in
       handed := true;
       r
     in
@@ -614,7 +619,7 @@ let raise_anywhere what handle stops opens () =
         let calls = ref 0 in
         let d =
           require_ok ~pp:Format.pp_print_string
-            (opens name (fun () ->
+            (opens name (fun _ ->
                  incr calls;
                  Ok (handle ())))
         in
@@ -631,14 +636,19 @@ let raise_anywhere what handle stops opens () =
 let test_driver_raise_anywhere =
   raise_anywhere "driver"
     (fun () -> P.make ())
+    (fun p ~word -> P.bind p ~word)
     (fun p -> List.length (List.filter (( = ) "stop") (P.log p)))
-    (fun name make -> Rig.open_ { name; driver = (module P); make })
+    (fun name make ->
+      Rig.open_
+        { name; driver = (module P); make = (fun ~word -> make (Some word)) })
 
 let test_io_raise_anywhere =
   raise_anywhere "io"
     (fun () -> ref 0)
+    (fun stops ~word:_ -> stops)
     ( ! )
-    (fun name make -> Rig.open_io { name; io = (module Stops); make })
+    (fun name make ->
+      Rig.open_io { name; io = (module Stops); make = (fun () -> make None) })
 
 (* An open that waits for another open of its name returns to OCaml at least
    every 200 ms, where a pending signal's handler runs. The other opener parks
@@ -650,9 +660,9 @@ let test_break_waiting_open () =
   if not Support.sees_waits then
     skip ~reason:"the system shows no thread's blocking call" ();
   let name = "open:break-waiting" in
-  let make () =
+  let make ~word =
     Support.park ();
-    Ok (P.make ())
+    Ok (P.bind (P.make ()) ~word)
   in
   let first = ref None in
   let opener =
@@ -667,9 +677,9 @@ let test_break_waiting_open () =
     else taken := "on another thread"
   in
   let calls = ref 0 in
-  let second () =
+  let second ~word =
     incr calls;
-    Ok (P.make ())
+    Ok (P.bind (P.make ()) ~word)
   in
   let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
   let got, raised =
@@ -702,9 +712,9 @@ let test_break_waiting_close () =
   let gpu name make =
     Rig.open_ ~machine:far { name; driver = (module P); make }
   in
-  let make () =
+  let make ~word =
     Support.park ();
-    Ok (P.make ())
+    Ok (P.bind (P.make ()) ~word)
   in
   let first = ref None in
   let opener =
@@ -728,7 +738,7 @@ let test_break_waiting_close () =
   equal ~msg:"the host" (option string) None (Rig.lost far);
   is_ok ~msg:"the open in flight" (Option.get !first);
   is_ok ~msg:"a later open"
-    (gpu "open:break-close-2" (fun () -> Ok (P.make ())));
+    (gpu "open:break-close-2" (fun ~word -> Ok (P.bind (P.make ()) ~word)));
   Rig.close far
 
 (* Two closes of one host wait for an open on its machine. A Ctrl-C ends the
@@ -743,9 +753,9 @@ let test_break_second_close () =
   let gpu name make =
     Rig.open_ ~machine:far { name; driver = (module P); make }
   in
-  let make () =
+  let make ~word =
     Support.park ();
-    Ok (P.make ())
+    Ok (P.bind (P.make ()) ~word)
   in
   let first_open = ref None in
   let opener =
@@ -756,7 +766,7 @@ let test_break_second_close () =
   Support.await "the opener" Support.parked;
   let first_close = Thread.create (fun () -> Rig.close far) () in
   let closed = Printf.sprintf "%s lost: closed" (Rig.name far) in
-  let probe () = Error "probe" in
+  let probe ~word:_ = Error "probe" in
   Support.await "the first close" (fun () ->
       gpu "open:second-close-probe" probe = Error closed);
   let main = Thread.id (Thread.self ()) in
@@ -776,7 +786,9 @@ let test_break_second_close () =
             | () -> "closed"
             | exception Sys.Break -> "Sys.Break"))
   in
-  let during = gpu "open:second-close-2" (fun () -> Ok (P.make ())) in
+  let during =
+    gpu "open:second-close-2" (fun ~word -> Ok (P.bind (P.make ()) ~word))
+  in
   Support.unpark ();
   Thread.join opener;
   Thread.join first_close;
@@ -805,7 +817,7 @@ let unpark_on_signal f =
     (fun () -> Support.interrupt_in_wait f)
 
 (* An opener that parks outside OCaml, then raises [Exit]. *)
-let parks_then_raises () =
+let parks_then_raises ~word:_ =
   Support.park ();
   raise Exit
 
@@ -835,7 +847,7 @@ let test_ended_wakes_waiter () =
   Support.await "the first opener" Support.parked;
   let second, waited =
     unpark_on_signal (fun () ->
-        let make () = Ok (P.make ()) in
+        let make ~word = Ok (P.bind (P.make ()) ~word) in
         Rig.open_ { name; driver = (module P); make })
   in
   let took = Unix.gettimeofday () -. !unparked_at in
@@ -897,7 +909,7 @@ let test_reopen_early () =
        {
          name = "open:early";
          driver = (module P);
-         make = (fun () -> Ok (P.make ()));
+         make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
        });
   P.open_gate p;
   Thread.join loser;
@@ -926,7 +938,9 @@ let lost = function Rig.Lost _ -> true | _ -> false
 let test_ended () =
   let key : string list Type.Id.t = Type.Id.make () in
   let cap = [ "add" ] in
-  let make () = Ok (P.make ~capability:(Rig_edge.Capability (key, cap)) ()) in
+  let make ~word =
+    Ok (P.bind (P.make ~capability:(Rig_edge.Capability (key, cap)) ()) ~word)
+  in
   let d =
     Result.get_ok
       (Rig.open_ { name = "open:ended"; driver = (module P); make })
@@ -1208,14 +1222,14 @@ let test_mapped_peak order () =
 let test_blocked_opener () =
   let lock = Mutex.create () and cond = Condition.create () in
   let inside = ref false and go = ref false and calls = ref 0 in
-  let make () =
+  let make ~word =
     Mutex.protect lock (fun () ->
         incr calls;
         inside := true;
         while not !go do
           Condition.wait cond lock
         done);
-    Ok (P.make ())
+    Ok (P.bind (P.make ()) ~word)
   in
   let opener : P.t Rig_edge.opener =
     { name = "open:slow"; driver = (module P); make }
@@ -1231,7 +1245,7 @@ let test_blocked_opener () =
     Thread.create
       (fun () ->
         Atomic.set started true;
-        let another = { opener with make = (fun () -> make ()) } in
+        let another = { opener with make = (fun ~word -> make ~word) } in
         second := Some (require_ok (Rig.open_ another)))
       ()
   in

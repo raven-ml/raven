@@ -1744,7 +1744,7 @@ let timeline =
 (* With no kernel driver, a process takes a GPU once: a second open is refused,
    naming the GPU taken, and the first device goes on. *)
 let one_gpu_driverless t =
-  (match S.open_gpu () with
+  (match S.open_gpu ~word:(Rig_gpu_support.Host.word ()) with
   | Ok g' ->
       A.stop g' ~fault:None;
       fail "a second open of a GPU the process took"
@@ -1825,7 +1825,10 @@ let one_gpu_shared ~second g =
 let one_gpu () =
   S.with_ @@ fun t ->
   if S.driverless () then one_gpu_driverless t
-  else one_gpu_shared ~second:S.open_gpu t.g
+  else
+    one_gpu_shared
+      ~second:(fun () -> S.open_gpu ~word:(Rig_gpu_support.Host.word ()))
+      t.g
 
 (* Every root shows this machine: a root that links to [/] reaches the same GPU,
    whose address space the process holds once, so devices opened through either
@@ -1841,11 +1844,15 @@ let two_roots () =
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ());
   Unix.symlink "/" mirror;
   Fun.protect ~finally:(fun () -> Unix.unlink mirror) @@ fun () ->
-  let through_mirror () = (Rig_amd_amdgpu.gpu ~root:mirror 0).make () in
+  let through_mirror () =
+    Rig_gpu_support.opened (Rig_amd_amdgpu.gpu ~root:mirror 0)
+  in
   S.with_ (fun t -> one_gpu_shared ~second:through_mirror t.g);
   let g = match through_mirror () with Ok g -> g | Error why -> fail why in
   Fun.protect ~finally:(fun () -> A.stop g ~fault:None) @@ fun () ->
-  one_gpu_shared ~second:S.open_gpu g
+  one_gpu_shared
+    ~second:(fun () -> S.open_gpu ~word:(Rig_gpu_support.Host.word ()))
+    g
 
 (* Host memory of fewer than 64 KiB, which no device maps, copies into Device
    memory through the host's staging memory, which the process keeps: devices of
@@ -1878,7 +1885,11 @@ let staged_devices () =
 let shared_after_stop () =
   if S.driverless () then skip ~reason:"the path maps no host memory" ();
   S.with_driver @@ fun g' ->
-  let g = match S.open_gpu () with Ok g -> g | Error why -> fail why in
+  let g =
+    match S.open_gpu ~word:(Rig_gpu_support.Host.word ()) with
+    | Ok g -> g
+    | Error why -> fail why
+  in
   let n = 4096 in
   let page = H.pages n in
   let first = Option.get (A.map_host g page n) in

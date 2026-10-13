@@ -245,12 +245,13 @@ struct polled_run {
   struct launched launched[LAST_LAUNCHES];
 };
 
-/* A device: its word, what reads it, as its [signaled] counts a fallible
-   call, and its run state, NULL once stopped. rig keeps it for the
-   process. */
+/* A device: its word, the one its open was given ([own] until then), what
+   reads it, as its [signaled] counts a fallible call, and its run state,
+   NULL once stopped. */
 struct polled {
   const struct rig_driver *driver; /* first */
-  _Atomic uint64_t word;
+  _Atomic uint64_t *word;
+  _Atomic uint64_t own;
   lock_t mu;         /* guards the fields below and [run]'s */
   cond_t cv;
   cond_t work;       /* signalled by a submit to a device that runs itself */
@@ -292,11 +293,12 @@ static void enrol(struct polled *p) {
   unlock(&all_mu);
 }
 
-/* The Polled device whose word is at [at], or NULL. */
+/* The Polled device whose word is at [at], or NULL: the last one given
+   that word, since a word passes from a stopped device to the next. */
 static struct polled *enrolled(uintptr_t at) {
   lock(&all_mu);
   struct polled *found = all;
-  while (found != NULL && (uintptr_t)&found->word != at) found = found->next;
+  while (found != NULL && (uintptr_t)found->word != at) found = found->next;
   unlock(&all_mu);
   return found;
 }
@@ -362,6 +364,7 @@ value rig_test_polled_new(value v_capacity, value v_may_block,
   r->may_block = Bool_val(v_may_block);
   r->lag = (uint64_t)Long_val(v_lag);
   p->run = r;
+  p->word = &p->own;
   enrol(p);
   v = caml_alloc_custom(&polled_ops, sizeof p, 0, 1);
   Polled_val(v) = p;
@@ -644,7 +647,7 @@ static void run_one(struct polled *p, struct queued *s) {
   free(s->waits);
   free(s->parts);
   if (s->blocks != NULL) free(s->blocks);
-  atomic_store_explicit(&p->word, s->v, memory_order_release);
+  atomic_store_explicit(p->word, s->v, memory_order_release);
 }
 
 /* Runs the queued submissions whose waits hold, in order: answers how
@@ -948,11 +951,32 @@ static int polled_settle(void *self, uint64_t v, const char **failure) {
 
 /* The host address of the device [v_p]'s word. */
 value rig_test_polled_word_at(value v_p) {
-  return Val_long((intnat)&Polled_val(v_p)->word);
+  return Val_long((intnat)Polled_val(v_p)->word);
 }
 
 value rig_test_polled_word(value v_p) {
-  return Val_long((intnat)atomic_load(&Polled_val(v_p)->word));
+  return Val_long((intnat)atomic_load(Polled_val(v_p)->word));
+}
+
+/* Makes the 8 bytes at [v_word] the device's word, first raising them to
+   [v_start] if they hold less, and starts its values after theirs, as an
+   opener's make does with the word rig gives it. The device moves to the
+   front of [all], so that a sleep finds it by its word. */
+value rig_test_polled_bind(value v_p, value v_word, value v_start) {
+  struct polled *p = Polled_val(v_p);
+  _Atomic uint64_t *w = (_Atomic uint64_t *)Nativeint_val(v_word);
+  rig_raise(w, (uint64_t)Long_val(v_start));
+  uint64_t base = atomic_load(w);
+  unenrol(p);
+  lock(&p->mu);
+  p->word = w;
+  if (p->run != NULL) {
+    p->run->received = base;
+    atomic_store(&p->run->committed, base);
+  }
+  unlock(&p->mu);
+  enrol(p);
+  return Val_unit;
 }
 
 /* Stops the device: frees its run state with its queued work, which never
@@ -964,7 +988,7 @@ value rig_test_polled_stop(value v_p) {
   struct polled_run *r = p->run;
   p->run = NULL;
   if (r != NULL)
-    atomic_store_explicit(&p->word, r->received, memory_order_release);
+    atomic_store_explicit(p->word, r->received, memory_order_release);
   cond_broadcast(&p->cv);
   cond_broadcast(&p->work);
   unlock(&p->mu);
@@ -974,7 +998,7 @@ value rig_test_polled_stop(value v_p) {
 
 /* Writes [v] into the word, as a stopped device's driver does. */
 value rig_test_polled_set_word(value v_p, value v) {
-  atomic_store(&Polled_val(v_p)->word, (uint64_t)Long_val(v));
+  atomic_store(Polled_val(v_p)->word, (uint64_t)Long_val(v));
   return Val_unit;
 }
 

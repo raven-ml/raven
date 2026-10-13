@@ -20,7 +20,7 @@ let gpu () =
   | Some firmware -> Rig_amd_pci.gpu ~firmware 0
   | None -> Rig_amd_amdgpu.gpu 0
 
-let open_gpu () = (gpu ()).make ()
+let open_gpu ~word = (gpu ()).make ~word
 
 module D = Rig_amd
 
@@ -55,7 +55,9 @@ let fixture f =
 let kernels_bin () = fixture "kernels_gfx1201.hsaco"
 let work_bin () = fixture "work_gfx1201.hsaco"
 let binary () = (kernels_bin (), [ "empty"; "double_index"; "spin"; "wild" ])
-let second () = if driverless () then None else Some (open_gpu ())
+let second () =
+  if driverless () then None
+  else Some (open_gpu ~word:(Rig_gpu_support.Host.word ()))
 
 (* Each fixture, loaded once on each device. *)
 let kernels = Rig_gpu_support.loader kernels_bin

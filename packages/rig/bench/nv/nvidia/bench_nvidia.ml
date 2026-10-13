@@ -10,7 +10,7 @@
    NVIDIA GPU the suite has no rows. *)
 
 let open_stop () =
-  match (Rig_nv_nvidia.gpu 0).make () with
+  match Rig_gpu_support.opened (Rig_nv_nvidia.gpu 0) with
   | Ok g -> Rig_nv.stop g ~fault:None
   | Error why -> failwith why
 

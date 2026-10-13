@@ -5,8 +5,8 @@
  (name test_root)
  (modules test_root)
  (locks %{workspace_root}/gpu)
- (libraries rig rig_amd rig_amd_pci rig_edge rig_pci rig_pci_support unix
-  windtrap)
+ (libraries rig rig_amd rig_amd_pci rig_edge rig_gpu_support rig_pci
+  rig_pci_support unix windtrap)
  (foreign_stubs
   (language c)
   (names test_root_stubs)))
@@ -26,6 +26,7 @@
  (modules :standard \ test_root)
  (libraries
   rig_amd_abi_support
+  rig_gpu_support
   rig_amd_pci
   rig_pci
   rig_pci_support

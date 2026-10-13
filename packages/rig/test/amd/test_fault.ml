@@ -65,12 +65,12 @@ let lost what f =
 let child_gpu () =
   let raw = ref None in
   let gpu = Rig_amd_amdgpu.gpu 0 in
-  let make () =
+  let make ~word =
     Result.map
       (fun g ->
         raw := Some g;
         g)
-      (gpu.make ())
+      (gpu.make ~word)
   in
   let opened =
     Rig.open_ { gpu with make } |> Result.map (fun d -> (d, Option.get !raw))
@@ -132,7 +132,7 @@ let unread () =
   while Sys.time () -. t0 < 0.5 do
     ()
   done;
-  match (Rig_amd_amdgpu.gpu 0).make () with
+  match Rig_gpu_support.opened (Rig_amd_amdgpu.gpu 0) with
   | Ok _ ->
       prerr_endline "an open after an unread fault answered a device";
       exit 1
@@ -177,7 +177,7 @@ let faults () =
   Rig_gpu_support.still ~msg:"the watched bytes (sampled)" string zeros
     (fun () -> String.init 64 (fun i -> host.{i}))
     ~ms:200;
-  (match (Rig_amd_amdgpu.gpu 0).make () with
+  (match Rig_gpu_support.opened (Rig_amd_amdgpu.gpu 0) with
   | Ok _ -> fail "an open of the GPU in the process its fault lost"
   | Error why ->
       contains ~msg:"an open in this process"

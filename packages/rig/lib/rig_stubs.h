@@ -37,8 +37,9 @@ typedef pthread_cond_t rig_cond;
 #define RIG_INDEX(p) ((int)((p) >> RIG_VALUE_BITS))
 #define RIG_VALUE(p) ((p) & RIG_VALUE_MASK)
 
-/* Device indices run from 1 to RIG_DEVICES - 1 and are never reused. */
-#define RIG_DEVICES 65536
+/* Device indices run from 1 to RIG_SLOTS - 1 and are never reused. A
+   device's index is its slot in rig's array of timeline words
+   ([rig_edge.h]). */
 
 /* A device's state. A loss moves a live device to LOSING while its loser
    spreads it, then to OWED, until a claimant takes its stop (STOPPING).
@@ -89,7 +90,7 @@ struct rig_line {
   int io;                   /* an io device's, whose state its library holds */
 };
 
-extern struct rig_line rig_lines[RIG_DEVICES];
+extern struct rig_line rig_lines[RIG_SLOTS];
 
 /* A list of release records ([rig_heap.c]): those of a device lie in its
    record. */

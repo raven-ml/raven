@@ -85,7 +85,7 @@ let faults () =
   still ~msg:"the watched buffer" string zeros
     (fun () -> H.read (H.at watched) 64)
     ~ms:200;
-  let e = require_error ((C.gpu 0).make ()) in
+  let e = require_error (Rig_gpu_support.opened (C.gpu 0)) in
   contains ~sub:"CUDA_ERROR_ILLEGAL_ADDRESS" e
 
 let () =

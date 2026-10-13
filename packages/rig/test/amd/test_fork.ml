@@ -23,7 +23,7 @@ let forked () =
   match Unix.fork () with
   | 0 ->
       let code =
-        match S.open_gpu () with
+        match S.open_gpu ~word:(Rig_gpu_support.Host.word ()) with
         | Error _ when S.driverless () -> 0
         | Ok c when S.driverless () ->
             A.stop c ~fault:None;

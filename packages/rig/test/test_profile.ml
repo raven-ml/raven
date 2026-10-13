@@ -214,7 +214,8 @@ let test_empty_queue_name () =
          {
            name = "profile:empty-queue";
            driver = (module Driver);
-           make = (fun () -> Ok (P.make ~host_visible:false ()));
+           make =
+             (fun ~word -> Ok (P.bind (P.make ~host_visible:false ()) ~word));
          })
   in
   let image = functions d in
@@ -315,7 +316,12 @@ let test_failed_history failure =
   in
   let d =
     require_ok ~pp:Format.pp_print_string
-      (Rig.open_ { name; driver = (module Driver); make = (fun () -> Ok p) })
+      (Rig.open_
+         {
+           name;
+           driver = (module Driver);
+           make = (fun ~word -> Ok (P.bind p ~word));
+         })
   in
   let arg = B.create Rig.host (1 lsl 16) in
   Rig.Point.wait (submit_parts ~buffers:[| arg |] d [| bump |]);

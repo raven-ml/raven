@@ -5,8 +5,8 @@
  (deps
   support/link_peer.exe
   (glob_files ../../fixtures/*.o))
- (libraries rig rig_edge rig_link_probe rig_remote_proxy rig_remote_abi
-  rig_support unix rig_host_support threads.posix windtrap))
+ (libraries rig rig_edge rig_gpu_support rig_link_probe rig_remote_proxy
+  rig_remote_abi rig_support unix rig_host_support threads.posix windtrap))
 
 (library
  (name rig_link_probe)

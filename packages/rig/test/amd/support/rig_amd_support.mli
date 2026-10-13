@@ -17,8 +17,9 @@ val gpus : unit -> int
 val gpu : unit -> Rig_amd.t Rig_edge.opener
 (** [gpu ()] describes GPU [0] through the selected kernel or PCI path. *)
 
-val open_gpu : unit -> (Rig_amd.t, string) result
-(** [open_gpu ()] opens GPU [0] through amdgpu ({!Rig_amd_amdgpu.gpu}), or,
+val open_gpu : word:nativeint -> (Rig_amd.t, string) result
+(** [open_gpu ~word] opens GPU [0] on the timeline word at [word], through
+    amdgpu ({!Rig_amd_amdgpu.gpu}), or,
     where the variable [RIG_AMD_PCI_FIRMWARE] lists directories separated by
     [:], with no kernel driver, its firmware read from them
     ({!Rig_amd_pci.gpu}): the GPU detached ({!Rig_amd_pci.detach}) and the

@@ -36,7 +36,7 @@ let driver_facts () =
   with_job_link @@ fun far ->
   let a = account 3 ~reaches:[] in
   let c = Rig_remote_abi.Device { id = 3 } in
-  let p = Result.get_ok ((Proxy.device far a c).make ()) in
+  let p = Result.get_ok (Rig_gpu_support.opened (Proxy.device far a c)) in
   let f = Proxy.facts p in
   equal (list string) [ "COMPUTE:0"; "COPY:0" ]
     (List.map (fun (q : Rig_edge.queue) -> q.name) f.queues);
@@ -94,21 +94,22 @@ let two_links () =
       let device id = Rig_remote_abi.Device { id } in
       let p =
         Result.get_ok
-          ((Proxy.device l1 (account 1 ~reaches:[]) (device 1)).make ())
+          (Rig_gpu_support.opened
+             (Proxy.device l1 (account 1 ~reaches:[]) (device 1)))
       in
       let q =
         Result.get_ok
           ((Proxy.device l2
               (account 2 ~reaches:[ 1 ] ~reached_by:[ 1 ])
               (device 2))
-             .make ())
+             .make ~word:(Rig_gpu_support.Host.word ()))
       in
       let q' =
         Result.get_ok
           ((Proxy.device l1
               (account 2 ~reaches:[] ~reached_by:[ 1 ])
               (device 2))
-             .make ())
+             .make ~word:(Rig_gpu_support.Host.word ()))
       in
       equal bool false (Proxy.peer p q);
       equal bool true (Proxy.peer p q');
@@ -138,17 +139,18 @@ let make_misuse () =
   in
   raises_match ~msg:"a host's record for device 1" Exn.invalid_arg (fun () ->
       Result.get_ok
-        ((Proxy.device far (account 1 ~reaches:[]) rig_host).make ()));
+        (Rig_gpu_support.opened
+           (Proxy.device far (account 1 ~reaches:[]) rig_host)));
   raises_match ~msg:"device 2's record for device 1" Exn.invalid_arg (fun () ->
       Result.get_ok
         ((Proxy.device far (account 1 ~reaches:[])
             (Rig_remote_abi.Device { id = 2 }))
-           .make ()));
+           .make ~word:(Rig_gpu_support.Host.word ())));
   raises_match ~msg:"a device's record for the host" Exn.invalid_arg (fun () ->
       Result.get_ok
         ((Proxy.device far (account 0 ~reaches:[])
             (Rig_remote_abi.Device { id = 1 }))
-           .make ()))
+           .make ~word:(Rig_gpu_support.Host.word ())))
 
 let facts =
   group "facts"
@@ -866,10 +868,10 @@ let second_proxy () =
   with_job_link @@ fun far ->
   let a = account 1 ~reaches:[] in
   let first = Proxy.device far a (Rig_remote_abi.Device { id = 1 }) in
-  ignore (Result.get_ok (first.make ()));
+  ignore (Result.get_ok (Rig_gpu_support.opened first));
   let second = Proxy.device far a (Rig_remote_abi.Device { id = 1 }) in
   equal string a.name second.name;
-  raises_match Exn.invalid_arg (fun () -> second.make ())
+  raises_match Exn.invalid_arg (fun () -> Rig_gpu_support.opened second)
 
 let failures =
   group "failure"

@@ -38,10 +38,10 @@ let lost f =
 
 let gpu_once () =
   let t = S.open_ () in
-  let e = require_error ((C.gpu 0).make ()) in
+  let e = require_error (Rig_gpu_support.opened (C.gpu 0)) in
   contains ~sub:"open" e;
   S.close t;
-  C.stop (require_ok ((C.gpu 0).make ())) ~fault:None
+  C.stop (require_ok (Rig_gpu_support.opened (C.gpu 0))) ~fault:None
 
 let opening =
   group ~timeout:60. "opening"
@@ -52,11 +52,12 @@ let opening =
             [ "CUDA"; "CUDA:1"; "CUDA:7" ]
             (List.map (fun i -> (C.gpu i).name) [ 0; 1; 7 ]));
       test "a negative GPU raises" (fun () ->
-          raises_match Exn.invalid_arg (fun () -> (C.gpu (-1)).make ());
+          raises_match Exn.invalid_arg (fun () ->
+              Rig_gpu_support.opened (C.gpu (-1)));
           raises_match Exn.invalid_arg (fun () -> (C.gpu (-1)).name));
       test "a GPU past the count is an error naming the count" (fun () ->
           let n = C.count () in
-          let e = require_error ((C.gpu n).make ()) in
+          let e = require_error (Rig_gpu_support.opened (C.gpu n)) in
           contains ~sub:(if n = 0 then "CUDA" else strf "CUDA sees %d" n) e);
       test "a GPU has one device until it is closed" gpu_once;
     ]
@@ -415,7 +416,7 @@ let lose (t : S.t) flag =
 let reopened () =
   let t0 = Rig.Profile.now () in
   let rec go () =
-    match (C.gpu 0).make () with
+    match Rig_gpu_support.opened (C.gpu 0) with
     | Ok g -> g
     | Error e when Rig.Profile.now () - t0 > 10 * second ->
         failf "GPU 0 does not open again within 10 s: %s" e
@@ -510,12 +511,14 @@ let stop_idle () =
 let stop_ended () =
   if not (S.present ()) then skip ~reason:"the machine has no CUDA GPU" ();
   S.release ();
-  let g = require_ok ((C.gpu 0).make ()) in
+  let g = require_ok (Rig_gpu_support.opened (C.gpu 0)) in
   is_none ~msg:"value 1" (S.submit_edge g ~v:1 []);
   equal int ~msg:"the word before the stop" 0 (C.signaled g);
   C.stop g ~fault:None;
   equal int ~msg:"the word as the stop returns" 1 (C.signaled g);
-  let g = require_ok ~msg:"the GPU opened again" ((C.gpu 0).make ()) in
+  let g =
+    require_ok ~msg:"the GPU opened again" (Rig_gpu_support.opened (C.gpu 0))
+  in
   C.stop g ~fault:None
 
 let stop_running () =
@@ -523,7 +526,7 @@ let stop_running () =
   S.release ();
   let opener = C.gpu 0 in
   let close g = C.stop g ~fault:None in
-  let g = require_ok (opener.make ()) in
+  let g = require_ok (Rig_gpu_support.opened opener) in
   S.bind g;
   if S.attribute watchdog <> 0 then begin
     close g;
@@ -539,7 +542,7 @@ let stop_running () =
       C.stop g ~fault;
       Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
       equal int ~msg:"the work still runs after stop" 0 (C.signaled g);
-      let opened = opener.make () in
+      let opened = Rig_gpu_support.opened opener in
       Result.iter close opened;
       let e = require_error opened in
       contains ~sub:"still runs" e;
@@ -548,7 +551,7 @@ let stop_running () =
   let d =
     require_ok
       (Rig.open_
-         { opener with driver = (module Driver); make = (fun () -> Ok g) })
+         { opener with driver = (module Driver); make = (fun ~word:_ -> Ok g) })
   in
   let t = { S.d; g } in
   Fun.protect
@@ -571,7 +574,7 @@ let stop_running () =
 let write_after_failure () =
   if not (S.present ()) then skip ~reason:"the machine has no CUDA GPU" ();
   S.release ();
-  let g = require_ok ((C.gpu 0).make ()) in
+  let g = require_ok (Rig_gpu_support.opened (C.gpu 0)) in
   S.bind g;
   let flag = require_some (C.alloc g Pinned 8) in
   let _, kernel = S.kernels g in

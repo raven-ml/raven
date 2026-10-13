@@ -371,12 +371,11 @@ static void launch(const struct rig_part *p, const uint8_t *args,
   rig_pool_run((int)threads, (int64_t)n, (int64_t)groups, body, &j);
 }
 
-/* The host's state: its driver and its word. The submitting thread runs the
-   launches in order, then makes [v] observable, so every value is reached
-   when its submit returns. */
+/* The host's state: its driver. Its word is slot 0's. The submitting thread
+   runs the launches in order, then makes [v] observable, so every value is
+   reached when its submit returns. */
 static struct {
   const struct rig_driver *driver;
-  _Atomic uint64_t word;
 } host;
 
 static int host_submit(void *self, uint64_t v, const struct rig_wait *waits,
@@ -393,7 +392,7 @@ static int host_submit(void *self, uint64_t v, const struct rig_wait *waits,
   if (times != NULL) times[0] = rig_now_ns();
   for (int i = 0; i < nparts; i++) launch(&parts[i], args, slots);
   if (times != NULL) times[1] = rig_now_ns();
-  atomic_store_explicit(&host.word, v, memory_order_release);
+  atomic_store_explicit(rig_words(), v, memory_order_release);
   return RIG_COMMITTED;
 }
 
@@ -413,12 +412,7 @@ void *rig_host_state(void) {
   return &host;
 }
 
-_Atomic uint64_t *rig_host_word(void) { return &host.word; }
-
-value caml_rig_host_word(value unit) {
-  (void)unit;
-  return Val_long((intnat)&host.word);
-}
+_Atomic uint64_t *rig_host_word(void) { return rig_words(); }
 
 /* Symbols */
 

@@ -85,7 +85,7 @@ let unreadable file =
   | exception Sys_error _ -> ());
   equal (list string) [] (N.buses ~root ());
   equal int 0 (N.count ~root ());
-  let e = require_error ((N.gpu ~root 0).make ()) in
+  let e = require_error (Rig_gpu_support.opened (N.gpu ~root 0)) in
   contains ~sub:"reading the machine's GPUs" e
 
 (* The kernel driver lists the GPUs it holds under /proc, by bus address: on a
@@ -103,11 +103,15 @@ let kernel_list () =
    opens again. *)
 let once () =
   if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let g = require_ok ((N.gpu 0).make ()) in
-  let e = require_error ~msg:"a second open" ((N.gpu 0).make ()) in
+  let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
+  let e =
+    require_error ~msg:"a second open" (Rig_gpu_support.opened (N.gpu 0))
+  in
   contains ~sub:"has a device open" e;
   Rig_nv.stop g ~fault:None;
-  let g' = require_ok ~msg:"an open after stop" ((N.gpu 0).make ()) in
+  let g' =
+    require_ok ~msg:"an open after stop" (Rig_gpu_support.opened (N.gpu 0))
+  in
   Rig_nv.stop g' ~fault:None
 
 (* Whether GPU [bus] shows a display, as nvidia-smi reports it, or [None]
@@ -128,7 +132,7 @@ let display_active bus =
    the device once its work has made no progress for 30 s. *)
 let hang_bound () =
   if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let g = require_ok ((N.gpu 0).make ()) in
+  let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let hang_ms = (Rig_nv.facts g).hang_ms in
   Rig_nv.stop g ~fault:None;
   mem (option int) ~msg:"hang_ms" hang_ms [ None; Some 30_000 ];
@@ -151,18 +155,20 @@ let other_root () =
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ());
   Unix.symlink "/" mirror;
   equal (list string) (N.buses ()) (N.buses ~root:mirror ());
-  let g = require_ok ((N.gpu 0).make ()) in
+  let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
   let e =
     require_error ~msg:"an open through the other root"
-      ((N.gpu ~root:mirror 0).make ())
+      (Rig_gpu_support.opened (N.gpu ~root:mirror 0))
   in
   contains ~sub:"has a device open" e;
   Rig_nv.stop g ~fault:None;
   let g' =
     require_ok ~msg:"an open through it after stop"
-      ((N.gpu ~root:mirror 0).make ())
+      (Rig_gpu_support.opened (N.gpu ~root:mirror 0))
   in
-  let e = require_error ~msg:"an open through /" ((N.gpu 0).make ()) in
+  let e =
+    require_error ~msg:"an open through /" (Rig_gpu_support.opened (N.gpu 0))
+  in
   contains ~sub:"has a device open" e;
   Rig_nv.stop g' ~fault:None
 
@@ -198,7 +204,7 @@ let cycles cycle =
 let reopen () =
   if N.count () = 0 then skip ~reason:"the machine has no NVIDIA GPU" ();
   cycles (fun () ->
-      let g = require_ok ((N.gpu 0).make ()) in
+      let g = require_ok (Rig_gpu_support.opened (N.gpu 0)) in
       Rig_nv.stop g ~fault:None)
 
 (* Opening and closing a GPU through rig again and again keeps at most one
@@ -239,11 +245,12 @@ let () =
              test "count answers on a machine whose /sys reads" (fun () ->
                  at_least int ~than:0 (N.count ()));
              test "a negative GPU raises" (fun () ->
-                 raises_match Exn.invalid_arg (fun () -> (N.gpu (-1)).make ());
+                 raises_match Exn.invalid_arg (fun () ->
+                     Rig_gpu_support.opened (N.gpu (-1)));
                  raises_match Exn.invalid_arg (fun () -> (N.gpu (-1)).name));
              test "a GPU past the count is an error naming the count" (fun () ->
                  let n = N.count () in
-                 let e = require_error ((N.gpu n).make ()) in
+                 let e = require_error (Rig_gpu_support.opened (N.gpu n)) in
                  contains ~sub:(Printf.sprintf "has %d NVIDIA GPUs" n) e);
              test "a GPU has one device until it is stopped" once;
              test "a GPU has one device whatever the root" other_root;

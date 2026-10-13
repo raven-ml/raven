@@ -316,7 +316,7 @@ let wait_rows =
   (* The driver's C state, the device, and the word's host and GPU addresses,
      read once so that a submission allocates nothing. *)
   let raw () =
-    let g = opening (get (Rig_amd_support.open_gpu ())) in
+    let g = opening (get (Rig_gpu_support.opened (Rig_amd_support.gpu ()))) in
     let w = Option.get (A.alloc g Rig_edge.Pinned 8) in
     ((A.facts g).edge, g, host w, address w, ref 0)
   in
@@ -580,7 +580,9 @@ let wake_rows =
    the last stop left, and a full one, which only a GPU reset to its bootloader
    takes, so that row times the reset too. Neither has a KFD twin. *)
 let open_rows =
-  let open_stop () = A.stop (get (Rig_amd_support.open_gpu ())) ~fault:None in
+  let open_stop () =
+    A.stop (get (Rig_gpu_support.opened (Rig_amd_support.gpu ()))) ~fault:None
+  in
   Thumper.group "open"
     [
       row "partial" open_stop (fun () -> open_stop ());
@@ -596,7 +598,7 @@ let waits_on () =
   match Unix.fork () with
   | 0 ->
       let on =
-        match Rig_amd_support.open_gpu () with
+        match Rig_amd_support.open_gpu ~word:(Rig_gpu_support.Host.word ()) with
         | Ok g ->
             let on = (A.facts g).waits.stores in
             A.stop g ~fault:None;

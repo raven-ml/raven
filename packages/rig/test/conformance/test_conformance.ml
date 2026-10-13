@@ -1342,7 +1342,7 @@ let device_waits (module G : Gpu) () =
          {
            name = G.class_ ^ ":producer";
            driver = (module G.D);
-           make = (fun () -> Ok g);
+           make = (fun ~word:_ -> Ok g);
          })
   in
   Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
@@ -1386,7 +1386,7 @@ let reaches_closed (module G : Gpu) () =
          {
            name = G.class_ ^ ":second";
            driver = (module G.D);
-           make = (fun () -> Ok g');
+           make = (fun ~word:_ -> Ok g');
          })
   in
   Fun.protect ~finally:(fun () -> Rig.close b) @@ fun () ->

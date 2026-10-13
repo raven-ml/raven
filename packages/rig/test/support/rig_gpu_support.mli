@@ -6,6 +6,10 @@
 (** What the GPU suites and benches share: host memory by address, and a GPU of
     one driver opened through rig. *)
 
+val opened : 'a Rig_edge.opener -> ('a, string) result
+(** [opened o] is [o.make] given a {!Host.word}: the device opened outside
+    rig, for a test that calls its driver itself. *)
+
 (** {1:host Host memory} *)
 
 (** Host memory the suites own, by address. *)
@@ -23,6 +27,11 @@ module Host : sig
   val pages : ?read_only:bool -> int -> int
   (** [pages n] is the address of [n] zeroed bytes from a page boundary,
       read-only iff [read_only] (defaults to [false]). *)
+
+  val word : unit -> nativeint
+  (** [word ()] is the address of 8 zeroed bytes of host memory that live
+      for the process: the word an opener's [make] is given
+      ({!Rig_edge.type-opener}) by a test that calls [make] itself. *)
 
   val free_pages : int -> int -> unit
   (** [free_pages a n] gives back the [n] bytes {!pages} gave at [a]. *)
@@ -72,8 +81,9 @@ module type Gpu = sig
   (** [present ()] is [true] iff the machine has a GPU of the class that rig
       drives, from its files and settings alone: it starts no vendor library. *)
 
-  val open_ : unit -> (D.t, string) result
-  (** [open_ ()] opens the driver's device of the GPU. *)
+  val open_ : word:nativeint -> (D.t, string) result
+  (** [open_ ~word] opens the driver's device of the GPU on the timeline
+      word at [word] ({!Rig_edge.type-opener}). *)
 end
 
 (** {1:work Work} *)

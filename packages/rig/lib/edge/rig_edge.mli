@@ -34,8 +34,8 @@
 
     The life of a device, as its driver sees it, goes like this:
     {ol
-    {- [Rig.open_] calls the opener's [make] and reads the new device's
-       facts.}
+    {- [Rig.open_] calls the opener's [make] with the address of the
+       device's word ({!type-opener}) and reads the new device's facts.}
     {- rig allocates, maps and frees memory, loads and unloads code, and
        hands work to the device through the C functions.}
     {- rig loses the device for a {!Driver.Fault}, a failed [submit] or
@@ -163,14 +163,15 @@ type 'region facts = {
   capability : capability;
       (** The ABI record, filled when the device opened. *)
   word : 'region;
-      (** The timeline word. Other devices may map it, and rig reads it after
-          a loss, for the life of the process: rig never frees it. Where it
-          has no host address, as for a device of another machine, rig reads
-          it through {!Driver.signaled}. *)
+      (** The timeline word: the word [make] was given ({!type-opener}), or
+          one of the driver's own. Other devices may map it, and rig reads it
+          after a loss, for the life of the process: rig never frees it.
+          Where it has no host address, as for a device of another machine,
+          rig reads it through {!Driver.signaled}. *)
   edge : nativeint;
-      (** The address of the device's C state, valid for the life of the
-          process. The state's first member must point to the driver's
-          [struct rig_driver] of [rig_edge.h] ({!section-calls}). *)
+      (** The address of the device's C state, valid until its stop returns
+          ({!Driver.stop}). The state's first member must point to the
+          driver's [struct rig_driver] of [rig_edge.h] ({!section-calls}). *)
 }
 (** The type for the facts of a device. A {!Driver.Fault} while rig reads
     them makes the open return [Error]. The open raises [Invalid_argument]
@@ -191,7 +192,9 @@ type 'region facts = {
        limits, or whose shared memory exceeds the function's.}
     {- [submit] encodes the parts on the device's queues as the work of the
        value it is given, after the waits it is given and the device's earlier
-       work. Its calls are given the values 1, 2, 3, … in order. Each part
+       work. Its calls are given the values [b + 1], [b + 2], … in order,
+       where [b] is the value the word given to [make] holds when [make]
+       returns. Each part
        names its queue, by its index in [queues], and the parts of other
        queues it starts after ([struct rig_part] in [rig_edge.h]). When it
        returns, all of the value's work is on the queues, though the device
@@ -556,16 +559,25 @@ end
 type 'a opener = {
   name : string;  (** The device's name, without a machine suffix. *)
   driver : (module Driver with type t = 'a);  (** The device's driver. *)
-  make : unit -> ('a, string) result;  (** Opens a new device handle. *)
+  make : word:nativeint -> ('a, string) result;
+      (** Opens a new device handle, whose timeline word lies at the host
+          address [word]. *)
 }
 (** The type for openers of named devices. Making an opener does no I/O and
-    opens nothing. [make] opens the device, and returns [Error] when the
-    device cannot be opened, such as when the hardware is missing. [Rig.open_]
-    calls [make] only when no device of [name] is open on its machine. A success
-    hands the handle to rig, which stops it ({!Driver.stop}) once the device is
-    lost or closed. A caller that calls [make] itself owns the handle and must
-    stop it. Each driver's opener states whether [make] opens another handle
-    while an earlier one is not stopped. *)
+    opens nothing. [make ~word] opens the device, and returns [Error] when
+    the device cannot be opened, such as when the hardware is missing.
+    [Rig.open_] calls [make] only when no device of [name] is open on its
+    machine. It gives it the address of the device's word in rig's array
+    of timeline words ([rig_words] in [rig_edge.h]), and the device's
+    values start after the value the word holds. [make] may raise that
+    value, never lower it, and an [Error] leaves no work that writes the
+    word, which rig then gives to a later device. A success hands the handle
+    to rig, which stops it ({!Driver.stop}) once the device is lost or
+    closed. A caller that calls
+    [make] itself owns the handle and must stop it, and gives it 8 bytes of
+    host memory, aligned to 8, that live as long as the handle. Each
+    driver's opener states whether [make] opens another handle while an
+    earlier one is not stopped. *)
 
 type 'a io_opener = {
   name : string;  (** The device's name, without a machine suffix. *)

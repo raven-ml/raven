@@ -925,5 +925,5 @@ let gpu ?root i : Rig_nv.t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Rig_nv);
-    make = (fun () -> open_ ?root i);
+    make = (fun ~word:_ -> open_ ?root i);
   }

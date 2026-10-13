@@ -729,4 +729,8 @@ module Driver = struct
 end
 
 let gpu i : t Rig_edge.opener =
-  { name = device_name i; driver = (module Driver); make = (fun () -> open_ i) }
+  {
+    name = device_name i;
+    driver = (module Driver);
+    make = (fun ~word:_ -> open_ i);
+  }
