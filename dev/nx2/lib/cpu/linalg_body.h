@@ -3531,6 +3531,14 @@ static void F(trevc)(int64_t n, const T *s, const R *wr, const R *wi, T *xm,
         x[j0 + 1 - pc] = y2;
         x[j0 + pc] = y1;
         xmax = F(cabs1)(y1) > F(cabs1)(y2) ? F(cabs1)(y1) : F(cabs1)(y2);
+        /* x scaled down where the block times it could overflow. */
+        R emax = 0;
+        for (int q = 0; q < 4; q++)
+          emax = F(cabs1)(e[q]) > emax ? F(cabs1)(e[q]) : emax;
+        if (xmax > 1 && emax > 1 && xmax > bignum / emax) {
+          F(cscale)(x, ki, emax / bignum);
+          xmax *= emax / bignum;
+        }
       }
       /* The update of the elements above, x scaled down first where it
          could overflow. */
