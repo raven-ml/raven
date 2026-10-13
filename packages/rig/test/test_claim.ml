@@ -605,6 +605,96 @@ let donation_commands =
     command "donate" (memory ^-> judges bool) judge_donate donate;
   ]
 
+(* Two domains: a donor that hands its claims to another domain and returns at
+   once, consumptions through those claims there, and donations of the same
+   memory. A consumption through the handed claims succeeds only before their
+   with_ has returned, and raises after. A donation's own consumption never
+   finds its buffer dead, and the memory is consumed at most once. A with_
+   beside another's may find the memory held exclusive or read, which no order
+   of whole calls shows, so those refusals and reads are accepted in any
+   state. *)
+type handed = { x : B.t; cell : Claim.t option Atomic.t }
+type handing = { mutable handed : bool; mutable live : bool }
+
+let handing =
+  abstract
+    ~pp:(fun ppf r ->
+      Format.fprintf ppf "handed %b, live %b" r.handed r.live)
+    "h"
+
+let hand h =
+  if Option.is_some (Atomic.get h.cell) then "already"
+  else
+    match
+      Claim.with_ ~read:[] ~donate:[ h.x ] (fun c ->
+          Atomic.compare_and_set h.cell None (Some c))
+    with
+    | true -> "handed"
+    | false -> "already"
+    | exception Invalid_argument _ -> "refused"
+
+let consume_handed h =
+  match Atomic.get h.cell with
+  | None -> "none"
+  | Some c -> (
+      match Claim.consume c ~why:"handed" h.x with
+      | _ -> "consumed"
+      | exception Invalid_argument _ -> "refused")
+
+let donate_handed h =
+  let own c =
+    if not (Claim.exclusive c h.x) then "shared"
+    else
+      match Claim.consume c ~why:"donated" h.x with
+      | _ -> "consumed"
+      | exception Invalid_argument _ -> "own consumption refused"
+  in
+  match Claim.with_ ~read:[] ~donate:[ h.x ] own with
+  | s -> s
+  | exception Invalid_argument _ -> "refused"
+
+let judge_hand r = function
+  | Ok "handed" ->
+      equal ~msg:"handed before" bool false r.handed;
+      r.handed <- true
+  | Ok "already" -> equal ~msg:"handed before" bool true r.handed
+  | Ok "refused" -> ()
+  | Ok s -> failf "the hand-over answered %s" s
+  | Error e -> raise e
+
+let judge_handed_consume r = function
+  | Ok "none" -> equal ~msg:"handed" bool false r.handed
+  | Ok "consumed" ->
+      equal ~msg:"handed, live" (pair bool bool) (false, true)
+        (r.handed, r.live);
+      r.live <- false
+  | Ok "refused" -> equal ~msg:"handed or dead" bool true (r.handed || not r.live)
+  | Ok s -> failf "the consumption answered %s" s
+  | Error e -> raise e
+
+let judge_handed_donate r = function
+  | Ok "consumed" ->
+      equal ~msg:"live" bool true r.live;
+      r.live <- false
+  | Ok "shared" -> equal ~msg:"live" bool true r.live
+  | Ok "refused" -> ()
+  | Ok s -> failf "the donation answered %s" s
+  | Error e -> raise e
+
+let handed_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes handing)
+      (fun () -> { handed = false; live = true })
+      (fun () -> { x = B.create Rig.host 64; cell = Atomic.make None });
+    command "hand" (handing ^-> judges string) judge_hand hand;
+    command "consume handed"
+      (handing ^-> judges string)
+      judge_handed_consume consume_handed;
+    command "donate" (handing ^-> judges string) judge_handed_donate
+      donate_handed;
+  ]
+
 (* An export under an exclusive claim is the consumer's: refused before the
    consumption, made after it, and the memory is outside the claims once they
    are released. *)
@@ -1104,6 +1194,10 @@ let tests =
           "reads, exports and shares beside a consuming donation are ordered \
            with it"
           donation_commands;
+        stateful ~domains:2
+          "a consumption through handed claims beside their return and \
+           donations is ordered with them"
+          handed_commands;
       ];
   ]
 
