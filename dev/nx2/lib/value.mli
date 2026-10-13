@@ -22,9 +22,12 @@ type ('v, 's, +'d) payload = ..
 
 type death =
   | Live
+  | Offered of int
+      (** Live and donated: the key that orders the claims of its handles,
+          one per donor. *)
   | Died of string  (** The function the value was given to. *)
-(** Whether a value lives. Values are made [Live]; a death is claimed by
-    [compare_and_set] from [Live]. *)
+(** Whether a value lives. Values are made [Live]; a donor is [Offered] once,
+    and a death is set once and never undone. *)
 
 type ('v, 's, 'd) t =
   | Array of {

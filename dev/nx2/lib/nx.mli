@@ -218,15 +218,17 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     {!sliding_window}), spends its handle and passes a new one to its result,
     whether it makes a view or a copy; the deaths wait for the final consumer. A spent
     handle raises naming the movement that spent it. Any other operation
-    consumes its handles. Two handles over one memory reaching one operation
-    raise naming [Nx.donate]: the same handle twice, two donations of one value,
-    or a handle and a view a movement passed on.
+    consumes its handles. Two handles of one donor or over one memory reaching
+    one operation raise naming [Nx.donate]: the same handle twice, two donations
+    of one value, or a handle and one a movement passed on.
 
     An operation checks every operand before it consumes any, so in sequence a
-    refused operation kills nothing. When operations on several domains race to
-    consume one handle, exactly one succeeds and the others raise naming it; a
-    loser's other donated operands may then be dead. No operation reads elements
-    a consumer has overwritten.
+    refused operation kills nothing. On any number of domains, no operation
+    reads a value after its donor died, and no value is consumed twice. When
+    operations on several domains race to consume the same handles, at least
+    one succeeds. A loser raises naming an operation that claimed one of its
+    operands, which may itself have lost, and the loser's other donated operands
+    may be dead. No operation reads elements a consumer has overwritten.
 
     The consumer may write its result into the donated memory when it reads the
     operand only at the result's own index (an elementwise operand), the memory

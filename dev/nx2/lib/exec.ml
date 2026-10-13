@@ -97,9 +97,24 @@ let checked (type v s d) ~by i (x : (v, s, d) Value.t) =
 
 (* Donation *)
 
+(* The key the next donor is offered with. *)
+let offers = Atomic.make 0
+
+(* Gives the live donor word [w] a key of its own, which every handle of every
+   donation of it reads. *)
+let offer (w : Value.death Atomic.Loc.t) =
+  match Atomic.Loc.get w with
+  | Value.Live ->
+      (* Fails only where another donation offered it first: a donor dies only
+         through a handle, which it has after it is offered. *)
+      let k = Atomic.fetch_and_add offers 1 in
+      ignore (Atomic.Loc.compare_and_set w Value.Live (Value.Offered k))
+  | Value.Offered _ | Value.Died _ -> ()
+
 let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   Prim.alive ~by 0 x;
   let handle at arrays donor =
+    offer donor;
     Value.Donated { at; arrays; donor; spent = Value.Live }
   in
   match x with
@@ -124,9 +139,16 @@ let is_handle (type v s d) (x : (v, s, d) Value.t) =
 
 let is_concrete x = not (Prim.is_constant x)
 
-(* The donated operands among [xs]. Two handles over one memory raise naming
-   [Nx.donate]: the same handle twice, two donations of one value, or one
-   handle and a view a movement passed on. *)
+(* Whether the donor words [w] and [w'] are one donor's: an offered donor has
+   one key. *)
+let one_donor (w : Value.death Atomic.Loc.t) w' =
+  match (Atomic.Loc.get w, Atomic.Loc.get w') with
+  | Value.Offered k, Value.Offered k' -> k = k'
+  | (Value.Live | Value.Offered _ | Value.Died _), _ -> false
+
+(* The donated operands among [xs]. Two handles of one donor or over one memory
+   raise naming [Nx.donate]: the same handle twice, two donations of one value,
+   or one handle and a value a movement passed on. *)
 let handles ~by xs =
   let hs =
     List.filter (fun (Handle (_, x)) -> is_handle x)
@@ -140,7 +162,8 @@ let handles ~by xs =
             let same =
               match (x, y) with
               | Value.Donated a, Value.Donated b ->
-                  Iarray.exists
+                  one_donor a.donor b.donor
+                  || Iarray.exists
                        (fun p ->
                          Iarray.exists
                            (fun q ->
@@ -160,40 +183,86 @@ let handles ~by xs =
 (* The buffers of a handle, one per device. *)
 let buffers (Handle (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x))
 
-(* Sets the death word [w] of operand [i] to [died] for [by], where a first claim
-   from [Live] failed: a word another operation took, on any domain, raises
-   naming it. No death is undone, so a word read [Live] is only retried. *)
-let rec contested ~by i (w : Value.death Atomic.Loc.t) died =
-  match Atomic.Loc.get w with
-  | Value.Died earlier ->
-      invalid_argf "%s: operand %d was donated to %s" by (i + 1) earlier
-  | Value.Live ->
-      if not (Atomic.Loc.compare_and_set w Value.Live died) then
-        contested ~by i w died
+(* Claims
 
-(* Marks the handle [x], operand [i], read by the operation [died] names: one
-   operation reads a handle. *)
-let spend (type v s d) ~by i died (x : (v, s, d) Value.t) =
+   A consumer claims its handles in their donors' key order, each handle's own
+   word before its donor's, setting each word to its death; it gives none back
+   when it loses one. Each word has one place in the order, since every handle
+   of a donor reads the donor's one key, and a consumer's words rise strictly,
+   since [handles] refuses two handles of one donor. So of consumers racing for
+   the same handles, at least one succeeds: a consumer that loses at a word
+   lost it to one that claimed that word, which, if it lost too, lost at a word
+   above it. Following who each loser lost to climbs the order, so it ends at a
+   consumer that claimed all its words.
+
+   Claimed in operand order, [add h1 h2] and [add h2 h1] on two domains could
+   each take its first handle and lose its second to the other. In key order a
+   loser may still name a loser. With h1 < h2 < h3, [add h1 h2] takes h1,
+   [add h2 h3] takes h2, [add h1 h3] loses h1 naming the first, which loses h2
+   naming the second, which takes h3 and succeeds. *)
+
+let died_to ~by i earlier =
+  invalid_argf "%s: operand %d was donated to %s" by (i + 1) earlier
+
+(* Sets the death word [w] of operand [i] to [died] unless it died first, on
+   any domain, which raises naming that consumer. No death is undone, so a word
+   read live is only retried. *)
+let rec claim_word ~by i (w : Value.death Atomic.Loc.t) died =
+  match Atomic.Loc.get w with
+  | Value.Died earlier -> died_to ~by i earlier
+  | (Value.Live | Value.Offered _) as seen ->
+      if not (Atomic.Loc.compare_and_set w seen died) then
+        claim_word ~by i w died
+
+(* Sets the handle [x]'s own word, operand [i], to [died] unless an operation
+   read the handle first, which raises naming it. The word is set in place:
+   passed to [claim_word], its location would be allocated. *)
+let rec spend_word : type v s d.
+    by:string -> int -> Value.death -> (v, s, d) Value.t -> unit =
+ fun ~by i died x ->
   match x with
-  | Value.Donated d ->
+  | Value.Donated d -> (
       if not (Atomic.Loc.compare_and_set [%atomic.loc d.spent] Value.Live died)
-      then contested ~by i [%atomic.loc d.spent] died
+      then
+        match d.spent with
+        | Value.Died earlier -> died_to ~by i earlier
+        | Value.Live | Value.Offered _ -> spend_word ~by i died x)
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
 
-(* Claims the handles [hs] for their consumer [by], before it reads them: each
-   handle is spent, then its donor dies naming [by]. A donor that died first,
-   on any domain, raises naming its consumer: the donor's one word orders the
-   consumers of all its handles. *)
+(* Marks the handle [x], operand [i], read by the movement [by], which passes a
+   new handle on: one operation reads a handle. *)
+let spend ~by i x = spend_word ~by i (Value.Died by) x
+
+(* Claims the handle [x], operand [i], for its consumer [by], before it reads
+   it: its own word, then its donor's, which orders the consumers of all the
+   donor's handles. *)
 let claim_handle (type v s d) ~by i (x : (v, s, d) Value.t) =
   match x with
   | Value.Donated d ->
       let died = Value.Died by in
-      spend ~by i died x;
-      if not (Atomic.Loc.compare_and_set d.donor Value.Live died) then
-        contested ~by i d.donor died
+      spend_word ~by i died x;
+      claim_word ~by i d.donor died
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
 
-let claim ~by hs = List.iter (fun (Handle (i, x)) -> claim_handle ~by i x) hs
+(* The key of the handle [x]'s donor, operand [i]. A donor that died raises
+   naming its consumer. *)
+let key (type v s d) ~by i (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Donated d -> (
+      match Atomic.Loc.get d.donor with
+      | Value.Offered k -> k
+      | Value.Died earlier -> died_to ~by i earlier
+      | Value.Live -> invalid_arg "Exec.key: a handle's donor was not offered")
+  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
+      invalid_arg "Exec.key: not a handle"
+
+(* Claims the handles [hs] for their consumer [by], in key order. Their keys
+   differ: [handles] refused two handles of one donor. *)
+let claim ~by hs =
+  let keyed = List.map (fun (Handle (i, x) as h) -> (key ~by i x, h)) hs in
+  List.iter
+    (fun (_, Handle (i, x)) -> claim_handle ~by i x)
+    (List.sort (fun (k, _) (k', _) -> Int.compare k k') keyed)
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)
@@ -691,7 +760,7 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
           | None -> moved ()
         end
       in
-      spend ~by 0 (Value.Died by) x;
+      spend ~by 0 x;
       Value.Donated { at; arrays; donor = d.donor; spent = Value.Live }
   | Value.Map ({ loads; _ } as m) -> (
       claim ~by hs;

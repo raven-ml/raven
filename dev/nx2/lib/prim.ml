@@ -44,12 +44,12 @@ let death : type v s d. (v, s, d) t -> death = function
       (* A handle dies with its donor, whichever handle was consumed. *)
       match Atomic.Loc.get r.donor with
       | Died _ as died -> died
-      | Live -> r.spent)
+      | Live | Offered _ -> r.spent)
   | Deferred _ | Traced _ -> Live
 
 let alive ~by i x =
   match death x with
-  | Live -> ()
+  | Live | Offered _ -> ()
   | Died why -> invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
 
 let arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray = function

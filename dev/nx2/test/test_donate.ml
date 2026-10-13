@@ -44,7 +44,14 @@ let test_one_read () =
   let x = fresh [| 1.; 2. |] in
   let d = Nx.donate x in
   invalid ~sub:"Nx.donate: Nx.mul reads one donation twice" (fun () ->
-      Nx.mul d (Nx.reshape [| 2 |] d))
+      Nx.mul d (Nx.reshape [| 2 |] d));
+  (* A reshape of a transpose copies: the two handles share no memory. *)
+  let x = Nx.reshape [| 2; 2 |] (fresh [| 1.; 2.; 3.; 4. |]) in
+  let c = Nx.reshape [| 4 |] (Nx.transpose (Nx.donate x)) in
+  invalid ~sub:"Nx.donate: Nx.add reads one donation twice" (fun () ->
+      Nx.add (Nx.reshape [| 4 |] (Nx.donate x)) c);
+  equal ~msg:"and kills nothing" (array float_exact) [| 2.; 4.; 6.; 8. |]
+    (elements (Nx.add x x))
 
 let test_passed_on () =
   let x = fresh [| 1.; 2.; 3.; 4. |] in
@@ -146,10 +153,10 @@ let commands =
 
 (* On two domains: handles given to consumers and movements. A handle's state
    is the set of what it may be: free, or taken by a named function. In
-   sequence it is known; an operation of two handles that loses its second to
-   another domain may have taken its first. Every run is explained by some
-   order, every result is computed from the elements, and a refusal names the
-   function that took the handle. *)
+   sequence it is known; an operation of two handles that loses one to another
+   domain may have taken the other. Every run is explained by some order, every
+   result is computed from the elements, and a refusal names a function that
+   took one of the operation's handles. *)
 type handle = { ys : float array; mutable states : string option list }
 
 let handle = abstract "h"
@@ -180,6 +187,14 @@ let refused f =
 let free h = List.mem None h.states
 let union a b = List.sort_uniq compare (a @ b)
 
+(* Whether [h] may have gone to [e]. An [add2] claims its handles one at a time
+   and keeps those it took when it loses another, so a handle it took can be
+   seen dead before the order reaches it: [add2 h2 h3] takes [h2] on one
+   domain, [add2 h3 h2] on the other loses [h2] to it, and the first loses [h3]
+   to a later [add2 h1 h3] there. A free handle may then have gone to an
+   [Nx.add] in flight, and is dead from then on. *)
+let lost_to e h = List.mem (Some e) h.states || (e = "Nx.add" && free h)
+
 (* A one-handle operation [by] whose result's elements are [f]'s. *)
 let judge1 by f h = function
   | Ok (Ok ys) ->
@@ -188,7 +203,7 @@ let judge1 by f h = function
       h.states <- [ Some by ]
   | Ok (Error e) ->
       cover "a later operation raises naming the first" true;
-      if not (List.mem (Some e) h.states) then fail (by ^ " raised naming " ^ e);
+      if not (lost_to e h) then fail (by ^ " raised naming " ^ e);
       h.states <- [ Some e ]
   | Error exn -> raise exn
 
@@ -207,7 +222,9 @@ let reshape_sys h =
       ignore (Nx.reshape [| 1; (Nx.shape h).(0) |] h);
       [||])
 
-(* [add h1 h2] checks both handles, then takes [h1], then [h2]. *)
+(* [add h1 h2] checks both handles, then takes them in an order the promise
+   leaves open: a loser lost one handle, and may have taken the other if it was
+   free. *)
 let add2_ref h1 h2 out =
   if h1 == h2 then
     match out with
@@ -222,19 +239,60 @@ let add2_ref h1 h2 out =
         h1.states <- [ Some "Nx.add" ];
         h2.states <- [ Some "Nx.add" ]
     | Ok (Error e) ->
-        let first = List.mem (Some e) h1.states in
-        let second = free h1 && List.mem (Some e) h2.states in
-        if not (first || second) then fail ("Nx.add raised naming " ^ e);
-        cover "the second handle refused" second;
-        let s1 = if first then [ Some e ] else [] in
-        let s1 = if second then union s1 [ None; Some "Nx.add" ] else s1 in
-        let s2 = if first then h2.states else [] in
-        let s2 = if second then union s2 [ Some e ] else s2 in
+        let lost = lost_to e in
+        let taken h =
+          if free h then union h.states [ Some "Nx.add" ] else h.states
+        in
+        if not (lost h1 || lost h2) then fail ("Nx.add raised naming " ^ e);
+        cover "one handle refused, the other free"
+          ((lost h1 && free h2) || (lost h2 && free h1));
+        let s1 = if lost h1 then [ Some e ] else [] in
+        let s1 = if lost h2 then union s1 (taken h1) else s1 in
+        let s2 = if lost h2 then [ Some e ] else [] in
+        let s2 = if lost h1 then union s2 (taken h2) else s2 in
         h1.states <- s1;
         h2.states <- s2
     | Error exn -> raise exn
 
 let add2_sys h1 h2 = refused (fun () -> elements (Nx.add h1 h2))
+
+(* [add h1 h2] and [add h2 h1] on two domains, released together in each round
+   over a fresh pair: at least one succeeds, and a loser names [Nx.add]. *)
+let rounds = 2000
+
+let test_crossed () =
+  let pairs =
+    Array.init rounds (fun _ ->
+        (Nx.donate (fresh [| 1.; 2. |]), Nx.donate (fresh [| 10.; 20. |])))
+  in
+  let arrived = Atomic.make 0 in
+  let meet r =
+    Atomic.incr arrived;
+    while Atomic.get arrived < 2 * (r + 1) do
+      Domain.cpu_relax ()
+    done
+  in
+  let race flip =
+    Array.mapi
+      (fun r (h1, h2) ->
+        meet r;
+        refused (fun () ->
+            elements (if flip then Nx.add h2 h1 else Nx.add h1 h2)))
+      pairs
+  in
+  let other = Domain.spawn (fun () -> race true) in
+  let mine = race false in
+  let theirs = Domain.join other in
+  Array.iteri
+    (fun r a ->
+      match (a, theirs.(r)) with
+      | Ok ys, Error e | Error e, Ok ys ->
+          equal (array float_exact) [| 11.; 22. |] ys;
+          equal string "Nx.add" e
+      | Ok _, Ok _ -> fail (Printf.sprintf "round %d: both consumed" r)
+      | Error e, Error e' ->
+          fail (Printf.sprintf "round %d: both lost, to %s and %s" r e e'))
+    mine
 
 let pair =
   Gen.with_pp
@@ -249,6 +307,14 @@ let handles =
     command "add" (handle ^-> judges taken) add_ref add_sys;
     command "mul" (handle ^-> judges taken) mul_ref mul_sys;
     command "reshape" (handle ^-> judges taken) reshape_ref reshape_sys;
+    command "add2" (handle ^-> handle ^-> judges taken) add2_ref add2_sys;
+  ]
+
+(* Consumers of two handles alone, so that two domains often take one pair in
+   opposite orders. *)
+let crossed =
+  [
+    command "make" (pair @-> makes handle) make_handle make_handle_sys;
     command "add2" (handle ^-> handle ^-> judges taken) add2_ref add2_sys;
   ]
 
@@ -270,5 +336,8 @@ let () =
              test "a value of every set is not donated" test_left_alone;
              stateful ~domains:2 "reads and consumers on two domains" commands;
              stateful ~domains:2 "handles taken on two domains" handles;
+             stateful ~domains:2 "two-handle consumers on two domains" crossed;
+             test "of crossed consumers on two domains, one succeeds"
+               test_crossed;
            ];
        ])

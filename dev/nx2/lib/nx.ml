@@ -2758,7 +2758,7 @@ let pp ppf x =
   | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
       match Prim.death x with
       | Value.Died f -> Format.fprintf ppf ", donated to %s" f
-      | Value.Live -> (
+      | Value.Live | Value.Offered _ -> (
           match Exec.on_host ~by:"Nx.pp" (Exec.live x) with
           | a -> Format.fprintf ppf "@ %a" pp_elements a
           | exception Rig.Lost (d, why) ->
