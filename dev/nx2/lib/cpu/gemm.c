@@ -788,8 +788,9 @@ done:
      row's element of a into lane t modulo 16's accumulators, one per
      output. Where an element's groups of columns are enough units for the
      threads, a unit takes a group whole, sums each block's lanes by the
-     lanes' tree and totals its outputs; otherwise a unit is one block of
-     one group, and a second job sums and totals them. */
+     lanes' tree and totals its outputs; otherwise a unit is a span of
+     the lanes of one block of one group, and a second job sums and totals
+     them. */
 
 /* The left-complete binary tree's sum of the [n] >= 1 values at [s]; the
    lanes' tree of [c] outputs, lane q of output j at l[q·ls + j], into lane
@@ -994,6 +995,7 @@ static void dots(problem *p, int64_t bytes, double cost) {
 typedef struct {
   problem *p;
   int64_t blocks, cols, groups; /* of k, and of [cols] columns */
+  int64_t spans;                /* of a block's lanes, each a unit's */
   int64_t staged;               /* a unit's staging of a and b */
   int64_t own;                  /* a worker's scratch */
   uint8_t *lanes; /* split: lane l of block x of output (i, j) of element e
@@ -1007,43 +1009,45 @@ static uint8_t *lane_at(const rows_job *f, int64_t e, int64_t x, int64_t l,
   return f->lanes + (at * p->ext[COL] + j) * p->w;
 }
 
-/* Block [x] of element [e]'s columns [j0, j0 + c), its lanes from +0,
-   lane q's row i at l + (q·ls + i·ldy)·w: the block's elements of a staged
-   into [ap], then each row of b in turn, in place or staged NX_CPU_LANES
-   rows at a time, added times each row's element of a into its lane,
-   prefetching the next row. b's rows are read in the order they lie: read
-   a lane at a time, every 16th row, b came at 35 GB/s on the i9-9900K's
-   16 threads, whose memory gives 42. */
+/* Lanes [q0, q1) of block [x] of element [e]'s columns [j0, j0 + c),
+   from +0, lane q's row i at l + (q·ls + i·ldy)·w: the block's elements
+   of a staged into [ap], then the lanes' rows of b in turn, in place or
+   staged NX_CPU_LANES rows at a time, each added times its row's element
+   of a into its lane, prefetching the next row. b's rows are read in the
+   order they lie: read a lane at a time, every 16th row, b came at 35 GB/s
+   on the i9-9900K's 16 threads, whose memory gives 42. */
 static void rows_block(const rows_job *f, uint8_t *ap, int64_t e, int64_t x,
-                       int64_t j0, int64_t c, uint8_t *l, int64_t ls,
-                       int64_t ldy) {
+                       int64_t q0, int64_t q1, int64_t j0, int64_t c,
+                       uint8_t *l, int64_t ls, int64_t ldy) {
   const problem *p = f->p;
   const int64_t *sa = p->op[A].st, *sb = p->op[B].st;
   int64_t m = p->ext[ROW], w = p->w, k0 = x * NX_CPU_FOLD_BLOCK;
   int64_t len = min64(NX_CPU_FOLD_BLOCK, p->ext[CON] - k0);
-  for (int64_t q = 0; q < NX_CPU_LANES; q++)
+  for (int64_t q = q0; q < q1; q++)
     for (int64_t i = 0; i < m; i++)
       memset(l + (q * ls + i * ldy) * w, 0, (size_t)(c * w));
   stage_acc(p, A, pos(p, A, e, 0, 0, k0), sa[ROW], sa[CON], m, len, ap, m);
   uint8_t *bp = ap + m * NX_CPU_FOLD_BLOCK * w;
   nx_cpu_axpy axpy = nx_cpu_table->axpy[p->acc];
-  for (int64_t t = 0; t < len; t += NX_CPU_LANES) {
-    int64_t r = min64(NX_CPU_LANES, len - t), at = pos(p, B, e, 0, j0, k0 + t);
-    /* The last row to prefetch: in place, the block's, so that the next
-       group's first row comes ahead too; staged, the group's, the last the
-       buffer holds. */
+  for (int64_t t = 0; t + q0 < len; t += NX_CPU_LANES) {
+    int64_t r = min64(q1, len - t), at = pos(p, B, e, 0, j0, k0 + t + q0);
+    /* Rows from q0: in place, the next row to prefetch after the last
+       lane's is the next group's first, within the block; staged, the
+       group's last row is the last the buffer holds. */
     const uint8_t *vb = bp;
-    int64_t ldb = c, last = r - 1;
+    int64_t ldb = c, wrap = r - 1 - q0, last = r - 1 - q0;
     if (adjacent(p, B, COL)) {
       vb = p->op[B].x->base + at * w;
       ldb = sb[CON];
-      last = len - t - 1;
+      wrap = NX_CPU_LANES;
+      last = len - t - q0 - 1;
     } else {
-      stage_acc(p, B, at, sb[COL], sb[CON], c, r, bp, c);
+      stage_acc(p, B, at, sb[COL], sb[CON], c, r - q0, bp, c);
     }
-    for (int64_t q = 0; q < r; q++) {
-      const uint8_t *row = vb + q * ldb * w, *aq = ap + (t + q) * m * w;
-      const uint8_t *next = vb + min64(q + 1, last) * ldb * w;
+    for (int64_t q = q0; q < r; q++) {
+      const uint8_t *row = vb + (q - q0) * ldb * w, *aq = ap + (t + q) * m * w;
+      int64_t up = q + 1 < r ? q + 1 - q0 : wrap;
+      const uint8_t *next = vb + min64(up, last) * ldb * w;
       for (int64_t i0 = 0; i0 < m; i0 += NX_CPU_DOT_ROWS)
         axpy(aq + i0 * w, 1, (int)min64(NX_CPU_DOT_ROWS, m - i0), row, c,
              l + (q * ls + i0 * ldy) * w, ldy, next);
@@ -1091,7 +1095,7 @@ static void rows_whole(int64_t lo, int64_t hi, int worker, void *ctx) {
     int64_t g = u % f->groups, e = u / f->groups;
     int64_t j0 = g * f->cols, c = min64(f->cols, n - j0);
     for (int64_t x = 0; x < f->blocks; x++) {
-      rows_block(f, ap, e, x, j0, c, l, m * c, c);
+      rows_block(f, ap, e, x, 0, NX_CPU_LANES, j0, c, l, m * c, c);
       block_sums(f, l, m * c, c, c, x, s);
     }
     totals(f, e, j0, c, s);
@@ -1108,11 +1112,14 @@ static void rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   int64_t m = p->ext[ROW], n = p->ext[COL];
   uint8_t *ap = scratch(p, f->own);
   if (ap == NULL) return;
+  int64_t lanes = NX_CPU_LANES / f->spans;
   for (int64_t u = lo; u < hi; u++) {
-    int64_t g = u % f->groups, x = u / f->groups % f->blocks;
-    int64_t e = u / f->groups / f->blocks;
+    int64_t q0 = u % f->spans * lanes, v = u / f->spans;
+    int64_t g = v % f->groups, x = v / f->groups % f->blocks;
+    int64_t e = v / f->groups / f->blocks;
     int64_t j0 = g * f->cols, c = min64(f->cols, n - j0);
-    rows_block(f, ap, e, x, j0, c, lane_at(f, e, x, 0, 0, j0), m * n, n);
+    rows_block(f, ap, e, x, q0, q0 + lanes, j0, c, lane_at(f, e, x, 0, 0, j0),
+               m * n, n);
   }
   give(SCRATCH, ap);
 }
@@ -1137,8 +1144,8 @@ static void rows_finish(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* A unit takes a group of columns whole where the groups are enough for
-   the threads; otherwise each block of each group is a unit, and a second
-   job sums them. */
+   the threads; otherwise each span of lanes of each block of each group
+   is a unit, and a second job sums them. */
 static void rows(problem *p, int64_t bytes, double cost) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t w = p->w, cols = min64(n, ROW_BYTES / w);
@@ -1160,7 +1167,13 @@ static void rows(problem *p, int64_t bytes, double cost) {
     atomic_store(&p->failed, 1);
     return;
   }
-  nx_cpu_job(batch * f.blocks * f.groups, bytes, cost, rows_unit, &f);
+  /* Lanes split into spans, a power of two, until the units are enough
+     for cores that run at unequal speeds to share; each lane's rows and
+     the sum's bits stay those of a whole block. */
+  int64_t blocks = batch * f.blocks * f.groups, want = units(bytes, cost);
+  for (f.spans = 1; f.spans < NX_CPU_LANES && blocks * f.spans < want;)
+    f.spans *= 2;
+  nx_cpu_job(blocks * f.spans, bytes, cost, rows_unit, &f);
   if (!atomic_load(&p->failed))
     nx_cpu_job(batch * f.groups, lanes, 2 * lanes, rows_finish, &f);
   free(f.lanes);
