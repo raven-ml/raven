@@ -377,6 +377,9 @@ let contract_rows =
   List.map (square acc32 "f32") [ 8; 64; 128; 256; 512; 1024; 2048; 4096 ]
   @ List.map (square acc64 "f64") [ 256; 1024 ]
   @ [
+      (* Few columns, many rows, [4096 × 256] by [256 × 64]: computed as
+         its transpose, whose columns lie apart in dst. *)
+      gemm ~acc:acc32 "contract-f32-4096x64x256" 4096 64 256;
       gemm ~init:true ~acc:acc32 "contract-f32-1024-init" 1024 1024 1024;
       (* a transposed: the [k × m] array viewed as [m × k]. *)
       contract ~acc:acc32 "contract-f32-1024-tn" ~sa:[| 1024; 1024 |]

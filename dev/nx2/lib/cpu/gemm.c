@@ -473,23 +473,25 @@ static void pack_panel(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* tile's path where R's columns are apart: MR rows at a time through a
-   buffer. Apart from tile, so that tile's frame holds no buffer, which
-   macOS would probe page by page at each call. */
+   buffer, each way a box copy (nx_array.h), which transposes square blocks
+   where R's rows are adjacent, as a transposed product's are. Apart from
+   tile, so that tile's frame holds no buffer, which macOS would probe page
+   by page at each call. */
 static __attribute__((noinline)) void tile_apart(
     const problem *p, nx_cpu_micro k, nx_cpu_from f, int64_t kc, src a, src b,
     int64_t e, int64_t i, int64_t j, int64_t m, int64_t n) {
   _Alignas(ALIGN) uint8_t t[NX_CPU_TILE];
+  const int64_t *s = p->op[DST].st;
+  uint8_t *base = p->op[DST].x->base;
   int w = p->w;
   for (int64_t r0 = 0; r0 < m; r0 += k.mr) {
-    int64_t rows = min64(k.mr, m - r0);
-    for (int64_t r = 0; f == NX_CPU_FROM_TILE && r < rows; r++)
-      for (int64_t q = 0; q < n; q++)
-        memcpy(t + (r * k.nr + q) * w, at_r(p, e, i + r0 + r, j + q), w);
+    int64_t rows = min64(k.mr, m - r0), at = pos(p, DST, e, i + r0, j, 0);
+    nx_box in = {{1, rows, n}, {0, at}, {{0, k.nr, 1}, {0, s[ROW], s[COL]}}};
+    nx_box out = {{1, rows, n}, {at, 0}, {{0, s[ROW], s[COL]}, {0, k.nr, 1}}};
+    if (f == NX_CPU_FROM_TILE) nx_copy_box(t, base, &in, 8 * w);
     k.f(rows, n, kc, a.at + r0 * a.row * w, a.row, a.k, b.at, b.k, t, k.nr,
         f);
-    for (int64_t r = 0; r < rows; r++)
-      for (int64_t q = 0; q < n; q++)
-        memcpy(at_r(p, e, i + r0 + r, j + q), t + (r * k.nr + q) * w, w);
+    nx_copy_box(base, t, &out, 8 * w);
   }
 }
 
