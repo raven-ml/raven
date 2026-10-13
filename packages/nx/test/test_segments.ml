@@ -174,33 +174,55 @@ let pp_draw ppf d =
 let extremes =
   [ Int64.min_int; Int64.max_int; 0x1_0000_0000L; 0x1_0000_0001L; -2L ]
 
-let draw_with ?(segments = Gen.int_range 0 4) shapes =
+(* [draw_with ~segments ~ids ~broadcast shapes] draws ids of a shape of
+   [shapes], each [ids segments] or an extreme, and whether each axis of [x] is
+   broadcast. *)
+let draw_with ?(segments = Gen.int_range 0 4)
+    ?(ids = fun segments -> Gen.int_range (-1) segments) ?(broadcast = Gen.bool)
+    shapes =
   let open Gen in
   let* segments = segments in
   let* shape = shapes in
   let id =
-    frequency
-      [ (8, map Int64.of_int (int_range (-1) segments)); (1, of_list extremes) ]
+    frequency [ (8, map Int64.of_int (ids segments)); (1, of_list extremes) ]
   in
   let* ids = array ~size:(constant (numel shape)) id in
-  let* broadcast = array ~size:(constant (Array.length shape)) bool in
+  let* broadcast = array ~size:(constant (Array.length shape)) broadcast in
   let* row = one_of [ constant [||]; map (fun w -> [| w |]) (int_range 0 2) ] in
   let+ poison =
     option (of_list [ Float.nan; Float.infinity; Float.neg_infinity ])
   in
   { segments; shape; ids; broadcast; row; poison }
 
+(* Any draw, and on branches of their own two that few draws are: a block per
+   position over rows shared along two axes or three, and groups in which no
+   position names the last segment. *)
 let draw =
   let open Gen in
+  let shared =
+    draw_with ~segments:(int_range 4 8)
+      ~broadcast:(frequency [ (3, constant true); (1, constant false) ])
+      (array ~size:(int_range 2 3) (constant 2))
+  and grouped =
+    draw_with ~segments:(int_range 1 4)
+      ~ids:(fun segments -> int_range (-1) (segments - 2))
+      (map (fun n -> [| n |]) (int_range 9 40))
+  in
   with_pp pp_draw
-    (draw_with
-       (one_of
-          [
-            constant [||];
-            map (fun n -> [| n |]) (int_range 0 40);
-            array ~size:(constant 2) (int_range 0 6);
-            array ~size:(constant 3) (int_range 0 3);
-          ]))
+    (frequency
+       [
+         ( 4,
+           draw_with
+             (one_of
+                [
+                  constant [||];
+                  map (fun n -> [| n |]) (int_range 0 40);
+                  array ~size:(constant 2) (int_range 0 6);
+                  array ~size:(constant 3) (int_range 0 3);
+                ]) );
+         (1, shared);
+         (1, grouped);
+       ])
 
 (* [tensors d] is [d]'s ids and rows: small integers, distinct per row of x, and
    NaN where [d] poisons a row that no in-range position reads. *)

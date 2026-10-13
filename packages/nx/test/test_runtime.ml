@@ -60,10 +60,20 @@ let representation =
   let outside = Exn.invalid_arg ~substring:"reaches outside"
   and other_count = Exn.invalid_arg ~substring:"Nx.of_buffer: shape"
   and p = Nx.Placement.on (Nx.Device.make r1) in
+  (* A buffer's element count and a shape, and on a branch of its own a shape of
+     exactly the buffer's count, which few independent draws give. *)
   let shapes =
-    Gen.(
-      let* rank = int_range 0 3 in
-      pair (int_range 0 8) (array ~size:(constant rank) edge_dims))
+    let pp ppf (n, shape) =
+      Format.fprintf ppf "%d elements, shape %a" n pp_shape shape
+    in
+    let exact =
+      Gen.map
+        (fun shape -> (Array.fold_left ( * ) 1 shape, shape))
+        Gen.(array ~size:(int_range 0 3) (int_range 0 3))
+    in
+    Gen.with_pp pp
+      (Gen.frequency
+         [ (3, Gen.pair (Gen.int_range 0 8) edge_shapes); (1, exact) ])
   in
   let host n view =
     Nx.Repr.host

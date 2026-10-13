@@ -205,13 +205,45 @@ let pp_bounded_view ppf (n, view) =
     (Nx_array.View.strides view)
     pp_shape (Nx_array.View.shape view)
 
+(* Shapes of rank up to 3 over {!edge_dims}, and on branches of their own the
+   two that few such draws reach: one with a negative dimension, and one of more
+   than [max_int] elements, two dimensions of [2^31] or more among dimensions of
+   1 to 3. *)
+let edge_shapes =
+  let open Gen in
+  let pp = Format.pp_print_int in
+  let of_rank lo dim =
+    let* rank = int_range lo 3 in
+    array ~size:(constant rank) dim
+  in
+  let set a d = Array.mapi (fun i e -> if i = a then d else e) in
+  let negative =
+    let* shape = of_rank 1 edge_dims in
+    let+ a = int_range 0 (Array.length shape - 1)
+    and+ d = of_list ~pp [ -2; -1 ] in
+    set a d shape
+  in
+  let overflowing =
+    let huge =
+      of_list ~pp [ 1 lsl 31; 1 lsl 32; 1 lsl 61; max_int - 1; max_int ]
+    in
+    let* shape = of_rank 2 (int_range 1 3) in
+    let rank = Array.length shape in
+    let+ a = int_range 0 (rank - 1)
+    and+ b = int_range 1 (rank - 1)
+    and+ x = huge
+    and+ y = huge in
+    set ((a + b) mod rank) y (set a x shape)
+  in
+  frequency [ (4, of_rank 0 edge_dims); (1, negative); (1, overflowing) ]
+
 (* A storage of up to 8 elements and a view of rank up to 3 over it. *)
 let edge_views =
   Gen.with_pp pp_bounded_view
     Gen.(
-      let* rank = int_range 0 3 in
+      let* shape = edge_shapes in
+      let rank = Array.length shape in
       let+ n = int_range 0 8
-      and+ shape = array ~size:(constant rank) edge_dims
       and+ strides = array ~size:(constant rank) (edge_ints (-2) 3)
       and+ offset = edge_ints (-3) 8 in
       (n, Nx_array.View.create ~offset ~strides shape))

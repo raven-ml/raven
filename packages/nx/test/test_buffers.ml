@@ -71,11 +71,17 @@ let round_trip (Stored.Case c) =
       equal ~msg:"elements" Stored.packed (Nx.P t)
         (Nx.P (Nx.of_buffer (Nx.dtype x) (Nx.shape x) b)))
 
+(* Tensors of [c] under any layout, and on a branch of their own broadcast over
+   a new axis of two, whose elements are not one run unless there are none. *)
 let own_storage (Stored.Case c) =
+  let broadcast t = Nx.broadcast_to (Array.append [| 2 |] (Nx.shape t)) t in
+  let tensors =
+    Gen.frequency [ (3, c.tensors); (1, Gen.map broadcast c.tensors) ]
+  in
   prop
     (c.name
    ^ ": to_buffer is the value's storage exactly when its elements are one run \
-      of it") (Gen.pair c.tensors wheres) (fun (t, where) ->
+      of it") (Gen.pair tensors wheres) (fun (t, where) ->
       let x = where.at t in
       cover "one run" (one_run x);
       cover "not one run" (Nx.numel x > 0 && not (one_run x));

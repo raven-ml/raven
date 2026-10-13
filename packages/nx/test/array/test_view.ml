@@ -23,16 +23,18 @@ let in_c_order v =
 
 type step = { name : string; apply : V.t -> V.t }
 
+let transposed =
+  {
+    name = "transposed";
+    apply =
+      (fun v -> V.permute v (Array.init (V.ndim v) (fun a -> V.ndim v - 1 - a)));
+  }
+
 let steps =
   let first v = if V.ndim v = 0 then 0 else V.dim 0 v in
   let all v x = Array.make (V.ndim v) x in
   [
-    {
-      name = "transposed";
-      apply =
-        (fun v ->
-          V.permute v (Array.init (V.ndim v) (fun a -> V.ndim v - 1 - a)));
-    };
+    transposed;
     { name = "flipped"; apply = (fun v -> V.flip v (all v true)) };
     {
       name = "without its first row";
@@ -170,10 +172,16 @@ let positions v =
 
 (* A moved view and a shape of as many elements: the candidates that divide what
    remains of the count, in order, then the rest, with axes of one element among
-   them. *)
+   them. A transpose of two or three axes of 2 or 3 elements, on a branch of its
+   own, is a view that most such shapes refuse. *)
 let reshaped =
   let open Gen in
-  let* shape, path = moved in
+  let transposes =
+    map
+      (fun shape -> (shape, [ transposed ]))
+      (array ~size:(int_range 2 3) (int_range 2 3))
+  in
+  let* shape, path = frequency [ (3, moved); (1, transposes) ] in
   let+ candidates = list ~size:(int_range 0 4) (int_range 1 4) in
   let v = List.fold_left (fun v s -> s.apply v) (V.create shape) path in
   let n = V.numel v in

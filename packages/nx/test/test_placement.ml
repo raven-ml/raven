@@ -515,9 +515,11 @@ let rec permutations = function
           List.map (List.cons x) (permutations (List.filter (( <> ) x) l)))
         l
 
-(* The movements of [host] of each kind: views only, so reshapes that keep
-   [host]'s elements where they are. *)
-let kinds host =
+(* The movements of [host] at [where] of each kind: views only, so reshapes that
+   keep [host]'s elements where they are. The last kind is the cuts that hold no
+   element, of the split axis when there is one, which are few among the cuts of
+   every axis. *)
+let kinds host where =
   let s = Nx.shape host and n = Nx.numel host in
   let axes = List.init (Array.length s) Fun.id in
   let divisors = List.filter (fun d -> n mod d = 0) (List.init n succ) in
@@ -555,6 +557,10 @@ let kinds host =
         List.concat_map
           (fun w -> [ Window (d, w, 1); Window (d, w, 2) ])
           (List.init s.(d) succ));
+    (let empty d = List.init (s.(d) + 1) (fun lo -> Range (d, lo, lo)) in
+     match where with
+     | Split (a, _) -> empty a
+     | One _ | Copies _ -> per_axis empty);
   ]
 
 (* A storage, equal to itself alone, printed as where it lives and its buffers'
@@ -581,8 +587,8 @@ let move_both ((shape, where), steps) =
       | Some (host, placed, where) -> (
           (* A kind with no movement of [host] falls back to transposes. *)
           let cs =
-            match List.nth (kinds host) kind with
-            | [] -> List.hd (kinds host)
+            match List.nth (kinds host where) kind with
+            | [] -> List.hd (kinds host where)
             | cs -> cs
           in
           let m = List.nth cs (pick mod List.length cs) in
@@ -653,7 +659,13 @@ let movements =
         (Gen.pair
            (Gen.with_pp pp_placed placed_shape)
            (Gen.list ~size:(Gen.int_range 1 3)
-              (Gen.pair (Gen.int_range 0 5) (Gen.int_range 0 10_000))))
+              (Gen.pair
+                 (Gen.frequency
+                    [
+                      (6, Gen.int_range 0 5);
+                      (2, Gen.constant ~pp:Format.pp_print_int 6);
+                    ])
+                 (Gen.int_range 0 10_000))))
         move_both;
       test "a view off its storage's devices is refused" (fun () ->
           match

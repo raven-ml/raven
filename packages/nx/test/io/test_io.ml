@@ -870,6 +870,17 @@ let txt_shaped t =
 
 let save_txt path t = Nx_io.save_txt path t
 let matrices = Gen.such_that txt_shaped float64s
+
+(* Tensors of [tensors] with elements and at most two axes, and on a branch of
+   their own the matrices that load back at their shape, which few of them
+   are. *)
+let txt_tensors tensors =
+  let matrix t = Nx.ndim t = 2 && txt_shaped t in
+  Gen.frequency
+    [
+      (3, Gen.such_that (fun t -> Nx.numel t > 0 && Nx.ndim t <= 2) tensors);
+      (1, Gen.such_that matrix tensors);
+    ]
 let int32s shape l = Nx.create Nx.int32 shape (Array.of_list l)
 let strings = Gen.of_list ~pp:(fun ppf s -> Format.fprintf ppf "%S" s)
 
@@ -886,11 +897,7 @@ let txt =
              prop
                (c.name
               ^ " tensors round trip, NaN keeping no sign, a single row or \
-                 column as a vector")
-               (Gen.such_that
-                  (fun t -> Nx.numel t > 0 && Nx.ndim t <= 2)
-                  c.tensors)
-               (fun t ->
+                 column as a vector") (txt_tensors c.tensors) (fun t ->
                  cover "a matrix" (Nx.ndim t = 2 && txt_shaped t);
                  cover "a scalar" (Nx.ndim t = 0);
                  let loaded = Nx_io.load_txt (saved "" save_txt t) c.dtype in

@@ -139,7 +139,16 @@ let making =
 (* Strings *)
 
 let every_byte = String.init 256 Char.chr
-let strings = Gen.(array ~size:(int_range 0 6) string)
+
+(* Arrays of strings, some holding a NUL byte, which few strings of random bytes
+   do. *)
+let strings =
+  let open Gen in
+  let with_nul =
+    let+ a = string and+ b = string in
+    a ^ "\000" ^ b
+  in
+  array ~size:(int_range 0 6) (frequency [ (3, string); (1, with_nul) ])
 
 let strings_of_bytes =
   group "strings"

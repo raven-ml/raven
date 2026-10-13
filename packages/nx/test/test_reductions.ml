@@ -969,9 +969,15 @@ let exact_mean ~signed xs =
   in
   if h < 0 && low mod n <> 0 then Int64.succ floor else floor
 
-(* Counts that the narrow dtypes cannot hold, beside small ones. *)
+(* Small counts, counts about the limits of the 8-bit dtypes, and on a branch of
+   their own counts past 255, which none of them holds. *)
 let mean_count =
-  Gen.frequency [ (3, Gen.int_range 1 9); (1, Gen.int_range 120 300) ]
+  Gen.frequency
+    [
+      (3, Gen.int_range 1 9);
+      (1, Gen.int_range 120 300);
+      (1, Gen.int_range 256 300);
+    ]
 
 (* [d] sums at its width and orders as it is signed. *)
 let sums (Int_dtype d) =
