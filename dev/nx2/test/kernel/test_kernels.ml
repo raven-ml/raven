@@ -1597,7 +1597,12 @@ let law_map_split ?declines ?(labels = true) ?length ?sub_byte_bitcasts
                  (List.init (Iarray.length p.nodes) (Iarray.get p.nodes)))
           in
           cover "more than four loop operands"
-            (Array.length ins + Iarray.length p.outs + List.length axes > 4)
+            (Array.length ins + Iarray.length p.outs + List.length axes > 4);
+          let repeated (A.Any x) =
+            let l = A.layout x in
+            L.numel l > 1 && Array.for_all (( = ) 0) (L.strides l)
+          in
+          cover "a load of one repeated element" (Array.exists repeated ops)
           end;
           if length <> None then
             cover "more than eight values held" (held p > 8);
