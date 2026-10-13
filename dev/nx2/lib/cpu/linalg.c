@@ -1,6 +1,13 @@
 /*---------------------------------------------------------------------------
+   Copyright (c) 1992-2025 The University of Tennessee and The University of
+   Tennessee Research Foundation, The University of California Berkeley,
+   The University of Colorado Denver (LAPACK). BSD-3-Clause-Open-MPI (see
+   dev/nx2/LICENSE-lapack).
+   Copyright (c) 2016 Elmar Peise (ReLAPACK). MIT (see
+   dev/nx2/LICENSE-relapack).
    Copyright (c) 2026 The Raven authors. All rights reserved.
-   SPDX-License-Identifier: ISC
+
+   SPDX-License-Identifier: BSD-3-Clause-Open-MPI AND MIT AND ISC
   ---------------------------------------------------------------------------*/
 
 /* Factorisations, triangular solves and decompositions: Nx_kernel.S's
