@@ -1475,36 +1475,40 @@ static int stop_in(struct edge *e, struct device *d) {
   return stopped;
 }
 
-/* Stops a device: [true] if its work no longer writes memory ([stop_in]);
-   [false] if work still runs, or the context cannot be made current to
-   ask, which leaves the state to [caml_rig_cuda_ended]. The state but for
-   the edge goes. */
-value caml_rig_cuda_stop(value v_self) {
-  struct edge *e = Edge_val(v_self);
-  struct device *d = e->d;
-  e->last = d->last;
-  e->context = d->context;
-  e->d = NULL;
+/* Stops [d], the state of [e]'s device, made current in its context
+   ([stop_in]), or leaves it to [caml_rig_cuda_ended] if the context cannot
+   be made current. */
+static int stop_edge(struct edge *e, struct device *d) {
   if (push(d->context) != CUDA_SUCCESS) {
     e->unstopped = d;
-    return Val_false;
+    return 0;
   }
   int stopped = stop_in(e, d);
   pop(CUDA_SUCCESS);
+  return stopped;
+}
+
+/* Stops a device: [true] if its work no longer writes memory ([stop_in]);
+   [false] if work still runs, or the context cannot be made current to
+   ask, which leaves the state to [caml_rig_cuda_ended]. The state but for
+   the edge goes. CUDA's calls may wait for other threads' calls in the
+   context, so they run with the runtime released. */
+value caml_rig_cuda_stop(value v_self) {
+  struct edge *e = Edge_val(v_self);
+  struct device *d = e->d;
+  int stopped;
+  e->last = d->last;
+  e->context = d->context;
+  e->d = NULL;
+  RELEASED(stopped = stop_edge(e, d));
   return Val_bool(stopped);
 }
 
-/* Whether the work a stop found running has since ended: its word holds
-   the last value, or both of its streams' end events have completed or
-   met an error, a fault which ends the context's work. A state the stop
-   left unstopped is stopped again first. Once the work has ended, the
-   word is raised to the last value, which a fault or a refused write left
-   short, and the events go. A context that cannot be made current answers
-   [false], and the next call asks again. */
-value caml_rig_cuda_ended(value v_self) {
-  struct edge *e = Edge_val(v_self);
-  if (e->unstopped == NULL && e->ends[0] == NULL) return Val_bool(reached(e));
-  if (push(e->context) != CUDA_SUCCESS) return Val_false;
+/* Whether the work that [e]'s stop found running has since ended, asked
+   in its context ([caml_rig_cuda_ended]): [1] if it has, [0] if it runs,
+   [-1] if the context cannot be made current to ask. */
+static int ended_in(struct edge *e) {
+  if (push(e->context) != CUDA_SUCCESS) return -1;
   int ended;
   if (e->unstopped != NULL) {
     struct device *d = e->unstopped;
@@ -1530,5 +1534,21 @@ value caml_rig_cuda_ended(value v_self) {
     }
   }
   pop(CUDA_SUCCESS);
-  return Val_bool(ended);
+  return ended;
+}
+
+/* Whether the work a stop found running has since ended: its word holds
+   the last value, or both of its streams' end events have completed or
+   met an error, a fault which ends the context's work. A state the stop
+   left unstopped is stopped again first. Once the work has ended, the
+   word is raised to the last value, which a fault or a refused write left
+   short, and the events go. It answers as [ended_in], and the next call
+   after an answer of [0] or [-1] asks again. CUDA's calls run with the
+   runtime released, as [caml_rig_cuda_stop]'s do. */
+value caml_rig_cuda_ended(value v_self) {
+  struct edge *e = Edge_val(v_self);
+  int ended;
+  if (e->unstopped == NULL && e->ends[0] == NULL) return Val_int(reached(e));
+  RELEASED(ended = ended_in(e));
+  return Val_int(ended);
 }

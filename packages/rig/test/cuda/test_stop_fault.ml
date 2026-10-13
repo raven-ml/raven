@@ -36,8 +36,9 @@ let reopen () =
 
 (* Work a stop leaves running that faults afterwards ends there: CUDA runs
    none of the context's work after a fault, the write of the last value
-   included. The GPU is then open to a new device, whose open answers the
-   fault's error, as every CUDA call does after it. Value 1 runs a kernel until
+   included. The GPU is then open to a new device, whose open raises the old
+   device's word to its last value and answers the fault's error, as every
+   CUDA call does after it. Value 1 runs a kernel until
    [flag] is set, then a store to address 0; a fill that fails in its submit
    loses the device, whose stop finds the kernel running. *)
 let fault_after_stop () =
@@ -56,7 +57,10 @@ let fault_after_stop () =
   | exception Rig.Lost _ -> ());
   equal ~msg:"the word at the stop" int 0 (C.signaled t.g);
   H.set64 (host flag) 1;
-  match reopen () with
+  let reopened = reopen () in
+  equal ~msg:"the word, raised by the reopen" int (Rig.submitted t.d)
+    (C.signaled t.g);
+  match reopened with
   | Ok g ->
       C.stop g ~fault:None;
       fail "the GPU opened after its context faulted"

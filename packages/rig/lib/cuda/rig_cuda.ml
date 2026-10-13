@@ -191,7 +191,7 @@ type t = {
 external open_device : int -> int = "caml_rig_cuda_open"
 external context_of : int -> int = "caml_rig_cuda_context" [@@noalloc]
 external stop_device : int -> bool = "caml_rig_cuda_stop"
-external ended : int -> bool = "caml_rig_cuda_ended" [@@noalloc]
+external ended : int -> int = "caml_rig_cuda_ended"
 external unload_module : int -> int -> int = "caml_rig_cuda_unload"
 external word_address : int -> int = "caml_rig_cuda_word" [@@noalloc]
 external enable_peer : int -> int -> int -> int -> int = "caml_rig_cuda_peer"
@@ -362,11 +362,17 @@ let claim held =
   if p > 0 || not (Atomic.compare_and_set held p taken) then
     Error "the GPU has a device open; stop it first"
   else if p = unheld then Ok ()
-  else if ended (-p) then Ok ()
-  else begin
-    Atomic.set held p;
-    Error "the GPU still runs the work of a stopped device"
-  end
+  else
+    match ended (-p) with
+    | 1 -> Ok ()
+    | answer ->
+        Atomic.set held p;
+        if answer = 0 then
+          Error "the GPU still runs the work of a stopped device"
+        else
+          Error
+            "the GPU's context cannot be made current to ask whether a \
+             stopped device's work has ended"
 
 (* Whether GPU [i] of [g], of primary context [c], addresses the GPU memory of
    GPU [j], of primary context [c'], after enabling the access. A failure is a

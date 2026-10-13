@@ -366,9 +366,10 @@ val capability : t -> Rig_cuda_abi.t
     of another device that never reaches its value, and it keeps an event
     behind the work on each stream. Either way it destroys [g]'s streams
     and its other events, which CUDA frees once their work ends. The GPU
-    can be opened again once that work ends, by completing or by a fault,
-    which then also brings the word to the last value; after a fault,
-    [make] answers its error. The stop frees [g]'s C state but for the
+    can be opened again once that work ends, by completing or by a fault.
+    CUDA signals no fault, so after one the GPU's next open raises the word
+    to the last value, and until then the device does not count as
+    stopped; that open's [make] answers the fault's error. The stop frees [g]'s C state but for the
     word and what reading it needs, which stay for the process. Compiled
     code may still call the [symbol] and [graph] functions of
     {!val-capability} after {!stop}, and rig's {!free} and {!unload} may
