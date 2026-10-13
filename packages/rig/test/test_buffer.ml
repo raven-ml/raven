@@ -79,6 +79,15 @@ let aligned_law (first, at, k) =
   cover "outside the view" (at < 0 || at >= 8192);
   equal bool ((first + at) mod n = 0) (B.aligned b ~at n)
 
+(* A host buffer of at least 128 bytes and fewer than 64 KiB starts on 128
+   bytes. *)
+let line_case =
+  Gen.with_pp
+    (fun ppf n -> Format.fprintf ppf "%d bytes" n)
+    (Gen.int_range 128 ((64 * 1024) - 1))
+
+let line_law n = equal bool true (B.aligned (B.create Rig.host n) ~at:0 128)
+
 let test_aligned_refusals () =
   let b = B.create Rig.host 8 in
   raises_match ~msg:"0" Exn.invalid_arg (fun () -> B.aligned b ~at:0 0);
@@ -1475,6 +1484,8 @@ let tests =
         test "a view shares its buffer's memory" test_views;
         prop "an address is aligned to a power of two, in or out of the buffer"
           aligned_case aligned_law;
+        prop "a host buffer of 128 bytes to 64 KiB starts on 128 bytes" line_case
+          line_law;
         test "aligned refuses what is no power of two, and io memory"
           test_aligned_refusals;
       ];

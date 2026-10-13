@@ -588,7 +588,7 @@ let test_host_refused () =
         (B.length (B.create Rig.host (32 * 1024 * kib))))
 
 (* A host buffer holds its bytes in the host's budget until it is collected,
-   small ones included. *)
+   small ones included, with up to 112 more where it starts on 128 bytes. *)
 let test_host_held () =
   List.iter
     (fun n ->
@@ -602,7 +602,9 @@ let test_host_held () =
           held)
           ()
       in
-      equal ~msg:(Printf.sprintf "%d bytes, live" n) int (before + n) held;
+      let msg = Printf.sprintf "%d bytes, live" n in
+      at_least ~msg int ~than:(before + n) held;
+      at_most ~msg int ~than:(before + n + 112) held;
       Gc.full_major ();
       Gc.full_major ();
       equal

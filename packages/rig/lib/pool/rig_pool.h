@@ -54,6 +54,10 @@
 
 #include <stdint.h>
 
+/* A cache line on Apple silicon, and the pair of lines x86 fetches
+   together: memory that threads write apart is split on multiples of it. */
+#define RIG_LINE_BYTES 128
+
 /* Cores
 
    A caller sizes a job by two counts of the host's cores: the cores the

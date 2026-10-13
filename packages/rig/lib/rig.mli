@@ -685,7 +685,9 @@ val failure : unit -> string option
     memory that counts in it: its live buffers, its loaded images' code and
     its cache ({!budget}). [Pinned] memory counts in the host's budget,
     except on a device whose memory the host addresses, such as Metal's,
-    where it counts in the device's. An allocation's bytes also pace the
+    where it counts in the device's. A host buffer counts the bytes it
+    takes of the C library's memory: its own, and up to 112 more where it
+    starts on 128 bytes ({!Buffer.create}). An allocation's bytes also pace the
     OCaml collector, so a device nearing its budget collects unreachable
     buffers more often. Live buffers are never freed, so a program that
     keeps every buffer reachable runs out of memory however large its
@@ -808,9 +810,11 @@ module Buffer : sig
   (** [create d n] is a buffer of [n] new bytes of [d]'s memory of kind
       [memory] (defaults to [Device]), with unspecified contents. An empty
       buffer allocates nothing. A host buffer of at least 64 KiB and at
-      least four pages starts on a page, so devices can {!borrow} it. On an
-      io device the memory is what {!Rig_edge.Io.alloc} makes, whatever
-      [memory].
+      least four pages starts on a page, so devices can {!borrow} it; a
+      smaller one of at least 128 bytes starts on 128 bytes, so threads that
+      write it in pieces of whole 128-byte blocks share no cache line, on
+      Apple silicon's 128-byte lines or x86's 64-byte ones. On an io device
+      the memory is what {!Rig_edge.Io.alloc} makes, whatever [memory].
 
       Raises [Invalid_argument] if [n < 0], or if [n > 0], [d] is an io
       device and its {!Rig_edge.Io.alloc} raises it, and {!Lost} if [d] is

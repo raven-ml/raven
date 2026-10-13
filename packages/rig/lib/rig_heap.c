@@ -30,6 +30,7 @@
 #include <unistd.h>
 #endif
 
+#include "rig_pool.h"
 #include "rig_stubs.h"
 
 size_t rig_page_bytes(void) {
@@ -541,23 +542,45 @@ static struct heap_block *heap_block(struct caml_ba_array *b) {
 /* Buffers from this size start on a page, and the heap keeps them. */
 static size_t heap_kept_from;
 
-/* The bytes allocated for a buffer of [n] bytes starting on a multiple of
-   [align]: where the C library aligns nothing that [free] releases
-   (Windows), [align - 1] more, to start on one. */
-static size_t heap_size(size_t n, size_t align) {
-#ifdef _WIN32
-  return align <= 16 ? n : n + align - 1;
-#else
-  (void)align;
-  return n;
-#endif
-}
-
 /* The page, which [caml_rig_heap_init] reads once. */
 static size_t heap_page;
 
-/* The bytes allocated for a buffer of [n] bytes made by
-   [caml_rig_heap_bytes]. */
+/* The alignment every host's [malloc] gives. */
+#define MALLOC_ALIGN 16
+
+/* The bytes allocated for a buffer of [n] bytes starting on a multiple of
+   [align]: [align - MALLOC_ALIGN] more, to start on one, unless the C
+   library aligns it, as [malloc] does to MALLOC_ALIGN and [posix_memalign]
+   to a page (heap_malloc). Windows aligns nothing that [free] releases. */
+static size_t heap_size(size_t n, size_t align) {
+  if (align <= MALLOC_ALIGN) return n;
+#ifndef _WIN32
+  if (align >= heap_page) return n;
+#endif
+  return n + align - MALLOC_ALIGN;
+}
+
+/* The alignment of a buffer of [n] bytes: a page from [heap_kept_from], so
+   devices can map it; RIG_LINE_BYTES from that line, so that pieces of
+   whole lines threads write apart share none; malloc's below, since a
+   buffer under a line holds no two such pieces, and aligning a scalar added
+   10 ns to a 180 ns add on fudge (Core Ultra 5 235). */
+static size_t heap_align(size_t n) {
+  if (n >= heap_kept_from) return heap_page;
+  return n >= RIG_LINE_BYTES ? RIG_LINE_BYTES : 1;
+}
+
+/* The bytes a buffer of [n] bytes takes of the C library's memory, which
+   its reservation and the collector's pacing count. */
+static size_t heap_footprint(size_t n) { return heap_size(n, heap_align(n)); }
+
+value caml_rig_heap_footprint(value v_n) {
+  return Val_long(heap_footprint((size_t)Long_val(v_n)));
+}
+
+/* The size by which [heap_finalize] keeps or frees a buffer of [n] bytes
+   made by [caml_rig_heap_bytes]: the bytes allocated for one that starts on
+   a page, which it keeps, else [n], below [heap_kept_from]. */
 static size_t heap_allocated(size_t n) {
   return n >= heap_kept_from ? heap_size(n, heap_page) : n;
 }
@@ -568,10 +591,10 @@ static void heap_finalize(value v) {
   size_t size = 0;
   if (!(b->flags & CAML_BA_SUBARRAY)) {
     struct heap_block *h = heap_block(b);
-    intnat n = b->dim[0];
-    atomic_fetch_sub_explicit(&heap_bytes, n, memory_order_relaxed);
+    intnat n = b->dim[0], f = (intnat)heap_footprint((size_t)n);
+    atomic_fetch_sub_explicit(&heap_bytes, f, memory_order_relaxed);
     if (h->cycle < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
-      atomic_fetch_add_explicit(&heap_collected, n, memory_order_relaxed);
+      atomic_fetch_add_explicit(&heap_collected, f, memory_order_relaxed);
     base = h->base;
     size = heap_allocated((size_t)n);
   }
@@ -605,9 +628,10 @@ value caml_rig_heap_init(value v_kept_from) {
 
 /* The [n] bytes at [data], allocated from [base], as a [char] bigarray. */
 static value heap_bigarray(void *base, void *data, size_t n) {
+  size_t f = heap_footprint(n);
   value ba = n < HEAP_PACED_FROM
-                 ? caml_alloc_custom_mem(&heap_ops, HEAP_BLOCK_BYTES, n)
-                 : caml_alloc_custom(&heap_ops, HEAP_BLOCK_BYTES, n,
+                 ? caml_alloc_custom_mem(&heap_ops, HEAP_BLOCK_BYTES, f)
+                 : caml_alloc_custom(&heap_ops, HEAP_BLOCK_BYTES, f,
                                      heap_cycle_bytes());
   struct caml_ba_array *b = Caml_ba_array_val(ba);
   b->data = data;
@@ -621,28 +645,32 @@ static value heap_bigarray(void *base, void *data, size_t n) {
   return ba;
 }
 
-/* [n] bytes of the C library starting on a multiple of [align], or NULL:
-   [posix_memalign] where it has one, an allocation [align - 1] bytes larger
-   otherwise ([heap_size]); [*base] is what [free] takes. */
+/* [n] bytes of the C library starting on a multiple of [align], or NULL;
+   [*base] is what [free] takes. A page comes from [posix_memalign] where
+   the host has one, a smaller [align] from an allocation [align - 1] bytes
+   larger ([heap_size]): on fudge (Core Ultra 5 235, glibc) [posix_memalign]
+   of 8 bytes on 128 took 33 ns, [malloc] 5.5. */
 static void *heap_malloc(size_t n, size_t align, void **base) {
   if (align <= 16) return *base = malloc(n);
-#ifdef _WIN32
+#ifndef _WIN32
+  if (align >= heap_page) {
+    if (posix_memalign(base, align, n) != 0) return *base = NULL;
+    return *base;
+  }
+#endif
   char *p = malloc(heap_size(n, align));
   *base = p;
   if (p == NULL) return NULL;
   return p + (align - (uintptr_t)p % align) % align;
-#else
-  if (posix_memalign(base, align, n) != 0) return *base = NULL;
-  return *base;
-#endif
 }
 
-/* [v_n] bytes of the heap starting on a multiple of [v_align], as a [char]
-   bigarray whose collection returns their reservation; a kept buffer of
-   the size if there is one. A failed allocation gives the kept buffers back
-   and tries again once, then raises [Out_of_memory]. */
-value caml_rig_heap_bytes(value v_align, value v_n) {
-  size_t n = (size_t)Long_val(v_n), align = (size_t)Long_val(v_align);
+/* [v_n] bytes of the heap starting on a multiple of [heap_align], as a
+   [char] bigarray whose collection returns their reservation of
+   [heap_footprint]; a kept buffer of the size if there is one. A failed
+   allocation gives the kept buffers back and tries again once, then raises
+   [Out_of_memory]. */
+value caml_rig_heap_bytes(value v_n) {
+  size_t n = (size_t)Long_val(v_n), align = heap_align(n);
   size_t size = heap_size(n, align);
   void *base = n >= heap_kept_from ? heap_take(size) : NULL;
   void *data;
