@@ -55,9 +55,7 @@ let fixture f =
 let kernels_bin () = fixture "kernels_gfx1201.hsaco"
 let work_bin () = fixture "work_gfx1201.hsaco"
 let binary () = (kernels_bin (), [ "empty"; "double_index"; "spin"; "wild" ])
-let second () =
-  if driverless () then None
-  else Some (open_gpu ~word:(Rig_gpu_support.Host.word ()))
+let second ~word = if driverless () then None else Some (open_gpu ~word)
 
 (* Each fixture, loaded once on each device. *)
 let kernels = Rig_gpu_support.loader kernels_bin

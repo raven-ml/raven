@@ -77,12 +77,12 @@ struct rig_times {
 
 /* A device's timeline line: what a point of the device asks, kept for the
    life of the process at the device's index, as the device's word and
-   reason are. [word] is the timeline word, or NULL behind a transport.
-   [state], [lost] and [reached] change under the device's mutex, and every
-   field is read without it. */
+   reason are. [word] is the slot's word in rig's array, which a device whose
+   own word lies elsewhere, such as behind a transport, raises as rig reads
+   its word. [state], [lost] and [reached] change under the device's mutex,
+   and every field is read without it. */
 struct rig_line {
   _Atomic(_Atomic uint64_t *) word;
-  _Atomic uint64_t seen; /* the last value a read of the word showed */
   _Atomic uint64_t submitted;
   _Atomic int state;
   _Atomic(char *) lost;     /* NULL, or the loss's reason */
@@ -311,9 +311,8 @@ int rig_point_lost(uint64_t p);
 /* The host's page size in bytes. */
 size_t rig_page_bytes(void);
 
-/* The host's driver state, whose word rig_host_word () is. */
+/* The host's driver state. Its word is slot 0's. */
 void *rig_host_state(void);
-_Atomic uint64_t *rig_host_word(void);
 
 /* Raises the stamps [s]'s work names in the run [r] to [p]. */
 void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p);

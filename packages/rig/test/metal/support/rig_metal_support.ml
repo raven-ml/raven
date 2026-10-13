@@ -122,7 +122,7 @@ let binary () =
   ( fixture ~dir:"../metal/fixtures" "fill",
     [ "fill"; "step"; "spin"; "bump"; "copy" ] )
 
-let second () = Some (Rig_gpu_support.opened (Rig_metal.gpu 0))
+let second ~word = Some ((Rig_metal.gpu 0).make ~word)
 let launch_binary () = Some (fixture ~dir:"../metal/fixtures" "launch")
 let images = Rig_gpu_support.loader (fun () -> fst (binary ()))
 

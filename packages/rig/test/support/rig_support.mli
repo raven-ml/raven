@@ -83,7 +83,9 @@ module Polled : sig
   (** [bind d ~word] is [d], whose word is now the 8 bytes at [word], as an
       opener's [make] does with the word rig gives it ({!Rig_edge.type-opener}):
       [d]'s values start after the value they hold. With [start] it first
-      raises them to [start], as a [make] that raises its word does. *)
+      raises them to [start], as a [make] that raises its word does. A device
+      made with [transport] keeps a word of its own, started at their value,
+      as a device of another machine does. *)
 
   val opener : ?start:int -> string -> t -> t Rig_edge.opener
   (** [opener name d] opens [d] as the device [name], whose [make] binds [d]

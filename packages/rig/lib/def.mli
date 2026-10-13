@@ -135,7 +135,9 @@ and live = {
   mutable progress : progress; [@atomic]
       (** The word as the last wait under [hang_ms] saw it, written by that
           wait without the lock. *)
-  word : int;  (** The word's host address, [0] if it has none. *)
+  word : int;
+      (** Its word's host address, in rig's array, or [0] for a word of its
+          driver's own, which rig reads through its driver. *)
   word_region : region option;  (** The region its word lies in. *)
   fault : exn -> string option;
       (** The reason of a driver fault, [None] for another exception. *)

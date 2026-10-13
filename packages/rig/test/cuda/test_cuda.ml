@@ -399,10 +399,12 @@ let spinning (t : S.t) flag =
   H.set64 (host flag) 0;
   S.launch t "spin" (address flag) (10 * second)
 
-(* [spin t flag] submits {!spinning} as value 1, and is its point. *)
-let spin t flag =
+(* [spin t flag] submits {!spinning} as [t]'s first value, and is its
+   point. *)
+let spin (t : S.t) flag =
+  let base = Rig.submitted t.d in
   let p = S.submit_work t [ spinning t flag ] in
-  equal int ~msg:"the value" 1 (Rig.Point.value p);
+  equal int ~msg:"the value" (base + 1) (Rig.Point.value p);
   p
 
 (* [lose t flag] submits {!spinning}, then a fill that fails: the loss stops [t]
@@ -437,7 +439,8 @@ let unload_aside () =
   Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
   let other, _ = S.kernels g in
   let p = spin t flag in
-  equal int ~msg:"the word" 0 (Rig.signaled t.d);
+  let before = Rig.Point.value p - 1 in
+  equal int ~msg:"the word" before (Rig.signaled t.d);
   let unloading = Atomic.make false in
   let d =
     Domain.spawn (fun () ->
@@ -447,9 +450,11 @@ let unload_aside () =
   while not (Atomic.get unloading) do
     Domain.cpu_relax ()
   done;
-  still ~msg:"the work while unload waits" int 0 (fun () -> C.signaled g) ~ms:50;
+  still ~msg:"the work while unload waits" int before
+    (fun () -> C.signaled g)
+    ~ms:50;
   Gc.full_major ();
-  equal int ~msg:"the work after a collection" 0 (C.signaled g);
+  equal int ~msg:"the work after a collection" before (C.signaled g);
   H.set64 (host flag) 1;
   Domain.join d;
   Rig.Point.wait p
@@ -526,33 +531,37 @@ let stop_running () =
   S.release ();
   let opener = C.gpu 0 in
   let close g = C.stop g ~fault:None in
-  let g = require_ok (Rig_gpu_support.opened opener) in
-  S.bind g;
-  if S.attribute watchdog <> 0 then begin
-    close g;
-    skip ~reason:"a display watchdog ends long kernels" ()
-  end;
-  let flag = require_some (C.alloc g Pinned 8) in
-  let checked = ref false in
+  let checked = ref false and flag_at = ref 0 and base = ref 0 in
   (* Checks while the kernel's gate is still held. *)
   let module Driver = struct
     include C
 
     let stop g ~fault =
       C.stop g ~fault;
-      Fun.protect ~finally:(fun () -> H.set64 (host flag) 1) @@ fun () ->
-      equal int ~msg:"the work still runs after stop" 0 (C.signaled g);
+      Fun.protect ~finally:(fun () -> H.set64 !flag_at 1) @@ fun () ->
+      equal int ~msg:"the work still runs after stop" !base (C.signaled g);
       let opened = Rig_gpu_support.opened opener in
       Result.iter close opened;
       let e = require_error opened in
       contains ~sub:"still runs" e;
       checked := true
   end in
-  let d =
-    require_ok
-      (Rig.open_
-         { opener with driver = (module Driver); make = (fun ~word:_ -> Ok g) })
+  let made = ref None in
+  let make ~word =
+    let r = opener.make ~word in
+    Result.iter (fun g -> made := Some g) r;
+    r
   in
+  let d = require_ok (Rig.open_ { opener with driver = (module Driver); make }) in
+  let g = Option.get !made in
+  base := Rig.submitted d;
+  S.bind g;
+  if S.attribute watchdog <> 0 then begin
+    Rig.close d;
+    skip ~reason:"a display watchdog ends long kernels" ()
+  end;
+  let flag = require_some (C.alloc g Pinned 8) in
+  flag_at := host flag;
   let t = { S.d; g } in
   Fun.protect
     ~finally:(fun () ->
@@ -790,7 +799,9 @@ let collection_does_not_wait () =
       gr := None;
       Gc.full_major ();
       ignore (Sys.opaque_identity gr);
-      equal int ~msg:"collection returned while the GPU waits" 0 (C.signaled g);
+      equal int ~msg:"collection returned while the GPU waits"
+        (Rig.Point.value p - 1)
+        (C.signaled g);
       H.set64 (host flag) 1;
       Rig.Point.wait p;
       ignore (require_ok (graph g [||])));

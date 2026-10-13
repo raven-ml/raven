@@ -13,7 +13,7 @@ exception Out_of_memory of device * int
 
 (* The C record *)
 
-external c_new : int -> string -> bool -> nativeint -> nativeint -> c
+external c_new : int -> string -> bool -> nativeint -> c
   = "caml_rig_device_new"
 
 external c_io_new : int -> string -> c = "caml_rig_io_new"
@@ -27,7 +27,7 @@ external c_done : int -> bool = "caml_rig_done" [@@noalloc]
 
 (* A device's line, read by its index for the life of the process. *)
 external c_word : int -> int = "caml_rig_word" [@@noalloc]
-external c_set_seen : int -> int -> unit = "caml_rig_set_seen" [@@noalloc]
+external c_raise_word : int -> int -> unit = "caml_rig_raise_word" [@@noalloc]
 external c_submitted : int -> int = "caml_rig_submitted" [@@noalloc]
 external c_state : int -> int = "caml_rig_state" [@@noalloc]
 external c_why : int -> string = "caml_rig_why"
@@ -340,14 +340,14 @@ let forget_locked d =
 
 let answered : (device -> unit) ref = ref ignore
 
-(* Reads a lost device's word behind a transport through its driver, which may
-   be called after [stop], so rig's copy of it moves on. *)
+(* Reads a lost device's own word through its driver, which may be called
+   after [stop], so that its slot's word moves on. *)
 let refresh d =
   match d.kind with
   | Driver { m; h; _ } when d.live.word = 0 -> (
       let module D = (val m) in
       match D.signaled h with
-      | w -> c_set_seen d.index w
+      | w -> c_raise_word d.index w
       | exception D.Fault _ -> ())
   | _ -> ()
 
@@ -481,8 +481,8 @@ let failure () =
 
 (* The timeline *)
 
-(* A word with no host address is read through a counted call, written out
-   so that a read allocates nothing. *)
+(* A word of the device's own is read through a counted call, written out so
+   that a read allocates nothing. *)
 let word d =
   let l = d.live in
   if l.word <> 0 || is_lost d then c_word d.index
@@ -498,7 +498,7 @@ let word d =
               w
           | exception e -> raised d e
         in
-        c_set_seen d.index w;
+        c_raise_word d.index w;
         w
     | _ -> c_word d.index
 
@@ -904,8 +904,13 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
           "Rig.open_: %s's copy engine is queue %d, which runs no copies" name
           i)
     f.copy_engine;
-  let word = Option.value ~default:0 (D.locate f.word).host in
-  let c = c_new index name f.may_block f.edge (Nativeint.of_int word) in
+  (* A word other than the one [make] was given is the driver's own, which
+     rig reads through [signaled]. *)
+  let word =
+    let slot = Nativeint.to_int (c_slot_word index) in
+    if (D.locate f.word).host = Some slot then slot else 0
+  in
+  let c = c_new index name f.may_block f.edge in
   let d =
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })

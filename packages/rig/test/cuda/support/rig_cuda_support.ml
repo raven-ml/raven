@@ -222,9 +222,8 @@ let launch t kernel a b =
 
 (* Conformance *)
 
-let second () =
-  if Rig_cuda.count () < 2 then None
-  else Some (Rig_gpu_support.opened (Rig_cuda.gpu 1))
+let second ~word =
+  if Rig_cuda.count () < 2 then None else Some ((Rig_cuda.gpu 1).make ~word)
 
 (* fixtures/launch.ptx's [copy dst src n] copies [n] 32-bit words, one a
    thread. *)

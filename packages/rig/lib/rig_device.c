@@ -223,11 +223,10 @@ value caml_rig_slot_word(value v_i) {
   return caml_copy_nativeint((intnat)slot_word(Int_val(v_i)));
 }
 
-/* The last value the word of [l] showed. */
+/* The last value the word of [l] showed: 0 for a line no device opened. */
 static uint64_t line_word(struct rig_line *l) {
   _Atomic uint64_t *w = atomic_load_explicit(&l->word, memory_order_acquire);
-  if (w != NULL) return atomic_load_explicit(w, memory_order_acquire);
-  return atomic_load_explicit(&l->seen, memory_order_acquire);
+  return w == NULL ? 0 : atomic_load_explicit(w, memory_order_acquire);
 }
 
 static int line_state(struct rig_line *l) {
@@ -245,9 +244,8 @@ static int stopping(struct rig_device *d) {
 }
 
 /* The word is read before the state: a word the stop raised shows its
-   loss. An orphaned device's word is never read: it may be a page the child
-   does not map. The host's line, of index 0, is live with no word, so the
-   point 0 is done. */
+   loss. An orphaned device's points are never done: its work is the
+   parent's. The point 0 is the host's value 0, which its word holds. */
 int rig_point_done(uint64_t p) {
   struct rig_line *l = line_of(RIG_INDEX(p));
   if (line_state(l) == RIG_ORPHANED) return 0;
@@ -483,31 +481,29 @@ static struct rig_device *record(value *v, value v_index, value v_name) {
   d->index = index;
   d->line = line_of(index);
   d->name = name;
-  uint64_t base = atomic_load_explicit(slot_word(index), memory_order_acquire);
+  _Atomic uint64_t *word = slot_word(index);
+  uint64_t base = atomic_load_explicit(word, memory_order_acquire);
   atomic_store(&d->committed, base);
-  atomic_store(&d->line->seen, base);
   atomic_store_explicit(&d->line->submitted, base, memory_order_release);
+  atomic_store_explicit(&d->line->word, word, memory_order_release);
   *v = caml_alloc_custom(&device_ops, sizeof d, 0, 1);
   Device_val(*v) = d;
   return d;
 }
 
 /* A driver's device of index [v_index] whose driver blocks ([v_may_block]),
-   with its driver's C state [v_edge] and its word's host address (0 behind
-   a transport). */
+   with its driver's C state [v_edge]. */
 value caml_rig_device_new(value v_index, value v_name, value v_may_block,
-                          value v_edge, value v_word) {
-  CAMLparam5(v_index, v_name, v_may_block, v_edge, v_word);
+                          value v_edge) {
+  CAMLparam4(v_index, v_name, v_may_block, v_edge);
   CAMLlocal1(v);
   void *self = (void *)Nativeint_val(v_edge);
   if (self == NULL || rig_driver_of(self) == NULL)
     caml_invalid_argument("Rig.open_: the driver's edge names no rig_driver");
-  _Atomic uint64_t *word = (_Atomic uint64_t *)Nativeint_val(v_word);
   struct rig_device *d = record(&v, v_index, v_name);
   d->may_block = Bool_val(v_may_block);
   d->self = self;
   d->driver = *rig_driver_of(self);
-  atomic_store(&d->line->word, word);
   CAMLreturn(v);
 }
 
@@ -538,7 +534,6 @@ value caml_rig_host_new(value v_name) {
   d->may_block = 1;
   d->self = rig_host_state();
   d->driver = *rig_driver_of(d->self);
-  atomic_store(&d->line->word, rig_host_word());
   put(d);
   CAMLreturn(v);
 }
@@ -546,19 +541,13 @@ value caml_rig_host_new(value v_name) {
 /* The timeline of the device of index [v_i], read from its line. */
 
 value caml_rig_word(value v_i) {
-  struct rig_line *l = line_of(Int_val(v_i));
-  if (line_state(l) == RIG_ORPHANED)
-    return Val_long((intnat)atomic_load(&l->seen));
-  return Val_long((intnat)line_word(l));
+  return Val_long((intnat)line_word(line_of(Int_val(v_i))));
 }
 
-/* Records [v] as read from the word of the device of index [v_i], for a
-   word behind a transport. */
-value caml_rig_set_seen(value v_i, value v) {
-  struct rig_line *l = line_of(Int_val(v_i));
-  uint64_t seen = atomic_load(&l->seen), w = (uint64_t)Long_val(v);
-  while (seen < w && !atomic_compare_exchange_weak(&l->seen, &seen, w)) {
-  }
+/* Raises the slot word of the device of index [v_i] to [v], read from the
+   device's own word, which lies elsewhere. */
+value caml_rig_raise_word(value v_i, value v) {
+  rig_raise(slot_word(Int_val(v_i)), (uint64_t)Long_val(v));
   return Val_unit;
 }
 

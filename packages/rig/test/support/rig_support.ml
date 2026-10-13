@@ -45,7 +45,7 @@ external polled_word_at : polled -> int = "rig_test_polled_word_at"
 external polled_word : polled -> int = "rig_test_polled_word"
 external polled_stop : polled -> unit = "rig_test_polled_stop"
 external polled_set_word : polled -> int -> unit = "rig_test_polled_set_word"
-external polled_bind : polled -> nativeint -> int -> unit
+external polled_bind : polled -> nativeint -> int -> bool -> unit
   = "rig_test_polled_bind"
 external host_alloc : int -> int = "rig_test_alloc"
 external host_free : int -> unit = "rig_test_free"
@@ -485,7 +485,7 @@ module Polled = struct
     d
 
   let bind ?(start = 0) d ~word =
-    polled_bind d.c word start;
+    polled_bind d.c word start d.transport;
     d.word_at <- polled_word_at d.c;
     d
 

@@ -44,15 +44,11 @@ let copy_after l k ?(ns = 0) ~dst ~src n =
 
 (* Driver devices the tests stop themselves *)
 
-(* [g] handed to rig under a name of its own, for the tests of the driver's own
-   stop: rig hands it work, and the test stops [g] itself. The device then stays
-   open in rig until the process ends, as no driver stops twice. *)
+(* The GPU in rig under a name of its own, for the tests of the driver's own
+   stop: rig hands it work, and the test stops its handle itself. *)
 let handed =
   let n = Atomic.make 0 in
-  fun g ->
-    let name = strf "NV:own-%d" (Atomic.fetch_and_add n 1) in
-    require_ok
-      (Rig.open_ { name; driver = (module N); make = (fun ~word:_ -> Ok g) })
+  fun () -> S.handed (strf "NV:own-%d" (Atomic.fetch_and_add n 1))
 
 (* GPUs *)
 
@@ -396,6 +392,7 @@ let high_word () =
    rings hold. No value is assigned. *)
 let refused () =
   S.with_ @@ fun t ->
+  let base = Rig.submitted t.d in
   let refuses msg ps =
     raises_match ~msg (Exn.invalid_arg ~substring:"never fit") (fun () ->
         S.submit t ps)
@@ -403,7 +400,7 @@ let refused () =
   refuses "one ring word" [| S.words [| 0 |] |];
   refuses "32,768 ring words" [| S.words (Array.make 32_768 0) |];
   refuses "65,536 parts" (Array.make 65_536 (S.words [||]));
-  equal int ~msg:"values assigned" 0 (Rig.submitted t.d)
+  equal int ~msg:"values assigned" base (Rig.submitted t.d)
 
 let work =
   group ~timeout:60. "work"
@@ -1202,8 +1199,7 @@ let stop_idle () =
    wait: stop returns with the word at the last value, and the waiting work
    never runs. *)
 let stop_waiting () =
-  let g = S.driver () in
-  let t = { S.d = handed g; g } in
+  let t = handed () in
   let l = S.launches t.g in
   let w = alloc t.g Pinned 8 in
   let marked = alloc t.g Pinned 8 in
@@ -1225,8 +1221,7 @@ let stop_waiting () =
 (* A kernel runs with a release queued behind it: stop returns with the word at
    the last value, and the queued work never runs. *)
 let stop_running () =
-  let g = S.driver () in
-  let t = { S.d = handed g; g } in
+  let t = handed () in
   let k = S.kernels t in
   let l = S.launches t.g in
   let flag = alloc t.g Pinned 8 in

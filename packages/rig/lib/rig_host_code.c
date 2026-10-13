@@ -412,8 +412,6 @@ void *rig_host_state(void) {
   return &host;
 }
 
-_Atomic uint64_t *rig_host_word(void) { return rig_words(); }
-
 /* Symbols */
 
 /* The address of the symbol [name] that linked code refers to and does not

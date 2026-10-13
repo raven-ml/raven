@@ -468,7 +468,7 @@ let program =
    stops. A process takes a GPU with no kernel driver once. *)
 let second () =
   if not (S.present ()) then skip ~reason:"no AMD GPU" ();
-  match S.second () with
+  match S.second ~word:(H.word ()) with
   | None -> skip ~reason:"one device of the GPU at a time" ()
   | Some r -> require_ok r
 

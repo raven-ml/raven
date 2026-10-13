@@ -229,9 +229,9 @@ let binary () =
   ( fixture ~dir:fixtures cubin,
     [ "empty"; "double_index"; "copy_after"; "spin"; "stack"; "stack_held" ] )
 
-let second () =
+let second ~word =
   if Rig_nv_nvidia.count () < 2 then None
-  else Some (Rig_gpu_support.opened (Rig_nv_nvidia.gpu 1))
+  else Some ((Rig_nv_nvidia.gpu 1).make ~word)
 
 let images = Rig_gpu_support.loader (fun () -> fst (binary ()))
 

@@ -208,7 +208,7 @@ let facts (module G : Gpu) () =
   equal int ~msg:"distinct queue names" (List.length names)
     (List.length (List.sort_uniq compare names));
   is_some ~msg:"the word's host address" (G.D.locate f.word).host;
-  equal int ~msg:"the word at open" 0 (G.D.signaled t.g);
+  equal int ~msg:"the word at open" (Rig.submitted t.d) (G.D.signaled t.g);
   (* Whether memory [memory] has a host address; [None] where the driver makes
      none of it, as [Mapped] may be, which rig then allocates [Pinned]. *)
   let host memory =
@@ -1079,10 +1079,11 @@ let images (module G : Gpu) () =
 
 let idle_close (module G : Gpu) () =
   let t = G.open_ () in
+  let base = Rig.submitted t.d in
   Rig.Point.wait (G.submit t [||]);
   Rig.Point.wait (G.submit t [||]);
   G.close t;
-  equal int ~msg:"the word" 2 (Rig.signaled t.d)
+  equal int ~msg:"the word" (base + 2) (Rig.signaled t.d)
 
 (* Opens and closes of a device keep a fixed record per open: rig's line,
    records and reason, and the driver's word and the state reading it needs,
@@ -1166,14 +1167,14 @@ let long_work (module G : Gpu) () =
    the word moves. *)
 let sleep_aside (module G : Gpu) () =
   G.with_ @@ fun t ->
-  let n = 1000 in
+  let n = Rig.submitted t.d + 1000 in
   let sleeper =
     Domain.spawn (fun () ->
         while G.D.signaled t.g < n do
           G.D.sleep t.g ~seen:(G.D.signaled t.g) ~still_ms:1000
         done)
   in
-  for _ = 1 to n - 1 do
+  for _ = 1 to 999 do
     ignore (G.submit t [||])
   done;
   Rig.Point.wait (G.submit t [||]);
@@ -1324,28 +1325,38 @@ let polled_waits (module G : Gpu) () =
   Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
   holds (module G) t (empty_point pd) (fun () -> ignore (P.run pp))
 
-(* The second device of [t]'s driver, in rig under a name of its own, for [f];
+(* The second device of [t]'s driver, opened by its driver alone, for [f];
    skips where the machine has none. *)
 let with_second (module G : Gpu) f =
-  match G.second () with
+  match G.second ~word:(Rig_gpu_support.Host.word ()) with
   | None -> skip ~reason:(strf "the machine has one %s device" G.class_) ()
   | Some (Error why) -> failf "a second %s device: %s" G.class_ why
   | Some (Ok g) -> f g
 
+(* The second device of [t]'s driver, opened in rig as [name], for [f] with
+   its handle; skips where the machine has none. *)
+let with_second_in_rig (module G : Gpu) name f =
+  let none = ref false and made = ref None in
+  let make ~word =
+    match G.second ~word with
+    | None ->
+        none := true;
+        Error "none"
+    | Some r ->
+        Result.iter (fun g -> made := Some g) r;
+        r
+  in
+  match Rig.open_ { name; driver = (module G.D); make } with
+  | Error _ when !none ->
+      skip ~reason:(strf "the machine has one %s device" G.class_) ()
+  | Error why -> failf "a second %s device: %s" G.class_ why
+  | Ok d -> Fun.protect ~finally:(fun () -> Rig.close d) (fun () ->
+      f d (Option.get !made))
+
 (* The producer, another device of the driver, whose work runs 50 ms. *)
 let device_waits (module G : Gpu) () =
   G.with_ @@ fun t ->
-  with_second (module G) @@ fun g ->
-  let pd =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_
-         {
-           name = G.class_ ^ ":producer";
-           driver = (module G.D);
-           make = (fun ~word:_ -> Ok g);
-         })
-  in
-  Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
+  with_second_in_rig (module G) (G.class_ ^ ":producer") @@ fun pd g ->
   let tp = { G.d = pd; g } in
   let sp = G.spin tp ~ns:50_000_000 in
   let point = submit pd [ sp ] ~uses:[] in
@@ -1379,17 +1390,7 @@ let peers (module G : Gpu) () =
    learned when they opened: the same once either is closed. *)
 let reaches_closed (module G : Gpu) () =
   G.with_ @@ fun t ->
-  with_second (module G) @@ fun g' ->
-  let b =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_
-         {
-           name = G.class_ ^ ":second";
-           driver = (module G.D);
-           make = (fun ~word:_ -> Ok g');
-         })
-  in
-  Fun.protect ~finally:(fun () -> Rig.close b) @@ fun () ->
+  with_second_in_rig (module G) (G.class_ ^ ":second") @@ fun b _ ->
   let both () = [ Rig.reaches t.d b; Rig.reaches b t.d ] in
   let opened = both () in
   Rig.close b;

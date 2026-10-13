@@ -958,15 +958,21 @@ value rig_test_polled_word(value v_p) {
   return Val_long((intnat)atomic_load(Polled_val(v_p)->word));
 }
 
-/* Makes the 8 bytes at [v_word] the device's word, first raising them to
-   [v_start] if they hold less, and starts its values after theirs, as an
-   opener's make does with the word rig gives it. The device moves to the
-   front of [all], so that a sleep finds it by its word. */
-value rig_test_polled_bind(value v_p, value v_word, value v_start) {
+/* Makes the 8 bytes at [v_word] the device's word, or, if [v_own], its own
+   word with their value, first raising them to [v_start] if they hold less,
+   and starts its values after theirs, as an opener's make does with the word
+   rig gives it. The device moves to the front of [all], so that a sleep
+   finds it by its word. */
+value rig_test_polled_bind(value v_p, value v_word, value v_start,
+                           value v_own) {
   struct polled *p = Polled_val(v_p);
   _Atomic uint64_t *w = (_Atomic uint64_t *)Nativeint_val(v_word);
   rig_raise(w, (uint64_t)Long_val(v_start));
   uint64_t base = atomic_load(w);
+  if (Bool_val(v_own)) {
+    atomic_store(&p->own, base);
+    w = &p->own;
+  }
   unenrol(p);
   lock(&p->mu);
   p->word = w;

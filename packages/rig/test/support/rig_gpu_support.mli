@@ -169,7 +169,13 @@ module type S = sig
       as {!open_} opens it. The caller stops it with {!stop_driver}. *)
 
   val stop_driver : gpu -> unit
-  (** [stop_driver g] stops [g], which {!driver} opened. *)
+  (** [stop_driver g] stops [g], which {!driver} or {!handed} opened. *)
+
+  val handed : string -> t
+  (** [handed name] is the GPU opened in rig under [name], as {!open_} opens
+      it, for a test of the driver's own stop: the test stops its handle with
+      {!stop_driver}, and the device stays open in rig until the process ends,
+      as no driver stops twice. *)
 
   val with_driver : (gpu -> 'a) -> 'a
   (** [with_driver f] is [f g], [g] {!driver}[ ()], stopped after [f] returns or
@@ -204,10 +210,10 @@ module type Conformance = sig
   (** [binary ()] is a binary of the driver's fixtures and the kernels it holds.
   *)
 
-  val second : unit -> (D.t, string) result option
-  (** [second ()] opens another device of the driver beside the one {!open_}
-      gave, while that one is open, or is [None] where the machine has none. The
-      caller stops it. *)
+  val second : word:nativeint -> (D.t, string) result option
+  (** [second ~word] opens another device of the driver beside the one
+      {!open_} gave, while that one is open, on the timeline word at [word],
+      or is [None] where the machine has none. The caller stops it. *)
 
   val copy_words : t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> work
   (** [copy_words t ~dst ~src] is work on [t]'s first queue that copies [src]'s

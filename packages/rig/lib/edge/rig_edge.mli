@@ -44,8 +44,9 @@
     {- rig calls {!Driver.stop} once no call of the driver is in flight on
        the device ({!Driver}). Once the word shows the device's last
        submitted value, the last value rig gave the driver's [submit], rig
-       frees the device's remaining memory and unloads its images. rig never
-       frees the word, and keeps the device's handle for the process.}}
+       frees the device's remaining memory and unloads its images, and the
+       word may pass to a device that opens later. rig keeps the device's
+       handle while the program holds the device.}}
 
     Each function's doc says what it does, and a driver's implementation
     must do that. Further obligations say "must". *)
@@ -163,11 +164,13 @@ type 'region facts = {
   capability : capability;
       (** The ABI record, filled when the device opened. *)
   word : 'region;
-      (** The timeline word: the word [make] was given ({!type-opener}), or
-          one of the driver's own. Other devices may map it, and rig reads it
-          after a loss, for the life of the process: rig never frees it.
-          Where it has no host address, as for a device of another machine,
-          rig reads it through {!Driver.signaled}. *)
+      (** The timeline word: the word [make] was given ({!type-opener}),
+          whose location's host address is that word's. Other devices' work
+          may read it through rig's array. A device whose work cannot write
+          that word, such as a device of another machine, has a word of its
+          driver's own instead: rig reads a word with another host address,
+          or none, through {!Driver.signaled}, and raises the given word to
+          each value it reads. *)
   edge : nativeint;
       (** The address of the device's C state, valid until its stop returns
           ({!Driver.stop}). The state's first member must point to the
@@ -433,8 +436,8 @@ module type Driver = sig
 
   val signaled : t -> int
   (** [signaled d] is the value in [d]'s word, read with acquire order. rig
-      calls it only for a word with no host address, and may call it after
-      {!val-stop}. Counted. *)
+      calls it only for a word other than the one the opener's [make] was
+      given, and may call it after {!val-stop}. Counted. *)
 
   val sleep : t -> seen:int -> still_ms:int -> unit
   (** [sleep d ~seen ~still_ms] blocks on the device's events until the word
@@ -464,9 +467,13 @@ module type Driver = sig
       {- [stop] must release nothing rig made. rig frees each region and
          unloads each image itself, also after [stop].}
       {- [stop] must release what the driver made to run work, such as its
-         queues, and must not wait for that work. The word, and what reading
-         it needs, must stay: rig never frees the word, and keeps [d] for the
-         process.}}
+         queues, and must not wait for that work. What reading a word of the
+         driver's own needs must stay while rig holds [d].}
+      {- Once the word shows the last value given to [submit] and [stop] has
+         returned, no write of [d] or of its work to the word may land: the
+         word then passes to a later device. A driver that raises the word
+         itself while work may still run must know that the work writes the
+         word no more.}}
       After [stop], rig calls {!val-free} and {!unload} only once the word
       reads that last value. It calls them uncounted and drops their faults.
       They may come after an open of the same hardware has made a new device

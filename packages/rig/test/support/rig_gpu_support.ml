@@ -143,6 +143,7 @@ module type S = sig
   val with_ : (t -> 'a) -> 'a
   val driver : unit -> gpu
   val stop_driver : gpu -> unit
+  val handed : string -> t
   val with_driver : (gpu -> 'a) -> 'a
   val release : unit -> unit
   val submit : t -> Rig.Submission.part array -> Rig.Point.t
@@ -219,6 +220,23 @@ module Make (G : Gpu) = struct
     (match !opened with Alone a when a == g -> opened := Nothing | _ -> ());
     G.D.stop g ~fault:None
 
+  let handed name =
+    prepare_open ();
+    let raw = ref None in
+    let make ~word =
+      Result.map
+        (fun g ->
+          raw := Some g;
+          g)
+        (G.open_ ~word)
+    in
+    match Rig.open_ { name; driver = (module G.D); make } with
+    | Ok d ->
+        let g = Option.get !raw in
+        opened := Alone g;
+        { d; g }
+    | Error why -> failf "%s in rig as %s: %s" name name why
+
   let with_driver f =
     let g = driver () in
     Fun.protect ~finally:(fun () -> stop_driver g) (fun () -> f g)
@@ -240,7 +258,7 @@ module type Conformance = sig
   include S with type gpu = D.t
 
   val binary : unit -> string * string list
-  val second : unit -> (D.t, string) result option
+  val second : word:nativeint -> (D.t, string) result option
   val copy_words : t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> work
   val spin : t -> ns:int -> work
   val clock_error : since:int -> int

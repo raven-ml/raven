@@ -863,12 +863,11 @@ let rig_word = 0
 let rig_object = 1
 let host_wait = -1
 
-(* rig's array of timeline words, where every device's word lies but for one
-   that has none on this process's host. *)
+(* rig's array of timeline words, where every device's word lies, but for a
+   word of a driver's own ([Def.live]'s [word] [0]). *)
 external array_of_words : unit -> int * int = "caml_rig_edge_words"
 
 let words_start, words_bytes = array_of_words ()
-let in_words a = a >= words_start && a < words_start + words_bytes
 
 (* [d]'s mapping of the array, made at its first wait on a word in it: its
    first byte's address as [d]'s work addresses it, or [host_wait] if [d] maps
@@ -909,22 +908,16 @@ let words_at d =
         Option.iter (Memory.unmap d) mapping;
         first
 
-(* How [d] waits in its queue for [p]'s word outside rig's array, mapping the
-   word region [r]: a device of the producer's driver maps the region, another
-   the host page that holds the word. Is the way, with the mapping, which [d]
-   keeps until it is Stopped. *)
-let map_word d p r =
-  let word = p.live.word in
-  let start = word - (word mod Memory.page) in
-  let mapped, skip =
-    if d.key = p.key then (Memory.map_peer_region d r, 0)
-    else (Memory.map_host_range d start Memory.page, word - start)
-  in
-  match mapped with
+(* How [d], a device of [p]'s driver, waits in its queue for [p]'s word where
+   it does not reach rig's array: through its driver's mapping of [p]'s word
+   region [r], as for a device of another machine. Is the way, with the
+   mapping, which [d] keeps until it is Stopped. *)
+let map_word d r =
+  match Memory.map_peer_region d r with
   | None -> (host_wait, None)
   | Some m -> (
       match (Memory.locate m).address with
-      | Some at -> (at + skip, Some m)
+      | Some at -> (at, Some m)
       | None ->
           Memory.unmap d m;
           (host_wait, None))
@@ -932,7 +925,8 @@ let map_word d p r =
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the producer's object for an object completion, or
    the address of [p]'s word as [d] maps it: inside [d]'s one mapping of rig's
-   array, or a mapping of [p]'s own, which comes with the way. *)
+   array, or, for a device of [p]'s driver that maps no host memory, a mapping
+   of [p]'s word region, which comes with the way. *)
 let decide d p =
   let l = d.live and pl = p.live in
   let waits =
@@ -945,11 +939,11 @@ let decide d p =
   else
     match (pl.completion, pl.word_region) with
     | Object o, _ -> (o, None)
-    | _, _ when d.maps_host && in_words pl.word ->
+    | _, _ when d.maps_host && pl.word <> 0 ->
         let at = words_at d in
         ((if at = host_wait then at else at + (pl.word - words_start)), None)
-    | _, None -> (host_wait, None)
-    | _, Some r -> map_word d p r
+    | _, Some r when d.key = p.key -> map_word d r
+    | _, _ -> (host_wait, None)
 
 (* An undecided pair: no way is negative but [host_wait], and an address or an
    object fits in 62 bits. *)
