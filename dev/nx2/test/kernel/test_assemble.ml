@@ -177,14 +177,11 @@ let law_in_place (b : Support.backend) c =
   | None, None -> ()
   | _ -> failf "%s declined one of the two" b.name
 
-(* Fills large enough for the job's threads, at a byte-wide and a sub-byte
-   dtype: an identity's, around its diagonal every 513th element of 512 x
-   512 merged, and a pad's, around a 400 x 400 piece inside 600 x 600. *)
-(* CR: These Int4 fills and every pad fill stay serial: the scheduler
-   prices each fill box. Keep the Float32 diagonal and scalar oracle, but
-   make the Int4 pad [1_600_001] with one piece at index 0. Its odd-start
-   suffix costs 800_000 bytes, enough for two workers where available,
-   covering both packed fills and a pad's outside box. *)
+(* Fills large enough for the job's threads: an identity's, around its
+   diagonal every 513th element of 512 x 512 merged, at a byte-wide and a
+   sub-byte dtype; a pad's, around a 400 x 400 piece inside 600 x 600, and
+   of a row longer than a unit's part, at float32; a pad's suffix of 1.6 Mi
+   int4 elements after a piece at index 0, its fill starting mid-byte. *)
 let test_threads (b : Support.backend) () =
   let rs = Random.State.make [| 3 |] in
   let case d form shape region =
@@ -203,14 +200,14 @@ let test_threads (b : Support.backend) () =
     | None -> failf "%s declined an assembly" b.name
     | Some y -> equal (array string) (expected c) (elements y)
   in
-  let inside = { M.start = 100; count = 400; step = 1 } in
-  List.iter
-    (fun d ->
-      check
-        (case d "slices" [| 512 * 512 |]
-           [| { M.start = 0; count = 512; step = 513 } |]);
-      check (case d "pad" [| 600; 600 |] [| inside; inside |]))
-    [ D.Any D.Float32; D.Any D.Int4 ]
+  let range start count = { M.start; count; step = 1 } in
+  let diagonal = [| { M.start = 0; count = 512; step = 513 } |] in
+  let f32 = D.Any D.Float32 and i4 = D.Any D.Int4 in
+  check (case f32 "slices" [| 512 * 512 |] diagonal);
+  check (case i4 "slices" [| 512 * 512 |] diagonal);
+  check (case f32 "pad" [| 600; 600 |] [| range 100 400; range 100 400 |]);
+  check (case f32 "pad" [| 200_001 |] [| range 70_000 100_000 |]);
+  check (case i4 "pad" [| 1_600_001 |] [| range 0 1 |])
 
 (* Refusals *)
 

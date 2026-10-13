@@ -8,10 +8,13 @@
    An assembly fills what no piece covers, then copies each piece into its
    region in order, so the last piece holding an element wins. Pieces of
    unit steps whose regions are disjoint and fill the result, as a
-   concatenation's do, leave nothing to fill; one such piece leaves the
-   2·rank boxes around it, as a pad does; any other set fills the whole
-   result first. A first piece that is the destination over the whole
-   result is already in place.
+   concatenation's do, leave nothing to fill. One such piece inside the
+   result, as a pad's, is one job over the result's rows, each row filled
+   before the piece, copied, and filled after it, so that every element is
+   written once; of a sub-byte dtype, whose rows may share bytes, it fills
+   the 2·rank boxes around the piece, then copies it. Any other set fills
+   the whole result first. A first piece that is the destination over the
+   whole result is already in place.
 
    A fold's result starts at +0. Then each tap, the indices along the window
    axes in C order, adds the operand's elements of that tap into the
@@ -78,6 +81,65 @@ static void fill_box(const nx_array *dst, const uint8_t *fill, int r,
   int w = dst->bits < 8 ? 1 : dst->bits / 8;
   filling f = {dst, fill};
   nx_cpu_walk(1, dst, &l, NX_CPU_SLOT / w, 1, fill_block, &f);
+}
+
+/* Elements of a pad's unit: a longer row is cut into parts of this many,
+   so that a long 1-d pad shares the job's threads. It is copy.c's
+   COPY_MOST, for its reason: at 64 Ki a unit's call costs next to nothing
+   beside its copy, and a job still has units to share. */
+#define PAD_PART (64 * 1024)
+
+/* A pad: the result and its one piece, of whole bytes, the piece's box
+   [lo, hi) per axis of the result's [shape], their steps [sd] and [sp];
+   rows along the last axis, [parts] units each. */
+typedef struct {
+  const nx_array *a;
+  filling f;
+  int r;
+  int64_t parts;
+  const int64_t *shape, *lo, *hi, *sd, *sp;
+} padding;
+
+/* Fills [n] elements of the result's row from position [pd]. */
+static void fill_run(const padding *p, int64_t pd, int64_t n) {
+  if (n <= 0) return;
+  nx_cpu_block b = {.n0 = n, .n1 = 1, .n2 = 1, .at = {pd},
+                    .s0 = {p->sd[p->r - 1]}};
+  fill_block(&b, (void *)&p->f);
+}
+
+static void pad_units(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const padding *p = ctx;
+  int last = p->r - 1;
+  int64_t n = p->shape[last], sd = p->sd[last], sp = p->sp[last];
+  for (int64_t u = lo; u < hi; u++) {
+    int64_t row = u / p->parts, c0 = u % p->parts * PAD_PART;
+    int64_t c1 = c0 + PAD_PART < n ? c0 + PAD_PART : n;
+    /* The row's positions in the result and the piece, and whether the
+       piece holds it. */
+    int64_t pd = p->a[0].offset, pp = p->a[1].offset;
+    int inside = 1;
+    for (int i = last - 1; i >= 0; i--) {
+      int64_t x = row % p->shape[i];
+      row /= p->shape[i];
+      pd += x * p->sd[i];
+      pp += (x - p->lo[i]) * p->sp[i];
+      inside &= x >= p->lo[i] && x < p->hi[i];
+    }
+    /* The piece's columns of the part: none outside the piece. */
+    int64_t x0 = inside ? p->lo[last] : c1, x1 = inside ? p->hi[last] : c1;
+    x0 = x0 < c0 ? c0 : x0 > c1 ? c1 : x0;
+    x1 = x1 < x0 ? x0 : x1 > c1 ? c1 : x1;
+    fill_run(p, pd + c0 * sd, x0 - c0);
+    if (x1 > x0)
+      nx_copy_box(p->a[0].base, p->a[1].base,
+                  &(nx_box){{1, 1, x1 - x0},
+                            {pd + x0 * sd, pp + (x0 - p->lo[last]) * sp},
+                            {{0, 0, sd}, {0, 0, sp}}},
+                  p->a[0].bits);
+    fill_run(p, pd + x1 * sd, c1 - x1);
+  }
 }
 
 /* The regions of unit steps, as [lo, hi) per axis, in [lo] and [hi]: 0 if
@@ -224,7 +286,24 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
     if (!whole) e = NX_OVERLAP;
   }
   int in_place = np > 0 && a[1].alias;
-  if (!e && total > 0 && !in_place && !(unit && tiles(np, r, lo, hi, total))) {
+  int covered = in_place || (unit && tiles(np, r, lo, hi, total));
+  /* A sub-byte dtype's rows may share bytes: its pad keeps the boxes. */
+  int padded = !e && total > 0 && !covered && unit && np == 1 && r > 0 &&
+               bits >= 8;
+  if (padded) {
+    padding pd = {.a = a,
+                  .f = {&a[0], fill},
+                  .r = r,
+                  .parts = (shape[r - 1] + PAD_PART - 1) / PAD_PART,
+                  .shape = shape,
+                  .lo = lo[0],
+                  .hi = hi[0],
+                  .sd = step,
+                  .sp = a[1].dim + r};
+    int64_t bytes = 2 * total * (bits / 8);
+    nx_cpu_job(total / shape[r - 1] * pd.parts, bytes, bytes, pad_units, &pd);
+  }
+  if (!e && total > 0 && !covered && !padded) {
     if (unit && np == 1) {
       /* The 2·rank boxes around the piece: before and after it along axis
          i, within it along the axes before i, whole along those after. */
@@ -242,7 +321,7 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
     } else
       fill_box(&a[0], fill, r, shape, step, a[0].offset);
   }
-  for (int j = 0; j < np && !e; j++) {
+  for (int j = 0; j < np && !e && !padded; j++) {
     if (a[1 + j].alias) continue;
     nx_loop l = {.rank = r, .first = {a[0].offset, a[1 + j].offset}};
     int64_t n = 1;
