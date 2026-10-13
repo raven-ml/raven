@@ -1097,13 +1097,17 @@ module Devices = struct
     | Placed p -> Nx.Repr.Placed.storage p
     | Host _ | Traced _ -> fail "expected a placed value"
 
-  (* [s] consumed at [path], as a compiled call consumes it. *)
-  let consume s ~path =
-    Nx.Repr.Storage.borrow s;
-    Nx.Repr.Storage.upgrade s;
-    Nx.Repr.Storage.consume s ~path;
-    ignore (Nx.Repr.Storage.finish s);
-    Nx.Repr.Storage.release s
+  (* [bufs] consumed at [path], as a compiled call consumes its arguments:
+     through rig's claims on them. *)
+  let consume_buffers bufs ~path =
+    let why =
+      Printf.sprintf "this value was consumed at %s in a compiled call" path
+    in
+    Rig.Claim.with_ ~read:[] ~donate:bufs (fun c ->
+        List.iter (fun b -> ignore (Rig.Claim.consume c ~why b)) bufs)
+
+  (* [s] consumed at [path]. *)
+  let consume s ~path = consume_buffers (Nx.Repr.Storage.buffers s) ~path
 end
 
 (* Tensors of every dtype as they are stored: drawn as bit patterns under every

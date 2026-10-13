@@ -4772,10 +4772,6 @@ thread.
   the element `max` and `min` return, and `Nx.sort`, `Nx.argsort` and
   `Nx.top_k` put `-0.` before `0.` ascending, where they kept the zeros in
   input order. Eager and compiled code agree on zeros.
-- `Nx.Repr.Storage` has the claims a compiled call takes on the storage its
-  arguments reach: `borrow` and `release` for reading, `upgrade` to an
-  exclusive claim, `consume`, and `finish`; `pin` and `unpin` for the programs
-  that bind a storage; and `live` and `pins` to read the state.
 - New low-level section of `Nx`, for transformations and file formats: `Nx.Op`,
   the operations as values with their interpretation (`eval`, `intercept`,
   `intercepted`), where their results live (`placement`), and their `operands`,

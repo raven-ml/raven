@@ -555,15 +555,9 @@ let solve_triangular (e : env) upper transpose unit_diag a b =
 (* [x]'s array on [d]: its storage there, through its view. *)
 let local (type a b) d (x : (a, b) t) : (a, b) Nx_array.t =
   match x with
-  | Placed r -> (
-      match Cell.state r.r_cell with
-      | Live bufs ->
-          {
-            dtype = r.r_dtype;
-            view = r.r_view;
-            buffer = buffer_on r.r_cell bufs d;
-          }
-      | Consumed k -> consumed k)
+  | Placed r ->
+      let buffer = buffer_on r.r_storage (live r.r_storage) d in
+      { dtype = r.r_dtype; view = r.r_view; buffer }
   | Host _ -> invalid_arg "Nx: a host value has no device array"
   | Traced _ -> outside_trace ()
 

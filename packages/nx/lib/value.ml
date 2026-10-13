@@ -13,18 +13,17 @@ open Nx_array
    parameters the return type determines.
 
    A value is one of three things. [Host] is an nx.cpu array, the value of the
-   host placement, with no cell, so that the default path pays nothing for what
-   compiled calls need of a storage. [Placed] is a value at any other placement,
-   held in runtime buffers, one per device of its placement: nx knows its
-   placement, dtype and view, and the buffers are its storage. [Traced] is a
-   node of a trace: it has no bytes and never will, and the tracer that made it
-   keeps its payload in [t_node].
+   host placement. [Placed] is a value at any other placement, held in runtime
+   buffers, one per device of its placement: nx knows its placement, dtype and
+   view, and the buffers are its storage. [Traced] is a node of a trace: it has
+   no bytes and never will, and the tracer that made it keeps its payload in
+   [t_node].
 
-   The views of one placed storage share one cell, which holds what belongs to
-   the storage rather than to a view: whether it is live or was consumed by a
-   compiled call, and how many reachable programs bind it. A storage holds
-   bytes, and each view reads them as its own dtype, so a bitcast of a placed
-   value is a view of its storage too. *)
+   The views of one placed storage share it, and it is compared by identity. A
+   storage holds bytes, and each view reads them as its own dtype, so a bitcast
+   of a placed value is a view of its storage too. Whether the storage was
+   consumed by a compiled call is rig's fact: the call consumes its buffers'
+   memory through rig's claims, which kill the buffers. *)
 
 type ('a, 'b) t =
   | Host : ('a, 'b) Nx_array.t -> ('a, 'b) t
@@ -36,27 +35,15 @@ and ('a, 'b) resident = {
   r_placement : Placement.t; (* never the host placement *)
   r_dtype : ('a, 'b) Nx_dtype.t;
   r_view : View.t; (* per shard, the same on every shard *)
-  r_cell : cell; (* one per storage, shared by all its views *)
+  r_storage : storage; (* shared by all its views *)
 }
 
-and cell = {
+and storage = {
   placement : Placement.t; (* where the storage lives, whichever views it *)
   bytes : int; (* bytes of the storage, per shard *)
-  mutable state : state;
-  bound : int Atomic.t; (* reachable program bindings to the storage *)
-  lock : Mutex.t;
-  mutable readers : int;
-  mutable exclusive : bool;
+  buffers : Rig.Buffer.t list;
+      (* one buffer per device of [placement], in its order *)
 }
-
-and state =
-  | Live of Rig.Buffer.t list
-    (* one buffer per device of the cell's placement, in its order *)
-  | Consumed of consumption
-
-(* Where a compiled call consumed a storage: the consumed leaf's path in the
-   call's arguments, whose first segment is the argument's position from 0. *)
-and consumption = { path : string }
 
 and ('a, 'b) traced = {
   t_id : int; (* fresh; identity tables key by it *)
@@ -94,100 +81,28 @@ let outside_trace () =
   invalid_arg
     "a traced tensor has no bytes; it was used outside the trace that made it"
 
-(* Why a value consumed at [path] is dead: the message of every later use. *)
-let why_consumed { path } =
-  Printf.sprintf
-    "this value was consumed at %s in a compiled call's arguments; use the \
-     value the call returned"
-    path
+(* Raises [Invalid_argument] with the reason a compiled call consumed [b]'s
+   memory with, once one did. *)
+let alive b =
+  match Rig.Buffer.dead b with Some why -> invalid_arg why | None -> ()
 
-let consumed k = invalid_arg (why_consumed k)
+(* [live s] is [s]'s buffers. Raises as [alive] does. *)
+let live s =
+  List.iter alive s.buffers;
+  s.buffers
 
-(* The lock only protects the cell's bookkeeping. Readers and consumers keep
-   their claim while executing outside it; overlapping consumption never
-   waits. *)
-module Cell = struct
-  let busy () =
-    invalid_arg "Nx: storage is in use by another reader or consuming call"
+(* Raises [Invalid_argument] naming [what] if [b] is dead, with the reason a
+   compiled call consumed its memory with. *)
+let check_live what b =
+  match Rig.Buffer.dead b with
+  | Some why -> invalid_arg (what ^ ": " ^ why)
+  | None -> ()
 
-  let state c =
-    Mutex.lock c.lock;
-    let state = c.state in
-    Mutex.unlock c.lock;
-    state
-
-  let borrow c =
-    Mutex.lock c.lock;
-    let blocked = c.exclusive in
-    if not blocked then c.readers <- c.readers + 1;
-    Mutex.unlock c.lock;
-    if blocked then busy ()
-
-  let release c =
-    Mutex.lock c.lock;
-    let valid = (not c.exclusive) && c.readers > 0 in
-    if valid then c.readers <- c.readers - 1;
-    Mutex.unlock c.lock;
-    if not valid then invalid_arg "Nx: unbalanced storage borrow"
-
-  (* A borrow reads the storage, so it also claims the memory of its buffers for
-     reading: the claim raises before [f] if a buffer is dead, or if a lost
-     device can reach its memory ([Rig.Lost]), even for no elements. *)
-  let with_borrow c f =
-    borrow c;
-    Fun.protect
-      ~finally:(fun () -> release c)
-      (fun () ->
-        match c.state with
-        | Live bufs ->
-            Rig.Claim.with_ ~read:bufs ~donate:[] (fun _ -> f ())
-        | Consumed k -> consumed k)
-
-  let upgrade c =
-    Mutex.lock c.lock;
-    let available = (not c.exclusive) && c.readers = 1 in
-    if available then begin
-      c.readers <- 0;
-      c.exclusive <- true
-    end;
-    Mutex.unlock c.lock;
-    if not available then busy ()
-
-  let consume c why =
-    let state = Consumed why in
-    Mutex.lock c.lock;
-    let valid = c.exclusive in
-    if valid then c.state <- state;
-    Mutex.unlock c.lock;
-    if not valid then invalid_arg "Nx: consumption requires exclusive storage"
-
-  let finish c =
-    Mutex.lock c.lock;
-    let retire =
-      match c.state with
-      | Consumed _ -> Atomic.get c.bound = 0
-      | Live _ -> false
-    in
-    c.exclusive <- false;
-    c.readers <- 1;
-    Mutex.unlock c.lock;
-    retire
-
-  let pin c =
-    Mutex.lock c.lock;
-    ignore (Atomic.fetch_and_add c.bound 1);
-    Mutex.unlock c.lock
-
-  let unpin c =
-    Mutex.lock c.lock;
-    let previous = Atomic.fetch_and_add c.bound (-1) in
-    let retire =
-      previous = 1 && (not c.exclusive)
-      && match c.state with Consumed _ -> true | Live _ -> false
-    in
-    Mutex.unlock c.lock;
-    retire
-end
+(* [reading s f] is [f ()] under a read claim on [s]'s memory, so that no
+   compiled call lends it to a result meanwhile. The claim raises before [f] if
+   a buffer is dead, or if a lost device can reach its memory ([Rig.Lost]), even
+   for no elements. *)
+let reading s f = Rig.Claim.with_ ~read:s.buffers ~donate:[] (fun _ -> f ())
 
 (* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
 let global p shape =
@@ -209,26 +124,18 @@ let whole_view r =
 
 (* Placed constructors *)
 
-(* A cell over [storage], one runtime buffer of one size per device of
-   [placement], which the runtime releases with the buffers. *)
-let cell ~placement storage =
-  {
-    placement;
-    bytes = Rig.Buffer.length (List.hd storage);
-    state = Live storage;
-    bound = Atomic.make 0;
-    lock = Mutex.create ();
-    readers = 0;
-    exclusive = false;
-  }
+(* The storage of [buffers], one runtime buffer of one size per device of
+   [placement]. *)
+let storage ~placement buffers =
+  { placement; bytes = Rig.Buffer.length (List.hd buffers); buffers }
 
-(* [placed what p dtype view cell] is the value at [p] of [cell] under [view].
-   Raises [Invalid_argument] naming [what] if [p] is the host's, or if [cell]'s
-   devices do not hold [p]'s memories. *)
-let placed what placement dtype view cell =
+(* [placed what p dtype view s] is the value at [p] of [s] under [view]. Raises
+   [Invalid_argument] naming [what] if [p] is the host's, or if [s]'s devices do
+   not hold [p]'s memories. *)
+let placed what placement dtype view s =
   if Placement.is_host placement then
     invalid_arg (what ^ ": a placed value is never on the host");
-  let held = List.map Device.memory (Placement.devices cell.placement) in
+  let held = List.map Device.memory (Placement.devices s.placement) in
   if
     not
       (List.for_all
@@ -237,14 +144,14 @@ let placed what placement dtype view cell =
   then
     invalid_arg
       (Format.asprintf "%s: a value on %a views a storage on %a" what
-         Placement.pp placement Placement.pp cell.placement);
+         Placement.pp placement Placement.pp s.placement);
   Placed
     {
       r_id = fresh_id ();
       r_placement = placement;
       r_dtype = dtype;
       r_view = view;
-      r_cell = cell;
+      r_storage = s;
     }
 
 (* [aligned dtype b] is [true] iff [b]'s first byte is aligned to one of
@@ -254,10 +161,10 @@ let aligned (type a b) (dtype : (a, b) Nx_dtype.t) b =
   let size = Int.max 1 (Nx_dtype.Scalar.(bitsize (of_dtype dtype)) / 8) in
   (not (Rig.computes (Rig.Buffer.device b))) || Rig.Buffer.aligned b ~at:0 size
 
-(* [capacity dtype c] is the elements of [dtype] that each shard of [c]
+(* [capacity dtype s] is the elements of [dtype] that each shard of [s]
    holds. *)
-let capacity (type a b) (dtype : (a, b) Nx_dtype.t) c =
-  c.bytes * 8 / Nx_dtype.Scalar.(bitsize (of_dtype dtype))
+let capacity (type a b) (dtype : (a, b) Nx_dtype.t) s =
+  s.bytes * 8 / Nx_dtype.Scalar.(bitsize (of_dtype dtype))
 
 (* Raises unless [buffer] is a host buffer, as nx.cpu reads it: through its host
    address. *)
@@ -330,7 +237,7 @@ let placement (type a b) (x : (a, b) t) : Placement.t =
 (* Values over runtime buffers *)
 
 (* [shard_storage what p buffers] is the storage of [buffers], one per device of
-   [p], in order, of one length, each in the memory of its device. *)
+   [p], in order, of one length, each live and in the memory of its device. *)
 let shard_storage what p buffers =
   let ds = Placement.devices p in
   if List.compare_lengths ds buffers <> 0 then
@@ -340,6 +247,7 @@ let shard_storage what p buffers =
   let bytes = Rig.Buffer.length (List.hd buffers) in
   List.iter2
     (fun d b ->
+      check_live what b;
       if Rig.Buffer.length b <> bytes then
         invalid_arg (what ^ ": buffers of different sizes");
       if not (Rig.equal (Rig.Buffer.device b) (Device.memory d)) then
@@ -347,30 +255,28 @@ let shard_storage what p buffers =
           (Printf.sprintf "%s: a buffer for %s is on %s" what (Device.name d)
              (Rig.name (Rig.Buffer.device b))))
     ds buffers;
-  cell ~placement:p buffers
+  storage ~placement:p buffers
 
-(* [host_value what dtype view b] is the host value of [b] under [view]. *)
+(* [host_value what dtype view b] is the host value of the live buffer [b] under
+   [view]. *)
 let host_value what dtype view b =
+  check_live what b;
   check_host what b;
   if not (View.within view (Elements.length dtype b)) then
     invalid_arg (what ^ ": the view reaches outside the buffer");
   Host { dtype; view; buffer = b }
 
-(* [placed_value what p dtype view c] is the value at [p] of [c] under [view].
-   Kernels read [view]'s elements of [c]'s bytes as [dtype]'s, so the view lies
-   within them and each buffer starts on a byte aligned to one. Consumed storage
-   has no bytes to reach. *)
-let placed_value (type a b) what p (dtype : (a, b) Nx_dtype.t) view c =
-  if not (View.within view (capacity dtype c)) then
+(* [placed_value what p dtype view s] is the value at [p] of [s] under [view].
+   Kernels read [view]'s elements of [s]'s bytes as [dtype]'s, so the view lies
+   within them and each buffer starts on a byte aligned to one. *)
+let placed_value (type a b) what p (dtype : (a, b) Nx_dtype.t) view s =
+  if not (View.within view (capacity dtype s)) then
     invalid_arg (what ^ ": the view reaches outside the storage");
-  (match Cell.state c with
-  | Live bufs ->
-      if not (List.for_all (aligned dtype) bufs) then
-        invalid_arg
-          (Printf.sprintf "%s: a buffer at a byte not aligned to %s" what
-             (Nx_dtype.to_string dtype))
-  | Consumed _ -> ());
-  placed what p dtype view c
+  if not (List.for_all (aligned dtype) (live s)) then
+    invalid_arg
+      (Printf.sprintf "%s: a buffer at a byte not aligned to %s" what
+         (Nx_dtype.to_string dtype));
+  placed what p dtype view s
 
 (* [of_shards what p dtype view buffers] is the value at [p] whose elements, on
    each device, are those [view] reaches in its buffer of [buffers]. *)
@@ -402,27 +308,25 @@ let of_buffer (type a b) (dtype : (a, b) Nx_dtype.t) shape b : (a, b) t =
   let p = Placement.on (Device.make (Rig.Buffer.device b)) in
   of_shards what p dtype view [ b ]
 
-(* The buffer, of [bufs], one per device of [c]'s placement, that holds [c]'s
-   storage in [d]'s memory. A value's devices hold their memories' buffers of
-   its storage, whichever device over that memory made it. *)
-let buffer_on (c : cell) bufs d =
+(* The buffer, of [bufs], one per device of [s]'s placement, that holds [s] in
+   [d]'s memory. A value's devices hold their memories' buffers of its storage,
+   whichever device over that memory made it. *)
+let buffer_on s bufs d =
   match
     List.find_index
       (fun h -> Device.memory h == Device.memory d)
-      (Placement.devices c.placement)
+      (Placement.devices s.placement)
   with
   | Some i -> List.nth bufs i
   | None -> invalid_arg ("Nx: no storage on " ^ Device.name d)
 
 let shards (type a b) (x : (a, b) t) =
   match x with
-  | Host a -> ([ a.buffer ], a.view)
-  | Placed r -> (
-      match Cell.state r.r_cell with
-      | Live buffers ->
-          ( List.map
-              (fun d -> buffer_on r.r_cell buffers d)
-              (Placement.devices r.r_placement),
-            r.r_view )
-      | Consumed k -> consumed k)
+  | Host a ->
+      alive a.buffer;
+      ([ a.buffer ], a.view)
+  | Placed r ->
+      let bufs = live r.r_storage in
+      ( List.map (buffer_on r.r_storage bufs) (Placement.devices r.r_placement),
+        r.r_view )
   | Traced _ -> outside_trace ()

@@ -220,22 +220,19 @@ let file_windows dtype v ds windows b =
 
 (* The elements of a placed value's view. *)
 let read_elements (type a b) (r : (a, b) resident) : Rig.Buffer.t =
-  Cell.with_borrow r.r_cell (fun () ->
-      match r.r_cell.state with
-      | Consumed k -> consumed k
-      | Live bufs ->
-          let shape = global r.r_placement (View.shape r.r_view) in
-          assemble r
-            (Array.map (fun n -> (0, n)) shape)
-            (fun d v ->
-              read_view r.r_dtype (buffer_on r.r_cell bufs d) v))
+  reading r.r_storage (fun () ->
+      let bufs = r.r_storage.buffers in
+      let shape = global r.r_placement (View.shape r.r_view) in
+      assemble r
+        (Array.map (fun n -> (0, n)) shape)
+        (fun d v -> read_view r.r_dtype (buffer_on r.r_storage bufs d) v))
 
 (* [file_run r] is the file bytes that hold [r]'s storage, when they lie on the
    disk, or another io device, at a byte aligned to an element, so that the
    host can read them in place. *)
 let file_run (type a b) (r : (a, b) resident) =
-  match Cell.state r.r_cell with
-  | Live [ b ] when not (Rig.computes (Rig.Buffer.device b)) ->
+  match live r.r_storage with
+  | [ b ] when not (Rig.computes (Rig.Buffer.device b)) ->
       let size = Int.max 1 (Nx_dtype.Scalar.(bitsize (of_dtype r.r_dtype)) / 8) in
       if Rig.Buffer.offset b mod size = 0 then Some b else None
   | _ -> None
@@ -252,10 +249,9 @@ let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
 let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
   match file_run r with
   | Some b -> (
-      match
-        Cell.with_borrow r.r_cell (fun () -> Rig.Buffer.borrow Rig.host b)
-      with
-      | Some buffer -> { Nx_array.dtype = r.r_dtype; view = whole_view r; buffer }
+      match reading r.r_storage (fun () -> Rig.Buffer.borrow Rig.host b) with
+      | Some buffer ->
+          { Nx_array.dtype = r.r_dtype; view = whole_view r; buffer }
       | None -> read_copy r)
   | None -> read_copy r
 
@@ -280,8 +276,8 @@ let place_at : type a b. Placement.t -> (a, b) t -> (a, b) t =
   let dt, v, run =
     match x with
     | Placed r -> (
-        match Cell.state r.r_cell with
-        | Live [ b ] -> (r.r_dtype, r.r_view, run_in r.r_dtype b)
+        match live r.r_storage with
+        | [ b ] -> (r.r_dtype, r.r_view, run_in r.r_dtype b)
         | _ -> (r.r_dtype, whole_view r, fun _ -> None))
     | _ ->
         let h = Lazy.force host in
@@ -299,7 +295,7 @@ let place_at : type a b. Placement.t -> (a, b) t -> (a, b) t =
     | _ -> None
   in
   match borrowed with
-  | Some (view, bufs) -> placed "Nx.place" p dt view (cell ~placement:p bufs)
+  | Some (view, bufs) -> placed "Nx.place" p dt view (storage ~placement:p bufs)
   | None ->
       let piece w =
         match run (View.shrink v w) with
@@ -318,7 +314,7 @@ let place_at : type a b. Placement.t -> (a, b) t -> (a, b) t =
             b)
           ds windows
       in
-      placed "Nx.place" p dt (View.create local) (cell ~placement:p bufs)
+      placed "Nx.place" p dt (View.create local) (storage ~placement:p bufs)
 
 (* Placing over one memory
 
@@ -342,7 +338,7 @@ let view_at (type a b) p (x : (a, b) t) : (a, b) t option =
       | [ d ] when Rig.equal (Device.memory d) Rig.host ->
           Some
             (placed "Nx.place" p t.dtype t.view
-               (cell ~placement:p [ t.buffer ]))
+               (storage ~placement:p [ t.buffer ]))
       | _ -> None)
   | Placed r when Placement.on_disk r.r_placement -> None
   | Placed r ->
@@ -372,8 +368,8 @@ let view_at (type a b) p (x : (a, b) t) : (a, b) t option =
 (* [r]'s value from the host's device, as a host value over its buffer, when it
    lies whole in the host's memory. *)
 let host_view (type a b) (r : (a, b) resident) : (a, b) Nx_array.t option =
-  match (Placement.devices r.r_placement, Cell.state r.r_cell) with
-  | [ d ], Live [ buffer ] when Rig.equal (Device.memory d) Rig.host ->
+  match (Placement.devices r.r_placement, live r.r_storage) with
+  | [ d ], [ buffer ] when Rig.equal (Device.memory d) Rig.host ->
       Some { dtype = r.r_dtype; view = r.r_view; buffer }
   | _ -> None
 
@@ -390,5 +386,5 @@ let move_to (type a b) p (x : (a, b) t) : (a, b) t =
         match view_at p x with Some y -> y | None -> place_at p x)
   in
   match x with
-  | Placed r -> Cell.with_borrow r.r_cell move
+  | Placed r -> reading r.r_storage move
   | Host _ | Traced _ -> move ()

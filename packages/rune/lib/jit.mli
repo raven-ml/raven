@@ -29,9 +29,9 @@
     it is lent. The stores are scheduled, compiled for the trace's devices and
     linked once, with the captures the trace bound; the call then runs as every
     later call with that key does:
-    + it borrows the storage of every leaf and takes the consumed ones
-      exclusively ({!Nx.Repr.Storage}), refusing a consumed leaf that does not
-      cover its storage or whose storage another leaf or a capture reaches;
+    + it claims the memory of every leaf for reading and donates the consumed
+      ones ({!Rig.Claim.with_}), refusing a consumed leaf whose storage
+      another leaf or a capture reaches;
     + it allocates each result's storage, and copies each consumed storage that
       cannot lend on this call: borrowed memory, memory that does not span its
       buffer, or storage another program binds;

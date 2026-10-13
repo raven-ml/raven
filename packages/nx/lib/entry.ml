@@ -252,7 +252,7 @@ let check ok data fail =
 let place (type a b) p (x : (a, b) t) : (a, b) t =
   if Placement.equal (placement x) p then
     match x with
-    | Placed r -> Cell.with_borrow r.r_cell (fun () -> x)
+    | Placed r -> reading r.r_storage (fun () -> x)
     | Host _ | Traced _ -> x
   else if Intercept.intercepting () then Intercept.perform (Place (p, x))
   else Place.move_to p x
@@ -314,8 +314,8 @@ let run (type a b) (x : (a, b) t) =
   match x with
   | Host t -> Place.run_in t.dtype t.buffer t.view
   | Placed r -> (
-      match Cell.state r.r_cell with
-      | Live [ b ] -> Place.run_in r.r_dtype b r.r_view
+      match live r.r_storage with
+      | [ b ] -> Place.run_in r.r_dtype b r.r_view
       | _ -> None)
   | Traced _ -> outside_trace ()
 

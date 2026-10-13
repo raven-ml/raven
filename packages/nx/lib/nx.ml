@@ -159,28 +159,11 @@ module Repr = struct
   type ('a, 'b) node = ('a, 'b) Value.node = ..
 
   module Storage = struct
-    type t = Value.cell
+    type t = Value.storage
 
     let v p buffers = Value.shard_storage "Nx.Repr.Storage.v" p buffers
-
-    let buffers (s : t) =
-      match Value.Cell.state s with
-      | Live bs -> bs
-      | Consumed k -> invalid_arg (Value.why_consumed k)
-
+    let buffers = Value.live
     let placement (s : t) = s.placement
-    let borrow = Value.Cell.borrow
-    let release = Value.Cell.release
-    let upgrade = Value.Cell.upgrade
-    let consume s ~path = Value.Cell.consume s { path }
-    let finish = Value.Cell.finish
-    let pin = Value.Cell.pin
-    let unpin = Value.Cell.unpin
-
-    let live s =
-      match Value.Cell.state s with Live _ -> true | Consumed _ -> false
-
-    let pins (s : t) = Atomic.get s.bound
   end
 
   module Placed = struct
@@ -191,7 +174,7 @@ module Repr = struct
 
     let id (x : ('a, 'b) t) = x.r_id
     let view (x : ('a, 'b) t) = x.r_view
-    let storage (x : ('a, 'b) t) = x.r_cell
+    let storage (x : ('a, 'b) t) = x.r_storage
   end
 
   module Traced = struct

@@ -1638,7 +1638,8 @@ val of_buffer : ('a, 'b) dtype -> int array -> Rig.Buffer.t -> ('a, 'b) t
     other holders, which must not write it while the value lives.
 
     Raises [Invalid_argument] if [b]'s bytes are not those of [shape]'s
-    elements of [dtype], the last byte whole. *)
+    elements of [dtype], the last byte whole, or if [b] is dead
+    ({!Rig.Buffer.dead}). *)
 
 val to_buffer : ('a, 'b) t -> Rig.Buffer.t
 (** [to_buffer x] is a buffer of exactly [x]'s elements in C order, on [x]'s
@@ -4888,9 +4889,9 @@ val of_shards :
     for [x] at [p] of view [view]. Nothing is copied.
 
     Raises [Invalid_argument] unless there is one buffer per device of [p], each
-    in the memory of its device and of one length, each starts on a byte
-    aligned to an element of [dtype], and [view] reaches no element outside
-    them. *)
+    live ({!Rig.Buffer.dead}), in the memory of its device and of one length,
+    each starts on a byte aligned to an element of [dtype], and [view] reaches
+    no element outside them. *)
 
 (** Operations as values.
 
@@ -5175,8 +5176,9 @@ module Repr : sig
 
     val v : Placement.t -> Rig.Buffer.t list -> t
     (** [v p buffers] is the storage of [buffers], one per device of [p], in
-        order, each of the same size in bytes and in the memory of its device.
-        A value over it reads its bytes as the value's dtype ({!Placed.v}).
+        order, each live ({!Rig.Buffer.dead}), of the same size in bytes and in
+        the memory of its device. A value over it reads its bytes as the
+        value's dtype ({!Placed.v}).
 
         Raises [Invalid_argument] otherwise. *)
 
@@ -5184,60 +5186,12 @@ module Repr : sig
     (** [buffers s] is [s]'s buffers, one per device. They are read-only by
         contract: every value over [s] reads the same memory.
 
-        Raises [Invalid_argument] if [s] was consumed. *)
+        Raises [Invalid_argument] if [s] was consumed: a compiled call consumed
+        its buffers' memory ({!Rig.Claim.consume}), and the message is the
+        reason it gave. *)
 
     val placement : t -> Placement.t
     (** [placement s] is where [s] lives. *)
-
-    (** {2:claims Claims}
-
-        A compiled call claims the storage its arguments reach. It borrows each
-        storage for reading, upgrades the borrow of each storage it consumes to
-        an exclusive claim, consumes it, and finishes. A program that binds a
-        storage pins it for as long as the program lives. Consumed storage is
-        retired once no call holds it and no program pins it. *)
-
-    val borrow : t -> unit
-    (** [borrow s] claims [s] for reading, beside other readers.
-
-        Raises [Invalid_argument] if a call holds [s] exclusively. *)
-
-    val release : t -> unit
-    (** [release s] ends a {!borrow} of [s].
-
-        Raises [Invalid_argument] if [s] has no borrow to end. *)
-
-    val upgrade : t -> unit
-    (** [upgrade s] turns the caller's borrow of [s] into an exclusive claim.
-
-        Raises [Invalid_argument] if another reader or call holds [s]. *)
-
-    val consume : t -> path:string -> unit
-    (** [consume s ~path] consumes [s] at [path], the consumed leaf's path in a
-        compiled call's arguments: every later read or use of a value over [s]
-        raises [Invalid_argument] naming [path], while shapes and dtypes stay
-        readable. Nothing unconsumes [s].
-
-        Raises [Invalid_argument] unless the caller holds [s] exclusively. *)
-
-    val finish : t -> bool
-    (** [finish s] turns the exclusive claim on [s] back into the caller's
-        borrow, which it then {!release}s. It is [true] iff [s] is consumed and
-        no program pins it: its buffers can be retired. *)
-
-    val pin : t -> unit
-    (** [pin s] records one more program that binds [s]. *)
-
-    val unpin : t -> bool
-    (** [unpin s] records one program fewer that binds [s]. It is [true] iff
-        that was the last, [s] is consumed and no call holds it exclusively: its
-        buffers can be retired. *)
-
-    val live : t -> bool
-    (** [live s] is [true] iff [s] was not consumed. *)
-
-    val pins : t -> int
-    (** [pins s] is the number of programs that bind [s]. *)
   end
 
   (** Placed values. *)
@@ -5258,8 +5212,8 @@ module Repr : sig
         Raises [Invalid_argument] if [p] is {!Placement.host}, if [view] reaches
         an element outside [s], if a buffer of [s] does not start on a byte
         aligned to one of [dtype]'s elements, if [dtype] is [bool] and [s]'s
-        buffers are not of [bool]'s format, whose only bytes are 0 and 1, or if
-        [s]'s devices do not hold [p]'s. *)
+        buffers are not of [bool]'s format, whose only bytes are 0 and 1, if
+        [s]'s devices do not hold [p]'s, or if [s] was consumed. *)
 
     val id : ('a, 'b) t -> int
     (** [id x] is [x]'s identity, for hashing: every placed value has its own.

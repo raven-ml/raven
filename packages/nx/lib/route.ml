@@ -160,13 +160,13 @@ let whole_shards xs =
         match x with
         | Placed r when not (Placement.on_disk r.r_placement) ->
             let bits = Nx_dtype.Scalar.(bitsize (of_dtype r.r_dtype)) in
-            Some (r.r_cell, (r.r_view, bits), r.r_placement)
+            Some (r.r_storage, (r.r_view, bits), r.r_placement)
         | _ -> None)
       xs
   in
   (* A view of a whole shard reaches every byte the shard holds, and no element
      twice through a broadcast axis. *)
-  let whole (c : Value.cell) (v, bits) =
+  let whole (c : Value.storage) (v, bits) =
     ((View.numel v * bits) + 7) / 8 = c.bytes
     && not
          (Array.exists2
@@ -176,16 +176,15 @@ let whole_shards xs =
   (* Each view is on one of the storage's own devices: a view seen from another
      device over the same memory is a value of that device, which meets the
      others only through [Nx.place]. *)
-  let own (c : Value.cell) p =
+  let own (c : Value.storage) p =
     match Placement.devices p with
     | [ d ] -> List.exists (Device.equal d) (Placement.devices c.placement)
     | _ -> false
   in
   match views with
-  | (cell, _, _) :: _
-    when List.for_all (fun (c, v, p) -> c == cell && whole c v && own c p) views
-    ->
-      Some (Placement.devices cell.Value.placement)
+  | (s, _, _) :: _
+    when List.for_all (fun (c, v, p) -> c == s && whole c v && own c p) views ->
+      Some (Placement.devices s.Value.placement)
   | _ -> None
 
 let mixed op p q =

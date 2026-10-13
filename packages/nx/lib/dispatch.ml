@@ -154,7 +154,7 @@ let settle_on q ~windowed envs =
         in
         let a = List.hd arrays in
         placed "Nx" q a.dtype a.view
-          (cell ~placement:q
+          (storage ~placement:q
              (List.map (fun (a : (_, _) Nx_array.t) -> a.buffer) arrays)));
   }
 
@@ -176,19 +176,6 @@ let no_kernels op d =
         device with a backend (Nx.Device.with_backend), or place the operands \
         on Nx.Placement.host."
        op (Device.name d))
-
-let rec with_cells cells f =
-  match cells with
-  | [] -> f ()
-  | c :: rest -> Cell.with_borrow c (fun () -> with_cells rest f)
-
-let cells_of op =
-  List.fold_left
-    (fun cells (P x) ->
-      match x with
-      | Placed r when not (List.memq r.r_cell cells) -> r.r_cell :: cells
-      | _ -> cells)
-    [] (Op.operands op)
 
 (* [on_devices op] is [op] computed where it runs: over host operands by nx.cpu,
    and at a placement [q] once per device of [q], by its backend. Each device
@@ -240,8 +227,7 @@ let on_devices : type r. r Op.t -> r =
             Op.map_operands { f = (fun x -> Place.move_to target x) } op
           in
           let envs = List.map2 Kernels.on kernels ds in
-          with_cells (cells_of op) (fun () ->
-              compute envs (settle_on q ~windowed envs) op))
+          compute envs (settle_on q ~windowed envs) op)
   | Moves _ | Places _ | Reads _ ->
       invalid_arg "Nx: the operation computes nothing"
 
@@ -346,11 +332,7 @@ let bitcast_view (type a b c d) (dtype : (c, d) Nx_dtype.t)
     let s = View.shape v in
     let last = Array.length s - 1 in
     let first = View.offset v * w in
-    let readable () =
-      match Cell.state r.r_cell with
-      | Live bufs -> List.for_all (aligned dtype) bufs
-      | Consumed _ -> false
-    in
+    let readable () = List.for_all (aligned dtype) (live r.r_storage) in
     if
       View.is_c_contiguous v
       && first mod w' = 0

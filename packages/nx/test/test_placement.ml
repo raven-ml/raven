@@ -398,6 +398,37 @@ let place_tests =
             (fun () -> Nx.place on1 p);
           raises_invalid_arg (fun () -> Nx.to_array p);
           equal (array int) [| 2; 3 |] (Nx.shape p));
+      test
+        "a consumed value's buffers are not handed out, through any view of \
+         its storage, on the host too" (fun () ->
+          let p = Nx.place on1 (iota [| 2; 3 |]) in
+          let v = Nx.transpose p in
+          consume (storage_of p) ~path:"1.cache";
+          let named = Exn.invalid_arg ~substring:"consumed at 1.cache" in
+          raises_match named (fun () -> Nx.shards v);
+          raises_match named (fun () -> Nx.Repr.Storage.buffers (storage_of v));
+          let b = Rig.Buffer.create Rig.host 24 in
+          let h = Nx.of_buffer Nx.float32 [| 6 |] b in
+          consume_buffers [ b ] ~path:"0.state";
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0.state")
+            (fun () -> Nx.shards h));
+      test "no value or storage is made over dead buffers" (fun () ->
+          let p = Nx.place on1 (iota [| 2; 3 |]) in
+          let s = storage_of p and bufs, view = Nx.shards p in
+          consume s ~path:"0";
+          let named what =
+            Exn.invalid_arg ~substring:(what ^ ": this value was consumed at 0")
+          in
+          raises_match (named "Nx.Repr.Storage.v") (fun () ->
+              Nx.Repr.Storage.v on1 bufs);
+          raises_match (named "Nx.of_shards") (fun () ->
+              Nx.of_shards on1 Nx.float32 view bufs);
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.Repr.Placed.v on1 Nx.float32 view s);
+          let b = Rig.Buffer.create Rig.host 24 in
+          consume_buffers [ b ] ~path:"0";
+          raises_match (named "Nx.of_buffer") (fun () ->
+              Nx.of_buffer Nx.float32 [| 6 |] b));
     ]
 
 (* Movements *)
@@ -1138,50 +1169,6 @@ let reads =
           equal values [| 1.; 2.; 3. |] (Nx.to_array c));
     ]
 
-(* Claims *)
-
-let claims =
-  let open Nx.Repr.Storage in
-  let fresh () = storage_of (Nx.place on1 (iota [| 2; 3 |])) in
-  group "claims"
-    [
-      test "readers share a storage, and a sole reader upgrades to consume it"
-        (fun () ->
-          let s = fresh () in
-          borrow s;
-          borrow s;
-          raises_invalid_arg (fun () -> upgrade s);
-          release s;
-          upgrade s;
-          raises_invalid_arg (fun () -> borrow s);
-          consume s ~path:"1.w";
-          is_false (live s);
-          is_true ~msg:"retired as the call finishes" (finish s);
-          release s;
-          raises_invalid_arg (fun () -> release s));
-      test "consuming needs the exclusive claim" (fun () ->
-          let s = fresh () in
-          raises_invalid_arg (fun () -> consume s ~path:"0");
-          borrow s;
-          raises_invalid_arg (fun () -> consume s ~path:"0");
-          release s;
-          is_true (live s));
-      test "a consumed storage that programs pin is retired by the last unpin"
-        (fun () ->
-          let s = fresh () in
-          pin s;
-          pin s;
-          equal int 2 (pins s);
-          borrow s;
-          upgrade s;
-          consume s ~path:"0";
-          is_false ~msg:"pinned as the call finishes" (finish s);
-          release s;
-          is_false ~msg:"one program left" (unpin s);
-          is_true ~msg:"the last program" (unpin s);
-          equal int 0 (pins s));
-    ]
-
 (* Identities *)
 
 type (_, _) Nx.Repr.node += Identity_probe : ('a, 'b) Nx.Repr.node
@@ -1238,6 +1225,5 @@ let () =
          results;
          bitcasts;
          reads;
-         claims;
          identities;
        ])
