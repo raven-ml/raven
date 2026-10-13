@@ -141,10 +141,12 @@ val close : t -> unit
 (** [close d] waits for the work submitted on [d] before the call, then loses
     [d] with the reason ["closed"] and returns once its driver's stop
     ({!Rig_edge.Driver.val-stop}) has returned, which may be before [d] has
-    stopped ({!section-stops}). From then on, uses of [d] raise {!Lost}, and
-    buffers over its memory return that memory once collected and [d] has
-    stopped, at {!free_cache}[ d] or a {!Buffer.create} on [d], or through
-    reclamation ({!section-reclaim}). Work that another domain submits on [d]
+    stopped ({!section-stops}). From then on, uses of [d] raise {!Lost}.
+    Once [d] has stopped, buffers over its memory return that memory once
+    collected, and [d]'s mappings of other memory ({!Buffer.borrow}) go back:
+    at the stop if [d] has stopped by then, and otherwise at
+    {!free_cache}[ d], a {!Buffer.create} or {!Buffer.borrow} on [d], or
+    through reclamation ({!section-reclaim}). Work that another domain submits on [d]
     during the close may be lost with [d].
     {ul
     {- On another machine's host ({!host_of}), lost or not, [close] first
@@ -165,8 +167,8 @@ val close : t -> unit
     life of the process, and its driver keeps its word and what reading the
     word needs, so its points name it for good. Its driver's stop releases
     what the device needs only to run work, such as its queues, and once
-    its work has ended rig gives back its mappings of other devices'
-    words. *)
+    its work has ended rig gives back its mappings of other devices' words
+    and memory. *)
 
 val name : t -> string
 (** [name d] is [d]'s name for people: its opener's [name], with

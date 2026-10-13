@@ -212,9 +212,10 @@ val export : claim -> bool
     A borrow of an allocation on a device is a memory record whose root is
     the owner's. Where the device needs a mapping, the first borrow makes it
     and later ones share it. The mapping is released when the entry is freed
-    ({!free_entry}), and the entry goes back to its driver after its last
+    ({!free_entry}) or once the device is Stopped ({!drain}), whichever
+    comes first, and the entry goes back to its driver after its last
     mapping is released. A device's mapping of another's word, which its
-    queue waits on, lives for the process. *)
+    queue waits on, is released once the device is Stopped. *)
 
 val map_host_range : device -> int -> int -> region option
 (** [map_host_range d p n] is [d]'s mapping of the [n] bytes of host memory
@@ -263,7 +264,8 @@ val of_io : device -> io_region -> access:access -> int -> memory
 
 val drain : device -> unit
 (** [drain d] moves [d]'s collected memory whose points are settled to its
-    cache or its driver, returns a Stopped device's cache, runs the pending
+    cache or its driver, returns a Stopped device's cache and gives back its
+    mappings of other devices' memory and words, runs the pending
     releases whose value [d] reached, and releases the holds that are due.
     In a forked child it forgets the holds made before the fork. It does
     nothing on an orphaned device, whose frees would call its parent's

@@ -442,6 +442,22 @@ let entry_unmapped (e : entry) =
 let give d r e =
   if free_region d r then entry_unmapped e else defer d (Unmap (r, Some e))
 
+let drop_mapped (l, id) = Cache.remove l.mapped id
+
+(* Releases [maps], the mappings of [e] that [free_entry] took, each once its
+   mapper ran the work that could use it, after taking [e] out of the
+   mapper's table. A loop of its own, so a free builds no closure. *)
+let rec release_maps (e : entry) = function
+  | [] -> ()
+  | mp :: maps ->
+      Dev.protect mp.on drop_mapped (mp.on.live, e.id);
+      if unmap_now mp then entry_unmapped e
+      else defer mp.on (Unmap (mp.map, Some e));
+      release_maps e maps
+
+(* A mapping belongs to whichever call takes it out of [e.maps] under the
+   owner's lock: [free_entry] takes them all, a Stopped mapper's drain its own
+   ([take_back]). *)
 let free_entry (e : entry) =
   (* No mapping is made of dead memory: one seen gone stays gone. *)
   let maps =
@@ -455,11 +471,7 @@ let free_entry (e : entry) =
       maps
     end
   in
-  List.iter
-    (fun mp ->
-      if unmap_now mp then entry_unmapped e
-      else defer mp.on (Unmap (mp.map, Some e)))
-    maps;
+  release_maps e maps;
   entry_unmapped e
 
 let key n kind =
@@ -627,17 +639,59 @@ let take_all_cached (l, freed) =
   l.cached <- 0;
   freed
 
-(* Empties [l]'s pairs, and takes its mappings of producers' words. *)
-let take_word_maps l =
-  let maps = l.word_maps in
-  l.word_maps <- [];
+(* Empties [l]'s pairs, and takes one of its mappings of producers' words. *)
+let pop_word_map l =
   l.pairs <- [||];
-  maps
+  match l.word_maps with
+  | r :: rest ->
+      l.word_maps <- rest;
+      Some r
+  | [] -> None
+
+let mapped_ids l = Cache.fold (fun id _ ids -> id :: ids) l.mapped []
+
+(* Takes the entry [id] out of those [l] maps, with [l]'s mapping of it, if
+   it is there. *)
+let pop_mapped (l, id) =
+  match Cache.find_opt l.mapped id with
+  | Some _ as found ->
+      Cache.remove l.mapped id;
+      found
+  | None -> None
+
+(* Takes [mp] back out of [e]'s mappings: whether it was there. *)
+let take_back ((e : entry), mp) =
+  List.memq mp e.maps
+  && begin
+    e.maps <- List.filter (fun mp' -> mp' != mp) e.maps;
+    true
+  end
+
+(* Gives back the Stopped [d]'s mappings of producers' words and of memory
+   that outlives it, one at a time: an exception loses at most the one in
+   hand, and the next drain finds the rest. *)
+let give_maps d =
+  let l = d.live in
+  let rec words () =
+    match Lock.protect l.lock pop_word_map l with
+    | Some r ->
+        unmap d r;
+        words ()
+    | None -> ()
+  in
+  words ();
+  List.iter
+    (fun id ->
+      match Lock.protect l.lock pop_mapped (l, id) with
+      | Some ((e, mp) as taken) when Dev.protect e.owner take_back taken ->
+          give d mp.map e
+      | Some _ | None -> ())
+    (Lock.protect l.lock mapped_ids l)
 
 (* Takes what became due: retiring memory no bigarray reads and whose uses are
    reached enters the cache, or is freed if [d] is lost and counts as stopped,
-   with its mappings of producers' words; pending releases whose value [d]
-   reached. Is the memory to free. *)
+   with its mappings; pending releases whose value [d] reached. Is the memory
+   to free. *)
 let due d =
   let lost = Dev.is_lost d in
   let free_lost = lost && Dev.stopped d in
@@ -649,7 +703,7 @@ let due d =
   let freed = judge d ~lost ~free_lost [] retiring in
   if not free_lost then freed
   else begin
-    List.iter (unmap d) (Lock.protect l.lock take_word_maps l);
+    give_maps d;
     Lock.protect l.lock take_all_cached (l, freed)
   end
 
@@ -721,14 +775,18 @@ let drain_own d =
 let idle l =
   l.retiring == [] && fst l.pending == [] && not (released_any l.release)
 
-(* An orphaned device's objects are forgotten: nothing of it drains. A lost
-   device's cache and its mappings of producers' words return once it is
-   Stopped. *)
+let maps_any l = Cache.length l.mapped > 0
+
+(* Whether the lost [d] keeps what returns once it is Stopped: its cache and
+   its mappings. *)
+let kept d =
+  let l = d.live in
+  l.cached > 0 || l.word_maps != [] || Dev.protect d maps_any l
+
+(* An orphaned device's objects are forgotten: nothing of it drains. *)
 let drain d =
   if not (Dev.orphaned d) then begin
-    let l = d.live in
-    let kept = l.cached > 0 || l.word_maps != [] in
-    if not (idle l && ((not kept) || not (Dev.is_lost d))) then drain_own d;
+    if not (idle d.live) || (Dev.is_lost d && kept d) then drain_own d;
     if released_any holds_list then List.iter (route d) (released holds_list);
     drain_holds ()
   end
@@ -1059,6 +1117,16 @@ let add_map ((e : entry), mp) =
       e.maps <- mp :: e.maps;
       None
 
+(* Notes [e] among the entries [d] maps, with [d]'s mapping [mp] of it, unless
+   [d]'s stop returned, whose drains may have given back its mappings
+   already: whether it noted it. *)
+let note_mapped (d, (e : entry), mp) =
+  (not (Dev.stop_returned d))
+  && begin
+    Cache.replace d.live.mapped e.id (e, mp);
+    true
+  end
+
 let map_host_range d start n =
   match d.kind with
   | Driver _ when not d.maps_host -> None
@@ -1097,8 +1165,10 @@ let peer_memory d (m : memory) =
   | Host | Io _ -> false
 
 (* [d]'s new mapping of the memory [m] owns, whose host address is [host] or
-   [-1], counted in the memory and recorded there. The mapping lasts until the
-   memory is freed. *)
+   [-1]. It counts in the memory and is recorded there first, then noted on
+   [d] unless [d]'s stop returned: a drain of [d] that came first found no
+   note, so the mapping is taken back out of the memory and given back here,
+   and [d] is lost. A drain that comes later finds the note. *)
 let map_new d m host =
   (* Memory of a device of [d]'s driver maps as a peer's; other memory the
      host addresses, as host memory. *)
@@ -1126,7 +1196,12 @@ let map_new d m host =
       | Some other ->
           give d r e;
           Some other
-      | None -> Some mp)
+      | None ->
+          if Dev.protect d note_mapped (d, e, mp) then Some mp
+          else begin
+            if Dev.protect m.dev take_back (e, mp) then give d r e;
+            Dev.raise_lost d
+          end)
 
 (* [d]'s mapping of the memory [m] owns, whose host address is [host] or [-1],
    made at the first borrow and shared by the later ones. *)

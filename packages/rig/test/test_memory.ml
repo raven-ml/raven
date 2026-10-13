@@ -233,10 +233,10 @@ let test_raced_maps () =
   equal ~msg:"the mapper's regions once it went back" (list int) []
     (P.outstanding pc)
 
-(* A borrow on another domain that maps memory for a device closed meanwhile
-   is lost or keeps its mapping, which goes back with the memory, once. The
-   borrow's locate of the mapping waits at Polled's locate gate while the
-   close runs. *)
+(* A device closed while a borrow on another domain maps memory for it gives
+   the mapping back, and the memory goes back to its driver once. The borrow's
+   locate of the mapping waits at Polled's locate gate while the close
+   runs. *)
 let test_close_beside_borrow () =
   let o, po = P.open_ "memory:borrow-owner" in
   let d, pd = P.open_ "memory:borrow-mapper" in
@@ -258,7 +258,7 @@ let test_close_beside_borrow () =
   Rig.close d;
   settle [ d ];
   P.open_locates pd;
-  mem ~msg:"the borrow" string (Domain.join borrower) [ "borrowed"; "lost" ];
+  equal ~msg:"the borrow" string "lost" (Domain.join borrower);
   held := None;
   collect o;
   Rig.set_budget o 0;
@@ -267,9 +267,10 @@ let test_close_beside_borrow () =
   equal ~msg:"the memory's frees" int 1
     (List.length (List.filter (fun (a, _) -> a = at) (P.frees po)))
 
-(* Memory goes back to its driver only after every other device's mapping of
-   it, a closed mapper's included: the memory's free in another domain gives
-   the mapping back first, held at Polled's free gate. *)
+(* Memory goes back to its driver after every other device's mapping of it,
+   whichever ends first. The mapper's close gives back its mapping in another
+   domain, held at Polled's free gate while the memory is collected and its
+   owner's cache emptied. *)
 let test_free_after_maps () =
   let o, po = P.open_ "memory:mapped-owner" in
   let d, pd = P.open_ "memory:mapper" in
@@ -282,18 +283,16 @@ let test_free_after_maps () =
   let at, held = mapped () in
   equal ~msg:"the mapper maps the memory" bool true
     (List.mem "map_peer" (P.log pd));
-  Rig.close d;
   P.gate_frees pd;
-  held := None;
-  let freer =
-    Domain.spawn (fun () ->
-        collect o;
-        Rig.set_budget o 0)
-  in
+  let mapper = Domain.spawn (fun () -> Rig.close d) in
   Support.await "the mapper's unmap at the gate" (fun () -> P.freers pd = 1);
+  held := None;
+  collect o;
+  Rig.set_budget o 0;
   equal ~msg:"the memory while it is mapped" bool false (freed po at);
   P.open_frees pd;
-  Domain.join freer;
+  Domain.join mapper;
+  settle [ o; d ];
   equal ~msg:"the memory once unmapped" bool true (freed po at);
   equal ~msg:"the mapper's regions" (list int) [] (P.outstanding pd)
 

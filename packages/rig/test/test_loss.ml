@@ -494,13 +494,11 @@ let test_create_frees () =
   close_frees "loss:create-frees" (fun d ->
       raises_match (lost d) (fun () -> B.create d 8))
 
-(* A close of a lost device only waits for its stop: the device keeps its
-   loss's reason. *)
-(* Mappings end with their memory. *)
+(* Mappings end with the shorter-lived of their memory and their device. *)
 
-(* [d]'s mapping of memory that outlives it is released once, with the
-   memory: [d]'s end releases none, and [d] keeps raising its loss. [ends d]
-   closes or loses [d]. *)
+(* [d]'s mapping of memory that outlives it is released once [d] has stopped,
+   once; another device's borrow of the memory stays, and the memory's death
+   unmaps nothing more on [d]. [ends d] closes or loses [d]. *)
 let outlived name ends =
   let d, p = P.open_ name in
   let e, pe = P.open_ (name ^ "-other") in
@@ -511,7 +509,10 @@ let outlived name ends =
   let other = ref (Some (require_some (B.borrow e (Option.get !h)))) in
   ends d p;
   collect d;
-  equal ~msg:"at the end" int 0 (count "unmap" p);
+  equal ~msg:"unmapped once stopped" int 2 (count "unmap" p);
+  equal ~msg:"held by the device" (list int) [] (P.outstanding p);
+  equal ~msg:"the other device's mapping" (slist int compare)
+    [ 64; 1 lsl 16 ] (P.outstanding pe);
   raises_match (lost d) (fun () -> B.borrow d (Option.get !h));
   ignore (Sys.opaque_identity (!h, !peer, !other));
   h := None;
@@ -520,8 +521,7 @@ let outlived name ends =
   collect d;
   Rig.free_cache e;
   equal ~msg:"once the memory is freed" int 2 (count "unmap" p);
-  equal ~msg:"held by the device" (list int) [] (P.outstanding p);
-  equal ~msg:"the other device's" int 1 (count "unmap" pe)
+  equal ~msg:"the other device's, then" int 1 (count "unmap" pe)
 
 let test_closed_unmaps () = outlived "loss:closed-unmaps" (fun d _ -> Rig.close d)
 let test_lost_unmaps () = outlived "loss:lost-unmaps" (fun d p -> lose d p)
@@ -540,6 +540,25 @@ let test_memory_first () =
   collect d;
   collect d;
   equal ~msg:"after the close" int 1 (count "unmap" p)
+
+(* The mapper's stop and the memory's death race over one mapping: each order
+   is held with the first one's unmap waiting at Polled's free gate, while the
+   other runs on another domain. The mapping is released once. *)
+let test_unmap_race_device_first () =
+  let d, p = P.open_ "loss:race-device-first" in
+  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+  ignore (require_some (B.borrow d (Option.get !h)));
+  P.gate_frees p;
+  let closer = Domain.spawn (fun () -> Rig.close d) in
+  Support.await "the stopped device's unmap at the gate" (fun () ->
+      P.freers p = 1);
+  ignore (Sys.opaque_identity !h);
+  h := None;
+  collect d;
+  P.open_frees p;
+  Domain.join closer;
+  collect d;
+  equal ~msg:"unmaps" int 1 (count "unmap" p)
 
 (* The memory's death and its mapper's close race over one mapping: the
    memory's unmap waits at Polled's free gate while the close runs on another
@@ -571,6 +590,8 @@ let test_unmap_race_memory_first () =
   collect d;
   equal ~msg:"unmaps" int 1 (count "unmap" p)
 
+(* A close of a lost device only waits for its stop: the device keeps its
+   loss's reason. *)
 let test_close_lost () =
   let d, p = P.open_ "loss:close-lost" in
   P.fail p;
@@ -635,6 +656,56 @@ let test_alloc_fault () =
   raises_match (lost d) (fun () -> B.create d 64);
   equal (option string) (Some "the device fell off the bus") (Rig.lost d);
   equal int 1 (count "stop" p)
+
+(* A device that maps a host buffer and has stopped, with no drain since: an
+   Unknown answer leaves its word unreached at the stop, and the word is set
+   after it. Then its drains ([free_cache]) and the buffer's free, on two
+   domains, each may give the mapping back. It goes at most once, and once
+   the program has made both calls and they returned, it has gone: a call
+   that returns may leave the give to another one still running. *)
+type stopped = { p : P.t; d : Rig.t; h : B.t option ref }
+
+let stopped_made = Atomic.make 0
+
+let[@inline never] make_stopped () =
+  let n = Atomic.fetch_and_add stopped_made 1 in
+  let d, p = P.open_ ~answer:`Unknown (Printf.sprintf "loss:stopped-%d" n) in
+  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
+  ignore (require_some (B.borrow d (Option.get !h)));
+  ignore (submit (empty d));
+  lose d p;
+  P.set_word p (Rig.submitted d);
+  { p; d; h }
+
+let free_stopped t =
+  t.h := None;
+  Gc.full_major ();
+  Rig.free_cache Rig.host
+
+let both t =
+  free_stopped t;
+  Rig.free_cache t.d;
+  equal ~msg:"unmaps after the free and a drain" int 1 (count "unmap" t.p)
+
+let unmaps = function
+  | Ok n -> at_most ~msg:"unmaps" int ~than:1 n
+  | Error e -> raise e
+
+let stopped_device = abstract ~release:both "s"
+
+let stopped_commands =
+  [
+    command "stopped" (Gen.unit @-> makes stopped_device) ignore make_stopped;
+    command "free" (stopped_device ^-> returns unit) ignore free_stopped;
+    command "drain"
+      (stopped_device ^-> returns unit)
+      ignore
+      (fun t -> Rig.free_cache t.d);
+    command "unmaps"
+      (stopped_device ^-> judges int)
+      (fun () n -> unmaps n)
+      (fun t -> count "unmap" t.p);
+  ]
 
 let tests =
   [
@@ -701,19 +772,27 @@ let tests =
            Buffer.create that raises"
           test_create_frees;
         test
-          "a closed device's mappings of memory that outlives it end with the \
-           memory, once"
+          "a closed device's mappings of memory that outlives it end once it \
+           has stopped, once"
           test_closed_unmaps;
         test
-          "a lost device's mappings of memory that outlives it end with the \
-           memory, once"
+          "a lost device's mappings of memory that outlives it end once it has \
+           stopped, once"
           test_lost_unmaps;
         test "a mapping of memory that dies first ends with the memory, once"
           test_memory_first;
         test
+          "a stopped device's unmap held while the memory dies on another \
+           domain: one unmap"
+          test_unmap_race_device_first;
+        test
           "a dead memory's unmap held while its mapper closes on another \
            domain: one unmap"
           test_unmap_race_memory_first;
+        stateful ~count:4 ~steps:3 ~domains:2
+          "a Stopped device's drain and its memory's free on two domains \
+           unmap once"
+          stopped_commands;
         test "a close of a lost device waits for its stop" test_close_lost;
         test "a fault during a close's wait is the device's loss"
           test_close_fault;
