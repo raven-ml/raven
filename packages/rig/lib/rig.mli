@@ -202,9 +202,9 @@ val most_parts : t -> int
 
     The count holds for launches and fills up to the argument size, and
     copies up to the length, that [d]'s driver's [.mli] states. Words parts,
-    and larger launches and copies, take the room their sizes take, and
-    their sizes are the caller's. A submission of more parts may still run:
-    {!submit} decides by the room [d]'s queues have. *)
+    and larger launches and copies, take room by their sizes, which the
+    caller sets. A submission of more parts may still run: {!submit} decides
+    by the room [d]'s queues have. *)
 
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is the record that [d]'s driver declares under [k]
@@ -710,8 +710,8 @@ module Buffer : sig
 
   val create : ?memory:kind -> device -> int -> t
   (** [create d n] is a buffer of [n] new bytes of [d]'s memory of kind
-      [memory] (defaults to [Device]), with unspecified contents. A buffer of
-      no bytes allocates nothing. A host buffer of at least 64 KiB and at
+      [memory] (defaults to [Device]), with unspecified contents. An empty
+      buffer allocates nothing. A host buffer of at least 64 KiB and at
       least four pages starts on a page, so devices can {!borrow} it. On an
       io device the memory is what {!Rig_edge.Io.alloc} makes, whatever
       [memory].
@@ -791,7 +791,7 @@ module Buffer : sig
   val overlaps : t -> t -> bool
   (** [overlaps b b'] is [true] iff [b] and [b'] share a byte of memory,
       through views of one allocation, a borrow and the memory it maps, or two
-      bigarrays over the same bytes. Buffers of no bytes overlap nothing. *)
+      bigarrays over the same bytes. An empty buffer overlaps nothing. *)
 
   val access : t -> access
   (** [access b] is the access [b]'s memory admits, the same through each of
@@ -1117,8 +1117,8 @@ end
     calls run in any order and in parallel, on at most as many threads as the
     host has {e performance cores} ({!section-host_platforms}), so a call
     must not write what another reads. A launch with shared memory, with an
-    axis of no group or thread, or with more than 2{^62} threads never runs,
-    and {!submit} raises.
+    axis of zero groups or threads, or with more than 2{^62} threads never
+    runs, and {!submit} raises.
 
     A C compiler makes such an object, for instance with
     {v clang -c -O2 -fPIC --target=x86_64-none-unknown-elf f.c v}

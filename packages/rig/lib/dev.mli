@@ -133,10 +133,11 @@ val drop_values : device -> unit
     or, under {!fail}, [fail]'s reason. The stop is then owed, and
     {!run_owed} runs it once no counted call on the device is in flight. An
     Ended device is {e Stopped} once its word reads its last submitted
-    value, at once for an io device, whose work is the caller's. Work a
-    driver's device took before the loss may run until then, and only then
-    are its memory and objects given back. Its word, records and line stay
-    for the process.
+    value. An io device is Stopped as soon as it is Ended, since its reads
+    and writes run inside the calls that ask for them. Work a driver's
+    device took before the loss may run until then, and only then are its
+    memory and objects given back. Its word, records and line stay for the
+    process.
 
     A forked child makes every lock anew. Each driver's device it inherited
     is Orphaned, and lost with the reason ["forked"] unless it was lost
