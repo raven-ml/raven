@@ -491,6 +491,19 @@ let drain_rows =
       allocation "allocate-4K/closed-devices-1024" (closed_devices 1024);
     ]
 
+(* An open of a memory device, one submit, and its close: a closed device's
+   slot goes to the next open, so a run makes as many opens as it likes at
+   one cost. *)
+let device_rows =
+  let run = Sub.Run.make () in
+  Thumper.group "device"
+    [
+      Thumper.bench "open-close-memory" (fun () ->
+          let d = Rig.memory_device "bench:open-close" in
+          ignore (Rig.submit (Sub.make d [||]) ~run ~buffers:[||]);
+          Rig.close d);
+    ]
+
 let wait_rows =
   Thumper.group "wait/memory"
     [
@@ -689,6 +702,7 @@ let () =
          claim_rows;
          copy_rows;
          drain_rows;
+         device_rows;
          wait_rows;
          heap_rows;
          floor_rows;
