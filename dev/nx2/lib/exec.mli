@@ -20,8 +20,9 @@
     program makes, [Nx.place] onto a set whose kernels compute it: no data moves
     between devices on its own. The decline of a routine also says that its
     expansion is not available yet. Movements and bitcasts are views where a
-    layout expresses them, and a copy, then a view, otherwise. [Check] raises
-    its exception from the first failing index, read on the host.
+    layout expresses them, and a copy, then a view, otherwise. [Check] reduces
+    its flags where they lie and reads only scalars on the host: whether all
+    hold, then the first failing index, from which it raises its exception.
 
     A program that reads coordinates computes each device's window with that
     window's first index added to them. *)

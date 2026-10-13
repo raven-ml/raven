@@ -1179,10 +1179,27 @@ and check : type d.
  fun ~by ok data fail ->
   let host : d Devices.placement = host () in
   let shape = Prim.shape ok in
-  match Array.find_index not (A.to_array (on_host ~by ok)) with
-  | None -> ()
-  | Some i ->
-      let idx = unravel i shape in
+  if Array.mem 0 shape then ()
+  else
+    (* [ok] reduces where it lies, so only scalars reach the host. A passing
+       check runs one [Min]; [Arg], for the first [false] in C order, costs
+       more and runs only on a failure. *)
+    let reduce r =
+      run ~by
+        (Value.Reduce
+           {
+             layout = L.contiguous shape;
+             axes = Array.init (Array.length shape) Fun.id;
+             prog = P.of_node ~ins:[| D.Any D.Bool |] (In 0);
+             reductions = Value.[ r ];
+             loads = [| Plain ok |];
+           })
+    in
+    let scalar x = A.get (on_host ~by x) [||] in
+    let all, () = reduce (Monoid (Min, 0, D.Bool)) in
+    if not (scalar all) then begin
+      let (_, first), () = reduce (Arg (Min, 0, D.Bool)) in
+      let idx = unravel (Int64.to_int (scalar first)) shape in
       let at_idx (Value.Any x) =
         let a = on_host ~by x in
         let one =
@@ -1194,6 +1211,7 @@ and check : type d.
         Value.Any (Value.Array { at = host; a = v; dead = Value.Live })
       in
       raise (fail idx (List.map at_idx data))
+    end
 
 (* A constant read at [p] by an operation: a view of a constant is its operand's
    results read at [p] and viewed; any other its results there, kept in its

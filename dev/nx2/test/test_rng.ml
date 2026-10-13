@@ -899,6 +899,82 @@ let rejection =
             (message (fun () -> Rng.binomial count (full Nx.float32 0.5))));
     ]
 
+(* Parameter checks: a sampler names the first parameter outside its domain, in
+   C order, whatever the dtype, shape and placement. *)
+
+(* The index of the flat position [i] of a value of shape [s], in C order. *)
+let index s i =
+  let idx = Array.make (Array.length s) 0 and k = ref i in
+  for a = Array.length s - 1 downto 0 do
+    idx.(a) <- !k mod s.(a);
+    k := !k / s.(a)
+  done;
+  idx
+
+(* A parameter's shape, whether it is also checked split over [S2] along its
+   first axis, doubled to divide evenly, and two flat positions in it, which may
+   coincide. *)
+let bad_params =
+  Gen.triple
+    (Gen.array ~size:(Gen.int_range 0 4) (Gen.int_range 1 4))
+    Gen.bool (Gen.pair Gen.nat Gen.nat)
+  |> Gen.map (fun (s, split, (i, j)) ->
+      let split = split && Array.length s > 0 in
+      let s =
+        if split then Array.mapi (fun a e -> if a = 0 then 2 * e else e) s
+        else s
+      in
+      let n = numel s in
+      (s, split, (i mod n, j mod n)))
+
+let split x = Nx.place (S2.split ~axis:0) x
+
+(* The message naming position [i] of shape [s] for [name]'s value [v]. *)
+let refusal by name s i v text =
+  Format.asprintf "%s: %s at %a is %s, not in %s" by name pp_shape (index s i) v
+    text
+
+let checks =
+  group "parameter checks"
+    [
+      prop "bernoulli names its first p outside [0, 1]"
+        (Gen.triple floats bad_params (floats_of [ -1.; 1.5; 4. ]))
+        (fun ((F dt, _), (s, on_s2, (i, j)), v) ->
+          cover "split" on_s2;
+          cover "two outside" (i <> j);
+          cover "rank 0" (Array.length s = 0);
+          cover "rank above 1" (Array.length s > 1);
+          let p =
+            host_of dt s
+              (Array.init (numel s) (fun k ->
+                   A.Dtype.of_float dt (if k = i || k = j then v else 0.5)))
+          in
+          let want =
+            refusal "Nx.Rng.bernoulli" "p" s (Int.min i j)
+              (Printf.sprintf "%g" v) "[0, 1]"
+          in
+          equal string want (message (fun () -> Rng.bernoulli p));
+          if on_s2 then
+            equal string want (message (fun () -> Rng.bernoulli (split p))));
+      prop "binomial names its first negative n" bad_params
+        (fun (s, on_s2, (i, j)) ->
+          cover "split" on_s2;
+          cover "two outside" (i <> j);
+          let n =
+            host_of Nx.int32 s
+              (Array.init (numel s) (fun k ->
+                   if k = i || k = j then -2l else 3l))
+          in
+          let p = host_of Nx.float32 s (Array.make (numel s) 0.5) in
+          let want =
+            refusal "Nx.Rng.binomial" "n" s (Int.min i j) "-2" "[0, inf)"
+          in
+          equal string want (message (fun () -> Rng.binomial n p));
+          if on_s2 then
+            equal string want
+              (message (fun () -> Rng.binomial (split n) (split p))));
+    ]
+
 (* The scope *)
 
 (* An interpretation that traces every operation it reaches. *)
@@ -1032,4 +1108,13 @@ let goldens =
 let () =
   exit
     (run "nx random"
-       [ known; keys_group; draws; distributions; rejection; scope; goldens ])
+       [
+         known;
+         keys_group;
+         draws;
+         distributions;
+         rejection;
+         checks;
+         scope;
+         goldens;
+       ])
