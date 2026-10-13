@@ -416,9 +416,45 @@ let mirrored r dt n =
         else
           Complex.mul m.((j * n) + i) { Complex.re = p.re /. q; im = p.im /. q })
 
+(* A lower triangular matrix of order [n], whose rows and columns
+   balancing isolates one by one. *)
+let lower r dt n =
+  Array.init (n * n) (fun k -> if k / n >= k mod n then draw r dt else Complex.zero)
+
+(* A block upper triangular matrix of order [n], its rows and columns
+   permuted by [p]: [i0] rows and columns, then a mirrored block, then
+   [i1], each of the outer ones upper triangular, so that balancing
+   isolates the outer ones' eigenvalues by permutations and balances the
+   block alone. *)
+let blocks r dt n =
+  let i0 = Random.State.int r 3 and i1 = Random.State.int r 3 in
+  let i0 = min i0 n in
+  let i1 = min i1 (n - i0) in
+  let m = n - i0 - i1 in
+  let mid = mirrored r dt m in
+  let b =
+    Array.init (n * n) (fun k ->
+        let i = k / n and j = k mod n in
+        let inside x = x >= i0 && x < i0 + m in
+        if inside i && inside j then mid.(((i - i0) * m) + j - i0)
+        else if j >= i && not (inside i && j < i0 + m) then draw r dt
+        else Complex.zero)
+  in
+  let p = Array.init n Fun.id in
+  for i = n - 1 downto 1 do
+    let j = Random.State.int r (i + 1) in
+    let t = p.(i) in
+    p.(i) <- p.(j);
+    p.(j) <- t
+  done;
+  Array.init (n * n) (fun k -> b.((p.(k / n) * n) + p.(k mod n)))
+
+(* eig's operands, by the seed: mirrored, lower triangular or permuted
+   block triangular, so that balancing leaves each with D = I. *)
 let eig_operand c =
   let r = Random.State.make [| c.seed |] in
-  let v = Array.concat (List.init (count c) (fun _ -> mirrored r c.dt c.n)) in
+  let draw = [| mirrored; lower; blocks |].(c.seed mod 3) in
+  let v = Array.concat (List.init (count c) (fun _ -> draw r c.dt c.n)) in
   of_values c.dt (square c)
     (shrink c (grade c ~symmetric:true ~rows:c.n ~cols:c.n v))
 
@@ -1109,9 +1145,12 @@ let check_eig dt ~e ~count ~n (a : Complex.t array) (w : Complex.t array)
   check_worst worst
 
 (* eig's results meet check_eig's relations, and on real a check_real's,
-   with the vectors and without, on matrices that balancing leaves, so
-   that the bounds read with a itself. *)
+   with the vectors and without, on matrices balancing leaves with D = I,
+   so that the bounds read with a itself: some it permutes. *)
 let law_eig (b : Support.backend) c =
+  cover "mirrored" (c.seed mod 3 = 0);
+  cover "lower triangular" (c.seed mod 3 = 1);
+  cover "permuted block triangular" (c.seed mod 3 = 2 && c.n > 2);
   let x = laid_out c.how (eig_operand c) in
   match (run b (Eig true) [| x |], run b (Eig false) [| x |]) with
   | Some y, Some y' ->
