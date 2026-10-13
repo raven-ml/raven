@@ -253,10 +253,10 @@ static void run(const prog *j, const plane *f, int i) {
     return;
   }
   if (s->tag == NX_NODE_COORD) {
-    int64_t *v = (int64_t *)d;
+    int64_t *v = (int64_t *)d, at = p->at[s->k];
+    int64_t s0 = p->s0[s->k], s1 = p->s1[s->k];
     for (int64_t r = 0; r < n1; r++)
-      for (int64_t e = 0; e < n0; e++)
-        v[r * n0 + e] = p->at[s->k] + r * p->s1[s->k] + e * p->s0[s->k];
+      for (int64_t e = 0; e < n0; e++) v[r * n0 + e] = at + r * s1 + e * s0;
     return;
   }
   view t = home(j, f, i);
