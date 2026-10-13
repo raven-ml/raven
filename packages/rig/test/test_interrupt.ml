@@ -152,7 +152,7 @@ let answers name d =
   | Error _ -> false
 
 (* The peer memory [borrow_kept] borrowed, kept until the borrowing devices
-   have closed and freed their resources. *)
+   have closed. *)
 let held = ref []
 
 (* The producers [waiting] opened, with their drivers. *)
@@ -189,8 +189,8 @@ let interrupt start op n =
       let d, _ = op.opener name in
       op.prepare d None;
       if !held <> [] then begin
-        (* The borrowing devices free their resources over a few rounds of
-           collections and drains, before the memory they mapped goes. *)
+        (* The borrowing devices close before the memory they mapped goes,
+           over a few rounds of collections and drains. *)
         Rig.close d;
         for _ = 1 to 4 do
           settle d
@@ -201,16 +201,12 @@ let interrupt start op n =
         done
       end;
       if !producers <> [] then begin
-        (* Once the waiting devices and the producers closed, each producer's
-           word goes back, after the mappings of it. *)
+        (* The waiting device and the producers close, each stopped once. *)
         Rig.close d;
         List.iter (fun (p, _) -> Rig.close p) !producers;
-        for _ = 1 to 4 do
-          settle d
-        done;
         List.iter
           (fun (_, pp) ->
-            equal ~msg:"a producer's word" int 1 (count "word" pp))
+            equal ~msg:"a producer's stops" int 1 (count "stop" pp))
           !producers
       end;
       raised)
@@ -237,8 +233,7 @@ let unmapped op =
   { op with name = op.name ^ " through staging"; opener }
 
 (* Borrows peer memory that goes back after the borrowing device, its mapper,
-   closed and freed its resources: an exception may leave the mapping
-   recorded in the memory alone. *)
+   closed: an exception may leave the mapping recorded in the memory alone. *)
 let borrow_kept =
   let opener name =
     ignore (peer ());
@@ -252,8 +247,7 @@ let borrow_kept =
       | None -> fail "the borrow was refused")
 
 (* Submits on a device whose queue waits on another device's word, a new
-   producer each time: the wait maps the producer's word, which counts in the
-   producer until the mapping goes back. *)
+   producer each time: the wait maps the producer's word. *)
 let waiting =
   op ~opener:(P.open_ ~waits_on:[ `Host ]) "submit waiting on a producer"
     (fun d _ ->
@@ -267,18 +261,12 @@ let waiting =
 (* Interrupts a close of a machine's host, which holds a device of the
    machine, from its [n]-th allocation, then checks that the machine answers
    as the close left it: an open host opens devices and a closed one opens
-   none. A second close ends the machine, and each of its devices then gives
-   its word back to its driver: a stopped device is found to end however the
-   close was interrupted. Is whether the allocation was reached. *)
+   none. A second close ends the machine however the close was interrupted.
+   Is whether the allocation was reached. *)
 let interrupt_close n =
   let at = Printf.sprintf ", interrupted from allocation %d" n in
   in_child at (fun () ->
-      let drivers = ref [] in
-      let polled () =
-        let p = P.make () in
-        drivers := p :: !drivers;
-        Ok p
-      in
+      let polled () = Ok (P.make ()) in
       let host =
         Rig.open_host ~machine:(fresh "close")
           { name = "CPU"; driver = (module P); make = polled }
@@ -306,12 +294,8 @@ let interrupt_close n =
           equal ~msg:"an open on the machine" string closed (gpu "after"));
       Rig.close host;
       equal ~msg:"an open once closed" string closed (gpu "last");
-      for _ = 1 to 4 do
-        settle host
-      done;
-      List.iter
-        (fun p -> equal ~msg:"a device's word" int 1 (count "word" p))
-        !drivers;
+      equal ~msg:"the host once closed" (option string) (Some "closed")
+        (Rig.lost host);
       got = "raised Injected")
 
 let test_close () =

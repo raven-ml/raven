@@ -1081,27 +1081,28 @@ let idle_close (module G : Gpu) () =
   G.close t;
   equal int ~msg:"the word" 2 (Rig.signaled t.d)
 
-(* Opens and closes of a device keep nothing of the OCaml heap once the
-   program holds no value of the devices: rig frees its own state and the
-   driver's once each device's memory has returned and its word has ended,
-   and the collector takes the device's record and its handle. A warm run of
-   as many opens fills the caches and tables the opens grow to, and the
-   rounds of [settle] drain every closed device and make its word's readers
-   pass. *)
+(* Opens and closes of a device keep a fixed record per open: rig's line,
+   records and reason, and the driver's word and the state reading it needs,
+   which live for the process, beside what the vendor's library keeps. A warm
+   run of as many opens fills the caches and tables the opens grow to, and
+   reclamation returns each closed device's memory. *)
 let opens = 32
 
-(* What a vendor's library keeps of the C heap past the driver's stop, per
-   open, which neither rig nor the driver can give back: on Metal, about 30
-   bytes of CoreAnalytics messages, and caches that grow by about 10 KB over
-   the first hundreds of opens. The Polled law in test_open holds rig to no
-   growth of the C heap. *)
-let vendor_c = 1024
+(* What an open keeps of the C heap past its close, per open: rig's records,
+   the driver's state, and the vendor's library's own, which neither rig nor
+   the driver can give back. AMD's state holds its rings' marks and timed
+   values, about 300 KiB, and Metal's a ring of 1,024 command buffer slots,
+   40 KiB; Metal's library keeps about 30 bytes of CoreAnalytics messages,
+   and caches that grow by about 10 KB over the first hundreds of opens. *)
+let kept_c = 384 * 1024
+
+(* What an open keeps of the OCaml heap: rig's device record and the
+   driver's handle. *)
+let kept_ml = 2048
 
 let settle () =
-  for _ = 1 to 4 do
-    Gc.full_major ();
-    ignore (B.create Rig.host 8 : B.t)
-  done
+  Gc.full_major ();
+  Rig_support.reclaim ()
 
 let open_close (module G : Gpu) () =
   let cycle () =
@@ -1125,9 +1126,9 @@ let open_close (module G : Gpu) () =
   done;
   settle ();
   at_most int ~msg:"the C heap's growth over the opens"
-    ~than:(opens * vendor_c) (heap () - c);
-  at_most int ~msg:"the OCaml heap's growth over the opens" ~than:0
-    (live () - ml)
+    ~than:(opens * kept_c) (heap () - c);
+  at_most int ~msg:"the OCaml heap's growth over the opens"
+    ~than:(opens * kept_ml) (live () - ml)
 
 let stale_seen (module G : Gpu) () =
   G.with_ @@ fun t ->
@@ -1628,8 +1629,7 @@ let laws (module G : Gpu) =
         (images g);
       test "a close of an idle device leaves the word at the last value"
         (idle_close g);
-      test "opens and closes keep nothing but the vendor library's own"
-        (open_close g);
+      test "opens and closes keep a fixed record per open" (open_close g);
       test "sleep returns at once when the word differs from seen"
         (stale_seen g);
       test "sleeps over long work raise no fault, and block" (long_work g);

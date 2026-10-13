@@ -22,7 +22,7 @@
       or from its driver within its budget, or reclaims ({!reclaiming}).
     + {!alloc} wraps the entry in a memory record with its token.
     + A borrow on another device maps it ({!borrow}). The entry lists each
-      mapping, and the mapper notes the entry.
+      mapping.
     + Once the record is collected, a {!drain} takes the entry off the
       release list. The entry enters the cache if it is a driver's region,
       its device is live and holds no more than its budget, every point of
@@ -39,11 +39,9 @@
 
     Every object goes back to its driver through {!Dev.give}. What a device
     lost and not yet Stopped would give back waits on its pending list
-    ([pending] in {!Def.live}) until it is Stopped. Every drain walks the
-    devices whose stop has returned ({!Dev.next_ended}) and takes the steps that
-    end their words ({!Dev.section-loss}). The last drain to leave a device
-    whose word is given back, whose entries have all been given back and
-    that holds nothing more frees its resources ({!Dev.free_live}).
+    ([pending] in {!Def.live}) until it is Stopped. A device's collected
+    memory moves in a drain of that device: its own calls', its stop's, or
+    a round of the ladder's ({!reclaiming}), which drains every device.
     {!Rig.section-reclaim} states the model a caller sees. *)
 
 open Def
@@ -214,10 +212,9 @@ val export : claim -> bool
     A borrow of an allocation on a device is a memory record whose root is
     the owner's. Where the device needs a mapping, the first borrow makes it
     and later ones share it. The mapping is released when the entry is freed
-    ({!free_entry}), or when the mapper's word ends, whichever comes first,
-    and the entry goes back to its driver after its last mapping is
-    released. A device's word goes back likewise after every mapping of it
-    that a queue's waits made ({!hold_word}). *)
+    ({!free_entry}), and the entry goes back to its driver after its last
+    mapping is released. A device's mapping of another's word, which its
+    queue waits on, lives for the process. *)
 
 val map_host_range : device -> int -> int -> region option
 (** [map_host_range d p n] is [d]'s mapping of the [n] bytes of host memory
@@ -228,34 +225,9 @@ val map_peer_region : device -> region -> region option
     device of [d]'s driver, or [None] for another driver's region or where
     [d] maps none. *)
 
-val enter : live -> bool
-(** [enter l] holds the drains of the device whose resources are [l], unless
-    they are freed: whether it held them. The device's resources outlive the
-    hold, and {!leave} frees them if they became spent. It allocates
-    nothing. *)
-
-val leave : device -> live -> unit
-(** [leave d l] ends a hold {!enter} took on [d]'s resources [l], freeing
-    them if [d] holds nothing more. It allocates nothing. *)
-
-val hold_word : device -> bool
-(** [hold_word d] counts a mapping of [d]'s word about to be made, unless
-    [d]'s word has moved to its C record's copy or gone back to its driver:
-    whether it counted. The mapping is then given back with {!give}, or, if
-    none was made, the count with {!word_unmapped}. *)
-
-val give : device -> region -> mapped -> unit
-(** [give d r m] gives back [d]'s mapping [r] of [m], now or once [d]
-    stopped, and [m] goes back to its driver after its last mapping. *)
-
-val drop_word_map : device -> region -> device -> unit
-(** [drop_word_map d r p] gives back [d]'s mapping [r] of [p]'s word, which
-    [d] never used, dropping the mapping's count of [p]'s word before it
-    frees [r]. *)
-
-val word_unmapped : device -> unit
-(** [word_unmapped d] drops one count of [d]'s word ({!hold_word}), giving
-    the word back after the last. *)
+val unmap : device -> region -> unit
+(** [unmap d r] gives back [d]'s mapping [r], which counts in no memory, now
+    or once [d] stopped. *)
 
 val borrow : device -> memory -> memory option
 (** [borrow d m] is [d]'s borrow of [m]'s allocation, or [None] where [d]
@@ -291,12 +263,12 @@ val of_io : device -> io_region -> access:access -> int -> memory
 
 val drain : device -> unit
 (** [drain d] moves [d]'s collected memory whose points are settled to its
-    cache or its driver, runs the pending releases whose value [d] reached,
-    does the same for every device whose stop returned, and releases the
-    holds that are due. In a forked child it forgets the holds made before
-    the fork. It does nothing on an orphaned device, whose frees would call
-    its parent's driver. It may raise {!Dev.Lost} when the read of a word
-    with no host address loses its device. *)
+    cache or its driver, returns a Stopped device's cache, runs the pending
+    releases whose value [d] reached, and releases the holds that are due.
+    In a forked child it forgets the holds made before the fork. It does
+    nothing on an orphaned device, whose frees would call its parent's
+    driver. It may raise {!Dev.Lost} when the read of a word with no host
+    address loses its device. *)
 
 val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
 (** [reclaiming d ~pool n f] is the first [Some] result of [f], a try at [n]

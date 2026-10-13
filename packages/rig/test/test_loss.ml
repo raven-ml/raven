@@ -37,8 +37,8 @@ let test_fault () =
   equal (option string) (Some "the engine hung") (Rig.lost d);
   equal int 1 (count "stop" p)
 
-(* After the stop answered, only frees reach the driver: of memory, of
-   mappings and of the word. *)
+(* After the stop answered, only frees reach the driver: of memory and of
+   mappings. *)
 let test_after_stop () =
   let d, p = P.open_ "loss:after-stop" in
   let b = B.create d 64 in
@@ -53,7 +53,7 @@ let test_after_stop () =
     | [] -> []
   in
   List.iter
-    (fun call -> mem string call [ "free"; "unmap"; "word" ])
+    (fun call -> mem string call [ "free"; "unmap" ])
     (after (P.log p))
 
 (* A submit refused because its device is lost runs no work on its buffers'
@@ -89,18 +89,17 @@ let test_many_waits () =
   raises_match (lost c) (fun () -> Rig.Point.wait last);
   equal (option string) (Some "the engine hung") (Rig.lost b)
 
-(* Loses [d] through a failed hand-over, then drains as an allocation does:
-   [d]'s stop has answered and nothing of it is left to drain. *)
+(* Loses [d] through a failed hand-over, whose stop has answered once it
+   returns. *)
 let lose d p =
   P.fail p;
-  (try ignore (submit (empty d)) with Rig.Lost _ -> ());
-  ignore (B.create Rig.host 8)
+  try ignore (submit (empty d)) with Rig.Lost _ -> ()
 
-(* Collects, then drains as an allocation does. *)
+(* Collects, then reclaims, which drains every device: a lost device's memory
+   collected after its stop returns so. *)
 let collect () =
   Gc.full_major ();
-  Gc.full_major ();
-  ignore (B.create Rig.host 8)
+  Support.reclaim ()
 
 (* Memory of a stopped device dropped once its stop answered is still freed
    through its driver. *)
@@ -113,8 +112,8 @@ let test_free_after_stop () =
   equal int 1 (count "free" p)
 
 (* A faulted device's frees after its stop raise its fault, which rig drops:
-   its memory, its mapping and its word each go back once, and the drains
-   that free them raise nothing. *)
+   its memory and its mapping each go back once, and the drains that free
+   them raise nothing. *)
 let test_faulted_frees () =
   let d, p = P.open_ "loss:faulted-frees" in
   let h = B.create Rig.host (1 lsl 16) in
@@ -128,9 +127,8 @@ let test_faulted_frees () =
   collect ();
   collect ();
   equal ~msg:"held" (list int) [] (P.outstanding p);
-  equal ~msg:"frees, unmaps and the word's"
-    (list int) [ 2; 1; 1 ]
-    (List.map (fun call -> count call p) [ "free"; "unmap"; "word" ]);
+  equal ~msg:"frees and unmaps" (list int) [ 2; 1 ]
+    (List.map (fun call -> count call p) [ "free"; "unmap" ]);
   equal (option string) (Some "the device fell off the bus") (Rig.lost d)
 
 (* A stopped device's mapping of host memory dropped once its stop answered is
@@ -205,11 +203,10 @@ let test_unknown () =
   P.fail p;
   (try ignore (submit (empty d)) with Rig.Lost _ -> ());
   ignore (Sys.opaque_identity b);
-  Gc.full_major ();
-  ignore (B.create Rig.host 8);
+  collect ();
   equal int 0 (count "free" p);
   P.set_word p (Rig.submitted d);
-  ignore (B.create Rig.host 8);
+  collect ();
   equal int 1 (count "free" p)
 
 (* A wait checks the loss after its value: a reached value of a lost device
@@ -488,11 +485,11 @@ let test_close_frees () =
 
 (* A close of a lost device only waits for its stop: the device keeps its
    loss's reason. *)
-(* Mappings end with the shorter-lived of their memory and their device. *)
+(* Mappings end with their memory. *)
 
-(* [d]'s mapping of memory that outlives it is released once [d]'s word ends,
-   once; another device's borrow of the memory stays, and the memory's death
-   unmaps nothing more on [d]. [ends d] closes or loses [d]. *)
+(* [d]'s mapping of memory that outlives it is released once, with the
+   memory: [d]'s end releases none, and [d] keeps raising its loss. [ends d]
+   closes or loses [d]. *)
 let outlived name ends =
   let d, p = P.open_ name in
   let e, pe = P.open_ (name ^ "-other") in
@@ -503,19 +500,17 @@ let outlived name ends =
   let other = ref (Some (require_some (B.borrow e (Option.get !h)))) in
   ends d p;
   collect ();
-  collect ();
-  equal ~msg:"unmapped at the word's end" int 2 (count "unmap" p);
-  equal ~msg:"held by the device" (list int) [] (P.outstanding p);
-  equal ~msg:"the other device's mapping" (slist int compare)
-    [ 64; 1 lsl 16 ] (P.outstanding pe);
+  equal ~msg:"at the end" int 0 (count "unmap" p);
   raises_match (lost d) (fun () -> B.borrow d (Option.get !h));
   ignore (Sys.opaque_identity (!h, !peer, !other));
   h := None;
   peer := None;
   other := None;
   collect ();
-  equal ~msg:"once the memory is collected" int 2 (count "unmap" p);
-  equal ~msg:"the other device's, then" int 1 (count "unmap" pe)
+  Rig.free_cache e;
+  equal ~msg:"once the memory is freed" int 2 (count "unmap" p);
+  equal ~msg:"held by the device" (list int) [] (P.outstanding p);
+  equal ~msg:"the other device's" int 1 (count "unmap" pe)
 
 let test_closed_unmaps () = outlived "loss:closed-unmaps" (fun d _ -> Rig.close d)
 let test_lost_unmaps () = outlived "loss:lost-unmaps" (fun d p -> lose d p)
@@ -535,30 +530,9 @@ let test_memory_first () =
   collect ();
   equal ~msg:"after the close" int 1 (count "unmap" p)
 
-(* The device's word end and the memory's death race over one mapping: each
-   order is held with the first one's unmap waiting at Polled's free gate,
-   while the other runs on another domain. The mapping is released once. *)
-let test_unmap_race_device_first () =
-  let d, p = P.open_ "loss:race-device-first" in
-  let h = ref (Some (B.create Rig.host (1 lsl 16))) in
-  ignore (require_some (B.borrow d (Option.get !h)));
-  Rig.close d;
-  P.gate_frees p;
-  let ender =
-    Domain.spawn (fun () ->
-        collect ();
-        collect ())
-  in
-  Support.await "the word end's unmap at the gate" (fun () ->
-      P.freers p = 1);
-  ignore (Sys.opaque_identity !h);
-  h := None;
-  collect ();
-  P.open_frees p;
-  Domain.join ender;
-  collect ();
-  equal ~msg:"unmaps" int 1 (count "unmap" p)
-
+(* The memory's death and its mapper's close race over one mapping: the
+   memory's unmap waits at Polled's free gate while the close runs on another
+   domain. The mapping is released once. *)
 let test_unmap_race_memory_first () =
   let d, p = P.open_ "loss:race-memory-first" in
   P.gate_frees p;
@@ -603,118 +577,6 @@ let test_close_fault () =
   Rig.close d;
   equal (option string) (Some "the engine hung") (Rig.lost d);
   equal int 1 (count "stop" p)
-
-(* A stopped device's timeline word goes back to its driver once nothing
-   reads it, after the stop: the next drains move its readers off it, then
-   give it back once every domain passed a minor collection. *)
-let test_close_word () =
-  let d, p = P.open_ "loss:close-word" in
-  ignore (submit (empty d));
-  Rig.close d;
-  collect ();
-  collect ();
-  let rec after = function
-    | "stop" :: rest -> rest
-    | _ :: rest -> after rest
-    | [] -> []
-  in
-  equal (list string) [ "word" ]
-    (List.filter (( = ) "word") (after (P.log p)));
-  equal ~msg:"the last value" int 1 (Rig.signaled d)
-
-(* A consumer's map of a producer's word that the producer's end overtakes
-   keeps no mapping: the word goes back while the consumer stays open. The
-   consumer's map waits at Polled's [map_peer] in another domain while the
-   producer closes and its word ends, which finds no mapping of it yet. *)
-let test_map_beside_word_end () =
-  let producer, pp = P.open_ "loss:overtaken-producer" in
-  let consumer, pc = P.open_ ~waits_on:[ `Host ] "loss:overtaken-consumer" in
-  let v = submit (empty producer) in
-  let at_map = Atomic.make false and go = Atomic.make false in
-  P.before pc "map_peer" (fun () ->
-      Atomic.set at_map true;
-      while not (Atomic.get go) do
-        Unix.sleepf 0.001
-      done);
-  let waiter =
-    Domain.spawn (fun () ->
-        match Rig.Point.wait (submit (empty consumer) ~waits:[| v |]) with
-        | () -> "ran"
-        | exception Rig.Lost (d, _) -> Rig.name d ^ " lost")
-  in
-  Support.await "the consumer's map" (fun () -> Atomic.get at_map);
-  Rig.close producer;
-  collect ();
-  collect ();
-  Atomic.set go true;
-  (* The submit then waits on the host, for a producer lost since. *)
-  mem ~msg:"the consumer's submit" string (Domain.join waiter)
-    [ "ran"; Rig.name producer ^ " lost" ];
-  collect ();
-  collect ();
-  equal ~msg:"the producer's word" int 1 (count "word" pp);
-  equal ~msg:"the consumer" (option string) None (Rig.lost consumer);
-  Rig.close consumer
-
-(* A word another device's queue waits on goes back only once that wait ran,
-   after that device's mapping of it. *)
-let test_word_waited () =
-  let producer, pp = P.open_ "loss:word-producer" in
-  let consumer, pc = P.open_ ~waits_on:[ `Host ] "loss:word-consumer" in
-  let v = submit (empty producer) in
-  ignore (submit (empty consumer) ~waits:[| v |]);
-  equal ~msg:"waited in the queue" int 1 (List.length (P.last_waits pc));
-  Rig.close producer;
-  collect ();
-  collect ();
-  equal ~msg:"while the wait is queued" int 0 (count "word" pp);
-  ignore (P.run pc);
-  collect ();
-  collect ();
-  equal ~msg:"once it ran" int 1 (count "word" pp);
-  equal ~msg:"the consumer's mapping" int 1 (count "unmap" pc)
-
-(* A release on a device lost and still stopping, here a consumer's mapping of a
-   closed producer's word, waits for the stop, and never raises the consumer's
-   loss to whoever drains: the consumer's stop waits at the gate on another
-   domain while the producer's word ends. *)
-let test_release_while_stopping () =
-  let producer, _ = P.open_ "loss:stopping-producer" in
-  let consumer, pc = P.open_ ~waits_on:[ `Host ] "loss:stopping-consumer" in
-  let v = submit (empty producer) in
-  let w = submit (empty consumer) ~waits:[| v |] in
-  Rig.Point.wait w;
-  P.gate pc;
-  let loser =
-    Domain.spawn (fun () ->
-        P.fail pc;
-        try ignore (submit (empty consumer)) with Rig.Lost _ -> ())
-  in
-  Support.await "the consumer's stop at the gate" (fun () -> P.sleepers pc = 1);
-  Rig.close producer;
-  let drained =
-    match
-      collect ();
-      collect ()
-    with
-    | () -> "drained"
-    | exception e -> Printexc.to_string e
-  in
-  equal ~msg:"the drains" string "drained" drained;
-  equal ~msg:"the mapping, while the stop runs" int 0 (count "unmap" pc);
-  P.open_gate pc;
-  Domain.join loser;
-  collect ();
-  equal ~msg:"the mapping, once stopped" int 1 (count "unmap" pc)
-
-(* The word of a device whose work may still run is never given back. *)
-let test_word_unknown () =
-  let d, p = P.open_ ~answer:`Unknown "loss:word-unknown" in
-  ignore (submit (empty d));
-  lose d p;
-  collect ();
-  collect ();
-  equal int 0 (count "word" p)
 
 let test_close_host () =
   raises_match Exn.invalid_arg (fun () -> Rig.close Rig.host)
@@ -822,19 +684,15 @@ let tests =
         test "a closed device's memory and images return once collected"
           test_close_frees;
         test
-          "a closed device's mappings of memory that outlives it end with its \
-           word, once"
+          "a closed device's mappings of memory that outlives it end with the \
+           memory, once"
           test_closed_unmaps;
         test
-          "a lost device's mappings of memory that outlives it end with its \
-           word, once"
+          "a lost device's mappings of memory that outlives it end with the \
+           memory, once"
           test_lost_unmaps;
         test "a mapping of memory that dies first ends with the memory, once"
           test_memory_first;
-        test
-          "a word end's unmap held while the memory dies on another domain: \
-           one unmap"
-          test_unmap_race_device_first;
         test
           "a dead memory's unmap held while its mapper closes on another \
            domain: one unmap"
@@ -842,18 +700,6 @@ let tests =
         test "a close of a lost device waits for its stop" test_close_lost;
         test "a fault during a close's wait is the device's loss"
           test_close_fault;
-        test "a closed device's word goes back once nothing reads it"
-          test_close_word;
-        test "a word another queue waits on goes back once the wait ran"
-          test_word_waited;
-        test "a map of a word whose end overtakes it keeps no mapping"
-          test_map_beside_word_end;
-        test
-          "a release on a device still stopping waits for its stop and raises \
-           nothing"
-          test_release_while_stopping;
-        test "the word of a device whose work may run is kept"
-          test_word_unknown;
         test "the host is never closed" test_close_host;
         test "an io device's close ends it at once" test_close_io;
       ];

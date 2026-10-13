@@ -39,6 +39,7 @@ external rig_local : unit -> int * int * int = "rig_test_rig_local"
 external rig_word : unit -> int = "rig_test_rig_word"
 external rig_object : unit -> int = "rig_test_rig_object"
 external polled_word_at : polled -> int = "rig_test_polled_word_at"
+external polled_state_bytes : unit -> int = "rig_test_polled_state_bytes"
 external polled_word : polled -> int = "rig_test_polled_word"
 external polled_stop : polled -> unit = "rig_test_polled_stop"
 external polled_set_word : polled -> int -> unit = "rig_test_polled_set_word"
@@ -271,11 +272,9 @@ module Driver = struct
         | None -> d.mapped <- remove r.bytes d.mapped);
     if r.kind <> None then host_free r.at
 
-  (* The word is the device's own record: its free is logged as ["word"]
-     alone. A faulted device's free gives the region back, then raises. *)
+  (* A faulted device's free gives the region back, then raises. *)
   let free d r =
-    if r.kind = None && r.at = d.word_at then note d "word"
-    else free_region d r;
+    free_region d r;
     match Mutex.protect d.lock (fun () -> d.fault) with
     | Some why -> raise (Fault why)
     | None -> ()
@@ -524,6 +523,7 @@ module Polled = struct
 
   let set_word d v = polled_set_word d.c v
   let word_at d = d.word_at
+  let state_bytes = polled_state_bytes ()
   let stop_fault d = Mutex.protect d.lock (fun () -> d.stop_fault)
   let blocked d = polled_blocked d.c
 
@@ -669,6 +669,27 @@ let await what f =
       failwith (Printf.sprintf "await: no %s after %.0f s" what watchdog_s);
     Thread.yield ()
   done
+
+(* A device whose budget one live buffer fills, opened at the first
+   [reclaim], and again in a forked child, which inherits it lost. *)
+let reclaimer = ref None
+let reclaimer_lock = Mutex.create ()
+
+let full () =
+  Mutex.protect reclaimer_lock @@ fun () ->
+  match !reclaimer with
+  | Some ((d, _) as r) when Rig.lost d = None -> r
+  | _ ->
+      let d, _ = Polled.open_ ~budget:64 "support:reclaim" in
+      let r = (d, Rig.Buffer.create d 64) in
+      reclaimer := Some r;
+      r
+
+let reclaim () =
+  let d, kept = full () in
+  match Rig.Buffer.create d 64 with
+  | _ -> failwith "reclaim: a full budget took another buffer"
+  | exception Rig.Out_of_memory _ -> ignore (Sys.opaque_identity kept)
 
 (* Io devices and machines *)
 

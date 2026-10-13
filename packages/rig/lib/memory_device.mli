@@ -18,9 +18,9 @@
     its memory ({!Dev.reaches}). Its device record is marked as a memory device
     ({!Def.device}), so {!Rig.runs_on_host} is [true] of it.
 
-    Its state is its driver's table and its word, alone in a page that other
-    devices may map. The state is freed when rig gives the word back, after
-    the device's stop ({!Dev}). *)
+    Its state is its driver's table and its word, on a line of its own in
+    pages that hold such states alone, which other devices may map. It lives
+    for the process. *)
 
 val open_ : string -> (Def.device, string) result
 (** [open_ name] is {!Rig.memory_device}[ name]. *)

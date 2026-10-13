@@ -169,12 +169,16 @@ module Polled : sig
   (** [word_at d] is the host address of [d]'s word, which is also its object
       ([completion]). *)
 
+  val state_bytes : int
+  (** [state_bytes] is the bytes of the C heap a device's state takes, kept
+      while its handle lives: rig keeps a device's handle for the
+      process. *)
+
   val log : t -> string list
   (** [log d] is [d]'s driver calls, oldest first: ["alloc"], ["free"],
-      ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["word"] (the
-      timeline word's free), ["sleep"], ["stop"], ["image"], ["entry"],
-      ["unload"]. Consecutive sleeps are one ["sleep"]; {!sleeps} counts
-      them. *)
+      ["map_host"], ["map_peer"], ["unmap"] (a mapping's free), ["sleep"],
+      ["stop"], ["image"], ["entry"], ["unload"]. Consecutive sleeps are one
+      ["sleep"]; {!sleeps} counts them. *)
 
   val sleeps : t -> int
   (** [sleeps d] is the number of [d]'s sleeps. *)
@@ -430,6 +434,13 @@ val time : float -> float
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)
+
+val reclaim : unit -> unit
+(** [reclaim ()] runs the rounds of reclamation ({!Rig.section-reclaim}),
+    which drain every device whose lock is free: an allocation that a full
+    budget refuses reclaims, then raises {!Rig.Out_of_memory}, which
+    [reclaim] drops. A lost device's memory collected after its stop
+    returns so. *)
 
 val io : string -> Rig.t
 (** [io name] is the io device named [name], whose memory holds nothing, opened

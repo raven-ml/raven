@@ -71,12 +71,10 @@ let drop_afters l = l.afters <- []
    them dropped. *)
 let read_pending () =
   let read (d : device) =
-    match d.live with
-    | Some l when l.afters <> [] -> (
-        let v = List.fold_left (fun m (v, _) -> Int.max m v) 0 l.afters in
-        try Dev.wait d v
-        with Dev.Lost _ -> Lock.protect l.lock drop_afters l)
-    | _ -> ()
+    let l = d.live in
+    if l.afters <> [] then
+      let v = List.fold_left (fun m (v, _) -> Int.max m v) 0 l.afters in
+      try Dev.wait d v with Dev.Lost _ -> Lock.protect l.lock drop_afters l
   in
   read Dev.host;
   Dev.iter read

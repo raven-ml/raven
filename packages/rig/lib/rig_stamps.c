@@ -89,7 +89,7 @@ static _Atomic uint64_t *write_word(_Atomic uint64_t *use) {
 static int spent(uint64_t p) {
   int s = atomic_load_explicit(&rig_lines[RIG_INDEX(p)].state,
                                memory_order_acquire);
-  if (s != RIG_STOPPING && s != RIG_ENDED && s != RIG_STOPPED) return 0;
+  if (s != RIG_STOPPING && s != RIG_ENDED) return 0;
   return RIG_VALUE(p) == 0 || rig_point_done(p);
 }
 
@@ -219,7 +219,6 @@ static void *zalloc(size_t n, size_t size, int *ok) {
 }
 
 static void sub_free(struct rig_sub *s) {
-  rig_device_unref(s->dev);
   free(s->parts);
   free(s->scratch);
   free(s->after);
@@ -246,8 +245,7 @@ static _Atomic uint64_t next_id = 1;
    [after] lists hold [v_nafter] indices in all, naming [v_nfixed] buffers,
    whose runs use one buffer per access of [v_access] (an rig_use), whose
    launches and fills hold [v_nrefs] buffer refs and [v_ncodes] entry refs
-   in all, and [v_ncopies] of whose parts are copies. It holds the device's
-   record until it is freed. */
+   in all, and [v_ncopies] of whose parts are copies. */
 value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
                        value v_nfixed, value v_access, value v_nrefs,
                        value v_ncodes, value v_ncopies) {
@@ -255,7 +253,6 @@ value caml_rig_sub_new(value v_d, value v_nparts, value v_nafter,
   if (s == NULL) caml_raise_out_of_memory();
   s->id = atomic_fetch_add(&next_id, 1);
   s->dev = Device_val(v_d);
-  rig_device_ref(s->dev);
   s->nparts = Int_val(v_nparts);
   s->nfixed = Int_val(v_nfixed);
   s->nslots = (int)Wosize_val(v_access);

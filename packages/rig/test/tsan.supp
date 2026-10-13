@@ -14,14 +14,11 @@ race_top:ensure_proxy
 # A drain's check for pending holds: a stale empty list leaves a due hold to
 # the next drain.
 race_top:camlRig__Memory.drain_holds
-# A device's word end: a stale Read finds the word moved already, and a stale
-# Moved reads the state again under the lock.
-race_top:camlRig__Memory.end_word
 # A staging half: another domain changes only the halves of a slot it took,
 # which the memory asked about is not, so a stale half answers the same.
 race_top:camlRig__Copy.holds
 # A device's way to wait for a producer: a stale undecided decides the pair
-# again, and the device keeps both decisions' mappings.
+# again, and the decision that comes second gives its mapping back.
 race_top:camlRig__Submission.pair_
 
 # The program suite's host code signals the test through memory that

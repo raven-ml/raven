@@ -13,8 +13,8 @@ module D = struct
   type t = { self : nativeint; word : int }
 
   (* A region is memory at [at] that [free] gives back from [base]: memory the
-     device allocated, or its word, whose free ends the device's state; [base]
-     is 0 for a mapping of host memory, which [free] leaves alone. *)
+     device allocated; [base] is 0 for its word and a mapping of host memory,
+     which [free] leaves alone. *)
   type region = { at : int; base : int }
   type image = unit
 
@@ -40,7 +40,7 @@ module D = struct
       maps_host = true;
       host_addresses = true;
       capability = Capability (capability_key, ());
-      word = { at = d.word; base = Nativeint.to_int d.self };
+      word = { at = d.word; base = 0 };
       edge = d.self;
     }
 

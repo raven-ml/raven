@@ -600,9 +600,9 @@ let reached o q i r =
 
 let first_runs fn d k =
   let rec go i =
-    if i = Array.length (Dev.live d).queues then
+    if i = Array.length d.live.queues then
       invalid_argf "Rig.%s: %s runs no %s" fn d.name (kind_name k)
-    else if List.mem k (Dev.live d).queues.(i).runs then i
+    else if List.mem k d.live.queues.(i).runs then i
     else go (i + 1)
   in
   go 0
@@ -618,7 +618,7 @@ let place fn d last = function
       let prepares (q : Rig_edge.queue) =
         List.mem Rig_edge.Launch q.runs && List.mem Rig_edge.Words q.runs
       in
-      match Array.find_index prepares (Dev.live d).queues with
+      match Array.find_index prepares d.live.queues with
       | Some q -> q
       | None -> first_runs fn d Rig_edge.Words)
   | Copy _ -> (
@@ -628,10 +628,10 @@ let place fn d last = function
         last;
       match !q with
       | q
-        when q >= 0 && List.mem Rig_edge.Copy (Dev.live d).queues.(q).runs ->
+        when q >= 0 && List.mem Rig_edge.Copy d.live.queues.(q).runs ->
           q
       | _ -> (
-          match (Dev.live d).copy_engine with
+          match d.live.copy_engine with
           | Some q -> q
           | None -> invalid_argf "Rig.%s: %s runs no copies" fn d.name))
   | p -> first_runs fn d (kind_of p)
@@ -653,7 +653,7 @@ let after q last =
 let order fn d reach fixed parts =
   let n = Array.length parts in
   let queues = Array.make n 0 and afters = Array.make n [||] in
-  let nq = Array.length (Dev.live d).queues in
+  let nq = Array.length d.live.queues in
   let last = Array.make nq (-1) and latest = Array.make nq (-1) in
   let o = order_of nq reach fixed in
   for j = 0 to n - 1 do
@@ -729,7 +729,7 @@ let build hold ~fixed d parts =
   let queues, afters = order fn d (Array.map reaches parts) fixed_reach parts in
   let nafter = Array.fold_left (fun n a -> n + Array.length a) 0 afters in
   let c =
-    sub_new (Dev.live d).c (Array.length parts) nafter !nfixed uses !nrefs
+    sub_new d.live.c (Array.length parts) nafter !nfixed uses !nrefs
       !ncodes !ncopies
   in
   let blocks = Array.make (Array.length parts) no_block in
@@ -794,7 +794,7 @@ let build hold ~fixed d parts =
     if Array.length parts = 0 then None
     else
       Some
-        ( (Dev.live d).queues.(queues.(0)).name,
+        ( d.live.queues.(queues.(0)).name,
           if kernels = [] then kind_name (kind_of parts.(0))
           else String.concat ", " kernels )
   in
@@ -863,121 +863,80 @@ let rig_word = 0
 let rig_object = 1
 let host_wait = -1
 
-(* Keeps [d]'s mapping [pm] of a producer's word while both words are read:
-   whether it kept it. Once the producer's word moved, its end's walk may
-   have passed [d] already, so a kept mapping would hold the word until [d]
-   ends. The producer's [word_end] is read under [d]'s lock alone, as a plain
-   field: a change after the read is one the walk then finds. *)
-let keep_pair_map (l, ((p, _) as pm)) =
-  l.word_end = Read
-  && (match p.live with Some pl -> pl.word_end = Read | None -> false)
-  && begin
-    l.pair_maps <- pm :: l.pair_maps;
-    true
-  end
-
-(* What [map_word] answers inside for a mapping [d] did not keep: no way. *)
-let not_kept = min_int
-
 (* How [d] waits for [p]'s word in its queue, mapping the word region [r]: a
    device of the producer's driver maps the region, another the host page that
-   holds the word. The mapping counts in [p]'s word from before it is made, and
-   [d] keeps it only while its own word is read, giving it back otherwise. *)
+   holds the word. Is the way, with the mapping, which lives for the process as
+   both words do. *)
 let map_word d p r =
-  let l = Dev.live d and pl = Dev.live p in
-  if not (Memory.hold_word p) then host_wait
-  else
-    let start = pl.word - (pl.word mod Memory.page) in
-    let mapped, skip =
-      match
-        if d.key = p.key then (Memory.map_peer_region d r, 0)
-        else (Memory.map_host_range d start Memory.page, pl.word - start)
-      with
-      | made -> made
-      | exception e ->
-          Memory.word_unmapped p;
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-    in
-    match mapped with
-    | None ->
-        Memory.word_unmapped p;
-        host_wait
-    | Some m -> (
-        (* The mapping goes back on any exception until [d] keeps it, the
-           allocations of the keep included, its count first. *)
-        match
-          let way =
-            match (Memory.locate m).address with
-            | None -> host_wait
-            | Some at -> at + skip
-          in
-          if Lock.protect l.lock keep_pair_map (l, (p, m)) then way
-          else not_kept
-        with
-        | way when way = not_kept ->
-            Memory.drop_word_map d m p;
-            host_wait
-        | way -> way
-        | exception e ->
-            Memory.drop_word_map d m p;
-            Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+  let word = p.live.word in
+  let start = word - (word mod Memory.page) in
+  let mapped, skip =
+    if d.key = p.key then (Memory.map_peer_region d r, 0)
+    else (Memory.map_host_range d start Memory.page, word - start)
+  in
+  match mapped with
+  | None -> (host_wait, None)
+  | Some m -> (
+      match (Memory.locate m).address with
+      | Some at -> (at + skip, Some m)
+      | None ->
+          Memory.unmap d m;
+          (host_wait, None))
 
 (* How [d] waits for [p]'s values, decided once per pair: [host_wait], or for a
    queue that waits in it, the producer's object for an object completion, or
-   the address of [p]'s word as [d] maps it. A submit decides outside any
-   counted call on [d], so [d]'s drains are held across the map and its keep:
-   a close on another domain cannot free [d]'s resources in between. *)
+   the address of [p]'s word as [d] maps it, with the mapping. *)
 let decide d p =
-  let l = Dev.live d and pl = Dev.live p in
+  let l = d.live and pl = p.live in
   let waits =
     match pl.completion with
     | Store -> l.waits.stores
     | Object _ -> l.waits.objects && d.key = p.key
     | Host_writes -> l.waits.hosts
   in
-  if (not waits) || not (Dev.same_machine p d) then host_wait
+  if (not waits) || not (Dev.same_machine p d) then (host_wait, None)
   else
     match (pl.completion, pl.word_region) with
-    | Object o, _ -> o
-    | _, None -> host_wait
-    | _, Some r -> (
-        if not (Memory.enter l) then host_wait
-        else
-          match map_word d p r with
-          | way ->
-              Memory.leave d l;
-              way
-          | exception e ->
-              Memory.leave d l;
-              Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+    | Object o, _ -> (o, None)
+    | _, None -> (host_wait, None)
+    | _, Some r -> map_word d p r
 
 (* An undecided pair: no way is negative but [host_wait], and an address or an
    object fits in 62 bits. *)
 let undecided = min_int
 
+let known_pair pairs i = if i < Array.length pairs then pairs.(i) else undecided
+
 (* Sets [l]'s pair of the producer of index [i] to [way], growing [l.pairs] by
-   replacement. *)
+   replacement, unless another decision came first: that decision's way. *)
 let set_pair (l, i, way) =
-  if i >= Array.length l.pairs then begin
-    let a = Array.make (Int.max (i + 1) (2 * Array.length l.pairs)) undecided in
-    Array.blit l.pairs 0 a 0 (Array.length l.pairs);
-    l.pairs <- a
-  end;
-  l.pairs.(i) <- way
+  let known = known_pair l.pairs i in
+  if known <> undecided then Some known
+  else begin
+    if i >= Array.length l.pairs then begin
+      let n = Int.max (i + 1) (2 * Array.length l.pairs) in
+      let a = Array.make n undecided in
+      Array.blit l.pairs 0 a 0 (Array.length l.pairs);
+      l.pairs <- a
+    end;
+    l.pairs.(i) <- way;
+    None
+  end
 
 (* [l.pairs] is replaced whole under [d]'s lock and its cells are ints, so a
    read takes no lock. Racy: a stale [undecided] decides the pair again, and
-   [pair_maps] keeps both decisions' mappings valid. *)
+   the decision that comes second gives its mapping back. *)
 let pair d p =
-  let i = p.index and l = Dev.live d in
-  let pairs = l.pairs in
-  let known = if i < Array.length pairs then pairs.(i) else undecided in
+  let i = p.index and l = d.live in
+  let known = known_pair l.pairs i in
   if known <> undecided then known
-  else begin
-    let way = decide d p in
-    Lock.protect l.lock set_pair (l, i, way);
-    way
-  end
+  else
+    let way, mapping = decide d p in
+    match Lock.protect l.lock set_pair (l, i, way) with
+    | None -> way
+    | Some first ->
+        Option.iter (Memory.unmap d) mapping;
+        first
 
 (* Submit *)
 
@@ -1032,9 +991,7 @@ let name_one s run use k b =
 
 (* Waits on the host for the foreign points [s]'s device cannot wait for in its
    queue, or that its queue has no room for, adds the others to the run's waits
-   after committing their producers' work, and is their number. A done point
-   passes before its device is looked up, which allocates for an ended
-   device. *)
+   after committing their producers' work, and is their number. *)
 let rec wait_points s run n i count =
   if i = n then count
   else
@@ -1048,7 +1005,7 @@ let rec wait_points s run n i count =
       end
       else
         let way =
-          if count >= (Dev.live s.dev).waits.most then host_wait
+          if count >= s.dev.live.waits.most then host_wait
           else pair s.dev producer
         in
         if way = host_wait then begin
@@ -1058,7 +1015,7 @@ let rec wait_points s run n i count =
         else begin
           Dev.commit producer v;
           let kind =
-            match (Dev.live producer).completion with
+            match producer.live.completion with
             | Object _ -> rig_object
             | _ -> rig_word
           in
@@ -1079,7 +1036,7 @@ let rec hand_over s run nwaits =
     hand_over s run nwaits
   end
   else if r = Dev.Answer.need_record then begin
-    ensure_record (Dev.live d).c nwaits;
+    ensure_record d.live.c nwaits;
     hand_over s run nwaits
   end
   else if r = Dev.Answer.never then
@@ -1189,7 +1146,7 @@ let untaken = { ps = []; moves = [||]; asked = 0 }
    [s]'s names: a lost device keeps its functions for good. *)
 let record s (lane, name) { ps; moves; asked } p pair =
   let device = s.dev in
-  let l = Dev.live device in
+  let l = device.live in
   let copies start stop =
     Array.iter
       (fun (src, dst, bytes) ->

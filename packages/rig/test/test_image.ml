@@ -147,11 +147,11 @@ let test_upload_fails () =
   P.fail p;
   raises_match (lost d) (fun () -> Image.load d "code:64")
 
-(* Collects, then drains as an allocation does. *)
+(* Collects, then reclaims, which drains every device: a lost device's memory
+   collected after its stop returns so. *)
 let collect () =
   Gc.full_major ();
-  Gc.full_major ();
-  ignore (B.create Rig.host 8)
+  Support.reclaim ()
 
 (* A load whose upload loses the device gives its code memory back only once the
    device counts as stopped: its work may still run until then. The upload's

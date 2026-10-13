@@ -31,7 +31,6 @@ external c_set_seen : int -> int -> unit = "caml_rig_set_seen" [@@noalloc]
 external c_submitted : int -> int = "caml_rig_submitted" [@@noalloc]
 external c_state : int -> int = "caml_rig_state" [@@noalloc]
 external c_why : int -> string = "caml_rig_why"
-external c_upgrade : int -> bool = "caml_rig_upgrade" [@@noalloc]
 
 (* The first point of the stamps [st] that a lost device did not reach, among
    their uses' if [every] and every device's last write's otherwise, [0] for
@@ -48,8 +47,6 @@ external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
 external c_first : unit -> int = "caml_rig_first" [@@noalloc]
 external generation : unit -> int = "caml_rig_generation" [@@noalloc]
-external c_word_retire : c -> bool = "caml_rig_word_retire"
-external minors : unit -> int = "caml_rig_minors" [@@noalloc]
 external c_enter : c -> int = "caml_rig_enter"
 external c_exit : c -> unit = "caml_rig_exit"
 external c_spin : c -> int -> int -> int = "caml_rig_spin"
@@ -58,22 +55,15 @@ external c_waits_in_queue : c -> bool = "caml_rig_waits_in_queue"
 external release_list : unit -> int = "caml_rig_release_list"
 external c_release : c -> int = "caml_rig_device_release" [@@noalloc]
 external host_arch : unit -> string = "caml_rig_arch"
-external c_forgotten : unit -> int = "caml_rig_forgotten"
-external c_forget : int -> unit = "caml_rig_forget" [@@noalloc]
 
-(* [c_next_live i] is the least index from [i] on whose device's resources
-   are not freed, 0 for none; [c_unlive i] says index [i]'s are. [c_ended ()]
-   is the number of devices Ended or Stopped whose resources are not
-   freed. *)
-external c_next_live : int -> int = "caml_rig_next_live" [@@noalloc]
-external c_unlive : int -> unit = "caml_rig_unlive" [@@noalloc]
-external c_ended : unit -> int = "caml_rig_ended" [@@noalloc]
+(* [c_next i] is the least index from [i] on of a published device, 0 for
+   none. *)
+external c_next : int -> int = "caml_rig_next" [@@noalloc]
 
 (* The C line's states: [rig_stubs.h]'s enum. *)
 let live_state = 0
 let ended_state = 4
-let stopped_state = 5
-let orphaned_state = 6
+let orphaned_state = 5
 
 (* How long a wait sees no progress before it blocks in the driver, and the
    longest a blocking call of a wait lasts: each returns to OCaml within it,
@@ -141,20 +131,12 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       fault;
       release = c_release c;
       lock = Lock.create ();
-      drains = 0;
-      entries = 0;
       used = 0;
       cached = 0;
       cache = Cache.create 16;
       retiring = [];
       pending = ([], []);
       pairs = [||];
-      pair_maps = [];
-      mapped = Cache.create 4;
-      word_end = Read;
-      moved_at = 0;
-      word_unmaps = 1;
-      entry_maps = 0;
       afters = [];
     }
   in
@@ -172,7 +154,7 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
     capability;
     budget;
     closing = 0;
-    live = Some live;
+    live;
   }
 
 (* The host runs launches of linked code ([rig_host_code.c]) on its one queue,
@@ -191,67 +173,18 @@ let host =
   in
   d
 
-(* The device every point of a device whose record was collected names
-   ({!of_index}): lost with the reason ["ended"], its word past every value.
-   Its index is past every point's. *)
-let forgotten =
-  {
-    index = c_forgotten ();
-    name = "ended";
-    machine = Here;
-    kind = Ended;
-    arch = "";
-    maps_host = false;
-    most_parts = 0;
-    host_addresses = false;
-    key = -1;
-    memory_device = false;
-    capability = None;
-    budget = 0;
-    closing = 0;
-    live = None;
-  }
-
 (* The table of devices *)
 
-(* The devices whose resources are not freed, by index; an index whose open
-   failed, or whose device's resources are freed, holds the host. *)
+(* Every device by index, for the life of the process; an index whose open
+   failed holds the host. *)
 let devices = Table.make host
 
-module Int_map = Map.Make (Int)
-
-(* The devices whose resources are freed, held weakly by index: a point finds
-   its device while a value of the program refers to it, and {!forgotten} once
-   the collector took it, which also takes it out of the map. *)
-let freed_devices : device Weak.t Int_map.t Atomic.t = Atomic.make Int_map.empty
-
-let rec update_freed f =
-  let m = Atomic.get freed_devices in
-  if not (Atomic.compare_and_set freed_devices m (f m)) then update_freed f
-
-let of_index i =
-  let d = Table.get devices i in
-  if d != host || i = 0 then d
-  else
-    match Int_map.find_opt i (Atomic.get freed_devices) with
-    | None -> forgotten
-    | Some w -> ( match Weak.get w 0 with Some d -> d | None -> forgotten)
-
-(* Once the collector takes [d], its weak entry and its line's reason go: its
-   points ask {!forgotten} from then on. The finaliser holds [d]'s index
-   alone. *)
-let register d =
-  Table.set devices d.index d;
-  let i = d.index in
-  Gc.finalise_last
-    (fun () ->
-      update_freed (Int_map.remove i);
-      c_forget i)
-    d
+let of_index i = Table.get devices i
+let register d = Table.set devices d.index d
 
 let iter f =
   let rec from i =
-    match c_next_live i with
+    match c_next i with
     | 0 -> ()
     | i ->
         f (of_index i);
@@ -271,21 +204,13 @@ let is_host d = match d.kind with Host -> true | _ -> false
 let is_io d = match d.kind with Io _ -> true | _ -> false
 
 (* Whether the device of index [i] is lost, read from its line alone. The host
-   is never lost: a use of its memory reads no C line. A point of a lost device
-   is answered from its line, without {!of_index}, which allocates once the
-   device's resources are freed. *)
+   is never lost: a use of its memory reads no C line. *)
 let[@inline] lost_at i = i <> 0 && c_state i <> live_state
 let[@inline] is_lost d = lost_at d.index
 let orphaned_at i = c_state i = orphaned_state
 let orphaned d = orphaned_at d.index
 
-(* [d]'s reason, copied while [d] is reachable: the collection of [d] frees the
-   C string ({!register}), which may run on another domain during the copy. *)
-let why d =
-  let s = c_why d.index in
-  ignore (Sys.opaque_identity d);
-  s
-
+let why d = c_why d.index
 let lost d = if is_lost d then Some (why d) else None
 let raise_lost d = raise (Lost (d, why d))
 
@@ -293,17 +218,11 @@ let raise_lost d = raise (Lost (d, why d))
 let printed d = strf "%s lost: %s" d.name (why d)
 
 let submitted d = c_submitted d.index
-
-(* A device whose resources are freed is lost: a use of them raises its
-   loss. *)
-let[@inline] live d = match d.live with Some l -> l | None -> raise_lost d
-let freed d = Option.is_none d.live
-let committed d = c_committed (live d).c
+let committed d = c_committed d.live.c
 
 (* Locks *)
 
-let protect d f x = Lock.protect (live d).lock f x
-let busy d = Lock.busy (live d).lock
+let protect d f x = Lock.protect d.live.lock f x
 
 (* The host of each other machine named so far: a machine has one for its
    life. *)
@@ -314,7 +233,8 @@ let hosting : string Strings.t = Strings.create 4
 
 let table_lock = Lock.create ()
 
-let host_of d = match d.machine with Here -> host | Hosts _ -> d | On h -> h
+let host_of (d : device) =
+  match d.machine with Here -> host | Hosts _ -> d | On h -> h
 let same_machine d d' = host_of d == host_of d'
 
 let machine_of = function
@@ -332,15 +252,14 @@ let rec machine_name = function
 (* Values per device *)
 
 (* A key's values by device index, set under [locals_lock], so a get that
-   finds its value reads it without the lock. A device whose stop
-   returned is in [dropped] until its resources are freed, and its values
-   leave every key: a store that raced its stop checks [dropped], or finds
-   the resources freed, and keeps nothing. Indices are never reused. *)
+   finds its value reads it without the lock. Once a device's stop returned,
+   its values leave every key. A store keeps nothing on a lost device, so a
+   store that raced the stop keeps nothing after the drop, which comes after
+   the loss. Indices are never reused. *)
 type 'a key = { init : device -> 'a; values : 'a option Table.t }
 type any_key = Key : 'a key -> any_key
 
 let keys : any_key list ref = ref []
-let dropped : unit Cache.t = Cache.create 16
 let locals_lock = Lock.create ()
 
 let add_key k = keys := k :: !keys
@@ -354,12 +273,11 @@ let store_locked (k, d, v) =
   match Table.get k.values d.index with
   | Some v' -> v'
   | None ->
-      if not (Cache.mem dropped d.index || freed d) then
-        Table.set k.values d.index (Some v);
+      if not (is_lost d) then Table.set k.values d.index (Some v);
       v
 
-(* Keeps [v] as [k]'s value on [d] unless a value came first or [d]
-   dropped its values: the value kept, or [v]. *)
+(* Keeps [v] as [k]'s value on [d] unless a value came first or [d] is lost:
+   the value kept, or [v]. *)
 let store k d v = Lock.protect locals_lock store_locked (k, d, v)
 
 let local k d =
@@ -372,9 +290,7 @@ let clear d (Key k) =
   if Option.is_some (Table.get k.values d.index) then
     Table.set k.values d.index None
 
-let drop_locked d =
-  Cache.replace dropped d.index ();
-  List.iter (clear d) !keys
+let drop_locked d = List.iter (clear d) !keys
 
 let drop_values d = Lock.protect locals_lock drop_locked d
 
@@ -382,65 +298,54 @@ let drop_values d = Lock.protect locals_lock drop_locked d
 
 let answered : (device -> unit) ref = ref ignore
 
-(* A device whose stop returned is one whose line's state is [ended_state]
-   or [stopped_state], which [c_stopped] stores in the call that counts it
-   in [c_ended]: being found among them takes nothing that may raise. Every
-   drain looks for them, and while there are none it reads the count
-   alone. *)
-let next_ended i =
-  let rec from i =
-    match c_next_live i with
-    | 0 -> 0
-    | i ->
-        let s = c_state i in
-        if s = ended_state || s = stopped_state then i else from (i + 1)
-  in
-  if c_ended () = 0 then 0 else from i
-
 (* Reads a lost device's word behind a transport through its driver, which may
    be called after [stop], so rig's copy of it moves on. *)
 let refresh d =
   match d.kind with
-  | Driver { m; h; _ } when (live d).word = 0 -> (
+  | Driver { m; h; _ } when d.live.word = 0 -> (
       let module D = (val m) in
       match D.signaled h with
       | w -> c_set_seen d.index w
       | exception D.Fault _ -> ())
   | _ -> ()
 
-let upgrade d =
-  refresh d;
-  c_upgrade d.index
-
 let stop_returned d = c_state d.index >= ended_state
 
+(* Whether the stop of [d] returned and its word shows its last submitted
+   value: no work of it runs. An orphaned device's work is its parent's. *)
 let stopped d =
-  let s = c_state d.index in
-  s = stopped_state || (s = ended_state && upgrade d)
+  c_state d.index = ended_state
+  && begin
+    refresh d;
+    c_word d.index >= c_submitted d.index
+  end
 
 let stop_handle d =
   match d.kind with
   | Driver { m; h; _ } -> (
       let module D = (val m) in
-      let fault = if c_faulted (live d).c then Some (why d) else None in
+      let fault = if c_faulted d.live.c then Some (why d) else None in
       try D.stop h ~fault with D.Fault _ -> ())
   | Io { m; h } -> (
       let module I = (val m) in
       try I.stop h with I.Fault _ -> ())
-  | Host | Ended -> ()
+  | Host -> ()
 
-let moved d =
-  c_stopped (live d).c;
-  match d.kind with Driver _ -> ignore (upgrade d) | _ -> ()
+(* Removes a device's names from the table of names ({!table}, below), which
+   so holds the devices whose stop has not returned. *)
+let forget_names : (device -> unit) ref = ref ignore
 
-(* Moves the state on after the driver's stop. Its values drop first, so a
-   close, which waits for the state, returns after the drop, and the state
-   moves also when the drop raises. *)
+(* Moves the state on after the driver's stop. Its values and its names go
+   first, so a close, which waits for the state, returns after them, and the
+   state moves also when they raise. *)
 let returned d =
-  match drop_values d with
-  | () -> moved d
+  match
+    drop_values d;
+    !forget_names d
+  with
+  | () -> c_stopped d.live.c
   | exception e ->
-      moved d;
+      c_stopped d.live.c;
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 (* The state moves on whatever the driver's stop did: the device must count as
@@ -462,22 +367,22 @@ let rec run_owed () =
         run_owed ()
 
 let lose d why =
-  ignore (c_lose (live d).c why true);
+  ignore (c_lose d.live.c why true);
   run_owed ();
   raise_lost d
 
 let leave d =
-  c_exit (live d).c;
+  c_exit d.live.c;
   run_owed ()
 
 (* Ends the counted call on [d] that raised [e]: a fault of [d] loses it. The
    call ends before anything allocates, since a second exception would keep
    it counted for good. *)
 let raised d e =
-  c_exit (live d).c;
+  c_exit d.live.c;
   let bt = Printexc.get_raw_backtrace () in
   run_owed ();
-  match (live d).fault e with
+  match d.live.fault e with
   | Some why -> lose d why
   | None -> Printexc.raise_with_backtrace e bt
 
@@ -486,7 +391,7 @@ let refused d =
   raise_lost d
 
 let counted d f =
-  match c_enter (live d).c with
+  match c_enter d.live.c with
   | 0 -> (
       match f () with
       | r ->
@@ -499,10 +404,9 @@ let counted d f =
    back nothing more. On a live one a fault loses the device, which its caller
    never sees: a give is no use of the device. *)
 let give d f =
-  let l = live d in
-  let s = c_state d.index in
-  if s = orphaned_state then true
-  else if s = stopped_state || (s = ended_state && upgrade d) then begin
+  let l = d.live in
+  if orphaned d then true
+  else if stopped d then begin
     (match f () with
     | () -> ()
     | exception Sys_error _ -> ()
@@ -529,45 +433,36 @@ let give d f =
             true
         | None -> Printexc.raise_with_backtrace e bt)
 
-let move_word d = c_word_retire (live d).c
 let fail why = if c_fail why then run_owed ()
-
-(* The process's first failure, as {!Lost} prints it, once the device it lost
-   has freed its resources: {!failure} answers it from then on, after the
-   collector takes the device. *)
-let first_lost : string option Atomic.t = Atomic.make None
 
 let failure () =
   match c_first () with
   | 0 -> None
   | -1 -> c_failed ()
-  | i -> (
-      match Table.get devices i with
-      | d when d != host -> Some (printed d)
-      | _ -> Atomic.get first_lost)
+  | i -> Some (printed (of_index i))
 
 (* The timeline *)
 
 (* A word with no host address is read through a counted call, written out
    so that a read allocates nothing. *)
 let word d =
-  match d.live with
-  | Some l when l.word = 0 && not (is_lost d) -> (
-      match d.kind with
-      | Driver { m; h; _ } ->
-          let module D = (val m) in
-          if c_enter l.c <> 0 then refused d;
-          let w =
-            match D.signaled h with
-            | w ->
-                leave d;
-                w
-            | exception e -> raised d e
-          in
-          c_set_seen d.index w;
-          w
-      | _ -> c_word d.index)
-  | _ -> c_word d.index
+  let l = d.live in
+  if l.word <> 0 || is_lost d then c_word d.index
+  else
+    match d.kind with
+    | Driver { m; h; _ } ->
+        let module D = (val m) in
+        if c_enter l.c <> 0 then refused d;
+        let w =
+          match D.signaled h with
+          | w ->
+              leave d;
+              w
+          | exception e -> raised d e
+        in
+        c_set_seen d.index w;
+        w
+    | _ -> c_word d.index
 
 let now_ms () = Prof.now () / 1_000_000
 
@@ -577,7 +472,7 @@ let now_ms () = Prof.now () / 1_000_000
    value stays above the word. A device whose queue waits for a producer's
    unreached value counts as idle: its own work may not have started. *)
 let bounded d w ~still_ms hang =
-  let l = live d in
+  let l = d.live in
   let now = now_ms () and p = l.progress in
   let idle = committed d <= w || c_waits_in_queue l.c in
   if idle || p.idle || p.seen <> w then begin
@@ -595,7 +490,7 @@ let sleep d ~seen ~still_ms =
   match d.kind with
   | Driver { m; h; _ } -> (
       let module D = (val m) in
-      let l = live d in
+      let l = d.live in
       let still_ms =
         match l.hang_ms with
         | None -> still_ms
@@ -621,14 +516,14 @@ end
    whether it did, or found [d] lost. A commit that fails has lost [d], whose
    stop is then owed. *)
 let commit_once d =
-  let r = c_commit (live d).c in
+  let r = c_commit d.live.c in
   if r = Answer.failed then run_owed ();
   r <> Answer.busy
 
 let rec commit d v = if committed d < v && not (commit_once d) then commit d v
 
 let rec settle d v =
-  let r = c_settle (live d).c v in
+  let r = c_settle d.live.c v in
   if r = Answer.failed then run_owed ();
   if r = Answer.busy then settle d v else r = Answer.ok
 
@@ -642,7 +537,7 @@ let take_afters (l, w) =
 (* Runs the functions registered on [d]'s values up to [w], re-raising the first
    exception one raised once all ran. *)
 let run_afters d w =
-  let l = live d in
+  let l = d.live in
   let due = Lock.protect l.lock take_afters (l, w) in
   let first = ref None in
   List.iter
@@ -653,7 +548,7 @@ let run_afters d w =
 let add_after (l, a) = l.afters <- a :: l.afters
 
 let after d v f =
-  let l = live d in
+  let l = d.live in
   Lock.protect l.lock add_after (l, (v, f))
 
 (* A device whose unreached work waits in its queue on another's surfaces that
@@ -664,7 +559,7 @@ let look_at_producers d =
       let p = of_index i in
       if not (is_lost p) then
         try sleep p ~seen:(word p) ~still_ms:0 with Lost _ -> ())
-    (c_producers (live d).c)
+    (c_producers d.live.c)
 
 (* Reads [d]'s word until it reaches [v] or the clock [until]: the word. *)
 let rec spin_held d v until =
@@ -689,7 +584,7 @@ let rec wait_from d v seen since =
     let now = now_ms () in
     let since = if w <> seen then now else since in
     let still = now - since in
-    let l = live d in
+    let l = d.live in
     (match l.completion with
     | Host_writes -> sleep d ~seen:w ~still_ms
     | (Store | Object _) when l.word = 0 -> sleep d ~seen:w ~still_ms
@@ -712,7 +607,7 @@ let wait_value d v =
   let w = word d in
   let w = if w >= v || is_lost d then w else wait_from d v w (now_ms ()) in
   if is_lost d then raise_lost d;
-  if (live d).afters != [] then run_afters d w
+  if d.live.afters != [] then run_afters d w
 
 let wait d v =
   let s = submitted d in
@@ -750,7 +645,7 @@ let wait_point m every p =
         wait_until_lost d v w
     in
     if not (is_lost d) then
-      begin if (live d).afters != [] then run_afters d w
+      begin if d.live.afters != [] then run_afters d w
       end
     else if not (c_done p) then raise_lost d
 
@@ -776,23 +671,18 @@ let settled p =
    OCaml every still interval. *)
 let rec await_stop d =
   run_owed ();
-  match d.live with
-  | Some l when not (c_await_stop l.c still_ms) -> await_stop d
-  | _ -> ()
+  if not (c_await_stop d.live.c still_ms) then await_stop d
 
-(* A device whose resources are freed stopped long ago. *)
 let close_one d =
-  match d.live with
-  | None -> ()
-  | Some l ->
-      (match d.kind with
-      | Driver _ when not (is_lost d) -> (
-          try wait d (submitted d) with Lost (d', _) when d' == d -> ())
-      | _ -> ());
-      ignore (c_lose l.c "closed" false);
-      await_stop d
+  (match d.kind with
+  | Driver _ when not (is_lost d) -> (
+      try wait d (submitted d) with Lost (d', _) when d' == d -> ())
+  | _ -> ());
+  ignore (c_lose d.live.c "closed" false);
+  await_stop d
 
 (* Opening *)
+
 
 (* An open of a name: its slot is [k], the machine's name and the device's.
    [opening] says whether the slot reads [Opening] for it, [index] is the
@@ -821,10 +711,20 @@ end)
 let table : slot Names.t = Names.create 16
 let next_index = Atomic.make 1
 
+(* Under the table's lock: removes [d]'s names, so an open of them makes a new
+   device. *)
+let forget_locked d =
+  let mine k slot ks =
+    match slot with Open d' when d' == d -> k :: ks | _ -> ks
+  in
+  List.iter (Names.remove table) (Names.fold mine table [])
+
+let () = forget_names := Lock.protect table_lock forget_locked
+
 (* The device [r] published, if any. *)
 let made r =
   let i = r.index in
-  if i <> 0 && c_next_live i = i then Ok (of_index i) else Error ""
+  if i <> 0 && c_next i = i then Ok (of_index i) else Error ""
 
 (* Under the table's lock: ends [r]'s open with [result]. The name's slot
    changes last, so an open that an exception stopped half way still reads
@@ -968,7 +868,7 @@ let completion_of = function
    the fork handler walk it for good. A device lost at birth by a failure of the
    process is stopped here. *)
 let publish d =
-  c_publish (live d).c;
+  c_publish d.live.c;
   run_owed ()
 
 (* The device of the driver's handle [h], in the tables and not published.
@@ -1131,33 +1031,6 @@ let close d =
           ignore (Atomic.Loc.fetch_and_add [%atomic.loc d.closing] (-1));
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
 
-(* Freeing *)
-
-let undrop (d : device) = Cache.remove dropped d.index
-
-(* Removes [d]'s names from the table. Holds the table's lock. *)
-let forget_names d =
-  let mine k slot ks =
-    match slot with Open d' when d' == d -> k :: ks | _ -> ks
-  in
-  List.iter (Names.remove table) (Names.fold mine table [])
-
-(* Its resources go first, so a store of a value that raced the drop finds
-   them gone once [dropped] forgets [d]. The table holds [d] weakly from then
-   on, set there before its strong entry goes, so a point finds it
-   throughout. The text of the process's first failure is kept before too, so
-   {!failure} finds it or [d]. *)
-let free_live d =
-  d.live <- None;
-  c_unlive d.index;
-  if c_first () = d.index then Atomic.set first_lost (Some (printed d));
-  let w = Weak.create 1 in
-  Weak.set w 0 (Some d);
-  update_freed (Int_map.add d.index w);
-  Table.set devices d.index host;
-  Lock.protect locals_lock undrop d;
-  Lock.protect table_lock forget_names d
-
 (* Reach *)
 
 let peer d d' =
@@ -1175,7 +1048,7 @@ let reaches d d' =
   || same_machine d d'
      &&
      match (d.kind, d'.kind) with
-     | Io _, _ | _, Io _ | Ended, _ | _, Ended -> false
+     | Io _, _ | _, Io _ -> false
      | Host, Host -> false
      | Host, Driver _ -> d'.host_addresses
      | Driver _, Host -> d.maps_host

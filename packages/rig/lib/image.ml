@@ -21,7 +21,7 @@ let place d (e : entry) region code =
     Memory.make ?host:l.host ?address:l.address ~handle:l.handle d e.bytes e
   in
   let dst = Buffer.of_memory m n in
-  match (Dev.live d).copy_engine with
+  match d.live.copy_engine with
   | Some _ ->
       let src = Buffer.create ~memory:Buffer.Pinned d n in
       Buffer.blit_string code 0 src 0 n;
@@ -72,7 +72,6 @@ let loaded d binary =
       | Ok c -> Ok (Linked c, None)
       | Error why -> Error (strf "%s: %s" d.name why))
   | Io _ -> invalid_argf "Rig.Image.load: %s loads no code" d.name
-  | Ended -> Dev.raise_lost d
 
 let load d binary =
   if Dev.is_lost d then Dev.raise_lost d;
@@ -81,7 +80,7 @@ let load d binary =
   | Ok (loaded, code) ->
       let bytes = match code with Some e -> e.bytes | None -> 0 in
       let itoken =
-        Memory.token (Dev.live d).release (Image (loaded, code)) bytes
+        Memory.token d.live.release (Image (loaded, code)) bytes
           (Memory.room d) (-1)
       in
       let image = { idev = d; loaded; itoken } in

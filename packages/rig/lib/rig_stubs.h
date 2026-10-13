@@ -37,29 +37,18 @@ typedef pthread_cond_t rig_cond;
 #define RIG_INDEX(p) ((int)((p) >> RIG_VALUE_BITS))
 #define RIG_VALUE(p) ((p) & RIG_VALUE_MASK)
 
-/* Device indices run from 1 to RIG_DEVICES - 1 and are never reused. The
-   line of index RIG_DEVICES, which no point names, is the stand-in's for
-   the devices whose OCaml records were collected ([caml_rig_forgotten]). */
+/* Device indices run from 1 to RIG_DEVICES - 1 and are never reused. */
 #define RIG_DEVICES 65536
 
 /* A device's state. A loss moves a live device to LOSING while its loser
    spreads it, then to OWED, until a claimant takes its stop (STOPPING).
-   Once the stop returned it is ENDED, and STOPPED once its word reads its
-   last submitted value, or at once for an io device. A driver's device a
-   forked child inherited is ORPHANED: its stop never runs and its work is
-   the parent's.
+   Once the stop returned it is ENDED. A driver's device a forked child
+   inherited is ORPHANED: its stop never runs and its work is the
+   parent's.
 
-     LIVE -> LOSING -> OWED -> STOPPING -> ENDED -> STOPPED
+     LIVE -> LOSING -> OWED -> STOPPING -> ENDED
      LIVE, or any loss state, -> ORPHANED (in a forked child) */
-enum {
-  RIG_LIVE,
-  RIG_LOSING,
-  RIG_OWED,
-  RIG_STOPPING,
-  RIG_ENDED,
-  RIG_STOPPED,
-  RIG_ORPHANED
-};
+enum { RIG_LIVE, RIG_LOSING, RIG_OWED, RIG_STOPPING, RIG_ENDED, RIG_ORPHANED };
 
 /* One in-queue wait of a device's unreached work on another device's value:
    the work of the waiter's value [u] waits for the producer's value [w]. */
@@ -86,17 +75,12 @@ struct rig_times {
 };
 
 /* A device's timeline line: what a point of the device asks, kept for the
-   life of the process at the device's index, since a point outlives its
-   device. Once the device's OCaml record is collected, its reason goes
-   ([caml_rig_forget]). [word] is the timeline word, or NULL behind a
-   transport. Once the device is stopped and nothing else reads the
-   driver's word, it points to [final], and the driver's word is given back
-   ([caml_rig_word_retire]).
-   [state], [lost] and [reached] change under the device's mutex while the
-   device lives, and every field is read without it. */
+   life of the process at the device's index, as the device's word and
+   reason are. [word] is the timeline word, or NULL behind a transport.
+   [state], [lost] and [reached] change under the device's mutex, and every
+   field is read without it. */
 struct rig_line {
   _Atomic(_Atomic uint64_t *) word;
-  _Atomic uint64_t final;
   _Atomic uint64_t seen; /* the last value a read of the word showed */
   _Atomic uint64_t submitted;
   _Atomic int state;
@@ -105,26 +89,22 @@ struct rig_line {
   int io;                   /* an io device's, whose state its library holds */
 };
 
-extern struct rig_line rig_lines[RIG_DEVICES + 1];
+extern struct rig_line rig_lines[RIG_DEVICES];
 
 /* A list of release records ([rig_heap.c]): those of a device lie in its
-   record. [refs] counts the device and the list's live tokens, and is 0
-   once the list is closed. */
+   record. */
 struct release_node;
 
 struct release_list {
   _Atomic(struct release_node *) head;
-  _Atomic intptr_t refs;
-  struct rig_device *device; /* NULL for a list of no device */
 };
 
-/* A device's resources, freed once neither its OCaml resources, a prepared
-   submission nor a release token holds it ([refs]). The mutex guards [turn], [inside], the
-   record and the moves of the line's state but ENDED to STOPPED. */
+/* A device's record, kept for the life of the process. The mutex guards
+   [turn], [inside], the record of waits and the moves of the line's
+   state. */
 struct rig_device {
   rig_mutex mu;
   rig_cond cv;
-  _Atomic int refs;
   int index;
   struct rig_line *line;
   char *name;
@@ -141,10 +121,8 @@ struct rig_device {
   struct release_list release;
 };
 
-/* The device record of the OCaml value [v], and a reference to it. */
+/* The device record of the OCaml value [v]. */
 #define Device_val(v) (*(struct rig_device **)Data_custom_val(v))
-void rig_device_ref(struct rig_device *d);
-void rig_device_unref(struct rig_device *d);
 
 /* A memory's stamps: per device, the point of its last use and the point of
    its last write. A chunk's write[i] belongs to the device of its use[i],

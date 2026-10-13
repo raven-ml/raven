@@ -142,9 +142,9 @@ val close : t -> unit
     [d] with the reason ["closed"] and returns once its driver's stop
     ({!Rig_edge.Driver.val-stop}) has returned, which may be before [d] has
     stopped ({!section-stops}). From then on, uses of [d] raise {!Lost}, and
-    buffers over its memory return that memory as they are collected. Work
-    that another domain submits on [d] during the close may be lost with
-    [d].
+    buffers over its memory return that memory once collected, through
+    reclamation ({!section-reclaim}). Work that another domain submits on [d]
+    during the close may be lost with [d].
     {ul
     {- On another machine's host ({!host_of}), lost or not, [close] first
        closes every device of that machine, including those still opening,
@@ -160,16 +160,10 @@ val close : t -> unit
 (** {2:properties Properties}
 
     A device's properties are set when it opens, and keep their values once
-    it is lost. Once a lost device has stopped and its memory has returned,
-    rig frees what it held for the device, in its driver and in rig, but
-    its properties and the last values of its timeline. Those go once no
-    value the program holds refers to the device and the collector has
-    taken it, and its points then name a stand-in ({!Point.val-device}). A
-    {!Lost} refers to its device. While backtraces are recorded
-    ([Printexc.record_backtrace]), the OCaml runtime keeps the last
-    exception each thread raised, rig's own included, so that device stays
-    until the thread raises another and, in a program that links the threads
-    library, next releases the domain lock. *)
+    it is lost. rig keeps a device's properties, timeline and reason for the
+    life of the process, a few kilobytes in rig and in its driver, so its
+    points name it for good. Its driver's stop releases what the device
+    needs only to run work, such as its queues. *)
 
 val name : t -> string
 (** [name d] is [d]'s name for people: its opener's [name], with
@@ -300,13 +294,7 @@ module Point : sig
   (** The type for points. *)
 
   val device : t -> device
-  (** [device p] is [p]'s device until the collector takes that device,
-      which it may do once the device has ended and no value the program
-      holds refers to it. From then on, [device p] is a stand-in for every
-      such device, named ["ended"]: it is lost with the reason ["ended"],
-      computes nothing, reaches only itself, its {!submitted} and
-      {!signaled} are [max_int], and its {!budget} is [0] until
-      {!set_budget} sets it, as it sets a lost device's. *)
+  (** [device p] is [p]'s device. *)
 
   val value : t -> int
   (** [value p] is [p]'s value, [1] or more. *)
@@ -534,7 +522,6 @@ exception Lost of t * string
     {- ["closed"] for a device {!close} ended;}
     {- the reason given to {!fail};}
     {- ["forked"] in a child of [fork];}
-    {- ["ended"] when [d] is {!Point.val-device}'s stand-in;}
     {- ["out of memory"] when the C heap had no room for the reason.}}
     It prints as ["NAME lost: why"] with [d]'s name. *)
 

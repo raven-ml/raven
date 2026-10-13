@@ -177,7 +177,7 @@ let mine d m =
 (* A copy on [d]'s copy engine between buffers [d] maps, waited for when [wait].
    Its submit records it. *)
 let on_queue ~wait d src dst =
-  match ((Dev.live d).copy_engine, mine d src.mem, mine d dst.mem) with
+  match (d.live.copy_engine, mine d src.mem, mine d dst.mem) with
   | Some _, Some s, Some t ->
       let p =
         Submission.run_copy d ~src:{ src with mem = s }
@@ -237,7 +237,7 @@ let direct ~wait src dst n =
     (* A borrow on a device that runs no copy copies by its memory's own
        device. *)
     let runner =
-      match (Dev.live side.mem.dev).copy_engine with
+      match side.mem.dev.live.copy_engine with
       | Some _ -> side.mem.dev
       | None -> (Memory.root side.mem).dev
     in
@@ -247,7 +247,7 @@ let direct ~wait src dst n =
    copy engine, or, for a borrow on a device that runs no copy, its memory's own
    device's, as [direct] picks it. *)
 let runner b =
-  match (Dev.live b.mem.dev).copy_engine with
+  match b.mem.dev.live.copy_engine with
   | Some _ -> b.mem.dev
   | None -> (Memory.root b.mem).dev
 

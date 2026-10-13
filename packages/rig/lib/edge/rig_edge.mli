@@ -44,8 +44,8 @@
     {- rig calls {!Driver.stop} once no call of the driver is in flight on
        the device ({!Driver}). Once the word shows the device's last
        submitted value, the last value rig gave the driver's [submit], rig
-       frees the device's remaining memory and unloads its images, and it
-       frees the word once nothing reads it.}}
+       frees the device's remaining memory and unloads its images. rig never
+       frees the word, and keeps the device's handle for the process.}}
 
     Each function's doc says what it does, and a driver's implementation
     must do that. Further obligations say "must". *)
@@ -164,12 +164,12 @@ type 'region facts = {
       (** The ABI record, filled when the device opened. *)
   word : 'region;
       (** The timeline word. Other devices may map it, and rig reads it after
-          a loss. rig frees it ({!Driver.free}) after {!Driver.stop}, once
-          nothing reads it. Where it has no host address, as for a device of
-          another machine, rig reads it through {!Driver.signaled}. *)
+          a loss, for the life of the process: rig never frees it. Where it
+          has no host address, as for a device of another machine, rig reads
+          it through {!Driver.signaled}. *)
   edge : nativeint;
-      (** The address of the device's C state, valid until rig frees [word].
-          The state's first member must point to the driver's
+      (** The address of the device's C state, valid for the life of the
+          process. The state's first member must point to the driver's
           [struct rig_driver] of [rig_edge.h] ({!section-calls}). *)
 }
 (** The type for the facts of a device. A {!Driver.Fault} while rig reads
@@ -374,10 +374,9 @@ module type Driver = sig
       none. [n] is positive. Counted. *)
 
   val free : t -> region -> unit
-  (** [free d r] gives back [r], which is a region {!val-alloc} made, a
-      mapping {!val-map_peer} or {!val-map_host} made, or [d]'s word. rig
-      frees [r] once no work of [d] that uses it can run. It may free after
-      {!val-stop}, and frees the word only after it. *)
+  (** [free d r] gives back [r], which is a region {!val-alloc} made or a
+      mapping {!val-map_peer} or {!val-map_host} made. rig frees [r] once no
+      work of [d] that uses it can run, and may free it after {!val-stop}. *)
 
   val locate : region -> location
   (** [locate r] is where [r] lies. *)
@@ -460,7 +459,11 @@ module type Driver = sig
       {- The driver must drop the work [d] encoded that runs only once
          committed, such as an open command buffer.}
       {- [stop] must release nothing rig made. rig frees each region and
-         unloads each image itself, also after [stop].}}
+         unloads each image itself, also after [stop].}
+      {- [stop] releases what the driver made to run work, such as its
+         queues, without waiting for that work. The word, and what reading
+         it needs, stay: rig never frees the word, and keeps [d] for the
+         process.}}
       After [stop], rig calls {!val-free} and {!unload} only once the word
       reads that last value. It calls them uncounted and drops their faults.
       They may come after an open of the same hardware has made a new device

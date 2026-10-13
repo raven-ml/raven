@@ -127,7 +127,6 @@ external token : int -> released -> int -> int -> int -> token
 external no_token : unit -> token = "%identity"
 external released : int -> released list = "caml_rig_released"
 external released_any : int -> bool = "caml_rig_released_any" [@@noalloc]
-external release_close : int -> bool = "caml_rig_release_close" [@@noalloc]
 external page_size : unit -> int = "caml_rig_page_size"
 
 let no_token = no_token ()
@@ -172,15 +171,7 @@ let is_io_memory (e : entry) =
 
 let entry_ids = Atomic.make 0
 
-(* Counts an entry of [d]'s memory until it is given back: [d]'s resources
-   outlive it. *)
-let count_entry d n =
-  if d != Dev.host then
-    let l = Dev.live d in
-    ignore (Atomic.Loc.fetch_and_add [%atomic.loc l.entries] n : int)
-
 let entry ?(access = Read_write) owner backing bytes stamps =
-  count_entry owner 1;
   {
     id = Atomic.fetch_and_add entry_ids 1;
     owner;
@@ -289,10 +280,7 @@ let locate (Region { m; r; _ }) =
 
 (* The host's buffers reserve against its budget in the heap, which counts
    them; a device's count is its own. *)
-(* A device whose resources are freed holds nothing. *)
-let allocated d =
-  if d == Dev.host then heap_held ()
-  else match d.live with Some l -> l.used | None -> 0
+let allocated d = if d == Dev.host then heap_held () else d.live.used
 
 let note d =
   if Prof.enabled () then
@@ -329,7 +317,6 @@ let new_entry d (kind : memory_kind) n =
           let region = Io_region { m; h; r } in
           Some (entry d (Io_memory { origin = Made; region }) n (stamps_new ())))
   | Host -> None
-  | Ended -> Dev.raise_lost d
 
 (* Gives back a region [d] allocated or mapped, an io region or an image:
    whether it did, which a device lost and not stopped does not ([Dev.give]). *)
@@ -367,7 +354,7 @@ let entry_budget (e : entry) =
 let owns (e : entry) = entry_budget e = Device_budget
 
 let take_device_room (d, n) =
-  let l = Dev.live d in
+  let l = d.live in
   l.used + n <= d.budget
   && begin
     l.used <- l.used + n;
@@ -384,7 +371,7 @@ let take_room d budget n =
 let give_room d budget n =
   match budget with
   | Device_budget ->
-      let l = Dev.live d in
+      let l = d.live in
       Lock.hold l.lock;
       l.used <- l.used - n;
       Lock.release l.lock
@@ -397,7 +384,7 @@ let give_room d budget n =
    submitted value under the append lock keeps the queue's values ordered. *)
 let append_pending (d, p) =
   let v = Dev.submitted d in
-  let l = Dev.live d in
+  let l = d.live in
   let front, back = l.pending in
   l.pending <-
     (if front == [] then ([ (v, p) ], []) else (front, (v, p) :: back))
@@ -429,8 +416,7 @@ let give_back (e : entry) =
     drop_stamps e;
     let budget = entry_budget e in
     give_room d budget e.bytes;
-    if budget = Device_budget then note d;
-    count_entry d (-1)
+    if budget = Device_budget then note d
   end
 
 (* Releases the mapping [mp] now if its mapper ran all the work submitted so
@@ -445,116 +431,23 @@ let unmap_now mp =
      && Dev.word d >= v
      && free_region d mp.map
 
-(* Drains in flight on a device: each holds its resources, and the last to
-   leave a device that holds nothing more frees them. A device holds nothing
-   once its word is given back, its memory and its images have returned and
-   it maps no other memory. Entering and leaving allocate nothing. *)
-let enter l =
-  Lock.hold l.lock;
-  let entered = l.drains >= 0 in
-  if entered then l.drains <- l.drains + 1;
-  Lock.release l.lock;
-  entered
-
-(* A given word means a Stopped device. The list is closed last. *)
-let spent l =
-  l.drains = 0 && l.word_end == Given
-  && Atomic.Loc.get [%atomic.loc l.entries] = 0
-  && l.retiring == [] && fst l.pending == [] && l.cached = 0
-  && l.pair_maps == [] && Cache.length l.mapped = 0
-  && Atomic.Loc.get [%atomic.loc l.word_unmaps] = 0
-  && Atomic.Loc.get [%atomic.loc l.entry_maps] = 0
-  && release_close l.release
-
-(* Whether the drain leaving [l] is the last of a device that holds nothing
-   more, which then frees its resources. *)
-let left l =
-  l.drains <- l.drains - 1;
-  let free = spent l in
-  if free then l.drains <- -1;
-  free
-
-let leave d l = if Lock.protect l.lock left l then Dev.free_live d
-
 (* Notes one of [e]'s unmaps done, and gives [e] back after the last. *)
 let entry_unmapped (e : entry) =
   if Atomic.Loc.fetch_and_add [%atomic.loc e.unmaps] (-1) = 1 then give_back e
 
-(* Notes one unmap of [d]'s word done, and gives the word back after the
-   last. It holds [d]'s drains meanwhile: the count may reach [0] in another
-   device's drain, and [d]'s resources must outlive the give whichever drain
-   finds [d] spent. A count above [0] keeps [d] from being spent, so the enter
-   holds. *)
-let word_unmapped d =
-  let l = Dev.live d in
-  if enter l then
-    match
-      if Atomic.Loc.fetch_and_add [%atomic.loc l.word_unmaps] (-1) = 1 then
-        match l.word_region with Some r -> unmap d r | None -> ()
-    with
-    | () -> leave d l
-    | exception e ->
-        leave d l;
-        Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-
-let unmapped = function Entry e -> entry_unmapped e | Word d -> word_unmapped d
-
-(* Notes that [d]'s driver took back its mapping of [m]: [d]'s count of
-   memory mappings drops, and [m]'s. *)
-let unmapped_by d m =
-  (match m with
-  | Entry _ -> Atomic.Loc.decr [%atomic.loc (Dev.live d).entry_maps]
-  | Word _ -> ());
-  unmapped m
-
-(* Gives back [d]'s mapping [r] of [m] now, or once [d] stopped. Memory and
-   words count their mappings and go back to their driver at the last unmap,
-   whichever side, the mapper's end or their own, takes the mapping: until
-   then a mapper's driver may still name their pages, and a driver that maps
-   host memory by its address would hand them to new memory at that
-   address. *)
-let give d r m =
-  if free_region d r then unmapped_by d m else defer d (Unmap (r, Some m))
-
-(* [d] never used the mapping, so the count goes back before the region: an
-   exception in the driver's free, which allocates, leaves the region alone
-   behind, and [p] still ends. *)
-let drop_word_map d r p =
-  word_unmapped p;
-  unmap d r
-
-(* Counts a mapping of [d]'s word about to be made while its readers still
-   read it: whether it counted. Once the word moves, the end's walk may have
-   passed the mappings already, so a new one would hold the word for
-   good. *)
-let count_word_map l =
-  l.word_end = Read
-  && begin
-    Atomic.Loc.incr [%atomic.loc l.word_unmaps];
-    true
-  end
-
-let hold_word d =
-  let l = Dev.live d in
-  Lock.protect l.lock count_word_map l
-
-let drop_mapped (l, id) = Cache.remove l.mapped id
-
-(* [e]'s mappings are taken under its owner's lock, as a mapper's word end
-   takes its own: each is released once. *)
-let rec forget (e : entry) = function
-  | [] -> ()
-  | mp :: maps ->
-      (let l = Dev.live mp.on in
-       Lock.protect l.lock drop_mapped (l, e.id));
-      forget e maps
+(* Gives back [d]'s mapping [r] of [e] now, or once [d] stopped. Memory counts
+   its mappings and goes back to its driver at the last unmap: until then a
+   mapper's driver may still name its pages, and a driver that maps host
+   memory by its address would hand them to new memory at that address. *)
+let give d r e =
+  if free_region d r then entry_unmapped e else defer d (Unmap (r, Some e))
 
 let free_entry (e : entry) =
   (* No mapping is made of dead memory: one seen gone stays gone. *)
   let maps =
     if e.maps == [] then []
     else begin
-      let l = Dev.live e.owner in
+      let l = e.owner.live in
       Lock.hold l.lock;
       let maps = e.maps in
       e.maps <- [];
@@ -562,11 +455,10 @@ let free_entry (e : entry) =
       maps
     end
   in
-  forget e maps;
   List.iter
     (fun mp ->
-      if unmap_now mp then unmapped_by mp.on (Entry e)
-      else defer mp.on (Unmap (mp.map, Some (Entry e))))
+      if unmap_now mp then entry_unmapped e
+      else defer mp.on (Unmap (mp.map, Some e)))
     maps;
   entry_unmapped e
 
@@ -662,14 +554,14 @@ let viewed (e : entry) =
 
 (* Puts [e] in its owner's cache, for reuse. The owner's lock is held. *)
 let cache (e : entry) =
-  let l = Dev.live e.owner and k = cache_key e in
+  let l = e.owner.live and k = cache_key e in
   let es = Option.value ~default:[] (Cache.find_opt l.cache k) in
   Cache.replace l.cache k (e :: es);
   l.cached <- l.cached + e.bytes
 
 (* Puts [e] among its owner's retiring memory. The owner's lock is held. *)
 let retire_entry (e : entry) =
-  let l = Dev.live e.owner in
+  let l = e.owner.live in
   l.retiring <- e :: l.retiring
 
 let to_cache (e : entry) = Dev.protect e.owner cache e
@@ -678,7 +570,7 @@ let to_cache (e : entry) = Dev.protect e.owner cache e
    [e] then returns to the driver, so a later allocation the budget refuses
    cannot reuse it. It skips the cache, never the wait: the driver gets [e]
    once every point of it is reached, [d]'s own included. *)
-let over_budget d (e : entry) = owns e && (Dev.live d).used > d.budget
+let over_budget d (e : entry) = owns e && d.live.used > d.budget
 
 (* Routes a record [d]'s release list gave. *)
 let route d = function
@@ -708,7 +600,7 @@ let fate d ~lost ~free_lost (e : entry) =
   else Stays
 
 let put_retiring (d, es) =
-  let l = Dev.live d in
+  let l = d.live in
   l.retiring <- es @ l.retiring
 
 (* Judges each retiring entry of [l] with no lock held, puts back those that
@@ -741,7 +633,7 @@ let take_all_cached (l, freed) =
 let due d =
   let lost = Dev.is_lost d in
   let free_lost = lost && Dev.stopped d in
-  let l = Dev.live d in
+  let l = d.live in
   Lock.hold l.lock;
   let retiring = l.retiring in
   l.retiring <- [];
@@ -765,7 +657,7 @@ let take_pending (l, w) =
 
 (* Takes the pending releases whose value [d] reached. *)
 let due_pending d =
-  let l = Dev.live d in
+  let l = d.live in
   match l.pending with
   | [], _ -> []
   | (v, _) :: _, _ ->
@@ -779,7 +671,7 @@ let run_pending d = function
   | Free e -> free_entry e
   | Give e -> give_back e
   | Unmap (r, after) as p ->
-      if free_region d r then Option.iter (unmapped_by d) after else defer d p
+      if free_region d r then Option.iter entry_unmapped after else defer d p
   | Unload (loaded, code) as p -> (
       if not (unload_now d loaded) then defer d p
       else
@@ -808,7 +700,7 @@ let rec run_all d = function
 
 (* Drains [d]'s own list and what became due on it. *)
 let drain_own d =
-  let l = Dev.live d in
+  let l = d.live in
   if released_any l.release then route_all d (released l.release);
   free_all (due d);
   run_all d (due_pending d)
@@ -818,174 +710,12 @@ let drain_own d =
 let idle l =
   l.retiring == [] && fst l.pending == [] && not (released_any l.release)
 
-let mapped_ids l = Cache.fold (fun id _ ids -> id :: ids) l.mapped []
-
-(* Takes the entry [id] out of those [l] maps, if it is there. *)
-let pop_mapped (l, id) =
-  match Cache.find_opt l.mapped id with
-  | Some e ->
-      Cache.remove l.mapped id;
-      Some e
-  | None -> None
-
-(* Takes [d]'s mapping out of [e]'s, if any. *)
-let take_map ((e : entry), d) =
-  match List.find_opt (fun mp -> mp.on == d) e.maps with
-  | Some mp ->
-      e.maps <- List.filter (fun mp' -> mp' != mp) e.maps;
-      Some mp
-  | None -> None
-
-(* Releases [d]'s mappings of the memory that outlives it, once its word shows
-   its last value: each is taken out of its memory's [maps] under the memory's
-   owner's lock, which [free_entry] takes, so whichever comes first releases
-   it, and the memory goes back at its last unmap ([give]). One mapping is
-   taken out at a time and given back before the next: an exception loses at
-   most the one in hand, and a later end finds the rest. *)
-let unmap_all d =
-  let l = Dev.live d in
-  List.iter
-    (fun id ->
-      match Lock.protect l.lock pop_mapped (l, id) with
-      | None -> ()
-      | Some e -> (
-          match Dev.protect e.owner take_map (e, d) with
-          | Some mp -> give d mp.map (Entry e)
-          | None -> ()))
-    (Lock.protect l.lock mapped_ids l)
-
-(* Takes out of [l]'s pair maps one mapping of [d]'s word, if any. *)
-let pop_pair_map (l, d) =
-  match List.partition (fun (p, _) -> p == d) l.pair_maps with
-  | [], _ -> None
-  | (_, r) :: rest, others ->
-      l.pair_maps <- rest @ others;
-      Some r
-
-(* Gives back [c]'s mappings of [d]'s word, one at a time, each while it
-   holds [c]'s drains: [c]'s resources then outlive the mapping in hand. A
-   [c] whose drains are closed has freed its resources, and has no mapping
-   left. *)
-let rec give_word_maps d c =
-  match c.live with
-  | Some l when enter l -> (
-      match
-        match Lock.protect l.lock pop_pair_map (l, d) with
-        | Some r ->
-            give c r (Word d);
-            true
-        | None -> false
-      with
-      | more ->
-          leave c l;
-          if more then give_word_maps d c
-      | exception e ->
-          leave c l;
-          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
-  | _ -> ()
-
-(* Whether this drain gives the word back: no other drain took that step. *)
-let give_word l =
-  match l.word_end with
-  | Moved ->
-      l.word_end <- Given;
-      true
-  | Read | Given -> false
-
-(* Takes one of [l]'s mappings of other devices' words, if any. *)
-let pop_own_word_map l =
-  match l.pair_maps with
-  | pm :: rest ->
-      l.pair_maps <- rest;
-      Some pm
-  | [] -> None
-
-(* Gives back [d]'s mappings of other devices' words, one at a time. *)
-let rec give_own_word_maps d =
-  let l = Dev.live d in
-  match Lock.protect l.lock pop_own_word_map l with
-  | Some (p, r) ->
-      give d r (Word p);
-      give_own_word_maps d
-  | None -> ()
-
-(* The minor count at which [l]'s word moved, read under the lock that
-   orders it after the move. *)
-let moved_at l =
-  Lock.hold l.lock;
-  let n = l.moved_at in
-  Lock.release l.lock;
-  n
-
-(* Gives back the stopped [d]'s timeline word once nothing reads it: its
-   readers move to the C line's copy, then, once every domain passed a minor
-   collection since, the driver gets the word back at the last unmap of it,
-   this one's or a mapper's end's ([give]). [d]'s own mappings of other
-   devices' words go then too: its queue reads them no more.
-
-   [move_word] answers [true] once, so the move is recorded with stores
-   alone, and read back under the same lock. While the word reads [Moved],
-   no new mapping of it counts, and the mappings are taken out and given
-   back one at a time: an exception loses at most the one in hand, and the
-   next drain finds the rest. The word's own count goes last, with the step
-   to [Given] that only one drain takes. *)
-let end_word d =
-  let l = Dev.live d in
-  (* Racy: a stale [Read] finds the word moved, and a stale [Moved] reads again
-     under the lock. *)
-  match l.word_end with
-  | Given -> ()
-  | Read ->
-      if Dev.stopped d && Dev.move_word d then begin
-        let n = Dev.minors () in
-        Lock.hold l.lock;
-        l.moved_at <- n;
-        l.word_end <- Moved;
-        Lock.release l.lock
-      end
-  | Moved ->
-      if Dev.minors () > moved_at l then begin
-        Dev.iter (give_word_maps d);
-        give_own_word_maps d;
-        unmap_all d;
-        if Lock.protect l.lock give_word l then word_unmapped d
-      end
-
-(* Drains the devices whose stop returned ({!Dev.next_ended}), from the index
-   [i] on, other than [d], and ends their words: every drain drains those
-   that hold memory or have a release waiting, and reads the word of those
-   whose work may still run. It allocates nothing for an idle one, as every
-   drain walks them all. *)
-let rec drain_lost d i =
-  match Dev.next_ended i with
-  | 0 -> ()
-  | i ->
-      let e = Dev.of_index i in
-      (match e.live with
-      | Some l when enter l ->
-          (match
-             end_word e;
-             if e != d && not (idle l && l.cached = 0) then drain_own e
-           with
-          | () -> leave e l
-          | exception x ->
-              leave e l;
-              raise x)
-      | _ -> ());
-      drain_lost d (i + 1)
-
-(* An orphaned device's objects are forgotten: nothing of it drains. *)
+(* An orphaned device's objects are forgotten: nothing of it drains. A lost
+   device's cache returns once it is Stopped. *)
 let drain d =
   if not (Dev.orphaned d) then begin
-    (match d.live with
-    | Some l when (not (idle l)) && enter l -> (
-        match drain_own d with
-        | () -> leave d l
-        | exception x ->
-            leave d l;
-            raise x)
-    | _ -> ());
-    drain_lost d 1;
+    let l = d.live in
+    if not (idle l && (l.cached = 0 || not (Dev.is_lost d))) then drain_own d;
     if released_any holds_list then List.iter (route d) (released holds_list);
     drain_holds ()
   end
@@ -1008,7 +738,7 @@ let take_cached_key (l, k) =
   | _ -> None
 
 let take_cached d kind n =
-  let l = Dev.live d in
+  let l = d.live in
   Lock.protect l.lock take_cached_key (l, key n kind)
 
 (* Takes the cached memory of [l] that [take] picks out of its cache. The
@@ -1033,11 +763,8 @@ let take_picked (l, take) =
     (Cache.fold pick l.cache [])
 
 (* Takes the cached memory of [d] that [take] picks out of its cache, in no
-   particular order: none once [d]'s resources are freed. *)
-let take_cache_if d take =
-  match d.live with
-  | None -> []
-  | Some l -> Lock.protect l.lock take_picked (l, take)
+   particular order. *)
+let take_cache_if d take = Lock.protect d.live.lock take_picked (d.live, take)
 
 (* Takes cached memory out of [d]'s cache: all of it, or with [upto] only memory
    that counts in [d]'s budget, until [d] holds at most [upto] bytes. *)
@@ -1045,7 +772,7 @@ let take_cache ?upto d =
   match upto with
   | None -> take_cache_if d (fun _ -> true)
   | Some upto ->
-      let held = ref (Dev.live d).used in
+      let held = ref d.live.used in
       take_cache_if d (fun e ->
           owns e && !held > upto
           && begin
@@ -1076,9 +803,8 @@ let release_taken ~wait d take =
         if reached_or_lost d v then List.iter free_entry taken
         else List.iter (fun e -> defer d (Free e)) taken
 
-(* Whether a call holds [d]'s lock, or its resources are freed: either way a
-   walk over every device passes it by. *)
-let busy d = match d.live with Some l -> Lock.busy l.lock | None -> true
+(* Whether a call holds [d]'s lock: a walk over every device passes it by. *)
+let busy d = Lock.busy d.live.lock
 
 let release_cache ?upto ~wait d = release_taken ~wait d (take_cache ?upto)
 
@@ -1106,9 +832,9 @@ let holds_back pool l =
   List.exists (charged pool) l.retiring
   ||
   let holds = function
-    | _, (Free e | Give e | Unmap (_, Some (Entry e)) | Unload (_, Some e)) ->
+    | _, (Free e | Give e | Unmap (_, Some e) | Unload (_, Some e)) ->
         charged pool e
-    | _, (Unmap (_, (None | Some (Word _))) | Unload (_, None)) -> false
+    | _, (Unmap (_, None) | Unload (_, None)) -> false
   in
   let front, back = l.pending in
   List.exists holds front || List.exists holds back
@@ -1129,12 +855,11 @@ let drain_all () =
 let reclaim_round pool round =
   if Dev.is_host pool then heap_drop ();
   Dev.iter (fun d ->
-      match d.live with
-      | Some l when not (Lock.busy l.lock) ->
-          if holds_back pool l && not (Dev.is_lost d) then
-            wait_for d (Dev.submitted d);
-          release_taken ~wait:true d (fun d -> take_cache_if d (charged pool))
-      | _ -> ());
+      if not (busy d) then begin
+        if holds_back pool d.live && not (Dev.is_lost d) then
+          wait_for d (Dev.submitted d);
+        release_taken ~wait:true d (fun d -> take_cache_if d (charged pool))
+      end);
   drain_all ();
   if round >= 2 then begin
     Gc.full_major ();
@@ -1182,7 +907,7 @@ let kernel_entry image f =
 
 (* Allocation *)
 
-let room d = Int.max 0 (d.budget - (Dev.live d).used)
+let room d = Int.max 0 (d.budget - d.live.used)
 
 (* A fresh memory record over the entry [e] of [d], with its token. *)
 let of_entry d e =
@@ -1193,7 +918,7 @@ let of_entry d e =
         make ?host:l.host ?address:l.address ~handle:l.handle d e.bytes e
     | Io_memory _ | Kept _ -> make d e.bytes e
   in
-  let l = Dev.live d in
+  let l = d.live in
   let live = if m.host >= 0 then l.used else -1 in
   m.token <- token l.release (Memory e) e.bytes (room d) live;
   m
@@ -1303,7 +1028,7 @@ let make_entry m =
     let d = m.dev in
     let e = entry d (Kept m.keep) m.bytes (stamps_new ()) in
     m.entry <- e;
-    m.token <- token (Dev.live d).release (Memory e) 0 max_int (-1)
+    m.token <- token d.live.release (Memory e) 0 max_int (-1)
   end
 
 let ensure_entry m = Dev.protect m.dev make_entry m
@@ -1311,33 +1036,15 @@ let ensure_entry m = Dev.protect m.dev make_entry m
 (* [d]'s mapping of [e], if any. *)
 let find_map ((e : entry), d) = List.find_opt (fun mp -> mp.on == d) e.maps
 
-(* Notes [e] among the entries [l] maps while [l]'s word is read: whether it
-   noted it. *)
-let note_mapped (l, (e : entry)) =
-  l.word_end = Read
-  && begin
-    Cache.replace l.mapped e.id e;
-    true
-  end
-
-(* Counts [mp] in [e] and in its mapper, and adds it to [e]'s mappings,
-   unless its device mapped [e] meanwhile: that mapping, then. *)
+(* Counts [mp] in [e], and adds it to [e]'s mappings, unless its device
+   mapped [e] meanwhile: that mapping, then. *)
 let add_map ((e : entry), mp) =
   Atomic.Loc.incr [%atomic.loc e.unmaps];
-  Atomic.Loc.incr [%atomic.loc (Dev.live mp.on).entry_maps];
   match find_map (e, mp.on) with
   | Some other -> Some other
   | None ->
       e.maps <- mp :: e.maps;
       None
-
-(* Takes [mp] back out of [e]'s mappings: whether it was there. *)
-let take_back ((e : entry), mp) =
-  List.memq mp e.maps
-  && begin
-    e.maps <- List.filter (fun mp' -> mp' != mp) e.maps;
-    true
-  end
 
 let map_host_range d start n =
   match d.kind with
@@ -1374,14 +1081,11 @@ let map_peer d m =
 let peer_memory d (m : memory) =
   match m.dev.kind with
   | Driver _ -> m.dev.key = d.key
-  | Host | Io _ | Ended -> false
+  | Host | Io _ -> false
 
 (* [d]'s new mapping of the memory [m] owns, whose host address is [host] or
-   [-1]. It counts in the memory and is recorded there first, then noted on
-   [d] while [d]'s word is read: a word end of [d] that came first found no
-   note, so the mapping is taken back out of the memory and given back here,
-   and [d], whose word ended, is lost. A word end that comes later finds the
-   note. *)
+   [-1], counted in the memory and recorded there. The mapping lasts until the
+   memory is freed. *)
 let map_new d m host =
   (* Memory of a device of [d]'s driver maps as a peer's; other memory the
      host addresses, as host memory. *)
@@ -1405,40 +1109,18 @@ let map_new d m host =
       let mp = { on = d; map = r; at; by = loc.handle } in
       (* A mapping that lost the race counts too, until it is given back, so
          the memory outlives it. *)
-      let raced = Dev.protect m.dev add_map (e, mp) in
-      match raced with
+      match Dev.protect m.dev add_map (e, mp) with
       | Some other ->
-          give d r (Entry e);
+          give d r e;
           Some other
-      | None ->
-          let l = Dev.live d in
-          let noted = Lock.protect l.lock note_mapped (l, e) in
-          if noted then Some mp
-          else begin
-            let mine = Dev.protect m.dev take_back (e, mp) in
-            if mine then give d r (Entry e);
-            Dev.raise_lost d
-          end)
+      | None -> Some mp)
 
 (* [d]'s mapping of the memory [m] owns, whose host address is [host] or [-1],
-   made at the first borrow and shared by the later ones. A borrow maps outside
-   any counted call on [d], so [d]'s drains are held across the map and its
-   record: a close on another domain cannot free [d]'s resources in between. *)
+   made at the first borrow and shared by the later ones. *)
 let mapping d m host =
-  let found = Dev.protect m.dev find_map (m.entry, d) in
-  match found with
+  match Dev.protect m.dev find_map (m.entry, d) with
   | Some mp -> Some mp
-  | None -> (
-      let l = Dev.live d in
-      if not (enter l) then Dev.raise_lost d
-      else
-        match map_new d m host with
-        | made ->
-            leave d l;
-            made
-        | exception x ->
-            leave d l;
-            Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ()))
+  | None -> map_new d m host
 
 (* Keeps [got] as [e]'s pages, unless a call kept some first. *)
 let set_pages ((e : entry), got) =
@@ -1536,7 +1218,7 @@ let maps d m =
   | Itself | At_host | Addressed | Empty -> true
   | Map ->
       if m.entry == no_entry then ensure_entry m;
-      let l = Dev.live m.dev in
+      let l = m.dev.live in
       Lock.hold l.lock;
       let maps = m.entry.maps in
       Lock.release l.lock;
@@ -1557,23 +1239,15 @@ let of_io d r ~access n =
   drain d;
   let e = entry ~access d (Io_memory { origin = Given; region = r }) n (stamps_new ()) in
   let m = make d n e in
-  m.token <- token (Dev.live d).release (Memory e) n max_int (-1);
+  m.token <- token d.live.release (Memory e) n max_int (-1);
   m
 
-(* A device whose resources are freed keeps the budget set last, and holds no
-   cache. So does {!Dev.forgotten}, which every point of a collected device
-   names: a budget set on it is the one they all answer. *)
 let set_device_budget (d, n) = d.budget <- n
 
 let set_budget d n =
   if n < 0 then invalid_argf "Rig.set_budget: budget %d is negative" n;
-  match d.live with
-  | None -> d.budget <- n
-  | Some l ->
-      Lock.protect l.lock set_device_budget (d, n);
-      if Dev.is_host d then heap_trim n
-      else release_cache ~upto:n ~wait:false d
+  Dev.protect d set_device_budget (d, n);
+  if Dev.is_host d then heap_trim n else release_cache ~upto:n ~wait:false d
 
 let free_cache d =
-  if Dev.is_host d then heap_drop ()
-  else if not (Dev.freed d) then release_cache ~wait:false d
+  if Dev.is_host d then heap_drop () else release_cache ~wait:false d

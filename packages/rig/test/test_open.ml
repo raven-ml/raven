@@ -914,18 +914,15 @@ let test_reopen () =
   not_equal device d d';
   equal (option string) None (Rig.lost d')
 
-(* Moves the memory of closed devices back and ends their words: each round
-   collects, then drains every device through an allocation. *)
+(* Collects, then reclaims, which drains every device: a closed device's
+   memory collected after its close returns so. *)
 let settle () =
-  for _ = 1 to 4 do
-    Gc.full_major ();
-    ignore (Rig.Buffer.create Rig.host 8 : Rig.Buffer.t)
-  done
+  Gc.full_major ();
+  Support.reclaim ()
 
 let lost = function Rig.Lost _ -> true | _ -> false
 
-(* A closed device's record outlives its resources: once its memory returned
-   and its word ended, it answers its properties and timeline as it did. *)
+(* A closed device answers its properties and timeline as it did. *)
 let test_ended () =
   let key : string list Type.Id.t = Type.Id.make () in
   let cap = [ "add" ] in
@@ -971,224 +968,56 @@ let test_ended () =
   raises_match lost (fun () -> Rig.Local.get k d);
   raises_match lost (fun () -> submit (Rig.Submission.make d [||]))
 
-(* A point outlives the values of its device: once the program holds none,
-   the point names the ended stand-in, lost, which has reached every value. *)
-let test_forgotten () =
-  let point () =
-    let d, _ = P.open_ "open:forgotten" in
-    let p = submit (Rig.Submission.make d [||]) in
-    Rig.Point.wait p;
+(* A point names its device for the life of the process, after the program
+   let go of the device: two closed devices' points name two devices, each
+   lost with its own reason. *)
+let test_points_name_device () =
+  let point name =
+    let d, p = P.open_ name in
+    let q = submit (Rig.Submission.make d [||]) in
+    Rig.Point.wait q;
+    P.fault p (name ^ " faulted");
+    (try Rig.Point.wait (submit (Rig.Submission.make d [||]))
+     with Rig.Lost _ -> ());
     Rig.close d;
-    p
+    q
   in
-  let p = point () in
+  let p = point "open:named-a" and q = point "open:named-b" in
   settle ();
-  (* [settle]'s last drain may free the device's resources: a collection after
-     it takes the record. *)
   Gc.full_major ();
-  let e = Rig.Point.device p in
-  equal string "ended" (Rig.name e);
-  equal (option string) (Some "ended") (Rig.lost e);
-  equal bool false (Rig.computes e);
-  equal bool false (Rig.reaches Rig.host e);
-  equal int 0 (Rig.allocated e);
-  equal int 0 (Rig.budget e);
-  equal int 1 (Rig.Point.value p);
+  let d = Rig.Point.device p and e = Rig.Point.device q in
+  not_equal device d e;
+  equal string "open:named-a" (Rig.name d);
+  equal string "open:named-b" (Rig.name e);
+  equal (option string) (Some "open:named-a faulted") (Rig.lost d);
+  equal (option string) (Some "open:named-b faulted") (Rig.lost e);
+  equal string "open:named-a:1" (Format.asprintf "%a" Rig.Point.pp p);
   equal bool true (Rig.Point.reached p);
-  equal string "ended:1" (Format.asprintf "%a" Rig.Point.pp p);
-  raises_match lost (fun () -> Rig.Point.wait p);
-  raises_match lost (fun () -> Rig.Buffer.create e 1)
+  raises_match lost (fun () -> Rig.Point.wait p)
 
-(* A point keeps what its device's loss made of it once the point names the
-   stand-in: memory whose last write the lost device never reached raises
-   Lost, and memory it wrote before its loss reads. While it records
-   backtraces, the runtime keeps the last exception raised, here the Lost that
-   holds the device, until another is, and the thread's copy of it until the
-   thread next releases the domain lock. *)
-let test_forgotten_loss () =
-  let reached = Rig.Buffer.create Rig.host (1 lsl 16) in
-  let dropped = Rig.Buffer.create Rig.host (1 lsl 16) in
-  let point () =
-    let d, p = P.open_ "open:forgotten-loss" in
-    let writes =
-      Rig.Submission.make d [| Support.touching [| Rig.Submission.write |] |]
-    in
-    let write b =
-      submit writes ~buffers:[| require_some (Rig.Buffer.borrow d b) |]
-    in
-    Rig.Point.wait (write reached);
-    let q = write dropped in
-    P.fail p;
-    (try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ());
-    Rig.close d;
-    q
-  in
-  let q = point () in
-  settle ();
-  (try raise Exit with Exit -> ());
-  Thread.delay 0.;
-  Gc.full_major ();
-  equal string "ended" (Rig.name (Rig.Point.device q));
-  let size b = Rig.Buffer.read b Bigarray.char Bigarray.Array1.dim in
-  raises_match ~msg:"a wait for the dropped write" lost (fun () ->
-      Rig.Buffer.wait dropped Rig.Read);
-  raises_match ~msg:"a read of the dropped write" lost (fun () ->
-      size dropped);
-  Rig.Buffer.wait reached Rig.Read;
-  equal ~msg:"a read of the reached write" int (1 lsl 16) (size reached)
-
-(* Submits on [d] work that makes [access] of the host buffer [b]. *)
-let touch d b access =
-  let s = Rig.Submission.make d [| Support.touching [| access |] |] in
-  submit s ~buffers:[| require_some (Rig.Buffer.borrow d b) |]
-
-(* A closed device gives its driver back its mapping of a live device's word,
-   which its queue waited for. *)
-let test_closed_consumer () =
-  let live, _ = P.open_ "open:producer" in
-  let d, p = P.open_ ~waits_on:[ `Host ] "open:consumer" in
-  let b = Rig.Buffer.create Rig.host (1 lsl 16) in
-  ignore (touch live b Rig.Submission.write : Rig.Point.t);
-  Rig.Point.wait (touch d b Rig.Submission.read);
-  Rig.close d;
-  settle ();
-  equal (list int) [] (P.outstanding p);
-  equal ~msg:"the producer" (option string) None (Rig.lost live)
-
-(* A device's word goes back to its driver after every other device's mapping
-   of it, whichever device ends first. The consumer's end gives back its
-   mapping of the producer's word in another domain, held at Polled's free gate
-   while the producer ends. *)
-let test_word_after_maps () =
-  let pd, pp = P.open_ "open:word-producer" in
-  let cd, cp = P.open_ ~waits_on:[ `Host ] "open:word-consumer" in
-  let pt = submit (Rig.Submission.make pd [||]) in
-  Rig.Point.wait (submit ~waits:[| pt |] (Rig.Submission.make cd [||]));
-  equal ~msg:"the consumer maps the word" bool true
-    (List.mem "map_peer" (P.log cp));
-  P.gate_frees cp;
-  let consumer =
-    Domain.spawn (fun () ->
-        Rig.close cd;
-        settle ())
-  in
-  Support.await "the consumer's unmap at the gate" (fun () -> P.freers cp = 1);
-  Rig.close pd;
-  settle ();
-  let words () = List.length (List.filter (( = ) "word") (P.log pp)) in
-  equal ~msg:"the producer's word while it is mapped" int 0 (words ());
-  P.open_frees cp;
-  Domain.join consumer;
-  settle ();
-  equal ~msg:"the producer's word once unmapped" int 1 (words ());
-  equal ~msg:"the producer's regions" (list int) [] (P.outstanding pp);
-  equal ~msg:"the consumer's regions" (list int) [] (P.outstanding cp)
-
-(* A device closed while a submit on another domain maps a producer's word
-   for its waits gives that mapping back, and the producer's word goes back
-   once the producer closes. The submit's locate of the mapping waits at
-   Polled's locate gate while the close ends the consumer's word. *)
-let test_close_beside_pair () =
-  let pd, pp = P.open_ "open:pair-producer" in
-  let cd, cp = P.open_ ~waits_on:[ `Host ] "open:pair-consumer" in
-  let pt = submit (Rig.Submission.make pd [||]) in
-  P.gate_locates cp;
-  let submitter =
-    Domain.spawn (fun () ->
-        match submit ~waits:[| pt |] (Rig.Submission.make cd [||]) with
-        | _ -> "submitted"
-        | exception Rig.Lost _ -> "lost")
-  in
-  Support.await "the submit's locate at the gate" (fun () ->
-      P.locaters cp = 1);
-  Rig.close cd;
-  settle ();
-  P.open_locates cp;
-  equal ~msg:"the submit" string "lost" (Domain.join submitter);
-  settle ();
-  equal ~msg:"the consumer's regions" (list int) [] (P.outstanding cp);
-  Rig.close pd;
-  settle ();
-  let words = List.length (List.filter (( = ) "word") (P.log pp)) in
-  equal ~msg:"the producer's word" int 1 words
-
-(* A wait that would block behind a live device's unreached write raises the
-   loss of a forgotten device's read queued behind it: the read's point keeps
-   the loss once the collector took its device. The live device's sleeps block
-   at its gate, so a wait for its write would never return. The runtime keeps
-   the last exception as [test_forgotten_loss] says. *)
-let test_forgotten_behind_live () =
-  let live, lp = P.open_ "open:behind-live" in
-  let b = Rig.Buffer.create Rig.host (1 lsl 16) in
-  ignore (touch live b Rig.Submission.write : Rig.Point.t);
-  let point () =
-    let d, p = P.open_ ~waits_on:[ `Host ] "open:behind-lost" in
-    let q = touch d b Rig.Submission.read in
-    P.fail p;
-    (try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ());
-    Rig.close d;
-    q
-  in
-  let q = point () in
-  settle ();
-  (try raise Exit with Exit -> ());
-  Thread.delay 0.;
-  Gc.full_major ();
-  equal string "ended" (Rig.name (Rig.Point.device q));
-  P.gate lp;
-  raises_match lost (fun () -> Rig.Buffer.wait b Rig.Read_write);
-  P.open_gate lp
-
-(* Minor words per call of [f], over 100 calls. *)
-let words f =
-  let before = Gc.minor_words () in
-  for _ = 1 to 100 do
-    f ()
-  done;
-  int_of_float (Gc.minor_words () -. before) / 100
-
-(* A wait for a reached point of an ended device the program still holds
-   allocates nothing, as on a live device: a buffer's wait for the memory it
-   wrote, and a submit that waits for the point. *)
-let test_ended_words () =
-  let d, _ = P.open_ "open:ended-words" in
-  let h = Rig.Buffer.create Rig.host (1 lsl 16) in
-  let writes =
-    Rig.Submission.make d [| Support.touching [| Rig.Submission.write |] |]
-  in
-  let p = submit writes ~buffers:[| require_some (Rig.Buffer.borrow d h) |] in
-  Rig.Point.wait p;
-  Rig.close d;
-  settle ();
-  let s = Rig.Submission.make (memory "open:ended-words-waiter") [||] in
-  let run = Rig.Submission.Run.make () in
-  (* Passed as an option made once: a supplied optional argument may allocate
-     its [Some] at each call. *)
-  let waits = Some [| p |] in
-  let wait () = Rig.Buffer.wait h Rig.Read in
-  let submit () =
-    ignore (Rig.submit s ?waits ~run ~buffers:[||] : Rig.Point.t)
-  in
-  wait ();
-  submit ();
-  equal ~msg:"a buffer's wait" int 0 (words wait);
-  equal ~msg:"a submit's wait" int 0 (words submit);
-  equal device d (Rig.Point.device p)
-
-(* Opens and closes keep nothing once the program holds no value of the
-   devices. A window opens and closes [opens] devices, then the rounds of
-   [settle] return their memory and end their words. After a warm window,
-   the OCaml heap ends each window where it started it. macOS's count of
-   the C heap can step by 16 KiB over one window, while a leak grows it in
-   every window: the law checks the least growth of [windows]. *)
+(* Opens and closes in a loop keep a fixed record per device: rig's line,
+   records and reason, and the driver's state, whatever work the device did.
+   Each device allocates, borrows a host buffer the program keeps, and waits
+   for a submit, then closes. After a warm window, each window of [opens]
+   devices grows the C heap by at most Polled's state and [record] bytes a
+   device, and the OCaml heap by at most [record_ml]. macOS's count of the C
+   heap can step by 16 KiB over one window: the law checks the least growth of
+   [windows]. *)
 let opens = 1024
 let windows = 3
+let record = 2048
+let record_ml = 4096
 
-let test_ended_kept () =
+let test_open_close () =
+  let h = Rig.Buffer.create Rig.host (1 lsl 16) in
   let cycle i =
-    let d, _ = P.open_ (Printf.sprintf "open:kept%d" (i mod 2)) in
+    let d, _ = P.open_ (Printf.sprintf "open:cycle%d" (i mod 2)) in
+    let uses =
+      Rig.Submission.make d [| Support.touching [| Rig.Submission.read |] |]
+    in
     ignore (Rig.Buffer.create d 64 : Rig.Buffer.t);
-    Rig.Point.wait (submit (Rig.Submission.make d [||]));
+    let b = require_some (Rig.Buffer.borrow d h) in
+    Rig.Point.wait (submit uses ~buffers:[| b |]);
     Rig.close d
   in
   let heap () =
@@ -1203,6 +1032,7 @@ let test_ended_kept () =
       cycle i
     done;
     settle ();
+    Rig.Buffer.wait h Rig.Read_write;
     (heap () - c, live () - ml)
   in
   ignore (window ());
@@ -1212,49 +1042,13 @@ let test_ended_kept () =
     ~msg:
       (Printf.sprintf "the C heap's least growth over a window (%s)"
          (String.concat ", " (List.map string_of_int cs)))
-    ~than:0
+    ~than:(opens * (P.state_bytes + record))
     (List.fold_left Int.min max_int cs);
   List.iter
     (fun (_, ml) ->
-      at_most int ~msg:"the OCaml heap's growth over a window" ~than:0 ml)
+      at_most int ~msg:"the OCaml heap's growth over a window"
+        ~than:(opens * record_ml) ml)
     grown
-
-(* A memory the program keeps across opens and closes keeps nothing of the
-   devices that used it once they ended: each device's work borrows one host
-   buffer, so its use lies in that memory's record. *)
-let test_ended_used () =
-  let h = Rig.Buffer.create Rig.host (1 lsl 16) in
-  let cycle i =
-    let d, _ = P.open_ (Printf.sprintf "open:used%d" (i mod 2)) in
-    let uses =
-      Rig.Submission.make d [| Support.touching [| Rig.Submission.read |] |]
-    in
-    let b = require_some (Rig.Buffer.borrow d h) in
-    Rig.Point.wait (submit uses ~buffers:[| b |]);
-    Rig.close d
-  in
-  let heap () =
-    match Support.heap_bytes () with
-    | Some n -> n
-    | None -> skip ~reason:"the system counts no C heap" ()
-  in
-  let window () =
-    let c = heap () in
-    for i = 1 to opens do
-      cycle i
-    done;
-    settle ();
-    Rig.Buffer.wait h Rig.Read_write;
-    heap () - c
-  in
-  ignore (window ());
-  let cs = List.init windows (fun _ -> window ()) in
-  at_most int
-    ~msg:
-      (Printf.sprintf "the C heap's least growth over a window (%s)"
-         (String.concat ", " (List.map string_of_int cs)))
-    ~than:0
-    (List.fold_left Int.min max_int cs)
 
 (* An open whose opener blocks holds back only opens of its own name. *)
 let test_blocked_opener () =
@@ -1361,23 +1155,10 @@ let tests =
         test_ended_wakes_waiter;
       test "a close ends an open in flight that an exception ended"
         test_close_ends_interrupted_open;
-      test "an ended device answers as it did before its end" test_ended;
-      test "a point whose device the program dropped names the ended device"
-        test_forgotten;
-      test "a write the forgotten device dropped still raises its loss"
-        test_forgotten_loss;
-      test "a closed device gives back its mapping of a live device's word"
-        test_closed_consumer;
-      test "a word goes back after every mapping of it" test_word_after_maps;
-      test "a close beside a submit's word mapping gives it back"
-        test_close_beside_pair;
-      test "a wait behind a live device raises a forgotten device's loss"
-        test_forgotten_behind_live;
-      test "a wait for a reached point of an ended device allocates nothing"
-        test_ended_words;
-      test "an ended device no value references keeps nothing" test_ended_kept;
-      test "a kept memory keeps nothing of the ended devices that used it"
-        test_ended_used;
+      test "a closed device answers as it did before its close" test_ended;
+      test "a point names its device after the program let go of it"
+        test_points_name_device;
+      test "opens and closes keep a fixed record per device" test_open_close;
     ]
 
 let () = exit (run "rig.open" [ tests ])

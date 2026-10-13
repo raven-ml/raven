@@ -23,7 +23,6 @@
 #include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
-#include <caml/minor_gc.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 #include <caml/threads.h>
@@ -146,23 +145,23 @@ static int64_t now_ms(void) { return (int64_t)(rig_now_ns() / 1000000); }
 
 /* The table of devices
 
-   A device's line lives at its index for the life of the process; its
-   record lives while its OCaml record or a submission holds it. Code that
-   walks the records holds [table_mu], which a record's free takes to leave
-   the table, and holds no runtime lock meanwhile. Code that asks a device
-   by index for its timeline reads its line. */
+   A device's line and record live at its index for the life of the
+   process, from its publication on. Code that walks the records holds
+   [table_mu], so the fork handler finds the table whole, and holds no
+   runtime lock meanwhile. Code that asks a device by index for its
+   timeline reads its line. */
 
-struct rig_line rig_lines[RIG_DEVICES + 1];
+struct rig_line rig_lines[RIG_DEVICES];
 
 static _Atomic(struct rig_device *) devices[RIG_DEVICES];
 static _Atomic int top;
 
-/* The devices whose resources are not freed, a bit per index, the host's
-   never set. A walk visits these alone, so a process that opened and
-   closed many devices walks the few still open. [put] sets a device's bit,
-   and [caml_rig_unlive] clears it once the device has stopped and nothing
-   holds its word. Readers take no lock. */
-static _Atomic uint64_t live[RIG_DEVICES / 64];
+/* The devices whose stop has not returned, a bit per index, the host's
+   never set. Spreads, failures and claims visit these alone, so an open
+   and a close cost the same however many devices the process ended. [put]
+   sets a device's bit and [caml_rig_stopped] clears it. Readers take no
+   lock. */
+static _Atomic uint64_t running[RIG_DEVICES / 64];
 
 static int low_bit(uint64_t w) {
 #ifdef _MSC_VER
@@ -174,19 +173,21 @@ static int low_bit(uint64_t w) {
 #endif
 }
 
-/* The least index from [i] on whose device's resources are not freed, or 0
+/* The least index from [i] on whose device's stop has not returned, or 0
    for none. */
-static int next_live(int i) {
+static int next_running(int i) {
   for (int k = i / 64; k < RIG_DEVICES / 64; k++) {
-    uint64_t w = atomic_load_explicit(&live[k], memory_order_acquire);
+    uint64_t w = atomic_load_explicit(&running[k], memory_order_acquire);
     if (k == i / 64) w &= ~(uint64_t)0 << (i % 64);
     if (w != 0) return k * 64 + low_bit(w);
   }
   return 0;
 }
 
-value caml_rig_next_live(value v_i) {
-  return Val_int(next_live(Int_val(v_i)));
+static void set_running(int i, int on) {
+  uint64_t bit = (uint64_t)1 << (i % 64);
+  if (on) atomic_fetch_or(&running[i / 64], bit);
+  else atomic_fetch_and(&running[i / 64], ~bit);
 }
 
 #ifdef _WIN32
@@ -195,10 +196,18 @@ static rig_mutex table_mu = SRWLOCK_INIT;
 static rig_mutex table_mu = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-/* The device record of index [i], or NULL. [table_mu] is held. */
+/* The published device record of index [i], or NULL. */
 static struct rig_device *device_of(int i) {
   if (i <= 0 || i >= RIG_DEVICES) return NULL;
   return atomic_load_explicit(&devices[i], memory_order_acquire);
+}
+
+/* The least index from [v_i] on of a published device, 0 for none. */
+value caml_rig_next(value v_i) {
+  int n = atomic_load(&top);
+  for (int i = Int_val(v_i); i <= n; i++)
+    if (device_of(i) != NULL) return Val_int(i);
+  return Val_int(0);
 }
 
 static struct rig_line *line_of(int i) { return &rig_lines[i]; }
@@ -223,11 +232,6 @@ static int stopping(struct rig_device *d) {
   int s = state(d);
   return s == RIG_LOSING || s == RIG_OWED || s == RIG_STOPPING;
 }
-
-/* Whether the state [s] is Ended or Stopped: a device's whose stop
-   returned. A forked child's orphaned devices are never counted: nothing
-   drains them. */
-static int returned(int s) { return s == RIG_ENDED || s == RIG_STOPPED; }
 
 /* The word is read before the state: a word the stop raised shows its
    loss. An orphaned device's word is never read: it may be a page the child
@@ -278,21 +282,18 @@ static rig_mutex locks_mu = SRWLOCK_INIT;
 static rig_mutex locks_mu = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-/* The process's loss facts: the devices whose stop is owed; the devices
-   Ended or Stopped whose resources are not freed ([ended]); the
-   first failure, 0 for none, a device's index for its loss, -1 for
-   [fail]'s; [fail]'s reason; and the forks that made this process, which
-   tell a hold made before a fork. */
+/* The process's loss facts: the devices whose stop is owed; the first
+   failure, 0 for none, a device's index for its loss, -1 for [fail]'s;
+   [fail]'s reason; and the forks that made this process, which tell a hold
+   made before a fork. */
 static _Atomic int owed;
-static _Atomic int ended;
 static _Atomic int first;
 static _Atomic(char *) failed;
 static _Atomic int generation;
 
-/* The reasons no line owns: a fork's, the stand-in's, and the one a loss
-   keeps when its own could not be copied. */
+/* The reasons no line owns: a fork's, and the one a loss keeps when its own
+   could not be copied. */
 static char forked_why[] = "forked";
-static char ended_why[] = "ended";
 static char no_memory_why[] = "out of memory";
 
 #define Lock_val(v) (*(struct rig_lock **)Data_custom_val(v))
@@ -306,9 +307,8 @@ static char no_memory_why[] = "out of memory";
    a word may be a page the child shares with its parent, or does not map.
    An io device's state is its io library's, which decides what a fork does
    to it: rig leaves it as it was, and runs a stop that a thread of the
-   parent claimed or owed. A device whose record was freed has stopped: a
-   driver's is orphaned too. [owed] and [ended] are counted anew, without
-   the orphans. A device the child opens is its own. */
+   parent claimed or owed. [owed] is counted anew, without the orphans. A
+   device the child opens is its own. */
 #ifndef _WIN32
 static void forking(void) {
   mutex_lock(&table_mu);
@@ -328,28 +328,24 @@ static void forked_child(void) {
     cond_init(&l->cv);
   }
   atomic_fetch_add(&generation, 1);
-  int n = atomic_load(&top), owing = 0, stopped = 0;
+  int n = atomic_load(&top), owing = 0;
   for (int i = 0; i <= n; i++) {
     struct rig_line *l = line_of(i);
     struct rig_device *d = atomic_load(&devices[i]);
-    if (d != NULL) {
-      mu_init(d);
-      d->turn = d->inside = 0;
-    }
+    if (d == NULL) continue;
+    mu_init(d);
+    d->turn = d->inside = 0;
     if (l->io) {
-      if (d != NULL && stopping(d)) atomic_store(&l->state, RIG_OWED);
+      if (stopping(d)) atomic_store(&l->state, RIG_OWED);
       owing += line_state(l) == RIG_OWED;
-    } else if (i > 0 && (d != NULL || line_state(l) != RIG_LIVE)) {
+    } else if (i > 0) {
       char *none = NULL;
       atomic_compare_exchange_strong(&l->lost, &none, forked_why);
       atomic_store(&l->state, RIG_ORPHANED);
+      set_running(i, 0);
     }
-    uint64_t bit = (uint64_t)1 << (i % 64);
-    stopped += i > 0 && (atomic_load(&live[i / 64]) & bit) != 0 &&
-               returned(line_state(l));
   }
   atomic_store(&owed, owing);
-  atomic_store(&ended, stopped);
 }
 
 static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
@@ -438,43 +434,15 @@ value caml_rig_lock_broadcast(value v_l) {
 
 /* Device records */
 
-/* Frees [d] once nothing holds it: it leaves the table first, so no walk
-   reaches it. Its line stays. Its work has stopped, so no driver writes
-   its time pairs. */
-static void device_free(struct rig_device *d) {
-  mutex_lock(&table_mu);
-  struct rig_device *expected = d;
-  atomic_compare_exchange_strong(&devices[d->index], &expected, NULL);
-  mutex_unlock(&table_mu);
-#ifndef _WIN32
-  pthread_mutex_destroy(&d->mu);
-  pthread_cond_destroy(&d->cv);
-  pthread_mutex_destroy(&d->times.mu);
-#endif
-  for (int i = 0; i < d->times.nchunks; i++) free(d->times.chunks[i]);
-  free(d->times.chunks);
-  free(d->times.free);
-  free(d->record);
-  free(d->name);
-  free(d);
-}
-
-void rig_device_ref(struct rig_device *d) { atomic_fetch_add(&d->refs, 1); }
-
-void rig_device_unref(struct rig_device *d) {
-  if (atomic_fetch_sub(&d->refs, 1) == 1) device_free(d);
-}
-
-static void device_finalize(value v) { rig_device_unref(Device_val(v)); }
-
 static struct custom_operations device_ops = {
-    "rig.device",       device_finalize,
+    "rig.device",       custom_finalize_default,
     custom_compare_default,     custom_hash_default,
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
 /* A device record of index [v_index] named [v_name], not yet published,
-   in a new custom block [*v] that holds it. */
+   in a new custom block [*v] that names it. The record lives for the
+   process. */
 static struct rig_device *record(value *v, value v_index, value v_name) {
   int index = Int_val(v_index);
   struct rig_device *d = calloc(1, sizeof *d);
@@ -485,9 +453,6 @@ static struct rig_device *record(value *v, value v_index, value v_name) {
     caml_raise_out_of_memory();
   }
   mu_init(d);
-  atomic_init(&d->refs, 1);
-  atomic_init(&d->release.refs, 1);
-  d->release.device = d;
   d->index = index;
   d->line = line_of(index);
   d->name = name;
@@ -530,8 +495,7 @@ static void put(struct rig_device *d) {
   int t = atomic_load(&top);
   while (t < d->index && !atomic_compare_exchange_weak(&top, &t, d->index)) {
   }
-  if (d->index > 0)
-    atomic_fetch_or(&live[d->index / 64], (uint64_t)1 << (d->index % 64));
+  if (d->index > 0) set_running(d->index, 1);
 }
 
 /* The host's record, of index 0: never lost, with its driver, whose work
@@ -576,16 +540,14 @@ value caml_rig_state(value v_i) {
   return Val_int(line_state(line_of(Int_val(v_i))));
 }
 
-/* The reason of the device of index [v_i], "" if it is not lost. Its caller
-   keeps the device's OCaml record reachable: the record's collection frees
-   the reason ([caml_rig_forget]). */
+/* The reason of the device of index [v_i], "" if it is not lost. */
 value caml_rig_why(value v_i) {
   char *why =
       atomic_load_explicit(&line_of(Int_val(v_i))->lost, memory_order_acquire);
   return caml_copy_string(why == NULL ? "" : why);
 }
 
-/* The address of [v_d]'s release list, valid while [v_d] is reachable. */
+/* The address of [v_d]'s release list. */
 value caml_rig_device_release(value v_d) {
   return Val_long((intnat)&Device_val(v_d)->release);
 }
@@ -655,7 +617,7 @@ static char *lost_with(struct rig_device *p) {
    the one mutex held. */
 static void spread(struct rig_device *p, char *shared) {
   char *why = shared;
-  for (int i = next_live(1); i != 0; i = next_live(i + 1)) {
+  for (int i = next_running(1); i != 0; i = next_running(i + 1)) {
     struct rig_device *c = device_of(i);
     if (c == NULL || c == p || is_lost(c)) continue;
     if (why == NULL) why = lost_with(p);
@@ -742,7 +704,7 @@ value caml_rig_fail(value v_why) {
   atomic_compare_exchange_strong(&first, &zero, -1);
   caml_enter_blocking_section_no_pending();
   mutex_lock(&table_mu);
-  for (int i = next_live(1); i != 0; i = next_live(i + 1)) {
+  for (int i = next_running(1); i != 0; i = next_running(i + 1)) {
     struct rig_device *d = device_of(i);
     if (d == NULL) continue;
     mu_lock(d);
@@ -790,7 +752,8 @@ value caml_rig_claim(value unit) {
   int claimed = 0;
   caml_enter_blocking_section_no_pending();
   mutex_lock(&table_mu);
-  for (int i = next_live(1); i != 0 && claimed == 0; i = next_live(i + 1)) {
+  for (int i = next_running(1); i != 0 && claimed == 0;
+       i = next_running(i + 1)) {
     struct rig_device *d = device_of(i);
     if (d == NULL || state(d) != RIG_OWED) continue;
     mu_lock(d);
@@ -802,80 +765,16 @@ value caml_rig_claim(value unit) {
   return Val_int(claimed);
 }
 
-/* Sets up the line of the stand-in for devices whose OCaml records were
-   collected, of index RIG_DEVICES: stopped, lost with the reason "ended",
-   and its word and submitted value past every value. Answers its index. */
-value caml_rig_forgotten(value unit) {
-  (void)unit;
-  struct rig_line *l = line_of(RIG_DEVICES);
-  atomic_store(&l->final, (uint64_t)Max_long);
-  atomic_store(&l->submitted, (uint64_t)Max_long);
-  atomic_store(&l->reached, (uint64_t)Max_long);
-  atomic_store(&l->lost, ended_why);
-  atomic_store(&l->word, &l->final);
-  atomic_store(&l->state, RIG_STOPPED);
-  return Val_int(RIG_DEVICES);
-}
-
-/* Frees the reason of the lost device of index [v_i], whose OCaml record was
-   collected: what asks after the device now asks the stand-in. [fail]'s
-   reason, which every device it lost shares, and the static reasons stay. */
-value caml_rig_forget(value v_i) {
-  struct rig_line *l = line_of(Int_val(v_i));
-  char *why = atomic_exchange(&l->lost, ended_why);
-  if (why != atomic_load(&failed) && why != forked_why && why != ended_why &&
-      why != no_memory_why)
-    free(why);
-  return Val_unit;
-}
-
-/* Records that [d]'s stop returned: ENDED for a driver's device, whose
-   work may still run, and STOPPED for an io device, whose work is the
-   caller's. [d]'s resources are not freed, since a device's are freed
-   after its stop, so it joins [ended]. The state and the count change in
-   this one call, which runs no OCaml, so no asynchronous exception comes
-   between them. */
+/* Records that [d]'s stop returned: ENDED, and out of the walks. */
 value caml_rig_stopped(value v_d) {
   CAMLparam1(v_d);
   struct rig_device *d = Device_val(v_d);
   int released = take(d);
-  int was = atomic_exchange(&d->line->state,
-                            d->line->io ? RIG_STOPPED : RIG_ENDED);
-  if (!returned(was)) atomic_fetch_add(&ended, 1);
+  atomic_store(&d->line->state, RIG_ENDED);
+  set_running(d->index, 0);
   cv_broadcast(d);
   give(d, released);
   CAMLreturn(Val_unit);
-}
-
-/* Takes the device of index [v_i], whose resources are freed, out of the
-   walks, and out of [ended] if its stop returned, in one call. */
-value caml_rig_unlive(value v_i) {
-  int i = Int_val(v_i);
-  uint64_t bit = (uint64_t)1 << (i % 64);
-  uint64_t was = atomic_fetch_and(&live[i / 64], ~bit);
-  if ((was & bit) != 0 && returned(line_state(line_of(i))))
-    atomic_fetch_sub(&ended, 1);
-  return Val_unit;
-}
-
-/* The number of devices Ended or Stopped whose resources are not
-   freed. */
-value caml_rig_ended(value unit) {
-  (void)unit;
-  return Val_int(atomic_load(&ended));
-}
-
-/* Moves the device of index [v_i] from ENDED to STOPPED once its word
-   reads its submitted value, read last through its driver for a word
-   behind a transport: then no work of it runs. Answers whether this call
-   moved it. */
-value caml_rig_upgrade(value v_i) {
-  struct rig_line *l = line_of(Int_val(v_i));
-  if (line_state(l) != RIG_ENDED) return Val_false;
-  if (line_word(l) < atomic_load(&l->submitted)) return Val_false;
-  int ended = RIG_ENDED;
-  return Val_bool(
-      atomic_compare_exchange_strong(&l->state, &ended, RIG_STOPPED));
 }
 
 /* Waits with the domain lock released until [d]'s stop returned, or
@@ -919,78 +818,17 @@ value caml_rig_exit(value v_d) {
 
 /* Spins on [d]'s word, yielding the processor with the domain lock
    released, until it reads [v_target], [d] is lost, or [v_ms] milliseconds
-   passed. Answers the last value read. The spin counts as a call inside
-   [d], so [d]'s stop, and the end of its word, wait for it: it reads the
-   word without the domain lock, which no minor collection waits for. */
+   passed. Answers the last value read. The word and the line live for the
+   process, so the spin holds nothing of [d]. */
 value caml_rig_spin(value v_d, value v_target, value v_ms) {
-  CAMLparam1(v_d);
   struct rig_device *d = Device_val(v_d);
   uint64_t target = (uint64_t)Long_val(v_target), w;
   int64_t until = now_ms() + Long_val(v_ms);
   caml_enter_blocking_section_no_pending();
-  mu_lock(d);
-  int lost = is_lost(d);
-  if (!lost) d->inside++;
-  else w = device_word(d);
-  mu_unlock(d);
-  if (lost) {
-    caml_leave_blocking_section();
-    CAMLreturn(Val_long((intnat)w));
-  }
   while ((w = device_word(d)) < target && !is_lost(d) && now_ms() < until)
     relax();
-  mu_lock(d);
-  d->inside--;
-  mu_unlock(d);
   caml_leave_blocking_section();
-  CAMLreturn(Val_long((intnat)w));
-}
-
-/* The end of a stopped device's word. Once nothing reads the driver's
-   word, the record moves its readers to [final], which holds the word's
-   last value; the driver's word is given back once every domain that
-   holds its runtime lock passed a minor collection since, as a reader that
-   held it may have loaded the old address. Readers without the runtime
-   lock read under the device's mutex or as a call inside it. The driver's
-   word is still read by another device's queue while that device's record
-   holds a wait on it its word has not passed. Answers whether this call
-   moved the readers; [d] is stopped. */
-value caml_rig_word_retire(value v_d) {
-  CAMLparam1(v_d);
-  struct rig_device *d = Device_val(v_d);
-  caml_enter_blocking_section_no_pending();
-  mutex_lock(&table_mu);
-  int waited = 0;
-  for (int i = next_live(1); i != 0 && !waited; i = next_live(i + 1)) {
-    struct rig_device *c = device_of(i);
-    if (c == NULL || c == d) continue;
-    mu_lock(c);
-    uint64_t cw = device_word(c);
-    for (int j = 0; j < c->nrecord && !waited; j++)
-      waited = c->record[j].producer == d->index && c->record[j].u > cw;
-    mu_unlock(c);
-  }
-  mutex_unlock(&table_mu);
-  int moved = 0;
-  if (!waited) {
-    mu_lock(d);
-    _Atomic uint64_t *w = atomic_load(&d->line->word);
-    moved = w != &d->line->final && d->inside == 0;
-    if (moved) {
-      atomic_store(&d->line->final, atomic_load(w != NULL ? w : &d->line->seen));
-      atomic_store(&d->line->word, &d->line->final);
-    }
-    mu_unlock(d);
-  }
-  caml_leave_blocking_section();
-  CAMLreturn(Val_bool(moved));
-}
-
-/* The minor collections the program made: each one waited for every domain
-   that holds its runtime lock. */
-value caml_rig_minors(value unit) {
-  (void)unit;
-  return Val_long((intnat)atomic_load(&caml_minor_collections_count));
+  return Val_long((intnat)w);
 }
 
 /* The producers [d]'s unreached work waits on in its queue, each once, for

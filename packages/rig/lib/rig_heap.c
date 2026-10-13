@@ -67,15 +67,8 @@ value caml_rig_arch(value unit) {
    the token, as a generational global root. When the collector frees the
    token, in whichever domain sweeps it, its finaliser links the node onto
    its device's list, with no allocation and no lock. The device takes the
-   list at its next drain.
-
-   A device's list lies in its C record, which each live token holds. The
-   list counts its device and its live tokens ([refs]). Before its device's
-   resources are freed, the list is closed, once no token is live and no
-   node waits ([caml_rig_release_close]). A token made on a closed list is
-   inert: it links nothing, and its resource is never released. Only a
-   token made in a race with its device's free is, and its device is
-   lost. */
+   list at its next drain. A device's list lies in its C record, which lives
+   for the process. */
 
 struct release_node {
   struct release_node *next;
@@ -92,35 +85,11 @@ value caml_rig_release_list(value unit) {
   (void)unit;
   struct release_list *l = calloc(1, sizeof *l);
   if (l == NULL) caml_raise_out_of_memory();
-  atomic_init(&l->refs, 1);
   return Val_long((intnat)l);
-}
-
-/* Closes the list [v_list] if no token of it is live and no node waits on
-   it: whether it did. A token links its node before its count leaves, so
-   the head is read after the count. */
-value caml_rig_release_close(value v_list) {
-  struct release_list *l = (struct release_list *)Long_val(v_list);
-  intptr_t one = 1;
-  if (!atomic_compare_exchange_strong(&l->refs, &one, 0)) return Val_false;
-  if (atomic_load(&l->head) == NULL) return Val_true;
-  atomic_store(&l->refs, 1);
-  return Val_false;
-}
-
-/* Counts a token of [l], and holds its device, unless [l] is closed:
-   whether it did. */
-static int token_ref(struct release_list *l) {
-  intptr_t n = atomic_load(&l->refs);
-  while (n > 0 && !atomic_compare_exchange_weak(&l->refs, &n, n + 1)) {
-  }
-  if (n > 0 && l->device != NULL) rig_device_ref(l->device);
-  return n > 0;
 }
 
 static void token_finalize(value v) {
   struct token *t = Data_custom_val(v);
-  if (t->list == NULL) return;
   struct release_node *n = t->node;
   struct release_node *head =
       atomic_load_explicit(&t->list->head, memory_order_relaxed);
@@ -128,9 +97,6 @@ static void token_finalize(value v) {
     n->next = head;
   while (!atomic_compare_exchange_weak_explicit(
       &t->list->head, &head, n, memory_order_release, memory_order_relaxed));
-  struct rig_device *d = t->list->device;
-  atomic_fetch_sub(&t->list->refs, 1);
-  if (d != NULL) rig_device_unref(d);
 }
 
 static struct custom_operations token_ops = {
@@ -188,12 +154,6 @@ value caml_rig_token(value v_list, value v_record, value v_mem,
                         pace(mem, (mlsize_t)Long_val(v_room),
                              Long_val(v_live)));
   struct token *t = Data_custom_val(v);
-  t->list = NULL;
-  t->node = NULL;
-  if (!token_ref(l)) {
-    free(n);
-    CAMLreturn(v);
-  }
   n->next = NULL;
   n->record = v_record;
   caml_register_generational_global_root(&n->record);

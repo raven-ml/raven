@@ -6,17 +6,15 @@
 (** Dev keeps the table of open devices, and runs each device's timeline
     and loss.
 
-    A device is four records. The C line ([struct rig_line] in
-    [rig_stubs.h]) holds its timeline, its state and its loss, and lasts for
-    the life of the process, since a point names its device by index. The
-    OCaml record ({!Def.device}) holds its facts: the table holds it until
-    its resources are freed, and weakly from then on, so a point finds it
-    while a value of the program refers to it, and {!forgotten} once the
-    collector took it, when the line's reason goes. Two are its resources,
-    freed at its end ({!free_live}): the OCaml {!Def.live} holds its memory
-    lists and what only its work needs, and the C record ([struct
-    rig_device]) its counted calls, its turn and the waits its queues hold
-    on other devices. This module implements {!Rig}'s opening and closing
+    A device is four records, which live for the process, so a point names
+    its device by index for good. The C line ([struct rig_line] in
+    [rig_stubs.h]) holds its timeline, its state and its loss. The OCaml
+    record ({!Def.device}) holds its facts, and its {!Def.live} its memory
+    lists and what only its work needs. The C record ([struct rig_device])
+    holds its counted calls, its turn and the waits its queues hold on
+    other devices. Its driver keeps its word for the process, and its stop
+    releases what the device needs only to run work. This module
+    implements {!Rig}'s opening and closing
     ({!Rig.section-devices}), waits on a timeline ({!Rig.section-timeline})
     and loss ({!Rig.section-loss}).
 
@@ -38,40 +36,20 @@ exception Out_of_memory of device * int
 val host : device
 (** [host] is {!Rig.host}, of index [0]. *)
 
-(** {1:locks Locks}
-
-    Each raises {!Lost} if [d]'s resources are freed. *)
+(** {1:locks Locks} *)
 
 val protect : device -> ('a -> 'b) -> 'a -> 'b
 (** [protect d f x] is {!Lock.protect} of [d]'s lock. *)
 
-val busy : device -> bool
-(** [busy d] is [true] if a call held [d]'s lock when [busy] tried to take
-    it. *)
-
 (** {1:table The table of devices} *)
 
-val forgotten : device
-(** [forgotten] is {!Rig.Point.device}'s stand-in for a device the collector
-    took: lost with the reason ["ended"], Stopped, its word and submitted
-    value [max_int], its budget [0] until set. Its index is past every
-    point's. *)
-
 val of_index : int -> device
-(** [of_index i] is the device of index [i], {!host} for [0], or {!forgotten}
-    once the collector took that device. [i] must be the index of a device
-    made. It allocates once that device's resources are freed. *)
+(** [of_index i] is the device of index [i], {!host} for [0]. [i] must be
+    the index of a device made. *)
 
 val iter : (device -> unit) -> unit
-(** [iter f] applies [f] to each published device other than the host whose
-    resources are not freed ({!freed}), lost ones included, in index order.
-    It costs the devices it visits, however many the process opened. *)
-
-val live : device -> live
-(** [live d] is [d]'s resources. Raises {!Lost} if they are freed. *)
-
-val freed : device -> bool
-(** [freed d] is [true] iff [d]'s resources are freed. *)
+(** [iter f] applies [f] to each published device other than the host, lost
+    ones included, in index order. *)
 
 val is_host : device -> bool
 (** [is_host d] is [true] iff [d] is {!host}. *)
@@ -132,7 +110,8 @@ val local : 'a key -> device -> 'a
 
 val drop_values : device -> unit
 (** [drop_values d] drops every key's value on [d], and every value stored
-    for [d] from then on. {!stop} calls it once the driver's stop returned. *)
+    for [d] from then on. {!run_owed} calls it once the driver's stop
+    returned. *)
 
 (** {1:loss Loss and stops}
 
@@ -143,8 +122,6 @@ val drop_values : device -> unit
     A device's state is one word of its C line:
     {v
     Live ─loss─> Losing ─spread─> Owed ─claimed─> Stopping ─returned─> Ended
-    Ended ─the word reads the last submitted value─> Stopped
-    Stopping ─returned, for an io device─> Stopped
     any state, in a forked child, for a driver's device ─> Orphaned
     v}
     A device is lost once. The first loss, by {!lose}, {!close}, {!fail} or
@@ -155,34 +132,11 @@ val drop_values : device -> unit
     has the reason ["<name> lost"], where <name> is the device it waited on,
     or, under {!fail}, [fail]'s reason. The stop is then owed, and
     {!run_owed} runs it once no counted call on the device is in flight. An
-    io device is Stopped once its stop returns. A driver's device stays
-    Ended until its word reads its last submitted value, since work it took
-    before the loss may still run, and only then are its memory and objects
-    given back.
-
-    A Stopped device's timeline word ends in three steps, each taken by a
-    drain ({!Memory.drain}):
-    + While another device's queue holds a wait on the word that its own
-      word has not passed, the word stays, since that queue still reads it.
-    + Then {!move_word} points the C line's readers at a copy of the
-      word's last value in the line. Every later read reads the copy,
-      including the read for a point a stamp names, so the word can end
-      while stamps still name its values.
-    + The driver gets the word back once a minor collection has run since
-      the move, after every other device's mapping of it. The collection
-      waits for every domain that holds its runtime lock, so a reader that
-      loaded the word's address before the move has finished with it. A
-      reader without the runtime lock reads under the device's mutex, or,
-      as a spin on the word, counts as a call in flight on the device
-      ([inside] in the C record), which the stop and the move wait for.
-
-    Once its word is given back, its memory has all returned and no drain
-    is in flight on it, a Stopped device's resources are freed
-    ({!free_live}). The C record goes once neither its custom block nor a
-    prepared submission holds it, and its lock once collected, so a call
-    that read them before the free finishes with them. From then on the
-    device answers from its facts and its line, and a use of its resources
-    raises {!Lost}.
+    Ended device is {e Stopped} once its word reads its last submitted
+    value, at once for an io device, whose work is the caller's. Work a
+    driver's device took before the loss may run until then, and only then
+    are its memory and objects given back. Its word, records and line stay
+    for the process.
 
     A forked child makes every lock anew. Each driver's device it inherited
     is Orphaned, and lost with the reason ["forked"] unless it was lost
@@ -207,33 +161,17 @@ val raise_lost : device -> 'a
     lost. *)
 
 val stop_returned : device -> bool
-(** [stop_returned d] is [true] iff [d] is Ended, Stopped or Orphaned. *)
+(** [stop_returned d] is [true] iff [d] is Ended or Orphaned. *)
 
 val stopped : device -> bool
-(** [stopped d] is [true] iff [d] is Stopped: its stop returned and, for a
-    driver's device, its word reads its last submitted value, so no work of
-    [d] runs and its objects may be given back. For a word with no host
-    address it asks the driver for the word. *)
+(** [stopped d] is [true] iff [d] is Stopped: Ended, and its word reads its
+    last submitted value, so no work of [d] runs and its objects may be
+    given back. For a word with no host address it asks the driver for the
+    word. *)
 
 val answered : (device -> unit) ref
 (** [answered] is called with each device whose stop returned, from
     {!run_owed}. {!Memory} sets it to {!Memory.drain}. *)
-
-val next_ended : int -> int
-(** [next_ended i] is the least index from [i] on of a device that is Ended
-    or Stopped and whose resources are not freed, or [0] for none. Such a
-    device's memory and mappings may go back long after its stop. A forked
-    child's orphaned devices ({!orphaned}) are never among them: nothing
-    drains them. The stop's change of state makes a device one of these, so
-    nothing an exception interrupts can leave a stopped device out. While
-    there are none it reads one count, and it allocates nothing. *)
-
-val free_live : device -> unit
-(** [free_live d] frees [d]'s resources: {!live} raises {!Lost} from then
-    on, and [d] leaves {!ended}, its name's slot in the table and the
-    values it dropped ({!drop_values}), and the table holds it weakly. [d]
-    is Stopped, its word is given back, its memory has all returned and no
-    drain is in flight on it; {!Memory} decides when. *)
 
 val run_owed : unit -> unit
 (** [run_owed ()] runs each owed stop whose device has no counted call in
@@ -264,18 +202,6 @@ val give : device -> (unit -> unit) -> bool
     [f]. An Orphaned device's objects are forgotten: [give] is [true]
     without calling [f]. *)
 
-val move_word : device -> bool
-(** [move_word d] moves the readers of the Stopped [d]'s word to a copy in
-    its C record, once no record of another device holds a wait on the word
-    that its own word has not passed. A reader that holds a domain's
-    runtime lock may still read the driver's word until that domain has
-    passed a minor collection ({!minors}). It is [true] once, for the call
-    that moved them. *)
-
-val minors : unit -> int
-(** [minors ()] is the number of minor collections the program made. Each
-    waits for every domain that holds its runtime lock. *)
-
 val close : device -> unit
 (** [close d] is {!Rig.close}[ d]. *)
 
@@ -300,8 +226,8 @@ val generation : unit -> int
     is the parent's. Waits and
     checks ask whether a point is done ({!is_done}); the return of memory
     asks whether it is settled ({!settled}). A lost device's points are
-    answered from its line, without {!of_index}: {!is_done}, {!settled},
-    {!check} and {!wait_point} on them allocate nothing unless they raise. *)
+    answered from its line: {!is_done}, {!settled}, {!check} and
+    {!wait_point} on them allocate nothing unless they raise. *)
 
 val submitted : device -> int
 (** [submitted d] is {!Rig.submitted}[ d]. *)

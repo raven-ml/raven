@@ -25,13 +25,22 @@
 
 /* Memory devices
 
-   A memory device's state is its driver and its word, alone in a page,
-   which other devices may map. */
+   A memory device's state is its driver and its word, on a line of its own.
+   The states lie in pages that hold nothing else, which other devices may
+   map, one line per device made: a state lives for the process, and the
+   process makes fewer than RIG_DEVICES devices. The pages are the
+   process's zeroed data, resident once a state is made in them. */
 
 struct memory_device {
   const struct rig_driver *driver;
   _Atomic uint64_t word;
 };
+
+#define LINE 64
+#define MOST_PAGE (1 << 16)
+
+static char lines[RIG_DEVICES * LINE + MOST_PAGE];
+static _Atomic int taken;
 
 static void *aligned(size_t align, size_t n) {
 #ifdef _WIN32
@@ -116,13 +125,15 @@ static int memory_commit(void *self, uint64_t v, const char **failure) {
 static const struct rig_driver memory_driver = {memory_room, memory_submit,
                                                 memory_commit, NULL};
 
-/* A memory device's state, which the free of its word gives back. */
+/* A new memory device's state, from the first whole page of [lines] on. */
 value caml_rig_memory_new(value unit) {
   (void)unit;
-  size_t page = rig_page_bytes();
-  struct memory_device *m = aligned(page, page);
-  if (m == NULL) caml_raise_out_of_memory();
-  memset(m, 0, page);
+  uintptr_t page = (uintptr_t)rig_page_bytes();
+  uintptr_t first = ((uintptr_t)lines + page - 1) & ~(page - 1);
+  int i = atomic_fetch_add(&taken, 1);
+  if (i >= RIG_DEVICES) caml_raise_out_of_memory();
+  struct memory_device *m =
+      (struct memory_device *)(first + (uintptr_t)i * LINE);
   m->driver = &memory_driver;
   return caml_copy_nativeint((intnat)m);
 }

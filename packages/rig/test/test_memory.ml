@@ -149,13 +149,11 @@ let test_budget_beside_loss () =
   equal ~msg:"frees" int 3
     (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
 
-(* Collects, then drains every device, round after round, as an allocation of
-   host memory does first. *)
+(* Collects, then reclaims, which drains every device: a closed device's
+   memory collected after its close returns so. *)
 let settle () =
-  for _ = 1 to 4 do
-    Gc.full_major ();
-    ignore (B.create Rig.host 8)
-  done
+  Gc.full_major ();
+  Support.reclaim ()
 
 (* A closed device's cache returns its memory to the driver once the device
    stopped. Buffers of 40 sizes fill 40 keys of the cache, which grows. *)
@@ -235,10 +233,10 @@ let test_raced_maps () =
   equal ~msg:"the mapper's regions once it went back" (list int) []
     (P.outstanding pc)
 
-(* A device closed while a borrow on another domain maps memory for it gives
-   the mapping back, and the memory goes back to its driver once. The borrow's
-   locate of the mapping waits at Polled's locate gate while the close ends
-   the mapper's word. *)
+(* A borrow on another domain that maps memory for a device closed meanwhile
+   is lost or keeps its mapping, which goes back with the memory, once. The
+   borrow's locate of the mapping waits at Polled's locate gate while the
+   close runs. *)
 let test_close_beside_borrow () =
   let o, po = P.open_ "memory:borrow-owner" in
   let d, pd = P.open_ "memory:borrow-mapper" in
@@ -260,7 +258,7 @@ let test_close_beside_borrow () =
   Rig.close d;
   settle ();
   P.open_locates pd;
-  equal ~msg:"the borrow" string "lost" (Domain.join borrower);
+  mem ~msg:"the borrow" string (Domain.join borrower) [ "borrowed"; "lost" ];
   held := None;
   collect o;
   Rig.set_budget o 0;
@@ -269,10 +267,9 @@ let test_close_beside_borrow () =
   equal ~msg:"the memory's frees" int 1
     (List.length (List.filter (fun (a, _) -> a = at) (P.frees po)))
 
-(* Memory goes back to its driver after every other device's mapping of it,
-   whichever ends first. The mapper's end gives back its mapping in another
-   domain, held at Polled's free gate while the memory is collected and its
-   owner's cache emptied. *)
+(* Memory goes back to its driver only after every other device's mapping of
+   it, a closed mapper's included: the memory's free in another domain gives
+   the mapping back first, held at Polled's free gate. *)
 let test_free_after_maps () =
   let o, po = P.open_ "memory:mapped-owner" in
   let d, pd = P.open_ "memory:mapper" in
@@ -285,33 +282,28 @@ let test_free_after_maps () =
   let at, held = mapped () in
   equal ~msg:"the mapper maps the memory" bool true
     (List.mem "map_peer" (P.log pd));
+  Rig.close d;
   P.gate_frees pd;
-  let mapper =
+  held := None;
+  let freer =
     Domain.spawn (fun () ->
-        Rig.close d;
-        settle ())
+        collect o;
+        Rig.set_budget o 0)
   in
   Support.await "the mapper's unmap at the gate" (fun () -> P.freers pd = 1);
-  held := None;
-  collect o;
-  Rig.set_budget o 0;
   equal ~msg:"the memory while it is mapped" bool false (freed po at);
   P.open_frees pd;
-  Domain.join mapper;
-  settle ();
+  Domain.join freer;
   equal ~msg:"the memory once unmapped" bool true (freed po at);
   equal ~msg:"the mapper's regions" (list int) [] (P.outstanding pd)
 
-(* A mapper's resources outlive its mappings of other memory. The memory,
-   mapped by two devices, is freed in another domain, whose give-back of one
+(* Memory two devices map is freed in another domain, whose give-back of one
    mapping waits at that mapper's free gate while it holds the other's
    mapping too. Both gates close first and the other's opens once one
    holds, so the test needs no order of the two. The other mapper meanwhile
-   closes and drains its word's end, which finds no mapping of its own left
-   in the memory. It keeps its resources until the free gives its mapping
-   back: nothing raises its loss, every region goes back, and the memory is
-   freed once. *)
-let test_mapper_outlives_maps () =
+   closes: nothing raises its loss, every region goes back, and the memory
+   is freed once. *)
+let test_mapper_beside_free () =
   let o, po = P.open_ "memory:outlived-owner" in
   let a, pa = P.open_ "memory:outlived-a" in
   let b, pb = P.open_ "memory:outlived-b" in
@@ -386,44 +378,6 @@ let test_drain_beside_loss () =
     (list bool) [ true; true; true ] (List.map (freed p) ats);
   equal ~msg:"frees" int 3
     (List.length (List.filter (fun (a, _) -> List.mem a ats) (P.frees p)))
-
-(* A device stops while another domain's drain, held at a free, gives back the
-   memory of a device stopped before. The second device's buffer outlives that
-   drain, so its memory and its word go back only when a later drain finds the
-   device stopped. *)
-let test_stop_beside_walk () =
-  let d1, p1 = P.open_ "memory:walk-first"
-  and d2, p2 = P.open_ "memory:walk-next" in
-  let at1 = dropped d1 (4 * kib) in
-  let held = ref (Some (B.create d2 (4 * kib))) in
-  let at2 = Support.at (Option.get !held) in
-  let lose p d =
-    P.fail p;
-    try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ()
-  in
-  let frees p at =
-    List.length (List.filter (fun (a, _) -> a = at) (P.frees p))
-  in
-  let words p = List.length (List.filter (( = ) "word") (P.log p)) in
-  lose p1 d1;
-  Gc.full_major ();
-  Gc.full_major ();
-  P.gate_frees p1;
-  let walker = Domain.spawn (fun () -> ignore (B.create Rig.host 8)) in
-  Support.await "the walk's free at the gate" (fun () -> P.freers p1 = 1);
-  lose p2 d2;
-  ignore (B.create Rig.host 8);
-  P.open_frees p1;
-  Domain.join walker;
-  equal ~msg:"the first device's memory, freed once" int 1 (frees p1 at1);
-  equal ~msg:"the first device's word, given back" int 1 (words p1);
-  equal ~msg:"the second device's word, while its buffer lives" int 0
-    (words p2);
-  held := None;
-  collect Rig.host;
-  collect Rig.host;
-  equal ~msg:"the second device's memory, freed once" int 1 (frees p2 at2);
-  equal ~msg:"the second device's word, given back" int 1 (words p2)
 
 (* The host's out-of-memory ladder waits for a device whose work holds back
    host memory, and a fault that wait finds is that device's loss, never the
@@ -978,16 +932,14 @@ let tests =
           test_budget_beside_loss;
         test "a drain beside a loss frees each memory once, then stops"
           test_drain_beside_loss;
-        test
-          "a device that stops while another domain gives back a stopped \
-           device's memory gives back its memory and word"
-          test_stop_beside_walk;
-        test "memory goes back after every mapping of it" test_free_after_maps;
+        test "memory goes back after every mapping of it, a closed mapper's \
+              included"
+          test_free_after_maps;
         test "memory whose last mapping goes before its stop goes back once"
           test_give_beside_stop;
         test "memory two raced maps share goes back after both"
           test_raced_maps;
-        test "a close beside a borrow's mapping gives it back"
+        test "a borrow beside its mapper's close goes back with the memory"
           test_close_beside_borrow;
         test
           "the host's out-of-memory ladder raises a device's fault it finds as \
@@ -1041,8 +993,8 @@ let tests =
         test "host memory an idle device borrowed returns to an allocation"
           test_idle_borrower;
         test "a closed device's cache returns to its driver" test_closed_cache;
-        test "a mapper's resources outlive its mappings of other memory"
-          test_mapper_outlives_maps;
+        test "a mapper closed beside the free of memory it maps raises nothing"
+          test_mapper_beside_free;
       ];
   ]
 

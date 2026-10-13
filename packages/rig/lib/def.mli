@@ -51,14 +51,12 @@ type token
     release list ({!Memory.token}). *)
 
 (** The type for what a device is: the host, a driver's device with its
-    module, handle and region witness, an io device with its module and
-    handle, or the stand-in for the devices whose records were collected
-    ({!Dev.forgotten}). *)
+    module, handle and region witness, or an io device with its module and
+    handle. *)
 type kind =
   | Host
   | Driver : { m : ('a, 'r, 'i) dm; h : 'a; rid : 'r Type.Id.t } -> kind
   | Io : { m : ('a, 'r) im; h : 'a } -> kind
-  | Ended
 
 (** The type for how a device's word advances ({!Rig_edge.completion}), an
     object as an int. *)
@@ -88,11 +86,6 @@ type backing =
   | Io_memory of { origin : origin; region : io_region }
   | Kept of keep
 
-(** The type for the end of a Stopped device's timeline word: read still,
-    its readers moved to the C record's copy ([moved_at] in {!live}), or
-    given back to the driver ({!Dev}). *)
-type word_end = Read | Moved | Given
-
 (** The type for the word as a wait under a hang bound last saw it: its
     value, whether the device was idle then, and since when, in milliseconds
     of the monotonic clock. *)
@@ -100,13 +93,11 @@ type progress = { seen : int; idle : bool; since : int }
 
 type c
 (** The type for custom blocks that hold a device's C record
-    ([struct rig_device] in [rig_stubs.h]), which is freed once neither its
-    block nor a prepared submission holds it. *)
+    ([struct rig_device] in [rig_stubs.h]), which lives for the process. *)
 
-(** The type for devices: {!Rig.t}. A device is its facts, fixed at open
-    and kept while a value of the program or the table of devices holds the
-    record, and its {!live} resources, which it drops at its end
-    ({!Dev.section-loss}). *)
+(** The type for devices: {!Rig.t}. A device is its facts, fixed at open,
+    and its {!live} state. The table of devices holds it for the life of the
+    process. *)
 type device = {
   index : int;  (** Its index in the table of devices, [0] for the host. *)
   name : string;
@@ -127,12 +118,11 @@ type device = {
   mutable closing : int; [@atomic]
       (** The closes of this machine's host under way: each adds one under
           the table's lock and takes it back with one atomic step. *)
-  mutable live : live option;
-      (** Its resources, [None] once it ended. Read without a lock. *)
+  live : live;  (** Its state. *)
 }
 
-(** The type for a device's resources: its C record, its lock, its memory
-    and the facts only its work needs. *)
+(** The type for a device's state: its C record, its lock, its memory and
+    the facts only its work needs. *)
 and live = {
   c : c;  (** Its C record. *)
   queues : Rig_edge.queue array;  (** Its queues, as its driver lists them. *)
@@ -154,10 +144,6 @@ and live = {
       (** Guards the mutable fields after it. The atomic ones among them are
           written under it and also read without it, as by a drain that
           finds nothing to do. *)
-  mutable drains : int;
-      (** The drains in flight on it, [-1] once its resources are freed. *)
-  mutable entries : int; [@atomic]
-      (** The entries of its memory not given back; the host counts none. *)
   mutable used : int; [@atomic]
       (** Its own bytes in live buffers, code and the cache. *)
   mutable cached : int; [@atomic]  (** The bytes in its cache. *)
@@ -172,23 +158,8 @@ and live = {
       (** By producer index, how its queues wait for the producer's values:
           [min_int] undecided, [-1] on the host, otherwise the producer's
           object or its word's address as this device maps it. Grown by
-          replacement, written under the lock, and read without it. *)
-  mutable pair_maps : (device * region) list;
-      (** Its mappings of producers' words, by producer, kept until either
-          word ends. Each counts in its producer's [word_unmaps]. *)
-  mapped : entry Tbl.Make(Int).t;
-      (** The entries it maps, by [id], whose mappings end with its word
-          unless the entry is freed first. *)
-  mutable word_end : word_end;  (** How far the end of its word went. *)
-  mutable moved_at : int;
-      (** The count of minor collections when the word moved, once
-          [Moved]. *)
-  mutable word_unmaps : int; [@atomic]
-      (** Other devices' mappings of its word not given back, plus one until
-          its word ends: the driver gets the word back at [0]. *)
-  mutable entry_maps : int; [@atomic]
-      (** Its mappings of other devices' memory whose region its driver has
-          not taken back: its resources outlive them. *)
+          replacement, written under the lock, and read without it. A
+          mapping of a producer's word lives for the process. *)
   mutable afters : (int * (unit -> unit)) list;
       (** Functions a wait runs once it finds their value reached. *)
 }
@@ -236,12 +207,10 @@ and pending =
   | Free of entry
   | Give of entry
       (** A freed entry whose last mapping went, given back to its driver. *)
-  | Unmap of region * mapped option
-      (** A mapping, and what it maps, given back after its last unmap. *)
+  | Unmap of region * entry option
+      (** A mapping, and the memory it maps, given back after its last
+          unmap. *)
   | Unload of loaded * entry option
-
-(** The type for what a counted mapping maps: memory, or a device's word. *)
-and mapped = Entry of entry | Word of device
 
 (** The type for an image: one a driver loaded, with its module and handle,
     or code the host linked ({!Host_code}). *)

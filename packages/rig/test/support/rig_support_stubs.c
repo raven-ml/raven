@@ -302,8 +302,8 @@ static void unenrol(struct polled *p) {
 
 /* Frees a collected device's state, with its queue. A device that runs
    itself keeps it for its thread, which runs for the life of the process.
-   rig holds the handle, and so the block, until it gave back the device's
-   word: no other device's queue waits on it any more. */
+   rig holds the handle of a device it opened, and so the block, for the
+   process. */
 static void polled_finalize(value v) {
   struct polled *p = Polled_val(v);
   if (p->itself) return;
@@ -894,6 +894,13 @@ static int polled_settle(void *self, uint64_t v, const char **failure) {
   if (!fail) return RIG_OK;
   *failure = "the settle failed";
   return RIG_FAILED;
+}
+
+/* The bytes a device's state takes: whole pages, as it starts on one. */
+value rig_test_polled_state_bytes(value unit) {
+  (void)unit;
+  size_t n = sizeof(struct polled);
+  return Val_long((intnat)((n + page() - 1) / page() * page()));
 }
 
 /* The host address of the device [v_p]'s word. */
