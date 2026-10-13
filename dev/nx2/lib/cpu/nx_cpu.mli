@@ -102,8 +102,8 @@
       each singular value within [g ‖a‖₂ + h] of the exact one, with
       [vectors] or without. The 100 is the iteration's test of convergence
       on the bidiagonal, which drops a superdiagonal element below
-      [u{^7/8}] times its neighbours. Values alone may differ from the
-      vectors' call's in their last bits. *)
+      [max(10, min(100, u{^-1/8})) u] times its neighbours. Values alone
+      may differ from the vectors' call's in their last bits. *)
 
 include Nx_kernel.S
 

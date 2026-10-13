@@ -807,8 +807,8 @@ let law_eigh_spectrum (b : Support.backend) c =
   | _ -> ()
 
 (* svd's bound: γ(16 max (m, n) + 100), the 100 for the bidiagonal
-   iteration's test of convergence, which drops an e below u^(7/8) times
-   its neighbours. *)
+   iteration's test of convergence, which drops an e below
+   max(10, min(100, u^-1/8)) u times its neighbours. *)
 let svd_bound dt ~m ~n = gamma dt ((16 * max m n) + 100)
 
 (* Its absolute term ε(16 max (m, n) + 100), times 2^e. *)
