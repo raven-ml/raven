@@ -4,12 +4,14 @@
   ---------------------------------------------------------------------------*/
 
 /* Contract: y[z, i, j] = init[z, i, j] + sum_k a[z, i, k] * b[z, j, k]
-   (kernels.h's contract_params), four bodies, each its own association,
-   fixed by the dtypes, the shape and the order given, never by a layout:
+   (kernels.h's contract_params), four bodies, each its own association.
+   A float sum's is fixed by the dtypes, k and the order given, never by a
+   layout, m, n, the batch or the tile; an integer sum's skinny ranges also
+   read n and the batch, which no association changes:
 
    - wmma: bfloat16 or float16 operands summed in float32, int8 in int32,
-     on gfx12's WMMA 16 x 16 x 16. Each output sums its k in steps of 16
-     in increasing k, one WMMA a step.
+     on gfx12's WMMA 16 x 16 x 16. Each output sums a chunk's k in steps
+     of 16 in increasing k, one WMMA a step.
 
        global --16-byte loads (zero past the extents; transposing 8 x 8
        blocks for an operand whose free axis is contiguous), two k-tiles
@@ -20,24 +22,29 @@
    - simt (float sums a call gives chain order, and integer sums past 16
      rows): float32 or float64 sums by fma, integer sums wrapping in 64
      bits (a 32-bit accumulator's wrap to 32 bits at the store: the same
-     sum modulo 2^32); each output summed in increasing k.
+     sum modulo 2^32); each output sums a chunk's k in increasing k.
    - skinny (integer sums of 16 rows or fewer): lane l of 32 sums the runs
      k0 + 128 t + 4 l + u, u < 4, of its range in increasing k, and the 32
      lane sums combine by the balanced tree (l, l + 16), then (l, l + 8),
-     (l, l + 4), (l, l + 2), (l, l + 1).
+     (l, l + 4), (l, l + 2), (l, l + 1). Integers wrap, so any association
+     gives their bits.
    - lane (float sums a call gives lane order, at any extents):
      Nx_kernel's lane order, the same bits as nx.cpu's; it never
      splits.
 
-   In the others, [splits] ranges of k (whole k-tiles for wmma and simt)
-   combine in range order (combine.h). In each, init then enters the sum,
-   and the result rounds once to y's dtype. A WMMA operand whose rows
-   along its contiguous axis are not 16-byte vectors, or in a layout with
-   no instance, is first packed into rows of k that are (pack): the same
-   values in the same tiles, so the same bits. A SIMT, skinny or lane
-   operand of a dtype other than its kernel's is packed into the
-   accumulator's dtype, exactly, so these kernels read their own dtype
-   alone. */
+   wmma and simt cut k into chunks of [chunk] k, a whole number of
+   k-tiles of every tile of the family, from 0: each chunk is summed from
+   +0, and the sum is +0 plus the chunks' sums in increasing k. A split
+   gives each workgroup a chunk, whose sum it puts for the last to add
+   (combine.h); without one, a workgroup adds each chunk's sum as it
+   ends. skinny's [splits] ranges add in range order. In each, init then
+   enters the sum, and the result rounds once to y's dtype. A WMMA operand
+   whose rows along its contiguous axis are not 16-byte vectors, or in a
+   layout with no instance, is first packed into rows of k that are
+   (pack): the same values in the same tiles, so the same bits. A SIMT,
+   skinny or lane operand of a dtype other than its kernel's is packed
+   into the accumulator's dtype, exactly, so these kernels read their own
+   dtype alone. */
 
 #include "combine.h"
 #include "device.h"
@@ -354,6 +361,11 @@ DEVICE F fragment(const uint8_t *s, int r, int k, int ldb, int es) {
   return *(const F *)(s + r * ldb + k * es);
 }
 
+/* A constant flag as a type, which selects a lambda's instance. */
+template <bool B> struct Flag {
+  static constexpr bool value = B;
+};
+
 template <int KIND, int AXIS_A, int AXIS_B, typename Tile>
 DEVICE void wmma_contract(const contract_params &p) {
   constexpr int BM = Tile::BM, BN = Tile::BN, BKB = Tile::BKB, WM = Tile::WM,
@@ -380,16 +392,24 @@ DEVICE void wmma_contract(const contract_params &p) {
   const int tm = first + pid % groups % gsz, tn = pid % groups / gsz;
   const int m0 = tm * BM, n0 = tn * BN, z = group_z();
 
+  /* k in chunks of [ck] k-tiles: a split's workgroup takes chunk [split],
+     the only one takes them all. Its KT k-tiles start at kt0. */
   const int kts = ceil_div(p.k, BK), split = group_y();
-  const int kt0 = (int)range_start(kts, split, p.splits);
-  const int KT = (int)range_start(kts, split + 1, p.splits) - kt0;
+  const int ck = p.chunk / BK;
+  const int kt0 = p.splits > 1 ? split * ck : 0;
+  const int KT = p.splits > 1 ? min_(kts - kt0, ck) : kts;
 
   const A a = {(const char *)p.a + (z * p.sa[0] + m0 * p.sa[1]) * ES,
                p.sa[AXIS_A == AXIS_k ? 1 : 2] * ES, p.m - m0, p.k};
   const B b = {(const char *)p.b + (z * p.sb[0] + n0 * p.sb[1]) * ES,
                p.sb[AXIS_B == AXIS_k ? 1 : 2] * ES, p.n - n0, p.k};
 
-  typename W::tile acc[MI][NI] = {};
+  /* [acc] sums the chunk under way, from +0; at the chunk's end it is
+     added to [sum], or put as its partial in a split. */
+  typename W::tile acc[MI][NI] = {}, sum[MI][NI] = {};
+  constexpr int N = MI * NI * 8;
+  const int64_t tile = ((int64_t)z * tiles_m + tm) * tiles_n + tn;
+  Acc *const part = (Acc *)p.partials + (size_t)tile * p.splits * N * THREADS;
 
   /* Tile kt of this range's k into the register set [s]. Past the range
      it loads the last tile again, unused: under a branch, the loads would
@@ -442,26 +462,54 @@ DEVICE void wmma_contract(const contract_params &p) {
     stash(0, 0, 0);
     barrier();
   }
-  for (int kt = 0; kt < KT; kt += 2) {
-    fetch(0, kt + 2);
-    compute(0);
-    if (kt + 1 < KT) stash(1, 1, kt + 1);
-    barrier();
-    if (kt + 1 >= KT) break;
-    fetch(1, kt + 3);
-    compute(1);
-    if (kt + 2 < KT) stash(0, 0, kt + 2);
-    barrier();
-  }
+  /* The end of tile kt: at a chunk's end before the last, before tile
+     [end], the chunk's sum leaves [acc] for [sum]. */
+  int end = min_(KT, ck);
+  auto close = [&](int kt) __attribute__((always_inline)) {
+    if (kt + 1 != end || end == KT) return;
+    end = min_(KT, end + ck);
+#pragma unroll
+    for (int i = 0; i < MI; i++)
+#pragma unroll
+      for (int j = 0; j < NI; j++) {
+        sum[i][j] += acc[i][j];
+        acc[i][j] = typename W::tile{};
+      }
+  };
+  /* The k loop, closing chunks where [closes]. On the 16-row tile, a
+     workgroup whose k-tiles are one chunk, a split's or the only one's,
+     runs it without [close]: on the R9700 the float16 kernel of 16 x 4096
+     x 4096 takes 5% longer with it. The other tiles run faster with it
+     (2048 cubed 5%, 512 x 201088 x 2880 7%), and keep it. */
+  auto run = [&](auto closes) __attribute__((always_inline)) {
+    for (int kt = 0; kt < KT; kt += 2) {
+      fetch(0, kt + 2);
+      compute(0);
+      if constexpr (decltype(closes)::value) close(kt);
+      if (kt + 1 < KT) stash(1, 1, kt + 1);
+      barrier();
+      if (kt + 1 >= KT) break;
+      fetch(1, kt + 3);
+      compute(1);
+      if constexpr (decltype(closes)::value) close(kt + 1);
+      if (kt + 2 < KT) stash(0, 0, kt + 2);
+      barrier();
+    }
+  };
+  if (BM == 16 && KT <= ck) run(Flag<false>{});
+  else run(Flag<true>{});
 
+  /* The last chunk's sum: added, or put as the split's partial. */
   if (p.splits > 1) {
-    Acc(&flat)[MI * NI * 8] = *reinterpret_cast<Acc(*)[MI * NI * 8]>(acc);
-    const int64_t tile = ((int64_t)z * tiles_m + tm) * tiles_n + tn;
-    if (!combine(flat,
-                 (Acc *)p.partials + (size_t)tile * p.splits * MI * NI * 8 * THREADS,
-                 p.tickets + tile, p.splits, split, THREADS))
-      return;
-  }
+    put(*reinterpret_cast<Acc(*)[N]>(acc), part + (size_t)split * N * THREADS,
+        THREADS);
+    if (!last(p.tickets + tile, p.splits)) return;
+    chain(*reinterpret_cast<Acc(*)[N]>(sum), part, p.splits, THREADS);
+  } else
+#pragma unroll
+    for (int i = 0; i < MI; i++)
+#pragma unroll
+      for (int j = 0; j < NI; j++) sum[i][j] += acc[i][j];
 
   /* The outputs through the local data share, in passes of whole wave rows:
      a pass's waves write their sums, then every work-item stores 8 outputs
@@ -480,7 +528,7 @@ DEVICE void wmma_contract(const contract_params &p) {
 #pragma unroll
           for (int e = 0; e < 8; e++)
             st[(wm0 - base + i * 16 + lane / 16 * 8 + e) * LD + wn0 + j * 16 +
-               lane % 16] = acc[i][j][e];
+               lane % 16] = sum[i][j][e];
     barrier();
     store_rows(p, st, LD, min_(ROWS, BM - base), BN, z, m0 + base, n0,
                THREADS);
@@ -565,9 +613,12 @@ template <typename T, int BM, int BN> DEVICE void simt_contract(const contract_p
   const int gsz = min_(tiles_m - first, 8);
   const int tm = first + pid % groups % gsz, tn = pid % groups / gsz;
   const int m0 = tm * BM, n0 = tn * BN;
+  /* k in chunks of [ck] k-tiles: a split's workgroup takes chunk [split],
+     the only one takes them all, its k-tiles [kt0, kt1). */
   const int kts = ceil_div(p.k, BK), split = group_y();
-  const int kt0 = (int)range_start(kts, split, p.splits);
-  const int kt1 = (int)range_start(kts, split + 1, p.splits);
+  const int ck = p.chunk / BK;
+  const int kt0 = p.splits > 1 ? split * ck : 0;
+  const int kt1 = p.splits > 1 ? min_(kts, kt0 + ck) : kts;
 
   const Simt_operand<T, BM, BK> a = {(const char *)p.a + z * p.sa[0] * sizeof(T),
                                      p.sa[1], p.sa[2], p.m, p.k, m0,
@@ -578,11 +629,16 @@ template <typename T, int BM, int BN> DEVICE void simt_contract(const contract_p
                                      p.sb[1] == 1 && p.sb[2] != 1,
                                      (p.aligned & NX_CONTRACT_B_VECTORS) != 0};
 
-  T acc[TM][TN];
+  /* [acc] sums the chunk under way, from +0; at the chunk's end it is
+     added to [sum], or put as its partial in a split. */
+  constexpr int N = TM * TN;
+  T acc[TM][TN], sum[TM][TN];
 #pragma unroll
   for (int i = 0; i < TM; i++)
 #pragma unroll
-    for (int j = 0; j < TN; j++) acc[i][j] = T(0);
+    for (int j = 0; j < TN; j++) acc[i][j] = sum[i][j] = T(0);
+  const int64_t tile = (int64_t)z * tiles_m * tiles_n + pid;
+  T *const part = (T *)p.partials + (size_t)tile * p.splits * N * THREADS;
   T ra[Simt_operand<T, BM, BK>::E], rb[Simt_operand<T, BN, BK>::E];
   if (kt0 < kt1) {
     a.load(ra, (int64_t)kt0 * BK, tid);
@@ -592,6 +648,8 @@ template <typename T, int BM, int BN> DEVICE void simt_contract(const contract_p
   }
   barrier();
 
+  /* A chunk before the last ends before tile [end]. */
+  int end = min_(kt1, kt0 + ck);
   for (int kt = kt0, buf = 0; kt < kt1; kt++, buf ^= 1) {
     const bool more = kt + 1 < kt1;
     if (more) {
@@ -605,14 +663,27 @@ template <typename T, int BM, int BN> DEVICE void simt_contract(const contract_p
       T va[TM], vb[TN];
 #pragma unroll
       for (int e = 0; e < HM; e++)
-        va[e] = as[buf][k][ty * HM + e], va[HM + e] = as[buf][k][BM / 2 + ty * HM + e];
+        va[e] = as[buf][k][ty * HM + e],
+        va[HM + e] = as[buf][k][BM / 2 + ty * HM + e];
 #pragma unroll
       for (int e = 0; e < HN; e++)
-        vb[e] = bs[buf][k][tx * HN + e], vb[HN + e] = bs[buf][k][BN / 2 + tx * HN + e];
+        vb[e] = bs[buf][k][tx * HN + e],
+        vb[HN + e] = bs[buf][k][BN / 2 + tx * HN + e];
 #pragma unroll
       for (int i = 0; i < TM; i++)
 #pragma unroll
         for (int j = 0; j < TN; j++) acc[i][j] = fma_(va[i], vb[j], acc[i][j]);
+    }
+    /* At a chunk's end before the last, its sum leaves [acc] for [sum]. */
+    if (kt + 1 == end && more) {
+      end = min_(kt1, end + ck);
+#pragma unroll
+      for (int i = 0; i < TM; i++)
+#pragma unroll
+        for (int j = 0; j < TN; j++) {
+          sum[i][j] += acc[i][j];
+          acc[i][j] = T(0);
+        }
     }
     if (more) {
       a.stash(as[buf ^ 1], ra, tid);
@@ -621,13 +692,17 @@ template <typename T, int BM, int BN> DEVICE void simt_contract(const contract_p
     barrier();
   }
 
+  /* The last chunk's sum: added, or put as the split's partial. */
   if (p.splits > 1) {
-    T(&flat)[TM * TN] = *reinterpret_cast<T(*)[TM * TN]>(acc);
-    const int64_t tile = (int64_t)z * tiles_m * tiles_n + pid;
-    if (!combine(flat, (T *)p.partials + (size_t)tile * p.splits * TM * TN * THREADS,
-                 p.tickets + tile, p.splits, split, THREADS))
-      return;
-  }
+    put(*reinterpret_cast<T(*)[N]>(acc), part + (size_t)split * N * THREADS,
+        THREADS);
+    if (!last(p.tickets + tile, p.splits)) return;
+    chain(*reinterpret_cast<T(*)[N]>(sum), part, p.splits, THREADS);
+  } else
+#pragma unroll
+    for (int i = 0; i < TM; i++)
+#pragma unroll
+      for (int j = 0; j < TN; j++) sum[i][j] += acc[i][j];
   /* The outputs through the local data share, a half of the rows a pass:
      work-item (tx, ty)'s first HM rows, then its last HM. */
 #pragma unroll
@@ -636,23 +711,24 @@ template <typename T, int BM, int BN> DEVICE void simt_contract(const contract_p
     for (int i = 0; i < HM; i++)
 #pragma unroll
       for (int j = 0; j < TN; j++)
-        smem[(ty * HM + i) * BN + (j < HN ? tx * HN + j : BN / 2 + tx * HN + j - HN)] =
-            acc[half * HM + i][j];
+        smem[(ty * HM + i) * BN +
+             (j < HN ? tx * HN + j : BN / 2 + tx * HN + j - HN)] =
+            sum[half * HM + i][j];
     barrier();
     store_rows(p, smem, BN, BM / 2, BN, z, m0 + half * BM / 2, n0, THREADS);
     barrier();
   }
 }
 
-/* The skinny kernels (integer sums, m <= 16): lane l of 32 sums, for each t, the run of
-   four k0 + 128 t + 4 l + u, u < 4, in increasing k, and the 32 lane sums
-   combine by the balanced tree (l, l + 16), then (l, l + 8), (l, l + 4),
-   (l, l + 2), (l, l + 1). Two forms, each its own kernel so that each has
-   the registers it needs: column, one wave per output column j when b's
-   k axis is contiguous (8 columns a workgroup), lanes across k, a run one
-   vector; across, a workgroup of 32 columns by 8 lane groups, work-item
-   (x, y) summing the lane classes y, y + 8, y + 16, y + 24 of column x,
-   reading rows of b across x. */
+/* The skinny kernels (integers, m <= 16): lane l of 32 sums, for each t,
+   the run of four k0 + 128 t + 4 l + u, u < 4, in increasing k, and the
+   32 lane sums combine by the balanced tree (l, l + 16), then (l, l + 8),
+   (l, l + 4), (l, l + 2), (l, l + 1). Two forms, each its own kernel so
+   that each has the registers it needs: column, one wave per output
+   column j when b's k axis is contiguous (8 columns a workgroup), lanes
+   across k, a run one vector; across, a workgroup of 32 columns by 8 lane
+   groups, work-item (x, y) summing the lane classes y, y + 8, y + 16,
+   y + 24 of column x, reading rows of b across x. */
 enum { FORM_column, FORM_across };
 
 template <typename T> DEVICE T tree32(T v) {
@@ -838,9 +914,10 @@ DEVICE void skinny_contract(const contract_params &p) {
   T v[2] = {sums[item()], sums[256 + item()]};
   if (splits > 1) {
     const int64_t tile = (int64_t)z * ceil_div(p.n, cols) + group();
-    if (!combine(v, (T *)p.partials + (size_t)tile * splits * 2 * THREADS,
-                 p.tickets + tile, splits, split, THREADS))
-      return;
+    T *const part = (T *)p.partials + (size_t)tile * splits * 2 * THREADS;
+    put(v, part + (size_t)split * 2 * THREADS, THREADS);
+    if (!last(p.tickets + tile, splits)) return;
+    chain(v, part, splits, THREADS);
   }
 #pragma unroll
   for (int h = 0; h < 2; h++) {

@@ -185,7 +185,8 @@ let contracts =
       contract ~order:chain bf16 f32 bf16 512 201088 2880;
       contract ~order:lane bf16 f32 bf16 1 5120 2880;
       contract ~order:lane bf16 f32 bf16 1 201088 2880;
-      (* Products of m <= 16 whose grids the plan splits 4, 2 and 8 ways. *)
+      (* Products of m <= 16: one row in lane order, and 16 rows in chain
+         order on the 16-row tile, k in two chunks, a workgroup each. *)
       contract ~order:lane bf16 f32 bf16 1 2880 4096;
       contract ~order:chain bf16 f32 bf16 16 4096 4096;
       contract ~order:chain f16 f32 f16 16 4096 4096;
@@ -211,6 +212,12 @@ let contracts =
       contract
         ~order:(Nx_amd.contract_order ~rows:20480 ~columns:1)
         f32 f32 f32 20480 1 2880;
+      (* Few outputs and a long k: a workgroup a chunk of k fills the GPU. *)
+      contract ~order:chain bf16 f32 bf16 128 128 65536;
+      contract ~order:chain bf16 f32 bf16 256 256 16384;
+      contract ~order:chain f32 f32 f32 64 64 65536;
+      (* Many small products of a long k, whose batch fills the GPU unsplit. *)
+      contract ~batch:256 ~order:chain f32 f32 f32 64 72 1100;
     ]
 
 let all = floors @ contracts

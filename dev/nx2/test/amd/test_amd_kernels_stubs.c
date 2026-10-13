@@ -58,7 +58,7 @@ static const fact fields[] = {
     F(contract_params, splits),     F(contract_params, a_dtype),
     F(contract_params, b_dtype),    F(contract_params, init_dtype),
     F(contract_params, y_dtype),    F(contract_params, acc_dtype),
-    F(contract_params, aligned),    F(contract_params, zero),
+    F(contract_params, aligned),    F(contract_params, chunk),
     F(pack_params, src),            F(pack_params, dst),
     F(pack_params, s),              F(pack_params, lead),
     F(pack_params, batch),          F(pack_params, rows),

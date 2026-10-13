@@ -3,15 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A call groups its view and chooses its launch, writes the launch into its
-   domain's run and submits the submission of the launch's sequence, made
-   once per device, through the door:
+(* A call groups its view and chooses its launches, one a window of its
+   results, and through the door writes each into its domain's run and submits
+   the submission of the launch's sequence, made once per device:
 
-   contract --> device (Rig.Local) --> Plan.choose --> workspace, submission
-   --> frame (the domain's, or a fresh one) --> Plan.write into its run -->
-   door --> Rig.submit
+   contract --> device (Rig.Local) --> Plan.choose --> workspace --> frame
+   (the domain's, or a fresh one) --> door --> for each launch: submission,
+   Plan.write into the run, Rig.submit
 
-   A call that finds every cache warm allocates its view, its launch, its
+   A call that finds every cache warm allocates its view, its launches, their
    buffers and the door's work, and nothing that outlives it. *)
 
 module A = Nx_array
@@ -109,18 +109,26 @@ let reads ~init a b =
   | None -> [| A.Any a; A.Any b |]
   | Some i -> [| A.Any a; A.Any b; A.Any i |]
 
-(* The door's work: a launch's submission, with the run its parameters are
-   written into and its buffers. *)
-let issue (sub, run, buffers) = ignore (Rig.submit sub ~run ~buffers)
+(* The door's work: the launches [ls] on [d], each written into [run] and
+   submitted in order, the workspace their only shared buffer, which each names
+   [Read_write]. *)
+let issue (d, dv, run, workspace, ls) =
+  for i = 0 to Array.length ls - 1 do
+    let l = ls.(i) in
+    let sub = submission d dv l in
+    Plan.write l run sub;
+    ignore (Rig.submit sub ~run ~buffers:(Plan.buffers l ~workspace))
+  done
 
-(* [write]s a launch of [sub] into a frame's run and submits [sub] with
-   [buffers] through the door. *)
-let submit ~written ~read sub buffers write =
+(* Submits [ls] on [d] through the door, in a frame's run. *)
+let submit ~written ~read d dv ls =
+  let need = ref 0 in
+  for i = 0 to Array.length ls - 1 do
+    need := Int.max !need (Plan.workspace ls.(i))
+  done;
+  let workspace = workspace d dv !need in
   let f = take () in
-  match
-    write f.run sub;
-    A.door ~written ~read issue (sub, f.run, buffers)
-  with
+  match A.door ~written ~read issue (d, dv, f.run, workspace, ls) with
   | answer ->
       release f;
       answer
@@ -161,12 +169,8 @@ let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
       else
         match Plan.choose ~order ~batch ~contracting ~acc ~dst ~init a b with
         | Error answer -> answer
-        | Ok Nothing -> A.door ~written ~read nothing ()
-        | Ok (Launch l) ->
-            let workspace = workspace d dv (Plan.workspace l) in
-            let sub = submission d dv l in
-            let buffers = Plan.buffers l ~workspace in
-            submit ~written ~read sub buffers (Plan.write l))
+        | Ok [||] -> A.door ~written ~read nothing ()
+        | Ok ls -> submit ~written ~read d dv ls)
 
 (* Elementwise *)
 

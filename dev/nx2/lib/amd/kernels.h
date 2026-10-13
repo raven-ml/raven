@@ -101,10 +101,12 @@ enum nx_amd_kernel { NX_AMD_KERNELS(NX_AMD_ENUM) NX_AMD_KERNEL_COUNT };
 /* y[z, i, j] = init[z, i, j] + sum_k a[z, i, k] * b[z, j, k], rounded once
    to y's dtype, for z < batch, i < m, j < n: each operand's element
    (z, i, k) at its address plus z, i and k times its strides, in elements.
-   [init] is NULL for none. [partials] and [tickets] are the workspace's when
-   [splits] > 1: the sum over k is cut into [splits] ranges, each summed by
-   its own workgroup, and the last to arrive adds them in range order
-   (combine.h). A SIMT kernel reads a and b of [a_dtype] and [b_dtype],
+   [init] is NULL for none. The WMMA and SIMT kernels sum k in chunks of
+   [chunk] k, a whole number of their k-tiles. [partials] and [tickets] are
+   the workspace's when [splits] > 1: the sum over k is cut into [splits]
+   parts, its chunks (ranges for skinny), each summed by its own workgroup,
+   and the last to arrive adds the partials in order (combine.h). A SIMT
+   kernel reads a and b of [a_dtype] and [b_dtype],
    converting to its accumulator. The sum, of [acc_dtype], reaches y as a
    cast from it does. [aligned] holds the NX_CONTRACT_ bits below. */
 typedef struct {
@@ -114,9 +116,7 @@ typedef struct {
   int64_t sa[3], sb[3], si[3], sy[3];
   int32_t batch, m, n, k;
   int32_t splits, a_dtype, b_dtype, init_dtype;
-  int32_t y_dtype, acc_dtype, aligned;
-  int32_t zero; /* 0: the last word, which would be padding, so that the
-                   parameters' bytes are their fields' alone */
+  int32_t y_dtype, acc_dtype, aligned, chunk;
 } contract_params;
 
 /* contract_params' bits of [aligned]. */

@@ -7,10 +7,11 @@
    or y is complex or narrower than a byte; a float operand or init is wider
    than a float accumulator, which would round it before the sum; init is of the
    other kind than the accumulator; an integer meets a float accumulator or the
-   reverse; the batch is above 65,535 (the grid's z); m, n or k is above 2^31 -
-   1; a pack's elements outnumber the work-items a grid holds; or the grid's
-   workgroups along x pass 2^31 - 1. A call whose axes do not group answers
-   what Contract_view.v answers. *)
+   reverse; or k is above 2^31 - 1. A call whose axes do not group answers what
+   Contract_view.v answers. A call past one launch's extents runs as launches
+   over windows of its results: every choice that changes a bit reads the
+   dtypes, the order and k alone, so each window has the bits the whole would
+   give it. *)
 
 module K = Kernels
 module V = Nx_kernel.Contract_view
@@ -114,7 +115,6 @@ let tile_threads (s : K.shape) = s.bm / s.wm * (s.bn / s.wn) * 32
 (* Plans *)
 
 let max_int32 = 0x7fff_ffff
-let max_uint32 = 0xffff_ffff
 let ceil_div a b = (a + b - 1) / b
 
 (* An operand a or b as it lies, which a pack copies into the workspace: its
@@ -173,18 +173,18 @@ type call = {
   k : int;
 }
 
-(* A call's launches: the call, its a and b traded where a lane plan swaps
+(* A call's launch: the call, its a and b traded where a lane plan swaps
    them; a and b as the kernel reads them; the contraction kernel's [blocks] x
-   [splits] x batch workgroups of [threads] work-items; the workspace bytes
-   taken; and the split sum's
-   pieces: its partials and tickets in the workspace, and its output tiles, a
-   ticket each. *)
+   [splits] x batch workgroups of [threads] work-items and the k of its chunks;
+   the workspace bytes taken; and the split sum's pieces: its partials and
+   tickets in the workspace, and its output tiles, a ticket each. *)
 type launch = {
   call : call;
   a : operand;
   b : operand;
   kernel : int;
   splits : int;
+  chunk : int;
   blocks : int;
   threads : int;
   aligned : int;
@@ -193,8 +193,6 @@ type launch = {
   tickets : int;
   tiles : int;
 }
-
-type verdict = Nothing | Launch of launch
 
 let declined = Error Nx_array.Declined
 
@@ -220,26 +218,22 @@ let align used = (used + 255) land lnot 255
 
 (* [o], of [rows] rows, packed into the workspace after its [used] bytes as
    elements of [into] with k contiguous and rows of whole vectors, a work-item
-   an element: the kernel reads the copy. [None] if its elements outnumber the
-   work-items a grid holds. With no k, the kernel reads no element, and [o]
-   is not packed. *)
+   an element: the kernel reads the copy. With no k, the kernel reads no
+   element, and [o] is not packed. *)
 let pack (c : call) o ~rows ~into ~used =
   let es = bytes into in
   let per = 16 / es in
   let lead = ceil_div c.k per * per in
-  if c.k = 0 then Some o
-  else if c.batch * rows * lead > max_uint32 * K.threads then None
+  if c.k = 0 then o
   else
     let at = align used in
-    Some
-      {
-        o with
-        first = at;
-        vector_first = at mod 16 = 0;
-        s = [| rows * lead; lead; 1 |];
-        pack =
-          Some { own = o.dtype; into; src = o.first; ps = o.s; rows; lead };
-      }
+    {
+      o with
+      first = at;
+      vector_first = at mod 16 = 0;
+      s = [| rows * lead; lead; 1 |];
+      pack = Some { own = o.dtype; into; src = o.first; ps = o.s; rows; lead };
+    }
 
 (* The workspace bytes taken up to the end of [o]'s copy, [used] if it has
    none. *)
@@ -249,30 +243,46 @@ let used_after (c : call) used o =
   | Some p -> o.first + (c.batch * o.s.(0) * bytes p.into)
 
 (* a and b of [c], each packed into [into] where [pack_a] and [pack_b] say,
-   a's copy first, and the workspace bytes the copies take; [None] if a pack
-   fails. *)
+   a's copy first, and the workspace bytes the copies take. *)
 let packed_as (c : call) ~into ~pack_a ~pack_b =
-  let a = if pack_a then pack c c.a ~rows:c.m ~into ~used:0 else Some c.a in
-  match a with
-  | None -> None
-  | Some a -> (
-      let used = used_after c 0 a in
-      let b = if pack_b then pack c c.b ~rows:c.n ~into ~used else Some c.b in
-      match b with None -> None | Some b -> Some (a, b, used_after c used b))
+  let a = if pack_a then pack c c.a ~rows:c.m ~into ~used:0 else c.a in
+  let used = used_after c 0 a in
+  let b = if pack_b then pack c c.b ~rows:c.n ~into ~used else c.b in
+  (a, b, used_after c used b)
 
-(* The split count of a grid of [grid] workgroups: doubled while the grid has
-   fewer than [target] workgroups and each range keeps at least [k_min] of k, at
-   most 16. The targets are constants of the processor, never a GPU's own count.
-   The 16 x 64 tile's target of 128 is measured on the R9700; the other rules'
-   targets and k_min (WMMA m > 16: 64 and 1024, SIMT: 64 and 128, skinny: 256
-   and 1024) carry over from Ada's, as the R9700's runs at those shapes did not
-   favour other values. *)
-let split_count grid target k k_min =
+(* Chunks *)
+
+(* The k of a WMMA or SIMT sum's chunks: k cut into at most 16 chunks of at
+   least [least] k, each a whole number of [unit] k, a k-tile of every tile
+   of the family. They read k and the dtypes alone: a window of a contraction
+   sums as the whole does. *)
+let most_chunks = 16
+
+let chunk_of k ~least ~unit =
+  let chunks = Int.max 1 (Int.min most_chunks (k / least)) in
+  ceil_div (ceil_div (Int.max k 1) unit) chunks * unit
+
+(* The split count of a skinny sum over a grid of [grid] workgroups: doubled
+   while the grid has fewer than [target] workgroups and each workgroup keeps
+   at least one of the [ranges] of k. The targets are constants of the
+   processor, never a GPU's own count; skinny's 256 carries over from Ada's,
+   as the R9700's runs at those shapes did not favour another. *)
+let split_count grid target ranges =
   let s = ref 1 in
-  while !s < 16 && grid * !s < target && k / (2 * !s) >= k_min do
+  while 2 * !s <= ranges && grid * !s < target do
     s := 2 * !s
   done;
   !s
+
+(* The split count of a WMMA or SIMT sum of [chunks] chunks over a grid of
+   [grid] workgroups: a workgroup a chunk where the grid fills at most half of
+   [target] workgroups, else one a tile. A split stores and reloads its
+   partials: worth it to fill a GPU short of workgroups, or to stream a long k
+   for a few rows. It changes no bit: the chunks are the same. The 16 x 64
+   tile's target of 128 is measured on the R9700; the others' 64 carries over
+   from Ada's. *)
+let splits_of grid target chunks =
+  if chunks > 1 && 2 * grid <= target then chunks else 1
 
 (* Outputs stored 16 bytes at once: no init, y's j contiguous, its rows on
    16-byte boundaries, and its dtype one the kernels store as they are, or
@@ -296,37 +306,35 @@ let whole (c : call) ~wmma_s8 (sum : K.acc) =
   && c.sy.(0) * yb mod 16 = 0
   && c.y_vector_first
 
-(* [c]'s launch of [kernel] over a and b as [packed_as] gives them, [None]
-   past the grid's workgroups along x. With [splits] above 1, its partials,
-   [values] of [sum_bytes] a work-item, then its tickets follow the copies in
-   the workspace: combine.h's last workgroup leaves its tile's ticket counted,
-   so a launch zeroes the tickets before each contraction, and no buffer
-   stays zero across calls. [whole]'s stores add y_whole to [aligned]. *)
-let launch (c : call) (a, b, used) ~kernel ~blocks ~splits ~threads ~values
-    ~sum_bytes ~aligned ~wmma_s8 sum =
-  if blocks > max_int32 then None
-  else
-    let split = splits > 1 in
-    let tiles = if split then c.batch * blocks else 0 in
-    let partials = if split then align used else 0 in
-    let sums = tiles * splits * values * threads * sum_bytes in
-    let tickets = if split then align (partials + sums) else 0 in
-    let whole = whole c ~wmma_s8 sum in
-    Some
-      {
-        call = c;
-        a;
-        b;
-        kernel;
-        splits;
-        blocks;
-        threads;
-        aligned = (if whole then aligned lor K.y_whole else aligned);
-        used = (if split then tickets + (tiles * 4) else used);
-        partials;
-        tickets;
-        tiles;
-      }
+(* [c]'s launch of [kernel] over a and b as [packed_as] gives them. With
+   [splits] above 1, its partials, [splits] a tile of [values] of [sum_bytes]
+   a work-item, then its tickets follow the copies in the workspace: combine.h's
+   last workgroup leaves its tile's ticket counted, so a launch zeroes the
+   tickets before each contraction, and no buffer stays zero across calls.
+   [whole]'s stores add y_whole to [aligned]. *)
+let launch (c : call) (a, b, used) ~kernel ~blocks ~splits ~chunk
+    ~threads ~values ~sum_bytes ~aligned ~wmma_s8 sum =
+  let split = splits > 1 in
+  let tiles = if split then c.batch * blocks else 0 in
+  let partials = if split then align used else 0 in
+  let sums = tiles * splits * values * threads * sum_bytes in
+  let tickets = if split then align (partials + sums) else 0 in
+  let whole = whole c ~wmma_s8 sum in
+  {
+    call = c;
+    a;
+    b;
+    kernel;
+    splits;
+    chunk;
+    blocks;
+    threads;
+    aligned = (if whole then aligned lor K.y_whole else aligned);
+    used = (if split then tickets + (tiles * 4) else used);
+    partials;
+    tickets;
+    tiles;
+  }
 
 (* Workgroups run in waves of [wave] on gfx1201: the 128 x 128 tile's time steps
    every 96 workgroups, three to each of the R9700's 32 work-group processors. A
@@ -349,24 +357,26 @@ let efficiency : K.tile -> int = function
   | T64x64 -> 80
   | T16x64 -> 33
 
-(* The index in [K.tiles] of the WMMA tile of a product among those [kind] has
-   an instance of with k contiguous: the one of least cost, by its shape alone;
-   m <= 16 takes the 16-row tile, and only it. -1 if [kind] has none for the
-   shape, int8 at 16 rows or fewer: the skinny kernels sum it. *)
+(* The WMMA tile of a product among those [kind] has an instance of with k
+   contiguous: m <= 16 takes the 16-row tile where [kind] has one; else the one
+   of least cost, by its shape alone. Every tile sums alike. *)
 let wmma_tile (c : call) kind =
-  let best = ref (-1) and least = ref 0. in
-  for i = 0 to Array.length K.tiles - 1 do
-    let t = K.tiles.(i) in
-    if find_wmma kind K.K K.K t >= 0 && c.m <= 16 = (t == K.T16x64) then begin
-      let s = K.shape t in
-      let cost = cost c s.bm s.bn (efficiency t) in
-      if !best < 0 || cost < !least then begin
-        least := cost;
-        best := i
+  let has t = find_wmma kind K.K K.K t >= 0 in
+  if c.m <= 16 && has K.T16x64 then K.T16x64
+  else
+    let best = ref K.T128x128 and least = ref Float.infinity in
+    for i = 0 to Array.length K.tiles - 1 do
+      let t = K.tiles.(i) in
+      if has t && t != K.T16x64 then begin
+        let s = K.shape t in
+        let cost = cost c s.bm s.bn (efficiency t) in
+        if cost < !least then begin
+          least := cost;
+          best := t
+        end
       end
-    end
-  done;
-  !best
+    done;
+    !best
 
 (* Whether the WMMA kernels read [o], of [rows] rows, as it lies: vectors of
    [per] elements along its contiguous axis, its rows whole vectors where they
@@ -374,6 +384,11 @@ let wmma_tile (c : call) kind =
 let readable o rows per whole =
   rows_vectors o && (not (is_f8 o.dtype)) && whole
   && ((not (free_contiguous o.s)) || rows mod per = 0)
+
+(* A WMMA sum's chunks: at least 2048 k, in units of 64 k, a whole number of
+   k-tiles of every tile: 32 or 64 k of 16-bit operands, 64 of int8's. *)
+let wmma_chunk = 2048
+let wmma_unit = 64
 
 (* The WMMA kernels, of [kind] on the tile [t]. They read whole vectors along
    an operand's contiguous axis and never past its extent: an operand whose k,
@@ -399,20 +414,16 @@ let plan_wmma (c : call) kind t ~wmma_s8 sum =
   in
   let lb = if pack_b then K.K else lb in
   let into = match kind with S8 -> i8 | F16 -> f16 | Bf16 -> bf16 in
-  match packed_as c ~into ~pack_a ~pack_b with
-  | None -> None
-  | Some read ->
-      let blocks = ceil_div c.m s.bm * ceil_div c.n s.bn in
-      let threads = tile_threads s in
-      launch c read ~kernel:(find_wmma kind la lb t) ~blocks
-        (* A split sum stores and reloads its partials: worth it to fill a GPU
-           short of workgroups, or to stream a long k for a few rows. *)
-        ~splits:
-          (if c.m <= 16 then
-             split_count (blocks * c.batch) 128 c.k (4 * s.bkb / width)
-           else split_count (blocks * c.batch) 64 c.k 1024)
-        ~threads ~values:(s.bm * s.bn / threads) ~sum_bytes:4 ~aligned:0
-        ~wmma_s8 sum
+  let read = packed_as c ~into ~pack_a ~pack_b in
+  let blocks = ceil_div c.m s.bm * ceil_div c.n s.bn in
+  let threads = tile_threads s in
+  let chunk = chunk_of c.k ~least:wmma_chunk ~unit:wmma_unit in
+  let chunks = ceil_div c.k chunk in
+  launch c read ~kernel:(find_wmma kind la lb t) ~blocks
+    ~splits:
+      (splits_of (blocks * c.batch) (if c.m <= 16 then 128 else 64) chunks)
+    ~chunk ~threads ~values:(s.bm * s.bn / threads) ~sum_bytes:4
+    ~aligned:0 ~wmma_s8 sum
 
 (* Whether [d] is the dtype the SIMT and skinny kernels of [sum] read. *)
 let reads_own (sum : K.acc) d =
@@ -427,27 +438,28 @@ let own_dtype : K.acc -> D.any = function F32 -> f32 | F64 -> f64 | I64 -> i64
    another is packed into it, exactly, with k contiguous, and read as it. *)
 let packed_own (c : call) sum =
   let into = own_dtype sum in
-  match
+  let a, b, used =
     packed_as c ~into
       ~pack_a:(not (reads_own sum c.a.dtype))
       ~pack_b:(not (reads_own sum c.b.dtype))
-  with
-  | None -> None
-  | Some (a, b, used) ->
-      let read o =
-        match o.pack with None -> o | Some _ -> { o with dtype = into }
-      in
-      Some (read a, read b, used)
+  in
+  let read o =
+    match o.pack with None -> o | Some _ -> { o with dtype = into }
+  in
+  (read a, read b, used)
 
-(* The skinny kernel of an integer [sum], m <= 16, in its column form, or
-   across when b's n axis is contiguous. *)
+(* The skinny kernel of an integer [sum], m <= 16, in its column form, or across
+   when b's n axis is contiguous: its ranges of k are whole runs of 128 k, at
+   least 1024 each. *)
 let plan_skinny (c : call) ((a, b, _) as read) ~wmma_s8 sum =
   let across = free_contiguous b.s in
+  let ranges = Int.min most_chunks (c.k / 1024) in
+  let splits = split_count (ceil_div c.n 8 * c.batch) 256 ranges in
   launch c read
     ~kernel:(find_skinny sum (if across then Across else Column))
     ~blocks:(if across then ceil_div c.n 32 else ceil_div c.n 8)
-    ~splits:(split_count (ceil_div c.n 8 * c.batch) 256 c.k 1024)
-    ~threads:K.threads ~values:2 ~sum_bytes:8
+    ~splits ~chunk:0 ~threads:K.threads ~values:2
+    ~sum_bytes:8
     ~aligned:
       ((if (not across) && rows_vectors b then K.b_vectors else 0)
       lor
@@ -485,30 +497,32 @@ let swap (c : call) =
 let plan_lane (c : call) ~wmma_s8 sum =
   let c = if c.m > K.lane_rows && c.n < c.m then swap c else c in
   let bf16s = sum == K.F32 && same c.a.dtype bf16 && same c.b.dtype bf16 in
-  let read = if bf16s then Some (c.a, c.b, 0) else packed_own c sum in
-  match read with
-  | None -> None
-  | Some ((a, b, _) as read) ->
-      let across = (not bf16s) && free_contiguous b.s in
-      let reads = if bf16s then Some K.Bf16 else None in
-      let k_vectors o = (not (free_contiguous o.s)) && rows_vectors o in
-      launch c read
-        ~kernel:(find_lane sum reads (if across then Across else Column))
-        ~blocks:
-          (ceil_div c.m K.lane_rows * ceil_div c.n (lane_columns c.k ~across))
-        ~splits:1 ~threads:(lane_blocks c.k * lane_columns c.k ~across)
-        ~values:0
-        ~sum_bytes:(if sum == K.F32 then 4 else 8)
-        ~aligned:
-          ((if k_vectors b then K.b_vectors else 0)
-          lor if k_vectors a then K.a_vectors else 0)
-        ~wmma_s8 sum
+  let ((a, b, _) as read) =
+    if bf16s then (c.a, c.b, 0) else packed_own c sum
+  in
+  let across = (not bf16s) && free_contiguous b.s in
+  let reads = if bf16s then Some K.Bf16 else None in
+  let k_vectors o = (not (free_contiguous o.s)) && rows_vectors o in
+  launch c read
+    ~kernel:(find_lane sum reads (if across then Across else Column))
+    ~blocks:(ceil_div c.m K.lane_rows * ceil_div c.n (lane_columns c.k ~across))
+    ~splits:1 ~chunk:0
+    ~threads:(lane_blocks c.k * lane_columns c.k ~across)
+    ~values:0
+    ~sum_bytes:(if sum == K.F32 then 4 else 8)
+    ~aligned:
+      ((if k_vectors b then K.b_vectors else 0)
+      lor if k_vectors a then K.a_vectors else 0)
+    ~wmma_s8 sum
 
 (* The SIMT tile of [sum]: where m is 16 or fewer, its short tile, 16 x 128
    for float32 and 8 x 128 for float64, whose float64 sums are compute bound;
    otherwise the square tile of least cost among its instances: on the R9700
    the 64-wide tile computes half as fast as the 128-wide one (39-56% at 2048
-   and 4096 cubed, float32). *)
+   and 4096 cubed, float32). Every tile sums alike, in chunks of at least 128
+   k. *)
+let simt_chunk = 128
+
 let plan_simt (c : call) ((a, b, _) as read) ~wmma_s8 sum =
   let cheaper = cost c 64 64 50 < cost c 128 128 100 in
   let bm, bn =
@@ -518,10 +532,14 @@ let plan_simt (c : call) ((a, b, _) as read) ~wmma_s8 sum =
     then (128, 128)
     else (64, 64)
   in
+  (* A k-tile of every tile: 64 bytes of the accumulator's dtype. *)
+  let unit = 64 / bytes (own_dtype sum) in
+  let chunk = chunk_of c.k ~least:simt_chunk ~unit in
+  let chunks = ceil_div c.k chunk in
   let blocks = ceil_div c.m bm * ceil_div c.n bn in
   launch c read ~kernel:(find_simt sum bm bn) ~blocks
-    ~splits:(split_count (blocks * c.batch) 64 c.k 128)
-    ~threads:K.threads ~values:(bm * bn / K.threads)
+    ~splits:(splits_of (blocks * c.batch) 64 chunks)
+    ~chunk ~threads:K.threads ~values:(bm * bn / K.threads)
     ~sum_bytes:(if sum == K.F32 then 4 else 8)
     ~aligned:
       ((if rows_vectors a then K.a_vectors else 0)
@@ -561,40 +579,115 @@ let sum_of ~acc a b : K.acc option =
   then if is_int a && is_int b then Some I64 else None
   else None
 
-(* The rules of nx.amd's contraction, reading nothing but [c]. *)
-let rules (c : call) =
-  let batch = c.batch and m = c.m and n = c.n and k = c.k in
-  if batch > 65535 || m > max_int32 || n > max_int32 || k > max_int32 then
-    declined
-  else if batch * m * n = 0 then Ok Nothing
+(* The accumulator family of [c]'s sum, or [None] where the plan declines it:
+   by the dtypes and k alone, so that a window declines as the whole does. *)
+let family (c : call) =
+  let a = c.a.dtype and b = c.b.dtype and acc = c.acc in
+  let init = Option.is_some c.init in
+  let i = match c.init with Some i -> i.i_dtype | None -> c.y_dtype in
+  if c.k > max_int32 || declines ~a ~b ~y:c.y_dtype ~i ~init ~acc then None
+  else sum_of ~acc a b
+
+(* The launch of [c], of the family [sum]. Where a bit depends on the choice,
+   it reads the dtypes, the order and k: a float sum in lane order on the lane
+   kernels, any other on the WMMA kernels where a kind sums its operands, else
+   on the SIMT kernels. An integer sum, whose bits no association changes, also
+   reads m: m <= 16 on the skinny kernels. *)
+let plan (c : call) sum =
+  let kind = wmma_kind c.a.dtype c.b.dtype c.acc in
+  if in_lane_order c sum then plan_lane c ~wmma_s8:false sum
   else
-    let a = c.a.dtype and b = c.b.dtype and acc = c.acc in
-    let init = Option.is_some c.init in
-    let i = match c.init with Some i -> i.i_dtype | None -> c.y_dtype in
-    if declines ~a ~b ~y:c.y_dtype ~i ~init ~acc then declined
-    else
-      let kind = wmma_kind a b acc in
-      let t = match kind with None -> -1 | Some kd -> wmma_tile c kd in
-      let wmma_s8 = match kind with Some S8 -> t >= 0 | _ -> false in
-      match sum_of ~acc a b with
-      | None -> declined
-      | Some sum -> (
-          let planned =
-            match kind with
-            | _ when in_lane_order c sum -> plan_lane c ~wmma_s8 sum
-            | Some kd when t >= 0 -> plan_wmma c kd K.tiles.(t) ~wmma_s8 sum
-            | _ -> (
-                match packed_own c sum with
-                | None -> None
-                | Some read ->
-                    (* An integer sum is exact in its wrapping, so every
-                       order gives it the same bits: few rows take the skinny
-                       kernels. *)
-                    if m <= 16 && sum == K.I64 then
-                      plan_skinny c read ~wmma_s8 sum
-                    else plan_simt c read ~wmma_s8 sum)
+    match kind with
+    | Some kd when sum != K.I64 || c.m > 16 ->
+        plan_wmma c kd (wmma_tile c kd) ~wmma_s8:(kd == K.S8) sum
+    | _ ->
+        let read = packed_own c sum in
+        if sum == K.I64 && c.m <= 16 then plan_skinny c read ~wmma_s8:false sum
+        else plan_simt c read ~wmma_s8:false sum
+
+(* Windows *)
+
+(* A launch's extents: at most 65,535 batch elements, which a grid's z holds on
+   gfx1201 (a launch of 70,000 leaves its last ones unwritten); rows and
+   columns that its parameters' int32s hold, a coordinate a tile past them too
+   (2^30); at most 2^35 outputs a batch element, so that its tiles, of at least
+   4 rows by 8 columns, number below 2^31; and packs of at most 2^40 elements,
+   whose work-items a grid holds. *)
+let most_batch = 65535
+let most_rows = 1 lsl 30
+let most_outputs = 1 lsl 35
+let most_packed = 1 lsl 40
+
+(* Whether a launch holds [m] x [n] outputs a batch element, and the packs of
+   [z] batch elements of them, a packed row holding at most k + 15 elements. *)
+let holds_outputs m n = m * n <= most_outputs
+let holds_packs (c : call) z m n = z * Int.max m n <= most_packed / (c.k + 16)
+
+(* Whether one launch holds [c]. *)
+let fits (c : call) =
+  c.batch <= most_batch && c.m <= most_rows && c.n <= most_rows
+  && holds_outputs c.m c.n
+  && holds_packs c c.batch c.m c.n
+
+(* The batch, rows and columns of [c]'s windows: its own, each halved until a
+   launch holds them. *)
+let extents (c : call) =
+  let z = ref (Int.min c.batch most_batch) in
+  let m = ref (Int.min c.m most_rows) and n = ref (Int.min c.n most_rows) in
+  let halve r = r := ceil_div !r 2 in
+  while not (holds_outputs !m !n) do
+    halve (if !m >= !n then m else n)
+  done;
+  while not (holds_packs c !z !m !n) do
+    halve (if !z > 1 then z else if !m >= !n then m else n)
+  done;
+  (!z, !m, !n)
+
+(* [c]'s window of [zc] x [mc] x [nc] results from (z0, i0, j0). *)
+let window (c : call) (z0, i0, j0) (zc, mc, nc) =
+  let at buffer first = Rig.Buffer.aligned buffer ~at:first 16 in
+  let shift (o : operand) r0 =
+    let first = o.first + (((z0 * o.s.(0)) + (r0 * o.s.(1))) * bytes o.dtype) in
+    { o with first; vector_first = at o.buffer first }
+  in
+  let offset s = (z0 * s.(0)) + (i0 * s.(1)) + (j0 * s.(2)) in
+  let y_first = c.y_first + (offset c.sy * bytes c.y_dtype) in
+  let init (i : init) =
+    { i with i_first = i.i_first + (offset i.si * bytes i.i_dtype) }
+  in
+  {
+    c with
+    a = shift c.a i0;
+    b = shift c.b j0;
+    y_first;
+    y_vector_first = at c.y y_first;
+    init = Option.map init c.init;
+    batch = zc;
+    m = mc;
+    n = nc;
+  }
+
+(* The launches of [c]'s windows, in order of batch, rows, then columns. *)
+let launches (c : call) sum =
+  if fits c then [| plan c sum |]
+  else begin
+    let zc, mc, nc = extents c in
+    let ls = ref [] in
+    for zi = ceil_div c.batch zc - 1 downto 0 do
+      for ii = ceil_div c.m mc - 1 downto 0 do
+        for ji = ceil_div c.n nc - 1 downto 0 do
+          let z0 = zi * zc and i0 = ii * mc and j0 = ji * nc in
+          let ext =
+            ( Int.min zc (c.batch - z0),
+              Int.min mc (c.m - i0),
+              Int.min nc (c.n - j0) )
           in
-          match planned with None -> declined | Some l -> Ok (Launch l))
+          ls := plan (window c (z0, i0, j0) ext) sum :: !ls
+        done
+      done
+    done;
+    Array.of_list !ls
+  end
 
 (* [x] as the operand [slot] of [v], [which], over its axis [free] and k. *)
 let operand v slot which (free : V.axis) x =
@@ -639,7 +732,7 @@ let choose ~order ~batch ~contracting ~acc ~dst ~init a b =
                 si = strides v Init;
               }
       in
-      rules
+      let c =
         {
           a = operand v 0 A Row a;
           b = operand v 1 B Column b;
@@ -656,6 +749,11 @@ let choose ~order ~batch ~contracting ~acc ~dst ~init a b =
           n = V.extent v Column;
           k = V.extent v Contracted;
         }
+      in
+      match family c with
+      | None -> declined
+      | Some _ when c.batch * c.m * c.n = 0 -> Ok [||]
+      | Some sum -> Ok (launches c sum)
 
 (* Sequences *)
 
@@ -847,4 +945,4 @@ let write l run sub =
   Run.int32 run at P.y_dtype (code c.y_dtype);
   Run.int32 run at P.acc_dtype (code c.acc);
   Run.int32 run at P.aligned l.aligned;
-  Run.int32 run at P.zero 0
+  Run.int32 run at P.chunk l.chunk

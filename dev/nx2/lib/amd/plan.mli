@@ -5,18 +5,15 @@
 
 (** A contraction's launches on gfx1201.
 
-    A call's launch is chosen from the contraction's dtypes, its view's
+    A call's launches are chosen from the contraction's dtypes, order, view's
     extents and strides, and its operands' alignment, never from the GPU's
-    size or clocks, so that a result's bits depend on its shape alone. *)
+    size or clocks. Every choice that changes a bit reads the dtypes, the order
+    and the contracted extent alone, so that a window of a contraction's
+    results has the bits the whole gives it. *)
 
 type launch
 (** The type for launches: a call's operands, kernels, geometry and
     workspace, as {!choose} decided them. *)
-
-(** The type for what a plan does with a call that does work or none. *)
-type verdict =
-  | Nothing  (** The result has no element: no work. *)
-  | Launch of launch  (** {!parts} and {!write} launch it. *)
 
 val choose :
   order:Nx_kernel.order ->
@@ -27,13 +24,14 @@ val choose :
   init:('v, 's) Nx_array.t option ->
   ('a, 'b) Nx_array.t ->
   ('c, 'e) Nx_array.t ->
-  (verdict, Nx_array.answer) result
+  (launch array, Nx_array.answer) result
 (** [choose ~order ~batch ~contracting ~acc ~dst ~init a b] plans the
     contraction of [a] with [b], computed in [acc], into [dst], as
     {!Nx_kernel.S.contract} takes it: a float one given lane order on the
-    lane kernels, and one given chain order on the WMMA or SIMT kernels. It is
-    [Error] of what {!Nx_kernel.Contract_view.v} answers where the axes do not
-    group, and
+    lane kernels, and one given chain order on the WMMA or SIMT kernels. Its
+    launches compute windows of the result that together cover it, each
+    once, in order; none where it has no element. It is [Error] of what
+    {!Nx_kernel.Contract_view.v} answers where the axes do not group, and
     [Error Declined] where its kernels do not compute the call. The
     operands' buffers are live. *)
 

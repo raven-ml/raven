@@ -138,7 +138,7 @@ let offsets () =
       ("contract_params.y_dtype", C.y_dtype);
       ("contract_params.acc_dtype", C.acc_dtype);
       ("contract_params.aligned", C.aligned);
-      ("contract_params.zero", C.zero);
+      ("contract_params.chunk", C.chunk);
       ("pack_params.src", P.src);
       ("pack_params.dst", P.dst);
       ("pack_params.s", P.s);

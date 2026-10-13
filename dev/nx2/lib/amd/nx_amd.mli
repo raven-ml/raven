@@ -14,7 +14,11 @@
     answer [Done] once it is on [d]'s timeline; on a lost [d] they raise
     {!Rig.Lost}, as the door does. A kernel allocates a number of words its
     operands' extents do not change, and keeps none once it returns but the
-    caches it fills for later calls on [d].
+    caches it fills for later calls on [d]. A contraction past one launch's
+    extents (65,535 batch elements, [2{^30}] rows or columns, [2{^35}]
+    outputs a batch element, or a batch times the larger of rows and columns
+    times [k + 16] past [2{^40}]) runs as a launch a window of its results,
+    each allocating alike.
 
     [apply0] to [apply3], [map], [reduce], [scan], [gather], [scatter],
     [sort], [assemble], [fold], the transforms and the routines answer
@@ -23,26 +27,30 @@
     and results of a byte or more that are not complex, whose layouts
     {!Nx_kernel.Contract_view} groups. It declines a float operand or [init]
     wider than a float accumulator, an operand or [init] of the other kind
-    than the accumulator, integer or float, a batch above 65,535, a row,
-    column or contracted extent above [2{^31} - 1], a product of more than
-    [2{^31} - 1] output tiles in a batch element, and an operand it would
-    repack whose elements, rows padded to 16 bytes, pass [2{^40}].
+    than the accumulator, integer or float, and a contracted extent [k] above
+    [2{^31} - 1].
 
     [contract_order ~rows ~columns] is [Lane] where [rows] is 1 or [columns]
     are 4 or fewer, and [Chain] otherwise.
 
     A float contraction given lane order ({!Nx_kernel.section-orders}) adds
     in that order, and with no products an output is [init]'s bits, or [+0].
-    In one given chain order, operands each bfloat16 or float8, or both
-    float16, into [float32] sum on the matrix units, each output adding its
-    products in steps of 16 in increasing k, one matrix product a step;
-    other float sums add each output's products in increasing k, one fused
-    multiply-add each. A chain sum covers one range of k from [0], or ranges
-    whose count the plan chooses from the extents, their sums added in
-    increasing k; [init] then enters the sum, and the result rounds once to
-    [dst]'s dtype. The extents enter a chain sum's bits through that count
-    alone, and a float sum's through the limits past which it declines.
-    Integer sums wrap, so every order gives them the same bits. A NaN
-    result's sign and payload are unspecified. *)
+    Given chain order, an output's products, numbered as that section
+    numbers them, fall into chunks of [c] consecutive ones, the last possibly
+    shorter. Each chunk is summed from [+0] in increasing number, the chunks'
+    sums are added to [+0] in increasing number, then [init] is added, and
+    the result rounds once to [dst]'s dtype. Two float16 operands, or two of
+    bfloat16 and the float8s, into a float32 accumulator sum on the matrix
+    unit, which adds 16 products a step as its instruction does; other
+    operands convert exactly to the accumulator's dtype and sum by fused
+    multiply-add, one product a step. [c = u ⌈⌈k / u⌉ / q⌉] for
+    [q = max 1 (min 16 ⌊k / l⌋)] chunks of at least [l] products: [u = 64]
+    and [l = 2048] on the matrix unit; [l = 128] otherwise, with [u = 16] for
+    a float32 accumulator and [8] for float64. An integer sum wraps, so its
+    bits are the exact sum's whatever the order. An output's bits thus depend
+    on the operands' values, the dtypes, the order and [k] alone: never on
+    the other extents, the layouts, the GPU's size, or which window of a
+    larger result a call computes. A NaN result's sign and payload are
+    unspecified. *)
 
 include Nx_kernel.S

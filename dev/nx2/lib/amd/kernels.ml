@@ -113,7 +113,7 @@ module Contract_params = struct
   let y_dtype = 176
   let acc_dtype = 180
   let aligned = 184
-  let zero = 188
+  let chunk = 188
 end
 
 module Pack_params = struct

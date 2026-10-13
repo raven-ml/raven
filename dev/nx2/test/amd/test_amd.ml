@@ -612,6 +612,133 @@ let shape_cases =
           ])
     configs
 
+(* Windows *)
+
+(* nx computes a contraction one window of its results at a time, and each
+   window alone has the bits of that window of the whole (Route.window). A
+   window is its batch elements, rows and columns, each a first and a count. *)
+type window = (int * int) * (int * int) * (int * int)
+
+(* Windows of a case's results: single rows and columns, at most 16 rows, a
+   half of the batch, a batch element alone, and cuts through the tiles. *)
+let windows c : window list =
+  let all e = (0, e) and half e = (e / 2, e - (e / 2)) in
+  let few e = (Int.min 1 (e - 1), Int.min 16 (e - Int.min 1 (e - 1))) in
+  [
+    (half c.batch, all c.m, all c.n);
+    (all c.batch, (0, 1), all c.n);
+    (all c.batch, few c.m, half c.n);
+    ((c.batch - 1, 1), half c.m, (0, Int.min 7 c.n));
+    (all c.batch, all c.m, (c.n - 1, 1));
+    (half c.batch, half c.m, few c.n);
+  ]
+
+(* The case's contraction, computed whole and over each window into a fresh
+   y, gives each window the same bytes. *)
+let windows_alike c =
+  let g = S.gpu () in
+  let a, b, init, (y : S.operand), _ = contract g c () in
+  let whole = S.read y.buffer and w = width c.out and ew = width c.dt in
+  let check (((z0, zc), (i0, mc), (j0, nc)) : window) =
+    (* An operand's batch elements and rows of the window, k whole. *)
+    let rows (o : S.operand) r0 rc =
+      let at = (z0 * o.strides.(0)) + (r0 * o.strides.(1)) in
+      { o with first = o.first + (ew * at); shape = [| zc; rc; o.shape.(2) |] }
+    in
+    let part (i : S.operand) =
+      let at =
+        (z0 * i.strides.(0)) + (i0 * i.strides.(1)) + (j0 * i.strides.(2))
+      in
+      { i with first = i.first + (w * at); shape = [| zc; mc; nc |] }
+    in
+    let yw =
+      {
+        S.buffer = S.buffer g (w * Int.max 1 (zc * mc * nc));
+        dtype = code c.out;
+        shape = [| zc; mc; nc |];
+        strides = [| mc * nc; nc; 1 |];
+        first = 0;
+      }
+    in
+    let name = strf "window %d+%d %d+%d %d+%d" z0 zc i0 mc j0 nc in
+    match
+      S.contract g ~order:c.order ~a:(rows a i0 mc) ~b:(rows b j0 nc)
+        ?init:(Option.map part init) ~y:yw
+        ~batch:[ (0, 0) ]
+        ~contracting:[ (2, 2) ]
+        ~acc:(code c.acc) ()
+    with
+    | None -> failf "%s declines" name
+    | Some _ ->
+        let want = Buffer.create (w * zc * mc * nc) in
+        for z = z0 to z0 + zc - 1 do
+          for i = i0 to i0 + mc - 1 do
+            Buffer.add_string want
+              (String.sub whole (w * ((((z * c.m) + i) * c.n) + j0)) (w * nc))
+          done
+        done;
+        equal ~msg:name string (Buffer.contents want)
+          (String.sub (S.read yw.buffer) 0 (w * zc * mc * nc))
+  in
+  List.iter check (windows c)
+
+(* Shapes whose windows take other tiles, families and split counts than the
+   whole: 260 rows and 300 columns cut through every tile and fill a grid the
+   whole does not split, while its windows of a row or of 16 split; 9 rows,
+   the short tiles' whole; 16 rows of 600 columns by 5000, the 16-row
+   tiles unsplit over several chunks; k of one chunk, of several and of the
+   most; 256 batch elements of 64 x 72 by 1100, whose single elements split
+   where the whole and its halves do not; a float32 grid wide enough for the 128-wide SIMT tile; and a
+   batch past a launch's 65,535. Floats in both orders; integers, which no
+   association changes, in chain order. *)
+let window_cases =
+  let open D in
+  let floats =
+    [
+      (Any Bfloat16, Any Float32, Any Bfloat16);
+      (Any Bfloat16, Any Float32, Any Float32);
+      (Any Float16, Any Float32, Any Float16);
+      (Any Float8_e4m3fn, Any Float32, Any Bfloat16);
+      (Any Float32, Any Float32, Any Float32);
+      (Any Float64, Any Float64, Any Float64);
+    ]
+  and ints =
+    [
+      (Any Int8, Any Int32, Any Int32);
+      (Any Int16, Any Int64, Any Int64);
+      (Any Int64, Any Int64, Any Int64);
+    ]
+  in
+  let shapes =
+    [
+      (4, 260, 300, 5000);
+      (1, 40, 70, 300);
+      (3, 20, 9, 20000);
+      (2, 9, 200, 3000);
+      (8, 16, 600, 5000);
+    ]
+  in
+  let case orders (dt, acc, out) (batch, m, n, k) =
+    let draw = Spread (if dt = Any Float16 then 2 else 6) in
+    List.map
+      (fun order ->
+        { dt; acc; out; batch; m; n; k; order; la = `K; lb = `K; init = `Bias;
+          draw; pad = 0 })
+      orders
+  in
+  let all orders dts =
+    List.concat_map (fun d -> List.concat_map (case orders d) shapes) dts
+  in
+  let f32 = (Any Float32, Any Float32, Any Float32)
+  and f64 = (Any Float64, Any Float64, Any Float64) in
+  all Nx_kernel.[ Chain; Lane ] floats
+  @ all [ Nx_kernel.Chain ] ints
+  @ List.concat_map
+      (fun d -> case [ Nx_kernel.Chain ] d (256, 64, 72, 1100))
+      [ (Any Bfloat16, Any Float32, Any Float32); f32; f64 ]
+  @ case Nx_kernel.[ Chain; Lane ] f32 (70000, 2, 3, 5)
+  @ case [ Nx_kernel.Chain ] f32 (1, 1536, 1536, 1000)
+
 (* Lane order *)
 
 let host =
@@ -1646,6 +1773,8 @@ let tests =
         cases ~name:case_name "within the error bound" (cases_of ())
           within_bound;
         cases ~name:case_name "bits fixed by the shape" shape_cases same_bits;
+        cases ~name:case_name "a window has the whole's bits" window_cases
+          windows_alike;
         prop "in lane order, nx.cpu's bits"
           (Gen.with_pp (fun ppf c -> Format.pp_print_string ppf (case_name c))
              lane_cases)
