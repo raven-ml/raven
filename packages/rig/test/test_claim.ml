@@ -243,8 +243,9 @@ let test_claims () =
           Claim.with_ ~read:[ b ] ~donate:[] ignore))
 
 (* A donor writes memory it holds exclusive by a copy, a blit or a fill the
-   host runs, which takes no claim. One a device runs claims both sides, so it
-   is refused, and so are the host's reads and writes in place. *)
+   host runs, which takes no claim. One a device runs claims both sides,
+   through staging memory too, so it is refused, and so are the host's reads
+   and writes in place. *)
 let test_exclusive_writes () =
   let d, _ = P.open_ ~host_visible:false "claim:exclusive-writes" in
   let src = B.of_string "abcdefgh" in
@@ -275,7 +276,14 @@ let test_exclusive_writes () =
       refused "a copy into it" (fun () -> B.copy ~src ~dst:m);
       refused "a copy out of it" (fun () -> B.copy ~src:m ~dst:h);
       refused "a blit" (fun () -> B.blit_from_string "ijkl" 0 m 4 4);
-      refused "a fill" (fun () -> B.fill m 'z'))
+      refused "a fill" (fun () -> B.fill m 'z'));
+  let staging, _ =
+    P.open_ ~maps_host:false ~host_visible:false "claim:exclusive-staged"
+  in
+  let s = B.create staging 8 in
+  donated (B.create Rig.host 8) (fun h ->
+      refused "a staged copy out of it" (fun () -> B.copy ~src:h ~dst:s);
+      refused "a staged copy into it" (fun () -> B.copy ~src:s ~dst:h))
 
 (* A borrow and the memory it maps share one count. *)
 let test_borrow_counts () =

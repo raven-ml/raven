@@ -20,6 +20,41 @@ let rec read_claim fn c =
    exception, comes between [f]'s return and the release. *)
 external drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 
+let hold fn b f =
+  read_claim fn b.mem.claim;
+  match
+    Buffer.check_live fn b;
+    f ()
+  with
+  | r ->
+      drop b;
+      r
+  | exception e ->
+      drop b;
+      Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
+(* [hold] of two buffers with no closure, for a staged copy's sides. *)
+let hold2 fn a b f x =
+  read_claim fn a.mem.claim;
+  match read_claim fn b.mem.claim with
+  | exception e ->
+      drop a;
+      raise e
+  | () -> (
+      match
+        Buffer.check_live fn a;
+        Buffer.check_live fn b;
+        f a b x
+      with
+      | r ->
+          drop a;
+          drop b;
+          r
+      | exception e ->
+          drop a;
+          drop b;
+          Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
+
 (* Host access to [b]'s bytes under a read claim: [f] runs on them once the
    work [access] follows is done, and the claim ends as [f] returns or
    raises. A loss raises where the wait for [access] meets it, so a read

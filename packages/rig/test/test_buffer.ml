@@ -26,6 +26,10 @@ let filled n c =
   B.write b Bigarray.char (fun a -> Bigarray.Array1.fill a c);
   b
 
+(* A device that maps no host memory, whose copies to and from the host go
+   through its own staging memory. *)
+let staging_device name = P.open_ ~maps_host:false ~host_visible:false name
+
 (* Host buffers *)
 
 let test_create () =
@@ -526,9 +530,7 @@ let test_maps_no_host () =
    back, its own [Pinned] memory standing in for the host's staging, and maps no
    host memory for it. *)
 let test_staged_no_host () =
-  let d, p =
-    P.open_ ~maps_host:false ~host_visible:false "buffer:staged-no-host"
-  in
+  let d, p = staging_device "buffer:staged-no-host" in
   let m = B.create d 64 in
   let into = B.create Rig.host 64 and back = B.create Rig.host 64 in
   B.write into Bigarray.char (fun a -> Bigarray.Array1.fill a 's');
@@ -895,26 +897,111 @@ let breaks f =
    of two pieces from an io device to a device the host does not address queues
    the first piece's leg out of its slot, then its second read fails; the wait
    for that leg is interrupted. After two such copies, as many as the staging
-   memory has slots, a third copy runs. *)
+   memory has slots, a third copy runs. Each broken copy released its claim on
+   its destination. *)
 let test_staging_gives_back () =
   let d, p = P.open_ ~host_visible:false "buffer:staging-gives-back" in
   let n = (32 * 1024 * 1024) + 8 in
-  let copy reads = B.copy ~src:(B.create (cut reads) n) ~dst:(B.create d n) in
+  let copy reads dst = B.copy ~src:(B.create (cut reads) n) ~dst in
   for i = 1 to 2 do
     P.interrupt p;
+    let dst = B.create d n in
     equal
       ~msg:(Printf.sprintf "copy %d broke" i)
       bool true
-      (breaks (fun () -> copy 1))
+      (breaks (fun () -> copy 1 dst));
+    is_some
+      ~msg:(Printf.sprintf "copy %d's destination donated after it" i)
+      (Rig.Claim.take ~why:"donated" dst)
   done;
   let copied = Atomic.make false in
   let third =
     Domain.spawn (fun () ->
-        copy 2;
+        copy 2 (B.create d n);
         Atomic.set copied true)
   in
   Support.await "the third copy" (fun () -> Atomic.get copied);
   Domain.join third
+
+(* A transfer through staging memory holds a read claim on its buffers until it
+   returns, so a donation on another domain meanwhile gets a read claim only.
+   [donate_during p b transfer donor] runs [transfer] on another domain until
+   it waits at [p]'s gate for a leg, with legs still to run, then donates [b]:
+   a donation that holds [b]'s memory exclusive gives [donor] the consumed
+   buffer to write in place. It is that buffer if the donation held the
+   memory, and how [transfer] ended. *)
+let donate_during p b transfer donor =
+  P.gate p;
+  let ended =
+    Domain.spawn (fun () ->
+        match transfer () with
+        | () -> "returned"
+        | exception e -> Printexc.to_string e)
+  in
+  Support.await "the transfer waiting for a leg" (fun () -> P.sleepers p > 0);
+  let donated = Rig.Claim.take ~why:"donated" b in
+  Option.iter donor donated;
+  P.open_gate p;
+  (donated, Domain.join ended)
+
+(* Three pieces of staging memory, whose halves hold 32 MiB each: the host's
+   leg of the third reads the source after the device ran the first's leg out
+   of the same half. *)
+let three_pieces = (2 * (32 lsl 20)) + 4096
+
+let differ c b =
+  let back = B.create Rig.host (B.length b) in
+  B.copy ~src:b ~dst:back;
+  B.read back Bigarray.char (fun got ->
+      let wrong = ref 0 in
+      for i = 0 to Bigarray.Array1.dim got - 1 do
+        if Bigarray.Array1.unsafe_get got i <> c then incr wrong
+      done;
+      !wrong)
+
+(* The host's leg reads the source, which a donation would write. *)
+let test_staged_source_claimed () =
+  let d, p = staging_device "buffer:staged-source" in
+  let src = filled three_pieces 's' and dst = B.create d three_pieces in
+  let donated, ended =
+    donate_during p src
+      (fun () -> B.copy ~src ~dst)
+      (fun b -> B.fill b 'X')
+  in
+  equal ~msg:"the copy" string "returned" ended;
+  equal ~msg:"bytes not the source's" int 0 (differ 's' dst);
+  equal ~msg:"donated during the copy" bool false (Option.is_some donated)
+
+(* The host's leg writes the destination, which a donation would write too. *)
+let test_staged_destination_claimed () =
+  let d, p = staging_device "buffer:staged-destination" in
+  let src = B.create d 64 in
+  B.fill src 's';
+  let dst = filled 64 'd' in
+  let donated, ended =
+    donate_during p dst
+      (fun () -> B.copy ~src ~dst)
+      (fun b -> B.fill b 'X')
+  in
+  Option.iter
+    (fun b -> equal ~msg:"bytes not the donor's" int 0 (differ 'X' b))
+    donated;
+  equal ~msg:"the copy" string "returned" ended;
+  equal ~msg:"bytes not the source's" int 0 (differ 's' dst);
+  equal ~msg:"donated during the copy" bool false (Option.is_some donated)
+
+(* A blit's legs into the buffer run after the donation, which consumed it. *)
+let test_staged_blit_claimed () =
+  let d, p = staging_device "buffer:staged-blit" in
+  let s = String.make three_pieces 's' and b = B.create d three_pieces in
+  let donated, ended =
+    donate_during p b
+      (fun () -> B.blit_from_string s 0 b 0 three_pieces)
+      ignore
+  in
+  equal ~msg:"the blit" string "returned" ended;
+  equal ~msg:"bytes not the string's" int 0 (differ 's' b);
+  equal ~msg:"donated during the blit" bool false (Option.is_some donated)
 
 (* Bigarrays *)
 
@@ -1417,6 +1504,12 @@ let tests =
           test_staging_after_loss;
         test "a staged copy gives its slot back on every exit"
           test_staging_gives_back;
+        test "a staged copy holds its source against a donation"
+          test_staged_source_claimed;
+        test "a staged copy holds its destination against a donation"
+          test_staged_destination_claimed;
+        test "a staged blit holds its buffer against a donation"
+          test_staged_blit_claimed;
       ];
     cases ~timeout
       ~name:(fun (n, _, _) -> n)

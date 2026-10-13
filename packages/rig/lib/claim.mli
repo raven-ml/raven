@@ -34,7 +34,8 @@
 
     {!Submission.submit} takes read claims of its own, in C, on the buffers
     of a run and the fixed memory, and releases them once the driver's
-    [submit] has returned. *)
+    [submit] has returned. A transfer through staging memory ({!Copy})
+    holds read claims on its buffers until it returns ({!hold}). *)
 
 val read_bytes :
   Def.buffer ->
@@ -50,6 +51,27 @@ val write_bytes :
   (('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> 'c) ->
   'c
 (** [write_bytes b k f] is {!Rig.Buffer.write}[ b k f]. *)
+
+val hold : string -> Def.buffer -> (unit -> 'a) -> 'a
+(** [hold fn b f] is [f ()] under a read claim on [b]'s memory for a call of
+    [fn]. It checks [b] live under the claim, as {!with_} does, and the claim
+    ends in C as [f] returns or raises.
+
+    Raises [Invalid_argument] naming [fn] if the memory is held exclusive or
+    [b] is dead. *)
+
+val hold2 :
+  string ->
+  Def.buffer ->
+  Def.buffer ->
+  (Def.buffer -> Def.buffer -> 'a -> 'b) ->
+  'a ->
+  'b
+(** [hold2 fn a b f x] is [f a b x] under read claims on [a]'s and [b]'s
+    memory, as {!hold} takes them. It allocates nothing when [f] is a
+    top-level function.
+
+    Raises as {!hold} does, for either buffer. *)
 
 val share : Def.buffer -> unit
 (** [share b] is {!Rig.Claim.share}[ b]. Memory already outside the claims

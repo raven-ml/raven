@@ -920,7 +920,8 @@ module Buffer : sig
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they
       are there. A copy the host runs takes no claim. A copy a device runs
       holds a read claim on both sides while it hands the work over, as
-      {!submit} does ({!Rig.section-claims}).
+      {!submit} does, and until it returns if it passes through staging
+      memory ({!Rig.section-claims}).
 
       Raises [Invalid_argument] if [src] or [dst] is dead, they differ in
       length or overlap ({!overlaps}), [dst]'s memory admits only [Read], one
@@ -1666,9 +1667,11 @@ end
     {ul
     {- A {e read claim} marks an allocation as being read. The host holds
        one during {!Buffer.read} and {!Buffer.write}, and {!Claim.with_} on
-       every buffer it is given. {!submit}, and a copy, blit or fill that a
-       device runs ({!Buffer.section-copying}), hold one on every allocation
-       the work uses until they return. Work on a device holds none, since
+       every buffer it is given. {!submit} holds one on every allocation
+       the work uses until it returns. A copy, blit or fill that a device
+       runs ({!Buffer.section-copying}) holds one on both sides while it
+       hands the work over, and until it returns if it passes through
+       staging memory. Work on a device holds none, since
        the stamps order a write in place after that work. A copy, blit or
        fill that the host runs takes no claim.}
     {- Only {!Claim.with_} holds memory exclusive, for an input its call

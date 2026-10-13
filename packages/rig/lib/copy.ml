@@ -369,9 +369,12 @@ and route ~wait src dst n =
     invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name dd.name
   else staged src dst n
 
-(* Through staging memory: where a device runs the legs out of [src], each runs
-   one piece ahead. *)
-and staged src dst n =
+(* Through staging memory, holding read claims on both sides until it
+   returns. *)
+and staged src dst n = Claim.hold2 fn src dst pieces n
+
+(* Where a device runs the legs out of [src], each runs one piece ahead. *)
+and pieces src dst n =
   let piece b at h = Buffer.view b ~first:at ~length:(Buffer.length h) in
   through (stage_for src dst) n ~sides:[ src; dst ] ~ahead:(runs src)
     ~into:(fun h at -> leg ~src:(piece src at h) ~dst:h)
@@ -390,31 +393,35 @@ let writable fn b =
     invalid_argf "Rig.%s: the buffer's memory admits only reads" fn
 
 (* The bytes of [dst], which the host does not address, through staging
-   memory: [put h at] writes the bytes from [dst]'s byte [at] into the half
-   [h], after the half's last leg. *)
-let upload dst put =
+   memory, holding a read claim on it as a staged copy does: [put h at] writes
+   the bytes from [dst]'s byte [at] into the half [h], after the half's last
+   leg. *)
+let upload fn dst put =
   Memory.check_owner dst.mem;
   Memory.drain dst.mem.dev;
   let n = Buffer.length dst in
-  if n > 0 then begin
-    through (stage_with dst) n ~sides:[ dst ] ~ahead:false ~into:put
-      ~out_of:(fun h at ->
-        leg ~src:h ~dst:(Buffer.view dst ~first:at ~length:(Buffer.length h)));
-    Buffer.wait dst Buffer.Read_write
-  end
+  if n > 0 then
+    Claim.hold fn dst (fun () ->
+        through (stage_with dst) n ~sides:[ dst ] ~ahead:false ~into:put
+          ~out_of:(fun h at ->
+            leg ~src:h
+              ~dst:(Buffer.view dst ~first:at ~length:(Buffer.length h)));
+        Buffer.wait dst Buffer.Read_write)
 
 (* The bytes of [src], which the host does not address, through staging
-   memory: [take h at] reads the bytes from [src]'s byte [at] out of the half
-   [h], after the leg that wrote it. *)
-let download src take =
+   memory, holding a read claim on it: [take h at] reads the bytes from
+   [src]'s byte [at] out of the half [h], after the leg that wrote it. *)
+let download fn src take =
   Memory.check_owner src.mem;
   Memory.drain src.mem.dev;
   let n = Buffer.length src in
   if n > 0 then
-    through (stage_with src) n ~sides:[ src ] ~ahead:true
-      ~into:(fun h at ->
-        leg ~src:(Buffer.view src ~first:at ~length:(Buffer.length h)) ~dst:h)
-      ~out_of:take
+    Claim.hold fn src (fun () ->
+        through (stage_with src) n ~sides:[ src ] ~ahead:true
+          ~into:(fun h at ->
+            leg ~src:(Buffer.view src ~first:at ~length:(Buffer.length h))
+              ~dst:h)
+          ~out_of:take)
 
 let blit_from_string s i b j n =
   let fn = "Buffer.blit_from_string" in
@@ -426,7 +433,7 @@ let blit_from_string s i b j n =
     Buffer.blit_string s i b j n
   end
   else
-    upload (Buffer.view b ~first:j ~length:n) (fun h at ->
+    upload fn (Buffer.view b ~first:j ~length:n) (fun h at ->
         Buffer.wait h Buffer.Read_write;
         Buffer.blit_string s (i + at) h 0 (Buffer.length h))
 
@@ -440,7 +447,7 @@ let blit_to_bytes b i s j n =
     Buffer.blit_bytes b i s j n
   end
   else
-    download (Buffer.view b ~first:i ~length:n) (fun h at ->
+    download fn (Buffer.view b ~first:i ~length:n) (fun h at ->
         Buffer.wait h Buffer.Read;
         Buffer.blit_bytes h 0 s (j + at) (Buffer.length h))
 
@@ -452,7 +459,7 @@ let fill b c =
   end
   else
     (* The halves keep [c] once the first two pieces filled them. *)
-    upload b (fun h at ->
+    upload "Buffer.fill" b (fun h at ->
         if at < 2 * half_bytes then begin
           Buffer.wait h Buffer.Read_write;
           Buffer.set_bytes h 0 (Buffer.length h) c
