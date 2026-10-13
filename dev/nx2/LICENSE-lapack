@@ -1,5 +1,12 @@
 nx.cpu's linalg.c and linalg_body.h follow Reference-LAPACK's routines,
-which they name at each, under this notice.
+which they name at each, under this notice:
+
+- Cholesky, LU and QR: xPOTF2, xGETF2, xGETRF2, xGEQR2, xGEQRF, xLARFG,
+  xLARF, xLARFT, xLARFB, xLAPY3, xUNGQR, xUNMQR, xUNMLQ.
+- eigh: xHEEV, xHEEVD, xHETRD, xLATRD, xUNMTR, xSTEQR, xSTEDC, xLAED0 to
+  xLAED6, xLAMRG, xLAEV2, xLARTG, xLASR.
+- svd: xGESDD, xGEBRD, xLABRD, xBDSDC, xBDSQR, xLASDQ, xLASD0 to xLASD5,
+  xLAS2, xLASV2.
 
 Copyright (c) 1992-2025 The University of Tennessee and The University
                         of Tennessee Research Foundation.  All rights
