@@ -33,15 +33,16 @@
 
    Chain order follows BLIS's loops (Goto and van de Geijn, "Anatomy of
    High-Performance Matrix Multiplication", 2008): per NC columns of b and
-   KC of the contraction, one job packs b's panel into NR-wide slivers and
-   a's rows into MC-row blocks, then a job computes each block against
-   ranges of b's slivers, MR × NR at a time:
+   KC of the contraction, one job packs a's rows into blocks of at most MC
+   rows, then a job computes each block against ranges of b's slivers, MR ×
+   NR at a time, packing each sliver into the panel where it first needs
+   it:
 
      for each group of batch elements, NC panel, KC block:
-       job 1: b[kc × nc] -> slivers kc × NR
-              a[m × kc] -> blocks of MC rows, kc steps each
-       job 2: per (element, MC block, range of slivers):
+       job 1: a[m × kc] -> blocks of at most MC rows, kc steps each
+       job 2: per (element, range of slivers, block):
                 for each sliver of b, each MR rows of the block:
+                  b[kc × NR] -> the panel's sliver, once
                   R tile += a · b
 
    The kernel reads both operands through their strides, and runs the
@@ -355,7 +356,7 @@ static src a_at(const problem *p, int64_t e, int64_t i, int64_t pc) {
 
 /* A panel: batch elements [e0, e0 + ne), b's columns [jc, jc + nc), the
    contraction [pc, pc + kc), packed: b at [b] in slivers of NR columns, a
-   at [a] in blocks of MC rows, each NULL where it is read in place. */
+   at [a] in blocks of [rows], each NULL where it is read in place. */
 typedef struct {
   problem *p;
   int64_t e0, ne;
@@ -363,9 +364,12 @@ typedef struct {
   int64_t slivers;
   int64_t mblocks, rows;      /* blocks of a, each of at most [rows] */
   int64_t ranges, per_range;  /* ranges of slivers a compute unit takes */
-  nx_cpu_pack move;           /* the pack job's pack, or NULL */
+  nx_cpu_pack move_a, move_b; /* each job's pack, or NULL */
   uint8_t *b, *a;
+  atomic_int *state;          /* per sliver of b: FREE, PACKING, PACKED */
 } panel;
+
+enum { FREE, PACKING, PACKED };
 
 /* Splits the panel's slivers into ranges where its elements' blocks of a
    are fewer units than [want]: ranges of one block share its packing. */
@@ -373,15 +377,25 @@ static void split(panel *c, int64_t want) {
   int64_t units = c->ne * c->mblocks;
   c->ranges = units < want ? min64(c->slivers, ceil_div(want, units)) : 1;
   c->per_range = ceil_div(c->slivers, c->ranges);
+  c->ranges = ceil_div(c->slivers, c->per_range);
 }
 
-/* Compute unit [u]'s work, units being (element, block, range) in C
-   order: element [e], the block of rows from [i0], slivers [v0, v1). */
+/* Compute unit [u]'s work: element [e], slivers [v0, v1), the block of
+   rows from [i0]. Threads claim units in turn. Where b is packed, units
+   are (element, range, block) in C order, so that units that run together
+   share their slivers and pack them between them (compute). Where b is
+   read in place, they are (element, block, range), so that they share a's
+   block and read b's columns apart: on the M1 Max a 256³ float32 product
+   took 1.02 to 1.18 times as long in the other order. */
 static void unit_of(const panel *c, int64_t u, int64_t *e, int64_t *i0,
                     int64_t *v0, int64_t *v1) {
-  int64_t range = u % c->ranges, ib = u / c->ranges % c->mblocks;
-  *e = c->e0 + u / c->ranges / c->mblocks;
-  *i0 = ib * c->p->g->mc;
+  int64_t ib = u % c->mblocks, range = u / c->mblocks % c->ranges;
+  if (c->b == NULL) {
+    range = u % c->ranges;
+    ib = u / c->ranges % c->mblocks;
+  }
+  *e = c->e0 + u / c->mblocks / c->ranges;
+  *i0 = ib * c->rows;
   *v0 = range * c->per_range;
   *v1 = min64(c->slivers, *v0 + c->per_range);
 }
@@ -397,7 +411,7 @@ static uint8_t *sliver(const panel *c, int64_t e, int64_t s) {
 static uint8_t *block(const panel *c, int64_t e, int64_t ib, int64_t *m,
                       int64_t *lda) {
   const nx_cpu_gemm *g = c->p->g;
-  *m = min64(g->mc, c->p->ext[ROW] - ib * g->mc);
+  *m = min64(c->rows, c->p->ext[ROW] - ib * c->rows);
   *lda = ceil_div(*m, g->kernel.mr) * g->kernel.mr;
   return c->a + ((e - c->e0) * c->mblocks + ib) * c->rows * c->kc * c->p->w;
 }
@@ -480,26 +494,36 @@ static src b_sliver(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
   return (src){d, 0, nr};
 }
 
-/* Units [0, ne·slivers) pack b's slivers, the next ne·mblocks a's blocks,
-   each operand's only where it is packed. */
-static void pack_panel(int64_t lo, int64_t hi, int worker, void *ctx) {
+/* A unit is a block of a's rows of one element. */
+static void pack_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const panel *c = ctx;
-  int nr = c->p->g->kernel.nr;
-  int64_t bs = c->b ? c->ne * c->slivers : 0;
   for (int64_t u = lo; u < hi; u++) {
-    if (u < bs) {
-      int64_t e = c->e0 + u / c->slivers, v = u % c->slivers;
-      int64_t j = c->jc + v * nr;
-      pack_b(c->p, c->move, e, j, min64(nr, c->jc + c->nc - j), nr, c->pc,
-             c->kc, sliver(c, e, v));
-      continue;
-    }
-    int64_t e = c->e0 + (u - bs) / c->mblocks, ib = (u - bs) % c->mblocks;
-    int64_t m, lda;
+    int64_t e = c->e0 + u / c->mblocks, ib = u % c->mblocks, m, lda;
     uint8_t *d = block(c, e, ib, &m, &lda);
-    pack_a(c->p, c->move, e, ib * c->p->g->mc, m, lda, c->pc, c->kc, d);
+    pack_a(c->p, c->move_a, e, ib * c->rows, m, lda, c->pc, c->kc, d);
   }
+}
+
+/* Sliver [v] of element [e]'s panel, b's columns [j, j + n), into [b]:
+   packed by the first unit that needs it. Where another unit is packing
+   it, returns 0 without waiting, or, given [own], packs a copy of its own
+   there, the same bytes. */
+static int panel_sliver(const panel *c, int64_t e, int64_t v, int64_t j,
+                        int64_t n, uint8_t *own, src *b) {
+  int nr = c->p->g->kernel.nr;
+  atomic_int *state = &c->state[(e - c->e0) * c->slivers + v];
+  uint8_t *d = sliver(c, e, v);
+  *b = (src){d, 0, nr};
+  if (atomic_load_explicit(state, memory_order_acquire) == PACKED) return 1;
+  int seen = FREE;
+  int mine = atomic_compare_exchange_strong(state, &seen, PACKING);
+  if (!mine && own == NULL) return 0;
+  if (!mine) d = own;
+  pack_b(c->p, c->move_b, e, j, n, nr, c->pc, c->kc, d);
+  if (mine) atomic_store_explicit(state, PACKED, memory_order_release);
+  *b = (src){d, 0, nr};
+  return 1;
 }
 
 /* tile's path where R's columns are apart: MR rows at a time through a
@@ -544,16 +568,27 @@ static void tile(const problem *p, nx_cpu_micro k, int64_t pc, int64_t kc,
 }
 
 /* A unit's work: each of its slivers of b against its block of a, the
-   block's rows a kernel's call. b is the panel's, or read in place
-   (b_sliver), or packed into the worker's scratch. */
+   block's rows a kernel's call. b is the panel's (panel_sliver), or read
+   in place (b_sliver), or packed into the worker's scratch.
+
+   A sliver another unit is packing waits for the unit's end. Units that
+   start together need the same slivers; were each to wait or copy, they
+   would stay in step, one packing each sliver as the others wait or pack
+   it too, and b's packing would run on one thread at a time: on the M1
+   Max a 4096³ float32 product took 1.16 times as long as packing b in a
+   job of its own. Deferring puts them out of step, each packing slivers
+   the others then find packed. */
 static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const panel *c = ctx;
   problem *p = c->p;
   const nx_cpu_gemm *g = p->g;
   nx_cpu_micro k = g->kernel;
-  uint8_t *bp = c->b ? NULL : scratch(p, k.nr * c->kc * p->w);
-  if (c->b == NULL && bp == NULL) return;
+  int64_t list = ceil_div(c->per_range * sizeof(int64_t), ALIGN) * ALIGN;
+  uint8_t *s = scratch(p, list + k.nr * c->kc * p->w);
+  if (s == NULL) return;
+  int64_t *later = (int64_t *)s;
+  uint8_t *bp = s + list;
   for (int64_t u = lo; u < hi; u++) {
     int64_t e, i0, v0, v1;
     unit_of(c, u, &e, &i0, &v0, &v1);
@@ -561,24 +596,30 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
     int64_t mc, lda;
     src a;
     if (c->a) {
-      const uint8_t *d = block(c, e, i0 / g->mc, &mc, &lda);
+      const uint8_t *d = block(c, e, i0 / c->rows, &mc, &lda);
       a = packed_a(p, d, lda, c->kc);
     } else {
-      mc = min64(g->mc, p->ext[ROW] - i0);
+      mc = min64(c->rows, p->ext[ROW] - i0);
       a = a_at(p, e, i0, c->pc);
     }
     int64_t j0 = c->jc + v0 * k.nr;
     int64_t j1 = min64(c->jc + c->nc, c->jc + v1 * k.nr);
     if (c->pc == 0) start(p, e, i0, i0 + mc, j0, j1);
     if (c->kc == 0) continue;
-    for (int64_t v = v0; v < v1; v++) {
+    int64_t nv = v1 - v0, deferred = 0;
+    for (int64_t t = 0; t < nv + deferred; t++) {
+      int64_t v = t < nv ? v0 + t : later[t - nv];
       int64_t j = c->jc + v * k.nr, n = min64(k.nr, c->jc + c->nc - j);
-      src b = c->b ? (src){sliver(c, e, v), 0, k.nr}
-                   : b_sliver(p, NULL, e, j, n, c->pc, c->kc, bp);
+      src b;
+      if (c->b == NULL) b = b_sliver(p, NULL, e, j, n, c->pc, c->kc, bp);
+      else if (!panel_sliver(c, e, v, j, n, t < nv ? NULL : bp, &b)) {
+        later[deferred++] = v;
+        continue;
+      }
       tile(p, k, c->pc, c->kc, a, b, e, i0, j, mc, n);
     }
   }
-  if (bp) give(SCRATCH, bp);
+  give(SCRATCH, s);
 }
 
 /* Products of few rows, at most the table's few. One job packs a whole,
@@ -720,25 +761,31 @@ static void few_rows(problem *p) {
   if (!p->a_in) give(OPS, r.a);
 }
 
+/* Blocks of a hold equal rows, a multiple of MR, so that a job's units
+   take equal times: 100 rows are blocks of 54 and 46, not 96 and 4. */
 static void chain(problem *p) {
   const nx_cpu_gemm *g = p->g;
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w;
   int64_t nc = min64(g->nc, n), nr = g->kernel.nr, kc_most = min64(g->kc, k);
-  int64_t slivers = ceil_div(nc, nr), mblocks = ceil_div(m, g->mc);
+  int64_t slivers = ceil_div(nc, nr);
+  int64_t rows = padded(g->kernel, ceil_div(m, ceil_div(m, g->mc)));
+  int64_t mblocks = ceil_div(m, rows);
   int64_t b_bytes = p->b_in ? 0 : slivers * nr * kc_most * w;
-  int64_t rows = min64(g->mc, ceil_div(m, g->kernel.mr) * g->kernel.mr);
   int64_t a_bytes = p->a_in ? 0 : mblocks * rows * kc_most * w;
   int64_t per = b_bytes + a_bytes;
   int64_t group = per > 0 ? PANELS / per : batch;
   group = group < 1 ? 1 : min64(group, batch);
   int64_t b_all = ceil_div(group * b_bytes, ALIGN) * ALIGN;
-  uint8_t *b = take(OPS, b_all + group * a_bytes);
+  int64_t a_all = ceil_div(group * a_bytes, ALIGN) * ALIGN;
+  int64_t states = p->b_in ? 0 : group * slivers;
+  uint8_t *b = take(OPS, b_all + a_all + states * sizeof(atomic_int));
   if (b == NULL) {
     atomic_store(&p->failed, 1);
     return;
   }
   uint8_t *a = b + b_all;
+  atomic_int *state = (atomic_int *)(a + a_all);
   for (int64_t e0 = 0; e0 < batch; e0 += group) {
     int64_t ne = min64(group, batch - e0);
     for (int64_t jc = 0; jc < n; jc += g->nc) {
@@ -752,25 +799,29 @@ static void chain(problem *p) {
                  .mblocks = mblocks,
                  .rows = rows,
                  .b = p->b_in ? NULL : b,
-                 .a = p->a_in ? NULL : a};
+                 .a = p->a_in ? NULL : a,
+                 .state = state};
       /* Enough units for the threads the compute job takes. */
       int64_t packed = ne * (c.slivers * nr + m) * kc_most * w;
       double cost =
           flop_cost(g->kernel, 2.0 * ne * m * c.nc * kc_most) + packed;
       split(&c, units(packed, cost, thread_bytes(g)));
-      int64_t pc = 0;
+      int64_t total = ne * c.ranges * mblocks, pc = 0;
       do {
         c.pc = pc;
         c.kc = min64(g->kc, k - pc);
         double flops = 2.0 * ne * m * c.nc * c.kc;
-        packed = ne * (c.slivers * nr + m) * c.kc * w;
-        int64_t packs =
-            ne * ((c.b ? c.slivers : 0) + (c.a ? mblocks : 0));
-        c.move = mover(p, packs, packed, PACK_COST * packed);
-        if (c.kc > 0 && packs > 0)
-          job(p, packs, packed, PACK_COST * packed, pack_panel, &c);
-        job(p, ne * mblocks * c.ranges, packed,
-            flop_cost(g->kernel, flops) + packed, compute, &c);
+        int64_t a_packed = c.a ? ne * m * c.kc * w : 0;
+        packed = ne * c.slivers * nr * c.kc * w + a_packed;
+        cost = flop_cost(g->kernel, flops) + packed;
+        c.move_a = mover(p, ne * mblocks, a_packed, PACK_COST * a_packed);
+        c.move_b = mover(p, total, packed, cost);
+        if (c.kc > 0 && c.a)
+          job(p, ne * mblocks, a_packed, PACK_COST * a_packed, pack_blocks,
+              &c);
+        for (int64_t v = 0; v < ne * c.slivers && c.b; v++)
+          atomic_store_explicit(&state[v], FREE, memory_order_relaxed);
+        job(p, total, packed, cost, compute, &c);
         if (atomic_load(&p->failed)) goto done;
         pc += g->kc;
       } while (pc < k);

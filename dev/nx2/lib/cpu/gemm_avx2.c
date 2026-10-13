@@ -159,11 +159,10 @@ DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 4, fma)
 
 /* The rows up to which a product streams b past all of a (gemm.c): its
-   one job, which packs b's slivers as it computes them, takes less time
-   than chain order's jobs, which pack a panel of b on few threads before
-   computing it. On the i9-9900K's 16 threads a 256³ float32 product takes
-   36.5 µs so against 51, a 4096 × 4096 weight against 128 rows 5.10 ms
-   against 8.35. */
+   one job reads each sliver of b along all of k, where chain order's jobs,
+   one per KC block, read b in pieces KC long. On the i9-9900K's 16 threads
+   a 4096 × 4096 weight stored n × k takes 5.1 ms so against 128 rows, 6.7
+   in chain order; a 256³ float32 product takes the same either way. */
 #define FEW 256
 
 /* The rows of a block of a (cpu.h's mc). */
