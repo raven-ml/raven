@@ -51,7 +51,6 @@ struct rig_metal_entry {
    handler takes; [changed] says whether the set holds additions it has not
    committed. */
 struct rig_metal_run {
-  _Atomic int holds;
   id<MTLDevice> device;
   id<MTLCommandQueue> queue;
   id<MTLFence> fence;
@@ -64,6 +63,7 @@ struct rig_metal_run {
   uint64_t open_v;             /* the last value whose work is encoded */
   _Atomic int open_values;     /* the values the open buffer ends */
   _Atomic int wanted;          /* a handler found the open mutex held */
+  _Atomic int holds; /* beside the fields handlers write */
   struct rig_metal_ring ring;
   struct rig_metal_slot slots[ring_slots];
 };
