@@ -31,37 +31,29 @@ let pp_ints ppf a =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
+let pp_table ppf t =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; "
+       (Array.to_list (Array.map (Format.asprintf "%a" pp_ints) t)))
+
 let pp_rule ppf = function
   | Route.Elementwise -> Format.pp_print_string ppf "Elementwise"
-  | Reduce { axes; whole } ->
-      Format.fprintf ppf "Reduce %a whole %a" pp_ints axes pp_ints whole
-  | Whole a -> Format.fprintf ppf "Whole %a" pp_ints a
-  | Gather a -> Format.fprintf ppf "Gather %d" a
-  | Into a -> Format.fprintf ppf "Into %d" a
-  | Contract { batch; contracting } ->
-      let pairs ps =
-        String.concat "; "
-          (Array.to_list
-             (Array.map (fun (a, b) -> Printf.sprintf "%d,%d" a b) ps))
-      in
-      Format.fprintf ppf "Contract batch [%s] contracting [%s]" (pairs batch)
-        (pairs contracting)
-  | Replicated -> Format.pp_print_string ppf "Replicated"
-  | Move _ -> Format.pp_print_string ppf "Move"
+  | Axes t -> Format.fprintf ppf "Axes %a" pp_table t
+  | Into t -> Format.fprintf ppf "Into %a" pp_table t
 
-(* An operation: its rule, and its operands' placements and shapes, of one shape
-   each but along the axes the rule reads whole. *)
+(* An operation: its rule, its operands' placements and shapes, and its results'
+   shape. *)
 type case = {
   rule : Route.rule;
   ps : b Devices.placement option array;
   shapes : int array array;
+  result : int array;
 }
 
 let pp_case ppf c =
-  Format.fprintf ppf "%a over" pp_rule c.rule;
+  Format.fprintf ppf "%a, results %a, over" pp_rule c.rule pp_ints c.result;
   Array.iteri
-    (fun i p ->
-      Format.fprintf ppf " %a at %a," pp_ints c.shapes.(i) pp_at p)
+    (fun i p -> Format.fprintf ppf " %a at %a," pp_ints c.shapes.(i) pp_at p)
     c.ps
 
 (* A placement of a value of [rank]; of a scalar, uncut. *)
@@ -88,142 +80,71 @@ let placement_of rank =
             (Gen.pair axis axis);
         ])
 
-let axes_of rank =
-  Gen.map
-    (fun l -> Array.of_list (List.sort_uniq Int.compare l))
-    (Gen.list ~size:(Gen.int_range 1 rank) (Gen.int_range 0 (rank - 1)))
+let extent = Gen.of_list [ 4; 8 ]
 
-let shaped =
+(* An operand of results of shape [out]: each axis becomes a distinct axis of
+   the results, of its extent, or none, of any extent. *)
+let operand_of out =
+  let open Gen in
+  let rank = Array.length out in
+  let* r = int_range 1 3 in
+  let+ order = permutation (List.init rank Fun.id @ List.init r (fun _ -> -1))
+  and+ along = array ~size:(constant r) extent in
+  let axes = Array.of_list (List.filteri (fun a _ -> a < r) order) in
+  (axes, Array.mapi (fun a t -> if t < 0 then along.(a) else out.(t)) axes)
+
+(* The operand a scatter writes into: the results' shape, each axis becoming
+   itself or read whole. *)
+let into_of out =
+  Gen.map
+    (fun whole ->
+      (Array.mapi (fun a w -> if w then -1 else a) whole, Array.copy out))
+    (Gen.array ~size:(Gen.constant (Array.length out)) Gen.bool)
+
+let case =
   let open Gen in
   let* rank = int_range 1 3 in
-  let* shape = array ~size:(constant rank) (of_list [ 4; 8 ]) in
-  let* rule =
-    one_of
-      [
-        constant Route.Elementwise;
-        map (fun a -> Route.Reduce { axes = a; whole = [||] }) (axes_of rank);
-        map (fun a -> Route.Whole a) (axes_of rank);
-        map (fun a -> Route.Gather a) (int_range 0 (rank - 1));
-        map (fun a -> Route.Into a) (int_range 0 (rank - 1));
-        constant Route.Replicated;
-      ]
+  let* out = array ~size:(constant rank) extent in
+  let* n = int_range 1 3 in
+  let* kind = int_range 0 2 in
+  let* operands =
+    match kind with
+    | 0 -> constant (Array.make n ([||], out))
+    | 1 -> array ~size:(constant n) (operand_of out)
+    | _ ->
+        let+ others = array ~size:(constant (n - 1)) (operand_of out)
+        and+ into = into_of out in
+        Array.append others [| into |]
   in
-  let* n =
-    match rule with Route.Gather _ -> constant 2 | _ -> int_range 1 3
+  let rule =
+    match kind with
+    | 0 -> Route.Elementwise
+    | 1 -> Axes (Array.map fst operands)
+    | _ -> Into (Array.map fst operands)
   in
-  (* Operands differ along an axis the rule reads whole, as a gather's source or
-     a scatter's updates do. *)
-  let* along = array ~size:(constant n) (of_list [ 4; 8 ]) in
-  let shapes =
-    Array.init n (fun i ->
-        let s = Array.copy shape in
-        (match rule with
-        | Route.Gather a when i = 1 -> s.(a) <- along.(i)
-        | Route.Into a -> s.(a) <- along.(i)
-        | _ -> ());
-        s)
-  in
-  let+ ps = array ~size:(constant n) (placement_of rank) in
-  { rule; ps; shapes }
-
-(* A contraction: logical axes [0, nb) the batch, then [nc] contracted, then
-   [a]'s and [b]'s own, each operand's in an order of its own; [init] of the
-   result's shape where there is one. *)
-let contracted =
-  let open Gen in
-  let* nb = int_range 0 1 in
-  let* nc = int_range 1 2 in
-  let* fa = int_range 0 1 in
-  let* fb = int_range 0 1 in
-  let* ext = array ~size:(constant (nb + nc + fa + fb)) (of_list [ 4; 8 ]) in
-  let shared = List.init (nb + nc) Fun.id in
-  let* la = permutation (shared @ List.init fa (fun f -> nb + nc + f)) in
-  let* lb = permutation (shared @ List.init fb (fun f -> nb + nc + fa + f)) in
-  let la = Array.of_list la and lb = Array.of_list lb in
-  let pos l id = Option.get (Array.find_index (( = ) id) l) in
-  let pairs lo n = Array.init n (fun j -> (pos la (lo + j), pos lb (lo + j))) in
-  let batch = pairs 0 nb and contracting = pairs nb nc in
-  let sa = Array.map (fun id -> ext.(id)) la in
-  let sb = Array.map (fun id -> ext.(id)) lb in
-  let result =
-    Result.get_ok (Nx_kernel.Shape.contract ~batch ~contracting sa sb)
-  in
-  let* init = bool in
-  let shapes = if init then [| sa; sb; result |] else [| sa; sb |] in
+  let shapes = Array.map snd operands in
   let rec placements i =
-    if i = Array.length shapes then constant []
+    if i = n then constant []
     else
       let* p = placement_of (Array.length shapes.(i)) in
       let+ rest = placements (i + 1) in
       p :: rest
   in
   let+ ps = placements 0 in
-  {
-    rule = Route.Contract { batch; contracting };
-    ps = Array.of_list ps;
-    shapes;
-  }
+  { rule; ps = Array.of_list ps; shapes; result = out }
 
-let case = Gen.with_pp pp_case (Gen.one_of [ shaped; contracted ])
-
-(* The shape of the results. *)
-let result_shape c =
-  let s = c.shapes.(0) in
-  match c.rule with
-  | Route.Reduce { axes; _ } ->
-      Array.of_list
-        (List.filteri (fun a _ -> not (Array.mem a axes)) (Array.to_list s))
-  | Into _ -> c.shapes.(Array.length c.shapes - 1)
-  | Contract { batch; contracting } ->
-      Result.get_ok
-        (Nx_kernel.Shape.contract ~batch ~contracting s c.shapes.(1))
-  | Elementwise | Whole _ | Gather _ | Replicated -> s
-  | Move mv -> R.shape mv s
+let case = Gen.with_pp pp_case case
 
 (* The part of operand [i] that result window [w] depends on. *)
 let depends c i (w : R.range array) =
-  let s = c.shapes.(i) in
-  let full a = { R.start = 0; count = s.(a); step = 1 } in
   match c.rule with
   | Route.Elementwise -> w
-  | Reduce { axes; _ } ->
-      let k = ref 0 in
-      Array.init (Array.length s) (fun a ->
-          if Array.mem a axes then full a
-          else
-            let r = w.(!k) in
-            incr k;
-            r)
-  | Whole axes ->
-      Array.mapi (fun a r -> if Array.mem a axes then full a else r) w
-  | Gather axis ->
-      if i = 1 then Array.mapi (fun a r -> if a = axis then full a else r) w
-      else w
-  | Into axis -> Array.mapi (fun a r -> if a = axis then full a else r) w
-  | Contract { batch; contracting } ->
-      (* The result has the batch pairs' axes, then [a]'s free axes in order,
-         then [b]'s; [init] has its shape. *)
-      if i = 2 then w
-      else
-        let side j (p, q) = if j = 0 then p else q in
-        let paired j ps a = Array.exists (fun p -> side j p = a) ps in
-        let free j =
-          List.filter
-            (fun a -> not (paired j batch a || paired j contracting a))
-            (List.init (Array.length c.shapes.(j)) Fun.id)
-        in
-        let first =
-          Array.length batch + if i = 0 then 0 else List.length (free 0)
-        in
-        Array.init (Array.length s) (fun a ->
-            match Array.find_index (fun p -> side i p = a) batch with
-            | Some j -> w.(j)
-            | None ->
-                if paired i contracting a then full a
-                else
-                  let f = Option.get (List.find_index (( = ) a) (free i)) in
-                  w.(first + f))
-  | Replicated | Move _ -> Array.init (Array.length s) full
+  | Axes t | Into t ->
+      Array.mapi
+        (fun a d ->
+          if t.(i).(a) < 0 then { R.start = 0; count = d; step = 1 }
+          else w.(t.(i).(a)))
+        c.shapes.(i)
 
 let pp_ranges ppf (w : R.range array) =
   Format.fprintf ppf "[%s]"
@@ -264,12 +185,16 @@ let law =
       | Some r ->
           if all_constant then fail "a route of values of every set"
           else begin
-            let rs = result_shape c in
+            let rs = c.result in
             let target = Devices.grid r.result in
             cover "a split result" (Grid.cuts target <> [||]);
-            cover "a split contraction"
-              ((match c.rule with Route.Contract _ -> true | _ -> false)
-              && Grid.cuts target <> [||]);
+            let read_whole =
+              match c.rule with
+              | Route.Elementwise -> false
+              | Axes t | Into t -> Array.exists (Array.mem (-1)) t
+            in
+            cover "a split result beside an axis read whole"
+              (read_whole && Grid.cuts target <> [||]);
             Array.iteri
               (fun j k ->
                 let w = Devices.window ~by:"t" r.result rs j in
@@ -335,13 +260,13 @@ let at_law =
       (fun ppf (c, p) ->
         Format.fprintf ppf "%a wanted at %a" pp_case c Devices.pp_placement p)
       (let* c = case in
-       let+ p = placement_of (Array.length (result_shape c)) in
+       let+ p = placement_of (Array.length c.result) in
        (c, Option.value ~default:(Devices.on s4) p))
   in
   prop ~count:500 "a constant's results are computed where it reads operands"
     wanted (fun (c, p) ->
       let r = Route.at ~by:"Nx.f" c.rule c.shapes p in
-      let rs = result_shape c in
+      let rs = c.result in
       equal (list int) ~msg:"the devices wanted" (devices_of p)
         (devices_of r.result);
       cover "a cut kept" (Grid.cuts (Devices.grid r.result) <> [||]);
@@ -387,44 +312,36 @@ let cases_ =
           equal placement x r.operands.(1));
       test "a reduction of a split axis is whole on each device" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r =
-            placed
-              (Reduce { axes = [| 1 |]; whole = [||] })
-              [| x |]
-              [| [| 4; 8 |] |]
-          in
+          let r = placed (Axes [| [| 0; -1 |] |]) [| x |] [| [| 4; 8 |] |] in
           equal placement (Devices.on s4) r.result;
           equal placement (Devices.on s4) r.operands.(0));
       test "a reduction keeps the cut of an axis it does not reduce" (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r =
-            placed
-              (Reduce { axes = [| 0 |]; whole = [||] })
-              [| x |]
-              [| [| 4; 8 |] |]
-          in
+          let r = placed (Axes [| [| -1; 0 |] |]) [| x |] [| [| 4; 8 |] |] in
           equal placement (Devices.split ~by:"t" ~axis:0 s4) r.result;
           equal bool true (r.operands.(0) == x));
       test "a scatter writes where its target lies" (fun () ->
           let into = Devices.split ~by:"t" ~axis:1 s4 and u = Devices.on s4 in
-          let r = placed (Into 0) [| u; into |] [| [| 4; 8 |]; [| 8; 8 |] |] in
+          let rule = Route.Into [| [| -1; 1 |]; [| -1; 1 |] |] in
+          let r = placed rule [| u; into |] [| [| 4; 8 |]; [| 8; 8 |] |] in
           equal placement into r.result);
-      test "a replicated operation lies on its operands' devices" (fun () ->
-          let r = placed Replicated [| Devices.one s4 2 |] [| [| 4 |] |] in
+      test "an operation reading all whole lies on its operands' devices"
+        (fun () ->
+          let whole = Route.Axes [| [| -1 |] |] in
+          let r = placed whole [| Devices.one s4 2 |] [| [| 4 |] |] in
           equal placement (Devices.one s4 2) r.result;
           let x = Devices.split ~by:"t" ~axis:0 s4 in
-          let r = placed Replicated [| x |] [| [| 8 |] |] in
+          let r = placed whole [| x |] [| [| 8 |] |] in
           equal placement (Devices.on s4) r.result);
-      test "replicated operands alone on two devices raise" (fun () ->
+      test "operands read whole alone on two devices raise" (fun () ->
           invalid (fun () ->
-              placed Replicated
+              placed
+                (Axes [| [| -1 |]; [| -1 |] |])
                 [| Devices.one s4 0; Devices.one s4 1 |]
                 [| [| 4 |]; [| 4 |] |]));
       test "a contraction keeps its batch and free cuts" (fun () ->
           let x = Devices.split ~by:"t" ~axis:0 s4 in
-          let rule =
-            Route.Contract { batch = [||]; contracting = [| (1, 0) |] }
-          in
+          let rule = Route.Axes [| [| 0; -1 |]; [| -1; 1 |] |] in
           let r =
             placed rule [| x; Devices.on s4 |] [| [| 8; 4 |]; [| 4; 4 |] |]
           in
@@ -446,9 +363,10 @@ let cases_ =
               placed Elementwise
                 [| Devices.split ~by:"t" ~axis:0 s4 |]
                 [| [| 6 |] |]));
-      test "an axis the operand lacks raises" (fun () ->
+      test "a rule that does not name each axis raises" (fun () ->
           invalid (fun () ->
-              placed (Gather 2)
+              placed
+                (Axes [| [| 0; 1 |]; [| 0 |] |])
                 [| Devices.on s4; Devices.on s4 |]
                 [| [| 4; 4 |]; [| 4; 4 |] |]));
       test "placements and shapes of two lengths raise" (fun () ->
@@ -537,7 +455,16 @@ let move_case =
 let move_law =
   prop ~count:300 "each moved result window reads the operand on its own device"
     move_case (fun (s, p, mv) ->
-      let r = placed (Move mv) [| p |] [| s |] in
+      let x =
+        Value.Array
+          {
+            at = Devices.one s4 0;
+            a = Nx_array.create (m 0) Nx_array.Dtype.Float32 s;
+            dead = Value.Live;
+          }
+      in
+      let rule = Prim.rule (Value.Move (mv, x)) in
+      let r = placed rule [| p |] [| s |] in
       let s' = R.shape mv s in
       cover "a split operand" (Grid.cuts (Devices.grid p) <> [||]);
       cover "a split result" (Grid.cuts (Devices.grid r.result) <> [||]);

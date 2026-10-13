@@ -809,59 +809,112 @@ let padded_axes (type d) layout ?(axes = [||]) (loads : d load array) =
     loads;
   marked whole
 
-(* A map's rule: elementwise, but for the axes padded loads read whole. *)
-let map_rule (type d) layout (loads : d load array) =
-  if Array.exists is_padded loads then Route.Whole (padded_axes layout loads)
-  else Route.Elementwise
+(* An operand of rank [r] whose axis becomes the results' axis of its index, but
+   those of [whole], read whole. *)
+let reading whole r =
+  Array.init r (fun a -> if Array.mem a whole then -1 else a)
 
-(* A loop's rules. A loop of no load is its expansion, which computes it
-   whole. *)
-let reduce_rule (type d) layout axes (loads : d load array) =
-  if Array.length loads = 0 then Route.Replicated
-  else
-    let whole =
-      if Array.exists is_padded loads then padded_axes layout loads else [||]
+(* A loop's operands' ranks: its rank, but a padded load's own. *)
+let load_ranks (type d) layout (loads : d load array) =
+  Array.map
+    (fun (l : d load) ->
+      match l with Plain _ -> L.rank layout | Padded { x; _ } -> rank x)
+    loads
+
+(* A loop's rule over loads of [ranks]: a load's axis becomes the results' axis
+   of its index less the axes reduced before it, but those reduced and those
+   read whole: its scan's axis and those its padded loads pad, crop or window. A
+   loop of no load is its expansion, which computes it whole. *)
+let loop_rule : type r. r prim -> int array -> Route.rule =
+ fun op ranks ->
+  let rows axes whole =
+    let becomes a =
+      if Array.mem a axes || Array.mem a whole then -1
+      else a - Array.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes
     in
-    Route.Reduce { axes; whole }
-
-let scan_rule (type d) layout axis (loads : d load array) =
-  if Array.length loads = 0 then Route.Replicated
-  else if Array.exists is_padded loads then
-    Route.Whole (padded_axes layout ~axes:[| axis |] loads)
-  else Route.Whole [| axis |]
+    Route.Axes (Array.map (fun r -> Array.init r becomes) ranks)
+  in
+  let padded (type d) layout (loads : d load array) axes =
+    if Array.exists is_padded loads then padded_axes layout ~axes loads
+    else axes
+  in
+  match op with
+  | Map { layout; loads; _ } -> rows [||] (padded layout loads [||])
+  | Reduce { layout; axes; loads; _ } -> rows axes (padded layout loads [||])
+  | Scan { layout; axis; loads; _ } ->
+      rows [||] (padded layout loads [| axis |])
+  | Gather _ | Scatter _ | Sort _ | Fold _ | Fft _ | Linalg _ | Assemble _
+  | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
+      invalid_arg "Prim.loop_rule: not a loop"
 
 (* A fold's rule: the axes of its operand that the padded load it sums back
    reads whole. *)
 let fold_rule pad x =
   let whole = Array.make (rank x) false in
   mark_padded whole pad;
-  Route.Whole (marked whole)
+  Route.Axes [| reading (marked whole) (rank x) |]
 
 (* A routine acts along its matrices' last two axes. *)
 let linalg_rule l =
-  let (Any a) = List.hd (linalg_operands l) in
-  let r = rank a in
-  Route.Whole [| r - 2; r - 1 |]
+  let ranks = List.map (fun (Any x) -> rank x) (linalg_operands l) in
+  let r = List.hd ranks in
+  Route.Axes (Array.of_list (List.map (reading [| r - 2; r - 1 |]) ranks))
+
+(* A contraction's result has the batch pairs' axes, then [a]'s other axes, then
+   [b]'s; [init] has its shape. *)
+let contract_rule batch contracting ra rb init =
+  let operand side r first =
+    let next = ref first in
+    Array.init r (fun a ->
+        match Array.find_index (fun p -> side p = a) batch with
+        | Some j -> j
+        | None when Array.exists (fun p -> side p = a) contracting -> -1
+        | None ->
+            incr next;
+            !next - 1)
+  in
+  let nb = Array.length batch and nc = Array.length contracting in
+  let a = operand fst ra nb and b = operand snd rb (ra - nc) in
+  match init with
+  | None -> Route.Axes [| a; b |]
+  | Some r -> Route.Axes [| a; b; reading [||] r |]
+
+let move_rule m x =
+  let s = shape x in
+  let becomes a = Option.value (Route.moved m s a) ~default:(-1) in
+  Route.Axes [| Array.init (Array.length s) becomes |]
 
 let bitcast_rule dt x =
   if D.bits dt > D.bits (dtype x) then
-    Route.Reduce { axes = [| rank x - 1 |]; whole = [||] }
+    Route.Axes [| reading [| rank x - 1 |] (rank x) |]
   else Route.Elementwise
 
-let rule : type r. r prim -> Route.rule = function
-  | Map { layout; loads; _ } -> map_rule layout loads
-  | Reduce { layout; axes; loads; _ } -> reduce_rule layout axes loads
-  | Scan { layout; axis; loads; _ } -> scan_rule layout axis loads
-  | Gather { axis; _ } -> Gather axis
-  | Scatter { axis; _ } -> Into axis
-  | Sort { axis; _ } -> Whole [| axis |]
+let rule : type r. r prim -> Route.rule =
+ fun op ->
+  match op with
+  | Map { loads; _ } when not (Array.exists is_padded loads) -> Elementwise
+  | Map { layout; loads; _ } -> loop_rule op (load_ranks layout loads)
+  | Reduce { layout; loads; _ } -> loop_rule op (load_ranks layout loads)
+  | Scan { layout; loads; _ } -> loop_rule op (load_ranks layout loads)
+  | Gather { axis; idx; x } ->
+      Axes [| reading [||] (rank idx); reading [| axis |] (rank x) |]
+  | Scatter { axis; idx; updates; into; _ } ->
+      Into
+        (Array.map (reading [| axis |]) [| rank idx; rank updates; rank into |])
+  | Sort { axis; x; _ } -> Axes [| reading [| axis |] (rank x) |]
   | Fold { pad; x; _ } -> fold_rule pad x
-  | Fft f -> Whole (fft_axes f)
+  | Fft f ->
+      let (Any x) = fft_operand f in
+      Axes [| reading (fft_axes f) (rank x) |]
   | Linalg l -> linalg_rule l
-  | Assemble _ -> Replicated
-  | Contract { batch; contracting; _ } -> Contract { batch; contracting }
+  | Assemble { pieces; _ } ->
+      Axes
+        (Array.of_list
+           (List.map (fun (_, x) -> Array.make (rank x) (-1)) pieces))
+  | Contract { batch; contracting; a; b; init; _ } ->
+      contract_rule batch contracting (rank a) (rank b) (Option.map rank init)
   | Copy _ -> Elementwise
-  | Move (m, _) -> Move m
+  | Move (m, x) -> move_rule m x
   | Bitcast (dt, x) -> bitcast_rule dt x
   | Place _ | Check _ -> Elementwise
 
@@ -1021,9 +1074,11 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
   let extents w = Array.map (fun (r : Nx_array.Move.range) -> r.count) w in
   (* A loop's window: the window of a load of its shape. *)
   let loop layout =
-    match rule op with
-    | Route.Elementwise -> w
-    | r -> Route.window r ~operand:0 (L.shape layout) w
+    match op with
+    | Map { loads; _ } when not (Array.exists is_padded loads) -> w
+    | _ ->
+        let r = loop_rule op [| L.rank layout |] in
+        Route.window r ~operand:0 (L.shape layout) w
   in
   match op with
   | Map m ->

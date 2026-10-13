@@ -29,40 +29,29 @@
     arrangement holds both, and moving one is a choice the program makes with
     [Nx.place]. *)
 
-(** The type for how an operation's results depend on its operands. Each case
-    gives every operand's window for a window of the results ({!window}). *)
+(** The type for how an operation's results depend on its operands: for each
+    axis of each operand, the axis of the results it becomes, of its extent, or
+    none. A window of the results reads each operand's axis that becomes one of
+    theirs at that axis's range, and every other axis whole: an axis the
+    operation acts along (a scan's, a sort's, a transform's, a reduction's, a
+    contraction's contracting pairs, a gather's source axis) and one a padded
+    load pads, crops or windows. A result axis that no operand's axis becomes is
+    kept whole: every window the engine computes holds all of it.
+
+    This is the sharding rule of Shardy
+    ({{:https://openxla.org/shardy/sdy_dialect}OpShardingRuleAttr}) with one
+    factor per axis: its reduction and need-replication factors are both read
+    whole. *)
 type rule =
   | Elementwise
-      (** Operands and results of one shape; a result's element reads each
-          operand at its own index. *)
-  | Reduce of { axes : int array; whole : int array }
-      (** Operands of one shape, but for trailing axes [whole] holds; results
-          drop [axes] and keep the others, [axes] and [whole] read whole: a
-          reduction whose loads pad or window [whole]'s axes. *)
-  | Whole of int array
-      (** Operands and results that share their leading axes, these axes read
-          whole: those the operation acts along (a scan's, a sort's, a
-          transform's, a factorisation's last two), and those a padded load or
-          a fold pads, crops or windows and those its windows append. An axis
-          that not all of them have is one of these. *)
-  | Gather of int
-      (** Operands [idx; x] of one rank, and results of [idx]'s shape: [x] is
-          read whole along this axis. *)
-  | Into of int
-      (** [Whole [| axis |]]'s windows, written into the last operand: operands
-          of one rank, results of the last one's shape, and the target the last
+      (** Operands and results of one shape, each axis becoming itself. *)
+  | Axes of int array array
+      (** Axis [a] of operand [i] becomes the results' axis [t.(i).(a)] of
+          [Axes t], none where it is negative. No two axes of an operand become
+          one. *)
+  | Into of int array array
+      (** [Axes]' windows, written into the last operand: the target is the last
           operand's placement where it lies on the set. *)
-  | Contract of { batch : (int * int) array; contracting : (int * int) array }
-      (** Operands [a; b], then possibly [init] of the result's shape, the
-          result's axes the batch pairs', then [a]'s other axes, then [b]'s
-          ({!Nx_kernel.Shape.contract}): the contracting pairs' axes are read
-          whole. *)
-  | Move of Nx_array.Move.t
-      (** One operand, moved: an axis that keeps its elements in order keeps its
-          cut, where it moves to (a permutation, a broadcast that does not
-          stretch it, a reshape that keeps it with the product of the extents
-          before it, a slice that keeps all of it); any other is read whole. *)
-  | Replicated  (** Operands read whole, results whole on each device. *)
 
 val moved : Nx_array.Move.t -> int array -> int -> int option
 (** [moved m s a] is the axis that axis [a] of a value of shape [s] becomes
@@ -78,8 +67,8 @@ val window :
   Nx_array.Move.range array ->
   Nx_array.Move.range array
 (** [window r ~operand:i s w] is the window of operand [i], of shape [s], that
-    the window [w] of an operation's results reads by [r]: whole along each axis
-    [r] reads whole, [w]'s range along an axis the results keep. Where an
+    the window [w] of an operation's results reads by [r]: [w]'s range along an
+    axis that becomes one of the results', whole along any other. Where an
     operation has several results, [w] is a window of the first.
 
     The engine computes an operation one window at a time, each device over its
@@ -122,18 +111,12 @@ val route :
 
     Raises [Invalid_argument] naming [by] if operands lie on two sets or on two
     devices alone, if a placement an operand is read at does not divide its
-    shape ({!Grid.window}), if an axis of [r] is negative, a gather's or a
-    scatter's axis is not an axis of an operand, operands are too many or too
-    few for [r], or a movement does not fit its operand
-    ({!Nx_array.Move.shape}), and as an internal fault if [ps] and [shapes]
-    differ in length or [ps] is empty. *)
+    shape ({!Grid.window}), and as an internal fault if [ps] and [shapes] differ
+    in length, [ps] is empty, or [r] does not name each axis of each operand. *)
 
-val keeps : rule -> int array array -> int -> bool
-(** [keeps r shapes a] is whether the results of an operation of rule [r] over
-    operands of [shapes] keep their axis [a] whole: every window of them that
-    the engine computes holds all of it: an axis a reduction keeps of those it
-    reads whole, an axis of [Whole] or [Into], an axis that no axis of a moved
-    operand becomes in order ({!moved}), and every axis of [Replicated]. *)
+val keeps : rule -> int -> bool
+(** [keeps r a] is whether the results of an operation of rule [r] keep their
+    axis [a] whole: no operand's axis becomes it. *)
 
 val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
 (** [at ~by r shapes p] routes an operation of rule [r] over operands of

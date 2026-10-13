@@ -467,11 +467,6 @@ let cover_families what o cond =
 
 (* The law *)
 
-let operand_shapes (Op op) =
-  let shapes = ref [] in
-  Prim.iteri (fun _ x -> shapes := Prim.shape x :: !shapes) op;
-  Array.of_list (List.rev !shapes)
-
 let shape_of_results (Op op) =
   let first = ref [||] in
   ignore
@@ -491,10 +486,9 @@ let case =
   let open Gen in
   let* (Op op as o) = one_of ops in
   let rule = Prim.rule op and s = shape_of_results o in
-  let shapes = operand_shapes o in
   let+ w =
     let range a d =
-      if Route.keeps rule shapes a || d = 0 then constant (full d)
+      if Route.keeps rule a || d = 0 then constant (full d)
       else
         let* start = int_range 0 (d - 1) in
         let+ count = int_range 0 (d - start) in
@@ -746,11 +740,9 @@ let split_case ops =
   let open Gen in
   let* (Op op as o) = ops in
   let rule = Prim.rule op and s = shape_of_results o in
-  let shapes = operand_shapes o in
   let free =
     List.filter
-      (fun a ->
-        (not (Route.keeps rule shapes a)) && s.(a) > 0 && s.(a) mod 2 = 0)
+      (fun a -> (not (Route.keeps rule a)) && s.(a) > 0 && s.(a) mod 2 = 0)
       (List.init (Array.length s) Fun.id)
   in
   let+ axis =

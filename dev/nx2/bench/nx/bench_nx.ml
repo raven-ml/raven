@@ -120,11 +120,25 @@ let rows_to_columns () =
   in
   Reshard (Four.split ~axis:1, Nx.place (Four.split ~axis:0) square)
 
+(* A 64 × 64 matmul's operands on two memory devices: the left split by rows,
+   the right whole on each, so each device computes its rows. *)
+type operands =
+  | Operands :
+      (float, D.float32_elt, 'd) Nx.t * (float, D.float32_elt, 'd) Nx.t
+      -> operands
+
+let rows_two () =
+  let module Two = (val Nx.devices [ memory 0; memory 1 ]) in
+  let x = host (64 * 64) |> Nx.reshape [| 64; 64 |] in
+  Operands (Nx.place (Two.split ~axis:0) x, Nx.place Two.on x)
+
 let placed_rows =
   Thumper.group "placed"
     [
       Thumper.bench_with_setup "add-1-two-memory-devices" ~setup:split_two
         (fun (Value two) -> Value (Nx.add two two));
+      Thumper.bench_with_setup "matmul-f32-64-rows-two-memory-devices"
+        ~setup:rows_two (fun (Operands (a, b)) -> Value (Nx.matmul a b));
     ]
 
 let place_rows =
