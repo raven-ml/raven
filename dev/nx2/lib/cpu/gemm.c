@@ -402,10 +402,7 @@ static nx_cpu_pack mover(const problem *p, int64_t total, int64_t bytes,
 
 /* Moves operand [o]'s block as stage_acc does, through [move] where it is
    a pack, the operand is in acc and its rows or its columns are
-   contiguous, and sets each row's elements from n0 to [pitch] to +0, as a
-   pack does. Only the padding is set: on the M1's matrix unit, products
-   of 100 columns took 10-17% longer where the whole sliver of b was set,
-   then moved. */
+   contiguous. */
 static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
                  int64_t s0, int64_t s1, int64_t n0, int64_t n1, uint8_t *d,
                  int64_t pitch) {
@@ -414,13 +411,11 @@ static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
     move(n0, n1, x->base + at * p->w, s0, s1, d, pitch);
     return;
   }
-  for (int64_t q = 0; n0 < pitch && q < n1; q++)
-    memset(d + (q * pitch + n0) * p->w, 0, (size_t)((pitch - n0) * p->w));
   stage_acc(p, o, at, s0, s1, n0, n1, d, pitch);
 }
 
 /* Packs [a]'s rows [i, i + m) of element [e], along k from
-   [pc] for [kc], into [d]: kc steps of [lda] elements, zero past m. A
+   [pc] for [kc], into [d]: kc steps of [lda] elements, padding past m. A
    block of rows is one pack: its rows transpose in square blocks, where a
    sliver as narrow as a microkernel's 6 rows would move element by
    element. */
@@ -432,7 +427,7 @@ static void pack_a(const problem *p, nx_cpu_pack move, int64_t e, int64_t i,
 }
 
 /* Packs the sliver of [b]'s columns [j, j + n) likewise, kc steps of
-   [nr], zero past n. */
+   [nr], padding past n. */
 static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
                    int64_t n, int nr, int64_t pc, int64_t kc, uint8_t *d) {
   const int64_t *s = p->op[B].st;
@@ -488,8 +483,12 @@ static __attribute__((noinline)) void tile_apart(
   int w = p->w;
   for (int64_t r0 = 0; r0 < m; r0 += k.mr) {
     int64_t rows = min64(k.mr, m - r0), at = pos(p, DST, e, i + r0, j, 0);
-    nx_box in = {{1, rows, n}, {0, at}, {{0, k.nr, 1}, {0, s[ROW], s[COL]}}};
-    nx_box out = {{1, rows, n}, {at, 0}, {{0, s[ROW], s[COL]}, {0, k.nr, 1}}};
+    nx_box in = {.extent = {1, rows, n},
+                 .first = {0, at},
+                 .step = {{0, k.nr, 1}, {0, s[ROW], s[COL]}}};
+    nx_box out = {.extent = {1, rows, n},
+                  .first = {at, 0},
+                  .step = {{0, s[ROW], s[COL]}, {0, k.nr, 1}}};
     if (f == NX_CPU_FROM_TILE) nx_copy_box(t, base, &in, 8 * w);
     k.f(rows, n, kc, a.at + r0 * a.row * w, a.row, a.k, b.at, b.k, t, k.nr,
         f);

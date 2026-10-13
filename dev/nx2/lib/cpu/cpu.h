@@ -63,7 +63,7 @@ typedef void (*nx_cpu_kernel)(int64_t m, int64_t n, int64_t k, const void *a,
 /* How a microkernel reads a: an element at a time, so that a is read in
    place however its rows lie; or MR elements of a step at once, from a
    packed block, a_row 1, whose rows past m up to a multiple of MR are
-   +0. */
+   padding, any value (nx_cpu_pack). */
 typedef enum { NX_CPU_A_ELEMENTS, NX_CPU_A_PACKED } nx_cpu_a_read;
 
 /* A dot adds, for each of [r] contiguous rows of [a], row i at
@@ -84,10 +84,11 @@ typedef void (*nx_cpu_axpy)(const void *a, int64_t lda, int r, const void *b,
 
 /* A pack moves [n1] rows of [n0] elements of acc from [s], stepping [s0]
    along a row and [s1] across rows, one of them 1, into [d]: element i of
-   row j to d + (j·pitch + i)·w, and +0 to its elements from n0 to [pitch],
-   the next multiple of the kernel's MR, for a's blocks, or of its NR, for
-   b's slivers. It packs them without the stage, whose moves serve every
-   dtype and layout. */
+   row j to d + (j·pitch + i)·w. [pitch] is the next multiple of the
+   kernel's MR, for a's blocks, or of its NR, for b's slivers, and a pack
+   may write any value past n0: a kernel's outputs from those elements lie
+   past m or n and are never stored. It packs without the stage, whose
+   moves serve every dtype and layout. */
 typedef void (*nx_cpu_pack)(int64_t n0, int64_t n1, const void *s,
                             int64_t s0, int64_t s1, void *d, int64_t pitch);
 

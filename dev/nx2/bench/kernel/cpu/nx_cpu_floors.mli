@@ -17,10 +17,11 @@
     unit that unit's peak, floor-amx-f32-1024M-1t on one thread and
     floor-amx-f32-1024M-units on one thread per unit; one that streams its
     operands, as a product of few rows does, also reads their bytes,
-    floor-read-64M-all on every core. An elementwise kind's floor streams its operands' bytes with
-    one integer operation per element, floor-stream-2x4-4-1M-all reading two
-    arrays of 1 Mi 4-byte elements and writing one on every core; a where's
-    floor-select-4-1M also reads its condition's bytes. *)
+    floor-read-64M-all on every core. An elementwise kind's floor streams its
+    operands' bytes with one integer operation per element,
+    floor-stream-2x4-4-1M-all reading two arrays of 1 Mi 4-byte elements and
+    writing one on every core; a where's floor-select-4-1M also reads its
+    condition's bytes. *)
 
 (** The type for the work of a kernel row. *)
 type work =

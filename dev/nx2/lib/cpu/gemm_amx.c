@@ -62,58 +62,58 @@
 /* The elements of a register. */
 #define LANES(w) (64 / (w))
 
+/* A tile's side, 2L, and the bytes of a row of it: two registers. */
+#define SIDE(w) (2 * LANES(w))
+#define ROW_BYTES 128
+
 /* The Z row of row [i]'s column half [h] of a tile. */
 #define ZROW(w, i, h) ((w) * ((i) % LANES(w)) + 2 * ((i) / LANES(w)) + (h))
 
 /* Whether [p], and every [step] bytes from it, lie on 128 bytes: where a
    pair load moves two registers at once. */
 static int on128(const void *p, int64_t step) {
-  return ((uintptr_t)p | (uintptr_t)step) % 128 == 0;
+  return ((uintptr_t)p | (uintptr_t)step) % ROW_BYTES == 0;
 }
 
+/* The load or store [move] of the 128 bytes at [p] to or from registers
+   [r] and [r + 1]: in one instruction where [paired], else in two. */
+#define MOVE2(move, p, r, paired)                                    \
+  do {                                                               \
+    if (paired) move((uint64_t)(p) | NX_AMX_PAIR, r);                \
+    else {                                                           \
+      move(p, r);                                                    \
+      move((p) + 64, (r) + 1);                                       \
+    }                                                                \
+  } while (0)
+
 /* Moves the first [rows] rows of the tile at [c], [ldc] bytes apart, into
-   Z and back: a row of the tile is the Z rows ZROW(w, i, 0) and
-   ZROW(w, i, 1), adjacent, so that where its rows start on 128 bytes each
-   moves in one instruction, else in two. */
+   Z and back: row L·h + i of the tile is the Z rows ZROW(w, i, 0) + 2h and
+   the next, adjacent, so that where its rows start on 128 bytes each moves
+   in one instruction, else in two. One loop over the rows, rather than
+   these over h and i, made the pack's transposes a quarter slower on the
+   M1 Max. */
 INLINE void zload(int w, const uint8_t *c, int64_t ldc, int64_t rows) {
-  int paired = on128(c, ldc);
-  for (int i = 0; i < rows; i++) {
-    const uint8_t *r = c + i * ldc;
-    if (paired) NX_AMX_LDZ((uint64_t)r | NX_AMX_PAIR, ZROW(w, i, 0));
-    else
-      for (int h = 0; h < 2; h++) NX_AMX_LDZ(r + 64 * h, ZROW(w, i, h));
-  }
+  int paired = on128(c, ldc), l = LANES(w);
+  for (int h = 0; h < 2; h++)
+    for (int i = 0; i < l && l * h + i < rows; i++)
+      MOVE2(NX_AMX_LDZ, c + (l * h + i) * ldc, ZROW(w, i, 0) + 2 * h, paired);
 }
 
 INLINE void zstore(int w, uint8_t *c, int64_t ldc, int64_t rows) {
-  int paired = on128(c, ldc);
-  for (int i = 0; i < rows; i++) {
-    uint8_t *r = c + i * ldc;
-    if (paired) NX_AMX_STZ((uint64_t)r | NX_AMX_PAIR, ZROW(w, i, 0));
-    else
-      for (int h = 0; h < 2; h++) NX_AMX_STZ(r + 64 * h, ZROW(w, i, h));
-  }
+  int paired = on128(c, ldc), l = LANES(w);
+  for (int h = 0; h < 2; h++)
+    for (int i = 0; i < l && l * h + i < rows; i++)
+      MOVE2(NX_AMX_STZ, c + (l * h + i) * ldc, ZROW(w, i, 0) + 2 * h, paired);
 }
 
-/* 128 bytes of +0, a pair of Y registers for zeroing Z. */
-static _Alignas(128) const uint8_t zeros[128];
+/* A row of +0, a pair of Y registers for zeroing Z. */
+static _Alignas(ROW_BYTES) const uint8_t zeros[ROW_BYTES];
 
 /* Sets Z to +0: fma32's four accumulators, its 64 rows, take 1·y, y +0. */
 static void zzero(void) {
   NX_AMX_LDY((uint64_t)zeros | NX_AMX_PAIR, 0);
   for (int q = 0; q < 4; q++)
-    NX_AMX_OP(12, NX_AMX_OUTER(0, 0, q) | NX_AMX_SKIP_Z | NX_AMX_SKIP_X);
-}
-
-/* 128 bytes from [s] into X's registers [r] and [r + 1]: in one load
-   where [pair], else in two. */
-static void ldx2(const uint8_t *s, int r, int pair) {
-  if (pair) {
-    NX_AMX_LDX((uint64_t)s | NX_AMX_PAIR, r);
-    return;
-  }
-  NX_AMX_LDX(s, r);
-  NX_AMX_LDX(s + 64, r + 1);
+    NX_AMX_FMA32_SKIP(0, 0, q, NX_AMX_SKIP_Z | NX_AMX_SKIP_X);
 }
 
 /* The four outer products of the step in X and Y's registers [r] and
@@ -121,9 +121,9 @@ static void ldx2(const uint8_t *s, int r, int pair) {
 INLINE void outer4(int w, int r) {
   int o = 64 * r;
   for (int q = 0; q < 4; q++) {
-    uint64_t op = NX_AMX_OUTER(o + 64 * (q % 2), o + 64 * (q / 2), q);
-    if (w == 4) NX_AMX_OP(12, op);
-    else NX_AMX_OP(10, op);
+    int x = o + 64 * (q % 2), y = o + 64 * (q / 2);
+    if (w == 4) NX_AMX_FMA32(x, y, q);
+    else NX_AMX_FMA64(x, y, q);
   }
 }
 
@@ -141,33 +141,32 @@ INLINE void tile(int w, int64_t k, const uint8_t *a, int64_t a_k,
   for (; p + 4 <= k; p += 4) {
     for (int s = 0; s < 4; s++) {
       NX_AMX_LDY((uint64_t)(a + (p + s) * a_k) | NX_AMX_PAIR, 2 * s);
-      ldx2(b + (p + s) * b_k, 2 * s, pair_b);
+      MOVE2(NX_AMX_LDX, b + (p + s) * b_k, 2 * s, pair_b);
     }
     for (int s = 0; s < 4; s++) outer4(w, 2 * s);
   }
   for (; p < k; p++) {
     NX_AMX_LDY((uint64_t)(a + p * a_k) | NX_AMX_PAIR, 0);
-    ldx2(b + p * b_k, 0, pair_b);
+    MOVE2(NX_AMX_LDX, b + p * b_k, 0, pair_b);
     outer4(w, 0);
   }
   zstore(w, c, ldc, rows);
 }
 
 /* A tile of [rows] and [n] columns, fewer than 2L, through a whole one on
-   the stack. Apart from the kernel, so that the kernel's
-   frame holds no tile, which macOS would probe page by page at each
-   call. */
+   the stack. Apart from the kernel, so that the kernel's frame holds no
+   tile, which macOS would probe page by page at each call. */
 static __attribute__((noinline)) void edge(
     int w, int64_t k, const uint8_t *a, int64_t a_k, const uint8_t *b,
     int64_t b_k, uint8_t *y, int64_t ldc, int64_t rows, int64_t n,
     nx_cpu_from from) {
-  _Alignas(128) uint8_t t[NX_CPU_TILE];
+  _Alignas(ROW_BYTES) uint8_t t[NX_CPU_TILE];
   for (int64_t i = 0; from == NX_CPU_FROM_TILE && i < rows; i++)
-    memcpy(t + 128 * i, y + i * ldc, (size_t)(n * w));
-  if (w == 4) tile(4, k, a, a_k, b, b_k, t, 128, rows, from);
-  else tile(8, k, a, a_k, b, b_k, t, 128, rows, from);
+    memcpy(t + ROW_BYTES * i, y + i * ldc, (size_t)(n * w));
+  if (w == 4) tile(4, k, a, a_k, b, b_k, t, ROW_BYTES, rows, from);
+  else tile(8, k, a, a_k, b, b_k, t, ROW_BYTES, rows, from);
   for (int64_t i = 0; i < rows; i++)
-    memcpy(y + i * ldc, t + 128 * i, (size_t)(n * w));
+    memcpy(y + i * ldc, t + ROW_BYTES * i, (size_t)(n * w));
 }
 
 /* a is packed (NX_CPU_A_PACKED), its rows adjacent. */
@@ -176,12 +175,11 @@ INLINE void kernel(int w, int64_t m, int64_t n, int64_t k, const void *va,
                    void *vc, int64_t ldc, nx_cpu_from from) {
   const uint8_t *a = va, *b = vb;
   uint8_t *c = vc;
-  int64_t mr = 2 * LANES(w);
-  for (int64_t i0 = 0; i0 < m; i0 += mr) {
-    int64_t rows = m - i0 < mr ? m - i0 : mr;
+  for (int64_t i0 = 0; i0 < m; i0 += SIDE(w)) {
+    int64_t rows = m - i0 < SIDE(w) ? m - i0 : SIDE(w);
     const uint8_t *ai = a + i0 * a_row * w;
     uint8_t *ci = c + i0 * ldc * w;
-    if (n == mr)
+    if (n == SIDE(w))
       tile(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, rows, from);
     else edge(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, rows, n, from);
   }
@@ -201,30 +199,18 @@ static void kernel_f64(int64_t m, int64_t n, int64_t k, const void *a,
 
 /* Transposes [rows] rows, at most 2L, × 2L steps from [s] into [d], rows
    [ld] and steps [pitch] bytes apart, on the unit, and stores steps
-   [first] to 2L - 1. Row i of row half h loads into the Z rows w·i + 2h
-   and the next, its steps 0 to L - 1 and L to 2L - 1: Z holds four
-   quarters, q = 2·(row half) + (step half), each row i of a quarter in Z
-   row w·i + q. Step k is then column k mod L of quarters k / L and
-   2 + k / L, moved into Y and stored: 2L elements, +0 past [rows], where
-   Z was set to +0. Rows and steps that start on 128 bytes move in one
-   instruction each, others in two. A move rounds nothing, so every bit
-   moves, a NaN's payload included. */
+   [first] to 2L - 1. The rows load as a tile's (zload); step k is then
+   lane k mod L of row i's half k / L, a column of Z, which extrv c =
+   w·(k mod L) + k / L moves into Y for the rows below L and c + 2 for
+   the others. Steps that start on 128 bytes store in one instruction,
+   others in two. A move rounds nothing, so every bit moves, a NaN's
+   payload included; past [rows], a step holds what Z held. */
 INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
                       int64_t pitch, int64_t rows, int64_t first) {
-  int l = LANES(w), in_pairs = on128(s, ld), out_pairs = on128(d, pitch);
-  if (rows < 2 * l) zzero();
-  for (int64_t r = 0; r < rows; r++) {
-    const uint8_t *row = s + r * ld;
-    int z = w * (r % l) + 2 * (r / l);
-    if (in_pairs) NX_AMX_LDZ((uint64_t)row | NX_AMX_PAIR, z);
-    else {
-      NX_AMX_LDZ(row, z);
-      NX_AMX_LDZ(row + 64, z + 1);
-    }
-  }
-  for (int k = first; k < 2 * l; k++) {
+  int l = LANES(w), out_pairs = on128(d, pitch);
+  zload(w, s, ld, rows);
+  for (int k = first; k < SIDE(w); k++) {
     int c = w * (k % l) + k / l;
-    uint8_t *r = d + k * pitch;
     if (w == 4) {
       NX_AMX_EXTRV32(0, c);
       NX_AMX_EXTRV32(64, c + 2);
@@ -232,71 +218,54 @@ INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
       NX_AMX_EXTRV64(0, c);
       NX_AMX_EXTRV64(64, c + 2);
     }
-    if (out_pairs) NX_AMX_STY((uint64_t)r | NX_AMX_PAIR, 0);
-    else {
-      NX_AMX_STY(r, 0);
-      NX_AMX_STY(r + 64, 1);
-    }
+    MOVE2(NX_AMX_STY, d + k * pitch, 0, out_pairs);
   }
 }
 
-/* The last [n] elements of a contiguous row, fewer than 2L, and +0 to
-   2L, into [d] as one store of 2L: the elements move one at a time,
-   which the compiler keeps in registers, where memcpy and memset would be
-   two calls a row. */
-INLINE void row_tail(int w, uint8_t *d, const uint8_t *s, int64_t n) {
-  _Alignas(16) uint8_t t[128] = {0};
-  for (int64_t e = 0; e < n * w; e += w) memcpy(t + e, s + e, (size_t)w);
-  memcpy(d, t, 128);
-}
-
 /* The pack. Contiguous rows move 2L elements at a time through X, four
-   rows to the eight registers, and their last elements through
-   row_tail. Rows contiguous across move 2L × 2L at a time through Z
-   (transpose): a block of fewer rows stores +0 past them; a block of
-   fewer steps loads the 2L steps that end at the last, all within its
-   rows, and stores its own. Rows of fewer than 2L steps move element by
-   element. Each of d's rows takes whole registers, its pitch the next
-   multiple of 2L (cpu.h). */
+   rows to the eight registers, and their last elements one at a time,
+   which the compiler keeps in registers where memcpy would be a call a
+   row. Rows contiguous across move 2L × 2L at a time through Z
+   (transpose), a block of fewer rows storing whole steps into d's
+   padding (cpu.h); a block of fewer steps loads the 2L steps that end at
+   its last, all within its rows, and stores its own. Rows of fewer than
+   2L steps move element by element. */
 INLINE void pack(int w, int64_t n0, int64_t n1, const void *vs, int64_t s0,
                  int64_t s1, void *vd, int64_t pitch) {
   const uint8_t *s = vs;
   uint8_t *d = vd;
-  int64_t mr = 2 * LANES(w);
+  int64_t side = SIDE(w);
   if (s0 == 1) {
-    int64_t i_most = n0 / mr * mr;
+    int64_t i_most = n0 / side * side;
     for (int64_t j = 0; j < n1; j += 4) {
       int rows = n1 - j < 4 ? (int)(n1 - j) : 4;
-      for (int64_t i = 0; i < i_most; i += mr) {
-        for (int u = 0; u < rows; u++) {
-          NX_AMX_LDX(s + ((j + u) * s1 + i) * w, 2 * u);
-          NX_AMX_LDX(s + ((j + u) * s1 + i) * w + 64, 2 * u + 1);
-        }
-        for (int u = 0; u < rows; u++) {
-          NX_AMX_STX(d + ((j + u) * pitch + i) * w, 2 * u);
-          NX_AMX_STX(d + ((j + u) * pitch + i) * w + 64, 2 * u + 1);
-        }
+      for (int64_t i = 0; i < i_most; i += side) {
+        for (int u = 0; u < rows; u++)
+          MOVE2(NX_AMX_LDX, s + ((j + u) * s1 + i) * w, 2 * u, 0);
+        for (int u = 0; u < rows; u++)
+          MOVE2(NX_AMX_STX, d + ((j + u) * pitch + i) * w, 2 * u, 0);
       }
     }
-    for (int64_t j = 0; i_most < n0 && j < n1; j++)
-      row_tail(w, d + (j * pitch + i_most) * w, s + (j * s1 + i_most) * w,
-               n0 - i_most);
+    for (int64_t j = 0; j < n1; j++)
+      for (int64_t i = i_most; i < n0; i++)
+        memcpy(d + (j * pitch + i) * w, s + (j * s1 + i) * w, (size_t)w);
     return;
   }
-  if (n1 < mr) {
-    for (int64_t j = 0; j < n1; j++) {
+  if (n1 < side) {
+    for (int64_t j = 0; j < n1; j++)
       for (int64_t i = 0; i < n0; i++)
         memcpy(d + (j * pitch + i) * w, s + (i * s0 + j) * w, (size_t)w);
-      memset(d + (j * pitch + n0) * w, 0, (size_t)((pitch - n0) * w));
-    }
     return;
   }
-  for (int64_t i = 0; i < n0; i += mr)
-    for (int64_t j = 0; j < n1; j += mr) {
-      int64_t rows = n0 - i < mr ? n0 - i : mr;
-      int64_t back = j + mr > n1 ? j + mr - n1 : 0;
-      transpose(w, s + (i * s0 + j - back) * w, s0 * w,
-                d + ((j - back) * pitch + i) * w, pitch * w, rows, back);
+  for (int64_t i = 0; i < n0; i += side)
+    for (int64_t j = 0; j < n1; j += side) {
+      int64_t rows = n0 - i < side ? n0 - i : side;
+      int64_t back = j + side > n1 ? j + side - n1 : 0;
+      const uint8_t *from = s + (i * s0 + j - back) * w;
+      uint8_t *to = d + ((j - back) * pitch + i) * w;
+      if (rows == side && back == 0)
+        transpose(w, from, s0 * w, to, pitch * w, side, 0);
+      else transpose(w, from, s0 * w, to, pitch * w, rows, back);
     }
 }
 
@@ -333,7 +302,8 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
   int shared = sysctl_int("hw.perflevel0.cpusperl2");
   shared = shared > 0 ? shared : 1;
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, 32, 32, NX_CPU_A_PACKED, SPEED32, shared},
+      .kernel = {kernel_f32, SIDE(4), SIDE(4), NX_CPU_A_PACKED, SPEED32,
+                 shared},
       .mc = 128,
       .kc = 1024,
       .nc = 2048,
@@ -341,8 +311,11 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
       .other = &nx_cpu_base.gemm[NX_FLOAT32],
       .enter = enter,
       .leave = leave};
+  /* float64 takes float32's blocks: KC 1024 beat 256 and 512 from 1024³
+     to 4096³. */
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, 16, 16, NX_CPU_A_PACKED, SPEED64, shared},
+      .kernel = {kernel_f64, SIDE(8), SIDE(8), NX_CPU_A_PACKED, SPEED64,
+                 shared},
       .mc = 128,
       .kc = 1024,
       .nc = 2048,
