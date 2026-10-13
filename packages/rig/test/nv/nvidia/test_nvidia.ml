@@ -168,7 +168,7 @@ let other_root () =
 
 (* The page a stopped device keeps of the GPU's mappings: its timeline word's,
    which lives for the process. *)
-let page = 4096
+let page = Rig_gpu_support.Host.page
 
 (* The bytes of the GPU's mappings that are not reservations ([---p]). *)
 let mapped_bytes () =

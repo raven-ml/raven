@@ -562,8 +562,8 @@ let stop_running () =
   equal bool ~msg:"the stop checked reopening while work ran" true !checked;
   H.set64 (host flag) 1;
   close (reopened ());
-  equal int ~msg:"the word once the work ended, its streams destroyed"
-    (Rig.submitted d) (C.signaled g)
+  equal int ~msg:"the word once the work ended" (Rig.submitted d)
+    (C.signaled g)
 
 (* After a failure, a submit's write of its value still follows every earlier
    value: here value 1, a kernel that runs on COPY:0 until [flag] is set. Value
