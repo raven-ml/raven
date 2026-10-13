@@ -333,9 +333,41 @@ let stop_handle d =
       try I.stop h with I.Fault _ -> ())
   | Host -> ()
 
-(* Removes a device's names from the table of names ({!table}, below), which
-   so holds the devices whose stop has not returned. *)
-let forget_names : (device -> unit) ref = ref ignore
+(* An open of a name: its slot is [k], the machine's name and the device's.
+   [opening] says whether the slot reads [Opening] for it, [index] is the
+   index it took, and [ended] says that an exception ended it. *)
+type request = {
+  fn : string;
+  machine : machine;
+  k : string option * string;
+  full : string;
+  key : int;
+  host : bool;
+  mutable opening : bool;
+  mutable index : int;
+  mutable ended : bool; [@atomic]
+}
+
+type slot = Opening of request | Open of device
+
+module Names = Tbl.Make (struct
+  type t = string option * string
+
+  let equal = ( = )
+  let hash = Hashtbl.hash
+end)
+
+let table : slot Names.t = Names.create 16
+let next_index = Atomic.make 1
+
+(* Under the table's lock: removes [d]'s names, so an open of them makes a new
+   device. A stop removes them, so the table holds the devices whose stop has
+   not returned. *)
+let forget_locked d =
+  let mine k slot ks =
+    match slot with Open d' when d' == d -> k :: ks | _ -> ks
+  in
+  List.iter (Names.remove table) (Names.fold mine table [])
 
 (* Moves the state on after the driver's stop. Its values and its names go
    first, so a close, which waits for the state, returns after them, and the
@@ -343,7 +375,7 @@ let forget_names : (device -> unit) ref = ref ignore
 let returned d =
   match
     drop_values d;
-    !forget_names d
+    Lock.protect table_lock forget_locked d
   with
   | () -> c_stopped d.live.c
   | exception e ->
@@ -476,8 +508,8 @@ let now_ms () = Prof.now () / 1_000_000
    is read again here: [w] was read before a commit that may have waited for
    the turn as long as the still interval. *)
 let bounded d w ~still_ms hang =
-  let w = Int.max w (c_word d.index) in
   let l = d.live in
+  let w = Int.max w (c_word d.index) in
   let now = now_ms () and p = l.progress in
   let idle = committed d <= w || c_waits_in_queue l.c in
   if idle || p.idle || p.seen <> w then begin
@@ -567,7 +599,7 @@ let look_at_producers d =
     (c_producers d.live.c)
 
 (* Reads [d]'s word until it reaches [v] or the clock [until]: the word. *)
-let rec spin_held d v until =
+let rec spin_held (d : device) v until =
   let w = c_word d.index in
   if w >= v || Prof.now () >= until then w
   else begin
@@ -688,43 +720,6 @@ let close_one d =
 
 (* Opening *)
 
-
-(* An open of a name: its slot is [k], the machine's name and the device's.
-   [opening] says whether the slot reads [Opening] for it, [index] is the
-   index it took, and [ended] says that an exception ended it. *)
-type request = {
-  fn : string;
-  machine : machine;
-  k : string option * string;
-  full : string;
-  key : int;
-  host : bool;
-  mutable opening : bool;
-  mutable index : int;
-  mutable ended : bool; [@atomic]
-}
-
-type slot = Opening of request | Open of device
-
-module Names = Tbl.Make (struct
-  type t = string option * string
-
-  let equal = ( = )
-  let hash = Hashtbl.hash
-end)
-
-let table : slot Names.t = Names.create 16
-let next_index = Atomic.make 1
-
-(* Under the table's lock: removes [d]'s names, so an open of them makes a new
-   device. *)
-let forget_locked d =
-  let mine k slot ks =
-    match slot with Open d' when d' == d -> k :: ks | _ -> ks
-  in
-  List.iter (Names.remove table) (Names.fold mine table [])
-
-let () = forget_names := Lock.protect table_lock forget_locked
 
 (* The device [r] published, if any. *)
 let made r =
