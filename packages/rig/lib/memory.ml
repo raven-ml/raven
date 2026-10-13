@@ -151,7 +151,8 @@ external heap_reserve : int -> int -> bool = "caml_rig_heap_reserve" [@@noalloc]
 type bytes_ba =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-external heap_bytes : int -> int -> bytes_ba = "caml_rig_heap_bytes"
+external heap_bytes : int -> bytes_ba = "caml_rig_heap_bytes"
+external heap_footprint : int -> int = "caml_rig_heap_footprint" [@@noalloc]
 external heap_drop : unit -> unit = "caml_rig_heap_drop"
 external heap_trim : int -> unit = "caml_rig_heap_trim"
 external heap_release : int -> unit = "caml_rig_heap_release" [@@noalloc]
@@ -168,10 +169,12 @@ external ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
 let aligned_from = Int.max (64 * 1024) (4 * page)
 let () = heap_init aligned_from
 
+(* Smaller ones of a line or more start on one (rig_heap.c), so threads that
+   write pieces of whole lines share none: on fudge (Core Ultra 5 235) a 64³
+   float32 product, one 16-column sliver a thread, took 2.4 us with its
+   output 16 bytes past a line against 1.7 on one. *)
 let heap_bytes n =
-  if n < aligned_from then heap_bytes 1 n
-  else if n > max_int - page then raise Stdlib.Out_of_memory
-  else heap_bytes page n
+  if n > max_int - page then raise Stdlib.Out_of_memory else heap_bytes n
 
 (* Memory records *)
 
@@ -1315,7 +1318,7 @@ let host_bytes n =
       match reclaiming Dev.host ~pool:Dev.host n (bytes n) with
       | ba -> ba
       | exception (Dev.Out_of_memory _ as x) ->
-          heap_release n;
+          heap_release (heap_footprint n);
           raise x)
 
 (* What every host buffer of no bytes keeps: nothing to free. *)
@@ -1328,7 +1331,7 @@ let host_memory n =
     let addr = ba_address empty in
     own ~keep:empty_keep ~host:addr ~address:addr ~handle:0n Dev.host no_entry
   else begin
-    heap_reserved n;
+    heap_reserved (heap_footprint n);
     let ba = host_bytes n in
     let addr = ba_address ba in
     own ~keep:(Heap ba) ~host:addr ~address:addr ~handle:0n Dev.host no_entry

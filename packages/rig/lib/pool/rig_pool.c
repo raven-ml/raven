@@ -72,10 +72,6 @@ static const uint64_t spin_ns = 100000;
    a body's safe depth does not depend on which thread claims its chunk. */
 static const size_t stack_bytes = 8 << 20;
 
-/* A cache line on Apple silicon, and the pair of lines x86 fetches
-   together. */
-enum { line_bytes = 128 };
-
 /* A claim takes 1 / claim_split of the chunks left in its strip, and at
    least one: one claim a chunk costs a fetch-add, more than a short chunk's
    work once threads contend for the counter. A thread up to about
@@ -384,7 +380,7 @@ static inline int64_t bound(const job *j, int64_t i) {
 typedef struct {
   _Atomic uint64_t next;
   uint64_t end;
-  char gap[line_bytes - 2 * sizeof(uint64_t)];
+  char gap[RIG_LINE_BYTES - 2 * sizeof(uint64_t)];
 } strip;
 
 typedef struct pool pool;
@@ -411,7 +407,7 @@ struct pool {
   /* The gap keeps the workers' entries a line away from the job and the
      generation, which every entry would otherwise take from the threads
      that spin on it, whatever the pool's address. */
-  char gap[line_bytes];
+  char gap[RIG_LINE_BYTES];
   _Atomic uint64_t inside; /* the workers inside the job, | closed */
   _Atomic int waiting;     /* whether the caller parked on [done] */
   /* Bit [id % 64] of word [id / 64] is set while worker [id] is parked. */
