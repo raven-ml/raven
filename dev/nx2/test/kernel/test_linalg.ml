@@ -139,8 +139,9 @@ let uniform r = Random.State.float r 2. -. 1.
 let draw r dt =
   { Complex.re = uniform r; im = (if is_complex dt then uniform r else 0.) }
 
-(* Matrix orders on both sides of a block of 64, and small ones. *)
-let orders = [ 0; 1; 2; 3; 5; 8; 17; 63; 64; 65; 129 ]
+(* Matrix orders on both sides of a block of 64, 26, the first that divide
+   and conquer tears, and small ones. *)
+let orders = [ 0; 1; 2; 3; 5; 8; 17; 26; 63; 64; 65; 129 ]
 
 type case = {
   dt : D.any;
@@ -1059,8 +1060,9 @@ let law_eigh_fails (b : Support.backend) c =
       v.((i * c.n) + j) <- { Complex.re = bad; im = 0. };
       v
     in
-    check_alone b (Eigh true) ~dt:c.dt ~rows:c.n ~cols:1 ~spoil
-      [| eigh_operand c |]
+    List.iter
+      (fun r -> check_alone b r ~dt:c.dt ~rows:c.n ~cols:1 ~spoil [| eigh_operand c |])
+      [ Eigh true; Eigh false ]
 
 (* NaN or an infinity anywhere. *)
 let law_svd_fails (b : Support.backend) c =
@@ -1074,8 +1076,9 @@ let law_svd_fails (b : Support.backend) c =
       v.(p) <- { Complex.re = bad; im = 0. };
       v
     in
-    check_alone b (Svd (Some (factors c))) ~dt:c.dt ~rows:(min m n) ~cols:1
-      ~spoil [| x |]
+    List.iter
+      (fun r -> check_alone b r ~dt:c.dt ~rows:(min m n) ~cols:1 ~spoil [| x |])
+      [ Svd (Some (factors c)); Svd None ]
 
 let law_solve_fails (b : Support.backend) c =
   let c = { (one c) with unit_diagonal = false; r = max 1 c.r } in
