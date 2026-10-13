@@ -224,6 +224,9 @@ let kc_least = 256
 let nc_least = 1024
 let panels = 8 * 1024 * 1024
 
+(* The most rows gemm.c's quads' dots take. *)
+let quad_rows = 32
+
 (* Extents of the batch, row, column and contracted axes, in profiles: any
    ranks over a few elements; one output; 64 outputs or more with edge
    tiles; several blocks of the contraction on several threads; dots past a
@@ -1034,10 +1037,14 @@ let shifted (A.Any x as a) =
   cast_into y a;
   A.Any y
 
-(* Quads in place: a as made, and b made [n × k], adjacent along k, over
-   several of chain order's blocks of words; a copied tail; operands
-   adjacent along k at an odd offset; an empty batch of operands adjacent
-   along k. *)
+(* Quads in place: a as made, and b stored [n × k], adjacent along k, over
+   several of chain order's blocks of words, past the dots' rows and
+   columns; b interleaved; a copied tail;
+   operands adjacent along k at an odd offset; an empty batch of operands
+   adjacent along k. Quads' dots: a batch of few rows by b stored [n × k],
+   over columns and words that do not fill the dot's 4 columns and 4
+   words; the most rows; one column of b, copied; few columns, with a and
+   b swapped, alone and in a batch. *)
 let quad_examples =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let by_rows r =
@@ -1049,13 +1056,24 @@ let quad_examples =
         let ra, _, ry = ranks e in
         make ~order ~acc ~out:acc e (d, plain ra) (d, vb) (Some (plain ry)) 3
       in
+      (* [case] with b stored as viewed. *)
+      let stored order e vb =
+        let c = case order e vb in
+        let (A.Any b) = c.b in
+        { c with b = A.Any (A.copy b) }
+      in
       [
-        case Chain ([||], [| 130 |], [| 20 |], [| 2052 |]) (by_rows 2);
+        stored Chain ([||], [| 130 |], [| 40 |], [| 2052 |]) (by_rows 2);
         case Chain ([||], [| 3 |], [| 50 |], [| 64 |]) (plain 2);
         case Lane ([||], [| 9 |], [| 33 |], [| 7 |]) (by_rows 2);
         (let c = case Chain ([||], [| 5 |], [| 9 |], [| 64 |]) (by_rows 2) in
          { c with a = shifted c.a; b = shifted c.b });
-        case Chain ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3);
+        stored Chain ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3);
+        stored Chain ([| 2 |], [| 3 |], [| 7 |], [| 20 |]) (by_rows 3);
+        stored Lane ([||], [| quad_rows |], [| 33 |], [| 64 |]) (by_rows 2);
+        case Chain ([||], [| 2 |], [| 1 |], [| 7 |]) (plain 2);
+        stored Chain ([||], [| 40 |], [| 3 |], [| 20 |]) (by_rows 2);
+        stored Lane ([| 2 |], [| 5 |], [| 2 |], [| 8 |]) (by_rows 3);
       ])
     D.[ (Any Int32, Any Int8); (Any Uint32, Any Uint8) ]
 
@@ -1141,6 +1159,11 @@ let quad_covers (c : case) =
     && ((adjacent c.a fst && not (aligned c.a fst))
        || (adjacent c.b snd && not (aligned c.b snd))));
   cover "b's rows interleaved" (k >= 4 && not (adjacent c.b snd) && columns_adjacent);
+  let m, n = rows_cols c in
+  let dots = m > 0 && n > 0 && (in_place c.b snd || n = 1) in
+  cover "few rows by quads' dots" (dots && m <= n && m <= quad_rows);
+  cover "few columns by quads' dots" (dots && n < m && n <= quad_rows);
+  cover "b read in place by chain order" (in_place c.b snd && min m n > quad_rows);
   cover "fewer than 4 products" (k < 4);
   cover "products not a multiple of 4" (k mod 4 <> 0)
 

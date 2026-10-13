@@ -1292,17 +1292,23 @@ static int init_is_dst(const problem *p) {
   return 1;
 }
 
+/* [p]'s operands and extents: [v]'s of [op]. */
+static void lay_out(problem *p, const nx_contract_view *v,
+                    const nx_array *const *op) {
+  for (int o = 0; o < 4; o++) {
+    p->op[o].x = op[o];
+    p->op[o].first = v->offset[o];
+    for (int x = 0; x < 4; x++) p->op[o].st[x] = v->stride[o][x];
+  }
+  for (int x = 0; x < 4; x++) p->ext[x] = v->extent[x];
+}
+
 /* nx_cpu_contract_on on the kernels [g]. */
 static int contract_with(const nx_cpu_gemm *g, int acc, int order,
                          const nx_contract_view *v,
                          const nx_array *const *op) {
   problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
-  for (int o = 0; o < 4; o++) {
-    p.op[o].x = op[o];
-    p.op[o].first = v->offset[o];
-    for (int x = 0; x < 4; x++) p.op[o].st[x] = v->stride[o][x];
-  }
-  for (int x = 0; x < 4; x++) p.ext[x] = v->extent[x];
+  lay_out(&p, v, op);
   if (p.ext[BATCH] == 0 || p.ext[ROW] == 0 || p.ext[COL] == 0) return 1;
   p.init_is_dst = init_is_dst(&p);
   atomic_init(&p.failed, 0);
@@ -1614,6 +1620,83 @@ static uint8_t *words_of(const nx_contract_view *v, const nx_array *const *op,
   return d;
 }
 
+/* A product of few rows whose b's words lie adjacent along k: each
+   output the dot of a's row and b's column, which reads b once, in the
+   order it lies, where chain order's tiles would pad a's rows to MR and
+   pack b's slivers. A unit is DOT_COLUMNS columns of a batch element,
+   which stay in the L1 cache from one pair of rows to the next while k is
+   at most 8192. The dots do not split k, as lane order's do: a product of
+   at most DOT_COLUMNS rows and columns runs on one core whatever k. On
+   the M1 Max, int8 rows by a 4096 × 4096 weight stored [n × k] take 50 µs
+   at 1 row against chain order's 255, 595 at 32 against 710, and the
+   same 1.2 ms at 64. */
+#define QUAD_ROWS 32
+
+typedef struct {
+  const problem *p; /* a and b of words */
+  nx_cpu_quads_dot dot;
+  int64_t groups; /* of DOT_COLUMNS columns */
+} quad_dots_job;
+
+/* Operand [o]'s words from (e, i, j, 0). */
+static const uint32_t *words_at(const problem *p, int o, int64_t e,
+                                int64_t i, int64_t j) {
+  return (const uint32_t *)p->op[o].x->base + pos(p, o, e, i, j, 0);
+}
+
+/* Row [i] of element [e]'s outputs [j0, j0 + c): init, or 0, plus [y]. */
+static void quad_row(const problem *p, int64_t e, int64_t i, int64_t j0,
+                     int64_t c, const uint32_t *y) {
+  uint32_t init[DOT_COLUMNS] = {0};
+  if (p->op[INIT].x)
+    stage_acc(p, INIT, pos(p, INIT, e, i, j0, 0), p->op[INIT].st[COL], 0, c,
+              1, (uint8_t *)init, c);
+  uint32_t *d = (uint32_t *)at_r(p, e, i, j0);
+  int64_t sy = p->op[DST].st[COL];
+  for (int64_t q = 0; q < c; q++) d[q * sy] = init[q] + y[q];
+}
+
+static void quad_dots(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const quad_dots_job *j = ctx;
+  const problem *p = j->p;
+  int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON];
+  int64_t lda = p->op[A].st[ROW], ldb = p->op[B].st[COL];
+  _Alignas(16) uint32_t y[2][DOT_COLUMNS + 4];
+  for (int64_t t = lo; t < hi; t++) {
+    int64_t e = t / j->groups, j0 = t % j->groups * DOT_COLUMNS;
+    int64_t c = min64(DOT_COLUMNS, n - j0), q;
+    const uint32_t *b = words_at(p, B, e, 0, j0);
+    for (int64_t i = 0; i < m; i += 2) {
+      const uint32_t *a = words_at(p, A, e, i, 0);
+      /* A last row alone is its own pair, a last column its own four. */
+      int64_t pair = i + 1 < m ? lda : 0, ldy = DOT_COLUMNS + 4;
+      for (q = 0; q + 4 <= c; q += 4)
+        j->dot(a, pair, b + q * ldb, ldb, k, y[0] + q, ldy);
+      for (; q < c; q++) j->dot(a, pair, b + q * ldb, 0, k, y[0] + q, ldy);
+      quad_row(p, e, i, j0, c, y[0]);
+      if (i + 1 < m) quad_row(p, e, i + 1, j0, c, y[1]);
+    }
+  }
+}
+
+/* [u]'s product of the words [op] in [acc] by quads' dots, the fewer of
+   rows and columns as rows: a's and b's words both lie adjacent along k,
+   so each output is the same dot with a and b swapped. */
+static void quad_dots_on(nx_cpu_quads_dot dot, const nx_cpu_gemm *g, int acc,
+                         const nx_contract_view *u,
+                         const nx_array *const *op) {
+  problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
+  lay_out(&p, u, op);
+  if (p.ext[COL] < p.ext[ROW]) transpose(&p);
+  int64_t batch = p.ext[BATCH], m = p.ext[ROW], n = p.ext[COL];
+  int64_t k = p.ext[CON], groups = ceil_div(n, DOT_COLUMNS);
+  quad_dots_job j = {.p = &p, .dot = dot, .groups = groups};
+  int64_t bytes = batch * (m + n) * k * p.w;
+  double cost = flop_cost(g->kernel, 2.0 * batch * m * n * k) + bytes;
+  nx_cpu_job(batch * groups, bytes, cost, quad_dots, &j);
+}
+
 /* The table's quads kernels for a contraction in [acc] of operands of
    [da] and [db], or NULL. */
 static const nx_cpu_gemm *quads_for(int acc, int da, int db) {
@@ -1636,7 +1719,13 @@ static int quads_on(const nx_cpu_gemm *g, int acc, const nx_contract_view *v,
   int done = 0;
   if ((copy_a && ab == NULL) || (copy_b && bb == NULL)) goto out;
   const nx_array *ops[4] = {&x[A], &x[B], op[INIT], op[DST]};
-  done = contract_with(g, acc, NX_CPU_CHAIN, &u, ops);
+  /* a's words lie adjacent along k; the dots need b's to as well. */
+  nx_cpu_quads_dot dot = nx_cpu_table->quads_dot[op[A]->dtype];
+  int64_t m = v->extent[ROW], n = v->extent[COL];
+  if (dot && u.stride[B][CON] == 1 && min64(m, n) <= QUAD_ROWS) {
+    quad_dots_on(dot, g, acc, &u, ops);
+    done = 1;
+  } else done = contract_with(g, acc, NX_CPU_CHAIN, &u, ops);
 out:
   free(ab);
   free(bb);

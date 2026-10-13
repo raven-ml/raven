@@ -101,6 +101,50 @@ KERNEL(kernel_sdot, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
        vld1q_dup_u32, SDOT, vdupq_n_u32(0))
 KERNEL(kernel_udot, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
        vld1q_dup_u32, UDOT, vdupq_n_u32(0))
+
+/* Quads' dots: the SDOT dot product of ggml's ggml_vec_dot_q8_0_q8_0,
+   here over whole rows with no blocks or scales, in a tile of two rows of
+   a by four columns of b: a vector of each row's words against one of
+   each column's, eight accumulators, whose lanes add at the end. Eight
+   chains in flight cover SDOT's latency. A tail of fewer than four words
+   goes through words zeroed on the stack. */
+#define QDOT_ROW(DOT, i, x, b0, b1, b2, b3) \
+  c##i##0 = DOT(c##i##0, b0, x);            \
+  c##i##1 = DOT(c##i##1, b1, x);            \
+  c##i##2 = DOT(c##i##2, b2, x);            \
+  c##i##3 = DOT(c##i##3, b3, x);
+#define QDOT_STEP(DOT, x0, x1, b0, b1, b2, b3) \
+  {                                            \
+    uint32x4_t v0 = b0, v1 = b1, v2 = b2, v3 = b3; \
+    QDOT_ROW(DOT, 0, x0, v0, v1, v2, v3)       \
+    QDOT_ROW(DOT, 1, x1, v0, v1, v2, v3)       \
+  }
+#define QDOT_SUMS(i)                                              \
+  vpaddq_u32(vpaddq_u32(c##i##0, c##i##1), vpaddq_u32(c##i##2, c##i##3))
+#define QDOT(name, DOT)                                                    \
+  static void name(const uint32_t *a, int64_t lda, const uint32_t *b,     \
+                   int64_t ldb, int64_t n, uint32_t *y, int64_t ldy) {    \
+    uint32x4_t c00 = vdupq_n_u32(0), c01 = c00, c02 = c00, c03 = c00;     \
+    uint32x4_t c10 = c00, c11 = c00, c12 = c00, c13 = c00;                \
+    const uint32_t *r[6] = {a, a + lda, b, b + ldb, b + 2 * ldb,          \
+                            b + 3 * ldb};                                 \
+    int64_t q = 0;                                                        \
+    for (; q + 4 <= n; q += 4)                                            \
+      QDOT_STEP(DOT, vld1q_u32(r[0] + q), vld1q_u32(r[1] + q),            \
+                vld1q_u32(r[2] + q), vld1q_u32(r[3] + q),                 \
+                vld1q_u32(r[4] + q), vld1q_u32(r[5] + q))                 \
+    if (q < n) {                                                          \
+      uint32_t t[6][4] = {{0}};                                           \
+      for (int i = 0; i < 6; i++)                                         \
+        memcpy(t[i], r[i] + q, (size_t)(n - q) * 4);                      \
+      QDOT_STEP(DOT, vld1q_u32(t[0]), vld1q_u32(t[1]), vld1q_u32(t[2]),   \
+                vld1q_u32(t[3]), vld1q_u32(t[4]), vld1q_u32(t[5]))        \
+    }                                                                     \
+    vst1q_u32(y, QDOT_SUMS(0));                                           \
+    vst1q_u32(y + ldy, QDOT_SUMS(1));                                     \
+  }
+QDOT(quads_dot_s8, SDOT)
+QDOT(quads_dot_u8, UDOT)
 #endif
 
 /* Lane order's dots and axpys: 16 lanes are 4 vectors of float32, 8 of
@@ -187,6 +231,8 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
 #if defined(__ARM_FEATURE_DOTPROD)
   t->quads[NX_INT8] = integers(kernel_sdot, 4);
   t->quads[NX_UINT8] = integers(kernel_udot, 4);
+  t->quads_dot[NX_INT8] = quads_dot_s8;
+  t->quads_dot[NX_UINT8] = quads_dot_u8;
 #endif
 }
 
