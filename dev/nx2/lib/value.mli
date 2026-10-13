@@ -20,30 +20,38 @@ type ('v, 's, +'d) payload = ..
 
 (** {1:values Values} *)
 
+type death =
+  | Live
+  | Died of string  (** The function the value was given to. *)
+(** Whether a value lives. Values are made [Live]; a death is claimed by
+    [compare_and_set] from [Live]. *)
+
 type ('v, 's, 'd) t =
   | Array of {
       at : 'd Devices.placement;
       a : ('v, 's) Nx_array.t;
-      mutable dead : string; [@atomic]
+      mutable dead : death; [@atomic]
     }
-      (** On [at]'s one device. [dead] is [""] while the value lives, and the
-          function it was donated to once it died ({!Exec.donate}). *)
+      (** On [at]'s one device. [dead] is [Died f] once the value was donated
+          to [f] ({!Exec.donate}). *)
   | Shards of {
       at : 'd Devices.placement;
       arrays : ('v, 's) Nx_array.t iarray;
-      mutable dead : string; [@atomic]
+      mutable dead : death; [@atomic]
     }
       (** On [at]'s devices, two or more: per device, in
           [Grid.devices (Devices.grid at)]'s order, its window of the value. *)
   | Donated of {
       at : 'd Devices.placement;
       arrays : ('v, 's) Nx_array.t iarray;
-      chain : chain;
-      mutable spent : string; [@atomic]
+      donor : death Atomic.Loc.t;  (** The donor's [dead]. *)
+      mutable spent : death; [@atomic]
     }
       (** A handle one operation reads: [arrays] over its donor's memory, one
-          per device of [at]. [spent] is [""] until an operation reads it: the
-          one that consumed it, or a movement that passed a new handle on. *)
+          per device of [at], or a copy of it a movement made. [spent] is
+          [Live] until an operation reads it: the one that consumed it, killing
+          the donor, or a movement that passed a new handle of the donor on.
+      *)
   | Deferred of { form : ('v, 's, 'd) form; node : node; k : int }
       (** Result [k] of the constant operation [node]. *)
   | Traced of {
@@ -51,19 +59,6 @@ type ('v, 's, 'd) t =
       owner : interpretation;
       payload : ('v, 's, 'd) payload;
     }  (** An interpretation's stand-in: its form, and what [owner] keeps. *)
-
-and chain = {
-  origin : int;  (** Unique among a process's donations. *)
-  claim : string -> string;
-      (** [claim by] kills the donor, naming [by], and is [""]; or, where it
-          died before, is the name it died to. Two claims on two domains: one
-          wins. *)
-  mutable consumer : string; [@atomic]
-      (** [""] until an operation consumed the chain, then its name: the handles
-          passed on die with it. *)
-}
-(** The handles one {!Exec.donate} made, the first and those movements passed
-    on. *)
 
 and ('v, 's, 'd) form = {
   dtype : ('v, 's) dtype;

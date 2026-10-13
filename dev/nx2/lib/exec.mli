@@ -106,8 +106,8 @@ val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     the handle, naming the operation. An elementwise operation writes its result
     into the memory, where rig holds it exclusive (no other value reads it) and
     it has the result's dtype and C-contiguous layout; the memory is consumed
-    either way where no other value reads it. A movement that maps elements one
-    to one passes a new handle on instead. A constant or a traced [x] is [x].
+    either way where no other value reads it. A movement passes a new handle
+    on instead. A constant or a traced [x] is [x].
 
     Raises [Invalid_argument] naming [by] if [x] is dead. *)
 

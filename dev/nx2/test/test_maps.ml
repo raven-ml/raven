@@ -30,7 +30,7 @@ let f32 data : (float, D.float32_elt, b) Value.t =
     {
       at = at1;
       a = A.to_device (m 0) (A.of_array D.Float32 [| Array.length data |] data);
-      dead = Prim.live;
+      dead = Value.Live;
     }
 
 let elements (type v s) (x : (v, s, b) Value.t) : v array =
@@ -109,7 +109,7 @@ let checks =
                 at = at1;
                 a =
                   A.to_device (m 0) (A.of_array D.Bool [| 2 |] [| true; true |]);
-                dead = Prim.live;
+                dead = Value.Live;
               }
           in
           Exec.run ~by:"t"
@@ -124,7 +124,7 @@ let checks =
                 a =
                   A.to_device (m 0)
                     (A.of_array D.Bool [| 3 |] [| true; false; false |]);
-                dead = Prim.live;
+                dead = Value.Live;
               }
           in
           let fail i data =
@@ -433,7 +433,7 @@ let test_reuse_fast3 () =
       {
         at = at1;
         a = A.to_device (m 0) (A.of_array D.Bool [| 2 |] [| true; false |]);
-        dead = Prim.live;
+        dead = Value.Live;
       }
   in
   let where i =
@@ -474,7 +474,7 @@ let test_no_reuse_strided () =
             (A.move
                (Slice [| { start = 0; count = 2; step = 2 } |])
                (array_of base));
-        dead = Prim.live;
+        dead = Value.Live;
       }
   in
   let y, reused = donated_add x in

@@ -42,7 +42,7 @@ let split = Devices.split ~by:"t" ~axis:0 s2
 let on_at at k (type v s) (dt : (v, s) D.t) shape (data : v array) :
     (v, s, b) Value.t =
   Value.Array
-    { at; a = A.to_device (m k) (A.of_array dt shape data); dead = Prim.live }
+    { at; a = A.to_device (m k) (A.of_array dt shape data); dead = Value.Live }
 
 let on dt = on_at at1 0 dt
 

@@ -13,8 +13,6 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* Values' facts *)
 
-let live = ""
-
 let at : type v s d. (v, s, d) t -> d Devices.placement option = function
   | Array { at; _ } | Shards { at; _ } | Donated { at; _ } -> Some at
   | Deferred { form; _ } | Traced { form; _ } -> form.placement
@@ -39,25 +37,32 @@ let own_layout : type v s d. (v, s, d) t -> L.t = function
 
 let rank x = L.rank (own_layout x)
 
-let death : type v s d. (v, s, d) t -> string = function
+let death : type v s d. (v, s, d) t -> death = function
   | Array r -> r.dead
   | Shards r -> r.dead
-  | Donated r ->
-      (* A handle passed on dies with its chain's consumer. *)
-      let c = r.chain.consumer in
-      if String.length c > 0 then c else r.spent
-  | Deferred _ | Traced _ -> ""
+  | Donated r -> (
+      (* A handle dies with its donor, whichever handle was consumed. *)
+      match Atomic.Loc.get r.donor with
+      | Died _ as died -> died
+      | Live -> r.spent)
+  | Deferred _ | Traced _ -> Live
 
 let alive ~by i x =
-  let why = death x in
-  if String.length why > 0 then
-    invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
+  match death x with
+  | Live -> ()
+  | Died why -> invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
+
+let arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray = function
+  | Array { a; _ } -> Iarray.of_list [ a ]
+  | Shards { arrays; _ } | Donated { arrays; _ } -> arrays
+  | Deferred _ -> invalid_arg "Prim.arrays: a constant has no arrays"
+  | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
 
 let of_arrays (type v s d) (p : d Devices.placement)
     (arrays : (v, s) Nx_array.t iarray) : (v, s, d) t =
   if Iarray.length arrays = 1 then
-    Array { at = p; a = Iarray.get arrays 0; dead = live }
-  else Shards { at = p; arrays; dead = live }
+    Array { at = p; a = Iarray.get arrays 0; dead = Live }
+  else Shards { at = p; arrays; dead = Live }
 
 (* The tiles along [axis] of a value at [p]: 1 where it is not cut. *)
 let tiles p axis =
@@ -1399,14 +1404,6 @@ let prepare : type r.
   | Bitcast (dt, x) -> Bitcast (dt, one (bitcast_rule dt x) x)
   | Place _ | Check _ -> op
 
-let arrays_of : type v s d. (v, s, d) t -> Nx_array.any array = function
-  | Array { a; _ } -> [| Nx_array.Any a |]
-  | Shards { arrays; _ } | Donated { arrays; _ } ->
-      Array.init (Iarray.length arrays) (fun j ->
-          Nx_array.Any (Iarray.get arrays j))
-  | Deferred _ -> invalid_arg "Prim.arrays: a constant has no arrays"
-  | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
-
 let rec iter_outs : type d q.
     ('v 's. ('v, 's, d) t -> unit) -> (d, q) outs -> q -> unit =
  fun f outs r ->
@@ -1493,7 +1490,14 @@ let iter_results : type r.
   | Place _ -> f r
   | Check _ -> ()
 
-let arrays op r =
+(* [x]'s arrays untyped; a value on one device builds no [iarray] on the way. *)
+let any_arrays : type v s d. (v, s, d) t -> Nx_array.any array = function
+  | Array { a; _ } -> [| Nx_array.Any a |]
+  | x ->
+      let xs = arrays x in
+      Array.init (Iarray.length xs) (fun j -> Nx_array.Any (Iarray.get xs j))
+
+let result_arrays op r =
   let acc = ref ([] : Nx_array.any array list) in
-  iter_results (fun x -> acc := List.cons (arrays_of x) !acc) op r;
+  iter_results (fun x -> acc := List.cons (any_arrays x) !acc) op r;
   Array.of_list (List.rev !acc)

@@ -25,7 +25,7 @@ let floats shape = Array.init (Array.fold_left ( * ) 1 shape) float_of_int
 
 let value d a : ('v, 's, b) Value.t =
   Value.Array
-    { at = Devices.one s2 d; a = A.to_device (m d) a; dead = Prim.live }
+    { at = Devices.one s2 d; a = A.to_device (m d) a; dead = Value.Live }
 
 let f32 ?(d = 0) shape = value d (A.of_array D.Float32 shape (floats shape))
 
@@ -37,7 +37,7 @@ let recording forms k (f : (_, _, _) Value.form) =
     :: !forms;
   let a = A.create Rig.host f.dtype (L.shape f.layout) in
   Value.Array
-    { at = Devices.rebrand (Devices.one Devices.host 0); a; dead = Prim.live }
+    { at = Devices.rebrand (Devices.one Devices.host 0); a; dead = Value.Live }
 
 let refusing _ _ = fail "the maker ran before the rule refused"
 
@@ -74,7 +74,7 @@ let split_x () : (float, D.float32_elt, b) Value.t =
             A.to_device (m 0) (A.of_array D.Float32 [| 2 |] [| 0.; 1. |]);
             A.to_device (m 1) (A.of_array D.Float32 [| 2 |] [| 2.; 3. |]);
           ];
-      dead = Prim.live;
+      dead = Value.Live;
     }
 
 let i32 : (int32, D.int32_elt, b) Value.t =
@@ -329,7 +329,7 @@ let array_of (type v s) (x : (v, s, b) Value.t) =
 let moved_by mv x =
   match x with
   | Value.Array { at; a; _ } ->
-      Value.Array { at; a = Option.get (A.move mv a); dead = Prim.live }
+      Value.Array { at; a = Option.get (A.move mv a); dead = Value.Live }
   | Shards _ | Donated _ | Deferred _ | Traced _ -> x
 
 let movements =
@@ -370,7 +370,7 @@ let movements =
                  {
                    at = host;
                    a = A.of_array D.Float32 s0 (floats s0);
-                   dead = Prim.live;
+                   dead = Value.Live;
                  })
           in
           match Exec.run ~by:"t" (Move (mv, x)) with
@@ -585,7 +585,7 @@ let operations =
             Prim.results ~by:"Nx.f" (fun k f -> recording (ref []) k f) op
           in
           let u, (v, ()) = r in
-          let arrays = Prim.arrays op r in
+          let arrays = Prim.result_arrays op r in
           equal int 2 (Array.length arrays);
           let same (Nx_array.Any a) y = A.buffer a == A.buffer (array_of y) in
           equal bool true (same arrays.(0).(0) u && same arrays.(1).(0) v));

@@ -13,7 +13,7 @@ let of_array ~by s a =
   | Some k ->
       (* Its caller keeps the array: no donation writes this memory. *)
       Rig.Claim.share (A.buffer a);
-      Value.Array { at = Devices.one s k; a; dead = Prim.live }
+      Value.Array { at = Devices.one s k; a; dead = Value.Live }
   | None ->
       invalid_argf "%s: the array lies on %s, which is not a device of %a" by
         (Rig.name (A.device a))
@@ -54,16 +54,14 @@ let of_shards ~by p arrays =
 let crossing (type v s d) ~by (x : (v, s, d) Value.t) :
     (v, s) A.t iarray option =
   Prim.alive ~by 0 x;
-  let out arrays =
-    Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
-    Some arrays
-  in
   match x with
   | Value.Deferred _ -> None
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
-  | Value.Array { a; _ } -> out (Iarray.of_list [ a ])
-  | Value.Shards { arrays; _ } | Value.Donated { arrays; _ } -> out arrays
+  | Value.Array _ | Value.Shards _ | Value.Donated _ ->
+      let arrays = Prim.arrays x in
+      Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+      Some arrays
 
 let array x =
   match crossing ~by:"Nx.Repr.array" x with

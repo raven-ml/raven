@@ -2928,14 +2928,15 @@ let pp ppf x =
   | Value.Deferred { node = Value.Node n; _ } ->
       Format.fprintf ppf " of every set,@ %a" Prim.pp n.op
   | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
-      let died = Prim.death x in
-      if String.length died > 0 then Format.fprintf ppf ", donated to %s" died
-      else
-        match Exec.on_host ~by:"Nx.pp" (Exec.live x) with
-        | a -> Format.fprintf ppf "@ %a" pp_elements a
-        | exception Rig.Lost (d, why) ->
-            Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
-        | exception Invalid_argument why -> Format.fprintf ppf ", unread: %s" why));
+      match Prim.death x with
+      | Value.Died f -> Format.fprintf ppf ", donated to %s" f
+      | Value.Live -> (
+          match Exec.on_host ~by:"Nx.pp" (Exec.live x) with
+          | a -> Format.fprintf ppf "@ %a" pp_elements a
+          | exception Rig.Lost (d, why) ->
+              Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
+          | exception Invalid_argument why ->
+              Format.fprintf ppf ", unread: %s" why)));
   Format.fprintf ppf "@]"
 
 let to_string x = Format.asprintf "%a" pp x

@@ -34,17 +34,18 @@ val of_arrays :
 (** [of_arrays p arrays] is the live value over [arrays], one per device of [p]:
     [Array] for one, [Shards] otherwise. *)
 
-val live : string
-(** [live] is the death word of a live value: values are made with it, so that a
-    death claims it by physical comparison. *)
-
-val death : ('v, 's, 'd) t -> string
-(** [death x] is [""] while [x] lives, and the function it was donated to, or
-    that read its handle, once it died. It reads one atomic word. *)
+val death : ('v, 's, 'd) t -> death
+(** [death x] is whether [x] lives: for a handle, its donor's death where the
+    donor died, else whether an operation read the handle. It allocates
+    nothing. *)
 
 val alive : by:string -> int -> ('v, 's, 'd) t -> unit
 (** [alive ~by i x] raises [Invalid_argument] naming [by], operand [i + 1] and
     the function [x] was donated to, if [x] died. *)
+
+val arrays : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
+(** [arrays x] is [x]'s arrays, one per device of its placement, whether [x]
+    lives or not. Raises [Invalid_argument] for a constant or a traced value. *)
 
 val rank : ('v, 's, 'd) t -> int
 
@@ -227,7 +228,7 @@ val iter_results : ('v 's 'd. ('v, 's, 'd) t -> unit) -> 'r prim -> 'r -> unit
 (** [iter_results f op r] is [f y] for each value [y] of [op]'s result [r], in
     position order. *)
 
-val arrays : 'r prim -> 'r -> Nx_array.any array array
-(** [arrays op r] is, per result of [op] in position order, the arrays of [r]'s
-    value there: one per device of its placement. Raises [Invalid_argument] if a
-    result is a constant. *)
+val result_arrays : 'r prim -> 'r -> Nx_array.any array array
+(** [result_arrays op r] is, per result of [op] in position order, the arrays
+    of [r]'s value there: one per device of its placement. Raises
+    [Invalid_argument] if a result is a constant. *)

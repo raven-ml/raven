@@ -245,11 +245,11 @@ let place ~by p x =
   match x with
   | Array r
     when Devices.rebrand r.at == p
-         && String.length r.dead = 0
+         && r.dead == Live
          && Interp.quiet () ->
       (* A second value over the memory shares it. *)
       Rig.Claim.share (Nx_array.buffer r.a);
-      Array { at = p; a = r.a; dead = Prim.live }
+      Array { at = p; a = r.a; dead = Live }
   | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ ->
       eval ~by (Place (p, x))
 

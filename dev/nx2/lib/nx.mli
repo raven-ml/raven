@@ -209,24 +209,32 @@ val scalar_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
 val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [donate x] is [x], given up by its owner: a handle that one operation reads.
     [x] stays usable until that operation is called. When it is called, [x] and
-    the handle die: a later operation on either raises [Invalid_argument] naming
-    the consumer, and its shape, dtype and placement still answer.
+    every handle of [x] die: a later operation on any of them raises
+    [Invalid_argument] naming the consumer, and its shape, dtype and placement
+    still answer.
 
-    A movement that maps the elements one to one ({!reshape}, {!flatten},
-    {!squeeze}, {!unsqueeze}, {!transpose}, {!moveaxis}, {!swapaxes}, {!flip},
-    {!rearrange}) spends its handle and passes a new one to its result, whether
-    it makes a view or a copy; the deaths wait for the final consumer. Any other
-    operation consumes it. Two handles of one donor reaching one operation raise
-    naming [Nx.donate]: the same handle twice, two donations, or one chain read
-    twice.
+    A movement, which rearranges elements without computing them ({!reshape},
+    {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
+    {!sliding_window}), spends its handle and passes a new one to its result,
+    whether it makes a view or a copy; the deaths wait for the final consumer. A spent
+    handle raises naming the movement that spent it. Any other operation
+    consumes its handles. Two handles over one memory reaching one operation
+    raise naming [Nx.donate]: the same handle twice, two donations of one value,
+    or a handle and a view a movement passed on.
+
+    An operation checks every operand before it consumes any, so in sequence a
+    refused operation kills nothing. When operations on several domains race to
+    consume one handle, exactly one succeeds and the others raise naming it; a
+    loser's other donated operands may then be dead. No operation reads elements
+    a consumer has overwritten.
 
     The consumer may write its result into the donated memory when it reads the
     operand only at the result's own index (an elementwise operand), the memory
     is C-contiguous with the result's shape and dtype, and the memory is not
-    shared. Memory is shared once a value outside the donor's handle chain has
-    been made over it (a view, a borrow by {!place}, a {!Repr} crossing), and
-    stays shared. Otherwise the consumer computes into fresh memory, and a value
-    that shares the memory keeps it. Its result is the same either way.
+    shared. Memory is shared once a value outside the donor's handles has been
+    made over it (a view, a borrow by {!place}, a {!Repr} crossing), and stays
+    shared. Otherwise the consumer computes into fresh memory, and a value that
+    shares the memory keeps it. Its result is the same either way.
 
     A traced value and a value of every set are returned unchanged: nothing
     dies, and passing such a value twice raises nothing.
