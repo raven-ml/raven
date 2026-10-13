@@ -1513,10 +1513,17 @@ cpu/cast-i8-i4-1M	alloc_words	exact	0
 cpu/cast-i8-i4-1M	wall_time	batch=1024	n=20	7.112e-06	7.072e-06 7.081e-06 7.082e-06 7.083e-06 7.090e-06 7.104e-06 7.105e-06 7.107e-06 7.109e-06 7.112e-06 7.112e-06 7.116e-06 7.116e-06 7.136e-06 7.142e-06 7.146e-06 7.154e-06 7.156e-06 7.201e-06 7.270e-06
 cpu/cast-u64-f32-1M	alloc_words	exact	0
 cpu/cast-u64-f32-1M	wall_time	batch=128	n=20	4.774e-05	3.733e-05 3.759e-05 4.003e-05 4.406e-05 4.456e-05 4.489e-05 4.490e-05 4.606e-05 4.647e-05 4.755e-05 4.792e-05 4.998e-05 5.012e-05 5.013e-05 5.024e-05 5.054e-05 5.148e-05 5.558e-05 5.658e-05 5.860e-05
+cpu/cholesky-c128-256	alloc_words	exact	0
+cpu/cholesky-f32-1024	alloc_words	exact	0
+cpu/cholesky-f64-1024	alloc_words	exact	0
+cpu/cholesky-f64-1024x32	alloc_words	exact	0
+cpu/cholesky-f64-256	alloc_words	exact	0
+cpu/cholesky-f64-32	alloc_words	exact	0
 cpu/contract-dot-f32-10M	alloc_words	exact	0
 cpu/contract-dot-f32-10M	wall_time	batch=8	n=20	7.910e-04	7.668e-04 7.695e-04 7.756e-04 7.774e-04 7.813e-04 7.826e-04 7.846e-04 7.884e-04 7.892e-04 7.906e-04 7.914e-04 7.943e-04 7.949e-04 8.101e-04 8.115e-04 8.123e-04 8.196e-04 8.250e-04 8.264e-04 8.404e-04
 cpu/contract-f32-100	alloc_words	exact	0
 cpu/contract-f32-100	wall_time	batch=1024	n=20	5.459e-06	5.308e-06 5.324e-06 5.343e-06 5.345e-06 5.375e-06 5.394e-06 5.400e-06 5.430e-06 5.439e-06 5.458e-06 5.459e-06 5.597e-06 5.772e-06 5.809e-06 5.828e-06 5.964e-06 6.028e-06 6.057e-06 6.137e-06 6.262e-06
+cpu/contract-f32-100-after-subnormals	alloc_words	exact	0
 cpu/contract-f32-1024	alloc_words	exact	0
 cpu/contract-f32-1024	wall_time	batch=8	n=20	1.145e-03	1.008e-03 1.024e-03 1.025e-03 1.027e-03 1.035e-03 1.063e-03 1.067e-03 1.080e-03 1.127e-03 1.143e-03 1.147e-03 1.155e-03 1.161e-03 1.180e-03 1.211e-03 1.254e-03 1.369e-03 1.469e-03 1.611e-03 3.614e-03
 cpu/contract-f32-1024-init	alloc_words	exact	0
@@ -1951,6 +1958,7 @@ cpu/floor-stream-3x4-4-1M-performance	alloc_words	exact	0
 cpu/floor-stream-3x4-4-1M-performance	wall_time	batch=128	n=20	5.366e-05	5.048e-05 5.169e-05 5.200e-05 5.259e-05 5.269e-05 5.288e-05 5.294e-05 5.298e-05 5.305e-05 5.310e-05 5.422e-05 5.497e-05 5.503e-05 5.545e-05 5.559e-05 5.586e-05 5.807e-05 6.010e-05 6.156e-05 6.197e-05
 cpu/fma-f32-1M	alloc_words	exact	0
 cpu/fma-f32-1M	wall_time	batch=128	n=20	5.771e-05	5.570e-05 5.597e-05 5.624e-05 5.639e-05 5.671e-05 5.681e-05 5.694e-05 5.720e-05 5.730e-05 5.768e-05 5.774e-05 5.777e-05 5.836e-05 5.839e-05 5.841e-05 5.886e-05 5.905e-05 6.047e-05 6.134e-05 6.328e-05
+cpu/fold-3x3-pad1-f32-32x64x56x56	alloc_words	exact	0
 cpu/iota-i64-1M	alloc_words	exact	0
 cpu/iota-i64-1M	wall_time	batch=128	n=20	6.876e-05	6.791e-05 6.838e-05 6.852e-05 6.859e-05 6.860e-05 6.863e-05 6.867e-05 6.868e-05 6.869e-05 6.873e-05 6.878e-05 6.882e-05 6.893e-05 6.903e-05 6.907e-05 6.921e-05 6.925e-05 6.951e-05 6.966e-05 6.982e-05
 cpu/less-f32-1M	alloc_words	exact	0
@@ -1959,29 +1967,36 @@ cpu/log-f32-1M	alloc_words	exact	2
 cpu/log-f32-1M	wall_time	batch=64	n=20	1.162e-04	1.159e-04 1.160e-04 1.160e-04 1.160e-04 1.160e-04 1.161e-04 1.161e-04 1.161e-04 1.161e-04 1.162e-04 1.162e-04 1.165e-04 1.166e-04 1.169e-04 1.172e-04 1.178e-04 1.180e-04 1.192e-04 1.215e-04 1.250e-04
 cpu/log-f64-1M	alloc_words	exact	2
 cpu/log-f64-1M	wall_time	batch=32	n=20	2.857e-04	2.836e-04 2.839e-04 2.839e-04 2.840e-04 2.843e-04 2.843e-04 2.844e-04 2.846e-04 2.848e-04 2.857e-04 2.857e-04 2.857e-04 2.866e-04 2.873e-04 2.932e-04 2.953e-04 2.984e-04 3.062e-04 3.283e-04 3.289e-04
+cpu/lu-c128-256	alloc_words	exact	0
+cpu/lu-f32-1024	alloc_words	exact	0
+cpu/lu-f64-1024	alloc_words	exact	0
+cpu/lu-f64-256	alloc_words	exact	0
 cpu/neg-f32-1M	alloc_words	exact	2
 cpu/neg-f32-1M	wall_time	batch=256	n=20	3.036e-05	2.829e-05 2.829e-05 2.834e-05 2.849e-05 2.855e-05 2.905e-05 2.931e-05 2.968e-05 3.007e-05 3.035e-05 3.037e-05 3.056e-05 3.071e-05 3.075e-05 3.119e-05 3.144e-05 3.155e-05 3.184e-05 3.187e-05 3.247e-05
-cpu/reduce-max-f32-16M	alloc_words	exact	11
+cpu/qr-c128-256	alloc_words	exact	0
+cpu/qr-f64-1024	alloc_words	exact	0
+cpu/qr-f64-256	alloc_words	exact	0
+cpu/reduce-max-f32-16M	alloc_words	exact	0
 cpu/reduce-max-f32-16M	wall_time	batch=8	n=20	7.340e-04	6.929e-04 6.975e-04 6.994e-04 7.035e-04 7.086e-04 7.142e-04 7.222e-04 7.227e-04 7.293e-04 7.322e-04 7.357e-04 7.359e-04 7.401e-04 7.453e-04 7.546e-04 7.567e-04 7.640e-04 7.682e-04 7.770e-04 8.205e-04
-cpu/reduce-max-f32-2x2-windows-32x16x26x26	alloc_words	exact	11
+cpu/reduce-max-f32-2x2-windows-32x16x26x26	alloc_words	exact	0
 cpu/reduce-max-f32-2x2-windows-32x16x26x26	wall_time	batch=128	n=20	4.504e-05	4.419e-05 4.449e-05 4.454e-05 4.460e-05 4.461e-05 4.462e-05 4.462e-05 4.466e-05 4.487e-05 4.497e-05 4.512e-05 4.522e-05 4.528e-05 4.533e-05 4.567e-05 4.631e-05 4.633e-05 4.696e-05 4.835e-05 4.844e-05
-cpu/reduce-sum-f32-1024x1024-axis0	alloc_words	exact	11
+cpu/reduce-sum-f32-1024x1024-axis0	alloc_words	exact	0
 cpu/reduce-sum-f32-1024x1024-axis0	wall_time	batch=128	n=20	1.651e-05	1.476e-05 1.478e-05 1.484e-05 1.507e-05 1.509e-05 1.519e-05 1.587e-05 1.592e-05 1.606e-05 1.645e-05 1.657e-05 1.671e-05 1.967e-05 3.514e-05 3.897e-05 4.719e-05 4.863e-05 4.997e-05 5.058e-05 7.047e-05
-cpu/reduce-sum-f32-1024x1024-axis1	alloc_words	exact	11
+cpu/reduce-sum-f32-1024x1024-axis1	alloc_words	exact	0
 cpu/reduce-sum-f32-1024x1024-axis1	wall_time	batch=512	n=20	1.316e-05	1.289e-05 1.292e-05 1.297e-05 1.299e-05 1.301e-05 1.302e-05 1.304e-05 1.305e-05 1.315e-05 1.315e-05 1.317e-05 1.319e-05 1.331e-05 1.339e-05 1.348e-05 1.375e-05 1.379e-05 1.420e-05 1.420e-05 1.443e-05
-cpu/reduce-sum-f32-16M	alloc_words	exact	11
+cpu/reduce-sum-f32-16M	alloc_words	exact	0
 cpu/reduce-sum-f32-16M	wall_time	batch=16	n=20	5.781e-04	5.617e-04 5.642e-04 5.681e-04 5.706e-04 5.707e-04 5.714e-04 5.724e-04 5.732e-04 5.746e-04 5.754e-04 5.809e-04 6.033e-04 6.312e-04 6.377e-04 6.431e-04 6.451e-04 6.587e-04 6.601e-04 6.646e-04 7.824e-04
-cpu/reduce-sum-f32-1M	alloc_words	exact	11
+cpu/reduce-sum-f32-1M	alloc_words	exact	0
 cpu/reduce-sum-f32-1M	wall_time	batch=512	n=20	1.161e-05	1.141e-05 1.141e-05 1.142e-05 1.144e-05 1.145e-05 1.145e-05 1.146e-05 1.154e-05 1.159e-05 1.159e-05 1.162e-05 1.170e-05 1.178e-05 1.181e-05 1.189e-05 1.221e-05 1.263e-05 1.298e-05 1.344e-05 1.396e-05
-cpu/reduce-sum-f32-1Mx4-axis1	alloc_words	exact	11
+cpu/reduce-sum-f32-1Mx4-axis1	alloc_words	exact	0
 cpu/reduce-sum-f32-1Mx4-axis1	wall_time	batch=16	n=20	3.201e-04	3.169e-04 3.171e-04 3.173e-04 3.177e-04 3.184e-04 3.195e-04 3.197e-04 3.197e-04 3.198e-04 3.199e-04 3.202e-04 3.203e-04 3.203e-04 3.205e-04 3.218e-04 3.218e-04 3.220e-04 3.227e-04 3.235e-04 3.456e-04
-cpu/reduce-sum-f32-4096x4096-axis0	alloc_words	exact	11
+cpu/reduce-sum-f32-4096x4096-axis0	alloc_words	exact	0
 cpu/reduce-sum-f32-4096x4096-axis0	wall_time	batch=8	n=20	1.032e-03	9.693e-04 9.775e-04 9.834e-04 9.903e-04 9.965e-04 9.966e-04 9.987e-04 1.022e-03 1.029e-03 1.031e-03 1.033e-03 1.055e-03 1.058e-03 1.061e-03 1.069e-03 1.085e-03 1.086e-03 1.113e-03 1.136e-03 1.224e-03
-cpu/reduce-sum-f32-4096x4096-axis1	alloc_words	exact	11
+cpu/reduce-sum-f32-4096x4096-axis1	alloc_words	exact	0
 cpu/reduce-sum-f32-4096x4096-axis1	wall_time	batch=16	n=20	5.835e-04	5.599e-04 5.668e-04 5.672e-04 5.705e-04 5.714e-04 5.755e-04 5.756e-04 5.758e-04 5.773e-04 5.795e-04 5.876e-04 6.006e-04 6.012e-04 6.015e-04 6.021e-04 6.111e-04 6.140e-04 6.287e-04 6.339e-04 6.461e-04
-cpu/reduce-sum-f64-16M	alloc_words	exact	11
+cpu/reduce-sum-f64-16M	alloc_words	exact	0
 cpu/reduce-sum-f64-16M	wall_time	batch=8	n=20	1.281e-03	1.233e-03 1.236e-03 1.239e-03 1.239e-03 1.248e-03 1.249e-03 1.260e-03 1.261e-03 1.280e-03 1.280e-03 1.282e-03 1.283e-03 1.299e-03 1.300e-03 1.304e-03 1.363e-03 1.376e-03 1.394e-03 1.442e-03 1.500e-03
-cpu/reduce-sum-i32-16M	alloc_words	exact	11
+cpu/reduce-sum-i32-16M	alloc_words	exact	0
 cpu/reduce-sum-i32-16M	wall_time	batch=8	n=20	6.317e-04	6.016e-04 6.064e-04 6.127e-04 6.128e-04 6.154e-04 6.172e-04 6.183e-04 6.206e-04 6.212e-04 6.303e-04 6.331e-04 6.393e-04 6.479e-04 6.655e-04 6.721e-04 6.978e-04 7.054e-04 7.130e-04 7.495e-04 7.859e-04
 cpu/scan-moments-f32-1024x4096-axis0	alloc_words	exact	0
 cpu/scan-moments-f32-1024x4096-axis0	wall_time	batch=1	n=20	1.673e-03	1.622e-03 1.629e-03 1.663e-03 1.664e-03 1.667e-03 1.668e-03 1.668e-03 1.669e-03 1.669e-03 1.669e-03 1.677e-03 1.685e-03 1.686e-03 1.690e-03 1.690e-03 1.699e-03 1.702e-03 1.706e-03 1.708e-03 1.735e-03
@@ -2001,6 +2016,8 @@ cpu/tanh-f32-1M	alloc_words	exact	2
 cpu/tanh-f32-1M	wall_time	batch=32	n=20	2.660e-04	2.652e-04 2.652e-04 2.652e-04 2.654e-04 2.655e-04 2.657e-04 2.658e-04 2.660e-04 2.660e-04 2.660e-04 2.660e-04 2.662e-04 2.663e-04 2.668e-04 2.683e-04 2.733e-04 2.824e-04 2.853e-04 3.339e-04 3.363e-04
 cpu/tanh-f64-1M	alloc_words	exact	2
 cpu/tanh-f64-1M	wall_time	batch=16	n=20	6.205e-04	6.165e-04 6.167e-04 6.170e-04 6.180e-04 6.180e-04 6.183e-04 6.194e-04 6.195e-04 6.200e-04 6.202e-04 6.207e-04 6.210e-04 6.218e-04 6.240e-04 6.468e-04 6.563e-04 6.764e-04 7.400e-04 8.393e-04 9.091e-04
+cpu/trsm-f64-1024x1024	alloc_words	exact	0
+cpu/trsm-f64-256x16	alloc_words	exact	0
 cpu/where-f32-1M	alloc_words	exact	0
 cpu/where-f32-1M	wall_time	batch=64	n=20	3.374e-05	3.067e-05 3.214e-05 3.215e-05 3.219e-05 3.243e-05 3.270e-05 3.299e-05 3.302e-05 3.315e-05 3.343e-05 3.406e-05 3.412e-05 3.417e-05 3.432e-05 3.445e-05 3.459e-05 3.544e-05 3.563e-05 3.634e-05 3.919e-05
 spec/contract-view-bf16-4096	alloc_words	exact	28
