@@ -1,5 +1,7 @@
 ; nx.cpu's floors for the kernel bench: loops that move or read a row's
-; bytes, codecs, and fused multiply-adds at their peak, in C.
+; bytes, codecs, and fused multiply-adds at their peak, in C. They take
+; nx.cpu's vector flags, so that gcc vectorises their loops as it does the
+; kernels'.
 
 (library
  (name nx_cpu_floors)
@@ -8,4 +10,5 @@
  (foreign_stubs
   (language c)
   (include_dirs ../../../lib/array ../../../lib/kernel ../../../lib/cpu)
+  (flags :standard (:include ../../../lib/cpu/vector_flags.sexp))
   (names nx_cpu_bench_stubs nx_cpu_bench_codec nx_cpu_bench_fma)))
