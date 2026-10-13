@@ -434,15 +434,30 @@ value caml_rig_lock_broadcast(value v_l) {
 
 /* Device records */
 
+/* A published record lives for the process. A record that no open
+   published, as when an exception ended its open, goes with its block. */
+static void device_finalize(value v) {
+  struct rig_device *d = Device_val(v);
+  if (atomic_load_explicit(&devices[d->index], memory_order_acquire) == d)
+    return;
+#ifndef _WIN32
+  pthread_mutex_destroy(&d->mu);
+  pthread_cond_destroy(&d->cv);
+  pthread_mutex_destroy(&d->times.mu);
+#endif
+  free(d->name);
+  free(d);
+}
+
 static struct custom_operations device_ops = {
-    "rig.device",       custom_finalize_default,
+    "rig.device",       device_finalize,
     custom_compare_default,     custom_hash_default,
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
 /* A device record of index [v_index] named [v_name], not yet published,
    in a new custom block [*v] that names it. The record lives for the
-   process. */
+   process once published. */
 static struct rig_device *record(value *v, value v_index, value v_name) {
   int index = Int_val(v_index);
   struct rig_device *d = calloc(1, sizeof *d);
