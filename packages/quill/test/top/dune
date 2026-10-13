@@ -3,7 +3,8 @@
 (test
  (name test_kernel)
  (modes byte)
- (link_flags -linkall)
+ (link_flags
+  (:standard -linkall))
  (package quill)
  (libraries quill quill.top windtrap)
  (action

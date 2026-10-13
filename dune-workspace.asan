@@ -6,3 +6,12 @@
 (context
  (default
   (profile sanitize)))
+
+; Every link names the standard library it records, as dune-workspace says.
+
+(env
+ (_
+  (link_flags
+   (:standard
+    -set-runtime-default
+    standard_library_default=%{ocaml-config:standard_library_default}))))

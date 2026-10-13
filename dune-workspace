@@ -1,0 +1,17 @@
+(lang dune 3.21)
+
+; An executable records where the compiler that linked it keeps the standard
+; library, and a toplevel, such as quill's kernel or mdx's generator, loads it
+; from there. dune builds the compiler inside _build, so that place differs
+; between trees, while dune's shared cache keys a link by a command that names
+; the compiler relative to _build. A tree then restored another tree's
+; executables with their path, and they failed once that tree was removed.
+; Every link passes the path the linker would record as an argument, which the
+; cache key holds. dune-workspace.asan and dune-workspace.tsan repeat it.
+
+(env
+ (_
+  (link_flags
+   (:standard
+    -set-runtime-default
+    standard_library_default=%{ocaml-config:standard_library_default}))))

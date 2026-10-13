@@ -11,7 +11,8 @@
  (package ppx_ptree)
  (modules test_locations)
  (libraries ppxlib ppx_ptree windtrap)
- (link_flags -linkall)
+ (link_flags
+  (:standard -linkall))
  (deps
   (glob_files support/cases/*.ml))
  (action
@@ -24,7 +25,8 @@
  (name pp)
  (modules pp)
  (libraries ppxlib ppx_ptree)
- (link_flags -linkall))
+ (link_flags
+  (:standard -linkall)))
 
 (cram
  (package ppx_ptree)
