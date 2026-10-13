@@ -695,47 +695,35 @@ let test_drain_beside_free () =
   Domain.join freer;
   equal ~msg:"unmaps" int 1 (count "unmap" t.p)
 
-(* The drain and the free on two domains: no unmap before either, at most
-   one after, and exactly one once both returned ([both], after the program).
-   A call that returns may leave the give to the other, still running, so
-   the model cannot ask for one after a single call. *)
-type stopped_model = { mutable freed : bool; mutable drained : bool }
+(* The drain takes the mapping, and its unmap waits at Polled's free gate on
+   another domain while the buffer's free runs: the free finds the mapping
+   taken and leaves the give to the drain. *)
+let test_free_beside_drain () =
+  let t = make_stopped () in
+  P.gate_frees t.p;
+  let drainer = Domain.spawn (fun () -> Rig.free_cache t.d) in
+  Support.await "the drain's unmap at the gate" (fun () -> P.freers t.p = 1);
+  Domain.join (Domain.spawn (fun () -> free_stopped t));
+  equal ~msg:"unmaps while the drain's waits" int 0 (count "unmap" t.p);
+  equal ~msg:"the drain's unmap, still at the gate" int 1 (P.freers t.p);
+  P.open_frees t.p;
+  Domain.join drainer;
+  equal ~msg:"unmaps" int 1 (count "unmap" t.p)
 
-let both t =
-  free_stopped t;
-  Rig.free_cache t.d;
-  equal ~msg:"unmaps after the free and a drain" int 1 (count "unmap" t.p)
-
-let judge_unmaps r = function
-  | Ok n when r.freed || r.drained -> at_most ~msg:"unmaps" int ~than:1 n
-  | Ok n -> equal ~msg:"unmaps before the free and the drain" int 0 n
-  | Error e -> raise e
-
-let stopped_device =
-  abstract ~release:both
-    ~pp:(fun ppf r ->
-      Format.fprintf ppf "freed %b, drained %b" r.freed r.drained)
-    "s"
-
-let stopped_commands =
-  [
-    command "stopped"
-      (Gen.unit @-> makes stopped_device)
-      (fun () -> { freed = false; drained = false })
-      make_stopped;
-    command "free"
-      (stopped_device ^-> returns unit)
-      (fun r -> r.freed <- true)
-      free_stopped;
-    command "drain"
-      (stopped_device ^-> returns unit)
-      (fun r -> r.drained <- true)
-      (fun t -> Rig.free_cache t.d);
-    command "unmaps"
-      (stopped_device ^-> judges int)
-      judge_unmaps
-      (fun t -> count "unmap" t.p);
-  ]
+(* The mapping stays until the free or the drain. Whichever runs first gives
+   it back, once, and the other gives back nothing. *)
+let test_stopped_unmaps () =
+  let drain t = Rig.free_cache t.d in
+  List.iter
+    (fun (order, first, second) ->
+      let t = make_stopped () in
+      equal ~msg:(order ^ ": unmaps before either") int 0 (count "unmap" t.p);
+      first t;
+      equal ~msg:(order ^ ": unmaps after the first") int 1 (count "unmap" t.p);
+      second t;
+      equal ~msg:(order ^ ": unmaps after both") int 1 (count "unmap" t.p))
+    [ ("free, then drain", free_stopped, drain);
+      ("drain, then free", drain, free_stopped) ]
 
 let tests =
   [
@@ -823,10 +811,13 @@ let tests =
           "a Stopped device's drain while the free's unmap waits leaves the \
            mapping to the free"
           test_drain_beside_free;
-        stateful ~count:4 ~steps:3 ~domains:2
-          "a Stopped device's drain and its memory's free on two domains \
-           unmap once"
-          stopped_commands;
+        test
+          "a Stopped device's free while the drain's unmap waits leaves the \
+           mapping to the drain"
+          test_free_beside_drain;
+        test
+          "a Stopped device's free and drain, in either order, unmap once"
+          test_stopped_unmaps;
         test "a close of a lost device waits for its stop" test_close_lost;
         test "a fault during a close's wait is the device's loss"
           test_close_fault;
