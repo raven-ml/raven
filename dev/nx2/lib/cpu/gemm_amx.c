@@ -199,27 +199,30 @@ static void kernel_f64(int64_t m, int64_t n, int64_t k, const void *a,
   kernel(8, m, n, k, a, a_row, a_k, b, b_k, c, ldc, from);
 }
 
-/* Transposes 2L rows × 2L steps from [s] into [d], rows [ld] and steps
-   [pitch] bytes apart, on the unit. Row i of row half h loads into the Z
-   rows w·i + 2h and the next, its steps 0 to L - 1 and L to 2L - 1: Z
-   holds four quarters, q = 2·(row half) + (step half), each row i of a
-   quarter in Z row w·i + q. Step k is then column k mod L of quarters k / L
-   and 2 + k / L, moved into Y and stored. Rows and steps that start on 128
-   bytes move in one instruction each, others in two. A move rounds
-   nothing, so every bit moves, a NaN's payload included. */
+/* Transposes [rows] rows, at most 2L, × 2L steps from [s] into [d], rows
+   [ld] and steps [pitch] bytes apart, on the unit, and stores steps
+   [first] to 2L - 1. Row i of row half h loads into the Z rows w·i + 2h
+   and the next, its steps 0 to L - 1 and L to 2L - 1: Z holds four
+   quarters, q = 2·(row half) + (step half), each row i of a quarter in Z
+   row w·i + q. Step k is then column k mod L of quarters k / L and
+   2 + k / L, moved into Y and stored: 2L elements, +0 past [rows], where
+   Z was set to +0. Rows and steps that start on 128 bytes move in one
+   instruction each, others in two. A move rounds nothing, so every bit
+   moves, a NaN's payload included. */
 INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
-                      int64_t pitch) {
+                      int64_t pitch, int64_t rows, int64_t first) {
   int l = LANES(w), in_pairs = on128(s, ld), out_pairs = on128(d, pitch);
-  for (int h = 0; h < 2; h++)
-    for (int i = 0; i < l; i++) {
-      const uint8_t *r = s + (l * h + i) * ld;
-      if (in_pairs) NX_AMX_LDZ((uint64_t)r | NX_AMX_PAIR, w * i + 2 * h);
-      else {
-        NX_AMX_LDZ(r, w * i + 2 * h);
-        NX_AMX_LDZ(r + 64, w * i + 2 * h + 1);
-      }
+  if (rows < 2 * l) zzero();
+  for (int64_t r = 0; r < rows; r++) {
+    const uint8_t *row = s + r * ld;
+    int z = w * (r % l) + 2 * (r / l);
+    if (in_pairs) NX_AMX_LDZ((uint64_t)row | NX_AMX_PAIR, z);
+    else {
+      NX_AMX_LDZ(row, z);
+      NX_AMX_LDZ(row + 64, z + 1);
     }
-  for (int k = 0; k < 2 * l; k++) {
+  }
+  for (int k = first; k < 2 * l; k++) {
     int c = w * (k % l) + k / l;
     uint8_t *r = d + k * pitch;
     if (w == 4) {
@@ -238,15 +241,19 @@ INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
 }
 
 /* The pack. Contiguous rows move 2L elements at a time through X, four
-   rows to the eight registers; rows contiguous across, 2L × 2L at a time
-   through Z (transpose). The rest moves element by element. */
+   rows to the eight registers, and the rest by memcpy. Rows contiguous
+   across move 2L × 2L at a time through Z (transpose): a block of fewer
+   rows stores +0 past them, in the padding of d's rows, whose pitch is a
+   multiple of 2L, as gemm.c's blocks' are; a block of fewer steps loads
+   the 2L steps that end at the last, all within its rows, and stores its
+   own. Rows of fewer than 2L steps move element by element. */
 INLINE void pack(int w, int64_t n0, int64_t n1, const void *vs, int64_t s0,
                  int64_t s1, void *vd, int64_t pitch) {
   const uint8_t *s = vs;
   uint8_t *d = vd;
-  int64_t mr = 2 * LANES(w), i_most = n0 / mr * mr, j_most = n1 / mr * mr;
+  int64_t mr = 2 * LANES(w);
   if (s0 == 1) {
-    int64_t j4 = n1 / 4 * 4;
+    int64_t i_most = n0 / mr * mr, j4 = n1 / 4 * 4;
     for (int64_t i = 0; i < i_most; i += mr)
       for (int64_t j = 0; j < j4; j += 4) {
         for (int u = 0; u < 4; u++) {
@@ -258,18 +265,26 @@ INLINE void pack(int w, int64_t n0, int64_t n1, const void *vs, int64_t s0,
           NX_AMX_STX(d + ((j + u) * pitch + i) * w + 64, 2 * u + 1);
         }
       }
-    for (int64_t j = 0; j < n1; j++)
-      for (int64_t i = j < j4 ? i_most : 0; i < n0; i++)
-        memcpy(d + (j * pitch + i) * w, s + (j * s1 + i) * w, w);
+    for (int64_t j = 0; j < n1; j++) {
+      int64_t i = j < j4 ? i_most : 0;
+      memcpy(d + (j * pitch + i) * w, s + (j * s1 + i) * w,
+             (size_t)((n0 - i) * w));
+    }
     return;
   }
-  for (int64_t i = 0; i < i_most; i += mr)
-    for (int64_t j = 0; j < j_most; j += mr)
-      transpose(w, s + (i * s0 + j) * w, s0 * w, d + (j * pitch + i) * w,
-                pitch * w);
-  for (int64_t j = 0; j < n1; j++)
-    for (int64_t i = j < j_most ? i_most : 0; i < n0; i++)
-      memcpy(d + (j * pitch + i) * w, s + (i * s0 + j) * w, w);
+  if (n1 < mr) {
+    for (int64_t j = 0; j < n1; j++)
+      for (int64_t i = 0; i < n0; i++)
+        memcpy(d + (j * pitch + i) * w, s + (i * s0 + j) * w, w);
+    return;
+  }
+  for (int64_t i = 0; i < n0; i += mr)
+    for (int64_t j = 0; j < n1; j += mr) {
+      int64_t rows = n0 - i < mr ? n0 - i : mr;
+      int64_t back = j + mr > n1 ? j + mr - n1 : 0;
+      transpose(w, s + (i * s0 + j - back) * w, s0 * w,
+                d + ((j - back) * pitch + i) * w, pitch * w, rows, back);
+    }
 }
 
 static void pack_f32(int64_t n0, int64_t n1, const void *s, int64_t s0,
