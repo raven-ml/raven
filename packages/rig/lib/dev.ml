@@ -296,42 +296,7 @@ let drop_locked d = List.iter (clear d) !keys
 
 let drop_values d = Lock.protect locals_lock drop_locked d
 
-(* Loss and stops *)
-
-let answered : (device -> unit) ref = ref ignore
-
-(* Reads a lost device's word behind a transport through its driver, which may
-   be called after [stop], so rig's copy of it moves on. *)
-let refresh d =
-  match d.kind with
-  | Driver { m; h; _ } when d.live.word = 0 -> (
-      let module D = (val m) in
-      match D.signaled h with
-      | w -> c_set_seen d.index w
-      | exception D.Fault _ -> ())
-  | _ -> ()
-
-let stop_returned d = c_state d.index >= ended_state
-
-(* Whether the stop of [d] returned and its word shows its last submitted
-   value: no work of it runs. An orphaned device's work is its parent's. *)
-let stopped d =
-  c_state d.index = ended_state
-  && begin
-    refresh d;
-    c_word d.index >= c_submitted d.index
-  end
-
-let stop_handle d =
-  match d.kind with
-  | Driver { m; h; _ } -> (
-      let module D = (val m) in
-      let fault = if c_faulted d.live.c then Some (why d) else None in
-      try D.stop h ~fault with D.Fault _ -> ())
-  | Io { m; h } -> (
-      let module I = (val m) in
-      try I.stop h with I.Fault _ -> ())
-  | Host -> ()
+(* The table of names *)
 
 (* An open of a name: its slot is [k], the machine's name and the device's.
    [opening] says whether the slot reads [Opening] for it, [index] is the
@@ -368,6 +333,43 @@ let forget_locked d =
     match slot with Open d' when d' == d -> k :: ks | _ -> ks
   in
   List.iter (Names.remove table) (Names.fold mine table [])
+
+(* Loss and stops *)
+
+let answered : (device -> unit) ref = ref ignore
+
+(* Reads a lost device's word behind a transport through its driver, which may
+   be called after [stop], so rig's copy of it moves on. *)
+let refresh d =
+  match d.kind with
+  | Driver { m; h; _ } when d.live.word = 0 -> (
+      let module D = (val m) in
+      match D.signaled h with
+      | w -> c_set_seen d.index w
+      | exception D.Fault _ -> ())
+  | _ -> ()
+
+let stop_returned (d : device) = c_state d.index >= ended_state
+
+(* Whether the stop of [d] returned and its word shows its last submitted
+   value: no work of it runs. An orphaned device's work is its parent's. *)
+let stopped (d : device) =
+  c_state d.index = ended_state
+  && begin
+    refresh d;
+    c_word d.index >= c_submitted d.index
+  end
+
+let stop_handle d =
+  match d.kind with
+  | Driver { m; h; _ } -> (
+      let module D = (val m) in
+      let fault = if c_faulted d.live.c then Some (why d) else None in
+      try D.stop h ~fault with D.Fault _ -> ())
+  | Io { m; h } -> (
+      let module I = (val m) in
+      try I.stop h with I.Fault _ -> ())
+  | Host -> ()
 
 (* Moves the state on after the driver's stop. Its values and its names go
    first, so a close, which waits for the state, returns after them, and the
