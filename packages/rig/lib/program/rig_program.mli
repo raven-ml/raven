@@ -73,7 +73,7 @@
        step on [d] fixes whole.}}
 
     Host code runs as a [Submit] step on the machine's host, whose launches
-    are done when its submit returns ({!Rig.section-host_code}).
+    are done when its submit returns ({!Rig.section-host_launches}).
 
     {1:rails Rails}
 

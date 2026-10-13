@@ -716,9 +716,9 @@ module Buffer : sig
       io device the memory is what {!Rig_edge.Io.alloc} makes, whatever
       [memory].
 
-      Raises [Invalid_argument] if [n < 0], or if [n > 0] and [d] is an io
-      device whose library allocates nothing ({!Rig_edge.Io.alloc}), and
-      {!Lost} if [d] is lost or the allocation loses it. *)
+      Raises [Invalid_argument] if [n < 0], or if [n > 0], [d] is an io
+      device and its {!Rig_edge.Io.alloc} raises it, and {!Lost} if [d] is
+      lost or the allocation loses it. *)
 
   val of_string : string -> t
   (** [of_string s] is a buffer on {!host} holding [s]'s bytes, placed as
@@ -1029,7 +1029,7 @@ module Image : sig
   val load : device -> string -> (t, string) result
   (** [load d binary] loads [binary] on [d], such as a code object for AMD, a
       cubin for NV, a CUDA module for CUDA, a metallib for Metal or a
-      relocatable ELF object for {!host} ({!section-host_code}). Each call
+      relocatable ELF object for {!host} ({!section-host_linking}). Each call
       loads [binary] again. Where [d]'s memory holds the code, it counts in
       [d]'s {!budget}, and [load] places it there after the work submitted on
       [d] before it. The image stays loaded while it is reachable, and
@@ -1284,8 +1284,8 @@ end
 (** Prepared submissions.
 
     A submission is work for one device, made of {e parts}, such as copies
-    and launches. It is made once and run many times. The buffers
-    and the points to wait for change from one run to the next, so they are
+    and launches. It is made once and run many times. The buffers and the
+    points to wait for change from one run to the next, so they are
     arguments of {!submit}, and so are the launch parameters, which a
     {!Submission.Run} holds. A submission holds nothing of a run, so any
     number of domains or threads submit it concurrently, each with its own
@@ -1302,7 +1302,7 @@ end
     buffer, a buffer ref uses its slot as its kind says, and every part uses
     the fixed memory with its access. Two uses may share memory where their
     buffers overlap ({!Buffer.overlaps}), or where either is a slot, whose
-    buffer only a run gives. An {!Submission.unordered} ref orders nothing.
+    buffer only a run gives. A {!Submission.unordered} ref orders nothing.
 
     A launch or a fill runs on the first of the device's queues that runs
     its kind ({!Rig_edge.type-facts}). Words run on the first queue that
@@ -1410,9 +1410,9 @@ module Submission : sig
       and [b]'s length must be a multiple of 4. Words may do what rig cannot
       see, such as start a thread trace or invalidate caches before a
       launch, so rule 2 of {!Rig.section-order} orders them after every
-      earlier part, and {!Rig.section-prepared} says which queue runs them.
-      Memory the words address is ordered against other work only if it is
-      among the submission's fixed memory. *)
+      earlier part, and {!Rig.Submission}'s preamble says which queue runs
+      them. Memory the words address is ordered against other work only if
+      it is among the submission's fixed memory. *)
 
   (** {1:making Making} *)
 
@@ -1431,8 +1431,8 @@ module Submission : sig
       submission keeps it reachable until the submission is unreachable and
       the work of its every submit is done, or, on a lost device, until the
       device has stopped ({!Rig.section-stops}). In a child of [fork] it
-      keeps nothing. [keep] orders no memory. {!Rig.section-prepared} states
-      how the parts are ordered and which queue runs each.
+      keeps nothing. [keep] orders no memory. {!Rig.Submission}'s preamble
+      states how the parts are ordered and which queue runs each.
 
       Raises [Invalid_argument] if:
       {ul

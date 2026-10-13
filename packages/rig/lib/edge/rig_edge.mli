@@ -498,8 +498,9 @@ module type Io = sig
   (** [alloc d n] is [n] new bytes of [d]'s memory, or [None] if [d] has no
       room. [n] is positive.
 
-      Raises [Invalid_argument] if [d] makes no memory of its own, which
-      [Rig.Buffer.create] raises in turn. *)
+      Raises [Invalid_argument] if [d]'s memory is only what its library
+      opens and hands to [Rig.Buffer.of_io], such as a disk's files.
+      [Rig.Buffer.create] raises it in turn. *)
 
   val free : t -> region -> unit
   (** [free d r] gives [r] back. *)
