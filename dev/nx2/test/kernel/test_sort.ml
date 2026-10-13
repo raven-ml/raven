@@ -199,7 +199,9 @@ let law_large (b : Support.backend) c =
     && kept c > 64
     && dtype_of c.x <> D.Any D.Complex128
   in
+  let wide = long && (let (D.Any d) = dtype_of c.x in D.bits d = 64) in
   cover "one long slice" long;
+  cover "long wide keys, keeping all" (wide && c.k = None);
   agrees b c
 
 (* Laws for every library *)

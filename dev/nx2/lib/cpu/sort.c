@@ -237,7 +237,11 @@ static void radix_packed(uint64_t *t, uint64_t *t2, int64_t n, int kb) {
    counts become each block's offsets, digit by digit and block by block,
    and every block moves its items to them; blocks keep their items'
    order, so the pass stays stable. Keys spanning at most 4 bytes travel
-   packed above their positions, wider ones beside them. */
+   packed above their positions, wider ones beside them.
+
+   Where the slice keeps every element, the positions' destination, and a
+   wide key's values', serve as two of the passes' arrays: fresh pages from
+   the system cost about as much as a pass over them. */
 
 typedef struct {
   const sorter *s;
@@ -355,7 +359,8 @@ static void move(spread *p, int64_t bytes) {
   p->pdst = q;
 }
 
-/* Writes the positions and values of the sorted items' blocks. */
+/* Writes the positions and values of the sorted items' blocks. An item
+   may lie in the destination it is written to, at its own index. */
 static void emit_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const spread *p = ctx;
@@ -373,9 +378,10 @@ static void emit_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-/* n words of the system's, kept in [own] to be freed; NULL if memory runs
-   out. */
-static uint64_t *take(int64_t n, uint64_t **own, int *owned) {
+/* [there], or n words of the system's, kept in [own] to be freed; NULL if
+   memory runs out. */
+static uint64_t *take(uint64_t *there, int64_t n, uint64_t **own, int *owned) {
+  if (there != NULL) return there;
   uint64_t *t = malloc((size_t)n * sizeof *t);
   if (t != NULL) own[(*owned)++] = t;
   return t;
@@ -415,15 +421,18 @@ static int sort_long(const sorter *s, int64_t blocks, int64_t bytes) {
     }
     p.least = least;
     int kb = span_bytes(most - least);
+    int whole = s->keep == n;
+    uint64_t *in_pos = whole && s->sp == 1 ? (uint64_t *)p.pos : NULL;
+    uint64_t *in_v = whole && s->sv == 1 && s->w == 8 ? (uint64_t *)p.v : NULL;
     if (kb <= 4) {
-      p.src = take(n, own, &owned);
-      p.dst = take(n, own, &owned);
+      p.src = take(in_pos, n, own, &owned);
+      p.dst = take(NULL, n, own, &owned);
       ok = p.src != NULL && p.dst != NULL;
     } else {
-      p.psrc = (int64_t *)take(n, own, &owned);
-      p.pdst = (int64_t *)take(n, own, &owned);
-      p.src = take(n, own, &owned);
-      p.dst = take(n, own, &owned);
+      p.psrc = (int64_t *)take(in_pos, n, own, &owned);
+      p.pdst = (int64_t *)take(NULL, n, own, &owned);
+      p.src = take(NULL, n, own, &owned);
+      p.dst = take(in_v, n, own, &owned);
       ok = p.psrc != NULL && p.pdst != NULL && p.src != NULL && p.dst != NULL;
     }
     if (ok) passes(&p, kb, bytes);
