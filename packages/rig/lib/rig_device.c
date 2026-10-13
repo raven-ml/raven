@@ -621,6 +621,11 @@ value caml_rig_take(value v_a) {
   CAMLreturn(Val_int(i));
 }
 
+/* A slot whose word passed this at its free is retired: every device that
+   takes a slot then has at least 2^46 values before its timeline ends, and
+   only one that makes that many submissions itself is lost for it. */
+#define RETIRED (UINT64_C(1) << 46)
+
 static void push(int i) { free_slots[nfree++] = i; }
 
 /* Gives back the slot an open stored in [v_a], and zeroes [v_a]: giving it
@@ -655,8 +660,8 @@ value caml_rig_routed(value v_l, value v_n) {
    holds the device: [*used] says so. The range is published before the slot
    is given back. The record keeps final copies of its line and answers from
    them from then on; the slot goes to a later device, whose timeline goes
-   on from the word. Answers whether it freed the slot, or freed it before.
-   Under [table_mu] and [d]'s mutex. */
+   on from the word, unless the word passed RETIRED. Answers whether it
+   freed the slot, or freed it before. Under [table_mu] and [d]'s mutex. */
 static int free_locked(struct rig_device *d, struct rig_range *r, int *used) {
   if (atomic_load(&devices[d->index]) != d) return 1;
   struct rig_line *l = d->line;
@@ -684,7 +689,7 @@ static int free_locked(struct rig_device *d, struct rig_range *r, int *used) {
      answers its final value even if that device's make raises the word. */
   atomic_store_explicit(&l->owner, -1, memory_order_release);
   atomic_store(&devices[d->index], NULL);
-  push(d->index);
+  if (w <= RETIRED) push(d->index);
   return 1;
 }
 
@@ -1315,6 +1320,12 @@ static int admit(struct rig_device *d, const struct rig_sub *s,
     return SUBMIT_NO_ROOM;
   }
   uint64_t v = atomic_load(&d->line->submitted) + 1;
+  /* A value past a point's 47 bits would carry into its index: the device
+     is lost instead, and assigns nothing. */
+  if (v > RIG_VALUE_MASK) {
+    r->why = "its timeline reached the last value a point holds, 2^47 - 1";
+    return SUBMIT_FAILED;
+  }
   atomic_store_explicit(&d->line->submitted, v, memory_order_release);
   const char *why = NULL;
   r->pair = r->timed ? take_pair(&d->times) : -1;

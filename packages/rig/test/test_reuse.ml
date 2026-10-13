@@ -353,12 +353,41 @@ let test_raised_by_make () =
     (option int) (Some last) !during;
   Rig.close later
 
+(* The end of a timeline *)
+
+(* The last value a point holds ends a device's timeline: a submit after it
+   loses the device with the reason and assigns nothing, and the slot, whose
+   word passed 2^46, goes to no later device. *)
+let test_last_value () =
+  let last = (1 lsl 47) - 1 in
+  let p = P.make () in
+  let d =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_ (P.opener ~start:(last - 1) "reuse:last-value" p))
+  in
+  let q = submit (Sub.make d [||]) in
+  equal ~msg:"the last value" int last (Rig.Point.value q);
+  Rig.Point.wait q;
+  raises_match
+    (function
+      | Rig.Lost (d', why) ->
+          Rig.equal d d'
+          && why = "its timeline reached the last value a point holds, 2^47 - 1"
+      | _ -> false)
+    (fun () -> submit (Sub.make d [||]));
+  equal ~msg:"no value assigned past it" int last (Rig.submitted d);
+  Rig.close d;
+  let later, _ = P.open_ "reuse:after-last-value" in
+  less ~msg:"a later device's base" int ~than:(1 lsl 46) (Rig.submitted later)
+
 let tests =
   [
     group ~timeout "reuse"
       [
         test "a closed device answers its value while a make raises its slot"
           test_raised_by_make;
+        test "a submit past the last value loses the device, whose slot retires"
+          test_last_value;
         test ~timeout:10.
           "a queue's wait for a producer's point reads the slot's current \
            device"

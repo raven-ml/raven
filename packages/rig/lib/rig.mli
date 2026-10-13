@@ -110,18 +110,19 @@ val host : t
     A device holds a slot of the process's 65,535, a bound that comes from a
     point fitting an OCaml int ({!Point}). It holds its slot while it is
     open, while memory of it remains to return, and while it is lost and has
-    not stopped ({!section-stops}). A device that never stops and the
-    process's first {!failure} hold theirs for the rest of the process. A
-    device that opens takes a free slot, and its values go on past every
-    value the slot's earlier devices were given, so the number of opens a
-    process makes has no bound. Each open still costs what its driver keeps
-    for the process, as the driver's documentation states: the GPU drivers
-    keep a few dozen bytes of C state per open, and a timeline word of the
-    device's own where it has one. A device whose queue waited on another
-    device's word of its own keeps its mapping of that word until it stops:
-    one per producer device it waited on. A device lost before it reached
-    every value it was given leaves its slot too, and keeps its record for
-    the rest of the process, which its dropped points raise {!Lost} with.
+    not stopped ({!section-stops}). A device that never stops, the process's
+    first {!failure}, and a device whose timeline passed 2{^ 46} hold theirs
+    for the rest of the process. A device that opens takes a free slot, and
+    its values go on past every value the slot's earlier devices were given,
+    so the number of opens a process makes has no bound. Each open still
+    costs what its driver keeps for the process, as the driver's
+    documentation states: the GPU drivers keep a few dozen bytes of C state
+    per open, and a timeline word of the device's own where it has one. A
+    device whose queue waited on another device's word of its own keeps its
+    mapping of that word until it stops: one per producer device it waited
+    on. A device lost before it reached every value it was given leaves its
+    slot too, and keeps its record for the rest of the process, which its
+    dropped points raise {!Lost} with.
 
     An exception raised inside an open, by the opener's [make] or
     asynchronously ({!section-errors}), is raised again. The name is then
@@ -1649,7 +1650,9 @@ val submit :
     {- [d]'s driver can never run the parts ({!Rig_edge.section-calls}).}}
     Raises {!Lost} if [d] is lost before [submit] returns, if its driver
     fails to take the work, or if a point of [waits] is a lost device's and
-    that device never reached it. *)
+    that device never reached it. A submit after [d]'s value [2]{^ 47}[ - 1],
+    the last a point holds, loses [d] with that reason and assigns
+    nothing. *)
 
 (** {1:per_device Values per device}
 
