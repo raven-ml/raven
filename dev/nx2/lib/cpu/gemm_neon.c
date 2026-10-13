@@ -87,6 +87,22 @@ KERNEL(kernel_u16, uint16_t, uint16x8_t, 8, vld1q_u16, vst1q_u16,
 KERNEL(kernel_u32, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
        vld1q_dup_u32, vmlaq_u32, vdupq_n_u32(0))
 
+/* Quads of int8 or uint8 by SDOT or UDOT, where the host has them: each
+   lane adds the four products of a word of b and the broadcast word of a,
+   16 products an instruction where MLA makes 4. */
+#if defined(__ARM_FEATURE_DOTPROD)
+#define SDOT(c, b, x)                                                     \
+  vreinterpretq_u32_s32(vdotq_s32(vreinterpretq_s32_u32(c),              \
+                                  vreinterpretq_s8_u32(b),               \
+                                  vreinterpretq_s8_u32(x)))
+#define UDOT(c, b, x) \
+  vdotq_u32(c, vreinterpretq_u8_u32(b), vreinterpretq_u8_u32(x))
+KERNEL(kernel_sdot, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
+       vld1q_dup_u32, SDOT, vdupq_n_u32(0))
+KERNEL(kernel_udot, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
+       vld1q_dup_u32, UDOT, vdupq_n_u32(0))
+#endif
+
 /* Lane order's dots and axpys: 16 lanes are 4 vectors of float32, 8 of
    float64; 4 rows of float32 or 2 of float64 hold 16 accumulators and b's
    vectors. */
@@ -168,6 +184,10 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
   t->gemm[NX_INT8] = t->gemm[NX_UINT8] = integers(kernel_u8, 16);
   t->gemm[NX_INT16] = t->gemm[NX_UINT16] = integers(kernel_u16, 8);
   t->gemm[NX_INT32] = t->gemm[NX_UINT32] = integers(kernel_u32, 4);
+#if defined(__ARM_FEATURE_DOTPROD)
+  t->quads[NX_INT8] = integers(kernel_sdot, 4);
+  t->quads[NX_UINT8] = integers(kernel_udot, 4);
+#endif
 }
 
 #else

@@ -237,7 +237,7 @@ let extents =
     (batch, rows, cols, con)
   in
   let axes most lo hi = array ~size:(int_range 0 most) (int_range lo hi) in
-  let ranked = shaped (axes 1 1 3) (axes 2 0 5) (axes 2 0 5) (axes 2 0 4) in
+  let ranked = shaped (axes 1 0 3) (axes 2 0 5) (axes 2 0 5) (axes 2 0 4) in
   let none = constant [||] in
   frequency
     [
@@ -292,15 +292,15 @@ let make ~order ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed
 
 (* A case in either order, in [acc] into [out], each operand of [acc] or of
    [dts]. *)
-let case_of ~acc ~out ~dts =
+let case_of ?same ~acc ~out ~dts () =
   let open Gen in
   let* order = of_list Nx_kernel.[ Chain; Lane ] in
   let* ((batch, _, _, _) as e) = extents in
   let nb = Array.length batch in
   let ra, rb, ry = ranks e in
   let pick = frequency [ (3, constant ~pp:pp_dtype acc); (2, of_list ~pp:pp_dtype dts) ] in
-  let* da = pick in
-  let* db = pick in
+  let* da = match same with Some d -> d | None -> pick in
+  let* db = if same = None then pick else constant ~pp:pp_dtype da in
   let* va = view ra nb in
   let* vb = view rb nb in
   let* vi = view ry 0 in
@@ -471,7 +471,7 @@ let integers =
 let computed =
   Gen.with_pp pp_case
     (Gen.bind (Gen.of_list ~pp:pp_dtype accs) (fun acc ->
-         case_of ~acc ~out:acc ~dts:(held acc)))
+         case_of ~acc ~out:acc ~dts:(held acc) ()))
 
 let examples = List.concat_map regimes accs
 
@@ -490,7 +490,7 @@ let any_case =
            ]
      in
      let* out = frequency [ (2, constant ~pp:pp_dtype acc); (1, of_list ~pp:pp_dtype D.all) ] in
-     case_of ~acc ~out ~dts)
+     case_of ~acc ~out ~dts ())
 
 (* The reference *)
 
@@ -1021,7 +1021,49 @@ let law_order b c =
 let integer_cases =
   Gen.with_pp pp_case
     (Gen.bind (Gen.of_list ~pp:pp_dtype integer_accs) (fun acc ->
-         case_of ~acc ~out:acc ~dts:integers))
+         case_of ~acc ~out:acc ~dts:integers ()))
+
+(* [x]'s values in an array one element longer along its last axis, read
+   from its second element: adjacent along that axis, at an odd offset. *)
+let shifted (A.Any x as a) =
+  let s = shape_of a in
+  let last = Array.length s - 1 in
+  let made = Array.mapi (fun i e -> if i = last then e + 1 else e) s in
+  let at i e = { M.start = (if i = last then 1 else 0); count = e; step = 1 } in
+  let y = Option.get (A.move (M.Slice (Array.mapi at s)) (A.create Rig.host (A.dtype x) made)) in
+  cast_into y a;
+  A.Any y
+
+(* Quads in place: a as made, and b made [n × k], adjacent along k, over
+   several of chain order's blocks of words; a copied tail; operands
+   adjacent along k at an odd offset; an empty batch of operands adjacent
+   along k. *)
+let quad_examples =
+  let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
+  let by_rows r =
+    { (plain r) with perm = Array.init r (fun i -> if i < r - 2 then i else (2 * r) - 3 - i) }
+  in
+  List.concat_map
+    (fun (acc, d) ->
+      let case order e vb =
+        let ra, _, ry = ranks e in
+        make ~order ~acc ~out:acc e (d, plain ra) (d, vb) (Some (plain ry)) 3
+      in
+      [
+        case Chain ([||], [| 130 |], [| 20 |], [| 2052 |]) (by_rows 2);
+        case Chain ([||], [| 3 |], [| 50 |], [| 64 |]) (plain 2);
+        case Lane ([||], [| 9 |], [| 33 |], [| 7 |]) (by_rows 2);
+        (let c = case Chain ([||], [| 5 |], [| 9 |], [| 64 |]) (by_rows 2) in
+         { c with a = shifted c.a; b = shifted c.b });
+        case Chain ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3);
+      ])
+    D.[ (Any Int32, Any Int8); (Any Uint32, Any Uint8) ]
+
+let quad_cases =
+  Gen.with_pp pp_case
+    (Gen.bind (Gen.of_list ~pp:pp_dtype D.[ Any Int32; Any Uint32 ]) (fun acc ->
+         let same = Gen.of_list ~pp:pp_dtype D.[ Any Int8; Any Uint8 ] in
+         case_of ~same ~acc ~out:acc ~dts:[] ()))
 
 (* [x]'s values as int64s: an integer's own value, a bool's 0 or 1. *)
 let ints x =
@@ -1043,15 +1085,68 @@ let wrap (D.Any dt) v =
 (* Each output is init, or 0, plus the products of its operands' values
    modulo the accumulator's width: int64 arithmetic wraps modulo 2^64, a
    multiple of every width. *)
-let law_wraps b c =
+let integer_covers (c : case) =
   let wider (A.Any x) = D.Any (A.dtype x) <> c.acc in
   let m, n = rows_cols c and _, k, _ = sizes c in
   cover "an operand of another dtype" (wider c.a || wider c.b);
-  cover "init" (c.init <> None);
   let (D.Any acc) = c.acc in
   cover "a 64-bit accumulator" (D.bits acc = 64);
   cover "more than 128 rows and columns over 513 products or more"
-    (m > 128 && n > 128 && k > 512);
+    (m > 128 && n > 128 && k > 512)
+
+(* The quads path reads an operand in place where k is a multiple of 4,
+   the operand is adjacent along k and its offset and other steps are
+   multiples of 4; it interleaves b's rows where b's columns are adjacent,
+   and copies any other operand element by element, padded with zeros. *)
+let quad_covers (c : case) =
+  let _, k, _ = sizes c in
+  let strides (A.Any x) = L.strides (A.layout x) in
+  let offset (A.Any x) = L.offset (A.layout x) in
+  let pairs = Array.append c.batch c.contracting in
+  (* [x]'s axes of more than one element, those [side] of the contracting
+     pairs names, or the others. *)
+  let axes x side ~con =
+    List.filter
+      (fun ax ->
+        (shape_of x).(ax) > 1
+        && con = Array.exists (fun p -> side p = ax) c.contracting
+        && (con || not (Array.exists (fun p -> side p = ax) pairs)))
+      (List.init (Array.length (shape_of x)) Fun.id)
+  in
+  let adjacent x side =
+    let rec steps want = function
+      | [] -> true
+      | ax :: r -> (strides x).(ax) = want && steps (want * (shape_of x).(ax)) r
+    in
+    let along = Array.to_list (Array.map side c.contracting) in
+    steps 1 (List.rev (List.filter (fun ax -> List.mem ax (axes x side ~con:true)) along))
+  in
+  let aligned x side =
+    offset x mod 4 = 0
+    && List.for_all (fun ax -> (strides x).(ax) mod 4 = 0) (axes x side ~con:false)
+    && Array.for_all (fun p -> (strides x).(side p) mod 4 = 0) c.batch
+  in
+  let fours = k > 0 && k mod 4 = 0 in
+  let in_place x side = fours && adjacent x side && aligned x side in
+  let columns_adjacent =
+    match List.rev (axes c.b snd ~con:false) with
+    | ax :: _ -> (strides c.b).(ax) = 1
+    | [] -> false
+  in
+  cover "products a multiple of 4" fours;
+  cover "a read in place" (in_place c.a fst);
+  cover "b read in place" (in_place c.b snd);
+  cover "an operand adjacent along k copied for its offset or steps"
+    (fours
+    && ((adjacent c.a fst && not (aligned c.a fst))
+       || (adjacent c.b snd && not (aligned c.b snd))));
+  cover "b's rows interleaved" (k >= 4 && not (adjacent c.b snd) && columns_adjacent);
+  cover "fewer than 4 products" (k < 4);
+  cover "products not a multiple of 4" (k mod 4 <> 0)
+
+let law_wraps ~covers b (c : case) =
+  covers c;
+  cover "init" (c.init <> None);
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "stepped"; "broadcast"; "permuted" ];
@@ -1161,7 +1256,11 @@ let cpu (b : Support.backend) =
         computed (run (law_order b));
       prop ~examples:(List.concat_map regimes D.[ Any Int8; Any Uint16; Any Int32; Any Uint64 ])
         "an integer output is its products' sum modulo the accumulator"
-        integer_cases (run (law_wraps b));
+        integer_cases
+        (run (law_wraps ~covers:integer_covers b));
+      prop ~examples:quad_examples
+        "8-bit operands into 32 bits wrap as integers do" quad_cases
+        (run (law_wraps ~covers:quad_covers b));
       prop "computes the cases nx_cpu.mli lists, declines others"
         any_case (run (law_computes b));
       test "with no products, a float32 output is init's bits"

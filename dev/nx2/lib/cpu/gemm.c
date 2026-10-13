@@ -1292,10 +1292,11 @@ static int init_is_dst(const problem *p) {
   return 1;
 }
 
-int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
-                       const nx_array *const *op) {
-  problem p = {.acc = acc, .w = nx_cpu_width(acc)};
-  p.g = &nx_cpu_table->gemm[acc];
+/* nx_cpu_contract_on on the kernels [g]. */
+static int contract_with(const nx_cpu_gemm *g, int acc, int order,
+                         const nx_contract_view *v,
+                         const nx_array *const *op) {
+  problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
   for (int o = 0; o < 4; o++) {
     p.op[o].x = op[o];
     p.op[o].first = v->offset[o];
@@ -1324,6 +1325,11 @@ int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
     else chain(&p);
   }
   return !atomic_load(&p.failed);
+}
+
+int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
+                       const nx_array *const *op) {
+  return contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op);
 }
 
 /* Complex */
@@ -1489,6 +1495,154 @@ out:
   return done;
 }
 
+/* Quads */
+
+/* An 8-bit a by a b of the same dtype into a 32-bit acc runs on the
+   table's quads kernel where it has one: four consecutive elements along
+   k are one 32-bit word, a quad, and the driver contracts words of K/4
+   products each, which the kernel adds four products at a time. A word of
+   a holds a row's four elements, a word of b a column's. Each operand is
+   read in place where it lies adjacent along k with each word on a word's
+   boundary, and copied into words otherwise, k padded with zeros to a
+   multiple of 4: a as rows of words, b as rows of each quad's words. The
+   sum is exact modulo 2^32, as acc's: an integer's bits do not depend on
+   how its products are grouped. */
+
+/* b's words, copied: column i's word q at d + (i + q·n)·4. A unit is a
+   column of a batch element where b is adjacent along k, else a quad of
+   each of its columns, so that the reads run along the memory. */
+typedef struct {
+  const nx_array *b;
+  const nx_contract_view *v;
+  int64_t quads;
+  uint8_t *d;
+} quads_job;
+
+/* Four rows of [n] bytes, each adjacent, interleaved into words: row t's
+   byte i to d[4i + t]. */
+static void interleave(const uint8_t *r0, const uint8_t *r1,
+                       const uint8_t *r2, const uint8_t *r3, uint8_t *d,
+                       int64_t n) {
+  for (int64_t i = 0; i < n; i++) {
+    d[4 * i] = r0[i];
+    d[4 * i + 1] = r1[i];
+    d[4 * i + 2] = r2[i];
+    d[4 * i + 3] = r3[i];
+  }
+}
+
+/* A full quad of b's rows, each adjacent, interleaves; any other element
+   moves alone. */
+static void quad_words(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const quads_job *j = ctx;
+  const int64_t *s = j->v->stride[B];
+  int64_t n = j->v->extent[COL], k = j->v->extent[CON];
+  int by_column = s[CON] == 1;
+  int64_t per = by_column ? n : j->quads;
+  for (int64_t u = lo; u < hi; u++) {
+    int64_t e = u / per, i0 = 0, i1 = n, p0 = 0, p1 = 4 * j->quads;
+    if (by_column) i0 = u % per, i1 = i0 + 1;
+    else p0 = 4 * (u % per), p1 = p0 + 4;
+    const uint8_t *x = j->b->base + j->v->offset[B] + e * s[BATCH];
+    uint8_t *d = j->d + e * n * j->quads * 4;
+    if (!by_column && s[COL] == 1 && p1 <= k) {
+      const uint8_t *r = x + p0 * s[CON];
+      interleave(r, r + s[CON], r + 2 * s[CON], r + 3 * s[CON], d + p0 * n,
+                 n);
+      continue;
+    }
+    for (int64_t i = i0; i < i1; i++)
+      for (int64_t p = p0; p < p1; p++)
+        d[(i + p / 4 * n) * 4 + p % 4] =
+            p < k ? x[p * s[CON] + i * s[COL]] : 0;
+  }
+}
+
+/* Whether operand [o] of [v] is read in place as words: adjacent along k,
+   each word's first element on a word's boundary. */
+static int words_in_place(const nx_contract_view *v, int o) {
+  const int64_t *s = v->stride[o];
+  int64_t k = v->extent[CON];
+  if (s[CON] != 1 && k > 1) return 0;
+  if (k % 4 != 0 || v->offset[o] % 4 != 0) return 0;
+  for (int x = BATCH; x < CON; x++)
+    if (s[x] % 4 != 0) return 0;
+  return 1;
+}
+
+/* Operand [o] of [v] as [u]'s operand [y] of words of [acc]: in place, or
+   under [copy] copied into memory of its own, a's rows of words and b's as
+   quads_job lays them out, one batch element where [o] steps 0 along the
+   batch. Answers the copy, NULL in place or if allocation fails. */
+static uint8_t *words_of(const nx_contract_view *v, const nx_array *const *op,
+                         int o, int acc, int copy, nx_contract_view *u,
+                         nx_array *y) {
+  const int64_t *s = v->stride[o];
+  int64_t k = v->extent[CON], quads = ceil_div(k, 4);
+  int64_t n = v->extent[o == A ? ROW : COL];
+  *y = *op[o];
+  y->dtype = acc;
+  y->bits = 32;
+  if (!copy) {
+    u->offset[o] = v->offset[o] / 4;
+    for (int x = BATCH; x < CON; x++) u->stride[o][x] = s[x] / 4;
+    u->stride[o][CON] = 1;
+    return NULL;
+  }
+  int64_t ne = s[BATCH] == 0 ? 1 : v->extent[BATCH], words = n * quads;
+  uint8_t *d = alloc(ne * words * 4);
+  if (d == NULL) return NULL;
+  y->base = d;
+  u->offset[o] = 0;
+  u->stride[o][BATCH] = s[BATCH] == 0 ? 0 : words;
+  if (o == A) {
+    for (int64_t e = 0; e < ne; e++)
+      nx_cpu_stage_as(op[A], v->offset[A] + e * s[BATCH], s[CON], s[ROW], k,
+                      n, op[A]->dtype, d + e * words * 4, 4 * quads);
+    for (int64_t r = 0; r < ne * n; r++)
+      memset(d + r * quads * 4 + k, 0, (size_t)(quads * 4 - k));
+    u->stride[A][ROW] = quads;
+    u->stride[A][CON] = 1;
+    return d;
+  }
+  quads_job j = {.b = op[B], .v = v, .quads = quads, .d = d};
+  int64_t units = ne * (s[CON] == 1 ? n : quads);
+  nx_cpu_job(units, ne * words * 8, ne * words * 8, quad_words, &j);
+  u->stride[B][COL] = 1;
+  u->stride[B][CON] = n;
+  return d;
+}
+
+/* The table's quads kernels for a contraction in [acc] of operands of
+   [da] and [db], or NULL. */
+static const nx_cpu_gemm *quads_for(int acc, int da, int db) {
+  if (acc != NX_INT32 && acc != NX_UINT32) return NULL;
+  if (da != db || (da != NX_INT8 && da != NX_UINT8)) return NULL;
+  const nx_cpu_gemm *g = &nx_cpu_table->quads[da];
+  return g->kernel.f ? g : NULL;
+}
+
+static int quads_on(const nx_cpu_gemm *g, int acc, const nx_contract_view *v,
+                    const nx_array *const *op) {
+  if (v->extent[BATCH] == 0 || v->extent[ROW] == 0 || v->extent[COL] == 0)
+    return 1;
+  nx_contract_view u = *v;
+  u.extent[CON] = ceil_div(v->extent[CON], 4);
+  nx_array x[2];
+  int copy_a = !words_in_place(v, A), copy_b = !words_in_place(v, B);
+  uint8_t *ab = words_of(v, op, A, acc, copy_a, &u, &x[A]);
+  uint8_t *bb = words_of(v, op, B, acc, copy_b, &u, &x[B]);
+  int done = 0;
+  if ((copy_a && ab == NULL) || (copy_b && bb == NULL)) goto out;
+  const nx_array *ops[4] = {&x[A], &x[B], op[INIT], op[DST]};
+  done = contract_with(g, acc, NX_CPU_CHAIN, &u, ops);
+out:
+  free(ab);
+  free(bb);
+  return done;
+}
+
 double nx_cpu_core_speed(int acc) {
   const nx_cpu_gemm *g = &nx_cpu_table->gemm[acc];
   if (g->kernel.shared > 1 && g->other != NULL) g = g->other;
@@ -1525,7 +1679,9 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
      modulo acc's width in any order, so chain order computes it whatever
      the order asked. */
   int order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder), done;
-  if (part_of(acc) != acc) done = complex_on(acc, order, &v, op);
+  const nx_cpu_gemm *quads = quads_for(acc, dts[0], dts[1]);
+  if (quads) done = quads_on(quads, acc, &v, op);
+  else if (part_of(acc) != acc) done = complex_on(acc, order, &v, op);
   else done = nx_cpu_contract_on(acc, order, &v, op);
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();

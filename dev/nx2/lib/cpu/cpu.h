@@ -262,8 +262,13 @@ typedef struct {
      int4 and uint4 their value modulo 16, float4 its code, bit 0 or 1. */
   nx_cpu_run convert[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
   /* gemm[acc] contracts in acc in chain order; its kernel is NULL where
-     the target has none. dot[acc] and axpy[acc] are lane order's. */
+     the target has none. dot[acc] and axpy[acc] are lane order's.
+     quads[d] contracts operands of the 8-bit dtype d into 32 bits in
+     chain order, each element of a and b a 32-bit word of four of d along
+     k, each product of words the sum of their four products (gemm.c,
+     Quads); its kernel is NULL where the target has none. */
   nx_cpu_gemm gemm[NX_DTYPE_COUNT];
+  nx_cpu_gemm quads[NX_DTYPE_COUNT];
   nx_cpu_dot dot[NX_DTYPE_COUNT];
   nx_cpu_axpy axpy[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k

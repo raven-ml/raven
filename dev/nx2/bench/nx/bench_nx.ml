@@ -342,7 +342,8 @@ let square_rows (type v s) name (dt : (v, s) D.t) (v : v) sizes =
 
 let rows_by_columns = Nx.Pattern.v "m k, k n -> m n | k"
 
-(* int8 operands into an int32 accumulator, as quantized weights are. *)
+(* int8 operands into an int32 accumulator, as quantized weights are: squares,
+   and a decode step against a weight stored [n × k]. *)
 let widened_rows =
   List.map
     (fun n ->
@@ -352,6 +353,15 @@ let widened_rows =
             (Nx.contract ~acc:D.Int32 D.Int32 rows_by_columns
                (Thumper.black_box a) b)))
     [ 64; 256; 1024 ]
+  @
+  let x = filled D.Int8 [| 1; 4096 |] 1
+  and w = filled D.Int8 [| 4096; 4096 |] 1 in
+  [
+    Thumper.bench "contract-i8-i32-m1x4096x4096" (fun () ->
+        Nx.Repr.array
+          (Nx.contract ~acc:D.Int32 D.Int32 rows_by_weight
+             (Thumper.black_box x) w));
+  ]
 
 (* A complex vector by a matrix: the lane order's path where b, the larger
    operand, is copied into its blocks. *)
