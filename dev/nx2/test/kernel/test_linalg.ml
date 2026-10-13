@@ -6,11 +6,12 @@
 (* Factorisations and triangular solves through every kernel library the host
    runs: each result against its defining relation, within the bound
    nx_cpu.mli states, by residuals computed in double-double, on operands
-   well and badly conditioned; LU's pivots as nx_kernel.mli's lu chooses
-   them; a failing matrix NaN alone in its batch; only the triangle a routine names read; the
-   same bits under every layout of the same values. nx.cpu's group checks
-   that it computes what nx_cpu.mli lists, the same bits on one thread as on
-   the job's, and its refusals. *)
+   well and badly conditioned and below the least normal number; LU's
+   pivots as nx_kernel.mli's lu chooses them; a failing matrix NaN alone in
+   its batch; only the triangle a routine names read; the same bits under
+   every layout of the same values. nx.cpu's group checks that it computes
+   what nx_cpu.mli lists, the same bits on one thread as on the job's, and
+   its refusals. *)
 
 open Windtrap
 open Nx_array_gen
@@ -33,6 +34,28 @@ let gamma dt k =
   let k = if is_complex dt then 2 * k else k in
   let ku = float_of_int k *. unit_roundoff dt in
   ku /. (1. -. ku)
+
+(* ε(k) = k η, η the dtype's least positive subnormal, [k] doubled on
+   complex numbers: what underflow adds to the bounds, times [2^e]. *)
+let epsilon ?(e = 0) dt k =
+  let k = if is_complex dt then 2 * k else k in
+  let eta =
+    match dt with D.Any (D.Float32 | D.Complex64) -> -149 | _ -> -1074
+  in
+  float_of_int k *. Float.ldexp 1. (eta + e)
+
+(* The exponent that takes values in [-1, 1] below the dtype's least normal
+   number, to [bits] bits above its least subnormal: deep enough that an
+   eigenvalue's rounding outweighs γ(16n) ‖a‖. *)
+let tiny ~bits (D.Any dt) =
+  (match dt with D.Float32 | D.Complex64 -> 149 | _ -> 1074) - bits
+
+(* [x] times 2^e, exact where the result is normal: a subnormal operand's
+   results scaled back, so that double-double residuals do not underflow. *)
+let ldexp e (x : Complex.t) =
+  { Complex.re = Float.ldexp x.re e; im = Float.ldexp x.im e }
+
+let up e v = Array.map (ldexp e) v
 
 (* Values *)
 
@@ -143,6 +166,22 @@ let draw r dt =
    and conquer tears, and small ones. *)
 let orders = [ 0; 1; 2; 3; 5; 8; 17; 26; 63; 64; 65; 129 ]
 
+(* How a case scales its operand. *)
+type scale =
+  | Plain
+  | Graded
+      (** rows and columns by powers of two from 2^-16 to 2^16: an operand
+          of condition up to 2^64 whose exact factors are those of the
+          ungraded one, scaled *)
+  | Subnormal
+      (** by 2^-(down c), below the least normal number: the bounds' ε
+          terms. A solve scales its right-hand sides. *)
+
+let pp_scale ppf = function
+  | Plain -> ()
+  | Graded -> Format.pp_print_string ppf " graded"
+  | Subnormal -> Format.pp_print_string ppf " subnormal"
+
 type case = {
   dt : D.any;
   batch : int array;
@@ -153,20 +192,16 @@ type case = {
   unit_diagonal : bool;
   seed : int;
   how : how;
-  graded : bool;
-      (** rows and columns scaled by powers of two from 2^-16 to 2^16: an
-          operand of condition up to 2^64 whose exact factors are those of
-          the ungraded one, scaled *)
+  scale : scale;
 }
 
 let pp_case ppf c =
-  Format.fprintf ppf "%a batch %a n %d r %d %s%s%s seed %d %a" pp_dtype c.dt
+  Format.fprintf ppf "%a batch %a n %d r %d %s%s%s seed %d %a%a" pp_dtype c.dt
     pp_ints c.batch c.n c.r
     (match c.triangle with Lower -> "lower" | Upper -> "upper")
     (if c.adjoint then " adjoint" else "")
     (if c.unit_diagonal then " unit" else "")
-    c.seed pp_how c.how;
-  if c.graded then Format.pp_print_string ppf " graded"
+    c.seed pp_how c.how pp_scale c.scale
 
 let case =
   Gen.with_pp pp_case
@@ -183,8 +218,8 @@ let case =
      let* unit_diagonal = bool in
      let* seed = int_range 0 1_000_000 in
      let* how = of_list ~pp:pp_how [ Contiguous; Transposed; Stepped ] in
-     let+ graded = bool in
-     { dt; batch; n; r; triangle; adjoint; unit_diagonal; seed; how; graded })
+     let+ scale = of_list ~pp:pp_scale [ Plain; Graded; Subnormal ] in
+     { dt; batch; n; r; triangle; adjoint; unit_diagonal; seed; how; scale })
 
 let count c = Array.fold_left ( * ) 1 c.batch
 let square c = Array.append c.batch [| c.n; c.n |]
@@ -193,10 +228,10 @@ let square c = Array.append c.batch [| c.n; c.n |]
 let at v ~rows ~cols b i j = v.((((b * rows) + i) * cols) + j)
 
 (* [v], matrices of [rows] × [cols], with element (i, j) times
-   2^(e_i + f_j) under [c.graded], e and f drawn from the seed in
-   [-8, 8], f = e under [symmetric]. *)
+   2^(e_i + f_j) under [Graded], e and f drawn from the seed in [-8, 8],
+   f = e under [symmetric]. *)
 let grade c ?(symmetric = false) ~rows ~cols v =
-  if not c.graded then v
+  if c.scale <> Graded then v
   else
     let r = Random.State.make [| c.seed + 2 |] in
     let e = Array.init rows (fun _ -> Random.State.int r 17 - 8) in
@@ -207,6 +242,17 @@ let grade c ?(symmetric = false) ~rows ~cols v =
         let s = Float.ldexp 1. (e.(i) + f.(j)) in
         { Complex.re = x.re *. s; im = x.im *. s })
       v
+
+(* The exponent [Subnormal] takes its operand down by, to [bits] bits, else
+   0. *)
+let down ?(bits = 8) c = if c.scale = Subnormal then tiny ~bits c.dt else 0
+
+(* [v] times 2^-(down c). *)
+let shrink ?bits c v = up (-down ?bits c) v
+
+(* The bits a positive definite operand keeps: its elements, at most about 1,
+   move by n 2^-19 at most, below its least eigenvalue's δ. *)
+let definite_bits = 19
 
 (* A Hermitian positive definite matrix of order [n]: m mᴴ / n + δ I, its
    eigenvalues at least δ. *)
@@ -326,18 +372,21 @@ let solve c =
 let cholesky_operand c =
   let r = Random.State.make [| c.seed |] in
   let v = Array.concat (List.init (count c) (fun _ -> definite r c.dt c.n)) in
-  of_values c.dt (square c) (grade c ~symmetric:true ~rows:c.n ~cols:c.n v)
+  of_values c.dt (square c)
+    (shrink ~bits:definite_bits c
+       (grade c ~symmetric:true ~rows:c.n ~cols:c.n v))
 
 let eigh_operand c =
   let r = Random.State.make [| c.seed |] in
   let v = Array.concat (List.init (count c) (fun _ -> hermitian r c.dt c.n)) in
-  of_values c.dt (square c) (grade c ~symmetric:true ~rows:c.n ~cols:c.n v)
+  of_values c.dt (square c)
+    (shrink c (grade c ~symmetric:true ~rows:c.n ~cols:c.n v))
 
 let solve_operands c =
   let r = Random.State.make [| c.seed |] in
   let a = Array.concat (List.init (count c) (fun _ -> triangular r c.dt c.n)) in
   let a = grade c ~rows:c.n ~cols:c.n a in
-  let b = Array.init (count c * c.n * c.r) (fun _ -> draw r c.dt) in
+  let b = shrink c (Array.init (count c * c.n * c.r) (fun _ -> draw r c.dt)) in
   [| of_values c.dt (square c) a;
      of_values c.dt (Array.append c.batch [| c.n; c.r |]) b |]
 
@@ -360,16 +409,19 @@ let worse w ~bound ~residual where =
 
 let check_worst w = at_most ~msg:w.where float_exact ~than:1. w.ratio
 
-(* L Lᴴ = a + Δ with |Δ| <= γ(n + 1) |L| |Lᴴ| over the lower triangle, the
-   other triangle +0, the diagonal real and positive. *)
+(* L Lᴴ = a + Δ with |Δ_ij| <= γ(n + 1) (|L| |Lᴴ|)_ij + ε(n + 1) (1 + L_jj)
+   over the lower triangle, the other triangle +0, the diagonal real and
+   positive. A subnormal a is checked as 2^2e a = (2^e L) (2^e L)ᴴ. *)
 let law_cholesky (b : Support.backend) c =
   let x = cholesky_operand c in
   match run b (Cholesky Lower) [| laid_out c.how x |] with
   | None -> ()
   | Some y ->
-      let a = values x and l = values y.(0) and n = c.n in
+      let e = (down ~bits:definite_bits c + 1) / 2 in
+      let a = up (2 * e) (values x) and l = up e (values y.(0)) in
+      let n = c.n in
       let w = { ratio = 0.; where = "" } in
-      let g = gamma c.dt (n + 1) in
+      let g = gamma c.dt (n + 1) and h = epsilon ~e:(2 * e) c.dt (n + 1) in
       for m = 0 to count c - 1 do
         for i = 0 to n - 1 do
           for j = 0 to n - 1 do
@@ -393,7 +445,9 @@ let law_cholesky (b : Support.backend) c =
                 add_cprod ~conj:true s (Complex.neg lip) ljp;
                 add_prod bound (Complex.norm lip) (Complex.norm ljp)
               done;
-              worse w ~bound:(g *. bound.hi)
+              let ljj = (at l ~rows:n ~cols:n m j j).re in
+              let h = h *. (1. +. Float.ldexp ljj (-e)) in
+              worse w ~bound:((g *. bound.hi) +. h)
                 ~residual:(Complex.norm (total s))
                 (fun () -> Printf.sprintf "matrix %d, element (%d, %d)" m i j)
             end
@@ -419,16 +473,18 @@ let law_upper (b : Support.backend) c =
       equal same_bits (bits (of_values c.dt (square c) lh)) (bits u.(0))
   | _ -> ()
 
-(* (op(a) + Δ) x = b with |Δ| <= γ(2n) |op(a)| per column, op(a) the triangle
-   read, transposed and conjugated under [adjoint], ones on its diagonal
-   under [unit_diagonal]. *)
+(* (op(a) + Δ) x = b + δ with |Δ| <= γ(2n) |op(a)| and
+   |δ_i| <= ε(2n) (1 + |op(a)_ii|) per column, op(a) the triangle read,
+   transposed and conjugated under [adjoint], ones on its diagonal under
+   [unit_diagonal]. A subnormal b is checked with b and x times 2^d. *)
 let law_solve (b : Support.backend) c =
   let ops = solve_operands c in
   match run b (solve c) [| laid_out c.how ops.(0); ops.(1) |] with
   | None -> ()
   | Some y ->
-      let a = values ops.(0) and rhs = values ops.(1) and x = values y.(0) in
-      let n = c.n and r = c.r in
+      let d = down c in
+      let a = values ops.(0) and rhs = up d (values ops.(1)) in
+      let x = up d (values y.(0)) and n = c.n and r = c.r in
       let upper = (c.triangle = Upper) <> c.adjoint in
       let op m i p =
         if i = p && c.unit_diagonal then Complex.one
@@ -436,9 +492,10 @@ let law_solve (b : Support.backend) c =
         else at a ~rows:n ~cols:n m i p
       in
       let w = { ratio = 0.; where = "" } in
-      let g = gamma c.dt (2 * n) in
+      let g = gamma c.dt (2 * n) and h = epsilon ~e:d c.dt (2 * n) in
       for m = 0 to count c - 1 do
         for i = 0 to n - 1 do
+          let h = h *. (1. +. Complex.norm (op m i i)) in
           for j = 0 to r - 1 do
             let s = sum () and bound = dd () in
             let bij = at rhs ~rows:n ~cols:r m i j in
@@ -450,7 +507,7 @@ let law_solve (b : Support.backend) c =
               add_cprod s (Complex.neg aip) xpj;
               add_prod bound (Complex.norm aip) (Complex.norm xpj)
             done;
-            worse w ~bound:(g *. bound.hi)
+            worse w ~bound:((g *. bound.hi) +. h)
               ~residual:(Complex.norm (total s))
               (fun () -> Printf.sprintf "matrix %d, element (%d, %d)" m i j)
           done
@@ -477,7 +534,7 @@ let lu_operand c =
     Array.init (count c * c.n * cols) (fun k ->
         if k mod cols = zero then Complex.zero else draw r c.dt)
   in
-  let v = grade c ~rows:c.n ~cols v in
+  let v = shrink c (grade c ~rows:c.n ~cols v) in
   (cols, of_values c.dt (Array.append c.batch [| c.n; cols |]) v)
 
 (* svd's operand: lu_operand's, or its transpose by the seed, so that it has
@@ -499,20 +556,26 @@ let int64s (A.Any x) =
   | D.Int64 -> Array.map Int64.to_int (A.to_array x)
   | _ -> invalid_arg "int64s"
 
-(* L U = P a + Δ with |Δ| <= γ(2k) |L| |U|, L unit lower triangular and of
-   magnitude at most 1 on reals, the interchanges [pivots] giving [perm],
-   and no NaN from numbers. *)
+(* L U = P a + Δ with |Δ_ij| <= γ(2k) (|L| |U|)_ij + ε(2k) (1 + |U_pp|),
+   p = min(i, j), L unit lower triangular and of magnitude at most 1 on
+   reals, the interchanges [pivots] giving [perm], and no NaN from
+   numbers. A subnormal a is checked as L (2^d U) = P (2^d a). *)
 let law_lu (b : Support.backend) c =
   let cols, x = lu_operand c in
   match run b Lu [| laid_out c.how x |] with
   | None -> ()
   | Some y ->
-      let a = values x and lu = values y.(0) in
+      let d = down c and m = c.n and n = cols in
+      let a = up d (values x) in
+      let lu =
+        Array.mapi
+          (fun p v -> if p / n mod m <= p mod n then ldexp d v else v)
+          (values y.(0))
+      in
       let piv = int64s y.(1) and perm = int64s y.(2) in
-      let m = c.n and n = cols in
       let k = min m n in
       let w = { ratio = 0.; where = "" } in
-      let g = gamma c.dt (2 * k) in
+      let g = gamma c.dt (2 * k) and h = epsilon ~e:d c.dt (2 * k) in
       equal ~msg:"numbers" int (numbers c.dt a) (numbers c.dt lu);
       for t = 0 to count c - 1 do
         let p = Array.init m Fun.id in
@@ -543,7 +606,10 @@ let law_lu (b : Support.backend) c =
               add_cprod s (Complex.neg liq) uqj;
               add_prod bound (Complex.norm liq) (Complex.norm uqj)
             done;
-            worse w ~bound:(g *. bound.hi)
+            let p = min i j in
+            let upp = Complex.norm (at lu ~rows:m ~cols:n t p p) in
+            let h = h *. (1. +. Float.ldexp upp (-d)) in
+            worse w ~bound:((g *. bound.hi) +. h)
               ~residual:(Complex.norm (total s))
               (fun () -> Printf.sprintf "matrix %d, element (%d, %d)" t i j)
           done
@@ -553,18 +619,23 @@ let law_lu (b : Support.backend) c =
 
 let factors c = if c.seed mod 2 = 0 then Nx_kernel.Reduced else Nx_kernel.Complete
 
-(* a = q r with, per column, ‖a_j − q r_j‖ <= γ(k(2m + 10)) ‖a_j‖; each element of
-   qᴴq − I at most γ(k(2m + 10)); r +0 below its diagonal and real on it. *)
+(* a = q r with, per column, ‖a_j − q r_j‖ <= g ‖a_j‖ + √m h; each element
+   of qᴴq − I at most g, g = γ(k(2m + 10)) and h = ε(k(2m + 10)); r +0
+   below its diagonal and real on it. A subnormal a is checked as
+   2^d a = q (2^d r). *)
 let law_qr (b : Support.backend) c =
   let cols, x = lu_operand c in
   let f = factors c in
   match run b (Qr f) [| laid_out c.how x |] with
   | None -> ()
   | Some y ->
-      let a = values x and q = values y.(0) and r = values y.(1) in
+      let d = down c in
+      let a = up d (values x) and q = values y.(0) in
+      let r = up d (values y.(1)) in
       let m = c.n and n = cols in
       let qc = if f = Complete then m else min m n in
       let g = gamma c.dt (min m n * ((2 * m) + 10)) in
+      let h = epsilon ~e:d c.dt (min m n * ((2 * m) + 10)) in
       let w = { ratio = 0.; where = "" } in
       for t = 0 to count c - 1 do
         for i = 0 to qc - 1 do
@@ -593,7 +664,9 @@ let law_qr (b : Support.backend) c =
             res := !res +. (Complex.norm2 (total s));
             norm := !norm +. Complex.norm2 aij
           done;
-          worse w ~bound:(g *. sqrt !norm) ~residual:(sqrt !res) (fun () ->
+          worse w
+            ~bound:((g *. sqrt !norm) +. (sqrt (float_of_int m) *. h))
+            ~residual:(sqrt !res) (fun () ->
               Printf.sprintf "matrix %d, column %d of a - q r" t j)
         done;
         for i = 0 to qc - 1 do
@@ -612,12 +685,12 @@ let law_qr (b : Support.backend) c =
       done;
       check_worst w
 
-(* a v = v diag w with ‖a − v diag w vᴴ‖_F <= γ(16n) ‖a‖_F and
-   ‖vᴴv − I‖_F <= γ(16n), for the [count] matrices of order [n] of [a]; w
-   ascending and real. *)
-let check_eigh dt ~count ~n (a : Complex.t array) (w : Complex.t array)
+(* a v = v diag w with ‖a − v diag w vᴴ‖_F <= g ‖a‖_F + h and
+   ‖vᴴv − I‖_F <= g, g = γ(16n) and h = ε(16n), for the [count] matrices of
+   order [n] of [a]; w ascending and real. [a] and [w] are scaled by 2^e. *)
+let check_eigh dt ~e ~count ~n (a : Complex.t array) (w : Complex.t array)
     (v : Complex.t array) =
-  let g = gamma dt (16 * n) in
+  let g = gamma dt (16 * n) and h = epsilon ~e dt (16 * n) in
   let worst = { ratio = 0.; where = "" } in
   for t = 0 to count - 1 do
     let wt j = w.((t * n) + j) in
@@ -648,23 +721,25 @@ let check_eigh dt ~count ~n (a : Complex.t array) (w : Complex.t array)
         norm := !norm +. Complex.norm2 aij
       done
     done;
-    worse worst ~bound:(g *. sqrt !norm) ~residual:(sqrt !res) (fun () ->
-        Printf.sprintf "matrix %d: a - v diag w vᴴ" t);
+    worse worst ~bound:((g *. sqrt !norm) +. h) ~residual:(sqrt !res)
+      (fun () -> Printf.sprintf "matrix %d: a - v diag w vᴴ" t);
     worse worst ~bound:g ~residual:(sqrt !orth) (fun () ->
         Printf.sprintf "matrix %d: vᴴv - I" t)
   done;
   check_worst worst
 
 (* eigh's results meet check_eigh's relations, and the values alone lie
-   within 2 γ(16n) ‖a‖_F of the vectors' call's, each within γ(16n) ‖a‖₂ of
-   the exact ones. *)
+   within 2 (g ‖a‖_F + h) of the vectors' call's, each within g ‖a‖₂ + h
+   of the exact ones. *)
 let law_eigh (b : Support.backend) c =
   let x = laid_out c.how (eigh_operand c) in
   match (run b (Eigh true) [| x |], run b (Eigh false) [| x |]) with
   | Some y, Some y' ->
-      let a = values x and w = values y.(0) and n = c.n in
-      check_eigh c.dt ~count:(count c) ~n a w (values y.(1));
-      let w' = values y'.(0) and g = gamma c.dt (16 * n) in
+      let d = down c and n = c.n in
+      let a = up d (values x) and w = up d (values y.(0)) in
+      check_eigh c.dt ~e:d ~count:(count c) ~n a w (values y.(1));
+      let w' = up d (values y'.(0)) and g = gamma c.dt (16 * n) in
+      let h = epsilon ~e:d c.dt (16 * n) in
       let worst = { ratio = 0.; where = "" } in
       for t = 0 to count c - 1 do
         let norm = ref 0. in
@@ -673,7 +748,8 @@ let law_eigh (b : Support.backend) c =
         done;
         for j = 0 to n - 1 do
           let k = (t * n) + j in
-          worse worst ~bound:(2. *. g *. sqrt !norm)
+          worse worst
+            ~bound:(2. *. ((g *. sqrt !norm) +. h))
             ~residual:(Float.abs (w.(k).re -. w'.(k).re)) (fun () ->
               Printf.sprintf "matrix %d: eigenvalue %d alone" t j)
         done
@@ -726,7 +802,8 @@ let law_eigh_spectrum (b : Support.backend) c =
   | Some y, Some y' ->
       spectrum ~msg:"alone" (values y.(0));
       spectrum ~msg:"with vectors" (values y'.(0));
-      check_eigh c.dt ~count:1 ~n (values x) (values y'.(0)) (values y'.(1))
+      check_eigh c.dt ~e:0 ~count:1 ~n (values x) (values y'.(0))
+        (values y'.(1))
   | _ -> ()
 
 (* svd's bound: γ(16 max (m, n) + 100), the 100 for the bidiagonal
@@ -734,13 +811,17 @@ let law_eigh_spectrum (b : Support.backend) c =
    its neighbours. *)
 let svd_bound dt ~m ~n = gamma dt ((16 * max m n) + 100)
 
-(* a = u diag s vh with ‖a − u diag s vh‖_F <= g ‖a‖_F, ‖uᴴu − I‖_F <= g
-   and ‖vh vhᴴ − I‖_F <= g, g = svd_bound, for the [count] matrices
-   of [m] × [n] of [a], u of [uc] columns and vh of [vr] rows; s real,
-   descending and not negative. *)
-let check_svd dt ~count ~m ~n ~uc ~vr (a : Complex.t array)
+(* Its absolute term ε(16 max (m, n) + 100), times 2^e. *)
+let svd_term ~e dt ~m ~n = epsilon ~e dt ((16 * max m n) + 100)
+
+(* a = u diag s vh with ‖a − u diag s vh‖_F <= g ‖a‖_F + h,
+   ‖uᴴu − I‖_F <= g and ‖vh vhᴴ − I‖_F <= g, g = svd_bound and
+   h = svd_term, for the [count] matrices of [m] × [n] of [a], u of [uc]
+   columns and vh of [vr] rows; s real, descending and not negative. [a]
+   and [s] are scaled by 2^e. *)
+let check_svd dt ~e ~count ~m ~n ~uc ~vr (a : Complex.t array)
     (s : Complex.t array) (u : Complex.t array) (vh : Complex.t array) =
-  let k = min m n and g = svd_bound dt ~m ~n in
+  let k = min m n and g = svd_bound dt ~m ~n and h = svd_term ~e dt ~m ~n in
   let worst = { ratio = 0.; where = "" } in
   for t = 0 to count - 1 do
     let st j = s.((t * k) + j) in
@@ -767,8 +848,8 @@ let check_svd dt ~count ~m ~n ~uc ~vr (a : Complex.t array)
         norm := !norm +. Complex.norm2 aij
       done
     done;
-    worse worst ~bound:(g *. sqrt !norm) ~residual:(sqrt !res) (fun () ->
-        Printf.sprintf "matrix %d: a - u diag s vh" t);
+    worse worst ~bound:((g *. sqrt !norm) +. h) ~residual:(sqrt !res)
+      (fun () -> Printf.sprintf "matrix %d: a - u diag s vh" t);
     (* ‖xᴴx − I‖_F for the [size] columns of [len] elements [el p i]. *)
     let gram ~msg size len el =
       let o = ref 0. in
@@ -796,7 +877,8 @@ let svd_columns f ~m ~n =
 
 (* svd's results meet check_svd's relations, reduced or complete, on
    matrices of fewer, as many and more rows than columns, and the values
-   alone lie within 2 svd_bound ‖a‖_F of the vectors' call's. *)
+   alone lie within 2 (svd_bound ‖a‖_F + svd_term) of the vectors'
+   call's. *)
 let law_svd (b : Support.backend) c =
   let m, n, x = svd_operand c in
   let f = factors c in
@@ -806,12 +888,13 @@ let law_svd (b : Support.backend) c =
   let x' = laid_out c.how x in
   match (run b (Svd (Some f)) [| x' |], run b (Svd None) [| x' |]) with
   | Some y, Some y' ->
-      let k = min m n and a = values x in
+      let d = down c and k = min m n in
+      let a = up d (values x) and s = up d (values y.(0)) in
       let uc, vr = svd_columns f ~m ~n in
-      check_svd c.dt ~count:(count c) ~m ~n ~uc ~vr a (values y.(0))
-        (values y.(1)) (values y.(2));
-      let s = values y.(0) and s' = values y'.(0) in
-      let g = svd_bound c.dt ~m ~n in
+      check_svd c.dt ~e:d ~count:(count c) ~m ~n ~uc ~vr a s (values y.(1))
+        (values y.(2));
+      let s' = up d (values y'.(0)) in
+      let g = svd_bound c.dt ~m ~n and h = svd_term ~e:d c.dt ~m ~n in
       let worst = { ratio = 0.; where = "" } in
       for t = 0 to count c - 1 do
         let norm = ref 0. in
@@ -820,7 +903,8 @@ let law_svd (b : Support.backend) c =
         done;
         for j = 0 to k - 1 do
           let p = (t * k) + j in
-          worse worst ~bound:(2. *. g *. sqrt !norm)
+          worse worst
+            ~bound:(2. *. ((g *. sqrt !norm) +. h))
             ~residual:(Float.abs (s.(p).re -. s'.(p).re)) (fun () ->
               Printf.sprintf "matrix %d: value %d alone" t j)
         done
@@ -875,7 +959,7 @@ let law_svd_spectrum (b : Support.backend) c =
       spectrum ~msg:"alone" (values y.(0));
       spectrum ~msg:"with vectors" (values y'.(0));
       let uc, vr = svd_columns f ~m ~n in
-      check_svd c.dt ~count:1 ~m ~n ~uc ~vr (values x) (values y'.(0))
+      check_svd c.dt ~e:0 ~count:1 ~m ~n ~uc ~vr (values x) (values y'.(0))
         (values y'.(1)) (values y'.(2))
   | _ -> ()
 
@@ -969,7 +1053,8 @@ let test_eigh_secular (b : Support.backend) () =
   let dt = D.Any D.Float64 in
   let x = of_values dt [| n; n |] a in
   match run b (Eigh true) [| x |] with
-  | Some y -> check_eigh dt ~count:1 ~n (values x) (values y.(0)) (values y.(1))
+  | Some y ->
+      check_eigh dt ~e:0 ~count:1 ~n (values x) (values y.(0)) (values y.(1))
   | None -> ()
 
 (* lu's pivot: a scan of the column from the diagonal down that

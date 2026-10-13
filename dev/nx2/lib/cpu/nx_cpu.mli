@@ -69,33 +69,41 @@
     others. [cholesky], [lu], [qr], [solve_triangular], [eigh] and [svd]
     compute them; [eig] declines them. The six refuse with
     [Shape_mismatch] what {!Nx_kernel.Shape} answers [Error] for and results
-    of other shapes. A matrix's results are a function of its values alone, whatever
-    its batch, its layout or the threads. With [γ(k) = k u / (1 - k u)],
-    [u] the dtype's unit roundoff, [k] doubled on complex dtypes, and [|·|]
-    taken elementwise:
-    - [cholesky]: [L Lᴴ = a + Δ] with [|Δ| <= γ(n + 1) |L| |Lᴴ|]. The
+    of other shapes. A matrix's results are a function of its values alone,
+    whatever its batch, its layout or the threads. With
+    [γ(k) = k u / (1 - k u)] and [ε(k) = k η], [u] the dtype's unit
+    roundoff and [η] its least positive subnormal (2{^-149} or 2{^-1074}),
+    [k] doubled on complex dtypes, and [|·|] taken elementwise, the bounds
+    below hold. Their [ε] terms bound what rounding below the least normal
+    number adds:
+    - [cholesky]: [L Lᴴ = a + Δ] with
+      [|Δ_ij| <= γ(n + 1) (|L| |Lᴴ|)_ij + ε(n + 1) (1 + L_jj)]. The
       [Upper] factor is the [Lower] one's conjugate transpose, bit for bit.
-    - [lu]: [L U = P a + Δ] with [|Δ| <= γ(2k) |L| |U|], [P] the rows'
-      permutation.
-    - [qr]: with [g = γ(k (2m + 10))], each column [a_j] has
-      [‖a_j - q r_j‖₂ <= g ‖a_j‖₂], and each element of [qᴴq - I] is at most
-      [g] in magnitude. [q] is the product of [k] Householder reflectors
-      [I - τ v vᴴ], its first [k] columns when reduced, whole when
-      complete, and [r]'s diagonal is real, of either sign.
-    - [solve_triangular]: [(op a + Δ) x = b] with [|Δ| <= γ(2n) |op a|] for
-      each column of [b], [op a] the triangle read, conjugate-transposed
-      under [adjoint].
-    - [eigh]: with [g = γ(16n)], [‖a - v diag w vᴴ‖_F <= g ‖a‖_F] and
-      [‖vᴴv - I‖_F <= g]; each eigenvalue within [g ‖a‖₂] of the exact one,
-      with [v] or without.
-    - [svd]: with [g = γ(16 max(m, n) + 100)],
-      [‖a - u diag s vh‖_F <= g ‖a‖_F] over [u]'s first [k] columns and
-      [vh]'s first [k] rows, [‖uᴴu - I‖_F <= g] and [‖vh vhᴴ - I‖_F <= g],
-      reduced or complete; each singular value within [g ‖a‖₂] of the exact
-      one, with [vectors] or without. The 100 is the iteration's test of
-      convergence on the bidiagonal, which drops a superdiagonal element
-      below [u{^7/8}] times its neighbours. Values alone may differ from
-      the vectors' call's in their last bits. *)
+    - [lu]: [L U = P a + Δ] with
+      [|Δ_ij| <= γ(2k) (|L| |U|)_ij + ε(2k) (1 + |U_pp|)], [p = min(i, j)]
+      and [P] the rows' permutation.
+    - [qr]: with [g = γ(k (2m + 10))] and [h = ε(k (2m + 10))], each column
+      [a_j] has [‖a_j - q r_j‖₂ <= g ‖a_j‖₂ + √m h], and each element of
+      [qᴴq - I] is at most [g] in magnitude. [q] is the product of [k]
+      Householder reflectors [I - τ v vᴴ], its first [k] columns when
+      reduced, whole when complete, and [r]'s diagonal is real, of either
+      sign.
+    - [solve_triangular]: [(op a + Δ) x = b + δ] with [|Δ| <= γ(2n) |op a|]
+      and [|δ_i| <= ε(2n) (1 + |(op a)_ii|)] for each column of [b], [op a]
+      the triangle read, conjugate-transposed under [adjoint], ones on its
+      diagonal under [unit_diagonal].
+    - [eigh]: with [g = γ(16n)] and [h = ε(16n)],
+      [‖a - v diag w vᴴ‖_F <= g ‖a‖_F + h] and [‖vᴴv - I‖_F <= g]; each
+      eigenvalue within [g ‖a‖₂ + h] of the exact one, with [v] or without.
+    - [svd]: with [g = γ(16 max(m, n) + 100)] and
+      [h = ε(16 max(m, n) + 100)], [‖a - u diag s vh‖_F <= g ‖a‖_F + h]
+      over [u]'s first [k] columns and [vh]'s first [k] rows,
+      [‖uᴴu - I‖_F <= g] and [‖vh vhᴴ - I‖_F <= g], reduced or complete;
+      each singular value within [g ‖a‖₂ + h] of the exact one, with
+      [vectors] or without. The 100 is the iteration's test of convergence
+      on the bidiagonal, which drops a superdiagonal element below
+      [u{^7/8}] times its neighbours. Values alone may differ from the
+      vectors' call's in their last bits. *)
 
 include Nx_kernel.S
 
