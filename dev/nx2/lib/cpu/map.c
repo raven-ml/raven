@@ -13,9 +13,12 @@
    plane, each node runs in order over values held in slots of an arena on
    the stack, through the target table's rows, as apply.c's kinds do:
 
-   - a load held in its own dtype, its rows contiguous, is read in place,
-     unless it is identical to an output, which a node may write first;
-     any other is staged into its slot;
+   - a load held in its own dtype whose rows are contiguous is read in
+     place;
+   - a load held in its own dtype of which the plane reads one element, as
+     a broadcast's, is read in place with a step of 0, as a constant is;
+   - a load identical to an output is staged, since a node may write the
+     output first, and so is any other load: into its slot;
    - a constant is read in place with a step of 0;
    - a coordinate fills its slot with its positions;
    - Copy, a Cast into the operand's own dtype and a Bitcast between byte
@@ -155,12 +158,18 @@ static void round_held(int dt, const uint8_t *s, uint8_t *d, uint8_t *t,
   }
 }
 
+/* Whether the plane [p] reads one element of operand [k]. */
+static int repeated(const nx_cpu_block *p, int k) {
+  return p->s0[k] == 0 && (p->s1[k] == 0 || p->n1 == 1);
+}
+
 /* Whether load [k] of plane [p] is read in place. A load identical to an
    output is not: a node may write the output before another reads the
    load. */
 static int in_place(const prog *j, const nx_cpu_block *p, int k) {
   const nx_array *a = &j->a[k];
-  return !a->alias && a->dtype == held(a->dtype) && p->s0[k] == 1;
+  return !a->alias && a->dtype == held(a->dtype) &&
+         (p->s0[k] == 1 || repeated(p, k));
 }
 
 /* Where node [i], a node with a slot, computes its value in plane [f]: its
@@ -184,7 +193,9 @@ static view value_of(const prog *j, const plane *f, int i) {
   if (s->tag == NX_NODE_IN && in_place(j, &f->p, s->k)) {
     const nx_array *a = &j->a[s->k];
     int64_t w = width(a->dtype);
-    return (view){a->base + f->p.at[s->k] * w, 1, f->p.s1[s->k] * w};
+    uint8_t *e = a->base + f->p.at[s->k] * w;
+    if (repeated(&f->p, s->k)) return (view){e, 0, 0};
+    return (view){e, 1, f->p.s1[s->k] * w};
   }
   return home(j, f, i);
 }
