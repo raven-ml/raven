@@ -22,10 +22,15 @@
     A claim is taken before the buffer is checked live. A consumption on
     another domain has raised the generation before it releases its claims,
     so a compare-and-set that reads the word after that release is followed
-    by a check that sees the new generation. From the first claim to the
-    last release, {!with_} allocates nothing outside its function, so an
-    exception raised at an allocation, such as [Out_of_memory] or a signal
-    handler's, leaves no claim behind.
+    by a check that sees the new generation. A claim refused by a hold that
+    has since ended is tried again.
+
+    {!with_} takes its claims in one C call, the last step before its
+    function's handler, and ends them in one C call, the first step of both
+    exits. In native code no poll point lies between the last claim and the
+    handler, or between [f]'s return or raise and the release, so an
+    asynchronous exception, such as [Sys.Break] or a signal handler's,
+    leaves no claim behind.
 
     {!Submission.submit} takes read claims of its own, in C, on the buffers
     of a run and the fixed memory, and releases them once the driver's

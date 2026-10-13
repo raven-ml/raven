@@ -453,43 +453,43 @@ let test_stale_raised () =
   claim_release b;
   equal ~msg:"the buffer stays live" (option string) None (B.dead b)
 
-(* An exception raised at any allocation of a [with_], as [Out_of_memory] or a
-   signal handler's is, leaves no claim behind. A memory profile raises at the
-   [n]th allocation inside the call, for each [n] until a call returns. *)
-exception Injected
+(* What a donation of [b] alone finds: its memory exclusive, shared by another
+   claim, or the refusal of a with_. *)
+let donation b =
+  match donated_exclusive b with
+  | true -> "exclusive"
+  | false -> "shared"
+  | exception Invalid_argument m -> m
 
-let raising_at n armed =
-  let left = ref n in
-  let alloc _ =
-    if !armed then begin
-      decr left;
-      if !left = 0 then raise Injected
-    end;
-    None
-  in
-  { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
+(* A signal pending as [f] returns or raises lands after with_ has ended its
+   claims. [f]'s last act raises SIGINT, which the runtime records; its
+   handler raises [Exit] at the next poll point, which the allocation after
+   the call places if with_ has none left. *)
+exception Raised
 
-let test_raise_anywhere () =
+let interrupted_at_end f =
   let r = B.create Rig.host 8 and b = B.create Rig.host 8 in
-  let read = [ r ] and donate = [ b ] in
-  let f c = Claim.exclusive c b in
-  let rec from n =
-    let armed = ref false in
-    let tracker = raising_at n armed in
-    ignore (Gc.Memprof.start ~sampling_rate:1. tracker);
-    armed := true;
-    let raised =
-      match Claim.with_ ~read ~donate f with
-      | _ -> false
-      | exception Injected -> true
-    in
-    armed := false;
-    Gc.Memprof.stop ();
-    let msg = Printf.sprintf "raised at allocation %d" n in
-    equal ~msg bool true (donated_exclusive r && donated_exclusive b);
-    if raised then from (n + 1) else n
+  let before =
+    Sys.signal Sys.sigint (Sys.Signal_handle (fun _ -> raise Exit))
   in
-  ignore (from 1)
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+    (fun () ->
+      raises Exit (fun () ->
+          (match Claim.with_ ~read:[ r ] ~donate:[ b ] f with
+          | () -> ()
+          | exception Raised -> ());
+          ignore (Sys.opaque_identity (ref ()))));
+  equal ~msg:"read, donated" (pair string string) ("exclusive", "exclusive")
+    (donation r, donation b)
+
+let test_signal_returned () =
+  interrupted_at_end (fun _ -> Rig_support.interrupt ())
+
+let test_signal_raised () =
+  interrupted_at_end (fun _ ->
+      Rig_support.interrupt ();
+      raise_notrace Raised)
 
 (* Two domains: with_ of a group of two memories, against a read of the second
    that ends in the same call. Whatever the order, no claim outlives its call:
@@ -1045,8 +1045,10 @@ let tests =
           test_share_refused;
         test "a claim whose with_ returned holds nothing" test_stale_returned;
         test "a claim whose with_ raised holds nothing" test_stale_raised;
-        test "a raise at any allocation of a with_ leaves no claim"
-          test_raise_anywhere;
+        test "a signal pending as with_'s function returns leaves no claim"
+          test_signal_returned;
+        test "a signal pending as with_'s function raises leaves no claim"
+          test_signal_raised;
         test "a buffer's death is a fact with its reason" test_dead_fact;
         test "claims on memory a loss reaches raise and release"
           test_lost_claims;

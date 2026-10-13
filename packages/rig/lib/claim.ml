@@ -16,30 +16,7 @@ let rec read_claim fn c =
   if n < 0 then invalid_argf "Rig.%s: the memory is held exclusive" fn
   else if not (swap c n (n + Memory.one_claim)) then read_claim fn c
 
-(* Takes a read claim off [c]. *)
-let rec release_claim c =
-  let n = count c in
-  if n < 0 then invalid_arg "Rig.Claim: the memory is held exclusive"
-  else if n < Memory.one_claim then
-    invalid_arg "Rig.Claim: the memory has no read claim"
-  else if not (swap c n (n - Memory.one_claim)) then release_claim c
-
-(* Claims, then checks [b] under the claim. A donation on another domain that
-   consumed the memory before this claim released its claims first, and the
-   compare-and-set reads the count after that release, so the check sees the
-   consumption. A check before the claim can pass while such a donation runs. *)
-let take fn b =
-  read_claim fn b.mem.claim;
-  match
-    Buffer.check_live fn b;
-    Memory.check b.mem
-  with
-  | () -> ()
-  | exception e ->
-      release_claim b.mem.claim;
-      raise e
-
-(* Ends a claim of [take] in C, so that no poll point, and so no asynchronous
+(* Ends a read claim in C, so that no poll point, and so no asynchronous
    exception, comes between [f]'s return and the release. *)
 external drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 
@@ -182,23 +159,14 @@ let rec check_live = function
       Buffer.check_live "Claim.with_" b;
       check_live bs
 
-let rec release_all = function
-  | [] -> ()
-  | b :: bs ->
-      release_claim b.mem.claim;
-      release_all bs
+(* [claim_all read donate] is -1, or the index across [read] then [donate]
+   of the buffer that refused its claim, every claim undone. *)
+external claim_all : buffer list -> buffer list -> int = "caml_rig_claim_all"
+[@@noalloc]
 
-(* Claims each buffer of [bs] for reading, in order, or none: a refusal
-   releases those taken before it. *)
-let rec take_all = function
-  | [] -> ()
-  | b :: bs -> (
-      take "Claim.with_" b;
-      match take_all bs with
-      | () -> ()
-      | exception e ->
-          release_claim b.mem.claim;
-          raise e)
+external release_all : buffer list -> buffer list -> unit
+  = "caml_rig_claim_release_all"
+[@@noalloc]
 
 (* Holds each buffer of [donate] exclusive that spans its memory and has no
    other claim on it: its own read claim is the only one. *)
@@ -209,45 +177,41 @@ let rec hold_all = function
         ignore (swap b.mem.claim Memory.one_claim Memory.exclusive : bool);
       hold_all bs
 
-(* Ends an exclusive claim, back to one read claim: outside the claims if the
-   consumer exported the memory. Only an export of the consumer's buffer races
-   it. *)
-let rec unhold cl =
-  let w = count cl in
-  let back =
-    if w = Memory.exported then Memory.one_claim lor Memory.outside
-    else Memory.one_claim
-  in
-  if not (swap cl w back) then unhold cl
-
-let rec unhold_all = function
-  | [] -> ()
-  | b :: bs ->
-      if count b.mem.claim < 0 then unhold b.mem.claim;
-      unhold_all bs
-
-let finish c =
+(* Ends [c]: it holds nothing from the store on, before any claim is
+   released. The compiler checks that nothing in it polls. *)
+let[@poll error] finish c =
   c.ended <- true;
-  unhold_all c.donate;
-  release_all c.read;
-  release_all c.donate
+  release_all c.read c.donate
 
-(* Allocates the claims' record alone, before it claims: no list of the
-   caller's is copied, and no closure is made. From the first claim to the
-   last release nothing allocates outside [f], so an exception raised at an
-   allocation, as [Out_of_memory] or a signal handler's is, leaves no claim
-   behind. *)
+(* The [i]th buffer of [c]'s read buffers followed by its donated ones. *)
+let nth c i =
+  let n = List.length c.read in
+  if i < n then List.nth c.read i else List.nth c.donate (i - n)
+
+(* Raises why [b] refused its claim, or returns once the refusal has passed,
+   as when the with_ that held it exclusive has ended. *)
+let refusal b =
+  if count b.mem.claim < 0 then
+    invalid_arg "Rig.Claim.with_: the memory is held exclusive";
+  Buffer.check_live "Claim.with_" b;
+  Memory.check b.mem
+
+(* Takes [c]'s claims, or raises why a buffer refused its claim. *)
+let rec claim c =
+  let i = claim_all c.read c.donate in
+  if i >= 0 then begin
+    refusal (nth c i);
+    claim c
+  end
+
 let with_ ~read ~donate f =
   check_live read;
   check_live donate;
   refuse_overlaps read donate;
   let c = { read; donate; ended = false } in
-  take_all read;
-  (match take_all donate with
-  | () -> ()
-  | exception e ->
-      release_all read;
-      raise e);
+  claim c;
+  (* Nothing may go between [claim c] and the handler: the compiler does not
+     check that no poll point lies there. *)
   match
     hold_all donate;
     f c

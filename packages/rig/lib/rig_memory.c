@@ -190,10 +190,14 @@ enum { CLAIM_COUNT, CLAIM_GEN, CLAIM_WHY };
 enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS,
        ENTRY_MAPS, ENTRY_UNMAPS, ENTRY_PAGES };
 
-/* The claim word's bit for memory that admits only reads, and its step
-   per claim, as rig's Memory module lays the word out. */
+/* The claim word as rig's Memory module lays it out: from 0 up, bits for
+   memory outside the claims and memory that admits only reads, and the
+   step per read claim; below 0, held exclusive, consumed, or exported by
+   the consumer of memory held exclusive. */
+#define CLAIM_OUTSIDE 1
 #define CLAIM_READ_ONLY 2
 #define CLAIM_ONE 4
+#define CLAIM_EXPORTED (-3)
 
 /* A field another domain writes. Read after the claim's compare-and-set,
    which acquires, so it shows what the release of any earlier claim
@@ -384,10 +388,12 @@ value caml_rig_stamps_lost(value v_st, value v_every) {
 
 /* Claims first, then checks [b] under the claim: the compare-and-set
    follows the release of any donation that consumed the memory, so the
-   checks see its consumption and its stamps. Work that is not done keeps
-   the claim: the caller waits under it, so no donation consumes the memory
-   between the wait and the access, and a loss's wait raises it. */
-enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
+   checks see its consumption and its stamps, those of every use if
+   [every], else of the last write. Work that is not done keeps the claim:
+   the caller waits under it, so no donation consumes the memory between
+   the wait and the access, and a loss's wait raises it. */
+static inline enum rig_claim claim_checked(value b, enum rig_access access,
+                                           int every) {
   value mem = Field(b, BUFFER_MEM);
   value claim = Field(mem, MEMORY_CLAIM);
   _Atomic value *word = (_Atomic value *)&Field(claim, CLAIM_COUNT);
@@ -407,7 +413,11 @@ enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
   value entry = load_field(root, MEMORY_ENTRY);
   struct rig_stamps *s =
       (struct rig_stamps *)Long_val(load_field(entry, ENTRY_STAMPS));
-  return s == NULL ? RIG_CLAIMED : follow_stamps(s, access == RIG_READ_WRITE);
+  return s == NULL ? RIG_CLAIMED : follow_stamps(s, every);
+}
+
+enum rig_claim rig_buffer_claim(value b, enum rig_access access) {
+  return claim_checked(b, access, access == RIG_READ_WRITE);
 }
 
 /* Rig.Buffer.wait, which buffer.ml registers, found once. */
@@ -467,3 +477,64 @@ value caml_rig_claim_drop_prefix(value v_buffers, value v_n) {
 }
 
 void rig_buffer_release(value b) { claim_end(b, "rig_buffer_release"); }
+
+/* Claim.with_'s claims, taken in one call and released in one, neither
+   running OCaml. */
+
+static _Atomic value *claim_word(value b) {
+  return (_Atomic value *)&Field(Field(Field(b, BUFFER_MEM), MEMORY_CLAIM),
+                                 CLAIM_COUNT);
+}
+
+/* Ends the read claims of the first [n] buffers of [read] followed by
+   [donate]. */
+static void end_claims(value read, value donate, intnat n) {
+  value lists[2] = {read, donate};
+  for (int k = 0; k < 2; k++)
+    for (value l = lists[k]; l != Val_emptylist && n > 0;
+         l = Field(l, 1), n--)
+      claim_end(Field(l, 0), "Rig.Claim.with_");
+}
+
+/* A read claim on [b]'s memory, checked under the claim as Memory.check
+   checks it: false, claiming nothing, if the memory is held exclusive, [b]
+   is dead, or a lost device owns it or did not reach work on it. */
+static int claim_live(value b) {
+  enum rig_claim a = claim_checked(b, RIG_READ, 1);
+  if (a == RIG_LOST) rig_buffer_release(b);
+  return a == RIG_CLAIMED || a == RIG_WAIT;
+}
+
+/* Claims every buffer of [v_read], then of [v_donate], for reading: -1, or
+   the index across both lists of the buffer that refused its claim, every
+   claim undone. */
+value caml_rig_claim_all(value v_read, value v_donate) {
+  value lists[2] = {v_read, v_donate};
+  intnat i = 0;
+  for (int k = 0; k < 2; k++)
+    for (value l = lists[k]; l != Val_emptylist; l = Field(l, 1), i++)
+      if (!claim_live(Field(l, 0))) {
+        end_claims(v_read, v_donate, i);
+        return Val_long(i);
+      }
+  return Val_long(-1);
+}
+
+/* Gives each memory of [v_donate] still held exclusive back to its read
+   claim, outside the claims if the consumer exported it, then ends the
+   read claims of [v_read] and [v_donate]. Only an export of the consumer's
+   buffer races the give back. */
+value caml_rig_claim_release_all(value v_read, value v_donate) {
+  for (value l = v_donate; l != Val_emptylist; l = Field(l, 1)) {
+    _Atomic value *word = claim_word(Field(l, 0));
+    value w = atomic_load(word);
+    while (Long_val(w) < 0) {
+      value back = w == Val_long(CLAIM_EXPORTED)
+                       ? Val_long(CLAIM_ONE | CLAIM_OUTSIDE)
+                       : Val_long(CLAIM_ONE);
+      if (atomic_compare_exchange_weak(word, &w, back)) break;
+    }
+  }
+  end_claims(v_read, v_donate, Max_long);
+  return Val_unit;
+}

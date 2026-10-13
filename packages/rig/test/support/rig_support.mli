@@ -392,6 +392,12 @@ val sees_waits : bool
     blocked in, and condition waits enter a call of their own: on macOS, and on
     Linux with glibc. *)
 
+val interrupt : unit -> unit
+(** [interrupt ()] raises SIGINT in the calling thread and returns with no
+    poll point: the runtime records the signal, and the thread's next poll
+    point runs its handler when the caller runs alone. With other domains,
+    the first to poll runs it. *)
+
 val interrupt_in_wait : (unit -> 'a) -> 'a * bool
 (** [interrupt_in_wait f] is [f ()], run while a new thread that runs no OCaml
     code raises SIGINT once the calling thread blocks in a condition wait, as a
