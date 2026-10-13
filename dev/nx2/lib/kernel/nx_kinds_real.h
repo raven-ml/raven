@@ -286,12 +286,13 @@ NX_INLINE NX_T NX_(nx_log_core)(NX_(nx_log_red) l, NX_T c) {
   return NX_FMA(l.k, NX_C(LN2_HI), -((hfsq - sr) - f));
 }
 
-/* The value at u = 1 + x outside (0, inf), and at a NaN x. */
+/* The value at u = 1 + x outside (0, inf), and at a NaN x: y is a number
+   elsewhere. */
 NX_INLINE NX_T NX_(nx_log_special)(NX_T u, NX_T x, NX_T y) {
   y = u == NX_C(INF) ? u : y;
   y = u == 0 ? -NX_C(INF) : y;
   y = u < 0 ? NX_C(NAN) : y;
-  return NX_(nx_nan1)(x, y);
+  return x != x ? x : y;
 }
 
 NX_INLINE NX_T NX_(nx_log)(NX_T x) {
