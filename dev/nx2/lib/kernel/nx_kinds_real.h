@@ -215,21 +215,30 @@ NX_INLINE NX_(nx_exp_red) NX_(nx_exp_reduce)(NX_T x) {
   return e;
 }
 
-/* exp: e^x = 2^k (1 + expm1 r), expm1 r = r + r^2 Q(r). nx_exp_of takes
-   x in [EXP_LO, EXP_HI], the range past which e^x rounds to 0 or
-   overflows; nx_exp clamps x to it, and keeps a NaN by its select. */
-NX_INLINE NX_T NX_(nx_exp_of)(NX_T x) {
-  NX_(nx_exp_red) e = NX_(nx_exp_reduce)(x);
-  NX_T em = NX_FMA(e.r * e.r, NX_(nx_exp_q)(e.r), e.r);
-  return NX_(nx_scale)(NX_ONE + em, e.k);
-}
-
+/* exp: e^x = 2^k (1 + expm1 r), expm1 r = r + r^2 Q(r), x clamped to
+   [EXP_LO, EXP_HI], the range past which e^x rounds to 0 or overflows; a
+   NaN kept by the last select. */
 NX_INLINE NX_T NX_(nx_exp)(NX_T x) {
   /* a vector minimum and maximum, as spelled */
   NX_T c = x < NX_C(EXP_HI) ? x : NX_C(EXP_HI);
   c = c > NX_C(EXP_LO) ? c : NX_C(EXP_LO);
-  NX_T r = NX_(nx_exp_of)(c);
+  NX_(nx_exp_red) e = NX_(nx_exp_reduce)(c);
+  NX_T em = NX_FMA(e.r * e.r, NX_(nx_exp_q)(e.r), e.r);
+  NX_T r = NX_(nx_scale)(NX_ONE + em, e.k);
   return x != x ? x : r;
+}
+
+/* exp where |x| <= NX_C(EXP_NEAR): e^x and 1 + em are normal there, so
+   adding k to 1 + em's exponent gives nx_scale's bits. */
+NX_INLINE NX_T NX_(nx_exp_near)(NX_T x) {
+  NX_(nx_exp_red) e = NX_(nx_exp_reduce)(x);
+  NX_T em = NX_FMA(e.r * e.r, NX_(nx_exp_q)(e.r), e.r);
+  return NX_OF_BITS(NX_BITS(NX_ONE + em) + ((NX_U)e.k << NX_C(MBITS)));
+}
+
+/* Whether x is past exp's near range, or a NaN. */
+NX_INLINE int NX_(nx_exp_big)(NX_T x) {
+  return !(NX_(nx_abs_bits)(x) <= NX_C(EXP_NEAR));
 }
 
 /* exp2: x = k + r, |r| <= 1/2, 2^r = 1 + r P(r). Exact at integers whose
@@ -519,7 +528,7 @@ NX_INLINE NX_T NX_(nx_tanh)(NX_T x) {
   NX_T a = NX_(nx_abs_bits)(x);
   NX_T z = a * a;
   NX_T small = NX_FMA(a * z, NX_(nx_tanh_t)(z), a);
-  NX_T w = NX_(nx_exp_of)((NX_T)2 * (a < NX_C(TANH_HI) ? a : NX_C(TANH_HI)));
+  NX_T w = NX_(nx_exp_near)((NX_T)2 * (a < NX_C(TANH_HI) ? a : NX_C(TANH_HI)));
   NX_(nx_pair) d = NX_(nx_fast_two_sum)(w, NX_ONE);
   NX_T qh = (NX_T)2 / d.hi;
   NX_T ql = (NX_FMA(-qh, d.hi, (NX_T)2) - qh * d.lo) * ((NX_T)0.5 * qh);

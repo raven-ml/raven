@@ -7,9 +7,9 @@
    as nx.cpu's convert.c is: as itself for base, and as its copy
    nx_kinds_support_loops_v3.c with NX_CPU_V3 and, on x86-64, v3's
    instructions, the headers included. Elsewhere the v3 table is NULL. The
-   trigonometric loops compute the kind below the switch on every lane and
-   redo the lanes past it, as nx_kinds.h says a vector loop does, testing a
-   block for such a lane in a loop that vectorises first. */
+   loops of the kinds with a near function compute it on every lane and
+   redo the lanes past its test, as nx_kinds.h says a vector loop does,
+   testing a block for such a lane in a loop that vectorises first. */
 
 #include <stddef.h>
 
@@ -19,10 +19,12 @@
 #if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 #define NX_F_UNARY(X)                                                         \
-  X(exp) X(exp2) X(expm1) X(log) X(log2) X(log1p) X(asin) X(acos) X(atan)     \
-  X(sinh) X(cosh) X(tanh) X(erf) X(neg) X(recip) X(abs) X(sign) X(sqrt)        \
-  X(floor) X(ceil) X(round) X(trunc)
-#define NX_F_TRIG(X) X(sin) X(cos) X(tan)
+  X(exp2) X(expm1) X(log) X(log2) X(log1p) X(asin) X(acos) X(atan) X(sinh)    \
+  X(cosh) X(tanh) X(erf) X(neg) X(recip) X(abs) X(sign) X(sqrt) X(floor)       \
+  X(ceil) X(round) X(trunc)
+/* Each with the prefix of its near function's test. */
+#define NX_F_NEAR(X)                                                          \
+  X(sin, trig) X(cos, trig) X(tan, trig) X(exp, exp)
 #define NX_F_BINARY(X)                                                        \
   X(add) X(sub) X(mul) X(fdiv) X(mod) X(pow) X(atan2) X(maximum) X(minimum)
 #define NX_F_COMPARE(X) X(equal) X(not_equal) X(less) X(less_equal)
@@ -48,15 +50,15 @@
   }
 NX_F_UNARY(NX_UNARY_LOOPS)
 
-/* The scalar call that redoes a lane past the switch, kept out of the
-   loop: inlined there, it made the loop's own call too large to inline. */
+/* The scalar call that redoes a lane past the test, kept out of the loop:
+   inlined there, it made the loop's own call too large to inline. */
 #if defined(__GNUC__)
 #define NX_COLD __attribute__((noinline))
 #else
 #define NX_COLD
 #endif
 
-#define NX_TRIG_LOOPS(k)                                                      \
+#define NX_NEAR_LOOPS(k, t)                                                   \
   NX_COLD static float k##_big_f32(float x) { return nx_##k##_f32(x); }       \
   NX_COLD static double k##_big_f64(double x) { return nx_##k##_f64(x); }     \
   static void k##_f32(const float *x, const float *z, const float *w,         \
@@ -67,9 +69,9 @@ NX_F_UNARY(NX_UNARY_LOOPS)
       long e = n - b < NX_BLOCK ? n : b + NX_BLOCK;                           \
       int big = 0;                                                            \
       for (long i = b; i < e; i++) y[i] = nx_##k##_near_f32(x[i]);            \
-      for (long i = b; i < e; i++) big |= nx_trig_big_f32(x[i]);              \
+      for (long i = b; i < e; i++) big |= nx_##t##_big_f32(x[i]);              \
       for (long i = b; big && i < e; i++)                                     \
-        if (nx_trig_big_f32(x[i])) y[i] = k##_big_f32(x[i]);                  \
+        if (nx_##t##_big_f32(x[i])) y[i] = k##_big_f32(x[i]);                  \
     }                                                                         \
   }                                                                           \
   static void k##_f64(const double *x, const double *z, const double *w,      \
@@ -80,12 +82,12 @@ NX_F_UNARY(NX_UNARY_LOOPS)
       long e = n - b < NX_BLOCK ? n : b + NX_BLOCK;                           \
       int big = 0;                                                            \
       for (long i = b; i < e; i++) y[i] = nx_##k##_near_f64(x[i]);            \
-      for (long i = b; i < e; i++) big |= nx_trig_big_f64(x[i]);              \
+      for (long i = b; i < e; i++) big |= nx_##t##_big_f64(x[i]);              \
       for (long i = b; big && i < e; i++)                                     \
-        if (nx_trig_big_f64(x[i])) y[i] = k##_big_f64(x[i]);                  \
+        if (nx_##t##_big_f64(x[i])) y[i] = k##_big_f64(x[i]);                  \
     }                                                                         \
   }
-NX_F_TRIG(NX_TRIG_LOOPS)
+NX_F_NEAR(NX_NEAR_LOOPS)
 
 #define NX_BINARY_LOOPS(k)                                                    \
   static void k##_f32(const float *x, const float *z, const float *w,         \
@@ -200,11 +202,12 @@ static void int_threefry(const uint64_t *x, const uint64_t *z,
 #define NX_REAL_ROW(k, arity) {#k, arity, k##_f32, k##_f64},
 #define NX_ROW1(k) NX_REAL_ROW(k, 1)
 #define NX_ROW2(k) NX_REAL_ROW(k, 2)
+#define NX_ROW_NEAR(k, t) NX_REAL_ROW(k, 1)
 #define NX_INT_ROW1(k) {#k, 1, int_##k},
 #define NX_INT_ROW2(k) {#k, 2, int_##k},
 
 static const nx_kinds_loops loops = {
-    {NX_F_UNARY(NX_ROW1) NX_F_TRIG(NX_ROW1) NX_F_BINARY(NX_ROW2)
+    {NX_F_UNARY(NX_ROW1) NX_F_NEAR(NX_ROW_NEAR) NX_F_BINARY(NX_ROW2)
          NX_F_COMPARE(NX_ROW2) NX_REAL_ROW(fma, 3) NX_REAL_ROW(where, 3)},
     {NX_I_UNARY(NX_INT_ROW1) NX_I_BINARY(NX_INT_ROW2) {"fma", 3, int_fma},
      {"where", 3, int_where},

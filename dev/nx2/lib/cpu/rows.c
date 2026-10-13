@@ -58,12 +58,13 @@
    of eight. */
 #define PIECE 256
 
-/* sin, cos and tan as nx_kinds.h says a vector loop computes them: a piece
-   with no lane past the integer reduction's switch runs the kind below it
-   on every lane, in a loop that vectorises; a piece with one runs the
-   scalar kind, which branches. Each piece is tested before it is written,
-   so a destination that is its operand reads every element first. */
-#define TRIG(K, S, T)                                                        \
+/* A kind with a near function, as nx_kinds.h says a vector loop computes
+   it: a piece with no lane past the test [BIG] runs the near function on
+   every lane, a piece with one runs the kind. Both loops vectorise but the
+   trigonometric kinds', which branch. Each piece is tested before it is
+   written, so a destination that is its operand reads every element
+   first. */
+#define NEAR(K, S, T, BIG)                                                   \
   ROW K##_##S(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,         \
               int64_t sx) {                                                  \
     T *d = (T *)d_;                                                          \
@@ -80,7 +81,7 @@
     for (int64_t b = 0; b < n; b += PIECE) {                                 \
       int64_t e = n - b < PIECE ? n : b + PIECE;                             \
       int big = 0;                                                           \
-      for (int64_t i = b; i < e; i++) big |= nx_trig_big_##S(x[i]);          \
+      for (int64_t i = b; i < e; i++) big |= nx_##BIG##_big_##S(x[i]);       \
       if (big)                                                               \
         for (int64_t i = b; i < e; i++) d[i] = nx_##K##_##S(x[i]);           \
       else                                                                   \
@@ -149,28 +150,30 @@
   }
 
 /* The kinds of one operand by nx_prog.h's code and nx_kinds.h's name: of
-   floats, of floats past the trigonometric switch, of integers. Each
-   applies [X] to the code, the name and the arguments that follow [X]. */
+   floats, of floats with a near function, of integers. Each applies [X] to
+   the code, the name and the arguments that follow [X]; NEAR_KINDS passes
+   after the name the prefix of the near function's test. */
 #define FLOAT_KINDS1(X, ...)                                                 \
   X(NEG, neg, __VA_ARGS__) X(RECIP, recip, __VA_ARGS__)                      \
   X(ABS, abs, __VA_ARGS__) X(SIGN, sign, __VA_ARGS__)                        \
-  X(SQRT, sqrt, __VA_ARGS__) X(EXP, exp, __VA_ARGS__)                        \
-  X(EXP2, exp2, __VA_ARGS__) X(LOG, log, __VA_ARGS__)                        \
-  X(LOG2, log2, __VA_ARGS__) X(LOG1P, log1p, __VA_ARGS__)                    \
+  X(SQRT, sqrt, __VA_ARGS__) X(EXP2, exp2, __VA_ARGS__)                      \
+  X(LOG, log, __VA_ARGS__) X(LOG2, log2, __VA_ARGS__)                        \
+  X(LOG1P, log1p, __VA_ARGS__)                                               \
   X(EXPM1, expm1, __VA_ARGS__) X(ASIN, asin, __VA_ARGS__)                    \
   X(ACOS, acos, __VA_ARGS__) X(ATAN, atan, __VA_ARGS__)                      \
   X(SINH, sinh, __VA_ARGS__) X(COSH, cosh, __VA_ARGS__)                      \
   X(TANH, tanh, __VA_ARGS__) X(FLOOR, floor, __VA_ARGS__)                    \
   X(CEIL, ceil, __VA_ARGS__) X(ROUND, round, __VA_ARGS__)                    \
   X(TRUNC, trunc, __VA_ARGS__)
-#define TRIG_KINDS(X, ...)                                                   \
-  X(SIN, sin, __VA_ARGS__) X(COS, cos, __VA_ARGS__) X(TAN, tan, __VA_ARGS__)
+#define NEAR_KINDS(X, ...)                                                   \
+  X(SIN, sin, trig, __VA_ARGS__) X(COS, cos, trig, __VA_ARGS__)              \
+  X(TAN, tan, trig, __VA_ARGS__) X(EXP, exp, exp, __VA_ARGS__)
 #define INT_KINDS1(X, ...)                                                   \
   X(NEG, neg, __VA_ARGS__) X(RECIP, recip, __VA_ARGS__)                      \
   X(ABS, abs, __VA_ARGS__) X(SIGN, sign, __VA_ARGS__)
 
 #define FLOAT1(C, K, S, T) UN(K##_##S, T, , nx_##K##_##S)
-#define TRIG1(C, K, S, T) TRIG(K, S, T)
+#define NEAR1(C, K, B, S, T) NEAR(K, S, T, B)
 #define INT1(C, K, D, T, CT, S) UN(K##_##D, T, (CT), nx_##K##_##S)
 
 /* Floor, Ceil, Round and Trunc are the identity on integers: a row per
@@ -352,7 +355,7 @@ IDENT(8, uint64_t)
   EXACT_FMA(fma_##D, T, FN, nx_fma_##S)                                      \
   BIN(atan2_##D, T, T, , nx_atan2_##S)                                       \
   FLOAT_KINDS1(FLOAT1, S, T)                                                 \
-  TRIG_KINDS(TRIG1, S, T)
+  NEAR_KINDS(NEAR1, S, T)
 
 #define INTS(D, T, CT, UT, S, SIGN)                                          \
   ARITH(D, T, (CT), S)                                                       \
@@ -486,13 +489,14 @@ FILL(16, w16)
   t->fma[DT] = fma_##D
 
 #define SET1(C, K, DT, D) t->op1[NX_OP1_##C][DT] = K##_##D;
+#define SETN(C, K, B, DT, D) SET1(C, K, DT, D)
 
 #define FLOAT_ROWS(DT, D)                                                    \
   ARITH_ROWS(DT, D);                                                         \
   t->op2[NX_OP2_FDIV][DT] = fdiv_##D;                                        \
   t->op2[NX_OP2_ATAN2][DT] = atan2_##D;                                      \
   FLOAT_KINDS1(SET1, DT, D)                                                  \
-  TRIG_KINDS(SET1, DT, D)
+  NEAR_KINDS(SETN, DT, D)
 
 #define INT_ROWS(DT, D, W)                                                   \
   ARITH_ROWS(DT, D);                                                         \

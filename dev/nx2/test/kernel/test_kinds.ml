@@ -170,84 +170,84 @@ let test_digests =
           expect t
           @@ __POS_OF__
                {|
-            exp f32 177eda006ee74554
-            exp f64 6a6a88d08d90b99f
-            exp2 f32 711c6196da734833
-            exp2 f64 42bee4b4c44277bb
-            expm1 f32 ef4c2c6a23ac8b5e
-            expm1 f64 be11e2d19cee6a6b
-            log f32 b6731f21538ed139
-            log f64 7ad8a48090a38bcd
-            log2 f32 778702e38db0be07
-            log2 f64 69a393cf9bd4e04c
-            log1p f32 dd6eb5095ad8b623
-            log1p f64 b0082181f98a7605
-            sin f32 2400b7b1a9d8e2bb
-            sin f64 e748bf9bce701f07
-            cos f32 26df02a72fd3009a
-            cos f64 812e9793a43e34cc
-            tan f32 40f6d306f2794faf
-            tan f64 4a460179a408bd2d
-            asin f32 859a2a3112313f95
-            asin f64 968bdd52a23a1889
-            acos f32 94ad67aa6d92a664
-            acos f64 644315a8d014422b
-            atan f32 346a9291d387369e
-            atan f64 d9ac06d82e275351
-            sinh f32 d1c0deff8de95050
-            sinh f64 9d23cad5b2079257
-            cosh f32 785d82efeb2a2b50
-            cosh f64 6eb4470813a62e4a
-            tanh f32 258fbaba8d4094ba
-            tanh f64 af9fa4a9c058101d
-            erf f32 da913d4a706d135b
-            erf f64 c335649c54d9fc2d
-            sqrt f32 4b050dff129930bf
-            sqrt f64 560a3d1fea93fab8
-            floor f32 cb26e06023a0765c
-            floor f64 1c7b6b00a4ebd952
-            ceil f32 9414893bf6c3ca89
-            ceil f64 23ee0a72743ecfce
-            round f32 457cd25d5d947f75
-            round f64 528124ef3031db28
-            trunc f32 16ba0ab52d914cae
-            trunc f64 85c3ef525e379f98
-            fdiv f32 270e1959540ee849
-            fdiv f64 5bc1dfc2ad6f3ca0
-            atan2 f32 832eda2f38c27dc5
-            atan2 f64 a5de640dbc768550
-            neg f32 ed5e58022ec5c212
-            neg f64 82d35d6306e2960a
+            exp f32 17d2c3c91d74a5e6
+            exp f64 9e4592740004bee2
+            exp2 f32 162ffc537d0be92c
+            exp2 f64 619776aadfc58ecf
+            expm1 f32 ed478fe1f7c48a44
+            expm1 f64 0fe1a90f7088a3a9
+            log f32 ed88f9f51d1056d4
+            log f64 5c7f9141f6659317
+            log2 f32 7e7bf05e4e06c906
+            log2 f64 46fb31d9f7137087
+            log1p f32 7c884cacc3dfac9c
+            log1p f64 d5b0989c733c0842
+            sin f32 3306fe5ff79f397b
+            sin f64 cb09ba85cbe1edb3
+            cos f32 e505ac6eeb8cd622
+            cos f64 147a0f2b6644a9b8
+            tan f32 7bbf9342404139c7
+            tan f64 6151db99765d791d
+            asin f32 fce14c3b05ab0855
+            asin f64 e3905a2f07ceeb69
+            acos f32 4b8d8de411e65924
+            acos f64 ac901c34a3c7530b
+            atan f32 9bcb943b590e776a
+            atan f64 045759334a6d727d
+            sinh f32 4b4aa3fb457a75c0
+            sinh f64 2feb552b86b831b7
+            cosh f32 f5ff656dcb45f630
+            cosh f64 fb7b96d81e8a7f2a
+            tanh f32 9936f3800cdafefa
+            tanh f64 7bbebdbbc3b03c9d
+            erf f32 c26fe6bfe9fb6c9b
+            erf f64 1fd4151bac52806d
+            sqrt f32 ee9f8255fb18c10d
+            sqrt f64 eada3c7c0715ecb9
+            floor f32 7de2b62c3fef8114
+            floor f64 8bf1717db53997f2
+            ceil f32 7606f4f30c6e2999
+            ceil f64 bc13e2a9a2892d6e
+            round f32 d30d2b349b43fc05
+            round f64 41d8cb307a0ab148
+            trunc f32 34f9bef2866a88be
+            trunc f64 0ecd64f3ca0f53b8
+            fdiv f32 b871ece0f2592852
+            fdiv f64 e7de96b328ce3382
+            atan2 f32 514e43c0d1518dea
+            atan2 f64 44753a3f36c3f4f0
+            neg f32 cea83e0bddaa4962
+            neg f64 ced5a51f9294a4ca
             neg int 51a191f53249a86d
-            abs f32 252f21db1bc3d092
-            abs f64 ce93d493e1c8fd8a
+            abs f32 08dcd90d759eb6e2
+            abs f64 a8c23c6593f7a14a
             abs int b38dd2f56f9d9e5a
-            sign f32 46a41d4d8f721dc5
-            sign f64 48133299bfabe105
+            sign f32 17c4b561ec24f905
+            sign f64 57bb9381be03ba45
             sign int 5dea5e3027706bbc
-            recip f32 522fe7dd378dad09
-            recip f64 c0d07aa072e7f1d5
+            recip f32 d51e78b9124791bd
+            recip f64 c910225a1f5577d9
             recip int b301af41e863f911
-            add f32 43803b58f1e555b6
-            add f64 ed7c7742a854d805
+            add f32 c6dba66e8ad54c69
+            add f64 77a90934e6682cc5
             add int e43acf1b1b03de31
-            sub f32 1236dc8ab5884b76
-            sub f64 f1bf7a8d5c71ff59
+            sub f32 69550897d5cadd4d
+            sub f64 ee98dad1fd8c3140
             sub int 428a370b690eeda1
-            mul f32 1124785dde357d0c
-            mul f64 e8777f93e6c45d7c
+            mul f32 8c47b9c0f9fbf0b6
+            mul f64 85ab9ebe7ff8f131
             mul int f6e0a9633e92af59
-            mod f32 c4d231ae32d735a8
-            mod f64 37e69403fa7eb4fd
+            mod f32 977b5a2f16e84e40
+            mod f64 e2da65fabc2da284
             mod int 8f21a2076f3b02f1
-            pow f32 87f36c3805f98ddd
-            pow f64 dceedd9e267f3b42
+            pow f32 0afbc574906c7d57
+            pow f64 7571971ed918fdcf
             pow int c21a5c07dfddd9d7
-            maximum f32 8d8462c4af9141ef
-            maximum f64 c4bae58492288516
+            maximum f32 a1447ba947915d66
+            maximum f64 7bd64cad6c3f7d68
             maximum int 31e15067e696aeb0
-            minimum f32 5582683e10ec30a4
-            minimum f64 37b3f5fd8b7c033b
+            minimum f32 967e301ad5ff4ca8
+            minimum f64 23ff51bf4210736c
             minimum int 958d0ad38bd04ad4
             equal f32 803ad2f4668a04f8
             equal f64 940226b225d8cfd8
@@ -255,17 +255,17 @@ let test_digests =
             not_equal f32 05567728a31db838
             not_equal f64 a9e59c8d015adc18
             not_equal int 0c6a89f13cf1d4e5
-            less f32 f3338469ff4abb98
-            less f64 0048845e11aaf385
+            less f32 2f4be0e27c4678a5
+            less f64 0b616c56ac6f9e65
             less int 2c5d30e6a2cb3465
-            less_equal f32 989a60fc67be57c5
-            less_equal f64 ae3fe5dee09bd338
+            less_equal f32 3325699d782f9f78
+            less_equal f64 e3643ce929d5c358
             less_equal int d8ffc94881c04425
-            fma f32 6fd30f6591312a9a
-            fma f64 d4d4a4917501c8ee
+            fma f32 5ffbff25342b4682
+            fma f64 a41fce1d935fa296
             fma int b8b2835591bec6d9
-            where f32 492950da23141346
-            where f64 b75ac12f7318eb25
+            where f32 ee634f112d2bf35b
+            where f64 5e149b28783ff1ad
             where int 1cf159101f48986d
             idiv int 735deb941f72707f
             and int 6df5b0d261586c1d

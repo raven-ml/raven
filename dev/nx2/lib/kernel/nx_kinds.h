@@ -63,11 +63,14 @@
    The polynomials' coefficients are minimax fits, written by
    dev/nx2/test/kernel/gen/kinds.py with the fit's error.
 
-   A vector library runs a kind's function on its lanes. sin, cos and tan
-   branch to an integer reduction past NX_PIO2_BIG_*: a vector loop computes
-   nx_sin_near_* (nx_cos_near_*, nx_tan_near_*) on every lane and redoes the
-   few lanes past the switch with nx_sin_* (nx_cos_*, nx_tan_*). erf at f64
-   branches between two ranges, as its own comment says. */
+   A vector library runs a kind's function on its lanes. sin, cos, tan and
+   exp also have a near function, nx_sin_near_* and so on, which gives the
+   kind's bits wherever a test is false: nx_trig_big_*, x past the integer
+   reduction's switch, for the first three, nx_exp_big_* for exp. A vector
+   loop computes the near function on runs with no lane past the test, and
+   the kind on the others: the trigonometric kinds branch past the switch,
+   and exp clamps and scales by two products. erf at f64 branches between
+   two ranges, as its own comment says. */
 
 #ifndef NX_KINDS_H
 #define NX_KINDS_H
@@ -288,6 +291,9 @@ NX_INLINE uint32_t nx_two_over_pi_at(int32_t g) {
 /* Clamps past which a result is saturated, and cutoffs */
 #define NX_EXP_HI_F32 89.0f
 #define NX_EXP_LO_F32 -104.0f
+/* exp's near range: there |k| <= 124 (f64: 1021), so 2^k times 1 + em,
+   within [1/2, 2], is normal */
+#define NX_EXP_NEAR_F32 86.0f
 #define NX_EXP2_HI_F32 129.0f
 #define NX_EXP2_LO_F32 -151.0f
 #define NX_EXPM1_LO_F32 -26.0f
@@ -619,6 +625,7 @@ NX_INLINE int nx_double_nan(double d) {
 #define NX_ATAN_3_2_LO_F64 0x1.007887af0cbbdp-56
 #define NX_EXP_HI_F64 710.0
 #define NX_EXP_LO_F64 -746.0
+#define NX_EXP_NEAR_F64 708.0
 #define NX_EXP2_HI_F64 1025.0
 #define NX_EXP2_LO_F64 -1076.0
 #define NX_EXPM1_LO_F64 -40.0
@@ -957,7 +964,7 @@ NX_INLINE double nx_erf_far_f64(double x) {
   g = nx_fmad(g, u, 0x1.87d48af31b6e3p-6);
   g = nx_fmad(g, u, -0x1.ca4aec3d2de83p-3);
   g = nx_fmad(g, u, -0x1.05cb67754a622p+1);
-  return nx_copysign_f64(1.0 - nx_exp_of_f64(g - b * b), x);
+  return nx_copysign_f64(1.0 - nx_exp_near_f64(g - b * b), x);
 }
 
 NX_INLINE double nx_erf_f64(double x) {
