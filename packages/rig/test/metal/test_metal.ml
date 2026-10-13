@@ -394,20 +394,39 @@ let bumps_counted fills =
   done;
   List.iter (Rig_metal.free t.g) [ out; args ]
 
-(* Metal hands a command buffer to its completion handler before the word moves
-   and releases it, with the objects it holds, once the handler returned: no
-   signal marks that, so a test waits for the weak reference [w] to empty under
-   its group's timeout. *)
-let await_release w =
-  while S.alive w do
+(* Waits until [f ()] holds, for at most 10 s of the host's monotonic clock,
+   then fails with [what ()]. *)
+let await what f =
+  let t0 = Rig.Profile.now () in
+  while not (f ()) do
+    if Rig.Profile.now () - t0 > 10_000_000_000 then
+      failf "%s after 10 s" (what ());
     Domain.cpu_relax ()
   done
+
+(* Waits for [d]'s word to show [v]. *)
+let await_word d v =
+  await
+    (fun () -> strf "the word shows %d, not %d," (Rig.signaled d) v)
+    (fun () -> Rig.signaled d >= v)
+
+(* Metal hands a command buffer to its completion handler before the word moves
+   and releases it, with the objects it holds, once the handler returned: no
+   signal marks that, so a test waits for the weak reference [w] to empty,
+   collecting and draining [d] meanwhile. *)
+let await_release d w =
+  await
+    (fun () -> "the weak reference still holds")
+    (fun () ->
+      Gc.full_major ();
+      Rig.free_cache d;
+      not (S.alive w))
 
 let released_buffer () =
   let t = dev () in
   let f, w = S.watching () in
   wait t (submit t [| f |]);
-  await_release w
+  await_release t.d w
 
 let failing_fill () =
   S.with_ @@ fun s ->
@@ -422,9 +441,7 @@ let failing_fill () =
   raises (Invalid_argument "Rig_metal.sleep: the device stopped") (fun () ->
       Rig_metal.sleep t.g ~seen:reached ~still_ms:10);
   S.close s;
-  while Rig.signaled t.d < reached + 1 do
-    Domain.cpu_relax ()
-  done
+  await_word t.d (reached + 1)
 
 let work =
   group ~timeout:60. "work"
@@ -481,9 +498,7 @@ let uncommitted n =
   for _ = 1 to n do
     last := Rig.Point.value (submit t [| f |])
   done;
-  while Rig_metal.signaled t.g < !last do
-    Domain.cpu_relax ()
-  done;
+  await_word t.d !last;
   equal int n (H.get32 (host out));
   List.iter (Rig_metal.free t.g) (out :: args :: held)
 
@@ -499,13 +514,7 @@ let progress n =
   for _ = 1 to n do
     last := Rig.Point.value (submit t [| f |])
   done;
-  let t0 = Rig.Profile.now () in
-  while Rig_metal.signaled t.g < !last do
-    if Rig.Profile.now () - t0 > 10_000_000_000 then
-      failf "the word shows %d, not %d, 10 s after the last submission"
-        (Rig_metal.signaled t.g) !last;
-    Domain.cpu_relax ()
-  done;
+  await_word t.d !last;
   List.iter (Rig_metal.free t.g) [ out; args ]
 
 (* A region allocated between two submits whose work shares a command buffer is
@@ -565,16 +574,6 @@ let beside () =
   in
   dev_of { S.d = require_ok (Rig.open_ opener); g }
 
-(* Waits for [d]'s word to show [v], for at most 10 s of the host's monotonic
-   clock. *)
-let await_word d v =
-  let t0 = Rig.Profile.now () in
-  while Rig.signaled d < v do
-    if Rig.Profile.now () - t0 > 10_000_000_000 then
-      failf "the word shows %d, not %d, after 10 s" (Rig.signaled d) v;
-    Domain.cpu_relax ()
-  done
-
 (* A command buffer in flight when a loss stops the device completes and
    writes its memory, and the word reaches the last value: the buffer keeps
    the command queue the stop releases. The buffer runs [gate], which a kernel
@@ -619,7 +618,8 @@ let stop_in_flight () =
     (Rig.signaled t.d >= gated);
   open_gate ();
   await_word t.d (Rig.submitted t.d);
-  equal ~msg:"the gate's write: it saw the gate open" int 1 (H.get32 page)
+  equal ~msg:"the gate's write: it saw the gate open" int 1 (H.get32 page);
+  List.iter (Rig_metal.free t.g) [ flag; args ]
 
 (* A loss that finds work waiting in the open command buffer drops it, and the
    stop brings the word to the last value. *)
@@ -635,9 +635,7 @@ let lost_open () =
     (function Rig.Lost _ -> true | _ -> false)
     (fun () -> submit t [| S.failing 7 |]);
   S.close s;
-  while Rig.signaled t.d < last do
-    Domain.cpu_relax ()
-  done
+  await_word t.d last
 
 let commits =
   group ~timeout:60. "commits"
@@ -1628,15 +1626,10 @@ let stopped_running () =
     (function Rig.Lost _ -> true | _ -> false)
     (fun () -> submit t [| S.failing 7 |]);
   S.close s;
-  while H.get32 (host out) = 0 do
-    Domain.cpu_relax ()
-  done;
-  (* The prepared work and its ICB release separately. *)
-  for _ = 1 to 4 do
-    Gc.full_major ();
-    ignore (B.create Rig.host 0)
-  done;
-  await_release w
+  (* The submission's hold of the ICB goes at a drain that finds the device
+     Stopped, which the word shows once the completion handler has run. *)
+  await_word t.d (Rig.submitted t.d);
+  await_release t.d w
 
 (* Images still loaded when the device stops stay loaded: their unload after the
    stop releases them. *)
