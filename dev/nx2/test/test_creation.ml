@@ -168,13 +168,17 @@ let fills =
 type ranged = Ranged : ('v, 's) D.t * int * int * int -> ranged
 
 (* Bounds a dtype holds, small enough for every integer dtype: start and stop
-   in [0, 7], steps from -3 to 3 but 0. *)
+   in [0, 7], steps from -3 to 3 but 0. A quarter of the cases are booleans,
+   one dtype among many, so that every run reaches a range a boolean can't
+   hold. *)
 let ranged =
   Gen.with_pp
     (fun ppf (Ranged (dt, a, b, c)) ->
       Format.fprintf ppf "%a %d %d %d" D.pp dt a b c)
     (let open Gen in
-     let* (D.Any dt) = dtype in
+     let* (D.Any dt) =
+       frequency [ (3, dtype); (1, constant (D.Any D.Bool)) ]
+     in
      let* start = int_range 0 7 in
      let* stop = int_range 0 7 in
      let+ step = one_of [ int_range 1 3; int_range (-3) (-1) ] in
