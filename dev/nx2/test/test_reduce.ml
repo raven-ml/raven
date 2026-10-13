@@ -861,6 +861,43 @@ let test_arg_cases () =
   equal ~msg:"float4_e2m1fn signed zeros" (array int64) [| 2L |]
     (snd (arg Min D.Float4_e2m1fn [| 0 |] [| 3 |] [| 1.; 0.; -0. |]))
 
+(* Integers [offset + k], [k] within 1 and [offset] above the float's [2^p] so
+   that a step is its last bit, in steps of a power of two [step]: with [step²]
+   the largest float over [2^10], Σ d² stays finite where (Σ d)², n² times the
+   mean's rounding squared, may overflow. *)
+let overflow_case offset step =
+  let open Gen in
+  let* n = int_range 100 200 in
+  let+ ks = array ~size:(constant n) (int_range (-1) 1) in
+  (offset, step, ks)
+
+(* The bound of {!law_moments}, in steps, of the exact variance of the
+   integers. *)
+let law_overflow (type s) (dt : (float, s) D.t) u (offset, step, ks) =
+  let xs = Array.map (fun k -> Float.of_int (offset + k) *. step) ks in
+  let mean, var = reduce1 (Moments (0, dt)) [| 0 |] (vector dt xs) in
+  let n = Array.length ks in
+  let nf = Float.of_int n in
+  let c = ((read mean).(0) /. step) -. Float.of_int offset in
+  let s1 = Array.fold_left (fun a k -> a +. (Float.of_int k -. c)) 0. ks in
+  let s2 =
+    Array.fold_left (fun a k -> a +. ((Float.of_int k -. c) ** 2.)) 0. ks
+  in
+  cover "the square of the deviations' sum overflows"
+    ((s1 *. s1 >= 0x1p10) && s2 < 0x1p10);
+  let s = Array.fold_left ( + ) 0 ks
+  and q = Array.fold_left (fun a k -> a + (k * k)) 0 ks in
+  let v = Float.of_int ((n * q) - (s * s)) /. (nf *. nf) in
+  let m = Float.of_int ((n * offset) + s) /. nf in
+  let gamma k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
+  let g = gamma n in
+  at_most ~msg:"variance" float_exact
+    ~than:
+      (((gamma (n + 4) +. (2. *. g *. g)) *. v)
+      +. (2. *. gamma (n + 6) *. g *. m *. Float.sqrt v)
+      +. (4. *. gamma (n + 4) *. g *. g *. m *. m))
+    (Float.abs (((read var).(0) /. (step *. step)) -. v))
+
 let test_moments_cases () =
   let mean, var =
     reduce1 (Moments (0, Nx.float64)) [| 0 |] (vector D.Float64 [||])
@@ -1525,6 +1562,12 @@ let optional_group =
       prop "logsumexp is m + log Σ exp (x - m), its specials exact" float64_case
         law_logsumexp;
       prop "moments are within their stated bounds" moments_case law_moments;
+      prop "float32 moments are within their bounds where (Σ d)² overflows"
+        (overflow_case ((1 lsl 23) + 2) 0x1p59)
+        (law_overflow D.Float32 0x1p-24);
+      prop "float64 moments are within their bounds where (Σ d)² overflows"
+        (overflow_case ((1 lsl 52) + 2) 0x1p507)
+        (law_overflow D.Float64 0x1p-53);
       prop "moment scans are within their stated bounds" moments_scan_case
         law_moments_scan;
       prop "arg is the extreme and its first position" int32_case law_arg;

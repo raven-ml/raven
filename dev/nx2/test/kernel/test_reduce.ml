@@ -1859,8 +1859,8 @@ let kind (D.Any dt) k xs =
 (* Logsumexp: the maximum [m], [c] where it is finite or else [0], then
    [c + log] of the sum of [exp (x - c)], an exp below the cut taken as
    [0]. Moments: the sum over the count, the mean, then the sums [s1] of
-   the deviations [d] from it and [s2] of their squares, and [(s2 - s1² /
-   n) / n], +0 where that is negative, or [s2] where that is +inf. Each
+   the deviations [d] from it and [s2] of their squares, and [(s2 - s1 (s1
+   / n)) / n], +0 where that is negative, or [s2] where that is +inf. Each
    operation rounds to the dtype. *)
 let law_record (b : Support.backend) c =
   let (D.Any dt) = c.dt in
@@ -1892,7 +1892,7 @@ let law_record (b : Support.backend) c =
       let d x = round (x -. mean) in
       let s1 = sum (Array.map d xs) in
       let s2 = sum (Array.map (fun x -> round (d x *. d x)) xs) in
-      let q = round (round (s2 -. round (round (s1 *. s1) /. n)) /. n) in
+      let q = round (round (s2 -. round (s1 *. round (s1 /. n))) /. n) in
       let var = if s2 = Float.infinity then s2 else if q < 0. then 0. else q in
       equal ~msg:"mean" int64 (bits_at mean) (bits_of got.(0).(0));
       equal ~msg:"variance" int64 (bits_at var) (bits_of got.(1).(0))

@@ -21,7 +21,7 @@
     [Logsumexp] is a [Max] [m], [m'] its finite elements and [0] elsewhere, a
     [Sum] of [exp (x - m')], then [m' + log s], or [m] where it is a NaN; with
     no term, [log 0]. [Moments] are the mean [Σ x / n], then two sums of
-    [d = x - mean] and the variance [(Σ d² - (Σ d)² / n) / n], [+0] where
+    [d = x - mean] and the variance [(Σ d² - Σ d (Σ d / n)) / n], [+0] where
     that is negative or [Σ d²] where that is [+∞], each the mean where it is
     a NaN. An [Arg] is
     the [Max] or [Min] [m], then a [Min] of the positions, numbered in C order

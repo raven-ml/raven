@@ -460,8 +460,8 @@ MOMENTS(double, f64)
      summed in lane order, merged by addition, and c + log of the sum.
    - Moments: first the terms summed in lane order, merged by addition,
      and the center, their mean c; then x - c and (x - c)² summed so, and
-     the variance, (Σ (x - c)² - (Σ (x - c))² / n) / n, +0 where that is
-     negative, or Σ (x - c)² where that is +inf: Nx's expansion's
+     the variance, (Σ (x - c)² - Σ (x - c) (Σ (x - c) / n)) / n, +0 where
+     that is negative, or Σ (x - c)² where that is +inf: Nx's expansion's
      arithmetic.
    A NaN result is replaced by the driver: by the first NaN term, or by
    nx_kinds.h's NaN where none is. Every function is inlined into each
@@ -669,13 +669,13 @@ ARGS(f64, double, uint64_t, nx_maximum_f64, nx_minimum_f64, IS_NAN)
     a->d = (T)a->d + (T)b->d;                                                \
   }                                                                          \
   /* A mean that is a NaN is the variance too. Squares summed to +inf are  \
-     the variance, where d * d may overflow too and v be a NaN. */          \
+     the variance, where d * (d / n) may overflow too and v be a NaN. */    \
   static void var_finish_##S(const nx_cpu_state *st, double c, uint8_t *d0,  \
                              uint8_t *d1) {                                  \
     T mean = MADE, var = MADE;                                               \
     if (st->n > 0) {                                                         \
       T n = (T)st->n, d = (T)st->d, s = (T)st->s;                            \
-      T v = (s - d * d / n) / n;                                             \
+      T v = (s - d * (d / n)) / n;                                           \
       mean = (T)c;                                                           \
       var = c != c ? mean : s == (T)INFINITY ? s : v < 0 ? 0 : v;            \
     }                                                                        \

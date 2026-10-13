@@ -202,7 +202,7 @@ let test_arg_cases () =
 (* var, std *)
 
 (* Integers about the [offsets], some large with a small spread, whose mean's
-   rounding a deviation from it carries. *)
+   rounding a deviation from it carries, in steps of [1]. *)
 let moments_case offsets =
   let open Gen in
   let* n = int_range 1 64 in
@@ -212,7 +212,21 @@ let moments_case offsets =
       (map (fun i -> Float.of_int (offset + i)) (int_range (-w) w))
   in
   let+ ddof = int_range 0 (Stdlib.min 2 (n - 1)) in
-  (xs, ddof)
+  (1., xs, ddof)
+
+(* Integers within 1 of [offset], above the float's [2^p] so that a step is its
+   last bit, in steps of a power of two [step]: with [step²] the largest float
+   over [2^10], Σ d² stays finite where (Σ d)², n² times the mean's rounding
+   squared, may overflow. *)
+let overflow_case offset step =
+  let open Gen in
+  let* n = int_range 100 200 in
+  let* xs =
+    array ~size:(constant n)
+      (map (fun i -> Float.of_int (offset + i)) (int_range (-1) 1))
+  in
+  let+ ddof = int_range 0 2 in
+  (step, xs, ddof)
 
 let offsets = [ (0, 1000); (1 lsl 20, 3); (1 lsl 20 + 1, 1000) ]
 
@@ -232,9 +246,19 @@ let exact xs =
   in
   Float.of_int ((n * s2) - (s * s)) /. Float.of_int (n * n)
 
-let law_moments (type s) (dt : (float, s) D.t) u (xs, ddof) =
+(* The bound, in the terms' steps. *)
+let law_moments (type s) (dt : (float, s) D.t) u (step, xs, ddof) =
   let n = Array.length xs in
-  let x = Nx.create dt [| n |] xs in
+  let x = Nx.create dt [| n |] (Array.map (fun x -> x *. step) xs) in
+  if step > 1. then begin
+    (* The deviations from the mean, in steps, and whether (Σ d)² overflows
+       where Σ d² does not: the float's largest over [step²] is [2^10]. *)
+    let c = Nx.item [] (Nx.mean x) /. step in
+    let s1 = Array.fold_left (fun s x -> s +. (x -. c)) 0. xs in
+    let s2 = Array.fold_left (fun s x -> s +. ((x -. c) *. (x -. c))) 0. xs in
+    cover "the square of the deviations' sum overflows"
+      (s1 *. s1 >= 0x1p10 && s2 < 0x1p10)
+  end;
   let scale = Float.of_int n /. Float.of_int (n - ddof) in
   let v = exact xs *. scale in
   let mean_abs = Array.fold_left (fun s x -> s +. Float.abs x) 0. xs /. Float.of_int n in
@@ -246,10 +270,10 @@ let law_moments (type s) (dt : (float, s) D.t) u (xs, ddof) =
     *. scale
     +. (3. *. u *. v)
   in
-  let got = Nx.item [] (Nx.var ~ddof x) in
+  let got = Nx.item [] (Nx.var ~ddof x) /. (step *. step) in
   if Float.abs (got -. v) > bound then
     failf "var: %h, exactly %h, beyond %h" got v bound;
-  let sd = Nx.item [] (Nx.std ~ddof x) in
+  let sd = Nx.item [] (Nx.std ~ddof x) /. step in
   if Float.abs (sd -. Float.sqrt v) > Float.sqrt bound +. (2. *. u *. Float.sqrt v) then
     failf "std: %h, exactly %h" sd (Float.sqrt v)
 
@@ -352,6 +376,12 @@ let () =
              prop "float64 within the bound" (moments_case (near_2_40 :: offsets))
                (law_moments D.Float64 0x1p-53);
              prop "float32 within the bound" (moments_case offsets)
+               (law_moments D.Float32 0x1p-24);
+             prop "float64 within the bound where (Σ d)² overflows"
+               (overflow_case ((1 lsl 52) + 2) 0x1p507)
+               (law_moments D.Float64 0x1p-53);
+             prop "float32 within the bound where (Σ d)² overflows"
+               (overflow_case ((1 lsl 23) + 2) 0x1p59)
                (law_moments D.Float32 0x1p-24);
              test "cases" test_moments_cases;
              narrow "var" (fun x -> Nx.var ~axes:[ 1 ] x);

@@ -295,13 +295,13 @@ let logsumexp (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
 
 (* Moments in two passes: the mean, [Σ x / n], then the variance by the
    corrected two-pass algorithm (Chan, Golub and LeVeque 1983; Higham,
-   Accuracy and Stability, §1.9): [(Σ d² - (Σ d)² / n) / n], [d = x - mean],
-   or [+0] where that is negative. [Σ (x - c)² - (Σ (x - c))² / n] is [Σ (x -
-   μ)²] for any [c], so the mean's rounding reaches the variance at second
-   order, where [Σ d² / n] alone carries it squared. Where [Σ d²] overflows,
-   [(Σ d)²] may too, and their difference is a NaN: the variance is then [Σ
-   d²], [+∞], as [(Σ d)² / n ≤ Σ d²]. Where the mean is a NaN, both are the
-   mean. *)
+   Accuracy and Stability, §1.9): [(Σ d² - Σ d (Σ d / n)) / n], [d = x -
+   mean], or [+0] where that is negative. [Σ (x - c)² - (Σ (x - c))² / n] is
+   [Σ (x - μ)²] for any [c], so the mean's rounding reaches the variance at
+   second order, where [Σ d² / n] alone carries it squared. [(Σ d)²] can reach
+   [n Σ d²] and overflow where [Σ d²] does not; [Σ d (Σ d / n)] is at most [Σ
+   d²]. Where [Σ d²] overflows, it may too, and their difference is a NaN: the
+   variance is then [Σ d²], [+∞]. Where the mean is a NaN, both are the mean. *)
 let moments (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     shape axes (x : (float, s, d) Value.t) :
     (float, s, d) Value.t * (float, s, d) Value.t =
@@ -332,7 +332,7 @@ let moments (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     let s1 = E.input 1 dt and s2 = E.input 2 dt in
     let zero = E.const dt (D.zero dt)
     and inf = E.const dt (D.of_float dt Float.infinity) in
-    let q = E.(fdiv (s2 - fdiv (s1 * s1) count) count) in
+    let q = E.(fdiv (s2 - (s1 * fdiv s1 count)) count) in
     let r = E.(where (s2 = inf) s2 (where (q < zero) zero q)) in
     map1 apply ~by out
       (P.of_exprs ~ins:three [| E.any (nan_or (E.input 0 dt) r) |])
