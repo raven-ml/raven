@@ -571,7 +571,7 @@ let running_logsumexp (type v s d)
   Prim.expect dt y.(0)
 
 (* Moments by {!pairwise}, over Chan, Golub and LeVeque's combination,
-   their (1.5b), of states [(μ, S, n)].
+   their (1.5b), of states [(μ, S, n, z)], [z] whether a term is a NaN.
 
    The derivation of its bounds, to first order, at index [i] of [N = i + 1]
    terms through [D = D_i] combinations, with [R] the terms' range and [V]
@@ -625,31 +625,35 @@ let running_moments (type v s d)
       let x0 = apply ~by (Value.Move (Slice (Array.mapi keep shape), x)) in
       apply ~by (Value.Move (Broadcast (Array.copy shape), x0))
     in
-    let dts = Array.make 3 (D.Any dt) in
+    let dts = [| D.Any dt; D.Any dt; D.Any dt; D.Any D.Bool |] in
     let terms =
       let b = Build.make () in
       let t = input b (D.Any dt) in
       let t0 = input b (D.Any dt) in
       let d = push b (Op2 (Binary Sub, t, shift b t0)) in
+      let z = push b (Op2 (Compare Not_equal, t, t)) in
       map_n apply ~by shape
-        (program b [| d; f b 0.; f b 1. |])
+        (program b [| d; f b 0.; f b 1.; z |])
         dts
         [| Value.Plain x; Value.Plain first |]
     in
     let combine b earlier later =
       let ma = earlier.(0) and sa = earlier.(1) and na = earlier.(2) in
       let mb = later.(0) and sb = later.(1) and nb = later.(2) in
+      let za = earlier.(3) and zb = later.(3) in
       let op2 k x y = push b (Op2 (k, x, y)) in
+      let where c x y = push b (Op3 (Where, c, x, y)) in
       let n = op2 (Binary Add) na nb in
       let delta = op2 (Binary Sub) mb ma in
       let step = op2 (Binary Mul) delta (op2 (Binary Fdiv) nb n) in
       let chan = op2 (Binary Add) ma step in
       let both = op2 (Binary And) (finite b ma) (finite b mb) in
-      let mean = push b (Op3 (Where, both, chan, op2 (Binary Add) ma mb)) in
+      let past = where za ma (where zb mb (op2 (Binary Add) ma mb)) in
+      let mean = where both chan past in
       let w = op2 (Binary Fdiv) (op2 (Binary Mul) na nb) n in
       let between = op2 (Binary Mul) (op2 (Binary Mul) delta delta) w in
       let s = op2 (Binary Add) (op2 (Binary Add) sa sb) between in
-      [| mean; s; n |]
+      [| mean; s; n; op2 (Binary Or) za zb |]
     in
     let state = pairwise apply ~by shape axis combine terms in
     let b = Build.make () in

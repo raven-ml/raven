@@ -748,7 +748,8 @@ let law_moments_scan (kind, s, axis, xs) =
 
 (* Both paths: no result along an empty axis; one term's own mean and a
    variance of [+0]; a NaN's bits from it on; an infinity's mean and a NaN
-   variance; a narrow float at float32, rounded once. *)
+   variance; a NaN term's bits past the NaN of opposite infinities; a
+   narrow float at float32, rounded once. *)
 let test_moments_scan_cases () =
   let both name f =
     List.iter (fun p -> f (name ^ ", " ^ path_name p) p) [ Expansion; Cpu ]
@@ -782,6 +783,15 @@ let test_moments_scan_cases () =
       equal ~msg:(msg ^ ", NaNs") (list bool)
         [ true; true; true; true ]
         (List.map Float.is_nan [ mean.(3); var.(1); var.(2); var.(3) ]));
+  (let msg = "opposite infinities, then a NaN, expansion" in
+   let a = nan_with 7L and made = 0x7ff8_0000_0000_0000L in
+   let xs = [| Float.infinity; Float.neg_infinity; a; 2. |] in
+   let mean, var = moments Expansion D.Float64 [| 4 |] xs in
+   equal ~msg
+     (pair (array int64) (array int64))
+     ( [| bits Float.infinity; made; bits a; bits a |],
+       [| made; made; bits a; bits a |] )
+     (Array.map bits mean, Array.map bits var));
   both "float16" (fun msg p ->
       let mean, var = moments p D.Float16 [| 4 |] [| 1.; 2.; 3.; 4. |] in
       let want = A.of_array D.Float32 [| 4 |] [| 0.; 0.25; 2. /. 3.; 1.25 |] in
