@@ -309,10 +309,17 @@ external solve_triangular :
   Nx_array.answer
   = "nx_cpu_solve_triangular_byte" "nx_cpu_solve_triangular"
 
-(* nx.cpu computes no decomposition by iteration. *)
+external eigh_c :
+  w:('v, 's) Nx_array.t ->
+  ('v, 's) Nx_array.t option ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_eigh"
+
+let eigh ~w ?v a = eigh_c ~w v a
+
+(* nx.cpu computes no other decomposition by iteration yet. *)
 let takes a = Nx_kernel.full_precision (Nx_array.dtype a)
 let svd ~s:_ ?vectors:_ a = declined (takes a)
-let eigh ~w:_ ?v:_ a = declined (takes a)
 let eig ~w ?v:_ a =
   declined
     (takes a

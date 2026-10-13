@@ -735,8 +735,9 @@ let assembly_rows =
    [-1, 1] off its diagonal and n on it, so positive definite and well
    conditioned; a solve's triangle is its Cholesky factor. The floors are
    the peak of fused multiply-adds at LAPACK's flop counts: n³/3 for
-   Cholesky, 2n³/3 for LU, 4n³/3 for QR and as many to form Q, n² r for a
-   solve, four real flops a complex one. *)
+   Cholesky, 2n³/3 for LU, 4n³/3 for QR and as many to form Q, 4n³/3 for
+   eigh's reduction and 2n³ to apply it to the vectors, n² r for a solve,
+   four real flops a complex one. *)
 
 let definite (type v s) (dt : (v, s) D.t) ~batch n : (v, s) A.t =
   let v i j = float_of_int ((((i * n) + j) * 7919 mod 251) - 125) /. 125. in
@@ -798,6 +799,14 @@ let linalg_rows =
         fun () -> K.qr ~q ~r a)
       dt n ~count:(8 * n * n * n / 3)
   in
+  let eigh dt ?batch n =
+    routine "eigh"
+      (fun (module K : Nx_kernel.S) a ->
+        let w, v = Result.get_ok (Nx_kernel.Shape.eigh (shape a)) in
+        let w = like a w and v = like a v in
+        fun () -> K.eigh ~w ~v a)
+      dt ?batch n ~count:(10 * n * n * n / 3)
+  in
   let solve n r =
     let call (module K : Nx_kernel.S) =
       let l = A.create Rig.host f64 [| 1; n; n |] in
@@ -831,6 +840,10 @@ let linalg_rows =
     qr f64 256;
     qr f64 1024;
     qr D.Complex128 256;
+    eigh f64 64;
+    eigh f64 256;
+    eigh f64 1024;
+    eigh f64 ~batch:64 32;
   ]
 
 let rows =

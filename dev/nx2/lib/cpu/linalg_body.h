@@ -588,6 +588,420 @@ static int F(form_q)(const T *a, int64_t m, int64_t n, int64_t ld,
   return 1;
 }
 
+/* Eigh
+
+   a = Q T Qᴴ with T real tridiagonal, then T = Z diag w Zᵀ, so that
+   v = Q Z, as LAPACK's xHEEV. The matrix is column-major here, element
+   (i, j) at a[i + j·ld], so that the routines follow LAPACK's index for
+   index; it is staged transposed, which on a Hermitian matrix swaps the
+   triangles: a's lower triangle is read. */
+
+/* The unit roundoff and the least normal number. */
+#define EPS ((R)(sizeof(R) == 4 ? FLT_EPSILON / 2 : DBL_EPSILON / 2))
+#define TINY ((R)(sizeof(R) == 4 ? FLT_MIN : DBL_MIN))
+
+/* The panel of the [nb] columns of the [n] × [n] [a] by reflectors, as
+   LAPACK's xLATRD (lower): column i, the products of the panel's earlier
+   reflectors deferred until now applied to it, is reduced below its
+   subdiagonal by H_i = I − τ_i v_i v_iᴴ, its subdiagonal into e[i], v_i
+   below it with v_i[0] = 1 stored; [w], [n] × nb with columns [ldw]
+   apart, gets W with the rest of a updated as a − V Wᴴ − W Vᴴ. Only the
+   lower triangle is read, and diagonals' real parts. */
+static void F(latrd)(T *a, int64_t n, int64_t nb, int64_t ld, R *e, T *tau,
+                     T *w, int64_t ldw) {
+  for (int64_t i = 0; i < nb; i++) {
+    T *ai = a + i * ld, *wi = w + i * ldw;
+    for (int64_t p = 0; p < i; p++) {
+      const T *ap = a + p * ld, *wp = w + p * ldw;
+      T x = CONJ(wp[i]), y = CONJ(ap[i]);
+      for (int64_t r = i; r < n; r++) ai[r] -= ap[r] * x + wp[r] * y;
+    }
+    ai[i] = REAL(ai[i]);
+    /* H_i from a's column i below its diagonal. */
+    T alpha = ai[i + 1];
+    int64_t h = n - i - 1;
+    tau[i] = F(reflector)(&alpha, ai + i + 2, h - 1, 1);
+    e[i] = REAL(alpha);
+    ai[i + 1] = 1;
+    /* W's column i, from rows i + 1 on: τ (A v − V (Wᴴ v) − W (Vᴴ v)) −
+       ½ τ (that ᴴ v) v, A the not yet updated trailing matrix (xHEMV). */
+    const T *v = ai + i + 1;
+    T *y = wi + i + 1, *x = wi;
+    for (int64_t r = 0; r < h; r++) y[r] = 0;
+    for (int64_t j = 0; j < h; j++) {
+      const T *col = a + (i + 1 + j) * ld + i + 1;
+      T vj = v[j], acc = REAL(col[j]) * vj;
+      for (int64_t r = j + 1; r < h; r++) {
+        y[r] += col[r] * vj;
+        acc += CONJ(col[r]) * v[r];
+      }
+      y[j] += acc;
+    }
+    for (int k = 0; k < 2; k++) {
+      /* x = Uᴴ v, then y −= U' x, for (U, U') = (W, V) then (V, W). */
+      const T *u = k == 0 ? w : a, *u2 = k == 0 ? a : w;
+      int64_t lu = k == 0 ? ldw : ld, lu2 = k == 0 ? ld : ldw;
+      for (int64_t p = 0; p < i; p++) {
+        const T *up = u + p * lu + i + 1;
+        T s = 0;
+        for (int64_t r = 0; r < h; r++) s += CONJ(up[r]) * v[r];
+        x[p] = s;
+      }
+      for (int64_t p = 0; p < i; p++) {
+        const T *up = u2 + p * lu2 + i + 1;
+        for (int64_t r = 0; r < h; r++) y[r] -= up[r] * x[p];
+      }
+    }
+    T s = 0;
+    for (int64_t r = 0; r < h; r++) {
+      y[r] *= tau[i];
+      s += CONJ(y[r]) * v[r];
+    }
+    T half = (R)-0.5 * tau[i] * s;
+    for (int64_t r = 0; r < h; r++) y[r] += half * v[r];
+  }
+}
+
+/* a = Q T Qᴴ in place in the [n] × [n] [a], as LAPACK's blocked xHETRD
+   (lower): T's diagonal into [d] and subdiagonal into [e], Q = H_0 ⋯
+   H_(n−2) as reflectors below the subdiagonal, their τ in [tau]. By
+   panels of NB columns (latrd), each followed by the rest's update
+   a − V Wᴴ − W Vᴴ (xHER2K) by products on column blocks of its lower
+   triangle. The scratch [w] holds n × NB elements. Answers 0 if an
+   allocation failed. */
+static int F(hetrd)(T *a, int64_t n, int64_t ld, R *d, R *e, T *tau, T *w,
+                    arena *s) {
+  for (int64_t i0 = 0; i0 < n - 1; i0 += NB) {
+    int64_t nb = NB < n - 1 - i0 ? NB : n - 1 - i0, h = n - i0, m = h - nb;
+    T *p = a + i0 * ld + i0;
+    F(latrd)(p, h, nb, ld, e + i0, tau + i0, w, h);
+    for (int64_t j = 0; j < nb; j++) d[i0 + j] = REAL(p[j * ld + j]);
+    /* The rest's lower triangle, as the row-major upper triangle of its
+       transpose: rows j0 on of conj W Vᵀ + conj V Wᵀ. */
+    T *v = p + nb, *w2 = w + nb, *c = p + nb * ld + nb;
+    for (int64_t j0 = 0; j0 < m; j0 += HERK) {
+      int64_t jb = m - j0 < HERK ? m - j0 : HERK;
+      T *cj = c + j0 * ld + j0;
+      if (!F(gemm)(jb, m - j0, nb, -1, (operand){w2 + j0, 1, h, CPLX},
+                   F(op)(v + j0, ld, 1), cj, ld, s) ||
+          !F(gemm)(jb, m - j0, nb, -1, (operand){v + j0, 1, ld, CPLX},
+                   F(op)(w2 + j0, h, 1), cj, ld, s))
+        return 0;
+    }
+  }
+  if (n > 0) d[n - 1] = REAL(a[(n - 1) * ld + n - 1]);
+  return 1;
+}
+
+/* c, s and r with [c s; −s c] [f; g] = [r; 0], as LAPACK's xLARTG. */
+static void F(rotation)(R f, R g, R *c, R *s, R *r) {
+  const R lo = SQRT(TINY), hi = SQRT((1 / TINY) / 2);
+  R af = F(abs)(f), ag = F(abs)(g);
+  if (g == 0) {
+    *c = 1;
+    *s = 0;
+    *r = f;
+    return;
+  }
+  if (f == 0) {
+    *c = 0;
+    *s = g < 0 ? -1 : 1;
+    *r = ag;
+    return;
+  }
+  R u = 1;
+  if (!(af > lo && af < hi && ag > lo && ag < hi)) {
+    u = af > ag ? af : ag;
+    u = u < TINY ? TINY : u > 1 / TINY ? 1 / TINY : u;
+    f /= u;
+    g /= u;
+  }
+  R h = SQRT(f * f + g * g), rr = f < 0 ? -h : h;
+  *c = F(abs)(f) / h;
+  *s = g / rr;
+  *r = rr * u;
+}
+
+/* The eigenvalues [rt1], of the larger magnitude, and [rt2] of
+   [a b; b c], and (cs, sn) with [cs sn; −sn cs] [a b; b c] [cs −sn; sn cs]
+   = diag (rt1, rt2), as LAPACK's xLAEV2. */
+static void F(laev2)(R a, R b, R c, R *rt1, R *rt2, R *cs, R *sn) {
+  R sm = a + c, df = a - c, adf = F(abs)(df), tb = b + b, ab = F(abs)(tb);
+  R acmx = F(abs)(a) > F(abs)(c) ? a : c, acmn = F(abs)(a) > F(abs)(c) ? c : a;
+  R rt = adf > ab   ? adf * SQRT(1 + (ab / adf) * (ab / adf))
+         : adf < ab ? ab * SQRT(1 + (adf / ab) * (adf / ab))
+                    : ab * SQRT((R)2);
+  int sgn1 = sm < 0 ? -1 : 1;
+  if (sm == 0) {
+    *rt1 = (R)0.5 * rt;
+    *rt2 = (R)-0.5 * rt;
+  } else {
+    *rt1 = (R)0.5 * (sm + sgn1 * rt);
+    *rt2 = (acmx / *rt1) * acmn - (b / *rt1) * b;
+  }
+  int sgn2 = df >= 0 ? 1 : -1;
+  R cv = df + sgn2 * rt, c1, s1;
+  if (F(abs)(cv) > ab) {
+    R ct = -tb / cv;
+    s1 = 1 / SQRT(1 + ct * ct);
+    c1 = ct * s1;
+  } else if (ab == 0) {
+    c1 = 1;
+    s1 = 0;
+  } else {
+    R tn = -cv / tb;
+    c1 = 1 / SQRT(1 + tn * tn);
+    s1 = tn * c1;
+  }
+  if (sgn1 == sgn2) {
+    R tn = c1;
+    c1 = -s1;
+    s1 = tn;
+  }
+  *cs = c1;
+  *sn = s1;
+}
+
+/* Columns [j0, j0 + k) of the [n]-row [z], columns [ldz] apart, times the
+   rotations (c[j], s[j]) of columns j0 + j and j0 + j + 1, the last first
+   under [backward] (xLASR's 'R', 'V'). */
+static void F(rotate)(R *z, int64_t n, int64_t ldz, int64_t k, const R *c,
+                      const R *s, int backward) {
+  for (int64_t t = 0; t < k - 1; t++) {
+    int64_t j = backward ? k - 2 - t : t;
+    R ct = c[j], st = s[j];
+    if (ct == 1 && st == 0) continue;
+    R *x = z + j * ldz, *y = x + ldz;
+    for (int64_t i = 0; i < n; i++) {
+      R yi = y[i];
+      y[i] = ct * yi - st * x[i];
+      x[i] = st * yi + ct * x[i];
+    }
+  }
+}
+
+/* d[l..lend] and e[l..lend) times [to] / [from]. */
+static void F(scale)(R *d, R *e, int64_t l, int64_t lend, R from, R to) {
+  for (int64_t i = l; i <= lend; i++) {
+    d[i] = d[i] / from * to;
+    if (i < lend) e[i] = e[i] / from * to;
+  }
+}
+
+/* The eigenvalues of the symmetric tridiagonal T of the diagonal [d] and
+   subdiagonal [e], [n] of them, ascending into d, and, where [z] is not
+   NULL, z Z for T = Z diag d Zᵀ, z of [nz] rows and n columns [nz] apart:
+   implicit QL or QR with Wilkinson shifts, whichever chases the bulge
+   from the end of larger magnitude, on each unreduced block scaled into
+   range, as LAPACK's xSTEQR. Values alone run the same iteration, so they
+   are the bits the vectors' call gives. [rot] holds 2n reals. Answers 0
+   if the iteration takes more than 30 n sweeps. */
+static int F(steqr)(int64_t n, R *d, R *e, R *z, int64_t nz, R *rot) {
+  const R eps2 = EPS * EPS, safmin = TINY;
+  const R ssfmax = SQRT(1 / safmin) / 3, ssfmin = SQRT(safmin) / eps2;
+  int64_t maxit = 30 * n, jtot = 0, l1 = 0;
+  R *cs = rot, *sn = rot + n;
+  while (l1 < n) {
+    if (l1 > 0) e[l1 - 1] = 0;
+    /* The block [l1, m]: the first negligible subdiagonal from l1. */
+    int64_t m = l1;
+    for (; m < n - 1; m++) {
+      R t = F(abs)(e[m]);
+      if (t == 0) break;
+      if (t <= SQRT(F(abs)(d[m])) * SQRT(F(abs)(d[m + 1])) * EPS) {
+        e[m] = 0;
+        break;
+      }
+    }
+    int64_t l = l1, lend = m, lsv = l, lendsv = lend;
+    l1 = m + 1;
+    if (lend == l) continue;
+    R anorm = 0;
+    for (int64_t i = l; i <= lend; i++) {
+      R x = F(abs)(d[i]), y = i < lend ? F(abs)(e[i]) : 0;
+      anorm = x > anorm ? x : anorm;
+      anorm = y > anorm ? y : anorm;
+    }
+    if (anorm == 0) continue;
+    /* Out of [ssfmin, ssfmax], the block is scaled to its nearer end. */
+    R sc = anorm > ssfmax ? ssfmax : anorm < ssfmin ? ssfmin : anorm;
+    if (sc != anorm) F(scale)(d, e, l, lend, anorm, sc);
+    if (F(abs)(d[lend]) < F(abs)(d[l])) {
+      lend = lsv;
+      l = lendsv;
+    }
+    if (lend > l) {
+      /* QL: deflate from the top. */
+      while (l <= lend) {
+        for (m = l; m < lend; m++) {
+          R t = F(abs)(e[m]);
+          if (t * t <= (eps2 * F(abs)(d[m])) * F(abs)(d[m + 1]) + safmin)
+            break;
+        }
+        if (m < lend) e[m] = 0;
+        R p = d[l];
+        if (m == l) {
+          l++;
+          continue;
+        }
+        if (m == l + 1) {
+          R rt1, rt2, c, s;
+          F(laev2)(d[l], e[l], d[l + 1], &rt1, &rt2, &c, &s);
+          if (z) F(rotate)(z + l * nz, nz, nz, 2, &c, &s, 1);
+          d[l] = rt1;
+          d[l + 1] = rt2;
+          e[l] = 0;
+          l += 2;
+          continue;
+        }
+        if (jtot == maxit) return 0;
+        jtot++;
+        R g = (d[l + 1] - p) / (2 * e[l]), r = F(lapy3)(g, 1, 0);
+        g = d[m] - p + (e[l] / (g + (g < 0 ? -r : r)));
+        R s = 1, c = 1;
+        p = 0;
+        for (int64_t i = m - 1; i >= l; i--) {
+          R f = s * e[i], b = c * e[i];
+          F(rotation)(g, f, &c, &s, &r);
+          if (i != m - 1) e[i + 1] = r;
+          g = d[i + 1] - p;
+          r = (d[i] - g) * s + 2 * c * b;
+          p = s * r;
+          d[i + 1] = g + p;
+          g = c * r - b;
+          cs[i] = c;
+          sn[i] = -s;
+        }
+        if (z) F(rotate)(z + l * nz, nz, nz, m - l + 1, cs + l, sn + l, 1);
+        d[l] -= p;
+        e[l] = g;
+      }
+    } else {
+      /* QR: deflate from the bottom. */
+      while (l >= lend) {
+        for (m = l; m > lend; m--) {
+          R t = F(abs)(e[m - 1]);
+          if (t * t <= (eps2 * F(abs)(d[m])) * F(abs)(d[m - 1]) + safmin)
+            break;
+        }
+        if (m > lend) e[m - 1] = 0;
+        R p = d[l];
+        if (m == l) {
+          l--;
+          continue;
+        }
+        if (m == l - 1) {
+          R rt1, rt2, c, s;
+          F(laev2)(d[l - 1], e[l - 1], d[l], &rt1, &rt2, &c, &s);
+          if (z) F(rotate)(z + (l - 1) * nz, nz, nz, 2, &c, &s, 0);
+          d[l - 1] = rt1;
+          d[l] = rt2;
+          e[l - 1] = 0;
+          l -= 2;
+          continue;
+        }
+        if (jtot == maxit) return 0;
+        jtot++;
+        R g = (d[l - 1] - p) / (2 * e[l - 1]), r = F(lapy3)(g, 1, 0);
+        g = d[m] - p + (e[l - 1] / (g + (g < 0 ? -r : r)));
+        R s = 1, c = 1;
+        p = 0;
+        for (int64_t i = m; i < l; i++) {
+          R f = s * e[i], b = c * e[i];
+          F(rotation)(g, f, &c, &s, &r);
+          if (i != m) e[i - 1] = r;
+          g = d[i] - p;
+          r = (d[i + 1] - g) * s + 2 * c * b;
+          p = s * r;
+          d[i] = g + p;
+          g = c * r - b;
+          cs[i] = c;
+          sn[i] = s;
+        }
+        if (z) F(rotate)(z + m * nz, nz, nz, l - m + 1, cs + m, sn + m, 0);
+        d[l] -= p;
+        e[l - 1] = g;
+      }
+    }
+    if (sc != anorm) F(scale)(d, e, lsv, lendsv, sc, anorm);
+  }
+  /* Ascending, by selection as xSTEQR, z's columns with them. */
+  for (int64_t i = 0; i < n - 1; i++) {
+    int64_t k = i;
+    for (int64_t j = i + 1; j < n; j++)
+      if (d[j] < d[k]) k = j;
+    if (k == i) continue;
+    R t = d[k];
+    d[k] = d[i];
+    d[i] = t;
+    if (z)
+      for (int64_t r = 0; r < nz; r++) {
+        t = z[k * nz + r];
+        z[k * nz + r] = z[i * nz + r];
+        z[i * nz + r] = t;
+      }
+  }
+  return 1;
+}
+
+/* Eigh on matrix [b] of [c] in the scratch [x]: w, and v where the call
+   has vectors, as LAPACK's xHEEV: the matrix scaled into [rmin, rmax]
+   where its largest magnitude lies outside, reduced (hetrd), T's
+   eigenvalues and Z by steqr, then v = Q Z by Q's blocks of NB reflectors
+   applied last first (xUNMTR). A matrix that holds NaN or an infinity
+   where it is read, or on which steqr does not converge, is NaN in both.
+   Answers 0 if an allocation failed. */
+static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
+  int64_t n = c->n;
+  T *a = x, *tau = a + n * n, *w = tau + n, *t = w + n * NB, *ww = t + NB * NB;
+  R *d = (R *)(ww + 2 * NB * n), *e = d + n, *rot = e + n, *z = rot + 2 * n;
+  T *wo = (T *)matrix_at(c, c->nops, b);
+  T *v = c->vectors ? (T *)matrix_at(c, c->nops + 1, b) : NULL;
+  stage(c, 0, b, a, n, 1);
+  R big = 0;
+  int finite = 1;
+  for (int64_t j = 0; j < n; j++) {
+    a[j * n + j] = REAL(a[j * n + j]);
+    for (int64_t i = j; i < n; i++) {
+      R re = REAL(a[j * n + i]), im = IMAG(a[j * n + i]);
+      finite &= re - re == 0 && im - im == 0;
+      R m = F(lapy3)(re, im, 0);
+      big = m > big ? m : big;
+    }
+  }
+  const R rmin = SQRT(TINY / (2 * EPS)), rmax = 1 / rmin;
+  R sigma = big > 0 && big < rmin ? rmin / big : big > rmax ? rmax / big : 1;
+  if (sigma != 1)
+    for (int64_t j = 0; j < n; j++)
+      for (int64_t i = j; i < n; i++) a[j * n + i] *= sigma;
+  if (finite && !F(hetrd)(a, n, n, d, e, tau, w, s)) return 0;
+  if (v)
+    for (int64_t i = 0; i < n * n; i++) z[i] = i % (n + 1) == 0;
+  if (!finite || !F(steqr)(n, d, e, v ? z : NULL, n, rot)) {
+    nans(wo, n * (CPLX + 1), RDT);
+    if (v) nans(v, n * n * (CPLX + 1), RDT);
+    return 1;
+  }
+  for (int64_t j = 0; j < n; j++) wo[j] = d[j] * (1 / sigma) + 0;
+  if (!v) return 1;
+  for (int64_t i = 0; i < n; i++)
+    for (int64_t j = 0; j < n; j++) v[i * n + j] = z[j * n + i];
+  /* Q = H_0 ⋯ H_(n−2) on rows 1 on: reflector j is a's column j from row
+     j + 1, so that they are the reflectors of a QR of rows 1 on. */
+  int64_t k = n - 1;
+  for (int64_t j0 = k <= 0 ? -1 : (k - 1) / NB * NB; j0 >= 0; j0 -= NB) {
+    int64_t jb = NB < k - j0 ? NB : k - j0, h = k - j0;
+    for (int64_t r = 0; r < h; r++)
+      for (int64_t p = 0; p < jb; p++)
+        w[r * jb + p] = a[(1 + j0 + r) + (j0 + p) * n];
+    F(dense_v)(w, h, jb);
+    if (!F(block_t)(w, h, jb, tau + j0, t, ww, s) ||
+        !F(larfb)(w, F(op)(t, jb, 1), jb, h, n, v + (1 + j0) * n, n, ww, s))
+      return 0;
+  }
+  return 1;
+}
+
 /* Matrices of a call */
 
 /* The routine on matrix [b] of the call [c], with the scratch [w] of
@@ -596,6 +1010,7 @@ static int F(form_q)(const T *a, int64_t m, int64_t n, int64_t ld,
 static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
   int64_t m = c->m, n = c->n;
   T *d = (T *)matrix_at(c, c->nops, b);
+  if (c->routine == EIGH) return F(eigh)(c, b, w, s);
   if (c->routine == QR) {
     /* a factored in w, then R and Q out. */
     int64_t k = m < n ? m : n, qc = c->complete ? m : k;
@@ -663,3 +1078,5 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
 #undef IMAG
 #undef SQRT
 #undef SAFMIN
+#undef EPS
+#undef TINY

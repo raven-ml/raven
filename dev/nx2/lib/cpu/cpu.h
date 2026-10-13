@@ -328,6 +328,7 @@ int nx_cpu_contract_on(int acc, const nx_contract_view *v,
 value nx_cpu_cholesky_on(int upper, value dst, value a, int threads);
 value nx_cpu_lu_on(value lu, value pivots, value perm, value a, int threads);
 value nx_cpu_qr_on(value q, value r, value a, int threads);
+value nx_cpu_eigh_on(value w, value v, value a, int threads);
 value nx_cpu_solve_triangular_on(int upper, int adjoint, int unit, value dst,
                                  value a, value b, int threads);
 

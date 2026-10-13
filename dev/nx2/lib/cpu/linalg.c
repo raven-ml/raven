@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Factorisations and triangular solves: Nx_kernel.S's cholesky, lu, qr
-   and solve_triangular.
+/* Factorisations, triangular solves and eigendecompositions: Nx_kernel.S's
+   cholesky, lu, qr, solve_triangular and eigh.
 
    A call computes a routine on each matrix of its operands' batch. Each
    matrix is copied once from its operand, whatever its layout, into its
@@ -70,7 +70,7 @@ static void *room(arena *s, int64_t bytes) {
 }
 
 /* The routines. */
-enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR };
+enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR, EIGH };
 
 /* A triangular solve: x ← t⁻¹ x for the triangle t, its diagonal read
    or taken as ones; or x ← x l⁻ᴴ for the lower l. */
@@ -78,11 +78,11 @@ typedef enum { LOWER, UPPER, UNIT_LOWER, UNIT_UPPER, ADJOINT_LOWER } solve;
 
 /* A call: its routine and attributes, 0 where it has none: [upper] for the
    triangle Upper, [complete] for complete factors, which q's shape states,
-   [adjoint] and [unit] for a solve's; its operand's [m] rows and [n]
+   [adjoint] and [unit] for a solve's, [vectors] where eigh computes v; its operand's [m] rows and [n]
    columns and, for a solve, the right-hand sides' count [r]; its arrays,
    the operands then the results, whose first [batch] axes are the batch. */
 typedef struct {
-  int routine, dt, w, upper, complete, adjoint, unit;
+  int routine, dt, w, upper, complete, adjoint, unit, vectors;
   int64_t m, n, r, matrices, per; /* per unit of the job */
   int nops, nres, batch;
   const nx_array *a;
@@ -249,13 +249,16 @@ static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* The elements of scratch a matrix of [c] takes besides its products':
-   a solve's triangle, or QR's factored matrix, its τ, a block's V and T,
-   two products of a block and a row (linalg_body.h). */
+   a solve's triangle; QR's factored matrix, its τ, a block's V and T,
+   two products of a block and a row; eigh's reduced matrix, its τ, a
+   panel's W or a block's V, T, two products of a block, then T's
+   diagonals, rotations and Z, as reals (linalg_body.h). */
 static int64_t scratch(const call *c) {
   int64_t m = c->m, n = c->n, big = m > n ? m : n, k = m < n ? m : n;
   switch (c->routine) {
     case SOLVE_TRIANGULAR: return n * n;
     case QR: return m * n + k + (m + NB + 2 * big + 1) * NB;
+    case EIGH: return 2 * n * n + 5 * n + (3 * n + NB) * NB;
     default: return 0;
   }
 }
@@ -293,6 +296,7 @@ static int results(const call *c, const int64_t *x, int xr, const int64_t *z,
       y[1][xr - 2] = q;
       return 1;
     }
+    case EIGH: ranks[0] = xr - 1; return 1;
     case SOLVE_TRIANGULAR:
       if (zr != xr) return 0;
       for (int i = 0; i < xr - 1; i++)
@@ -327,7 +331,9 @@ static int has_shape(value v, const int64_t *s, int r) {
 static value run(call c, const value *arrays, int threads) {
   int solve = c.routine == SOLVE_TRIANGULAR;
   c.nops = 1 + solve;
-  c.nres = c.routine == LU ? 3 : c.routine == QR ? 2 : 1;
+  c.nres = c.routine == LU                         ? 3
+           : c.routine == QR || (c.routine == EIGH && c.vectors) ? 2
+                                                                 : 1;
   c.dt = nx_array_dtype(arrays[0]);
   if (!takes(c.dt)) return Val_int(NX_DTYPE);
   int64_t x[2 * NX_MAX_RANK], z[2 * NX_MAX_RANK], y[3][NX_MAX_RANK], off;
@@ -357,7 +363,12 @@ static value run(call c, const value *arrays, int threads) {
   c.w = nx_cpu_width(c.dt);
   c.scratch = scratch(&c);
   int64_t order = c.m > c.n ? c.m : c.n;
-  int64_t flops = c.matrices * c.m * c.n * (solve ? c.r : order / 3 + 1);
+  /* eigh's flops: about 9 n³ with vectors, 4/3 n³ without (xHEEV). */
+  int64_t per = solve                 ? c.r
+                : c.routine != EIGH ? order / 3 + 1
+                : c.vectors           ? 9 * order
+                                      : 4 * order / 3 + 1;
+  int64_t flops = c.matrices * c.m * c.n * per;
   int64_t bytes = c.matrices * c.m * (c.n + c.r) * c.w;
   /* A matrix a unit where there are enough for the threads, else one unit
      of all, whose GEMM updates take the threads. */
@@ -424,6 +435,13 @@ value nx_cpu_solve_triangular_on(int upper, int adjoint, int unit, value dst,
   CAMLreturn(run(c, arrays, threads));
 }
 
+value nx_cpu_eigh_on(value w, value v, value a, int threads) {
+  CAMLparam3(w, v, a);
+  int vectors = Is_some(v);
+  value arrays[] = {a, w, vectors ? Some_val(v) : Val_unit};
+  CAMLreturn(run((call){.routine = EIGH, .vectors = vectors}, arrays, threads));
+}
+
 value nx_cpu_cholesky(value triangle, value dst, value a) {
   return nx_cpu_cholesky_on(Int_val(triangle) == NX_TRIANGLE_UPPER, dst, a,
                             0);
@@ -448,4 +466,8 @@ value nx_cpu_solve_triangular_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_solve_triangular(argv[0], argv[1], argv[2], argv[3], argv[4],
                                  argv[5]);
+}
+
+value nx_cpu_eigh(value w, value v, value a) {
+  return nx_cpu_eigh_on(w, v, a, 0);
 }

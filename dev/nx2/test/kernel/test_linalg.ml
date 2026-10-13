@@ -222,6 +222,15 @@ let definite r dt n =
       if i = j then { Complex.re = (v.re /. f) +. delta; im = 0. }
       else { Complex.re = v.re /. f; im = v.im /. f })
 
+(* A Hermitian matrix of order [n], its lower triangle drawn. *)
+let hermitian r dt n =
+  let m = Array.init (n * n) (fun _ -> draw r dt) in
+  Array.init (n * n) (fun k ->
+      let i = k / n and j = k mod n in
+      if i > j then m.(k)
+      else if i = j then { (m.(k)) with im = 0. }
+      else Complex.conj m.((j * n) + i))
+
 (* A triangular matrix of order [n] that substitution solves stably: its
    diagonal of magnitude 1 to 2, the rest drawn in [-1/n, 1/n]. *)
 let triangular r dt n =
@@ -243,6 +252,7 @@ type routine =
   | Cholesky of Nx_kernel.triangle
   | Lu
   | Qr of Nx_kernel.factors
+  | Eigh of bool  (** with vectors *)
   | Solve of {
       triangle : Nx_kernel.triangle;
       adjoint : bool;
@@ -274,6 +284,13 @@ let run ?(k : (module Nx_kernel.S) option) (b : Support.backend) r ops =
         let sq, sr = ok (Shape.qr f (shape ops.(0))) in
         let q = make sq and r = make sr in
         ([| A.Any q; A.Any r |], K.qr ~q ~r a)
+    | Eigh vectors ->
+        let sw, sv = ok (Shape.eigh (shape ops.(0))) in
+        let w = make sw in
+        if vectors then
+          let v = make sv in
+          ([| A.Any w; A.Any v |], K.eigh ~w ~v a)
+        else ([| A.Any w |], K.eigh ~w a)
     | Solve { triangle; adjoint; unit_diagonal } ->
         let rhs = A.expect dt ops.(1) in
         let dst =
@@ -300,6 +317,11 @@ let solve c =
 let cholesky_operand c =
   let r = Random.State.make [| c.seed |] in
   let v = Array.concat (List.init (count c) (fun _ -> definite r c.dt c.n)) in
+  of_values c.dt (square c) (grade c ~symmetric:true ~rows:c.n ~cols:c.n v)
+
+let eigh_operand c =
+  let r = Random.State.make [| c.seed |] in
+  let v = Array.concat (List.init (count c) (fun _ -> hermitian r c.dt c.n)) in
   of_values c.dt (square c) (grade c ~symmetric:true ~rows:c.n ~cols:c.n v)
 
 let solve_operands c =
@@ -567,6 +589,85 @@ let law_qr (b : Support.backend) c =
       done;
       check_worst w
 
+(* a v = v diag w with ‖a − v diag w vᴴ‖_F <= γ(16n) ‖a‖_F and
+   ‖vᴴv − I‖_F <= γ(16n); w ascending and real; the values alone the bits
+   of the vectors' call. *)
+let law_eigh (b : Support.backend) c =
+  let x = laid_out c.how (eigh_operand c) in
+  match (run b (Eigh true) [| x |], run b (Eigh false) [| x |]) with
+  | None, _ | _, None -> ()
+  | Some y, Some y' ->
+      equal ~msg:"the values alone" same_bits (bits y.(0)) (bits y'.(0));
+      let a = values x and w = values y.(0) and v = values y.(1) and n = c.n in
+      let g = gamma c.dt (16 * n) in
+      let worst = { ratio = 0.; where = "" } in
+      for t = 0 to count c - 1 do
+        let wt j = w.((t * n) + j) in
+        for j = 0 to n - 1 do
+          equal ~msg:"w is real" int64 0L (Int64.bits_of_float (wt j).im);
+          if j > 0 && not ((wt (j - 1)).re <= (wt j).re) then
+            failf "matrix %d: w not ascending at %d" t j
+        done;
+        let res = ref 0. and norm = ref 0. and orth = ref 0. in
+        for i = 0 to n - 1 do
+          for j = 0 to n - 1 do
+            let aij = at a ~rows:n ~cols:n t i j in
+            let s = sum () and o = sum () in
+            add s.re aij.re;
+            add s.im aij.im;
+            if i = j then add o.re (-1.);
+            for p = 0 to n - 1 do
+              let vip = at v ~rows:n ~cols:n t i p in
+              add_cprod ~conj:true s
+                (Complex.mul vip { Complex.re = -.(wt p).re; im = 0. })
+                (at v ~rows:n ~cols:n t j p);
+              add_cprod ~conj:true o
+                (at v ~rows:n ~cols:n t p i)
+                (at v ~rows:n ~cols:n t p j)
+            done;
+            res := !res +. Complex.norm2 (total s);
+            orth := !orth +. Complex.norm2 (total o);
+            norm := !norm +. Complex.norm2 aij
+          done
+        done;
+        worse worst ~bound:(g *. sqrt !norm) ~residual:(sqrt !res) (fun () ->
+            Printf.sprintf "matrix %d: a - v diag w vᴴ" t);
+        worse worst ~bound:g ~residual:(sqrt !orth) (fun () ->
+            Printf.sprintf "matrix %d: vᴴv - I" t)
+      done;
+      check_worst worst
+
+(* Of a = H diag λ H, H = I − 2 u uᵀ / uᵀu, the eigenvalues are λ's within
+   γ(16n) max |λ|, ascending; λ draws repeats. *)
+let law_eigh_spectrum (b : Support.backend) c =
+  let n = c.n and r = Random.State.make [| c.seed |] in
+  let l = Array.init n (fun _ -> Float.round (8. *. uniform r) /. 8.) in
+  let u = Array.init n (fun _ -> uniform r) in
+  let uu = Array.fold_left (fun s x -> s +. (x *. x)) 0. u in
+  let lu = ref 0. in
+  Array.iteri (fun k x -> lu := !lu +. (l.(k) *. x *. x)) u;
+  let a =
+    Array.init (n * n) (fun k ->
+        let i = k / n and j = k mod n in
+        let h = u.(i) *. u.(j) /. uu in
+        let d = if i = j then l.(i) else 0. in
+        { Complex.re = d -. (2. *. h *. (l.(i) +. l.(j))) +. (4. *. h *. !lu /. uu); im = 0. })
+  in
+  match run b (Eigh false) [| of_values c.dt [| n; n |] a |] with
+  | None -> ()
+  | Some y ->
+      let w = values y.(0) in
+      Array.sort compare l;
+      let big = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. l in
+      let g = gamma c.dt (16 * n) *. big in
+      let worst = { ratio = 0.; where = "" } in
+      Array.iteri
+        (fun j x ->
+          worse worst ~bound:g ~residual:(Float.abs (w.(j).re -. x)) (fun () ->
+              Printf.sprintf "eigenvalue %d: %h, not %h" j w.(j).re x))
+        l;
+      check_worst worst
+
 (* lu's pivot: a scan of the column from the diagonal down that
    moves to each later row of greater magnitude, |re| + |im| on complex
    numbers, a NaN never greater and nothing greater than a NaN. Each case is
@@ -643,6 +744,21 @@ let law_cholesky_fails (b : Support.backend) c =
     check_alone b (Cholesky Lower) ~dt:c.dt ~rows:c.n ~cols:c.n ~spoil
       [| cholesky_operand c |]
 
+(* NaN or an infinity in the lower triangle. *)
+let law_eigh_fails (b : Support.backend) c =
+  let c = one c in
+  if c.n > 0 then
+    let i = c.seed mod c.n in
+    let j = c.seed / c.n mod (i + 1) in
+    let bad = [| Float.nan; Float.infinity; Float.neg_infinity |].(c.seed mod 3) in
+    let spoil v =
+      let v = Array.copy v in
+      v.((i * c.n) + j) <- { Complex.re = bad; im = 0. };
+      v
+    in
+    check_alone b (Eigh true) ~dt:c.dt ~rows:c.n ~cols:1 ~spoil
+      [| eigh_operand c |]
+
 let law_solve_fails (b : Support.backend) c =
   let c = { (one c) with unit_diagonal = false; r = max 1 c.r } in
   if c.n > 0 then
@@ -676,6 +792,16 @@ let law_cholesky_reads (b : Support.backend) c =
   | Some y, Some z -> equal same_bits (bits y.(0)) (bits z.(0))
   | _ -> ()
 
+let law_eigh_reads (b : Support.backend) c =
+  let x = eigh_operand c in
+  let v = garbage c (values x) ~unread:(fun i j -> j > i) ~diagonal_im:true in
+  let y = of_values c.dt (square c) v in
+  match (run b (Eigh true) [| x |], run b (Eigh true) [| y |]) with
+  | Some y, Some z ->
+      equal ~msg:"w" same_bits (bits y.(0)) (bits z.(0));
+      equal ~msg:"v" same_bits (bits y.(1)) (bits z.(1))
+  | _ -> ()
+
 let law_solve_reads (b : Support.backend) c =
   let ops = solve_operands c in
   let unread i j =
@@ -699,6 +825,12 @@ let law_layouts (b : Support.backend) c =
   | Some y, Some z ->
       equal ~msg:"lu" same_bits (bits y.(0)) (bits z.(0));
       equal ~msg:"lu's pivots" (array int) (int64s y.(1)) (int64s z.(1))
+  | _ -> ());
+  let x = eigh_operand c in
+  (match (run b (Eigh true) [| x |], run b (Eigh true) [| laid_out c.how x |]) with
+  | Some y, Some z ->
+      equal ~msg:"eigh's w" same_bits (bits y.(0)) (bits z.(0));
+      equal ~msg:"eigh's v" same_bits (bits y.(1)) (bits z.(1))
   | _ -> ());
   let ops = solve_operands { c with batch = [| 1 |] } in
   let k = 3 in
@@ -734,9 +866,10 @@ let threads_agree (b : Support.backend) c =
       ("solve", solve c, ops);
       ("lu", Lu, [| lu |]);
       ("qr", Qr (factors c), [| lu |]);
+      ("eigh", Eigh true, [| eigh_operand c |]);
     ]
 
-(* nx.cpu computes Cholesky and triangular solves at the four dtypes, and
+(* nx.cpu computes its routines at the four dtypes, and
    its matrices on one thread give the job's bits. *)
 let law_cpu_threads b c =
   threads_agree b { c with batch = (if c.n > 17 then [| 2 |] else [| 9 |]) }
@@ -762,6 +895,8 @@ let routine_name = function
   | Lu -> "lu"
   | Qr Reduced -> "qr reduced"
   | Qr Complete -> "qr complete"
+  | Eigh true -> "eigh"
+  | Eigh false -> "eigh's values"
   | Solve _ -> "solve_triangular"
 
 let pp_misfit ppf c =
@@ -777,9 +912,14 @@ let shapes c =
   | Cholesky _ -> Result.map (fun y -> [| y |]) (S.cholesky c.a)
   | Lu -> Result.map (fun (l, p, q) -> [| l; p; q |]) (S.lu c.a)
   | Qr f -> Result.map (fun (q, r) -> [| q; r |]) (S.qr f c.a)
+  | Eigh v ->
+      Result.map (fun (w, x) -> if v then [| w; x |] else [| w |]) (S.eigh c.a)
   | Solve _ -> Result.map (fun y -> [| y |]) (S.solve_triangular c.a c.b)
 
-let arity = function Cholesky _ | Solve _ -> 1 | Lu -> 3 | Qr _ -> 2
+let arity = function
+  | Cholesky _ | Solve _ | Eigh false -> 1
+  | Lu -> 3
+  | Qr _ | Eigh true -> 2
 
 (* Square matrices half the time, and a vector now and then. *)
 let misfits =
@@ -789,7 +929,8 @@ let misfits =
        Solve { triangle = Lower; adjoint = false; unit_diagonal = false }
      in
      let* routine =
-       of_list [ Cholesky Lower; Lu; Qr Reduced; Qr Complete; solve ]
+       of_list
+         [ Cholesky Lower; Lu; Qr Reduced; Qr Complete; Eigh true; Eigh false; solve ]
      in
      let* batch = array ~size:(int_range 0 2) (int_range 0 3) in
      let* m = int_range 0 4 in
@@ -827,6 +968,8 @@ let law_cpu_refuses (b : Support.backend) c =
     | Cholesky t -> K.cholesky t ~dst:(dst 0) a
     | Lu -> K.lu ~lu:(dst 0) ~pivots:(ints 1) ~perm:(ints 2) a
     | Qr _ -> K.qr ~q:(dst 0) ~r:(dst 1) a
+    | Eigh true -> K.eigh ~w:(dst 0) ~v:(dst 1) a
+    | Eigh false -> K.eigh ~w:(dst 0) a
     | Solve { triangle; adjoint; unit_diagonal } ->
         K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst:(dst 0) a
           (zeros c.b)
@@ -884,8 +1027,6 @@ let test_cpu_refusals (b : Support.backend) () =
   let sq () = A.create Rig.host D.Complex64 [| 2; 2 |] in
   declines ~msg:"svd" (K.svd ~s:(w ()) ~vectors:(~u:(sq ()), ~vh:(sq ())) c64);
   declines ~msg:"svd's values" (K.svd ~s:(w ()) c64);
-  declines ~msg:"eigh" (K.eigh ~w:(w ()) ~v:(sq ()) c64);
-  declines ~msg:"eigh's values" (K.eigh ~w:(w ()) c64);
   declines ~msg:"eig" (K.eig ~w:(w ()) ~v:(sq ()) c64);
   declines ~msg:"eig's values" (K.eig ~w:(w ()) c64)
 
@@ -964,9 +1105,17 @@ let laws (b : Support.backend) =
         (run (law_lu b));
       prop "QR's factors meet their relations within γ(k(2m + 10))" case
         (run (law_qr b));
+      prop "eigh's results meet their relations within γ(16n)" case
+        (run (law_eigh b));
+      prop "eigh's eigenvalues are within γ(16n) ‖a‖₂ of the exact ones" case
+        (run (law_eigh_spectrum b));
       prop "a matrix that is not definite is NaN alone" case
         (run (law_cholesky_fails b));
       prop "a singular triangle is NaN alone" case (run (law_solve_fails b));
+      prop "eigh of a matrix with NaN or an infinity is NaN alone" case
+        (run (law_eigh_fails b));
+      prop "eigh reads the lower triangle and the diagonal's real parts" case
+        (run (law_eigh_reads b));
       prop "Cholesky reads the lower triangle and the diagonal's real parts"
         case (run (law_cholesky_reads b));
       prop "a solve reads its triangle, and its diagonal unless unit" case

@@ -66,8 +66,8 @@
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take. The transforms decline the
-    others. [cholesky], [lu], [qr] and [solve_triangular] compute them;
-    [svd], [eigh] and [eig] decline them. The four refuse with
+    others. [cholesky], [lu], [qr], [solve_triangular] and [eigh] compute
+    them; [svd] and [eig] decline them. The five refuse with
     [Shape_mismatch] what {!Nx_kernel.Shape} answers [Error] for and results
     of other shapes. A matrix's results are a function of its values alone, whatever
     its batch, its layout or the threads. With [γ(k) = k u / (1 - k u)],
@@ -84,7 +84,10 @@
       complete, and [r]'s diagonal is real, of either sign.
     - [solve_triangular]: [(op a + Δ) x = b] with [|Δ| <= γ(2n) |op a|] for
       each column of [b], [op a] the triangle read, conjugate-transposed
-      under [adjoint]. *)
+      under [adjoint].
+    - [eigh]: with [g = γ(16n)], [‖a - v diag w vᴴ‖_F <= g ‖a‖_F] and
+      [‖vᴴv - I‖_F <= g]; each eigenvalue within [g ‖a‖₂] of the exact one.
+      [w] alone has the bits it has with [v]. *)
 
 include Nx_kernel.S
 
