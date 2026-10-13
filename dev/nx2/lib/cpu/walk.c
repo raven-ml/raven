@@ -9,11 +9,13 @@
    so the walk's order decides no bit, only how memory is read. Its rules,
    in order:
 
-   0. A loop of one axis that one block holds, as a small operation's is,
-      runs as that block on the calling thread: the rules below and a job
-      would decide the same at a cost that rivals the block's. This rule is
-      cpu.h's nx_cpu_walk, inline, so that a kernel calls its block
-      function directly; the others are nx_cpu_cut.
+   0. A loop of one axis that one block holds and one thread runs, as a
+      small operation's is, runs as that block on the calling thread: the
+      rules below and a job would decide the same at a cost that rivals
+      the block's. A copy's block of 64 Ki elements can cost more than a
+      thread's share, and goes to the rules below. This rule is cpu.h's
+      nx_cpu_walk, inline, so that a kernel calls its block function
+      directly; the others are nx_cpu_cut.
    1. An innermost axis of fewer than SHORT elements, as a small window's,
       would make a block of a few elements per row: the nearest outer axis
       of at least SHORT becomes the innermost. Byte-wide operands only: a
@@ -31,10 +33,14 @@
 
    The units of the job are planes (indices of the axes outside the rows) ×
    blocks of rows × pieces of a row, and unit u's block is computed from u
-   alone, so any thread runs any unit. Where a block is a whole plane of
-   fewer than PLANES elements, a unit's block takes the planes that follow
-   it along the next axis out too, up to PLANES elements: the kernel gets
-   them in one call. */
+   alone, so any thread runs any unit. A job of several threads has at
+   least NX_CPU_CHUNKS blocks a thread, so that its threads' strips end
+   together: in 64 Ki-element blocks a 1024x1024 float32 copy left 14
+   threads one or two blocks each, 12.7 us on fudge against 9.4 in blocks
+   of 9 Ki. Where a block is a whole plane of fewer than PLANES elements,
+   a unit's block takes the planes that follow it along the next axis out
+   too, up to PLANES elements and no more than a block holds: the kernel
+   gets them in one call. */
 
 #include "cpu.h"
 
@@ -54,12 +60,6 @@
 #define TILE_WIDE 128
 #endif
 #define TILE_SPAN (1 << 20)
-
-/* A walk that moves elements one by one, through tiles or along strides,
-   costs as much time as this many times its bytes moved by memcpy, and its
-   job sizes its threads so: a transposed 512x512 float32 copy, tile by
-   tile, takes 4.6 times memcpy's time on one kimchi core. */
-#define STRIDED_COST 4
 
 /* The elements of a unit of small planes. A unit's first block costs
    divisions, which a unit per plane of 2x2 windows, 52 elements, pays for
@@ -181,6 +181,19 @@ void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
       tiled = 1;
     }
   }
+  int64_t elements = 1;
+  for (int i = 0; i < r; i++) elements *= wl->extent[i];
+  int strided = tiled;
+  for (int k = 0; k < n; k++) strided |= magnitude(wl->step[k][r - 1]) > 1;
+  int64_t bytes = elements * bits / 8;
+  int64_t cost = nx_cpu_walk_cost(bytes, weight, strided);
+  /* A job's threads share its blocks, but a tile keeps its width: a
+     512x512 transposed copy took 16.3 us on six of fudge's cores in 52
+     tiles 42 elements wide, 13.7 in four tiles of 128x512. */
+  int64_t threads = nx_cpu_threads(bytes, cost);
+  int64_t share = (elements + threads * NX_CPU_CHUNKS - 1) /
+                  (threads * NX_CPU_CHUNKS);
+  if (!tiled && threads > 1 && share < most) most = share;
   int64_t len = wl->extent[r - 1], height = r > 1 ? wl->extent[r - 2] : 1;
   if (tiled) {
     /* The tile reads its input's lines whole and writes long runs of the
@@ -206,21 +219,16 @@ void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
   }
   w.pieces = (len + w.n0 - 1) / w.n0;
   w.rowblocks = (height + w.n1 - 1) / w.n1;
-  int64_t elements = 1;
-  for (int i = 0; i < r; i++) elements *= wl->extent[i];
   int64_t planes = elements / (len * height);
   if (r > 2) {
     /* A block of a whole small plane runs with the next ones in its
        unit. */
-    if (w.pieces == 1 && w.rowblocks == 1 && len * height < PLANES)
-      w.n2 = PLANES / (len * height);
+    int64_t merged = PLANES < most ? PLANES : most;
+    if (w.pieces == 1 && w.rowblocks == 1 && len * height < merged)
+      w.n2 = merged / (len * height);
     if (w.n2 > wl->extent[r - 3]) w.n2 = wl->extent[r - 3];
     w.planeblocks = (wl->extent[r - 3] + w.n2 - 1) / w.n2;
     planes = planes / wl->extent[r - 3] * w.planeblocks;
   }
-  int strided = tiled;
-  for (int k = 0; k < n; k++) strided |= magnitude(wl->step[k][r - 1]) > 1;
-  int64_t bytes = elements * bits / 8;
-  nx_cpu_job(planes * w.rowblocks * w.pieces, bytes,
-             weight * (strided ? STRIDED_COST * bytes : bytes), units, &w);
+  nx_cpu_job(planes * w.rowblocks * w.pieces, bytes, cost, units, &w);
 }

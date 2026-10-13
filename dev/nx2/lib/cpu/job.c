@@ -7,16 +7,17 @@
    runtime.
 
    A job's threads follow from its cost, the bytes memcpy would move in the
-   time it takes: one thread per THREAD_BYTES. Starting a job of several
-   threads costs 1 to 5 us on the M1 Max and kimchi, and at 384 KiB a
-   thread a 1.5 MiB int8 to int4 pack runs in 6.2 us on four threads,
-   against 7.7 on three at 512 KiB (kimchi). The threads are the
-   performance cores while the bytes the job touches fit in the caches,
-   and every core past CACHE_BYTES: a job the caches hold ran up to 1.6
-   times as long on all ten of the M1 Max's cores as on its eight
-   performance cores, and past the caches the efficiency cores add their
-   share of the memory's bandwidth (a 64 MiB copy: 665 us on ten, 789 on
-   eight).
+   time it takes: one thread per NX_CPU_THREAD_BYTES (cpu.h), the bytes a
+   core moves in the time a job of several threads takes to start. On fudge,
+   a Core Ultra 5 235, today's pool starts a job in 0.5 to 1.2 us: 128 KiB,
+   at which a 1.5 MiB int8 to int4 pack takes 3.6 us against 5.8 at 384 KiB,
+   a 64 Ki-element float32 copy 1.8 us against 3.7, a 64^3 float32 product
+   1.8 us against 3.8. The threads are the performance cores while the bytes the job
+   touches fit in the caches, and every core past CACHE_BYTES: a job the
+   caches hold ran up to 1.6 times as long on all ten of the M1 Max's cores
+   as on its eight performance cores, and past the caches the efficiency
+   cores add their share of the memory's bandwidth (a 64 MiB copy: 665 us on
+   ten, 789 on eight).
 
    A job of more than one thread releases the runtime, since a domain that
    holds it through a job keeps every domain from collecting, and so does a
@@ -37,17 +38,11 @@
 
 #include "cpu.h"
 
-#define THREAD_BYTES (384 * 1024)
 #define CACHE_BYTES (32 * 1024 * 1024)
 #define HOLD_BYTES (1024 * 1024)
 
-/* Chunks per thread: a thread that finishes its strip takes the chunks left
-   in the others', so a thread that runs slower, an efficiency core's say,
-   runs fewer. */
-#define CHUNKS 8
-
 int nx_cpu_threads(int64_t bytes, double cost) {
-  double threads = cost / THREAD_BYTES;
+  double threads = cost / NX_CPU_THREAD_BYTES;
   int cores =
       bytes > CACHE_BYTES ? rig_pool_cores() : rig_pool_performance_cores();
   if (threads > cores) return cores;
@@ -81,11 +76,12 @@ void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
     return;
   }
   job j = {body, ctx};
+  int64_t chunks = threads * NX_CPU_CHUNKS;
   if (released) {
-    rig_pool_run((int)threads, total, threads * CHUNKS, run_released, &j);
+    rig_pool_run((int)threads, total, chunks, run_released, &j);
     return;
   }
   caml_enter_blocking_section_no_pending();
-  rig_pool_run((int)threads, total, threads * CHUNKS, run_released, &j);
+  rig_pool_run((int)threads, total, chunks, run_released, &j);
   caml_leave_blocking_section();
 }

@@ -264,6 +264,11 @@ static inline int nx_cpu_width(int dt) {
 
 /* Jobs */
 
+/* Chunks a job cuts its units into per thread: a thread that finishes its
+   strip takes the chunks left in the others', so a thread that runs
+   slower, an efficiency core's say, runs fewer. */
+#define NX_CPU_CHUNKS 8
+
 /* Runs [body] over the units [0, total) of work that touches [bytes] bytes
    and takes as long as memcpy of [cost] bytes, on as many of the pool's
    threads as the cost pays for. A job of more than one thread, or a long
@@ -276,8 +281,10 @@ void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
                 void *ctx);
 
 /* The threads nx_cpu_job gives such work, if it has as many units: at
-   least 1. */
+   least 1, one per NX_CPU_THREAD_BYTES of cost, the bytes a core moves in
+   the time a job takes to start (job.c). */
 int nx_cpu_threads(int64_t bytes, double cost);
+#define NX_CPU_THREAD_BYTES (128 * 1024)
 
 /* Folds */
 
@@ -331,17 +338,31 @@ typedef void (*nx_cpu_block_fn)(const nx_cpu_block *b, void *ctx);
 
 /* Calls [f] on blocks of at most [most] elements that cover the loop [l]
    over the [n] operands [a], operand 0 the written one, each element once,
-   from a job, or on the calling thread for a loop that one block holds.
-   [f] takes [weight] times as long as a memcpy of the operands' bytes, at
-   least 1, and the job sizes its threads so. Order and threads decide no
-   bit: [f] computes each element from operands' elements at its index
-   alone. Inline, so that a kernel's call of [f] on its one block is direct
-   (walk.c, rule 0). */
+   from a job, or on the calling thread for a loop that one block holds
+   and one thread runs. [f] takes [weight] times as long as a memcpy of
+   the operands' bytes, at least 1, and the job sizes its threads by
+   nx_cpu_walk_cost. Order and threads decide no bit: [f] computes each element
+   from operands' elements at its index alone. Inline, so that a kernel's
+   call of [f] on its one block is direct (walk.c, rule 0). */
 static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
                                int64_t most, int64_t weight,
                                nx_cpu_block_fn f, void *ctx);
 
-/* nx_cpu_walk for a loop that one block does not hold (walk.c, rules 1 to
+/* A walk that moves elements one by one, through tiles or along strides,
+   costs as much time as this many times its bytes moved by memcpy: a
+   transposed 512x512 float32 copy, tile by tile, takes 4.6 times memcpy's
+   time on one kimchi core. */
+#define NX_CPU_STRIDED_COST 4
+
+/* The cost (job.c) of a walk over [bytes] whose block function takes
+   [weight] times as long as memcpy, [strided] where an operand steps by
+   more than one element along the rows. */
+static inline int64_t nx_cpu_walk_cost(int64_t bytes, int64_t weight,
+                                       int strided) {
+  return weight * (strided ? NX_CPU_STRIDED_COST : 1) * bytes;
+}
+
+/* nx_cpu_walk for a loop that rule 0 does not run (walk.c, rules 1 to
    3). */
 void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
                 int64_t weight, nx_cpu_block_fn f, void *ctx);
@@ -354,9 +375,19 @@ static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
     return;
   }
   nx_cpu_block b = {.n0 = l->extent[0], .n1 = 1, .n2 = 1};
+  int64_t bits = 0;
+  int strided = 0;
   for (int k = 0; k < n; k++) {
     b.at[k] = l->first[k];
     b.s0[k] = l->step[k][0];
+    bits += a[k].bits;
+    strided |= b.s0[k] > 1 || b.s0[k] < -1;
+  }
+  /* Below two threads' cost, nx_cpu_threads gives one. */
+  int64_t bytes = b.n0 * bits / 8;
+  if (nx_cpu_walk_cost(bytes, weight, strided) >= 2 * NX_CPU_THREAD_BYTES) {
+    nx_cpu_cut(n, a, l, most, weight, f, ctx);
+    return;
   }
   if (b.n0 > 0) f(&b, ctx);
 }
