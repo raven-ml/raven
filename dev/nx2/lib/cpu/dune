@@ -11,6 +11,9 @@
 ; gcc vectorises at -O2 only the loops that need no remainder and no check
 ; of their pointers' overlap, so loops of a run-time count stay scalar
 ; there: its dynamic cost model vectorises them as clang does at -O2.
+; gcc also keeps a loop scalar where its selects join more than four
+; values in one place, as the special values of log, log2, log1p and pow
+; do: a bound of 16 vectorises every kind.
 
 (library
  (name nx_cpu)
@@ -67,7 +70,8 @@
  (action
   (with-stdout-to
    %{target}
-   (echo "(-fvect-cost-model=dynamic)"))))
+   (echo
+    "(-fvect-cost-model=dynamic --param=max-tree-if-conversion-phi-args=16)"))))
 
 (rule
  (target vector_flags.sexp)

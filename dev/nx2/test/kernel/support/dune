@@ -1,6 +1,6 @@
 ; nx_kinds.h's kinds by name, compiled with every dev/nx2 C library's flags,
-; and their loops per target as nx.cpu compiles its conversions. The loops
-; run at the target nx.cpu picked.
+; and their loops per target as nx.cpu compiles its rows, vectoriser flags
+; included. The loops run at the target nx.cpu picked.
 
 (library
  (name nx_kinds_support)
@@ -15,6 +15,9 @@
    ../../../lib/array/nx_dtype.h
    nx_kinds_support.h
    nx_kinds_strata.h)
+  (flags
+   :standard
+   (:include ../../../lib/cpu/vector_flags.sexp))
   (names nx_kinds_support_stubs nx_kinds_support_loops))
  (foreign_stubs
   (language c)
@@ -27,6 +30,7 @@
   (flags
    :standard
    -DNX_CPU_V3
+   (:include ../../../lib/cpu/vector_flags.sexp)
    (:include ../../../lib/cpu/v3_flags.sexp))
   (names nx_kinds_support_loops_v3)))
 
