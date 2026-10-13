@@ -4,11 +4,12 @@
   ---------------------------------------------------------------------------*/
 
 /* This executable's wait, the system call rig's waits make: select's form
-   for sets past FD_SETSIZE on macOS, poll elsewhere. The next one that
-   waits on descriptors without a timeout first sends the armed signal, then
-   waits at most a second. A signal sent there comes after the OCaml
-   runtime's last look at its pending signals, just before the system call
-   blocks. */
+   for sets past FD_SETSIZE on macOS, poll elsewhere, which glibc names
+   __poll_chk when built with _FORTIFY_SOURCE=3, as Ubuntu's gcc builds by
+   default. The first wait on descriptors once armed sends the armed
+   signal, then waits at most a second. A signal sent there comes after
+   the OCaml runtime's last look at its pending signals, just before the
+   system call blocks. */
 
 #define _GNU_SOURCE
 #include <caml/mlvalues.h>
@@ -54,6 +55,12 @@ value gap_blocked(value unit) {
   return Val_bool(blocked);
 }
 
+/* Whether the signal is still armed: no wait reached the calls below. */
+value gap_missed(value unit) {
+  (void)unit;
+  return Val_bool(armed);
+}
+
 /* Sends the armed signal, once. */
 static int fire(void) {
   if (!armed) return 0;
@@ -73,20 +80,30 @@ int gap_select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *t) {
                            struct timeval *);
   select_fn real = (select_fn)dlsym(RTLD_NEXT, WAIT_NAME);
   if (real == NULL) fail("dlsym select");
-  if (r == NULL || t != NULL || !fire()) return real(n, r, w, e, t);
+  if (r == NULL || !fire()) return real(n, r, w, e, t);
   struct timeval bound = {1, 0};
   int rc = real(n, r, w, e, &bound);
   blocked = rc == 0;
   return rc;
 }
 #else
-int poll(struct pollfd *fds, nfds_t n, int timeout) {
+static int gap_poll(struct pollfd *fds, nfds_t n, int timeout) {
   typedef int (*poll_fn)(struct pollfd *, nfds_t, int);
   poll_fn real = (poll_fn)dlsym(RTLD_NEXT, "poll");
   if (real == NULL) fail("dlsym poll");
-  if (timeout >= 0 || !fire()) return real(fds, n, timeout);
+  if (!fire()) return real(fds, n, timeout);
   int rc = real(fds, n, 1000);
   blocked = rc == 0;
   return rc;
+}
+
+int poll(struct pollfd *fds, nfds_t n, int timeout) {
+  return gap_poll(fds, n, timeout);
+}
+
+/* [fdslen] is the size of [fds], which glibc checks holds [n] entries. */
+int __poll_chk(struct pollfd *fds, nfds_t n, int timeout, size_t fdslen) {
+  if (fdslen / sizeof *fds < n) abort();
+  return gap_poll(fds, n, timeout);
 }
 #endif
