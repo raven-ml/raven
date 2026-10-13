@@ -3,17 +3,33 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* How partial sums combine: one output tile's sum cut into [splits] ranges,
-   each summed by its own block, those blocks the same in every way but
-   their range. Each block stores its partial; the last block to take the
-   tile's ticket adds the partials in range order, s0 + s1 + ... + s(n-1),
-   whichever order the blocks ran in. A family's kernels call it after
-   their own sums, before their epilogue. */
+/* How partial sums combine: one output tile's sum cut into [splits] ranges
+   of k (k_range), each summed by its own block, those blocks the same in
+   every way but their range. Each block stores its partial; the last block
+   to take the tile's ticket adds the partials in range order,
+   s0 + s1 + ... + s(n-1), whichever order the blocks ran in. A family's
+   kernels call it after their own sums, before their epilogue. */
 
 #ifndef NX_CUDA_COMBINE_CUH
 #define NX_CUDA_COMBINE_CUH
 
 #include <stdint.h>
+
+#include "kernels.h"
+
+/* Range [split] of [splits] of k, as k-tiles [t0, t1) of BK elements:
+   k's runs of NX_SPLIT_RUN elements shared out in order, range s taking
+   runs s * runs / splits to (s + 1) * runs / splits, the last one cut at
+   k's last k-tile. The bounds in elements depend on k and [splits] alone,
+   never on a family's k-tile. */
+template <int BK>
+__device__ void k_range(int k, int split, int splits, int &t0, int &t1) {
+  static_assert(NX_SPLIT_RUN % BK == 0, "a run is whole k-tiles");
+  constexpr int PER = NX_SPLIT_RUN / BK;
+  const int tiles = (k + BK - 1) / BK, runs = (tiles + PER - 1) / PER;
+  t0 = split * runs / splits * PER;
+  t1 = min(tiles, (split + 1) * runs / splits * PER);
+}
 
 /* [v] is this thread's N values of the partial of its block: range
    blockIdx.y of the tile of blockIdx.x and blockIdx.z, whose [splits]

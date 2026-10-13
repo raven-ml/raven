@@ -5,9 +5,11 @@
 
 (** A contraction's launches on sm_89.
 
-    A call's launch is chosen from the contraction's dtypes, its view's
+    A call's launches are chosen from the contraction's dtypes, order, view's
     extents and strides, and its operands' alignment, never from the GPU's
-    size or clocks, so that a result's bits depend on its shape alone. *)
+    size or clocks. Every choice that changes a bit of a float sum reads k,
+    the dtypes and the order alone, so that a window of a result, computed
+    alone, has the whole's bits. *)
 
 type launch
 (** The type for launches: a call's operands, kernels, geometry and
@@ -16,7 +18,10 @@ type launch
 (** The type for what a plan does with a call that does work or none. *)
 type verdict =
   | Nothing  (** The result has no element: no work. *)
-  | Launch of launch  (** {!parts} and {!write} launch it. *)
+  | Launches of launch array
+      (** Windows of the result that together cover it, each once, launched
+          in order by {!parts} and {!write}; one for a call within one
+          launch's bounds. *)
 
 val choose :
   order:Nx_kernel.order ->
@@ -30,11 +35,13 @@ val choose :
   (verdict, Nx_array.answer) result
 (** [choose ~order ~batch ~contracting ~acc ~dst ~init a b] plans the
     contraction of [a] with [b], computed in [acc], into [dst], as
-    {!Nx_kernel.S.contract} takes it: a sum the mma kernels do not take runs
-    on the skinny kernels in lane order and on the SIMT kernels in chain
-    order. It is [Error] of what {!Nx_kernel.Contract_view.v} answers where
-    the axes do not group, and [Error Declined] where its kernels do not
-    compute the call. The operands' buffers are live. *)
+    {!Nx_kernel.S.contract} takes it: the mma kernels take a sum by its
+    dtypes, in either order; another float sum runs on the skinny kernels in
+    lane order and on the SIMT kernels in chain order, and an integer sum on
+    the skinny kernels at 16 rows or fewer. It is [Error] of what
+    {!Nx_kernel.Contract_view.v} answers where the axes do not group, and
+    [Error Declined] for dtypes its kernels do not sum and a contracted
+    extent above [2{^30}]. The operands' buffers are live. *)
 
 val workspace : launch -> int
 (** [workspace l] is the bytes of workspace [l] addresses. *)

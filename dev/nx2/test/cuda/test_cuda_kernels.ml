@@ -78,6 +78,7 @@ let constants () =
       ("b_vectors", K.b_vectors);
       ("b_across", K.b_across);
       ("y_whole", K.y_whole);
+      ("split_run", K.split_run);
       ("simt_bk", K.simt_bk);
       ("simt_stages", K.simt_stages);
       ("skinny_rows", K.skinny_rows);

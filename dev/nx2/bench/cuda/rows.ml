@@ -172,6 +172,12 @@ let contracts =
       contract ~order:lane e4m3 f32 bf16 1 5120 2880;
       contract ~order:lane bf16 f32 bf16 1 201088 2880;
       contract ~order:chain bf16 f32 bf16 4096 14336 4096;
+      (* long sums, k cut into 2 ranges: few outputs in chain order; a full
+         grid in chain order, whose partials (128 MiB) pass the kept
+         workspace; many rows of one column in lane order *)
+      contract ~order:chain bf16 f32 bf16 256 256 65536;
+      contract ~order:chain bf16 f32 bf16 4096 4096 65536;
+      contract ~order:lane bf16 f32 bf16 4096 1 4096;
       contract ~batch:64 ~order:chain bf16 f32 bf16 512 512 512;
       contract ~order:lane f32 f32 f32 1 5120 2880;
       (* float64 and integer sums, which the core computes *)

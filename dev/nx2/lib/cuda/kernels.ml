@@ -48,19 +48,21 @@ let kernels =
     ("contract_s8_kk_t128x256", Mma (S8, K, K, T128x256));
     ( "contract_simt_f32_128x256",
       Simt (F32, { tm = 16; tn = 8; warps_m = 2; warps_n = 4 }) );
+    ( "contract_simt_f32_128x128",
+      Simt (F32, { tm = 8; tn = 8; warps_m = 4; warps_n = 2 }) );
     ( "contract_simt_f32_64x64",
       Simt (F32, { tm = 8; tn = 4; warps_m = 2; warps_n = 2 }) );
     ("contract_skinny_f32", Skinny F32);
-    ( "contract_simt_f32_16x128",
-      Simt (F32, { tm = 4; tn = 4; warps_m = 1; warps_n = 4 }) );
+    ( "contract_simt_f32_16x16",
+      Simt (F32, { tm = 4; tn = 2; warps_m = 1; warps_n = 1 }) );
     ( "contract_simt_f64_64x64",
       Simt (F64, { tm = 4; tn = 4; warps_m = 4; warps_n = 2 }) );
     ( "contract_simt_i64_64x64",
       Simt (I64, { tm = 4; tn = 4; warps_m = 4; warps_n = 2 }) );
     ("contract_skinny_f64", Skinny F64);
     ("contract_skinny_i64", Skinny I64);
-    ( "contract_simt_f64_8x128",
-      Simt (F64, { tm = 2; tn = 4; warps_m = 1; warps_n = 4 }) );
+    ( "contract_simt_f64_8x32",
+      Simt (F64, { tm = 2; tn = 4; warps_m = 1; warps_n = 1 }) );
     ("reduce_rows", Reduce);
     ("reduce_cols", Reduce);
     ("reduce_tree", Reduce);
@@ -89,6 +91,9 @@ let a_vectors = 1
 let b_vectors = 2
 let b_across = 4
 let y_whole = 8
+
+(* NX_SPLIT_RUN. *)
+let split_run = 128
 
 (* NX_SIMT_BK and NX_SIMT_STAGES. *)
 let simt_bk = 16

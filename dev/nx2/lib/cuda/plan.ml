@@ -7,9 +7,15 @@
    or y is complex or narrower than a byte; a float operand or init is wider
    than a float accumulator, which would round it before the sum; init is of the
    other kind than the accumulator; an integer meets a float accumulator or the
-   reverse; the batch is above 65,535 (the grid's z); m, n or k is above 2^31 -
-   1; or a batch element has more than 2^31 - 1 output tiles (the grid's x). A
-   call whose axes do not group answers what Contract_view.v answers. *)
+   reverse; or k is above 2^30. A call whose axes do not group answers what
+   Contract_view.v answers.
+
+   Every float output's association is fixed by k, the dtypes and the order:
+   the family by the dtypes and the order, the split by k and the order. The
+   tile, the packs and the cut into launches follow the extents and the layouts
+   and change no bit, so that a window of a result computed alone has the
+   whole's bits. An integer sum, exact in its wrapping, also takes its family
+   by its rows. *)
 
 module K = Kernels
 module V = Nx_kernel.Contract_view
@@ -88,11 +94,13 @@ let find_mma kind a b t = find_mma_from 0 kind a b t
 
 (* A SIMT instance's block of outputs, its threads and its efficiency, its
    outputs per unit of time against the 128 x 256 block's, in percent, on
-   sm_89. *)
+   sm_89: 90 for the 128 x 128 block at 8192 x 8192 x 8192. *)
 let simt_bm (s : K.simt) = s.warps_m * 4 * s.tm
 let simt_bn (s : K.simt) = s.warps_n * 8 * s.tn
 let simt_threads (s : K.simt) = s.warps_m * s.warps_n * 32
-let simt_efficiency s = if simt_bm s * simt_bn s >= 128 * 256 then 100 else 60
+let simt_efficiency s =
+  let outputs = simt_bm s * simt_bn s in
+  if outputs >= 128 * 256 then 100 else if outputs >= 128 * 128 then 90 else 60
 
 let rec find_skinny_from k sum =
   if k = count then -1
@@ -109,13 +117,15 @@ let shared (s : K.shape) = s.stages * (s.bm + s.bn) * s.bkb
 
 let max_int32 = 0x7fff_ffff
 
-(* The largest row, column and contracted extent the kernels take. They form
-   coordinates in int32: an extent plus a tile or a run, a split's first
-   k-tile, a row times an element's two bytes. Each stays below 2^31 from an
-   extent of 2^30. *)
+(* The largest row, column and contracted extent a launch takes. The kernels
+   form coordinates in int32: an extent plus a tile or a run, a split's first
+   k, a row times an element's two bytes. Each stays below 2^31 from an extent
+   of 2^30. *)
 let max_extent = 1 lsl 30
-let ceil_div a b = (a + b - 1) / b
 
+(* The most batch elements a launch takes: the grid's z. *)
+let max_batch = 65535
+let ceil_div a b = (a + b - 1) / b
 
 (* An operand a or b as it lies, which a pack copies into the workspace: its
    dtype, its first element (bytes into its slot) and its strides; its rows,
@@ -190,7 +200,7 @@ type launch = {
   tiles : int;
 }
 
-type verdict = Nothing | Launch of launch
+type verdict = Nothing | Launches of launch array
 
 let declined = Error Nx_array.Declined
 
@@ -255,16 +265,22 @@ let read_as (c : call) ~into ~pack_a ~pack_b =
   in
   (a, b, used_after c used b)
 
-(* The split count of a grid of [grid] blocks: doubled while the grid has fewer
-   than [target] blocks and each range keeps at least [k_min] of k, at most 16.
-   The targets are constants measured on an architecture's GPUs, never a GPU's
-   own count. *)
-let split_count grid target k k_min =
-  let s = ref 1 in
-  while !s < 16 && grid * !s < target && k / (2 * !s) >= k_min do
-    s := 2 * !s
-  done;
-  !s
+(* The runs of K.split_run elements a range of k takes at least, by order. nx
+   gives lane order to products of few rows or columns, whose outputs fill the
+   GPU only with their k cut, and chain order to products of many, which a
+   split only slows unless k is long. *)
+let chain_least = 256
+let lane_least = 16
+
+(* The ranges of k an output sums apart, then adds in order: one a
+   [chain_least] or [lane_least] runs, at least one and at most 16. A function
+   of k and the order alone, so that no window of a result sums otherwise than
+   the whole. *)
+let splits (c : call) =
+  let least =
+    match c.order with Nx_kernel.Chain -> chain_least | Lane -> lane_least
+  in
+  Int.max 1 (Int.min 16 (ceil_div c.k K.split_run / least))
 
 (* [c]'s launch of [kernel] over a and b as [read_as] gives them; with
    [splits] above 1, its partials, [sums] of [sum_bytes] a block, follow the
@@ -310,24 +326,27 @@ let efficiency : K.tile -> int = function
   | T64x64 -> 60
   | T16x64 -> 30
 
-(* The index in [K.tiles] of the mma tile of a product among those [kind] has an
-   instance of with k contiguous: the one of least cost, by its shape alone; m
-   <= 16 takes the 16-row tile, which larger m take where it costs least. -1 if
-   [kind] has none for the shape: the SIMT or skinny kernels sum it. *)
+(* The mma tile of a product among those [kind] has an instance of with k
+   contiguous: the one of least cost, by its shape alone; m <= 16 takes the
+   16-row tile, which every kind has and larger m take where it costs least.
+   Every tile sums an output alike, so the choice changes no bit. *)
 let mma_tile (c : call) kind =
-  let best = ref (-1) and least = ref 0. in
-  for i = 0 to Array.length K.tiles - 1 do
-    let t = K.tiles.(i) in
-    if find_mma kind K.K K.K t >= 0 && (c.m > 16 || t == K.T16x64) then begin
-      let s = K.shape t in
-      let cost = cost c s.bm s.bn (efficiency t) in
-      if !best < 0 || cost < !least then begin
-        least := cost;
-        best := i
+  if c.m <= 16 then K.T16x64
+  else begin
+    let best = ref K.T16x64 and least = ref Float.infinity in
+    for i = 0 to Array.length K.tiles - 1 do
+      let t = K.tiles.(i) in
+      if find_mma kind K.K K.K t >= 0 then begin
+        let s = K.shape t in
+        let cost = cost c s.bm s.bn (efficiency t) in
+        if cost < !least then begin
+          least := cost;
+          best := t
+        end
       end
-    end
-  done;
-  !best
+    done;
+    !best
+  end
 
 (* The mma kernels, of [kind] on the tile [t]. An operand whose rows are not
    vectors is packed into the workspace with k contiguous, as is a float8 one
@@ -348,28 +367,18 @@ let plan_mma (c : call) kind t ~whole =
     || (lb != K.K && find_mma kind la lb t < 0)
   in
   let lb = if pack_b then K.K else lb in
-  let kernel = find_mma kind la lb t in
-  let blocks = ceil_div c.m s.bm * ceil_div c.n s.bn in
-  if kernel < 0 || blocks > max_int32 then None
-  else
-    let into =
-      match kind with
-      | S8 -> D.Any Int8
-      | F16 -> D.Any Float16
-      | Bf16 | K.Any -> D.Any Bfloat16
-    in
-    (* A split sum stores and reloads its partials: worth it to fill a GPU short
-       of blocks, or to stream a long k for a few rows. *)
-    let splits =
-      if c.m <= 16 then
-        split_count (blocks * c.batch) 256 c.k (4 * s.bkb / width into)
-      else split_count (blocks * c.batch) 64 c.k 1024
-    in
-    Some
-      (launch c
-         (read_as c ~into ~pack_a ~pack_b)
-         ~kernel ~blocks ~splits ~threads:(threads s) ~shared:(shared s)
-         ~sums:(s.bm * s.bn) ~sum_bytes:4 ~aligned:0 ~whole)
+  let into =
+    match kind with
+    | S8 -> D.Any Int8
+    | F16 -> D.Any Float16
+    | Bf16 | K.Any -> D.Any Bfloat16
+  in
+  launch c
+    (read_as c ~into ~pack_a ~pack_b)
+    ~kernel:(find_mma kind la lb t)
+    ~blocks:(ceil_div c.m s.bm * ceil_div c.n s.bn)
+    ~splits:(splits c) ~threads:(threads s) ~shared:(shared s)
+    ~sums:(s.bm * s.bn) ~sum_bytes:4 ~aligned:0 ~whole
 
 (* The dtype of the accumulator [sum]: what the SIMT kernels read, and the float
    skinny kernels. *)
@@ -387,7 +396,8 @@ let read_into (c : call) into =
 
 (* The SIMT kernels of the accumulator [sum], in chain order: the instance of
    least cost among its, of 16 rows or fewer where m is 16 or fewer and of more
-   rows otherwise. They read their accumulator's own dtype. *)
+   rows otherwise, each of which [sum] has one or more of. They read their
+   accumulator's own dtype. *)
 let plan_simt (c : call) sum ~whole =
   let best = ref (-1) and least = ref 0. in
   for k = 0 to count - 1 do
@@ -400,61 +410,48 @@ let plan_simt (c : call) sum ~whole =
         end
     | _ -> ()
   done;
-  match if !best < 0 then None else Some (snd K.kernels.(!best)) with
-  | Some (Simt (_, s)) ->
-      let bm = simt_bm s and bn = simt_bn s in
-      let blocks = ceil_div c.m bm * ceil_div c.n bn in
-      if blocks > max_int32 then None
-      else
-        let ((a, b, _) as read) = read_into c (own_dtype sum) in
-        (* Each stage holds a's and b's k-tiles, k-major, a k's row padded by
-           16 bytes. *)
-        let bytes = width (own_dtype sum) in
-        Some
-          (launch c read ~kernel:!best ~blocks
-             (* A SIMT block's k-tiles run one after another, each waiting on
-                its loads: split while the grid has fewer than 256 blocks, down
-                to 64 of k a range. *)
-             ~splits:(split_count (blocks * c.batch) 256 c.k 64)
-             ~threads:(simt_threads s)
-             ~shared:(K.simt_stages * K.simt_bk * (((bm + bn) * bytes) + 32))
-             ~sums:(bm * bn) ~sum_bytes:bytes
-             ~aligned:
-               ((if rows_vectors a then K.a_vectors else 0)
-               lor if rows_vectors b then K.b_vectors else 0)
-             ~whole)
-  | _ -> None
+  let s =
+    match snd K.kernels.(!best) with
+    | Simt (_, s) -> s
+    | _ -> invalid_arg "Plan.plan_simt: no SIMT instance"
+  in
+  let bm = simt_bm s and bn = simt_bn s in
+  let ((a, b, _) as read) = read_into c (own_dtype sum) in
+  (* Each stage holds a's and b's k-tiles, k-major, a k's row padded by 16
+     bytes. *)
+  let bytes = width (own_dtype sum) in
+  launch c read ~kernel:!best
+    ~blocks:(ceil_div c.m bm * ceil_div c.n bn)
+    ~splits:(splits c) ~threads:(simt_threads s)
+    ~shared:(K.simt_stages * K.simt_bk * (((bm + bn) * bytes) + 32))
+    ~sums:(bm * bn) ~sum_bytes:bytes
+    ~aligned:
+      ((if rows_vectors a then K.a_vectors else 0)
+      lor if rows_vectors b then K.b_vectors else 0)
+    ~whole
 
 (* The skinny kernel of the accumulator [sum]: float sums in lane order and
    integer sums of 16 rows or fewer. It reads a float accumulator's own dtype,
    or one integer dtype both operands hold. *)
 let plan_skinny (c : call) sum ~whole =
-  let kernel = find_skinny sum in
-  let blocks = ceil_div c.m K.skinny_rows * ceil_div c.n 32 in
-  if kernel < 0 || blocks > max_int32 then None
-  else
-    let into =
-      if sum == K.I64 then common_int c.a.dtype c.b.dtype else own_dtype sum
-    in
-    let ((a, b, _) as read) = read_into c into in
-    (* A 32-bit integer accumulator sums in 32 bits here. *)
-    let narrow = match c.acc with D.Any (Int32 | Uint32) -> true | _ -> false in
-    let across = free_contiguous b.s in
-    Some
-      (launch c read ~kernel ~blocks
-         (* By the columns alone: a row's sums are the same bits whatever rows
-            come with it. *)
-         ~splits:(split_count (ceil_div c.n 32 * c.batch) 64 c.k 1024)
-         ~threads:256 ~shared:0 ~sums:256
-         ~sum_bytes:(if sum == K.F32 || narrow then 4 else 8)
-         ~aligned:
-           ((if across then K.b_across
-             else if rows_vectors b then K.b_vectors
-             else 0)
-           lor
-           if (not (free_contiguous a.s)) && rows_vectors a then K.a_vectors
-           else 0)
-         ~whole)
+  let into =
+    if sum == K.I64 then common_int c.a.dtype c.b.dtype else own_dtype sum
+  in
+  let ((a, b, _) as read) = read_into c into in
+  (* A 32-bit integer accumulator sums in 32 bits here. *)
+  let narrow = match c.acc with D.Any (Int32 | Uint32) -> true | _ -> false in
+  let across = free_contiguous b.s in
+  launch c read ~kernel:(find_skinny sum)
+    ~blocks:(ceil_div c.m K.skinny_rows * ceil_div c.n 32)
+    ~splits:(splits c) ~threads:256 ~shared:0 ~sums:256
+    ~sum_bytes:(if sum == K.F32 || narrow then 4 else 8)
+    ~aligned:
+      ((if across then K.b_across
+        else if rows_vectors b then K.b_vectors
+        else 0)
+      lor
+      if (not (free_contiguous a.s)) && rows_vectors a then K.a_vectors else 0)
+    ~whole
 
 (* The mma kind of operands of [a] and [b] into [acc], if one sums them. float8
    operands decode exactly to bfloat16 and sum on its matrix unit: Ada's float8
@@ -513,12 +510,74 @@ let whole (c : call) ~mma_s8 (sum : K.acc) =
   && c.sy.(0) * yb mod 16 = 0
   && c.y_vector_first
 
+(* The launch of [c], a call a launch takes whole, by the family of [kind],
+   [sum] and the order. *)
+let plan (c : call) kind sum =
+  match kind with
+  | Some kd ->
+      let whole = whole c ~mma_s8:(kd == K.S8) sum in
+      plan_mma c kd (mma_tile c kd) ~whole
+  | None -> (
+      let whole = whole c ~mma_s8:false sum in
+      (* An integer sum is exact in its wrapping, so every order gives it the
+         same bits: few rows take the skinny kernels whatever the order. *)
+      match c.order with
+      | _ when sum == K.I64 ->
+          if c.m <= 16 then plan_skinny c sum ~whole
+          else plan_simt c sum ~whole
+      | Nx_kernel.Lane -> plan_skinny c sum ~whole
+      | Chain -> plan_simt c sum ~whole)
+
+(* The window of [c] of [batch] x [m] x [n] outputs from batch element [z], row
+   [i] and column [j]: each operand's first element moved there. *)
+let window (c : call) ~z ~i ~j ~batch ~m ~n =
+  let move (o : operand) row =
+    let first = o.first + (((z * o.s.(0)) + (row * o.s.(1))) * width o.dtype) in
+    { o with first; vector_first = Rig.Buffer.aligned o.buffer ~at:first 16 }
+  in
+  let at s = (z * s.(0)) + (i * s.(1)) + (j * s.(2)) in
+  let y_first = c.y_first + (at c.sy * width c.y_dtype) in
+  let init =
+    match c.init with
+    | None -> None
+    | Some v ->
+        Some { v with i_first = v.i_first + (at v.si * width v.i_dtype) }
+  in
+  {
+    c with
+    a = move c.a i;
+    b = move c.b j;
+    y_first;
+    y_vector_first = Rig.Buffer.aligned c.y ~at:y_first 16;
+    init;
+    batch;
+    m;
+    n;
+  }
+
+(* [c]'s launches, one a window of at most [max_batch] batch elements and
+   [max_extent] rows and columns whose blocks fit the grid's x: at most 2^31 -
+   1 of skinny's, the least. A call within those bounds is one launch. *)
+let windows (c : call) kind sum =
+  let cols = Int.min c.n max_extent in
+  let per_row = ceil_div cols 32 in
+  let rows = Int.min c.m (max_int32 / per_row * K.skinny_rows) in
+  let rows = Int.min rows max_extent and zs = Int.min c.batch max_batch in
+  let along_m = ceil_div c.m rows and along_n = ceil_div c.n cols in
+  let count = ceil_div c.batch zs * along_m * along_n in
+  if count = 1 then [| plan c kind sum |]
+  else
+    Array.init count (fun w ->
+        let z = w / (along_m * along_n) * zs in
+        let i = w / along_n mod along_m * rows and j = w mod along_n * cols in
+        let batch = Int.min zs (c.batch - z) in
+        let m = Int.min rows (c.m - i) and n = Int.min cols (c.n - j) in
+        plan (window c ~z ~i ~j ~batch ~m ~n) kind sum)
+
 (* The rules of nx.cuda's contraction, reading nothing but [c]. *)
 let rules (c : call) =
-  let batch = c.batch and m = c.m and n = c.n and k = c.k in
-  if batch > 65535 || m > max_extent || n > max_extent || k > max_extent then
-    declined
-  else if batch * m * n = 0 then Ok Nothing
+  if c.k > max_extent then declined
+  else if c.batch = 0 || c.m = 0 || c.n = 0 then Ok Nothing
   else
     let ad = c.a.dtype and bd = c.b.dtype and acc = c.acc in
     let init = Option.is_some c.init in
@@ -527,26 +586,7 @@ let rules (c : call) =
     else
       match sum_of ~acc ad bd with
       | None -> declined
-      | Some sum -> (
-          let kind = mma_kind ad bd acc in
-          let t = match kind with None -> -1 | Some kd -> mma_tile c kd in
-          let mma_s8 = match kind with Some S8 -> t >= 0 | _ -> false in
-          let whole = whole c ~mma_s8 sum in
-          let planned =
-            match kind with
-            | Some kd when t >= 0 -> plan_mma c kd K.tiles.(t) ~whole
-            | _ -> (
-                (* An integer sum is exact in its wrapping, so every order
-                   gives it the same bits: few rows take the skinny kernels
-                   whatever the order. *)
-                match c.order with
-                | _ when sum == K.I64 ->
-                    if m <= 16 then plan_skinny c sum ~whole
-                    else plan_simt c sum ~whole
-                | Nx_kernel.Lane -> plan_skinny c sum ~whole
-                | Chain -> plan_simt c sum ~whole)
-          in
-          match planned with None -> declined | Some l -> Ok (Launch l))
+      | Some sum -> Ok (Launches (windows c (mma_kind ad bd acc) sum))
 
 (* [x] as the operand [which] of [v], over its axis [free] and k. *)
 let operand v which (free : V.axis) x =

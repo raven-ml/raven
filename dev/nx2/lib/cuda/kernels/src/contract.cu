@@ -5,14 +5,13 @@
 
 /* Contract: y[z, i, j] = init[z, i, j] + sum_k a[z, i, k] * b[z, j, k]
    (kernels.h's contract_params), by three bodies, each its own
-   association, fixed by the dtypes, the shape and the order the call is
-   given, never by a layout: mma (mma.cuh), SIMT and skinny (below), over
-   the elements of elements.cuh. In each, [splits] ranges of k (whole
-   k-tiles for mma and SIMT) combine in range order (combine.cuh); init
-   then enters the sum, and the result rounds once to y's dtype. Each body
-   reads its operands in the layout and dtype the plan packs them into
-   (the pack, below): the same values in the same tiles, so the same
-   bits. */
+   association, fixed by k, the dtypes and the order the call is given,
+   never by the other extents, a tile or a layout: mma (mma.cuh), SIMT and
+   skinny (below), over the elements of elements.cuh. In each, [splits]
+   ranges of k (combine.cuh's k_range) combine in range order; init then
+   enters the sum, and the result rounds once to y's dtype. Each body reads
+   its operands in the layout and dtype the plan packs them into (the pack,
+   below): the same values in the same tiles, so the same bits. */
 
 #include "combine.cuh"
 #include "kernels.h"
@@ -33,18 +32,19 @@ typedef unsigned long long u64;
    fma, integer sums wrapping; each output summed in increasing k. */
 
 /* A block of THREADS computes a BM x BN tile of outputs: warps of 4 x 8
-   lanes, a lane TM x TN outputs in blocks of RM x 4, RM = min(TM, 4), its
-   blocks' rows RM apart across lanes and 4 RM apart in a lane, their
-   columns 4 apart across lanes and 32 apart in a lane, so that a k's
-   fragments are loads of RM and 4 elements of which a warp's touch 4 and 8
-   addresses. A tile of 8 rows (TM = 2) keeps a sum of few rows from
-   computing rows past m. The k-tiles, of NX_SIMT_BK,
-   NX_SIMT_STAGES of them in flight, are copied by cp.async straight into
-   shared memory, k-major: element (k, r) at [k][r], each k's row padded
-   by 16 bytes, so that a warp's copies of a k-contiguous operand, an
-   element each, 16 k of 2 rows, fall at most two to a bank. An operand
-   whose rows are contiguous copies along them, 16 bytes at a time where
-   they are vectors. */
+   lanes, a lane TM x TN outputs in blocks of RM x CN, RM = min(TM, 4) and
+   CN = min(TN, 4), its blocks' rows RM apart across lanes and 4 RM apart
+   in a lane, their columns CN apart across lanes and 8 CN apart in a lane,
+   so that a k's fragments are loads of RM and CN elements of which a
+   warp's touch 4 and 8 addresses. A tile of 8 rows (TM = 2) keeps a sum of
+   few rows from computing rows past m, and one warp of 16 columns
+   (TN = 2) gives few rows blocks enough to fill the GPU. The k-tiles, of
+   NX_SIMT_BK, NX_SIMT_STAGES of them in flight, are copied by cp.async
+   straight into shared memory, k-major: element (k, r) at [k][r], each
+   k's row padded by 16 bytes, so that a warp's copies of a k-contiguous
+   operand, an element each, 16 k of 2 rows, fall at most two to a bank.
+   An operand whose rows are contiguous copies along them, 16 bytes at a
+   time where they are vectors. */
 template <typename T, int R, int THREADS> struct Simt_operand {
   static constexpr int BK = NX_SIMT_BK, V = 16 / sizeof(T), LD = R + V;
   static constexpr int BYTES = BK * LD * sizeof(T);
@@ -139,7 +139,8 @@ __device__ void simt_contract(const contract_params &p) {
   /* This lane's first row and column in the tile. */
   constexpr int RM = TM < 4 ? TM : 4;
   const int lm = (warp / WARPS_N) * 4 * TM + lane / 8 * RM;
-  const int ln = (warp % WARPS_N) * 8 * TN + lane % 8 * 4;
+  constexpr int CN = TN < 4 ? TN : 4;
+  const int ln = (warp % WARPS_N) * 8 * TN + lane % 8 * CN;
   /* Grouped rasterisation, as the mma kernels'. */
   const int tiles_m = (p.m + BM - 1) / BM, tiles_n = (p.n + BN - 1) / BN;
   const int pid = blockIdx.x, group = 8 * tiles_n, first = (pid / group) * 8;
@@ -148,9 +149,9 @@ __device__ void simt_contract(const contract_params &p) {
   const int m0 = tm * BM, n0 = tn * BN;
   /* m, n and k are at most 2^30 (plan.ml's max_extent): each coordinate
      here and in the other bodies, an extent plus a tile, fits an int. */
-  const int kts = (p.k + BK - 1) / BK, split = blockIdx.y;
-  const int kt0 = split * kts / p.splits;
-  const int KT = (split + 1) * kts / p.splits - kt0;
+  int kt0, kt1;
+  k_range<BK>(p.k, blockIdx.y, p.splits, kt0, kt1);
+  const int KT = kt1 - kt0;
 
   A a;
   B b;
@@ -172,7 +173,7 @@ __device__ void simt_contract(const contract_params &p) {
 #pragma unroll
     for (int i = 0; i < TM; i++) va[f][i] = as[k][lm + i / RM * 4 * RM + i % RM];
 #pragma unroll
-    for (int j = 0; j < TN; j++) vb[f][j] = bs[k][ln + j / 4 * 32 + j % 4];
+    for (int j = 0; j < TN; j++) vb[f][j] = bs[k][ln + j / CN * 8 * CN + j % CN];
   };
 
 #pragma unroll
@@ -228,7 +229,7 @@ __device__ void simt_contract(const contract_params &p) {
 #pragma unroll
     for (int j = 0; j < TN; j += 2)
       store_pair(p, z, m0 + lm + i / RM * 4 * RM + i % RM,
-                 n0 + ln + j / 4 * 32 + j % 4, acc[i][j], acc[i][j + 1]);
+                 n0 + ln + j / CN * 8 * CN + j % CN, acc[i][j], acc[i][j + 1]);
 }
 
 /* Skinny */
@@ -401,11 +402,14 @@ __device__ void skinny_contract(const contract_params &p,
      from L2. */
   const int groups = (p.m + R - 1) / R;
   const int i0 = blockIdx.x % groups * R, j0 = blockIdx.x / groups * 32;
-  const int z = blockIdx.z, split = blockIdx.y, splits = p.splits;
+  const int z = blockIdx.z, splits = p.splits;
   const char *a = (const char *)p.a + (z * p.sa[0] + i0 * p.sa[1]) * sizeof(S);
   const char *b = (const char *)p.b + z * p.sb[0] * sizeof(S);
-  /* The range of k: whole 128-element runs, one t of the lanes. */
-  const int runs = (p.k + 127) / 128;
+  /* A run of NX_SPLIT_RUN is one t of the lanes. The range's bounds are
+     k_range's, written out: through k_range the compiler schedules the
+     integer sums 3 to 5% slower (int16 1x5120x2880 on sm_89). */
+  static_assert(NX_SPLIT_RUN == 128, "a range is whole runs of the lanes");
+  const int split = blockIdx.y, runs = (p.k + 127) / 128;
   const int k0 = split * runs / splits * 128;
   const int k1 = min(p.k, (split + 1) * runs / splits * 128);
   skinny_sums<T, S>(p, level8, a, min(R, p.m - i0), b, j0, k0, k1);

@@ -256,9 +256,12 @@ let codecs_e5m2 () = codecs D.Float8_e5m2 ~code:D.Uint8 ~spread:30
 (* How a case draws its operands: floats of exponents in [-e, e] (integers over
    their range); those with the second half of each row of a negating its first,
    so that sums cancel; those with NaN, infinities, -0 and subnormals (integer
-   extremes) at every seventh element; or float64 elements all of the largest
-   finite magnitude, their signs drawn, so that every product overflows. *)
-type draw = Spread of int | Cancel | Edges | Overflow
+   extremes) at every seventh element; float64 elements all of the largest
+   finite magnitude, their signs drawn, so that every product overflows; or
+   bfloat16 or float32 elements all of magnitude 2^-100, a's negative and b's
+   positive, so that every product underflows float32 and a float32 sum is
+   -0. *)
+type draw = Spread of int | Cancel | Edges | Overflow | Tiny
 
 (* A contraction y[z, i, j] = init[z, i, j] + Σ_k a[z, i, k] · b[z, j, k] of
    [batch], [m], [n], [k], a and b of [dt] in the layout whose [`K] or [`Free]
@@ -296,6 +299,7 @@ let case_name c =
     | Cancel -> "cancel"
     | Edges -> "edges"
     | Overflow -> "overflow"
+    | Tiny -> "tiny"
   in
   strf "%s->%s acc %s %dx%dx%dx%d %s %s%s%s %s pad %d" (name c.dt)
     (name c.out) (name c.acc) c.batch c.m c.n c.k (order_name c.order)
@@ -387,7 +391,7 @@ let values g dt ~batch ~rows ~k ~draw ~seed ~cancel =
     match draw with
     | _ when not (D.is D.Float d) -> S.Uniform
     | Spread e -> S.Wide e
-    | Cancel | Edges | Overflow -> S.Wide 6
+    | Cancel | Edges | Overflow | Tiny -> S.Wide 6
   in
   let tmp = S.buffer g (w * Int.max 1 n) in
   S.generate g tmp d gen ~seed;
@@ -419,6 +423,20 @@ let values g dt ~batch ~rows ~k ~draw ~seed ~cancel =
         Bytes.set_int64_le v (8 * i)
           (Int64.logor (Int64.bits_of_float max_float)
              (if negative then Int64.min_int else 0L))
+      done
+  | Tiny ->
+      (* 2^-100: biased exponent 27. *)
+      let sign = if cancel then 1 else 0 in
+      for i = 0 to n - 1 do
+        match dt with
+        | D.Any D.Bfloat16 ->
+            Bytes.set_uint16_le v (2 * i) ((sign lsl 15) lor (27 lsl 7))
+        | D.Any D.Float32 ->
+            Bytes.set_int32_le v (4 * i)
+              (Int32.logor
+                 (Int32.shift_left (Int32.of_int sign) 31)
+                 (Int32.shift_left 27l 23))
+        | _ -> invalid_arg "values: tiny is bfloat16's and float32's"
       done
   | _ -> ());
   Bytes.to_string v
@@ -699,11 +717,11 @@ let sign_extends () =
             (String.get_int64_le (S.read y.buffer) 0))
     [ D.Any D.Int8; D.Any D.Int16 ]
 
-(* The plan takes extents up to 2^30, so that every coordinate its kernels
-   form fits an int32, and declines larger ones. a and b are one float64 1
-   broadcast, so a row sums its k products exactly to k, in the lane order nx
-   gives one column, on the skinny kernels. 17 rows' run at 2^30 would take a
-   minute: they only decline. *)
+(* The plan takes contracted extents up to 2^30, so that every coordinate its
+   kernels form fits an int32, and declines larger ones. a and b are one
+   float64 1 broadcast, so a row sums its k products exactly to k, in the lane
+   order nx gives one column, on the skinny kernels. 17 rows' run at 2^30
+   would take a minute: they only decline. *)
 let extent_bound () =
   let g = S.gpu () in
   let float64 = D.code D.Float64 in
@@ -735,6 +753,301 @@ let extent_bound () =
       equal ~msg:(strf "%d rows, k %d" m k) (option (list float_exact)) None
         (sum m k))
     [ (1, 0x7fff_ffff); (1, bound + 1); (17, 0x7fff_ffff); (17, bound + 1) ]
+
+(* Rows past 2^30 compute: the plan cuts them into launches. a and b are one
+   float32 1 broadcast, which the skinny kernels read in place, so each output
+   of y, int8, is k. *)
+let rows_past_bound () =
+  let g = S.gpu () in
+  let int8 = D.code D.Int8 and float32 = D.code D.Float32 in
+  let m = (1 lsl 30) + 5 and k = 3 in
+  let one = S.buffer g 4 in
+  S.write one (put32 [ 1. ]);
+  let ones rows =
+    {
+      S.buffer = one;
+      dtype = float32;
+      shape = [| 1; rows; k |];
+      strides = [| 0; 0; 0 |];
+      first = 0;
+    }
+  in
+  let y =
+    {
+      S.buffer = S.buffer g m;
+      dtype = int8;
+      shape = [| 1; m; 1 |];
+      strides = [| m; 1; 1 |];
+      first = 0;
+    }
+  in
+  match
+    S.contract g ~order:Nx_kernel.Lane ~a:(ones m) ~b:(ones 1) ~y
+      ~batch:[ (0, 0) ]
+      ~contracting:[ (2, 2) ]
+      ~acc:float32 ()
+  with
+  | None -> fail "the plan declines"
+  | Some _ ->
+      let ys = S.read y.buffer in
+      let sum i = Char.code ys.[i] in
+      no_difference
+        (differences m
+           (fun i -> sum i = k)
+           (fun i -> strf "row %d: %d" i (sum i)))
+
+(* Batches past the grid's 65,535 compute, in lane and chain order. *)
+let batch_cases =
+  let f32 = D.Any D.Float32 in
+  List.map
+    (fun (m, n, k, order) ->
+      {
+        dt = D.Any D.Bfloat16;
+        acc = f32;
+        out = f32;
+        batch = 70_000;
+        m;
+        n;
+        k;
+        order;
+        la = `K;
+        lb = `K;
+        init = `Bias;
+        draw = Spread 6;
+        pad = 0;
+      })
+    Nx_kernel.[ (2, 3, 5, Lane); (8, 8, 2, Chain) ]
+
+(* Windows *)
+
+(* A window of a contraction's results, computed alone, has the whole's bits:
+   [w] of [c], its batch elements from [z], rows from [i] and columns from [j],
+   [wb] x [wm] x [wn] of them. *)
+type window = {
+  c : case;
+  z : int;
+  i : int;
+  j : int;
+  wb : int;
+  wm : int;
+  wn : int;
+}
+
+let window_name w =
+  strf "%s, window %dx%dx%d at %d,%d,%d" (case_name w.c) w.wb w.wm w.wn w.z
+    w.i w.j
+
+(* Shapes across the tiles' edges and the k past which lane order (3968) and
+   chain order (65408) cut k into ranges; k to 4096 with up to 3 x 200 x 200
+   outputs, so that a window has far fewer tiles than its whole, and longer k
+   with few rows and columns, so that the host builds operands fast. *)
+let window_gen =
+  let open Gen in
+  let* dt, acc, out =
+    of_list
+      D.
+        [
+          (Any Bfloat16, Any Float32, Any Float32);
+          (Any Float16, Any Float32, Any Float16);
+          (Any Float8_e4m3fn, Any Float32, Any Bfloat16);
+          (Any Float32, Any Float32, Any Float32);
+          (Any Float64, Any Float64, Any Float64);
+          (Any Int8, Any Int32, Any Int32);
+          (Any Int16, Any Int64, Any Int64);
+        ]
+  in
+  let* k =
+    of_list [ 0; 1; 127; 129; 1000; 3968; 3969; 8191; 65408; 65409; 70000 ]
+  in
+  let long = k > 4096 in
+  let extent =
+    if long then of_list [ 1; 3; 5; 17 ]
+    else of_list [ 1; 3; 4; 5; 16; 17; 64; 65; 129; 200 ]
+  in
+  let* batch = if long then constant 1 else int_range 1 3
+  and+ m = extent
+  and+ n = extent
+  and+ order = of_list [ Nx_kernel.Chain; Lane ]
+  and+ la = of_list [ `K; `Free ]
+  and+ lb = of_list [ `K; `Free ]
+  and+ init = of_list [ `None; `Bias; `Full ]
+  and+ draw = of_list [ Spread 6; Spread 20; Edges ] in
+  let* z = int_range 0 (batch - 1)
+  and+ i = int_range 0 (m - 1)
+  and+ j = int_range 0 (n - 1) in
+  let+ wb = int_range 1 (batch - z)
+  and+ wm = int_range 1 (m - i)
+  and+ wn = int_range 1 (n - j) in
+  let (D.Any d) = dt in
+  let draw = if D.is D.Float d then draw else Spread 6 in
+  let c = { dt; acc; out; batch; m; n; k; order; la; lb; init; draw; pad = 0 } in
+  { c; z; i; j; wb; wm; wn }
+
+let window_gen =
+  Gen.with_pp
+    (fun ppf w -> Format.pp_print_string ppf (window_name w))
+    window_gen
+
+(* [o]'s elements of the window from batch element [z], row [r] (k, or y's
+   column, from [q]), [rows] x [cols] of [batch]. *)
+let sub (o : S.operand) ~w ~z ~r ~q ~batch ~rows ~cols =
+  let s = o.strides in
+  {
+    o with
+    S.shape = [| batch; rows; cols |];
+    first = o.first + (w * ((z * s.(0)) + (r * s.(1)) + (q * s.(2))));
+  }
+
+(* Whether the little-endian bytes [s] of a float of [dt] are a NaN, whose sign
+   and payload nx.cuda leaves unspecified. *)
+let is_nan (D.Any d) s =
+  match d with
+  | D.Float64 -> Float.is_nan (Int64.float_of_bits (String.get_int64_le s 0))
+  | D.Float32 -> Float.is_nan (Int32.float_of_bits (String.get_int32_le s 0))
+  | D.Float16 -> String.get_uint16_le s 0 land 0x7fff > 0x7c00
+  | D.Bfloat16 -> String.get_uint16_le s 0 land 0x7fff > 0x7f80
+  | _ -> false
+
+let same_as_whole w =
+  let c = w.c in
+  let g = S.gpu () in
+  let a, b, init, (y : S.operand), _ = contract g c () in
+  let whole = S.read y.buffer in
+  let ey = width c.out and ex = width c.dt in
+  let aw = sub a ~w:ex ~z:w.z ~r:w.i ~q:0 ~batch:w.wb ~rows:w.wm ~cols:c.k in
+  let bw = sub b ~w:ex ~z:w.z ~r:w.j ~q:0 ~batch:w.wb ~rows:w.wn ~cols:c.k in
+  let iw =
+    Option.map
+      (fun i ->
+        sub i ~w:ey ~z:w.z ~r:w.i ~q:w.j ~batch:w.wb ~rows:w.wm ~cols:w.wn)
+      init
+  in
+  let n = w.wb * w.wm * w.wn in
+  let yw =
+    {
+      S.buffer = S.buffer g (ey * Int.max 1 n);
+      dtype = code c.out;
+      shape = [| w.wb; w.wm; w.wn |];
+      strides = [| w.wm * w.wn; w.wn; 1 |];
+      first = 0;
+    }
+  in
+  (match
+     S.contract g ~order:c.order ~a:aw ~b:bw ?init:iw ~y:yw
+       ~batch:[ (0, 0) ]
+       ~contracting:[ (2, 2) ]
+       ~acc:(code c.acc) ()
+   with
+  | None -> fail "the plan declines the window"
+  | Some _ -> ());
+  let got = S.read yw.buffer in
+  let at e =
+    let z = e / (w.wm * w.wn) and r = e / w.wn mod w.wm and q = e mod w.wn in
+    let x = ((((w.z + z) * c.m) + w.i + r) * c.n) + w.j + q in
+    (String.sub whole (ey * x) ey, String.sub got (ey * e) ey)
+  in
+  (* An output's bytes as hexadecimal, most significant first. *)
+  let hex s =
+    String.init (2 * ey) (fun x ->
+        let byte = Char.code s.[ey - 1 - (x / 2)] in
+        "0123456789abcdef".[if x mod 2 = 0 then byte lsr 4 else byte land 15])
+  in
+  let same e =
+    let want, got = at e in
+    String.equal want got || (is_nan c.out want && is_nan c.out got)
+  in
+  let show e =
+    let want, got = at e in
+    strf "output %d: whole %s, window %s" e (hex want) (hex got)
+  in
+  no_difference (differences n same show)
+
+let window_law w =
+  let c = w.c in
+  cover "lane order cuts k" (c.order = Lane && c.k > 3968);
+  cover "chain order cuts k" (c.order = Chain && c.k > 65408);
+  cover "16 rows or fewer of a taller whole" (w.wm <= 16 && c.m > 16);
+  cover "rows cut off a tile's edge" (w.i mod 16 <> 0 && w.wm < c.m);
+  cover "columns cut" (w.wn < c.n);
+  cover "batch cut" (w.wb < c.batch);
+  same_as_whole w
+
+(* Batch windows of batched products whose split count once followed their
+   batch: 256 x 64 x 72 x 1100 and 2 x 8 x 8 x 3000. *)
+let batch_windows =
+  let open D in
+  List.concat_map
+    (fun (dt, acc, out) ->
+      List.concat_map
+        (fun ((batch, m, n, k), (z, wb)) ->
+          List.map
+            (fun order ->
+              let c =
+                { dt; acc; out; batch; m; n; k; order; la = `K; lb = `K;
+                  init = `Bias; draw = Spread 6; pad = 0 }
+              in
+              { c; z; i = 0; j = 0; wb; wm = m; wn = n })
+            Nx_kernel.[ Chain; Lane ])
+        [ ((256, 64, 72, 1100), (0, 1)); ((256, 64, 72, 1100), (100, 3));
+          ((2, 8, 8, 3000), (1, 1)); ((70_000, 2, 3, 5), (69_999, 1));
+          ((70_000, 2, 3, 5), (65_000, 1000)) ])
+    [
+      (Any Bfloat16, Any Float32, Any Float32);
+      (Any Float32, Any Float32, Any Float32);
+      (Any Float64, Any Float64, Any Float64);
+    ]
+
+(* 16 rows or fewer of products whose whole takes the large tiles: the 128 x
+   128 mma and SIMT tiles at 1024 x 1024, the 128 x 256 ones at 4096 x 4096
+   and a batch of 64 of 512 x 512, and the mma tiles that read a or b with
+   its rows contiguous; k of 17 and 32, which those tiles cover in fewer
+   steps than the 16-row tiles' k-tiles. *)
+let tile_windows =
+  let open D in
+  let f32 = Any Float32 and bf16 = Any Bfloat16 in
+  let window ?(la = `K) ?(lb = `K) dt (batch, m, n, k) (z, i, j, wm, wn) =
+    let c =
+      { dt; acc = f32; out = f32; batch; m; n; k; order = Nx_kernel.Chain;
+        la; lb; init = `Bias; draw = Spread 6; pad = 0 }
+    in
+    { c; z; i; j; wb = 1; wm; wn }
+  in
+  List.concat_map
+    (fun k ->
+      [
+        window bf16 (1, 1024, 1024, k) (0, 1000, 100, 16, 300);
+        window f32 (1, 1024, 1024, k) (0, 1000, 100, 16, 300);
+        window bf16 (1, 4096, 4096, k) (0, 3, 4000, 13, 96);
+        window ~la:`Free bf16 (1, 4096, 4096, k) (0, 3, 4000, 13, 96);
+        window ~lb:`Free bf16 (1, 4096, 4096, k) (0, 3, 4000, 13, 96);
+        window ~la:`Free ~lb:`Free bf16 (1, 4096, 4096, k) (0, 3, 4000, 13, 96);
+        window f32 (1, 4096, 4096, k) (0, 3, 4000, 13, 96);
+        window bf16 (64, 512, 512, k) (5, 500, 7, 12, 200);
+      ])
+    [ 17; 32 ]
+
+(* Sums of products that underflow float32, whose zero's sign the steps of
+   zeros past k could flip, in a window of 16 rows of a whole on the 128 x
+   128 tiles, k of 17 to 32 past a multiple of 32 or 64: every tile adds the
+   same steps, so the window has the whole's bits. *)
+let underflow_windows =
+  let open D in
+  let f32 = Any Float32 in
+  List.concat_map
+    (fun (dt, k, order) ->
+      let c =
+        { dt; acc = f32; out = f32; batch = 1; m = 1024; n = 1024; k; order;
+          la = `K; lb = `K; init = `None; draw = Tiny; pad = 0 }
+      in
+      [ { c; z = 0; i = 1000; j = 100; wb = 1; wm = 16; wn = 300 } ])
+    Nx_kernel.
+      [
+        (Any Bfloat16, 20, Chain);
+        (Any Bfloat16, 32, Chain);
+        (Any Bfloat16, 84, Lane);
+        (Any Float32, 20, Chain);
+        (Any Float32, 32, Chain);
+      ]
 
 (* Every dtype quadruple *)
 
@@ -921,7 +1234,8 @@ let scratch_out_of_memory () =
 (* Calls *)
 
 (* A bfloat16 case that packs a and b, whose rows of 8191 elements are not
-   vectors, and splits its long sum: every piece of the workspace. *)
+   vectors, and, in lane order, splits its long sum: every piece of the
+   workspace. *)
 let packed_split =
   {
     dt = D.Any D.Bfloat16;
@@ -929,9 +1243,9 @@ let packed_split =
     out = D.Any D.Float32;
     batch = 1;
     m = 64;
-    n = 64;
+    n = 4;
     k = 8191;
-    order = Nx_kernel.Chain;
+    order = Nx_kernel.Lane;
     la = `K;
     lb = `K;
     init = `Bias;
@@ -1046,16 +1360,16 @@ let raise_frees_the_frame () =
 
 (* Split sums of different tile counts, run back to back over a sentinel, give
    their first run's bits: each call leaves the tickets that the next counts on
-   zero. By the plan's rules all four split: four and sixteen 16 x 64 mma
-   tiles, one SIMT tile and two skinny tiles. *)
+   zero. By the plan's rules all four split: one and sixteen mma tiles in lane
+   order, one SIMT tile in chain order and one skinny tile. *)
 let split_cases =
   let f32 = D.Any D.Float32 in
   [
     packed_split;
-    { packed_split with m = 128; n = 128 };
-    { packed_split with dt = f32; k = 8192; init = `None };
-    { packed_split with dt = f32; m = 1; k = 20000; order = Nx_kernel.Lane;
-      init = `None };
+    { packed_split with m = 4; n = 1000 };
+    { packed_split with dt = f32; m = 8; n = 8; k = 70000;
+      order = Nx_kernel.Chain; init = `None };
+    { packed_split with dt = f32; m = 1; k = 20000; init = `None };
   ]
 
 let splits_leave_tickets_zero () =
@@ -1200,7 +1514,18 @@ let tests =
         cases ~name:case_name "float64 sums past double's range" overflow_cases
           within_bound;
         test "an int32 sum sign-extends into int64" sign_extends;
-        test "extents past 2^30 decline" extent_bound;
+        test "contracted extents past 2^30 decline" extent_bound;
+        test "rows past 2^30 compute" rows_past_bound;
+        cases ~name:case_name "batches past 65,535 within the error bound"
+          batch_cases within_bound;
+        prop ~count:300 "a window computed alone has the whole's bits"
+          window_gen window_law;
+        cases ~name:window_name "a batch window has the whole's bits"
+          batch_windows same_as_whole;
+        cases ~name:window_name "a window of the large tiles has their bits"
+          tile_windows same_as_whole;
+        cases ~name:window_name "a window of underflowing sums has their bits"
+          underflow_windows same_as_whole;
         test "scratch past the GPU's memory raises" scratch_out_of_memory;
         warm_calls_bounded;
         test "a call keeps none of its arrays" calls_keep_nothing;

@@ -59,14 +59,16 @@
   X(contract_any_kk_t16x64, MMA, any, k, k, t16x64)                         \
   /* int8 4096 */                                                           \
   X(contract_s8_kk_t128x256, MMA, s8, k, k, t128x256)                       \
-  /* f32 2048 to 8192 and the 4096 layouts */                               \
+  /* f32 4096, 8192 and the 4096 layouts */                                 \
   X(contract_simt_f32_128x256, SIMT, f32, 16, 8, 2, 4)                      \
-  /* f32 256 to 1024 */                                                     \
+  /* f32 1024, 2048 */                                                      \
+  X(contract_simt_f32_128x128, SIMT, f32, 8, 8, 4, 2)                       \
+  /* f32 256, 512 */                                                        \
   X(contract_simt_f32_64x64, SIMT, f32, 8, 4, 2, 2)                         \
   /* f32 decode 1x5120x2880 */                                              \
   X(contract_skinny_f32, SKINNY, f32)                                       \
   /* f32 chain order at 16 rows or fewer: 8x5120x2880, 16x5120x2880 */      \
-  X(contract_simt_f32_16x128, SIMT, f32, 4, 4, 1, 4)                        \
+  X(contract_simt_f32_16x16, SIMT, f32, 4, 2, 1, 1)                         \
   /* float64 and integer sums, which every library computes: float64-       \
      1024x1024x1024 and -1x5120x2880, int16-1024x1024x1024 and              \
      -1x5120x2880 (int64 sums) */                                           \
@@ -75,7 +77,7 @@
   X(contract_skinny_f64, SKINNY, f64)                                       \
   X(contract_skinny_i64, SKINNY, i64)                                       \
   /* f64 chain order at 16 rows or fewer: float64-8x5120x2880 */            \
-  X(contract_simt_f64_8x128, SIMT, f64, 2, 4, 1, 4)                         \
+  X(contract_simt_f64_8x32, SIMT, f64, 2, 4, 1, 1)                          \
   /* reductions whose terms run along the operand: sum-rows-*, sum-all-* */ \
   X(reduce_rows, REDUCE)                                                    \
   /* reductions across outputs, and few terms: sum-cols-*, sum-rows-4-4M */ \
@@ -106,14 +108,14 @@ enum nx_cuda_kernel { NX_CUDA_KERNELS(NX_CUDA_ENUM) NX_CUDA_KERNEL_COUNT };
    to y's dtype, for z < batch, i < m, j < n: each operand's element
    (z, i, k) at its address plus z, i and k times its strides, in elements.
    [init] is NULL for none. When [splits] > 1 the sum over k is cut into
-   [splits] ranges, each summed by its own block into [partials], and the
-   last block to take its tile's ticket adds them in range order
-   (combine.cuh): [tickets] holds a zero word a tile, which that block
-   returns to zero. a and b are of the dtypes [a_dtype] and [b_dtype], the
-   kernel's own: an mma kernel of kind any sums the kind of [a_dtype], and
-   the integer skinny kernel's loop reads [b_dtype]. The sum, of
-   [acc_dtype], reaches y as a cast from it does. [aligned] holds the
-   NX_CONTRACT_ bits below. */
+   [splits] ranges of whole runs of NX_SPLIT_RUN elements, each summed by
+   its own block into [partials], and the last block to take its tile's
+   ticket adds them in range order (combine.cuh): [tickets] holds a zero
+   word a tile, which that block returns to zero. a and b are of the
+   dtypes [a_dtype] and [b_dtype], the kernel's own: an mma kernel of kind
+   any sums the kind of [a_dtype], and the integer skinny kernel's loop
+   reads [b_dtype]. The sum, of [acc_dtype], reaches y as a cast from it
+   does. [aligned] holds the NX_CONTRACT_ bits below. */
 typedef struct {
   const void *a, *b, *init;
   void *y, *partials;
@@ -131,6 +133,10 @@ enum {
   NX_CONTRACT_B_ACROSS = 4,  /* skinny: b's n axis is contiguous */
   NX_CONTRACT_Y_WHOLE = 8    /* y's outputs store 16 bytes at once */
 };
+
+/* The elements of k a split range takes a whole number of: a multiple of
+   every k-tile, so that a range's bounds are the same in every tile. */
+#define NX_SPLIT_RUN 128
 
 /* The SIMT kernels' k-tile, in elements, and the k-tiles in flight. */
 #define NX_SIMT_BK 16

@@ -3,16 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A call groups its view and chooses its launch, writes the launch into its
-   domain's run and submits the submission of the launch's sequence, made
-   once per device, through the door:
+(* A call groups its view and chooses its launches, then, through the door,
+   writes each into its domain's run and submits the submission of the
+   launch's sequence, made once per device:
 
-   contract --> device (Rig.Local) --> Plan.choose --> workspace, submission
-   --> frame (the domain's, or a fresh one) --> Plan.write into its run -->
-   door --> Rig.submit
+   contract --> device (Rig.Local) --> Plan.choose --> workspace --> frame
+   (the domain's, or a fresh one) --> door --> submission, Plan.write into
+   its run --> Rig.submit
 
-   reduce and scan take the same path with Reduce's launch.
-   A call that finds every cache warm allocates its view, its launch, its
+   reduce and scan write Reduce's one launch before the door.
+   A call that finds every cache warm allocates its view, its launches, their
    buffers and the door's work, and nothing that outlives it. *)
 
 module A = Nx_array
@@ -178,6 +178,30 @@ let lane_most = 4
 let contract_order ~rows ~columns : Nx_kernel.order =
   if rows <= lane_most || columns <= lane_most then Lane else Chain
 
+(* The door's work of a contraction's launches on [d]: each written into [run]
+   and submitted in order, which rig keeps by the buffers they share: y, the
+   workspace and the tickets. *)
+let issue_launches (run, d, dv, ls, workspace, tickets) =
+  for i = 0 to Array.length ls - 1 do
+    let l = ls.(i) in
+    let sub = submission d dv l in
+    Plan.write l run sub;
+    ignore (Rig.submit sub ~run ~buffers:(Plan.buffers l ~workspace ~tickets))
+  done
+
+(* Submits [ls] through the door with a frame's run. *)
+let submit_launches ~written ~read d dv ls ~workspace ~tickets =
+  let f = take () in
+  match
+    A.door ~written ~read issue_launches (f.run, d, dv, ls, workspace, tickets)
+  with
+  | answer ->
+      release f;
+      answer
+  | exception e ->
+      release f;
+      raise e
+
 let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
   let d = A.device dst in
   match device d with
@@ -192,12 +216,17 @@ let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
         match Plan.choose ~order ~batch ~contracting ~acc ~dst ~init a b with
         | Error answer -> answer
         | Ok Nothing -> A.door ~written ~read nothing ()
-        | Ok (Launch l) ->
-            let workspace = workspace d dv (Plan.workspace l) in
-            let tickets = tickets d dv (Plan.tickets l) in
-            let sub = submission d dv l in
-            let buffers = Plan.buffers l ~workspace ~tickets in
-            submit ~written ~read sub buffers (Plan.write l))
+        | Ok (Launches ls) ->
+            (* The launches run one after another: the most workspace and
+               tickets any of them takes. *)
+            let bytes = ref 0 and ticket_bytes = ref 0 in
+            for i = 0 to Array.length ls - 1 do
+              bytes := Int.max !bytes (Plan.workspace ls.(i));
+              ticket_bytes := Int.max !ticket_bytes (Plan.tickets ls.(i))
+            done;
+            let workspace = workspace d dv !bytes in
+            let tickets = tickets d dv !ticket_bytes in
+            submit_launches ~written ~read d dv ls ~workspace ~tickets)
 
 (* Reductions and scans *)
 

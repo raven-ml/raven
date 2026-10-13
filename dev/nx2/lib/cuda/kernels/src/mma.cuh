@@ -212,9 +212,15 @@ __device__ void mma_contract(const contract_params &p) {
   const int tm = first + (pid % group) % gsz, tn = (pid % group) / gsz;
   const int m0 = tm * BM, n0 = tn * BN, z = blockIdx.z;
 
-  const int kts = (p.k + BK - 1) / BK, split = blockIdx.y;
-  const int kt0 = split * kts / p.splits;
-  const int KT = (split + 1) * kts / p.splits - kt0;
+  int kt0, kt1;
+  k_range<BK>(p.k, blockIdx.y, p.splits, kt0, kt1);
+  const int KT = kt1 - kt0;
+  /* A k-tile past k's end runs steps of zero products, more of them in a
+     tile of 64 bfloat16 elements than in one of 32. They change no bit: a
+     step adds +0 to the accumulator, which leaves every value but -0, and
+     the accumulator is never -0, starting from +0 and the unit flushing an
+     underflowing sum to +0 (test_cuda's underflowing windows). Skipping
+     them costs the large products 5 to 14%. */
 
   A a;
   B b;
