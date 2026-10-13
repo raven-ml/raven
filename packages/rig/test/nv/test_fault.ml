@@ -172,7 +172,7 @@ let perms line = Scanf.sscanf line "%x-%x %s" (fun _ _ p -> p)
 (* The device is lost with the RM's report, which every later use raises again:
    the channel group's error once, by number and name, then the MMU's fault at
    address 0 on a write. The files the device took come back, and its
-   mappings but one shared page, its timeline word's. *)
+   mappings: its timeline word lies in rig's array. *)
 let test_fault () =
   need_gpu ();
   let r = require_ok (in_child fault) in
@@ -194,8 +194,8 @@ let test_fault () =
   let kept =
     List.filter (fun l -> perms l <> "---p" && not (List.mem l before)) after
   in
-  equal ~msg:"the bytes of each GPU mapping the device keeps" (list int)
-    [ 4096 ] (List.map bytes_of kept)
+  equal ~msg:"the bytes of each GPU mapping the device keeps" (list int) []
+    (List.map bytes_of kept)
 
 let test_fresh () =
   need_gpu ();

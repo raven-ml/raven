@@ -254,7 +254,7 @@ let started hold (c : Chip.t) =
         (strf "%s still runs the GSP's firmware after its reset"
            (Function.bus c.fn))
 
-let device g ~gsp ~hold ~tables (c : Chip.t) =
+let device ~word g ~gsp ~hold ~tables (c : Chip.t) =
   let* () =
     match c.family with
     | Blackwell ->
@@ -274,7 +274,7 @@ let device g ~gsp ~hold ~tables (c : Chip.t) =
     | Ok None -> Ok None
     | Error _ as e -> e
   in
-  Rig_nv.make
+  Rig_nv.make ~word
     {
       key = on.key;
       index = g.index;
@@ -341,7 +341,7 @@ let start h (c : Chip.t) (fw : Images.t) fwsec ~failed =
 (* The GPU's registers and doorbell are written from the process and from C: a
    machine whose windows the process does not map is refused before the first
    write. *)
-let boot ~firmware ~index h fn =
+let boot ~word ~firmware ~index h fn =
   let machine = Function.machine fn in
   let* c = Chip.of_function fn in
   let* () =
@@ -384,14 +384,14 @@ let boot ~firmware ~index h fn =
       names = Some { regions = Hashtbl.create 64; next = 1 };
     }
   in
-  match device g ~gsp ~hold:h ~tables c with
+  match device ~word g ~gsp ~hold:h ~tables c with
   | Ok d ->
       learn (known machine) index (Memory.reach g.memory);
       Ok d
   | Error why | (exception Rig_nv.Fault why) -> Error why
 
-let open_ ?(machine = Machine.this) ~firmware i =
-  Gpus.open_ gpus machine i (boot ~firmware ~index:i)
+let open_ ?(machine = Machine.this) ~word ~firmware i =
+  Gpus.open_ gpus machine i (boot ~word ~firmware ~index:i)
 
 (* Changes to the machine *)
 
@@ -408,7 +408,7 @@ let gpu ?machine ?(firmware = []) i : Rig_nv.t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Rig_nv);
-    make = (fun ~word:_ -> open_ ?machine ~firmware i);
+    make = (fun ~word -> open_ ?machine ~word ~firmware i);
   }
 
 module Rpc = Rpc

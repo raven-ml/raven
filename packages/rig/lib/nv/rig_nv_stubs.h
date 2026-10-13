@@ -268,8 +268,9 @@ enum { MEASURE_OK, MEASURE_WIDE, MEASURE_FAILED };
 
 /* What a device runs work with, from its open to its stop. */
 struct device {
-  _Atomic uint64_t *word; /* the timeline word, then the two join words */
+  _Atomic uint64_t *word; /* the timeline word */
   uint64_t word_gpu;
+  uint64_t join_gpu; /* the channels' join words follow it */
   _Atomic uint64_t last; /* the last value submitted */
   struct channel ch[CHANNELS];
   volatile uint32_t *doorbell;
@@ -340,7 +341,7 @@ int rig_nv_measure(const struct device *d, struct measure *m,
                    uint64_t *width);
 
 /* The join word of channel [q]: its GPU address. */
-#define JOIN_GPU(d, q) ((d)->word_gpu + 8 * (1 + (q)))
+#define JOIN_GPU(d, q) ((d)->join_gpu + 8 * (1 + (q)))
 
 /* A pending local memory's fields. */
 #define LOCAL_ADDRESS_BITS 40

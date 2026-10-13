@@ -44,12 +44,13 @@ static const struct rig_driver driver = {rig_nv_room, rig_nv_submit,
                                          rig_nv_commit, rig_nv_settle};
 
 /* A device whose timeline word is the host's 64-bit word at [v_word], the
-   GPU's at [v_word_gpu], followed by its two join words, and whose
-   notifications hold their error at [v_info32] and its status at
-   [v_status]; or [0] without memory. Its edge lives for the process, its
-   state until its stop. */
-value caml_rig_nv_create(value v_word, value v_word_gpu, value v_info32,
-                         value v_status) {
+   GPU's at [v_word_gpu], whose join words follow the GPU's word at
+   [v_join_gpu], and whose notifications hold their error at [v_info32] and
+   its status at [v_status]; or [0] without memory. Its values start after
+   the value its word holds. Its edge lives for the process, its state until
+   its stop. */
+value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
+                         value v_info32, value v_status) {
   struct rig_nv_edge *e = calloc(1, sizeof *e);
   struct device *d = calloc(1, sizeof *d);
   if (e == NULL || d == NULL) {
@@ -62,9 +63,15 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_info32,
   e->d = d;
   d->word = Pointer_val(v_word);
   d->word_gpu = (uint64_t)Long_val(v_word_gpu);
+  d->join_gpu = (uint64_t)Long_val(v_join_gpu);
   d->info32_at = (uint32_t)Long_val(v_info32);
   d->status_at = (uint32_t)Long_val(v_status);
-  for (int q = 0; q < CHANNELS; q++) d->ch[q].owes_setup = 1;
+  uint64_t base = atomic_load_explicit(d->word, memory_order_acquire);
+  atomic_store_explicit(&d->last, base, memory_order_relaxed);
+  for (int q = 0; q < CHANNELS; q++) {
+    d->ch[q].owes_setup = 1;
+    d->ch[q].released = base;
+  }
   return Val_long((intnat)e);
 }
 
@@ -324,6 +331,16 @@ value caml_rig_nv_flush(value v_self, value v_word, value v_delta) {
 /* Zeroes the [v_n] bytes of host memory at [v_at]. */
 value caml_rig_nv_zero(value v_at, value v_n) {
   memset(Pointer_val(v_at), 0, (size_t)Long_val(v_n));
+  return Val_unit;
+}
+
+/* Copies the 64-bit word at [v_from] to [v_to], with acquire and release
+   order. */
+value caml_rig_nv_copy_word(value v_to, value v_from) {
+  uint64_t w = atomic_load_explicit((_Atomic uint64_t *)Pointer_val(v_from),
+                                    memory_order_acquire);
+  atomic_store_explicit((_Atomic uint64_t *)Pointer_val(v_to), w,
+                        memory_order_release);
   return Val_unit;
 }
 

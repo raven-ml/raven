@@ -892,7 +892,7 @@ let device_name i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   if i = 0 then "NV" else strf "NV:%d" i
 
-let open_ ?(root = "/") i =
+let open_ ?(root = "/") ~word i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   let* buses =
     Result.map_error
@@ -915,7 +915,7 @@ let open_ ?(root = "/") i =
       in
       if not claimed then Error (strf "%s has a device open" bus)
       else
-        match Rig_nv.make (path g) with
+        match Rig_nv.make ~word (path g) with
         | Ok d -> Ok d
         | Error _ as e ->
             Mutex.protect gpus_lock (fun () -> g.opened <- false);
@@ -925,5 +925,5 @@ let gpu ?root i : Rig_nv.t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Rig_nv);
-    make = (fun ~word:_ -> open_ ?root i);
+    make = (fun ~word -> open_ ?root ~word i);
   }

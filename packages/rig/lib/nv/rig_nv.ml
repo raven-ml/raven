@@ -99,9 +99,14 @@ let path_alloc (p : _ path) kind n = below n (p.alloc kind n)
 
 let page = 4096
 
-(* The device's words: the timeline word, then the channels' join words, as
-   rig_nv_stubs.h's JOIN_GPU lays them out. *)
+(* The device's own words: a timeline word, used where the path maps no host
+   memory, then the channels' join words, as rig_nv_stubs.h's JOIN_GPU lays
+   them out. *)
 let words_bytes = 8 * 3
+
+(* The bytes, from a 64 KiB boundary of rig's array of words, that the device
+   maps to reach its word there: whole pages on every host. *)
+let chunk = 1 lsl 16
 
 (* Each channel's ring holds [entries] entries, and its segment ring
    [segment_bytes] bytes, both powers of two: a submission takes at least one
@@ -173,7 +178,7 @@ let sm_errors =
 
 (* The C state *)
 
-external create : int -> int -> int -> int -> int = "caml_rig_nv_create"
+external create : int -> int -> int -> int -> int -> int = "caml_rig_nv_create"
 [@@noalloc]
 
 external destroy : int -> unit = "caml_rig_nv_destroy" [@@noalloc]
@@ -200,6 +205,10 @@ external set_flush : int -> int -> unit = "caml_rig_nv_bar" [@@noalloc]
 external count_flush : int -> int -> int -> bool = "caml_rig_nv_flush"
 [@@noalloc]
 external zero : int -> int -> unit = "caml_rig_nv_zero" [@@noalloc]
+external copy_word : int -> int -> unit = "caml_rig_nv_copy_word" [@@noalloc]
+
+(* rig's array of timeline words: its address and its bytes. *)
+external array_of_words : unit -> int * int = "caml_rig_edge_words"
 
 external exchange_local : int -> int -> int = "caml_rig_nv_exchange_local"
 [@@noalloc]
@@ -570,7 +579,7 @@ let host what (m : _ memory) =
 
 (* The device's objects and memory, each given back by [taken] if a later step
    fails. *)
-let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
+let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
   let rm = p.rm in
   let alloc kind bytes what =
     match path_alloc p kind bytes with
@@ -586,9 +595,35 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     taken (fun () -> ignore (rm.free ~parent h));
     Ok h
   in
-  let* words = alloc Pinned page "timeline word" in
-  let* words_host = host "timeline word" words in
+  let* words = alloc Pinned page "join words" in
+  let* words_host = host "join words" words in
   zero words_host words_bytes;
+  (* The word rig gave, mapped from its chunk of the array, or, where the
+     path maps no host memory or the word lies outside the array, a word of
+     the device's own, started at the given word's value. *)
+  let word = Nativeint.to_int word in
+  let at = word land lnot (chunk - 1) in
+  let start, bytes = array_of_words () in
+  let mapped =
+    match p.map_host with
+    | None -> None
+    | Some _ when word < start || word + 8 > start + bytes -> None
+    | Some map -> (
+        match below chunk (map at chunk) with
+        | None -> None
+        | Some m ->
+            taken (fun () -> p.free m);
+            Some m)
+  in
+  let word_host, word_mem =
+    match mapped with
+    | Some m ->
+        ( word,
+          { m with address = m.address + (word - at); host = Some word } )
+    | None ->
+        copy_word words_host word;
+        (words_host, words)
+  in
   let* block = alloc Pinned block_bytes "channels' rings" in
   let* block_host = host "channels' rings" block in
   let notifier q =
@@ -637,7 +672,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
       C.sizeof
   in
   let self =
-    create words_host words.address
+    create word_host word_mem.address words.address
       (fst D.Notification.info32)
       (fst D.Notification.status)
   in
@@ -749,8 +784,11 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
           let* code_host = host "copy kernel" code in
           Ok (Some (c, k, code, code_host))
     in
+    (* An own word stays for the process, which reads it; rig's word goes
+       back with the device's mapping of it. *)
     let owned =
       [ block; launches; stamps; fst compute_notifier; fst copy_notifier ]
+      @ match mapped with Some m -> [ m; words ] | None -> []
     in
     let owned =
       match copy_kernel with
@@ -780,7 +818,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
             local_window;
             local = (fun n -> local d n);
           };
-        word = { dev = d; mem = words; free = p.free; bytes = 8; flush = None };
+        word = { dev = d; mem = word_mem; free = p.free; bytes = 8; flush = None };
         flush = p.flush;
         flush_lock = Mutex.create ();
         local_lock = Mutex.create ();
@@ -815,7 +853,7 @@ let start (type m) (p : m path) (module R : D.RELEASE) ~taken =
     in
     Ok (T d)
 
-let make p =
+let make ~word p =
   match D.release p.rm.release with
   | None ->
       Error
@@ -828,7 +866,7 @@ let make p =
       let give_back () =
         List.iter (fun f -> try f () with Fault _ -> ()) !undo
       in
-      match start p release ~taken with
+      match start ~word p release ~taken with
       | exception Fault why ->
           give_back ();
           Error why
@@ -1119,10 +1157,13 @@ let halt d l =
     Option.iter (give l.path.free) l.local_pending;
     List.iter (fun (m, _) -> give l.path.free m) l.local_retired
   end
-    (* The RM stopped the channels on a fault: nothing runs, though their
+    (* The RM stopped both channels on a fault: nothing runs, though their
        objects stay. Otherwise their own releases bring the word up as their
-       work ends; a word raised here could be lowered by a late release. *)
-  else if notified d then raise_word d.self;
+       work ends. A word raised here could be lowered by a late release: a
+       channel the RM did not stop would find its waits on the word met and
+       release its own values. *)
+  else if notification d.self 0 <> 0 && notification d.self 1 <> 0 then
+    raise_word d.self;
   Mutex.protect d.flush_lock (fun () -> end_state d.self stopped)
 
 let stop (T d) ~fault:_ =

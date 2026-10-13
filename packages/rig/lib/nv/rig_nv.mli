@@ -84,9 +84,15 @@ val capability : t -> Rig_nv_abi.Gpu.t
       | [maps_host] | [true] iff the path maps host memory. |
       | [host_addresses] | [false]: the host does not address [Device] memory. |
       | [capability] | {!val-capability} ({!Rig_nv_abi.Gpu.declare}). |
-      | [word] | Eight bytes of [Pinned] memory. |
+      | [word] | The word [make] was given, mapped through the path. |
     }
 
+    The device maps the 64 KiB of rig's array of words that holds its word
+    through the path ({!field-map_host}), so that its channels write it. On a
+    path that maps no host memory, or when the word [make] was given lies
+    outside the array, the word is eight bytes of the device's own [Pinned]
+    memory, which starts at the given word's value and which rig reads
+    through {!signaled}. The device's values start after that value.
     The word holds, as an unsigned 64-bit integer in the host's byte order,
     the last value [v] such that the work of every value up to [v] has
     completed. A channel writes it once its work has completed and that
@@ -265,8 +271,19 @@ val capability : t -> Rig_nv_abi.Gpu.t
     allocated return as {!Rig_edge.Driver.val-stop} states, in both cases.
 
     Either way the stop frees the C state the device ran work with, its
-    templates and the channels' records, which the channels never read. The
-    word, and the edge that reads it, stay for the process. *)
+    templates and the channels' records, which the channels never read. A
+    word of the device's own, and the edge that reads the word, stay for the
+    process.
+
+    Once the word shows the last value and {!val-stop} has returned, no work
+    of the device writes it. A channel's release of a value follows its work,
+    and the channels end their work with the last value's release. The stop
+    raises the word itself only once the channels are freed or the path
+    stopped them, or once both channels' notifiers hold an error: the RM
+    stops a channel it reports an error for. A raised word would release the
+    waits of a channel still running, whose own releases would then lower
+    it, so with one channel stopped the word reaches the last value only as
+    the other's work ends. *)
 
 (** {1:paths Paths}
 
@@ -419,10 +436,12 @@ type 'm path = {
     [free] until it has given back all the memory the path gave, and
     [reaches] for the life of the process. *)
 
-val make : 'm path -> (t, string) result
-(** [make p] is the device of the GPU [p] reaches. Under [p.device] it
-    allocates a channel group with one context share, the two channels and
-    their memory, and asks the RM to run the GPU at its highest clocks.
+val make : word:nativeint -> 'm path -> (t, string) result
+(** [make ~word p] is the device of the GPU [p] reaches, whose timeline word
+    is the 8 bytes at the host address [word] ({!Rig_edge.type-opener}).
+    Under [p.device] it allocates a channel group with one context share,
+    the two channels and their memory, and asks the RM to run the GPU at its
+    highest clocks.
 
     It then takes its first measure of the GPU's timer through [p.clock].
 
