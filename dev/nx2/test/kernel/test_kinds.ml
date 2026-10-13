@@ -198,8 +198,8 @@ let test_digests =
             sinh f64 9d23cad5b2079257
             cosh f32 785d82efeb2a2b50
             cosh f64 6eb4470813a62e4a
-            tanh f32 9903a9f26ee800c5
-            tanh f64 1658d47e32dc44eb
+            tanh f32 258fbaba8d4094ba
+            tanh f64 af9fa4a9c058101d
             erf f32 da913d4a706d135b
             erf f64 c335649c54d9fc2d
             sqrt f32 4b050dff129930bf
@@ -336,7 +336,7 @@ let test_f64_goldens =
       ("atan", 2, 0.573);
       ("sinh", 2, 0.708);
       ("cosh", 2, 0.590);
-      ("tanh", 2, 0.906);
+      ("tanh", 2, 0.832);
       ("erf", 2, 0.714);
       ("pow", 2, 1.000);
       ("atan2", 2, 0.946);

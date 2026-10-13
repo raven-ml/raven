@@ -295,6 +295,11 @@ NX_INLINE uint32_t nx_two_over_pi_at(int32_t g) {
 #define NX_EXPM1_TINY_F32 0x1p-25f
 #define NX_HYP_HI_F32 90.0f
 #define NX_HYP_KCAP_F32 32
+/* tanh's split, where e^2a passes 3.5 and its error reaches the quotient
+   shrunk by 0.62 or more, and where it rounds to 1: (p + 2) ln2 / 2
+   rounded up, p the precision. */
+#define NX_TANH_SMALL_F32 0.625f
+#define NX_TANH_HI_F32 9.5f
 #define NX_POW_HI_F32 130.0f
 #define NX_POW_LO_F32 -160.0f
 #define NX_PIO2_BIG_F32 0x1p+15f
@@ -363,6 +368,15 @@ NX_INLINE float nx_asin_b_f32(float z) {
   b = nx_fmaf(b, z, 0x1.747bbap-5f);
   b = nx_fmaf(b, z, 0x1.330204p-4f);
   return nx_fmaf(b, z, 0x1.5555c8p-3f);
+}
+
+/* tanh a = a + a^3 T(a^2) on a <= 0.625, 2^-27.7 (tanhT). */
+NX_INLINE float nx_tanh_t_f32(float z) {
+  float t = -0x1.750ce4p-8f;
+  t = nx_fmaf(t, z, 0x1.51f8cep-6f);
+  t = nx_fmaf(t, z, -0x1.b835a4p-5f);
+  t = nx_fmaf(t, z, 0x1.1106f6p-3f);
+  return nx_fmaf(t, z, -0x1.555532p-2f);
 }
 
 NX_INLINE nx_rem_f32 nx_rem_pio2_cw_f32(float x);
@@ -612,6 +626,8 @@ NX_INLINE int nx_double_nan(double d) {
 #define NX_EXPM1_TINY_F64 0x1p-54
 #define NX_HYP_HI_F64 712.0
 #define NX_HYP_KCAP_F64 64
+#define NX_TANH_SMALL_F64 0.625
+#define NX_TANH_HI_F64 19.5
 #define NX_POW_HI_F64 1030.0
 #define NX_POW_LO_F64 -1080.0
 #define NX_PIO2_BIG_F64 0x1p+28
@@ -705,6 +721,21 @@ NX_INLINE double nx_asin_b_f64(double z) {
   b = nx_fmad(b, z, 0x1.6db6db427c841p-5);
   b = nx_fmad(b, z, 0x1.333333336e7cbp-4);
   return nx_fmad(b, z, 0x1.555555555539p-3);
+}
+
+/* T(a^2) on a <= 0.625, 2^-56.0 (tanhT). */
+NX_INLINE double nx_tanh_t_f64(double z) {
+  double t = -0x1.0da727a627179p-16;
+  t = nx_fmad(t, z, 0x1.4391214300e67p-14);
+  t = nx_fmad(t, z, -0x1.df5579a8b4a07p-13);
+  t = nx_fmad(t, z, 0x1.336612e405191p-11);
+  t = nx_fmad(t, z, -0x1.7d68a32fdd9b9p-10);
+  t = nx_fmad(t, z, 0x1.d6cf280ecda0fp-9);
+  t = nx_fmad(t, z, -0x1.226e162bf7b5p-7);
+  t = nx_fmad(t, z, 0x1.664f477adac7ap-6);
+  t = nx_fmad(t, z, -0x1.ba1ba1b5064afp-5);
+  t = nx_fmad(t, z, 0x1.111111110accdp-3);
+  return nx_fmad(t, z, -0x1.55555555554ffp-2);
 }
 
 NX_INLINE nx_rem_f64 nx_rem_pio2_cw_f64(double x);

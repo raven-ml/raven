@@ -236,6 +236,9 @@ def fits():
         # asin s = s + s^3 B(s^2), relative
         "asinB": (at0(lambda z: (E.asin(E.sqrt(z)) - E.sqrt(z)) / (z * E.sqrt(z)), mpf(1) / 6),
                   (0, mpf(1) / 4), at0(lambda z: z * E.sqrt(z) / E.asin(E.sqrt(z)), 0)),
+        # tanh a = a + a^3 T(a^2) on a <= 0.625, relative
+        "tanhT": (at0(lambda z: (E.tanh(E.sqrt(z)) - E.sqrt(z)) / (z * E.sqrt(z)), -mpf(1) / 3),
+                  (0, mpf("0.625") ** 2), at0(lambda z: z * E.sqrt(z) / E.tanh(E.sqrt(z)), 0)),
     }
     atan_a = at0(lambda z: (E.atan(E.sqrt(z)) - E.sqrt(z)) / (z * E.sqrt(z)), -mpf(1) / 3)
     atan_w = at0(lambda z: z * E.sqrt(z) / E.atan(E.sqrt(z)), 0)
@@ -244,7 +247,7 @@ def fits():
     erf_w = at0(lambda z: z / (E.erf(E.sqrt(z)) / E.sqrt(z)), 0)
     out = []
     for name, n in [("expQ", 5), ("exp2P", 6), ("logT", 4), ("logT'", 3), ("sinS", 3),
-                    ("cosC", 3), ("asinB", 5)]:
+                    ("cosC", 3), ("asinB", 5), ("tanhT", 5)]:
         tgt, (a, b), w = common[name]
         out.append(("f32", name, tgt, n, a, b, w, 0))
     out.append(("f32", "atanA", atan_a, 8, 0, 1, atan_w, 0))
@@ -253,7 +256,7 @@ def fits():
     out.append(("f32", "erfQ", lambda u: E.erfc(u + mpf(5) / 2), 15, -mpf(3) / 2, mpf(3) / 2,
                 lambda u: 1, mpf(5) / 2))
     for name, n in [("expQ", 10), ("exp2P", 12), ("logT", 8), ("logT'", 8), ("sinS", 6),
-                    ("cosC", 6), ("asinB", 12)]:
+                    ("cosC", 6), ("asinB", 12), ("tanhT", 11)]:
         tgt, (a, b), w = common[name]
         out.append(("f64", name, tgt, n, a, b, w, 0))
     out.append(("f64", "atanA", atan_a, 11, 0, (mpf(7) / 16) ** 2, atan_w, 0))
@@ -338,7 +341,11 @@ def unary_points(fn, rng):
         "asin": [0.5, 1.0, -1.0], "acos": [0.5, -0.5, 1.0, -1.0],
         "atan": [0.4375, 0.6875, 1.1875, 2.4375, float.fromhex("0x1p54")],
         "sinh": [710.4758600739439, 0.3465735902799726, 1.0], "cosh": [710.4758600739439, 1.0],
-        "tanh": [19.06154746539849, float.fromhex("0x1p-54")], "erf": [1.0, 1.75, 2.5, 2.75, 4.0, 5.95, 5.921587195794507],
+        # tanh: its splits, float32's clamp, and the largest float64 error
+        # found among 4M points near 0.87
+        "tanh": [19.06154746539849, float.fromhex("0x1p-54"), 0.625, 19.5, 9.5,
+                 float.fromhex("0x1.bd0a009ce7bedp-1")],
+        "erf": [1.0, 1.75, 2.5, 2.75, 4.0, 5.95, 5.921587195794507],
     }[fn]
     for e in edges:
         pts += neighbours(e) + neighbours(-e)
@@ -349,6 +356,9 @@ def unary_points(fn, rng):
         "sinh": (-711, 711), "cosh": (-711, 711), "tanh": (-20, 20), "erf": (-6, 6),
     }[fn]
     pts += uniform(rng, 300, *core)
+    if fn == "tanh":
+        # past the split at 0.625, where 1 - 2 / (e^2a + 1) errs most
+        pts += uniform(rng, 1000, -2, 2)
     if fn in ("sin", "cos", "tan"):
         # near the multiples of pi/2 that reduce worst, and past the switch
         for k in [1, 2, 3, 4, 5, 6, 7, 355, 103993, 1 << 20, 1 << 27]:

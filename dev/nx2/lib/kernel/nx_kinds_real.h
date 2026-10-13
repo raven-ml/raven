@@ -11,8 +11,9 @@
    - NX_C(c), the type's constant c: NX_C(SHIFT) is NX_SHIFT_F32;
    - NX_FMA, NX_SQRT, NX_BITS, NX_OF_BITS and NX_ISNAN;
    - the polynomials (NX_(nx_exp_q), NX_(nx_exp2_poly), NX_(nx_log_t),
-     NX_(nx_log_tp), NX_(nx_sincos_p), NX_(nx_asin_b)), the pair and
-     reduction types, and the prototypes of the trigonometric reductions.
+     NX_(nx_log_tp), NX_(nx_sincos_p), NX_(nx_asin_b), NX_(nx_tanh_t)), the
+     pair and reduction types, and the prototypes of the trigonometric
+     reductions.
 
    It defines every kind but those whose algorithm differs between the
    types: the trigonometric reductions, atan, atan2, erf and mod. */
@@ -33,12 +34,6 @@ typedef struct {
   NX_T r, rc, kf;
   int32_t k;
 } NX_(nx_exp_red);
-
-/* e^x - 1 = 2^k (v.hi + v.lo). */
-typedef struct {
-  NX_(nx_pair) v;
-  int32_t k;
-} NX_(nx_expm1_red);
 
 /* u = 2^k (1 + f). */
 typedef struct {
@@ -247,29 +242,19 @@ NX_INLINE NX_T NX_(nx_exp2)(NX_T x) {
 }
 
 /* expm1: e^x - 1 = 2^k ((1 - 2^-k) + r + r^2 Q(r)), the bracket summed
-   exactly but for the last rounding: a pair, which tanh divides. r's
-   rounding error rc is added scaled by e^r. Past NX_C(EXPM1_KCAP) the
-   2^-k term is below 2^-64 of the result. */
-NX_INLINE NX_(nx_expm1_red) NX_(nx_expm1_pair)(NX_T x) {
-  x = x > NX_C(EXP_HI) ? NX_C(EXP_HI) : x;
-  x = x < NX_C(EXPM1_LO) ? NX_C(EXPM1_LO) : x;
-  NX_(nx_exp_red) e = NX_(nx_exp_reduce)(x);
+   exactly but for the last rounding. r's rounding error rc is added
+   scaled by e^r. Past NX_C(EXPM1_KCAP) the 2^-k term is below 2^-64 of
+   the result. Below NX_C(EXPM1_TINY), expm1 x rounds to x, whose zero
+   sign the sums lose. */
+NX_INLINE NX_T NX_(nx_expm1)(NX_T x) {
+  NX_T c = x > NX_C(EXP_HI) ? NX_C(EXP_HI) : x;
+  c = c < NX_C(EXPM1_LO) ? NX_C(EXPM1_LO) : c;
+  NX_(nx_exp_red) e = NX_(nx_exp_reduce)(c);
   NX_T h = NX_FMA(e.r * e.r, NX_(nx_exp_q)(e.r), NX_FMA(e.rc, e.r, e.rc));
   NX_T m = NX_(nx_pow2)(-(e.k > NX_C(EXPM1_KCAP) ? NX_C(EXPM1_KCAP) : e.k));
   NX_(nx_pair) u = NX_(nx_two_sum)(NX_ONE, -m);
   NX_(nx_pair) sum = NX_(nx_two_sum)(u.hi, e.r);
-  NX_(nx_expm1_red) r;
-  r.v.hi = sum.hi;
-  r.v.lo = sum.lo + (u.lo + h);
-  r.k = e.k;
-  return r;
-}
-
-/* Below NX_C(EXPM1_TINY), expm1 x rounds to x, whose zero sign the sums
-   lose. */
-NX_INLINE NX_T NX_(nx_expm1)(NX_T x) {
-  NX_(nx_expm1_red) e = NX_(nx_expm1_pair)(x);
-  NX_T y = NX_(nx_scale)(e.v.hi + e.v.lo, e.k);
+  NX_T y = NX_(nx_scale)(sum.hi + (sum.lo + (u.lo + h)), e.k);
   return NX_(nx_nan1)(x, NX_(nx_abs_bits)(x) < NX_C(EXPM1_TINY) ? x : y);
 }
 
@@ -523,17 +508,24 @@ NX_INLINE NX_T NX_(nx_cosh)(NX_T x) {
   return NX_(nx_nan1)(x, NX_(nx_scale)(y, h.k - 1));
 }
 
-/* tanh |x| = -em / (em + 2) with em = expm1(-2|x|), divided as pairs. */
+/* tanh a, a = |x|: below NX_C(TANH_SMALL), a + a^3 T(a^2); above,
+   1 - 2 / (w + 1) with w = e^2a, whose error the quotient shrinks, and a
+   clamped past which tanh rounds to 1. The quotient's and the
+   subtraction's own roundings are kept as tails: w + 1 as a pair, the
+   quotient corrected by its residual, 1 - q summed exactly but for the
+   last rounding. Both ranges are positive and take x's sign bit. */
 NX_INLINE NX_T NX_(nx_tanh)(NX_T x) {
-  NX_(nx_expm1_red) e = NX_(nx_expm1_pair)((NX_T)-2 * NX_(nx_abs_bits)(x));
-  NX_T sh = NX_(nx_pow2)(e.k);
-  NX_(nx_pair) n = {-e.v.hi * sh, -e.v.lo * sh};
-  NX_(nx_pair) d = NX_(nx_two_sum)((NX_T)2, -n.hi);
-  d.lo -= n.lo;
-  NX_(nx_pair) q = NX_(nx_div_pair)(n, d);
-  NX_T y = q.hi + q.lo;
   NX_T a = NX_(nx_abs_bits)(x);
-  return NX_(nx_nan1)(x, NX_(nx_copysign)(a < NX_C(EXPM1_TINY) ? a : y, x));
+  NX_T z = a * a;
+  NX_T small = NX_FMA(a * z, NX_(nx_tanh_t)(z), a);
+  NX_T w = NX_(nx_exp_of)((NX_T)2 * (a < NX_C(TANH_HI) ? a : NX_C(TANH_HI)));
+  NX_(nx_pair) d = NX_(nx_fast_two_sum)(w, NX_ONE);
+  NX_T qh = (NX_T)2 / d.hi;
+  NX_T ql = (NX_FMA(-qh, d.hi, (NX_T)2) - qh * d.lo) * ((NX_T)0.5 * qh);
+  NX_T s = NX_ONE - qh;
+  NX_T y = a < NX_C(TANH_SMALL) ? small : s + (((NX_ONE - s) - qh) - ql);
+  y = NX_OF_BITS(NX_BITS(y) | (NX_BITS(x) & NX_SIGN_BIT));
+  return x != x ? x : y;
 }
 
 /* pow
