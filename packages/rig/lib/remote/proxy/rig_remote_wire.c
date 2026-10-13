@@ -7,6 +7,8 @@
    the system's random source. */
 
 #define _GNU_SOURCE
+/* macOS's select takes sets past FD_SETSIZE. */
+#define _DARWIN_UNLIMITED_SELECT
 
 #ifdef _WIN32
 #define _CRT_RAND_S
@@ -28,6 +30,7 @@
 #if !defined(_WIN32)
 #include <poll.h>
 #include <sys/random.h>
+#include <sys/select.h>
 #include <sys/time.h>
 #include <unistd.h>
 #endif
@@ -70,11 +73,17 @@ static fd_set *socket_set(const SOCKET *s, mlsize_t n) {
 /* The index of the first of the descriptors [fds] ready to read, or to
    write if [write], within [ms] milliseconds, -1 for no bound; -1 once [ms]
    passed. A descriptor in error, or whose peer hung up, is ready: the call
-   that follows reports it. POSIX waits with poll, which takes descriptors
-   of any number and count, where select takes none from FD_SETSIZE.
-   Windows waits with select on sockets, whose sets it allocates to fit,
-   and which reports a failed connect as an exception. Releases the
-   runtime. Raises Unix.Unix_error if the wait fails, EINTR included. */
+   that follows reports it. Each system waits on descriptors of any number
+   and count:
+   - Linux and the BSDs wait with poll, where select takes none from
+     FD_SETSIZE.
+   - macOS waits with select, its sets sized to the highest descriptor
+     (_DARWIN_UNLIMITED_SELECT): its poll misses the end of a FIFO and
+     refuses devices such as /dev/null.
+   - Windows waits with select on sockets, its sets allocated to fit; it
+     reports a failed connect as an exception.
+   Releases the runtime. Raises Unix.Unix_error if the wait fails, EINTR
+   included. */
 value caml_rig_remote_wire_wait(value fds, value write, value ms) {
   mlsize_t n = Wosize_val(fds);
   int w = Bool_val(write), t = Int_val(ms);
@@ -104,6 +113,44 @@ value caml_rig_remote_wire_wait(value fds, value write, value ms) {
   free(ready);
   free(failed);
   if (k == SOCKET_ERROR) rig_remote_raise_error(e, "select");
+  return Val_int(r);
+#elif defined(__APPLE__)
+  /* The descriptors, copied: the array may move once the runtime is
+     released. */
+  int *d = malloc(n * sizeof(int));
+  if (d == NULL) caml_raise_out_of_memory();
+  int top = -1, bad = 0;
+  for (mlsize_t i = 0; i < n; i++) {
+    d[i] = Int_val(Field(fds, i));
+    if (d[i] > top) top = d[i];
+    if (d[i] < 0) bad = 1;
+  }
+  if (bad) {
+    free(d);
+    rig_remote_raise_error(EBADF, "select");
+  }
+  size_t words = (size_t)top / __DARWIN_NFDBITS + 1;
+  int32_t *set = calloc(words, sizeof(int32_t));
+  if (set == NULL) {
+    free(d);
+    caml_raise_out_of_memory();
+  }
+  for (mlsize_t i = 0; i < n; i++)
+    set[d[i] / __DARWIN_NFDBITS] |= (int32_t)(1u << (d[i] % __DARWIN_NFDBITS));
+  struct timeval bound = {t / 1000, (t % 1000) * 1000};
+  caml_release_runtime_system();
+  int k = select(top + 1, w ? NULL : (fd_set *)set, w ? (fd_set *)set : NULL,
+                 NULL, t < 0 ? NULL : &bound);
+  int e = errno;
+  caml_acquire_runtime_system();
+  int r = -1;
+  for (mlsize_t i = 0; k > 0 && i < n && r < 0; i++)
+    if (set[d[i] / __DARWIN_NFDBITS] &
+        (int32_t)(1u << (d[i] % __DARWIN_NFDBITS)))
+      r = (int)i;
+  free(d);
+  free(set);
+  if (k < 0) rig_remote_raise_error(e, "select");
   return Val_int(r);
 #else
   struct pollfd *p = malloc(n * sizeof(struct pollfd));

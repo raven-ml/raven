@@ -24,3 +24,10 @@
   (language c)
   (names gap))
  (libraries rig_bin unix))
+
+(executable
+ (name high)
+ (modules high)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries rig_support unix))

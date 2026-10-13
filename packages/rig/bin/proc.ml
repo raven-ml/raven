@@ -94,7 +94,7 @@ let wait ?until rs =
     | None -> -1.
     | Some t -> Float.max 0. (t -. Unix.gettimeofday ())
   in
-  (try ignore (Unix.select (fst wake :: fds) [] [] timeout)
+  (try ignore (Rig_remote_proxy.Wire.ready (fst wake :: fds) `Read timeout)
    with Unix.Unix_error (Unix.EINTR, _, _) -> ());
   drain (fst wake)
 

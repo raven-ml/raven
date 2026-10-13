@@ -16,4 +16,5 @@
   support/ctl.exe
   support/firmware_test.exe
   support/sig.exe
-  support/gap.exe))
+  support/gap.exe
+  support/high.exe))
