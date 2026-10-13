@@ -164,7 +164,7 @@ let operand dt s nb v seed =
    rows and columns than [few_rows_most] (AVX2's few, the largest) takes
    the chain path; [kc_least] and [nc_least] are the smallest blocks of the
    contraction and of b's columns, KC and NC, and [panels] the bytes of
-   packed operands a group of batch elements shares, b's panel at least. *)
+   packed operands a group of batch elements shares. *)
 let few_rows_most = 256
 let kc_least = 256
 let nc_least = 1024
@@ -255,11 +255,12 @@ let case_of ~acc ~out ~dts =
    few rows over several groups of columns, on several threads;
    several panels and several groups of few rows; 40 rows by 40 and by 17
    columns over several blocks of the contraction, a tile's partial rows
-   and columns; the chain path over several blocks of the contraction,
-   over several panels
-   without init, with no product and no init, and, in float64, over several
-   groups. The drawn cases reach each a few times in a hundred or never, so
-   a run of a hundred can miss one. *)
+   and columns; AVX2's most few rows against an edge of b's columns; the
+   chain path over several blocks of the contraction, over several panels,
+   without init, and with no product and no init. The few rows' case again,
+   and in float64 the chain path over several groups, with a and b stored
+   transposed. The drawn cases reach each a few times in a hundred or
+   never, so a run of a hundred can miss one. *)
 let regimes acc =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let case (init, e) =
@@ -267,18 +268,32 @@ let regimes acc =
     let ti = if init then Some (plain ry) else None in
     make ~acc ~out:acc e (acc, plain ra) (acc, plain rb) ti 1
   in
+  (* [case] with a and b stored transposed, which every table packs. *)
+  let apart (init, e) =
+    let ra, rb, ry = ranks e in
+    let swap r =
+      { (plain r) with
+        perm = Array.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i) }
+    in
+    let ti = if init then Some (plain ry) else None in
+    let c = make ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
+    let copy (A.Any x) = A.Any (A.copy x) in
+    { c with a = copy c.a; b = copy c.b }
+  in
   let rows = few_rows_most + 1 in
-  (* Several groups of the chain path take some 136 million products in
-     float64, twice as many in float32, whose reference is slower: float64
-     alone draws them. *)
+  let few = (true, ([||], [| few_rows_most |], [| few_rows_most + 3 |], [| 3 |])) in
+  (* Several groups of the chain path, both operands packed, take some 135
+     million products in float64; float32's packs are half as large, and
+     its groups need twice the products: float64 alone draws them. *)
   let groups =
     match acc with
     | D.Any D.Float64 ->
-        let batch = (panels / (rows * kc_least * 8)) + 1 in
-        [ (true, ([| batch |], [| rows |], [| rows |], [| kc_least |])) ]
+        let batch = (panels / (2 * rows * kc_least * 8)) + 1 in
+        [ apart (true, ([| batch |], [| rows |], [| rows |], [| kc_least |])) ]
     | _ -> []
   in
-  List.map case
+  [ apart few ] @ groups
+  @ List.map case
     ([
        (true, ([||], [| 0 |], [| 3 |], [| 2 |]));
        (true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
@@ -295,11 +310,11 @@ let regimes acc =
        (true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
        (true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
        (true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
+       few;
        (true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
        (false, ([||], [| rows |], [| 3100 |], [| 3 |]));
        (false, ([||], [| rows |], [| rows |], [| 0 |]));
-     ]
-    @ groups)
+     ])
 
 (* The dtypes each accumulator holds, as nx_cpu.mli lists them. *)
 let held = function
@@ -563,7 +578,7 @@ let covers c =
   cover "chain over several blocks of the contraction" (chain && k > 1024);
   cover "chain over several panels of columns" (chain && n > 3072);
   cover "chain over several groups of batch elements"
-    (chain && batch * min n nc_least * min k kc_least * w > panels);
+    (chain && batch * (m + min n nc_least) * min k kc_least * w > panels);
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "stepped"; "broadcast"; "permuted" ]
