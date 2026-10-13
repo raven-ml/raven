@@ -7,8 +7,8 @@ which they name at each, under this notice:
   xLAED6, xLAMRG, xLAEV2, xLARTG, xLASR.
 - svd: xGESDD, xGEBRD, xLABRD, xBDSDC, xBDSQR, xLASDQ, xLASD0 to xLASD5,
   xLAS2, xLASV2.
-- eig: xGEEV, xGEBAL, xGEHD2, xLARF, xLAHQR, xLANV2, xTREVC3, xLALN2,
-  xGEBAK.
+- eig: xGEEV, xGEBAL, xGEHD2, xLARF, xHSEQR, xLAHQR, xLANV2, xTREVC3,
+  xLALN2, xGEBAK.
 
 Copyright (c) 1992-2025 The University of Tennessee and The University
                         of Tennessee Research Foundation.  All rights

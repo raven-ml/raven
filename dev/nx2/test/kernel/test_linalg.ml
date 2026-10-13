@@ -414,12 +414,14 @@ let mirrored r dt n =
         let q = Complex.norm p in
         if q = 0. then m.((j * n) + i)
         else
-          Complex.mul m.((j * n) + i) { Complex.re = p.re /. q; im = p.im /. q })
+          let phase = { Complex.re = p.re /. q; im = p.im /. q } in
+          Complex.mul m.((j * n) + i) phase)
 
 (* A lower triangular matrix of order [n], whose rows and columns
    balancing isolates one by one. *)
 let lower r dt n =
-  Array.init (n * n) (fun k -> if k / n >= k mod n then draw r dt else Complex.zero)
+  Array.init (n * n) (fun k ->
+      if k / n >= k mod n then draw r dt else Complex.zero)
 
 (* A block upper triangular matrix of order [n], its rows and columns
    permuted by [p]: [i0] rows and columns, then a mirrored block, then
@@ -1305,7 +1307,8 @@ let test_eig_balanced (b : Support.backend) () =
    ones. Scaled first, as xGEEV does, the small entry flushes to zero. *)
 let test_eig_extremes (b : Support.backend) () =
   let case dt (a : float array) exact =
-    let x = of_values dt [| 2; 2 |] (Array.map (fun re -> { Complex.re; im = 0. }) a) in
+    let a = Array.map (fun re -> { Complex.re; im = 0. }) a in
+    let x = of_values dt [| 2; 2 |] a in
     match run b (Eig true) [| x |] with
     | None -> ()
     | Some y ->
@@ -1316,7 +1319,8 @@ let test_eig_extremes (b : Support.backend) () =
             let near =
               List.fold_left
                 (fun m e ->
-                  Float.min m (Complex.norm (Complex.sub z { Complex.re = e; im = 0. })))
+                  let e = { Complex.re = e; im = 0. } in
+                  Float.min m (Complex.norm (Complex.sub z e)))
                 infinity exact
             in
             worse worst ~bound ~residual:near (fun () ->
@@ -1356,7 +1360,8 @@ let test_eig_graded_cycle (b : Support.backend) () =
       | Some y ->
           let w = values y.(0) and v = values y.(1) in
           let msg = Format.asprintf "%a" pp_dtype dt in
-          equal ~msg:(msg ^ ": numbers in w") int (2 * n) (numbers (D.Any D.Complex128) w);
+          equal ~msg:(msg ^ ": numbers in w") int (2 * n)
+            (numbers (D.Any D.Complex128) w);
           equal ~msg:(msg ^ ": numbers in v") int (2 * n * n)
             (numbers (D.Any D.Complex128) v);
           let g = eig_bound dt n and worst = { ratio = 0.; where = "" } in
@@ -1381,7 +1386,7 @@ let test_eig_graded_cycle (b : Support.backend) () =
 let test_overflowing_modulus (b : Support.backend) () =
   let big = 0.9 *. Float.max_float in
   let a =
-    [| { Complex.re = big; im = big }; Complex.zero; Complex.zero; Complex.one |]
+    Complex.[| { re = big; im = big }; zero; zero; one |]
   in
   let dt = D.Any D.Complex128 in
   let x = of_values dt [| 2; 2 |] a in
@@ -1657,7 +1662,7 @@ let law_eig_fails (b : Support.backend) c =
   let c = one c in
   if c.n > 0 then
     let p = c.seed mod (c.n * c.n) in
-    let bad = [| Float.nan; Float.infinity; Float.neg_infinity |].(c.seed mod 3) in
+    let bad = Float.[| nan; infinity; neg_infinity |].(c.seed mod 3) in
     let spoil v =
       let v = Array.copy v in
       v.(p) <- { Complex.re = bad; im = 0. };
@@ -1759,7 +1764,9 @@ let law_layouts (b : Support.backend) c =
       equal ~msg:"eigh's v" same_bits (bits y.(1)) (bits z.(1))
   | _ -> ());
   let x = eig_operand c in
-  (match (run b (Eig true) [| x |], run b (Eig true) [| laid_out c.how x |]) with
+  (match
+     (run b (Eig true) [| x |], run b (Eig true) [| laid_out c.how x |])
+   with
   | Some y, Some z ->
       equal ~msg:"eig's w" same_bits (bits y.(0)) (bits z.(0));
       equal ~msg:"eig's v" same_bits (bits y.(1)) (bits z.(1))
