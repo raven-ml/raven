@@ -1382,23 +1382,7 @@ value caml_rig_cuda_signaled(value v_self) {
   return Val_long(atomic_load_explicit(d->word, memory_order_acquire));
 }
 
-/* Gives back the stopped device's word, which holds its last value, and
-   frees the device: the streams and events of a stop that found work
-   running go first, as that work has ended. Releases the runtime: CUDA may
-   wait for the GPU. */
-value caml_rig_cuda_free_word(value v_self) {
-  struct device *d = Device_val(v_self);
-  caml_enter_blocking_section_no_pending();
-  if (push(d->context) == CUDA_SUCCESS) {
-    destroy(d);
-    p_cuMemFreeHost((void *)d->word);
-    pop(CUDA_SUCCESS);
-  }
-  free(d);
-  caml_leave_blocking_section();
-  return Val_unit;
-}
-
+/* The host address of the device's word, which lives for the process. */
 value caml_rig_cuda_word(value v_self) {
   return Val_long((intnat)Device_val(v_self)->word);
 }
@@ -1418,16 +1402,17 @@ value caml_rig_cuda_failed(value v_self) {
 }
 
 /* Stops a device: [true] if its work no longer writes memory, after
-   raising the word to the last value by compare-and-set and destroying the
-   streams and events; [false] if work still runs, or the context cannot be
-   made current to ask. The work no longer writes once the word holds the
-   last value (its write is the work's last command), or once both streams
-   are idle or one met an error. The streams are asked before any write is
-   enqueued, since a write would keep an idle stream busy. Work that still
-   runs gets the write of the last value, if no commit wrote it, so the word
-   reaches it once the work ends. A fault counts as an end because CUDA
-   then runs none of the context's queued work: its reference does not
-   state this, and the 615 driver behaves so. */
+   raising the word to the last value by compare-and-set; [false] if work
+   still runs, or the context cannot be made current to ask. The work no
+   longer writes once the word holds the last value (its write is the
+   work's last command), or once both streams are idle or one met an error.
+   The streams are asked before any write is enqueued, since a write would
+   keep an idle stream busy. Work that still runs gets the write of the
+   last value, if no commit wrote it, so the word reaches it once the work
+   ends. A fault counts as an end because CUDA then runs none of the
+   context's queued work: its reference does not state this, and the 615
+   driver behaves so. The streams and events are destroyed whether work
+   runs or not: CUDA frees them once their work ends. */
 value caml_rig_cuda_stop(value v_self) {
   struct device *d = Device_val(v_self);
   uint64_t w = atomic_load_explicit(d->word, memory_order_acquire);
@@ -1441,10 +1426,16 @@ value caml_rig_cuda_stop(value v_self) {
   stopped |= !running;
   if (!stopped && !d->failed && d->committed != d->last)
     write_word(d, d->last);
-  if (stopped) {
-    rig_raise(d->word, d->last);
-    destroy(d);
-  }
+  if (stopped) rig_raise(d->word, d->last);
+  destroy(d);
   pop(CUDA_SUCCESS);
   return Val_bool(stopped);
+}
+
+/* Whether a device that a stop found running has since ended its work: its
+   word holds the last value. */
+value caml_rig_cuda_ended(value v_self) {
+  struct device *d = Device_val(v_self);
+  uint64_t w = atomic_load_explicit(d->word, memory_order_acquire);
+  return Val_bool((int64_t)(w - d->last) >= 0);
 }

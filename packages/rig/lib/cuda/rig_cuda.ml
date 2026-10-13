@@ -77,8 +77,7 @@ let unheld = 0
 let taken = 1
 let lock = Mutex.create ()
 
-(* Held by a claim of a GPU and by the free of a stopped device's word, which
-   ends the state the claim would stop. *)
+(* Held by a claim of a GPU. *)
 let held_lock = Mutex.create ()
 let gpus = ref None
 
@@ -192,7 +191,7 @@ type t = {
 external open_device : int -> int = "caml_rig_cuda_open"
 external context_of : int -> int = "caml_rig_cuda_context" [@@noalloc]
 external stop_device : int -> bool = "caml_rig_cuda_stop"
-external free_word : int -> unit = "caml_rig_cuda_free_word"
+external ended : int -> bool = "caml_rig_cuda_ended" [@@noalloc]
 external unload_module : int -> int -> int = "caml_rig_cuda_unload"
 external word_address : int -> int = "caml_rig_cuda_word" [@@noalloc]
 external enable_peer : int -> int -> int -> int -> int = "caml_rig_cuda_peer"
@@ -354,16 +353,16 @@ let graph context guard stopped images pending
   end
 
 (* Takes a GPU's [held] for a new device: unheld, or held by a stopped device
-   whose work has since ended, which is then stopped for good. A GPU has one
-   device at a time: two would wait on each other's words through the
-   context's shared hardware queues, an order CUDA does not see. *)
+   whose work has since ended. A GPU has one device at a time: two would wait
+   on each other's words through the context's shared hardware queues, an
+   order CUDA does not see. *)
 let claim held =
   Mutex.protect held_lock @@ fun () ->
   let p = Atomic.get held in
   if p > 0 || not (Atomic.compare_and_set held p taken) then
     Error "the GPU has a device open; stop it first"
   else if p = unheld then Ok ()
-  else if stop_device (-p) then Ok ()
+  else if ended (-p) then Ok ()
   else begin
     Atomic.set held p;
     Error "the GPU still runs the work of a stopped device"
@@ -595,11 +594,7 @@ let free g (r : region) =
         registry := List.filter (fun e' -> e' != e) !registry;
         ignore (lock g.context false e.start 0 : int)
       end
-  | Word ->
-      Mutex.protect held_lock @@ fun () ->
-      ignore (Atomic.compare_and_set g.held (-g.self) unheld);
-      free_word g.self
-  | Locked None | Peer _ -> ()
+  | Word | Locked None | Peer _ -> ()
 
 (* Images *)
 

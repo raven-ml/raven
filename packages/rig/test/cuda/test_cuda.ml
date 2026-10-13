@@ -508,19 +508,14 @@ let stop_ended () =
   equal int ~msg:"the word before the stop" 0 (C.signaled g);
   C.stop g ~fault:None;
   equal int ~msg:"the word as the stop returns" 1 (C.signaled g);
-  C.free g (C.facts g).word;
   let g = require_ok ~msg:"the GPU opened again" ((C.gpu 0).make ()) in
-  C.stop g ~fault:None;
-  C.free g (C.facts g).word
+  C.stop g ~fault:None
 
 let stop_running () =
   if not (S.present ()) then skip ~reason:"the machine has no CUDA GPU" ();
   S.release ();
   let opener = C.gpu 0 in
-  let close g =
-    C.stop g ~fault:None;
-    C.free g (C.facts g).word
-  in
+  let close g = C.stop g ~fault:None in
   let g = require_ok (opener.make ()) in
   S.bind g;
   if S.attribute watchdog <> 0 then begin
@@ -529,8 +524,7 @@ let stop_running () =
   end;
   let flag = require_some (C.alloc g Pinned 8) in
   let checked = ref false in
-  (* Rig reclaims older devices after stop. CUDA may hold a free of their
-     words until this kernel ends, so check while its gate is still held. *)
+  (* Checks while the kernel's gate is still held. *)
   let module Driver = struct
     include C
 
@@ -558,7 +552,11 @@ let stop_running () =
       C.free g flag)
   @@ fun () ->
   lose t flag;
-  equal bool ~msg:"the stop checked reopening while work ran" true !checked
+  equal bool ~msg:"the stop checked reopening while work ran" true !checked;
+  H.set64 (host flag) 1;
+  close (reopened ());
+  equal int ~msg:"the word once the work ended, its streams destroyed"
+    (Rig.submitted d) (C.signaled g)
 
 (* After a failure, a submit's write of its value still follows every earlier
    value: here value 1, a kernel that runs on COPY:0 until [flag] is set. Value
@@ -582,8 +580,7 @@ let write_after_failure () =
   Fun.protect ~finally:(fun () ->
       ended ();
       C.stop g ~fault:None;
-      C.free g flag;
-      C.free g (C.facts g).word)
+      C.free g flag)
   @@ fun () ->
   is_none ~msg:"value 1" (S.submit_edge g ~v:1 [ (1, spinning) ]);
   is_some ~msg:"value 2" (S.submit_edge g ~v:2 [ (1, S.failing 1) ]);

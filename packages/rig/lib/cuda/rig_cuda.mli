@@ -252,10 +252,7 @@ val capability : t -> Rig_cuda_abi.t
     that host address for host memory, and [None] for GPU memory.
 
     {!free} frees an allocation, and ends a region that {!map_peer} or
-    {!map_host} gave. Freeing the word ends a stopped device. A {!stop} that
-    found work running left the device's streams, and this free destroys
-    them. It also frees the device's C state. The GPU can then be opened
-    again.
+    {!map_host} gave.
 
     {!peer}[ g g'] is [true] if [g] and [g'] are devices of one GPU, and
     otherwise iff CUDA gave [g]'s GPU access to the GPU memory of [g']'s
@@ -364,10 +361,12 @@ val capability : t -> Rig_cuda_abi.t
 
     {!stop} ignores [fault]. If [g]'s work has ended (every value's work has
     completed, its streams are idle, or a fault has ended the context's
-    work), it writes the last value and destroys [g]'s streams. Otherwise it
-    commits that value, and the word reaches it once the work ends, unless
-    the work waits on a word of another device that never reaches its value.
-    The GPU can be opened again once that work ends. Compiled code may still
+    work), it writes the last value. Otherwise it commits that value, and
+    the word reaches it once the work ends, unless the work waits on a word
+    of another device that never reaches its value. Either way it destroys
+    [g]'s streams and events, which CUDA frees once their work ends. The
+    GPU can be opened again once that work ends. The word and [g]'s C state
+    stay for the process. Compiled code may still
     call the [symbol] and [graph] functions of {!val-capability} after
     {!stop}, and rig's {!free} and {!unload} may come after the GPU has
     opened again, since the device's modules lie in the GPU's primary
