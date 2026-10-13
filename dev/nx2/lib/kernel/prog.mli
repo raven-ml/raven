@@ -427,3 +427,21 @@ val of_exprs : ins:Nx_array.Dtype.any iarray -> E.any iarray -> t
     Raises [Invalid_argument] if an [In] of [outs] reads no operand of [ins]
     or is not of its dtype, or if [outs] is empty or [ins] and [outs] are
     more than {!max_operands}. *)
+
+(** {1:binding Binding} *)
+
+val bind : t -> int -> E.any -> t
+(** [bind p k x] is [p] with its operand [k] the value of the expression [x].
+    It is a program over [p]'s operands but [k], in order, whose outputs are
+    [p]'s; [x]'s [E.input i] names its operand [i]. Its nodes are [x]'s as
+    {!of_exprs} lowers them, then [p]'s but its [In k] nodes, in order. A
+    node that read [In k] reads [x]'s value, and [In i] for [i > k] becomes
+    [In (i - 1)]. It computes as [p] does over [x]'s value, and the result
+    holds as {!v} states.
+
+    Binding an operand to an expression of coordinates, for example, gives
+    each element a value computed from its index, such as its flat position.
+
+    Raises [Invalid_argument] if [k] is not an operand of [p], as {!of_exprs}
+    does for [x] over the result's operands, or if [x] is not of operand
+    [k]'s dtype. *)

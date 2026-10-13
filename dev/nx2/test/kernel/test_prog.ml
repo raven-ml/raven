@@ -672,6 +672,122 @@ let compute (p : P.t) loads =
 
 let outputs = Testable.(result (array (array string)) Elements.answer)
 
+(* Binding *)
+
+(* An expression drawn over [ins], its last node cast to [dt]. *)
+let ending ins choices dt =
+  let d = build ins choices 1 in
+  let last = Array.length d.nodes - 1 in
+  let d = { d with nodes = Array.append d.nodes [| P.Op1 (Cast, dt, last) |] } in
+  (exprs d).(last + 1)
+
+let binding =
+  let open Gen in
+  with_pp
+    (fun ppf (d, k, _, _) -> Format.fprintf ppf "%a, operand %d" pp_drawn d k)
+    (let+ d = drawn
+     and+ k = int_range 0 2
+     and+ choices = array ~size:(int_range 1 6) (int_range 0 1_000_000)
+     and+ seed = int in
+     (d, k, choices, seed))
+
+(* [bind p k x]'s nodes as prog.mli states them: [q]'s, [x] lowered over the
+   result's operands, then [p]'s but [In k], renumbered. *)
+let bound_nodes (p : P.t) k (q : P.t) =
+  let out = Iarray.get q.outs 0 in
+  let index = Array.make (Iarray.length p.nodes) 0 in
+  let nodes = ref (List.rev (Iarray.to_list q.nodes)) in
+  let count = ref (Iarray.length q.nodes) in
+  Iarray.iteri
+    (fun i nd ->
+      let at j = index.(j) in
+      match (nd : P.node) with
+      | In j when j = k -> index.(i) <- out
+      | _ ->
+          let nd : P.node =
+            match nd with
+            | In j when j > k -> In (j - 1)
+            | Op1 (o, dt, x) -> Op1 (o, dt, at x)
+            | Op2 (o, x, y) -> Op2 (o, at x, at y)
+            | Op3 (o, x, y, z) -> Op3 (o, at x, at y, at z)
+            | nd -> nd
+          in
+          nodes := nd :: !nodes;
+          index.(i) <- !count;
+          incr count)
+    p.nodes;
+  (Array.of_list (List.rev !nodes), Array.map (fun o -> index.(o)) (Iarray.to_array p.outs))
+
+(* Checks [bind p k x] against prog.mli: its operands, its nodes and outputs,
+   v's program of them, and its outputs' bits on nx.cpu against [p]'s over
+   [x]'s value, over operands drawn from [seed]. *)
+let check_bind (p : P.t) k x seed =
+  let ins = Iarray.to_array p.ins in
+  let others = Array.of_list (List.filteri (fun i _ -> i <> k) (Array.to_list ins)) in
+  let b = P.bind p k x in
+  let q = P.of_exprs ~ins:(Iarray.of_array others) [| x |] in
+  let nodes, outs = bound_nodes p k q in
+  equal ~msg:"nodes" (array node) nodes (Iarray.to_array b.nodes);
+  equal ~msg:"outs" (array int) outs (Iarray.to_array b.outs);
+  equal ~msg:"ins" (list string) (Array.to_list (Array.map name others))
+    (List.map name (Iarray.to_list b.ins));
+  equal ~msg:"as v builds it" bool true
+    (b = P.v ~ins:b.ins b.nodes ~outs:b.outs);
+  let rand = Random.State.make [| seed |] in
+  let loads = Array.map (fun t -> random_elements rand t 12) others in
+  let computed = compute q loads in
+  match computed with
+  | Error _ -> false
+  | Ok out ->
+      let given = Elements.of_elements ins.(k) [| 2; 3; 2 |] out.(0) in
+      let all =
+        Array.init (Array.length ins) (fun i ->
+            if i = k then given else loads.(if i < k then i else i - 1))
+      in
+      equal ~msg:"outputs' bits" outputs (compute p all) (compute b loads);
+      true
+
+let law_bind (d, k, choices, seed) =
+  assume (k < Array.length d.ins);
+  let others = Array.of_list (List.filteri (fun i _ -> i <> k) (Array.to_list d.ins)) in
+  cover "p reads operand k" (Array.mem (P.In k) d.nodes);
+  cover "an operand after k" (k < Array.length d.ins - 1);
+  cover "k is 0" (k = 0);
+  cover "x computed" (check_bind (program d) k (ending others choices d.ins.(k)) seed)
+
+(* Expressions whose value is an operand, a coordinate or a constant, at k =
+   0, with p reading or outputting In k. *)
+let test_bind_leaves () =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 and i64 = D.Any D.Int64 in
+  let p ins nodes outs =
+    P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes) ~outs:(Iarray.of_array outs)
+  in
+  let sum = p [| f32; f32 |] [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |] [| 2 |] in
+  equal ~msg:"an operand" bool true
+    (check_bind sum 0 P.E.(any (input 0 D.Float32)) 1);
+  let scaled =
+    p [| i64; f32 |] [| P.In 0; In 1; Op1 (Cast, f32, 0); Op2 (Binary Mul, 2, 1) |] [| 3 |]
+  in
+  equal ~msg:"a coordinate" bool true (check_bind scaled 0 P.E.(any (coord 1)) 2);
+  let passed = p [| f32; f64 |] [| P.In 0; In 1 |] [| 0; 1 |] in
+  equal ~msg:"a constant, output as p's In k" bool true
+    (check_bind passed 0 P.E.(any (const D.Float32 2.5)) 3)
+
+let test_bind_refuses () =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+  let p = P.of_exprs ~ins:[| f32; f64 |] [| P.E.(any (input 0 D.Float32)) |] in
+  let refuses ~msg k x =
+    raises_match ~msg Exn.invalid_arg (fun () -> P.bind p k x)
+  in
+  refuses ~msg:"an operand past ins" 2 P.E.(any (const D.Float32 1.));
+  refuses ~msg:"a negative operand" (-1) P.E.(any (const D.Float32 1.));
+  refuses ~msg:"an expression of another dtype" 1 P.E.(any (const D.Float32 1.));
+  refuses ~msg:"a read of an operand the result lacks" 1
+    P.E.(any (cast D.Float64 (input 1 D.Float32)));
+  refuses ~msg:"a read of an operand at another dtype" 1
+    P.E.(any (input 0 D.Float64));
+  ignore (P.bind p 1 P.E.(any (const D.Float64 1.)))
+
 (* of_exprs of [d]'s outputs, the odd ones from a second build, so that every
    node they reach is a value apart from the first build's and merges by its
    structure; checked against {!lowered} and against [d]'s program over
@@ -1126,6 +1242,11 @@ let tests =
         prop "of_node is v over the operands' nodes" one_node law_of_node;
         test "dtype refuses a node past the program" test_dtype_refuses;
         test "each tag, field and kind is nx_prog.h's code" test_codes;
+        prop "bind is p over x's value, its nodes x's then p's" binding
+          law_bind;
+        test "bind takes an operand, a coordinate or a constant"
+          test_bind_leaves;
+        test "bind refuses what is no binding" test_bind_refuses;
       ];
     group "expressions"
       [

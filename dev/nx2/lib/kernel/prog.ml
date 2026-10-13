@@ -563,3 +563,44 @@ let of_exprs ~ins outs =
   if Iarray.length outs = 0 then invalid "no output"
   else if n > max_operands then invalid (Option.get (too_many n))
   else { ins; nodes; outs }
+
+(* Binding *)
+
+let same_dtype (D.Any x) (D.Any y) = D.equal x y
+
+(* x's nodes come first and keep their indices; [p]'s follow, each reference
+   renumbered, a read of operand [k] taking x's value. Both are programs over
+   the result's operands, so their nodes keep their dtypes and kinds, and
+   the result is one. *)
+let bind p k x =
+  let fn = "Nx_kernel.Prog.bind" in
+  let n = Iarray.length p.ins in
+  if k < 0 || k >= n then invalid_arg (strf "%s: no operand %d" fn k);
+  let ins =
+    Iarray.init (n - 1) (fun i -> Iarray.get p.ins (if i < k then i else i + 1))
+  in
+  let q = of_exprs ~ins [| x |] in
+  let out = Iarray.get q.outs 0 in
+  if not (same_dtype (dtype q out) (Iarray.get p.ins k)) then
+    invalid_arg (strf "%s: the expression is not of operand %d's dtype" fn k);
+  let m = Iarray.length q.nodes and np = Iarray.length p.nodes in
+  let nodes = Array.make (m + np) (In 0) and count = ref m in
+  Iarray.iteri (fun i nd -> nodes.(i) <- nd) q.nodes;
+  let index = Array.make np 0 in
+  let at i = index.(i) in
+  for i = 0 to np - 1 do
+    let nd = Iarray.get p.nodes i in
+    match nd with
+    | In j when j = k -> index.(i) <- out
+    | _ ->
+        nodes.(!count) <-
+          (match nd with
+          | In j -> if j > k then In (j - 1) else nd
+          | Coord _ | Const _ -> nd
+          | Op1 (o, dt, x) -> Op1 (o, dt, at x)
+          | Op2 (o, x, y) -> Op2 (o, at x, at y)
+          | Op3 (o, x, y, z) -> Op3 (o, at x, at y, at z));
+        index.(i) <- !count;
+        incr count
+  done;
+  { ins; nodes = Iarray.init !count (Array.get nodes); outs = Iarray.map at p.outs }
