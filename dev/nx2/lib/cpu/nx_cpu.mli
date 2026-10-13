@@ -66,7 +66,8 @@
       than [-87] ([float32]) or [-708] ([float64]), the least integers
       whose [exp] is normal, is taken as [0].
     - [Moments]: the mean [c], the terms' sum over their count, then the
-      variance, the sum of [(x - c)²] over the count: the bits of Nx's own
+      variance [(Σ d² - (Σ d)² / n) / n], [d = x - c], [+0] where that is
+      negative, or [Σ d²] where that is [+∞]: the bits of Nx's own
       expansion of [Moments].
 
     For [n] terms, let [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings
@@ -75,8 +76,9 @@
     underflow, to first order in [u], a [Logsumexp] [r] is within
     [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Moments] mean is
     within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
-    terms' magnitudes, and its variance within [(L + D + 4) u V + E²] of
-    the exact [V].
+    terms' magnitudes, and its variance within
+    [(L + D + 5) u V + 2 (L + D + 1) u E √V + (3L + 3D + 7) u E²] of the
+    exact [V].
 
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A

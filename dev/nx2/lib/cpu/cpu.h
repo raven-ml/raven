@@ -196,12 +196,13 @@ enum {
 
 /* The state of a block of an output's terms, or of several merged: Arg's
    extreme's bits [v] and its position [at], or a value [s] of the terms
-   and their count [n]: Logsumexp's maximum, or its sum, and Moments' sums.
-   A float is its dtype's value, which a double holds exactly. */
+   and their count [n]: Logsumexp's maximum, or its sum, and Moments' sums,
+   [d] the deviations' with [s] their squares'. A float is its dtype's
+   value, which a double holds exactly. */
 typedef struct {
   int64_t n, at;
   uint64_t v;
-  double s;
+  double s, d;
 } nx_cpu_state;
 
 /* A pass of a stateful reduction at a dtype (reduce.c). [block] stores

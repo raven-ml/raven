@@ -201,20 +201,35 @@ let test_arg_cases () =
 
 (* var, std *)
 
-let moments_case =
+(* Integers about the [offsets], some large with a small spread, whose mean's
+   rounding a deviation from it carries. *)
+let moments_case offsets =
   let open Gen in
   let* n = int_range 1 64 in
-  let* xs = array ~size:(constant n) (map Float.of_int (int_range (-1000) 1000)) in
+  let* offset, w = of_list offsets in
+  let* xs =
+    array ~size:(constant n)
+      (map (fun i -> Float.of_int (offset + i)) (int_range (-w) w))
+  in
   let+ ddof = int_range 0 (Stdlib.min 2 (n - 1)) in
   (xs, ddof)
 
+let offsets = [ (0, 1000); (1 lsl 20, 3); (1 lsl 20 + 1, 1000) ]
+
+(* Where the mean's rounding, squared, passes float64's bound: float32 holds
+   no integer this large. *)
+let near_2_40 = (1 lsl 40 + 1, 3)
+
 let gamma u k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u))
 
-(* The exact population variance of integers, rounded once to float64. *)
+(* The exact population variance of integers, rounded once to float64: about
+   the first, so that the squares stay exact. *)
 let exact xs =
-  let n = Array.length xs in
-  let s = Array.fold_left (fun s x -> s + int_of_float x) 0 xs in
-  let s2 = Array.fold_left (fun s x -> s + (int_of_float x * int_of_float x)) 0 xs in
+  let n = Array.length xs and c = int_of_float xs.(0) in
+  let s = Array.fold_left (fun s x -> s + (int_of_float x - c)) 0 xs in
+  let s2 =
+    Array.fold_left (fun s x -> s + ((int_of_float x - c) * (int_of_float x - c))) 0 xs
+  in
   Float.of_int ((n * s2) - (s * s)) /. Float.of_int (n * n)
 
 let law_moments (type s) (dt : (float, s) D.t) u (xs, ddof) =
@@ -223,9 +238,12 @@ let law_moments (type s) (dt : (float, s) D.t) u (xs, ddof) =
   let scale = Float.of_int n /. Float.of_int (n - ddof) in
   let v = exact xs *. scale in
   let mean_abs = Array.fold_left (fun s x -> s +. Float.abs x) 0. xs /. Float.of_int n in
-  let g = gamma u (n + 3) and gn = gamma u n in
+  let g = gamma u n and m = mean_abs and e = exact xs in
   let bound =
-    (((g *. exact xs) +. ((1. +. g) *. gn *. gn *. mean_abs *. mean_abs)) *. scale)
+    (((gamma u (n + 4) +. (2. *. g *. g)) *. e)
+     +. (2. *. gamma u (n + 6) *. g *. m *. Float.sqrt e)
+     +. (4. *. gamma u (n + 4) *. g *. g *. m *. m))
+    *. scale
     +. (3. *. u *. v)
   in
   let got = Nx.item [] (Nx.var ~ddof x) in
@@ -246,6 +264,12 @@ let test_moments_cases () =
   equal same_bits [| nan |] (Nx.to_array (Nx.reshape [| 1 |] (Nx.std (f64 [| 1.; nan |]))));
   let m = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 3.; 2.; 2. |] in
   equal same_bits [| 1.; 0. |] (Nx.to_array (Nx.var ~axes:[ 1 ] m));
+  (* Squared deviations that overflow, with the square of their sum. *)
+  let var dt xs = Nx.to_array (Nx.var ~keepdims:true (Nx.create dt [| Array.length xs |] xs)) in
+  equal same_bits [| infinity |] (var Nx.float32 [| 8.25e37; -8.25e37; 8.25e37 |]);
+  equal same_bits [| infinity |] (var Nx.float32 [| 3.3e38; 3.3e38 |]);
+  equal same_bits [| infinity |] (var Nx.float64 [| 4.25e307; -4.25e307; 4.25e307 |]);
+  equal same_bits [| infinity |] (var Nx.bfloat16 [| 8.25e37; -8.25e37; 8.25e37 |]);
   equal (array int) [| 1; 2 |] (Nx.shape (Nx.std ~axes:[ 0 ] ~keepdims:true m));
   invalid ~by:"Nx.var" (fun () -> Nx.var ~ddof:(-1) (f64 one));
   invalid ~by:"Nx.var" (fun () -> Nx.var ~ddof:5 (f64 one));
@@ -325,8 +349,10 @@ let () =
            ];
          group "var std"
            [
-             prop "float64 within the bound" moments_case (law_moments D.Float64 0x1p-53);
-             prop "float32 within the bound" moments_case (law_moments D.Float32 0x1p-24);
+             prop "float64 within the bound" (moments_case (near_2_40 :: offsets))
+               (law_moments D.Float64 0x1p-53);
+             prop "float32 within the bound" (moments_case offsets)
+               (law_moments D.Float32 0x1p-24);
              test "cases" test_moments_cases;
              narrow "var" (fun x -> Nx.var ~axes:[ 1 ] x);
              narrow "std" (fun x -> Nx.std ~axes:[ 1 ] ~ddof:1 x);

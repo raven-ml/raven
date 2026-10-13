@@ -478,8 +478,9 @@ let law_logsumexp (s, axes, xs) =
           end)
     (terms s ax xs)
 
-(* float32 terms near an offset [c], whose large ratio of mean to spread a
-   formula reading [Σ x²] would lose. *)
+(* float32 terms near an offset [c] within [w], whose large ratio of mean to
+   spread a formula reading [Σ x²] would lose, and the mean's own error too
+   where the spread is small. *)
 let moments_case =
   let open Gen in
   with_pp
@@ -491,20 +492,20 @@ let moments_case =
         c)
     (let* s = shape in
      let* axes = axes_of (Array.length s) in
-     let* c = of_list [ 0.; 1e3; 1e5 ] in
+     let* c, w = of_list [ (0., 10.); (1e3, 10.); (1e5, 10.); (1e4, 1e-2) ] in
      let+ xs =
        array
          ~size:(constant (Array.fold_left ( * ) 1 s))
          (map
             (fun d -> Int32.float_of_bits (Int32.bits_of_float (c +. d)))
-            (float_range (-10.) 10.))
+            (float_range (-.w) w))
      in
      (s, axes, c, xs))
 
 (* The bounds nx's expansion of Moments states, at float32's unit roundoff: the
-   mean within [γ(n) Σ|x| / n], the variance [V] within [γ(n + 3) V + (1 + γ(n +
-   3)) γ(n)² (Σ|x| / n)²]. The references are float64 two-pass sums, whose own
-   error is the slack. *)
+   mean within [γ(n) M], [M = Σ|x| / n], the variance [V] within [(γ(n + 4) +
+   2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²]. The references are
+   float64 two-pass sums, whose own error is the slack. *)
 let law_moments (s, axes, _, xs) =
   let ax = normal (Array.length s) axes in
   let x = core (A.of_array D.Float32 s xs) in
@@ -530,17 +531,17 @@ let law_moments (s, axes, _, xs) =
         let abs_mean =
           List.fold_left (fun a t -> a +. Float.abs t) 0. ts /. nf
         in
-        let slack =
-          4. *. nf *. epsilon_float *. (v +. (abs_mean *. abs_mean))
-        in
+        let e = 4. *. nf *. epsilon_float in
+        let slack = (e *. v) +. (e *. abs_mean *. (1. +. (e *. abs_mean))) in
         at_most ~msg:"mean" float_exact
           ~than:((gamma n *. abs_mean) +. slack)
           (Float.abs (mean.(i) -. m));
+        let g = gamma n in
         at_most ~msg:"variance" float_exact
           ~than:
-            ((gamma (n + 3) *. v)
-            +. (1. +. gamma (n + 3))
-               *. gamma n *. gamma n *. abs_mean *. abs_mean
+            (((gamma (n + 4) +. (2. *. g *. g)) *. v)
+            +. (2. *. gamma (n + 6) *. g *. abs_mean *. Float.sqrt v)
+            +. (4. *. gamma (n + 4) *. g *. g *. abs_mean *. abs_mean)
             +. slack)
           (Float.abs (var.(i) -. v))
       end)
@@ -886,6 +887,20 @@ let test_moments_cases () =
     (pair float_exact float_exact)
     (2.5, 1.25)
     ((read mean).(0), (read var).(0));
+  (* Finite terms whose squared deviations overflow: their sum, +inf, where
+     the square of the deviations' sum overflows too. *)
+  let overflow (type s) (dt : (float, s) D.t) xs =
+    let _, var = reduce1 (Moments (0, dt)) [| 0 |] (vector dt xs) in
+    (read var).(0)
+  in
+  equal ~msg:"float32 overflow" int64 (bits Float.infinity)
+    (bits (overflow D.Float32 [| 8.25e37; -8.25e37; 8.25e37 |]));
+  equal ~msg:"float32 overflow of the mean" int64 (bits Float.infinity)
+    (bits (overflow D.Float32 [| 3.3e38; 3.3e38 |]));
+  equal ~msg:"float64 overflow" int64 (bits Float.infinity)
+    (bits (overflow D.Float64 [| 4.25e307; -4.25e307; 4.25e307 |]));
+  equal ~msg:"bfloat16 overflow" int64 (bits Float.infinity)
+    (bits (overflow D.Bfloat16 [| 8.25e37; -8.25e37; 8.25e37 |]));
   (* 3000 terms cross a block of the sum's lane order. *)
   let xs = Array.init 3000 (fun i -> 1e4 +. Float.of_int (i mod 7)) in
   let mean, var =

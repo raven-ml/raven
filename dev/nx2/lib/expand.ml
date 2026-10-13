@@ -293,39 +293,51 @@ let logsumexp (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       dt
       [| Value.Plain m; Value.Plain s |]
 
-(* Moments in two passes: the mean, [Σ x / n], then the variance, [Σ (x - mean)²
-   / n], each a sum. Where the mean is a NaN, both are the mean. *)
+(* Moments in two passes: the mean, [Σ x / n], then the variance by the
+   corrected two-pass algorithm (Chan, Golub and LeVeque 1983; Higham,
+   Accuracy and Stability, §1.9): [(Σ d² - (Σ d)² / n) / n], [d = x - mean],
+   or [+0] where that is negative. [Σ (x - c)² - (Σ (x - c))² / n] is [Σ (x -
+   μ)²] for any [c], so the mean's rounding reaches the variance at second
+   order, where [Σ d² / n] alone carries it squared. Where [Σ d²] overflows,
+   [(Σ d)²] may too, and their difference is a NaN: the variance is then [Σ
+   d²], [+∞], as [(Σ d)² / n ≤ Σ d²]. Where the mean is a NaN, both are the
+   mean. *)
 let moments (type s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     shape axes (x : (float, s, d) Value.t) :
     (float, s, d) Value.t * (float, s, d) Value.t =
   let dt = Prim.dtype x in
   let out = Prim.reduced shape axes in
   let n = Array.fold_left (fun n a -> n * shape.(a)) 1 axes in
-  (* [s / n], or [over] where it is a NaN. *)
-  let divided s over =
-    let count = E.const dt (D.of_float dt (Float.of_int n)) in
-    nan_or over (E.fdiv s count)
-  in
-  let one : D.any iarray = [| D.Any dt |] and two : D.any iarray = [| D.Any dt; D.Any dt |] in
+  let count = E.const dt (D.of_float dt (Float.of_int n)) in
+  let one : D.any iarray = [| D.Any dt |]
+  and two : D.any iarray = [| D.Any dt; D.Any dt |]
+  and three : D.any iarray = [| D.Any dt; D.Any dt; D.Any dt |] in
   let mean =
     let s = E.input 0 dt in
     map1 apply ~by out
-      (P.of_exprs ~ins:one [| E.any (divided s s) |])
+      (P.of_exprs ~ins:one [| E.any (nan_or s (E.fdiv s count)) |])
       dt
       [| Value.Plain (reduce_plain apply ~by axes Sum x) |]
   in
-  let squares =
+  let spread = spread_back apply ~by shape axes mean in
+  let deviations f =
     let d = E.(input 0 dt - input 1 dt) in
     reduce1 apply ~by shape axes Sum
-      (P.of_exprs ~ins:two [| E.(any (d * d)) |])
+      (P.of_exprs ~ins:two [| E.any (f d) |])
       dt
-      [| Value.Plain x; Value.Plain (spread_back apply ~by shape axes mean) |]
+      [| Value.Plain x; Value.Plain spread |]
   in
+  let firsts = deviations Fun.id and squares = deviations E.(fun d -> d * d) in
   let var =
+    let s1 = E.input 1 dt and s2 = E.input 2 dt in
+    let zero = E.const dt (D.zero dt)
+    and inf = E.const dt (D.of_float dt Float.infinity) in
+    let q = E.(fdiv (s2 - fdiv (s1 * s1) count) count) in
+    let r = E.(where (s2 = inf) s2 (where (q < zero) zero q)) in
     map1 apply ~by out
-      (P.of_exprs ~ins:two [| E.(any (divided (input 0 dt) (input 1 dt))) |])
+      (P.of_exprs ~ins:three [| E.any (nan_or (E.input 0 dt) r) |])
       dt
-      [| Value.Plain squares; Value.Plain mean |]
+      [| Value.Plain mean; Value.Plain firsts; Value.Plain squares |]
   in
   (mean, var)
 

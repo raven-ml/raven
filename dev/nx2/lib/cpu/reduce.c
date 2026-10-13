@@ -459,8 +459,10 @@ MOMENTS(double, f64)
      maximum, and the center c, m where finite, else 0; then exp (x - c)
      summed in lane order, merged by addition, and c + log of the sum.
    - Moments: first the terms summed in lane order, merged by addition,
-     and the center, their mean c; then (x - c)² summed so, and the
-     variance, that sum over the count: Nx's expansion's arithmetic.
+     and the center, their mean c; then x - c and (x - c)² summed so, and
+     the variance, (Σ (x - c)² - (Σ (x - c))² / n) / n, +0 where that is
+     negative, or Σ (x - c)² where that is +inf: Nx's expansion's
+     arithmetic.
    A NaN result is replaced by the driver: by the first NaN term, or by
    nx_kinds.h's NaN where none is. Every function is inlined into each
    kernel, whose loops of 16 lanes the compiler then vectorises. */
@@ -644,27 +646,38 @@ ARGS(f64, double, uint64_t, nx_maximum_f64, nx_minimum_f64, IS_NAN)
                  nx_cpu_state *st) {                                         \
     (void)t0;                                                                \
     const T *x = (const T *)x_;                                              \
-    T c = (T)c_, a[8] = {0}, b[8] = {0};                                     \
+    T c = (T)c_, a[8] = {0}, b[8] = {0}, p[8] = {0}, q[8] = {0};             \
     int64_t i = 0;                                                           \
     for (; i + 16 <= n; i += 16)                                             \
       for (int k = 0; k < 8; k++) {                                          \
         T d = x[i + k] - c, e = x[i + 8 + k] - c;                            \
         a[k] += d * d;                                                       \
         b[k] += e * e;                                                       \
+        p[k] += d;                                                           \
+        q[k] += e;                                                           \
       }                                                                      \
     for (; i < n; i++) {                                                     \
       T d = x[i] - c;                                                        \
       (i & 8 ? b : a)[i & 7] += d * d;                                       \
+      (i & 8 ? q : p)[i & 7] += d;                                           \
     }                                                                        \
-    *st = (nx_cpu_state){.n = n, .s = halves_##S(a, b)};                     \
+    *st = (nx_cpu_state){.n = n, .s = halves_##S(a, b),                      \
+                         .d = halves_##S(p, q)};                             \
   }                                                                          \
-  /* A mean that is a NaN is the variance too. */                            \
+  static void var_merge_##S(nx_cpu_state *a, const nx_cpu_state *b) {        \
+    sum_merge_##S(a, b);                                                     \
+    a->d = (T)a->d + (T)b->d;                                                \
+  }                                                                          \
+  /* A mean that is a NaN is the variance too. Squares summed to +inf are  \
+     the variance, where d * d may overflow too and v be a NaN. */          \
   static void var_finish_##S(const nx_cpu_state *st, double c, uint8_t *d0,  \
                              uint8_t *d1) {                                  \
     T mean = MADE, var = MADE;                                               \
     if (st->n > 0) {                                                         \
+      T n = (T)st->n, d = (T)st->d, s = (T)st->s;                            \
+      T v = (s - d * d / n) / n;                                             \
       mean = (T)c;                                                           \
-      var = c != c ? mean : (T)st->s / (T)st->n;                             \
+      var = c != c ? mean : s == (T)INFINITY ? s : v < 0 ? 0 : v;            \
     }                                                                        \
     memcpy(d0, &mean, sizeof mean);                                          \
     memcpy(d1, &var, sizeof var);                                            \
@@ -701,7 +714,7 @@ STATES(double, f64, NX_NAN_F64, -708)
   STATE(NX_CPU_LOGSUMEXP, DT, PASS(top, top_merge, top_finish, D),           \
         PASS(lse, lse_merge, lse_finish, D));                                \
   STATE(NX_CPU_MOMENTS, DT, PASS(mean, sum_merge, mean_finish, D),           \
-        PASS(var, sum_merge, var_finish, D))
+        PASS(var, var_merge, var_finish, D))
 
 static void set(nx_cpu_target *t) {
   ARG2(NX_FLOAT32, f32);

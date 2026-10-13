@@ -20,18 +20,20 @@
     accumulator for the first two and in the output's dtype for [Arg]. A
     [Logsumexp] is a [Max] [m], [m'] its finite elements and [0] elsewhere, a
     [Sum] of [exp (x - m')], then [m' + log s], or [m] where it is a NaN; with
-    no term, [log 0]. [Moments] are two sums: the mean [Σ x / n], then the
-    variance [Σ (x - mean)² / n], each the mean where it is a NaN. An [Arg] is
+    no term, [log 0]. [Moments] are the mean [Σ x / n], then two sums of
+    [d = x - mean] and the variance [(Σ d² - (Σ d)² / n) / n], [+0] where
+    that is negative or [Σ d²] where that is [+∞], each the mean where it is
+    a NaN. An [Arg] is
     the [Max] or [Min] [m], then a [Min] of the positions, numbered in C order
     of the reduced indices, whose term has [m]'s bits or, where [m] is a NaN, is
     a NaN. Where a float sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact
     sum ({!Nx_kernel.reduction}), and barring overflow and underflow, a
     [Logsumexp] [r] of [n] terms whose maximum is finite is within
     [γ(2n) + u|r| + ε] of the exact one, [ε] the error [Exp] and [Log] add; the
-    mean within [γ(n) Σ|x| / n], and the variance [V] within
-    [γ(n + 3) V + (1 + γ(n + 3)) γ(n)² (Σ|x| / n)²], for [n] exact in the
-    accumulator. A scan of [Logsumexp], [Moments] or [Arg], the first two in
-    the accumulator, combines its terms' states by {!pairwise}: output [i]
+    mean within [γ(n) M], [M = Σ|x| / n], and the variance [V] within
+    [(γ(n + 4) + 2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²], for
+    [n] exact in the accumulator. A scan of [Logsumexp], [Moments] or [Arg],
+    the first two in the accumulator, combines its terms' states by {!pairwise}: output [i]
     through at most [D_i = max(0, 2⌈log₂(i+1)⌉ - 1)] combinations, the
     earlier state first, O(n) along an axis of [n]. [Logsumexp] combines [a]
     and [b] into [M + log1p (exp (m - M))], [M] the two's [Maximum] and [m]

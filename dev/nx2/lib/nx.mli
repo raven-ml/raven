@@ -1164,11 +1164,13 @@ val var :
     variance, and [1] gives the sample variance. NaN of no element.
 
     The population variance is the kernels' moments, within the bound
-    their library states; nx's own, the mean then the squared deviations
-    from it, each summed as {!sum} sums, is within
-    [γ(n + 3) V + (1 + γ(n + 3)) γ(n)² (Σ|x| / n)²] of the exact [V],
-    barring overflow and underflow, [γ(k) = k u / (1 - k u)] and [u] the
-    unit roundoff of the format it computes in. A [ddof] scales it by a
+    their library states; nx's own, the mean then the deviations [d] from
+    it and their squares, each summed as {!sum} sums, and
+    [(Σ d² - (Σ d)² / n) / n], is within
+    [(γ(n + 4) + 2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²] of
+    the exact [V], [M = Σ|x| / n], barring overflow and underflow,
+    [γ(k) = k u / (1 - k u)] and [u] the unit roundoff of the format it
+    computes in, and [+∞] where [Σ d²] overflows. A [ddof] scales it by a
     relative [2u] more, then one rounding to the dtype.
 
     Raises [Invalid_argument] naming itself for a negative [ddof], or one of
