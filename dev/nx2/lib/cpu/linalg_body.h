@@ -2379,8 +2379,10 @@ static int F(lasd1)(int64_t nl, int64_t nr, int sqre, R *d, R alpha, R beta,
     z[i] = u2[p];
     coltyp[i] = idxc[p];
   }
+  /* 64 u, as Reference-LAPACK's PR 1286 has it: at 8 u, rotations of
+     values that close lose the vectors' orthogonality (issue 255). */
   R tol = F(abs)(alpha) > F(abs)(beta) ? F(abs)(alpha) : F(abs)(beta);
-  tol = 8 * EPS * (F(abs)(d[n - 1]) > tol ? F(abs)(d[n - 1]) : tol);
+  tol = 64 * EPS * (F(abs)(d[n - 1]) > tol ? F(abs)(d[n - 1]) : tol);
   int64_t j = 1, jprev = 0;
   for (; j < n && F(abs)(z[j]) <= tol; j++) {
     idxp[--k2] = j;

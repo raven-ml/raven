@@ -1057,6 +1057,67 @@ let test_eigh_secular (b : Support.backend) () =
       check_eigh dt ~e:0 ~count:1 ~n (values x) (values y.(0)) (values y.(1))
   | None -> ()
 
+(* Reference-LAPACK issue 255's upper bidiagonal of order 1000, its
+   diagonal then its superdiagonal in golden/linalg, on which the merges'
+   deflation at 8 u loses u's and vh's orthogonality (#1286 raised it to
+   64 u). svd's results meet its bound element by element: |(uᵀu − I)_ij|,
+   |(vh vhᵀ − I)_ij| <= g and |(a − u diag s vh)_ij| <= g ‖a‖_F, sums of
+   1000 products whose rounding, under 1000 u, is far below g. *)
+let test_svd_deflation (b : Support.backend) () =
+  let n = 1000 in
+  let v =
+    In_channel.with_open_text "golden/linalg/bidiagonal-255.txt"
+      In_channel.input_lines
+    |> List.map float_of_string |> Array.of_list
+  in
+  let a = Array.make (n * n) 0. in
+  for i = 0 to n - 1 do
+    a.((i * n) + i) <- v.(i);
+    if i < n - 1 then a.((i * n) + i + 1) <- v.(n + i)
+  done;
+  let x = A.Any (A.of_array D.Float64 [| n; n |] a) in
+  match run b (Svd (Some Reduced)) [| x |] with
+  | None -> ()
+  | Some y ->
+      let floats (A.Any x) : float array =
+        match A.dtype x with D.Float64 -> A.to_array x | _ -> assert false
+      in
+      let s = floats y.(0) and u = floats y.(1) and vh = floats y.(2) in
+      let g = svd_bound (D.Any D.Float64) ~m:n ~n in
+      let norm = sqrt (Array.fold_left (fun t x -> t +. (x *. x)) 0. a) in
+      let ut = Array.init (n * n) (fun p -> u.((p mod n * n) + (p / n))) in
+      let w = { ratio = 0.; where = "" } in
+      (* Element (i, j) of x xᵀ − I for the rows of [x]. *)
+      let gram msg x =
+        for i = 0 to n - 1 do
+          for j = 0 to i do
+            let t = ref (if i = j then -1. else 0.) in
+            for p = 0 to n - 1 do
+              t := !t +. (x.((i * n) + p) *. x.((j * n) + p))
+            done;
+            worse w ~bound:g ~residual:(Float.abs !t) (fun () ->
+                Printf.sprintf "%s, element (%d, %d)" msg i j)
+          done
+        done
+      in
+      gram "uᵀu - I" ut;
+      gram "vh vhᵀ - I" vh;
+      let r = Array.make n 0. in
+      for i = 0 to n - 1 do
+        Array.blit a (i * n) r 0 n;
+        for p = 0 to n - 1 do
+          let us = u.((i * n) + p) *. s.(p) in
+          for j = 0 to n - 1 do
+            r.(j) <- r.(j) -. (us *. vh.((p * n) + j))
+          done
+        done;
+        for j = 0 to n - 1 do
+          worse w ~bound:(g *. norm) ~residual:(Float.abs r.(j)) (fun () ->
+              Printf.sprintf "a - u diag s vh, element (%d, %d)" i j)
+        done
+      done;
+      check_worst w
+
 (* lu's pivot: a scan of the column from the diagonal down that
    moves to each later row of greater magnitude, |re| + |im| on complex
    numbers, a NaN never greater and nothing greater than a NaN. Each case is
@@ -1565,6 +1626,8 @@ let laws (b : Support.backend) =
       test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
       test "eigh solves Reference-LAPACK issue 1166's secular equation"
         (fun () -> b.around (test_eigh_secular b));
+      test "svd keeps Reference-LAPACK issue 255's bidiagonal's vectors"
+        (fun () -> b.around (test_svd_deflation b));
       test "routines take floats and complex numbers alone" (fun () ->
           b.around (test_dtypes b));
     ]
