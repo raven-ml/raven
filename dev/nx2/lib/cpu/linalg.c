@@ -11,13 +11,15 @@
    result, C-contiguous, or into scratch, and computed there in place
    (linalg_body.h, one instance per dtype). A unit of the job is a run of
    matrices: one matrix each where there are as many as the job's threads,
-   else all of them, one after the other, their products on the job's
-   threads. Which thread computes a matrix changes no bit: a matrix's
-   arithmetic is a function of its shape alone.
+   else all of them, one after the other, their products and their
+   triangular solves' units of columns on the job's threads. Which thread
+   computes a matrix or a unit changes no bit: a matrix's arithmetic is a
+   function of its shape alone.
 
      operand ──stage──► result or scratch ──routine──► result
                                     │
-                                    └──── products (gemm.c)
+                                    ├──── products (gemm.c)
+                                    └──── solves' units of columns
 
    The routines follow LAPACK's (BSD) and ReLAPACK's recursive ones (MIT),
    named at each. */
@@ -35,10 +37,12 @@
 #include "cpu.h"
 
 /* The most columns a recursive routine computes by scalar loops; the
-   columns of QR's blocks; the columns of Cholesky's update panels. */
+   columns of QR's blocks; the columns of Cholesky's update panels; the
+   least columns of a triangular solve's units on the call's threads. */
 #define LEAF 24
 #define NB 32
 #define HERK 128
+#define SOLVE_COLUMNS 32
 
 /* The columns a recursive routine on [n] computes first: half, a
    multiple of 8 from 16 on (ReLAPACK's split). */
@@ -47,10 +51,13 @@ static int64_t split(int64_t n) { return n >= 16 ? (n + 8) / 16 * 8 : n / 2; }
 /* The most operands and results of a routine. */
 #define ARRAYS 5
 
-/* A worker's buffer, grown as its matrices need. */
-typedef struct {
+/* A worker's buffer, grown as its matrices need; [copy], the worker's
+   buffer for a solve's copies; [workers], every worker's where a matrix
+   has the call's threads, else NULL. */
+typedef struct arena {
   void *p;
   int64_t n;
+  struct arena *copy, *workers;
 } arena;
 
 /* [bytes] of [s], NULL if they cannot be allocated. */
@@ -65,6 +72,10 @@ static void *room(arena *s, int64_t bytes) {
 /* The routines. */
 enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR };
 
+/* A triangular solve: x ← t⁻¹ x for the triangle t, its diagonal read
+   or taken as ones; or x ← x l⁻ᴴ for the lower l. */
+typedef enum { LOWER, UPPER, UNIT_LOWER, UNIT_UPPER, ADJOINT_LOWER } solve;
+
 /* A call: its routine and attributes, 0 where it has none: [upper] for the
    triangle Upper, [complete] for Complete factors, [adjoint] and [unit]
    for a solve's; its operand's [m] rows and [n] columns and, for a solve,
@@ -76,7 +87,8 @@ typedef struct {
   int nops, nres, batch;
   const nx_array *a;
   int64_t scratch; /* elements per worker */
-  arena *ws, *packs; /* per worker: the routine's, the products' */
+  arena *ws, *packs, *copies; /* per worker: the routine's, the products',
+                                 the solves' */
   int failed;
 } call;
 
@@ -343,11 +355,17 @@ static value run(call c, const value *arrays, int threads) {
   int cores = rig_pool_cores();
   c.ws = calloc((size_t)cores, sizeof(arena));
   c.packs = calloc((size_t)cores, sizeof(arena));
-  if (c.ws == NULL || c.packs == NULL) {
+  c.copies = calloc((size_t)cores, sizeof(arena));
+  if (c.ws == NULL || c.packs == NULL || c.copies == NULL) {
     free(c.ws);
     free(c.packs);
+    free(c.copies);
     nx_done(n, a);
     caml_raise_out_of_memory();
+  }
+  for (int i = 0; i < cores; i++) {
+    c.packs[i].copy = &c.copies[i];
+    if (c.per == c.matrices && threads != 1) c.packs[i].workers = c.packs;
   }
   if (c.matrices > 0) {
     int64_t units = c.matrices / c.per;
@@ -357,9 +375,11 @@ static value run(call c, const value *arrays, int threads) {
   for (int i = 0; i < cores; i++) {
     free(c.ws[i].p);
     free(c.packs[i].p);
+    free(c.copies[i].p);
   }
   free(c.ws);
   free(c.packs);
+  free(c.copies);
   nx_done(n, a);
   if (c.failed) caml_raise_out_of_memory();
   return Val_int(NX_OK);

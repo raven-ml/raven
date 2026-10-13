@@ -97,6 +97,19 @@ static operand F(op_h)(const T *x, int64_t ld) {
   return (operand){x, 1, ld, CPLX};
 }
 
+/* The [r] elements at [x] divided by [d]: by its real part where its
+   imaginary part is zero, as Cholesky's diagonal is, which rounds once. */
+static void F(divide)(T *x, int64_t r, T d) {
+#if CPLX
+  if (IMAG(d) == 0) {
+    R e = REAL(d);
+    for (int64_t j = 0; j < r; j++) x[j] /= e;
+    return;
+  }
+#endif
+  for (int64_t j = 0; j < r; j++) x[j] /= d;
+}
+
 /* Triangular solves
 
    x ← l⁻¹ x for the lower triangular n × n [l] and the n × r [x], or
@@ -120,9 +133,7 @@ static int F(lower)(const T *l, int64_t n, int64_t ld, T *x, int64_t r,
         const T *xp = x + p * ldx;
         for (int64_t j = 0; j < r; j++) xi[j] -= c * xp[j];
       }
-      if (unit) continue;
-      T d = l[i * ld + i];
-      for (int64_t j = 0; j < r; j++) xi[j] /= d;
+      if (!unit) F(divide)(xi, r, l[i * ld + i]);
     }
     return 1;
   }
@@ -144,9 +155,7 @@ static int F(upper)(const T *u, int64_t n, int64_t ld, T *x, int64_t r,
         const T *xp = x + p * ldx;
         for (int64_t j = 0; j < r; j++) xi[j] -= c * xp[j];
       }
-      if (unit) continue;
-      T d = u[i * ld + i];
-      for (int64_t j = 0; j < r; j++) xi[j] /= d;
+      if (!unit) F(divide)(xi, r, u[i * ld + i]);
     }
     return 1;
   }
@@ -158,44 +167,73 @@ static int F(upper)(const T *u, int64_t n, int64_t ld, T *x, int64_t r,
          F(upper)(u, n1, ld, x, r, ldx, unit, s);
 }
 
-/* x ← x l⁻ᴴ for the [m] × [n] [x] and the lower triangular [l] whose
-   diagonal is real, so that x lᴴ is the old x (xTRSM's right-side,
-   conjugate-transposed lower case): halves of l down to LEAF. At a leaf,
-   the n columns are solved as the n rows of t = xᴴ, copied contiguous,
-   since l t' = t for t' = (x l⁻ᴴ)ᴴ: row by row,
+/* A solve by units of columns of x, which are independent, on the
+   call's threads: one a thread, of SOLVE_COLUMNS columns at least, each
+   solved whole. gemm.c computes a product in chain order where its rows
+   and columns are above LANE_MOST, 4, and its outputs at least
+   CHAIN_OUTPUTS, 64: a unit's products have more than 8 rows, since the
+   recursion splits above LEAF, and SOLVE_COLUMNS columns, so they keep it,
+   and each column's arithmetic and bits are the whole solve's, whatever
+   the units and threads.
 
-     t[c] = (t[c] − Σ_{p < c} l[c][p] t[p]) / l[c][c].
+   ADJOINT_LOWER's x is r × n and solved as l t' = t for t = xᴴ, since
+   x lᴴ is the old x: a unit copies its rows of x conjugate transposed into
+   its worker's copy buffer, solves them there and copies them back, since
+   columns of x read in place would step a row's length apart, which at a
+   power of two maps every row to one set of the cache. */
+typedef struct {
+  const T *l;
+  T *x;
+  int64_t n, ld, r, ldx, units;
+  solve kind;
+  int failed;
+  arena *workers;
+} F(solve_job);
 
-   Columns of x read in place would step a row's length apart, and at a
-   power of two that maps every row to one set of the cache. Answers 0 if
-   an allocation failed. */
-static int F(right)(const T *l, int64_t n, int64_t ld, T *x, int64_t m,
-                    int64_t ldx, arena *s) {
-  if (n <= LEAF) {
-    T *t = room(s, n * m * (int64_t)sizeof(T));
-    if (t == NULL) return 0;
-    for (int64_t i = 0; i < m; i++)
-      for (int64_t c = 0; c < n; c++) t[c * m + i] = CONJ(x[i * ldx + c]);
-    for (int64_t c = 0; c < n; c++) {
-      const T *lc = l + c * ld;
-      T *tc = t + c * m;
-      for (int64_t p = 0; p < c; p++) {
-        T f = lc[p];
-        const T *tp = t + p * m;
-        for (int64_t i = 0; i < m; i++) tc[i] -= f * tp[i];
-      }
-      R d = REAL(lc[c]);
-      for (int64_t i = 0; i < m; i++) tc[i] /= d;
-    }
-    for (int64_t i = 0; i < m; i++)
-      for (int64_t c = 0; c < n; c++) x[i * ldx + c] = CONJ(t[c * m + i]);
-    return 1;
+static int F(columns)(const F(solve_job) *j, int64_t c0, int64_t c,
+                      arena *s) {
+  int64_t n = j->n, ld = j->ld, ldx = j->ldx;
+  switch (j->kind) {
+    case LOWER: return F(lower)(j->l, n, ld, j->x + c0, c, ldx, 0, s);
+    case UNIT_LOWER: return F(lower)(j->l, n, ld, j->x + c0, c, ldx, 1, s);
+    case UPPER: return F(upper)(j->l, n, ld, j->x + c0, c, ldx, 0, s);
+    case UNIT_UPPER: return F(upper)(j->l, n, ld, j->x + c0, c, ldx, 1, s);
+    case ADJOINT_LOWER: break;
   }
-  int64_t n1 = split(n), n2 = n - n1;
-  return F(right)(l, n1, ld, x, m, ldx, s) &&
-         F(gemm)(m, n2, n1, -1, F(op)(x, ldx, 1), F(op_h)(l + n1 * ld, ld),
-                 x + n1, ldx, s) &&
-         F(right)(l + n1 * ld + n1, n2, ld, x + n1, m, ldx, s);
+  T *x = j->x + c0 * ldx, *t = room(s->copy, n * c * (int64_t)sizeof(T));
+  if (t == NULL) return 0;
+  for (int64_t i = 0; i < c; i++)
+    for (int64_t p = 0; p < n; p++) t[p * c + i] = CONJ(x[i * ldx + p]);
+  int ok = F(lower)(j->l, n, ld, t, c, c, 0, s);
+  for (int64_t i = 0; i < c; i++)
+    for (int64_t p = 0; p < n; p++) x[i * ldx + p] = CONJ(t[p * c + i]);
+  return ok;
+}
+
+static void F(solve_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
+  F(solve_job) *j = ctx;
+  for (int64_t u = lo; u < hi; u++) {
+    int64_t c0 = u * j->r / j->units, c1 = (u + 1) * j->r / j->units;
+    if (!F(columns)(j, c0, c1 - c0, &j->workers[worker]))
+      __atomic_store_n(&j->failed, 1, __ATOMIC_RELAXED);
+  }
+}
+
+/* The solve [kind] by the n × n triangle [l] of the n × r [x], or of the
+   r × n [x] under ADJOINT_LOWER, rows [ldx] apart: by units where [s]
+   holds the call's threads, else whole. Answers 0 if an allocation
+   failed. */
+static int F(solve)(solve kind, const T *l, int64_t n, int64_t ld, T *x,
+                    int64_t r, int64_t ldx, arena *s) {
+  int64_t bytes = n * (n + r) * (int64_t)sizeof(T);
+  double cost = (double)bytes + (double)n * n * r;
+  int64_t units = nx_cpu_threads(bytes, cost);
+  if (units > r / SOLVE_COLUMNS) units = r / SOLVE_COLUMNS;
+  F(solve_job) j = {.l = l, .x = x, .n = n, .ld = ld, .r = r, .ldx = ldx,
+                    .units = units, .kind = kind, .workers = s->workers};
+  if (s->workers == NULL || units < 2) return F(columns)(&j, 0, r, s);
+  nx_cpu_job(units, bytes, cost, F(solve_unit), &j);
+  return !j.failed;
 }
 
 /* Cholesky
@@ -236,7 +274,7 @@ static int F(cholesky)(T *a, int64_t n, int64_t ld, arena *s) {
   T *a21 = a + n1 * ld, *a22 = a21 + n1;
   int ok = F(cholesky)(a, n1, ld, s);
   if (ok <= 0) return ok;
-  if (!F(right)(a, n1, ld, a21, n2, ld, s)) return -1;
+  if (!F(solve)(ADJOINT_LOWER, a, n1, ld, a21, n2, ld, s)) return -1;
   for (int64_t j = 0; j < n2; j += HERK) {
     int64_t jb = n2 - j < HERK ? n2 - j : HERK;
     if (!F(gemm)(n2 - j, jb, n1, -1, F(op)(a21 + j * ld, ld, 1),
@@ -312,7 +350,7 @@ static int F(panel)(T *a, int64_t m, int64_t width, int64_t ld, int64_t j0,
   int64_t n1 = split(n), n2 = n - n1, j1 = j0 + n1;
   T *a11 = a + j0 * ld + j0, *a12 = a11 + n1, *a21 = a11 + n1 * ld;
   return F(panel)(a, m, width, ld, j0, n1, pivots, perm, s) &&
-         F(lower)(a11, n1, ld, a12, n2, ld, 1, s) &&
+         F(solve)(UNIT_LOWER, a11, n1, ld, a12, n2, ld, s) &&
          F(gemm)(m - j1, n2, n1, -1, F(op)(a21, ld, 1), F(op)(a12, ld, 1),
                  a21 + n1, ld, s) &&
          F(panel)(a, m, width, ld, j1, n2, pivots, perm, s);
@@ -324,7 +362,7 @@ static int F(lu)(T *a, int64_t m, int64_t n, int64_t ld, int64_t *pivots,
   for (int64_t i = 0; i < m; i++) perm[i] = i;
   if (k == 0) return 1;
   return F(panel)(a, m, n, ld, 0, k, pivots, perm, s) &&
-         F(lower)(a, k, ld, a + k, n - k, ld, 1, s);
+         F(solve)(UNIT_LOWER, a, k, ld, a + k, n - k, ld, s);
 }
 
 /* Householder reflectors */
@@ -599,8 +637,9 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
         nans(d, n * r * (CPLX + 1), RDT);
         return 1;
       }
-  return upper ? F(upper)(w, n, n, d, r, r, c->unit, s)
-               : F(lower)(w, n, n, d, r, r, c->unit, s);
+  solve kind = upper ? (c->unit ? UNIT_UPPER : UPPER)
+                     : (c->unit ? UNIT_LOWER : LOWER);
+  return F(solve)(kind, w, n, n, d, r, r, s);
 }
 
 #undef T

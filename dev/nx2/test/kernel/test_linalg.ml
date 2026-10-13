@@ -719,10 +719,9 @@ let law_layouts (b : Support.backend) c =
    This removes Support.serial and its production threads switch; nested
    GEMMs choose their threads in both current paths. *)
 
-(* nx.cpu computes Cholesky and triangular solves at the four dtypes, and
-   its matrices on one thread give the job's bits. *)
-let law_cpu_threads (b : Support.backend) c =
-  let c = { c with batch = (if c.n > 17 then [| 2 |] else [| 9 |]) } in
+(* nx.cpu computes the routines of [c] at its dtype, and on one thread
+   gives the job's bits. *)
+let threads_agree (b : Support.backend) c =
   let x = cholesky_operand c and ops = solve_operands c in
   let _, lu = lu_operand c in
   List.iter
@@ -736,6 +735,18 @@ let law_cpu_threads (b : Support.backend) c =
       ("lu", Lu, [| lu |]);
       ("qr", Qr (factors c), [| lu |]);
     ]
+
+(* nx.cpu computes Cholesky and triangular solves at the four dtypes, and
+   its matrices on one thread give the job's bits. *)
+let law_cpu_threads b c =
+  threads_agree b { c with batch = (if c.n > 17 then [| 2 |] else [| 9 |]) }
+
+(* One matrix of order 256 and 160 right-hand sides: Cholesky's solve of
+   128 rows, LU's of 128 columns and the solve's of 160 split into units
+   of columns on the threads, which give the bits of one thread. *)
+let law_cpu_units b c =
+  cover "units on the threads" (Domain.recommended_domain_count () > 1);
+  threads_agree b { c with batch = [||]; n = 256; r = 160 }
 
 (* A routine's operand [a], right-hand sides [b] for a solve, and
    destinations [dsts], each near a fit. *)
@@ -946,6 +957,8 @@ let cpu (b : Support.backend) =
     [
       prop ~count:30 "computes every dtype, one thread giving the job's bits"
         case (run (law_cpu_threads b));
+      prop ~count:8 "a solve's units of columns give one thread's bits" case
+        (run (law_cpu_units b));
       prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
         (run (law_cpu_refuses b));
       test "refuses dtypes and shapes, declines the other routines" (fun () ->
