@@ -594,6 +594,15 @@ let scatter_examples =
       [| 0L; 0L; 2L; 5L; 0L; 1L |];
   ]
 
+(* Past a block of a sorted scatter: shared targets, positions past the
+   axis on both sides, a narrow float's sum. *)
+let blocked_examples =
+  let ps = Array.init 1009 (fun i -> Int64.of_int ((i * 7 mod 1003) - 1)) in
+  [
+    scatter_example (D.Any D.Float16) Nx_kernel.Add ~ts:[| 1000 |] ~axis:0
+      ~m:600_000 ps;
+  ]
+
 let gathers = Gen.with_pp pp_gather (gather_gen ())
 let large_gathers = Gen.with_pp pp_gather (gather_gen ~shapes:large_shapes ())
 let scatters = Gen.with_pp pp_scatter (scatter_gen ())
@@ -607,6 +616,14 @@ let long_scatters =
     (scatter_gen
        ~shapes:(Gen.of_list [ [| 1000 |]; [| 3; 7 |]; [| 5 |] ])
        ~ms:(Gen.int_range 70_000 100_000)
+       ())
+
+(* More steps along the axis than a partitioned scatter sorts at once. *)
+let blocked_scatters =
+  Gen.with_pp pp_scatter
+    (scatter_gen
+       ~shapes:(Gen.of_list [ [| 1000 |]; [| 5 |] ])
+       ~ms:(Gen.int_range 524_289 600_000)
        ())
 
 let int_gathers =
@@ -641,6 +658,9 @@ let cpu (b : Support.backend) =
       prop ~count:10 "long scatters split their targets among threads"
         long_scatters
         (run (scatter_agrees b));
+      prop ~count:4 ~examples:blocked_examples
+        "longer scatters split them block by block" blocked_scatters
+        (run (law_scatter_reference b));
       test "boolean extremes are of truths" (fun () ->
           b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->
