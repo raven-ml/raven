@@ -847,7 +847,8 @@ module Buffer : sig
       {- It does not wait for work through {!Submission.unordered} refs,
          which the caller orders.}
       {- It takes no claim, so a donation on another domain may write the
-         memory once it returns, which {!read} and {!write} prevent.}}
+         memory once it returns, which {!read}, {!write}, the copies, the
+         blits and {!fill} prevent.}}
 
       Raises [Invalid_argument] if [b] is dead, and {!Lost} where
       {!Rig.section-loss_memory} says, before it waits on any device if the
@@ -1693,8 +1694,8 @@ end
        buffer that {!Claim.consume} returns. Where the memory was held
        exclusive, that buffer's holder may write it in place, and no holder
        of a buffer made before the consumption sees the write. Code that the
-       holder hands the new buffer sees it, and the holder orders that
-       code's accesses as for a buffer it made.}}
+       holder hands the new buffer sees the write, so the holder must order
+       that code's accesses as for a buffer it made.}}
 
     Taking a claim never waits. A read claim on memory held exclusive raises
     [Invalid_argument], and a donated input whose memory another claim holds
@@ -1752,9 +1753,8 @@ module Claim : sig
       Every claim is released when [f] returns or raises, and [c] then holds
       nothing. A {!consume} on another domain that overlaps the return
       completes before the release or raises [Invalid_argument]. Any other
-      use of [c] on another domain, and a write in place through the buffer
-      {!consume} returned, must finish before [f] returns. rig does not
-      detect one that overlaps the return, which races the memory's next
+      use of [c] on another domain must finish before [f] returns. rig does
+      not detect one that overlaps the return, which races the memory's next
       holder.
 
       Raises [Invalid_argument] before calling [f], releasing what it took,
@@ -1770,8 +1770,8 @@ module Claim : sig
   val consume : t -> why:string -> Buffer.t -> Buffer.t
   (** [consume c ~why b] consumes [b]'s memory with the reason [why], so [b]
       and every buffer made over that memory until then are dead. It is a live
-      buffer over the same memory, the only one, which the caller writes in
-      place only if [exclusive c b] was [true] before the call. [c] no longer
+      buffer over the same memory, the only one. The caller must not write
+      it in place unless [exclusive c b] was [true] before the call. [c] no longer
       holds the memory exclusive, and the buffer is claimed as any other.
 
       Raises [Invalid_argument] if [c]'s {!with_} has returned or raised, [c]

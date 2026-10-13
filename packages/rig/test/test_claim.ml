@@ -725,7 +725,8 @@ let test_export_exclusive () =
 
 (* A claim from C is a read claim: it sits beside other readers, keeps a
    donation a read until it is released, and is refused under an exclusive claim
-   and on a dead buffer, where it leaves no claim behind. *)
+   and on a dead buffer, where it leaves no claim behind. The buffer a
+   consumption gives is claimed at once. *)
 let test_c_claims () =
   let b = B.create Rig.host 16 in
   equal ~msg:"for reading" answer R.Claimed (R.claim b Rig.Read);
@@ -739,7 +740,10 @@ let test_c_claims () =
         equal ~msg:"donated once released" bool true (Claim.exclusive c b);
         equal ~msg:"under an exclusive claim" answer R.Exclusive
           (R.claim b Rig.Read);
-        Claim.consume c ~why:"donated" b)
+        let b' = Claim.consume c ~why:"donated" b in
+        equal ~msg:"the consumed buffer" answer R.Claimed (R.claim b' Rig.Read);
+        R.release b';
+        b')
   in
   equal ~msg:"dead" answer R.Dead (R.claim b Rig.Read);
   equal ~msg:"its reason" (option string) (Some "donated") (R.why b);
@@ -1233,40 +1237,43 @@ let device = function
   | Addressed -> Lazy.force addressed
   | Unaddressed -> Lazy.force unaddressed
 
-let consumed_case =
-  Gen.pair
-    (Gen.of_list ~pp:pp_place [ Host; Addressed; Unaddressed ])
-    (Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 8; 4096 ])
+let consumed_cases =
+  List.concat_map
+    (fun place -> List.map (fun n -> (place, n)) [ 0; 1; 8; 4096 ])
+    [ Host; Addressed; Unaddressed ]
+
+let consumed_name (place, n) =
+  Format.asprintf "%a memory of %d bytes" pp_place place n
 
 (* [exclusive c b] holds until [c] consumes [b], and is false after it for
    both buffers. The consumed buffer is then used as any buffer its holder
    made: work submitted on it, the host's reads and writes, a copy a device
    runs, a share. *)
 let consumed_law (place, n) =
-  cover "host memory" (place = Host);
-  cover "memory the host addresses" (place = Addressed);
-  cover "memory the host does not address" (place = Unaddressed);
   let d = device place in
   let b = B.create d n in
   let other = B.create (device Unaddressed) n in
-  Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
-      equal ~msg:"before the consumption" bool true (Claim.exclusive c b);
-      let b' = Claim.consume c ~why:"consumed" b in
-      equal ~msg:"after, the consumed buffer" (pair bool bool) (false, false)
-        (Claim.exclusive c b, Claim.exclusive c b');
-      if place <> Host then write d b';
-      (* A device's memory of no bytes has no host address. *)
-      if place = Host || (place = Addressed && n > 0) then begin
-        B.write b' Bigarray.char (fun a -> Bigarray.Array1.fill a 'w');
-        equal ~msg:"read back" string (String.make n 'w')
-          (B.read b' Bigarray.char (fun a ->
-               String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)))
-      end
-      else B.fill b' 'w';
-      B.copy ~src:b' ~dst:other;
-      Claim.share b';
-      equal ~msg:"shared" bool false (Claim.exclusive c b'));
-  equal ~msg:"the copy" string (String.make n 'w') (text other)
+  let b' =
+    Claim.with_ ~read:[] ~donate:[ b ] @@ fun c ->
+    equal ~msg:"before the consumption" bool true (Claim.exclusive c b);
+    let b' = Claim.consume c ~why:"consumed" b in
+    equal ~msg:"after, the consumed buffer" (pair bool bool) (false, false)
+      (Claim.exclusive c b, Claim.exclusive c b');
+    if place <> Host then write d b';
+    (* A device's memory of no bytes has no host address. *)
+    if place = Host || (place = Addressed && n > 0) then begin
+      B.write b' Bigarray.char (fun a -> Bigarray.Array1.fill a 'w');
+      equal ~msg:"read back" string (String.make n 'w')
+        (B.read b' Bigarray.char (fun a ->
+             String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)))
+    end
+    else B.fill b' 'w';
+    B.copy ~src:b' ~dst:other;
+    Claim.share b';
+    b'
+  in
+  equal ~msg:"the copy" string (String.make n 'w') (text other);
+  equal ~msg:"shared for good" bool false (donated_exclusive b')
 
 (* Two domains: host copies, blits and fills of a memory beside donations of
    it. A donation that holds the memory exclusive consumes it, fills the
@@ -1274,7 +1281,9 @@ let consumed_law (place, n) =
    memory was made with, so while the memory is live they agree whatever their
    order. An access after a consumption finds the buffer dead; one beside a
    donation may find it held exclusive, which an order with the donation first
-   explains. *)
+   explains. A donation may also find the memory read by an access beside it
+   and answer [None], in any state, which no order of whole calls shows: an
+   access's claim spans its call. *)
 type copied = { mutable gone : bool }
 
 let copied =
@@ -1369,10 +1378,10 @@ let tests =
           test_export_exclusive;
         test "a donor submits work on the consumed buffer inside with_"
           test_donor_submits;
-        prop
+        cases ~name:consumed_name
           "exclusive holds until the consumption, and the consumed buffer is \
            used as any other"
-          consumed_case consumed_law;
+          consumed_cases consumed_law;
       ];
     group ~timeout "consumption"
       [

@@ -36,7 +36,7 @@
     two pieces only, after which both hold it.
 
     A copy, blit or fill takes a read claim on its buffers before it checks
-    them and waits, and holds it until it returns: the host moves bytes that
+    them and waits, and holds it until it returns. The host moves bytes that
     no stamp orders, so a donation meanwhile would write them, or kill the
     buffer the next leg names. *)
 

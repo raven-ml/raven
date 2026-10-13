@@ -432,10 +432,14 @@ let blit_from_string s i b j n =
     Buffer.blit_string s i b j n;
     Claim.drop b
   end
-  else
+  else begin
+    (* The view would otherwise name itself for a dead buffer; the check that
+       counts runs under the claim. *)
+    Buffer.check_live fn b;
     upload fn (Buffer.view b ~first:j ~length:n) (fun h at ->
         Buffer.wait h Buffer.Read_write;
         Buffer.blit_string s (i + at) h 0 (Buffer.length h))
+  end
 
 let blit_to_bytes b i s j n =
   let fn = "Buffer.blit_to_bytes" in
@@ -446,10 +450,12 @@ let blit_to_bytes b i s j n =
     Buffer.blit_bytes b i s j n;
     Claim.drop b
   end
-  else
+  else begin
+    Buffer.check_live fn b;
     download fn (Buffer.view b ~first:i ~length:n) (fun h at ->
         Buffer.wait h Buffer.Read;
         Buffer.blit_bytes h 0 s (j + at) (Buffer.length h))
+  end
 
 let fill b c =
   let fn = "Buffer.fill" in

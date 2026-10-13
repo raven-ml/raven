@@ -1768,11 +1768,15 @@ let with_ref r d outcome =
           if expected && (not got) && not r.w.two then
             fail "a donation refused with no other claim")
 
+(* A with_ holds the donated memory exclusive while it runs, which a host
+   access of that memory meanwhile would meet and no order of whole calls
+   explains. The memory's lock orders the two, as it orders host accesses. *)
 let with_sys r d =
   guard r.sw @@ fun () ->
-  let a = (get r).b and b = (get d).b in
-  Rig.Claim.with_ ~read:[ a ] ~donate:[ b ] (fun c ->
-      Rig.Claim.exclusive c b)
+  let sa = get r and sb = get d in
+  locked [ sa.m; sb.m ] @@ fun () ->
+  Rig.Claim.with_ ~read:[ sa.b ] ~donate:[ sb.b ] (fun c ->
+      Rig.Claim.exclusive c sb.b)
 
 let consume_ref src dst outcome =
   with_buf src outcome @@ fun b ->
@@ -1795,10 +1799,12 @@ let consume_ref src dst outcome =
             dst.rb <- Some { b with gen = b.mem.generation }
           end)
 
+(* Under the memory's lock, as [with_sys]. *)
 let consume_sys src dst =
   let sb = get src in
   guard src.sw @@ fun () ->
   let b = sb.b in
+  locked [ sb.m ] @@ fun () ->
   match
     Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
         if Rig.Claim.exclusive c b then
