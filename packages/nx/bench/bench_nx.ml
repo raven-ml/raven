@@ -144,6 +144,38 @@ let dispatch_benchmarks () =
     Thumper.bench "shape" (fun () -> Nx.shape row);
   ]
 
+(* Eager operations on values placed on a memory device, which nx.cpu computes:
+   what the placed path costs over the host values of [dispatch], up to the
+   result's completion. The device is opened in the worker that measures, since
+   one the parent opens is lost in the forked child. *)
+let placed_benchmarks () =
+  let row = Nx.rand Nx.Float32 [| 4096 |] in
+  let row' = Nx.rand Nx.Float32 [| 4096 |] in
+  let mask = Nx.less row row' in
+  let on () = Nx.Placement.on (Nx.Device.make (Rig.memory_device "BENCH:1")) in
+  let wait y =
+    List.iter (fun b -> Rig.Buffer.wait b Rig.Read) (fst (Nx.shards y))
+  in
+  let timed f x =
+    let y = f x in
+    wait y;
+    y
+  in
+  [
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let p = on () in
+        (Nx.place p row, Nx.place p row'))
+      "add 4096"
+      (timed (fun (a, b) -> Nx.add a b));
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let p = on () in
+        (Nx.place p mask, Nx.place p row, Nx.place p row'))
+      "where 4096"
+      (timed (fun (c, a, b) -> Nx.where c a b));
+  ]
+
 (* Samplers at the sizes a training step draws: a dropout mask or an init at a
    million elements, and the rejection samplers, whose cost per element is the
    question, at fewer. Poisson is measured at one rate per regime of its
@@ -263,6 +295,7 @@ let () =
       ]
     [
       Thumper.group "dispatch" (dispatch_benchmarks ());
+      Thumper.group "placed" (placed_benchmarks ());
       Thumper.group "binary" (binary_benchmarks ());
       Thumper.group "unary" (unary_benchmarks ());
       Thumper.group "reduce" (reduce_benchmarks ());
