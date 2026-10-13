@@ -137,17 +137,18 @@ let pp_scatter ppf c =
 
 let takes_add (D.Any dt) = not (D.is D.Boolean dt)
 
+let combine_gen d =
+  Gen.of_list
+    ~pp:(fun ppf c -> Format.pp_print_string ppf (combine_name c))
+    (if takes_add d then Nx_kernel.[ Set; Add; Max; Min ]
+     else Nx_kernel.[ Set; Max; Min ])
+
 let scatter_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen)
     ?(ms = Gen.frequency [ (4, Gen.int_range 0 8); (1, Gen.int_range 9 60) ]) ()
     =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
-  let* combine =
-    of_list
-      ~pp:(fun ppf c -> Format.pp_print_string ppf (combine_name c))
-      (if takes_add d then Nx_kernel.[ Set; Add; Max; Min ]
-       else Nx_kernel.[ Set; Max; Min ])
-  in
+  let* combine = combine_gen d in
   let* ts = shapes in
   let r = Array.length ts in
   let* axis = int_range 0 (r - 1) in
@@ -561,17 +562,22 @@ let gather_example d ~xs ~axis ~n ?(broadcast = []) ps =
     gviews = List.map (( ^ ) "idx ") (view_names iv);
   }
 
-let scatter_example d combine ~ts ~axis ~m ps =
+let scatter_example d combine ~ts ~axis ~m ?(broadcast = []) ?tv ?uv ps =
   let r = Array.length ts in
   let rs = Random.State.make [| 1 |] in
   let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
+  let iv = { (plain r) with broadcast } in
+  let tv = Option.value tv ~default:(plain r)
+  and uv = Option.value uv ~default:(plain r) in
   {
     combine;
     saxis = axis;
-    into = operand d ts (plain r) (fun _ -> element d rs);
-    sidx = int64s us (plain r) (positions_of ps);
-    updates = operand d us (plain r) (fun _ -> element d rs);
-    sviews = [];
+    into = operand d ts tv (fun _ -> element d rs);
+    sidx = int64s us iv (positions_of ps);
+    updates = operand d us uv (fun _ -> element d rs);
+    sviews =
+      List.map (( ^ ) "into ") (view_names tv)
+      @ List.map (( ^ ) "updates ") (view_names uv);
   }
 
 let gather_examples =
@@ -594,14 +600,58 @@ let scatter_examples =
       [| 0L; 0L; 2L; 5L; 0L; 1L |];
   ]
 
-(* Past a block of a sorted scatter: shared targets, positions past the
-   axis on both sides, a narrow float's sum. *)
+(* Positions past the axis on both sides, cycling over 1003 targets. *)
+let cycled = Array.init 1009 (fun i -> Int64.of_int ((i * 7 mod 1003) - 1))
+
+(* Past a block of a sorted scatter: shared targets, a narrow float's
+   sum. *)
 let blocked_examples =
-  let ps = Array.init 1009 (fun i -> Int64.of_int ((i * 7 mod 1003) - 1)) in
   [
     scatter_example (D.Any D.Float16) Nx_kernel.Add ~ts:[| 1000 |] ~axis:0
-      ~m:600_000 ps;
+      ~m:600_000 cycled;
   ]
+
+(* An embedding gradient's rows, sorted: into transposed and the updates
+   stepped and reversed; a narrow float's sum past a block. *)
+let row_examples =
+  [
+    scatter_example (D.Any D.Float32) Nx_kernel.Add ~ts:[| 1000; 5 |] ~axis:0
+      ~m:70_000 ~broadcast:[ 1 ]
+      ~tv:{ (plain 2) with perm = [| 1; 0 |] }
+      ~uv:{ (plain 2) with stepped = true; reversed = Some 0 }
+      cycled;
+    scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 1000; 2 |] ~axis:0
+      ~m:530_000 ~broadcast:[ 1 ] cycled;
+  ]
+
+(* A sorted run of 1025 slices, whose last piece is one slice: the updates
+   broadcast along the axis, positions cycling over 0, 1 and 2 into an axis
+   of 2, so that both targets end as the row. *)
+let test_last_piece (b : Support.backend) () =
+  let d = D.Any D.Complex128 and m = 65_536 and len = 1025 in
+  let rs = Random.State.make [| 2 |] in
+  let row = Array.init len (fun _ -> element d rs) in
+  let c =
+    {
+      combine = Nx_kernel.Set;
+      saxis = 0;
+      into = operand d [| 2; len |] (plain 2) (fun _ -> element d rs);
+      sidx =
+        int64s [| m; len |]
+          { (plain 2) with broadcast = [ 1 ] }
+          (positions_of [| 0L; 1L; 2L |]);
+      updates =
+        operand d [| m; len |] { (plain 2) with broadcast = [ 0 ] } (fun k ->
+            row.(k));
+      sviews = [];
+    }
+  in
+  match scatter_on b c with
+  | None -> failf "%s declined a scatter" b.name
+  | Some y ->
+      equal (array string)
+        (Array.init (2 * len) (fun t -> row.(t mod len)))
+        (elements y)
 
 let gathers = Gen.with_pp pp_gather (gather_gen ())
 let large_gathers = Gen.with_pp pp_gather (gather_gen ~shapes:large_shapes ())
@@ -625,6 +675,37 @@ let blocked_scatters =
        ~shapes:(Gen.of_list [ [| 1000 |]; [| 5 |] ])
        ~ms:(Gen.int_range 524_289 600_000)
        ())
+
+(* Embedding gradients: many updates along axis 0, their positions
+   broadcast along the rows, into and the updates through drawn views. *)
+let row_scatters =
+  let open Gen in
+  let* d = of_list ~pp:pp_dtype all_dtypes in
+  let* combine = combine_gen d in
+  let* ts =
+    of_list ~pp:pp_ints
+      [ [| 300; 5 |]; [| 50; 7 |]; [| 20; 2; 3 |]; [| 40; 3 |] ]
+  in
+  let r = Array.length ts in
+  let* m = int_range 65_536 70_000 in
+  let* tv = view_of r in
+  let* uv = view_of r in
+  let+ seed = int in
+  let rs = Random.State.make [| seed |] in
+  let us = Array.mapi (fun i e -> if i = 0 then m else e) ts in
+  let iv = { (plain r) with broadcast = List.init (r - 1) succ } in
+  {
+    combine;
+    saxis = 0;
+    into = operand d ts tv (fun _ -> element d rs);
+    sidx = int64s us iv (fun () -> position rs ts.(0));
+    updates = operand d us uv (fun _ -> element d rs);
+    sviews =
+      List.map (( ^ ) "into ") (view_names tv)
+      @ List.map (( ^ ) "updates ") (view_names uv);
+  }
+
+let row_scatters = Gen.with_pp pp_scatter row_scatters
 
 let int_gathers =
   Gen.with_pp pp_gather (gather_gen ~dtypes:[ D.Any D.Int64 ] ())
@@ -661,6 +742,14 @@ let cpu (b : Support.backend) =
       prop ~count:4 ~examples:blocked_examples
         "longer scatters split them block by block" blocked_scatters
         (run (law_scatter_reference b));
+      prop ~count:10 ~examples:row_examples
+        "an embedding gradient's rows combine in C order, in place too"
+        row_scatters
+        (run (fun c ->
+             law_scatter_reference b c;
+             law_in_place b c));
+      test "a sorted run's last piece of one slice" (fun () ->
+          b.around (test_last_piece b));
       test "boolean extremes are of truths" (fun () ->
           b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->

@@ -14,7 +14,8 @@
    row is one copy from the source's row p.
 
    A scatter copies [into] to the destination, unless the two are one
-   array, then applies the updates. Update j's target has j's indices off
+   array, then applies the updates; a sorted scatter copies each bin's
+   targets just before its updates. Update j's target has j's indices off
    the axis, so those indices cut the targets into disjoint slices, which
    any thread may take; within a slice the updates apply in increasing
    index along the axis, which is C order of the updates for each target.
@@ -24,10 +25,10 @@
    gradient's do, the step is one row of the kind. Where runs are fewer
    than the job's threads and the axis long, as a 1-d scatter's is, each
    run's updates are sorted into bins of their targets (Sorted scatters
-   below), or, where a run has several slices, each thread also takes a
-   part of the targets along the axis and walks every update of its run,
-   applying those that land in its part: the order per target stays C
-   order.
+   below), or, where a run has several slices whose positions differ
+   along it, each thread also takes a part of the targets along the axis
+   and walks every update of its run, applying those that land in its
+   part: the order per target stays C order.
 
    Add adds left to right from +0 + x. nx_add keeps the first NaN operand,
    and a zero sum is stored as +0: a sum that starts from +0 is never -0,
@@ -228,27 +229,31 @@ struct scatter {
   const nx_array *a; /* the destination, into, the positions, the updates */
   scatter_run run;
   int dt, combine;
-  /* The slices: a loop of the destination, the positions and the updates
-     off the axis; [sd], [si] and [su] their steps along its last axis. */
+  /* The slices: a loop of the destination, the positions, the updates and
+     into off the axis; [sd], [si], [su] and [st] their steps along its last
+     axis, whose [len] slices are a row of slices. */
   nx_loop l;
-  int64_t sd, si, su;
+  int64_t sd, si, su, st, len;
   int64_t pieces; /* runs per row of slices */
   int64_t parts;  /* parts of the axis's targets, each a unit's */
   /* Along the axis: the updates' extent, their steps through the positions
-     and the updates, the destination's stride and extent. */
-  int64_t m, ia, ua, da;
+     and the updates, the destination's and into's strides, the
+     destination's extent. */
+  int64_t m, ia, ua, da, ta;
   uint64_t dim;
   /* A narrow float's sums, by the destination's element, and whether an
      update reached each. */
   float *acc;
   uint8_t *touched;
-  /* A sorted scatter (Sorted scatters): the run's positions in the
-     destination, the positions and the updates, the block's first step,
-     steps and chunks, and the bins of 2^shift targets. Chunk k's updates
-     of bin q end at seg[k·bins + q] in [pos] and [vals], elements of [w]
-     bytes, and start at the end of bin q - 1, or at the chunk's first.
-     Each chunk gathers [gather_bytes] at [gather]. */
-  int64_t pd, pi, pu, b0, steps, chunks, bins, block, w, gather_bytes;
+  /* A sorted scatter (Sorted scatters): the run's [n] slices, at [pd],
+     [pi], [pu] and [pt] in the destination, the positions, the updates and
+     into; the block's first step [b0], its [steps] and [chunks], of at most
+     [block] steps; the [bins] of 2^[shift] targets. Chunk k's updates of
+     bin q end at seg[k·bins + q] in [pos] and [vals], whose entries are
+     the updates, of [w] bytes, or their rows' steps (entry_bytes), and
+     start at the end of bin q - 1, or at the chunk's first. Each chunk
+     gathers [gather_bytes] at [gather]. */
+  int64_t pd, pi, pu, pt, n, b0, steps, chunks, bins, block, w, gather_bytes;
   int shift;
   int64_t *pos, *seg;
   uint8_t *vals, *gather;
@@ -300,7 +305,11 @@ static inline nx_c128 add_c128(nx_c128 a, nx_c128 b) {
         if (p - lo >= span) continue;                                        \
         T *e = d + pd + (int64_t)p * da;                                     \
         const T *v = u + pu;                                                 \
-        for (int64_t i = 0; i < n; i++) e[i * sd] = F(e[i * sd], v[i * su]); \
+        if (sd == 1 && su == 1)                                              \
+          for (int64_t i = 0; i < n; i++) e[i] = F(e[i], v[i]);              \
+        else                                                                 \
+          for (int64_t i = 0; i < n; i++)                                    \
+            e[i * sd] = F(e[i * sd], v[i * su]);                             \
         continue;                                                            \
       }                                                                      \
       for (int64_t i = 0; i < n; i++) {                                      \
@@ -487,21 +496,19 @@ static scatter_run run_of(int combine, int dt) {
 #undef PICK
 }
 
-/* Run [v] of slices: its positions in the destination, the positions and
-   the updates into [p], its slices answered. */
+/* Run [v] of slices: its positions in the destination, the positions, the
+   updates and into, into [p]; its slices answered. */
 static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
   const nx_loop *l = &c->l;
   int r = l->rank;
   int64_t len = l->extent[r - 1];
   int64_t i0 = v % c->pieces * UNIT_ROW;
   v /= c->pieces;
-  p[0] = l->first[0] + i0 * c->sd;
-  p[1] = l->first[1] + i0 * c->si;
-  p[2] = l->first[2] + i0 * c->su;
+  for (int k = 0; k < 4; k++) p[k] = l->first[k] + i0 * l->step[k][r - 1];
   for (int i = r - 2; i >= 0; i--) {
     int64_t x = v % l->extent[i];
     v /= l->extent[i];
-    for (int k = 0; k < 3; k++) p[k] += x * l->step[k][i];
+    for (int k = 0; k < 4; k++) p[k] += x * l->step[k][i];
   }
   return len - i0 < UNIT_ROW ? len - i0 : UNIT_ROW;
 }
@@ -511,7 +518,7 @@ static void scatter_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   const scatter *c = ctx;
   for (int64_t u = lo; u < hi; u++) {
     /* The unit's part of the axis's targets, then its run of slices. */
-    int64_t part = u % c->parts, p[3];
+    int64_t part = u % c->parts, p[4];
     uint64_t first = c->dim * (uint64_t)part / (uint64_t)c->parts;
     uint64_t next = c->dim * (uint64_t)(part + 1) / (uint64_t)c->parts;
     int64_t n = run_at(c, u / c->parts, p);
@@ -521,17 +528,25 @@ static void scatter_units(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 /* Sorted scatters
 
-   Where the runs are fewer than the threads, each one slice, as a 1-d
-   scatter's is, and the axis long, a run's updates are sorted by their
-   targets' bins of 2^shift positions along the axis, a block at a time.
-   A job cuts the block into chunks; each chunk's thread counts its
-   updates by bin, then copies their positions and updates into its bins'
-   runs in their order, dropping positions outside the axis. A second job
-   takes the bins: each applies its chunks' runs in chunk order with the
-   scatter's own run, so that a target's updates apply in C order, into
-   targets that fit half a core's L2. Threads that split the targets
-   instead each read every update: 1-d scatters of 16 Mi updates ran 1.2
-   to 1.7 times slower so on an x86-64 of six cores. */
+   Where the runs are fewer than the threads and the axis long, as a 1-d
+   scatter's is or an embedding gradient's, whose positions step 0 along
+   its run, a run's updates are sorted by their targets' bins of 2^shift
+   positions along the axis, a block at a time. A job cuts the block into
+   chunks; each chunk's thread counts its updates by bin, then copies
+   their positions into its bins' runs in their order, with the updates
+   where a row of slices is one slice and their rows' steps where it has
+   several, its last run perhaps of one slice, dropping positions outside
+   the axis. A second job takes the bins: each
+   copies its targets from into, in the first block, then applies its
+   chunks' runs in chunk order with the scatter's own run, so that a
+   target's updates apply in C order, into targets that fit half a core's
+   L2. Threads that split the targets instead each read every update: 1-d
+   scatters of 16 Mi updates ran 1.2 to 1.7 times slower so on an x86-64
+   of six cores, and the embedding gradient's row 1.3 times. */
+
+/* The bytes of a sorted entry: the update where a row of slices is one
+   slice, else its row's step. */
+static int64_t entry_bytes(const scatter *c) { return c->len > 1 ? 8 : c->w; }
 
 /* The first step of chunk [k] of the block. */
 static int64_t chunk_first(const scatter *c, int64_t k) {
@@ -539,9 +554,9 @@ static int64_t chunk_first(const scatter *c, int64_t k) {
 }
 
 /* Lays out a chunk's updates from [t0] to [t1] by bin, from the bins'
-   firsts at [seg], their elements of the type [T]: each bin's gather in
-   [gp] and [gv], GATHER at a time. */
-#define PLACE(T)                                                             \
+   firsts at [seg], with each a value [V] of the type [T], the update or
+   its row's step: each bin's gather in [gp] and [gv], GATHER at a time. */
+#define PLACE(T, V)                                                          \
   {                                                                          \
     T *gv = (T *)(gp + bins * GATHER);                                       \
     for (int64_t t = t0; t < t1; t++) {                                      \
@@ -549,7 +564,7 @@ static int64_t chunk_first(const scatter *c, int64_t k) {
       if (p >= dim) continue;                                                \
       int64_t q = (int64_t)(p >> shift), g = fill[q]++;                      \
       gp[q * GATHER + g] = (int64_t)p;                                       \
-      gv[q * GATHER + g] = ((const T *)u)[t * ua];                           \
+      gv[q * GATHER + g] = V;                                                \
       if (g + 1 < GATHER) continue;                                          \
       memcpy(pos + seg[q], gp + q * GATHER, sizeof(int64_t) * GATHER);       \
       memcpy((T *)vals + seg[q], gv + q * GATHER, sizeof(T) * GATHER);       \
@@ -566,7 +581,7 @@ static int64_t chunk_first(const scatter *c, int64_t k) {
 static void sort_chunks(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const scatter *c = ctx;
-  int64_t bins = c->bins, ia = c->ia, ua = c->ua;
+  int64_t bins = c->bins, ia = c->ia, ua = c->ua, b0 = c->b0;
   uint64_t dim = c->dim;
   int shift = c->shift;
   int64_t *pos = c->pos;
@@ -589,18 +604,39 @@ static void sort_chunks(int64_t lo, int64_t hi, int worker, void *ctx) {
     }
     seg[0] = t0;
     for (int64_t q = 0; q < bins; q++) seg[q + 1] += seg[q];
-    switch (c->w) {
-      case 1: PLACE(uint8_t) break;
-      case 2: PLACE(uint16_t) break;
-      case 4: PLACE(uint32_t) break;
-      case 8: PLACE(uint64_t) break;
-      default: PLACE(u128)
-    }
+#define AT(T) ((const T *)u)[t * ua]
+    if (c->len > 1) PLACE(int64_t, b0 + t)
+    else switch (c->w) {
+        case 1: PLACE(uint8_t, AT(uint8_t)) break;
+        case 2: PLACE(uint16_t, AT(uint16_t)) break;
+        case 4: PLACE(uint32_t, AT(uint32_t)) break;
+        case 8: PLACE(uint64_t, AT(uint64_t)) break;
+        default: PLACE(u128, AT(u128))
+      }
+#undef AT
     memcpy(c->seg + k * bins, seg, (size_t)bins * sizeof *seg);
   }
 }
 
 #undef PLACE
+
+/* Copies the run's targets of the bin from [first] from into, unless
+   into is the destination. */
+static void copy_bin(const scatter *c, uint64_t first) {
+  if (c->a[1].alias) return;
+  uint64_t end = first + ((uint64_t)1 << c->shift);
+  if (end > c->dim) end = c->dim;
+  nx_loop l = {.rank = 2,
+               .extent = {(int64_t)(end - first), c->n},
+               .first = {c->pd + (int64_t)first * c->da,
+                         c->pt + (int64_t)first * c->ta}};
+  l.step[0][0] = c->da;
+  l.step[0][1] = c->sd;
+  l.step[1][0] = c->ta;
+  l.step[1][1] = c->st;
+  l.rank = nx_coalesce_dims(2, 2, l.extent, l.step);
+  nx_cpu_copy_loop(c->a[0].base, c->a[1].base, c->a[0].bits, &l);
+}
 
 /* Applies each bin's runs with the scatter's run, over the sorted
    positions and updates. */
@@ -613,21 +649,40 @@ static void apply_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
   nx_array a[4] = {{.base = d->base, .bits = d->bits, .offset = d->offset},
                    {.bits = d->bits},
                    {.bits = 64},
-                   {.bits = c->a[3].bits}};
+                   {.base = c->a[3].base, .bits = c->a[3].bits}};
   scatter s = *c;
   s.a = a;
   s.ia = s.ua = 1;
   uint64_t span = (uint64_t)1 << c->shift;
-  for (int64_t q = lo; q < hi; q++)
+  for (int64_t q = lo; q < hi; q++) {
+    uint64_t first = (uint64_t)q << c->shift;
+    if (c->b0 == 0) copy_bin(c, first);
     for (int64_t k = 0; k < c->chunks; k++) {
       const int64_t *seg = c->seg + k * c->bins;
       int64_t from = q == 0 ? chunk_first(c, k) : seg[q - 1];
       s.m = seg[q] - from;
       if (s.m == 0) continue;
       a[2].base = (uint8_t *)(c->pos + from);
-      a[3].base = c->vals + from * c->w;
-      s.run(&s, c->pd, 0, 0, 1, (uint64_t)q << c->shift, span);
+      if (c->len == 1) {
+        a[3].base = c->vals + from * c->w;
+        s.run(&s, c->pd, 0, 0, 1, first, span);
+        continue;
+      }
+      /* A row of updates at a time, from its step, the next row's bytes
+         fetched ahead where they are contiguous: rows read out of order
+         stall on memory otherwise. */
+      const int64_t *t = (const int64_t *)c->vals + from;
+      int64_t m = s.m, bytes = c->su == 1 ? c->n * c->w : 0;
+      s.m = 1;
+      for (int64_t j = 0; j < m; j++) {
+        if (j + 1 < m)
+          for (int64_t b = 0; b < bytes; b += 64)
+            __builtin_prefetch(c->a[3].base +
+                               (c->pu + t[j + 1] * c->ua) * c->w + b);
+        s.run(&s, c->pd, j, c->pu + t[j] * c->ua, c->n, first, span);
+      }
     }
+  }
 }
 
 /* The shift of the bins: as many targets as fit half a core's L2, the
@@ -643,19 +698,21 @@ static int bin_shift(uint64_t dim, int64_t w, int threads) {
   return s;
 }
 
-/* Scatters run [v], one slice, by sorted blocks. */
+/* Scatters run [v] by sorted blocks. */
 static void sorted(scatter *c, int64_t v, int threads) {
-  int64_t p[3];
-  run_at(c, v, p);
+  int64_t p[4];
+  c->n = run_at(c, v, p);
   c->pd = p[0];
   c->pi = p[1];
   c->pu = p[2];
+  c->pt = p[3];
   for (c->b0 = 0; c->b0 < c->m; c->b0 += c->block) {
     c->steps = c->m - c->b0 < c->block ? c->m - c->b0 : c->block;
     c->chunks = c->steps < threads ? c->steps : threads;
-    int64_t bytes = c->steps * 2 * (8 + c->w);
+    int64_t e = entry_bytes(c);
+    int64_t bytes = c->steps * 2 * (8 + e);
     nx_cpu_job(c->chunks, bytes, (double)bytes, sort_chunks, c);
-    bytes = c->steps * (8 + 3 * c->w);
+    bytes = c->steps * (8 + e + 3 * c->n * c->w);
     nx_cpu_job(c->bins, bytes, (double)bytes, apply_bins, c);
   }
 }
@@ -666,6 +723,46 @@ static void encode_sums(const scatter *c, int64_t total) {
   for (int64_t k = 0; k < total; k++)
     if (c->touched[k])
       code_put(d, d->offset + k, narrow_of_float(c->dt, c->acc[k]));
+}
+
+/* Fills the loop of slices from the shape [us] of rank [r], off [axis],
+   with into's strides [ts], and answers its units. Only a sorted
+   scatter's copy_bin reads into's steps; other scatters pass zeros, which
+   never part an axis. */
+static int64_t slices(scatter *c, const int64_t *us, int r, intnat axis,
+                      const int64_t *ts) {
+  const nx_array *a = c->a;
+  nx_loop *l = &c->l;
+  l->first[0] = a[0].offset;
+  l->first[1] = a[2].offset;
+  l->first[2] = a[3].offset;
+  l->first[3] = a[1].offset;
+  for (int i = 0; i < r; i++) {
+    l->extent[i] = i == axis ? 1 : us[i];
+    l->step[0][i] = a[0].dim[r + i];
+    l->step[1][i] = a[2].dim[r + i];
+    l->step[2][i] = a[3].dim[r + i];
+    l->step[3][i] = ts[i];
+  }
+  l->rank = nx_coalesce_dims(4, r, l->extent, l->step);
+  int lr = l->rank;
+  c->sd = l->step[0][lr - 1];
+  c->si = l->step[1][lr - 1];
+  c->su = l->step[2][lr - 1];
+  c->st = l->step[3][lr - 1];
+  c->len = l->extent[lr - 1];
+  c->pieces = (c->len + UNIT_ROW - 1) / UNIT_ROW;
+  int64_t rows = 1;
+  for (int i = 0; i < lr - 1; i++) rows *= l->extent[i];
+  return rows * c->pieces;
+}
+
+/* Copies into to the destination, unless the two are one array. */
+static void copy_into(const nx_array *a, int64_t total) {
+  if (total == 0 || a[1].alias) return;
+  nx_loop l;
+  nx_coalesce(2, a, &l);
+  nx_cpu_copy_loop(a[0].base, a[1].base, a[0].bits, &l);
 }
 
 value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
@@ -694,12 +791,8 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     total *= ys[i];
     updates *= us[i];
   }
-  if (total > 0 && !a[1].alias) {
-    nx_loop l;
-    nx_coalesce(2, a, &l);
-    nx_cpu_copy_loop(a[0].base, a[1].base, a[0].bits, &l);
-  }
   if (total == 0 || updates == 0) {
+    copy_into(a, total);
     nx_done(4, a);
     CAMLreturn(Val_int(NX_OK));
   }
@@ -711,40 +804,26 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
                .ia = a[2].dim[r + axis],
                .ua = a[3].dim[r + axis],
                .da = a[0].dim[r + axis],
+               .ta = a[1].dim[r + axis],
                .dim = (uint64_t)ys[axis]};
-  /* The slices: the destination, positions and updates off the axis, as
-     the loop's operands 0, 1 and 2. */
-  c.l.rank = r;
-  c.l.first[0] = a[0].offset;
-  c.l.first[1] = a[2].offset;
-  c.l.first[2] = a[3].offset;
-  for (int i = 0; i < r; i++) {
-    c.l.extent[i] = i == axis ? 1 : us[i];
-    c.l.step[0][i] = a[0].dim[r + i];
-    c.l.step[1][i] = a[2].dim[r + i];
-    c.l.step[2][i] = a[3].dim[r + i];
-  }
-  c.l.rank = nx_coalesce_dims(3, r, c.l.extent, c.l.step);
-  int lr = c.l.rank;
-  c.sd = c.l.step[0][lr - 1];
-  c.si = c.l.step[1][lr - 1];
-  c.su = c.l.step[2][lr - 1];
-  int64_t len = c.l.extent[lr - 1], rows = updates / c.m / len;
+  static const int64_t unread[NX_MAX_RANK];
+  int64_t units = slices(&c, us, r, axis, unread);
   int64_t bytes = updates * (8 + a[3].bits / 8 + a[0].bits / 8);
   int threads = nx_cpu_threads(bytes, bytes);
-  c.pieces = (len + UNIT_ROW - 1) / UNIT_ROW;
-  int64_t units = rows * c.pieces;
-  /* Fewer units than threads, over many updates: each thread takes a part
-     of the targets and walks every update, as a 1-d scatter or an
-     embedding gradient needs. Narrower runs read the updates' rows in
-     pieces, which ran slower on the embedding gradient's row. */
+  /* Fewer units than threads, over many updates. Rows of one slice, or of
+     slices whose positions step 0 along them, as a 1-d scatter's or an
+     embedding gradient's, sort their updates; a dtype of under a byte
+     shares its bytes across bins, so doesn't. Otherwise each thread takes
+     a part of the targets and walks every update of its run. */
   c.parts = 1;
   int few = units < threads && c.m >= PART_UPDATES;
-  /* One slice a run, of whole bytes: sorted, a dtype of under a byte
-     sharing its bytes across bins. */
-  int sort = few && len == 1 && a[0].bits >= 8;
+  int sort = few && (c.len == 1 || c.si == 0) && a[0].bits >= 8;
   if (few && !sort) c.parts = (threads + units - 1) / units;
+  /* Into's steps may part the loop's axes further; a row of one slice, or
+     of positions stepping 0, stays one. */
+  if (sort) units = slices(&c, us, r, axis, a[1].dim + r);
   if ((uint64_t)c.parts > c.dim) c.parts = (int64_t)c.dim;
+  if (!sort) copy_into(a, total);
   int narrow_add = combine == NX_COMBINE_ADD && is_narrow(dt);
   if (narrow_add) {
     c.acc = malloc((size_t)total * sizeof(float));
@@ -752,15 +831,16 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   }
   if (sort) {
     c.w = a[0].bits / 8;
-    c.shift = bin_shift(c.dim, c.w, threads);
+    int64_t width = c.len < UNIT_ROW ? c.len : UNIT_ROW;
+    c.shift = bin_shift(c.dim, width * c.w, threads);
     c.bins = (int64_t)((c.dim - 1) >> c.shift) + 1;
     c.block = (int64_t)c.dim < FEWEST_BLOCK ? FEWEST_BLOCK
               : (int64_t)c.dim > MOST_BLOCK ? MOST_BLOCK
                                             : (int64_t)c.dim;
-    int64_t most = c.m < c.block ? c.m : c.block;
-    c.gather_bytes = c.bins * GATHER * (8 + c.w);
+    int64_t most = c.m < c.block ? c.m : c.block, e = entry_bytes(&c);
+    c.gather_bytes = c.bins * GATHER * (8 + e);
     c.pos = malloc((size_t)most * sizeof(int64_t));
-    c.vals = malloc((size_t)(most * c.w));
+    c.vals = malloc((size_t)(most * e));
     c.seg = malloc((size_t)(threads * c.bins) * sizeof(int64_t));
     c.gather = malloc((size_t)(threads * c.gather_bytes));
   }
