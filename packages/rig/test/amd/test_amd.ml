@@ -931,12 +931,23 @@ let trace_after_close () =
   S.close t;
   is_error ~msg:"after the close" (c.trace ())
 
+(* The hooks that read a device's rings refuse once it stopped, whose stop
+   freed them. *)
+let hooks_after_close () =
+  let t = S.open_ () in
+  S.close t;
+  raises (Invalid_argument "Rig_amd.ring: the device stopped") (fun () ->
+      A.ring t.g "COMPUTE:0");
+  raises (Invalid_argument "Rig_amd.renumber: the device stopped") (fun () ->
+      A.renumber t.g (1 lsl 32))
+
 let work =
   group ~timeout:60. "work"
     [
       test "locate names a region by its GPU address" locates;
       test "map_host refuses pages it cannot map for writing" map_host_refusals;
       test "trace buffers are refused once the device closed" trace_after_close;
+      test "the ring hooks refuse once the device closed" hooks_after_close;
       test "an opened GPU's facts are its capability's" (fun () ->
           S.with_ @@ fun t ->
           let c = A.capability t.g in

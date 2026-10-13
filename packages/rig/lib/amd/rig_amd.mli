@@ -523,8 +523,8 @@ val is_gpu : vendor:int -> class_:int -> bool
    long run reaches, such as those past 2^31 and 2^32, and the slots' refresh
    past 2^31 values of age, without making that many submissions.
 
-   Raises [Invalid_argument] if [g] is not idle, if [v - 1] is below its last
-   value, or if [age] is negative or above [v - 1]. *)
+   Raises [Invalid_argument] if [g] has stopped or is not idle, if [v - 1] is
+   below its last value, or if [age] is negative or above [v - 1]. *)
 val renumber : ?age:int -> t -> int -> unit
 
 (* [ring g q] is [(n, size)]: the 32-bit words [g] placed on the ring of its
@@ -532,5 +532,5 @@ val renumber : ?age:int -> t -> int -> unit
    place on the ring is its count modulo [size]. Tests check that their
    submissions wrapped a ring.
 
-   Raises [Invalid_argument] if [g] has no queue [q]. *)
+   Raises [Invalid_argument] if [g] has stopped or has no queue [q]. *)
 val ring : t -> string -> int * int

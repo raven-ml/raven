@@ -969,7 +969,15 @@ let stop g ~fault =
 
 external renumber_device : int -> int -> int -> unit = "caml_rig_amd_renumber"
 
+(* The hooks read the run state, which the stop frees once it took [live]
+   under the guard: they hold the guard over their read. *)
+let refuse_stopped g what =
+  if Option.is_none g.live then
+    invalid_argf "Rig_amd.%s: the device stopped" what
+
 let renumber ?(age = 0) g v =
+  Mutex.protect g.guard @@ fun () ->
+  refuse_stopped g "renumber";
   let last = last g.self in
   if signaled g <> last then
     invalid_arg "Rig_amd.renumber: the device's work runs";
@@ -984,5 +992,8 @@ external placed : int -> int -> int * int = "caml_rig_amd_placed"
 let ring g q =
   let named (d : Rig_edge.queue) = d.name = q in
   match List.find_index named device_queues with
-  | Some i -> placed g.self i
+  | Some i ->
+      Mutex.protect g.guard @@ fun () ->
+      refuse_stopped g "ring";
+      placed g.self i
   | None -> invalid_argf "Rig_amd.ring: no queue %S" q
