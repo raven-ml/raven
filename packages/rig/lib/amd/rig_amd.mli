@@ -21,8 +21,9 @@
     [submit] places packets and rings the queues' doorbells with plain
     stores. The {e argument segment} is [Pinned] memory into which [submit]
     copies each launch's arguments. The last packet of a value's work is
-    its {e release}, which writes the value into the timeline word, eight
-    bytes of host memory, once the work has completed, and raises the
+    its {e release}, which writes the value into the timeline word, the
+    eight bytes of host memory that the opener's [make] is given, once the
+    work has completed, and raises the
     path's interrupt, on which {!val-sleep} blocks. What differs between
     paths, such as a bound on how long work runs or whether the GPU maps
     host memory, is a field of the path, which the device's facts carry
@@ -41,8 +42,8 @@
     A device's life goes like this:
     {ol
     {- A path's opener reaches the GPU and fills a {!type-path}.}
-    {- {!make} makes the device's rings, argument segment and timeline word
-       through the path. [Rig.open_] runs these two steps through the
+    {- {!make} makes the device's rings and argument segment, and maps its
+       timeline word, through the path. [Rig.open_] runs these two steps through the
        opener's [make].}
     {- rig gives each submission to the driver's [room] and [submit]
        ({!section-c}). The GPU runs its parts and releases its value.}
@@ -225,7 +226,7 @@ val capability : t -> Rig_amd_abi.Capability.t
        memory;}
     {- [capability], {!capability}, declared with
        {!Rig_amd_abi.Capability.declare};}
-    {- [word], eight bytes of [Pinned] memory.}}
+    {- [word], the device's timeline word, as {b Word.} below states.}}
 
     {b Capability.} The record holds the GPU, its clock, its compute queue's
     packets, its work-group processors that run work, and its trace buffers,
@@ -234,11 +235,19 @@ val capability : t -> Rig_amd_abi.Capability.t
     returns [Error] once {!val-stop} has begun. On a PM4 queue the dispatch
     of each launch names the scratch.
 
-    {b Word.} The word holds an unsigned 64-bit integer in the host's byte
-    order. A release writes it after its work's writes reached memory. A
-    release on ["COMPUTE:0"] writes all 64 bits, and one on ["COPY:0"] the
-    low 32 bits, so the driver releases on ["COMPUTE:0"] every value whose
-    low 32 bits are [0], the only values whose high 32 bits change.
+    {b Word.} The device maps rig's whole array of words through the path
+    ([map_host] of {!type-path}). The path's first map of the array on a GPU
+    makes the mapping, and every later one counts against it: a GPU maps the
+    array once, at the host's addresses, while a device of it lives. On a
+    path that maps no host memory, or when the word [make] was given lies
+    outside the array, the word is eight bytes of the device's own
+    [Pinned] memory, started at the given word's value, which rig reads
+    through {!signaled}. The device's values start after that value. The
+    word holds an unsigned 64-bit integer in the host's byte order. A
+    release writes it after its work's writes reached memory. A release on
+    ["COMPUTE:0"] writes all 64 bits, and one on ["COPY:0"] the low 32
+    bits, so the driver releases on ["COMPUTE:0"] every value whose low 32
+    bits are [0], the only values whose high 32 bits change.
 
     {b Sleep.} {!val-sleep} blocks on the path's interrupt, which every
     release raises, and lets other domains run while it waits. It may return
@@ -339,8 +348,14 @@ val capability : t -> Rig_amd_abi.Capability.t
     their work.
 
     Either way the stop frees the C state the device ran work with, its
-    rings' and timed values' records, which the queues never read. The word,
-    and the edge that reads it, stay for the process. *)
+    rings' and timed values' records, which the queues never read. A word of
+    the device's own, and the edge that reads the word, stay for the
+    process.
+
+    Once the word shows the last value and {!val-stop} has returned, no work
+    of the device writes it: the queues release values in order, and the
+    last value's release is the last write; the stop writes the word itself
+    only once the path destroyed every queue. *)
 
 (** {1:paths Paths}
 
@@ -474,10 +489,11 @@ type 'm path = {
        when [stop] runs. It returns without reading the GPU once [stop] has
        begun.}} *)
 
-val make : 'm path -> (t, string) result
-(** [make p] is a device of the GPU [p] reaches. It makes, through [p], the
-    device's queues, timeline word and argument segment, and loads the kernel
-    the device copies with. A failed [make] gives back what it took once
+val make : word:nativeint -> 'm path -> (t, string) result
+(** [make ~word p] is a device of the GPU [p] reaches, whose timeline word is
+    the 8 bytes at the host address [word] ({!Rig_edge.type-opener}). It
+    makes, through [p], the device's queues and argument segment, maps its
+    word, and loads the kernel the device copies with. A failed [make] gives back what it took once
     [p]'s [stop] returns [`Stopped], and keeps it otherwise. It calls [stop]
     only if it made a queue.
 

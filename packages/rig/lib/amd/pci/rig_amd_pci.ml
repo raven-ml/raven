@@ -329,7 +329,7 @@ let booted h fn ~firmware =
             "firmware this library did not start still runs on the GPU after \
              its reset")
 
-let start ~firmware ~index h fn =
+let start ~word ~firmware ~index h fn =
   let* () =
     Machine.reserve
       (Rig_pci.Function.machine fn)
@@ -338,7 +338,7 @@ let start ~firmware ~index h fn =
   in
   let* g = booted h fn ~firmware in
   Gpus.set_stop h (fun () -> Boot.stop g);
-  match Amd.make (path g h fn ~index) with
+  match Amd.make ~word (path g h fn ~index) with
   | Ok d ->
       (* A host resets a VF that holds its access long: every queue is made, so
          it goes back. *)
@@ -350,8 +350,8 @@ let start ~firmware ~index h fn =
       Ok d
   | Error why | (exception (Amd.Fault why | Regs.Stuck why)) -> Error why
 
-let open_ ?(machine = Machine.this) ~firmware i =
-  Gpus.open_ gpus machine i (start ~firmware ~index:i)
+let open_ ?(machine = Machine.this) ~word ~firmware i =
+  Gpus.open_ gpus machine i (start ~word ~firmware ~index:i)
 
 (* Changes to the machine *)
 
@@ -368,7 +368,7 @@ let gpu ?machine ?(firmware = []) i : Rig_amd.t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Rig_amd);
-    make = (fun ~word:_ -> open_ ?machine ~firmware i);
+    make = (fun ~word -> open_ ?machine ~word ~firmware i);
   }
 
 (* Formats *)

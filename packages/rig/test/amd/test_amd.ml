@@ -116,7 +116,7 @@ let gpus =
         (fun (field, gpu) ->
           raises_match
             (Exn.invalid_arg ~substring:("Rig_amd.make: the GPU's " ^ field))
-            (fun () -> A.make (path_of gpu)));
+            (fun () -> A.make ~word:(H.word ()) (path_of gpu)));
       test "AMD's display controllers and accelerators are GPUs" (fun () ->
           equal bool ~msg:"display" true
             (A.is_gpu ~vendor:0x1002 ~class_:0x030000);
@@ -1913,9 +1913,75 @@ let shared_after_stop () =
   A.free g' back;
   H.free_pages page n
 
+(* rig's array of timeline words: its address and its bytes. *)
+external words : unit -> int * int = "caml_rig_edge_words"
+
+(* Two devices of one GPU, both opened through rig, write their words in rig's
+   array, which the GPU maps once for both. The other device's copy waits in
+   its queue for a Polled device's point, which the test reaches last: a copy
+   on the first device of memory the other wrote, submitted before, reads the
+   other's word in the array, or it would copy the memory unwritten. Once the
+   other closes, the first still waits through the array. *)
+let two_in_array () =
+  if S.driverless () then skip ~reason:"one device of the GPU at a time" ();
+  S.with_ @@ fun t ->
+  waits_on t.g;
+  let raw = ref None in
+  let make ~word =
+    Result.map
+      (fun g ->
+        raw := Some g;
+        g)
+      ((S.gpu ()).make ~word)
+  in
+  let d' =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_ { name = "AMD:second-in-array"; driver = (module A); make })
+  in
+  let t' = { d = d'; g = Option.get !raw } in
+  let start, bytes = words () in
+  let in_array g =
+    match (A.locate (A.facts g).word).host with
+    | Some a -> a >= start && a + 8 <= start + bytes
+    | None -> false
+  in
+  equal (pair bool bool) ~msg:"both words lie in rig's array" (true, true)
+    (in_array t.g, in_array t'.g);
+  let gate, gp = Rig_support.Polled.open_ "amd:gate" in
+  let gated d ws =
+    let s, run, buffers = Rig_gpu_support.prepare d ws in
+    let q =
+      Rig.submit
+        (Rig.Submission.make gate [||])
+        ~run:(Rig.Submission.Run.make ()) ~buffers:[||]
+    in
+    (q, Rig.submit ~waits:[| q |] s ~run ~buffers)
+  in
+  let n = 1 lsl 20 in
+  let p = pattern n 29 in
+  let src = buffer ~memory:Pinned t' n and mid = buffer ~memory:Pinned t' n in
+  put src p;
+  ignore (gated d' [ copy ~dst:mid src ]);
+  let dst = buffer t n in
+  let borrowed = Option.get (Rig.Buffer.borrow t.d mid) in
+  let after = S.submit_work t [ copy ~dst borrowed ] in
+  ignore (Rig_support.Polled.run gp);
+  Rig.Point.wait after;
+  equal string ~msg:"the copy after the other device's" p (get dst);
+  Rig.close d';
+  let dst' = buffer t n in
+  let _, last = gated t.d [ copy ~dst:dst' dst ] in
+  ignore (Rig_support.Polled.run gp);
+  Rig.Point.wait last;
+  equal string ~msg:"a wait through the array once the other closed" p
+    (get dst');
+  Rig.close gate
+
 let two =
   group ~timeout:60. "one GPU"
     [
+      test "two devices of one GPU opened through rig share rig's array"
+        two_in_array;
       test
         "two devices of one GPU share its memory, mapping each page once, \
          where the path allows a second device"

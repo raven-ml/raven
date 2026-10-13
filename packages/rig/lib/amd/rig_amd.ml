@@ -137,6 +137,8 @@ external publish_scratch : int -> int -> int array -> int array -> int
 
 external scratch_taken : int -> int = "caml_rig_amd_scratch_taken" [@@noalloc]
 external signaled_word : int -> int = "caml_rig_amd_signaled" [@@noalloc]
+external renumber_device : int -> int -> int -> unit = "caml_rig_amd_renumber"
+external copy_word : int -> int -> unit = "caml_rig_amd_copy_word" [@@noalloc]
 
 external c_launch_pm4 :
   string -> string -> int array -> int array -> int array -> int
@@ -739,9 +741,16 @@ let unload _ m =
 
 (* Opening *)
 
+(* rig's array of timeline words: its address and its bytes. *)
+external words : unit -> int * int = "caml_rig_edge_words"
+
+(* [m] from [at] bytes on, which lie at the host address [host]. *)
+let within (Mem (o, m)) at host =
+  Mem (o, { m with address = m.address + at; host = Some host })
+
 (* Makes the device's memory and queues, giving back what it took if one of them
    is refused. *)
-let make (type m) (p : m path) =
+let make (type m) ~word (p : m path) =
   if p.interrupt = 0 then
     invalid_arg "Rig_amd.make: the release's interrupt context is 0";
   if p.clock_hz < 1 then
@@ -783,7 +792,35 @@ let make (type m) (p : m path) =
   in
   let waits64 = waits64 p and aql = reads_aql p.gpu in
   let open_device () =
-    let* word = alloc "timeline word" 8 in
+    (* The word rig gave, in the device's mapping of rig's whole array of
+       words: the path's first map of the array on the GPU makes it, and the
+       others count against it. Where the path maps no host memory, or the
+       word a caller gave lies outside the array, a word of the device's
+       own, started at the given word's value, which stays for the
+       process. *)
+    let word = Nativeint.to_int word in
+    let start, bytes = words () in
+    let in_array = word >= start && word + 8 <= start + bytes in
+    let mapped =
+      match ops.map_host with
+      | None -> None
+      | Some _ when not in_array -> None
+      | Some map -> (
+          match map start bytes with
+          | Some m ->
+              taken := m :: !taken;
+              Some m
+          | None -> None)
+    in
+    let* word =
+      match mapped with
+      | Some m -> Ok (within m (word - start) word)
+      | None ->
+          let* own = alloc "timeline word" 8 in
+          let* host = host_of "timeline word" own in
+          copy_word host word;
+          Ok own
+    in
     let* slot_words = alloc "slot words" (8 * slots) in
     let* segment = alloc "argument segment" segment_bytes in
     let* compute = alloc "compute ring" ring_bytes in
@@ -862,6 +899,9 @@ let make (type m) (p : m path) =
     in
     ring 0 compute_kind compute_host compute_bell;
     ring 1 `Sdma copy_host copy_bell;
+    (* The values start after the word's: the device numbers on from it as
+       an idle one would. *)
+    renumber_device self (signaled_word self + 1) 0;
     set_stamps self stamps_host (mem_address stamps) stamps_bytes p.clock_hz;
     let source = match p.clock with Source c -> c | Round_trip -> 0 in
     let* () =
@@ -903,7 +943,8 @@ let make (type m) (p : m path) =
               ops;
               own =
                 copy_code
-                @ [ slot_words; segment; compute; copy; pointers; stamps ];
+                @ [ slot_words; segment; compute; copy; pointers; stamps ]
+                @ Option.to_list mapped;
               copy_launch = !copy_launch;
               desc = mem_address pointers;
               scratch = { installed = None; pending = None; retired = [] };
@@ -966,8 +1007,6 @@ let stop g ~fault =
   Mutex.protect g.hdps (fun () -> end_state g.self)
 
 (* Tests *)
-
-external renumber_device : int -> int -> int -> unit = "caml_rig_amd_renumber"
 
 (* The hooks read the run state, which the stop frees once it took [live]
    under the guard: they hold the guard over their read. *)

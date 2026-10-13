@@ -89,7 +89,6 @@ value caml_rig_amd_memory(value v_self, value v_word, value v_word_gpu,
   struct rig_amd *d = Device_val(v_self);
   d->word = Host_val(v_word);
   Edge_val(v_self)->word = d->word;
-  atomic_store_explicit(d->word, 0, memory_order_release);
   d->word_gpu = (uint64_t)Long_val(v_word_gpu);
   d->slots = Host_val(v_slots);
   d->slots_gpu = (uint64_t)Long_val(v_slots_gpu);
@@ -388,6 +387,16 @@ value caml_rig_amd_poke32(value v_host, value v_off, value v_v) {
 
 value caml_rig_amd_zero(value v_host, value v_n) {
   memset(Host_val(v_host), 0, (size_t)Long_val(v_n));
+  return Val_unit;
+}
+
+/* Copies the 64-bit word at [v_from] to [v_to], with acquire and release
+   order. */
+value caml_rig_amd_copy_word(value v_to, value v_from) {
+  uint64_t w = atomic_load_explicit((_Atomic uint64_t *)Host_val(v_from),
+                                    memory_order_acquire);
+  atomic_store_explicit((_Atomic uint64_t *)Host_val(v_to), w,
+                        memory_order_release);
   return Val_unit;
 }
 

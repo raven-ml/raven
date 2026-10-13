@@ -720,7 +720,7 @@ let device_name i =
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;
   if i = 0 then "AMD" else strf "AMD:%d" i
 
-let open_ ?(root = "/") i =
+let open_ ?(root = "/") ~word i =
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;
   let* gpus =
     Result.map_error
@@ -751,7 +751,7 @@ let open_ ?(root = "/") i =
     (* The events stay while a queue the path could not stop may still raise the
        interrupt. *)
     let give_back () = if d.queues = [] then drop_events d in
-    match Amd.make (path d ~gpus ~index:i) with
+    match Amd.make ~word (path d ~gpus ~index:i) with
     | Ok _ as r ->
         Mutex.protect opening (fun () -> g.live <- events :: g.live);
         r
@@ -766,5 +766,5 @@ let gpu ?root i : Rig_amd.t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Rig_amd);
-    make = (fun ~word:_ -> open_ ?root i);
+    make = (fun ~word -> open_ ?root ~word i);
   }
