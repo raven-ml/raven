@@ -18,6 +18,9 @@
     word to {!Memory.consumed}. When {!with_}'s function returns or raises,
     each word still negative goes back to one read claim, outside the claims
     if the consumer exported the memory, and every read claim is released.
+    {!consume} checks that the claims have not ended and makes its effects
+    in one C step, which that end waits for: a consumption that races the end
+    completes before the end releases anything, or raises.
 
     A claim is taken before the buffer is checked live. A consumption on
     another domain has raised the generation before it releases its claims,

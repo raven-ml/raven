@@ -1742,9 +1742,12 @@ module Claim : sig
       GPUs, is donated when each of them is {!exclusive}.
 
       Every claim is released when [f] returns or raises, and [c] then holds
-      nothing. A use of [c] on another domain must finish before [f] returns.
-      rig does not detect one that overlaps the return, which may behave as
-      if [f] were still running.
+      nothing. A {!consume} on another domain that overlaps the return
+      completes before the release or raises [Invalid_argument]. Any other
+      use of [c] on another domain, and a write in place through the buffer
+      {!consume} returned, must finish before [f] returns. rig does not
+      detect one that overlaps the return, which races the memory's next
+      holder.
 
       Raises [Invalid_argument] before calling [f], releasing what it took,
       if a buffer is dead, an allocation is held exclusive, or a buffer of

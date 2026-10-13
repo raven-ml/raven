@@ -117,16 +117,18 @@ let share b =
     || Atomic.Loc.get [%atomic.loc c.generation] <> b.generation
   then mark b
 
-(* The buffers [with_] was given, which it holds for reading: [ended] is set
-   once its [f] returned or raised, before any claim is released, and from then
-   on they hold nothing. A donated memory is held exclusive iff its claim word
-   is negative: the read claim [with_] keeps on it lets no other holder make it
-   so. *)
+(* The buffers [with_] was given, which it holds for reading. [state] is twice
+   the consumptions under way, plus 1 once [f] has returned or raised. From then
+   on the buffers hold nothing. A donated memory is held exclusive iff its claim
+   word is negative: the read claim [with_] keeps on it lets no other holder
+   make it so. The C stubs read the fields by position. *)
 type t = {
   read : buffer list;
   donate : buffer list;
-  mutable ended : bool; [@atomic]
+  mutable state : int; [@atomic]
 }
+
+let ended c = Atomic.Loc.get [%atomic.loc c.state] land 1 = 1
 
 let refuse () = invalid_arg "Rig.Claim.with_: a donated buffer overlaps another"
 
@@ -203,6 +205,14 @@ external release_all : buffer list -> buffer list -> unit
   = "caml_rig_claim_release_all"
 [@@noalloc]
 
+(* Waits until no consumption of [c] is under way, a few instructions of
+   another domain at most. *)
+external await_consumed : t -> unit = "caml_rig_claim_await" [@@noalloc]
+
+(* [consume]'s effects, as one step against [finish]: the new generation, or
+   -1 if [c] has ended. *)
+external consumed : t -> buffer -> string -> int = "caml_rig_claim_consume"
+
 (* Holds each buffer of [donate] exclusive that spans its memory and has no
    other claim on it: its own read claim is the only one. *)
 let rec hold_all = function
@@ -212,10 +222,12 @@ let rec hold_all = function
         ignore (swap b.mem.claim Memory.one_claim Memory.exclusive : bool);
       hold_all bs
 
-(* Ends [c]: it holds nothing from the store on, before any claim is
-   released. The compiler checks that nothing in it polls. *)
+(* Ends [c]: it holds nothing from the end on, before any claim is released. A
+   consumption under way completes first. The compiler checks that nothing in
+   it polls. *)
 let[@poll error] finish c =
-  c.ended <- true;
+  if Atomic.Loc.fetch_and_add [%atomic.loc c.state] 1 <> 0 then
+    await_consumed c;
   release_all c.read c.donate
 
 (* The [i]th buffer of [c]'s read buffers followed by its donated ones. *)
@@ -243,7 +255,7 @@ let with_ ~read ~donate f =
   check_live read;
   check_live donate;
   refuse_overlaps read donate;
-  let c = { read; donate; ended = false } in
+  let c = { read; donate; state = 0 } in
   claim c;
   (* Nothing may go between [claim c] and the handler: the compiler does not
      check that no poll point lies there. *)
@@ -264,22 +276,23 @@ let rec names cl = function
 
 let exclusive c b =
   let cl = b.mem.claim in
-  (not c.ended) && count cl < 0 && names cl c.donate
+  (not (ended c)) && count cl < 0 && names cl c.donate
 
+let refuse_ended () =
+  invalid_arg "Rig.Claim.consume: the claims' with_ returned"
+
+(* The claims hold [b]'s memory until they end, so a word exclusive is theirs;
+   [consumed] moves it only while they have not ended. *)
 let consume c ~why b =
-  if c.ended then invalid_arg "Rig.Claim.consume: the claims' with_ returned";
+  if ended c then refuse_ended ();
   let cl = b.mem.claim in
   if not (names cl c.read || names cl c.donate) then
     invalid_arg "Rig.Claim.consume: the claims do not hold the memory";
   Buffer.check_live "Claim.consume" b;
   if not (Buffer.spans b) then
     invalid_arg "Rig.Claim.consume: the buffer is part of its memory";
-  cl.why <- why;
-  let g = Atomic.Loc.fetch_and_add [%atomic.loc cl.generation] 1 + 1 in
-  (* After the generation: an export that finds the word consumed then finds
-     every earlier buffer dead. The claims hold [cl], so a word exclusive is
-     theirs. *)
-  ignore (swap cl Memory.exclusive Memory.consumed);
+  let g = consumed c b why in
+  if g < 0 then refuse_ended ();
   { b with generation = g }
 
 let take ~why b =

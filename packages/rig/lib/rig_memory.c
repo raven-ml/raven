@@ -5,12 +5,19 @@
 
 /* Memory devices, whose memory is the host's and whose work runs in the
    submitting thread, and the readers of buffers rig.h declares. Nothing
-   here blocks but rig_buffer_wait, which runs Rig.Buffer.wait. */
+   here blocks but rig_buffer_wait, which runs Rig.Buffer.wait, and the end
+   of a with_'s claims, which waits out a consumption under way. */
 
 #define _GNU_SOURCE
 
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sched.h>
+#endif
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -208,6 +215,8 @@ enum { ENTRY_OWNER, ENTRY_BACKING, ENTRY_BYTES, ENTRY_ACCESS, ENTRY_STAMPS,
 #define CLAIM_OUTSIDE 1
 #define CLAIM_READ_ONLY 2
 #define CLAIM_ONE 4
+#define CLAIM_EXCLUSIVE (-1)
+#define CLAIM_CONSUMED (-2)
 #define CLAIM_EXPORTED (-3)
 
 /* A field another domain writes. Read after the claim's compare-and-set,
@@ -524,6 +533,54 @@ value caml_rig_claim_all(value v_read, value v_donate) {
         return Val_long(i);
       }
   return Val_long(-1);
+}
+
+/* The fields of Claim.t. Its state is twice the consumptions under way,
+   plus 1 once its with_ has ended. A consumption adds 2, and backs out if
+   the end came first; the end adds 1, and waits if a consumption came
+   first. */
+enum { CLAIMS_READ, CLAIMS_DONATE, CLAIMS_STATE };
+#define CLAIMS_CONSUMING (Val_long(2) - Val_long(0))
+
+static _Atomic value *claims_state(value v_c) {
+  return (_Atomic value *)&Field(v_c, CLAIMS_STATE);
+}
+
+/* Claim.consume's effects, as one step against the end of the claims
+   [v_c]: records [v_why], raises the generation of [v_b]'s memory and
+   moves its word from exclusive to consumed. The new generation, or -1,
+   doing nothing, if the claims have ended. */
+value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
+  _Atomic value *state = claims_state(v_c);
+  if (Long_val(atomic_fetch_add(state, CLAIMS_CONSUMING)) & 1) {
+    atomic_fetch_sub(state, CLAIMS_CONSUMING);
+    return Val_long(-1);
+  }
+  value claim = Field(Field(v_b, BUFFER_MEM), MEMORY_CLAIM);
+  caml_modify(&Field(claim, CLAIM_WHY), v_why);
+  /* The generation before the word: an export that finds the word
+     consumed then finds every earlier buffer dead. */
+  intnat g = Long_val(atomic_fetch_add(
+                 (_Atomic value *)&Field(claim, CLAIM_GEN),
+                 Val_long(1) - Val_long(0))) + 1;
+  value w = Val_long(CLAIM_EXCLUSIVE);
+  atomic_compare_exchange_strong(claim_word(v_b), &w, Val_long(CLAIM_CONSUMED));
+  atomic_fetch_sub(state, CLAIMS_CONSUMING);
+  return Val_long(g);
+}
+
+/* Waits until the claims [v_c], which have ended, have no consumption
+   under way. */
+value caml_rig_claim_await(value v_c) {
+  _Atomic value *state = claims_state(v_c);
+  while (atomic_load(state) != Val_long(1)) {
+#ifdef _WIN32
+    SwitchToThread();
+#else
+    sched_yield();
+#endif
+  }
+  return Val_unit;
 }
 
 /* Gives each memory of [v_donate] still held exclusive back to its read
