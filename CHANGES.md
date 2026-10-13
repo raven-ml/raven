@@ -51,27 +51,6 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
-- `Rig_pci.Function.pin` and the `pin` of `Rig_pci.Machine.fn` return
-  `(int * int) list option`: `Ok None` at the locked-memory and
-  `dma_entry_limit` limits, as `Function.alloc_dma` does. A limit was an
-  `Error`, like a refusal.
-- `Rig_pci.Function.alloc_dma` behind an IOMMU returns `Ok None` once the
-  container holds `dma_entry_limit` mappings, as it does at the locked-memory
-  limit. It returned `Error`, so a caller could not tell a limit from a refusal.
-- A remote job that fails sends every peer the root cause: a link whose
-  thread saw the failure before the failing thread reached it could end its
-  stream without the abort, and the peer learned only that the link closed.
-- On Windows, `Rig_remote.serve` no longer fails with `EADDRINUSE` in a
-  process whose id a killed OCaml process had: `Unix.socketpair` there binds a
-  file named after the process id, which the killed process left behind.
-- On Windows, linked host code whose stack frame is larger than a page no
-  longer dies with an access violation: a thread's stack is committed before
-  the thread first runs linked code, which probes no stack. tolk's compiled
-  derivatives of the incomplete beta have frames of 18 to 52 KiB.
-- `Rig.Profile` records a `Copy` event for every copy part of a submission,
-  on every device, and names each side by the device of its allocation, so a
-  copy through a `Buffer.borrow` of host memory counts as a transfer from the
-  host.
 - Add `rig`, which runs work on GPUs from OCaml through Metal, CUDA, NVIDIA's
   and AMD's kernel drivers, or no kernel driver on Linux, and orders the work
   of every device by the memory it uses (`Rig.submit`, `Rig.Buffer.copy`).
