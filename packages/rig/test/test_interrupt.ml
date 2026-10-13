@@ -313,6 +313,44 @@ let test_close () =
   let rec from n = if interrupt_close n then from (n + 1) in
   from 1
 
+(* Values kept by collected submissions on a device whose work is not done:
+   several, so that an interrupt can come between the routing of two of a
+   drain's records. *)
+let kept_values = 4
+
+let[@inline never] submit_kept d runs =
+  for _ = 1 to kept_values do
+    let v = ref () in
+    Gc.finalise (fun _ -> Atomic.incr runs) v;
+    ignore (once ~run:(Sub.Run.make ()) (Sub.make ~keep:v d [||]))
+  done
+
+(* Interrupts a drain that finds collected submissions keeping values, from
+   its [n]-th allocation: however the drain was interrupted, no value is let
+   go before the work of its submission is done. Is whether the allocation
+   was reached. *)
+let interrupt_kept n =
+  let at = Printf.sprintf ", interrupted from allocation %d" n in
+  in_child at (fun () ->
+      let d, _ = P.open_ (fresh "kept") in
+      let runs = Atomic.make 0 in
+      submit_kept d runs;
+      Gc.full_major ();
+      let drain () = ignore (Sys.opaque_identity (B.create d 8)) in
+      let got = outcome (fun () -> interrupting (Nth n) (ref None) drain) in
+      mem ~msg:"outcome" string got [ "done"; "raised Injected" ];
+      drain ();
+      Gc.full_major ();
+      equal ~msg:"values let go before their work is done" int 0
+        (Atomic.get runs);
+      got = "raised Injected")
+
+let test_kept () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n = if interrupt_kept n then from (n + 1) in
+  from 1
+
 (* Opens [names] devices, as many as make the table of names grow, and checks
    that each name answers the device it opened before. *)
 let names = 40
@@ -354,5 +392,8 @@ let () =
                 ])
               ((opens :: caches :: borrow_kept :: waiting :: ops)
               @ staged @ List.map unmapped staged)
-           @ [ test "close of a machine's host" test_close ]);
+           @ [
+               test "close of a machine's host" test_close;
+               test "a drain that lets go of kept values" test_kept;
+             ]);
        ]

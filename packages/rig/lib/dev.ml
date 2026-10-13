@@ -62,7 +62,6 @@ external c_claim : unit -> int = "caml_rig_claim"
 external c_fail : string -> bool = "caml_rig_fail"
 external c_failed : unit -> string option = "caml_rig_failed"
 external c_first : unit -> int = "caml_rig_first" [@@noalloc]
-external generation : unit -> int = "caml_rig_generation" [@@noalloc]
 external c_enter : c -> int = "caml_rig_enter"
 external c_exit : c -> unit = "caml_rig_exit"
 external c_spin : c -> int -> int -> int = "caml_rig_spin"

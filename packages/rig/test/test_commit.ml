@@ -171,12 +171,16 @@ let[@inline never] submit_kept d released =
   Gc.finalise (fun _ -> Atomic.set released true) v;
   ignore (submit (Sub.make ~keep:v d [||]))
 
-(* A submission lets go of its value once its stamp is reached, in a drain:
-   without a wait, only the driver's own commit reaches it. *)
+(* A collected submission lets go of its value, in a drain, once the work
+   submitted before its collection is done: without a wait, only the driver's
+   own commit reaches it. A drain first finds the submission collected, before
+   the other submits. *)
 let test_lag_bounded () =
   let d, _ = P.open_ ~lag ~runs:`Itself (fresh "bounded") in
   let released = Atomic.make false in
   submit_kept d released;
+  Gc.full_major ();
+  ignore (Sys.opaque_identity (B.create d 8));
   for _ = 1 to lag do
     ignore (submit (empty d))
   done;

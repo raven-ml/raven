@@ -181,15 +181,6 @@ static _Atomic uint64_t *reserve_any(struct rig_stamps *s, int index,
   }
 }
 
-/* [reserve_any], first trying the first word, which a memory one device
-   uses holds. */
-static inline _Atomic uint64_t *reserve(struct rig_stamps *s, int index,
-                                        uint64_t base) {
-  uint64_t p = atomic_load_explicit(&s->use[0], memory_order_relaxed);
-  if (is_own(p, index, base)) return &s->use[0];
-  return reserve_any(s, index, base, 0);
-}
-
 /* The point the use word [w] holds: none while it holds the (index, 0) its
    reservation stored, before the first raise. */
 static uint64_t use_point(_Atomic uint64_t *w) {
@@ -608,11 +599,10 @@ value caml_rig_run_fit(value v_r, value v_s) {
   return Val_unit;
 }
 
-/* Forgets the run's buffers, its hold and its waits, and gives it back. */
+/* Forgets the run's buffers and its waits, and gives it back. */
 value caml_rig_run_give(value v_r) {
   struct rig_run *r = Run_val(v_r);
   for (int k = 0; k < r->nslots; k++) r->slots[k].stamps = NULL;
-  r->hold = NULL;
   r->npoints = r->nwaits = 0;
   atomic_store(&r->busy, RUN_IDLE);
   return Val_unit;
@@ -750,11 +740,8 @@ static _Atomic uint64_t *add_memory(struct rig_run *r, int own, uint64_t base,
    taken run holds whole, and sets the run's parts for its copies. Collects
    in [v_r] the points [v_s]'s work follows,
    the greatest per other device, with the points of [v_waits], and reserves
-   the use words its raise stores to, and [own]'s in the hold's stamps
-   [v_hold], 0 for none: a hold orders nothing, so its points are not
-   followed. Answers the number of points. */
-value caml_rig_run_collect(value v_s, value v_r, value v_waits,
-                           value v_hold) {
+   the use words its raise stores to. Answers the number of points. */
+value caml_rig_run_collect(value v_s, value v_r, value v_waits) {
   const struct rig_sub *s = Sub_val(v_s);
   struct rig_run *r = Run_val(v_r);
   int own = s->dev->index, nslots = s->nslots;
@@ -768,7 +755,6 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
   for (int k = 0; k < s->ncodes; k++)
     memcpy(r->args + s->codes[k].at, &s->codes[k].code, sizeof(uint64_t));
   r->npoints = r->nwaits = 0;
-  r->hold = Stamps_val(v_hold);
   for (int k = 0; k < s->nfixed; k++)
     r->fixed[k] =
         add_memory(r, own, base, s->fixed[k].stamps, s->fixed[k].use);
@@ -777,7 +763,6 @@ value caml_rig_run_collect(value v_s, value v_r, value v_waits,
                                  (enum rig_use)s->uses[k]);
   for (mlsize_t k = 0; k < Wosize_val(v_waits); k++)
     add_point(r, own, base, Unsigned_long_val(Field(v_waits, k)));
-  if (r->hold != NULL) r->hold_use = reserve(r->hold, own, base);
   return Val_int(r->npoints);
 }
 
@@ -829,7 +814,6 @@ void rig_sub_raise(const struct rig_sub *s, struct rig_run *r, uint64_t p) {
     if (s->uses[k] == RIG_USE_WRITE) raise_own(write_word(r->slots[k].use), p);
     raise_own(r->slots[k].use, p);
   }
-  if (r->hold != NULL) raise_own(r->hold_use, p);
 }
 
 value caml_rig_run_value(value v_r) {

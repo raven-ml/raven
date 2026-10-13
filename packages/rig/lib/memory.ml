@@ -513,68 +513,6 @@ let cache_key (e : entry) =
   | Driver_memory { memory; _ } -> key e.bytes memory
   | Io_memory _ | Kept _ -> invalid_arg "Rig: io or kept memory in a cache"
 
-(* Holds whose release is still to run. *)
-let holds_lock = Lock.create ()
-let holds : hold_release list ref = ref []
-
-(* A hold's release is due once each of its points is reached on a live device,
-   and each of its lost devices is Stopped. A point of a device that gave its
-   slot to a later one is settled. *)
-let hold_due (Hold_release { stamps = st; _ }) =
-  for_all_points
-    (fun p ->
-      let d = Dev.of_index (Point.index p) in
-      (not (Dev.owns d p))
-      ||
-      if Dev.is_lost d then Dev.stopped d
-      else
-        match Dev.word d >= Point.value p with
-        | r -> r
-        | exception Dev.Lost _ -> false)
-    st
-
-(* A hold made before a fork is forgotten in the child: its release would call
-   the parent's drivers. *)
-let forgotten (Hold_release { stamps; generation; _ }) =
-  generation <> Dev.generation ()
-  && begin
-    stamps_unref stamps;
-    true
-  end
-
-(* Lets go of a due hold's value: the hold no longer keeps it reachable. *)
-let run_release (Hold_release { stamps; _ }) = stamps_unref stamps
-
-let take_holds () =
-  let l = !holds in
-  holds := [];
-  l
-
-let put_holds l = holds := l @ !holds
-let add_hold h = holds := h :: !holds
-
-(* Takes the holds whose release is due. Their points are read with no lock
-   held: a word behind a transport is read through its driver, whose fault stops
-   its device, and a stop drains. *)
-let take_due_holds () =
-  let all = Lock.protect holds_lock take_holds () in
-  let put_back l = Lock.protect holds_lock put_holds l in
-  let all = List.filter (fun h -> not (forgotten h)) all in
-  match List.partition hold_due all with
-  | due, later ->
-      put_back later;
-      due
-  | exception e ->
-      put_back all;
-      raise e
-
-(* Never inlined: rig's ThreadSanitizer suppression of its racy read names it. *)
-let[@inline never] drain_holds () =
-  (* Racy: a stale [[]] leaves a due hold to the next drain. *)
-  if !holds != [] then List.iter run_release (take_due_holds ())
-
-let holds_list = Dev.release_list ()
-
 (* Bigarrays over memory *)
 
 external proxy_new : unit -> int = "caml_rig_proxy_new"
@@ -628,7 +566,7 @@ let route d = function
       in
       Dev.protect e.owner (if cached then cache else retire_entry) e
   | Image (loaded, code) -> defer d (Unload (loaded, code))
-  | Release h -> Lock.protect holds_lock add_hold h
+  | Release h -> defer d (Let_go h)
 
 type fate = Stays | Cached | Freed
 
@@ -778,6 +716,7 @@ let run_pending d = function
         | Some e when Dev.is_lost d || over_budget d e -> free_entry e
         | Some e -> to_cache e
         | None -> ())
+  | Let_go _ -> ()
 
 (* Routes the records of the nodes [l], letting go of each node once its
    record is routed: an exception leaves the rest reachable, never dropped. *)
@@ -800,23 +739,41 @@ let rec run_all d = function
       run_pending d p;
       run_all d l
 
-(* Drains [d]'s own list and what became due on it. A record is routed before
-   it is counted, so [d]'s slot stays until the memory it routed is given
-   back. The handler is set before the records are taken, which counts them
-   in the same call, so a routing that raises, asynchronously too, counts
-   them. *)
-let drain_own d =
+(* Routes the records [d]'s own list gave. A record is routed before it is
+   counted, so [d]'s slot stays until the memory it routed is given back. The
+   handler is set before the records are taken, which counts them in the same
+   call, so a routing that raises, asynchronously too, counts them. *)
+let route_released d =
   let l = d.live in
-  if released_any l.release then begin
-    let n = ref 0 in
-    match route_all d (released l.release n) with
-    | () -> routed l.release !n
-    | exception e ->
-        routed l.release !n;
-        raise e
-  end;
+  let n = ref 0 in
+  match route_all d (released l.release n) with
+  | () -> routed l.release !n
+  | exception e ->
+      routed l.release !n;
+      raise e
+
+(* Drains [d]'s own list and what became due on it. *)
+let drain_own d =
+  if released_any d.live.release then route_released d;
   free_all (due d);
   run_all d (due_pending d)
+
+let is_let_go = function _, Let_go _ -> true | _ -> false
+
+let drop_let_go l =
+  let front, back = l.pending in
+  l.pending <-
+    (List.filter (fun p -> not (is_let_go p)) (front @ List.rev back), [])
+
+(* A forked child keeps nothing for an orphaned device: it routes the records
+   the device's list gave and lets go of the values pending on it. Nothing
+   else of the device runs, since it would call the parent's driver. *)
+let forget d =
+  let l = d.live in
+  if released_any l.release then route_released d;
+  let front, back = l.pending in
+  if List.exists is_let_go front || List.exists is_let_go back then
+    Dev.protect d drop_let_go l
 
 (* Whether [l] has nothing to drain: no collected memory, nothing waiting for a
    value. A drain of an idle device allocates nothing. *)
@@ -831,15 +788,12 @@ let kept d =
   let l = d.live in
   l.cached > 0 || l.word_maps != [] || Dev.protect d maps_any l
 
-(* An orphaned device's objects are forgotten: nothing of it drains. A
-   device whose stop returned frees its slot once its last memory went
-   back. *)
+(* A device whose stop returned frees its slot once its last memory went
+   back and its last kept value went. *)
 let drain d =
-  if not (Dev.orphaned d) then begin
+  if Dev.orphaned d then forget d
+  else begin
     if not (idle d.live) || (Dev.is_lost d && kept d) then drain_own d;
-    if released_any holds_list then
-      route_all d (released holds_list (ref 0));
-    drain_holds ();
     if Dev.stop_returned d then ignore (Dev.free_slot d : bool)
   end
 
@@ -957,7 +911,7 @@ let holds_back pool l =
   let holds = function
     | _, (Free e | Give e | Unmap (_, Some e) | Unload (_, Some e)) ->
         charged pool e
-    | _, (Unmap (_, None) | Unload (_, None)) -> false
+    | _, (Unmap (_, None) | Unload (_, None) | Let_go _) -> false
   in
   let front, back = l.pending in
   List.exists holds front || List.exists holds back

@@ -347,13 +347,11 @@ static rig_mutex locks_mu = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
 /* The process's loss facts: the devices whose stop is owed; the first
-   failure, 0 for none, a device's index for its loss, -1 for [fail]'s;
-   [fail]'s reason; and the forks that made this process, which tell a hold
-   made before a fork. */
+   failure, 0 for none, a device's index for its loss, -1 for [fail]'s; and
+   [fail]'s reason. */
 static _Atomic int owed;
 static _Atomic int first;
 static _Atomic(char *) failed;
-static _Atomic int generation;
 
 /* The reasons no line owns: a fork's, and the one a loss keeps when its own
    could not be copied. */
@@ -391,7 +389,6 @@ static void forked_child(void) {
     mutex_init(&l->mu);
     cond_init(&l->cv);
   }
-  atomic_fetch_add(&generation, 1);
   int n = atomic_load(&top), owing = 0;
   for (int i = 0; i <= n; i++) {
     struct rig_line *l = line_of(i);
@@ -975,11 +972,6 @@ value caml_rig_failed(value unit) {
 value caml_rig_first(value unit) {
   (void)unit;
   return Val_int(atomic_load(&first));
-}
-
-value caml_rig_generation(value unit) {
-  (void)unit;
-  return Val_int(atomic_load(&generation));
 }
 
 value caml_rig_owed(value unit) {

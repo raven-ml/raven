@@ -331,25 +331,29 @@ let test_child_memory () =
   equal (list string) (List.init 6 (fun _ -> "forked")) lines;
   B.wait h Rig.Read_write
 
-(* A submission made and submitted before a fork keeps its value in the child
-   no longer, though its work is not done. *)
-let test_keep () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let runs = Atomic.make 0 in
-  let counted () =
-    let v = ref () in
-    Gc.finalise (fun _ -> Atomic.incr runs) v;
-    v
-  in
-  let d, p = P.open_ "fork:keep" in
-  let h = ref (Some (Sub.make ~keep:(counted ()) d [||])) in
-  ignore (submit (Option.get !h));
+(* A drain on [d], also on a lost [d], whose {!B.create} then raises. *)
+let drain d =
+  match B.create d 8 with
+  | b -> ignore (Sys.opaque_identity b)
+  | exception Rig.Lost _ -> ()
+
+(* A value whose collection counts in [runs]. *)
+let counted runs =
+  let v = ref () in
+  Gc.finalise (fun _ -> Atomic.incr runs) v;
+  v
+
+(* Drops the submission [h] holds in a forked child, drains its device and the
+   host there, and checks that its value is collected in the child, then in
+   the parent once its work is done. *)
+let collected_in_child d p runs h =
   let lines, ended =
     in_child (fun () ->
         h := None;
         Gc.full_major ();
         Gc.full_major ();
-        ignore (B.create Rig.host 8);
+        drain d;
+        drain Rig.host;
         Gc.full_major ();
         [ Printf.sprintf "collected: %d" (Atomic.get runs) ])
   in
@@ -360,9 +364,35 @@ let test_keep () =
   ignore (P.run p);
   Gc.full_major ();
   Gc.full_major ();
-  ignore (B.create Rig.host 8);
+  drain d;
   Gc.full_major ();
   equal ~msg:"in the parent" int 1 (Atomic.get runs)
+
+(* A submission made and submitted before a fork keeps its value in the child
+   no longer, though its work is not done. *)
+let test_keep () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let runs = Atomic.make 0 in
+  let d, p = P.open_ "fork:keep" in
+  let h = ref (Some (Sub.make ~keep:(counted runs) d [||])) in
+  ignore (submit (Option.get !h));
+  collected_in_child d p runs h
+
+(* A value whose submission the parent collected and drained before the fork,
+   and whose work is not done, is kept in the child no longer. *)
+let[@inline never] kept_and_drained d runs =
+  ignore (submit (Sub.make ~keep:(counted runs) d [||]));
+  Gc.full_major ();
+  Gc.full_major ();
+  drain d
+
+let test_keep_drained () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let runs = Atomic.make 0 in
+  let d, p = P.open_ "fork:keep-drained" in
+  kept_and_drained d runs;
+  equal ~msg:"in the parent before the fork" int 0 (Atomic.get runs);
+  collected_in_child d p runs (ref None)
 
 let tests =
   [
@@ -385,6 +415,8 @@ let tests =
           test_child_memory;
         test "a submission made before a fork keeps nothing in the child"
           test_keep;
+        test "a kept value drained before a fork is let go in the child"
+          test_keep_drained;
       ];
   ]
 

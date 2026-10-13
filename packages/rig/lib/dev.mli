@@ -236,10 +236,6 @@ val fail : string -> unit
 val failure : unit -> string option
 (** [failure ()] is {!Rig.failure}[ ()]. *)
 
-val generation : unit -> int
-(** [generation ()] is the number of forks that made this process from the
-    first. A value made in another generation was made before a fork. *)
-
 (** {1:timeline Timelines}
 
     A point of a device is done once the device's word has read its value

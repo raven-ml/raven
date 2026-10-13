@@ -109,20 +109,20 @@ val host : t
 
     A device holds a slot of the process's 65,535, a bound that comes from a
     point fitting an OCaml int ({!Point}). It holds its slot while it is
-    open, while memory of it remains to return, and while it is lost and has
-    not stopped ({!section-stops}). A device that never stops, the process's
-    first {!failure}, and a device whose timeline passed 2{^ 46} hold theirs
-    for the rest of the process. A device that opens takes a free slot, and
-    its values go on past every value the slot's earlier devices were given,
-    so the number of opens a process makes has no bound. Each open still
-    costs what its driver keeps for the process, as the driver's
-    documentation states: the GPU drivers keep a few dozen bytes of C state
-    per open, and a timeline word of the device's own where it has one. A
-    device whose queue waited on another device's word of its own keeps its
-    mapping of that word until it stops: one per producer device it waited
-    on. A device lost before it reached every value it was given leaves its
-    slot too, and keeps its record for the rest of the process, which its
-    dropped points raise {!Lost} with.
+    open, while memory of it or a value its submissions keep remains to
+    return, and while it is lost and has not stopped ({!section-stops}). A
+    device that never stops, the process's first {!failure}, and a device
+    whose timeline passed 2{^ 46} hold theirs for the rest of the process. A
+    device that opens takes a free slot, and its values go on past every
+    value the slot's earlier devices were given, so the number of opens a
+    process makes has no bound. Each open still costs what its driver keeps
+    for the process, as the driver's documentation states: the GPU drivers
+    keep a few dozen bytes of C state per open, and a timeline word of the
+    device's own where it has one. A device whose queue waited on another
+    device's word of its own keeps its mapping of that word until it stops:
+    one per producer device it waited on. A device lost before it reached
+    every value it was given leaves its slot too, and keeps its record for
+    the rest of the process, which its dropped points raise {!Lost} with.
 
     An exception raised inside an open, by the opener's [make] or
     asynchronously ({!section-errors}), is raised again. The name is then
@@ -526,9 +526,13 @@ val signaled : t -> int
     In a child of [fork], every driver's device inherited from the parent is
     lost, with the reason ["forked"] unless it was lost before, and its
     points count as never reached. The child never calls that device's
-    driver, and a submission made before the fork keeps nothing. rig leaves
-    an io device as it was, and its library decides what a fork does to it.
-    A device the child opens is its own. *)
+    driver, and a submission on it made before the fork keeps nothing: the
+    child's next call on the device lets go of the value it keeps, without
+    waiting for its work. A value kept by a submission on {!host} returns as
+    in any process, so one kept after work a thread of the parent was
+    submitting on {!host} at the fork stays until the child's next submit
+    on {!host}. rig leaves an io device as it was, and its library decides
+    what a fork does to it. A device the child opens is its own. *)
 
 (** {2:errors Errors and failure}
 
@@ -605,13 +609,13 @@ val failure : unit -> string option
     calls, on any domain. {!Buffer.create}, {!Buffer.of_string},
     {!Buffer.of_io} and {!Buffer.copy} first move the collected memory whose
     points are reached or dropped on the devices they use, and let go of the
-    values that collected submissions keep once their work is done, also
-    when they then raise {!Lost}. {!free_cache} moves memory on its device,
-    reclamation on every device, and a lost device's stop on its own.
-    Memory collected while a domain blocks returns through other domains'
-    calls. A device reports its values up to [k] values late
-    ({!section-timeline}), and memory and kept values return by what it
-    reports.
+    values that collected submissions on those devices keep, once the work
+    submitted on the device before the first such call after the collection
+    is done, also when they then raise {!Lost}. {!free_cache} moves memory on its device, reclamation on every
+    device, and a lost device's stop on its own. Memory collected while a
+    domain blocks returns through other domains' calls. A device reports its
+    values up to [k] values late ({!section-timeline}), and memory and kept
+    values return by what it reports.
 
     A device's {e budget} is the most bytes it holds at one time of the
     memory that counts in it: its live buffers, its loaded images' code and
@@ -1059,9 +1063,9 @@ module Image : sig
       relocatable ELF object for {!host} ({!section-host_linking}). Each call
       loads [binary] again. Where [d]'s memory holds the code, it counts in
       [d]'s {!budget}, and [load] places it there after the work submitted on
-      [d] before it. The image stays loaded while it is reachable, and
-      unloads once the work submitted on [d] before the image became
-      unreachable is done.
+      [d] before it. The image stays loaded while it is reachable. A call on
+      [d] that finds it collected ({!Rig.section-reclaim}) unloads it once
+      the work submitted on [d] before that call is done.
 
       It is [Error why] if [d]'s driver rejects [binary], where [why] is
       [d]'s {!val-name}, then the driver's reason. [d] stays usable.
@@ -1455,11 +1459,14 @@ module Submission : sig
 
       [keep] is a value the work uses beyond memory, such as the driver
       objects that a graph or an indirect command buffer made. The
-      submission keeps it reachable until the submission is unreachable and
-      the work of its every submit is done, or, on a lost device, until the
-      device has stopped ({!Rig.section-stops}). In a child of [fork] it
-      keeps nothing. [keep] orders no memory. {!Rig.Submission}'s preamble
-      states how the parts are ordered and which queue runs each.
+      submission keeps it reachable while it is reachable. A call on [d]
+      that finds the submission collected ({!Rig.section-reclaim}) lets it go
+      once the work submitted on [d] before that call is done, or, on a lost
+      [d], once [d] has stopped ({!Rig.section-stops}). In a child of [fork],
+      on a driver's device the child inherited, the child's next call on [d]
+      lets it go without waiting for the work. [keep] orders no memory.
+      {!Rig.Submission}'s preamble states how the parts are ordered and
+      which queue runs each.
 
       Raises [Invalid_argument] if:
       {ul

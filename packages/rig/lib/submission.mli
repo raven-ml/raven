@@ -15,7 +15,7 @@
     its image ({!Rig_edge.type-entry}), without a reference, so the record
     beside it keeps their owners reachable: the buffers of its words and
     copy parts and its fixed memory, the images of its launches and entry
-    refs, and the hold of its keep. It also holds each entry ref's function
+    refs, and the token of its keep. It also holds each entry ref's function
     value and place in a run's blocks. A copy between two buffers is set
     once, at make.
 

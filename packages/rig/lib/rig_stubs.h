@@ -181,9 +181,8 @@ struct rig_device {
    word. A word whose point a loss dropped stays until a later device takes
    its slot: its point is then folded into the first chunk's [lost_use] or
    [lost_write], which keep the first such point, and the word can be taken.
-   A walk reads them after the words. [refs] counts the memories and holds
-   that share it. A hold's stamps hold only uses: those of the submissions
-   made with it. */
+   A walk reads them after the words. [refs] counts the memories that share
+   it. */
 #define RIG_USES 4
 
 struct rig_stamps {
@@ -327,8 +326,6 @@ struct rig_run {
      used unordered. */
   _Atomic uint64_t **fixed;
   struct rig_slot *slots;
-  struct rig_stamps *hold; /* the hold's stamps, NULL for none */
-  _Atomic uint64_t *hold_use;
   /* Built for one submit, cleared after it. */
   int npoints, cpoints;
   uint64_t *points;

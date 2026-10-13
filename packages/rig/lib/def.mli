@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** The records rig's modules share: devices, allocations, buffers, claims,
-    images, holds and profile events.
+    images, kept values and profile events.
 
     The types live here, apart from the modules that work on them, because
     they refer to each other, as a device holds its cache of entries and an
@@ -239,6 +239,11 @@ and pending =
       (** A mapping, and the memory it maps, given back after its last
           unmap. *)
   | Unload of loaded * entry option
+  | Let_go of held
+      (** A value a collected submission kept: dropped, it is let go. *)
+
+(** The type for the value a submission keeps ({!Rig.Submission.make}). *)
+and held = Held : 'a -> held
 
 (** The type for an image: one a driver loaded, with its module and handle,
     or code the host linked ({!Host_code}). *)
@@ -296,11 +301,6 @@ type image = { idev : device; loaded : loaded; itoken : token }
 (** {!Rig.Image.t}: its device, what the driver loaded, and the token that
     unloads it once collected. *)
 
-type hold = { hstamps : int; htoken : token }
-(** The hold of the value a submission keeps ({!Rig.Submission.make}): the
-    stamps of the submission's submits, and the token that releases the
-    value once collected. *)
-
 (** {!Rig.Profile.event}. *)
 type event =
   | Span of {
@@ -330,14 +330,8 @@ type event =
   | Overwritten of { device : device; time : int; runs : int }
   | Copy of { src : device; dst : device; bytes : int; start : int; stop : int }
 
-(** The type for a hold's release: its stamps, the value it keeps, and the
-    generation of forks it was made in. *)
-type hold_release =
-  | Hold_release : { stamps : int; value : 'a; generation : int }
-      -> hold_release
-
 (** The type for what a release list holds. *)
 type released =
   | Memory of entry
   | Image of loaded * entry option  (** The image and its code's memory. *)
-  | Release of hold_release
+  | Release of held

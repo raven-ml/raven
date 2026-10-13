@@ -11,9 +11,6 @@ race_top:ensure_proxy
 # read leaves correct. OCaml defines a racy read to return an earlier or the
 # latest value, and none of these orders access to other memory.
 #
-# A drain's check for pending holds: a stale empty list leaves a due hold to
-# the next drain.
-race_top:camlRig__Memory.drain_holds
 # A staging half: another domain changes only the halves of a slot it took,
 # which the memory asked about is not, so a stale half answers the same.
 race_top:camlRig__Copy.holds

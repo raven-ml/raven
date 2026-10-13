@@ -58,7 +58,7 @@ val page : int
     return waits for. A device's words pass to another device once its stop
     was claimed and their points are done, so the words, and a walk's cost,
     follow the devices whose work on the allocation may still matter. They
-    count references: the entry or hold that owns them holds one, and the
+    count references: the entry that owns them holds one, and the
     last {!stamps_unref} frees them. Nothing checks a use after that. The
     stubs never block or release the runtime. *)
 
@@ -120,9 +120,6 @@ val token : int -> released -> int -> int -> int -> token
 
 val no_token : token
 (** [no_token] is no token: one that puts nothing on any list. *)
-
-val holds_list : int
-(** [holds_list] is the release list of holds, which every drain reads. *)
 
 val entry : ?access:access -> device -> backing -> int -> int -> entry
 (** [entry owner backing bytes st] is a new entry of [bytes] bytes of
@@ -264,12 +261,12 @@ val of_io : device -> io_region -> access:access -> int -> memory
 val drain : device -> unit
 (** [drain d] moves [d]'s collected memory whose points are settled to its
     cache or its driver, returns a Stopped device's cache and gives back its
-    mappings of other devices' memory and words, runs the pending
-    releases whose value [d] reached, and releases the holds that are due.
-    In a forked child it forgets the holds made before the fork. It does
-    nothing on an orphaned device, whose frees would call its parent's
-    driver. It may raise {!Dev.Lost} when the read of a word with no host
-    address loses its device. *)
+    mappings of other devices' memory and words, and runs the pending
+    releases whose value [d] reached, which let go of the values that [d]'s
+    collected submissions kept. On an orphaned device it only routes [d]'s
+    release list and lets go of the kept values pending on it, since its
+    frees would call its parent's driver. It may raise {!Dev.Lost} when the
+    read of a word with no host address loses its device. *)
 
 val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
 (** [reclaiming d ~pool n f] is the first [Some] result of [f], a try at [n]

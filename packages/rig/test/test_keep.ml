@@ -15,8 +15,12 @@ let count call p = List.length (List.filter (( = ) call) (P.log p))
 let empty d = Sub.make d [||]
 let submit s = Rig.submit s ~run:(Sub.Run.make ()) ~buffers:[||]
 
-(* A drain on [d]: what {!Buffer.create} does first. *)
-let drain d = ignore (Sys.opaque_identity (B.create d 8))
+(* A drain on [d]: what {!Buffer.create} does first, also on a lost [d],
+   where it then raises. *)
+let drain d =
+  match B.create d 8 with
+  | b -> ignore (Sys.opaque_identity b)
+  | exception Rig.Lost (d', _) when Rig.equal d d' -> ()
 
 (* A value whose collection counts in [runs]. *)
 let counted runs =
@@ -113,10 +117,10 @@ let test_release_lost () =
   raises_match (lost d) (fun () -> submit (empty d));
   equal int 1 (count "stop" p);
   Gc.full_major ();
-  released Rig.host;
+  released d;
   equal ~msg:"with the word short" int 0 (Atomic.get runs);
   P.set_word p (Rig.submitted d);
-  released Rig.host;
+  released d;
   equal ~msg:"once the word drained" int 1 (Atomic.get runs)
 
 (* A drain that finds a kept value's device behind a transport faulted when it
@@ -129,8 +133,72 @@ let test_release_transport_fault () =
   Gc.full_major ();
   Gc.full_major ();
   P.fault_word p "the link went down";
-  drain Rig.host;
+  drain d;
   equal (option string) (Some "the link went down") (Rig.lost d)
+
+(* A submission submitted twice keeps its value until the work of both submits
+   is done: the first's done keeps it. *)
+let[@inline never] submit_twice d runs =
+  let s = Sub.make ~keep:(counted runs) d [||] in
+  let first = Rig.Point.value (submit s) in
+  ignore (submit s);
+  first
+
+let test_release_last_submit () =
+  let d, p = P.open_ "keep:last-submit" in
+  let runs = Atomic.make 0 in
+  let first = submit_twice d runs in
+  P.set_word p first;
+  Gc.full_major ();
+  released d;
+  equal ~msg:"with its first submit's work done" int 0 (Atomic.get runs);
+  P.set_word p (Rig.submitted d);
+  released d;
+  equal ~msg:"with both done" int 1 (Atomic.get runs)
+
+(* A device ended while a submission keeps a value holds its slot until a call
+   on it lets the value go: the device's points name it while the submission is
+   reachable, and once it is not and a drain let the value go, a later device
+   takes the slot. The later device's open takes the slot freed last, which
+   rig.mli does not promise: it promises only a free slot, and no call names
+   a slot. *)
+let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
+
+let[@inline never] kept_submission d runs held =
+  let s = Sub.make ~keep:(counted runs) d [||] in
+  held := Some s;
+  submit s
+
+let slot_passes name ~end_ =
+  let d, p = P.open_ name in
+  let runs = Atomic.make 0 and held = ref None in
+  let pt = kept_submission d runs held in
+  end_ d p;
+  Gc.full_major ();
+  released d;
+  ignore (P.open_ (name ^ "-later"));
+  equal ~msg:"while the submission is reachable" (option device) (Some d)
+    (Rig.Point.device pt);
+  equal ~msg:"its value, while the submission is reachable" int 0
+    (Atomic.get runs);
+  held := None;
+  Gc.full_major ();
+  released d;
+  equal ~msg:"its value, once let go" int 1 (Atomic.get runs);
+  ignore (P.open_ (name ^ "-last"));
+  equal ~msg:"once its value went" (option device) None (Rig.Point.device pt)
+
+let test_slot_closed () =
+  slot_passes "keep:slot-closed" ~end_:(fun d _ -> Rig.close d)
+
+let test_slot_lost () =
+  (* The process's first failure keeps its slot: one comes first. *)
+  let first, pf = P.open_ "keep:slot-first" in
+  P.fail pf;
+  raises_match (lost first) (fun () -> submit (empty first));
+  slot_passes "keep:slot-lost" ~end_:(fun d p ->
+      P.fail p;
+      raises_match (lost d) (fun () -> submit (empty d)))
 
 (* A kept value orders no work: a submission that keeps it follows nothing
    another device's submission that keeps it did. *)
@@ -325,6 +393,12 @@ let tests =
         test "a kept value orders no work" test_keep_orders_nothing;
         test "a submission keeps its value until its work is done"
           test_keeps_value;
+        test "a value submitted twice waits for both submits' work"
+          test_release_last_submit;
+        test "a closed device keeps its slot while it keeps a value"
+          test_slot_closed;
+        test "a lost device keeps its slot while it keeps a value"
+          test_slot_lost;
       ];
     group ~timeout "fixed memory"
       [

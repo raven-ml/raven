@@ -116,7 +116,7 @@ external run_side : run -> int -> buffer -> bool -> bool -> unit
   = "caml_rig_run_side"
 [@@noalloc]
 
-external run_collect : c -> run -> int array -> int -> int
+external run_collect : c -> run -> int array -> int
   = "caml_rig_run_collect"
 
 external run_point : run -> int -> int = "caml_rig_run_point" [@@noalloc]
@@ -197,9 +197,9 @@ type t = {
           which live while the image is loaded. *)
   uses : use array;  (** Each slot's use. *)
   naming : naming array;  (** What names each slot. *)
-  hold : hold option;
-      (** The hold of the value the submission keeps, whose stamps each run
-          raises, kept reachable: its release lets the value go. *)
+  hold : token option;
+      (** The token of the value the submission keeps, kept reachable: its
+          collection lets the value go once the work is done. *)
   blocks : block array;
       (** Each part's block, [no_block] for no launch or fill. *)
   span : (string * string) option;
@@ -672,10 +672,20 @@ let order fn d reach fixed parts =
   done;
   (queues, afters)
 
-let build hold ~fixed d parts =
+(* A token that keeps [v] reachable until the submission is collected and its
+   work done: its record lands on [d]'s release list, and [d]'s drain defers
+   it after the work submitted to [d] by then, which covers every submit of the
+   submission. The token keeps [d]'s slot until then. *)
+let hold d v =
+  let t = Memory.token d.live.release (Release (Held v)) 0 max_int (-1) in
+  if t == Memory.no_token then Dev.raise_lost d;
+  t
+
+let build keep ~fixed d parts =
   let parts = Array.copy parts in
   let fn = "Submission.make" in
   check_device fn d;
+  let hold = Option.map (hold d) keep in
   let uses, naming = slot_uses fn parts in
   let check_buffer = Buffer.check_live fn in
   let nfixed = ref 0 and nrefs = ref 0 and ncodes = ref 0 in
@@ -812,27 +822,7 @@ let build hold ~fixed d parts =
     copies;
   }
 
-(* A hold of [v]: stamps and a token. Each submit raises the stamps by a use,
-   which no work follows, since a kept value orders nothing. The token's
-   release record keeps [v] reachable from here on, since the C node that
-   later puts the record on a release list holds it as a GC root. Once the
-   submission is collected, so is the hold, and the record lands on
-   {!Memory.holds_list}. A drain keeps it until each point of the stamps has
-   settled on a live device and each lost device among them is Stopped, then
-   lets [v] go. In a forked child, a drain forgets a hold made before the
-   fork, since its points name the parent's work. *)
-let hold v =
-  let st = Memory.stamps_new () in
-  let generation = Dev.generation () in
-  let htoken =
-    Memory.token Memory.holds_list
-      (Release (Hold_release { stamps = st; value = v; generation }))
-      0 max_int (-1)
-  in
-  { hstamps = st; htoken }
-
-let make ?keep ?(fixed = []) d parts =
-  build (Option.map hold keep) ~fixed d parts
+let make ?keep ?(fixed = []) d parts = build keep ~fixed d parts
 
 let block s i =
   if i < 0 || i >= Array.length s.blocks || s.blocks.(i) == no_block then
@@ -1141,8 +1131,7 @@ let release_frame m b0 b1 b2 b3 =
 let rec go s run buffers waits k =
   let n = Array.length s.uses in
   if k >= n then
-    let hold = match s.hold with Some h -> h.hstamps | None -> 0 in
-    hand_over s run (wait_points s run (run_collect s.c run waits hold) 0 0)
+    hand_over s run (wait_points s run (run_collect s.c run waits) 0 0)
   else
     let m = min 4 (n - k) in
     let b0 = Array.unsafe_get buffers k in
