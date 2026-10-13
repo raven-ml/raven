@@ -111,26 +111,29 @@ let uniforms (type s) ~key ~p (c : (float, s) D.t) j n : (float, s) E.t array =
           let t = blocks.(m / 2) in
           of_word ~p c (if m mod 2 = 0 then word0 t else word1 t))
 
-(* A sampler's program, whose element at position [j] of its draw is [body
-   ~key ~j]: operand 0 is the element's key and operand 1 its position, both
-   uint64, then come operands of dtypes [ins]. *)
-let sampler ins body =
-  let ins = Array.append [| D.Any D.Uint64; D.Any D.Uint64 |] ins in
-  let key = E.input 0 D.Uint64 and j = E.input 1 D.Uint64 in
-  P.of_exprs ~ins:(Iarray.of_array ins) [| E.any (body ~key ~j) |]
-
 (* Programs by dtype. A sampler's program depends on its dtypes alone, so it
    is lowered once per dtype, into the slot of the dtype's code, and kept.
    Programs are immutable data: two domains that race to fill a slot build
    equal programs, and either may stay. *)
 let programs () = Array.init (List.length D.all) (fun _ -> Atomic.make None)
 
+(* A sampler program's operands: the element's key, its position in the
+   draw, both uint64, then the sampler's parameters. *)
+let key_operand = 0
+let position_operand = 1
+let first_param = 2
+
+(* The program of [table] for [dt], whose element at position [j] of its draw
+   is [body ~key ~j], over parameters of dtypes [ins]. *)
 let lowered table dt ins body =
   let slot = table.(D.code dt) in
   match Atomic.get slot with
   | Some p -> p
   | None ->
-      let p = sampler ins body in
+      let ins = Array.append [| D.Any D.Uint64; D.Any D.Uint64 |] ins in
+      let key = E.input key_operand D.Uint64 in
+      let j = E.input position_operand D.Uint64 in
+      let p = P.of_exprs ~ins:(Iarray.of_array ins) [| E.any (body ~key ~j) |] in
       Atomic.set slot (Some p);
       p
 
@@ -168,59 +171,19 @@ let map ~by shape prog dt loads =
   in
   x
 
-(* The sampler program [prog] with its position operand replaced by each
-   element's position: its flat index in C order in the last [Array.length s]
-   axes, of extents [s], of a shape of rank [rank]. The position's nodes come
-   first, then [prog]'s, each in its order. *)
-let positioned ~rank s (prog : P.t) =
-  let r = Array.length s and n = Iarray.length prog.nodes in
-  (* An axis takes at most four nodes: its coordinate, its weight, their
-     product and the sum; the position one more. *)
-  let nodes = Array.make ((4 * r) + 1 + n) (P.Coord 0) and count = ref 0 in
-  let push nd =
-    nodes.(!count) <- nd;
-    incr count;
-    !count - 1
-  in
+(* The flat index in C order, a uint64 node, of each element in the last
+   [Array.length s] axes, of extents [s], of a shape of rank [rank]. *)
+let position ~rank s =
+  let r = Array.length s in
   let flat = ref None and weight = ref 1 in
   for c = r - 1 downto 0 do
-    let at = push (P.Coord (rank - r + c)) in
-    let term =
-      if !weight = 1 then at
-      else
-        let w = P.bits D.Int64 (Int64.of_int !weight) in
-        push (P.Op2 (Binary Mul, at, push (P.Const (D.Any D.Int64, w))))
-    in
-    flat :=
-      Some
-        (match !flat with
-        | None -> term
-        | Some f -> push (P.Op2 (Binary Add, f, term)));
+    let at = E.coord (rank - r + c) in
+    let w = E.const D.Int64 (Int64.of_int !weight) in
+    let term = if !weight = 1 then at else E.(at * w) in
+    flat := Some (match !flat with None -> term | Some f -> E.(f + term));
     weight := !weight * s.(c)
   done;
-  let j =
-    match !flat with
-    | None -> push (P.Const (D.Any D.Uint64, P.bits D.Uint64 0L))
-    | Some f -> push (P.Op1 (Bitcast, D.Any D.Uint64, f))
-  in
-  let index = Array.make n 0 in
-  let at i = index.(i) in
-  for i = 0 to n - 1 do
-    index.(i) <-
-      (match Iarray.get prog.nodes i with
-      | In 1 -> j
-      | In k -> push (P.In (if k = 0 then 0 else k - 1))
-      | (Coord _ | Const _) as nd -> push nd
-      | Op1 (k, dt, x) -> push (Op1 (k, dt, at x))
-      | Op2 (k, x, y) -> push (Op2 (k, at x, at y))
-      | Op3 (k, x, y, z) -> push (Op3 (k, at x, at y, at z)))
-  done;
-  let ins =
-    Iarray.init (Iarray.length prog.ins - 1) (fun i ->
-        Iarray.get prog.ins (if i = 0 then 0 else i + 1))
-  in
-  let nodes = Iarray.init !count (Array.get nodes) in
-  P.v ~ins nodes ~outs:(Iarray.map at prog.outs)
+  match !flat with None -> u64 0L | Some f -> E.bitcast D.Uint64 f
 
 (* A draw of [dt] and shape [s] per key of [k], by the sampler program [prog]:
    one map over the key's batch then [s], each element reading its key, its
@@ -235,12 +198,12 @@ let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
       [| Value.Any (stretch ~by shape w) |]
       (Array.map (fun (Value.Any x) -> Value.Any (stretch ~by shape x)) params)
   in
-  let prog = positioned ~rank:(Array.length shape) s prog in
+  let position = position ~rank:(Array.length shape) s in
+  let prog = P.bind prog position_operand (E.any position) in
   map ~by shape prog dt loads
 
-(* Parameter [i] of a draw, of dtype [dt], as a node of its program: operands 0
-   and 1 are the key and the position. *)
-let operand i dt = E.input (i + 2) dt
+(* Parameter [i] of a draw, of dtype [dt], as a node of its program. *)
+let operand i dt = E.input (first_param + i) dt
 
 (* Keys *)
 
@@ -444,24 +407,35 @@ let fits v = v >= -0x8000_0000 && v <= 0x7FFF_FFFF
    stands whatever its [lo]. [hi] comes from 32-bit halves, [r] being at most
    2^32 - 1: [hi = (w_hi r + (w_lo r) / 2^32) / 2^32], each term below 2^64.
    [low] is added in uint32, where the sum wraps into the int32 it names. The
-   program holds the range, so it is lowered per call. *)
+   range, [2^64 mod r] and [low] are operands, bound per call. *)
+let randint_programs = programs ()
+
 let randint ?key ?(low = 0) ~high s =
   let by = "Nx.Rng.randint" in
   if low >= high then invalid_argf "%s: low %d is not below high %d" by low high;
   if not (fits low && fits high) then
     invalid_argf "%s: [%d, %d) does not fit in int32" by low high;
-  let range = Int64.of_int (high - low) in
-  let threshold = Int64.unsigned_rem (Int64.neg range) range in
+  let ins = D.[| Any Uint64; Any Uint64; Any Uint32 |] in
   let prog =
-    sampler [||] (fun ~key ~j ->
-        let r = u64 range in
+    lowered randint_programs D.Int32 ins (fun ~key ~j ->
+        let r = operand 0 D.Uint64 and threshold = operand 1 D.Uint64 in
         let first = E.(j * u64 2L) in
         let w = block ~key first in
-        let rejected = E.(w * r < u64 threshold) in
+        let rejected = E.(w * r < threshold) in
         let w = E.where rejected (block ~key E.(first + u64 1L)) w in
         let hi = E.(((word1 w * r) + (word0 w * r / u64 two32)) / u64 two32) in
-        let low = E.const D.Uint32 (Int32.of_int low) in
-        E.(bitcast D.Int32 (cast D.Uint32 hi + low)))
+        E.(bitcast D.Int32 (cast D.Uint32 hi + operand 2 D.Uint32)))
+  in
+  let range = Int64.of_int (high - low) in
+  let threshold = Int64.unsigned_rem (Int64.neg range) range in
+  (* Each bind renumbers the operands after the one it binds, so the last is
+     bound first and the others keep their indices. *)
+  let bind i x prog = P.bind prog (first_param + i) (E.any x) in
+  let prog =
+    prog
+    |> bind 2 (E.const D.Uint32 (Int32.of_int low))
+    |> bind 1 (u64 threshold)
+    |> bind 0 (u64 range)
   in
   draw ~by (resolve key) D.Int32 s prog
 
