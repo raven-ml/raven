@@ -398,7 +398,33 @@ COMPARES(b, uint8_t, BOOL_LD, u32)
 BIN(and_b, uint8_t, uint8_t, BOOL_LD, nx_and_u32)
 BIN(or_b, uint8_t, uint8_t, BOOL_LD, nx_or_u32)
 BIN(xor_b, uint8_t, uint8_t, BOOL_LD, nx_xor_u32)
-BIN(threefry_u64, uint64_t, uint64_t, , nx_threefry_u64)
+
+/* Threefry's contiguous rows read and write each uint64 as its two words,
+   the low first, as a little-endian host lays them out, so that a vector
+   holds a word a lane: over uint64 elements the M1's loop took two a vector
+   and ran at half the speed (7.3 ns an element against 3.6). [SX] and [SY]
+   are the operands' steps. */
+#define WORD_PAIR(p, i)                                                      \
+  ((uint64_t)(p)[2 * (i)] | (uint64_t)(p)[2 * (i) + 1] << 32)
+#define THREEFRY_WORDS(SX, SY)                                               \
+  for (int64_t i = 0; i < n; i++) {                                          \
+    uint64_t r = nx_threefry_u64(WORD_PAIR(x, i * SX), WORD_PAIR(y, i * SY)); \
+    d[2 * i] = (uint32_t)r;                                                  \
+    d[2 * i + 1] = (uint32_t)(r >> 32);                                      \
+  }
+
+ROW threefry_u64(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,
+                 int64_t sx, const uint8_t *y_, int64_t sy) {
+  uint32_t *d = (uint32_t *)d_;
+  const uint32_t *x = (const uint32_t *)x_, *y = (const uint32_t *)y_;
+  const uint64_t *xs = (const uint64_t *)x_, *ys = (const uint64_t *)y_;
+  if (sd == 1 && sx == 1 && sy == 1) THREEFRY_WORDS(1, 1)
+  else if (sd == 1 && sx == 1 && sy == 0) THREEFRY_WORDS(1, 0)
+  else if (sd == 1 && sx == 0 && sy == 1) THREEFRY_WORDS(0, 1)
+  else
+    for (int64_t i = 0; i < n; i++)
+      ((uint64_t *)d_)[i * sd] = nx_threefry_u64(xs[i * sx], ys[i * sy]);
+}
 
 /* Where selects bits and a fill stores them: one row per width. */
 /* A where of [w]-byte words selects by a mask, so that contiguous rows
