@@ -370,6 +370,30 @@ let gemm ?init ~acc name m n k =
 
 let f64 = D.Float64
 
+(* The 100³ float32 product after one by 111 columns of subnormals, whose
+   edge sliver of b, packed into a thread's buffer, leaves them where the
+   100-column product's edge sliver has its padding. x86 kernels mask
+   their loads of b past n; without the masks, each FMA of a subnormal
+   takes a microcode assist. The row guards x86 only (on the M1
+   it times a plain 100³ product), and only when the worker that packed
+   the 111-column edge takes the 100-column edge: always on one thread,
+   by chance where threads steal units. *)
+let after_subnormals =
+  let acc = D.Any f32 and contracting = [| (1, 0) |] in
+  let bench (module K : Nx_kernel.S) =
+    let product dst a b =
+      ok (K.contract ~batch:[||] ~contracting ~acc ~dst ~init:None a b)
+    in
+    row "contract-f32-100-after-subnormals"
+      (fun () ->
+        let a = filled f32 [| 100; 100 |] in
+        let tiny = A.of_array f32 [| 100; 111 |] (Array.make 11100 1e-40) in
+        product (A.create Rig.host f32 [| 100; 111 |]) a tiny;
+        (A.create Rig.host f32 [| 100; 100 |], a, filled f32 [| 100; 100 |]))
+      (fun (dst, a, b) -> product dst a b)
+  in
+  { bench; work = [ F.Fma (acc, 2 * 100 * 100 * 100) ] }
+
 let contract_rows =
   let acc32 = D.Any f32 and acc64 = D.Any f64 in
   let square acc dt n = gemm ~acc (Printf.sprintf "contract-%s-%d" dt n) n n n in
@@ -381,6 +405,7 @@ let contract_rows =
          tile's side. *)
       square acc32 "f32" 50;
       square acc32 "f32" 100;
+      after_subnormals;
       square acc64 "f64" 50;
       (* Few columns, many rows, [4096 × 256] by [256 × 64]: computed as
          its transpose, whose columns lie apart in dst. *)

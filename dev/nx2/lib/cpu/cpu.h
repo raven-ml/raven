@@ -91,9 +91,10 @@ typedef void (*nx_cpu_axpy)(const void *a, int64_t lda, int r, const void *b,
 /* A pack moves [n1] rows of [n0] elements of acc from [s], stepping [s0]
    along a row and [s1] across rows, one of them 1, into [d]: element i of
    row j to d + (j·pitch + i)·w. [pitch] is the next multiple of the
-   kernel's MR, for a's blocks, or of its NR, for b's slivers, and a pack
-   may write any value past n0: a kernel's outputs from those elements lie
-   past m or n and are never stored. It packs without the stage, whose
+   kernel's MR, for a's blocks, or of its NR, for b's slivers. A pack may
+   leave any value past n0: a kernel's outputs from those elements lie past
+   m or n and are never stored, and a kernel on hardware that slows on
+   subnormal inputs masks its loads past n. It packs without the stage, whose
    moves serve every dtype and layout. */
 typedef void (*nx_cpu_pack)(int64_t n0, int64_t n1, const void *s,
                             int64_t s0, int64_t s1, void *d, int64_t pitch);
