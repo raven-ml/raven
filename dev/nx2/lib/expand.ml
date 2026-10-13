@@ -1408,6 +1408,15 @@ let fft : type d r.
             (fun p a -> along apply ~by 1. a p)
             p (Array.sub axes 0 k)
         in
+        (* Bins [0] and, for an even [n], [n/2] keep their real parts alone. *)
+        let p =
+          let dt = Prim.dtype p and t = E.coord (l + 1) in
+          let half = Int64.of_int (if n mod 2 = 0 then n / 2 else 0) in
+          let edge = E.(t = const D.Int64 0L || t = const D.Int64 half) in
+          pairs_map apply ~by (Prim.shape p) [| p |] (fun parts ->
+              let re, im = parts.(0) in
+              (re, E.where edge (E.const dt (D.zero dt)) im))
+        in
         (* Bins [h] to [n - 1] are [conj X[n - k]]: bins [n - h] down to [1]. *)
         let h = s.(l) and mirrored = n - s.(l) in
         let full =

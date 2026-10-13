@@ -221,6 +221,31 @@ end
 
 module Dec = (val Nx.devices ~kernels:(module Untransformed) [ m 2 ])
 
+(* A declined C2r reads only the real parts of bins 0 and, for an even n, n/2,
+   as {!Nx_kernel.S.c2r} states: those of NaN and infinite imaginary parts are
+   those of +0 ones. *)
+let test_declined_c2r () =
+  List.iter
+    (fun n ->
+      let h = (n / 2) + 1 in
+      let bins im =
+        Array.init h (fun k ->
+            z (Float.of_int (k + 1)) (if k = 0 || 2 * k = n then im k else 0.5))
+      in
+      let c2r xs =
+        let x =
+          Nx.place Dec.on
+            (Nx.Repr.of_array Nx.Host.v (A.of_array D.Complex128 [| h |] xs))
+        in
+        read (fft (C2r { dtype = Nx.float64; n; axes = [| 0 |]; x }))
+      in
+      equal
+        ~msg:(Printf.sprintf "%d points" n)
+        (array float_exact)
+        (c2r (bins (fun _ -> 0.)))
+        (c2r (bins (fun k -> if k = 0 then Float.nan else Float.infinity))))
+    [ 6; 7; 8 ]
+
 type transform =
   | Complex of Nx_kernel.direction
   | Real
@@ -556,6 +581,8 @@ let () =
          group "rules and declines"
            [
              test "the rule raises before any kernel" test_rules;
+             test "a declined c2r ignores bins 0's and n/2's imaginary parts"
+               test_declined_c2r;
              prop "a declined transform is within its bound" case law_declined;
              test "nx.cpu is as accurate as the expansion on each route"
                test_accuracy;
