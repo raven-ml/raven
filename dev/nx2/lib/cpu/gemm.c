@@ -201,20 +201,22 @@ typedef struct {
 static pthread_key_t kept_key;
 static pthread_once_t kept_once = PTHREAD_ONCE_INIT;
 
+/* The calling thread's kept buffers, or NULL: one load, where the key's
+   lookup is two calls. The key frees them when the thread ends. */
+static _Thread_local kept *kept_here;
+
 static void kept_drop(void *v) {
   kept *k = v;
   free(k->s[OPS].p);
   free(k->s[SCRATCH].p);
   free(k);
+  kept_here = NULL;
 }
 
 static void kept_init(void) { pthread_key_create(&kept_key, kept_drop); }
 
 /* The calling thread's kept buffers, made at its first product; NULL if
-   they cannot be. A thread-local pointer finds them in one load, where the
-   key's lookup is two calls; the key frees them when the thread ends. */
-static _Thread_local kept *kept_here;
-
+   they cannot be. */
 static kept *mine(void) {
   if (kept_here != NULL) return kept_here;
   pthread_once(&kept_once, kept_init);
