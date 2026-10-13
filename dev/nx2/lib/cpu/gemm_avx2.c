@@ -162,18 +162,31 @@ AXPY(axpy_f64, double, 4, fma)
    against 8.35. */
 #define FEW 256
 
+/* The rows of a block of a (cpu.h's mc). */
+#define MC 96
+
 void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, MR, 16, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
-                 SPEED, 1},
-      .mc = 96,
+      .kernel = {.f = kernel_f32,
+                 .mr = MR,
+                 .nr = 16,
+                 .a = NX_CPU_A_ELEMENTS,
+                 .b = NX_CPU_B_COLUMNS,
+                 .flops_per_byte = SPEED,
+                 .shared = 1},
+      .mc = MC,
       .kc = 384,
       .nc = 3072,
       .few = FEW};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, MR, 8, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
-                 SPEED, 1},
-      .mc = 96,
+      .kernel = {.f = kernel_f64,
+                 .mr = MR,
+                 .nr = 8,
+                 .a = NX_CPU_A_ELEMENTS,
+                 .b = NX_CPU_B_COLUMNS,
+                 .flops_per_byte = SPEED,
+                 .shared = 1},
+      .mc = MC,
       .kc = 256,
       .nc = 3072,
       .few = FEW};

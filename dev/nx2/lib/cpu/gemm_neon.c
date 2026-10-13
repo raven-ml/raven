@@ -106,21 +106,35 @@ DOT(dot2_f64, double, 2, 8, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 2, fma)
 
+/* The rows of a block of a, and those up to which a product streams b
+   past all of a (cpu.h's mc and few). */
+#define MC 128
+
 void nx_cpu_set_neon(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, MR, 12, NX_CPU_A_ELEMENTS, NX_CPU_B_SLIVER,
-                 SPEED32, 1},
-      .mc = 128,
+      .kernel = {.f = kernel_f32,
+                 .mr = MR,
+                 .nr = 12,
+                 .a = NX_CPU_A_ELEMENTS,
+                 .b = NX_CPU_B_SLIVER,
+                 .flops_per_byte = SPEED32,
+                 .shared = 1},
+      .mc = MC,
       .kc = 512,
       .nc = 3072,
-      .few = 128};
+      .few = MC};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, MR, 6, NX_CPU_A_ELEMENTS, NX_CPU_B_SLIVER,
-                 SPEED64, 1},
-      .mc = 128,
+      .kernel = {.f = kernel_f64,
+                 .mr = MR,
+                 .nr = 6,
+                 .a = NX_CPU_A_ELEMENTS,
+                 .b = NX_CPU_B_SLIVER,
+                 .flops_per_byte = SPEED64,
+                 .shared = 1},
+      .mc = MC,
       .kc = 256,
       .nc = 3072,
-      .few = 128};
+      .few = MC};
   t->dot[NX_FLOAT32] = dot_f32;
   t->dot[NX_FLOAT64] = dot_f64;
   t->axpy[NX_FLOAT32] = axpy_f32;

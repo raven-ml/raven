@@ -296,18 +296,27 @@ int nx_cpu_has_amx(void) {
   return (uint32_t)sysctl_int("hw.cpufamily") == 0x1b588bb3u;
 }
 
+/* The rows of a block of a, and those up to which a product streams b
+   past all of a (cpu.h's mc and few). */
+#define MC 128
+
 /* The table's kernels: the unit's, priced against base's. */
 void nx_cpu_set_amx(nx_cpu_target *t) {
   /* The cores that share a unit: a cluster's, which share its L2. */
   int shared = sysctl_int("hw.perflevel0.cpusperl2");
   shared = shared > 0 ? shared : 1;
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, SIDE(4), SIDE(4), NX_CPU_A_PACKED,
-                 NX_CPU_B_SLIVER, SPEED32, shared},
-      .mc = 128,
+      .kernel = {.f = kernel_f32,
+                 .mr = SIDE(4),
+                 .nr = SIDE(4),
+                 .a = NX_CPU_A_PACKED,
+                 .b = NX_CPU_B_SLIVER,
+                 .flops_per_byte = SPEED32,
+                 .shared = shared},
+      .mc = MC,
       .kc = 1024,
       .nc = 2048,
-      .few = 128,
+      .few = MC,
       .pack = pack_f32,
       .other = &nx_cpu_base.gemm[NX_FLOAT32],
       .enter = enter,
@@ -315,12 +324,17 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
   /* float64 takes float32's blocks: KC 1024 beat 256 and 512 from 1024³
      to 4096³. */
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, SIDE(8), SIDE(8), NX_CPU_A_PACKED,
-                 NX_CPU_B_SLIVER, SPEED64, shared},
-      .mc = 128,
+      .kernel = {.f = kernel_f64,
+                 .mr = SIDE(8),
+                 .nr = SIDE(8),
+                 .a = NX_CPU_A_PACKED,
+                 .b = NX_CPU_B_SLIVER,
+                 .flops_per_byte = SPEED64,
+                 .shared = shared},
+      .mc = MC,
       .kc = 1024,
       .nc = 2048,
-      .few = 128,
+      .few = MC,
       .pack = pack_f64,
       .other = &nx_cpu_base.gemm[NX_FLOAT64],
       .enter = enter,
