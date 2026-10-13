@@ -750,25 +750,31 @@ let assembly_rows =
 
 (* Factorisations and triangular solves. An operand is symmetric, values in
    [-1, 1] off its diagonal and n on it, so positive definite and well
-   conditioned; a solve's triangle is its Cholesky factor. The floors are
-   the peak of fused multiply-adds at LAPACK's flop counts: n³/3 for
-   Cholesky, 2n³/3 for LU, 4n³/3 for QR and as many to form Q, 4n³/3 for
-   eigh's reduction and 2n³ to apply it to the vectors, 8n³/3 for svd's
-   bidiagonalisation and 4n³ to apply it to the vectors, n² r for a
-   solve, four real flops a complex one. *)
+   conditioned; a solve's triangle is its Cholesky factor; eig's operand
+   has the same values without the symmetry. The floors are the peak of
+   fused multiply-adds at LAPACK's flop counts: n³/3 for Cholesky, 2n³/3
+   for LU, 4n³/3 for QR and as many to form Q, 4n³/3 for eigh's reduction
+   and 2n³ to apply it to the vectors, 8n³/3 for svd's bidiagonalisation
+   and 4n³ to apply it to the vectors, 25n³ for eig's Schur form and
+   vectors (Golub and Van Loan), n² r for a solve, four real flops a
+   complex one. *)
 
-let definite (type v s) (dt : (v, s) D.t) ~batch n : (v, s) A.t =
+let operand (type v s) ~symmetric (dt : (v, s) D.t) ~batch n : (v, s) A.t =
   let v i j = float_of_int ((((i * n) + j) * 7919 mod 251) - 125) /. 125. in
   let a =
     Array.init (n * n) (fun k ->
         let i = k / n and j = k mod n in
-        if i = j then float_of_int n else v (min i j) (max i j))
+        if i = j then float_of_int n
+        else if symmetric then v (min i j) (max i j)
+        else v i j)
   in
   let one = A.of_array D.Float64 [| 1; n; n |] a in
   let src = Option.get (A.move (M.Broadcast [| batch; n; n |]) one) in
   let x = A.create Rig.host dt [| batch; n; n |] in
   ok (Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst:x src);
   x
+
+let definite dt ~batch n = operand ~symmetric:true dt ~batch n
 
 (* A routine's row: [call] allocates the destinations of its operands and
    gives the call. *)
@@ -786,12 +792,12 @@ let linalg_rows =
     | D.Complex128 -> F.Fma (D.Any f64, 4 * n)
     | _ -> F.Fma (D.Any dt, n)
   in
-  let routine name call dt ?(batch = 1) n ~count =
+  let routine ?(symmetric = true) name call dt ?(batch = 1) n ~count =
     let name =
       if batch = 1 then strf "%s-%s-%d" name (short dt) n
       else strf "%s-%s-%dx%d" name (short dt) batch n
     in
-    let call k = call k (definite dt ~batch n) in
+    let call k = call k (operand ~symmetric dt ~batch n) in
     { bench = linalg name call; work = [ flops dt (batch * count) ] }
   in
   let cholesky dt ?batch n =
@@ -834,6 +840,16 @@ let linalg_rows =
         let s = like a s and u = like a u and vh = like a vh in
         fun () -> K.svd ~s ~vectors:(~u, ~vh) a)
       dt ?batch n ~count:(20 * n * n * n / 3)
+  in
+  (* float64 alone: its results are complex128. *)
+  let eig ?batch n =
+    routine ~symmetric:false "eig"
+      (fun (module K : Nx_kernel.S) a ->
+        let w, v = Result.get_ok (Nx_kernel.Shape.eig (Vectors ()) (shape a)) in
+        let make s = A.create Rig.host D.Complex128 s in
+        let w = make w and v = make v in
+        fun () -> K.eig ~w ~v a)
+      f64 ?batch n ~count:(25 * n * n * n)
   in
   let solve n r =
     let call (module K : Nx_kernel.S) =
@@ -896,6 +912,9 @@ let linalg_rows =
     svd f64 256;
     svd f64 1024;
     svd f64 ~batch:64 32;
+    eig 64;
+    eig 256;
+    eig ~batch:64 32;
   ]
 
 let rows =
