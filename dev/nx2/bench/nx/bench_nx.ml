@@ -169,7 +169,9 @@ let move_rows =
    which computes it. The samplers' programs differ in length: one Threefry
    block per element for bits and uniform, two for normal, and fixed rounds of
    proposals for the rejection samplers. bernoulli-f32-1Kx1K draws at rank 2:
-   its loop holds the draw, the key, the probabilities and two coordinates. *)
+   its loop holds the draw, the key, the probabilities and two coordinates.
+   The one-element draws time a sampler's program, written and lowered per
+   call: beta's has two thousand nodes. *)
 
 let mib = 1 lsl 20
 let key = Nx.Rng.key 0
@@ -182,6 +184,7 @@ let rates = filled [| 1 lsl 16 |] 4.
 let probabilities = filled [| mib |] 0.3
 let probabilities_2d = filled [| 1024; 1024 |] 0.3
 let draw x = Nx.Repr.array (Nx.place Nx.Host.on x)
+let one = filled [| 1 |] 2.
 
 (* The draws' floor: nx.cpu's Threefry called directly over 1M counters under
    one broadcast key, the one block per element that bits and uniform compute,
@@ -223,6 +226,10 @@ let rng_rows =
           draw (Nx.Rng.gamma ~key:(Thumper.black_box key) rates));
       Thumper.bench "poisson-f32-64K" (fun () ->
           draw (Nx.Rng.poisson ~key:(Thumper.black_box key) rates));
+      Thumper.bench "normal-f32-1" (fun () ->
+          draw (Nx.Rng.normal ~key:(Thumper.black_box key) D.Float32 [| 1 |]));
+      Thumper.bench "beta-f32-1" (fun () ->
+          draw (Nx.Rng.beta ~key:(Thumper.black_box key) one one));
     ]
 
 (* Contractions at the shapes of nx.cpu's and nx.cuda's rows, each beside its
