@@ -31,12 +31,13 @@
    the M1 Max beat one thread per unit (1024³ float32: 1.09 against 2.02
    ms).
 
-   A kernel's speed prices its jobs (cpu.h): at the unit's, a 128³ product
-   runs on one thread, which beats eight (5.9 against 8.0 us). The cores of
-   a cluster share its unit, so that the M1 Max's eight performance cores
-   hold two: products of at most 8 rows, as decoding is, run faster on the
-   cores' vector units (base's kernels, the table's other), and the unit
-   packs only in jobs of at most one thread per unit (gemm.c).
+   A kernel's speed and a thread's start on the unit price its jobs
+   (cpu.h): a 128³ product runs on one thread, which beats eight (5.9
+   against 8.0 us). The cores of a cluster share its unit, so that the M1
+   Max's eight performance cores hold two: products of at most 8 rows, as
+   decoding is, run faster on the cores' vector units (base's kernels, the
+   table's other), and the unit packs only in jobs of at most one thread
+   per unit (gemm.c).
 
    The functions below take the element's bytes [w]: 4 or 8, a constant
    in each width's kernel and pack, into which they are inlined. */
@@ -56,6 +57,19 @@
    as many. */
 #define SPEED32 13.0
 #define SPEED64 (SPEED32 / 4)
+
+/* What a thread adds to a job's start on the unit (cpu.h), past a core
+   job's NX_CPU_THREAD_BYTES: on the M1 Max a product's job gains from a
+   second thread once it is priced at about 1.45 MB.
+
+     product       priced at   two threads against one
+     float32 160³    0.84 MB   1.09
+     float32 192³    1.38 MB   1.03
+     float32 224³    2.13 MB   0.90
+     float64 96³     0.69 MB   1.11
+     float64 128³    1.55 MB   0.97
+     float64 160³    2.93 MB   0.85 */
+#define START ((704 - 128) * 1024)
 
 #define INLINE static inline __attribute__((always_inline))
 
@@ -312,7 +326,7 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
                  .a = NX_CPU_A_PACKED,
                  .b = NX_CPU_B_SLIVER,
                  .flops_per_byte = SPEED32,
-                 .shared = shared},
+                            .shared = shared},
       .mc = MC,
       .kc = 1024,
       .nc = 2048,
@@ -320,7 +334,8 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
       .pack = pack_f32,
       .other = &nx_cpu_base.gemm[NX_FLOAT32],
       .enter = enter,
-      .leave = leave};
+      .leave = leave,
+      .start = START};
   /* float64 takes float32's blocks: KC 1024 beat 256 and 512 from 1024³
      to 4096³. */
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
@@ -330,7 +345,7 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
                  .a = NX_CPU_A_PACKED,
                  .b = NX_CPU_B_SLIVER,
                  .flops_per_byte = SPEED64,
-                 .shared = shared},
+                            .shared = shared},
       .mc = MC,
       .kc = 1024,
       .nc = 2048,
@@ -338,7 +353,8 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
       .pack = pack_f64,
       .other = &nx_cpu_base.gemm[NX_FLOAT64],
       .enter = enter,
-      .leave = leave};
+      .leave = leave,
+      .start = START};
 }
 
 #else

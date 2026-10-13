@@ -12,8 +12,10 @@
    a Core Ultra 5 235, today's pool starts a job in 0.5 to 1.2 us: 128 KiB,
    at which a 1.5 MiB int8 to int4 pack takes 3.6 us against 5.8 at 384 KiB,
    a 64 Ki-element float32 copy 1.8 us against 3.7, a 64^3 float32 product
-   1.8 us against 3.8. The threads are the performance cores while the bytes the job
-   touches fit in the caches, and every core past CACHE_BYTES: a job the
+   1.8 us against 3.8. Work whose threads take longer to start, as the M1's
+   matrix unit's do, states its own bytes a thread (nx_cpu_job_at). The
+   threads are the performance cores while the bytes the job touches fit
+   in the caches, and every core past CACHE_BYTES: a job the
    caches hold ran up to 1.6 times as long on all ten of the M1 Max's cores
    as on its eight performance cores, and past the caches the efficiency
    cores add their share of the memory's bandwidth (a 64 MiB copy: 665 us on
@@ -42,7 +44,11 @@
 #define HOLD_BYTES (1024 * 1024)
 
 int nx_cpu_threads(int64_t bytes, double cost) {
-  double threads = cost / NX_CPU_THREAD_BYTES;
+  return nx_cpu_threads_at(bytes, cost, NX_CPU_THREAD_BYTES);
+}
+
+int nx_cpu_threads_at(int64_t bytes, double cost, double thread_bytes) {
+  double threads = cost / thread_bytes;
   int cores =
       bytes > CACHE_BYTES ? rig_pool_cores() : rig_pool_performance_cores();
   if (threads > cores) return cores;
@@ -68,8 +74,13 @@ static void run_released(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
                 void *ctx) {
+  nx_cpu_job_at(total, bytes, cost, NX_CPU_THREAD_BYTES, body, ctx);
+}
+
+void nx_cpu_job_at(int64_t total, int64_t bytes, double cost,
+                   double thread_bytes, rig_pool_body body, void *ctx) {
   if (total <= 0) return;
-  int64_t threads = nx_cpu_threads(bytes, cost);
+  int64_t threads = nx_cpu_threads_at(bytes, cost, thread_bytes);
   if (threads > total) threads = total;
   if (threads <= 1 && cost < HOLD_BYTES) {
     body(0, total, 0, ctx);

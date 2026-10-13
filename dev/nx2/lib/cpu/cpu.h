@@ -124,6 +124,9 @@ typedef struct nx_cpu_gemm {
   void (*enter)(void), (*leave)(void); /* or NULL: on a thread, its calls
                                           of kernel and pack run between
                                           enter and leave */
+  double start; /* the cost, in bytes of memcpy, that each thread of a job
+                   on these kernels adds to its start (nx_cpu_job_at); 0
+                   where it adds none */
 } nx_cpu_gemm;
 
 /* A row of a kind of one operand: n elements of [d] from [x], each stepping
@@ -310,6 +313,13 @@ void nx_cpu_job(int64_t total, int64_t bytes, double cost, rig_pool_body body,
    the time a job takes to start (job.c). */
 int nx_cpu_threads(int64_t bytes, double cost);
 #define NX_CPU_THREAD_BYTES (128 * 1024)
+
+/* nx_cpu_job and nx_cpu_threads with one thread per [thread_bytes] of
+   cost: the bytes a core moves in the time a job of that work takes to
+   start, where it starts slower than a job's NX_CPU_THREAD_BYTES. */
+void nx_cpu_job_at(int64_t total, int64_t bytes, double cost,
+                   double thread_bytes, rig_pool_body body, void *ctx);
+int nx_cpu_threads_at(int64_t bytes, double cost, double thread_bytes);
 
 /* Matrices */
 

@@ -114,10 +114,17 @@ static double flop_cost(nx_cpu_micro k, double flops) {
   return flops / k.flops_per_byte;
 }
 
-/* The units a compute job of [bytes] and [cost] splits into: UNITS a
-   thread, or one where it runs on one thread and a split buys nothing. */
-static int64_t units(int64_t bytes, double cost) {
-  int64_t threads = nx_cpu_threads(bytes, cost);
+/* The cost a thread of a job on [g]'s kernels brings to pay for the job's
+   start (nx_cpu_job_at). */
+static double thread_bytes(const nx_cpu_gemm *g) {
+  return NX_CPU_THREAD_BYTES + g->start;
+}
+
+/* The units a compute job of [bytes] and [cost], one thread per [per] of
+   it, splits into: UNITS a thread, or one where it runs on one thread and
+   a split buys nothing. */
+static int64_t units(int64_t bytes, double cost, double per) {
+  int64_t threads = nx_cpu_threads_at(bytes, cost, per);
   return threads > 1 ? UNITS * threads : 1;
 }
 
@@ -403,7 +410,8 @@ static uint8_t *block(const panel *c, int64_t e, int64_t ib, int64_t *m,
 static nx_cpu_pack mover(const problem *p, int64_t total, int64_t bytes,
                          double cost) {
   if (p->g->pack == NULL) return NULL;
-  int64_t threads = min64(total, nx_cpu_threads(bytes, cost));
+  int64_t threads =
+      min64(total, nx_cpu_threads_at(bytes, cost, thread_bytes(p->g)));
   return threads <= engines(p->g->kernel) ? p->g->pack : NULL;
 }
 
@@ -642,12 +650,13 @@ static void bracketed(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static void job(const problem *p, int64_t total, int64_t bytes, int64_t cost,
                 rig_pool_body body, void *ctx) {
+  double per = thread_bytes(p->g);
   if (p->g->enter == NULL) {
-    nx_cpu_job(total, bytes, cost, body, ctx);
+    nx_cpu_job_at(total, bytes, cost, per, body, ctx);
     return;
   }
   bracket b = {p->g, body, ctx};
-  nx_cpu_job(total, bytes, cost, bracketed, &b);
+  nx_cpu_job_at(total, bytes, cost, per, bracketed, &b);
 }
 
 /* The rows of [m] that [k] computes: a multiple of its tile's. */
@@ -748,7 +757,7 @@ static void chain(problem *p) {
       int64_t packed = ne * (c.slivers * nr + m) * kc_most * w;
       double cost =
           flop_cost(g->kernel, 2.0 * ne * m * c.nc * kc_most) + packed;
-      split(&c, units(packed, cost));
+      split(&c, units(packed, cost, thread_bytes(g)));
       int64_t pc = 0;
       do {
         c.pc = pc;
@@ -976,7 +985,7 @@ static void dots(problem *p, int64_t bytes, double cost) {
     nx_cpu_job(batch, batch * m * k * w, PACK_COST * batch * m * k * w,
                dots_a, &f);
   }
-  int64_t want = units(bytes, cost);
+  int64_t want = units(bytes, cost, NX_CPU_THREAD_BYTES);
   int64_t outer = batch * f.groups;
   f.per_range = outer < want ? ceil_div(f.blocks, ceil_div(want, outer))
                              : f.blocks;
@@ -1156,7 +1165,7 @@ static void rows(problem *p, int64_t bytes, double cost) {
                 .groups = ceil_div(n, cols),
                 .staged = (m * NX_CPU_LANE_BLOCK + NX_CPU_LANES * cols) * w};
   int64_t sums = m * cols * f.blocks * w;
-  if (batch * f.groups >= units(bytes, cost)) {
+  if (batch * f.groups >= units(bytes, cost, NX_CPU_THREAD_BYTES)) {
     f.own = f.staged + NX_CPU_LANES * m * cols * w + sums;
     nx_cpu_job(batch * f.groups, bytes, cost, rows_whole, &f);
     return;
@@ -1171,7 +1180,8 @@ static void rows(problem *p, int64_t bytes, double cost) {
   /* Lanes split into spans, a power of two, until the units are enough
      for cores that run at unequal speeds to share; each lane's rows and
      the sum's bits stay those of a whole block. */
-  int64_t blocks = batch * f.blocks * f.groups, want = units(bytes, cost);
+  int64_t blocks = batch * f.blocks * f.groups;
+  int64_t want = units(bytes, cost, NX_CPU_THREAD_BYTES);
   for (f.spans = 1; f.spans < NX_CPU_LANES && blocks * f.spans < want;)
     f.spans *= 2;
   nx_cpu_job(blocks * f.spans, bytes, cost, rows_unit, &f);
