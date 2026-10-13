@@ -68,12 +68,11 @@ struct rig_metal_run {
   struct rig_metal_slot slots[ring_slots];
 };
 
-/* A device, kept for the process with its word: rig never frees the word.
-   Its run state goes at its stop, and rig calls the C functions no more. */
+/* A device: its word, the one its open was given, and its run state, which
+   goes at its stop, after which rig calls the C functions no more. */
 struct rig_metal {
   const struct rig_driver *driver;
-  id<MTLBuffer> word;
-  uint64_t *at; /* the word's contents */
+  uint64_t *at; /* the word */
   struct rig_metal_run *run; /* NULL once stopped */
 };
 

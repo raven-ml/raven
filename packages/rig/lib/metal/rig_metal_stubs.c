@@ -37,7 +37,6 @@ enum {
   no_queue,
   no_fence,
   no_set,
-  no_word,
   no_memory
 };
 
@@ -80,7 +79,9 @@ static int family(id<MTLDevice> device) {
 static const struct rig_driver driver = {rig_metal_room, rig_metal_submit,
                                          rig_metal_commit, NULL};
 
-static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
+/* A device whose word is the 8 bytes at [word], its values starting after
+   theirs. */
+static intnat open_device(_Atomic uint64_t *word) API_AVAILABLE(macos(15.0)) {
   id<MTLDevice> device = MTLCreateSystemDefaultDevice();
   if (device == nil) return -no_device;
   int f = family(device);
@@ -97,24 +98,22 @@ static intnat open_device(void) API_AVAILABLE(macos(15.0)) {
   r->queue = [device newCommandQueueWithMaxCommandBufferCount:ring_slots];
   r->fence = [device newFence];
   r->set = [device newResidencySetWithDescriptor:desc error:NULL];
-  d->word = [device newBufferWithLength:sizeof(uint64_t)
-                                options:MTLResourceStorageModeShared];
   [desc release];
   int missing = !r->queue   ? no_queue
                 : !r->fence ? no_fence
                 : !r->set   ? no_set
-                : !d->word  ? no_word
                             : 0;
   if (missing) {
     [r->queue release], [r->fence release], [r->set release];
-    [d->word release], [device release], free(r), free(d);
+    [device release], free(r), free(d);
     return -missing;
   }
   [r->queue addResidencySet:r->set];
   pthread_mutex_init(&r->set_mutex, NULL);
   pthread_mutex_init(&r->open_mutex, NULL);
   r->open = (struct rig_metal_queue){nil, nil, -1, r};
-  d->at = d->word.contents;
+  d->at = (uint64_t *)word;
+  r->last = atomic_load_explicit(word, memory_order_acquire);
   rig_metal_ring_init(&r->ring, r->slots, ring_slots, d->at);
   r->holds = 1;
   d->run = r;
@@ -138,11 +137,11 @@ void rig_metal_release(struct rig_metal_run *r) {
   free(r);
 }
 
-value caml_rig_metal_open(value unit) {
-  (void)unit;
+value caml_rig_metal_open(value v_word) {
+  _Atomic uint64_t *word = (_Atomic uint64_t *)Nativeint_val(v_word);
   intnat d = -before_15;
   @autoreleasepool {
-    if (@available(macOS 15, *)) d = open_device();
+    if (@available(macOS 15, *)) d = open_device(word);
   }
   return Val_long(d);
 }
@@ -158,15 +157,16 @@ static value location(id<MTLBuffer> b) {
   CAMLreturn(triple(address, host, handle));
 }
 
-/* The device's family, budget and word. */
+/* The device's family and budget. */
 value caml_rig_metal_facts(value v_d) {
   CAMLparam1(v_d);
-  CAMLlocal1(word);
-  struct rig_metal *d = Device_val(v_d);
-  id<MTLDevice> device = d->run->device;
-  word = location(d->word);
+  CAMLlocal1(v);
+  id<MTLDevice> device = Device_val(v_d)->run->device;
   intnat budget = (intnat)device.recommendedMaxWorkingSetSize;
-  CAMLreturn(triple(Val_int(family(device)), Val_long(budget), word));
+  v = caml_alloc_tuple(2);
+  Store_field(v, 0, Val_int(family(device)));
+  Store_field(v, 1, Val_long(budget));
+  CAMLreturn(v);
 }
 
 /* Memory */
@@ -495,8 +495,8 @@ value caml_rig_metal_count(value unit) {
   return Val_int(0);
 }
 
-value caml_rig_metal_open(value unit) {
-  (void)unit;
+value caml_rig_metal_open(value v_word) {
+  (void)v_word;
   return Val_long(-not_macos);
 }
 

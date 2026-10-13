@@ -14,8 +14,8 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 type buffer = Rig_edge.location
 
 external count : unit -> int = "caml_rig_metal_count"
-external open_device : unit -> int = "caml_rig_metal_open"
-external device_facts : int -> int * int * buffer = "caml_rig_metal_facts"
+external open_device : nativeint -> int = "caml_rig_metal_open"
+external device_facts : int -> int * int = "caml_rig_metal_facts"
 external alloc_buffer : int -> int -> buffer option = "caml_rig_metal_alloc"
 
 external map_buffer : int -> int -> int -> buffer option
@@ -74,9 +74,8 @@ type tables = {
       (* the pipelines an icb may record, those entries of loaded images gave,
          with each one's most threads per threadgroup *)
   regions : (nativeint, int) Hashtbl.t;
-      (* the live regions' handles, its allocations, mappings and word, with
-         the bytes an icb may address in each: [0] for the word, which no icb
-         takes *)
+      (* the live regions' handles, its allocations and mappings, with the
+         bytes an icb may address in each *)
 }
 
 (* An image's entries, [none] until its first [entry], under [guard]: an [entry]
@@ -210,25 +209,31 @@ let open_failures =
     "Metal made no command queue";
     "Metal made no fence";
     "Metal made no residency set";
-    "Metal made no buffer for the word";
   |]
 
 let no_memory = Array.length open_failures + 1
 
-let open_ i =
+(* The handlers write the word from the host: no work addresses it. *)
+let open_ ~word i =
   if i < 0 then invalid_argf "Rig_metal.gpu: GPU %d is negative" i;
   if i > 0 then Error (strf "no such GPU; Metal sees %d" (count ()))
   else
-    let self = open_device () in
+    let self = open_device word in
     if self = -no_memory then raise Out_of_memory
     else if self < 0 then Error open_failures.(-self - 1)
     else
-      let family, budget, word = device_facts self in
+      let family, budget = device_facts self in
+      let word =
+        {
+          Rig_edge.address = None;
+          host = Some (Nativeint.to_int word);
+          handle = 0n;
+        }
+      in
       let arch = if family > 0 then strf "Apple%d" family else "Mac2" in
       let align = if family > 0 then apple_align else mac_align in
       let guard = Mutex.create () in
       let pipelines = Hashtbl.create 16 and regions = Hashtbl.create 64 in
-      Hashtbl.replace regions word.handle 0;
       let tables = ref (Some { pipelines; regions }) in
       let icb = icb self guard tables align in
       let cap = { Rig_metal_abi.align; icb; split } in
@@ -439,5 +444,5 @@ let gpu i : t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Driver);
-    make = (fun ~word:_ -> open_ i);
+    make = (fun ~word -> open_ ~word i);
   }

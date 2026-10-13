@@ -104,7 +104,7 @@ val gpu : int -> t Rig_edge.opener
 
     [make] is [Error] with the reason if [i >= count ()], if the Mac lacks
     what {!section-opening} requires, or if Metal cannot make the device's
-    command queue, fence, residency set or word.
+    command queue, fence or residency set.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -144,13 +144,16 @@ val capability : t -> Rig_metal_abi.t
       | [maps_host]      | [true]                                         |
       | [host_addresses] | [true]                                         |
       | [capability]     | {!Rig_metal_abi.t} ({!val-capability})         |
-      | [word]           | An [MTLBuffer] of eight bytes                  |
+      | [word]           | The word [make] was given, which no work reads |
     }
 
     [arch] is the highest Apple GPU family the GPU supports, such as
     ["Apple7"] for an M1, else its Mac family, ["Mac2"]. [budget] is the
     memory, in bytes, that Metal recommends the device keep allocated at most.
-    The word holds an unsigned 64-bit integer in the host's byte order.
+    The word holds an unsigned 64-bit integer in the host's byte order, and
+    the device's values start after the value it holds when [make] returns.
+    Its location has a host address and no device address: only the
+    completion handlers and {!stop} write it.
 
     The device's queue waits only for the device's own work, so rig waits on
     the host for the points a submission waits for, before it hands the
@@ -322,8 +325,11 @@ val capability : t -> Rig_metal_abi.t
     word, whatever that work did. The stop gives back what the device runs
     work with: its Metal command queue, fence, residency set and command
     buffer ring, which each committed command buffer keeps until its handler
-    returns. The word, and the few bytes of C state that read it, stay for
-    the process. {!sleep} on a stopped device raises [Invalid_argument]. *)
+    returns. Once the word shows the last value and [stop] has returned, no
+    handler writes it: the handlers write in order, and the one that
+    completes the last command buffer writes the last value. The few bytes
+    of C state that read the word stay with the device. {!sleep} on a
+    stopped device raises [Invalid_argument]. *)
 
 (** {1:references References}
     - Apple's Metal framework headers (macOS 26 SDK): [MTLCommandQueue.h]
