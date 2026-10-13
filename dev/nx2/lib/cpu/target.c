@@ -17,6 +17,12 @@
 
 #if defined(__x86_64__)
 #include <cpuid.h>
+#endif
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
+
+#if defined(__x86_64__)
 
 static int has_v3(void) {
   unsigned a, b, c, d;
@@ -42,7 +48,36 @@ nx_cpu_target nx_cpu_amx;
 
 const nx_cpu_target *nx_cpu_table = &nx_cpu_base;
 
+/* A core's L2 where the host does not tell: 256 KiB, the least of the
+   x86-64 and Apple cores nx.cpu tunes for. */
+#define L2_BYTES (256 * 1024)
+
+int64_t nx_cpu_l2_bytes = L2_BYTES;
+
+/* x86-64 reports the L2 of the core it runs on in KiB, CPUID leaf
+   0x80000006, ECX bits 31-16 (Intel SDM vol. 2A; AMD APM vol. 3), a core's
+   own on both vendors' cores. Apple's arm64 reports its performance
+   cores' L2 and how many share it. */
+static int64_t l2_bytes(void) {
+  int64_t bytes = 0;
+#if defined(__x86_64__)
+  unsigned a, b, c, d;
+  if (__get_cpuid(0x80000006, &a, &b, &c, &d))
+    bytes = (int64_t)(c >> 16) * 1024;
+#elif defined(__APPLE__)
+  int64_t size = 0;
+  int32_t cores = 0;
+  size_t n = sizeof size, m = sizeof cores;
+  if (sysctlbyname("hw.perflevel0.l2cachesize", &size, &n, NULL, 0) == 0 &&
+      sysctlbyname("hw.perflevel0.cpusperl2", &cores, &m, NULL, 0) == 0 &&
+      cores > 0)
+    bytes = size / cores;
+#endif
+  return bytes > 0 ? bytes : L2_BYTES;
+}
+
 __attribute__((constructor)) static void init(void) {
+  nx_cpu_l2_bytes = l2_bytes();
   nx_cpu_set_convert_base(&nx_cpu_base);
   nx_cpu_set_gemm_base(&nx_cpu_base);
   nx_cpu_set_rows_base(&nx_cpu_base);

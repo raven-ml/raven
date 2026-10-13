@@ -229,6 +229,10 @@ void nx_cpu_set_avx2(nx_cpu_target *t);
    has. */
 extern const nx_cpu_target *nx_cpu_table;
 
+/* The bytes of L2 cache a performance core of the host has to itself, read
+   when the program starts (target.c). */
+extern int64_t nx_cpu_l2_bytes;
+
 /* The dtype a block of [dt] is staged in: float32 for a narrow float, int8
    for int4, uint8 for uint4, bool for bit, and [dt] itself otherwise. */
 static inline int nx_cpu_carrier(int dt) {

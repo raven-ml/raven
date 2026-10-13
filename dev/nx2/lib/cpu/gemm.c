@@ -86,12 +86,18 @@
 #define ROW_BYTES 4096
 #define LANE_STEPS (NX_CPU_FOLD_BLOCK / NX_CPU_LANES)
 
-/* The bytes of an operand's element up to which chain order reads it in
-   place, where it allows: past them its blocks fall out of the caches
-   between their reads, b's slivers each kc rows of a row of b apart. On
-   kimchi a 4096³ float32 product takes twice as long with b in place (205
-   against 102 ms) and a 1024³ one 6% longer where a is packed; a 512³ one
-   takes 11% less (363 against 408 us), its packing gone. */
+/* The bytes of a's element up to which chain order reads a in place,
+   where it allows: each tile streams its MR rows, which stay in the caches
+   from one sliver of b to the next. On kimchi a 1024³ float32 product
+   takes 6% longer where a is packed.
+
+   b's sliver, kc rows a row of b apart, is read again for each tile of
+   a's rows: b is read in place up to half the L2 a core has
+   (nx_cpu_l2_bytes), past which its rows fall out between tiles. On the
+   i9-9900K (256 KiB) a 256³ float32 product takes 432 µs on one core with
+   b in place, 245 with b packed; on kimchi (3 MiB) a 512³ one 11% less in
+   place (363 against 408 µs), a 4096³ one twice as long (205 against 102
+   ms). */
 #define IN_PLACE_BYTES (2 * 1024 * 1024)
 
 /* The bytes of a job's packed b: a group of batch elements shares one job
@@ -380,8 +386,8 @@ static uint8_t *sliver(const panel *c, int64_t e, int64_t s) {
   return c->b + ((e - c->e0) * c->slivers + s) * nr * c->kc * c->p->w;
 }
 
-/* Block [ib] of element [e]'s rows of a, packed: kc steps of [*lda]
-   elements, a multiple of MR, for its [*m] rows. */
+/* Block [ib] of element [e]'s rows of a, packed (packed_a) for its [*m]
+   rows in [*lda], a multiple of MR. */
 static uint8_t *block(const panel *c, int64_t e, int64_t ib, int64_t *m,
                       int64_t *lda) {
   const nx_cpu_gemm *g = c->p->g;
@@ -415,16 +421,34 @@ static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
   stage_acc(p, o, at, s0, s1, n0, n1, d, pitch);
 }
 
-/* Packs [a]'s rows [i, i + m) of element [e], along k from
-   [pc] for [kc], into [d]: kc steps of [lda] elements, padding past m. A
-   block of rows is one pack: its rows transpose in square blocks, where a
+/* Packs [a]'s rows [i, i + m) of element [e], along k from [pc] for
+   [kc], into [d], as the kernel reads them (packed_a). A block of rows is
+   one pack: where it transposes, it does so in square blocks, where a
    sliver as narrow as a microkernel's 6 rows would move element by
    element. */
 static void pack_a(const problem *p, nx_cpu_pack move, int64_t e, int64_t i,
                    int64_t m, int64_t lda, int64_t pc, int64_t kc,
                    uint8_t *d) {
   const int64_t *s = p->op[A].st;
-  pack(p, move, A, pos(p, A, e, i, 0, pc), s[ROW], s[CON], m, kc, d, lda);
+  int64_t at = pos(p, A, e, i, 0, pc);
+  if (p->g->kernel.a == NX_CPU_A_ELEMENTS) {
+    pack(p, move, A, at, s[CON], s[ROW], kc, m, d, kc);
+    return;
+  }
+  pack(p, move, A, at, s[ROW], s[CON], m, kc, d, lda);
+}
+
+/* A block of a packed at [d] for [kc] steps of [lda] elements: a kernel
+   that reads MR elements of a step at once takes kc steps of lda, padding
+   past its rows; one that reads an element at a time takes its rows, kc
+   apart, so that a tile streams its MR rows. Read by steps of lda, a
+   6-row tile uses 24 bytes of each line it loads and loads kc lines,
+   which evict b's sliver from L1: on the i9-9900K (32 KiB) the AVX2
+   kernel runs a 96-row block at 111 GFLOP/s so, 151 by rows. */
+static src packed_a(const problem *p, const uint8_t *d, int64_t lda,
+                    int64_t kc) {
+  if (p->g->kernel.a == NX_CPU_A_ELEMENTS) return (src){d, kc, 1};
+  return (src){d, 1, lda};
 }
 
 /* Packs the sliver of [b]'s columns [j, j + n) likewise, kc steps of
@@ -527,10 +551,10 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
     unit_of(c, u, &e, &i0, &v0, &v1);
     if (v0 >= v1) continue;
     int64_t mc, lda;
-    src a = {NULL, 1, 0};
+    src a;
     if (c->a) {
-      a.at = block(c, e, i0 / g->mc, &mc, &lda);
-      a.k = lda;
+      const uint8_t *d = block(c, e, i0 / g->mc, &mc, &lda);
+      a = packed_a(p, d, lda, c->kc);
     } else {
       mc = min64(g->mc, p->ext[ROW] - i0);
       a = a_at(p, e, i0, c->pc);
@@ -588,7 +612,8 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
     start(p, e, 0, m, j, j + n);
     while (pc < k) {
       int64_t kc = min64(kc_most, k - pc);
-      src a = r->a ? (src){r->a + (e * k + pc) * r->lda * w, 1, r->lda}
+      src a = r->a ? packed_a(p, r->a + (e * k + pc) * r->lda * w,
+                              r->lda, kc)
                    : a_at(p, e, 0, pc);
       src b = b_sliver(p, r->move_b, e, j, n, pc, kc, bp);
       tile(p, r->k, pc, kc, a, b, e, 0, j, m, n);
@@ -1161,12 +1186,13 @@ static int chain_order(const problem *p) {
 }
 
 /* Whether chain order reads operand [o] of [p] in place: in acc, at most
-   IN_PLACE_BYTES an element, and adjacent along the axis the kernel
-   streams, b along its columns, a along k where the kernel reads it an
-   element at a time. */
+   IN_PLACE_BYTES an element for a, half a core's L2 for b, and adjacent
+   along the axis the kernel streams, b along its columns, a along k where
+   the kernel reads it an element at a time. */
 static int in_place(const problem *p, int o) {
   int64_t n = o == A ? p->ext[ROW] : p->ext[COL];
-  if (p->ext[CON] > IN_PLACE_BYTES / p->w / n) return 0;
+  int64_t most = o == A ? IN_PLACE_BYTES : nx_cpu_l2_bytes / 2;
+  if (p->ext[CON] > most / p->w / n) return 0;
   if (o == B) return adjacent(p, B, COL);
   return p->g->kernel.a == NX_CPU_A_ELEMENTS && adjacent(p, A, CON);
 }
