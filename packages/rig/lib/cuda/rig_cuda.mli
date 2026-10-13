@@ -8,8 +8,12 @@
     A device of this library is one GPU, opened on its primary context with
     two CUDA streams of its own, its queues ["COMPUTE:0"] and ["COPY:0"].
     ["COMPUTE:0"] runs launches, copies and fills, and ["COPY:0"] runs copies
-    and fills. The device's timeline word lies in page-locked host memory,
-    and the streams write it themselves. A GPU has one device at a time.
+    and fills. The device's timeline word is the word its opener's [make] is
+    given, in rig's array of words, and the streams write it themselves. The
+    first device that opens registers that array for every context
+    ([cuMemHostRegister], portable and mapped) in its GPU's primary context,
+    which the process keeps, so the registration lasts for the process. A
+    GPU has one device at a time.
 
     A kernel reaches the GPU in a cubin, a fatbin or PTX text.
     {!Rig.Image.load} loads it as a CUDA module and places every function's
@@ -137,13 +141,18 @@ val capability : t -> Rig_cuda_abi.t
       | [maps_host]      | [CU_DEVICE_ATTRIBUTE_HOST_REGISTER_SUPPORTED]    |
       | [host_addresses] | [false]                                          |
       | [capability]     | {!Rig_cuda_abi.t} ({!val-capability})            |
-      | [word]           | Eight bytes of page-locked host memory           |
+      | [word]           | The word [make] was given, registered            |
     }
 
     [arch] is ["sm_89"] for compute capability 8.9. ["COMPUTE:0"] runs
     [Fill], [Copy] and [Launch], and ["COPY:0"] runs [Fill] and [Copy]. The
     streams write the word, and the host does not address [Device] memory.
-    The word holds an unsigned 64-bit integer in the host's byte order.
+    The word holds an unsigned 64-bit integer in the host's byte order, and
+    the device's values start after the value it holds when [make] returns.
+    On a GPU that registers no host memory, or when the word [make] was
+    given lies outside rig's array, the word is eight bytes of the device's
+    own page-locked memory, which starts at that value and has no host
+    address in its location: rig reads it through {!signaled}.
 
     The streams wait on any aligned 64-bit word the device's work addresses,
     whoever writes it. A submission's waits go to its stream in batches, as
@@ -370,8 +379,14 @@ val capability : t -> Rig_cuda_abi.t
     CUDA signals no fault, so after one the GPU's next open raises the word
     to the last value, and until then the device does not count as
     stopped; that open's [make] answers the fault's error. The stop frees
-    [g]'s C state but for the word and what reading it needs, which stay
-    for the process. Compiled code may still call the [symbol] and [graph]
+    [g]'s C state but for what reading the word needs, which stays with the
+    device. Once the word shows the last value and the stop has returned, no
+    work of [g] writes it: a stream's write of the last value is its last
+    command, and the stop and the next open raise the word only once both
+    streams are idle or one has met an error, after which CUDA runs none of
+    the context's queued work, as the 615 driver does (CUDA's reference
+    states only that such an error is returned to every later call).
+    Compiled code may still call the [symbol] and [graph]
     functions of {!val-capability} after {!stop}, and rig's {!free} and
     {!unload} may come after the GPU has opened again, since the device's
     modules lie in the GPU's primary context, which the process keeps. *)

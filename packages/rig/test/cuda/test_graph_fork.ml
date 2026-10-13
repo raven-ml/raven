@@ -44,10 +44,35 @@ let inherited_graphs () =
       S.with_ (fun { g; _ } ->
           ignore (require_ok ((C.capability g).graph [||])))
 
+(* rig's array of words, which an open registered with CUDA, stays the
+   child's: a device the child opens takes a slot of it, and its work's
+   value reaches the word. The CUDA device the child inherited is lost. *)
+let words_in_child () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.with_ @@ fun { d; _ } ->
+  Rig_support.needs_fork ();
+  match Unix.fork () with
+  | 0 ->
+      ignore (Unix.alarm 5);
+      let m = Rig.memory_device "graph_fork:child-memory" in
+      let run = Rig.Submission.Run.make () in
+      let p = Rig.submit (Rig.Submission.make m [||]) ~run ~buffers:[||] in
+      Rig.Point.wait p;
+      Unix._exit
+        (match Rig.lost d with
+        | Some "forked" when Rig.signaled m = Rig.Point.value p -> 0
+        | _ -> 1)
+  | pid -> (
+      match Unix.waitpid [] pid with
+      | _, WEXITED n -> equal int ~msg:"the child's exit" 0 n
+      | _, (WSIGNALED n | WSTOPPED n) ->
+          failf "the child stopped on signal %d" n)
+
 let () =
   exit
     (run "rig_cuda.graph_fork"
        [
          test "a child destroys no graph inherited from its parent"
            inherited_graphs;
+         test "a child's devices use rig's array of words" words_in_child;
        ])

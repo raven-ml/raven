@@ -143,7 +143,9 @@ type registration = { start : int; bytes : int; mutable maps : int }
 type kind =
   | Device
   | Host
-  | Word
+  | Word (* rig's, in its registered array *)
+  | Own_word (* the device's own: its GPU registers no host memory, or the
+               word it was given lies outside rig's array *)
   | Locked of registration option (* [None]: another owner's *)
   | Peer of kind
 
@@ -157,7 +159,7 @@ type region = {
 let region home kind ~address ~handle = { kind; address; handle; home }
 
 let rec on_host = function
-  | Device -> false
+  | Device | Own_word -> false
   | Host | Word | Locked _ -> true
   | Peer k -> on_host k
 
@@ -188,12 +190,13 @@ type t = {
   cap : Rig_cuda_abi.t;
 }
 
-external open_device : int -> int = "caml_rig_cuda_open"
+external open_device : int -> nativeint -> bool -> int = "caml_rig_cuda_open"
 external context_of : int -> int = "caml_rig_cuda_context" [@@noalloc]
 external stop_device : int -> bool = "caml_rig_cuda_stop"
 external ended : int -> int = "caml_rig_cuda_ended"
 external unload_module : int -> int -> int = "caml_rig_cuda_unload"
 external word_address : int -> int = "caml_rig_cuda_word" [@@noalloc]
+external word_at : int -> int = "caml_rig_cuda_word_at" [@@noalloc]
 external enable_peer : int -> int -> int -> int -> int = "caml_rig_cuda_peer"
 
 let count () =
@@ -403,7 +406,23 @@ let enable_peers (g : gpus) i c =
 let compute = { Rig_edge.name = "COMPUTE:0"; runs = [ Fill; Copy; Launch ] }
 let copy = { Rig_edge.name = "COPY:0"; runs = [ Fill; Copy ] }
 
-let open_ i =
+(* The registrations [map_host] made, with the regions over each. *)
+let registry : registration list ref = ref []
+let registry_lock = Mutex.create ()
+
+(* rig's array of timeline words: its address and its bytes. *)
+external words : unit -> int * int = "caml_rig_edge_words"
+
+(* Notes the registration of rig's array of words, which the first device
+   that opened made and the process keeps: a range [map_host] maps inside it
+   counts against it, and it is never given back. *)
+let note_words () =
+  let start, bytes = words () in
+  Mutex.protect registry_lock @@ fun () ->
+  if not (List.exists (fun e -> e.start = start) !registry) then
+    registry := { start; bytes; maps = 1 } :: !registry
+
+let open_ ~word i =
   if i < 0 then invalid_argf "Rig_cuda.gpu: GPU %d is negative" i;
   let* g = find_gpus () in
   let n = Array.length g.devices in
@@ -435,7 +454,10 @@ let open_ i =
     | _, _, major, minor, registers, watchdog, budget ->
         let held = g.held.(i) in
         let* () = claim held in
-        let self = open_device d in
+        let start, bytes = words () in
+        let w = Nativeint.to_int word in
+        let own = registers = 0 || w < start || w + 8 > start + bytes in
+        let self = open_device d word own in
         if self < 0 then begin
           Atomic.set held unheld;
           Error
@@ -444,8 +466,11 @@ let open_ i =
         else begin
           let context = context_of self in
           enable_peers g i context;
-          let w = word_address self in
-          let word = region i Word ~address:w ~handle:w in
+          if not own then note_words ();
+          let kind = if own then Own_word else Word in
+          let word =
+            region i kind ~address:(word_at self) ~handle:(word_address self)
+          in
           let arch = strf "sm_%d%d" major minor in
           let images = Atomic.make [] in
           let pending = g.pending.(i) in
@@ -539,9 +564,6 @@ let map_peer g _ (r : region) =
   if not (on_host kind || addresses g r.home) then None
   else Some { r with kind = Peer kind }
 
-(* The registrations [map_host] made, with the regions over each. *)
-let registry : registration list ref = ref []
-let registry_lock = Mutex.create ()
 let page_locking n a = strf "page-locking %d bytes at 0x%x" n a
 
 (* A region over the locked memory at [a], at the address CUDA's work reaches
@@ -600,7 +622,7 @@ let free g (r : region) =
         registry := List.filter (fun e' -> e' != e) !registry;
         ignore (lock g.context false e.start 0 : int)
       end
-  | Word | Locked None | Peer _ -> ()
+  | Word | Own_word | Locked None | Peer _ -> ()
 
 (* Images *)
 
@@ -732,5 +754,5 @@ let gpu i : t Rig_edge.opener =
   {
     name = device_name i;
     driver = (module Driver);
-    make = (fun ~word:_ -> open_ i);
+    make = (fun ~word -> open_ ~word i);
   }

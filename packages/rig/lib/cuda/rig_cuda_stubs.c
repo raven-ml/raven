@@ -108,6 +108,7 @@ enum {
   CUDA_ERROR_INVALID_VALUE = 1,
   CUDA_ERROR_OUT_OF_MEMORY = 2,
   CUDA_ERROR_NOT_READY = 600,
+  CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED = 712,
   CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK = 0,
   CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES = 1,
   CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES = 8,
@@ -391,17 +392,20 @@ struct stamp {
   uint64_t *times;
 };
 
-/* A device: its context, its two streams and the events that order them,
-   and its timeline word, whose host address CUDA's work also uses
-   (cuMemHostAlloc's memory, not write-combined, under unified
-   addressing). A value ends on one stream, after its work on both; a value
-   that starts on the other stream waits for that end. It lives from the
-   open to the stop; the word lives for the process. The context is the
-   GPU's primary context, which the process keeps: memory, modules and
-   graphs are the context's, and outlive the device. */
+/* A device: its context, its two streams and the events that order them, and
+   its timeline word: the word rig gave its open, in rig's array, which every
+   context reaches registered ([register_words]), or, on a GPU that registers no
+   host memory or for a word outside the array, a word of its own from
+   cuMemHostAlloc, whose value rig reads through [signaled]. [word] is its host
+   address and [word_at] the address CUDA's work writes. A value ends on one
+   stream, after its work on both; a value that starts on the other stream waits
+   for that end. It lives from the open to the stop. The context is the GPU's
+   primary context, which the process keeps: memory, modules and graphs are the
+   context's, and outlive the device. */
 struct device {
   CUdevice device;
   CUcontext context;
+  int keeps; /* its open registered rig's array: its context stays */
   CUstream streams[2]; /* COMPUTE:0, COPY:0 */
   CUevent done[2];     /* the latest part of a stream another one waits for */
   CUevent ended;       /* the end of the last value, for the other stream */
@@ -418,6 +422,7 @@ struct device {
   uint64_t converted, unconverted, last_end;
   unsigned int groups[3], threads[3]; /* a launch's most along x, y, z */
   _Atomic uint64_t *word;
+  CUdeviceptr word_at;
   uint64_t last;       /* the last value submit received */
   uint64_t committed;  /* the last value written to the word */
   int tail;            /* the stream the last value ended on */
@@ -541,12 +546,51 @@ static CUresult stamp_events(struct stamp *t) {
   return s;
 }
 
-/* Makes [d]'s word, streams and events, or none of them. The events that
-   order the streams record no timing, the form CUDA waits on fastest. */
+/* Whether rig's array of timeline words is registered. The first device
+   that opens registers it, PORTABLE so that every context reaches it, in
+   its GPU's primary context, which the process keeps from then on, even if
+   that open fails ([keeps]): the registration lives as long as that
+   context. A second registration, from an open that raced the first,
+   answers that the memory is registered. */
+static _Atomic int words_registered;
+
+static CUresult register_words(struct device *d) {
+  if (atomic_load_explicit(&words_registered, memory_order_acquire))
+    return CUDA_SUCCESS;
+  CUresult s = p_cuMemHostRegister_v2(rig_words(), RIG_WORDS_BYTES,
+                                      CU_MEMHOST_PORTABLE_DEVICEMAP);
+  if (s == CUDA_SUCCESS) d->keeps = 1;
+  if (s == CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED) s = CUDA_SUCCESS;
+  if (s == CUDA_SUCCESS)
+    atomic_store_explicit(&words_registered, 1, memory_order_release);
+  return s;
+}
+
+/* Makes [d]'s word, on [slot] in rig's array, or of its own if [own], with
+   the value [slot] holds; or none. */
+static CUresult word_start(struct device *d, _Atomic uint64_t *slot, int own) {
+  uint64_t base = atomic_load_explicit(slot, memory_order_acquire);
+  void *word = slot;
+  CUresult s = own ? p_cuMemHostAlloc(&word, sizeof(uint64_t),
+                                      CU_MEMHOST_PORTABLE_DEVICEMAP)
+                   : register_words(d);
+  CUdeviceptr at = 0;
+  if (s == CUDA_SUCCESS) s = p_cuMemHostGetDevicePointer_v2(&at, word, 0);
+  if (s != CUDA_SUCCESS) {
+    if (own && word != slot) p_cuMemFreeHost(word);
+    return s;
+  }
+  d->word = word;
+  d->word_at = at;
+  if (own) atomic_store_explicit(d->word, base, memory_order_relaxed);
+  d->last = d->committed = base;
+  return s;
+}
+
+/* Makes [d]'s streams and events, or none of them. The events that order
+   the streams record no timing, the form CUDA waits on fastest. */
 static CUresult start(struct device *d) {
-  void *word = NULL;
-  CUresult s = p_cuMemHostAlloc(&word, sizeof(uint64_t),
-                                CU_MEMHOST_PORTABLE_DEVICEMAP);
+  CUresult s = CUDA_SUCCESS;
   for (int q = 0; q < 2 && s == CUDA_SUCCESS; q++) {
     s = p_cuStreamCreate(&d->streams[q], CU_STREAM_NON_BLOCKING);
     if (s == CUDA_SUCCESS)
@@ -557,13 +601,17 @@ static CUresult start(struct device *d) {
   if (s == CUDA_SUCCESS)
     s = p_cuEventCreate(&d->waited, CU_EVENT_DISABLE_TIMING);
   if (s == CUDA_SUCCESS) s = clock_start(d);
-  if (s == CUDA_SUCCESS) {
-    d->word = word;
-    atomic_store_explicit(d->word, 0, memory_order_relaxed);
-    return s;
-  }
-  destroy(d);
-  if (word != NULL) p_cuMemFreeHost(word);
+  if (s != CUDA_SUCCESS) destroy(d);
+  return s;
+}
+
+/* Makes [d]'s streams and events, then its word ([word_start]), or none of
+   them. */
+static CUresult begin(struct device *d, _Atomic uint64_t *slot, int own) {
+  CUresult s = start(d);
+  if (s != CUDA_SUCCESS) return s;
+  s = word_start(d, slot, own);
+  if (s != CUDA_SUCCESS) destroy(d);
   return s;
 }
 
@@ -586,11 +634,15 @@ static CUresult limits(struct device *d) {
   return s;
 }
 
-/* Opens a device on the primary context of the CUdevice [v_device]: its
+/* Opens a device on the primary context of the CUdevice [v_device], with
+   the word rig gave at [v_word], or a word of its own if [v_own]: its
    state's address, or CUDA's status negated. A device that does not open
-   gives back its retain of the context. Releases the runtime: CUDA may
-   create the context. */
-value caml_rig_cuda_open(value v_device) {
+   gives back its retain of the context. The word comes last, so that a
+   registration is made in a context the process keeps. Releases the
+   runtime: CUDA may create the context. */
+value caml_rig_cuda_open(value v_device, value v_word, value v_own) {
+  _Atomic uint64_t *slot = (_Atomic uint64_t *)Nativeint_val(v_word);
+  int own = Bool_val(v_own);
   struct device *d = calloc(1, sizeof *d);
   struct edge *e = calloc(1, sizeof *e);
   int flush = 0;
@@ -607,8 +659,9 @@ value caml_rig_cuda_open(value v_device) {
   if (s == CUDA_SUCCESS)
     s = p_cuDevicePrimaryCtxRetain(&d->context, d->device);
   if (s == CUDA_SUCCESS) {
-    IN_CONTEXT(s, d->context, start(d));
-    if (s != CUDA_SUCCESS) p_cuDevicePrimaryCtxRelease_v2(d->device);
+    IN_CONTEXT(s, d->context, begin(d, slot, own));
+    if (s != CUDA_SUCCESS && !d->keeps)
+      p_cuDevicePrimaryCtxRelease_v2(d->device);
   }
   if (s != CUDA_SUCCESS) free(d), free(e);
   caml_leave_blocking_section();
@@ -1238,8 +1291,8 @@ static CUresult take_stamp(struct device *d, uint64_t v, struct stamp **t) {
 /* Writes [v] into the word after the last value's end, which follows every
    earlier value's. */
 static CUresult write_word(struct device *d, uint64_t v) {
-  CUresult e = p_cuStreamWriteValue64_v2(
-      d->streams[d->tail], (CUdeviceptr)(uintptr_t)d->word, v, 0);
+  CUresult e =
+      p_cuStreamWriteValue64_v2(d->streams[d->tail], d->word_at, v, 0);
   if (e == CUDA_SUCCESS) d->committed = v;
   return e;
 }
@@ -1405,9 +1458,14 @@ value caml_rig_cuda_signaled(value v_self) {
       atomic_load_explicit(Edge_val(v_self)->word, memory_order_acquire));
 }
 
-/* The host address of the device's word, which lives for the process. */
+/* The host address of the device's word. */
 value caml_rig_cuda_word(value v_self) {
   return Val_long((intnat)Edge_val(v_self)->word);
+}
+
+/* The address at which CUDA's work writes the device's word. */
+value caml_rig_cuda_word_at(value v_self) {
+  return Val_long((intnat)Device_val(v_self)->word_at);
 }
 
 /* The error a stream of the device met, which ended the context's work and
