@@ -273,7 +273,7 @@ let run ?(k : (module Nx_kernel.S) option) (b : Support.backend) r ops =
     | Qr f ->
         let sq, sr = ok (Shape.qr f (shape ops.(0))) in
         let q = make sq and r = make sr in
-        ([| A.Any q; A.Any r |], K.qr f ~q ~r a)
+        ([| A.Any q; A.Any r |], K.qr ~q ~r a)
     | Solve { triangle; adjoint; unit_diagonal } ->
         let rhs = A.expect dt ops.(1) in
         let dst =
@@ -826,12 +826,20 @@ let law_cpu_refuses (b : Support.backend) c =
     match c.routine with
     | Cholesky t -> K.cholesky t ~dst:(dst 0) a
     | Lu -> K.lu ~lu:(dst 0) ~pivots:(ints 1) ~perm:(ints 2) a
-    | Qr f -> K.qr f ~q:(dst 0) ~r:(dst 1) a
+    | Qr _ -> K.qr ~q:(dst 0) ~r:(dst 1) a
     | Solve { triangle; adjoint; unit_diagonal } ->
         K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst:(dst 0) a
           (zeros c.b)
   in
-  let fit = shapes c = Ok c.dsts in
+  (* A QR's destinations fit as either factors' shapes. *)
+  let fit =
+    match c.routine with
+    | Qr _ ->
+        List.exists
+          (fun f -> shapes { c with routine = Qr f } = Ok c.dsts)
+          [ Nx_kernel.Reduced; Complete ]
+    | _ -> shapes c = Ok c.dsts
+  in
   cover "fits" fit;
   cover "misfits" (not fit);
   equal answer (if fit then A.Done else A.Shape_mismatch) got
@@ -863,9 +871,9 @@ let test_cpu_refusals (b : Support.backend) () =
     dst 7.;
   let tall = A.of_array D.Float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let q = sentinel D.Float32 7. [| 3; 2 |] in
-  refuses ~msg:"complete factors into reduced shapes" float_exact
+  refuses ~msg:"a reduced q with a complete r" float_exact
     A.Shape_mismatch
-    (K.qr Complete ~q ~r:(sentinel D.Float32 7. [| 2; 2 |]) tall)
+    (K.qr ~q ~r:(sentinel D.Float32 7. [| 3; 2 |]) tall)
     q 7.;
   let c64 = A.of_array D.Complex64 [| 2; 2 |] (Array.make 4 Complex.one) in
   let w () = A.create Rig.host D.Complex64 [| 2 |] in
@@ -874,16 +882,17 @@ let test_cpu_refusals (b : Support.backend) () =
       A.Declined got
   in
   let sq () = A.create Rig.host D.Complex64 [| 2; 2 |] in
-  declines ~msg:"svd" (K.svd Reduced ~u:(sq ()) ~s:(w ()) ~vh:(sq ()) c64);
-  declines ~msg:"svd_values" (K.svd_values ~s:(w ()) c64);
+  declines ~msg:"svd" (K.svd ~s:(w ()) ~vectors:(~u:(sq ()), ~vh:(sq ())) c64);
+  declines ~msg:"svd's values" (K.svd ~s:(w ()) c64);
   declines ~msg:"eigh" (K.eigh ~w:(w ()) ~v:(sq ()) c64);
-  declines ~msg:"eigh_values" (K.eigh_values ~w:(w ()) c64);
+  declines ~msg:"eigh's values" (K.eigh ~w:(w ()) c64);
   declines ~msg:"eig" (K.eig ~w:(w ()) ~v:(sq ()) c64);
-  declines ~msg:"eig_values" (K.eig_values ~w:(w ()) c64)
+  declines ~msg:"eig's values" (K.eig ~w:(w ()) c64)
 
 (* Every routine answers Wrong_dtype at the dtypes routines do not take,
-   and computes or declines float32, float64, complex64 and complex128. [eig]
-   takes complex numbers alone by its type. *)
+   and computes or declines float32, float64, complex64 and complex128.
+   [eig] answers Wrong_dtype also for results of another precision than
+   [a]'s. *)
 let test_dtypes (b : Support.backend) () =
   let module K = (val b.kernels) in
   List.iter
@@ -897,6 +906,22 @@ let test_dtypes (b : Support.backend) () =
       let positions s = A.create b.device D.Int64 s in
       let sq = [| 2; 2 |] in
       let a = x sq in
+      let wide = match dt with D.Float64 | D.Complex128 -> true | _ -> false in
+      let eig (type c) (c : (Complex.t, c) D.t) =
+        let z s = A.create b.device c s in
+        let paired = wide = (D.Any c = D.Any D.Complex128) in
+        let check ~msg got =
+          if paired && takes then begin
+            if got = A.Wrong_dtype then failf "%s answered Wrong_dtype" msg
+          end
+          else equal ~msg answer A.Wrong_dtype got
+        in
+        let msg = Format.asprintf "eig of %a into %a" D.pp dt D.pp c in
+        check ~msg (K.eig ~w:(z [| 2 |]) ~v:(z sq) a);
+        check ~msg:(msg ^ ", values") (K.eig ~w:(z [| 2 |]) a)
+      in
+      eig D.Complex64;
+      eig D.Complex128;
       List.iter
         (fun (name, call) ->
           let msg = Format.asprintf "%s of %a" name D.pp dt in
@@ -909,12 +934,13 @@ let test_dtypes (b : Support.backend) () =
             fun () ->
               K.lu ~lu:(x sq) ~pivots:(positions [| 2 |])
                 ~perm:(positions [| 2 |]) a );
-          ("qr", fun () -> K.qr Reduced ~q:(x sq) ~r:(x sq) a);
+          ("qr", fun () -> K.qr ~q:(x sq) ~r:(x sq) a);
           ( "svd",
-            fun () -> K.svd Reduced ~u:(x sq) ~s:(x [| 2 |]) ~vh:(x sq) a );
-          ("svd_values", fun () -> K.svd_values ~s:(x [| 2 |]) a);
+            fun () ->
+              K.svd ~s:(x [| 2 |]) ~vectors:(~u:(x sq), ~vh:(x sq)) a );
+          ("svd's values", fun () -> K.svd ~s:(x [| 2 |]) a);
           ("eigh", fun () -> K.eigh ~w:(x [| 2 |]) ~v:(x sq) a);
-          ("eigh_values", fun () -> K.eigh_values ~w:(x [| 2 |]) a);
+          ("eigh's values", fun () -> K.eigh ~w:(x [| 2 |]) a);
           ( "solve_triangular",
             fun () ->
               K.solve_triangular Lower ~adjoint:false ~unit_diagonal:false

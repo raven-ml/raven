@@ -2139,7 +2139,8 @@ module Prim : sig
             from [n/2 + 1] bins; [dtype] has [x]'s precision. *)
 
   (** Each constructor is one routine of {!Nx_kernel.S}, its results in that
-      routine's order, each of [a]'s dtype but [Lu]'s positions. *)
+      routine's order, each of [a]'s dtype but [Lu]'s positions and [Eig]'s
+      results. *)
   type ('d, _) linalg =
     | Cholesky : {
         triangle : Nx_kernel.triangle;
@@ -2160,23 +2161,27 @@ module Prim : sig
       }
         -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg  (** [q], [r]. *)
     | Svd : {
-        factors : Nx_kernel.factors;
+        vectors :
+          ( Nx_kernel.factors,
+            ('v, 's, 'd) nx * ('v, 's, 'd) nx,
+            'r )
+          Nx_kernel.vectors;
         a : ('v, 's, 'd) nx;
       }
-        -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
-        (** [u], [s], [vh]. *)
-    | Svd_values : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx) linalg
-        (** [s]: [svd] without vectors. *)
-    | Eigh : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
-        (** [w], [v]. *)
-    | Eigh_values : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx) linalg
-        (** [w]: [eigh] without vectors. *)
-    | Eig :
-        (Complex.t, 's, 'd) nx
-        -> ('d, (Complex.t, 's, 'd) nx * (Complex.t, 's, 'd) nx) linalg
-        (** [w], [v]. *)
-    | Eig_values : (Complex.t, 's, 'd) nx -> ('d, (Complex.t, 's, 'd) nx) linalg
-        (** [w]: [eig] without vectors. *)
+        -> ('d, ('v, 's, 'd) nx * 'r) linalg
+        (** [s], then [u] and [vh]. *)
+    | Eigh : {
+        vectors : (unit, ('v, 's, 'd) nx, 'r) Nx_kernel.vectors;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, ('v, 's, 'd) nx * 'r) linalg  (** [w], then [v]. *)
+    | Eig : {
+        vectors : (unit, (Complex.t, 'c, 'd) nx, 'r) Nx_kernel.vectors;
+        dtype : (Complex.t, 'c) dtype;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, (Complex.t, 'c, 'd) nx * 'r) linalg
+        (** [w], then [v], of [dtype], [a]'s {!Nx_kernel.same_precision}. *)
     | Solve_triangular : {
         triangle : Nx_kernel.triangle;
         adjoint : bool;

@@ -321,13 +321,13 @@ int nx_cpu_contract_on(int acc, const nx_contract_view *v,
                        const nx_array *const *op);
 
 /* nx.cpu's matrix routines (linalg.c): each external's arguments, its
-   attributes read into C ([upper] for the triangle Upper, [complete] for
-   Complete factors), and its destinations and operands; then [threads]:
+   attributes read into C ([upper] for the triangle Upper), and its
+   destinations and operands; then [threads]:
    the matrices on one thread where [threads] is 1, on as many as the job
    gives where it is 0. The bits do not change. */
 value nx_cpu_cholesky_on(int upper, value dst, value a, int threads);
 value nx_cpu_lu_on(value lu, value pivots, value perm, value a, int threads);
-value nx_cpu_qr_on(int complete, value q, value r, value a, int threads);
+value nx_cpu_qr_on(value q, value r, value a, int threads);
 value nx_cpu_solve_triangular_on(int upper, int adjoint, int unit, value dst,
                                  value a, value b, int threads);
 

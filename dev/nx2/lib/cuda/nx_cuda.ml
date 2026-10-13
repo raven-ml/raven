@@ -295,11 +295,11 @@ let c2r ~axes:_ ~dst x =
 
 let cholesky _ ~dst:_ a = routine a
 let lu ~lu:_ ~pivots:_ ~perm:_ a = routine a
-let qr _ ~q:_ ~r:_ a = routine a
-let svd _ ~u:_ ~s:_ ~vh:_ a = routine a
-let svd_values ~s:_ a = routine a
-let eigh ~w:_ ~v:_ a = routine a
-let eigh_values ~w:_ a = routine a
-let eig ~w:_ ~v:_ _ = A.Declined
-let eig_values ~w:_ _ = A.Declined
+let qr ~q:_ ~r:_ a = routine a
+let svd ~s:_ ?vectors:_ a = routine a
+let eigh ~w:_ ?v:_ a = routine a
+let eig ~w ?v:_ a =
+  declined
+    (Nx_kernel.full_precision (A.dtype a)
+    && Nx_kernel.same_precision (A.dtype a) (A.dtype w))
 let solve_triangular _ ~adjoint:_ ~unit_diagonal:_ ~dst:_ a _ = routine a

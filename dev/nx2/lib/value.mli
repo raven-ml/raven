@@ -308,7 +308,8 @@ and ('d, _) fft =
           from [n/2 + 1] bins; [dtype] has [x]'s precision. *)
 
 (** Each constructor is one routine of {!Nx_kernel.S}, its results in that
-    routine's order, each of [a]'s dtype but [Lu]'s positions. *)
+    routine's order, each of [a]'s dtype but [Lu]'s positions and [Eig]'s
+    results. *)
 and ('d, _) linalg =
   | Cholesky : {
       triangle : Nx_kernel.triangle;
@@ -323,23 +324,27 @@ and ('d, _) linalg =
     }
       -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) linalg  (** [q], [r]. *)
   | Svd : {
-      factors : Nx_kernel.factors;
+      vectors :
+        ( Nx_kernel.factors,
+          ('v, 's, 'd) t * ('v, 's, 'd) t,
+          'r )
+        Nx_kernel.vectors;
       a : ('v, 's, 'd) t;
     }
-      -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
-      (** [u], [s], [vh]. *)
-  | Svd_values : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t) linalg
-      (** [s]: [svd] without vectors. *)
-  | Eigh : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
-      (** [w], [v]. *)
-  | Eigh_values : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t) linalg
-      (** [w]: [eigh] without vectors. *)
-  | Eig :
-      (Complex.t, 's, 'd) t
-      -> ('d, (Complex.t, 's, 'd) t * (Complex.t, 's, 'd) t) linalg
-      (** [w], [v]. *)
-  | Eig_values : (Complex.t, 's, 'd) t -> ('d, (Complex.t, 's, 'd) t) linalg
-      (** [w]: [eig] without vectors. *)
+      -> ('d, ('v, 's, 'd) t * 'r) linalg
+      (** [s], then [u] and [vh]. *)
+  | Eigh : {
+      vectors : (unit, ('v, 's, 'd) t, 'r) Nx_kernel.vectors;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, ('v, 's, 'd) t * 'r) linalg  (** [w], then [v]. *)
+  | Eig : {
+      vectors : (unit, (Complex.t, 'c, 'd) t, 'r) Nx_kernel.vectors;
+      dtype : (Complex.t, 'c) dtype;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, (Complex.t, 'c, 'd) t * 'r) linalg
+      (** [w], then [v], of [dtype], [a]'s {!Nx_kernel.same_precision}. *)
   | Solve_triangular : {
       triangle : Nx_kernel.triangle;
       adjoint : bool;

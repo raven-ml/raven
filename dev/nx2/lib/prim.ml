@@ -187,9 +187,9 @@ let routine_name : type d r. (d, r) linalg -> string = function
   | Cholesky _ -> "Cholesky"
   | Lu _ -> "Lu"
   | Qr _ -> "Qr"
-  | Svd _ | Svd_values _ -> "Svd"
-  | Eigh _ | Eigh_values _ -> "Eigh"
-  | Eig _ | Eig_values _ -> "Eig"
+  | Svd _ -> "Svd"
+  | Eigh _ -> "Eigh"
+  | Eig _ -> "Eig"
   | Solve_triangular _ -> "Solve_triangular"
 
 let linalg_operands : type d r. (d, r) linalg -> d any list = function
@@ -197,11 +197,8 @@ let linalg_operands : type d r. (d, r) linalg -> d any list = function
   | Lu a -> [ Any a ]
   | Qr { a; _ } -> [ Any a ]
   | Svd { a; _ } -> [ Any a ]
-  | Svd_values a -> [ Any a ]
-  | Eigh a -> [ Any a ]
-  | Eigh_values a -> [ Any a ]
-  | Eig a -> [ Any a ]
-  | Eig_values a -> [ Any a ]
+  | Eigh { a; _ } -> [ Any a ]
+  | Eig { a; _ } -> [ Any a ]
   | Solve_triangular { a; b; _ } -> [ Any a; Any b ]
 
 let fft_axes : type d r. (d, r) fft -> int array = function
@@ -227,11 +224,8 @@ let map_linalg : type d r.
   | Lu a -> Lu (m a)
   | Qr l -> Qr { l with a = m l.a }
   | Svd l -> Svd { l with a = m l.a }
-  | Svd_values a -> Svd_values (m a)
-  | Eigh a -> Eigh (m a)
-  | Eigh_values a -> Eigh_values (m a)
-  | Eig a -> Eig (m a)
-  | Eig_values a -> Eig_values (m a)
+  | Eigh l -> Eigh { l with a = m l.a }
+  | Eig l -> Eig { l with a = m l.a }
   | Solve_triangular l -> Solve_triangular { l with a = m l.a; b = m l.b }
 
 let name : type r. r prim -> string = function
@@ -1017,20 +1011,32 @@ let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
         invalid_argf "%s: %s does not take %s" by (routine_name l)
           (D.name (dtype x)))
     (linalg_operands l);
+  (match l with
+  | Eig { dtype = c; a; _ } when not (Nx_kernel.same_precision (dtype a) c) ->
+      invalid_argf "%s: Eig of %s into %s" by (D.name (dtype a)) (D.name c)
+  | _ -> ());
   let one r = Result.map (fun s -> [| s |]) r in
   let two r = Result.map (fun (s, s') -> [| s; s' |]) r in
   let three r = Result.map (fun (s, s', s'') -> [| s; s'; s'' |]) r in
+  let values r = Result.map (fun (s, ()) -> [| s |]) r in
+  let vectors r = Result.map (fun (s, (u, vh)) -> [| s; u; vh |]) r in
   shaped ~by
     (match l with
     | Cholesky { a; _ } -> one (Shape.cholesky (shape a))
     | Lu a -> three (Shape.lu (shape a))
     | Qr { factors; a } -> two (Shape.qr factors (shape a))
-    | Svd { factors; a } -> three (Shape.svd factors (shape a))
-    | Svd_values a -> one (Shape.svd_values (shape a))
-    | Eigh a -> two (Shape.eigh (shape a))
-    | Eigh_values a -> one (Shape.eigh_values (shape a))
-    | Eig a -> two (Shape.eig (shape a))
-    | Eig_values a -> one (Shape.eig_values (shape a))
+    | Svd { vectors = No_vectors; a } ->
+        values (Shape.svd No_vectors (shape a))
+    | Svd { vectors = Vectors f; a } ->
+        vectors (Shape.svd (Vectors f) (shape a))
+    | Eigh { vectors = No_vectors; a } ->
+        values (Shape.eigh No_vectors (shape a))
+    | Eigh { vectors = Vectors (); a } ->
+        two (Shape.eigh (Vectors ()) (shape a))
+    | Eig { vectors = No_vectors; a; _ } ->
+        values (Shape.eig No_vectors (shape a))
+    | Eig { vectors = Vectors (); a; _ } ->
+        two (Shape.eig (Vectors ()) (shape a))
     | Solve_triangular { a; b; _ } ->
         one (Shape.solve_triangular (shape a) (shape b)))
 
@@ -1144,12 +1150,14 @@ let linalg_results : type d r.
   | Cholesky { a; _ } -> one 0 (dtype a)
   | Lu a -> three (dtype a) D.Int64 D.Int64
   | Qr { a; _ } -> two (dtype a) (dtype a)
-  | Svd { a; _ } -> three (dtype a) (dtype a) (dtype a)
-  | Svd_values a -> one 0 (dtype a)
-  | Eigh a -> two (dtype a) (dtype a)
-  | Eigh_values a -> one 0 (dtype a)
-  | Eig a -> two (dtype a) (dtype a)
-  | Eig_values a -> one 0 (dtype a)
+  | Svd { vectors = No_vectors; a } -> (one 0 (dtype a), ())
+  | Svd { vectors = Vectors _; a } ->
+      let s, u = two (dtype a) (dtype a) in
+      (s, (u, one 2 (dtype a)))
+  | Eigh { vectors = No_vectors; a } -> (one 0 (dtype a), ())
+  | Eigh { vectors = Vectors (); a } -> two (dtype a) (dtype a)
+  | Eig { vectors = No_vectors; dtype; _ } -> (one 0 dtype, ())
+  | Eig { vectors = Vectors (); dtype; _ } -> two dtype dtype
   | Solve_triangular { a; _ } -> one 0 (dtype a)
 
 let results : type r.
@@ -1460,27 +1468,27 @@ let iter_linalg : type d r.
  fun f l r ->
   match (l, r) with
   | Cholesky _, x -> f x
-  | Svd_values _, x -> f x
-  | Eigh_values _, x -> f x
-  | Eig_values _, x -> f x
   | Solve_triangular _, x -> f x
+  | Svd { vectors = No_vectors; _ }, (s, ()) -> f s
+  | Eigh { vectors = No_vectors; _ }, (w, ()) -> f w
+  | Eig { vectors = No_vectors; _ }, (w, ()) -> f w
   | Lu _, (a, b, c) ->
       f a;
       f b;
       f c
-  | Svd _, (a, b, c) ->
-      f a;
-      f b;
-      f c
+  | Svd { vectors = Vectors _; _ }, (s, (u, vh)) ->
+      f s;
+      f u;
+      f vh
   | Qr _, (a, b) ->
       f a;
       f b
-  | Eigh _, (a, b) ->
-      f a;
-      f b
-  | Eig _, (a, b) ->
-      f a;
-      f b
+  | Eigh { vectors = Vectors (); _ }, (w, v) ->
+      f w;
+      f v
+  | Eig { vectors = Vectors (); _ }, (w, v) ->
+      f w;
+      f v
 
 let iter_results : type r.
     ('v 's 'd. ('v, 's, 'd) t -> unit) -> r prim -> r -> unit =

@@ -67,8 +67,7 @@
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take. The transforms decline the
     others. [cholesky], [lu], [qr] and [solve_triangular] compute them;
-    [svd], [svd_values], [eigh], [eigh_values], [eig] and [eig_values]
-    decline them. The four refuse with
+    [svd], [eigh] and [eig] decline them. The four refuse with
     [Shape_mismatch] what {!Nx_kernel.Shape} answers [Error] for and results
     of other shapes. A matrix's results are a function of its values alone, whatever
     its batch, its layout or the threads. With [γ(k) = k u / (1 - k u)],
@@ -81,8 +80,8 @@
     - [qr]: with [g = γ(k (2m + 10))], each column [a_j] has
       [‖a_j - q r_j‖₂ <= g ‖a_j‖₂], and each element of [qᴴq - I] is at most
       [g] in magnitude. [q] is the product of [k] Householder reflectors
-      [I - τ v vᴴ], its first [k] columns under [Reduced], whole under
-      [Complete], and [r]'s diagonal is real, of either sign.
+      [I - τ v vᴴ], its first [k] columns when reduced, whole when
+      complete, and [r]'s diagonal is real, of either sign.
     - [solve_triangular]: [(op a + Δ) x = b] with [|Δ| <= γ(2n) |op a|] for
       each column of [b], [op a] the triangle read, conjugate-transposed
       under [adjoint]. *)

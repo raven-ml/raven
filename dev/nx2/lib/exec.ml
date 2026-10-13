@@ -689,30 +689,30 @@ let linalg_on (type d r) ~by (l : (d, r) Value.linalg)
         (K.lu ~lu ~pivots ~perm a)
         [| A.Any lu; A.Any pivots; A.Any perm |]
         [| A.Any a |]
-  | Value.Qr { factors; a }, (q, r) ->
+  | Value.Qr { a; _ }, (q, r) ->
       let q = at q and r = at r and a = view a in
-      outcome ~by (K.qr factors ~q ~r a) [| A.Any q; A.Any r |] [| A.Any a |]
-  | Value.Svd { factors; a }, (u, s, vh) ->
-      let u = at u and s = at s and vh = at vh and a = view a in
-      outcome ~by
-        (K.svd factors ~u ~s ~vh a)
-        [| A.Any u; A.Any s; A.Any vh |]
-        [| A.Any a |]
-  | Value.Svd_values a, s ->
+      outcome ~by (K.qr ~q ~r a) [| A.Any q; A.Any r |] [| A.Any a |]
+  | Value.Svd { vectors = No_vectors; a }, (s, ()) ->
       let s = at s and a = view a in
-      outcome ~by (K.svd_values ~s a) [| A.Any s |] [| A.Any a |]
-  | Value.Eigh a, (w, v) ->
+      outcome ~by (K.svd ~s a) [| A.Any s |] [| A.Any a |]
+  | Value.Svd { vectors = Vectors _; a }, (s, (u, vh)) ->
+      let s = at s and u = at u and vh = at vh and a = view a in
+      outcome ~by
+        (K.svd ~s ~vectors:(~u, ~vh) a)
+        [| A.Any s; A.Any u; A.Any vh |]
+        [| A.Any a |]
+  | Value.Eigh { vectors = No_vectors; a }, (w, ()) ->
+      let w = at w and a = view a in
+      outcome ~by (K.eigh ~w a) [| A.Any w |] [| A.Any a |]
+  | Value.Eigh { vectors = Vectors (); a }, (w, v) ->
       let w = at w and v = at v and a = view a in
       outcome ~by (K.eigh ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
-  | Value.Eigh_values a, w ->
+  | Value.Eig { vectors = No_vectors; a; _ }, (w, ()) ->
       let w = at w and a = view a in
-      outcome ~by (K.eigh_values ~w a) [| A.Any w |] [| A.Any a |]
-  | Value.Eig a, (w, v) ->
+      outcome ~by (K.eig ~w a) [| A.Any w |] [| A.Any a |]
+  | Value.Eig { vectors = Vectors (); a; _ }, (w, v) ->
       let w = at w and v = at v and a = view a in
       outcome ~by (K.eig ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
-  | Value.Eig_values a, w ->
-      let w = at w and a = view a in
-      outcome ~by (K.eig_values ~w a) [| A.Any w |] [| A.Any a |]
   | Value.Solve_triangular { triangle; adjoint; unit_diagonal; a; b }, y ->
       let dst = at y and a = view a and b = view b in
       outcome ~by

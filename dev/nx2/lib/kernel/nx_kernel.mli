@@ -156,20 +156,28 @@ val accumulates : ('v, 's) Nx_array.Dtype.t -> bool
 type direction = Forward | Inverse
 
 val same_precision :
-  (float, 'r) Nx_array.Dtype.t -> (Complex.t, 'c) Nx_array.Dtype.t -> bool
-(** [same_precision r c] is [true] iff [r] and [c] have one precision, the
-    dtypes a real transform pairs: [float32] with [complex64], [float64]
-    with [complex128]. *)
+  ('v, 's) Nx_array.Dtype.t -> (Complex.t, 'c) Nx_array.Dtype.t -> bool
+(** [same_precision x c] is [true] iff [x] and [c] have one precision, the
+    dtypes a real transform and {!S.eig} pair: [float32] or [complex64]
+    with [complex64], [float64] or [complex128] with [complex128]. *)
 
 (** {1:matrices Matrices} *)
 
 (** The type for a square matrix's triangles, each with its diagonal. *)
 type triangle = Lower | Upper
 
-(** The type for how much of a matrix's unitary factors a routine computes,
-    for [m] rows, [n] columns and [k = min m n]: [k] columns of the left one
-    and [k] rows of the right one, or the square ones, of [m] and [n]. *)
+(** The type for how much of a matrix's unitary factors {!Shape.qr} and
+    {!Shape.svd} shape, for [m] rows, [n] columns and [k = min m n]: [k]
+    columns of the left one and [k] rows of the right one, or the square ones,
+    of [m] and [n]. A kernel reads which from its destinations' shapes. *)
 type factors = Reduced | Complete
+
+(** The type for the vectors a routine computes beside its values, ['x] their
+    results: none, or [Vectors p], [p] how much of them where the routine
+    has a choice. *)
+type ('p, 'x, _) vectors =
+  | No_vectors : ('p, 'x, unit) vectors
+  | Vectors : 'p -> ('p, 'x, 'x) vectors
 
 val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
 (** [full_precision dt] is [true] iff [dt] is [float32], [float64],
@@ -283,27 +291,17 @@ module Shape : sig
   (** [qr f a] is the shapes of [q] and [r]: [[…; m; k]] and [[…; k; n]]
       under [Reduced], [[…; m; m]] and [[…; m; n]] under [Complete]. *)
 
-  val svd : factors -> t -> (t * t * t) result
-  (** [svd f a] is the shapes of [u], [s] and [vh]: [[…; m; k]], [[…; k]] and
-      [[…; k; n]] under [Reduced], [[…; m; m]], [[…; k]] and [[…; n; n]]
-      under [Complete]. *)
+  val svd : (factors, t * t, 'r) vectors -> t -> (t * 'r) result
+  (** [svd vs a] is the shape of [s], [[…; k]], then with [Vectors f] those
+      of [u] and [vh]: [[…; m; k]] and [[…; k; n]] under [Reduced],
+      [[…; m; m]] and [[…; n; n]] under [Complete]. *)
 
-  val svd_values : t -> t result
-  (** [svd_values a] is the shape of [s]: [[…; k]]. *)
+  val eigh : (unit, t, 'r) vectors -> t -> (t * 'r) result
+  (** [eigh vs a] is the shape of [w] of [a], square, [[…; n]], then with
+      [Vectors ()] that of [v]: [a]. *)
 
-  val eigh : t -> (t * t) result
-  (** [eigh a] is the shapes of [w] and [v] of [a], square: [[…; n]] and
-      [a]. *)
-
-  val eigh_values : t -> t result
-  (** [eigh_values a] is the shape of [w] of [a], square: [[…; n]]. *)
-
-  val eig : t -> (t * t) result
-  (** [eig a] is the shapes of [w] and [v] of [a], square: [[…; n]] and
-      [a]. *)
-
-  val eig_values : t -> t result
-  (** [eig_values a] is the shape of [w] of [a], square: [[…; n]]. *)
+  val eig : (unit, t, 'r) vectors -> t -> (t * 'r) result
+  (** [eig vs a] is the shapes {!eigh} gives. *)
 
   val solve_triangular : t -> t -> t result
   (** [solve_triangular a b] is [b], [[…; n; r]], for [a] square of [n] and
@@ -545,14 +543,22 @@ module type S = sig
       fails is NaN in its own results alone. [aᴴ] is the conjugate transpose.
       Routines take the {!full_precision} dtypes; a real result of a
       complex [a], a singular value or an eigenvalue of [eigh], is complex
-      with an imaginary part of [+0]. Each kernel library states its
+      with an imaginary part of [+0]. [eig]'s results are complex of [a]'s
+      {!same_precision}, a real [a] or not. Each kernel library states its
       error bounds and the choices below leave open: [eig]'s order of
       eigenvalues; [qr]'s factors, unique only up to a unit factor per column
       of [q] and row of [r] where [r]'s diagonal has no zero, and otherwise
       from the first zero on up to an orthonormal completion; the vectors of
       [svd], [eigh] and [eig], unique only up to a unit factor where their
       value is simple and up to a unitary basis of its space where it repeats;
-      and the columns a [Complete] factor adds, any orthonormal completion. *)
+      and the columns complete factors add, any orthonormal completion.
+
+      [qr] and [svd] compute reduced or complete factors as their
+      destinations' shapes state, those {!Shape.qr} or {!Shape.svd} gives
+      for one {!factors}. Where a destination's two shapes coincide, as
+      [q]'s, [r]'s and [u]'s do for [m <= n] and [vh]'s for [m >= n], they
+      name one result: [qr]'s factors are then the same either way, and
+      [svd] reads the choice from its other factor. *)
 
   val cholesky : triangle -> dst:('v, 's) a -> ('v, 's) a -> answer
   (** [cholesky t ~dst a] stores [L] with [a = L Lᴴ] under [Lower], or
@@ -572,44 +578,33 @@ module type S = sig
       row [perm[i]] of [a]. A zero pivot stays in [U] and its column of [L] is
       not divided. *)
 
-  val qr : factors -> q:('v, 's) a -> r:('v, 's) a -> ('v, 's) a -> answer
-  (** [qr f ~q ~r a] stores [q] with orthonormal columns and the upper
-      triangular [r], [a = q r], as factors [f] ({!Shape.qr}). *)
+  val qr : q:('v, 's) a -> r:('v, 's) a -> ('v, 's) a -> answer
+  (** [qr ~q ~r a] stores [q] with orthonormal columns and the upper
+      triangular [r], [a = q r]. *)
 
   val svd :
-    factors ->
-    u:('v, 's) a ->
     s:('v, 's) a ->
-    vh:('v, 's) a ->
+    ?vectors:(u:('v, 's) a * vh:('v, 's) a) ->
     ('v, 's) a ->
     answer
-  (** [svd f ~u ~s ~vh a] stores [a = u diag s vh], [s] descending and not
-      negative, a zero one [+0], and [u] and [vh] as factors [f]
-      ({!Shape.svd}). A matrix that holds NaN or an infinity, or on which the
+  (** [svd ~s ~vectors:(~u, ~vh) a] stores [a = u diag s vh], [s] descending
+      and not negative, a zero one [+0]. Without [vectors] it stores [s]
+      alone. A matrix that holds NaN or an infinity, or on which the
       iteration does not converge, is NaN in every result. *)
 
-  val svd_values : s:('v, 's) a -> ('v, 's) a -> answer
-  (** [svd_values ~s a] stores [a]'s singular values into [s] as {!svd}
-      states them ({!Shape.svd_values}). *)
-
-  val eigh : w:('v, 's) a -> v:('v, 's) a -> ('v, 's) a -> answer
+  val eigh : w:('v, 's) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
   (** [eigh ~w ~v a] stores the eigenvalues of [a], square and Hermitian as
       its lower triangle and the real parts of its diagonal name it, which
       alone are read, ascending into [w], and orthonormal columns [v] with
-      [a v = v diag w]. NaN as for [svd], over what is read. *)
-
-  val eigh_values : w:('v, 's) a -> ('v, 's) a -> answer
-  (** [eigh_values ~w a] stores [a]'s eigenvalues into [w] as {!eigh} states
-      them. *)
+      [a v = v diag w]. Without [v] it stores [w] alone. NaN as for [svd],
+      over what is read. *)
 
   val eig :
-    w:(Complex.t, 's) a -> v:(Complex.t, 's) a -> (Complex.t, 's) a -> answer
+    w:(Complex.t, 'c) a -> ?v:(Complex.t, 'c) a -> ('v, 's) a -> answer
   (** [eig ~w ~v a] stores the eigenvalues of [a], square, into [w], and
-      columns [v] of unit norm with [a v = v diag w]. NaN as for [svd]. *)
-
-  val eig_values : w:(Complex.t, 's) a -> (Complex.t, 's) a -> answer
-  (** [eig_values ~w a] stores [a]'s eigenvalues into [w] as {!eig} states
-      them. *)
+      columns [v] of unit norm with [a v = v diag w]. Without [v] it stores
+      [w] alone. NaN as for [svd]. It answers [Wrong_dtype] unless [w] and
+      [v] are of [a]'s {!same_precision}. *)
 
   val solve_triangular :
     triangle ->

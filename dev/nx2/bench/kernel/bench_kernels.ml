@@ -795,7 +795,7 @@ let linalg_rows =
       (fun (module K : Nx_kernel.S) a ->
         let q, r = Result.get_ok (Nx_kernel.Shape.qr Reduced (shape a)) in
         let q = like a q and r = like a r in
-        fun () -> K.qr Reduced ~q ~r a)
+        fun () -> K.qr ~q ~r a)
       dt n ~count:(8 * n * n * n / 3)
   in
   let solve n r =

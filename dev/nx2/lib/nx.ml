@@ -2850,26 +2850,25 @@ module Prim = struct
       }
         -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
     | Svd : {
-        factors : Nx_kernel.factors;
+        vectors :
+          ( Nx_kernel.factors,
+            ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t,
+            'r )
+          Nx_kernel.vectors;
         a : ('v, 's, 'd) Value.t;
       }
-        -> ( 'd,
-             ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t
-           )
-           linalg
-    | Svd_values : ('v, 's, 'd) Value.t -> ('d, ('v, 's, 'd) Value.t) linalg
-    | Eigh :
-        ('v, 's, 'd) Value.t
-        -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
-    | Eigh_values : ('v, 's, 'd) Value.t -> ('d, ('v, 's, 'd) Value.t) linalg
-    | Eig :
-        (Complex.t, 's, 'd) Value.t
-        -> ( 'd,
-             (Complex.t, 's, 'd) Value.t * (Complex.t, 's, 'd) Value.t )
-           linalg
-    | Eig_values :
-        (Complex.t, 's, 'd) Value.t
-        -> ('d, (Complex.t, 's, 'd) Value.t) linalg
+        -> ('d, ('v, 's, 'd) Value.t * 'r) linalg
+    | Eigh : {
+        vectors : (unit, ('v, 's, 'd) Value.t, 'r) Nx_kernel.vectors;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ('d, ('v, 's, 'd) Value.t * 'r) linalg
+    | Eig : {
+        vectors : (unit, (Complex.t, 'c, 'd) Value.t, 'r) Nx_kernel.vectors;
+        dtype : (Complex.t, 'c) dtype;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ('d, (Complex.t, 'c, 'd) Value.t * 'r) linalg
     | Solve_triangular : {
         triangle : Nx_kernel.triangle;
         adjoint : bool;

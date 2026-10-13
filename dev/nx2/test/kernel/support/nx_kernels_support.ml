@@ -106,7 +106,6 @@ module Serial = struct
     Nx_array.answer = "nx_kernels_support_serial_lu"
 
   external qr :
-    Nx_kernel.factors ->
     q:('v, 's) Nx_array.t ->
     r:('v, 's) Nx_array.t ->
     ('v, 's) Nx_array.t ->

@@ -77,10 +77,10 @@ enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR };
 typedef enum { LOWER, UPPER, UNIT_LOWER, UNIT_UPPER, ADJOINT_LOWER } solve;
 
 /* A call: its routine and attributes, 0 where it has none: [upper] for the
-   triangle Upper, [complete] for Complete factors, [adjoint] and [unit]
-   for a solve's; its operand's [m] rows and [n] columns and, for a solve,
-   the right-hand sides' count [r]; its arrays, the operands then the
-   results, whose first [batch] axes are the batch. */
+   triangle Upper, [complete] for complete factors, which q's shape states,
+   [adjoint] and [unit] for a solve's; its operand's [m] rows and [n]
+   columns and, for a solve, the right-hand sides' count [r]; its arrays,
+   the operands then the results, whose first [batch] axes are the batch. */
 typedef struct {
   int routine, dt, w, upper, complete, adjoint, unit;
   int64_t m, n, r, matrices, per; /* per unit of the job */
@@ -303,6 +303,15 @@ static int results(const call *c, const int64_t *x, int xr, const int64_t *z,
   }
 }
 
+/* Whether [q], a QR's left factor for an operand of shape [x] of rank
+   [xr], is complete: as many columns as the operand has rows. Where the
+   operand has no more rows than columns, both factors have that shape. */
+static int complete(value q, const int64_t *x, int xr) {
+  int64_t d[2 * NX_MAX_RANK], off;
+  int r = nx_array_layout(q, d, &off);
+  return xr >= 2 && r >= 1 && d[r - 1] == x[xr - 2];
+}
+
 /* Whether the array [v] has the shape [s] of rank [r]. */
 static int has_shape(value v, const int64_t *s, int r) {
   int64_t d[2 * NX_MAX_RANK], off;
@@ -325,6 +334,7 @@ static value run(call c, const value *arrays, int threads) {
   int ranks[3];
   int xr = nx_array_layout(arrays[0], x, &off);
   int zr = solve ? nx_array_layout(arrays[1], z, &off) : 0;
+  if (c.routine == QR) c.complete = complete(arrays[1], x, xr);
   if (!results(&c, x, xr, z, zr, y, ranks)) return Val_int(NX_SHAPE);
   for (int j = 0; j < c.nres; j++)
     if (!has_shape(arrays[c.nops + j], y[j], ranks[j]))
@@ -397,11 +407,10 @@ value nx_cpu_lu_on(value lu, value pivots, value perm, value a, int threads) {
   CAMLreturn(run((call){.routine = LU}, arrays, threads));
 }
 
-value nx_cpu_qr_on(int complete, value q, value r, value a, int threads) {
+value nx_cpu_qr_on(value q, value r, value a, int threads) {
   CAMLparam3(q, r, a);
   value arrays[] = {a, q, r};
-  CAMLreturn(
-      run((call){.routine = QR, .complete = complete}, arrays, threads));
+  CAMLreturn(run((call){.routine = QR}, arrays, threads));
 }
 
 value nx_cpu_solve_triangular_on(int upper, int adjoint, int unit, value dst,
@@ -424,8 +433,8 @@ value nx_cpu_lu(value lu, value pivots, value perm, value a) {
   return nx_cpu_lu_on(lu, pivots, perm, a, 0);
 }
 
-value nx_cpu_qr(value factors, value q, value r, value a) {
-  return nx_cpu_qr_on(Int_val(factors) == NX_FACTORS_COMPLETE, q, r, a, 0);
+value nx_cpu_qr(value q, value r, value a) {
+  return nx_cpu_qr_on(q, r, a, 0);
 }
 
 value nx_cpu_solve_triangular(value triangle, value adjoint, value unit,

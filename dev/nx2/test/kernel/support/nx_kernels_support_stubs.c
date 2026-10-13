@@ -109,8 +109,8 @@ value nx_kernels_support_serial_lu(value lu, value pivots, value perm,
   return nx_cpu_lu_on(lu, pivots, perm, a, 1);
 }
 
-value nx_kernels_support_serial_qr(value f, value q, value r, value a) {
-  return nx_cpu_qr_on(Int_val(f) == NX_FACTORS_COMPLETE, q, r, a, 1);
+value nx_kernels_support_serial_qr(value q, value r, value a) {
+  return nx_cpu_qr_on(q, r, a, 1);
 }
 
 value nx_kernels_support_serial_solve_triangular(value t, value adjoint,

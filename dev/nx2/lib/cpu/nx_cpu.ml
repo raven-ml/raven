@@ -294,7 +294,6 @@ external lu :
   Nx_array.answer = "nx_cpu_lu"
 
 external qr :
-  Nx_kernel.factors ->
   q:('v, 's) Nx_array.t ->
   r:('v, 's) Nx_array.t ->
   ('v, 's) Nx_array.t ->
@@ -312,9 +311,9 @@ external solve_triangular :
 
 (* nx.cpu computes no decomposition by iteration. *)
 let takes a = Nx_kernel.full_precision (Nx_array.dtype a)
-let svd _ ~u:_ ~s:_ ~vh:_ a = declined (takes a)
-let svd_values ~s:_ a = declined (takes a)
-let eigh ~w:_ ~v:_ a = declined (takes a)
-let eigh_values ~w:_ a = declined (takes a)
-let eig ~w:_ ~v:_ a = declined (takes a)
-let eig_values ~w:_ a = declined (takes a)
+let svd ~s:_ ?vectors:_ a = declined (takes a)
+let eigh ~w:_ ?v:_ a = declined (takes a)
+let eig ~w ?v:_ a =
+  declined
+    (takes a
+    && Nx_kernel.same_precision (Nx_array.dtype a) (Nx_array.dtype w))

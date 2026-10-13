@@ -235,10 +235,12 @@ let test_admits () =
     (Shape.c2r ~axes:[| 0 |] ~n:(big + 2) [| (big / 2) + 2 |]);
   let svd a =
     of_shapes
-      (Result.map (fun (u, s, vh) -> [ u; s; vh ]) (Shape.svd Complete a))
+      (Result.map
+         (fun (s, (u, vh)) -> [ s; u; vh ])
+         (Shape.svd (Vectors Complete) a))
   in
   equal ~msg:"square vectors within max_numel" shapes_t
-    (Ok [ [ k / 2; k / 2 ]; [ 0 ]; [ 0; 0 ] ])
+    (Ok [ [ 0 ]; [ k / 2; k / 2 ]; [ 0; 0 ] ])
     (svd [| k / 2; 0 |]);
   equal ~msg:"square vectors past max_numel" shapes_t misfit
     (svd [| 0; k |]);
@@ -724,38 +726,28 @@ let test_fft_refuses () =
   fits ~msg:"one bin is no point" [ 2; 0 ]
     (Shape.c2r ~axes:[| 1 |] ~n:0 [| 2; 1 |])
 
-type real = Real : (float, 'r) D.t -> real
 type complex = Complex : (Complex.t, 'c) D.t -> complex
 
-(* The doc's pairs: float32 with complex64, float64 with complex128. *)
+(* The doc's pairs: float32 or complex64 with complex64, float64 or
+   complex128 with complex128. *)
 let test_same_precision () =
-  let reals =
-    D.
-      [
-        Real Float64;
-        Real Float32;
-        Real Float16;
-        Real Bfloat16;
-        Real Float8_e4m3fn;
-        Real Float8_e5m2;
-        Real Float4_e2m1fn;
-      ]
-  in
   List.iter
-    (fun (Real r) ->
+    (fun (D.Any x) ->
       List.iter
         (fun (Complex c) ->
           let want =
-            match (r, c) with
-            | D.Float32, D.Complex64 | D.Float64, D.Complex128 -> true
+            match (x, c) with
+            | (D.Float32 | D.Complex64), D.Complex64
+            | (D.Float64 | D.Complex128), D.Complex128 ->
+                true
             | _ -> false
           in
           equal
-            ~msg:(D.name r ^ " with " ^ D.name c)
+            ~msg:(D.name x ^ " with " ^ D.name c)
             bool want
-            (Nx_kernel.same_precision r c))
+            (Nx_kernel.same_precision x c))
         [ Complex D.Complex64; Complex D.Complex128 ])
-    reals
+    D.all
 
 (* Matrices *)
 
@@ -763,12 +755,9 @@ type routine =
   | Cholesky
   | Lu
   | Qr of Nx_kernel.factors
-  | Svd of Nx_kernel.factors
-  | Svd_values
-  | Eigh
-  | Eigh_values
-  | Eig
-  | Eig_values
+  | Svd of Nx_kernel.factors option (* [Some f]: with vectors [f]. *)
+  | Eigh of bool (* [true]: with vectors. *)
+  | Eig of bool
   | Solve
 
 let routines =
@@ -777,13 +766,13 @@ let routines =
     Lu;
     Qr Reduced;
     Qr Complete;
-    Svd Reduced;
-    Svd Complete;
-    Svd_values;
-    Eigh;
-    Eigh_values;
-    Eig;
-    Eig_values;
+    Svd None;
+    Svd (Some Reduced);
+    Svd (Some Complete);
+    Eigh false;
+    Eigh true;
+    Eig false;
+    Eig true;
     Solve;
   ]
 
@@ -797,12 +786,10 @@ let pp_routine ppf r =
     | Cholesky -> "cholesky"
     | Lu -> "lu"
     | Qr f -> "qr " ^ factors f
-    | Svd f -> "svd " ^ factors f
-    | Svd_values -> "svd_values"
-    | Eigh -> "eigh"
-    | Eigh_values -> "eigh_values"
-    | Eig -> "eig"
-    | Eig_values -> "eig_values"
+    | Svd None -> "svd's values"
+    | Svd (Some f) -> "svd " ^ factors f
+    | Eigh v -> if v then "eigh" else "eigh's values"
+    | Eig v -> if v then "eig" else "eig's values"
     | Solve -> "solve_triangular")
 
 type linalg_case = { r : routine; a : int array; b : int array }
@@ -843,12 +830,13 @@ let routine r a b =
   | Cholesky -> Result.map one (Shape.cholesky a)
   | Lu -> Result.map (fun (l, p, q) -> [ l; p; q ]) (Shape.lu a)
   | Qr f -> Result.map (fun (q, r) -> [ q; r ]) (Shape.qr f a)
-  | Svd f -> Result.map (fun (u, s, vh) -> [ u; s; vh ]) (Shape.svd f a)
-  | Svd_values -> Result.map one (Shape.svd_values a)
-  | Eigh -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh a)
-  | Eigh_values -> Result.map one (Shape.eigh_values a)
-  | Eig -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eig a)
-  | Eig_values -> Result.map one (Shape.eig_values a)
+  | Svd None -> Result.map (fun (s, ()) -> [ s ]) (Shape.svd No_vectors a)
+  | Svd (Some f) ->
+      Result.map (fun (s, (u, vh)) -> [ s; u; vh ]) (Shape.svd (Vectors f) a)
+  | Eigh false -> Result.map (fun (w, ()) -> [ w ]) (Shape.eigh No_vectors a)
+  | Eigh true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh (Vectors ()) a)
+  | Eig false -> Result.map (fun (w, ()) -> [ w ]) (Shape.eig No_vectors a)
+  | Eig true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eig (Vectors ()) a)
   | Solve -> Result.map one (Shape.solve_triangular a b)
 
 (* The destinations by each routine's rule, for [a] of [batch; m; n]. *)
@@ -862,12 +850,10 @@ let law_linalg c =
       let k = min m n in
       let y tail = batch @ tail in
       match c.r with
-      | (Cholesky | Eigh | Eigh_values | Eig | Eig_values | Solve) when m <> n
-        ->
-          misfit
+      | (Cholesky | Eigh _ | Eig _ | Solve) when m <> n -> misfit
       | Cholesky -> Ok [ y [ n; n ] ]
-      | Eigh | Eig -> Ok [ y [ n ]; y [ n; n ] ]
-      | Eigh_values | Eig_values -> Ok [ y [ n ] ]
+      | Eigh true | Eig true -> Ok [ y [ n ]; y [ n; n ] ]
+      | Eigh false | Eig false -> Ok [ y [ n ] ]
       | Solve ->
           let b = Array.to_list c.b in
           let rows = List.filteri (fun i _ -> i < ra - 1) b in
@@ -875,9 +861,9 @@ let law_linalg c =
       | Lu -> Ok [ y [ m; n ]; y [ k ]; y [ m ] ]
       | Qr Reduced -> Ok [ y [ m; k ]; y [ k; n ] ]
       | Qr Complete -> Ok [ y [ m; m ]; y [ m; n ] ]
-      | Svd Reduced -> Ok [ y [ m; k ]; y [ k ]; y [ k; n ] ]
-      | Svd Complete -> Ok [ y [ m; m ]; y [ k ]; y [ n; n ] ]
-      | Svd_values -> Ok [ y [ k ] ]
+      | Svd None -> Ok [ y [ k ] ]
+      | Svd (Some Reduced) -> Ok [ y [ k ]; y [ m; k ]; y [ k; n ] ]
+      | Svd (Some Complete) -> Ok [ y [ k ]; y [ m; m ]; y [ n; n ] ]
   in
   let wide =
     match List.rev (Array.to_list c.a) with n :: m :: _ -> n > m | _ -> false
@@ -927,8 +913,6 @@ let test_codes () =
       ("NX_COMBINE_MIN", tag (Min : Nx_kernel.combine));
       ("NX_TRIANGLE_LOWER", tag (Lower : Nx_kernel.triangle));
       ("NX_TRIANGLE_UPPER", tag (Upper : Nx_kernel.triangle));
-      ("NX_FACTORS_REDUCED", tag (Reduced : Nx_kernel.factors));
-      ("NX_FACTORS_COMPLETE", tag (Complete : Nx_kernel.factors));
     ]
 
 (* Contraction views *)
@@ -1203,7 +1187,7 @@ let tests =
       [
         prop "results keep the shape but along the last axis" fft_case law_fft;
         test "refuses axes and bins that do not fit" test_fft_refuses;
-        test "same_precision pairs a float with its complex"
+        test "same_precision pairs a dtype with its complex"
           test_same_precision;
       ];
     group "matrices"

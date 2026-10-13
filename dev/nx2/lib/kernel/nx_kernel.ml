@@ -42,13 +42,18 @@ let accumulates (type v s) (dt : (v, s) D.t) =
 
 type direction = Forward | Inverse
 
-let same_precision (type r c) (r : (float, r) D.t) (c : (Complex.t, c) D.t) =
-  match (r, c) with
-  | Float32, Complex64 | Float64, Complex128 -> true
+let same_precision (type v s c) (x : (v, s) D.t) (c : (Complex.t, c) D.t) =
+  match (x, c) with
+  | (Float32 | Complex64), Complex64 | (Float64 | Complex128), Complex128 ->
+      true
   | _ -> false
 
 type triangle = Lower | Upper
 type factors = Reduced | Complete
+
+type ('p, 'x, _) vectors =
+  | No_vectors : ('p, 'x, unit) vectors
+  | Vectors : 'p -> ('p, 'x, 'x) vectors
 
 let full_precision (type v s) (dt : (v, s) D.t) =
   match dt with
@@ -309,33 +314,35 @@ module Shape = struct
     let* r = admit "r" r in
     Ok (q, r)
 
-  let svd_values a =
-    let* batch, m, n = matrix a in
-    admit "singular values" (Array.append batch [| min m n |])
-
-  let svd f a =
+  let svd : type r.
+      (factors, t * t, r) vectors -> t -> (t * r, string) Stdlib.result =
+   fun vs a ->
     let* batch, m, n = matrix a in
     let y tail = Array.append batch tail in
     let k = min m n in
-    let u, vh =
-      match f with
-      | Reduced -> (y [| m; k |], y [| k; n |])
-      | Complete -> (y [| m; m |], y [| n; n |])
-    in
-    let* u = admit "u" u in
     let* s = admit "singular values" (y [| k |]) in
-    let* vh = admit "vh" vh in
-    Ok (u, s, vh)
+    (* The annotation lets each case refine [r] inside [let*]'s function. *)
+    (match vs with
+     | No_vectors -> Ok (s, ())
+     | Vectors f ->
+         let u, vh =
+           match f with
+           | Reduced -> (y [| m; k |], y [| k; n |])
+           | Complete -> (y [| m; m |], y [| n; n |])
+         in
+         let* u = admit "u" u in
+         let* vh = admit "vh" vh in
+         Ok (s, (u, vh))
+      : (t * r, string) Stdlib.result)
 
-  let eigh_values a =
+  let eigh : type r.
+      (unit, t, r) vectors -> t -> (t * r, string) Stdlib.result =
+   fun vs a ->
     let* batch, _, n = square a in
-    Ok (Array.append batch [| n |])
+    let w = Array.append batch [| n |] in
+    (match vs with No_vectors -> Ok (w, ()) | Vectors () -> Ok (w, a)
+      : (t * r, string) Stdlib.result)
 
-  let eigh a =
-    let* w = eigh_values a in
-    Ok (w, a)
-
-  let eig_values = eigh_values
   let eig = eigh
 
   let solve_triangular a b =
@@ -417,24 +424,18 @@ module type S = sig
   val c2r : axes:int array -> dst:(float, 'r) a -> (Complex.t, 'c) a -> answer
   val cholesky : triangle -> dst:('v, 's) a -> ('v, 's) a -> answer
   val lu : lu:('v, 's) a -> pivots:index -> perm:index -> ('v, 's) a -> answer
-  val qr : factors -> q:('v, 's) a -> r:('v, 's) a -> ('v, 's) a -> answer
+  val qr : q:('v, 's) a -> r:('v, 's) a -> ('v, 's) a -> answer
 
   val svd :
-    factors ->
-    u:('v, 's) a ->
     s:('v, 's) a ->
-    vh:('v, 's) a ->
+    ?vectors:(u:('v, 's) a * vh:('v, 's) a) ->
     ('v, 's) a ->
     answer
 
-  val svd_values : s:('v, 's) a -> ('v, 's) a -> answer
-  val eigh : w:('v, 's) a -> v:('v, 's) a -> ('v, 's) a -> answer
-  val eigh_values : w:('v, 's) a -> ('v, 's) a -> answer
+  val eigh : w:('v, 's) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
 
   val eig :
-    w:(Complex.t, 's) a -> v:(Complex.t, 's) a -> (Complex.t, 's) a -> answer
-
-  val eig_values : w:(Complex.t, 's) a -> (Complex.t, 's) a -> answer
+    w:(Complex.t, 'c) a -> ?v:(Complex.t, 'c) a -> ('v, 's) a -> answer
 
   val solve_triangular :
     triangle ->

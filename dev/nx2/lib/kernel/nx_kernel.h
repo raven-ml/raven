@@ -29,7 +29,4 @@ enum { NX_COMBINE_SET, NX_COMBINE_ADD, NX_COMBINE_MAX, NX_COMBINE_MIN };
 /* Nx_kernel.triangle. */
 enum { NX_TRIANGLE_LOWER, NX_TRIANGLE_UPPER };
 
-/* Nx_kernel.factors. */
-enum { NX_FACTORS_REDUCED, NX_FACTORS_COMPLETE };
-
 #endif
