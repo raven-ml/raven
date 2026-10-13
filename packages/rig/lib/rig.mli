@@ -146,8 +146,8 @@ val close : t -> unit
     collected, and [d]'s mappings of other memory ({!Buffer.borrow}) go back:
     at the stop if [d] has stopped by then, and otherwise at
     {!free_cache}[ d], a {!Buffer.create} or {!Buffer.borrow} on [d], or
-    through reclamation ({!section-reclaim}). Work that another domain submits on [d]
-    during the close may be lost with [d].
+    through reclamation ({!section-reclaim}). Work that another domain
+    submits on [d] during the close may be lost with [d].
     {ul
     {- On another machine's host ({!host_of}), lost or not, [close] first
        closes every device of that machine, including those still opening,
