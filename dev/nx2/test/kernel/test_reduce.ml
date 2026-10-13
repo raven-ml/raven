@@ -1802,6 +1802,16 @@ type spread_case = {
   seed : int;
 }
 
+(* Long ramps, whose blocks' maxima differ: a sum rescaled block by block
+   loses their bits. *)
+let spread_examples =
+  List.concat_map
+    (fun dt ->
+      List.map
+        (fun seed -> { r = Nx_kernel.Monoid Logsumexp; dt; spread = "ramp"; n = 70_000; seed })
+        [ 0; 1; 2; 3 ])
+    floats
+
 let spread_case =
   Gen.with_pp
     (fun ppf c ->
@@ -2019,8 +2029,9 @@ let cpu (b : Support.backend) =
         "Arg is exact, Logsumexp and Moments within their bounds, each the \
          same bits on one thread and from a copy"
         stat_case (run (law_stateful b));
-      prop "Logsumexp and Moments give the bits of Nx's expansions"
-        spread_case (run (law_record b));
+      prop ~examples:spread_examples
+        "Logsumexp and Moments give the bits of Nx's expansions" spread_case
+        (run (law_record b));
       test "declines Arg at bool and narrow floats, refuses an Arg of nothing"
         (fun () -> b.around (test_stateful_cases b));
     ]
