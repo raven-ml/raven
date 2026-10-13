@@ -408,16 +408,22 @@ static inline void nx_float_to_i32_run(const float *src, int32_t *dst,
 }
 
 #if defined(__AVX2__) && !defined(__aarch64__)
-/* The eight binary32 values from [src] as nx_float_to_int gives them for
-   [[lo, hi]], in int32 lanes; AVX2. [[lo, hi]] is an integer dtype's range
-   of at most 16 bits, whose bounds binary32 holds. */
-static inline __m256i nx_float_to_int_x8(const float *src, float lo,
-                                         float hi) {
+/* The eight binary32 values from [src] truncated to int32 lanes, NaN as 0
+   and those past [hi] as [hi], the largest of an integer dtype of at most
+   16 bits; AVX2. Packs that saturate then give nx_float_to_int's values
+   for the dtype's range: a value below it truncates below it, or to
+   INT32_MIN past int32's. */
+static inline __m256i nx_float_to_int_x8(const float *src, float hi) {
   __m256 x = _mm256_loadu_ps(src);
   x = _mm256_and_ps(x, _mm256_cmp_ps(x, x, _CMP_ORD_Q));
-  x = _mm256_min_ps(_mm256_max_ps(x, _mm256_set1_ps(lo)), _mm256_set1_ps(hi));
-  return _mm256_cvttps_epi32(x);
+  return _mm256_cvttps_epi32(_mm256_min_ps(x, _mm256_set1_ps(hi)));
 }
+
+/* Four vectors of int32 lanes a, b, c and d packed to bytes, first in
+   pairs, hold their groups of four lanes as a0 b0 c0 d0 a1 b1 c1 d1, since
+   a pack works within 128-bit halves: a permute of 32-bit lanes by
+   NX_PACKED_ORDER puts them back in sequence. */
+#define NX_PACKED_ORDER _mm256_setr_epi32(0, 4, 1, 5, 2, 6, 3, 7)
 #endif
 
 static inline void nx_float_to_i8_run(const float *src, int8_t *dst,
@@ -433,8 +439,18 @@ static inline void nx_float_to_i8_run(const float *src, int8_t *dst,
     vst1q_s8(dst + i, vcombine_s8(vqmovn_s16(lo), vqmovn_s16(hi)));
   }
 #elif defined(__AVX2__)
+  for (; i + 32 <= n; i += 32) {
+    __m256i a = nx_float_to_int_x8(src + i, 127.0f);
+    __m256i b = nx_float_to_int_x8(src + i + 8, 127.0f);
+    __m256i c = nx_float_to_int_x8(src + i + 16, 127.0f);
+    __m256i d = nx_float_to_int_x8(src + i + 24, 127.0f);
+    __m256i y = _mm256_packs_epi16(_mm256_packs_epi32(a, b),
+                                   _mm256_packs_epi32(c, d));
+    _mm256_storeu_si256((__m256i *)(dst + i),
+                        _mm256_permutevar8x32_epi32(y, NX_PACKED_ORDER));
+  }
   for (; i + 8 <= n; i += 8) {
-    __m256i t = nx_float_to_int_x8(src + i, -128.0f, 127.0f);
+    __m256i t = nx_float_to_int_x8(src + i, 127.0f);
     __m128i h = _mm_packs_epi32(_mm256_castsi256_si128(t),
                                 _mm256_extracti128_si256(t, 1));
     _mm_storel_epi64((__m128i *)(dst + i), _mm_packs_epi16(h, h));
@@ -457,8 +473,18 @@ static inline void nx_float_to_u8_run(const float *src, uint8_t *dst,
     vst1q_u8(dst + i, vcombine_u8(vqmovn_u16(lo), vqmovn_u16(hi)));
   }
 #elif defined(__AVX2__)
+  for (; i + 32 <= n; i += 32) {
+    __m256i a = nx_float_to_int_x8(src + i, 255.0f);
+    __m256i b = nx_float_to_int_x8(src + i + 8, 255.0f);
+    __m256i c = nx_float_to_int_x8(src + i + 16, 255.0f);
+    __m256i d = nx_float_to_int_x8(src + i + 24, 255.0f);
+    __m256i y = _mm256_packus_epi16(_mm256_packs_epi32(a, b),
+                                    _mm256_packs_epi32(c, d));
+    _mm256_storeu_si256((__m256i *)(dst + i),
+                        _mm256_permutevar8x32_epi32(y, NX_PACKED_ORDER));
+  }
   for (; i + 8 <= n; i += 8) {
-    __m256i t = nx_float_to_int_x8(src + i, 0.0f, 255.0f);
+    __m256i t = nx_float_to_int_x8(src + i, 255.0f);
     __m128i h = _mm_packs_epi32(_mm256_castsi256_si128(t),
                                 _mm256_extracti128_si256(t, 1));
     _mm_storel_epi64((__m128i *)(dst + i), _mm_packus_epi16(h, h));
