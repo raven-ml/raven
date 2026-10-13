@@ -18,8 +18,11 @@
 
    Keys sort with their positions, stably: by insertion below SMALL
    elements; into k slots where a sort keeps k of many; otherwise by LSD
-   radix of 8-bit digits, skipping a digit every key shares, from one
-   pass that counts every digit. A complex128's two keys sort by the
+   radix of 8-bit digits of each key less the slice's least, over the
+   digits their span takes, skipping a digit every key shares, from one
+   pass that counts every digit. Keys that span at most 4 bytes travel
+   above their positions in one word: integers of a narrow range sort as
+   32-bit keys whatever their width. A complex128's two keys sort by the
    imaginary part's, then stably by the real part's. Values then move once,
    by position, their bits unchanged. */
 
@@ -109,6 +112,13 @@ static uint64_t key_of(const sorter *s, const uint8_t *p) {
    part's. */
 static uint64_t real_key(const double *c) {
   return c[0] != c[0] || c[1] != c[1] ? ~0ull : key64(c[0]);
+}
+
+/* The bytes a span of keys [r] takes, at least one. */
+static int span_bytes(uint64_t r) {
+  int b = 1;
+  while (b < 8 && r >> (8 * b) != 0) b++;
+  return b;
 }
 
 /* The bytes of [dt]'s keys. */
@@ -222,22 +232,25 @@ static void radix_packed(uint64_t *t, uint64_t *t2, int64_t n, int kb) {
   if (ts != t) memcpy(t, ts, (size_t)n * sizeof *t);
 }
 
-/* A long slice's radix on the job's threads: each pass, every block of
-   items counts its digits, the counts become each block's offsets, digit
-   by digit and block by block, and every block moves its items to them.
-   Blocks keep their items' order, so the pass stays stable. Keys of at
-   most 4 bytes travel packed above their positions; longer ones beside
-   them. */
+/* A long slice's radix on the job's threads. Each block of items finds
+   the span of its keys. Then each pass, every block counts its digits, the
+   counts become each block's offsets, digit by digit and block by block,
+   and every block moves its items to them; blocks keep their items'
+   order, so the pass stays stable. Keys spanning at most 4 bytes travel
+   packed above their positions, wider ones beside them. */
 
 typedef struct {
   const sorter *s;
   const uint8_t *x; /* the slice's first element */
   uint64_t *src, *dst;
-  int64_t *psrc, *pdst; /* positions beside keys of 8 bytes, else NULL */
+  int64_t *psrc, *pdst; /* positions beside wide keys, else NULL */
   int64_t n, blocks;
   int shift;
+  uint64_t least, flip; /* subtracted from, and xored into, each key */
+  uint64_t (*span)[2];  /* each block's least and greatest key */
   int64_t (*count)[256];
-  int64_t pv, pp; /* the slice's first value and position */
+  int64_t *pos; /* the positions' destination */
+  uint8_t *v;   /* the values' destination */
 } spread;
 
 static void block_range(const spread *p, int64_t b, int64_t *lo, int64_t *hi) {
@@ -245,17 +258,33 @@ static void block_range(const spread *p, int64_t b, int64_t *lo, int64_t *hi) {
   *hi = p->n * (b + 1) / p->blocks;
 }
 
+static void span_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const spread *p = ctx;
+  const sorter *s = p->s;
+  for (int64_t b = lo; b < hi; b++) {
+    int64_t i0, i1;
+    block_range(p, b, &i0, &i1);
+    uint64_t least = ~0ull, most = 0;
+    for (int64_t i = i0; i < i1; i++) {
+      uint64_t k = key_of(s, p->x + i * s->sx * s->w) ^ p->flip;
+      least = k < least ? k : least;
+      most = k > most ? k : most;
+    }
+    p->span[b][0] = least;
+    p->span[b][1] = most;
+  }
+}
+
 static void key_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const spread *p = ctx;
   const sorter *s = p->s;
-  uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1;
-  uint64_t flip = s->descending ? mask : 0;
   for (int64_t b = lo; b < hi; b++) {
     int64_t i0, i1;
     block_range(p, b, &i0, &i1);
     for (int64_t i = i0; i < i1; i++) {
-      uint64_t k = key_of(s, p->x + i * s->sx * s->w) ^ flip;
+      uint64_t k = (key_of(s, p->x + i * s->sx * s->w) ^ p->flip) - p->least;
       if (p->psrc == NULL) p->src[i] = k << 32 | (uint64_t)i;
       else {
         p->src[i] = k;
@@ -295,13 +324,42 @@ static void move_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
+/* Counts digit [d] of every block's items and makes the counts each
+   block's offsets, digit by digit and block by block; answers the most
+   items of one digit. */
+static int64_t count_digit(spread *p, int d, int64_t bytes) {
+  p->shift = (p->psrc == NULL ? 32 : 0) + 8 * d;
+  nx_cpu_job(p->blocks, bytes, bytes, count_blocks, p);
+  int64_t at = 0, most = 0;
+  for (int g = 0; g < 256; g++) {
+    int64_t first = at;
+    for (int64_t b = 0; b < p->blocks; b++) {
+      int64_t c = p->count[b][g];
+      p->count[b][g] = at;
+      at += c;
+    }
+    most = at - first > most ? at - first : most;
+  }
+  return most;
+}
+
+/* Moves every block's items to its offsets; the destination becomes the
+   source. */
+static void move(spread *p, int64_t bytes) {
+  nx_cpu_job(p->blocks, bytes, bytes, move_blocks, p);
+  uint64_t *t = p->src;
+  p->src = p->dst;
+  p->dst = t;
+  int64_t *q = p->psrc;
+  p->psrc = p->pdst;
+  p->pdst = q;
+}
+
 /* Writes the positions and values of the sorted items' blocks. */
 static void emit_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const spread *p = ctx;
   const sorter *s = p->s;
-  int64_t *pos = (int64_t *)s->a[1].base + p->pp;
-  uint8_t *v = s->a[0].base + p->pv * s->w;
   for (int64_t b = lo; b < hi; b++) {
     int64_t i0, i1;
     block_range(p, b, &i0, &i1);
@@ -309,60 +367,102 @@ static void emit_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
     for (int64_t i = i0; i < i1; i++) {
       int64_t q =
           p->psrc == NULL ? (int64_t)(p->src[i] & 0xFFFFFFFFu) : p->psrc[i];
-      pos[i * s->sp] = q;
-      memcpy(v + i * s->sv * s->w, p->x + q * s->sx * s->w, (size_t)s->w);
+      p->pos[i * s->sp] = q;
+      memcpy(p->v + i * s->sv * s->w, p->x + q * s->sx * s->w, (size_t)s->w);
     }
   }
 }
 
-/* Sorts the one slice of [s] at [pv], [pp] and [px] through the scratch
-   [t], four arrays of its length, on [blocks] blocks. */
-static void sort_long(const sorter *s, int64_t pv, int64_t pp, int64_t px,
-                      uint64_t *t, int64_t (*count)[256], int64_t blocks,
-                      int64_t bytes) {
+/* n words of the system's, kept in [own] to be freed; NULL if memory runs
+   out. */
+static uint64_t *take(int64_t n, uint64_t **own, int *owned) {
+  uint64_t *t = malloc((size_t)n * sizeof *t);
+  if (t != NULL) own[(*owned)++] = t;
+  return t;
+}
+
+/* Runs the passes of [p], over [kb] bytes of keys, and writes the result. */
+static void passes(spread *p, int kb, int64_t bytes) {
+  nx_cpu_job(p->blocks, bytes, bytes, key_blocks, p);
+  /* A digit every key shares leaves its pass out. */
+  for (int d = 0; d < kb; d++)
+    if (count_digit(p, d, bytes) < p->n) move(p, bytes);
+  nx_cpu_job(p->blocks, bytes, bytes, emit_blocks, p);
+}
+
+/* Sorts the one slice of [s] on [blocks] blocks. Answers 0, or -1 where
+   memory runs out. */
+static int sort_long(const sorter *s, int64_t blocks, int64_t bytes) {
   int64_t n = s->n;
-  int packed = s->kb <= 4;
+  uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1;
   spread p = {.s = s,
-              .x = s->a[2].base + px * s->w,
-              .src = t,
-              .dst = t + n,
-              .psrc = packed ? NULL : (int64_t *)(t + 2 * n),
-              .pdst = packed ? NULL : (int64_t *)(t + 3 * n),
+              .x = s->a[2].base + s->l.first[2] * s->w,
               .n = n,
               .blocks = blocks,
-              .count = count,
-              .pv = pv,
-              .pp = pp};
-  nx_cpu_job(blocks, bytes, bytes, key_blocks, &p);
-  for (int d = 0; d < s->kb; d++) {
-    p.shift = (packed ? 32 : 0) + 8 * d;
-    nx_cpu_job(blocks, bytes, bytes, count_blocks, &p);
-    /* Offsets, digit by digit and block by block; a digit every key shares
-       leaves the pass out. */
-    int64_t at = 0, skip = 0;
-    for (int g = 0; g < 256; g++) {
-      int64_t all = 0;
-      for (int64_t b = 0; b < blocks; b++) {
-        int64_t c = count[b][g];
-        count[b][g] = at;
-        at += c;
-        all += c;
-      }
-      skip |= all == n;
+              .flip = s->descending ? mask : 0,
+              .span = malloc((size_t)blocks * sizeof *p.span),
+              .count = malloc((size_t)blocks * sizeof *p.count),
+              .pos = (int64_t *)s->a[1].base + s->l.first[1],
+              .v = s->a[0].base + s->l.first[0] * s->w};
+  uint64_t *own[4];
+  int owned = 0, ok = p.span != NULL && p.count != NULL;
+  if (ok) {
+    nx_cpu_job(blocks, bytes, bytes, span_blocks, &p);
+    uint64_t least = ~0ull, most = 0;
+    for (int64_t b = 0; b < blocks; b++) {
+      least = p.span[b][0] < least ? p.span[b][0] : least;
+      most = p.span[b][1] > most ? p.span[b][1] : most;
     }
-    if (skip) continue;
-    nx_cpu_job(blocks, bytes, bytes, move_blocks, &p);
-    uint64_t *tt = p.src;
-    p.src = p.dst;
-    p.dst = tt;
-    int64_t *pt = p.psrc;
-    p.psrc = p.pdst;
-    p.pdst = pt;
+    p.least = least;
+    int kb = span_bytes(most - least);
+    if (kb <= 4) {
+      p.src = take(n, own, &owned);
+      p.dst = take(n, own, &owned);
+      ok = p.src != NULL && p.dst != NULL;
+    } else {
+      p.psrc = (int64_t *)take(n, own, &owned);
+      p.pdst = (int64_t *)take(n, own, &owned);
+      p.src = take(n, own, &owned);
+      p.dst = take(n, own, &owned);
+      ok = p.psrc != NULL && p.pdst != NULL && p.src != NULL && p.dst != NULL;
+    }
+    if (ok) passes(&p, kb, bytes);
   }
-  nx_cpu_job(blocks, bytes, bytes, emit_blocks, &p);
+  for (int i = 0; i < owned; i++) free(own[i]);
+  free(p.span);
+  free(p.count);
+  return ok ? 0 : -1;
 }
 
 /* Slices */
+
+/* Sorts the slice at [x] by radix over its keys' span, stably, through
+   [k2] and [p2]: makes its keys into [k], finding their least and greatest
+   on the way, then sorts them less the least, above their positions where
+   they span at most 4 bytes. The kept positions land in [p]. */
+static void by_span(const sorter *s, const uint8_t *x, uint64_t flip,
+                    uint64_t *k, int64_t *p, uint64_t *k2, int64_t *p2) {
+  int64_t n = s->n;
+  uint64_t least = ~0ull, most = 0;
+  for (int64_t i = 0; i < n; i++) {
+    uint64_t y = key_of(s, x + i * s->sx * s->w) ^ flip;
+    k[i] = y;
+    least = y < least ? y : least;
+    most = y > most ? y : most;
+  }
+  int kb = span_bytes(most - least);
+  if (kb > 4 || n > UINT32_MAX) {
+    for (int64_t i = 0; i < n; i++) {
+      k[i] -= least;
+      p[i] = i;
+    }
+    radix(k, p, k2, p2, n, kb);
+    return;
+  }
+  for (int64_t i = 0; i < n; i++) k[i] = (k[i] - least) << 32 | (uint64_t)i;
+  radix_packed(k, k2, n, kb);
+  for (int64_t i = 0; i < s->keep; i++) p[i] = (int64_t)(k[i] & 0xFFFFFFFFu);
+}
 
 static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
                        uint64_t *scratch) {
@@ -372,28 +472,28 @@ static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
   const uint8_t *x = s->a[2].base + px * s->w;
   uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1;
   uint64_t flip = s->descending ? mask : 0;
-  for (int64_t i = 0; i < n; i++) {
-    k[i] = key_of(s, x + i * s->sx * s->w) ^ flip;
-    p[i] = i;
-  }
   int64_t keep = s->keep;
-  if (s->dt == NX_COMPLEX128) {
-    /* The imaginary parts' order, then the real parts' over it. */
-    radix(k, p, k2, p2, n, 8);
-    for (int64_t i = 0; i < n; i++)
-      k[i] = real_key((const double *)(x + p[i] * s->sx * s->w)) ^ flip;
-    radix(k, p, k2, p2, n, 8);
-  } else if (n < SMALL)
-    insertion(k, p, n);
-  else if (keep <= KEEP && keep * SPARE <= n) {
-    memcpy(k2, k, (size_t)n * sizeof *k);
-    slots(k2, n, keep, k, p);
-  } else if (s->kb <= 4 && n <= UINT32_MAX) {
-    for (int64_t i = 0; i < n; i++) k[i] = k[i] << 32 | (uint64_t)i;
-    radix_packed(k, k2, n, s->kb);
-    for (int64_t i = 0; i < keep; i++) p[i] = (int64_t)(k[i] & 0xFFFFFFFFu);
-  } else
-    radix(k, p, k2, p2, n, s->kb);
+  int few = keep <= KEEP && keep * SPARE <= n;
+  if (s->dt != NX_COMPLEX128 && n >= SMALL && !few)
+    by_span(s, x, flip, k, p, k2, p2);
+  else {
+    for (int64_t i = 0; i < n; i++) {
+      k[i] = key_of(s, x + i * s->sx * s->w) ^ flip;
+      p[i] = i;
+    }
+    if (s->dt == NX_COMPLEX128) {
+      /* The imaginary parts' order, then the real parts' over it. */
+      radix(k, p, k2, p2, n, 8);
+      for (int64_t i = 0; i < n; i++)
+        k[i] = real_key((const double *)(x + p[i] * s->sx * s->w)) ^ flip;
+      radix(k, p, k2, p2, n, 8);
+    } else if (n < SMALL)
+      insertion(k, p, n);
+    else {
+      memcpy(k2, k, (size_t)n * sizeof *k);
+      slots(k2, n, keep, k, p);
+    }
+  }
   int64_t *pos = (int64_t *)s->a[1].base + pp;
   for (int64_t i = 0; i < keep; i++) pos[i * s->sp] = p[i];
   uint8_t *v = s->a[0].base + pv * s->w;
@@ -493,19 +593,9 @@ value nx_cpu_sort(value vaxis, value vdescending, value vv, value vp,
   int slots = keep <= KEEP && keep * SPARE <= s.n;
   if (slices == 1 && workers > 1 && s.n >= LONG && dt != NX_COMPLEX128 &&
       !slots && s.n <= UINT32_MAX) {
-    uint64_t *t = malloc(4 * (size_t)s.n * sizeof *t);
-    int64_t(*count)[256] = malloc((size_t)workers * sizeof *count);
-    if (t == NULL || count == NULL) {
-      free(t);
-      free(count);
-      nx_done(3, a);
-      caml_raise_out_of_memory();
-    }
-    sort_long(&s, s.l.first[0], s.l.first[1], s.l.first[2], t, count,
-              workers, bytes);
-    free(t);
-    free(count);
+    int e = sort_long(&s, workers, bytes);
     nx_done(3, a);
+    if (e) caml_raise_out_of_memory();
     CAMLreturn(Val_int(NX_OK));
   }
   if (workers > slices) workers = slices;

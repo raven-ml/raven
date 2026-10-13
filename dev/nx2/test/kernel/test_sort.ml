@@ -13,21 +13,31 @@ open Windtrap
 open Elements
 module Support = Nx_kernels_support
 
+(* How an operand's elements are drawn: from a few values, so that ties are
+   common; within a narrow span of keys, a base element's high bytes over its
+   given number of random low ones; or each at random. *)
+type draw = Tied | Narrow of int | Spread
+
 type case = {
   axis : int;
   descending : bool;
   k : int option;
   x : A.any;
+  draw : draw;
   views : string list;
 }
 
 let pp_case ppf c =
   let (A.Any x) = c.x in
-  Format.fprintf ppf "sort%s along %d%s of %a %a (%s)"
+  Format.fprintf ppf "sort%s along %d%s of %a %a, %s (%s)"
     (if c.descending then " descending" else "")
     c.axis
     (match c.k with None -> "" | Some k -> Printf.sprintf " keeping %d" k)
     D.pp (A.dtype x) pp_ints (shape_of c.x)
+    (match c.draw with
+    | Tied -> "tied"
+    | Narrow low -> Printf.sprintf "narrow over %d bytes" low
+    | Spread -> "spread")
     (String.concat ", " c.views)
 
 (* Sub-byte dtypes sort through bytes: nx.cpu declines them. *)
@@ -48,14 +58,26 @@ let shape_gen =
   in
   frequency [ (5, small); (1, edge); (2, long) ]
 
-(* An operand of [d] drawn from [seed], with few distinct values so that ties
-   are common. *)
-let tied d s v seed =
+(* An operand of [d] drawn from [seed] as [draw] says. A narrow element keeps
+   the base's high bytes, so that integers lie within a few low bytes of each
+   other and floats within a few low bytes of their significands. *)
+let drawn draw d s v seed =
   let rs = Random.State.make [| seed |] in
   let pool = Array.init 6 (fun _ -> element d rs) in
+  let base = element d rs in
   operand d s v (fun _ ->
-      if Random.State.int rs 3 = 0 then element d rs
-      else pool.(Random.State.int rs 6))
+      match draw with
+      | Tied ->
+          if Random.State.int rs 3 = 0 then element d rs
+          else pool.(Random.State.int rs 6)
+      | Narrow low ->
+          String.mapi
+            (fun j c ->
+              if j < low then Char.chr (Random.State.int rs 256) else c)
+            base
+      | Spread ->
+          String.init (String.length base) (fun _ ->
+              Char.chr (Random.State.int rs 256)))
 
 let case_gen ?(dtypes = computed) ?(shapes = shape_gen) () =
   let open Gen in
@@ -73,14 +95,30 @@ let case_gen ?(dtypes = computed) ?(shapes = shape_gen) () =
       ]
   in
   let* v = view_of r in
+  let (D.Any dt) = d in
+  let* draw =
+    frequency
+      [
+        (4, constant Tied);
+        (1, map (fun low -> Narrow low) (int_range 1 (D.bits dt / 8)));
+        (1, constant Spread);
+      ]
+  in
   let+ seed = int in
-  { axis; descending; k; x = tied d s v seed; views = view_names v }
+  { axis; descending; k; x = drawn draw d s v seed; draw; views = view_names v }
 
 (* A constructed case along the last axis, drawn from seed 1, so that every seed
    reaches its regime. *)
-let example ?k ?(descending = false) d s =
+let example ?k ?(descending = false) ?(draw = Tied) d s =
   let r = Array.length s in
-  { axis = r - 1; descending; k; x = tied d s (plain r) 1; views = [] }
+  {
+    axis = r - 1;
+    descending;
+    k;
+    x = drawn draw d s (plain r) 1;
+    draw;
+    views = [];
+  }
 
 let kept c = match c.k with None -> (shape_of c.x).(c.axis) | Some k -> k
 
@@ -146,15 +184,22 @@ let law_reference (b : Support.backend) c =
   cover "keeps some" (c.k <> None && kept c < n);
   cover "radix" (n >= 64 && c.k = None);
   cover "complex128's two keys" (dtype_of c.x = D.Any D.Complex128 && n >= 2);
+  cover "narrow 8-byte keys"
+    (let (D.Any d) = dtype_of c.x in
+     (match c.draw with Narrow _ -> true | _ -> false)
+     && n >= 64
+     && D.bits d = 64);
   agrees b c
 
 (* One slice sorts on the job's threads where it is long and keeps more than a
    few. *)
 let law_large (b : Support.backend) c =
-  cover "one long slice"
-    (Array.length (shape_of c.x) = 1
+  let long =
+    Array.length (shape_of c.x) = 1
     && kept c > 64
-    && dtype_of c.x <> D.Any D.Complex128);
+    && dtype_of c.x <> D.Any D.Complex128
+  in
+  cover "one long slice" long;
   agrees b c
 
 (* Laws for every library *)
@@ -255,6 +300,8 @@ let examples =
   [
     example (D.Any D.Complex128) [| 2; 70 |];
     example (D.Any D.Complex128) [| 9 |] ~descending:true;
+    example (D.Any D.Int64) [| 2; 300 |] ~draw:(Narrow 3);
+    example (D.Any D.Complex64) [| 300 |] ~draw:(Narrow 5) ~descending:true;
   ]
 
 (* Slices the job's threads share, and one long slice. *)
@@ -264,12 +311,15 @@ let large =
        ~shapes:(Gen.of_list [ [| 200_000 |]; [| 400; 500 |]; [| 3; 100_000 |] ])
        ())
 
-(* One long slice of 4-byte keys packed with positions, and of 8-byte keys
-   beside them. *)
+(* One long slice of 4-byte keys packed with positions; of 8-byte keys beside
+   them, keeping some or all; and of 8-byte keys of a narrow span, packed. *)
 let large_examples =
   [
     example (D.Any D.Float32) [| 200_000 |];
     example (D.Any D.Int64) [| 200_000 |] ~descending:true ~k:150_000;
+    example (D.Any D.Int64) [| 200_000 |] ~draw:Spread;
+    example (D.Any D.Float64) [| 200_000 |] ~draw:Spread ~descending:true;
+    example (D.Any D.Int64) [| 200_000 |] ~draw:(Narrow 3);
   ]
 
 let laws (b : Support.backend) =

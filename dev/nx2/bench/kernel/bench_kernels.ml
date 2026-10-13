@@ -659,7 +659,7 @@ let index_rows =
   ]
 
 (* Sorts. A sort's floor copies its keys and positions once per radix pass of
-   its key's bytes. *)
+   its keys' span. *)
 
 let sort_row name ~axis ~descending ~k x (module K : Nx_kernel.S) =
   row name
@@ -675,6 +675,17 @@ let sort_row name ~axis ~descending ~k x (module K : Nx_kernel.S) =
 let sort_rows =
   let m = mib in
   let any dt s () = A.Any (filled dt s) in
+  (* Keys over the whole of int64's range: SplitMix64's outputs. *)
+  let wide n () =
+    let mix i =
+      let open Int64 in
+      let z = mul (of_int (i + 1)) 0x9E3779B97F4A7C15L in
+      let z = mul (logxor z (shift_right_logical z 30)) 0xBF58476D1CE4E5B9L in
+      let z = mul (logxor z (shift_right_logical z 27)) 0x94D049BB133111EBL in
+      logxor z (shift_right_logical z 31)
+    in
+    A.Any (A.of_array D.Int64 [| n |] (Array.init n mix))
+  in
   let sort name ?(descending = false) ?k ~axis x ~passes ~n =
     {
       bench = sort_row name ~axis ~descending ~k x;
@@ -683,7 +694,9 @@ let sort_rows =
   in
   [
     sort "sort-f32-1M" ~axis:0 (any f32 [| m |]) ~passes:4 ~n:m;
-    sort "sort-i64-1M" ~axis:0 (any D.Int64 [| m |]) ~passes:8 ~n:m;
+    (* 251 values: one byte of span. *)
+    sort "sort-i64-1M" ~axis:0 (any D.Int64 [| m |]) ~passes:1 ~n:m;
+    sort "sort-i64-1M-wide" ~axis:0 (wide m) ~passes:8 ~n:m;
     sort "sort-f32-rows-512x512" ~axis:1
       (any f32 [| 512; 512 |])
       ~passes:4 ~n:(512 * 512);
