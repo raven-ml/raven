@@ -627,15 +627,15 @@ static int64_t padded(nx_cpu_micro k, int64_t m) {
 
 /* [g] or its other kernels, whichever computes [m] rows in less time: the
    kernel few_rows or chain takes, its rows padded to its tile, at its
-   speed on every copy of its hardware. On the M1 Max 8 rows are 8 on the
-   vector units of 8 cores at speed 1, against 32 on 2 matrix units at 13:
-   at most 8 rows run on the cores, more on the units. */
+   speed on every copy of its hardware. On the M1 Max 8 rows of float32
+   are 8 on the vector units of 8 cores at speed 1, against 32 on 2 matrix
+   units at 13: at most 8 rows run on the cores, more on the units. */
 static const nx_cpu_gemm *fastest(const nx_cpu_gemm *g, int64_t m) {
   const nx_cpu_gemm *o = g->other;
   if (o == NULL) return g;
   nx_cpu_micro a = g->kernel, b = o->kernel;
-  int64_t ta = padded(a, m) * b.flops_per_byte * engines(b);
-  int64_t tb = padded(b, m) * a.flops_per_byte * engines(a);
+  double ta = padded(a, m) * b.flops_per_byte * engines(b);
+  double tb = padded(b, m) * a.flops_per_byte * engines(a);
   return tb < ta ? o : g;
 }
 

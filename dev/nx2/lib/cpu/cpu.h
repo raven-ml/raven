@@ -97,7 +97,7 @@ typedef struct {
   nx_cpu_kernel f;
   int mr, nr;
   nx_cpu_a_read a;
-  int flops_per_byte;
+  double flops_per_byte;
   int shared;
 } nx_cpu_micro;
 

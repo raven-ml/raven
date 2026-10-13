@@ -9,9 +9,9 @@
    Apple documents none of them. The encodings and operand fields are those
    of the corsix/amx write-up (github.com/corsix/amx: Instructions.md,
    ldst.md, fma.md, extr_v.md, setclr.md), and each one used here was
-   checked on an M1 Max: fma32 rounds once, keeps subnormals, gives the
-   default NaN for a NaN operand, and a chain of fma32 into one accumulator
-   equals C's fmaf chain bit for bit.
+   checked on an M1 Max: fma32 and fma64 round once, keep subnormals, give
+   the default NaN for a NaN operand, and a chain of fma32 into one
+   accumulator equals C's fmaf chain bit for bit.
 
    The unit's state is X and Y, eight registers of 64 bytes each, and Z, 64
    rows of 64 bytes. An instruction is the word 0x201000 + (op << 5) + r,
@@ -59,19 +59,24 @@
 /* Outer products (fma.md): the operand holds the byte offset into Y in
    bits 0-8, into X in bits 10-18, and the Z row in bits 20-25. fma32 adds
    x[i]·y[j] into z[4j + q][i] for 16 × 16 float32, q the Z row modulo 4:
-   four accumulators. With bit 27, Z is skipped and the product replaces
-   z; with bit 29, X is skipped and x taken as 1. */
+   four accumulators; fma64 into z[8j + q][i] for 8 × 8 float64, q modulo
+   8. With bit 27, Z is skipped and the product replaces z; with bit 29, X
+   is skipped and x taken as 1. */
 #define NX_AMX_OUTER(x, y, z)                                               \
   ((uint64_t)(y) | ((uint64_t)(x) << 10) | ((uint64_t)(z) << 20))
 #define NX_AMX_FMA32(x, y, z) NX_AMX_OP(12, NX_AMX_OUTER(x, y, z))
+#define NX_AMX_FMA64(x, y, z) NX_AMX_OP(10, NX_AMX_OUTER(x, y, z))
 #define NX_AMX_SKIP_Z (1ull << 27)
 #define NX_AMX_SKIP_X (1ull << 29)
 
-/* A column of Z into Y (extr_v.md, bit 26 clear; bits 28-29 1 for
-   float32): Y's 16 lanes at byte offset [y], bits 0-8, take Z's lane c / 4
-   of the rows 4i + c mod 4, c in bits 20-25: y[i] = z[4i + c mod 4][c / 4].
-   It moves bits and rounds nothing. */
+/* A column of Z into Y (extr_v.md, bit 26 clear; bits 28-29 1 for 32-bit
+   lanes, 0 for 64-bit): Y's 16 lanes at byte offset [y], bits 0-8, take
+   Z's lane c / 4 of the rows 4i + c mod 4, c in bits 20-25:
+   y[i] = z[4i + c mod 4][c / 4]; its 8 lanes of 64 bits
+   y[i] = z[8i + c mod 8][c / 8]. It moves bits and rounds nothing. */
 #define NX_AMX_EXTRV32(y, c)                                                \
   NX_AMX_OP(9, (uint64_t)(y) | ((uint64_t)(c) << 20) | (1ull << 28))
+#define NX_AMX_EXTRV64(y, c)                                                \
+  NX_AMX_OP(9, (uint64_t)(y) | ((uint64_t)(c) << 20))
 
 #endif

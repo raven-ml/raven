@@ -26,9 +26,11 @@
 
 #if defined(__aarch64__)
 
-/* The kernels' speed (cpu.h): 99.8 GFLOP/s on a performance core of the
-   M1 Max, against the 100-160 GB/s its memcpy moves. */
-#define SPEED 1
+/* The kernels' speed (cpu.h): 99.8 GFLOP/s of float32 and 50.2 of float64
+   on a performance core of the M1 Max, against the 100-160 GB/s its
+   memcpy moves. */
+#define SPEED32 1.0
+#define SPEED64 0.5
 
 #define MR 8
 #define NV 3
@@ -106,12 +108,12 @@ AXPY(axpy_f64, double, 2, fma)
 
 void nx_cpu_set_neon(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, MR, 12, NX_CPU_A_ELEMENTS, SPEED, 1},
+      .kernel = {kernel_f32, MR, 12, NX_CPU_A_ELEMENTS, SPEED32, 1},
       .mc = 128,
       .kc = 512,
       .nc = 3072};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, MR, 6, NX_CPU_A_ELEMENTS, SPEED, 1},
+      .kernel = {kernel_f64, MR, 6, NX_CPU_A_ELEMENTS, SPEED64, 1},
       .mc = 128,
       .kc = 256,
       .nc = 3072};
