@@ -138,15 +138,14 @@ typedef struct {
 #define PAIRS(D, DT, K, A, B, C) SRCS(PAIR, D, DT, K, A, B, C)
 DSTS(PAIRS)
 
-/* Narrow floats to float32: a sub-byte one's codes, one per byte. float16
-   and e4m3fn convert in nx_array.h's runs, below. */
+/* Narrow floats to float32: a sub-byte one's codes, one per byte.
+   float16, bfloat16 and e4m3fn convert in nx_array.h's runs, below. */
 #define DECODE(S, ST, f)                                                \
   static void S##_FLOAT32(const void *src, void *dst, int64_t n) {      \
     const ST *s = src;                                                  \
     float *d = dst;                                                     \
     for (int64_t i = 0; i < n; i++) d[i] = nx_##f##_to_float(s[i]);     \
   }
-DECODE(BFLOAT16, uint16_t, bf16)
 DECODE(FLOAT8_E5M2, uint8_t, e5m2)
 DECODE(FLOAT4_E2M1FN, uint8_t, e2m1fn)
 
@@ -161,6 +160,7 @@ RUN(FLOAT32, INT32, nx_float_to_i32_run)
 RUN(FLOAT32, INT8, nx_float_to_i8_run)
 RUN(FLOAT32, UINT8, nx_float_to_u8_run)
 RUN(FLOAT64, FLOAT16, nx_double_to_f16_run)
+RUN(BFLOAT16, FLOAT32, nx_bf16_to_float_run)
 RUN(FLOAT32, BFLOAT16, nx_float_to_bf16_run)
 RUN(FLOAT32, FLOAT8_E4M3FN, nx_float_to_e4m3fn_run)
 RUN(FLOAT8_E4M3FN, FLOAT32, nx_e4m3fn_to_float_run)
@@ -173,7 +173,6 @@ RUN(UINT64, FLOAT32, nx_u64_to_float_run)
 
 static void set(nx_cpu_target *t) {
   DSTS(ENTRIES)
-  t->convert[NX_BFLOAT16][NX_FLOAT32] = BFLOAT16_FLOAT32;
   t->convert[NX_FLOAT8_E5M2][NX_FLOAT32] = FLOAT8_E5M2_FLOAT32;
   t->convert[NX_FLOAT4_E2M1FN][NX_FLOAT32] = FLOAT4_E2M1FN_FLOAT32;
   t->convert[NX_FLOAT16][NX_FLOAT32] = run_FLOAT16_FLOAT32;
@@ -182,6 +181,7 @@ static void set(nx_cpu_target *t) {
   t->convert[NX_FLOAT32][NX_INT8] = run_FLOAT32_INT8;
   t->convert[NX_FLOAT32][NX_UINT8] = run_FLOAT32_UINT8;
   t->convert[NX_FLOAT64][NX_FLOAT16] = run_FLOAT64_FLOAT16;
+  t->convert[NX_BFLOAT16][NX_FLOAT32] = run_BFLOAT16_FLOAT32;
   t->convert[NX_FLOAT32][NX_BFLOAT16] = run_FLOAT32_BFLOAT16;
   t->convert[NX_FLOAT32][NX_FLOAT8_E4M3FN] = run_FLOAT32_FLOAT8_E4M3FN;
   t->convert[NX_FLOAT8_E4M3FN][NX_FLOAT32] = run_FLOAT8_E4M3FN_FLOAT32;

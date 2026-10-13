@@ -341,8 +341,8 @@ static inline __attribute__((always_inline)) void nx_sub_pack_run(
    for, under -fno-trapping-math, and is a run. The runs below are named
    because they are faster than such a loop: the hardware converts a
    vector at a time with one instruction where it can, bit operations on
-   vectors encode bfloat16 and decode e4m3fn in fewer instructions than a
-   compiler finds, and a 64-bit integer converts with the scalar
+   vectors encode and decode bfloat16 and e4m3fn in fewer instructions
+   than a compiler finds, and a 64-bit integer converts with the scalar
    instruction, which no vector form matches. A run's tail is the scalar
    codec. Device kernels convert per element with nx_dtype.h. */
 
@@ -493,6 +493,35 @@ static inline void nx_float_to_u8_run(const float *src, uint8_t *dst,
   for (; i < n; i++) dst[i] = (uint8_t)nx_float_to_int(src[i], 0, UINT8_MAX);
 }
 
+/* bfloat16 to binary32, sixteen at a time with AVX2: the quiet bit set on a
+   NaN as the scalar decoder does, in 16-bit lanes (a magnitude past the
+   infinity's makes 0x7F80 minus it wrap, and its top bit, shifted to bit
+   6, is the quiet bit), then each code moved to the top half of a 32-bit
+   lane by interleaving with zeros, the 64-bit groups first permuted so
+   that the interleave keeps their order. On fudge it takes 0.033 ns an
+   element on one core against the loop's 0.049 to 0.061. */
+static inline void nx_bf16_to_float_run(const uint16_t *src, float *dst,
+                                        size_t n) {
+  size_t i = 0;
+#if defined(__AVX2__)
+  const __m256i zero = _mm256_setzero_si256();
+  const __m256i inf = _mm256_set1_epi16(0x7F80);
+  const __m256i mag = _mm256_set1_epi16(0x7FFF);
+  const __m256i quiet = _mm256_set1_epi16(0x40);
+  for (; i + 16 <= n; i += 16) {
+    __m256i c = _mm256_loadu_si256((const __m256i *)(src + i));
+    __m256i past = _mm256_sub_epi16(inf, _mm256_and_si256(c, mag));
+    __m256i q = _mm256_or_si256(
+        c, _mm256_and_si256(_mm256_srli_epi16(past, 9), quiet));
+    q = _mm256_permute4x64_epi64(q, 0xD8);
+    _mm256_storeu_si256((__m256i *)(dst + i), _mm256_unpacklo_epi16(zero, q));
+    _mm256_storeu_si256((__m256i *)(dst + i + 8),
+                        _mm256_unpackhi_epi16(zero, q));
+  }
+#endif
+  for (; i < n; i++) dst[i] = nx_bf16_to_float(src[i]);
+}
+
 /* binary32 to bfloat16, rounded to nearest even, eight at a time: a
    float's high half, plus one where its low half passes 0x8000, or reaches
    it with the high half odd; a NaN's high half with the quiet bit. arm64
@@ -540,22 +569,58 @@ static inline void nx_float_to_bf16_run(const float *src, uint16_t *dst,
    cases in 32-bit lanes, as the scalar encoder computes them, then the
    lanes narrowed with saturation to bytes, where the largest finite code,
    NaN and the sign apply once for sixteen elements. 60 vector operations
-   for sixteen against the loop's 71. */
+   for sixteen against the loop's 71. With AVX2, 32 at a time: the code,
+   NaN's and the sign are set in 32-bit lanes, which one chain of packs
+   then narrows, as nx_float_to_i8_run's does; 0.13 ns an element on a
+   fudge core against the loop's 0.59. */
+
+/* nx_mini_round(f, 3, 7)'s constants: the binary32 whose addition rounds a
+   subnormal code's bits into place, the bias that moves a normal's
+   exponent and adds half a unit less one, and the bits of the least
+   normal. */
+#define NX_E4M3FN_MAGIC ((uint32_t)(127 + 24 - 7 - 3) << 23)
+#define NX_E4M3FN_BIAS (0u - ((uint32_t)(127 - 7) << 23) + (1u << 19) - 1)
+#define NX_E4M3FN_NORMAL ((uint32_t)(128 - 7) << 23)
+
 #if defined(__aarch64__)
 /* nx_mini_round(f, 3, 7) of four lanes. */
 static inline uint32x4_t nx_e4m3fn_round_x4(float32x4_t f) {
   uint32x4_t u = vreinterpretq_u32_f32(vabsq_f32(f));
-  const float32x4_t magic =
-      vreinterpretq_f32_u32(vdupq_n_u32((uint32_t)(127 + 24 - 7 - 3) << 23));
+  const float32x4_t magic = vreinterpretq_f32_u32(vdupq_n_u32(NX_E4M3FN_MAGIC));
   uint32x4_t sub = vsubq_u32(
       vreinterpretq_u32_f32(vaddq_f32(vreinterpretq_f32_u32(u), magic)),
       vreinterpretq_u32_f32(magic));
   uint32x4_t odd = vandq_u32(vshrq_n_u32(u, 20), vdupq_n_u32(1));
-  uint32x4_t bias =
-      vdupq_n_u32(0u - ((uint32_t)(127 - 7) << 23) + (1u << 19) - 1);
+  uint32x4_t bias = vdupq_n_u32(NX_E4M3FN_BIAS);
   uint32x4_t normal = vshrq_n_u32(vaddq_u32(vaddq_u32(u, bias), odd), 20);
-  uint32x4_t small = vcltq_u32(u, vdupq_n_u32((uint32_t)(128 - 7) << 23));
+  uint32x4_t small = vcltq_u32(u, vdupq_n_u32(NX_E4M3FN_NORMAL));
   return vbslq_u32(small, sub, normal);
+}
+#elif defined(__AVX2__)
+/* The e4m3fn code of eight lanes, its sign included, NaN's 0x7F. */
+static inline __m256i nx_e4m3fn_x8(const float *src) {
+  __m256i b = _mm256_castps_si256(_mm256_loadu_ps(src));
+  __m256i u = _mm256_and_si256(b, _mm256_set1_epi32(0x7FFFFFFF));
+  const __m256 magic =
+      _mm256_castsi256_ps(_mm256_set1_epi32((int32_t)NX_E4M3FN_MAGIC));
+  __m256i sub = _mm256_sub_epi32(
+      _mm256_castps_si256(_mm256_add_ps(_mm256_castsi256_ps(u), magic)),
+      _mm256_castps_si256(magic));
+  __m256i odd =
+      _mm256_and_si256(_mm256_srli_epi32(u, 20), _mm256_set1_epi32(1));
+  __m256i bias = _mm256_set1_epi32((int32_t)NX_E4M3FN_BIAS);
+  __m256i normal =
+      _mm256_srli_epi32(_mm256_add_epi32(_mm256_add_epi32(u, bias), odd), 20);
+  __m256i small =
+      _mm256_cmpgt_epi32(_mm256_set1_epi32((int32_t)NX_E4M3FN_NORMAL), u);
+  __m256i q = _mm256_min_epu32(_mm256_blendv_epi8(normal, sub, small),
+                               _mm256_set1_epi32(0x7E));
+  __m256i nan = _mm256_cmpgt_epi32(u, _mm256_set1_epi32(0x7F800000));
+  __m256i sign = _mm256_and_si256(_mm256_srli_epi32(b, 24),
+                                  _mm256_set1_epi32(0x80));
+  return _mm256_or_si256(
+      _mm256_or_si256(q, _mm256_and_si256(nan, _mm256_set1_epi32(0x7F))),
+      sign);
 }
 #endif
 
@@ -589,6 +654,16 @@ static inline void nx_float_to_e4m3fn_run(const float *src, uint8_t *dst,
         vuzp2q_u8(vreinterpretq_u8_u16(h01), vreinterpretq_u8_u16(h23)),
         vdupq_n_u8(0x80));
     vst1q_u8(dst + i, vorrq_u8(sign, vbslq_u8(ok, q, vdupq_n_u8(0x7F))));
+  }
+#elif defined(__AVX2__)
+  for (; i + 32 <= n; i += 32) {
+    __m256i a = _mm256_packs_epi32(nx_e4m3fn_x8(src + i),
+                                   nx_e4m3fn_x8(src + i + 8));
+    __m256i b = _mm256_packs_epi32(nx_e4m3fn_x8(src + i + 16),
+                                   nx_e4m3fn_x8(src + i + 24));
+    _mm256_storeu_si256((__m256i *)(dst + i),
+                        _mm256_permutevar8x32_epi32(_mm256_packus_epi16(a, b),
+                                                    NX_PACKED_ORDER));
   }
 #endif
   for (; i < n; i++) dst[i] = nx_float_to_e4m3fn(src[i]);
