@@ -3572,24 +3572,31 @@ static int F(eig)(const call *c, int64_t b, T *x, arena *s) {
   R *wo = (R *)matrix_at(c, c->nops, b);
   R *vo = c->vectors ? (R *)matrix_at(c, c->nops + 1, b) : NULL;
   stage(c, 0, b, a, n, 1);
-  R big = 0;
   int finite = 1;
-  for (int64_t i = 0; i < nn; i++) {
-    R re = REAL(a[i]), im = IMAG(a[i]), mag = F(lapy3)(re, im, 0);
-    finite &= re - re == 0 && im - im == 0;
-    big = mag > big ? mag : big;
-  }
-  /* Scaled into [small, 1 / small] where its largest magnitude lies
-     outside (xGEEV). */
-  const R small = SQRT(TINY) / ULP;
-  R sigma = big > 0 && big < small ? small / big
-            : big > 1 / small        ? 1 / small / big
-                                     : 1;
-  for (int64_t i = 0; sigma != 1 && i < nn; i++) a[i] *= sigma;
-  int64_t lo, hi;
+  for (int64_t i = 0; i < nn; i++)
+    finite &= REAL(a[i]) - REAL(a[i]) == 0 && IMAG(a[i]) - IMAG(a[i]) == 0;
+  int64_t lo = 0, hi = n - 1;
+  R sigma = 1;
   int ok = finite;
   if (ok) {
+    /* Balanced, then scaled into [small, 1 / small] where its largest
+       magnitude lies outside. xGEEV scales first, which flushes entries
+       that balancing would have brought near the others: float32's
+       [0 2^100; 2^-100 0] loses 2^-100, and its eigenvalues ±1 become 0,
+       as float64's [1 1e300; 1e-300 1] loses 1e-300 and its 0 and 2
+       become 1. Balancing's own guards keep it safe unscaled. */
     F(gebal)(a, n, &lo, &hi, scale);
+    R big = 0;
+    for (int64_t i = 0; i < nn; i++) {
+      R re = F(abs)(REAL(a[i])), im = F(abs)(IMAG(a[i]));
+      big = re > big ? re : big;
+      big = im > big ? im : big;
+    }
+    const R small = SQRT(TINY) / ULP;
+    sigma = big > 0 && big < small ? small / big
+            : big > 1 / small      ? 1 / small / big
+                                   : 1;
+    for (int64_t i = 0; sigma != 1 && i < nn; i++) a[i] *= sigma;
     F(gehd2)(a, n, lo, hi, tau, ws);
     for (int64_t j = 0; j < n; j++)
       for (int64_t i = 0; i < n; i++)

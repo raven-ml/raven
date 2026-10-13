@@ -1257,6 +1257,40 @@ let test_eig_balanced (b : Support.backend) () =
           check_worst worst)
     dtypes
 
+(* Matrices whose entries span the exponent range, which eig balances
+   before it scales them: [0 2^100; 2^-100 0] at float32, eigenvalues ±1,
+   and [1 1e300; 1e-300 1] at float64, eigenvalues 0 and 2. Each balances
+   to b, 2 × 2 with entries within a factor 2 of [0 1; 1 0] or [1 1; 1 1],
+   ‖b‖_F <= 4 and its eigenvectors' condition at most 3, so that the
+   balanced bound puts each eigenvalue within 3 (4 g + h) of the exact
+   ones. Scaled first, as xGEEV does, the small entry flushes to zero. *)
+let test_eig_extremes (b : Support.backend) () =
+  let case dt (a : float array) exact =
+    let x = of_values dt [| 2; 2 |] (Array.map (fun re -> { Complex.re; im = 0. }) a) in
+    match run b (Eig true) [| x |] with
+    | None -> ()
+    | Some y ->
+        let bound = 3. *. ((4. *. eig_bound dt 2) +. eig_term ~e:0 dt 2) in
+        let worst = { ratio = 0.; where = "" } in
+        Array.iteri
+          (fun j (z : Complex.t) ->
+            let near =
+              List.fold_left
+                (fun m e ->
+                  Float.min m (Complex.norm (Complex.sub z { Complex.re = e; im = 0. })))
+                infinity exact
+            in
+            worse worst ~bound ~residual:near (fun () ->
+                Format.asprintf "%a: eigenvalue %d, %h%+hi" pp_dtype dt j z.re
+                  z.im))
+          (values y.(0));
+        check_worst worst
+  in
+  case (D.Any D.Float32) [| 0.; 0x1p100; 0x1p-100; 0. |] [ -1.; 1. ];
+  case (D.Any D.Complex64) [| 0.; 0x1p100; 0x1p-100; 0. |] [ -1.; 1. ];
+  case (D.Any D.Float64) [| 1.; 1e300; 1e-300; 1. |] [ 0.; 2. ];
+  case (D.Any D.Complex128) [| 1.; 1e300; 1e-300; 1. |] [ 0.; 2. ]
+
 (* The Jacobi matrix whose eigenvalues are [l] and whose eigenvectors'
    first components are [q], ‖q‖ = 1, by Lanczos on diag l from q,
    reorthogonalised twice against every earlier vector: its diagonal and
@@ -1955,6 +1989,8 @@ let laws (b : Support.backend) =
         (fun () -> b.around (test_eigh_secular b));
       test "eig balances a graded matrix" (fun () ->
           b.around (test_eig_balanced b));
+      test "eig balances before it scales" (fun () ->
+          b.around (test_eig_extremes b));
       test "svd keeps Reference-LAPACK issue 255's bidiagonal's vectors"
         (fun () -> b.around (test_svd_deflation b));
       test "routines take floats and complex numbers alone" (fun () ->
