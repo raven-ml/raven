@@ -166,20 +166,32 @@ let other_root () =
   contains ~sub:"has a device open" e;
   Rig_nv.stop g' ~fault:None
 
-(* [cycles cycle] runs [cycle] once, then once more and sixteen times after,
-   and checks that each run past the first keeps at most what the second
-   kept of the GPU's mappings: a stopped device's word, which lives for the
-   process. *)
+(* The page a stopped device keeps of the GPU's mappings: its timeline word's,
+   which lives for the process. *)
+let page = 4096
+
+(* The bytes of the GPU's mappings that are not reservations ([---p]). *)
+let mapped_bytes () =
+  List.fold_left
+    (fun n line ->
+      Scanf.sscanf line "%x-%x %s" (fun a b perms ->
+          if perms = "---p" then n else n + (b - a)))
+    0 (S.mappings ())
+
+(* [cycles cycle] runs [cycle] once, which makes what the process keeps for
+   good, then [runs] times more, and checks that each run past the first keeps
+   at most a page of the GPU's mappings. *)
+let runs = 17
+
 let cycles cycle =
   cycle ();
-  let first = List.length (S.mappings ()) in
-  cycle ();
-  let one = List.length (S.mappings ()) - first in
-  for _ = 1 to 16 do
+  let first = mapped_bytes () in
+  for _ = 1 to runs do
     cycle ()
   done;
-  at_most int ~msg:"the GPU's mappings" ~than:(first + (17 * one))
-    (List.length (S.mappings ()))
+  at_most int ~msg:"the bytes of the GPU's mappings past the first run"
+    ~than:(runs * page)
+    (mapped_bytes () - first)
 
 (* Opening and stopping a GPU again and again keeps at most one device's
    mappings per open. *)
