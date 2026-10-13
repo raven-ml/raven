@@ -71,13 +71,13 @@ static int on128(const void *p, int64_t step) {
   return ((uintptr_t)p | (uintptr_t)step) % 128 == 0;
 }
 
-/* Moves the tile at [c], rows [ldc] bytes apart, into Z and back: a row of
-   the tile is the Z rows ZROW(w, i, 0) and ZROW(w, i, 1), adjacent, so
-   that where its rows start on 128 bytes each moves in one instruction,
-   else in two. */
-INLINE void zload(int w, const uint8_t *c, int64_t ldc) {
+/* Moves the first [rows] rows of the tile at [c], [ldc] bytes apart, into
+   Z and back: a row of the tile is the Z rows ZROW(w, i, 0) and
+   ZROW(w, i, 1), adjacent, so that where its rows start on 128 bytes each
+   moves in one instruction, else in two. */
+INLINE void zload(int w, const uint8_t *c, int64_t ldc, int64_t rows) {
   int paired = on128(c, ldc);
-  for (int i = 0; i < 2 * LANES(w); i++) {
+  for (int i = 0; i < rows; i++) {
     const uint8_t *r = c + i * ldc;
     if (paired) NX_AMX_LDZ((uint64_t)r | NX_AMX_PAIR, ZROW(w, i, 0));
     else
@@ -85,9 +85,9 @@ INLINE void zload(int w, const uint8_t *c, int64_t ldc) {
   }
 }
 
-INLINE void zstore(int w, uint8_t *c, int64_t ldc) {
+INLINE void zstore(int w, uint8_t *c, int64_t ldc, int64_t rows) {
   int paired = on128(c, ldc);
-  for (int i = 0; i < 2 * LANES(w); i++) {
+  for (int i = 0; i < rows; i++) {
     uint8_t *r = c + i * ldc;
     if (paired) NX_AMX_STZ((uint64_t)r | NX_AMX_PAIR, ZROW(w, i, 0));
     else
@@ -127,13 +127,15 @@ INLINE void outer4(int w, int r) {
   }
 }
 
-/* The tile at [c]: a's packed steps from [a], each on 128 bytes, times
-   b's 2L columns; steps [a_k] and [b_k] bytes apart. */
+/* The first [rows] rows of the tile at [c]: a's packed steps from [a],
+   each on 128 bytes, times b's 2L columns; steps [a_k] and [b_k] bytes
+   apart. The rows past [rows] are computed from a's padding and not
+   stored. */
 INLINE void tile(int w, int64_t k, const uint8_t *a, int64_t a_k,
                  const uint8_t *b, int64_t b_k, uint8_t *c, int64_t ldc,
-                 nx_cpu_from from) {
+                 int64_t rows, nx_cpu_from from) {
   int pair_b = on128(b, b_k);
-  if (from == NX_CPU_FROM_TILE) zload(w, c, ldc);
+  if (from == NX_CPU_FROM_TILE) zload(w, c, ldc, rows);
   else zzero();
   int64_t p = 0;
   for (; p + 4 <= k; p += 4) {
@@ -148,11 +150,11 @@ INLINE void tile(int w, int64_t k, const uint8_t *a, int64_t a_k,
     ldx2(b + p * b_k, 0, pair_b);
     outer4(w, 0);
   }
-  zstore(w, c, ldc);
+  zstore(w, c, ldc, rows);
 }
 
-/* A tile of [rows] and [n] columns, fewer than 2L of either, through a
-   whole one on the stack. Apart from the kernel, so that the kernel's
+/* A tile of [rows] and [n] columns, fewer than 2L, through a whole one on
+   the stack. Apart from the kernel, so that the kernel's
    frame holds no tile, which macOS would probe page by page at each
    call. */
 static __attribute__((noinline)) void edge(
@@ -162,8 +164,8 @@ static __attribute__((noinline)) void edge(
   _Alignas(128) uint8_t t[NX_CPU_TILE];
   for (int64_t i = 0; from == NX_CPU_FROM_TILE && i < rows; i++)
     memcpy(t + 128 * i, y + i * ldc, (size_t)(n * w));
-  if (w == 4) tile(4, k, a, a_k, b, b_k, t, 128, from);
-  else tile(8, k, a, a_k, b, b_k, t, 128, from);
+  if (w == 4) tile(4, k, a, a_k, b, b_k, t, 128, rows, from);
+  else tile(8, k, a, a_k, b, b_k, t, 128, rows, from);
   for (int64_t i = 0; i < rows; i++)
     memcpy(y + i * ldc, t + 128 * i, (size_t)(n * w));
 }
@@ -179,8 +181,8 @@ INLINE void kernel(int w, int64_t m, int64_t n, int64_t k, const void *va,
     int64_t rows = m - i0 < mr ? m - i0 : mr;
     const uint8_t *ai = a + i0 * a_row * w;
     uint8_t *ci = c + i0 * ldc * w;
-    if (rows == mr && n == mr)
-      tile(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, from);
+    if (n == mr)
+      tile(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, rows, from);
     else edge(w, k, ai, a_k * w, b, b_k * w, ci, ldc * w, rows, n, from);
   }
 }

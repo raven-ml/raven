@@ -402,11 +402,15 @@ static nx_cpu_pack mover(const problem *p, int64_t total, int64_t bytes,
 
 /* Moves operand [o]'s block as stage_acc does, through [move] where it is
    a pack, the operand is in acc and its rows or its columns are
-   contiguous. */
+   contiguous, and sets each row's elements from n0 to [pitch] to +0. Only
+   the padding is set: on the M1's matrix unit, products of 100 columns
+   took 10-17% longer where the whole sliver of b was set, then moved. */
 static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
                  int64_t s0, int64_t s1, int64_t n0, int64_t n1, uint8_t *d,
                  int64_t pitch) {
   const nx_array *x = p->op[o].x;
+  for (int64_t q = 0; n0 < pitch && q < n1; q++)
+    memset(d + (q * pitch + n0) * p->w, 0, (size_t)((pitch - n0) * p->w));
   if (move && x->dtype == p->acc && (s0 == 1 || s1 == 1)) {
     move(n0, n1, x->base + at * p->w, s0, s1, d, pitch);
     return;
@@ -423,17 +427,14 @@ static void pack_a(const problem *p, nx_cpu_pack move, int64_t e, int64_t i,
                    int64_t m, int64_t lda, int64_t pc, int64_t kc,
                    uint8_t *d) {
   const int64_t *s = p->op[A].st;
-  for (int64_t q = 0; m < lda && q < kc; q++)
-    memset(d + (q * lda + m) * p->w, 0, (size_t)((lda - m) * p->w));
   pack(p, move, A, pos(p, A, e, i, 0, pc), s[ROW], s[CON], m, kc, d, lda);
 }
 
 /* Packs the sliver of [b]'s columns [j, j + n) likewise, kc steps of
-   [nr]. */
+   [nr], zero past n. */
 static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
                    int64_t n, int nr, int64_t pc, int64_t kc, uint8_t *d) {
   const int64_t *s = p->op[B].st;
-  if (n < nr) memset(d, 0, (size_t)(nr * kc * p->w));
   pack(p, move, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
 }
 
