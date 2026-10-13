@@ -135,9 +135,8 @@ typedef struct {
   int64_t m, n, r, matrices, per; /* per unit of the job */
   int nops, nres, batch;
   const nx_array *a;
-  int64_t scratch; /* elements per worker */
-  arena *ws, *packs, *copies; /* per worker: the routine's, the products',
-                                 the solves' */
+  int64_t scratch; /* elements per worker, from its kept buffers */
+  arena *packs, *copies; /* per worker: the products', the solves' */
   int failed;
 } call;
 
@@ -300,7 +299,7 @@ static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
 static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
   call *c = ctx;
   arena *s = &c->packs[worker];
-  void *w = room(&c->ws[worker], (c->scratch > 0 ? c->scratch : 1) * c->w);
+  void *w = nx_cpu_take((c->scratch > 0 ? c->scratch : 1) * c->w);
   if (w == NULL) {
     __atomic_store_n(&c->failed, 1, __ATOMIC_RELAXED);
     return;
@@ -316,6 +315,7 @@ static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
     }
     if (!ok) __atomic_store_n(&c->failed, 1, __ATOMIC_RELAXED);
   }
+  nx_cpu_give(w);
 }
 
 /* A matrix's flops, two a multiply-add as gemm.c counts them, with k the
@@ -497,11 +497,9 @@ static value run(call c, const value *arrays, int threads) {
      of all, whose GEMM updates take the threads. */
   c.per = c.matrices >= nx_cpu_threads(bytes, cost) ? 1 : c.matrices;
   int cores = rig_pool_cores();
-  c.ws = calloc((size_t)cores, sizeof(arena));
   c.packs = calloc((size_t)cores, sizeof(arena));
   c.copies = calloc((size_t)cores, sizeof(arena));
-  if (c.ws == NULL || c.packs == NULL || c.copies == NULL) {
-    free(c.ws);
+  if (c.packs == NULL || c.copies == NULL) {
     free(c.packs);
     free(c.copies);
     nx_done(n, a);
@@ -517,11 +515,9 @@ static value run(call c, const value *arrays, int threads) {
     else nx_cpu_job(units, bytes, cost, matrices, &c);
   }
   for (int i = 0; i < cores; i++) {
-    free(c.ws[i].p);
     free(c.packs[i].p);
     free(c.copies[i].p);
   }
-  free(c.ws);
   free(c.packs);
   free(c.copies);
   nx_done(n, a);
