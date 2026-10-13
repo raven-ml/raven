@@ -1192,8 +1192,11 @@ let tests =
       ];
     group "matrices"
       [
-        prop "results are each routine's, after the batch" linalg_case
-          law_linalg;
+        (* A wide matrix that fits its routine is about 1 case in 26, so
+           100 cases missed "wide" about 2% of runs; 1000 miss it about
+           once in 10^17. *)
+        prop ~count:1000 "results are each routine's, after the batch"
+          linalg_case law_linalg;
         test "full_precision states the routines' dtypes" test_full_precision;
       ];
     group "constructor codes"
