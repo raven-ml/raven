@@ -426,17 +426,19 @@ let bitwise_or a b = binary ~by:"Nx.bitwise_or" (Binary Or) a b
 let bitwise_xor a b = binary ~by:"Nx.bitwise_xor" (Binary Xor) a b
 
 let comparison ~by k a b =
-  if same_shape a b then Eval.apply2 ~by (Compare k) D.Bool a b
+  if same_shape a b then Eval.apply2 ~by k D.Bool a b
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
-    Eval.apply2 ~by (Compare k) D.Bool (broadcast ~by s a) (broadcast ~by s b)
+    Eval.apply2 ~by k D.Bool (broadcast ~by s a) (broadcast ~by s b)
 
-let equal a b = comparison ~by:"Nx.equal" Equal a b
-let not_equal a b = comparison ~by:"Nx.not_equal" Not_equal a b
-let less a b = comparison ~by:"Nx.less" Less a b
-let less_equal a b = comparison ~by:"Nx.less_equal" Less_equal a b
-let greater a b = comparison ~by:"Nx.greater" Less b a
-let greater_equal a b = comparison ~by:"Nx.greater_equal" Less_equal b a
+let equal a b = comparison ~by:"Nx.equal" (Compare Equal) a b
+let not_equal a b = comparison ~by:"Nx.not_equal" (Compare Not_equal) a b
+let less a b = comparison ~by:"Nx.less" (Compare Less) a b
+let less_equal a b = comparison ~by:"Nx.less_equal" (Compare Less_equal) a b
+let greater a b = comparison ~by:"Nx.greater" (Compare Less) b a
+
+let greater_equal a b =
+  comparison ~by:"Nx.greater_equal" (Compare Less_equal) b a
 
 (* Scalar forms: the constant [c] of [x]'s dtype, of every set, beside [x]. *)
 
@@ -458,12 +460,14 @@ let rpow_s c x = reversed ~by:"Nx.rpow_s" (Binary Pow) c x
 
 let compared ~by k x c = comparison ~by k x (constant ~by x c)
 let compared_by ~by k c x = comparison ~by k (constant ~by x c) x
-let equal_s x c = compared ~by:"Nx.equal_s" Equal x c
-let not_equal_s x c = compared ~by:"Nx.not_equal_s" Not_equal x c
-let less_s x c = compared ~by:"Nx.less_s" Less x c
-let less_equal_s x c = compared ~by:"Nx.less_equal_s" Less_equal x c
-let greater_s x c = compared_by ~by:"Nx.greater_s" Less c x
-let greater_equal_s x c = compared_by ~by:"Nx.greater_equal_s" Less_equal c x
+let equal_s x c = compared ~by:"Nx.equal_s" (Compare Equal) x c
+let not_equal_s x c = compared ~by:"Nx.not_equal_s" (Compare Not_equal) x c
+let less_s x c = compared ~by:"Nx.less_s" (Compare Less) x c
+let less_equal_s x c = compared ~by:"Nx.less_equal_s" (Compare Less_equal) x c
+let greater_s x c = compared_by ~by:"Nx.greater_s" (Compare Less) c x
+
+let greater_equal_s x c =
+  compared_by ~by:"Nx.greater_equal_s" (Compare Less_equal) c x
 
 let ternary ~by k c x y =
   if same_shape c x && same_shape x y then Eval.apply3 ~by k c x y
@@ -1736,7 +1740,7 @@ let clamp ?min:lo ?max:hi x =
             let hi = push b (Const (D.Any dt, bits ~by dt hi)) in
             push b (Op2 (Binary Minimum, v, hi)))
 
-let isnan x = comparison ~by:"Nx.isnan" Not_equal x x
+let isnan x = comparison ~by:"Nx.isnan" (Compare Not_equal) x x
 
 (* A complex value's parts, as views of its bits read as pairs of its parts'
    format: [part 0] its real parts, [part 1] its imaginary parts. *)
@@ -2666,7 +2670,7 @@ let unique ?size keys =
            bin2 b Sub ins.(0) (i64 b 1)))
       k
   in
-  let differs = comparison ~by Not_equal k before in
+  let differs = comparison ~by (Compare Not_equal) k before in
   let differs =
     if ndim keys = 1 then differs else truth ~by Max ~axes:[ 1 ] differs
   in

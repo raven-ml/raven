@@ -53,7 +53,7 @@ let alive ~by i x =
   | Died why -> invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
 
 let arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray = function
-  | Array { a; _ } -> Iarray.of_list [ a ]
+  | Array { a; _ } -> [| a |]
   | Shards { arrays; _ } | Donated { arrays; _ } -> arrays
   | Deferred _ -> invalid_arg "Prim.arrays: a constant has no arrays"
   | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
@@ -141,7 +141,7 @@ let of_layout (type v s d) (dtype : (v, s) dtype) layout
     (placement : d Devices.placement option) : (v, s, d) form =
   match placement with
   | Some p
-    when Devices.device p = None
+    when Grid.count (Devices.grid p) > 1
          && not (L.is_contiguous layout && L.offset layout = 0) ->
       { dtype; layout = L.contiguous (L.shape layout); placement }
   | Some _ | None -> { dtype; layout; placement }
@@ -1286,55 +1286,71 @@ let op3 ~by k c x y =
 let read_at (r : _ Route.t option) i =
   Option.map (fun (r : _ Route.t) -> r.operands.(i)) r
 
+(* A loop's loads placed by [place] where its route [r] reads them; [None]
+   where none moves. *)
+let placed : type d.
+    ('v 's 'e. 'e Devices.placement option -> ('v, 's, 'e) t -> ('v, 's, 'e) t) ->
+    d Route.t option ->
+    d load array ->
+    d load array option =
+ fun place r loads ->
+  let moved = ref false in
+  let loads =
+    Array.mapi
+      (fun i l ->
+        match l with
+        | Plain x ->
+            let y = place (read_at r i) x in
+            if y == x then l
+            else begin
+              moved := true;
+              Plain y
+            end
+        | Padded p ->
+            let y = place (read_at r i) p.x in
+            if y == p.x then l
+            else begin
+              moved := true;
+              Padded { p with x = y }
+            end)
+      loads
+  in
+  if !moved then Some loads else None
+
+(* [x] placed by [place] where an operation of one operand by [rule] reads
+   it. *)
+let placed_one : type v s d.
+    by:string ->
+    ('w 'r 'e. 'e Devices.placement option -> ('w, 'r, 'e) t -> ('w, 'r, 'e) t) ->
+    Route.rule ->
+    (v, s, d) t ->
+    (v, s, d) t =
+ fun ~by place rule x ->
+  if lies_simply x then place (at x) x
+  else place (read_at (one_route ~by rule x) 0) x
+
 let prepare : type r.
     by:string ->
     ('v 's 'd. 'd Devices.placement option -> ('v, 's, 'd) t -> ('v, 's, 'd) t) ->
     r prim ->
     r prim =
  fun ~by place op ->
-  let one rule x =
-    if lies_simply x then place (at x) x
-    else place (read_at (one_route ~by rule x) 0) x
-  in
-  (* A loop's loads placed where its route reads them; [None] where none
-     moves. *)
-  let placed (type d) (r : d Route.t option) (loads : d load array) =
-    let moved = ref false in
-    let loads =
-      Array.mapi
-        (fun i l ->
-          let placed x =
-            let y = place (read_at r i) x in
-            if y != x then moved := true;
-            y
-          in
-          match l with
-          | Plain x ->
-              let y = placed x in
-              if y == x then l else Plain y
-          | Padded p ->
-              let y = placed p.x in
-              if y == p.x then l else Padded { p with x = y })
-        loads
-    in
-    if !moved then Some loads else None
-  in
   match op with
   | Map p -> (
       check_map ~by p.layout p.prog p.outs p.loads;
-      match placed (map_route ~by p.layout p.loads) p.loads with
+      match placed place (map_route ~by p.layout p.loads) p.loads with
       | Some loads -> Map { p with loads }
       | None -> op)
   | Reduce p -> (
       check_reduce ~by p.layout p.axes p.prog p.reductions p.loads;
       let r = loop_route ~by (Reduce p.axes) p.layout p.loads in
-      match placed r p.loads with
+      match placed place r p.loads with
       | Some loads -> Reduce { p with loads }
       | None -> op)
   | Scan p -> (
       check_scan ~by p.layout p.axis p.prog p.reduction p.loads;
       let r = loop_route ~by (Along [| p.axis |]) p.layout p.loads in
-      match placed r p.loads with
+      match placed place r p.loads with
       | Some loads -> Scan { p with loads }
       | None -> op)
   | Gather g ->
@@ -1397,11 +1413,11 @@ let prepare : type r.
       let init = Option.map (fun i -> place (read_at r 2) i) c.init in
       if a == c.a && b == c.b && init == c.init then op
       else Contract { c with a; b; init }
-  | Copy x -> Copy (one Elementwise x)
+  | Copy x -> Copy (placed_one ~by place Elementwise x)
   | Move (mv, x) ->
       ignore (moved_shape ~by mv x);
-      Move (mv, one (Move mv) x)
-  | Bitcast (dt, x) -> Bitcast (dt, one (bitcast_rule dt x) x)
+      Move (mv, placed_one ~by place (Move mv) x)
+  | Bitcast (dt, x) -> Bitcast (dt, placed_one ~by place (bitcast_rule dt x) x)
   | Place _ | Check _ -> op
 
 let rec iter_outs : type d q.

@@ -104,7 +104,7 @@ let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   in
   match x with
   | Value.Array r ->
-      handle r.at (Iarray.of_list [ r.a ]) [%atomic.loc r.dead]
+      handle r.at ([| r.a |] : _ iarray) [%atomic.loc r.dead]
   | Value.Shards r -> handle r.at r.arrays [%atomic.loc r.dead]
   | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> x
 
@@ -275,7 +275,7 @@ let starts (w : M.range array) = Array.map (fun (r : M.range) -> r.start) w
 let fresh ~by p dt shape =
   let set = Devices.set p in
   match Grid.one (Devices.grid p) with
-  | Some k -> Iarray.of_list [ A.create (Devices.rig set k) dt shape ]
+  | Some k -> ([| A.create (Devices.rig set k) dt shape |] : _ iarray)
   | None ->
       let devices = Grid.devices (Devices.grid p) in
       Iarray.init (Array.length devices) (fun j ->
@@ -497,16 +497,6 @@ let operand_at : type r.
    computed into memory of their own. *)
 type policy = Memo | Fresh
 
-(* Whether [op] is a view of its operand: a constant's keeps no results of its
-   own, and an operation reads it through to its operand's. *)
-let is_view : type r. r Value.prim -> bool = function
-  | Value.Move _ | Value.Bitcast _ -> true
-  | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
-  | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
-  | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
-  | Value.Place _ | Value.Check _ ->
-      false
-
 let find memo p =
   List.find_map
     (fun (q, a) -> if Devices.equal q p then Some a else None)
@@ -694,7 +684,7 @@ and donated : type r. by:string -> r Value.prim -> handle list -> r =
         else begin
           ignore (Prim.prepare ~by (fun _ y -> y) op);
           match A.move mv (Iarray.get d.arrays 0) with
-          | Some v -> (d.at, Iarray.of_list [ v ])
+          | Some v -> (d.at, [| v |])
           | None -> moved ()
         end
       in
@@ -1170,19 +1160,25 @@ and through_views : type v s d.
   match x with
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
   | Value.Deferred { form; node; k } ->
-      (* Each view and where it is read, the innermost first. *)
+      (* Each view and where it is read, the innermost first. A view, a Move
+         or a Bitcast, keeps no results of its own: it is read through to its
+         operand's. *)
       let views = ref [] and node = ref node in
       let key = ref (Devices.rebrand p) in
       let continue = ref true in
       while !continue do
         let (Value.Node n) = !node in
-        match Prim.operands n.op with
-        | Prim.Operands [ Value.Any (Value.Deferred { node = m; _ }) ]
-          when is_view n.op ->
+        match n.op with
+        | Value.Move (_, Value.Deferred { node = m; _ })
+        | Value.Bitcast (_, Value.Deferred { node = m; _ }) ->
             views := (!node, !key) :: !views;
             key := operand_at n.op !key;
             node := m
-        | Prim.Operands _ -> continue := false
+        | Value.Move _ | Value.Bitcast _ | Value.Map _ | Value.Reduce _
+        | Value.Scan _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
+        | Value.Fft _ | Value.Linalg _ | Value.Fold _ | Value.Assemble _
+        | Value.Contract _ | Value.Copy _ | Value.Place _ | Value.Check _ ->
+            continue := false
       done;
       let (Value.Node n) = !node in
       let base =

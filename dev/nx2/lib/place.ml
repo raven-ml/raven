@@ -190,7 +190,7 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
   let at = Prim.placement x in
   let arrays =
     match x with
-    | Value.Array { a; _ } -> Iarray.of_list [ a ]
+    | Value.Array { a; _ } -> ([| a |] : _ iarray)
     | Value.Shards { arrays; _ } -> arrays
     | Value.Deferred _ ->
         invalid_arg "Place.value: a constant is placed computed"
@@ -207,14 +207,14 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
           (Devices.window ~by at shape i, Iarray.get arrays i))
     in
     let set = Devices.set p in
-    let take j k =
-      let w = Devices.window ~by p shape j and d = Devices.rig set k in
-      match from_one d dt w sources with
-      | Some a -> a
-      | None -> gather d dt w sources
-    in
     let devices = Grid.devices (Devices.grid p) in
-    make (Iarray.init (Array.length devices) (fun j -> take j devices.(j)))
+    make
+      (Iarray.init (Array.length devices) (fun j ->
+           let w = Devices.window ~by p shape j
+           and d = Devices.rig set devices.(j) in
+           match from_one d dt w sources with
+           | Some a -> a
+           | None -> gather d dt w sources))
   end
 
 (* [x]'s window [w] from the array of device [k], which holds it. *)
@@ -222,7 +222,7 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   let at = Prim.placement x and shape = Prim.shape x in
   let arrays =
     match x with
-    | Value.Array { a; _ } -> Iarray.of_list [ a ]
+    | Value.Array { a; _ } -> ([| a |] : _ iarray)
     | Value.Shards { arrays; _ } -> arrays
     | Value.Deferred _ -> invalid_arg "Place.view: a constant has no arrays"
     | Value.Traced _ -> invalid_arg "Place.view: a traced value has no arrays"
