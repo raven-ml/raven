@@ -412,6 +412,46 @@ let computed_examples =
       Sum f64 [| 3; 4; 5 |] [| 1 |];
   ]
 
+(* A float vector of [xs] at [dt], read with a step of two where
+   [stepped]. *)
+let vector_of (type s) (dt : (float, s) D.t) ?(stepped = false) xs =
+  let n = Array.length xs in
+  if not stepped then A.Any (A.of_array dt [| n |] xs)
+  else
+    let spread i = if i mod 2 = 1 then xs.(i / 2) else 7. in
+    let x = A.of_array dt [| 2 * n |] (Array.init (2 * n) spread) in
+    let odd = { M.start = 1; count = n; step = 2 } in
+    A.Any (Option.get (A.move (M.Slice [| odd |]) x))
+
+(* NaNs made from numbers, before a NaN term and with none: opposite
+   infinities summed, zero times an infinity, along one block, past one,
+   past a chunk, in a few-term reduction's rows and through a stepped view. *)
+let made_examples =
+  let inf = Float.infinity and ninf = Float.neg_infinity in
+  let nan = Int64.float_of_bits 0x7FF0_0000_0000_0042L in
+  let case ?(views = []) ?(axes = [| 0 |]) scan monoid x =
+    { scan; monoid; axes; x; views }
+  in
+  let f32 = vector_of D.Float32 and f64 = vector_of D.Float64 in
+  let stepped = [ "stepped" ] in
+  let at n pairs =
+    Array.init n (fun i -> Option.value ~default:1. (List.assoc_opt i pairs))
+  in
+  let rows = at 128 [ (10, inf); (11, ninf) ] in
+  let rows = A.Any (A.of_array D.Float32 [| 64; 2 |] rows) in
+  [
+    case false Sum (f32 [| inf; ninf |]);
+    case false Prod (f32 [| 0.; inf |]);
+    case true Sum (f32 [| inf; ninf; 1. |]);
+    case ~views:stepped false Sum
+      (f64 ~stepped:true [| 1.; inf; 2.; ninf; 3. |]);
+    case ~views:stepped true Prod
+      (f64 ~stepped:true [| 2.; 0.; inf; 1.; nan |]);
+    case false Sum (f32 (at 1025 [ (0, inf); (1024, ninf) ]));
+    case true Sum (f32 (at 4097 [ (3, inf); (4096, ninf) ]));
+    case ~axes:[| 1 |] false Sum rows;
+  ]
+
 let any_examples =
   [
     example Sum f32 [| 4 |] [| 0 |];
@@ -550,13 +590,18 @@ let ordered (f, id) ts =
 let is_nan = function F (x, _) -> Float.is_nan x | I _ -> false
 let bits_of = function F (_, b) -> b | I v -> v
 
-(* A float result's NaN holds its first NaN term, else it is some NaN. *)
-let settle ts r =
+(* The NaN the kinds make from numbers at the float dtype [dt]: the quiet
+   NaN of a clear sign bit. *)
+let made (D.Any dt) =
+  if D.bits dt = 32 then 0x7FC00000L else 0x7FF8_0000_0000_0000L
+
+(* A float result's NaN holds its first NaN term, else it is [made]'s. *)
+let settle made ts r =
   if not (is_nan r) then Bits (bits_of r)
   else
     match Array.find_opt is_nan ts with
     | Some t -> Bits (bits_of t)
-    | None -> Some_nan
+    | None -> Bits made
 
 (* The terms of each output of [c], in C order of outputs, each in C order
    of the reduced axes' indices; a scan's are its slices, in order. *)
@@ -588,8 +633,8 @@ let outputs c ts =
    result the carry combined with the chunk's terms up to it, left to right,
    the carry into a chunk the carry into the one before combined with that
    chunk's total in [ordered]'s order. From the first NaN term on, a float
-   result is that term. *)
-let scanned ((f, id) as m) ts =
+   result is that term; a NaN result before it is [made]'s. *)
+let scanned made ((f, id) as m) ts =
   let n = Array.length ts in
   let out = Array.make n id in
   let carry = ref id in
@@ -607,7 +652,7 @@ let scanned ((f, id) as m) ts =
     (fun i v ->
       match first with
       | Some k when i >= k -> Bits (bits_of ts.(k))
-      | _ -> if is_nan v then Some_nan else Bits (bits_of v))
+      | _ -> if is_nan v then Bits made else Bits (bits_of v))
     out
 
 (* The position of each index of shape [s] in C order. *)
@@ -620,9 +665,11 @@ let position s idx =
 let expected c =
   let (A.Any x) = c.x in
   let m = op (D.Any (A.dtype x)) c.monoid in
+  let made = made (D.Any (A.dtype x)) in
   let ts = terms c.x in
   if not c.scan then
-    Array.of_list (List.map (fun o -> settle o (ordered m o)) (outputs c ts))
+    Array.of_list
+      (List.map (fun o -> settle made o (ordered m o)) (outputs c ts))
   else
     let s = shape_of c.x and a = c.axes.(0) in
     let r = Array.length s in
@@ -637,7 +684,7 @@ let expected c =
           position s idx
         in
         let slice = Array.init s.(a) (fun j -> ts.(at j)) in
-        Array.iteri (fun j w -> y.(at j) <- w) (scanned m slice))
+        Array.iteri (fun j w -> y.(at j) <- w) (scanned made m slice))
       (indices (Array.map (fun i -> s.(i)) ks));
     y
 
@@ -675,6 +722,9 @@ let covers c =
   cover "no output" (outs = 0);
   cover "no term" (per = 0 && outs > 0);
   cover "one term" (per = 1);
+  cover "two terms" (per = 2);
+  let pow2 k = k > 0 && k land (k - 1) = 0 in
+  cover "2^k ± 1 terms" (per > 2 && (pow2 (per - 1) || pow2 (per + 1)));
   cover "several blocks" (per > 1024);
   cover "many outputs" (outs >= 64);
   let nans =
@@ -806,8 +856,26 @@ let cpu_computes c =
   let (A.Any x) = c.x in
   List.mem (D.Any (A.dtype x)) base
 
+(* Whether a float result of [c] is a NaN made from numbers: one whose terms,
+   a scan's up to it, hold no NaN. *)
+let makes_nan c =
+  let (A.Any x) = c.x in
+  let dt = D.Any (A.dtype x) in
+  match A.dtype x with
+  | D.Float32 | D.Float64 ->
+      let m = op dt c.monoid and made = made dt in
+      let one o =
+        let n = Array.length o in
+        let k = Option.value ~default:n (Array.find_index is_nan o) in
+        if c.scan then Array.mem (Bits made) (scanned made m (Array.sub o 0 k))
+        else k = n && is_nan (ordered m o)
+      in
+      List.exists one (outputs c (terms c.x))
+  | _ -> false
+
 let law_order (b : Support.backend) c =
   covers c;
+  cover "a NaN made from numbers" (makes_nan c);
   match run b c with
   | None when cpu_computes c -> failf "%s declined a case it states it computes" b.name
   | None -> cover "declined" true
@@ -1249,7 +1317,8 @@ let depth i =
   Float.of_int (max 0 ((2 * log2 (i + 1) 1) - 1))
 
 (* The expected mean and variance at each index of [c], in C order: past a
-   NaN term, its bits; past an infinity, the infinities' sum and a NaN;
+   NaN term, its bits; past an infinity, the infinities' sum and the NaN
+   the kinds make, the mean that NaN too past infinities of both signs;
    else the running mean and variance by float64 sums of the terms less the
    first and of their squares, within nx.cpu's bound at [x]'s unit roundoff
    [u], the depth [D] of the index and the range [R] and variance [V] of the
@@ -1257,6 +1326,7 @@ let depth i =
 let expected_moments (c : moments) =
   let (A.Any x) = c.x in
   let u = if D.bits (A.dtype x) = 32 then 0x1p-24 else 0x1p-53 in
+  let made = Is (Bits (made (D.Any (A.dtype x)))) in
   let gamma k =
     Float.of_int k *. 0x1p-53 /. (1. -. (Float.of_int k *. 0x1p-53))
   in
@@ -1294,10 +1364,13 @@ let expected_moments (c : moments) =
         | Some b ->
             mean.(at) <- Is (Bits b);
             var.(at) <- Is (Bits b)
-        | None when !pos && !neg -> ()
+        | None when !pos && !neg ->
+            mean.(at) <- made;
+            var.(at) <- made
         | None when !pos || !neg ->
             let inf = if !pos then Float.infinity else Float.neg_infinity in
-            mean.(at) <- Near (inf, 0.)
+            mean.(at) <- Near (inf, 0.);
+            var.(at) <- made
         | None ->
             let c = Option.get !c and d = depth j and k = j + 1 in
             let m = !s1 /. n and r = !hi -. !lo in
@@ -1447,7 +1520,7 @@ let order (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu's cases and order, " ^ b.name)
     [
-      prop ~examples:computed_examples
+      prop ~examples:(computed_examples @ made_examples)
         "each result folds its terms in nx.cpu's order" computed
         (run (law_order b));
       prop ~examples:any_examples

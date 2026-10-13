@@ -29,10 +29,11 @@
    blocks' tree: the groups' values combine by the same counter.
 
    NaN. A float result that is NaN is replaced by its first NaN term in
-   index order, found by a second walk taken only then. A scan's results
-   stay NaN once they are, since adding, multiplying and the extremes keep
-   a NaN: where a slice's last result is NaN, every result from its first
-   NaN term on is that term.
+   index order, found by a second walk taken only then, or by nx_kinds.h's
+   NaN where no term is NaN. A scan's results stay NaN once they are, since
+   adding, multiplying and the extremes keep a NaN: where a slice's last
+   result is NaN, every result from its first NaN term on is that term, and
+   every NaN result before it nx_kinds.h's.
 
    Paths. The operand and the destination, read at the operand's shape with
    step 0 along the reduced axes, coalesce: reduced and kept axes never
@@ -607,6 +608,17 @@ static const uint8_t *at(const plan *q, int64_t p) {
   return q->src->base + p * q->w;
 }
 
+/* Writes the NaN nx_kinds.h makes from numbers at [d]. */
+static void made_nan(const plan *q, uint8_t *d) {
+  if (q->dtype == NX_FLOAT32) {
+    float v = NX_NAN_F32;
+    memcpy(d, &v, 4);
+    return;
+  }
+  double v = NX_NAN_F64;
+  memcpy(d, &v, 8);
+}
+
 /* The operand's position of term [t] of the output at [p]. */
 static int64_t term(const plan *q, int64_t p, int64_t t) {
   for (int i = q->nr - 1; i >= 0; i--) {
@@ -761,7 +773,8 @@ static unit unit_of(const plan *q, int64_t u) {
   return x;
 }
 
-/* Stores the unit's values [v], each NaN replaced by its first NaN term. */
+/* Stores the unit's values [v], each NaN replaced by its first NaN term, or
+   by nx_kinds.h's where none is. */
 static void store(const plan *q, const unit *x, const uint8_t *v) {
   uint8_t *d = q->dst->base + x->d * q->w;
   if (x->sd == 1) memcpy(d, v, x->W * q->w);
@@ -773,7 +786,9 @@ static void store(const plan *q, const unit *x, const uint8_t *v) {
     if (!is_nan(q, v + j * q->w)) continue;
     int64_t p = x->p + j * x->s, t = 0;
     while (t < q->terms && !is_nan(q, at(q, term(q, p, t)))) t++;
-    if (t < q->terms) memcpy(d + j * x->sd * q->w, at(q, term(q, p, t)), q->w);
+    uint8_t *e = d + j * x->sd * q->w;
+    if (t < q->terms) memcpy(e, at(q, term(q, p, t)), q->w);
+    else made_nan(q, e);
   }
 }
 
@@ -794,6 +809,7 @@ static void few(const plan *q, const unit *x) {
       int64_t t = 0;
       while (t < q->terms && !is_nan(q, at(q, p + j * x->s + q->off[t]))) t++;
       if (t < q->terms) memcpy(e, at(q, p + j * x->s + q->off[t]), q->w);
+      else made_nan(q, e);
     }
   }
 }
@@ -996,7 +1012,8 @@ static void rescan(const plan *q, const unit *x, int64_t c, uint8_t *a) {
 }
 
 /* Each of the unit's slices whose last result is NaN takes its first NaN
-   term from that term on. */
+   term from that term on, and nx_kinds.h's NaN for each NaN result before
+   it. */
 static void settle(const plan *q, const unit *x) {
   if (!q->nan || q->terms == 0) return;
   uint8_t *y = q->dst->base;
@@ -1005,6 +1022,10 @@ static void settle(const plan *q, const unit *x) {
     if (!is_nan(q, y + (d + (q->terms - 1) * q->rd) * q->w)) continue;
     int64_t k = 0;
     while (k < q->terms && !is_nan(q, at(q, p + k * q->rs[0]))) k++;
+    for (int64_t t = 0; t < k; t++) {
+      uint8_t *e = y + (d + t * q->rd) * q->w;
+      if (is_nan(q, e)) made_nan(q, e);
+    }
     for (int64_t t = k; t < q->terms; t++)
       memcpy(y + (d + t * q->rd) * q->w, at(q, p + k * q->rs[0]), q->w);
   }

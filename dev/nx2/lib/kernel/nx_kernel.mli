@@ -76,14 +76,15 @@ type extreme = Max | Min
       [int64].
 
     A NaN result, where a term it reduces is a NaN, is the first such term, its
-    bits unchanged; with no NaN term it is the instruction set's NaN, as an
-    infinity less itself gives. A float [Sum] or [Prod] associates in an order
-    that is a function of the shapes alone ({!section-orders}), and each kernel
-    library states its order, the bounds of [Logsumexp], reduced and scanned,
-    and those of [Moments] reduced. A float sum of [n] terms is within
-    [γ(n - 1) Σ|x|] of the exact sum, a product within a relative
-    [γ(n - 1)] barring overflow and underflow, where [γ(k) = k u / (1 - k u)]
-    and [u] is the dtype's unit roundoff.
+    bits unchanged; with no NaN term it is the quiet NaN of a clear sign bit,
+    the NaN {!Prog}'s kinds make from numbers on every target. A float [Sum]
+    or [Prod] associates in an order that is a function of the shapes alone
+    ({!section-orders}), and each kernel library states its order, the
+    bounds of [Logsumexp], reduced and scanned, and those of [Moments]
+    reduced. A float sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact
+    sum, a product within a relative [γ(n - 1)] barring overflow and
+    underflow, where [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit
+    roundoff.
 
     A [Moments] scan gives the same bits in every library that computes
     one. On each slice, a term [t] is the state [(t - c, +0, 1)] of a mean
