@@ -14,11 +14,11 @@
 
     The C stubs read some fields by position, so their order is fixed.
     [rig_memory.c] reads, for the readers and claims [rig.h] declares, the
-    fields of {!buffer} and {!claim}, those of {!memory} up to [root], those
-    of {!entry} up to [pages], and those of {!device} up to [machine], and takes
-    [Here] to be {!machine}'s first constant constructor. [rig.h]'s
-    [enum rig_access] lists {!access}'s constructors in order. A change of
-    either changes the C too. *)
+    fields of {!buffer} and {!memory}, those of {!alloc} up to [entry], those
+    of {!entry} up to [pages], and those of {!device} up to [machine] and its
+    [opened], and takes [Here] to be {!machine}'s first constant constructor.
+    [rig.h]'s [enum rig_access] lists {!access}'s constructors in order. A
+    change of either changes the C too. *)
 
 (** The type for a driver's module with its types exposed. *)
 type ('a, 'r, 'i) dm =
@@ -65,7 +65,7 @@ type completion = Store | Object of int | Host_writes
 (** {!Rig.Buffer.access}. *)
 type access = Read | Read_write
 
-(** The type for the host memory a memory record keeps reachable: none, a
+(** The type for the host memory an allocation keeps reachable: none, a
     heap bigarray, whose collection returns its bytes to the host's budget,
     or the caller's bigarray. *)
 type keep =
@@ -259,43 +259,43 @@ and linked = { code : code; functions : (string * int) list }
     collected. *)
 and code
 
-(** The type for an allocation's claim, which every memory record over it
-    shares ({!Claim}). *)
-type claim = {
+type alloc = {
+  owner : device;  (** The device whose memory it is. *)
+  host : int;
+      (** [owner]'s host address, [-1] if the host does not address it. *)
   mutable count : int; [@atomic]
       (** The claim word ({!Memory.section-claims}). *)
   mutable generation : int; [@atomic]
       (** Raised by each consumption, which kills the buffers of older
           ones. *)
   mutable why : string;  (** The last consumption's reason. *)
+  mutable entry : entry; [@atomic]
+      (** The allocation's entry, {!Memory.no_entry} for host memory no
+          device borrowed. Set once, under [owner]'s lock, and read without
+          it: the read orders the reader's access to the entry's stamps,
+          which C initialised. *)
+  mutable token : token;
+      (** Puts [entry] on [owner]'s release list once collected.
+          {!Memory.no_token} for host memory until its first borrow, and for
+          an image's code memory, whose entry the image releases. *)
+  keep : keep;  (** The host memory it keeps reachable. *)
 }
+(** The type for one lifetime of an allocation, which every memory record
+    over it shares: its claim, and the token that releases its entry. A
+    cache hit wraps a reused entry in a new one. *)
 
 type memory = {
   dev : device;  (** The device that reaches the allocation through it. *)
-  bytes : int;  (** The allocation's size. *)
   host : int;  (** Host address, [-1] if the host does not address it. *)
   address : int;  (** As [dev]'s work addresses it, [-1] if none. *)
   handle : nativeint;  (** The driver object that names it on [dev]. *)
-  claim : claim;  (** The allocation's claim. *)
-  mutable entry : entry; [@atomic]
-      (** The allocation's entry, {!Memory.no_entry} for host memory no
-          device borrowed. Set once, under its device's lock, and read
-          without it: the read orders the reader's access to the entry's
-          stamps, which C initialised. *)
-  root : memory;
-      (** The owner's record for a borrow; for the owner's, a record that
-          stands for the record itself ({!Memory.root}). *)
-  mutable token : token;
-      (** Puts [entry] on [dev]'s release list once collected; none for a
-          borrow. *)
-  keep : keep;  (** The host memory it keeps reachable. *)
+  alloc : alloc;  (** The allocation. *)
 }
-(** The type for a device's record of an allocation: the owner's, which is
-    its own root, or a borrow's. No record points back to itself, so
-    polymorphic comparison of two records ends. *)
+(** The type for a device's reach of an allocation: the owner's, whose [dev]
+    is [alloc]'s [owner], or a borrow's. *)
 
 type buffer = { mem : memory; offset : int; length : int; generation : int }
-(** {!Rig.Buffer.t}: live while [generation] is its claim's. *)
+(** {!Rig.Buffer.t}: live while [generation] is its allocation's. *)
 
 type image = { idev : device; loaded : loaded; itoken : token }
 (** {!Rig.Image.t}: its device, what the driver loaded, and the token that

@@ -18,7 +18,7 @@ let place d (e : entry) region code =
   let n = String.length code in
   let l = Memory.locate region in
   let m =
-    Memory.make ?host:l.host ?address:l.address ~handle:l.handle d e.bytes e
+    Memory.make ?host:l.host ?address:l.address ~handle:l.handle d e
   in
   let dst = Buffer.of_memory m n in
   match d.live.copy_engine with

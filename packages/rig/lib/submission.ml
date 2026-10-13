@@ -224,9 +224,9 @@ let kind_name = function
 
 (* The record of [b]'s memory, which holds the stamps a submission raises. *)
 let[@inline] entry_of b =
-  let m = Memory.root b.mem in
-  if m.entry == Memory.no_entry then Memory.ensure_entry m;
-  m.entry
+  let a = b.mem.alloc in
+  if a.entry == Memory.no_entry then Memory.ensure_entry a;
+  a.entry
 
 let host_address fn b =
   if b.mem.host < 0 then invalid_argf "Rig.%s: the buffer is not host memory" fn;
@@ -243,9 +243,9 @@ let carried d b = b.mem.dev != d && local b && not (Dev.same_machine d Dev.host)
 (* Only the original allocation says whose memory it is and of which kind:
    a peer borrow's device and handle describe the receiving device's mapping. *)
 let owns_device_memory d b =
-  let m = Memory.root b.mem in
-  m.dev == d
-  && match m.entry.backing with
+  let a = b.mem.alloc in
+  a.owner == d
+  && match a.entry.backing with
      | Driver_memory { memory = Device; _ } -> true
      | Driver_memory _ | Io_memory _ | Kept _ -> false
 
@@ -831,7 +831,7 @@ let block s i =
 
 (* Whether the bytes of [b] lie in those of [f]. *)
 let within b f =
-  Memory.root b.mem == Memory.root f.mem && f.offset <= b.offset
+  b.mem.alloc == f.mem.alloc && f.offset <= b.offset
   && b.length <= f.length - (b.offset - f.offset)
 
 let address s b =
@@ -995,9 +995,8 @@ let check_count s buffers =
 let check_owner s b =
   let m = b.mem in
   if m.dev != s.dev && Dev.is_lost m.dev then Dev.raise_lost m.dev;
-  let r = Memory.root m in
-  if r.dev != s.dev && r.dev != m.dev && Dev.is_lost r.dev then
-    Dev.raise_lost r.dev
+  let o = m.alloc.owner in
+  if o != s.dev && o != m.dev && Dev.is_lost o then Dev.raise_lost o
 
 (* Refuses [b], the run's buffer [k], used with [use], unless it is live, on
    [s]'s device or carried for copies alone, and, written, of memory that
@@ -1005,7 +1004,7 @@ let check_owner s b =
    what a copy passes the driver to its side [k]. *)
 let name_one s run use k b =
   if not (Buffer.is_live b) then
-    invalid_argf "Rig.%s: buffers.(%d) is dead: %s" fn k b.mem.claim.why;
+    invalid_argf "Rig.%s: buffers.(%d) is dead: %s" fn k b.mem.alloc.why;
   let naming = Array.unsafe_get s.naming k in
   let carried =
     match naming with Copies -> carried s.dev b | Refs | Both -> false
@@ -1015,9 +1014,9 @@ let name_one s run use k b =
     invalid_argf "Rig.%s: buffers.(%d) is on %s, not on %s: borrow it" fn k
       b.mem.dev.name s.dev.name;
   check_owner s b;
-  let m = Memory.root b.mem in
-  if m.entry == Memory.no_entry then Memory.ensure_entry m;
-  let e = m.entry in
+  let a = b.mem.alloc in
+  if a.entry == Memory.no_entry then Memory.ensure_entry a;
+  let e = a.entry in
   if use <> Use_read && e.access = Def.Read then
     invalid_argf
       "Rig.%s: buffers.(%d) is written and its memory admits only reads" fn k;
@@ -1162,7 +1161,7 @@ let moves_of s buffers =
   Array.map
     (fun (src, dst) ->
       let src = buffer src and dst = buffer dst in
-      ((Memory.root src.mem).dev, (Memory.root dst.mem).dev, src.length))
+      (src.mem.alloc.owner, dst.mem.alloc.owner, src.length))
     s.copies
 
 (* What a submit reads for the profiles taken before it hands its work over: the

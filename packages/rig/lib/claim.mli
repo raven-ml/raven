@@ -5,9 +5,10 @@
 
 (** Claims: the implementation of {!Rig.Claim}.
 
-    Each allocation has one claim ({!Def.claim}), which every memory record
-    over it shares: a claim word ({!Memory.section-claims}), a generation,
-    and the reason of the last consumption. A read claim adds
+    Each lifetime of an allocation has one claim, in its {!Def.alloc}, which
+    every memory record over it shares: a claim word
+    ({!Memory.section-claims}), a generation, and the reason of the last
+    consumption. A read claim adds
     {!Memory.one_claim} to the word by compare-and-set, and is refused while
     the word is negative, that is while the memory is held exclusive.
 

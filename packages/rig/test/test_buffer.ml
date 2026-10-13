@@ -610,6 +610,54 @@ let test_borrow_own () =
   | Some b' -> equal bool true (b == b')
   | None -> failf "no borrow of its own memory"
 
+(* Where a buffer's memory lies, as each reader states it: its driver object,
+   its host address, the address its device's work uses, [None] where a reader
+   refuses, and whether it is borrowed. *)
+let coordinates b =
+  let answer f = try Some (f ()) with Invalid_argument _ -> None in
+  let address () =
+    Sub.address (Sub.make ~fixed:[ (b, Rig.Read) ] (B.device b) [||]) b
+  in
+  ( answer (fun () -> B.handle b),
+    Support.Reader.host b,
+    answer address,
+    B.is_borrowed b )
+
+(* Memory of each kind of owner, and a device of other coordinates that
+   borrows it. A hidden device's memory has no host address; one without
+   addresses names its memory by handle alone. *)
+let owners =
+  let hidden name = fst (P.open_ ~host_visible:false name) in
+  let peer () = hidden "buffer:back-peer" in
+  let paged () = B.export (B.create Rig.host (1 lsl 16)) Bigarray.char in
+  [
+    ("device memory", fun () -> (B.create (hidden "buffer:back") 64, peer ()));
+    ( "memory named by handle",
+      fun () ->
+        let d, _ =
+          P.open_ ~host_visible:false ~addresses:false "buffer:back-handle"
+        in
+        (B.create d 64, peer ()) );
+    ( "pinned memory",
+      fun () ->
+        (B.create ~memory:Pinned (hidden "buffer:back-pinned") 64, peer ()) );
+    ("no bytes", fun () -> (B.create (hidden "buffer:back-empty") 0, peer ()));
+    ("host memory", fun () -> (B.create Rig.host (1 lsl 16), peer ()));
+    ("a bigarray", fun () -> (B.of_bigarray (paged ()), peer ()));
+  ]
+
+(* A borrow back on the device whose memory it is lies where that memory does,
+   by every reader. *)
+let test_borrow_back (_, owner) =
+  let m, via = owner () in
+  let on_via = require_some (B.borrow via m) in
+  let back = require_some (B.borrow (B.device m) on_via) in
+  equal ~msg:"device" bool true (Rig.equal (B.device m) (B.device back));
+  equal ~msg:"coordinates"
+    (quad (option nativeint) int (option int) bool)
+    (coordinates m) (coordinates back);
+  equal ~msg:"overlaps" bool (B.length m > 0) (B.overlaps m back)
+
 (* A mapping lasts while its memory lives, and is released with it once the work
    the mapper was handed until then is done. *)
 let test_mapping_released () =
@@ -1514,6 +1562,9 @@ let tests =
         test "a staged blit holds its buffer against a donation"
           test_staged_blit_claimed;
       ];
+    cases ~timeout ~name:fst
+      "a borrow back on its memory's device lies where that memory does" owners
+      test_borrow_back;
     cases ~timeout
       ~name:(fun (n, _, _) -> n)
       "polymorphic comparison ends, and equality refuses one device's buffers"

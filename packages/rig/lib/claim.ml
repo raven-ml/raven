@@ -6,22 +6,23 @@
 open Def
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-let count (c : claim) = Atomic.Loc.get [%atomic.loc c.count]
-let swap (c : claim) a b = Atomic.Loc.compare_and_set [%atomic.loc c.count] a b
+let count (a : alloc) = Atomic.Loc.get [%atomic.loc a.count]
+let swap (a : alloc) w w' =
+  Atomic.Loc.compare_and_set [%atomic.loc a.count] w w'
 
-(* Adds a read claim to [c]; the loop retries only a compare-and-set another
+(* Adds a read claim to [a]; the loop retries only a compare-and-set another
    domain's claim beat. *)
-let rec read_claim fn c =
-  let n = count c in
+let rec read_claim fn a =
+  let n = count a in
   if n < 0 then invalid_argf "Rig.%s: the memory is held exclusive" fn
-  else if not (swap c n (n + Memory.one_claim)) then read_claim fn c
+  else if not (swap a n (n + Memory.one_claim)) then read_claim fn a
 
 (* Ends a read claim in C, so that no poll point, and so no asynchronous
    exception, comes between [f]'s return and the release. *)
 external drop : buffer -> unit = "caml_rig_claim_drop" [@@noalloc]
 
 let hold fn b f =
-  read_claim fn b.mem.claim;
+  read_claim fn b.mem.alloc;
   match
     Buffer.check_live fn b;
     f ()
@@ -35,8 +36,8 @@ let hold fn b f =
 
 (* [hold] of two buffers with no closure, for a staged copy's sides. *)
 let hold2 fn a b f x =
-  read_claim fn a.mem.claim;
-  match read_claim fn b.mem.claim with
+  read_claim fn a.mem.alloc;
+  match read_claim fn b.mem.alloc with
   | exception e ->
       drop a;
       raise e
@@ -59,7 +60,7 @@ let hold2 fn a b f x =
    wait for [access] meets it, so a read depends on every device's last write
    alone. *)
 let wait fn (access : access) b =
-  read_claim fn b.mem.claim;
+  read_claim fn b.mem.alloc;
   match
     Buffer.check_live fn b;
     Memory.check_owner b.mem;
@@ -99,7 +100,7 @@ let write_bytes b k f =
 
 let mark b =
   Buffer.check_live "Claim.share" b;
-  if not (Memory.mark_outside b.mem.claim) then
+  if not (Memory.mark_outside b.mem.alloc) then
     invalid_arg "Rig.Claim.share: the memory is held exclusive by claims";
   (* A consumption between the check and the mark killed [b]: the memory stays
      marked, which costs only its donations. *)
@@ -108,7 +109,7 @@ let mark b =
 (* Memory a library hands out again is marked already: two loads answer, the
    word unheld and marked, then [b] live, with no call. *)
 let share b =
-  let c = b.mem.claim in
+  let c = b.mem.alloc in
   let n = count c in
   if
     n < 0
@@ -219,7 +220,7 @@ let rec hold_all = function
   | [] -> ()
   | b :: bs ->
       if Buffer.spans b then
-        ignore (swap b.mem.claim Memory.one_claim Memory.exclusive : bool);
+        ignore (swap b.mem.alloc Memory.one_claim Memory.exclusive : bool);
       hold_all bs
 
 (* Ends [c]: it holds nothing from the end on, before any claim is released. A
@@ -238,7 +239,7 @@ let nth c i =
 (* Raises why [b] refused its claim, or returns once the refusal has passed,
    as when the with_ that held it exclusive has ended. *)
 let refusal b =
-  if count b.mem.claim < 0 then
+  if count b.mem.alloc < 0 then
     invalid_arg "Rig.Claim.with_: the memory is held exclusive";
   Buffer.check_live "Claim.with_" b;
   Memory.check b.mem
@@ -272,10 +273,10 @@ let with_ ~read ~donate f =
 
 let rec names cl = function
   | [] -> false
-  | b :: bs -> b.mem.claim == cl || names cl bs
+  | b :: bs -> b.mem.alloc == cl || names cl bs
 
 let exclusive c b =
-  let cl = b.mem.claim in
+  let cl = b.mem.alloc in
   (not (ended c)) && count cl < 0 && names cl c.donate
 
 let refuse_ended () =
@@ -285,7 +286,7 @@ let refuse_ended () =
    [consumed] moves it only while they have not ended. *)
 let consume c ~why b =
   if ended c then refuse_ended ();
-  let cl = b.mem.claim in
+  let cl = b.mem.alloc in
   if not (names cl c.read || names cl c.donate) then
     invalid_arg "Rig.Claim.consume: the claims do not hold the memory";
   Buffer.check_live "Claim.consume" b;

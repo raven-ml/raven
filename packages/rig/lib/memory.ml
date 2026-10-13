@@ -52,36 +52,30 @@ let iter_points f st =
   let p = stamps_folded st true in
   if p <> 0 then f p
 
-(* [m]'s root: the owner's record for a borrow, [m] for the owner's, whose root
-   field holds [itself] (below), the one record whose root is itself. *)
-let[@inline] root m =
-  let r = m.root in
-  if r.root == r then m else r
-
-(* Waits for the use points of [m]'s stamps if [every], their write points
+(* Waits for the use points of [a]'s stamps if [every], their write points
    otherwise, from the chunk [c]'s [i]th word on, with no closure: the walk
-   is a host access's every wait. [m], whose collection frees the stamps, is
+   is a host access's every wait. [a], whose collection frees the stamps, is
    an argument of every step, so it stays reachable through every wait and
    every read. *)
-let rec wait_from m every c i =
-  if c <> 0 && i = uses then wait_from m every (stamps_next c) 0
+let rec wait_from (a : alloc) every c i =
+  if c <> 0 && i = uses then wait_from a every (stamps_next c) 0
   else
     let p = if c = 0 then ended else stamps_followed c i every in
     if p <> ended then begin
-      if p <> 0 then Dev.wait_point m.entry.stamps every p;
-      wait_from m every c (i + 1)
+      if p <> 0 then Dev.wait_point a.entry.stamps every p;
+      wait_from a every c (i + 1)
     end
 
 (* The walk, then the point folded into the head. *)
-let wait_all m every =
-  let st = m.entry.stamps in
-  wait_from m every st 0;
+let wait_all (a : alloc) every =
+  let st = a.entry.stamps in
+  wait_from a every st 0;
   let p = stamps_folded st every in
-  if p <> 0 then Dev.wait_point m.entry.stamps every p;
-  ignore (Sys.opaque_identity m)
+  if p <> 0 then Dev.wait_point a.entry.stamps every p;
+  ignore (Sys.opaque_identity a)
 
-let wait_points m = wait_all (root m) true
-let wait_write m = wait_all (root m) false
+let wait_points m = wait_all m.alloc true
+let wait_write m = wait_all m.alloc false
 
 (* Visit every point even after a refusal: reading a later transport word may
    discover a loss and stop its device. The walk carries no allocated state. *)
@@ -104,16 +98,13 @@ let check_points st = iter_points Dev.check st
 let[@inline] check_owner m =
   let d = m.dev in
   if Dev.is_lost d then Dev.raise_lost d;
-  let r = root m in
-  if r != m then begin
-    let o = r.dev in
-    if o != d && Dev.is_lost o then Dev.raise_lost o
-  end
+  let o = m.alloc.owner in
+  if o != d && Dev.is_lost o then Dev.raise_lost o
 
 (* Raises [Lost] for a use of [m] that depends on every point of its stamps. *)
 let[@inline] check m =
   check_owner m;
-  check_points (root m).entry.stamps
+  check_points m.alloc.entry.stamps
 
 (* Whether [f] holds of each keep point of the chunk [c] from its [i]th word
    on, and of the chunks after it: the points of work that uses the memory
@@ -215,7 +206,10 @@ let read_only = 2
 let one_claim = 4
 let exclusive = -1
 
-let new_claim keep (e : entry) =
+(* The claim word of a new lifetime of [e] that keeps [keep]: outside the
+   claims for the caller's bigarray and an io library's region, read-only for
+   memory that admits only reads. *)
+let claim_word keep (e : entry) =
   let reached =
     match keep with
     | Bigarray _ -> true
@@ -224,71 +218,49 @@ let new_claim keep (e : entry) =
         | Io_memory { origin = Given; _ } -> true
         | Io_memory { origin = Made; _ } | Driver_memory _ | Kept _ -> false)
   in
-  let word =
-    (if reached then outside else 0)
-    lor if e.access = Read then read_only else 0
-  in
-  { count = word; generation = 0; why = "" }
+  (if reached then outside else 0)
+  lor if e.access = Read then read_only else 0
 
-let rec mark_outside (c : claim) =
-  let w = Atomic.Loc.get [%atomic.loc c.count] in
+let rec mark_outside (a : alloc) =
+  let w = Atomic.Loc.get [%atomic.loc a.count] in
   w >= 0
   && (w land outside <> 0
-     || Atomic.Loc.compare_and_set [%atomic.loc c.count] w (w lor outside)
-     || mark_outside c)
+     || Atomic.Loc.compare_and_set [%atomic.loc a.count] w (w lor outside)
+     || mark_outside a)
 
-(* The root an owner's record holds, which stands for the record itself. A
-   record pointing back to itself would send polymorphic comparison of two
-   owners that agree on every other field round that cycle forever. *)
-let rec itself =
-  {
-    dev = Dev.host;
-    bytes = 0;
-    host = -1;
-    address = -1;
-    handle = 0n;
-    claim = new_claim Nothing no_entry;
-    entry = no_entry;
-    token = no_token;
-    keep = Nothing;
-    root = itself;
-  }
+(* An owner's record of a new lifetime of [entry], with no token. Every
+   argument is given, so a host buffer's records allocate nothing beside
+   them. *)
+let own ~keep ~host ~address ~handle dev entry =
+  let count = claim_word keep entry in
+  let alloc =
+    {
+      owner = dev;
+      host;
+      count;
+      generation = 0;
+      why = "";
+      entry;
+      token = no_token;
+      keep;
+    }
+  in
+  { dev; host; address; handle; alloc }
 
-(* An owned memory. Every argument is given, so a host buffer's record allocates
-   nothing beside it. *)
-let own ~keep ~host ~address ~handle ~token dev bytes entry =
-  {
-    dev;
-    bytes;
-    host;
-    address;
-    handle;
-    claim = new_claim keep entry;
-    entry;
-    token;
-    keep;
-    root = itself;
-  }
+let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n) dev
+    entry =
+  own ~keep ~host ~address ~handle dev entry
 
-let make ?(keep = Nothing) ?(host = -1) ?(address = -1) ?(handle = 0n)
-    ?(token = no_token) dev bytes entry =
-  own ~keep ~host ~address ~handle ~token dev bytes entry
+let memory_of alloc dev ~host ~address ~handle =
+  { dev; host; address; handle; alloc }
 
-let borrow_of (root : memory) dev ~host ~address ~handle =
-  {
-    dev;
-    bytes = root.bytes;
-    host;
-    address;
-    handle;
-    claim = root.claim;
-    entry = root.entry;
-    token = no_token;
-    keep = Nothing;
-    root;
-  }
-
-let stamps m = (root m).entry.stamps
+(* Host memory's size is its bigarray's, other memory's its entry's:
+   [no_entry], of no bytes, for memory of no bytes. *)
+let size (a : alloc) =
+  match a.keep with
+  | Heap ba -> Bigarray.Array1.dim ba
+  | Bigarray ba -> Bigarray.Array1.size_in_bytes ba
+  | Nothing -> a.entry.bytes
 
 let locate (Region { m; r; _ }) =
   let module D = (val m) in
@@ -994,13 +966,13 @@ let of_entry d e =
     match e.backing with
     | Driver_memory { region; _ } ->
         let l = locate region in
-        make ?host:l.host ?address:l.address ~handle:l.handle d e.bytes e
-    | Io_memory _ | Kept _ -> make d e.bytes e
+        make ?host:l.host ?address:l.address ~handle:l.handle d e
+    | Io_memory _ | Kept _ -> make d e
   in
   let l = d.live in
   let live = if m.host >= 0 then l.used else -1 in
-  m.token <- token l.release (Memory e) e.bytes (room d) live;
-  if m.token == no_token then begin
+  m.alloc.token <- token l.release (Memory e) e.bytes (room d) live;
+  if m.alloc.token == no_token then begin
     (* A refused token means [d] has stopped: its driver takes [e] back
        now. *)
     free_entry e;
@@ -1096,32 +1068,30 @@ let host_memory n =
   drain Dev.host;
   if n = 0 then
     let addr = ba_address empty in
-    own ~keep:empty_keep ~host:addr ~address:addr ~handle:0n ~token:no_token
-      Dev.host 0 no_entry
+    own ~keep:empty_keep ~host:addr ~address:addr ~handle:0n Dev.host no_entry
   else begin
     heap_reserved n;
     let ba = host_bytes n in
     let addr = ba_address ba in
-    own ~keep:(Heap ba) ~host:addr ~address:addr ~handle:0n ~token:no_token
-      Dev.host n no_entry
+    own ~keep:(Heap ba) ~host:addr ~address:addr ~handle:0n Dev.host no_entry
   end
 
 (* Borrows *)
 
-let make_entry m =
-  if m.entry == no_entry then begin
-    let d = m.dev in
-    let e = entry d (Kept m.keep) m.bytes (stamps_new ()) in
+let make_entry (a : alloc) =
+  if a.entry == no_entry then begin
+    let d = a.owner in
+    let e = entry d (Kept a.keep) (size a) (stamps_new ()) in
     let t = token d.live.release (Memory e) 0 max_int (-1) in
     if t == no_token then begin
       stamps_unref e.stamps;
       Dev.raise_lost d
     end;
-    m.entry <- e;
-    m.token <- t
+    a.entry <- e;
+    a.token <- t
   end
 
-let ensure_entry m = Dev.protect m.dev make_entry m
+let ensure_entry (a : alloc) = Dev.protect a.owner make_entry a
 
 (* [d]'s mapping of [e], if any. *)
 let find_map ((e : entry), d) = List.find_opt (fun mp -> mp.on == d) e.maps
@@ -1171,35 +1141,35 @@ let map_peer_region d (Region { m = om; h = oh; r; rid }) =
       | None -> None)
   | _ -> None
 
-let map_peer d m =
-  match m.entry.backing with
+let map_peer d (a : alloc) =
+  match a.entry.backing with
   | Driver_memory { region; _ } -> map_peer_region d region
   | Io_memory _ | Kept _ -> None
 
-(* Whether [d] maps [m] as a peer's memory: memory of a device of [d]'s
+(* Whether [d] maps [a] as a peer's memory: memory of a device of [d]'s
    driver. *)
-let peer_memory d (m : memory) =
-  match m.dev.kind with
-  | Driver _ -> m.dev.key = d.key
+let peer_memory d (a : alloc) =
+  match a.owner.kind with
+  | Driver _ -> a.owner.key = d.key
   | Host | Io _ -> false
 
-(* [d]'s new mapping of the memory [m] owns, whose host address is [host] or
+(* [d]'s new mapping of the allocation [a], whose host address is [host] or
    [-1]. It counts in the memory and is recorded there first, then noted on
    [d] unless [d]'s stop returned: a drain of [d] that came first found no
    note, so the mapping is taken back out of the memory and given back here,
    and [d] is lost. A drain that comes later finds the note. *)
-let map_new d m host =
+let map_new d (a : alloc) host =
   (* Memory of a device of [d]'s driver maps as a peer's; other memory the
      host addresses, as host memory. *)
   let made =
-    if peer_memory d m then map_peer d m
-    else if host >= 0 then map_host_range d host m.bytes
-    else map_peer d m
+    if peer_memory d a then map_peer d a
+    else if host >= 0 then map_host_range d host (size a)
+    else map_peer d a
   in
   match made with
   | None -> None
   | Some r -> (
-      let e = m.entry in
+      let e = a.entry in
       let loc =
         match locate r with
         | loc -> loc
@@ -1211,103 +1181,119 @@ let map_new d m host =
       let mp = { on = d; map = r; at; by = loc.handle } in
       (* A mapping that lost the race counts too, until it is given back, so
          the memory outlives it. *)
-      match Dev.protect m.dev add_map (e, mp) with
+      match Dev.protect a.owner add_map (e, mp) with
       | Some other ->
           give d r e;
           Some other
       | None ->
           if Dev.protect d note_mapped (d, e, mp) then Some mp
           else begin
-            if Dev.protect m.dev take_back (e, mp) then give d r e;
+            if Dev.protect a.owner take_back (e, mp) then give d r e;
             Dev.raise_lost d
           end)
 
-(* [d]'s mapping of the memory [m] owns, whose host address is [host] or [-1],
+(* [d]'s mapping of the allocation [a], whose host address is [host] or [-1],
    made at the first borrow and shared by the later ones. *)
-let mapping d m host =
-  match Dev.protect m.dev find_map (m.entry, d) with
+let mapping d (a : alloc) host =
+  match Dev.protect a.owner find_map (a.entry, d) with
   | Some mp -> Some mp
-  | None -> map_new d m host
+  | None -> map_new d a host
 
 (* Keeps [got] as [e]'s pages, unless a call kept some first. *)
 let set_pages ((e : entry), got) =
   match e.pages with Unasked -> e.pages <- got | Pages _ | No_pages -> ()
 
-(* The host address of the io memory [m]'s pages, or [-1] if it maps none:
+(* The host address of the io memory [a]'s pages, or [-1] if it maps none:
    the first result from its device, kept. A call that raises leaves it to
    ask again. Which pages a driver refuses to map is its own: each driver's
    .mli states it, from NVIDIA's os-mlock.c and Linux's mm/gup.c
    ([writable_file_mapping_allowed]) for CUDA and NV, and from amdgpu_hmm.c
    for AMD. *)
-let pages (m : memory) =
-  let e = m.entry in
+let pages (a : alloc) =
+  let e = a.entry in
   (match e.pages with
   | Unasked -> (
       match e.backing with
       | Io_memory { region = Io_region { m = im; h; r }; _ } ->
           let module I = (val im) in
           let got =
-            match Dev.counted m.dev (fun () -> I.pages h r) with
+            match Dev.counted a.owner (fun () -> I.pages h r) with
             | Some ba -> Pages ba
             | None -> No_pages
           in
-          Dev.protect m.dev set_pages (e, got)
+          Dev.protect a.owner set_pages (e, got)
       | Driver_memory _ | Kept _ -> ())
   | Pages _ | No_pages -> ());
   match e.pages with Pages ba -> ba_address ba | Unasked | No_pages -> -1
 
-(* How [d] reaches the root memory [m] whose host address is [host]: constant
+(* How [d] reaches the allocation [a] whose host address is [host]: constant
    answers, so asking builds nothing. *)
 type reach =
   | Cannot (* [d] cannot map it *)
-  | Itself (* [m] is [d]'s *)
+  | Itself (* [a] is [d]'s *)
   | At_host (* [d] is the host, which addresses it *)
   | Addressed (* [d] addresses host memory as the host does *)
   | Empty (* no bytes to map *)
   | Map (* through [d]'s mapping of it *)
 
-let[@inline] reach d (m : memory) host =
-  if m.dev == d then Itself
-  else if Dev.is_io d || (Dev.is_io m.dev && host < 0) then Cannot
-  else if (not (Dev.same_machine m.dev d)) && not (Dev.is_io m.dev) then Cannot
+let[@inline] reach d (a : alloc) host =
+  let o = a.owner in
+  if o == d then Itself
+  else if Dev.is_io d || (Dev.is_io o && host < 0) then Cannot
+  else if (not (Dev.same_machine o d)) && not (Dev.is_io o) then Cannot
   else if Dev.is_host d then if host >= 0 then At_host else Cannot
   else if d.memory_device && host >= 0 then Addressed
-  else if m.bytes = 0 then Empty
-  else if host >= 0 && host mod page <> 0 && not (peer_memory d m) then
+  else if size a = 0 then Empty
+  else if host >= 0 && host mod page <> 0 && not (peer_memory d a) then
     (* [mapping] maps it as host memory, which a driver maps from a page
        ([map_host]). *)
     Cannot
   else Map
 
-(* Whether [m] is io memory of no bytes, which every other device borrows over
+(* Whether [a] is io memory of no bytes, which every other device borrows over
    no pages. *)
-let[@inline] empty_io d (m : memory) =
-  is_io_memory m.entry && m.bytes = 0 && m.dev != d
+let[@inline] empty_io d (a : alloc) =
+  is_io_memory a.entry && size a = 0 && a.owner != d
 
-let[@inline] host_of (m : memory) =
-  if is_io_memory m.entry then pages m else m.host
+let[@inline] host_of (a : alloc) =
+  if is_io_memory a.entry then pages a else a.host
+
+(* [a]'s owner's record, for a borrow on the owner of another device's: where
+   its driver locates the memory, host memory at its host address, and no
+   address for io memory and [0] for no bytes, as their records were made. *)
+let owned (a : alloc) =
+  let dev = a.owner and host = a.host in
+  match a.entry.backing with
+  | Driver_memory { region; _ } ->
+      let l = locate region in
+      let address = Option.value ~default:(-1) l.address in
+      memory_of a dev ~host ~address ~handle:l.handle
+  | Io_memory _ -> memory_of a dev ~host ~address:(-1) ~handle:0n
+  | Kept _ ->
+      memory_of a dev ~host ~address:(if host >= 0 then host else 0)
+        ~handle:0n
 
 let borrow d m =
-  let m = root m in
-  if empty_io d m then
+  let a = m.alloc in
+  if empty_io d a then
     let at = ba_address empty in
-    Some (borrow_of m d ~host:at ~address:at ~handle:0n)
+    Some (memory_of a d ~host:at ~address:at ~handle:0n)
   else
-    let host = host_of m in
-    match reach d m host with
+    let host = host_of a in
+    match reach d a host with
     | Cannot -> None
-    | Itself -> Some m
-    | At_host -> Some (borrow_of m d ~host ~address:host ~handle:0n)
+    | Itself -> Some (if m.dev == d then m else owned a)
+    | At_host -> Some (memory_of a d ~host ~address:host ~handle:0n)
     | Addressed ->
-        Some (borrow_of m d ~host ~address:host ~handle:(Nativeint.of_int host))
-    | Empty -> Some (borrow_of m d ~host ~address:0 ~handle:0n)
+        Some (memory_of a d ~host ~address:host ~handle:(Nativeint.of_int host))
+    | Empty -> Some (memory_of a d ~host ~address:0 ~handle:0n)
     | Map -> (
-        if m.entry == no_entry then ensure_entry m;
+        if a.entry == no_entry then ensure_entry a;
         (* A borrow of host memory keeps its host address: it is host memory,
            which the host copies. *)
-        match mapping d m host with
+        match mapping d a host with
         | None -> None
-        | Some mp -> Some (borrow_of m d ~host ~address:mp.at ~handle:mp.by))
+        | Some mp -> Some (memory_of a d ~host ~address:mp.at ~handle:mp.by))
 
 (* Whether one of [maps] is [d]'s. A loop of its own, so asking builds no
    closure. *)
@@ -1316,26 +1302,26 @@ let rec mapped_on d = function
   | mp :: maps -> mp.on == d || mapped_on d maps
 
 let maps d m =
-  let m = root m in
-  empty_io d m
+  let a = m.alloc in
+  empty_io d a
   ||
-  let host = host_of m in
-  match reach d m host with
+  let host = host_of a in
+  match reach d a host with
   | Cannot -> false
   | Itself | At_host | Addressed | Empty -> true
   | Map ->
-      if m.entry == no_entry then ensure_entry m;
-      let l = m.dev.live in
+      if a.entry == no_entry then ensure_entry a;
+      let l = a.owner.live in
       Lock.hold l.lock;
-      let maps = m.entry.maps in
+      let maps = a.entry.maps in
       Lock.release l.lock;
-      mapped_on d maps || Option.is_some (mapping d m host)
+      mapped_on d maps || Option.is_some (mapping d a host)
 
 (* Asks an io device to read ahead the bytes that a borrow on [d], a device
    other than the host, reaches through its pages. It is a hint, so its
    failures are dropped. *)
 let prefetch d (m : memory) ~at ~len =
-  match (root m).entry.backing with
+  match m.alloc.entry.backing with
   | Io_memory { region = Io_region { m = im; h; r }; _ } when not (Dev.is_host d)
     -> (
       let module I = (val im) in
@@ -1346,9 +1332,9 @@ let of_io d r ~access n =
   if Dev.is_lost d then Dev.raise_lost d;
   drain d;
   let e = entry ~access d (Io_memory { origin = Given; region = r }) n (stamps_new ()) in
-  let m = make d n e in
-  m.token <- token d.live.release (Memory e) n max_int (-1);
-  if m.token == no_token then begin
+  let m = make d e in
+  m.alloc.token <- token d.live.release (Memory e) n max_int (-1);
+  if m.alloc.token == no_token then begin
     stamps_unref e.stamps;
     Dev.raise_lost d
   end;

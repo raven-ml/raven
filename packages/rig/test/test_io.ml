@@ -154,12 +154,32 @@ let test_span_stable () =
   let space, first = Support.Reader.span m in
   let host = require_some (B.borrow Rig.host m) in
   let view = B.view m ~first:12 ~length:8 in
-  equal ~msg:"publishing pages preserves the root's coordinates" (pair int int)
+  equal ~msg:"publishing pages preserves the memory's coordinates"
+    (pair int int)
     (space, first + 12)
     (Support.Reader.span view);
-  equal ~msg:"a borrow has the root's coordinates" (pair int int) (space, first)
+  equal ~msg:"a borrow has its memory's coordinates" (pair int int)
+    (space, first)
     (Support.Reader.span host);
   equal ~msg:"one mapping" int 1 (count "pages" t)
+
+(* A borrow back on the io device is its memory: no driver object, no host or
+   device address, not borrowed, in the memory's span. *)
+let test_borrow_back () =
+  let io, _ = open_pages () in
+  let m = B.create io page_bytes in
+  let back = require_some (B.borrow io (require_some (B.borrow Rig.host m))) in
+  let answer f = try Some (f ()) with Invalid_argument _ -> None in
+  let coordinates b =
+    ( answer (fun () -> B.handle b),
+      Support.Reader.host b,
+      Support.Reader.span b,
+      B.is_borrowed b )
+  in
+  equal ~msg:"device" bool true (Rig.equal io (B.device back));
+  equal
+    (quad (option nativeint) int (pair int int) bool)
+    (coordinates m) (coordinates back)
 
 (* Nine donations use the sorted check. Each io memory keeps its identity span
    as well as the host range through which a bigarray aliases it. *)
@@ -605,6 +625,7 @@ let tests =
         test "an io span stays stable when its pages are published"
           test_span_stable;
         test "sorted claims check cached io aliases" test_sorted_overlaps;
+        test "a borrow back on the io device is its memory" test_borrow_back;
         test "an empty io borrow keeps its host address without mapping"
           test_empty_host_borrow;
         test "memory whose device maps no pages borrows nowhere, asked once"

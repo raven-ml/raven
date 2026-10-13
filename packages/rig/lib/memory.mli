@@ -8,19 +8,20 @@
 
     Each allocation has one entry ({!Def.entry}), the record its owner gives
     back, which holds its stamps, its backing and the other devices'
-    mappings of it. Each device that reaches the allocation does so through a
-    memory record ({!Def.memory}): the owner's, which is its own root, and
-    one per borrow, whose root is the owner's. A token in the root puts the
-    entry on its device's release list once the root is collected. Host
-    memory has no entry ({!no_entry}) until a device borrows it
-    ({!ensure_entry}), and its bytes return to the host's budget when their
-    bigarray is collected.
+    mappings of it. Each lifetime of the allocation has one {!Def.alloc},
+    which holds its claim, and whose token puts the entry on its owner's
+    release list once the lifetime is collected. Each device that reaches the
+    allocation does so through a memory record ({!Def.memory}) over it: the
+    owner's, and one per borrow. Host memory has no entry ({!no_entry})
+    until a device borrows it ({!ensure_entry}), and its bytes return to the
+    host's budget when their bigarray is collected.
 
     This module implements {!Rig.section-reclaim}. The life of a device's
     allocation goes like this:
     + {!alloc_entry} drains the device, then takes the memory from its cache,
       or from its driver within its budget, or reclaims ({!reclaiming}).
-    + {!alloc} wraps the entry in a memory record with its token.
+    + {!alloc} wraps the entry in a new lifetime, with its token, and the
+      owner's memory record over it.
     + A borrow on another device maps it ({!borrow}). The entry lists each
       mapping.
     + Once the record is collected, a {!drain} takes the entry off the
@@ -79,21 +80,21 @@ val iter_points : (int -> unit) -> int -> unit
 
 val wait_points : memory -> unit
 (** [wait_points m] is {!Dev.wait_point} of each point of [m]'s stamps, as
-    {!iter_points} walks them, for an access that follows every use. [m]
-    stays reachable until it returns. *)
+    {!iter_points} walks them, for an access that follows every use. [m]'s
+    allocation stays reachable until it returns. *)
 
 val wait_write : memory -> unit
 (** [wait_write m] is {!Dev.wait_point} of each device's last write of [m]'s
-    stamps, for an access that follows every last write. [m] stays
-    reachable until it returns. *)
+    stamps, for an access that follows every last write. [m]'s allocation
+    stays reachable until it returns. *)
 
 val check_points : int -> unit
 (** [check_points st] raises {!Dev.Lost} if a point of [st] is on a lost
     device and not done. *)
 
 val check_owner : memory -> unit
-(** [check_owner m] raises {!Dev.Lost} if [m]'s device is lost, or, for a
-    borrow, if the device that owns the allocation is lost. *)
+(** [check_owner m] raises {!Dev.Lost} if [m]'s device or the device that
+    owns the allocation is lost. *)
 
 val check : memory -> unit
 (** [check m] is {!check_owner}[ m], then {!check_points} of [m]'s stamps,
@@ -135,22 +136,16 @@ val make :
   ?host:int ->
   ?address:int ->
   ?handle:nativeint ->
-  ?token:token ->
   device ->
-  int ->
   entry ->
   memory
-(** [make d n e] is a new memory record of [n] bytes on [d] over [e], its own
-    root, with a claim of its own whose bits come from [keep] and [e]. [host]
-    and [address] default to [-1], [handle] to [0n] and [token] to none. *)
+(** [make d e] is the owner's memory record of a new lifetime of [e] on [d],
+    with no token and a claim word whose bits come from [keep] and [e].
+    [host] and [address] default to [-1], and [handle] to [0n]. *)
 
-val root : memory -> memory
-(** [root m] is [m]'s root: the owner's record for a borrow, [m] itself for
-    the owner's. *)
-
-val stamps : memory -> int
-(** [stamps m] is the stamps of the allocation [m] lies in, read from its
-    root's entry. *)
+val size : alloc -> int
+(** [size a] is the number of [a]'s bytes: its bigarray's for host memory,
+    its entry's otherwise. *)
 
 val locate : region -> Rig_edge.location
 (** [locate r] is where [r] lies, as its driver states it. *)
@@ -161,11 +156,11 @@ val allocated : device -> int
 val note : device -> unit
 (** [note d] records [d]'s allocated bytes in the profiles being taken. *)
 
-val ensure_entry : memory -> unit
-(** [ensure_entry m] gives [m], host memory with {!no_entry}, an entry with
-    stamps and a token, under [m]'s device's lock, unless another call did.
-    Once [m] is collected and its uses are settled, the token's release
-    unmaps the entry's mappings. Raises {!Dev.Lost} if the device's slot was
+val ensure_entry : alloc -> unit
+(** [ensure_entry a] gives [a], host memory with {!no_entry}, an entry with
+    stamps and a token, under its owner's lock, unless another call did.
+    Once [a] is collected and its uses are settled, the token's release
+    unmaps the entry's mappings. Raises {!Dev.Lost} if the owner's slot was
     freed. *)
 
 val proxy : entry -> int
@@ -175,9 +170,9 @@ val proxy : entry -> int
 
 (** {1:claims Claim words}
 
-    A claim's [count] is one word, so that a claim, a donation and an export
-    are each one compare-and-set with one winner. A word from zero up holds
-    two bits and a count. Bit 0 ({!outside}) is set once something outside
+    An allocation's [count] is one word, so that a claim, a donation and an
+    export are each one compare-and-set with one winner. A word from zero up
+    holds two bits and a count. Bit 0 ({!outside}) is set once something outside
     the claims reaches the memory: the bigarray {!Rig.Buffer.of_bigarray}
     was given, an io library's region, an array {!Rig.Buffer.export} made,
     or a value {!Rig.Claim.share} marked. Bit 1 ({!read_only}) is set for
@@ -198,18 +193,18 @@ val one_claim : int
 val exclusive : int
 (** [exclusive] is the word of memory one {!Claim.with_} holds exclusive. *)
 
-val mark_outside : claim -> bool
-(** [mark_outside c] marks [c]'s memory outside the claims for good. It is
+val mark_outside : alloc -> bool
+(** [mark_outside a] marks [a]'s memory outside the claims for good. It is
     [false], changing nothing, while claims hold the memory exclusive. *)
 
 (** {1:borrows Mappings and borrows}
 
-    A borrow of an allocation on a device is a memory record whose root is
-    the owner's. Where the device needs a mapping, the first borrow makes it
-    and later ones share it. The mapping is released when the entry is freed
-    ({!free_entry}) or once the device is Stopped ({!drain}), whichever
-    comes first, and the entry goes back to its driver after its last
-    mapping is released. A device's mapping of another's word, which its
+    A borrow of an allocation on a device is a memory record of that device
+    over the allocation's lifetime. Where the device needs a mapping, the
+    first borrow makes it and later ones share it. The mapping is released
+    when the entry is freed ({!free_entry}) or once the device is Stopped
+    ({!drain}), whichever comes first, and the entry goes back to its driver
+    after its last mapping is released. A device's mapping of another's word, which its
     queue waits on, is released once the device is Stopped. *)
 
 val map_host_range : device -> int -> int -> region option
@@ -227,7 +222,9 @@ val unmap : device -> region -> unit
 
 val borrow : device -> memory -> memory option
 (** [borrow d m] is [d]'s borrow of [m]'s allocation, or [None] where [d]
-    cannot map it. An io allocation borrows through its pages, and raises
+    cannot map it. On the allocation's owner it is [m] if [m] is the owner's
+    record, and otherwise a record with the coordinates the owner's record
+    was made with. An io allocation borrows through its pages, and raises
     what asking for them raises. *)
 
 val maps : device -> memory -> bool
@@ -311,9 +308,9 @@ val alloc_entry : device -> Rig_edge.memory -> int -> entry
     immediately if [n] exceeds the budget the memory counts in. *)
 
 val alloc : device -> Rig_edge.memory -> int -> memory
-(** [alloc d kind n] is a memory record over [alloc_entry d kind n], with
-    its token. Raises {!Dev.Lost}, giving the entry back, if [d]'s slot was
-    freed meanwhile. *)
+(** [alloc d kind n] is the owner's memory record of a new lifetime of
+    [alloc_entry d kind n], with its token. Raises {!Dev.Lost}, giving the
+    entry back, if [d]'s slot was freed meanwhile. *)
 
 val host_memory : int -> memory
 (** [host_memory n] is a new memory record of [n] bytes of the host's heap,

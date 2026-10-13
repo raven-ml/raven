@@ -177,17 +177,17 @@ value caml_rig_set_bytes(value v_b, value v_j, value v_n, value v_c) {
 /* Reading buffers
 
    A buffer is the record { mem; offset; length; generation }, its
-   memory { dev; bytes; host; address; handle; claim; entry; root; ... },
-   its claim { count; generation; why }, the entry of its root
-   { owner; backing; bytes; access; stamps; ... } and its device
+   memory { dev; host; address; handle; alloc }, its allocation
+   { owner; host; count; generation; why; entry; ... }, the allocation's
+   entry { owner; backing; bytes; access; stamps; ... } and a device
    { index; name; machine; ...; opened }, as rig's Def module lays them
    out. */
 
 enum { DEVICE_INDEX, DEVICE_NAME, DEVICE_MACHINE, DEVICE_OPENED = 15 };
 enum { BUFFER_MEM, BUFFER_OFFSET, BUFFER_LENGTH, BUFFER_GEN };
-enum { MEMORY_DEV, MEMORY_BYTES, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE,
-       MEMORY_CLAIM, MEMORY_ENTRY, MEMORY_ROOT };
-enum { CLAIM_COUNT, CLAIM_GEN, CLAIM_WHY };
+enum { MEMORY_DEV, MEMORY_HOST, MEMORY_ADDRESS, MEMORY_HANDLE, MEMORY_ALLOC };
+enum { ALLOC_OWNER, ALLOC_HOST, ALLOC_COUNT, ALLOC_GEN, ALLOC_WHY,
+       ALLOC_ENTRY };
 
 /* A device's machine when it is this process's: [Here], the machine type's
    first constant constructor. */
@@ -210,12 +210,13 @@ static value load_field(value v, int i) {
                               memory_order_relaxed);
 }
 
-/* The root of the memory record [mem], as rig's Memory.root reads it: an
-   owner's record holds Memory.itself, the one record whose root is itself,
-   in place of a pointer back to it. */
-static value root_of(value mem) {
-  value root = Field(mem, MEMORY_ROOT);
-  return Field(root, MEMORY_ROOT) == root ? mem : root;
+/* The allocation [b] lies in, and its claim word. */
+static value alloc_of(value b) {
+  return Field(Field(b, BUFFER_MEM), MEMORY_ALLOC);
+}
+
+static _Atomic value *claim_word(value b) {
+  return (_Atomic value *)&Field(alloc_of(b), ALLOC_COUNT);
 }
 
 void *rig_buffer_host(value b) {
@@ -228,8 +229,7 @@ void *rig_buffer_host(value b) {
 /* An io memory's published pages add a local host alias to its stable span.
    Looking for that alias never asks its device to map any pages. */
 static intnat cached_host(value b) {
-  value root = root_of(Field(b, BUFFER_MEM));
-  value entry = load_field(root, MEMORY_ENTRY);
+  value entry = load_field(alloc_of(b), ALLOC_ENTRY);
   /* [pages] publishes its bigarray with caml_modify's release store. There
      is no claim or device lock here to acquire that publication for us. */
   value pages = atomic_load_explicit((_Atomic value *)&Field(entry, ENTRY_PAGES),
@@ -245,21 +245,21 @@ size_t rig_buffer_bytes(value b) {
 }
 
 /* Memory of this process's host lies at its host address. Other memory is
-   named by its root's stamps, which no other memory shares: a device's
+   named by its entry's stamps, which no other memory shares: a device's
    addresses or handles would not do, as memories of a handle-named device
    lie at handles a few bytes apart. An io memory retains these coordinates
    when its pages become host-addressable through cached_host. */
 void rig_buffer_span(value b, intnat *space, intnat *first) {
-  value root = root_of(Field(b, BUFFER_MEM));
-  intnat host = Long_val(Field(root, MEMORY_HOST));
+  value alloc = alloc_of(b);
+  intnat host = Long_val(Field(alloc, ALLOC_HOST));
   intnat offset = Long_val(Field(b, BUFFER_OFFSET));
-  value machine = Field(Field(root, MEMORY_DEV), DEVICE_MACHINE);
+  value machine = Field(Field(alloc, ALLOC_OWNER), DEVICE_MACHINE);
   if (host >= 0 && machine == MACHINE_HERE) {
     *space = 0;
     *first = host + offset;
     return;
   }
-  *space = Long_val(load_field(load_field(root, MEMORY_ENTRY), ENTRY_STAMPS));
+  *space = Long_val(load_field(load_field(alloc, ALLOC_ENTRY), ENTRY_STAMPS));
   *first = offset;
 }
 
@@ -328,21 +328,19 @@ value caml_rig_span_first_byte(value b) {
 }
 
 const char *rig_buffer_why(value b) {
-  value claim = Field(Field(b, BUFFER_MEM), MEMORY_CLAIM);
-  value g = atomic_load_explicit((_Atomic value *)&Field(claim, CLAIM_GEN),
+  value alloc = alloc_of(b);
+  value g = atomic_load_explicit((_Atomic value *)&Field(alloc, ALLOC_GEN),
                                  memory_order_acquire);
   if (Long_val(g) == Long_val(Field(b, BUFFER_GEN))) return NULL;
-  return String_val(Field(claim, CLAIM_WHY));
+  return String_val(Field(alloc, ALLOC_WHY));
 }
 
 /* Claims */
 
-/* Whether the device of the memory record [mem] is lost: a borrow's
-   device, or the device whose memory a root is. Its slot's line answers
-   while it names the device ([struct rig_line]): a device whose slot passed
-   on has ended. */
-static int dev_lost(value mem) {
-  value d = Field(mem, MEMORY_DEV);
+/* Whether the device [d] is lost. Its slot's line answers while it names
+   the device ([struct rig_line]): a device whose slot passed on has
+   ended. */
+static int dev_lost(value d) {
   struct rig_line *l = &rig_lines[Int_val(Field(d, DEVICE_INDEX))];
   int s = atomic_load_explicit(&l->state, memory_order_acquire);
   return s != RIG_LIVE ||
@@ -408,12 +406,13 @@ value caml_rig_stamps_folded(value v_st, value v_every) {
    checks see its consumption and its stamps, those of every use if
    [every], else of every device's last write. Work that is not done keeps
    the claim: the caller waits under it, so no donation consumes the memory
-   between the wait and the access, and a loss's wait raises it. */
-static inline enum rig_claim claim_checked(value b, enum rig_access access,
-                                           int every) {
-  value mem = Field(b, BUFFER_MEM);
-  value claim = Field(mem, MEMORY_CLAIM);
-  _Atomic value *word = (_Atomic value *)&Field(claim, CLAIM_COUNT);
+   between the wait and the access, and a loss's wait raises it. Inlined
+   into each claim of a list's buffers. */
+static inline __attribute__((always_inline)) enum rig_claim
+claim_checked(value b, enum rig_access access, int every) {
+  value dev = Field(Field(b, BUFFER_MEM), MEMORY_DEV);
+  value alloc = alloc_of(b);
+  _Atomic value *word = (_Atomic value *)&Field(alloc, ALLOC_COUNT);
   value w = atomic_load_explicit(word, memory_order_relaxed);
   do {
     if (Long_val(w) < 0) return RIG_EXCLUSIVE;
@@ -421,13 +420,13 @@ static inline enum rig_claim claim_checked(value b, enum rig_access access,
       return RIG_READ_ONLY;
   } while (!atomic_compare_exchange_weak(word, &w,
                                          Val_long(Long_val(w) + CLAIM_ONE)));
-  if (Long_val(load_field(claim, CLAIM_GEN)) != Long_val(Field(b, BUFFER_GEN))) {
+  if (Long_val(load_field(alloc, ALLOC_GEN)) != Long_val(Field(b, BUFFER_GEN))) {
     rig_buffer_release(b);
     return RIG_DEAD;
   }
-  value root = root_of(mem);
-  if (dev_lost(mem) || (root != mem && dev_lost(root))) return RIG_LOST;
-  value entry = load_field(root, MEMORY_ENTRY);
+  value owner = Field(alloc, ALLOC_OWNER);
+  if (dev_lost(dev) || (owner != dev && dev_lost(owner))) return RIG_LOST;
+  value entry = load_field(alloc, ALLOC_ENTRY);
   struct rig_stamps *s =
       (struct rig_stamps *)Long_val(load_field(entry, ENTRY_STAMPS));
   return s == NULL ? RIG_CLAIMED : follow_stamps(s, every);
@@ -455,8 +454,7 @@ caml_result rig_buffer_wait(value b, enum rig_access access) {
    which checks its buffers under the claims: false, claiming nothing, if
    the memory is held exclusive. */
 value caml_rig_claim_hold(value v_b) {
-  value claim = Field(Field(v_b, BUFFER_MEM), MEMORY_CLAIM);
-  _Atomic value *word = (_Atomic value *)&Field(claim, CLAIM_COUNT);
+  _Atomic value *word = claim_word(v_b);
   value w = atomic_load_explicit(word, memory_order_relaxed);
   do {
     if (Long_val(w) < 0) return Val_false;
@@ -471,10 +469,8 @@ value caml_rig_claim_hold(value v_b) {
    subtraction left matches none of the claims' states, so the process
    aborts. */
 static void claim_end(value b, const char *who) {
-  value claim = Field(Field(b, BUFFER_MEM), MEMORY_CLAIM);
   value w = atomic_fetch_sub_explicit(
-      (_Atomic value *)&Field(claim, CLAIM_COUNT),
-      Val_long(CLAIM_ONE) - Val_long(0), memory_order_release);
+      claim_word(b), Val_long(CLAIM_ONE) - Val_long(0), memory_order_release);
   if (Long_val(w) < CLAIM_ONE)
     caml_fatal_error("%s: no read claim to end", who);
 }
@@ -497,11 +493,6 @@ void rig_buffer_release(value b) { claim_end(b, "rig_buffer_release"); }
 
 /* Claim.with_'s claims, taken in one call and released in one, neither
    running OCaml. */
-
-static _Atomic value *claim_word(value b) {
-  return (_Atomic value *)&Field(Field(Field(b, BUFFER_MEM), MEMORY_CLAIM),
-                                 CLAIM_COUNT);
-}
 
 /* Ends the read claims of the first [n] buffers of [read] followed by
    [donate]. */
@@ -564,8 +555,8 @@ value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
     atomic_fetch_sub(state, CLAIMS_CONSUMING);
     return Val_long(CONSUME_ENDED);
   }
-  value claim = Field(Field(v_b, BUFFER_MEM), MEMORY_CLAIM);
-  _Atomic value *gen = (_Atomic value *)&Field(claim, CLAIM_GEN);
+  value alloc = alloc_of(v_b);
+  _Atomic value *gen = (_Atomic value *)&Field(alloc, ALLOC_GEN);
   value g = Field(v_b, BUFFER_GEN);
   /* The reason before the generation, so that a buffer found dead shows
      it; a consumption that loses the race below wrote it too. The
@@ -573,7 +564,7 @@ value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
      word given back follows the raise, so its check finds every earlier
      buffer dead. Word first, such a claim would pass its check and read
      beside the consumer's writes. */
-  if (atomic_load(gen) == g) caml_modify(&Field(claim, CLAIM_WHY), v_why);
+  if (atomic_load(gen) == g) caml_modify(&Field(alloc, ALLOC_WHY), v_why);
   if (!atomic_compare_exchange_strong(gen, &g, Val_long(Long_val(g) + 1))) {
     atomic_fetch_sub(state, CLAIMS_CONSUMING);
     return Val_long(CONSUME_DEAD);

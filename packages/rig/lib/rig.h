@@ -31,7 +31,7 @@ size_t rig_buffer_bytes(value b);
    [*space]. Space 0 is this process's host memory, at host addresses.
    Any other space is one memory's, at offsets within it, and no other
    memory shares it while [b] is reachable. Views and borrows keep their
-   root's space and their offset in it, including when io pages are first
+   allocation's space and their offset in it, including when io pages are first
    mapped. Equal spaces with intersecting ranges share bytes. Distinct spaces
    may alias: an io memory and a bigarray over its mapped pages are one such
    pair. Rig.Buffer.overlaps includes these aliases. A buffer of no bytes

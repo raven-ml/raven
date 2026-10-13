@@ -28,8 +28,8 @@ let record src dst bytes start =
     Prof.record
       (Copy
          {
-           src = (Memory.root src.mem).dev;
-           dst = (Memory.root dst.mem).dev;
+           src = src.mem.alloc.owner;
+           dst = dst.mem.alloc.owner;
            bytes;
            start;
            stop = Prof.now ();
@@ -64,7 +64,7 @@ let device_stages : stage Stages.t = Stages.create 4
 let slots_lock = Lock.create ()
 
 let names_lost b =
-  match Memory.check_points (Memory.stamps b.mem) with
+  match Memory.check_points b.mem.alloc.entry.stamps with
   | () -> false
   | exception Dev.Lost _ -> true
 
@@ -149,7 +149,7 @@ let map_halves st b ~pieces h0 h1 =
    allocates nothing. Racy: another thread changes only the halves of a slot it
    took, which [m] is not, so a stale half answers the same. *)
 let holds_half st m i h =
-  match st.halves.(i).(h) with Some b -> Memory.root b.mem == Memory.root m | None -> false
+  match st.halves.(i).(h) with Some b -> b.mem.alloc == m.alloc | None -> false
 
 let holds st m =
   holds_half st m 0 0 || holds_half st m 0 1 || holds_half st m 1 0
@@ -189,7 +189,7 @@ let on_queue ~wait d src dst =
   | _ -> false
 
 let io_read src dst n =
-  match src.mem.entry.backing with
+  match src.mem.alloc.entry.backing with
   | Io_memory { region = Io_region { m; h; r }; _ } ->
       let module I = (val m) in
       Dev.counted src.mem.dev (fun () ->
@@ -198,7 +198,7 @@ let io_read src dst n =
       invalid_argf "Rig.%s: the source is no io memory" fn
 
 let io_write src dst n =
-  match dst.mem.entry.backing with
+  match dst.mem.alloc.entry.backing with
   | Io_memory { region = Io_region { m; h; r }; _ } ->
       let module I = (val m) in
       Dev.counted dst.mem.dev (fun () ->
@@ -240,7 +240,7 @@ let direct ~wait src dst n =
     let runner =
       match side.mem.dev.live.copy_engine with
       | Some _ -> side.mem.dev
-      | None -> (Memory.root side.mem).dev
+      | None -> side.mem.alloc.owner
     in
     (not (Dev.is_io runner)) && on_queue ~wait runner src dst
 
@@ -250,7 +250,7 @@ let direct ~wait src dst n =
 let runner b =
   match b.mem.dev.live.copy_engine with
   | Some _ -> b.mem.dev
-  | None -> (Memory.root b.mem).dev
+  | None -> b.mem.alloc.owner
 
 (* Whether [b]'s legs run on a device of this machine that maps no host memory,
    which then stages through its own memory. *)
@@ -340,7 +340,7 @@ let rec copy ~src ~dst =
      from its own mapping on macOS's APFS. *)
   if
     Dev.is_io src.mem.dev <> Dev.is_io dst.mem.dev
-    && Memory.root src.mem == Memory.root dst.mem
+    && src.mem.alloc == dst.mem.alloc
   then
     invalid_argf "Rig.%s: one buffer is a borrow of the other's io memory" fn;
   if Buffer.access dst = Read then

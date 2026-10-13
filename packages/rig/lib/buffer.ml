@@ -11,19 +11,19 @@ type t = buffer
 type kind = Rig_edge.memory = Device | Pinned | Mapped
 type access = Def.access = Read | Read_write
 
-let generation (c : claim) = Atomic.Loc.get [%atomic.loc c.generation]
-let is_live b = b.generation = generation b.mem.claim
-let dead b = if is_live b then None else Some b.mem.claim.why
-let access b = (Memory.root b.mem).entry.access
+let generation (a : alloc) = Atomic.Loc.get [%atomic.loc a.generation]
+let is_live b = b.generation = generation b.mem.alloc
+let dead b = if is_live b then None else Some b.mem.alloc.why
+let access b = b.mem.alloc.entry.access
 
 let refuse_dead fn b =
-  invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.claim.why
+  invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.alloc.why
 
 (* Inlined where it is called per buffer of a submit. *)
 let[@inline] check_live fn b = if not (is_live b) then refuse_dead fn b
 
 let of_memory mem length =
-  { mem; offset = 0; length; generation = generation mem.claim }
+  { mem; offset = 0; length; generation = generation mem.alloc }
 
 let create ?(memory = Device) d n =
   if n < 0 then invalid_argf "Rig.Buffer.create: %d bytes is negative" n;
@@ -37,7 +37,7 @@ let create ?(memory = Device) d n =
     else if n = 0 then begin
       (* No memory: work of no bytes reads none, so 0 names it. *)
       Memory.drain d;
-      Memory.make ~address:0 d 0 Memory.no_entry
+      Memory.make ~address:0 d Memory.no_entry
     end
     else if Dev.is_io d then Memory.alloc d Device n
     else Memory.alloc d memory n
@@ -59,7 +59,7 @@ let of_io (type r) d (k : r Type.Id.t) (r : r) ~access n =
 
 let io (type r) b (k : r Type.Id.t) : r option =
   check_live "Buffer.io" b;
-  match (Memory.root b.mem).entry.backing with
+  match b.mem.alloc.entry.backing with
   | Io_memory { region = Io_region { m; r; _ }; _ } -> (
       let module I = (val m) in
       match Type.Id.provably_equal I.region_key k with
@@ -71,7 +71,7 @@ let of_bigarray ba =
   let n = Bigarray.Array1.size_in_bytes ba in
   let addr = Memory.ba_address ba in
   of_memory
-    (Memory.make ~keep:(Bigarray ba) ~host:addr ~address:addr Dev.host n
+    (Memory.make ~keep:(Bigarray ba) ~host:addr ~address:addr Dev.host
        Memory.no_entry)
     n
 
@@ -80,8 +80,8 @@ let length b = b.length
 let offset b = b.offset
 
 let is_borrowed b =
-  Memory.root b.mem != b.mem
-  || match (Memory.root b.mem).keep with Bigarray _ -> true | _ -> false
+  b.mem.dev != b.mem.alloc.owner
+  || match b.mem.alloc.keep with Bigarray _ -> true | _ -> false
 
 let view b ~first ~length =
   check_live "Buffer.view" b;
@@ -92,7 +92,7 @@ let view b ~first ~length =
       length first b.length;
   { b with offset = b.offset + first; length }
 
-let spans b = b.offset = 0 && b.length = (Memory.root b.mem).bytes
+let spans b = b.offset = 0 && b.length = Memory.size b.mem.alloc
 
 external overlaps : t -> t -> bool = "caml_rig_buffer_overlaps" [@@noalloc]
 
@@ -152,12 +152,12 @@ let () = Callback.register "rig.buffer.wait" wait
 let host_addressed b =
   Dev.is_host b.mem.dev
   ||
-  let m = Memory.root b.mem in
-  m.host >= 0 && Dev.same_machine m.dev Dev.host
+  let a = b.mem.alloc in
+  a.host >= 0 && Dev.same_machine a.owner Dev.host
 
 let refuse_unaddressed fn b =
   invalid_argf "Rig.%s: the host does not address the buffer's memory, on %s" fn
-    (Memory.root b.mem).dev.name
+    b.mem.alloc.owner.name
 
 (* Bigarrays *)
 
@@ -193,7 +193,7 @@ let kind_code (type a b) (k : (a, b) Bigarray.kind) =
   | Bigarray.Float16 -> 13
 
 (* [b]'s bytes as an array of [k], over the memory without a copy. The array
-   keeps the memory alive: the bytes of the root allocation's heap, bigarray or
+   keeps the memory alive: the bytes of the allocation's heap, bigarray or
    proxy. With [export], the memory first leaves the claims for good. *)
 let array_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
     (a, b, Bigarray.c_layout) Bigarray.Array1.t =
@@ -212,33 +212,33 @@ let array_of fn ~export (type a b) (k : (a, b) Bigarray.kind) b :
        elements"
       fn bytes b.offset size;
   if export then begin
-    if not (Memory.mark_outside b.mem.claim) then
+    if not (Memory.mark_outside b.mem.alloc) then
       invalid_argf "Rig.%s: the memory is held exclusive" fn;
     (* A consumption between the first check and the export killed [b]: the
        memory stays marked, which costs only its donations. *)
     check_live fn b
   end;
-  let root = Memory.root b.mem in
-  let at = b.mem.host - root.host + b.offset in
+  let a = b.mem.alloc in
+  let at = b.mem.host - a.host + b.offset in
   let code = kind_code k and n = bytes / size in
-  match root.keep with
+  match a.keep with
   | Heap ba -> bigarray_view ba code at n
   | Bigarray ba -> bigarray_view ba code at n
-  | Nothing when root.entry == Memory.no_entry ->
+  | Nothing when a.entry == Memory.no_entry ->
       (* No bytes: nothing to keep. *)
-      bigarray_view (external_bytes b.mem.host b.mem.bytes) code b.offset n
+      bigarray_view (external_bytes b.mem.host (Memory.size a)) code b.offset n
   | Nothing ->
-      let p = Memory.proxy root.entry in
-      bigarray_view (proxy_bytes p b.mem.host b.mem.bytes) code b.offset n
+      let p = Memory.proxy a.entry in
+      bigarray_view (proxy_bytes p b.mem.host (Memory.size a)) code b.offset n
 
 let array fn k b = array_of fn ~export:false k b
 
 let export b k =
   let fn = "Buffer.export" in
   check_live fn b;
-  if (Memory.root b.mem).dev != Dev.host then
+  if b.mem.alloc.owner != Dev.host then
     invalid_argf "Rig.%s: the buffer is %s's memory, not the host's" fn
-      (Memory.root b.mem).dev.name;
+      b.mem.alloc.owner.name;
   wait b Read_write;
   array_of fn ~export:true k b
 
