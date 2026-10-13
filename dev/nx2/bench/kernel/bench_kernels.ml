@@ -814,20 +814,16 @@ let rows =
 
 (* A contraction's axes grouped as a GPU planner reads them: Contract_view
    of the bf16 4096 call, a and b [1; 4096; 4096] over the batch pair (0, 0)
-   and the contracting pair (2, 2). It allocates nothing. *)
+   and the contracting pair (2, 2). *)
 let view =
   let bf16 = D.Bfloat16 in
   row "spec/contract-view-bf16-4096"
     (fun () ->
       let x () = A.create Rig.host bf16 [| 1; 4096; 4096 |] in
-      ( Nx_kernel.Contract_view.make (),
-        [| (0, 0) |],
-        [| (2, 2) |],
-        x (),
-        x (),
-        x () ))
-    (fun (v, batch, contracting, dst, a, b) ->
-      ignore (Nx_kernel.Contract_view.fill v ~batch ~contracting ~dst ~init:None a b))
+      ([| (0, 0) |], [| (2, 2) |], x (), x (), x ()))
+    (fun (batch, contracting, dst, a, b) ->
+      ignore
+        (Nx_kernel.Contract_view.v ~batch ~contracting ~dst ~init:None a b))
 
 (* A backend: its rows, then the floors its support derives from their work. *)
 let backend name kernels floors =

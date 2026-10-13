@@ -941,10 +941,17 @@ let over l =
 (* [c]'s operands [a], [b] and [init], and its destination. *)
 let operands c = (over c.la, over c.lb, Option.map over c.li, over c.ly)
 
-let fill v c =
+(* What a view answers, as text: whether it groups, or why not. *)
+let outcome = function
+  | Ok _ -> "grouped"
+  | Error A.Declined -> "declined"
+  | Error A.Shape_mismatch -> "shape mismatch"
+  | Error _ -> "another answer"
+
+let view c =
   let batch, contracting = pairs_of c in
   let a, b, init, dst = operands c in
-  V.fill v ~batch ~contracting ~dst ~init a b
+  V.v ~batch ~contracting ~dst ~init a b
 
 (* Each operand's axes of each group, by the rule. *)
 let groups c =
@@ -1014,75 +1021,68 @@ let check_view c v =
     (groups c)
 
 let law_view c =
-  let v = V.make () in
-  let grouped = fill v c in
-  cover "groups" grouped;
-  cover "declines" (not grouped);
-  if grouped then check_view c v
+  let v = view c in
+  cover "groups" (Result.is_ok v);
+  cover "declines" (Result.is_error v);
+  not_equal ~msg:"a misfit" string "shape mismatch" (outcome v);
+  Result.iter (check_view c) v
 
 let law_canonical c =
-  let v = V.make () in
-  equal ~msg:"groups" bool true (fill v c);
-  check_view c v
+  let v = view c in
+  equal ~msg:"groups" string "grouped" (outcome v);
+  Result.iter (check_view c) v
 
-(* C reads, through nx_contract_view, what the accessors give, and 0 for an
-   axis an operand lacks and for an absent init, though the view held a call
-   with init and every axis before. *)
+(* C's nx_contract_view_fill groups what the view gives, and 0 for an axis
+   an operand lacks and for an absent init. *)
 let law_view_in_c c =
-  let v = V.make () in
-  let arr s = over (L.contiguous s) in
-  equal ~msg:"the first call groups" bool true
-    (V.fill v
-       ~batch:[| (0, 0) |]
-       ~contracting:[| (2, 1) |]
-       ~dst:(arr [| 2; 3; 5 |])
-       ~init:(Some (arr [| 2; 3; 5 |]))
-       (arr [| 2; 3; 4 |])
-       (arr [| 2; 4; 5 |]));
+  let batch, contracting = pairs_of c in
+  let a, b, init, dst = operands c in
+  let f = Nx_kernel_support.view_fields ~batch ~contracting ~dst ~init a b in
   cover "without init" (Option.is_none c.li);
-  if fill v c then begin
-    let f = Nx_kernel_support.view_fields v in
-    let present o = o <> V.Init || Option.is_some c.li in
-    let has o x =
-      present o
-      &&
-      match (o, x) with
-      | V.A, V.Column | V.B, V.Row | (V.Init | V.Dst), V.Contracted -> false
-      | _ -> true
-    in
-    let axes = V.[| Batch; Row; Column; Contracted |] in
-    let operands = V.[| A; B; Init; Dst |] in
-    let want =
-      Array.concat
-        [
-          Array.map (V.extent v) axes;
-          Array.map (fun o -> if present o then V.offset v o else 0) operands;
-          Array.concat
-            (Array.to_list
-               (Array.map
-                  (fun o ->
-                    Array.map
-                      (fun x -> if has o x then V.stride v o x else 0)
-                      axes)
-                  operands));
-        ]
-    in
-    equal (array int) want f
-  end
+  equal ~msg:"answers as the view" string (outcome (view c)) (outcome f);
+  match (view c, f) with
+  | Error _, _ | _, Error _ -> ()
+  | Ok v, Ok f ->
+      let present o = o <> V.Init || Option.is_some c.li in
+      let has o x =
+        present o
+        &&
+        match (o, x) with
+        | V.A, V.Column | V.B, V.Row | (V.Init | V.Dst), V.Contracted -> false
+        | _ -> true
+      in
+      let axes = V.[| Batch; Row; Column; Contracted |] in
+      let operands = V.[| A; B; Init; Dst |] in
+      let want =
+        Array.concat
+          [
+            Array.map (V.extent v) axes;
+            Array.map (fun o -> if present o then V.offset v o else 0) operands;
+            Array.concat
+              (Array.to_list
+                 (Array.map
+                    (fun o ->
+                      Array.map
+                        (fun x -> if has o x then V.stride v o x else 0)
+                        axes)
+                    operands));
+          ]
+      in
+      equal (array int) want f
 
 (* A view refuses operands that do not fit its pairs, and declines a call
    whose group does not merge. *)
 let test_view_declines () =
   let arr s = over (L.contiguous s) in
-  let v = V.make () in
-  let mm ?(batch = [||]) ?(contracting = [| (1, 0) |]) ?init ~dst a b =
-    V.fill v ~batch ~contracting ~dst ~init a b
+  let view ?(batch = [||]) ?(contracting = [| (1, 0) |]) ?init ~dst a b =
+    V.v ~batch ~contracting ~dst ~init a b
   in
-  equal ~msg:"fits" bool true
+  let mm ?batch ?contracting ?init ~dst a b =
+    outcome (view ?batch ?contracting ?init ~dst a b)
+  in
+  equal ~msg:"fits" string "grouped"
     (mm ~dst:(arr [| 2; 3 |]) (arr [| 2; 4 |]) (arr [| 4; 3 |]));
-  let misfit ~msg f =
-    raises_match ~msg (Exn.invalid_arg ~substring:"fill") (fun () -> f ())
-  in
+  let misfit ~msg f = equal ~msg string "shape mismatch" (f ()) in
   misfit ~msg:"contracted extents" (fun () ->
       mm ~dst:(arr [| 2; 3 |]) (arr [| 2; 4 |]) (arr [| 5; 3 |]));
   misfit ~msg:"dst's shape" (fun () ->
@@ -1099,22 +1099,20 @@ let test_view_declines () =
       mm ~contracting:[| (1, 2) |] ~dst:(arr [| 2; 3 |]) (arr [| 2; 4 |])
         (arr [| 4; 3 |]));
   let sq = arr [| 4; 4 |] in
-  equal ~msg:"distinct pairs" bool true
+  equal ~msg:"distinct pairs" string "grouped"
     (mm ~batch:[| (0, 0) |] ~contracting:[| (1, 1) |] ~dst:(arr [| 4 |]) sq sq);
   misfit ~msg:"an axis of a in two pairs" (fun () ->
       mm ~batch:[| (0, 0) |] ~contracting:[| (0, 1) |] ~dst:(arr [| 4 |]) sq sq);
   misfit ~msg:"an axis of b in two pairs" (fun () ->
       mm ~batch:[| (0, 0) |] ~contracting:[| (1, 0) |] ~dst:(arr [| 4 |]) sq sq);
-  (* A misfit raises even behind a group that does not merge: [a]'s batch
-     axes transposed, its contracted extent 4 against [b]'s 5. *)
+  (* A misfit is refused even behind a group that does not merge: [a]'s
+     batch axes transposed, its contracted extent 4 against [b]'s 5. *)
   let at =
     Option.get
       (L.move (M.Permute [| 1; 0; 2; 3 |]) (L.contiguous [| 3; 2; 2; 4 |]))
   in
   let a = A.v D.Float32 at (Rig.Buffer.create Rig.host 192) in
-  raises_match ~msg:"behind an unmerged group"
-    (Exn.invalid_arg ~substring:"fill")
-    (fun () ->
+  misfit ~msg:"behind an unmerged group" (fun () ->
       mm
         ~batch:[| (0, 0); (1, 1) |]
         ~contracting:[| (3, 2) |]
@@ -1126,15 +1124,16 @@ let test_view_declines () =
     Option.get (L.move (M.Permute [| 1; 0; 2 |]) (L.contiguous [| 3; 4; 5 |]))
   in
   let b = A.v D.Float32 bt (Rig.Buffer.create Rig.host 240) in
-  equal ~msg:"no run" bool false
+  equal ~msg:"no run" string "declined"
     (mm ~contracting:[| (1, 0); (2, 1) |] ~dst:(arr [| 2; 5 |])
        (arr [| 2; 4; 3 |]) b);
   let a =
     A.v D.Float32 (L.v ~strides:[| 1; 8 |] [| 2; 4 |])
       (Rig.Buffer.create Rig.host 128)
   in
-  equal ~msg:"strided contraction" bool true
-    (mm ~dst:(arr [| 2; 3 |]) a (arr [| 4; 3 |]));
+  let v = view ~dst:(arr [| 2; 3 |]) a (arr [| 4; 3 |]) in
+  equal ~msg:"strided contraction" string "grouped" (outcome v);
+  let v = Result.get_ok v in
   equal int 8 (V.stride v V.A V.Contracted);
   raises_match Exn.invalid_arg (fun () -> V.stride v V.A V.Column);
   raises_match Exn.invalid_arg (fun () -> V.stride v V.Dst V.Contracted);
@@ -1145,15 +1144,17 @@ let minor_words f =
   f ();
   Gc.minor_words () -. before
 
+(* C's nx_contract_view_fill, which nx.cpu groups each contraction with,
+   allocates nothing. *)
 let test_view_allocates_nothing () =
   let arr s = over (L.contiguous s) in
   let a = arr [| 2; 3; 4 |] and b = arr [| 2; 4; 5 |] in
   let init = Some (arr [| 2; 3; 5 |]) and dst = arr [| 2; 3; 5 |] in
   let batch = [| (0, 0) |] and contracting = [| (2, 1) |] in
-  let v = V.make () in
   let calls () =
     for _ = 1 to 1000 do
-      ignore (V.fill v ~batch ~contracting ~dst ~init a b)
+      ignore
+        (Nx_kernel_support.view_groups ~batch ~contracting ~dst ~init a b)
     done
   in
   let nothing () = () in
@@ -1222,9 +1223,9 @@ let tests =
           "refuses what does not fit, declines an unmerged group and names \
            only an operand's axes"
           test_view_declines;
-        prop "C reads what the accessors give, and 0 where they raise" any_case
-          law_view_in_c;
-        test "fill allocates nothing" test_view_allocates_nothing;
+        prop "C groups what the accessors give, and 0 where they raise"
+          any_case law_view_in_c;
+        test "C's fill allocates nothing" test_view_allocates_nothing;
       ];
   ]
 

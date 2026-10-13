@@ -9,8 +9,7 @@
    other kind than the accumulator; an integer meets a float accumulator or the
    reverse; the batch is above 65,535 (the grid's z); m, n or k is above 2^31 -
    1; or a batch element has more than 2^31 - 1 output tiles (the grid's x). A
-   call whose axes do not group never reaches the plan: Contract_view.fill
-   answers false first. *)
+   call whose axes do not group answers what Contract_view.v answers. *)
 
 module K = Kernels
 module V = Nx_kernel.Contract_view
@@ -190,7 +189,9 @@ type launch = {
   tiles : int;
 }
 
-type verdict = Declined | Nothing | Launch of launch
+type verdict = Nothing | Launch of launch
+
+let declined = Error Nx_array.Declined
 
 (* Whether rows along [contiguous] (stride 1) load as 16-byte vectors: every
    other stride a whole number of vectors, and the first element on a vector. *)
@@ -513,16 +514,16 @@ let whole (c : call) ~mma_s8 (sum : K.acc) =
 let rules (c : call) =
   let batch = c.batch and m = c.m and n = c.n and k = c.k in
   if batch > 65535 || m > max_extent || n > max_extent || k > max_extent then
-    Declined
-  else if batch * m * n = 0 then Nothing
+    declined
+  else if batch * m * n = 0 then Ok Nothing
   else
     let ad = c.a.dtype and bd = c.b.dtype and acc = c.acc in
     let init = Option.is_some c.init in
     let id = match c.init with Some i -> i.i_dtype | None -> c.y_dtype in
-    if declines ~ad ~bd ~yd:c.y_dtype ~id ~init ~acc then Declined
+    if declines ~ad ~bd ~yd:c.y_dtype ~id ~init ~acc then declined
     else
       match sum_of ~acc ad bd with
-      | None -> Declined
+      | None -> declined
       | Some sum -> (
           let kind = mma_kind ad bd acc in
           let t = match kind with None -> -1 | Some kd -> mma_tile c kd in
@@ -535,7 +536,7 @@ let rules (c : call) =
                 if m <= 16 then plan_skinny c sum ~whole
                 else plan_simt c sum ~whole
           in
-          match planned with None -> Declined | Some l -> Launch l)
+          match planned with None -> declined | Some l -> Ok (Launch l))
 
 (* [x] as the operand [which] of [v], over its axis [free] and k. *)
 let operand v which (free : V.axis) x =
@@ -559,39 +560,42 @@ let operand v which (free : V.axis) x =
 let strides v which : int array =
   [| V.stride v which Batch; V.stride v which Row; V.stride v which Column |]
 
-let choose v ~acc ~dst ~init a b =
-  let y_dtype = dtype_of dst in
-  let y_first = V.offset v Dst * width y_dtype in
-  let y = Nx_array.buffer dst in
-  let init =
-    match init with
-    | None -> None
-    | Some i ->
-        let i_dtype = dtype_of i in
-        Some
-          {
-            i_buffer = Nx_array.buffer i;
-            i_dtype;
-            i_first = V.offset v Init * width i_dtype;
-            si = strides v Init;
-          }
-  in
-  rules
-    {
-      a = operand v A Row a;
-      b = operand v B Column b;
-      y;
-      y_dtype;
-      y_first;
-      y_vector_first = Rig.Buffer.aligned y ~at:y_first 16;
-      sy = strides v Dst;
-      init;
-      acc;
-      batch = V.extent v Batch;
-      m = V.extent v Row;
-      n = V.extent v Column;
-      k = V.extent v Contracted;
-    }
+let choose ~batch ~contracting ~acc ~dst ~init a b =
+  match V.v ~batch ~contracting ~dst ~init a b with
+  | Error answer -> Error answer
+  | Ok v ->
+      let y_dtype = dtype_of dst in
+      let y_first = V.offset v Dst * width y_dtype in
+      let y = Nx_array.buffer dst in
+      let init =
+        match init with
+        | None -> None
+        | Some i ->
+            let i_dtype = dtype_of i in
+            Some
+              {
+                i_buffer = Nx_array.buffer i;
+                i_dtype;
+                i_first = V.offset v Init * width i_dtype;
+                si = strides v Init;
+              }
+      in
+      rules
+        {
+          a = operand v A Row a;
+          b = operand v B Column b;
+          y;
+          y_dtype;
+          y_first;
+          y_vector_first = Rig.Buffer.aligned y ~at:y_first 16;
+          sy = strides v Dst;
+          init;
+          acc;
+          batch = V.extent v Batch;
+          m = V.extent v Row;
+          n = V.extent v Column;
+          k = V.extent v Contracted;
+        }
 
 (* Sequences *)
 

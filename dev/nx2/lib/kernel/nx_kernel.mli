@@ -20,7 +20,8 @@
     In C, [nx_kinds.h] computes each kind, [nx_prog.h] and [nx_kernel.h] hold
     the codes by which C reads a program and the other constructors, and
     [nx_contract_view.h] a contraction view's struct, with no OCaml header, so
-    device sources include them. *)
+    device sources include them; [nx_contract_view_fill.h] fills a view on
+    the host. *)
 
 module Prog = Prog
 (** Scalar kinds. *)
@@ -603,12 +604,12 @@ end
 
     A view groups a contraction's axes into one of each kind, where every
     operand lays out each group's axes as one run of strides, as a matrix
-    product reads them. *)
+    product reads them. A C kernel groups them as {!v} does into
+    [nx_contract_view.h]'s [nx_contract_view], on its own stack, with
+    [nx_contract_view_fill.h]'s [nx_contract_view_fill]. *)
 module Contract_view : sig
   type t
-  (** The type for views, rewritten by {!fill}. A C kernel reads a view as
-      [nx_contract_view.h]'s [nx_contract_view]: its value is bytes that begin
-      with that struct. *)
+  (** The type for views. *)
 
   (** The type for a contraction's operands and its result. *)
   type operand = A | B | Init | Dst
@@ -618,26 +619,20 @@ module Contract_view : sig
       [Row] and [Column]. *)
   type axis = Batch | Row | Column | Contracted
 
-  val make : unit -> t
-  (** [make ()] is a view to {!fill}. *)
-
-  val fill :
-    t ->
+  val v :
     batch:(int * int) array ->
     contracting:(int * int) array ->
     dst:('v, 's) a ->
     init:('v, 's) a option ->
     ('a, 'b) a ->
     ('c, 'e) a ->
-    bool
-  (** [fill v ~batch ~contracting ~dst ~init a b] groups the axes of [a], [b],
-      [init] and [dst], as {!S.contract} takes them, into [v]. It is [false]
-      if a group does not merge into one axis, and [v] is then unspecified. It
-      allocates nothing.
-
-      Raises [Invalid_argument] if the operands do not fit the pairs: ranks
-      the pairs do not fit, an axis in two pairs, or extents that differ
-      within a group. *)
+    (t, Nx_array.answer) result
+  (** [v ~batch ~contracting ~dst ~init a b] is the view of the axes of [a],
+      [b], [init] and [dst], as {!S.contract} takes them. It is [Error
+      Shape_mismatch] if the operands do not fit the pairs (ranks the pairs
+      do not fit, an axis in two pairs, or extents that differ within a
+      group), and otherwise [Error Declined] if a group does not merge into
+      one axis. *)
 
   val extent : t -> axis -> int
   (** [extent v x] is [v]'s extent along [x]: [1] for a group of no axis. *)

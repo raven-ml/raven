@@ -6,8 +6,9 @@
 /* Contractions: y[b, i, j] = init[b, i, j] + Σ_k a[b, i, k] · b[b, k, j],
    computed in acc and rounded once to y's dtype.
 
-   Nx_kernel.Contract_view has grouped the axes into one batch, row (M),
-   column (N) and contracted (K) axis per operand. An operand is read
+   nx_contract_view_fill groups the axes, as Nx_kernel.Contract_view does,
+   into one batch, row (M), column (N) and contracted (K) axis per
+   operand. An operand is read
    through the stage, which takes any strides and dtype into its carrier, and
    the target's conversion takes the carrier into acc: a dtype is computed
    only where acc holds each of its values, so operands convert exactly.
@@ -1207,16 +1208,18 @@ int nx_cpu_contract_on(int acc, const nx_contract_view *v,
   return !atomic_load(&p.failed);
 }
 
-/* The external: copies the view, declines what it does not compute, then
-   reads the operands through the door. [vacc] is acc's dtype code and [vi]
-   the init, an option. The view is copied before nx_read, which may run
-   OCaml code: a collection may move its bytes. */
-value nx_cpu_contract(value vacc, value vview, value vdst, value va, value vb,
-                      value vi) {
+/* The external: groups the view of the pairs [vbatch] and [vcontracting]
+   on the stack, answering what the fill answers where it does not group,
+   declines what it does not compute, then reads the operands through the
+   door. [vacc] is acc's dtype code and [vi] the init, an
+   option. */
+value nx_cpu_contract(value vbatch, value vcontracting, value vacc,
+                      value vdst, value vi, value va, value vb) {
   int acc = Int_val(vacc), init = Is_block(vi);
   value vinit = init ? Field(vi, 0) : va;
   nx_contract_view v;
-  memcpy(&v, Bytes_val(vview), sizeof v);
+  int fit = nx_contract_view_fill(&v, vbatch, vcontracting, vdst, va, vb, vi);
+  if (fit != NX_OK) return Val_int(fit);
   int dts[3] = {nx_array_dtype(va), nx_array_dtype(vb),
                 nx_array_dtype(vinit)};
   if (acc < 0 || acc >= NX_DTYPE_COUNT ||
@@ -1240,5 +1243,5 @@ value nx_cpu_contract(value vacc, value vview, value vdst, value va, value vb,
 value nx_cpu_contract_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_contract(argv[0], argv[1], argv[2], argv[3], argv[4],
-                         argv[5]);
+                         argv[5], argv[6]);
 }

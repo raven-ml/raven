@@ -14,9 +14,8 @@ type launch
 (** The type for launches: a call's operand, result, kernels and geometry,
     as {!reduce} or {!scan} decided them. *)
 
-(** The type for what a plan does with a call. *)
+(** The type for what a plan does with a call that does work or none. *)
 type verdict =
-  | Declined  (** Its kernels do not compute the call. *)
   | Nothing  (** The result has no element: no work. *)
   | Launch of launch  (** {!parts} and {!write} launch it. *)
 
@@ -32,12 +31,12 @@ val reduce :
   Nx_kernel.Prog.t ->
   dst:Nx_array.any ->
   ('v, 's) Nx_array.t ->
-  verdict
+  (verdict, Nx_array.answer) result
 (** [reduce ~axes m prog ~dst x] plans the reduction by [m] along [axes] of
     [prog]'s output read plain from [x], into [dst]. It computes a [Sum],
     [Prod], [Max] or [Min] of a program that is its one operand, into that
     operand's dtype, at [float32], [float64] and the 8- to 64-bit integers,
-    and [Max] and [Min] at [bool]. *)
+    and [Max] and [Min] at [bool]; it is [Error Declined] for the others. *)
 
 val scan :
   axis:int ->
@@ -45,7 +44,7 @@ val scan :
   Nx_kernel.Prog.t ->
   dst:Nx_array.any ->
   ('v, 's) Nx_array.t ->
-  verdict
+  (verdict, Nx_array.answer) result
 (** [scan ~axis m prog ~dst x] plans the scan by [m] along [axis], as
     {!reduce} plans a reduction. *)
 

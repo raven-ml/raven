@@ -13,23 +13,26 @@ type launch
 (** The type for launches: a call's operands, kernels, geometry and
     workspace, as {!choose} decided them. *)
 
-(** The type for what a plan does with a call. *)
+(** The type for what a plan does with a call that does work or none. *)
 type verdict =
-  | Declined  (** Its kernels do not compute the call. *)
   | Nothing  (** The result has no element: no work. *)
   | Launch of launch  (** {!parts} and {!write} launch it. *)
 
 val choose :
-  Nx_kernel.Contract_view.t ->
+  batch:(int * int) array ->
+  contracting:(int * int) array ->
   acc:Nx_array.Dtype.any ->
   dst:('v, 's) Nx_array.t ->
   init:('v, 's) Nx_array.t option ->
   ('a, 'b) Nx_array.t ->
   ('c, 'e) Nx_array.t ->
-  verdict
-(** [choose v ~acc ~dst ~init a b] plans the contraction of [a] with [b],
-    computed in [acc], into [dst], whose axes [v] groups. The operands'
-    buffers are live. *)
+  (verdict, Nx_array.answer) result
+(** [choose ~batch ~contracting ~acc ~dst ~init a b] plans the contraction
+    of [a] with [b], computed in [acc], into [dst], as
+    {!Nx_kernel.S.contract} takes it. It is [Error] of what
+    {!Nx_kernel.Contract_view.v} answers where the axes do not group, and
+    [Error Declined] where its kernels do not compute the call. The
+    operands' buffers are live. *)
 
 val workspace : launch -> int
 (** [workspace l] is the bytes of workspace [l] addresses. *)

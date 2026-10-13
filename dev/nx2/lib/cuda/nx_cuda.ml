@@ -3,20 +3,19 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A call fills its domain's view, chooses its launch, writes the launch into
-   its run's blocks and submits the submission of the launch's sequence, made
+(* A call groups its view and chooses its launch, writes the launch into its
+   domain's run and submits the submission of the launch's sequence, made
    once per device, through the door:
 
-   contract --> device (Rig.Local) --> frame (the domain's, or a fresh one) -->
-   View.fill, Plan.choose --> workspace, submission --> Plan.write into the run
-   --> door --> Rig.submit
+   contract --> device (Rig.Local) --> Plan.choose --> workspace, submission
+   --> frame (the domain's, or a fresh one) --> Plan.write into its run -->
+   door --> Rig.submit
 
-   reduce and scan take the same path with Reduce's launch. A call that finds
-   every cache warm allocates its launch, its buffers and the door's work,
-   and nothing that outlives it. *)
+   reduce and scan take the same path with Reduce's launch.
+   A call that finds every cache warm allocates its view, its launch, its
+   buffers and the door's work, and nothing that outlives it. *)
 
 module A = Nx_array
-module V = Nx_kernel.Contract_view
 module Sub = Rig.Submission
 
 let name = "nx.cuda"
@@ -120,14 +119,13 @@ let reduce_submission d dv l =
 
 (* Frames *)
 
-(* A call's state: one per domain, guarded by [busy]. A call that finds it busy,
-   such as one of another systhread of the domain or a signal handler's, uses a
-   fresh frame it does not keep. *)
-type frame = { busy : bool Atomic.t; view : V.t; run : Sub.Run.t }
+(* The run of a call, which needs it alone from its {!Plan.write} to its
+   submit's return: one per domain, guarded by [busy]. A call that finds it
+   busy, such as one of another systhread of the domain or a signal
+   handler's, uses a fresh frame it does not keep. *)
+type frame = { busy : bool Atomic.t; run : Sub.Run.t }
 
-let frame ~busy =
-  { busy = Atomic.make busy; view = V.make (); run = Sub.Run.make () }
-
+let frame ~busy = { busy = Atomic.make busy; run = Sub.Run.make () }
 let frames = Domain.DLS.new_key (fun () -> frame ~busy:false)
 
 let take () =
@@ -146,6 +144,21 @@ let reads ~init a b =
    written into and its buffers. *)
 let issue (sub, run, buffers) = ignore (Rig.submit sub ~run ~buffers)
 
+(* [write]s a launch of [sub] into a frame's run and submits [sub] with
+   [buffers] through the door. *)
+let submit ~written ~read sub buffers write =
+  let f = take () in
+  match
+    write f.run sub;
+    A.door ~written ~read issue (sub, f.run, buffers)
+  with
+  | answer ->
+      release f;
+      answer
+  | exception e ->
+      release f;
+      raise e
+
 let nothing () = ()
 let dead (A.Any x) = Option.is_some (Rig.Buffer.dead (A.buffer x))
 
@@ -154,54 +167,28 @@ let rec any_dead xs i =
 
 (* Contractions *)
 
-let run d dv f ~batch ~contracting ~acc ~dst ~init a b =
-  if not (V.fill f.view ~batch ~contracting ~dst ~init a b) then A.Declined
-  else begin
-    let written = [| A.Any dst |] and read = reads ~init a b in
-    if any_dead written 0 || any_dead read 0 then
-      (* The door refuses a dead buffer, before the plan reads its address. *)
-      A.door ~written ~read nothing ()
-    else
-      match Plan.choose f.view ~acc ~dst ~init a b with
-      | Declined -> A.Declined
-      | Nothing -> A.door ~written ~read nothing ()
-      | Launch l ->
-          let workspace = workspace d dv (Plan.workspace l) in
-          let tickets = tickets d dv (Plan.tickets l) in
-          let sub = submission d dv l in
-          Plan.write l f.run sub;
-          let buffers = Plan.buffers l ~workspace ~tickets in
-          A.door ~written ~read issue (sub, f.run, buffers)
-  end
-
 let contract ~batch ~contracting ~acc ~dst ~init a b =
   let d = A.device dst in
   match device d with
   | None -> A.Declined
   | Some dv -> (
-      let f = take () in
-      match run d dv f ~batch ~contracting ~acc ~dst ~init a b with
-      | answer ->
-          release f;
-          answer
-      | exception e ->
-          release f;
-          raise e)
+      let written = [| A.Any dst |] and read = reads ~init a b in
+      if any_dead written 0 || any_dead read 0 then
+        (* The door refuses a dead buffer, before the plan reads its
+           address. *)
+        A.door ~written ~read nothing ()
+      else
+        match Plan.choose ~batch ~contracting ~acc ~dst ~init a b with
+        | Error answer -> answer
+        | Ok Nothing -> A.door ~written ~read nothing ()
+        | Ok (Launch l) ->
+            let workspace = workspace d dv (Plan.workspace l) in
+            let tickets = tickets d dv (Plan.tickets l) in
+            let sub = submission d dv l in
+            let buffers = Plan.buffers l ~workspace ~tickets in
+            submit ~written ~read sub buffers (Plan.write l))
 
 (* Reductions and scans *)
-
-(* The call Reduce planned as [verdict], of [x] into [dst]. *)
-let run_reduce d dv f ~dst x (verdict : Reduce.verdict) =
-  let written = [| dst |] and read = [| A.Any x |] in
-  match verdict with
-  | Declined -> A.Declined
-  | Nothing -> A.door ~written ~read nothing ()
-  | Launch l ->
-      let workspace = workspace d dv (Reduce.workspace l) in
-      let sub = reduce_submission d dv l in
-      Reduce.write l f.run sub;
-      let buffers = Reduce.buffers l ~workspace in
-      A.door ~written ~read issue (sub, f.run, buffers)
 
 (* Whether reduction [r] accepts the dtype of [p]'s output [k]. *)
 let accepted (p : Nx_kernel.Prog.t) (r, k) =
@@ -237,14 +224,15 @@ let reduce_on p x ~dst shape plan =
       match refusal p x ~dst shape with
       | Some refused -> refused
       | None -> (
-          let f = take () in
-          match run_reduce d dv f ~dst x (plan ()) with
-          | answer ->
-              release f;
-              answer
-          | exception e ->
-              release f;
-              raise e))
+          let written = [| dst |] and read = [| A.Any x |] in
+          match plan () with
+          | Error answer -> answer
+          | Ok Reduce.Nothing -> A.door ~written ~read nothing ()
+          | Ok (Launch l) ->
+              let workspace = workspace d dv (Reduce.workspace l) in
+              let sub = reduce_submission d dv l in
+              let buffers = Reduce.buffers l ~workspace in
+              submit ~written ~read sub buffers (Reduce.write l)))
 
 (* Reduce computes a monoid of output 0 of the program into one destination,
    read plain. *)

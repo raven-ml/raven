@@ -68,7 +68,7 @@ type pass = { body : int; groups : int; full : int; span : int; threads : int }
 (* A reduction is followed by reduce_tree where its first pass has several
    groups; a scan follows scan_totals where a slice has several chunks. *)
 type launch = Reduce of call * pass | Scan of call
-type verdict = Declined | Nothing | Launch of launch
+type verdict = Nothing | Launch of launch
 
 (* Axes *)
 
@@ -249,8 +249,8 @@ let call ~scan ~axes m p ~dst x =
 
 let reduce ~axes m p ~dst x =
   match call ~scan:false ~axes m p ~dst x with
-  | None -> Declined
-  | Some c when c.outputs = 0 -> Nothing
+  | None -> Error A.Declined
+  | Some c when c.outputs = 0 -> Ok Nothing
   | Some c ->
       let blocks = ceil_div c.terms K.reduce_block in
       let outputs = c.outputs in
@@ -258,13 +258,13 @@ let reduce ~axes m p ~dst x =
         if c.terms >= 64 && along_terms c then rows ~outputs ~blocks
         else cols ~outputs ~blocks
       in
-      Launch (Reduce (c, pass))
+      Ok (Launch (Reduce (c, pass)))
 
 let scan ~axis m p ~dst x =
   match call ~scan:true ~axes:[| axis |] m p ~dst x with
-  | None -> Declined
-  | Some c when c.outputs = 0 || c.terms = 0 -> Nothing
-  | Some c -> Launch (Scan c)
+  | None -> Error A.Declined
+  | Some c when c.outputs = 0 || c.terms = 0 -> Ok Nothing
+  | Some c -> Ok (Launch (Scan c))
 
 (* Sequences *)
 

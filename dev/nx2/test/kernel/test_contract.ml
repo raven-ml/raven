@@ -512,9 +512,9 @@ let cpu_computes c =
   && Array.for_all
        (fun (A.Any x) -> List.mem (D.Any (A.dtype x)) (held acc))
        (operands c)
-  && Nx_kernel.Contract_view.fill
-       (Nx_kernel.Contract_view.make ())
-       ~batch:c.batch ~contracting:c.contracting ~dst ~init a b
+  && Result.is_ok
+       (Nx_kernel.Contract_view.v ~batch:c.batch ~contracting:c.contracting
+          ~dst ~init a b)
 
 (* Outputs per batch element. *)
 let per_batch c =

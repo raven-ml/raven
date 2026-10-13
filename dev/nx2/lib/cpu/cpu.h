@@ -25,6 +25,7 @@
 
 #include "nx_array.h"
 #include "nx_contract_view.h"
+#include "nx_contract_view_fill.h"
 #include "nx_kernel.h"
 #include "nx_prog.h"
 #include "rig_pool.h"

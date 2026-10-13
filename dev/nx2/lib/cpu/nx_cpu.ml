@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module V = Nx_kernel.Contract_view
-
 let name = "nx.cpu"
 let computes_on = Rig.shares_host_memory
 
@@ -180,26 +178,22 @@ external fold :
 
 (* Contractions (gemm.c) *)
 
-(* [contract_c acc v ~dst a b init] contracts [a] and [b], with [init] if
-   given, laid out as the view [v], in the dtype of code [acc]. *)
+(* [contract_c ~batch ~contracting acc ~dst ~init a b] contracts [a] and
+   [b], with [init] if given, in the dtype of code [acc], over the view C
+   groups from the pairs on its stack ([nx_contract_view_fill]). *)
 external contract_c :
+  batch:(int * int) array ->
+  contracting:(int * int) array ->
   int ->
-  V.t ->
   dst:('v, 's) Nx_array.t ->
+  init:('v, 's) Nx_array.t option ->
   ('a, 'b) Nx_array.t ->
   ('c, 'd) Nx_array.t ->
-  ('v, 's) Nx_array.t option ->
   Nx_array.answer = "nx_cpu_contract_byte" "nx_cpu_contract"
 
-(* Each domain's view. *)
-let view = Domain.DLS.new_key V.make
-
 let contract ~batch ~contracting ~acc ~dst ~init a b =
-  let v = Domain.DLS.get view in
-  if not (V.fill v ~batch ~contracting ~dst ~init a b) then Nx_array.Declined
-  else
-    let (Nx_array.Dtype.Any acc) = acc in
-    contract_c (Nx_array.Dtype.code acc) v ~dst a b init
+  let (Nx_array.Dtype.Any acc) = acc in
+  contract_c ~batch ~contracting (Nx_array.Dtype.code acc) ~dst ~init a b
 
 (* Fourier transforms: declined at the dtypes they take. *)
 

@@ -39,10 +39,10 @@
 (library
  (name nx_kernel_support)
  (modules nx_kernel_support)
- (libraries nx_kernel)
+ (libraries nx_array nx_kernel)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/kernel)
+  (include_dirs ../../../lib/array ../../../lib/kernel)
   (names nx_kernel_support_stubs)))
 
 ; The kernel libraries the suite runs its laws through, and nx.cpu's target

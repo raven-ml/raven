@@ -450,19 +450,16 @@ module Contract_view = struct
   type operand = A | B | Init | Dst
   type axis = Batch | Row | Column | Contracted
 
-  (* A view is nx_contract_view.h's nx_contract_view, int64 fields in the
-     host's byte order, then an int64 that is 1 iff it has an init. Operands
-     and axes by index: A 0, B 1, Init 2, Dst 3; Batch 0, Row 1, Column 2,
-     Contracted 3. C fills it (nx_kernel_view_fill). *)
-  type t = Bytes.t
+  (* A view is an int array: the extents by axis, the offsets by operand and
+     the strides by operand then axis, as nx_contract_view.h's
+     nx_contract_view lays them out, then 1 iff it has an init. Operands and
+     axes by index: A 0, B 1, Init 2, Dst 3; Batch 0, Row 1, Column 2,
+     Contracted 3. C makes it (nx_kernel_view). *)
+  type t = int array
 
-  let at_extent = 0
-  let at_offset = 32
-  let at_strides = 64
-  let at_has_init = 192
-  let size = at_has_init + 8
-  let get v at = Int64.to_int (Bytes.get_int64_ne v at)
-  let make () = Bytes.make size '\000'
+  let at_offset = 4
+  let at_stride = 8
+  let at_has_init = 24
   let operand_index = function A -> 0 | B -> 1 | Init -> 2 | Dst -> 3
 
   let axis_index = function
@@ -471,35 +468,18 @@ module Contract_view = struct
     | Column -> 2
     | Contracted -> 3
 
-  let has_init v = get v at_has_init <> 0
-  let at_stride o x = at_strides + (8 * ((4 * o) + x))
-  let misfit what = invalid_arg ("Nx_kernel.Contract_view.fill: " ^ what)
+  let has_init v = v.(at_has_init) <> 0
 
-  (* [fill_c v batch contracting y a b i] fills [v] for the pairs, [dst]
-     [y] and the operands [a], [b] and [i], or [None] for no init: [1]
-     filled, [0] a group that does not merge, [-1] extents that differ
-     within a group, [-2] ranks the pairs do not fit, [-3] an axis in two
-     pairs. *)
-  external fill_c :
-    Bytes.t ->
-    (int * int) array ->
-    (int * int) array ->
-    ('v, 's) Nx_array.t ->
+  external v :
+    batch:(int * int) array ->
+    contracting:(int * int) array ->
+    dst:('v, 's) Nx_array.t ->
+    init:('v, 's) Nx_array.t option ->
     ('a, 'b) Nx_array.t ->
-    ('c, 'd) Nx_array.t ->
-    ('v, 's) Nx_array.t option ->
-    (int[@untagged]) = "nx_kernel_view_fill_byte" "nx_kernel_view_fill"
-  [@@noalloc]
+    ('c, 'e) Nx_array.t ->
+    (t, Nx_array.answer) result = "nx_kernel_view_byte" "nx_kernel_view"
 
-  let fill v ~batch ~contracting ~dst ~init a b =
-    match fill_c v batch contracting dst a b init with
-    | 1 -> true
-    | 0 -> false
-    | -1 -> misfit "extents differ within a group"
-    | -3 -> misfit "an axis in two pairs"
-    | _ -> misfit "ranks the pairs do not fit"
-
-  let extent v x = get v (at_extent + (8 * axis_index x))
+  let extent v x = v.(axis_index x)
 
   let check_init fn v o =
     if o = Init && not (has_init v) then
@@ -507,7 +487,7 @@ module Contract_view = struct
 
   let offset v o =
     check_init "offset" v o;
-    get v (at_offset + (8 * operand_index o))
+    v.(at_offset + operand_index o)
 
   let stride v o x =
     check_init "stride" v o;
@@ -516,5 +496,5 @@ module Contract_view = struct
         invalid_arg
           "Nx_kernel.Contract_view.stride: an axis the operand does not have"
     | _ -> ());
-    get v (at_stride (operand_index o) (axis_index x))
+    v.(at_stride + (4 * operand_index o) + axis_index x)
 end

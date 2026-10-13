@@ -6,10 +6,12 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <caml/alloc.h>
+#include <caml/memory.h>
 #include <caml/mlvalues.h>
 
 #include "nx_array.h"
-#include "nx_contract_view.h"
+#include "nx_contract_view_fill.h"
 #include "nx_prog.h"
 
 _Static_assert(NX_OP1_COUNT == 28 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
@@ -25,24 +27,16 @@ value nx_kernel_narrow_bits_byte(value dt, value x) {
   return Val_long(nx_kernel_narrow_bits(Long_val(dt), Double_val(x)));
 }
 
-/* nx_kernel.ml writes nx_contract_view at these byte offsets. */
-_Static_assert(offsetof(nx_contract_view, extent) == 0, "at_extent");
-_Static_assert(offsetof(nx_contract_view, offset) == 32, "at_offset");
-_Static_assert(offsetof(nx_contract_view, stride) == 64, "at_stride");
 _Static_assert(NX_VIEW_DST == 3 && NX_VIEW_CONTRACTED == 3,
                "operand and axis indices");
-_Static_assert(sizeof(nx_contract_view) == 192, "view_bytes");
 
-/* Contract_view.fill, in one pass over the pairs [vbatch] and
+/* nx_contract_view_fill, in one pass over the pairs [vbatch] and
    [vcontracting] and the layouts of [y], [a], [b] and the init [i], an
-   option, into the view [v]: the paired axes marked in a mask per side,
-   each operand's axes of each group gathered, every group's extents checked
+   option, into [w]: the paired axes marked in a mask per side, each
+   operand's axes of each group gathered, every group's extents checked
    before any merges, then each group coalesced (nx_coalesce_dims) and
-   written. Answers FILLED, UNMERGED for a group that is no single run, or
-   why the call does not fit the pairs. It reads each pair once, so another
-   domain's write to the arrays cannot change what it checked. It allocates
-   nothing. */
-enum { TWICE = -3, RANKS = -2, EXTENTS = -1, UNMERGED = 0, FILLED = 1 };
+   written. It reads each pair once, so another domain's write to the
+   arrays cannot change what it checked. */
 enum { A = NX_VIEW_A, B = NX_VIEW_B, I = NX_VIEW_INIT, Y = NX_VIEW_DST };
 enum {
   BATCH = NX_VIEW_BATCH,
@@ -50,10 +44,6 @@ enum {
   COLUMN = NX_VIEW_COLUMN,
   CONTRACTED = NX_VIEW_CONTRACTED
 };
-
-/* The byte after the view in Contract_view.t: whether it has an init. */
-#define AT_HAS_INIT 192
-_Static_assert(sizeof(nx_contract_view) == AT_HAS_INIT, "has_init's place");
 
 typedef struct {
   int rank;
@@ -103,8 +93,9 @@ static int fits(int g, int count, int n, const int *ops, const layout *l,
   return 1;
 }
 
-intnat nx_kernel_view_fill(value v, value vbatch, value vcontracting, value y,
-                           value a, value b, value i) {
+int nx_contract_view_fill(nx_contract_view *w, value vbatch,
+                          value vcontracting, value y, value a, value b,
+                          value i) {
   int nb = (int)Wosize_val(vbatch), nc = (int)Wosize_val(vcontracting);
   int init = Is_block(i);
   layout l[4];
@@ -112,7 +103,7 @@ intnat nx_kernel_view_fill(value v, value vbatch, value vcontracting, value y,
   l[B].rank = nx_array_layout(b, l[B].dim, &l[B].offset);
   l[Y].rank = nx_array_layout(y, l[Y].dim, &l[Y].offset);
   l[I].rank = init ? nx_array_layout(Field(i, 0), l[I].dim, &l[I].offset) : 0;
-  if (nb + nc > l[A].rank || nb + nc > l[B].rank) return RANKS;
+  if (nb + nc > l[A].rank || nb + nc > l[B].rank) return NX_SHAPE;
   int fa = l[A].rank - nb - nc, fb = l[B].rank - nb - nc;
   int ry = nb + fa + fb;
   uint64_t na = 0, nbm = 0;
@@ -120,15 +111,16 @@ intnat nx_kernel_view_fill(value v, value vbatch, value vcontracting, value y,
   for (int k = 0; k < nb + nc; k++) {
     value p = Field(k < nb ? vbatch : vcontracting, k < nb ? k : k - nb);
     intnat ia = Long_val(Field(p, 0)), ib = Long_val(Field(p, 1));
-    if (ia < 0 || ia >= l[A].rank || ib < 0 || ib >= l[B].rank) return RANKS;
-    if (na >> ia & 1 || nbm >> ib & 1) return TWICE;
+    if (ia < 0 || ia >= l[A].rank || ib < 0 || ib >= l[B].rank ||
+        na >> ia & 1 || nbm >> ib & 1)
+      return NX_SHAPE;
     na |= (uint64_t)1 << ia;
     nbm |= (uint64_t)1 << ib;
     int g = k < nb ? BATCH : CONTRACTED, at = k < nb ? k : k - nb;
     axes[A][g][at] = (int)ia;
     axes[B][g][at] = (int)ib;
   }
-  if (l[Y].rank != ry || (init && l[I].rank != ry)) return RANKS;
+  if (l[Y].rank != ry || (init && l[I].rank != ry)) return NX_SHAPE;
   for (int ax = 0, n = 0; ax < l[A].rank; ax++)
     if (!(na >> ax & 1)) axes[A][ROW][n++] = ax;
   for (int ax = 0, n = 0; ax < l[B].rank; ax++)
@@ -149,24 +141,55 @@ intnat nx_kernel_view_fill(value v, value vbatch, value vcontracting, value y,
       !fits(ROW, fa, nrow, row, l, axes) ||
       !fits(COLUMN, fb, nrow, column, l, axes) ||
       !fits(CONTRACTED, nc, 2, contracted, l, axes))
-    return EXTENTS;
-  uint8_t *bytes = Bytes_val(v);
-  nx_contract_view *w = (nx_contract_view *)bytes;
+    return NX_SHAPE;
   /* What an operand lacks reads 0: its axes, and an absent init. */
   memset(w, 0, sizeof *w);
-  *(int64_t *)(bytes + AT_HAS_INIT) = init;
   w->offset[A] = l[A].offset;
   w->offset[B] = l[B].offset;
   w->offset[Y] = l[Y].offset;
   if (init) w->offset[I] = l[I].offset;
-  return group(w, BATCH, nb, nbatch, batch, l, axes) &&
-         group(w, ROW, fa, nrow, row, l, axes) &&
-         group(w, COLUMN, fb, nrow, column, l, axes) &&
-         group(w, CONTRACTED, nc, 2, contracted, l, axes);
+  int grouped = group(w, BATCH, nb, nbatch, batch, l, axes) &&
+                group(w, ROW, fa, nrow, row, l, axes) &&
+                group(w, COLUMN, fb, nrow, column, l, axes) &&
+                group(w, CONTRACTED, nc, 2, contracted, l, axes);
+  return grouped ? NX_OK : NX_DECLINED;
 }
 
-value nx_kernel_view_fill_byte(value *argv, int argn) {
+/* Contract_view.v: Ok of the view of the pairs [vbatch] and
+   [vcontracting], the result [y], the init [i], an option, and [a] and [b],
+   as an int array in nx_kernel.ml's order (the extents, the offsets, the
+   strides by operand then axis, then whether it has an init), or Error of
+   the answer nx_contract_view_fill gives. */
+enum { VIEW_FIELDS = 25, AT_OFFSET = 4, AT_STRIDE = 8, AT_HAS_INIT = 24 };
+enum { OK_TAG, ERROR_TAG };
+
+value nx_kernel_view(value vbatch, value vcontracting, value y, value i,
+                     value a, value b) {
+  CAMLparam5(vbatch, vcontracting, y, i, a);
+  CAMLxparam1(b);
+  CAMLlocal2(v, r);
+  nx_contract_view w;
+  int answer = nx_contract_view_fill(&w, vbatch, vcontracting, y, a, b, i);
+  if (answer != NX_OK) {
+    r = caml_alloc_small(1, ERROR_TAG);
+    Field(r, 0) = Val_int(answer);
+    CAMLreturn(r);
+  }
+  v = caml_alloc_small(VIEW_FIELDS, 0);
+  for (int k = 0; k < 4; k++) {
+    Field(v, k) = Val_long(w.extent[k]);
+    Field(v, AT_OFFSET + k) = Val_long(w.offset[k]);
+    for (int x = 0; x < 4; x++)
+      Field(v, AT_STRIDE + 4 * k + x) = Val_long(w.stride[k][x]);
+  }
+  Field(v, AT_HAS_INIT) = Val_bool(Is_block(i));
+  r = caml_alloc_small(1, OK_TAG);
+  Field(r, 0) = v;
+  CAMLreturn(r);
+}
+
+value nx_kernel_view_byte(value *argv, int argn) {
   (void)argn;
-  return Val_long(nx_kernel_view_fill(argv[0], argv[1], argv[2], argv[3],
-                                      argv[4], argv[5], argv[6]));
+  return nx_kernel_view(argv[0], argv[1], argv[2], argv[3], argv[4],
+                        argv[5]);
 }

@@ -13,8 +13,7 @@
    one (8- to 64-bit integers throughout); an extent passes 2^32 - 1, or an
    operand's elements within a batch element lie 2^32 elements or more apart;
    or a float operand has neither axis of unit stride. A call whose axes do
-   not group never reaches the plan: Contract_view.fill answers false
-   first. *)
+   not group answers what Contract_view.v answers. *)
 
 module K = Kernels
 module V = Nx_kernel.Contract_view
@@ -163,7 +162,9 @@ type launch = {
   used : int;
 }
 
-type verdict = Declined | Nothing | Launch of launch
+type verdict = Nothing | Launch of launch
+
+let declined = Error Nx_array.Declined
 
 (* The strides of an absent init. *)
 let no_strides = [| 0; 0; 0 |]
@@ -342,15 +343,15 @@ let rules c ~a_vector ~b_vector =
     && Option.is_some (dense i)
   in
   let sa = c.a.s and sb = c.b.s in
-  if (not (same a c.b.dtype)) || not (ints || floats) then Declined
+  if (not (same a c.b.dtype)) || not (ints || floats) then declined
   else if not (fits32 c.batch && fits32 c.m && fits32 c.n && fits32 c.k) then
-    Declined
+    declined
   else if
     (not (spans32 sa c.m c.k))
     || (not (spans32 sb c.k c.n))
     || not (spans32 si c.m c.n)
-  then Declined
-  else if c.batch = 0 || c.m = 0 || c.n = 0 then Nothing
+  then declined
+  else if c.batch = 0 || c.m = 0 || c.n = 0 then Ok Nothing
   else begin
     (* The kernels read an operand with one axis of unit stride, or of one
        element; t names the operands whose other axis it is. *)
@@ -374,14 +375,14 @@ let rules c ~a_vector ~b_vector =
          || aligned a_vector (if a_t then sa.(2) else sa.(1)) sa.(0) c.batch
             && aligned b_vector (if b_t then sb.(2) else sb.(1)) sb.(0) c.batch)
     in
-    if ints && not i8 then Launch (plan_integer c ~order)
-    else if not ordered then Declined
+    if ints && not i8 then Ok (Launch (plan_integer c ~order))
+    else if not ordered then declined
     else
       match dense a with
-      | _ when i8 -> Launch (plan_int8 c ~order)
-      | Some d when c.m = 1 -> Launch (plan_skinny c d ~order)
-      | Some d -> Launch (plan_float c d ~order)
-      | None -> Declined
+      | _ when i8 -> Ok (Launch (plan_int8 c ~order))
+      | Some d when c.m = 1 -> Ok (Launch (plan_skinny c d ~order))
+      | Some d -> Ok (Launch (plan_float c d ~order))
+      | None -> declined
   end
 
 (* [x] as the operand [which] of [v], over the axes [r] and [c]. *)
@@ -394,25 +395,28 @@ let operand v which (r : V.axis) (c : V.axis) x =
     s = [| V.stride v which Batch; V.stride v which r; V.stride v which c |];
   }
 
-let choose v ~acc ~dst ~init a b =
-  let y_dtype = dtype_of dst in
-  let c =
-    {
-      a = operand v A Row Contracted a;
-      b = operand v B Contracted Column b;
-      y = Nx_array.buffer dst;
-      y_dtype;
-      y_first = V.offset v Dst * bytes y_dtype;
-      init = Option.map (operand v Init Row Column) init;
-      acc;
-      batch = V.extent v Batch;
-      m = V.extent v Row;
-      n = V.extent v Column;
-      k = V.extent v Contracted;
-    }
-  in
-  let vector o = Rig.Buffer.aligned o.buffer ~at:o.first 16 in
-  rules c ~a_vector:(vector c.a) ~b_vector:(vector c.b)
+let choose ~batch ~contracting ~acc ~dst ~init a b =
+  match V.v ~batch ~contracting ~dst ~init a b with
+  | Error answer -> Error answer
+  | Ok v ->
+      let y_dtype = dtype_of dst in
+      let c =
+        {
+          a = operand v A Row Contracted a;
+          b = operand v B Contracted Column b;
+          y = Nx_array.buffer dst;
+          y_dtype;
+          y_first = V.offset v Dst * bytes y_dtype;
+          init = Option.map (operand v Init Row Column) init;
+          acc;
+          batch = V.extent v Batch;
+          m = V.extent v Row;
+          n = V.extent v Column;
+          k = V.extent v Contracted;
+        }
+      in
+      let vector o = Rig.Buffer.aligned o.buffer ~at:o.first 16 in
+      rules c ~a_vector:(vector c.a) ~b_vector:(vector c.b)
 
 (* Sequences *)
 
