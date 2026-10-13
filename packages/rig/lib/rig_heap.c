@@ -174,10 +174,13 @@ value caml_rig_token(value v_list, value v_record, value v_mem,
   CAMLreturn(v);
 }
 
-/* The records the list [v_list] holds, which it no longer does, their
-   number stored into the ref [v_n] in the same call: a caller that counts
-   them as routed ([caml_rig_routed]) from a handler set before the call
-   misses none. */
+/* The nodes of the records the list [v_list] holds, which it no longer
+   does, their number stored into the ref [v_n] in the same call: a caller
+   that counts them as routed ([caml_rig_routed]) from a handler set before
+   the call misses none. A node keeps its record reachable until
+   [caml_rig_node_routed], so a routing that an exception interrupts leaks
+   the records it did not reach, and lets go of none: a kept value stays
+   until its work is done. */
 value caml_rig_released(value v_list, value v_n) {
   CAMLparam2(v_list, v_n);
   CAMLlocal2(l, cell);
@@ -188,17 +191,27 @@ value caml_rig_released(value v_list, value v_n) {
   l = Val_emptylist;
   while (n != NULL) {
     cell = caml_alloc(2, 0);
-    Store_field(cell, 0, n->record);
+    Store_field(cell, 0, Val_long((intnat)n));
     Store_field(cell, 1, l);
     l = cell;
-    caml_remove_generational_global_root(&n->record);
-    struct release_node *next = n->next;
-    free(n);
-    n = next;
+    n = n->next;
     k++;
   }
   Field(v_n, 0) = Val_long(k);
   CAMLreturn(l);
+}
+
+/* The record of the node [v_n] that [caml_rig_released] gave. */
+value caml_rig_node_record(value v_n) {
+  return ((struct release_node *)Long_val(v_n))->record;
+}
+
+/* Frees the node [v_n], whose record was routed. */
+value caml_rig_node_routed(value v_n) {
+  struct release_node *n = (struct release_node *)Long_val(v_n);
+  caml_remove_generational_global_root(&n->record);
+  free(n);
+  return Val_unit;
 }
 
 value caml_rig_released_any(value v_list) {

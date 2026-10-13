@@ -138,9 +138,11 @@ external token : int -> released -> int -> int -> int -> token
 
 external no_token : unit -> token = "%identity"
 
-(* The records a list holds, their number stored into the ref in the same
-   call. *)
-external released : int -> int ref -> released list = "caml_rig_released"
+(* The nodes of the records a list holds, their number stored into the ref in
+   the same call. A node keeps its record reachable until [node_routed]. *)
+external released : int -> int ref -> int list = "caml_rig_released"
+external node_record : int -> released = "caml_rig_node_record" [@@noalloc]
+external node_routed : int -> unit = "caml_rig_node_routed" [@@noalloc]
 external released_any : int -> bool = "caml_rig_released_any" [@@noalloc]
 
 (* Notes [n] records of a release list routed: a device's slot frees once
@@ -777,10 +779,13 @@ let run_pending d = function
         | Some e -> to_cache e
         | None -> ())
 
+(* Routes the records of the nodes [l], letting go of each node once its
+   record is routed: an exception leaves the rest reachable, never dropped. *)
 let rec route_all d = function
   | [] -> ()
-  | r :: l ->
-      route d r;
+  | node :: l ->
+      route d (node_record node);
+      node_routed node;
       route_all d l
 
 let rec free_all = function
@@ -833,7 +838,7 @@ let drain d =
   if not (Dev.orphaned d) then begin
     if not (idle d.live) || (Dev.is_lost d && kept d) then drain_own d;
     if released_any holds_list then
-      List.iter (route d) (released holds_list (ref 0));
+      route_all d (released holds_list (ref 0));
     drain_holds ();
     if Dev.stop_returned d then ignore (Dev.free_slot d : bool)
   end
