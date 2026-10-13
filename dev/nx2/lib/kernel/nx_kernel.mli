@@ -350,7 +350,12 @@ end
     transform's axes, the contracted extents, a routine's matrices, a gather's
     or a scatter's axis, the axes a padded load or a fold pads or windows), the
     dtypes, the attributes and the device's architecture, never on the result's
-    other extents. A kernel raises [Out_of_memory] if host memory runs out and
+    other extents. Neither rule covers the sign and payload of a NaN result
+    where the operation leaves them unspecified, as a contraction and a
+    transform do: IEEE 754 specifies neither for arithmetic, and where two NaNs
+    meet, the one an instruction passes on depends on its operands' order,
+    which a kernel's paths for different layouts and windows may set
+    differently. A kernel raises [Out_of_memory] if host memory runs out and
     {!Rig.Out_of_memory} if its device's does.
 
     A kernel answers [Wrong_dtype] for dtypes its doc does not take. A decline
@@ -537,13 +542,15 @@ module type S = sig
       kernels of one order never compute a call given the other. A library
       that states it follows {!section-orders} adds each output's products in
       [order], whatever the extents. Another states the association it
-      computes for each order. *)
+      computes for each order. A NaN result's sign and payload are
+      unspecified. *)
 
   (** {1:fft Fourier transforms}
 
       Each transform runs along each of [axes], strictly increasing and not
       empty. A transform of no point is the empty sum. Each kernel library
-      states its error bound. *)
+      states its error bound. A NaN result's sign and payload are
+      unspecified. *)
 
   val c2c :
     direction -> axes:int array -> dst:(Complex.t, 's) a -> (Complex.t, 's) a -> answer

@@ -35,7 +35,7 @@
     ~columns] is [Chain] where [rows] and [columns] are both above 4 and
     multiply to at least 64, and [Lane] otherwise.
     With no products, an output is [init]'s bits, or [+0]. Otherwise a NaN
-    result's payload is unspecified.
+    result's sign and payload are unspecified.
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand into its own dtype, read plain or padded, at
@@ -96,13 +96,13 @@
     The transforms refuse with [Shape_mismatch] what {!Nx_kernel.Shape}
     answers [Error] for and results of other shapes. A transform's result
     is a function of its operand's values alone, whatever its layout, its
-    batch or the threads; a NaN result's payload is unspecified. Barring
-    underflow and overflow, a transform [ŷ] of [N] points, the product of
-    the points along each of [axes], is within [‖ŷ - y‖₂ <= ε u √N ‖x‖₂]
-    of the exact [y], [u] the unit roundoff of [x]'s parts and [‖x‖₂] its
-    norm, a [c2r]'s that of its completed bins, at most [√2] times its
-    operand's. [ε] is the sum over [axes] of [e(n)], [n] the points along
-    the axis:
+    batch or the threads, but for a NaN result's sign and payload, which are
+    unspecified. Barring underflow and overflow, a transform [ŷ] of [N]
+    points, the product of the points along each of [axes], is within
+    [‖ŷ - y‖₂ <= ε u √N ‖x‖₂] of the exact [y], [u] the unit roundoff of
+    [x]'s parts and [‖x‖₂] its norm, a [c2r]'s that of its completed bins,
+    at most [√2] times its operand's. [ε] is the sum over [axes] of [e(n)],
+    [n] the points along the axis:
     - [e(n) = 8 Σ p{^3/2} + 8] over [n]'s prime factors [p], with
       multiplicity: a line computes by passes of radix 2, 3, 4, 5 and
       [n]'s other primes, or by Bailey's four steps.

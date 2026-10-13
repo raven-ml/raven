@@ -5,8 +5,10 @@
 
 (* The window law, through the engine's private Prim, Route and Exec, copied
    here: on one device, an operation over the windows its rule gives its
-   operands equals that window of its whole result, bitwise. Each device of a
-   set computes its window so, so this is the law a set's results rest on.
+   operands equals that window of its whole result, bitwise but for a NaN's
+   sign and payload where the operation leaves them unspecified. Each device
+   of a set computes its window so, so this is the law a set's results rest
+   on.
 
    Then the law at work: an operation over operands on a set of two devices
    whose kernels decline what nx expands, each device computing its window by
@@ -513,8 +515,26 @@ let pp_case ppf (Op op, (w : M.range array)) =
              (fun (r : M.range) -> Printf.sprintf "%d+%d" r.start r.count)
              w)))
 
-(* Each result's bytes on the host, in C order, at [windows]: a constant
-   result, an expansion's of no element, computed there. *)
+(* [a] with each NaN the quiet NaN of a clear sign bit. *)
+let any_nan (type v s) (a : (v, s) A.t) : (v, s) A.t =
+  let s = L.shape (A.layout a) in
+  let f x = if Float.is_nan x then Float.nan else x in
+  let z (c : Complex.t) = { Complex.re = f c.re; im = f c.im } in
+  match A.dtype a with
+  | D.Float32 -> A.of_array D.Float32 s (Array.map f (A.to_array a))
+  | D.Float64 -> A.of_array D.Float64 s (Array.map f (A.to_array a))
+  | D.Complex64 -> A.of_array D.Complex64 s (Array.map z (A.to_array a))
+  | D.Complex128 -> A.of_array D.Complex128 s (Array.map z (A.to_array a))
+  | _ -> a
+
+(* Whether [op] leaves a NaN result's sign and payload unspecified, as
+   nx_kernel.mli states of a contraction and a transform. *)
+let nan_bits_unspecified (type r) (op : r Value.prim) =
+  match op with Value.Contract _ | Value.Fft _ -> true | _ -> false
+
+(* Each result's bytes on the host, in C order, at [windows], each NaN made
+   one where [op] leaves its bits unspecified: a constant result, an
+   expansion's of no element, computed there. *)
 let bytes (type r) windows (op : r Value.prim) (r : r) =
   let host : b Devices.placement = Devices.rebrand (Devices.one Devices.host 0) in
   let arrays = ref [] in
@@ -528,6 +548,7 @@ let bytes (type r) windows (op : r Value.prim) (r : r) =
       let a =
         Option.get (A.move (Slice (windows i (L.shape (A.layout a)))) a)
       in
+      let a = if nan_bits_unspecified op then any_nan (A.copy a) else a in
       A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a))))
     (Array.of_list (List.rev !arrays))
 
@@ -790,6 +811,47 @@ let test_contract_rows () =
   let w = [| { M.start = 0; count = 4; step = 1 }; full 8 |] in
   agrees (Op op, w)
 
+(* NaNs of both signs, as a negated NaN gives, in a transform's lines and a
+   contraction's terms. *)
+let range start count = { M.start; count; step = 1 }
+
+let test_fft_nans () =
+  let re =
+    [|
+      3.3; 3.3; 1.; -1e7; nan; 3.3; -1e7; 0.; 1.; -1e7; 1.; nan; -0.; nan; 0.;
+      0.1; nan; 1.; 0.; nan; -2.5e-3; 1.; -2.5e-3; -0.; 1e7; nan; 1.; -0.;
+      -1e7; 0.;
+    |]
+  in
+  let x =
+    value D.Complex64 [| 5; 2; 3 |]
+      (Array.map (fun re -> { Complex.re; im = -.re }) re)
+  in
+  let op = Value.Fft (C2c { direction = Forward; axes = [| 0 |]; x }) in
+  agrees (Op op, [| full 5; range 1 1; range 1 2 |])
+
+let test_contract_nans () =
+  let a =
+    value D.Float32 [| 8; 3 |]
+      (Array.init 24 (fun i -> [| nan; -.nan; 1. |].(i mod 3)))
+  in
+  let b = value D.Float32 [| 3; 8 |] (Array.make 24 1.) in
+  let batch = [||] and contracting = [| (1, 0) |] in
+  let op =
+    Value.Contract
+      {
+        order = Prim.contract_order ~batch ~contracting a b;
+        batch;
+        contracting;
+        acc = D.Any D.Float32;
+        out = D.Float32;
+        a;
+        b;
+        init = None;
+      }
+  in
+  agrees (Op op, [| range 3 4; range 1 5 |])
+
 let () =
   exit
     (run "nx windows"
@@ -808,5 +870,9 @@ let () =
                threshold_law;
              test "a contraction's rows keep the whole's order"
                test_contract_rows;
+             test "a transform's window over NaNs of both signs"
+               test_fft_nans;
+             test "a contraction's window over NaNs of both signs"
+               test_contract_nans;
            ];
        ])

@@ -43,6 +43,6 @@
     [dst]'s dtype. The extents enter a chain sum's bits through that count
     alone, and a float sum's through the limits past which it declines.
     Integer sums wrap, so every order gives them the same bits. A NaN
-    result's payload is unspecified. *)
+    result's sign and payload are unspecified. *)
 
 include Nx_kernel.S
