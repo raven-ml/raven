@@ -1885,9 +1885,10 @@ module Rng : sig
       [Gamma(a) = Gamma(a + 1) U{^1/a}]. Divide by a rate for the two-parameter
       family.
 
-      It is not exact: a draw takes the first of eight rounds that accepts, each
-      accepting more than 98% of proposals, and the one element in about
-      [10{^14}] that no round accepts is the distribution's mean.
+      It is not exact: a draw takes the first of ten rounds that accepts, each
+      accepting more than 95% of proposals, and the one element in about
+      [10{^13}] that no round accepts is the distribution's mean from a
+      concentration of 1 up, and [(a + 1) U{^1/a}] below.
 
       Raises [Invalid_argument] if an element of [a] is outside [(0, inf)]. *)
 

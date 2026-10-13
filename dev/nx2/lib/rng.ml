@@ -484,15 +484,17 @@ let pair ~key ~p ~n ~rounds c j r =
 (* Marsaglia and Tsang (2000): at a concentration of 1 or more, a normal draw
    [x] is squeezed through [v = (1 + x / √(9d))^3], [d = a - 1/3], and accepted
    against a uniform; below 1, Gamma(a) = Gamma(a + 1) U^(1/a). The acceptance
-   test reads data, so a fixed eight rounds are drawn and the first acceptance
-   taken, above 98% each; an element no round accepts, about one in 1e14, takes
-   the mean. The proposals take the key's first split key, the tests its second
+   test reads data, so a fixed ten rounds are drawn and the first acceptance
+   taken. A round accepts more than 95% of proposals, least at a concentration
+   of 1, which those below 1 are lifted to; an element no round accepts, about
+   one in 10^13, takes the mean of Gamma(boosted), [a + 1] times the shift
+   below 1. The proposals take the key's first split key, the tests its second
    and the shift its third, each element [j] of [n] drawing position [r n + j]
    in round [r].
 
    The draw of Gamma(boosted) and what the shift needs: the concentration [a],
    whether it is below 1, and the shift's uniform floored at 2^-p. *)
-let rounds = 8
+let rounds = 10
 
 let marsaglia ~key ~n c a j =
   let p = precision c in
