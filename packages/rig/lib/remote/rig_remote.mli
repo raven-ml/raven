@@ -268,8 +268,11 @@ val listen : key:key -> string -> int -> (agent, string) result
     one job that prove [key]. Port [0] lets the system choose ({!port}). It
     opens no device and joins no job until a controller proves [key].
     Each connection proves the key on a thread of its own, and one that
-    proves nothing within 10 seconds is dropped. A connection is refused only
-    when the system refuses it a thread.
+    proves nothing within 10 seconds is dropped. The agent greets every
+    connection, and refuses one before its proof only when the system gives
+    it no thread. When the system lacks a descriptor or memory to accept a
+    connection, the agent accepts again at most a second later. Linux keeps
+    that connection waiting; macOS closes it.
 
     [Error why] if [host] does not resolve or the process cannot listen
     there. *)
@@ -293,8 +296,11 @@ val serve :
     [Ok ()] once the controller has closed the job, as {!close} states.
     [Error why] once the job has failed, [why] its root cause
     ({!section-failure}). Work of a GPU that no kernel driver resets may then
-    still reach memory the process holds, so the process must exit. [a]
-    stops listening when [serve] returns.
+    still reach memory the process holds, so the process must exit. [Error
+    why] also once accepting a connection fails with an error other than a
+    lack of descriptors, buffers or memory, or a failure of the connection
+    it took: [why] names it, and a job [a] serves fails with it. [a] stops
+    listening when [serve] returns.
 
     An agent that a launcher started reports its job's end
     ({!section-launchers}), and returns [Error why] immediately if

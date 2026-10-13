@@ -16,7 +16,10 @@
    that prints "helper ready" and waits for a line or the end of stdin. It
    reaps that process before exiting. In mode "deaf" it is no agent of
    rig.remote: it proves the key to the controller, then stops listening, so no
-   other agent of the job reaches it, and waits for the job to end.
+   other agent of the job reaches it, and waits for the job to end. In mode
+   "crowded" it limits its descriptors to [crowd] and, while it serves, takes
+   lines on stdin: "fill" opens descriptors until the system refuses one, then
+   prints "full"; "free" closes them, then prints "freed".
 
    It serves eleven kinds. "MEM" is two memory devices. "POLLED" is two Polled
    devices, which launch Polled's host functions. "TIGHT" is a Polled device
@@ -35,6 +38,36 @@ module Link = Rig_remote_proxy.Link
 let fail why =
   print_endline why;
   exit 1
+
+(* Crowding *)
+
+external limit_descriptors : int -> int = "rig_remote_test_limit_descriptors"
+
+(* The descriptors a crowded agent may hold: more than it opens to serve. *)
+let crowd = 256
+
+(* Runs the commands of mode "crowded" from stdin until its end. *)
+let crowding () =
+  let rec fill held =
+    match Unix.dup ~cloexec:true Unix.stdout with
+    | fd -> fill (fd :: held)
+    | exception Unix.Unix_error (Unix.EMFILE, _, _) -> held
+    | exception Unix.Unix_error (e, _, _) ->
+        fail ("filling descriptors: " ^ Unix.error_message e)
+  in
+  let rec take held =
+    match In_channel.input_line stdin with
+    | Some "fill" ->
+        let held = fill held in
+        print_endline "full";
+        take held
+    | Some "free" ->
+        List.iter Unix.close held;
+        print_endline "freed";
+        take []
+    | Some _ | None -> ()
+  in
+  take []
 
 (* The devices the openers made. *)
 let opened = ref []
@@ -156,7 +189,12 @@ let () =
   if mode = "deaf" then
     deaf (In_channel.with_open_bin Sys.argv.(1) In_channel.input_all)
   else begin
+    if mode = "crowded" then begin
+      let e = limit_descriptors crowd in
+      if e <> 0 then fail (Printf.sprintf "limiting descriptors: %d" e)
+    end;
     let a = listen key 0 in
+    if mode = "crowded" then ignore (Thread.create crowding ());
     let helper =
       if mode <> "helper" then None
       else

@@ -228,6 +228,88 @@ let many_waiting () =
     [ (0, [ "closed" ]); (0, [ "closed" ]) ]
     (List.map finish agents)
 
+(* Whether the system keeps a connection queued when accept finds no
+   descriptor for it: Linux takes the descriptor before it takes the
+   connection; macOS takes the connection first, then closes it. *)
+let keeps_queued =
+  lazy
+    (let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+     let os = input_line ic in
+     ignore (Unix.close_process_in ic);
+     os = "Linux")
+
+(* How long the test leaves an agent with no descriptor where the system keeps
+   the connection queued. Nothing outside the agent shows that its accept ran:
+   the agent's descriptors, its socket's queue and the backlog stay as they
+   were. *)
+let tried_s = 0.2
+
+(* An agent whose accept finds no descriptor for a connection keeps
+   listening: once descriptors are free again, a controller joins. The probe's
+   greeting shows the agent accepts before it fills its descriptors.
+
+   Where the system closes the connection accept had no descriptor for, the
+   controller's connect returns that Error before the test frees any: the
+   accept has run. Where the system keeps the connection queued, the test
+   frees descriptors after [tried_s], the connect still waiting. *)
+let crowded () =
+  if Sys.win32 then skip ~reason:"Windows has no limit of descriptors" ();
+  with_key_file @@ fun file ->
+  let input, commands = Unix.pipe ~cloexec:true () in
+  let a = start ~mode:"crowded" ~input file in
+  Unix.close input;
+  let probe = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect
+    ~finally:(fun () ->
+      List.iter Unix.close [ commands; probe ];
+      kill a)
+  @@ fun () ->
+  let tell line =
+    let s = line ^ "\n" in
+    ignore (Unix.write_substring commands s 0 (String.length s))
+  in
+  let join () = Rig_remote.connect ~key:(as_key key) [ address a ] in
+  let free () =
+    tell "free";
+    equal string "freed" (input_line a.out)
+  in
+  Unix.connect probe (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port));
+  Rig_support.recv_timeout probe patience;
+  equal ~msg:"the probe's greeting" int greeting_bytes
+    (String.length (read_n probe greeting_bytes));
+  tell "fill";
+  equal string "full" (input_line a.out);
+  let first = ref None in
+  let t = Thread.create (fun () -> first := Some (join ())) () in
+  let j =
+    if Lazy.force keeps_queued then begin
+      Thread.delay tried_s;
+      equal ~msg:"the connect waits while the agent is full" bool true
+        (!first = None);
+      free ();
+      Thread.join t;
+      match Option.get !first with
+      | Ok j -> j
+      | Error why -> failf "connect: %s" why
+    end
+    else begin
+      Thread.join t;
+      (match Option.get !first with
+      | Ok j ->
+          Rig_remote.close j;
+          fail "a job joined while the agent had no descriptor"
+      | Error why ->
+          contains ~msg:"the dropped connection"
+            ~sub:"closed during the handshake" why);
+      free ();
+      match join () with
+      | Ok j -> j
+      | Error why -> failf "the second connect: %s" why
+    end
+  in
+  Rig_remote.close j;
+  equal exit_w (0, [ "closed" ]) (finish a)
+
 (* An agent opens a kind at the controller's first call for it, and once: the
    other agent, never asked, opens nothing. *)
 let opens_when_asked () =
@@ -271,6 +353,8 @@ let connecting =
         listen_taken;
       test "a job joins through an agent with 100 handshakes in flight"
         many_waiting;
+      test "an agent out of descriptors serves a job once it has them again"
+        crowded;
       test "an agent opens a kind at the first devices call for it, once"
         opens_when_asked;
       test "a second job at one address is another machine, named #2"

@@ -3,14 +3,15 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* A launcher's report descriptor: what OCaml's Unix lacks to take a
-   descriptor known by its number. */
+/* What OCaml's Unix lacks for an agent: taking a launcher's report
+   descriptor by its number, and the errors of accept it does not name. */
 
 #define _GNU_SOURCE
 
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <errno.h>
 #include <limits.h>
 
 #ifdef _WIN32
@@ -48,4 +49,25 @@ value caml_rig_remote_report_open(value vn) {
   fd = Val_int(n);
 #endif
   CAMLreturn(caml_alloc_some(fd));
+}
+
+/* The system's EPROTO and ENONET, -1 where it has none. Linux's accept(2)
+   reports a connection's protocol errors through them, which Unix.error
+   gives as EUNKNOWNERR. */
+value caml_rig_remote_eproto(value unit) {
+  (void)unit;
+#ifdef EPROTO
+  return Val_int(EPROTO);
+#else
+  return Val_int(-1);
+#endif
+}
+
+value caml_rig_remote_enonet(value unit) {
+  (void)unit;
+#ifdef ENONET
+  return Val_int(ENONET);
+#else
+  return Val_int(-1);
+#endif
 }

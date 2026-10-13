@@ -209,6 +209,8 @@ type t = {
           the join that names their machines. *)
   peers : (int, Link.t) Hashtbl.t;  (** The job's other agents' links. *)
   mutable stopped : bool;  (** Once it listens no more. *)
+  mutable broken : string option;
+      (** Once its socket failed for good, so that it accepts no more: why. *)
 }
 
 let listen ~key host port =
@@ -244,6 +246,7 @@ let listen ~key host port =
               accepted = Hashtbl.create 4;
               peers = Hashtbl.create 4;
               stopped = false;
+              broken = None;
             })
 
 let port a = a.port
@@ -255,6 +258,8 @@ let close_quietly fd = try Unix.close fd with Unix.Unix_error _ -> ()
 let admit a mine p =
   Mutex.protect a.lock @@ fun () ->
   match (p, a.phase) with
+  | Wire.Controller, Claimed when Option.is_some a.broken ->
+      Error (Option.get a.broken)
   | Wire.Controller, Claimed -> (
       match Link.job () with
       | j ->
@@ -288,24 +293,77 @@ let handshake a fd =
   | _, Some job ->
       Link.close job;
       a.phase <- Claimed;
+      Condition.broadcast a.changed;
       close_quietly fd
   | _, None -> close_quietly fd
 
+(* Accepting *)
+
+(* The pauses after an error of accept that passes, as Go's net/http server
+   makes them: the first, doubled after each error in a row up to the last.
+   Once the system has descriptors again, a connection waits a pause at
+   most. *)
+let first_pause = 0.005
+let last_pause = 1.
+
+external eproto : unit -> int = "caml_rig_remote_eproto"
+external enonet : unit -> int = "caml_rig_remote_enonet"
+
+(* The system's EPROTO and ENONET, -1 where it has none. *)
+let eproto = eproto ()
+let enonet = enonet ()
+
+(* Whether an error [e] of accept passes. The system may lack descriptors,
+   buffers or memory for now; or the connection accept took failed, which
+   Linux's accept(2) reports as the network's errors and asks a server to
+   retry (ENETDOWN, EPROTO, ENOPROTOOPT, EHOSTDOWN, ENONET, EHOSTUNREACH,
+   EOPNOTSUPP, ENETUNREACH), and as EPERM when a firewall forbids it. Another
+   error, of the socket itself such as EBADF or EINVAL, or one no system
+   documents for accept, recurs: retrying it would leave the agent deaf
+   without saying so. *)
+let passes (e : Unix.error) =
+  match e with
+  | EMFILE | ENFILE | ENOBUFS | ENOMEM | ECONNABORTED | ECONNRESET | EPERM
+  | ENETDOWN | ENETUNREACH | EHOSTDOWN | EHOSTUNREACH | ENOPROTOOPT
+  | EOPNOTSUPP | ETIMEDOUT ->
+      true
+  | EUNKNOWNERR n -> n = eproto || n = enonet
+  | _ -> false
+
+(* Ends [a]'s accepting after an error that recurs, [why]: fails the job it
+   serves, and wakes a serve that waits for a controller. The failure, which
+   waits for its aborts to leave, runs outside [a]'s lock. *)
+let break a why =
+  let serving =
+    Mutex.protect a.lock @@ fun () ->
+    a.broken <- Some why;
+    Condition.broadcast a.changed;
+    match a.phase with
+    | Serving { job; _ } -> Some job
+    | Listening | Claimed | Admitting _ -> None
+  in
+  Option.iter (fun job -> Link.fail job why) serving
+
 (* Accepts connections until [wake] is readable, each handshake on a thread of
    its own. A job assumes a trusted network, so only the job's processes
-   connect: the listener takes every connection, and the system's bound on
-   threads alone refuses one. *)
+   connect: the listener takes every connection, and refuses one before its
+   proof only when the system gives it no thread. After an error that passes
+   it pauses, then accepts again; after another it breaks [a]. *)
 let accept_loop a wake =
-  let rec loop () =
+  let err what e =
+    strf "the agent's %s failed: %s" what (Unix.error_message e)
+  in
+  let rec loop pause =
     match Unix.select [ a.socket; wake ] [] [] (-1.) with
-    | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop pause
+    | exception Unix.Unix_error (e, _, _) -> break a (err "select" e)
     | ready, _, _ when List.mem wake ready -> ()
-    | _ -> accept_one ()
-  and accept_one () =
+    | _ -> accept_one pause
+  and accept_one pause =
     match Unix.accept ~cloexec:true a.socket with
-    | exception Unix.Unix_error ((Unix.EINTR | Unix.ECONNABORTED), _, _) ->
-        loop ()
-    | exception Unix.Unix_error _ -> ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop pause
+    | exception Unix.Unix_error (e, _, _) when passes e -> rest pause
+    | exception Unix.Unix_error (e, _, _) -> break a (err "accept" e)
     | fd, _ ->
         (match Thread.create (handshake a) fd with
         | _ -> ()
@@ -314,9 +372,17 @@ let accept_loop a wake =
         | exception Out_of_memory ->
             Wire.refuse fd
               "the agent cannot start a handshake: no memory for a thread");
-        loop ()
+        loop first_pause
+  (* Waits [pause], or until [wake] is readable. *)
+  and rest pause =
+    let next = Float.min last_pause (2. *. pause) in
+    match Unix.select [ wake ] [] [] pause with
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop next
+    | exception Unix.Unix_error (e, _, _) -> break a (err "select" e)
+    | [], _, _ -> loop next
+    | _ -> ()
   in
-  loop ()
+  loop first_pause
 
 (* Ends [a]'s listening: wakes the acceptor through [waker], waits for it, and
    closes the socket and the connections no join named. *)
@@ -622,21 +688,31 @@ let rec apply s =
           Link.fail s.job (no_memory d n);
           apply s)
 
-(* Serves one job, reporting its end on [report]. *)
-let run a kinds report =
-  let wake, waker = Link.socket_pair () in
-  let acceptor = Thread.create (accept_loop a) wake in
-  let job, self, link =
+(* The job [a] serves, once a controller's handshake made it. A job that a
+   broken accept met fails with its reason; a serve that has no job yet ends
+   with it. *)
+let job a =
+  let r =
     Mutex.protect a.lock @@ fun () ->
     let rec serving () =
-      match a.phase with
-      | Serving { job; self; controller } -> (job, self, controller)
-      | Listening | Claimed | Admitting _ ->
+      match (a.phase, a.broken) with
+      | Serving { job; self; controller }, broken ->
+          Ok ((job, self, controller), broken)
+      | (Listening | Claimed), Some why -> Error why
+      | (Listening | Claimed | Admitting _), _ ->
           Condition.wait a.changed a.lock;
           serving ()
     in
     serving ()
   in
+  match r with
+  | Error _ as e -> e
+  | Ok (((job, _, _) as serving), broken) ->
+      Option.iter (Link.fail job) broken;
+      Ok serving
+
+(* Serves [job], reporting its end on [report]; [close] ends [a]'s listening. *)
+let serve_job a kinds report ~close job self link =
   watch report job;
   let devices = Hashtbl.create 8 in
   Hashtbl.replace devices 0 Rig.host;
@@ -669,9 +745,7 @@ let run a kinds report =
   in
   (* The agent listens no more before its close tells the controller the job
      ended. *)
-  stop a waker acceptor;
-  Unix.close wake;
-  Unix.close waker;
+  close ();
   let r =
     match r with
     | Error _ as e -> e
@@ -685,6 +759,22 @@ let run a kinds report =
       ended report (`Failed why);
       Rig.fail why);
   r
+
+(* Serves one job, reporting its end on [report]. *)
+let run a kinds report =
+  let wake, waker = Link.socket_pair () in
+  let acceptor = Thread.create (accept_loop a) wake in
+  let close () =
+    stop a waker acceptor;
+    Unix.close wake;
+    Unix.close waker
+  in
+  match job a with
+  | Ok (job, self, link) -> serve_job a kinds report ~close job self link
+  | Error why ->
+      close ();
+      ended report (`Failed why);
+      Error why
 
 let serve a kinds =
   let names = List.map fst kinds in
