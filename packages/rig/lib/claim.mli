@@ -14,13 +14,16 @@
     {!with_} takes a read claim on every buffer it is given. Then, for each
     donated buffer that spans its memory, it turns the word, if it holds that
     one claim and no bit, into {!Memory.exclusive}. {!consume} raises the
-    generation, which kills every buffer made before, then moves an exclusive
-    word to {!Memory.consumed}. When {!with_}'s function returns or raises,
-    each word still negative goes back to one read claim, outside the claims
-    if the consumer exported the memory, and every read claim is released.
-    {!consume} checks that the claims have not ended and makes its effects
-    in one C step, which that end waits for: a consumption that races the end
-    completes before the end releases anything, or raises.
+    generation from its buffer's own, which kills every buffer made before,
+    then moves an exclusive word to {!Memory.consumed}. When {!with_}'s
+    function returns or raises, each word still negative goes back to one
+    read claim, outside the claims if the consumer exported the memory, and
+    every read claim is released.
+
+    {!consume} makes its check and its effects in one C step. The end of the
+    claims waits for a step under way, so a consumption that races the end
+    completes before any release, or raises. Of two consumptions of one
+    buffer, the step lets one raise the generation, and the other raises.
 
     A claim is taken before the buffer is checked live. A consumption on
     another domain has raised the generation before it releases its claims,
@@ -29,8 +32,11 @@
     has since ended is tried again.
 
     {!with_} takes its claims in one C call, the last step before its
-    function's handler, and ends them in one C call, the first step of both
-    exits. In native code no poll point lies between the last claim and the
+    function's handler. Both exits begin with [finish], which ends the
+    claims by an atomic addition, waits in C for a consumption under way,
+    and releases the claims in one C call; the compiler checks that it holds
+    no poll point.
+    In native code no poll point lies between the last claim and the
     handler, or between [f]'s return or raise and the release, so an
     asynchronous exception, such as [Sys.Break] or a signal handler's,
     leaves no claim behind.

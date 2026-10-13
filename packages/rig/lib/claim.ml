@@ -209,8 +209,9 @@ external release_all : buffer list -> buffer list -> unit
    another domain at most. *)
 external await_consumed : t -> unit = "caml_rig_claim_await" [@@noalloc]
 
-(* [consume]'s effects, as one step against [finish]: the new generation, or
-   -1 if [c] has ended. *)
+(* [consume]'s effects, as one step against [finish] and other consumptions
+   of the memory: the new generation, or -1 if [c] has ended, or -2 if [b] is
+   dead. *)
 external consumed : t -> buffer -> string -> int = "caml_rig_claim_consume"
 
 (* Holds each buffer of [donate] exclusive that spans its memory and has no
@@ -291,9 +292,10 @@ let consume c ~why b =
   Buffer.check_live "Claim.consume" b;
   if not (Buffer.spans b) then
     invalid_arg "Rig.Claim.consume: the buffer is part of its memory";
-  let g = consumed c b why in
-  if g < 0 then refuse_ended ();
-  { b with generation = g }
+  match consumed c b why with
+  | -1 -> refuse_ended ()
+  | -2 -> Buffer.refuse_dead "Claim.consume" b
+  | g -> { b with generation = g }
 
 let take ~why b =
   with_ ~read:[] ~donate:[ b ] (fun c ->

@@ -53,6 +53,9 @@ val check_live : string -> t -> unit
 (** [check_live fn b] raises [Invalid_argument] if [b] is dead, naming the
     public function [fn], such as ["Buffer.view"]. *)
 
+val refuse_dead : string -> t -> 'a
+(** [refuse_dead fn b] raises what {!check_live} raises for the dead [b]. *)
+
 val of_memory : Def.memory -> int -> t
 (** [of_memory m n] is a live buffer over the first [n] bytes of [m]. It
     checks nothing: [n <= m.bytes] must hold. *)

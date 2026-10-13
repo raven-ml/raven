@@ -13,9 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
+#ifndef _WIN32
 #include <sched.h>
 #endif
 
@@ -546,27 +544,37 @@ static _Atomic value *claims_state(value v_c) {
   return (_Atomic value *)&Field(v_c, CLAIMS_STATE);
 }
 
+/* What the step answers when the claims have ended, or when [v_b] is
+   dead: another consumption of its memory came first. */
+#define CONSUME_ENDED (-1)
+#define CONSUME_DEAD (-2)
+
 /* Claim.consume's effects, as one step against the end of the claims
-   [v_c]: records [v_why], raises the generation of [v_b]'s memory and
-   moves its word from exclusive to consumed. The new generation, or -1,
-   doing nothing, if the claims have ended. */
+   [v_c]: raises the generation of [v_b]'s memory from [v_b]'s own,
+   records [v_why] and moves the word from exclusive to consumed. The new
+   generation, or CONSUME_ENDED or CONSUME_DEAD, doing nothing. */
 value caml_rig_claim_consume(value v_c, value v_b, value v_why) {
   _Atomic value *state = claims_state(v_c);
   if (Long_val(atomic_fetch_add(state, CLAIMS_CONSUMING)) & 1) {
     atomic_fetch_sub(state, CLAIMS_CONSUMING);
-    return Val_long(-1);
+    return Val_long(CONSUME_ENDED);
   }
   value claim = Field(Field(v_b, BUFFER_MEM), MEMORY_CLAIM);
-  caml_modify(&Field(claim, CLAIM_WHY), v_why);
-  /* The generation before the word: an export that finds the word
-     consumed then finds every earlier buffer dead. */
-  intnat g = Long_val(atomic_fetch_add(
-                 (_Atomic value *)&Field(claim, CLAIM_GEN),
-                 Val_long(1) - Val_long(0))) + 1;
+  _Atomic value *gen = (_Atomic value *)&Field(claim, CLAIM_GEN);
+  value g = Field(v_b, BUFFER_GEN);
+  /* The reason before the generation, so that a buffer found dead shows
+     it; a consumption that loses the race below wrote it too. The
+     generation before the word: an export that finds the word consumed
+     then finds every earlier buffer dead. */
+  if (atomic_load(gen) == g) caml_modify(&Field(claim, CLAIM_WHY), v_why);
+  if (!atomic_compare_exchange_strong(gen, &g, Val_long(Long_val(g) + 1))) {
+    atomic_fetch_sub(state, CLAIMS_CONSUMING);
+    return Val_long(CONSUME_DEAD);
+  }
   value w = Val_long(CLAIM_EXCLUSIVE);
   atomic_compare_exchange_strong(claim_word(v_b), &w, Val_long(CLAIM_CONSUMED));
   atomic_fetch_sub(state, CLAIMS_CONSUMING);
-  return Val_long(g);
+  return Val_long(Long_val(g) + 1);
 }
 
 /* Waits until the claims [v_c], which have ended, have no consumption
