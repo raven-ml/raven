@@ -53,9 +53,9 @@ typedef enum { NX_CPU_FROM_TILE, NX_CPU_FROM_ZERO } nx_cpu_from;
    most NR, output (i, j) at c + (i·ldc + j)·w, the products of [k] steps:
    step p's element of a's row i at a + (i·a_row + p·a_k)·w, of b's column
    j at b + (p·b_k + j)·w. It runs MR rows at a time, so that b's steps
-   stay in the caches across them, and reads NR columns of b. Each output
-   adds its products in increasing p, each fused into its addition, to the
-   start [from] names. */
+   stay in the caches across them, and reads b as nx_cpu_b_read says. Each
+   output adds its products in increasing p, each fused into its addition,
+   to the start [from] names. */
 typedef void (*nx_cpu_kernel)(int64_t m, int64_t n, int64_t k, const void *a,
                               int64_t a_row, int64_t a_k, const void *b,
                               int64_t b_k, void *c, int64_t ldc,
@@ -66,6 +66,11 @@ typedef void (*nx_cpu_kernel)(int64_t m, int64_t n, int64_t k, const void *a,
    packed block, a_row 1, whose rows past m up to a multiple of MR are
    padding, any value (nx_cpu_pack). */
 typedef enum { NX_CPU_A_ELEMENTS, NX_CPU_A_PACKED } nx_cpu_a_read;
+
+/* How a microkernel reads b: NR columns a step, so that a sliver of fewer
+   columns is packed; or the n columns it is given, so that such a sliver
+   is read in place too. */
+typedef enum { NX_CPU_B_SLIVER, NX_CPU_B_COLUMNS } nx_cpu_b_read;
 
 /* A dot adds, for each of [r] contiguous rows of [a], row i at
    a + i·lda·w, r at most NX_CPU_DOT_ROWS, the [n] products with the
@@ -93,14 +98,15 @@ typedef void (*nx_cpu_axpy)(const void *a, int64_t lda, int r, const void *b,
 typedef void (*nx_cpu_pack)(int64_t n0, int64_t n1, const void *s,
                             int64_t s0, int64_t s1, void *d, int64_t pitch);
 
-/* A microkernel, its tile of MR × NR outputs, how it reads a, its speed:
-   the flops it runs on one thread in the time memcpy moves a byte, which
-   prices its jobs; and the cores that share the hardware it runs on: 1
-   for a core's vector unit, a cluster's for the M1's matrix unit. */
+/* A microkernel, its tile of MR × NR outputs, how it reads a and b, its
+   speed: the flops it runs on one thread in the time memcpy moves a byte,
+   which prices its jobs; and the cores that share the hardware it runs on:
+   1 for a core's vector unit, a cluster's for the M1's matrix unit. */
 typedef struct {
   nx_cpu_kernel f;
   int mr, nr;
   nx_cpu_a_read a;
+  nx_cpu_b_read b;
   double flops_per_byte;
   int shared;
 } nx_cpu_micro;

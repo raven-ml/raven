@@ -85,12 +85,14 @@ AXPY(axpy_f64, double, fma)
 
 static void set(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, MR, NR, NX_CPU_A_ELEMENTS, SPEED, 1},
+      .kernel = {kernel_f32, MR, NR, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
+                 SPEED, 1},
       .mc = 64,
       .kc = 256,
       .nc = 1024};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, MR, NR, NX_CPU_A_ELEMENTS, SPEED, 1},
+      .kernel = {kernel_f64, MR, NR, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
+                 SPEED, 1},
       .mc = 64,
       .kc = 256,
       .nc = 1024};

@@ -49,7 +49,8 @@
    read in place where its layout streams along the axis the kernel loads
    (in_place), as BLIS's path for small products does: it is not packed,
    and with both operands in place job 1 is gone. An edge sliver of b in
-   place is packed, so that the kernel reads no column past b's.
+   place is packed where the kernel reads NR columns, so that it reads no
+   column past b's.
 
    A product of at most MC rows packs a whole and then streams b: each unit
    packs a sliver of b and adds it in, so that b is read once and no panel
@@ -459,12 +460,12 @@ static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
 }
 
 /* b's sliver of columns [j, j + n) of element [e], the block of k from
-   [pc]: in place where b is read so and the sliver is whole, else packed
-   into [d]. */
+   [pc]: in place where b is read so and the kernel reads its n columns,
+   else packed into [d]. */
 static src b_sliver(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
                     int64_t n, int64_t pc, int64_t kc, uint8_t *d) {
   int nr = p->g->kernel.nr;
-  if (p->b_in && n == nr)
+  if (p->b_in && (n == nr || p->g->kernel.b == NX_CPU_B_COLUMNS))
     return (src){p->op[B].x->base + pos(p, B, e, 0, j, pc) * p->w, 0,
                  p->op[B].st[CON]};
   pack_b(p, move, e, j, n, nr, pc, kc, d);
@@ -535,8 +536,8 @@ static void tile(const problem *p, nx_cpu_micro k, int64_t pc, int64_t kc,
 }
 
 /* A unit's work: each of its slivers of b against its block of a, the
-   block's rows a kernel's call. b is the panel's, or read in place, an
-   edge sliver packed into the worker's scratch. */
+   block's rows a kernel's call. b is the panel's, or read in place
+   (b_sliver), or packed into the worker's scratch. */
 static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const panel *c = ctx;

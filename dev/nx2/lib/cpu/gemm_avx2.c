@@ -16,9 +16,10 @@
 
    a's elements are broadcast one at a time, so that its rows are read in
    place wherever they lie. A tile of fewer rows points its missing rows at
-   its last and stores only its own; one of fewer columns loads and stores
-   its outputs through masks. Before a tile, the next tile's first lines of
-   a and of the outputs are prefetched: its rows start cold, where the
+   its last and stores only its own; one of fewer columns loads b and its
+   outputs and stores them through masks, so that it reads no column past
+   its own (NX_CPU_B_COLUMNS). Before a tile, the next tile's first lines
+   of a and of the outputs are prefetched: its rows start cold, where the
    hardware's prefetchers follow each row once it streams. */
 
 #include <math.h>
@@ -71,8 +72,8 @@ static const int64_t ones64[8] = {-1, -1, -1, -1};
   M(__VA_ARGS__, 0); M(__VA_ARGS__, 1); M(__VA_ARGS__, 2);               \
   M(__VA_ARGS__, 3); M(__VA_ARGS__, 4); M(__VA_ARGS__, 5)
 
-#define KERNEL(name, T, V, W, MASK, LOAD, MLOAD, STORE, MSTORE, BCAST, FMA, \
-               ZERO)                                                        \
+#define KERNEL(name, T, V, W, MASK, LOAD, MLOAD, BLOAD, STORE, MSTORE,      \
+               BCAST, FMA, ZERO)                                            \
   static void name(int64_t m, int64_t n, int64_t k, const void *va,         \
                    int64_t a_row, int64_t a_k, const void *vb, int64_t b_k, \
                    void *vc, int64_t ldc, nx_cpu_from from) {               \
@@ -88,19 +89,41 @@ static const int64_t ones64[8] = {-1, -1, -1, -1};
       ROWS(DECL, V, T);                                                     \
       ROWS(LOADC, LOAD, MLOAD, ZERO, W);                                    \
       for (int64_t p = 0, q = 0; p < k; p++, q += a_k, b += b_k) {          \
-        V b0 = LOAD(b), b1 = LOAD(b + W), ai;                               \
+        V b0 = BLOAD(b, m0), b1 = BLOAD(b + W, m1), ai;                     \
         ROWS(STEP, BCAST, FMA);                                             \
       }                                                                     \
       ROWS(STOREC, STORE, MSTORE, W);                                       \
     }                                                                       \
   }
 
-KERNEL(kernel_f32, float, __m256, 8, MASK32, _mm256_loadu_ps,
-       _mm256_maskload_ps, _mm256_storeu_ps, _mm256_maskstore_ps,
+/* A tile of every column loads b whole, one of fewer through masks: two
+   instances, so that the masks cost the whole tile's loop nothing. */
+#define WHOLE32(p, m) _mm256_loadu_ps(p)
+#define WHOLE64(p, m) _mm256_loadu_pd(p)
+#define TILES(name, T, NR)                                                   \
+  static void name(int64_t m, int64_t n, int64_t k, const void *a,          \
+                   int64_t a_row, int64_t a_k, const void *b, int64_t b_k,  \
+                   void *c, int64_t ldc, nx_cpu_from from) {                \
+    (n == NR ? whole_##T : edge_##T)(m, n, k, a, a_row, a_k, b, b_k, c, ldc, \
+                                     from);                                 \
+  }
+
+KERNEL(whole_f32, float, __m256, 8, MASK32, _mm256_loadu_ps,
+       _mm256_maskload_ps, WHOLE32, _mm256_storeu_ps, _mm256_maskstore_ps,
        _mm256_broadcast_ss, _mm256_fmadd_ps, _mm256_setzero_ps())
-KERNEL(kernel_f64, double, __m256d, 4, MASK64, _mm256_loadu_pd,
-       _mm256_maskload_pd, _mm256_storeu_pd, _mm256_maskstore_pd,
+KERNEL(edge_f32, float, __m256, 8, MASK32, _mm256_loadu_ps,
+       _mm256_maskload_ps, _mm256_maskload_ps, _mm256_storeu_ps,
+       _mm256_maskstore_ps, _mm256_broadcast_ss, _mm256_fmadd_ps,
+       _mm256_setzero_ps())
+TILES(kernel_f32, f32, 16)
+KERNEL(whole_f64, double, __m256d, 4, MASK64, _mm256_loadu_pd,
+       _mm256_maskload_pd, WHOLE64, _mm256_storeu_pd, _mm256_maskstore_pd,
        _mm256_broadcast_sd, _mm256_fmadd_pd, _mm256_setzero_pd())
+KERNEL(edge_f64, double, __m256d, 4, MASK64, _mm256_loadu_pd,
+       _mm256_maskload_pd, _mm256_maskload_pd, _mm256_storeu_pd,
+       _mm256_maskstore_pd, _mm256_broadcast_sd, _mm256_fmadd_pd,
+       _mm256_setzero_pd())
+TILES(kernel_f64, f64, 8)
 
 /* Lane order's dots and axpys: 16 lanes are 2 vectors of float32, 4 of
    float64; 4 rows of float32 or 2 of float64 hold 8 accumulators and b's
@@ -133,12 +156,14 @@ AXPY(axpy_f64, double, 4, fma)
 
 void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, MR, 16, NX_CPU_A_ELEMENTS, SPEED, 1},
+      .kernel = {kernel_f32, MR, 16, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
+                 SPEED, 1},
       .mc = 96,
       .kc = 384,
       .nc = 3072};
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, MR, 8, NX_CPU_A_ELEMENTS, SPEED, 1},
+      .kernel = {kernel_f64, MR, 8, NX_CPU_A_ELEMENTS, NX_CPU_B_COLUMNS,
+                 SPEED, 1},
       .mc = 96,
       .kc = 256,
       .nc = 3072};

@@ -302,8 +302,8 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
   int shared = sysctl_int("hw.perflevel0.cpusperl2");
   shared = shared > 0 ? shared : 1;
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {kernel_f32, SIDE(4), SIDE(4), NX_CPU_A_PACKED, SPEED32,
-                 shared},
+      .kernel = {kernel_f32, SIDE(4), SIDE(4), NX_CPU_A_PACKED,
+                 NX_CPU_B_SLIVER, SPEED32, shared},
       .mc = 128,
       .kc = 1024,
       .nc = 2048,
@@ -314,8 +314,8 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
   /* float64 takes float32's blocks: KC 1024 beat 256 and 512 from 1024³
      to 4096³. */
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {kernel_f64, SIDE(8), SIDE(8), NX_CPU_A_PACKED, SPEED64,
-                 shared},
+      .kernel = {kernel_f64, SIDE(8), SIDE(8), NX_CPU_A_PACKED,
+                 NX_CPU_B_SLIVER, SPEED64, shared},
       .mc = 128,
       .kc = 1024,
       .nc = 2048,
