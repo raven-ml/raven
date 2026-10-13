@@ -164,9 +164,10 @@ and live = {
       (** Its mappings of producers' words that [pairs] names, written under
           the lock. They go back to its driver once it is Stopped. *)
   mapped : (entry * mapping) Tbl.Make(Int).t;
-      (** The entries it maps, by [id], with its mapping of each: the mapping
-          goes back with the entry, or once it is Stopped, whichever comes
-          first. *)
+      (** The entries it maps, by [id], with its mapping of each, under the
+          lock: the mapping goes back with the entry, or once it is Stopped,
+          whichever comes first. Emptied, it goes back to its smallest
+          size. *)
   mutable afters : (int * (unit -> unit)) list;
       (** Functions a wait runs once it finds their value reached. *)
 }

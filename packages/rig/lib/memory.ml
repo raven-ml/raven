@@ -442,17 +442,24 @@ let entry_unmapped (e : entry) =
 let give d r e =
   if free_region d r then entry_unmapped e else defer d (Unmap (r, Some e))
 
-let drop_mapped (l, id) = Cache.remove l.mapped id
+(* Takes the note [id] out of [d]'s table, which, emptied, keeps no buckets
+   for the most [d] ever mapped. *)
+let forget_note (d, id) =
+  let l = d.live in
+  Cache.remove l.mapped id;
+  Cache.trim l.mapped
 
 (* Releases [maps], the mappings of [e] that [free_entry] took, each once its
-   mapper ran the work that could use it, after taking [e] out of the
-   mapper's table. A loop of its own, so a free builds no closure. *)
+   mapper ran the work that could use it, then takes [e] out of the mapper's
+   table. The note stays while the unmap runs: a drain that finds it leaves
+   the mapping, which [e.maps] no longer holds, to this free. A loop of its
+   own, so a free builds no closure. *)
 let rec release_maps (e : entry) = function
   | [] -> ()
   | mp :: maps ->
-      Dev.protect mp.on drop_mapped (mp.on.live, e.id);
       if unmap_now mp then entry_unmapped e
       else defer mp.on (Unmap (mp.map, Some e));
+      Dev.protect mp.on forget_note (mp.on, e.id);
       release_maps e maps
 
 (* A mapping belongs to whichever call takes it out of [e.maps] under the
@@ -650,12 +657,12 @@ let pop_word_map l =
 
 let mapped_ids l = Cache.fold (fun id _ ids -> id :: ids) l.mapped []
 
-(* Takes the entry [id] out of those [l] maps, with [l]'s mapping of it, if
+(* Takes the entry [id] out of those [d] maps, with [d]'s mapping of it, if
    it is there. *)
-let pop_mapped (l, id) =
-  match Cache.find_opt l.mapped id with
+let pop_mapped (d, id) =
+  match Cache.find_opt d.live.mapped id with
   | Some _ as found ->
-      Cache.remove l.mapped id;
+      forget_note (d, id);
       found
   | None -> None
 
@@ -682,7 +689,7 @@ let give_maps d =
   words ();
   List.iter
     (fun id ->
-      match Lock.protect l.lock pop_mapped (l, id) with
+      match Lock.protect l.lock pop_mapped (d, id) with
       | Some ((e, mp) as taken) when Dev.protect e.owner take_back taken ->
           give d mp.map e
       | Some _ | None -> ())

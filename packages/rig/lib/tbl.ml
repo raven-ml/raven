@@ -86,4 +86,6 @@ struct
   let reset t =
     t.buckets <- Array.make 8 Nil;
     t.size <- 0
+
+  let trim t = if t.size = 0 && Array.length t.buckets > 8 then reset t
 end

@@ -56,5 +56,10 @@ end) : sig
       order. [f] must not change [t]. *)
 
   val reset : 'a t -> unit
-  (** [reset t] removes every binding of [t]. *)
+  (** [reset t] removes every binding of [t], and gives [t] 8 buckets. *)
+
+  val trim : 'a t -> unit
+  (** [trim t] is [reset t] if [t] holds no binding and has more than 8
+      buckets, and does nothing otherwise: an emptied table keeps no buckets
+      for the most it held, and a small one allocates nothing. *)
 end
