@@ -1,7 +1,7 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef float float16 __attribute__((aligned(64),ext_vector_type(16)));
-void r_4_4_4_4_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {
+__attribute__((min_vector_width(512))) void r_4_4_4_4_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {
   float buf0[16];
   for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
     int alu0 = (block_lo_+Lidx1);

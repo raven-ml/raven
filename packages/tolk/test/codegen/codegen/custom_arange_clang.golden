@@ -55,7 +55,7 @@
 53 Ops.SINK dtypes.void [15, 15, 15, 15, 26, 26, 26, 26, 39, 39, 39, 39, 52, 52, 52, 52] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),))
 54 Ops.SINK dtypes.void [15, 15, 15, 15, 26, 26, 26, 26, 39, 39, 39, 39, 52, 52, 52, 52] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)),), estimates=Estimates(lds=64, mem=64))
 55 Ops.LINEAR dtypes.void [0, 6, 7, 8, 9, 10, 11, 12, 13, 14, 43, 44, 45, 46, 47, 48, 49, 50, 51, 17, 18, 19, 20, 21, 22, 23, 24, 25, 34, 35, 36, 37, 30, 31, 32, 33, 38, 1, 2, 3, 4, 5, 40, 41, 42, 16, 27, 28, 29, 15, 52, 26, 39, 53]
-56 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid custom_arange_16(float* restrict data0_16) {\n  *((float4*)((data0_16+0))) = (float4){0.0f,1.0f,2.0f,3.0f};\n  *((float4*)((data0_16+12))) = (float4){12.0f,13.0f,14.0f,15.0f};\n  *((float4*)((data0_16+4))) = (float4){4.0f,5.0f,6.0f,7.0f};\n  *((float4*)((data0_16+8))) = (float4){8.0f,9.0f,10.0f,11.0f};\n}\n"
+56 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void custom_arange_16(float* restrict data0_16) {\n  *((float4*)((data0_16+0))) = (float4){0.0f,1.0f,2.0f,3.0f};\n  *((float4*)((data0_16+12))) = (float4){12.0f,13.0f,14.0f,15.0f};\n  *((float4*)((data0_16+4))) = (float4){4.0f,5.0f,6.0f,7.0f};\n  *((float4*)((data0_16+8))) = (float4){8.0f,9.0f,10.0f,11.0f};\n}\n"
 57 Ops.PROGRAM dtypes.void [54, 55, 56] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 58 Ops.SINK dtypes.void [53, 57]
 

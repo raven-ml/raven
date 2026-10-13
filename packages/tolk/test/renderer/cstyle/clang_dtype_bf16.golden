@@ -4,7 +4,7 @@ typedef unsigned short unsigned_short4 __attribute__((aligned(8),ext_vector_type
 typedef unsigned int unsigned_int4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef unsigned short unsigned_short4 __attribute__((aligned(8),ext_vector_type(4)));
-void E_4_4(float* restrict data0_16, float* restrict data1_16, unsigned short* restrict data2_16, const int block_lo_, const int block_hi_) {
+__attribute__((min_vector_width(512))) void E_4_4(float* restrict data0_16, float* restrict data1_16, unsigned short* restrict data2_16, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);
     unsigned short val0 = (*(data2_16+(alu0+1)));

@@ -1251,6 +1251,10 @@ thread.
 
 ### Tolk (new)
 
+- On x86, kernels with a float16 negation, absolute value or copysign of
+  more than 16 lanes (`Nx.neg`, `Nx.abs`, a minimum) compile with Clang 18 for
+  processors with AVX-512, where Clang crashed. The Clang renderer marks x86
+  kernels `__attribute__((min_vector_width(512)))`.
 - `Simplify.pm_simplify_ranges` merges two ranges in every reduction that
   closes them or in none, at the kernel's sink. It merged them in one of the
   reductions that share their loops, which the linearizer then refused.

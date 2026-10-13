@@ -3884,3 +3884,42 @@ submission, and a range a loop of rig's program (D146).
 - **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, whose `SIN`
   rows include `1e300`, `3.4e38`, pi and floats near multiples of pi, and
   which fail on Windows with the C library's sine.
+
+## D151. An x86 kernel declares that it uses 512-bit vectors
+
+- **tinygrad:** `renderer/cstyle.py:122` (`kernel_typedef`, `void`) and
+  `:306` (`ClangRenderer.__init__`).
+- **tolk:** `lib/renderer/cstyle.ml:1196` (the Clang renderer's language on
+  x86, whose `kernel_typedef` is
+  `__attribute__((min_vector_width(512))) void`); `gen/tinygrad.patch` makes
+  the same choice in tinygrad's Clang renderer on x86, so the goldens state
+  tolk's sources.
+- **Differs:** on x86, every kernel is marked as a function that uses
+  512-bit vectors. On a processor with AVX-512, 512-bit types are then legal
+  even where the processor prefers 256-bit vectors, as Intel's do: LLVM
+  holds a vector of up to 512 bits in one register and splits a wider one
+  into 512-bit parts. A kernel whose vectors are no wider than 256 bits,
+  scalar loops among them, compiles to the same instructions, and on a
+  processor without AVX-512 the mark changes nothing.
+- **Reason:** (b). The renderer writes vectors wider than 256 bits: 32 halves
+  for an elementwise float16 kernel (D141), and up to 72 bytes (`float18`)
+  where a small axis is upcast whole. Clang 18 crashes (a segfault in
+  `DAGTypeLegalizer::SplitVectorResult`) splitting a negation, an absolute
+  value or a copysign of more than 16 halves for a processor with AVX-512
+  that prefers 256-bit vectors, with or without AVX512-FP16. Such a vector is
+  what `Rune.jit` writes for `Nx.neg` and `Nx.abs` of float16 and for a
+  float16 minimum, which negates its lanes: rune's `Rune.jit programs › computes
+  eager's values within the stated rounding` crashed Ubuntu 24.04's Clang
+  18.1.3 under `-march=native` on a CI runner. Clang 17 and Clang 19 and later
+  compile them without the mark. Rendering the negation otherwise does not
+  hold: LLVM folds a round trip through float32, a subtraction from `-0.`, a
+  product by `-1` and a flip of the sign bit back into the same negation of
+  halves. tinygrad computes each lane apart and writes no such vector.
+- **Pinned by:** `Tolk.Compiler_cpu › features › a kernel over more than 16
+  halves compiles for AVX-512`, which renders `half_neg`, `half_abs`,
+  `half_copysign` (32 lanes) and `half_min` (18 lanes) for
+  `skylake-avx512`, `icelake-server` and `sapphirerapids` and fails under
+  `CC` naming Clang 18 without the mark; the x86 Clang goldens, whose kernels
+  carry it; rune's `Rune.jit programs › computes eager's values within the
+  stated rounding`, whose examples hold the program found, under Clang 18 on
+  an x86 host with AVX-512.

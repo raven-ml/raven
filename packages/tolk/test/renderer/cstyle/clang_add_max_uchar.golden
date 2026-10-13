@@ -1,6 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef unsigned char unsigned_char4 __attribute__((aligned(4),ext_vector_type(4)));
-void r_256_4(unsigned char* restrict data0_1, unsigned char* restrict data1_1024, unsigned char* restrict data2_1024) {
+__attribute__((min_vector_width(512))) void r_256_4(unsigned char* restrict data0_1, unsigned char* restrict data1_1024, unsigned char* restrict data2_1024) {
   unsigned char buf0[1];
   *(buf0+0) = ((unsigned char)(0u));
   for (int Ridx0 = 0; Ridx0 < 256; Ridx0++) {

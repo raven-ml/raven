@@ -24,7 +24,7 @@
 22 Ops.SINK dtypes.void [21] KernelInfo(name="custom_sum_64") tag=1
 23 Ops.SINK dtypes.void [21] KernelInfo(name="custom_sum_64", estimates=Estimates(ops=64, lds=772, mem=264)) tag=1
 24 Ops.LINEAR dtypes.void [0, 15, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 16, 17, 12, 13, 14, 18, 19, 20, 21, 22]
-25 Ops.SOURCE dtypes.void [] "\nvoid custom_sum_64(float* restrict data0_1, float* restrict data1_64) {\n  *(data0_1+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {\n    float val0 = (*(data1_64+Ridx0));\n    float val1 = (*(data0_1+0));\n    *(data0_1+0) = (val1+val0);\n  }\n}\n"
+25 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void custom_sum_64(float* restrict data0_1, float* restrict data1_64) {\n  *(data0_1+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {\n    float val0 = (*(data1_64+Ridx0));\n    float val1 = (*(data0_1+0));\n    *(data0_1+0) = (val1+val0);\n  }\n}\n"
 26 Ops.PROGRAM dtypes.void [23, 24, 25] ProgramInfo(globals=(0, 1), outs=(0,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 27 Ops.SINK dtypes.void [22, 26]
 

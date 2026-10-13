@@ -1,6 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void E(__fp16* restrict data0_1, __fp16* restrict data1_1) {
+__attribute__((min_vector_width(512))) void E(__fp16* restrict data0_1, __fp16* restrict data1_1) {
   __fp16 val0 = (*(data1_1+0));
   float cast0 = ((float)(val0));
   _Bool alu0 = (cast0!=cast0);

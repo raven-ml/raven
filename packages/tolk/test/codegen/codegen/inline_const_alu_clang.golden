@@ -14,7 +14,7 @@
 12 Ops.SINK dtypes.void [11] KernelInfo(name="E") tag=1
 13 Ops.SINK dtypes.void [11] KernelInfo(name="E", estimates=Estimates(ops=2, lds=8, mem=8)) tag=1
 14 Ops.LINEAR dtypes.void [0, 4, 1, 2, 5, 6, 3, 7, 8, 9, 10, 11, 12]
-15 Ops.SOURCE dtypes.void [] "\nvoid E(int* restrict data0_1, int* restrict data1_1) {\n  int val0 = (*(data1_1+0));\n  int alu0 = ((val0<-2147483647)?-2147483647:val0);\n  *(data0_1+0) = alu0;\n}\n"
+15 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(int* restrict data0_1, int* restrict data1_1) {\n  int val0 = (*(data1_1+0));\n  int alu0 = ((val0<-2147483647)?-2147483647:val0);\n  *(data0_1+0) = alu0;\n}\n"
 16 Ops.PROGRAM dtypes.void [13, 14, 15] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 17 Ops.SINK dtypes.void [12, 16]
 

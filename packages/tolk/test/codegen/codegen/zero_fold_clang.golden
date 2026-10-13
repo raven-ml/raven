@@ -16,7 +16,7 @@
 14 Ops.SINK dtypes.void [13, 13] KernelInfo(name="E_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
 15 Ops.SINK dtypes.void [13, 13] KernelInfo(name="E_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(lds=16, mem=16))
 16 Ops.LINEAR dtypes.void [0, 9, 6, 1, 2, 10, 11, 7, 8, 12, 3, 4, 5, 13, 14]
-17 Ops.SOURCE dtypes.void [] "typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));\nvoid E_2(float* restrict data0_2, float* restrict data1_1, float* restrict data2_1) {\n  float val0 = (*(data1_1+0));\n  float val1 = (*(data2_1+0));\n  *((float2*)((data0_2+0))) = (float2){val1,val0};\n}\n"
+17 Ops.SOURCE dtypes.void [] "typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));\n__attribute__((min_vector_width(512))) void E_2(float* restrict data0_2, float* restrict data1_1, float* restrict data2_1) {\n  float val0 = (*(data1_1+0));\n  float val1 = (*(data2_1+0));\n  *((float2*)((data0_2+0))) = (float2){val1,val0};\n}\n"
 18 Ops.PROGRAM dtypes.void [15, 16, 17] ProgramInfo(globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 19 Ops.SINK dtypes.void [14, 18]
 

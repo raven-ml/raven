@@ -1171,7 +1171,14 @@ let clang (target : Helpers.Target.t) =
      it aborts on a selection between vectors and calls compiler-rt's
      [__truncsfbf2], which no library of the process defines. Every bfloat16
      operation computes in float32 here, so on x86 a bfloat16 is held as its
-     bits, an [unsigned short], as HIP holds it. *)
+     bits, an [unsigned short], as HIP holds it.
+
+     A processor with AVX-512 that prefers 256-bit vectors, as Intel's do,
+     makes 512-bit types illegal, so LLVM splits the kernel's wider vectors.
+     LLVM 18 crashes splitting a negation, an absolute value or a copysign of
+     more than 16 halves. A kernel is marked as one that uses 512-bit vectors,
+     [min_vector_width(512)], which makes those types legal where the
+     processor has them; code that uses none is unchanged. *)
   let lang =
     if
       String.starts_with ~prefix:"arm64" arch
@@ -1185,6 +1192,8 @@ let clang (target : Helpers.Target.t) =
     else if String.starts_with ~prefix:"x86" arch then
       {
         clang_lang with
+        kernel_typedef =
+          (fun _ -> "__attribute__((min_vector_width(512))) void");
         type_map = (Dtype.Bfloat16, "unsigned short") :: clang_lang.type_map;
         string_rewrite =
           Pattern_matcher.append pm_bf16_ushort_const

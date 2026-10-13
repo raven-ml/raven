@@ -240,6 +240,25 @@ let features =
           not_equal string
             (compile "riscv64,rv64g" add)
             (compile "riscv64,rv64g,c" add));
+      (* Clang 18 crashed splitting a vector of more than 16 halves that it
+         negates, takes the absolute value of or copies a sign to, for these
+         processors, which prefer 256-bit vectors. *)
+      cases
+        ~name:(fun (arch, name) -> arch ^ " " ^ name)
+        "a kernel over more than 16 halves compiles for AVX-512"
+        (List.concat_map
+           (fun arch ->
+             List.map
+               (fun name -> (arch, name))
+               [ "half_neg"; "half_abs"; "half_copysign"; "half_min" ])
+           [
+             "x86_64,skylake-avx512";
+             "x86_64,icelake-server";
+             "x86_64,sapphirerapids";
+           ])
+        (fun (arch, name) ->
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch (rendered arch name)));
       test "arm64 leaves x18 alone" (fun () ->
           let text = disassembly "arm64,generic" pressure in
           is_false ~msg:"x18" (mentions "x18" text);

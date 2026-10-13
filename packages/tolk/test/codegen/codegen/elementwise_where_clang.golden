@@ -16,7 +16,7 @@
 14 Ops.SINK dtypes.void [13] KernelInfo(name="relu") tag=1
 15 Ops.SINK dtypes.void [13] KernelInfo(name="relu", estimates=Estimates(ops=512, lds=2048, mem=2048)) tag=1
 16 Ops.LINEAR dtypes.void [7, 0, 5, 6, 1, 2, 3, 8, 9, 4, 10, 11, 12, 13, 14]
-17 Ops.SOURCE dtypes.void [] "\nvoid relu(float* restrict data0_256, float* restrict data1_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    float alu0 = ((0.0f<val0)?val0:0.0f);\n    *(data1_256+Lidx0) = alu0;\n  }\n}\n"
+17 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void relu(float* restrict data0_256, float* restrict data1_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    float alu0 = ((0.0f<val0)?val0:0.0f);\n    *(data1_256+Lidx0) = alu0;\n  }\n}\n"
 18 Ops.PROGRAM dtypes.void [15, 16, 17] ProgramInfo(globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 19 Ops.SINK dtypes.void [14, 18]
 

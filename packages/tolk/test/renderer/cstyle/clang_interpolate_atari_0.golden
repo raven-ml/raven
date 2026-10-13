@@ -3,7 +3,7 @@ typedef unsigned char unsigned_char4 __attribute__((aligned(4),ext_vector_type(4
 typedef signed char signed_char4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef short short4 __attribute__((aligned(8),ext_vector_type(4)));
 typedef unsigned short unsigned_short4 __attribute__((aligned(8),ext_vector_type(4)));
-void E_210_16_4(unsigned char* restrict data0_13440, unsigned char* restrict data1_33600, const int block_lo_, const int block_hi_) {
+__attribute__((min_vector_width(512))) void E_210_16_4(unsigned char* restrict data0_13440, unsigned char* restrict data1_33600, const int block_lo_, const int block_hi_) {
   for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
     int alu0 = (block_lo_+Lidx1);
     int alu1 = (alu0*160);

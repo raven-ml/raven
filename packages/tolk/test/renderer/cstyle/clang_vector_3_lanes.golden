@@ -1,7 +1,7 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef float float3 __attribute__((aligned(8),ext_vector_type(3)));
 typedef int int3 __attribute__((aligned(8),ext_vector_type(3)));
-void three(float* restrict data0_3, float* restrict data1_3, float* restrict data2_3) {
+__attribute__((min_vector_width(512))) void three(float* restrict data0_3, float* restrict data1_3, float* restrict data2_3) {
   float val0 = (*(data1_3+0));
   float val1 = (*(data1_3+1));
   float val2 = (*(data1_3+2));

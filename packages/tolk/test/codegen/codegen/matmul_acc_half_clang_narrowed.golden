@@ -1,6 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void r_8_8_8(__fp16* restrict data0_64, __fp16* restrict data1_64, __fp16* restrict data2_64, const int block_lo_, const int block_hi_) {
+__attribute__((min_vector_width(512))) void r_8_8_8(__fp16* restrict data0_64, __fp16* restrict data1_64, __fp16* restrict data2_64, const int block_lo_, const int block_hi_) {
   __fp16 buf0[1];
   for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
     int alu0 = (block_lo_+Lidx1);

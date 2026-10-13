@@ -22,7 +22,7 @@
 20 Ops.SINK dtypes.void [19] KernelInfo(name="two_outputs") tag=1
 21 Ops.SINK dtypes.void [19] KernelInfo(name="two_outputs", estimates=Estimates(ops=512, lds=3072, mem=3072)) tag=1
 22 Ops.LINEAR dtypes.void [5, 0, 12, 8, 9, 14, 15, 1, 2, 3, 6, 7, 4, 13, 10, 16, 11, 17, 18, 19, 20]
-23 Ops.SOURCE dtypes.void [] "\nvoid two_outputs(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = (val0+1.0f);\n    *(data2_256+Lidx0) = (val0*2.0f);\n  }\n}\n"
+23 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void two_outputs(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = (val0+1.0f);\n    *(data2_256+Lidx0) = (val0*2.0f);\n  }\n}\n"
 24 Ops.PROGRAM dtypes.void [21, 22, 23] ProgramInfo(globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 25 Ops.SINK dtypes.void [20, 24]
 

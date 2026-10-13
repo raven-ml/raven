@@ -1,7 +1,7 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef unsigned int unsigned_int2 __attribute__((aligned(8),ext_vector_type(2)));
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_2_2_4(float* restrict data0_16, unsigned int* restrict data1_2, unsigned int* restrict data2_2, const int block_lo_, const int block_hi_) {
+__attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, unsigned int* restrict data1_2, unsigned int* restrict data2_2, const int block_lo_, const int block_hi_) {
   unsigned_int2 val0 = (*((unsigned_int2*)((data1_2+0))));
   unsigned_int2 val1 = (*((unsigned_int2*)((data2_2+0))));
   unsigned int alu0 = ((val0[1]-((unsigned int)((val0[0]<16u))))+val1[1]);

@@ -14,7 +14,7 @@
 12 Ops.SINK dtypes.void [11] KernelInfo(name="E_16") tag=1
 13 Ops.SINK dtypes.void [11] KernelInfo(name="E_16", estimates=Estimates(ops=16, lds=128, mem=128)) tag=1
 14 Ops.LINEAR dtypes.void [5, 0, 1, 2, 3, 6, 7, 4, 8, 9, 10, 11, 12]
-15 Ops.SOURCE dtypes.void [] "\nvoid E_16(int* restrict data0_16, float* restrict data1_16) {\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    int val0 = (*(data0_16+Lidx0));\n    *(data1_16+Lidx0) = __builtin_sqrtf(((float)(val0)));\n  }\n}\n"
+15 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_16(int* restrict data0_16, float* restrict data1_16) {\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    int val0 = (*(data0_16+Lidx0));\n    *(data1_16+Lidx0) = __builtin_sqrtf(((float)(val0)));\n  }\n}\n"
 16 Ops.PROGRAM dtypes.void [13, 14, 15] ProgramInfo(globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 17 Ops.SINK dtypes.void [12, 16]
 

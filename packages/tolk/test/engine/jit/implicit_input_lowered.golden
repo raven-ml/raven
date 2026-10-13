@@ -13,8 +13,8 @@
 11 Ops.SINK dtypes.void [10] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
 12 Ops.SINK dtypes.void [10] KernelInfo(name="E") tag=1
 13 Ops.LINEAR dtypes.void [0, 4, 1, 2, 5, 6, 3, 7, 8, 9, 10, 12]
-14 Ops.SOURCE dtypes.void [] "\nvoid E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
-15 Ops.BINARY dtypes.uchar [] b"\nvoid E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
+14 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
+15 Ops.BINARY dtypes.uchar [] b"\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
 16 Ops.PROGRAM dtypes.void [11, 13, 14, 15] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
 17 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=1, device="CPU")
 18 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1, device="CPU")

@@ -17,7 +17,7 @@
 15 Ops.ENDIF dtypes.void [14]
 16 Ops.SINK dtypes.void [12] KernelInfo() tag=1
 17 Ops.LINEAR dtypes.void [0, 1, 2, 5, 6, 3, 4, 7, 14, 11, 15, 12, 16]
-18 Ops.SOURCE dtypes.void [] "\nvoid test(int* restrict data0_16) {\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    if ((Lidx0<8)) {\n      *(data0_16+Lidx0) = Lidx0;\n    }\n  }\n}\n"
+18 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void test(int* restrict data0_16) {\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    if ((Lidx0<8)) {\n      *(data0_16+Lidx0) = Lidx0;\n    }\n  }\n}\n"
 19 Ops.PROGRAM dtypes.void [13, 17, 18] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 20 Ops.SINK dtypes.void [10, 19]
 

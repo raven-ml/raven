@@ -1642,7 +1642,7 @@ index 0dfa777..629350f 100644
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 0dd26d2..1e64a3d 100644
+index 0dd26d2..dc05e40 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -8,6 +8,19 @@ from tinygrad.helpers import strip_parens, getenv, prod, dedup, Target, IMAGE, F
@@ -1879,7 +1879,7 @@ index 0dd26d2..1e64a3d 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -307,6 +432,12 @@ class ClangRenderer(CStyleLanguage):
+@@ -307,6 +432,15 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -1889,10 +1889,13 @@ index 0dd26d2..1e64a3d 100644
 +    if target.arch.startswith("x86"):
 +      self.type_map = {**self.type_map, dtypes.bfloat16: "unsigned short"}
 +      self.string_rewrite = pm_bf16_ushort_const + self.string_rewrite
++      # an avx512 cpu that prefers 256-bit vectors makes 512-bit types illegal, and llvm 18 crashes splitting a negation,
++      # an absolute value or a copysign of more than 16 halves: a kernel that uses 512-bit vectors makes them legal
++      self.kernel_typedef = "__attribute__((min_vector_width(512))) void"
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -424,7 +555,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -424,7 +558,8 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -1902,7 +1905,7 @@ index 0dd26d2..1e64a3d 100644
    type_map = {dtypes.uint32: "uint", dtypes.bfloat16: "nv_bfloat16", dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
    extra_matcher = create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
      (UPat(Ops.CAST, dtypes.fp8s, UPat.var("x", dtypes.fp8s), name='y'), lambda x,y: x.cast(dtypes.float).cast(y.dtype) if x.dtype!=y.dtype else None),
-@@ -519,7 +651,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -519,7 +654,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),

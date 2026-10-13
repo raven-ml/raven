@@ -1,6 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void r_64_4(float* restrict data0_1, float* restrict data1_256) {
+__attribute__((min_vector_width(512))) void r_64_4(float* restrict data0_1, float* restrict data1_256) {
   float buf0[1];
   *(buf0+0) = 0.0f;
   for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {

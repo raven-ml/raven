@@ -40,7 +40,7 @@
 38 Ops.SINK dtypes.void [37] KernelInfo(name="r_3", estimates=Estimates(ops=3, lds=7, mem=7)) tag=1
 39 Ops.SINK dtypes.void [37] KernelInfo(name="r_3") tag=1
 40 Ops.LINEAR dtypes.void [0, 13, 25, 1, 2, 26, 7, 8, 27, 9, 14, 15, 28, 29, 30, 16, 31, 32, 33, 34, 35, 36, 3, 37, 39]
-41 Ops.SOURCE dtypes.void [] "\nvoid r_3(int* restrict data0_1, _Bool* restrict data1_3) {\n  int buf0[1];\n  *(buf0+0) = 0;\n  for (int Ridx0 = 0; Ridx0 < 3; Ridx0++) {\n    _Bool val0 = (*(data1_3+Ridx0));\n    *(buf0+0) = ((*(buf0+0))+((int)(val0)));\n  }\n  *(data0_1+0) = (*(buf0+0));\n}\n"
+41 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_3(int* restrict data0_1, _Bool* restrict data1_3) {\n  int buf0[1];\n  *(buf0+0) = 0;\n  for (int Ridx0 = 0; Ridx0 < 3; Ridx0++) {\n    _Bool val0 = (*(data1_3+Ridx0));\n    *(buf0+0) = ((*(buf0+0))+((int)(val0)));\n  }\n  *(data0_1+0) = (*(buf0+0));\n}\n"
 42 Ops.PROGRAM dtypes.void [38, 40, 41] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 43 Ops.SINK dtypes.void [24, 42]
 

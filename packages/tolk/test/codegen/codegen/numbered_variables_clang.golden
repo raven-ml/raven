@@ -10,7 +10,7 @@
 8 Ops.SINK dtypes.void [7] KernelInfo() tag=1
 9 Ops.SINK dtypes.void [7] KernelInfo(estimates=Estimates(ops=1, lds=4, mem=4)) tag=1
 10 Ops.LINEAR dtypes.void [0, 4, 5, 1, 2, 3, 6, 7, 8]
-11 Ops.SOURCE dtypes.void [] "\nvoid test(int* restrict data0_1, const int m_, const int n_) {\n  *(data0_1+0) = (m_+n_);\n}\n"
+11 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void test(int* restrict data0_1, const int m_, const int n_) {\n  *(data0_1+0) = (m_+n_);\n}\n"
 12 Ops.PROGRAM dtypes.void [9, 10, 11] ProgramInfo(vars=(%4, %5), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 13 Ops.SINK dtypes.void [8, 12]
 

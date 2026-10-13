@@ -1479,6 +1479,25 @@ let rounded_found =
                   ( [| (0, 0); (0, 1) |],
                     Float.infinity,
                     leaf ~capture:true F16 [| 1; 1 |] [| 0. |] ) ) ) );
+    (* The exponential of a float16 minimum over 18 lanes, which negates them:
+       Clang 18 crashed negating a vector of more than 16 halves for an x86
+       processor with AVX-512. *)
+    Fn
+      ( Exp,
+        Transpose
+          ( [ 0; 1; 2 ],
+            Reduce
+              ( Min,
+                [ 1 ],
+                false,
+                Cast
+                  ( F16,
+                    leaf F32 [| 3; 2; 1; 3 |]
+                      [|
+                        0x1p-149; 0.; 0.; 0x1p-149; 0.; 0.; 0x1p-149; 0.; 0.;
+                        0.; 0.; 0.; 0x1p-149; 0.; 0x1p-149; 0x1p-149;
+                        0x1p-149; 0.;
+                      |] ) ) ) );
   ]
 
 let suite =

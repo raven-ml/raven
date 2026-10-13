@@ -1,6 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void E(float* restrict data0_1, float* restrict data1_1) {
+__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {
   float val0 = (*(data1_1+0));
   _Bool alu0 = (val0!=val0);
   _Bool alu1 = (val0!=((float)(-__builtin_inff())));

@@ -17,8 +17,8 @@
 15 Ops.SINK dtypes.void [14] KernelInfo(name="E_5", estimates=Estimates(ops=5, lds=40, mem=40), split=(5, 2, 3)) tag=1
 16 Ops.SINK dtypes.void [14] KernelInfo(name="E_5", split=(5, 2, 3)) tag=1
 17 Ops.LINEAR dtypes.void [0, 7, 1, 2, 10, 11, 3, 4, 5, 8, 9, 6, 12, 13, 14, 16]
-18 Ops.SOURCE dtypes.void [] "\nvoid E_5(int* restrict data0_5, int* restrict data1_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    *(data0_5+alu0) = (val0<<1);\n  }\n}\n"
-19 Ops.BINARY dtypes.uchar [] b"\nvoid E_5(int* restrict data0_5, int* restrict data1_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    *(data0_5+alu0) = (val0<<1);\n  }\n}\n"
+18 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_5(int* restrict data0_5, int* restrict data1_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    *(data0_5+alu0) = (val0<<1);\n  }\n}\n"
+19 Ops.BINARY dtypes.uchar [] b"\n__attribute__((min_vector_width(512))) void E_5(int* restrict data0_5, int* restrict data1_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    *(data0_5+alu0) = (val0<<1);\n  }\n}\n"
 20 Ops.PROGRAM dtypes.void [15, 17, 18, 19] ProgramInfo(global_size=(5, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
 21 Ops.BUFFER dtypes.char [] ParamArg(slot=8, dtype=dtypes.char, size=512, device="CPU")
 22 Ops.CONST dtypes.weakint [] 0
@@ -50,8 +50,8 @@
 48 Ops.SINK dtypes.void [47] KernelInfo(name="E_5", estimates=Estimates(ops=5, lds=60, mem=60), split=(5, 3, 4)) tag=1
 49 Ops.SINK dtypes.void [47] KernelInfo(name="E_5", split=(5, 3, 4)) tag=1
 50 Ops.LINEAR dtypes.void [0, 7, 42, 34, 35, 36, 37, 38, 40, 41, 43, 44, 39, 45, 46, 47, 49]
-51 Ops.SOURCE dtypes.void [] "\nvoid E_5(int* restrict data0_5, int* restrict data1_5, int* restrict data2_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    int val1 = (*(data2_5+alu0));\n    *(data0_5+alu0) = (val0+val1);\n  }\n}\n"
-52 Ops.BINARY dtypes.uchar [] b"\nvoid E_5(int* restrict data0_5, int* restrict data1_5, int* restrict data2_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    int val1 = (*(data2_5+alu0));\n    *(data0_5+alu0) = (val0+val1);\n  }\n}\n"
+51 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_5(int* restrict data0_5, int* restrict data1_5, int* restrict data2_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    int val1 = (*(data2_5+alu0));\n    *(data0_5+alu0) = (val0+val1);\n  }\n}\n"
+52 Ops.BINARY dtypes.uchar [] b"\n__attribute__((min_vector_width(512))) void E_5(int* restrict data0_5, int* restrict data1_5, int* restrict data2_5, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_5+alu0));\n    int val1 = (*(data2_5+alu0));\n    *(data0_5+alu0) = (val0+val1);\n  }\n}\n"
 53 Ops.PROGRAM dtypes.void [48, 50, 51, 52] ProgramInfo(global_size=(5, 1, 1), vars=(%34, %35), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
 54 Ops.CONST dtypes.weakint [] 256
 55 Ops.SHRINK dtypes.char [21, 54, 23]
@@ -82,8 +82,8 @@
 80 Ops.SINK dtypes.void [79] KernelInfo(name="r_5", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UNROLL)),), estimates=Estimates(ops=4, lds=24, mem=24)) tag=1
 81 Ops.SINK dtypes.void [79] KernelInfo(name="r_5", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UNROLL)),)) tag=1
 82 Ops.LINEAR dtypes.void [58, 7, 61, 62, 76, 77, 22, 59, 63, 64, 60, 65, 10, 11, 66, 68, 69, 70, 72, 73, 74, 67, 71, 75, 78, 79, 81]
-83 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid r_5(int* restrict data0_1, int* restrict data1_5) {\n  int val0 = (*(data1_5+4));\n  int4 val1 = (*((int4*)((data1_5+0))));\n  *(data0_1+0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0);\n}\n"
-84 Ops.BINARY dtypes.uchar [] b"typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid r_5(int* restrict data0_1, int* restrict data1_5) {\n  int val0 = (*(data1_5+4));\n  int4 val1 = (*((int4*)((data1_5+0))));\n  *(data0_1+0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0);\n}\n"
+83 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_5(int* restrict data0_1, int* restrict data1_5) {\n  int val0 = (*(data1_5+4));\n  int4 val1 = (*((int4*)((data1_5+0))));\n  *(data0_1+0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0);\n}\n"
+84 Ops.BINARY dtypes.uchar [] b"typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_5(int* restrict data0_1, int* restrict data1_5) {\n  int val0 = (*(data1_5+4));\n  int4 val1 = (*((int4*)((data1_5+0))));\n  *(data0_1+0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0);\n}\n"
 85 Ops.PROGRAM dtypes.void [80, 82, 83, 84] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
 86 Ops.BUFFER dtypes.int [] ParamArg(slot=7, dtype=dtypes.int, size=1, device="CPU")
 87 Ops.CALL dtypes.void [85, 86, 56] CallInfo()

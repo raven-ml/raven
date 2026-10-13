@@ -31,7 +31,7 @@
 29 Ops.SINK dtypes.void [25, 25, 28] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
 30 Ops.SINK dtypes.void [25, 25, 28] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=3, lds=28, mem=28))
 31 Ops.LINEAR dtypes.void [0, 6, 1, 2, 7, 8, 9, 10, 11, 12, 13, 14, 3, 4, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 5, 28, 25, 29]
-32 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\ntypedef float float3 __attribute__((aligned(8),ext_vector_type(3)));\ntypedef float float2 __attribute__((aligned(8),ext_vector_type(2)));\nvoid E_3(float* restrict data0_3, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  float3 alu0 = ((float3){val0[0],val0[1],val0[2]}+(float3){val0[1],val0[2],val0[3]});\n  *(data0_3+2) = alu0[2];\n  *((float2*)((data0_3+0))) = (float2){alu0[0],alu0[1]};\n}\n"
+32 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\ntypedef float float3 __attribute__((aligned(8),ext_vector_type(3)));\ntypedef float float2 __attribute__((aligned(8),ext_vector_type(2)));\n__attribute__((min_vector_width(512))) void E_3(float* restrict data0_3, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  float3 alu0 = ((float3){val0[0],val0[1],val0[2]}+(float3){val0[1],val0[2],val0[3]});\n  *(data0_3+2) = alu0[2];\n  *((float2*)((data0_3+0))) = (float2){alu0[0],alu0[1]};\n}\n"
 33 Ops.PROGRAM dtypes.void [30, 31, 32] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 34 Ops.SINK dtypes.void [29, 33]
 

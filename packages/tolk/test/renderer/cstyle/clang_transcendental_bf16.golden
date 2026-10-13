@@ -1,6 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 
-void E(unsigned short* restrict data0_1, unsigned short* restrict data1_1) {
+__attribute__((min_vector_width(512))) void E(unsigned short* restrict data0_1, unsigned short* restrict data1_1) {
   unsigned short val0 = (*(data1_1+0));
   float cast0 = __builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (unsigned short)(val0))))<<16u)));
   _Bool alu0 = (cast0!=((float)(-__builtin_inff())));
