@@ -217,6 +217,10 @@ static double cost_of(int64_t bytes, int64_t n, int64_t m) {
 
 static int halved(int64_t n) { return n % 2 == 0 && n >= HALVED_POINTS; }
 
+/* π/2 rounded to double. <math.h>'s M_PI_2 is not ISO C: glibc declares
+   it only under _DEFAULT_SOURCE. */
+#define HALF_PI 1.57079632679489661923
+
 /* Numbers */
 
 /* e^(-2πi m / n), 0 <= m < n, within about an ulp of double: θ = 2π m / n
@@ -225,7 +229,7 @@ static int halved(int64_t n) { return n % 2 == 0 && n >= HALVED_POINTS; }
 static void unit(int64_t m, int64_t n, double *re, double *im) {
   int64_t q = 4 * m / n, r = 4 * m - q * n;
   int far = 2 * r > n;
-  double a = M_PI_2 * (double)(far ? n - r : r) / (double)n;
+  double a = HALF_PI * (double)(far ? n - r : r) / (double)n;
   double c = cos(a), s = sin(a);
   if (far) {
     double t = c;
