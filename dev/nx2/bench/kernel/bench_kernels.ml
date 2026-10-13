@@ -440,13 +440,14 @@ let contract_rows =
         ~flops:(2 * 4096 * 4096) ~streams:(4 * 4096 * 4096);
     ]
 
-(* Reductions and scans of one operand by a monoid, and its running mean and
+(* Reductions and scans of one operand by a monoid, its extreme with its
+   position, its logsumexp, mean and variance, and its running mean and
    variance. A reduction's floor reads its operand's bytes; a scan's copies
    them once per result, since it writes as many. *)
 
 let identity dt = Nx_kernel.Prog.v ~ins:[| dt |] [| In 0 |] ~outs:[| 0 |]
 
-let reduce name m ~axes a (module K : Nx_kernel.S) =
+let reduce name (r : Nx_kernel.reduction) ~axes a (module K : Nx_kernel.S) =
   row name
     (fun () ->
       let (A.Any x) = a () in
@@ -456,10 +457,14 @@ let reduce name m ~axes a (module K : Nx_kernel.S) =
         Array.of_list
           (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list s))
       in
-      ( identity dt,
-        [| (Nx_kernel.Monoid m, 0) |],
-        [| Nx_kernel.Plain x |],
-        [| A.Any (A.create Rig.host (A.dtype x) y) |] ))
+      let like () = A.Any (A.create Rig.host (A.dtype x) y) in
+      let dsts =
+        match r with
+        | Monoid _ -> [| like () |]
+        | Moments -> [| like (); like () |]
+        | Arg _ -> [| like (); A.Any (A.create Rig.host D.Int64 y) |]
+      in
+      (identity dt, [| (r, 0) |], [| Nx_kernel.Plain x |], dsts))
     (fun (p, rs, loads, dsts) -> ok (K.reduce p ~axes rs ~dsts loads))
 
 let scan name r ~axis a (module K : Nx_kernel.S) =
@@ -479,8 +484,16 @@ let scan name r ~axis a (module K : Nx_kernel.S) =
 let reduce_rows =
   let bytes dt s = D.bits dt / 8 * Array.fold_left ( * ) 1 s in
   let any dt s () = A.Any (filled dt s) in
-  let along name dt s axes m =
-    { bench = reduce name m ~axes (any dt s); work = [ F.Read (bytes dt s) ] }
+  let along name dt s axes r =
+    { bench = reduce name r ~axes (any dt s); work = [ F.Read (bytes dt s) ] }
+  in
+  let stated r name =
+    [
+      along (Printf.sprintf "reduce-%s-f32-1M" name) f32 [| mib |] [| 0 |] r;
+      along
+        (Printf.sprintf "reduce-%s-f32-1024x1024-axis1" name)
+        f32 [| 1024; 1024 |] [| 1 |] r;
+    ]
   in
   let running name dt s axis =
     {
@@ -496,23 +509,23 @@ let reduce_rows =
   in
   let m = mib in
   [
-    along "reduce-sum-f32-1M" f32 [| m |] [| 0 |] Sum;
-    along "reduce-sum-f32-16M" f32 [| 16 * m |] [| 0 |] Sum;
-    along "reduce-sum-f64-16M" f64 [| 16 * m |] [| 0 |] Sum;
-    along "reduce-sum-i32-16M" D.Int32 [| 16 * m |] [| 0 |] Sum;
-    along "reduce-max-f32-16M" f32 [| 16 * m |] [| 0 |] Max;
+    along "reduce-sum-f32-1M" f32 [| m |] [| 0 |] (Monoid Sum);
+    along "reduce-sum-f32-16M" f32 [| 16 * m |] [| 0 |] (Monoid Sum);
+    along "reduce-sum-f64-16M" f64 [| 16 * m |] [| 0 |] (Monoid Sum);
+    along "reduce-sum-i32-16M" D.Int32 [| 16 * m |] [| 0 |] (Monoid Sum);
+    along "reduce-max-f32-16M" f32 [| 16 * m |] [| 0 |] (Monoid Max);
     (* Along an axis whose outputs lie side by side: rows of outputs. *)
-    along "reduce-sum-f32-1024x1024-axis0" f32 [| 1024; 1024 |] [| 0 |] Sum;
-    along "reduce-sum-f32-4096x4096-axis0" f32 [| 4096; 4096 |] [| 0 |] Sum;
+    along "reduce-sum-f32-1024x1024-axis0" f32 [| 1024; 1024 |] [| 0 |] (Monoid Sum);
+    along "reduce-sum-f32-4096x4096-axis0" f32 [| 4096; 4096 |] [| 0 |] (Monoid Sum);
     (* Along the innermost axis: each output's run into lanes. *)
-    along "reduce-sum-f32-1024x1024-axis1" f32 [| 1024; 1024 |] [| 1 |] Sum;
-    along "reduce-sum-f32-4096x4096-axis1" f32 [| 4096; 4096 |] [| 1 |] Sum;
+    along "reduce-sum-f32-1024x1024-axis1" f32 [| 1024; 1024 |] [| 1 |] (Monoid Sum);
+    along "reduce-sum-f32-4096x4096-axis1" f32 [| 4096; 4096 |] [| 1 |] (Monoid Sum);
     (* Four terms an output. *)
-    along "reduce-sum-f32-1Mx4-axis1" f32 [| m; 4 |] [| 1 |] Sum;
+    along "reduce-sum-f32-1Mx4-axis1" f32 [| m; 4 |] [| 1 |] (Monoid Sum);
     (* The maximum of each 2x2 window of a pooling layer. *)
     {
       bench =
-        reduce "reduce-max-f32-2x2-windows-32x16x26x26" Max ~axes:[| 4; 5 |]
+        reduce "reduce-max-f32-2x2-windows-32x16x26x26" (Monoid Max) ~axes:[| 4; 5 |]
           (fun () ->
             let w axis = { M.axis; size = 2; step = 2; dilation = 1 } in
             let a = filled f32 [| 32; 16; 26; 26 |] in
@@ -525,6 +538,10 @@ let reduce_rows =
     moments "scan-moments-f32-4096x1024-axis1" f32 [| 4096; 1024 |] 1;
     moments "scan-moments-f32-1024x4096-axis0" f32 [| 1024; 4096 |] 0;
   ]
+  (* The reductions computed by a state of each block. *)
+  @ stated (Arg Max) "argmax"
+  @ stated (Monoid Logsumexp) "logsumexp"
+  @ stated Moments "moments"
 
 (* Gathers and scatters. A gather's floor copies its result's bytes and reads
    its positions'; a scatter's reads its positions and updates and copies

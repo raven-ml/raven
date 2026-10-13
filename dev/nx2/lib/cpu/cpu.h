@@ -181,6 +181,50 @@ typedef struct {
                  int64_t s, int64_t w);
 } nx_cpu_monoid;
 
+/* The reductions nx.cpu computes by a state of each block of terms
+   (reduce.c), numbered on from the monoids: Logsumexp, Arg by Max and by
+   Min, and Moments. */
+enum {
+  NX_CPU_LOGSUMEXP = NX_CPU_MONOIDS,
+  NX_CPU_ARG_MAX,
+  NX_CPU_ARG_MIN,
+  NX_CPU_MOMENTS,
+  NX_CPU_REDUCTIONS
+};
+
+#define NX_CPU_STATEFUL (NX_CPU_REDUCTIONS - NX_CPU_MONOIDS)
+
+/* The state of a block of an output's terms, or of several merged: Arg's
+   extreme's bits [v] and its position [at], or a value [s] of the terms
+   and their count [n]: Logsumexp's maximum, or its sum, and Moments' sums.
+   A float is its dtype's value, which a double holds exactly. */
+typedef struct {
+  int64_t n, at;
+  uint64_t v;
+  double s;
+} nx_cpu_state;
+
+/* A pass of a stateful reduction at a dtype (reduce.c). [block] stores
+   into [st] the state of the [n] contiguous terms at [x], 1 to
+   NX_CPU_LANE_BLOCK of them, the first numbered [t0], of an output whose
+   center is [c]. [merge] makes [a] the state of [a]'s terms then [b]'s.
+   [finish] stores the results of an output's state [st], center [c], at
+   [d0] and, but for Logsumexp, [d1]. */
+typedef struct {
+  void (*block)(const uint8_t *x, int64_t n, int64_t t0, double c,
+                nx_cpu_state *st);
+  void (*merge)(nx_cpu_state *a, const nx_cpu_state *b);
+  void (*finish)(const nx_cpu_state *st, double c, uint8_t *d0, uint8_t *d1);
+} nx_cpu_pass;
+
+/* A stateful reduction at a dtype: where [center.block] is not NULL, a
+   first pass whose [finish] stores each output's center at [d0], a double,
+   then the [value] pass, which takes it. Logsumexp's center is the terms'
+   maximum where finite, else 0; Moments', their mean. */
+typedef struct {
+  nx_cpu_pass center, value;
+} nx_cpu_stateful;
+
 /* A Moments scan of [w] slices of [n] terms side by side (reduce.c), w at
    most NX_CPU_MOMENTS_LANES: slice l's term t at x + t xs + l xl, its mean
    and variance at mean + t ms + l ml and var + t vs + l vl, in elements;
@@ -235,6 +279,9 @@ typedef struct {
   nx_cpu_monoid monoid[NX_CPU_MONOIDS][NX_DTYPE_COUNT];
   /* moments[dt] scans by Moments at float32 and float64. */
   nx_cpu_moments moments[NX_DTYPE_COUNT];
+  /* stateful[r - NX_CPU_MONOIDS][dt] reduces by r (NX_CPU_LOGSUMEXP to
+     NX_CPU_MOMENTS) at dt: block NULL where the table declines. */
+  nx_cpu_stateful stateful[NX_CPU_STATEFUL][NX_DTYPE_COUNT];
 } nx_cpu_target;
 
 /* The tables, each set when the program starts on a host that runs it, by

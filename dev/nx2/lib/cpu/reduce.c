@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Reductions and scans of one operand by Sum, Prod, Max or Min, and its
-   scan by Moments.
+/* Reductions and scans of one operand by Sum, Prod, Max or Min, its
+   reductions by Logsumexp, Arg and Moments, and its scan by Moments.
 
    Association. An output's terms are numbered t = 0, 1, … in C order of the
    reduced axes' indices. They fall into blocks of NX_CPU_LANE_BLOCK
@@ -43,6 +43,13 @@
    - W outputs along the kept axis that steps least, each term a row of W
      elements combined into one of 16 accumulator rows, elsewhere and where
      outputs have few terms. A 2x2 window's maximum takes this path.
+
+   States. Logsumexp, Arg and Moments reduce by the same blocks, tree and
+   paths, an output's value a state of its terms in place of a monoid's
+   element: a kernel makes a block's state from its terms, contiguous in
+   the operand or copied so, and merges two states as the tree combines
+   values. A float result that is NaN is replaced as a monoid's is, but
+   Arg's, whose state holds its first NaN term.
 
    Moments. A Moments scan computes nx_kernel.mli's network on each slice,
    op by op with the kinds' arithmetic, as Nx's expansion does, so that the
@@ -339,8 +346,8 @@ typedef enum { FAST, EXACT } arith;
       r[l] = ma + d * f;                                                      \
       r[w + l] = (va + vb) + (d * d) * (na * f);                              \
       r[2 * w + l] = k;                                                       \
-    }                                                                         \
-  }                                                                           \
+    }                                                                        \
+  }                                                                          \
   static void exact_##S(int64_t w, const T *restrict a, const T *restrict b, \
                         T *restrict r) {                                      \
     const T *ma = a, *va = a + w, *na = a + 2 * w, *za = a + 3 * w;           \
@@ -362,7 +369,7 @@ typedef enum { FAST, EXACT } arith;
     LANES_OF(t, nx_add_##S(va[l], vb[l]));                                    \
     LANES_OF(r + w, nx_add_##S(t[l], d[l]));                                  \
     LANES_OF(r + 3 * w, (T)((za[l] != 0) | (zb[l] != 0)));                    \
-  }                                                                           \
+  }                                                                          \
   /* The states of term [x] of each lane, [xl] apart, shifted by [c]. */    \
   static void leaf_##S(arith a, int64_t w, const T *restrict x, int64_t xl,   \
                        const T *restrict c, T *restrict r) {                  \
@@ -371,7 +378,7 @@ typedef enum { FAST, EXACT } arith;
     LANES_OF(r + w, 0);                                                       \
     LANES_OF(r + 2 * w, 1);                                                   \
     if (a == EXACT) LANES_OF(r + 3 * w, (T)(x[l * xl] != x[l * xl]));         \
-  }                                                                           \
+  }                                                                          \
   /* One pass: 0, or 1 where the fast pass met a value not finite. */       \
   static int pass_##S(arith a, const T *x, int64_t xs, int64_t xl, T *ym,     \
                       int64_t ms, int64_t ml, T *yv, int64_t vs, int64_t vl,  \
@@ -389,7 +396,7 @@ typedef enum { FAST, EXACT } arith;
       held[k] = scratch + 3 * k * size;                                       \
       in[k] = held[k] + size;                                                 \
       joined[k] = in[k] + size;                                               \
-    }                                                                         \
+    }                                                                        \
     for (int64_t t = 0; t < n; t++) {                                         \
       leaf_##S(a, w, x + t * xs, xl, c, in[0]);                               \
       int k = 0;                                                              \
@@ -399,7 +406,7 @@ typedef enum { FAST, EXACT } arith;
       else {                                                                  \
         join(w, got[k + 1], in[k], joined[k]);                                \
         got[k] = joined[k];                                                   \
-      }                                                                       \
+      }                                                                      \
       T *e = held[k];                                                         \
       held[k] = in[k];                                                        \
       in[k] = e;                                                              \
@@ -417,18 +424,18 @@ typedef enum { FAST, EXACT } arith;
         for (int64_t l = 0; l < w; l++) {                                     \
           dm[l * ml] = mean[l];                                               \
           dv[l * vl] = FINITE(r[l]) ? var[l] : nan[l];                        \
-        }                                                                     \
+        }                                                                    \
         continue;                                                             \
-      }                                                                       \
+      }                                                                      \
       for (int64_t l = 0; l < w; l++) {                                       \
         T mean = c[l] + r[l], var = r[w + l] / m;                             \
         bad |= !(FINITE(mean) & FINITE(var));                                 \
         dm[l * ml] = mean;                                                    \
         dv[l * vl] = var;                                                     \
-      }                                                                       \
-    }                                                                         \
+      }                                                                      \
+    }                                                                        \
     return bad;                                                               \
-  }                                                                           \
+  }                                                                          \
   static void moments_##S(const uint8_t *x, int64_t xs, int64_t xl,          \
                           uint8_t *mean, int64_t ms, int64_t ml,              \
                           uint8_t *var, int64_t vs, int64_t vl, int64_t n,    \
@@ -442,6 +449,230 @@ typedef enum { FAST, EXACT } arith;
 MOMENTS(float, f32)
 MOMENTS(double, f64)
 
+/* Arg, Logsumexp and Moments reductions: a block's state, two merged, an
+   output's results.
+   - Arg: the block's extreme by lanes, then its first term of the
+     extreme's bits, or its first NaN where it has one. The later of two
+     states takes over where the extreme of their two is not the
+     earlier's, so a tie keeps the earlier position.
+   - Logsumexp: first the terms' maximum m by lanes, merged by the
+     maximum, and the center c, m where finite, else 0; then exp (x - c)
+     summed in lane order, merged by addition, and c + log of the sum.
+   - Moments: first the terms summed in lane order, merged by addition,
+     and the center, their mean c; then (x - c)² summed so, and the
+     variance, that sum over the count: Nx's expansion's arithmetic.
+   A NaN result is replaced by the driver: by the first NaN term, or by
+   nx_kinds.h's NaN where none is. Every function is inlined into each
+   kernel, whose loops of 16 lanes the compiler then vectorises. */
+
+#define KERNEL static __attribute__((flatten)) void
+
+/* Arg by the extreme [F] over terms of [T], [U] the unsigned integer of
+   its width: [BEAT] is [>] or [<], [F] without its order of NaNs and
+   zeros, which the plain compare vectorises; [NANQ] tests a term for a
+   NaN. */
+#define ARG(NAME, T, U, F, BEAT, NANQ)                                       \
+  /* The extreme by BEAT of the [n] terms at [x], or a NaN where one is:     \
+     a lane takes each NaN it meets and keeps the last. */                   \
+  static inline T top_##NAME(const T *x, int64_t n) {                        \
+    T l[16];                                                                 \
+    for (int k = 0; k < 16; k++) l[k] = x[0];                                \
+    int64_t i = 0;                                                           \
+    for (; i + 16 <= n; i += 16)                                             \
+      for (int k = 0; k < 16; k++) {                                         \
+        T v = x[i + k];                                                      \
+        l[k] = v BEAT l[k] || NANQ(v) ? v : l[k];                            \
+      }                                                                      \
+    for (; i < n; i++) l[0] = x[i] BEAT l[0] || NANQ(x[i]) ? x[i] : l[0];    \
+    for (int k = 1; k < 16; k++)                                             \
+      l[0] = l[k] BEAT l[0] || NANQ(l[k]) ? l[k] : l[0];                     \
+    return l[0];                                                             \
+  }                                                                          \
+  /* The first of the [n] terms at [x] of the bits of [e], or [n]: their     \
+     bits compare as integers, 16 at a time until one is equal. */           \
+  static inline U bits_##NAME(const T *x) {                                  \
+    U u;                                                                     \
+    memcpy(&u, x, sizeof u);                                                 \
+    return u;                                                                \
+  }                                                                          \
+  static inline int64_t find_##NAME(const T *x, int64_t n, T e) {            \
+    U b = bits_##NAME(&e);                                                   \
+    int64_t i = 0;                                                           \
+    for (; i + 16 <= n; i += 16) {                                           \
+      U hit = 0;                                                             \
+      for (int k = 0; k < 16; k++) hit |= bits_##NAME(&x[i + k]) == b;       \
+      if (hit) break;                                                        \
+    }                                                                        \
+    while (i < n && bits_##NAME(&x[i]) != b) i++;                            \
+    return i;                                                                \
+  }                                                                          \
+  /* The first NaN, or the first term of the extreme's bits: of F's zero     \
+     where the extreme is a zero and one is. */                              \
+  KERNEL arg_##NAME(const uint8_t *x_, int64_t n, int64_t t0, double c,      \
+                    nx_cpu_state *st) {                                      \
+    (void)c;                                                                 \
+    const T *x = (const T *)x_;                                              \
+    T e = top_##NAME(x, n), z = F((T)0, (T)(-(T)0));                         \
+    int64_t i = 0;                                                           \
+    if (NANQ(e))                                                             \
+      while (!NANQ(x[i])) i++;                                               \
+    else if (e != 0)                                                         \
+      i = find_##NAME(x, n, e);                                              \
+    else if ((i = find_##NAME(x, n, z)) == n)                                \
+      i = find_##NAME(x, n, (T)(-z));                                        \
+    *st = (nx_cpu_state){.at = t0 + i};                                      \
+    memcpy(&st->v, &x[i], sizeof(T));                                        \
+  }                                                                          \
+  static void arg_merge_##NAME(nx_cpu_state *a, const nx_cpu_state *b) {     \
+    T va, vb;                                                                \
+    memcpy(&va, &a->v, sizeof va);                                           \
+    memcpy(&vb, &b->v, sizeof vb);                                           \
+    T e = F(va, vb);                                                         \
+    if (memcmp(&e, &va, sizeof e) != 0) *a = *b;                             \
+  }                                                                          \
+  static void arg_finish_##NAME(const nx_cpu_state *st, double c,            \
+                                uint8_t *d0, uint8_t *d1) {                  \
+    (void)c;                                                                 \
+    memcpy(d0, &st->v, sizeof(T));                                           \
+    memcpy(d1, &st->at, sizeof st->at);                                      \
+  }
+
+#define IS_NAN(v) ((v) != (v))
+#define NO_NAN(v) 0
+
+#define ARGS(D, T, U, F_MAX, F_MIN, NANQ)                                    \
+  ARG(max_##D, T, U, F_MAX, >, NANQ)                                         \
+  ARG(min_##D, T, U, F_MIN, <, NANQ)
+
+ARGS(i8, int8_t, uint8_t, max_i8, min_i8, NO_NAN)
+ARGS(u8, uint8_t, uint8_t, max_u8, min_u8, NO_NAN)
+ARGS(i16, int16_t, uint16_t, max_i16, min_i16, NO_NAN)
+ARGS(u16, uint16_t, uint16_t, max_u16, min_u16, NO_NAN)
+ARGS(i32, int32_t, uint32_t, max_i32, min_i32, NO_NAN)
+ARGS(u32, uint32_t, uint32_t, max_u32, min_u32, NO_NAN)
+ARGS(i64, int64_t, uint64_t, max_i64, min_i64, NO_NAN)
+ARGS(u64, uint64_t, uint64_t, max_u64, min_u64, NO_NAN)
+ARGS(f32, float, uint32_t, nx_maximum_f32, nx_minimum_f32, IS_NAN)
+ARGS(f64, double, uint64_t, nx_maximum_f64, nx_minimum_f64, IS_NAN)
+
+/* Logsumexp and Moments at the float [T] of suffix [S], [MADE] the NaN
+   nx_kinds.h makes from numbers, [CUT] the least integer whose exp is a
+   normal [T]. */
+#define STATES(T, S, MADE, CUT)                                              \
+  /* exp [y], or 0 below CUT, computed at CUT: no lane makes a subnormal,    \
+     which costs x86 a hundred cycles. */                                    \
+  static inline T ex_##S(T y) {                                              \
+    T e = nx_exp_##S(y < CUT ? CUT : y);                                     \
+    return y < CUT ? 0 : e;                                                  \
+  }                                                                          \
+  KERNEL top_##S(const uint8_t *x, int64_t n, int64_t t0, double c,          \
+                 nx_cpu_state *st) {                                         \
+    (void)t0;                                                                \
+    (void)c;                                                                 \
+    *st = (nx_cpu_state){.s = top_max_##S((const T *)x, n)};                 \
+  }                                                                          \
+  static void top_merge_##S(nx_cpu_state *a, const nx_cpu_state *b) {        \
+    T ma = (T)a->s, mb = (T)b->s;                                            \
+    a->s = ma != ma ? ma : mb != mb ? mb : ma < mb ? mb : ma;                \
+  }                                                                          \
+  static void top_finish_##S(const nx_cpu_state *st, double c, uint8_t *d0,  \
+                             uint8_t *d1) {                                  \
+    (void)c;                                                                 \
+    (void)d1;                                                                \
+    double m = FINITE(st->s) ? st->s : 0;                                    \
+    memcpy(d0, &m, sizeof m);                                                \
+  }                                                                          \
+  KERNEL lse_##S(const uint8_t *x_, int64_t n, int64_t t0, double c_,        \
+                 nx_cpu_state *st) {                                         \
+    (void)t0;                                                                \
+    const T *x = (const T *)x_;                                              \
+    T c = (T)c_, l[16] = {0};                                                \
+    int64_t i = 0;                                                           \
+    for (; i + 16 <= n; i += 16)                                             \
+      for (int k = 0; k < 16; k++) l[k] += ex_##S(x[i + k] - c);             \
+    for (; i < n; i++) l[i & 15] += ex_##S(x[i] - c);                        \
+    for (int h = 8; h >= 1; h /= 2)                                          \
+      for (int k = 0; k < h; k++) l[k] += l[k + h];                          \
+    *st = (nx_cpu_state){.s = l[0]};                                         \
+  }                                                                          \
+  static void lse_merge_##S(nx_cpu_state *a, const nx_cpu_state *b) {        \
+    a->s = (T)a->s + (T)b->s;                                                \
+  }                                                                          \
+  static void lse_finish_##S(const nx_cpu_state *st, double c, uint8_t *d0,  \
+                             uint8_t *d1) {                                  \
+    (void)d1;                                                                \
+    T r = (T)c + nx_log_##S((T)st->s);                                       \
+    memcpy(d0, &r, sizeof r);                                                \
+  }                                                                          \
+  /* The lanes' tree over lanes 0 to 7 [a] and 8 to 15 [b]: two arrays,      \
+     which the compiler holds in registers, where one of 16 doubles it       \
+     keeps in memory. */                                                     \
+  static inline T halves_##S(T *a, const T *b) {                             \
+    for (int k = 0; k < 8; k++) a[k] += b[k];                                \
+    for (int h = 4; h >= 1; h /= 2)                                          \
+      for (int k = 0; k < h; k++) a[k] += a[k + h];                          \
+    return a[0];                                                             \
+  }                                                                          \
+  KERNEL mean_##S(const uint8_t *x_, int64_t n, int64_t t0, double c,        \
+                  nx_cpu_state *st) {                                        \
+    (void)t0;                                                                \
+    (void)c;                                                                 \
+    const T *x = (const T *)x_;                                              \
+    T a[8] = {0}, b[8] = {0};                                                \
+    int64_t i = 0;                                                           \
+    for (; i + 16 <= n; i += 16)                                             \
+      for (int k = 0; k < 8; k++) {                                          \
+        a[k] += x[i + k];                                                    \
+        b[k] += x[i + 8 + k];                                                \
+      }                                                                      \
+    for (; i < n; i++) (i & 8 ? b : a)[i & 7] += x[i];                       \
+    *st = (nx_cpu_state){.n = n, .s = halves_##S(a, b)};                     \
+  }                                                                          \
+  static void sum_merge_##S(nx_cpu_state *a, const nx_cpu_state *b) {        \
+    a->n += b->n;                                                            \
+    a->s = (T)a->s + (T)b->s;                                                \
+  }                                                                          \
+  /* The count as the dtype rounds it, as Nx's expansion divides by it. */   \
+  static void mean_finish_##S(const nx_cpu_state *st, double c,              \
+                              uint8_t *d0, uint8_t *d1) {                    \
+    (void)c;                                                                 \
+    (void)d1;                                                                \
+    double m = (T)st->s / (T)st->n;                                          \
+    memcpy(d0, &m, sizeof m);                                                \
+  }                                                                          \
+  KERNEL var_##S(const uint8_t *x_, int64_t n, int64_t t0, double c_,        \
+                 nx_cpu_state *st) {                                         \
+    (void)t0;                                                                \
+    const T *x = (const T *)x_;                                              \
+    T c = (T)c_, a[8] = {0}, b[8] = {0};                                     \
+    int64_t i = 0;                                                           \
+    for (; i + 16 <= n; i += 16)                                             \
+      for (int k = 0; k < 8; k++) {                                          \
+        T d = x[i + k] - c, e = x[i + 8 + k] - c;                            \
+        a[k] += d * d;                                                       \
+        b[k] += e * e;                                                       \
+      }                                                                      \
+    for (; i < n; i++) {                                                     \
+      T d = x[i] - c;                                                        \
+      (i & 8 ? b : a)[i & 7] += d * d;                                       \
+    }                                                                        \
+    *st = (nx_cpu_state){.n = n, .s = halves_##S(a, b)};                     \
+  }                                                                          \
+  /* A mean that is a NaN is the variance too. */                            \
+  static void var_finish_##S(const nx_cpu_state *st, double c, uint8_t *d0,  \
+                             uint8_t *d1) {                                  \
+    T mean = MADE, var = MADE;                                               \
+    if (st->n > 0) {                                                         \
+      mean = (T)c;                                                           \
+      var = c != c ? mean : (T)st->s / (T)st->n;                             \
+    }                                                                        \
+    memcpy(d0, &mean, sizeof mean);                                          \
+    memcpy(d1, &var, sizeof var);                                            \
+  }
+
+STATES(float, f32, NX_NAN_F32, -87)
+STATES(double, f64, NX_NAN_F64, -708)
+
 /* The table's monoids, by monoid then dtype: NULL where declined. */
 #define SET(M, DT, F)                                                        \
   t->monoid[M][DT] =                                                           \
@@ -454,7 +685,37 @@ MOMENTS(double, f64)
   SET(NX_MONOID_MAX, DT, max_##D);                                            \
   SET(NX_MONOID_MIN, DT, min_##D)
 
+/* The table's stateful reductions, by reduction then dtype: a pass is the
+   kernels K, M and F at the suffix D. */
+#define PASS(K, M, F, D) ((nx_cpu_pass){K##_##D, M##_##D, F##_##D})
+#define NONE ((nx_cpu_pass){NULL, NULL, NULL})
+
+#define STATE(R, DT, CENTER, VALUE)                                          \
+  t->stateful[R - NX_CPU_MONOIDS][DT] = (nx_cpu_stateful){CENTER, VALUE}
+
+#define ARG2(DT, D)                                                          \
+  STATE(NX_CPU_ARG_MAX, DT, NONE, PASS(arg, arg_merge, arg_finish, max_##D)); \
+  STATE(NX_CPU_ARG_MIN, DT, NONE, PASS(arg, arg_merge, arg_finish, min_##D))
+
+#define FLOATS(DT, D)                                                        \
+  STATE(NX_CPU_LOGSUMEXP, DT, PASS(top, top_merge, top_finish, D),           \
+        PASS(lse, lse_merge, lse_finish, D));                                \
+  STATE(NX_CPU_MOMENTS, DT, PASS(mean, sum_merge, mean_finish, D),           \
+        PASS(var, sum_merge, var_finish, D))
+
 static void set(nx_cpu_target *t) {
+  ARG2(NX_FLOAT32, f32);
+  ARG2(NX_FLOAT64, f64);
+  ARG2(NX_INT8, i8);
+  ARG2(NX_UINT8, u8);
+  ARG2(NX_INT16, i16);
+  ARG2(NX_UINT16, u16);
+  ARG2(NX_INT32, i32);
+  ARG2(NX_UINT32, u32);
+  ARG2(NX_INT64, i64);
+  ARG2(NX_UINT64, u64);
+  FLOATS(NX_FLOAT32, f32);
+  FLOATS(NX_FLOAT64, f64);
   ALL4(NX_FLOAT32, f32);
   ALL4(NX_FLOAT64, f64);
   ALL4(NX_INT8, i8);
@@ -514,22 +775,34 @@ void nx_cpu_set_reduce_base(nx_cpu_target *t) { set(t); }
    of 2x2 windows, which memcpy moves in 19 us). Its jobs are priced so. */
 #define FEW_COST 10
 
+/* A term's time against memcpy's, by stateful reduction: Logsumexp's
+   exp, Arg's and Moments' two walks of a block. */
+static const double STATE_COST[NX_CPU_STATEFUL] = {8, 2, 2, 3};
+
 /* What a call computes: a reduction, a scan, or a Moments scan. */
 typedef enum { REDUCE, SCAN, MOMENTS } task;
 
+/* An output's value is an element of the dtype under a monoid, a state
+   under a stateful reduction. */
 typedef struct {
-  const nx_cpu_monoid *f;
-  int dtype, w, nan;
+  const nx_cpu_monoid *f;   /* a monoid's kernels, or NULL */
+  const nx_cpu_pass *r;     /* a stateful reduction's pass, or NULL */
+  double *centers;          /* its outputs' centers, a row of them a unit */
+  int centering;            /* the pass stores the centers */
+  int dtype, w, nan;        /* nan: NaN results take their first NaN term */
+  int64_t size;             /* the bytes of an output's value */
   _Alignas(8) uint8_t id[8];
-  const nx_array *dst, *src; /* the destination, the operand as loaded */
+  /* The destinations, the second the first again for one, and the operand
+     as loaded. */
+  const nx_array *dst, *dst1, *src;
   /* The reduced axes in C order: extents and the operand's steps. */
   int nr;
   int64_t re[NX_MAX_RANK], rs[NX_MAX_RANK];
   /* The kept axes, the row axis last: extents, the operand's and the
-     destination's steps. */
+     destinations' steps. */
   int nk;
-  int64_t ke[NX_MAX_RANK], ks[NX_MAX_RANK], kd[NX_MAX_RANK];
-  int64_t x0, d0;
+  int64_t ke[NX_MAX_RANK], ks[NX_MAX_RANK], kd[NX_MAX_RANK], kd1[NX_MAX_RANK];
+  int64_t x0, d0, d1;
   int64_t rd; /* a scan's destination step along its axis */
   int slices; /* a unit's outputs are slices scanned side by side */
   int64_t terms, blocks;
@@ -628,6 +901,39 @@ static int64_t term(const plan *q, int64_t p, int64_t t) {
   return p;
 }
 
+/* The terms' positions step through the reduced axes as an odometer: the
+   position of term [t] of the output at [p], and its indices into [idx]. */
+static int64_t odometer(const plan *q, int64_t p, int64_t t, int64_t *idx) {
+  for (int i = q->nr - 1; i >= 0; i--) {
+    idx[i] = t % q->re[i];
+    p += idx[i] * q->rs[i];
+    t /= q->re[i];
+  }
+  return p;
+}
+
+/* The position of the term after the one at [pos], its indices [idx]
+   stepped. */
+static int64_t next(const plan *q, int64_t *idx, int64_t pos) {
+  int i = q->nr - 1;
+  pos += q->rs[i];
+  while (++idx[i] == q->re[i] && i > 0) {
+    pos -= q->re[i] * q->rs[i];
+    idx[i--] = 0;
+    pos += q->rs[i];
+  }
+  return pos;
+}
+
+/* Replaces the NaN result at [e] of the output at [p] by its first NaN
+   term, or by nx_kinds.h's NaN where none is. */
+static void first_nan(const plan *q, int64_t p, uint8_t *e) {
+  int64_t t = 0;
+  while (t < q->terms && !is_nan(q, at(q, term(q, p, t)))) t++;
+  if (t < q->terms) memcpy(e, at(q, term(q, p, t)), q->w);
+  else made_nan(q, e);
+}
+
 /* Blocks */
 
 /* Adds terms [t0, t0 + n) of the output at [p] into the lanes [l], run by
@@ -652,10 +958,46 @@ static void lane_tree(const plan *q, uint8_t *l, int64_t W, int used) {
       q->f->combine(l + i * row, l + (i + h) * row, 1, W);
 }
 
+/* Block [b]'s states of the unit's [W] outputs, the first at [p] and each
+   next [s] further along the operand, their centers [c] or 0 where NULL,
+   into [v]: each output's terms where they lie contiguous, else copied into
+   a block. */
+static void states(const plan *q, int64_t p, int64_t s, int64_t W,
+                   const double *c, int64_t b, nx_cpu_state *v) {
+  int64_t t0 = b * BLOCK, n = q->terms - t0 < BLOCK ? q->terms - t0 : BLOCK;
+  _Alignas(16) uint8_t buf[BLOCK * 8];
+  int contiguous = q->nr == 1 && q->rs[0] == 1;
+  for (int64_t j = 0; j < W; j++) {
+    int64_t o = p + j * s, idx[NX_MAX_RANK];
+    const uint8_t *x = at(q, o + t0);
+    if (!contiguous) {
+      int64_t pos = odometer(q, o, t0, idx);
+      for (int64_t t = 0; t < n; t++, pos = next(q, idx, pos))
+        memcpy(buf + t * q->w, at(q, pos), q->w);
+      x = buf;
+    }
+    q->r->block(x, n, t0, c != NULL ? c[j] : 0, &v[j]);
+  }
+}
+
+/* Combines the values [b] of [W] outputs into [a]'s. */
+static void join(const plan *q, uint8_t *a, const uint8_t *b, int64_t W) {
+  if (q->f != NULL) {
+    q->f->combine(a, b, 1, W);
+    return;
+  }
+  for (int64_t j = 0; j < W; j++)
+    q->r->merge((nx_cpu_state *)a + j, (const nx_cpu_state *)b + j);
+}
+
 /* Block [b]'s values of the unit's [W] outputs, the first at [p] and each
-   next [s] further along the operand, into [v]. */
-static void block(const plan *q, int64_t p, int64_t s, int64_t W, int64_t b,
-                  uint8_t *v) {
+   next [s] further along the operand, of centers [c], into [v]. */
+static void block(const plan *q, int64_t p, int64_t s, int64_t W,
+                  const double *c, int64_t b, uint8_t *v) {
+  if (q->r != NULL) {
+    states(q, p, s, W, c, b, (nx_cpu_state *)v);
+    return;
+  }
   int64_t t0 = b * BLOCK, n = q->terms - t0 < BLOCK ? q->terms - t0 : BLOCK;
   int used = n < LANES ? (int)n : LANES;
   if (W == 1) {
@@ -680,37 +1022,26 @@ static void block(const plan *q, int64_t p, int64_t s, int64_t W, int64_t b,
     memcpy(v, l, row);
     return;
   }
-  /* The terms' positions step through the reduced axes as an odometer. */
-  int64_t idx[NX_MAX_RANK], pos = term(q, p, t0), r = q->nr - 1;
-  for (int64_t i = r, t = t0; i >= 0; i--) {
-    idx[i] = t % q->re[i];
-    t /= q->re[i];
-  }
-  for (int64_t t = t0; t < t0 + n; t++) {
+  int64_t idx[NX_MAX_RANK], pos = odometer(q, p, t0, idx);
+  for (int64_t t = t0; t < t0 + n; t++, pos = next(q, idx, pos))
     q->f->combine(l + (t & (LANES - 1)) * row, at(q, pos), s, W);
-    int64_t i = r;
-    pos += q->rs[i];
-    while (++idx[i] == q->re[i] && i > 0) {
-      pos -= q->re[i] * q->rs[i];
-      idx[i--] = 0;
-      pos += q->rs[i];
-    }
-  }
   lane_tree(q, l, W, used);
   memcpy(v, l, row);
 }
 
-/* The value of blocks [b0, b1) of the unit's outputs, by the counter, into
-   [v]: the identity for no block. */
-static void blocks(const plan *q, int64_t p, int64_t s, int64_t W, int64_t b0,
-                   int64_t b1, uint8_t *v) {
+/* The value of blocks [b0, b1) of the unit's outputs, of centers [c], by
+   the counter, into [v]: the identity for no block. */
+static void blocks(const plan *q, int64_t p, int64_t s, int64_t W,
+                   const double *c, int64_t b0, int64_t b1, uint8_t *v) {
   _Alignas(16) uint8_t stack[LEVELS][ROW];
   _Alignas(16) uint8_t run[RUN * 8];
   int top = 0;
-  int64_t row = W * q->w;
-  /* One output's full blocks of contiguous terms take the table's blocks,
-     RUN at a time. */
-  int64_t full = W == 1 && q->nr == 1 && q->rs[0] == 1 ? q->terms / BLOCK : 0;
+  int64_t row = W * q->size;
+  /* A monoid's output's full blocks of contiguous terms take the table's
+     blocks, RUN at a time. */
+  int64_t full = q->f != NULL && W == 1 && q->nr == 1 && q->rs[0] == 1
+                     ? q->terms / BLOCK
+                     : 0;
   for (int64_t b = b0; b < b1;) {
     int64_t n = (b1 < full ? b1 : full) - b;
     if (n > RUN) n = RUN;
@@ -720,12 +1051,12 @@ static void blocks(const plan *q, int64_t p, int64_t s, int64_t W, int64_t b0,
       n = 1;
     for (int64_t i = 0; i < n; i++, b++) {
       if (b < full) memcpy(stack[top++], run + i * q->w, q->w);
-      else block(q, p, s, W, b, stack[top++]);
+      else block(q, p, s, W, c, b, stack[top++]);
       for (int64_t k = b - b0 + 1; (k & 1) == 0; k >>= 1, top--)
-        q->f->combine(stack[top - 2], stack[top - 1], 1, W);
+        join(q, stack[top - 2], stack[top - 1], W);
     }
   }
-  for (; top > 1; top--) q->f->combine(stack[top - 2], stack[top - 1], 1, W);
+  for (; top > 1; top--) join(q, stack[top - 2], stack[top - 1], W);
   if (top == 0) fill(q, v, W);
   else memcpy(v, stack[0], row);
 }
@@ -733,15 +1064,16 @@ static void blocks(const plan *q, int64_t p, int64_t s, int64_t W, int64_t b0,
 /* Units */
 
 /* Unit [u]'s outputs: [H] rows of [W], the first one's positions in the
-   operand and the destination, and the operand's and destination's steps
+   operand and the destinations, and the operand's and destinations' steps
    from one output to the next in a row, and from one row to the next. Units
    run outer index, then band, then chunk, then group. */
 typedef struct {
-  int64_t p, d, W, s, sd, H, s2, sd2, g;
+  int64_t p, d, d1, W, s, sd, sd1, H, s2, sd2, g;
 } unit;
 
 static unit unit_of(const plan *q, int64_t u) {
-  unit x = {q->x0, q->d0, 1, 0, 0, 1, 0, 0, u % q->groups};
+  unit x = {.p = q->x0, .d = q->d0, .d1 = q->d1, .W = 1, .H = 1,
+            .g = u % q->groups};
   u /= q->groups;
   int last = q->nk - 1;
   if (q->row > 1) {
@@ -749,9 +1081,11 @@ static unit unit_of(const plan *q, int64_t u) {
     u /= q->chunks;
     x.s = q->ks[last];
     x.sd = q->kd[last];
+    x.sd1 = q->kd1[last];
     x.W = q->ke[last] - c * q->row < q->row ? q->ke[last] - c * q->row : q->row;
     x.p += c * q->row * x.s;
     x.d += c * q->row * x.sd;
+    x.d1 += c * q->row * x.sd1;
     last--;
   }
   if (q->band > 1) {
@@ -763,33 +1097,54 @@ static unit unit_of(const plan *q, int64_t u) {
                                               : q->band;
     x.p += c * q->band * x.s2;
     x.d += c * q->band * x.sd2;
+    x.d1 += c * q->band * q->kd1[last];
     last--;
   }
   for (int i = last; i >= 0; i--) {
     x.p += u % q->ke[i] * q->ks[i];
     x.d += u % q->ke[i] * q->kd[i];
+    x.d1 += u % q->ke[i] * q->kd1[i];
     u /= q->ke[i];
   }
   return x;
 }
 
-/* Stores the unit's values [v], each NaN replaced by its first NaN term, or
-   by nx_kinds.h's where none is. */
-static void store(const plan *q, const unit *x, const uint8_t *v) {
+/* Stores the results of the unit's states [v], of centers [c], each NaN
+   replaced as store's are; or, where the pass finds them, the centers. */
+static void store_states(const plan *q, const unit *x, double *c,
+                         const nx_cpu_state *v) {
+  int w1 = nx_cpu_width(q->dst1->dtype);
+  for (int64_t j = 0; j < x->W; j++) {
+    if (q->centering) {
+      q->r->finish(&v[j], 0, (uint8_t *)&c[j], NULL);
+      continue;
+    }
+    int64_t p = x->p + j * x->s;
+    uint8_t *d0 = q->dst->base + (x->d + j * x->sd) * q->w;
+    uint8_t *d1 = q->dst1->base + (x->d1 + j * x->sd1) * w1;
+    q->r->finish(&v[j], c != NULL ? c[j] : 0, d0, d1);
+    if (!q->nan) continue;
+    if (is_nan(q, d0)) first_nan(q, p, d0);
+    if (q->dst1 != q->dst && is_nan(q, d1)) first_nan(q, p, d1);
+  }
+}
+
+/* Stores the unit's values [v], of centers [c], each NaN replaced by its
+   first NaN term, or by nx_kinds.h's where none is. */
+static void store(const plan *q, const unit *x, double *c, const uint8_t *v) {
+  if (q->r != NULL) {
+    store_states(q, x, c, (const nx_cpu_state *)v);
+    return;
+  }
   uint8_t *d = q->dst->base + x->d * q->w;
   if (x->sd == 1) memcpy(d, v, x->W * q->w);
   else
     for (int64_t j = 0; j < x->W; j++)
       memcpy(d + j * x->sd * q->w, v + j * q->w, q->w);
   if (!q->nan || !any_nan(q, v, x->W)) return;
-  for (int64_t j = 0; j < x->W; j++) {
-    if (!is_nan(q, v + j * q->w)) continue;
-    int64_t p = x->p + j * x->s, t = 0;
-    while (t < q->terms && !is_nan(q, at(q, term(q, p, t)))) t++;
-    uint8_t *e = d + j * x->sd * q->w;
-    if (t < q->terms) memcpy(e, at(q, term(q, p, t)), q->w);
-    else made_nan(q, e);
-  }
+  for (int64_t j = 0; j < x->W; j++)
+    if (is_nan(q, v + j * q->w))
+      first_nan(q, x->p + j * x->s, d + j * x->sd * q->w);
 }
 
 /* Outputs of a lane or fewer each, one block: their terms' positions from
@@ -803,14 +1158,9 @@ static void few(const plan *q, const unit *x) {
     int64_t p = x->p + h * x->s2;
     uint8_t *d = q->dst->base + (x->d + h * x->sd2) * q->w;
     if (x->sd == 1 && !any_nan(q, d, x->W)) continue;
-    for (int64_t j = 0; j < x->W; j++) {
-      uint8_t *e = d + j * x->sd * q->w;
-      if (!is_nan(q, e)) continue;
-      int64_t t = 0;
-      while (t < q->terms && !is_nan(q, at(q, p + j * x->s + q->off[t]))) t++;
-      if (t < q->terms) memcpy(e, at(q, p + j * x->s + q->off[t]), q->w);
-      else made_nan(q, e);
-    }
+    for (int64_t j = 0; j < x->W; j++)
+      if (is_nan(q, d + j * x->sd * q->w))
+        first_nan(q, p + j * x->s, d + j * x->sd * q->w);
   }
 }
 
@@ -820,17 +1170,18 @@ static void reduce_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   _Alignas(16) uint8_t v[ROW];
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u);
-    if (q->terms <= LANES) {
+    if (q->f != NULL && q->terms <= LANES) {
       few(q, &x);
       continue;
     }
     int64_t b0 = x.g * q->group, b1 = b0 + q->group;
     if (b1 > q->blocks) b1 = q->blocks;
+    double *c = q->centers ? q->centers + u / q->groups * q->row : NULL;
     if (q->groups == 1) {
-      blocks(q, x.p, x.s, x.W, b0, b1, v);
-      store(q, &x, v);
+      blocks(q, x.p, x.s, x.W, c, b0, b1, v);
+      store(q, &x, c, v);
     } else
-      blocks(q, x.p, x.s, x.W, b0, b1, q->scratch + u * q->row * q->w);
+      blocks(q, x.p, x.s, x.W, c, b0, b1, q->scratch + u * q->row * q->size);
   }
 }
 
@@ -838,7 +1189,7 @@ static void reduce_units(int64_t lo, int64_t hi, int worker, void *ctx) {
 static void finish_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const plan *q = ctx;
-  int64_t row = q->row * q->w;
+  int64_t row = q->row * q->size;
   for (int64_t u = lo; u < hi; u++) {
     unit x = unit_of(q, u * q->groups);
     _Alignas(16) uint8_t stack[LEVELS][ROW];
@@ -846,11 +1197,10 @@ static void finish_units(int64_t lo, int64_t hi, int worker, void *ctx) {
     for (int64_t g = 0; g < q->groups; g++) {
       memcpy(stack[top++], q->scratch + (u * q->groups + g) * row, row);
       for (int64_t k = g + 1; (k & 1) == 0; k >>= 1, top--)
-        q->f->combine(stack[top - 2], stack[top - 1], 1, x.W);
+        join(q, stack[top - 2], stack[top - 1], x.W);
     }
-    for (; top > 1; top--)
-      q->f->combine(stack[top - 2], stack[top - 1], 1, x.W);
-    store(q, &x, stack[0]);
+    for (; top > 1; top--) join(q, stack[top - 2], stack[top - 1], x.W);
+    store(q, &x, q->centers ? q->centers + u * q->row : NULL, stack[0]);
   }
 }
 
@@ -864,13 +1214,14 @@ static void job(int64_t total, int64_t bytes, double cost, int threads,
   else nx_cpu_job(total, bytes, cost, body, ctx);
 }
 
-/* Adds the axis of extent [e] and steps [s] (operand) and [d] (destination)
-   to the kept axes, if it has more than one element. */
-static void keep(plan *q, int64_t e, int64_t s, int64_t d) {
+/* Adds the axis of extent [e] and steps [s] (operand), [d] and [d1]
+   (destinations) to the kept axes, if it has more than one element. */
+static void keep(plan *q, int64_t e, int64_t s, int64_t d, int64_t d1) {
   if (e <= 1) return;
   q->ke[q->nk] = e;
   q->ks[q->nk] = s;
-  q->kd[q->nk++] = d;
+  q->kd[q->nk] = d;
+  q->kd1[q->nk++] = d1;
 }
 
 /* Picks the path for [q]'s axes and lays out its units. The kept axis that
@@ -900,46 +1251,53 @@ static void choose(plan *q, task op) {
   q->blocks = (q->terms + BLOCK - 1) / BLOCK;
   int rows = least >= 0 && (kept < red || q->terms < FEW);
   if (least < 0 || (!rows && op != SCAN)) return;
-  int64_t e = q->ke[least], s = q->ks[least], d = q->kd[least];
+  int64_t e = q->ke[least], s = q->ks[least], d = q->kd[least],
+          d1 = q->kd1[least];
   for (int i = least; i < q->nk - 1; i++) {
     q->ke[i] = q->ke[i + 1];
     q->ks[i] = q->ks[i + 1];
     q->kd[i] = q->kd[i + 1];
+    q->kd1[i] = q->kd1[i + 1];
   }
   q->ke[q->nk - 1] = e;
   q->ks[q->nk - 1] = s;
   q->kd[q->nk - 1] = d;
+  q->kd1[q->nk - 1] = d1;
   q->slices = !rows;
-  int64_t most = q->slices ? SLICES : ROW / q->w;
+  int64_t most = q->slices ? SLICES : ROW / q->size;
   q->row = most < e ? most : e;
   q->chunks = (e + q->row - 1) / q->row;
   q->outer = outputs / e;
-  if (op == SCAN || q->terms > LANES || q->nk < 2 || q->chunks > 1) return;
+  if (op == SCAN || q->f == NULL || q->terms > LANES || q->nk < 2 ||
+      q->chunks > 1)
+    return;
   int64_t next = q->ke[q->nk - 2], want = (most + q->row - 1) / q->row;
   q->bands = (next + want - 1) / want;
   q->band = (next + q->bands - 1) / q->bands;
   q->outer /= next;
 }
 
-/* Lays out a reduction from the coalesced loop [l] over the destination and
-   the operand, the destination stepping 0 along the reduced axes. Where
-   units are few and blocks many, each unit takes a group of blocks, its
-   size from the shape alone. */
+/* Lays out a reduction from the coalesced loop [l] over the destinations
+   and the operand, the destinations stepping 0 along the reduced axes.
+   Where units are few and blocks many, each unit takes a group of blocks,
+   its size from the shape alone. */
 static void plan_reduce(plan *q, const nx_loop *l) {
   q->nr = q->nk = 0;
   for (int i = 0; i < l->rank; i++)
-    if (l->step[0][i] != 0) keep(q, l->extent[i], l->step[1][i], l->step[0][i]);
+    if (l->step[0][i] != 0)
+      keep(q, l->extent[i], l->step[2][i], l->step[0][i], l->step[1][i]);
     else if (l->extent[i] > 1) {
       q->re[q->nr] = l->extent[i];
-      q->rs[q->nr++] = l->step[1][i];
+      q->rs[q->nr++] = l->step[2][i];
     }
   if (q->nr == 0) {
     q->re[0] = 1;
     q->rs[0] = 0;
     q->nr = 1;
   }
-  q->x0 = l->first[1];
+  q->x0 = l->first[2];
   q->d0 = l->first[0];
+  q->d1 = l->first[1];
   choose(q, REDUCE);
   for (int64_t t = 0; t < q->terms && t < LANES; t++) q->off[t] = term(q, 0, t);
   int64_t units = q->outer * q->bands * q->chunks;
@@ -952,10 +1310,9 @@ static void plan_reduce(plan *q, const nx_loop *l) {
   q->groups = q->blocks > 0 ? (q->blocks + q->group - 1) / q->group : 1;
 }
 
-/* The destination's elements, all set to the identity: a reduction of no
-   term. */
-static void fill_dst(plan *q) {
-  const nx_array *d = q->dst;
+/* The elements of [d], each of [w] bytes, all set to the bits [e]: a
+   reduction of no term. */
+static void fill_dst(const nx_array *d, const uint8_t *e, int w) {
   int64_t extent[NX_MAX_RANK], step[1][NX_MAX_RANK];
   for (int i = 0; i < d->rank; i++) {
     extent[i] = d->dim[i];
@@ -970,7 +1327,7 @@ static void fill_dst(plan *q) {
       p += rest % extent[i] * step[0][i];
       rest /= extent[i];
     }
-    memcpy(d->base + p * q->w, q->id, q->w);
+    memcpy(d->base + p * w, e, w);
   }
 }
 
@@ -982,11 +1339,11 @@ static void total(const plan *q, const unit *x, int64_t c, uint8_t *v) {
   int64_t b0 = c * (SCAN_CHUNK / BLOCK), b1 = b0 + SCAN_CHUNK / BLOCK;
   if (b1 > q->blocks) b1 = q->blocks;
   if (!q->slices) {
-    blocks(q, x->p, x->s, x->W, b0, b1, v);
+    blocks(q, x->p, x->s, x->W, NULL, b0, b1, v);
     return;
   }
   for (int64_t j = 0; j < x->W; j++)
-    blocks(q, x->p + j * x->s, 0, 1, b0, b1, v + j * q->w);
+    blocks(q, x->p + j * x->s, 0, 1, NULL, b0, b1, v + j * q->w);
 }
 
 /* Chunk [c]'s results of the unit's slices, from the carry [a], which it
@@ -1132,7 +1489,8 @@ static void plan_scan(plan *q, const nx_array *d, const nx_array *x, int axis) {
       step[1][i] = x->dim[r + a];
     }
     n = nx_coalesce_dims(2, n, extent, step);
-    for (int i = 0; i < n; i++) keep(q, extent[i], step[1][i], step[0][i]);
+    for (int i = 0; i < n; i++)
+      keep(q, extent[i], step[1][i], step[0][i], step[0][i]);
   }
   choose(q, SCAN);
   int64_t chunks = (q->terms + SCAN_CHUNK - 1) / SCAN_CHUNK;
@@ -1159,57 +1517,101 @@ static int fits(task op, const int64_t *x, int xr, const int64_t *y, int yr,
   return j == naxes && k == yr;
 }
 
-/* Reduces or scans, as [op] says, [x] into [y] by [monoid]: NX_OK,
-   NX_SHAPE for shapes that do not fit, an extreme of no term included, or
-   -1 if host memory runs out. */
-static int reduce_into(task op, int monoid, int dt, const int *axes, int naxes,
-                     const nx_array *y, const nx_array *x, int threads) {
+/* A reduction's units: each unit's blocks, or each unit's groups of them
+   then the groups combined. */
+static void reduce_jobs(plan *q, int64_t units, int64_t bytes, double cost,
+                        int threads) {
+  if (q->groups == 1) {
+    job(units, bytes, cost, threads, reduce_units, q);
+    return;
+  }
+  int64_t values = units * q->groups * q->row * q->size;
+  job(units * q->groups, bytes, cost, threads, reduce_units, q);
+  job(units, values, values, threads, finish_units, q);
+}
+
+/* Reduces or scans, as [op] says, [x] into [y] and [y1] by [r]: a monoid
+   (reduced or scanned) into [y], [y1] being [y]; or reduced, Logsumexp
+   into [y], [y1] being [y], Arg into the extreme [y] and its int64
+   position [y1], or Moments into the mean [y] and the variance [y1].
+   NX_OK, NX_SHAPE for shapes that do not fit, an extreme of no term
+   included, or -1 if host memory runs out. */
+static int reduce_into(task op, int r, int dt, const int *axes, int naxes,
+                       const nx_array *y, const nx_array *y1,
+                       const nx_array *x, int threads) {
   int64_t terms, outputs;
   if (!fits(op, x->dim, x->rank, y->dim, y->rank, axes, naxes, &terms,
+            &outputs) ||
+      !fits(op, x->dim, x->rank, y1->dim, y1->rank, axes, naxes, &terms,
             &outputs))
     return NX_SHAPE;
-  if (op == REDUCE && terms == 0 && outputs > 0 && monoid >= NX_MONOID_MAX)
-    return NX_SHAPE;
-  plan q = {.f = &nx_cpu_table->monoid[monoid][dt],
+  int extreme = r == NX_MONOID_MAX || r == NX_MONOID_MIN ||
+                r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
+  if (op == REDUCE && terms == 0 && outputs > 0 && extreme) return NX_SHAPE;
+  int stateful = r >= NX_CPU_MONOIDS, w = nx_cpu_width(dt);
+  int arg = r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
+  const nx_cpu_stateful *st =
+      stateful ? &nx_cpu_table->stateful[r - NX_CPU_MONOIDS][dt] : NULL;
+  plan q = {.f = stateful ? NULL : &nx_cpu_table->monoid[r][dt],
+            .r = stateful ? &st->value : NULL,
             .dtype = dt,
-            .w = nx_cpu_width(dt),
-            .nan = dt == NX_FLOAT32 || dt == NX_FLOAT64,
+            .w = w,
+            .nan = (dt == NX_FLOAT32 || dt == NX_FLOAT64) && !arg,
+            .size = stateful ? (int64_t)sizeof(nx_cpu_state) : w,
             .dst = y,
+            .dst1 = y1,
             .src = x,
             .terms = terms};
-  identity(monoid, dt, q.id);
-  int64_t bytes = terms * outputs * q.w;
-  if (outputs > 0 && terms == 0 && op == REDUCE) fill_dst(&q);
+  if (outputs > 0 && terms == 0 && op == REDUCE) {
+    /* The results of no term: the identity, or a state of none's. */
+    _Alignas(8) uint8_t e0[8], e1[8];
+    if (stateful) q.r->finish(&(nx_cpu_state){0}, 0, e0, e1);
+    else identity(r, dt, e0);
+    fill_dst(y, e0, w);
+    if (y1 != y) fill_dst(y1, e1, nx_cpu_width(y1->dtype));
+  }
   if (outputs == 0 || terms == 0) return NX_OK;
-  int r = x->rank;
+  if (!stateful) identity(r, dt, q.id);
+  int rank = x->rank;
   if (op == SCAN) plan_scan(&q, y, x, axes[0]);
   else {
-    /* The loop: the destination steps 0 along the reduced axes. */
-    nx_loop l = {.rank = r, .first = {y->offset, x->offset}};
-    for (int i = 0, k = 0, j = 0; i < r; i++) {
+    /* The loop: the destinations step 0 along the reduced axes. */
+    nx_loop l = {.rank = rank, .first = {y->offset, y1->offset, x->offset}};
+    for (int i = 0, k = 0, j = 0; i < rank; i++) {
       l.extent[i] = x->dim[i];
-      l.step[1][i] = x->dim[r + i];
+      l.step[2][i] = x->dim[rank + i];
       int reduced = j < naxes && axes[j] == i;
       j += reduced;
-      l.step[0][i] = reduced ? 0 : y->dim[y->rank + k++];
+      l.step[0][i] = reduced ? 0 : y->dim[y->rank + k];
+      l.step[1][i] = reduced ? 0 : y1->dim[y1->rank + k];
+      k += !reduced;
     }
-    l.rank = nx_coalesce_dims(2, r, l.extent, l.step);
+    l.rank = nx_coalesce_dims(3, rank, l.extent, l.step);
     plan_reduce(&q, &l);
   }
   int64_t units = q.outer * q.bands * q.chunks;
-  if (q.groups > 1) {
-    q.scratch = malloc((size_t)(units * q.groups * q.row * q.w));
-    if (q.scratch == NULL) return -1;
+  int64_t bytes = terms * outputs * w;
+  double cost = stateful ? STATE_COST[r - NX_CPU_MONOIDS] * bytes
+                : op == REDUCE && terms <= LANES ? FEW_COST * bytes
+                                                 : bytes;
+  if (q.groups > 1)
+    q.scratch = malloc((size_t)(units * q.groups * q.row * q.size));
+  int center = stateful && st->center.block != NULL;
+  if (center) q.centers = malloc((size_t)(units * q.row) * sizeof(double));
+  if ((q.groups > 1 && q.scratch == NULL) || (center && q.centers == NULL)) {
+    free(q.scratch);
+    free(q.centers);
+    return -1;
   }
-  if (q.groups == 1) {
-    int64_t cost = op == REDUCE && terms <= LANES ? FEW_COST * bytes : bytes;
-    rig_pool_body body = op == SCAN ? scan_units : reduce_units;
-    job(units, bytes, cost, threads, body, &q);
-  } else if (op == REDUCE) {
-    int64_t values = units * q.groups * q.row * q.w;
-    job(units * q.groups, bytes, bytes, threads, reduce_units, &q);
-    job(units, values, values, threads, finish_units, &q);
-  } else {
+  if (op == REDUCE && center) {
+    plan c = q;
+    c.r = &st->center;
+    c.centering = 1;
+    reduce_jobs(&c, units, bytes, cost, threads);
+  }
+  if (op == REDUCE) reduce_jobs(&q, units, bytes, cost, threads);
+  else if (q.groups == 1) job(units, bytes, cost, threads, scan_units, &q);
+  else {
     job(units * q.groups, bytes, bytes, threads, total_units, &q);
     carries(&q, units);
     if (q.row == 1)
@@ -1223,6 +1625,7 @@ static int reduce_into(task op, int monoid, int dt, const int *axes, int naxes,
     }
   }
   free(q.scratch);
+  free(q.centers);
   return NX_OK;
 }
 
@@ -1315,22 +1718,25 @@ static int moments_into(int axis, const nx_array *m, const nx_array *v,
 
 /* Entries */
 
-/* Reads [x], [nd] destinations of [x]'s dtype and, where [vpad] is Some
-   (pad, fill), [x] copied padded with the bits [fill] into C-heap scratch
-   (assemble.c), and computes [c] of them: [monoid]'s reduction along the
-   [naxes] axes [axes], its scan along [axes[0]], or a Moments scan along
-   [axes[0]] into the two destinations, as [op] says. The pad
-   is trusted: one that fits no operand of [x]'s shape is refused before
-   anything reads [x]. */
+/* Reads [x], one destination [d0] or two, [d0] and [d1], and, where
+   [vpad] is Some (pad, fill), [x] copied padded with the bits [fill] into
+   C-heap scratch (assemble.c), and computes [c] of them: [r]'s reduction
+   along the [naxes] axes [axes], a monoid's scan along [axes[0]], or a
+   Moments scan along [axes[0]] into the two destinations, as [op] says.
+   The destinations are of [x]'s dtype, but for Arg's int64 positions. The
+   pad is trusted: one that fits no operand of [x]'s shape is refused
+   before anything reads [x]. */
 typedef struct {
   task op;
-  int monoid, naxes, threads;
+  int r, naxes, threads;
   int axes[NX_MAX_RANK];
 } call;
 
 static value run(const call *c, value d0, value d1, value vx, value vpad) {
   CAMLparam4(d0, d1, vx, vpad);
-  int dt = nx_array_dtype(vx), nd = c->op == MOMENTS ? 2 : 1;
+  int dt = nx_array_dtype(vx), nd = d1 == Val_unit ? 1 : 2;
+  int arg =
+      c->op == REDUCE && (c->r == NX_CPU_ARG_MAX || c->r == NX_CPU_ARG_MIN);
   /* The pad and the fill, copied before anything that can move them. */
   int padded = Is_block(vpad);
   nx_cpu_pad pad;
@@ -1345,7 +1751,7 @@ static value run(const call *c, value d0, value d1, value vx, value vpad) {
         nx_cpu_padded_shape(&pad, rank, xs, ys))
       CAMLreturn(Val_int(NX_SHAPE));
   }
-  nx_operand in[3] = {{d0, dt, 1}, {d1, dt, 1}};
+  nx_operand in[3] = {{d0, dt, 1}, {d1, arg ? NX_INT64 : dt, 1}};
   in[nd] = (nx_operand){vx, dt, 0};
   nx_array a[3], loaded, *x = &a[nd];
   int e = nx_read(nd + 1, in, a);
@@ -1360,8 +1766,8 @@ static value run(const call *c, value d0, value d1, value vx, value vpad) {
   int threads = c->threads;
   e = c->op == MOMENTS
           ? moments_into(c->axes[0], &a[0], &a[1], x, threads)
-          : reduce_into(c->op, c->monoid, dt, c->axes, c->naxes, &a[0], x,
-                        threads);
+          : reduce_into(c->op, c->r, dt, c->axes, c->naxes, &a[0],
+                        &a[nd - 1], x, threads);
   if (padded) free(loaded.base);
   nx_done(nd + 1, a);
   if (e < 0) caml_raise_out_of_memory();
@@ -1376,16 +1782,20 @@ static int axis_of(value v, int *a) {
   return 0;
 }
 
-value nx_cpu_reduce(value monoid, value axes, value dst, value x, value pad,
+/* [dsts] holds Arg's and Moments' two destinations, the others' one. */
+value nx_cpu_reduce(value r, value axes, value dsts, value x, value pad,
                     value threads) {
   call c = {.op = REDUCE,
-            .monoid = Int_val(monoid),
+            .r = Int_val(r),
             .naxes = (int)Wosize_val(axes),
             .threads = Int_val(threads)};
+  int two = c.r == NX_CPU_ARG_MAX || c.r == NX_CPU_ARG_MIN ||
+            c.r == NX_CPU_MOMENTS;
+  if (Wosize_val(dsts) != (mlsize_t)(1 + two)) return Val_int(NX_ARITY);
   if (c.naxes > NX_MAX_RANK) return Val_int(NX_SHAPE);
   for (int i = 0; i < c.naxes; i++)
     if (axis_of(Field(axes, i), &c.axes[i])) return Val_int(NX_SHAPE);
-  return run(&c, dst, Val_unit, x, pad);
+  return run(&c, Field(dsts, 0), two ? Field(dsts, 1) : Val_unit, x, pad);
 }
 
 value nx_cpu_reduce_byte(value *argv, int argn) {
@@ -1396,7 +1806,7 @@ value nx_cpu_reduce_byte(value *argv, int argn) {
 value nx_cpu_scan(value monoid, value axis, value dst, value x, value pad,
                   value threads) {
   call c = {.op = SCAN,
-            .monoid = Int_val(monoid),
+            .r = Int_val(monoid),
             .naxes = 1,
             .threads = Int_val(threads)};
   if (axis_of(axis, &c.axes[0])) return Val_int(NX_SHAPE);

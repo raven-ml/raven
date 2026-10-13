@@ -37,14 +37,16 @@
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand into its own dtype, read plain or padded, at
     [float32], [float64] and the 8- to 64-bit integers, and [Max] and [Min]
-    at [bool]; [scan] also computes [Moments] so at [float32] and
-    [float64]. They answer [Wrong_dtype] where {!Nx_kernel.accepts} is
-    [false] of a reduction and its output's dtype, and [Declined] for the
-    other cases. A padded operand is
-    first copied padded into host memory, which the call holds until it
-    returns. They refuse with [Shape_mismatch] what {!Nx_kernel.Shape.padded}
-    and {!Nx_kernel.Shape.reduce} or {!Nx_kernel.Shape.scan} answer [Error]
-    for, and destinations whose shapes are not the ones they give.
+    at [bool]; [reduce] also computes one [Arg] so at those dtypes but
+    [bool], and one [Logsumexp] or [Moments] at [float32] and [float64];
+    [scan] also computes [Moments] so at [float32] and [float64]. They
+    answer [Wrong_dtype] where {!Nx_kernel.accepts} is [false] of a
+    reduction and its output's dtype, and [Declined] for the other cases. A
+    padded operand is first copied padded into host memory, which the call
+    holds until it returns. They refuse with [Shape_mismatch] what
+    {!Nx_kernel.Shape.padded} and {!Nx_kernel.Shape.reduce} or
+    {!Nx_kernel.Shape.scan} answer [Error] for, and destinations whose
+    shapes are not the ones they give.
 
     A float sum or product adds each output's terms in lane order
     ({!Nx_kernel.section-orders}). A scan cuts each slice along its
@@ -53,6 +55,25 @@
     the next the carry into this one combined with this one's total; each
     result of a chunk is its carry combined with the chunk's terms up to it,
     left to right.
+
+    [Logsumexp] and [Moments] reduce an output's terms in two passes, each
+    summing in lane order.
+    - [Logsumexp]: the terms' maximum [m], and [c], [m] where finite, else
+      [0]; then [c + log s], [s] the sum of [exp (x - c)]. An [exp] of less
+      than [-87] ([float32]) or [-708] ([float64]), the least integers
+      whose [exp] is normal, is taken as [0].
+    - [Moments]: the mean [c], the terms' sum over their count, then the
+      variance, the sum of [(x - c)²] over the count: the bits of Nx's own
+      expansion of [Moments].
+
+    For [n] terms, let [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings
+    of a block's sum a term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the
+    blocks' tree, and [u] the dtype's unit roundoff. Barring overflow and
+    underflow, to first order in [u], a [Logsumexp] [r] is within
+    [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Moments] mean is
+    within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
+    terms' magnitudes, and its variance within [(L + D + 4) u V + E²] of
+    the exact [V].
 
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A

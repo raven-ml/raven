@@ -84,17 +84,30 @@ external map :
   Nx_kernel.load array ->
   Nx_array.answer = "nx_cpu_map"
 
-(* Reductions and scans (reduce.c). nx.cpu computes a program's one operand,
-   unchanged, into its own dtype: one [Sum], [Prod], [Max] or [Min] at a
-   dtype the kernels reduce, or a [Moments] scan at float32 or float64. The
-   externals take the monoid, read as an int, a padded load's pad and its
-   fill's bits, and [threads]: [1] for one thread, [0] for as many as the
-   job gives. *)
+(* Reductions and scans (reduce.c). nx.cpu computes a program's one
+   operand, unchanged: one [Sum], [Prod], [Max] or [Min] into its own dtype
+   at a dtype the kernels reduce, reduced or scanned; one [Arg],
+   [Logsumexp] or [Moments], reduced; or a [Moments] scan. The externals
+   take the reduction or the monoid, read as an int, a padded load's pad
+   and its fill's bits, and [threads]: [1] for one thread, [0] for as many
+   as the job gives. *)
+
+(* The reductions reduce.c computes: the monoids in [Nx_kernel.monoid]'s
+   order, then those it computes by a state of each block of terms. *)
+type reduction =
+  | Sum
+  | Prod
+  | Max
+  | Min
+  | Logsumexp
+  | Arg_max
+  | Arg_min
+  | Moments
 
 external reduce_c :
-  Nx_kernel.monoid ->
+  reduction ->
   int array ->
-  Nx_array.any ->
+  Nx_array.any array ->
   ('v, 's) Nx_array.t ->
   (Nx_kernel.pad * string) option ->
   int ->
@@ -134,11 +147,32 @@ let reduces (type v s) (m : Nx_kernel.monoid) (dt : (v, s) D.t) =
       | Int4 | Uint4 | Complex128 | Complex64 | Bit ) ) ->
       false
 
-(* Whether the kernels scan terms of [dt] by Moments. *)
-let moments_dtype (type v s) (dt : (v, s) D.t) =
+(* Whether the kernels compute [Logsumexp] and [Moments] of terms of [dt]. *)
+let floats (type v s) (dt : (v, s) D.t) =
   match dt with Float32 | Float64 -> true | _ -> false
 
 let same (Nx_array.Any d) x = D.equal (Nx_array.dtype d) (Nx_array.dtype x)
+
+let of_monoid : Nx_kernel.monoid -> reduction = function
+  | Sum -> Sum
+  | Prod -> Prod
+  | Max -> Max
+  | Min -> Min
+  | Logsumexp -> Logsumexp
+
+(* The reduction the kernels compute for [r] of [x] into [dsts], if they
+   do: an [Arg] at the dtypes [Sum] reduces, into [x]'s dtype and int64. *)
+let reduction (r : Nx_kernel.reduction) x dsts =
+  let dt = Nx_array.dtype x in
+  match (r, dsts) with
+  | Monoid Logsumexp, [| y |] when floats dt && same y x -> Some Logsumexp
+  | Monoid m, [| y |] when reduces m dt && same y x -> Some (of_monoid m)
+  | Arg e, [| y; Nx_array.Any i |]
+    when reduces Sum dt && same y x && D.equal (Nx_array.dtype i) D.Int64 ->
+      Some (match e with Max -> Arg_max | Min -> Arg_min)
+  | Moments, [| mean; var |] when floats dt && same mean x && same var x ->
+      Some Moments
+  | _ -> None
 
 (* A load's operand, and a padded one's pad and its fill's bits. *)
 let operand : Nx_kernel.load -> Nx_array.any = function
@@ -164,12 +198,12 @@ let reduce_on ~threads p ~axes rs ~dsts (loads : Nx_kernel.load array) =
   if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
   else if not (Nx_kernel.Prog.is_identity p) then Nx_array.Declined
   else
-    match (rs, dsts, loads) with
-    | [| (Monoid m, 0) |], [| dst |], [| l |] ->
+    match (rs, loads) with
+    | [| (r, 0) |], [| l |] -> (
         let (Any x) = operand l in
-        if not (reduces m (Nx_array.dtype x) && same dst x) then
-          Nx_array.Declined
-        else reduce_c m axes dst x (padding l) threads
+        match reduction r x dsts with
+        | Some r -> reduce_c r axes dsts x (padding l) threads
+        | None -> Nx_array.Declined)
     | _ -> Nx_array.Declined
 
 let scan_on ~threads p ~axis rk ~dsts (loads : Nx_kernel.load array) =
@@ -185,7 +219,7 @@ let scan_on ~threads p ~axis rk ~dsts (loads : Nx_kernel.load array) =
     | (Moments, 0), [| mean; var |], [| l |] ->
         let (Any x) = operand l in
         let dt = Nx_array.dtype x in
-        if not (moments_dtype dt && same mean x && same var x) then
+        if not (floats dt && same mean x && same var x) then
           Nx_array.Declined
         else moments_c axis mean var x (padding l) threads
     | _ -> Nx_array.Declined
