@@ -77,11 +77,11 @@ val cgroup_cpus : string -> int
     from the tree of files under the directory [root] as the pool reads the
     host's under [/]: [-1] without a quota (rig_pool_host.h). *)
 
-val capacity_cpus : string -> int array -> int
-(** [capacity_cpus root cpus] is the number of [cpus] whose capacity is more
-    than half the largest of theirs, read from the tree of files under the
-    directory [root] as the pool reads the host's under [/]: [-1] if one of them
-    has none (rig_pool_host.h). *)
+val performance_cpus : string -> int array -> int
+(** [performance_cpus root cpus] is the number of [cpus] that are performance
+    cores, read from the tree of files under the directory [root] as the pool
+    reads the host's under [/]: [-1] where the tree tells no kind of core from
+    another (rig_pool_host.h). *)
 
 val sysctl : string -> int
 (** [sysctl name] is the integer the sysctl [name] reads (macOS). *)

@@ -140,7 +140,7 @@ static long affinity_cpus(int **cpus) {
 
 #endif
 
-/* The cgroup quotas and the CPUs' capacities are plain reading of files,
+/* The cgroup quotas and the kinds of CPU are plain reading of files,
    compiled everywhere so that the suite runs them on every system. */
 
 /* The file [name] under [root], opened for reading, or NULL. */
@@ -312,11 +312,12 @@ static long capacity(const char *root, int cpu) {
   return scan_under(root, name, 1, "%ld", &c) ? c : -1;
 }
 
-/* Two passes over the files, so that nothing is allocated. A core of half
-   the largest capacity or less takes twice as long or more for a chunk, as
-   an efficiency core does. Unmeasured on hardware: no Linux host with cores
-   of several sizes was at hand. */
-long rig_pool_capacity_cpus(const char *root, const int *cpus, long n) {
+/* The number of [cpus] of capacity more than half the largest of theirs, or
+   -1 if one of them has none. Two passes over the files, so that nothing is
+   allocated. A core of half the largest capacity or less takes twice as
+   long or more for a chunk, as an efficiency core does. Unmeasured on
+   hardware: no Linux host with capacities of several sizes was at hand. */
+static long capacity_cpus(const char *root, const int *cpus, long n) {
   long largest = -1;
   for (long i = 0; i < n; i++) {
     long c = capacity(root, cpus[i]);
@@ -326,6 +327,42 @@ long rig_pool_capacity_cpus(const char *root, const int *cpus, long n) {
   long count = 0;
   for (long i = 0; i < n; i++) count += 2 * capacity(root, cpus[i]) > largest;
   return count;
+}
+
+/* The number of [cpus] in the CPU list [name] under [root], or -1 if it
+   cannot be read. The kernel writes a list as ranges and single CPUs
+   separated by commas, such as "0-5,8\n", each range once. */
+static long listed_cpus(const char *root, const char *name, const int *cpus,
+                        long n) {
+  FILE *f = open_under(root, name);
+  if (f == NULL) return -1;
+  long count = 0, lo, hi;
+  int c = 0;
+  while (fscanf(f, "%ld", &lo) == 1) {
+    hi = lo;
+    c = fgetc(f);
+    if (c == '-') {
+      if (fscanf(f, "%ld", &hi) != 1) break;
+      c = fgetc(f);
+    }
+    for (long i = 0; i < n; i++) count += lo <= cpus[i] && cpus[i] <= hi;
+    if (c != ',') break;
+  }
+  fclose(f);
+  return c == '\n' || c == EOF ? count : -1;
+}
+
+/* Intel's hybrid CPUs report no capacity. Their efficiency cores run at
+   more than half the speed of their performance cores (the highest
+   performance ACPI CPPC gives the Core Ultra 5 235's is 62 against 80), so
+   a capacity would not tell them apart anyway. An affinity of efficiency
+   cores alone holds no faster core, so it counts whole, as capacity_cpus
+   counts an affinity of little cores. */
+long rig_pool_performance_cpus(const char *root, const int *cpus, long n) {
+  long fast = capacity_cpus(root, cpus, n);
+  if (fast >= 0) return fast;
+  fast = listed_cpus(root, "/sys/devices/cpu_core/cpus", cpus, n);
+  return fast == 0 ? n : fast;
 }
 
 static int g_cores, g_performance_cores;
@@ -356,7 +393,7 @@ static void cores_init(void) {
   int *cpus;
   cores = affinity_cpus(&cpus);
   if (cores < 0) cores = sysconf(_SC_NPROCESSORS_ONLN);
-  if (cpus != NULL) fast = rig_pool_capacity_cpus("", cpus, cores);
+  if (cpus != NULL) fast = rig_pool_performance_cpus("", cpus, cores);
   free(cpus);
   cores = tighter(cores, rig_pool_cgroup_cpus(""));
 #else

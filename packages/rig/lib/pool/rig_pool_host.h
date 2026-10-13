@@ -23,9 +23,12 @@
    a quota on those paths, or without either hierarchy. */
 long rig_pool_cgroup_cpus(const char *root);
 
-/* rig_pool_capacity_cpus (root, cpus, n) is the number of the [n] CPUs
-   [cpus] whose root/sys/devices/system/cpu/cpuN/cpu_capacity is more than
-   half the largest of theirs, or -1 if one of them has no capacity. */
-long rig_pool_capacity_cpus(const char *root, const int *cpus, long n);
+/* rig_pool_performance_cpus (root, cpus, n) is the number of the [n] CPUs
+   [cpus] that are performance cores, read under root. Where each of them
+   has a root/sys/devices/system/cpu/cpuN/cpu_capacity, they are those of
+   capacity more than half the largest of theirs. Otherwise, where the CPU
+   list root/sys/devices/cpu_core/cpus reads, they are those in the list,
+   or all of [cpus] if none is. Otherwise it is -1. */
+long rig_pool_performance_cpus(const char *root, const int *cpus, long n);
 
 #endif

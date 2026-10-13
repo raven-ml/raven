@@ -154,6 +154,8 @@ let test_other_performance_cores () =
     skip ~reason:"the host reports its performance cores" ();
   if Sys.file_exists "/sys/devices/system/cpu/cpu0/cpu_capacity" then
     skip ~reason:"the host reports its CPUs' capacities" ();
+  if Sys.file_exists "/sys/devices/cpu_core/cpus" then
+    skip ~reason:"the host lists its performance cores" ();
   equal int cores (P.performance_cores ())
 
 (* A process of this executable pins itself to one CPU, reads the cores, then
@@ -467,84 +469,88 @@ let test_cgroup tree =
     (with_files files P.cgroup_cpus)
 
 (* The CPUs [cpus] of a tree whose CPU i has capacity [capacities.(i)], none
-   where it is negative. [fast] is what rig_pool_host.h counts. *)
-type capacities = {
+   where it is negative, and whose hybrid CPU lists its performance cores as
+   [core] and its efficiency cores as [atom], where given. [fast] is what
+   rig_pool_host.h counts. *)
+type cpu_tree = {
   name : string;
   capacities : int array;
+  core : string option;
+  atom : string option;
   cpus : int array;
   fast : int;
 }
 
-let capacity_trees =
+let cpu_trees =
   let all n = Array.init n Fun.id in
   let big_little = [| 1024; 1024; 1024; 1024; 446; 446; 446; 446 |] in
+  let sized name capacities cpus fast =
+    { name; capacities; core = None; atom = None; cpus; fast }
+  in
+  (* An Intel Core Ultra 5 235 under Linux 6.12: CPUs 0-5 are its
+     performance cores, 6-13 its efficiency cores, and no CPU has a
+     capacity. *)
+  let hybrid name cpus fast =
+    {
+      name;
+      capacities = Array.make 14 (-1);
+      core = Some "0-5\n";
+      atom = Some "6-13\n";
+      cpus;
+      fast;
+    }
+  in
   [
+    sized "cores of one size" (Array.make 4 1024) (all 4) 4;
+    sized "big and little cores" big_little (all 8) 4;
+    sized "three sizes, the middle one more than half the largest"
+      [| 1024; 900; 900; 900; 280; 280; 280; 280 |]
+      (all 8) 4;
+    sized "a capacity of exactly half the largest" [| 1024; 512 |] (all 2) 1;
+    sized "a capacity just over half the largest" [| 1024; 513 |] (all 2) 2;
+    sized "an affinity of little cores" big_little [| 4; 5; 6; 7 |] 4;
+    sized "an affinity of a big and a little core" big_little [| 1; 5 |] 1;
+    sized "a CPU without a capacity" [| 1024; -1 |] (all 2) (-1);
+    sized "no CPU" [||] [||] 0;
+    hybrid "a hybrid CPU without capacities" (all 14) 6;
+    hybrid "an affinity of a hybrid CPU's efficiency cores"
+      [| 6; 7; 8; 9; 10; 11; 12; 13 |]
+      8;
+    hybrid "an affinity across a hybrid CPU's kinds of core" [| 4; 5; 6; 7 |] 2;
     {
-      name = "cores of one size";
-      capacities = Array.make 4 1024;
-      cpus = all 4;
-      fast = 4;
+      (hybrid "a hybrid CPU listing several ranges" (all 14) 5) with
+      core = Some "0-1,4,8-9\n";
     };
     {
-      name = "big and little cores";
+      (hybrid "a hybrid CPU whose CPUs have capacities" (all 8) 4) with
       capacities = big_little;
-      cpus = all 8;
-      fast = 4;
+      core = Some "0-1\n";
     };
     {
-      name = "three sizes, the middle one more than half the largest";
-      capacities = [| 1024; 900; 900; 900; 280; 280; 280; 280 |];
-      cpus = all 8;
-      fast = 4;
+      (hybrid "a hybrid CPU where one CPU has a capacity" (all 14) 6) with
+      capacities = Array.init 14 (fun cpu -> if cpu = 0 then 1024 else -1);
     };
     {
-      name = "a capacity of exactly half the largest";
-      capacities = [| 1024; 512 |];
-      cpus = all 2;
-      fast = 1;
+      (hybrid "a hybrid CPU's malformed list" (all 14) (-1)) with
+      core = Some "0-\n";
     };
-    {
-      name = "a capacity just over half the largest";
-      capacities = [| 1024; 513 |];
-      cpus = all 2;
-      fast = 2;
-    };
-    {
-      name = "an affinity of little cores";
-      capacities = big_little;
-      cpus = [| 4; 5; 6; 7 |];
-      fast = 4;
-    };
-    {
-      name = "an affinity of a big and a little core";
-      capacities = big_little;
-      cpus = [| 1; 5 |];
-      fast = 1;
-    };
-    {
-      name = "a CPU without a capacity";
-      capacities = [| 1024; -1 |];
-      cpus = all 2;
-      fast = -1;
-    };
-    { name = "no CPU"; capacities = [||]; cpus = [||]; fast = 0 };
   ]
 
-let test_capacities tree =
+let test_cpu_tree tree =
+  let capacity cpu c =
+    if c < 0 then None
+    else
+      Some
+        (strf "sys/devices/system/cpu/cpu%d/cpu_capacity" cpu, strf "%d\n" c)
+  in
+  let list kind = Option.map (fun l -> (strf "sys/devices/%s/cpus" kind, l)) in
   let files =
     List.filter_map Fun.id
-      (Array.to_list
-         (Array.mapi
-            (fun cpu c ->
-              if c < 0 then None
-              else
-                Some
-                  ( strf "sys/devices/system/cpu/cpu%d/cpu_capacity" cpu,
-                    strf "%d\n" c ))
-            tree.capacities))
+      (list "cpu_core" tree.core :: list "cpu_atom" tree.atom
+      :: Array.to_list (Array.mapi capacity tree.capacities))
   in
-  equal ~msg:"the CPUs over half the largest capacity, or -1" int tree.fast
-    (with_files files (fun root -> P.capacity_cpus root tree.cpus))
+  equal ~msg:"the performance cores among the CPUs, or -1" int tree.fast
+    (with_files files (fun root -> P.performance_cpus root tree.cpus))
 
 let cores_tests =
   group ~timeout:P.timeout "cores"
@@ -577,10 +583,11 @@ let cores_tests =
             skip ~reason:"Windows cannot represent these Linux path names" ();
           test_cgroup tree);
       cases
-        ~name:(fun (t : capacities) -> t.name)
+        ~name:(fun (t : cpu_tree) -> t.name)
         "Linux's performance cores are the CPUs of capacity more than half the \
-         largest of theirs, read from any tree"
-        capacity_trees test_capacities;
+         largest of theirs, or without capacities those a hybrid CPU lists, \
+         read from any tree"
+        cpu_trees test_cpu_tree;
     ]
 
 (* Chunks *)
