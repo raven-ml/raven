@@ -158,11 +158,13 @@ DOT(dot2_f64, double, 4, 4, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 4, fma)
 
-/* The rows up to which a product streams b past all of a (gemm.c): its
-   one job reads each sliver of b along all of k, where chain order's jobs,
-   one per KC block, read b in pieces KC long. On the i9-9900K's 16 threads
-   a 4096 × 4096 weight stored n × k takes 5.1 ms so against 128 rows, 6.7
-   in chain order; a 256³ float32 product takes the same either way. */
+/* The rows at most which a product may stream b past all of a (gemm.c's
+   streams), each sliver of b reading all of a's. On the i9-9900K's 16
+   threads a 4096 × 4096 weight stored n × k takes 5.1 ms so against 128
+   rows, 6.7 in chain order. A bound from the threads instead (stream
+   where b's slivers are enough units and a's KC rows fit in L2) took no
+   less time on the i9, and on fudge's six cores lost to this one: 64³
+   float32 took 1.08 times as long, 1024³ float64 1.12. */
 #define FEW 256
 
 /* The rows of a block of a (cpu.h's mc). */

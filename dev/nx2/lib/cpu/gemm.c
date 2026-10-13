@@ -53,10 +53,10 @@
    An edge sliver of b in place is packed where the kernel reads NR
    columns, so that it reads no column past b's.
 
-   A product of few rows, at most the table's few, packs a whole and then
-   streams b: each unit packs a sliver of b and adds it in, so that b is
-   read once and no panel passes between jobs. One of few columns, and
-   fewer columns than rows, is computed as its transpose. Where a table
+   A product of few rows (streams) packs a whole and then streams b: each
+   unit packs a sliver of b and adds it in along all of k, so that b is
+   read once, in one job. One of fewer columns than rows is computed as its
+   transpose where that streams. Where a table
    names other kernels, a product runs on those that take less time for
    its rows (fastest): on the M1, the cores' vector units take products of
    few rows from its matrix unit.
@@ -372,7 +372,8 @@ typedef struct {
 enum { FREE, PACKING, PACKED };
 
 /* Splits the panel's slivers into ranges where its elements' blocks of a
-   are fewer units than [want]: ranges of one block share its packing. */
+   are fewer units than [want]: ranges of one block share its packing.
+   Every range holds a sliver. */
 static void split(panel *c, int64_t want) {
   int64_t units = c->ne * c->mblocks;
   c->ranges = units < want ? min64(c->slivers, ceil_div(want, units)) : 1;
@@ -592,7 +593,6 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
   for (int64_t u = lo; u < hi; u++) {
     int64_t e, i0, v0, v1;
     unit_of(c, u, &e, &i0, &v0, &v1);
-    if (v0 >= v1) continue;
     int64_t mc, lda;
     src a;
     if (c->a) {
@@ -622,12 +622,11 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
   give(SCRATCH, s);
 }
 
-/* Products of few rows, at most the table's few. One job packs a whole,
-   each KC block as the kernel reads it (packed_a), unless a is read in
-   place; then a unit is a sliver of b's columns of one element, which it
-   reads in place or packs, KC block by KC block, and adds into R. b, the
-   large operand, is read once, by one thread, and no panel is shared
-   between jobs. */
+/* Products of few rows (streams). One job packs a whole, each KC block as
+   the kernel reads it (packed_a), unless a is read in place; then a unit
+   is a sliver of b's columns of one element, which it reads in place or
+   packs, KC block by KC block, and adds into R. b, the large operand, is
+   read once, by one thread, along all of k. */
 typedef struct {
   problem *p;
   nx_cpu_micro k;
@@ -819,8 +818,9 @@ static void chain(problem *p) {
         if (c.kc > 0 && c.a)
           job(p, ne * mblocks, a_packed, PACK_COST * a_packed, pack_blocks,
               &c);
-        for (int64_t v = 0; v < ne * c.slivers && c.b; v++)
-          atomic_store_explicit(&state[v], FREE, memory_order_relaxed);
+        if (c.b)
+          for (int64_t v = 0; v < ne * c.slivers; v++)
+            atomic_store_explicit(&state[v], FREE, memory_order_relaxed);
         job(p, total, packed, cost, compute, &c);
         if (atomic_load(&p->failed)) goto done;
         pc += g->kc;
@@ -1283,6 +1283,20 @@ static int in_place(const problem *p, int o) {
   return p->g->kernel.a == NX_CPU_A_ELEMENTS && adjacent(p, A, CON);
 }
 
+/* Whether [p] streams b past all of a (few_rows) rather than run in chain
+   order: where a is one block of rows, or where b, read along k, is larger
+   than a core's L2 and a stays within the table's few rows. Chain order's
+   jobs, one per KC block, read such a b in pieces KC long; the streaming
+   job reads each sliver along all of k. Where b is smaller, chain order's
+   units, more than b's slivers, spread over the threads: on fudge's six
+   performance cores a 128³ float32 product took 8.3 µs streamed, 6.7 in
+   chain order. */
+static int streams(const problem *p) {
+  int64_t m = p->ext[ROW], b_bytes = p->ext[CON] * p->ext[COL] * p->w;
+  if (m <= p->g->mc) return 1;
+  return m <= p->g->few && adjacent(p, B, CON) && b_bytes > nx_cpu_table->l2;
+}
+
 /* Whether [p]'s init is its dst: the door lets a read operand be identical to
    the written one, every index at the same byte. */
 static int init_is_dst(const problem *p) {
@@ -1310,11 +1324,14 @@ int nx_cpu_contract_on(int acc, const nx_contract_view *v,
   atomic_init(&p.failed, 0);
   if (!chain_order(&p)) lanes(&p);
   else {
-    if (p.ext[COL] < p.ext[ROW] && p.ext[COL] <= p.g->few) transpose(&p);
+    if (p.ext[COL] < p.ext[ROW]) {
+      transpose(&p);
+      if (!streams(&p)) transpose(&p);
+    }
     p.g = fastest(p.g, p.ext[ROW]);
     p.a_in = in_place(&p, A);
     p.b_in = in_place(&p, B);
-    if (p.ext[ROW] <= p.g->few) few_rows(&p);
+    if (streams(&p)) few_rows(&p);
     else chain(&p);
   }
   return !atomic_load(&p.failed);

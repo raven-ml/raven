@@ -116,8 +116,8 @@ typedef struct {
 typedef struct nx_cpu_gemm {
   nx_cpu_micro kernel;
   int64_t mc, kc, nc;    /* the driver's blocks of rows, of k and of columns */
-  int64_t few;           /* the rows up to which a product streams b past
-                            all of a (gemm.c) */
+  int64_t few;           /* the rows at most which a product may stream b
+                            past all of a (gemm.c's streams) */
   nx_cpu_pack pack;      /* or NULL: operands pack through the stage */
   const struct nx_cpu_gemm *other; /* or NULL: kernels that compute a
                                       product where they take less time */
