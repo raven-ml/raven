@@ -56,14 +56,17 @@
    A product of few rows (streams) packs a whole and then streams b: each
    unit packs a sliver of b and adds it in along all of k, so that b is
    read once, in one job. One of fewer columns than rows is computed as its
-   transpose where that streams. Where a table
-   names other kernels, a product runs on those that take less time for
-   its rows (fastest): on the M1, the cores' vector units take products of
-   few rows from its matrix unit.
+   transpose where that streams, unless a is read in place: then a is read
+   where it lies, as BLIS's small products read it (bli_gemmsup), in chain
+   order's blocks of rows, which give the threads units where b's few
+   slivers would not. Where a table names other kernels, a product runs on
+   those that take less time for its rows (fastest): on the M1, the cores'
+   vector units take products of few rows from its matrix unit.
 
    R, the sum in acc, is dst itself: nx.cpu computes a dst of acc's dtype.
    Each tile starts as init, or +0, when its first KC block is computed. */
 
+#include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -155,6 +158,8 @@ typedef struct {
   const nx_cpu_gemm *g;
   int init_is_dst;   /* init is dst itself: R starts as it is */
   int a_in, b_in;    /* chain order reads a, b in place */
+  int keeps_a;       /* fewer columns than rows, a read in place, not
+                        transposed (nx_cpu_contract_on) */
   atomic_int failed; /* an allocation failed */
 } problem;
 
@@ -686,17 +691,39 @@ static void few_rows(problem *p) {
   if (!p->a_in) nx_cpu_give(r.a);
 }
 
-/* Blocks of a hold equal rows, a multiple of MR, so that a job's units
-   take equal times: 100 rows are blocks of 54 and 46, not 96 and 4. */
+/* The rows of a block of a, the job's units being [want] blocks and
+   ranges of b's [slivers] together: equal blocks of at most MC rows, a
+   multiple of MR, so that a job's units take equal times (100 rows are
+   blocks of 54 and 46, not 96 and 4). A product that keeps a (keeps_a),
+   as BLIS's small products read it, takes as many blocks as make a unit's
+   tiles of rows about as many as its slivers (bli_thread_partition_2x2):
+   ranges of b's few slivers would each write a piece of every row of R.
+   On the i9-9900K's 16 threads a 1024 × 16 × 16 float64 product takes 3.0
+   µs in blocks of 24 rows against 20 in blocks of 96; a 256³ float32 one
+   45 µs in such blocks against 37 in MC's. */
+static int64_t block_rows(const problem *p, int64_t want, int64_t slivers) {
+  int64_t m = p->ext[ROW], tiles = ceil_div(m, p->g->kernel.mr);
+  int64_t blocks = ceil_div(m, p->g->mc);
+  if (p->keeps_a) {
+    double per = (double)ceil_div(want, p->ext[BATCH]);
+    int64_t most = min64((int64_t)sqrt(per * tiles / slivers), tiles);
+    blocks = blocks < most ? most : blocks;
+  }
+  return padded(p->g->kernel, ceil_div(m, blocks));
+}
+
 static void chain(problem *p) {
   const nx_cpu_gemm *g = p->g;
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON], w = p->w;
   int64_t nc = min64(g->nc, n), nr = g->kernel.nr, kc_most = min64(g->kc, k);
   int64_t slivers = ceil_div(nc, nr);
-  int64_t rows = padded(g->kernel, ceil_div(m, ceil_div(m, g->mc)));
-  int64_t mblocks = ceil_div(m, rows);
   int64_t b_bytes = p->b_in ? 0 : slivers * nr * kc_most * w;
+  int64_t packed = batch * (slivers * nr + m) * kc_most * w;
+  double cost = flop_cost(g->kernel, 2.0 * batch * m * nc * kc_most) + packed;
+  int64_t rows =
+      block_rows(p, units(packed, cost, thread_bytes(g)), slivers);
+  int64_t mblocks = ceil_div(m, rows);
   int64_t a_bytes = p->a_in ? 0 : mblocks * rows * kc_most * w;
   int64_t per = b_bytes + a_bytes;
   int64_t group = per > 0 ? PANELS / per : batch;
@@ -727,9 +754,8 @@ static void chain(problem *p) {
                  .a = p->a_in ? NULL : a,
                  .state = state};
       /* Enough units for the threads the compute job takes. */
-      int64_t packed = ne * (c.slivers * nr + m) * kc_most * w;
-      double cost =
-          flop_cost(g->kernel, 2.0 * ne * m * c.nc * kc_most) + packed;
+      packed = ne * (c.slivers * nr + m) * kc_most * w;
+      cost = flop_cost(g->kernel, 2.0 * ne * m * c.nc * kc_most) + packed;
       split(&c, units(packed, cost, thread_bytes(g)));
       int64_t total = ne * c.ranges * mblocks, pc = 0;
       do {
@@ -1198,14 +1224,23 @@ static void lanes(problem *p) {
 /* Whether chain order reads operand [o] of [p] in place: in acc, adjacent
    along the axis the kernel streams (b along its columns, a along k where
    the kernel reads it an element at a time), and within its bound: a,
-   IN_PLACE_BYTES an element; b, half a core's L2. b's sliver, kc rows a
-   row of b apart, is read again for each tile of a's rows, and past the
-   bound its rows fall out between tiles. On the i9-9900K (256 KiB) a 256³
-   float32 product takes 406 µs on one core with b in place against 244
-   packed, a 512³ one 683 against 322 µs on 16 threads; a 128³ one, within
-   the bound, 33.2 against 33.9 µs on one core. On kimchi (3 MiB) a 4096³
-   one took twice as long in place (205 against 102 ms). */
+   IN_PLACE_BYTES an element; b, half a core's L2, or, where the product
+   keeps a (keeps_a), the span of a sliver's kc rows, a row of b apart,
+   within half its L1. b's sliver is read again for each tile of a's
+   rows, and past the bound its rows fall out between tiles. On the
+   i9-9900K (256 KiB) a 256³ float32 product takes 406 µs on one core with
+   b in place against 244 packed, a 512³ one 683 against 322 µs on 16
+   threads; a 128³ one, within the bound, 33.2 against 33.9 µs on one
+   core. A 1024 × 1024 triangular solve's 512 × 64 × 512 float64 products,
+   which keep a, its rows 8 KiB apart, take 2.8 ms each on 16 threads with
+   b in place, its sliver's span half of L2, against 1.3 packed. On kimchi (3 MiB) a
+   4096³ one took twice as long in place (205 against 102 ms). */
 static int in_place(const problem *p, int o) {
+  if (o == B && p->keeps_a) {
+    int64_t kc = min64(p->g->kc, p->ext[CON]);
+    return adjacent(p, B, COL) &&
+           kc * p->op[B].st[CON] * p->w <= nx_cpu_table->l1 / 2;
+  }
   int64_t n = o == A ? p->ext[ROW] : p->ext[COL];
   int64_t most = o == A ? IN_PLACE_BYTES : nx_cpu_table->l2 / 2;
   if (p->ext[CON] > most / p->w / n) return 0;
@@ -1254,14 +1289,20 @@ int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
   atomic_init(&p.failed, 0);
   if (order == NX_CPU_LANE) lanes(&p);
   else {
-    if (p.ext[COL] < p.ext[ROW]) {
+    /* Kept in place, whether or not a stays in the caches: on the
+       i9-9900K a 300 × 16 × 600 float64 product takes 91 µs on one core
+       so against 166 transposed, a 256 × 64 × 256 one 24 µs on 16 threads
+       against 33. */
+    int narrow = p.ext[COL] < p.ext[ROW];
+    p.keeps_a = narrow && in_place(&p, A);
+    if (narrow && !p.keeps_a) {
       transpose(&p);
       if (!streams(&p)) transpose(&p);
     }
     p.g = fastest(p.g, p.ext[ROW]);
     p.a_in = in_place(&p, A);
     p.b_in = in_place(&p, B);
-    if (streams(&p)) few_rows(&p);
+    if (streams(&p) && !p.keeps_a) few_rows(&p);
     else chain(&p);
   }
   return !atomic_load(&p.failed);

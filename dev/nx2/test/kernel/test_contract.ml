@@ -264,7 +264,8 @@ let case_of ~acc ~out ~dts =
    contraction, a tile's partial rows and columns; AVX2's most few rows
    against an edge of b's columns; the chain path over several blocks of the
    contraction, over several panels, without init, and with no product and
-   no init. The few rows' case again, and in float64 the chain path over
+   no init; few columns by many rows with a read in place, over several
+   blocks of the contraction and over one. The few rows' case again, and in float64 the chain path over
    several groups, with a and b stored transposed. Each in the order whose
    path it names, then cases in the other order: chain order in few rows or
    columns, lane order in many rows and columns over several passes and
@@ -327,6 +328,8 @@ let regimes acc =
        (chain, true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
        (chain, false, ([||], [| rows |], [| 3100 |], [| 3 |]));
        (chain, false, ([||], [| rows |], [| rows |], [| 0 |]));
+       (chain, true, ([||], [| 300 |], [| 16 |], [| 600 |]));
+       (chain, true, ([||], [| 1024 |], [| 16 |], [| 16 |]));
        (* The other order. *)
        (chain, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
        (chain, true, ([||], [| 3 |], [| 64 |], [| 600 |]));

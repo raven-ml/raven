@@ -417,6 +417,9 @@ let contract_rows =
       (* Few columns, many rows, [4096 × 256] by [256 × 64]: computed as
          its transpose, whose columns lie apart in dst. *)
       gemm ~acc:acc32 ~order:chain "contract-f32-4096x64x256" 4096 64 256;
+      (* A factorisation's update: a triangular solve's half by 32 columns
+         of its right-hand sides. *)
+      gemm ~acc:acc64 ~order:chain "contract-f64-512x32x512" 512 32 512;
       gemm ~init:true ~acc:acc32 ~order:chain "contract-f32-1024-init" 1024
         1024 1024;
       (* a transposed: the [k × m] array viewed as [m × k]. *)
