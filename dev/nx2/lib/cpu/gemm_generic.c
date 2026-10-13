@@ -22,9 +22,13 @@
 #define MR 4
 #define NR 4
 
-/* The kernels' speed (cpu.h), as the vector kernels': a target without
-   their own runs these on every product. */
-#define SPEED 1
+/* The kernels' speed (cpu.h): a target without vector kernels runs these
+   on every product. It is measured for x86-64's base with glibc, where
+   each fused multiply-add is a call of the C library's fma: on a
+   performance core of fudge they run 1.4 GFLOP/s of float32 and 1.3 of
+   float64, against the 151 GB/s its memcpy moves (floor-copy-256K-1t).
+   Another target or C library runs them at its own speed. */
+#define SPEED 0.01
 
 #define KERNEL(name, T, FMA)                                                \
   static void name(int64_t m, int64_t n, int64_t k, const void *va,         \

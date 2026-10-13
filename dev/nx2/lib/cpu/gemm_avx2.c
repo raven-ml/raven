@@ -31,9 +31,10 @@
 
 #if defined(__x86_64__) && defined(__AVX2__) && defined(__FMA__)
 
-/* The kernels' speed (cpu.h): 155 GFLOP/s on a performance core of
-   kimchi, against the 146 GB/s its memcpy moves. */
-#define SPEED 1
+/* The kernels' speed (cpu.h): 151 GFLOP/s of float32 and 75.7 of float64
+   on a performance core of fudge, against the 151 GB/s its memcpy moves. */
+#define SPEED32 1.0
+#define SPEED64 0.5
 
 #define MR 6
 
@@ -175,7 +176,7 @@ void nx_cpu_set_avx2(nx_cpu_target *t) {
                  .nr = 16,
                  .a = NX_CPU_A_ELEMENTS,
                  .b = NX_CPU_B_COLUMNS,
-                 .flops_per_byte = SPEED,
+                 .flops_per_byte = SPEED32,
                  .shared = 1},
       .mc = MC,
       .kc = 384,
@@ -187,7 +188,7 @@ void nx_cpu_set_avx2(nx_cpu_target *t) {
                  .nr = 8,
                  .a = NX_CPU_A_ELEMENTS,
                  .b = NX_CPU_B_COLUMNS,
-                 .flops_per_byte = SPEED,
+                 .flops_per_byte = SPEED64,
                  .shared = 1},
       .mc = MC,
       .kc = 256,
