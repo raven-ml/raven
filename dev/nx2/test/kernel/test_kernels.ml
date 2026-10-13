@@ -467,6 +467,15 @@ let law_copy b (Case a) =
   declines r;
   Option.iter (same a) r
 
+(* A uint4 copy on several threads whose blocks start mid-byte: the walk
+   gives each thread a share of an odd count of elements. *)
+let test_sub_byte_shares b () =
+  let n = (105 lsl 13) + 1 in
+  let a =
+    A.of_array D.Uint4 [| n |] (Array.init n (fun i -> i * 7919 land 15))
+  in
+  Option.iter (same a) (run_op b Copy D.Uint4 a)
+
 let test_copy_nan_payloads b () =
   let bits = [| 0x7fc00001l; 0xffa00002l; 0x80000000l; 0x7f800001l |] in
   let f = Option.get (A.bitcast D.Float32 (A.of_array D.Uint32 [| 4 |] bits)) in
@@ -492,6 +501,17 @@ let pair c =
   in
   (c, d)
 
+(* [a] cast to every dtype is the reference. *)
+let casts_are_reference b a =
+  List.iter
+    (fun (D.Any d) ->
+      Option.iter
+        (fun dst ->
+          equal ~msg:(D.name d) (list string) []
+            (differ ~src:(A.Any a) (reference a d) dst))
+        (run_op b Cast d a))
+    D.all
+
 (* Every code of a format of at most 16 bits, cast to every dtype. *)
 let test_every_code b (D.Any s) () =
   let w = D.bits s in
@@ -510,14 +530,7 @@ let test_every_code b (D.Any s) () =
     | 1 -> A.expect s (A.Any p)
     | _ -> Option.get (A.bitcast s p)
   in
-  List.iter
-    (fun (D.Any d) ->
-      Option.iter
-        (fun dst ->
-          equal ~msg:(D.name d) (list string) []
-            (differ ~src:(A.Any a) (reference a d) dst))
-        (run_op b Cast d a))
-    D.all
+  casts_are_reference b a
 
 let narrow = List.filter (fun (D.Any dt) -> D.bits dt <= 16) D.all
 
@@ -556,15 +569,20 @@ let sweep64 =
 
 let test_sweep b (type s) (s : (float, s) D.t) (xs : float array Lazy.t) () =
   let xs = Lazy.force xs in
-  let a = A.of_array s [| Array.length xs |] xs in
-  List.iter
-    (fun (D.Any d) ->
-      Option.iter
-        (fun dst ->
-          equal ~msg:(D.name d) (list string) []
-            (differ ~src:(A.Any a) (reference a d) dst))
-        (run_op b Cast d a))
-    D.all
+  casts_are_reference b (A.of_array s [| Array.length xs |] xs)
+
+(* Every length from 0 to 64, cast to every dtype, so that each run's
+   vector loops and its scalar tail meet every cast: float32 about 1.0 from
+   the sweep, and bfloat16 codes from 0x7F7C, which cross into NaN. *)
+let test_lengths b () =
+  let xs = Lazy.force sweep32 in
+  for n = 0 to 64 do
+    test_sweep b D.Float32 (lazy (Array.sub xs ((0x3F80 * 9) + n) n)) ();
+    let codes =
+      A.of_array D.Uint16 [| n |] (Array.init n (fun i -> 0x7F7C + i))
+    in
+    casts_are_reference b (Option.get (A.bitcast D.Bfloat16 codes))
+  done
 
 (* Integers about every rounding point of the float formats: m·2^e and the
    points half a unit about it, for m of 2 to 54 significant bits, as int64 and
@@ -892,6 +910,12 @@ let large_pairs =
      in
      let+ seed = int in
      Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) seed))
+
+(* A contiguous bfloat16 pair: a kind that stages every operand, on several
+   threads. *)
+let large_bfloat16_pair =
+  let (Case x) = large_at D.Bfloat16 257 65 0 1 in
+  Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) 2)
 
 (* The answer of [run] into a seeded destination of [dt] and [shape], checked:
    [Done] with the bytes [want ()], a decline only of a case [b] does not
@@ -1720,6 +1744,8 @@ let laws (b : Support.backend) =
       prop ~count:16 "copy of views with rows 4 KiB apart is bits for bits"
         aliased (run (law_copy b));
       test "copy keeps NaN payloads" (unit (test_copy_nan_payloads b));
+      test "a sub-byte copy shared mid-byte is bits for bits"
+        (unit (test_sub_byte_shares b));
       prop "cast is the reference, element by element" (pair case)
         (run (fun ((Case a as c), D.Any d) ->
              covers c;
@@ -1739,6 +1765,7 @@ let laws (b : Support.backend) =
         (unit (test_sweep b D.Float32 sweep32));
       test "float64 about every tie, to every dtype"
         (unit (test_sweep b D.Float64 sweep64));
+      test "every length to 64, to every dtype" (unit (test_lengths b));
       test "integers about every rounding point" (unit (test_integer_ties b));
       group "every special to every dtype"
         (List.filter_map
@@ -1767,7 +1794,8 @@ let laws (b : Support.backend) =
              law_bitcast b x));
       prop "kinds of two operands are nx_kinds.h's at each index" pairs
         (run (law_apply2 b));
-      prop ~count:8 "kinds of two operands over large views" large_pairs
+      prop ~count:8 ~examples:[ large_bfloat16_pair ]
+        "kinds of two operands over large views" large_pairs
         (run (law_apply2 ~kinds:P.[ Binary Add; Compare Less ] b));
       prop ~count:4 "idiv and mod by a repeated power of two are nx_kinds.h's"
         Gen.nat
