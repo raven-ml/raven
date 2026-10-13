@@ -140,7 +140,7 @@ static long affinity_cpus(int **cpus) {
 
 #endif
 
-/* The cgroup quotas and the kinds of CPU are plain reading of files,
+/* The cgroup quotas and the CPUs' ratings are plain reading of files,
    compiled everywhere so that the suite runs them on every system. */
 
 /* The file [name] under [root], opened for reading, or NULL. */
@@ -303,66 +303,43 @@ long rig_pool_cgroup_cpus(const char *root) {
   return tighter(hierarchy_cpus(V2, root), hierarchy_cpus(V1, root));
 }
 
-/* The capacity of CPU [cpu] under [root], or -1 without one. */
-static long capacity(const char *root, int cpu) {
-  char name[64];
-  long c = -1;
-  snprintf(name, sizeof name, "/sys/devices/system/cpu/cpu%d/cpu_capacity",
-           cpu);
-  return scan_under(root, name, 1, "%ld", &c) ? c : -1;
+/* The rating [file] of CPU [cpu] under [root], or -1 without one. */
+static long rating(const char *root, const char *file, int cpu) {
+  char name[128];
+  long r = -1;
+  snprintf(name, sizeof name, "/sys/devices/system/cpu/cpu%d/%s", cpu, file);
+  return scan_under(root, name, 1, "%ld", &r) ? r : -1;
 }
 
-/* The number of [cpus] of capacity more than half the largest of theirs, or
-   -1 if one of them has none. Two passes over the files, so that nothing is
-   allocated. A core of half the largest capacity or less takes twice as
-   long or more for a chunk, as an efficiency core does. Unmeasured on
-   hardware: no Linux host with capacities of several sizes was at hand. */
-static long capacity_cpus(const char *root, const int *cpus, long n) {
+/* The number of [cpus] whose rating [file] is more than half the largest of
+   theirs, or -1 if one of them has none. Two passes over the files, so that
+   nothing is allocated. A core rated at half the largest or less takes
+   twice as long or more for a chunk. */
+static long rated_cpus(const char *root, const char *file, const int *cpus,
+                       long n) {
   long largest = -1;
   for (long i = 0; i < n; i++) {
-    long c = capacity(root, cpus[i]);
-    if (c < 0) return -1;
-    if (c > largest) largest = c;
+    long r = rating(root, file, cpus[i]);
+    if (r < 0) return -1;
+    if (r > largest) largest = r;
   }
   long count = 0;
-  for (long i = 0; i < n; i++) count += 2 * capacity(root, cpus[i]) > largest;
+  for (long i = 0; i < n; i++)
+    count += 2 * rating(root, file, cpus[i]) > largest;
   return count;
 }
 
-/* The number of [cpus] in the CPU list [name] under [root], or -1 if it
-   cannot be read. The kernel writes a list as ranges and single CPUs
-   separated by commas, such as "0-5,8\n", each range once. */
-static long listed_cpus(const char *root, const char *name, const int *cpus,
-                        long n) {
-  FILE *f = open_under(root, name);
-  if (f == NULL) return -1;
-  long count = 0, lo, hi;
-  int c = 0;
-  while (fscanf(f, "%ld", &lo) == 1) {
-    hi = lo;
-    c = fgetc(f);
-    if (c == '-') {
-      if (fscanf(f, "%ld", &hi) != 1) break;
-      c = fgetc(f);
-    }
-    for (long i = 0; i < n; i++) count += lo <= cpus[i] && cpus[i] <= hi;
-    if (c != ',') break;
-  }
-  fclose(f);
-  return c == '\n' || c == EOF ? count : -1;
-}
-
-/* Intel's hybrid CPUs report no capacity. Their efficiency cores run at
-   more than half the speed of their performance cores (the highest
-   performance ACPI CPPC gives the Core Ultra 5 235's is 62 against 80), so
-   a capacity would not tell them apart anyway. An affinity of efficiency
-   cores alone holds no faster core, so it counts whole, as capacity_cpus
-   counts an affinity of little cores. */
+/* The kernel writes cpu_capacity on hosts whose firmware or device tree
+   rates its CPUs, and on arm64 derives it from ACPI CPPC's highest_perf,
+   scaled so that the largest is 1024 (drivers/base/arch_topology.c,
+   topology_init_cpu_capacity_cppc). Elsewhere, Intel's hybrid CPUs among
+   them, it writes none, and highest_perf is read the same way. The Core
+   Ultra 5 235 rates its efficiency cores 62 against 80 and they run
+   compute at 0.9 of the performance cores' speed, so all of them count. */
 long rig_pool_performance_cpus(const char *root, const int *cpus, long n) {
-  long fast = capacity_cpus(root, cpus, n);
+  long fast = rated_cpus(root, "cpu_capacity", cpus, n);
   if (fast >= 0) return fast;
-  fast = listed_cpus(root, "/sys/devices/cpu_core/cpus", cpus, n);
-  return fast == 0 ? n : fast;
+  return rated_cpus(root, "acpi_cppc/highest_perf", cpus, n);
 }
 
 static int g_cores, g_performance_cores;

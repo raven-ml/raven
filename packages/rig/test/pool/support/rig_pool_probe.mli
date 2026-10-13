@@ -80,8 +80,8 @@ val cgroup_cpus : string -> int
 val performance_cpus : string -> int array -> int
 (** [performance_cpus root cpus] is the number of [cpus] that are performance
     cores, read from the tree of files under the directory [root] as the pool
-    reads the host's under [/]: [-1] where the tree tells no kind of core from
-    another (rig_pool_host.h). *)
+    reads the host's under [/]: [-1] if one of them has neither a capacity nor
+    a CPPC highest performance (rig_pool_host.h). *)
 
 val sysctl : string -> int
 (** [sysctl name] is the integer the sysctl [name] reads (macOS). *)

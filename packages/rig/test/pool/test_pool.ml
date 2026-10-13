@@ -154,8 +154,8 @@ let test_other_performance_cores () =
     skip ~reason:"the host reports its performance cores" ();
   if Sys.file_exists "/sys/devices/system/cpu/cpu0/cpu_capacity" then
     skip ~reason:"the host reports its CPUs' capacities" ();
-  if Sys.file_exists "/sys/devices/cpu_core/cpus" then
-    skip ~reason:"the host lists its performance cores" ();
+  if Sys.file_exists "/sys/devices/system/cpu/cpu0/acpi_cppc/highest_perf"
+  then skip ~reason:"the host rates its CPUs' highest performance" ();
   equal int cores (P.performance_cores ())
 
 (* A process of this executable pins itself to one CPU, reads the cores, then
@@ -468,36 +468,57 @@ let test_cgroup tree =
   equal ~msg:"ceil q, or -1 without a quota" int tree.cpus
     (with_files files P.cgroup_cpus)
 
-(* The CPUs [cpus] of a tree whose CPU i has capacity [capacities.(i)], none
-   where it is negative, and whose hybrid CPU lists its performance cores as
-   [core] and its efficiency cores as [atom], where given. [fast] is what
-   rig_pool_host.h counts. *)
+(* The CPUs [cpus] of a tree whose CPU i has capacity [capacities.(i)] and
+   ACPI CPPC highest performance [perfs.(i)], none where it is negative, and
+   the other files [others]. [fast] is what rig_pool_host.h counts. *)
 type cpu_tree = {
   name : string;
   capacities : int array;
-  core : string option;
-  atom : string option;
+  perfs : int array;
+  others : (string * string) list;
   cpus : int array;
   fast : int;
 }
 
 let cpu_trees =
   let all n = Array.init n Fun.id in
+  let none n = Array.make n (-1) in
   let big_little = [| 1024; 1024; 1024; 1024; 446; 446; 446; 446 |] in
   let sized name capacities cpus fast =
-    { name; capacities; core = None; atom = None; cpus; fast }
-  in
-  (* An Intel Core Ultra 5 235 under Linux 6.12: CPUs 0-5 are its
-     performance cores, 6-13 its efficiency cores, and no CPU has a
-     capacity. *)
-  let hybrid name cpus fast =
     {
       name;
-      capacities = Array.make 14 (-1);
-      core = Some "0-5\n";
-      atom = Some "6-13\n";
+      capacities;
+      perfs = none (Array.length capacities);
+      others = [];
       cpus;
       fast;
+    }
+  in
+  let rated name perfs cpus fast =
+    {
+      name;
+      capacities = none (Array.length perfs);
+      perfs;
+      others = [];
+      cpus;
+      fast;
+    }
+  in
+  (* An Intel Core Ultra 5 235 under Linux 6.12: no CPU has a capacity, CPPC
+     rates performance cores 0-5 at 80 and efficiency cores 6-13 at 62, and
+     the kernel lists the two kinds as the CPUs of the cpu_core and cpu_atom
+     PMUs. The efficiency cores run compute at 0.9 of the performance cores'
+     speed. *)
+  let hybrid name cpus fast =
+    {
+      (rated name (Array.init 14 (fun cpu -> if cpu < 6 then 80 else 62)) cpus
+         fast)
+      with
+      others =
+        [
+          ("sys/devices/cpu_core/cpus", "0-5\n");
+          ("sys/devices/cpu_atom/cpus", "6-13\n");
+        ];
     }
   in
   [
@@ -512,42 +533,46 @@ let cpu_trees =
     sized "an affinity of a big and a little core" big_little [| 1; 5 |] 1;
     sized "a CPU without a capacity" [| 1024; -1 |] (all 2) (-1);
     sized "no CPU" [||] [||] 0;
-    hybrid "a hybrid CPU without capacities" (all 14) 6;
+    hybrid "a hybrid CPU without capacities" (all 14) 14;
     hybrid "an affinity of a hybrid CPU's efficiency cores"
       [| 6; 7; 8; 9; 10; 11; 12; 13 |]
       8;
-    hybrid "an affinity across a hybrid CPU's kinds of core" [| 4; 5; 6; 7 |] 2;
+    hybrid "an affinity across a hybrid CPU's kinds of core"
+      [| 4; 5; 6; 7; 8; 9 |]
+      6;
     {
-      (hybrid "a hybrid CPU listing several ranges" (all 14) 5) with
-      core = Some "0-1,4,8-9\n";
-    };
-    {
-      (hybrid "a hybrid CPU whose CPUs have capacities" (all 8) 4) with
-      capacities = big_little;
-      core = Some "0-1\n";
-    };
-    {
-      (hybrid "a hybrid CPU where one CPU has a capacity" (all 14) 6) with
+      (hybrid "a hybrid CPU where one CPU has a capacity" (all 14) 14) with
       capacities = Array.init 14 (fun cpu -> if cpu = 0 then 1024 else -1);
     };
+    rated "CPPC rates of half the largest or less"
+      [| 80; 80; 80; 80; 40; 40; 30; 30 |]
+      (all 8) 4;
+    rated "a CPPC rate just over half the largest" [| 80; 41 |] (all 2) 2;
+    rated "an affinity of slow cores by CPPC" [| 80; 80; 40; 40 |] [| 2; 3 |] 2;
+    rated "a CPU with neither a capacity nor a CPPC rate" [| 80; -1 |] (all 2)
+      (-1);
     {
-      (hybrid "a hybrid CPU's malformed list" (all 14) (-1)) with
-      core = Some "0-\n";
+      (sized "capacities before CPPC rates" big_little (all 8) 4) with
+      perfs = Array.make 8 80;
+    };
+    {
+      (sized "CPPC rates where a CPU has no capacity" [| 1024; -1 |] (all 2) 1)
+      with
+      perfs = [| 80; 40 |];
     };
   ]
 
 let test_cpu_tree tree =
-  let capacity cpu c =
+  let rating file cpu c =
     if c < 0 then None
-    else
-      Some
-        (strf "sys/devices/system/cpu/cpu%d/cpu_capacity" cpu, strf "%d\n" c)
+    else Some (strf "sys/devices/system/cpu/cpu%d/%s" cpu file, strf "%d\n" c)
   in
-  let list kind = Option.map (fun l -> (strf "sys/devices/%s/cpus" kind, l)) in
+  let ratings file a = Array.to_list (Array.mapi (rating file) a) in
   let files =
     List.filter_map Fun.id
-      (list "cpu_core" tree.core :: list "cpu_atom" tree.atom
-      :: Array.to_list (Array.mapi capacity tree.capacities))
+      (ratings "cpu_capacity" tree.capacities
+      @ ratings "acpi_cppc/highest_perf" tree.perfs)
+    @ tree.others
   in
   equal ~msg:"the performance cores among the CPUs, or -1" int tree.fast
     (with_files files (fun root -> P.performance_cpus root tree.cpus))
@@ -585,8 +610,8 @@ let cores_tests =
       cases
         ~name:(fun (t : cpu_tree) -> t.name)
         "Linux's performance cores are the CPUs of capacity more than half the \
-         largest of theirs, or without capacities those a hybrid CPU lists, \
-         read from any tree"
+         largest of theirs, or without capacities of CPPC highest performance \
+         more than half the largest of theirs, read from any tree"
         cpu_trees test_cpu_tree;
     ]
 

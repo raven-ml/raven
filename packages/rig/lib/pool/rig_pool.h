@@ -45,11 +45,10 @@
    cpu.max files of the Linux kernel's cgroup v2
    (Documentation/admin-guide/cgroup-v2.rst), the cpu.cfs_quota_us and
    cpu.cfs_period_us files of its cgroup v1 (Documentation/scheduler/
-   sched-bwc.rst), the cpu_capacity files of its CPUs
-   (Documentation/ABI/testing/sysfs-devices-system-cpu) and the CPU list of
-   the cpu_core PMU it registers on Intel hybrid CPUs
-   (/sys/devices/cpu_core/cpus), from sysctl(3) on macOS, and from
-   GetActiveProcessorCount on Windows. */
+   sched-bwc.rst), the cpu_capacity and acpi_cppc/highest_perf files of its
+   CPUs (Documentation/ABI/testing/sysfs-devices-system-cpu, and
+   Documentation/admin-guide/acpi/cppc_sysfs.rst), from sysctl(3) on macOS,
+   and from GetActiveProcessorCount on Windows. */
 
 #ifndef RIG_POOL_H
 #define RIG_POOL_H
@@ -60,10 +59,10 @@
 
    A caller sizes a job by two counts of the host's cores: the cores the
    process may occupy, which bound the threads of every job, and the
-   performance cores, those the host classes as fast where its cores run at
-   several speeds. A job of compute-bound chunks of equal size is sized by
-   the performance cores, since a chunk that a slower core claims takes
-   longer and delays the end of the job.
+   performance cores, those that run compute-bound work at more than half
+   the speed of the fastest. A job of compute-bound chunks of equal size is
+   sized by the performance cores, since a chunk that a slower core claims
+   takes longer and delays the end of the job.
 
    Both counts are taken at the first call of either function and stay the
    same for the life of the process, so a later change of affinity or quota
@@ -81,16 +80,16 @@
    processors, and elsewhere the online CPUs. */
 int rig_pool_cores(void);
 
-/* rig_pool_performance_cores () is the number of the performance cores the
-   process may occupy. 1 <= rig_pool_performance_cores () <= rig_pool_cores ().
+/* rig_pool_performance_cores () is the number of the cores the process may
+   occupy that run compute-bound work at more than half the speed of the
+   fastest. 1 <= rig_pool_performance_cores () <= rig_pool_cores ().
 
    On macOS it is the performance cores (hw.perflevel0.physicalcpu) where the
    host reports them. On Linux it is at most rig_pool_cores (), and counts
-   CPUs of the affinity mask: where the kernel reports each one's
-   cpu_capacity, those whose capacity is more than half the largest of
-   theirs; otherwise, where it lists an Intel hybrid CPU's performance cores
-   in /sys/devices/cpu_core/cpus, those in the list, or every one if none
-   is. Elsewhere, and on a host that reports none of these, it is
+   the CPUs of the affinity mask whose rating is more than half the largest
+   of theirs: the cpu_capacity the kernel reports for each of them, or else
+   the highest performance ACPI CPPC reports for each (acpi_cppc/
+   highest_perf). Elsewhere, and on a host that reports neither, it is
    rig_pool_cores (). */
 int rig_pool_performance_cores(void);
 
