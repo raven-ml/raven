@@ -39,6 +39,7 @@ fixture() {
 }
 
 [ $# -gt 0 ] || set -- \
+  aligned_x86_64.o aligned_aarch64.o \
   blocks_x86_64.o blocks_aarch64.o deep_x86_64.o deep_aarch64.o \
   data_entry_x86_64.o data_entry_aarch64.o \
   empty_x86_64.o empty_aarch64.o got_x86_64.o got_aarch64.o \

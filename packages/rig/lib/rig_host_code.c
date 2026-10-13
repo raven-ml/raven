@@ -32,6 +32,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #if defined(__APPLE__) && defined(__aarch64__)
@@ -127,9 +128,16 @@ void rig_code_sync(void) { synchronize(); }
    executable at once. On arm64 macOS it is MAP_JIT memory, mapped
    read-write-execute, whose write protection each thread lifts for itself;
    elsewhere it is mapped read-write, written once, then made read-execute. A
-   block whose mapping failed holds no memory and the error. */
+   block whose mapping failed holds no memory and the error.
+
+   The system maps at a multiple of its page (Windows: of its allocation
+   granularity). For a larger alignment the mapping takes that much more,
+   and the code starts at the first multiple of the alignment in it: a POSIX
+   system unmaps the bytes around it, Windows commits only the code's and
+   releases the whole reservation, from [start], at the end. */
 
 typedef struct {
+  char *start; /* Windows' reservation; NULL elsewhere */
   char *base;
   size_t size;
   intnat error;
@@ -141,7 +149,7 @@ static void finalize_mapping(value v) {
   mapping *m = Mapping_val(v);
   if (m->base == NULL) return;
 #if defined(_WIN32)
-  VirtualFree(m->base, 0, MEM_RELEASE);
+  VirtualFree(m->start, 0, MEM_RELEASE);
 #else
   munmap(m->base, m->size);
 #endif
@@ -154,29 +162,58 @@ static struct custom_operations mapping_ops = {
     custom_compare_ext_default, custom_fixed_length_default,
 };
 
-/* A mapping of [size] bytes, writable until installed. The block comes
-   first, so that the mapping is never left without an owner. */
-value caml_rig_host_map(value v_size) {
-  CAMLparam1(v_size);
+/* The first multiple of [align], a power of two, at or after [p]. */
+static char *align_up(char *p, size_t align) {
+  return (char *)(((uintptr_t)p + align - 1) & ~(uintptr_t)(align - 1));
+}
+
+/* A mapping of [size] bytes at a multiple of [align], a power of two,
+   writable until installed. Both fit an OCaml int, so their sum fits a
+   size_t. The block comes first, so that the mapping is never left without
+   an owner. */
+value caml_rig_host_map(value v_size, value v_align) {
+  CAMLparam2(v_size, v_align);
   CAMLlocal1(v);
-  size_t size = (size_t)Long_val(v_size);
+  size_t size = (size_t)Long_val(v_size), align = (size_t)Long_val(v_align);
   v = caml_alloc_custom_mem(&mapping_ops, sizeof(mapping), size);
   mapping *m = Mapping_val(v);
-  *m = (mapping){NULL, size, 0};
+  *m = (mapping){NULL, NULL, size, 0};
 #if defined(_WIN32)
-  m->base = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-  if (m->base == NULL) m->error = -(intnat)GetLastError();
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  size_t unit = si.dwAllocationGranularity;
+  size_t slop = align > unit ? align - unit : 0;
+  char *start = VirtualAlloc(NULL, size + slop, MEM_RESERVE, PAGE_NOACCESS);
+  if (start == NULL) {
+    m->error = -(intnat)GetLastError();
+    CAMLreturn(v);
+  }
+  char *base = align_up(start, align);
+  if (VirtualAlloc(base, size, MEM_COMMIT, PAGE_READWRITE) == NULL) {
+    m->error = -(intnat)GetLastError();
+    VirtualFree(start, 0, MEM_RELEASE);
+    CAMLreturn(v);
+  }
+  m->start = start;
+  m->base = base;
 #else
+  size_t page = (size_t)sysconf(_SC_PAGESIZE);
+  size_t span = (size + page - 1) & ~(page - 1);
+  size_t slop = align > page ? align - page : 0;
   int prot = PROT_READ | PROT_WRITE, flags = MAP_PRIVATE | MAP_ANON;
 #if defined(__APPLE__) && defined(__aarch64__)
   prot |= PROT_EXEC;
   flags |= MAP_JIT;
 #endif
-  void *p = mmap(NULL, size, prot, flags, -1, 0);
-  if (p == MAP_FAILED)
+  char *start = mmap(NULL, span + slop, prot, flags, -1, 0);
+  if (start == MAP_FAILED) {
     m->error = -errno;
-  else
-    m->base = p;
+    CAMLreturn(v);
+  }
+  char *base = align_up(start, align), *end = start + span + slop;
+  if (base > start) munmap(start, (size_t)(base - start));
+  if (end > base + span) munmap(base + span, (size_t)(end - (base + span)));
+  m->base = base;
 #endif
   CAMLreturn(v);
 }

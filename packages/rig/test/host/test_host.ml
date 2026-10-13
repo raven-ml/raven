@@ -546,7 +546,6 @@ let patch_section obj ~kind set =
   set b (header (List.find (fun i -> kind_of i = kind) (List.init n Fun.id)));
   Bytes.to_string b
 
-let sht_progbits = 1
 let sht_rela = 4
 let sht_rel = 9
 let set64 b at x = Bytes.set_int64_le b at (Int64.of_int x)
@@ -578,18 +577,59 @@ let test_got () =
     ~affix:(refused (strf "relocation of type %d at 0x" kind))
     (load_error (obj "got"))
 
-(* affine's code aligned to [align] bytes. *)
-let aligned align =
-  patch_section (obj "affine") ~kind:sht_progbits (fun b h ->
-      set64 b (h + 48) align)
+(* [obj] with the header of its section [name], at [h], set by [set b h]. The
+   ELF64 header holds the index of the section of section names, [e_shstrndx],
+   at 0x3e; a section header its name's offset in that section at 0 and its
+   own offset at 24. *)
+let patch_named obj name set =
+  let b = Bytes.of_string obj in
+  let shoff = Int64.to_int (Bytes.get_int64_le b 0x28) in
+  let entsize = Bytes.get_uint16_le b 0x3a and n = Bytes.get_uint16_le b 0x3c in
+  let header i = shoff + (i * entsize) in
+  let names = header (Bytes.get_uint16_le b 0x3e) + 24 in
+  let names = Int64.to_int (Bytes.get_int64_le b names) in
+  let name_of i =
+    let at = names + Int32.to_int (Bytes.get_int32_le b (header i)) in
+    Bytes.sub_string b at (Bytes.index_from b at '\000' - at)
+  in
+  set b (header (List.find (fun i -> name_of i = name) (List.init n Fun.id)));
+  Bytes.to_string b
 
-let test_aligned () =
-  is_ok ~msg:"4096 bytes" ~pp:(fun ppf _ -> Format.pp_print_string ppf "image")
-    (Rig.Image.load Rig.host (aligned 4096));
-  equal string
-    (refused
-       "a section asks for an alignment of 8192 bytes, expected at most 4096")
-    (load_error (aligned 8192))
+(* An ELF64 section header holds its alignment, [sh_addralign], at 48. *)
+let set_align align b h = set64 b (h + 48) align
+
+(* Alignments at, around and above every host's page and Windows' allocation
+   granularity of 64 KiB. *)
+let alignments = [ 16; 4096; 16384; 65536; 1 lsl 17; 1 lsl 20 ]
+
+(* aligned.c with its table's section aligned to [align]: the link places the
+   table at a multiple of it, and the code reads it there. *)
+let test_aligned align =
+  let o = patch_named (obj "aligned") ".rodata" (set_align align) in
+  let image =
+    require_ok ~pp:Format.pp_print_string (Rig.Image.load Rig.host o)
+  in
+  let out = S.words 5 in
+  ignore
+    (launch image "aligned"
+       ~refs:Sub.[| write 0 ~at:0 |]
+       ~params:8
+       ~grid:{ one with threads = (4, 1, 1) }
+       (words [| out |]));
+  equal ~msg:"the table's address modulo its alignment" int 0
+    (Int64.to_int out.{0} land (align - 1));
+  equal ~msg:"the table" (array int) [| 3; 1; 4; 1 |]
+    (Array.init 4 (fun i -> Int64.to_int out.{1 + i}))
+
+(* An alignment no address space holds: the system refuses the mapping, and
+   the error names the alignment. *)
+let test_unmappable () =
+  let align = 1 lsl 61 in
+  let why =
+    load_error (patch_named (obj "aligned") ".rodata" (set_align align))
+  in
+  starts_with ~affix:"CPU: mapping " why;
+  contains ~sub:(strf "at a multiple of %d bytes" align) why
 
 let test_refusal (_, o, msg) = equal string (refused msg) (load_error o)
 
@@ -606,7 +646,11 @@ let refusal_tests =
         test_rel;
       test "a load of a relocation through a global offset table is refused"
         test_got;
-      test "a load of code aligned above 4096 bytes is refused" test_aligned;
+      cases
+        ~name:(strf "%d bytes")
+        "a function reads data aligned to" alignments test_aligned;
+      test "a load of an alignment no address space holds is refused"
+        test_unmappable;
     ]
 
 let () =

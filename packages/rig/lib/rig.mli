@@ -1172,8 +1172,6 @@ end
     {- No allocated section is writable and not empty, as a [.data] or
        [.bss] in use would be. Code that needs a variable gets it through
        its parameters.}
-    {- No section asks for an alignment above 4096 bytes, the least page of
-       every supported host.}
     {- Each relocation holds its addend in its entry ([SHT_RELA]), is of a
        type listed under {!section-host_relocations}, uses no symbol defined
        outside the image, such as a common or thread-local variable, patches
@@ -1183,7 +1181,8 @@ end
     {- The image and its stubs fit in [max_int] bytes.}}
 
     The link lays out the object's allocated sections ([SHF_ALLOC]), its code
-    and read-only data, in one image. It writes the image once, applies its
+    and read-only data, in one image, each at an address that is a multiple
+    of its alignment ([sh_addralign]). It writes the image once, applies its
     relocations, then makes the memory executable. The memory is never
     writable and executable at the same time ({!section-host_platforms}).
 

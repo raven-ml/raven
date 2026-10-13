@@ -17,9 +17,6 @@ let em_aarch64 = 183
 let host =
   match arch () with "x86_64" -> em_x86_64 | "arm64" -> em_aarch64 | _ -> 0
 
-(* The least page of every supported host: a mapping starts at a multiple of
-   it. *)
-let max_align = 4096
 let machine_name m = if m = em_x86_64 then "x86_64" else "arm64"
 
 (* Refusals: a link raises [Refused] where it finds the object unfit, and
@@ -41,14 +38,15 @@ let err_unsupported k at =
 let eperm = 1
 let eacces = 13
 
-let err_map size e =
+let err_map size align e =
   let remedy =
     if Sys.win32 || e <> eperm then ""
     else
       "; sign the program with the com.apple.security.cs.allow-jit entitlement"
   in
-  refusef "mapping %d bytes of executable memory: %s%s" size (error_message e)
-    remedy
+  refusef
+    "mapping %d bytes of executable memory at a multiple of %d bytes: %s%s" size
+    align (error_message e) remedy
 
 let err_protect size e =
   let remedy =
@@ -59,11 +57,11 @@ let err_protect size e =
   in
   refusef "making %d bytes executable: %s%s" size (error_message e) remedy
 
-(* Code memory: a mapping the collector unmaps. [base] is its address, or the
-   system's error, negated, if mapping failed; [install] is [0] or that
-   error. *)
+(* Code memory: a mapping at a multiple of an alignment, which the collector
+   unmaps. [base] is its address, or the system's error, negated, if mapping
+   failed; [install] is [0] or that error. *)
 
-external map : int -> Def.code = "caml_rig_host_map"
+external map : int -> int -> Def.code = "caml_rig_host_map"
 external base : Def.code -> int = "caml_rig_host_base"
 external install : Def.code -> bytes -> int = "caml_rig_host_install"
 external process_symbol : string -> int = "caml_rig_host_symbol"
@@ -215,9 +213,6 @@ let check (o : Rig_elf.t) =
   if o.machine <> host then
     refusef "the object is for %s, expected %s" (machine o.machine)
       (machine_name host);
-  if o.align > max_align then
-    refusef "a section asks for an alignment of %d bytes, expected at most %d"
-      o.align max_align;
   match Iarray.find_opt writable o.sections with
   | Some s ->
       refusef
@@ -290,9 +285,9 @@ let link_exn obj =
     refusef "the image's %d bytes and %d stubs exceed max_int" o.size n;
   let slots_at = (o.size + slot_bytes - 1) / slot_bytes * slot_bytes in
   let size = Int.max 1 (slots_at + (slot_bytes * n)) in
-  let code = map size in
+  let code = map size o.align in
   let base = base code in
-  if base < 0 then err_map size (-base);
+  if base < 0 then err_map size o.align (-base);
   let b = write o externals ~slots_at ~size ~base in
   match install code b with
   | 0 -> { Def.code; functions = functions o ~base }
