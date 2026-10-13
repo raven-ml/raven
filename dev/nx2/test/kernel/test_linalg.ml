@@ -885,10 +885,17 @@ let law_svd (b : Support.backend) c =
   cover "wide" (m < n);
   cover "square" (m = n);
   cover "tall" (m > n);
+  (* nx.cpu's paths: a QR first from 11/6 (17/9 on complex numbers) as
+     many rows as columns or the other way, divide and conquer past 25
+     values. *)
+  let k = min m n and mm = max m n in
+  let qr_first = if is_complex c.dt then k * 17 / 9 else k * 11 / 6 in
+  cover "a QR first" (k > 0 && mm >= qr_first);
+  cover "divide and conquer" (k > 25);
   let x' = laid_out c.how x in
   match (run b (Svd (Some f)) [| x' |], run b (Svd None) [| x' |]) with
   | Some y, Some y' ->
-      let d = down c and k = min m n in
+      let d = down c in
       let a = up d (values x) and s = up d (values y.(0)) in
       let uc, vr = svd_columns f ~m ~n in
       check_svd c.dt ~e:d ~count:(count c) ~m ~n ~uc ~vr a s (values y.(1))
