@@ -43,6 +43,9 @@ external floor_stream :
 
 external floor_fma : int -> bool -> int -> unit = "nx_cpu_bench_floor_fma"
 external floor_read : int -> bytes -> unit = "nx_cpu_bench_floor_read"
+external floor_amx : int -> bool -> int -> unit = "nx_cpu_bench_floor_amx"
+
+external amx_units : unit -> int = "nx_cpu_bench_amx_units" [@@noalloc]
 
 external block_transposed : bytes -> bytes -> int -> int -> unit
   = "nx_cpu_bench_block_transposed"
@@ -89,12 +92,13 @@ let short (type v s) (dt : (v, s) D.t) =
 
 (* Floors: memcpy of [n] bytes, [n] elements of [inb] bytes moved into [outb],
    [n] elements through a codec, [n] flops of fused multiply-adds, float64
-   ones if [f64], or a read of [n] bytes. *)
+   ones if [f64], on the cores or the matrix unit, or a read of [n] bytes. *)
 type floor =
   | Memcpy of int
   | Move of { inb : int; outb : int; n : int }
   | Codec of codec * int
   | Peak of { f64 : bool; n : int }
+  | Amx of { f64 : bool; n : int }
   | Bytes_read of int
   | Streamed of { ins : int; inb : int; outb : int; n : int }
   | Selected of { inb : int; n : int }
@@ -120,6 +124,7 @@ let floor_name = function
       let s, _, d, _ = codec_pair c in
       strf "codec-%s-%s-%s" s d (count n)
   | Peak { f64; n } -> strf "fma-%s-%s" (if f64 then "f64" else "f32") (count n)
+  | Amx { f64; n } -> strf "amx-%s-%s" (if f64 then "f64" else "f32") (count n)
   | Bytes_read n -> strf "read-%s" (count n)
   | Streamed s -> strf "stream-%dx%d-%d-%s" s.ins s.inb s.outb (count s.n)
   | Selected s -> strf "select-%d-%s" s.inb (count s.n)
@@ -145,7 +150,10 @@ let floors = function
         if (cs, cd) = (short s, short d) then Some (Codec (c, n)) else None
       in
       move :: List.filter_map codec codecs
-  | Fma (dt, _) -> [ Peak { f64 = dt = D.Any D.Float64; n = peak_flops } ]
+  | Fma (dt, _) ->
+      let f64 = dt = D.Any D.Float64 in
+      Peak { f64; n = peak_flops }
+      :: (if amx_units () > 0 then [ Amx { f64; n = peak_flops } ] else [])
   | Read n -> [ Bytes_read n ]
   | Stream { ins; inb; outb; n } -> [ Streamed { ins; inb; outb; n } ]
   | Select { inb; n } -> [ Selected { inb; n } ]
@@ -188,6 +196,7 @@ let floor_rows ws =
           (fun () -> (buffer (outb * n), buffer (inb * n)))
           (fun (d, s) -> floor_codec threads c d s n)
     | Peak { f64; n } -> pair (fun () -> ()) (fun () -> floor_fma threads f64 n)
+    | Amx { f64; n } -> pair (fun () -> ()) (fun () -> floor_amx threads f64 n)
     | Bytes_read n -> pair (fun () -> buffer n) (fun s -> floor_read threads s)
     | Streamed { ins; inb; outb; n } ->
         let src k = buffer (if k < ins then inb * n else 1) in
@@ -203,15 +212,20 @@ let floor_rows ws =
     List.filter
       (function
         | Codec _ | Peak _ | Bytes_read _ -> codecs_run ()
-        | Memcpy _ | Move _ | Streamed _ | Selected _ -> true)
+        | Memcpy _ | Move _ | Streamed _ | Selected _ | Amx _ -> true)
       (needed ws)
+  in
+  (* The matrix unit's floors run on one thread and on one per unit. *)
+  let threads_of = function
+    | Amx _ -> [ ("1t", 1); ("units", amx_units ()) ]
+    | _ -> threads
   in
   List.concat_map
     (fun f ->
       List.map
         (fun (t, threads) ->
           run (strf "floor-%s-%s" (floor_name f) t) f threads)
-        threads)
+        (threads_of f))
     floors
 
 (* The transposing block copy of 512x512 elements of [bits] bits. *)
