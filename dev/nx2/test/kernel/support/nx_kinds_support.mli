@@ -56,10 +56,16 @@ val run :
     A symmetric kind is checked at each pattern's magnitude, and at the negated
     magnitude against its value there, bit for bit. *)
 
-type worst = { errors : (int * int) array; ambiguous : int }
+type worst = {
+  errors : (int * int) array;
+  ambiguous : int;
+  frac : float;
+  frac_at : int;
+}
 (** The type for a check's worst points: up to 64 [(error, pattern)] pairs, the
-    largest first, the earliest pattern first among equal errors, and the number
-    of ambiguous references. *)
+    largest first, the earliest pattern first among equal errors, the number of
+    ambiguous references, and the largest error against the reference itself
+    in binary32 ulps at it, a fraction, with a pattern where it occurs. *)
 
 val sweep_range : string -> int -> int -> int -> worst
 (** [sweep_range kind lo hi step] checks [kind] at the bit patterns [lo],
@@ -90,6 +96,11 @@ val binary : string -> seed:int -> int -> int * int * int
     [seed], a sixth from all patterns and the rest where the kind is hard, its
     reductions' boundaries among them, against the C library's f64 function: the
     largest error and a pair of operands, as bits, where it occurs. *)
+
+val f32_fractions : (string * float) list
+(** [f32_fractions] is each kind of {!f32_bounds} with the largest fractional
+    error, in binary32 ulps at the reference, the full sweep found when its
+    algorithm last changed: a change may lower one, never raise it. *)
 
 val f32_bounds : (string * int) list
 (** [f32_bounds] is each f32 transcendental kind of one operand with the bound
@@ -126,8 +137,10 @@ val header_digest : unit -> string
 
 val write_record : (string * worst) list -> unit
 (** [write_record sweeps] writes {!record}: {!header_digest}, then each kind's
-    largest error over all arguments and its worst patterns. *)
+    largest error over all arguments, its largest fractional error to three
+    decimals and a pattern where it occurs, and its worst patterns. *)
 
-val read_record : unit -> string * (string * int * int list) list
-(** [read_record ()] is the digest {!record} holds and each kind's largest error
-    and worst patterns. Raises [Failure] on a malformed record. *)
+val read_record : unit -> string * (string * int * (float * int) * int list) list
+(** [read_record ()] is the digest {!record} holds and each kind's largest
+    error, largest fractional error and a pattern where it occurs, and worst
+    patterns. Raises [Failure] on a malformed record. *)

@@ -197,7 +197,11 @@ value nx_kinds_support_c128(value name, value args) {
    below binary32's: where r lies within 2^-44 of it from a midpoint
    between two floats, either float could be the correctly rounded one, and
    the smaller error counts. A NaN against a number and a zero of the wrong
-   sign count as 2^31. */
+   sign count as 2^31.
+
+   Beside that rank, the error of y against r itself in units of the
+   binary32 ulp at r, a fraction: how far a result strays within its rank,
+   which a change can worsen while every rank stays. */
 
 #define WRONG ((int64_t)1 << 31)
 
@@ -245,10 +249,21 @@ static int64_t error32(float y, double r, int *ambiguous) {
   return e;
 }
 
+/* |y - r| in binary32 ulps at r: 2^(e - 24) for |r| in [2^(e-1), 2^e),
+   2^-149 below the normals. A NaN or infinity on either side is no
+   fraction: the rank holds it. */
+static double fraction32(float y, double r) {
+  if (!isfinite(r) || !isfinite(y)) return 0;
+  int e;
+  frexp(fabs(r) < 0x1p-126 ? 0x1p-126 : r, &e);
+  return fabs((double)y - r) / ldexp(1, e - 24);
+}
+
 /* The worst points a check finds: the largest errors, and among equal
    ones at most two to a binade, ordered by a scramble of the pattern, so
    that a kind with many points at its maximum records points spread over
-   its range. Nx_kinds_support.merge orders them the same way. */
+   its range. Nx_kinds_support.merge orders them the same way. With them,
+   the largest fractional error and its pattern. */
 #define WORST 64
 
 typedef struct {
@@ -256,6 +271,8 @@ typedef struct {
   uint32_t arg[WORST];
   int n;
   long ambiguous;
+  double frac;
+  uint32_t frac_arg;
 } worst;
 
 static int before(int64_t e, uint32_t p, int64_t e2, uint32_t p2) {
@@ -318,6 +335,11 @@ static void check32(const nx_real_loop *k, int ref, const uint32_t *p, long n,
     }
     for (int j = 0; j < b; j++) {
       double r = f((double)x[j]);
+      double fr = fraction32(y[j], r);
+      if (fr > w->frac) {
+        w->frac = fr;
+        w->frac_arg = nx_float_bits(x[j]);
+      }
       if (nx_float_bits(y[j]) == nx_float_bits((float)r)) continue;
       int amb = 0;
       note(w, error32(y[j], r, &amb), nx_float_bits(x[j]));
@@ -336,9 +358,11 @@ static value worst_value(const worst *w) {
     Store_field(pair, 1, Val_long(w->arg[i]));
     Store_field(pts, i, pair);
   }
-  res = caml_alloc_tuple(2);
+  res = caml_alloc_tuple(4);
   Store_field(res, 0, pts);
   Store_field(res, 1, Val_long(w->ambiguous));
+  Store_field(res, 2, caml_copy_double(w->frac));
+  Store_field(res, 3, Val_long(w->frac_arg));
   CAMLreturn(res);
 }
 
@@ -355,7 +379,7 @@ value nx_kinds_support_sweep(value name, value lo, value hi, value step) {
   uint64_t d = (uint64_t)Long_val(step);
   if (d == 0) caml_invalid_argument("Nx_kinds_support.sweep_range: step 0");
   if (references[ref].sym != NONE && b > 0x80000000u) b = 0x80000000u;
-  worst w = {.n = 0, .ambiguous = 0};
+  worst w = {.n = 0, .ambiguous = 0, .frac = 0, .frac_arg = 0};
   caml_enter_blocking_section();
   static _Thread_local uint32_t p[BLOCK];
   for (uint64_t u = a; u < b;) {
@@ -376,7 +400,7 @@ value nx_kinds_support_points(value name, value ps) {
   uint32_t *p = malloc((size_t)(n ? n : 1) * sizeof *p);
   if (p == NULL) caml_raise_out_of_memory();
   for (long i = 0; i < n; i++) p[i] = (uint32_t)Long_val(Field(ps, i));
-  worst w = {.n = 0, .ambiguous = 0};
+  worst w = {.n = 0, .ambiguous = 0, .frac = 0, .frac_arg = 0};
   check32(k, ref, p, n, &w);
   free(p);
   CAMLreturn(worst_value(&w));
@@ -421,7 +445,7 @@ value nx_kinds_support_strata(value name) {
     long m = 0;
     for (size_t i = 0; i < n; i++)
       if (regions[0][i] == r) p[m++] = (uint32_t)strata[0][i];
-    worst wr = {.n = 0, .ambiguous = 0};
+    worst wr = {.n = 0, .ambiguous = 0, .frac = 0, .frac_arg = 0};
     check32(k, ref, p, m, &wr);
     w = worst_value(&wr);
     row = caml_alloc_tuple(3);

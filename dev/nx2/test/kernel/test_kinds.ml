@@ -49,8 +49,6 @@ let ulps64 a b =
     if Int64.compare d (Int64.of_int max_int) >= 0 then max_int
     else Int64.to_int d
 
-let ulps_text e = if e = 1 then "max 1 ulp" else strf "max %d ulps" e
-
 (* f32 transcendentals
 
    gen/sweep_kinds.exe checks every argument and records each kind's largest
@@ -64,15 +62,24 @@ let ulps_text e = if e = 1 then "max 1 ulp" else strf "max %d ulps" e
    draws: every binade of both signs gets 2^15 points, so every region wider
    than 256 ulps is reached by arithmetic. The strata reach the narrower ones:
    each reduction boundary and clamp with its neighbours. Bounds are the
-   header's. *)
+   header's; each kind's fractional error, against the reference itself in
+   binary32 ulps at it, is held to Nx_kinds_support.f32_fractions, so that no
+   change worsens a result within its rank. *)
 
 let worst_error (w : K.worst) =
   if Array.length w.errors = 0 then 0 else fst w.errors.(0)
 
+(* Fractions are compared at the record's three decimals. *)
+let thousandths x = Float.round (x *. 1000.) /. 1000.
+
 let at_bound kind bound (w : K.worst) =
   let e = worst_error w in
   let p = if e = 0 then 0 else snd w.errors.(0) in
-  at_most int ~than:bound e ~msg:(strf "%s at %h (0x%08x)" kind (f p) p)
+  at_most int ~than:bound e ~msg:(strf "%s at %h (0x%08x)" kind (f p) p);
+  at_most float_exact
+    ~than:(List.assoc kind K.f32_fractions)
+    (thousandths w.frac)
+    ~msg:(strf "%s's fractional error at %h (0x%08x)" kind (f w.frac_at) w.frac_at)
 
 let test_record =
   test "the full sweep is the headers'" (fun () ->
@@ -83,12 +90,16 @@ let test_record =
            full sweep (gen/sweep_kinds.exe, from dev/nx2/test/kernel)";
       equal (list string)
         (List.map fst K.f32_bounds)
-        (List.map (fun (k, _, _) -> k) sweeps);
+        (List.map (fun (k, _, _, _) -> k) sweeps);
       List.iter
-        (fun (kind, e, ps) ->
+        (fun (kind, e, (frac, at), ps) ->
           let bound = List.assoc kind K.f32_bounds in
           at_most int ~than:bound e ~msg:kind;
-          at_bound kind bound (K.points kind (Array.of_list ps)))
+          at_most float_exact ~than:(List.assoc kind K.f32_fractions) frac
+            ~msg:kind;
+          at_bound kind bound (K.points kind (Array.of_list (at :: ps)));
+          equal float_exact frac (thousandths (K.points kind [| at |]).frac)
+            ~msg:(strf "%s at 0x%08x" kind at))
         sweeps)
 
 let test_strided =
@@ -279,7 +290,18 @@ let test_exact_points =
       done)
 
 (* f64 transcendentals at the goldens' points, each value correctly rounded by
-   mpmath: uv run dev/nx2/test/kernel/gen/kinds.py *)
+   mpmath with the exact value's remainder past it: uv run
+   dev/nx2/test/kernel/gen/kinds.py. Besides the bound in ranks, each kind's
+   largest error against the exact value in ulps of the rounded one, a
+   fraction, is held to the largest its algorithm last reached. *)
+
+(* |got - (want + lo)| in ulps of want; 0 where want is no finite number. *)
+let fraction64 got want lo =
+  if not (Float.is_finite want) then 0.
+  else
+    let _, e = Float.frexp want in
+    let ulp = Float.ldexp 1. (max (e - 53) (-1074)) in
+    Float.abs (got -. want -. lo) /. ulp
 
 let golden kind =
   let ic = open_in (Filename.concat "golden/kinds" (kind ^ ".golden")) in
@@ -300,42 +322,45 @@ let test_f64_goldens =
     ~name:(fun (k, _, _) -> k)
     "f64 at the goldens"
     [
-      ("exp", 2, __POS_OF__ {|max 1 ulp|});
-      ("exp2", 2, __POS_OF__ {|max 1 ulp|});
-      ("expm1", 2, __POS_OF__ {|max 1 ulp|});
-      ("log", 2, __POS_OF__ {|max 1 ulp|});
-      ("log2", 2, __POS_OF__ {|max 1 ulp|});
-      ("log1p", 2, __POS_OF__ {|max 1 ulp|});
-      ("sin", 2, __POS_OF__ {|max 1 ulp|});
-      ("cos", 2, __POS_OF__ {|max 1 ulp|});
-      ("tan", 2, __POS_OF__ {|max 1 ulp|});
-      ("asin", 2, __POS_OF__ {|max 1 ulp|});
-      ("acos", 2, __POS_OF__ {|max 1 ulp|});
-      ("atan", 2, __POS_OF__ {|max 1 ulp|});
-      ("sinh", 2, __POS_OF__ {|max 1 ulp|});
-      ("cosh", 2, __POS_OF__ {|max 1 ulp|});
-      ("tanh", 2, __POS_OF__ {|max 1 ulp|});
-      ("erf", 2, __POS_OF__ {|max 1 ulp|});
-      ("pow", 2, __POS_OF__ {|max 1 ulp|});
-      ("atan2", 2, __POS_OF__ {|max 1 ulp|});
+      ("exp", 2, 0.802);
+      ("exp2", 2, 1.000);
+      ("expm1", 2, 0.649);
+      ("log", 2, 0.668);
+      ("log2", 2, 0.750);
+      ("log1p", 2, 0.709);
+      ("sin", 2, 0.642);
+      ("cos", 2, 0.651);
+      ("tan", 2, 0.729);
+      ("asin", 2, 0.607);
+      ("acos", 2, 0.598);
+      ("atan", 2, 0.573);
+      ("sinh", 2, 0.708);
+      ("cosh", 2, 0.590);
+      ("tanh", 2, 0.906);
+      ("erf", 2, 0.714);
+      ("pow", 2, 1.000);
+      ("atan2", 2, 0.946);
     ]
-    (fun (kind, bound, measured) ->
-      let check worst row =
-        let n = Array.length row - 1 in
-        let args = Array.sub row 0 n and want = row.(n) in
+    (fun (kind, bound, ceiling) ->
+      let check row =
+        let n = Array.length row - 2 in
+        let args = Array.sub row 0 n and want = row.(n) and lo = row.(n + 1) in
         let got = K.f64 kind args in
         let wrong_zero =
           got = 0. && want = 0. && Float.sign_bit got <> Float.sign_bit want
         in
         let e = if wrong_zero then max_int else ulps64 got want in
-        at_most int ~than:bound e
-          ~msg:
-            (strf "%s %s: got %h, want %h" kind
-               (String.concat " " (List.map (strf "%h") (Array.to_list args)))
-               got want);
-        max worst e
+        let at =
+          strf "%s %s: got %h, want %h" kind
+            (String.concat " " (List.map (strf "%h") (Array.to_list args)))
+            got want
+        in
+        at_most int ~than:bound e ~msg:at;
+        at_most float_exact ~than:ceiling
+          (thousandths (fraction64 got want lo))
+          ~msg:at
       in
-      expect (ulps_text (List.fold_left check 0 (golden kind))) measured)
+      List.iter check (golden kind))
 
 (* Drawn f32 operands *)
 

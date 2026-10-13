@@ -22,15 +22,21 @@ external run :
   unit = "nx_kinds_support_run"
 [@@noalloc]
 
-type worst = { errors : (int * int) array; ambiguous : int }
+type worst = {
+  errors : (int * int) array;
+  ambiguous : int;
+  frac : float;
+  frac_at : int;
+}
 
-external sweep_raw : string -> int -> int -> int -> (int * int) array * int
+type raw = (int * int) array * int * float * int
+
+external sweep_raw : string -> int -> int -> int -> raw
   = "nx_kinds_support_sweep"
 
-external points_raw : string -> int array -> (int * int) array * int
-  = "nx_kinds_support_points"
+external points_raw : string -> int array -> raw = "nx_kinds_support_points"
 
-external strata_raw : string -> (string * int * ((int * int) array * int)) array
+external strata_raw : string -> (string * int * raw) array
   = "nx_kinds_support_strata"
 
 external narrow : string -> int -> int * int = "nx_kinds_support_narrow"
@@ -43,7 +49,8 @@ external targets : unit -> string list = "nx_kinds_support_targets"
 external digest_raw : string -> string -> string -> string
   = "nx_kinds_support_digest"
 
-let worst (errors, ambiguous) = { errors; ambiguous }
+let worst (errors, ambiguous, frac, frac_at) =
+  { errors; ambiguous; frac; frac_at }
 let sweep_range kind lo hi step = worst (sweep_raw kind lo hi step)
 let points kind ps = worst (points_raw kind ps)
 let strata kind = Array.map (fun (r, n, w) -> (r, n, worst w)) (strata_raw kind)
@@ -71,6 +78,26 @@ let f32_bounds =
     ("cosh", 2);
     ("tanh", 2);
     ("erf", 2);
+  ]
+
+let f32_fractions =
+  [
+    ("exp", 1.013);
+    ("exp2", 0.919);
+    ("expm1", 0.997);
+    ("log", 0.826);
+    ("log2", 0.864);
+    ("log1p", 0.834);
+    ("sin", 1.545);
+    ("cos", 1.541);
+    ("tan", 1.822);
+    ("asin", 0.693);
+    ("acos", 0.665);
+    ("atan", 1.567);
+    ("sinh", 0.955);
+    ("cosh", 0.660);
+    ("tanh", 0.891);
+    ("erf", 1.371);
   ]
 
 let kinds =
@@ -138,9 +165,12 @@ let merge a b =
     (fun (e, p) (e', p') ->
       if e <> e' then compare e' e else compare (scramble p) (scramble p'))
     all;
+  let f = if b.frac > a.frac then b else a in
   {
     errors = Array.sub all 0 (min 64 (Array.length all));
     ambiguous = a.ambiguous + b.ambiguous;
+    frac = f.frac;
+    frac_at = f.frac_at;
   }
 
 (* Chunks of 2^24 patterns go to the domains in turn. *)
@@ -149,7 +179,7 @@ let sweep ?(step = 1) ?(offset = 0) kind =
   if step <= 0 || chunk mod step <> 0 || offset < 0 || offset >= step then
     invalid_arg "Nx_kinds_support.sweep: step must divide 2^24, offset below it";
   let next = Atomic.make 0 in
-  let none = { errors = [||]; ambiguous = 0 } in
+  let none = { errors = [||]; ambiguous = 0; frac = 0.; frac_at = 0 } in
   let rec work acc =
     let lo = Atomic.fetch_and_add next chunk in
     if lo >= total then acc
@@ -176,12 +206,14 @@ let write_record sweeps =
   let oc = open_out record in
   Printf.fprintf oc
     "# written by gen/sweep_kinds.exe, run from dev/nx2/test/kernel; do not edit\n";
-  Printf.fprintf oc "# kind, largest error in ulps, the worst patterns\n";
+  Printf.fprintf oc
+    "# kind, largest error in ulps, largest fractional error and its \
+     pattern, the worst patterns\n";
   Printf.fprintf oc "%s %s\n" stamp (header_digest ());
   List.iter
     (fun (kind, w) ->
       let e = if Array.length w.errors = 0 then 0 else fst w.errors.(0) in
-      Printf.fprintf oc "%s %d" kind e;
+      Printf.fprintf oc "%s %d %.3f 0x%08x" kind e w.frac w.frac_at;
       Array.iter (fun (_, p) -> Printf.fprintf oc " 0x%08x" p) w.errors;
       output_char oc '\n')
     sweeps;
@@ -205,8 +237,12 @@ let read_record () =
             List.map
               (fun l ->
                 match fields l with
-                | kind :: e :: ps -> (
-                    try (kind, int_of_string e, List.map int_of_string ps)
+                | kind :: e :: frac :: at :: ps -> (
+                    try
+                      ( kind,
+                        int_of_string e,
+                        (float_of_string frac, int_of_string at),
+                        List.map int_of_string ps )
                     with Failure _ -> bad l)
                 | _ -> bad l)
               rows )

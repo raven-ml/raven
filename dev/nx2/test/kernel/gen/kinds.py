@@ -12,7 +12,10 @@ f64 points each transcendental kind is held to; with --check nothing is
 written, and the run fails if a file would change.
 
 A golden is a table of hexadecimal doubles, one row per point: the
-arguments, then the value correctly rounded to binary64, or `nan`.
+arguments, the value correctly rounded to binary64, or `nan`, and the
+exact value's remainder past it rounded to binary64, 0 where the value
+is no finite rounding, so that a test measures errors to a fraction of
+an ulp.
 
 The second form prints the minimax fits that nx_kinds.h's polynomials
 copy, each with its weighted error, coefficients from the constant term
@@ -408,7 +411,7 @@ def pow_ref(x, y):
         return math.copysign(mag, x) if odd else mag
     if x < 0 and not integer:
         return math.nan
-    v = to_double(E.power(abs(mpf(x)), mpf(y)))
+    v = E.power(abs(mpf(x)), mpf(y))
     return -v if x < 0 and odd else v
 
 
@@ -417,7 +420,7 @@ def atan2_ref(y, x):
         return math.nan
     if math.isinf(x) or math.isinf(y) or x == 0 or y == 0:
         return math.atan2(y, x)  # Annex F's exact special values
-    return to_double(E.atan2(mpf(y), mpf(x)))
+    return E.atan2(mpf(y), mpf(x))
 
 
 def unary_ref(fn, x):
@@ -441,8 +444,18 @@ def unary_ref(fn, x):
     if x == 0 and fn in ("exp", "exp2", "cos", "cosh"):
         return 1.0
     if x == 0:
-        return x if fn != "acos" else to_double(E.pi / 2)
-    return to_double(UNARY[fn](mpf(x)))
+        return x if fn != "acos" else E.pi / 2
+    return UNARY[fn](mpf(x))
+
+
+def rounded(v):
+    """The value v, a float or exact, as its binary64 rounding and the
+    remainder past it, rounded."""
+    if isinstance(v, float):
+        return f"{hexf(v)}\t{hexf(0.0)}"
+    hi = to_double(v)
+    lo = to_double(v - mpf(hi)) if math.isfinite(hi) else 0.0
+    return f"{hexf(hi)}\t{hexf(lo)}"
 
 
 def goldens():
@@ -450,12 +463,12 @@ def goldens():
     files = {}
     for fn in UNARY:
         rng = random.Random(f"nx_kinds:{fn}")
-        rows = [f"{hexf(x)}\t{hexf(unary_ref(fn, x))}\n" for x in unary_points(fn, rng)]
-        files[fn] = HEADER + "x\tf\n" + "".join(rows)
+        rows = [f"{hexf(x)}\t{rounded(unary_ref(fn, x))}\n" for x in unary_points(fn, rng)]
+        files[fn] = HEADER + "x\tf\tlo\n" + "".join(rows)
     for fn, ref in (("pow", pow_ref), ("atan2", atan2_ref)):
         rng = random.Random(f"nx_kinds:{fn}")
-        rows = [f"{hexf(a)}\t{hexf(b)}\t{hexf(ref(a, b))}\n" for a, b in binary_points(fn, rng)]
-        cols = "x\ty\tf\n" if fn == "pow" else "y\tx\tf\n"
+        rows = [f"{hexf(a)}\t{hexf(b)}\t{rounded(ref(a, b))}\n" for a, b in binary_points(fn, rng)]
+        cols = "x\ty\tf\tlo\n" if fn == "pow" else "y\tx\tf\tlo\n"
         files[fn] = HEADER + cols + "".join(rows)
     return files
 
