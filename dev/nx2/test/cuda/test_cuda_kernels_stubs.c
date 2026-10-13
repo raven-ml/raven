@@ -44,14 +44,14 @@ static const fact constants[] = {
     {"simt_bk", NX_SIMT_BK, 0},
     {"simt_stages", NX_SIMT_STAGES, 0},
     {"skinny_rows", NX_SKINNY_ROWS, 0},
-    {"fold_block", NX_FOLD_BLOCK, 0},
-    {"fold_lanes", NX_FOLD_LANES, 0},
+    {"reduce_block", NX_REDUCE_BLOCK, 0},
+    {"reduce_lanes", NX_REDUCE_LANES, 0},
     {"scan_chunk", NX_SCAN_CHUNK, 0},
-    {"fold_rank", NX_FOLD_RANK, 0},
-    {"monoid_sum", NX_FOLD_SUM, 0},
-    {"monoid_prod", NX_FOLD_PROD, 0},
-    {"monoid_max", NX_FOLD_MAX, 0},
-    {"monoid_min", NX_FOLD_MIN, 0}};
+    {"reduce_rank", NX_REDUCE_RANK, 0},
+    {"monoid_sum", NX_REDUCE_SUM, 0},
+    {"monoid_prod", NX_REDUCE_PROD, 0},
+    {"monoid_max", NX_REDUCE_MAX, 0},
+    {"monoid_min", NX_REDUCE_MIN, 0}};
 
 /* Every field of a struct must be listed: the test checks that the fields
    tile their struct. */
@@ -74,19 +74,19 @@ static const fact fields[] = {
     F(pack_params, batch),          F(pack_params, rows),
     F(pack_params, k),              F(pack_params, dtype),
     F(pack_params, out),            F(pack_params, bytes),
-    F(fold_params, x),              F(fold_params, y),
-    F(fold_params, partials),       F(fold_params, outputs),
-    F(fold_params, terms),          F(fold_params, blocks),
-    F(fold_params, groups),         F(fold_params, full),
-    F(fold_params, span),           F(fold_params, monoid),
-    F(fold_params, dtype),          F(fold_params, nkept),
-    F(fold_params, nred),           F(fold_params, kept),
-    F(fold_params, red)};
+    F(reduce_params, x),            F(reduce_params, y),
+    F(reduce_params, partials),     F(reduce_params, outputs),
+    F(reduce_params, terms),        F(reduce_params, blocks),
+    F(reduce_params, groups),       F(reduce_params, full),
+    F(reduce_params, span),         F(reduce_params, monoid),
+    F(reduce_params, dtype),        F(reduce_params, nkept),
+    F(reduce_params, nred),         F(reduce_params, kept),
+    F(reduce_params, red)};
 
 #define S(s) {#s, sizeof(s), 0}
 
 static const fact structs[] = {S(contract_params), S(pack_params),
-                               S(fold_params)};
+                               S(reduce_params)};
 
 #define COUNT(xs) (sizeof xs / sizeof xs[0])
 

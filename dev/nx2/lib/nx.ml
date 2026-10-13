@@ -1506,7 +1506,7 @@ let reduced_axes ~by r axes =
       axes
 
 (* The one-operand reduction [m] of [x] along [axes], rounded to [dt]. *)
-let fold (type v s w r d) ~by m (dt : (w, r) D.t) axes (x : (v, s, d) t) :
+let reduce (type v s w r d) ~by m (dt : (w, r) D.t) axes (x : (v, s, d) t) :
     (w, r, d) t =
   let prog = P.of_node ~ins:[| D.Any (dtype x) |] (In 0) in
   let y, () =
@@ -1531,7 +1531,7 @@ let kept ~keepdims s axes y =
 let reduction ~by m ?axes ?(keepdims = false) x =
   let s = shape x in
   let axes = reduced_axes ~by (Array.length s) axes in
-  kept ~keepdims s axes (fold ~by m (dtype x) axes x)
+  kept ~keepdims s axes (reduce ~by m (dtype x) axes x)
 
 let sum ?axes ?keepdims x = reduction ~by:"Nx.sum" Sum ?axes ?keepdims x
 let prod ?axes ?keepdims x = reduction ~by:"Nx.prod" Prod ?axes ?keepdims x
@@ -1547,7 +1547,7 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) : (v, s, d) t
   let axes = reduced_axes ~by (Array.length s) axes in
   let n = Array.fold_left (fun n a -> n * s.(a)) 1 axes in
   let within (type w r) (acc : (w, r) D.t) (count : (w, r, d) t) =
-    kept ~keepdims s axes (cast dt (div (fold ~by Sum acc axes x) count))
+    kept ~keepdims s axes (cast dt (div (reduce ~by Sum acc axes x) count))
   in
   match D.kind dt with
   | D.Float when D.bits dt < 32 ->
@@ -1940,8 +1940,8 @@ let reduce_by ~by s axes xs rs body =
 
 let reduced_count s axes = Array.fold_left (fun n a -> n * s.(a)) 1 axes
 
-(* [x]'s elements as booleans folded by [m] along [axes]: booleans fold
-   themselves, a plain loop. An extreme of no term has no kernel: there,
+(* [x]'s elements as booleans reduced by [m] along [axes]: booleans reduce
+   as they are, a plain loop. An extreme of no term has no kernel: there,
    whether the count of [true]s is not zero, [Max]'s [false], or whether the
    count of [false]s is zero, [Min]'s [true]. *)
 let truth (type v s d) ~by m ?axes ?(keepdims = false) (x : (v, s, d) t) =
@@ -1951,7 +1951,7 @@ let truth (type v s d) ~by m ?axes ?(keepdims = false) (x : (v, s, d) t) =
   let y =
     if reduced_count s axes > 0 then
       match D.equal_witness (dtype x) D.Bool with
-      | Some Type.Equal -> fold ~by m D.Bool axes x
+      | Some Type.Equal -> reduce ~by m D.Bool axes x
       | None ->
           fst
             (reduce_by ~by s axes [ Any x ]
@@ -2049,7 +2049,7 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
   let axes = reduced_axes ~by (Array.length s) axes in
   let n = Float.of_int (reduced_count s axes) in
   let (Wide w) = wide dt in
-  let l = fold ~by Logsumexp w axes x in
+  let l = reduce ~by Logsumexp w axes x in
   let y =
     elementwise ~by dt [ Any l ] (fun b ins ->
         let log_n = un1 b Log w (const b w n) in
@@ -2696,7 +2696,7 @@ let unique ?size keys =
     scattered ~by Set target i (fill ~by D.Int64 [| n |] (Int64.of_int n))
   in
   let counts = scattered ~by Add ids (fill ~by D.Int64 [| n |] 1L) zeros in
-  let count = fold ~by Sum D.Int64 [| 0 |] fresh in
+  let count = reduce ~by Sum D.Int64 [| 0 |] fresh in
   let l = match size with Some l -> l | None -> length ~by count in
   {
     ids;
@@ -2719,7 +2719,7 @@ let positions ?size c =
         let v = push b (Op1 (Cast, D.Any D.Int64, ins.(0))) in
         bin2 b Maximum v (i64 b 0))
   in
-  let total = fold ~by Sum D.Int64 [| 0 |] counts in
+  let total = reduce ~by Sum D.Int64 [| 0 |] counts in
   let l = match size with Some l -> l | None -> length ~by total in
   let i = arange D.Int64 0 n 1 in
   (* An index of no count goes to its own position below zero, which writes

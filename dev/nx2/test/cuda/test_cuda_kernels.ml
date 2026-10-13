@@ -48,7 +48,7 @@ let kernel_row (name, instance) =
         "SIMT" :: acc sum
         :: List.map string_of_int [ s.tm; s.tn; s.warps_m; s.warps_n ]
     | Skinny sum -> [ "SKINNY"; acc sum ]
-    | Fold -> [ "FOLD" ]
+    | Reduce -> [ "REDUCE" ]
   in
   String.concat ", " (name :: args)
 
@@ -81,10 +81,10 @@ let constants () =
       ("simt_bk", K.simt_bk);
       ("simt_stages", K.simt_stages);
       ("skinny_rows", K.skinny_rows);
-      ("fold_block", K.fold_block);
-      ("fold_lanes", K.fold_lanes);
+      ("reduce_block", K.reduce_block);
+      ("reduce_lanes", K.reduce_lanes);
       ("scan_chunk", K.scan_chunk);
-      ("fold_rank", K.fold_rank);
+      ("reduce_rank", K.reduce_rank);
       ("monoid_sum", K.monoid_sum);
       ("monoid_prod", K.monoid_prod);
       ("monoid_max", K.monoid_max);
@@ -119,14 +119,14 @@ let fields_tile () =
 let offsets () =
   let module C = K.Contract_params in
   let module P = K.Pack_params in
-  let module F = K.Fold_params in
+  let module R = K.Reduce_params in
   equal
     (list (pair string int))
     (named (H.structs ()) @ named (H.fields ()))
     [
       ("contract_params", C.size);
       ("pack_params", P.size);
-      ("fold_params", F.size);
+      ("reduce_params", R.size);
       ("contract_params.a", C.a);
       ("contract_params.b", C.b);
       ("contract_params.init", C.init);
@@ -159,21 +159,21 @@ let offsets () =
       ("pack_params.dtype", P.dtype);
       ("pack_params.out", P.out);
       ("pack_params.bytes", P.bytes);
-      ("fold_params.x", F.x);
-      ("fold_params.y", F.y);
-      ("fold_params.partials", F.partials);
-      ("fold_params.outputs", F.outputs);
-      ("fold_params.terms", F.terms);
-      ("fold_params.blocks", F.blocks);
-      ("fold_params.groups", F.groups);
-      ("fold_params.full", F.full);
-      ("fold_params.span", F.span);
-      ("fold_params.monoid", F.monoid);
-      ("fold_params.dtype", F.dtype);
-      ("fold_params.nkept", F.nkept);
-      ("fold_params.nred", F.nred);
-      ("fold_params.kept", F.kept);
-      ("fold_params.red", F.red);
+      ("reduce_params.x", R.x);
+      ("reduce_params.y", R.y);
+      ("reduce_params.partials", R.partials);
+      ("reduce_params.outputs", R.outputs);
+      ("reduce_params.terms", R.terms);
+      ("reduce_params.blocks", R.blocks);
+      ("reduce_params.groups", R.groups);
+      ("reduce_params.full", R.full);
+      ("reduce_params.span", R.span);
+      ("reduce_params.monoid", R.monoid);
+      ("reduce_params.dtype", R.dtype);
+      ("reduce_params.nkept", R.nkept);
+      ("reduce_params.nred", R.nred);
+      ("reduce_params.kept", R.kept);
+      ("reduce_params.red", R.red);
     ]
 
 let () =

@@ -28,7 +28,7 @@
    - SIMT (contract.cu): the accumulator's type, a lane's TM x TN outputs
      and the WARPS_M x WARPS_N warps of the block.
    - SKINNY (contract.cu): the accumulator's type.
-   - FOLD (fold.cu): none; the monoid and dtype are parameters.
+   - REDUCE (reduce.cu): none; the monoid and dtype are parameters.
    Instances are a budget: each names the rows that keep it. The plan
    packs an operand into a layout and dtype an instance reads. */
 #define NX_CUDA_KERNELS(X)                                                    \
@@ -73,14 +73,14 @@
   X(contract_skinny_f64, SKINNY, f64)                                       \
   X(contract_skinny_i64, SKINNY, i64)                                       \
   /* reductions whose terms run along the operand: sum-rows-*, sum-all-* */ \
-  X(fold_rows, FOLD)                                                        \
+  X(reduce_rows, REDUCE)                                                    \
   /* reductions across outputs, and few terms: sum-cols-*, sum-rows-4-4M */ \
-  X(fold_cols, FOLD)                                                        \
+  X(reduce_cols, REDUCE)                                                    \
   /* an output's ranges, where several fold it: sum-all-* */                 \
-  X(fold_tree, FOLD)                                                        \
+  X(reduce_tree, REDUCE)                                                    \
   /* scans: cumsum-*, the totals where a slice has several chunks */        \
-  X(scan_totals, FOLD)                                                      \
-  X(scan_rescan, FOLD)
+  X(scan_totals, REDUCE)                                                    \
+  X(scan_rescan, REDUCE)
 
 #define NX_CUDA_ENUM(name, ...) NX_CUDA_##name,
 enum nx_cuda_kernel { NX_CUDA_KERNELS(NX_CUDA_ENUM) NX_CUDA_KERNEL_COUNT };
@@ -149,26 +149,26 @@ typedef struct {
   int32_t batch, rows, k, dtype, out, bytes;
 } pack_params;
 
-/* Fold */
+/* Reduce */
 
-/* Reductions and scans of one operand by a monoid (fold.cu, whose header
-   states the association): terms in blocks of NX_FOLD_BLOCK, NX_FOLD_LANES
-   lanes a block; a scan's chunks of NX_SCAN_CHUNK. */
-#define NX_FOLD_BLOCK 1024
-#define NX_FOLD_LANES 16
+/* Reductions and scans of one operand by a monoid (reduce.cu, whose header
+   states the association): terms in blocks of NX_REDUCE_BLOCK,
+   NX_REDUCE_LANES lanes a block; a scan's chunks of NX_SCAN_CHUNK. */
+#define NX_REDUCE_BLOCK 1024
+#define NX_REDUCE_LANES 16
 #define NX_SCAN_CHUNK 4096
-#define NX_FOLD_RANK 32 /* Layout.max_rank */
+#define NX_REDUCE_RANK 32 /* Layout.max_rank */
 
-/* fold_params' monoids. */
-enum { NX_FOLD_SUM, NX_FOLD_PROD, NX_FOLD_MAX, NX_FOLD_MIN };
+/* reduce_params' monoids. */
+enum { NX_REDUCE_SUM, NX_REDUCE_PROD, NX_REDUCE_MAX, NX_REDUCE_MIN };
 
-/* y[o] = the fold by [monoid] (NX_FOLD_SUM to NX_FOLD_MIN) of the
+/* y[o] = the reduction by [monoid] (NX_REDUCE_SUM to NX_REDUCE_MIN) of the
    [terms] terms of output o < [outputs] of x, both of the dtype [dtype].
    Output o lies along [nkept] kept axes, term t along [nred] reduced ones,
    each in C order: kept[d] and red[d] hold an axis's extent, then x's
    stride and y's, in elements. y holds the outputs in order. An output's
    [blocks] blocks fall into [groups] ranges of [span] blocks, [full] of
-   them whole, folded into [partials] where [groups] > 1 (fold_tree's
+   them whole, folded into [partials] where [groups] > 1 (reduce_tree's
    [span] is values a thread).
 
    A scan's [outputs] slices run along the one axis red[0], [terms] long,
@@ -179,8 +179,8 @@ typedef struct {
   int64_t outputs, terms, blocks;
   int64_t groups, full, span;
   int32_t monoid, dtype, nkept, nred;
-  int64_t kept[NX_FOLD_RANK][3];
-  int64_t red[NX_FOLD_RANK][3];
-} fold_params;
+  int64_t kept[NX_REDUCE_RANK][3];
+  int64_t red[NX_REDUCE_RANK][3];
+} reduce_params;
 
 #endif

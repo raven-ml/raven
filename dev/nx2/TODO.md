@@ -48,7 +48,7 @@ to the current API; they do not establish readiness to land.
   patches and missing `dispatch/real-1` and `dispatch/sum-1` rows are preserved
   in `refs/audit/20261010-deep/worktrees/wt-13`. Require per-stage A/Bs,
   kimchi correctness and baselines; keep compiler internals private.
-- Decide the CUDA elementwise and fold drafts in
+- Decide the CUDA elementwise and reduce drafts in
   `refs/audit/20261010-deep/worktrees/wt-10` against the intended backend
   contract. Any accepted implementation needs current argument/access
   consumers, regenerated cubins, kernel and public laws, and recorded rows.

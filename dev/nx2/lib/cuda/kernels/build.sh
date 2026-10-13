@@ -38,7 +38,7 @@ stamp "$stamp_dir/kernels.h" "$nx2/lib/cuda/kernels/build.sh" \
   "$nx2/lib/cuda/kernels/src/elements.cuh" \
   "$nx2/lib/cuda/kernels/src/mma.cuh" \
   "$nx2/lib/cuda/kernels/src/kinds.cuh" \
-  "$nx2/lib/cuda/kernels/src/fold.cu"
+  "$nx2/lib/cuda/kernels/src/reduce.cu"
 stamp "$stamp_dir/harness.h" "$nx2/lib/cuda/kernels/build.sh" \
   "$nx2/test/cuda/support/harness.h" "$nx2/lib/array/nx_dtype.h" \
   "$nx2/test/cuda/support/harness.cu"

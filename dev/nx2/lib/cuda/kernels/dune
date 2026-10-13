@@ -34,5 +34,5 @@
      %{dep:src/elements.cuh}
      %{dep:src/mma.cuh}
      %{dep:src/kinds.cuh}
-     %{dep:src/fold.cu}))
+     %{dep:src/reduce.cu}))
    (copy sm_89.cubin embedded.cubin))))

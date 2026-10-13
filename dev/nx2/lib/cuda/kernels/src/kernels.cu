@@ -12,7 +12,7 @@
 
 #include "kinds.cuh"
 
-#include "fold.cu"
+#include "reduce.cu"
 
 #define DEFINE(name, FAMILY, ...) FAMILY(name, __VA_ARGS__)
 NX_CUDA_KERNELS(DEFINE)

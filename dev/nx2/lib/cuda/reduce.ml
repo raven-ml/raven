@@ -6,15 +6,15 @@
 (* A reduction's axes split into kept and reduced ones, each list coalesced
    apart in its own order, so that the terms keep their C order:
 
-     x [kept..., reduced...] --> fold_rows or fold_cols --> y, or the
-     ranges' values --> fold_tree --> y
+     x [kept..., reduced...] --> reduce_rows or reduce_cols --> y, or the
+     ranges' values --> reduce_tree --> y
 
    A scan's axis is its one reduced axis, the others kept:
 
      x --> scan_totals (where a slice has several chunks) --> scan_rescan --> y
 
-   fold_rows takes outputs whose terms step through x no more than the
-   outputs do, with 64 terms or more; fold_cols the others. Each unit folds
+   reduce_rows takes outputs whose terms step through x no more than the
+   outputs do, with 64 terms or more; reduce_cols the others. Each unit folds
    an aligned range of blocks, sized so that a GPU of kimchi's size gets
    enough of them; the size never changes a bit. *)
 
@@ -33,14 +33,14 @@ let operand (p : Nx_kernel.Prog.t) =
     let (D.Any dt) = Iarray.get p.ins 0 in
     D.code dt
 
-let rank = K.fold_rank
+let rank = K.reduce_rank
 let index name =
   let rec go k = if fst K.kernels.(k) = name then k else go (k + 1) in
   go 0
 
-let fold_rows = index "fold_rows"
-let fold_cols = index "fold_cols"
-let fold_tree = index "fold_tree"
+let reduce_rows = index "reduce_rows"
+let reduce_cols = index "reduce_cols"
+let reduce_tree = index "reduce_tree"
 let scan_totals = index "scan_totals"
 let scan_rescan = index "scan_rescan"
 
@@ -57,7 +57,7 @@ type t = {
   mutable groups : int;
   mutable full : int;
   mutable span : int;
-  mutable tree_span : int;  (** fold_tree's values a thread. *)
+  mutable tree_span : int;  (** reduce_tree's values a thread. *)
   mutable nkept : int;
   mutable nred : int;
   kept : int array;  (** [rank] triples: extent, x's stride, y's stride. *)
@@ -66,9 +66,10 @@ type t = {
   axis : int array;  (** A scan's one axis, as the axes it reduces. *)
   mutable x_first : int;  (** Bytes into x's buffer. *)
   mutable y_first : int;
-  mutable body : int;  (** The first pass: fold_rows or fold_cols. *)
+  mutable body : int;  (** The first pass: reduce_rows or reduce_cols. *)
   mutable threads : int;
-  mutable second : bool;  (** fold_tree after the body, or scan_totals first. *)
+  mutable second : bool;
+      (** reduce_tree after the body, or scan_totals first. *)
 }
 
 let make () =
@@ -151,8 +152,8 @@ let rec axes_fit axes r j =
 let ceil_div a b = (a + b - 1) / b
 let rec pow2_above n p = if p > n then p else pow2_above n (2 * p)
 
-(* Units the first pass aims for on kimchi's 100 SMs: fold_rows' blocks of
-   up to 256 threads, fold_cols' threads. *)
+(* Units the first pass aims for on kimchi's 100 SMs: reduce_rows' blocks of
+   up to 256 threads, reduce_cols' threads. *)
 let row_units = 800
 let col_units = 32768
 
@@ -167,7 +168,7 @@ let plan_rows c =
   do
     span := 2 * !span
   done;
-  c.body <- fold_rows;
+  c.body <- reduce_rows;
   c.threads <- 16 * q;
   c.span <- !span;
   c.groups <- ceil_div c.blocks (q * !span);
@@ -180,7 +181,7 @@ let plan_cols c =
   do
     span := 2 * !span
   done;
-  c.body <- fold_cols;
+  c.body <- reduce_cols;
   c.threads <- 256;
   c.span <- !span;
   c.groups <- Int.max 1 (ceil_div c.blocks !span);
@@ -194,10 +195,10 @@ let along_terms c =
         < Int.abs c.kept.((3 * (c.nkept - 1)) + 1))
 
 let plan_reduce c =
-  c.blocks <- ceil_div c.terms K.fold_block;
+  c.blocks <- ceil_div c.terms K.reduce_block;
   if c.terms >= 64 && along_terms c then plan_rows c else plan_cols c;
   c.second <- c.groups > 1;
-  (* Thread j of fold_tree folds the values from j tree_span: 256 threads
+  (* Thread j of reduce_tree folds the values from j tree_span: 256 threads
      cover the whole ranges. *)
   c.tree_span <- pow2_above (c.full / 256) 1
 
@@ -207,9 +208,9 @@ let plan_scan c =
   c.threads <- 256;
   c.second <- c.blocks > 1
 
-(* The dtypes nx.cuda folds: float32, float64, the 8- to 64-bit integers;
+(* The dtypes nx.cuda reduces: float32, float64, the 8- to 64-bit integers;
    bool for the extremes. *)
-let folds (type v s) (dt : (v, s) D.t) monoid =
+let reduces (type v s) (dt : (v, s) D.t) monoid =
   match dt with
   | D.Float32 | D.Float64 | D.Int8 | D.Uint8 | D.Int16 | D.Uint16 | D.Int32
   | D.Uint32 | D.Int64 | D.Uint64 ->
@@ -217,7 +218,7 @@ let folds (type v s) (dt : (v, s) D.t) monoid =
   | D.Bool -> monoid = K.monoid_max || monoid = K.monoid_min
   | _ -> false
 
-(* fold.cu's code of [m], or -1 for a monoid it does not fold. *)
+(* reduce.cu's code of [m], or -1 for a monoid it does not fold. *)
 let code : Nx_kernel.monoid -> int = function
   | Sum -> K.monoid_sum
   | Prod -> K.monoid_prod
@@ -255,7 +256,7 @@ let choose c ~axes m p ~dst x =
   let code = code m and dt = operand p in
   if code < 0 || dt < 0 then Declined
   else if D.code (A.dtype x) <> dt then Refused A.Wrong_dtype
-  else if D.code (A.dtype ya) <> dt || not (folds (A.dtype x) code) then
+  else if D.code (A.dtype ya) <> dt || not (reduces (A.dtype x) code) then
     Declined
   else
     let l = A.layout x and y = A.layout ya in
@@ -301,13 +302,13 @@ let scan c ~axis m p ~dst x =
 
 (* Sequences *)
 
-(* Keys: fold_rows, then with fold_tree; fold_cols, then with fold_tree;
+(* Keys: reduce_rows, then with reduce_tree; reduce_cols, then with reduce_tree;
    scan_rescan, then after scan_totals. *)
 let sequences = 6
 
 let sequence c =
   let pair = Bool.to_int c.second in
-  if c.scan then 4 + pair else if c.body = fold_rows then pair else 2 + pair
+  if c.scan then 4 + pair else if c.body = reduce_rows then pair else 2 + pair
 
 let workspace c =
   if not c.second then 0
@@ -322,7 +323,7 @@ let access c =
 (* [c]'s launches in order: each kernel and its refs into the slots: x, y,
    then the workspace. *)
 let launches c =
-  let module P = K.Fold_params in
+  let module P = K.Reduce_params in
   let acc = access c in
   let ref at slot =
     match acc.(slot) with
@@ -335,12 +336,12 @@ let launches c =
   else
     let refs = [| x; y; ref P.partials 2 |] in
     if c.scan then [ (scan_totals, refs); (scan_rescan, refs) ]
-    else [ (c.body, refs); (fold_tree, refs) ]
+    else [ (c.body, refs); (reduce_tree, refs) ]
 
 let parts c image =
   let part (kernel, refs) =
     let kernel = fst K.kernels.(kernel) in
-    Sub.launch ~refs image kernel ~params:K.Fold_params.size
+    Sub.launch ~refs image kernel ~params:K.Reduce_params.size
   in
   Array.of_list (List.map part (launches c))
 
@@ -352,7 +353,7 @@ let write_dims run at field dims n =
   done
 
 let write_params run at c ~span =
-  let module P = K.Fold_params in
+  let module P = K.Reduce_params in
   Run.shared run at 0;
   Run.int64 run at P.x c.x_first;
   Run.int64 run at P.y c.y_first;
@@ -389,7 +390,7 @@ let write run sub c =
   end
   else begin
     let at = block 0 in
-    if c.body = fold_rows then begin
+    if c.body = reduce_rows then begin
       Run.groups run at (c.outputs * c.groups) 1 1;
       Run.threads run at c.threads 1 1
     end

@@ -11,7 +11,7 @@
    View.fill, Plan.choose --> workspace, submission --> Plan.write into the run
    --> door --> Rig.submit
 
-   reduce and scan take the same path with Fold's plan. A call that finds
+   reduce and scan take the same path with Reduce's plan. A call that finds
    every cache warm allocates nothing. *)
 
 module A = Nx_array
@@ -31,15 +31,15 @@ external cubin : string -> string option = "nx_cuda_cubin"
    words, which every call leaves zero. *)
 let kept = 64 * 1024 * 1024
 
-(* What this library keeps for a device: [subs] and
-   [folds] hold the submissions by {!Plan.sequence} and {!Fold.sequence}, made
-   on first use. *)
+(* What this library keeps for a device: [subs] and [reduce_subs] hold the
+   submissions by {!Plan.sequence} and {!Reduce.sequence}, made on first
+   use. *)
 type device = {
   image : Rig.Image.t;
   workspace : Rig.Buffer.t Atomic.t;
   tickets : Rig.Buffer.t Atomic.t;
   subs : Sub.t option array;
-  folds : Sub.t option array;
+  reduce_subs : Sub.t option array;
 }
 
 (* A device of an architecture [cubin] serves, whose queues run launches. *)
@@ -56,7 +56,7 @@ let load d =
               workspace = Atomic.make (Rig.Buffer.create d 0);
               tickets = Atomic.make (Rig.Buffer.create d 0);
               subs = Array.make Plan.sequences None;
-              folds = Array.make Fold.sequences None;
+              reduce_subs = Array.make Reduce.sequences None;
             })
 
 (* Each device's [load], [None] where it does not compute. *)
@@ -108,14 +108,14 @@ let submission d dv p =
       dv.subs.(key) <- s;
       s
 
-let fold_submission d dv p =
-  let key = Fold.sequence p in
-  match dv.folds.(key) with
+let reduce_submission d dv p =
+  let key = Reduce.sequence p in
+  match dv.reduce_subs.(key) with
   | Some _ as s -> s
   | None ->
-      let parts = Fold.parts p dv.image in
+      let parts = Reduce.parts p dv.image in
       let s = Some (Sub.make d parts) in
-      dv.folds.(key) <- s;
+      dv.reduce_subs.(key) <- s;
       s
 
 (* Frames *)
@@ -129,7 +129,7 @@ type frame = {
   busy : bool Atomic.t;
   view : V.t;
   plan : Plan.t;
-  fold : Fold.t;
+  reduce : Reduce.t;
   run : Sub.Run.t;
   mutable sub : Sub.t option;
   buffer_arrays : Rig.Buffer.t array array;
@@ -151,7 +151,7 @@ let frame ~busy =
     busy = Atomic.make busy;
     view = V.make ();
     plan = Plan.make ();
-    fold = Fold.make ();
+    reduce = Reduce.make ();
     run = Sub.Run.make ();
     sub = None;
     buffer_arrays = by_count 6 no_buffer;
@@ -260,8 +260,8 @@ let contract ~batch ~contracting ~acc ~dst ~init a b =
 
 (* Reductions and scans *)
 
-(* The call Fold planned as [verdict], of [x] into [dst]. *)
-let run_fold d dv f ~dst x (verdict : Fold.verdict) =
+(* The call Reduce planned as [verdict], of [x] into [dst]. *)
+let run_reduce d dv f ~dst x (verdict : Reduce.verdict) =
   f.written <- f.written_arrays.(1);
   f.written.(0) <- dst;
   f.read <- f.read_arrays.(1);
@@ -271,12 +271,12 @@ let run_fold d dv f ~dst x (verdict : Fold.verdict) =
   | Refused r -> r
   | Nothing -> A.door ~written:f.written ~read:f.read nothing ()
   | Launches ->
-      let ws = workspace d dv (Fold.workspace f.fold) in
-      let sub = fold_submission d dv f.fold in
+      let ws = workspace d dv (Reduce.workspace f.reduce) in
+      let sub = reduce_submission d dv f.reduce in
       f.sub <- sub;
-      Fold.write f.run (Option.get sub) f.fold;
-      (* {!Fold.access}'s slots: [x], [dst], then the workspace. *)
-      let uses_ws = Fold.workspace f.fold > 0 in
+      Reduce.write f.run (Option.get sub) f.reduce;
+      (* {!Reduce.access}'s slots: [x], [dst], then the workspace. *)
+      let uses_ws = Reduce.workspace f.reduce > 0 in
       f.buffers <- f.buffer_arrays.(2 + Bool.to_int uses_ws);
       f.buffers.(0) <- A.buffer x;
       f.buffers.(1) <- buffer dst;
@@ -288,7 +288,7 @@ let accepted (p : Nx_kernel.Prog.t) (r, k) =
   let (Nx_array.Dtype.Any dt) = Nx_kernel.Prog.dtype p (Iarray.get p.outs k) in
   Nx_kernel.accepts r dt
 
-(* Fold computes a monoid of output 0 of the program into one destination,
+(* Reduce computes a monoid of output 0 of the program into one destination,
    read plain. *)
 let reduce p ~axes rs ~dsts loads =
   if not (Array.for_all (accepted p) rs) then A.Wrong_dtype
@@ -302,7 +302,7 @@ let reduce p ~axes rs ~dsts loads =
         | Some dv -> (
             let f = take () in
             match
-              run_fold d dv f ~dst x (Fold.reduce f.fold ~axes m p ~dst x)
+              run_reduce d dv f ~dst x (Reduce.reduce f.reduce ~axes m p ~dst x)
             with
             | answer ->
                 release f;
@@ -324,7 +324,7 @@ let scan p ~axis r ~dsts loads =
         | Some dv -> (
             let f = take () in
             match
-              run_fold d dv f ~dst x (Fold.scan f.fold ~axis m p ~dst x)
+              run_reduce d dv f ~dst x (Reduce.scan f.reduce ~axis m p ~dst x)
             with
             | answer ->
                 release f;

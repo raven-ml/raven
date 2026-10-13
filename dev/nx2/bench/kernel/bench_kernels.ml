@@ -443,7 +443,7 @@ let scan name r ~axis a (module K : Nx_kernel.S) =
       ))
     (fun (p, r, loads, dsts) -> ok (K.scan p ~axis r ~dsts loads))
 
-let fold_rows =
+let reduce_rows =
   let bytes dt s = D.bits dt / 8 * Array.fold_left ( * ) 1 s in
   let any dt s () = A.Any (filled dt s) in
   let along name dt s axes m =
@@ -801,7 +801,7 @@ let linalg_rows =
   ]
 
 let rows =
-  copy_rows @ cast_rows @ apply_rows @ map_rows @ contract_rows @ fold_rows
+  copy_rows @ cast_rows @ apply_rows @ map_rows @ contract_rows @ reduce_rows
   @ index_rows @ sort_rows @ assembly_rows @ linalg_rows
 
 (* A contraction's axes grouped as a GPU planner reads them: Contract_view

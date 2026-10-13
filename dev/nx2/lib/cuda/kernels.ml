@@ -26,7 +26,7 @@ type instance =
   | Mma of kind * axis * axis * tile
   | Simt of acc * simt
   | Skinny of acc
-  | Fold
+  | Reduce
 
 (* NX_CUDA_KERNELS's rows in order: each kernel's name and instance. *)
 let kernels =
@@ -57,11 +57,11 @@ let kernels =
       Simt (I64, { tm = 4; tn = 4; warps_m = 4; warps_n = 2 }) );
     ("contract_skinny_f64", Skinny F64);
     ("contract_skinny_i64", Skinny I64);
-    ("fold_rows", Fold);
-    ("fold_cols", Fold);
-    ("fold_tree", Fold);
-    ("scan_totals", Fold);
-    ("scan_rescan", Fold);
+    ("reduce_rows", Reduce);
+    ("reduce_cols", Reduce);
+    ("reduce_tree", Reduce);
+    ("scan_totals", Reduce);
+    ("scan_rescan", Reduce);
   |]
 
 (* Tiles *)
@@ -93,13 +93,13 @@ let simt_stages = 3
 (* NX_SKINNY_ROWS. *)
 let skinny_rows = 4
 
-(* NX_FOLD_BLOCK, NX_FOLD_LANES, NX_SCAN_CHUNK, NX_FOLD_RANK. *)
-let fold_block = 1024
-let fold_lanes = 16
+(* NX_REDUCE_BLOCK, NX_REDUCE_LANES, NX_SCAN_CHUNK, NX_REDUCE_RANK. *)
+let reduce_block = 1024
+let reduce_lanes = 16
 let scan_chunk = 4096
-let fold_rank = 32
+let reduce_rank = 32
 
-(* NX_FOLD_SUM to NX_FOLD_MIN, the monoids fold.cu reads. *)
+(* NX_REDUCE_SUM to NX_REDUCE_MIN, the monoids reduce.cu reads. *)
 let monoid_sum = 0
 let monoid_prod = 1
 let monoid_max = 2
@@ -149,7 +149,7 @@ module Pack_params = struct
   let bytes = 68
 end
 
-module Fold_params = struct
+module Reduce_params = struct
   let size = 1624
   let x = 0
   let y = 8

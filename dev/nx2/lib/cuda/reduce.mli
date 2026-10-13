@@ -7,7 +7,7 @@
 
     A plan is chosen from the operand's dtype and layout and the reduced
     axes, never from the GPU's size or clocks; its ranges and lanes follow
-    fold.cu's association whatever it chooses, so a result's bits depend on
+    reduce.cu's association whatever it chooses, so a result's bits depend on
     the values and the shape alone. *)
 
 type t

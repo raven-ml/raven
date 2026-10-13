@@ -4,12 +4,12 @@
   ---------------------------------------------------------------------------*/
 
 /* Reductions and scans of one operand by Sum, Prod, Max or Min
-   (kernels.h's fold_params), in nx.cpu's association, so that the two
+   (kernels.h's reduce_params), in nx.cpu's association, so that the two
    libraries agree bit for bit.
 
    An output's terms are t = 0, 1, ... in C order of the reduced axes. They
-   fall into blocks of NX_FOLD_BLOCK consecutive terms and, within a block,
-   into NX_FOLD_LANES lanes from the identity, term t into lane t mod 16,
+   fall into blocks of NX_REDUCE_BLOCK consecutive terms and, within a block,
+   into NX_REDUCE_LANES lanes from the identity, term t into lane t mod 16,
    each lane folding its terms in increasing t. Lane i takes lane i + 8 for
    i < 8, then lane i + 4, i + 2 and i + 1: lane 0 is the block's value.
    The blocks combine by the binary tree whose left part holds the largest
@@ -21,13 +21,13 @@
    bits, largest first, each combined with the fold of those after it. The
    tree over the whole ranges with the tail innermost is the tree over the
    blocks. A counter folds a run of values either way in one pass
-   (Counter). So each kernel folds an aligned range, and fold_tree folds
+   (Counter). So each kernel folds an aligned range, and reduce_tree folds
    the ranges' values of an output:
 
-     fold_rows   a group of 16 threads a lane each, along a run of terms
-     fold_cols   a thread an output, its 16 lanes in registers, the
-                 threads of a warp on neighbouring outputs
-     fold_tree   a block an output, over its ranges' values
+     reduce_rows   a group of 16 threads a lane each, along a run of terms
+     reduce_cols   a thread an output, its 16 lanes in registers, the
+                   threads of a warp on neighbouring outputs
+     reduce_tree   a block an output, over its ranges' values
 
    A scan cuts each slice along its axis into chunks of NX_SCAN_CHUNK
    terms from its start. scan_totals folds each whole chunk as above;
@@ -42,14 +42,14 @@
 
    Part of kernels.cu's translation unit, after nx_kinds.h. */
 
-#ifndef NX_CUDA_FOLD_CU
-#define NX_CUDA_FOLD_CU
+#ifndef NX_CUDA_REDUCE_CU
+#define NX_CUDA_REDUCE_CU
 
-#define BLOCK NX_FOLD_BLOCK
-#define LANES NX_FOLD_LANES
+#define BLOCK NX_REDUCE_BLOCK
+#define LANES NX_REDUCE_LANES
 #define NONE INT64_MAX
 
-/* A range's value as fold_tree and scan_rescan read it: its bits, then
+/* A range's value as reduce_tree and scan_rescan read it: its bits, then
    its first NaN term or NONE. */
 typedef struct {
   uint64_t bits;
@@ -58,13 +58,13 @@ typedef struct {
 
 /* Monoids */
 
-/* The monoid [m], an NX_FOLD_SUM to NX_FOLD_MIN of kernels.h: a parameter
+/* The monoid [m], an NX_REDUCE_SUM to NX_REDUCE_MIN of kernels.h: a parameter
    of the launch, so its switch takes the same branch in every thread. */
 template <typename T> __device__ __forceinline__ T op(int m, T a, T b) {
   switch (m) {
-  case NX_FOLD_SUM: return k_add(a, b);
-  case NX_FOLD_PROD: return k_mul(a, b);
-  case NX_FOLD_MAX: return k_maximum(a, b);
+  case NX_REDUCE_SUM: return k_add(a, b);
+  case NX_REDUCE_PROD: return k_mul(a, b);
+  case NX_REDUCE_MAX: return k_maximum(a, b);
   default: return k_minimum(a, b);
   }
 }
@@ -83,9 +83,9 @@ template <typename T> __device__ __forceinline__ T greatest() {
 
 template <typename T> __device__ __forceinline__ T identity(int m) {
   switch (m) {
-  case NX_FOLD_SUM: return T(0);
-  case NX_FOLD_PROD: return T(1);
-  case NX_FOLD_MAX: return least<T>();
+  case NX_REDUCE_SUM: return T(0);
+  case NX_REDUCE_PROD: return T(1);
+  case NX_REDUCE_MAX: return least<T>();
   default: return greatest<T>();
   }
 }
@@ -146,7 +146,7 @@ template <typename T> __device__ __forceinline__ T of_bits(uint64_t b) {
 /* The offset in elements of term [t] along the reduced axes, from the
    output's first term: one multiplication along one axis, out of line
    along several. */
-__device__ __noinline__ int64_t terms_at(const fold_params &p, int64_t t) {
+__device__ __noinline__ int64_t terms_at(const reduce_params &p, int64_t t) {
   int64_t at = 0;
   for (int d = p.nred - 1; d >= 0; d--) {
     const int64_t e = p.red[d][0];
@@ -156,13 +156,13 @@ __device__ __noinline__ int64_t terms_at(const fold_params &p, int64_t t) {
   return at;
 }
 
-__device__ __forceinline__ int64_t term_at(const fold_params &p, int64_t t) {
+__device__ __forceinline__ int64_t term_at(const reduce_params &p, int64_t t) {
   return p.nred == 1 ? t * p.red[0][1] : terms_at(p, t);
 }
 
 /* The offset in elements of output (or slice) [o] in x ([side] 1) or y
    ([side] 2), along the kept axes. */
-__device__ __noinline__ int64_t kept_at(const fold_params &p, int64_t o, int side) {
+__device__ __noinline__ int64_t kept_at(const reduce_params &p, int64_t o, int side) {
   int64_t at = 0;
   for (int d = p.nkept - 1; d >= 0; d--) {
     const int64_t e = p.kept[d][0];
@@ -222,15 +222,15 @@ template <typename T> __device__ __forceinline__ void lane_tree(int m, T (&a)[LA
 /* Output [o]'s result [v], whose first NaN term is [first], stored: that
    term's bits where [v] is a NaN. */
 template <typename T>
-__device__ void put_output(const fold_params &p, int64_t o, T v, int64_t first) {
+__device__ void put_output(const reduce_params &p, int64_t o, T v, int64_t first) {
   if (is_nan(v) && first != NONE) v = load<T>(p.x, kept_at(p, o, 1) + term_at(p, first), p.dtype);
   store<T>(p.y, o, p.dtype, v);
 }
 
 /* A unit's value: the output's result where one unit folds it, else its
-   range's value for fold_tree. */
+   range's value for reduce_tree. */
 template <typename T>
-__device__ void put_unit(const fold_params &p, int64_t o, int64_t g, T v, int64_t first) {
+__device__ void put_unit(const reduce_params &p, int64_t o, int64_t g, T v, int64_t first) {
   if (p.groups == 1) put_output<T>(p, o, v, first);
   else ((part *)p.partials)[o * p.groups + g] = part{to_bits(v), first};
 }
@@ -260,7 +260,7 @@ __device__ __forceinline__ int64_t *shared_counts() {
    folds the span blocks from (g Q + q) span by a counter, its lanes summed
    by shuffles; thread 0 folds the groups' values. Every group runs every
    iteration, so the shuffles see the whole warp. */
-template <typename T> __device__ void fold_rows(const fold_params &p) {
+template <typename T> __device__ void reduce_rows(const reduce_params &p) {
   const int m = p.monoid;
   T *sv = (T *)shared_values();
   int64_t *sf = shared_firsts(), *sn = shared_counts();
@@ -307,7 +307,7 @@ template <typename T> __device__ void fold_rows(const fold_params &p) {
 
 /* A thread per unit (o, g), u = g outputs + o: the span blocks from block
    g span of output o, each block's 16 lanes in registers. */
-template <typename T> __device__ void fold_cols(const fold_params &p) {
+template <typename T> __device__ void reduce_cols(const reduce_params &p) {
   const int m = p.monoid;
   const int64_t u = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
   if (u >= p.outputs * p.groups) return;
@@ -343,7 +343,7 @@ template <typename T> __device__ void fold_cols(const fold_params &p) {
    the tail range's, where [groups] says there is one. Thread j folds the
    span values from j span; the thread at [full] / span takes the tail
    range's value as its tail. */
-template <typename T> __device__ void fold_tree(const fold_params &p) {
+template <typename T> __device__ void reduce_tree(const reduce_params &p) {
   T *sv = (T *)shared_values();
   int64_t *sf = shared_firsts(), *sn = shared_counts();
   const int64_t o = blockIdx.x;
@@ -373,7 +373,7 @@ template <typename T> __device__ void fold_tree(const fold_params &p) {
    [blocks] chunks; unit u = c outputs + s is chunk c of slice s. */
 
 /* A thread per whole chunk: its total, as a reduction of its terms. */
-template <typename T> __device__ void scan_totals(const fold_params &p) {
+template <typename T> __device__ void scan_totals(const reduce_params &p) {
   const int m = p.monoid;
   const int64_t u = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
   if (u >= p.outputs * (p.blocks - 1)) return;
@@ -406,7 +406,7 @@ template <typename T> __device__ void scan_totals(const fold_params &p) {
 
 /* A thread per chunk: its carry from the totals before it, then its
    results left to right. */
-template <typename T> __device__ void scan_rescan(const fold_params &p) {
+template <typename T> __device__ void scan_rescan(const reduce_params &p) {
   const int m = p.monoid;
   const int64_t u = blockIdx.x * (int64_t)blockDim.x + threadIdx.x;
   if (u >= p.outputs * p.blocks) return;
@@ -438,20 +438,20 @@ template <typename T> __device__ void scan_rescan(const fold_params &p) {
 
 /* Instances: one kernel per body, its monoid and dtype switched once. */
 
-#define FOLD_BODY(name)                                                        \
+#define REDUCE_BODY(name)                                                      \
   template <typename T> struct body_##name {                                   \
-    static __device__ void run(const fold_params &p) { name<T>(p); }          \
+    static __device__ void run(const reduce_params &p) { name<T>(p); }         \
   };
-FOLD_BODY(fold_rows)
-FOLD_BODY(fold_cols)
-FOLD_BODY(fold_tree)
-FOLD_BODY(scan_totals)
-FOLD_BODY(scan_rescan)
-#undef FOLD_BODY
+REDUCE_BODY(reduce_rows)
+REDUCE_BODY(reduce_cols)
+REDUCE_BODY(reduce_tree)
+REDUCE_BODY(scan_totals)
+REDUCE_BODY(scan_rescan)
+#undef REDUCE_BODY
 
 /* The compute type of a dtype: a float its own, 8- to 32-bit integers the
    32-bit type of their signedness, bool uint32. */
-template <template <typename> class B> __device__ void by_dtype(const fold_params &p) {
+template <template <typename> class B> __device__ void by_dtype(const reduce_params &p) {
   switch (p.dtype) {
   case NX_FLOAT32: return B<float>::run(p);
   case NX_FLOAT64: return B<double>::run(p);
@@ -464,9 +464,9 @@ template <template <typename> class B> __device__ void by_dtype(const fold_param
   }
 }
 
-#define FOLD(name, ...)                                                        \
+#define REDUCE(name, ...)                                                      \
   extern "C" __global__ void __launch_bounds__(256)                            \
-      name(const __grid_constant__ fold_params p) {                            \
+      name(const __grid_constant__ reduce_params p) {                          \
     by_dtype<body_##name>(p);                                                  \
   }
 

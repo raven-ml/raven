@@ -211,7 +211,7 @@ let map1 (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
 
 (* The monoid [m] of [prog]'s output over [loads], of [shape], along [axes], in
    [dt]. *)
-let fold1 (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
+let reduce1 (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     axes m prog (dt : (w, r) D.t) (loads : d Value.load array) :
     (w, r, d) Value.t =
   fst
@@ -226,10 +226,10 @@ let fold1 (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
           }))
 
 (* [x] by the monoid [m] along [axes]. *)
-let fold_plain (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+let reduce_plain (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     axes m (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let dt = Prim.dtype x in
-  fold1 apply ~by (Prim.shape x) axes m
+  reduce1 apply ~by (Prim.shape x) axes m
     (P.of_node ~ins:[| D.Any dt |] (In 0))
     dt [| Value.Plain x |]
 
@@ -263,7 +263,7 @@ let logsumexp (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       | Some m ->
           [| Value.Plain x; Value.Plain (spread_back apply ~by shape axes m) |]
     in
-    fold1 apply ~by shape axes Sum (program b [| e |]) dt loads
+    reduce1 apply ~by shape axes Sum (program b [| e |]) dt loads
   in
   if Array.exists (fun a -> shape.(a) = 0) axes then
     map1 apply ~by out
@@ -271,7 +271,7 @@ let logsumexp (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       dt
       [| Value.Plain (sum_exp None) |]
   else
-    let m = fold_plain apply ~by axes Max x in
+    let m = reduce_plain apply ~by axes Max x in
     (* [m'], from the maximum at node [m]. *)
     let finite b m =
       let a = push b (Op1 (Unary Abs, D.Any dt, m)) in
@@ -315,7 +315,7 @@ let moments (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     map1 apply ~by out
       (program b [| divided b s s |])
       dt
-      [| Value.Plain (fold_plain apply ~by axes Sum x) |]
+      [| Value.Plain (reduce_plain apply ~by axes Sum x) |]
   in
   let squares =
     let b = Build.make () in
@@ -323,7 +323,7 @@ let moments (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     let mean' = input b (D.Any dt) in
     let d = push b (Op2 (Binary Sub, x', mean')) in
     let sq = push b (Op2 (Binary Mul, d, d)) in
-    fold1 apply ~by shape axes Sum
+    reduce1 apply ~by shape axes Sum
       (program b [| sq |])
       dt
       [| Value.Plain x; Value.Plain (spread_back apply ~by shape axes mean) |]
@@ -383,7 +383,7 @@ let arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
     (v, s, d) Value.t * (int64, D.int64_elt, d) Value.t =
   let dt = Prim.dtype x in
   let m =
-    fold_plain apply ~by axes (match e with Max -> Max | Min -> Min) x
+    reduce_plain apply ~by axes (match e with Max -> Max | Min -> Min) x
   in
   let mb = spread_back apply ~by shape axes m in
   let kx = keys apply ~by x and km = keys apply ~by mb in
@@ -423,7 +423,7 @@ let arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   let none = const b D.Int64 Int64.max_int in
   let pick = push b (Op3 (Where, found, position, none)) in
   let p =
-    fold1 apply ~by shape axes Min (program b [| pick |]) D.Int64
+    reduce1 apply ~by shape axes Min (program b [| pick |]) D.Int64
       (Array.map (fun (Value.Any y) -> Value.Plain y) loads)
   in
   (m, p)
