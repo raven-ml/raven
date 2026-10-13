@@ -81,6 +81,9 @@ let submit ?waits d ws ~uses =
   let s, run, buffers = Rig_gpu_support.prepare ~fixed:uses d ws in
   Rig.submit ?waits s ~run ~buffers
 
+let empty_point d =
+  Rig.submit (Sub.make d [||]) ~run:(Sub.Run.make ()) ~buffers:[||]
+
 let copy_part ~dst src =
   Rig_gpu_support.work Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
@@ -1083,21 +1086,23 @@ let idle_close (module G : Gpu) () =
 
 (* Opens and closes of a device keep a fixed record per open: rig's line,
    records and reason, and the driver's word and the state reading it needs,
-   which live for the process, beside what the vendor's library keeps. A warm
-   run of as many opens fills the caches and tables the opens grow to, and
-   reclamation returns each closed device's memory. *)
+   which live for the process, beside what the vendor's library keeps. Each
+   open waits for a Polled producer's value, which the device's queue waits
+   for where it maps the producer's word: its close gives the mapping back.
+   A warm run of as many opens fills the caches and tables the opens grow to,
+   and reclamation returns each closed device's memory. *)
 let opens = 32
 
-(* What an open keeps of the C heap past its close, per open: rig's records,
-   the driver's state, and the vendor's library's own, which neither rig nor
-   the driver can give back. AMD's state holds its rings' marks and timed
-   values, about 300 KiB, and Metal's a ring of 1,024 command buffer slots,
-   40 KiB; Metal's library keeps about 30 bytes of CoreAnalytics messages,
-   and caches that grow by about 10 KB over the first hundreds of opens. *)
-let kept_c = 384 * 1024
+(* What an open keeps of the C heap past its close, per device: rig's records,
+   about 1 KiB, the driver's word and what reading it needs, and the vendor's
+   library's own, which neither rig nor the driver can give back. The
+   driver's stop gives back the state it made to run work. Metal's library
+   keeps about 30 bytes of CoreAnalytics messages, and caches that grow by
+   about 10 KB over the first hundreds of opens. *)
+let kept_c = 4096
 
-(* What an open keeps of the OCaml heap: rig's device record and the
-   driver's handle. *)
+(* What an open keeps of the OCaml heap, per device: rig's device record and
+   the driver's handle. *)
 let kept_ml = 2048
 
 let settle () =
@@ -1106,9 +1111,14 @@ let settle () =
 
 let open_close (module G : Gpu) () =
   let cycle () =
+    let pd, pp = P.open_ "POLLED:cycle" in
     let t = G.open_ () in
     ignore (B.create t.d 1 : B.t);
-    G.close t
+    let p = submit t.d [] ~uses:[] ~waits:[| empty_point pd |] in
+    ignore (P.run pp : int);
+    Rig.Point.wait p;
+    G.close t;
+    Rig.close pd
   in
   let heap () =
     match Rig_support.heap_bytes () with
@@ -1126,9 +1136,9 @@ let open_close (module G : Gpu) () =
   done;
   settle ();
   at_most int ~msg:"the C heap's growth over the opens"
-    ~than:(opens * kept_c) (heap () - c);
+    ~than:(2 * opens * kept_c) (heap () - c);
   at_most int ~msg:"the OCaml heap's growth over the opens"
-    ~than:(opens * kept_ml) (live () - ml)
+    ~than:(2 * opens * kept_ml) (live () - ml)
 
 let stale_seen (module G : Gpu) () =
   G.with_ @@ fun t ->
@@ -1307,9 +1317,6 @@ let holds (module G : Gpu) (t : G.t) point go =
   equal (option string) ~msg:"early" None (Atomic.get early);
   equal octets ~msg:"the work's bytes" data (read ());
   ignore (Sys.opaque_identity dst)
-
-let empty_point d =
-  Rig.submit (Sub.make d [||]) ~run:(Sub.Run.make ()) ~buffers:[||]
 
 (* The producer, a Polled device, whose work runs when the test runs it. *)
 let polled_waits (module G : Gpu) () =
