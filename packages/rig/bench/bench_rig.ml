@@ -416,7 +416,7 @@ let[@inline never] pending_buffers d n =
   let run = Sub.Run.make () in
   Array.iter (fun b -> submit_read ~run s [| b |]) buffers
 
-let[@inline never] pending_holds d n =
+let[@inline never] pending_kept d n =
   let run = Sub.Run.make () in
   for _ = 1 to n do
     ignore (submit ~run (Sub.make ~keep:(Bytes.create 64) d [||]))
@@ -479,10 +479,10 @@ let drain_rows =
         (pending pending_buffers 1024);
       allocation "allocate-4K/completed-buffers-1024"
         (completed pending_buffers 1024);
-      allocation "allocate-4K/pending-holds-64" (pending pending_holds 64);
-      allocation "allocate-4K/pending-holds-1024" (pending pending_holds 1024);
-      allocation "allocate-4K/completed-holds-1024"
-        (completed pending_holds 1024);
+      allocation "allocate-4K/pending-kept-64" (pending pending_kept 64);
+      allocation "allocate-4K/pending-kept-1024" (pending pending_kept 1024);
+      allocation "allocate-4K/completed-kept-1024"
+        (completed pending_kept 1024);
       allocation "allocate-4K/pending-images-64" (pending pending_images 64);
       allocation "allocate-4K/pending-images-1024" (pending pending_images 1024);
       allocation "allocate-4K/completed-images-1024"
