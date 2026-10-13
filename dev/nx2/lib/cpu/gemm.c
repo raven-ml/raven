@@ -10,10 +10,11 @@
    into one batch, row (M), column (N) and contracted (K) axis per
    operand. An operand is read
    through the stage, which takes any strides and dtype into its carrier, and
-   the target's conversion takes the carrier into acc: a dtype is computed
-   only where acc holds each of its values, so operands convert exactly.
-   Lane order reads b in place where it is acc and adjacent along the axis
-   it streams.
+   the target's conversion takes the carrier into acc. A float or complex
+   acc takes only dtypes it holds each value of, so operands convert
+   exactly; an integer acc takes every integer, modulo its width, and
+   computes on chain order's paths whatever the order asked. Lane order
+   reads b in place where it is acc and adjacent along the axis it streams.
 
    Each output's sum adds in the order the caller gives, at any M, N and
    K:
@@ -198,13 +199,20 @@ static int part_of(int acc) {
   return acc == NX_COMPLEX128 ? NX_FLOAT64 : acc;
 }
 
-/* Whether every value of [d] is one of [acc]'s, as nx_cpu.mli lists them:
-   the booleans, the floats of at most the width of [acc]'s parts, the
-   integers of at most half of it, and for a complex [acc] the complex
-   numbers of at most its width. */
+static int is_integer(int dt) {
+  int k = nx_dtype_row_of(dt).kind;
+  return k == NX_KIND_SIGNED || k == NX_KIND_UNSIGNED;
+}
+
+/* Whether an [acc] takes operands of [d], as nx_cpu.mli lists them: the
+   booleans; for an integer [acc] every integer, which converts modulo its
+   width; for another, the values it holds exactly: the floats of at most
+   the width of [acc]'s parts, the integers of at most half of it, and for
+   a complex [acc] the complex numbers of at most its width. */
 static int holds(int acc, int d) {
   nx_dtype_row r = nx_dtype_row_of(d), a = nx_dtype_row_of(acc);
   int width = nx_dtype_row_of(part_of(acc)).bits;
+  if (is_integer(acc)) return r.kind == NX_KIND_BOOLEAN || is_integer(d);
   switch (r.kind) {
     case NX_KIND_BOOLEAN: return 1;
     case NX_KIND_FLOAT: return r.bits <= width;
@@ -1513,7 +1521,10 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   int e = nx_read(n, in, a);
   if (e) return Val_int(e);
   const nx_array *op[4] = {&a[0], &a[1], init ? &a[3] : NULL, &a[2]};
-  int order = Int_val(vorder), done;
+  /* Only chain order has integer kernels, and an integer sum is exact
+     modulo acc's width in any order, so chain order computes it whatever
+     the order asked. */
+  int order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder), done;
   if (part_of(acc) != acc) done = complex_on(acc, order, &v, op);
   else done = nx_cpu_contract_on(acc, order, &v, op);
   nx_done(n, a);

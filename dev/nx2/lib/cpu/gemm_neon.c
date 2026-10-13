@@ -77,6 +77,16 @@ KERNEL(kernel_f32, float, float32x4_t, 4, vld1q_f32, vst1q_f32,
 KERNEL(kernel_f64, double, float64x2_t, 2, vld1q_f64, vst1q_f64,
        vld1q_dup_f64, vfmaq_f64, vdupq_n_f64(0))
 
+/* The integers of 8 to 32 bits by MLA, modulo their width, as unsigned
+   numbers, which gives a signed accumulator's bits too; 64-bit ones have
+   no vector multiply and keep the portable kernel. */
+KERNEL(kernel_u8, uint8_t, uint8x16_t, 16, vld1q_u8, vst1q_u8, vld1q_dup_u8,
+       vmlaq_u8, vdupq_n_u8(0))
+KERNEL(kernel_u16, uint16_t, uint16x8_t, 8, vld1q_u16, vst1q_u16,
+       vld1q_dup_u16, vmlaq_u16, vdupq_n_u16(0))
+KERNEL(kernel_u32, uint32_t, uint32x4_t, 4, vld1q_u32, vst1q_u32,
+       vld1q_dup_u32, vmlaq_u32, vdupq_n_u32(0))
+
 /* Lane order's dots and axpys: 16 lanes are 4 vectors of float32, 8 of
    float64; 4 rows of float32 or 2 of float64 hold 16 accumulators and b's
    vectors. */
@@ -110,6 +120,22 @@ AXPY(axpy_f64, double, 2, fma)
    past all of a (cpu.h's mc and few). */
 #define MC 128
 
+/* The integers' kernels of [lanes] lanes: a sliver of b is as many bytes
+   along k as float32's. */
+static nx_cpu_gemm integers(nx_cpu_kernel f, int lanes) {
+  return (nx_cpu_gemm){.kernel = {.f = f,
+                                  .mr = MR,
+                                  .nr = NV * lanes,
+                                  .a = NX_CPU_A_ELEMENTS,
+                                  .b = NX_CPU_B_SLIVER,
+                                  .flops_per_byte = SPEED32 * lanes / 4,
+                                  .shared = 1},
+                       .mc = MC,
+                       .kc = 512,
+                       .nc = 3072,
+                       .few = MC};
+}
+
 void nx_cpu_set_neon(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
       .kernel = {.f = kernel_f32,
@@ -139,6 +165,9 @@ void nx_cpu_set_neon(nx_cpu_target *t) {
   t->dot[NX_FLOAT64] = dot_f64;
   t->axpy[NX_FLOAT32] = axpy_f32;
   t->axpy[NX_FLOAT64] = axpy_f64;
+  t->gemm[NX_INT8] = t->gemm[NX_UINT8] = integers(kernel_u8, 16);
+  t->gemm[NX_INT16] = t->gemm[NX_UINT16] = integers(kernel_u16, 8);
+  t->gemm[NX_INT32] = t->gemm[NX_UINT32] = integers(kernel_u32, 4);
 }
 
 #else

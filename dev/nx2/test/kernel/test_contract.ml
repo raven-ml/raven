@@ -62,6 +62,9 @@ let part_of (D.Any dt as d) =
 
 let is_complex acc = part_of acc <> acc
 
+let is_integer (D.Any dt) =
+  match D.kind dt with D.Signed | D.Unsigned -> true | _ -> false
+
 (* [x]'s values read in [acc] as float64 planes in C order: one, or the real
    then the imaginary parts for a complex [acc]. *)
 let planes acc x =
@@ -161,9 +164,22 @@ let names v =
   if v.perm <> Array.init (Array.length v.perm) Fun.id then [ "permuted" ]
   else []
 
+(* An int64 that narrows to the extremes of every integer width and their
+   neighbours, or any int64. *)
+let wide r =
+  let pick a = a.(Random.State.int r (Array.length a)) in
+  match Random.State.int r 3 with
+  | 0 -> Random.State.bits64 r
+  | 1 -> Int64.of_int (Random.State.int r 16 - 8)
+  | _ ->
+      pick
+        [| Int64.min_int; Int64.max_int; 0x7FL; 0x80L; 0xFFL; 0x7FFFL; 0x8000L;
+           0xFFFFL; 0x7FFFFFFFL; 0x80000000L; 0xFFFFFFFFL; -1L |]
+
 (* An array of [dt] of shape [s] through the view [v], its values, or each
-   part of them, drawn from [seed]. *)
-let operand dt s nb v seed =
+   part of them, drawn from [seed]; under [wide] an integer's or a bool's
+   from {!wide}, narrowed modulo its width. *)
+let operand ?(wide_ints = false) dt s nb v seed =
   let r = Random.State.make [| seed |] in
   let last = Array.length s - 1 in
   let made =
@@ -176,7 +192,9 @@ let operand dt s nb v seed =
   in
   let draw () = value dt r in
   let xs =
-    if is_complex dt then
+    if wide_ints && (is_integer dt || dt = D.Any D.Bool || dt = D.Any D.Bit) then
+      A.Any (A.of_array D.Int64 made (Array.init (total made) (fun _ -> wide r)))
+    else if is_complex dt then
       A.Any
         (A.of_array D.Complex128 made
            (Array.init (total made) (fun _ ->
@@ -253,7 +271,9 @@ let make ~order ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed
   let contracting =
     Array.init (Array.length con) (fun k -> (ia.(nb + fa + k), ib.(nb + k)))
   in
-  let a = operand da sa nb va seed and b = operand db sb nb vb (seed + 1) in
+  let wide_ints = is_integer acc in
+  let a = operand ~wide_ints da sa nb va seed in
+  let b = operand ~wide_ints db sb nb vb (seed + 1) in
   let y =
     match
       Nx_kernel.Shape.contract ~batch:pairs ~contracting (shape_of a)
@@ -263,7 +283,8 @@ let make ~order ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed
     | Error e -> invalid_arg ("make: " ^ e)
   in
   let made vi =
-    operand out (Array.map (fun i -> y.(i)) (inverse vi.perm)) 0 vi (seed + 2)
+    operand ~wide_ints out (Array.map (fun i -> y.(i)) (inverse vi.perm)) 0 vi
+      (seed + 2)
   in
   let views = names va @ names vb @ Option.fold ~none:[] ~some:names init in
   { order; batch = pairs; contracting; acc; a; b; init = Option.map made init;
@@ -305,10 +326,11 @@ let case_of ~acc ~out ~dts =
    columns, lane order in many rows and columns over several passes and
    blocks of lanes. The drawn cases reach each a few times in a hundred or
    never, so a run of a hundred can miss one. A complex contraction is a
-   real one of twice the columns and products, whose paths the real
-   accumulators' cases reach: its own are few, each order over several
-   blocks of its parts' products, no product, a batch, and the few rows'
-   case stored transposed, which copies a. *)
+   real one of twice the columns and products, and an integer one takes
+   chain order's paths, which the floats' cases reach: their own are few,
+   each order over several blocks of products, no product, a batch, and
+   the few rows' case stored transposed; an integer's also the chain path
+   over several blocks of the contraction. *)
 let regimes acc =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let case (order, init, e) =
@@ -353,7 +375,9 @@ let regimes acc =
       (chain, false, ([| 50 |], [| 8 |], [| 8 |], [| 2 |]));
     ]
   in
+  let integer = (chain, true, ([||], [| 130 |], [| 130 |], [| 520 |])) :: complex in
   if is_complex acc then apart few :: List.map case complex
+  else if is_integer acc then apart few :: List.map case integer
   else
     [ apart few ] @ groups
     @ List.map case
@@ -432,6 +456,18 @@ let rec held = function
 
 let accs = D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
 
+let integer_accs =
+  D.[ Any Int8; Any Uint8; Any Int16; Any Uint16; Any Int32; Any Uint32; Any Int64; Any Uint64 ]
+
+(* The operands an integer accumulator takes, as nx_cpu.mli lists them:
+   every integer, and the booleans. *)
+let integers =
+  D.
+    [
+      Any Int64; Any Uint64; Any Int32; Any Uint32; Any Int16; Any Uint16;
+      Any Int8; Any Uint8; Any Int4; Any Uint4; Any Bool; Any Bit;
+    ]
+
 let computed =
   Gen.with_pp pp_case
     (Gen.bind (Gen.of_list ~pp:pp_dtype accs) (fun acc ->
@@ -449,7 +485,8 @@ let any_case =
        of_list ~pp:pp_dtype
          D.
            [
-             Any Float32; Any Float64; Any Int32; Any Complex64; Any Complex128;
+             Any Float32; Any Float64; Any Int4; Any Int8; Any Int32;
+             Any Complex64; Any Complex128;
            ]
      in
      let* out = frequency [ (2, constant ~pp:pp_dtype acc); (1, of_list ~pp:pp_dtype D.all) ] in
@@ -463,14 +500,12 @@ let any_case =
    orders give them. *)
 type output = { init : float option; av : float array; bv : float array }
 
-(* The result's shape, and [each f], which calls [f yi k parts] on each
-   output in C order: [yi] its index, [k] its position in C order, [parts]
-   its init and factors, one for a real accumulator, the real then the
-   imaginary part's for a complex one. The operands are read as
-   C-contiguous float64 planes, each output's factors at offsets computed
-   once. *)
-let outputs c =
-  let flat = planes c.acc in
+(* The result's shape, each output's offsets in C-contiguous [a] and [b]
+   along the contracted index, in C order, and [walk f], which calls
+   [f yi k ra rb] on each output in C order: [yi] its index, [k] its
+   position in C order, [ra] and [rb] where its factors start, the
+   offsets computed once. *)
+let index c =
   let strides s =
     let st = Array.make (Array.length s) 1 in
     for i = Array.length s - 2 downto 0 do
@@ -479,7 +514,6 @@ let outputs c =
     st
   in
   let sa = shape_of c.a and sb = shape_of c.b in
-  let a = flat c.a and b = flat c.b and init = Option.map flat c.init in
   let ta = strides sa and tb = strides sb in
   let bp = c.batch and cp = c.contracting in
   let free side r =
@@ -531,7 +565,7 @@ let outputs c =
   let oa = offsets (Array.map (fun (i, _) -> ta.(i)) cp) in
   let ob = offsets (Array.map (fun (_, j) -> tb.(j)) cp) in
   let ty = strides y in
-  let each f =
+  let walk f =
     for k = 0 to total y - 1 do
       let yi = Array.make (Array.length y) 0 in
       let ra = ref 0 and rb = ref 0 and r = ref k in
@@ -542,6 +576,23 @@ let outputs c =
         ra := !ra + (i * ya.(d));
         rb := !rb + (i * yb.(d))
       done;
+      f yi k !ra !rb
+    done
+  in
+  (y, oa, ob, walk)
+
+(* The result's shape, and [each f], which calls [f yi k parts] on each
+   output in C order: [yi] its index, [k] its position in C order, [parts]
+   its init and factors, one for a real accumulator, the real then the
+   imaginary part's for a complex one. The operands are read as
+   C-contiguous float64 planes, each output's factors at offsets computed
+   once. *)
+let outputs c =
+  let flat = planes c.acc in
+  let a = flat c.a and b = flat c.b and init = Option.map flat c.init in
+  let y, oa, ob, walk = index c in
+  let each f =
+    walk (fun yi k ra rb ->
       let pick x r = Array.map (fun t -> x.(r + t)) in
       let part p av bv =
         { init = Option.map (fun x -> x.(p).(k)) init; av; bv }
@@ -553,19 +604,18 @@ let outputs c =
       in
       let parts =
         if Array.length a = 1 then
-          [| part 0 (pick a.(0) !ra oa) (pick b.(0) !rb ob) |]
+          [| part 0 (pick a.(0) ra oa) (pick b.(0) rb ob) |]
         else
           (* a's parts in turn against b's (br, −bi) for the real part and
              (bi, br) for the imaginary part. *)
-          let ar = pick a.(0) !ra oa and ai = pick a.(1) !ra oa in
-          let br = pick b.(0) !rb ob and bi = pick b.(1) !rb ob in
+          let ar = pick a.(0) ra oa and ai = pick a.(1) ra oa in
+          let br = pick b.(0) rb ob and bi = pick b.(1) rb ob in
           [|
             part 0 (pairs ar ai) (pairs br (Array.map Float.neg bi));
             part 1 (pairs ar ai) (pairs bi br);
           |]
       in
-      f yi k parts
-    done
+      f yi k parts)
   in
   (y, each)
 
@@ -632,9 +682,13 @@ let cpu_computes c =
   let (A.Any a) = c.a in
   let (A.Any b) = c.b in
   let init = Option.map (A.expect out) c.init in
-  List.mem acc accs && c.out = acc
+  let (D.Any dt) = acc in
+  let integer = is_integer acc && D.bits dt >= 8 in
+  let takes = if integer then integers else held acc in
+  (List.mem acc accs || integer)
+  && c.out = acc
   && Array.for_all
-       (fun (A.Any x) -> List.mem (D.Any (A.dtype x)) (held acc))
+       (fun (A.Any x) -> List.mem (D.Any (A.dtype x)) takes)
        (operands c)
   && Result.is_ok
        (Nx_kernel.Contract_view.v ~batch:c.batch ~contracting:c.contracting
@@ -962,6 +1016,63 @@ let law_order b c =
              if bits x = bits w then None
              else Some (Printf.sprintf "%h, expected %h" x w)))
 
+(* Integers *)
+
+let integer_cases =
+  Gen.with_pp pp_case
+    (Gen.bind (Gen.of_list ~pp:pp_dtype integer_accs) (fun acc ->
+         case_of ~acc ~out:acc ~dts:integers))
+
+(* [x]'s values as int64s: an integer's own value, a bool's 0 or 1. *)
+let ints x =
+  let d = A.create Rig.host D.Int64 (shape_of x) in
+  cast_into d x;
+  A.to_array d
+
+(* [v] modulo [acc]'s width, read as [acc] reads its bits. *)
+let wrap (D.Any dt) v =
+  let w = D.bits dt in
+  let signed = match D.kind dt with D.Signed -> true | _ -> false in
+  if w = 64 then v
+  else
+    let m = Int64.logand v (Int64.pred (Int64.shift_left 1L w)) in
+    if signed && Int64.compare m (Int64.shift_left 1L (w - 1)) >= 0 then
+      Int64.sub m (Int64.shift_left 1L w)
+    else m
+
+(* Each output is init, or 0, plus the products of its operands' values
+   modulo the accumulator's width: int64 arithmetic wraps modulo 2^64, a
+   multiple of every width. *)
+let law_wraps b c =
+  let wider (A.Any x) = D.Any (A.dtype x) <> c.acc in
+  let m, n = rows_cols c and _, k, _ = sizes c in
+  cover "an operand of another dtype" (wider c.a || wider c.b);
+  cover "init" (c.init <> None);
+  let (D.Any acc) = c.acc in
+  cover "a 64-bit accumulator" (D.bits acc = 64);
+  cover "more than 128 rows and columns over 513 products or more"
+    (m > 128 && n > 128 && k > 512);
+  List.iter
+    (fun v -> cover v (List.mem v c.views))
+    [ "stepped"; "broadcast"; "permuted" ];
+  match run b c with
+  | None when cpu_computes c ->
+      failf "nx.cpu declined a case nx_cpu.mli says it computes"
+  | None -> cover "a layout the view does not group" true
+  | Some y ->
+      let _, oa, ob, walk = index c in
+      let a = ints c.a and bv = ints c.b and init = Option.map ints c.init in
+      let got = ints y and bad = ref [] in
+      walk (fun yi k ra rb ->
+          let s = ref (match init with Some i -> i.(k) | None -> 0L) in
+          Array.iteri
+            (fun t o -> s := Int64.add !s (Int64.mul a.(ra + o) bv.(rb + ob.(t))))
+            oa;
+          let want = wrap c.acc !s in
+          if want <> got.(k) && List.length !bad < 8 then
+            bad := Format.asprintf "%a: %Ld, expected %Ld" pp_ints yi got.(k) want :: !bad);
+      equal (list string) [] (List.rev !bad)
+
 let law_computes b c =
   let computes = cpu_computes c in
   cover "computed" computes;
@@ -1048,6 +1159,9 @@ let cpu (b : Support.backend) =
     [
       prop ~examples "each output adds its products in the order given"
         computed (run (law_order b));
+      prop ~examples:(List.concat_map regimes D.[ Any Int8; Any Uint16; Any Int32; Any Uint64 ])
+        "an integer output is its products' sum modulo the accumulator"
+        integer_cases (run (law_wraps b));
       prop "computes the cases nx_cpu.mli lists, declines others"
         any_case (run (law_computes b));
       test "with no products, a float32 output is init's bits"

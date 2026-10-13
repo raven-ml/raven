@@ -8,7 +8,9 @@
 
    A microkernel of 4 × 4 outputs and lane order's dot and axpy, each
    product fused into its addition by C's fma, which rounds once: the same
-   bits as the vector kernels' fused instructions. A target whose
+   bits as the vector kernels' fused instructions. The integers' microkernels
+   multiply and add modulo their width, as unsigned numbers, which gives a
+   signed accumulator's bits too. A target whose
    instructions have no fused multiply-add (base on x86-64) calls the C
    library's, which is exact and slow; every x86-64 host measured runs v3.
    A target's own kernels replace these where it has them. */
@@ -87,35 +89,40 @@ KERNEL(kernel_f64, double, fma)
 DOT(dot_f64, double, fma)
 AXPY(axpy_f64, double, fma)
 
+/* z + x·y modulo the width of the [T] it is stored in: computed in an
+   unsigned type no narrower than int, which C does not promote to int. */
+#define MAD32(x, y, z) ((z) + (uint32_t)(x) * (uint32_t)(y))
+#define MAD64(x, y, z) ((z) + (uint64_t)(x) * (uint64_t)(y))
+KERNEL(kernel_u8, uint8_t, MAD32)
+KERNEL(kernel_u16, uint16_t, MAD32)
+KERNEL(kernel_u32, uint32_t, MAD32)
+KERNEL(kernel_u64, uint64_t, MAD64)
+
 /* The rows of a block of a, and those up to which a product streams b
    past all of a (cpu.h's mc and few). */
 #define MC 64
 
+static nx_cpu_gemm gemm_of(nx_cpu_kernel f) {
+  return (nx_cpu_gemm){.kernel = {.f = f,
+                                  .mr = MR,
+                                  .nr = NR,
+                                  .a = NX_CPU_A_ELEMENTS,
+                                  .b = NX_CPU_B_COLUMNS,
+                                  .flops_per_byte = SPEED,
+                                  .shared = 1},
+                       .mc = MC,
+                       .kc = 256,
+                       .nc = 1024,
+                       .few = MC};
+}
+
 static void set(nx_cpu_target *t) {
-  t->gemm[NX_FLOAT32] = (nx_cpu_gemm){
-      .kernel = {.f = kernel_f32,
-                 .mr = MR,
-                 .nr = NR,
-                 .a = NX_CPU_A_ELEMENTS,
-                 .b = NX_CPU_B_COLUMNS,
-                 .flops_per_byte = SPEED,
-                 .shared = 1},
-      .mc = MC,
-      .kc = 256,
-      .nc = 1024,
-      .few = MC};
-  t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
-      .kernel = {.f = kernel_f64,
-                 .mr = MR,
-                 .nr = NR,
-                 .a = NX_CPU_A_ELEMENTS,
-                 .b = NX_CPU_B_COLUMNS,
-                 .flops_per_byte = SPEED,
-                 .shared = 1},
-      .mc = MC,
-      .kc = 256,
-      .nc = 1024,
-      .few = MC};
+  t->gemm[NX_FLOAT32] = gemm_of(kernel_f32);
+  t->gemm[NX_FLOAT64] = gemm_of(kernel_f64);
+  t->gemm[NX_INT8] = t->gemm[NX_UINT8] = gemm_of(kernel_u8);
+  t->gemm[NX_INT16] = t->gemm[NX_UINT16] = gemm_of(kernel_u16);
+  t->gemm[NX_INT32] = t->gemm[NX_UINT32] = gemm_of(kernel_u32);
+  t->gemm[NX_INT64] = t->gemm[NX_UINT64] = gemm_of(kernel_u64);
   t->dot[NX_FLOAT32] = dot_f32;
   t->dot[NX_FLOAT64] = dot_f64;
   t->axpy[NX_FLOAT32] = axpy_f32;
