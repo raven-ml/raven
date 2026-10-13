@@ -318,33 +318,44 @@ static void F(swap)(T *x, T *y, int64_t n) {
 static int F(panel)(T *a, int64_t m, int64_t width, int64_t ld, int64_t j0,
                     int64_t n, int64_t *pivots, int64_t *perm, arena *s) {
   if (n <= LEAF) {
-    int64_t j1 = j0 + n;
-    for (int64_t j = j0; j < j1; j++) {
+    /* The panel's columns, copied contiguous (column c's row i at
+       q[c·h + i − j0]), so that a column streams: in place, each of its
+       elements is a line of its own, rows a power of two apart sharing one
+       set of the cache. */
+    int64_t h = m - j0;
+    T *q = room(s, h * n * (int64_t)sizeof(T));
+    if (q == NULL) return 0;
+    for (int64_t i = 0; i < h; i++)
+      for (int64_t c = 0; c < n; c++) q[c * h + i] = a[(j0 + i) * ld + j0 + c];
+    for (int64_t j = 0; j < n; j++) {
+      T *qj = q + j * h;
       int64_t p = j;
-      R best = F(magnitude)(a[j * ld + j]);
-      for (int64_t i = j + 1; i < m; i++) {
-        R v = F(magnitude)(a[i * ld + j]);
+      R best = F(magnitude)(qj[j]);
+      for (int64_t i = j + 1; i < h; i++) {
+        R v = F(magnitude)(qj[i]);
         if (v > best) {
           best = v;
           p = i;
         }
       }
-      pivots[j] = p;
+      pivots[j0 + j] = j0 + p;
       if (p != j) {
-        F(swap)(a + j * ld, a + p * ld, width);
-        int64_t t = perm[j];
-        perm[j] = perm[p];
-        perm[p] = t;
+        F(swap)(a + (j0 + j) * ld, a + (j0 + p) * ld, width);
+        for (int64_t c = 0; c < n; c++) F(swap)(q + c * h + j, q + c * h + p, 1);
+        int64_t t = perm[j0 + j];
+        perm[j0 + j] = perm[j0 + p];
+        perm[j0 + p] = t;
       }
-      T d = a[j * ld + j];
-      const T *aj = a + j * ld;
-      for (int64_t i = j + 1; i < m; i++) {
-        T *ai = a + i * ld;
-        if (d != 0) ai[j] /= d;
-        T l = ai[j];
-        for (int64_t c = j + 1; c < j1; c++) ai[c] -= l * aj[c];
+      T d = qj[j];
+      if (d != 0)
+        for (int64_t i = j + 1; i < h; i++) qj[i] /= d;
+      for (int64_t c = j + 1; c < n; c++) {
+        T *qc = q + c * h, u = qc[j];
+        for (int64_t i = j + 1; i < h; i++) qc[i] -= qj[i] * u;
       }
     }
+    for (int64_t i = 0; i < h; i++)
+      for (int64_t c = 0; c < n; c++) a[(j0 + i) * ld + j0 + c] = q[c * h + i];
     return 1;
   }
   int64_t n1 = split(n), n2 = n - n1, j1 = j0 + n1;
