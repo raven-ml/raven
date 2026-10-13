@@ -460,9 +460,9 @@ module type Driver = sig
          committed, such as an open command buffer.}
       {- [stop] must release nothing rig made. rig frees each region and
          unloads each image itself, also after [stop].}
-      {- [stop] releases what the driver made to run work, such as its
-         queues, without waiting for that work. The word, and what reading
-         it needs, stay: rig never frees the word, and keeps [d] for the
+      {- [stop] must release what the driver made to run work, such as its
+         queues, and must not wait for that work. The word, and what reading
+         it needs, must stay: rig never frees the word, and keeps [d] for the
          process.}}
       After [stop], rig calls {!val-free} and {!unload} only once the word
       reads that last value. It calls them uncounted and drops their faults.

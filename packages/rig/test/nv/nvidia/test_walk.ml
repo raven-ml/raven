@@ -167,7 +167,7 @@ let allowed op got =
       got = "None" || String.starts_with ~prefix:"Fault " got
 
 (* A failure leaves the process's files and the GPU's mappings as they were.
-   An open that succeeds keeps its device's timeline word until it is freed. *)
+   An open that succeeds keeps its device's timeline word for the process. *)
 let check op lim r =
   let at = Format.asprintf "%s with %a" (op_name op) pp_limit lim in
   if not (succeeded r.got) then begin

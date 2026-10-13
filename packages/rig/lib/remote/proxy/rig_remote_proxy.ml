@@ -92,6 +92,8 @@ let alloc d memory bytes =
   | Ok true -> Some (Memory { id })
   | Ok false | Error _ -> None
 
+(* A word region that rig frees is another device's mapping of a word, which
+   [map_peer] answers with the word itself: nothing to give back. *)
 let free d = function Memory { id } -> Link.drop d.link id | Word _ -> ()
 
 let locate = function
