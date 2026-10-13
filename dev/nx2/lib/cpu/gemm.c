@@ -402,19 +402,20 @@ static nx_cpu_pack mover(const problem *p, int64_t total, int64_t bytes,
 
 /* Moves operand [o]'s block as stage_acc does, through [move] where it is
    a pack, the operand is in acc and its rows or its columns are
-   contiguous, and sets each row's elements from n0 to [pitch] to +0. Only
-   the padding is set: on the M1's matrix unit, products of 100 columns
-   took 10-17% longer where the whole sliver of b was set, then moved. */
+   contiguous, and sets each row's elements from n0 to [pitch] to +0, as a
+   pack does. Only the padding is set: on the M1's matrix unit, products
+   of 100 columns took 10-17% longer where the whole sliver of b was set,
+   then moved. */
 static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
                  int64_t s0, int64_t s1, int64_t n0, int64_t n1, uint8_t *d,
                  int64_t pitch) {
   const nx_array *x = p->op[o].x;
-  for (int64_t q = 0; n0 < pitch && q < n1; q++)
-    memset(d + (q * pitch + n0) * p->w, 0, (size_t)((pitch - n0) * p->w));
   if (move && x->dtype == p->acc && (s0 == 1 || s1 == 1)) {
     move(n0, n1, x->base + at * p->w, s0, s1, d, pitch);
     return;
   }
+  for (int64_t q = 0; n0 < pitch && q < n1; q++)
+    memset(d + (q * pitch + n0) * p->w, 0, (size_t)((pitch - n0) * p->w));
   stage_acc(p, o, at, s0, s1, n0, n1, d, pitch);
 }
 

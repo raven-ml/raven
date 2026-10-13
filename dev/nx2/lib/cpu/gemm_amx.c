@@ -240,42 +240,55 @@ INLINE void transpose(int w, const uint8_t *s, int64_t ld, uint8_t *d,
   }
 }
 
+/* The last [n] elements of a contiguous row, fewer than 2L, and +0 to
+   2L, into [d] as one store of 2L: the elements move one at a time,
+   which the compiler keeps in registers, where memcpy and memset would be
+   two calls a row. */
+INLINE void row_tail(int w, uint8_t *d, const uint8_t *s, int64_t n) {
+  _Alignas(16) uint8_t t[128] = {0};
+  for (int64_t e = 0; e < n * w; e += w) memcpy(t + e, s + e, (size_t)w);
+  memcpy(d, t, 128);
+}
+
 /* The pack. Contiguous rows move 2L elements at a time through X, four
-   rows to the eight registers, and the rest by memcpy. Rows contiguous
-   across move 2L × 2L at a time through Z (transpose): a block of fewer
-   rows stores +0 past them, in the padding of d's rows, whose pitch is a
-   multiple of 2L, as gemm.c's blocks' are; a block of fewer steps loads
-   the 2L steps that end at the last, all within its rows, and stores its
-   own. Rows of fewer than 2L steps move element by element. */
+   rows to the eight registers, and their last elements through
+   row_tail. Rows contiguous across move 2L × 2L at a time through Z
+   (transpose): a block of fewer rows stores +0 past them; a block of
+   fewer steps loads the 2L steps that end at the last, all within its
+   rows, and stores its own. Rows of fewer than 2L steps move element by
+   element. Each of d's rows takes whole registers, its pitch the next
+   multiple of 2L (cpu.h). */
 INLINE void pack(int w, int64_t n0, int64_t n1, const void *vs, int64_t s0,
                  int64_t s1, void *vd, int64_t pitch) {
   const uint8_t *s = vs;
   uint8_t *d = vd;
   int64_t mr = 2 * LANES(w);
   if (s0 == 1) {
-    int64_t i_most = n0 / mr * mr, j4 = n1 / 4 * 4;
-    for (int64_t i = 0; i < i_most; i += mr)
-      for (int64_t j = 0; j < j4; j += 4) {
-        for (int u = 0; u < 4; u++) {
+    int64_t i_most = n0 / mr * mr;
+    for (int64_t j = 0; j < n1; j += 4) {
+      int rows = n1 - j < 4 ? (int)(n1 - j) : 4;
+      for (int64_t i = 0; i < i_most; i += mr) {
+        for (int u = 0; u < rows; u++) {
           NX_AMX_LDX(s + ((j + u) * s1 + i) * w, 2 * u);
           NX_AMX_LDX(s + ((j + u) * s1 + i) * w + 64, 2 * u + 1);
         }
-        for (int u = 0; u < 4; u++) {
+        for (int u = 0; u < rows; u++) {
           NX_AMX_STX(d + ((j + u) * pitch + i) * w, 2 * u);
           NX_AMX_STX(d + ((j + u) * pitch + i) * w + 64, 2 * u + 1);
         }
       }
-    for (int64_t j = 0; j < n1; j++) {
-      int64_t i = j < j4 ? i_most : 0;
-      memcpy(d + (j * pitch + i) * w, s + (j * s1 + i) * w,
-             (size_t)((n0 - i) * w));
     }
+    for (int64_t j = 0; i_most < n0 && j < n1; j++)
+      row_tail(w, d + (j * pitch + i_most) * w, s + (j * s1 + i_most) * w,
+               n0 - i_most);
     return;
   }
   if (n1 < mr) {
-    for (int64_t j = 0; j < n1; j++)
+    for (int64_t j = 0; j < n1; j++) {
       for (int64_t i = 0; i < n0; i++)
-        memcpy(d + (j * pitch + i) * w, s + (i * s0 + j) * w, w);
+        memcpy(d + (j * pitch + i) * w, s + (i * s0 + j) * w, (size_t)w);
+      memset(d + (j * pitch + n0) * w, 0, (size_t)((pitch - n0) * w));
+    }
     return;
   }
   for (int64_t i = 0; i < n0; i += mr)
