@@ -138,6 +138,12 @@ let bits ~by dt v =
   | b -> b
   | exception Invalid_argument e -> invalid_argf "%s: %s" by e
 
+(* [v] as an expression of [dt], naming [by] where [dt] does not hold it. *)
+let const ~by dt v =
+  match Nx_kernel.Prog.E.const dt v with
+  | e -> e
+  | exception Invalid_argument e -> invalid_argf "%s: %s" by e
+
 (* [f ()] with an [Invalid_argument] from the array layer renamed [by]: its
    message without the layer's function. *)
 let renamed ~by f =
@@ -191,19 +197,15 @@ let scalar_like x v =
 
 (* Leaves *)
 
-(* Build's functions, without its type [t], which would hide this module's. *)
-let input = Build.input
-let push = Build.push
-let const = Build.const
-let program = Build.program
+module E = P.E
 
-(* The value of [dt] and [shape] whose element at each index is node [body b] of
-   a program with no operand, reading the index through [Coord]. *)
-let leaf ~by dt shape body =
+let i64 n = E.const D.Int64 (Int64.of_int n)
+
+(* The value of [dt] and [shape] whose element at each index is [out], an
+   expression of no operand, reading the index through [Coord]. *)
+let leaf (type v s) ~by (dt : (v, s) D.t) shape (out : (v, s) E.t) =
   let layout = renamed ~by (fun () -> Nx_array.Layout.contiguous shape) in
-  let b = Build.make () in
-  let out = body b in
-  let prog = program b [| out |] in
+  let prog = P.of_exprs ~ins:[||] [| E.any out |] in
   let x, () =
     Eval.eval ~by
       (Value.Map { layout; prog; outs = Value.[ dt ]; loads = [||] })
@@ -251,17 +253,13 @@ let arange dt start stop step =
                invalid_argf "%s: %d is outside %s's range [%d, %d]" by v
                  (D.name dt) lo hi)
            [ start; last ]);
-  leaf ~by dt [| n |] (fun b ->
-      let int64 n = const b D.Int64 (Int64.of_int n) in
-      let i = push b (Coord 0) in
-      let v = push b (Op2 (Binary Mul, i, int64 step)) in
-      let v = push b (Op2 (Binary Add, v, int64 start)) in
-      push b (Op1 (Cast, D.Any dt, v)))
+  let int64 n = E.const D.Int64 (Int64.of_int n) in
+  leaf ~by dt [| n |] E.(cast dt ((coord 0 * int64 step) + int64 start))
 
 (* [start + i step] for the index [i], by one fused multiply-add at float64. *)
-let ramp b ~start ~step =
-  let i = push b (Op1 (Cast, D.Any D.Float64, push b (Coord 0))) in
-  push b (Op3 (Fma, i, const b D.Float64 step, const b D.Float64 start))
+let ramp ~start ~step =
+  let f64 = E.const D.Float64 in
+  E.(fma (cast D.Float64 (coord 0)) (f64 step) (f64 start))
 
 let arange_f dt start stop step =
   let by = "Nx.arange_f" in
@@ -270,33 +268,29 @@ let arange_f dt start stop step =
   if (not (Float.is_finite length)) || length >= Float.of_int max_int then
     invalid_argf "%s: [%g, %g) by %g has no finite length" by start stop step;
   let n = if length > 0. then Float.to_int length else 0 in
-  leaf ~by dt [| n |] (fun b ->
-      push b (Op1 (Cast, D.Any dt, ramp b ~start ~step)))
+  leaf ~by dt [| n |] (E.cast dt (ramp ~start ~step))
 
 (* [n] values from [start] to [stop] at float64: [stop] itself last with
    [endpoint], so the ends are exact. *)
-let spaced ~by b ~endpoint start stop n =
+let spaced ~by ~endpoint start stop n =
   if n < 0 then invalid_argf "%s: %d values" by n;
   let div = if endpoint then n - 1 else n in
   let step = if div > 0 then (stop -. start) /. Float.of_int div else 0. in
-  let v = ramp b ~start ~step in
+  let v = ramp ~start ~step in
   if not (endpoint && n >= 2) then v
   else
-    let final = const b D.Int64 (Int64.of_int (n - 1)) in
-    let last = push b (Op2 (Compare Equal, push b (Coord 0), final)) in
-    push b (Op3 (Where, last, const b D.Float64 stop, v))
+    let final = E.const D.Int64 (Int64.of_int (n - 1)) in
+    E.(where (coord 0 = final) (const D.Float64 stop) v)
 
 let linspace dt ?(endpoint = true) start stop n =
   let by = "Nx.linspace" in
-  leaf ~by dt [| Stdlib.max n 0 |] (fun b ->
-      push b (Op1 (Cast, D.Any dt, spaced ~by b ~endpoint start stop n)))
+  let v = spaced ~by ~endpoint start stop n in
+  leaf ~by dt [| Stdlib.max n 0 |] (E.cast dt v)
 
 let logspace dt ?(endpoint = true) ?(base = 10.) start stop n =
   let by = "Nx.logspace" in
-  leaf ~by dt [| Stdlib.max n 0 |] (fun b ->
-      let e = spaced ~by b ~endpoint start stop n in
-      let v = push b (Op2 (Binary Pow, const b D.Float64 base, e)) in
-      push b (Op1 (Cast, D.Any dt, v)))
+  let e = spaced ~by ~endpoint start stop n in
+  leaf ~by dt [| Stdlib.max n 0 |] E.(cast dt (const D.Float64 base ** e))
 
 (* Data in and out *)
 
@@ -1268,28 +1262,27 @@ let targets ~by x picks =
       | Some route -> List.map (Eval.place ~by route.result) inputs
   in
   let inputs = ref inputs in
-  let b = ref (Build.make ()) and loads = ref [] in
-  let push n = push !b n in
+  (* The current map's loads and their dtypes, last first. *)
+  let loads = ref [] and dtypes = ref [] in
+  let ins () = Iarray.of_list (List.rev !dtypes) in
   let read v =
     loads := Value.Plain v :: !loads;
-    input !b (D.Any (dtype v))
+    dtypes := D.Any (dtype v) :: !dtypes;
+    E.input (List.length !dtypes - 1) (dtype v)
   in
-  let sum = ref (push (const64 0)) and valid = ref None in
+  let sum = ref (i64 0) and valid = ref None in
   let both ok =
-    valid :=
-      match !valid with
-      | None -> Some ok
-      | Some v -> Some (push (P.Op2 (Binary And, v, ok)))
+    valid := match !valid with None -> Some ok | Some v -> Some E.(v && ok)
   in
   (* The address so far: the current map's output. *)
   let address () =
     let out =
       match !valid with
       | None -> !sum
-      | Some ok -> push (P.Op3 (Where, ok, !sum, push (const64 (-1))))
+      | Some ok -> E.(where ok !sum (i64 (-1)))
     in
     let loads = Array.of_list (List.rev !loads) in
-    let prog = program !b [| out |] in
+    let prog = P.of_exprs ~ins:(ins ()) [| E.any out |] in
     let v, () =
       Eval.eval ~by
         (Value.Map
@@ -1307,11 +1300,11 @@ let targets ~by x picks =
   let next () =
     if List.length !loads = room then begin
       let carry = address () in
-      b := Build.make ();
       loads := [];
+      dtypes := [];
       valid := None;
       sum := read carry;
-      both (push (P.Op2 (Compare Less_equal, push (const64 0), !sum)))
+      both E.(i64 0 <= !sum)
     end;
     match !inputs with
     | v :: rest ->
@@ -1319,20 +1312,11 @@ let targets ~by x picks =
         read v
     | [] -> invalid_arg "Nx.targets: a pick without its input"
   in
-  let add a index =
-    let k = push (const64 strides.(a)) in
-    let m = push (P.Op2 (Binary Mul, index, k)) in
-    sum := push (P.Op2 (Binary Add, !sum, m))
-  in
-  (* The selection's axis [j] as a coordinate. *)
-  let coord j = push (P.Coord j) in
+  let add a index = sum := E.(!sum + (index * i64 strides.(a))) in
   (* A position held in data, and whether it lies in [0, d). *)
   let checked d =
     let i = next () in
-    let lo = push (const64 0) and hi = push (const64 d) in
-    let ge = push (P.Op2 (Compare Less_equal, lo, i)) in
-    let lt = push (P.Op2 (Compare Less, i, hi)) in
-    both (push (P.Op2 (Binary And, ge, lt)));
+    both E.(i64 0 <= i && i < i64 d);
     i
   in
   let j = ref 0 in
@@ -1340,13 +1324,9 @@ let targets ~by x picks =
     (fun (p, a) ->
       match (p, a) with
       | New, _ -> incr j
-      | At i, Some a -> add a (push (const64 i))
+      | At i, Some a -> add a (i64 i)
       | Span g, Some a ->
-          let c = coord !j in
-          let st = push (const64 g.step) in
-          let m = push (P.Op2 (Binary Mul, c, st)) in
-          let o = push (const64 g.start) in
-          add a (push (P.Op2 (Binary Add, o, m)));
+          add a E.(i64 g.start + (coord !j * i64 g.step));
           incr j
       | Rows _, Some a ->
           add a (checked s.(a));
@@ -1356,18 +1336,15 @@ let targets ~by x picks =
           j := !j + ndim p
       | From (_, n, d), Some a ->
           let st = next () in
-          let lo = push (const64 0) and hi = push (const64 (d - n)) in
-          let c =
-            push
-              (P.Op2 (Binary Minimum, push (P.Op2 (Binary Maximum, st, lo)), hi))
-          in
-          add a (push (P.Op2 (Binary Add, c, coord !j)));
+          let hi = i64 (d - n) in
+          let c = E.(minimum (maximum st (i64 0)) hi) in
+          add a E.(c + coord !j);
           incr j
       | (At _ | Span _ | Rows _ | Held _ | From _), None -> ())
     picks;
   let used = List.length (List.filter (fun (_, a) -> a <> None) picks) in
   for a = used to r - 1 do
-    add a (coord !j);
+    add a (E.coord !j);
     incr j
   done;
   address ()
@@ -1608,19 +1585,26 @@ let matmul a b = Contraction.matmul ~by:"Nx.matmul" a b
 
 (* Compositions *)
 
-(* The map [body b ins] over [xs] broadcast together, its one result of [dt]:
-   [ins] are [xs]'s nodes, in order. One pass over the operands. *)
-let elementwise ~by dt xs body =
+(* Operand [k] of a map, the load of [x]. *)
+let operand k x = E.input k (dtype x)
+
+(* [x] rounded once to [dt]: itself at [dt]. *)
+let at (type v s w r) (dt : (v, s) D.t) (x : (w, r) E.t) : (v, s) E.t =
+  match D.equal_witness (E.dtype x) dt with
+  | Some Type.Equal -> x
+  | None -> E.cast dt x
+
+(* The map [out] over [xs] broadcast together, its one result of [dt]: its
+   operand [k] reads [xs]' element [k]. One pass over the operands. *)
+let elementwise (type v s) ~by (dt : (v, s) D.t) xs (out : (v, s) E.t) =
   let s =
     List.fold_left
       (fun s (Value.Any x) -> Prim.broadcast_shape ~by s (shape x))
       [||] xs
   in
   let load (Value.Any x) = Value.Plain (broadcast ~by s x) in
-  let b = Build.make () in
-  let input (Value.Any x) = input b (D.Any (dtype x)) in
-  let ins = Array.map input (Array.of_list xs) in
-  let prog = program b [| body b ins |] in
+  let ins = Iarray.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs) in
+  let prog = P.of_exprs ~ins [| E.any out |] in
   let layout = Nx_array.Layout.contiguous s in
   let y, () =
     Eval.eval ~by
@@ -1629,14 +1613,11 @@ let elementwise ~by dt xs body =
   in
   y
 
-let un1 b k w x = push b (Op1 (Unary k, D.Any w, x))
-let bin2 b k x y = push b (Op2 (Binary k, x, y))
-let at_least b w x c = push b (Op2 (Compare Less_equal, const b w c, x))
-let below b w x c = push b (Op2 (Compare Less, x, const b w c))
-let pick b c x y = push b (Op3 (Where, c, x, y))
+(* [x <> 0] for [x] of [dt], [0 / 1] for booleans. *)
+let not_zero dt x = E.(x <> const dt (D.zero dt))
 
-let not_zero b dt x =
-  push b (Op2 (Compare Not_equal, x, const b dt (D.zero dt)))
+(* [one] where [t] holds, zero elsewhere, in [dt]. *)
+let indicator dt t = E.(where t (const dt (D.one dt)) (const dt (D.zero dt)))
 
 (* One where [k] of the operands' truths holds, zero elsewhere. *)
 let logical (type v s d) ~by k (a : (v, s, d) t) (b' : (v, s, d) t) =
@@ -1644,10 +1625,8 @@ let logical (type v s d) ~by k (a : (v, s, d) t) (b' : (v, s, d) t) =
   match dt with
   | D.Bool -> binary ~by (Binary k) a b'
   | _ ->
-  elementwise ~by dt [ Any a; Any b' ] (fun b ins ->
-      let x = not_zero b dt ins.(0) and y = not_zero b dt ins.(1) in
-      let t = push b (Op2 (Binary k, x, y)) in
-      push b (Op3 (Where, t, const b dt (D.one dt), const b dt (D.zero dt))))
+  let x = not_zero dt (operand 0 a) and y = not_zero dt (operand 1 b') in
+  elementwise ~by dt [ Any a; Any b' ] (indicator dt (E.binary k x y))
 
 let logical_and a b = logical ~by:"Nx.logical_and" And a b
 let logical_or a b = logical ~by:"Nx.logical_or" Or a b
@@ -1655,9 +1634,8 @@ let logical_xor a b = logical ~by:"Nx.logical_xor" Xor a b
 
 let logical_not x =
   let dt = dtype x in
-  elementwise ~by:"Nx.logical_not" dt [ Any x ] (fun b ins ->
-      let t = push b (Op2 (Compare Equal, ins.(0), const b dt (D.zero dt))) in
-      push b (Op3 (Where, t, const b dt (D.one dt), const b dt (D.zero dt))))
+  elementwise ~by:"Nx.logical_not" dt [ Any x ]
+    (indicator dt E.(operand 0 x = const dt (D.zero dt)))
 
 let integer_or_boolean (type v s) ~by (dt : (v, s) D.t) =
   match D.kind dt with
@@ -1672,15 +1650,13 @@ let integer (type v s) ~by (dt : (v, s) D.t) =
       invalid_argf "%s: %s is not an integer dtype" by (D.name dt)
 
 (* The int64 [v] stored into [dt], modulo its width. *)
-let int_const b dt v =
-  push b (Op1 (Cast, D.Any dt, const b D.Int64 v))
+let wrapped dt v = E.(cast dt (const D.Int64 v))
 
 let bitwise_not x =
   let by = "Nx.bitwise_not" in
   let dt = dtype x in
   integer_or_boolean ~by dt;
-  elementwise ~by dt [ Any x ] (fun b ins ->
-      push b (Op2 (Binary Xor, ins.(0), int_const b dt (-1L))))
+  elementwise ~by dt [ Any x ] E.(operand 0 x lxor wrapped dt (-1L))
 
 let lshift x n =
   let by = "Nx.lshift" in
@@ -1688,8 +1664,7 @@ let lshift x n =
   integer ~by dt;
   if n < 0 then invalid_argf "%s: shift %d" by n;
   let factor = if n < 64 then Int64.shift_left 1L n else 0L in
-  elementwise ~by dt [ Any x ] (fun b ins ->
-      push b (Op2 (Binary Mul, ins.(0), int_const b dt factor)))
+  elementwise ~by dt [ Any x ] E.(operand 0 x * wrapped dt factor)
 
 (* [x / 2^n] rounded toward negative infinity, so a signed integer keeps its
    sign. Up to 32 bits, at float64, which holds every such integer and its
@@ -1702,43 +1677,30 @@ let rshift x n =
   if n < 0 then invalid_argf "%s: shift %d" by n;
   let bits = D.bits dt in
   let unsigned = D.is D.Unsigned dt in
-  elementwise ~by dt [ Any x ] (fun b ins ->
-      let x = ins.(0) in
-      if unsigned && n >= bits then int_const b dt 0L
-      else if (not unsigned) && n >= bits - 1 then
-        let neg = push b (Op2 (Compare Less, x, int_const b dt 0L)) in
-        push b (Op3 (Where, neg, int_const b dt (-1L), int_const b dt 0L))
-      else if bits <= 32 then
-        let f = push b (Op1 (Cast, D.Any D.Float64, x)) in
-        let q = bin2 b Mul f (const b D.Float64 (Float.ldexp 1. (-n))) in
-        push b (Op1 (Cast, D.Any dt, un1 b Floor D.Float64 q))
-      else
-        let d = int_const b dt (Int64.shift_left 1L n) in
-        let q = bin2 b Idiv x d in
-        if unsigned then q
-        else
-          let r = bin2 b Mod x d in
-          let neg = push b (Op2 (Compare Less, r, int_const b dt 0L)) in
-          bin2 b Sub q (pick b neg (int_const b dt 1L) (int_const b dt 0L)))
+  let int v = wrapped dt v in
+  let y = operand 0 x in
+  elementwise ~by dt [ Any x ]
+    (if unsigned && n >= bits then int 0L
+     else if (not unsigned) && n >= bits - 1 then
+       E.(where (y < int 0L) (int (-1L)) (int 0L))
+     else if bits <= 32 then
+       let scale = E.const D.Float64 (Float.ldexp 1. (-n)) in
+       E.(cast dt (floor (cast D.Float64 y * scale)))
+     else
+       let d = int (Int64.shift_left 1L n) in
+       let q = E.(y / d) in
+       if unsigned then q
+       else E.(q - where (y mod d < int 0L) (int 1L) (int 0L)))
 
 let clamp ?min:lo ?max:hi x =
   let by = "Nx.clamp" in
   if lo = None && hi = None then x
   else
     let dt = dtype x in
-    elementwise ~by dt [ Any x ] (fun b ins ->
-        let v =
-          match lo with
-          | None -> ins.(0)
-          | Some lo ->
-              let lo = push b (Const (D.Any dt, bits ~by dt lo)) in
-              push b (Op2 (Binary Maximum, ins.(0), lo))
-        in
-        match hi with
-        | None -> v
-        | Some hi ->
-            let hi = push b (Const (D.Any dt, bits ~by dt hi)) in
-            push b (Op2 (Binary Minimum, v, hi)))
+    let y = operand 0 x in
+    let v = match lo with None -> y | Some lo -> E.maximum y (const ~by dt lo) in
+    elementwise ~by dt [ Any x ]
+      (match hi with None -> v | Some hi -> E.minimum v (const ~by dt hi))
 
 let isnan x = comparison ~by:"Nx.isnan" (Compare Not_equal) x x
 
@@ -1764,40 +1726,32 @@ let parts (type s d) ~by (z : (Complex.t, s, d) t) : (s, d) parts =
 
 (* Where a float of [dt]'s format is an infinity: [false] in a format with
    none. *)
-let infinite (type s) b (dt : (float, s) D.t) x =
-  if not (D.float_format dt).infinities then const b D.Bool false
-  else
-    let a = push b (Op1 (Unary Abs, D.Any dt, x)) in
-    push b (Op2 (Compare Equal, a, const b dt Float.infinity))
+let infinite (type s) (dt : (float, s) D.t) x =
+  if not (D.float_format dt).infinities then E.const D.Bool false
+  else E.(abs x = const dt Float.infinity)
 
 (* Where a float of [dt]'s format is neither an infinity nor a NaN. *)
-let finite (type s) b (dt : (float, s) D.t) x =
-  let not_nan = push b (Op2 (Compare Equal, x, x)) in
-  if not (D.float_format dt).infinities then not_nan
-  else
-    let a = push b (Op1 (Unary Abs, D.Any dt, x)) in
-    push b (Op2 (Compare Less, a, const b dt Float.infinity))
+let finite (type s) (dt : (float, s) D.t) x =
+  if not (D.float_format dt).infinities then E.(x = x)
+  else E.(abs x < const dt Float.infinity)
 
 (* [x]'s float predicate [p], each part's joined by [k] for a complex [x], and
    [other] for the other dtypes, where [x] lies. *)
 let predicate (type v s d) ~by
-    (p : 'r. Build.t -> (float, 'r) D.t -> int -> int) k other
-    (x : (v, s, d) t) : d bool_t =
+    (p : 'r. (float, 'r) D.t -> (float, 'r) E.t -> (bool, D.bool_elt) E.t) k
+    other (x : (v, s, d) t) : d bool_t =
   match D.kind (dtype x) with
-  | D.Float ->
-      let dt = dtype x in
-      elementwise ~by D.Bool [ Any x ] (fun b ins -> p b dt ins.(0))
+  | D.Float -> elementwise ~by D.Bool [ Any x ] (p (dtype x) (operand 0 x))
   | D.Complex ->
       let (Parts (f, part)) = parts ~by x in
-      elementwise ~by D.Bool [ Any (part 0); Any (part 1) ] (fun b ins ->
-          push b (Op2 (Binary k, p b f ins.(0), p b f ins.(1))))
+      let re = part 0 and im = part 1 in
+      elementwise ~by D.Bool [ Any re; Any im ]
+        (E.binary k (p f (operand 0 re)) (p f (operand 1 im)))
   | D.Signed | D.Unsigned | D.Boolean ->
       beside ~by x (fill ~by D.Bool (shape x) other)
 
-let isinf x = predicate ~by:"Nx.isinf" (fun b dt x -> infinite b dt x) Or false x
-
-let isfinite x =
-  predicate ~by:"Nx.isfinite" (fun b dt x -> finite b dt x) And true x
+let isinf x = predicate ~by:"Nx.isinf" (fun dt x -> infinite dt x) Or false x
+let isfinite x = predicate ~by:"Nx.isfinite" (fun dt x -> finite dt x) And true x
 
 (* Float functions *)
 
@@ -1808,22 +1762,17 @@ type wide = Wide : (float, 's) D.t -> wide
 let wide (type s) (dt : (float, s) D.t) =
   if D.bits dt < 32 then Wide D.Float32 else Wide dt
 
-(* The float function [f b w ins] of [xs], of one dtype, computed in its wide
+(* The float function [f w ins] of [xs], of one dtype, computed in its wide
    format [w] and rounded once to that dtype. *)
 let float_map (type v s d) ~by (xs : (v, s, d) t list)
-    (f : 'w. Build.t -> (float, 'w) D.t -> int array -> int) : (v, s, d) t =
+    (f : 'w. (float, 'w) D.t -> (float, 'w) E.t array -> (float, 'w) E.t) :
+    (v, s, d) t =
   let dt = dtype (List.hd xs) in
   match D.kind dt with
   | D.Float ->
       let (Wide w) = wide dt in
-      let narrow = D.bits dt < 32 in
-      elementwise ~by dt
-        (List.map (fun x -> Value.Any x) xs)
-        (fun b ins ->
-          if not narrow then f b w ins
-          else
-            let wide i = push b (Op1 (Cast, D.Any w, i)) in
-            push b (Op1 (Cast, D.Any dt, f b w (Array.map wide ins))))
+      let ins = Array.of_list (List.mapi (fun k x -> at w (operand k x)) xs) in
+      elementwise ~by dt (List.map (fun x -> Value.Any x) xs) (at dt (f w ins))
   | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
       invalid_argf "%s: %s is not a float dtype" by (D.name dt)
 
@@ -1831,35 +1780,31 @@ let float_map (type v s d) ~by (xs : (v, s, d) t list)
 let square x = binary ~by:"Nx.square" (Binary Mul) x x
 
 let rsqrt x =
-  float_map ~by:"Nx.rsqrt" [ x ] (fun b w ins ->
-      un1 b Recip w (un1 b Sqrt w ins.(0)))
+  float_map ~by:"Nx.rsqrt" [ x ] (fun _ ins -> E.(recip (sqrt ins.(0))))
 
 (* [sqrt (x^2 + y^2)] with nothing overflowing: at float32, the squares summed
    at float64, which holds them; at float64, [m sqrt (1 + (n / m)^2)] for the
    larger magnitude [m] and the smaller [n], zero for two zeros. An infinity
    where either is, even beside a NaN. *)
-let hypotenuse (type w) b (w : (float, w) D.t) x y =
-  let ax = un1 b Abs w x and ay = un1 b Abs w y in
+let hypotenuse (type w) (w : (float, w) D.t) x y =
+  let lit = E.const w in
+  let ax = E.abs x and ay = E.abs y in
   let h =
     match w with
     | D.Float32 ->
-        let up v = push b (Op1 (Cast, D.Any D.Float64, v)) in
-        let x = up x and y = up y in
-        let sum = push b (Op3 (Fma, x, x, bin2 b Mul y y)) in
-        push b (Op1 (Cast, D.Any w, un1 b Sqrt D.Float64 sum))
+        let x = E.cast D.Float64 x and y = E.cast D.Float64 y in
+        E.(cast w (sqrt (fma x x (y * y))))
     | _ ->
-        let m = bin2 b Maximum ax ay and n = bin2 b Minimum ax ay in
-        let r = bin2 b Fdiv n m in
-        let s = un1 b Sqrt w (push b (Op3 (Fma, r, r, const b w 1.))) in
-        let zero = push b (Op2 (Compare Equal, m, const b w 0.)) in
-        pick b zero (const b w 0.) (bin2 b Mul m s)
+        let m = E.maximum ax ay in
+        let r = E.(minimum ax ay / m) in
+        let s = E.(sqrt (fma r r (lit 1.))) in
+        E.(where (m = lit 0.) (lit 0.) (m * s))
   in
-  let inf v = push b (Op2 (Compare Equal, v, const b w Float.infinity)) in
-  pick b (bin2 b Or (inf ax) (inf ay)) (const b w Float.infinity) h
+  let inf v = E.(v = lit Float.infinity) in
+  E.(where (inf ax || inf ay) (lit Float.infinity) h)
 
 let hypot x y =
-  float_map ~by:"Nx.hypot" [ x; y ] (fun b w ins ->
-      hypotenuse b w ins.(0) ins.(1))
+  float_map ~by:"Nx.hypot" [ x; y ] (fun w ins -> hypotenuse w ins.(0) ins.(1))
 
 (* Past [big] a square would overflow float32: [log (2 x)] is the function to
    the format's precision there. Below [tiny], [x] is. *)
@@ -1871,66 +1816,51 @@ let tiny = 0x1p-28
 let ln2 = 0x1.62e42fefa39efp-1
 
 let asinh x =
-  float_map ~by:"Nx.asinh" [ x ] (fun b w ins ->
-      let x = ins.(0) in
-      let a = un1 b Abs w x in
-      let far = bin2 b Add (un1 b Log w a) (const b w ln2) in
-      let a2 = bin2 b Mul a a in
-      let root = un1 b Sqrt w (bin2 b Add (const b w 1.) a2) in
-      let near =
-        un1 b Log1p w
-          (bin2 b Add a (bin2 b Fdiv a2 (bin2 b Add (const b w 1.) root)))
-      in
-      let r = pick b (at_least b w a big) far near in
-      let signed = pick b (below b w x 0.) (un1 b Neg w r) r in
-      pick b (below b w a tiny) x signed)
+  float_map ~by:"Nx.asinh" [ x ] (fun w ins ->
+      let lit = E.const w and x = ins.(0) in
+      let a = E.abs x in
+      let far = E.(log a + lit ln2) in
+      let a2 = E.(a * a) in
+      let root = E.(sqrt (lit 1. + a2)) in
+      let near = E.(log1p (a + (a2 / (lit 1. + root)))) in
+      let r = E.(where (lit big <= a) far near) in
+      let signed = E.(where (x < lit 0.) (-r) r) in
+      E.(where (a < lit tiny) x signed))
 
 let acosh x =
-  float_map ~by:"Nx.acosh" [ x ] (fun b w ins ->
-      let x = ins.(0) in
-      let far = bin2 b Add (un1 b Log w x) (const b w ln2) in
-      let root = un1 b Sqrt w (push b (Op3 (Fma, x, x, const b w (-1.)))) in
-      let mid =
-        un1 b Log w
-          (bin2 b Sub (bin2 b Add x x)
-             (un1 b Recip w (bin2 b Add x root)))
-      in
-      let t = bin2 b Sub x (const b w 1.) in
-      let near =
-        un1 b Log1p w
-          (bin2 b Add t
-             (un1 b Sqrt w (push b (Op3 (Fma, t, t, bin2 b Add t t)))))
-      in
-      let r = pick b (at_least b w x 2.) mid near in
-      let r = pick b (at_least b w x big) far r in
-      pick b (below b w x 1.) (const b w Float.nan) r)
+  float_map ~by:"Nx.acosh" [ x ] (fun w ins ->
+      let lit = E.const w and x = ins.(0) in
+      let far = E.(log x + lit ln2) in
+      let root = E.(sqrt (fma x x (lit (-1.)))) in
+      let mid = E.(log (x + x - recip (x + root))) in
+      let t = E.(x - lit 1.) in
+      let near = E.(log1p (t + sqrt (fma t t (t + t)))) in
+      let r = E.(where (lit 2. <= x) mid near) in
+      let r = E.(where (lit big <= x) far r) in
+      E.(where (x < lit 1.) (lit Float.nan) r))
 
 (* [log1p (2a / (1 - a)) / 2] of [a = |x|], the sign put back: a small [a]
    splits the quotient to keep its digits. *)
 let atanh x =
-  float_map ~by:"Nx.atanh" [ x ] (fun b w ins ->
-      let x = ins.(0) in
-      let a = un1 b Abs w x in
-      let t = bin2 b Add a a in
-      let one_minus = bin2 b Sub (const b w 1.) a in
-      let small =
-        bin2 b Add t (bin2 b Fdiv (bin2 b Mul t a) one_minus)
-      in
-      let large = bin2 b Fdiv t one_minus in
-      let q = pick b (below b w a 0.5) small large in
-      let r = bin2 b Mul (const b w 0.5) (un1 b Log1p w q) in
-      let signed = pick b (below b w x 0.) (un1 b Neg w r) r in
-      pick b (below b w a tiny) x signed)
+  float_map ~by:"Nx.atanh" [ x ] (fun w ins ->
+      let lit = E.const w and x = ins.(0) in
+      let a = E.abs x in
+      let t = E.(a + a) in
+      let one_minus = E.(lit 1. - a) in
+      let small = E.(t + (t * a / one_minus)) in
+      let large = E.(t / one_minus) in
+      let q = E.(where (a < lit 0.5) small large) in
+      let r = E.(lit 0.5 * log1p q) in
+      let signed = E.(where (x < lit 0.) (-r) r) in
+      E.(where (a < lit tiny) x signed))
 
 (* Statistics *)
 
-(* The reductions [rs] along [axes] of the program [body b ins] over [xs], each
-   of shape [s]: [ins] are [xs]'s nodes, in order. *)
-let reduce_by ~by s axes xs rs body =
-  let b = Build.make () in
-  let input (Value.Any x) = input b (D.Any (dtype x)) in
-  let ins = Array.map input (Array.of_list xs) in
-  let prog = program b [| body b ins |] in
+(* The reductions [rs] along [axes] of [out] over [xs], each of shape [s]: its
+   operand [k] reads [xs]' element [k]. *)
+let reduce_by ~by s axes xs rs out =
+  let ins = Iarray.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs) in
+  let prog = P.of_exprs ~ins [| E.any out |] in
   let load (Value.Any x) = Value.Plain x in
   Eval.eval ~by
     (Value.Reduce
@@ -1951,7 +1881,6 @@ let reduced_count s axes = Array.fold_left (fun n a -> n * s.(a)) 1 axes
 let truth (type v s d) ~by m ?axes ?(keepdims = false) (x : (v, s, d) t) =
   let s = shape x in
   let axes = reduced_axes ~by (Array.length s) axes in
-  let to_bool b ins = push b (Op1 (Cast, D.Any D.Bool, ins.(0))) in
   let y =
     if reduced_count s axes > 0 then
       match D.equal_witness (dtype x) D.Bool with
@@ -1960,12 +1889,12 @@ let truth (type v s d) ~by m ?axes ?(keepdims = false) (x : (v, s, d) t) =
           fst
             (reduce_by ~by s axes [ Any x ]
                Value.[ Monoid (m, 0, D.Bool) ]
-               to_bool)
+               (E.cast D.Bool (operand 0 x)))
     else
       let n, () =
         reduce_by ~by s axes [ Any x ]
           Value.[ Monoid (Sum, 0, D.Int64) ]
-          (fun b ins -> push b (Op1 (Cast, D.Any D.Int64, to_bool b ins)))
+          E.(cast D.Int64 (cast D.Bool (operand 0 x)))
       in
       match (m : Nx_kernel.monoid) with
       | Max -> not_equal_s n 0L
@@ -1983,7 +1912,7 @@ let count ?axes ?(keepdims = false) m =
   let y, () =
     reduce_by ~by s axes [ Any m ]
       Value.[ Monoid (Sum, 0, D.Int64) ]
-      (fun b ins -> push b (Op1 (Cast, D.Any D.Int64, ins.(0))))
+      (E.cast D.Int64 (operand 0 m))
   in
   kept ~keepdims s axes y
 
@@ -2000,7 +1929,7 @@ let arg ~by e ?axis:along ?(keepdims = false) x =
   let (_, i), () =
     reduce_by ~by (shape x) [| a |] [ Any x ]
       Value.[ Arg (e, 0, dtype x) ]
-      (fun _ ins -> ins.(0))
+      (operand 0 x)
   in
   match along with
   | None ->
@@ -2023,17 +1952,16 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
   let (_, v), () =
     reduce_by ~by s axes [ Any x ]
       Value.[ Moments (0, w) ]
-      (fun _ ins -> ins.(0))
+      (operand 0 x)
   in
   let y =
     if ddof = 0 && not root then cast dt v
     else
-      elementwise ~by dt [ Any v ] (fun b ins ->
-          let v = ins.(0) in
-          let scale = Float.of_int n /. Float.of_int (n - ddof) in
-          let v = if ddof = 0 then v else bin2 b Mul v (const b w scale) in
-          let v = if root then un1 b Sqrt w v else v in
-          push b (Op1 (Cast, D.Any dt, v)))
+      let e = operand 0 v in
+      let scale = Float.of_int n /. Float.of_int (n - ddof) in
+      let e = if ddof = 0 then e else E.(e * const w scale) in
+      let e = if root then E.sqrt e else e in
+      elementwise ~by dt [ Any v ] (E.cast dt e)
   in
   kept ~keepdims s axes y
 
@@ -2055,9 +1983,7 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
   let (Wide w) = wide dt in
   let l = reduce ~by Logsumexp w axes x in
   let y =
-    elementwise ~by dt [ Any l ] (fun b ins ->
-        let log_n = un1 b Log w (const b w n) in
-        push b (Op1 (Cast, D.Any dt, bin2 b Sub ins.(0) log_n)))
+    elementwise ~by dt [ Any l ] E.(cast dt (operand 0 l - log (const w n)))
   in
   kept ~keepdims s axes y
 
@@ -2069,14 +1995,11 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
   let s = shape x and dt = dtype x in
   let go (type w) (w : (float, w) D.t) =
     let terms =
-      let b = Build.make () in
-      let t = input b (D.Any w) in
-      let first =
-        push b (Op2 (Compare Equal, push b (Coord axis), const b D.Int64 0L))
-      in
-      let a = pick b first (const b w 0.) (const b w (1. -. alpha)) in
-      let c = pick b first t (bin2 b Mul (const b w alpha) t) in
-      let prog = program b [| a; c |] in
+      let first = E.(coord axis = const D.Int64 0L) in
+      let lit = E.const w and t = E.input 0 w in
+      let a = E.where first (lit 0.) (lit (1. -. alpha)) in
+      let c = E.(where first t (lit alpha * t)) in
+      let prog = P.of_exprs ~ins:[| D.Any w |] [| E.any a; E.any c |] in
       let layout = Nx_array.Layout.contiguous s in
       let a, (c, ()) =
         let loads = [| Value.Plain (cast w x) |] in
@@ -2084,13 +2007,11 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
       in
       [| Value.Any a; Value.Any c |]
     in
-    let combine b earlier later =
-      let a1 = earlier.(0) and b1 = earlier.(1) in
-      let a2 = later.(0) and b2 = later.(1) in
-      let inf = const b w Float.infinity in
-      let infinite = push b (Op2 (Compare Equal, un1 b Abs w b1, inf)) in
-      let fma = push b (Op3 (Fma, a2, b1, b2)) in
-      [| bin2 b Mul a1 a2; pick b infinite (bin2 b Add b1 b2) fma |]
+    let combine =
+      let a1 = E.input 0 w and b1 = E.input 1 w in
+      let a2 = E.input 2 w and b2 = E.input 3 w in
+      let infinite = E.(abs b1 = const w Float.infinity) in
+      E.[| any (a1 * a2); any (where infinite (b1 + b2) (fma a2 b1 b2)) |]
     in
     let y = Expand.pairwise Eval.eval ~by s axis combine terms in
     cast dt (Prim.expect w y.(1))
@@ -2117,60 +2038,53 @@ let ewma ?axis:along ~alpha x =
    Map. Check endpoint classification exactly beside the ULP bound,
    which currently accepts this violation of sigmoid's contract. *)
 let sigmoid x =
-  float_map ~by:"Nx.sigmoid" [ x ] (fun b w ins ->
-      let x = ins.(0) in
-      let t = un1 b Exp w (un1 b Neg w (un1 b Abs w x)) in
-      let d = bin2 b Add (const b w 1.) t in
-      pick b (below b w x 0.) (bin2 b Fdiv t d) (un1 b Recip w d))
+  float_map ~by:"Nx.sigmoid" [ x ] (fun w ins ->
+      let lit = E.const w and x = ins.(0) in
+      let t = E.(exp (-abs x)) in
+      let d = E.(lit 1. + t) in
+      E.(where (x < lit 0.) (t / d) (recip d)))
 
 let softplus x =
-  float_map ~by:"Nx.softplus" [ x ] (fun b w ins ->
+  float_map ~by:"Nx.softplus" [ x ] (fun w ins ->
       let x = ins.(0) in
-      let tail = un1 b Log1p w (un1 b Exp w (un1 b Neg w (un1 b Abs w x))) in
-      bin2 b Add (bin2 b Maximum x (const b w 0.)) tail)
+      E.(maximum x (const w 0.) + log1p (exp (-abs x))))
 
-(* [finish b w shifted sum] of each [scale x - m] and its lane's sum of
+(* [finish w shifted sum] of each [scale x - m] and its lane's sum of
    exponentials, [m] the lane's greatest [scale x], computed in [x]'s wide
    format and rounded once. *)
 let normalised (type s d) ~by
-    (finish : 'w. Build.t -> (float, 'w) D.t -> int -> int -> int)
+    (finish : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t)
     ?(axes = [ -1 ]) ?(scale = 1.) (x : (float, s, d) t) : (float, s, d) t =
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by (Array.length s) (Some axes) in
   if numel x = 0 then x
   else
     let (Wide w) = wide dt in
-    let scaled b x =
-      let x = push b (Op1 (Cast, D.Any w, x)) in
-      if scale = 1. then x else bin2 b Mul x (const b w scale)
+    let scaled =
+      let x = E.cast w (operand 0 x) in
+      if scale = 1. then x else E.(x * const w scale)
     in
     let lanes y = broadcast ~by s (kept ~keepdims:true s axes y) in
     let m, () =
-      reduce_by ~by s axes [ Any x ]
-        Value.[ Monoid (Max, 0, w) ]
-        (fun b ins -> scaled b ins.(0))
+      reduce_by ~by s axes [ Any x ] Value.[ Monoid (Max, 0, w) ] scaled
     in
     let m = lanes m in
-    let shifted b ins = bin2 b Sub (scaled b ins.(0)) ins.(1) in
+    let shifted = E.(scaled - operand 1 m) in
     let sum, () =
       reduce_by ~by s axes [ Any x; Any m ]
         Value.[ Monoid (Sum, 0, w) ]
-        (fun b ins -> un1 b Exp w (shifted b ins))
+        (E.exp shifted)
     in
+    let sum = lanes sum in
     elementwise ~by dt
-      [ Any x; Any m; Any (lanes sum) ]
-      (fun b ins ->
-        push b (Op1 (Cast, D.Any dt, finish b w (shifted b ins) ins.(2))))
+      [ Any x; Any m; Any sum ]
+      (E.cast dt (finish w shifted (operand 2 sum)))
 
 let softmax ?axes ?scale x =
-  normalised ~by:"Nx.softmax"
-    (fun b w d sum -> bin2 b Fdiv (un1 b Exp w d) sum)
-    ?axes ?scale x
+  normalised ~by:"Nx.softmax" (fun _ d sum -> E.(exp d / sum)) ?axes ?scale x
 
 let log_softmax ?axes ?scale x =
-  normalised ~by:"Nx.log_softmax"
-    (fun b w d sum -> bin2 b Sub d (un1 b Log w sum))
-    ?axes ?scale x
+  normalised ~by:"Nx.log_softmax" (fun _ d sum -> E.(d - log sum)) ?axes ?scale x
 
 (* Complex parts *)
 
@@ -2190,25 +2104,20 @@ let imag dt z =
   let (Parts (_, part)) = parts ~by z in
   cast_by ~by dt (part 1)
 
-(* [body b w re im] of [z]'s parts, computed in the wider of [dt] and the
+(* [body w re im] of [z]'s parts, computed in the wider of [dt] and the
    parts' format, then stored in [dt]. *)
 let of_parts (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
-    (body : 'w. Build.t -> (float, 'w) D.t -> int -> int -> int) :
-    (float, r, d) t =
+    (body : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t) : (float, r, d) t =
   let (Parts (f, part)) = parts ~by z in
   let (Wide w) = if D.bits dt > D.bits f then Wide dt else Wide f in
-  elementwise ~by dt [ Any (part 0); Any (part 1) ] (fun b ins ->
-      let up i =
-        if D.equal w f then i else push b (Op1 (Cast, D.Any w, i))
-      in
-      let v = body b w (up ins.(0)) (up ins.(1)) in
-      if D.equal w dt then v else push b (Op1 (Cast, D.Any dt, v)))
+  let re = part 0 and im = part 1 in
+  let v = body w (at w (operand 0 re)) (at w (operand 1 im)) in
+  elementwise ~by dt [ Any re; Any im ] (at dt v)
 
 let magnitude dt z =
-  of_parts ~by:"Nx.magnitude" dt z (fun b w re im -> hypotenuse b w re im)
+  of_parts ~by:"Nx.magnitude" dt z (fun w re im -> hypotenuse w re im)
 
-let angle dt z =
-  of_parts ~by:"Nx.angle" dt z (fun b _ re im -> bin2 b Atan2 im re)
+let angle dt z = of_parts ~by:"Nx.angle" dt z (fun _ re im -> E.atan2 im re)
 
 let complex (type c a d) (dt : (Complex.t, c) D.t) ~(re : (float, a, d) t)
     ~(im : (float, a, d) t) : (Complex.t, c, d) t =
@@ -2239,10 +2148,9 @@ let conjugate (type v s d) (x : (v, s, d) t) : (v, s, d) t =
       let pairs = Eval.eval ~by (Value.Bitcast (D.Float64, x)) in
       let last = ndim pairs - 1 in
       let y =
-        elementwise ~by D.Float64 [ Any pairs ] (fun b ins ->
-            let at = push b (Coord last) in
-            let im = push b (Op2 (Compare Equal, at, const b D.Int64 1L)) in
-            pick b im (un1 b Neg D.Float64 ins.(0)) ins.(0))
+        let e = operand 0 pairs in
+        elementwise ~by D.Float64 [ Any pairs ]
+          E.(where (coord last = const D.Int64 1L) (-e) e)
       in
       Eval.eval ~by (Value.Bitcast (D.Complex128, y))
   | _ -> x
@@ -2267,16 +2175,11 @@ let matrix_transpose x =
 let triangle ~by keep k x =
   matrix ~by x;
   let dt = dtype x in
-  elementwise ~by dt [ Any x ] (fun b ins ->
-      let r = ndim x in
-      let d = bin2 b Sub (push b (Coord (r - 1))) (push b (Coord (r - 2))) in
-      let kk = const b D.Int64 (Int64.of_int k) in
-      let inside =
-        match keep with
-        | `Below -> push b (Op2 (Compare Less_equal, d, kk))
-        | `Above -> push b (Op2 (Compare Less_equal, kk, d))
-      in
-      pick b inside ins.(0) (const b dt (D.zero dt)))
+  let r = ndim x in
+  let column = E.coord (r - 1) and row = E.coord (r - 2) in
+  let d = E.(column - row) and kk = E.const D.Int64 (Int64.of_int k) in
+  let inside = match keep with `Below -> E.(d <= kk) | `Above -> E.(kk <= d) in
+  elementwise ~by dt [ Any x ] E.(where inside (operand 0 x) (const dt (D.zero dt)))
 
 let tril ?(k = 0) x = triangle ~by:"Nx.tril" `Below k x
 let triu ?(k = 0) x = triangle ~by:"Nx.triu" `Above k x
@@ -2402,8 +2305,6 @@ let top_k ~k ?axis:(a = -1) x =
     invalid_argf "%s: k = %d for an axis of %d elements" by k n;
   sorted ~by ~descending:true ~k a x
 
-(* The int64 [v] in the dtype [w], modulo its width. *)
-let any_const b w v = push b (Op1 (Cast, w, const b D.Int64 v))
 
 let signed_of_width = function
   | 8 -> D.Any D.Int8
@@ -2427,24 +2328,22 @@ let float_of_width (type s) (dt : (float, s) D.t) w =
    with the sign bit flipped, a float's bits flipped where negative and only its
    sign bit elsewhere, every NaN all ones. With [merge], [-0.]'s key is [+0.]'s,
    as [less] compares numbers. *)
-let key_node (type v s) b ~merge (dt : (v, s) D.t) kd w x =
-  let cast w i = push b (Op1 (Cast, w, i)) in
-  let bitcast w i = push b (Op1 (Bitcast, w, i)) in
-  let s = signed_of_width w in
-  let sign = Int64.shift_left (-1L) (w - 1) in
+let key_node (type v s k r) ~merge (dt : (v, s) D.t) (kd : (k, r) D.t) w
+    (x : (v, s) E.t) : (k, r) E.t =
+  let (D.Any s) = signed_of_width w in
+  let int v = wrapped s v in
+  let sign_bit = Int64.shift_left (-1L) (w - 1) in
   match D.kind dt with
-  | D.Unsigned | D.Boolean -> cast kd x
-  | D.Signed -> bitcast kd (bin2 b Xor (cast s x) (any_const b s sign))
+  | D.Unsigned | D.Boolean -> E.cast kd x
+  | D.Signed -> E.bitcast kd E.(cast s x lxor int sign_bit)
   | D.Complex -> assert false
   | D.Float ->
       let (Wide f) = float_of_width dt w in
-      let v = if D.code f = D.code dt then x else cast (D.Any f) x in
-      let v = if merge then bin2 b Add v (const b f 0.) else v in
-      let i = bitcast s v in
-      let neg = push b (Op2 (Compare Less, i, any_const b s 0L)) in
-      let flip = pick b neg (any_const b s (-1L)) (any_const b s sign) in
-      let nan = push b (Op2 (Compare Not_equal, v, v)) in
-      bitcast kd (pick b nan (any_const b s (-1L)) (bin2 b Xor i flip))
+      let v = at f x in
+      let v = if merge then E.(v + const f 0.) else v in
+      let i = E.bitcast s v in
+      let flip = E.(where (i < int 0L) (int (-1L)) (int sign_bit)) in
+      E.bitcast kd E.(where (v <> v) (int (-1L)) (i lxor flip))
 
 let no_complex ~by x =
   if D.is D.Complex (dtype x) then
@@ -2467,14 +2366,12 @@ let order_key (type k r v s d) (kd : (k, r) D.t) (x : (v, s, d) t) : (k, r, d) t
   no_complex ~by x;
   if D.bits dt > w then
     invalid_argf "%s: %s keys are narrower than %s" by (D.name kd) (D.name dt);
-  elementwise ~by kd [ Any x ] (fun b ins ->
-      key_node b ~merge:false dt (D.Any kd) w ins.(0))
+  elementwise ~by kd [ Any x ] (key_node ~merge:false dt kd w (operand 0 x))
 
 (* [x]'s uint64 keys, [-0.]'s merged into [+0.]'s where [merge]. *)
 let keys64 ~by ~merge x =
   let dt = dtype x in
-  elementwise ~by D.Uint64 [ Any x ] (fun b ins ->
-      key_node b ~merge dt (D.Any D.Uint64) 64 ins.(0))
+  elementwise ~by D.Uint64 [ Any x ] (key_node ~merge dt D.Uint64 64 (operand 0 x))
 
 (* Refuses what is not 1-d or 2-d keys. *)
 let keyed ~by x =
@@ -2518,15 +2415,11 @@ let rounds m =
   let rec go r = if m lsr r = 0 then r else go (r + 1) in
   go 0
 
-let i64 b n = const b D.Int64 (Int64.of_int n)
-
 (* How a probe [k] compares with a sought key [x], as uint8: 0 below, 1 equal, 2
    above. *)
-let code b k x =
-  let c v = const b D.Uint8 v in
-  let lt = push b (Op2 (Compare Less, k, x)) in
-  let eq = push b (Op2 (Compare Equal, k, x)) in
-  pick b lt (c 0) (pick b eq (c 1) (c 2))
+let code k x =
+  let c v = E.const D.Uint8 v in
+  E.(where (k < x) (c 0) (where (k = x) (c 1) (c 2)))
 
 (* The number of keys of [s] before each key of [v] ([`Left]), or before or
    equal to it ([`Right]), by binary lifting: the count [p] takes each step
@@ -2543,15 +2436,14 @@ let search ~by side s v =
   let step i = 1 lsl (r - 1 - i) in
   let compared probe =
     let c =
-      elementwise ~by D.Uint8 [ Any probe; Any kv ] (fun b ins ->
-          code b ins.(0) ins.(1))
+      elementwise ~by D.Uint8 [ Any probe; Any kv ]
+        (code (operand 0 probe) (operand 1 kv))
     in
     if not rows then c
     else if Prim.dim s 1 = 0 then fill ~by D.Uint8 lead 1
     else
       let differs =
-        elementwise ~by D.Bool [ Any c ] (fun b ins ->
-            push b (Op2 (Compare Not_equal, ins.(0), const b D.Uint8 1)))
+        elementwise ~by D.Bool [ Any c ] E.(operand 0 c <> const D.Uint8 1)
       in
       let j = arg ~by Max ~axis:1 ~keepdims:true differs in
       move ~by (Reshape lead) (take_along_axis ~axis:1 j c)
@@ -2560,19 +2452,12 @@ let search ~by side s v =
     let c = compared (take_axis ~by 0 q ks) in
     let last = i = r - 1 in
     let q =
-      elementwise ~by D.Int64 [ Any q; Any c ] (fun b ins ->
-          let q = ins.(0) in
-          let inside = push b (Op2 (Compare Less, q, i64 b m)) in
-          let goes =
-            push b (Op2 (Compare Less_equal, ins.(1), const b D.Uint8 before))
-          in
-          let up = push b (Op2 (Binary And, inside, goes)) in
-          let p =
-            pick b up
-              (bin2 b Add q (i64 b 1))
-              (bin2 b Sub q (i64 b (step i - 1)))
-          in
-          if last then p else bin2 b Add p (i64 b (step (i + 1) - 1)))
+      let e = operand 0 q in
+      let up = E.(e < i64 m && operand 1 c <= const D.Uint8 before) in
+      let back = i64 (step i - 1) in
+      let p = E.(where up (e + i64 1) (e - back)) in
+      elementwise ~by D.Int64 [ Any q; Any c ]
+        (if last then p else E.add p (i64 (step (i + 1) - 1)))
     in
     if last then q else round (i + 1) q
   in
@@ -2629,8 +2514,7 @@ let unique ?size keys =
   let i = arange D.Int64 0 n 1 in
   let before =
     take_axis ~by 0
-      (elementwise ~by D.Int64 [ Any i ] (fun b ins ->
-           bin2 b Sub ins.(0) (i64 b 1)))
+      (elementwise ~by D.Int64 [ Any i ] E.(operand 0 i - i64 1))
       k
   in
   let differs = comparison ~by (Compare Not_equal) k before in
@@ -2638,10 +2522,8 @@ let unique ?size keys =
     if ndim keys = 1 then differs else truth ~by Max ~axes:[ 1 ] differs
   in
   let fresh =
-    elementwise ~by D.Int64 [ Any i; Any differs ] (fun b ins ->
-        let start = push b (Op2 (Compare Equal, ins.(0), i64 b 0)) in
-        let f = push b (Op2 (Binary Or, start, ins.(1))) in
-        pick b f (i64 b 1) (i64 b 0))
+    elementwise ~by D.Int64 [ Any i; Any differs ]
+      E.(where (operand 0 i = i64 0 || operand 1 differs) (i64 1) (i64 0))
   in
   let start = scan_along ~by Max 0 (binary ~by (Binary Mul) fresh i) in
   let from = take_axis ~by 0 start p in
@@ -2649,15 +2531,13 @@ let unique ?size keys =
   let flags = scattered ~by ~unique:true Set p fresh zeros in
   let rank = scan_along ~by Sum 0 flags in
   let of_sorted =
-    elementwise ~by D.Int64
-      [ Any (take_axis ~by 0 from rank) ]
-      (fun b ins -> bin2 b Sub ins.(0) (i64 b 1))
+    let r = take_axis ~by 0 from rank in
+    elementwise ~by D.Int64 [ Any r ] E.(operand 0 r - i64 1)
   in
   let ids = scattered ~by ~unique:true Set p of_sorted zeros in
   let target =
-    elementwise ~by D.Int64 [ Any flags; Any rank ] (fun b ins ->
-        let f = push b (Op2 (Compare Equal, ins.(0), i64 b 1)) in
-        pick b f (bin2 b Sub ins.(1) (i64 b 1)) (i64 b (-1)))
+    elementwise ~by D.Int64 [ Any flags; Any rank ]
+      E.(where (operand 0 flags = i64 1) (operand 1 rank - i64 1) (i64 (-1)))
   in
   let first =
     scattered ~by Set target i (fill ~by D.Int64 [| n |] (Int64.of_int n))
@@ -2682,9 +2562,7 @@ let positions ?size c =
   sized ~by size;
   let n = Prim.dim c 0 in
   let counts =
-    elementwise ~by D.Int64 [ Any c ] (fun b ins ->
-        let v = push b (Op1 (Cast, D.Any D.Int64, ins.(0))) in
-        bin2 b Maximum v (i64 b 0))
+    elementwise ~by D.Int64 [ Any c ] E.(maximum (cast D.Int64 (operand 0 c)) (i64 0))
   in
   let total = reduce ~by Sum D.Int64 [| 0 |] counts in
   let l = match size with Some l -> l | None -> length ~by total in
@@ -2692,21 +2570,18 @@ let positions ?size c =
   (* An index of no count goes to its own position below zero, which writes
      nothing, so the targets are distinct. *)
   let starts =
-    elementwise ~by D.Int64
-      [ Any (scan_along ~by Sum 0 counts); Any counts; Any i ]
-      (fun b ins ->
-        let some = push b (Op2 (Compare Less, i64 b 0, ins.(1))) in
-        let below = bin2 b Sub (i64 b (-1)) ins.(2) in
-        pick b some (bin2 b Sub ins.(0) ins.(1)) below)
+    let ends = scan_along ~by Sum 0 counts in
+    let count = operand 1 counts in
+    let below = E.(i64 (-1) - operand 2 i) in
+    elementwise ~by D.Int64 [ Any ends; Any counts; Any i ]
+      E.(where (i64 0 < count) (operand 0 ends - count) below)
   in
   let runs =
     scattered ~by ~unique:true Set starts i (fill ~by D.Int64 [| l |] (-1L))
   in
-  elementwise ~by D.Int64
-    [ Any (scan_along ~by Max 0 runs); Any (arange D.Int64 0 l 1); Any total ]
-    (fun b ins ->
-      let inside = push b (Op2 (Compare Less, ins.(1), ins.(2))) in
-      pick b inside ins.(0) (i64 b n))
+  let starts = scan_along ~by Max 0 runs and j = arange D.Int64 0 l 1 in
+  elementwise ~by D.Int64 [ Any starts; Any j; Any total ]
+    E.(where (operand 1 j < operand 2 total) (operand 0 starts) (i64 n))
 
 (* Quantiles and histograms *)
 
@@ -2745,7 +2620,6 @@ let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
   and above = take_axis ~by a (index hi) s in
   let dt = dtype x in
   let (Wide w) = wide dt in
-  let narrow = D.bits dt < 32 in
   let along =
     Array.mapi (fun i _ -> if i = a then Array.length qs else 1) (shape x)
   in
@@ -2754,15 +2628,11 @@ let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
       (vector ~by w (Array.map (fun h -> h -. Float.floor h) h))
   in
   let y =
-    elementwise ~by dt [ Any below; Any above; Any frac ] (fun b ins ->
-        let wide i = if narrow then push b (Op1 (Cast, D.Any w, i)) else i in
-        let lo = wide ins.(0) and hi = wide ins.(1) and f = ins.(2) in
-        let r = bin2 b Add lo (bin2 b Mul f (bin2 b Sub hi lo)) in
-        let at = push b (Op2 (Compare Equal, f, const b w 0.)) in
-        let same = push b (Op2 (Compare Equal, lo, hi)) in
-        let exact = push b (Op2 (Binary Or, at, same)) in
-        let r = pick b exact lo r in
-        if narrow then push b (Op1 (Cast, D.Any dt, r)) else r)
+    let lo = at w (operand 0 below) and hi = at w (operand 1 above) in
+    let f = operand 2 frac in
+    let r = E.(lo + (f * (hi - lo))) in
+    let r = E.(where (f = const w 0. || lo = hi) lo r) in
+    elementwise ~by dt [ Any below; Any above; Any frac ] (at dt r)
   in
   let r = ndim y in
   permute ~by
@@ -2800,30 +2670,21 @@ let histogram (type s d) ?weights
       move ~by (Reshape [||])
         (move ~by (Slice [| { start = m - 1; count = 1; step = 1 } |]) e)
     in
-    elementwise ~by D.Int64
-      [ Any (search ~by `Right e x); Any x; Any last ]
-      (fun b ins ->
-        let j = bin2 b Sub ins.(0) (i64 b 1) in
-        let at_last = push b (Op2 (Compare Equal, ins.(1), ins.(2))) in
-        let j = pick b at_last (i64 b (m - 2)) j in
-        let low = push b (Op2 (Compare Less_equal, i64 b 0, j)) in
-        let high = push b (Op2 (Compare Less_equal, j, i64 b (m - 2))) in
-        pick b (push b (Op2 (Binary And, low, high))) j (i64 b (-1)))
+    let found = search ~by `Right e x in
+    let last_bin = i64 (m - 2) in
+    let j =
+      E.(where (operand 1 x = operand 2 last) last_bin (operand 0 found - i64 1))
+    in
+    elementwise ~by D.Int64 [ Any found; Any x; Any last ]
+      E.(where (i64 0 <= j && j <= last_bin) j (i64 (-1)))
   in
   let cell acc (e, x) =
     let nb = Prim.dim e 0 - 1 in
-    elementwise ~by D.Int64
-      [ Any acc; Any (bin (e, x)) ]
-      (fun b ins ->
-        let out =
-          push b
-            (Op2
-               ( Binary Or,
-                 push b (Op2 (Compare Less, ins.(0), i64 b 0)),
-                 push b (Op2 (Compare Less, ins.(1), i64 b 0)) ))
-        in
-        let flat = bin2 b Add (bin2 b Mul ins.(0) (i64 b nb)) ins.(1) in
-        pick b out (i64 b (-1)) flat)
+    let b = bin (e, x) in
+    let a = operand 0 acc and i = operand 1 b in
+    let out = E.(a < i64 0 || i < i64 0) in
+    elementwise ~by D.Int64 [ Any acc; Any b ]
+      E.(where out (i64 (-1)) ((a * i64 nb) + i))
   in
   let flat =
     match dims with

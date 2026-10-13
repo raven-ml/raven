@@ -120,16 +120,17 @@ val pairwise :
   by:string ->
   int array ->
   int ->
-  ?first:(Build.t -> int array -> int array) ->
-  (Build.t -> int array -> int array -> int array) ->
+  ?first:Nx_kernel.Prog.E.any array ->
+  Nx_kernel.Prog.E.any array ->
   'd Value.any array ->
   'd Value.any array
 (** [pairwise apply ~by shape axis ?first combine states] scans [states],
-    the components of each term's state, values of [shape], along [axis] by
-    the odd/even recursion, through [apply]. [combine b earlier later] is the
-    nodes of the state of [earlier]'s terms followed by [later]'s, and
-    [first b s] the nodes of index [0]'s result from its state [s], [s]
-    itself if [first] is absent.
+    the [n] components of each term's state, values of [shape], along [axis]
+    by the odd/even recursion, through [apply]. [combine] is the state of an
+    earlier run of terms followed by a later one, over operands [0] to
+    [n - 1], the earlier state's components, and [n] to [2n - 1], the
+    later's; [first] is index [0]'s result from its state, operands [0] to
+    [n - 1], the state itself if [first] is absent.
 
     Of [m] states [s], pairs [p_j = combine s_2j s_2j+1] for [j < ⌊m/2⌋]
     scan recursively into [q]; then [y_2j+1 = q_j], [y_0 = s_0] and

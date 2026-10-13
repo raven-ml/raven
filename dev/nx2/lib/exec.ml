@@ -305,35 +305,38 @@ let shifted first (nd : P.node) =
   match nd with Coord c -> first.(c) <> 0 | _ -> false
 
 (* [prog] with each [Coord] of an axis whose window starts at [s > 0] replaced
-   by [Coord + s], so that a device computes its window. Its operands' nodes
-   come first, and each [In] reads its operand's. *)
+   by [Coord + s], so that a device computes its window. Each node keeps its
+   place after the two it gains, [at] mapping old indices to new. *)
 let with_offsets (prog : P.t) (first : int array) =
   if
     Array.for_all (fun s -> s = 0) first
     || not (Iarray.exists (shifted first) prog.nodes)
   then prog
   else begin
-    let open Build in
-    let b = make () in
-    let operand k = input b (Iarray.get prog.ins k) in
-    let operands = Array.init (Iarray.length prog.ins) operand in
+    let nodes = ref [] and count = ref 0 in
+    let push nd =
+      nodes := nd :: !nodes;
+      incr count;
+      !count - 1
+    in
     let index = Array.make (Iarray.length prog.nodes) 0 in
+    let at j = index.(j) in
     Iarray.iteri
       (fun i nd ->
-        let at j = index.(j) in
         index.(i) <-
           (match (nd : P.node) with
-          | In k -> operands.(k)
           | Coord c when first.(c) <> 0 ->
-              let coord = push b nd in
-              let start = const b D.Int64 (Int64.of_int first.(c)) in
-              push b (Op2 (Binary Add, coord, start))
-          | Op1 (k, dt, j) -> push b (Op1 (k, dt, at j))
-          | Op2 (k, j, l) -> push b (Op2 (k, at j, at l))
-          | Op3 (k, j, l, m) -> push b (Op3 (k, at j, at l, at m))
-          | Coord _ | Const _ -> push b nd))
+              let coord = push nd in
+              let start = P.bits D.Int64 (Int64.of_int first.(c)) in
+              let start = push (Const (D.Any D.Int64, start)) in
+              push (Op2 (Binary Add, coord, start))
+          | Op1 (k, dt, j) -> push (Op1 (k, dt, at j))
+          | Op2 (k, j, l) -> push (Op2 (k, at j, at l))
+          | Op3 (k, j, l, m) -> push (Op3 (k, at j, at l, at m))
+          | In _ | Coord _ | Const _ -> push nd))
       prog.nodes;
-    program b (Iarray.map (fun o -> index.(o)) prog.outs)
+    let nodes = Iarray.of_list (List.rev !nodes) in
+    P.v ~ins:prog.ins nodes ~outs:(Iarray.map at prog.outs)
   end
 
 (* [node]'s kernel into [dst], over [ops]. *)

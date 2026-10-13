@@ -27,48 +27,41 @@ let pp_shape ppf s =
 
 (* Programs *)
 
-open Build
+module E = P.E
 
-let u64 b v = const b D.Uint64 v
-let bin b k x y = push b (Op2 (Binary k, x, y))
-let cmp b k x y = push b (Op2 (Compare k, x, y))
-let un b k dt x = push b (Op1 (Unary k, D.Any dt, x))
-let into b dt x = push b (Op1 (Cast, D.Any dt, x))
-let where b c x y = push b (Op3 (Where, c, x, y))
+let u64 v = E.const D.Uint64 v
 let two32 = 0x1_0000_0000L
 
 (* The counter of block [i], a uint64 node: the words [(2i, 2i + 1)], which
    repeat from 2^31 blocks on, so the second is xored with [q = i / 2^31], which
    keeps the counters distinct up to 2^63 blocks and is zero below 2^31. *)
-let counter b i =
-  let half = u64 b 0x8000_0000L in
-  let q = bin b Idiv i half and r = bin b Mod i half in
-  let lo = bin b Add r r in
-  let hi = bin b Xor (bin b Add lo (u64 b 1L)) q in
-  bin b Add lo (bin b Mul hi (u64 b two32))
+let counter i =
+  let half = u64 0x8000_0000L in
+  let r = E.(i mod half) in
+  let lo = E.(r + r) in
+  let hi = E.((lo + u64 1L) lxor (i / half)) in
+  E.(lo + (hi * u64 two32))
 
-let block b ~key i = bin b Threefry (counter b i) key
+let block ~key i = E.threefry (counter i) key
 
 (* Word [j] of a draw, a uint64 node below 2^32. *)
-let word b ~key j =
-  let two = u64 b 2L in
-  let t = block b ~key (bin b Idiv j two) in
-  let first = cmp b Equal (bin b Mod j two) (u64 b 0L) in
-  let w = u64 b two32 in
-  where b first (bin b Mod t w) (bin b Idiv t w)
+let word ~key j =
+  let two = u64 2L and w = u64 two32 in
+  let t = block ~key E.(j / two) in
+  E.(where (j mod two = u64 0L) (t mod w) (t / w))
 
 (* The flat index, as a uint64 node, of each element in the last [Array.length
    s] axes of a shape of rank [rank], of extents [s]. *)
-let flat b ~rank s =
+let flat ~rank s =
   let r = Array.length s in
-  let acc = ref (const b D.Int64 0L) and weight = ref 1 in
+  let acc = ref (E.const D.Int64 0L) and weight = ref 1 in
   for c = 0 to r - 1 do
-    let at = push b (Coord (rank - 1 - c)) in
-    let term = bin b Mul at (const b D.Int64 (Int64.of_int !weight)) in
-    acc := bin b Add !acc term;
+    let at = E.coord (rank - 1 - c) in
+    let w = E.const D.Int64 (Int64.of_int !weight) in
+    acc := E.(!acc + (at * w));
     weight := !weight * s.(r - 1 - c)
   done;
-  push b (Op1 (Bitcast, D.Any D.Uint64, !acc))
+  E.bitcast D.Uint64 !acc
 
 (* The largest [p] such that every multiple of 2^-p in [0, 1) is a value of
    [dt]: the significand's width where the format reaches 2^-p, else the
@@ -78,47 +71,42 @@ let precision (type s) (dt : (float, s) D.t) =
   let f = D.float_format dt in
   min (f.fraction_bits + 1) (1 - snd (Float.frexp (f.min_normal *. f.epsilon)))
 
-(* Samplers compute at float64 for float64 and at float32 for the other
-   floats. *)
+(* A sampler's compute dtype. Samplers compute at float64 for float64 and at
+   float32 for the other floats. *)
+type compute = C : (float, 's) D.t -> compute
+
 let compute (type s) (dt : (float, s) D.t) =
-  match dt with D.Float64 -> D.Any D.Float64 | _ -> D.Any D.Float32
+  match dt with D.Float64 -> C D.Float64 | _ -> C D.Float32
 
-let constf (type v s) b (dt : (v, s) D.t) (x : float) =
-  match D.kind dt with
-  | Float -> const b dt x
-  | _ -> invalid_arg "Rng.constf: not a float dtype"
+(* [x] as a constant of the compute dtype [c]. *)
+let lit c x = E.const c (D.of_float c x)
 
-(* [x], a node of [c], rounded once to [dt]. *)
-let rounded (type s) b (dt : (float, s) D.t) (D.Any c) x =
-  if D.equal c dt then x else into b dt x
+(* [x] rounded once to [dt]. *)
+let rounded (type v s w r) (dt : (v, s) D.t) (x : (w, r) E.t) : (v, s) E.t =
+  match D.equal_witness (E.dtype x) dt with
+  | Some Equal -> x
+  | None -> E.cast dt x
+
+(* 53 random bits at position [pos], a uint64 node below 2^53: the low word's
+   low 21 bits over the high word, of one block. *)
+let bits53 ~key pos =
+  let t = block ~key pos and w = u64 two32 in
+  let top = E.(t mod w land u64 0x1F_FFFFL) in
+  E.((top * w) + (t / w))
 
 (* A draw in [0, 1) at position [pos] with [p] random bits, in the compute dtype
    [c]: at float32, [p] of 24 or fewer, the low [p] bits of a word scaled by
    2^-p; at float64, [p] of 53, one block's 21 + 32 bits scaled by 2^-53. Both
    are exact, so a draw is a multiple of 2^-p below 1. *)
-(* 53 random bits at position [pos], a uint64 node below 2^53: the low word's
-   low 21 bits over the high word, of one block. *)
-let bits53 b ~key pos =
-  let t = block b ~key pos and w = u64 b two32 in
-  let top = bin b And (bin b Mod t w) (u64 b 0x1F_FFFFL) in
-  bin b Add (bin b Mul top w) (bin b Idiv t w)
-
-let unit b ~key ~p (D.Any c) pos =
+let unit (type s) ~key ~p (c : (float, s) D.t) pos =
   match c with
   | D.Float64 ->
-      let m = bits53 b ~key pos in
-      bin b Mul (into b D.Float64 m) (const b D.Float64 (Float.ldexp 1. (-53)))
+      let scale = E.const c (Float.ldexp 1. (-53)) in
+      E.(cast c (bits53 ~key pos) * scale)
   | _ ->
-      let mask = u64 b (Int64.of_int ((1 lsl p) - 1)) in
-      let bits = bin b And (word b ~key pos) mask in
-      bin b Mul (into b D.Float32 bits)
-        (const b D.Float32 (Float.ldexp 1. (-p)))
-
-(* The precision of a compute dtype, float32 or float64. *)
-let precision_of (D.Any c) =
-  match D.kind c with
-  | Float -> precision c
-  | _ -> invalid_arg "Rng.precision_of: not a float dtype"
+      let mask = u64 (Int64.of_int ((1 lsl p) - 1)) in
+      let scale = E.const c (Float.ldexp 1. (-p)) in
+      E.(cast c (word ~key pos land mask) * scale)
 
 (* Draws *)
 
@@ -156,37 +144,36 @@ let map ~by shape prog dt loads =
   in
   x
 
-(* A draw of [dt] and shape [s] per key of [k]: [body b ~key ~j ins] is the
-   element at flat position [j] of [s], [key] its key's words and [ins] the
-   nodes of [params], each loaded at the draw's shape. *)
-let draw ~by ?(params = [||]) (k : 'd key) dt s body =
+(* A draw of [dt] and shape [s] per key of [k]: [body ~key ~j] is the element
+   at flat position [j] of [s], [key] its key's words, reading [params], each
+   loaded at the draw's shape, as {!operand}s. *)
+let draw (type v e) ~by ?(params = [||]) (k : 'd key) (dt : (v, e) D.t) s
+    (body : key:_ -> j:_ -> (v, e) E.t) =
   check_shape ~by s;
   let batch = batch k and w = pack ~by k in
   let shape = Array.append batch s in
-  let b = Build.make () in
-  let key = input b (D.Any D.Uint64) in
-  let params' =
-    Array.map (fun (Value.Any x) -> input b (D.Any (Prim.dtype x))) params
-  in
-  let j = flat b ~rank:(Array.length shape) s in
-  let out = body b ~key ~j params' in
+  let dtype (Value.Any x) = D.Any (Prim.dtype x) in
+  let ins = Iarray.of_array (Array.append [| D.Any D.Uint64 |] (Array.map dtype params)) in
+  let out = body ~key:(E.input 0 D.Uint64) ~j:(flat ~rank:(Array.length shape) s) in
   let w = reshape ~by (Array.append batch (Array.make (Array.length s) 1)) w in
   let loads =
     Array.append
       [| Value.Any (stretch ~by shape w) |]
       (Array.map (fun (Value.Any x) -> Value.Any (stretch ~by shape x)) params)
   in
-  map ~by shape (program b [| out |]) dt loads
+  map ~by shape (P.of_exprs ~ins [| E.any out |]) dt loads
+
+(* Parameter [i] of a draw, [p], as a node of its body: operand 0 is the
+   key. *)
+let operand i p = E.input (i + 1) (Prim.dtype p)
 
 (* Keys *)
 
 let key seed : 'd key =
-  let b = Build.make () in
-  let first = cmp b Equal (push b (Coord 0)) (const b D.Int64 0L) in
-  let hi = const b D.Int32 (Int32.of_int (seed asr 32)) in
-  let lo = const b D.Int32 (Int32.of_int seed) in
-  let out = where b first hi lo in
-  map ~by:"Nx.Rng.key" [| 2 |] (program b [| out |]) D.Int32 [||]
+  let hi = E.const D.Int32 (Int32.of_int (seed asr 32)) in
+  let lo = E.const D.Int32 (Int32.of_int seed) in
+  let out = E.(where (coord 0 = const D.Int64 0L) hi lo) in
+  map ~by:"Nx.Rng.key" [| 2 |] (P.of_exprs ~ins:[||] [| E.any out |]) D.Int32 [||]
 
 let of_tensor (t : (int32, D.int32_elt, 'd) Value.t) : 'd key =
   let s = Prim.shape t in
@@ -197,16 +184,15 @@ let of_tensor (t : (int32, D.int32_elt, 'd) Value.t) : 'd key =
 
 let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
 
-(* The keys [f b ~key] gives at each element of [shape], whose last axes follow
+(* The keys [f ~key] gives at each element of [shape], whose last axes follow
    [k]'s batch. *)
 let keys ~by (k : 'd key) shape f : 'd key =
   let w = pack ~by k in
-  let b = Build.make () in
-  let key = input b (D.Any D.Uint64) in
-  let out = f b ~key in
+  let ins : D.any iarray = [| D.Any D.Uint64 |] in
+  let out = f ~key:(E.input 0 D.Uint64) in
   let w = stretch ~by shape w in
   let u : (int64, D.uint64_elt, 'd) Value.t =
-    map ~by shape (program b [| out |]) D.Uint64 [| Value.Any w |]
+    map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 [| Value.Any w |]
   in
   Eval.eval ~by (Value.Bitcast (D.Int32, u))
 
@@ -219,8 +205,7 @@ let one ~by k =
 let blocks ~by n k =
   if n < 1 then invalid_argf "%s: n is %d, not at least 1" by n;
   one ~by k;
-  keys ~by k [| n |] (fun b ~key ->
-      block b ~key (push b (Op1 (Bitcast, D.Any D.Uint64, push b (Coord 0)))))
+  keys ~by k [| n |] (fun ~key -> block ~key (E.bitcast D.Uint64 (E.coord 0)))
 
 let split_batch ~n k = blocks ~by:"Nx.Rng.split_batch" n k
 
@@ -243,7 +228,7 @@ let fold_in (k : 'd key) data : 'd key =
   let hi = Int64.logand (Int64.of_int (data asr 32)) 0xFFFF_FFFFL in
   let lo = Int64.logand (Int64.of_int data) 0xFFFF_FFFFL in
   let c = Int64.logor hi (Int64.shift_left lo 32) in
-  keys ~by k (batch k) (fun b ~key -> bin b Threefry (u64 b c) key)
+  keys ~by k (batch k) (fun ~key -> E.threefry (u64 c) key)
 
 (* [fold_in] of an index held in data: [i]'s words [(i asr 32, i)] as the
    sign-extended [i] gives them. A batch of indices gives a batch of keys. *)
@@ -252,18 +237,15 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
   let by = "Nx.Rng.fold_in_tensor" in
   let w = pack ~by k in
   let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
-  let b = Build.make () in
-  let key = input b (D.Any D.Uint64) in
-  let x = input b (D.Any D.Int32) in
-  let v = push b (Op1 (Bitcast, D.Any D.Uint64, into b D.Int64 x)) in
-  let w32 = u64 b two32 in
-  let c = bin b Add (bin b Idiv v w32) (bin b Mul (bin b Mod v w32) w32) in
-  let out = bin b Threefry c key in
+  let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
+  let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
+  let w32 = u64 two32 in
+  let out = E.threefry E.((v / w32) + (v mod w32 * w32)) (E.input 0 D.Uint64) in
   let loads =
     [| Value.Any (stretch ~by shape w); Value.Any (stretch ~by shape i) |]
   in
   let u : (int64, D.uint64_elt, 'd) Value.t =
-    map ~by shape (program b [| out |]) D.Uint64 loads
+    map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 loads
   in
   Eval.eval ~by (Value.Bitcast (D.Int32, u))
 
@@ -320,49 +302,42 @@ let place p k = Eval.place ~by:"Nx.Rng.place" p k
 (* Samplers *)
 
 let bits ?key s =
-  draw ~by:"Nx.Rng.bits" (resolve key) D.Int32 s (fun b ~key ~j _ ->
-      into b D.Int32 (word b ~key j))
+  draw ~by:"Nx.Rng.bits" (resolve key) D.Int32 s (fun ~key ~j ->
+      E.cast D.Int32 (word ~key j))
 
 let uniform ?key dt s =
-  let c = compute dt in
-  draw ~by:"Nx.Rng.uniform" (resolve key) dt s (fun b ~key ~j _ ->
-      rounded b dt c (unit b ~key ~p:(precision dt) c j))
+  let (C c) = compute dt in
+  draw ~by:"Nx.Rng.uniform" (resolve key) dt s (fun ~key ~j ->
+      rounded dt (unit ~key ~p:(precision dt) c j))
 
 (* The standard normal draw at position [e] of a Box-Muller draw over a [2;
    pairs] uniform draw: the radius from row 0, the angle from row 1, and both of
    the pair kept, the cosines first. [u1] is floored at 2^-p, the smallest draw
    above zero, so that the logarithm is finite and no other draw moves. A node
-   of [cd], float32 or float64. *)
-let gauss b ~key ~p ~pairs (D.Any cd as c) e =
-  let lit x = constf b cd x in
-  let pr = u64 b (Int64.of_int pairs) in
-  let second = cmp b Less_equal pr e in
-  let i = where b second (bin b Sub e pr) e in
-  let u1 = unit b ~key ~p c i and u2 = unit b ~key ~p c (bin b Add i pr) in
-  let floor = bin b Maximum u1 (lit (Float.ldexp 1. (-p))) in
-  let r = un b Sqrt cd (bin b Mul (lit (-2.)) (un b Log cd floor)) in
-  let angle = bin b Mul u2 (lit (2. *. Float.pi)) in
-  where b second
-    (bin b Mul r (un b Sin cd angle))
-    (bin b Mul r (un b Cos cd angle))
+   of [c], float32 or float64. *)
+let gauss ~key ~p ~pairs c e =
+  let lit = lit c and pr = u64 (Int64.of_int pairs) in
+  let second = E.(pr <= e) in
+  let i = E.(where second (e - pr) e) in
+  let u1 = unit ~key ~p c i and u2 = unit ~key ~p c E.(i + pr) in
+  let u1 = E.maximum u1 (lit (Float.ldexp 1. (-p))) in
+  let r = E.(sqrt (lit (-2.) * log u1)) in
+  let angle = E.(u2 * lit (2. *. Float.pi)) in
+  E.(where second (r * sin angle) (r * cos angle))
 
 let normal ?key dt s =
-  let c = compute dt in
+  let (C c) = compute dt in
   let pairs = (numel s + 1) / 2 in
-  draw ~by:"Nx.Rng.normal" (resolve key) dt s (fun b ~key ~j _ ->
-      rounded b dt c (gauss b ~key ~p:(precision_of c) ~pairs c j))
+  draw ~by:"Nx.Rng.normal" (resolve key) dt s (fun ~key ~j ->
+      rounded dt (gauss ~key ~p:(precision c) ~pairs c j))
 
 (* Exponential(1) by inverse CDF, from [1 - u], which is never 0. The draw is [0
    - log (1 - u)], where a negation would make -0 of u = 0. *)
 let exponential ?key dt s =
-  let c = compute dt in
-  draw ~by:"Nx.Rng.exponential" (resolve key) dt s (fun b ~key ~j _ ->
-      let (D.Any cd) = c in
-      let u = unit b ~key ~p:(precision_of c) c j in
-      let y =
-        bin b Sub (constf b cd 0.) (un b Log cd (bin b Sub (constf b cd 1.) u))
-      in
-      rounded b dt c y)
+  let (C c) = compute dt in
+  draw ~by:"Nx.Rng.exponential" (resolve key) dt s (fun ~key ~j ->
+      let u = unit ~key ~p:(precision c) c j in
+      rounded dt E.(lit c 0. - log (lit c 1. - u)))
 
 let fits v = v >= -0x8000_0000 && v <= 0x7FFF_FFFF
 
@@ -382,109 +357,48 @@ let randint ?key ?(low = 0) ~high s =
   let range = Int64.of_int (high - low) in
   let threshold = Int64.unsigned_rem (Int64.neg range) range in
   let n = numel s in
-  draw ~by (resolve key) D.Int32 s (fun b ~key ~j _ ->
-      let r = u64 b range and w32 = u64 b two32 in
-      let pick i =
-        let w = block b ~key (bin b Add (u64 b (Int64.of_int (i * n))) j) in
-        let wh = bin b Idiv w w32 and wl = bin b Mod w w32 in
-        let hi =
-          bin b Idiv
-            (bin b Add (bin b Mul wh r) (bin b Idiv (bin b Mul wl r) w32))
-            w32
-        in
-        (hi, cmp b Less (bin b Mul w r) (u64 b threshold))
-      in
-      let first, rejected = pick 0 in
-      let second, _ = pick 1 in
-      let hi = where b rejected second first in
-      let v = into b D.Uint32 hi in
-      let v = bin b Add v (const b D.Uint32 (Int32.of_int low)) in
-      push b (Op1 (Bitcast, D.Any D.Int32, v)))
+  draw ~by (resolve key) D.Int32 s (fun ~key ~j ->
+      let r = u64 range and w32 = u64 two32 in
+      let at i = u64 (Int64.of_int (i * n)) in
+      let block i = block ~key E.(at i + j) in
+      let hi w = E.(((w / w32 * r) + (w mod w32 * r / w32)) / w32) in
+      let first = block 0 in
+      let rejected = E.(first * r < u64 threshold) in
+      let v = E.(cast D.Uint32 (where rejected (hi (block 1)) (hi first))) in
+      E.(bitcast D.Int32 (v + const D.Uint32 (Int32.of_int low))))
 
 (* Parameters *)
 
-(* Float arithmetic on the nodes of one compute dtype. *)
-type f = {
-  lit : float -> int;
-  add : int -> int -> int;
-  sub : int -> int -> int;
-  mul : int -> int -> int;
-  div : int -> int -> int;
-  neg : int -> int;
-  log : int -> int;
-  log1p : int -> int;
-  exp : int -> int;
-  sqrt : int -> int;
-  abs : int -> int;
-  floor : int -> int;
-  ceil : int -> int;
-  min : int -> int -> int;
-  max : int -> int -> int;
-  lt : int -> int -> int;
-  le : int -> int -> int;
-  both : int -> int -> int;
-}
-
-let floats b (D.Any cd) =
-  let u k x = un b k cd x and o k x y = bin b k x y in
-  {
-    lit = constf b cd;
-    add = o Add;
-    sub = o Sub;
-    mul = o Mul;
-    div = o Fdiv;
-    neg = u Neg;
-    log = u Log;
-    log1p = u Log1p;
-    exp = u Exp;
-    sqrt = u Sqrt;
-    abs = u Abs;
-    floor = u Floor;
-    ceil = u Ceil;
-    min = o Minimum;
-    max = o Maximum;
-    lt = cmp b Less;
-    le = cmp b Less_equal;
-    both = bin b And;
-  }
-
-(* Parameter [x] at the compute dtype [cd]. *)
-let param b (D.Any cd) (p : (float, 's, 'd) Value.t) x =
-  if D.equal cd (Prim.dtype p) then x else into b cd x
+(* Parameter [i] of a draw, [p], at the compute dtype [c]. *)
+let param c i p = rounded c (operand i p)
 
 (* A float parameter's domain: as a refusal writes it, and the boolean node of
-   whether [x], the parameter at its sampler's compute dtype, lies in it. NaN
-   lies outside each. The compute dtype holds every bound, where a narrow
+   whether [x], the parameter at its sampler's compute dtype [c], lies in it.
+   NaN lies outside each. The compute dtype holds every bound, where a narrow
    parameter dtype would round it. *)
-type domain = { text : string; inside : f -> int -> int }
+type domain = {
+  text : string;
+  inside :
+    's. (float, 's) D.t -> (float, 's) E.t -> (bool, D.bool_elt) E.t;
+}
 
 (* [x] is finite where [x - x] is zero, and NaN elsewhere. *)
-let finite f x = f.le (f.sub x x) (f.lit 0.)
+let finite c x = E.(x - x <= lit c 0.)
 
 let probability =
-  {
-    text = "[0, 1]";
-    inside = (fun f x -> f.both (f.le (f.lit 0.) x) (f.le x (f.lit 1.)));
-  }
+  { text = "[0, 1]"; inside = (fun c x -> E.(lit c 0. <= x && x <= lit c 1.)) }
 
 let positive =
-  {
-    text = "(0, inf)";
-    inside = (fun f x -> f.both (f.lt (f.lit 0.) x) (finite f x));
-  }
+  { text = "(0, inf)"; inside = (fun c x -> E.(lit c 0. < x && finite c x)) }
 
 let non_negative =
-  {
-    text = "[0, inf)";
-    inside = (fun f x -> f.both (f.le (f.lit 0.) x) (finite f x));
-  }
+  { text = "[0, inf)"; inside = (fun c x -> E.(lit c 0. <= x && finite c x)) }
 
 (* Poisson rates: their counts fit int32. *)
 let counted =
   {
     text = "[0, 2^31)";
-    inside =
-      (fun f x -> f.both (f.le (f.lit 0.) x) (f.lt x (f.lit 2147483648.)));
+    inside = (fun c x -> E.(lit c 0. <= x && x < lit c 2147483648.));
   }
 
 (* Raises, at the check, naming [name]'s first element of [p] where [ok], a map
@@ -507,37 +421,33 @@ let refuse ~by name text ~show (p : ('v, 's, 'd) Value.t) ok =
 
 (* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
 let require ~by name d (p : (float, 's, 'd) Value.t) =
-  let c = compute (Prim.dtype p) in
-  let b = Build.make () in
-  let x = input b (D.Any (Prim.dtype p)) in
-  let inside = d.inside (floats b c) (param b c p x) in
+  let (C c) = compute (Prim.dtype p) in
+  let ins : D.any iarray = [| D.Any (Prim.dtype p) |] in
+  let inside = d.inside c (rounded c (E.input 0 (Prim.dtype p))) in
   let ok =
-    map ~by (Prim.shape p) (program b [| inside |]) D.Bool [| Value.Any p |]
+    map ~by (Prim.shape p) (P.of_exprs ~ins [| E.any inside |]) D.Bool [| Value.Any p |]
   in
   refuse ~by name d.text ~show:(Printf.sprintf "%g") p ok
 
 (* Checks that the counts [n] are not negative. *)
 let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
-  let b = Build.make () in
-  let x = input b (D.Any D.Int32) in
-  let inside = cmp b Less_equal (const b D.Int32 0l) x in
+  let ins : D.any iarray = [| D.Any D.Int32 |] in
+  let inside = E.(const D.Int32 0l <= input 0 D.Int32) in
   let ok =
-    map ~by (Prim.shape n) (program b [| inside |]) D.Bool [| Value.Any n |]
+    map ~by (Prim.shape n) (P.of_exprs ~ins [| E.any inside |]) D.Bool [| Value.Any n |]
   in
   refuse ~by name "[0, inf)" ~show:Int32.to_string n ok
 
 let bernoulli ?key p =
   let by = "Nx.Rng.bernoulli" in
   require ~by "p" probability p;
-  let c = compute (Prim.dtype p) in
+  let (C c) = compute (Prim.dtype p) in
   draw ~by ~params:[| Value.Any p |] (resolve key) D.Bool (Prim.shape p)
-    (fun b ~key ~j ins ->
+    (fun ~key ~j ->
       (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw
          is 53 bits below it, rounded up, at every dtype. *)
-      let f = floats b c in
-      let scaled = f.mul (param b c p ins.(0)) (f.lit (Float.ldexp 1. 53)) in
-      let t = into b D.Uint64 (f.ceil scaled) in
-      cmp b Less (bits53 b ~key j) t)
+      let scaled = E.(param c 0 p * lit c (Float.ldexp 1. 53)) in
+      E.(bits53 ~key j < cast D.Uint64 (ceil scaled)))
 
 (* Rejection *)
 
@@ -546,25 +456,28 @@ let bernoulli ?key p =
    accepted, and the draw is the first proposal accepted. An element no round
    accepts takes [otherwise], or by default the last proposal, whatever its
    test. Built from the last round back, each round is one select. *)
-let first_accepted b ~rounds ?otherwise round =
+let first_accepted ~rounds ?otherwise round =
   let last, accepted = round (rounds - 1) in
   let acc =
     ref
       (match otherwise with
       | None -> last
-      | Some v -> where b accepted last v)
+      | Some v -> E.where accepted last v)
   in
   for r = rounds - 2 downto 0 do
     let x, accepted = round r in
-    acc := where b accepted x !acc
+    acc := E.where accepted x !acc
   done;
   !acc
 
 (* A rejection loop's uniforms: round [r] of element [j] of [n] reads positions
    [r n + j] and [(rounds + r) n + j] of the key's uniform draw. *)
-let pair b ~key ~p ~n ~rounds c j r =
-  let at r = bin b Add (u64 b (Int64.of_int (r * n))) j in
-  (unit b ~key ~p c (at r), unit b ~key ~p c (at (rounds + r)))
+let pair ~key ~p ~n ~rounds c j r =
+  let at r =
+    let first = u64 (Int64.of_int (r * n)) in
+    E.(first + j)
+  in
+  (unit ~key ~p c (at r), unit ~key ~p c (at (rounds + r)))
 
 (* Gamma *)
 
@@ -581,51 +494,46 @@ let pair b ~key ~p ~n ~rounds c j r =
    whether it is below 1, and the shift's uniform floored at 2^-p. *)
 let rounds = 8
 
-let marsaglia b ~key ~n (D.Any cd as c) a j =
-  let p = precision_of c in
-  let lit x = constf b cd x in
+let marsaglia ~key ~n c a j =
+  let p = precision c in
+  let lit = lit c in
   let tiny = lit (Float.ldexp 1. (-p)) in
-  let keys = Array.init 3 (fun i -> block b ~key (u64 b (Int64.of_int i))) in
-  let below = cmp b Less a (lit 1.) in
-  let boosted = where b below (bin b Add a (lit 1.)) a in
-  let d = bin b Sub boosted (lit (1. /. 3.)) in
-  let squeeze = un b Recip cd (un b Sqrt cd (bin b Mul (lit 9.) d)) in
+  let keys = Array.init 3 (fun i -> block ~key (u64 (Int64.of_int i))) in
+  let below = E.(a < lit 1.) in
+  let boosted = E.(where below (a + lit 1.) a) in
+  let d = E.(boosted - lit (1. /. 3.)) in
+  let squeeze = E.(recip (sqrt (lit 9. * d))) in
   let pairs = ((rounds * n) + 1) / 2 in
   let round r =
-    let pos = bin b Add (u64 b (Int64.of_int (r * n))) j in
-    let x = gauss b ~key:keys.(0) ~p ~pairs c pos in
-    let u = unit b ~key:keys.(1) ~p c pos in
-    let t = bin b Add (lit 1.) (bin b Mul squeeze x) in
-    let v = bin b Mul t (bin b Mul t t) in
+    let first = u64 (Int64.of_int (r * n)) in
+    let pos = E.(first + j) in
+    let x = gauss ~key:keys.(0) ~p ~pairs c pos in
+    let u = unit ~key:keys.(1) ~p c pos in
+    let t = E.(lit 1. + (squeeze * x)) in
+    let v = E.(t * (t * t)) in
     (* [v] can be non-positive, where the logarithm is undefined: it is floored,
        and [positive] rejects it. *)
-    let positive = cmp b Less (lit 0.) v in
-    let log_v = un b Log cd (bin b Maximum v tiny) in
-    let bound =
-      bin b Add
-        (bin b Mul (lit 0.5) (bin b Mul x x))
-        (bin b Add d
-           (bin b Add (un b Neg cd (bin b Mul d v)) (bin b Mul d log_v)))
-    in
-    let log_u = un b Log cd (bin b Maximum u tiny) in
-    (bin b Mul d v, bin b And positive (cmp b Less log_u bound))
+    let positive = E.(lit 0. < v) in
+    let log_v = E.(log (maximum v tiny)) in
+    let bound = E.((lit 0.5 * (x * x)) + (d + (-(d * v) + (d * log_v)))) in
+    let log_u = E.(log (maximum u tiny)) in
+    (E.(d * v), E.(positive && log_u < bound))
   in
-  let draw = first_accepted b ~rounds ~otherwise:boosted round in
-  let boost = bin b Maximum (unit b ~key:keys.(2) ~p c j) tiny in
+  let draw = first_accepted ~rounds ~otherwise:boosted round in
+  let boost = E.maximum (unit ~key:keys.(2) ~p c j) tiny in
   (draw, below, boost)
 
 let gamma ?key a =
   let by = "Nx.Rng.gamma" in
   require ~by "a" positive a;
   let dt = Prim.dtype a in
-  let c = compute dt in
+  let (C c) = compute dt in
   let s = Prim.shape a in
-  draw ~by ~params:[| Value.Any a |] (resolve key) dt s (fun b ~key ~j ins ->
-      let (D.Any cd) = c in
-      let a' = param b c a ins.(0) in
-      let acc, below, boost = marsaglia b ~key ~n:(numel s) c a' j in
-      let shift = bin b Pow boost (un b Recip cd a') in
-      rounded b dt c (where b below (bin b Mul acc shift) acc))
+  draw ~by ~params:[| Value.Any a |] (resolve key) dt s (fun ~key ~j ->
+      let a' = param c 0 a in
+      let acc, below, boost = marsaglia ~key ~n:(numel s) c a' j in
+      let shift = E.(boost ** recip a') in
+      rounded dt E.(where below (acc * shift) acc))
 
 (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas from the key's two
    split keys, formed as [1 / (1 + exp d)], [d = log G(b) - log G(a)], so that
@@ -636,32 +544,28 @@ let gamma ?key a =
    a b] before they meet: [(s/b) q_b - (s/a) q_a] is finite, and its quotient by
    [s] is [d]'s shift, an infinity only where the draw is 0 or 1. The quotient
    is a division, where [q · (1 / s)] would make NaN of a zero [q]. *)
-let beta ?key a b' =
+let beta ?key a b =
   let by = "Nx.Rng.beta" in
   require ~by "a" positive a;
-  require ~by "b" positive b';
+  require ~by "b" positive b;
   let dt = Prim.dtype a in
-  let c = compute dt in
-  let s = Prim.broadcast_shape ~by (Prim.shape a) (Prim.shape b') in
+  let (C c) = compute dt in
+  let s = Prim.broadcast_shape ~by (Prim.shape a) (Prim.shape b) in
   let n = numel s in
-  draw ~by ~params:[| Value.Any a; Value.Any b' |] (resolve key) dt s
-    (fun b ~key ~j ins ->
-      let f = floats b c in
-      let ka = block b ~key (u64 b 0L) and kb = block b ~key (u64 b 1L) in
-      let a = param b c a ins.(0) and b'' = param b c b' ins.(1) in
+  draw ~by ~params:[| Value.Any a; Value.Any b |] (resolve key) dt s
+    (fun ~key ~j ->
+      let lit = lit c in
+      let ka = block ~key (u64 0L) and kb = block ~key (u64 1L) in
+      let a = param c 0 a and b = param c 1 b in
       let gamma key x =
-        let acc, below, boost = marsaglia b ~key ~n c x j in
-        (f.log acc, where b below (f.log boost) (f.lit 0.))
+        let acc, below, boost = marsaglia ~key ~n c x j in
+        (E.log acc, E.(where below (log boost) (lit 0.)))
       in
-      let la, qa = gamma ka a and lb, qb = gamma kb b'' in
-      let least = f.min a b'' in
-      let shift =
-        f.div
-          (f.sub (f.mul (f.div least b'') qb) (f.mul (f.div least a) qa))
-          least
-      in
-      let d = f.add (f.sub lb la) shift in
-      rounded b dt c (f.div (f.lit 1.) (f.add (f.lit 1.) (f.exp d))))
+      let la, qa = gamma ka a and lb, qb = gamma kb b in
+      let least = E.minimum a b in
+      let shift = E.(((least / b * qb) - (least / a * qa)) / least) in
+      let d = E.(lb - la + shift) in
+      rounded dt E.(lit 1. / (lit 1. + exp d)))
 
 (* Von Mises *)
 
@@ -689,89 +593,62 @@ let beta ?key a b' =
    phi]. *)
 let von_mises_rounds = 20
 
-let wrapped_cauchy b cd kappa =
-  let lit x = constf b cd x in
-  let sqrt x = un b Sqrt cd x and recip x = un b Recip cd x in
-  let add x y = bin b Add x y and mul x y = bin b Mul x y in
-  let div x y = bin b Fdiv x y in
+let wrapped_cauchy c kappa =
+  let lit = lit c in
   (* Each regime reads a concentration of its own range, so neither divides by
      zero or overflows where the other is selected. *)
-  let large = cmp b Less_equal (lit 1.) kappa in
-  let small_kappa = where b large (lit 0.) kappa in
-  let large_kappa = where b large kappa (lit 1.) in
-  let two_kappa = mul (lit 2.) small_kappa in
-  let root = sqrt (add (lit 1.) (mul two_kappa two_kappa)) in
-  let tau = add (lit 1.) root in
-  let r = sqrt (mul (lit 2.) tau) in
-  let dd = add tau r in
-  let gap = add (add (lit 1.) (recip (add root two_kappa))) r in
-  let e = div (lit 0.5) large_kappa in
-  let h = sqrt (add (lit 1.) (mul e e)) in
-  let d = add (add h e) (sqrt (mul (lit 2.) (mul e (add e h)))) in
-  let w =
-    add
-      (add (div (mul e (sqrt e)) (add h (lit 1.))) (sqrt e))
-      (sqrt (mul (lit 2.) (add e h)))
-  in
-  let rho = where b large (recip d) (div two_kappa dd) in
-  let one_minus_rho = where b large (div (mul (sqrt e) w) d) (div gap dd) in
-  let a =
-    where b large
-      (div (mul w w) (mul (lit 4.) d))
-      (div (mul gap gap) (mul (lit 4.) dd))
-  in
+  let large = E.(lit 1. <= kappa) in
+  let small_kappa = E.where large (lit 0.) kappa in
+  let large_kappa = E.where large kappa (lit 1.) in
+  let two_kappa = E.(lit 2. * small_kappa) in
+  let root = E.(sqrt (lit 1. + (two_kappa * two_kappa))) in
+  let tau = E.(lit 1. + root) in
+  let r = E.(sqrt (lit 2. * tau)) in
+  let dd = E.(tau + r) in
+  let gap = E.(lit 1. + recip (root + two_kappa) + r) in
+  let e = E.(lit 0.5 / large_kappa) in
+  let h = E.(sqrt (lit 1. + (e * e))) in
+  let d = E.(h + e + sqrt (lit 2. * (e * (e + h)))) in
+  let w = E.((e * sqrt e / (h + lit 1.)) + sqrt e + sqrt (lit 2. * (e + h))) in
+  let rho = E.(where large (recip d) (two_kappa / dd)) in
+  let one_minus_rho = E.(where large (sqrt e * w / d) (gap / dd)) in
+  let a = E.(where large (w * w / (lit 4. * d)) (gap * gap / (lit 4. * dd))) in
   (rho, one_minus_rho, a)
 
 let von_mises ?key kappa =
   let by = "Nx.Rng.von_mises" in
   require ~by "k" non_negative kappa;
   let dt = Prim.dtype kappa in
-  let c = compute dt in
+  let (C c) = compute dt in
   let s = Prim.shape kappa in
   let n = numel s in
   draw ~by ~params:[| Value.Any kappa |] (resolve key) dt s
-    (fun b ~key ~j ins ->
-      let (D.Any cd) = c in
-      let p = precision_of c in
-      let lit x = constf b cd x in
-      let mul x y = bin b Mul x y in
-      let rho, one_minus_rho, a =
-        wrapped_cauchy b cd (param b c kappa ins.(0))
-      in
-      let one_plus_rho = bin b Add (lit 1.) rho in
-      let lift = mul a (mul one_plus_rho one_plus_rho) in
+    (fun ~key ~j ->
+      let p = precision c and lit = lit c in
+      let rho, one_minus_rho, a = wrapped_cauchy c (param c 0 kappa) in
+      let one_plus_rho = E.(lit 1. + rho) in
+      let lift = E.(a * (one_plus_rho * one_plus_rho)) in
       let denom phi =
-        let cs = un b Cos cd phi in
-        bin b Add
-          (mul one_minus_rho one_minus_rho)
-          (mul (mul (lit 4.) rho) (mul cs cs))
+        let cs = E.cos phi in
+        E.((one_minus_rho * one_minus_rho) + (lit 4. * rho * (cs * cs)))
       in
       let rounds = von_mises_rounds in
       let round r =
-        let u, v = pair b ~key ~p ~n ~rounds c j r in
-        let phi = mul (bin b Sub u (lit 0.5)) (lit Float.pi) in
-        let y = bin b Fdiv lift (denom phi) in
-        let squeeze = cmp b Less v (mul y (bin b Sub (lit 2.) y)) in
-        let bound =
-          cmp b Less_equal (lit (-1.))
-            (bin b Sub (un b Log cd (bin b Fdiv y v)) y)
-        in
-        (phi, bin b Or squeeze bound)
+        let u, v = pair ~key ~p ~n ~rounds c j r in
+        let phi = E.((u - lit 0.5) * lit Float.pi) in
+        let y = E.(lift / denom phi) in
+        let squeeze = E.(v < y * (lit 2. - y)) in
+        let bound = E.(lit (-1.) <= log (y / v) - y) in
+        (phi, E.(squeeze || bound))
       in
-      let phi = first_accepted b ~rounds round in
-      let half =
-        bin b Fdiv
-          (mul (un b Abs cd (un b Sin cd phi)) one_minus_rho)
-          (un b Sqrt cd (denom phi))
-      in
-      let asin = un b Asin cd (bin b Minimum half (lit 1.)) in
-      let theta = mul (un b Sign cd phi) (mul (lit 2.) asin) in
-      rounded b dt c theta)
+      let phi = first_accepted ~rounds round in
+      let half = E.(abs (sin phi) * one_minus_rho / sqrt (denom phi)) in
+      let theta = E.(sign phi * (lit 2. * asin (minimum half (lit 1.)))) in
+      rounded dt theta)
 
 (* Counts *)
 
-let either b x y = bin b Or x y
-let not_ b x = cmp b Equal x (const b D.Bool false)
+let not_ x = E.(x = const D.Bool false)
 
 (* log (2π) / 2 rounded to a double, written out: [Float.log] calls the C
    library, whose last bit may differ by system, and on Windows by domain. *)
@@ -791,57 +668,39 @@ let half_log_two_pi = 0x1.d67f1c864beb5p-1
    up; below, it is read off a shift by eight. Both regimes of each [where] run
    everywhere, so the arithmetic stays finite where it is not selected. *)
 
-let stirlerr b f y =
-  let main y =
-    f.add
-      (f.sub (f.mul (f.add y (f.lit 0.5)) (f.log y)) y)
-      (f.lit half_log_two_pi)
-  in
+let stirlerr lit y =
+  let main y = E.(((y + lit 0.5) * log y) - y + lit half_log_two_pi) in
   let tail y =
-    let y2 = f.mul y y in
-    f.div
-      (f.sub
-         (f.lit (1.0 /. 12.0))
-         (f.div
-            (f.sub (f.lit (1.0 /. 360.0)) (f.div (f.lit (1.0 /. 1260.0)) y2))
-            y2))
-      y
+    let y2 = E.(y * y) in
+    E.((lit (1.0 /. 12.0) - ((lit (1.0 /. 360.0) - (lit (1.0 /. 1260.0) / y2)) / y2)) / y)
   in
-  let shifted = f.add y (f.lit 8.0) in
-  let product = ref (f.add y (f.lit 1.0)) in
+  let shifted = E.(y + lit 8.0) in
+  let product = ref E.(y + lit 1.0) in
   for i = 2 to 8 do
-    product := f.mul !product (f.add y (f.lit (float_of_int i)))
+    product := E.(!product * (y + lit (float_of_int i)))
   done;
-  let small =
-    f.sub
-      (f.sub (f.add (main shifted) (tail shifted)) (f.log !product))
-      (main y)
-  in
-  where b (f.lt y (f.lit 8.0)) small (tail y)
+  let small = E.(main shifted + tail shifted - log !product - main y) in
+  E.(where (y < lit 8.0) small (tail y))
 
-let deviance b f x m d =
-  let s = f.add x m in
-  let v = f.div d s in
-  let v2 = f.mul v v in
-  let acc = ref (f.mul d v) in
-  let term = ref (f.mul (f.mul (f.lit 2.0) x) v) in
+let deviance lit x m d =
+  let s = E.(x + m) in
+  let v = E.(d / s) in
+  let v2 = E.(v * v) in
+  let acc = ref E.(d * v) in
+  let term = ref E.(lit 2.0 * x * v) in
   for j = 1 to 6 do
-    term := f.mul !term v2;
-    acc := f.add !acc (f.div !term (f.lit (float_of_int ((2 * j) + 1))))
+    term := E.(!term * v2);
+    let odd = lit (float_of_int ((2 * j) + 1)) in
+    acc := E.(!acc + (!term / odd))
   done;
-  let direct = f.add (f.sub (f.mul x (f.log (f.div x m))) x) m in
-  where b (f.lt (f.abs d) (f.mul (f.lit 0.1) s)) !acc direct
+  let direct = E.((x * log (x / m)) - x + m) in
+  E.(where (abs d < lit 0.1 * s) !acc direct)
 
 (* The Poisson log pmf: [-bd0 (k, rate) - log (2π k) / 2 - stirlerr k]. *)
-let log_poisson_pmf b f k rate =
-  where b
-    (f.lt k (f.lit 0.5))
-    (f.neg rate)
-    (f.sub
-       (f.sub
-          (f.neg (deviance b f k rate (f.sub k rate)))
-          (f.mul (f.lit 0.5) (f.log (f.mul (f.lit (2.0 *. Float.pi)) k))))
-       (stirlerr b f k))
+let log_poisson_pmf lit k rate =
+  let spread = E.(lit 0.5 * log (lit (2.0 *. Float.pi) * k)) in
+  E.(where (k < lit 0.5) (-rate)
+       (-deviance lit k rate (k - rate) - spread - stirlerr lit k))
 
 (* The binomial log pmf of [n] trials of probability [p], [q = 1 - p]:
 
@@ -850,31 +709,18 @@ let log_poisson_pmf b f k rate =
 
    both deviances taking their difference from [n p - k]. The counts [0] and [n]
    have their own branches; the rest is read at a count strictly inside them. *)
-let log_binomial_pmf b f k n p q =
-  let inside = f.max (f.min k (f.sub n (f.lit 1.0))) (f.lit 1.0) in
-  let rest = f.sub n inside in
-  let d = f.sub inside (f.mul n p) in
+let log_binomial_pmf lit k n p q =
+  let inside = E.(maximum (minimum k (n - lit 1.0)) (lit 1.0)) in
+  let rest = E.(n - inside) in
+  let d = E.(inside - (n * p)) in
   let saddle =
-    f.sub
-      (f.sub
-         (f.sub
-            (f.sub (stirlerr b f n) (stirlerr b f inside))
-            (stirlerr b f rest))
-         (deviance b f inside (f.mul n p) d))
-      (deviance b f rest (f.mul n q) (f.neg d))
+    E.(stirlerr lit n - stirlerr lit inside - stirlerr lit rest
+       - deviance lit inside (n * p) d
+       - deviance lit rest (n * q) (-d))
   in
-  let spread =
-    f.add
-      (f.log (f.mul (f.lit (2.0 *. Float.pi)) inside))
-      (f.log1p (f.neg (f.div inside n)))
-  in
-  where b
-    (f.lt k (f.lit 0.5))
-    (f.mul n (f.log1p (f.neg p)))
-    (where b
-       (f.lt (f.sub n (f.lit 0.5)) k)
-       (f.mul n (f.log p))
-       (f.sub saddle (f.mul (f.lit 0.5) spread)))
+  let spread = E.(log (lit (2.0 *. Float.pi) * inside) + log1p (-(inside / n))) in
+  E.(where (k < lit 0.5) (n * log1p (-p))
+       (where (n - lit 0.5 < k) (n * log p) (saddle - (lit 0.5 * spread))))
 
 (* Two regimes with a fixed round count each, chosen per element, so the shape
    of the computation does not depend on the rate. Below 10, inversion: one
@@ -893,80 +739,53 @@ let poisson ?key rate =
   let by = "Nx.Rng.poisson" in
   require ~by "rate" counted rate;
   let dt = Prim.dtype rate in
-  let c = compute dt in
+  let (C c) = compute dt in
   let s = Prim.shape rate in
   let n = numel s in
   draw ~by ~params:[| Value.Any rate |] (resolve key) D.Int32 s
-    (fun b ~key ~j ins ->
-      let f = floats b c in
-      let p = precision_of c in
-      let rate = param b c rate ins.(0) in
-      let k0 = block b ~key (u64 b 0L) and k1 = block b ~key (u64 b 1L) in
-      let small = not_ b (f.le (f.lit 10.0) rate) in
+    (fun ~key ~j ->
+      let p = precision c and lit = lit c in
+      let rate = param c 0 rate in
+      let k0 = block ~key (u64 0L) and k1 = block ~key (u64 1L) in
+      let small = not_ E.(lit 10.0 <= rate) in
       let inversion =
-        let u = unit b ~key:k0 ~p c j in
-        let pmf = ref (f.exp (f.neg rate)) in
-        let cdf = ref (f.lit 0.0) and count = ref (f.lit 0.0) in
+        let u = unit ~key:k0 ~p c j in
+        let pmf = ref E.(exp (-rate)) in
+        let cdf = ref (lit 0.0) and count = ref (lit 0.0) in
         for i = 0 to poisson_inversion_rounds - 1 do
-          if i > 0 then
-            pmf := f.mul !pmf (f.div rate (f.lit (float_of_int i)));
-          cdf := f.add !cdf !pmf;
-          count := f.add !count (where b (f.lt !cdf u) (f.lit 1.0) (f.lit 0.0))
+          if i > 0 then pmf := E.(!pmf * (rate / lit (float_of_int i)));
+          cdf := E.(!cdf + !pmf);
+          count := E.(!count + where (!cdf < u) (lit 1.0) (lit 0.0))
         done;
         !count
       in
       let rejection =
         let rounds = poisson_rejection_rounds in
-        let lam = where b small (f.lit 1e5) rate in
-        let b' = f.add (f.lit 0.931) (f.mul (f.lit 2.53) (f.sqrt lam)) in
-        let a = f.add (f.lit (-0.059)) (f.mul (f.lit 0.02483) b') in
-        let log_inv_alpha =
-          f.log
-            (f.add (f.lit 1.1239) (f.div (f.lit 1.1328) (f.sub b' (f.lit 3.4))))
-        in
-        let vr =
-          f.sub (f.lit 0.9277) (f.div (f.lit 3.6224) (f.sub b' (f.lit 2.0)))
-        in
+        let lam = E.where small (lit 1e5) rate in
+        let b = E.(lit 0.931 + (lit 2.53 * sqrt lam)) in
+        let a = E.(lit (-0.059) + (lit 0.02483 * b)) in
+        let log_inv_alpha = E.(log (lit 1.1239 + (lit 1.1328 / (b - lit 3.4)))) in
+        let vr = E.(lit 0.9277 - (lit 3.6224 / (b - lit 2.0))) in
         let round r =
-          let u, v = pair b ~key:k1 ~p ~n ~rounds c j r in
-          let u = f.sub u (f.lit 0.5) in
-          let us = f.sub (f.lit 0.5) (f.abs u) in
-          let proposal =
-            f.floor
-              (f.add
-                 (f.add
-                    (f.mul (f.add (f.div (f.mul (f.lit 2.0) a) us) b') u)
-                    lam)
-                 (f.lit 0.43))
-          in
+          let u, v = pair ~key:k1 ~p ~n ~rounds c j r in
+          let u = E.(u - lit 0.5) in
+          let us = E.(lit 0.5 - abs u) in
+          let proposal = E.(floor ((((lit 2.0 * a / us) + b) * u) + lam + lit 0.43)) in
           (* A [us] of zero sends the proposal to an infinity and an infinite
              rate makes it NaN: the tests reject both, and the count the cast
              reads stays finite. *)
           let count =
-            where b
-              (f.le (f.lit 0.0) proposal)
-              (f.min proposal (f.lit 2147483647.0))
-              (f.lit 0.0)
+            E.(where (lit 0.0 <= proposal) (minimum proposal (lit 2147483647.0)) (lit 0.0))
           in
-          let squeeze = f.both (f.le (f.lit 0.07) us) (f.le v vr) in
-          let reject =
-            either b
-              (f.lt proposal (f.lit 0.0))
-              (f.both (f.lt us (f.lit 0.013)) (f.lt us v))
-          in
-          let lhs =
-            f.sub
-              (f.add (f.log v) log_inv_alpha)
-              (f.log (f.add (f.div a (f.mul us us)) b'))
-          in
-          ( count,
-            either b squeeze
-              (f.both (not_ b reject)
-                 (f.le lhs (log_poisson_pmf b f count lam))) )
+          let squeeze = E.(lit 0.07 <= us && v <= vr) in
+          let reject = E.(proposal < lit 0.0 || (us < lit 0.013 && us < v)) in
+          let lhs = E.(log v + log_inv_alpha - log ((a / (us * us)) + b)) in
+          let accepted = E.(not_ reject && lhs <= log_poisson_pmf lit count lam) in
+          (count, E.(squeeze || accepted))
         in
-        first_accepted b ~rounds round
+        first_accepted ~rounds round
       in
-      into b D.Int32 (where b small inversion rejection))
+      E.(cast D.Int32 (where small inversion rejection)))
 
 (* Binomial(n, p) counts the failures of [1 - p] where [p] exceeds one half, so
    the regimes see [p <= 1/2], chosen per element by the mean [n p]. Below 10,
@@ -985,93 +804,72 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   require_counts ~by "n" count;
   require ~by "p" probability prob;
   let dt = Prim.dtype prob in
-  let c = compute dt in
+  let (C c) = compute dt in
   let s = Prim.broadcast_shape ~by (Prim.shape count) (Prim.shape prob) in
   let len = numel s in
   draw ~by ~params:[| Value.Any count; Value.Any prob |] (resolve key) D.Int32 s
-    (fun b ~key ~j ins ->
-      let f = floats b c in
-      let (D.Any cd) = c in
-      let bits = precision_of c in
-      let n = into b cd ins.(0) in
-      let p = param b c prob ins.(1) in
-      let flip = f.lt (f.lit 0.5) p in
-      let p = where b flip (f.sub (f.lit 1.0) p) p in
-      let small = not_ b (f.le (f.lit 10.0) (f.mul n p)) in
-      let k0 = block b ~key (u64 b 0L) and k1 = block b ~key (u64 b 1L) in
+    (fun ~key ~j ->
+      let bits = precision c and lit = lit c in
+      let count = operand 0 count in
+      let n = E.cast c count in
+      let p = param c 1 prob in
+      let flip = E.(lit 0.5 < p) in
+      let p = E.(where flip (lit 1.0 - p) p) in
+      let small = not_ E.(lit 10.0 <= n * p) in
+      let k0 = block ~key (u64 0L) and k1 = block ~key (u64 1L) in
       let inversion =
         (* Term [i] holds [log (n (n - 1) … (n - i + 1) / i! (p / q)^i)]:
            the logarithms of the ratios [(n - l) p / ((l + 1) q)], summed over
            [l < i]. *)
-        let odds = f.sub (f.log p) (f.log1p (f.neg p)) in
-        let base = f.mul n (f.log1p (f.neg p)) in
-        let ratios = ref (f.lit 0.0) and cdf = ref (f.lit 0.0) in
+        let odds = E.(log p - log1p (-p)) in
+        let base = E.(n * log1p (-p)) in
+        let ratios = ref (lit 0.0) and cdf = ref (lit 0.0) in
         let cdfs =
           Array.init binomial_inversion_rounds (fun i ->
               if i > 0 then begin
                 let l = float_of_int (i - 1) in
-                let left = f.max (f.sub n (f.lit l)) (f.lit 0.0) in
-                let ratio = f.log (f.div left (f.lit (l +. 1.0))) in
-                ratios := f.add !ratios (f.add ratio odds)
+                let left = E.(maximum (n - lit l) (lit 0.0)) in
+                let ratio = E.(log (left / lit (l +. 1.0))) in
+                ratios := E.(!ratios + (ratio + odds))
               end;
-              cdf := f.add !cdf (f.exp (f.add base !ratios));
+              cdf := E.(!cdf + exp (base + !ratios));
               !cdf)
         in
-        let u = f.mul (unit b ~key:k0 ~p:bits c j) !cdf in
+        let u = E.(unit ~key:k0 ~p:bits c j * !cdf) in
         Array.fold_left
-          (fun acc cdf ->
-            f.add acc (where b (f.lt cdf u) (f.lit 1.0) (f.lit 0.0)))
-          (f.lit 0.0) cdfs
+          (fun acc cdf -> E.(acc + where (cdf < u) (lit 1.0) (lit 0.0)))
+          (lit 0.0) cdfs
       in
       let rejection =
         let rounds = binomial_rejection_rounds in
-        let n = where b small (f.lit 1000.0) n
-        and p = where b small (f.lit 0.5) p in
-        let q = f.sub (f.lit 1.0) p in
-        let mean = f.mul n p in
-        let spq = f.sqrt (f.mul mean q) in
-        let b' = f.add (f.lit 1.15) (f.mul (f.lit 2.53) spq) in
-        let a =
-          f.add
-            (f.add (f.lit (-0.0873)) (f.mul (f.lit 0.0248) b'))
-            (f.mul (f.lit 0.01) p)
-        in
-        let centre = f.add mean (f.lit 0.5) in
-        let log_alpha =
-          f.log (f.mul (f.add (f.lit 2.83) (f.div (f.lit 5.1) b')) spq)
-        in
-        let vr = f.sub (f.lit 0.92) (f.div (f.lit 4.2) b') in
-        let mode = f.floor (f.mul (f.add n (f.lit 1.0)) p) in
-        let log_mode = log_binomial_pmf b f mode n p q in
+        let n = E.where small (lit 1000.0) n and p = E.where small (lit 0.5) p in
+        let q = E.(lit 1.0 - p) in
+        let mean = E.(n * p) in
+        let spq = E.(sqrt (mean * q)) in
+        let b = E.(lit 1.15 + (lit 2.53 * spq)) in
+        let a = E.(lit (-0.0873) + (lit 0.0248 * b) + (lit 0.01 * p)) in
+        let centre = E.(mean + lit 0.5) in
+        let log_alpha = E.(log ((lit 2.83 + (lit 5.1 / b)) * spq)) in
+        let vr = E.(lit 0.92 - (lit 4.2 / b)) in
+        let mode = E.(floor ((n + lit 1.0) * p)) in
+        let log_mode = log_binomial_pmf lit mode n p q in
         let round r =
-          let u, v = pair b ~key:k1 ~p:bits ~n:len ~rounds c j r in
-          let u = f.sub u (f.lit 0.5) in
-          let us = f.sub (f.lit 0.5) (f.abs u) in
-          let proposal =
-            f.floor
-              (f.add
-                 (f.mul (f.add (f.div (f.mul (f.lit 2.0) a) us) b') u)
-                 centre)
-          in
+          let u, v = pair ~key:k1 ~p:bits ~n:len ~rounds c j r in
+          let u = E.(u - lit 0.5) in
+          let us = E.(lit 0.5 - abs u) in
+          let proposal = E.(floor ((((lit 2.0 * a / us) + b) * u) + centre)) in
           (* A [us] of zero sends the proposal to an infinity, which the range
              test rejects; the count stays finite for the cast. *)
           let count =
-            where b (f.le (f.lit 0.0) proposal) (f.min proposal n) (f.lit 0.0)
+            E.(where (lit 0.0 <= proposal) (minimum proposal n) (lit 0.0))
           in
-          let inside = f.both (f.le (f.lit 0.0) proposal) (f.le proposal n) in
-          let squeeze = f.both (f.le (f.lit 0.07) us) (f.le v vr) in
-          let lhs =
-            f.sub
-              (f.add (f.log v) log_alpha)
-              (f.log (f.add (f.div a (f.mul us us)) b'))
-          in
-          ( count,
-            f.both inside
-              (either b squeeze
-                 (f.le lhs (f.sub (log_binomial_pmf b f count n p q) log_mode)))
-          )
+          let inside = E.(lit 0.0 <= proposal && proposal <= n) in
+          let squeeze = E.(lit 0.07 <= us && v <= vr) in
+          let lhs = E.(log v + log_alpha - log ((a / (us * us)) + b)) in
+          let pmf = E.(log_binomial_pmf lit count n p q - log_mode) in
+          (count, E.(inside && (squeeze || lhs <= pmf)))
         in
-        first_accepted b ~rounds round
+        first_accepted ~rounds round
       in
-      let y = into b D.Int32 (where b small inversion rejection) in
-      where b flip (bin b Sub ins.(0) y) y)
+      let y = E.(cast D.Int32 (where small inversion rejection)) in
+      E.(where flip (count - y) y))
