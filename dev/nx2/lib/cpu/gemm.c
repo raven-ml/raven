@@ -1269,6 +1269,12 @@ int nx_cpu_contract_on(int acc, const nx_contract_view *v,
   return !atomic_load(&p.failed);
 }
 
+double nx_cpu_core_speed(int acc) {
+  const nx_cpu_gemm *g = &nx_cpu_table->gemm[acc];
+  if (g->kernel.shared > 1 && g->other != NULL) g = g->other;
+  return g->kernel.flops_per_byte;
+}
+
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
    on the stack, answering what the fill answers where it does not group,
    declines what it does not compute, then reads the operands through the

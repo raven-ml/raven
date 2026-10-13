@@ -409,18 +409,29 @@ static value run(call c, const value *arrays, int threads) {
   c.w = nx_cpu_width(c.dt);
   c.scratch = scratch(&c);
   int64_t order = c.m > c.n ? c.m : c.n, least = c.m < c.n ? c.m : c.n;
-  /* eigh's flops: about 10/3 n³ with vectors, 4/3 n³ without (xHEEVD);
-     svd's about 4 m n k without, three times as many with (xGESDD). */
-  int64_t per = solve                  ? c.r
-                : c.routine == SVD     ? (c.vectors ? 12 : 4) * least
-                : c.routine != EIGH    ? order / 3 + 1
-                : c.vectors            ? 10 * order / 3
-                                       : 4 * order / 3 + 1;
-  int64_t flops = c.matrices * c.m * c.n * per;
+  /* Flops, two a multiply-add as gemm.c counts them, with k the lesser
+     extent: a solve's n² r; Cholesky's n³/3; LU's about 2/3 m n k; QR's
+     about 4/3 m n k for R and as many for Q; eigh's about 10/3 n³ with
+     vectors, 4/3 n³ without (xHEEVD); svd's about 4 m n k without, three
+     times as many with (xGESDD). A complex flop is four real ones. They
+     are priced at the real dtype's speed on a core: a unit runs on one
+     thread. */
+  int64_t per = solve                    ? c.r
+                : c.routine == SVD       ? (c.vectors ? 12 : 4) * least
+                : c.routine == CHOLESKY  ? order / 3 + 1
+                : c.routine == LU        ? 2 * least / 3 + 1
+                : c.routine == QR        ? 8 * least / 3 + 1
+                : c.vectors              ? 10 * order / 3
+                                         : 4 * order / 3 + 1;
+  int cplx = c.dt == NX_COMPLEX64 || c.dt == NX_COMPLEX128;
+  int rdt = c.dt == NX_FLOAT32 || c.dt == NX_COMPLEX64 ? NX_FLOAT32
+                                                        : NX_FLOAT64;
+  double flops = (double)c.matrices * c.m * c.n * per * (cplx ? 4 : 1);
   int64_t bytes = c.matrices * c.m * (c.n + c.r) * c.w;
+  double cost = bytes + flops / nx_cpu_core_speed(rdt);
   /* A matrix a unit where there are enough for the threads, else one unit
      of all, whose GEMM updates take the threads. */
-  c.per = c.matrices >= nx_cpu_threads(bytes, bytes + flops) ? 1 : c.matrices;
+  c.per = c.matrices >= nx_cpu_threads(bytes, cost) ? 1 : c.matrices;
   int cores = rig_pool_cores();
   c.ws = calloc((size_t)cores, sizeof(arena));
   c.packs = calloc((size_t)cores, sizeof(arena));
@@ -439,7 +450,7 @@ static value run(call c, const value *arrays, int threads) {
   if (c.matrices > 0) {
     int64_t units = c.matrices / c.per;
     if (threads == 1) matrices(0, units, 0, &c);
-    else nx_cpu_job(units, bytes, bytes + flops, matrices, &c);
+    else nx_cpu_job(units, bytes, cost, matrices, &c);
   }
   for (int i = 0; i < cores; i++) {
     free(c.ws[i].p);

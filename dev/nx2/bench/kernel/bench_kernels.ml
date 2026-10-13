@@ -784,21 +784,21 @@ let linalg_rows =
         fun () -> K.cholesky Lower ~dst a)
       dt ?batch n ~count:(n * n * n / 3)
   in
-  let lu dt n =
+  let lu dt ?batch n =
     routine "lu"
       (fun (module K : Nx_kernel.S) a ->
         let y, p, q = Result.get_ok (Nx_kernel.Shape.lu (shape a)) in
         let lu = like a y and pivots = positions_of p and perm = positions_of q in
         fun () -> K.lu ~lu ~pivots ~perm a)
-      dt n ~count:(2 * n * n * n / 3)
+      dt ?batch n ~count:(2 * n * n * n / 3)
   in
-  let qr dt n =
+  let qr dt ?batch n =
     routine "qr"
       (fun (module K : Nx_kernel.S) a ->
         let q, r = Result.get_ok (Nx_kernel.Shape.qr Reduced (shape a)) in
         let q = like a q and r = like a r in
         fun () -> K.qr ~q ~r a)
-      dt n ~count:(8 * n * n * n / 3)
+      dt ?batch n ~count:(8 * n * n * n / 3)
   in
   let eigh dt ?batch n =
     routine "eigh"
@@ -842,15 +842,19 @@ let linalg_rows =
     cholesky f32 1024;
     cholesky D.Complex128 256;
     cholesky f64 ~batch:1024 32;
+    cholesky f64 ~batch:32 32;
+    cholesky D.Complex128 ~batch:8 32;
     solve 256 16;
     solve 1024 1024;
     lu f64 256;
     lu f64 1024;
     lu f32 1024;
     lu D.Complex128 256;
+    lu f64 ~batch:16 32;
     qr f64 256;
     qr f64 1024;
     qr D.Complex128 256;
+    qr f32 ~batch:16 32;
     eigh f64 64;
     eigh f64 256;
     eigh f64 1024;
