@@ -83,6 +83,13 @@ enum { LU, CHOLESKY, QR, SOLVE_TRIANGULAR, EIGH, SVD };
    or taken as ones; or x ← x l⁻ᴴ for the lower l. */
 typedef enum { LOWER, UPPER, UNIT_LOWER, UNIT_UPPER, ADJOINT_LOWER } solve;
 
+/* The order a sort leaves values in. */
+typedef enum { ASCENDING, DESCENDING } order;
+
+/* How reflectors are read: as stored, or conjugated (an LQ's, which
+   store vᴴ). */
+typedef enum { AS_STORED, CONJUGATED } reading;
+
 /* A call: its routine and attributes, 0 where it has none: [upper] for the
    triangle Upper, [complete] for complete factors, which q's or u's and
    vh's shapes state, [adjoint] and [unit] for a solve's, [vectors] where

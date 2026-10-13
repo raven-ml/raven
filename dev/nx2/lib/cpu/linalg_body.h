@@ -603,10 +603,10 @@ static int F(form_q)(const T *a, int64_t m, int64_t n, int64_t ld,
 
 /* c ← H_0 ⋯ H_(k−1) c for c of [h] rows, rows [ldc] apart, and [n]
    columns, H_j = I − τ_j v_j v_jᴴ with v_j[j] = 1 and v_j[r], r > j, at
-   [x] + r·rs + j·cs, conjugated under [conjugate]: by blocks of NB
+   [x] + r·rs + j·cs, read as [how] says: by blocks of NB
    reflectors, the last first (xUNMQR, xUNMLQ). The scratch [w] holds
    (h + NB + 2n) NB elements. Answers 0 if an allocation failed. */
-static int F(back)(const T *x, int64_t rs, int64_t cs, int conjugate,
+static int F(back)(const T *x, int64_t rs, int64_t cs, reading how,
                    const T *tau, int64_t k, int64_t h, int64_t n, T *c,
                    int64_t ldc, T *w, arena *s) {
   T *t = w + h * NB, *ww = t + NB * NB;
@@ -615,7 +615,7 @@ static int F(back)(const T *x, int64_t rs, int64_t cs, int conjugate,
     for (int64_t r = 0; r < hb; r++)
       for (int64_t p = 0; p < jb; p++) {
         T v = x[(j0 + r) * rs + (j0 + p) * cs];
-        w[r * jb + p] = conjugate ? CONJ(v) : v;
+        w[r * jb + p] = how == CONJUGATED ? CONJ(v) : v;
       }
     F(dense_v)(w, hb, jb);
     if (!F(block_t)(w, hb, jb, tau + j0, t, ww, s) ||
@@ -872,16 +872,16 @@ static void F(rswap)(R *x, R *y, int64_t n) {
   }
 }
 
-/* d[0..n) ascending, or descending under [down], by selection as
+/* d[0..n) in the order [o], by selection as
    xSTEQR, xSTEDC, xLASDQ and xBDSDC, with the [nz] rows of z's columns,
    [ldz] apart, and the [ny] rows of y's, [ldy] apart, where they are not
    NULL. */
-static void F(sort)(int64_t n, R *d, int down, R *z, int64_t nz, int64_t ldz,
+static void F(sort)(int64_t n, R *d, order o, R *z, int64_t nz, int64_t ldz,
                     R *y, int64_t ny, int64_t ldy) {
   for (int64_t i = 0; i < n - 1; i++) {
     int64_t k = i;
     for (int64_t j = i + 1; j < n; j++)
-      if (down ? d[j] > d[k] : d[j] < d[k]) k = j;
+      if (o == DESCENDING ? d[j] > d[k] : d[j] < d[k]) k = j;
     if (k == i) continue;
     R t = d[k];
     d[k] = d[i];
@@ -1029,7 +1029,7 @@ static int F(steqr)(int64_t n, R *d, R *e, R *z, int64_t nz, int64_t ldz,
     }
     if (sc != anorm) F(scale)(d, e, lsv, lendsv, sc, anorm);
   }
-  F(sort)(n, d, 0, z, nz, ldz, NULL, 0, 0);
+  F(sort)(n, d, ASCENDING, z, nz, ldz, NULL, 0, 0);
   return 1;
 }
 
@@ -1653,7 +1653,7 @@ static int F(stedc)(int64_t n, R *d, R *e, R *z, int64_t ldz, R *work,
       memcpy(zs + i * ldz, work + m + i * m, sizeof(R) * m);
     }
   }
-  F(sort)(n, d, 0, z, n, ldz, NULL, 0, 0);
+  F(sort)(n, d, ASCENDING, z, n, ldz, NULL, 0, 0);
   return 1;
 }
 
@@ -1710,7 +1710,8 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
     for (int64_t j = 0; j < n; j++) v[i * n + j] = z[j * n + i];
   /* Q = H_0 ⋯ H_(n−2) on rows 1 on: reflector j is a's column j from row
      j + 1, so that they are the reflectors of a QR of rows 1 on. */
-  return F(back)(a + 1, 1, n, 0, tau, n - 1, n - 1, n, v + n, n, w, s);
+  return F(back)(a + 1, 1, n, AS_STORED, tau, n - 1, n - 1, n, v + n, n, w,
+                 s);
 }
 
 /* Singular value decomposition
@@ -2042,7 +2043,7 @@ static int F(lasdq)(int64_t n, int sqre, R *d, R *e, R *u, int64_t ldu,
   }
   if (!F(bdsqr)(n, d, e, u, u ? n : 0, ldu, v, v ? nv : 0, ldv, work))
     return 0;
-  F(sort)(n, d, 0, u, n, ldu, v, nv, ldv);
+  F(sort)(n, d, ASCENDING, u, n, ldu, v, nv, ldv);
   return 1;
 }
 
@@ -2595,7 +2596,7 @@ static int F(bdsdc)(int64_t n, R *d, R *e, R *u, int64_t ldu, R *v,
     }
   if (u == NULL || n <= SMLSIZ) {
     if (!F(lasdq)(n, 0, d, e, u, ldu, v, ldv, work)) return 0;
-    F(sort)(n, d, 1, u, n, ldu, v, n, ldv);
+    F(sort)(n, d, DESCENDING, u, n, ldu, v, n, ldv);
     return 1;
   }
   R big = 0;
@@ -2628,7 +2629,7 @@ static int F(bdsdc)(int64_t n, R *d, R *e, R *u, int64_t ldu, R *v,
     start = i + 1;
   }
   for (int64_t i = 0; i < n; i++) d[i] *= big;
-  F(sort)(n, d, 1, u, n, ldu, v, n, ldv);
+  F(sort)(n, d, DESCENDING, u, n, ldu, v, n, ldv);
   return 1;
 }
 
@@ -2840,10 +2841,12 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
     for (int64_t j = 0; j < k; j++) wo[i * k + j] = vb[i + j * k];
   /* Q is the bidiagonalisation's, after QR's where it came first; P's
      reflectors are B's rows right of the diagonal, conjugated. */
-  if (qrf && !F(back)(r, 1, k, 0, tauq, k, k, k, xo, xc, ws, s)) return 0;
-  if (!F(back)(a, qrf ? k : 1, qrf ? 1 : mm, 0, qrf ? tau : tauq, k, mm, xc,
-               xo, xc, ws, s) ||
-      !F(back)(bd + lb, lb, 1, 1, taup, k - 1, k - 1, k, wo + k, k, ws, s))
+  if (qrf && !F(back)(r, 1, k, AS_STORED, tauq, k, k, k, xo, xc, ws, s))
+    return 0;
+  if (!F(back)(a, qrf ? k : 1, qrf ? 1 : mm, AS_STORED, qrf ? tau : tauq, k,
+               mm, xc, xo, xc, ws, s) ||
+      !F(back)(bd + lb, lb, 1, CONJUGATED, taup, k - 1, k - 1, k, wo + k, k,
+               ws, s))
     return 0;
   const T *src = wide ? xo : wo;
   int64_t rows = wide ? vr : k;
