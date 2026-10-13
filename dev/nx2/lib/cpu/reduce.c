@@ -43,13 +43,9 @@
      elements combined into one of 16 accumulator rows, elsewhere and where
      outputs have few terms. A 2x2 window's maximum takes this path.
 
-   Moments. A Moments scan is Welford's: at index t of a slice, with
-   n = t + 1, the mean m += (x - m) / n and the sum of squared deviations
-   s += (x - m_before) (x - m), the variance s / n. Each slice runs on one
-   thread, in order, so the bits are its terms' alone. A NaN term makes
-   both results that term's bits from there on. An infinity, with no NaN
-   before it, makes the mean the sum of the slice's infinities so far and
-   the variance an infinity less itself.
+   Moments. A Moments scan computes nx_kernel.mli's network on each slice,
+   op by op with the kinds' arithmetic, as Nx's expansion does, so that the
+   two give the same bits. It holds O(log n) states per slice.
 
    The kernels come first, compiled once per target: as reduce.c for base
    and as its copy reduce_v3.c for v3. The entries follow, compiled once. */
@@ -296,6 +292,155 @@ MONOID(min_f64, double, nx_minimum_f64)
 MONOID(max_b, uint8_t, ANY)
 MONOID(min_b, uint8_t, ALL)
 
+/* Moments scans. A unit scans [w] slices side by side by the network of
+   nx_kernel.mli, a state rows of [w] lanes: its mu, S and n, and in the
+   exact pass z, whether one of its terms is a NaN, 0 or 1.
+
+   The terms enter in order, term t at index t of level 0. A state at an
+   odd index joins the one before it, and the pair enters the next level at
+   half its index. Where its index is even, the level's result is the state
+   itself at index 0, else the next level's last result joined with it; a
+   pair's result is the next level's. So a level holds the even state that
+   awaits its partner and its last result, and the scratch three states per
+   level: the waiting one, the arriving one and the joined one.
+
+     t        0    1    2        3     4
+     level 0  s0   s1   s2       s3    s4
+     level 1       p0            p1
+     level 2                     q0
+     y        s0   p0   p0.s2    q0    q0.s4
+
+   where p0 is s0.s1, p1 s2.s3, q0 p0.p1 and a.b the join of a and b.
+
+   The fast pass computes by plain arithmetic, which gives the kinds' bits
+   wherever no value is a NaN or an infinity. Where one of its results is
+   not finite, the exact pass computes the unit again with the kinds' ops,
+   one kind per loop: gcc leaves scalar a loop that chains two of their
+   NaN selects. */
+
+/* Whether [v] is finite: an infinity or a NaN less itself is a NaN. */
+#define FINITE(v) ((v) - (v) == 0)
+
+#define LANES_OF(D, E)                                                        \
+  for (int64_t l = 0; l < w; l++) (D)[l] = E
+
+/* A pass's arithmetic. */
+typedef enum { FAST, EXACT } arith;
+
+#define MOMENTS(T, S)                                                         \
+  /* State [b] after state [a], into [r], each [w] elements a row. */       \
+  static void fast_##S(int64_t w, const T *restrict a, const T *restrict b,  \
+                       T *restrict r) {                                       \
+    for (int64_t l = 0; l < w; l++) {                                         \
+      T ma = a[l], va = a[w + l], na = a[2 * w + l];                          \
+      T mb = b[l], vb = b[w + l], nb = b[2 * w + l];                          \
+      T k = na + nb, d = mb - ma, f = nb / k;                                 \
+      r[l] = ma + d * f;                                                      \
+      r[w + l] = (va + vb) + (d * d) * (na * f);                              \
+      r[2 * w + l] = k;                                                       \
+    }                                                                         \
+  }                                                                           \
+  static void exact_##S(int64_t w, const T *restrict a, const T *restrict b, \
+                        T *restrict r) {                                      \
+    const T *ma = a, *va = a + w, *na = a + 2 * w, *za = a + 3 * w;           \
+    const T *mb = b, *vb = b + w, *nb = b + 2 * w, *zb = b + 3 * w;           \
+    T *k = r + 2 * w, d[NX_CPU_MOMENTS_LANES], f[NX_CPU_MOMENTS_LANES],       \
+      t[NX_CPU_MOMENTS_LANES], sum[NX_CPU_MOMENTS_LANES];                     \
+    LANES_OF(k, nx_add_##S(na[l], nb[l]));                                    \
+    LANES_OF(d, nx_sub_##S(mb[l], ma[l]));                                    \
+    LANES_OF(f, nx_fdiv_##S(nb[l], k[l]));                                    \
+    LANES_OF(t, nx_mul_##S(d[l], f[l]));                                      \
+    LANES_OF(t, nx_add_##S(ma[l], t[l]));                                     \
+    LANES_OF(sum, nx_add_##S(ma[l], mb[l]));                                  \
+    LANES_OF(r, (FINITE(ma[l]) & FINITE(mb[l]))                               \
+                    ? t[l]                                                    \
+                    : za[l] != 0 ? ma[l] : zb[l] != 0 ? mb[l] : sum[l]);      \
+    LANES_OF(f, nx_mul_##S(na[l], f[l]));                                     \
+    LANES_OF(d, nx_mul_##S(d[l], d[l]));                                      \
+    LANES_OF(d, nx_mul_##S(d[l], f[l]));                                      \
+    LANES_OF(t, nx_add_##S(va[l], vb[l]));                                    \
+    LANES_OF(r + w, nx_add_##S(t[l], d[l]));                                  \
+    LANES_OF(r + 3 * w, (T)((za[l] != 0) | (zb[l] != 0)));                    \
+  }                                                                           \
+  /* The states of term [x] of each lane, [xl] apart, shifted by [c]. */    \
+  static void leaf_##S(arith a, int64_t w, const T *restrict x, int64_t xl,   \
+                       const T *restrict c, T *restrict r) {                  \
+    if (a == EXACT) LANES_OF(r, nx_sub_##S(x[l * xl], c[l]));                 \
+    else LANES_OF(r, x[l * xl] - c[l]);                                       \
+    LANES_OF(r + w, 0);                                                       \
+    LANES_OF(r + 2 * w, 1);                                                   \
+    if (a == EXACT) LANES_OF(r + 3 * w, (T)(x[l * xl] != x[l * xl]));         \
+  }                                                                           \
+  /* One pass: 0, or 1 where the fast pass met a value not finite. */       \
+  static int pass_##S(arith a, const T *x, int64_t xs, int64_t xl, T *ym,     \
+                      int64_t ms, int64_t ml, T *yv, int64_t vs, int64_t vl,  \
+                      int64_t n, int64_t w, T *scratch) {                     \
+    void (*join)(int64_t, const T *, const T *, T *) =                        \
+        a == EXACT ? exact_##S : fast_##S;                                    \
+    int64_t size = 4 * w;                                                     \
+    int bad = 0, levels = nx_cpu_moments_levels(n);                           \
+    T c[NX_CPU_MOMENTS_LANES];                                                \
+    LANES_OF(c, FINITE(x[l * xl]) ? x[l * xl] : 0);                           \
+    /* Level k's waiting, arriving and joined states, and its result. */    \
+    T *held[64], *in[64], *joined[64];                                        \
+    const T *got[64];                                                         \
+    for (int k = 0; k < levels; k++) {                                        \
+      held[k] = scratch + 3 * k * size;                                       \
+      in[k] = held[k] + size;                                                 \
+      joined[k] = in[k] + size;                                               \
+    }                                                                         \
+    for (int64_t t = 0; t < n; t++) {                                         \
+      leaf_##S(a, w, x + t * xs, xl, c, in[0]);                               \
+      int k = 0;                                                              \
+      int64_t j = t;                                                          \
+      for (; j & 1; k++, j >>= 1) join(w, held[k], in[k], in[k + 1]);         \
+      if (j == 0) got[k] = in[k];                                             \
+      else {                                                                  \
+        join(w, got[k + 1], in[k], joined[k]);                                \
+        got[k] = joined[k];                                                   \
+      }                                                                       \
+      T *e = held[k];                                                         \
+      held[k] = in[k];                                                        \
+      in[k] = e;                                                              \
+      for (int i = 0; i < k; i++) got[i] = got[k];                            \
+      /* The mean c + mu, the variance S over the count, or mu less        \
+         itself where mu is not finite. */                                  \
+      const T *r = got[0];                                                    \
+      T m = (T)t + 1, *dm = ym + t * ms, *dv = yv + t * vs;                   \
+      if (a == EXACT) {                                                       \
+        T mean[NX_CPU_MOMENTS_LANES], var[NX_CPU_MOMENTS_LANES],              \
+            nan[NX_CPU_MOMENTS_LANES];                                        \
+        LANES_OF(mean, nx_add_##S(c[l], r[l]));                               \
+        LANES_OF(var, nx_fdiv_##S(r[w + l], m));                              \
+        LANES_OF(nan, nx_sub_##S(r[l], r[l]));                                \
+        for (int64_t l = 0; l < w; l++) {                                     \
+          dm[l * ml] = mean[l];                                               \
+          dv[l * vl] = FINITE(r[l]) ? var[l] : nan[l];                        \
+        }                                                                     \
+        continue;                                                             \
+      }                                                                       \
+      for (int64_t l = 0; l < w; l++) {                                       \
+        T mean = c[l] + r[l], var = r[w + l] / m;                             \
+        bad |= !(FINITE(mean) & FINITE(var));                                 \
+        dm[l * ml] = mean;                                                    \
+        dv[l * vl] = var;                                                     \
+      }                                                                       \
+    }                                                                         \
+    return bad;                                                               \
+  }                                                                           \
+  static void moments_##S(const uint8_t *x, int64_t xs, int64_t xl,          \
+                          uint8_t *mean, int64_t ms, int64_t ml,              \
+                          uint8_t *var, int64_t vs, int64_t vl, int64_t n,    \
+                          int64_t w, uint8_t *scratch) {                      \
+    if (pass_##S(FAST, (const T *)x, xs, xl, (T *)mean, ms, ml, (T *)var, vs, \
+                 vl, n, w, (T *)scratch))                                     \
+      pass_##S(EXACT, (const T *)x, xs, xl, (T *)mean, ms, ml, (T *)var, vs,  \
+               vl, n, w, (T *)scratch);                                       \
+  }
+
+MOMENTS(float, f32)
+MOMENTS(double, f64)
+
 /* The table's monoids, by monoid then dtype: NULL where declined. */
 #define SET(M, DT, F)                                                        \
   t->monoid[M][DT] =                                                           \
@@ -321,6 +466,8 @@ static void set(nx_cpu_target *t) {
   ALL4(NX_UINT64, u64);
   SET(NX_MONOID_MAX, NX_BOOL, max_b);
   SET(NX_MONOID_MIN, NX_BOOL, min_b);
+  t->moments[NX_FLOAT32] = moments_f32;
+  t->moments[NX_FLOAT64] = moments_f64;
 }
 
 #if defined(NX_CPU_V3)
@@ -1060,77 +1207,35 @@ static int reduce_into(task op, int monoid, int dt, const int *axes, int naxes,
 
 /* Moments scans */
 
-/* Outputs a unit of a Moments scan runs side by side, along the outer
-   axis that steps least. */
-#define MOMENTS_ROW 64
-
-/* The results of a slice's terms so far, past a NaN or an infinity. */
-enum { FINITE, INFINITE, NOT_A_NUMBER };
-
 /* A Moments scan: the outer axes, those but the scanned one, coalesced,
    with the steps of the mean (0), the variance (1) and the operand (2);
-   the scanned axis's extent and steps. */
+   the scanned axis's extent and steps. [failed] is set where a unit's
+   scratch could not be allocated. A unit runs NX_CPU_MOMENTS_LANES slices
+   side by side, along the outer axis that steps least. */
 typedef struct {
   const nx_array *a[3];
   nx_loop outer;
   int64_t len, along[3];
   int64_t rows, chunks; /* outer positions but the last axis; units along it */
+  _Atomic int failed;
 } moments;
-
-#define MOMENTS_RUN(NAME, T)                                                  \
-  static void NAME(const moments *q, const int64_t *at, int64_t w) {          \
-    T mean[MOMENTS_ROW], dev[MOMENTS_ROW], over_mean[MOMENTS_ROW],            \
-        over_var[MOMENTS_ROW];                                                \
-    uint8_t over[MOMENTS_ROW];                                                \
-    T *ym = (T *)q->a[0]->base, *yv = (T *)q->a[1]->base;                     \
-    const T *x = (const T *)q->a[2]->base;                                    \
-    int last = q->outer.rank - 1;                                             \
-    int64_t s0 = q->outer.step[0][last], s1 = q->outer.step[1][last],         \
-            s2 = q->outer.step[2][last];                                      \
-    for (int64_t i = 0; i < w; i++) {                                         \
-      mean[i] = 0;                                                            \
-      dev[i] = 0;                                                             \
-      over[i] = FINITE;                                                       \
-    }                                                                         \
-    for (int64_t t = 0; t < q->len; t++) {                                    \
-      T n = (T)(t + 1);                                                       \
-      const T *xt = x + at[2] + t * q->along[2];                              \
-      T *mt = ym + at[0] + t * q->along[0];                                   \
-      T *vt = yv + at[1] + t * q->along[1];                                   \
-      for (int64_t i = 0; i < w; i++) {                                       \
-        T v = xt[i * s2];                                                     \
-        if (isfinite(v)) {                                                    \
-          T d = v - mean[i];                                                  \
-          mean[i] += d / n;                                                   \
-          dev[i] += d * (v - mean[i]);                                        \
-        } else if (isnan(v)) {                                                \
-          if (over[i] != NOT_A_NUMBER) {                                      \
-            over_mean[i] = over_var[i] = v;                                   \
-            over[i] = NOT_A_NUMBER;                                           \
-          }                                                                   \
-        } else if (over[i] == FINITE) {                                       \
-          over_mean[i] = v;                                                   \
-          over_var[i] = v - v;                                                \
-          over[i] = INFINITE;                                                 \
-        } else if (over[i] == INFINITE)                                       \
-          over_mean[i] += v;                                                  \
-        mt[i * s0] = over[i] ? over_mean[i] : mean[i];                        \
-        vt[i * s1] = over[i] ? over_var[i] : dev[i] / n;                      \
-      }                                                                       \
-    }                                                                         \
-  }
-
-MOMENTS_RUN(moments_f32, float)
-MOMENTS_RUN(moments_f64, double)
 
 static void moments_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
-  const moments *q = ctx;
+  moments *q = ctx;
   const nx_loop *l = &q->outer;
-  int last = l->rank - 1;
-  int64_t inner = l->extent[last];
+  int last = l->rank - 1, w8 = nx_cpu_width(q->a[2]->dtype);
+  int64_t inner = l->extent[last], most = NX_CPU_MOMENTS_LANES;
+  int64_t lanes = inner < most ? inner : most;
+  int64_t levels = nx_cpu_moments_levels(q->len);
+  uint8_t *scratch = malloc((size_t)(12 * levels * lanes * w8));
+  if (scratch == NULL) {
+    q->failed = 1;
+    return;
+  }
+  nx_cpu_moments run = nx_cpu_table->moments[q->a[2]->dtype];
   for (int64_t u = lo; u < hi; u++) {
-    int64_t row = u / q->chunks, from = (u % q->chunks) * MOMENTS_ROW;
+    int64_t row = u / q->chunks, from = (u % q->chunks) * most;
     int64_t at[3] = {l->first[0], l->first[1], l->first[2]};
     for (int i = last - 1; i >= 0; i--) {
       int64_t k = row % l->extent[i];
@@ -1138,15 +1243,18 @@ static void moments_units(int64_t lo, int64_t hi, int worker, void *ctx) {
       for (int o = 0; o < 3; o++) at[o] += k * l->step[o][i];
     }
     for (int o = 0; o < 3; o++) at[o] += from * l->step[o][last];
-    int64_t w = inner - from < MOMENTS_ROW ? inner - from : MOMENTS_ROW;
-    if (q->a[2]->dtype == NX_FLOAT32) moments_f32(q, at, w);
-    else moments_f64(q, at, w);
+    int64_t w = inner - from < most ? inner - from : most;
+    run(q->a[2]->base + at[2] * w8, q->along[2], l->step[2][last],
+        q->a[0]->base + at[0] * w8, q->along[0], l->step[0][last],
+        q->a[1]->base + at[1] * w8, q->along[1], l->step[1][last], q->len, w,
+        scratch);
   }
+  free(scratch);
 }
 
 /* Scans [x] along [axis] by Moments into the mean [m] and the variance [v],
-   float32 or float64 of [x]'s dtype: NX_OK, or NX_SHAPE for shapes that do
-   not fit. */
+   float32 or float64 of [x]'s dtype: NX_OK, NX_SHAPE for shapes that do
+   not fit, or -1 if host memory runs out. */
 static int moments_into(int axis, const nx_array *m, const nx_array *v,
                         const nx_array *x, int threads) {
   int64_t terms, outputs;
@@ -1169,13 +1277,19 @@ static int moments_into(int axis, const nx_array *m, const nx_array *v,
     for (int o = 0; o < 3; o++) l->step[o][k] = q.a[o]->dim[r + i];
     k++;
   }
+  /* A slice alone keeps one outer axis, of extent 1. */
+  if (k == 0) {
+    l->extent[0] = 1;
+    for (int o = 0; o < 3; o++) l->step[o][0] = 0;
+    k = 1;
+  }
   l->rank = nx_coalesce_dims(3, k, l->extent, l->step);
   int64_t inner = l->extent[l->rank - 1];
   q.rows = outputs / inner;
-  q.chunks = (inner + MOMENTS_ROW - 1) / MOMENTS_ROW;
+  q.chunks = (inner + NX_CPU_MOMENTS_LANES - 1) / NX_CPU_MOMENTS_LANES;
   int64_t bytes = 3 * terms * outputs * nx_cpu_width(x->dtype);
-  job(q.rows * q.chunks, bytes, bytes, threads, moments_units, &q);
-  return NX_OK;
+  job(q.rows * q.chunks, bytes, 4 * bytes, threads, moments_units, &q);
+  return q.failed ? -1 : NX_OK;
 }
 
 /* Entries */

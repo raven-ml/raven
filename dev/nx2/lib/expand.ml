@@ -570,8 +570,9 @@ let running_logsumexp (type v s d)
   let y = pairwise apply ~by shape axis ~first combine [| Value.Any x |] in
   Prim.expect dt y.(0)
 
-(* Moments by {!pairwise}, over Chan, Golub and LeVeque's combination,
-   their (1.5b), of states [(μ, S, n, z)], [z] whether a term is a NaN.
+(* {!Nx_kernel.reduction}'s Moments scan by {!pairwise}, over Chan, Golub
+   and LeVeque's combination, their (1.5b), of states [(μ, S, n, z)], [z]
+   whether a term is a NaN.
 
    The derivation of its bounds, to first order, at index [i] of [N = i + 1]
    terms through [D = D_i] combinations, with [R] the terms' range and [V]
@@ -584,9 +585,9 @@ let running_logsumexp (type v s d)
      largest plus [4 u R]. Through [D] combinations, [(4 D + 1) u R]; the
      sum [c + μ] adds [u |μ|].
    - Variance. Errors in [S] add up the tree. A combination rounds
-     [Sa + Sb] within [u (Sa + Sb)], [δ δ (na nb / n)] within a relative
+     [Sa + Sb] within [u (Sa + Sb)], [δ δ (na w)] within a relative
      [6 u] (the rounding of [δ] twice through its square, the square,
-     [na nb], the division and the product) and the sum within [u S]: at
+     [w], [na w] and the product) and the sum within [u S]: at
      most [7 u S], as [Sa + Sb] and [δ² na nb / n] are at most [S]. The
      nodes at one distance from the root hold disjoint terms, and a union's
      [S] is at least the sum of its parts', so the [D] distances add at most
@@ -645,13 +646,13 @@ let running_moments (type v s d)
       let where c x y = push b (Op3 (Where, c, x, y)) in
       let n = op2 (Binary Add) na nb in
       let delta = op2 (Binary Sub) mb ma in
-      let step = op2 (Binary Mul) delta (op2 (Binary Fdiv) nb n) in
-      let chan = op2 (Binary Add) ma step in
+      let w = op2 (Binary Fdiv) nb n in
+      let chan = op2 (Binary Add) ma (op2 (Binary Mul) delta w) in
       let both = op2 (Binary And) (finite b ma) (finite b mb) in
       let past = where za ma (where zb mb (op2 (Binary Add) ma mb)) in
       let mean = where both chan past in
-      let w = op2 (Binary Fdiv) (op2 (Binary Mul) na nb) n in
-      let between = op2 (Binary Mul) (op2 (Binary Mul) delta delta) w in
+      let naw = op2 (Binary Mul) na w in
+      let between = op2 (Binary Mul) (op2 (Binary Mul) delta delta) naw in
       let s = op2 (Binary Add) (op2 (Binary Add) sa sb) between in
       [| mean; s; n; op2 (Binary Or) za zb |]
     in

@@ -54,17 +54,6 @@
     result of a chunk is its carry combined with the chunk's terms up to it,
     left to right.
 
-    A [Moments] scan is Welford's, each slice in order: at [n] terms the
-    mean [m] moves by [(x - m) / n], the sum [s] of squared deviations by
-    the product of [x]'s deviations from [m] before and after the move, and
-    the variance is [s / n]. Barring overflow and underflow, for [n] exact
-    in the dtype, [u] its unit roundoff and [X] the terms' largest
-    magnitude, the mean is within
-    [(n + 9) u X / 2] of the exact one and the variance within
-    [(2n + 21) u X²], to first order in [u]. A NaN term makes both results
-    that term's bits from there on; an infinity, with no NaN, makes the mean
-    the sum of the infinities so far and the variance NaN.
-
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
     scatter's [Add] adds a target's updates left to right.

@@ -79,11 +79,33 @@ type extreme = Max | Min
     bits unchanged; with no NaN term it is the instruction set's NaN, as an
     infinity less itself gives. A float [Sum] or [Prod] associates in an order
     that is a function of the shapes alone ({!section-orders}), and each kernel
-    library states its order and the bounds of [Logsumexp] and [Moments],
-    reduced and scanned. A float sum of [n] terms is within [γ(n - 1) Σ|x|] of
-    the exact sum, a product within a relative [γ(n - 1)] barring overflow and
-    underflow, where [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit
-    roundoff. *)
+    library states its order, the bounds of [Logsumexp], reduced and scanned,
+    and those of [Moments] reduced. A float sum of [n] terms is within
+    [γ(n - 1) Σ|x|] of the exact sum, a product within a relative
+    [γ(n - 1)] barring overflow and underflow, where [γ(k) = k u / (1 - k u)]
+    and [u] is the dtype's unit roundoff.
+
+    A [Moments] scan gives the same bits in every library that computes
+    one. On each slice, a term [t] is the state [(t - c, +0, 1)] of a mean
+    [μ], a sum [S] of squared deviations and a count [n], [c] the slice's
+    first term, or [0] where that term is not finite. The states combine by
+    the odd/even network: neighbours [2j] and [2j + 1] combine into pairs,
+    the pairs scan by the same network, result [2j + 1] is the pairs' result
+    [j], and result [2j], for [j > 0], is the pairs' result [j - 1] combined
+    with state [2j]. A state [a] then a state [b] combine as
+    [n = na + nb], [δ = μb - μa], [w = nb / n], [μ = μa + δ w] and
+    [S = (Sa + Sb) + (δ δ) (na w)], each operation in the output's dtype as
+    {!Prog} computes it. Where [μa] or [μb] is not finite, [μ] is [μa] where
+    a term of [a] is a NaN, else [μb] where one of [b] is, else [μa + μb].
+    Result [i] is the mean [c + μ] and the variance [S / (i + 1)], or
+    [μ - μ] where [μ] is not finite. So the first NaN term makes both
+    results its bits from there on, and with no NaN an infinity makes the
+    mean the sum of the infinities so far and the variance a NaN. Result
+    [i] passes through at most [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)]
+    combinations. Barring overflow, for [i + 1] exact in the dtype, [R] the
+    range of the terms up to [i] and [V] their variance, the mean [μ] is
+    within [(4 D + 1) u R + u|μ|] of the exact one and the variance within
+    [(7 D + 1) u V + (4 D² - 2 D) u R √V], to first order in [u]. *)
 type reduction = Monoid of monoid | Moments | Arg of extreme
 
 val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool

@@ -1242,10 +1242,17 @@ let run_moments k (c : moments) =
 (* A result: some bits, or a value within a tolerance. *)
 type expect = Is of want | Near of float * float
 
+(* The most combinations a Moments scan's result [i] passes through:
+   [max 0 (2 ⌈log₂ (i + 1)⌉ - 1)]. *)
+let depth i =
+  let rec log2 k p = if p >= k then 0 else 1 + log2 k (2 * p) in
+  Float.of_int (max 0 ((2 * log2 (i + 1) 1) - 1))
+
 (* The expected mean and variance at each index of [c], in C order: past a
    NaN term, its bits; past an infinity, the infinities' sum and a NaN;
-   else the running mean and variance by float64 sums of [x] and [x²],
-   within nx.cpu's bound at [x]'s unit roundoff [u] and the [X] of the
+   else the running mean and variance by float64 sums of the terms less the
+   first and of their squares, within nx.cpu's bound at [x]'s unit roundoff
+   [u], the depth [D] of the index and the range [R] and variance [V] of the
    terms so far, plus the sums' own bound in float64. *)
 let expected_moments (c : moments) =
   let (A.Any x) = c.x in
@@ -1264,7 +1271,8 @@ let expected_moments (c : moments) =
       let idx = Array.make r 0 in
       Array.iteri (fun q i -> idx.(i) <- o.(q)) ks;
       let nan = ref None and pos = ref false and neg = ref false in
-      let s1 = ref 0. and s2 = ref 0. and big = ref 0. in
+      let s1 = ref 0. and s2 = ref 0. and c = ref None in
+      let lo = ref Float.infinity and hi = ref Float.neg_infinity in
       for j = 0 to s.(a) - 1 do
         idx.(a) <- j;
         let at = position s idx in
@@ -1275,9 +1283,11 @@ let expected_moments (c : moments) =
         else if v = Float.infinity then pos := true
         else if v = Float.neg_infinity then neg := true
         else begin
-          s1 := !s1 +. v;
-          s2 := !s2 +. (v *. v);
-          big := Float.max !big (Float.abs v)
+          let c = match !c with Some c -> c | None -> (c := Some v; v) in
+          s1 := !s1 +. (v -. c);
+          s2 := !s2 +. ((v -. c) *. (v -. c));
+          lo := Float.min !lo v;
+          hi := Float.max !hi v
         end;
         let n = Float.of_int (j + 1) in
         match !nan with
@@ -1289,15 +1299,22 @@ let expected_moments (c : moments) =
             let inf = if !pos then Float.infinity else Float.neg_infinity in
             mean.(at) <- Near (inf, 0.)
         | None ->
-            let m = !s1 /. n in
-            let x = !big and k = j + 1 in
-            let tm = ((n +. 9.) /. 2. *. u *. x) +. (gamma k *. x) in
-            let tv =
-              (((2. *. n) +. 21.) *. u *. x *. x)
-              +. (gamma ((3 * k) + 4) *. x *. x)
+            let c = Option.get !c and d = depth j and k = j + 1 in
+            let m = !s1 /. n and r = !hi -. !lo in
+            let v = Float.max 0. ((!s2 /. n) -. (m *. m)) in
+            let slack = gamma (3 * k + 4) *. ((r *. r) +. r +. Float.abs c) in
+            let tm =
+              (((4. *. d) +. 1.) *. u *. r)
+              +. (u *. Float.abs (c +. m))
+              +. slack
             in
-            mean.(at) <- Near (m, tm);
-            var.(at) <- Near ((!s2 /. n) -. (m *. m), tv)
+            let tv =
+              (((7. *. d) +. 1.) *. u *. v)
+              +. (((4. *. d *. d) -. (2. *. d)) *. u *. r *. Float.sqrt v)
+              +. slack
+            in
+            mean.(at) <- Near (c +. m, tm);
+            var.(at) <- Near (v, tv)
       done)
     (indices (Array.map (fun i -> s.(i)) ks));
   (mean, var)

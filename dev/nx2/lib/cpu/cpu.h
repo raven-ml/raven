@@ -178,6 +178,25 @@ typedef struct {
                  int64_t s, int64_t w);
 } nx_cpu_monoid;
 
+/* A Moments scan of [w] slices of [n] terms side by side (reduce.c), w at
+   most NX_CPU_MOMENTS_LANES: slice l's term t at x + t xs + l xl, its mean
+   and variance at mean + t ms + l ml and var + t vs + l vl, in elements;
+   [scratch] holds 12 w nx_cpu_moments_levels(n) elements. */
+#define NX_CPU_MOMENTS_LANES 64
+
+/* The levels of a Moments scan's network over [n] terms, n >= 1: one per
+   bit of n. */
+static inline int nx_cpu_moments_levels(int64_t n) {
+  int k = 1;
+  for (; n > 1; n >>= 1) k++;
+  return k;
+}
+
+typedef void (*nx_cpu_moments)(const uint8_t *x, int64_t xs, int64_t xl,
+                               uint8_t *mean, int64_t ms, int64_t ml,
+                               uint8_t *var, int64_t vs, int64_t vl,
+                               int64_t n, int64_t w, uint8_t *scratch);
+
 /* The bytes of the largest tile of any target's microkernel: 32 × 32
    float32 on the matrix unit. */
 #define NX_CPU_TILE 4096
@@ -211,6 +230,8 @@ typedef struct {
   /* monoid[m][dt] reduces by the monoid m (NX_MONOID_SUM to
      NX_MONOID_MIN) at dt: lanes NULL where the table declines. */
   nx_cpu_monoid monoid[NX_CPU_MONOIDS][NX_DTYPE_COUNT];
+  /* moments[dt] scans by Moments at float32 and float64. */
+  nx_cpu_moments moments[NX_DTYPE_COUNT];
 } nx_cpu_target;
 
 /* The tables, each set when the program starts on a host that runs it, by

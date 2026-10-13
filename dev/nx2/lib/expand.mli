@@ -38,21 +38,11 @@
     their [Minimum], or [M] where [M] is not finite; index [0] is its term
     plus [+0]. Its result at [i] is within [D_i (u (X + ln(i+1) + 1) + ε)]
     of the exact one, [X] the largest finite magnitude among the terms up to
-    [i] and [ε] the error [Exp] and [Log1p] add. [Moments] combines states
-    of [na] and [nb] terms less the slice's first term [c], [c] taken as [0]
-    where it is not finite, holding their means [μ] and sums of squared
-    deviations [S], into [μa + δ (nb / n)] and [(Sa + Sb) + δ² (na nb / n)],
-    [δ = μb - μa] and [n = na + nb]. Where either mean is not finite, the
-    mean is the first state's where its terms hold a NaN, else the second's
-    where its do, else [μa + μb]: the first NaN term keeps its bits past
-    the NaN of two opposite infinities. At index [i] the mean is [c + μ]
-    and the variance [S / (i + 1)], or [μ - μ] where [μ] is not finite. With [R] the range of
-    the terms up to [i], the mean [μ] is within [(4 D_i + 1) u R + u|μ|] of
-    the exact one and the variance [V] within
-    [(7 D_i + 1) u V + (4 D_i² - 2 D_i) u R √V]. These bounds hold to first
-    order, barring overflow, for [i + 1] exact in the accumulator. [Arg]
-    combines pairs of an extreme and its position, keeping the earlier pair
-    unless the later extreme is past it in [Max]'s or [Min]'s order: exact.
+    [i] and [ε] the error [Exp] and [Log1p] add, to first order, barring
+    overflow, for [i + 1] exact in the accumulator. [Moments] scans as
+    {!Nx_kernel.reduction} states, in the accumulator. [Arg] combines pairs
+    of an extreme and its position, keeping the earlier pair unless the
+    later extreme is past it in [Max]'s or [Min]'s order: exact.
 
     A one-node map at a dtype other than a base one ({!base}), but a cast, a
     bitcast or a copy, computes at its dtypes' accumulators, which hold their
