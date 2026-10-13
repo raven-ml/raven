@@ -26,6 +26,7 @@
 #include "rig_remote_proxy_stubs.h"
 
 #if !defined(_WIN32)
+#include <poll.h>
 #include <sys/random.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -49,6 +50,82 @@ value caml_rig_remote_wire_send(value fd, value s) {
   free(b);
   if (err != 0) rig_remote_raise_error(err, "send");
   CAMLreturn(Val_unit);
+}
+
+/* Waiting */
+
+#ifdef _WIN32
+/* An fd_set of [n] sockets: Winsock's fd_set is a count and an array, which
+   FD_SETSIZE sizes only for its macros, so a set of any size is allocated
+   to fit and filled by hand. */
+static fd_set *socket_set(const SOCKET *s, mlsize_t n) {
+  fd_set *set = malloc(sizeof(fd_set) + n * sizeof(SOCKET));
+  if (set == NULL) return NULL;
+  set->fd_count = (u_int)n;
+  memcpy(set->fd_array, s, n * sizeof(SOCKET));
+  return set;
+}
+#endif
+
+/* The index of the first of the descriptors [fds] ready to read, or to
+   write if [write], within [ms] milliseconds, -1 for no bound; -1 once [ms]
+   passed. A descriptor in error, or whose peer hung up, is ready: the call
+   that follows reports it. POSIX waits with poll, which takes descriptors
+   of any number and count, where select takes none from FD_SETSIZE.
+   Windows waits with select on sockets, whose sets it allocates to fit,
+   and which reports a failed connect as an exception. Releases the
+   runtime. Raises Unix.Unix_error if the wait fails, EINTR included. */
+value caml_rig_remote_wire_wait(value fds, value write, value ms) {
+  mlsize_t n = Wosize_val(fds);
+  int w = Bool_val(write), t = Int_val(ms);
+  if (n == 0) caml_invalid_argument("Rig_remote_proxy.Wire.ready: no socket");
+#ifdef _WIN32
+  SOCKET *s = malloc(n * sizeof(SOCKET));
+  if (s == NULL) caml_raise_out_of_memory();
+  for (mlsize_t i = 0; i < n; i++) s[i] = Socket_val(Field(fds, i));
+  fd_set *ready = socket_set(s, n), *failed = socket_set(s, n);
+  if (ready == NULL || failed == NULL) {
+    free(s);
+    free(ready);
+    free(failed);
+    caml_raise_out_of_memory();
+  }
+  struct timeval bound = {t / 1000, (t % 1000) * 1000};
+  caml_release_runtime_system();
+  int k = select(0, w ? NULL : ready, w ? ready : NULL, failed,
+                 t < 0 ? NULL : &bound);
+  int e = WSAGetLastError();
+  caml_acquire_runtime_system();
+  int r = -1;
+  if (k != SOCKET_ERROR)
+    for (mlsize_t i = 0; i < n && r < 0; i++)
+      if (FD_ISSET(s[i], ready) || FD_ISSET(s[i], failed)) r = (int)i;
+  free(s);
+  free(ready);
+  free(failed);
+  if (k == SOCKET_ERROR) rig_remote_raise_error(e, "select");
+  return Val_int(r);
+#else
+  struct pollfd *p = malloc(n * sizeof(struct pollfd));
+  if (p == NULL) caml_raise_out_of_memory();
+  for (mlsize_t i = 0; i < n; i++)
+    p[i] = (struct pollfd){Int_val(Field(fds, i)), w ? POLLOUT : POLLIN, 0};
+  caml_release_runtime_system();
+  int k = poll(p, (nfds_t)n, t);
+  int e = errno;
+  caml_acquire_runtime_system();
+  int r = -1;
+  for (mlsize_t i = 0; k > 0 && i < n && r < 0; i++) {
+    if (p[i].revents & POLLNVAL) {
+      k = -1;
+      e = EBADF;
+    } else if (p[i].revents != 0)
+      r = (int)i;
+  }
+  free(p);
+  if (k < 0) rig_remote_raise_error(e, "poll");
+  return Val_int(r);
+#endif
 }
 
 /* Bounds each send on the socket [fd] to [s] seconds, [0.] for none. Winsock

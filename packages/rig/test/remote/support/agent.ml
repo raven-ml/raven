@@ -19,7 +19,9 @@
    other agent of the job reaches it, and waits for the job to end. In mode
    "crowded" it limits its descriptors to [crowd] and, while it serves, takes
    lines on stdin: "fill" opens descriptors until the system refuses one, then
-   prints "full"; "free" closes them, then prints "freed".
+   prints "full"; "free" closes them, then prints "freed". In mode "high" it
+   holds [past] descriptors before it listens, its limit raised to [high], so
+   that every socket it makes has a number past [past].
 
    It serves eleven kinds. "MEM" is two memory devices. "POLLED" is two Polled
    devices, which launch Polled's host functions. "TIGHT" is a Polled device
@@ -41,10 +43,19 @@ let fail why =
 
 (* Crowding *)
 
-external limit_descriptors : int -> int = "rig_remote_test_limit_descriptors"
-
 (* The descriptors a crowded agent may hold: more than it opens to serve. *)
 let crowd = 256
+
+(* Descriptors past select's FD_SETSIZE, 1024 on Linux and macOS, and the
+   limit of descriptors that holds them and the job's. *)
+let past = 1100
+let high = 4096
+
+(* Holds [past] descriptors, its limit raised to [high]. *)
+let hold_high () =
+  let e = Rig_support.set_descriptor_limit high in
+  if e <> 0 then fail (Printf.sprintf "raising descriptors: %d" e);
+  List.init past (fun _ -> Unix.dup ~cloexec:true Unix.stdout)
 
 (* Runs the commands of mode "crowded" from stdin until its end. *)
 let crowding () =
@@ -190,9 +201,10 @@ let () =
     deaf (In_channel.with_open_bin Sys.argv.(1) In_channel.input_all)
   else begin
     if mode = "crowded" then begin
-      let e = limit_descriptors crowd in
+      let e = Rig_support.set_descriptor_limit crowd in
       if e <> 0 then fail (Printf.sprintf "limiting descriptors: %d" e)
     end;
+    let held = if mode = "high" then hold_high () else [] in
     let a = listen key 0 in
     if mode = "crowded" then ignore (Thread.create crowding ());
     let helper =
@@ -225,6 +237,7 @@ let () =
         | Unix.WEXITED 0 -> print_endline "helper exited"
         | _ -> fail "helper failed")
       helper;
+    List.iter Unix.close held;
     if mode = "twice" then
       match Rig_remote.serve a kinds with
       | _ -> print_endline "serve returned"

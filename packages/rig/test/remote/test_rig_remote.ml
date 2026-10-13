@@ -310,6 +310,35 @@ let crowded () =
   Rig_remote.close j;
   equal exit_w (0, [ "closed" ]) (finish a)
 
+(* Descriptors past select's FD_SETSIZE, 1024 on Linux and macOS, as the
+   agents of mode "high" hold them, and the limit that holds them and the
+   job's. *)
+let past = 1100
+let high = 4096
+
+(* A job whose processes each hold more than 1024 descriptors: every socket
+   of the job, the controller's and the agents', has a number past [past].
+   The second agent's join dials, accepts and proves the key there. *)
+let high_descriptors () =
+  if Sys.win32 then skip ~reason:"Windows bounds no socket's number" ();
+  let old = Rig_support.descriptor_limit () in
+  if old < high && Rig_support.set_descriptor_limit high <> 0 then
+    skip ~reason:"the system limits descriptors below 4096" ();
+  let held = List.init past (fun _ -> Unix.dup ~cloexec:true Unix.stdout) in
+  Fun.protect ~finally:(fun () ->
+      List.iter Unix.close held;
+      if old < high then ignore (Rig_support.set_descriptor_limit old))
+  @@ fun () ->
+  with_agents ~n:2 ~mode:"high" @@ fun agents ->
+  let j = connect agents in
+  let h = List.nth (Rig_remote.hosts j) 1 in
+  let s = "to " ^ machine (List.nth agents 1) in
+  equal string s (read (far_of_string (List.hd (mem h)) s));
+  Rig_remote.close j;
+  equal (list exit_w)
+    [ (0, [ "closed" ]); (0, [ "closed" ]) ]
+    (List.map finish agents)
+
 (* An agent opens a kind at the controller's first call for it, and once: the
    other agent, never asked, opens nothing. *)
 let opens_when_asked () =
@@ -355,6 +384,8 @@ let connecting =
         many_waiting;
       test "an agent out of descriptors serves a job once it has them again"
         crowded;
+      test "a job whose processes hold more than 1024 descriptors joins"
+        high_descriptors;
       test "an agent opens a kind at the first devices call for it, once"
         opens_when_asked;
       test "a second job at one address is another machine, named #2"

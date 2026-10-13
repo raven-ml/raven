@@ -1454,6 +1454,42 @@ value rig_test_recv_timeout(value fd, value s) {
   return Val_unit;
 }
 
+/* Descriptors */
+
+#if !defined(_WIN32)
+#include <errno.h>
+#include <sys/resource.h>
+#endif
+
+/* This process's soft limit of its descriptors: max_int if none, -1 on
+   Windows. */
+value rig_test_descriptor_limit(value unit) {
+  (void)unit;
+#if defined(_WIN32)
+  return Val_int(-1);
+#else
+  struct rlimit l;
+  if (getrlimit(RLIMIT_NOFILE, &l) != 0) caml_uerror("getrlimit", Nothing);
+  if (l.rlim_cur == RLIM_INFINITY || l.rlim_cur > (rlim_t)Max_long)
+    return Val_long(Max_long);
+  return Val_long((intnat)l.rlim_cur);
+#endif
+}
+
+/* Sets this process's soft limit of its descriptors to [n]: 0, the errno,
+   or -1 on Windows, which has no such limit. */
+value rig_test_set_descriptor_limit(value v_n) {
+#if defined(_WIN32)
+  (void)v_n;
+  return Val_int(-1);
+#else
+  struct rlimit l;
+  if (getrlimit(RLIMIT_NOFILE, &l) != 0) return Val_int(errno);
+  l.rlim_cur = (rlim_t)Long_val(v_n);
+  return Val_int(setrlimit(RLIMIT_NOFILE, &l) == 0 ? 0 : errno);
+#endif
+}
+
 /* Memory */
 
 /* This process's resident memory in bytes: its working set on Windows. */

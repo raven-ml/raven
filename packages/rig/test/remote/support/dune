@@ -1,9 +1,6 @@
 (executables
  (names agent controller launched)
  (modules agent controller launched)
- (foreign_stubs
-  (language c)
-  (names agent_stubs))
  (libraries rig rig_disk rig_remote rig_remote_proxy rig_support threads.posix
   unix))
 

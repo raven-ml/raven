@@ -373,6 +373,15 @@ val recv_timeout : Unix.file_descr -> float -> unit
     in a unit it reads as milliseconds. A read past the bound raises
     [Unix.Unix_error] with [EAGAIN] or [EWOULDBLOCK], [ETIMEDOUT] on Windows. *)
 
+val descriptor_limit : unit -> int
+(** [descriptor_limit ()] is this process's soft limit of its descriptors:
+    [max_int] if it has none, [-1] on Windows. *)
+
+val set_descriptor_limit : int -> int
+(** [set_descriptor_limit n] sets this process's soft limit of its
+    descriptors to [n]: [0], the errno, or [-1] on Windows, which has no such
+    limit. *)
+
 val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts
     them on the proxy its arrays share: [0] if they share none. *)

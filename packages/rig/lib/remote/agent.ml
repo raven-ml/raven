@@ -145,10 +145,10 @@ let dial_tcp ~s host port =
       let until = Unix.gettimeofday () +. s in
       let rec finish fd =
         let left = Float.max 0. (until -. Unix.gettimeofday ()) in
-        match Unix.select [] [ fd ] [] left with
+        match Wire.ready [ fd ] `Write left with
         | exception Unix.Unix_error (Unix.EINTR, _, _) -> finish fd
-        | [], [], [] -> Error (strf "no answer within %.0f s" s)
-        | _ -> (
+        | None -> Error (strf "no answer within %.0f s" s)
+        | Some _ -> (
             match Unix.getsockopt_error fd with
             | None -> Ok ()
             | Some e -> Error (Unix.error_message e))
@@ -224,7 +224,11 @@ let listen ~key host port =
            Windows the option would let two sockets bind one port. *)
         if not Sys.win32 then Unix.setsockopt fd Unix.SO_REUSEADDR true;
         Unix.bind fd addr;
-        Unix.listen fd backlog
+        Unix.listen fd backlog;
+        (* A connection reset between the wait and accept leaves nothing to
+           accept: a blocking accept would then wait for the next one, and
+           [stop] for it (Stevens, UNIX Network Programming, 16.6). *)
+        Unix.set_nonblock fd
       with
       | exception Unix.Unix_error (e, _, _) ->
           Unix.close fd;
@@ -344,6 +348,21 @@ let break a why =
   in
   Option.iter (fun job -> Link.fail job why) serving
 
+(* Starts the handshake of the accepted [fd] on a thread of its own, or
+   refuses it if the system gives it no thread. [fd] blocks first: macOS and
+   Windows give it the listener's non-blocking mode. *)
+let start a fd =
+  match Unix.clear_nonblock fd with
+  | exception Unix.Unix_error _ -> close_quietly fd
+  | () -> (
+      match Thread.create (handshake a) fd with
+      | _ -> ()
+      | exception Sys_error why ->
+          Wire.refuse fd ("the agent cannot start a handshake: " ^ why)
+      | exception Out_of_memory ->
+          Wire.refuse fd
+            "the agent cannot start a handshake: no memory for a thread")
+
 (* Accepts connections until [wake] is readable, each handshake on a thread of
    its own. A job assumes a trusted network, so only the job's processes
    connect: the listener takes every connection, and refuses one before its
@@ -354,33 +373,29 @@ let accept_loop a wake =
     strf "the agent's %s failed: %s" what (Unix.error_message e)
   in
   let rec loop pause =
-    match Unix.select [ a.socket; wake ] [] [] (-1.) with
+    match Wire.ready [ wake; a.socket ] `Read (-1.) with
     | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop pause
-    | exception Unix.Unix_error (e, _, _) -> break a (err "select" e)
-    | ready, _, _ when List.mem wake ready -> ()
-    | _ -> accept_one pause
+    | exception Unix.Unix_error (e, _, _) -> break a (err "wait" e)
+    | Some fd when fd == wake -> ()
+    | Some _ | None -> accept_one pause
   and accept_one pause =
     match Unix.accept ~cloexec:true a.socket with
-    | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop pause
+    | exception
+        Unix.Unix_error ((Unix.EINTR | Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+        loop pause
     | exception Unix.Unix_error (e, _, _) when passes e -> rest pause
     | exception Unix.Unix_error (e, _, _) -> break a (err "accept" e)
     | fd, _ ->
-        (match Thread.create (handshake a) fd with
-        | _ -> ()
-        | exception Sys_error why ->
-            Wire.refuse fd ("the agent cannot start a handshake: " ^ why)
-        | exception Out_of_memory ->
-            Wire.refuse fd
-              "the agent cannot start a handshake: no memory for a thread");
+        start a fd;
         loop first_pause
   (* Waits [pause], or until [wake] is readable. *)
   and rest pause =
     let next = Float.min last_pause (2. *. pause) in
-    match Unix.select [ wake ] [] [] pause with
+    match Wire.ready [ wake ] `Read pause with
     | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop next
-    | exception Unix.Unix_error (e, _, _) -> break a (err "select" e)
-    | [], _, _ -> loop next
-    | _ -> ()
+    | exception Unix.Unix_error (e, _, _) -> break a (err "wait" e)
+    | None -> loop next
+    | Some _ -> ()
   in
   loop first_pause
 

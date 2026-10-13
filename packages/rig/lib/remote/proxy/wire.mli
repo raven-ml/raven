@@ -275,3 +275,19 @@ type command =
           needs it. *)
   | Close : command
       (** Ends the job in order, after the work submitted before. *)
+
+(**/**)
+
+val ready :
+  Unix.file_descr list ->
+  [ `Read | `Write ] ->
+  float ->
+  Unix.file_descr option
+(** [ready fds dir s] is the first of the descriptors [fds], sockets on
+    Windows, ready to [dir] within [s] seconds, waiting without bound if [s]
+    is negative; [None] once [s] passed. A descriptor in error, or whose peer
+    hung up, is ready, so that the call that follows reports it. Unlike
+    [Unix.select], it takes descriptors of any number and count.
+
+    Raises [Unix.Unix_error] if the wait fails, [EINTR] included, and
+    [Invalid_argument] if [fds] is empty. *)

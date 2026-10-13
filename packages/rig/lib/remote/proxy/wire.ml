@@ -97,6 +97,20 @@ let timed_out = function
   | Unix.ETIMEDOUT -> Sys.win32
   | _ -> false
 
+external wait : Unix.file_descr array -> bool -> int -> int
+  = "caml_rig_remote_wire_wait"
+
+(* The longest wait poll takes, in milliseconds: an int's. *)
+let most_ms = 0x7fff_ffff
+
+let ready fds dir s =
+  let fds = Array.of_list fds in
+  let ms =
+    if s < 0. then -1
+    else Float.to_int (Float.min (Float.ceil (s *. 1e3)) (Float.of_int most_ms))
+  in
+  match wait fds (dir = `Write) ms with -1 -> None | i -> Some fds.(i)
+
 (* The stream ended or broke, an answer came late, or a field is malformed: the
    handshake's [Error], with its cause. *)
 exception Stop of string
@@ -110,10 +124,10 @@ let recv until fd n =
     if off < n then begin
       let left = until -. Unix.gettimeofday () in
       if left <= 0. then raise (Stop (strf "no answer within %.0f s" answer_s));
-      match Unix.select [ fd ] [] [] left with
+      match ready [ fd ] `Read left with
       | exception Unix.Unix_error (Unix.EINTR, _, _) -> go off
-      | [], _, _ -> go off
-      | _ -> (
+      | None -> go off
+      | Some _ -> (
           match Unix.read fd b off (n - off) with
           | 0 -> raise (Stop "the connection closed during the handshake")
           | k -> go (off + k))
