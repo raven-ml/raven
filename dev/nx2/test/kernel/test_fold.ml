@@ -51,7 +51,8 @@ let folded = List.filter (fun (D.Any d) -> not (D.is D.Boolean d)) D.all
    last axis, of a result of two or three axes. *)
 type lead = Drawn | Slabs | Padded
 
-let case_gen ?(dtypes = folded) () =
+(* [last], where given, draws the result's last extent. *)
+let case_gen ?(dtypes = folded) ?last () =
   let open Gen in
   let* d = of_list ~pp:pp_dtype dtypes in
   let* lead =
@@ -65,6 +66,14 @@ let case_gen ?(dtypes = folded) () =
         map
           (fun s -> Array.mapi (fun a v -> if a = 0 then max v 2 else v) s)
           (array ~size:(int_range 2 3) (int_range 1 5))
+  in
+  let* shape =
+    match last with
+    | Some n when Array.length shape > 0 ->
+        let+ n = n in
+        let last = Array.length shape - 1 in
+        Array.mapi (fun a v -> if a = last then n else v) shape
+    | _ -> constant shape
   in
   let r = Array.length shape in
   let small = int_range (-2) 3 in
@@ -383,6 +392,38 @@ let int_cases =
       | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
     (case_gen ~dtypes:[ D.Any D.Int64 ] ())
 
+(* Guard pages *)
+
+let guard_cases =
+  Gen.pair
+    (Gen.with_pp
+       (fun ppf -> function
+         | None -> Format.pp_print_string ppf "no load"
+         | Some c -> pp_case ppf c)
+       (case_gen ~last:tails ()))
+    sides
+
+(* The same result with the operand, through its view, and the destination
+   against an inaccessible page. *)
+let law_guards (b : Support.backend) (c, side) =
+  let module K = (val b.kernels) in
+  match c with
+  | None -> reject ()
+  | Some c ->
+      let after = side = Support.After in
+      cover "windows" (c.pad.windows <> [||]);
+      cover "sub-byte" (let (D.Any dt) = dtype_of c.x in D.bits dt < 8);
+      cover "a stepped operand at the page before"
+        ((not after) && List.mem "stepped" c.views);
+      cover "a reversed operand at the page after"
+        (after && List.mem "reversed" c.views);
+      let call xs ds =
+        let (A.Any x) = xs.(0) in
+        K.fold c.pad ~dst:(A.expect (A.dtype x) ds.(0)) x
+      in
+      equal answer A.Done
+        (same_guarded side ~call [| c.x |] [| (dtype_of c.x, c.shape) |])
+
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
@@ -403,6 +444,10 @@ let cpu (b : Support.backend) =
       test "long rows of narrow dtypes" (fun () -> b.around (test_long_rows b));
       test "refuses shapes and pads that do not fit, and booleans" (fun () ->
           b.around (test_refusals b));
+      prop ~count:300
+        "reads and writes no byte past the operand and dst, whatever pages lie \
+         beside them"
+        guard_cases (run (law_guards b));
     ]
 
 let () =
