@@ -348,7 +348,9 @@ let case_of ?same ~acc ~out ~dts () =
    against an edge of b's columns; the chain path over several blocks of the
    contraction, over several panels, without init, and with no product and
    no init; few columns by many rows with a read in place, over several
-   blocks of the contraction and over one. The few rows' case again, and in float64 the chain path over
+   blocks of the contraction and over one; few rows of a batch whose
+   slivers of b are fewer than the threads, in blocks of rows. The few
+   rows' case again, and in float64 the chain path over
    several groups, with a and b stored transposed. Each in the order whose
    path it names, then cases in the other order: chain order in few rows or
    columns, lane order in many rows and columns over several passes and
@@ -427,6 +429,7 @@ let regimes acc =
          (lane, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
          (lane, true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
          (chain, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
+         (chain, false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |]));
          few;
          (chain, true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
          (chain, false, ([||], [| rows |], [| 3100 |], [| 3 |]));
