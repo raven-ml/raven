@@ -49,6 +49,9 @@ raven / llama.cpp (Vulkan; ROCm):
   serve stop, free and unload after an exception, as NV's do
 - exceptions: the mlx5 wait loses an event's count to an exception after
   the kernel delivered it
+- a driver's `Invalid_argument` from free or unload (a callback re-entering
+  Metal's guard) loses the device through `Dev.give`: rig_edge needs a rule
+  for it; Metal's per-image guard in `entry` is still a `Mutex` (`Sys_error`)
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
   under KFD (RX 9070: 3 for 4)
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a
