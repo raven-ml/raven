@@ -17,9 +17,13 @@
 
     Any domain may call any function. A call that blocks, waiting for a lock
     or in {!wait}, releases the domain's runtime lock meanwhile and runs no
-    signal handler. A lock is not reentrant, so a thread that holds it and
-    takes it again blocks for good. A lock is freed once it is collected, so
-    a caller holds it, or what holds it, for as long as it uses it.
+    signal handler. A thread holds at most one lock, and a take while it
+    holds one raises [Invalid_argument]. Such a take comes from a signal
+    handler, finaliser or [Gc.Memprof] callback that runs inside a section
+    and calls rig, which would otherwise wait for good on the lock it
+    interrupted, or take two in no fixed order. C mutexes are taken only
+    inside one stub, after any lock. A lock is freed once it is collected,
+    so a caller holds it, or what holds it, for as long as it uses it.
 
     A forked child makes every lock anew, so a lock that a thread of the
     parent held at the fork is free in the child. *)
@@ -46,7 +50,8 @@ val protect : t -> ('a -> 'b) -> 'a -> 'b
     the top level, and its argument, so the call allocates no closure. *)
 
 val busy : t -> bool
-(** [busy l] is [true] if a call held [l] when [busy] tried to take it. *)
+(** [busy l] is [true] if a call held [l] when [busy] tried to take it, or
+    the thread holds a lock. *)
 
 val wait : t -> unit
 (** [wait l], holding [l], gives it up until a {!broadcast} on [l], a spurious

@@ -98,19 +98,16 @@ let interrupting a site f =
    exception, and if the child has not answered within [child_limit] s: a
    lock that an exception left held makes the next call that takes it wait
    for good, in C, where no timeout interrupts it. *)
-let in_child what f =
+let in_child what (f : unit -> 'a) : 'a =
   let r, w = Unix.pipe () in
   match Unix.fork () with
   | 0 ->
       Unix.close r;
-      let answer =
-        match f () with
-        | true -> "raised"
-        | false -> "done"
-        | exception e -> Printexc.to_string e
+      let answer : ('a, string) result =
+        match f () with v -> Ok v | exception e -> Error (Printexc.to_string e)
       in
       let oc = Unix.out_channel_of_descr w in
-      output_string oc answer;
+      Marshal.to_channel oc answer [];
       close_out oc;
       Unix._exit 0
   | pid -> (
@@ -133,12 +130,13 @@ let in_child what f =
       let answer = In_channel.input_all ic in
       close_in ic;
       match (answer, status) with
-      | "raised", _ -> true
-      | "done", _ -> false
       | "", WEXITED n -> failf "the child exited %d%s" n what
       | "", (WSIGNALED n | WSTOPPED n) ->
           failf "the child got signal %d%s" n what
-      | e, _ -> failf "%s%s" e what)
+      | answer, _ -> (
+          match (Marshal.from_string answer 0 : ('a, string) result) with
+          | Ok v -> v
+          | Error e -> failf "%s%s" e what))
 
 (* The device an interrupted operation runs on: one just opened, or one the
    operation ran on once, which made what the device keeps for good, and whose
@@ -360,6 +358,43 @@ let test_kept () =
   let rec from n = if interrupt_kept n then from (n + 1) in
   from 1
 
+(* Re-enters rig from a [Gc.Memprof] callback at the [n]-th allocation of an
+   open: where the open holds one of rig's locks, the callback's call raises
+   [Invalid_argument], which ends the open, and nothing waits for good. rig
+   stays consistent: the call works once no lock is held, and the name
+   opens. Is whether the allocation was reached, and whether the call
+   raised. *)
+let reenter n =
+  let at = Printf.sprintf ", re-entered at allocation %d" n in
+  in_child at (fun () ->
+      let probe = "reenter:probe" and name = fresh "reenter" in
+      ignore (Rig.memory_device probe);
+      let raised = ref false in
+      let call () =
+        try ignore (Rig.memory_device probe)
+        with Invalid_argument _ as e ->
+          raised := true;
+          raise e
+      in
+      let open_ () =
+        try ignore (Rig.memory_device name)
+        with Invalid_argument _ when !raised -> ()
+      in
+      let reached = S.interrupted ~landing:(Call call) n open_ in
+      ignore (Rig.memory_device probe);
+      ignore (Rig.memory_device name);
+      (reached, !raised))
+
+let test_reentry () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n raised =
+    match reenter n with
+    | true, r -> from (n + 1) (if r then raised + 1 else raised)
+    | false, _ -> raised
+  in
+  greater ~msg:"calls that raised" int ~than:0 (from 1 0)
+
 (* Opens [names] devices, as many as make the table of names grow, and checks
    that each name answers the device it opened before. *)
 let names = 40
@@ -404,5 +439,6 @@ let () =
            @ [
                test "close of a machine's host" test_close;
                test "a drain that lets go of kept values" test_kept;
+               test "a callback that calls rig inside a lock" test_reentry;
              ]);
        ]

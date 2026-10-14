@@ -63,8 +63,9 @@
        {!section-loss_memory} says;}
     {- a call that allocates raises {!Out_of_memory} if its device cannot
        provide the bytes ({!section-reclaim});}
-    {- a call may be made from any domain, concurrently with any other
-       ({!section-domains}).}}
+    {- a call may be made from any domain, concurrently with any other,
+       and may raise [Invalid_argument] when a signal handler, finaliser
+       or [Gc.Memprof] callback makes it ({!section-domains}).}}
 
     This copies five bytes to a device and back. The blit back reads [dev],
     so it follows the blit that wrote it.
@@ -452,7 +453,20 @@ val signaled : t -> int
 
     A wait releases the domain lock while it blocks, and returns to OCaml at
     least every 200 ms, where a pending [Sys.Break] from Ctrl-C raises. An
-    interrupted wait loses no device and assigns no value. *)
+    interrupted wait loses no device and assigns no value.
+
+    rig also holds locks of its own, briefly, inside most calls. A signal
+    handler, finaliser or [Gc.Memprof] callback runs where the code it
+    interrupts allocates or polls, which may be inside such a call on the
+    same thread. A call to rig from the callback may then raise
+    [Invalid_argument], since waiting for the lock would wait for good. If
+    the callback lets the exception escape, it ends the interrupted call as
+    an asynchronous exception ({!section-errors}). The callback must not
+    block either, in a wait of rig's or for another thread: other calls,
+    and every round of reclamation, wait meanwhile for the lock its thread
+    holds. A program that calls rig from such a callback handles that
+    exception, or has the callback record the work for the program's own
+    code to do, such as in an [Atomic.t]. *)
 
 (** {1:loss Loss}
 
