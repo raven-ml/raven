@@ -1514,13 +1514,13 @@ out:
    sum is exact modulo 2^32, as acc's: an integer's bits do not depend on
    how its products are grouped. */
 
-/* b's words, copied: column i's word q at d + (i + q·n)·4. A unit is a
-   column of a batch element where b is adjacent along k, else a quad of
+/* b's words, copied: column i's word q at d + (i + q·pitch)·4. A unit is
+   a column of a batch element where b is adjacent along k, else a quad of
    each of its columns, so that the reads run along the memory. */
 typedef struct {
   const nx_array *b;
   const nx_contract_view *v;
-  int64_t quads;
+  int64_t quads, pitch;
   uint8_t *d;
 } quads_job;
 
@@ -1551,16 +1551,16 @@ static void quad_words(int64_t lo, int64_t hi, int worker, void *ctx) {
     if (by_column) i0 = u % per, i1 = i0 + 1;
     else p0 = 4 * (u % per), p1 = p0 + 4;
     const uint8_t *x = j->b->base + j->v->offset[B] + e * s[BATCH];
-    uint8_t *d = j->d + e * n * j->quads * 4;
+    uint8_t *d = j->d + e * j->pitch * j->quads * 4;
     if (!by_column && s[COL] == 1 && p1 <= k) {
       const uint8_t *r = x + p0 * s[CON];
-      interleave(r, r + s[CON], r + 2 * s[CON], r + 3 * s[CON], d + p0 * n,
-                 n);
+      interleave(r, r + s[CON], r + 2 * s[CON], r + 3 * s[CON],
+                 d + p0 * j->pitch, n);
       continue;
     }
     for (int64_t i = i0; i < i1; i++)
       for (int64_t p = p0; p < p1; p++)
-        d[(i + p / 4 * n) * 4 + p % 4] =
+        d[(i + p / 4 * j->pitch) * 4 + p % 4] =
             p < k ? x[p * s[CON] + i * s[COL]] : 0;
   }
 }
@@ -1577,10 +1577,22 @@ static int words_in_place(const nx_contract_view *v, int o) {
   return 1;
 }
 
+/* The words between the rows of a copy into words, words_of's or
+   zip_rows': a row's [words], or a line more where that is a multiple of
+   4 KiB. Rows a multiple of 4 KiB apart share their low 12 address bits,
+   and with them the L1 sets of a sliver's steps. On one fudge core,
+   contract-i8-i32-1024, whose b is copied into rows of 1024 words, took
+   3.77 ms, and 3.68 with its rows a line further apart; the kernel alone,
+   in cache, ran 273 G products a second, and 294. */
+static int64_t pitch_of(int64_t words) {
+  return words > 0 && words * 4 % 4096 == 0 ? words + 16 : words;
+}
+
 /* Operand [o] of [v] as [u]'s operand [y] of words of [acc]: in place, or
    under [copy] copied into memory of its own, a's rows of words and b's as
-   quads_job lays them out, one batch element where [o] steps 0 along the
-   batch. Answers the copy, NULL in place or if allocation fails. */
+   quads_job lays them out, rows pitch_of apart, one batch element where
+   [o] steps 0 along the batch. Answers the copy, NULL in place or if
+   allocation fails. */
 static uint8_t *words_of(const nx_contract_view *v, const nx_array *const *op,
                          int o, int acc, int copy, nx_contract_view *u,
                          nx_array *y) {
@@ -1596,7 +1608,10 @@ static uint8_t *words_of(const nx_contract_view *v, const nx_array *const *op,
     u->stride[o][CON] = 1;
     return NULL;
   }
-  int64_t ne = s[BATCH] == 0 ? 1 : v->extent[BATCH], words = n * quads;
+  /* a's rows are of quads words, b's of n. */
+  int64_t pitch = pitch_of(o == A ? quads : n);
+  int64_t rows = o == A ? n : quads;
+  int64_t ne = s[BATCH] == 0 ? 1 : v->extent[BATCH], words = rows * pitch;
   uint8_t *d = alloc(ne * words * 4);
   if (d == NULL) return NULL;
   y->base = d;
@@ -1605,18 +1620,18 @@ static uint8_t *words_of(const nx_contract_view *v, const nx_array *const *op,
   if (o == A) {
     for (int64_t e = 0; e < ne; e++)
       nx_cpu_stage_as(op[A], v->offset[A] + e * s[BATCH], s[CON], s[ROW], k,
-                      n, op[A]->dtype, d + e * words * 4, 4 * quads);
+                      n, op[A]->dtype, d + e * words * 4, 4 * pitch);
     for (int64_t r = 0; r < ne * n; r++)
-      memset(d + r * quads * 4 + k, 0, (size_t)(quads * 4 - k));
-    u->stride[A][ROW] = quads;
+      memset(d + r * pitch * 4 + k, 0, (size_t)(pitch * 4 - k));
+    u->stride[A][ROW] = pitch;
     u->stride[A][CON] = 1;
     return d;
   }
-  quads_job j = {.b = op[B], .v = v, .quads = quads, .d = d};
+  quads_job j = {.b = op[B], .v = v, .quads = quads, .pitch = pitch, .d = d};
   int64_t units = ne * (s[CON] == 1 ? n : quads);
   nx_cpu_job(units, ne * words * 8, ne * words * 8, quad_words, &j);
   u->stride[B][COL] = 1;
-  u->stride[B][CON] = n;
+  u->stride[B][CON] = pitch;
   return d;
 }
 
@@ -1753,10 +1768,11 @@ typedef struct {
 #define LINE_BYTES 64 /* x86's cache line, half the M1's */
 
 /* Rows [q, q + kb) of b from column [j0] of element [e], zipped as
-   interleave() does into rows of words of [c] columns at [d], a row past
-   k repeating the last, prefetching ZIP_AHEAD rows on. */
+   interleave() does into rows of words of [c] columns at [d], [pitch]
+   words apart, a row past k repeating the last, prefetching ZIP_AHEAD
+   rows on. */
 static void zip_rows(const problem *p, int64_t e, int64_t j0, int64_t c,
-                     int64_t q, int64_t kb, uint32_t *d) {
+                     int64_t pitch, int64_t q, int64_t kb, uint32_t *d) {
   const uint8_t *b = p->op[B].x->base + pos(p, B, e, 0, j0, q);
   int64_t ldb = p->op[B].st[CON];
   for (int64_t w = 0; w < ceil_div(kb, 4); w++) {
@@ -1768,7 +1784,7 @@ static void zip_rows(const problem *p, int64_t e, int64_t j0, int64_t c,
     const uint8_t *r1 = 4 * w + 1 < kb ? r0 + ldb : r0;
     const uint8_t *r2 = 4 * w + 2 < kb ? r1 + ldb : r1;
     const uint8_t *r3 = 4 * w + 3 < kb ? r2 + ldb : r2;
-    interleave(r0, r1, r2, r3, (uint8_t *)(d + w * c), c);
+    interleave(r0, r1, r2, r3, (uint8_t *)(d + w * pitch), c);
   }
 }
 
@@ -1794,14 +1810,14 @@ static void quad_unit(const quad_axpys_job *j, int64_t e, int64_t j0,
     }
     return;
   }
-  int64_t step = AXPY_ZIPS / c / 16 * 16;
+  int64_t zp = pitch_of(c), step = AXPY_ZIPS / zp / 16 * 16;
   for (int64_t q = 0; q < j->k; q += step) {
     int64_t kb = min64(step, j->k - q), words = ceil_div(kb, 4);
-    zip_rows(p, e, j0, c, q, kb, z);
+    zip_rows(p, e, j0, c, zp, q, kb, z);
     const uint32_t *a = words_at(p, A, e, 0, 0) + q / 4;
     for (int64_t jj = 0; jj < c; jj += km.nr)
-      km.f(m, min64(km.nr, c - jj), words, a, p->op[A].st[ROW], 1, z + jj, c,
-           s + jj, c, NX_CPU_FROM_TILE);
+      km.f(m, min64(km.nr, c - jj), words, a, p->op[A].st[ROW], 1, z + jj,
+           zp, s + jj, c, NX_CPU_FROM_TILE);
   }
 }
 

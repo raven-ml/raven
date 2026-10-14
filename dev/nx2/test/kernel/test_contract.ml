@@ -1061,7 +1061,9 @@ let shifted (A.Any x as a) =
    sums a unit holds; either side of x86's tile and by NEON's, every
    element of a and b at the dtype's extreme and init at the
    accumulator's largest value, so that two products pass 16 bits and
-   every sum wraps. *)
+   every sum wraps. Copies whose rows would lie 4 KiB apart: b's of 1024
+   columns, zipped by both tiles' rows and copied past the axpys' rows,
+   and a's of 4096 elements at an odd offset, by b stored [n × k]. *)
 let quad_examples =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let by_rows r =
@@ -1108,6 +1110,10 @@ let quad_examples =
         extreme Chain ([||], [| quad_mr_least - 1 |], [| 100 |], [| 70 |]) (plain 2);
         extreme Chain ([||], [| quad_mr_least |], [| 100 |], [| 70 |]) (plain 2);
         extreme Chain ([||], [| quad_mr_most |], [| 100 |], [| 70 |]) (plain 2);
+        case Chain ([||], [| quad_mr_most |], [| 1024 |], [| 12 |]) (plain 2);
+        case Chain ([||], [| axpy_rows + 1 |], [| 1024 |], [| 12 |]) (plain 2);
+        (let c = stored Chain ([||], [| 2 |], [| 3 |], [| 4096 |]) (by_rows 2) in
+         { c with a = shifted c.a });
       ])
     D.[ (Any Int32, Any Int8, -128L, 0x7FFFFFFFL);
         (Any Uint32, Any Uint8, 255L, 0xFFFFFFFFL) ]
@@ -1213,6 +1219,12 @@ let quad_covers (c : case) =
   cover "an odd count of rows by quads' dots, the last alone"
     (dots && min m n <= quad_rows && min m n mod 2 = 1);
   cover "b read in place by chain order" (in_place c.b snd && min m n > quad_rows);
+  cover "a copy's rows a line past 4 KiB"
+    ((m > 0 && n > 0 && k > 0)
+    && ((not (in_place c.b snd)) && (not axpys) && n * 4 mod 4096 = 0
+       || ((not (in_place c.a fst)) && words * 4 mod 4096 = 0)));
+  cover "quads' axpys zipping 1024 columns by the tile"
+    (axpys && m >= quad_mr_most && n mod 1024 = 0 && k > 4);
   cover "fewer than 4 products" (k < 4);
   cover "products not a multiple of 4" (k mod 4 <> 0)
 
