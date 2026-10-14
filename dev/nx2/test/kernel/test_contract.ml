@@ -242,13 +242,12 @@ let axpy_many = 32
 let axpy_cached = 4 * 1024 * 1024
 let axpy_held = 1024 * 1024
 
-(* The rows of the quads kernel's tile, MR, from which the axpys run it
-   over b's rows zipped: 6 by AVX-VNNI-INT8, 8 on NEON; AVX2's axpys never
-   zip. *)
-let quad_mr_least = 6
-let quad_mr_most = 8
+(* The rows of NEON's quads kernel's tile, MR, from which its axpys run it
+   over b's rows zipped; x86's axpys never zip. *)
+let quad_mr = 8
 
-(* AVX2's axpys of several rows: the columns of b they widen at once, and
+(* x86's axpys of several rows: the columns of b they keep at once,
+   widened into pairs by AVX2 and zipped into words by AVX-VNNI-INT8, and
    the most rows of a group besides the first. *)
 let axpy_cols = 256
 let axpy_group = 6
@@ -1072,19 +1071,19 @@ let shifted (A.Any x as a) =
    words; 11 words, a step of 8 and a tail, by odd rows and columns; the
    most rows; one column of b, copied; few columns, with a and b swapped,
    alone and in a batch. Quads' axpys, b stored [k × n]: a batch over
-   partial blocks of columns and of b's rows, and the same by the tile at
-   its rows; rows past few and past many over a column a thread, by the
-   least k and b they take them by, and by a b held in cache; few rows over several groups of columns, past
-   the most sums a unit holds; 64 rows by 64 columns and 64 along k, which
-   chain order takes; few rows by few columns, in bands of rows; either
-   side of AVX-VNNI-INT8's tile and by NEON's; two rows over more columns
-   than AVX2's axpys widen at once, by an odd k; a row and a full group; a
-   row and three groups. Each with every
-   element of a and b at the dtype's extreme and init at the
-   accumulator's largest value, so that two products pass 16 bits and
-   every sum wraps. Copies whose rows would lie 4 KiB apart: b's of 1024
-   columns, zipped by both tiles' rows and copied past the axpys' rows,
-   and a's of 4096 elements at an odd offset, by b stored [n × k]. *)
+   partial blocks of columns and of b's rows, and the same by NEON's tile
+   at its rows; rows past few and past many over a column a thread, by the
+   least k and b they take them by, and by a b held in cache; few rows
+   over several groups of columns, past the most sums a unit holds; 64
+   rows by 64 columns and 64 along k, which chain order takes; few rows by
+   few columns, in bands of rows; either side of NEON's tile; two rows
+   over more columns than x86's axpys keep at once, by an odd k; a row and
+   a full group; a row and three groups. Each with every element of a and
+   b at the dtype's extreme and init at the accumulator's largest value,
+   so that two products pass 16 bits and every sum wraps. Copies whose
+   rows would lie 4 KiB apart: b's of 1024 columns, zipped by NEON's
+   tile's rows and copied past the axpys' rows, and a's of 4096 elements
+   at an odd offset, by b stored [n × k]. *)
 let quad_examples =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let by_rows r =
@@ -1126,7 +1125,7 @@ let quad_examples =
         stored Chain ([||], [| 40 |], [| 3 |], [| 20 |]) (by_rows 2);
         stored Lane ([| 2 |], [| 5 |], [| 2 |], [| 8 |]) (by_rows 3);
         case Lane ([| 2 |], [| 3 |], [| 70 |], [| 130 |]) (plain 3);
-        case Chain ([||], [| quad_mr_most |], [| 70 |], [| 130 |]) (plain 2);
+        case Chain ([||], [| quad_mr |], [| 70 |], [| 130 |]) (plain 2);
         case Chain ([||], [| axpy_many |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
         case Chain ([||], [| axpy_many + 1 |], [| axpy_wide |],
                     [| axpy_cached / axpy_wide |]) (plain 2);
@@ -1134,10 +1133,9 @@ let quad_examples =
         case Chain ([||], [| axpy_few |], [| 600 |], [| 20 |]) (plain 2);
         case Chain ([||], [| 64 |], [| 64 |], [| 64 |]) (plain 2);
         extreme Chain ([||], [| axpy_few |], [| 40 |], [| 2048 |]) (plain 2);
-        extreme Chain ([||], [| quad_mr_least - 1 |], [| 100 |], [| 70 |]) (plain 2);
-        extreme Chain ([||], [| quad_mr_least |], [| 100 |], [| 70 |]) (plain 2);
-        extreme Chain ([||], [| quad_mr_most |], [| 100 |], [| 70 |]) (plain 2);
-        case Chain ([||], [| quad_mr_most |], [| 1024 |], [| 12 |]) (plain 2);
+        extreme Chain ([||], [| quad_mr - 1 |], [| 100 |], [| 70 |]) (plain 2);
+        extreme Chain ([||], [| quad_mr |], [| 100 |], [| 70 |]) (plain 2);
+        case Chain ([||], [| quad_mr |], [| 1024 |], [| 12 |]) (plain 2);
         case Chain ([||], [| axpy_rows + 1 |], [| 1024 |], [| 12 |]) (plain 2);
         (let c = stored Chain ([||], [| 2 |], [| 3 |], [| 4096 |]) (by_rows 2) in
          { c with a = shifted c.a });
@@ -1252,12 +1250,12 @@ let quad_covers (c : case) =
   cover "quads' axpys over several groups of columns"
     (axpys && n > axpy_sums / 4 / m / 64 * 64);
   cover "quads' axpys over k not a multiple of 4" (axpys && k mod 4 <> 0);
-  cover "quads' axpys below the tile" (axpys && m < quad_mr_least);
-  cover "quads' axpys by the tile" (axpys && m >= quad_mr_most);
+  cover "quads' axpys below the tile" (axpys && m < quad_mr);
+  cover "quads' axpys by the tile" (axpys && m >= quad_mr);
   cover "quads' axpys of two rows" (axpys && m = 2);
   cover "quads' axpys over more rows than a group holds"
     (axpys && m - 1 > axpy_group);
-  cover "quads' axpys of several rows over more columns than they widen"
+  cover "quads' axpys of several rows over more columns than they keep"
     (axpys && m > 1 && n > axpy_cols);
   let dots = m > 0 && n > 0 && (in_place c.b snd || n = 1) in
   cover "few rows by quads' dots" (dots && m <= n && m <= quad_rows);
@@ -1273,7 +1271,7 @@ let quad_covers (c : case) =
     && ((not (in_place c.b snd)) && (not axpys) && n * 4 mod 4096 = 0
        || ((not (in_place c.a fst)) && words * 4 mod 4096 = 0)));
   cover "quads' axpys zipping 1024 columns by the tile"
-    (axpys && m >= quad_mr_most && n mod 1024 = 0 && k > 4);
+    (axpys && m >= quad_mr && n mod 1024 = 0 && k > 4);
   cover "fewer than 4 products" (k < 4);
   cover "products not a multiple of 4" (k mod 4 <> 0)
 

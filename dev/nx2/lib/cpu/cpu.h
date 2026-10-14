@@ -322,8 +322,9 @@ typedef struct {
      k, each product of words the sum of their four products (gemm.c,
      Quads); its kernel is NULL where the target has none. quads_dot[d]
      and quads_axpy[d] are its dot and axpy for products of few rows, or
-     NULL where the target has none; from quads_zip_rows rows, quads[d]'s
-     kernel over b's rows zipped into words outruns the axpy. */
+     NULL where the target has none; from quads_zip_rows rows (INT_MAX
+     where it never does), quads[d]'s kernel over b's rows zipped into
+     words outruns the axpy. */
   nx_cpu_gemm gemm[NX_DTYPE_COUNT];
   nx_cpu_gemm quads[NX_DTYPE_COUNT];
   nx_cpu_quads_dot quads_dot[NX_DTYPE_COUNT];

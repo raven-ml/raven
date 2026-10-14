@@ -222,13 +222,6 @@ QDOT(quads_dot_u8, WIDEN_U, 4, MADD)
    1.16 times as fast. No reference was ported. */
 #define CVT_S _mm256_cvtepi8_epi16
 #define CVT_U _mm256_cvtepu8_epi16
-/* The rows of b and the columns a step of several rows widens into pairs
-   at once: 8 KiB on the stack. */
-#define QK 16
-#define QCOLS 256
-/* The most rows of a group: 12 accumulators, b's 2 vectors and a's
-   broadcast. */
-#define QG 6
 /* 16 columns from [at] of rows [r0] and [r1] times a's pair [x], their
    pairs kept at [p] where KEEP. */
 #define QPAIR(S, KEEP, c0, c1, x, r0, r1, at, p)                \
@@ -296,104 +289,27 @@ QDOT(quads_dot_u8, WIDEN_U, 4, MADD)
       for (int64_t t = 0; t < k; t++)                               \
         y[j] += (uint32_t)((T)a[t] * (T)b[t * ldb + j]);            \
   }
-/* Row i's accumulators, named: gcc -O2 keeps an array indexed by a loop
-   over the rows in memory. */
-#define QLOAD(R, i)                   \
-  if (R > i)                          \
-    c##i##0 = VLOAD(y + i * ldy + j), \
-    c##i##1 = VLOAD(y + i * ldy + j + 8);
-#define QSTORE(R, i)                  \
-  if (R > i)                          \
-    VSTORE(y + i * ldy + j, c##i##0), \
-    VSTORE(y + i * ldy + j + 8, c##i##1);
-/* Row i's pair [t], a word of two 16-bit elements, times b's. */
-#define QMADD(R, i)                              \
-  if (R > i) {                                   \
-    __m256i x = _mm256_set1_epi32((int)w[i][t]); \
-    c##i##0 = MADD(x, lo, c##i##0);              \
-    c##i##1 = MADD(x, hi, c##i##1);              \
+/* A group's rows' pairs of elements, widened into words at [w]. An odd
+   k's last pair ends on a's zero past it. */
+#define QPREP(S, T, R)                                                 \
+  _Alignas(32) uint32_t w[R][QK / 2];                                  \
+  for (int i = 0; i < R; i++) {                                        \
+    const T *e = (const T *)(a + i * lda);                             \
+    if (kw == QK / 2) {                                                \
+      VSTORE(w[i], CVT_##S(_mm_loadu_si128((const __m128i *)e)));      \
+      continue;                                                        \
+    }                                                                  \
+    for (int64_t t = 0; t < kw; t++)                                   \
+      w[i][t] =                                                        \
+          (uint16_t)e[2 * t] | (uint32_t)(uint16_t)e[2 * t + 1] << 16; \
   }
-/* [R] rows, 1 to QG, from [a], [lda] apart, over the [kp] pairs of rows
-   of b kept at [pb], into the 16-column groups of [c] columns of y, [ldy]
-   apart: a's pairs widened into [w], then 2 accumulators a row. */
-#define QGROUP(name, S, T, R)                                             \
-  static void name(const uint8_t *a, int64_t lda, const __m256i *pb,      \
-                   int64_t kp, int64_t c, uint32_t *y, int64_t ldy) {     \
-    _Alignas(32) uint32_t w[R][QK / 2];                                   \
-    for (int i = 0; i < R; i++) {                                         \
-      const T *e = (const T *)(a + i * lda);                              \
-      if (kp == QK / 2) {                                                 \
-        VSTORE(w[i], CVT_##S(_mm_loadu_si128((const __m128i *)e)));       \
-        continue;                                                         \
-      }                                                                   \
-      /* An odd k's last pair ends on a's zero past it. */                \
-      for (int64_t t = 0; t < kp; t++)                                    \
-        w[i][t] =                                                         \
-            (uint16_t)e[2 * t] | (uint32_t)(uint16_t)e[2 * t + 1] << 16;  \
-    }                                                                     \
-    for (int64_t j = 0; j < c; j += 16) {                                 \
-      __m256i c00, c01, c10, c11, c20, c21, c30, c31, c40, c41, c50, c51; \
-      QLOAD(R, 0) QLOAD(R, 1) QLOAD(R, 2)                                 \
-      QLOAD(R, 3) QLOAD(R, 4) QLOAD(R, 5)                                 \
-      const __m256i *p = pb + j / 8;                                      \
-      for (int64_t t = 0; t < kp; t++, p += QCOLS / 8) {                  \
-        __m256i lo = p[0], hi = p[1];                                     \
-        QMADD(R, 0) QMADD(R, 1) QMADD(R, 2)                               \
-        QMADD(R, 3) QMADD(R, 4) QMADD(R, 5)                               \
-      }                                                                   \
-      QSTORE(R, 0) QSTORE(R, 1) QSTORE(R, 2)                              \
-      QSTORE(R, 3) QSTORE(R, 4) QSTORE(R, 5)                              \
-    }                                                                     \
-  }
-/* Several rows: by steps of QK rows and QCOLS columns of b, the first row
-   as a row alone, keeping the pairs of b's rows it widens, then the others
-   over them, in groups of at most QG whose sizes differ by at most one: 6
-   others as 6, 7 as 3 and 4. Each line of b is read once: a step's rows,
-   4 KiB apart, fall in one set of the L1 cache, whose 8 ways a second
-   read of 16 rows would miss. Columns past the last 16 go one at a
-   time. */
-#define QAXPY(name, S, T)                                                    \
-  QAXPY_1(name##_1, S, T, 0)                                                 \
-  QAXPY_1(name##_keep, S, T, 1)                                              \
-  QGROUP(name##_g1, S, T, 1)                                                 \
-  QGROUP(name##_g2, S, T, 2)                                                 \
-  QGROUP(name##_g3, S, T, 3)                                                 \
-  QGROUP(name##_g4, S, T, 4)                                                 \
-  QGROUP(name##_g5, S, T, 5)                                                 \
-  QGROUP(name##_g6, S, T, 6)                                                 \
-  static void name(const uint8_t *a, int64_t lda, int64_t rows,              \
-                   const uint8_t *b, int64_t ldb, int64_t k, int64_t n,      \
-                   uint32_t *y, int64_t ldy, const uint8_t *next) {          \
-    if (rows == 1) {                                                         \
-      name##_1(a, b, ldb, k, n, y, next, NULL);                              \
-      return;                                                                \
-    }                                                                        \
-    static void (*const group[QG + 1])(const uint8_t *, int64_t,             \
-                                       const __m256i *, int64_t, int64_t,    \
-                                       uint32_t *, int64_t) = {              \
-        NULL,      name##_g1, name##_g2, name##_g3,                          \
-        name##_g4, name##_g5, name##_g6};                                    \
-    _Alignas(32) __m256i pb[QK / 2 * (QCOLS / 8)];                           \
-    int64_t groups = (rows - 1 + QG - 1) / QG;                               \
-    for (int64_t t0 = 0; t0 < k; t0 += QK) {                                 \
-      int64_t kb = k - t0 < QK ? k - t0 : QK, kp = (kb + 1) / 2;             \
-      for (int64_t j0 = 0; j0 < n; j0 += QCOLS) {                            \
-        int64_t cb = n - j0 < QCOLS ? n - j0 : QCOLS, c = cb / 16 * 16;      \
-        int64_t at = t0 * ldb + j0;                                          \
-        name##_keep(a + t0, b + at, ldb, kb, cb, y + j0, next + at, pb);     \
-        for (int64_t g = 0, i = 1; g < groups; g++) {                        \
-          int64_t r = (rows - i) / (groups - g);                             \
-          group[r](a + i * lda + t0, lda, pb, kp, c, y + i * ldy + j0, ldy); \
-          i += r;                                                            \
-        }                                                                    \
-        for (int64_t j = j0 + c; j < j0 + cb; j++)                           \
-          for (int64_t i = 1; i < rows; i++)                                 \
-            for (int64_t t = t0; t < t0 + kb; t++)                           \
-              y[i * ldy + j] += (uint32_t)((T)a[i * lda + t] *               \
-                                           (T)b[t * ldb + j]);               \
-      }                                                                      \
-    }                                                                        \
-  }
+#define QPREP_S(R) QPREP(S, int8_t, R)
+#define QPREP_U(R) QPREP(U, uint8_t, R)
+#define QWORD(i, t) w[i][t]
+#define QAXPY(name, S, T)                    \
+  QAXPY_1(name##_1, S, T, 0)                 \
+  QAXPY_1(name##_keep, S, T, 1)              \
+  QAXPYS(name, T, 2, QPREP_##S, QWORD, MADD)
 QAXPY(quads_axpy_s8, S, int8_t)
 QAXPY(quads_axpy_u8, U, uint8_t)
 

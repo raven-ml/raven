@@ -2055,10 +2055,9 @@ static int axpys_fit(const nx_cpu_gemm *g, const nx_contract_view *v,
    groups of columns are fewer than the threads, units split rows too.
    Where the product zips b's rows (the target's quads_zip_rows), bands
    keep the quads kernel's MR rows, which zip as the whole would, unless
-   whole tiles leave more than half the threads idle: on fudge, bands of
-   4 rows took 8 rows by n = k = 256 1.38 times as long as bands of whole
-   tiles, and on the M1 Max 2 bands of 8 rows took 16 rows by n 64, k 4096
-   29.7 µs against 15 in 8 bands of 2. */
+   whole tiles leave more than half the threads idle: on the M1 Max 2
+   bands of 8 rows took 16 rows by n 64, k 4096 29.7 µs against 15 in 8
+   bands of 2. */
 static int quad_axpys_on(nx_cpu_quads_axpy axpy, const nx_cpu_gemm *g,
                          int acc, int64_t k, const nx_contract_view *u,
                          const nx_array *const *op) {
