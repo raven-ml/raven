@@ -37,9 +37,9 @@ _Static_assert(NX_VIEW_DST == 3 && NX_VIEW_CONTRACTED == 3,
    [vcontracting] and the layouts of [y], [a], [b] and the init [i], an
    option, into [w]: the paired axes marked in a mask per side, each
    operand's axes of each group gathered, every group's extents checked
-   before any merges, then each group coalesced (nx_coalesce_dims) and
-   written. It reads each pair once, so another domain's write to the
-   arrays cannot change what it checked. */
+   before any merges, then each group coalesced (nx_coalesce_dims) into
+   its runs and written. It reads each pair once, so another domain's write
+   to the arrays cannot change what it checked. */
 enum { A = NX_VIEW_A, B = NX_VIEW_B, I = NX_VIEW_INIT, Y = NX_VIEW_DST };
 enum {
   BATCH = NX_VIEW_BATCH,
@@ -55,34 +55,38 @@ typedef struct {
 } layout;
 
 /* Groups the [count] axes of group [g] over the [n] operands [ops], whose
-   axes are [axes][op][g], into [w]; answers whether they make one run. A
-   group of at most one axis is one as nx_coalesce_dims writes it: an
-   absent or single axis of extent 1 steps 0, as does an empty one. */
-static int group(nx_contract_view *w, int g, int count, int n, const int *ops,
-                 const layout *l, int8_t axes[4][4][NX_MAX_RANK]) {
-  if (count <= 1) {
-    int64_t d = count ? l[ops[0]].dim[axes[ops[0]][g][0]] : 1;
-    w->extent[g] = d;
-    for (int p = 0; p < n; p++) {
-      const layout *lp = &l[ops[p]];
-      int64_t s = d > 1 ? lp->dim[lp->rank + axes[ops[p]][g][0]] : 0;
-      w->stride[ops[p]][g] = s;
-    }
-    return 1;
-  }
+   axes are [axes][op][g], into its runs in [r] (nx_contract_view_fill.h):
+   one run where there are at most one axis, as nx_coalesce_dims writes it,
+   an absent or single axis of extent 1 stepping 0, as does an empty one.
+   The operands not in [ops] step 0. */
+static void group(nx_contract_runs *r, int g, int count, int n,
+                  const int *ops, const layout *l,
+                  int8_t axes[4][4][NX_MAX_RANK]) {
   int64_t ext[NX_MAX_RANK], st[4][NX_MAX_RANK];
-  for (int k = 0; k < count; k++) {
-    const layout *l0 = &l[ops[0]];
-    ext[k] = l0->dim[axes[ops[0]][g][k]];
+  int runs = 1;
+  if (count <= 1) {
+    ext[0] = count ? l[ops[0]].dim[axes[ops[0]][g][0]] : 1;
     for (int p = 0; p < n; p++) {
       const layout *lp = &l[ops[p]];
-      st[p][k] = lp->dim[lp->rank + axes[ops[p]][g][k]];
+      st[p][0] = ext[0] > 1 ? lp->dim[lp->rank + axes[ops[p]][g][0]] : 0;
     }
+  } else {
+    for (int k = 0; k < count; k++) {
+      ext[k] = l[ops[0]].dim[axes[ops[0]][g][k]];
+      for (int p = 0; p < n; p++) {
+        const layout *lp = &l[ops[p]];
+        st[p][k] = lp->dim[lp->rank + axes[ops[p]][g][k]];
+      }
+    }
+    runs = nx_coalesce_dims(n, count, ext, st);
   }
-  if (nx_coalesce_dims(n, count, ext, st) != 1) return 0;
-  w->extent[g] = ext[0];
-  for (int p = 0; p < n; p++) w->stride[ops[p]][g] = st[p][0];
-  return 1;
+  r->runs[g] = runs;
+  for (int o = A; o <= Y; o++)
+    for (int k = 0; k < runs; k++) r->stride[o][g][k] = 0;
+  for (int k = 0; k < runs; k++) {
+    r->extent[g][k] = ext[k];
+    for (int p = 0; p < n; p++) r->stride[ops[p]][g][k] = st[p][k];
+  }
 }
 
 /* Whether the operands [ops] agree on group [g]'s [count] extents. */
@@ -135,21 +139,32 @@ static int single(nx_contract_view *w, const layout *l, int init,
   return NX_OK;
 }
 
-int nx_contract_view_fill(nx_contract_view *w, value vbatch,
-                          value vcontracting, value y, value a, value b,
-                          value i) {
-  int nb = (int)Wosize_val(vbatch), nc = (int)Wosize_val(vcontracting);
-  int init = Is_block(i);
+/* A contraction's pairs read and checked: the layouts, each operand's
+   axes by group, the axes in each group and whether it has an init. */
+typedef struct {
   layout l[4];
+  int8_t axes[4][4][NX_MAX_RANK];
+  int count[4];
+  int init;
+} pairs;
+
+/* Reads the pairs [vbatch] and [vcontracting] and the layouts of [y], [a],
+   [b] and the init [i] into [q]: NX_OK, or NX_SHAPE where they do not fit
+   the pairs' ranks or an axis is in two pairs. */
+static int read_pairs(pairs *q, value vbatch, value vcontracting, value y,
+                      value a, value b, value i) {
+  int nb = (int)Wosize_val(vbatch), nc = (int)Wosize_val(vcontracting);
+  layout *l = q->l;
+  q->init = Is_block(i);
   l[A].rank = nx_array_layout(a, l[A].dim, &l[A].offset);
   l[B].rank = nx_array_layout(b, l[B].dim, &l[B].offset);
   l[Y].rank = nx_array_layout(y, l[Y].dim, &l[Y].offset);
-  l[I].rank = init ? nx_array_layout(Field(i, 0), l[I].dim, &l[I].offset) : 0;
+  l[I].rank =
+      q->init ? nx_array_layout(Field(i, 0), l[I].dim, &l[I].offset) : 0;
   if (nb + nc > l[A].rank || nb + nc > l[B].rank) return NX_SHAPE;
   int fa = l[A].rank - nb - nc, fb = l[B].rank - nb - nc;
   int ry = nb + fa + fb;
   uint64_t na = 0, nbm = 0;
-  int8_t axes[4][4][NX_MAX_RANK];
   for (int k = 0; k < nb + nc; k++) {
     value p = Field(k < nb ? vbatch : vcontracting, k < nb ? k : k - nb);
     intnat ia = Long_val(Field(p, 0)), ib = Long_val(Field(p, 1));
@@ -159,44 +174,78 @@ int nx_contract_view_fill(nx_contract_view *w, value vbatch,
     na |= (uint64_t)1 << ia;
     nbm |= (uint64_t)1 << ib;
     int g = k < nb ? BATCH : CONTRACTED, at = k < nb ? k : k - nb;
-    axes[A][g][at] = (int)ia;
-    axes[B][g][at] = (int)ib;
+    q->axes[A][g][at] = (int)ia;
+    q->axes[B][g][at] = (int)ib;
   }
-  if (l[Y].rank != ry || (init && l[I].rank != ry)) return NX_SHAPE;
+  if (l[Y].rank != ry || (q->init && l[I].rank != ry)) return NX_SHAPE;
   for (int ax = 0, n = 0; ax < l[A].rank; ax++)
-    if (!(na >> ax & 1)) axes[A][ROW][n++] = ax;
+    if (!(na >> ax & 1)) q->axes[A][ROW][n++] = ax;
   for (int ax = 0, n = 0; ax < l[B].rank; ax++)
-    if (!(nbm >> ax & 1)) axes[B][COLUMN][n++] = ax;
+    if (!(nbm >> ax & 1)) q->axes[B][COLUMN][n++] = ax;
   for (int o = I; o <= Y; o++) {
-    for (int k = 0; k < nb; k++) axes[o][BATCH][k] = k;
-    for (int k = 0; k < fa; k++) axes[o][ROW][k] = nb + k;
-    for (int k = 0; k < fb; k++) axes[o][COLUMN][k] = nb + fa + k;
+    for (int k = 0; k < nb; k++) q->axes[o][BATCH][k] = k;
+    for (int k = 0; k < fa; k++) q->axes[o][ROW][k] = nb + k;
+    for (int k = 0; k < fb; k++) q->axes[o][COLUMN][k] = nb + fa + k;
   }
-  if (nb <= 1 && fa <= 1 && fb <= 1 && nc <= 1)
-    return single(w, l, init, (int[4]){nb, fa, fb, nc}, axes);
-  /* Each group's operands: batch over all, rows over a, init and dst,
-     columns over b, init and dst, contracted over a and b. */
+  q->count[BATCH] = nb;
+  q->count[ROW] = fa;
+  q->count[COLUMN] = fb;
+  q->count[CONTRACTED] = nc;
+  return NX_OK;
+}
+
+/* Groups [q] into [r]: NX_OK, or NX_SHAPE where the operands' extents
+   differ within a group. Each group's operands: batch over all, rows over
+   a, init and dst, columns over b, init and dst, contracted over a and
+   b. */
+static int runs_of(nx_contract_runs *r, pairs *q) {
   int batch[4] = {A, B, Y, I}, row[3] = {A, Y, I}, column[3] = {B, Y, I};
   int contracted[2] = {A, B};
-  int nbatch = 3 + init, nrow = 2 + init;
+  int nbatch = 3 + q->init, nrow = 2 + q->init;
+  const int *c = q->count;
   /* Every group fits before any merges: a misfit is refused even behind a
      group that does not merge. */
-  if (!fits(BATCH, nb, nbatch, batch, l, axes) ||
-      !fits(ROW, fa, nrow, row, l, axes) ||
-      !fits(COLUMN, fb, nrow, column, l, axes) ||
-      !fits(CONTRACTED, nc, 2, contracted, l, axes))
+  if (!fits(BATCH, c[BATCH], nbatch, batch, q->l, q->axes) ||
+      !fits(ROW, c[ROW], nrow, row, q->l, q->axes) ||
+      !fits(COLUMN, c[COLUMN], nrow, column, q->l, q->axes) ||
+      !fits(CONTRACTED, c[CONTRACTED], 2, contracted, q->l, q->axes))
     return NX_SHAPE;
-  /* What an operand lacks reads 0: its axes, and an absent init. */
+  group(r, BATCH, c[BATCH], nbatch, batch, q->l, q->axes);
+  group(r, ROW, c[ROW], nrow, row, q->l, q->axes);
+  group(r, COLUMN, c[COLUMN], nrow, column, q->l, q->axes);
+  group(r, CONTRACTED, c[CONTRACTED], 2, contracted, q->l, q->axes);
+  for (int o = A; o <= Y; o++)
+    r->offset[o] = o == I && !q->init ? 0 : q->l[o].offset;
+  return NX_OK;
+}
+
+int nx_contract_fill(nx_contract_view *w, nx_contract_runs *r, value vbatch,
+                     value vcontracting, value y, value a, value b,
+                     value i) {
+  pairs q;
+  int e = read_pairs(&q, vbatch, vcontracting, y, a, b, i);
+  if (e) return e;
+  const int *c = q.count;
+  if (c[BATCH] <= 1 && c[ROW] <= 1 && c[COLUMN] <= 1 && c[CONTRACTED] <= 1)
+    return single(w, q.l, q.init, c, q.axes);
+  if ((e = runs_of(r, &q))) return e;
+  for (int g = BATCH; g <= CONTRACTED; g++)
+    if (r->runs[g] != 1) return NX_DECLINED;
   memset(w, 0, sizeof *w);
-  w->offset[A] = l[A].offset;
-  w->offset[B] = l[B].offset;
-  w->offset[Y] = l[Y].offset;
-  if (init) w->offset[I] = l[I].offset;
-  int grouped = group(w, BATCH, nb, nbatch, batch, l, axes) &&
-                group(w, ROW, fa, nrow, row, l, axes) &&
-                group(w, COLUMN, fb, nrow, column, l, axes) &&
-                group(w, CONTRACTED, nc, 2, contracted, l, axes);
-  return grouped ? NX_OK : NX_DECLINED;
+  for (int o = A; o <= Y; o++) {
+    w->offset[o] = r->offset[o];
+    for (int g = BATCH; g <= CONTRACTED; g++)
+      w->stride[o][g] = r->stride[o][g][0];
+  }
+  for (int g = BATCH; g <= CONTRACTED; g++) w->extent[g] = r->extent[g][0];
+  return NX_OK;
+}
+
+int nx_contract_view_fill(nx_contract_view *w, value vbatch,
+                          value vcontracting, value y, value a, value b,
+                          value i) {
+  nx_contract_runs r;
+  return nx_contract_fill(w, &r, vbatch, vcontracting, y, a, b, i);
 }
 
 /* Contract_view.v: Ok of the view of the pairs [vbatch] and

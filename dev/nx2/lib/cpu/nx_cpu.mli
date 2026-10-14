@@ -23,15 +23,14 @@
 
     [contract] computes contractions in [float32], [float64], [complex64],
     [complex128] or an integer of 8 to 64 bits whose [dst] has their [acc]'s
-    dtype, whose [a], [b] and [init] each convert exactly into a float or
-    complex [acc] or are integers or booleans for an integer one, and whose
-    layouts {!Nx_kernel.Contract_view} groups; it answers [Declined] for the
-    others. [float32] holds [bool], [bit], the integers of at most 16 bits
-    and the floats of at most 32; [float64] also [int32], [uint32] and
-    [float64]. A complex dtype holds what its parts' dtype holds and the
-    complex numbers of at most its width. An integer [acc] of [w] bits
-    converts each operand modulo [2^w], as a cast does, and its sum is exact
-    modulo [2^w] whatever the order.
+    dtype, and whose [a], [b] and [init] each convert exactly into a float
+    or complex [acc] or are integers or booleans for an integer one, at any
+    layout; it answers [Declined] for the others. [float32] holds [bool],
+    [bit], the integers of at most 16 bits and the floats of at most 32;
+    [float64] also [int32], [uint32] and [float64]. A complex dtype holds
+    what its parts' dtype holds and the complex numbers of at most its
+    width. An integer [acc] of [w] bits converts each operand modulo [2^w],
+    as a cast does, and its sum is exact modulo [2^w] whatever the order.
 
     A float or complex contraction adds in the order it is given
     ({!Nx_kernel.section-orders}), at any shape.

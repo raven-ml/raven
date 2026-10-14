@@ -8,7 +8,8 @@
 
    nx_contract_view_fill groups the axes, as Nx_kernel.Contract_view does,
    into one batch, row (M), column (N) and contracted (K) axis per
-   operand. An operand is read
+   operand; a group that makes several runs takes an outer loop or a copy
+   (Groups of several runs). An operand is read
    through the stage, which takes any strides and dtype into its carrier, and
    the target's conversion takes the carrier into acc. A float or complex
    acc takes only dtypes it holds each value of, so operands convert
@@ -2162,18 +2163,176 @@ double nx_cpu_core_speed(int acc) {
   return g->kernel.flops_per_byte;
 }
 
+/* The contraction of the view [v] of [op], in [acc] and [order], [da] and
+   [db] a's and b's dtypes: 0 if an allocation failed. */
+static int contract_view(int acc, int order, int da, int db,
+                         const nx_contract_view *v,
+                         const nx_array *const *op) {
+  const nx_cpu_gemm *quads = quads_for(acc, da, db);
+  if (quads) return quads_on(quads, acc, v, op);
+  if (part_of(acc) != acc) return complex_on(acc, order, v, op);
+  return nx_cpu_contract_on(acc, order, v, op);
+}
+
+/* Groups of several runs
+
+   A group whose axes do not coalesce into one, over every operand that
+   has it, is several runs (nx_contract_runs). The last run of each group
+   is the view's axis and the batch's, rows' and columns' other runs an
+   outer loop, each of whose positions is a contraction of the view: an
+   output's sum is the same whichever contraction computes it. Attention's
+   heads, a [b; s; h; d] array read as [b; h; s; d], are so a batch of h
+   with b outside, read in place.
+
+   The contracted runs instead make one: a and b are copied, every element
+   of them, into buffers where their runs lie in C order, the contracted
+   ones last, and those then coalesce. The copy keeps the products'
+   numbering, so every order gives its bits; a loop over the outer
+   contracted runs, each from the last's sums, would keep chain order's
+   bits alone. */
+
+typedef struct {
+  int acc, order, da, db;
+  nx_contract_view v;      /* the view at the outer loop's first position */
+  int n;                   /* outer runs */
+  int64_t extent[NX_MAX_RANK], stride[4][NX_MAX_RANK];
+  const nx_array *const *op;
+  atomic_int failed;
+} outer;
+
+/* The outer loop's positions [lo, hi), each a contraction of its view. */
+static void outer_units(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  outer *q = ctx;
+  for (int64_t u = lo; u < hi; u++) {
+    nx_contract_view v = q->v;
+    for (int64_t r = q->n - 1, x = u; r >= 0; r--) {
+      int64_t i = x % q->extent[r];
+      x /= q->extent[r];
+      for (int o = A; o <= DST; o++) v.offset[o] += i * q->stride[o][r];
+    }
+    if (!contract_view(q->acc, q->order, q->da, q->db, &v, q->op))
+      atomic_store(&q->failed, 1);
+  }
+}
+
+/* Copies operand [o] of [r] (a or b) into scratch (nx_cpu_take) where its
+   runs lie in C order, groups [gs] in turn, contracted last, skipping
+   runs it steps 0 along but the contracted ones, and lays [r] out over it
+   in [x]: 0 if the scratch could not be allocated. The copies hold a's
+   and b's elements, O(a + b). */
+static int stage_runs(nx_contract_runs *r, int o, const int *gs,
+                      const nx_array *src, nx_array *x) {
+  nx_loop l = {.first = {0, r->offset[o]}};
+  int64_t *at[NX_MAX_RANK], n = 1;
+  int rank = 0;
+  for (int t = 0; t < 3; t++) {
+    int g = gs[t];
+    for (int k = 0; k < r->runs[g]; k++) {
+      if (r->stride[o][g][k] == 0 && g != CON) continue;
+      l.extent[rank] = r->extent[g][k];
+      l.step[1][rank] = r->stride[o][g][k];
+      at[rank++] = &r->stride[o][g][k];
+    }
+  }
+  for (int d = rank - 1; d >= 0; d--) {
+    l.step[0][d] = n;
+    *at[d] = n;
+    n *= l.extent[d];
+  }
+  uint8_t *base = nx_cpu_take((n * src->bits + 7) / 8);
+  if (base == NULL) return 0;
+  l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
+  nx_cpu_copy_loop(base, src->base, src->bits, &l);
+  *x = *src;
+  x->base = base;
+  x->offset = 0;
+  x->alias = 0;
+  r->offset[o] = 0;
+  return 1;
+}
+
+/* The contraction of [r]'s groups over [op], as contract_view's: 0 if an
+   allocation failed. */
+static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
+                   const nx_array *const *op) {
+  for (int g = BATCH; g <= COL; g++)
+    for (int k = 0; k < r->runs[g]; k++)
+      if (r->extent[g][k] == 0) return 1;
+  nx_array x[2];
+  const nx_array *ops[4] = {op[A], op[B], op[INIT], op[DST]};
+  int staged = r->runs[CON] > 1, done = 0;
+  if (staged) {
+    static const int ga[3] = {BATCH, ROW, CON}, gb[3] = {BATCH, COL, CON};
+    if (!stage_runs(r, A, ga, op[A], &x[A])) return 0;
+    if (!stage_runs(r, B, gb, op[B], &x[B])) {
+      nx_cpu_give(x[A].base);
+      return 0;
+    }
+    ops[A] = &x[A];
+    ops[B] = &x[B];
+    int64_t ext[NX_MAX_RANK], st[2][NX_MAX_RANK];
+    for (int k = 0; k < r->runs[CON]; k++) {
+      ext[k] = r->extent[CON][k];
+      st[0][k] = r->stride[A][CON][k];
+      st[1][k] = r->stride[B][CON][k];
+    }
+    r->runs[CON] = nx_coalesce_dims(2, r->runs[CON], ext, st);
+    r->extent[CON][0] = ext[0];
+    r->stride[A][CON][0] = st[0][0];
+    r->stride[B][CON][0] = st[1][0];
+  }
+  outer q = {.acc = acc, .order = order, .da = da, .db = db, .op = ops};
+  atomic_init(&q.failed, 0);
+  int64_t units = 1;
+  for (int g = BATCH; g <= CON; g++) {
+    int last = r->runs[g] - 1;
+    q.v.extent[g] = r->extent[g][last];
+    for (int o = A; o <= DST; o++) q.v.stride[o][g] = r->stride[o][g][last];
+    for (int k = 0; k < last; k++) {
+      q.extent[q.n] = r->extent[g][k];
+      for (int o = A; o <= DST; o++) q.stride[o][q.n] = r->stride[o][g][k];
+      units *= r->extent[g][k];
+      q.n++;
+    }
+  }
+  for (int o = A; o <= DST; o++) q.v.offset[o] = r->offset[o];
+  /* As a factorisation's matrices (linalg.c): a position a unit where they
+     are as many as the threads the whole takes, each then on its own
+     thread, else in turn, each on the threads it takes. */
+  const nx_cpu_gemm *g = &nx_cpu_table->gemm[part_of(acc)];
+  double e = (double)units * (double)q.v.extent[BATCH];
+  double m = (double)q.v.extent[ROW], n = (double)q.v.extent[COL];
+  double k = (double)q.v.extent[CON];
+  double bytes = e * (m * k + k * n + m * n) * nx_cpu_width(acc);
+  double cost = flop_cost(g->kernel, 2 * e * m * n * k) + bytes;
+  int threads = nx_cpu_threads_at((int64_t)bytes, cost, thread_bytes(g));
+  if (threads > 1 && units >= threads)
+    nx_cpu_job_at(units, (int64_t)bytes, cost, thread_bytes(g), outer_units,
+                  &q);
+  else nx_cpu_one_thread(units, cost, outer_units, &q);
+  done = !atomic_load(&q.failed);
+  if (staged) {
+    nx_cpu_give(x[A].base);
+    nx_cpu_give(x[B].base);
+  }
+  return done;
+}
+
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
-   on the stack, answering what the fill answers where it does not group,
-   declines what it does not compute, then reads the operands through the
-   door. [vorder] is the order, [vacc] acc's dtype code and [vi] the init,
-   an option. */
+   on the stack, or their runs where a group makes several, answering what
+   the fill answers where it does not fit, declines what it does not
+   compute, then reads the operands through the door. [vorder] is the
+   order, [vacc] acc's dtype code and [vi] the init, an option. */
 value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
                       value vacc, value vdst, value vi, value va, value vb) {
   int acc = Int_val(vacc), init = Is_block(vi);
   value vinit = init ? Field(vi, 0) : va;
   nx_contract_view v;
-  int fit = nx_contract_view_fill(&v, vbatch, vcontracting, vdst, va, vb, vi);
-  if (fit != NX_OK) return Val_int(fit);
+  nx_contract_runs r;
+  int fit = nx_contract_fill(&v, &r, vbatch, vcontracting, vdst, va, vb, vi);
+  int runs = fit == NX_DECLINED;
+  if (fit != NX_OK && !runs) return Val_int(fit);
   int dts[3] = {nx_array_dtype(va), nx_array_dtype(vb),
                 nx_array_dtype(vinit)};
   if (acc < 0 || acc >= NX_DTYPE_COUNT ||
@@ -2191,11 +2350,9 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   /* Only chain order has integer kernels, and an integer sum is exact
      modulo acc's width in any order, so chain order computes it whatever
      the order asked. */
-  int order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder), done;
-  const nx_cpu_gemm *quads = quads_for(acc, dts[0], dts[1]);
-  if (quads) done = quads_on(quads, acc, &v, op);
-  else if (part_of(acc) != acc) done = complex_on(acc, order, &v, op);
-  else done = nx_cpu_contract_on(acc, order, &v, op);
+  int order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder);
+  int done = runs ? runs_on(acc, order, dts[0], dts[1], &r, op)
+                  : contract_view(acc, order, dts[0], dts[1], &v, op);
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();
   return Val_int(NX_OK);

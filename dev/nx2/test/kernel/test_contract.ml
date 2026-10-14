@@ -145,24 +145,36 @@ let inverse p =
 
 (* How an operand of rank [r] is viewed: made with extent 1 along its [nb]
    batch axes and broadcast, made with its last axis twice as long and
-   stepped by two, then permuted, [perm.(i)] being the made axis of axis
-   [i]. *)
-type view = { stepped : bool; broadcast : bool; perm : int array }
+   stepped by two, its elements stored in the order of the made axes
+   [stored] names, outermost first, then permuted, [perm.(i)] being the
+   made axis of axis [i]. *)
+type view = {
+  stepped : bool;
+  broadcast : bool;
+  stored : int array;
+  perm : int array;
+}
 
 let view r nb =
   let open Gen in
+  let axes = List.init r Fun.id in
   let* broadcast = if nb > 0 then bool else constant false in
   let* stepped = bool in
   let stepped = stepped && r > 0 && (r > nb || not broadcast) in
-  let+ p = permutation ~pp:Format.pp_print_int (List.init r Fun.id) in
-  { stepped; broadcast; perm = Array.of_list p }
+  let* stored =
+    frequency
+      [ (2, constant axes); (1, permutation ~pp:Format.pp_print_int axes) ]
+  in
+  let+ p = permutation ~pp:Format.pp_print_int axes in
+  { stepped; broadcast; stored = Array.of_list stored; perm = Array.of_list p }
+
+let identity p = p = Array.init (Array.length p) Fun.id
 
 let names v =
   (if v.stepped then [ "stepped" ] else [])
   @ (if v.broadcast then [ "broadcast" ] else [])
-  @
-  if v.perm <> Array.init (Array.length v.perm) Fun.id then [ "permuted" ]
-  else []
+  @ (if identity v.stored then [] else [ "stored apart" ])
+  @ if identity v.perm then [] else [ "permuted" ]
 
 (* An int64 that narrows to the extremes of every integer width and their
    neighbours, or any int64. *)
@@ -204,8 +216,16 @@ let operand ?(wide_ints = false) dt s nb v seed =
       A.Any
         (A.of_array D.Float64 made (Array.init (total made) (fun _ -> draw ())))
   in
-  let (A.Any x) = cast_to dt xs in
   let move m x = Option.get (A.move m x) in
+  let (A.Any x) = cast_to dt xs in
+  (* The values copied into an array stored in [v.stored]'s order, read
+     back in the made axes' order. *)
+  let x =
+    if identity v.stored then x
+    else
+      let t = A.copy (move (M.Permute v.stored) x) in
+      move (M.Permute (inverse v.stored)) t
+  in
   let step i e =
     if i = last then { M.start = 1; count = s.(i); step = 2 }
     else { M.start = 0; count = e; step = 1 }
@@ -256,7 +276,10 @@ let axpy_group = 6
    ranks over a few elements; one output; 64 outputs or more with edge
    tiles; several blocks of the contraction on several threads; dots past a
    block of lanes; several panels of columns; few rows over several blocks
-   of the contraction; few columns; several groups of batch elements. *)
+   of the contraction; few columns; several groups of batch elements; two
+   axes in each group, which views split into runs; and a batch of two
+   axes over 512 KiB of operands or more, whose outer run takes several
+   threads. *)
 let extents =
   let open Gen in
   let one lo hi = map (fun e -> [| e |]) (int_range lo hi) in
@@ -265,7 +288,9 @@ let extents =
     (batch, rows, cols, con)
   in
   let axes most lo hi = array ~size:(int_range 0 most) (int_range lo hi) in
-  let ranked = shaped (axes 1 0 3) (axes 2 0 5) (axes 2 0 5) (axes 2 0 4) in
+  let two lo hi = array ~size:(constant 2) (int_range lo hi) in
+  let pair x y = map (fun (x, y) -> [| x; y |]) (Gen.pair x y) in
+  let ranked = shaped (axes 2 0 3) (axes 2 0 5) (axes 2 0 5) (axes 2 0 4) in
   let none = constant [||] in
   frequency
     [
@@ -278,6 +303,9 @@ let extents =
       (1, shaped none (one 1 4) (one 16 200) (one 400 1100));
       (1, shaped none (one 16 300) (one 1 4) (one 1 600));
       (2, shaped (one 342 420) (constant [| 8 |]) (constant [| 8 |]) (one 1 4));
+      (8, shaped (two 2 3) (two 2 3) (two 2 3) (two 2 3));
+      (4, shaped (pair (int_range 16 24) (int_range 2 3)) (one 48 48)
+            (one 48 48) (one 48 56));
     ]
 
 (* The ranks of [a], [b] and the result for the extents [e]. *)
@@ -363,9 +391,14 @@ let case_of ?same ~acc ~out ~dts () =
    an integer one takes chain order's paths, which the floats' cases reach:
    their own are few, each order over several blocks of products, no
    product, a batch, and the few rows' case stored transposed; an integer's
-   also the chain path over several blocks of the contraction. *)
+   also the chain path over several blocks of the contraction. Every
+   kind's contracted axes stored apart, and the floats' attention heads,
+   whose groups make several runs. *)
 let regimes acc =
-  let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
+  let plain r =
+    let axes = Array.init r Fun.id in
+    { stepped = false; broadcast = false; stored = axes; perm = axes }
+  in
   let case (order, init, e) =
     let ra, rb, ry = ranks e in
     let ti = if init then Some (plain ry) else None in
@@ -391,7 +424,34 @@ let regimes acc =
     let c = make ~order ~acc ~out:acc e (acc, swap ra) (acc, plain rb) ti 1 in
     { c with a = copy c.a }
   in
+  (* [case] with a and b stored in the orders of their made axes [sa] and
+     [sb] name. *)
+  let stored (order, init, e, sa, sb) =
+    let _, _, ry = ranks e in
+    let ti = if init then Some (plain ry) else None in
+    let at s = { (plain (Array.length s)) with stored = s } in
+    make ~order ~acc ~out:acc e (acc, at sa) (acc, at sb) ti 1
+  in
   let chain = Nx_kernel.Chain and lane = Nx_kernel.Lane in
+  (* Contracted axes stored in another order in a than in b, in either
+     order. *)
+  let split =
+    List.map stored
+      [
+        (chain, true, ([||], [| 3 |], [| 4 |], [| 5; 6 |]), [| 0; 2; 1 |],
+         [| 0; 1; 2 |]);
+        (lane, false, ([||], [| 3 |], [| 4 |], [| 5; 6 |]), [| 0; 2; 1 |],
+         [| 0; 1; 2 |]);
+      ]
+  in
+  (* Attention's scores, q and k of [b; s; h; d] read as [b; h; s; d]: a
+     batch of two runs, the outer of 16 positions, over 768 KiB of
+     operands, which the threads take a position at a time. *)
+  let heads =
+    stored
+      ( chain, false, ([| 16; 4 |], [| 32 |], [| 32 |], [| 32 |]),
+        [| 0; 2; 1; 3 |], [| 0; 3; 1; 2 |] )
+  in
   let rows = few_rows_most + 1 in
   let few =
     (chain, true, ([||], [| few_rows_most |], [| few_rows_most + 3 |], [| 3 |]))
@@ -417,12 +477,12 @@ let regimes acc =
     ]
   in
   let integer = (chain, true, ([||], [| 130 |], [| 130 |], [| 520 |])) :: complex in
-  if is_complex acc then apart few :: List.map case complex
-  else if is_integer acc then apart few :: List.map case integer
+  if is_complex acc then (apart few :: split) @ List.map case complex
+  else if is_integer acc then (apart few :: split) @ List.map case integer
   else
-    [ apart few;
+    [ apart few; heads;
       a_apart (chain, false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |])) ]
-    @ groups
+    @ split @ groups
     @ List.map case
       ([
          (lane, true, ([||], [| 0 |], [| 3 |], [| 2 |]));
@@ -723,16 +783,9 @@ let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) (A.Any a) (A.Any b)
   K.contract ~order:c.order ~batch:c.batch ~contracting:c.contracting
     ~acc:c.acc ~dst:d ~init a b
 
-(* Whether nx_cpu.mli says nx.cpu computes [c]: its dtypes, and a layout
-   Contract_view groups. *)
+(* Whether nx_cpu.mli says nx.cpu computes [c]: its dtypes, at any layout. *)
 let cpu_computes c =
   let acc = c.acc in
-  let y, _, _ = sizes c in
-  let (D.Any out) = c.out in
-  let dst = A.create Rig.host out y in
-  let (A.Any a) = c.a in
-  let (A.Any b) = c.b in
-  let init = Option.map (A.expect out) c.init in
   let (D.Any dt) = acc in
   let integer = is_integer acc && D.bits dt >= 8 in
   let takes = if integer then integers else held acc in
@@ -741,9 +794,67 @@ let cpu_computes c =
   && Array.for_all
        (fun (A.Any x) -> List.mem (D.Any (A.dtype x)) takes)
        (operands c)
-  && Result.is_ok
-       (Nx_kernel.Contract_view.v ~batch:c.batch ~contracting:c.contracting
-          ~dst ~init a b)
+
+(* The runs each group of [c] makes, batch, rows, columns and contracted,
+   as nx_coalesce_dims makes them over the group's operands (gemm.c): its
+   axes but those of extent 1, an axis merging into the one before where
+   every operand steps there its step times its extent; one run where
+   there is no axis or an axis of no element. dst is C-contiguous, as every
+   destination is. With [~init_alone], the runs over init alone. *)
+let runs ?(init_alone = false) c =
+  let y, _, _ = sizes c in
+  let nb = Array.length c.batch in
+  let strides (A.Any x) = L.strides (A.layout x) in
+  let dst = L.strides (L.contiguous y) in
+  let along x axes =
+    if init_alone then [] else [ Array.map (fun i -> (strides x).(i)) axes ]
+  in
+  let ys axes =
+    if init_alone then [] else [ Array.map (fun i -> dst.(i)) axes ]
+  in
+  let inits axes =
+    match c.init with
+    | Some (A.Any i) ->
+        [ Array.map (fun k -> (L.strides (A.layout i)).(k)) axes ]
+    | None -> []
+  in
+  (* The axes of [x] no pair names, in order. *)
+  let free x side =
+    let paired i =
+      Array.exists (fun p -> side p = i) (Array.append c.batch c.contracting)
+    in
+    let r = Array.length (shape_of x) in
+    Array.of_list (List.filter (fun i -> not (paired i)) (List.init r Fun.id))
+  in
+  let fa = free c.a fst and fb = free c.b snd in
+  let count exts steps =
+    let step i = List.map (fun s -> s.(i)) steps in
+    let merges cur i =
+      List.for_all2 (fun c s -> c = s.(i) * exts.(i)) cur steps
+    in
+    let join (runs, cur) i =
+      ((if merges cur i then runs else runs + 1), step i)
+    in
+    let n = Array.length exts in
+    match List.filter (fun i -> exts.(i) <> 1) (List.init n Fun.id) with
+    | _ when Array.exists (( = ) 0) exts -> 1
+    | [] -> 1
+    | first :: rest -> fst (List.fold_left join (1, step first) rest)
+  in
+  let on side pairs = Array.map side pairs in
+  let yb = Array.init nb Fun.id in
+  let yr = Array.init (Array.length fa) (fun i -> nb + i) in
+  let yc = Array.mapi (fun i _ -> nb + Array.length fa + i) fb in
+  let exts axes = Array.map (fun i -> y.(i)) axes in
+  let ka = on fst c.contracting in
+  ( count (exts yb)
+      (along c.a (on fst c.batch) @ along c.b (on snd c.batch) @ ys yb
+     @ inits yb),
+    count (exts yr) (along c.a fa @ ys yr @ inits yr),
+    count (exts yc) (along c.b fb @ ys yc @ inits yc),
+    count
+      (Array.map (fun i -> (shape_of c.a).(i)) ka)
+      (along c.a ka @ along c.b (on snd c.contracting)) )
 
 (* Outputs per batch element. *)
 let per_batch c =
@@ -827,7 +938,16 @@ let covers c =
     (chain && batch * (m + min n nc_least) * min k kc_least * w > panels);
   List.iter
     (fun v -> cover v (List.mem v c.views))
-    [ "stepped"; "broadcast"; "permuted" ]
+    [ "stepped"; "broadcast"; "stored apart"; "permuted" ];
+  let rb, rr, rc, rk = runs c in
+  cover "a batch of several runs" (rb > 1);
+  cover "rows of several runs" (rr > 1);
+  cover "columns of several runs" (rc > 1);
+  cover "contracted axes of several runs" (rk > 1);
+  let ib, ir, ic, _ = runs ~init_alone:true c in
+  cover "an init whose group makes several runs" (ib > 1 || ir > 1 || ic > 1);
+  cover "a batch of several runs over 512 KiB of operands or more"
+    (rb > 1 && batch * ((m * k) + (k * n) + (m * n)) * 4 >= 512 * 1024)
 
 (* The kernels' result on [b]'s device, read back where the host reads it;
    [None] if they declined. *)
@@ -1053,7 +1173,7 @@ let law_order b c =
   match run b c with
   | None when cpu_computes c ->
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
-  | None -> cover "a layout the view does not group" true
+  | None -> cover "declined" true
   | Some y ->
       let chain = c.order = Chain in
       let fma, add =
@@ -1108,7 +1228,10 @@ let shifted (A.Any x as a) =
    tile's rows and copied past the axpys' rows, and a's of 4096 elements
    at an odd offset, by b stored [n × k]. *)
 let quad_examples =
-  let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
+  let plain r =
+    let axes = Array.init r Fun.id in
+    { stepped = false; broadcast = false; stored = axes; perm = axes }
+  in
   let by_rows r =
     { (plain r) with perm = Array.init r (fun i -> if i < r - 2 then i else (2 * r) - 3 - i) }
   in
@@ -1424,9 +1547,14 @@ let laws (b : Support.backend) =
    [k × cols] array, so that its rows lie off any alignment, and the
    window ends at the page where [c0 + n = cols]. Slivers of a matrix
    unit's half and whole tiles (16 and 32 float32 columns, 8 and 16
-   float64) and rows past one tile are drawn often. *)
+   float64) and rows past one tile are drawn often. With [heads] 2, a
+   batch of 2 × 2 products whose operands are stored [2; m; 2; k] and
+   [2; k; 2; cols] and read [2; 2; m; k] and [2; 2; k; cols], as
+   attention's heads are, into a C-contiguous [2; 2; m; n]: the batch
+   makes two runs, and the product loops over the outer one. *)
 type guard_case = {
   f64 : bool;
+  heads : int;
   side : Support.side;
   m : int;
   n : int;
@@ -1437,15 +1565,16 @@ type guard_case = {
 }
 
 let pp_guard ppf g =
-  Format.fprintf ppf "%s %s m %d n %d k %d cols %d c0 %d seed %d"
+  Format.fprintf ppf "%s %s heads %d m %d n %d k %d cols %d c0 %d seed %d"
     (if g.f64 then "float64" else "float32")
     (match g.side with Support.Before -> "before" | After -> "after")
-    g.m g.n g.k g.cols g.c0 g.seed
+    g.heads g.m g.n g.k g.cols g.c0 g.seed
 
 let guard_cases =
   let open Gen in
   Gen.with_pp pp_guard
     (let* f64 = bool in
+     let* heads = frequency [ (2, constant 1); (1, constant 2) ] in
      let half = if f64 then 8 else 16 in
      let* after = bool in
      let side = if after then Support.After else Support.Before in
@@ -1460,7 +1589,7 @@ let guard_cases =
      let* extra = int_range 0 8 in
      let* c0 = frequency [ (1, constant extra); (2, int_range 0 extra) ] in
      let+ seed = int in
-     { f64; side; m; n; k; cols = n + extra; c0; seed })
+     { f64; heads; side; m; n; k; cols = n + extra; c0; seed })
 
 let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
   let (module K : Nx_kernel.S) = b.kernels in
@@ -1469,18 +1598,28 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
     A.of_array dt s
       (Array.init (total s) (fun _ -> Random.State.float st 2. -. 1.))
   in
+  let move m x = Option.get (A.move m x) in
+  (* An [r × c] matrix, or with heads [2; r; heads; c] read
+     [2; heads; r; c]. *)
+  let matrix make r c =
+    if g.heads = 1 then make [| r; c |]
+    else move (M.Permute [| 0; 2; 1; 3 |]) (make [| 2; r; g.heads; c |])
+  in
+  let batch, contracting =
+    if g.heads = 1 then ([||], [| (1, 0) |])
+    else ([| (0, 0); (1, 1) |], [| (3, 2) |])
+  in
   let window x =
-    let all c = { Nx_array.Move.start = 0; count = c; step = 1 } in
-    Option.get
-      (A.move
-         (Nx_array.Move.Slice
-            [| all g.k; { Nx_array.Move.start = g.c0; count = g.n; step = 1 } |])
-         x)
+    let all c = { M.start = 0; count = c; step = 1 } in
+    let cols = { M.start = g.c0; count = g.n; step = 1 } in
+    let s = L.shape (A.layout x) in
+    let r = Array.length s in
+    move (M.Slice (Array.init r (fun i -> if i = r - 1 then cols else all s.(i)))) x
   in
   let product ~dst a x =
     match
-      K.contract ~order:Nx_kernel.Chain ~batch:[||] ~contracting:[| (1, 0) |]
-        ~acc:(D.Any dt) ~dst ~init:None a (window x)
+      K.contract ~order:Nx_kernel.Chain ~batch ~contracting ~acc:(D.Any dt) ~dst
+        ~init:None a (window x)
     with
     | A.Done -> ()
     | r -> failf "contract answered %a" Nx_array_support.pp_answer r
@@ -1492,8 +1631,11 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
     | r -> failf "a copy answered %a" Nx_array_support.pp_answer r);
     (g', free)
   in
-  let a = values [| g.m; g.k |] and x = values [| g.k; g.cols |] in
-  let want = A.create Rig.host dt [| g.m; g.n |] in
+  let a = matrix values g.m g.k and x = matrix values g.k g.cols in
+  let want =
+    if g.heads = 1 then A.create Rig.host dt [| g.m; g.n |]
+    else A.create Rig.host dt [| 2; g.heads; g.m; g.n |]
+  in
   product ~dst:want a x;
   let ga, free_a = guard a and gx, free_x = guard x in
   let gd, free_d = guard want in
@@ -1520,6 +1662,9 @@ let law_guards (b : Support.backend) g =
     && g.side = Support.After
     && g.c0 + g.n = g.cols
     && g.m > 2 * half);
+  cover "two heads stored apart" (g.heads = 2);
+  cover "two heads stored apart, b's window ending at the page"
+    (g.heads = 2 && g.side = Support.After && g.c0 + g.n = g.cols);
   if g.f64 then guarded_product b D.Float64 g
   else guarded_product b D.Float32 g
 
