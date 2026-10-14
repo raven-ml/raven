@@ -254,14 +254,24 @@ let call g fn body =
       let* () = send g fn body in
       wait_for g fn)
 
+external reraise : exn -> 'a = "%reraise"
+
+let drained g =
+  match drain g ~want:None with
+  | Ok _ -> ()
+  | Error why -> if g.fault = None then g.fault <- Some why
+
+(* The lock is taken as the last step before the handler and given back as the
+   first step of both exits, so an exception in the drain, an asynchronous one
+   too, leaves it free for the next call and the stop's unload. *)
 let check g =
-  if Mutex.try_lock g.lock then
-    Fun.protect
-      ~finally:(fun () -> Mutex.unlock g.lock)
-      (fun () ->
-        match drain g ~want:None with
-        | Ok _ -> ()
-        | Error why -> if g.fault = None then g.fault <- Some why);
+  if Mutex.try_lock g.lock then begin
+    match drained g with
+    | () -> Mutex.unlock g.lock
+    | exception e ->
+        Mutex.unlock g.lock;
+        reraise e
+  end;
   g.fault
 
 let unload g =

@@ -626,9 +626,38 @@ let failed_boot =
         test_failed_boot;
     ]
 
+(* A GPU of this machine *)
+
+(* GPU 0 of this machine, opened by its driver alone, for [f], then stopped. It
+   skips without the firmware or a GPU free of NVIDIA's kernel driver. *)
+let with_gpu f =
+  let firmware = firmware () in
+  if Rig_nv_pci.count () = 0 then
+    skip ~reason:"this machine has no NVIDIA GPU free of its kernel driver" ();
+  let g = require_ok (Rig_gpu_support.opened (Rig_nv_pci.gpu ~firmware 0)) in
+  Fun.protect ~finally:(fun () -> Rig_nv.stop g ~fault:None) (fun () -> f g)
+
+(* An exception at any allocation of a sleep, which handles the GSP's events,
+   leaves the GSP's lock free: the stop, whose unload calls the GSP, returns. *)
+let test_interrupted_sleep () =
+  with_gpu @@ fun g ->
+  let sleep () = Rig_nv.sleep g ~seen:(Rig_nv.signaled g) ~still_ms:1 in
+  let rec from n = if Rig_support.interrupted n sleep then from (n + 1) in
+  from 1
+
+let this_machine =
+  group ~timeout:60. "this machine's GPU"
+    [
+      test
+        "an exception at any allocation of a sleep leaves the GSP's lock free \
+         (RIG_NV_PCI_FIRMWARE)"
+        test_interrupted_sleep;
+    ]
+
 let () =
   match Sys.argv with
   | [| _; arg; how; root |] when arg = taking -> take how root
   | _ ->
       exit
-        (run "rig_nv_pci" [ numbering; opening; reports; booted; failed_boot ])
+        (run "rig_nv_pci"
+           [ numbering; opening; reports; booted; failed_boot; this_machine ])

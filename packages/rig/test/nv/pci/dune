@@ -1,8 +1,8 @@
 (test
  (name test_nv_pci)
  (modules test_nv_pci)
- (libraries rig_gpu_support rig_nv rig_nv_pci rig_pci rig_pci_support unix
-  windtrap)
+ (libraries rig_gpu_support rig_nv rig_nv_pci rig_pci rig_pci_support
+  rig_support unix windtrap)
  (deps
   (source_tree fixtures)))
 
