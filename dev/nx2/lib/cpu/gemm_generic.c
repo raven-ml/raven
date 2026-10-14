@@ -82,12 +82,33 @@
     }                                                                       \
   }
 
+/* Sets y[j], for each of the [c] columns of b, to lane order's sum of
+   the block of [k] products of a's row and the column (cpu.h's lane
+   tile). */
+#define TILE(name, T, FMA)                                                  \
+  static void name(const void *va, int64_t a_k, const void *vb,             \
+                   int64_t b_k, int64_t k, int64_t c, void *vy) {           \
+    const T *a = va, *b = vb;                                               \
+    T *y = vy;                                                              \
+    for (int64_t j = 0; j < c; j++) {                                       \
+      T s[NX_CPU_LANES] = {0};                                              \
+      for (int64_t t = 0; t < k; t++)                                       \
+        s[t % NX_CPU_LANES] =                                               \
+            FMA(a[t * a_k], b[t * b_k + j], s[t % NX_CPU_LANES]);           \
+      for (int w = NX_CPU_LANES / 2; w > 0; w /= 2)                         \
+        for (int q = 0; q < w; q++) s[q] = s[q] + s[q + w];                 \
+      y[j] = s[0];                                                          \
+    }                                                                       \
+  }
+
 KERNEL(kernel_f32, float, fmaf)
 DOT(dot_f32, float, fmaf)
 AXPY(axpy_f32, float, fmaf)
+TILE(tile_f32, float, fmaf)
 KERNEL(kernel_f64, double, fma)
 DOT(dot_f64, double, fma)
 AXPY(axpy_f64, double, fma)
+TILE(tile_f64, double, fma)
 
 /* z + x·y modulo the width of the [T] it is stored in: computed in an
    unsigned type no narrower than int, which C does not promote to int. */
@@ -127,6 +148,8 @@ static void set(nx_cpu_target *t) {
   t->dot[NX_FLOAT64] = dot_f64;
   t->axpy[NX_FLOAT32] = axpy_f32;
   t->axpy[NX_FLOAT64] = axpy_f64;
+  t->tile[NX_FLOAT32] = tile_f32;
+  t->tile[NX_FLOAT64] = tile_f64;
 }
 
 #if defined(NX_CPU_V3)

@@ -21,11 +21,18 @@
    much of the next b a step: a row of b lies a page or more from the
    next, where no hardware prefetcher follows.
 
+   A tile takes one row of a against W columns of b, a vector, whose
+   NX_CPU_LANES lanes are named vectors: term t of each column into
+   vector t modulo NX_CPU_LANES, then the vectors summed by the lanes'
+   tree, so that a small product finishes W outputs at a time in
+   registers, where the dot and the axpy leave a lane at a time in
+   memory.
+
    A target file defines VT (the vector type), LOAD, STORE, BCAST (one
-   element into every lane) and FMA (c + a·b, rounded once) before it
-   includes this header, then instantiates DOT for its row counts, DOTS
-   over them, and AXPY. gcc at -O2 vectorises none of these loops written
-   plainly. */
+   element into every lane), ADD and FMA (c + a·b, rounded once) before
+   it includes this header, then instantiates DOT for its row counts, DOTS
+   over them, AXPY and TILE. gcc at -O2 vectorises none of these loops
+   written plainly. */
 
 #ifndef NX_CPU_GEMM_LANES_H
 #define NX_CPU_GEMM_LANES_H
@@ -113,6 +120,56 @@
       for (; j + W <= n; j += W)                                         \
         STORE(y + j, FMA(LOAD(y + j), x, LOAD(b + j)));                  \
       for (; j < n; j++) y[j] = SFMA(s, b[j], y[j]);                     \
+    }                                                                    \
+  }
+
+/* F(q) for each lane q, and the lanes' tree over named vectors. */
+#define TILE_EACH(F)                                                     \
+  F(0) F(1) F(2) F(3) F(4) F(5) F(6) F(7) F(8) F(9) F(10) F(11) F(12)    \
+      F(13) F(14) F(15)
+#define TILE_ZERO(q) VT l##q = BCAST(0);
+#define TILE_ADD(q)                                                      \
+  l##q = FMA(l##q, BCAST(a[(t + q) * a_k]), LOAD(b + (t + q) * b_k));
+#define TILE_LAST(q) \
+  if (q < k - t) TILE_ADD(q)
+#define TILE_TREE                                                         \
+  l0 = ADD(l0, l8), l1 = ADD(l1, l9), l2 = ADD(l2, l10), l3 = ADD(l3, l11), \
+  l4 = ADD(l4, l12), l5 = ADD(l5, l13), l6 = ADD(l6, l14),                \
+  l7 = ADD(l7, l15), l0 = ADD(l0, l4), l1 = ADD(l1, l5), l2 = ADD(l2, l6), \
+  l3 = ADD(l3, l7), l0 = ADD(l0, l2), l1 = ADD(l1, l3), l0 = ADD(l0, l1);
+
+/* [name], cpu.h's lane tile: W columns a vector, the last from c - W, so
+   that no column past c is read, its lanes overlapping the vector before
+   with the same bits; fewer than W columns one at a time, adding by
+   [SFMA]. */
+#define TILE(name, T, W, SFMA)                                           \
+  static void name(const void *va, int64_t a_k, const void *vb,          \
+                   int64_t b_k, int64_t k, int64_t c, void *vy) {        \
+    const T *a = va;                                                     \
+    T *y = vy;                                                           \
+    if (c < W) {                                                         \
+      for (int64_t j = 0; j < c; j++) {                                  \
+        T s[NX_CPU_LANES] = {0};                                         \
+        const T *b = (const T *)vb + j;                                  \
+        for (int64_t t = 0; t < k; t++)                                  \
+          s[t % NX_CPU_LANES] =                                          \
+              SFMA(a[t * a_k], b[t * b_k], s[t % NX_CPU_LANES]);         \
+        for (int w = NX_CPU_LANES / 2; w > 0; w /= 2)                    \
+          for (int q = 0; q < w; q++) s[q] = s[q] + s[q + w];            \
+        y[j] = s[0];                                                     \
+      }                                                                  \
+      return;                                                            \
+    }                                                                    \
+    for (int64_t j0 = 0; j0 < c; j0 += W) {                              \
+      int64_t j = j0 + W <= c ? j0 : c - W, t = 0;                       \
+      const T *b = (const T *)vb + j;                                    \
+      TILE_EACH(TILE_ZERO)                                               \
+      for (; t + NX_CPU_LANES <= k; t += NX_CPU_LANES) {                 \
+        TILE_EACH(TILE_ADD)                                              \
+      }                                                                  \
+      TILE_EACH(TILE_LAST)                                               \
+      TILE_TREE                                                          \
+      STORE(y + j, l0);                                                  \
     }                                                                    \
   }
 

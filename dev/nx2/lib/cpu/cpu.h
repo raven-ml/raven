@@ -94,6 +94,16 @@ typedef void (*nx_cpu_axpy)(const void *a, int64_t lda, int r, const void *b,
                             int64_t n, void *y, int64_t ldy,
                             const void *next);
 
+/* A lane tile sets y[j], for each of the [c] columns of b at [b], c at
+   most NX_CPU_LANES, row t at b + t·b_k·w, to lane order's sum of one
+   block of [k] products, k at most NX_CPU_LANE_BLOCK, of a's row, its
+   element t at a + t·a_k·w, and the column: term t into lane t modulo
+   NX_CPU_LANES, fused, the lanes summed by their tree (gemm.c). It reads
+   no column past c. */
+typedef void (*nx_cpu_lane_tile)(const void *a, int64_t a_k, const void *b,
+                                 int64_t b_k, int64_t k, int64_t c,
+                                 void *y);
+
 /* A quads dot sets y[i·ldy + c], for each of 2 rows i of a, at a + i·lda,
    and 4 columns c of b, at b + c·ldb, to the sum of the products of the
    [n] words of the row and of the column: each word four elements of
@@ -305,7 +315,8 @@ typedef struct {
      int4 and uint4 their value modulo 16, float4 its code, bit 0 or 1. */
   nx_cpu_run convert[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
   /* gemm[acc] contracts in acc in chain order; its kernel is NULL where
-     the target has none. dot[acc] and axpy[acc] are lane order's.
+     the target has none. dot[acc], axpy[acc] and tile[acc] are lane
+     order's.
      quads[d] contracts operands of the 8-bit dtype d into 32 bits in
      chain order, each element of a and b a 32-bit word of four of d along
      k, each product of words the sum of their four products (gemm.c,
@@ -320,6 +331,7 @@ typedef struct {
   int quads_zip_rows;
   nx_cpu_dot dot[NX_DTYPE_COUNT];
   nx_cpu_axpy axpy[NX_DTYPE_COUNT];
+  nx_cpu_lane_tile tile[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k
      (nx_prog.h's code) at dt, fma[dt] fma: NULL where the table declines
      (rows.c). */

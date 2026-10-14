@@ -404,6 +404,7 @@ QAXPY(quads_axpy_u8, U, uint8_t)
 #define LOAD _mm256_loadu_ps
 #define STORE _mm256_storeu_ps
 #define BCAST _mm256_set1_ps
+#define ADD _mm256_add_ps
 #define FMA(c, a, b) _mm256_fmadd_ps(a, b, c)
 #include "gemm_lanes.h"
 DOT(dot1_f32, float, 8, 2, 1, fmaf)
@@ -411,20 +412,66 @@ DOT(dot2_f32, float, 8, 2, 2, fmaf)
 DOT(dot4_f32, float, 8, 2, 4, fmaf)
 DOTS(dot_f32, float, 4, dot4_f32, dot2_f32, dot1_f32)
 AXPY(axpy_f32, float, 8, fmaf)
+TILE(tile8_f32, float, 8, fmaf)
 #undef VT
 #undef LOAD
 #undef STORE
 #undef BCAST
+#undef ADD
 #undef FMA
 #define VT __m256d
 #define LOAD _mm256_loadu_pd
 #define STORE _mm256_storeu_pd
 #define BCAST _mm256_set1_pd
+#define ADD _mm256_add_pd
 #define FMA(c, a, b) _mm256_fmadd_pd(a, b, c)
 DOT(dot1_f64, double, 4, 4, 1, fma)
 DOT(dot2_f64, double, 4, 4, 2, fma)
 DOTS(dot_f64, double, 2, dot2_f64, dot2_f64, dot1_f64)
 AXPY(axpy_f64, double, 4, fma)
+TILE(tile4_f64, double, 4, fma)
+#undef VT
+#undef LOAD
+#undef STORE
+#undef BCAST
+#undef ADD
+#undef FMA
+
+/* Tiles of fewer columns than a 256-bit vector holds run on 128-bit
+   vectors, whose lanes take them where the wider tile takes them one at a
+   time: on fudge, 256-bit tiles alone took a 4³ float32 product from 0.37
+   µs through rows to 0.39. */
+#define VT __m128
+#define LOAD _mm_loadu_ps
+#define STORE _mm_storeu_ps
+#define BCAST _mm_set1_ps
+#define ADD _mm_add_ps
+#define FMA(c, a, b) _mm_fmadd_ps(a, b, c)
+TILE(tile4_f32, float, 4, fmaf)
+#undef VT
+#undef LOAD
+#undef STORE
+#undef BCAST
+#undef ADD
+#undef FMA
+#define VT __m128d
+#define LOAD _mm_loadu_pd
+#define STORE _mm_storeu_pd
+#define BCAST _mm_set1_pd
+#define ADD _mm_add_pd
+#define FMA(c, a, b) _mm_fmadd_pd(a, b, c)
+TILE(tile2_f64, double, 2, fma)
+
+/* cpu.h's lane tile of [c] columns: 256-bit vectors from a vector's
+   columns, 128-bit ones below. */
+#define LANE_TILE(name, W, wide, narrow)                                  \
+  static void name(const void *a, int64_t a_k, const void *b, int64_t b_k, \
+                   int64_t k, int64_t c, void *y) {                       \
+    if (c >= W) wide(a, a_k, b, b_k, k, c, y);                            \
+    else narrow(a, a_k, b, b_k, k, c, y);                                 \
+  }
+LANE_TILE(tile_f32, 8, tile8_f32, tile4_f32)
+LANE_TILE(tile_f64, 4, tile4_f64, tile2_f64)
 
 /* The rows of a block of a (cpu.h's mc). */
 #define MC 96
@@ -476,6 +523,8 @@ void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->dot[NX_FLOAT64] = dot_f64;
   t->axpy[NX_FLOAT32] = axpy_f32;
   t->axpy[NX_FLOAT64] = axpy_f64;
+  t->tile[NX_FLOAT32] = tile_f32;
+  t->tile[NX_FLOAT64] = tile_f64;
   t->gemm[NX_INT8] = t->gemm[NX_UINT8] = integers(kernel_u8, 32, SPEED8);
   t->gemm[NX_INT16] = t->gemm[NX_UINT16] = integers(kernel_u16, 32, SPEED16);
   t->gemm[NX_INT32] = t->gemm[NX_UINT32] = integers(kernel_u32, 16, SPEED32I);

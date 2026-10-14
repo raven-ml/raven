@@ -870,9 +870,12 @@ done:
 
 /* Lane order */
 
-/* Rows are the fewer of the two (lanes transposes the product), at most
-   LANE_ROWS a pass. b, the large operand, is read once a pass, in the
-   order it lies:
+/* A product of one block of k that runs on one thread, a in acc and b
+   adjacent along its columns, runs in tiles: a row of a against
+   NX_CPU_LANES columns of b at a time, summed in registers, each lane a
+   vector of columns. Otherwise rows are the fewer of the two (lanes
+   transposes the product), at most LANE_ROWS a pass. b, the large
+   operand, is read once a pass, in the order it lies:
 
    - Dots, where b is adjacent along k, as a weight stored [n × k] is: a
      unit is (element, DOT_COLUMNS columns, range of blocks), and each
@@ -914,12 +917,16 @@ static void lane_sums(int acc, uint8_t *l, int64_t ls, int64_t c) {
 }
 
 /* [d] = init (if any) + the tree of the [n] block sums at [s]; with no
-   block, init as it is, or +0. */
+   block, init as it is, or +0. An init in acc is read in place: the stage
+   costs more than the sum of a small product's output. */
 static void total(const problem *p, int64_t e, int64_t i, int64_t j,
                   const uint8_t *s, int64_t n, uint8_t *d) {
   _Alignas(16) uint8_t x[16] = {0};
-  int init = p->op[INIT].x != NULL;
-  if (init) stage_acc(p, INIT, pos(p, INIT, e, i, j, 0), 1, 0, 1, 1, x, 0);
+  const nx_array *init = p->op[INIT].x;
+  int64_t at = init ? pos(p, INIT, e, i, j, 0) : 0;
+  if (init && init->dtype == p->acc)
+    memcpy(x, init->base + at * p->w, (size_t)p->w);
+  else if (init) stage_acc(p, INIT, at, 1, 0, 1, 1, x, 0);
   if (init && n == 0) {
     memcpy(d, x, (size_t)p->w);
     return;
@@ -1299,6 +1306,42 @@ static void lane_pass(problem *p) {
   else rows(p, bytes, cost);
 }
 
+/* Whether [p] runs in tiles: one block of k, on one thread, a in acc and b
+   adjacent along its columns. */
+static int tiled(const problem *p) {
+  int64_t k = p->ext[CON], bytes;
+  double cost = lane_cost(p, &bytes);
+  return k > 0 && k <= NX_CPU_LANE_BLOCK && p->op[A].x->dtype == p->acc &&
+         adjacent(p, B, COL) && nx_cpu_threads(bytes, cost) <= 1;
+}
+
+/* Each row's outputs NX_CPU_LANES columns at a time by the target's tile,
+   which sums them in registers, then init. On the M1 Max a 4³ float32
+   product took 0.58 µs through rows, whose lanes and sums move through
+   memory, 0.14 in tiles; 4 × 64 × 64 took 4.4 µs and 1.6. */
+static void tiles(const problem *p) {
+  nx_cpu_lane_tile tile = nx_cpu_table->tile[p->acc];
+  const int64_t *sa = p->op[A].st, *sb = p->op[B].st;
+  int64_t m = p->ext[ROW], n = p->ext[COL], w = p->w;
+  int copies = p->op[INIT].x == NULL && p->op[DST].st[COL] == 1;
+  _Alignas(16) double sums[NX_CPU_LANES];
+  uint8_t *y = (uint8_t *)sums;
+  for (int64_t e = 0; e < p->ext[BATCH]; e++)
+    for (int64_t i = 0; i < m; i++)
+      for (int64_t j0 = 0; j0 < n; j0 += NX_CPU_LANES) {
+        int64_t c = min64(NX_CPU_LANES, n - j0);
+        tile(p->op[A].x->base + pos(p, A, e, i, 0, 0) * w, sa[CON],
+             p->op[B].x->base + pos(p, B, e, 0, j0, 0) * w, sb[CON],
+             p->ext[CON], c, y);
+        if (copies) {
+          memcpy(at_r(p, e, i, j0), y, (size_t)(c * w));
+          continue;
+        }
+        for (int64_t j = 0; j < c; j++)
+          total(p, e, i, j0 + j, y + j * w, 1, at_r(p, e, i, j0 + j));
+      }
+}
+
 /* Passes of LANE_ROWS rows: each moves a, init and dst on by its rows.
    The call is the one unit of a job of one thread at its whole cost
    (nx_cpu_one_thread), so that it releases the runtime where it costs
@@ -1308,6 +1351,10 @@ static void lane_pass(problem *p) {
 static void lanes(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)lo, (void)hi, (void)worker;
   problem *p = ctx;
+  if (tiled(p)) {
+    tiles(p);
+    return;
+  }
   if (p->ext[COL] < p->ext[ROW]) transpose(p);
   int64_t m = p->ext[ROW];
   for (int64_t i = 0; i < m && !atomic_load(&p->failed); i += LANE_ROWS) {
