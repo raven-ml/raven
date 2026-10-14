@@ -681,6 +681,30 @@ let spans (module G : Gpu) () =
    driver's age for a new measure of its clock, a second. *)
 let idle_s = 1.2
 
+(* Checks that [submit ()]'s work, profiled alone and waited for, has one
+   span on [d], which lies within the host's window from before the submit to
+   after the wait, up to the error [clock_error] states for a device
+   [opened] then. *)
+let within d ~opened clock_error what submit =
+  let t0 = Rig.Profile.now () in
+  let (), events = Rig.Profile.take (fun () -> Rig.Point.wait (submit ())) in
+  let t1 = Rig.Profile.now () in
+  match
+    List.filter_map
+      (function
+        | Rig.Profile.Span { device; start; stop; _ } when device == d ->
+            Some (start, stop)
+        | _ -> None)
+      events
+  with
+  | [ (start, stop) ] ->
+      let error = clock_error ~since:(t1 - opened) in
+      at_least int ~msg:(what ^ ": the span's start") ~than:(t0 - error) start;
+      at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + error) stop;
+      at_most int ~msg:(what ^ ": the span's start") ~than:stop start
+  | spans ->
+      equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)
+
 (* A submission's span, profiled alone, lies within the host's window from
    before the submit to after the wait, on the host clock, up to the error
    its driver states: before and after the device idles past the age at
@@ -695,33 +719,63 @@ let spans_after_idle (module G : Gpu) () =
   let s, run, buffers =
     Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
   in
-  let within what =
-    let t0 = Rig.Profile.now () in
-    let (), events =
-      Rig.Profile.take (fun () -> Rig.Point.wait (Rig.submit s ~run ~buffers))
-    in
-    let t1 = Rig.Profile.now () in
-    match
-      List.filter_map
-        (function
-          | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
-              Some (start, stop)
-          | _ -> None)
-        events
-    with
-    | [ (start, stop) ] ->
-        let error = G.clock_error ~since:(t1 - opened) in
-        at_least int ~msg:(what ^ ": the span's start") ~than:(t0 - error)
-          start;
-        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + error) stop;
-        at_most int ~msg:(what ^ ": the span's start") ~than:stop start
-    | spans ->
-        equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)
-  in
+  let within = within t.d ~opened G.clock_error in
+  let within what = within what (fun () -> Rig.submit s ~run ~buffers) in
   within "at open";
   Unix.sleepf idle_s;
   within "after idling";
   within "after the measure"
+
+(* A profile stopped while its work runs drops the work's entry, though the
+   device still writes the work's times when it ends: the spans of the
+   submissions profiled after it each lie within their profile's window, up
+   to the error the driver states. *)
+let spans_after_stop (module G : Gpu) () =
+  let opened = Rig.Profile.now () in
+  G.with_ @@ fun t ->
+  let n = 64 in
+  let src = filled ~memory:Pinned t.d (pattern n 5) in
+  let dst = filled ~memory:Pinned t.d (String.make n '\000') in
+  let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
+  let s, run, buffers =
+    Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
+  in
+  let within = within t.d ~opened G.clock_error in
+  let within what = within what (fun () -> Rig.submit s ~run ~buffers) in
+  let spun = ref None in
+  raises Exit (fun () ->
+      Rig.Profile.take (fun () ->
+          spun := Some (submit t.d [ G.spin t ~ns:50_000_000 ] ~uses:[]);
+          raise Exit));
+  within "the first after the stop";
+  within "the second";
+  Rig.Point.wait (Option.get !spun)
+
+(* A value read by two nested profiles, the inner one first, has the same
+   span in both: the outer read's settle finds the times the inner one's
+   wrote, and leaves them. *)
+let spans_nested (module G : Gpu) () =
+  G.with_ @@ fun t ->
+  let on_device events =
+    List.filter_map
+      (function
+        | Rig.Profile.Span { device; start; stop; _ } when device == t.d ->
+            Some (start, stop)
+        | _ -> None)
+      events
+  in
+  let work = G.spin t ~ns:1_000_000 and inner = ref [] in
+  let (), outer =
+    Rig.Profile.take (fun () ->
+        let (), events =
+          Rig.Profile.take (fun () ->
+              Rig.Point.wait (submit t.d [ work ] ~uses:[]))
+        in
+        inner := on_device events)
+  in
+  equal int ~msg:"the inner profile's spans" 1 (List.length !inner);
+  equal (list (pair int int)) ~msg:"the outer profile's spans" !inner
+    (on_device outer)
 
 (* A profile around submissions, waited for once: [crossing] of them, then,
    after the device idled past every driver's age for a new measure of its
@@ -1657,6 +1711,10 @@ let laws (module G : Gpu) =
         (spans_across g);
       test "a span lies within its window after the device idles"
         (spans_after_idle g);
+      test "spans after a profile stopped while its work ran lie within theirs"
+        (spans_after_stop g);
+      test "a value read by nested profiles has one span in both"
+        (spans_nested g);
       prop ~count:30
         "a launch writes what its grid and parameters say, and a launch after \
          it reads that"

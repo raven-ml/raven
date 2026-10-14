@@ -529,6 +529,7 @@ static void device_finalize(value v) {
   for (int i = 0; i < d->times.nchunks; i++) free(d->times.chunks[i]);
   free(d->times.chunks);
   free(d->times.free);
+  free(d->times.owed);
   free(d->record);
   free(d->name);
   free(d);
@@ -1332,9 +1333,12 @@ static int take_pair(struct rig_times *t) {
         realloc(t->chunks, (size_t)(t->nchunks + 1) * sizeof *chunks);
     int *free_ = realloc(t->free, (size_t)(t->nchunks + 1) * RIG_TIMES *
                                       sizeof *free_);
+    struct rig_owed *owed = realloc(
+        t->owed, (size_t)(t->nchunks + 1) * RIG_TIMES * sizeof *owed);
     if (chunks != NULL) t->chunks = chunks;
     if (free_ != NULL) t->free = free_;
-    if (chunk != NULL && chunks != NULL && free_ != NULL) {
+    if (owed != NULL) t->owed = owed;
+    if (chunk != NULL && chunks != NULL && free_ != NULL && owed != NULL) {
       t->chunks[t->nchunks] = chunk;
       for (int i = RIG_TIMES - 1; i >= 0; i--)
         t->free[t->nfree++] = t->nchunks * RIG_TIMES + i;
@@ -1372,6 +1376,60 @@ value caml_rig_times_free(value v_d, value v_k) {
   struct rig_times *t = &Device_val(v_d)->times;
   mutex_lock(&t->mu);
   t->free[t->nfree++] = Int_val(v_k);
+  mutex_unlock(&t->mu);
+  return Val_unit;
+}
+
+/* Owes the pair [v_k] of the device [v_d], which timed its value [v_v]
+   and which no read settled. */
+value caml_rig_times_owe(value v_d, value v_k, value v_v) {
+  struct rig_times *t = &Device_val(v_d)->times;
+  mutex_lock(&t->mu);
+  int n = atomic_load_explicit(&t->nowed, memory_order_relaxed);
+  t->owed[n] = (struct rig_owed){Int_val(v_k), 0, (uint64_t)Long_val(v_v)};
+  atomic_store_explicit(&t->nowed, n + 1, memory_order_release);
+  mutex_unlock(&t->mu);
+  return Val_unit;
+}
+
+/* Takes a pair of the live device [v_d] that is owed, untaken, and whose
+   value its word shows: that value, or 0 for none. Its caller settles the
+   value and gives the pair back, so no other call takes it too. One load
+   while no pair is owed. */
+value caml_rig_times_due(value v_d) {
+  struct rig_device *d = Device_val(v_d);
+  struct rig_times *t = &d->times;
+  uint64_t v = 0;
+  if (atomic_load_explicit(&t->nowed, memory_order_acquire) == 0 ||
+      is_lost(d))
+    return Val_long(0);
+  uint64_t w = device_word(d);
+  mutex_lock(&t->mu);
+  int n = atomic_load_explicit(&t->nowed, memory_order_relaxed);
+  for (int i = 0; i < n && v == 0; i++) {
+    struct rig_owed *o = &t->owed[i];
+    if (o->taken || o->v > w) continue;
+    o->taken = 1;
+    v = o->v;
+  }
+  mutex_unlock(&t->mu);
+  return Val_long((intnat)v);
+}
+
+/* Gives back the owed pair of the value [v_v] of the device [v_d], which
+   [caml_rig_times_due] took. */
+value caml_rig_times_give(value v_d, value v_v) {
+  struct rig_times *t = &Device_val(v_d)->times;
+  uint64_t v = (uint64_t)Long_val(v_v);
+  mutex_lock(&t->mu);
+  int n = atomic_load_explicit(&t->nowed, memory_order_relaxed);
+  for (int i = 0; i < n; i++) {
+    if (t->owed[i].v != v) continue;
+    t->free[t->nfree++] = t->owed[i].pair;
+    t->owed[i] = t->owed[n - 1];
+    atomic_store_explicit(&t->nowed, n - 1, memory_order_release);
+    break;
+  }
   mutex_unlock(&t->mu);
   return Val_unit;
 }

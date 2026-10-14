@@ -60,13 +60,24 @@ struct rig_entry {
 };
 
 /* A device's time pairs for timed values, chunks of RIG_TIMES pairs that
-   never move, and the indices of the free pairs, under [mu]. A hand-over
-   takes a pair for a value it times; its driver writes the pair before the
-   word shows the value, and the read that records the value's span gives
-   it back. A lost device keeps the pairs of values it never showed: they
-   live as long as the device, so a late write from its work lands in
-   them. */
+   never move, the indices of the free pairs, and the owed pairs, under
+   [mu]. A hand-over takes a pair for a value it times; its driver writes
+   the pair before the word shows the value, or before its settle of the
+   value returns. The read that settles the value and records its span
+   gives the pair back. A pair whose value no read settled is owed: the
+   device may still write it, so it returns only once the word shows its
+   value and the driver settled it ([Submission.give_owed]). A lost device
+   keeps its owed pairs: they live as long as the device, so a late write
+   from its work lands in them. [free] and [owed] each hold room for every
+   pair. */
 #define RIG_TIMES 256
+
+/* An owed pair, the value it timed, and whether a call that gives it back
+   took it. */
+struct rig_owed {
+  int pair, taken;
+  uint64_t v;
+};
 
 struct rig_times {
   rig_mutex mu;
@@ -74,6 +85,8 @@ struct rig_times {
   int nchunks;
   int *free;
   int nfree;
+  struct rig_owed *owed;
+  _Atomic int nowed;
 };
 
 /* A slot's timeline line: what a point of the slot's devices asks, kept for the

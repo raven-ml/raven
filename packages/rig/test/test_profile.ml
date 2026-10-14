@@ -400,12 +400,14 @@ let test_span_reached_elsewhere () =
   Domain.join waiter;
   equal (list string) [ "fills" ] (named events)
 
-(* A Ctrl-C in [take]'s wait for a timed value drops the value's entry, whose
-   time pair goes back: the device's next timed submit writes its times to
-   that pair. *)
+(* A Ctrl-C in [take]'s wait for a timed value drops the value's entry. The
+   device's next timed submit, once the device ran the dropped work, takes
+   no time pair before rig settled the value it timed last, and its profile
+   holds its fills. *)
 let test_break_in_take () =
   let d, p = P.open_ "profile:break-take" in
   let arg = B.create Rig.host (1 lsl 16) in
+  let seen = List.length (P.violations ()) in
   P.interrupt p;
   Sys.catch_break true;
   let broke =
@@ -418,7 +420,6 @@ let test_break_in_take () =
         | exception Sys.Break -> true)
   in
   equal ~msg:"the take's wait broke" bool true broke;
-  let pair = P.last_times p in
   ignore (P.run p);
   let _, events =
     Prof.take (fun () ->
@@ -426,8 +427,55 @@ let test_break_in_take () =
         ignore (P.run p);
         pt)
   in
-  equal ~msg:"the next submit's pair" int pair (P.last_times p);
+  equal ~msg:"breaches" (list string) [] (List.drop seen (P.violations ()));
   equal (list string) [ "fills" ] (named events)
+
+(* A profile stopped before its timed work ran drops the work's entry, and
+   the work keeps its time pair, which the device may still write: a later
+   timed submit's times land elsewhere, and its span lies within its
+   profile. *)
+let test_stopped_keeps_pair () =
+  let d, p = P.open_ "profile:stopped-pair" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  let timed () = submit_parts ~buffers:[| arg |] d [| bump |] in
+  raises Exit (fun () ->
+      Prof.take (fun () ->
+          ignore (timed ());
+          raise Exit));
+  let dropped = P.last_times p in
+  let before = Prof.now () in
+  let (), events =
+    Prof.take (fun () ->
+        let pt = timed () in
+        not_equal ~msg:"where a later submit's times land" int dropped
+          (P.last_times p);
+        Rig.Point.wait pt)
+  in
+  let after = Prof.now () in
+  match device_spans d events with
+  | [ (_, _, start, stop) ] ->
+      at_least ~msg:"the start" int ~than:before start;
+      at_least ~msg:"the stop" int ~than:start stop;
+      at_most ~msg:"the stop" int ~than:after stop
+  | spans -> failf "%d spans of the device" (List.length spans)
+
+(* A profile stopped before its timed work ran drops the work's entry. Once
+   the device ran that work, a later timed submit may take the work's time
+   pair only after the driver settled the work's value, so the driver writes
+   that pair for one value at a time. *)
+let test_settled_before_reuse () =
+  let d, p = P.open_ "profile:settled-reuse" in
+  let arg = B.create Rig.host (1 lsl 16) in
+  let timed () = submit_parts ~buffers:[| arg |] d [| bump |] in
+  let seen = List.length (P.violations ()) in
+  raises Exit (fun () ->
+      Prof.take (fun () ->
+          ignore (timed ());
+          raise Exit));
+  ignore (P.run p);
+  let (), events = Prof.take (fun () -> Rig.Point.wait (timed ())) in
+  equal (list string) [ "fills" ] (named events);
+  equal ~msg:"breaches" (list string) [] (List.drop seen (P.violations ()))
 
 (* [take] reads only the work timed while its function ran: a submit that
    another domain makes while [take] waits for that work adds nothing to the
@@ -824,6 +872,10 @@ let tests =
           test_span_reached_elsewhere;
         test "a Ctrl-C in take's wait gives back the span's time pair"
           test_break_in_take;
+        test "a profile stopped before its work ran leaves the work its pair"
+          test_stopped_keeps_pair;
+        test "a time pair goes to another value once its value settled"
+          test_settled_before_reuse;
         test "take reads only the work timed while its function ran"
           test_take_reads_its_own;
       ];

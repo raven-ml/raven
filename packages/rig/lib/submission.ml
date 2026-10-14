@@ -138,6 +138,12 @@ external run_pair : run -> int = "caml_rig_run_pair" [@@noalloc]
 external times_read : Def.c -> int -> int * int = "caml_rig_times_read"
 external times_free : Def.c -> int -> unit = "caml_rig_times_free" [@@noalloc]
 
+external times_owe : Def.c -> int -> int -> unit = "caml_rig_times_owe"
+[@@noalloc]
+
+external times_due : Def.c -> int = "caml_rig_times_due" [@@noalloc]
+external times_give : Def.c -> int -> unit = "caml_rig_times_give" [@@noalloc]
+
 (* A launch's or a fill's block, as the setters' C reads it: the id of its
    submission's C form, where it lies in a run, as [caml_rig_sub_launch]
    encodes it, and the most threads a group of its function has, [0] for a
@@ -1213,33 +1219,56 @@ type taking = {
 (* The taking of a submit while no profile is taken. *)
 let untaken = { ps = []; moves = [||]; asked = 0 }
 
+(* Gives back [d]'s owed time pairs whose values [d] reached, one at a time,
+   each once its driver settled it, after which the driver writes it no
+   more. A pair taken here and not given back, as by an exception in the
+   settle, stays with the device. *)
+let rec give_owed d =
+  let v = times_due d.live.c in
+  if v > 0 then begin
+    ignore (Dev.settle d v);
+    times_give d.live.c v;
+    give_owed d
+  end
+
+(* The holds of a time pair, one per profile's entry, and whether a read
+   settled its value, after which its driver writes it no more. *)
+type holds = { mutable left : int; [@atomic] mutable settled : bool [@atomic] }
+
+(* Gives back the time pair [pair] of the value [v] of the device whose C
+   record is [c], once [h]'s last hold ended: at once if a read settled [v],
+   and otherwise owed, since the device may still write it, until
+   [give_owed] finds [v] reached. Allocates nothing. *)
+let give_pair c h v pair =
+  if pair >= 0 then if h.settled then times_free c pair else times_owe c pair v
+
 (* Leaves to each profile of [t.ps] an entry that reads into it the span of
    [s]'s value [p] and a copy per move of [t.moves] once [p] is reached, from
    the time pair [pair] its driver wrote, which the last entry to end gives
-   back. A driver that left the pair 0, or no pair, timed nothing: no span,
-   and the copies run from [t.asked] to when the host saw [p] reached, now if
-   the device ran the work in its submit, and otherwise at the read. A
-   settle that failed or found the device lost records nothing.
+   back ([give_pair]). A driver that left the pair 0, or no pair, timed
+   nothing: no span, and the copies run from [t.asked] to when the host saw
+   [p] reached, now if the device ran the work in its submit, and otherwise
+   at the read. A settle that failed or found the device lost records
+   nothing.
 
-   In native code an exception anywhere in the call gives the pair back: the
-   entry counts one hold of the pair per profile, and the trap drops the
-   holds no profile took, or gives the pair back itself before the count is
-   made. Nothing allocates or polls between a profile taking the entry and
-   the count of the holds left to drop. *)
+   In native code an exception anywhere in the call loses no pair: the entry
+   counts one hold of the pair per profile, and the trap drops the holds no
+   profile took, or owes the pair itself before the count is made. Nothing
+   allocates or polls between a profile taking the entry and the count of
+   the holds left to drop. *)
 let record s (lane, name) { ps; moves; asked } p pair =
   let device = s.dev in
-  let c = device.live.c in
-  let left = ref None and owed = ref 0 and todo = ref ps in
+  let c = device.live.c and value = Point.value p in
+  let held = ref None and owed = ref 0 and todo = ref ps in
   match
-    let value = Point.value p in
     let seen = if Dev.is_done p then Profile.now () else -1 in
     let n = List.length ps in
-    let holds = Atomic.make n in
-    left := Some holds;
+    let h = { left = n; settled = false } in
+    held := Some h;
     owed := n;
     let drop () =
-      if Atomic.fetch_and_add holds (-1) = 1 && pair >= 0 then
-        times_free c pair
+      if Atomic.Loc.fetch_and_add [%atomic.loc h.left] (-1) = 1 then
+        give_pair c h value pair
     in
     let read prof =
       let copies start stop =
@@ -1248,12 +1277,14 @@ let record s (lane, name) { ps; moves; asked } p pair =
             Profile.add [ prof ] (Copy { src; dst; bytes; start; stop }))
           moves
       in
-      if pair < 0 || Dev.settle device value then
+      if pair < 0 || Dev.settle device value then begin
+        h.settled <- true;
         match if pair < 0 then (0, 0) else times_read c pair with
         | 0, 0 -> copies asked (if seen >= 0 then seen else Profile.now ())
         | start, stop ->
             Profile.add [ prof ] (Span { device; lane; name; start; stop });
             copies start stop
+      end
     in
     let e = { Profile.device; value; read; drop } in
     while !todo != [] do
@@ -1268,22 +1299,25 @@ let record s (lane, name) { ps; moves; asked } p pair =
   | () -> ()
   | exception x ->
       let k = !owed in
-      (match !left with
-      | None -> if pair >= 0 then times_free c pair
-      | Some holds ->
-          if k > 0 && Atomic.fetch_and_add holds (-k) = k && pair >= 0 then
-            times_free c pair);
+      (match !held with
+      | None -> if pair >= 0 then times_owe c pair value
+      | Some h ->
+          if k > 0 && Atomic.Loc.fetch_and_add [%atomic.loc h.left] (-k) = k
+          then give_pair c h value pair);
       raise x
 
-(* The taking of a submit of [s] with [buffers]. The last profile may stop
-   between the two reads: the work is then untimed, since no entry would give
-   its time pair back. *)
+(* The taking of a submit of [s] with [buffers], which first gives back
+   the device's owed pairs it can. The last profile may stop between the two
+   reads: the work is then untimed, since no entry would give its time pair
+   back. *)
 let taking s buffers =
   match s.span with
   | Some _ when Profile.enabled () -> (
       match Profile.active () with
       | [] -> untaken
-      | ps -> { ps; moves = moves_of s buffers; asked = Profile.now () })
+      | ps ->
+          give_owed s.dev;
+          { ps; moves = moves_of s buffers; asked = Profile.now () })
   | _ -> untaken
 
 (* Takes [run] and submits [s] with it. The take is the last step before the
@@ -1291,11 +1325,11 @@ let taking s buffers =
    after it, such as one where the taking allocates, leaves the run to the
    next submit. The C submit takes a time pair in the call that hands the
    work over, so a pair the trap finds was handed over with the work: the
-   device may still write it, and it stays with the device as other unread
-   pairs do. The C submit reads [s]'s C form, and the stamps and templates
-   it names without a reference, with the runtime released: their owners
-   stay reachable until the run is given back. While a profile is taken, a
-   submission with parts times its value. *)
+   device may still write it, and it stays with the device. The C submit
+   reads [s]'s C form, and the stamps and templates it names without a
+   reference, with the runtime released: their owners stay reachable until
+   the run is given back. While a profile is taken, a submission with parts
+   times its value. *)
 let submit_run s run buffers waits =
   if not (take run s.c) then
     invalid_argf "Rig.%s: another submit is using the run" fn;

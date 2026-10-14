@@ -214,7 +214,8 @@ type 'region facts = {
        when the value's work started and ended on the device, on the host's
        clock, or leave both [0] for work it cannot time. It writes them
        before the word shows the value if [settle] is [NULL], and before
-       [settle] of the value returns otherwise.}
+       [settle] of the value returns otherwise. rig gives the pair to no
+       other value until then.}
     {- [commit] is given a value [v] no greater than the last value given to
        [submit], and lets the work up to [v] run. Once that work has
        completed, the device writes [v] or a later value into the word.
@@ -222,18 +223,20 @@ type 'region facts = {
        [RIG_FAILED], which loses the device.}
     {- [settle] is given a value [v] that [submit] timed, once the word
        shows [v], and must write [v]'s times if it has not. rig calls it
-       just before it reads them, at most once for each such value. A value
-       of a device lost first may get no call. A driver whose device's work
+       before it reads them, or before it gives their pair to another value.
+       It may call it more than once for a value, one call at a time, and a
+       later call finds the times written and leaves them. A value of a
+       device lost first may get no call. A driver whose device's work
        writes the word, with no host code between the work's end and the
        word, has the work stamp its start and end in the driver's own
        memory, and converts the stamps to the host's clock in [settle], or
        in a later [submit] once [v]'s work has completed. [settle] never
        waits for the device's work. It may read a clock of the device, with
-       one call of the operating system or a read of the device's
-       registers. It returns [RIG_OK], or [RIG_FAILED] if it
-       could not write the times, such as for a stamp the work never wrote,
-       which loses the device. [settle] may be [NULL] for a driver that
-       writes the times itself before the word shows the value.
+       one call of the operating system or a read of the device's registers.
+       It returns [RIG_OK], or [RIG_FAILED] if it could not write the times,
+       such as for a stamp the work never wrote, which loses the device.
+       [settle] may be [NULL] for a driver that writes the times itself
+       before the word shows the value.
 
        The times are as exact as the driver's correlation of the device's
        clock with the host's, which its interface states. A driver converts

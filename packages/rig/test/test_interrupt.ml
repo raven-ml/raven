@@ -277,27 +277,27 @@ let kept_run =
       ignore (Rig.Profile.take submit))
 
 (* Interrupts a profiled submit from its [n]-th allocation, then checks that
-   the submit gave back the time pair it took: a device hands out the pair
-   given back last first, so the next profiled submit's times land where
-   those of the submit before the interrupt did. Is whether the allocation
-   was reached. *)
+   the device stays usable and that the next profiled submit, once the
+   device ran its earlier work, takes no time pair before rig settled the
+   value it timed last. Is whether the allocation was reached. *)
 let interrupt_timed n =
   let at = Printf.sprintf ", interrupted from allocation %d" n in
   in_child at (fun () ->
-      let d, p = P.open_ (fresh "timed") in
+      let d, _ = P.open_ (fresh "timed") in
       let s = Sub.make d [| Sub.copy ~src:(Slot 0) ~dst:(Slot 1) |] in
       let buffers = [| B.create d 8; B.create d 8 |] in
       let run = Sub.Run.make () in
       let wait () = Rig.Point.wait (once ~buffers ~run s) in
       let submit () = ignore (Rig.Profile.take wait) in
       submit ();
-      let pair = P.last_times p in
+      let seen = List.length (P.violations ()) in
       Gc.full_major ();
       let got = outcome (fun () -> interrupting (Nth n) (ref None) submit) in
       mem ~msg:"outcome" string got [ "done"; "raised Injected" ];
       equal ~msg:"lost" (option string) None (Rig.lost d);
+      Rig.Point.wait (once ~run:(Sub.Run.make ()) (Sub.make d [||]));
       submit ();
-      equal ~msg:"where the times land" int pair (P.last_times p);
+      equal ~msg:"breaches" (list string) [] (List.drop seen (P.violations ()));
       got = "raised Injected")
 
 let test_timed () =

@@ -287,6 +287,7 @@ module Driver = struct
       "Polled: a word was freed twice";
       "Polled: a wait read a mapping rig gave back";
       "Polled: rig freed a word in its array";
+      "Polled: a time pair went to a value before the one it timed settled";
     |]
 
   let read_freed = 0

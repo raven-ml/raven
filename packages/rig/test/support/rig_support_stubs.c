@@ -214,6 +214,14 @@ struct launched {
   uint8_t block[sizeof(struct rig_block) + RIG_PARAMS];
 };
 
+/* A time pair a submit was given, the value it timed, and whether a settle
+   of that value returned. */
+struct timed {
+  uint64_t *times;
+  uint64_t v;
+  int settled;
+};
+
 /* What a device runs work with, from its make to its stop. */
 struct polled_run {
   _Atomic uint64_t committed; /* the last value committed */
@@ -230,6 +238,8 @@ struct polled_run {
   int nlast;   /* the waits of the last submit, the first [LAST] of them */
   struct rig_wait last[LAST];
   uint64_t *last_times; /* where the last submit's times go */
+  int ntimed, ctimed;   /* each time pair given, with its last value */
+  struct timed *timed;
   int nsides; /* the copy.local of each copy run, the first [LAST_COPIES] */
   int sides[LAST_COPIES];
   int device_memory[LAST_COPIES];
@@ -289,14 +299,17 @@ static const struct rig_driver polled_driver = {polled_room, polled_submit,
                                                 polled_commit, polled_settle};
 
 /* What rig must not do, as Polled sees it: read or free twice a word of
-   the driver's own after rig freed it, free a word in its array, or hand a
-   queue a wait whose word rig gave back. Each is recorded, the first
-   BROKEN_KEPT in the order seen ([rig_test_polled_broken]), and raised as a
-   Failure where the call that saw it returns to OCaml. */
+   the driver's own after rig freed it, free a word in its array, hand a
+   queue a wait whose word rig gave back, or give a time pair to a value
+   before it settled the value the pair timed last. Each is recorded, the
+   first BROKEN_KEPT in the order seen ([rig_test_polled_broken]); each but
+   the last is raised as a Failure where the call that saw it returns to
+   OCaml. */
 #define BROKE_READ_FREED 0
 #define BROKE_FREED_TWICE 1
 #define BROKE_GAVE_BACK 2
 #define BROKE_FREED_ARRAY 3
+#define BROKE_UNSETTLED 4
 #define BROKEN_KEPT 64
 
 static lock_t broken_mu = LOCK_INITIALIZER;
@@ -369,6 +382,7 @@ static void free_run(struct polled_run *r) {
     free(r->q[i].blocks);
   }
   free(r->q);
+  free(r->timed);
   free(r);
 }
 
@@ -930,6 +944,28 @@ static int blocks(const struct rig_part *parts, int nparts,
   return 1;
 }
 
+/* Records that [r]'s value [v] was given the time pair [times], a breach if
+   the value the pair timed last has not settled. Is whether it found the
+   memory for the record. */
+static int give_pair(struct polled_run *r, uint64_t *times, uint64_t v) {
+  for (int i = 0; i < r->ntimed; i++) {
+    struct timed *t = &r->timed[i];
+    if (t->times != times) continue;
+    if (!t->settled) broke(BROKE_UNSETTLED);
+    *t = (struct timed){times, v, 0};
+    return 1;
+  }
+  if (r->ntimed == r->ctimed) {
+    int c = r->ctimed == 0 ? 8 : 2 * r->ctimed;
+    struct timed *t = realloc(r->timed, (size_t)c * sizeof *t);
+    if (t == NULL) return 0;
+    r->timed = t;
+    r->ctimed = c;
+  }
+  r->timed[r->ntimed++] = (struct timed){times, v, 0};
+  return 1;
+}
+
 static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
                          int nwaits, const struct rig_part *parts, int nparts,
                          void *scratch, const uint8_t *args,
@@ -984,6 +1020,11 @@ static int polled_submit(void *self, uint64_t v, const struct rig_wait *waits,
   }
   if (r->nlast > 0) memcpy(r->last, waits, (size_t)r->nlast * sizeof *waits);
   r->last_times = times;
+  if (times != NULL && !give_pair(r, times, v)) {
+    unlock(&p->mu);
+    *failure = "no memory for the time pairs";
+    return RIG_FAILED;
+  }
   struct rig_wait *ws = malloc((size_t)(nwaits + 1) * sizeof *waits);
   struct rig_part *ps = malloc((size_t)(nparts + 1) * sizeof *parts);
   uint8_t *bs = NULL;
@@ -1039,18 +1080,20 @@ static int polled_commit(void *self, uint64_t v, const char **failure) {
   return RIG_OK;
 }
 
-/* A settle does nothing, since the queue's run writes a value's times
-   before its word shows it, or fails as [rig_test_polled_fail_settle]
-   asked. It waits while gated. */
+/* A settle writes nothing, since the queue's run writes a value's times
+   before its word shows it, and records [v] settled, or fails as
+   [rig_test_polled_fail_settle] asked. It waits while gated. */
 static int polled_settle(void *self, uint64_t v, const char **failure) {
   struct polled *p = self;
-  (void)v;
   lock(&p->mu);
   p->settle_waiters++;
   while (p->settle_gated) cond_wait(&p->cv, &p->mu);
   p->settle_waiters--;
-  int fail = p->run->fail_settle;
-  p->run->fail_settle = 0;
+  struct polled_run *r = p->run;
+  int fail = r->fail_settle;
+  r->fail_settle = 0;
+  for (int i = 0; i < r->ntimed && !fail; i++)
+    if (r->timed[i].v == v) r->timed[i].settled = 1;
   unlock(&p->mu);
   if (!fail) return RIG_OK;
   *failure = "the settle failed";

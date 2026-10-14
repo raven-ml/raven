@@ -165,7 +165,8 @@ typedef int rig_room_fn(void *self, const struct rig_part *parts, int n,
    macOS, CLOCK_MONOTONIC elsewhere) at which [v]'s work started and ended
    on the device: before the word shows [v] if its settle is NULL, and
    before its settle of [v] returns otherwise (rig_settle_fn). [times]
-   stays valid until then. It leaves both 0 if it cannot time the work.
+   stays valid, and is given to no other value, until then. It leaves both
+   0 if it cannot time the work.
    Answers RIG_COMMITTED if every value up to [v] is committed, RIG_OK if
    [v] is encoded only, or RIG_FAILED with [*failure] set to the driver's
    message, which lives as long as the device. */
@@ -184,17 +185,19 @@ typedef int rig_submit_fn(void *self, uint64_t v, const struct rig_wait *waits,
 typedef int rig_commit_fn(void *self, uint64_t v, const char **failure);
 
 /* Writes the times of [v], whose submission was given [times], unless the
-   driver wrote them already. The caller calls it after the word shows [v]
-   and before it reads the times, at most once for each such value, and
-   possibly never, as for a device lost first. A driver whose GPU writes
-   the word has the work write stamps into the driver's own memory, and
-   converts them to the host's clock here, or in a later submit once [v]'s
-   work has completed. Settle never waits for the device's work. It may
-   read a clock of the device, with one system call or register read.
-   Answers RIG_OK, or RIG_FAILED with [*failure] set as a submission's if
-   it could not write the times, such as for a stamp the work never wrote,
-   which loses the device. A driver that writes the times before the word
-   shows [v] sets [settle] to NULL. */
+   driver wrote them already. The caller calls it after the word shows [v] and
+   before it reads the times or gives their pair to another value. It may call
+   it more than once for a value, one call at a time as every function here,
+   and a later call finds the times written and leaves them. It may never call
+   it, as for a device lost first. A driver whose GPU writes the word has the
+   work write stamps into the driver's own memory, and converts them to the
+   host's clock here, or in a later submit once [v]'s work has completed.
+   Settle never waits for the device's work. It may read a clock of the
+   device, with one system call or register read. Answers RIG_OK, or
+   RIG_FAILED with [*failure] set as a submission's if it could not write the
+   times, such as for a stamp the work never wrote, which loses the device. A
+   driver that writes the times before the word shows [v] sets [settle] to
+   NULL. */
 typedef int rig_settle_fn(void *self, uint64_t v, const char **failure);
 
 /* A driver's functions, which the first member of its state for each

@@ -28,8 +28,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### semantics
 
-- a profile stop that drops an unread entry gives its time pair back while
-  the device may still write it; a later submit can then take the pair
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): decide required
   `~waits` against its callers (none in nx, rune or tolk pass waits), and
   count exact-zero tests with `Gc.allocated_bytes`; `Buffer.free`; both

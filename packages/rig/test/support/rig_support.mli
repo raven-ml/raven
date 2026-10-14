@@ -14,12 +14,17 @@
     Polled checks that rig keeps the word promises of {!Rig_edge}: rig frees
     only a word outside its array, which is the driver's own, once, and then
     reads it no more, and a queue's wait reads a word that rig's array or a
-    live mapping of the queue's device holds. A breach is recorded ({!violations}) and raises
-    [Failure] where the call that saw it returns to OCaml: a [signaled] or a
-    [free] of the word, or a {!run} or sleep that read the wait. A device
-    that runs itself records it alone. A mapping of another device's word
-    lies at that word's address, so a wait through a mapping rig gave back
-    is seen only once the device holds no mapping of that word. *)
+    live mapping of the queue's device holds. A breach is recorded
+    ({!violations}) and raises [Failure] where the call that saw it returns
+    to OCaml: a [signaled] or a [free] of the word, or a {!run} or sleep that
+    read the wait. A device that runs itself records it alone. A mapping of
+    another device's word lies at that word's address, so a wait through a
+    mapping rig gave back is seen only once the device holds no mapping of
+    that word.
+
+    Polled also checks that rig settles the value a time pair timed before it
+    gives the pair to another value. A breach, which a submit sees with no
+    OCaml call to return to, is only recorded. *)
 module Polled : sig
   include Rig_edge.Driver
 
