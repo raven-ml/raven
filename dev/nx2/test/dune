@@ -64,7 +64,7 @@
  (libraries nx nx_array nx_kernel nx_cpu nx_support rig windtrap))
 
 (copy_files
- (files ../lib/{grid,devices,route,prim,place,expand,exec,repr}.{ml,mli}))
+ (files ../lib/{grid,devices,route,prim,place,pairwise,expand,exec,repr}.{ml,mli}))
 
 (copy_files
  (files ../lib/value.mli))
@@ -84,6 +84,7 @@
   value
   prim
   place
+  pairwise
   expand
   exec
   repr)

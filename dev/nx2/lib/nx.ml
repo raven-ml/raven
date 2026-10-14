@@ -1988,7 +1988,7 @@ let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
   kept ~keepdims s axes y
 
 (* The affine maps [y -> a y + b] of the recurrence, composed by
-   {!Expand.pairwise}: [(a1, b1)] then [(a2, b2)] is [(a1 a2, a2 b1 + b2)],
+   {!Pairwise.scan}: [(a1, b1)] then [(a2, b2)] is [(a1 a2, a2 b1 + b2)],
    one fma, or [b1 + b2] where [b1] is infinite, so that an [a] that
    underflowed to [0] still carries an infinite [b] past it. *)
 let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
@@ -2013,7 +2013,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
       let infinite = E.(abs b1 = const w Float.infinity) in
       E.[| any (a1 * a2); any (where infinite (b1 + b2) (fma a2 b1 b2)) |]
     in
-    let y = Expand.pairwise Eval.eval ~by s axis combine terms in
+    let y = Pairwise.scan Eval.eval ~by s axis combine terms in
     cast dt (Prim.expect w y.(1))
   in
   let (Wide w) = wide dt in

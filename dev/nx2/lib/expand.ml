@@ -448,100 +448,12 @@ let map_n (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
   let layout = L.contiguous shape in
   Array.of_list (read (apply ~by (Value.Map { layout; prog; outs; loads })))
 
-(* The ranges of [shape] that keep its elements [start + j step], [j < count],
-   along [axis] and all others elsewhere. *)
-let along_axis shape axis start count step =
-  let keep a e =
-    if a = axis then { M.start; count; step }
-    else { M.start = 0; count = e; step = 1 }
-  in
-  Array.mapi keep shape
-
-(* [x]'s elements [start + j step], [j < count], along [axis]. *)
-let part (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by axis
-    start count step (Value.Any x : d Value.any) : d Value.any =
-  let ranges = along_axis (Prim.shape x) axis start count step in
-  Value.Any (apply ~by (Value.Move (Slice ranges, x)))
-
-let plain (Value.Any x) = Value.Plain x
-
-(* Ladner and Fischer's prefix circuit at its least size, the tree of Brent
-   and Kung:
-
-     s     s0  s1  s2  s3  s4
-     p     c(s0,s1)  c(s2,s3)          the pairs
-     q     the scan of p, recursively
-     y     s0  q0  c(q0,s2)  q1  c(q1,s4)
-
-   Output [i]'s depth [f(i)] follows [f(0) = 0], [f(2j+1) = 1 + f(j)] and
-   [f(2j) = 2 + f(j-1)], so [f(i) <= max(0, 2⌈log₂(i+1)⌉ - 1)]. *)
-let pairwise (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by shape
-    axis ?first combine (state : d Value.any array) : d Value.any array =
-  let dts = Array.map (fun (Value.Any x) -> D.Any (Prim.dtype x)) state in
-  let along e =
-    let s = Array.copy shape in
-    s.(axis) <- e;
-    s
-  in
-  let parts start count step =
-    Array.map (part apply ~by axis start count step)
-  in
-  let ins = Iarray.of_array (Array.append dts dts) in
-  let prog = P.of_exprs ~ins (Iarray.of_array combine) in
-  (* The states [combine] makes of the [e] indices of the two. *)
-  let combined e earlier later =
-    let loads = Array.map plain (Array.append earlier later) in
-    map_n apply ~by (along e) prog dts loads
-  in
-  (* Index [0]'s result, from [state]'s first. *)
-  let head first state =
-    let s0 = parts 0 1 1 state in
-    match first with
-    | None -> s0
-    | Some first ->
-        let ins = Iarray.of_array dts in
-        let prog = P.of_exprs ~ins (Iarray.of_array first) in
-        map_n apply ~by (along 1) prog dts (Array.map plain s0)
-  in
-  let rec level first state m =
-    if m = 0 || (m = 1 && Option.is_none first) then state
-    else if m = 1 then head first state
-    else
-      let half = m / 2 and rows = (m + 1) / 2 in
-      let p = combined half (parts 0 half 2 state) (parts 1 half 2 state) in
-      let q = level None p half in
-      let evens =
-        if rows = 1 then [||]
-        else
-          combined (rows - 1) (parts 0 (rows - 1) 1 q)
-            (parts 2 (rows - 1) 2 state)
-      in
-      let h = head first state in
-      let shape = along m in
-      Array.mapi
-        (fun k (Value.Any y0) ->
-          let dt = Prim.dtype y0 in
-          let piece start count v =
-            (along_axis shape axis start count 2, Prim.expect dt v)
-          in
-          let pieces =
-            piece 0 1 (Value.Any y0)
-            :: piece 1 half q.(k)
-            :: (if rows = 1 then [] else [ piece 2 (rows - 1) evens.(k) ])
-          in
-          let fill = D.zero dt in
-          Value.Any
-            (apply ~by (Value.Assemble { dtype = dt; shape; fill; pieces })))
-        h
-  in
-  level first state shape.(axis)
-
 (* Whether [v] is finite: [|v| < ∞], [false] for a NaN. *)
 let finite v =
   let dt = E.dtype v in
   E.(abs v < const dt (D.of_float dt Float.infinity))
 
-(* Logsumexp by {!pairwise}: results [a] and [b] combine as
+(* Logsumexp by {!Pairwise.scan}: results [a] and [b] combine as
    [M + log1p (exp (m - M))], [M] their [Maximum] and [m] their [Minimum], or
    as [M] where [M] is not finite: [-∞] for terms all [-∞], [+∞] past a [+∞],
    the first NaN with its bits. Index [0] is its term [x] as [x + 0], so that
@@ -557,10 +469,10 @@ let running_logsumexp (type s d)
     [| E.(any (where (finite big) (big + log1p (exp (small - big))) big)) |]
   in
   let first = [| E.(any (input 0 dt + const dt (D.of_float dt 0.))) |] in
-  let y = pairwise apply ~by shape axis ~first combine [| Value.Any x |] in
+  let y = Pairwise.scan apply ~by shape axis ~first combine [| Value.Any x |] in
   Prim.expect dt y.(0)
 
-(* {!Nx_kernel.reduction}'s Moments scan by {!pairwise}, over Chan, Golub
+(* {!Nx_kernel.reduction}'s Moments scan by {!Pairwise.scan}, over Chan, Golub
    and LeVeque's combination, their (1.5b), of states [(μ, S, n, z)], [z]
    whether a term is a NaN.
 
@@ -639,7 +551,7 @@ let running_moments (type s d)
       let s = E.(sa + sb + between) in
       E.[| any mean; any s; any n; any (za || zb) |]
     in
-    let state = pairwise apply ~by shape axis combine terms in
+    let state = Pairwise.scan apply ~by shape axis combine terms in
     let ins : D.any iarray = [| D.Any dt; D.Any dt; D.Any dt |] in
     let m = E.input 0 dt and s = E.input 1 dt and c = shift (E.input 2 dt) in
     let n = E.(cast dt (coord axis) + f 1.) in
@@ -652,7 +564,7 @@ let running_moments (type s d)
         Value.Plain first;
       |]
 
-(* Arg by {!pairwise} over the pair of an extreme and its position: the
+(* Arg by {!Pairwise.scan} over the pair of an extreme and its position: the
    earlier pair holds unless the later's extreme is past it in [Max]'s or
    [Min]'s order, so ties keep the first position and the first NaN holds.
    The order reads the extreme's keys, itself or a complex number's parts,
@@ -712,7 +624,7 @@ let running_arg (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
       (Array.mapi (fun j _ -> pick (2 + j) kdt) carried)
   in
   let state =
-    pairwise apply ~by shape axis combine
+    Pairwise.scan apply ~by shape axis combine
       (Array.append [| Value.Any x; Value.Any position |] carried)
   in
   (Prim.expect dt state.(0), Prim.expect D.Int64 state.(1))
