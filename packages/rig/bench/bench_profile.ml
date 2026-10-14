@@ -11,6 +11,23 @@ let record n () =
         P.span "work" ignore
       done)
 
+(* [n] submits of a copy on a memory device while a profile is taken: each
+   leaves the profile an entry, which [take] reads before it returns. The
+   device opens in the process that measures, since a fork loses it. *)
+let submits n =
+  let copy =
+    lazy
+      (let d = Rig.memory_device "bench:profile" in
+       let src = Rig.Buffer.create d 64 and dst = Rig.Buffer.create d 64 in
+       Rig.Submission.(make d [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
+  and run = Rig.Submission.Run.make () in
+  fun () ->
+    let s = Lazy.force copy in
+    P.take (fun () ->
+        for _ = 1 to n do
+          ignore (Rig.submit s ~run ~buffers:[||])
+        done)
+
 let events n =
   List.init n (fun i ->
       P.Span
@@ -32,6 +49,7 @@ let () =
                  Thumper.bench "100" (record 100);
                  Thumper.bench "10000" (record 10_000);
                ];
+             Thumper.group "take" [ Thumper.bench "submits-100" (submits 100) ];
              Thumper.group "export"
                (List.map
                   (fun n ->

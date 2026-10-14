@@ -530,6 +530,15 @@ let drain_rows =
           done;
           Gc.full_major ();
           create d (4 * kib) ());
+      (* The same, then [free_cache] frees the 1,000 cached buffers of one
+         size, each taken from the head of its size's list. *)
+      row "free-cache-1000" memory (fun d ->
+          for _ = 1 to dropped do
+            create d (4 * kib) ()
+          done;
+          Gc.full_major ();
+          create d (4 * kib) ();
+          Rig.free_cache d);
       allocation "allocate-4K/pending-0" (pending pending_buffers 0);
       allocation "allocate-4K/pending-buffers-64" (pending pending_buffers 64);
       allocation "allocate-4K/pending-buffers-1024"
