@@ -66,10 +66,13 @@ value caml_rig_arch(value unit) {
    keeps the resource's release record, an OCaml value that does not reach
    the token, as a generational global root. When the collector frees the
    token, in whichever domain sweeps it, its finaliser links the node onto
-   its device's list, with no allocation and no lock. The device takes the
-   list at its next drain. A device's list lies in its C record, and counts
-   the tokens made for it whose records its drains have not yet routed: the
-   device keeps its slot, and so its record, while one remains. */
+   its device's list, with no allocation and no lock. A drain routes the
+   records one at a time from the list's hand, which it refills from the
+   list, under the device's lock: a record leaves the hand in the section
+   that stores it in its home, so an exception never drops one. A device's
+   list lies in its C record, and counts the tokens made for it whose
+   records its drains have not yet routed: the device keeps its slot, and so
+   its record, while one remains. */
 
 struct release_node {
   struct release_node *next;
@@ -174,50 +177,43 @@ value caml_rig_token(value v_list, value v_record, value v_mem,
   CAMLreturn(v);
 }
 
-/* The nodes of the records the list [v_list] holds, which it no longer
-   does, their number stored into the ref [v_n] in the same call: a caller
-   that counts them as routed ([caml_rig_routed]) from a handler set before
-   the call misses none. A node keeps its record reachable until
-   [caml_rig_node_routed], so a routing that an exception interrupts leaks
-   the records it did not reach, and lets go of none: a kept value stays
-   until its work is done. */
-value caml_rig_released(value v_list, value v_n) {
-  CAMLparam2(v_list, v_n);
-  CAMLlocal2(l, cell);
-  intnat k = 0;
+/* The node at the front of the hand of the list [v_list], taking the list
+   into the hand when it is empty, or 0 for none. Under the device's lock. */
+value caml_rig_release_front(value v_list) {
   struct release_list *rl = (struct release_list *)Long_val(v_list);
   struct release_node *n =
-      atomic_exchange_explicit(&rl->head, NULL, memory_order_acquire);
-  l = Val_emptylist;
-  while (n != NULL) {
-    cell = caml_alloc(2, 0);
-    Store_field(cell, 0, Val_long((intnat)n));
-    Store_field(cell, 1, l);
-    l = cell;
-    n = n->next;
-    k++;
+      atomic_load_explicit(&rl->hand, memory_order_relaxed);
+  if (n == NULL) {
+    n = atomic_exchange_explicit(&rl->head, NULL, memory_order_acquire);
+    atomic_store_explicit(&rl->hand, n, memory_order_relaxed);
   }
-  Field(v_n, 0) = Val_long(k);
-  CAMLreturn(l);
+  return Val_long((intnat)n);
 }
 
-/* The record of the node [v_n] that [caml_rig_released] gave. */
+/* The record of the node [v_n]. */
 value caml_rig_node_record(value v_n) {
   return ((struct release_node *)Long_val(v_n))->record;
 }
 
-/* Frees the node [v_n], whose record was routed. */
-value caml_rig_node_routed(value v_n) {
-  struct release_node *n = (struct release_node *)Long_val(v_n);
+/* Frees the node at the front of the hand of the list [v_list], whose
+   record was routed, and counts it routed. Under the device's lock. */
+value caml_rig_release_pop(value v_list) {
+  struct release_list *rl = (struct release_list *)Long_val(v_list);
+  struct release_node *n =
+      atomic_load_explicit(&rl->hand, memory_order_relaxed);
+  atomic_store_explicit(&rl->hand, n->next, memory_order_relaxed);
   caml_remove_generational_global_root(&n->record);
   free(n);
+  atomic_fetch_sub_explicit(&rl->count, 1, memory_order_release);
   return Val_unit;
 }
 
 value caml_rig_released_any(value v_list) {
   struct release_list *rl = (struct release_list *)Long_val(v_list);
   return Val_bool(atomic_load_explicit(&rl->head, memory_order_relaxed) !=
-                  NULL);
+                      NULL ||
+                  atomic_load_explicit(&rl->hand, memory_order_relaxed) !=
+                      NULL);
 }
 
 /* The host's heap

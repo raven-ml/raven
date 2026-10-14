@@ -129,16 +129,15 @@ external token : int -> released -> int -> int -> int -> token
 
 external no_token : unit -> token = "%identity"
 
-(* The nodes of the records a list holds, their number stored into the ref in
-   the same call. A node keeps its record reachable until [node_routed]. *)
-external released : int -> int ref -> int list = "caml_rig_released"
+(* Under the device's lock: the node at the front of a list's hand, which a
+   drain routes next, taking the list into the hand when it is empty, or [0]
+   for none; and the front node's free, once its record is routed, which
+   counts it routed: a device's slot frees once every token of its list is
+   ({!Dev.free_slot}). A node keeps its record reachable until then. *)
+external release_front : int -> int = "caml_rig_release_front" [@@noalloc]
+external release_pop : int -> unit = "caml_rig_release_pop" [@@noalloc]
 external node_record : int -> released = "caml_rig_node_record" [@@noalloc]
-external node_routed : int -> unit = "caml_rig_node_routed" [@@noalloc]
 external released_any : int -> bool = "caml_rig_released_any" [@@noalloc]
-
-(* Notes [n] records of a release list routed: a device's slot frees once
-   every token of its list is ({!Dev.free_slot}). *)
-external routed : int -> int -> unit = "caml_rig_routed" [@@noalloc]
 external page_size : unit -> int = "caml_rig_page_size"
 
 let no_token = no_token ()
@@ -583,7 +582,14 @@ let cache (e : entry) =
 (* Puts [e] among its owner's retiring memory. The owner's lock is held. *)
 let retire_entry (e : entry) =
   let l = e.owner.live in
-  l.retiring <- e :: l.retiring
+  let n = l.nretiring in
+  if n = Array.length l.retiring then begin
+    let a = Array.make (Int.max 8 (2 * n)) no_entry in
+    Array.blit l.retiring 0 a 0 n;
+    l.retiring <- a
+  end;
+  l.retiring.(n) <- e;
+  l.nretiring <- n + 1
 
 let to_cache (e : entry) = Dev.protect e.owner cache e
 
@@ -593,25 +599,46 @@ let to_cache (e : entry) = Dev.protect e.owner cache e
    once every point of it is reached, [d]'s own included. *)
 let over_budget d (e : entry) = owns e && d.live.used > d.budget
 
-(* Routes a record [d]'s release list gave. *)
-let route d = function
-  | Memory e ->
-      let cached =
-        (not (Dev.is_lost d))
-        && (not (uncached e))
-        && reached e.stamps
-        && (not (viewed e))
-        && not (over_budget d e)
-      in
-      Dev.protect e.owner (if cached then cache else retire_entry) e
-  | Image (loaded, code) -> defer d (Unload (loaded, code))
-  | Release h -> defer d (Let_go h)
+(* Routing collected records
+
+   A drain routes the records of its device's list one at a time from the
+   list's hand ({!release_front}), and judges its retiring memory one entry
+   at a time. A record or entry is judged, stored in its home and taken out
+   of the hand or the retiring memory in one section under the device's
+   lock, so no other drain reads or frees it meanwhile. Reading a word
+   behind a transport calls its driver, which runs no stop there. The store
+   allocates first, so an exception leaves the record or the entry for the
+   next drain. *)
+
+(* Whether [d]'s collected [e] enters the cache now. *)
+let cacheable d (e : entry) =
+  (not (Dev.is_lost d))
+  && (not (uncached e))
+  && reached e.stamps
+  && (not (viewed e))
+  && not (over_budget d e)
+
+(* Under [d]'s lock: routes the record at the front of [d]'s hand to its
+   home and pops it: whether there was one. *)
+let route_one d =
+  let l = d.live in
+  let n = release_front l.release in
+  n <> 0
+  && begin
+    (match node_record n with
+    | Memory e when cacheable d e -> cache e
+    | Memory e -> retire_entry e
+    | Image (loaded, code) -> append_pending (d, Unload (loaded, code))
+    | Release h -> append_pending (d, Let_go h));
+    release_pop l.release;
+    true
+  end
+
+let rec route_released d = if Dev.protect d route_one d then route_released d
 
 type fate = Stays | Cached | Freed
 
-(* What becomes of the retiring [e] of [d]. It reads words, so no lock is held:
-   a word behind a transport is read through its driver, whose fault stops its
-   device, and a stop drains. A taken entry is the one drain's that took it. *)
+(* What becomes of the retiring [e] of [d]. *)
 let fate d ~lost ~free_lost (e : entry) =
   if viewed e then Stays
   else if lost then if free_lost && reached e.stamps then Freed else Stays
@@ -620,33 +647,113 @@ let fate d ~lost ~free_lost (e : entry) =
   else if reached e.stamps then Cached
   else Stays
 
-let put_retiring (d, es) =
+(* A drain's pass over the retiring memory of [dev]: how [fate] judges, and
+   the entry it judges next. *)
+type pass = { dev : device; lost : bool; free_lost : bool; mutable at : int }
+
+(* Under [p.dev]'s lock: from the retiring entry [p.at] on, caches each whose
+   uses are reached and takes out the first to free, moving the last entry
+   into its place: it, or [no_entry]. *)
+let rec take_freed (p : pass) =
+  let l = p.dev.live and i = p.at in
+  if i >= l.nretiring then no_entry
+  else
+    let e = l.retiring.(i) in
+    match fate p.dev ~lost:p.lost ~free_lost:p.free_lost e with
+    | Stays ->
+        p.at <- i + 1;
+        take_freed p
+    | (Cached | Freed) as f ->
+        if f = Cached then cache e;
+        let last = l.nretiring - 1 in
+        l.retiring.(i) <- l.retiring.(last);
+        l.retiring.(last) <- no_entry;
+        l.nretiring <- last;
+        if f = Freed then e else take_freed p
+
+(* Frees [p.dev]'s retiring memory that is due, one entry at a time: an
+   entry leaves as its free starts, so an exception leaks that one at most. *)
+let rec judge p =
+  let e = Dev.protect p.dev take_freed p in
+  if e != no_entry then begin
+    free_entry e;
+    judge p
+  end
+
+(* Releasing the cache *)
+
+let cache_keys l = Cache.fold (fun k _ ks -> k :: ks) l.cache []
+
+(* Under [l]'s lock: takes the first entry of [l]'s cache under the key [k]
+   if [pick] holds of it. Entries of one key share their owner and their
+   kind of memory, so [pick] answers alike for each. *)
+let take_picked (l, k, pick) =
+  match Cache.find_opt l.cache k with
+  | Some (e :: rest) when pick e ->
+      (match rest with
+      | [] -> Cache.remove l.cache k
+      | _ -> Cache.replace l.cache k rest);
+      l.cached <- l.cached - e.bytes;
+      Some e
+  | _ -> None
+
+(* Waits for [d]'s value [v] on behalf of memory, never of [d]'s caller: a loss
+   the wait finds is [d]'s alone, whose memory then returns once it stopped. *)
+let wait_for d v = try Dev.wait d v with Dev.Lost (d', _) when d' == d -> ()
+
+(* Whether [d]'s work up to [v] is done, or [d] is lost: its frees then wait for
+   its stop themselves. *)
+let reached_or_lost d v =
+  Dev.is_lost d || match Dev.word d >= v with r -> r | exception Dev.Lost _ -> true
+
+(* Frees the cached memory of [d] that [pick] holds of, one entry at a time,
+   once [d]'s work up to [v] is done, and defers each free otherwise: an
+   exception leaks the entry in hand at most. *)
+let release_picked d pick v =
   let l = d.live in
-  l.retiring <- es @ l.retiring
+  let rec take k =
+    match Dev.protect d take_picked (l, k, pick) with
+    | Some e ->
+        if reached_or_lost d v then free_entry e else defer d (Free e);
+        take k
+    | None -> ()
+  in
+  List.iter take (Dev.protect d cache_keys l)
 
-(* Judges each retiring entry of [l] with no lock held, puts back those that
-   stay or enter the cache, and is those to free, consed onto [freed]. *)
-let rec judge d ~lost ~free_lost freed = function
-  | [] -> freed
-  | e :: l -> (
-      match fate d ~lost ~free_lost e with
-      | Freed -> judge d ~lost ~free_lost (e :: freed) l
-      | Stays ->
-          Dev.protect d retire_entry e;
-          judge d ~lost ~free_lost freed l
-      | Cached ->
-          to_cache e;
-          judge d ~lost ~free_lost freed l
-      | exception x ->
-          Dev.protect d put_retiring (d, e :: l);
-          raise x)
+let any_picked (l, pick) =
+  Cache.fold (fun _ es found -> found || List.exists pick es) l.cache false
 
-(* Empties [l]'s cache: its entries, consed onto [freed]. *)
-let take_all_cached (l, freed) =
-  let freed = Cache.fold (fun _ es freed -> es @ freed) l.cache freed in
-  Cache.reset l.cache;
-  l.cached <- 0;
-  freed
+(* Frees what [pick] holds of in [d]'s cache once the work [d] was handed
+   until now is done: at once if it is, after waiting for it when [wait] and
+   [pick] holds of some, and otherwise each free is deferred until it is.
+   The wait comes before any entry leaves the cache, so an exception in it,
+   such as [Sys.Break], loses none. A lost device's cache waits for it to
+   count as stopped. *)
+let release_cache_if ~wait d pick =
+  if (not (Dev.is_lost d)) || Dev.stopped d then begin
+    let v = Dev.submitted d in
+    if wait && (not (Dev.is_lost d)) && Dev.protect d any_picked (d.live, pick)
+    then wait_for d v;
+    release_picked d pick v
+  end
+
+let every (_ : entry) = true
+
+(* [d]'s cached memory, or with [upto] only memory that counts in [d]'s
+   budget until [d] holds at most [upto] bytes, freed as [release_cache_if]
+   does. A count of what is left goes with the picks, so [upto] is for a
+   release that never waits. *)
+let release_cache ?upto ~wait d =
+  match upto with
+  | None -> release_cache_if ~wait d every
+  | Some upto ->
+      let held = ref d.live.used in
+      release_cache_if ~wait d (fun e ->
+          owns e && !held > upto
+          && begin
+            held := !held - e.bytes;
+            true
+          end)
 
 (* Ends [l]'s way to rig's array, and takes its mapping of the array. *)
 let pop_words_map l =
@@ -727,37 +834,28 @@ let give_maps d =
       | Some _ | None -> ())
     (Lock.protect l.lock mapped_ids l)
 
-(* Takes what became due: retiring memory no bigarray reads and whose uses are
-   reached enters the cache, or is freed if [d] is lost and counts as stopped,
-   with its mappings; pending releases whose value [d] reached. Is the memory
-   to free. *)
+(* Moves what became due: retiring memory no bigarray reads and whose uses
+   are reached enters the cache, or is freed if [d] is lost and counts as
+   stopped, with its mappings and its cache. *)
 let due d =
   let lost = Dev.is_lost d in
   let free_lost = lost && Dev.stopped d in
   let l = d.live in
-  Lock.hold l.lock;
-  let retiring = l.retiring in
-  l.retiring <- [];
-  Lock.release l.lock;
-  let freed = judge d ~lost ~free_lost [] retiring in
-  if not free_lost then freed
-  else begin
+  if l.nretiring > 0 then judge { dev = d; lost; free_lost; at = 0 };
+  if free_lost then begin
     give_maps d;
-    Lock.protect l.lock take_all_cached (l, freed)
+    release_picked d every (Dev.submitted d)
   end
 
-(* Takes [l]'s pending releases up to the value [w]. *)
-let take_pending (l, w) =
-  let[@tail_mod_cons] rec take front back =
-    match front with
-    | (v, p) :: rest when v <= w -> p :: take rest back
-    | [] when back <> [] -> take (List.rev back) []
-    | _ ->
-        l.pending <- (front, back);
-        []
-  in
-  let front, back = l.pending in
-  take front back
+(* Under [l]'s lock: takes the first of [l]'s pending releases if [w] reached
+   its value. *)
+let take_due (l, w) =
+  match l.pending with
+  | (v, p) :: front, back when v <= w ->
+      let taken = Some p in
+      l.pending <- (if front == [] then (List.rev back, []) else (front, back));
+      taken
+  | _ -> None
 
 (* The value up to which [d]'s releases are due: [d]'s word, none while it
    is lost and not Stopped, and all once it is Stopped, since it runs
@@ -766,15 +864,6 @@ let due_at d =
   if not (Dev.is_lost d) then Dev.word d
   else if Dev.stopped d then max_int
   else -1
-
-(* Takes the pending releases whose value [d] reached. *)
-let due_pending d =
-  let l = d.live in
-  match l.pending with
-  | [], _ -> []
-  | (v, _) :: _, _ ->
-      let w = due_at d in
-      if w < v then [] else Lock.protect l.lock take_pending (l, w)
 
 (* Takes one of [l]'s retired mappings of words whose value [w] reached. *)
 let take_retired (l, w) =
@@ -819,45 +908,28 @@ let run_pending d = function
         | None -> ())
   | Let_go _ -> ()
 
-(* Routes the records of the nodes [l], letting go of each node once its
-   record is routed: an exception leaves the rest reachable, never dropped. *)
-let rec route_all d = function
-  | [] -> ()
-  | node :: l ->
-      route d (node_record node);
-      node_routed node;
-      route_all d l
-
-let rec free_all = function
-  | [] -> ()
-  | e :: l ->
-      free_entry e;
-      free_all l
-
-let rec run_all d = function
-  | [] -> ()
-  | p :: l ->
+(* Runs [d]'s pending releases up to the value [w], one at a time: each
+   leaves the queue as it runs, so an exception leaks that one at most. *)
+let rec run_due d w =
+  match Dev.protect d take_due (d.live, w) with
+  | Some p ->
       run_pending d p;
-      run_all d l
+      run_due d w
+  | None -> ()
 
-(* Routes the records [d]'s own list gave. A record is routed before it is
-   counted, so [d]'s slot stays until the memory it routed is given back. The
-   handler is set before the records are taken, which counts them in the same
-   call, so a routing that raises, asynchronously too, counts them. *)
-let route_released d =
-  let l = d.live in
-  let n = ref 0 in
-  match route_all d (released l.release n) with
-  | () -> routed l.release !n
-  | exception e ->
-      routed l.release !n;
-      raise e
+(* Runs the pending releases whose value [d] reached. *)
+let due_pending d =
+  match d.live.pending with
+  | [], _ -> ()
+  | (v, _) :: _, _ ->
+      let w = due_at d in
+      if w >= v then run_due d w
 
 (* Drains [d]'s own list and what became due on it. *)
 let drain_own d =
   if released_any d.live.release then route_released d;
-  free_all (due d);
-  run_all d (due_pending d);
+  due d;
+  due_pending d;
   give_retired d
 
 let is_let_go = function _, Let_go _ -> true | _ -> false
@@ -880,7 +952,9 @@ let forget d =
 (* Whether [l] has nothing to drain: no collected memory, nothing waiting for a
    value. A drain of an idle device allocates nothing. *)
 let idle l =
-  l.retiring == [] && fst l.pending == [] && l.retired == []
+  l.nretiring = 0
+  && fst l.pending == []
+  && l.retired == []
   && not (released_any l.release)
 
 let kept_locked l =
@@ -929,72 +1003,8 @@ let take_cached d kind n =
   let l = d.live in
   Lock.protect l.lock take_cached_key (l, key n kind)
 
-(* Takes the cached memory of [l] that [take] picks out of its cache. The
-   changes are worked out before any is made, and each key's list changes
-   with the count. *)
-let take_picked (l, take) =
-  let pick k es picked =
-    match List.partition take es with
-    | [], _ -> picked
-    | taken, kept ->
-        let n = List.fold_left (fun n (e : entry) -> n + e.bytes) 0 taken in
-        (k, taken, kept, n) :: picked
-  in
-  List.fold_left
-    (fun all (k, taken, kept, n) ->
-      (match kept with
-      | [] -> Cache.remove l.cache k
-      | _ -> Cache.replace l.cache k kept);
-      l.cached <- l.cached - n;
-      List.rev_append taken all)
-    []
-    (Cache.fold pick l.cache [])
-
-(* Takes the cached memory of [d] that [take] picks out of its cache, in no
-   particular order. *)
-let take_cache_if d take = Lock.protect d.live.lock take_picked (d.live, take)
-
-(* Takes cached memory out of [d]'s cache: all of it, or with [upto] only memory
-   that counts in [d]'s budget, until [d] holds at most [upto] bytes. *)
-let take_cache ?upto d =
-  match upto with
-  | None -> take_cache_if d (fun _ -> true)
-  | Some upto ->
-      let held = ref d.live.used in
-      take_cache_if d (fun e ->
-          owns e && !held > upto
-          && begin
-            held := !held - e.bytes;
-            true
-          end)
-
-(* Frees what [take_cache] takes once the work [d] was handed until now is done:
-   at once if it is, after waiting for it when [wait], and otherwise each free
-   is deferred until it is. A lost device's cache waits for it to count as
-   stopped. *)
-(* Waits for [d]'s value [v] on behalf of memory, never of [d]'s caller: a loss
-   the wait finds is [d]'s alone, whose memory then returns once it stopped. *)
-let wait_for d v = try Dev.wait d v with Dev.Lost (d', _) when d' == d -> ()
-
-(* Whether [d]'s work up to [v] is done, or [d] is lost: its frees then wait for
-   its stop themselves. *)
-let reached_or_lost d v =
-  Dev.is_lost d || match Dev.word d >= v with r -> r | exception Dev.Lost _ -> true
-
-let release_taken ~wait d take =
-  if (not (Dev.is_lost d)) || Dev.stopped d then
-    match take d with
-    | [] -> ()
-    | taken ->
-        let v = Dev.submitted d in
-        if wait && not (Dev.is_lost d) then wait_for d v;
-        if reached_or_lost d v then List.iter free_entry taken
-        else List.iter (fun e -> defer d (Free e)) taken
-
 (* Whether a call holds [d]'s lock: a walk over every device passes it by. *)
 let busy d = Lock.busy d.live.lock
-
-let release_cache ?upto ~wait d = release_taken ~wait d (take_cache ?upto)
 
 (* The out-of-memory ladder *)
 
@@ -1012,12 +1022,12 @@ let charged pool (e : entry) =
   | Host_budget -> Dev.is_host pool
   | No_budget -> false
 
-(* Whether [d] holds memory that counts in [pool]'s budget back from its return
-   until work is done: collected memory outside the cache, and returns deferred
-   until [d]'s handed work is done. Only the entries' plain fields are read: a
-   drain may free them meanwhile. *)
-let holds_back pool l =
-  List.exists (charged pool) l.retiring
+(* Under [l]'s lock: whether its device holds memory that counts in
+   [pool]'s budget back from its return until work is done: collected memory
+   outside the cache, and returns deferred until the device's handed work is
+   done. *)
+let holds_back (pool, l) =
+  Array.exists (charged pool) (Array.sub l.retiring 0 l.nretiring)
   ||
   let holds = function
     | _, (Free e | Give e | Unmap (_, Some e) | Unload (_, Some e)) ->
@@ -1047,9 +1057,9 @@ let reclaim_round pool round =
   if Dev.is_host pool then heap_drop ();
   Dev.iter (fun d ->
       if not (busy d) then begin
-        if holds_back pool d.live && not (Dev.is_lost d) then
+        if Dev.protect d holds_back (pool, d.live) && not (Dev.is_lost d) then
           wait_for d (Dev.submitted d);
-        release_taken ~wait:true d (fun d -> take_cache_if d (charged pool))
+        release_cache_if ~wait:true d (charged pool)
       end);
   drain_all ();
   if round >= 2 then begin

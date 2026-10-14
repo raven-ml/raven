@@ -160,7 +160,8 @@ let make_device ~index ~name ~machine ~kind ~c ~arch ~queues ~copy_engine
       used = 0;
       cached = 0;
       cache = Cache.create 16;
-      retiring = [];
+      retiring = [||];
+      nretiring = 0;
       pending = ([], []);
       pairs = [||];
       retired = [];
@@ -436,7 +437,9 @@ let stopped (d : device) =
 let free_slot d =
   let l = d.live in
   d.index > 0 && stopped d
-  && l.cached = 0 && l.retiring == [] && l.retired == []
+  && l.cached = 0
+  && l.nretiring = 0
+  && l.retired == []
   && fst l.pending == []
   && c_free l.c d
 

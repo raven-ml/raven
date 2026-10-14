@@ -77,6 +77,8 @@ external unpark : unit -> unit = "rig_test_unpark"
 external sees_waits : unit -> bool = "rig_test_sees_waits"
 external interrupter_start : unit -> unit = "rig_test_interrupter_start"
 external interrupter_stop : unit -> bool = "rig_test_interrupter_stop"
+external thread_self : unit -> int = "rig_test_thread_self"
+external waits_for_lock : int -> bool = "rig_test_waits_for_lock"
 external set_address_space : int -> int = "rig_test_set_address_space"
 
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
@@ -415,9 +417,10 @@ module Driver = struct
   let signaled d =
     Mutex.lock d.lock;
     let fault = d.word_fault and break = d.word_break in
-    let freed = freed_at d.word_at d.frees in
+    let freed = freed_at d.word_at d.frees and hooked = d.before != [] in
     d.word_break <- false;
     Mutex.unlock d.lock;
+    if hooked then run_before d "signaled";
     if freed then broke read_freed;
     if break then raise Sys.Break;
     match fault with
@@ -734,6 +737,10 @@ let watchdog_s = 10.
 
 let sees_waits = sees_waits ()
 
+type thread = int
+
+let self = thread_self
+let waits_for_lock = waits_for_lock
 let interrupt_after s = interrupt_after_ms (int_of_float (s *. 1000.))
 
 let interrupt_in_wait f =

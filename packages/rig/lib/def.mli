@@ -165,8 +165,10 @@ and live = {
   mutable cached : int; [@atomic]  (** The bytes in its cache. *)
   cache : entry list Tbl.Make(Int).t;
       (** Its cache, by [bytes * 4 + kind]. *)
-  mutable retiring : entry list; [@atomic]
-      (** Collected entries that wait for their points or their bigarrays. *)
+  mutable retiring : entry array;
+      (** Collected entries that wait for their points or their bigarrays:
+          its first [nretiring], in no order. Grown by replacement. *)
+  mutable nretiring : int; [@atomic]
   mutable pending : (int * pending) list * (int * pending) list; [@atomic]
       (** Releases by nondecreasing value of it, replaced whole: the front in
           order, the back reversed, and the front empty only when both are. *)

@@ -120,15 +120,19 @@ static inline uint64_t rig_line_base(int index) {
 }
 
 /* A list of release records ([rig_heap.c]): those of a device lie in its
-   record. [count] counts the tokens made for the list whose records its
-   drains have not yet routed: a device's slot frees at none. [closed] says
-   that the list takes no more tokens, as its device's slot is being freed:
-   a token counts itself before it reads [closed], and the free closes the
-   list before it reads [count], so one of the two sees the other. */
+   record. [head] takes the records of collected tokens; [hand] holds those
+   a drain took from it and has not routed, which only a holder of the
+   device's lock changes. [count] counts the tokens made for the list whose
+   records its drains have not yet routed: a device's slot frees at none.
+   [closed] says that the list takes no more tokens, as its device's slot
+   is being freed: a token counts itself before it reads [closed], and the
+   free closes the list before it reads [count], so one of the two sees the
+   other. */
 struct release_node;
 
 struct release_list {
   _Atomic(struct release_node *) head;
+  _Atomic(struct release_node *) hand;
   _Atomic intnat count;
   _Atomic int closed;
 };

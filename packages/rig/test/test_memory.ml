@@ -460,6 +460,72 @@ let test_refused_waits () =
   equal int (32 * kib) (B.length (B.create d (32 * kib)));
   equal ~msg:"the queued memory" bool true (freed p at)
 
+(* A Ctrl-C in a reclamation round's wait for the device's work loses none of
+   its cache: the cache the round would have freed returns at the next
+   free_cache, and only the live buffer stays. *)
+let test_break_in_round () =
+  let d, p = P.open_ "memory:break-round" in
+  Rig.set_budget d (8 * kib);
+  let live = B.create d (4 * kib) in
+  let at = dropped d (4 * kib) in
+  Gc.full_major ();
+  ignore (B.create d 0);
+  ignore (submit (Sub.make d [||]));
+  P.interrupt p;
+  Sys.catch_break true;
+  let broke =
+    Fun.protect
+      ~finally:(fun () -> Sys.catch_break false)
+      (fun () ->
+        match B.create d (2 * kib) with
+        | _ -> false
+        | exception Sys.Break -> true)
+  in
+  equal ~msg:"the round's wait broke" bool true broke;
+  ignore (P.run p);
+  Rig.free_cache d;
+  equal ~msg:"the cached memory" bool true (freed p at);
+  equal ~msg:"bytes held" int (4 * kib) (Rig.allocated d);
+  ignore (Sys.opaque_identity live)
+
+(* Two drains of one device judge a retiring buffer one at a time. The first
+   judges a buffer over the budget whose work ran, which only a read of the
+   word behind the transport shows; while it reads, a drain on another
+   domain waits for it and frees nothing the first reads. The buffer goes
+   back once. *)
+let test_judged_once () =
+  if not Support.sees_waits then skip ~reason:"no view of lock waits" ();
+  let d, p = P.open_ ~transport:true "memory:judged-once" in
+  let s = Sub.make d [| Support.touching [| Sub.write |] |] in
+  let at = dropped_written s d (4 * kib) in
+  collect d;
+  Rig.set_budget d kib;
+  ignore (P.run p);
+  let judging = Atomic.make false and second = Atomic.make None in
+  let drained = Atomic.make false and freed_inside = ref true in
+  let other =
+    Domain.spawn (fun () ->
+        Support.await "the first drain's read" (fun () -> Atomic.get judging);
+        Atomic.set second (Some (Support.self ()));
+        ignore (Sys.opaque_identity (B.create ~memory:Pinned d 8));
+        Atomic.set drained true)
+  in
+  P.before p "signaled" (fun () ->
+      Atomic.set judging true;
+      Support.await "the second drain" (fun () ->
+          Atomic.get drained
+          ||
+          match Atomic.get second with
+          | Some t -> Support.waits_for_lock t
+          | None -> false);
+      freed_inside := freed p at);
+  collect d;
+  Domain.join other;
+  equal ~msg:"freed while the first drain read it" bool false !freed_inside;
+  equal ~msg:"frees of the buffer" int 1
+    (List.length (List.filter (fun (a, _) -> a = at) (P.frees p)));
+  equal ~msg:"bytes held" int 0 (P.allocated p B.Device)
+
 (* The wait finds the loss of a device that faulted with that work queued. *)
 let test_refused_lost () =
   let d, p, _ = queued_over_budget "memory:refused-lost" in
@@ -971,6 +1037,10 @@ let tests =
       ];
     group ~timeout "reclamation"
       [
+        test "a Ctrl-C in a reclamation round's wait loses none of the cache"
+          test_break_in_round;
+        test "two drains of one device judge its retiring memory in turn"
+          test_judged_once;
         test "a buffer dropped by a domain that then blocks returns"
           test_blocked_domain;
         test "dropped buffers of many budgets never force a collection"

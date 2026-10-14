@@ -1251,10 +1251,11 @@ value rig_test_unpark(value unit) {
   return Val_unit;
 }
 
-/* Whether a thread of this process blocks in a condition wait, from the
-   system's view of it: the system call it entered is the one condition waits
-   use, __psynch_cvwait on macOS and a futex wait on a bitset with glibc,
-   which no glibc mutex uses. */
+/* Whether a thread of this process blocks in a condition wait, or with
+   [mutex] in a mutex's, from the system's view of it: the system call it
+   entered is the one such waits use, __psynch_cvwait or __psynch_mutexwait
+   on macOS, and with glibc a futex wait on a bitset, which no glibc mutex
+   uses, or a plain futex wait. */
 
 #if defined(__APPLE__)
 
@@ -1266,7 +1267,7 @@ static int sees_waits(void) { return 1; }
 
 /* The system call a suspended thread entered: the number its stub put in x16
    (arm64) or rax (x86_64). */
-static int in_cond_wait(thread_id t) {
+static int in_wait(thread_id t, int mutex) {
   if (thread_suspend(t) != KERN_SUCCESS) return 0;
   thread_basic_info_data_t info;
   mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT;
@@ -1288,7 +1289,7 @@ static int in_cond_wait(thread_id t) {
     call = (long)(s.__rax & 0xffffff);
 #endif
   thread_resume(t);
-  return waiting && call == SYS_psynch_cvwait;
+  return waiting && call == (mutex ? SYS_psynch_mutexwait : SYS_psynch_cvwait);
 }
 
 #elif defined(__linux__) && defined(__GLIBC__)
@@ -1312,7 +1313,7 @@ static int sees_waits(void) {
   return 1;
 }
 
-static int in_cond_wait(thread_id t) {
+static int in_wait(thread_id t, int mutex) {
   FILE *f = syscall_file(t);
   if (f == NULL) return 0;
   long call = -1;
@@ -1320,7 +1321,7 @@ static int in_cond_wait(thread_id t) {
   int got = fscanf(f, "%ld %lx %lx", &call, &word, &op);
   fclose(f);
   return got == 3 && call == SYS_futex &&
-         (op & FUTEX_CMD_MASK) == FUTEX_WAIT_BITSET;
+         (op & FUTEX_CMD_MASK) == (mutex ? FUTEX_WAIT : FUTEX_WAIT_BITSET);
 }
 
 #endif
@@ -1342,7 +1343,7 @@ static struct {
 static void *interrupter_main(void *p) {
   (void)p;
   while (!atomic_load(&interrupter.stop)) {
-    if (in_cond_wait(interrupter.watched)) {
+    if (in_wait(interrupter.watched, 0)) {
       atomic_store(&interrupter.raised, 1);
       raise(SIGINT);
       return NULL;
@@ -1355,6 +1356,15 @@ static void *interrupter_main(void *p) {
 value rig_test_sees_waits(value unit) {
   (void)unit;
   return Val_bool(sees_waits());
+}
+
+value rig_test_thread_self(value unit) {
+  (void)unit;
+  return Val_long((intnat)self());
+}
+
+value rig_test_waits_for_lock(value v_t) {
+  return Val_bool(in_wait((thread_id)Long_val(v_t), 1));
 }
 
 value rig_test_interrupter_start(value unit) {
@@ -1382,6 +1392,16 @@ value rig_test_interrupter_stop(value unit) {
 value rig_test_sees_waits(value unit) {
   (void)unit;
   return Val_false;
+}
+
+value rig_test_thread_self(value unit) {
+  (void)unit;
+  return Val_long(0);
+}
+
+value rig_test_waits_for_lock(value v_t) {
+  (void)v_t;
+  caml_failwith("Rig_support.waits_for_lock: no view of waits");
 }
 
 value rig_test_interrupter_start(value unit) {

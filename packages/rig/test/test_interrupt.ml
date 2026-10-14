@@ -358,6 +358,33 @@ let test_kept () =
   let rec from n = if interrupt_kept n then from (n + 1) in
   from 1
 
+(* Interrupts a drain that routes collected buffers into the cache, from its
+   [n]-th allocation: the drain leaks no buffer's memory, so once the cache
+   is freed the device holds none. Is whether the allocation was reached. *)
+let interrupt_cached n =
+  let at = Printf.sprintf ", interrupted from allocation %d" n in
+  in_child at (fun () ->
+      let d, _ = P.open_ (fresh "cached") in
+      let[@inline never] drop () =
+        for k = 1 to kept_values do
+          ignore (Sys.opaque_identity (B.create d (k * 64)))
+        done
+      in
+      drop ();
+      Gc.full_major ();
+      let drain () = ignore (Sys.opaque_identity (B.create d 0)) in
+      let got = outcome (fun () -> interrupting (Nth n) (ref None) drain) in
+      mem ~msg:"outcome" string got [ "done"; "raised Injected" ];
+      Rig.free_cache d;
+      equal ~msg:"bytes held" int 0 (Rig.allocated d);
+      got = "raised Injected")
+
+let test_cached () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n = if interrupt_cached n then from (n + 1) in
+  from 1
+
 (* Re-enters rig from a [Gc.Memprof] callback at the [n]-th allocation of an
    open: where the open holds one of rig's locks, the callback's call raises
    [Invalid_argument], which ends the open, and nothing waits for good. rig
@@ -439,6 +466,7 @@ let () =
            @ [
                test "close of a machine's host" test_close;
                test "a drain that lets go of kept values" test_kept;
+               test "a drain that routes memory into the cache" test_cached;
                test "a callback that calls rig inside a lock" test_reentry;
              ]);
        ]

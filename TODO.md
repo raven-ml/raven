@@ -28,10 +28,9 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### semantics
 
-- step 4 of _plans/rfc0036-rig-enforcement/: drains and the ladder lose no
-  record on an interrupt; rounds wait for a busy device; `afters` as
-  per-profile pending entries (a span recorded in `Profile.take` is never
-  dropped)
+- step 4 of _plans/rfc0036-rig-enforcement/: rounds wait for a busy device;
+  `afters` as per-profile pending entries (a span recorded in
+  `Profile.take` is never dropped)
 - step 5: a submission run's take as a hold; one claim take (D8), net lines
   <= 0. Step 6: the boxed `Some` on the cache path
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): decide required

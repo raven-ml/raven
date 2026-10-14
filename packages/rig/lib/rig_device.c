@@ -653,13 +653,6 @@ value caml_rig_give(value v_a) {
   CAMLreturn(Val_unit);
 }
 
-/* Notes [v_n] records of the release list [v_l] routed. */
-value caml_rig_routed(value v_l, value v_n) {
-  struct release_list *l = (struct release_list *)Long_val(v_l);
-  atomic_fetch_sub_explicit(&l->count, Long_val(v_n), memory_order_release);
-  return Val_unit;
-}
-
 /* Frees the slot of [d] if [d] has stopped: its stop returned and its word
    shows its last value, so nothing of it writes the word again (the stop's
    obligation, [Rig_edge.Driver.stop]); its release list has routed every

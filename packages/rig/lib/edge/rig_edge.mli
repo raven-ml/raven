@@ -468,7 +468,8 @@ module type Driver = sig
   (** [signaled d] is the value in [d]'s word, read with acquire order. rig
       calls it only for a word of the driver's own ({!type-facts}), also
       after {!val-stop}, until it frees that word. Counted until
-      {!val-stop}. After it, rig drops its faults. *)
+      {!val-stop}. After it, rig drops its faults. rig may call it while it
+      holds a lock of its own, so it must not block or call rig. *)
 
   val sleep : t -> seen:int -> still_ms:int -> unit
   (** [sleep d ~seen ~still_ms] blocks on the device's events until the word

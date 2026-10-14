@@ -150,8 +150,9 @@ module Polled : sig
 
   val before : t -> string -> (unit -> unit) -> unit
   (** [before d call f] runs [f] once, at the start of [d]'s next counted call
-      or stop that {!log} names [call], such as ["entry"], or of the function
-      of the next [Place] its [image] answers, ["place"]: a point inside a
+      or stop that {!log} names [call], such as ["entry"], of its next read
+      of its word, ["signaled"], or of the function of the next [Place] its
+      [image] answers, ["place"]: a point inside a
       call rig makes, where a test can change what rig was given, hold the
       call or raise from it. A free runs it once it passed the free gate,
       and a free of the word once it gave the word back. *)
@@ -458,6 +459,18 @@ val sees_waits : bool
 (** [sees_waits] is [true] where the system shows which call a thread is
     blocked in, and condition waits enter a call of their own: on macOS, and on
     Linux with glibc. *)
+
+type thread
+(** A thread, as the system names it. *)
+
+val self : unit -> thread
+(** [self ()] is the calling thread. *)
+
+val waits_for_lock : thread -> bool
+(** [waits_for_lock t] is whether [t] blocks taking a mutex, as a take of
+    one of rig's locks does, from the system's view of it. A wait for a
+    domain's own lock shows too, briefly. It raises [Failure] where not
+    {!sees_waits}. *)
 
 val interrupt : unit -> unit
 (** [interrupt ()] raises SIGINT in the calling thread and returns with no
