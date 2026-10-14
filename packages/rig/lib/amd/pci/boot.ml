@@ -19,8 +19,9 @@ let ( let* ) = Result.bind
    carries another mark, and is not booted partially. *)
 let session = 0x5241_0002
 
-let plan ~mark ~dirty ~fault ~os =
-  if mark = session && dirty = 0 && fault = 0 then `Partial
+let plan ~gc ~mark ~dirty ~fault ~os =
+  if mark = session && (gc = (9, 5, 0) || (dirty = 0 && fault = 0)) then
+    `Partial
   else if os then `Booted
   else `Full
 
@@ -356,10 +357,10 @@ let boot g ~partial ~pool ~kiq =
      memory alone, so that no address a step gets wrong reaches the host's. A
      virtual function's KIQ, in system memory, needs it earlier. *)
   Function.set_bus_master g.f false;
-  (* A clean mark is another process's word that its engines stopped: they
-     stop again before the hubs take this session's tables, so that none
-     reaches this session's memory. A compute queue that stays is reset with
-     the MEC below. *)
+  (* A clean mark is another process's word that its engines stopped, and a
+     GC 9.5.0's dirty mark is no such word: they stop again before the hubs
+     take this session's tables, so that none reaches this session's memory.
+     A compute queue that stays is reset with the MEC below. *)
   if partial then ignore (quiet g ~wait:true);
   (* The GPU masters the bus only while both hubs translate: an untranslated
      address goes to host memory as it stands. *)
@@ -476,8 +477,8 @@ let start ~gpus f first =
         let os = (not vf) && Psp.running r in
         let read name = Regs.read r name in
         ( gmc,
-          plan ~mark:(read "regSCRATCH_REG7") ~dirty:(read "regSCRATCH_REG6")
-            ~fault:(read (fault_status l))
+          plan ~gc ~mark:(read "regSCRATCH_REG7")
+            ~dirty:(read "regSCRATCH_REG6") ~fault:(read (fault_status l))
             ~os ))
   in
   let* () =

@@ -54,9 +54,6 @@ raven / llama.cpp (Vulkan; ROCm):
   tables must still serve stop, free and unload after an exception
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
   under KFD (RX 9070: 3 for 4)
-- rig.amd.pci: a dirty or faulted GC 9.5.0 that rig marked gets a partial
-  boot (queues stopped, compute engines soft-reset), as tinygrad does: a
-  mode 1 reset over its live state can stop its fabric until a power cycle
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a
   terminal index outside [taken, posted] counts as none; poll and wait issue
   no firmware command; fix the leak when `Qp.make` refuses

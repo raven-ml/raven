@@ -33,18 +33,21 @@ val session : int
     [SCRATCH_REG7]. *)
 
 val plan :
+  gc:int * int * int ->
   mark:int ->
   dirty:int ->
   fault:int ->
   os:bool ->
   [ `Partial | `Full | `Booted ]
-(** [plan ~mark ~dirty ~fault ~os] is how a GPU boots whose GC holds
-    [mark] in [SCRATCH_REG7], [dirty] in [SCRATCH_REG6] and [fault] in its
-    protection fault status, and whose security processor's OS runs iff
-    [os]. Pure.
+(** [plan ~gc ~mark ~dirty ~fault ~os] is how a GPU boots whose GC, of
+    version [gc], holds [mark] in [SCRATCH_REG7], [dirty] in [SCRATCH_REG6]
+    and [fault] in its protection fault status, and whose security
+    processor's OS runs iff [os]. Pure.
     {ul
-    {- [`Partial] if it carries {!session} and [dirty] and [fault] are [0],
-       as a session that stopped cleanly leaves them;}
+    {- [`Partial] if it carries {!session}, and [dirty] and [fault] are [0],
+       as a session that stopped cleanly leaves them, or [gc] is 9.5.0,
+       whose fabric a mode 1 reset over live state can stop until a power
+       cycle;}
     {- [`Full] otherwise, if no OS runs;}
     {- [`Booted] otherwise, when firmware runs whose state this library
        cannot vouch for, whoever left it. Only a reset stops it.}} *)

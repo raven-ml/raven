@@ -123,8 +123,10 @@ val count : ?machine:Rig_pci.Machine.t -> unit -> int
     GPU may run firmware without the mark, as its kernel driver leaves it,
     or have been left by a killed process, or by a process that lost it to
     a fault or a hang, this process or another. The open returns [Error] if
-    firmware this library did not start still runs after the reset. On
-    GC 9.5.0 this reset is written and has never run on hardware.
+    firmware this library did not start still runs after the reset. A
+    GC 9.5.0 GPU this library marked is the exception: a mode 1 reset over
+    its live state can stop its fabric until a power cycle. Its open stops
+    its queues, soft-resets its compute engines and boots them partially.
 
     A boot turns the GPU's bus mastering on only once both of its memory
     hubs translate addresses, so that no address a boot step gets wrong
