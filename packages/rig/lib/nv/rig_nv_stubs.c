@@ -278,6 +278,13 @@ value caml_rig_nv_launch_free(value v_launch) {
   return Val_unit;
 }
 
+/* Frees each launch of the list [v_launches]. */
+value caml_rig_nv_launches_free(value v_launches) {
+  for (value l = v_launches; Is_block(l); l = Field(l, 1))
+    free((void *)Nativeint_val(Field(l, 0)));
+  return Val_unit;
+}
+
 /* Installs the private kernel's image and transfers its launch to the
    device. No submission can use the image before make returns. */
 value caml_rig_nv_copy_kernel(value v_self, value v_launch, value v_host,

@@ -50,6 +50,10 @@ type buffer = { size : int; phys : bool; virt : bool; local : bool }
    point to the FMC in system memory. *)
 type start = Legacy of Vbios.fwsec * Images.booter | Cot of Falcon.op list
 
+(* Each channel's runlist changes by one store of a map made first, so an
+   exception leaves the table whole. *)
+module Channels = Map.Make (Int)
+
 type t = {
   p : placement;
   q : Msgq.t;
@@ -62,7 +66,7 @@ type t = {
   mutable next : int; (* the next handle the process names an object with *)
   mutable clients : int; (* the next client handle *)
   mutable runlists : (int * int) list; (* each engine's runlist *)
-  channels : (int, int) Hashtbl.t; (* each channel's runlist *)
+  mutable channels : int Channels.t; (* each channel's runlist *)
   mutable buffers : (int * buffer) list; (* the graphics context's *)
   taken : sys list ref; (* the system memory the boot took *)
 }
@@ -486,8 +490,8 @@ let alloc g ~client ~locate ~objects ~parent cls p =
     Option.iter
       (fun p ->
         let e = pget p Defs.Gpfifo_alloc.engine_type in
-        Hashtbl.replace g.channels obj
-          (Option.value ~default:0 (List.assoc_opt e g.runlists)))
+        let runlist = Option.value ~default:0 (List.assoc_opt e g.runlists) in
+        g.channels <- Channels.add obj runlist g.channels)
       p;
   if cls = Defs.nv20_subdevice_0 then objects.subdevice <- obj;
   let* () =
@@ -519,7 +523,7 @@ let alloc g ~client ~locate ~objects ~parent cls p =
    Blackwell bit 30 set. *)
 let token g obj p =
   let module W = Defs.Work_submit_token in
-  let runlist = Option.value ~default:0 (Hashtbl.find_opt g.channels obj) in
+  let runlist = Option.value ~default:0 (Channels.find_opt obj g.channels) in
   let blackwell = g.p.chip.family = Blackwell in
   pset p W.work_submit_token
     (pget p W.work_submit_token lor (runlist lsl 16)
@@ -857,7 +861,7 @@ let take p (fw : Images.t) fwsec ~taken =
       next = first_handle;
       clients = first_client;
       runlists = [];
-      channels = Hashtbl.create 8;
+      channels = Channels.empty;
       buffers = [];
       taken;
     }

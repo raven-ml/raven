@@ -44,8 +44,9 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - a peer view of a stopped driver-less NV GPU can crash: the stop unmaps
   the BAR windows another GPU's flush entry or view still reads
-- exceptions: amdgpu's and NV's tables must still serve stop, free and
-  unload after an exception
+- exceptions: amdgpu's `acquired` and `views` and rig.amd's `launches` are
+  stdlib Hashtbls, which an exception while one grows loses: they must still
+  serve stop, free and unload after an exception, as NV's do
 - rig.amd: `Counter.places` reserves too few WGP slots on harvested RDNA3/4
   under KFD (RX 9070: 3 for 4)
 - rig.bnxt: take completions the NIC wrote before failing a queue pair; a

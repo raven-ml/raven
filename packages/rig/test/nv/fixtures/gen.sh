@@ -32,5 +32,5 @@ fixture() {
 
 [ $# -gt 0 ] || set -- \
   grid_params_sm89.cubin kernels_sm89.cubin launch_sm89.cubin \
-  thrice_sm89.cubin twice_sm89.cubin
+  locals_sm89.cubin thrice_sm89.cubin twice_sm89.cubin
 for f in "$@"; do fixture "$f"; done

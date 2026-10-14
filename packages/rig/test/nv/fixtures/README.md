@@ -5,6 +5,8 @@ Cubins for sm_89, each made from its source by `gen.sh`.
 - `kernels_sm89.cubin` holds the kernels of `kernels.cu`.
 - `launch_sm89.cubin` holds the kernels of `launch.cu`, which the
   conformance and NV suites launch with their parameters in a run's block.
+- `locals_sm89.cubin` holds the forty kernels of `locals.cu`, each with
+  local memory of its own size.
 - `twice_sm89.cubin` and `thrice_sm89.cubin` each hold one kernel `index`,
   of one size, which writes `2i` and `3i`.
 - `grid_params_sm89.cubin` is made by NVCC, the others by NVRTC. Its kernel

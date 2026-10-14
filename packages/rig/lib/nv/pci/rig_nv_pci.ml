@@ -99,6 +99,8 @@ let report ~firmware ~chip ~vbios =
    every GPU: a peer's memory maps at its owner's address. *)
 let space = Space.create ~base:(64 * gib) ((1 lsl 40) - (64 * gib))
 
+module Handles = Map.Make (Int)
+
 (* A GPU this path opened. [fault] is the first flush the GPU did not confirm.
    Memory the path gave holds this record until its free, also after stop, so
    stop drops [names] and releases [memory]. *)
@@ -112,8 +114,9 @@ type gpu = {
 }
 
 (* The names the path gave the GPU's memory, which the RM's channel allocations
-   take, with each name's region. *)
-and names = { regions : (int, Memory.region) Hashtbl.t; mutable next : int }
+   take, with each name's region. The regions change by one store of a map
+   made first, so an exception leaves them whole for the frees. *)
+and names = { mutable regions : Memory.region Handles.t; mutable next : int }
 
 (* What the path keeps of each machine, from its first open there: the key
    its devices share, so that a GPU's number names the same GPU for each of
@@ -165,8 +168,8 @@ let memory g r =
     | None -> invalid_arg "Rig_nv_pci: the GPU was stopped"
     | Some n ->
         let h = n.next in
+        n.regions <- Handles.add h r n.regions;
         n.next <- h + 1;
-        Hashtbl.replace n.regions h r;
         h
   in
   { Rig_nv.address = Memory.address r; host = host r; handle; data = r }
@@ -176,7 +179,7 @@ let memory g r =
    the memory of handle [h]. *)
 let locate g h off =
   protect g @@ fun () ->
-  match Option.bind g.names (fun n -> Hashtbl.find_opt n.regions h) with
+  match Option.bind g.names (fun n -> Handles.find_opt h n.regions) with
   | None -> None
   | Some r ->
       let target, pages = Memory.pages r in
@@ -222,7 +225,7 @@ let map_peer g (m : Memory.region Rig_nv.memory) =
 
 let free g (m : Memory.region Rig_nv.memory) =
   protect g @@ fun () ->
-  Option.iter (fun n -> Hashtbl.remove n.regions m.handle) g.names;
+  Option.iter (fun n -> n.regions <- Handles.remove m.handle n.regions) g.names;
   Memory.free g.memory m.data
 
 (* Faults, hangs and stops *)
@@ -389,7 +392,7 @@ let boot ~word ~firmware ~index h fn =
       memory = Memory.create fn tables ~bar:memory_bar;
       lock = Mutex.create ();
       fault;
-      names = Some { regions = Hashtbl.create 64; next = 1 };
+      names = Some { regions = Handles.empty; next = 1 };
     }
   in
   match device ~word g ~gsp ~hold:h ~tables c with

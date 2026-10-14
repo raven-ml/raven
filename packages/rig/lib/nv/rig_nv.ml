@@ -225,6 +225,9 @@ external new_launch : string array -> int array -> nativeint
 
 external free_launch : nativeint -> unit = "caml_rig_nv_launch_free" [@@noalloc]
 
+external free_launches : nativeint list -> unit = "caml_rig_nv_launches_free"
+[@@noalloc]
+
 external install_copy : int -> nativeint -> int -> string -> unit
   = "caml_rig_nv_copy_kernel"
 [@@noalloc]
@@ -270,6 +273,10 @@ let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
 
 (* Devices *)
 
+(* A local memory the GPU's work no longer uses once the device reached
+   [until], the value of the submission that took its successor. *)
+type 'm retired = { mem : 'm memory; mutable until : int }
+
 (* What only a running device uses. The handle outlives the device in its
    properties, so stop drops it. *)
 type 'm live = {
@@ -283,7 +290,7 @@ type 'm live = {
   mutable per_thread : int; (* under [local_lock], as the fields below *)
   mutable local_current : 'm memory option;
   mutable local_pending : 'm memory option;
-  mutable local_retired : ('m memory * int) list;
+  mutable local_retired : 'm retired list;
 }
 
 (* A device: its facts, what [peer] uses for the life of the process, and its
@@ -385,42 +392,67 @@ let live d =
 
 (* Local memory *)
 
-(* The value of the submission that took the pending local memory, if the
-   word [x] says one did. *)
-let taken x = if x land 1 = 1 then Some (x lsr 1) else None
+(* The pending local memory's word [x] says a submission took it iff its bit 0
+   is set, and then holds the submission's value above it. *)
+let taken x = x land 1 = 1
+let taker x = x lsr 1
 
-(* Makes [m], which the submission of value [v] took, the current local
-   memory. The current one serves the values before [v]: it retires with
-   [v]. *)
-let succeed l m v =
-  Option.iter (fun c -> l.local_retired <- (c, v) :: l.local_retired)
-    l.local_current;
-  l.local_current <- Some m
+(* What making the pending memory current stores, allocated ahead, so that a
+   change allocates nothing between its first store and its last: the current
+   memory retired, its value to be set, and the retired list it heads. *)
+let retiring l =
+  match l.local_current with
+  | Some c ->
+      let r = { mem = c; until = 0 } in
+      (Some r, r :: l.local_retired)
+  | None -> (None, l.local_retired)
+
+(* Makes the pending memory, [current], current from the value [v], which
+   the current one served up to. *)
+let succeed l (r, retired) current v =
+  (match r with Some r -> r.until <- v | None -> ());
+  l.local_retired <- retired;
+  l.local_current <- current
 
 (* Moves the pending local memory to current once a submission took it. *)
 let settle d l =
-  match (l.local_pending, taken (pending_local d.self)) with
-  | Some m, Some v ->
-      succeed l m v;
-      l.local_pending <- None
-  | (Some _ | None), _ -> ()
+  match l.local_pending with
+  | None -> ()
+  | Some _ as current ->
+      let x = pending_local d.self in
+      if taken x then begin
+        let ahead = retiring l in
+        succeed l ahead current (taker x);
+        l.local_pending <- None
+      end
 
-(* Frees the retired local memories no work uses: those whose successor's value
-   is reached. *)
-let retire d l =
+(* Frees the retired local memories no work uses, those whose successor's
+   value is reached, one at a time: each leaves the list before its free, so
+   an exception leaves the rest for the next call. *)
+let rec retire d l =
   let seen = read_word d.self in
-  let done_, kept = List.partition (fun (_, v) -> v <= seen) l.local_retired in
-  l.local_retired <- kept;
-  List.iter (fun (m, _) -> give l.path.free m) done_
+  match List.find_opt (fun r -> r.until <= seen) l.local_retired with
+  | None -> ()
+  | Some r ->
+      l.local_retired <- List.filter (fun r' -> r' != r) l.local_retired;
+      give l.path.free r.mem;
+      retire d l
 
 (* Makes [m], whose word is [packed], the pending local memory, freeing a
-   pending one that no submission took. *)
+   pending one that no submission took. The exchange hands [m] to the
+   submissions, so what it decides is allocated before it. *)
 let publish d l m packed =
-  (match (l.local_pending, taken (exchange_local d.self packed)) with
-  | Some p, Some v -> succeed l p v
-  | Some p, None -> give l.path.free p
-  | None, _ -> ());
-  l.local_pending <- Some m
+  let pending = Some m and current = l.local_pending in
+  let ahead = retiring l in
+  let x = exchange_local d.self packed in
+  match current with
+  | Some _ when taken x ->
+      succeed l ahead current (taker x);
+      l.local_pending <- pending
+  | Some p ->
+      l.local_pending <- pending;
+      give l.path.free p
+  | None -> l.local_pending <- pending
 
 type grown = Served | Stopped | Short of int
 
@@ -956,16 +988,21 @@ let map_host (T d) a n =
 
 (* Images *)
 
+module Names = Map.Make (String)
+
 (* An image is a cubin laid over a region of its device: the address of the
-   region's first byte. It keeps the entries made of its functions, each with
-   its C launch, until it is unloaded. *)
+   region's first byte. It keeps the entries made of its functions, and their
+   C launches, until it is unloaded. Both change by stores of values made
+   first, with nothing between the stores that allocates or polls, so an
+   exception leaves them whole and in step for the unload. *)
 type image = {
   base : int;
   cubin : Cubin.t;
   gpu : Abi.Gpu.t;
   grow : int -> grown; (* its device's [grow] *)
   lock : Mutex.t;
-  entries : (string, Rig_edge.entry) Hashtbl.t;
+  mutable entries : Rig_edge.entry Names.t;
+  mutable launches : nativeint list; (* the entries' *)
 }
 
 (* The cubin [c] laid over the region [r] of [d]. A cubin may load where another
@@ -981,7 +1018,8 @@ let lay d c r =
       gpu = d.capability;
       grow = grow d;
       lock = Mutex.create ();
-      entries = Hashtbl.create 8;
+      entries = Names.empty;
+      launches = [];
     }
   in
   (i, image_bytes c ~base)
@@ -990,9 +1028,11 @@ let image (T d) bin =
   let* c = Cubin.of_string bin in
   Ok (Rig_edge.Place (Cubin.size c, lay d c))
 
-(* A function's launch is set up once the local memory serves it, and a function
-   the GPU has no memory for makes nothing. *)
-let set_up c (k : Cubin.kernel) =
+(* The entry of [c]'s function [k], named [name], once the local memory serves
+   it; a function the GPU has no memory for makes nothing. The launch is
+   [c]'s from [new_launch] on: an exception before [c] holds it, such as an
+   asynchronous one where the entry allocates, frees it. *)
+let set_up c name (k : Cubin.kernel) =
   let l =
     match Launch.make c.gpu k with
     | Ok l -> l
@@ -1002,37 +1042,50 @@ let set_up c (k : Cubin.kernel) =
   match c.grow bytes with
   | Short n -> Rig_edge.No_memory n
   | Stopped -> raise (Fault "the device is stopped")
-  | Served ->
+  | Served -> (
       let code = c.base + k.code in
       let local = Abi.Local_memory.make c.gpu bytes in
-      Entry
-        {
-          code;
-          launch = descriptors l c.base code local.per_thread k;
-          params = Some k.params_bytes;
-          threads = Some (Launch.max_threads l);
-        }
+      let launch = descriptors l c.base code local.per_thread k in
+      match
+        let e =
+          {
+            Rig_edge.code;
+            launch;
+            params = Some k.params_bytes;
+            threads = Some (Launch.max_threads l);
+          }
+        in
+        let entries = Names.add name e c.entries
+        and launches = launch :: c.launches in
+        c.entries <- entries;
+        c.launches <- launches;
+        e
+      with
+      | e -> Entry e
+      | exception x ->
+          free_launch launch;
+          Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ()))
 
 let entry c name =
   Mutex.protect c.lock @@ fun () ->
-  match Hashtbl.find_opt c.entries name with
+  match Names.find_opt name c.entries with
   | Some e -> Rig_edge.Entry e
   | None -> (
       match Cubin.kernel c.cubin name with
       | None -> Absent
-      | Some k ->
-          let answer = set_up c k in
-          (match answer with
-          | Entry e -> Hashtbl.replace c.entries name e
-          | Absent | No_memory _ -> ());
-          answer)
+      | Some k -> set_up c name k)
 
 (* An image holds of its device its code region, which rig frees, and its
-   functions' launches. *)
+   functions' launches. rig unloads an image once, so the unload allocates
+   nothing and polls nowhere: an exception cannot end it with launches
+   held. *)
 let unload (T _) c =
-  Mutex.protect c.lock @@ fun () ->
-  Hashtbl.iter (fun _ (e : Rig_edge.entry) -> free_launch e.launch) c.entries;
-  Hashtbl.reset c.entries
+  Mutex.lock c.lock;
+  let launches = c.launches in
+  c.entries <- Names.empty;
+  c.launches <- [];
+  free_launches launches;
+  Mutex.unlock c.lock
 
 (* Timeline *)
 
@@ -1155,7 +1208,7 @@ let halt d l =
     List.iter (give l.path.free) l.owned;
     Option.iter (give l.path.free) l.local_current;
     Option.iter (give l.path.free) l.local_pending;
-    List.iter (fun (m, _) -> give l.path.free m) l.local_retired
+    List.iter (fun (r : _ retired) -> give l.path.free r.mem) l.local_retired
   end
     (* The RM stopped both channels on a fault: nothing runs, though their
        objects stay. Otherwise their own releases bring the word up as their
