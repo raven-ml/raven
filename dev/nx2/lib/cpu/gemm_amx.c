@@ -78,6 +78,17 @@
      float64 160³    2.93 MB   0.85 */
 #define START ((704 - 128) * 1024)
 
+/* What a product on the unit adds to its flops' time on one thread
+   (cpu.h): its state made and drained, a packed, its edges, set between
+   the sizes where a core and the unit take turns. On the M1 Max float32
+   products up to 22³ took less time on a core (22³: 0.49 µs against
+   0.72), from 24³ on the unit (0.48 against 0.51): CALL32 lies between
+   the 20.4 and 24.2 KiB that split them. float64 14³ took 0.37 µs on a
+   core against 0.59 on the unit, 16³ 0.39 on the unit against 0.41 on a
+   core: CALL64 between 7.6 and 13.5 KiB. */
+#define CALL32 (22 * 1024)
+#define CALL64 (11 * 1024)
+
 #define INLINE static inline __attribute__((always_inline))
 
 /* The elements of a register. */
@@ -427,7 +438,8 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
       .other = &nx_cpu_base.gemm[NX_FLOAT32],
       .enter = enter,
       .leave = leave,
-      .start = START};
+      .start = START,
+      .call = CALL32};
   /* float64 takes float32's blocks: KC 1024 beat 256 and 512 from 1024³
      to 4096³. */
   t->gemm[NX_FLOAT64] = (nx_cpu_gemm){
@@ -446,7 +458,8 @@ void nx_cpu_set_amx(nx_cpu_target *t) {
       .other = &nx_cpu_base.gemm[NX_FLOAT64],
       .enter = enter,
       .leave = leave,
-      .start = START};
+      .start = START,
+      .call = CALL64};
 }
 
 #else

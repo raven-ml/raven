@@ -61,8 +61,9 @@
    where it lies, as BLIS's small products read it (bli_gemmsup), in chain
    order's blocks of rows, which give the threads units where b's few
    slivers would not. Where a table names other kernels, a product runs on
-   those that take less time for its rows (fastest): on the M1, the cores'
-   vector units take products of few rows from its matrix unit.
+   those that take less time for its rows, or on one thread where it runs
+   alone (fastest): on the M1, the cores' vector units take products of
+   few rows, and small ones, from its matrix unit.
 
    R, the sum in acc, is dst itself: nx.cpu computes a dst of acc's dtype.
    Each tile starts as init, or +0, when its first KC block is computed. */
@@ -161,6 +162,8 @@ typedef struct {
   int a_in, b_in;    /* chain order reads a, b in place */
   int keeps_a;       /* fewer columns than rows, a read in place, not
                         transposed (nx_cpu_contract_on) */
+  int alone;         /* runs on the calling thread, in one state of
+                        g's hardware (runs_alone) */
   atomic_int failed; /* an allocation failed */
 } problem;
 
@@ -636,7 +639,9 @@ static void few_rows_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 /* A job of the table's kernels, each of its bodies run between the table's
    enter and leave: on the M1, a body's calls share one live state of the
-   matrix unit, where a state per call drained the unit at each end. */
+   matrix unit, where a state per call drained the unit at each end. A
+   product that runs alone runs each job's body itself, in the state its
+   call holds (runs_alone). */
 typedef struct {
   const nx_cpu_gemm *g;
   rig_pool_body body;
@@ -652,6 +657,10 @@ static void bracketed(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static void job(const problem *p, int64_t total, int64_t bytes, int64_t cost,
                 rig_pool_body body, void *ctx) {
+  if (p->alone) {
+    if (total > 0) body(0, total, 0, ctx);
+    return;
+  }
   double per = thread_bytes(p->g);
   if (p->g->enter == NULL) {
     nx_cpu_job_at(total, bytes, cost, per, body, ctx);
@@ -666,18 +675,55 @@ static int64_t padded(nx_cpu_micro k, int64_t m) {
   return ceil_div(m, k.mr) * k.mr;
 }
 
-/* [g] or its other kernels, whichever computes [m] rows in less time: the
-   kernel few_rows or chain takes, its rows padded to its tile, at its
-   speed on every copy of its hardware. On the M1 Max 8 rows of float32
-   are 8 on the vector units of 8 cores at speed 1, against 32 on 2 matrix
-   units at 13: at most 8 rows run on the cores, more on the units. */
-static const nx_cpu_gemm *fastest(const nx_cpu_gemm *g, int64_t m) {
-  const nx_cpu_gemm *o = g->other;
-  if (o == NULL) return g;
-  nx_cpu_micro a = g->kernel, b = o->kernel;
-  double ta = padded(a, m) * b.flops_per_byte * engines(b);
-  double tb = padded(b, m) * a.flops_per_byte * engines(a);
-  return tb < ta ? o : g;
+/* [p]'s cost on [g]'s kernels in job.c's terms, its operands' [bytes]
+   set: its flops at the kernels' speed and its bytes. */
+static double alone_cost(const problem *p, const nx_cpu_gemm *g,
+                         double *bytes) {
+  double e = (double)p->ext[BATCH], m = (double)p->ext[ROW];
+  double n = (double)p->ext[COL], k = (double)p->ext[CON];
+  *bytes = e * (m * k + k * n + m * n) * p->w;
+  return flop_cost(g->kernel, 2 * e * m * n * k) + *bytes;
+}
+
+/* Whether [p] runs alone on [g]'s kernels: on the calling thread, where
+   its whole cost buys no second thread, as BLIS's small products take one
+   thread below their thresholds (bli_gemmsup). Its jobs then are calls,
+   which run in one state of g's hardware, made once: on the M1 Max a 64³
+   float32 product took 0.94 µs as two jobs, each in its own state of the
+   matrix unit, 0.91 alone. */
+static int runs_alone(const problem *p, const nx_cpu_gemm *g) {
+  double bytes, cost = alone_cost(p, g, &bytes);
+  return nx_cpu_threads_at((int64_t)bytes, cost, thread_bytes(g)) <= 1;
+}
+
+/* Sets [p]'s kernels to the table's or their other ones, whichever
+   computes it in less time, and whether it runs alone, decided once. By
+   rows: the kernel few_rows or chain takes, its rows padded to its tile,
+   at its speed on every copy of its hardware. On the M1 Max 8 rows of
+   float32 are 8 on the vector units of 8 cores at speed 1, against 32 on
+   2 matrix units at 13: at most 8 rows run on the cores, more on the
+   units. A product that runs alone on those then takes the ones that
+   compute it in less time on one thread, with what a call on them adds
+   (nx_cpu_gemm's call), and runs alone on them: on the M1 Max float32
+   products up to 22³ and float64 ones up to 14³ run on a core, and 8 ×
+   64 × 64 float32 runs on the unit, in 0.50 µs against 1.25 on the
+   cores. */
+static void fastest(problem *p) {
+  const nx_cpu_gemm *g = p->g, *o = g->other;
+  int64_t m = p->ext[ROW];
+  if (o != NULL) {
+    double ta = padded(g->kernel, m) * o->kernel.flops_per_byte *
+                engines(o->kernel);
+    double tb = padded(o->kernel, m) * g->kernel.flops_per_byte *
+                engines(g->kernel);
+    if (tb < ta) p->g = o;
+  }
+  p->alone = runs_alone(p, p->g);
+  if (o == NULL || !p->alone) return;
+  double f = 2.0 * p->ext[BATCH] * p->ext[COL] * p->ext[CON];
+  double ta = flop_cost(g->kernel, f * padded(g->kernel, m)) + g->call;
+  double tb = flop_cost(o->kernel, f * padded(o->kernel, m)) + o->call;
+  p->g = tb < ta ? o : g;
 }
 
 /* [p] as the product of b's transpose by a's, which has the same outputs
@@ -1319,6 +1365,23 @@ static int init_is_dst(const problem *p) {
   return 1;
 }
 
+/* Chain order's products: streamed past all of a, or in chain's blocks. */
+static void products(problem *p) {
+  if (streams(p) && !p->keeps_a) few_rows(p);
+  else chain(p);
+}
+
+/* A product that runs alone, its one unit: in one state of its kernels'
+   hardware, as a job of one thread, so that one that costs a held job's
+   most releases the runtime as such a job does (nx_cpu_one_thread). */
+static void alone(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)lo, (void)hi, (void)worker;
+  problem *p = ctx;
+  if (p->g->enter) p->g->enter();
+  products(p);
+  if (p->g->leave) p->g->leave();
+}
+
 /* [p]'s operands and extents: [v]'s of [op]. */
 static void lay_out(problem *p, const nx_contract_view *v,
                     const nx_array *const *op) {
@@ -1353,11 +1416,12 @@ static int contract_with(const nx_cpu_gemm *g, int acc, int order,
       transpose(&p);
       if (!streams(&p)) transpose(&p);
     }
-    p.g = fastest(p.g, p.ext[ROW]);
+    fastest(&p);
     p.a_in = in_place(&p, A);
     p.b_in = in_place(&p, B);
-    if (streams(&p) && !p.keeps_a) few_rows(&p);
-    else chain(&p);
+    double bytes;
+    if (p.alone) nx_cpu_one_thread(1, alone_cost(&p, p.g, &bytes), alone, &p);
+    else products(&p);
   }
   return !atomic_load(&p.failed);
 }

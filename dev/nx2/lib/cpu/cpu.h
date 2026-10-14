@@ -153,6 +153,9 @@ typedef struct nx_cpu_gemm {
   double start; /* the cost, in bytes of memcpy, that each thread of a job
                    on these kernels adds to its start (nx_cpu_job_at); 0
                    where it adds none */
+  double call;  /* the cost, in bytes of memcpy, that a product on these
+                   kernels on one thread adds to its flops' (gemm.c's
+                   fastest); 0 where it adds none */
 } nx_cpu_gemm;
 
 /* A row of a kind of one operand: n elements of [d] from [x], each stepping
