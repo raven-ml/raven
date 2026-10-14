@@ -17,8 +17,11 @@
 #define REAL_PLAN CAT(real_plan, SFX)
 
 /* L complex numbers, one a lane: the elements every pass computes on, L
-   lines side by side. */
-typedef T VEC __attribute__((vector_size(L * sizeof(T))));
+   lines side by side. A VEC is aligned as the base targets' 16-byte
+   vectors, which hold it in two or more: at its own 32 bytes, gcc notes on
+   x86-64 that passing it by value changed ABI in gcc 4.6, an ABI only AVX
+   uses and no call here crosses. */
+typedef T VEC __attribute__((vector_size(L * sizeof(T)), aligned(16)));
 typedef struct {
   VEC re, im;
 } CV;
