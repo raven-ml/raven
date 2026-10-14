@@ -230,10 +230,19 @@ static int holds(int acc, int d) {
   }
 }
 
+/* The dtype a sum in [acc] is computed in: int8 and uint8 for int4 and
+   uint4, whose sums modulo 2^8 are theirs modulo 2^4 once narrowed, as
+   the int8 kernels' are; [acc] itself otherwise. */
+static int summed_in(int acc) {
+  if (acc == NX_INT4) return NX_INT8;
+  return acc == NX_UINT4 ? NX_UINT8 : acc;
+}
+
 /* Whether nx.cpu computes a contraction in [acc] of the [n] operands of
    dtypes [dts], into a dst of any dtype. */
 static int computes(int acc, const int *dts, int n) {
-  if (nx_cpu_table->gemm[part_of(acc)].kernel.f == NULL) return 0;
+  if (nx_cpu_table->gemm[part_of(summed_in(acc))].kernel.f == NULL)
+    return 0;
   for (int i = 0; i < n; i++)
     if (!holds(acc, dts[i])) return 0;
   return 1;
@@ -2331,7 +2340,9 @@ static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
    A dst of another dtype than acc takes the sum in acc rounded once, as a
    cast of it would round it: R is scratch in acc, laid out C-contiguous
    over the batch's, rows' and columns' runs, and a cast walk takes it
-   into dst once every product is in. */
+   into dst once every product is in. A 4-bit acc sums in 8 bits
+   (summed_in): R is then narrowed to acc, by a cast into dst where dst
+   is of acc, else into scratch of acc cast into dst in turn. */
 
 /* [r]'s view as runs: one a group. */
 static void runs_of_view(nx_contract_runs *r, const nx_contract_view *v) {
@@ -2343,10 +2354,11 @@ static void runs_of_view(nx_contract_runs *r, const nx_contract_view *v) {
   for (int o = A; o <= DST; o++) r->offset[o] = v->offset[o];
 }
 
-/* The contraction of [r]'s groups over [op] in [acc] into op[DST] of
-   another dtype, through scratch R: 0 if an allocation failed. */
-static int rounded_on(int acc, int order, int da, int db, nx_contract_runs *r,
-                      const nx_array *const *op) {
+/* The contraction of [r]'s groups over [op] in [acc], summed in [sum],
+   into op[DST] of another dtype than [sum], through scratch R: 0 if an
+   allocation failed. */
+static int rounded_on(int acc, int sum, int order, int da, int db,
+                      nx_contract_runs *r, const nx_array *const *op) {
   /* The loop the cast walks, dst its operand 0 and R its 1, over the runs
      of more than one element; R's steps C-contiguous over them. */
   nx_loop l = {.first = {r->offset[DST], 0}};
@@ -2369,18 +2381,36 @@ static int rounded_on(int acc, int order, int da, int db, nx_contract_runs *r,
   }
   r->offset[DST] = 0;
   nx_array y = *op[DST];
-  y.dtype = acc;
-  y.bits = nx_dtype_row_of(acc).bits;
+  y.dtype = sum;
+  y.bits = nx_dtype_row_of(sum).bits;
   y.offset = 0;
   y.alias = 0;
-  y.base = nx_cpu_take(n * nx_cpu_width(acc));
+  y.base = nx_cpu_take(n * nx_cpu_width(sum));
   if (y.base == NULL) return 0;
   const nx_array *ops[4] = {op[A], op[B], op[INIT], &y};
-  int done = runs_on(acc, order, da, db, r, ops);
+  int done = runs_on(sum, order, da, db, r, ops);
+  int narrows = acc != sum && op[DST]->dtype != acc;
+  nx_array t = y;
+  t.base = NULL;
+  if (done && narrows) {
+    /* R narrowed to acc in scratch of its own, laid out as R. */
+    t.dtype = acc;
+    t.bits = nx_dtype_row_of(acc).bits;
+    t.base = nx_cpu_take((n * t.bits + 7) / 8);
+    done = t.base != NULL;
+    if (done) {
+      nx_loop lt = l;
+      for (int d = 0; d < rank; d++) lt.step[0][d] = l.step[1][d];
+      lt.first[0] = 0;
+      lt.rank = nx_coalesce_dims(2, rank, lt.extent, lt.step);
+      nx_cpu_cast_loop(&t, &y, &lt);
+    }
+  }
   if (done) {
     l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-    nx_cpu_cast_loop(op[DST], &y, &l);
+    nx_cpu_cast_loop(op[DST], narrows ? &t : &y, &l);
   }
+  if (t.base) nx_cpu_give(t.base);
   nx_cpu_give(y.base);
   return done;
 }
@@ -2417,9 +2447,10 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
      modulo acc's width in any order, so chain order computes it whatever
      the order asked. */
   int order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder), done;
-  if (out != acc) {
+  int sum = summed_in(acc);
+  if (out != acc || sum != acc) {
     if (!runs) runs_of_view(&r, &v);
-    done = rounded_on(acc, order, dts[0], dts[1], &r, op);
+    done = rounded_on(acc, sum, order, dts[0], dts[1], &r, op);
   } else if (runs) done = runs_on(acc, order, dts[0], dts[1], &r, op);
   else done = contract_view(acc, order, dts[0], dts[1], &v, op);
   nx_done(n, a);

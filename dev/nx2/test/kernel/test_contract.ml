@@ -557,7 +557,11 @@ let rec held = function
 let accs = D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
 
 let integer_accs =
-  D.[ Any Int8; Any Uint8; Any Int16; Any Uint16; Any Int32; Any Uint32; Any Int64; Any Uint64 ]
+  D.
+    [
+      Any Int4; Any Uint4; Any Int8; Any Uint8; Any Int16; Any Uint16;
+      Any Int32; Any Uint32; Any Int64; Any Uint64;
+    ]
 
 (* The operands an integer accumulator takes, as nx_cpu.mli lists them:
    every integer, and the booleans. *)
@@ -796,8 +800,7 @@ let contract (module K : Nx_kernel.S) c ~dst:(A.Any d) (A.Any a) (A.Any b)
    dtypes, init's being the result's, into any result, at any layout. *)
 let cpu_computes c =
   let acc = c.acc in
-  let (D.Any dt) = acc in
-  let integer = is_integer acc && D.bits dt >= 8 in
+  let integer = is_integer acc in
   let takes = if integer then integers else held acc in
   (List.mem acc accs || integer)
   && Array.for_all
@@ -1201,6 +1204,9 @@ let law_order b c =
 let law_rounds_once b c =
   cover "a narrow float result" (List.mem c.out narrow);
   cover "an integer acc" (is_integer c.acc);
+  cover "a 4-bit acc"
+    (let (D.Any acc) = c.acc in
+     is_integer c.acc && D.bits acc = 4);
   cover "a complex acc" (is_complex c.acc);
   cover "init" (c.init <> None);
   cover "a group of several runs"
@@ -1361,6 +1367,7 @@ let integer_covers (c : case) =
   cover "an operand of another dtype" (wider c.a || wider c.b);
   let (D.Any acc) = c.acc in
   cover "a 64-bit accumulator" (D.bits acc = 64);
+  cover "a 4-bit accumulator" (D.bits acc = 4);
   cover "more than 128 rows and columns over 513 products or more"
     (m > 128 && n > 128 && k > 512)
 
@@ -1467,7 +1474,7 @@ let law_wraps ~covers b (c : case) =
   match run b c with
   | None when cpu_computes c ->
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
-  | None -> cover "a layout the view does not group" true
+  | None -> cover "declined" true
   | Some y ->
       let _, oa, ob, walk = index c in
       let a = ints c.a and bv = ints c.b and init = Option.map ints c.init in

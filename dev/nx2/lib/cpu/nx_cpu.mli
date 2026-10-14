@@ -22,7 +22,7 @@
     [Shape_mismatch].
 
     [contract] computes contractions in [float32], [float64], [complex64],
-    [complex128] or an integer of 8 to 64 bits whose [a], [b] and [init]
+    [complex128] or an integer of 4 to 64 bits whose [a], [b] and [init]
     each convert exactly into a float or complex [acc] or are integers or
     booleans for an integer one, into a [dst] of any dtype, at any layout;
     it answers [Declined] for the others. A [dst] of another dtype than
