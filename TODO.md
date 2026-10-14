@@ -26,36 +26,14 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## needs a decision
 
-- compress: keep otherlibs/compress or move its codecs to their consumers.
-  Deflate has four (nx.io, hugin's PDF, talon's Parquet, ymir.fits); snappy,
-  lz4 and zstd only talon's Parquet. `Nx_io.gunzip` serves only kaun's
-  dataset downloader: move it there or keep it
-- private modules: does every private module get a developer .mli? jera,
-  norn and ymir dropped theirs for one public .mli. Write the rule in
-  doc/dev/documentation.md, then bring lib/ to it (143 modules without one)
-- rune allocation: kaun's TrainStep/train-step allocates 27,332 words
-  (22,460 before the redesign), ~2,300 of them two traced values and a
-  recorded op per op. Re-record on the Mac and fudge, then accept or cut
-- rig: cross-machine GPU copies over RDMA. nx.rdma had them; rig has the
-  NIC drivers (rig.mlx5, rig.bnxt) and no copy through them
 - rig.amd.pci: GC 9.5.0 gets a quiesced reset before reuse (never run, no
   MI350); tinygrad keeps an override instead
-- tolk: an AMD assembly renderer and assembler (gfx12 first, tables from
-  AMD's ISA XML, licence unchecked) against HIP through comgr: its priority
-- talon.xlsx: whether talon reads Excel files
 - talon plan problems print escaped inside `Invalid_argument`: accept it,
   have quill print them raw, or give them an exception with a printer
 - munin.sys samples every 2 s (~16k events an hour; the guides said 15 s)
 - ymir.units spelling: `Vocabulary.spell` puts the power of ten on the
   first word, so km/s/Mpc prints `mm pc-1 s-1`; state the rule in
   ymir_units.mli
-- licences: land or drop branch third-party-notices (one
-  LICENSE-THIRD-PARTY.md; main ships per-package LICENSE-* files)
-- upstream: 7 tinygrad bug reports in _plans/raven-1.0/upstream/ and the
-  split_reduceop one-hot guard; the dune issue and patch in
-  _plans/dune-baked-paths/ (then drop `-set-runtime-default` from the three
-  dune-workspace files). Send or drop
-- branch `book` (9 wip commits, March 2026; quill's TUI is on main): delete
 
 ## rig
 
@@ -153,6 +131,9 @@ raven / llama.cpp (Vulkan; ROCm):
   device's refusal; state `equal`, run ownership and `create`'s alignment
 - rig.gpus: one card appears through two paths, and `openers` drops each
   path's refusal reason; `Rig_pci.Gpus` also holds NICs
+- GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: the
+  GPU drivers give a buffer's bus ranges for a NIC to register, and a copy
+  between two machines' GPUs runs through rig.mlx5 or rig.bnxt, not TCP
 
 ### tests and runs
 
@@ -218,6 +199,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - 23 D-numbers cited from tolk and rune code (ops.ml:2607, shape.ml:2016,
   test names, rune test_jit.ml:1973): state the fact. Keep, fold or delete
   rune/DIVERGENCES.md and tolk/test/REGRESSIONS.md
+- AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
+  assembly renderer and assembler, gfx12 first, the default once its gate
+  passes; HIP stays as a choice. First read the terms of AMD's ISA XML
 - divergences: for each entry of tolk's and rune's DIVERGENCES.md, look in
   references (tinygrad HEAD, papers, other compilers) for a better
   solution; keep it with its reason or replace it
@@ -260,6 +244,9 @@ raven / llama.cpp (Vulkan; ROCm):
   n (35 s at n=32); as a loop it ran 1.5x slower at n=11
 - the `compile` bench suite takes ~2.4 min quiet on the Mac
   (`log_betainc-grad-b` 13 s, `betainc` 6 s, `sinkhorn-64` 3.8 s)
+- kaun's TrainStep/train-step allocates 27,332 words (22,460 before the
+  redesign), ~2,300 of them two traced values and a recorded op per op:
+  re-record on the Mac and fudge, and cut the per-op records
 - eager rune links tolk (rune's library lists tolk and tolk.engine): the
   compile path behind its own module (_plans/tolk/linkall-design.md)
 - an `iterate` that emits rows; jera's `Ode.path` scans every `budget`
@@ -345,6 +332,12 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## repo
 
+- compress stays: decide its home, in nx or its own library, through a
+  design campaign that audits its references (formats' specs, zlib, zstd,
+  lz4, snappy) and holds it to rig's bar; `Nx_io.gunzip` moves with it
+- private modules: each gets an .mli per doc/dev/documentation.md, rig as
+  the reference (143 lib/ modules have none; jera, norn and ymir dropped
+  theirs)
 - licences: replace lena.png and the Gaia DR1 fixture; stop calling talon's
   bench TPC-H; rewrite talon's Schubfach (OpenJDK, GPL) and ymir's WCS pole
   (WCSLIB, LGPL) from their papers; one copyright line; a LICENSE in fehu,
