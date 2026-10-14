@@ -186,7 +186,12 @@ static void fill_block(const nx_cpu_block *b, void *ctx) {
         j->bits);
 }
 
-/* Reads the [n] operands [in] through the door and walks them with [f]. */
+/* Reads the [n] operands [in] through the door and walks them with [f]. A
+   kind whose loop is one run within a block, each operand in its compute
+   dtype and stepping by one element or none, runs the one row block
+   would run on the walk's one block, on the calling thread, without the
+   block: on the M1 Max an add of one float32 element spent 35 of its 93
+   ns between the loop and the row. */
 static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
                            op *j) {
   nx_array a[OPERANDS];
@@ -195,7 +200,26 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
   if (e) return Val_int(e);
   j->a = a;
   j->n = n;
-  if (!(e = nx_coalesce(n, a, &l))) nx_cpu_walk(n, a, &l, most(n, a), 1, f, j);
+  if ((e = nx_coalesce(n, a, &l))) {
+    nx_done(n, a);
+    return Val_int(e);
+  }
+  int64_t block_most = most(n, a);
+  int run = f == block && l.rank == 1 && l.extent[0] <= block_most;
+  for (int k = 0; k < n && run; k++) {
+    int64_t step = l.step[k][0];
+    run = a[k].dtype == j->as[k] && (step == 0 || step == 1);
+  }
+  if (!run) nx_cpu_walk(n, a, &l, block_most, 1, f, j);
+  else if (l.extent[0] > 0) {
+    uint8_t *p[OPERANDS];
+    int64_t s0[OPERANDS], s1[OPERANDS] = {0};
+    for (int k = 0; k < n; k++) {
+      p[k] = at(a, k, l.first[k]);
+      s0[k] = l.step[k][0];
+    }
+    each_row(j, l.extent[0], 1, p, s0, s1);
+  }
   nx_done(n, a);
   return Val_int(e);
 }

@@ -1798,7 +1798,25 @@ let laws (b : Support.backend) =
              covers c;
              law_bitcast b x));
       prop "kinds of two operands are nx_kinds.h's at each index" pairs
-        (run (law_apply2 b));
+        (run (fun (Pair (x, y) as p) ->
+             (* Operands whose loop is one run of steps of one or none, in
+                a dtype the kinds compute in, as nx.cpu takes in one row:
+                neither sub-byte nor a float narrower than float32. *)
+             let dt = A.dtype x and lx = A.layout x in
+             let c =
+               L.coalesce [| L.contiguous (L.shape lx); lx; A.layout y |]
+             in
+             let one_run =
+               L.rank c.(0) = 1
+               && Array.for_all (fun l -> abs (L.stride l 0) <= 1) c
+               && Array.for_all (fun l -> L.stride l 0 >= 0) c
+               && D.bits dt >= 8
+               && not (D.is D.Float dt && D.bits dt < 32)
+             in
+             cover "operands of one run in their own dtype" one_run;
+             cover "operands of one run, of one element"
+               (one_run && L.numel lx = 1);
+             law_apply2 b p));
       prop ~count:8 ~examples:[ large_bfloat16_pair ]
         "kinds of two operands over large views" large_pairs
         (run (law_apply2 ~kinds:P.[ Binary Add; Compare Less ] b));
