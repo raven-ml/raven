@@ -120,7 +120,7 @@ All notable changes to this project will be documented in this file.
 - Remove `Hugin.show`. There is no interactive window any more; view figures
   in Quill or save them to a file.
 
-### Vega
+### Vega (new)
 
 - **Breaking:** `Vega.global_dot` and `global_norm` are removed for
   `Nx.Ptree.dot` and `Nx.Ptree.norm`, which return scalar tensors; read one
@@ -211,6 +211,28 @@ All notable changes to this project will be documented in this file.
   under `jit` on any device and can sit between a jitted backward pass and a
   jitted optimizer step. `global_norm` remains the `float64` host read for
   reporting.
+
+- The structural optimizers (`sgd_step`, `adam_step`, `adamw_step`) pass
+  non-float leaves through unchanged instead of updating them, so a structure
+  carrying an `Nx.Rng.t` alongside its parameters survives a step. Adam is
+  where it showed: its direction runs each leaf through a square root and a
+  division.
+- Add `Loss_scale` for float16 training: static and dynamic loss scales
+  with `scale`/`unscale`/`grads_finite`/`adjust`; all state is scalar
+  tensors updated by `Nx.where` arithmetic, so it threads through
+  `Rune.jit`/`pmap` steps and adapts across compiled calls.
+- `sgd_step` with `momentum = 0.` (the default) no longer reads or updates
+  the velocity state; under `Rune.jit` this stops parameter-sized zero
+  velocities from being captured and transferred every step.
+- New package: gradient-based optimizers and learning-rate schedules. Built
+  on Nx with no autodiff dependency. Equivalent to Optax in JAX.
+- The primary surface is structural: `sgd_init`/`sgd_step`,
+  `adam_init`/`adam_step`, `adamw_init`/`adamw_step`, `global_norm`,
+  `clip_by_global_norm`, and `clip_by_value` step whole parameter
+  structures, any value with an `Nx.Ptree.t`, with optimizer state
+  shaped like the parameters themselves.
+- Schedules are plain functions of the step counter; loops evaluate one at
+  the counter and pass it as `~lr`.
 
 ### Rune
 
@@ -1092,6 +1114,222 @@ All notable changes to this project will be documented in this file.
   and their variants gave both leaves the summed gradient and, for `jvp`, one
   leaf's tangent; each leaf now gets its own. Tie weights by structure, not by
   aliasing.
+
+- `Rune.vmap` now maps `Nx.matmul` correctly when the other operand carries
+  leading batch dimensions of its own: the map's axis was aligned against the
+  operand's first batch dimension, which raised a shape mismatch or silently
+  paired the wrong matrices.
+- `grad` through `Nx.solve_triangular ~unit_diag:true` no longer assigns a
+  gradient to the diagonal, which the solve never reads; it disagreed with
+  both the function and `jvp` there.
+- `grad` and `jvp` through a batch of matrices are now correct for
+  `Nx.cholesky`, `Nx.qr`, and `Nx.solve_triangular`: the rules reversed every
+  axis and extracted, rather than built, their diagonal terms, so a stack of
+  matrices gave wrong gradients or a shape error.
+- `Rune.jit` compiles `Nx.qr`, `Nx.solve_triangular`, `Nx.cholesky`,
+  `Nx.solve`, and `Nx.inv`: the factorizations unroll at trace time into the
+  fixed number of steps their shapes imply (see `Tolk_frontend.Linalg`), and
+  `grad` through them compiles as well. A singular or non-positive-definite
+  input yields infinities or nans in the compiled program rather than an error.
+
+- `Rune.jit` compiles `Nx.qr` and `triangular_solve` — Householder QR and
+  forward substitution unrolled at trace time into the fixed number of steps
+  their shapes imply, so the whole factorization lowers to ordinary Tolk
+  compositions and compiles for every Tolk device. Compiled results match the
+  eager kernels, including the LAPACK reflector sign and the zero-tail
+  no-reflector convention. A linear solve inside jit is the same composition
+  written out by hand (`Nx.solve` itself still refuses to trace, because its
+  singularity check reads a traced value); a singular system yields infinities
+  rather than an error. Wide right-hand sides (nrhs ≥ 32, n > 64) solve
+  block-by-block — 32-row blocks, diagonal blocks inverted once, one GEMM per
+  block against the rows solved so far — instead of unrolling one thin matmul
+  per row, which cuts the compiled solve's O(n²·nrhs) concatenation copying to
+  O(n²·nrhs/32): replay at 256×256 drops ~80× (58 ms to 0.7 ms) and the
+  compiled solve now beats the eager C kernel 3-5× from 128×128 up. Compile
+  time grows linearly in the matrix dimension, and `grad` inside a jitted
+  function now also differentiates through `qr` and `cholesky`: the tape
+  pullbacks' `diag` use read host bytes and refused to trace, so the QR and
+  Cholesky pullbacks (and the triangular-solve JVP rule) form the diagonal
+  terms from the identity instead.
+
+- `Rune.jit` and `Rune.pmap` run on `Rune.device "NV"` — NVIDIA GPUs driven on
+  the kernel driver's hardware queues (Linux), with kernels compiled straight
+  to cubin. `"CUDA"` keeps selecting the userspace CUDA driver API backend.
+
+- `Rune.jit` and `Rune.pmap` run on `Rune.device "AMD"` (`"AMD:n"` for a
+  specific GPU), running compiled programs on AMD GPUs on Linux. Previously the device
+  factory rejected the name with `Invalid_argument: unknown device AMD:0`
+  even though the runtime had landed; an AMD device that cannot open now
+  reports `device AMD:0 unavailable` with the reason, like CUDA.
+
+- `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
+  step compiles once and runs per slice — instead of unrolling every step into
+  the trace, and `grad` through a jitted scan compiles a reversed loop over the
+  step's pullback. Compile time for a scanned recurrence (an RNN, a sampling
+  loop) no longer grows with its sequence length. A carry that changes shape
+  across steps, and a scan reached through `vmap` or `pmap`, unroll into the
+  trace as before.
+
+- `grad`, `vjp`, and `jvp` now differentiate `Nx.rfft` and `Nx.irfft` — both
+  are linear, so each rule is an exact transpose — and `vmap` batches all four
+  FFT transforms (`fft`, `ifft`, `rfft`, `irfft`), so spectral losses built on
+  real FFTs train end to end.
+- `jit`, `jit'` and `pmap` take `?beam_parallel`: the
+  number of domains compiling a beam-search round's candidates, scoping the
+  `BEAM_PARALLEL` setting to one compiled function. It only changes compile
+  time, never the compiled code.
+
+- `jit`, `jit'` and `pmap` take `?beam`: beam-search
+  autotuning of the compiled function's kernels, equivalent to compiling under
+  `BEAM=n` but scoped to that one function. The width is part of the
+  persistent compile-cache key, so tuned and untuned compilations of the same
+  trace do not collide.
+- A parameter structure may now hold leaves that are not parameters — an
+  `Nx.Rng.t` threaded through a compiled step, a step counter, a batch of
+  indices. `grad`, `value_and_grad` and `vjp` carry them instead of raising:
+  they are not tracked, and their slot in the gradient structure holds zeros.
+  One structure can therefore serve both `grad` and `jit`, where before a key
+  had to be captured in a closure and the parameters kept in a second structure
+  — the workaround the GPT-2 example spells out across four hand-written ptree
+  modules. The single-tensor `grad'`/`vjp'` still reject an integer argument,
+  having nowhere to carry one.
+
+- Gradient rules that combine with a constant (`asin`, `atan`, `tanh`, `sqrt`,
+  `pow`, `max`/`min`, `where`, `cholesky`, `cumprod`) no longer materialize a
+  full-size tensor of ones or zeros to do it.
+- Fix the gradient of `Nx.fft` and `Nx.ifft`: reverse mode pulled cotangents
+  back through the opposite transform, which reversed the frequency index. Each
+  transform is its own transpose and now pulls back through itself.
+- Fix the derivative of `abs` on complex tensors for cotangents that are not
+  real: the modulus is real-valued, so the rule now keeps only the real part of
+  the cotangent and pushes forward to a real tangent.
+- Fix the derivative of `abs` on complex tensors, in both forward and reverse
+  mode: it pulled back through `sign z` instead of its conjugate, which negated
+  the imaginary part's contribution. Gradients of a real-valued function that
+  passes through a complex magnitude were wrong; real dtypes are unaffected.
+- Reverse mode differentiates the sliding-window movement through `fold`
+  rather than a materialized scatter, so the backward pass is a single
+  overlap-add instead of allocating a `window`-fold copy of the cotangent.
+- `vmap` now batches `Nx.extract_patches` and `Nx.combine_patches` instead of
+  raising; both preserve leading dimensions, so the batch axis passes through.
+- `jacfwd'` and `jacrev'` support float32 and float64 inputs without an
+  implicit float64 specialization. Forward-mode Jacobians keep the output
+  dtype, reverse-mode Jacobians keep the input dtype, and both evaluate the
+  differentiated function only once.
+- `pmap` now decorrelates per-device randomness: under `Rune.pmap`,
+  `Nx.Rng.fold_in_axis key` folds each device's own index into the key, so a
+  replicated key yields an independent draw per device (device `i` draws
+  `Nx.Rng.fold_in key i`). Data-parallel dropout masks now differ across
+  devices instead of replicating. Previously every device drew the identical
+  values from a replicated key.
+- The `rune` bench suite now covers `jit`: a `Jit` group times compiled
+  execution of the MLP forward pass and the deep elementwise chain against
+  their eager equivalents, with compilation hoisted out of the measured region.
+- Random number generation lives in `Nx.Rng`: `rune` no longer declares a `Rng`
+  module or a `type key`. The unified splittable keys and samplers are reached
+  as `Nx.Rng.*`; rune's transforms only answer the generator's effects (jit
+  lowers threefry, `vmap` batches per-lane keys with `Nx.Rng.fold_in_axis`),
+  adding no RNG vocabulary of their own. Migration: rename `Rune.Rng.*` to
+  `Nx.Rng.*`.
+- `jit` now compiles random number generation: threefry lowers to the
+  compiler's primitive with bit-exact parity to eager execution. A key that
+  does not depend on the jitted function's inputs (`Nx.rand` and friends, or
+  a captured key) raises `Jit_error` at trace time instead of silently
+  replaying one frozen draw per call — thread an `Nx.Rng` key through the
+  inputs.
+- `jit` compilations now persist across processes: compiled kernels are
+  stored on disk (`$XDG_CACHE_HOME/tolk/rune_jit`) keyed on the traced
+  computation and compile environment, so a warm process skips scheduling,
+  lowering, and kernel compilation (gpt2 train first step ~17 s -> ~4.4 s,
+  results bit-identical). Set `JITCACHE=0` to disable; `pmap` compilations
+  are not persisted.
+- `pmap` now differentiates through `~keepdims:true` reductions
+  (`max`/`sum`/`mean`), unblocking softmax, layer norm, attention, and the
+  stock losses in data-parallel training.
+- Add `pmap`: compile a function to run in parallel across a device tuple.
+  `in_axes` shards or replicates each argument; the function
+  observes global shapes and reductions over a sharded axis become
+  cross-device allreduces automatically, so differentiating a mean loss
+  inside `pmap` yields data-parallel gradients. Outputs stay resident per
+  device and feed back into matching placements with no transfer.
+- Fix `jit` raising `Jit_error` ("not scheduled to a buffer") when a
+  function returned an input leaf of rank 2 or higher unchanged.
+- `jit` compiled programs now replay through device execution graphs (CUDA
+  graphs): consecutive kernels batch into single graph launches, honoring
+  `JIT` (>= 2 disables) and `JIT_BATCH_SIZE`. GPT-2 training drops ~116 to
+  ~110 ms/step and decode rises ~320 to ~380 tok/s on an H100.
+- **Breaking.** `jit` closure captures are now compile-time constants on
+  every device: they are bound once when the trace compiles and never
+  refreshed, and a jitted function that assigns to a capture (`assign`,
+  `blit`) raises `Jit_error` at trace time instead of writing state back.
+  Thread mutable state through the input structure instead; assigning to an
+  input leaf still writes back on every call. Mutating a captured tensor
+  between calls now has unspecified visibility (the CPU device may observe
+  it through zero-copy aliasing; other devices never do).
+- Tensors captured by a jitted closure are uploaded to the device once per
+  closure and shared by all compiled signatures, instead of once per
+  signature — halving resident weight memory for prefill+decode closures.
+- `jit` outputs on CUDA and Metal now stay resident on the device until
+  read: metadata reads never transfer, and an unread output fed back as an
+  input of a jit call on the same device seeds the compiled program directly
+  with its device buffer. Iterated jitted calls (training steps, decode
+  loops) no longer round-trip state through the host: GPT-2 decoding goes
+  from ~142 to ~320 tok/s at 100 tokens and training steps from ~380 to
+  ~117 ms on an H100, with bit-identical results. Device memory is reclaimed
+  when outputs are read or collected (budget via
+  `RUNE_JIT_RESIDENT_BUDGET`).
+- Add `Rune.jit_stats`/`Rune.reset_jit_stats` transfer counters, a
+  `RUNE_JIT_DEBUG=1` per-call transfer log, and `RUNE_JIT_FORCE_COPY=1` to
+  exercise the device copy path on the CPU device.
+- Inside `jit`, `Nx.full`/`Nx.zeros`/`Nx.ones` (and `*_like`) now trace as
+  broadcast scalar constants instead of captured host tensors re-uploaded on
+  every call, scalar constants fold into kernels as immediates, and replay
+  reuses its transfer staging buffers — a jitted GPT-2 124M train step on
+  CUDA drops from ~2.1 s to ~0.35 s.
+- `jit` uploads closure-captured tensors to non-CPU devices once per
+  compilation instead of on every call (captures the function assigns to are
+  still re-read each call, so in-place state carries across calls). Jitted
+  functions capturing large weights no longer pay a full re-upload per call.
+  CPU behavior is unchanged.
+- `jit` runs on `Rune.device "CUDA"`: jitted programs compile through NVRTC and
+  run on NVIDIA GPUs.
+- `jit` takes a `?devices` argument selecting where kernels compile and run:
+  the CPU device (the default) or Metal on macOS.
+- On the CPU device, jitted programs now run on the tensors' own memory:
+  contiguous inputs and captured tensors are read in place and outputs are
+  computed directly into the returned tensors' storage, removing the byte
+  copies previously made on every call. Non-contiguous tensors and other
+  devices still go through copies.
+- Add just-in-time compilation: `jit` and `jit'` trace a function
+  once per input signature (leaf dtypes and shapes), compile the trace into
+  fused native kernels through the Tolk compiler, and replay the compiled
+  program on subsequent calls. Differentiating inside a jitted function
+  compiles the forward and backward passes together — a whole training step
+  (forward, backward, parameter update) compiles into one program; under an
+  enclosing transformation (`grad`, `vmap`, `with_debug`) the wrapped
+  function runs eagerly so results never change. Sliding-window operations
+  (`extract_patches`/`combine_patches`, and convolution built on them)
+  compile too. Reading a traced tensor's value or using an operation the
+  compiler cannot express (FFT, linear algebra, RNG, complex dtypes) raises
+  `Jit_error` at trace time instead of compiling a wrong program.
+- **Breaking.** Ground-up rewrite. Transformations now operate over typed
+  parameter structures: `grad`, `value_and_grad`, `vjp`, `jvp`, `vmap`,
+  `hvp`, and friends take the structure of their arguments
+  and return gradients with the same structure and leaf dtypes as the
+  parameters — mixed-dtype parameters differentiate in a single forward
+  and backward pass. Functions of a single tensor use the primed variants
+  (`grad'`, `value_and_grad'`, `vjp'`, `jvp'`, `vmap'`, `jacfwd'`,
+  `jacrev'`, `hessian'`, `hvp'`).
+- New transformation surface: reusable pullbacks (`vjp_fun`), gradient
+  checkpointing (`remat`), Hessian-vector products (`hvp`), custom
+  differentiation rules (`custom_vjp`, `custom_jvp`), directional gradient
+  checking (`check_grads`), staging-ready control flow (`scan`, `cond`,
+  `while_loop`), and operation logging (`with_debug`, replacing `debug`).
+- Removed: the list-based variants (`grads`, `value_and_grads`, `vjps`,
+  `jvps`, ...) — use a structure instead; the finite-difference
+  `check_gradient` API — use `check_grads`; and `jit`/`trace_graph` —
+  JIT compilation via Tolk will return as a transformation in a later
+  release.
 
 ### Jera (new)
 
@@ -3632,30 +3870,6 @@ thread.
 - Runtimes: CPU (via Clang) and Metal. Renderers additionally target CUDA,
   AMD/HIP, and OpenCL for GPU code generation.
 
-### Vega (new)
-
-- The structural optimizers (`sgd_step`, `adam_step`, `adamw_step`) pass
-  non-float leaves through unchanged instead of updating them, so a structure
-  carrying an `Nx.Rng.t` alongside its parameters survives a step. Adam is
-  where it showed: its direction runs each leaf through a square root and a
-  division.
-- Add `Loss_scale` for float16 training: static and dynamic loss scales
-  with `scale`/`unscale`/`grads_finite`/`adjust`; all state is scalar
-  tensors updated by `Nx.where` arithmetic, so it threads through
-  `Rune.jit`/`pmap` steps and adapts across compiled calls.
-- `sgd_step` with `momentum = 0.` (the default) no longer reads or updates
-  the velocity state; under `Rune.jit` this stops parameter-sized zero
-  velocities from being captured and transferred every step.
-- New package: gradient-based optimizers and learning-rate schedules. Built
-  on Nx with no autodiff dependency. Equivalent to Optax in JAX.
-- The primary surface is structural: `sgd_init`/`sgd_step`,
-  `adam_init`/`adam_step`, `adamw_init`/`adamw_step`, `global_norm`,
-  `clip_by_global_norm`, and `clip_by_value` step whole parameter
-  structures, any value with an `Nx.Ptree.t`, with optimizer state
-  shaped like the parameters themselves.
-- Schedules are plain functions of the step counter; loops evaluate one at
-  the counter and pass it as `~lr`.
-
 ### Compress (new)
 
 - Add the `compress` package: deflate with its zlib and gzip framings
@@ -6031,224 +6245,6 @@ thread.
   and shape C stubs. The `iterate_inner_dims` helpers did not account for the
   ndarray offset, producing wrong results when the data starts at a non-zero
   offset in the underlying buffer.
-
-### Rune
-
-- `Rune.vmap` now maps `Nx.matmul` correctly when the other operand carries
-  leading batch dimensions of its own: the map's axis was aligned against the
-  operand's first batch dimension, which raised a shape mismatch or silently
-  paired the wrong matrices.
-- `grad` through `Nx.solve_triangular ~unit_diag:true` no longer assigns a
-  gradient to the diagonal, which the solve never reads; it disagreed with
-  both the function and `jvp` there.
-- `grad` and `jvp` through a batch of matrices are now correct for
-  `Nx.cholesky`, `Nx.qr`, and `Nx.solve_triangular`: the rules reversed every
-  axis and extracted, rather than built, their diagonal terms, so a stack of
-  matrices gave wrong gradients or a shape error.
-- `Rune.jit` compiles `Nx.qr`, `Nx.solve_triangular`, `Nx.cholesky`,
-  `Nx.solve`, and `Nx.inv`: the factorizations unroll at trace time into the
-  fixed number of steps their shapes imply (see `Tolk_frontend.Linalg`), and
-  `grad` through them compiles as well. A singular or non-positive-definite
-  input yields infinities or nans in the compiled program rather than an error.
-
-- `Rune.jit` compiles `Nx.qr` and `triangular_solve` — Householder QR and
-  forward substitution unrolled at trace time into the fixed number of steps
-  their shapes imply, so the whole factorization lowers to ordinary Tolk
-  compositions and compiles for every Tolk device. Compiled results match the
-  eager kernels, including the LAPACK reflector sign and the zero-tail
-  no-reflector convention. A linear solve inside jit is the same composition
-  written out by hand (`Nx.solve` itself still refuses to trace, because its
-  singularity check reads a traced value); a singular system yields infinities
-  rather than an error. Wide right-hand sides (nrhs ≥ 32, n > 64) solve
-  block-by-block — 32-row blocks, diagonal blocks inverted once, one GEMM per
-  block against the rows solved so far — instead of unrolling one thin matmul
-  per row, which cuts the compiled solve's O(n²·nrhs) concatenation copying to
-  O(n²·nrhs/32): replay at 256×256 drops ~80× (58 ms to 0.7 ms) and the
-  compiled solve now beats the eager C kernel 3-5× from 128×128 up. Compile
-  time grows linearly in the matrix dimension, and `grad` inside a jitted
-  function now also differentiates through `qr` and `cholesky`: the tape
-  pullbacks' `diag` use read host bytes and refused to trace, so the QR and
-  Cholesky pullbacks (and the triangular-solve JVP rule) form the diagonal
-  terms from the identity instead.
-
-- `Rune.jit` and `Rune.pmap` run on `Rune.device "NV"` — NVIDIA GPUs driven on
-  the kernel driver's hardware queues (Linux), with kernels compiled straight
-  to cubin. `"CUDA"` keeps selecting the userspace CUDA driver API backend.
-
-- `Rune.jit` and `Rune.pmap` run on `Rune.device "AMD"` (`"AMD:n"` for a
-  specific GPU), running compiled programs on AMD GPUs on Linux. Previously the device
-  factory rejected the name with `Invalid_argument: unknown device AMD:0`
-  even though the runtime had landed; an AMD device that cannot open now
-  reports `device AMD:0 unavailable` with the reason, like CUDA.
-
-- `Rune.jit` compiles `Rune.scan` as a loop in the compiled program — the fold
-  step compiles once and runs per slice — instead of unrolling every step into
-  the trace, and `grad` through a jitted scan compiles a reversed loop over the
-  step's pullback. Compile time for a scanned recurrence (an RNN, a sampling
-  loop) no longer grows with its sequence length. A carry that changes shape
-  across steps, and a scan reached through `vmap` or `pmap`, unroll into the
-  trace as before.
-
-- `grad`, `vjp`, and `jvp` now differentiate `Nx.rfft` and `Nx.irfft` — both
-  are linear, so each rule is an exact transpose — and `vmap` batches all four
-  FFT transforms (`fft`, `ifft`, `rfft`, `irfft`), so spectral losses built on
-  real FFTs train end to end.
-- `jit`, `jit'` and `pmap` take `?beam_parallel`: the
-  number of domains compiling a beam-search round's candidates, scoping the
-  `BEAM_PARALLEL` setting to one compiled function. It only changes compile
-  time, never the compiled code.
-
-- `jit`, `jit'` and `pmap` take `?beam`: beam-search
-  autotuning of the compiled function's kernels, equivalent to compiling under
-  `BEAM=n` but scoped to that one function. The width is part of the
-  persistent compile-cache key, so tuned and untuned compilations of the same
-  trace do not collide.
-- A parameter structure may now hold leaves that are not parameters — an
-  `Nx.Rng.t` threaded through a compiled step, a step counter, a batch of
-  indices. `grad`, `value_and_grad` and `vjp` carry them instead of raising:
-  they are not tracked, and their slot in the gradient structure holds zeros.
-  One structure can therefore serve both `grad` and `jit`, where before a key
-  had to be captured in a closure and the parameters kept in a second structure
-  — the workaround the GPT-2 example spells out across four hand-written ptree
-  modules. The single-tensor `grad'`/`vjp'` still reject an integer argument,
-  having nowhere to carry one.
-
-- Gradient rules that combine with a constant (`asin`, `atan`, `tanh`, `sqrt`,
-  `pow`, `max`/`min`, `where`, `cholesky`, `cumprod`) no longer materialize a
-  full-size tensor of ones or zeros to do it.
-- Fix the gradient of `Nx.fft` and `Nx.ifft`: reverse mode pulled cotangents
-  back through the opposite transform, which reversed the frequency index. Each
-  transform is its own transpose and now pulls back through itself.
-- Fix the derivative of `abs` on complex tensors for cotangents that are not
-  real: the modulus is real-valued, so the rule now keeps only the real part of
-  the cotangent and pushes forward to a real tangent.
-- Fix the derivative of `abs` on complex tensors, in both forward and reverse
-  mode: it pulled back through `sign z` instead of its conjugate, which negated
-  the imaginary part's contribution. Gradients of a real-valued function that
-  passes through a complex magnitude were wrong; real dtypes are unaffected.
-- Reverse mode differentiates the sliding-window movement through `fold`
-  rather than a materialized scatter, so the backward pass is a single
-  overlap-add instead of allocating a `window`-fold copy of the cotangent.
-- `vmap` now batches `Nx.extract_patches` and `Nx.combine_patches` instead of
-  raising; both preserve leading dimensions, so the batch axis passes through.
-- `jacfwd'` and `jacrev'` support float32 and float64 inputs without an
-  implicit float64 specialization. Forward-mode Jacobians keep the output
-  dtype, reverse-mode Jacobians keep the input dtype, and both evaluate the
-  differentiated function only once.
-- `pmap` now decorrelates per-device randomness: under `Rune.pmap`,
-  `Nx.Rng.fold_in_axis key` folds each device's own index into the key, so a
-  replicated key yields an independent draw per device (device `i` draws
-  `Nx.Rng.fold_in key i`). Data-parallel dropout masks now differ across
-  devices instead of replicating. Previously every device drew the identical
-  values from a replicated key.
-- The `rune` bench suite now covers `jit`: a `Jit` group times compiled
-  execution of the MLP forward pass and the deep elementwise chain against
-  their eager equivalents, with compilation hoisted out of the measured region.
-- Random number generation lives in `Nx.Rng`: `rune` no longer declares a `Rng`
-  module or a `type key`. The unified splittable keys and samplers are reached
-  as `Nx.Rng.*`; rune's transforms only answer the generator's effects (jit
-  lowers threefry, `vmap` batches per-lane keys with `Nx.Rng.fold_in_axis`),
-  adding no RNG vocabulary of their own. Migration: rename `Rune.Rng.*` to
-  `Nx.Rng.*`.
-- `jit` now compiles random number generation: threefry lowers to the
-  compiler's primitive with bit-exact parity to eager execution. A key that
-  does not depend on the jitted function's inputs (`Nx.rand` and friends, or
-  a captured key) raises `Jit_error` at trace time instead of silently
-  replaying one frozen draw per call — thread an `Nx.Rng` key through the
-  inputs.
-- `jit` compilations now persist across processes: compiled kernels are
-  stored on disk (`$XDG_CACHE_HOME/tolk/rune_jit`) keyed on the traced
-  computation and compile environment, so a warm process skips scheduling,
-  lowering, and kernel compilation (gpt2 train first step ~17 s -> ~4.4 s,
-  results bit-identical). Set `JITCACHE=0` to disable; `pmap` compilations
-  are not persisted.
-- `pmap` now differentiates through `~keepdims:true` reductions
-  (`max`/`sum`/`mean`), unblocking softmax, layer norm, attention, and the
-  stock losses in data-parallel training.
-- Add `pmap`: compile a function to run in parallel across a device tuple.
-  `in_axes` shards or replicates each argument; the function
-  observes global shapes and reductions over a sharded axis become
-  cross-device allreduces automatically, so differentiating a mean loss
-  inside `pmap` yields data-parallel gradients. Outputs stay resident per
-  device and feed back into matching placements with no transfer.
-- Fix `jit` raising `Jit_error` ("not scheduled to a buffer") when a
-  function returned an input leaf of rank 2 or higher unchanged.
-- `jit` compiled programs now replay through device execution graphs (CUDA
-  graphs): consecutive kernels batch into single graph launches, honoring
-  `JIT` (>= 2 disables) and `JIT_BATCH_SIZE`. GPT-2 training drops ~116 to
-  ~110 ms/step and decode rises ~320 to ~380 tok/s on an H100.
-- **Breaking.** `jit` closure captures are now compile-time constants on
-  every device: they are bound once when the trace compiles and never
-  refreshed, and a jitted function that assigns to a capture (`assign`,
-  `blit`) raises `Jit_error` at trace time instead of writing state back.
-  Thread mutable state through the input structure instead; assigning to an
-  input leaf still writes back on every call. Mutating a captured tensor
-  between calls now has unspecified visibility (the CPU device may observe
-  it through zero-copy aliasing; other devices never do).
-- Tensors captured by a jitted closure are uploaded to the device once per
-  closure and shared by all compiled signatures, instead of once per
-  signature — halving resident weight memory for prefill+decode closures.
-- `jit` outputs on CUDA and Metal now stay resident on the device until
-  read: metadata reads never transfer, and an unread output fed back as an
-  input of a jit call on the same device seeds the compiled program directly
-  with its device buffer. Iterated jitted calls (training steps, decode
-  loops) no longer round-trip state through the host: GPT-2 decoding goes
-  from ~142 to ~320 tok/s at 100 tokens and training steps from ~380 to
-  ~117 ms on an H100, with bit-identical results. Device memory is reclaimed
-  when outputs are read or collected (budget via
-  `RUNE_JIT_RESIDENT_BUDGET`).
-- Add `Rune.jit_stats`/`Rune.reset_jit_stats` transfer counters, a
-  `RUNE_JIT_DEBUG=1` per-call transfer log, and `RUNE_JIT_FORCE_COPY=1` to
-  exercise the device copy path on the CPU device.
-- Inside `jit`, `Nx.full`/`Nx.zeros`/`Nx.ones` (and `*_like`) now trace as
-  broadcast scalar constants instead of captured host tensors re-uploaded on
-  every call, scalar constants fold into kernels as immediates, and replay
-  reuses its transfer staging buffers — a jitted GPT-2 124M train step on
-  CUDA drops from ~2.1 s to ~0.35 s.
-- `jit` uploads closure-captured tensors to non-CPU devices once per
-  compilation instead of on every call (captures the function assigns to are
-  still re-read each call, so in-place state carries across calls). Jitted
-  functions capturing large weights no longer pay a full re-upload per call.
-  CPU behavior is unchanged.
-- `jit` runs on `Rune.device "CUDA"`: jitted programs compile through NVRTC and
-  run on NVIDIA GPUs.
-- `jit` takes a `?devices` argument selecting where kernels compile and run:
-  the CPU device (the default) or Metal on macOS.
-- On the CPU device, jitted programs now run on the tensors' own memory:
-  contiguous inputs and captured tensors are read in place and outputs are
-  computed directly into the returned tensors' storage, removing the byte
-  copies previously made on every call. Non-contiguous tensors and other
-  devices still go through copies.
-- Add just-in-time compilation: `jit` and `jit'` trace a function
-  once per input signature (leaf dtypes and shapes), compile the trace into
-  fused native kernels through the Tolk compiler, and replay the compiled
-  program on subsequent calls. Differentiating inside a jitted function
-  compiles the forward and backward passes together — a whole training step
-  (forward, backward, parameter update) compiles into one program; under an
-  enclosing transformation (`grad`, `vmap`, `with_debug`) the wrapped
-  function runs eagerly so results never change. Sliding-window operations
-  (`extract_patches`/`combine_patches`, and convolution built on them)
-  compile too. Reading a traced tensor's value or using an operation the
-  compiler cannot express (FFT, linear algebra, RNG, complex dtypes) raises
-  `Jit_error` at trace time instead of compiling a wrong program.
-- **Breaking.** Ground-up rewrite. Transformations now operate over typed
-  parameter structures: `grad`, `value_and_grad`, `vjp`, `jvp`, `vmap`,
-  `hvp`, and friends take the structure of their arguments
-  and return gradients with the same structure and leaf dtypes as the
-  parameters — mixed-dtype parameters differentiate in a single forward
-  and backward pass. Functions of a single tensor use the primed variants
-  (`grad'`, `value_and_grad'`, `vjp'`, `jvp'`, `vmap'`, `jacfwd'`,
-  `jacrev'`, `hessian'`, `hvp'`).
-- New transformation surface: reusable pullbacks (`vjp_fun`), gradient
-  checkpointing (`remat`), Hessian-vector products (`hvp`), custom
-  differentiation rules (`custom_vjp`, `custom_jvp`), directional gradient
-  checking (`check_grads`), staging-ready control flow (`scan`, `cond`,
-  `while_loop`), and operation logging (`with_debug`, replacing `debug`).
-- Removed: the list-based variants (`grads`, `value_and_grads`, `vjps`,
-  `jvps`, ...) — use a structure instead; the finite-difference
-  `check_gradient` API — use `check_grads`; and `jit`/`trace_graph` —
-  JIT compilation via Tolk will return as a transformation in a later
-  release.
 
 ### Kaun
 
