@@ -1656,7 +1656,10 @@ static const uint32_t *words_at(const problem *p, int o, int64_t e,
    registers for each row of a, AXPY_STEP rows of b at a time; from MR,
    AXPY_ZIPS bytes of b's rows are zipped into words once, by
    interleave(), and the quads kernel runs all rows over them, as chain
-   order would without padding a's rows.
+   order would without padding a's rows. A unit's rows lie a row of b
+   apart, a stride no x86 hardware prefetcher follows (the L1's follow at
+   most 2 KiB, the L2's stay within a 4 KiB page; Intel's optimization
+   manual), so each axpy is passed the next step's rows to prefetch.
 
    On the M1 Max, int8 rows by a 4096 × 4096 weight stored [k × n] take,
    against chain order (from the system cache unless said): 1 row 142-149
@@ -1769,9 +1772,13 @@ static void quad_unit(const quad_axpys_job *j, int64_t e, int64_t j0,
   if (m < km.mr) {
     for (int64_t q = 0; q < j->k; q += AXPY_STEP) {
       const uint8_t *b = p->op[B].x->base + pos(p, B, e, 0, j0, q);
+      /* The next step's rows, or b's last AXPY_STEP, or all of b. */
+      int64_t ahead = min64(q + AXPY_STEP, j->k - AXPY_STEP);
+      if (ahead < 0) ahead = 0;
+      const uint8_t *next = b + (ahead - q) * ldb;
       for (int64_t i = 0; i < m; i++) {
         const uint8_t *a = (const uint8_t *)words_at(p, A, e, i, 0) + q;
-        j->axpy(a, b, ldb, min64(AXPY_STEP, j->k - q), c, s + i * c);
+        j->axpy(a, b, ldb, min64(AXPY_STEP, j->k - q), c, s + i * c, next);
       }
     }
     return;

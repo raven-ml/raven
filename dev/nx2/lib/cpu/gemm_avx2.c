@@ -200,6 +200,79 @@ INTS(kernel_uq, uint32_t, 8, LOADB_U, BCAST_U, MADD, START_Q, FINISH_Q)
 QDOT(quads_dot_s8, WIDEN_S, 4, MADD)
 QDOT(quads_dot_u8, WIDEN_U, 4, MADD)
 
+/* Quads' axpys: b's rows read in place, two at a time interleaved by
+   VPUNPCKLBW and VPUNPCKHBW into pairs of elements along k per column,
+   widened to 16 bits, each column's pair against the broadcast pair of
+   a's elements by VPMADDWD, exact as in the quads kernel: 64 columns at a
+   time in 8 accumulators, then 16 in 2, then one at a time. Rows past k
+   repeat the last, which a's elements there, zeros, cancel. Each step of
+   64 columns prefetches the same 4 rows of [next] (gemm.c says why,
+   above AXPY_ROWS): on the i9-9900K one row by a 4096 × 4096 weight took
+   141 µs against 263 without, from memory 508 against 964. No reference
+   was ported. */
+#define CVT_S _mm256_cvtepi8_epi16
+#define CVT_U _mm256_cvtepu8_epi16
+/* 16 columns from [at] of rows [r0] and [r1] times a's pair [x]. */
+#define QPAIR(S, c0, c1, x, r0, r1, at)                         \
+  {                                                             \
+    __m128i v0 = _mm_loadu_si128((const __m128i *)((r0) + at)); \
+    __m128i v1 = _mm_loadu_si128((const __m128i *)((r1) + at)); \
+    c0 = MADD(x, CVT_##S(_mm_unpacklo_epi8(v0, v1)), c0);       \
+    c1 = MADD(x, CVT_##S(_mm_unpackhi_epi8(v0, v1)), c1);       \
+  }
+/* 16 columns from [at]: rows t and t + 1, then t + 2 and t + 3. */
+#define QZIP(S, c0, c1, at)         \
+  QPAIR(S, c0, c1, x01, r0, r1, at) \
+  QPAIR(S, c0, c1, x23, r2, r3, at)
+/* Rows t to t + 3 of b from column j, and a's pairs at t and t + 2. */
+#define QROWS(S)                                    \
+  const uint8_t *r0 = b + t * ldb + j;              \
+  const uint8_t *r1 = t + 1 < k ? r0 + ldb : r0;    \
+  const uint8_t *r2 = t + 2 < k ? r1 + ldb : r1;    \
+  const uint8_t *r3 = t + 3 < k ? r2 + ldb : r2;    \
+  __m256i x = BCAST_##S((const uint32_t *)(a + t)); \
+  __m256i x01 = _mm256_shuffle_epi32(x, 0x00);      \
+  __m256i x23 = _mm256_shuffle_epi32(x, 0x55);
+/* A row of [next] where [r] is a row of b. */
+#define QAHEAD(r) _mm_prefetch((const char *)((r) + ahead), _MM_HINT_T0)
+#define QAXPY(name, S, T)                                           \
+  static void name(const uint8_t *a, const uint8_t *b, int64_t ldb, \
+                   int64_t k, int64_t n, uint32_t *y,               \
+                   const uint8_t *next) {                           \
+    int64_t ahead = next - b;                                       \
+    int64_t j = 0;                                                  \
+    for (; j + 64 <= n; j += 64) {                                  \
+      __m256i c[8];                                                 \
+      for (int v = 0; v < 8; v++) c[v] = VLOAD(y + j + 8 * v);      \
+      for (int64_t t = 0; t < k; t += 4) {                          \
+        QROWS(S)                                                    \
+        QAHEAD(r0);                                                 \
+        QAHEAD(r1);                                                 \
+        QAHEAD(r2);                                                 \
+        QAHEAD(r3);                                                 \
+        QZIP(S, c[0], c[1], 0)                                      \
+        QZIP(S, c[2], c[3], 16)                                     \
+        QZIP(S, c[4], c[5], 32)                                     \
+        QZIP(S, c[6], c[7], 48)                                     \
+      }                                                             \
+      for (int v = 0; v < 8; v++) VSTORE(y + j + 8 * v, c[v]);      \
+    }                                                               \
+    for (; j + 16 <= n; j += 16) {                                  \
+      __m256i c0 = VLOAD(y + j), c1 = VLOAD(y + j + 8);             \
+      for (int64_t t = 0; t < k; t += 4) {                          \
+        QROWS(S)                                                    \
+        QZIP(S, c0, c1, 0)                                          \
+      }                                                             \
+      VSTORE(y + j, c0);                                            \
+      VSTORE(y + j + 8, c1);                                        \
+    }                                                               \
+    for (; j < n; j++)                                              \
+      for (int64_t t = 0; t < k; t++)                               \
+        y[j] += (uint32_t)((T)a[t] * (T)b[t * ldb + j]);            \
+  }
+QAXPY(quads_axpy_s8, S, int8_t)
+QAXPY(quads_axpy_u8, U, uint8_t)
+
 /* Lane order's dots and axpys: 16 lanes are 2 vectors of float32, 4 of
    float64; 4 rows of float32 or 2 of float64 hold 8 accumulators and b's
    vectors. */
@@ -286,6 +359,8 @@ void nx_cpu_set_avx2(nx_cpu_target *t) {
   t->quads[NX_UINT8] = integers(kernel_uq, 8, SPEEDQ);
   t->quads_dot[NX_INT8] = quads_dot_s8;
   t->quads_dot[NX_UINT8] = quads_dot_u8;
+  t->quads_axpy[NX_INT8] = quads_axpy_s8;
+  t->quads_axpy[NX_UINT8] = quads_axpy_u8;
 }
 
 #else

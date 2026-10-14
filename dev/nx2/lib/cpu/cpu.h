@@ -99,10 +99,11 @@ typedef void (*nx_cpu_quads_dot)(const uint32_t *a, int64_t lda,
 /* A quads axpy adds into y[j], for each of [n] columns j, the sum over
    the [k] elements t of a row of a, adjacent, of a[t] · b[t·ldb + j], b's
    rows adjacent along their columns: elements of quads[d]'s 8-bit dtype,
-   the sum in 32 bits (gemm.c, Quads). */
+   the sum in 32 bits (gemm.c, Quads). It may prefetch the [k] rows of [n]
+   elements at [next], [ldb] apart, the b of a later call. */
 typedef void (*nx_cpu_quads_axpy)(const uint8_t *a, const uint8_t *b,
                                   int64_t ldb, int64_t k, int64_t n,
-                                  uint32_t *y);
+                                  uint32_t *y, const uint8_t *next);
 
 /* A pack moves [n1] rows of [n0] elements of acc from [s], stepping [s0]
    along a row and [s1] across rows, one of them 1, into [d]: element i of

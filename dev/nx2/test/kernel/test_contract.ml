@@ -232,8 +232,10 @@ let axpy_rows = 128
 let axpy_sums = 32 * 1024
 
 (* The rows of the quads kernel's tile, MR, from which the axpys run it
-   over b's rows zipped. *)
-let quad_mr = 8
+   over b's rows zipped: 6 on x86, AVX2's and AVX-VNNI-INT8's alike, 8 on
+   NEON. *)
+let quad_mr_least = 6
+let quad_mr_most = 8
 
 (* Extents of the batch, row, column and contracted axes, in profiles: any
    ranks over a few elements; one output; 64 outputs or more with edge
@@ -1056,17 +1058,30 @@ let shifted (A.Any x as a) =
    alone and in a batch. Quads' axpys, b stored [k × n]: a batch over
    partial blocks of columns and of b's rows, and the same by the tile at
    its rows; the most rows over several groups of columns, past the most
-   sums a unit holds. *)
+   sums a unit holds; either side of x86's tile and by NEON's, every
+   element of a and b at the dtype's extreme and init at the
+   accumulator's largest value, so that two products pass 16 bits and
+   every sum wraps. *)
 let quad_examples =
   let plain r = { stepped = false; broadcast = false; perm = Array.init r Fun.id } in
   let by_rows r =
     { (plain r) with perm = Array.init r (fun i -> if i < r - 2 then i else (2 * r) - 3 - i) }
   in
   List.concat_map
-    (fun (acc, d) ->
+    (fun (acc, d, low, top) ->
       let case order e vb =
         let ra, _, ry = ranks e in
         make ~order ~acc ~out:acc e (d, plain ra) (d, vb) (Some (plain ry)) 3
+      in
+      (* [case] with a and b all [low], init all [top]. *)
+      let extreme order e vb =
+        let c = case order e vb in
+        let fill v (A.Any x as a) =
+          let s = shape_of a in
+          cast_into x (A.Any (A.of_array D.Int64 s (Array.make (total s) v)));
+          a
+        in
+        { c with a = fill low c.a; b = fill low c.b; init = Option.map (fill top) c.init }
       in
       (* [case] with b stored as viewed. *)
       let stored order e vb =
@@ -1088,10 +1103,14 @@ let quad_examples =
         stored Chain ([||], [| 40 |], [| 3 |], [| 20 |]) (by_rows 2);
         stored Lane ([| 2 |], [| 5 |], [| 2 |], [| 8 |]) (by_rows 3);
         case Lane ([| 2 |], [| 3 |], [| 70 |], [| 130 |]) (plain 3);
-        case Chain ([||], [| quad_mr |], [| 70 |], [| 130 |]) (plain 2);
+        case Chain ([||], [| quad_mr_most |], [| 70 |], [| 130 |]) (plain 2);
         case Chain ([||], [| axpy_rows |], [| 130 |], [| 20 |]) (plain 2);
+        extreme Chain ([||], [| quad_mr_least - 1 |], [| 100 |], [| 70 |]) (plain 2);
+        extreme Chain ([||], [| quad_mr_least |], [| 100 |], [| 70 |]) (plain 2);
+        extreme Chain ([||], [| quad_mr_most |], [| 100 |], [| 70 |]) (plain 2);
       ])
-    D.[ (Any Int32, Any Int8); (Any Uint32, Any Uint8) ]
+    D.[ (Any Int32, Any Int8, -128L, 0x7FFFFFFFL);
+        (Any Uint32, Any Uint8, 255L, 0xFFFFFFFFL) ]
 
 let quad_cases =
   Gen.with_pp pp_case
@@ -1183,8 +1202,8 @@ let quad_covers (c : case) =
   cover "quads' axpys over several groups of columns"
     (axpys && n > axpy_sums / 4 / m / 64 * 64);
   cover "quads' axpys over k not a multiple of 4" (axpys && k mod 4 <> 0);
-  cover "quads' axpys below the tile" (axpys && m < quad_mr);
-  cover "quads' axpys by the tile" (axpys && m >= quad_mr);
+  cover "quads' axpys below the tile" (axpys && m < quad_mr_least);
+  cover "quads' axpys by the tile" (axpys && m >= quad_mr_most);
   let dots = m > 0 && n > 0 && (in_place c.b snd || n = 1) in
   cover "few rows by quads' dots" (dots && m <= n && m <= quad_rows);
   cover "few columns by quads' dots" (dots && n < m && n <= quad_rows);

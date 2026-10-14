@@ -151,7 +151,7 @@ QDOT(quads_dot_u8, UDOT)
    the broadcast word of a's four by SDOT (UDOT for uint8): 64 columns at
    a time in 16 accumulators of 4 lanes, half the vector registers, then
    16 in 4, then one at a time. Rows past k repeat the last, which a's elements
-   there, zeros, cancel. */
+   there, zeros, cancel. They leave [next] to the hardware's prefetchers. */
 #define QZIP(DOT, c0, c1, c2, c3, x, r0, r1, r2, r3, at)          \
   {                                                               \
     uint8x16_t v0 = vld1q_u8(r0 + at), v1 = vld1q_u8(r1 + at);    \
@@ -174,7 +174,9 @@ QDOT(quads_dot_u8, UDOT)
   uint32x4_t x = vld1q_dup_u32((const uint32_t *)(a + t));
 #define QAXPY(name, DOT, T)                                               \
   static void name(const uint8_t *a, const uint8_t *b, int64_t ldb,       \
-                   int64_t k, int64_t n, uint32_t *y) {                   \
+                   int64_t k, int64_t n, uint32_t *y,                     \
+                   const uint8_t *next) {                                 \
+    (void)next;                                                           \
     int64_t j = 0;                                                        \
     for (; j + 64 <= n; j += 64) {                                        \
       uint32x4_t c[16];                                                   \
