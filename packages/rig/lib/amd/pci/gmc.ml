@@ -490,10 +490,12 @@ let fault g =
     (Regs.read r "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32" lsl 32)
     lor Regs.read r "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"
   in
-  Regs.update r "regGCVM_L2_PROTECTION_FAULT_CNTL"
-    [ ("clear_protection_fault_status_addr", 1) ];
   strf "page fault at 0x%x (%s)" (page lsl 12)
     (String.concat ", "
        (List.filter_map
           (fun (f, v) -> if v <> 0 then Some (strf "%s=%d" f v) else None)
           fields))
+
+let clear_fault g =
+  Regs.update g.r "regGCVM_L2_PROTECTION_FAULT_CNTL"
+    [ ("clear_protection_fault_status_addr", 1) ]

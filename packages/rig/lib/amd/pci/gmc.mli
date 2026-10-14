@@ -155,4 +155,8 @@ val invalidate : t -> unit
 
 val fault : t -> string
 (** [fault g] is the report of GC's last protection fault, its address and
-    status fields, and clears the status. *)
+    status fields. The status stays until {!clear_fault}. *)
+
+val clear_fault : t -> unit
+(** [clear_fault g] clears GC's protection fault status, so the hub records
+    the next fault. *)

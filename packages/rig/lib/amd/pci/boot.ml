@@ -322,7 +322,9 @@ let stop_locked g =
     let failed = ref false in
     let step f = try f () with Regs.Stuck _ -> failed := true in
     if not g.vf then step (fun () -> Smu.clocks g.smu `Lowest);
-    step (fun () -> ignore (Ih.read g.ih));
+    step (fun () ->
+        ignore (Ih.read g.ih);
+        Ih.consume g.ih);
     step (fun () -> List.iter (Memory.free g.memory) g.eops);
     g.eops <- [];
     step (fun () -> mark g ~dirty:(!(g.fault) <> None || (not left) || !failed));
@@ -611,26 +613,55 @@ let faulted g why =
   Mutex.protect g.hw @@ fun () -> if !(g.fault) = None then g.fault := Some why
 
 (* The GPU's fatal hardware errors, which NBIO flags outside the interrupt ring,
-   with the power manager's machine-check banks. *)
+   with the power manager's machine-check banks: the report, and the flags it
+   read, which [clear_fatal] clears. *)
+let fatal_flags = "regBIF_BX0_BIF_DOORBELL_INT_CNTL"
+
 let fatal g =
   let r = g.r in
-  let reg = "regBIF_BX0_BIF_DOORBELL_INT_CNTL" in
-  let athub = Regs.field r reg "ras_athub_err_event_interrupt_status" in
-  let cntlr = Regs.field r reg "ras_cntlr_interrupt_status" in
+  let athub = Regs.field r fatal_flags "ras_athub_err_event_interrupt_status" in
+  let cntlr = Regs.field r fatal_flags "ras_cntlr_interrupt_status" in
   if athub = 0 && cntlr = 0 then None
-  else begin
+  else
     let banks = try Smu.banks g.smu with Regs.Stuck why -> why in
-    Regs.write r reg
-      [
-        ("ras_cntlr_interrupt_clear", cntlr);
-        ("ras_athub_err_event_interrupt_clear", athub);
-      ];
-    Some
-      (strf "fatal hardware error%s%s; machine-check banks: %s"
-         (if athub <> 0 then " RAS_ATHUB_ERR_EVENT" else "")
-         (if cntlr <> 0 then " RAS_CNTLR" else "")
-         banks)
-  end
+    let why =
+      strf "fatal hardware error%s%s; machine-check banks: %s"
+        (if athub <> 0 then " RAS_ATHUB_ERR_EVENT" else "")
+        (if cntlr <> 0 then " RAS_CNTLR" else "")
+        banks
+    in
+    Some (why, (athub, cntlr))
+
+let clear_fatal g (athub, cntlr) =
+  Regs.write g.r fatal_flags
+    [
+      ("ras_cntlr_interrupt_clear", cntlr);
+      ("ras_athub_err_event_interrupt_clear", athub);
+    ]
+
+(* Records the events a sleep read in [g.fault], then consumes them: the
+   interrupt ring's entries, the page fault's status and the fatal error
+   flags. An exception before the record consumed nothing, so the next sleep
+   reads the events again; one after it leaves the fault, which the next
+   sleep raises. The status holds one page fault, reported once, first. *)
+let events g reports =
+  let page =
+    if List.mem Ih.Page_fault reports then Some (Gmc.fault g.gmc) else None
+  in
+  let fatal = if g.vf then None else fatal g in
+  let reports =
+    List.filter_map
+      (function Ih.Page_fault -> None | Fault why -> Some why)
+      reports
+  in
+  let reports =
+    Option.to_list page @ reports @ Option.to_list (Option.map fst fatal)
+  in
+  if reports <> [] then g.fault := Some (String.concat "; " reports);
+  if Option.is_some page then Gmc.clear_fault g.gmc;
+  Option.iter (fun (_, flags) -> clear_fatal g flags) fatal;
+  Ih.consume g.ih;
+  Option.iter (fun why -> raise (Rig_amd.Fault why)) !(g.fault)
 
 (* A sleep that a stop overtakes reads nothing more: the stop's release unmaps
    the windows the interrupt ring lies in. Each look at the ring holds the lock
@@ -653,24 +684,7 @@ let sleep g ~ms =
       | None -> (
           match Ih.read g.ih with
           | exception Regs.Stuck why -> fault g why
-          | reports -> (
-              let reports =
-                List.map
-                  (function
-                    | Ih.Page_fault -> Gmc.fault g.gmc
-                    | Fault why -> why)
-                  reports
-              in
-              let reports =
-                if g.vf then reports
-                else
-                  match fatal g with
-                  | Some why -> reports @ [ why ]
-                  | None -> reports
-              in
-              match reports with
-              | [] -> ()
-              | l -> fault g (String.concat "; " l))))
+          | reports -> events g reports))
 
 (* Resetting *)
 

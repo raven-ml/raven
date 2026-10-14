@@ -1164,12 +1164,9 @@ let long_work (module G : Gpu) () =
   G.D.sleep t.g ~seen:(v - 1) ~still_ms:600_000
 
 (* A Ctrl-C during a wait for work that runs loses nothing: the wait raises
-   Sys.Break, and the next wait reaches the value. AMD driven over PCI skips:
-   its sleep may consume a fault's report that an interrupt then drops. *)
+   Sys.Break, and the next wait reaches the value. *)
 let break_in_wait (module G : Gpu) () =
   if Sys.win32 then skip ~reason:"Windows has no SIGINT from a thread" ();
-  if G.class_ = "AMD" && Rig_amd_support.driverless () then
-    skip ~reason:"AMD's sleep over PCI may drop a report it consumed" ();
   G.with_ @@ fun t ->
   let p = submit t.d [ G.spin t ~ns:500_000_000 ] ~uses:[] in
   Sys.catch_break true;

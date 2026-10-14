@@ -66,9 +66,14 @@ val pending : t -> bool
 
 val read : t -> report list
 (** [read ih] is the reports of the first ring's entries the GPU wrote since
-    the last [read], in order. It then writes the read pointer back, leaving
-    the ring empty. After an overflow it clears the overflow and reads on
-    from the oldest entry the GPU did not overwrite.
+    the last {!consume}, in order. It leaves them in the ring, so a caller
+    records what they report before it consumes them. After an overflow it
+    clears the overflow and reads on from the oldest entry the GPU did not
+    overwrite.
 
     Raises {!Regs.Stuck} if the GPU's function or its machine failed
     ({!Rig_pci.Function.failed}). *)
+
+val consume : t -> unit
+(** [consume ih] writes the read pointer back past the entries the last
+    {!read} reported, which no later [read] reports. *)

@@ -165,6 +165,7 @@ type t = {
   wptr : Window.t;
   rings : ring list;
   mutable rptr : int; (* bytes into the first ring *)
+  mutable upto : int; (* where the last [read] ended, which [consume] reaches *)
 }
 
 let make r gmc vram ~rings:(ring0, ring1) ~wptr =
@@ -180,6 +181,7 @@ let make r gmc vram ~rings:(ring0, ring1) ~wptr =
         { at = ring1; suffix = "_RING1"; first = false };
       ];
     rptr = 0;
+    upto = 0;
   }
 
 (* The interrupt storm and flood controls IH 4.4.2 lacks. *)
@@ -234,7 +236,8 @@ let start t =
     (fun ring ->
       Regs.update r ("regIH_RB_CNTL" ^ ring.suffix) [ ("rb_enable", 1) ])
     t.rings;
-  t.rptr <- 0
+  t.rptr <- 0;
+  t.upto <- 0
 
 let ring_controls = [ "regIH_RB_CNTL"; "regIH_RB_CNTL_RING1" ]
 
@@ -261,8 +264,11 @@ let wptr t =
     let w = Regs.read t.r "regIH_RB_WPTR" in
     if w land overflow_bit = 0 then offset w
     else begin
-      Regs.update t.r "regIH_RB_WPTR" [ ("rb_overflow", 0) ];
+      (* Reading resumes past the overwritten entries before the overflow is
+         cleared, so an exception between leaves a recovery that runs again
+         to the same pointer. *)
       t.rptr <- offset (w + entry_bytes);
+      Regs.update t.r "regIH_RB_WPTR" [ ("rb_overflow", 0) ];
       Regs.update t.r "regIH_RB_CNTL" [ ("wptr_overflow_clear", 1) ];
       Regs.update t.r "regIH_RB_CNTL" [ ("wptr_overflow_clear", 0) ];
       offset w
@@ -270,20 +276,26 @@ let wptr t =
 
 let pending t = offset (Window.get32 t.wptr 0) <> t.rptr
 
+(* The entries stay in the ring until [consume]: an exception while they are
+   read and decoded, which allocates per entry, consumes none of them. *)
 let read t =
   let l = Regs.layout_of t.r in
   let gc = Regs.version l D.gc_hwid and sdma = Regs.version l D.sdma0_hwid in
   let w = wptr t in
-  let rec go acc =
-    if t.rptr = w then List.rev acc
+  let rec go at acc =
+    if at = w then List.rev acc
     else
-      let e = Array.init 8 (fun i -> Window.get32 t.view (t.rptr + (4 * i))) in
-      t.rptr <- (t.rptr + entry_bytes) land (bytes - 1);
-      go
+      let e = Array.init 8 (fun i -> Window.get32 t.view (at + (4 * i))) in
+      let next = (at + entry_bytes) land (bytes - 1) in
+      go next
         (match decode ~gc ~sdma e with
         | Some rep -> rep :: acc
         | None -> acc)
   in
-  let reports = go [] in
-  Regs.write ~value:t.rptr t.r "regIH_RB_RPTR" [];
+  let reports = go t.rptr [] in
+  t.upto <- w;
   reports
+
+let consume t =
+  t.rptr <- t.upto;
+  Regs.write ~value:t.rptr t.r "regIH_RB_RPTR" []
