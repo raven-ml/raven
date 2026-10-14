@@ -276,6 +276,36 @@ let kept_run =
       let submit () = Rig.Point.wait (once ~buffers ~run:kept s) in
       ignore (Rig.Profile.take submit))
 
+(* Interrupts a profiled submit from its [n]-th allocation, then checks that
+   the submit gave back the time pair it took: a device hands out the pair
+   given back last first, so the next profiled submit's times land where
+   those of the submit before the interrupt did. Is whether the allocation
+   was reached. *)
+let interrupt_timed n =
+  let at = Printf.sprintf ", interrupted from allocation %d" n in
+  in_child at (fun () ->
+      let d, p = P.open_ (fresh "timed") in
+      let s = Sub.make d [| Sub.copy ~src:(Slot 0) ~dst:(Slot 1) |] in
+      let buffers = [| B.create d 8; B.create d 8 |] in
+      let run = Sub.Run.make () in
+      let wait () = Rig.Point.wait (once ~buffers ~run s) in
+      let submit () = ignore (Rig.Profile.take wait) in
+      submit ();
+      let pair = P.last_times p in
+      Gc.full_major ();
+      let got = outcome (fun () -> interrupting (Nth n) (ref None) submit) in
+      mem ~msg:"outcome" string got [ "done"; "raised Injected" ];
+      equal ~msg:"lost" (option string) None (Rig.lost d);
+      submit ();
+      equal ~msg:"where the times land" int pair (P.last_times p);
+      got = "raised Injected")
+
+let test_timed () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  S.needs_fork ();
+  let rec from n = if interrupt_timed n then from (n + 1) in
+  from 1
+
 (* Interrupts a close of a machine's host, which holds a device of the
    machine, from its [n]-th allocation, then checks that the machine answers
    as the close left it: an open host opens devices and a closed one opens
@@ -476,6 +506,7 @@ let () =
               ((opens :: caches :: borrow_kept :: waiting :: kept_run :: ops)
               @ staged @ List.map unmapped staged)
            @ [
+               test "a profiled submit's time pair" test_timed;
                test "close of a machine's host" test_close;
                test "a drain that lets go of kept values" test_kept;
                test "a drain that routes memory into the cache" test_cached;

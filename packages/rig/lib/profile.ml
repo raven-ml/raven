@@ -67,9 +67,27 @@ let is_open p = Option.is_some (Atomic.get p.events)
 let enabled () =
   match Atomic.get profiles with [] -> false | ps -> List.exists is_open ps
 
-(* Sets the list to [f] of it without the stopped profiles. *)
+(* Drops [p]'s pending entries one at a time, then takes no more. Each
+   entry leaves [p] before its drop, with nothing that allocates or polls
+   between, so an exception between two drops leaves the rest in [p] and
+   none is dropped twice. *)
+let rec close p =
+  match Atomic.get p.pending with
+  | (Open [] | Reading []) as before ->
+      if not (Atomic.compare_and_set p.pending before Closed) then close p
+  | (Open (e :: l) | Reading (e :: l)) as before ->
+      if Atomic.compare_and_set p.pending before (Reading l) then e.drop ();
+      close p
+  | Closed -> ()
+
+let close_stopped p = if not (is_open p) then close p
+
+(* Sets the list to [f] of it without the stopped profiles, once their
+   entries are dropped: a stop that an exception ended leaves its profile in
+   the list with the entries it did not drop. *)
 let rec change f =
   let ps = Atomic.get profiles in
+  List.iter close_stopped ps;
   if not (Atomic.compare_and_set profiles ps (f (List.filter is_open ps))) then
     change f
 
@@ -78,16 +96,12 @@ let start () =
   change (fun ps -> ps @ [ p ]);
   p
 
-let drop (e : pending) = e.drop ()
-
 (* The exchange is the stop: an exception that ends the call after it, at an
-   allocation, leaves [p] in the list stopped, and the next change drops it.
-   The pending entries left are dropped first, with no allocation. *)
+   allocation or a poll, leaves [p] in the list stopped, with the entries it
+   did not drop, and the next change drops them and [p]. *)
 let stop p =
   let events = Atomic.exchange p.events None in
-  (match Atomic.exchange p.pending Closed with
-  | Open l | Reading l -> List.iter drop l
-  | Closed -> ());
+  close p;
   change Fun.id;
   match events with None -> [] | Some events -> events
 

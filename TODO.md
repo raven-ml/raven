@@ -28,8 +28,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### semantics
 
-- an asynchronous exception in a profiled submit's `record`, after
-  `run_give`, loses the profile's time pair (`times_free` never runs)
 - ledger rows (_plans/rig-semantics-refs/LEDGER.md): decide required
   `~waits` against its callers (none in nx, rune or tolk pass waits), and
   count exact-zero tests with `Gc.allocated_bytes`; `Buffer.free`; both

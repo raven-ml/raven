@@ -1219,30 +1219,61 @@ let untaken = { ps = []; moves = [||]; asked = 0 }
    back. A driver that left the pair 0, or no pair, timed nothing: no span,
    and the copies run from [t.asked] to when the host saw [p] reached, now if
    the device ran the work in its submit, and otherwise at the read. A
-   settle that failed or found the device lost records nothing. *)
+   settle that failed or found the device lost records nothing.
+
+   In native code an exception anywhere in the call gives the pair back: the
+   entry counts one hold of the pair per profile, and the trap drops the
+   holds no profile took, or gives the pair back itself before the count is
+   made. Nothing allocates or polls between a profile taking the entry and
+   the count of the holds left to drop. *)
 let record s (lane, name) { ps; moves; asked } p pair =
-  let device = s.dev and value = Point.value p in
+  let device = s.dev in
   let c = device.live.c in
-  let seen = if Dev.is_done p then Profile.now () else -1 in
-  let left = Atomic.make (List.length ps) in
-  let drop () =
-    if Atomic.fetch_and_add left (-1) = 1 && pair >= 0 then times_free c pair
-  in
-  let read prof =
-    let copies start stop =
-      Array.iter
-        (fun (src, dst, bytes) ->
-          Profile.add [ prof ] (Copy { src; dst; bytes; start; stop }))
-        moves
+  let left = ref None and owed = ref 0 and todo = ref ps in
+  match
+    let value = Point.value p in
+    let seen = if Dev.is_done p then Profile.now () else -1 in
+    let n = List.length ps in
+    let holds = Atomic.make n in
+    left := Some holds;
+    owed := n;
+    let drop () =
+      if Atomic.fetch_and_add holds (-1) = 1 && pair >= 0 then
+        times_free c pair
     in
-    if pair < 0 || Dev.settle device value then
-      match if pair < 0 then (0, 0) else times_read c pair with
-      | 0, 0 -> copies asked (if seen >= 0 then seen else Profile.now ())
-      | start, stop ->
-          Profile.add [ prof ] (Span { device; lane; name; start; stop });
-          copies start stop
-  in
-  List.iter (fun prof -> Profile.pend prof { device; value; read; drop }) ps
+    let read prof =
+      let copies start stop =
+        Array.iter
+          (fun (src, dst, bytes) ->
+            Profile.add [ prof ] (Copy { src; dst; bytes; start; stop }))
+          moves
+      in
+      if pair < 0 || Dev.settle device value then
+        match if pair < 0 then (0, 0) else times_read c pair with
+        | 0, 0 -> copies asked (if seen >= 0 then seen else Profile.now ())
+        | start, stop ->
+            Profile.add [ prof ] (Span { device; lane; name; start; stop });
+            copies start stop
+    in
+    let e = { Profile.device; value; read; drop } in
+    while !todo != [] do
+      match !todo with
+      | prof :: rest ->
+          Profile.pend prof e;
+          todo := rest;
+          owed := !owed - 1
+      | [] -> ()
+    done
+  with
+  | () -> ()
+  | exception x ->
+      let k = !owed in
+      (match !left with
+      | None -> if pair >= 0 then times_free c pair
+      | Some holds ->
+          if k > 0 && Atomic.fetch_and_add holds (-k) = k && pair >= 0 then
+            times_free c pair);
+      raise x
 
 (* The taking of a submit of [s] with [buffers]. The last profile may stop
    between the two reads: the work is then untimed, since no entry would give
@@ -1258,9 +1289,12 @@ let taking s buffers =
 (* Takes [run] and submits [s] with it. The take is the last step before the
    trap that gives the run back, so in native code an exception anywhere
    after it, such as one where the taking allocates, leaves the run to the
-   next submit. The C submit reads [s]'s C form, and the stamps and templates
-   it names without a reference, with the runtime released: their owners stay
-   reachable until the run is given back. While a profile is taken, a
+   next submit. The C submit takes a time pair in the call that hands the
+   work over, so a pair the trap finds was handed over with the work: the
+   device may still write it, and it stays with the device as other unread
+   pairs do. The C submit reads [s]'s C form, and the stamps and templates
+   it names without a reference, with the runtime released: their owners
+   stay reachable until the run is given back. While a profile is taken, a
    submission with parts times its value. *)
 let submit_run s run buffers waits =
   if not (take run s.c) then

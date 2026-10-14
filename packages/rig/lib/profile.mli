@@ -23,13 +23,14 @@
     is dropped however its read ends. A device lost meanwhile has its
     entries dropped.
 
-    A profile detaches its events and its entries in one exchange each when
-    it stops, which no allocation precedes, so an asynchronous exception
-    cannot leave it open, and a [take] whose function raises keeps no entry.
-    A recorder that read the list before the stop and adds afterwards finds
-    the cell closed, and its event is dropped. A stopped profile may stay in
-    the list, where an exception that ended the stop after its exchanges left
-    it, until the next start or stop removes it. *)
+    A profile detaches its events in one exchange when it stops, which no
+    allocation precedes, so an asynchronous exception cannot leave it open,
+    then drops its entries one at a time, and a [take] whose function raises
+    keeps no entry. A recorder that read the list before the stop and adds
+    afterwards finds the cell closed, and its event is dropped. A stopped
+    profile may stay in the list, where an exception that ended the stop
+    after its exchange left it with the entries it did not drop, until the
+    next start or stop drops them and removes it. *)
 
 open Def
 
